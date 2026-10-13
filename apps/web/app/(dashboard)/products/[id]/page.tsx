@@ -326,6 +326,9 @@ export default function ProductDetailPage() {
 
   const [isEditing, setIsEditing] = React.useState(false);
   const [editDraft, setEditDraft] = React.useState<Record<string, unknown>>({});
+  // The pack word the form opened with: a save sends `unit` only if the operator changed it, so a form
+  // left open across a Settings > Units rename cannot write the old word back.
+  const unitWhenEditStartedRef = React.useRef<string | undefined>(undefined);
 
   // Regulated type picker (edit mode). The Category field below renders the
   // structured SubcategoryCombobox in place of the free-text combobox once a
@@ -486,9 +489,6 @@ export default function ProductDetailPage() {
   const msrpBelowWholesale =
     msrpNumber != null && wholesalePerPiece > 0 && msrpNumber < wholesalePerPiece;
 
-  // The pack word the form opened with: a save sends `unit` only if the operator changed it, so a form
-  // left open across a Settings > Units rename cannot write the old word back.
-  const unitWhenEditStartedRef = React.useRef<string | undefined>(undefined);
   const startEdit = () => {
     unitWhenEditStartedRef.current = product.unit;
     setEditDraft({
