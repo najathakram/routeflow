@@ -112,6 +112,7 @@ import {
 } from "../../../../lib/invoice-terms";
 import { MoneyTextInput } from "../../../../components/MoneyTextInput";
 import { alertInfo, chooseAction, confirm } from "../../../../lib/confirm";
+import { KEPT_DRAFT_COPY, keptDraftInvoiceId } from "../../../../lib/kept-draft-invoice";
 import { QtyStepper } from "../../../../components/QtyStepper";
 import { InlineCreateProductSheet } from "../../../../components/InlineCreateProductSheet";
 import { ProductPickerSheet } from "../../../../components/ProductPickerSheet";
@@ -283,6 +284,11 @@ export default function NewInvoiceScreen() {
           showToast(`Invoice ${invoiceNumber} created`);
           router.replace(`/(operator)/invoices/${invoiceId}` as any);
         }}
+        onKeptDraft={(invoiceId) => {
+          // Row 466: the invoice was created and only the send failed. Open it, never retry the create.
+          showToast(KEPT_DRAFT_COPY);
+          router.replace(`/(operator)/invoices/${invoiceId}` as any);
+        }}
       />
     </SafeAreaView>
   );
@@ -371,12 +377,15 @@ function InvoiceComposer({
   onBack,
   onChangeCustomer,
   onSaved,
+  onKeptDraft,
 }: {
   customerId: string;
   customerName: string | null;
   onBack: () => void;
   onChangeCustomer: () => void;
   onSaved: (invoiceId: string, invoiceNumber: string) => void;
+  /** The create committed but the send step failed: open the kept draft. */
+  onKeptDraft: (invoiceId: string) => void;
 }) {
   const [category, setCategory] = useState("All");
   const [items, setItems] = useState<Record<string, InvoiceLineState>>({});
@@ -1384,6 +1393,8 @@ function InvoiceComposer({
             showToast("Sale recorded — open the invoice from the Invoices tab.");
           },
           onError: (err: any) => {
+            const keptId = keptDraftInvoiceId(err);
+            if (keptId) return void onKeptDraft(keptId);
             if (unitNotOfferedCode(err)) return void onUnitNotOffered("Couldn't record the sale");
             alertInfo(
               "Couldn't record the sale",
@@ -1453,6 +1464,8 @@ function InvoiceComposer({
           onSaved(inv.id, inv.invoiceNumber);
         },
         onError: (err: any) => {
+          const keptId = keptDraftInvoiceId(err);
+          if (keptId) return void onKeptDraft(keptId);
           if (unitNotOfferedCode(err)) return void onUnitNotOffered("Couldn't create invoice");
           alertInfo(
             "Couldn't create invoice",

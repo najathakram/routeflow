@@ -157,6 +157,7 @@ import { currentTaxRate } from "../common/tax-rate";
 import { NotificationsService } from "../notifications/notifications.service";
 import { InvoicesService } from "../invoices/invoices.service";
 import { dueStamp } from "../invoices/invoice-due-dates";
+import { sendAfterCommit } from "../invoices/send-after-commit";
 import {
   decrementStockForSale,
   restoreStockForReopen,
@@ -2280,7 +2281,10 @@ export class OrdersService implements OnApplicationBootstrap {
         const sent =
           replay && inv.status && inv.status !== InvoiceStatus.DRAFT
             ? inv
-            : await this.invoicesService.send(inv.id, ...sendOpts);
+            : // Row 466: the order and this invoice are committed; a send failure carries their ids.
+              await sendAfterCommit({ invoiceId: inv.id, orderId: order.id }, () =>
+                this.invoicesService.send(inv.id, ...sendOpts),
+              );
         if (primary === null) primary = sent;
       }
       return primary;

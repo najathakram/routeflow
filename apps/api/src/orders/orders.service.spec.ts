@@ -2331,6 +2331,38 @@ describe("OrdersService", () => {
       expect(result).toEqual(expect.objectContaining({ id: "inv-1" }));
     });
 
+    it("row 466: a van-sale send failure carries the committed invoiceId and orderId, keeping status and code", async () => {
+      const invoices = (service as any).invoicesService;
+      invoices.send.mockRejectedValueOnce(
+        new BadRequestException({ code: "EMAIL_SEND_FAILED", message: "smtp down" }),
+      );
+      const err = await service
+        .createSale({ ...baseDto, deliveredNow: true }, user)
+        .catch((e) => e);
+      expect(err).toBeInstanceOf(BadRequestException);
+      expect(err.getResponse()).toMatchObject({
+        code: "EMAIL_SEND_FAILED",
+        invoiceId: "inv-1",
+        orderId: "ord-1",
+      });
+      // The order and its invoice were created once; the failure did not re-create anything.
+      expect(invoices.createInvoiceFromOrder).toHaveBeenCalledTimes(1);
+    });
+
+    it("row 466: a non-HTTP send failure on a van sale is a coded 500 carrying invoiceId", async () => {
+      const invoices = (service as any).invoicesService;
+      invoices.send.mockRejectedValueOnce(new Error("lock timeout"));
+      const err = await service
+        .createSale({ ...baseDto, deliveredNow: true }, user)
+        .catch((e) => e);
+      expect(err.getStatus()).toBe(500);
+      expect(err.getResponse()).toMatchObject({
+        code: "INVOICE_SEND_AFTER_CREATE_FAILED",
+        invoiceId: "inv-1",
+        orderId: "ord-1",
+      });
+    });
+
     it("bill before delivery (deliveredNow=false, send=false): PENDING order, draft invoice, not sent", async () => {
       const invoices = (service as any).invoicesService;
       await service.createSale({ ...baseDto, deliveredNow: false, send: false }, user);

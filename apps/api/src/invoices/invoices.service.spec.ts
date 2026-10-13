@@ -5452,6 +5452,140 @@ describe("InvoicesService", () => {
     });
   });
 
+  // ─── Row 466: create-and-send must not lie when the send step fails after the commit ───────────
+  describe("row 466 — a send failure after the draft committed carries the invoiceId", () => {
+    const CREATED = "inv-466";
+    const seedCreate = () => {
+      prisma.customer.findUnique.mockResolvedValue({ id: "cust-1", isTaxExempt: false });
+      prisma.product.findMany.mockResolvedValue([]);
+      jest.spyOn(service as any, "resolveTenantInvoiceDefaults").mockResolvedValue({
+        notes: null,
+        terms: null,
+      });
+      prisma.invoice.create.mockImplementation((args: any) =>
+        Promise.resolve({ id: CREATED, ...args.data, items: [], customer: {}, payments: [] }),
+      );
+    };
+    const createAndSend = () =>
+      service.create({
+        customerId: "cust-1",
+        send: true,
+        items: [{ description: "Widget", qty: 1, unitPrice: 10 }],
+      } as any);
+
+    it("a VOID-after-create refusal (400) keeps its status and message and adds invoiceId", async () => {
+      seedCreate();
+      // The real send(): the row reads back VOID, so sendRefusal throws a plain 400.
+      prisma.invoice.findUnique.mockResolvedValue({
+        id: CREATED,
+        orderId: null,
+        status: InvoiceStatus.VOID,
+        deliveryBatchId: null,
+      });
+      const err = await createAndSend().catch((e) => e);
+      expect(err).toBeInstanceOf(BadRequestException);
+      expect(err.getStatus()).toBe(400);
+      expect(err.getResponse()).toMatchObject({ invoiceId: CREATED, statusCode: 400 });
+      expect(typeof (err.getResponse() as any).message).toBe("string");
+      expect(prisma.invoice.create).toHaveBeenCalledTimes(1); // the draft exists exactly once
+    });
+
+    it("a 409 from the send step keeps its code and gains invoiceId", async () => {
+      seedCreate();
+      jest
+        .spyOn(service, "send")
+        .mockRejectedValue(
+          new ConflictException({ code: "INVOICE_CHANGED_CONCURRENTLY", message: "changed" }),
+        );
+      const err = await createAndSend().catch((e) => e);
+      expect(err).toBeInstanceOf(ConflictException);
+      expect(err.getResponse()).toMatchObject({
+        code: "INVOICE_CHANGED_CONCURRENTLY",
+        message: "changed",
+        invoiceId: CREATED,
+      });
+    });
+
+    it("EMAIL_SEND_FAILED still carries its code and now also invoiceId", async () => {
+      seedCreate();
+      jest
+        .spyOn(service, "send")
+        .mockRejectedValue(
+          new BadRequestException({ code: "EMAIL_SEND_FAILED", message: "smtp down" }),
+        );
+      const err = await createAndSend().catch((e) => e);
+      expect(err.getResponse()).toMatchObject({
+        code: "EMAIL_SEND_FAILED",
+        message: "smtp down",
+        invoiceId: CREATED,
+      });
+    });
+
+    it("a non-HTTP error becomes a coded 500 with invoiceId, never the raw message", async () => {
+      seedCreate();
+      jest
+        .spyOn(service, "send")
+        .mockRejectedValue(new Error("pdf renderer exploded: secret-detail"));
+      const err = await createAndSend().catch((e) => e);
+      expect(err.getStatus()).toBe(500);
+      const body = err.getResponse() as any;
+      expect(body).toMatchObject({ code: "INVOICE_SEND_AFTER_CREATE_FAILED", invoiceId: CREATED });
+      expect(JSON.stringify(body)).not.toContain("secret-detail");
+      expect(err.cause).toBeInstanceOf(Error); // Sentry still sees the original
+    });
+
+    it("without send=true nothing is wrapped and the draft is returned", async () => {
+      seedCreate();
+      const send = jest.spyOn(service, "send");
+      const inv = await service.create({
+        customerId: "cust-1",
+        items: [{ description: "Widget", qty: 1, unitPrice: 10 }],
+      } as any);
+      expect(inv).toMatchObject({ id: CREATED });
+      expect(send).not.toHaveBeenCalled();
+    });
+
+    it("createPartialFromOrder(send=true) carries invoiceId on a send failure too", async () => {
+      prisma.customer.findUnique.mockResolvedValue({ isTaxExempt: false } as any);
+      prisma.invoice.aggregate.mockResolvedValue({ _sum: { shippingFee: 0 } });
+      prisma.order.findUnique.mockResolvedValue({
+        id: "ord-p1",
+        customerId: "cust-1",
+        orderNumber: "ORD-P1",
+        subtotal: 50,
+        tax: 5,
+        shippingFee: 0,
+        lineItems: [
+          {
+            id: "oi-1",
+            productId: "p-1",
+            qty: 10,
+            invoicedQty: 0,
+            boxes: null,
+            pieces: null,
+            unitsPerBox: null,
+            unitPrice: 5,
+            subtotal: 50,
+            product: { name: "Widget", unitsPerBox: null },
+          },
+        ],
+      });
+      prisma.invoice.create.mockImplementation((args: any) =>
+        Promise.resolve({ id: CREATED, ...args.data, items: [], payments: [], customer: {} }),
+      );
+      prisma.orderItem.update.mockResolvedValue({} as any);
+      jest.spyOn(service, "send").mockRejectedValue(new BadRequestException("blocked"));
+      const err = await service
+        .createPartialFromOrder("ord-p1", {
+          items: [{ orderItemId: "oi-1", qty: 10 }],
+          send: true,
+        } as any)
+        .catch((e) => e);
+      expect(err).toBeInstanceOf(BadRequestException);
+      expect(err.getResponse()).toMatchObject({ invoiceId: CREATED, message: "blocked" });
+    });
+  });
+
   // ─── createPartialFromOrder — remaining-fee seeding (WP2) ──────────────────
   describe("createPartialFromOrder — shipping fee seeding", () => {
     const baseOrder = (over: any = {}) => ({

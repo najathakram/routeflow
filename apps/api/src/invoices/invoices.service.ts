@@ -8,6 +8,7 @@ import {
   Optional,
 } from "@nestjs/common";
 import { syncOrderLineCompositions } from "../orders/order-composition";
+import { sendAfterCommit } from "./send-after-commit";
 import { invoiceCompositionFields } from "./invoice-line-composition";
 import { applyComposedLineEdits } from "./invoice-composed-edit";
 import { FeatureConfigService } from "../billing/feature-config.service";
@@ -554,8 +555,9 @@ export class InvoicesService {
     }
 
     // If the caller wants to immediately send the invoice, transition DRAFT → SENT
+    // Row 466: the draft is committed; a send failure must still hand the client its id.
     if (dto.send) {
-      return this.send(invoice.id);
+      return sendAfterCommit({ invoiceId: invoice.id }, () => this.send(invoice.id));
     }
 
     return invoice;
@@ -2834,7 +2836,7 @@ export class InvoicesService {
     const invoice = await this.prisma.tenantTransaction(runCreation);
 
     if (dto.send) {
-      return this.send(invoice.id);
+      return sendAfterCommit({ invoiceId: invoice.id }, () => this.send(invoice.id));
     }
     return invoice;
   }

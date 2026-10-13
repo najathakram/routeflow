@@ -48,6 +48,7 @@ import {
 } from "@/lib/sale-line-pricing";
 import { reasonRequiredMessage } from "@/lib/staff-price-override";
 import { apiClient } from "@/lib/api-client";
+import { KEPT_DRAFT_TOAST, keptDraftInvoiceId } from "@/lib/kept-draft-invoice";
 import { fetchPdfBlob } from "@/lib/fetch-pdf-blob";
 import { displayProductName } from "@/lib/product-display";
 import {
@@ -1579,12 +1580,20 @@ export default function NewInvoicePage() {
           });
           router.push(`/invoices/${inv.id}`);
         },
-        onError: (err: unknown) =>
+        onError: (err: unknown) => {
+          // Row 466: the sale and its invoice exist; only the send failed. Open the kept draft.
+          const keptId = keptDraftInvoiceId(err);
+          if (keptId) {
+            toast({ ...KEPT_DRAFT_TOAST, variant: "warning" });
+            router.push(`/invoices/${keptId}`);
+            return;
+          }
           toast({
             title: "Could not create the sale",
             description: unitRefusal(err, saleLines) ?? "Please check your inputs and try again.",
             variant: "error",
-          }),
+          });
+        },
       },
     );
   }
@@ -1597,17 +1606,21 @@ export default function NewInvoicePage() {
       const dto = buildInvoiceDto(false, lines);
       updateInvoice.mutate({ id: currentDraftId, ...dto } as any, {
         onSuccess: async () => {
+          let sendFailed = false;
           if (sendNow) {
             try {
               await apiClient.post(`/invoices/${currentDraftId}/send`);
             } catch {
-              // fall through to toast below
+              // Row 466: never say "sent" when it was not. The draft is kept; open it.
+              sendFailed = true;
             }
           }
-          toast({
-            title: sendNow ? "Invoice sent" : "Draft saved",
-            variant: "success",
-          });
+          if (sendFailed) toast({ ...KEPT_DRAFT_TOAST, variant: "warning" });
+          else
+            toast({
+              title: sendNow ? "Invoice sent" : "Draft saved",
+              variant: "success",
+            });
           router.push(`/invoices/${currentDraftId}`);
         },
         onError: (err: unknown) => {
@@ -1635,6 +1648,14 @@ export default function NewInvoicePage() {
         router.push(`/invoices/${invoice.id}`);
       },
       onError: (err: unknown) => {
+        // Row 466: the draft was committed and only the send failed. Open it; never offer a
+        // second create (a retry here would duplicate the invoice).
+        const keptId = keptDraftInvoiceId(err);
+        if (keptId) {
+          toast({ ...KEPT_DRAFT_TOAST, variant: "warning" });
+          router.push(`/invoices/${keptId}`);
+          return;
+        }
         toast({
           title: "Failed to create invoice",
           description: unitRefusal(err, lines) ?? "Please check your inputs and try again.",
