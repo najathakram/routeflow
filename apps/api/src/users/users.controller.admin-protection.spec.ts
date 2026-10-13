@@ -27,13 +27,22 @@ describe("UsersController: admin account protection wiring", () => {
       "t1",
       { status: "SUSPENDED" },
       UserRole.OPERATOR,
+      "op1", // the caller's id: self-deactivation is refused (SA M2)
     );
   });
   it("update passes the caller's role", async () => {
-    await controller.update("t1", { email: "a@b.example" } as any, operator);
+    // Editing ANOTHER user is account administration (admin only); an operator edits their own record.
+    await controller.update("t1", { email: "a@b.example" } as any, admin);
     expect(service.updateUser).toHaveBeenCalledWith(
       "t1",
       { email: "a@b.example" },
+      "ad",
+      UserRole.TENANT_ADMIN,
+    );
+    await controller.update("op1", { email: "a@b.example" } as any, operator);
+    expect(service.updateUser).toHaveBeenLastCalledWith(
+      "op1",
+      { email: "a@b.example", role: undefined },
       "op",
       UserRole.OPERATOR,
       undefined,

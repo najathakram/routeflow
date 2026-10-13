@@ -81,6 +81,7 @@ import {
 } from "@/lib/api/remittance";
 import { useTierLabels, useUpdateTierLabels, type TierLabelsConfig } from "@/lib/api/tier-labels";
 import { useAuth } from "@/lib/auth-context";
+import { isAccountAdmin } from "@/lib/auth";
 import { useFleetAccess } from "@/lib/api/addons";
 import { changePassword, setPassword } from "@/lib/auth";
 import { RegulatedSettingsTab } from "./_components/RegulatedSettingsTab";
@@ -102,6 +103,7 @@ import { TIME_ZONE_REQUIRED_COPY, canonicalTimeZone, isValidTimeZone } from "@/l
 import { useInvalidFocus } from "@/lib/form-errors";
 import { ReadOnlyHint, WriteButton } from "@/lib/read-only-gate";
 import { isReadOnlyRefusal, showReadOnlyRefusal } from "@/lib/read-only-refusal";
+import { userStatusRefusalCopy } from "@/lib/user-status-refusal";
 
 // ─── TAB 1: Business Profile ──────────────────────────────────────────────────
 
@@ -710,6 +712,8 @@ function EditUserModal({
 }) {
   const updateUser = useUpdateUser();
   const resetPassword = useResetUserPassword();
+  // Non-admins edit only their own username / email: no role change, no password reset.
+  const isAdmin = isAccountAdmin(useAuth().user);
   // Fleet-off: no DRIVER option — unless this user already IS a driver (never silently change a role).
   const { fleet } = useFleetAccess();
   const { toast } = useToast();
@@ -803,6 +807,14 @@ function EditUserModal({
             </div>
             <p className="mt-1 text-xs text-navy/70">Tenant admin role cannot be changed.</p>
           </div>
+        ) : !isAdmin ? (
+          <div>
+            <label className="mb-1 block text-sm font-medium text-navy">Role</label>
+            <div className="flex h-10 items-center rounded-md border border-surface-border bg-surface-secondary px-3 text-sm text-navy/70">
+              {user?.role === "DRIVER" ? "Driver" : "Operator"}
+            </div>
+            <p className="mt-1 text-xs text-navy/70">Only an admin can change this.</p>
+          </div>
         ) : (
           <Select
             label="Role"
@@ -829,43 +841,52 @@ function EditUserModal({
         />
       </form>
 
-      {/* Password reset section */}
-      <div className="mt-4 border-t border-surface-border pt-4">
-        {tempPassword ? (
-          <div className="space-y-2">
-            <p className="text-xs font-medium text-navy">
-              New temporary password — share with user:
-            </p>
-            <div className="flex items-center gap-2">
-              <code className="flex-1 rounded border border-surface-border bg-surface-raised px-3 py-1.5 font-mono text-sm font-bold tracking-widest text-navy">
-                {tempPassword}
-              </code>
-              <button
-                onClick={copyPw}
-                title="Copy"
-                className="rounded p-1.5 text-navy/70 hover:bg-surface-raised hover:text-navy transition-colors"
-              >
-                {copied ? <Check className="h-4 w-4 text-success" /> : <Copy className="h-4 w-4" />}
-              </button>
+      {/* Password reset section (admin-only on the api) */}
+      {isAdmin && (
+        <div className="mt-4 border-t border-surface-border pt-4">
+          {tempPassword ? (
+            <div className="space-y-2">
+              <p className="text-xs font-medium text-navy">
+                New temporary password — share with user:
+              </p>
+              <div className="flex items-center gap-2">
+                <code className="flex-1 rounded border border-surface-border bg-surface-raised px-3 py-1.5 font-mono text-sm font-bold tracking-widest text-navy">
+                  {tempPassword}
+                </code>
+                <button
+                  onClick={copyPw}
+                  title="Copy"
+                  className="rounded p-1.5 text-navy/70 hover:bg-surface-raised hover:text-navy transition-colors"
+                >
+                  {copied ? (
+                    <Check className="h-4 w-4 text-success" />
+                  ) : (
+                    <Copy className="h-4 w-4" />
+                  )}
+                </button>
+              </div>
             </div>
-          </div>
-        ) : (
-          <Button
-            variant="secondary"
-            size="sm"
-            loading={resetPassword.isPending}
-            onClick={handleResetPassword}
-          >
-            Reset Password
-          </Button>
-        )}
-      </div>
+          ) : (
+            <Button
+              variant="secondary"
+              size="sm"
+              loading={resetPassword.isPending}
+              onClick={handleResetPassword}
+            >
+              Reset Password
+            </Button>
+          )}
+        </div>
+      )}
     </Modal>
   );
 }
 
 function UserManagementTab() {
   const { data, isLoading } = useUsers();
+  // Add / status / reset-password are admin-only on the api; anyone may edit THEIR OWN record.
+  const { user: viewer } = useAuth();
+  const isAdmin = isAccountAdmin(viewer);
   const changeStatus = useChangeUserStatus();
   const [isAddOpen, setIsAddOpen] = React.useState(false);
   const [editingUser, setEditingUser] = React.useState<AppUser | null>(null);
@@ -879,7 +900,11 @@ function UserManagementTab() {
       { id: user.id, status: nextStatus },
       {
         onError: (err) =>
-          isReadOnlyRefusal(err) || toast({ title: "Failed to update status", variant: "error" }),
+          isReadOnlyRefusal(err) ||
+          toast({
+            title: userStatusRefusalCopy(err) ?? "Failed to update status",
+            variant: "error",
+          }),
       },
     );
   };
@@ -894,9 +919,11 @@ function UserManagementTab() {
         <p className="text-sm text-navy/70">
           {isLoading ? "Loading..." : `${data?.meta.total ?? 0} users total`}
         </p>
-        <WriteButton size="sm" onClick={() => setIsAddOpen(true)}>
-          Add User
-        </WriteButton>
+        {isAdmin && (
+          <WriteButton size="sm" onClick={() => setIsAddOpen(true)}>
+            Add User
+          </WriteButton>
+        )}
       </div>
       <ReadOnlyHint className="text-xs text-slate-600" />
 
@@ -945,30 +972,35 @@ function UserManagementTab() {
                   </td>
                   <td className="px-4 py-3">
                     <div className="flex items-center gap-1 justify-end">
-                      <button
-                        title="Edit user"
-                        onClick={() => setEditingUser(user)}
-                        className="rounded p-1.5 text-navy/70 hover:bg-surface-raised hover:text-navy transition-colors"
-                      >
-                        <Pencil className="h-4 w-4" />
-                      </button>
-                      <button
-                        title={user.status === "ACTIVE" ? "Deactivate" : "Activate"}
-                        onClick={() => toggleStatus(user)}
-                        disabled={changeStatus.isPending}
-                        className={cn(
-                          "rounded p-1.5 transition-colors disabled:opacity-50",
-                          user.status === "ACTIVE"
-                            ? "text-success hover:bg-success-bg"
-                            : "text-navy/30 hover:bg-surface-raised hover:text-navy",
-                        )}
-                      >
-                        {user.status === "ACTIVE" ? (
-                          <ToggleRight className="h-4 w-4" />
-                        ) : (
-                          <ToggleLeft className="h-4 w-4" />
-                        )}
-                      </button>
+                      {(isAdmin || user.id === viewer?.id) && (
+                        <button
+                          title="Edit user"
+                          onClick={() => setEditingUser(user)}
+                          className="rounded p-1.5 text-navy/70 hover:bg-surface-raised hover:text-navy transition-colors"
+                        >
+                          <Pencil className="h-4 w-4" />
+                        </button>
+                      )}
+                      {/* SA #3412: no Deactivate on your own row (the API refuses it too) */}
+                      {isAdmin && user.id !== viewer?.id && (
+                        <button
+                          title={user.status === "ACTIVE" ? "Deactivate" : "Activate"}
+                          onClick={() => toggleStatus(user)}
+                          disabled={changeStatus.isPending}
+                          className={cn(
+                            "rounded p-1.5 transition-colors disabled:opacity-50",
+                            user.status === "ACTIVE"
+                              ? "text-success hover:bg-success-bg"
+                              : "text-navy/30 hover:bg-surface-raised hover:text-navy",
+                          )}
+                        >
+                          {user.status === "ACTIVE" ? (
+                            <ToggleRight className="h-4 w-4" />
+                          ) : (
+                            <ToggleLeft className="h-4 w-4" />
+                          )}
+                        </button>
+                      )}
                     </div>
                   </td>
                 </tr>
@@ -2110,6 +2142,8 @@ function MyAccountTab() {
   const { fleet: hasFleet } = useFleetAccess();
   const canToggleDriver =
     (hasFleet || !!me?.canActAsDriver) && (me?.role === "OPERATOR" || me?.role === "TENANT_ADMIN");
+  // PATCH /users/:id/driver-permit is admin-only even for yourself: others get a read-only line.
+  const isAdmin = isAccountAdmin(useAuth().user);
   const toggleDriverPermit = useToggleDriverPermit();
 
   const handleLinkGoogle = async () => {
@@ -2148,7 +2182,12 @@ function MyAccountTab() {
 
   return (
     <div className="space-y-5">
-      {canToggleDriver && (
+      {canToggleDriver && !isAdmin && me?.canActAsDriver && (
+        <Card title="Driver Access">
+          <p className="text-sm text-navy/70">Driver access is on. Ask an admin to change it.</p>
+        </Card>
+      )}
+      {canToggleDriver && isAdmin && (
         <Card title="Driver Access">
           <div className="flex items-center justify-between">
             <div className="flex items-center gap-3">
@@ -2266,7 +2305,7 @@ function MyAccountTab() {
 function CostingTab() {
   const { toast } = useToast();
   const { user } = useAuth();
-  const isAdmin = user?.role === "TENANT_ADMIN";
+  const isAdmin = isAccountAdmin(user);
   const { data: config, isLoading } = useMarginConfig();
   const update = useUpdateMarginConfig();
 
@@ -2367,7 +2406,7 @@ function CostingTab() {
 function RemittanceTab() {
   const { toast } = useToast();
   const { user } = useAuth();
-  const isAdmin = user?.role === "TENANT_ADMIN";
+  const isAdmin = isAccountAdmin(user);
   const { data: config, isLoading } = useRemittanceConfig();
   const update = useUpdateRemittanceConfig();
 
@@ -2504,7 +2543,7 @@ const TIER_KEYS = ["1", "2", "3", "4", "5"] as const;
 function TierLabelsCard() {
   const { toast } = useToast();
   const { user } = useAuth();
-  const isAdmin = user?.role === "TENANT_ADMIN";
+  const isAdmin = isAccountAdmin(user);
   const { data: labels, isLoading } = useTierLabels();
   const update = useUpdateTierLabels();
 
@@ -2894,7 +2933,7 @@ function SettingsPageInner() {
   const { setTitle } = usePageTitle();
   const { toast } = useToast();
   const { user } = useAuth();
-  const isAdmin = user?.role === "TENANT_ADMIN";
+  const isAdmin = isAccountAdmin(user);
 
   React.useEffect(() => {
     setTitle("Settings");
@@ -2950,11 +2989,20 @@ function SettingsPageInner() {
       width: "max-w-4xl",
     },
     users: { title: "User management", node: <UserManagementTab /> },
-    email: { title: "Email (SMTP)", node: <EmailSettingsTab />, width: "max-w-3xl" },
+    // Perms PR1: every email (SMTP) and Claude AI endpoint is admin-only, so a deep link shows the notice instead
+    email: {
+      title: "Email (SMTP)",
+      node: isAdmin ? <EmailSettingsTab /> : <AdminOnlyNotice />,
+      width: "max-w-3xl",
+    },
     invoicing: { title: "Invoicing", node: <InvoicingTab />, width: "max-w-3xl" },
     costing: { title: "Costing", node: <CostingTab />, width: "max-w-3xl" },
     remittance: { title: "How to pay", node: <RemittanceTab />, width: "max-w-3xl" },
-    integrations: { title: "Integrations", node: <AIIntegrationsTab />, width: "max-w-3xl" },
+    integrations: {
+      title: "Integrations",
+      node: isAdmin ? <AIIntegrationsTab /> : <AdminOnlyNotice />,
+      width: "max-w-3xl",
+    },
     gohighlevel: {
       title: "GoHighLevel",
       node: <GoHighLevelSettingsTab />,
@@ -3030,6 +3078,11 @@ function SettingsPageInner() {
       )}
     </div>
   );
+}
+
+/** Perms PR1: a settings screen whose every endpoint is admin-only, opened by a non-admin (e.g. a deep link). */
+function AdminOnlyNotice() {
+  return <p className="text-sm text-navy/70">Only an admin can change this.</p>;
 }
 
 export default function SettingsPage() {

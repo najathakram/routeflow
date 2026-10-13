@@ -103,9 +103,10 @@ export const SETTINGS_REGISTRY: SettingRow[] = [
     "smtpUser",
     "smtpPassword",
     "smtpSecure",
-  ].map((k) => cfg(`email.${k}`, "/settings?tab=email")),
-  cfg("email.sendingDomain", "/settings?tab=email"),
-  cfg("anthropic.apiKey", "/settings?tab=integrations"),
+  ].map((k) => cfg(`email.${k}`, "/settings?tab=email", { adminOnly: true })),
+  // Perms PR1: every email (SMTP) and Claude AI settings endpoint is TENANT_ADMIN-only
+  cfg("email.sendingDomain", "/settings?tab=email", { adminOnly: true }),
+  cfg("anthropic.apiKey", "/settings?tab=integrations", { adminOnly: true }),
   ...[
     "serviceTimeMinutes",
     "defaultStartTime",

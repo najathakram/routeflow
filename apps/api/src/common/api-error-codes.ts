@@ -486,6 +486,8 @@ export const API_ERROR_CODES = {
    * session. Fixed body; nothing was written. Reads stay available (SA-778).
    */
   IMPERSONATION_NOT_ALLOWED: "IMPERSONATION_NOT_ALLOWED",
+  SELF_DEACTIVATION_REFUSED: "SELF_DEACTIVATION_REFUSED",
+  LAST_TENANT_ADMIN: "LAST_TENANT_ADMIN",
 } as const satisfies Record<string, ApiErrorCode>;
 
 /** The `flag` of a PLAN_GATE body that gates a count (a meter), not a feature flag. Not an error code. */
