@@ -13,6 +13,7 @@ import {
   useCreateMinimalAddress,
   useRefreshUnknownState,
   useSetAddressState,
+  useSetDefaultAddress,
   useUnknownStateBuckets,
 } from "@/lib/api/unknown-state";
 import { stateLabel } from "@/lib/portal-limits";
@@ -20,12 +21,15 @@ import {
   BULK_MAX,
   BULK_UNDO_MS,
   BUCKET_KEYS,
+  NEEDS_DEFAULT_HINT,
+  NEEDS_DEFAULT_LINE,
   SAVED_MS,
   SAVE_FAILED,
   bucketAction,
   bucketLine,
   bulkConfirmLine,
   bulkDoneTitle,
+  choiceLabel,
   headerLine,
   headerTotal,
   remaining,
@@ -258,6 +262,127 @@ function StateRow({
   );
 }
 
+/**
+ * needsDefault: one customer with 2+ addresses and no usable default. Choose one address and Save makes it the default
+ * (the existing address PATCH clears the others in one transaction); then the row confirms and leaves like a state fix.
+ */
+function DefaultRow({
+  row,
+  canFix,
+  onAdvance,
+  onBusy,
+  onSaved,
+}: {
+  row: UnknownStateRow;
+  canFix: boolean;
+  onAdvance: (row: UnknownStateRow) => void;
+  onBusy: (id: string, busy: boolean) => void;
+  onSaved: (row: UnknownStateRow) => void;
+}) {
+  const setDefault = useSetDefaultAddress();
+  const choices = row.choices ?? [];
+  const [value, setValue] = React.useState("");
+  const [status, setStatus] = React.useState<RowStatus>("idle");
+  const [error, setError] = React.useState(false);
+
+  React.useEffect(() => {
+    onBusy(row.customerId, status !== "idle");
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- report status changes only
+  }, [status]);
+
+  const save = () => {
+    if (!value || status !== "idle") return;
+    setError(false);
+    setStatus("saving");
+    setDefault.mutate(
+      { customerId: row.customerId, addressId: value },
+      {
+        onSuccess: () => {
+          setStatus("saved");
+          onAdvance(row);
+          window.setTimeout(() => {
+            if (reducedMotion()) return onSaved(row);
+            setStatus("leaving");
+            window.setTimeout(() => onSaved(row), 200);
+          }, SAVED_MS);
+        },
+        onError: () => {
+          setStatus("idle");
+          setError(true);
+        },
+      },
+    );
+  };
+
+  const busy = status !== "idle";
+  return (
+    <li
+      data-testid={`state-row-${row.customerId}`}
+      data-state-row
+      className={`flex flex-wrap items-start gap-x-3 gap-y-2 overflow-hidden px-3 py-2.5 transition-all duration-200 motion-reduce:transition-none ${
+        status === "leaving" ? "max-h-0 py-0 opacity-0" : ""
+      }`}
+    >
+      <div className="min-w-0 flex-1 basis-60">
+        <p className="truncate text-sm font-medium text-navy">{row.name}</p>
+        <fieldset className="mt-1" disabled={!canFix || busy}>
+          <legend className="sr-only">Default address for {row.name}</legend>
+          {choices.map((c, i) => (
+            <label key={c.addressId} className="flex items-start gap-2 py-0.5 text-sm text-navy">
+              <input
+                type="radio"
+                name={`default-${row.customerId}`}
+                value={c.addressId}
+                checked={value === c.addressId}
+                onChange={() => setValue(c.addressId)}
+                onKeyDown={(e) => {
+                  if (e.key === "Enter") {
+                    e.preventDefault();
+                    save();
+                  }
+                }}
+                {...(i === 0 ? { "data-row-field": true } : {})}
+                aria-invalid={error || undefined}
+                className="mt-0.5 h-4 w-4 accent-brand-600"
+              />
+              <span className="min-w-0 break-words">{choiceLabel(c)}</span>
+            </label>
+          ))}
+        </fieldset>
+        {error && (
+          <p role="alert" className="mt-1 text-xs text-navy">
+            {SAVE_FAILED}
+          </p>
+        )}
+      </div>
+      {status === "saved" || status === "leaving" ? (
+        <span role="status" className="inline-flex items-center gap-1 text-sm text-success">
+          <Check className="h-4 w-4" aria-hidden /> Saved
+        </span>
+      ) : (
+        <div className="flex flex-wrap items-center gap-2">
+          {canFix && (
+            <Button
+              size="sm"
+              loading={status === "saving"}
+              disabled={!value || busy}
+              onClick={save}
+            >
+              Save
+            </Button>
+          )}
+          <NextLink
+            href={`/customers/${row.customerId}`}
+            className="text-xs font-medium text-brand-600 hover:underline"
+          >
+            Open customer
+          </NextLink>
+        </div>
+      )}
+    </li>
+  );
+}
+
 /** One bucket's inline list: 20 per page with Show more, and one state for every row shown. */
 function BucketList({
   bucket,
@@ -330,21 +455,25 @@ function BucketList({
         onSuccess: (res) => {
           setBulkOpen(false);
           onRemoved(ids);
+          const actionId = res.actionId;
           toast({
             title: bulkDoneTitle(res.changed, stateLabel(bulkState)),
             variant: "success",
             duration: BULK_UNDO_MS,
-            action: {
-              label: "Undo",
-              // a plain call: this list is gone once its bucket empties, the card is not
-              onClick: () => {
-                undoBulkStateRequest({ changedAddressIds: res.changedAddressIds })
-                  .then(onUndone)
-                  .catch(() =>
-                    toast({ title: "Couldn't undo. Nothing was changed.", variant: "error" }),
-                  );
-              },
-            },
+            // no action id = nothing changed, so there is nothing to undo
+            action: actionId
+              ? {
+                  label: "Undo",
+                  // a plain call: this list is gone once its bucket empties, the card is not
+                  onClick: () => {
+                    undoBulkStateRequest({ actionId, changedAddressIds: res.changedAddressIds })
+                      .then(onUndone)
+                      .catch(() =>
+                        toast({ title: "Couldn't undo. Nothing was changed.", variant: "error" }),
+                      );
+                  },
+                }
+              : undefined,
           });
         },
         onError: () => setBulkError(true),
@@ -354,7 +483,13 @@ function BucketList({
 
   return (
     <div className="border-t border-warning/30">
-      {canFix && rows.length > 0 && (
+      {bucket === "needsDefault" && (
+        <div className="space-y-1 px-3 pt-2 text-sm text-navy" data-testid="needs-default-help">
+          <p>{NEEDS_DEFAULT_LINE}</p>
+          <p className="text-navy/70">{NEEDS_DEFAULT_HINT}</p>
+        </div>
+      )}
+      {canFix && bucket !== "needsDefault" && rows.length > 0 && (
         <div className="flex justify-end px-3 pt-2">
           <Button
             size="sm"
@@ -370,18 +505,29 @@ function BucketList({
         </div>
       )}
       <ul ref={listRef} className="divide-y divide-warning/20" aria-label="Customers to fix">
-        {rows.map((r) => (
-          <StateRow
-            key={r.customerId}
-            bucket={bucket}
-            row={r}
-            canFix={canFix}
-            onAdvance={advance}
-            onBusy={setBusy}
-            onSaved={saved}
-            onAddFull={onAddFull}
-          />
-        ))}
+        {rows.map((r) =>
+          bucket === "needsDefault" ? (
+            <DefaultRow
+              key={r.customerId}
+              row={r}
+              canFix={canFix}
+              onAdvance={advance}
+              onBusy={setBusy}
+              onSaved={saved}
+            />
+          ) : (
+            <StateRow
+              key={r.customerId}
+              bucket={bucket}
+              row={r}
+              canFix={canFix}
+              onAdvance={advance}
+              onBusy={setBusy}
+              onSaved={saved}
+              onAddFull={onAddFull}
+            />
+          ),
+        )}
       </ul>
       {cursor && (
         <div className="px-3 pb-3">
@@ -425,6 +571,12 @@ function BucketList({
   );
 }
 
+const noneRemoved = (): Record<BucketKey, Set<string>> =>
+  Object.fromEntries(BUCKET_KEYS.map((k) => [k, new Set<string>()])) as Record<
+    BucketKey,
+    Set<string>
+  >;
+
 /**
  * "Customers without a state on file" (Addendum D): readiness as advice, fixed in place. Amber, never red; the card
  * loads its own data (no Check readiness gate) and rows leave the list as they are saved.
@@ -435,11 +587,7 @@ export function CustomersWithoutState({ canFix }: { canFix: boolean }) {
   const gate = useReadOnlyGate();
   const fixable = canFix && !gate.readOnly;
   const [open, setOpen] = React.useState<BucketKey | null>(null);
-  const [removed, setRemoved] = React.useState<Record<BucketKey, Set<string>>>({
-    noAddress: new Set(),
-    unusableState: new Set(),
-    needsReview: new Set(),
-  });
+  const [removed, setRemoved] = React.useState<Record<BucketKey, Set<string>>>(noneRemoved);
   const [sheetRow, setSheetRow] = React.useState<{
     bucket: BucketKey;
     row: UnknownStateRow;
@@ -451,21 +599,18 @@ export function CustomersWithoutState({ canFix }: { canFix: boolean }) {
   // The server read is the truth: whenever fresh data lands (Refresh, an Undo, another save elsewhere) the rows
   // saved here are already in it, so forget them rather than subtract them twice.
   React.useEffect(() => {
-    setRemoved({ noAddress: new Set(), unusableState: new Set(), needsReview: new Set() });
+    setRemoved(noneRemoved());
   }, [buckets.dataUpdatedAt]);
 
-  // a body that is not the three buckets (an old API) is treated as an unreadable list, never a crash
+  // a body that is not the buckets (an old API) is treated as an unreadable list, never a crash; a bucket an
+  // older API does not send counts as empty
   const data = buckets.data?.noAddress ? buckets.data : undefined;
   const counts = data
     ? (Object.fromEntries(
-        BUCKET_KEYS.map((k) => [k, remaining(data[k].total, removed[k].size)]),
+        BUCKET_KEYS.map((k) => [k, remaining(data[k]?.total ?? 0, removed[k].size)]),
       ) as Record<BucketKey, number>)
     : null;
-  const removedCustomers = new Set<string>([
-    ...removed.noAddress,
-    ...removed.unusableState,
-    ...removed.needsReview,
-  ]);
+  const removedCustomers = new Set<string>(BUCKET_KEYS.flatMap((k) => [...removed[k]]));
   const total = data ? headerTotal(data, removedCustomers) : 0;
 
   return (
@@ -485,8 +630,10 @@ export function CustomersWithoutState({ canFix }: { canFix: boolean }) {
           )}
           {counts && (
             <p className="mt-1 text-sm text-navy" aria-live="polite">
-              {total === 0 && <Check className="mr-1 inline h-4 w-4 text-success" aria-hidden />}
-              {headerLine(total)}
+              {total === 0 && !data?.truncated && (
+                <Check className="mr-1 inline h-4 w-4 text-success" aria-hidden />
+              )}
+              {headerLine(total, data?.truncated === true)}
             </p>
           )}
         </div>

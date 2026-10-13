@@ -12,7 +12,7 @@ import { PAGE } from "../unknown-state";
 const BASE = "/settings/restrictions/unknown-state-customers";
 export const UNKNOWN_STATE_KEY = ["restrictions-settings", "unknown-state-customers"] as const;
 
-/** The three buckets, first page of each (the card loads its own data; there is no "Check readiness" gate). */
+/** The four buckets, first page of each (the card loads its own data; there is no "Check readiness" gate). */
 export function useUnknownStateBuckets(limit = PAGE) {
   return useQuery<UnknownStateBuckets>({
     queryKey: [...UNKNOWN_STATE_KEY, limit],
@@ -61,6 +61,20 @@ export function useCreateMinimalAddress() {
   });
 }
 
+/**
+ * needsDefault: make one address the customer's default through the existing address PATCH, which clears every
+ * other default in the same transaction (so exactly one default governs). Sends only `isDefault`: the pin stays.
+ */
+export function useSetDefaultAddress() {
+  return useMutation<unknown, Error, { customerId: string; addressId: string }>({
+    meta: LOCAL,
+    mutationFn: ({ customerId, addressId }) =>
+      apiClient
+        .patch(`/customers/${customerId}/addresses/${addressId}`, { isDefault: true })
+        .then((r) => r.data),
+  });
+}
+
 export function useBulkSetState() {
   return useMutation<
     BulkStateResult,
@@ -79,6 +93,8 @@ export function useRefreshUnknownState() {
 
 /** The Undo as a plain call: the bucket that raised it may have unmounted by the time it is clicked. */
 export async function undoBulkStateRequest(body: {
+  /** The bulk action's id (BulkStateResponse.actionId): the API undoes exactly that action. */
+  actionId: string;
   changedAddressIds: string[];
 }): Promise<{ restored: number }> {
   const { data } = await apiClient.post(`${BASE}/bulk-state/undo`, body);

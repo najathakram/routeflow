@@ -213,7 +213,9 @@ describe("CustomersWithoutState (Addendum D)", () => {
 
   it("Set state for all shown… confirms the exact count, applies one state, and Undo restores", async () => {
     const user = userEvent.setup();
-    mockPost.mockResolvedValueOnce({ data: { changed: 3, changedAddressIds: ["x1", "x2", "x3"] } });
+    mockPost.mockResolvedValueOnce({
+      data: { changed: 3, changedAddressIds: ["x1", "x2", "x3"], actionId: "act-1" },
+    });
     mockPost.mockResolvedValueOnce({ data: { restored: 3 } });
     renderWithProviders(<CustomersWithoutState canFix />);
     await openBucket(user, /3 have no address/);
@@ -238,14 +240,16 @@ describe("CustomersWithoutState (Addendum D)", () => {
     await waitFor(() =>
       expect(mockPost).toHaveBeenLastCalledWith(
         "/settings/restrictions/unknown-state-customers/bulk-state/undo",
-        { changedAddressIds: ["x1", "x2", "x3"] },
+        { actionId: "act-1", changedAddressIds: ["x1", "x2", "x3"] },
       ),
     );
   });
 
   it("after a bulk Undo the bucket is back (the card re-reads; the list that raised it is gone)", async () => {
     const user = userEvent.setup();
-    mockPost.mockResolvedValueOnce({ data: { changed: 3, changedAddressIds: ["x1", "x2", "x3"] } });
+    mockPost.mockResolvedValueOnce({
+      data: { changed: 3, changedAddressIds: ["x1", "x2", "x3"], actionId: "act-1" },
+    });
     mockPost.mockResolvedValueOnce({ data: { restored: 3 } });
     renderWithProviders(<CustomersWithoutState canFix />);
     await openBucket(user, /3 have no address/);
@@ -303,5 +307,168 @@ describe("CustomersWithoutState (Addendum D)", () => {
     renderWithProviders(<CustomersWithoutState canFix />);
     await screen.findByText(/need a state/);
     expect(screen.queryByTestId("business-state-missing")).toBeNull();
+  });
+});
+
+describe("CustomersWithoutState: needsDefault (row 414)", () => {
+  const choice = (id: string, text: string, type: string, state: string | null) => ({
+    addressId: id,
+    addressText: text,
+    addressType: type,
+    state,
+    isDefault: false,
+  });
+  const nd = (id: string) =>
+    row(id, {
+      choices: [
+        choice(`ad-${id}1`, "1 Main St, Dallas, TX", "BILLING", "TX"),
+        choice(`ad-${id}2`, "9 Elm St, Albany, NY", "SHIPPING", "NY"),
+      ],
+    });
+  const withDefaults = (rows: unknown[]) =>
+    data({
+      noAddress: bucket([]),
+      unusableState: bucket([]),
+      needsReview: bucket([]),
+      needsDefault: bucket(rows),
+      customersTotal: rows.length,
+    });
+
+  it("the disclosure row reads the exact copy, pluralised, with `Choose default`", async () => {
+    mockGet.mockResolvedValue({ data: withDefaults([nd("d"), nd("e")]) });
+    const { unmount } = renderWithProviders(<CustomersWithoutState canFix />);
+    expect(
+      await screen.findByText("2 customers have more than one address and no default"),
+    ).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Choose default" })).toBeInTheDocument();
+    unmount();
+    mockGet.mockResolvedValue({ data: withDefaults([nd("d")]) });
+    renderWithProviders(<CustomersWithoutState canFix />);
+    expect(
+      await screen.findByText("1 customer has more than one address and no default"),
+    ).toBeInTheDocument();
+  });
+
+  it("expanded: the supporting line and hint, a radio per address, Open customer, and no bulk set", async () => {
+    const user = userEvent.setup();
+    mockGet.mockResolvedValue({ data: withDefaults([nd("d")]) });
+    renderWithProviders(<CustomersWithoutState canFix />);
+    await openBucket(user, /more than one address and no default/);
+    expect(
+      screen.getByText(
+        "We can't tell which state applies. Legal bans still keep those products hidden, but other state limits won't reach them until you choose.",
+      ),
+    ).toBeInTheDocument();
+    expect(screen.getByText("Choose the address that sets their state.")).toBeInTheDocument();
+    const r = screen.getByTestId("state-row-c-d");
+    expect(within(r).getAllByRole("radio")).toHaveLength(2);
+    expect(within(r).getByLabelText("1 Main St, Dallas, TX · Billing · TX")).toBeInTheDocument();
+    expect(within(r).getByRole("link", { name: "Open customer" })).toHaveAttribute(
+      "href",
+      "/customers/c-d",
+    );
+    expect(within(r).getByRole("button", { name: "Save" })).toBeDisabled();
+    expect(screen.queryByRole("button", { name: /set state for all shown/i })).toBeNull();
+  });
+
+  it("Save sends only isDefault to the address PATCH, removes the row and decrements the counts", async () => {
+    const user = userEvent.setup();
+    mockGet.mockResolvedValue({ data: withDefaults([nd("d"), nd("e")]) });
+    renderWithProviders(<CustomersWithoutState canFix />);
+    await openBucket(user, /2 customers have more than one address/);
+    const r = screen.getByTestId("state-row-c-d");
+    await user.click(within(r).getByLabelText(/Albany, NY/));
+    await user.click(within(r).getByRole("button", { name: "Save" }));
+    await waitFor(() =>
+      expect(mockPatch).toHaveBeenCalledWith("/customers/c-d/addresses/ad-d2", {
+        isDefault: true,
+      }),
+    );
+    await waitFor(() => expect(screen.queryByTestId("state-row-c-d")).toBeNull());
+    expect(
+      screen.getByText("1 customer has more than one address and no default"),
+    ).toBeInTheDocument();
+    expect(screen.getByText(/^1 customer needs a state\./)).toBeInTheDocument();
+  });
+
+  it("an error keeps the row and the choice, with the message under it", async () => {
+    const user = userEvent.setup();
+    mockPatch.mockRejectedValueOnce({ response: { status: 500, data: {} } });
+    mockGet.mockResolvedValue({ data: withDefaults([nd("d")]) });
+    renderWithProviders(<CustomersWithoutState canFix />);
+    await openBucket(user, /more than one address/);
+    const r = screen.getByTestId("state-row-c-d");
+    await user.click(within(r).getByLabelText(/Dallas, TX/));
+    await user.click(within(r).getByRole("button", { name: "Save" }));
+    expect(await within(r).findByText("Couldn't save. Try again.")).toBeInTheDocument();
+    expect(within(r).getByLabelText(/Dallas, TX/)).toBeChecked();
+  });
+
+  it("Enter on a chosen address saves", async () => {
+    const user = userEvent.setup();
+    mockGet.mockResolvedValue({ data: withDefaults([nd("d"), nd("e")]) });
+    renderWithProviders(<CustomersWithoutState canFix />);
+    await openBucket(user, /more than one address/);
+    const r = screen.getByTestId("state-row-c-d");
+    await user.click(within(r).getByLabelText(/Dallas, TX/));
+    await user.keyboard("{Enter}");
+    await waitFor(() =>
+      expect(mockPatch).toHaveBeenCalledWith("/customers/c-d/addresses/ad-d1", {
+        isDefault: true,
+      }),
+    );
+  });
+
+  it("read-only: the choices render disabled with no Save; Open customer stays", async () => {
+    const user = userEvent.setup();
+    mockReadOnly = true;
+    mockGet.mockResolvedValue({ data: withDefaults([nd("d")]) });
+    renderWithProviders(<CustomersWithoutState canFix />);
+    await openBucket(user, /more than one address/);
+    const r = screen.getByTestId("state-row-c-d");
+    expect(within(r).queryByRole("button", { name: "Save" })).toBeNull();
+    for (const radio of within(r).getAllByRole("radio")) expect(radio).toBeDisabled();
+    expect(within(r).getByRole("link", { name: "Open customer" })).toBeInTheDocument();
+  });
+
+  it("an older API without needsDefault still renders the other buckets", async () => {
+    renderWithProviders(<CustomersWithoutState canFix />);
+    expect(await screen.findByText("3 have no address")).toBeInTheDocument();
+    expect(screen.queryByText(/no default/)).toBeNull();
+  });
+});
+
+describe("CustomersWithoutState: SA rows R2 + undo by action id", () => {
+  it("a truncated list never reads as all clear (no check, the partial line instead)", async () => {
+    mockGet.mockResolvedValue({
+      data: {
+        noAddress: bucket([]),
+        unusableState: bucket([]),
+        needsReview: bucket([]),
+        needsDefault: bucket([]),
+        customersTotal: 0,
+        truncated: true,
+      },
+    });
+    renderWithProviders(<CustomersWithoutState canFix />);
+    expect(
+      await screen.findByText(
+        "Your customer list is too large to check all at once, so some customers may still need a state.",
+      ),
+    ).toBeInTheDocument();
+    expect(screen.queryByText("Every customer has a state on file.")).toBeNull();
+  });
+
+  it("a bulk set that changed nothing (actionId null) offers no Undo", async () => {
+    const user = userEvent.setup();
+    mockPost.mockResolvedValueOnce({ data: { changed: 0, changedAddressIds: [], actionId: null } });
+    renderWithProviders(<CustomersWithoutState canFix />);
+    await openBucket(user, /3 have no address/);
+    await user.click(screen.getByRole("button", { name: /set state for all shown/i }));
+    const dialog = screen.getByRole("dialog");
+    await user.selectOptions(within(dialog).getByLabelText(/state/i), "TX");
+    await user.click(within(dialog).getByRole("button", { name: "Set state" }));
+    await waitFor(() => expect(toast).toHaveBeenCalled());
+    expect(toast.mock.calls[0][0].action).toBeUndefined();
   });
 });
