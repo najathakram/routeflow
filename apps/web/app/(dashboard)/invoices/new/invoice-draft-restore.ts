@@ -38,7 +38,8 @@ const isGone = (err: unknown): boolean => {
 export function isRetiredRow(data: unknown): boolean {
   if (typeof data !== "object" || data === null) return false;
   const d = data as Record<string, unknown>;
-  return !!d.deletedAt || !!d.archivedAt || d.isActive === false;
+  // A variant is as retired as the parent it hangs under (when the API populated it).
+  return !!d.deletedAt || !!d.archivedAt || d.isActive === false || isRetiredRow(d.parent);
 }
 
 const settledGone = (r: PromiseSettledResult<{ data?: unknown } | null>): boolean =>

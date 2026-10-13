@@ -70,6 +70,18 @@ describe("checkDraftReferences: what counts as gone (ROW 447)", () => {
     expect(r.snapshot.lines).toHaveLength(1);
   });
 
+  it("an active variant behind an inactive parent is dropped", async () => {
+    const r = await checkDraftReferences(
+      snap([line("p-var")]),
+      getter({
+        "/products/p-var": {
+          data: { id: "p-var", isActive: true, parent: { id: "p-par", isActive: false } },
+        },
+      }),
+    );
+    expect(r.droppedLines).toBe(1);
+  });
+
   it("an inactive customer is cleared", async () => {
     const r = await checkDraftReferences(
       snap([]),

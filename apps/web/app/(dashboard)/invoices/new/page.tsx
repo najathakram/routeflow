@@ -65,7 +65,6 @@ import { InlineCreateProductModal } from "@/components/InlineCreateProductModal"
 import { fmt, fmtCalendarDate } from "@/lib/formatting";
 import { getDaysForTerms, addDaysIso } from "@/lib/invoice-terms";
 import {
-  isSpecialTier,
   computeInvoiceLineTotal,
   computeInvoiceTotals,
   type InvoiceTotalsLine,
