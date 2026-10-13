@@ -203,6 +203,45 @@ describe("ProductsService: a reparent keeps the labels the variant carried (H2)"
     expect(emit).not.toHaveBeenCalled();
   });
 
+  it("an unlink keeps the variant's name and variantName: neither is written", async () => {
+    seedVariant("fam");
+    prisma.product.update.mockResolvedValue({ ...PRODUCT, parentProductId: null });
+    await service.update("prod-1", { parentProductId: null } as never);
+    const data = prisma.product.update.mock.calls[0][0].data as Record<string, unknown>;
+    expect(data).toMatchObject({ parentProductId: null, kind: "STANDARD" });
+    expect(data).not.toHaveProperty("variantName");
+    expect(data).not.toHaveProperty("name");
+  });
+
+  it("atomic: the parent write and the label keep share ONE tx; a throw in the keep leaves the write uncommitted", async () => {
+    seedVariant("old");
+    const txs: unknown[] = [];
+    let committed = false;
+    (prisma.tenantTransaction as jest.Mock).mockImplementation(
+      async (fn: (t: unknown) => unknown) => {
+        const tx = prisma; // the mock's tx object
+        txs.push(tx);
+        const out = await fn(tx); // a rejection here skips the commit below
+        committed = true;
+        return out;
+      },
+    );
+    prisma.product.update.mockImplementation(async function (this: unknown) {
+      txs.push("write-in-tx-" + txs.length);
+      return { ...PRODUCT, parentProductId: "fam" };
+    });
+    keep.mockImplementation(async (tx: unknown) => {
+      expect(tx).toBe(txs[0]); // the keep got the very tx the update ran in
+      throw new Error("materialise failed");
+    });
+    await expect(service.update("prod-1", { parentProductId: "fam" } as never)).rejects.toThrow(
+      "materialise failed",
+    );
+    expect(prisma.product.update).toHaveBeenCalledTimes(1);
+    expect(committed).toBe(false);
+    expect(prisma.tenantTransaction).toHaveBeenCalledTimes(1);
+  });
+
   it("bulkAssignParent reports what was kept PER child (nothing for a child that lost nothing)", async () => {
     seedVariant(null);
     const update = jest
