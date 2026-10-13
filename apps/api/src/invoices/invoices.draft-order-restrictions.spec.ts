@@ -30,6 +30,7 @@ import { entitlementAuthorityFromEntitlements } from "../testing/entitlement-aut
 import { CommissionEngineService } from "../sales-agents/commission-engine.service";
 import { SellingRestrictionsService } from "../selling-restrictions/selling-restrictions.service";
 import { EntitlementAuthority } from "../billing/entitlement-authority.service";
+import { ORDER_SOURCE_RECORDED_FROM } from "../orders/line-author-channel";
 import { fillSparseCasBasis } from "./testing/sparse-line-fixtures";
 
 describe("InvoicesService — DRAFT order invoicing is gated (F2)", () => {
@@ -151,6 +152,7 @@ describe("InvoicesService — DRAFT order invoicing is gated (F2)", () => {
       id: "ord-1",
       status,
       customerId: "cust-1",
+      source: "PHONE", // a staff-authored order: judged on STAFF (the author-channel describe overrides it)
       orderNumber: "ORD",
       subtotal: 20,
       tax: 0,
@@ -333,6 +335,21 @@ describe("InvoicesService — DRAFT order invoicing is gated (F2)", () => {
       expect(prisma.orderItem.updateMany).not.toHaveBeenCalled();
     });
 
+    it("the in-tx order read is scoped to the passed tenant", async () => {
+      setup("DRAFT", false);
+      inTx("DRAFT", [
+        { id: "oi-a", productId: "p-a" },
+        { id: "oi-b", productId: "p-b" },
+      ]);
+      jest.spyOn(prisma, "getTenantId").mockReturnValue("t-1" as never);
+      await service.createInvoiceFromOrder("ord-1");
+      expect(prisma.order.findFirst).toHaveBeenCalledWith(
+        expect.objectContaining({
+          where: expect.objectContaining({ id: "ord-1", tenantId: "t-1" }),
+        }),
+      );
+    });
+
     it("control: an unchanged product set is not judged a second time", async () => {
       setup("DRAFT", false);
       inTx("DRAFT", [
@@ -365,6 +382,53 @@ describe("InvoicesService — DRAFT order invoicing is gated (F2)", () => {
         response: { code: API_ERROR_CODES.ORDER_CHANGED_DURING_EDIT },
       });
       expect(prisma.invoice.create).not.toHaveBeenCalled();
+    });
+  });
+
+  // F2 judges like promotion: each billed line at the STRICTER of the acting STAFF channel and its author's channel,
+  // so a buyer-authored DRAFT billed (a deposit mirror goes SENT) cannot slip a portal-only ban through.
+  describe("author channel (judged like promotion)", () => {
+    const AFTER = new Date(ORDER_SOURCE_RECORDED_FROM.getTime() + 86_400_000);
+    const BEFORE = new Date(ORDER_SOURCE_RECORDED_FROM.getTime() - 86_400_000);
+    /** A product refused on the buyer portal only (a portal-only limit). */
+    const portalOnlyBan = () =>
+      restrictions().assertLinesSellable.mockImplementation(async (p: { channel: string }) => {
+        if (p.channel === "BUYER_PORTAL") throw refusal();
+      });
+    const asOrder = async (source: string, createdAt: Date) => {
+      setup("DRAFT", false, true);
+      const cur = await prisma.order.findUnique({} as any);
+      prisma.order.findUnique.mockResolvedValue({ ...cur, source, createdAt });
+      portalOnlyBan();
+    };
+
+    it("a buyer-authored DRAFT (source APP, after the cutoff) billed with a deposit is refused on the BUYER channel", async () => {
+      await asOrder("APP", AFTER);
+      const err: any = await service.createInvoiceFromOrder("ord-1").catch((e) => e);
+      expect(err).toBeInstanceOf(ConflictException);
+      expect(restrictions().assertLinesSellable).toHaveBeenCalledWith(
+        expect.objectContaining({ channel: "BUYER_PORTAL" }),
+      );
+      expectNothingWritten();
+    });
+
+    it("control: a staff-authored DRAFT (source PHONE) is judged on STAFF only and bills", async () => {
+      await asOrder("PHONE", AFTER);
+      await service.createInvoiceFromOrder("ord-1");
+      expect(restrictions().assertLinesSellable).toHaveBeenCalledTimes(1);
+      expect(restrictions().assertLinesSellable).toHaveBeenCalledWith(
+        expect.objectContaining({ channel: "STAFF" }),
+      );
+      expect(prisma.invoice.create).toHaveBeenCalledTimes(1);
+    });
+
+    it("control: a LEGACY order (created before the cutoff, source APP) is STAFF-authored and bills", async () => {
+      await asOrder("APP", BEFORE);
+      await service.createInvoiceFromOrder("ord-1");
+      expect(restrictions().assertLinesSellable).toHaveBeenCalledWith(
+        expect.objectContaining({ channel: "STAFF" }),
+      );
+      expect(prisma.invoice.create).toHaveBeenCalledTimes(1);
     });
   });
 });

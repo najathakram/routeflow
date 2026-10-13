@@ -777,12 +777,13 @@ export class InvoicesService {
 
   /** F2: see draft-order-restrictions.ts (returns the judged product ids, null for a non-DRAFT order). */
   private assertDraftOrderSellable(
-    order: { status?: string | null; customerId: string | null },
+    tenantId: string | null | undefined,
+    order: Parameters<typeof assertDraftOrderSellable>[2],
     productIds: ReadonlyArray<string | null | undefined>,
   ) {
     return assertDraftOrderSellable(
-      this.sellingRestrictions,
-      this.prisma.getTenantId(),
+      { restrictions: this.sellingRestrictions, prisma: this.prisma },
+      tenantId,
       order,
       productIds,
     );
@@ -1123,6 +1124,7 @@ export class InvoicesService {
     // F2: billing a DRAFT order SELLS its lines. Refuse a banned one (the standard 409) BEFORE the
     // license guard, the split flag + its audit, the number reservation and the deposit-mirror send.
     const judged = await this.assertDraftOrderSellable(
+      tenantId,
       order,
       remainingItems.map(({ li }: any) => li.productId),
     );
@@ -1310,7 +1312,7 @@ export class InvoicesService {
     const runCreation = async (tx: any): Promise<any[]> => {
       if (!callerTx) await lockOrderRow(tx, tenantId, order.id); // SA-706: before the first insert
       const ids = remainingItems.map(({ li }: any) => li.id); // F2b: re-judge before the first insert
-      await rejudgeDraftOrderInTx(tx, order, ids, judged);
+      await rejudgeDraftOrderInTx(tx, tenantId, order, ids, judged);
       // Right before the first insert — never above the caller's transaction.
       const baseNumber =
         hoistedBaseNumber ?? (await this.generateInvoiceNumber(tenantId ?? undefined, tx));
@@ -2721,6 +2723,7 @@ export class InvoicesService {
     // F2: a DRAFT order's partial SELLS these lines: refuse a banned one (standard 409) before the
     // number is reserved (no series gap), the transaction opens or the optional send runs.
     const judged = await this.assertDraftOrderSellable(
+      this.prisma.getTenantId(),
       order,
       dto.items.map((req) => (itemById.get(req.orderItemId) as any)?.productId),
     );
@@ -2814,7 +2817,7 @@ export class InvoicesService {
     const runCreation = async (tx: any) => {
       await lockOrderRow(tx, tenantId, order.id); // SA-706: before the insert's FK takes KEY SHARE
       const ids = dto.items.map((r) => r.orderItemId); // F2b: edited since the pre-check?
-      await rejudgeDraftOrderInTx(tx, order, ids, judged);
+      await rejudgeDraftOrderInTx(tx, tenantId, order, ids, judged);
       let created: any;
       try {
         created = await tx.invoice.create({

@@ -1,5 +1,7 @@
 import { ConflictException } from "@nestjs/common";
 import { API_ERROR_CODES } from "../common/api-error-codes";
+import { channelsToJudge, resolveLineAuthors } from "../orders/line-author-channel";
+import { EDIT_REVISIONS } from "../orders/ship-state-markers";
 import { requireRestrictionTenantId } from "../selling-restrictions/restriction-tenant";
 import type { SellingRestrictionsService } from "../selling-restrictions/selling-restrictions.service";
 
@@ -11,24 +13,61 @@ const uniqueIds = (ids: ReadonlyArray<string | null | undefined>): string[] => [
 
 /**
  * F2: a DRAFT order has not been judged by the selling-restrictions engine for these lines since it was placed, so
- * billing it is a sale (the staff channel, like every writer in invoices.service). Any other status keeps F-05's
- * flag-not-block. Runs BEFORE the transaction and the number reservation. Returns the product ids it judged (null for
- * a non-DRAFT order) so `rejudgeDraftOrderInTx` can tell whether the order moved afterwards. Read-only.
+ * billing it is a sale. It is judged like its PROMOTION: each billed line at the STRICTER of the acting STAFF channel
+ * and the channel of whoever authored it (`resolveLineAuthors` / `channelsToJudge`, the same helpers
+ * `judgeDraftPromotion` uses), so a buyer-authored draft billed with a deposit (a SENT mirror) is judged on
+ * BUYER_PORTAL. Any other status keeps F-05's flag-not-block. Runs BEFORE the transaction and the number
+ * reservation. Returns the product ids it judged (null for a non-DRAFT order) so `rejudgeDraftOrderInTx` can tell
+ * whether the order moved afterwards. Read-only.
  */
 export async function assertDraftOrderSellable(
-  restrictions: Restrictions,
+  deps: {
+    restrictions: Restrictions;
+    prisma: { forTenant(): any };
+  },
   tenantId: string | null | undefined,
-  order: { status?: string | null; customerId: string | null },
+  order: {
+    id?: string;
+    status?: string | null;
+    customerId: string | null;
+    source?: string | null;
+    createdAt?: Date | string | null;
+    lineItems?: ReadonlyArray<{
+      productId?: string | null;
+      createdAt?: Date | string | null;
+    }> | null;
+  },
   productIds: ReadonlyArray<string | null | undefined>,
 ): Promise<ReadonlySet<string> | null> {
   if (order.status !== "DRAFT") return null;
   const ids = uniqueIds(productIds);
-  await restrictions.assertLinesSellable({
-    tenantId: requireRestrictionTenantId(tenantId),
-    customerId: order.customerId,
-    lines: ids.map((productId) => ({ productId })),
-    channel: "STAFF",
-  });
+  const revisions =
+    (order.id
+      ? await deps.prisma.forTenant().orderRevision.findMany({
+          where: { orderId: order.id, ...EDIT_REVISIONS.where },
+          orderBy: EDIT_REVISIONS.orderBy,
+          select: { editedByRole: true, snapshot: true, createdAt: true },
+        })
+      : null) ?? [];
+  const authors = resolveLineAuthors(order, revisions, order.lineItems ?? []);
+  const tenant = requireRestrictionTenantId(tenantId);
+  const groups = channelsToJudge(ids, authors, "STAFF");
+  const idsOn = (c: string) => groups.find((g) => g.channel === c)?.productIds ?? [];
+  const lines = (pids: string[]) => pids.map((productId) => ({ productId }));
+  const base = { tenantId: tenant, customerId: order.customerId };
+  // BUYER_PORTAL first: the always-applying side refuses before the optional one.
+  if (idsOn("BUYER_PORTAL").length)
+    await deps.restrictions.assertLinesSellable({
+      ...base,
+      lines: lines(idsOn("BUYER_PORTAL")),
+      channel: "BUYER_PORTAL",
+    });
+  if (idsOn("STAFF").length)
+    await deps.restrictions.assertLinesSellable({
+      ...base,
+      lines: lines(idsOn("STAFF")),
+      channel: "STAFF",
+    });
   return new Set(ids);
 }
 
@@ -47,11 +86,15 @@ export async function rejudgeDraftOrderInTx(
     order: { findFirst(args: any): Promise<any> };
     orderItem: { findMany(args: any): Promise<any[]> };
   },
+  tenantId: string | null | undefined,
   order: { id: string },
   billedLineIds: readonly string[],
   judged: ReadonlySet<string> | null,
 ): Promise<void> {
-  const row = await tx.order.findFirst({ where: { id: order.id }, select: { status: true } });
+  const row = await tx.order.findFirst({
+    where: { id: order.id, ...(tenantId ? { tenantId } : {}) },
+    select: { status: true },
+  });
   if (row?.status !== "DRAFT") return;
   const lines =
     (await tx.orderItem.findMany({
