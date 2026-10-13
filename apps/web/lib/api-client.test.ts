@@ -158,13 +158,14 @@ describe("api-client", () => {
       headers: { Authorization: "Bearer old-token" },
     };
     await expect(errorHandler({ response: { status: 401 }, config: original })).rejects.toThrow();
-    // eslint-disable-next-line @typescript-eslint/no-require-imports
-    const store = require("./invoice-draft-storage");
     const form = {
       basis: "standalone",
       customer: { id: "c-1", businessName: "Acme Co" },
       lines: [],
     };
+    // same module registry as the fresh api-client copy (jest.resetModules() above)
+    const store =
+      jest.requireActual<typeof import("./invoice-draft-storage")>("./invoice-draft-storage");
     expect(store.writeInvoiceDraft("rf.invoice-draft.v1:acme:u1", form)).toBe(false);
     expect(localStorage.getItem("rf.invoice-draft.v1:acme:u1")).toBeNull();
   });
