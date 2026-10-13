@@ -183,6 +183,30 @@ export function isAddonIncludedAtPlan(
 }
 
 /**
+ * B1102: is a catalog `includedAtPlan` a legal value? `null`/`undefined` means "never bundled";
+ * anything else must resolve through `normalizePlanKey` (a current key or a legacy alias, since
+ * superseded versions keep their original rows). A misspelled key ranks -1 in
+ * `isAddonIncludedAtPlan`, which reads as "bundled nowhere", so the add-on would bill on every
+ * plan — the free-text column cannot be trusted without this check at every write/publish.
+ */
+export function isValidIncludedAtPlan(includedAtPlan: string | null | undefined): boolean {
+  return includedAtPlan == null || normalizePlanKey(includedAtPlan) !== null;
+}
+
+/** The SKUs whose `includedAtPlan` is not a legal value (see `isValidIncludedAtPlan`). */
+export function findInvalidIncludedAtPlan(
+  skus: readonly { sku: string; includedAtPlan?: string | null }[],
+): { sku: string; includedAtPlan: string }[] {
+  const bad: { sku: string; includedAtPlan: string }[] = [];
+  for (const s of skus) {
+    if (!isValidIncludedAtPlan(s.includedAtPlan)) {
+      bad.push({ sku: s.sku, includedAtPlan: String(s.includedAtPlan) });
+    }
+  }
+  return bad;
+}
+
+/**
  * Find a catalog definition by plan key, NORMALIZING both sides so a stored key and a
  * pinned version that disagree about the rename still resolve to the same row — a v7-pinned
  * tenant carrying SCALE matches the BUSINESS row, a v8 tenant carrying legacy TEAM matches
