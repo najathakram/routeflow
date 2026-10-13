@@ -74,7 +74,7 @@ describeDb("tenant unit backfill (U-6)", () => {
     url = requireLocalDatabaseUrl();
     pool = new Pool({ connectionString: url });
     prisma = new PrismaClient({ adapter: new PrismaPg(pool) });
-    for (const k of ["a", "ctl", "p", "edit", "arch"]) {
+    for (const k of ["a", "ctl", "p", "edit", "arch", "pk"]) {
       ids[k] = (await prisma.tenant.create({ data: { slug: slug(k), name: `u6 ${k}` } })).id;
     }
     // Tenant A: casing "Case" wins 2:1, a synonym level, a too-long level, legacy words.
@@ -164,13 +164,14 @@ describeDb("tenant unit backfill (U-6)", () => {
   it("parent = the largest dividing lower level; a non-divisible level is skipped (M2)", async () => {
     const levels = await prisma.productUnit.findMany({ where: { tenantId: ids.a } });
     const by = (label: string) => levels.find((l) => l.label === label)!;
-    expect(by("Six")).toMatchObject({ parentUnitId: by("Each").id, perParent: 6 });
+    // a factor-1 ROW is never a parent: Six sits on the base (NULL), not on the "Each" row (SA-728)
+    expect(by("Six")).toMatchObject({ parentUnitId: null, perParent: 6 });
     expect(by("Box")).toMatchObject({ parentUnitId: by("Six").id, perParent: 4 });
     expect(by("Bale")).toMatchObject({ parentUnitId: by("Six").id, perParent: 6 });
     expect(by("Odd")).toMatchObject({ parentUnitId: by("Six").id, perParent: null });
-    // product 1: Case 12 -> Piece (base row), Pallet 48 -> Case 12 (x4)
+    // product 1: Case 12 -> the base (NULL, not the Piece row), Pallet 48 -> Case 12 (x4)
     const case12 = levels.find((l) => l.label === "Case" && l.factorToBase === 12)!;
-    expect(case12).toMatchObject({ perParent: 12 });
+    expect(case12).toMatchObject({ parentUnitId: null, perParent: 12 });
     expect(levels.find((l) => l.label === "Pallet")).toMatchObject({
       parentUnitId: case12.id,
       perParent: 4,
@@ -182,6 +183,28 @@ describeDb("tenant unit backfill (U-6)", () => {
     });
     // base rows get nothing
     for (const b of levels.filter((l) => l.factorToBase === 1)) expect(b.perParent).toBeNull();
+  });
+
+  it("the PACK is a lower level: upb 12 / Case 48 -> perParent 4; upb 1 / Case 12 -> 12, base", async () => {
+    const t = ids.pk;
+    const packed = await product(t, "k1", "Box", [["Case", 48]]);
+    await prisma.product.update({ where: { id: packed.id }, data: { unitsPerBox: 12 } });
+    const loose = await product(t, "k2", "Box", [["Case", 12]]);
+    await prisma.product.update({ where: { id: loose.id }, data: { unitsPerBox: 1 } });
+    const productsBefore = await products(t);
+    const r = cli(t, "--apply");
+    expect(r.status).toBe(0);
+    expect(await prisma.productUnit.findUnique({ where: { id: packed.units.Case } })).toMatchObject(
+      {
+        parentUnitId: null,
+        perParent: 4, // "4 Box = 1 Case"
+      },
+    );
+    expect(await prisma.productUnit.findUnique({ where: { id: loose.units.Case } })).toMatchObject({
+      parentUnitId: null,
+      perParent: 12, // no pack: the base
+    });
+    expect(await products(t)).toBe(productsBefore); // still no Product write
   });
 
   it("a second --apply changes nothing (idempotent)", async () => {

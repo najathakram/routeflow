@@ -116,13 +116,14 @@ describe("planTenantUnits (U-6)", () => {
     expect(plan([pu("a", "case"), pu("b", "CASE")], []).toCreate[0].name).toBe("CASE");
   });
 
-  it("skips a unit whose KEY is too long, even if the word itself is not", () => {
-    // 16 x U+0130 is 16 UTF-16 units, but lowercases to 32: no TenantUnit.
+  it("measures the DISPLAY name for too-long, never the key", () => {
+    // 16 x U+0130 is 16 characters, but lowercases to a 32-unit key: the name fits, so it is created.
     const word = "İ".repeat(16);
     expect(word.length).toBeLessThanOrEqual(30);
+    expect(nameKeyOf(word).length).toBeGreaterThan(30);
     const r = plan([], [prod("p1", word)]);
-    expect(r.toCreate).toEqual([]);
-    expect(r.counts.skippedTooLong).toBe(1);
+    expect(r.toCreate.map((c: { name: string }) => c.name)).toEqual([word]);
+    expect(r.counts.skippedTooLong).toBe(0);
   });
 
   it("names a unit that merely CONTAINS a synonym word (Each Case is a pack)", () => {
@@ -139,7 +140,7 @@ describe("planTenantUnits (U-6)", () => {
       // 1 (base row), 6, 24, 36: 6 -> base (x6); 24 -> 6 (x4); 36 -> 6 (x6, 24 does not divide 36)
       const units = [lvl("b", 1), lvl("six", 6), lvl("tf", 24), lvl("ts", 36)];
       expect(fills(units)).toEqual([
-        expect.objectContaining({ productUnitId: "six", parentUnitId: "b", perParent: 6 }),
+        expect.objectContaining({ productUnitId: "six", parentUnitId: null, perParent: 6 }),
         expect.objectContaining({ productUnitId: "tf", parentUnitId: "six", perParent: 4 }),
         expect.objectContaining({ productUnitId: "ts", parentUnitId: "six", perParent: 6 }),
       ]);
@@ -150,6 +151,65 @@ describe("planTenantUnits (U-6)", () => {
         (x: { productUnitId: string }) => x.productUnitId === "c",
       );
       expect(f).toMatchObject({ parentUnitId: null, parentFactor: 1, perParent: 12 });
+    });
+
+    it("a factor-1 ROW is never a parent: the base is parentUnitId NULL (SA-728)", () => {
+      const [f] = fills([lvl("b", 1), lvl("case", 12)]);
+      expect(f).toMatchObject({ productUnitId: "case", parentUnitId: null, perParent: 12 });
+    });
+
+    describe("the PACK is a lower level (Product.unitsPerBox)", () => {
+      const withPack = (upb: number | null, units: PU[]) =>
+        planParentFills(units, [{ id: "p1", unitsPerBox: upb }]).parentFills;
+
+      it("upb 12 and Case 48: parentUnitId NULL, perParent 4 (4 Box = 1 Case)", () => {
+        expect(withPack(12, [lvl("case", 48)])).toEqual([
+          expect.objectContaining({
+            productUnitId: "case",
+            parentUnitId: null,
+            perParent: 4,
+            packFactor: 12,
+          }),
+        ]);
+      });
+
+      it("upb 1 (no pack) and Case 12: the base, perParent 12", () => {
+        expect(withPack(1, [lvl("case", 12)])).toEqual([
+          expect.objectContaining({ parentUnitId: null, perParent: 12, packFactor: null }),
+        ]);
+      });
+
+      it("a larger dividing ROW wins over the pack; the pack wins over a smaller row", () => {
+        const a = withPack(6, [lvl("twelve", 12), lvl("big", 48)]);
+        expect(a.find((f: { productUnitId: string }) => f.productUnitId === "big")).toMatchObject({
+          parentUnitId: "twelve",
+          perParent: 4,
+        });
+        const b = withPack(12, [lvl("six", 6), lvl("big", 48)]);
+        expect(b.find((f: { productUnitId: string }) => f.productUnitId === "big")).toMatchObject({
+          parentUnitId: null,
+          perParent: 4,
+          packFactor: 12,
+        });
+      });
+
+      it("a row at the pack's own size is the pack's level: the row wins the tie", () => {
+        const f = withPack(12, [lvl("box", 12), lvl("big", 48)]).find(
+          (x: { productUnitId: string }) => x.productUnitId === "big",
+        );
+        expect(f).toMatchObject({ parentUnitId: "box", perParent: 4 });
+      });
+
+      it("a pack that does not divide, or is not smaller, is ignored", () => {
+        expect(withPack(5, [lvl("case", 12)])[0]).toMatchObject({
+          perParent: 12,
+          packFactor: null,
+        });
+        expect(withPack(12, [lvl("case", 12)])[0]).toMatchObject({
+          perParent: 12,
+          packFactor: null,
+        });
+      });
     });
 
     it("a factor-1 level is the base itself: nothing to fill, nothing reported", () => {

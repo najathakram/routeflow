@@ -30,7 +30,7 @@ type Unit = {
 type State = {
   tenantUnits: Array<{ id: string; tenantId: string; nameKey: string; name: string }>;
   productUnits: Unit[];
-  products: Array<{ id: string; tenantId: string; unit: string }>;
+  products: Array<{ id: string; tenantId: string; unit: string; unitsPerBox: number | null }>;
 };
 
 /**
@@ -69,23 +69,30 @@ function fake(
           .filter((u) => u.tenantId === tenantId && ids.includes(u.nameKey))
           .map((u) => ({ id: u.id, nameKey: u.nameKey }));
       }
+      if (sql.includes('"Product"')) {
+        log.push("share:packs");
+        return state.products
+          .filter((p) => p.tenantId === tenantId && ids.includes(p.id))
+          .map((p) => ({ id: p.id, unitsPerBox: p.unitsPerBox }));
+      }
       log.push("share:parents");
       return state.productUnits
         .filter((u) => u.tenantId === tenantId && ids.includes(u.id))
         .map((u) => ({ id: u.id, productId: u.productId, factorToBase: u.factorToBase }));
     },
     tenantUnit: {
-      upsert: async ({ where, create }: any) => {
-        log.push("upsert");
-        const k = where.tenantId_nameKey;
-        let row = state.tenantUnits.find(
-          (u) => u.tenantId === k.tenantId && u.nameKey === k.nameKey,
-        );
-        if (!row) {
-          row = { id: `tu${++seq}`, ...create };
-          state.tenantUnits.push(row!);
+      // skipDuplicates on the unique (tenantId, nameKey): returns the rows ACTUALLY inserted
+      createMany: async ({ data, skipDuplicates }: any) => {
+        log.push("createMany");
+        if (!skipDuplicates) throw new Error("createMany without skipDuplicates");
+        let count = 0;
+        for (const d of data) {
+          if (state.tenantUnits.some((u) => u.tenantId === d.tenantId && u.nameKey === d.nameKey))
+            continue;
+          state.tenantUnits.push({ id: `tu${++seq}`, ...d });
+          count += 1;
         }
-        return { id: row!.id };
+        return { count };
       },
     },
     productUnit: {
@@ -138,7 +145,12 @@ const seed = (n: number): State => ({
     parentUnitId: null,
     perParent: null,
   })),
-  products: Array.from({ length: n }, (_, i) => ({ id: `p${i}`, tenantId: TENANT, unit: "Tray" })),
+  products: Array.from({ length: n }, (_, i) => ({
+    id: `p${i}`,
+    tenantId: TENANT,
+    unit: "Tray",
+    unitsPerBox: null,
+  })),
 });
 
 async function runOnce(state: State, f: ReturnType<typeof fake>, batchSize?: number) {
@@ -234,12 +246,12 @@ describe("batched backfill apply (U-6)", () => {
   it("re-reads the batch's units and parents FOR SHARE before any write (SA M4)", async () => {
     const state = seed(2);
     state.productUnits.push({
-      id: "base0",
+      id: "six0",
       tenantId: TENANT,
       productId: "p0",
-      label: "Piece",
+      label: "Six",
       tenantUnitId: null,
-      factorToBase: 1,
+      factorToBase: 6,
       parentUnitId: null,
       perParent: null,
     });
@@ -247,13 +259,13 @@ describe("batched backfill apply (U-6)", () => {
     await runOnce(state, f, 5);
     const batch = f.stats.ops[1];
     const firstWrite = batch.indexOf("write");
-    expect(batch.indexOf("share:units")).toBeGreaterThan(-1);
-    expect(batch.indexOf("share:parents")).toBeGreaterThan(-1);
-    expect(batch.indexOf("share:units")).toBeLessThan(firstWrite);
-    expect(batch.indexOf("share:parents")).toBeLessThan(firstWrite);
+    for (const read of ["share:units", "share:parents", "share:packs"]) {
+      expect(batch.indexOf(read)).toBeGreaterThan(-1);
+      expect(batch.indexOf(read)).toBeLessThan(firstWrite);
+    }
     expect(state.productUnits.find((u) => u.id === "pu0")).toMatchObject({
-      parentUnitId: "base0",
-      perParent: 12,
+      parentUnitId: "six0",
+      perParent: 2,
     });
   });
 
@@ -324,6 +336,34 @@ describe("batched backfill apply (U-6)", () => {
     expect(state.tenantUnits.map((u) => u.nameKey)).toEqual(["tray"]);
     expect(state.productUnits.every((u) => u.tenantUnitId === null)).toBe(true);
     expect(r).toMatchObject({ linked: 0, linksChanged: 2, parentFilled: 2 });
+  });
+
+  it("a pack fill writes parentUnitId NULL and f / upb; a pack that moved is skipped", async () => {
+    const state = seed(2);
+    state.products[0].unitsPerBox = 4; // Case 12 = 3 packs of 4
+    state.products[1].unitsPerBox = 4;
+    const f = fake(state, {
+      beforeTx: (n, st) => {
+        if (n === 2) st.products[1].unitsPerBox = 6; // p1's pack changed under the apply
+      },
+    });
+    const r = await runOnce(state, f, 5);
+    expect(state.productUnits[0]).toMatchObject({ parentUnitId: null, perParent: 3 });
+    expect(state.productUnits[1]).toMatchObject({ parentUnitId: null, perParent: null });
+    expect(r).toMatchObject({ parentFilled: 1, parentsChanged: 1 });
+  });
+
+  it("reports the units ACTUALLY inserted: one created by someone else since planning is not counted", async () => {
+    const state = seed(2);
+    const f = fake(state, {
+      beforeTx: (n, st) => {
+        if (n === 1)
+          st.tenantUnits.push({ id: "theirs", tenantId: TENANT, nameKey: "tray", name: "Tray" });
+      },
+    });
+    const r = await runOnce(state, f, 5);
+    expect(r.unitsCreated).toBe(1); // case; tray already existed when the insert ran
+    expect(state.tenantUnits.map((u) => u.nameKey).sort()).toEqual(["case", "tray"]);
   });
 
   it("a parent whose factor moved since planning is not filled against", async () => {
