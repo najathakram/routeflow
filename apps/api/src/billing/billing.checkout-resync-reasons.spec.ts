@@ -139,6 +139,7 @@ describe("resyncPriceAfterCheckout — transient reasons throw (M3)", () => {
     "stripe_update_failed",
     "reconcile_flag_failed",
     "stripe_not_configured",
+    "pricing_lookup_failed",
   ])("%s: THROWS so Stripe redelivers, and raises no alert", async (reason) => {
     const { svc, prisma, coupon } = make();
     svc.syncStripeSubscriptionPrice.mockResolvedValue({ synced: false, reason });

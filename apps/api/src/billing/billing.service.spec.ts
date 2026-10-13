@@ -15,7 +15,7 @@ jest.mock("./needs-reconcile", () =>
   require("../testing/needs-reconcile-mock").needsReconcileMock(),
 );
 import { Test, TestingModule } from "@nestjs/testing";
-import { Logger } from "@nestjs/common";
+import { BadRequestException, Logger } from "@nestjs/common";
 import { armNeedsReconcile, clearNeedsReconcile } from "./needs-reconcile";
 import { isPricePushFailure } from "./price-override";
 import { toCents } from "@routeflow/pricing";
@@ -189,6 +189,8 @@ function make(
   const tenantStatus = { invalidate: jest.fn() } as any;
   const events = { emit: jest.fn().mockResolvedValue({}) } as any;
   const pricing = overrides.pricing ?? {
+    // a tenant price that cannot be resolved is a BUSINESS refusal (HttpException), not an infrastructure error
+    resolveTenantPricing: jest.fn().mockRejectedValue(new BadRequestException("no price")),
     resolveCatalogPricing: jest.fn().mockResolvedValue({
       planKey: "BUSINESS",
       planName: "Business",
@@ -986,6 +988,7 @@ describe("onCheckoutCompleted — B445 planKey + basePriceSnapshot write", () =>
   it("(5) resolveCatalogPricing throwing does not crash the handler — planKey still gets written, basePriceSnapshot left unset", async () => {
     const pricing = {
       resolveCatalogPricing: jest.fn().mockRejectedValue(new Error("isCustom plan, no price")),
+      resolveTenantPricing: jest.fn().mockRejectedValue(new BadRequestException("no price")),
     };
     const { svc, prisma, events } = make({ transitionCount: 1, pricing });
 
@@ -2051,7 +2054,9 @@ describe("BillingService.syncStripeSubscriptionPrice", () => {
   });
 
   it("is a no-op ({ synced: false, reason: 'price_unresolvable' }) when no price resolves, instead of throwing", async () => {
-    pricing.resolveTenantPricing.mockRejectedValue(new Error("No price is resolvable"));
+    pricing.resolveTenantPricing.mockRejectedValue(
+      new BadRequestException("No price is resolvable"),
+    );
 
     const result = await service.syncStripeSubscriptionPrice("t1");
 

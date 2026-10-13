@@ -87,6 +87,8 @@ const TRANSIENT_PRICE_PUSH_REASONS: readonly string[] = [
   "stripe_update_failed",
   "reconcile_flag_failed",
   "stripe_not_configured",
+  // the tenant's price could not be LOOKED UP (infrastructure), not "has no price"
+  "pricing_lookup_failed",
 ];
 
 /**

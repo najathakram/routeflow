@@ -1,5 +1,6 @@
 import { TX_CONFLICT_MAX_ATTEMPTS } from "../common/tx-retry";
 import {
+  HttpException,
   Injectable,
   Logger,
   NotFoundException,
@@ -692,10 +693,18 @@ export class BillingService {
     try {
       pricing = await this.pricing.resolveTenantPricing(tenantId);
     } catch (err) {
-      this.logger.warn(
-        `Cannot sync Stripe price for tenant ${tenantId}: ${(err as Error).message}`,
-      );
-      return { synced: false, reason: "price_unresolvable" };
+      // resolveTenantPricing signals a business outcome (no fee, unknown plan, missing tenant) with an
+      // HttpException: that is `price_unresolvable`. Anything else (a Prisma / connection error, a timeout, an
+      // unknown Error) is infrastructure and TRANSIENT: its own reason, so the checkout webhook throws and Stripe
+      // redelivers instead of acknowledging a lookup that merely failed.
+      if (err instanceof HttpException) {
+        this.logger.warn(
+          `Cannot sync Stripe price for tenant ${tenantId}: ${(err as Error).message}`,
+        );
+        return { synced: false, reason: "price_unresolvable" };
+      }
+      this.logger.error(`Price lookup failed for tenant ${tenantId}`, err as Error);
+      return { synced: false, reason: "pricing_lookup_failed" };
     }
 
     const result = opts?.pushed ?? (await this.pushResolvedPriceToStripe(tenantId, opts));
