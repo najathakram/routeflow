@@ -8,9 +8,15 @@ import {
 import { assertSellableLines } from "../products/sellable-lines";
 import { EstimateStatus, PriceType } from "@prisma/client";
 import { PrismaService } from "../prisma/prisma.service";
-import { isSpecialTier, computeLineSubtotal, getTierPrice, roundMoney } from "@routeflow/pricing";
+import {
+  isSpecialTier,
+  computeLineSubtotal,
+  getTierPrice,
+  roundMoney,
+  sumInvoiceTotals,
+} from "@routeflow/pricing";
 import { loadMsrpMap } from "../common/msrp";
-import { effectiveTaxRateFromTotals } from "../common/tax-rate";
+import { configuredTaxRateFraction } from "../common/tax-rate";
 import { EntitlementsService } from "../billing/entitlements.service";
 import { EntitlementAuthority } from "../billing/entitlement-authority.service";
 import { RegulatedLedgerService } from "../regulated/regulated-ledger.service";
@@ -30,6 +36,9 @@ import {
 import { assertNoUnitAwareLines } from "../orders/unit-aware-guard";
 import { CreateEstimateDto } from "./dto/create-estimate.dto";
 import { describeUniqueViolation, uniqueViolationOn } from "../common/prisma-unique";
+
+/** A tax rate at the 4-decimal scale `InvoiceItem.taxRate` is stored at. */
+const roundRate = (r: number): number => Math.round(r * 10_000) / 10_000;
 
 // B70: terminal status set — CONVERTED is terminal and cannot be re-transitioned; voided
 // (DECLINED) is also terminal per the requirement that send/decline/accept refuse both.
@@ -141,6 +150,9 @@ export class EstimatesService {
     const tenantId = this.prisma.getTenantId();
     const defaultTier = customer.pricingTier ?? 1;
     const items: any[] = dto.items ?? [];
+    // H5: a quote is taxed the way an invoice is - the tenant rate and the customer's exempt flag, today.
+    const taxRate = await configuredTaxRateFraction(this.prisma);
+    const isTaxExempt = !!customer.isTaxExempt;
 
     // Load products for items that reference a product
     const productIds = items.filter((i: any) => i.productId).map((i: any) => i.productId);
@@ -188,7 +200,8 @@ export class EstimatesService {
         const tierForProduct = cpMap.get(i.productId) ?? defaultTier;
         const tierPrice = getTierPrice(product, tierForProduct);
         const listPrice = Number(product.pricePerUnit);
-        const overridePrice = i.unitPrice != null ? Number(i.unitPrice) : null;
+        // H5: a typed override is money - cents, like every other written price
+        const overridePrice = i.unitPrice != null ? roundMoney(Number(i.unitPrice)) : null;
 
         if (overridePrice != null && overridePrice < listPrice) {
           unitPrice = overridePrice;
@@ -203,8 +216,8 @@ export class EstimatesService {
           priceType = PriceType.STANDARD;
         }
       } else {
-        // Freeform item — use passed unitPrice directly
-        unitPrice = Number(i.unitPrice);
+        // Freeform item — the typed price, in cents (H5)
+        unitPrice = roundMoney(Number(i.unitPrice));
       }
 
       const sub = computeLineSubtotal({
@@ -237,13 +250,17 @@ export class EstimatesService {
     });
 
     subtotal = roundMoney(subtotal);
-    // B451 gap 4: neither `discount` nor `taxAmount` is a declared field on
-    // CreateEstimateDto — no current caller sends either, and the global
-    // ValidationPipe's forbidNonWhitelisted now 400s a request that does.
-    // Read via `as any` only so this stays defense-in-depth (via the shared
-    // guard below) if either is ever added to the DTO, not a live input path.
+    // B451 gap 4: `discount` is not a declared field on CreateEstimateDto - no current caller sends one, and the
+    // global ValidationPipe's forbidNonWhitelisted 400s a request that does. Read via `as any` only so this stays
+    // defense-in-depth (via the shared guard below) if it is ever added to the DTO, not a live input path.
+    // `taxAmount` is no longer an input at all (H5): it is computed, below.
     const discount = (dto as any).discount ?? 0;
-    const tax = (dto as any).taxAmount ?? 0;
+    // H5: the invoice rule - each line's subtotal x the rate, summed unrounded, rounded once; $0 when exempt.
+    const taxed = sumInvoiceTotals(
+      itemsData.map((it) => ({ subtotal: it.subtotal, taxRate })),
+      { discount, isTaxExempt },
+    );
+    const tax = taxed.regularTax;
     const total = roundMoney(subtotal - discount + tax);
 
     assertMoneyInvariantsOrThrow({ subtotal, discount, tax, total });
@@ -481,19 +498,13 @@ export class EstimatesService {
           ] as string[])
         : new Map<string, number | null>();
 
-      // B294: the estimate never carries a per-line tax rate, only one flat
-      // `taxAmount` over its whole `subtotal` — same shape as an order's
-      // `order.tax`/`order.subtotal`. Recovering `taxAmount / subtotal` here
-      // (0 for a degenerate zero-subtotal estimate) and stamping it on every
-      // converted line is the same fix invoices.service.ts applies to
-      // order-derived lines: a line built with `taxRate: 0` silently zeroes
-      // the tax on the very next applyPriceAdjustment recompute even though
-      // the invoice was issued with the correct total.
-      const lineTaxRate = effectiveTaxRateFromTotals(
-        est.taxAmount,
-        est.subtotal,
-        !!est.customer?.isTaxExempt,
-      );
+      // H5 (owner ruling 2026-10-13): converting RE-TAKES the current basis - today's tenant rate and the
+      // customer's exempt flag today - rather than recovering the quote's rate. The estimate carries only one flat
+      // `taxAmount` over its subtotal (the quote's REGULAR tax), kept to report the difference. The rate is stamped on
+      // every converted line (B294): a line built with `taxRate: 0` would silently zero the tax on the next
+      // applyPriceAdjustment recompute even though the invoice was issued with the correct total.
+      const currentRate = await configuredTaxRateFraction({ forTenant: () => tx });
+      const lineTaxRate = est.customer?.isTaxExempt ? 0 : currentRate;
 
       // B659: the invoice is built through the SAME line path as an interactive invoice: the quoted PRICE
       // is honoured, but the regulated category (and its levy) is read from the product NOW and computed
@@ -528,7 +539,22 @@ export class EstimatesService {
       // tax only (never the display levy of a later stage), so lineTaxRate above is a one-source recovery.
       zeroExemptCategoryTax(itemsData, isTaxExempt); // exempt: $0 of BOTH taxes, snapshots zeroed
       const discount = Number(est.discount ?? 0);
-      const { tax: taxTotal, total } = sumInvoiceTotalsStrict(itemsData, { discount, isTaxExempt });
+      const {
+        tax: taxTotal,
+        total,
+        regularTax: currentTax,
+      } = sumInvoiceTotalsStrict(itemsData, { discount, isTaxExempt });
+      // H5: the quote's regular tax against today's, so the operator is told when the rate (or the exempt flag) moved.
+      const quotedTax = roundMoney(Number(est.taxAmount ?? 0));
+      const quotedSubtotal = Number(est.subtotal ?? 0);
+      const taxBasis = {
+        quotedTax,
+        currentTax,
+        delta: roundMoney(currentTax - quotedTax),
+        changed: roundMoney(currentTax - quotedTax) !== 0,
+        quotedRate: quotedSubtotal > 0 ? roundRate(quotedTax / quotedSubtotal) : 0,
+        currentRate: lineTaxRate,
+      };
 
       try {
         const inv = await tx.invoice.create({
@@ -580,7 +606,7 @@ export class EstimatesService {
           throw new ConflictException("Estimate link failed");
         }
 
-        return inv;
+        return { ...inv, taxBasis };
       } catch (err: any) {
         // B100/F16b (REG-B100-F): had no P2002 catch — a concurrent convert's
         // unique-constraint hit propagated as a raw 500 (same message as the

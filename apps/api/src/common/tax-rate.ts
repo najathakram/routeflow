@@ -47,6 +47,22 @@ export async function configuredTaxRatePercent(prisma: {
 }
 
 /**
+ * H5: the tenant's configured rate as a FRACTION (0.0825), read from `settings.taxRate` through the same parser as
+ * every other reader; 0 when unset. For a service that holds a Prisma client but no SystemConfigService
+ * (the estimate quote), exactly like `configuredTaxRatePercent`.
+ */
+export async function configuredTaxRateFraction(prisma: {
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any -- PrismaService and its test mock both fit
+  forTenant(): { systemConfig: { findFirst(args: any): Promise<{ value: string } | null> } };
+}): Promise<number> {
+  const row = await prisma.forTenant().systemConfig.findFirst({
+    where: { key: "settings.taxRate" },
+    select: { value: true },
+  });
+  return taxRateFractionFrom(row?.value ?? null);
+}
+
+/**
  * The tenant's CURRENT tax rate (fraction), read from Settings — the ONE reader every
  * caller shares, so the percent→fraction parsing above is never re-derived a second time
  * (the exact L-072/duplicated-rule class this file's own header warns about). Originally
