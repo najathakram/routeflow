@@ -1,3 +1,4 @@
+import { RegulatedVisibilityService } from "../buyer/regulated-visibility.service";
 import { oversellReaderOffProvider } from "../orders/testing/policy-reader-provider";
 import { ForbiddenException } from "@nestjs/common";
 import { Test } from "@nestjs/testing";
@@ -27,6 +28,7 @@ const product = (id: string, over: Record<string, unknown> = {}) => ({
   unit: "each",
   isActive: true,
   kind: "STANDALONE",
+  trackedCategoryId: null as string | null,
   portalVisible: true,
   parent: null,
   ...over,
@@ -44,6 +46,7 @@ describe("OrderTemplatesService — buyer template reads drop lines the catalog 
   let service: OrderTemplatesService;
   let prisma: ReturnType<typeof createMockPrisma>;
   let restrictedProductIdsFor: jest.Mock;
+  let lockedCategories: Set<string>;
 
   const rowWith = (items: unknown[]) => ({
     id: "t1",
@@ -67,6 +70,7 @@ describe("OrderTemplatesService — buyer template reads drop lines the catalog 
 
   beforeEach(async () => {
     prisma = createMockPrisma();
+    lockedCategories = new Set();
     restrictedProductIdsFor = jest.fn().mockResolvedValue(new Set(["blocked"]));
     const mod = await Test.createTestingModule({
       providers: [
@@ -80,6 +84,12 @@ describe("OrderTemplatesService — buyer template reads drop lines the catalog 
         { provide: NotificationsService, useValue: {} },
         { provide: AuditService, useValue: { log: jest.fn() } },
         { provide: SellingRestrictionsService, useValue: { restrictedProductIdsFor } },
+        {
+          provide: RegulatedVisibilityService,
+          useValue: {
+            computeGate: jest.fn(async () => ({ hiddenIds: lockedCategories, locked: [] })),
+          },
+        },
       ],
     }).compile();
     service = mod.get(OrderTemplatesService);
@@ -155,6 +165,34 @@ describe("OrderTemplatesService — buyer template reads drop lines the catalog 
       ForbiddenException,
     );
     expect(prisma.orderTemplate.findUnique).toHaveBeenCalledTimes(1); // the ownership read only
+  });
+
+  it("MUST 2: a line in a regulated category the buyer is not licensed for is dropped, by the catalog's own gate", async () => {
+    lockedCategories.add("cat-locked");
+    prisma.orderTemplate.findMany.mockResolvedValue([
+      rowWith([
+        line("ok1", product("ok1")),
+        line("reg", product("reg", { trackedCategoryId: "cat-locked" })),
+        line("regOpen", product("regOpen", { trackedCategoryId: "cat-licensed" })),
+      ]),
+    ]);
+    const list = await service.findAllForBuyer("c1");
+    expect(visibleIds(list.data[0])).toEqual(["ok1", "regOpen"]);
+    expect(JSON.stringify(list)).not.toContain('Widget reg"');
+    prisma.orderTemplate.findUnique.mockResolvedValue(
+      rowWith([line("reg", product("reg", { trackedCategoryId: "cat-locked" }))]),
+    );
+    const one = await service.findOneForUser("t1", user("CUSTOMER"));
+    expect(one.items).toEqual([]);
+  });
+
+  it("MUST 2: staff reads ignore the regulated gate", async () => {
+    lockedCategories.add("cat-locked");
+    prisma.orderTemplate.findMany.mockResolvedValue([
+      rowWith([line("reg", product("reg", { trackedCategoryId: "cat-locked" }))]),
+    ]);
+    const list = await service.findAllForUser(user("OPERATOR"), "c1");
+    expect(list.data[0].items).toHaveLength(1);
   });
 
   it("a template whose every line is hidden is returned with no items (the row itself is the buyer's)", async () => {

@@ -39,12 +39,14 @@ import { decrementStockForSale } from "../orders/order-stock";
 import { resolveOversellAllowed } from "../orders/oversell-policy";
 import { PolicyOversellReader } from "../orders/policy-oversell-reader";
 import { assertSellableLines } from "../products/sellable-lines";
+import { RegulatedVisibilityService } from "../buyer/regulated-visibility.service";
+import { assertBuyerMayListProducts } from "./buyer-template-products";
+import { assertBuyerMayListRegulated } from "./buyer-template-regulated";
 import {
-  buyerVisibilityFor,
-  isBuyerVisibleProduct,
-  PORTAL_PARENT_SELECT,
-} from "../buyer/buyer-product-visibility";
-import type { BuyerVisibilityContext } from "../buyer/buyer-product-visibility";
+  BUYER_TEMPLATE_PRODUCT_SELECT,
+  buyerTemplateReadContext,
+  toBuyerView,
+} from "./buyer-template-view";
 import { assertPositiveTemplateQty } from "./template-qty";
 import { assertMoneyInvariantsOrThrow } from "../common/money-invariants.util";
 import { isoWeekdayUtc, startOfUtcDay } from "../common/utc-day";
@@ -82,21 +84,6 @@ function isLegacyStaffBuilt(t: {
   return known.length < roles.length && known.every(staff);
 }
 
-/**
- * Row 479: what a BUYER-side template read loads per line. The staff shape (`id`, `name`, `unit`) plus exactly
- * the facts `isBuyerVisibleProduct` needs; the visibility fields are stripped again before the response, so a buyer's
- * product object keeps the staff read's shape and never gains a field.
- */
-const BUYER_TEMPLATE_PRODUCT_SELECT = {
-  id: true,
-  name: true,
-  unit: true,
-  isActive: true,
-  kind: true,
-  portalVisible: true,
-  parent: { select: PORTAL_PARENT_SELECT },
-} as const;
-
 @Injectable()
 export class OrderTemplatesService {
   private readonly logger = new Logger(OrderTemplatesService.name);
@@ -112,6 +99,8 @@ export class OrderTemplatesService {
     // WS9: the backorder policy reader behind resolveOversellAllowed (once per generated order, before
     // the transaction). Required (never @Optional): a missing provider is a DI error (L-247).
     private readonly oversellReader: PolicyOversellReader,
+    // The catalog's regulated-category gate, applied to a buyer's template reads and writes (row 479). Required.
+    private readonly regulated: RegulatedVisibilityService,
     // #2717 M3: the `mixed_packs` mode read; absent = off (no composition work).
     @Optional() private readonly featureConfig?: FeatureConfigService,
   ) {}
@@ -146,8 +135,8 @@ export class OrderTemplatesService {
       },
       orderBy: { createdAt: "desc" },
     });
-    const visibility = await this.buyerVisibility(customerId);
-    const data = templates.map((t) => this.toBuyerView(t, visibility));
+    const ctx = await this.buyerReadContext(customerId);
+    const data = templates.map((t) => toBuyerView(t, ctx));
     return { data, meta: { total: data.length } };
   }
 
@@ -205,38 +194,30 @@ export class OrderTemplatesService {
       },
     });
     if (!template) throw new NotFoundException("Order template not found");
-    return this.toBuyerView(template, await this.buyerVisibility(owned.customerId));
+    return toBuyerView(template, await this.buyerReadContext(owned.customerId));
   }
 
-  private buyerVisibility(customerId: string) {
-    return buyerVisibilityFor(this.sellingRestrictions, this.prisma.getTenantId(), customerId);
+  /** The catalog rules a buyer's request is judged by: the portal context and the locked regulated categories. */
+  private buyerReadContext(customerId: string) {
+    return buyerTemplateReadContext(
+      { restrictions: this.sellingRestrictions, regulated: this.regulated },
+      this.prisma.getTenantId(),
+      customerId,
+    );
   }
 
-  /** Drop the lines the catalog would hide from this buyer and trim every kept product back to `{ id, name, unit }`. */
-  private toBuyerView<
-    T extends {
-      items: Array<{
-        product: {
-          id: string;
-          name: string;
-          unit: string;
-          isActive: boolean;
-          kind: string;
-          portalVisible: boolean;
-          parent: { portalVisible: boolean; isActive: boolean; tenantId: string | null } | null;
-        };
-      }>;
-    },
-  >(template: T, visibility: BuyerVisibilityContext) {
-    return {
-      ...template,
-      items: template.items
-        .filter((item) => isBuyerVisibleProduct(visibility, item.product))
-        .map((item) => ({
-          ...item,
-          product: { id: item.product.id, name: item.product.name, unit: item.product.unit },
-        })),
-    };
+  /** The buyer write gate: the same 404 for a hidden, regulated-locked, or missing product; nothing is stored first. */
+  private async assertBuyerMayList(customerId: string, productIds: readonly string[]) {
+    await assertBuyerMayListProducts(
+      { prisma: this.prisma, restrictions: this.sellingRestrictions },
+      customerId,
+      productIds,
+    );
+    await assertBuyerMayListRegulated(
+      { prisma: this.prisma, regulated: this.regulated },
+      customerId,
+      productIds,
+    );
   }
 
   async createForUser(dto: CreateOrderTemplateDto, user: JwtPayload) {
@@ -246,6 +227,10 @@ export class OrderTemplatesService {
         .customer.findFirst({ where: { userId: user.sub } });
       if (!customer) throw new ForbiddenException();
       dto.customerId = customer.id;
+      await this.assertBuyerMayList(
+        customer.id,
+        (dto.items ?? []).map((i) => i.productId),
+      );
       const created = await this.create(dto, { role: user.role, userId: user.sub });
       return this.findOneForUser(created.id, user); // the buyer-filtered read (row 479)
     }
@@ -259,6 +244,11 @@ export class OrderTemplatesService {
         .forTenant()
         .customer.findFirst({ where: { userId: user.sub } });
       if (!customer || template.customerId !== customer.id) throw new ForbiddenException();
+      if (dto.items)
+        await this.assertBuyerMayList(
+          customer.id,
+          dto.items.map((i) => i.productId),
+        );
     }
     const updated = await this.update(id, dto, { role: user.role, userId: user.sub });
     // A buyer's answer is the buyer-filtered read, never the staff-shaped write result (row 479).
@@ -566,7 +556,9 @@ export class OrderTemplatesService {
   // OPERATOR this is a pass-through today (the ownership branch is CUSTOMER-only);
   // its value is uniformity — a future CUSTOMER grant on addItem cannot ship unguarded.
   async addItemForUser(templateId: string, dto: AddTemplateItemDto, user: JwtPayload) {
-    await this.assertTemplateAccess(templateId, user);
+    const template = await this.assertTemplateAccess(templateId, user);
+    if (user.role === "CUSTOMER")
+      await this.assertBuyerMayList(template.customerId, [dto.productId]);
     return this.addItem(templateId, dto, { role: user.role });
   }
 

@@ -27,6 +27,8 @@ import { PrismaService } from "../prisma/prisma.service";
 import { TenantContextService } from "../tenant/tenant-context.service";
 import { ProductLabelsService } from "../product-labels/product-labels.service";
 import { SellingRestrictionsService } from "../selling-restrictions/selling-restrictions.service";
+import { RegulatedVisibilityService } from "../buyer/regulated-visibility.service";
+import { NotFoundException } from "@nestjs/common";
 import { OrderTemplatesService } from "./order-templates.service";
 import type { OrdersService } from "../orders/orders.service";
 import type { JwtPayload } from "../auth/jwt-payload.interface";
@@ -47,10 +49,11 @@ describeDb("buyer template reads drop lines the catalog hides (row 479)", () => 
   let buyer: JwtPayload;
   let operator: JwtPayload;
   let templateId = "";
+  let categoryId = "";
   /** name -> product id, for every product on the template */
   const ids: Record<string, string> = {};
   const nameOf = (key: string) => `${key}-${run}`;
-  const HIDDEN = ["portal", "restricted", "inactive", "family", "variantOfHidden"];
+  const HIDDEN = ["portal", "restricted", "inactive", "family", "variantOfHidden", "regulated"];
   const VISIBLE = ["visibleA", "visibleB"];
 
   const asTenant = <T>(fn: () => Promise<T>) => tenantCtx.run(tenantId, fn) as Promise<T>;
@@ -110,6 +113,13 @@ describeDb("buyer template reads drop lines the catalog hides (row 479)", () => 
     await mk("restricted");
     await mk("inactive", { isActive: false });
     await mk("family", { kind: "FAMILY" });
+    // A licence-required category the buyer has NO verified authorization for: the catalog hides its products.
+    categoryId = (
+      await raw.trackedCategory.create({
+        data: { tenantId, name: `Regulated ${run}`, requiresLicense: true },
+      })
+    ).id;
+    await mk("regulated", { trackedCategoryId: categoryId });
     await mk("hiddenParent", { kind: "FAMILY", portalVisible: false }); // the parent itself is not on the template
     await mk("variantOfHidden", { parentProductId: ids.hiddenParent });
     // A hiding rule the buyer's own request context resolves (federal, every surface: no address needed).
@@ -154,6 +164,7 @@ describeDb("buyer template reads drop lines the catalog hides (row 479)", () => 
       {} as never,
       new SellingRestrictionsService(prisma, new ProductLabelsService(prisma)),
       { read: async () => "off" } as never,
+      new RegulatedVisibilityService(prisma),
     );
   });
 
@@ -163,10 +174,12 @@ describeDb("buyer template reads drop lines the catalog hides (row 479)", () => 
     await raw.orderTemplateItem.deleteMany(where).catch(swallow);
     await raw.orderTemplate.deleteMany(where).catch(swallow);
     await raw.sellingRestriction.deleteMany(where).catch(swallow);
+    await raw.customerAuthorization.deleteMany(where).catch(swallow);
     await raw.product
       .deleteMany({ where: { tenantId, parentProductId: { not: null } } })
       .catch(swallow);
     await raw.product.deleteMany(where).catch(swallow);
+    await raw.trackedCategory.deleteMany(where).catch(swallow);
     await raw.customer.deleteMany(where).catch(swallow);
     await raw.user.deleteMany(where).catch(swallow);
     await raw.tenant.delete({ where: { id: tenantId } }).catch(swallow);
@@ -222,5 +235,94 @@ describeDb("buyer template reads drop lines the catalog hides (row 479)", () => 
     }
     const back = await asTenant(() => templates.findOneForUser(templateId, buyer));
     expect(JSON.stringify(back)).toContain(nameOf("visibleB"));
+  });
+
+  it("MUST 2: a VERIFIED authorization for the category brings the regulated line back; expiry drops it again", async () => {
+    const auth = await raw.customerAuthorization.create({
+      data: {
+        tenantId,
+        customerId,
+        trackedCategoryId: categoryId,
+        status: "VERIFIED",
+        expiresAt: new Date(Date.now() + 86_400_000),
+      },
+    });
+    try {
+      const licensed = await asTenant(() => templates.findOneForUser(templateId, buyer));
+      expect(JSON.stringify(licensed)).toContain(nameOf("regulated"));
+      await raw.customerAuthorization.update({
+        where: { id: auth.id },
+        data: { expiresAt: new Date(Date.now() - 86_400_000) },
+      });
+      const expired = await asTenant(() => templates.findOneForUser(templateId, buyer));
+      expect(JSON.stringify(expired)).not.toContain(nameOf("regulated"));
+    } finally {
+      await raw.customerAuthorization.delete({ where: { id: auth.id } });
+    }
+  });
+
+  describe("buyer WRITES: a hidden product is the same 404 as an unknown id", () => {
+    const wire = async (p: Promise<unknown>) => {
+      const err: any = await p.then(
+        () => {
+          throw new Error("expected a rejection");
+        },
+        (e) => e,
+      );
+      expect(err).toBeInstanceOf(NotFoundException);
+      return JSON.stringify({ status: err.getStatus(), body: err.getResponse() });
+    };
+    const itemCount = () => raw.orderTemplateItem.count({ where: { templateId } });
+    const items = (productId: string) => [{ productId, qty: 1 }];
+
+    it("create / update / addItem refuse every hiding cause byte-identically to an unknown id, and store nothing", async () => {
+      const before = await itemCount();
+      const templatesBefore = await raw.orderTemplate.count({ where: { tenantId } });
+      const unknownId = randomUUID();
+      const attempts = (productId: string) => [
+        asTenant(() =>
+          templates.createForUser(
+            { name: "New", daysOfWeek: [1], items: items(productId) } as never,
+            buyer,
+          ),
+        ),
+        asTenant(() =>
+          templates.updateForUser(templateId, { items: items(productId) } as never, buyer),
+        ),
+        asTenant(() => templates.addItemForUser(templateId, { productId, qty: 1 } as never, buyer)),
+      ];
+      const expected = await Promise.all(attempts(unknownId).map(wire));
+      expect(new Set(expected).size).toBe(1);
+      for (const k of HIDDEN) {
+        const got = await Promise.all(attempts(ids[k]).map(wire));
+        expect(got).toEqual(expected); // same status and body, whichever cause hides the product
+        expect(got.join()).not.toContain(nameOf(k));
+      }
+      expect(await itemCount()).toBe(before);
+      expect(await raw.orderTemplate.count({ where: { tenantId } })).toBe(templatesBefore);
+    });
+
+    it("a visible product is still accepted (control), and staff may list a hidden one", async () => {
+      const created = await asTenant(() =>
+        templates.createForUser(
+          { name: "Ok", daysOfWeek: [1], items: items(ids.visibleA) } as never,
+          buyer,
+        ),
+      );
+      expect(JSON.stringify(created)).toContain(nameOf("visibleA"));
+      const staffCreated = await asTenant(() =>
+        templates.createForUser(
+          { name: "Staff", customerId, daysOfWeek: [1], items: items(ids.portal) } as never,
+          operator,
+        ),
+      );
+      expect(staffCreated.items).toHaveLength(1);
+      await raw.orderTemplateItem.deleteMany({
+        where: { templateId: { in: [(created as any).id, staffCreated.id] } },
+      });
+      await raw.orderTemplate.deleteMany({
+        where: { id: { in: [(created as any).id, staffCreated.id] } },
+      });
+    });
   });
 });
