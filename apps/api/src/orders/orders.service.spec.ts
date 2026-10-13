@@ -1345,7 +1345,7 @@ describe("OrdersService", () => {
       await service.create(
         { items: [{ productId: "prod-1", qty: 1 }], status: "DRAFT" } as any,
         customerPayload,
-        { allowArchived: true },
+        { allowArchived: true, internalCustomerDraft: true },
       );
 
       expect(prisma.order.create).toHaveBeenCalled();
@@ -9130,6 +9130,7 @@ describe("OrdersService", () => {
             type: "CHANGE_QTY",
             orderItemId: "li-1",
             payload: { orderItemId: "li-1", newQty: 18 },
+            requestedByRole: "DRIVER", // staff-filed: keeps this on the staff channel (F1 i)
           }),
         );
         prisma.order.findUnique.mockResolvedValue(baseOrder([sharedLine])); // snapshot line: PENDING

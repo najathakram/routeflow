@@ -45,7 +45,8 @@ const TABLE: Record<string, Row> = {
   [ord("create")]: G,
   [ord("updateOrderItems")]: G,
   [ord("approveChangeRequestAtStop")]: G,
-  [ord("changeStatus")]: G,
+  // F1(i): the DRAFT promotion check moved out of changeStatus (size ratchet); it judges each line at its author's channel too.
+  "orders/draft-promotion-judgement.ts::judgeDraftPromotion": G,
   [ord("reopenOrder")]: G,
   [ord("mergeAllPendingForCustomer")]: X(
     "owner ruling 2026-09-25 (#2093) / SA-255: MERGE AND WARN — folds orders each checked when placed, never blocked; warns via merge-restriction-warning.ts (pinned in orders.merge-warn.spec.ts)",
@@ -365,7 +366,11 @@ const files = new Map(
  * `changeStatus` into a free function, and a class-method-only scan lost it. Keep in step with FREE_WRITER_FILES in
  * orders/unit-line-writers.ast.spec.ts.
  */
-const FREE_WRITER_FILES = ["orders/order-cancel-tx.ts", "orders/delivered-stamp.ts"];
+const FREE_WRITER_FILES = [
+  "orders/order-cancel-tx.ts",
+  "orders/delivered-stamp.ts",
+  "orders/draft-promotion-judgement.ts",
+];
 
 type WriterNode = ts.MethodDeclaration | ts.FunctionDeclaration;
 
@@ -400,7 +405,8 @@ function writers(): Set<string> {
     for (const [name, node] of scannedUnits(sf, file))
       if (lineWritePositions(node, sf).length > 0) found.add(`${file}::${name}`);
     if (file.startsWith("selling-restrictions/")) continue; // the definition itself
-    for (const [name, node] of classMethods(sf))
+    // class methods AND the exported free functions of FREE_WRITER_FILES (F1 i: the DRAFT promotion check moved out of changeStatus)
+    for (const [name, node] of scannedUnits(sf, file))
       if (callPositions(node, CHOKE_POINT).length > 0) found.add(`${file}::${name}`);
   }
   return found;

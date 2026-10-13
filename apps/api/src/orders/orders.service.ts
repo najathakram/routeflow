@@ -34,6 +34,12 @@ import {
   appendReopenRevisionInTx,
   attachRevisionNumber,
 } from "./order-revisions";
+import { leastPrivilegedPrincipal, orderSourceForRole } from "./line-author-channel";
+import {
+  assertJudgementHolds,
+  judgeDraftPromotion,
+  type DraftPromotionJudgement,
+} from "./draft-promotion-judgement";
 import {
   isSpecialTier,
   categoryTaxSnapshotOf,
@@ -2080,6 +2086,7 @@ export class OrdersService implements OnApplicationBootstrap {
                 // customer/agent default). Validated by parseCommissionRatePct above.
                 commissionRatePct,
                 fulfillPath,
+                source: orderSourceForRole(user.role), // F1(i): who authored the lines (line-author-channel.ts)
                 // SA-672e/row 317: only the counter-sale POST passes this; it also stamps the cashier (a replay writes nothing).
                 ...(options.counterSale ? { counterSale: true, soldById: user.sub } : {}),
                 lineItems: { create: lineItemsData },
@@ -2346,39 +2353,16 @@ export class OrdersService implements OnApplicationBootstrap {
     // W6: promoting a DRAFT into a live order is when it becomes a real sale, so
     // re-run the license guard (drafts are created/edited without it — that's the
     // "draft escape"). Categories resolve from each line's snapshot or its product.
-    let checkedProductIds: ReadonlySet<string> | undefined; // what the Lane R check saw
+    let judged: DraftPromotionJudgement | undefined; // what the Lane R check saw
     if (order.status === "DRAFT" && dto.status !== OrderStatus.CANCELLED) {
-      const items = await this.prisma.forTenant().orderItem.findMany({
-        where: { orderId: id, status: { not: "CANCELLED" } },
-        select: { productId: true, trackedCategoryId: true },
-      });
-      const pids = items.map((li) => li.productId).filter(Boolean) as string[];
-      const products = pids.length
-        ? await this.prisma.forTenant().product.findMany({
-            where: { id: { in: pids } },
-            select: { id: true, trackedCategoryId: true },
-          })
-        : [];
-      const catByProduct = new Map(products.map((p) => [p.id, p.trackedCategoryId]));
-      await this.authGuard.assertAuthorizedOrThrow({
-        customerId: order.customerId,
-        lines: items.map((li) => ({
-          trackedCategoryId:
-            li.trackedCategoryId ??
-            (li.productId ? (catByProduct.get(li.productId) ?? null) : null),
-        })),
-        orderId: id,
-      });
-      // Lane R: the same "becomes a real sale" moment — a banned product refuses (409
-      // SELLING_RESTRICTED) BEFORE the status write / stock reservation. Drafts are created and
-      // edited without the check; this is the draft escape's second half.
-      await this.sellingRestrictions.assertLinesSellable({
-        tenantId: this.restrictionTenantId(user, order.tenantId),
-        customerId: order.customerId,
-        lines: items.flatMap((li) => (li.productId ? [{ productId: li.productId }] : [])),
-        channel: restrictionChannelForPrincipal(user), // judged at ENTRY time, like the license guard
-      });
-      checkedProductIds = new Set(pids);
+      judged = await judgeDraftPromotion(
+        {
+          prisma: this.prisma,
+          authGuard: this.authGuard,
+          restrictions: this.sellingRestrictions,
+        },
+        { order, user, tenantId: this.restrictionTenantId(user, order.tenantId) },
+      );
     }
 
     // B585: goods leaving is the enforcement moment (operators only, by the role gates above; before
@@ -2465,11 +2449,7 @@ export class OrdersService implements OnApplicationBootstrap {
               });
             // The Lane R check ran outside this tx: a product added since (a concurrent draft
             // edit) was never judged — roll back (the claim above included) and promote again.
-            if (activeItems.some((li) => li.productId && !checkedProductIds?.has(li.productId))) {
-              throw new ConflictException(
-                "The order's items changed while it was being promoted — review it and promote again.",
-              );
-            }
+            await assertJudgementHolds(judged, tx, id, activeItems);
             const stockLines = activeItems.filter((li): li is StockLine => !!li.productId);
             await this.decrementStockForSale(tx, stockLines, allowOversell, {
               orderId: id,
@@ -4683,16 +4663,19 @@ export class OrdersService implements OnApplicationBootstrap {
     // Lane R: an at-door add / qty raise of a banned product refuses (409 SELLING_RESTRICTED) BEFORE
     // the tx; OFF = one policy read. Re-checked under the row lock below (change-request-restrictions.ts).
     const tenantId = this.restrictionTenantId(resolver, order.tenantId);
+    // F1(i): the line is judged at the stricter of the resolver's and the REQUESTER's channel (a buyer's add
+    // approved by a driver is still a buyer's add); an unknown requester is the buyer.
+    const judgedAs = leastPrivilegedPrincipal(resolver, cr.requestedByRole);
     const restrictionPlan = await planChangeRequestRestrictions(
       { restrictions: this.sellingRestrictions },
-      { tenantId, existing: order.lineItems ?? [], cr, principal: resolver },
+      { tenantId, existing: order.lineItems ?? [], cr, principal: judgedAs },
     );
     if (restrictionPlan)
       await this.sellingRestrictions.assertLinesSellable({
         tenantId,
         customerId: order.customerId,
         lines: restrictionPlan.lines,
-        channel: restrictionChannelForPrincipal(resolver),
+        channel: restrictionChannelForPrincipal(judgedAs),
       });
 
     // P5-08b posture: reference reads on separate pooled connections are
