@@ -618,6 +618,9 @@ export class BillingService {
       });
     }
 
+    // F3: planned BEFORE any Stripe call - inside the window before the 1st it throws the coded 409.
+    const anchor = planCheckoutAnchor(new Date());
+
     const customerId = await this.ensureStripeCustomer(tenantId);
     // Throws BadRequestException when neither an override nor a catalog price
     // exists for this tenant's plan (e.g. Enterprise with no custom fee yet).
@@ -627,7 +630,6 @@ export class BillingService {
     const baseUrl = process.env.FRONTEND_URL ?? "http://localhost:3001";
     // SA-733 D6 / M6: ALWAYS an explicit anchor (the next 1st, 12:00 UTC), prorations created, and a session that
     // expires before the anchor so it can never complete after it (Stripe would then charge the full period).
-    const anchor = planCheckoutAnchor(new Date());
 
     // Inline price_data line item — bypasses StripeService.createCheckoutSession
     // (which only accepts a pre-created `priceId`) via the underlying client, since

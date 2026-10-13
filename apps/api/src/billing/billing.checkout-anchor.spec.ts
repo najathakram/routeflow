@@ -145,6 +145,18 @@ describe("SA-733 D6 / M6 — createCheckoutSession anchors every new subscriptio
     for (const li of sent(h).line_items) expect(li.price_data.recurring).toBeDefined();
   });
 
+  it("F3: inside the window before the 1st 12:00Z the checkout is refused (409 CHECKOUT_ANCHOR_WINDOW + retryAt), before any Stripe call", async () => {
+    jest.useFakeTimers({ now: new Date("2026-11-01T10:45:00Z"), doNotFake: ONLY_DATE });
+    const h = make();
+    const err: any = await h.billing.createCheckoutSession("t1", "month").catch((e) => e);
+    expect(err.getStatus()).toBe(409);
+    expect(err.getResponse()).toMatchObject({
+      code: API_ERROR_CODES.CHECKOUT_ANCHOR_WINDOW,
+      retryAt: "2026-11-01T12:01:00.000Z",
+    });
+    expect(h.create).not.toHaveBeenCalled();
+  });
+
   it("annual is refused (monthly only) with its own code, before any customer or session is created", async () => {
     const h = make();
     const err: any = await h.billing.createCheckoutSession("t1", "year").catch((e) => e);

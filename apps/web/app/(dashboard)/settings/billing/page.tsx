@@ -108,6 +108,7 @@ const NOT_BILLED_ONLINE_COPY = "Not billed online yet; your account manager will
 // ("Turn it off before adding your card...") is gone from the sheet.
 const TRIAL_BILLED_COPY = "It is billed from your first paid month, once you add your card.";
 const CHECKOUT_FAILED_COPY = "We couldn't start checkout. Nothing was changed. Please try again.";
+const CHECKOUT_REOPENS_SOON_COPY = "Checkout reopens in a few minutes.";
 const CHECKOUT_ADDONS_PENDING_FALLBACK =
   "Turn off your add-ons before adding your card, or contact support to set them up.";
 const addonIncludedCopy = (name: string) => `${name} is already included in your plan.`;
@@ -128,6 +129,17 @@ function checkoutErrorCopy(err: unknown): string {
   if (body?.code === API_ERROR_CODES.ADDON_BILLING_PENDING_CHECKOUT) {
     const text = body.message; // the one deliberate raw-message read on this page (allowlisted)
     return typeof text === "string" && text.trim() ? text : CHECKOUT_ADDONS_PENDING_FALLBACK;
+  }
+  if (body?.code === API_ERROR_CODES.CHECKOUT_ANCHOR_WINDOW) {
+    // F3: fixed copy plus the browser-local time of the `retryAt` FIELD (never the server's message).
+    const retryAt = new Date(
+      typeof (body as { retryAt?: unknown }).retryAt === "string"
+        ? (body as { retryAt: string }).retryAt
+        : NaN,
+    );
+    return Number.isNaN(retryAt.getTime())
+      ? CHECKOUT_REOPENS_SOON_COPY
+      : `Checkout reopens at ${retryAt.toLocaleTimeString([], { hour: "numeric", minute: "2-digit" })}`;
   }
   return CHECKOUT_FAILED_COPY;
 }
