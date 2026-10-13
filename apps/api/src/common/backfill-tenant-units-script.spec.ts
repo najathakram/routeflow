@@ -37,6 +37,8 @@ function helpers(): Record<string, unknown> {
       subPlanRaw: m.subOf({ planKey: "GROWTH", stripeSubId: "sub_1", couponFull: true }),
       backupAlias: m.parseArgs(["--tenant", ${JSON.stringify(ID)}, "--backup-taken"]).backupTaken,
       skips: m.parentSkipLines([{ reason: "b" }, { reason: "a" }, { reason: "b" }]),
+      pieceRows: m.explicitPieceLines([{ label: "Case" }, { label: " Box " }, { label: "Case" }]),
+      pieceNone: m.explicitPieceLines([]),
     }));`;
   const r = spawnSync(process.execPath, ["--input-type=module", "-e", src], { encoding: "utf8" });
   if (r.status !== 0) throw new Error(r.stderr);
@@ -95,6 +97,11 @@ describe("backfill-tenant-units.mjs gates (U-6, SA M3)", () => {
     it("subOf: no plan is never paying; with a plan couponFull passes RAW (unselected still throws)", () => {
       expect(h.subNoPlan).toEqual({ planKey: null, stripeSubId: null, couponFull: false });
       expect(h.subPlanRaw).toEqual({ planKey: "GROWTH", stripeSubId: "sub_1", couponFull: true });
+    });
+
+    it("levels on an explicit Piece row: one count line, then each level name with its count", () => {
+      expect(h.pieceRows).toEqual(["parent is an explicit Piece row: 3", "  Box: 1", "  Case: 2"]);
+      expect(h.pieceNone).toEqual([]);
     });
 
     it("parent skips are reported as counts per reason, never an id", () => {

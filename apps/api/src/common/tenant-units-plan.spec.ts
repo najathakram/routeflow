@@ -212,8 +212,31 @@ describe("planTenantUnits (U-6)", () => {
       });
     });
 
+    it("an EXISTING parent that is a factor-1 row is left (fill-only), counted and listed", () => {
+      const r = planParentFills([
+        lvl("pc", 1),
+        lvl("case", 12, { parentUnitId: "pc" }),
+        lvl("tray", 6, { parentUnitId: "pc", perParent: 6 }),
+        lvl("box", 24),
+      ]);
+      // case keeps its pointer and only gets perParent; tray is already filled
+      expect(r.parentFills).toContainEqual(
+        expect.objectContaining({ productUnitId: "case", parentUnitId: "pc", perParent: 12 }),
+      );
+      expect(r.explicitPieceParents).toEqual([
+        { productUnitId: "case", label: "case" },
+        { productUnitId: "tray", label: "tray" },
+      ]);
+      const main = plan([lvl("pc", 1), lvl("case", 12, { parentUnitId: "pc" })], []);
+      expect(main.counts.explicitPieceParent).toBe(1);
+    });
+
     it("a factor-1 level is the base itself: nothing to fill, nothing reported", () => {
-      expect(planParentFills([lvl("b", 1)])).toEqual({ parentFills: [], parentSkips: [] });
+      expect(planParentFills([lvl("b", 1)])).toEqual({
+        parentFills: [],
+        parentSkips: [],
+        explicitPieceParents: [],
+      });
     });
 
     it("a level that names a parent but has no perParent gets factor / parent factor", () => {

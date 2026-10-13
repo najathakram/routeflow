@@ -146,6 +146,8 @@ describeDb("tenant unit backfill (U-6)", () => {
     expect(r.stdout).toContain("tenantUnits created=8 existing=0");
     expect(r.stdout).toContain("skipped tooLong=1 synonyms=2 parent=1");
     expect(r.stdout).toContain("parent not filled for 1 level(s)");
+    // Odd names "Six" (not a factor-1 row) as its parent: no explicit-Piece line for tenant A
+    expect(r.stdout).not.toContain("parent is an explicit Piece row");
     expect(r.stdout).not.toMatch(/[0-9a-f]{8}-[0-9a-f]{4}/);
     expect(r.stdout).not.toContain(slug("a"));
 
@@ -205,6 +207,26 @@ describeDb("tenant unit backfill (U-6)", () => {
       perParent: 12, // no pack: the base
     });
     expect(await products(t)).toBe(productsBefore); // still no Product write
+  });
+
+  it("an existing parent on an explicit Piece row is left, counted and listed, dry run and apply", async () => {
+    const t = ids.pk;
+    const p = await product(t, "k3", "Box", [["Piece", 1]]);
+    const piece = p.units.Piece;
+    const tub = await prisma.productUnit.create({
+      data: { tenantId: t, productId: p.id, label: "Tub", factorToBase: 10, parentUnitId: piece },
+    });
+    for (const extra of [[], ["--apply"]]) {
+      const r = cli(t, ...extra);
+      expect(r.status).toBe(0);
+      expect(r.stdout).toContain("parent is an explicit Piece row: 1");
+      expect(r.stdout).toContain("  Tub: 1");
+    }
+    // fill-only: the pointer stays, perParent is filled (10 / 1)
+    expect(await prisma.productUnit.findUnique({ where: { id: tub.id } })).toMatchObject({
+      parentUnitId: piece,
+      perParent: 10,
+    });
   });
 
   it("a second --apply changes nothing (idempotent)", async () => {
