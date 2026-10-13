@@ -162,6 +162,9 @@ const CODE_COPY: Record<string, string> = {
 
 /** Exact server sentences (already product text) for refusals with no `code`; matched whole, never partially. */
 const KNOWN_REFUSAL_SENTENCES: Record<string, string> = {
+  // a buyer reorder where every line is restricted: the API's own sentence, already product text
+  "None of these items are available to you right now.":
+    "None of these items are available to you right now.",
   "Cannot duplicate an order-linked invoice. Create a new invoice or issue a credit note instead.":
     "This invoice came from an order, so it can't be duplicated. Create a new invoice or issue a credit note instead.",
 };

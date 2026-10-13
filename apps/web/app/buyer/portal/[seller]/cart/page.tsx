@@ -97,9 +97,22 @@ export default function BuyerCartPage() {
   // a plain page of the catalog silently omits any product outside it, and the
   // lookup below then prices those lines at 0.
   const cartProductIds = React.useMemo(() => cart.items.map((i) => i.productId), [cart.items]);
-  const { data: productsResult } = useBuyerProducts(
+  const { data: productsResult, isSuccess: catalogLoaded } = useBuyerProducts(
     cartProductIds.length > 0 ? { ids: cartProductIds } : { limit: 0 },
   );
+
+  // State portal limits (spec §4): a line the catalog no longer returns for this buyer is taken out of the cart, but
+  // only after a SUCCESSFUL load (a failed fetch removes nothing), and the buyer is told calmly, by name, once.
+  const [removedNames, setRemovedNames] = React.useState<string[]>([]);
+  React.useEffect(() => {
+    if (!catalogLoaded || cartProductIds.length === 0) return;
+    const known = new Set((productsResult?.data ?? []).map((p) => p.id));
+    const gone = cart.items.filter((i) => !known.has(i.productId));
+    if (gone.length === 0) return;
+    for (const g of gone) cart.removeItem(g.productId);
+    setRemovedNames((prev) => [...prev, ...gone.map((g) => g.name)]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- runs once per loaded catalog result
+  }, [catalogLoaded, productsResult]);
   const { data: promotions } = useBuyerPromotions();
 
   // Catalog meta (price/category/box) keyed by product id — category drives
@@ -310,9 +323,33 @@ export default function BuyerCartPage() {
   }
 
   // Empty cart
+
+  // Calm and non-error: no toast, no red; its only action is OK.
+  const removedNotice =
+    removedNames.length > 0 ? (
+      <div
+        role="status"
+        data-testid="cart-removed-notice"
+        className="mb-4 flex flex-wrap items-center justify-between gap-3 rounded-lg bg-surface-raised px-4 py-3 text-sm text-navy"
+      >
+        <span>
+          Some items are no longer available to you, so we took them out of your cart:{" "}
+          {removedNames.join(", ")}.
+        </span>
+        <button
+          type="button"
+          className="font-medium text-brand-600 hover:underline"
+          onClick={() => setRemovedNames([])}
+        >
+          OK
+        </button>
+      </div>
+    ) : null;
+
   if (cart.items.length === 0) {
     return (
       <div className="p-6">
+        {removedNotice}
         <button
           onClick={() => router.push(`/buyer/portal/${sellerSlug}/shop`)}
           className="mb-4 flex items-center gap-1.5 text-sm text-navy/70 hover:text-navy transition-colors"
@@ -344,6 +381,7 @@ export default function BuyerCartPage() {
       </button>
 
       <h1 className="text-2xl font-bold text-navy mb-4">Cart</h1>
+      {removedNotice}
 
       {/* Active order merge banner */}
       {willMerge && activeOrder && (

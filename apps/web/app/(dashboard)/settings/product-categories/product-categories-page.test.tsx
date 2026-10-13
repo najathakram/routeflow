@@ -11,6 +11,7 @@ let role = "TENANT_ADMIN";
 let categories: unknown[] = [];
 let isError = false;
 
+jest.mock("next/navigation", () => ({ useRouter: () => ({ push: jest.fn() }) }));
 jest.mock("@/lib/auth-context", () => ({
   ...jest.requireActual("@/lib/auth-context"),
   useAuth: () => ({ user: { role } }),
@@ -120,6 +121,15 @@ describe("Product labels page", () => {
     );
     fireEvent.click(screen.getByLabelText("Show archived"));
     expect(useCategories).toHaveBeenLastCalledWith(true);
+  });
+
+  it("each label row has Limit in portal… and opens the dialog scoped to that category (C, spec §1)", () => {
+    categories = [cat({ name: "Vapes" }), cat({ id: "c2", name: "Old", archivedAt: "2026-01-01" })];
+    render();
+    // an archived label cannot be limited
+    expect(screen.getAllByTestId("category-limit-in-portal")).toHaveLength(1);
+    fireEvent.click(screen.getByTestId("category-limit-in-portal"));
+    expect(screen.getByText("Limit “Vapes” in your portal")).toBeInTheDocument();
   });
 
   it("is read-only for a non-admin", () => {

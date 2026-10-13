@@ -277,25 +277,25 @@ describe("OrdersService — F06 guards (TP2)", () => {
      * of SELLING UNITS and its `unitPrice` the BOX price. upb 12, box $10.00.
      */
     function primeBoxUnawareLine() {
-      prisma.order.findUnique.mockResolvedValue({
-        ...MOCK_ORDER,
-        status: "PENDING",
-        lineItems: [
-          {
-            id: "li-boxunaware",
-            orderId: "ord-1",
-            productId: "prod-box",
-            qty: 2,
-            unitPrice: 10,
-            subtotal: 20,
-            status: "PENDING",
-            boxes: null,
-            pieces: null,
-            priceType: "STANDARD",
-            originalPrice: null,
-          },
-        ],
-      });
+      const lineItems = [
+        {
+          id: "li-boxunaware",
+          orderId: "ord-1",
+          productId: "prod-box",
+          qty: 2,
+          unitPrice: 10,
+          subtotal: 20,
+          status: "PENDING",
+          boxes: null,
+          pieces: null,
+          priceType: "STANDARD",
+          originalPrice: null,
+        },
+      ];
+      prisma.order.findUnique.mockResolvedValue({ ...MOCK_ORDER, status: "PENDING", lineItems });
+      // The lock-time read sees the same line the pre-lock read did (a buyer's edit is judged by the
+      // portal channel even with the switch off, and its plan is re-checked against this read).
+      prisma.orderItem.findMany.mockResolvedValue(lineItems);
       prisma.customer.findFirst.mockResolvedValue({ id: "cust-1", pricingTier: 1 });
       prisma.product.findMany.mockResolvedValue([
         {
@@ -307,7 +307,6 @@ describe("OrdersService — F06 guards (TP2)", () => {
           trackedSubcategoryId: null,
         },
       ]);
-      prisma.orderItem.findMany.mockResolvedValue([]);
     }
 
     it("REG-B47 (T3): a folded {qty:36,boxes:3,pieces:0} item bills 3 boxes, not 36 raw units", async () => {

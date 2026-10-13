@@ -1,3 +1,4 @@
+import type { BuyerReorderSkippedLine } from "@routeflow/types";
 import {
   Body,
   Controller,
@@ -75,7 +76,6 @@ import {
   isMergeContention,
   mapLockError,
 } from "../orders/merge-contention";
-import { buyerVisibleProductWhere, noBuyerRestrictions } from "./buyer-product-visibility";
 import {
   buyerSubmitHash,
   normalizeBuyerIdempotencyKey,
@@ -397,8 +397,8 @@ export class BuyerController {
   @UseInterceptors(BuyerTenantInterceptor)
   @ApiHeader({ name: "X-Tenant-Slug", required: true })
   @ApiOperation({ summary: "List distinct product categories for filter dropdowns" })
-  getCategories() {
-    return this.catalogService.getCategories();
+  getCategories(@CurrentBuyerCustomer() ctx: any) {
+    return this.catalogService.getCategories(ctx.customerId);
   }
 
   @Get("products/counts")
@@ -498,7 +498,8 @@ export class BuyerController {
       this.prisma.forTenant(),
       candidates,
       // B1211: the parent-visibility filter is tenant-scoped, so a parent link across tenants decides nothing.
-      buyerVisibleProductWhere(noBuyerRestrictions(ctx.tenantId)),
+      // The restriction-hidden ids ride the same builder, so a scanned code on a hidden product 404s too.
+      await this.catalogService.scanVisibilityWhere(ctx.customerId, ctx.tenantId),
     );
     if (!hit) throw new NotFoundException("Product not found");
     const match = hit.product;
@@ -1122,8 +1123,13 @@ export class BuyerController {
       source: "buyer",
       customerId: ctx.customerId,
     });
-    // The generated order goes back to the buyer: the customer-facing allowlist, never the staff row.
-    return toCustomerOrder(await this.templatesService.generateOrder(id, false, allowOversell));
+    // The generated order goes back to the buyer: the customer-facing allowlist, never the staff row. Lines a
+    // selling restriction hides from this buyer are left out and listed in `skipped` (BuyerReorderSkipped).
+    const outcome: { skipped: BuyerReorderSkippedLine[] } = { skipped: [] };
+    const order = toCustomerOrder(
+      await this.templatesService.generateOrder(id, false, allowOversell, outcome),
+    );
+    return order ? { ...order, skipped: outcome.skipped } : order;
   }
 
   @Patch("templates/:id")

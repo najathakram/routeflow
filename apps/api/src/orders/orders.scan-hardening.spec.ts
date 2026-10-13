@@ -1536,7 +1536,7 @@ describe("buyer barcode scan — reachable and catalog-scoped (T-B200 / R12 / RE
   let controller: BuyerController;
   let prisma: ReturnType<typeof createMockPrisma>;
   let scopedProductFindMany: jest.Mock;
-  let catalogService: { getProductDetail: jest.Mock };
+  let catalogService: { getProductDetail: jest.Mock; scanVisibilityWhere: jest.Mock };
   let stockAlertService: { isSubscribed: jest.Mock };
 
   beforeEach(async () => {
@@ -1557,7 +1557,13 @@ describe("buyer barcode scan — reachable and catalog-scoped (T-B200 / R12 / RE
       throw new Error("unscoped catalog read — the buyer scan rung must go through forTenant()");
     });
 
-    catalogService = { getProductDetail: jest.fn() };
+    catalogService = {
+      getProductDetail: jest.fn(),
+      // the buyer scope builder with no restriction-hidden ids (hidden ids are proven in the portal db spec)
+      scanVisibilityWhere: jest.fn(async (_c: string, tenantId: string) =>
+        buyerVisibleProductWhere(noBuyerRestrictions(tenantId)),
+      ),
+    };
     stockAlertService = { isSubscribed: jest.fn().mockResolvedValue(false) };
 
     const module: TestingModule = await Test.createTestingModule({

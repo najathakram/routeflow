@@ -1,6 +1,6 @@
 import * as React from "react";
 import userEvent from "@testing-library/user-event";
-import { render, screen, within } from "@testing-library/react";
+import { render, screen, waitFor, within } from "@testing-library/react";
 import BuyerDashboardPage from "./page";
 
 /**
@@ -155,5 +155,42 @@ describe("buyer dashboard — Standing Orders Reorder review", () => {
     render(<BuyerDashboardPage />);
     await screen.findAllByRole("button", { name: /^reorder$/i });
     expect(mockUseBuyerReorder).toHaveBeenCalledWith({ localErrorToast: true });
+  });
+});
+
+describe("buyer dashboard — reorder leaves out lines the portal no longer offers", () => {
+  it("some skipped: the order is placed and the buyer is told how many were left out", async () => {
+    mutateAsync.mockResolvedValueOnce({
+      id: "o1",
+      skipped: [{ productId: "x" }, { productId: "y" }],
+    });
+    const user = userEvent.setup();
+    render(<BuyerDashboardPage />);
+    await user.click(await screen.findByRole("button", { name: /^reorder$/i }));
+    await user.click(
+      within(await screen.findByRole("dialog")).getByRole("button", { name: "Place order" }),
+    );
+    expect(mutateAsync).toHaveBeenCalledTimes(1);
+    await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
+    expect(screen.getByTestId("reorder-skipped-note")).toHaveTextContent(
+      "2 items aren't available to you and were left out.",
+    );
+  });
+
+  it("all skipped: the API answers 400 with the sentence; the sheet stays and shows it as-is", async () => {
+    mutateAsync.mockRejectedValueOnce({
+      response: {
+        status: 400,
+        data: { message: "None of these items are available to you right now." },
+      },
+    });
+    const user = userEvent.setup();
+    render(<BuyerDashboardPage />);
+    await user.click(await screen.findByRole("button", { name: /^reorder$/i }));
+    const dialog = within(await screen.findByRole("dialog"));
+    await user.click(dialog.getByRole("button", { name: "Place order" }));
+    expect(await dialog.findByRole("alert")).toHaveTextContent(
+      "None of these items are available to you right now.",
+    );
   });
 });
