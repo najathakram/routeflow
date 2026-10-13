@@ -1,6 +1,7 @@
 import {
   Injectable,
   BadRequestException,
+  ConflictException,
   ForbiddenException,
   Logger,
   NotFoundException,
@@ -8,7 +9,8 @@ import {
 import { assertNotWalkIn } from "../customers/walk-in-protected";
 import { assertMayChangeAccount } from "./admin-account-protection";
 import { ConfigService } from "@nestjs/config";
-import { User, UserRole } from "@prisma/client";
+import { User, UserRole, UserStatus } from "@prisma/client";
+import { API_ERROR_CODES } from "../common/api-error-codes";
 import * as crypto from "crypto";
 import * as bcrypt from "bcrypt";
 import { PrismaService } from "../prisma/prisma.service";
@@ -203,15 +205,52 @@ export class UsersService {
     return { user, tempPassword };
   }
 
-  async changeStatus(userId: string, dto: ChangeUserStatusDto, callerRole: UserRole) {
+  async changeStatus(
+    userId: string,
+    dto: ChangeUserStatusDto,
+    callerRole: UserRole,
+    callerId?: string,
+  ) {
     const user = await this.prisma.forTenant().user.findUnique({ where: { id: userId } });
     if (!user) throw new NotFoundException("User not found");
     assertMayChangeAccount(user, callerRole);
     await this.assertNotWalkInAccount(userId);
-    return this.prisma.forTenant().user.update({
-      where: { id: userId },
-      data: { status: dto.status },
-      select: { id: true, username: true, email: true, role: true, status: true },
+    const deactivating = dto.status !== UserStatus.ACTIVE;
+    // Perms PR1 M2: a workspace can never lock itself out of account administration.
+    if (deactivating && callerId && userId === callerId) {
+      throw new ConflictException({
+        code: API_ERROR_CODES.SELF_DEACTIVATION_REFUSED,
+        message: "You can't deactivate your own account. Ask another admin to do it.",
+      });
+    }
+    const select = { id: true, username: true, email: true, role: true, status: true } as const;
+    if (!(
+      deactivating &&
+      user.role === UserRole.TENANT_ADMIN &&
+      user.status === UserStatus.ACTIVE
+    )) {
+      return this.prisma.forTenant().user.update({
+        where: { id: userId },
+        data: { status: dto.status },
+        select,
+      });
+    }
+    // Deactivating an active admin: read the tenant's active admins FOR UPDATE inside the same transaction as the
+    // write, so two admins deactivating each other at once serialize and the second sees the first's change.
+    const tenantId = this.prisma.getTenantId();
+    return this.prisma.tenantTransaction(async (tx) => {
+      const admins = await tx.$queryRaw<{ id: string }[]>`
+        SELECT id FROM "User"
+        WHERE "tenantId" = ${tenantId} AND role = 'TENANT_ADMIN' AND status = 'ACTIVE' AND "deletedAt" IS NULL
+        FOR UPDATE`;
+      if (!admins.some((a) => a.id !== userId)) {
+        throw new ConflictException({
+          code: API_ERROR_CODES.LAST_TENANT_ADMIN,
+          message:
+            "This is the workspace's only active admin. Make someone else an admin before deactivating this account.",
+        });
+      }
+      return tx.user.update({ where: { id: userId }, data: { status: dto.status }, select });
     });
   }
 

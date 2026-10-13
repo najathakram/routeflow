@@ -106,7 +106,7 @@ export class UsersController {
     @Body() dto: ChangeUserStatusDto,
     @CurrentUser() user: JwtPayload,
   ) {
-    return this.usersService.changeStatus(id, dto, user.role);
+    return this.usersService.changeStatus(id, dto, user.role, user.sub);
   }
 
   @Post(":id/reset-password")

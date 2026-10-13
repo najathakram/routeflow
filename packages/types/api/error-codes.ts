@@ -648,6 +648,17 @@ export const API_ERROR_CODES = {
    * sign-in (GET /auth/google).
    */
   SIGN_IN_ROUTE_RETIRED: "SIGN_IN_ROUTE_RETIRED",
+  /**
+   * 409 from PATCH /users/:id/status: a tenant admin tried to set their OWN account INACTIVE or SUSPENDED. Refused so
+   * a workspace can never lose the person changing it; another admin must do it. Nothing was written (Perms PR1 M2).
+   */
+  SELF_DEACTIVATION_REFUSED: "SELF_DEACTIVATION_REFUSED",
+  /**
+   * 409 from PATCH /users/:id/status: deactivating this account would leave the workspace with no ACTIVE tenant
+   * admin (nobody could manage users, billing or settings again). Make someone else an admin first. Nothing was
+   * written (Perms PR1 M2).
+   */
+  LAST_TENANT_ADMIN: "LAST_TENANT_ADMIN",
 } as const;
 
 /** The `flag` of a PLAN_GATE body that gates a count (a meter), not a feature flag. Not an error code. */

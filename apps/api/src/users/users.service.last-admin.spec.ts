@@ -8,7 +8,7 @@ import { ConflictException } from "@nestjs/common";
 import { Test, TestingModule } from "@nestjs/testing";
 import { ConfigService } from "@nestjs/config";
 import { UserRole } from "@prisma/client";
-import { API_ERROR_CODES } from "@routeflow/types";
+import { API_ERROR_CODES } from "../common/api-error-codes";
 import { UsersService } from "./users.service";
 import { PrismaService } from "../prisma/prisma.service";
 import { EmailService } from "../email/email.service";
