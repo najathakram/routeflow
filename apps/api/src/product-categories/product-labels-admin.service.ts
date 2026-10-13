@@ -15,25 +15,13 @@ import {
   type LabelChainLink,
 } from "../product-labels/effective-labels";
 import { SetProductLabelDto } from "./dto/set-product-label.dto";
+import { LabelLockTimeoutError, lockLabelCategory, writeLabelRow } from "./label-writer";
 
 const LABEL_INCLUDE = { category: { select: { name: true, archivedAt: true } } } as const;
 type LabelRow = Prisma.ProductCategoryLabelGetPayload<{ include: typeof LABEL_INCLUDE }>;
 
 /** Same hop bound as the engine (`MAX_ANCESTOR_DEPTH` in product-labels.service): a product has at most this many ancestors. */
 const MAX_HOPS = 5;
-/**
- * How long a label write waits for the per-category advisory lock. Kept well inside Prisma's 5 s
- * interactive-transaction budget: a longer wait would surface contention as an opaque P2028
- * (transaction expired) instead of the clear 409 below.
- */
-const LOCK_WAIT = "2s";
-
-/** Postgres `lock_not_available` (SQLSTATE 55P03), however Prisma wraps it (P2010 raw error / message). */
-function isLockTimeout(e: unknown): boolean {
-  const err = e as { meta?: { code?: string }; message?: string };
-  return err?.meta?.code === "55P03" || /55P03|lock timeout/i.test(err?.message ?? "");
-}
-
 /** Upper bound on the descendants one label removal will inspect — a runaway subtree fails closed. */
 const MAX_SUBTREE = 5000;
 /** How many voided opt-outs are spelled out in the audit row (the rest are counted). */
@@ -185,16 +173,9 @@ export class ProductLabelsAdminService {
     categoryId: string,
   ): Promise<void> {
     try {
-      // Bound only THIS wait; then restore the default so later row-lock waits are unaffected.
-      await tx.$executeRawUnsafe(`SET LOCAL lock_timeout = '${LOCK_WAIT}'`);
-      await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtext(${"product-labels"}), hashtext(${`${tenantId}:${categoryId}`}))`;
-      await tx.$executeRawUnsafe("SET LOCAL lock_timeout = 0");
+      await lockLabelCategory(tx, tenantId, categoryId); // the single writer's lock (label-writer.ts)
     } catch (e) {
-      if (isLockTimeout(e)) {
-        throw new ConflictException(
-          "Another label change for this category is in progress. Try again in a moment.",
-        );
-      }
+      if (e instanceof LabelLockTimeoutError) throw new ConflictException(e.message);
       throw e;
     }
   }
@@ -394,21 +375,13 @@ export class ProductLabelsAdminService {
           pin = product.parentProductId;
         }
 
-        const existing = await tx.productCategoryLabel.findFirst({
-          where: { productId, categoryId },
-          select: { id: true, mode: true },
+        const written: LabelRow = await writeLabelRow(tx, {
+          tenantId,
+          productId,
+          categoryId,
+          data: { mode: dto.mode, reason, parentProductIdAtWrite: pin, ...stamp },
+          include: LABEL_INCLUDE,
         });
-        const data = { mode: dto.mode, reason, parentProductIdAtWrite: pin, ...stamp };
-        const written: LabelRow = existing
-          ? await tx.productCategoryLabel.update({
-              where: { id: existing.id },
-              data,
-              include: LABEL_INCLUDE,
-            })
-          : await tx.productCategoryLabel.create({
-              data: { tenantId, productId, categoryId, ...data },
-              include: LABEL_INCLUDE,
-            });
         const voidedRows = await this.voidIfStoppedCarrying(
           tx,
           tenantId,

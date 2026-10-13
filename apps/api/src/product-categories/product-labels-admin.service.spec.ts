@@ -503,15 +503,19 @@ describe("ProductLabelsAdminService — lock budget and in-transaction checks (#
       (c) => c.model === model && (c.op.includes(sqlPart) || c.args?.includes?.(sqlPart)),
     );
 
-  it("bounds the lock wait well inside Prisma's 5 s budget, then restores the default", async () => {
+  it("bounds the lock wait well inside Prisma's 5 s budget, then restores the CALLER'S own lock_timeout", async () => {
     const s = family();
     await s.service.setLabel("GP", "c", { mode: "INCLUDE" }, user);
+    const read = idx(s, "$queryRaw", "current_setting('lock_timeout')");
     const set = s.db.calls.findIndex((c) => c.op === "SET LOCAL lock_timeout = '2s'");
-    const lock = idx(s, "$executeRaw");
-    const reset = s.db.calls.findIndex((c) => c.op === "SET LOCAL lock_timeout = 0");
-    expect(set).toBeGreaterThan(-1);
+    const lock = idx(s, "$executeRaw", "pg_advisory_xact_lock");
+    const restore = idx(s, "$executeRaw", "set_config('lock_timeout'");
+    expect(read).toBeGreaterThan(-1);
+    expect(read).toBeLessThan(set);
     expect(set).toBeLessThan(lock);
-    expect(lock).toBeLessThan(reset);
+    expect(lock).toBeLessThan(restore);
+    // restored to exactly what was read (a script's own lock_timeout survives the label lock)
+    expect(s.db.calls[restore].args).toEqual(["0"]);
   });
 
   it.each([
