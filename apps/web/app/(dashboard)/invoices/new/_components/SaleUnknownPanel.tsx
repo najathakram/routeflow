@@ -6,6 +6,7 @@ import { Button, Modal } from "@routeflow/ui/web";
 import {
   SALE_RECOVERY_COPY as COPY,
   saleRecovery,
+  saleRecoveryBody,
   type UnknownSale,
 } from "@routeflow/types/sale-attempt";
 
@@ -28,14 +29,24 @@ export function SaleUnknownPanel({
 }) {
   const [confirming, setConfirming] = React.useState(false);
   const recovery = saleRecovery(unknown);
+  const ref = React.useRef<HTMLDivElement>(null);
+  // The clerk must SEE this: bring the panel into view and put focus on Try again (after the form behind it
+  // disabled, which drops focus from whatever field they were in). Runs again if a retry fails and replaces it.
+  React.useEffect(() => {
+    const el = ref.current;
+    if (!el) return;
+    el.scrollIntoView?.({ block: "center" });
+    el.querySelector<HTMLButtonElement>("button")?.focus({ preventScroll: true });
+  }, [unknown]);
   return (
     <div
+      ref={ref}
       role="alert"
       data-testid="sale-unknown"
       className="mx-6 mt-6 space-y-2 rounded border border-amber-300 bg-amber-50 p-3 text-sm"
     >
       <p className="font-semibold">{COPY.title}</p>
-      <p>{COPY.body}</p>
+      <p>{saleRecoveryBody(unknown)}</p>
       <div className="flex flex-wrap items-center gap-3">
         <Button className="min-h-[44px]" onClick={onTryAgain} disabled={busy}>
           {COPY.tryAgain}

@@ -1719,7 +1719,15 @@ export default function NewInvoicePage() {
         />
       ) : null}
       {/* Row 485: a sale with an unknown outcome locks every control behind the panel above. */}
-      <fieldset disabled={saleLocked} className="m-0 min-w-0 space-y-5 border-0 p-6">
+      <fieldset
+        disabled={saleLocked}
+        data-locked={saleLocked ? "true" : undefined}
+        className={cn(
+          "m-0 min-w-0 space-y-5 border-0 p-6",
+          // locked behind the panel: visibly inert (the mobile composer dims to the same 0.45)
+          saleLocked && "cursor-not-allowed opacity-[0.45]",
+        )}
+      >
         {/* Back to the basis chooser */}
         <button
           onClick={() => setBasis(null)}

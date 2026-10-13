@@ -2,6 +2,7 @@ import { Pressable, StyleSheet, Text, View } from "react-native";
 import {
   SALE_RECOVERY_COPY as COPY,
   saleRecovery,
+  saleRecoveryBody,
   type UnknownSale,
 } from "@routeflow/types/sale-attempt";
 import { ios } from "@routeflow/ui/tokens";
@@ -35,7 +36,7 @@ export function SaleUnknownPanel({
   return (
     <View style={styles.panel} accessibilityRole="alert" testID="sale-unknown">
       <Text style={styles.title}>{COPY.title}</Text>
-      <Text style={styles.body}>{COPY.body}</Text>
+      <Text style={styles.body}>{saleRecoveryBody(unknown)}</Text>
       <View style={styles.actions}>
         <Pressable
           style={[styles.primary, busy && styles.disabled]}
@@ -47,21 +48,22 @@ export function SaleUnknownPanel({
           <Text style={styles.primaryText}>{COPY.tryAgain}</Text>
         </Pressable>
         <Pressable
+          style={[styles.secondary, busy && styles.disabled]}
+          disabled={busy}
           onPress={onOpen}
-          accessibilityRole="link"
+          accessibilityRole="button"
           accessibilityLabel={openLabel}
-          hitSlop={8}
         >
-          <Text style={styles.link}>{openLabel}</Text>
+          <Text style={styles.secondaryText}>{openLabel}</Text>
         </Pressable>
         <Pressable
+          style={[styles.tertiary, busy && styles.disabled]}
           onPress={onStartNew}
           disabled={busy}
           accessibilityRole="button"
           accessibilityLabel={COPY.startNew}
-          hitSlop={8}
         >
-          <Text style={styles.link}>{COPY.startNew}</Text>
+          <Text style={styles.tertiaryText}>{COPY.startNew}</Text>
         </Pressable>
       </View>
     </View>
@@ -92,10 +94,23 @@ const styles = StyleSheet.create({
   },
   primaryText: { color: "#fff", fontSize: 14, fontFamily: "Inter_600SemiBold" },
   disabled: { opacity: 0.5 },
-  link: {
-    color: ios.brand,
-    fontSize: 14,
-    fontFamily: "Inter_500Medium",
-    textDecorationLine: "underline",
+  // Every action is a >= 44pt-tall control: primary Try again, secondary open/check, tertiary Start a new sale.
+  secondary: {
+    minHeight: 44,
+    paddingHorizontal: 16,
+    borderRadius: 10,
+    borderWidth: 1,
+    borderColor: ios.brand,
+    backgroundColor: "#fff",
+    alignItems: "center",
+    justifyContent: "center",
   },
+  secondaryText: { color: ios.brand, fontSize: 14, fontFamily: "Inter_600SemiBold" },
+  tertiary: {
+    minHeight: 44,
+    paddingHorizontal: 12,
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  tertiaryText: { color: ios.brand, fontSize: 14, fontFamily: "Inter_500Medium" },
 });

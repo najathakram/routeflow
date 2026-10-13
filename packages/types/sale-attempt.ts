@@ -110,7 +110,11 @@ export function saleRecovery(unknown: UnknownSale): SaleRecovery {
  */
 export const SALE_RECOVERY_COPY = {
   title: "Sale not confirmed",
-  body: "We couldn't confirm this sale. It may already be recorded, so the cart is locked. Try again to finish it, or open it to check.",
+  /** The lead sentence; the closing clause follows the action offered (see saleRecoveryBody). */
+  body: "We couldn't confirm this sale. It may already be recorded, so the cart is locked. Try again to finish it, or",
+  bodyOrder: "open the order to check.",
+  bodyInvoice: "open the invoice to check.",
+  bodyRecent: "check recent orders.",
   tryAgain: "Try again",
   openOrder: "Open order",
   openInvoice: "Open invoice",
@@ -121,6 +125,18 @@ export const SALE_RECOVERY_COPY = {
     "Check recent orders first. If this sale was recorded, starting a new one rings it up twice.",
   confirmKeep: "Keep this sale",
 } as const;
+
+/** The full body line, its closing clause matching the one action offered (invoice, order, or recent orders). */
+export function saleRecoveryBody(unknown: UnknownSale): string {
+  const r = saleRecovery(unknown);
+  const end =
+    r.kind === "invoice"
+      ? SALE_RECOVERY_COPY.bodyInvoice
+      : r.kind === "order"
+        ? SALE_RECOVERY_COPY.bodyOrder
+        : SALE_RECOVERY_COPY.bodyRecent;
+  return `${SALE_RECOVERY_COPY.body} ${end}`;
+}
 
 const idOrNull = (v: unknown): string | null => (nonEmpty(v) ? v : null);
 

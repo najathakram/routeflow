@@ -5,7 +5,7 @@
  */
 import * as fs from "fs";
 import * as path from "path";
-import { SALE_RECOVERY_COPY, saleRecovery } from "@routeflow/types/sale-attempt";
+import { SALE_RECOVERY_COPY, saleRecovery, saleRecoveryBody } from "@routeflow/types/sale-attempt";
 import { createSaleAttemptKey, isDefinitiveSaleRefusal } from "../lib/sale-attempt-key";
 
 const apiError = (status: number, data: Record<string, unknown> = {}) => ({
@@ -187,7 +187,10 @@ describe("saleRecovery and the shared copy", () => {
   it("pins the copy both clients show", () => {
     expect(SALE_RECOVERY_COPY).toEqual({
       title: "Sale not confirmed",
-      body: "We couldn't confirm this sale. It may already be recorded, so the cart is locked. Try again to finish it, or open it to check.",
+      body: "We couldn't confirm this sale. It may already be recorded, so the cart is locked. Try again to finish it, or",
+      bodyOrder: "open the order to check.",
+      bodyInvoice: "open the invoice to check.",
+      bodyRecent: "check recent orders.",
       tryAgain: "Try again",
       openOrder: "Open order",
       openInvoice: "Open invoice",
@@ -198,6 +201,21 @@ describe("saleRecovery and the shared copy", () => {
         "Check recent orders first. If this sale was recorded, starting a new one rings it up twice.",
       confirmKeep: "Keep this sale",
     });
+  });
+});
+
+describe("saleRecoveryBody follows the action offered", () => {
+  const lead =
+    "We couldn't confirm this sale. It may already be recorded, so the cart is locked. Try again to finish it, or";
+  it.each([
+    [{ invoiceId: "i1", orderId: "o1" }, "open the invoice to check."],
+    [{ invoiceId: null, orderId: "o1" }, "open the order to check."],
+    [{ invoiceId: null, orderId: null }, "check recent orders."],
+  ])("%j", (unknown, tail) => {
+    expect(saleRecoveryBody(unknown)).toBe(`${lead} ${tail}`);
+  });
+  it("never offers to open something when nothing exists", () => {
+    expect(saleRecoveryBody({ invoiceId: null, orderId: null })).not.toMatch(/open the/);
   });
 });
 
@@ -238,5 +256,30 @@ describe("the composer locks and renders the three actions", () => {
     expect(src).toMatch(/label: SALE_RECOVERY_COPY\.recentOrders/);
     expect(src).toMatch(/onPress: startNewSale/);
     expect(src).toMatch(/postSale\(lastSaleRef\.current\)/);
+  });
+});
+
+describe("the panel's actions are real controls, in order", () => {
+  const panel = fs.readFileSync(
+    path.join(__dirname, "..", "components", "SaleUnknownPanel.tsx"),
+    "utf8",
+  );
+
+  it("no action is a bare text link: primary, secondary and tertiary are each >= 44pt tall", () => {
+    expect(panel).not.toMatch(/styles\.link/);
+    for (const name of ["primary", "secondary", "tertiary"]) {
+      expect(panel).toMatch(new RegExp(`${name}: \\{[^}]*minHeight: 44`));
+    }
+  });
+
+  it("keeps the order Try again (primary), then open/check (secondary), then Start a new sale (tertiary)", () => {
+    const at = (re: RegExp) => panel.search(re);
+    expect(at(/styles\.primary/)).toBeGreaterThan(0);
+    expect(at(/styles\.primary\b/)).toBeLessThan(at(/styles\.secondary\b/));
+    expect(at(/styles\.secondary\b/)).toBeLessThan(at(/styles\.tertiary\b/));
+  });
+
+  it("uses the shared body line so its closing clause matches the action", () => {
+    expect(panel).toMatch(/saleRecoveryBody\(unknown\)/);
   });
 });

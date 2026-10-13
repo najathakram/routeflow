@@ -1,6 +1,6 @@
 import * as React from "react";
 import userEvent from "@testing-library/user-event";
-import { SALE_RECOVERY_COPY as COPY } from "@routeflow/types/sale-attempt";
+import { SALE_RECOVERY_COPY as COPY, saleRecoveryBody } from "@routeflow/types/sale-attempt";
 import { act, renderWithProviders, screen, waitFor, within } from "@/test-utils/render";
 import NewInvoicePage from "./page";
 
@@ -151,9 +151,55 @@ describe("row 485 — an unknown New sale outcome locks the cart", () => {
     await ringAndFail(fiveHundred);
     const panel = screen.getByTestId("sale-unknown");
     expect(within(panel).getByText(COPY.title)).toBeInTheDocument();
-    expect(within(panel).getByText(COPY.body)).toBeInTheDocument();
+    expect(
+      within(panel).getByText(saleRecoveryBody({ invoiceId: null, orderId: null })),
+    ).toBeInTheDocument();
     expect(within(panel).getByRole("button", { name: COPY.tryAgain })).toBeInTheDocument();
     expect(within(panel).getByRole("button", { name: COPY.startNew })).toBeInTheDocument();
+  });
+
+  it.each([
+    [{ statusCode: 500 }, "check recent orders."],
+    [{ orderId: "ord-1" }, "open the order to check."],
+    [{ invoiceId: "inv-1", orderId: "ord-1" }, "open the invoice to check."],
+  ])("the body's closing clause follows the action offered (%j)", async (data, tail) => {
+    await ringAndFail({ response: { status: 500, data } });
+    const panel = screen.getByTestId("sale-unknown");
+    expect(panel.textContent).toContain(`Try again to finish it, or ${tail}`);
+    // never offers to open something that does not exist
+    if (!("orderId" in data) && !("invoiceId" in data)) {
+      expect(panel.textContent).not.toMatch(/open the (order|invoice)/);
+    }
+  });
+
+  it("the locked form LOOKS locked: the disabled fieldset is dimmed and not-allowed; the panel is not dimmed", async () => {
+    await ringAndFail(fiveHundred);
+    const fieldset = document.querySelector("fieldset") as HTMLFieldSetElement;
+    expect(fieldset).toBeDisabled();
+    expect(fieldset.className).toContain("opacity-[0.45]");
+    expect(fieldset.className).toContain("cursor-not-allowed");
+    expect(fieldset.contains(screen.getByTestId("sale-unknown"))).toBe(false);
+    expect(screen.getByTestId("sale-unknown").className).not.toContain("opacity");
+  });
+
+  it("an unlocked form is not dimmed", async () => {
+    const user = userEvent.setup();
+    renderWithProviders(<NewInvoicePage />);
+    await user.click(screen.getByRole("button", { name: /new sale/i }));
+    const fieldset = document.querySelector("fieldset") as HTMLFieldSetElement;
+    expect(fieldset.className).not.toContain("opacity-[0.45]");
+  });
+
+  it("the clerk SEES it: the panel is scrolled into view and focus lands on Try again", async () => {
+    const scroll = jest.fn();
+    (Element.prototype as unknown as { scrollIntoView: unknown }).scrollIntoView = scroll;
+    try {
+      await ringAndFail(fiveHundred);
+      expect(scroll).toHaveBeenCalled();
+      expect(document.activeElement).toBe(screen.getByRole("button", { name: COPY.tryAgain }));
+    } finally {
+      delete (Element.prototype as unknown as { scrollIntoView?: unknown }).scrollIntoView;
+    }
   });
 
   it("Try again resends the SAME body under the SAME key", async () => {
