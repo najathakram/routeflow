@@ -214,6 +214,23 @@ describe("Notifications page — grouped list (#1965)", () => {
     expect(within(soon).queryAllByRole("switch")).toHaveLength(0);
   });
 
+  it("apple-ux: 'Low stock' under Coming soon points an admin to the live daily digest below", () => {
+    renderWithProviders(<NotificationsSettingsTab />);
+    const soon = screen.getByText(/^coming soon$/i).closest("details") as HTMLElement;
+    const link = within(soon).getByRole("link", { name: "The daily low-stock digest is below" });
+    expect(link).toHaveAttribute("href", "#low-stock-digest");
+  });
+
+  it("apple-ux: a non-admin sees no digest pointer (the digest card is admin-only)", () => {
+    mockRole = "OPERATOR";
+    try {
+      renderWithProviders(<NotificationsSettingsTab />);
+      expect(screen.queryByRole("link", { name: /daily low-stock digest/i })).toBeNull();
+    } finally {
+      mockRole = "TENANT_ADMIN";
+    }
+  });
+
   it("T9 the message meter is hidden unless a metered channel is LIVE", () => {
     const { unmount } = renderWithProviders(<NotificationsSettingsTab />);
     expect(screen.queryByText(/messages used/i)).not.toBeInTheDocument();

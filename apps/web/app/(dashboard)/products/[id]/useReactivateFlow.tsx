@@ -5,13 +5,14 @@ import { useToast } from "@routeflow/ui/web";
 import { useDeactivateProduct, useReactivateProduct } from "@/lib/api/products";
 import { ConfirmDialog } from "@/components/ConfirmDialog";
 import {
+  codeTakenOnSubmit,
   deactivateFailureToast,
   getReactivationRefusal,
   isReadOnlyRefusal,
   type ReactivationRefusal,
 } from "@/lib/product-reactivation-refusal";
 import { getFamilyCascadePrompt, type FamilyCascadePrompt } from "@/lib/product-family-cascade";
-import { ReactivateConflictDialog } from "./ReactivateConflictDialog";
+import { ReactivateConflictDialog, type NewCodes } from "./ReactivateConflictDialog";
 
 export type ProductKind = "product" | "variant";
 const noun = (k: ProductKind) => (k === "variant" ? "variant" : "product");
@@ -40,23 +41,50 @@ export function useReactivateFlow(opts?: { onReactivated?: (id: string) => void 
   const [pending, setPending] = React.useState<{
     id: string;
     kind: ProductKind;
+    name?: string;
     refusal: ReactivationRefusal;
   } | null>(null);
+  // Codes the server refused on a new-code submit (a 400, or the write's 409 CODE_TAKEN / BARCODE_TAKEN):
+  // the dialog stays open on its new-code step and flags them inline.
+  const [rejected, setRejected] = React.useState<NewCodes | null>(null);
+  // A second click before the first request settles must not send a second PATCH.
+  const inFlight = React.useRef(false);
 
   const run = React.useCallback(
-    (id: string, kind: ProductKind, deactivateHolderIds?: string[]) => {
+    (
+      id: string,
+      kind: ProductKind,
+      name?: string,
+      extra?: { deactivateHolderIds?: string[]; newCodes?: NewCodes },
+    ) => {
+      if (inFlight.current) return;
+      inFlight.current = true;
+      setRejected(null);
       reactivate.mutate(
-        { id, deactivateHolderIds },
+        { id, ...extra },
         {
+          onSettled: () => {
+            inFlight.current = false;
+          },
           onSuccess: () => {
             setPending(null);
+            setRejected(null);
             toast({ title: `${Noun(kind)} reactivated`, variant: "success" });
             opts?.onReactivated?.(id);
           },
           onError: (err) => {
-            const refusal = getReactivationRefusal(err);
-            if (refusal) setPending({ id, kind, refusal });
-            else {
+            // A request that carried replacement codes and was refused on one of them (the 400, or the
+            // write's own 409 CODE_TAKEN / BARCODE_TAKEN): stay on the new-code step, typed codes kept,
+            // the refused one flagged. A request without new codes keeps the holders / retry refusal.
+            const takenField = extra?.newCodes ? codeTakenOnSubmit(err, extra.newCodes) : null;
+            const refusal = takenField ? null : getReactivationRefusal(err);
+            if (takenField && extra?.newCodes) {
+              const next: NewCodes = {};
+              next[takenField] = extra.newCodes[takenField];
+              setRejected(next);
+            } else if (refusal) {
+              setPending({ id, kind, name, refusal });
+            } else {
               setPending(null);
               // READ_ONLY already got the global "workspace is read-only" toast: no second one.
               if (!isReadOnlyRefusal(err)) {
@@ -122,16 +150,27 @@ export function useReactivateFlow(opts?: { onReactivated?: (id: string) => void 
       />
       <ReactivateConflictDialog
         refusal={pending?.refusal ?? null}
+        productName={pending?.name}
+        rejectedCodes={rejected}
         loading={reactivate.isPending}
-        onClose={() => setPending(null)}
-        onResolve={(ids) => pending && run(pending.id, pending.kind, ids)}
-        onRetry={() => pending && run(pending.id, pending.kind)}
+        onClose={() => {
+          setPending(null);
+          setRejected(null);
+        }}
+        onResolve={(ids) =>
+          pending && run(pending.id, pending.kind, pending.name, { deactivateHolderIds: ids })
+        }
+        onResolveWithCodes={(codes) =>
+          pending && run(pending.id, pending.kind, pending.name, { newCodes: codes })
+        }
+        onRetry={() => pending && run(pending.id, pending.kind, pending.name)}
       />
     </>
   );
 
   return {
-    start: (id: string, kind: ProductKind = "product") => run(id, kind),
+    /** `name` is the product's name, shown in the conflict dialog's new-code step. */
+    start: (id: string, kind: ProductKind = "product", name?: string) => run(id, kind, name),
     /** Ask before deactivating: it releases the product's codes. */
     askDeactivate: (id: string, name: string, kind: ProductKind = "product") =>
       setDeactivating({ id, name, kind }),

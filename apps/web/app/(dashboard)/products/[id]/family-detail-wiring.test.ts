@@ -31,7 +31,10 @@ describe("products/[id]/page.tsx — family wiring (WS8)", () => {
     // the Stock & Cost card (Set cost, movements) is not rendered for a family
     expect(src).toMatch(/product\.kind !== "FAMILY" && \(\s*<ProductStockCostCard/);
     // "Make variant of…" is not offered on a family
-    expect(src).toMatch(/isOperator && !product\.parentProductId && product\.kind !== "FAMILY"/);
+    // (the header buttons live in ProductHeaderControls since VU-2)
+    const header = fs.readFileSync(path.join(__dirname, "ProductHeaderControls.tsx"), "utf8");
+    expect(header).toMatch(/isOperator && !product\.parentProductId && product\.kind !== "FAMILY"/);
+    expect(src).toMatch(/<ProductHeaderControls/);
   });
 
   it("the page stays under its size-ratchet cap (the Stock & Cost card lives in its own component)", () => {

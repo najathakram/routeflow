@@ -199,9 +199,13 @@ describeFakes("local-env.mjs --proof-stack / --build-sha (#2491), fake docker an
   function run(flags: string[], env: Record<string, string>) {
     const childEnv: NodeJS.ProcessEnv = { ...process.env, ...env };
     delete childEnv.PROOF_STACK_REQUIRE;
+    delete childEnv.RF_HEAVY_SLOT_TOKEN;
+    // --build-sha takes the heavy slot (#3376): a private slot dir, so a verify holding the machine's
+    // slot (often the one running this spec) never blocks the child into the spawn timeout.
     Object.assign(childEnv, env, {
       PATH: `${path.join(dir, "bin")}${path.delimiter}${process.env.PATH}`,
       PROOF_STACK_LOG: log,
+      RF_HEAVY_SLOT_DIR: path.join(dir, "heavy-slot"),
     });
     const child = `"${process.execPath}" "${path.join(dir, "child.js")}"`;
     const res = spawnSync(process.execPath, [LOCAL_ENV, ...flags, "--", child], {
