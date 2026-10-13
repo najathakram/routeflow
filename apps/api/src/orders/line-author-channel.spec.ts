@@ -297,11 +297,9 @@ describe("legacy source (Order.sourceRecorded)", () => {
     });
 
     it("a line written in the edit's own transaction, just before its revision row, is the editor's (BUYER)", () => {
-      const a = resolveLineAuthors(
-        legacy,
-        [{ ...revBy(true, "CUSTOMER", ["added", 1]), createdAt: ms(60_001) }],
-        [line("added", ms(60_000))],
-      );
+      // The revision row lands 1 ms after the line it added (same transaction); its timestamp is not read.
+      const revision = { ...revBy(true, "CUSTOMER", ["added", 1]), createdAt: ms(60_001) };
+      const a = resolveLineAuthors(legacy, [revision], [line("added", ms(60_000))]);
       expect(a.channelOf("added")).toBe("BUYER_PORTAL");
     });
 
