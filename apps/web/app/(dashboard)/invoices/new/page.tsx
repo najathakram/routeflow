@@ -324,10 +324,11 @@ function ProductSearchInput({
           setExpandedParentId(null);
         }}
         onFocus={() => setOpen(true)}
-        className="h-9 w-full rounded border border-surface-border bg-white px-2.5 text-sm text-navy placeholder:text-navy/30 focus:border-transparent focus:outline-none focus:ring-1 focus:ring-brand-500"
+        className="h-9 w-full rounded border border-surface-border bg-white px-2.5 text-sm text-navy placeholder:text-navy/30 focus:border-transparent focus:outline-none focus:ring-1 focus:ring-brand-500 max-md:h-11"
       />
       <BarcodeScannerButton
         inputRef={inputRef}
+        className="max-md:h-11 max-md:w-11 max-md:shrink-0"
         onScan={async (code) => {
           try {
             const product = await apiClient
@@ -450,6 +451,9 @@ interface LineItemState extends InvoiceUnitFields {
   taxable: boolean;
   category?: string; // product category — for the per-category margin floor
 }
+
+/** Visible per-field label of the stacked (below md) line card; the table header carries them from md up. */
+const MOBILE_FIELD_LABEL = "mb-1 block text-xs font-medium text-navy/70 md:hidden";
 
 function createEmptyItem(): LineItemState {
   return {
@@ -713,7 +717,7 @@ function LineUnitControl({
   const hasPicker = enabled && !!item.productId && (units.data?.length ?? 0) > 0;
   if (!hasPicker) return <>{legacy}</>;
   return (
-    <div className="mt-1 [&_select]:h-8">
+    <div className="mt-1 [&_select]:h-8 max-md:[&_select]:h-11">
       <OrderLineUnitPicker
         line={pickerLineOf(item)}
         tier={tier}
@@ -749,7 +753,7 @@ function LevelCount({
           aria-label={`${item.unitLabel} count`}
           value={item.qty}
           onChange={(v) => onCount(Math.max(0, Math.trunc(v ?? 0)))}
-          className="h-9 min-w-0 flex-1 rounded border border-surface-border bg-white px-2 text-right text-sm text-navy focus:border-transparent focus:outline-none focus:ring-1 focus:ring-brand-500 aria-disabled:opacity-60"
+          className="h-9 min-w-0 flex-1 rounded border border-surface-border bg-white px-2 text-right text-sm text-navy focus:border-transparent focus:outline-none focus:ring-1 focus:ring-brand-500 aria-disabled:opacity-60 max-md:h-11"
         />
         {/* The unit the count is in, worded by the vocabulary helper (apple-ux 2026-10-13: Qty never said "Case"). */}
         <span className="shrink-0 text-xs text-navy/70">
@@ -2077,10 +2081,11 @@ export default function NewInvoicePage() {
                 {/* Table header */}
                 <div
                   className={cn(
-                    "gap-2 rounded-t bg-gray-50 px-1 py-2 text-xs font-semibold uppercase tracking-wider text-gray-500",
+                    // Below md the labels sit on each field of the stacked card, so the header hides.
+                    "hidden gap-2 rounded-t bg-gray-50 px-1 py-2 text-xs font-semibold uppercase tracking-wider text-gray-500 md:grid",
                     showAvgCost
-                      ? "grid grid-cols-[1fr_70px_100px_90px_72px_44px_32px]"
-                      : "grid grid-cols-[1fr_70px_100px_90px_44px_32px]",
+                      ? "md:grid-cols-[1fr_70px_100px_90px_72px_44px_32px]"
+                      : "md:grid-cols-[1fr_70px_100px_90px_44px_32px]",
                   )}
                 >
                   <span>Item Details</span>
@@ -2100,14 +2105,16 @@ export default function NewInvoicePage() {
                       else rowRefs.current.delete(item.key);
                     }}
                     className={cn(
-                      "items-center gap-2 border-b border-surface-border pb-2",
+                      // Below md: a 4-column stacked card (item + delete / qty + rate / discount + tax
+                      // / total). From md up: the table row it always was.
+                      "grid grid-cols-4 items-start gap-x-2 gap-y-3 border-surface-border max-md:mb-3 max-md:rounded-lg max-md:border max-md:bg-white max-md:p-3 md:items-center md:gap-y-2 md:border-b md:pb-2",
                       showAvgCost
-                        ? "grid grid-cols-[1fr_70px_100px_90px_72px_44px_32px]"
-                        : "grid grid-cols-[1fr_70px_100px_90px_44px_32px]",
+                        ? "md:grid-cols-[1fr_70px_100px_90px_72px_44px_32px]"
+                        : "md:grid-cols-[1fr_70px_100px_90px_44px_32px]",
                     )}
                   >
                     {/* Description / product search */}
-                    <div className="min-w-0">
+                    <div className="min-w-0 max-md:col-span-3 max-md:col-start-1 max-md:row-start-1">
                       <ProductSearchInput
                         value={item.description}
                         onCreateProduct={(searchTerm) => {
@@ -2195,7 +2202,7 @@ export default function NewInvoicePage() {
                                   type="button"
                                   onClick={() => setLineSellBy(item.key, "case")}
                                   className={cn(
-                                    "max-w-[104px] truncate whitespace-nowrap px-1.5 py-0.5 transition-colors",
+                                    "max-w-[104px] truncate whitespace-nowrap px-1.5 py-0.5 transition-colors max-md:min-h-11",
                                     (item.sellBy ?? "case") === "case"
                                       ? "bg-brand-500 text-white"
                                       : "bg-white text-navy/70 hover:bg-surface-raised",
@@ -2207,7 +2214,7 @@ export default function NewInvoicePage() {
                                   type="button"
                                   onClick={() => setLineSellBy(item.key, "unit")}
                                   className={cn(
-                                    "max-w-[104px] truncate whitespace-nowrap border-l border-surface-border px-1.5 py-0.5 transition-colors",
+                                    "max-w-[104px] truncate whitespace-nowrap border-l border-surface-border px-1.5 py-0.5 transition-colors max-md:min-h-11",
                                     item.sellBy === "unit"
                                       ? "bg-brand-500 text-white"
                                       : "bg-white text-navy/70 hover:bg-surface-raised",
@@ -2224,94 +2231,99 @@ export default function NewInvoicePage() {
                     </div>
 
                     {/* Qty — box/piece mode if unitsPerBox set, otherwise plain number */}
-                    {item.unitLabel ? (
-                      <LevelCount
-                        item={item}
-                        enabled={unitsOn}
-                        locked={!!pendingUnitOf(item)}
-                        onCount={(n) => updateItem(item.key, { qty: n })}
-                      />
-                    ) : (item.unitsPerBox ?? 0) > 1 ? (
-                      item.sellBy === "unit" ? (
-                        <div className="flex flex-col gap-0.5">
-                          <input
-                            type="number"
-                            min={0}
-                            value={item.qty}
-                            onChange={(e) =>
-                              setLineUnitQty(item.key, parseInt(e.target.value, 10) || 0)
-                            }
-                            onFocus={(e) => e.target.select()}
-                            className="aria-disabled:opacity-60 w-full rounded border border-surface-border bg-white px-1 py-1 text-center text-xs font-semibold text-navy focus:border-transparent focus:outline-none focus:ring-1 focus:ring-brand-500"
-                            readOnly={!!pendingUnitOf(item)}
-                            aria-disabled={!!pendingUnitOf(item) || undefined}
-                            title={`Total ${w.base.lowerOther}`}
-                          />
-                          <span className="text-[9px] text-navy/30 text-right">
-                            {w.base.short.other}
-                          </span>
-                        </div>
-                      ) : (
-                        <div className="flex flex-col gap-0.5">
-                          <div className="flex items-center gap-0.5">
+                    <div className="min-w-0 max-md:col-span-2 md:contents">
+                      <span className={MOBILE_FIELD_LABEL}>Qty</span>
+                      {item.unitLabel ? (
+                        <LevelCount
+                          item={item}
+                          enabled={unitsOn}
+                          locked={!!pendingUnitOf(item)}
+                          onCount={(n) => updateItem(item.key, { qty: n })}
+                        />
+                      ) : (item.unitsPerBox ?? 0) > 1 ? (
+                        item.sellBy === "unit" ? (
+                          <div className="flex flex-col gap-0.5">
                             <input
                               type="number"
                               min={0}
-                              value={item.boxes ?? 0}
-                              onChange={(e) => {
-                                const boxes = Math.max(0, parseInt(e.target.value, 10) || 0);
-                                const pieces = item.pieces ?? 0;
-                                updateItem(item.key, {
-                                  boxes,
-                                  qty: boxes * item.unitsPerBox! + pieces,
-                                });
-                              }}
+                              value={item.qty}
+                              onChange={(e) =>
+                                setLineUnitQty(item.key, parseInt(e.target.value, 10) || 0)
+                              }
                               onFocus={(e) => e.target.select()}
-                              className="aria-disabled:opacity-60 w-8 rounded border border-surface-border bg-white px-1 py-1 text-center text-xs font-semibold text-navy focus:border-transparent focus:outline-none focus:ring-1 focus:ring-brand-500"
+                              className="aria-disabled:opacity-60 w-full rounded border border-surface-border bg-white px-1 py-1 text-center text-xs font-semibold text-navy focus:border-transparent focus:outline-none focus:ring-1 focus:ring-brand-500 max-md:h-11"
                               readOnly={!!pendingUnitOf(item)}
                               aria-disabled={!!pendingUnitOf(item) || undefined}
-                              title={w.pack.other}
+                              title={`Total ${w.base.lowerOther}`}
                             />
-                            <span className="text-[10px] text-navy/70">{w.pack.lower} +</span>
-                            <input
-                              type="number"
-                              min={0}
-                              max={(item.unitsPerBox ?? 0) - 1}
-                              value={item.pieces ?? 0}
-                              onChange={(e) => {
-                                const pieces = Math.max(0, parseInt(e.target.value, 10) || 0);
-                                const boxes = item.boxes ?? 0;
-                                updateItem(item.key, {
-                                  pieces,
-                                  qty: boxes * item.unitsPerBox! + pieces,
-                                });
-                              }}
-                              onFocus={(e) => e.target.select()}
-                              className="aria-disabled:opacity-60 w-8 rounded border border-surface-border bg-white px-1 py-1 text-center text-xs font-semibold text-navy focus:border-transparent focus:outline-none focus:ring-1 focus:ring-brand-500"
-                              readOnly={!!pendingUnitOf(item)}
-                              aria-disabled={!!pendingUnitOf(item) || undefined}
-                              title={`Extra ${w.base.lowerOther}`}
-                            />
+                            <span className="text-[9px] text-navy/30 text-right">
+                              {w.base.short.other}
+                            </span>
                           </div>
-                          <span className="text-[9px] text-navy/30 text-right">
-                            {item.qty} {w.baseShortFor(item.qty)}
-                          </span>
-                        </div>
-                      )
-                    ) : (
-                      <DecimalInput
-                        decimals={3}
-                        min={0}
-                        readOnly={!!pendingUnitOf(item)}
-                        aria-disabled={!!pendingUnitOf(item) || undefined}
-                        value={item.qty}
-                        onChange={(v) => updateItem(item.key, { qty: v ?? 0 })}
-                        className="h-9 rounded border border-surface-border bg-white px-2 text-right text-sm text-navy focus:border-transparent focus:outline-none focus:ring-1 focus:ring-brand-500 aria-disabled:opacity-60"
-                      />
-                    )}
+                        ) : (
+                          <div className="flex flex-col gap-0.5">
+                            <div className="flex items-center gap-0.5 max-md:flex-wrap">
+                              <input
+                                type="number"
+                                min={0}
+                                value={item.boxes ?? 0}
+                                onChange={(e) => {
+                                  const boxes = Math.max(0, parseInt(e.target.value, 10) || 0);
+                                  const pieces = item.pieces ?? 0;
+                                  updateItem(item.key, {
+                                    boxes,
+                                    qty: boxes * item.unitsPerBox! + pieces,
+                                  });
+                                }}
+                                onFocus={(e) => e.target.select()}
+                                className="aria-disabled:opacity-60 w-8 rounded border border-surface-border bg-white px-1 py-1 text-center text-xs font-semibold text-navy focus:border-transparent focus:outline-none focus:ring-1 focus:ring-brand-500 max-md:h-11 max-md:w-11"
+                                readOnly={!!pendingUnitOf(item)}
+                                aria-disabled={!!pendingUnitOf(item) || undefined}
+                                title={w.pack.other}
+                              />
+                              <span className="text-[10px] text-navy/70">{w.pack.lower} +</span>
+                              <input
+                                type="number"
+                                min={0}
+                                max={(item.unitsPerBox ?? 0) - 1}
+                                value={item.pieces ?? 0}
+                                onChange={(e) => {
+                                  const pieces = Math.max(0, parseInt(e.target.value, 10) || 0);
+                                  const boxes = item.boxes ?? 0;
+                                  updateItem(item.key, {
+                                    pieces,
+                                    qty: boxes * item.unitsPerBox! + pieces,
+                                  });
+                                }}
+                                onFocus={(e) => e.target.select()}
+                                className="aria-disabled:opacity-60 w-8 rounded border border-surface-border bg-white px-1 py-1 text-center text-xs font-semibold text-navy focus:border-transparent focus:outline-none focus:ring-1 focus:ring-brand-500 max-md:h-11 max-md:w-11"
+                                readOnly={!!pendingUnitOf(item)}
+                                aria-disabled={!!pendingUnitOf(item) || undefined}
+                                title={`Extra ${w.base.lowerOther}`}
+                              />
+                            </div>
+                            <span className="text-[9px] text-navy/30 text-right">
+                              {item.qty} {w.baseShortFor(item.qty)}
+                            </span>
+                          </div>
+                        )
+                      ) : (
+                        <DecimalInput
+                          decimals={3}
+                          min={0}
+                          readOnly={!!pendingUnitOf(item)}
+                          aria-disabled={!!pendingUnitOf(item) || undefined}
+                          value={item.qty}
+                          onChange={(v) => updateItem(item.key, { qty: v ?? 0 })}
+                          aria-label="Qty"
+                          className="h-9 rounded border border-surface-border bg-white px-2 text-right text-sm text-navy focus:border-transparent focus:outline-none focus:ring-1 focus:ring-brand-500 aria-disabled:opacity-60 max-md:h-11 max-md:w-full"
+                        />
+                      )}
+                    </div>
 
                     {/* Unit price */}
-                    <div>
+                    <div className="max-md:col-span-2">
+                      <span className={MOBILE_FIELD_LABEL}>Rate</span>
                       {item.isSpecialPrice && item.regularPrice !== undefined && (
                         <p className="text-xs line-through text-navy/70 mb-0.5 text-right">
                           ${item.regularPrice.toFixed(2)}
@@ -2324,7 +2336,7 @@ export default function NewInvoicePage() {
                         readOnly={!!pendingUnitOf(item)}
                         aria-disabled={!!pendingUnitOf(item) || undefined}
                         aria-label="Unit price"
-                        className="h-9 w-full rounded border border-surface-border bg-white px-2 text-right text-sm text-navy focus:border-transparent focus:outline-none focus:ring-1 focus:ring-brand-500 aria-disabled:opacity-60"
+                        className="h-9 w-full rounded border border-surface-border bg-white px-2 text-right text-sm text-navy focus:border-transparent focus:outline-none focus:ring-1 focus:ring-brand-500 aria-disabled:opacity-60 max-md:h-11"
                       />
                       {/* #2696(c) SA-558e: off the customer's special price ⇒ a reason, as the
                           server requires on a sale (pricing's decideStaffOverride). */}
@@ -2338,7 +2350,7 @@ export default function NewInvoicePage() {
                           aria-invalid={saleLineNeedsReason(item)}
                           placeholder="Reason (required)"
                           className={cn(
-                            "mt-1 h-8 w-full rounded border bg-white px-2 text-xs text-navy placeholder:text-navy/40 focus:outline-none focus:ring-1 focus:ring-brand-500",
+                            "mt-1 h-8 w-full rounded border bg-white px-2 text-xs max-md:h-11 max-md:text-sm text-navy placeholder:text-navy/40 focus:outline-none focus:ring-1 focus:ring-brand-500",
                             saleLineNeedsReason(item) ? "border-danger" : "border-surface-border",
                           )}
                         />
@@ -2351,7 +2363,7 @@ export default function NewInvoicePage() {
                       )}
                       {/* Live cost & margin — the negotiation floor (shared component) */}
                       {item.productId && (
-                        <div className="mt-0.5">
+                        <div className="mt-0.5 max-md:[&_button]:min-h-11">
                           <MarginHint
                             unitPrice={item.unitPrice}
                             unitCost={item.avgCost}
@@ -2369,41 +2381,57 @@ export default function NewInvoicePage() {
                     </div>
 
                     {/* Discount */}
-                    <MoneyInput
-                      aria-label="Line discount"
-                      min={0}
-                      placeholder="0.00"
-                      value={item.discount || null}
-                      onChange={(v) => updateItem(item.key, { discount: v ?? 0 })}
-                      className="h-9 rounded border border-surface-border bg-white px-2 text-right text-sm text-navy placeholder:text-navy/30 focus:border-transparent focus:outline-none focus:ring-1 focus:ring-brand-500"
-                    />
+                    <div className="max-md:col-span-2 md:contents">
+                      <span className={MOBILE_FIELD_LABEL}>Discount</span>
+                      <MoneyInput
+                        aria-label="Line discount"
+                        min={0}
+                        placeholder="0.00"
+                        value={item.discount || null}
+                        onChange={(v) => updateItem(item.key, { discount: v ?? 0 })}
+                        className="h-9 rounded border border-surface-border bg-white px-2 text-right text-sm text-navy placeholder:text-navy/30 focus:border-transparent focus:outline-none focus:ring-1 focus:ring-brand-500 max-md:h-11 max-md:w-full"
+                      />
+                    </div>
 
                     {/* Avg cost (optional column) */}
                     {showAvgCost && (
-                      <span className="text-right text-xs text-navy/70">
-                        {item.avgCost ? "$" + item.avgCost.toFixed(2) : "—"}
-                      </span>
+                      <div className="max-md:col-span-2 md:contents">
+                        <span className={MOBILE_FIELD_LABEL}>Avg. cost</span>
+                        <span className="text-right text-xs text-navy/70 max-md:block max-md:text-sm">
+                          {item.avgCost ? "$" + item.avgCost.toFixed(2) : "—"}
+                        </span>
+                      </div>
                     )}
 
                     {/* Taxable checkbox */}
-                    <label className="flex cursor-pointer items-center justify-center">
+                    <label className="flex cursor-pointer items-center justify-center max-md:col-span-2 max-md:min-h-11 max-md:justify-start max-md:gap-2">
                       <input
                         type="checkbox"
                         checked={item.taxable}
                         onChange={(e) => updateItem(item.key, { taxable: e.target.checked })}
-                        className="h-4 w-4 rounded border-surface-border text-brand-500 focus:ring-brand-500"
+                        className="h-4 w-4 rounded border-surface-border text-brand-500 focus:ring-brand-500 max-md:h-5 max-md:w-5"
                       />
+                      <span className="text-sm font-medium text-navy/70 md:hidden">Tax</span>
                     </label>
 
                     {/* Remove */}
                     <button
                       onClick={() => removeItem(item.key)}
                       disabled={items.length === 1}
-                      className="flex items-center justify-center rounded p-1 text-navy/30 hover:text-danger transition-colors disabled:opacity-30 disabled:cursor-not-allowed"
+                      className="flex items-center justify-center rounded p-1 text-navy/30 hover:text-danger transition-colors disabled:opacity-30 disabled:cursor-not-allowed max-md:col-start-4 max-md:row-start-1 max-md:h-11 max-md:w-11 max-md:justify-self-end"
                       title="Remove item"
                     >
                       <Trash2 className="h-4 w-4" />
                     </button>
+
+                    {/* Line total — inside the card below md (the desktop strip below is md-only) */}
+                    <div
+                      data-testid="line-total-mobile"
+                      className="flex items-center justify-end gap-2 text-sm font-semibold text-navy max-md:col-span-2 md:hidden"
+                    >
+                      <span className="text-xs font-medium text-navy/70">Line total</span>
+                      {fmt(lineTotal(item))}
+                    </div>
                   </div>
                 ))}
 
@@ -2412,10 +2440,10 @@ export default function NewInvoicePage() {
                   <div
                     key={item.key + "-total"}
                     className={cn(
-                      "gap-2 px-1",
+                      "hidden gap-2 px-1 md:grid",
                       showAvgCost
-                        ? "grid grid-cols-[1fr_70px_100px_90px_72px_44px_32px]"
-                        : "grid grid-cols-[1fr_70px_100px_90px_44px_32px]",
+                        ? "md:grid-cols-[1fr_70px_100px_90px_72px_44px_32px]"
+                        : "md:grid-cols-[1fr_70px_100px_90px_44px_32px]",
                     )}
                   >
                     <span />
