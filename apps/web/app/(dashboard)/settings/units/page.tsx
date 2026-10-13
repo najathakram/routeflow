@@ -61,8 +61,18 @@ function useOnline(): boolean {
  * the API refuses every call, so the screen is never mounted and the units query is never sent.
  */
 export default function UnitsPage() {
-  const { enabled, isLoading } = useUnitsFlag();
+  const { enabled, isLoading, isError, refetch } = useUnitsFlag();
   if (isLoading) return null;
+  if (!enabled && isError) {
+    return (
+      <div className="text-sm text-navy/70">
+        <p>Couldn&apos;t check your plan. Try again</p>
+        <Button variant="secondary" className="mt-3" onClick={() => refetch()}>
+          Retry
+        </Button>
+      </div>
+    );
+  }
   if (!enabled) {
     return <p className="text-sm text-navy/70">Units are not available on your account yet.</p>;
   }

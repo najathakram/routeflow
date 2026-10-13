@@ -19,9 +19,17 @@ export const UNITS_FLAG = "flag.units_v1";
 export function useUnitsFlag(opts?: { enabled?: boolean }): {
   enabled: boolean;
   isLoading: boolean;
+  /** The plan could not be read: "not granted" and "could not ask" are different states. */
+  isError: boolean;
+  refetch: () => void;
 } {
   const q = useSubscription({ staleTime: 60_000, ...opts });
-  return { enabled: (q.data?.flags ?? []).includes(UNITS_FLAG), isLoading: q.isLoading };
+  return {
+    enabled: (q.data?.flags ?? []).includes(UNITS_FLAG),
+    isLoading: q.isLoading,
+    isError: q.isError,
+    refetch: () => void q.refetch(),
+  };
 }
 
 export function useUnitsEnabled(opts?: { enabled?: boolean }): boolean {

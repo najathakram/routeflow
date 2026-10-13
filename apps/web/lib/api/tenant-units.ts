@@ -1,6 +1,7 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { API_ERROR_CODES, isPieceSynonym, unitNameKey } from "@routeflow/types";
 import { apiClient } from "../api-client";
+import { codedToastCopy } from "../generic-toast-copy";
 
 // Tenant unit NAMES (Settings > Units). A names list, not a math source: order, invoice and return
 // lines snapshot their unit words and never reference these rows.
@@ -80,6 +81,9 @@ export function unitErrorMessage(err: unknown, name: string): string {
       ? `Can't rename to ${name}. ${text} already have a ${name}. Change those first.`
       : `Can't rename to ${name}. ${text} already has a ${name}. Change that first.`;
   }
+  // A rename is already running for this tenant: the shared fixed sentence (same copy as the toast).
+  if (data.code === API_ERROR_CODES.UNITS_RENAME_IN_PROGRESS)
+    return codedToastCopy(err) ?? SAVE_FAILED;
   // A 400 (empty / too long) is caught client-side first; the server text is never shown (B986).
   return SAVE_FAILED;
 }

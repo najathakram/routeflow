@@ -52,6 +52,11 @@ describe("checkUnitName", () => {
 });
 
 describe("unitErrorMessage", () => {
+  it("rename in progress: the fixed retry sentence, never the raw server text", () => {
+    expect(
+      unitErrorMessage(http(409, { code: "UNITS_RENAME_IN_PROGRESS", message: "raw" }), "Case"),
+    ).toBe("A unit rename is in progress. Try again in a moment.");
+  });
   it("name taken", () => {
     expect(unitErrorMessage(http(409, { code: "UNIT_NAME_TAKEN" }), "Case")).toBe(
       "You already have a unit called Case.",

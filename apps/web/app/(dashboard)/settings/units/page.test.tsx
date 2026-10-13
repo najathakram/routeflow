@@ -18,7 +18,8 @@ jest.mock("@routeflow/ui/web", () => ({
   useToast: () => ({ toast }),
 }));
 jest.mock("@/lib/page-title-context", () => ({ usePageTitle: () => ({ setTitle: jest.fn() }) }));
-let flag = { enabled: true, isLoading: false };
+const flagRefetch = jest.fn();
+let flag = { enabled: true, isLoading: false, isError: false, refetch: flagRefetch };
 jest.mock("@/lib/api/product-units", () => ({ useUnitsFlag: () => flag }));
 jest.mock("@/lib/api/tenant-units", () => ({
   ...jest.requireActual("@/lib/api/tenant-units"),
@@ -48,7 +49,7 @@ const setOnline = (online: boolean) => {
 };
 
 beforeEach(() => {
-  flag = { enabled: true, isLoading: false };
+  flag = { enabled: true, isLoading: false, isError: false, refetch: flagRefetch };
   jest.clearAllMocks();
   createMutate.mockReset();
   updateMutate.mockReset();
@@ -58,7 +59,7 @@ beforeEach(() => {
 
 describe("Units page: ships DARK behind flag.units_v1", () => {
   it("without the flag it shows a plain not-available message and never asks for the units", () => {
-    flag = { enabled: false, isLoading: false };
+    flag = { enabled: false, isLoading: false, isError: false, refetch: flagRefetch };
     setUnits(u("Case"));
     render();
     expect(screen.getByText("Units are not available on your account yet.")).toBeInTheDocument();
@@ -66,8 +67,18 @@ describe("Units page: ships DARK behind flag.units_v1", () => {
     expect(screen.queryByText("Case")).not.toBeInTheDocument();
   });
 
+  it("when the plan itself fails to load it offers Retry (not a false 'not available')", () => {
+    flag = { enabled: false, isLoading: false, isError: true, refetch: flagRefetch };
+    render();
+    expect(
+      screen.queryByText("Units are not available on your account yet."),
+    ).not.toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "Retry" }));
+    expect(flagRefetch).toHaveBeenCalledTimes(1);
+  });
+
   it("while the plan is still loading it shows nothing (no flash of the screen or the message)", () => {
-    flag = { enabled: false, isLoading: true };
+    flag = { enabled: false, isLoading: true, isError: false, refetch: flagRefetch };
     render();
     expect(screen.queryByLabelText("Unit name")).not.toBeInTheDocument();
     expect(
