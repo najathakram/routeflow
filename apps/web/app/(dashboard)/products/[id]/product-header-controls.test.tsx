@@ -12,7 +12,7 @@ const flow = () => ({ start: jest.fn(), askDeactivate: jest.fn(), isPending: fal
 
 function setup(over: { isActive?: boolean } = {}) {
   const reactivateFlow = flow();
-  const onDelete = jest.fn().mockResolvedValue(undefined);
+  const onRequestDelete = jest.fn();
   render(
     <ProductHeaderControls
       product={{
@@ -28,11 +28,10 @@ function setup(over: { isActive?: boolean } = {}) {
       tobaccoLoading={false}
       onToggleTobacco={jest.fn()}
       onMakeVariant={jest.fn()}
-      onDelete={onDelete}
-      deleting={false}
+      onRequestDelete={onRequestDelete}
     />,
   );
-  return { reactivateFlow, onDelete };
+  return { reactivateFlow, onRequestDelete };
 }
 
 beforeEach(() => {
@@ -81,18 +80,10 @@ describe("ProductHeaderControls (VU-2)", () => {
     expect(screen.queryByRole("button", { name: "Delete" })).toBeNull();
   });
 
-  it("the delete dialog keeps its title and 'Yes, delete', with the new body", async () => {
-    const { onDelete } = setup();
+  it("Delete asks the page to open its DeleteProductConfirm (no second dialog here)", () => {
+    const { onRequestDelete } = setup();
     fireEvent.click(screen.getByRole("button", { name: "Delete" }));
-    const dialog = await screen.findByRole("dialog");
-    expect(within(dialog).getByText("Delete product?")).toBeInTheDocument();
-    expect(
-      within(dialog).getByText(
-        "Cola 12pk will be deactivated and hidden from the catalog. Its SKU and barcode are freed, so another product can use them. Order and invoice history is kept. A product on an undelivered order can't be deleted.",
-      ),
-    ).toBeInTheDocument();
-    fireEvent.click(within(dialog).getByRole("button", { name: "Yes, delete" }));
-    await waitFor(() => expect(onDelete).toHaveBeenCalledTimes(1));
-    await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
+    expect(onRequestDelete).toHaveBeenCalledTimes(1);
+    expect(screen.queryByRole("dialog")).toBeNull();
   });
 });

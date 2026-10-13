@@ -6,7 +6,7 @@ import { isFamilyProduct } from "./sellable-products";
 /**
  * Pure gate for the operator order builder's two save paths, mirroring web's
  * CreateOrderModal footer: a normal submit ("Create Order") needs a customer AND
- * ≥1 item; "Save as Draft" needs only a customer (the API allows a zero-item
+ * ≥1 item; "Save as draft" needs only a customer (the API allows a zero-item
  * DRAFT — orders.service `create()` skips the item-count check when
  * `status === "DRAFT"`). Screen-free so __tests__/*.test.ts can lock it.
  */

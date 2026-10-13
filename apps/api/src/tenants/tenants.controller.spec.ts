@@ -244,3 +244,47 @@ describe("TenantsController.getMyFeatures: fulfilment modes + capabilities.fulfi
     });
   });
 });
+
+// Row 411: the test-connection answer no longer advertises a sign-in URL. The legacy per-tenant sign-in
+// routes are retired (410), and the standard start (GET /auth/google?tenant=) answers JSON, not a page a
+// plain link can open, so there is no URL that would work here.
+describe("TenantsController.testGoogleOAuthConfig: no sign-in URL is advertised (row 411)", () => {
+  function build(cfg: Record<string, unknown>) {
+    const tenantsService = { getGoogleOAuthConfig: jest.fn().mockResolvedValue(cfg) } as any;
+    const controller = new TenantsController(
+      tenantsService,
+      {} as any,
+      {} as any,
+      {} as any,
+      {} as any,
+      {} as any,
+      {} as any,
+    );
+    return { controller, tenantsService };
+  }
+  const user = { tenantId: "t-uuid-1", tenantSlug: "acme-co" } as unknown as JwtPayload;
+  const ready = { clientId: "id", callbackUrl: "https://x/cb", enabled: true };
+
+  it("a configured tenant answers success with no authUrl", async () => {
+    const { controller, tenantsService } = build(ready);
+    const out = await controller.testGoogleOAuthConfig({}, user);
+    expect(out).toEqual({ success: true, message: "Google OAuth is configured" });
+    expect(out).not.toHaveProperty("authUrl");
+    expect(tenantsService.getGoogleOAuthConfig).toHaveBeenCalledWith("t-uuid-1");
+  });
+
+  it("never names a per-tenant sign-in path, by id or by slug", async () => {
+    const { controller } = build(ready);
+    const text = JSON.stringify(await controller.testGoogleOAuthConfig({}, user));
+    expect(text).not.toMatch(/\/auth\/google\/[^"?]/);
+    expect(text).not.toContain("t-uuid-1");
+    expect(text).not.toContain("acme-co");
+  });
+
+  it("an unconfigured tenant still answers success: false without a URL", async () => {
+    const { controller } = build({ clientId: null, callbackUrl: null, enabled: false });
+    const out = await controller.testGoogleOAuthConfig({}, user);
+    expect(out).toMatchObject({ success: false });
+    expect(out).not.toHaveProperty("authUrl");
+  });
+});

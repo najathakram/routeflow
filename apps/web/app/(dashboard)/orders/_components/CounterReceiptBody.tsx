@@ -1,6 +1,7 @@
 "use client";
 
 import * as React from "react";
+import { cashierNameOf } from "@routeflow/pricing";
 import type { CounterSalePaymentMethod, CounterSaleResponse } from "@routeflow/types";
 import { useTenant } from "@/components/tenant-provider";
 import { useOptionalAuth } from "@/lib/auth-context";
@@ -21,6 +22,7 @@ export function CounterReceiptBody({
   enteredTender,
   profile,
   fallbackMethod,
+  customerName,
   headingRef,
 }: {
   receipt: CounterSaleResponse;
@@ -29,11 +31,13 @@ export function CounterReceiptBody({
   /** the screen's own `GET /settings` answer (address + phone); no fetch happens here */
   profile?: ReceiptBusinessProfile | null;
   fallbackMethod?: CounterSalePaymentMethod;
+  /** SA-762r: the named customer of the sale; omit for a walk-in (no customer line prints) */
+  customerName?: string | null;
   /** POS-1: the screen focuses this heading when the receipt appears. */
   headingRef?: React.Ref<HTMLHeadingElement>;
 }) {
   const { branding } = useTenant();
-  const cashier = useOptionalAuth()?.user?.username ?? null;
+  const cashier = cashierNameOf(useOptionalAuth()?.user);
   const [now] = React.useState(() => new Date());
   const m = buildCounterReceipt({
     receipt,
@@ -41,6 +45,7 @@ export function CounterReceiptBody({
     enteredTender,
     fallbackMethod,
     cashier,
+    customerName,
     now,
     profile: {
       ...profile,

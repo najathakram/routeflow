@@ -74,8 +74,19 @@ import {
   isResolvedReturn,
   loadSourceInvoicesState,
   lockRefundInvoices,
+  refundSourcesRefusal,
   lockRefundOrders,
+  type RefundTender,
 } from "./inline-return-refund";
+import { assertCashRefundWithinCap, refundAmountsBySale } from "./cash-refund-cap";
+import { dbClockNow, lockCounterClose, registerKeyOfOrder } from "./counter-close-lock";
+import { assertCounterWindowOpen } from "./counter-close-window";
+import {
+  refundTenderColumn,
+  refundTenderData,
+  refundTenderOfColumn,
+  refundTenderOfReturn,
+} from "./refund-tender";
 import { selectEditRevertedInvoices } from "../invoices/order-edit-revert-set";
 import { uniqueViolationOn } from "../common/prisma-unique";
 
@@ -272,6 +283,8 @@ export class InlineReturnsService {
         });
       }
     }
+    // SA-740: a NEW order has no id yet, so a walk-in cannot default a source here: it is refused (SOURCE_SALE_REQUIRED),
+    // failing closed (a counter return rides on its sale through the capture endpoint, never a nested order create).
     const priced = await this.quoteService.priceInlineReturn(
       { customerId, items: lines.items, routeRunStopId: lines.routeRunStopId },
       user,
@@ -305,7 +318,16 @@ export class InlineReturnsService {
     opts: { orderRouteRunId?: string | null; forRefund?: boolean } = {},
   ): Promise<{ replayed: boolean; ret: any; overCap: boolean }> {
     const tenantId = this.prisma.getTenantId();
-    await tx.$executeRaw`SELECT id FROM "Order" WHERE id = ${dto.orderId} FOR UPDATE`;
+    // SA-740 (row 190): lock the carrying order, plus the SOURCE sale when it is a different one, in ONE id-sorted,
+    // tenant-bound statement (the set and order `refund()` takes, so a capture and a refund cannot deadlock). It replaces
+    // the old carrying-only lock, which had no tenant predicate. The customer advisory lock the caller holds stays first.
+    await lockRefundOrders(
+      tx,
+      tenantId,
+      dto.sourceOrderId && dto.sourceOrderId !== dto.orderId
+        ? [dto.orderId, dto.sourceOrderId]
+        : [dto.orderId],
+    );
     const order = await tx.order.findFirst({
       where: { id: dto.orderId },
       select: { id: true, customerId: true, total: true, status: true, routeRunId: true },
@@ -368,9 +390,16 @@ export class InlineReturnsService {
     // Same pricing engine the quote endpoint uses, run on THIS transaction's client so
     // it reads the matching-set/prior-returned snapshot under the lock just taken.
     const priced = await this.quoteService.priceInlineReturn(
-      { customerId: dto.customerId, items: dto.items, routeRunStopId: dto.routeRunStopId },
+      {
+        customerId: dto.customerId,
+        items: dto.items,
+        routeRunStopId: dto.routeRunStopId,
+        sourceOrderId: dto.sourceOrderId,
+      },
       user,
       tx,
+      // SA-740: a WALK-IN's return is from the sale carrying it unless the caller names another source
+      { defaultSourceOrderId: dto.orderId },
     );
 
     // B948 / SA-628a (c): a source line may never be credited past its value by a credit note + an inline return.
@@ -584,23 +613,9 @@ export class InlineReturnsService {
       tx,
       priced.chunks.map((c) => c.sourceInvoiceItemId),
     );
-    if (!src.paidInFull) {
-      throw new ConflictException({
-        code: API_ERROR_CODES.REFUND_NEEDS_PAID_INVOICE,
-        message:
-          "A refund needs every invoice the goods were sold on to be paid in full. Issue store credit instead.",
-      });
-    }
-    if (src.paidWithStoreCredit) throw this.paidWithStoreCreditRefusal();
-  }
-
-  /** F4: store credit is never turned into cash - any part paid with a CREDIT_NOTE / ADVANCE payment goes back as store credit. */
-  private paidWithStoreCreditRefusal(): ConflictException {
-    return new ConflictException({
-      code: API_ERROR_CODES.REFUND_PAID_WITH_STORE_CREDIT,
-      message:
-        "Paid with store credit, so it goes back as store credit. Issue store credit instead.",
-    });
+    // paid in full AND none of it store credit (F4): the ONE refusal, shared with the STANDARD refund
+    const refusal = refundSourcesRefusal(src);
+    if (refusal) throw refusal;
   }
 
   /** B961 (Opus N4): a REPLAY of a hold-because-already-returned capture keeps the readable message (derived from the
@@ -711,10 +726,15 @@ export class InlineReturnsService {
       ? (await selectEditRevertedInvoices(db, opts.revertOrderId)).map((inv) => inv.id)
       : [];
     const priced = await this.quoteService.priceInlineReturn(
-      { customerId: dto.customerId, items: dto.items, routeRunStopId: dto.routeRunStopId },
+      {
+        customerId: dto.customerId,
+        items: dto.items,
+        routeRunStopId: dto.routeRunStopId,
+        sourceOrderId: dto.sourceOrderId,
+      },
       user,
       db,
-      { excludeInvoiceIds },
+      { excludeInvoiceIds, defaultSourceOrderId: dto.orderId },
     );
     // B961: staff without the reason refuse HERE too (before the caller's revert commits); a driver is held at capture.
     this.alreadyReturnedPolicy(dto.items, priced.chunks, user);
@@ -1341,7 +1361,7 @@ export class InlineReturnsService {
     if (!canRefundRole(user.role)) {
       throw this.refundNotAllowed("Only office staff can refund a return");
     }
-    const tenantId = this.prisma.getTenantId();
+    const tenantId = this.requireRefundTenant();
     await this.assertGranted(tenantId);
     const expected = roundMoney(dto.expectedAmount);
 
@@ -1351,7 +1371,18 @@ export class InlineReturnsService {
       return this.refundReplay(this.prisma.forTenant(), pre, dto.tender, expected);
     }
 
+    // SA-740r2 item 6: a COUNTER order's refund counts in the day's drawer, so the transaction's FIRST statement is the shared
+    // counter-close lock on the carrying order's register (it is immutable, so this unlocked read is safe); the close waits
+    // for refunds in flight and a refund's `refundedAt` (the database clock, dbClockNow) can never land behind a close's cutoff.
+    const registerKey = registerKeyOfOrder(
+      await this.prisma.forTenant().order.findFirst({
+        where: { id: pre.orderId },
+        select: { counterSale: true, registerKey: true },
+      }),
+    );
+
     const outcome: { replay?: any } = await this.prisma.tenantTransaction(async (tx: any) => {
+      if (registerKey) await lockCounterClose(tx, tenantId, registerKey);
       // F7: the tenant predicate is explicit (bound), like the Order/Invoice locks right after it
       await tx.$executeRaw`SELECT id FROM "Return" WHERE id = ${id} AND (${tenantId}::text IS NULL OR "tenantId" = ${tenantId}) FOR UPDATE`;
       const fresh = await tx.return.findFirst({
@@ -1411,16 +1442,22 @@ export class InlineReturnsService {
         items.map((i) => i.sourceInvoiceItemId),
         { beforeInvoiceRead: (invoiceIds) => lockRefundInvoices(tx, tenantId, invoiceIds) },
       );
-      if (!src.paidInFull) {
-        throw new ConflictException({
-          code: API_ERROR_CODES.REFUND_NEEDS_PAID_INVOICE,
-          message:
-            "A refund needs every invoice the goods were sold on to be paid in full. Issue store credit instead.",
-        });
-      }
-      // F4: store credit is never turned into cash (read under the same invoice locks)
-      if (src.paidWithStoreCredit) throw this.paidWithStoreCreditRefusal();
+      // paid in full AND none of it store credit (F4, read under the same invoice locks)
+      const refusal = refundSourcesRefusal(src);
+      if (refusal) throw refusal;
+      // SA-749r2 item 9: a CASH refund may not exceed the cash applied to each source sale minus earlier cash refunds on it
+      // (read under the order and invoice locks held here, so two refunds cannot both spend the same room)
+      await assertCashRefundWithinCap(tx, {
+        returnId: id,
+        tender: dto.tender,
+        counterOrder: registerKey != null,
+        perOrder: refundAmountsBySale(fresh.items as any[], amount, fresh.orderId),
+      });
 
+      // SA-758 CR-2: refundedAt is the DATABASE clock, read after the close lock (the close reads its cutoff from the same clock)
+      const refundedAt = await dbClockNow(tx);
+      // SA-750r3: a refund dated inside a closed window is refused (a closed day's totals never move)
+      if (registerKey) await assertCounterWindowOpen(tx, tenantId, registerKey, refundedAt);
       // M1: the CAS - store credit XOR refund, once
       const claimed = await tx.return.updateMany({
         where: {
@@ -1434,7 +1471,9 @@ export class InlineReturnsService {
         data: {
           status: "REFUNDED",
           refundAmount: amount,
-          refundedAt: new Date(),
+          refundedAt,
+          // SA-740r: the tender of record, written in the SAME CAS as refundedAt (CARD is stored as CREDIT_CARD)
+          ...refundTenderData(dto.tender),
         },
       });
       if (claimed.count === 0) throw this.alreadyResolved();
@@ -1469,9 +1508,11 @@ export class InlineReturnsService {
   }
 
   /**
-   * The replay of a refund (the return id is the key): only an EXTERNAL_REFUND with the SAME tender (read from its audit
-   * row; the column does not exist yet) and the SAME amount returns the stored result. Store credit, another tender or
-   * another amount is 409 RETURN_ALREADY_RESOLVED.
+   * The replay of a refund (the return id is the key): only an EXTERNAL_REFUND with the SAME tender and the SAME amount
+   * returns the stored result. The tender is compared in ONE vocabulary: `Return.refundTender` against
+   * `refundTenderColumn(dto.tender)` (the counter payment map; CARD is CREDIT_CARD); only a row the backfill has not reached
+   * (column null) falls back to the tender in its `inline_return.refund` audit row. Store credit, another tender or another
+   * amount is 409 RETURN_ALREADY_RESOLVED.
    */
   private async refundReplay(
     db: any,
@@ -1480,39 +1521,44 @@ export class InlineReturnsService {
       status?: string | null;
       refundMethod?: string | null;
       refundAmount?: unknown;
+      refundTender?: string | null;
     },
-    tender: string,
+    tender: RefundTender,
     expected: number,
   ): Promise<any> {
-    const audit =
-      ret.refundMethod === EXTERNAL_REFUND_METHOD && ret.status === "REFUNDED"
-        ? await db.auditLog.findFirst({
-            where: { action: INLINE_REFUND_AUDIT_ACTION, entityType: "Return", entityId: ret.id },
-            orderBy: { createdAt: "asc" },
-            select: { meta: true },
-          })
-        : null;
-    const storedTender = (audit?.meta as { tender?: string } | null | undefined)?.tender;
-    if (
-      !audit ||
-      storedTender !== tender ||
-      roundMoney(Number(ret.refundAmount ?? 0)) !== expected
-    ) {
+    const resolvedRefund = ret.refundMethod === EXTERNAL_REFUND_METHOD && ret.status === "REFUNDED";
+    let sameTender = false;
+    if (resolvedRefund && ret.refundTender != null) {
+      sameTender = ret.refundTender === refundTenderColumn(tender);
+    } else if (resolvedRefund) {
+      // pre-backfill row: the audit row written in the refund's own transaction still holds the tender
+      const audit = await db.auditLog.findFirst({
+        where: { action: INLINE_REFUND_AUDIT_ACTION, entityType: "Return", entityId: ret.id },
+        orderBy: { createdAt: "asc" },
+        select: { meta: true },
+      });
+      sameTender = refundTenderOfReturn({}, audit?.meta as { tender?: unknown } | null) === tender;
+    }
+    if (!sameTender || roundMoney(Number(ret.refundAmount ?? 0)) !== expected) {
       throw new ConflictException({
         code: API_ERROR_CODES.RETURN_ALREADY_RESOLVED,
         message: "This return was already resolved.",
       });
     }
-    return this.refundResult(db, ret.id, storedTender);
+    return this.refundResult(db, ret.id, tender);
   }
 
-  /** The final return state a refund answers with: the row (REFUNDED, refundAmount) plus the tender it was recorded with. */
-  private async refundResult(db: any, id: string, tender: string): Promise<any> {
+  /**
+   * The final return state a refund answers with: the row (REFUNDED, refundAmount) plus the tender it was recorded with, in the
+   * counter vocabulary read back from the stored column (so the response can never disagree with what is stored); the tender
+   * the caller recorded stands in only for a row whose column is still null.
+   */
+  private async refundResult(db: any, id: string, recordedTender: RefundTender): Promise<any> {
     const after = await db.return.findUnique({ where: { id }, include: { items: true } });
     if (!after) throw new NotFoundException("Return not found");
     return {
       ...(await this.withParkedReversals(after)),
-      refundTender: tender,
+      refundTender: refundTenderOfColumn(after.refundTender) ?? recordedTender,
       refundPending: false,
     };
   }
@@ -1530,7 +1576,7 @@ export class InlineReturnsService {
     if (!canRefundRole(user.role)) {
       throw this.refundNotAllowed("Only office staff can give store credit instead of a refund");
     }
-    const tenantId = this.prisma.getTenantId();
+    const tenantId = this.requireRefundTenant();
     await this.assertGranted(tenantId);
 
     const pre = await this.prisma.forTenant().return.findFirst({ where: { id, kind: "INLINE" } });
@@ -1657,6 +1703,17 @@ export class InlineReturnsService {
   }
 
   /** SA-727: the refund gate's 403 carries a code (`{code}` body) like every 409 here; the controller's RolesGuard 403 does not. */
+  /**
+   * Row 59: a refund / store-credit conversion is a money write on ONE tenant's return. A SUPER_ADMIN session with no tenant
+   * context passes the role gate, skips the add-on check and would lock rows with no tenant predicate, so it is refused
+   * (403 REFUND_NOT_ALLOWED) before any read. The platform acts through a tenant context (impersonation) or not at all.
+   */
+  private requireRefundTenant(): string {
+    const tenantId = this.prisma.getTenantId();
+    if (!tenantId) throw this.refundNotAllowed("A refund needs a tenant: open the tenant first");
+    return tenantId;
+  }
+
   private refundNotAllowed(message: string): ForbiddenException {
     return new ForbiddenException({ code: API_ERROR_CODES.REFUND_NOT_ALLOWED, message });
   }

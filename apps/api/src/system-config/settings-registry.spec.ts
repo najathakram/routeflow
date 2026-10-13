@@ -16,6 +16,7 @@ import * as path from "path";
 import {
   CREDIT_LIMIT_MOVING_KEYS,
   LEGACY_SYSTEM_CONFIG_BEHAVIOUR,
+  OFF_HUB_SCREENS,
   PREFERENCE_KEYS as SHARED_PREFERENCE_KEYS,
   SETTINGS_REGISTRY,
   isRegisteredSettingKey,
@@ -24,11 +25,14 @@ import {
 } from "@routeflow/types";
 import { SettingsController } from "./settings.controller";
 import { SystemConfigService } from "./system-config.service";
+import { QuickKeysSettingsService } from "./quick-keys-settings.service";
+import { QuickKeysRankCache } from "./quick-keys-rank.cache";
 import { PrismaService } from "../prisma/prisma.service";
 import { EmailService } from "../email/email.service";
 import { EncryptionService } from "../common/encryption.service";
 import { createMockPrisma } from "../testing/prisma-mock";
 import { PREFERENCE_KEYS } from "../users/dto/update-preferences.dto";
+import { QUICK_KEYS_CONFIG_KEY } from "./quick-keys-settings";
 import { TOBACCO_EXCLUDE_KEY } from "../analytics/analytics.service";
 import {
   CREDIT_LIMIT_DELIVERY_ENFORCE_KEY,
@@ -131,6 +135,13 @@ describe("settings registry — rules", () => {
     expect(validateSettingsRegistry([planted]).join("\n")).toMatch(/only the named credit_limit/);
   });
 
+  it("orders.posMode is live: the Create Order switch (an off-hub screen) edits it", () => {
+    const r = SETTINGS_REGISTRY.find((x) => x.key === "orders.posMode")!;
+    expect(r.status).toBe("live");
+    expect(r.plannedSurface).toBeUndefined();
+    expect(Object.keys(OFF_HUB_SCREENS)).toContain(r.screen);
+  });
+
   it("a pending or moving row cannot claim a screen (it must name a plannedSurface)", () => {
     const planted = row({
       key: "staffSomething",
@@ -177,6 +188,22 @@ describe("settings registry — rules", () => {
     expect(r.adminOnly).toBeFalsy();
   });
 
+  it("the business time zone (SA-738) is an admin-only tenantConfig row on the profile tab", () => {
+    const r = SETTINGS_REGISTRY.find((x) => x.key === "timezone")!;
+    expect(r).toMatchObject({
+      home: "tenantConfig",
+      kind: "config",
+      status: "live",
+      screen: "/settings?tab=profile",
+      adminOnly: true,
+    });
+    expect(
+      validateSettingsRegistry([row({ key: "tz", home: "tenantConfig", kind: "behaviour" })]).join(
+        " ",
+      ),
+    ).toMatch(/tenant-config rows are config data only/);
+  });
+
   it("userPref rows are exactly the shared and api preference allow-lists", () => {
     const keys = SETTINGS_REGISTRY.filter((r) => r.home === "userPref")
       .map((r) => r.key)
@@ -209,6 +236,8 @@ describe("settings registry — every SystemConfig key the settings writers writ
         { provide: ConfigService, useValue: { get: jest.fn() } },
         { provide: PrismaService, useValue: prisma },
         { provide: EmailService, useValue: { isEmailConfigured: jest.fn(async () => true) } },
+        QuickKeysSettingsService,
+        QuickKeysRankCache,
       ],
     }).compile();
     controller = mod.get(SettingsController);
@@ -216,6 +245,7 @@ describe("settings registry — every SystemConfig key the settings writers writ
     await controller.updateSettings({
       taxRate: 5,
       logoUrl: "u",
+      receiptFooter: "Thank you",
       // Every other field the handler accepts is NOT tenant-editable: none may reach SystemConfig.
       businessName: "b",
       ownerName: "o",
@@ -264,9 +294,10 @@ describe("settings registry — every SystemConfig key the settings writers writ
     expect(written).toContain("margin.floor.category.SNACKS");
   });
 
-  it("driving every settings.* field writes only settings.taxRate and settings.logoUrl", () => {
+  it("driving every settings.* field writes only settings.taxRate, settings.logoUrl and settings.receiptFooter", () => {
     expect([...written].filter((k) => k.startsWith("settings.")).sort()).toEqual([
       "settings.logoUrl",
+      "settings.receiptFooter",
       "settings.taxRate",
     ]);
   });
@@ -422,6 +453,7 @@ describe("settings registry — structural source scan of every SystemConfig wri
       "messaging/staff-email-settings.service.ts",
       "restrictions-settings/restrictions-settings.service.ts",
       "route-optimization/route-optimization.service.ts",
+      "system-config/quick-keys-settings.service.ts",
       "system-config/settings.controller.ts",
       "system-config/system-config.service.ts",
       "tobacco/tobacco.service.ts",
@@ -445,6 +477,10 @@ describe("settings registry — structural source scan of every SystemConfig wri
    */
   const INDIRECT_KEY_WRITERS: Record<string, Record<string, string[]>> = {
     "tobacco/tobacco.service.ts": { TOBACCO_EXCLUDE_KEY: [TOBACCO_EXCLUDE_KEY] },
+    // SA-747: the counter quick keys value is ONE JSON string under this constant (quick-keys-settings.ts)
+    "system-config/quick-keys-settings.service.ts": {
+      QUICK_KEYS_CONFIG_KEY: [QUICK_KEYS_CONFIG_KEY],
+    },
     // static key constants inside SystemConfigService itself (the generic set(key) is a definition)
     "system-config/system-config.service.ts": {
       "SystemConfigService.REMITTANCE_KEY": ["remittance.config"],

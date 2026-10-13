@@ -29,6 +29,7 @@ import type { PrismaService } from "../prisma/prisma.service";
 import { appendOrderRevisionInTx } from "./order-revisions";
 import { type buildStatusUpdateData, writeStatusIfUnchanged } from "./order-status-claim";
 import { billsAtShipment } from "./order-status-invoicing";
+import { stampDeliveredInFull } from "./delivered-stamp";
 import { SHIP_STATE_REOPENED, SHIP_STATE_SOURCES, SHIP_STATE_UNMARKED } from "./ship-state-markers";
 
 export {
@@ -91,7 +92,15 @@ export async function updateStatusWithShipMarker(
     !source ||
     !(await billsAtShipment(featureConfig, order.tenantId ?? prisma.getTenantId(), order))
   ) {
-    return writeStatusIfUnchanged(prisma.forTenant(), order.id, order.status, data);
+    if (to !== OrderStatus.DELIVERED) {
+      return writeStatusIfUnchanged(prisma.forTenant(), order.id, order.status, data);
+    }
+    // SA-763r: a manual DELIVERED books what left, in the SAME tx as the status write (no ship marker here).
+    return prisma.tenantTransaction(async (tx) => {
+      const row = await writeStatusIfUnchanged(tx, order.id, order.status, data);
+      await stampDeliveredInFull(tx, order.id, "entry");
+      return row;
+    });
   }
   return prisma.tenantTransaction(async (tx) => {
     const row = await writeStatusIfUnchanged(tx, order.id, order.status, data);

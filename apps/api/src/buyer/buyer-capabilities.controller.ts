@@ -1,3 +1,5 @@
+import { READ_ONLY_STATUS } from "../billing/dunning-config";
+import { sellerReadOnlyBuyerGate } from "./seller-status-gate";
 import { Controller, Get, UseGuards, UseInterceptors } from "@nestjs/common";
 import { ApiBearerAuth, ApiHeader, ApiOperation, ApiTags } from "@nestjs/swagger";
 import type { BuyerSellerCapability } from "@routeflow/types";
@@ -25,10 +27,16 @@ export class BuyerCapabilitiesController {
   @UseInterceptors(BuyerTenantInterceptor)
   @ApiHeader({ name: "X-Tenant-Slug", required: true })
   @ApiOperation({ summary: "The active seller's fulfilment capability (how its orders ship)" })
-  getSellerCapabilities(
-    @CurrentBuyerCustomer() ctx: { tenantId: string },
+  async getSellerCapabilities(
+    @CurrentBuyerCustomer() ctx: { tenantId: string; sellerStatus?: string },
   ): Promise<BuyerSellerCapability> {
-    // Exactly { portalMethods, portalDefault, fleet } — no staff fields.
-    return this.fulfilmentCapability.forBuyer(ctx.tenantId);
+    // Exactly { portalMethods, portalDefault, fleet, acceptingOrders } — no staff fields. `acceptingOrders` is the
+    // ONE thing a buyer learns about a paused seller (SA-733r6): no reason, nothing about billing.
+    const capability = await this.fulfilmentCapability.forBuyer(ctx.tenantId);
+    // A3: the UI's "isn't taking online orders" must match what the SERVER does. While SELLER_READ_ONLY_BUYER_GATE is
+    // dark the guard still takes the order, so a READ_ONLY seller is still accepting; only `enforced` refuses.
+    const refused =
+      ctx.sellerStatus === READ_ONLY_STATUS && sellerReadOnlyBuyerGate() === "enforced";
+    return { ...capability, acceptingOrders: !refused };
   }
 }

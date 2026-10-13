@@ -44,7 +44,20 @@ import {
   type RefundItem,
 } from "../credit-notes/line-credit-headroom";
 import { API_ERROR_CODES } from "../common/api-error-codes";
-import { EXTERNAL_REFUND_METHOD, isRefundPending } from "./inline-return-refund";
+import {
+  EXTERNAL_REFUND_METHOD,
+  isRefundPending,
+  loadInvoiceRefundState,
+  lockRefundInvoices,
+  lockRefundOrders,
+  refundSourcesRefusal,
+  resolveRefundInvoiceIds,
+  type RefundTender,
+} from "./inline-return-refund";
+import { assertCashRefundWithinCap } from "./cash-refund-cap";
+import { dbClockNow, lockCounterClose, registerKeyOfOrder } from "./counter-close-lock";
+import { assertCounterWindowOpen } from "./counter-close-window";
+import { refundTenderData, refundTenderOfColumn } from "./refund-tender";
 import { roundMoney } from "@routeflow/pricing";
 import type { ProcessRefundDto } from "./dto/process-refund.dto";
 import { CREDIT_SOURCE_EXCLUDED } from "../invoices/invoice-status-sets";
@@ -706,7 +719,7 @@ export class ReturnsService {
         code: API_ERROR_CODES.RETURN_NOTHING_BILLED,
         message:
           "None of the returned items were billed on this order, so there is nothing to refund. " +
-          "Cancel the return, or credit it manually if a refund is owed.",
+          "Cancel the return.",
       });
     let unbilledItems: UnbilledReturnItem[] | undefined;
     if (unbilledQty.size > 0) {
@@ -803,7 +816,7 @@ export class ReturnsService {
             code: API_ERROR_CODES.RETURN_REFUND_OVER_LINE_HEADROOM,
             message:
               "This refund would credit more than the order's invoice lines are worth: part of it was already credited " +
-              "(by a credit note or an earlier refund). Refund it outside RouteFlow or issue the credit note manually.",
+              "(by a credit note or an earlier refund). Give store credit for what is still billable, or cancel the return.",
             productId,
             requested: refused.requestedAmount,
             remaining: refused.remainingAmount,
@@ -827,7 +840,7 @@ export class ReturnsService {
       // case of a row that lost the field, and a UUID there is a bug, not a label.
       throw new BadRequestException(
         `Refund ${effectiveAmount} exceeds the remaining room ${roundMoney(latestRoom)} on invoice ` +
-          `${latest?.invoiceNumber ?? invoiceId}; refund it outside RouteFlow or issue the credit note manually`,
+          `${latest?.invoiceNumber ?? invoiceId}; give store credit for what is still billable, or cancel the return`,
       );
     }
     return {
@@ -867,7 +880,7 @@ export class ReturnsService {
         code: API_ERROR_CODES.RETURN_MIXED_UNIT_PRODUCT,
         message:
           "This product's quantity cannot be priced as one unit across this order's invoices. " +
-          "Credit it per line via an inline return, or manually.",
+          "Credit it per line via an inline return, or cancel the return.",
         productId,
       });
     return qty * ([...factors][0] ?? 1);
@@ -897,7 +910,7 @@ export class ReturnsService {
       code: API_ERROR_CODES.RETURN_MIXED_UNIT_PRODUCT,
       message:
         "This product was sold in different units on this order (for example boxes and loose pieces), so the return " +
-        "cannot be priced as one quantity. Credit it per line via an inline return, or manually.",
+        "cannot be priced as one quantity. Credit it per line via an inline return, or cancel the return.",
       productId,
     });
   }
@@ -962,7 +975,7 @@ export class ReturnsService {
           code: API_ERROR_CODES.RETURN_REFUND_OVER_LINE_HEADROOM,
           message:
             "This refund would credit more than the invoice line is worth: part of it was already credited " +
-            "(by a credit note or an earlier refund). Refund it outside RouteFlow or issue the credit note manually.",
+            "(by a credit note or an earlier refund). Give store credit for what is still billable, or cancel the return.",
           productId,
           requested: refusal.requestedAmount,
           remaining: refusal.remainingAmount,
@@ -1122,6 +1135,17 @@ export class ReturnsService {
 
   async processRefund(id: string, dto?: ProcessRefundDto) {
     const method = dto?.method ?? "CREDIT_NOTE";
+    // Row 59: a refund is a money write on one tenant's return; a tenantless session is refused before any read.
+    if (!this.prisma.getTenantId()) {
+      throw new ForbiddenException({
+        code: API_ERROR_CODES.REFUND_NOT_ALLOWED,
+        message: "A refund needs a tenant: open the tenant first",
+      });
+    }
+    // SA-740r2 item 4: the tender belongs to a recorded refund only; store credit has none.
+    if (dto?.tender && method !== "EXTERNAL_REFUND") {
+      throw new BadRequestException("A tender only applies to a cash, card or check refund");
+    }
 
     const ret = await this.prisma.forTenant().return.findUnique({
       where: { id },
@@ -1132,6 +1156,9 @@ export class ReturnsService {
             // `id` feeds the order-scoped headroom aggregate in billedBasisFor.
             id: true,
             orderNumber: true,
+            // SA-740r2 item 6: a counter order's refund takes the counter-close lock on its register
+            counterSale: true,
+            registerKey: true,
             // F08 B53: the creditable/VOID decision must be made IN CODE
             // (billedBasisFor), never as a DB-level status filter here — excluding
             // VOID/WRITTEN_OFF at the query makes a VOID-only order indistinguishable
@@ -1181,9 +1208,9 @@ export class ReturnsService {
 
     // F08 B53: refund value is priced from what was actually BILLED (the order's
     // creditable invoices), not re-derived from the order line — see billedBasisFor.
-    // EXTERNAL_REFUND mints nothing, so it prices with the PURE helper and skips the
-    // mint-time gates: a RECEIVED return on a VOID-only (or fully credited) order must
-    // still be resolvable by "refunded outside RouteFlow", or it is stuck forever.
+    // EXTERNAL_REFUND mints nothing, so it prices with the PURE helper and skips the mint-time headroom gates. Whether the money
+    // may go back is decided separately, under locks, by recordExternalRefund (the order's invoices paid in full, SA-740r2);
+    // a return that fails it is never stuck: it takes store credit when billable, else it is cancelled.
     const basis: {
       amount: number;
       invoiceId?: string;
@@ -1205,6 +1232,12 @@ export class ReturnsService {
     const withUnbilled = <T>(r: T): T | (T & { unbilledItems: UnbilledReturnItem[] }) =>
       unbilledItems && unbilledItems.length > 0 && r ? { ...r, unbilledItems } : r;
 
+    // SA-740r2 (R20-2): a recorded cash/card/check refund is resolved in ONE locked transaction: the order's creditable
+    // invoices must be paid in full (the same resolver and predicate as the inline refund), and the claim carries the tender.
+    if (method === "EXTERNAL_REFUND") {
+      return this.recordExternalRefund(ret, refundAmount, dto?.tender);
+    }
+
     // Concurrency guard: atomically CLAIM the RECEIVED→REFUNDED transition — and persist
     // the resolution snapshot (method/amount/timestamp) in that SAME write — before
     // minting any store credit. A racing processRefund (double-click, client retry, or
@@ -1224,9 +1257,6 @@ export class ReturnsService {
       throw new BadRequestException("Only RECEIVED returns can be refunded");
     }
     const updated = await this.prisma.forTenant().return.findUnique({ where: { id } });
-
-    // EXTERNAL_REFUND: the money was returned outside RouteFlow. Record it, mint nothing.
-    if (method === "EXTERNAL_REFUND") return updated;
 
     if (refundAmount <= 0.001) return withUnbilled(updated);
 
@@ -1299,7 +1329,7 @@ export class ReturnsService {
           code: API_ERROR_CODES.RETURN_REFUND_OVER_LINE_HEADROOM,
           message:
             "This refund would credit more than the invoice line is worth: part of it was already credited " +
-            "(by a credit note or an earlier refund). Refund it outside RouteFlow or issue the credit note manually.",
+            "(by a credit note or an earlier refund). Give store credit for what is still billable, or cancel the return.",
         });
       }
       throw err;
@@ -1307,6 +1337,80 @@ export class ReturnsService {
     await this.prisma.forTenant().return.update({ where: { id }, data: { creditNoteId: cn.id } });
 
     return withUnbilled({ ...updated, creditNoteId: cn.id });
+  }
+
+  /**
+   * SA-740r2: records a STANDARD return's cash/card/check refund (EXTERNAL_REFUND mints nothing). ONE transaction in the house
+   * lock order Return -> Order -> Invoices: the order's creditable invoices (not VOID / WRITTEN_OFF) are resolved, locked,
+   * and only then read for "paid in full" (409 REFUND_NEEDS_PAID_INVOICE; paid with store credit is 409
+   * REFUND_PAID_WITH_STORE_CREDIT), through the SAME resolver and predicate the inline refund uses. The claim that follows
+   * (RECEIVED -> REFUNDED) carries the amount, `refundedAt` and the optional tender (`Return.refundTender`; omitted -> null).
+   */
+  private async recordExternalRefund(
+    ret: {
+      id: string;
+      orderId?: string | null;
+      order?: { id?: string; counterSale?: boolean | null; registerKey?: string | null } | null;
+    },
+    refundAmount: number,
+    tender: RefundTender | undefined,
+  ) {
+    const id = ret.id;
+    const tenantId = this.prisma.getTenantId();
+    // SA-740r2 item 6: the shared counter-close lock is the FIRST statement (a counter order's refund counts in the drawer)
+    const registerKey = registerKeyOfOrder(ret.order);
+    return this.prisma.tenantTransaction(async (tx: any) => {
+      if (registerKey && tenantId) await lockCounterClose(tx, tenantId, registerKey);
+      await tx.$executeRaw`SELECT id FROM "Return" WHERE id = ${id} AND (${tenantId}::text IS NULL OR "tenantId" = ${tenantId}) FOR UPDATE`;
+      const fresh = await tx.return.findFirst({
+        where: { id },
+        select: { id: true, status: true },
+      });
+      if (!fresh || fresh.status !== "RECEIVED") {
+        throw new BadRequestException("Only RECEIVED returns can be refunded");
+      }
+      const orderId = ret.order?.id ?? ret.orderId;
+      if (orderId) await lockRefundOrders(tx, tenantId, [orderId]);
+      const resolved = await resolveRefundInvoiceIds(tx, {
+        kind: "ORDER",
+        orderId: orderId ?? "",
+      });
+      const state = await loadInvoiceRefundState(tx, resolved, {
+        beforeInvoiceRead: (invoiceIds) => lockRefundInvoices(tx, tenantId, invoiceIds),
+      });
+      const refusal = refundSourcesRefusal(state);
+      if (refusal) throw refusal;
+      // SA-749r2 item 9: a CASH refund may not exceed the cash applied to the order minus earlier cash refunds on it
+      if (orderId) {
+        await assertCashRefundWithinCap(tx, {
+          returnId: id,
+          tender,
+          counterOrder: registerKey != null,
+          perOrder: new Map([[orderId, refundAmount]]),
+        });
+      }
+      // SA-758 CR-2: refundedAt is the DATABASE clock, read after the close lock (the close reads its cutoff from the same clock)
+      const refundedAt = await dbClockNow(tx);
+      // SA-750r3: a refund dated inside a closed window is refused (a closed day's totals never move)
+      if (registerKey && tenantId)
+        await assertCounterWindowOpen(tx, tenantId, registerKey, refundedAt);
+      const claimed = await tx.return.updateMany({
+        where: { id, status: "RECEIVED" },
+        data: {
+          status: "REFUNDED",
+          refundMethod: EXTERNAL_REFUND_METHOD,
+          refundAmount,
+          refundedAt,
+          ...refundTenderData(tender),
+        },
+      });
+      if (claimed.count === 0) {
+        throw new BadRequestException("Only RECEIVED returns can be refunded");
+      }
+      // one tender vocabulary (SA-740r2 item 8): answered like the inline refund, read back from the stored column
+      const row = await tx.return.findUnique({ where: { id } });
+      return row ? { ...row, refundTender: refundTenderOfColumn(row.refundTender) } : row;
+    });
   }
 
   async cancel(id: string, user: JwtPayload) {
@@ -1440,6 +1544,8 @@ export class ReturnsService {
           select: {
             id: true,
             orderNumber: true,
+            // SA-740r2: the web requires a refund tender for a COUNTER order (the cash cap treats no tender as cash)
+            counterSale: true,
             // F08 B53: same creditable-invoice shape as processRefund, so
             // refundEstimate below is priced by the same billedBasisFor helper.
             invoices: {

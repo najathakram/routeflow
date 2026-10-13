@@ -1,6 +1,7 @@
 import { useMutation, useQueryClient } from "@tanstack/react-query";
 import type { CreateFamilyRequest, UpdateFamilyVariantsRequest } from "@routeflow/types";
 import { apiClient } from "../api-client";
+import { invalidateProductSet } from "./products";
 
 export interface CreateFamilyResult {
   family: { id: string; name: string };
@@ -18,7 +19,7 @@ export function useCreateFamily() {
     meta: { localErrorToast: true },
     mutationFn: (req: CreateFamilyRequest): Promise<CreateFamilyResult> =>
       apiClient.post("/products/families", req).then((r) => r.data),
-    onSuccess: () => qc.invalidateQueries({ queryKey: ["products"] }),
+    onSuccess: () => invalidateProductSet(qc),
   });
 }
 
@@ -29,7 +30,7 @@ export function useUpdateFamilyVariants(familyId: string) {
     meta: { localErrorToast: true },
     mutationFn: (req: UpdateFamilyVariantsRequest) =>
       apiClient.patch(`/products/${familyId}/variants`, req).then((r) => r.data),
-    onSuccess: () => qc.invalidateQueries({ queryKey: ["products"] }),
+    onSuccess: () => invalidateProductSet(qc),
   });
 }
 

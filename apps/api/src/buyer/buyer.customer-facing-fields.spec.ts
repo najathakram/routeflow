@@ -59,6 +59,7 @@ async function boot() {
     findActiveOrder: jest.fn().mockResolvedValue(orderRow()),
     create: jest.fn().mockResolvedValue(orderRow()),
     mergeAllPendingForCustomer: jest.fn().mockResolvedValue(null),
+    liveTrioByProduct: jest.fn().mockResolvedValue(new Map()),
     updateOrderItems: jest.fn().mockResolvedValue(orderRow()),
   };
   const templatesService = { generateOrder: jest.fn().mockResolvedValue(orderRow()) };

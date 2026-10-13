@@ -20,6 +20,7 @@ import {
 } from "lucide-react";
 import { Button, Card, Input, useToast, cn } from "@routeflow/ui/web";
 import { usePageTitle } from "@/lib/page-title-context";
+import { countNoun } from "@/lib/plural";
 import { scheduleScannerRefocus } from "@/lib/refocus-scanner";
 import { useQuery } from "@tanstack/react-query";
 import {
@@ -49,6 +50,15 @@ import { reasonRequiredMessage } from "@/lib/staff-price-override";
 import { apiClient } from "@/lib/api-client";
 import { fetchPdfBlob } from "@/lib/fetch-pdf-blob";
 import { displayProductName } from "@/lib/product-display";
+import {
+  attachParent,
+  groupSearchRows,
+  isFamilyProduct,
+  isGroupExpanded,
+  pickerProductName,
+  sellableFlat,
+  sellableOnly,
+} from "@/lib/product-search-groups";
 import { BarcodeScannerButton } from "@/components/BarcodeScannerButton";
 import { bumpInvoiceLine, scanLevelForHit, seedLineQty } from "../invoice-scan-level";
 import { InlineCreateProductModal } from "@/components/InlineCreateProductModal";
@@ -62,11 +72,14 @@ import {
   getTierPrice,
   normalizeBoxesPieces,
   perUnitPrice,
+  pillLabel,
+  unitWords,
   type SellLevel,
 } from "@routeflow/pricing";
 import { useMarginConfig, floorForCategory } from "@/lib/api/margin";
 import { MarginHint } from "@/components/MarginHint";
 import { DecimalInput, MoneyInput } from "@/components/MoneyInput";
+import { ReadOnlyHint, WriteButton } from "@/lib/read-only-gate";
 
 // ─── Terms options ─────────────────────────────────────────────────────────────
 
@@ -232,8 +245,10 @@ function ProductSearchInput({
     limit: 20,
     includeVariants: true,
   });
-  // Only top-level products (parents + standalones) shown at root; variants appear as children
-  const products = (data?.data ?? []).filter((p: any) => !p.parentProductId);
+  // Top-level products (parents + standalones) with variants as children. A variant that matched on
+  // its own gets its parent re-attached and opened (B1215 C6); a FAMILY is never a line (C7).
+  const groups = React.useMemo(() => groupSearchRows<any>(data?.data ?? []), [data]);
+  const products = groups.rows;
 
   React.useEffect(() => {
     function handle(e: MouseEvent) {
@@ -246,8 +261,10 @@ function ProductSearchInput({
   }, []);
 
   function selectProduct(p: any, scanLevel?: SellLevel) {
+    if (isFamilyProduct(p)) return; // a FAMILY is a container, never a line (B1215 C7)
+    const label = displayProductName(p);
     onChange(
-      p.name,
+      label,
       p.id,
       String(p.pricePerUnit),
       p.averageCost ? parseFloat(String(p.averageCost)) : undefined,
@@ -255,7 +272,7 @@ function ProductSearchInput({
       p,
       scanLevel,
     );
-    setQuery(p.name);
+    setQuery(label);
     setOpen(false);
     setExpandedParentId(null);
   }
@@ -304,7 +321,7 @@ function ProductSearchInput({
             )}
             {products.map((p: any) => {
               const hasVariants = p.variants?.length > 0;
-              const isExpanded = expandedParentId === p.id;
+              const isExpanded = isGroupExpanded(expandedParentId, groups.expandedIds, p.id);
               return (
                 <React.Fragment key={p.id}>
                   <li>
@@ -312,7 +329,7 @@ function ProductSearchInput({
                       className="flex w-full items-center justify-between px-3 py-2 text-left hover:bg-surface-raised"
                       onClick={() => {
                         if (hasVariants) {
-                          setExpandedParentId(isExpanded ? null : p.id);
+                          setExpandedParentId(isExpanded ? "" : p.id);
                         } else {
                           selectProduct(p);
                         }
@@ -333,7 +350,7 @@ function ProductSearchInput({
                         )}
                         {hasVariants && (
                           <span className="text-[10px] text-navy/70 shrink-0">
-                            {p.variants.length} variants
+                            {countNoun(p.variants.length, "variant")}
                           </span>
                         )}
                       </div>
@@ -350,14 +367,17 @@ function ProductSearchInput({
                       <li key={v.id} className="bg-surface-raised/50">
                         <button
                           className="flex w-full items-center justify-between pl-8 pr-3 py-2 text-left hover:bg-surface-raised"
-                          onClick={() => selectProduct(v)}
+                          onClick={() => selectProduct(attachParent(v, p))}
                         >
                           <div className="flex items-center gap-1.5 min-w-0">
                             <span className="text-sm font-medium text-navy truncate">
-                              {v.variantName ?? v.name}
+                              {pickerProductName(v, p)}
                             </span>
                             {v.sku && (
                               <span className="text-xs text-navy/70 shrink-0">{v.sku}</span>
+                            )}
+                            {v.unit && (
+                              <span className="text-xs text-navy/70 shrink-0">{v.unit}</span>
                             )}
                           </div>
                           <span className="text-xs text-navy/70 shrink-0 ml-2">
@@ -657,6 +677,7 @@ function ExistingOrderInvoiceFlow({ onBack }: { onBack: () => void }) {
 // ─── Page ─────────────────────────────────────────────────────────────────────
 
 export default function NewInvoicePage() {
+  const w = unitWords();
   const router = useRouter();
   const { setTitle } = usePageTitle();
   const { toast } = useToast();
@@ -982,9 +1003,8 @@ export default function NewInvoicePage() {
   });
   const scanSuggestions = React.useMemo(() => {
     if (!debouncedScanQuery.trim()) return [] as any[];
-    return ((scanProductsData?.data as any[]) ?? [])
-      .filter((p: any) => !p.parentProductId)
-      .slice(0, 8);
+    // Flat typeahead: variants (named under their parent) and standalones, never a FAMILY (B1215).
+    return sellableFlat<any>((scanProductsData?.data as any[]) ?? []).slice(0, 8);
   }, [scanProductsData, debouncedScanQuery]);
 
   /**
@@ -1016,7 +1036,7 @@ export default function NewInvoicePage() {
           params: { search: code, limit: 10, isActive: true, includeVariants: true },
         })
         .then((r) => r.data);
-      const matches: any[] = res?.data ?? [];
+      const matches: any[] = sellableOnly<any>(res?.data ?? []);
       const skuExact = matches.find((p) => (p.sku ?? "").toLowerCase() === code.toLowerCase());
       const toAdd = skuExact ?? matches[0];
       if (toAdd) {
@@ -1761,7 +1781,10 @@ export default function NewInvoicePage() {
                                       <span className="italic">no SKU</span>
                                     )}
                                     {Number(p.unitsPerBox ?? 0) > 1 ? (
-                                      <span> · {p.unitsPerBox} per box</span>
+                                      <span>
+                                        {" "}
+                                        · {p.unitsPerBox} {w.base.short.other} per {w.pack.lower}
+                                      </span>
                                     ) : null}
                                   </p>
                                 </div>
@@ -1887,7 +1910,7 @@ export default function NewInvoicePage() {
                           });
                         }}
                       />
-                      {/* Case | Unit sell-by toggle — UI-only; the payload always
+                      {/* {Pack} | {Base} sell-by toggle — UI-only; the payload always
                           carries {qty, boxes, pieces} regardless of the mode. */}
                       {item.unitsPerBox && item.unitsPerBox > 1 && (
                         <div className="mt-1 inline-flex overflow-hidden rounded border border-surface-border text-[10px] font-medium">
@@ -1895,25 +1918,25 @@ export default function NewInvoicePage() {
                             type="button"
                             onClick={() => setLineSellBy(item.key, "case")}
                             className={cn(
-                              "px-1.5 py-0.5 transition-colors",
+                              "max-w-[104px] truncate whitespace-nowrap px-1.5 py-0.5 transition-colors",
                               (item.sellBy ?? "case") === "case"
                                 ? "bg-brand-500 text-white"
                                 : "bg-white text-navy/70 hover:bg-surface-raised",
                             )}
                           >
-                            Case
+                            {pillLabel(w.pack.one)}
                           </button>
                           <button
                             type="button"
                             onClick={() => setLineSellBy(item.key, "unit")}
                             className={cn(
-                              "border-l border-surface-border px-1.5 py-0.5 transition-colors",
+                              "max-w-[104px] truncate whitespace-nowrap border-l border-surface-border px-1.5 py-0.5 transition-colors",
                               item.sellBy === "unit"
                                 ? "bg-brand-500 text-white"
                                 : "bg-white text-navy/70 hover:bg-surface-raised",
                             )}
                           >
-                            Unit
+                            {pillLabel(w.base.one)}
                           </button>
                         </div>
                       )}
@@ -1932,9 +1955,11 @@ export default function NewInvoicePage() {
                             }
                             onFocus={(e) => e.target.select()}
                             className="w-full rounded border border-surface-border bg-white px-1 py-1 text-center text-xs font-semibold text-navy focus:border-transparent focus:outline-none focus:ring-1 focus:ring-brand-500"
-                            title="Total units"
+                            title={`Total ${w.base.lowerOther}`}
                           />
-                          <span className="text-[9px] text-navy/30 text-right">units</span>
+                          <span className="text-[9px] text-navy/30 text-right">
+                            {w.base.short.other}
+                          </span>
                         </div>
                       ) : (
                         <div className="flex flex-col gap-0.5">
@@ -1953,9 +1978,9 @@ export default function NewInvoicePage() {
                               }}
                               onFocus={(e) => e.target.select()}
                               className="w-8 rounded border border-surface-border bg-white px-1 py-1 text-center text-xs font-semibold text-navy focus:border-transparent focus:outline-none focus:ring-1 focus:ring-brand-500"
-                              title="Cases"
+                              title={w.pack.other}
                             />
-                            <span className="text-[10px] text-navy/70">c+</span>
+                            <span className="text-[10px] text-navy/70">{w.pack.lower} +</span>
                             <input
                               type="number"
                               min={0}
@@ -1971,11 +1996,11 @@ export default function NewInvoicePage() {
                               }}
                               onFocus={(e) => e.target.select()}
                               className="w-8 rounded border border-surface-border bg-white px-1 py-1 text-center text-xs font-semibold text-navy focus:border-transparent focus:outline-none focus:ring-1 focus:ring-brand-500"
-                              title="Extra loose units"
+                              title={`Extra ${w.base.lowerOther}`}
                             />
                           </div>
                           <span className="text-[9px] text-navy/30 text-right">
-                            {item.qty} units
+                            {item.qty} {w.baseShortFor(item.qty)}
                           </span>
                         </div>
                       )
@@ -2022,7 +2047,8 @@ export default function NewInvoicePage() {
                       )}
                       {item.unitsPerBox && item.unitsPerBox > 1 && item.unitPrice > 0 && (
                         <p className="text-[9px] text-navy/70 text-right mt-0.5">
-                          ${perUnitPrice(item.unitPrice, item.unitsPerBox)?.toFixed(2)}/pc
+                          ${perUnitPrice(item.unitPrice, item.unitsPerBox)?.toFixed(2)}/
+                          {w.base.short.one}
                         </p>
                       )}
                       {/* Live cost & margin — the negotiation floor (shared component) */}
@@ -2264,23 +2290,23 @@ export default function NewInvoicePage() {
           <div className="flex items-center gap-2">
             {isSale ? (
               deliveredNow ? (
-                <Button
+                <WriteButton
                   onClick={() => handleSubmitSale(true)}
                   loading={createSale.isPending}
                   disabled={createSale.isPending}
                 >
                   Create sale &amp; invoice
-                </Button>
+                </WriteButton>
               ) : (
                 // Deliver later → only create the draft. It mirrors the order and
                 // becomes sendable after the order is delivered (never sent here).
-                <Button
+                <WriteButton
                   onClick={() => handleSubmitSale(false)}
                   loading={createSale.isPending}
                   disabled={createSale.isPending}
                 >
                   Save draft invoice
-                </Button>
+                </WriteButton>
               )
             ) : (
               <>
@@ -2293,7 +2319,7 @@ export default function NewInvoicePage() {
                 >
                   Preview
                 </Button>
-                <Button
+                <WriteButton
                   variant="secondary"
                   leftIcon={<Download className="h-4 w-4" />}
                   onClick={handleDownload}
@@ -2302,24 +2328,25 @@ export default function NewInvoicePage() {
                   title="Save as draft and download the PDF without sending"
                 >
                   Download
-                </Button>
-                <Button
+                </WriteButton>
+                <WriteButton
                   variant="secondary"
                   onClick={() => handleSubmit(false)}
                   loading={createInvoice.isPending || updateInvoice.isPending}
                   disabled={createInvoice.isPending || updateInvoice.isPending}
                 >
-                  Save as Draft
-                </Button>
-                <Button
+                  Save as draft
+                </WriteButton>
+                <WriteButton
                   onClick={() => handleSubmit(true)}
                   loading={createInvoice.isPending || updateInvoice.isPending}
                   disabled={createInvoice.isPending || updateInvoice.isPending}
                 >
                   Save and Send
-                </Button>
+                </WriteButton>
               </>
             )}
+            <ReadOnlyHint className="ml-2 text-xs text-slate-600" />
             <button
               onClick={() => router.push("/invoices")}
               className="px-3 py-1.5 text-sm text-navy/70 hover:text-navy transition-colors"

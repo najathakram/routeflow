@@ -300,6 +300,42 @@ describeDb("#2648 credit-note reissue (SA-535b)", () => {
       return real(...args);
     }) as any);
   }
+  /**
+   * Makes a SAME-key race deterministic. The first transaction to reach `idempotency.save` (the
+   * winner: it holds the key's advisory lock and has done every write) is parked there until
+   * Postgres itself reports a peer backend blocked behind it on `pg_advisory_xact_lock`
+   * (`pg_blocking_pids`), and only then is it allowed to save and commit. So the peer's
+   * Serializable snapshot is provably taken BEFORE the winner commits: its `check` sees no row,
+   * it enters the void, loses on the write conflict and replays on the retry. Without the park the
+   * peer may start its transaction after the winner has already committed, take the early
+   * replay and never reach the void at all - which of the two happens is just scheduling.
+   */
+  function parkWinnerUntilPeerBlocked() {
+    const real = (idempotency.save as any).bind(idempotency);
+    const state = { parked: false, peerObserved: false };
+    const spy = jest.spyOn(idempotency, "save").mockImplementation((async (...args: any[]) => {
+      const tx = args[4];
+      if (!state.parked) {
+        state.parked = true;
+        const [{ pid }] = await tx.$queryRaw`SELECT pg_backend_pid()::int AS pid`;
+        const deadline = Date.now() + 20_000;
+        while (!state.peerObserved) {
+          const rows = await prisma.$queryRaw<Array<{ n: number }>>`
+            SELECT count(*)::int AS n FROM pg_stat_activity
+            WHERE ${pid}::int = ANY(pg_blocking_pids(pid))
+              AND wait_event_type = 'Lock' AND wait_event = 'advisory'
+              AND query ILIKE '%pg_advisory_xact_lock%'`;
+          state.peerObserved = rows[0].n > 0;
+          if (state.peerObserved) break;
+          if (Date.now() > deadline)
+            throw new Error("park: no peer was ever blocked on the idempotency lock");
+          await new Promise((r) => setTimeout(r, 20));
+        }
+      }
+      return real(...args);
+    }) as any);
+    return { spy, state };
+  }
   const settle = async (...calls: Array<Promise<any>>) => {
     const results = await Promise.allSettled(calls);
     return {
@@ -598,12 +634,16 @@ describeDb("#2648 credit-note reissue (SA-535b)", () => {
     const before = await counter(tenantId);
     barrierAtReserve(2);
     const voidSpy = jest.spyOn(creditNotes, "voidWithReversalInTx");
+    // r366: the barrier only aligns the PRE-tx phase. Without this park the loser may open its
+    // transaction after the winner committed, hit the early replay and never reach the void.
+    const park = parkWinnerUntilPeerBlocked();
 
     const { ok, failed } = await settle(
       run(tenantId, old.id, { amount: 20 }, "k-9"),
       run(tenantId, old.id, { amount: 20 }, "k-9"),
     );
 
+    expect(park.state.peerObserved).toBe(true); // the loser really was inside its tx, behind the winner
     expect(failed).toHaveLength(0);
     expect(ok[0].value.creditNote.id).toBe(ok[1].value.creditNote.id);
     expect(voidSpy.mock.calls.length).toBeGreaterThanOrEqual(2); // the loser's first attempt reached the void, then replayed

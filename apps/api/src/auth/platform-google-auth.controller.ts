@@ -103,6 +103,12 @@ export class PlatformGoogleAuthController {
     try {
       const profile = await this.googleOAuth.verifyCallback(code, state);
 
+      // Only platform-type states complete here. Turn any other type away before the
+      // link or sign-in step, so no account is linked, created or signed in on this path.
+      if (profile.type !== "platform") {
+        return res.redirect(`${base}/auth/callback?error=unauthorized`);
+      }
+
       // ── Link-account flow ────────────────────────────────────────────────────
       if (profile.linkUserId) {
         await this.googleOAuth.linkGoogleAccount(profile);
@@ -112,7 +118,8 @@ export class PlatformGoogleAuthController {
       // ── Sign-in flow ─────────────────────────────────────────────────────────
       const result = await this.googleOAuth.findOrCreateUser(profile, extractDeviceInfo(req));
 
-      // Only SUPER_ADMIN platform accounts are expected here
+      // Only SUPER_ADMIN platform accounts are expected here (defence in depth; the
+      // state-type check above already turns non-platform states away).
       if (result.kind !== "platform") {
         return res.redirect(`${base}/auth/callback?error=unauthorized`);
       }

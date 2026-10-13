@@ -52,6 +52,7 @@ const customerPayload = {
   sub: "user-cust",
   username: "customer1",
   role: "CUSTOMER" as const,
+  tenantId: "test-tenant",
   status: "ACTIVE" as const,
   forcePasswordChange: false,
 };
@@ -106,6 +107,8 @@ describe("OrdersService.create — selling restrictions call site (lane R 2a-5)"
             findOpenOrderDraft: jest.fn().mockResolvedValue(null),
             reconcileOrderDraftInvoice: jest.fn().mockResolvedValue({ id: "inv-1" }),
             resyncOrderInvoicesForEdit: jest.fn().mockResolvedValue([{ id: "inv-1" }]),
+            followPartialPrices: jest.fn().mockResolvedValue({ issuedPartialsUnchanged: [] }),
+            projectEditedInvoiceTotals: jest.fn().mockResolvedValue([]),
             revertLinkedInvoicesForOrderEdit: jest.fn().mockResolvedValue([]),
             voidInvoice: jest.fn().mockResolvedValue({ id: "inv-1", status: "VOID" }),
             voidInvoiceInTx: jest.fn().mockResolvedValue({ id: "inv-1", status: "VOID" }),
@@ -359,7 +362,7 @@ describe("OrdersService.create — selling restrictions call site (lane R 2a-5)"
   // cannot name one is refused rather than assumed OFF (fail closed; the price of a check that can
   // never be skipped by omitting the tenant). Staff and buyer alike.
   it.each([
-    ["a buyer", customerPayload],
+    ["a buyer", { ...customerPayload, tenantId: null }],
     ["a staff principal", operatorPayload],
   ])(
     "%s with no tenant on the caller and none ambient: refused (403) rather than skipped",

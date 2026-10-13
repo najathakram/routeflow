@@ -179,7 +179,6 @@ const CONSUMER_ALLOWLIST: Record<string, string[]> = {
   "apps/web/components/ScanInvoiceModal.tsx": ["AI_KEY_INVALID"],
   "apps/web/lib/api/authorizations.ts": ["REGULATED_AUTH_REQUIRED"],
   "apps/web/lib/api/credit-limit.ts": ["CREDIT_LIMIT_EXCEEDED"],
-  "apps/web/lib/api/restrictions-settings.ts": ["SELLING_RESTRICTIONS_NOT_READY"],
   "apps/web/lib/api/selling-restricted.ts": ["SELLING_RESTRICTED"],
   "apps/web/lib/api/supplier-statements.ts": [
     "AI_KEY_INVALID",
@@ -196,14 +195,13 @@ const CONSUMER_ALLOWLIST: Record<string, string[]> = {
     "MERGE_CHOICE_REQUIRED",
     "STOP_ALREADY_COMPLETED",
     "SELLING_RESTRICTED",
-    "SELLING_RESTRICTIONS_NOT_READY",
     "REGULATED_AUTH_REQUIRED",
   ],
   "apps/web/lib/plan-gate.ts": ["PLAN_GATE", "PLAN_GATE_UNAVAILABLE"],
   "apps/web/lib/po-bill-refusal.ts": ["BILL_EXCEEDS_PO"],
   "apps/web/lib/scan-po-lock.ts": ["PLAN_GATE"],
 };
-const CONSUMER_ALLOWLIST_TOTAL = 74;
+const CONSUMER_ALLOWLIST_TOTAL = 72;
 
 /**
  * B987-D: literals in packages/ that keep a literal because a value import of `@routeflow/types` is ruled out there (a hard runtime constraint for pricing, a build CONVENTION for returns).
@@ -226,12 +224,13 @@ const PACKAGE_ALLOWLIST: Record<string, { codes: string[]; reason: string }> = {
       "PLAN_GATE_UNAVAILABLE",
       "RETURN_REFUND_OVER_LINE_HEADROOM",
       "INLINE_RETURN_KEY_REUSED_WITH_DIFFERENT_ITEMS",
+      "READ_ONLY",
     ],
     reason:
       "CONVENTION, not a runtime constraint: compiled CJS package (like pricing) that keeps @routeflow/types imports type-only, so its dist never requires the raw-TS package; only pricing is bound by SA-478a",
   },
 };
-const PACKAGE_ALLOWLIST_TOTAL = 6;
+const PACKAGE_ALLOWLIST_TOTAL = 7;
 
 /**
  * `READ_ONLY` is ALSO a tenant STATUS value (`tenant.status === "READ_ONLY"`), which is not an error
@@ -241,12 +240,15 @@ const PACKAGE_ALLOWLIST_TOTAL = 6;
 const READ_ONLY_STATUS_FILES = [
   "apps/api/src/billing/billing-cron.service.ts",
   "apps/api/src/billing/billing.service.ts",
+  "apps/api/src/billing/dunning-config.ts", // SA-733r7: READ_ONLY_STATUS, the one spelling the dunning modules share
   "apps/api/src/billing/mrr.service.ts",
   "apps/api/src/billing/subscription-mutation.service.ts",
   "apps/api/src/tenant/tenant-status.guard.ts",
   // web: tenant STATUS checks (`status !== "READ_ONLY"`), not the error code
   "apps/web/app/(dashboard)/settings/billing/page.tsx",
   "apps/web/components/ReadOnlyBanner.tsx",
+  "apps/web/lib/read-only-gate.tsx", // SA-733r6: `view.status === "READ_ONLY"`
+  "apps/web/lib/subscription-banner-state.ts", // SA-733r6: `view.status === "READ_ONLY"`
 ];
 
 /**

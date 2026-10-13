@@ -47,7 +47,8 @@ export function LockedPage({
           <a
             href="/choose-plan"
             onClick={(e) => {
-              if (guardCounterLeave()) e.preventDefault(); // POS-7: not mid-sale
+              if (guardCounterLeave(() => window.location.assign("/choose-plan")))
+                e.preventDefault(); // POS-7: not mid-sale
             }}
           >
             <Button className="mt-4">

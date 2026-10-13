@@ -135,8 +135,8 @@ jest.mock("@routeflow/ui/web", () => ({
   useToast: () => ({ toast: mockToast }),
 }));
 
-const casesInput = () => screen.getByTitle("Number of whole cases") as HTMLInputElement;
-const looseInput = () => screen.queryByLabelText("Extra loose units") as HTMLInputElement | null;
+const casesInput = () => screen.getByTitle("Number of whole boxes") as HTMLInputElement;
+const looseInput = () => screen.queryByLabelText("Extra pieces") as HTMLInputElement | null;
 /** The line item's <li> in the order (not a dropdown row). */
 const lineFor = (name: string) =>
   screen
@@ -175,7 +175,7 @@ describe("R1: a UNIT code adds one PIECE — never a hidden case", () => {
     await waitFor(() => expect(lineFor("Sample Chips")).toBeTruthy());
     expect(casesInput().value).toBe("0");
     expect(looseInput()?.value).toBe("1"); // no hidden quantity: the line states boxes AND pieces
-    expect(lineFor("Sample Chips").textContent).toContain("1 pcs total");
+    expect(lineFor("Sample Chips").textContent).toContain("1 pc total");
   });
 
   it("UNIT onto an existing case line -> 1 case + 1 loose on the ONE line (qty 13), and the merge toast says both", async () => {
@@ -188,7 +188,7 @@ describe("R1: a UNIT code adds one PIECE — never a hidden case", () => {
     expect(casesInput().value).toBe("1");
     expect(lineFor("Sample Chips").textContent).toContain("13 pcs total");
     expect(mockToast).toHaveBeenCalledWith(
-      expect.objectContaining({ description: expect.stringMatching(/1 case.*1 (pc|unit)/i) }),
+      expect.objectContaining({ description: expect.stringMatching(/1 box.*1 (pc|unit)/i) }),
     );
   });
 
@@ -263,7 +263,7 @@ describe("R2 (SA-580b): a shared code on upb <= 1 adds the default unit -> today
     expect(plainQty()).toBe("1");
     await scan(PLAIN, "100200300", ["UNIT", "BOX"]);
     await waitFor(() => expect(plainQty()).toBe("2"));
-    expect(screen.queryByTitle("Number of whole cases")).not.toBeInTheDocument();
+    expect(screen.queryByTitle("Number of whole boxes")).not.toBeInTheDocument();
   });
 });
 
@@ -277,7 +277,7 @@ describe("R4: upb <= 1 — no box/unit distinction, today's line shape whatever 
       expect(plainQty()).toBe("1");
       await scan(PLAIN, "100200300", [level]);
       await waitFor(() => expect(plainQty()).toBe("2"));
-      expect(screen.queryByTitle("Number of whole cases")).not.toBeInTheDocument();
+      expect(screen.queryByTitle("Number of whole boxes")).not.toBeInTheDocument();
     },
   );
 });
@@ -299,7 +299,7 @@ describe("SA-595a R4: a sku (BOX-level) hit at upb <= 1 adds today's line shape 
     await scan(UPB_NULL, "111222333", ["BOX"]);
     await waitFor(() => expect(qty()).toBe("2"));
     expect(screen.getAllByTitle("Remove")).toHaveLength(1);
-    expect(screen.queryByTitle("Number of whole cases")).not.toBeInTheDocument();
+    expect(screen.queryByTitle("Number of whole boxes")).not.toBeInTheDocument();
   });
 
   it("upb 1: new line is {boxes 1, pieces 0, qty 1}, a repeat merges +1 box on the ONE line, no loose units", async () => {
@@ -308,7 +308,7 @@ describe("SA-595a R4: a sku (BOX-level) hit at upb <= 1 adds today's line shape 
     await waitFor(() => expect(lineFor("Sample Soda")).toBeTruthy());
     expect(casesInput().value).toBe("1");
     expect(looseInput()).toBeNull();
-    expect(lineFor("Sample Soda").textContent).toContain("1 pcs total");
+    expect(lineFor("Sample Soda").textContent).toContain("1 pc total");
     await scan(UPB_ONE, "700800900", ["BOX"]);
     await waitFor(() => expect(casesInput().value).toBe("2"));
     expect(looseInput()).toBeNull();

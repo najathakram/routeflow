@@ -15,6 +15,9 @@
 // call, and the "success"/"refused" screens — `InlineReturnSection` stays mounted underneath
 // them (hidden, never unmounted) across a refusal so a retry doesn't lose the operator's typed
 // lines/quote.
+import { RefundSlipAction } from "./RefundSlipAction";
+import { readAutoPrint } from "@/lib/counter-sale";
+import { isReadOnlyRefusal } from "@/lib/read-only-refusal";
 import * as React from "react";
 import Link from "next/link";
 import { Button, Modal, Select, useToast } from "@routeflow/ui/web";
@@ -68,12 +71,18 @@ export interface RecordInlineReturnDialogProps {
    *  used as the carrying order (capture's `orderId`) with no extra picker. Omit when
    *  opening from customer detail (the order picker below is then required). */
   orderId?: string;
+  /** SA-740: the sale the goods are from, sent on every quote and the capture. A counter return passes its sale (REQUIRED
+   *  for a walk-in, whose one shared customer row would otherwise match another receipt); omit for a named customer,
+   *  whose return may spill across orders. */
+  sourceOrderId?: string;
   /** POS-4b: offer "Store credit or Refund" on the quote step (counter receipt + order detail only).
    *  Off (customer detail) = today's dialog, no choice block. */
   allowRefund?: boolean;
   /** Optional: called once when a return is fully recorded — after the refund, if one was chosen
    *  (the counter receipt shows its own hand-back note from `info`). */
   onRecorded?: (result: InlineReturnRecord, info?: RecordedInfo) => void;
+  /** W21b: Radix close-focus hook, so the opener can take focus back (no Radix trigger here). */
+  onCloseAutoFocus?: (event: Event) => void;
 }
 
 /** Refund refusals after a saved capture where the goods are in and nothing was paid out. */
@@ -81,15 +90,19 @@ const PENDING_ON_CLOSE: ReadonlySet<RefundErrorKind> = new Set([
   "failed",
   "changed",
   "forbidden",
+  "readOnly",
   "needsPaid",
   "notRefundable",
   "paidWithCredit",
+  "exceedsCash",
+  "dayClosed",
 ]);
 /** Refusals where the saved return can still be given as store credit (not a 403). */
 const CREDIT_INSTEAD: ReadonlySet<RefundErrorKind> = new Set([
   "needsPaid",
   "notRefundable",
   "paidWithCredit",
+  "dayClosed",
 ]);
 
 export interface RecordedInfo {
@@ -102,14 +115,23 @@ export interface RecordedInfo {
 
 type DialogPhase = "capture" | "success" | "refused";
 
+/** The real amount a 409 REFUND_AMOUNT_CHANGED body carries; null when absent or unusable. */
+function serverAmountOf(err: unknown): number | null {
+  const amount = (err as { response?: { data?: { amount?: unknown } } } | undefined)?.response?.data
+    ?.amount;
+  return typeof amount === "number" && Number.isFinite(amount) && amount > 0 ? amount : null;
+}
+
 export function RecordInlineReturnDialog({
   open,
   onClose,
   customerId,
   customerName,
   orderId,
+  sourceOrderId,
   allowRefund = false,
   onRecorded,
+  onCloseAutoFocus,
 }: RecordInlineReturnDialogProps) {
   const role = useOptionalAuth()?.user?.role;
   const { toast } = useToast();
@@ -157,6 +179,9 @@ export function RecordInlineReturnDialog({
   const [requoteOverride, setRequoteOverride] = React.useState<InlineReturnQuoteResponse | null>(
     null,
   );
+  // The amount the 409 REFUND_AMOUNT_CHANGED body carried: the server's real figure, which the
+  // clerk's fresh confirm sends as expectedAmount (no re-quote, so it cannot loop on a re-priced quote).
+  const [serverAmount, setServerAmount] = React.useState<number | null>(null);
   const busyRef = React.useRef(false);
   // a refund POST already failed once: a later RETURN_ALREADY_RESOLVED means "check before handing over"
   const retriedRef = React.useRef(false);
@@ -184,6 +209,7 @@ export function RecordInlineReturnDialog({
     setRefundError(null);
     setRefundDone(null);
     setRequoteOverride(null);
+    setServerAmount(null);
     setCrediting(false);
     setRequoting(false);
     retriedRef.current = false;
@@ -203,9 +229,22 @@ export function RecordInlineReturnDialog({
     !showChoice || paidWithCredit ? "STORE_CREDIT" : walkIn ? "REFUND" : resolution;
   const effTender: InlineRefundTender = tender ?? tenderFromPaidMethods(quoted?.paidMethods);
   const quotedAmount = quoted?.total ?? 0;
+  const shownAmount = serverAmount ?? quotedAmount;
+  // A 409 that carried the server's figure: the quote's Total follows it, so the screen never shows two amounts. Keyed on the
+  // figure alone (the latest quote rides in a ref) so handing it down cannot feed back into its own quote state.
+  const quotedRef = React.useRef(quoted);
+  quotedRef.current = quoted;
+  const serverQuote = React.useMemo(
+    () =>
+      serverAmount !== null && quotedRef.current
+        ? { ...quotedRef.current, total: serverAmount }
+        : null,
+    [serverAmount],
+  );
 
   /** The server's figure once a capture is saved; the quote only before (or after a re-quote). */
   function savedAmountOf(ret: InlineReturnRecord): number {
+    if (serverAmount !== null) return serverAmount;
     if (requoteOverride) return quotedAmount;
     return refundAmountOf(ret.refundAmount) ?? quotedAmount;
   }
@@ -285,17 +324,26 @@ export function RecordInlineReturnDialog({
         setRefunding(false);
         const kind = classify(err);
         setRefundError(kind);
-        if (kind === "changed") {
+        const changedAmount = kind === "changed" ? serverAmountOf(err) : null;
+        if (changedAmount !== null) {
+          // The server's own figure came back: show it; the clerk's confirm re-POSTs with it.
+          setServerAmount(changedAmount);
+        } else if (kind === "changed") {
           // The amount moved under us: re-fetch the quote; the clerk must confirm the new figure.
+          // A stale server amount from an earlier 409 must not outrank the re-quote.
+          setServerAmount(null);
           setRequoting(true);
-          requoteMutation.mutate(buildQuoteRequest(customerId, sectionState.lines), {
-            onSuccess: (fresh) => {
-              setRequoting(false);
-              setRequoteOverride(fresh);
+          requoteMutation.mutate(
+            buildQuoteRequest(customerId, sectionState.lines, undefined, sourceOrderId),
+            {
+              onSuccess: (fresh) => {
+                setRequoting(false);
+                setRequoteOverride(fresh);
+              },
+              // A failed re-quote never lets the clerk confirm the old amount: the refund stays pending.
+              onError: () => setRefundError("failed"),
             },
-            // A failed re-quote never lets the clerk confirm the old amount: the refund stays pending.
-            onError: () => setRefundError("failed"),
-          });
+          );
         }
       },
     );
@@ -324,6 +372,7 @@ export function RecordInlineReturnDialog({
           lines: sectionState.lines,
           returnKey: returnKeyRef.current,
           reason: sectionState.captureReason,
+          sourceOrderId,
         }),
         ...(showChoice ? { resolution: effResolution } : {}),
       },
@@ -349,6 +398,7 @@ export function RecordInlineReturnDialog({
           const refundDenied =
             showChoice &&
             effResolution === "REFUND" &&
+            !isReadOnlyRefusal(err) &&
             (err as { response?: { status?: number } } | undefined)?.response?.status === 403;
           setRefusalMessage(refundDenied ? REFUND_COPY.forbidden : extractRefusalMessage(err));
           // #2647: the earlier capture WAS recorded: link it and clear the draft (a fresh key and a
@@ -370,6 +420,7 @@ export function RecordInlineReturnDialog({
     <Modal
       open={open}
       onClose={handleClose}
+      onCloseAutoFocus={onCloseAutoFocus}
       title="Record a return"
       description={customerName ? `For ${customerName}` : undefined}
       className="max-w-2xl"
@@ -398,15 +449,20 @@ export function RecordInlineReturnDialog({
         hidden={phase !== "capture"}
         customerId={customerId}
         entryOrderId={orderId}
+        sourceOrderId={sourceOrderId}
         resetToken={openSeq}
         getQuoteEnabled={!!carryingOrderId}
         onStateChange={setSectionState}
-        quoteOverride={requoteOverride}
+        quoteOverride={serverQuote ?? requoteOverride}
+        totalOnly={!!serverQuote}
         hideBack={!!saved}
+        quoteNote={
+          showChoice && effResolution === "REFUND" ? REFUND_COPY.quoteRefundNote : undefined
+        }
         renderQuoteFooter={() =>
           showChoice ? (
             <RefundChoice
-              amount={money(quotedAmount)}
+              amount={money(shownAmount)}
               walkIn={walkIn}
               refundUnavailable={paidWithCredit}
               resolution={effResolution}
@@ -420,6 +476,8 @@ export function RecordInlineReturnDialog({
                 captureMutation.isPending ||
                 captureSentRef.current
               }
+              // SA-749r2 #9: after "more cash than was taken" the tender is the way out, so it stays editable
+              tenderEditable={refundError === "exceedsCash"}
               error={refundError}
             />
           ) : null
@@ -431,8 +489,15 @@ export function RecordInlineReturnDialog({
         )}
         renderQuoteActions={() =>
           showChoice &&
-          (refundError === "failed" || (refundError && TERMINAL_REFUND_ERRORS.has(refundError))) ? (
-            saved && (refundError === "failed" || CREDIT_INSTEAD.has(refundError)) ? (
+          (refundError === "failed" ||
+            refundError === "exceedsCash" ||
+            (refundError && TERMINAL_REFUND_ERRORS.has(refundError))) ? (
+            saved &&
+            (refundError === "failed" ||
+              refundError === "exceedsCash" ||
+              (CREDIT_INSTEAD.has(refundError) &&
+                // a walk-in can't hold store credit: a closed day leaves only the later date
+                !(refundError === "dayClosed" && walkIn))) ? (
               <>
                 <Button
                   variant="secondary"
@@ -442,7 +507,7 @@ export function RecordInlineReturnDialog({
                 >
                   Give store credit instead
                 </Button>
-                {refundError === "failed" ? (
+                {refundError === "failed" || refundError === "exceedsCash" ? (
                   <Button
                     loading={refunding}
                     disabled={crediting}
@@ -477,7 +542,7 @@ export function RecordInlineReturnDialog({
                 : refunding
                   ? "Refunding…"
                   : effResolution === "REFUND"
-                    ? `Return & refund ${money(quotedAmount)}`
+                    ? `Return & refund ${money(shownAmount)}`
                     : "Return & issue store credit"}
             </Button>
           )
@@ -534,6 +599,9 @@ export function RecordInlineReturnDialog({
             <p role="status" className="text-sm text-navy">
               Refund recorded. {handBackLine(refundDone.tender, money(refundDone.amount))}
             </p>
+          )}
+          {(refundDone || result.creditNoteId) && (
+            <RefundSlipAction returnId={result.id} autoPrint={readAutoPrint()} />
           )}
           {result.parkedReversals && (
             <div
@@ -592,6 +660,7 @@ function RefundChoice({
   tender,
   onTender,
   locked,
+  tenderEditable = false,
   error,
 }: {
   amount: string;
@@ -602,6 +671,8 @@ function RefundChoice({
   tender: InlineRefundTender;
   onTender: (t: InlineRefundTender) => void;
   locked: boolean;
+  /** SA-749r2 #9: keep the "Refund by" tender editable although the choice is locked (the way out of a cash cap refusal). */
+  tenderEditable?: boolean;
   error: RefundErrorKind | null;
 }) {
   const refund = resolution === "REFUND";
@@ -637,7 +708,7 @@ function RefundChoice({
           <Select
             label="Refund by"
             value={tender}
-            disabled={locked}
+            disabled={locked && !tenderEditable}
             onChange={(e) => onTender(e.target.value as InlineRefundTender)}
             options={TENDER_OPTIONS}
           />
@@ -646,7 +717,7 @@ function RefundChoice({
       )}
       {error && (
         <p role="alert" className="text-sm font-medium text-danger">
-          {REFUND_COPY[error]}
+          {error === "dayClosed" && walkIn ? REFUND_COPY.dayClosedWalkIn : REFUND_COPY[error]}
         </p>
       )}
     </fieldset>

@@ -69,3 +69,27 @@ describe("InvoiceTotalsSummary wording (B421, REG-B421)", () => {
     expect(screen.queryByText("Advance applied")).not.toBeInTheDocument();
   });
 });
+
+describe("InvoiceTotalsSummary: the levy is its own named charge, never inside Tax (CQ-03)", () => {
+  it("Tax 2.60, then 'CRV deposit 2.80', then the payment: the lines add up to the total", () => {
+    render(
+      <InvoiceTotalsSummary
+        {...BASE}
+        subtotal={31.48}
+        taxAmount={2.6}
+        chargeLines={[{ key: "crv", label: "CRV deposit", amount: 2.8 }]}
+        amountPaid={36.88}
+        balanceDue={0}
+      />,
+    );
+    expect(screen.getByText("Tax")).toBeInTheDocument();
+    expect(screen.getByText("$2.60")).toBeInTheDocument();
+    expect(screen.getByTestId("invoice-charge-crv")).toHaveTextContent("CRV deposit");
+    expect(screen.getByTestId("invoice-charge-crv")).toHaveTextContent("$2.80");
+  });
+
+  it("no regulated line: no charge row at all", () => {
+    render(<InvoiceTotalsSummary {...BASE} taxAmount={5} />);
+    expect(screen.queryByTestId(/^invoice-charge-/)).not.toBeInTheDocument();
+  });
+});

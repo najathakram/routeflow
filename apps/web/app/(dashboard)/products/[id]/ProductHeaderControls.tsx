@@ -3,12 +3,11 @@
 import * as React from "react";
 import { Trash2 } from "lucide-react";
 import { Button } from "@routeflow/ui/web";
-import { ConfirmDialog } from "@/components/ConfirmDialog";
 import { useAuth } from "@/lib/auth-context";
 
 /**
  * The product Details card's view-mode actions: Make variant of…, Deactivate / Reactivate, the tobacco
- * toggle, and Delete (OPERATOR only, behind its own confirm). The pencil (Edit) stays in the page.
+ * toggle, and Delete (OPERATOR only; it opens the page's DeleteProductConfirm). The pencil (Edit) stays in the page.
  */
 export function ProductHeaderControls({
   product,
@@ -18,8 +17,7 @@ export function ProductHeaderControls({
   tobaccoLoading,
   onToggleTobacco,
   onMakeVariant,
-  onDelete,
-  deleting,
+  onRequestDelete,
 }: {
   product: {
     id: string;
@@ -38,13 +36,11 @@ export function ProductHeaderControls({
   tobaccoLoading: boolean;
   onToggleTobacco: () => void;
   onMakeVariant: () => void;
-  /** Resolves when the delete finished (the confirm closes either way). */
-  onDelete: () => Promise<void> | void;
-  deleting: boolean;
+  /** Opens the page's "Delete product?" confirm (DeleteProductConfirm). */
+  onRequestDelete: () => void;
 }) {
   const { user } = useAuth();
   const isOperator = user?.role === "OPERATOR";
-  const [confirmOpen, setConfirmOpen] = React.useState(false);
 
   return (
     <>
@@ -86,27 +82,11 @@ export function ProductHeaderControls({
           size="sm"
           variant="danger-outline"
           leftIcon={<Trash2 className="h-4 w-4" />}
-          onClick={() => setConfirmOpen(true)}
+          onClick={onRequestDelete}
         >
           Delete
         </Button>
       )}
-      <ConfirmDialog
-        open={confirmOpen}
-        onClose={() => setConfirmOpen(false)}
-        onConfirm={async () => {
-          try {
-            await onDelete();
-          } finally {
-            setConfirmOpen(false);
-          }
-        }}
-        title="Delete product?"
-        description={`${product.name} will be deactivated and hidden from the catalog. Its SKU and barcode are freed, so another product can use them. Order and invoice history is kept. A product on an undelivered order can't be deleted.`}
-        confirmLabel="Yes, delete"
-        variant="danger"
-        loading={deleting}
-      />
     </>
   );
 }

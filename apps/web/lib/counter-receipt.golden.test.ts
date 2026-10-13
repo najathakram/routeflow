@@ -14,7 +14,7 @@ const PROFILE = {
   phone: "555-0100",
 };
 const CART = [
-  { tempId: "l1", name: "Cola", unitPrice: 2.5, qty: 3 },
+  { tempId: "l1", name: "Cola", unitPrice: 2.5, qty: 3, unit: "each" },
   { tempId: "l2", name: "Water", unitPrice: 12, qty: 15, unitsPerBox: 12, boxes: 1, pieces: 3 },
 ];
 const SOLD = new Date("2026-10-07T15:15:00.000Z");
@@ -54,7 +54,7 @@ const reprint = (
       orderNumber: "ORD-1",
       total: 24.5,
       lineItems: [
-        { id: "l1", name: "Cola", qty: 3, unitPrice: 2.5 },
+        { id: "l1", name: "Cola", qty: 3, unitPrice: 2.5, product: { name: "Cola", unit: "each" } },
         { id: "l2", name: "Water", qty: 15, unitPrice: 12, unitsPerBox: 12, boxes: 1, pieces: 3 },
         { id: "l3", name: "Voided line", qty: 1, unitPrice: 99, status: "CANCELLED" },
       ],
@@ -77,7 +77,8 @@ const SHARED = [
   "invoiceNumber",
   "invoiceId",
   "subtotal",
-  "adjustment",
+  "tax",
+  "adjustments",
   "total",
   "paid",
   "balanceDue",
@@ -89,7 +90,7 @@ const SHARED = [
 
 describe("receipt golden: live vs reprint", () => {
   it.each([["CASH"], ["CARD"]] as const)(
-    "%s sale: same header, lines, subtotal, adjustment, total, method, numbers",
+    "%s sale: same header, lines, subtotal, tax, adjustments, total, method, numbers",
     (m) => {
       const a = live(m);
       const b = reprint([{ method: m, amount: 24.5 }]);
@@ -124,6 +125,15 @@ describe("receipt golden: live vs reprint", () => {
     const b = reprint([{ method: "STORE_CREDIT", amount: 24.5 }]);
     expect(b.methodLabel).toBe("Store credit");
     expect(b.dateLabel).toMatch(/11:15/);
+  });
+  it("the live receipt reads the sale time in the tenant zone, the same clock as the reprint", () => {
+    // New York is not the runner's zone (the suite pins TZ elsewhere); both must say 11:15 AM.
+    const l = live("CARD", { profile: { ...PROFILE, timezone: "America/New_York" } });
+    const r = reprint([{ method: "CARD", amount: 24.5 }]);
+    expect(l.dateLabel).toMatch(/11:15 AM/);
+    expect(l.dateLabel).toBe(r.dateLabel);
+    const tokyo = live("CARD", { profile: { ...PROFILE, timezone: "Asia/Tokyo" } });
+    expect(tokyo.dateLabel).toMatch(/Oct 8, 2026, 12:15 AM/);
   });
   it("uses the server's paid and balanceDue as given, whatever the tenders add up to", () => {
     const b = reprint([{ method: "CASH", amount: 9 }], "PARTLY_PAID", { paid: 15, balanceDue: 3 });

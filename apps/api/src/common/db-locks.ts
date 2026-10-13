@@ -95,6 +95,7 @@
 import { ConflictException, Logger } from "@nestjs/common";
 import { Prisma } from "@prisma/client";
 import { Pool, type PoolClient } from "pg";
+import { utcPoolConfig } from "./pg-session";
 import { API_ERROR_CODES } from "./api-error-codes";
 
 export type LockMode = "wait" | "try";
@@ -113,13 +114,27 @@ export const LOCK_FAMILIES = [
   "policy-write",
   "counter-tender",
   "fulfilment-settings",
+  "tenant-price",
+  "counter-park",
 ] as const;
 export type LockFamily = (typeof LOCK_FAMILIES)[number];
+/**
+ * Advisory-lock families a caller may take in the SHARED form alongside its first lock (`sharedAlso`). They name no pool
+ * (the shared lock rides the first lock's pinned connection); the list is closed for the same typo reason as `LOCK_FAMILIES`.
+ */
+export const SHARED_LOCK_FAMILIES = ["counter-close"] as const;
 export interface AdvisoryLockOptions {
   family: string;
   key: string;
   mode: LockMode;
   waitMs?: number;
+  /**
+   * SA-750r3: a SHARED advisory lock (`pg_advisory_lock_shared`) taken on the SAME pinned connection right after the first
+   * lock, and released (`pg_advisory_unlock_shared`) BEFORE it, even when `fn` throws. The counter-sale tender uses it for
+   * the end-of-day close lock; a second connection could exhaust the 4-slot `counter-tender` pool. Same `mode` and `waitMs`
+   * as the first lock (a `try` that loses the shared race returns `{ acquired: false }` and unlocks the first lock).
+   */
+  sharedAlso?: { family: (typeof SHARED_LOCK_FAMILIES)[number]; key: string };
 }
 export type LockResult<T> = { acquired: true; value: T } | { acquired: false };
 
@@ -189,6 +204,20 @@ const POOL_MAX: Record<string, number | undefined> = {
   // Console set()/clear() of the two fulfilment keys, keyed on the tenant id. A rare, short,
   // request-path settings write: a deliberately small pool.
   "fulfilment-settings": 2,
+  // `tenant-price` (SA-733 D8): every writer that moves a tenant's Stripe price serialises per tenant on
+  // this one family — the tenant-facing in-app upgrade, the admin plan edit, the price override, the
+  // catalog fan-out and the scheduled-downgrade sweep (which holds ONE slot at a time). A holder pins its
+  // slot across Stripe calls (seconds), and a WAITER pins one too, so the size is a deliberate bound, not
+  // a convenience: admin / cron writers wait up to 20 s, but the tenant-facing upgrade waits only ~2.5 s
+  // (`billing/price-lock.ts`) so a double-click burst or a slow Stripe cannot hold all 4 slots for the
+  // long wait; a caller that cannot get a slot surfaces as a retryable 409 / 503, never a hang.
+  "tenant-price": 4,
+  // `counter-park` (SA-748): the parked-cart cap in `CounterParkService#park`, keyed on the tenant id. That
+  // lock is a transaction-scoped `pg_advisory_xact_lock` taken on the park transaction's own Prisma connection
+  // (the idempotency-service pattern), so this family opens no lock pool today. It is listed so the family name
+  // is reserved in the one namespace (a `withAdvisoryLock` caller can never collide with it by accident) and
+  // sized small in case a pinned caller is ever added.
+  "counter-park": 2,
 };
 const DEFAULT_POOL_MAX = 8;
 function lockPool(family: string): Pool {
@@ -198,17 +227,19 @@ function lockPool(family: string): Pool {
     // critical section: without it `pool.connect()` queues with NO timer once `max` is reached
     // (pg-pool `connect()`), so an overflowing caller would hang unbounded instead of surfacing
     // as LockUnavailableError → 503.
-    pool = new Pool({
-      connectionString: process.env.DATABASE_URL,
-      max: POOL_MAX[family] ?? DEFAULT_POOL_MAX,
-      connectionTimeoutMillis: 5_000,
-      // A lock connection is idle at the SOCKET for the whole critical section — a cron leader's
-      // tick does its work on the Prisma pool — so an intermediate idle-reap would end the
-      // session and release the advisory lock mid-tick, letting another replica win an election
-      // for a job still running. See the header's "WHY KEEPALIVE".
-      keepAlive: true,
-      keepAliveInitialDelayMillis: 30_000,
-    });
+    pool = new Pool(
+      utcPoolConfig({
+        connectionString: process.env.DATABASE_URL,
+        max: POOL_MAX[family] ?? DEFAULT_POOL_MAX,
+        connectionTimeoutMillis: 5_000,
+        // A lock connection is idle at the SOCKET for the whole critical section — a cron leader's
+        // tick does its work on the Prisma pool — so an intermediate idle-reap would end the
+        // session and release the advisory lock mid-tick, letting another replica win an election
+        // for a job still running. See the header's "WHY KEEPALIVE".
+        keepAlive: true,
+        keepAliveInitialDelayMillis: 30_000,
+      }),
+    );
     // pg-pool re-emits an idle client's socket error on the pool; with no listener an
     // EventEmitter "error" throws as an uncaught exception and takes the API process down.
     // The client is already removed from the pool by the time this runs — log and nothing else.
@@ -231,6 +262,11 @@ const LOCK_SQL = {
   try: "SELECT pg_try_advisory_lock(hashtext($1), hashtext($2)) AS ok",
 } as const;
 const UNLOCK_SQL = "SELECT pg_advisory_unlock(hashtext($1), hashtext($2))";
+const SHARED_LOCK_SQL = {
+  wait: "SELECT pg_advisory_lock_shared(hashtext($1), hashtext($2))",
+  try: "SELECT pg_try_advisory_lock_shared(hashtext($1), hashtext($2)) AS ok",
+} as const;
+const SHARED_UNLOCK_SQL = "SELECT pg_advisory_unlock_shared(hashtext($1), hashtext($2))";
 
 const DEFAULT_WAIT_MS = 20_000;
 
@@ -267,6 +303,18 @@ export async function withAdvisoryLock<T>(
     throw new TypeError(
       `withAdvisoryLock: unknown lock family "${opts.family}" (expected one of ${LOCK_FAMILIES.join(", ")})`,
     );
+  }
+  if (opts.sharedAlso) {
+    const { family, key } = opts.sharedAlso;
+    if (
+      !(SHARED_LOCK_FAMILIES as readonly string[]).includes(family) ||
+      typeof key !== "string" ||
+      key.length === 0
+    ) {
+      throw new TypeError(
+        `withAdvisoryLock: sharedAlso needs a known family (${SHARED_LOCK_FAMILIES.join(", ")}) and a non-empty key`,
+      );
+    }
   }
   // `SET lock_timeout` is a utility statement: it takes no bind parameters, so the value has to
   // be interpolated. Only a validated finite integer ever reaches the string.
@@ -337,7 +385,25 @@ export async function withAdvisoryLock<T>(
     // lock this call does not hold (unlocking someone else's lock would be a no-op plus a
     // warning, but the query would still be wrong).
     if (!acquired) return { acquired: false };
+    const shared = opts.sharedAlso ? [opts.sharedAlso.family, opts.sharedAlso.key] : null;
+    let sharedHeld = false;
     try {
+      if (shared) {
+        // SA-750r3: the SHARED close lock, on THIS connection (lock_timeout above bounds the wait).
+        try {
+          const res = await client.query(SHARED_LOCK_SQL[opts.mode], shared);
+          sharedHeld = opts.mode === "try" ? res.rows[0]?.ok === true : true;
+        } catch (e: any) {
+          if (e?.code === "55P03") {
+            logger.warn(`db-locks: lock timeout after ${waitMs}ms for ${shared[0]}:${shared[1]}`);
+            throw new LockTimeoutError(shared[0], shared[1], waitMs);
+          }
+          recordFailure(e);
+          destroy = true;
+          throw e;
+        }
+        if (!sharedHeld) return { acquired: false };
+      }
       return { acquired: true, value: await fn() };
     } catch (e) {
       // Deliberately NOT `destroy`: the `finally` below unlocks either way, and an unlock that
@@ -348,6 +414,18 @@ export async function withAdvisoryLock<T>(
       recordFailure(e);
       throw e;
     } finally {
+      // The shared lock goes first (reverse of acquisition); its failed unlock must not skip the first unlock.
+      if (sharedHeld && shared) {
+        try {
+          await client.query(SHARED_UNLOCK_SQL, shared);
+        } catch (e: any) {
+          logger.error(
+            `db-locks: shared unlock failed for ${shared[0]}:${shared[1]} — ${e?.message ?? e}; connection will be destroyed`,
+          );
+          recordFailure(e);
+          destroy = true;
+        }
+      }
       try {
         await client.query(UNLOCK_SQL, args);
       } catch (e: any) {

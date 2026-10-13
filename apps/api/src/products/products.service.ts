@@ -87,6 +87,14 @@ import {
   tenantSafeParent,
   tenantSafeParentView,
 } from "./product-parent";
+import { scanReadInclude } from "./scan-product-view";
+import {
+  activeVariantIds,
+  assertParentActiveForReactivation,
+  cascadeDeactivate,
+  familyHasActiveVariants,
+  variantCodes,
+} from "./product-family-cascade";
 import {
   barcodeRowsToView,
   liveBarcodeRows,
@@ -134,6 +142,13 @@ const TENANT_COSTING_TO_PRODUCT: Record<string, CostingMethod> = {
   FIFO: CostingMethod.FIFO,
   LAST_COST: CostingMethod.LAST_COST,
 };
+
+/** One product a bulk delete refused: a machine `code` (clients show fixed copy for it) and the legacy `reason` sentence. */
+export interface BulkDeleteSkip {
+  id: string;
+  code: string;
+  reason: string;
+}
 
 @Injectable()
 export class ProductsService {
@@ -355,7 +370,9 @@ export class ProductsService {
     // is removed again below, so the response keeps its shape.
     const readTenantId = this.prisma.getTenantId();
     const includeRelations = {
-      parent: { select: { id: true, name: true, portalVisible: true, tenantId: true } },
+      parent: {
+        select: { id: true, name: true, kind: true, portalVisible: true, tenantId: true },
+      },
       // #2717 M1 (SA-572b Q5): additive barcodes[] on the list too (rows, else synthesized below).
       barcodes: { orderBy: { level: "asc" as const } },
       ...(query.includeVariants
@@ -614,12 +631,7 @@ export class ProductsService {
       this.prisma.forTenant(),
       candidates,
       {},
-      {
-        variants: {
-          where: { isActive: true, ...(readTenantId ? { tenantId: readTenantId } : {}) },
-        },
-        parent: true,
-      },
+      scanReadInclude(readTenantId),
     );
     if (!hit) throw new NotFoundException("Product not found");
     return {
@@ -1110,6 +1122,8 @@ export class ProductsService {
       dto.name !== undefined && effectiveParentId ? { ...dto, variantName: dto.name } : { ...dto };
     // Not a column: the one-tx reactivation door reads it from `dto` (see deactivateReactivationHolders).
     delete data.deactivateHolderIds;
+    // Not a column either: B1213's family-deactivation confirmation, read from `dto` inside the tx.
+    delete data.confirmCascade;
     // Force the (possibly auto-cleared) subcategory into the write when the section
     // was cleared but the client didn't also clear the subcategory.
     if (effectiveCategoryId == null && existing.trackedSubcategoryId != null) {
@@ -1204,6 +1218,7 @@ export class ProductsService {
         : "off";
     let propagatedRows = 0;
     let doorDeactivated: string[] = [];
+    let cascaded: string[] = [];
     const updated = await this.prisma.tenantTransaction(async (tx: any) => {
       // SA-603a: reactivate restores the retired codes still free; a code this PATCH sets is claimed (an inactive
       // holder is released + audited, an active one is a 409); deactivate releases BEFORE the isActive write.
@@ -1212,6 +1227,12 @@ export class ProductsService {
       const deactivating = existing.isActive !== false && data.isActive === false;
       const effectiveParent =
         dto.parentProductId !== undefined ? dto.parentProductId : existing.parentProductId;
+      // B1213: deactivating a family that still has ACTIVE variants is a coded 409 unless confirmed; a confirmed one
+      // deactivates them in this tx, so their codes join the ONE sorted lock call below.
+      const cascadeIds = deactivating ? await activeVariantIds(tx, tenantId, id) : [];
+      if (cascadeIds.length > 0 && !dto.confirmCascade) {
+        throw familyHasActiveVariants(cascadeIds.length);
+      }
       // ONE sorted lockBarcodeCodes call for EVERY code this write can touch, taken before the first write or row lock
       // (SA-572c / Opus #2860 B2): the new and old barcode, this product's own live and retired codes (level rows
       // too), the claims and, for the one-tx door, the blocking holders' live codes (their codes are released below).
@@ -1221,6 +1242,7 @@ export class ProductsService {
         existing.barcode,
         ...claims.map((c) => c.value),
         ...(await peekProductCodes(tx, tenantId, id)),
+        ...(await variantCodes(tx, tenantId, cascadeIds)),
         ...(reactivating
           ? await reactivationLockCodes(tx, {
               tenantId,
@@ -1233,6 +1255,19 @@ export class ProductsService {
           : []),
       ].filter((c): c is string => typeof c === "string" && c.trim().length > 0);
       await lockBarcodeCodes(tx, tenantId, lockList);
+      // B1213: a variant is only as live as its family. The family row is locked before anything of this variant is
+      // written (house order F -> V); a CHANGED parent is judged by assertValidParent below, which refuses an
+      // inactive one.
+      if (
+        reactivating &&
+        existing.parentProductId &&
+        (dto.parentProductId === undefined || dto.parentProductId === existing.parentProductId)
+      ) {
+        await assertParentActiveForReactivation(tx, {
+          tenantId,
+          parentId: existing.parentProductId,
+        });
+      }
       if (reactivating) {
         // SA-603i: any ACTIVE holder of a retired code / the name is a 409 listing ALL of them; with
         // `deactivateHolderIds` exactly that set is deactivated in this tx (codes -> name -> rows sorted).
@@ -1299,6 +1334,8 @@ export class ProductsService {
           parentId: dto.parentProductId,
         });
         if (parentKind === "FAMILY" && existing.kind !== "VARIANT") data.kind = "VARIANT";
+        // A VARIANT moved under a STANDARD parent is no variant of a family any more: reset it, as un-parenting does.
+        else if (parentKind !== "FAMILY" && existing.kind === "VARIANT") data.kind = "STANDARD";
       }
       // Promoting a variant to standalone (parentProductId: null) must not leave a VARIANT with no parent.
       if (dto.parentProductId === null && existing.kind === "VARIANT") data.kind = "STANDARD";
@@ -1312,6 +1349,13 @@ export class ProductsService {
       // its row lock; the UPDATE below must never be the first thing to lock the row.
       if (deactivating) {
         await releaseProductCodes(tx, { tenantId, productId: id, lockedCodes: new Set(lockList) });
+        // The family row is held now: its variants follow in id order (re-read under the lock).
+        cascaded = await cascadeDeactivate(tx, {
+          tenantId,
+          familyId: id,
+          lockedCodes: new Set(lockList),
+          confirmed: !!dto.confirmCascade,
+        });
       }
       let row;
       try {
@@ -1348,7 +1392,7 @@ export class ProductsService {
     // ONE coalesced event after the loop instead of one per row.
     if (!options?.suppressEmit) this.emitProductChanged(id, "updated");
     // The one-tx door deactivated blocking products too: buyer/driver caches must not keep them visible (SA-603j LOW, N4).
-    if (doorDeactivated.length > 0) this.emitProductChanged(null, "bulk");
+    if (doorDeactivated.length > 0 || cascaded.length > 0) this.emitProductChanged(null, "bulk");
     // The family edit moved its children's prices: ONE coalesced event, after the commit (L-237).
     if (propagatedRows > 0) this.emitProductChanged(null, "bulk");
     return updated;
@@ -1552,7 +1596,7 @@ export class ProductsService {
     return { succeeded, failed };
   }
 
-  async remove(id: string) {
+  async remove(id: string, options?: { confirmCascade?: boolean }) {
     await this.findOne(id);
     const activeItems = await this.prisma.forTenant().orderItem.count({
       where: { productId: id, status: { notIn: ["DELIVERED", "CANCELLED"] } },
@@ -1562,23 +1606,40 @@ export class ProductsService {
     }
     const tenantId = this.prisma.getTenantId();
     if (!tenantId) throw new BadRequestException("No tenant context");
+    let cascaded: string[] = [];
     const archived = await this.prisma.tenantTransaction(async (tx: any) => {
+      // B1213: archiving a family with ACTIVE variants is a coded 409 unless confirmed; a confirmed one archives them
+      // in this tx, so their codes join the ONE sorted lock call.
+      const cascadeIds = await activeVariantIds(tx, tenantId, id);
+      if (cascadeIds.length > 0 && !options?.confirmCascade) {
+        throw familyHasActiveVariants(cascadeIds.length);
+      }
       // SA-603a: archiving releases the codes, so a new product can reuse them. Codes + row lock FIRST, the isActive
       // write after (house order, Opus #2860 B1).
       // ONE sorted lock call for every code of the product (Opus #2860 R1), then the release, then the write.
-      const codes = (await peekProductCodes(tx, tenantId, id)).filter((c) => c.trim().length > 0);
+      const codes = [
+        ...(await peekProductCodes(tx, tenantId, id)),
+        ...(await variantCodes(tx, tenantId, cascadeIds)),
+      ].filter((c) => c.trim().length > 0);
       await lockBarcodeCodes(tx, tenantId, codes);
       await releaseProductCodes(tx, { tenantId, productId: id, lockedCodes: new Set(codes) });
+      cascaded = await cascadeDeactivate(tx, {
+        tenantId,
+        familyId: id,
+        lockedCodes: new Set(codes),
+        confirmed: !!options?.confirmCascade,
+      });
       return tx.product.update({ where: { id }, data: { isActive: false } });
     });
     this.emitProductChanged(id, "archived");
+    if (cascaded.length > 0) this.emitProductChanged(null, "bulk");
     return archived;
   }
 
   async clearAll(): Promise<{
     deleted: number;
     softDeleted: number;
-    skipped: Array<{ id: string; reason: string }>;
+    skipped: BulkDeleteSkip[];
   }> {
     // Tenant-scoped by construction.
     //
@@ -1609,7 +1670,7 @@ export class ProductsService {
   async bulkDelete(ids: string[]): Promise<{
     deleted: number;
     softDeleted: number;
-    skipped: Array<{ id: string; reason: string }>;
+    skipped: BulkDeleteSkip[];
   }> {
     if (ids.length === 0) return { deleted: 0, softDeleted: 0, skipped: [] };
 
@@ -1637,12 +1698,13 @@ export class ProductsService {
       activeGroups.map((g) => g.productId).filter((id): id is string => !!id),
     );
 
-    const skipped: Array<{ id: string; reason: string }> = [];
+    const skipped: BulkDeleteSkip[] = [];
     const remaining: string[] = [];
     for (const id of ids) {
       if (activeIds.has(id)) {
         skipped.push({
           id,
+          code: API_ERROR_CODES.PRODUCT_HAS_ACTIVE_ORDER_ITEMS,
           reason: `${nameById.get(id) ?? id} has active order items and cannot be deleted`,
         });
         continue;
@@ -1691,8 +1753,50 @@ export class ProductsService {
       if (referencedIds.size === remaining.length) break;
     }
 
-    const softDeleteIds = remaining.filter((id) => referencedIds.has(id));
-    const hardDeleteIds = remaining.filter((id) => !referencedIds.has(id));
+    let softDeleteIds = remaining.filter((id) => referencedIds.has(id));
+    let hardDeleteIds = remaining.filter((id) => !referencedIds.has(id));
+
+    // B1212: a product that still has variants is never hard-deleted. The variants' parent link is SET NULL on
+    // delete, so they would fall back to standalone products and could collide with another product of the same
+    // name (a unique violation). A parent keeps (or archives) its variants: refused while one of them stays
+    // active, archived when every variant that stays is already inactive or is archived in this same batch, and
+    // only hard-deleted when ALL its variants are hard-deleted with it.
+    const delTenantId = this.prisma.getTenantId();
+    if (!delTenantId) throw new BadRequestException("No tenant context");
+    const variantRows = (await this.prisma.forTenant().product.findMany({
+      where: { tenantId: delTenantId, parentProductId: { in: remaining } },
+      select: { id: true, parentProductId: true, isActive: true },
+    })) as Array<{ id: string; parentProductId: string | null; isActive: boolean }>;
+    if (variantRows.length > 0) {
+      const hardSet = new Set(hardDeleteIds);
+      const inBatch = new Set(remaining);
+      const refused = new Set<string>();
+      const forceSoft = new Set<string>();
+      for (const v of variantRows) {
+        const parentId = v.parentProductId;
+        if (!parentId || hardSet.has(v.id)) continue; // goes away with its parent
+        const archivedHere = inBatch.has(v.id) && !hardSet.has(v.id);
+        if (v.isActive && !archivedHere) refused.add(parentId);
+        else forceSoft.add(parentId);
+      }
+      for (const id of refused) {
+        skipped.push({
+          id,
+          code: API_ERROR_CODES.FAMILY_HAS_ACTIVE_VARIANTS,
+          reason: `${nameById.get(id) ?? id} has variants that are still active; delete or archive them first`,
+        });
+      }
+      softDeleteIds = softDeleteIds.filter((id) => !refused.has(id));
+      hardDeleteIds = hardDeleteIds.filter((id) => !refused.has(id));
+      for (const id of forceSoft) {
+        if (refused.has(id) || !hardDeleteIds.includes(id)) continue;
+        hardDeleteIds = hardDeleteIds.filter((h) => h !== id);
+        softDeleteIds.push(id);
+      }
+    }
+    if (softDeleteIds.length === 0 && hardDeleteIds.length === 0) {
+      return { deleted: 0, softDeleted: 0, skipped };
+    }
 
     if (softDeleteIds.length > 0) {
       const clearTenantId = this.prisma.getTenantId();
@@ -1717,48 +1821,61 @@ export class ProductsService {
     if (hardDeleteIds.length > 0) {
       // Delete all dependent records first, then the products themselves —
       // scoped to only the reference-free ids.
-      await this.prisma.$transaction([
-        this.prisma
-          .forTenant()
-          .customerPrice.deleteMany({ where: { productId: { in: hardDeleteIds } } }),
-        this.prisma
-          .forTenant()
-          .recurringInvoiceItem.deleteMany({ where: { productId: { in: hardDeleteIds } } }),
-        this.prisma
-          .forTenant()
-          .productMapping.deleteMany({ where: { productId: { in: hardDeleteIds } } }),
-        this.prisma
-          .forTenant()
-          .vendorBillItem.deleteMany({ where: { productId: { in: hardDeleteIds } } }),
-        this.prisma
-          .forTenant()
-          .estimateItem.deleteMany({ where: { productId: { in: hardDeleteIds } } }),
-        this.prisma
-          .forTenant()
-          .returnItem.deleteMany({ where: { productId: { in: hardDeleteIds } } }),
-        this.prisma
-          .forTenant()
-          .purchaseOrderItem.deleteMany({ where: { productId: { in: hardDeleteIds } } }),
-        this.prisma
-          .forTenant()
-          .invoiceItem.deleteMany({ where: { productId: { in: hardDeleteIds } } }),
-        this.prisma
-          .forTenant()
-          .orderTemplateItem.deleteMany({ where: { productId: { in: hardDeleteIds } } }),
-        this.prisma
-          .forTenant()
-          .deliveryMutation.deleteMany({ where: { productId: { in: hardDeleteIds } } }),
-        this.prisma
-          .forTenant()
-          .orderItem.deleteMany({ where: { productId: { in: hardDeleteIds } } }),
-        this.prisma
-          .forTenant()
-          .stockLot.deleteMany({ where: { productId: { in: hardDeleteIds } } }),
-        this.prisma
-          .forTenant()
-          .stockMovement.deleteMany({ where: { productId: { in: hardDeleteIds } } }),
-        this.prisma.forTenant().product.deleteMany({ where: { id: { in: hardDeleteIds } } }),
-      ]);
+      try {
+        await this.prisma.$transaction([
+          this.prisma
+            .forTenant()
+            .customerPrice.deleteMany({ where: { productId: { in: hardDeleteIds } } }),
+          this.prisma
+            .forTenant()
+            .recurringInvoiceItem.deleteMany({ where: { productId: { in: hardDeleteIds } } }),
+          this.prisma
+            .forTenant()
+            .productMapping.deleteMany({ where: { productId: { in: hardDeleteIds } } }),
+          this.prisma
+            .forTenant()
+            .vendorBillItem.deleteMany({ where: { productId: { in: hardDeleteIds } } }),
+          this.prisma
+            .forTenant()
+            .estimateItem.deleteMany({ where: { productId: { in: hardDeleteIds } } }),
+          this.prisma
+            .forTenant()
+            .returnItem.deleteMany({ where: { productId: { in: hardDeleteIds } } }),
+          this.prisma
+            .forTenant()
+            .purchaseOrderItem.deleteMany({ where: { productId: { in: hardDeleteIds } } }),
+          this.prisma
+            .forTenant()
+            .invoiceItem.deleteMany({ where: { productId: { in: hardDeleteIds } } }),
+          this.prisma
+            .forTenant()
+            .orderTemplateItem.deleteMany({ where: { productId: { in: hardDeleteIds } } }),
+          this.prisma
+            .forTenant()
+            .deliveryMutation.deleteMany({ where: { productId: { in: hardDeleteIds } } }),
+          this.prisma
+            .forTenant()
+            .orderItem.deleteMany({ where: { productId: { in: hardDeleteIds } } }),
+          this.prisma
+            .forTenant()
+            .stockLot.deleteMany({ where: { productId: { in: hardDeleteIds } } }),
+          this.prisma
+            .forTenant()
+            .stockMovement.deleteMany({ where: { productId: { in: hardDeleteIds } } }),
+          this.prisma.forTenant().product.deleteMany({ where: { id: { in: hardDeleteIds } } }),
+        ]);
+      } catch (e) {
+        // B1212: a unique violation (e.g. a variant orphaned by the delete colliding with a same-named product) is a
+        // coded 409 (the delete is one transaction), never an uncoded 500.
+        if (e instanceof Prisma.PrismaClientKnownRequestError && e.code === "P2002") {
+          throw new ConflictException({
+            code: API_ERROR_CODES.PRODUCT_DELETE_CONFLICT,
+            message:
+              "A product in this selection changed while it was being deleted, so the delete did not go through. Reload the list and try again.",
+          });
+        }
+        throw e;
+      }
     }
 
     // ONE coalesced event for the whole batch (clearAll delegates HERE, so it

@@ -82,7 +82,7 @@ function m(rec: any, where: any): boolean {
     if (k === "OR") return v.some((w: any) => m(rec, w));
     const val = rec?.[k];
     if (v !== null && typeof v === "object" && !(v instanceof Date) && !Array.isArray(v)) {
-      const ops = ["gte", "lt", "not", "notIn", "some"];
+      const ops = ["gte", "lt", "not", "notIn", "some", "in"];
       const keys = Object.keys(v);
       if (keys.every((x) => ops.includes(x))) {
         return (
@@ -90,6 +90,7 @@ function m(rec: any, where: any): boolean {
           (v.lt === undefined || val < v.lt) &&
           (v.not === undefined || val !== v.not) &&
           (v.notIn === undefined || !v.notIn.includes(val)) &&
+          (v.in === undefined || v.in.includes(val)) &&
           (v.some === undefined || (val as any[]).some((r) => m(r, v.some)))
         );
       }
@@ -138,13 +139,22 @@ function setup(orders: OrderRow[]) {
       _sum: { total: hit.reduce((s, o) => s + Number(o.total), 0) },
     };
   });
-  prisma.invoicePayment.groupBy.mockImplementation(async (args: any) => {
-    const by = new Map<string, number>();
-    for (const p of payments.filter((x) => m(x, args.where))) {
-      by.set(p.method, (by.get(p.method) ?? 0) + Number(p.amount));
-    }
-    return [...by].map(([method, amount]) => ({ method, _sum: { amount } }));
-  });
+  // the counter payments are READ as rows (row 374 a: the same till-money classification as the Z); the hand-over candidate
+  // read (non-counter orders) finds none in these fixtures
+  prisma.invoicePayment.findMany.mockImplementation(async (args: any) =>
+    args.where?.invoice?.order?.counterSale === false
+      ? []
+      : payments
+          .filter((x) => m(x, args.where))
+          .map((p, i) => ({
+            amount: p.amount,
+            method: p.method,
+            status: "PAID",
+            paymentGroupId: null,
+            checkStatus: null,
+            invoice: { orderId: `drawer-order-${i}` },
+          })),
+  );
   prisma.invoicePayment.aggregate.mockImplementation(async (args: any) => ({
     _sum: {
       amount: payments.filter((x) => m(x, args.where)).reduce((s, p) => s + Number(p.amount), 0),
@@ -152,6 +162,18 @@ function setup(orders: OrderRow[]) {
   }));
   prisma.return.findMany.mockImplementation(async (args: any) =>
     returns.filter((r) => m(r, args.where)),
+  );
+  // a store-credit return's credit note is minted when the return is captured in these fixtures: it carries the return's createdAt
+  const notes = returns
+    .filter((r) => r.creditNoteId)
+    .map((r) => ({
+      id: r.creditNoteId as string,
+      tenantId: r.tenantId,
+      status: "ISSUED",
+      createdAt: r.createdAt,
+    }));
+  prisma.creditNote.findMany.mockImplementation(async (args: any) =>
+    notes.filter((n) => m(n, args.where)).map((n) => ({ id: n.id })),
   );
 
   const service = new CounterSaleTodayService(prisma as never);

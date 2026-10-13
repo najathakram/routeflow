@@ -15,6 +15,13 @@ interface AdminTabsProps {
 }
 
 export function AdminTabs({ tabs, active, onChange }: AdminTabsProps) {
+  // SA-1: the strip scrolls sideways at 390px, so a tab past the fold (Setup, opened by ?tab=setup) would sit
+  // clipped out of sight. Bring the active tab into view whenever it changes. `nearest` on both axes never
+  // moves the page itself, only the strip.
+  const activeRef = React.useRef<HTMLButtonElement | null>(null);
+  React.useEffect(() => {
+    activeRef.current?.scrollIntoView?.({ block: "nearest", inline: "nearest" });
+  }, [active]);
   return (
     // B559: a plain `flex` row of 5 tabs has no room at 390px — with no wrap and the browser's
     // default `min-width: auto` on each flex-item button, the row refuses to shrink below its
@@ -30,6 +37,8 @@ export function AdminTabs({ tabs, active, onChange }: AdminTabsProps) {
       {tabs.map((tab) => (
         <button
           key={tab.key}
+          ref={active === tab.key ? activeRef : undefined}
+          aria-current={active === tab.key ? "page" : undefined}
           onClick={() => onChange(tab.key)}
           className={`flex shrink-0 items-center gap-2 whitespace-nowrap px-4 py-2.5 text-sm font-medium transition-colors border-b-2 -mb-px ${
             active === tab.key

@@ -93,6 +93,7 @@ describe("#2178 — the preflight prices against the post-revert matching set", 
     });
     expect(svc.quoteService.priceInlineReturn.mock.calls[0][3]).toEqual({
       excludeInvoiceIds: ["inv-own"],
+      defaultSourceOrderId: "ord-1", // SA-740: the carrying order is the walk-in's default source
     });
   });
 
@@ -107,7 +108,10 @@ describe("#2178 — the preflight prices against the post-revert matching set", 
       { routeRunId: null },
     );
     expect(db.invoice.findMany).not.toHaveBeenCalled();
-    expect(svc.quoteService.priceInlineReturn.mock.calls[0][3]).toEqual({ excludeInvoiceIds: [] });
+    expect(svc.quoteService.priceInlineReturn.mock.calls[0][3]).toEqual({
+      excludeInvoiceIds: [],
+      defaultSourceOrderId: "ord-1",
+    });
   });
 
   it("preflightInlineReturn: asks for the post-revert set ONLY when the edit's revert runs next", async () => {

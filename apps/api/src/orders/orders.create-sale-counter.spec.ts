@@ -68,13 +68,24 @@ describe("OrdersService.createSale — counter-sale options and resume", () => {
     expect(b.create.mock.calls[0][2]).not.toHaveProperty("counterSale");
   });
 
+  it("sale.priceEditAllowed reaches create() as given (true AND false), and is absent when unset (POS-5)", async () => {
+    for (const v of [true, false]) {
+      const a = await setup();
+      await a.h.service.createSale(dto, operatorPayload as never, { priceEditAllowed: v });
+      expect(a.create.mock.calls[0][2]).toMatchObject({ skipAutoMerge: true, priceEditAllowed: v });
+    }
+    const b = await setup();
+    await b.h.service.createSale(dto, operatorPayload as never, { counterSale: true });
+    expect(b.create.mock.calls[0][2]).not.toHaveProperty("priceEditAllowed");
+  });
+
   it("suppressInvoiceNotify sends the invoice with { suppressNotify: true } (walk-in: no INVOICE_SENT email)", async () => {
     const { h, invoices } = await setup();
     await h.service.createSale(dto, operatorPayload as never, { suppressInvoiceNotify: true });
     expect(invoices.send).toHaveBeenCalledWith("inv-1", { suppressNotify: true });
   });
 
-  it("marks DELIVERED with status + deliveredAt ONLY (no deliveredQty stamp: B1050 — corrections go via return/credit)", async () => {
+  it("the order row gets status + deliveredAt ONLY (the deliveredQty stamp is a line write in the same tx, SA-763r)", async () => {
     const { h } = await setup();
     await h.service.createSale(dto, operatorPayload as never, { fulfillPath: "PICKUP" as never });
     const data = h.prisma.order.update.mock.calls[0][0].data;

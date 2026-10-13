@@ -92,4 +92,15 @@ export class QuoteInlineReturnDto {
   @IsOptional()
   @IsString()
   routeRunStopId?: string;
+
+  /**
+   * SA-740 (row 190): the sale this return is from. REQUIRED for a walk-in (decided server-side from
+   * `customer.isWalkIn`, never from this body): the quote refuses without it (400 SOURCE_SALE_REQUIRED). A named
+   * customer may send it to pin the matching to that one order; without it their return still spills across orders.
+   * Must be the customer's own counter sale or delivered order in this tenant (400 SOURCE_SALE_INVALID).
+   */
+  @IsOptional()
+  @IsString()
+  @IsNotEmpty()
+  sourceOrderId?: string;
 }

@@ -12,6 +12,7 @@ import { normalizeScanCode } from "@routeflow/scanning";
 import * as scanMatch from "../products/scan-match";
 import { oversellReaderOffProvider } from "../orders/testing/policy-reader-provider";
 import { BuyerController } from "./buyer.controller";
+import { buyerVisibleProductWhere, noBuyerRestrictions } from "./buyer-product-visibility";
 import { BuyerService } from "./buyer.service";
 import { BuyerCatalogService } from "./buyer-catalog.service";
 import { BuyerDashboardService } from "./buyer-dashboard.service";
@@ -43,14 +44,20 @@ const BUYER_CTX = {
 describe("BuyerController.scanProduct — shares findScanMatches, keeps the buyer's scope (M4a-1)", () => {
   let controller: BuyerController;
   let prisma: ReturnType<typeof createMockPrisma>;
-  let catalogService: { getProductDetail: jest.Mock };
+  let catalogService: { getProductDetail: jest.Mock; scanVisibilityWhere: jest.Mock };
   let stockAlertService: { isSubscribed: jest.Mock };
 
   beforeEach(async () => {
     prisma = createMockPrisma();
     prisma.productBarcode.findMany.mockResolvedValue([] as any);
     prisma.product.findMany.mockResolvedValue([] as any);
-    catalogService = { getProductDetail: jest.fn() };
+    catalogService = {
+      getProductDetail: jest.fn(),
+      // the buyer scope builder with no restriction-hidden ids (the visibility rows live in the portal db spec)
+      scanVisibilityWhere: jest.fn(async (_c: string, tenantId: string) =>
+        buyerVisibleProductWhere(noBuyerRestrictions(tenantId)),
+      ),
+    };
     stockAlertService = { isSubscribed: jest.fn().mockResolvedValue(false) };
     const module: TestingModule = await Test.createTestingModule({
       controllers: [BuyerController],

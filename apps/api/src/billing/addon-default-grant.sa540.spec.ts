@@ -232,4 +232,5 @@ describe("SA-540 conditions 2–4 (static pins)", () => {
 });
 
 /** sha256 of isPayingRow's source as of the SA-540 ruling; a change must be a deliberate re-pin. */
-const ISPAYINGROW_SHA256 = "ef863e60894228563d58438020fe824a507488ee683cd83db63851ec483f0666";
+// SA-736r (deliberate re-pin): isPayingRow gained the REQUIRED `couponFull` third parameter and `couponFull !== true`.
+const ISPAYINGROW_SHA256 = "ebe005e415f440d4a247abfe0cc4b113f54aa2b7e4afb57ed0c0c17efe5c0c7f";

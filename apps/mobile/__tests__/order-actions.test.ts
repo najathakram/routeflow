@@ -263,3 +263,34 @@ describe("map parity — mirrors the server's universal one-step demotion (2026-
     expect(canTransitionOrder("DELIVERED", "CANCELLED")).toBe(false);
   });
 });
+
+describe("statusActions on a POS-mode (PICKUP, non-counter) order", () => {
+  const statuses = ["PENDING", "CONFIRMED", "OUT_FOR_DELIVERY", "DELIVERED"] as const;
+
+  it("never offers an Out-for-delivery or DELIVERED status action", () => {
+    for (const st of statuses) {
+      const to = statusActions(st, "PICKUP", null, false).map((a) => a.toStatus);
+      expect(to).not.toContain("OUT_FOR_DELIVERY");
+      expect(to).not.toContain("DELIVERED");
+      expect(to).not.toContain("PARTIALLY_DELIVERED");
+    }
+  });
+
+  it("keeps Confirm, Back to pending, Cancel and Reopen", () => {
+    expect(statusActions("PENDING", "PICKUP").map((a) => a.toStatus)).toEqual([
+      "CONFIRMED",
+      "CANCELLED",
+    ]);
+    expect(statusActions("CONFIRMED", "PICKUP").map((a) => a.toStatus)).toEqual([
+      "PENDING",
+      "CANCELLED",
+    ]);
+    expect(statusActions("DELIVERED", "PICKUP").map((a) => a.toStatus)).toEqual(["CONFIRMED"]);
+  });
+
+  it("a counter sale (PICKUP + counterSale) keeps the full ROUTE action set", () => {
+    expect(statusActions("CONFIRMED", "PICKUP", null, true)).toEqual(
+      statusActions("CONFIRMED", "ROUTE"),
+    );
+  });
+});

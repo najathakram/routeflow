@@ -58,7 +58,7 @@ export function planFingerprint(plan: BusinessProfilePlan): string {
 export interface BusinessProfileResolution {
   profile: BusinessProfileDef;
   plan: BusinessProfilePlan;
-  /** featureKey → the active opposite override to revoke, for every `replace` action. */
+  /** featureKey → the active opposite override to revoke, for every `replace` and `revoke` action. */
   revokeOverrideIds: Record<string, string>;
   /** The request the existing FeaturePreviewService runs for this plan. */
   previewRequest: FeaturePreviewRequest;
@@ -71,7 +71,8 @@ export interface BusinessProfileResolution {
  * Business profiles: list, plan and preview. READ-ONLY by design. It reads the tenant through the
  * existing services (overrides, `FeatureConfigService.can()`/`getState()`) and previews through
  * the existing `FeaturePreviewService`. The writes happen in `PlatformAdminController`'s confirm
- * route, through its own audited override path (the single caller of
+ * route: add-on modules a profile grants are COMP rows through `AddonService.enableAddon({ comp })`
+ * (SA-769), the rest through its own audited override path (the single caller of
  * `FeatureOverrideService.create`, feature-override-single-caller.spec.ts) and
  * `FeatureConfigService.set`.
  */
@@ -138,7 +139,9 @@ export class BusinessProfileService {
     const reason = `Business profile: ${profile.label}`;
     const revokeOverrideIds: Record<string, string> = {};
     for (const o of plan.overrides) {
-      if (o.action === "replace") revokeOverrideIds[o.featureKey] = activeIds.get(o.featureKey)!;
+      if (o.action === "replace" || o.action === "revoke") {
+        revokeOverrideIds[o.featureKey] = activeIds.get(o.featureKey)!;
+      }
     }
     return {
       profile,
@@ -146,10 +149,13 @@ export class BusinessProfileService {
       revokeOverrideIds,
       previewRequest: {
         // The preview models the END state: a module switched off by its billing disable is
-        // shown as off (a DENY in the hypothetical), in module order.
+        // shown as off (a DENY in the hypothetical); a module comped (SA-769) is shown as on (a GRANT).
         overrides: plan.overrides
           .filter(
-            (o) => o.action !== "skip" || plan.billing.some((b) => b.featureKey === o.featureKey),
+            (o) =>
+              o.action !== "skip" ||
+              plan.billing.some((b) => b.featureKey === o.featureKey) ||
+              plan.comps.some((c) => c.featureKey === o.featureKey),
           )
           .map((o) => ({ featureKey: o.featureKey, effect: o.effect, reason })),
         modes: { ...profile.modes },
@@ -230,20 +236,30 @@ export class BusinessProfileService {
     // positive price snapshot. A comped row (neither) or a GRANT override is never a billing call.
     // A price with NO Stripe item = paid MANUALLY (a manual/external-payment activation): still
     // disabled, but flagged so the preview tells the admin to fix the manual invoice.
+    // SA-769: the same row read also answers "does an ACTIVE row hold it" (`rowHeld`, apart from
+    // `holds`, which an override overrides) and "is that row a comp" (`compRows`, `isComp`): a
+    // fleet-ON profile never re-prices a held row, and a fleet-OFF profile switches a comp off
+    // through the disable path with no billing call. `paying` is only decided for a fleet-OFF profile.
     const paying = new Set<string>();
     const manualPay = new Set<string>();
-    if (!profile.fleet) {
-      for (const key of PROFILE_MODULE_KEYS) {
-        const row = await findAddonRow(this.prisma, tenantId, addonCodeOf(key));
-        if (!row?.active) continue;
-        if (row.stripeItemId) paying.add(key);
-        else if (Number(row.priceSnapshot ?? 0) > 0) {
-          paying.add(key);
-          manualPay.add(key);
-        }
+    const rowHeld = new Set<string>();
+    const compRows = new Set<string>();
+    for (const key of PROFILE_MODULE_KEYS) {
+      const row = await findAddonRow(this.prisma, tenantId, addonCodeOf(key));
+      if (!row?.active) continue;
+      rowHeld.add(key);
+      if (row.isComp === true) compRows.add(key);
+      if (profile.fleet) continue;
+      if (row.stripeItemId) paying.add(key);
+      else if (Number(row.priceSnapshot ?? 0) > 0) {
+        paying.add(key);
+        manualPay.add(key);
       }
     }
-    return { state: { overrides, holds, paying, manualPay, modes }, activeIds };
+    return {
+      state: { overrides, holds, paying, manualPay, rowHeld, compRows, modes },
+      activeIds,
+    };
   }
 
   /**

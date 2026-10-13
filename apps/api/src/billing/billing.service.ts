@@ -3,22 +3,48 @@ import {
   Injectable,
   Logger,
   NotFoundException,
+  Optional,
   BadRequestException,
   ConflictException,
   ServiceUnavailableException,
 } from "@nestjs/common";
+import { randomUUID } from "crypto";
 import { CronExpression } from "@nestjs/schedule";
 import { LeaderCron } from "../common/cron-lock";
 import { withAdvisoryLock, LockTimeoutError, LockUnavailableError } from "../common/db-locks";
 import { Prisma, TenantPlan } from "@prisma/client";
 import { PrismaService } from "../prisma/prisma.service";
 import { EmailService } from "../email/email.service";
+import { escapeHtml, safeLinkHref } from "../common/html-escape";
+import {
+  PAYMENT_FAILED_EMAIL_DEDUPE_STATUSES,
+  PAYMENT_FAILED_EMAIL_ENTITY_TYPE,
+  PAYMENT_FAILED_EMAIL_KIND,
+  PAYMENT_FAILED_EMAIL_DEDUPE_DAYS,
+  billingPauseMode,
+  dunningEmailsFor,
+} from "./dunning-config";
 import { TenantStatusGuard } from "../tenant/tenant-status.guard";
-import { roundMoney } from "@routeflow/pricing";
+import { fromCents, roundMoney } from "@routeflow/pricing";
+import {
+  type PricePushOptions,
+  type PricePushResult,
+  priceOverrideIdempotencyKey,
+  prorationAllowedFor,
+  prorationBehaviorFor,
+  itemUnitAmount,
+} from "./price-override";
 import { StripeService } from "./stripe.service";
 import { BillingEventService } from "./billing-event.service";
 import { PlatformPricingService } from "./platform-pricing.service";
 import { isPayingRow } from "./mrr.service";
+import {
+  applyCouponStateTx,
+  resetCouponState,
+  syncCouponFromStripe,
+  type CouponSyncOutcome,
+} from "./coupon-state";
+import { NO_COUPON } from "./coupon-unbilled";
 import {
   BILLING_EVENTS,
   BillingEventType,
@@ -29,6 +55,7 @@ import {
 import { BillingNotificationService } from "./billing-notification.service";
 import { PlanTransitionConfigService } from "./plan-transition-config.service";
 import { SubscriptionMutationService } from "./subscription-mutation.service";
+import { ScheduledPriceChangeService } from "./scheduled-price-change";
 import {
   CHECKOUT_ADDON_EXPAND,
   CHECKOUT_ADDON_SKUS_KEY,
@@ -36,20 +63,42 @@ import {
   checkoutAddonItems,
 } from "./stripe-addon-items";
 import { lockTenantForLedger } from "./addon-ledger";
+import { checkoutAnchorParams, planCheckoutAnchor } from "./checkout-anchor";
+import { CatchupClaimService } from "./catchup-claim.service";
+import { DunningService } from "./dunning.service";
+import { AutoLockSwitchService } from "./auto-lock-switch.service";
+import { autoLockAllowed, recordAutoLockSkip } from "./auto-lock-gate";
+import {
+  PAYMENT_GRACE_DAYS,
+  overdueGraceDeadline,
+  overdueSubscriptionWhere,
+} from "./auto-lock-candidates";
+import type { TransitionOpts } from "./dunning-core";
+import { assertTenantNotPaymentOverdue } from "./payment-overdue";
+import { transitionToActiveTx, type PauseExit } from "./transition-to-active";
+import { claimRefusal, isCatchupSession, isCatchupSubscription } from "./catchup-claim";
+import { armNeedsReconcile, clearNeedsReconcile } from "./needs-reconcile";
+import { API_ERROR_CODES } from "../common/api-error-codes";
 import { isStripeResourceMissing } from "./addon.service";
 import { billableAddonWhere } from "./addon-row";
+import { SUSPENDED_REASON_SUBSCRIPTION_CANCELED } from "./billing-notification.templates";
 import { writeAdminNotice } from "./manual-invoice-notice";
 import { ADMIN_AUDIT_ENTITY, AdminAuditAction } from "../platform-admin/audit-actions.constant";
 import { retryOnTxConflict } from "../common/tx-retry";
+import { withCheckoutPolicy } from "./checkout-session-params";
 import {
   STRIPE_CHECKOUT_APPLIED_ACTION,
+  STRIPE_CHECKOUT_ASYNC_FAILED_ACTION,
   STRIPE_CHECKOUT_ENTITY,
   STRIPE_CHECKOUT_HOOK_FAILED_ACTION,
   STRIPE_CHECKOUT_DUPLICATE_ACTION,
   STRIPE_CHECKOUT_REFUSED_ACTION,
   STRIPE_CHECKOUT_STALE_ACTION,
+  PARKED_CHECKOUT_ESCALATE_AFTER_DAYS,
+  STRIPE_CHECKOUT_PARK_ESCALATED_ACTION,
+  STRIPE_CHECKOUT_PARK_RESOLVED_ACTION,
+  STRIPE_CHECKOUT_PAYMENT_PROCESSING_ACTION,
 } from "./config-snapshot-audit.constants";
-import { escapeHtml, safeLinkHref } from "../common/html-escape";
 import {
   isLiveStripeSubscriptionStatus,
   isTerminalStripeSubscriptionStatus,
@@ -59,12 +108,9 @@ import {
   stripeSubscriptionPeriod,
 } from "./stripe-period";
 
-/** Grace period (in days) after a payment failure before suspending the tenant. */
-const PAYMENT_GRACE_DAYS = 3;
-/** #2476: the payment-failed email's portal call runs inside the webhook's claim lease — cap it so a
+/** #2476: the payment-failed email's portal call runs inside the webhook's claim lease - cap it so a
  *  slow Stripe can never hold the claim for minutes; on timeout the email falls back to plain text. */
 const PAYMENT_FAILED_PORTAL_REQUEST = { timeoutMs: 10_000, maxNetworkRetries: 0 };
-
 /**
  * Clock skew allowed between a manual-activation marker (our database clock) and `session.created` (Stripe's):
  * a marker within this many seconds BEFORE the session counts as AFTER it, i.e. stale. Deliberately lopsided:
@@ -76,6 +122,17 @@ const MANUAL_MARKER_SKEW_S = 60;
 /** Returned by the checkout transaction when the session was already applied (a redelivery). */
 const ALREADY_APPLIED = Symbol("checkout-session-already-applied");
 
+/**
+ * P0 hotfix: the ONLY Checkout payment states that may ACTIVATE a tenant (and write the APPLIED marker). A card
+ * completes `paid`; a 100%-off / free-trial session `no_payment_required`. A bank debit (ACH / SEPA) completes
+ * `unpaid` and settles days later: that session is LINKED (customer, subscription, period, plan) but not activated
+ * until `checkout.session.async_payment_succeeded` re-delivers it as `paid`. An absent status is NOT settled.
+ */
+const SETTLED_CHECKOUT_PAYMENT_STATUSES: ReadonlySet<string> = new Set([
+  "paid",
+  "no_payment_required",
+]);
+
 /** Why a completed checkout session is not applied (X1). */
 type DuplicateVerdict = {
   reason: "duplicate_checkout" | "stale_checkout_manual";
@@ -86,6 +143,19 @@ type DuplicateVerdict = {
 class DuplicateCheckoutSignal extends Error {
   constructor(readonly verdict: DuplicateVerdict) {
     super(`duplicate checkout: ${verdict.reason}`);
+  }
+}
+
+/**
+ * B1158: a paid checkout was PARKED (the superseded subscription's bank payment is still processing): nothing was
+ * applied or cancelled; the webhook fails so Stripe redelivers, and the hourly sweep re-judges it. A ConflictException
+ * subtype so the sweep can tell "still parked" from any other retryable conflict.
+ */
+class SupersededPaymentProcessingError extends ConflictException {
+  constructor() {
+    super(
+      "The superseded subscription's payment is still processing — the checkout is parked and retried.",
+    );
   }
 }
 
@@ -167,7 +237,18 @@ export class BillingService {
     // SA-690 option A: the unbilled self-serve add-ons ride the card checkout as line items, and the
     // completion adopts the resulting Stripe items onto their rows (see SubscriptionMutationService).
     private readonly mutations: SubscriptionMutationService,
-  ) {}
+    // R1 option B: the `invoice.upcoming` trigger of a scheduled downgrade's Stripe price push.
+    @Optional() private readonly scheduledPrice?: ScheduledPriceChangeService,
+    // SA-733r3 N2: the October catch-up claim (completion / expiry / paid / failed hooks below).
+    @Optional() private readonly catchup?: CatchupClaimService,
+    // SA-733r7 PR-B3: dunning (the clock stamp, the hourly pause sweep, the invoice.paid resume).
+    @Optional() private readonly dunning?: DunningService,
+    // SA-775: the rollout pause on AUTOMATIC locks (suspendOverdueTenants, the Stripe-cancel webhook).
+    @Optional() private readonly autoLocks?: AutoLockSwitchService,
+  ) {
+    // MRR has ONE writer: dunning's pause and resume book their delta through this class's transitionAndEmit.
+    this.dunning?.bindTransition((...args) => this.transitionAndEmit(...args));
+  }
 
   /**
    * Emit a signed MRR-ledger delta for a Stripe-driven status transition into (+1) or out of
@@ -195,6 +276,7 @@ export class BillingService {
       planKey: string | null;
       basePriceSnapshot: Prisma.Decimal | null;
       discount: Prisma.Decimal | null;
+      couponFull: boolean;
     },
     tenant: { deletedAt: Date | null; class: string },
     direction: 1 | -1,
@@ -202,7 +284,7 @@ export class BillingService {
     payload: Prisma.InputJsonValue,
     tx: Prisma.TransactionClient,
   ): Promise<void> {
-    if (!isPayingRow({ ...tenant, status: "ACTIVE" }, sub.planKey)) return;
+    if (!isPayingRow({ ...tenant, status: "ACTIVE" }, sub.planKey, sub.couponFull)) return;
     // SA-693 / SHOULD-2: only BILLABLE add-ons count — a comp is a platform grant (never revenue), and one that
     // was billed before it became a comp can still carry a stale snapshot.
     const addons = await tx.tenantAddon.findMany({
@@ -237,27 +319,35 @@ export class BillingService {
    *
    * @returns true iff THIS call performed the transition.
    */
-  private async transitionAndEmit(
+  async transitionAndEmit(
     tenantId: string,
-    sub: {
-      planKey: string | null;
-      basePriceSnapshot: Prisma.Decimal | null;
-      discount: Prisma.Decimal | null;
-    },
     statusWhere: Prisma.TenantWhereInput,
-    toStatus: "ACTIVE" | "CANCELLED" | "SUSPENDED",
+    toStatus: "ACTIVE" | "CANCELLED" | "SUSPENDED" | "READ_ONLY",
     direction: 1 | -1,
     event: BillingEventType,
     payload: Prisma.InputJsonValue,
+    // SA-733r7 PR-B3: `tx` joins the caller's transaction (the dunning pause), `data` rides the same CAS (the
+    // pause's `readOnlyReason`), `onExit` receives the Stripe pause to clear after commit (the dunning resume).
+    opts?: TransitionOpts,
   ): Promise<boolean> {
-    return this.prisma.$transaction(async (tx) => {
-      const { count } = await tx.tenant.updateMany({
-        where: { ...statusWhere, id: tenantId },
-        // Reinstating to ACTIVE also clears a stale readOnlyReason (trial_cancelled /
-        // trial_expired / subscription_cancelled) — RO-1 now ships that field to the client,
-        // and a Stripe-driven reactivation is a paying tenant, never read-only.
-        data: { status: toStatus, ...(toStatus === "ACTIVE" ? { readOnlyReason: null } : {}) },
-      });
+    const exitBox: { exit: PauseExit | null } = { exit: null };
+    const run = async (tx: Prisma.TransactionClient): Promise<boolean> => {
+      let count: number;
+      if (toStatus === "ACTIVE") {
+        // The ONE path back to ACTIVE (SA-733r2 N5): also nulls readOnlyReason and clears the dunning clock + pause
+        // in this tx - a Stripe-driven reactivation is a paying tenant, never read-only.
+        const to = await transitionToActiveTx(tx, tenantId, {
+          where: statusWhere,
+          data: opts?.data,
+        });
+        count = to.count;
+        exitBox.exit = to.exit;
+      } else {
+        ({ count } = await tx.tenant.updateMany({
+          where: { ...statusWhere, id: tenantId },
+          data: { ...(opts?.data ?? {}), status: toStatus },
+        }));
+      }
       if (count !== 1) return false;
       // SA-140: emitPayingDelta's gate needs the tenant's deletedAt/class (status/toStatus is
       // deliberately not part of its gate — see the function's own doc comment).
@@ -265,8 +355,69 @@ export class BillingService {
         where: { id: tenantId },
         select: { deletedAt: true, class: true },
       });
-      await this.emitPayingDelta(tenantId, sub, tenant, direction, event, payload, tx);
+      // SA-736r M1: planKey, snapshot, discount AND couponFull are re-read HERE, inside the tx and after
+      // the status CAS (which holds the Tenant row) - never taken from a `sub` read before the tx, which a
+      // coupon sync or a plan change can overtake. An absent row is not paying: books nothing.
+      const sub = await tx.tenantSubscription.findUnique({
+        where: { tenantId },
+        select: { planKey: true, basePriceSnapshot: true, discount: true, couponFull: true },
+      });
+      if (sub) await this.emitPayingDelta(tenantId, sub, tenant, direction, event, payload, tx);
       return true;
+    };
+    const done = opts?.tx ? await run(opts.tx) : await this.prisma.$transaction(run);
+    if (done && toStatus === "ACTIVE") {
+      // Leaving a pause also leaves Stripe's pause_collection (SA-733r3 F4), AFTER commit: here, or by the caller
+      // that took `onExit` (a joined `tx` commits later, so only `onExit` can serve it).
+      if (opts?.onExit) opts.onExit(exitBox.exit);
+      else if (!opts?.tx) await this.dunning?.clearPauseAfterCommit(exitBox.exit);
+    }
+    return done;
+  }
+
+  /**
+   * SA-736r M3: re-derive `couponFull` from Stripe (retrieve + upcoming-invoice preview, never the webhook
+   * payload) and write it through the single writer. A failure THROWS - callers keep it OUTSIDE any best-effort
+   * try/catch so the webhook ledger records an error and Stripe redelivers.
+   */
+  private syncCoupon(
+    tenantId: string,
+    stripeSubId: string,
+    reason: string,
+  ): Promise<CouponSyncOutcome> {
+    return syncCouponFromStripe(
+      { prisma: this.prisma, stripe: this.stripe, events: this.events },
+      tenantId,
+      stripeSubId,
+      reason,
+    );
+  }
+
+  /**
+   * SA-736r M5: inside the checkout tx (the Tenant row is locked), a replaced `stripeSubId` takes the old
+   * subscription's coupon columns with it. Read BEFORE the upsert; the reset runs AFTER it.
+   */
+  private async storedStripeSubIdTx(
+    tx: Prisma.TransactionClient,
+    tenantId: string,
+  ): Promise<string | null> {
+    const row = await tx.tenantSubscription.findUnique({
+      where: { tenantId },
+      select: { stripeSubId: true },
+    });
+    return row?.stripeSubId ?? null;
+  }
+
+  private async resetCouponIfSubReplacedTx(
+    tx: Prisma.TransactionClient,
+    tenantId: string,
+    previousSubId: string | null,
+    newSubId: string,
+  ): Promise<void> {
+    if (previousSubId == null || previousSubId === newSubId) return;
+    await applyCouponStateTx(tx, this.events, tenantId, NO_COUPON, {
+      reason: "stripe_sub_replaced",
+      tenantLockHeld: true,
     });
   }
 
@@ -393,10 +544,33 @@ export class BillingService {
     // the completion webhook overwrites `stripeSubId`, orphaning the first one where
     // nothing in RouteFlow can see (or cancel) it. Price changes never need a new
     // checkout — they ride the existing subscription via syncStripeSubscriptionPrice.
+    // NOTE: this read is deliberately NOT under the Tenant lock. It is a fast refusal, not a guarantee: the claim's
+    // authority is the locked CAS in CatchupClaimService.openClaim, and a catch-up completing in between is stopped
+    // by the settle-side verification (the session's own subscription), so a race here cannot double-void.
     const existingSub = await this.prisma.tenantSubscription.findUnique({
       where: { tenantId },
-      select: { stripeSubId: true },
+      select: { stripeSubId: true, externalPayment: true, catchupState: true },
     });
+    // SA-733r5 / Opus B1: while a catch-up claim is held, an ORDINARY checkout would create a second subscription
+    // whose first paid invoice could be mistaken for the catch-up's. Refused with the claim's own coded 409.
+    const held = claimRefusal(existingSub?.catchupState);
+    if (held) throw held;
+    // SA-733r M1 (PR-B3): a tenant that owes an overdue invoice cannot buy its way out through a new checkout.
+    await assertTenantNotPaymentOverdue(
+      { prisma: this.prisma, stripe: this.stripe, logger: this.logger },
+      tenantId,
+      "checkout",
+    );
+    // Ruling (item 8): a manual-pay (externalPayment) tenant completes card setup ONLY through the catch-up flow,
+    // which prices the unpaid periods and voids exactly what it bills. No ordinary checkout for them.
+    if (existingSub?.externalPayment === true && !existingSub.stripeSubId) {
+      throw new ConflictException({
+        code: API_ERROR_CODES.EXTERNAL_PAYMENT_USE_CATCHUP,
+        message:
+          "Your account is invoiced directly. Card setup is completed through your RouteFlow contact - " +
+          "they will send you a secure payment link.",
+      });
+    }
     if (existingSub?.stripeSubId) {
       let liveStatus: string | undefined;
       try {
@@ -433,6 +607,15 @@ export class BillingService {
     // is created.
     const addons = await this.mutations.checkoutAddonLines(tenantId, interval);
 
+    // SA-733 D6: a new subscription is MONTHLY only - an anchored annual checkout would bill a prorated slice of
+    // the YEAR now (10-03 ruling: annual Stripe subscriptions are not offered). Refused before any Stripe call.
+    if (interval === "year") {
+      throw new BadRequestException({
+        code: API_ERROR_CODES.CHECKOUT_ANNUAL_NOT_SUPPORTED,
+        message: "Annual checkout is not available. Subscriptions are billed monthly.",
+      });
+    }
+
     const customerId = await this.ensureStripeCustomer(tenantId);
     // Throws BadRequestException when neither an override nor a catalog price
     // exists for this tenant's plan (e.g. Enterprise with no custom fee yet).
@@ -440,37 +623,42 @@ export class BillingService {
     const priceData = await this.pricing.checkoutPriceData(tenantId, interval);
 
     const baseUrl = process.env.FRONTEND_URL ?? "http://localhost:3001";
+    // SA-733 D6 / M6: ALWAYS an explicit anchor (the next 1st, 12:00 UTC), prorations created, and a session that
+    // expires before the anchor so it can never complete after it (Stripe would then charge the full period).
+    const anchor = planCheckoutAnchor(new Date());
 
     // Inline price_data line item — bypasses StripeService.createCheckoutSession
     // (which only accepts a pre-created `priceId`) via the underlying client, since
     // no env-configured Stripe Price exists for catalog-driven plans/tiers.
-    const session = await this.stripe.client.checkout.sessions.create({
-      customer: customerId,
-      mode: "subscription",
-      line_items: [{ price_data: priceData, quantity: 1 }, ...addons.lineItems],
-      success_url:
-        opts?.successUrl ?? `${baseUrl}/billing/success?session_id={CHECKOUT_SESSION_ID}`,
-      cancel_url: opts?.cancelUrl ?? `${baseUrl}/billing/cancel`,
-      metadata: {
-        tenantId,
-        slug: tenant.slug,
-        planKey: pricing.planKey,
-        interval,
-        ...(addons.skus.length ? { [CHECKOUT_ADDON_SKUS_KEY]: addons.skus.join(",") } : {}),
-      },
-      // The SKUs also ride the subscription itself, so a later reader of the subscription (not just
-      // the session) can see which add-ons its first invoice billed. A plan-only checkout sends none.
-      ...(addons.skus.length
-        ? {
-            subscription_data: {
-              metadata: { tenantId, [CHECKOUT_ADDON_SKUS_KEY]: addons.skus.join(",") },
-            },
-          }
-        : {}),
-    });
+    const session = await this.stripe.client.checkout.sessions.create(
+      withCheckoutPolicy({
+        customer: customerId,
+        mode: "subscription",
+        line_items: [{ price_data: priceData, quantity: 1 }, ...addons.lineItems],
+        success_url:
+          opts?.successUrl ?? `${baseUrl}/billing/success?session_id={CHECKOUT_SESSION_ID}`,
+        cancel_url: opts?.cancelUrl ?? `${baseUrl}/billing/cancel`,
+        metadata: {
+          tenantId,
+          slug: tenant.slug,
+          planKey: pricing.planKey,
+          interval,
+          ...(addons.skus.length ? { [CHECKOUT_ADDON_SKUS_KEY]: addons.skus.join(",") } : {}),
+        },
+        expires_at: anchor.expiresAt,
+        subscription_data: {
+          ...checkoutAnchorParams(anchor),
+          // The SKUs also ride the subscription itself, so a later reader of the subscription (not just
+          // the session) can see which add-ons its first invoice billed. A plan-only checkout sends none.
+          ...(addons.skus.length
+            ? { metadata: { tenantId, [CHECKOUT_ADDON_SKUS_KEY]: addons.skus.join(",") } }
+            : {}),
+        },
+      }),
+    );
 
     this.logger.log(
-      `Checkout session ${session.id} created for tenant ${tenantId} (plan ${pricing.planKey}, ${interval})`,
+      `Checkout session ${session.id} created for tenant ${tenantId} (plan ${pricing.planKey}, ${interval}, anchor ${anchor.anchorAt.toISOString()})`,
     );
     return { checkoutUrl: session.url, sessionId: session.id };
   }
@@ -485,13 +673,14 @@ export class BillingService {
    *
    * Also reconciles the MRR ledger (basePriceSnapshot + a signed BillingEvent
    * `amountDelta`) so reported revenue follows the price actually charged.
+   *
+   * D8: `opts.pushed` is a push the caller already made Stripe-first (before writing the override), so
+   * only the ledger half runs here; `opts.effective` / `proposed` / `version` shape a push made here.
    */
-  async syncStripeSubscriptionPrice(tenantId: string): Promise<{
-    synced: boolean;
-    reason?: string;
-    oldAmount?: number;
-    newAmount?: number;
-  }> {
+  async syncStripeSubscriptionPrice(
+    tenantId: string,
+    opts?: PricePushOptions & { pushed?: PricePushResult },
+  ): Promise<PricePushResult> {
     // Resolve FIRST: an unresolvable price (isCustom plan with no custom fee) must be a
     // clean no-op result, not a thrown 400 out of a "sync" call — callers fan this out.
     let pricing: Awaited<ReturnType<PlatformPricingService["resolveTenantPricing"]>>;
@@ -504,21 +693,27 @@ export class BillingService {
       return { synced: false, reason: "price_unresolvable" };
     }
 
-    const result = await this.pushResolvedPriceToStripe(tenantId);
+    const result = opts?.pushed ?? (await this.pushResolvedPriceToStripe(tenantId, opts));
     // Reported MRR must follow the money: basePriceSnapshot is what MrrService prices
     // every paying tenant from, and Σ BillingEvent.amountDelta is what it reconciles
     // against — so a price change writes BOTH, whatever Stripe did.
     await this.reconcilePriceLedger(tenantId, pricing.monthly, pricing.planKey, result);
+    // N4: the ledger half landed behind the Stripe push (both agree again): the push's flag comes down.
+    if (result.synced) {
+      await clearNeedsReconcile(
+        { prisma: this.prisma, logger: this.logger },
+        tenantId,
+        result.reconcile,
+      );
+    }
     return result;
   }
 
   /** The Stripe half of `syncStripeSubscriptionPrice` (no ledger side effects). */
-  private async pushResolvedPriceToStripe(tenantId: string): Promise<{
-    synced: boolean;
-    reason?: string;
-    oldAmount?: number;
-    newAmount?: number;
-  }> {
+  async pushResolvedPriceToStripe(
+    tenantId: string,
+    opts?: PricePushOptions,
+  ): Promise<PricePushResult> {
     const sub = await this.prisma.tenantSubscription.findUnique({ where: { tenantId } });
     if (!sub?.stripeSubId) {
       return { synced: false, reason: "no_active_stripe_subscription" };
@@ -538,7 +733,10 @@ export class BillingService {
       return { synced: false, reason: "stripe_retrieve_failed" };
     }
 
-    if (stripeSub.status !== "active" && stripeSub.status !== "trialing") {
+    // SA-733r M7: past_due / unpaid are live — an owner price change must reach their next invoice.
+    // A Stripe-side `paused` (or incomplete) subscription is skipped: a price change made while it is
+    // paused does NOT reach Stripe, so the resume path (B3) must reconcile the price on resume.
+    if (!isLiveStripeSubscriptionStatus(stripeSub.status)) {
       return { synced: false, reason: `subscription_not_active_${stripeSub.status}` };
     }
 
@@ -563,10 +761,31 @@ export class BillingService {
           ? "year"
           : "month";
 
-    const priceData = await this.pricing.checkoutPriceData(tenantId, interval);
+    const priceData = opts?.proposed
+      ? await this.pricing.checkoutPriceData(tenantId, interval, opts.proposed)
+      : await this.pricing.checkoutPriceData(tenantId, interval);
+    const effective = opts?.effective ?? "next_cycle";
+    // A mid-period proration on a delinquent subscription would pile onto an invoice nobody pays: past_due /
+    // unpaid always take the change at the next invoice, whatever was asked.
+    const proration = prorationAllowedFor(stripeSub.status)
+      ? prorationBehaviorFor(effective)
+      : "none";
+    const key = priceOverrideIdempotencyKey({
+      tenantId,
+      amountCents: priceData.unit_amount,
+      proration, // the mode actually SENT: an active -> past_due flip between attempts must not reuse a key
+      version: opts?.version,
+      itemPriceId: item.price?.id,
+      attempt: randomUUID(), // a retry after a cached 5xx must really be sent (the lock + the unchanged check make it safe)
+    });
     const oldAmount =
-      typeof item.price?.unit_amount === "number" ? item.price.unit_amount / 100 : undefined;
-    const newAmount = priceData.unit_amount / 100;
+      typeof item.price?.unit_amount === "number" ? fromCents(item.price.unit_amount) : undefined;
+    const newAmount = fromCents(priceData.unit_amount);
+    // Same cents on the same interval: nothing to change. Re-saving a price with now_prorated would only
+    // add net-zero proration lines to the customer's invoice, so Stripe is left alone.
+    if (item.price?.unit_amount === priceData.unit_amount) {
+      return { synced: true, unchanged: true, oldAmount, newAmount, proration: "none" };
+    }
 
     // Stripe requires a `product` ID on inline price_data for a subscription-item
     // update — `product_data` is a Checkout-session-only shape and is REJECTED here
@@ -576,9 +795,10 @@ export class BillingService {
       typeof item.price?.product === "string" ? item.price.product : item.price?.product?.id;
     if (!productId) {
       try {
-        const product = await this.stripe.client.products.create({
-          name: priceData.product_data.name,
-        });
+        const product = await this.stripe.client.products.create(
+          { name: priceData.product_data.name },
+          { idempotencyKey: `${key}:product` },
+        );
         productId = product.id;
       } catch (err) {
         this.logger.error(
@@ -595,23 +815,63 @@ export class BillingService {
       product: productId,
     };
 
+    // SA-733r3 N4: `needsReconcile` (+ the key/nonce audit row) is COMMITTED before Stripe is touched; the flow
+    // clears it after its local write (syncStripeSubscriptionPrice / the override flow). Unwritable => nothing sent.
+    const reconcileDeps = { prisma: this.prisma, logger: this.logger };
+    let reconcile: { owned: boolean };
     try {
-      await this.stripe.updateSubscription(sub.stripeSubId, {
-        items: [{ id: item.id, price_data: updatePriceData }],
-        proration_behavior: "none",
+      reconcile = await armNeedsReconcile(reconcileDeps, {
+        tenantId,
+        kind: "price_override",
+        key,
+        stripeSubId: sub.stripeSubId,
       });
+    } catch (err) {
+      this.logger.error(
+        `Could not record needsReconcile before pushing tenant ${tenantId}'s price (${(err as Error).message}) - nothing was sent`,
+      );
+      return { synced: false, reason: "reconcile_flag_failed" };
+    }
+    // Also logged BEFORE the write: the key is how an operator finds the push if the process dies mid-flight.
+    this.logger.log(
+      `billing.price_override.push ${JSON.stringify({
+        tenantId,
+        stripeSubId: sub.stripeSubId,
+        idempotencyKey: key,
+        priorAmountCents: item.price?.unit_amount ?? null,
+        basePriceCents: priceData.unit_amount,
+        proration,
+        effective,
+      })}`,
+    );
+    try {
+      await this.stripe.updateSubscription(
+        sub.stripeSubId,
+        { items: [{ id: item.id, price_data: updatePriceData }], proration_behavior: proration },
+        { idempotencyKey: key },
+      );
     } catch (err) {
       this.logger.error(
         `Failed to sync Stripe subscription price for tenant ${tenantId}`,
         err as Error,
       );
-      return { synced: false, reason: "stripe_update_failed" };
+      // A lost RESPONSE is not a failed update: Stripe may have applied it. Re-read the item; if it already
+      // bills the new amount the push is applied, otherwise it is a failure the caller must refuse.
+      const reread = await this.stripe.getSubscription(sub.stripeSubId).catch(() => null);
+      if (itemUnitAmount(reread, item.id) !== priceData.unit_amount) {
+        // Stripe was READ and did not take it: nothing is ahead, this attempt's flag comes down.
+        await clearNeedsReconcile(reconcileDeps, tenantId, reconcile);
+        return { synced: false, reason: "stripe_update_failed" };
+      }
+      this.logger.warn(
+        `Stripe price update for tenant ${tenantId} errored but the item already bills ${newAmount} — treating it as applied`,
+      );
     }
 
     this.logger.log(
-      `Synced Stripe subscription price for tenant ${tenantId}: ${oldAmount ?? "?"} -> ${newAmount} (${interval}, proration_behavior=none)`,
+      `Synced Stripe subscription price for tenant ${tenantId}: ${oldAmount ?? "?"} -> ${newAmount} (${interval}, proration_behavior=${proration})`,
     );
-    return { synced: true, oldAmount, newAmount };
+    return { synced: true, oldAmount, newAmount, proration, reconcile };
   }
 
   /**
@@ -655,6 +915,7 @@ export class BillingService {
             select: {
               planKey: true,
               basePriceSnapshot: true,
+              couponFull: true,
               tenant: { select: { status: true, deletedAt: true, class: true } },
             },
           });
@@ -674,7 +935,7 @@ export class BillingService {
           });
           if (count === 0) return "retry" as const;
 
-          if (isPayingRow(sub.tenant, sub.planKey)) {
+          if (isPayingRow(sub.tenant, sub.planKey, sub.couponFull)) {
             await this.events.emit(
               tenantId,
               BILLING_EVENTS.PLAN_CHANGED,
@@ -740,13 +1001,49 @@ export class BillingService {
     switch (event.type) {
       case "checkout.session.completed":
         await this.onCheckoutCompleted(event.data.object);
+        // Catch-up claim: advances only a session this handler actually applied; idempotent on a redelivery.
+        await this.catchup?.onSessionCompleted(event.data.object);
+        break;
+
+      case "checkout.session.async_payment_succeeded":
+        // The payload is the now-PAID session: the same handler applies it, exactly once (the APPLIED marker is
+        // only written for a settled session, so the unpaid completion before it left none).
+        await this.onCheckoutCompleted(event.data.object);
+        break;
+
+      case "checkout.session.async_payment_failed":
+        // A notice row only: nothing is activated (the unpaid completion never did). Cancel / void is SA-774r2.
+        await this.onCheckoutAsyncPaymentFailed(event.data.object);
+        break;
+
+      case "checkout.session.expired":
+        await this.catchup?.onSessionExpired(event.data.object);
+        break;
+
+      case "invoice.paid":
+        await this.catchup?.onInvoicePaid(event.data.object);
+        // SA-733r7 PR-B3: the ONLY resume (and the only +MRR booking) of a dunning pause; a throw is redelivered.
+        await this.dunning?.onInvoicePaid(event.data.object);
+        break;
+
+      case "customer.subscription.trial_will_end":
+        // SA-733r5: a catch-up subscription is a `trialing` Stripe sub on an ACTIVE tenant. We send no trial email
+        // for ANY Stripe trial (the tenant trial emails are ours, keyed on Tenant.status = TRIAL); ignored here.
+        this.logger.debug(
+          `trial_will_end ignored${isCatchupSubscription(event.data.object) ? " (catch-up subscription)" : ""}`,
+        );
         break;
 
       case "invoice.payment_succeeded":
         await this.onPaymentSucceeded(event.data.object);
         break;
 
+      case "invoice.upcoming":
+        await this.onInvoiceUpcoming(event.data.object);
+        break;
+
       case "invoice.payment_failed":
+        await this.catchup?.onPaymentFailed(event.data.object);
         await this.onPaymentFailed(event.data.object);
         break;
 
@@ -822,12 +1119,12 @@ export class BillingService {
    * trail row and the platform notice (once per session, written together). Raised only when it would be news:
    *  - the session was not paid: nothing was charged;
    *  - it was applied already (its APPLIED row, or the stored subscription IS this one): a late retry of a
-   *    session that was handled — the cancellation arrives through customer.subscription.deleted;
-   *  - the tenant is on a different LIVE subscription (the A applied, sub_A cancelled, B applied, A retried
-   *    sequence): it is billed fine, and an alert would send an operator to refund a legitimate charge.
-   * The flag-off apply writes no APPLIED row, so "stored is live" is the signal that works for both flags. A
-   * Stripe error reading the stored subscription rethrows (only resource_missing means not live): the webhook is
-   * retried. Best-effort otherwise: a failing write never changes the 200.
+   *    session that was handled — the cancellation arrives through customer.subscription.deleted.
+   * B1157: a LIVE stored subscription no longer silences it. Every apply path now writes the APPLIED marker in its
+   * apply transaction (flag on or off, plan or not), so the A applied, sub_A cancelled, B applied, A retried
+   * sequence is silent through A's marker — while a paid session that was NEVER applied alerts even when the
+   * tenant is billed fine by another subscription (an operator must refund the orphan charge). Best-effort: a
+   * failing write never changes the 200.
    */
   private async noticePaidSessionAlreadyCancelled(
     session: any,
@@ -840,7 +1137,6 @@ export class BillingService {
     const storedSubId = stored?.stripeSubId ?? null;
     if (storedSubId === subscriptionId) return;
     if (session.id && (await this.hasAppliedMarker(tenantId, session.id))) return;
-    if (storedSubId && (await this.storedSubscriptionIsLive(storedSubId))) return;
     const tenant = await this.prisma.tenant.findUnique({
       where: { id: tenantId },
       select: { name: true, slug: true },
@@ -899,9 +1195,31 @@ export class BillingService {
     await this.mutations.adoptCheckoutAddons(tenantId, stripeSub, adoptCtx);
   }
 
+  /** The APPLIED marker row of a checkout session: written by EVERY apply path, inside its apply transaction. */
+  private async writeAppliedMarker(
+    tx: Prisma.TransactionClient,
+    tenantId: string,
+    sessionId: string,
+    meta: Prisma.InputJsonObject,
+  ): Promise<void> {
+    await tx.auditLog.create({
+      data: {
+        tenantId,
+        action: STRIPE_CHECKOUT_APPLIED_ACTION,
+        entityType: STRIPE_CHECKOUT_ENTITY,
+        entityId: sessionId,
+        meta,
+      },
+    });
+  }
+
   /** Has this checkout session already been APPLIED? (its marker row, written in the apply transaction) */
-  private async hasAppliedMarker(tenantId: string, sessionId: string): Promise<boolean> {
-    const row = await this.prisma.auditLog.findFirst({
+  private async hasAppliedMarker(
+    tenantId: string,
+    sessionId: string,
+    db: { auditLog: Pick<Prisma.TransactionClient["auditLog"], "findFirst"> } = this.prisma,
+  ): Promise<boolean> {
+    const row = await db.auditLog.findFirst({
       where: {
         tenantId,
         entityType: STRIPE_CHECKOUT_ENTITY,
@@ -951,10 +1269,6 @@ export class BillingService {
     }
   }
 
-  private async storedSubscriptionIsLive(storedSubId: string): Promise<boolean> {
-    return (await this.readStoredSubscription(storedSubId)).live;
-  }
-
   /**
    * B1155: a checkout is about to be applied over a stored subscription that is NOT live but NOT cancelled
    * either (paused / incomplete): it would be left behind, alive in Stripe, with nothing in RouteFlow pointing
@@ -982,6 +1296,209 @@ export class BillingService {
       });
       if (!isTerminalStripeSubscriptionStatus(again?.status)) throw err;
     }
+  }
+
+  /**
+   * B1158: the superseded-subscription cancel, guarded by a fresh re-read of that subscription RIGHT BEFORE it
+   * (the status read at the top of the handler is stale by now, and a bank payment may be in flight on it):
+   *  - now LIVE: do NOT cancel — a retryable throw, so the redelivery re-judges the checkout as a duplicate;
+   *  - terminal / gone: nothing to cancel, the checkout applies;
+   *  - its latest invoice's PaymentIntent is `processing` (ACH / SEPA): PARK the checkout — nothing cancelled, nothing
+   *    applied, ONE trail row + ONE platform notice per session — and fail the webhook so Stripe redelivers (the
+   *    hourly sweep resolves it);
+   *  - otherwise: cancel, as before.
+   */
+  private async cancelSupersededUnlessProcessing(
+    session: any,
+    tenantId: string,
+    stripeSub: any,
+    existing: { stripeCustomerId?: string | null } | null,
+    storedSubId: string,
+  ): Promise<void> {
+    const fresh = await this.stripe.getSubscriptionPaymentState(storedSubId);
+    if (isLiveStripeSubscriptionStatus(fresh.status)) {
+      throw new ConflictException(
+        "The superseded subscription became live while this checkout was being applied — the checkout is retried.",
+      );
+    }
+    // A bank payment in flight parks the checkout even when the status already reads terminal: the payment
+    // may still settle, so nothing is applied or cancelled until it resolves.
+    if (fresh.paymentProcessing) {
+      await this.parkCheckoutForProcessingPayment(
+        session,
+        tenantId,
+        stripeSub,
+        existing,
+        storedSubId,
+      );
+      throw new SupersededPaymentProcessingError();
+    }
+    if (fresh.status === null || isTerminalStripeSubscriptionStatus(fresh.status)) return;
+    await this.cancelSupersededSubscription(storedSubId, fresh.status);
+  }
+
+  /** The durable half of a park: the trail row and its platform notice, written together (once per session). */
+  private async parkCheckoutForProcessingPayment(
+    session: any,
+    tenantId: string,
+    stripeSub: any,
+    existing: { stripeCustomerId?: string | null } | null,
+    storedSubId: string,
+  ): Promise<void> {
+    const newSubId: string = stripeSub.id;
+    const trail = this.checkoutCustomerTrail(session, existing, stripeSub);
+    const tenant = await this.prisma.tenant.findUnique({
+      where: { id: tenantId },
+      select: { name: true, slug: true },
+    });
+    const label = tenant?.name ?? tenant?.slug ?? tenantId;
+    const message =
+      `Paid checkout for ${label} is parked: the tenant's previous subscription ${storedSubId} has a bank payment ` +
+      `still processing; the new paid checkout ${session.id ?? "?"} / subscription ${newSubId} is parked, NOT applied; ` +
+      `nothing was cancelled. RouteFlow re-checks hourly and resolves it automatically (payment succeeds: the new ` +
+      `subscription is treated as a duplicate and cancelled, with a refund notice; payment fails: the new checkout ` +
+      `is applied); do not cancel either subscription by hand.`;
+    this.logger.warn(`Tenant ${tenantId}: ${message}`);
+    await this.recordCheckoutRefusal(
+      session,
+      tenantId,
+      { reason: "superseded_payment_processing", storedSubId, newSubId, ...trail },
+      {
+        action: STRIPE_CHECKOUT_PAYMENT_PROCESSING_ACTION,
+        rethrow: true,
+        alsoWrite: tenant
+          ? (tx) =>
+              writeAdminNotice(tx, {
+                tenantId,
+                action: AdminAuditAction.STRIPE_PAID_CHECKOUT_NOT_APPLIED,
+                message,
+                meta: {
+                  reason: "superseded_payment_processing",
+                  checkoutSessionId: session.id ?? null,
+                  storedSubId,
+                  newSubId,
+                },
+              })
+          : undefined,
+      },
+    );
+  }
+
+  /**
+   * B1158: hourly, re-run the SAME checkout handling (`onCheckoutCompleted`, the webhook's own path) for every
+   * parked checkout that has no resolution row yet. Handled (applied, or judged a duplicate and cancelled) writes
+   * the PARK_RESOLVED row; parked again (payment still processing) stays open — and once it has been open longer
+   * than PARKED_CHECKOUT_ESCALATE_AFTER_DAYS, ONE escalation notice asks for a manual reconcile in Stripe. One row
+   * failing never stops the others. Idempotent across runs and replicas (LeaderCron; every write dedupes on the
+   * session under the same advisory lock the webhook takes).
+   */
+  @LeaderCron("0 * * * *", "billing.reconcileParkedCheckouts")
+  async reconcileParkedCheckouts(): Promise<void> {
+    if (!this.stripe.isConfigured) return;
+    // Open parks only: NOT EXISTS a resolution row for the same entity, in the query itself (Prisma cannot
+    // express a NOT EXISTS across rows of one table). `escalated` = an ESCALATED row exists for the entity.
+    const parked = await this.prisma.$queryRaw<
+      { entityId: string; tenantId: string | null; createdAt: Date; escalated: boolean }[]
+    >`
+      SELECT a."entityId", a."tenantId", a."createdAt",
+        EXISTS (
+          SELECT 1 FROM "AuditLog" e
+          WHERE e."entityType" = a."entityType" AND e."entityId" = a."entityId"
+            AND e."action" = ${STRIPE_CHECKOUT_PARK_ESCALATED_ACTION}
+        ) AS "escalated"
+      FROM "AuditLog" a
+      WHERE a."entityType" = ${STRIPE_CHECKOUT_ENTITY}
+        AND a."action" = ${STRIPE_CHECKOUT_PAYMENT_PROCESSING_ACTION}
+        AND a."entityId" IS NOT NULL
+        AND NOT EXISTS (
+          SELECT 1 FROM "AuditLog" r
+          WHERE r."entityType" = a."entityType" AND r."entityId" = a."entityId"
+            AND r."action" = ${STRIPE_CHECKOUT_PARK_RESOLVED_ACTION}
+        )
+      ORDER BY a."createdAt" ASC`;
+    // An escalated park already told the platform; re-run it once a day (the UTC-midnight run), not hourly.
+    const dailyRun = new Date(Date.now()).getUTCHours() === 0;
+    for (const row of parked) {
+      if (row.escalated && !dailyRun) continue;
+      try {
+        await this.reconcileParkedCheckout(row.entityId, row.createdAt);
+      } catch (err) {
+        this.logger.error(
+          `billing.reconcileParkedCheckouts: parked checkout ${row.entityId} could not be re-run (${(err as Error)?.message}) — left open, retried next hour`,
+        );
+        // A re-run that keeps failing must not hide an old park: escalate once from the row's own ids.
+        // Passes a partial `{ id }` session: escalateParkedCheckout reads only `session.id`.
+        if (
+          row.tenantId &&
+          Date.now() - row.createdAt.getTime() >
+            PARKED_CHECKOUT_ESCALATE_AFTER_DAYS * 24 * 3600 * 1000
+        ) {
+          await this.escalateParkedCheckout({ id: row.entityId }, row.tenantId, true).catch((e) =>
+            this.logger.error(
+              `billing.reconcileParkedCheckouts: escalation for ${row.entityId} failed (${(e as Error)?.message})`,
+            ),
+          );
+        }
+      }
+    }
+  }
+
+  private async reconcileParkedCheckout(sessionId: string, parkedAt: Date): Promise<void> {
+    const session = await this.stripe.getCheckoutSession(sessionId);
+    const tenantId: string | null = session?.metadata?.tenantId ?? null;
+    try {
+      await this.onCheckoutCompleted(session);
+    } catch (err) {
+      if (!(err instanceof SupersededPaymentProcessingError)) throw err;
+      const ageMs = Date.now() - parkedAt.getTime();
+      if (tenantId && ageMs > PARKED_CHECKOUT_ESCALATE_AFTER_DAYS * 24 * 3600 * 1000) {
+        await this.escalateParkedCheckout(session, tenantId);
+      }
+      return; // still parked: stays open
+    }
+    await this.recordCheckoutRefusal(
+      session,
+      tenantId,
+      { reason: "park_resolved" },
+      { action: STRIPE_CHECKOUT_PARK_RESOLVED_ACTION, rethrow: true },
+    );
+  }
+
+  private async escalateParkedCheckout(
+    session: any,
+    tenantId: string,
+    rerunFailing = false,
+  ): Promise<void> {
+    const tenant = await this.prisma.tenant.findUnique({
+      where: { id: tenantId },
+      select: { name: true, slug: true },
+    });
+    if (!tenant) return;
+    const label = tenant.name ?? tenant.slug ?? tenantId;
+    const message =
+      `Paid checkout ${session.id} for ${label} has been parked for more than ` +
+      `${PARKED_CHECKOUT_ESCALATE_AFTER_DAYS} days: the previous subscription's bank payment is still processing. ` +
+      `Nothing was applied or cancelled${rerunFailing ? "; the hourly re-run itself is failing for this session" : ""} — manual reconcile in Stripe now.`;
+    this.logger.error(`Tenant ${tenantId}: ${message}`);
+    await this.recordCheckoutRefusal(
+      session,
+      tenantId,
+      { reason: "superseded_payment_processing_escalated" },
+      {
+        action: STRIPE_CHECKOUT_PARK_ESCALATED_ACTION,
+        rethrow: true,
+        alsoWrite: (tx) =>
+          writeAdminNotice(tx, {
+            tenantId,
+            action: AdminAuditAction.STRIPE_PAID_CHECKOUT_NOT_APPLIED,
+            message,
+            meta: {
+              reason: "superseded_payment_processing_escalated",
+              checkoutSessionId: session.id ?? null,
+            },
+          }),
+      },
+    );
   }
 
   /**
@@ -1263,6 +1780,59 @@ export class BillingService {
     };
   }
 
+  /**
+   * `checkout.session.async_payment_failed`: the bank debit of a checkout that was linked unpaid did NOT clear. The
+   * tenant was never activated by it (see onCheckoutCompleted), so there is nothing to undo here: ONE audit row per
+   * session plus a platform notice. Cancelling the linked subscription / voiding is SA-774r2. Best-effort: a failed
+   * write never changes the 200 Stripe gets.
+   */
+  private async onCheckoutAsyncPaymentFailed(session: any): Promise<void> {
+    const tenantId: string | null = session.metadata?.tenantId ?? null;
+    this.logger.warn(
+      `checkout.async_payment_failed ${session.id ?? "?"} for tenant ${tenantId ?? "?"}: the bank debit failed - ` +
+        `nothing was activated by this checkout`,
+    );
+    if (!tenantId) return;
+    const tenant = await this.prisma.tenant.findUnique({
+      where: { id: tenantId },
+      select: { name: true, slug: true },
+    });
+    const label = tenant?.name ?? tenant?.slug ?? tenantId;
+    // A session that completed BEFORE the hotfix activated the tenant and left its APPLIED marker: its debit has now
+    // failed, so that tenant is ACTIVE and UNPAID. The notice must say so, never "nothing was activated".
+    const wasActivated = session.id ? await this.hasAppliedMarker(tenantId, session.id) : false;
+    const message = wasActivated
+      ? `The bank debit for ${label}'s checkout FAILED, and that checkout ACTIVATED the tenant before the payment ` +
+        `cleared (completed before the payment gate): the tenant is ACTIVE and UNPAID. Follow up or suspend it, and ` +
+        `check Stripe (a failed debit is not cancelled automatically yet).`
+      : `The bank debit for ${label}'s checkout FAILED: it was not activated by this checkout. ` +
+        `Check Stripe and follow up with the tenant (a failed debit is not cancelled automatically yet).`;
+    const notice = {
+      tenantId,
+      action: AdminAuditAction.STRIPE_ASYNC_PAYMENT_FAILED,
+      message,
+      meta: {
+        reason: "async_payment_failed",
+        activated: wasActivated,
+        checkoutSessionId: session.id ?? null,
+        sessionPaymentStatus: session.payment_status ?? null,
+      },
+    };
+    await this.recordCheckoutRefusal(
+      session,
+      tenant ? tenantId : null, // an unknown tenant id would fail the AuditLog FK and leave no trail
+      {
+        reason: "async_payment_failed",
+        activated: wasActivated,
+        checkoutSessionId: session.id ?? null,
+      },
+      {
+        action: STRIPE_CHECKOUT_ASYNC_FAILED_ACTION,
+        alsoWrite: tenant ? (tx) => writeAdminNotice(tx, notice) : undefined,
+      },
+    );
+  }
+
   private async onCheckoutCompleted(session: any): Promise<void> {
     const tenantId = session.metadata?.tenantId;
     if (!tenantId) {
@@ -1277,6 +1847,10 @@ export class BillingService {
       this.logger.warn("checkout.session.completed without subscription ID");
       return;
     }
+
+    // P0 hotfix: is the money in (or none due)? Only then may this session ACTIVATE the tenant and write its APPLIED
+    // marker; an unpaid session (an ACH debit in flight) still LINKS the customer / subscription / period / plan below.
+    const settled = SETTLED_CHECKOUT_PAYMENT_STATUSES.has(session.payment_status ?? "");
 
     // Fetch the full subscription to get period dates. SA-690: with each item's product expanded, so
     // the add-on items this checkout billed (tagged `addonSku` on their product) can be told apart
@@ -1393,6 +1967,9 @@ export class BillingService {
         stripeSub,
         adoptCtx,
       );
+      // SA-736r F2: the redelivery syncs the coupon too (idempotent), so a sync that threw after the first
+      // delivery's upsert is retried here instead of being lost behind "already applied".
+      await this.syncCoupon(tenantId, subscriptionId, "checkout_completed");
       return;
     }
     const storedSubId: string | null = existingOverride?.stripeSubId ?? null;
@@ -1422,14 +1999,16 @@ export class BillingService {
     }
     // B1155: this checkout is going to REPLACE a stored subscription that is neither live nor cancelled
     // (paused / incomplete): cancel that one first, so it is not left alive and unreferenced.
-    if (
-      storedSubId &&
-      storedSubId !== subscriptionId &&
-      !stored.live &&
-      stored.status &&
-      !isTerminalStripeSubscriptionStatus(stored.status)
-    ) {
-      await this.cancelSupersededSubscription(storedSubId, stored.status);
+    if (storedSubId && storedSubId !== subscriptionId && !stored.live && stored.status) {
+      // Also for an already-terminal early status: the guard re-reads the payment state, and a bank payment
+      // still processing on it parks the checkout instead of applying it (it may yet settle).
+      await this.cancelSupersededUnlessProcessing(
+        session,
+        tenantId,
+        stripeSub,
+        existingOverride,
+        storedSubId,
+      );
     }
     /** Re-judged under the tenant row lock, from the row as it is NOW (a racing completion or a manual
      *  activation may have committed since the read above). A moved stored id is a retryable conflict. */
@@ -1483,6 +2062,11 @@ export class BillingService {
       snapshotOn && resolvedPlanKey
         ? (normalizePlanKey(resolvedPlanKey) ?? resolvedPlanKey)
         : resolvedPlanKey;
+    // P0 hotfix: THIS session's own subscription is already the stored one, so an earlier (unpaid) delivery of it linked
+    // the plan and ran the plan-transition hook. Settling it must not re-judge the plan: the "newer downgrade" query
+    // below would find that delivery's OWN snapshot (a false "plan not changed" email to the tenant admin), and a
+    // re-write could reverse a change made while the debit was in flight. It only activates.
+    const alreadyLinked = existingOverride?.stripeSubId === subscriptionId;
     if (snapshotOn) {
       const storedCustomer = existingOverride?.stripeCustomerId;
       if (!tenantRow || (storedCustomer && storedCustomer !== session.customer)) {
@@ -1499,7 +2083,7 @@ export class BillingService {
         });
         return;
       }
-      if (typeof session.created === "number") {
+      if (typeof session.created === "number" && !alreadyLinked) {
         // A downgrade that committed AFTER this session was created is the tenant's (or an admin's)
         // newer decision: an out-of-order/redelivered checkout must not reverse it. The Stripe ids
         // and period still land (money moved); only the PLAN change is skipped.
@@ -1541,6 +2125,8 @@ export class BillingService {
       }
     }
 
+    if (alreadyLinked) planKeyForCheckout = null; // linked (plan, base price) at the first delivery: never re-written
+
     const transition =
       planKeyForCheckout && tenantRow
         ? {
@@ -1578,6 +2164,10 @@ export class BillingService {
         stripeCustomerId: session.customer as string,
         ...(period ?? {}),
         ...(billingInterval ? { billingInterval } : {}),
+        // SA-733 D7 / b2b review: a CATCH-UP checkout turns manual invoicing off HERE, in the apply transaction and
+        // BEFORE the trailing coupon sync (coupon-state forces couponFull=false on an externalPayment row). Nothing
+        // else on this base clears externalPayment on a card checkout.
+        ...(isCatchupSession(session) ? { externalPayment: false } : {}),
         ...(planKeyForCheckout ? { planKey: planKeyForCheckout } : {}),
         ...(planKeyForCheckout && resolvedBasePrice != null && !hasNegotiatedOverride
           ? { basePriceSnapshot: resolvedBasePrice }
@@ -1621,6 +2211,7 @@ export class BillingService {
                 await lockTenantForLedger(tx, tenantId);
                 // X1: judged again under the lock; a duplicate throws, so the hook's writes above roll back.
                 await recheckUnderLock(tx);
+                const previousSubId = await this.storedStripeSubIdTx(tx, tenantId);
                 // Compare-and-swap on the plan we judged the transition from (the same shape as
                 // upgrade()'s guard): if an in-app change moved it since we read it, this checkout is
                 // stale — throw so the tx (hook writes included) rolls back and Stripe redelivers,
@@ -1642,18 +2233,12 @@ export class BillingService {
                   }
                 }
                 const row = await tx.tenantSubscription.upsert(upsertArgs);
-                if (session.id) {
-                  await tx.auditLog.create({
-                    data: {
-                      tenantId,
-                      action: STRIPE_CHECKOUT_APPLIED_ACTION,
-                      entityType: STRIPE_CHECKOUT_ENTITY,
-                      entityId: session.id,
-                      meta: {
-                        fromPlanKey: transition.fromPlanKey,
-                        toPlanKey: transition.toPlanKey,
-                      },
-                    },
+                await this.resetCouponIfSubReplacedTx(tx, tenantId, previousSubId, subscriptionId);
+                // P0 hotfix: only a SETTLED session leaves the marker (an unpaid bank debit is linked, not applied)
+                if (session.id && settled) {
+                  await this.writeAppliedMarker(tx, tenantId, session.id, {
+                    fromPlanKey: transition.fromPlanKey,
+                    toPlanKey: transition.toPlanKey,
                   });
                 }
                 return row;
@@ -1700,13 +2285,28 @@ export class BillingService {
         }
       } else {
         // Flag OFF (or a checkout that names no plan / a stale one): no plan-transition hook, but the same
-        // tenant row lock (house order: first statement) and the same under-the-lock duplicate re-check as
+        // per-session lock first, then the tenant row lock (the hook path's order) and the same under-the-lock duplicate re-check as
         // the hook path, so a racing completion or manual activation can never be overwritten.
         upserted = await retryOnTxConflict("billing.onCheckoutCompleted", () =>
           this.prisma.$transaction(async (tx) => {
+            // B1157: this path writes the APPLIED marker too (so the paid-but-cancelled notice can tell an
+            // applied session from a never-applied one), under the same one-processor-per-session lock.
+            if (session.id) {
+              await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtext(${"stripe-checkout"}), hashtext(${session.id}))`;
+              if (await this.hasAppliedMarker(tenantId, session.id, tx)) return ALREADY_APPLIED;
+            }
             await lockTenantForLedger(tx, tenantId);
             await recheckUnderLock(tx);
-            return tx.tenantSubscription.upsert(upsertArgs);
+            const previousSubId = await this.storedStripeSubIdTx(tx, tenantId);
+            const row = await tx.tenantSubscription.upsert(upsertArgs);
+            await this.resetCouponIfSubReplacedTx(tx, tenantId, previousSubId, subscriptionId);
+            if (session.id && settled) {
+              await this.writeAppliedMarker(tx, tenantId, session.id, {
+                toPlanKey: planKeyForCheckout ?? resolvedPlanKey,
+                subscriptionId,
+              });
+            }
+            return row;
           }, CHECKOUT_TX_OPTIONS),
         );
       }
@@ -1734,6 +2334,20 @@ export class BillingService {
         stripeSub,
         adoptCtx,
       );
+      // SA-736r F2: a redelivery that finds the session applied STILL syncs the coupon (idempotent), so a
+      // sync that threw after the upsert is retried instead of being lost behind ALREADY_APPLIED.
+      await this.syncCoupon(tenantId, subscriptionId, "checkout_completed");
+      return;
+    }
+
+    if (!settled) {
+      // A bank debit in flight: linked above, NOT activated. It activates (once) when
+      // checkout.session.async_payment_succeeded re-delivers this session as `paid`; a failed debit leaves a notice
+      // row instead (onCheckoutAsyncPaymentFailed). No marker was written, so that delivery is not "already applied".
+      this.logger.log(
+        `checkout.awaiting_async_payment ${session.id ?? "?"}: tenant ${tenantId} linked to ${subscriptionId} ` +
+          `(payment_status=${session.payment_status ?? "unknown"}) - NOT activated until the payment settles`,
+      );
       return;
     }
 
@@ -1743,7 +2357,6 @@ export class BillingService {
     // legacy Stripe doesn't set it, so emitPayingDelta short-circuits).
     const reinstated = await this.transitionAndEmit(
       tenantId,
-      upserted,
       { status: { not: "ACTIVE" } },
       "ACTIVE",
       1,
@@ -1772,6 +2385,10 @@ export class BillingService {
     // two sum to what Stripe bills. Reversed, the crossing would price the adopted snapshot a second
     // time.
     await this.mutations.adoptCheckoutAddons(tenantId, stripeSub, adoptCtx);
+
+    // SA-736r M3: LAST, after the activation crossing and the add-on adoption (their writes are
+    // idempotent), so a throwing sync is retried by Stripe without double-booking anything.
+    await this.syncCoupon(tenantId, subscriptionId, "checkout_completed");
 
     this.logger.log(`Tenant ${tenantId} activated via checkout (sub: ${subscriptionId})`);
   }
@@ -1818,7 +2435,7 @@ export class BillingService {
       where: { stripeCustomerId: customerId },
       // R2: the tenant's CURRENT status is what decides whether the cancelAtPeriodEnd guard
       // below applies — onPaymentFailed already includes the tenant the same way.
-      include: { tenant: { select: { status: true } } },
+      include: { tenant: { select: { status: true, readOnlyReason: true } } },
     });
     if (!sub) {
       this.logger.debug(
@@ -1880,13 +2497,38 @@ export class BillingService {
       return;
     }
 
+    // SA-733r3 N1 (r4 #1 text): the legacy reinstatement needs the invoice's subscription to EQUAL the row's NON-NULL
+    // stripeSubId (dahlia has no `invoice.subscription`; the id lives where stripeInvoiceSubscriptionId reads it).
+    // Customer-wide matching let a late payment on an old / other subscription (or a one-off invoice) reinstate a
+    // SUSPENDED or lapsed-trial tenant, book +MRR and wipe a live dunning clock. The count reset above still applies.
+    const invoiceSubId = stripeInvoiceSubscriptionId(invoice);
+    if (!sub.stripeSubId || invoiceSubId !== sub.stripeSubId) {
+      this.logger.log(
+        `payment_succeeded for tenant ${sub.tenantId}: invoice subscription ${invoiceSubId ?? "none"} is not the tenant's own - no reinstatement`,
+      );
+      return;
+    }
+
+    // SA-733r M3 / r3 N1 (PR-B3): a dunning pause is resumed ONLY by invoice.paid (DunningService.onInvoicePaid,
+    // which books the single +MRR and clears the clock), and a paid invoice never revives a CANCELLED paused tenant
+    // for free. Customer-wide `payment_succeeded` for either reason therefore reinstates nothing.
+    if (
+      sub.tenant?.status === "READ_ONLY" &&
+      (sub.tenant.readOnlyReason === "payment_overdue" ||
+        sub.tenant.readOnlyReason === "subscription_cancelled")
+    ) {
+      this.logger.log(
+        `payment_succeeded for tenant ${sub.tenantId}: READ_ONLY(${sub.tenant.readOnlyReason}) is not reinstated here`,
+      );
+      return;
+    }
+
     // Atomic non-ACTIVE→ACTIVE: reinstates a dropped-out tenant and re-adds its run-rate exactly
     // once. The conditional flip is the idempotency key — the paired checkout.session.completed
     // webhook races here and only the winner emits — and it is a NO-OP on ordinary renewals
     // (already ACTIVE → count 0 → no ledger delta).
     const reinstated = await this.transitionAndEmit(
       sub.tenantId,
-      sub,
       { status: { not: "ACTIVE" } },
       "ACTIVE",
       1,
@@ -1905,6 +2547,10 @@ export class BillingService {
           `applies it when due`,
       );
     }
+
+    // SA-736r F1: LAST - catches a repeating coupon that ended at the period boundary. Every earlier write
+    // here is idempotent (CAS resume, absolute reset), so a throwing sync is safely retried.
+    if (sub.stripeSubId) await this.syncCoupon(sub.tenantId, sub.stripeSubId, "payment_succeeded");
 
     this.logger.log(`Payment succeeded for tenant ${sub.tenantId} (customer ${customerId})`);
   }
@@ -1941,6 +2587,37 @@ export class BillingService {
     return sub;
   }
 
+  /**
+   * R1 option B: Stripe announces the renewal days ahead. If the tenant has a scheduled downgrade, its price is
+   * pushed NOW, before the invoice is cut. The event rides the existing StripeBillingEvent ledger (a redelivery of
+   * the same event id never reaches here twice) and the push itself is idempotent (Stripe already billing the
+   * target is a no-op). A lock collision or an unreadable Stripe THROWS: the webhook fails and Stripe redelivers,
+   * never a double push. A REFUSAL (an annual item, an unresolvable price) is alerted and acknowledged - a
+   * redelivery could never succeed.
+   */
+  private async onInvoiceUpcoming(invoice: any): Promise<void> {
+    if (!this.scheduledPrice) return;
+    const sub = await this.matchStripeSubscription(
+      stripeInvoiceSubscriptionId(invoice),
+      invoice?.customer,
+      "invoice.upcoming",
+    );
+    if (!sub) return;
+    try {
+      const out = await this.scheduledPrice.apply(sub.tenantId);
+      if (out.applied) {
+        this.logger.log(
+          `invoice.upcoming: scheduled downgrade price pushed for tenant ${sub.tenantId} (${out.priorAmountCents} -> ${out.amountCents} cents)`,
+        );
+      }
+    } catch (err) {
+      if (!(err instanceof BadRequestException)) throw err;
+      this.logger.error(
+        `invoice.upcoming: the scheduled downgrade price for tenant ${sub.tenantId} cannot be applied - fix it in Stripe before the renewal: ${err.message}`,
+      );
+    }
+  }
+
   private async onPaymentFailed(invoice: any): Promise<void> {
     const sub = await this.matchStripeSubscription(
       stripeInvoiceSubscriptionId(invoice),
@@ -1949,9 +2626,27 @@ export class BillingService {
     );
     if (!sub) return;
 
-    // Dunning is counted, not enforced here: no status change. Grace and suspension stay with
-    // suspendOverdueTenants (which re-checks Stripe); reinstatement stays with payment_succeeded,
-    // which resets this count.
+    // SA-736r M3/F1: a failing invoice means the coupon no longer zeroes it. The sync runs BEFORE the
+    // non-idempotent increment below: a throwing sync aborts here, before the count moves, and the redelivery
+    // runs the whole handler once.
+    try {
+      await this.syncCoupon(sub.tenantId, sub.stripeSubId as string, "payment_failed");
+    } catch (err) {
+      // Rethrown (Stripe redelivers, and the count has not moved), but never silently: a PERSISTENT Stripe
+      // error here would keep failedPaymentCount from ever advancing, so it is an ERROR with the tenant id.
+      this.logger.error(
+        `payment_failed for tenant ${sub.tenantId}: the coupon sync failed, so the failed-payment count did not advance (${(err as Error)?.message}); Stripe will redeliver`,
+      );
+      throw err;
+    }
+
+    // SA-733r7 PR-B3: the dunning clock is stamped once per invoice (in enforced the d0 notice goes out; in off/dark
+    // master's direct email below is the only tenant email). BEFORE the non-idempotent increment below, like the coupon sync: a throw here (an unreadable
+    // Stripe) aborts before the count moves and the redelivery runs the whole handler once.
+    await this.dunning?.onPaymentFailed(invoice);
+
+    // Dunning is counted, not enforced here: no status change. The pause belongs to DunningService's hourly sweep;
+    // reinstatement stays with payment_succeeded (which resets this count) and invoice.paid (the dunning resume).
     await this.prisma.tenantSubscription.update({
       where: { tenantId: sub.tenantId },
       data: { failedPaymentCount: { increment: 1 } },
@@ -1961,22 +2656,72 @@ export class BillingService {
       `Payment failed for tenant ${sub.tenantId} (${sub.tenant.slug}). Grace period: ${PAYMENT_GRACE_DAYS} days.`,
     );
 
-    // #2476 / SA-472: the increment above IS the event's effect. Everything after it is best-effort
-    // and never throws — a throw here would record "error:" and make a redelivery re-run the increment.
-    try {
-      await this.sendPaymentFailedEmail(sub);
-    } catch (e) {
-      this.logger.warn(
-        `payment-failed email for tenant ${sub.tenantId} not sent: ${(e as Error)?.message}`,
-      );
+    // SA r-note 5 A1: in off/dark this is the ONLY tenant email (master's #2440, once per invoice per PAYMENT_FAILED_EMAIL_DEDUPE_DAYS: dark
+    // is silent to tenants); the dunning milestone series replaces it in enforced. #2476 / SA-472: the increment
+    // above IS the event's effect, so everything after it is best-effort and never throws - a throw would record
+    // "error:" and make a redelivery re-run the increment.
+    const mode = billingPauseMode();
+    if (dunningEmailsFor(mode) === "legacy_failed_payment") {
+      try {
+        await this.sendPaymentFailedEmail(sub, stripeRefId(invoice?.id) ?? undefined);
+      } catch (e) {
+        this.logger.warn(
+          `payment-failed email for tenant ${sub.tenantId} not sent: ${(e as Error)?.message}`,
+        );
+      }
     }
   }
 
-  /** The admin warning for a failed payment (#2440): portal link best-effort, plain-text fallback. */
-  private async sendPaymentFailedEmail(sub: {
-    tenantId: string;
-    tenant: { slug: string; name: string | null };
-  }): Promise<void> {
+  /**
+   * Row 346: has the admin already been told about THIS Stripe invoice inside the re-dedupe window? Keyed on the
+   * existing `EmailDelivery` marker (tenant + kind + entityType + entityId = the invoice id), no schema change.
+   * Only a row that actually went out counts (a FAILED / WOULD_SEND row must not silence the next retry). Best-effort:
+   * a lookup error FAILS OPEN (the email is sent) with a warn - a duplicate nudge beats a missed one.
+   */
+  private async paymentFailedEmailAlreadySent(
+    tenantId: string,
+    invoiceId: string,
+  ): Promise<boolean> {
+    try {
+      const since = new Date(Date.now() - PAYMENT_FAILED_EMAIL_DEDUPE_DAYS * 24 * 60 * 60 * 1000);
+      const prior = await this.prisma.emailDelivery.findFirst({
+        where: {
+          tenantId,
+          kind: PAYMENT_FAILED_EMAIL_KIND,
+          entityType: PAYMENT_FAILED_EMAIL_ENTITY_TYPE,
+          entityId: invoiceId,
+          status: { in: [...PAYMENT_FAILED_EMAIL_DEDUPE_STATUSES] },
+          createdAt: { gte: since },
+        },
+        select: { id: true },
+      });
+      return prior != null;
+    } catch (e) {
+      this.logger.warn(
+        `payment-failed email dedupe lookup failed for tenant ${tenantId} (sending anyway): ${(e as Error)?.message}`,
+      );
+      return false;
+    }
+  }
+
+  /**
+   * The admin warning for a failed payment (#2440): portal link best-effort, plain-text fallback. Row 346: sent at
+   * most once per invoice per PAYMENT_FAILED_EMAIL_DEDUPE_DAYS (Stripe re-fires payment_failed on every retry); the
+   * delivery row it records is the dedupe marker. An event with no invoice id cannot be keyed, so it sends.
+   */
+  private async sendPaymentFailedEmail(
+    sub: {
+      tenantId: string;
+      tenant: { slug: string; name: string | null };
+    },
+    invoiceId?: string,
+  ): Promise<void> {
+    if (invoiceId && (await this.paymentFailedEmailAlreadySent(sub.tenantId, invoiceId))) {
+      this.logger.log(
+        `payment-failed email for tenant ${sub.tenantId} skipped: invoice ${invoiceId} was already mailed within ${PAYMENT_FAILED_EMAIL_DEDUPE_DAYS} days`,
+      );
+      return;
+    }
     const adminUser = await this.prisma.user.findFirst({
       where: { tenantId: sub.tenantId, role: "TENANT_ADMIN", deletedAt: null },
       select: { email: true, username: true },
@@ -1993,16 +2738,22 @@ export class BillingService {
       subject: `Payment failed — ${sub.tenant.name ?? sub.tenant.slug}`,
       html: `<p>Hello ${escapeHtml(adminUser.username)},</p>
 <p>We were unable to process your subscription payment for <strong>${escapeHtml(sub.tenant.name ?? sub.tenant.slug)}</strong>.</p>
-<p>Please update your payment method within <strong>${PAYMENT_GRACE_DAYS} days</strong> to avoid service interruption.</p>
+<p>Please update your payment method to avoid service interruption.</p>
 ${updateLine}
 <p>RouteFlow Platform</p>`,
+      delivery: {
+        tenantId: sub.tenantId,
+        kind: PAYMENT_FAILED_EMAIL_KIND,
+        entityType: PAYMENT_FAILED_EMAIL_ENTITY_TYPE,
+        ...(invoiceId ? { entityId: invoiceId } : {}),
+      },
     });
   }
 
   /** #2440: the tenant's billing-portal URL, or "" on any portal error (logged, never thrown). */
   private async portalUrlOrEmpty(tenantId: string): Promise<string> {
     try {
-      // #2476: capped — this runs inside the webhook's claim lease, and the link is best-effort.
+      // #2476: capped - this runs inside the webhook's claim lease, and the link is best-effort.
       return (
         await this.createBillingPortalSession(tenantId, undefined, PAYMENT_FAILED_PORTAL_REQUEST)
       ).portalUrl;
@@ -2034,16 +2785,28 @@ ${updateLine}
   private async cancelFromStripe(
     sub: {
       tenantId: string;
+      stripeSubId?: string | null;
       planKey: string | null;
       basePriceSnapshot: Prisma.Decimal | null;
       discount: Prisma.Decimal | null;
     },
     reason: string,
   ): Promise<void> {
+    // SA-775 (row 381): the rollout pause. While the switch is paused a PRODUCTION tenant is NOT cancelled by
+    // this webhook: no CANCELLED / SUSPENDED, no MRR row, no cancellation notice. What Stripe told us is still
+    // recorded (cancelAtPeriodEnd, the disarmed downgrade, the coupon reset); see holdStripeCancel.
+    const lockTarget = await this.prisma.tenant.findUnique({
+      where: { id: sub.tenantId },
+      select: { id: true, class: true, status: true },
+    });
+    if (lockTarget && !(await autoLockAllowed(this.autoLocks, lockTarget, "stripe_cancelled"))) {
+      await this.holdStripeCancel(sub, lockTarget.status, reason);
+      return;
+    }
+    // The class the gate judged is part of both CASes (SA-775 S3): a reclassification since the read cannot lock.
     const churned = await this.transitionAndEmit(
       sub.tenantId,
-      sub,
-      { status: "ACTIVE" },
+      { status: "ACTIVE", class: lockTarget?.class },
       "CANCELLED",
       -1,
       BILLING_EVENTS.SUBSCRIPTION_CANCELED,
@@ -2053,11 +2816,20 @@ ${updateLine}
       churned ||
       (
         await this.prisma.tenant.updateMany({
-          where: { id: sub.tenantId, status: "SUSPENDED" },
+          where: { id: sub.tenantId, status: "SUSPENDED", class: lockTarget?.class },
           data: { status: "CANCELLED" },
         })
       ).count === 1;
     if (!cancelled) {
+      // SA-733r2 N1: a PAUSED tenant whose Stripe subscription ended lands on READ_ONLY(subscription_cancelled),
+      // never CANCELLED; the overdue invoice stays owed. (A no-op for every other status.)
+      await this.dunning?.markCancelledWhilePaused(sub.tenantId);
+      // SA-736r M5/F5: the status CAS missed (TRIAL / READ_ONLY / already CANCELLED), the columns still reset.
+      await resetCouponState(
+        { prisma: this.prisma, events: this.events },
+        sub.tenantId,
+        `stripe_${reason}`,
+      );
       this.logger.log(
         `Stripe ${reason} for tenant ${sub.tenantId}: status is not ACTIVE/SUSPENDED — left as is`,
       );
@@ -2073,6 +2845,15 @@ ${updateLine}
       data: { cancelAtPeriodEnd: true, ...disarmedDowngrade() },
     });
 
+    // SA-736r M5: the coupon columns never outlive their subscription - reset AFTER the cancel flag and the
+    // downgrade disarm are written (own tx, Tenant lock first). The status CAS above already ran, so cancelling
+    // a couponFull tenant books 0.
+    await resetCouponState(
+      { prisma: this.prisma, events: this.events },
+      sub.tenantId,
+      `stripe_${reason}`,
+    );
+
     this.logger.log(`Subscription cancelled for tenant ${sub.tenantId} (${reason})`);
 
     // N3: best-effort admin notification, never blocks the cancellation above (a Stripe
@@ -2087,6 +2868,55 @@ ${updateLine}
         e as Error,
       );
     }
+  }
+
+  /**
+   * SA-775: a Stripe-side cancellation of a PRODUCTION tenant while automatic locks are paused. ACTIVE / SUSPENDED
+   * tenants would have been moved to CANCELLED: that is skipped (ONE durable skip record per Stripe subscription,
+   * so a webhook redelivery adds nothing) and the Stripe-side facts are recorded exactly as before (the flag, the
+   * superseded downgrade, the coupon columns). Any other status was never going to be cancelled by this path, so it
+   * takes the ordinary "not cancelled" branch. After an unpause the overdue cron or the scheduled-cancellation cron
+   * finds the tenant again (cancelAtPeriodEnd stays armed); the webhook is not replayed.
+   */
+  private async holdStripeCancel(
+    sub: { tenantId: string; stripeSubId?: string | null },
+    status: string,
+    reason: string,
+  ): Promise<void> {
+    if (status !== "ACTIVE" && status !== "SUSPENDED") {
+      await this.dunning?.markCancelledWhilePaused(sub.tenantId);
+      await resetCouponState(
+        { prisma: this.prisma, events: this.events },
+        sub.tenantId,
+        `stripe_${reason}`,
+      );
+      this.logger.log(
+        `Stripe ${reason} for tenant ${sub.tenantId}: status is not ACTIVE/SUSPENDED — left as is`,
+      );
+      return;
+    }
+    await recordAutoLockSkip(
+      this.prisma,
+      {
+        tenantId: sub.tenantId,
+        kind: "stripe_cancelled",
+        key: sub.stripeSubId ?? sub.tenantId,
+        wouldHaveSet: { status: "CANCELLED", from: status },
+      },
+      this.logger,
+    );
+    await this.prisma.tenantSubscription.update({
+      where: { tenantId: sub.tenantId },
+      data: { cancelAtPeriodEnd: true, ...disarmedDowngrade() },
+    });
+    await resetCouponState(
+      { prisma: this.prisma, events: this.events },
+      sub.tenantId,
+      `stripe_${reason}`,
+    );
+    this.logger.log(
+      `Stripe ${reason} for tenant ${sub.tenantId}: automatic locks are paused — recorded, not cancelled`,
+    );
   }
 
   private async onSubscriptionUpdated(subscription: any): Promise<void> {
@@ -2124,13 +2954,16 @@ ${updateLine}
     // grace stays with suspendOverdueTenants, reinstatement with invoice.payment_succeeded.
     if (subscription.status === "canceled") {
       await this.cancelFromStripe(sub, "subscription_canceled");
+      return; // SA-736r M1: a canceled status skips the coupon sync - cancelFromStripe resets the columns
     }
+    // SA-736r M3: adding or removing a discount fires this event; re-derive from Stripe, not the payload.
+    await this.syncCoupon(sub.tenantId, sub.stripeSubId as string, "subscription_updated");
   }
 
   // ─── Cron: suspend tenants with expired trials / overdue payments ─────────
 
   /**
-   * Runs every hour. Suspends tenants that:
+   * Runs every hour. Suspends tenants whose Stripe subscription was canceled (A2: never for past_due / unpaid):
    *  1. Are in TRIAL status with trialEndsAt in the past, OR
    *  2. Have a subscription whose periodEnd is past + grace period and still ACTIVE
    */
@@ -2139,7 +2972,7 @@ ${updateLine}
     if (!this.stripe.isConfigured) return; // No billing = no suspension logic
 
     const now = new Date();
-    const graceDeadline = new Date(now.getTime() - PAYMENT_GRACE_DAYS * 24 * 60 * 60 * 1000);
+    const graceDeadline = overdueGraceDeadline(now);
 
     // Trial expiry is owned by BillingCronService.expireTrials() → READ_ONLY (not
     // SUSPENDED), so exports + sign-in keep working. This cron only handles overdue
@@ -2147,30 +2980,40 @@ ${updateLine}
 
     // Overdue subscriptions (periodEnd + grace past, still ACTIVE, no recent payment)
     const overdueSubs = await this.prisma.tenantSubscription.findMany({
-      where: {
-        periodEnd: { lt: graceDeadline },
-        stripeSubId: { not: null },
-        tenant: { status: "ACTIVE", deletedAt: null },
-      },
-      include: { tenant: { select: { id: true, slug: true } } },
+      where: overdueSubscriptionWhere(graceDeadline),
+      include: { tenant: { select: { id: true, slug: true, class: true } } },
     });
 
     for (const sub of overdueSubs) {
       // Double-check with Stripe that the subscription is actually past-due or unpaid
       try {
         const stripeSub = await this.stripe.getSubscription(sub.stripeSubId!);
-        if (
-          stripeSub.status === "past_due" ||
-          stripeSub.status === "unpaid" ||
-          stripeSub.status === "canceled"
-        ) {
+        // SA r-note 5 A2: ONLY `canceled` (a subscription the tenant ended). past_due / unpaid are payment-overdue
+        // states and never suspend, in any BILLING_PAUSE_MODE: dunning owns non-payment (the 7-day grace, then
+        // READ_ONLY + pay).
+        if (stripeSub.status === "canceled") {
+          // SA-775 (row 381): the rollout pause. A PRODUCTION tenant is NOT suspended while the switch is paused
+          // (no status write, no notice); ONE durable skip record per Stripe subscription, and the pass after an
+          // unpause finds it again.
+          if (!(await autoLockAllowed(this.autoLocks, sub.tenant, "overdue_suspended"))) {
+            await recordAutoLockSkip(
+              this.prisma,
+              {
+                tenantId: sub.tenantId,
+                kind: "overdue_suspended",
+                key: sub.stripeSubId as string,
+                wouldHaveSet: { status: "SUSPENDED" },
+              },
+              this.logger,
+            );
+            continue;
+          }
           // Atomic ACTIVE→SUSPENDED: emits the −MRR delta exactly once even if a concurrent
           // subscription.deleted webhook already churned this tenant (count 0 → no double). The
           // suspension is reversible — onPaymentSucceeded re-adds a matching +delta on reinstatement.
           const suspended = await this.transitionAndEmit(
             sub.tenantId,
-            sub,
-            { status: "ACTIVE" },
+            { status: "ACTIVE", class: sub.tenant.class }, // the judged class is part of the CAS (SA-775 S3)
             "SUSPENDED",
             -1,
             BILLING_EVENTS.SUBSCRIPTION_SUSPENDED,
@@ -2183,7 +3026,10 @@ ${updateLine}
             );
             // N3: best-effort admin notification, never blocks the suspension above.
             try {
-              await this.billingNotification.notifySuspended(sub.tenantId, "overdue payment");
+              await this.billingNotification.notifySuspended(
+                sub.tenantId,
+                SUSPENDED_REASON_SUBSCRIPTION_CANCELED,
+              );
             } catch (e) {
               this.logger.error(
                 `N3 notifySuspended threw unexpectedly for tenant ${sub.tenantId}`,

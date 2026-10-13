@@ -251,9 +251,12 @@ describe("deactivateFailureToast — CODES_CHANGED on the deactivate/delete path
 describe("the deactivate / delete call sites use deactivateFailureToast (source pin)", () => {
   const read = (rel: string) => fs.readFileSync(path.join(__dirname, rel), "utf8");
 
-  it("product detail: Delete (header + variant Deactivate live in useReactivateFlow)", () => {
-    const src = read("../app/(dashboard)/products/[id]/page.tsx");
-    expect((src.match(/deactivateFailureToast\(/g) ?? []).length).toBeGreaterThanOrEqual(1);
+  it("product detail: Delete lives in useDeleteProductFlow, Deactivate in useReactivateFlow", () => {
+    // The page hands Delete to the flow hook (#3323: the cascade confirm) instead of toasting itself.
+    expect(read("../app/(dashboard)/products/[id]/page.tsx")).toMatch(/useDeleteProductFlow\(/);
+    expect(read("../app/(dashboard)/products/[id]/useDeleteProductFlow.tsx")).toMatch(
+      /deactivateFailureToast\(/,
+    );
     expect(read("../app/(dashboard)/products/[id]/useReactivateFlow.tsx")).toMatch(
       /deactivateFailureToast\(/,
     );

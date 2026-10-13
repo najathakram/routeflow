@@ -23,7 +23,7 @@
  * app to match this commit" gate FAILS the job rather than continuing unless
  * the deployed web build is code-identical to the commit under test.
  *
- * Role: OPERATOR (storage state from the "migration-hub-gate" project, mirroring
+ * Role: TENANT_ADMIN (storage state from the "migration-hub-gate" project, admin-only page, mirroring
  * 19-compliance-pack-gate.spec.ts / 20-trip-builder-gate.spec.ts). Runs against
  * the DEPLOYED build (T2, proven-pending-deploy per the build plan) — red until
  * the PR deploys, by design; Playwright is not part of the pre-merge red gate.
