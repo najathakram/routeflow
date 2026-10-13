@@ -3,6 +3,7 @@ import { PriceType } from "@prisma/client";
 import {
   isSpecialTier,
   decideStaffOverride,
+  withinStaffOverrideTolerance,
   AmbiguousLineError,
   InvalidTierError,
   UnknownUnitError,
@@ -23,6 +24,7 @@ import { assertUnitLineSplit } from "./unit-line-split";
 import { lineUnitsPerBoxSnapshot, type ResolvedLineUnits } from "../products/line-units";
 import { API_ERROR_CODES } from "../common/api-error-codes";
 import { specialPriceReasonRequired } from "./staff-override";
+import { norm } from "./unit-label-norm";
 
 /**
  * units_v1, step 4b-2 — building ONE order line that is sold by a non-pack unit (a Case, a Pallet,
@@ -61,6 +63,29 @@ export interface UnitLineRequest {
   /** Why a special-tier customer's price was changed (H3); required by the override rule there. */
   overrideReason?: string | null;
 }
+
+/**
+ * The line an edit re-writes, as stored (H3). Only a same-product, same-unit counterpart is passed (matched
+ * by line id, or by the replace-all pairing); a new or substitute line passes none.
+ */
+export interface StoredUnitLine {
+  unitLabel?: string | null;
+  unitPrice: unknown;
+  priceType: string;
+  originalPrice?: unknown;
+  overrideReason?: string | null;
+  overriddenBy?: string | null;
+}
+
+/** The `orderItem` columns a {@link StoredUnitLine} reads: the edit's locked line read selects these. */
+export const STORED_UNIT_LINE_SELECT = {
+  unitLabel: true,
+  unitPrice: true,
+  priceType: true,
+  originalPrice: true,
+  overrideReason: true,
+  overriddenBy: true,
+} as const;
 
 /** A Prisma `Decimal` (or number/string) — coerced once by `toLadderProduct`. */
 type Money = number | string | { toString(): string };
@@ -297,6 +322,13 @@ export function buildUnitLine(input: {
   tenantId: string | null | undefined;
   /** The staff user whose typed price overrides the ladder (H3); stamped only on a real override. */
   overriddenBy?: string | null;
+  /**
+   * H3: the stored line this one re-writes. Re-sending the price ALREADY on it is not a new override: the
+   * line keeps its stored price, type, original price, reason and stamp, no reason needed (an internal
+   * re-write must never 400 on a stored override). A CHANGED price is re-decided against the tier price
+   * and needs a reason sent with it (a 400 otherwise).
+   */
+  stored?: StoredUnitLine | null;
 }): UnitLineData {
   const { product, units, resolved, item, tier, taxFor } = input;
   const ladderProduct = toLadderProduct(product);
@@ -358,8 +390,14 @@ export function buildUnitLine(input: {
     throw e;
   }
   // H3: ONE rule for a staff-typed price — judged against the customer's TIER unit price, never the list.
+  const held =
+    input.stored && norm(input.stored.unitLabel ?? "") === norm(label) ? input.stored : null;
+  const echoesHeld =
+    held != null &&
+    item.unitPrice != null &&
+    withinStaffOverrideTolerance(Number(item.unitPrice), Number(held.unitPrice));
   const decision =
-    item.unitPrice != null
+    item.unitPrice != null && !echoesHeld
       ? decideStaffOverride({
           overridePrice: Number(item.unitPrice),
           baselinePrice: tierPrice,
@@ -369,18 +407,41 @@ export function buildUnitLine(input: {
         })
       : null;
   if (decision && "refused" in decision) throw specialPriceReasonRequired(product.name);
-  const unitPrice = decision ? decision.unitPrice : tierPrice;
-  const priceType: PriceType = decision
-    ? PriceType[decision.priceType]
-    : isSpecialTier(tier)
-      ? PriceType.SPECIAL
-      : PriceType.STANDARD;
-  const originalPrice: number | null = decision
-    ? decision.originalPrice
-    : isSpecialTier(tier)
-      ? listPrice
-      : null;
+  const ladderType: PriceType = isSpecialTier(tier) ? PriceType.SPECIAL : PriceType.STANDARD;
+  const unitPrice = echoesHeld
+    ? roundMoney(Number(held.unitPrice))
+    : decision
+      ? decision.unitPrice
+      : tierPrice;
+  const priceType: PriceType = echoesHeld
+    ? (held.priceType as PriceType)
+    : decision
+      ? PriceType[decision.priceType]
+      : ladderType;
+  const originalPrice: number | null = echoesHeld
+    ? held.originalPrice == null
+      ? null
+      : Number(held.originalPrice)
+    : decision
+      ? decision.originalPrice
+      : isSpecialTier(tier)
+        ? listPrice
+        : null;
   const overridden = priceType === PriceType.DISCOUNTED || priceType === PriceType.MANUAL;
+  // the stamp: a held override keeps ITS reason and user; a new one is this edit's
+  const stamp = !overridden
+    ? null
+    : echoesHeld
+      ? {
+          overrideReason: held.overrideReason ?? null,
+          overriddenBy: held.overriddenBy ?? undefined,
+        }
+      : input.overriddenBy
+        ? {
+            overrideReason: item.overrideReason?.trim() || null,
+            overriddenBy: input.overriddenBy,
+          }
+        : null;
 
   // The real subtotal, now that tier pricing has resolved the actual unitPrice — the split
   // above is already buildLine-validated, so computeLineSubtotalStrict never throws here.
@@ -410,9 +471,7 @@ export function buildUnitLine(input: {
       unitPrice,
       priceType,
       originalPrice,
-      ...(overridden && input.overriddenBy
-        ? { overrideReason: item.overrideReason?.trim() || null, overriddenBy: input.overriddenBy }
-        : {}),
+      ...(stamp ?? {}),
       promoFreeUnits: null,
       subtotal,
       notes: item.itemNote || item.notes || undefined,

@@ -67,7 +67,7 @@ import {
   type SaleOptions,
 } from "./sale-options";
 import { notifyPickupHandover, pickupOutForDeliveryPush } from "./order-pickup-wording";
-import { decideTierOverride } from "./staff-override";
+import { assertPriceEditAllowed, decideTierOverride } from "./staff-override";
 import { assertMergeLockAcquired, isMergeContention, mapLockError } from "./merge-contention";
 import {
   deleteLoserGuarded,
@@ -1721,6 +1721,7 @@ export class OrdersService implements OnApplicationBootstrap {
           tenantId: this.prisma.getTenantId(),
           overriddenBy: user.sub,
         });
+        if (isOverride(unitLine)) assertPriceEditAllowed(options.priceEditAllowed); // POS-5, as the pack branch
         subtotal += unitLine.subtotal;
         return unitLine;
       }
@@ -1814,12 +1815,7 @@ export class OrdersService implements OnApplicationBootstrap {
           : null;
       if (staff?.overridden) {
         // POS-5: counter callers pass `priceEditAllowed`; judged vs the SERVER tier price, before any lock or write.
-        if (options.priceEditAllowed === false) {
-          throw new ForbiddenException({
-            code: API_ERROR_CODES.PRICE_EDIT_NOT_PERMITTED,
-            message: "You can't change prices. Ask your account admin.",
-          });
-        }
+        assertPriceEditAllowed(options.priceEditAllowed);
         ({ unitPrice, originalPrice } = staff);
         priceType = PriceType[staff.priceType];
         staffOverride = {
@@ -3066,9 +3062,8 @@ export class OrdersService implements OnApplicationBootstrap {
             ...EXISTING_LINE_SELECT,
             deliveredQty: true,
             invoicedQty: true,
-            unitPrice: true,
+            ...unitLines.STORED_UNIT_LINE_SELECT,
             promoFreeUnits: true,
-            overrideReason: true,
           },
         });
         restrictionPlan?.assertHeld(heldItems);
@@ -3396,6 +3391,7 @@ export class OrdersService implements OnApplicationBootstrap {
             tenantId: this.prisma.getTenantId(),
             tier: (pid) => (atCustomerTier ? (operatorCpMap.get(pid) ?? operatorDefaultTier) : 1),
             overriddenBy: user?.sub ?? null,
+            held: heldById,
             categoryMap: await loadCategoryMapForProducts(tx, unitCtx.products), // B297
           };
 
@@ -3896,7 +3892,7 @@ export class OrdersService implements OnApplicationBootstrap {
                   const p = unitCtx.products.get(li.productId!);
                   if (!p) throw new ConflictException({ code: API_ERROR_CODES.CONCURRENT_UPDATE });
                   // B297: same product, not a substitute — updateUnitLine must PRESERVE the trio.
-                  await unitEdit.updateUnitLine(uctx, item.id!, p, unitRow, item, false, li);
+                  await unitEdit.updateUnitLine(uctx, item.id!, p, unitRow, item, false);
                   continue;
                 }
                 // A zero boxes+pieces payload is "not using box entry", not "zero

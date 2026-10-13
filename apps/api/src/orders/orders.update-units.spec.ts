@@ -398,6 +398,76 @@ describe("OrdersService.updateOrderItems — units_v1 (A1) staff conversion", ()
     );
   });
 
+  describe("H3: a stored unit-line override on a special-tier customer", () => {
+    // tier-3 Case $80 (list $100); the stored line is a DISCOUNTED $90 override with its reason and stamp
+    const storedOverride = {
+      ...existingCaseLine,
+      unitPrice: 90,
+      subtotal: 180,
+      priceType: "DISCOUNTED",
+      originalPrice: 100,
+      overrideReason: "damaged cartons",
+      overriddenBy: "user-old",
+    };
+    const caseLineUpdate = (unitPrice: number, overrideReason?: string) =>
+      service.updateOrderItems(
+        "ord-1",
+        {
+          replaceAll: false,
+          items: [
+            {
+              id: "li-case",
+              unitLabel: "Case",
+              qty: 3,
+              unitPrice,
+              ...(overrideReason ? { overrideReason } : {}),
+            },
+          ],
+        } as never,
+        operatorPayload as never,
+      );
+    beforeEach(() => {
+      prisma.customer.findFirst.mockResolvedValue({ id: "cust-1", pricingTier: 3 });
+      prisma.productUnit.findMany.mockResolvedValue([{ ...caseLadderRow, priceTier3: 80 }]);
+      prisma.order.findUnique.mockResolvedValue({ ...MOCK_ORDER, lineItems: [storedOverride] });
+    });
+
+    it("re-sending the stored price unchanged is a 200 that keeps the type, reason and stamp (no reason sent)", async () => {
+      await caseLineUpdate(90);
+      expect(prisma.orderItem.update).toHaveBeenCalledWith(
+        expect.objectContaining({
+          data: expect.objectContaining({
+            unitPrice: 90,
+            subtotal: 270,
+            priceType: "DISCOUNTED",
+            originalPrice: 100,
+            overrideReason: "damaged cartons",
+            overriddenBy: "user-old",
+          }),
+        }),
+      );
+    });
+
+    it("changing the price without a reason is a 400 REASON_REQUIRED and writes nothing", async () => {
+      await expect(caseLineUpdate(95)).rejects.toThrow(/reason is required/);
+      expect(prisma.orderItem.update).not.toHaveBeenCalled();
+    });
+
+    it("changing the price WITH a reason re-decides it and stamps the editor", async () => {
+      await caseLineUpdate(95, "new deal");
+      expect(prisma.orderItem.update).toHaveBeenCalledWith(
+        expect.objectContaining({
+          data: expect.objectContaining({
+            unitPrice: 95,
+            priceType: "DISCOUNTED",
+            overrideReason: "new deal",
+            overriddenBy: "user-op",
+          }),
+        }),
+      );
+    });
+  });
+
   it("ADD a Case line (diff-add, no existing line for this product): base qty = count x factor", async () => {
     prisma.order.findUnique.mockResolvedValue({ ...MOCK_ORDER, lineItems: [existingPackLine] });
     await service.updateOrderItems(
