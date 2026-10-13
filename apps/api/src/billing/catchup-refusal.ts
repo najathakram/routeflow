@@ -19,6 +19,8 @@ export const CATCHUP_REFUSAL = {
   addon_snapshot_not_catalog: API_ERROR_CODES.CATCHUP_ADDON_SNAPSHOT_NOT_CATALOG,
   // the reverse direction: a card line the manual invoice never billed. Same family, same fixed copy.
   checkout_addon_without_priced_row: API_ERROR_CODES.CATCHUP_ADDON_SNAPSHOT_NOT_CATALOG,
+  // B1102: a held add-on whose catalog includedAtPlan names no plan (fix the catalog entry)
+  addon_catalog_invalid: API_ERROR_CODES.ADDON_CATALOG_INVALID,
   manual_period_ahead: API_ERROR_CODES.CATCHUP_MANUAL_PERIOD_AHEAD,
   // a legacy activation marker with no recorded period cannot be measured: same code, fail closed
   manual_marker_without_period: API_ERROR_CODES.CATCHUP_MANUAL_PERIOD_AHEAD,

@@ -183,7 +183,7 @@ export function isAddonIncludedAtPlan(
 }
 
 /**
- * B1102: is a catalog `includedAtPlan` a legal value? `null`/`undefined` means "never bundled";
+ * B1102: is a catalog `includedAtPlan` a legal value? `null`/`undefined`/`""` mean "never bundled";
  * anything else must resolve through `normalizePlanKey` (a current key or a legacy alias, since
  * superseded versions keep their original rows). A misspelled key ranks -1 in
  * `isAddonIncludedAtPlan`, which reads as "bundled nowhere", so the add-on would bill on every
@@ -206,7 +206,8 @@ export type IncludedAtPlanResolution = { ok: true; plan: PlanKey | null } | { ok
 export function resolveIncludedAtPlan(
   includedAtPlan: string | null | undefined,
 ): IncludedAtPlanResolution {
-  if (includedAtPlan == null) return { ok: true, plan: null };
+  // "" and null both keep the LEGACY meaning (never bundled): only a NON-EMPTY unknown value is a typo.
+  if (includedAtPlan == null || includedAtPlan === "") return { ok: true, plan: null };
   const plan = normalizePlanKey(includedAtPlan);
   return plan ? { ok: true, plan } : { ok: false };
 }

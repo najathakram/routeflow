@@ -22,6 +22,7 @@ import { AdminAuditAction } from "../platform-admin/audit-actions.constant";
 import { addonCatalogInvalid } from "./addon-catalog-invalid";
 import { addonsIncludedAtPlan } from "./addon-retirement";
 import { priceUnbilledAddonsOnActivation } from "./manual-activation-addons";
+import { beginStripeFirstPlanChange } from "./plan-change-flow";
 import { resolveIncludedAtPlan } from "./plan-catalog.constants";
 import { ProrationService } from "./proration.service";
 import { SubscriptionMutationService } from "./subscription-mutation.service";
@@ -119,7 +120,6 @@ describe("B1102 one parser: resolveIncludedAtPlan", () => {
     expect(resolveIncludedAtPlan("SCALE")).toEqual({ ok: true, plan: "SCALE" });
     expect(resolveIncludedAtPlan("BUSINESS")).toEqual({ ok: true, plan: "SCALE" });
     expect(resolveIncludedAtPlan(TYPO)).toEqual({ ok: false });
-    expect(resolveIncludedAtPlan("")).toEqual({ ok: false });
   });
 });
 
@@ -201,7 +201,11 @@ describe("B1102 background readers skip the add-on, log, audit and never throw",
   it("the quiet catch-up read drops the add-on's line without throwing or writing a notice", async () => {
     const { svc, audits } = makeSvc(TYPO);
     const lines = await svc.checkoutAddonLines("t1", "month", { quiet: true });
-    expect(lines).toEqual({ lineItems: [], skus: [] });
+    expect(lines).toEqual({
+      lineItems: [],
+      skus: [],
+      invalid: [{ sku: "FORECASTING", value: TYPO }],
+    });
     expect(audits).toEqual([]);
   });
 
@@ -305,5 +309,61 @@ describe("B1102 a valid key is unchanged", () => {
     expect(billed).toBe(false);
     expect(stripeClient.subscriptionItems.create).not.toHaveBeenCalled();
     expect(audits).toEqual([]);
+  });
+});
+
+describe("B1102 the empty value keeps its LEGACY meaning (never bundled), only a non-empty unknown value is invalid", () => {
+  it('null and "" both resolve to "never bundled"; a non-empty unknown value is the only typo', () => {
+    expect(resolveIncludedAtPlan(null)).toEqual({ ok: true, plan: null });
+    expect(resolveIncludedAtPlan(undefined)).toEqual({ ok: true, plan: null });
+    expect(resolveIncludedAtPlan("")).toEqual({ ok: true, plan: null });
+    expect(resolveIncludedAtPlan(TYPO)).toEqual({ ok: false });
+  });
+
+  it('enable with includedAtPlan "" is NOT a catalog refusal (the SKU bills on every plan, as it always did)', async () => {
+    const { svc } = makeSvc("");
+    expect(await svc.addonEnableRefusal("t1", "FORECASTING")).toBeNull();
+  });
+});
+
+describe("B1102 a Stripe-first plan change refuses a held invalid add-on before ANY Stripe call", () => {
+  it("beginStripeFirstPlanChange throws the coded 409 and pushes nothing", async () => {
+    const stripe = {
+      subscriptions: { retrieve: jest.fn(), update: jest.fn() },
+      subscriptionItems: { list: jest.fn(), del: jest.fn(), create: jest.fn() },
+    };
+    const prisma = {
+      tenantAddon: {
+        findMany: jest.fn().mockResolvedValue([
+          {
+            id: "a1",
+            addonKey: "FORECASTING",
+            sku: "FORECASTING",
+            active: true,
+            quantity: 1,
+            stripeItemId: "si_1",
+            isComp: false,
+          },
+        ]),
+      },
+    };
+    const err = await rejection(
+      beginStripeFirstPlanChange(
+        { prisma: prisma as any, logger: new Logger("t"), stripe: stripe as any },
+        {
+          tenantId: "t1",
+          stripeSubId: "sub_1",
+          targetPlanKey: "SCALE",
+          targetPlanName: "Scale",
+          retireAddons: true,
+          addonSkus: [{ sku: "FORECASTING", name: "Forecasting", includedAtPlan: TYPO }],
+        } as any,
+      ),
+    );
+    expect(err).toBeInstanceOf(ConflictException);
+    expect(err.getResponse()).toEqual(BAD);
+    for (const group of Object.values(stripe)) {
+      for (const fn of Object.values(group)) expect(fn).not.toHaveBeenCalled();
+    }
   });
 });

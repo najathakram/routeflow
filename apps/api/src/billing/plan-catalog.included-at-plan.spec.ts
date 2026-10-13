@@ -60,8 +60,8 @@ describe("B1102 includedAtPlan guard — negative control", () => {
     expect(() => assertAllIncludedAtPlanValid("fake", typo)).toThrow(/FORECASTING="SCAEL"/);
   });
 
-  it("rejects an empty string and wrong case; accepts null, current keys and legacy aliases", () => {
-    expect(isValidIncludedAtPlan("")).toBe(false);
+  it("rejects wrong case; accepts the empty string (legacy), null, current keys and legacy aliases", () => {
+    expect(isValidIncludedAtPlan("")).toBe(true); // legacy: "" = never bundled (SA ruling)
     expect(isValidIncludedAtPlan("scale")).toBe(false);
     expect(isValidIncludedAtPlan("__proto__")).toBe(false);
     expect(isValidIncludedAtPlan(null)).toBe(true);

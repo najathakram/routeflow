@@ -7,6 +7,7 @@ import {
 } from "@nestjs/common";
 import { fromCents, toCents } from "@routeflow/pricing";
 import { API_ERROR_CODES } from "../common/api-error-codes";
+import { addonCatalogInvalidException } from "./addon-catalog-invalid";
 import { ADMIN_AUDIT_ENTITY, AdminAuditAction } from "../platform-admin/audit-actions.constant";
 import { PrismaService } from "../prisma/prisma.service";
 import { billableAddonWhere } from "./addon-row";
@@ -56,6 +57,8 @@ export interface CatchupReport {
   plan: CatchupPlanResult;
   /** For the session: the pieces `open()` needs (not serialised). */
   _inputs?: { planPriceData: Record<string, any>; addonLines: any[]; addonSkus: string[] };
+  /** Add-ons the quiet read dropped for an unparseable catalog includedAtPlan (internal; the open() refuses on it). */
+  _catalogInvalid?: { sku: string; value: string }[];
 }
 
 /** The plan changed between the dry-run read and the claim (re-planned under the claim). */
@@ -176,6 +179,8 @@ export class CatchupCheckoutService {
     }
 
     const lines = await this.mutations.checkoutAddonLines(tenantId, "month", { quiet: true });
+    // B1102: a held add-on whose catalog includedAtPlan names no plan is CATALOG_INVALID, not "not card billable".
+    if (lines.invalid.length > 0) ineligible.push("addon_catalog_invalid");
     const addons: CatchupAddon[] = lines.lineItems.map((li: any) => ({
       sku: String(li.price_data?.product_data?.metadata?.addonSku ?? "ADDON"),
       unitPrice: fromCents(Number(li.price_data?.unit_amount ?? 0)),
@@ -274,6 +279,7 @@ export class CatchupCheckoutService {
       subPeriod: sub ? { start: sub.periodStart ?? null, end: sub.periodEnd ?? null } : null,
       plan,
       _inputs: { planPriceData, addonLines: lines.lineItems, addonSkus: lines.skus },
+      _catalogInvalid: lines.invalid,
     };
   }
 
@@ -334,6 +340,12 @@ export class CatchupCheckoutService {
       throw new ServiceUnavailableException("Stripe is not configured.");
     }
     const report = await this.plan(tenantId, now);
+    if (report._catalogInvalid?.length) {
+      // B1102: the coded 409 + the platform notice, BEFORE the plan's own (misleading) card-billable refusal.
+      await this.mutations.recordInvalidCatalogAddons(tenantId, report._catalogInvalid);
+      const first = report._catalogInvalid[0];
+      throw addonCatalogInvalidException(first.sku, first.value);
+    }
     if (!report.plan.ok) {
       // a coded refusal with fixed copy: never the internal reason string
       throw planRefusalException(report.plan.reason);

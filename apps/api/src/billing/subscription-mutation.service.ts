@@ -1894,8 +1894,14 @@ export class SubscriptionMutationService {
     interval: "month" | "year",
     // SA-733 D7: the catch-up DRY-RUN reads the same lines but writes nothing (no platform notice).
     opts: { quiet?: boolean } = {},
-  ): Promise<{ lineItems: ReturnType<typeof checkoutAddonLineItem>[]; skus: string[] }> {
-    const none = { lineItems: [], skus: [] };
+  ): Promise<{
+    lineItems: ReturnType<typeof checkoutAddonLineItem>[];
+    skus: string[];
+    /** Quiet reads only: add-ons dropped for an unparseable includedAtPlan (a user's checkout throws instead). */
+    invalid: { sku: string; value: string }[];
+  }> {
+    const invalid: { sku: string; value: string }[] = [];
+    const none = { lineItems: [], skus: [], invalid };
     // SA-693: a comp is a platform grant — never billed, so never a line and never a reason to refuse.
     const active = await this.prisma.tenantAddon.findMany({
       where: billableAddonWhere({ tenantId, active: true }),
@@ -1928,6 +1934,7 @@ export class SubscriptionMutationService {
         // catch-up read drops just this line (never billed) and carries on.
         if (!opts.quiet) throw refusalException(included);
         await this.skipInvalidCatalogAddon(tenantId, def.sku, included.value, false);
+        invalid.push({ sku: def.sku, value: String(included.value) });
         continue;
       }
       // The row findAddonRow picks (oldest) decides the quantity — the same row the completion adopts onto.
@@ -1970,7 +1977,19 @@ export class SubscriptionMutationService {
         }),
       ),
       skus: billable.map((b) => b.def.sku),
+      invalid,
     };
+  }
+
+  /**
+   * B1102: the catch-up open() met add-ons the quiet read dropped for an unparseable includedAtPlan. Writes the
+   * same deduped platform notice the background billers write (best-effort, never throws).
+   */
+  async recordInvalidCatalogAddons(
+    tenantId: string,
+    invalid: readonly { sku: string; value: string }[],
+  ): Promise<void> {
+    for (const i of invalid) await this.skipInvalidCatalogAddon(tenantId, i.sku, i.value, true);
   }
 
   /**
