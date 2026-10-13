@@ -2983,11 +2983,20 @@ function SettingsPageInner() {
       width: "max-w-4xl",
     },
     users: { title: "User management", node: <UserManagementTab /> },
-    email: { title: "Email (SMTP)", node: <EmailSettingsTab />, width: "max-w-3xl" },
+    // Perms PR1: every email (SMTP) and Claude AI endpoint is admin-only, so a deep link shows the notice instead
+    email: {
+      title: "Email (SMTP)",
+      node: isAdmin ? <EmailSettingsTab /> : <AdminOnlyNotice />,
+      width: "max-w-3xl",
+    },
     invoicing: { title: "Invoicing", node: <InvoicingTab />, width: "max-w-3xl" },
     costing: { title: "Costing", node: <CostingTab />, width: "max-w-3xl" },
     remittance: { title: "How to pay", node: <RemittanceTab />, width: "max-w-3xl" },
-    integrations: { title: "Integrations", node: <AIIntegrationsTab />, width: "max-w-3xl" },
+    integrations: {
+      title: "Integrations",
+      node: isAdmin ? <AIIntegrationsTab /> : <AdminOnlyNotice />,
+      width: "max-w-3xl",
+    },
     gohighlevel: {
       title: "GoHighLevel",
       node: <GoHighLevelSettingsTab />,
@@ -3063,6 +3072,11 @@ function SettingsPageInner() {
       )}
     </div>
   );
+}
+
+/** Perms PR1: a settings screen whose every endpoint is admin-only, opened by a non-admin (e.g. a deep link). */
+function AdminOnlyNotice() {
+  return <p className="text-sm text-navy/70">Only an admin can change this.</p>;
 }
 
 export default function SettingsPage() {

@@ -291,3 +291,29 @@ describe("T1.4 admin: the same controls are all there", () => {
     expect(screen.queryByText(/Driver access is on/)).not.toBeInTheDocument();
   });
 });
+
+describe("T1.3 deep links: an operator who opens an admin-only screen by URL", () => {
+  it.each(["email", "integrations"])(
+    "?tab=%s shows the admin-only line and requests nothing behind it",
+    async (tab) => {
+      mockRole = "OPERATOR";
+      mockTab = tab;
+      renderWithProviders(<SettingsPage />);
+      expect(await screen.findByText("Only an admin can change this.")).toBeInTheDocument();
+      const urls = get.mock.calls.map((c: unknown[]) => String(c[0]));
+      expect(
+        urls.some((u) => u.startsWith("/settings/email") || u.startsWith("/settings/anthropic")),
+      ).toBe(false);
+    },
+  );
+
+  it.each(["email", "integrations"])(
+    "a tenant admin still gets the full ?tab=%s screen",
+    async (tab) => {
+      mockRole = "TENANT_ADMIN";
+      mockTab = tab;
+      renderWithProviders(<SettingsPage />);
+      await waitFor(() => expect(screen.queryByText("Only an admin can change this.")).toBeNull());
+    },
+  );
+});

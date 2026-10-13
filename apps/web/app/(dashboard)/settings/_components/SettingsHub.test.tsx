@@ -333,14 +333,7 @@ describe("settings registry — every configurable setting has a screen (WS5)", 
   it("operators reach every non-admin-only hub screen in the registry", () => {
     renderWithProviders(<SettingsHub isAdmin={false} />);
     const missing = orphanScreens(
-      // Perms PR1 M1: the api made the email (SMTP) and Claude AI scanner endpoints admin-only, so the hub
-      // hides those tiles from operators; their registry rows are not flagged adminOnly yet (packages).
-      SETTINGS_REGISTRY.filter(
-        (r) =>
-          !r.adminOnly &&
-          r.screen !== "/settings?tab=email" &&
-          r.screen !== "/settings?tab=integrations",
-      ),
+      SETTINGS_REGISTRY.filter((r) => !r.adminOnly),
       hubHrefs(),
       (id) => !!document.getElementById(id),
     );
