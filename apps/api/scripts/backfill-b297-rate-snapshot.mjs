@@ -400,8 +400,14 @@ export async function confirmLiveTenantYes({
 
 // ─── SQL ──────────────────────────────────────────────────────────────────────
 
+/**
+ * R4 in SQL: a trio is NULL when ANY of its three columns is. The plan's scope and the TRIO write's guard
+ * share this one predicate, so a partly-NULL line the plan selects is a line the write can fill.
+ */
+export const TRIO_NULL_SQL = `(i."categoryTaxType" IS NULL OR i."categoryTaxRate" IS NULL OR i."categoryPriceIncludesTax" IS NULL)`;
+
 const SCOPE_SQL = `((i."trackedCategoryId" IS NOT NULL
-        AND (i."categoryTaxType" IS NULL OR i."categoryTaxRate" IS NULL OR i."categoryPriceIncludesTax" IS NULL))
+        AND ${TRIO_NULL_SQL})
     OR (i."trackedCategoryId" IS NULL AND i."categoryTaxAmount" <> 0))`;
 
 function pageSql(table) {
@@ -665,10 +671,10 @@ export async function buildPlan(client, { protectedSlugs, allowedIds = new Set()
 export function writeSqlFor(table, mode) {
   if (!TABLES.includes(table)) throw refuse(`unknown table ${table} in the plan`);
   const parent = table === "InvoiceItem" ? ["Invoice", "invoiceId"] : ["Order", "orderId"];
-  const stillNull = mode === "TRIO" ? `"categoryTaxRate" IS NULL` : `"trackedCategoryId" IS NULL`;
+  const stillNull = mode === "TRIO" ? TRIO_NULL_SQL : `i."trackedCategoryId" IS NULL`;
   return `UPDATE "${table}" i SET "trackedCategoryId" = $2, "categoryTaxType" = $3::"TrackedCategoryTaxType",
       "categoryTaxRate" = $4::numeric, "categoryPriceIncludesTax" = $5
-    WHERE i.id = $1 AND i.${stillNull}
+    WHERE i.id = $1 AND ${stillNull}
       AND COALESCE(i."tenantId", (SELECT p."tenantId" FROM "${parent[0]}" p WHERE p.id = i."${parent[1]}")) = $6`;
 }
 const REREAD_SQL = (table) =>

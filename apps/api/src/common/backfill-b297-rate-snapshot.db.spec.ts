@@ -338,6 +338,31 @@ describeDb("B297 PR6 backfill — provable rate snapshot, real Postgres", () => 
     }
   }, 180_000);
 
+  it("a PARTLY-null trio (rate set, type NULL) is planned AND written", async () => {
+    const cat = await newCategory("Part");
+    const line = (
+      await orderLine({
+        trackedCategoryId: cat,
+        categoryTaxAmount: "0.60",
+        categoryTaxType: null,
+        categoryTaxRate: "0.0500",
+        categoryPriceIncludesTax: null,
+      })
+    ).id;
+    const dry = cli(["--local"]);
+    expect(dry.out).toMatch(/APPLY: 1 line\(s\)/);
+    const res = cli(applyArgs(planOf(dry.out), ["--i-have-a-fresh-backup"]));
+    expect(res.out).toMatch(/committed — 1 line\(s\)/);
+    expect(res.status).toBe(0);
+    const row = await raw.orderItem.findUniqueOrThrow({ where: { id: line } });
+    expect(row).toMatchObject({
+      categoryTaxType: "EXCISE_PER_UNIT",
+      categoryPriceIncludesTax: false,
+    });
+    expect(Number(row.categoryTaxRate)).toBe(0.05);
+    expect(Number(row.categoryTaxAmount)).toBe(0.6);
+  }, 180_000);
+
   it("a 2-line plan with ONE stale line rolls back BOTH (whole-apply refusal)", async () => {
     const cat = await newCategory("Two");
     const a = await provingLine(cat);

@@ -286,7 +286,7 @@ describe("backfill-b297-rate-snapshot", () => {
       let bad = null;
       try { m.writeSqlFor("Product", "TRIO"); } catch (e) { bad = e.message; }
       console.log(JSON.stringify({
-        trio, l2, bad,
+        trio, l2, bad, trioNull: m.TRIO_NULL_SQL,
         counts: m.modeCounts([{ mode: "TRIO" }, { mode: "L2-ORDER" }, { mode: "L2-INVOICE" }, { mode: "TRIO" }]),
         phrase: m.confirmPhrase({ trio: 2, l2: 2 }),
         same: m.categoryMatchesPlan({ taxType: "EXCISE_PER_UNIT", rate: "0.0500", priceIncludesTax: false }, set),
@@ -296,7 +296,12 @@ describe("backfill-b297-rate-snapshot", () => {
         gone: m.categoryMatchesPlan(undefined, set),
         hint: m.applyHint({ plan: { admittedProtectedTenantIds: ["t-9"], apply: [{ mode: "TRIO" }] } }, "/x/plan.json", "h".repeat(64)),
       }));`);
-    expect(out.trio).toMatch(/WHERE i\.id = \$1 AND i\."categoryTaxRate" IS NULL/);
+    // The TRIO guard IS the plan's partly-NULL predicate (R4), never a narrower one.
+    expect(out.trio).toContain(`WHERE i.id = $1 AND ${out.trioNull}`);
+    expect(out.trioNull).toBe(
+      `(i."categoryTaxType" IS NULL OR i."categoryTaxRate" IS NULL OR i."categoryPriceIncludesTax" IS NULL)`,
+    );
+    expect(code).toContain("AND ${TRIO_NULL_SQL})");
     expect(out.trio).toMatch(/= \$6$/);
     expect(out.trio).toContain(`FROM "Order" p WHERE p.id = i."orderId"`);
     expect(out.l2).toMatch(/AND i\."trackedCategoryId" IS NULL/);
