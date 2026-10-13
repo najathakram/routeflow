@@ -597,6 +597,7 @@ describe("structural pin: ONE writer of the coupon columns (L-223)", () => {
   // mention and raw SQL writes still fail for these files like any other (the raw-SQL test below has no waiver).
   const SNAPSHOT_READERS = new Set([
     "/scripts/backfill-b294-order-line-taxrate.mjs",
+    "/scripts/backfill-b297-rate-snapshot.mjs",
     "/scripts/backfill-refund-tender.mjs",
     "/scripts/billing-correct-activation.mjs",
     "/scripts/lib/billing-catchup-core.cjs",

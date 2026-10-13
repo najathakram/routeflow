@@ -263,6 +263,21 @@ describe("B1079 - the checkout's own add-on LINE does not bill a couponFull tena
     expect(h.events.emit).not.toHaveBeenCalled();
   });
 
+  it("the removal can only CREDIT: prorated, never an invoice-now, and no item is created or raised", async () => {
+    const h = make({ storedCouponFull: false, preview: FULL_PREVIEW, checkoutItem: true });
+    await h.adopt();
+    const [itemId, opts] = h.stripeClient.subscriptionItems.del.mock.calls[0] as unknown as [
+      string,
+      any,
+    ];
+    expect(itemId).toBe("si_line");
+    // create_prorations on a delete makes a credit line (<= 0) for the unused time and bills nothing now
+    expect(opts).toEqual({ proration_behavior: "create_prorations" });
+    expect(opts.proration_behavior).not.toBe("always_invoice");
+    expect(h.stripeClient.subscriptionItems.create).not.toHaveBeenCalled();
+    expect(h.stripeClient.subscriptionItems.update).not.toHaveBeenCalled();
+  });
+
   it("a Stripe read failure with a checkout item present fails the webhook and deletes nothing", async () => {
     const h = make({ stripeReadFails: true, checkoutItem: true });
     await expect(h.adopt()).rejects.toThrow();
