@@ -112,6 +112,11 @@ import { useMarginConfig, floorForCategory } from "@/lib/api/margin";
 import { MarginHint } from "@/components/MarginHint";
 import { DecimalInput, MoneyInput } from "@/components/MoneyInput";
 import { ReadOnlyHint, WriteButton } from "@/lib/read-only-gate";
+import { getTenantCookie } from "@/lib/tenant-cookie";
+import { invoiceDraftKey } from "@/lib/invoice-draft-storage";
+import { useInvoiceDraft } from "./use-invoice-draft";
+import { checkDraftReferences } from "./invoice-draft-restore";
+import { InvoiceDraftBanner, draftNoticeCopy, draftSummary } from "./InvoiceDraftBanner";
 
 // ─── Terms options ─────────────────────────────────────────────────────────────
 
@@ -997,6 +1002,110 @@ export default function NewInvoicePage() {
     return copy;
   }
 
+  // ── Unsaved-draft persistence (ROW 447) ─────────────────────────────────────
+  // Inputs only (never a total): the footer totals below are recomputed from the lines on every render, including
+  // right after a restore. Offered, never applied silently; this page has no URL prefill to collide with.
+  const draftKey = invoiceDraftKey(authUser?.tenantSlug ?? getTenantCookie(), authUser?.id);
+  const draftForm = React.useMemo(
+    () =>
+      basis === "newSale" || basis === "standalone"
+        ? {
+            basis,
+            customer: customer && {
+              id: customer.id,
+              businessName: customer.businessName,
+              pricingTier: customer.pricingTier,
+              defaultPaymentTerms: customer.defaultPaymentTerms,
+            },
+            reference,
+            subject,
+            terms,
+            issueDate,
+            dueDate,
+            dueDateEdited: dueDateEditedRef.current,
+            termsText,
+            notes,
+            deliveredNow,
+            deliveredOn,
+            depositOpen,
+            depositPercent,
+            depositDueDate,
+            adjustment,
+            lines: items,
+          }
+        : null,
+    [
+      basis,
+      customer,
+      reference,
+      subject,
+      terms,
+      issueDate,
+      dueDate,
+      termsText,
+      notes,
+      deliveredNow,
+      deliveredOn,
+      depositOpen,
+      depositPercent,
+      depositDueDate,
+      adjustment,
+      items,
+    ],
+  );
+  const draft = useInvoiceDraft(draftKey, draftForm);
+  const [draftBusy, setDraftBusy] = React.useState(false);
+  const [draftNotice, setDraftNotice] = React.useState<string | null>(null);
+  async function restoreDraft() {
+    if (!draft.offer || draftBusy) return;
+    setDraftBusy(true);
+    try {
+      const r = await checkDraftReferences(draft.offer.snapshot, (u) => apiClient.get(u));
+      const s = r.snapshot;
+      // The seeding effects above must not overwrite what the user had chosen.
+      didPrefillRef.current = true;
+      didSeedTermsRef.current = true;
+      seededCustomerIdRef.current = s.customer?.id ?? null;
+      if (s.terms) termsSourceRef.current = "manual";
+      dueDateEditedRef.current = s.dueDateEdited;
+      setBasis(s.basis);
+      setCustomer((s.customer as Customer | null) ?? null);
+      setReference(s.reference);
+      setSubject(s.subject);
+      setTerms(s.terms);
+      setIssueDate(s.issueDate || todayIso());
+      setDueDate(s.dueDate || addDaysIso(s.issueDate || todayIso(), 30));
+      setTermsText(s.termsText);
+      setNotes(s.notes);
+      setDeliveredNow(s.deliveredNow);
+      setDeliveredOn(s.deliveredOn || todayIso());
+      setDepositOpen(s.depositOpen);
+      setDepositPercent(s.depositPercent);
+      setDepositDueDate(s.depositDueDate);
+      setAdjustment(s.adjustment);
+      setItems(
+        s.lines.length
+          ? s.lines.map((l) => ({ ...createEmptyItem(), ...l }) as LineItemState)
+          : [createEmptyItem()],
+      );
+      setErrors({});
+      setDraftNotice(draftNoticeCopy(r.droppedLines, r.customerCleared));
+      draft.resolveOffer();
+    } finally {
+      setDraftBusy(false);
+    }
+  }
+  const draftBanner = (
+    <InvoiceDraftBanner
+      summary={draft.offer ? draftSummary(draft.offer.snapshot, draft.offer.savedAt) : null}
+      notice={draftNotice}
+      busy={draftBusy}
+      onRestore={() => void restoreDraft()}
+      onDiscard={draft.discard}
+      onDismissNotice={() => setDraftNotice(null)}
+    />
+  );
+
   // ── Auto-update due date when terms change ────────────────────────────────
 
   function handleTermsChange(t: string) {
@@ -1404,6 +1513,7 @@ export default function NewInvoicePage() {
         );
         invoiceId = created.id;
         setCurrentDraftId(invoiceId);
+        draft.clear(); // the invoice now exists as a server draft (ROW 447)
       }
       // Two-step: render PDF on the API, then fetch its bytes through the
       // authenticated apiClient. The raw URL points at the storage uploads
@@ -1456,6 +1566,7 @@ export default function NewInvoicePage() {
         );
         invoiceId = created.id;
         setCurrentDraftId(invoiceId);
+        draft.clear(); // the invoice now exists as a server draft (ROW 447)
       }
       const meta = await apiClient.get<{ url: string; invoiceNumber?: string }>(
         `/invoices/${invoiceId}/pdf`,
@@ -1488,6 +1599,7 @@ export default function NewInvoicePage() {
     if (!currentDraftId) return;
     try {
       await apiClient.post(`/invoices/${currentDraftId}/send`);
+      draft.clear();
       toast({
         title: "Invoice sent",
         description: "The draft has been sent.",
@@ -1573,6 +1685,7 @@ export default function NewInvoicePage() {
       } as CreateSaleDto & { paymentTermsLabel?: string },
       {
         onSuccess: (inv) => {
+          draft.clear();
           toast({
             title: deliveredNow ? "Sale recorded" : send ? "Invoice sent" : "Invoice saved",
             variant: "success",
@@ -1597,6 +1710,7 @@ export default function NewInvoicePage() {
       const dto = buildInvoiceDto(false, lines);
       updateInvoice.mutate({ id: currentDraftId, ...dto } as any, {
         onSuccess: async () => {
+          draft.clear();
           if (sendNow) {
             try {
               await apiClient.post(`/invoices/${currentDraftId}/send`);
@@ -1625,6 +1739,7 @@ export default function NewInvoicePage() {
 
     createInvoice.mutate(dto as Parameters<typeof createInvoice.mutate>[0], {
       onSuccess: (invoice) => {
+        draft.clear();
         toast({
           title: sendNow ? "Invoice sent" : "Draft saved",
           description: sendNow
@@ -1645,7 +1760,13 @@ export default function NewInvoicePage() {
   }
 
   // Pick the basis first so every invoice (except the explicit exception) is tied to an order.
-  if (basis === null) return <InvoiceBasisChooser onPick={setBasis} />;
+  if (basis === null)
+    return (
+      <>
+        <div className="mx-auto max-w-2xl px-6 pt-6">{draftBanner}</div>
+        <InvoiceBasisChooser onPick={setBasis} />
+      </>
+    );
   if (basis === "existing") return <ExistingOrderInvoiceFlow onBack={() => setBasis(null)} />;
 
   // basis === "newSale" | "standalone" — both share the customer + line-item form below.
@@ -1654,6 +1775,7 @@ export default function NewInvoicePage() {
   return (
     <div className="pb-24">
       <div className="space-y-5 p-6">
+        {draftBanner}
         {/* Back to the basis chooser */}
         <button
           onClick={() => setBasis(null)}
