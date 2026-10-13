@@ -441,6 +441,9 @@ export default function AdminTenantsPage() {
         <p className="text-sm text-slate-300">
           This action will be applied to {selected.size} selected tenant(s).
         </p>
+        {bulkAction === "suspend" && (
+          <p className="mt-2 text-sm text-slate-400">{TENANT_ACTION_COPY.suspendAutoReinstate}</p>
+        )}
       </AdminModal>
 
       {/* Delete confirmation: the shared type-the-slug dialog (the tenant page uses the same one). */}

@@ -41,6 +41,7 @@ export const TENANT_ACTION_COPY = {
   deleteRefused: "Only a suspended tenant can be deleted. Suspend it first, then delete.",
   deleteFailed: "Couldn't delete the tenant. Try again.",
   actionFailed: "That didn't work. Try again.",
+  suspendAutoReinstate: "Suspended tenants are reinstated automatically when they pay.",
 } as const;
 
 /** The delete refusal (the server deletes only SUSPENDED tenants: a 400 / 409) or a plain failure. */
@@ -252,6 +253,7 @@ export function SuspendDialog({
         People at {label} can&apos;t sign in while it&apos;s suspended. You can reactivate it at any
         time.
       </p>
+      <p className="mt-2 text-sm text-slate-400">{TENANT_ACTION_COPY.suspendAutoReinstate}</p>
     </AdminModal>
   );
 }
