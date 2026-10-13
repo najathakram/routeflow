@@ -13,7 +13,8 @@ import {
  * No order line records its author, and this change adds no column. What an order does record:
  *  - `Order.source` (APP / PHONE / ROUTE): written by `create()` from the creating principal
  *    (`orderSourceForRole`). APP = buyer, PHONE = office staff, ROUTE = driver. Every row that predates the write
- *    carries the column default APP, which reads as the buyer: the stricter side.
+ *    (createdAt before ORDER_SOURCE_RECORDED_FROM) carries the column default APP, which says nothing about who made
+ *    it: such an order is UNKNOWN_LEGACY and its creation channel is STAFF (see `creationChannelOf`).
  *  - `OrderRevision` rows (editor role + the line snapshot AFTER each edit). Diffing consecutive snapshots says who
  *    added a line and who raised its quantity; a merge/sweep writes a revision with no editor, which reads as unknown.
  * Anything unknown is the BUYER channel. A staff edit never moves a buyer line to the staff channel.

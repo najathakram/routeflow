@@ -145,6 +145,7 @@ import {
   EXISTING_LINE_SELECT,
   orderEditMode,
   planOrderEditRestrictions,
+  assertNoMirrorAppearedUnderLock,
   type OrderEditRestrictionPlan,
 } from "./order-edit-restrictions";
 import { planChangeRequestRestrictions } from "./change-request-restrictions";
@@ -3060,6 +3061,7 @@ export class OrdersService implements OnApplicationBootstrap {
           },
         });
         restrictionPlan?.assertHeld(heldItems);
+        await assertNoMirrorAppearedUnderLock(tx, orderId, !!restrictionPlan, order.status); // DRAFT edit vs a concurrent bill
         await driverAccess.assertDriverMayEditOrder(tx, orderId, user); // SA-429: re-derived under the Order lock
         cancelledLines.assertHeldCancelledLines(heldItems, dto.items, user, isDiffPayload); // SA-422
 

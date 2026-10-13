@@ -88,4 +88,25 @@ describe("updateOrderItems — a DRAFT order with a live linked invoice is judge
     await edit();
     expect(h.restrictions.assertLinesSellable).not.toHaveBeenCalled();
   });
+
+  it("race: no invoice at the pre-check, a deposit mirror committed before the lock is a retryable 409, nothing written", async () => {
+    let asked = 0;
+    h.prisma.invoice.findFirst.mockImplementation(async (args: any) => {
+      if (args?.where?.status?.not !== "VOID") return null;
+      return ++asked === 1 ? null : { id: "inv-1" }; // the in-lock re-read sees the new SENT mirror
+    });
+    await expect(edit()).rejects.toMatchObject({
+      status: 409,
+      response: { code: "ORDER_CHANGED_DURING_EDIT" },
+    });
+    expect(h.prisma.orderItem.create).not.toHaveBeenCalled();
+    expect(h.prisma.orderItem.deleteMany).not.toHaveBeenCalled();
+    expect(h.prisma.invoice.update).not.toHaveBeenCalled();
+  });
+
+  it("race control: still no invoice under the lock, the DRAFT edit proceeds", async () => {
+    h.prisma.invoice.findFirst.mockResolvedValue(null);
+    await edit();
+    expect(h.prisma.orderItem.create).toHaveBeenCalled();
+  });
 });

@@ -127,3 +127,27 @@ export async function planOrderEditRestrictions(
     },
   };
 }
+
+/**
+ * A DRAFT edit skips the restriction plan only while the order has no live (non-VOID) linked invoice; the reconcile
+ * after the edit copies the order's lines onto a SENT deposit mirror. That answer is read BEFORE the Order row lock, so
+ * re-ask it under the lock: if a mirror appeared meanwhile (a concurrent bill with a deposit), the edit was never
+ * judged, so refuse with the retryable 409 (the retry re-runs the pre-check and judges). Read-only.
+ */
+export async function assertNoMirrorAppearedUnderLock(
+  tx: { invoice: { findFirst(args: any): Promise<any> } },
+  orderId: string,
+  planned: boolean,
+  status: string | null | undefined,
+): Promise<void> {
+  if (planned || status !== "DRAFT") return;
+  const live = await tx.invoice.findFirst({
+    where: { orderId, status: { not: "VOID" } },
+    select: { id: true },
+  });
+  if (live)
+    throw new ConflictException({
+      code: API_ERROR_CODES.ORDER_CHANGED_DURING_EDIT,
+      message: "The order was billed while you were editing it — review it and try again.",
+    });
+}
