@@ -645,10 +645,14 @@ export class PlatformAdminService {
     const tenant = await this.prisma.$transaction(async (tx) => {
       await tx.$queryRaw`SELECT id FROM "Tenant" WHERE id = ${id} FOR UPDATE`;
       await this.assertStripeSubUnchangedTx(tx, id, readSubId);
-      return tx.tenant.update({
-        where: { id },
+      // The SUSPENDED check above ran before the Stripe read; re-prove it under the lock. An admin who set the
+      // tenant ACTIVE meanwhile must not get a paying tenant CANCELLED + deleted with no ledger delta.
+      const { count } = await tx.tenant.updateMany({
+        where: { id, status: "SUSPENDED" },
         data: { deletedAt: new Date(), status: "CANCELLED" },
       });
+      if (count !== 1) throw retryRefusal();
+      return tx.tenant.findUniqueOrThrow({ where: { id } });
     });
     // Evict cached status so the guard blocks this tenant immediately
     this.tenantStatusGuard.invalidate(id);

@@ -50,12 +50,10 @@ function make(subs: Subs, opts: { configured?: boolean; status?: string } = {}) 
       stripeSubId: subs.inTx === undefined ? subs.pre : subs.inTx,
     },
   });
-  prisma.tenant.update.mockResolvedValue({
-    id: TENANT_ID,
-    slug: "acme",
-    status: "CANCELLED",
-    deletedAt: new Date(),
-  });
+  const done = { id: TENANT_ID, slug: "acme", status: "CANCELLED", deletedAt: new Date() };
+  prisma.tenant.update.mockResolvedValue(done);
+  // deleteTenant: the guarded write (where status SUSPENDED) then a re-read of the row it wrote
+  prisma.tenant.updateMany.mockResolvedValue({ count: 1 });
   const stripeCalls: boolean[] = []; // was each getSubscription call made inside the transaction?
   const stripe: any = {
     isConfigured: opts.configured ?? true,
@@ -103,7 +101,8 @@ const OPS: Op[] = [
   ],
   ["deleteTenant", (s) => s.deleteTenant(TENANT_ID, "a1")],
 ];
-const written = (prisma: any) => prisma.tenant.update.mock.calls.length > 0;
+const written = (prisma: any) =>
+  prisma.tenant.update.mock.calls.length > 0 || prisma.tenant.updateMany.mock.calls.length > 0;
 const code = (e: any) => e?.getResponse?.()?.code;
 
 beforeEach(() => {
@@ -217,5 +216,21 @@ describe("updateStatus - other targets never read Stripe", () => {
     const { svc, stripe } = make({ pre: "sub_1" }, { status: "TRIAL" });
     await svc.updateStatus(TENANT_ID, { status } as any, "a1").catch(() => undefined);
     expect(stripe.getSubscription).not.toHaveBeenCalled();
+  });
+});
+
+describe("deleteTenant - the SUSPENDED check is re-proved under the row lock", () => {
+  it("status moved to ACTIVE after the pre-read: 409 CONCURRENT_UPDATE, nothing deleted, no audit row", async () => {
+    const { svc, prisma, stripe } = make({ pre: null });
+    stripe.getSubscription.mockResolvedValue({ status: "canceled" });
+    prisma.tenant.updateMany.mockResolvedValue({ count: 0 }); // the guarded write finds an ACTIVE row
+    const err: any = await svc.deleteTenant(TENANT_ID, "a1").catch((e) => e);
+    expect(err.getStatus()).toBe(409);
+    expect(err.getResponse()).toMatchObject({ code: "CONCURRENT_UPDATE" });
+    expect(prisma.tenant.updateMany.mock.calls[0][0].where).toEqual({
+      id: TENANT_ID,
+      status: "SUSPENDED",
+    });
+    expect(prisma.tenant.update).not.toHaveBeenCalled();
   });
 });
