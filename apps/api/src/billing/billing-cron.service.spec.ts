@@ -1631,9 +1631,11 @@ describe("#2641 scheduled sweeps book on the paying predicate, re-read under the
   // F1 (b): the local cancel flag can be a STALE webhook's. Before ANY lock or add-on deactivation the sweep
   // re-reads Stripe: lock only for cancel_at_period_end=true AND current_period_end <= now, or status=canceled.
   describe("F1(b): Stripe is re-read before a scheduled cancellation locks the tenant", () => {
+    // the row's updatedAt as the sweep's scan read it, BEFORE the Stripe read
+    const SCANNED_AT = new Date("2026-08-31T10:00:00.000Z");
     const withStripe = (getSubscription: jest.Mock) =>
       make({
-        cancellations: [{ ...cancellation, stripeSubId: "sub_1" }],
+        cancellations: [{ ...cancellation, stripeSubId: "sub_1", updatedAt: SCANNED_AT }],
         cancelAddons: [{ priceSnapshot: 12, quantity: 2 }],
         stripe: { isConfigured: true, getSubscription },
       });
@@ -1689,7 +1691,13 @@ describe("#2641 scheduled sweeps book on the paying predicate, re-read under the
         await h.svc.applyScheduledCancellations();
         expect(h.prisma.tenantSubscription.updateMany).toHaveBeenCalledTimes(1);
         expect(h.prisma.tenantSubscription.updateMany).toHaveBeenCalledWith({
-          where: { tenantId: "t1", stripeSubId: "sub_1", cancelAtPeriodEnd: true },
+          // updatedAt fences the clear: a re-cancel that landed after the scan (after Stripe was read) moves it
+          where: {
+            tenantId: "t1",
+            stripeSubId: "sub_1",
+            cancelAtPeriodEnd: true,
+            updatedAt: SCANNED_AT,
+          },
           data: { cancelAtPeriodEnd: false },
         });
         expect(log.mock.calls.filter((c) => /stale/i.test(String(c[0])))).toHaveLength(1);

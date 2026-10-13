@@ -638,6 +638,7 @@ export class BillingCronService {
     tenantId: string,
     stripeSubId: string,
     now: Date,
+    scannedAt?: Date,
   ): Promise<boolean> {
     try {
       if (!this.stripe?.isConfigured) return false;
@@ -649,7 +650,8 @@ export class BillingCronService {
         // F1b: Stripe says the cancel was resumed, so the local flag is a stale webhook's. Warning about it every
         // hour for ever helps nobody: the flag is cleared ONCE (compare-and-set on the old value), with one log line.
         // A `cancel_at` timestamp is another way to schedule a cancel - that is NOT a resume, so it is left alone.
-        if (stripeSub?.cancel_at == null) await this.clearStaleCancelFlag(tenantId, stripeSubId);
+        if (stripeSub?.cancel_at == null)
+          await this.clearStaleCancelFlag(tenantId, stripeSubId, scannedAt);
         else {
           this.logger.warn(
             `F1: tenant=${tenantId} has a local cancellation and Stripe holds cancel_at, not cancel_at_period_end - not locked`,
@@ -669,10 +671,21 @@ export class BillingCronService {
   }
 
   /** F1b: clear a local `cancelAtPeriodEnd` Stripe no longer has - only while the row still holds that value. */
-  private async clearStaleCancelFlag(tenantId: string, stripeSubId: string): Promise<void> {
+  private async clearStaleCancelFlag(
+    tenantId: string,
+    stripeSubId: string,
+    scannedAt?: Date,
+  ): Promise<void> {
     try {
       const { count } = await this.prisma.tenantSubscription.updateMany({
-        where: { tenantId, stripeSubId, cancelAtPeriodEnd: true },
+        // updatedAt is the row's value from the scan, taken BEFORE the Stripe read: a re-cancel that landed since then
+        // moves it, the CAS misses, and the flag (now a real one) stays armed.
+        where: {
+          tenantId,
+          stripeSubId,
+          cancelAtPeriodEnd: true,
+          ...(scannedAt ? { updatedAt: scannedAt } : {}),
+        },
         data: { cancelAtPeriodEnd: false },
       });
       if (count === 1) {
@@ -694,7 +707,7 @@ export class BillingCronService {
     const now = new Date();
     const subs = await this.prisma.tenantSubscription.findMany({
       where: scheduledCancellationWhere(now),
-      select: { tenantId: true, stripeSubId: true },
+      select: { tenantId: true, stripeSubId: true, updatedAt: true },
     });
     let applied = 0;
     let held = 0;
@@ -703,7 +716,7 @@ export class BillingCronService {
       // deactivation; a read failure skips the tenant this hour (the next pass retries) - it never locks.
       if (
         s.stripeSubId &&
-        !(await this.stripeConfirmsCancellation(s.tenantId, s.stripeSubId, now))
+        !(await this.stripeConfirmsCancellation(s.tenantId, s.stripeSubId, now, s.updatedAt))
       ) {
         continue;
       }
