@@ -59,7 +59,12 @@ import { requireLocalPgConfig } from "./lib/local-pg-config.mjs";
 import { redactUrl, resolveDatabaseUrl } from "./lib/railway-db-url.mjs";
 
 const require = createRequire(import.meta.url);
-const { computeCategoryTax, regulatedUnitBasis } = require("@routeflow/pricing");
+const {
+  categoryTaxSnapshotOf,
+  computeCategoryTax,
+  regulatedUnitBasis,
+  roundMoney,
+} = require("@routeflow/pricing");
 const { isTestTenant } = require("../../../scripts/lib/test-tenants.cjs");
 const { protectedArm } = require("./lib/paying-tenant.cjs");
 const { loadProtectedSlugs } = require("./lib/protected-slugs.cjs");
@@ -87,7 +92,7 @@ const argvAll = (name) =>
   process.argv.flatMap((a, i, all) => (a === name && all[i + 1] !== undefined ? [all[i + 1]] : []));
 const sha256 = (obj) => createHash("sha256").update(JSON.stringify(obj)).digest("hex");
 const refuse = (msg) => Object.assign(new Error(msg), { refuse: true });
-const cents = (n) => Math.round((Number(n) || 0) * 100);
+const cents = (n) => Math.round(roundMoney(Number(n) || 0) * 100);
 
 // ─── pure: the proof ──────────────────────────────────────────────────────────
 
@@ -171,13 +176,14 @@ export function classifyTrio(line) {
     return { kind: "LEFT", reason: line.exempt ? "exempt" : "mismatch" };
   }
   if (isVacuous(line, trio)) return { kind: "LEFT", reason: "zero-basis" };
+  const snap = categoryTaxSnapshotOf(trio);
   return {
     kind: "APPLY",
     set: {
       trackedCategoryId: line.trackedCategoryId,
-      categoryTaxType: trio.taxType,
-      categoryTaxRate: String(trio.rate),
-      categoryPriceIncludesTax: trio.priceIncludesTax,
+      categoryTaxType: snap.categoryTaxType,
+      categoryTaxRate: String(snap.categoryTaxRate),
+      categoryPriceIncludesTax: snap.categoryPriceIncludesTax,
     },
     rate0: Number(trio.rate) === 0,
     weak: isWeakProof(line, trio),
@@ -310,16 +316,25 @@ export function verifyPlanFile(saved, confirmPlan) {
  * The live-tenant yes (SA: an owner yes per live tenant). `liveTenantIds` are the plan's non-test tenants.
  * Needs --live-tenant-override, the literal phrase for the plan's line count, and a --yes-tenant for each.
  */
+/** The literal confirm phrase: the per-mode line counts the owner is approving. */
+export const confirmPhrase = ({ trio, l2 }) => `APPLY TRIO ${trio} L2 ${l2} LINES`;
+
+/** Per-mode line counts of a plan's apply list (TRIO vs the two L2 modes). */
+export function modeCounts(apply) {
+  const trio = apply.filter((a) => a.mode === "TRIO").length;
+  return { trio, l2: apply.length - trio };
+}
+
 export function liveTenantGate({
   liveTenantIds,
-  lineCount,
+  counts,
   override,
   confirm,
   yesTenants,
   typedTenants,
 }) {
   if (liveTenantIds.length === 0) return { ok: true };
-  const phrase = `APPLY ${lineCount} LINES`;
+  const phrase = confirmPhrase(counts);
   if (!override || confirm !== phrase) {
     return {
       ok: false,
@@ -642,12 +657,20 @@ export async function buildPlan(client, { protectedSlugs, allowedIds = new Set()
   };
 }
 
-const WRITE_SQL = {
-  OrderItem: `UPDATE "OrderItem" SET "trackedCategoryId" = $2, "categoryTaxType" = $3::"TrackedCategoryTaxType",
-      "categoryTaxRate" = $4::numeric, "categoryPriceIncludesTax" = $5 WHERE id = $1`,
-  InvoiceItem: `UPDATE "InvoiceItem" SET "trackedCategoryId" = $2, "categoryTaxType" = $3::"TrackedCategoryTaxType",
-      "categoryTaxRate" = $4::numeric, "categoryPriceIncludesTax" = $5 WHERE id = $1`,
-};
+/**
+ * The one write. The WHERE re-states what the locked re-read proved, so a row that slipped any gate writes
+ * nothing: the line's own tenant, and the column the mode fills still NULL (TRIO: the rate; L2: the
+ * category). `$6` is the tenant id. The apply counts rows and refuses unless every planned line wrote one.
+ */
+export function writeSqlFor(table, mode) {
+  if (!TABLES.includes(table)) throw refuse(`unknown table ${table} in the plan`);
+  const parent = table === "InvoiceItem" ? ["Invoice", "invoiceId"] : ["Order", "orderId"];
+  const stillNull = mode === "TRIO" ? `"categoryTaxRate" IS NULL` : `"trackedCategoryId" IS NULL`;
+  return `UPDATE "${table}" i SET "trackedCategoryId" = $2, "categoryTaxType" = $3::"TrackedCategoryTaxType",
+      "categoryTaxRate" = $4::numeric, "categoryPriceIncludesTax" = $5
+    WHERE i.id = $1 AND i.${stillNull}
+      AND COALESCE(i."tenantId", (SELECT p."tenantId" FROM "${parent[0]}" p WHERE p.id = i."${parent[1]}")) = $6`;
+}
 const REREAD_SQL = (table) =>
   table === "InvoiceItem"
     ? `SELECT COALESCE(i."tenantId", iv."tenantId") AS "tenantId", iv.status::text AS "parentStatus",
@@ -666,6 +689,17 @@ const REREAD_SQL = (table) =>
     FROM "OrderItem" i LEFT JOIN "Order" o ON o.id = i."orderId"
     LEFT JOIN "Product" p ON p.id = i."productId"
     WHERE i.id = $1 FOR UPDATE OF i`;
+
+// FOR SHARE: the category's trio cannot move under the apply between this check and COMMIT.
+const CATEGORY_SQL = `SELECT "tenantId", "taxType"::text AS "taxType", rate::text AS rate, "priceIncludesTax"
+    FROM "TrackedCategory" WHERE id = $1 FOR SHARE`;
+
+/** TRIO mode copies the category's CURRENT trio: all three must still equal the planned values. */
+export const categoryMatchesPlan = (cat, set) =>
+  cat != null &&
+  String(cat.taxType) === String(set.categoryTaxType) &&
+  Number(cat.rate) === Number(set.categoryTaxRate) &&
+  !!cat.priceIncludesTax === !!set.categoryPriceIncludesTax;
 
 const sameExpected = (row, e) =>
   (row.trackedCategoryId ?? null) === e.trackedCategoryId &&
@@ -742,7 +776,7 @@ export async function applyPlan(client, plan, ctx) {
   const live = tenantIds.filter((id) => !isTestTenant(slugById.get(id)));
   const liveGate = liveTenantGate({
     liveTenantIds: live,
-    lineCount: plan.apply.length,
+    counts: modeCounts(plan.apply),
     override: !!ctx.liveOverride,
     confirm: ctx.confirm,
     yesTenants: ctx.yesTenants ?? [],
@@ -752,26 +786,31 @@ export async function applyPlan(client, plan, ctx) {
 
   let written = 0;
   for (const a of plan.apply) {
-    if (!WRITE_SQL[a.table]) throw refuse(`unknown table ${a.table} in the plan`);
+    if (!TABLES.includes(a.table)) throw refuse(`unknown table ${a.table} in the plan`);
     if (a.tenantId == null) throw refuse(`${a.table} line ${a.id} has no tenant in the plan`);
     const row = (await client.query(REREAD_SQL(a.table), [a.id])).rows[0];
     if (!row || !sameExpected(row, a.expected)) {
       throw refuse(`${a.table} line ${a.id} has changed since the dry run`);
     }
-    const cat = (
-      await client.query('SELECT "tenantId" FROM "TrackedCategory" WHERE id = $1', [
-        a.set.trackedCategoryId,
-      ])
-    ).rows[0];
+    const cat = (await client.query(CATEGORY_SQL, [a.set.trackedCategoryId])).rows[0];
     assertRowProvesWrite(row, a, cat?.tenantId ?? null);
-    const res = await client.query(WRITE_SQL[a.table], [
+    if (a.mode === "TRIO" && !categoryMatchesPlan(cat, a.set)) {
+      throw refuse(
+        `${a.table} line ${a.id}: its category ${a.set.trackedCategoryId} changed since the dry run`,
+      );
+    }
+    const res = await client.query(writeSqlFor(a.table, a.mode), [
       a.id,
       a.set.trackedCategoryId,
       a.set.categoryTaxType,
       a.set.categoryTaxRate,
       a.set.categoryPriceIncludesTax,
+      a.tenantId,
     ]);
     written += res.rowCount;
+  }
+  if (written !== plan.apply.length) {
+    throw refuse(`wrote ${written} of ${plan.apply.length} planned line(s)`);
   }
   return written;
 }
@@ -788,10 +827,35 @@ async function targetOrNull() {
   }
 }
 
+/**
+ * The exact apply command for this plan: through `railway run` (prod is reached only that way), with every
+ * gate flag the plan will need. Live-tenant ids come from the plan file, never echoed here.
+ */
+export function applyHint(built, file, planHash) {
+  const rel = SELF.slice(REPO_ROOT.length + 1).replace(/\\/g, "/");
+  const parts = [
+    `railway run --service postgres node ${rel} --apply`,
+    `--plan ${file.replace(/\\/g, "/")} --confirm-plan ${planHash}`,
+    "--guard-sha <merged sha> --i-have-a-fresh-backup",
+  ];
+  for (const id of built.plan.admittedProtectedTenantIds) parts.push(`--allow-protected ${id}`);
+  const live = `--live-tenant-override --confirm "${confirmPhrase(modeCounts(built.plan.apply))}"`;
+  return (
+    `to apply: ${parts.join(" \\\n    ")}\n` +
+    `  a plan holding a LIVE tenant also needs: ${live} --yes-tenant <tenantId> (one per live tenant, each typed back at a terminal)`
+  );
+}
+
 async function dryRun() {
   const url = await targetOrNull();
   if (!url) return 2;
-  const protectedSlugs = loadProtectedSlugs(process.env, url);
+  let protectedSlugs;
+  try {
+    protectedSlugs = loadProtectedSlugs(process.env, url);
+  } catch (e) {
+    console.error(`${TAG}: ${e.message}`);
+    return 2;
+  }
   console.log(`${TAG}: target ${redactUrl(url)} DRY-RUN`);
   const client = new pg.Client(dialConfig(url));
   try {
@@ -799,6 +863,7 @@ async function dryRun() {
     // One snapshot for every page and source read: a twin is never proven from a state that never existed
     // alongside it.
     await client.query("BEGIN TRANSACTION ISOLATION LEVEL REPEATABLE READ READ ONLY");
+    await client.query("SET LOCAL lock_timeout = '5s'");
     await client.query("SET LOCAL statement_timeout = '120s'");
     const allowedIds = new Set(argvAll("--allow-protected"));
     const built = await buildPlan(client, { protectedSlugs, allowedIds });
@@ -823,11 +888,7 @@ async function dryRun() {
     );
     console.log(JSON.stringify(built.summary, null, 2));
     console.log(`\nplan: ${file}\nplan hash: ${planFile.planHash}`);
-    if (built.counts.apply > 0) {
-      console.log(
-        `\nto apply: node ${SELF.replace(/\\/g, "/")} --apply --plan ${file.replace(/\\/g, "/")} --confirm-plan ${planFile.planHash} --guard-sha <sha> --i-have-a-fresh-backup`,
-      );
-    }
+    if (built.counts.apply > 0) console.log(`\n${applyHint(built, file, planFile.planHash)}`);
     return 0;
   } catch (e) {
     await client.query("ROLLBACK").catch(() => undefined);
@@ -879,7 +940,13 @@ async function apply() {
 
   const url = await targetOrNull();
   if (!url) return 2;
-  const protectedSlugs = loadProtectedSlugs(process.env, url);
+  let protectedSlugs;
+  try {
+    protectedSlugs = loadProtectedSlugs(process.env, url);
+  } catch (e) {
+    console.error(`${TAG}: ${e.message}`);
+    return 2;
+  }
   // Every protected tenant the plan admitted needs its OWN operator confirmation, taken BEFORE the
   // transaction opens (a prompt must not hold row locks).
   const overrides = new Map();

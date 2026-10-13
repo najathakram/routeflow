@@ -198,6 +198,7 @@ describeDb("B297 PR6 backfill — provable rate snapshot, real Postgres", () => 
 
   afterAll(async () => {
     if (raw) {
+      await raw.tenantSubscription.deleteMany({ where: { tenantId } });
       await raw.invoiceItem.deleteMany({ where: { tenantId } });
       await raw.invoice.deleteMany({ where: { tenantId } });
       await raw.orderItem.deleteMany({ where: { tenantId } });
@@ -283,5 +284,74 @@ describeDb("B297 PR6 backfill — provable rate snapshot, real Postgres", () => 
     expect(stale.out).toMatch(/changed since the dry run -- nothing was written/);
     const row = await raw.orderItem.findUniqueOrThrow({ where: { id: ids.trioLeft } });
     expect(row.categoryTaxType).toBeNull();
+  }, 180_000);
+
+  // A fresh TRIO line at `catId` whose stored 0.60 proves 12 x 0.05; returns its id.
+  const provingLine = async (catId: string) =>
+    (
+      await orderLine({
+        trackedCategoryId: catId,
+        categoryTaxAmount: "0.60",
+        categoryTaxType: null,
+        categoryTaxRate: null,
+        categoryPriceIncludesTax: null,
+      })
+    ).id;
+  const newCategory = async (name: string) =>
+    (
+      await raw.trackedCategory.create({
+        data: { tenantId, name: `${name} ${run}`, taxType: "EXCISE_PER_UNIT", rate: 0.05 },
+      })
+    ).id;
+
+  it("M1: a category rate changed after the dry run refuses the WHOLE apply; the trio stays NULL", async () => {
+    const cat = await newCategory("M1");
+    const line = await provingLine(cat);
+    const dry = cli(["--local"]);
+    expect(dry.out).toMatch(/APPLY: 1 line\(s\)/);
+    await raw.trackedCategory.update({ where: { id: cat }, data: { rate: 0.07 } });
+    const res = cli(applyArgs(planOf(dry.out), ["--i-have-a-fresh-backup"]));
+    expect(res.out).toMatch(/category .* changed since the dry run -- nothing was written/);
+    expect(res.status).toBe(1);
+    const row = await raw.orderItem.findUniqueOrThrow({ where: { id: line } });
+    expect(row.categoryTaxRate).toBeNull();
+    expect(row.categoryTaxType).toBeNull();
+    // Leave the population clean for the next cases: the line no longer proves at 0.07.
+    await raw.orderItem.update({ where: { id: line }, data: { categoryTaxAmount: "0.59" } });
+  }, 180_000);
+
+  it("a tenant that turned protected after the dry run is refused inside the apply (no TTY), nothing written", async () => {
+    const cat = await newCategory("Prot");
+    const line = await provingLine(cat);
+    const dry = cli(["--local"]);
+    expect(dry.out).toMatch(/APPLY: 1 line\(s\)/);
+    await raw.tenantSubscription.create({ data: { tenantId, stripeSubId: `sub_qa_${run}` } });
+    try {
+      const res = cli(applyArgs(planOf(dry.out), ["--i-have-a-fresh-backup"]));
+      expect(res.out).toMatch(/became protected .* -- nothing was written/);
+      expect(res.status).toBe(1);
+      const row = await raw.orderItem.findUniqueOrThrow({ where: { id: line } });
+      expect(row.categoryTaxRate).toBeNull();
+    } finally {
+      await raw.tenantSubscription.deleteMany({ where: { tenantId } });
+      await raw.orderItem.update({ where: { id: line }, data: { categoryTaxAmount: "0.59" } });
+    }
+  }, 180_000);
+
+  it("a 2-line plan with ONE stale line rolls back BOTH (whole-apply refusal)", async () => {
+    const cat = await newCategory("Two");
+    const a = await provingLine(cat);
+    const b = await provingLine(cat);
+    const dry = cli(["--local"]);
+    expect(dry.out).toMatch(/APPLY: 2 line\(s\)/);
+    await raw.orderItem.update({ where: { id: b }, data: { categoryTaxAmount: "0.61" } });
+    const res = cli(applyArgs(planOf(dry.out), ["--i-have-a-fresh-backup"]));
+    expect(res.status).toBe(1);
+    expect(res.out).toMatch(/nothing was written/);
+    for (const id of [a, b]) {
+      const row = await raw.orderItem.findUniqueOrThrow({ where: { id } });
+      expect(row.categoryTaxRate).toBeNull();
+      expect(row.trackedCategoryId).toBe(cat);
+    }
   }, 180_000);
 });

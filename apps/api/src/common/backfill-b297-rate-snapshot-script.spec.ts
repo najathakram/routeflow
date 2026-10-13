@@ -56,7 +56,7 @@ describe("backfill-b297-rate-snapshot", () => {
     expect(out.proven.set).toEqual({
       trackedCategoryId: "cat-1",
       categoryTaxType: "EXCISE_PER_UNIT",
-      categoryTaxRate: "0.0500",
+      categoryTaxRate: "0.05", // categoryTaxSnapshotOf normalises the rate; the write casts ::numeric
       categoryPriceIncludesTax: false,
     });
     expect(out.moved).toEqual({ kind: "LEFT", reason: "mismatch" });
@@ -167,19 +167,21 @@ describe("backfill-b297-rate-snapshot", () => {
 
   it("a live tenant needs the override, the literal phrase, its own --yes-tenant AND the id typed back", () => {
     const out = runModule(`
-      const g = (o) => m.liveTenantGate({ liveTenantIds: ["t-1", "t-2"], lineCount: 5, override: true, confirm: "APPLY 5 LINES", yesTenants: ["t-1", "t-2"], typedTenants: ["t-1", "t-2"], ...o });
+      const g = (o) => m.liveTenantGate({ liveTenantIds: ["t-1", "t-2"], counts: { trio: 3, l2: 2 }, override: true, confirm: "APPLY TRIO 3 L2 2 LINES", yesTenants: ["t-1", "t-2"], typedTenants: ["t-1", "t-2"], ...o });
       console.log(JSON.stringify({
         ok: g({}),
         noOverride: g({ override: false }),
-        badPhrase: g({ confirm: "APPLY 4 LINES" }),
+        badPhrase: g({ confirm: "APPLY TRIO 2 L2 3 LINES" }),
+        oldPhrase: g({ confirm: "APPLY 5 LINES" }),
         missingYes: g({ yesTenants: ["t-1"] }),
         notTyped: g({ typedTenants: ["t-1"] }),
         noneTyped: g({ typedTenants: undefined }),
-        noLive: m.liveTenantGate({ liveTenantIds: [], lineCount: 5, override: false, confirm: undefined, yesTenants: [] }),
+        noLive: m.liveTenantGate({ liveTenantIds: [], counts: { trio: 3, l2: 2 }, override: false, confirm: undefined, yesTenants: [] }),
       }));`);
     expect(out.ok).toEqual({ ok: true });
     expect(out.noOverride.ok).toBe(false);
     expect(out.badPhrase.ok).toBe(false);
+    expect(out.oldPhrase.ok).toBe(false);
     expect(out.missingYes).toMatchObject({ ok: false });
     expect(out.missingYes.reason).toContain("t-2");
     expect(out.notTyped).toMatchObject({ ok: false });
@@ -246,10 +248,12 @@ describe("backfill-b297-rate-snapshot", () => {
   });
 
   it("source: the only columns the UPDATEs set are the category and the trio — never an amount, qty or subtotal", () => {
-    const updates = [
-      ...code.matchAll(/UPDATE "(?:OrderItem|InvoiceItem)" SET([\s\S]*?)WHERE/g),
-    ].map((m) => m[1]);
-    expect(updates).toHaveLength(2);
+    const updates = [...code.matchAll(/UPDATE "[^"]+" i SET([\s\S]*?)WHERE/g)].map((m) => m[1]);
+    // ONE templated write (writeSqlFor), its table only ever from TABLES.
+    expect(updates).toHaveLength(1);
+    expect(code.match(/UPDATE "/g)).toHaveLength(1);
+    // Every planned line must write exactly one row, or the whole apply refuses before COMMIT.
+    expect(code).toMatch(/if \(written !== plan\.apply\.length\)/);
     for (const set of updates) {
       const cols = [...set.matchAll(/"(\w+)" =/g)].map((m) => m[1]).sort();
       expect(cols).toEqual([
@@ -272,5 +276,45 @@ describe("backfill-b297-rate-snapshot", () => {
       env: { ...process.env, DATABASE_URL: "" },
     });
     expect(res.status).toBe(2);
+  });
+
+  it("the write re-states its proof: own tenant, the mode's column still NULL; the counts and category gates", () => {
+    const out = runModule(`
+      const trio = m.writeSqlFor("OrderItem", "TRIO");
+      const l2 = m.writeSqlFor("InvoiceItem", "L2-INVOICE");
+      const set = { categoryTaxType: "EXCISE_PER_UNIT", categoryTaxRate: "0.05", categoryPriceIncludesTax: false };
+      let bad = null;
+      try { m.writeSqlFor("Product", "TRIO"); } catch (e) { bad = e.message; }
+      console.log(JSON.stringify({
+        trio, l2, bad,
+        counts: m.modeCounts([{ mode: "TRIO" }, { mode: "L2-ORDER" }, { mode: "L2-INVOICE" }, { mode: "TRIO" }]),
+        phrase: m.confirmPhrase({ trio: 2, l2: 2 }),
+        same: m.categoryMatchesPlan({ taxType: "EXCISE_PER_UNIT", rate: "0.0500", priceIncludesTax: false }, set),
+        rate: m.categoryMatchesPlan({ taxType: "EXCISE_PER_UNIT", rate: "0.0700", priceIncludesTax: false }, set),
+        type: m.categoryMatchesPlan({ taxType: "PERCENT_OF_SALE", rate: "0.0500", priceIncludesTax: false }, set),
+        incl: m.categoryMatchesPlan({ taxType: "EXCISE_PER_UNIT", rate: "0.0500", priceIncludesTax: true }, set),
+        gone: m.categoryMatchesPlan(undefined, set),
+        hint: m.applyHint({ plan: { admittedProtectedTenantIds: ["t-9"], apply: [{ mode: "TRIO" }] } }, "/x/plan.json", "h".repeat(64)),
+      }));`);
+    expect(out.trio).toMatch(/WHERE i\.id = \$1 AND i\."categoryTaxRate" IS NULL/);
+    expect(out.trio).toMatch(/= \$6$/);
+    expect(out.trio).toContain(`FROM "Order" p WHERE p.id = i."orderId"`);
+    expect(out.l2).toMatch(/AND i\."trackedCategoryId" IS NULL/);
+    expect(out.l2).toContain(`FROM "Invoice" p WHERE p.id = i."invoiceId"`);
+    expect(out.bad).toMatch(/unknown table Product/);
+    expect(out.counts).toEqual({ trio: 2, l2: 2 });
+    expect(out.phrase).toBe("APPLY TRIO 2 L2 2 LINES");
+    expect([out.same, out.rate, out.type, out.incl, out.gone]).toEqual([
+      true,
+      false,
+      false,
+      false,
+      false,
+    ]);
+    expect(out.hint).toMatch(
+      /^to apply: railway run --service postgres node apps\/api\/scripts\/backfill-b297-rate-snapshot\.mjs --apply/,
+    );
+    expect(out.hint).toContain("--allow-protected t-9");
+    expect(out.hint).toContain('--confirm "APPLY TRIO 1 L2 0 LINES"');
   });
 });
