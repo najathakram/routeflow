@@ -1,6 +1,7 @@
 "use client";
 
 import { priceRowLabel } from "@/lib/product-unit-label";
+import { packWordToSend } from "@/lib/product-edit-unit";
 import { safeTextErrorCopy } from "@/lib/safe-text-error-copy";
 import * as React from "react";
 import Link from "next/link";
@@ -485,7 +486,11 @@ export default function ProductDetailPage() {
   const msrpBelowWholesale =
     msrpNumber != null && wholesalePerPiece > 0 && msrpNumber < wholesalePerPiece;
 
+  // The pack word the form opened with: a save sends `unit` only if the operator changed it, so a form
+  // left open across a Settings > Units rename cannot write the old word back.
+  const unitWhenEditStartedRef = React.useRef<string | undefined>(undefined);
   const startEdit = () => {
+    unitWhenEditStartedRef.current = product.unit;
     setEditDraft({
       name: product.name,
       sku: product.sku ?? "",
@@ -534,7 +539,7 @@ export default function ProductDetailPage() {
       {
         id: id,
         name: composedName,
-        unit: draft.unit || undefined,
+        unit: packWordToSend(draft.unit, unitWhenEditStartedRef.current),
         sku: draft.sku?.trim() || null,
         barcode: draft.barcode?.trim() || null,
         unitSku: draft.unitSku?.trim() || null,
