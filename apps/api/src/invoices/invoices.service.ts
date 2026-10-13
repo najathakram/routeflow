@@ -56,6 +56,8 @@ import {
   loadEditCatalog,
   withRowCategories,
   orderSyncLines,
+  auditAttestedPacks,
+  inheritHeldUnit,
   inPlacePatch,
   matchEditLines,
 } from "./invoice-edit-plan";
@@ -3075,9 +3077,9 @@ export class InvoicesService {
   async update(id: string, dto: UpdateInvoiceDto) {
     assertFiniteInvoiceInput(dto); // N4: NaN is a 400, not a silent $0
     const inv = await this.findOneOrThrow(id); // a missing invoice is a 404 whatever else is wrong
-    // units_v1: a line can be CREATED by a unit (create(), 4c-1) but not yet REWRITTEN by one (4c-2);
-    // the shared DTO accepts `unitLabel`, and this path would silently store a PACK line for it.
-    if (dto.items?.some(requestsUnit)) {
+    // units_v1 (VU-4a, D3): a unit line is accepted only on an order-LESS DRAFT (resolveLineUnits below);
+    // a SENT or order-linked one stays refused (the back-sync would write the unit onto the order line).
+    if (dto.items?.some(requestsUnit) && (inv.status !== InvoiceStatus.DRAFT || inv.orderId)) {
       throw new BadRequestException("Selling by a unit can't be set on an invoice edit yet.");
     }
     if (inv.status !== InvoiceStatus.DRAFT)
@@ -3106,7 +3108,11 @@ export class InvoicesService {
       });
       await assertOrderItemIdsBelongToOrder(this.prisma.forTenant(), inv.orderId, items); // SA-093a rd6
       // Products (pack + regulated snapshot) and section tax config for the edited lines (mirrors create()).
-      const { productMap, categoryMap } = await loadEditCatalog(this.prisma.forTenant(), items);
+      const { productMap, categoryMap, unitsByProduct } = await loadEditCatalog(
+        this.prisma.forTenant(),
+        items,
+        { isStaff: true, prisma: this.prisma, entitlements: this.entitlements },
+      );
 
       const { updated } = await this.prisma.tenantTransaction(async (tx: any) => {
         // Serialize concurrent saves of this invoice: rows are read AFTER the lock, so a second save
@@ -3132,8 +3138,23 @@ export class InvoicesService {
           items,
           matches.map((m) => m.row),
         ); // #2656: 400 before any write
+        // units_v1 (VU-4a): the factor of a unit line is decided HERE, by the server ladder, as create() does;
+        // a row already sold by that unit keeps its own snapshot factor (resolveLineUnits rule 2).
+        const sent = inheritHeldUnit(items, matches); // SA-070: an absent label keeps a row's unit
+        const resolved = sent.map((it, i) => {
+          const held = matches[i].productChanged ? null : matches[i].row;
+          return requestsUnit(it)
+            ? resolveLineUnits(
+                productMap.get(it.productId ?? "") ?? {},
+                unitsByProduct.get(it.productId ?? "") ?? [],
+                it,
+                held as any,
+              )
+            : undefined;
+        });
         const editLines = buildEditedLines({
-          items: items,
+          resolved,
+          items: sent,
           stored: storedRows,
           matches,
           productMap,
@@ -3183,21 +3204,7 @@ export class InvoicesService {
           if (patch) await tx.invoiceItem.update({ where: { id: l.rowId }, data: patch });
         }
         await applyComposedLineEdits(tx, inv, editLines, storedRows); // #2717 M3: case 18
-        // SA-189: history must tell an attested pack (the operator's explicit unitsPerBox) from a recovered one.
-        const attested = editLines.flatMap((l) =>
-          l.attestedPack ? [{ rowId: l.rowId, unitsPerBox: l.attestedPack }] : [],
-        );
-        if (attested.length > 0) {
-          await tx.auditLog.create({
-            data: {
-              tenantId: this.prisma.getTenantId(),
-              action: "INVOICE_LINE_PACK_ATTESTED",
-              entityType: "invoice",
-              entityId: id,
-              meta: { attested },
-            },
-          });
-        }
+        await auditAttestedPacks(tx, this.prisma.getTenantId(), id, editLines);
         const u = await tx.invoice.update({
           where: { id },
           data: {

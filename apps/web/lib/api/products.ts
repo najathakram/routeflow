@@ -96,11 +96,21 @@ export function useReactivateProduct() {
     // The flow renders its own fixed-sentence error UI (dialog / toast): opt out of the global
     // handler's raw `data.message` toast (lib/mutation-error-toast.ts).
     meta: { localErrorToast: true },
-    mutationFn: ({ id, deactivateHolderIds }: { id: string; deactivateHolderIds?: string[] }) =>
+    mutationFn: ({
+      id,
+      deactivateHolderIds,
+      newCodes,
+    }: {
+      id: string;
+      deactivateHolderIds?: string[];
+      /** Reactivate with replacement codes instead of deactivating the holders. */
+      newCodes?: { sku?: string; unitSku?: string; barcode?: string };
+    }) =>
       apiClient
         .patch(`/products/${id}`, {
           isActive: true,
           ...(deactivateHolderIds?.length ? { deactivateHolderIds } : {}),
+          ...(newCodes ?? {}),
         })
         .then((r) => r.data),
     onSuccess: () => invalidateProductSet(qc),
@@ -223,24 +233,6 @@ export interface ImportResult {
   created: number;
   skipped: number;
   errors: Array<{ row: number; name: string; reason: string }>;
-}
-
-export function useImportProducts() {
-  const qc = useQueryClient();
-  return useMutation({
-    mutationFn: (items: ZohoImportItem[]): Promise<ImportResult> =>
-      apiClient.post("/products/import", { items }).then((r) => r.data),
-    onSuccess: () => invalidateProductSet(qc),
-  });
-}
-
-export function useClearAllProducts() {
-  const qc = useQueryClient();
-  return useMutation({
-    mutationFn: (): Promise<{ deleted: number }> =>
-      apiClient.delete("/products/clear-all").then((r) => r.data),
-    onSuccess: () => invalidateProductSet(qc),
-  });
 }
 
 /** Matches the server's @ArrayMaxSize on DELETE /products/bulk (F9-009). */
