@@ -2,6 +2,7 @@ import { BadRequestException } from "@nestjs/common";
 import type { FulfillPath } from "@prisma/client";
 import { API_ERROR_CODES } from "../common/api-error-codes";
 import type { SourceLines } from "./source-line";
+import type { OrderItemAuthorChannel } from "./line-author-channel";
 
 /** The ORIGINAL order a replay hands back (create()'s replay lookup includes its lines). */
 export interface ReplayedOrder {
@@ -45,6 +46,12 @@ export interface CreateOrderOptions {
   sourceLines?: SourceLines;
   fulfillPath?: FulfillPath;
   counterSale?: boolean;
+  /**
+   * The author marker every line of this create() is stamped with, instead of the acting principal's. Only the
+   * not-on-truck change-request rollover sets it: its draft is created as the buyer pseudo-user, but the line is the
+   * REQUESTER's (SA ruling #3418). Never a DTO field.
+   */
+  lineAuthor?: OrderItemAuthorChannel;
   priceEditAllowed?: boolean;
   onReplay?: (order: ReplayedOrder) => void;
   beforeWrite?: (priced: { total: number }) => void | Promise<void>;

@@ -572,7 +572,12 @@ describe("ChangeRequestsService", () => {
         expect.objectContaining({ role: "CUSTOMER", sub: "user-cust" }),
         // REG-B142-G: this draft path is the one exempt caller — it must
         // pass allowArchived so a since-archived line can still roll over.
-        { skipAutoMerge: false, allowArchived: true, internalCustomerDraft: true },
+        {
+          skipAutoMerge: false,
+          allowArchived: true,
+          internalCustomerDraft: true,
+          lineAuthor: "BUYER", // SA ruling #3418: PENDING_CR was filed by a CUSTOMER
+        },
       );
       expect(ordersService.assertCreditForProjectedOrder).toHaveBeenCalledWith(
         "cust-1",

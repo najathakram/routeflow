@@ -55,6 +55,12 @@ export type AuthorOrPrincipal = OrderItemAuthorChannel | ChannelPrincipal | null
 const markerFrom = (a: AuthorOrPrincipal): OrderItemAuthorChannel =>
   typeof a === "string" ? a : lineAuthorFor(a);
 
+/** Who authors the lines of a create(): an explicit `lineAuthor` marker (the change-request rollover), else the principal. */
+export const authorOf = (
+  options: { lineAuthor?: OrderItemAuthorChannel },
+  principal: AuthorOrPrincipal,
+): AuthorOrPrincipal => options.lineAuthor ?? principal;
+
 /** Nested-create rows, each stamped with the author's marker (keeps every nested create site on one line). */
 export function withAuthor<T extends object>(
   rows: readonly T[],

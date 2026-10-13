@@ -32,7 +32,7 @@ import {
 } from "../buyer/buyer-product-visibility";
 import { SellingRestrictionsService } from "../selling-restrictions/selling-restrictions.service";
 import { restrictionChannelForPrincipal } from "../selling-restrictions/selling-restrictions.core";
-import { leastPrivilegedPrincipal } from "./line-author-channel";
+import { leastPrivilegedPrincipal, lineAuthorFor } from "./line-author-channel";
 import { requireRestrictionTenantId } from "../selling-restrictions/restriction-tenant";
 import { CreateChangeRequestDto } from "./dto/create-change-request.dto";
 import {
@@ -617,6 +617,8 @@ export class ChangeRequestsService {
         skipAutoMerge: false,
         allowArchived: true,
         internalCustomerDraft: true, // F1(ii): the one deliberate draft under the buyer pseudo-user
+        // SA ruling #3418: the rollover line is the REQUESTER's (staff-filed = STAFF; buyer, null or unknown = BUYER).
+        lineAuthor: lineAuthorFor({ role: cr.requestedByRole }),
         ...(sourceItem
           ? {
               sourceLines: {

@@ -2055,6 +2055,7 @@ export class OrdersService implements OnApplicationBootstrap {
                 Object.assign(li, { backorderedPieces: markers?.get(li) ?? 0 });
             }
 
+            const lineAuthor = authorship.authorOf(options, user); // SA ruling #3418: the requester on a CR rollover
             const created = await tx.order.create({
               data: {
                 id: orderId,
@@ -2093,7 +2094,7 @@ export class OrdersService implements OnApplicationBootstrap {
                 sourceRecorded: true, // F1(i): the source above is from the creating principal, not the column default
                 // SA-672e/row 317: only the counter-sale POST passes this; it also stamps the cashier (a replay writes nothing).
                 ...(options.counterSale ? { counterSale: true, soldById: user.sub } : {}),
-                lineItems: { create: authorship.withAuthor(lineItemsData, user) }, // SA ruling #3418
+                lineItems: { create: authorship.withAuthor(lineItemsData, lineAuthor) },
               },
               include: {
                 customer: { select: { id: true, businessName: true } },
