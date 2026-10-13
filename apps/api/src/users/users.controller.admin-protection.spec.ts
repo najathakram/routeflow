@@ -27,6 +27,7 @@ describe("UsersController: admin account protection wiring", () => {
       "t1",
       { status: "SUSPENDED" },
       UserRole.OPERATOR,
+      "op1", // the caller's id: self-deactivation is refused (SA M2)
     );
   });
   it("update passes the caller's role", async () => {
