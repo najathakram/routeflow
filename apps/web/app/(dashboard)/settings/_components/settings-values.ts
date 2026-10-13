@@ -1,7 +1,7 @@
 import type { SubscriptionView } from "@routeflow/types";
 import { planPriceLabel } from "@/lib/plan-money";
 import { billingCardModel } from "@/lib/billing-card-model";
-import type { BannerRole } from "@/lib/subscription-banner-state";
+import { isReadOnlyView, type BannerRole } from "@/lib/subscription-banner-state";
 
 /**
  * What each hub row says it is set to right now (trailing value) and what the Business card says about the
@@ -80,7 +80,7 @@ export function businessStatus(
   const price = planPriceLabel(sub);
   const model = billingCardModel(sub, role, now);
   const owed = model?.state === "due" || model?.state === "overdue";
-  const readOnly = sub.status === "READ_ONLY";
+  const readOnly = isReadOnlyView(sub);
   const due = owed || (readOnly && sub.readOnlyReason === "payment_overdue");
   const pay = model?.pay ?? null;
   if (readOnly) return { plan, price, pill: { label: "Read-only", tone: "danger" }, pay, due };
