@@ -173,7 +173,8 @@ describe("PR1 every href resolves", () => {
       expect(ROUTES).toContain(p === "" ? "/settings" : p);
       const tab = query?.match(/(?:^|&)tab=([a-z]+)/)?.[1];
       if (tab) expect(TAB_KEYS).toContain(tab);
-      if (hash) expect(sources).toMatch(new RegExp(`\\bid="${hash}"`));
+      // a static id, or a SettingsHub loose card ({ id, node }) which the hub renders at id={c.id}
+      if (hash) expect(sources).toMatch(new RegExp(`\\bid="${hash}"|\\{ id: "${hash}", node:`));
     },
   );
 

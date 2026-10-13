@@ -451,3 +451,28 @@ describe("settings registry — every configurable setting has a screen (WS5)", 
     expect(missing).toEqual([]);
   });
 });
+
+describe("apple-ux U1: page cards under the hub follow the search", () => {
+  const loose = [
+    { id: "card-payments", node: <p>Stripe card body</p> },
+    { id: "tier-names", node: <p>Tier names body</p> },
+  ];
+  const type = (q: string) =>
+    fireEvent.change(screen.getByLabelText("Search settings"), { target: { value: q } });
+
+  it("no query: every loose card shows, each at its own anchor", () => {
+    renderWithProviders(<SettingsHub isAdmin looseCards={loose} />);
+    expect(screen.getByText("Stripe card body").closest("#card-payments")).not.toBeNull();
+    expect(screen.getByText("Tier names body").closest("#tier-names")).not.toBeNull();
+  });
+
+  it("a query hides the cards it does not match, and keeps the one it does", () => {
+    renderWithProviders(<SettingsHub isAdmin looseCards={loose} />);
+    type("state");
+    expect(screen.queryByText("Stripe card body")).toBeNull();
+    expect(screen.queryByText("Tier names body")).toBeNull();
+    type("stripe");
+    expect(screen.getByText("Stripe card body")).toBeInTheDocument();
+    expect(screen.queryByText("Tier names body")).toBeNull();
+  });
+});

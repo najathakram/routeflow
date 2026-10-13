@@ -3005,17 +3005,16 @@ function SettingsPageInner() {
       {!section ? (
         <>
           <h2 className="mb-5 text-2xl font-bold text-navy">Settings</h2>
-          <SettingsHub isAdmin={isAdmin} />
-          {/* Stripe Connect lives on the hub itself (not behind a `?tab=`) because the
-              OAuth callback returns the operator to bare `/settings?stripe=...` and the
-              card renders that banner. */}
-          <div id="card-payments" className="mt-5 max-w-3xl scroll-mt-28">
-            <StripeConnectCard />
-          </div>
-          {/* Pricing tier names — a small card, not worth its own `?tab=` screen. */}
-          <div id="tier-names" className="mt-5 max-w-3xl scroll-mt-28">
-            <TierLabelsCard />
-          </div>
+          {/* Stripe Connect lives on the hub itself (not behind a `?tab=`) because the OAuth callback returns the
+              operator to bare `/settings?stripe=...` and the card renders that banner. Pricing tier names is a small
+              card, not worth its own `?tab=` screen. Both follow the hub's search (hidden by a query they don't match). */}
+          <SettingsHub
+            isAdmin={isAdmin}
+            looseCards={[
+              { id: "card-payments", node: <StripeConnectCard /> },
+              { id: "tier-names", node: <TierLabelsCard /> },
+            ]}
+          />
         </>
       ) : (
         <>

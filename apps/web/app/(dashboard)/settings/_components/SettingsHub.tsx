@@ -18,7 +18,16 @@ import { useSettingsNav } from "./use-settings-nav";
  * attention, frequent links, the groups with their values, then the loose cards below. Every setting screen
  * stays reachable; role-gated rows are hidden the same way the sidebar hides them.
  */
-export function SettingsHub({ isAdmin }: { isAdmin: boolean }) {
+/** A card the page renders under the hub (Stripe Connect, tier names): shown at `#id`, hidden by a search it doesn't match. */
+export type LooseCard = { id: string; node: React.ReactNode };
+
+export function SettingsHub({
+  isAdmin,
+  looseCards = [],
+}: {
+  isAdmin: boolean;
+  looseCards?: LooseCard[];
+}) {
   const [query, setQuery] = React.useState("");
   const nav = useSettingsNav({ isAdmin });
 
@@ -64,6 +73,15 @@ export function SettingsHub({ isAdmin }: { isAdmin: boolean }) {
           <BuyerOversellCard canEdit={isAdmin} />
         </div>
       )}
+
+      {/* apple-ux U1: the page's own cards follow the search too (they stayed under unrelated results). */}
+      {looseCards
+        .filter((c) => !searching || listed(c.id))
+        .map((c) => (
+          <div key={c.id} id={c.id} className="max-w-3xl scroll-mt-28">
+            {c.node}
+          </div>
+        ))}
 
       {/* My account footer */}
       {!searching && (
