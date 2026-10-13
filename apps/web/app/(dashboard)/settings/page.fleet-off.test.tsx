@@ -41,6 +41,10 @@ jest.mock("@/lib/api/users", () => ({
   useResetUserPassword: () => ({ mutate: jest.fn(), isPending: false }),
   useToggleDriverPermit: () => ({ mutateAsync: jest.fn(), isPending: false }),
 }));
+jest.mock("@/lib/auth-context", () => ({
+  ...jest.requireActual("@/lib/auth-context"),
+  useAuth: () => ({ user: { id: "u1", username: "x", role: "TENANT_ADMIN" } }),
+}));
 jest.mock("@/lib/api-client", () => ({
   apiClient: {
     get: jest.fn().mockImplementation(async () => ({ data: mockMe })),

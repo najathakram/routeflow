@@ -103,11 +103,13 @@ const GROUPS: HubGroup[] = [
         label: "Import data",
         desc: "CSV importers, numbering & finish setup",
         href: "/settings/import",
+        show: "admin",
       },
       {
         label: "Migration",
         desc: "Move from Zoho, QuickBooks, CSV or paper",
         href: "/settings/migration",
+        show: "admin",
       },
     ],
   },
@@ -149,6 +151,7 @@ const GROUPS: HubGroup[] = [
         label: "Email (SMTP)",
         desc: "Sender identity & delivery settings",
         href: "/settings?tab=email",
+        show: "admin",
       },
     ],
   },
@@ -184,11 +187,13 @@ const GROUPS: HubGroup[] = [
         label: "Claude AI scanner",
         desc: "API key for invoice/bill scanning",
         href: "/settings?tab=integrations",
+        show: "admin",
       },
       {
         label: "GoHighLevel",
         desc: "Create customers from won leads",
         href: "/settings?tab=gohighlevel",
+        show: "admin",
       },
     ],
   },
@@ -203,10 +208,10 @@ const GROUPS: HubGroup[] = [
   },
 ];
 
-const CHIPS: { label: string; href: string }[] = [
+const CHIPS: { label: string; href: string; show?: "admin" }[] = [
   { label: "Invoicing", href: "/settings?tab=invoicing" },
   { label: "User management", href: "/settings?tab=users" },
-  { label: "Import", href: "/settings/import" },
+  { label: "Import", href: "/settings/import", show: "admin" },
   { label: "Notifications", href: "/settings?tab=notifications" },
 ];
 
@@ -312,7 +317,7 @@ export function SettingsHub({ isAdmin }: { isAdmin: boolean }) {
       {!q && (
         <div className="flex flex-wrap items-center gap-2 text-xs text-navy/50">
           <span>Frequently used:</span>
-          {CHIPS.map((c) => (
+          {CHIPS.filter((c) => c.show !== "admin" || isAdmin).map((c) => (
             <Link
               key={c.href + c.label}
               href={c.href}
