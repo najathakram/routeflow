@@ -996,6 +996,9 @@ export class OrderTemplatesService {
           templateId: template.id,
           fulfillPath,
           orderNumber,
+          // Unattended run: no principal creates it, and the template's author is judged per line
+          // (leastPrivilegedAuthor), so the recorded source is the stricter, buyer side (the column default, explicit).
+          source: "APP",
           subtotal,
           tax,
           total,
