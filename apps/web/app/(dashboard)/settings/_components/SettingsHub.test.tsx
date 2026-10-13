@@ -476,3 +476,24 @@ describe("apple-ux U1: page cards under the hub follow the search", () => {
     expect(screen.queryByText("Tier names body")).toBeNull();
   });
 });
+
+describe("apple-ux U1: the search survives Back", () => {
+  beforeEach(() => sessionStorage.clear());
+
+  it("a query typed, then a result opened and Back pressed (the hub remounts), is still there", () => {
+    const first = renderWithProviders(<SettingsHub isAdmin />);
+    fireEvent.change(screen.getByLabelText("Search settings"), { target: { value: "plan" } });
+    first.unmount();
+    renderWithProviders(<SettingsHub isAdmin />);
+    expect(screen.getByLabelText("Search settings")).toHaveValue("plan");
+  });
+
+  it("clearing the box clears what is remembered", () => {
+    const first = renderWithProviders(<SettingsHub isAdmin />);
+    fireEvent.change(screen.getByLabelText("Search settings"), { target: { value: "plan" } });
+    fireEvent.change(screen.getByLabelText("Search settings"), { target: { value: "" } });
+    first.unmount();
+    renderWithProviders(<SettingsHub isAdmin />);
+    expect(screen.getByLabelText("Search settings")).toHaveValue("");
+  });
+});

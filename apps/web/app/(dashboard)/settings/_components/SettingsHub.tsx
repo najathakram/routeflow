@@ -18,6 +18,15 @@ import { useSettingsNav } from "./use-settings-nav";
  * attention, frequent links, the groups with their values, then the loose cards below. Every setting screen
  * stays reachable; role-gated rows are hidden the same way the sidebar hides them.
  */
+const QUERY_KEY = "rf:settings-hub:q";
+function readRememberedQuery(): string {
+  try {
+    return sessionStorage.getItem(QUERY_KEY) ?? "";
+  } catch {
+    return "";
+  }
+}
+
 /** A card the page renders under the hub (Stripe Connect, tier names): shown at `#id`, hidden by a search it doesn't match. */
 export type LooseCard = { id: string; node: React.ReactNode };
 
@@ -28,7 +37,17 @@ export function SettingsHub({
   isAdmin: boolean;
   looseCards?: LooseCard[];
 }) {
-  const [query, setQuery] = React.useState("");
+  // apple-ux U1: a search survives opening a result and pressing Back (the hub remounts). Per-tab, best effort.
+  const [query, setQueryState] = React.useState(readRememberedQuery);
+  const setQuery = React.useCallback((q: string) => {
+    setQueryState(q);
+    try {
+      if (q) sessionStorage.setItem(QUERY_KEY, q);
+      else sessionStorage.removeItem(QUERY_KEY);
+    } catch {
+      /* storage blocked (private window): the box just starts empty next time */
+    }
+  }, []);
   const nav = useSettingsNav({ isAdmin });
 
   // A row that points at a card on this page ("#out-of-stock-ordering", "#route-defaults") is a plain hash
