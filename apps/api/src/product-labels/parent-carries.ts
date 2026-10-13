@@ -41,7 +41,7 @@ export function parentChainCarries(
   const seen = new Set<string>([productId]);
   let cursor: string | null = parent;
   while (cursor) {
-    if (upward.length > MAX_HOPS || seen.has(cursor) || !state.parentOf.has(cursor)) return false;
+    if (upward.length >= MAX_HOPS || seen.has(cursor) || !state.parentOf.has(cursor)) return false;
     seen.add(cursor);
     upward.push(cursor);
     cursor = state.parentOf.get(cursor) ?? null;
@@ -96,18 +96,14 @@ export async function loadInheritanceState(
 }
 
 /**
- * Of `productIds`, the ones whose parent chain carries `categoryId` (counting `planned` as carrying). Loads only the
- * ancestors it needs, one query per level (≤ the cap), plus one for that label's rows on them.
+ * The ancestors of `productIds` (and the products themselves) as parent links, one query per level up to the cap.
+ * A link absent from the map is unknown (another tenant's / missing): callers treat that chain as unresolvable.
  */
-export async function productsInheritingLabel(
+export async function ancestorsOf(
   tx: Prisma.TransactionClient,
   tenantId: string,
-  categoryId: string,
   productIds: readonly string[],
-  planned?: ReadonlySet<string>,
-): Promise<Set<string>> {
-  const out = new Set<string>();
-  if (productIds.length === 0) return out;
+): Promise<Map<string, string | null>> {
   const parentOf = new Map<string, string | null>();
   let frontier = [...new Set(productIds)];
   for (let level = 0; level <= MAX_HOPS + 1 && frontier.length > 0; level++) {
@@ -122,6 +118,40 @@ export async function productsInheritingLabel(
       ),
     ];
   }
+  return parentOf;
+}
+
+/** The ancestors of `productId` nearest first (parent, grandparent, …), up to the cap; stops at a cycle / unknown link. */
+export function ancestorChain(
+  parentOf: ReadonlyMap<string, string | null>,
+  productId: string,
+): string[] {
+  const out: string[] = [];
+  const seen = new Set<string>([productId]);
+  let cursor = parentOf.get(productId) ?? null;
+  while (cursor && out.length < MAX_HOPS && !seen.has(cursor)) {
+    out.push(cursor);
+    seen.add(cursor);
+    if (!parentOf.has(cursor)) break;
+    cursor = parentOf.get(cursor) ?? null;
+  }
+  return out;
+}
+
+/**
+ * Of `productIds`, the ones whose parent chain carries `categoryId` (counting `planned` as carrying). Loads only the
+ * ancestors it needs, one query per level (≤ the cap), plus one for that label's rows on them.
+ */
+export async function productsInheritingLabel(
+  tx: Prisma.TransactionClient,
+  tenantId: string,
+  categoryId: string,
+  productIds: readonly string[],
+  planned?: ReadonlySet<string>,
+): Promise<Set<string>> {
+  const out = new Set<string>();
+  if (productIds.length === 0) return out;
+  const parentOf = await ancestorsOf(tx, tenantId, productIds);
   const rows = await tx.productCategoryLabel.findMany({
     where: { tenantId, categoryId, productId: { in: [...parentOf.keys()] } },
     select: { productId: true, categoryId: true, mode: true, parentProductIdAtWrite: true },

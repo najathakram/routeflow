@@ -130,6 +130,7 @@ export function planLabels({
   textOf,
   nameProblem = () => null,
   inherits = () => false,
+  parentRemoved = () => false,
 }) {
   const groups = new Map(); // key -> { texts: Map<text, count>, productIds: [] }
   let blank = 0;
@@ -161,6 +162,7 @@ export function planLabels({
   let alreadyIn = 0;
   let optedOut = 0;
   let inheritedCount = 0;
+  const parentKept = []; // { name, products }: variants whose parent had the label removed on purpose
   for (const [key, g] of [...groups.entries()].sort((a, b) => a[0].localeCompare(b[0]))) {
     const name = [...g.texts.entries()].sort(
       (a, b) => b[1] - a[1] || byCodePoint(a[0], b[0]),
@@ -199,6 +201,12 @@ export function planLabels({
       else if (existingId && removed.has(`${productId}:${existingId}`)) removedHere++;
       else candidates.push(productId);
     }
+    // A parent's deliberate removal covers its family (existing labels only: a NEW label has no removals).
+    const byFamily = existingId ? candidates.filter((id) => parentRemoved(id, existingId)) : [];
+    if (byFamily.length) {
+      parentKept.push({ name: live[0]?.name ?? name, products: byFamily.length });
+      for (const id of byFamily) candidates.splice(candidates.indexOf(id), 1);
+    }
     if (removedHere) kept.push({ name: live[0]?.name ?? name, products: removedHere });
     // Variants FOLLOW the parent: a product whose parent chain carries the label (already, or as a candidate of this
     // very run) gets no own row.
@@ -234,12 +242,14 @@ export function planLabels({
       optedOut,
       inherited: inheritedCount,
       removedKept: kept.reduce((n, k) => n + k.products, 0),
+      parentRemoved: parentKept.reduce((n, k) => n + k.products, 0),
     },
     merged,
     archived,
     ambiguous,
     unsafe,
     kept,
+    parentKept,
   };
 }
 
@@ -282,9 +292,11 @@ async function readState(db, tenantId) {
     where: { tenantId, action: "product_label.removed", entityType: "Product" },
     select: { entityId: true, meta: true },
   });
+  // Only an INCLUDE removal is a deliberate "not this label" (a legacy audit without `mode` counts as one); removing
+  // an opt-out re-applies the label and is not a removal of it.
   const removed = new Set(
     removals
-      .filter((r) => r.entityId && r.meta?.categoryId)
+      .filter((r) => r.entityId && r.meta?.categoryId && (r.meta.mode ?? "INCLUDE") === "INCLUDE")
       .map((r) => `${r.entityId}:${r.meta.categoryId}`),
   );
   return { products, existing, memberships, removed };
@@ -301,6 +313,11 @@ async function planFor(db, tenantId, w) {
     nameProblem: w.labelNameProblem,
     inherits: (productId, labelRef, planned) =>
       w.carries.parentChainCarries(chains, productId, labelRef, planned),
+    // A deliberate removal covers the family: an ancestor's INCLUDE removal of this label keeps the variant out.
+    parentRemoved: (productId, labelRef) =>
+      w.carries
+        .ancestorChain(chains.parentOf, productId)
+        .some((a) => state.removed.has(`${a}:${labelRef}`)),
   });
 }
 
@@ -362,6 +379,12 @@ function report(plan) {
   if (plan.kept.length) {
     console.log("\n  removed on purpose by an operator, NOT re-added:");
     for (const k of plan.kept) console.log(`    ${k.name} (${k.products})`);
+  }
+  if (plan.parentKept.length) {
+    console.log(
+      "\n  parent removed (the parent's label was removed on purpose; its variants stay without it):",
+    );
+    for (const k of plan.parentKept) console.log(`    ${k.name} (${k.products})`);
   }
   if (plan.unsafe.length) {
     console.log(
@@ -520,7 +543,7 @@ async function main() {
             productIds: l.add,
             stamp,
           });
-          if (r.added.length !== l.add.length) {
+          if (r.added.length !== l.add.length || r.count !== l.add.length) {
             throw refuse(
               `label ${l.name}: wrote ${r.added.length} memberships, planned ${l.add.length}`,
             );

@@ -2,7 +2,11 @@ import { ConflictException } from "@nestjs/common";
 import { Prisma } from "@prisma/client";
 import { API_ERROR_CODES } from "../common/api-error-codes";
 import { assertSafeCategoryName } from "../common/text-cell-guards";
-import { productsInheritingLabel } from "../product-labels/parent-carries";
+import {
+  ancestorChain,
+  ancestorsOf,
+  productsInheritingLabel,
+} from "../product-labels/parent-carries";
 
 /**
  * THE single writer of product label memberships (`ProductCategoryLabel`). Everything that adds, flips
@@ -119,6 +123,7 @@ export type AddIncludeOutcome =
   | "present" // the product already has an INCLUDE of this label
   | "opted-out" // the product has an EXCLUDE of it: an opt-out is never flipped by an automatic add
   | "inherited" // its PARENT chain already carries the label: a variant follows its parent (no own row)
+  | "parent-removed" // an ancestor had this label REMOVED on purpose: the family stays without it
   | "archived"
   | "missing"; // no such label (or not this tenant's) / no such product
 
@@ -155,6 +160,9 @@ export async function addIncludeIfAbsent(
   if ((await productsInheritingLabel(tx, tenantId, categoryId, [productId])).has(productId)) {
     return "inherited";
   }
+  if ((await familyRemovedLabel(tx, tenantId, categoryId, [productId])).has(productId)) {
+    return "parent-removed";
+  }
   const { count } = await tx.productCategoryLabel.createMany({
     data: [
       // An INCLUDE carries no pin: the column keeps its NULL default.
@@ -163,6 +171,47 @@ export async function addIncludeIfAbsent(
     skipDuplicates: true,
   });
   return count === 1 ? "added" : "present";
+}
+
+/** The admin "remove label" audit action (ProductLabelsAdminService.removeLabel). */
+export const LABEL_REMOVED_ACTION = "product_label.removed";
+
+/**
+ * A deliberate removal covers the family (SA): of `productIds`, the ones with an ANCESTOR whose INCLUDE of
+ * `categoryId` an operator removed (a `product_label.removed` audit; a legacy audit with no `mode` counts as an INCLUDE
+ * removal, the conservative reading). Automatic adds never give those products their own row.
+ */
+export async function familyRemovedLabel(
+  tx: Prisma.TransactionClient,
+  tenantId: string,
+  categoryId: string,
+  productIds: readonly string[],
+): Promise<Set<string>> {
+  const out = new Set<string>();
+  if (productIds.length === 0) return out;
+  const parentOf = await ancestorsOf(tx, tenantId, productIds);
+  const chains = new Map(productIds.map((id) => [id, ancestorChain(parentOf, id)]));
+  const ancestors = [...new Set([...chains.values()].flat())];
+  if (ancestors.length === 0) return out;
+  const audits = await tx.auditLog.findMany({
+    where: {
+      tenantId,
+      action: LABEL_REMOVED_ACTION,
+      entityType: "Product",
+      entityId: { in: ancestors },
+    },
+    select: { entityId: true, meta: true },
+  });
+  const removedOn = new Set(
+    audits
+      .filter((a) => {
+        const m = (a.meta ?? {}) as { categoryId?: string; mode?: string };
+        return m.categoryId === categoryId && (m.mode ?? "INCLUDE") === "INCLUDE";
+      })
+      .map((a) => a.entityId as string),
+  );
+  for (const [id, chain] of chains) if (chain.some((a) => removedOn.has(a))) out.add(id);
+  return out;
 }
 
 /** The audit action a sync writes when it adds a membership from the product's category text. */
@@ -303,9 +352,24 @@ const auditRow = (
 export async function addIncludesForProducts(
   tx: Prisma.TransactionClient,
   args: { tenantId: string; categoryId: string; productIds: readonly string[]; stamp: LabelStamp },
-): Promise<{ added: string[]; present: number; inherited: string[]; archived: boolean }> {
+): Promise<{
+  added: string[];
+  /** createMany's own row count: equals `added.length` (callers assert it). */
+  count: number;
+  present: number;
+  inherited: string[];
+  parentRemoved: string[];
+  archived: boolean;
+}> {
   const { tenantId, categoryId, stamp } = args;
-  const none = { added: [] as string[], present: 0, inherited: [] as string[], archived: false };
+  const none = {
+    added: [] as string[],
+    count: 0,
+    present: 0,
+    inherited: [] as string[],
+    parentRemoved: [] as string[],
+    archived: false,
+  };
   const ids = [...new Set(args.productIds)];
   if (ids.length === 0) return none;
   await lockLabelCategory(tx, tenantId, categoryId);
@@ -332,9 +396,16 @@ export async function addIncludesForProducts(
     candidates,
     new Set(candidates),
   );
-  const toAdd = candidates.filter((id) => !inherited.has(id)).sort();
+  const parentRemoved = await familyRemovedLabel(
+    tx,
+    tenantId,
+    categoryId,
+    candidates.filter((id) => !inherited.has(id)),
+  );
+  const toAdd = candidates.filter((id) => !inherited.has(id) && !parentRemoved.has(id)).sort();
+  let count = 0;
   if (toAdd.length > 0) {
-    await tx.productCategoryLabel.createMany({
+    ({ count } = await tx.productCategoryLabel.createMany({
       // An INCLUDE carries no pin: the column keeps its NULL default.
       data: toAdd.map((productId) => ({
         tenantId,
@@ -345,9 +416,16 @@ export async function addIncludesForProducts(
         ...stamp,
       })),
       skipDuplicates: true,
-    });
+    }));
   }
-  return { added: toAdd, present: has.size, inherited: [...inherited].sort(), archived: false };
+  return {
+    added: toAdd,
+    count,
+    present: has.size,
+    inherited: [...inherited].sort(),
+    parentRemoved: [...parentRemoved].sort(),
+    archived: false,
+  };
 }
 
 /**

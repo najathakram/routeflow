@@ -418,7 +418,7 @@ export class ProductLabelsAdminService {
   ): Promise<{ removed: true; clearedOptOuts: number }> {
     const tenantId = this.requireTenant();
     await this.loadProduct(productId);
-    const voided = await this.prisma.tenantTransaction(async (tx) => {
+    const removal = await this.prisma.tenantTransaction(async (tx) => {
       await this.lockCategory(tx, tenantId, categoryId);
       const row = await tx.productCategoryLabel.findFirst({ where: { productId, categoryId } });
       if (!row) throw new NotFoundException("Label not found on this product");
@@ -426,8 +426,16 @@ export class ProductLabelsAdminService {
       await tx.productCategoryLabel.deleteMany({ where: { id: row.id } });
       // Removing an opt-out re-applies the label (nothing stops reaching the subtree); removing an
       // INCLUDE can stop it. The membership rule decides — never the row's mode.
-      return this.voidIfStoppedCarrying(tx, tenantId, productId, categoryId, before);
+      const voidedRows = await this.voidIfStoppedCarrying(
+        tx,
+        tenantId,
+        productId,
+        categoryId,
+        before,
+      );
+      return { voidedRows, mode: row.mode };
     });
+    const { voidedRows: voided, mode } = removal;
     await this.audit.log({
       tenantId,
       userId: user.sub,
@@ -436,6 +444,9 @@ export class ProductLabelsAdminService {
       entityId: productId,
       meta: {
         categoryId,
+        // The removed row's mode: an INCLUDE removal is a deliberate "not this label" that automatic adds honour
+        // (the product itself and, through its family, its variants); an opt-out removal is not.
+        mode,
         clearedOptOuts: voided.length,
         voided: voided.slice(0, AUDIT_VOIDED_CAP),
       },

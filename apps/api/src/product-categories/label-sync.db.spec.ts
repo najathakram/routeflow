@@ -489,4 +489,120 @@ describeDb("category text -> label add-only sync (real Postgres)", () => {
       }
     }, 30_000);
   });
+
+  describe("SA round 3: removals are honoured (key compare; a parent's removal covers its family)", () => {
+    const removeOnPurpose = async (productId: string, categoryId: string) => {
+      await prisma.productCategoryLabel.deleteMany({ where: { productId, categoryId } });
+      await prisma.auditLog.create({
+        data: {
+          tenantId: A.id,
+          action: "product_label.removed",
+          entityType: "Product",
+          entityId: productId,
+          meta: { categoryId, mode: "INCLUDE" },
+        },
+      });
+    };
+
+    it('products.update: after a removal, re-saving "Snacks" as " snacks" (same name key) adds NO row', async () => {
+      const p = await inA(() =>
+        products.create(
+          { name: "rm-update", unit: "each", pricePerUnit: "2.00", category: "Snacks" } as any,
+          {
+            actorId: actor.id,
+          },
+        ),
+      );
+      expect((await membershipsOf(p.id)).map((r) => r.categoryId)).toEqual([A.snacks]);
+      await removeOnPurpose(p.id, A.snacks);
+      await inA(() => products.update(p.id, { category: " snacks" } as any, { actorId: actor.id }));
+      expect(await membershipsOf(p.id)).toHaveLength(0);
+    });
+
+    it('completeSetup: after a removal, confirming " snacks" over "Snacks" adds NO row', async () => {
+      const id = await seedProduct(A.id, "rm-setup", {
+        detailsIncomplete: true,
+        category: "Snacks",
+      });
+      await inA(() => variants.completeSetup(id, { category: "Snacks" }));
+      await syncIn(A.id, id, "Snacks"); // labelled (the text was already Snacks at seed)
+      expect((await membershipsOf(id)).map((r) => r.categoryId)).toEqual([A.snacks]);
+      await removeOnPurpose(id, A.snacks);
+      await inA(() => variants.completeSetup(id, { category: " snacks" }));
+      expect(await membershipsOf(id)).toHaveLength(0);
+    });
+
+    it("a parent's deliberate INCLUDE removal covers its family: a variant gets no own row from the sync", async () => {
+      const parent = await seedProduct(A.id, "rm-parent", { category: "Snacks" });
+      expect((await syncIn(A.id, parent, "Snacks")).addedCategoryId).toBe(A.snacks);
+      await removeOnPurpose(parent, A.snacks);
+      const variant = await seedProduct(A.id, "rm-variant", {
+        category: "Snacks",
+        parentProductId: parent,
+      });
+      expect((await syncIn(A.id, variant, "Snacks")).addedCategoryId).toBeNull();
+      expect(await membershipsOf(variant)).toHaveLength(0);
+      // an opt-out removal (mode EXCLUDE) is NOT a removal of the label: a sibling still gets its row
+      const other = await seedProduct(A.id, "rm-parent-2", { category: "Snacks" });
+      await prisma.auditLog.create({
+        data: {
+          tenantId: A.id,
+          action: "product_label.removed",
+          entityType: "Product",
+          entityId: other,
+          meta: { categoryId: A.snacks, mode: "EXCLUDE" },
+        },
+      });
+      const v2 = await seedProduct(A.id, "rm-variant-2", {
+        category: "Snacks",
+        parentProductId: other,
+      });
+      expect((await syncIn(A.id, v2, "Snacks")).addedCategoryId).toBe(A.snacks);
+    });
+  });
+
+  it("a subcategory rename whose label sync meets a busy lock rolls back WHOLE (409; name and products unchanged)", async () => {
+    const cat = await prisma.trackedCategory.create({
+      data: { tenantId: A.id, name: `Section L ${randomUUID().slice(0, 4)}` },
+    });
+    const sub = await prisma.trackedSubcategory.create({
+      data: { tenantId: A.id, trackedCategoryId: cat.id, name: "Pre Name" },
+    });
+    const mirrored = await seedProduct(A.id, "ren-lock", {
+      trackedCategoryId: cat.id,
+      trackedSubcategoryId: sub.id,
+      category: "Pre Name",
+    });
+    const pool = new Pool({ connectionString: requireLocalDatabaseUrl() });
+    const holder = await pool.connect();
+    try {
+      await holder.query("BEGIN");
+      await holder.query("SELECT pg_advisory_xact_lock(hashtext($1), hashtext($2))", [
+        "product-labels",
+        `${A.id}:${A.snacks}`,
+      ]);
+      const err = await inA(() =>
+        tracked.updateSubcategory(cat.id, sub.id, { name: "Snacks" } as any),
+      ).catch((e) => e);
+      expect((err as ConflictException).getResponse()).toMatchObject({
+        code: "LABEL_CHANGE_IN_PROGRESS",
+      });
+      expect(
+        (await prisma.trackedSubcategory.findUniqueOrThrow({ where: { id: sub.id } })).name,
+      ).toBe("Pre Name");
+      expect((await prisma.product.findUniqueOrThrow({ where: { id: mirrored } })).category).toBe(
+        "Pre Name",
+      );
+    } finally {
+      await holder.query("ROLLBACK");
+      holder.release();
+      await pool.end();
+    }
+    // the retry re-mirrors and labels
+    await inA(() => tracked.updateSubcategory(cat.id, sub.id, { name: "Snacks" } as any));
+    expect((await prisma.product.findUniqueOrThrow({ where: { id: mirrored } })).category).toBe(
+      "Snacks",
+    );
+    expect((await membershipsOf(mirrored)).map((r) => r.categoryId)).toEqual([A.snacks]);
+  }, 30_000);
 });

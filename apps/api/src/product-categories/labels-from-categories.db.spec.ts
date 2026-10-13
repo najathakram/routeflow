@@ -174,6 +174,18 @@ describeDb("labels-from-categories — real Postgres, through the CLI", () => {
         meta: { categoryId: ids.drinks },
       },
     });
+    // A parent's deliberate removal covers its family: "Punch" had drinks removed on purpose; its variant gets none.
+    ids.punch = await product("Punch", "Drinks");
+    await raw.auditLog.create({
+      data: {
+        tenantId,
+        action: "product_label.removed",
+        entityType: "Product",
+        entityId: ids.punch,
+        meta: { categoryId: ids.drinks, mode: "INCLUDE" },
+      },
+    });
+    ids.punchV = await product("Punch Small", "Drinks", { parentProductId: ids.punch });
     // A formula-like text can't be a label name (B983): listed, skipped.
     ids.u1 = await product("Odd", "=HYPERLINK(1)");
     // Blank and missing text: no label.
@@ -208,13 +220,16 @@ describeDb("labels-from-categories — real Postgres, through the CLI", () => {
     expect(dry.out).toMatch(/labels: 4 \(new: 3, reusing existing: 1\)/);
     expect(dry.out).toMatch(/\+ Snacks \(4, 4\)/);
     expect(dry.out).toMatch(/\+ Frozen Foods \(2, 2\)/);
-    expect(dry.out).toMatch(/= drinks \(4, 1\)/); // Cola added; Juice in; the variant opted out; Lemonade removed on purpose
+    expect(dry.out).toMatch(/= drinks \(6, 1\)/); // Cola added; Juice in; its variant opted out; Lemonade + Punch removed; Punch Small: parent removed
     // variants FOLLOW the parent: Tea gets ONE row (the family parent), its two variants none
     expect(dry.out).toMatch(/\+ Tea \(3, 1\)/);
     expect(dry.out).toMatch(
-      /FOLLOW their parent's label \(no own row\): 2; deliberate removals kept removed: 1/,
+      /FOLLOW their parent's label \(no own row\): 2; deliberate removals kept removed: 2/,
     );
-    expect(dry.out).toMatch(/removed on purpose by an operator, NOT re-added:\s+drinks \(1\)/);
+    expect(dry.out).toMatch(/removed on purpose by an operator, NOT re-added:\s+drinks \(2\)/);
+    expect(dry.out).toMatch(
+      /parent removed \(the parent's label was removed on purpose; its variants stay without it\):\s+drinks \(1\)/,
+    );
     expect(dry.out).toMatch(/can't be a label name[\s\S]*\[unsafe\] =HYPERLINK\(1\) \(1\)/);
     expect(dry.out).toMatch(/re-run: a re-run plans only what is left/);
     expect(dry.out).toMatch(/owner checklist \(not enforced by code\)/);
@@ -268,6 +283,8 @@ describeDb("labels-from-categories — real Postgres, through the CLI", () => {
     expect(await of(ids.teaV1)).toEqual([]); // follows its parent
     expect(await of(ids.teaV2)).toEqual([]);
     expect(await of(ids.d2)).toEqual([]); // removed on purpose: not re-added
+    expect(await of(ids.punch)).toEqual([]);
+    expect(await of(ids.punchV)).toEqual([]); // the parent's removal covers the family
     expect(await of(ids.u1)).toEqual([]); // unsafe text: no label
     expect(await of(ids.b1)).toEqual([]);
     expect(
