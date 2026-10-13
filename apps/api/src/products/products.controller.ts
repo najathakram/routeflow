@@ -95,7 +95,10 @@ export class ProductsController {
   @Post()
   @Roles(UserRole.OPERATOR)
   create(@Body() dto: CreateProductDto, @CurrentUser() user: JwtPayload) {
-    return this.productsService.create(dto, { actorId: user.sub ?? null });
+    return this.productsService.create(dto, {
+      actorId: user.sub ?? null,
+      actorName: user.username ?? null,
+    });
   }
 
   // Must be declared before :id to avoid route collision
@@ -153,7 +156,10 @@ export class ProductsController {
   @Patch(":id")
   @Roles(UserRole.OPERATOR)
   update(@Param("id") id: string, @Body() dto: UpdateProductDto, @CurrentUser() user: JwtPayload) {
-    return this.productsService.update(id, dto, { actorId: user.sub ?? null });
+    return this.productsService.update(id, dto, {
+      actorId: user.sub ?? null,
+      actorName: user.username ?? null,
+    });
   }
 
   @Delete(":id")

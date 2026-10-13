@@ -102,6 +102,30 @@ describe("ProductLabelsCard", () => {
     expect(screen.getByRole("alert")).toHaveTextContent(/can.t be resolved/i);
   });
 
+  it("an INCLUDE the category-text sync added renders like any other own label, with a Remove for an admin and none for a non-admin", () => {
+    labels = view({
+      parentProductId: null,
+      inherited: [],
+      own: [
+        own({
+          id: "auto1",
+          categoryId: "c2",
+          categoryName: "THC",
+          createdById: "u1",
+          createdByName: "olivia",
+        }),
+      ],
+    });
+    render();
+    const list = screen.getByRole("list", { name: "Labels on this product" });
+    expect(list).toHaveTextContent("THC");
+    expect(screen.getByRole("button", { name: "Remove THC" })).toBeInTheDocument();
+    role = "OPERATOR";
+    renderWithProviders(<ProductLabelsCard productId="v1" />);
+    expect(screen.getAllByRole("list", { name: "Labels on this product" })).toHaveLength(2);
+    expect(screen.getAllByRole("button", { name: "Remove THC" })).toHaveLength(1);
+  });
+
   it("adds an INCLUDE label from the untaken ones and removes one", () => {
     labels = view({ parentProductId: null, inherited: [], own: [own()] });
     render();
