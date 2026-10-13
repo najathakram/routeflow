@@ -120,8 +120,8 @@ export class BuyerMergeService {
   // ─── Buyer: verify merge token ────────────────────────────────────────────────
 
   /**
-   * The shared, read-only validation behind both the preview and the consume: lookup by token,
-   * still pending verification, not expired. Throws the same NotFound / BadRequest / Gone errors.
+   * The read-only validation in front of the consume: lookup by token, still pending
+   * verification, not expired. Throws the same NotFound / BadRequest / Gone errors.
    */
   private async findPendingMergeByToken(token: string) {
     const mergeRequest = await this.prisma.buyerMergeRequest.findUnique({
@@ -153,6 +153,8 @@ export class BuyerMergeService {
         id: mergeRequest.id,
         verificationToken: token,
         status: BuyerMergeRequestStatus.PENDING_VERIFICATION,
+        // a row that expired after the pre-check read cannot be consumed
+        verificationExpires: { gt: new Date() },
       },
       data: {
         status: BuyerMergeRequestStatus.PENDING_REVIEW,
