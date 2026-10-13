@@ -16,6 +16,9 @@ import { SettingsBillingController } from "./settings-billing.controller";
  * SA-778 pin: every mutating (non-GET) handler of the tenant billing controllers carries
  * `@NoImpersonation("billing")` (the marker AND the guard), except an explicit allow-list. A new billing
  * mutation added without it fails here by name.
+ *
+ * Coverage limit: the detector keys on the HTTP verb, so a GET that has a side effect is NOT covered. Mark
+ * such a handler by hand and add it to an explicit list (see auth/auth-support-session.pin.spec.ts).
  */
 
 type Ctor = (new (...args: never[]) => unknown) & { prototype: object };

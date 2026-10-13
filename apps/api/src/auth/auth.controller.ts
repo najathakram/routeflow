@@ -22,6 +22,7 @@ import type { Request, Response } from "express";
 import { AuthService } from "./auth.service";
 import { LocalAuthGuard } from "./guards/local-auth.guard";
 import { JwtAuthGuard } from "./guards/jwt-auth.guard";
+import { NoImpersonation } from "./decorators/no-impersonation.decorator";
 import { CurrentUser } from "./decorators/current-user.decorator";
 import { GoogleOAuthService } from "./google-oauth.service";
 import { AppleOAuthService } from "./apple-oauth.service";
@@ -237,6 +238,8 @@ export class AuthController {
     return this.authService.verifyEmailAndLogin(body.token, deviceInfo);
   }
 
+  // Topmost on purpose: decorators apply bottom-up, so this guard lands AFTER JwtAuthGuard in the guard list.
+  @NoImpersonation("account")
   @Post("change-password")
   @HttpCode(HttpStatus.OK)
   @UseGuards(JwtAuthGuard)
@@ -246,6 +249,7 @@ export class AuthController {
     return this.authService.changePassword(user.id, dto.currentPassword, dto.newPassword);
   }
 
+  @NoImpersonation("account")
   @Post("set-password")
   @HttpCode(HttpStatus.OK)
   @UseGuards(JwtAuthGuard)
@@ -362,6 +366,7 @@ export class AuthController {
    * links the Google account to the currently signed-in user instead of logging in.
    * Requires a valid JWT (the user must already be authenticated).
    */
+  @NoImpersonation("account")
   @Get("google/link")
   @UseGuards(JwtAuthGuard)
   @ApiBearerAuth()
@@ -632,6 +637,7 @@ export class AuthController {
     return this.appleOAuth.signIn(dto, extractDeviceInfo(req));
   }
 
+  @NoImpersonation("account")
   @Post("apple/link")
   @HttpCode(HttpStatus.OK)
   @UseGuards(JwtAuthGuard)

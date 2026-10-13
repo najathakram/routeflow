@@ -1518,7 +1518,9 @@ export class PlatformAdminService {
    * Issues a short-lived (15-min) access token with the target tenant-admin
    * user's claims plus `impersonatedBy: superAdminId`.
    * The ImpersonationGuard logs write operations for audit trail purposes;
-   * impersonation sessions have full write access (same as the impersonated user).
+   * impersonation sessions have write access (same as the impersonated user) EXCEPT the routes marked
+   * `@NoImpersonation(scope)` (billing actions, payment setup, and the account's own credentials and linked
+   * identities), which a support session is refused with 403 IMPERSONATION_NOT_ALLOWED.
    */
   async impersonate(tenantId: string, superAdminId: string) {
     const tenant = await this._findOrThrow(tenantId);

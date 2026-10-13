@@ -15,8 +15,12 @@ import type { JwtPayload } from "../jwt-payload.interface";
 /** Metadata key `@NoImpersonation(scope)` writes; the guard reads it from the handler, then the class. */
 export const NO_IMPERSONATION_KEY = "noImpersonation";
 
-/** Areas a support session may not act in. Extend the union to restrict another area. */
-export type NoImpersonationScope = "billing";
+/**
+ * Areas a support session may not act in. Extend the union to restrict another area.
+ * "account": the signed-in user's own credentials and linked identities (a support session must not mint a
+ * clean session or attach an identity to the account it is borrowing).
+ */
+export type NoImpersonationScope = "billing" | "account";
 
 /** The one sentence the refusal carries (the web copy for the code says the same). */
 export const SUPPORT_SESSION_REFUSAL_MESSAGE =
@@ -57,7 +61,7 @@ export class NoImpersonationGuard implements CanActivate {
     const request = context.switchToHttp().getRequest();
     const user = request?.user as Partial<JwtPayload> | undefined;
     if (!user) throw new UnauthorizedException();
-    if (!user.impersonatedBy) return true;
+    if (user.impersonatedBy == null) return true;
 
     const method = String(request.method ?? "").toUpperCase();
     const route = String(request.route?.path ?? String(request.url ?? "").split("?")[0]).slice(

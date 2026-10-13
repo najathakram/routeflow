@@ -130,6 +130,34 @@ describe("UsersService: admin account protection", () => {
         ),
       ).resolves.toBeDefined();
     });
+    it("a support session cannot change an email (403 IMPERSONATION_NOT_ALLOWED) and nothing is written", async () => {
+      prisma.user.findUnique.mockResolvedValue(ADMIN_TARGET as any);
+      await expect(
+        service.updateUser(
+          "t1",
+          { email: "mine@support.example" } as any,
+          "owner",
+          "TENANT_ADMIN" as any,
+          "sa-1",
+        ),
+      ).rejects.toMatchObject({
+        response: expect.objectContaining({ code: "IMPERSONATION_NOT_ALLOWED" }),
+      });
+      expect(prisma.user.update).not.toHaveBeenCalled();
+    });
+    it("a support session can still save an unchanged email with other fields", async () => {
+      prisma.user.findUnique.mockResolvedValue(OPERATOR_TARGET as any);
+      prisma.user.update.mockResolvedValue({ id: "o1", username: "op", role: "OPERATOR" } as any);
+      await expect(
+        service.updateUser(
+          "o1",
+          { email: "OP@acme.example", firstName: "Op" } as any,
+          "owner",
+          "TENANT_ADMIN" as any,
+          "sa-1",
+        ),
+      ).resolves.toBeDefined();
+    });
     it("an OPERATOR can still change an OPERATOR's email", async () => {
       prisma.user.findUnique.mockResolvedValue(OPERATOR_TARGET as any);
       prisma.user.update.mockResolvedValue({
