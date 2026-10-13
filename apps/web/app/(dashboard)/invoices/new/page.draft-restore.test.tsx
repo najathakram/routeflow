@@ -545,6 +545,46 @@ describe("ROW 447 — unsaved new-invoice draft", () => {
     });
   });
 
+  it("typing while the restore is still checking cancels it: nothing is overwritten and the offer stays", async () => {
+    seed({ reference: "ORIGINAL" });
+    let release: (v: { data: unknown }) => void = () => undefined;
+    mockGet.mockImplementation((url: string) =>
+      url === "/products/p-1"
+        ? new Promise((res) => {
+            release = res;
+          })
+        : Promise.resolve({ data: {} }),
+    );
+    const user = userEvent.setup();
+    renderWithProviders(<NewInvoicePage />);
+    await user.click(await screen.findByRole("button", { name: "Restore" }));
+    // The form is usable while the checks run.
+    await user.click(screen.getByRole("button", { name: /other charge/i }));
+    await user.type(screen.getByPlaceholderText(/PO-1234/), "TYPED");
+    await act(async () => {
+      release({ data: { id: "p-1", isActive: true, pricePerUnit: "10" } });
+    });
+    expect(screen.getByPlaceholderText(/PO-1234/)).toHaveValue("TYPED");
+    expect(screen.getByText("The form changed, so the restore was cancelled.")).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Restore" })).toBeEnabled();
+    expect(JSON.parse(stored()!).data.reference).toBe("ORIGINAL");
+  });
+
+  it("a second click on Restore while it is checking does not apply twice", async () => {
+    seed();
+    let calls = 0;
+    mockGet.mockImplementation((url: string) => {
+      if (url === "/products/p-1") calls += 1;
+      return Promise.resolve({ data: {} });
+    });
+    const user = userEvent.setup();
+    renderWithProviders(<NewInvoicePage />);
+    const btn = await screen.findByRole("button", { name: "Restore" });
+    await user.dblClick(btn);
+    await screen.findByDisplayValue("Widget");
+    expect(calls).toBe(1);
+  });
+
   it("while the offer is open, typing in a fresh form does not overwrite the stored draft", async () => {
     seed({ reference: "ORIGINAL" });
     const user = userEvent.setup();

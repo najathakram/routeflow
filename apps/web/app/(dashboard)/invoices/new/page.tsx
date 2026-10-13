@@ -117,7 +117,12 @@ import { invoiceDraftKey, isPristineForm } from "@/lib/invoice-draft-storage";
 import { catalogPricing } from "./invoice-catalog-price";
 import { useInvoiceDraft } from "./use-invoice-draft";
 import { checkDraftReferences } from "./invoice-draft-restore";
-import { InvoiceDraftBanner, draftNoticeCopy, draftSummary } from "./InvoiceDraftBanner";
+import {
+  DRAFT_CANCELLED_COPY,
+  InvoiceDraftBanner,
+  draftNoticeCopy,
+  draftSummary,
+} from "./InvoiceDraftBanner";
 
 // ─── Terms options ─────────────────────────────────────────────────────────────
 
@@ -1058,11 +1063,23 @@ export default function NewInvoicePage() {
   const [draftBusy, setDraftBusy] = React.useState(false);
   const [draftNotice, setDraftNotice] = React.useState<string | null>(null);
   const [draftRestored, setDraftRestored] = React.useState(false);
+  // A ref, not state: two quick clicks must not both start a restore before a re-render shows the busy flag.
+  const draftBusyRef = React.useRef(false);
+  const draftFormRef = React.useRef(draftForm);
+  draftFormRef.current = draftForm;
   async function restoreDraft() {
-    if (!draft.offer || draftBusy) return;
+    if (!draft.offer || draftBusyRef.current) return;
+    draftBusyRef.current = true;
     setDraftBusy(true);
+    const formAtStart = draftFormRef.current;
     try {
       const r = await checkDraftReferences(draft.offer.snapshot, (u) => apiClient.get(u));
+      // The form stays usable while the checks run. If it changed meanwhile, applying would overwrite what was typed.
+      if (draftFormRef.current !== formAtStart) {
+        setDraftNotice(DRAFT_CANCELLED_COPY);
+        return;
+      }
+      setDraftNotice(null);
       const s = r.snapshot;
       // The seeding effects above must not overwrite what the user had chosen.
       didPrefillRef.current = true;
@@ -1111,6 +1128,7 @@ export default function NewInvoicePage() {
       setDraftRestored(true);
       draft.resolveOffer();
     } finally {
+      draftBusyRef.current = false;
       setDraftBusy(false);
     }
   }
@@ -1122,7 +1140,10 @@ export default function NewInvoicePage() {
       warning={!!draft.offer && !isPristineForm(draftForm)}
       busy={draftBusy}
       onRestore={() => void restoreDraft()}
-      onDiscard={draft.discard}
+      onDiscard={() => {
+        setDraftNotice(null);
+        draft.discard();
+      }}
       onDismissNotice={() => {
         setDraftNotice(null);
         setDraftRestored(false);

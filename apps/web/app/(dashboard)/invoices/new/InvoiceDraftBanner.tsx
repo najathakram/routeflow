@@ -11,6 +11,7 @@ export const DRAFT_BANNER_TITLE = "Restore unsaved invoice?";
 export const DRAFT_BANNER_LABEL = "Unsaved invoice";
 /** The same fixed labels the form headings use. */
 export const DRAFT_KIND_LABEL = { newSale: "New sale", standalone: "Other charge" } as const;
+export const DRAFT_CANCELLED_COPY = "The form changed, so the restore was cancelled.";
 export const DRAFT_RESTORED_COPY = "Draft restored.";
 export const DRAFT_BANNER_WARNING = "Starting a new invoice discards the saved draft.";
 
@@ -89,6 +90,7 @@ export function InvoiceDraftBanner({
             <p className="text-sm font-semibold text-navy">{DRAFT_BANNER_TITLE}</p>
             <p className="text-sm text-navy/70">{summary}</p>
             {warning ? <p className="text-sm text-navy/70">{DRAFT_BANNER_WARNING}</p> : null}
+            {notice ? <p className="text-sm text-navy/70">{notice}</p> : null}
           </>
         ) : (
           <>
