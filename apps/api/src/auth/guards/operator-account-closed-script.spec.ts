@@ -226,3 +226,42 @@ describe("operator permissions PR1: account endpoints are TENANT_ADMIN-only", ()
     expect(unseen).toEqual([]);
   });
 });
+
+/** Every method on a controller that Nest routes (it carries METHOD_METADATA), by reflection, never by hand. */
+function routeHandlersOf(ctl: Ctl): string[] {
+  return Object.getOwnPropertyNames(ctl.prototype).filter(
+    (m) =>
+      m !== "constructor" &&
+      typeof ctl.prototype[m] === "function" &&
+      Reflect.getMetadata(METHOD_METADATA, ctl.prototype[m] as object) !== undefined,
+  );
+}
+
+describe("SA Perms PR1 M3: the import / migration / numbering pin is structural", () => {
+  // These three are closed at the CLASS level: any handler added to them is account-level by construction, so
+  // every routed method must be on the report's list. A new handler that is not listed goes red here.
+  const STRUCTURAL: [string, Ctl][] = [
+    ["import/import.controller.ts", ImportController as unknown as Ctl],
+    ["import/migration.controller.ts", MigrationController as unknown as Ctl],
+    ["import/numbering.controller.ts", NumberingController as unknown as Ctl],
+  ];
+  const listed = (file: string) =>
+    new Set(ALL_HANDLERS.filter((h) => h.controller === file).map((h) => h.method));
+  const unlisted = (file: string, ctl: Ctl) =>
+    routeHandlersOf(ctl).filter((m) => !listed(file).has(m));
+
+  it.each(STRUCTURAL)("%s: every routed handler is on the report's list", (file, ctl) => {
+    expect(routeHandlersOf(ctl).length).toBeGreaterThan(0);
+    expect(unlisted(file, ctl)).toEqual([]);
+  });
+
+  it("the detector itself: a planted, unlisted handler is caught", () => {
+    class Planted extends (ImportController as unknown as { new (...a: never[]): object }) {
+      sneaky() {
+        return null;
+      }
+    }
+    Reflect.defineMetadata(METHOD_METADATA, RequestMethod.POST, Planted.prototype.sneaky);
+    expect(unlisted("import/import.controller.ts", Planted as unknown as Ctl)).toEqual(["sneaky"]);
+  });
+});
