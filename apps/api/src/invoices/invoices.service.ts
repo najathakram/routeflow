@@ -769,7 +769,12 @@ export class InvoicesService {
         // deposit mirror is MEANT to be sendable pre-delivery. It does not relax
         // update()'s separate "only DRAFT invoices can be edited" rule, so hand-editing
         // stays blocked — the order remains the only edit surface, as designed.
-        issued.push(await this.send(inv.id, { allowPreDelivery: true }));
+        // Row 466: the invoice is committed; a send failure carries its id and the order's.
+        issued.push(
+          await sendAfterCommit({ invoiceId: inv.id, orderId: order.id }, () =>
+            this.send(inv.id, { allowPreDelivery: true }),
+          ),
+        );
       }
       return issued;
     }
