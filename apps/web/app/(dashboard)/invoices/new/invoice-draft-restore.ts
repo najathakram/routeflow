@@ -15,10 +15,24 @@ export interface RestoreCheck {
 
 type Get = (url: string) => Promise<{ data?: unknown }>;
 
+/** 403 counts as gone too: a row this user may no longer see is not one to bill. */
 const isGone = (err: unknown): boolean => {
   const status = (err as { response?: { status?: number } } | null)?.response?.status;
-  return status === 404 || status === 410;
+  return status === 403 || status === 404 || status === 410;
 };
+
+/**
+ * A row that still answers 200 but is soft-deleted, archived or inactive is gone as well:
+ * `deletedAt` / `archivedAt` set, or `isActive === false` (the Product and Customer flag).
+ */
+export function isRetiredRow(data: unknown): boolean {
+  if (typeof data !== "object" || data === null) return false;
+  const d = data as Record<string, unknown>;
+  return !!d.deletedAt || !!d.archivedAt || d.isActive === false;
+}
+
+const settledGone = (r: PromiseSettledResult<{ data?: unknown } | null>): boolean =>
+  r.status === "rejected" ? isGone(r.reason) : isRetiredRow(r.value?.data);
 
 export async function checkDraftReferences(
   snapshot: InvoiceDraftSnapshot,
@@ -33,16 +47,9 @@ export async function checkDraftReferences(
       : Promise.resolve(null),
     ...productIds.map((id) => get(`/products/${encodeURIComponent(id)}`)),
   ]);
-  const gone = new Set(
-    productIds.filter(
-      (_, i) =>
-        productRes[i].status === "rejected" &&
-        isGone((productRes[i] as PromiseRejectedResult).reason),
-    ),
-  );
+  const gone = new Set(productIds.filter((_, i) => settledGone(productRes[i])));
   const lines = snapshot.lines.filter((l) => !l.productId || !gone.has(l.productId));
-  const customerCleared =
-    !!snapshot.customer && customerRes.status === "rejected" && isGone(customerRes.reason);
+  const customerCleared = !!snapshot.customer && settledGone(customerRes);
   let customer = customerCleared ? null : snapshot.customer;
   // A live customer row refreshes the fields the form reads (name, tier, default terms).
   if (customer && customerRes.status === "fulfilled") {
