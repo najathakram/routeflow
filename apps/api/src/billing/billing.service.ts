@@ -84,6 +84,7 @@ import { isStripeResourceMissing } from "./addon.service";
 import { billableAddonWhere } from "./addon-row";
 import { SUSPENDED_REASON_SUBSCRIPTION_CANCELED } from "./billing-notification.templates";
 import { writeAdminNotice } from "./manual-invoice-notice";
+import { TENANT_PRICE_LOCK_SELF_SERVE_WAIT_MS, underTenantPriceLock } from "./price-lock";
 import { ADMIN_AUDIT_ENTITY, AdminAuditAction } from "../platform-admin/audit-actions.constant";
 import { retryOnTxConflict } from "../common/tx-retry";
 import { withCheckoutPolicy } from "./checkout-session-params";
@@ -2411,7 +2412,14 @@ export class BillingService {
   private async resyncPriceAfterCheckout(tenantId: string, session: any): Promise<void> {
     let result: Awaited<ReturnType<BillingService["syncStripeSubscriptionPrice"]>>;
     try {
-      result = await this.syncStripeSubscriptionPrice(tenantId, { effective: "next_cycle" });
+      // M1: ONE writer per tenant's Stripe price. The price (override / catalog) is resolved INSIDE the lock, after
+      // any admin writer that held it has committed, so a delivery with an old view cannot overwrite its push. A
+      // collision THROWS (a coded 409), so Stripe redelivers; the short tenant-facing wait keeps the small pool free.
+      result = await underTenantPriceLock(
+        tenantId,
+        () => this.syncStripeSubscriptionPrice(tenantId, { effective: "next_cycle" }),
+        { waitMs: TENANT_PRICE_LOCK_SELF_SERVE_WAIT_MS },
+      );
     } catch (err) {
       this.logger.error(
         `F2: checkout ${session?.id ?? "?"} for tenant ${tenantId}: the price re-sync threw`,
