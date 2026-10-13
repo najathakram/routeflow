@@ -266,6 +266,7 @@ const STRIPE_PAYER = {
   discount: 0,
   stripeSubId: "sub_1",
   stripeCustomerId: "cus_1",
+  tenant: { status: "SUSPENDED", readOnlyReason: null }, // F4: a lapsed payer is what a payment reinstates
 };
 const OWN_INVOICE = {
   customer: "cus_1",
@@ -524,6 +525,62 @@ describe("BillingService — Stripe churn/reactivation MRR ledger", () => {
       writesNothingToTheTenant(tx, events);
     });
 
+    // F4: a payment reinstates ONLY from TRIAL, READ_ONLY(trial_*) and SUSPENDED. A READ_ONLY an admin set, or a
+    // CANCELLED tenant, is never revived by a renewal landing on the still-live subscription: no change, a warn
+    // and an audit row.
+    describe("F4: a renewal never undoes an admin's READ_ONLY / CANCELLED", () => {
+      const blockedAudit = (prisma: any) =>
+        prisma.auditLog.create.mock.calls.find(
+          (c: any[]) => c[0].data.action === "STRIPE_PAYMENT_REINSTATE_BLOCKED",
+        )?.[0].data;
+
+      it.each([
+        ["READ_ONLY(admin_set)", { status: "READ_ONLY", readOnlyReason: "admin_set" }],
+        [
+          "READ_ONLY(no reason: a legacy admin write)",
+          { status: "READ_ONLY", readOnlyReason: null },
+        ],
+        ["CANCELLED", { status: "CANCELLED", readOnlyReason: null }],
+      ])(
+        "%s + a renewal on its own subscription: stays put, warned and audited",
+        async (_n, tenant) => {
+          const { svc, tx, events, prisma } = make({ transitionCount: 1, sub: row(tenant) });
+          const warn = jest.spyOn(Logger.prototype, "warn").mockImplementation(() => undefined);
+          await (svc as any).onPaymentSucceeded(sub("sub_1"));
+          writesNothingToTheTenant(tx, events);
+          expect(prisma.tenant.update).not.toHaveBeenCalled();
+          expect(warn).toHaveBeenCalledWith(expect.stringContaining("not reinstating"));
+          warn.mockRestore();
+          expect(blockedAudit(prisma)).toMatchObject({
+            tenantId: "t1",
+            entityType: "tenant",
+            meta: { status: tenant.status, readOnlyReason: tenant.readOnlyReason },
+          });
+        },
+      );
+
+      it.each([
+        ["TRIAL", { status: "TRIAL", readOnlyReason: null }],
+        ["SUSPENDED", { status: "SUSPENDED", readOnlyReason: null }],
+        ["READ_ONLY(trial_expired)", { status: "READ_ONLY", readOnlyReason: "trial_expired" }],
+        ["READ_ONLY(trial_cancelled)", { status: "READ_ONLY", readOnlyReason: "trial_cancelled" }],
+      ])("%s is still reinstated by a payment on its own subscription", async (_n, tenant) => {
+        const { svc, events, prisma } = make({ transitionCount: 1, sub: row(tenant) });
+        await (svc as any).onPaymentSucceeded(sub("sub_1"));
+        expect(deltaOf(events, BILLING_EVENTS.SUBSCRIPTION_RESUMED)).toBe(349);
+        expect(blockedAudit(prisma)).toBeUndefined();
+      });
+
+      it("an ACTIVE tenant's ordinary renewal is untouched (no warn, no audit)", async () => {
+        const { svc, prisma } = make({
+          transitionCount: 0,
+          sub: row({ status: "ACTIVE", readOnlyReason: null }),
+        });
+        await (svc as any).onPaymentSucceeded(sub("sub_1"));
+        expect(blockedAudit(prisma)).toBeUndefined();
+      });
+    });
+
     it("a late payment on an old subscription by a READ_ONLY(trial_expired) tenant: no reinstatement", async () => {
       const { svc, tx, events } = make({
         transitionCount: 1,
@@ -640,6 +697,7 @@ describe("BillingService — Stripe churn/reactivation MRR ledger", () => {
           discount: 0,
           stripeSubId: "sub_1",
           cancelAtPeriodEnd: false,
+          tenant: { status: "SUSPENDED", readOnlyReason: null },
         },
       });
       await (svc as any).onPaymentSucceeded(OWN_INVOICE);
@@ -1700,6 +1758,7 @@ describe("B216 — a Stripe reinstatement LEAVES a downgrade scheduled before th
     downgradeToPlanKey: "STARTER",
     downgradeEffectiveAt: new Date("2026-08-01T00:00:00.000Z"),
     retainedUserIds: ["u-keep"],
+    tenant: { status: "SUSPENDED", readOnlyReason: null }, // F4: a lapsed payer is what a payment reinstates
     ...over,
   });
   // The tenantSubscription.update call that touches the downgrade schedule, if any.

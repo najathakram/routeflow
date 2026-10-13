@@ -291,6 +291,87 @@ describe("PlatformAdminService — audit provenance", () => {
     );
   });
 
+  // F4: an admin-set READ_ONLY carries the reason `admin_set` (never null) so a later renewal can tell it from a
+  // lapsed trial; and a CANCELLED over a LIVE Stripe subscription is refused - cancel the subscription first.
+  describe("updateStatus - F4 admin_set / cancel-the-subscription-first", () => {
+    const before = (over: Record<string, unknown> = {}) =>
+      prisma.tenant.findUniqueOrThrow.mockResolvedValue({
+        id: TENANT_ID,
+        slug: "acme",
+        plan: "STARTER",
+        status: "ACTIVE",
+        readOnlyReason: null,
+        class: "PRODUCTION",
+        deletedAt: null,
+        subscription: {
+          planKey: "STARTER",
+          basePriceSnapshot: 99,
+          discount: 0,
+          couponFull: false,
+          stripeSubId: null,
+        },
+        ...over,
+      } as any);
+
+    it("READ_ONLY is written with readOnlyReason 'admin_set', never null", async () => {
+      before();
+      prisma.tenant.findUnique.mockResolvedValue({ id: TENANT_ID, slug: "acme" } as any);
+      prisma.tenant.update.mockResolvedValue({
+        id: TENANT_ID,
+        slug: "acme",
+        status: "READ_ONLY",
+      } as any);
+      await service.updateStatus(TENANT_ID, { status: "READ_ONLY" } as any, ADMIN_ID);
+      expect(prisma.tenant.update.mock.calls[0][0].data).toEqual({
+        status: "READ_ONLY",
+        readOnlyReason: "admin_set",
+      });
+    });
+
+    it("READ_ONLY over a payment_overdue pause is 'admin_set' too (not nulled)", async () => {
+      before({ status: "READ_ONLY", readOnlyReason: "payment_overdue" });
+      prisma.tenant.findUnique.mockResolvedValue({ id: TENANT_ID, slug: "acme" } as any);
+      prisma.tenant.update.mockResolvedValue({
+        id: TENANT_ID,
+        slug: "acme",
+        status: "READ_ONLY",
+      } as any);
+      await service.updateStatus(TENANT_ID, { status: "READ_ONLY" } as any, ADMIN_ID);
+      expect(prisma.tenant.update.mock.calls[0][0].data.readOnlyReason).toBe("admin_set");
+    });
+
+    it("CANCELLED with a live stripeSubId: 409 TENANT_CANCEL_SUBSCRIPTION_FIRST, nothing written", async () => {
+      before({
+        subscription: {
+          planKey: "STARTER",
+          basePriceSnapshot: 99,
+          discount: 0,
+          couponFull: false,
+          stripeSubId: "sub_live",
+        },
+      });
+      prisma.tenant.findUnique.mockResolvedValue({ id: TENANT_ID, slug: "acme" } as any);
+      const err: any = await service
+        .updateStatus(TENANT_ID, { status: "CANCELLED" } as any, ADMIN_ID)
+        .catch((e) => e);
+      expect(err.getStatus()).toBe(409);
+      expect(err.getResponse()).toMatchObject({ code: "TENANT_CANCEL_SUBSCRIPTION_FIRST" });
+      expect(prisma.tenant.update).not.toHaveBeenCalled();
+    });
+
+    it("CANCELLED with no Stripe subscription is allowed", async () => {
+      before();
+      prisma.tenant.findUnique.mockResolvedValue({ id: TENANT_ID, slug: "acme" } as any);
+      prisma.tenant.update.mockResolvedValue({
+        id: TENANT_ID,
+        slug: "acme",
+        status: "CANCELLED",
+      } as any);
+      await service.updateStatus(TENANT_ID, { status: "CANCELLED" } as any, ADMIN_ID);
+      expect(prisma.tenant.update.mock.calls[0][0].data.status).toBe("CANCELLED");
+    });
+  });
+
   // FINDING-4 RULING (2026-09-14, lead): an admin reactivation LEAVES an armed downgrade armed.
   // Only downgrade() (the tenant) and updatePlan()'s scheduled branch ever set
   // downgradeToPlanKey, so the field set is always a CHOSEN schedule and never a dunning threat

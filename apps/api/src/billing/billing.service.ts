@@ -100,6 +100,7 @@ import {
   STRIPE_CHECKOUT_PARK_RESOLVED_ACTION,
   STRIPE_CHECKOUT_PAYMENT_PROCESSING_ACTION,
   STRIPE_CHECKOUT_PRICE_RESYNC_ACTION,
+  STRIPE_PAYMENT_REINSTATE_BLOCKED_ACTION,
 } from "./config-snapshot-audit.constants";
 import {
   isLiveStripeSubscriptionStatus,
@@ -2568,6 +2569,40 @@ export class BillingService {
       this.logger.log(
         `payment_succeeded for tenant ${sub.tenantId}: READ_ONLY(${sub.tenant.readOnlyReason}) is not reinstated here`,
       );
+      return;
+    }
+
+    // F4: a payment reinstates ONLY from TRIAL, READ_ONLY with a trial_* reason, and SUSPENDED (ACTIVE is an
+    // ordinary renewal: the CAS below finds nothing to flip). A READ_ONLY an admin set, or a CANCELLED tenant,
+    // is a decision a payment on the still-live subscription must not undo: no change, a warn and an audit row.
+    const paidStatus = sub.tenant?.status;
+    const paidReason = sub.tenant?.readOnlyReason ?? null;
+    if (
+      paidStatus !== "ACTIVE" &&
+      paidStatus !== "TRIAL" &&
+      paidStatus !== "SUSPENDED" &&
+      !(paidStatus === "READ_ONLY" && paidReason?.startsWith("trial_"))
+    ) {
+      this.logger.warn(
+        `payment_succeeded for tenant ${sub.tenantId}: status ${paidStatus ?? "unknown"}` +
+          `${paidReason ? ` (${paidReason})` : ""} is not a payment-reinstatable state - not reinstating`,
+      );
+      await this.prisma.auditLog
+        .create({
+          data: {
+            tenantId: sub.tenantId,
+            action: STRIPE_PAYMENT_REINSTATE_BLOCKED_ACTION,
+            entityType: "tenant",
+            entityId: sub.tenantId,
+            meta: {
+              status: paidStatus ?? null,
+              readOnlyReason: paidReason,
+              stripeSubId: sub.stripeSubId,
+              invoiceId: invoice?.id ?? null,
+            },
+          },
+        })
+        .catch(() => undefined);
       return;
     }
 

@@ -26,7 +26,11 @@ import { FeatureOverrideService } from "../billing/feature-override.service";
 import { PlanTransitionConfigService } from "../billing/plan-transition-config.service";
 import { gateVia } from "../billing/feature-registry";
 import { BillingEventService } from "../billing/billing-event.service";
-import { PAYMENT_OVERDUE_REASON, READ_ONLY_STATUS } from "../billing/dunning-config";
+import {
+  ADMIN_SET_REASON,
+  PAYMENT_OVERDUE_REASON,
+  READ_ONLY_STATUS,
+} from "../billing/dunning-config";
 import { DunningService } from "../billing/dunning.service";
 import { assertTenantNotPaymentOverdue } from "../billing/payment-overdue";
 import {
@@ -118,6 +122,14 @@ function activeTenantTrialRefusal(): ConflictException {
   return new ConflictException({
     code: API_ERROR_CODES.TENANT_TRIAL_EXTEND_NOT_ALLOWED,
     message: "This tenant is Active. A trial can't be set on a paying tenant.",
+  });
+}
+
+/** 409 TENANT_CANCEL_SUBSCRIPTION_FIRST: a status CANCELLED over a live Stripe subscription would keep billing. */
+function cancelSubscriptionFirstRefusal(): ConflictException {
+  return new ConflictException({
+    code: API_ERROR_CODES.TENANT_CANCEL_SUBSCRIPTION_FIRST,
+    message: "This tenant has a live subscription. Cancel the subscription first.",
   });
 }
 
@@ -652,10 +664,22 @@ export class PlatformAdminService {
           class: true,
           deletedAt: true,
           subscription: {
-            select: { planKey: true, basePriceSnapshot: true, discount: true, couponFull: true },
+            select: {
+              planKey: true,
+              basePriceSnapshot: true,
+              discount: true,
+              couponFull: true,
+              stripeSubId: true,
+            },
           },
         },
       });
+
+      // F4: a CANCELLED status over a LIVE Stripe subscription would leave Stripe billing a cancelled tenant (and a
+      // later payment has nothing to say about it): the subscription is cancelled first, through its own flow.
+      if (dto.status === "CANCELLED" && before.subscription?.stripeSubId) {
+        throw cancelSubscriptionFirstRefusal();
+      }
 
       // The same refusal as extendTrial, on the PRIOR status read under the row lock above: the status
       // PATCH accepts any TenantStatus, so it must not be the back door for ACTIVE -> TRIAL.
@@ -685,6 +709,8 @@ export class PlatformAdminService {
                 ...(before.readOnlyReason === PAYMENT_OVERDUE_REASON
                   ? { readOnlyReason: null }
                   : {}),
+                // F4: an admin-set READ_ONLY says so (never null), so a renewal can tell it from a lapsed trial
+                ...(dto.status === READ_ONLY_STATUS ? { readOnlyReason: ADMIN_SET_REASON } : {}),
               },
             });
       // Same exit, local side: a PAUSED tenant moved to SUSPENDED / CANCELLED / TRIAL / ... by an admin loses its
