@@ -119,7 +119,7 @@ function make(
     })),
   };
   const mutations: any = {
-    checkoutAddonLines: jest.fn(async () => ({ lineItems: [], skus: [] })),
+    checkoutAddonLines: jest.fn(async () => ({ lineItems: [], skus: [], invalid: [] })),
   };
   const claim = new CatchupClaimService(prisma, stripe as any, { emit: jest.fn() } as any);
   const billing: any = { ensureStripeCustomer: jest.fn(async () => "cus_1") };

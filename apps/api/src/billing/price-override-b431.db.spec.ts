@@ -113,7 +113,7 @@ describeDb(
         { notifyCancelled: jest.fn(), notifySuspended: jest.fn() } as any,
         planTransitionStub,
         {
-          checkoutAddonLines: async () => ({ lineItems: [], skus: [] }),
+          checkoutAddonLines: async () => ({ lineItems: [], skus: [], invalid: [] }),
           adoptCheckoutAddons: async () => undefined,
         } as any,
       );

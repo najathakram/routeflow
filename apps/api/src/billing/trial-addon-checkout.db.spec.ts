@@ -2210,6 +2210,7 @@ describeDb("SA-690 — trial add-ons are adopted at checkout completion (real Po
       await expect(r.mutations.checkoutAddonLines(r.tenantId, "year")).resolves.toEqual({
         lineItems: [],
         skus: [],
+        invalid: [],
       });
     });
 
