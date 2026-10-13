@@ -493,6 +493,29 @@ describe('"Add full address": the first billing address becomes the default bill
     expect(prisma.customerAddress.updateMany).toHaveBeenCalledTimes(1);
   });
 
+  it.each([
+    ["", ""],
+    ["Unknown", ""],
+    ["Tejas", ""],
+  ])(
+    "M1: a bulk-set TX placeholder stays the default when the new address has a street but no usable state (%j)",
+    async (state, zip) => {
+      existing([
+        {
+          id: "min",
+          isDefault: true,
+          addressType: "BILLING",
+          line1: "",
+          city: "",
+          stateCode: "TX",
+        } as any,
+      ]);
+      await service.addAddress("c1", { ...ADDRESS, state, zip } as any);
+      expect(written().isDefault).toBe(false);
+      expect(prisma.customerAddress.updateMany).not.toHaveBeenCalled();
+    },
+  );
+
   it("a NON-blank default is never demoted (a street, or only a city, is a real address)", async () => {
     existing([{ isDefault: true, addressType: "BILLING", line1: "", city: "Dallas" }]);
     await service.addAddress("c1", { ...ADDRESS, zip: "78701" } as any);

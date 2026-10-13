@@ -737,6 +737,7 @@ export class CustomersService {
     assertSafeAddress(dto); // B964: before the geocode call and the transaction
     // Geocode before creating so lat/lng are set from the start
     const coords = await this.geocodeIfPossible(dto);
+    const hasUsableState = addressStateFields(dto.state, dto.zip).stateCode !== null;
     return this.prisma.tenantTransaction(async (tx) => {
       if (dto.isDefault) {
         await tx.customerAddress.updateMany({
@@ -747,13 +748,19 @@ export class CustomersService {
       // Addendum D: with no explicit choice, a billing address becomes the default when the customer
       // has NO default address of any type, or when every default is a blank-street placeholder (a
       // "minimal", state-only address) and this one is real: the placeholder is demoted in this
-      // transaction, so exactly one default remains. A default with a street or a city is never demoted.
+      // transaction, so exactly one default remains. A default with a street or a city is never demoted, and
+      // neither is a placeholder when the new address has no usable state (M1: that would lose the state the
+      // placeholder carries, e.g. a bulk-set TX, and leave the customer unresolved).
       let becomesDefaultBilling = false;
       if (dto.isDefault !== true && isBillingType(dto.addressType ?? "BILLING")) {
         const defaults = await defaultAddresses(tx, id);
         const placeholders = defaults.filter((a) => hasBlankStreet(a));
         if (defaults.length === 0) becomesDefaultBilling = true;
-        else if (!hasBlankStreet(dto) && placeholders.length === defaults.length) {
+        else if (
+          !hasBlankStreet(dto) &&
+          hasUsableState &&
+          placeholders.length === defaults.length
+        ) {
           await tx.customerAddress.updateMany({
             where: { customerId: id, isDefault: true, id: { in: placeholders.map((a) => a.id) } },
             data: { isDefault: false },
