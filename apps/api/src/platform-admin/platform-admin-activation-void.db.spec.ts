@@ -49,6 +49,11 @@ async function coveredInvoice(): Promise<{ id: string; periodKey: string }> {
   });
   return { id: r.id, periodKey };
 }
+/**
+ * A PAID invoice that ends before any window the tests anchor on (PR4a M2 refuses a window that runs over a PAID
+ * period, so "PAID untouched" is proved with a paid row that is BEFORE the window, as in real life).
+ */
+const paidBeforeWindow = () => monthlyInvoice(new Date(Date.now() - 45 * DAY), "PAID");
 const statusOf = async (id: string) =>
   (await prisma.rfInvoice.findUniqueOrThrow({ where: { id } })).status;
 const voidAudits = () =>
@@ -258,8 +263,7 @@ describeDb("manual activation auto-void (DB)", () => {
 
   it("an activation failure after the void point rolls the void back: invoice stays OPEN, no audit", async () => {
     const inv = await coveredInvoice();
-    const paid = await coveredInvoice();
-    await prisma.rfInvoice.update({ where: { id: paid.id }, data: { status: "PAID" } });
+    const paid = await paidBeforeWindow();
     failMarker = true; // the marker write comes after the subscription upsert AND the void
 
     await expect(
@@ -293,8 +297,7 @@ describeDb("manual activation auto-void (DB)", () => {
 
   it("success: the covered OPEN invoice is VOID with its reason + audit in the same commit; PAID untouched", async () => {
     const open = await coveredInvoice();
-    const paid = await coveredInvoice();
-    await prisma.rfInvoice.update({ where: { id: paid.id }, data: { status: "PAID" } });
+    const paid = await paidBeforeWindow();
 
     await svc.activateManualSubscription(tenantId, ACTOR_DTO as any, "sa-4a");
 
@@ -387,7 +390,11 @@ describeDb("manual activation auto-void (DB)", () => {
         where: { tenantId, periodStart: new Date(P.getTime() + 30 * DAY) },
       });
       expect(next).toHaveLength(1);
-      expect(next[0].periodEnd!.getTime()).toBe(P.getTime() + 60 * DAY);
+      // the issuer aligns a window end to the calendar anchor (the 1st at 12:00Z), no later than P+60d
+      const end = next[0].periodEnd!;
+      expect([end.getUTCDate(), end.getUTCHours()]).toEqual([1, 12]);
+      expect(end.getTime()).toBeGreaterThan(P.getTime() + 30 * DAY);
+      expect(end.getTime()).toBeLessThanOrEqual(P.getTime() + 60 * DAY);
       expect(next[0].status).toBe("OPEN");
     });
 
