@@ -13,6 +13,7 @@ import { normalizeUsState } from "../common/us-states";
 import { excludeWalkIn } from "../customers/walk-in-protected";
 import { PrismaService } from "../prisma/prisma.service";
 import { tenantBusinessState } from "./tenant-business-state";
+import { judgedAtStore, type SaleFulfilmentKind } from "./sale-fulfilment";
 import { ProductLabelsService } from "../product-labels/product-labels.service";
 import {
   activeRuleWhere,
@@ -146,6 +147,8 @@ export interface SellableLinesParams {
   switchGated?: boolean;
   /** As `EvaluateOptions.skipPortalOnlyRules`. */
   skipPortalOnlyRules?: boolean;
+  /** As `EvaluateOptions.fulfilmentKind`. */
+  fulfilmentKind?: SaleFulfilmentKind;
 }
 
 export interface EvaluateOptions {
@@ -165,6 +168,11 @@ export interface EvaluateOptions {
    * order of legacy provenance (a NULL creator/editor role beside known staff), which is staff-built.
    */
   skipPortalOnlyRules?: boolean;
+  /**
+   * L8: how the goods change hands (`sale-fulfilment.ts`). COUNTER / PICKUP judge a STATE rule on the STORE's state for
+   * every customer, named or walk-in; DELIVERY or omitted keeps the customer-address rule (the unchanged behaviour).
+   */
+  fulfilmentKind?: SaleFulfilmentKind;
 }
 
 /**
@@ -448,7 +456,12 @@ export class SellingRestrictionsService {
       }
     }
     let governingState = UNRESOLVED_STATE;
-    if (stateRuleInPlay(matched, channel, at) && customerId) {
+    if (stateRuleInPlay(matched, channel, at) && judgedAtStore(options?.fulfilmentKind)) {
+      // L8: a counter sale / pickup is judged where the STORE is, whoever the customer is (or none). No usable store
+      // state stays UNRESOLVED (INDETERMINATE, fail closed) — never the customer's address instead.
+      const state = await tenantBusinessState(this.prisma, tenantId);
+      governingState = state ? { resolved: true, state } : UNRESOLVED_STATE;
+    } else if (stateRuleInPlay(matched, channel, at) && customerId) {
       // Ownership check + addresses in ONE query through the customer: a nested select is not
       // rewritten by the tenant extension, so a legacy address row with a NULL tenantId is still
       // seen (dropping it could let a different, stamped address govern), and a customer that
@@ -595,6 +608,7 @@ export class SellingRestrictionsService {
         at: params.at,
         switchGated: params.switchGated,
         skipPortalOnlyRules: params.skipPortalOnlyRules,
+        fulfilmentKind: params.fulfilmentKind,
       },
     );
   }
