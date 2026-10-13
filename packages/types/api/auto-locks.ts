@@ -20,8 +20,12 @@ export interface AutoLockWouldLock {
   kind: AutoLockKindValue;
   /** trialEndsAt ISO / periodEnd ISO / Stripe sub id / dunning invoice id. */
   key: string;
-  /** Set when the nightly job still has to ask Stripe before it locks (the overdue-subscription sweep). */
-  via?: "stripe_check_pending";
+  /**
+   * `stripe_check_pending`: the nightly job still has to ask Stripe before it locks (the overdue-subscription
+   * sweep). `fresh_final_first`: the dunning final notice predates the pause, so a FRESH final goes out first and
+   * the lock follows 24 h later (row 412) - not "within the hour".
+   */
+  via?: "stripe_check_pending" | "fresh_final_first";
 }
 
 /** A lock that WAS held (a durable skip record), newest first. */

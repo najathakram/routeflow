@@ -32,9 +32,24 @@ export const AUTO_LOCK_SKIP_REASON = "paused by rollout switch";
 /** The only tenant classes that keep locking while the switch is paused (QA can still exercise the locks). */
 const UNPROTECTED_CLASSES: ReadonlySet<string> = new Set(["TEST", "DEMO", "INTERNAL"]);
 
+/**
+ * Does the rollout pause hold this tenant's automatic locks? True for PRODUCTION, a missing class and any unknown
+ * value (fail closed); false only for an explicit TEST / DEMO / INTERNAL. The ONE definition: `autoLockAllowed`
+ * and the dunning "final notice is stale after an unpause" rule (row 412) both ask it.
+ */
+export function autoLockClassProtected(cls: string | null | undefined): boolean {
+  return !(cls != null && UNPROTECTED_CLASSES.has(cls));
+}
+
 /** What a writer needs from the switch (the service implements it; a spec can pass a stub). */
 export interface AutoLockSwitch {
   isPaused(): Promise<boolean>;
+  /**
+   * Row 412: the instant of the switch's LAST flip to unpaused, or null while it is paused. A dunning final notice
+   * sent before this instant was sent while the pause could still hold the lock, so it no longer counts. Absent on
+   * a bare stub = no boundary known = no notice is stale (the pre-412 behaviour).
+   */
+  unpausedSince?(): Promise<Date | null>;
 }
 
 /** The kind of a skip claim row, or null when `milestone` is not one of ours. */
@@ -61,7 +76,7 @@ export async function autoLockAllowed(
   // Fail closed (SA-775 S2): while paused ONLY an explicitly non-production class may lock. PRODUCTION, a missing or
   // null class and any unknown value are PROTECTED, so a row the code cannot classify is never the one that locks.
   if (!(await autoLocks.isPaused())) return true;
-  return tenant.class != null && UNPROTECTED_CLASSES.has(tenant.class);
+  return !autoLockClassProtected(tenant.class);
 }
 
 export interface AutoLockSkip {
