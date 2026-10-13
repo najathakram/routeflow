@@ -13,8 +13,9 @@
  *
  * Inside each batch, BEFORE any write (SA M4): the batch's TenantUnits are re-read by nameKey FOR SHARE
  * (a unit deleted since planning is not linked; the share lock keeps it from being renamed or deleted
- * until COMMIT), and every planned parent is re-read FOR SHARE (its factor and product must still be
- * the planned ones).
+ * until COMMIT), every planned parent row is re-read FOR SHARE (its factor and product must still be
+ * the planned ones), and for a fill planned with no parent row (the base or the pack) the product's
+ * unitsPerBox is re-read FOR SHARE (the pack must still be the planned one).
  *
  * Resume and idempotence: every write is a compare-and-set on the values the plan was built from (a
  * link only where tenantUnitId IS NULL and the label is unchanged; a parent fill only where perParent
@@ -39,6 +40,14 @@ const UNITS_FOR_SHARE = `SELECT id, "nameKey" FROM "TenantUnit"
   WHERE "tenantId" = $1 AND "nameKey" = ANY($2::text[]) FOR SHARE`;
 const PARENTS_FOR_SHARE = `SELECT id, "productId", "factorToBase" FROM "ProductUnit"
   WHERE "tenantId" = $1 AND id = ANY($2::text[]) FOR SHARE`;
+const PACKS_FOR_SHARE = `SELECT id, "unitsPerBox" FROM "Product"
+  WHERE "tenantId" = $1 AND id = ANY($2::text[]) FOR SHARE`;
+
+/** The pack size a product's unitsPerBox stands for: an integer > 1, else none (null). */
+const packOf = (unitsPerBox) => {
+  const n = Number(unitsPerBox);
+  return Number.isInteger(n) && n > 1 ? n : null;
+};
 
 /**
  * Group the plan's writes by product, then slice the products into batches of `size`.
@@ -92,8 +101,8 @@ function requireIds(...ids) {
  *           productIdByUnit: Map<string, string>,
  *           batchSize?: number,
  *           onBatch?: (done: number, total: number) => void }} args
- * @returns {Promise<{ batches: number, linked: number, parentFilled: number, linksChanged: number,
- *                     parentsChanged: number }>}
+ * @returns {Promise<{ batches: number, unitsCreated: number, linked: number, parentFilled: number,
+ *                     linksChanged: number, parentsChanged: number }>}
  *   linked/parentFilled are rows ACTUALLY written; linksChanged/parentsChanged are planned writes that
  *   were skipped because a row changed since planning (left for a re-run, never overwritten).
  */
@@ -111,17 +120,17 @@ async function applyTenantUnitsPlan({
     for (const sql of WRITE_TIMEOUTS) await db.$executeRawUnsafe(sql);
   };
 
+  // Inserted rows, counted by the database: a unit created by someone else since planning is skipped
+  // (the unique (tenantId, nameKey) holds), so this is what the run actually created.
+  let unitsCreated = 0;
   if (plan.toCreate.length > 0) {
     await prisma.$transaction(async (db) => {
       await setTimeouts(db);
-      for (const c of plan.toCreate) {
-        await db.tenantUnit.upsert({
-          where: { tenantId_nameKey: { tenantId, nameKey: c.nameKey } },
-          create: { tenantId, name: c.name, nameKey: c.nameKey },
-          update: {},
-          select: { id: true },
-        });
-      }
+      const res = await db.tenantUnit.createMany({
+        data: plan.toCreate.map((c) => ({ tenantId, name: c.name, nameKey: c.nameKey })),
+        skipDuplicates: true,
+      });
+      unitsCreated = res.count;
     }, TX_OPTIONS);
   }
 
@@ -151,6 +160,16 @@ async function applyTenantUnitsPlan({
           parentById.set(r.id, r);
         }
       }
+      // ...and the pack of every product with a fill planned against no parent row.
+      const packProductIds = [
+        ...new Set(batch.parentFills.filter((f) => f.parentUnitId == null).map((f) => f.productId)),
+      ];
+      const packByProduct = new Map();
+      if (packProductIds.length > 0) {
+        for (const r of await db.$queryRawUnsafe(PACKS_FOR_SHARE, tenantId, packProductIds)) {
+          packByProduct.set(r.id, packOf(r.unitsPerBox));
+        }
+      }
 
       for (const l of batch.links) {
         const tenantUnitId = idByKey.get(l.nameKey);
@@ -178,6 +197,13 @@ async function applyTenantUnitsPlan({
             got.parentsChanged += 1;
             continue;
           }
+        } else if (
+          !packByProduct.has(f.productId) ||
+          packByProduct.get(f.productId) !== packOf(f.unitsPerBox)
+        ) {
+          // the product is gone or its pack moved: the base/pack choice no longer holds
+          got.parentsChanged += 1;
+          continue;
         }
         const res = await db.productUnit.updateMany({
           // Compare-and-set: still no perParent, the same factor, and the same parent (NULL included)
@@ -199,7 +225,7 @@ async function applyTenantUnitsPlan({
     done += 1;
     if (onBatch) onBatch(done, batches.length);
   }
-  return { batches: batches.length, ...totals };
+  return { batches: batches.length, unitsCreated, ...totals };
 }
 
 module.exports = { applyTenantUnitsPlan, batchWrites, BACKFILL_BATCH_SIZE, WRITE_TIMEOUTS };

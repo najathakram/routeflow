@@ -78,22 +78,30 @@ function planTenantUnits({ productUnits, products, existingUnits }) {
   }
   for (const p of products) note(p.unit);
 
+  // nameKey -> the most common original casing (see byCasingPreference for the tie rule).
+  const bestByKey = new Map();
+  for (const [key, m] of casings)
+    bestByKey.set(key, [...m.entries()].sort(byCasingPreference)[0][0]);
+
   const synonymKeys = new Set();
   const tooLongKeys = new Set();
   const usable = new Set();
   for (const key of casings.keys()) {
+    // The limit is on the NAME a person sees (the unit's display name), never the case-folded key: a
+    // case fold can lengthen a word (U+0130 lowercases to two code units).
+    const display = existingNameByKey.get(key) ?? bestByKey.get(key);
     if (PIECE_SYNONYMS.has(key)) synonymKeys.add(key);
-    else if (key.length > MAX_NAME_LENGTH) tooLongKeys.add(key);
+    else if (display.length > MAX_NAME_LENGTH) tooLongKeys.add(key);
     else usable.add(key);
   }
 
   const toCreate = [];
   // nameKey -> the tenant's canonical display name: an existing TenantUnit's own name, else the most
-  // common original casing (see byCasingPreference for the tie rule).
+  // common original casing.
   const canonicalByKey = new Map();
   let existing = 0;
   for (const key of [...usable].sort()) {
-    const best = [...casings.get(key).entries()].sort(byCasingPreference)[0][0];
+    const best = bestByKey.get(key);
     canonicalByKey.set(key, existingNameByKey.get(key) ?? best);
     if (existingKeys.has(key)) {
       existing += 1;
@@ -119,7 +127,7 @@ function planTenantUnits({ productUnits, products, existingUnits }) {
     }
   }
 
-  const { parentFills, parentSkips } = planParentFills(productUnits);
+  const { parentFills, parentSkips } = planParentFills(productUnits, products);
 
   return {
     toCreate,
@@ -143,10 +151,13 @@ function planTenantUnits({ productUnits, products, existingUnits }) {
 
 /**
  * SA-729a item 3: fill a ladder level's parentUnitId / perParent where they are NULL, from the
- * product's own levels (factorToBase = pieces per one of that level).
- *   - parent = the largest LOWER level of the same product whose factor divides this one (a factor-1
- *     level is the base row); with no such level the parent is the implicit base piece, so
- *     parentUnitId stays NULL and perParent = the factor;
+ * product's own levels (factorToBase = pieces per one of that level) and its pack.
+ *   - the parent is the largest LOWER size of the product that divides this one: a ProductUnit level
+ *     (factor > 1), or the PACK (Product.unitsPerBox > 1), which has no row, so it is written as
+ *     parentUnitId NULL with perParent = factor / unitsPerBox ("4 Box = 1 Case"); a row at the pack's
+ *     own size is that level, so the row wins the tie;
+ *   - with neither, the parent is the base: parentUnitId NULL, perParent = the factor. A factor-1 ROW
+ *     is never a parent (the base is NULL, SA-728);
  *   - a level that already names a parent but has no perParent gets factor / parent factor;
  *   - perParent must be an integer >= 2, otherwise the level is reported and skipped (never guessed);
  *   - a factor-1 level is the base itself (nothing to fill); a level with perParent set is done.
@@ -154,7 +165,12 @@ function planTenantUnits({ productUnits, products, existingUnits }) {
  * factor): the apply writes only where they still hold.
  * @returns {{ parentFills: Array<object>, parentSkips: Array<{ productUnitId: string, reason: string }> }}
  */
-function planParentFills(productUnits) {
+function planParentFills(productUnits, products = []) {
+  const packByProduct = new Map();
+  for (const p of products) {
+    const upb = Number(p.unitsPerBox);
+    if (Number.isInteger(upb) && upb > 1) packByProduct.set(p.id, upb);
+  }
   const byProduct = new Map();
   for (const u of productUnits) {
     let list = byProduct.get(u.productId);
@@ -176,19 +192,28 @@ function planParentFills(productUnits) {
       if (f === 1) continue; // the base row: no parent, no count
       let parent = null;
       for (const c of siblings) {
-        if (c.id === u.id || !Number.isInteger(c.factorToBase) || c.factorToBase < 1) continue;
+        // a factor-1 row is the base, never a parent
+        if (c.id === u.id || !Number.isInteger(c.factorToBase) || c.factorToBase <= 1) continue;
         if (c.factorToBase < f && f % c.factorToBase === 0) {
           if (!parent || c.factorToBase > parent.factorToBase) parent = c;
         }
       }
-      const parentFactor = parent ? parent.factorToBase : 1;
+      const upb = packByProduct.get(u.productId);
+      const packFits = upb != null && upb < f && f % upb === 0;
+      // the pack beats only a SMALLER dividing row (a row at the pack's size is the pack's level)
+      const viaPack = packFits && (!parent || upb > parent.factorToBase);
+      const parentFactor = viaPack ? upb : parent ? parent.factorToBase : 1;
       parentFills.push({
         productUnitId: u.id,
         productId: u.productId,
         factorToBase: f,
         fromParentUnitId: null,
-        parentUnitId: parent ? parent.id : null,
+        parentUnitId: !viaPack && parent ? parent.id : null,
         parentFactor,
+        // the pack the fill was planned against (null = no pack, or not chosen): the apply re-reads
+        // Product.unitsPerBox and skips the fill if the pack moved
+        packFactor: viaPack ? upb : null,
+        unitsPerBox: upb ?? null,
         perParent: f / parentFactor,
       });
       continue;
@@ -210,6 +235,7 @@ function planParentFills(productUnits) {
       fromParentUnitId: u.parentUnitId,
       parentUnitId: u.parentUnitId,
       parentFactor: parent.factorToBase,
+      packFactor: null,
       perParent: per,
     });
   }

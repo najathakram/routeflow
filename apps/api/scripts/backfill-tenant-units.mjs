@@ -10,8 +10,10 @@
 //   (c) ProductUnit.tenantUnitId linked by nameKey where NULL (archived units included: never a
 //       second unit for a key; links to an archived unit are reported so it can be restored);
 //   (d) ProductUnit.parentUnitId / perParent filled where NULL (SA-729a item 3): the parent is the
-//       largest lower level of the same product whose factor divides this one, else the base;
-//       perParent must be an integer >= 2, otherwise the level is reported and skipped.
+//       largest lower size of the product that divides this one: a level row (factor > 1), or the
+//       pack (Product.unitsPerBox > 1, written as parentUnitId NULL + perParent = factor / pack),
+//       else the base (parentUnitId NULL; a factor-1 row is never a parent, SA-728); perParent must
+//       be an integer >= 2, otherwise the level is reported and skipped.
 //
 // SAFETY
 //   - DRY-RUN by default: ONE `REPEATABLE READ, READ ONLY` transaction (checked read-only before any
@@ -142,7 +144,7 @@ export async function readSnapshot(prisma, tenantId) {
     });
     const products = await tx.product.findMany({
       where: { tenantId },
-      select: { id: true, unit: true },
+      select: { id: true, unit: true, unitsPerBox: true },
     });
     const existingUnits = await tx.tenantUnit.findMany({
       where: { tenantId },
@@ -217,8 +219,12 @@ async function main(argv = process.argv.slice(2), env = process.env) {
             `parents=${result.parentsChanged}; re-run to pick them up.`,
         );
       }
+      // What the writes actually did: a unit someone else created since planning counts as existing.
       counts = {
         ...plan.counts,
+        tenantUnitsCreated: result.unitsCreated,
+        tenantUnitsExisting:
+          plan.counts.tenantUnitsExisting + (plan.toCreate.length - result.unitsCreated),
         productUnitsLinked: result.linked,
         productUnitsParentFilled: result.parentFilled,
       };
