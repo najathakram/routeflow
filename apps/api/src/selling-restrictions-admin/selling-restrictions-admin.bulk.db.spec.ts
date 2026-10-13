@@ -20,6 +20,8 @@ import { describeDb, requireLocalDatabaseUrl } from "../common/testing/db-spec";
 import { PrismaService } from "../prisma/prisma.service";
 import { TenantContextService } from "../tenant/tenant-context.service";
 import { ProductLabelsService } from "../product-labels/product-labels.service";
+import { ProductLabelsAdminService } from "../product-categories/product-labels-admin.service";
+import type { AuditService } from "../audit/audit.service";
 import { SellingRestrictionsAdminService } from "./selling-restrictions-admin.service";
 import type { JwtPayload } from "../auth/jwt-payload.interface";
 
@@ -309,16 +311,15 @@ describeDb("selling-restriction bulk create against real Postgres", () => {
     await raw.productCategoryLabel.create({
       data: { tenantId: tenantA, productId: parent, categoryId: categoryA, mode: "INCLUDE" },
     });
-    await raw.productCategoryLabel.create({
-      data: {
-        tenantId: tenantA,
-        productId: optedOut,
-        categoryId: categoryA,
-        mode: "EXCLUDE",
-        reason: "not a vape",
-        parentProductIdAtWrite: parent,
-      },
-    });
+    // the opt-out goes through the ONE label writer, which stamps the variant's current parent
+    const labels = new ProductLabelsAdminService(
+      prisma,
+      { log: jest.fn().mockResolvedValue(undefined) } as unknown as AuditService,
+      new ProductLabelsService(prisma),
+    );
+    await asA(() =>
+      labels.setLabel(optedOut, categoryA, { mode: "EXCLUDE", reason: "not a vape" }, admin),
+    );
     await asA(() =>
       service.bulkCreate({ jurisdiction: "STATE", states: ["TX"], productIds: [variant] }, admin),
     );
