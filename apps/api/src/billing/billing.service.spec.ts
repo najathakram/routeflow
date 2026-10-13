@@ -252,6 +252,11 @@ const LIVE_SUB = {
   stripeCustomerId: "cus_1",
 };
 const SUB_EVT = { id: "sub_1", customer: "cus_1" };
+// F1 (a): the handler ignores the payload's state and re-fetches; these tests want "Stripe says what the event says".
+const updated = (svc: any, evt: any) => {
+  svc.stripe.getSubscription.mockResolvedValue({ customer: "cus_1", ...evt });
+  return svc.onSubscriptionUpdated(evt);
+};
 // SA-733r3 N1: the reinstatement needs the invoice's subscription to equal the row's stripeSubId.
 // a Stripe-billed paying row whose own subscription is sub_1 (the default make() sub has no stripeSubId)
 const STRIPE_PAYER = {
@@ -362,7 +367,7 @@ describe("BillingService — Stripe churn/reactivation MRR ledger", () => {
 
     it("clears the downgrade markers when the update ARMS a cancellation", async () => {
       const { svc, prisma } = make({ sub: LIVE_SUB });
-      await (svc as any).onSubscriptionUpdated(evt(true));
+      await updated(svc, evt(true));
       expect(prisma.tenantSubscription.update.mock.calls[0][0].data).toMatchObject({
         cancelAtPeriodEnd: true,
         downgradeToPlanKey: null,
@@ -373,7 +378,7 @@ describe("BillingService — Stripe churn/reactivation MRR ledger", () => {
 
     it("leaves the downgrade markers untouched on an ordinary update", async () => {
       const { svc, prisma } = make({ sub: LIVE_SUB });
-      await (svc as any).onSubscriptionUpdated(evt(false));
+      await updated(svc, evt(false));
       // A cycle roll, a price sync or an add-on item arrives as subscription.updated too —
       // clearing the markers there would silently drop a downgrade the tenant scheduled.
       const data = prisma.tenantSubscription.update.mock.calls[0][0].data;
@@ -2601,7 +2606,7 @@ describe("#2436 Stripe API dahlia — the subscription period lives on items", (
 
   it("customer.subscription.updated reads a dahlia payload's period from items", async () => {
     const { svc, prisma } = make({ sub: LIVE_SUB });
-    await (svc as any).onSubscriptionUpdated({
+    await updated(svc, {
       ...SUB_EVT,
       cancel_at_period_end: false,
       ...dahlia(),
@@ -2632,7 +2637,7 @@ describe("#2436 Stripe API dahlia — the subscription period lives on items", (
 
   it("a subscription with no period anywhere writes NO period fields (never an Invalid Date)", async () => {
     const { svc, prisma } = make({ sub: LIVE_SUB });
-    await (svc as any).onSubscriptionUpdated({ ...SUB_EVT, cancel_at_period_end: false });
+    await updated(svc, { ...SUB_EVT, cancel_at_period_end: false });
     const data = prisma.tenantSubscription.update.mock.calls[0][0].data;
     expect(data).not.toHaveProperty("periodStart");
     expect(data).not.toHaveProperty("periodEnd");
@@ -2640,7 +2645,7 @@ describe("#2436 Stripe API dahlia — the subscription period lives on items", (
 
   it("a pre-dahlia payload (top-level period, older endpoint version) still reads its period", async () => {
     const { svc, prisma } = make({ sub: LIVE_SUB });
-    await (svc as any).onSubscriptionUpdated({
+    await updated(svc, {
       ...SUB_EVT,
       cancel_at_period_end: false,
       current_period_start: 1_700_000_000,
@@ -2761,7 +2766,7 @@ describe("#2440 subscription upkeep — match by subscription id, status mapping
 
     it("looks the row up by the subscription id", async () => {
       const { svc, prisma } = make({ sub: LIVE_SUB });
-      await (svc as any).onSubscriptionUpdated(upd("active"));
+      await updated(svc, upd("active"));
       expect(prisma.tenantSubscription.findFirst.mock.calls[0][0].where).toEqual({
         stripeSubId: "sub_1",
       });
@@ -2769,7 +2774,7 @@ describe("#2440 subscription upkeep — match by subscription id, status mapping
 
     it("status canceled behaves as deleted: ACTIVE ⇒ CANCELLED with one −MRR delta", async () => {
       const { svc, tx, events } = make({ transitionCount: 1, sub: LIVE_SUB });
-      await (svc as any).onSubscriptionUpdated(upd("canceled"));
+      await updated(svc, upd("canceled"));
       expect(tx.tenant.updateMany.mock.calls[0][0]).toMatchObject({
         where: { id: "t1", status: "ACTIVE", class: "PRODUCTION" }, // SA-775 S3: the judged class is part of the CAS
         data: { status: "CANCELLED" },
@@ -2785,7 +2790,7 @@ describe("#2440 subscription upkeep — match by subscription id, status mapping
           plainCasCount: 1,
           sub: LIVE_SUB,
         });
-        await (svc as any).onSubscriptionUpdated(upd(status));
+        await updated(svc, upd(status));
         expect(tx.tenant.updateMany).not.toHaveBeenCalled();
         expect(prisma.tenant.updateMany).not.toHaveBeenCalled();
         expect(prisma.tenant.update).not.toHaveBeenCalled();
@@ -2793,18 +2798,92 @@ describe("#2440 subscription upkeep — match by subscription id, status mapping
       },
     );
 
+    // F1 (a): the webhook payload's state is never trusted - a STALE event redelivered after a renewal must not
+    // re-arm a cancel. The handler re-fetches the subscription and writes only the FETCHED object's state.
+    describe("F1(a): re-fetch, never the payload", () => {
+      const fetched = (stripe: any, over: Record<string, unknown>) =>
+        stripe.getSubscription.mockResolvedValue({
+          id: "sub_1",
+          customer: "cus_1",
+          status: "active",
+          cancel_at_period_end: false,
+          items: {
+            data: [
+              {
+                id: "si_base",
+                current_period_start: 1_800_000_000,
+                current_period_end: 1_802_000_000,
+              },
+            ],
+          },
+          ...over,
+        });
+
+      it("a stale cancel=true payload after a renewal: the FETCHED (renewed, un-cancelled) state is written - no re-arm, no rewind", async () => {
+        const { svc, stripe, prisma, tx, events } = make({ transitionCount: 1, sub: LIVE_SUB });
+        fetched(stripe, {});
+        await (svc as any).onSubscriptionUpdated(
+          upd("active", {
+            cancel_at_period_end: true,
+            items: {
+              data: [{ id: "si_base", current_period_start: 1, current_period_end: 2 }],
+            },
+          }),
+        );
+        expect(stripe.getSubscription).toHaveBeenCalledWith("sub_1");
+        const data = prisma.tenantSubscription.update.mock.calls[0][0].data;
+        expect(data.cancelAtPeriodEnd).toBe(false);
+        expect(data.periodEnd).toEqual(new Date(1_802_000_000 * 1000));
+        expect(data.downgradeEffectiveAt).toBeUndefined(); // an un-cancelled sub never disarms a downgrade
+        expect(tx.tenant.updateMany).not.toHaveBeenCalled();
+        expect(events.emit).not.toHaveBeenCalled();
+      });
+
+      it("a stale status=canceled payload while Stripe says active: no cancellation", async () => {
+        const { svc, stripe, tx, events } = make({ transitionCount: 1, sub: LIVE_SUB });
+        fetched(stripe, {});
+        await (svc as any).onSubscriptionUpdated(upd("canceled"));
+        expect(tx.tenant.updateMany).not.toHaveBeenCalled();
+        expect(events.emit).not.toHaveBeenCalled();
+      });
+
+      it("Stripe 404 (resource_missing) goes down the subscription.deleted path", async () => {
+        const { svc, stripe, tx, events } = make({ transitionCount: 1, sub: LIVE_SUB });
+        stripe.getSubscription.mockRejectedValue(
+          Object.assign(new Error("No such subscription"), {
+            code: "resource_missing",
+            statusCode: 404,
+          }),
+        );
+        await (svc as any).onSubscriptionUpdated(upd("active"));
+        expect(tx.tenant.updateMany.mock.calls[0][0]).toMatchObject({
+          data: { status: "CANCELLED" },
+        });
+        expect(deltaOf(events, BILLING_EVENTS.SUBSCRIPTION_CANCELED)).toBe(-349);
+      });
+
+      it("any other fetch error THROWS (the webhook ledger retries) and never falls back to the payload", async () => {
+        const { svc, stripe, prisma, tx, events } = make({ transitionCount: 1, sub: LIVE_SUB });
+        stripe.getSubscription.mockRejectedValue(new Error("Stripe timeout"));
+        await expect(
+          (svc as any).onSubscriptionUpdated(upd("canceled", { cancel_at_period_end: true })),
+        ).rejects.toThrow("Stripe timeout");
+        writesNothing(prisma, tx, events);
+      });
+    });
+
     it("another customer's subscription id ⇒ no write at all", async () => {
       const { svc, prisma, tx, events } = make({
         transitionCount: 1,
         sub: { ...LIVE_SUB, stripeCustomerId: "cus_other" },
       });
-      await (svc as any).onSubscriptionUpdated(upd("canceled"));
+      await updated(svc, upd("canceled"));
       writesNothing(prisma, tx, events);
     });
 
     it("a free pilot (no stripeSubId on the row) is untouched", async () => {
       const { svc, prisma, tx, events } = make({ sub: { ...LIVE_SUB, stripeSubId: null } });
-      await (svc as any).onSubscriptionUpdated(upd("canceled", { cancel_at_period_end: true }));
+      await updated(svc, upd("canceled", { cancel_at_period_end: true }));
       writesNothing(prisma, tx, events);
     });
   });
@@ -3020,7 +3099,7 @@ describe("#2440 Opus nits on #2446 — period source and null-period warnings", 
   it("N2: subscription.updated reads the base item's period, skipping the tenant's add-on item", async () => {
     const { svc, prisma } = make({ sub: LIVE_SUB });
     prisma.tenantAddon.findMany.mockResolvedValue([{ stripeItemId: "si_addon" }]);
-    await (svc as any).onSubscriptionUpdated({
+    await updated(svc, {
       ...SUB_EVT,
       cancel_at_period_end: false,
       ...twoItems,
@@ -3045,7 +3124,7 @@ describe("#2440 Opus nits on #2446 — period source and null-period warnings", 
   it("N1: subscription.updated with no period logs a warning", async () => {
     const { svc } = make({ sub: LIVE_SUB });
     const warn = jest.spyOn((svc as any).logger, "warn").mockImplementation(() => undefined);
-    await (svc as any).onSubscriptionUpdated({ ...SUB_EVT, cancel_at_period_end: false });
+    await updated(svc, { ...SUB_EVT, cancel_at_period_end: false });
     expect(warn.mock.calls.some((c: any[]) => /no billing period/.test(String(c[0])))).toBe(true);
   });
 

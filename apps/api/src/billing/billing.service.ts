@@ -2919,13 +2919,29 @@ ${updateLine}
     );
   }
 
-  private async onSubscriptionUpdated(subscription: any): Promise<void> {
+  private async onSubscriptionUpdated(payload: any): Promise<void> {
     const sub = await this.matchStripeSubscription(
-      stripeRefId(subscription?.id),
-      subscription?.customer,
+      stripeRefId(payload?.id),
+      payload?.customer,
       "customer.subscription.updated",
     );
     if (!sub) return;
+
+    // F1 (a): the payload is only a pointer. A redelivered or reordered event carries the state of its own
+    // moment (a stale cancel_at_period_end=true after a renewal would re-arm a cancel and lock a paying
+    // tenant), so everything below is written from the subscription as Stripe has it NOW. A 404 means Stripe
+    // no longer knows it: the subscription.deleted path. Any other error THROWS (the webhook ledger retries);
+    // the payload is never a fallback.
+    let subscription: any;
+    try {
+      subscription = await this.stripe.getSubscription(sub.stripeSubId as string);
+    } catch (err) {
+      if ((err as any)?.code === "resource_missing" || (err as any)?.statusCode === 404) {
+        await this.cancelFromStripe(sub, "subscription_deleted");
+        return;
+      }
+      throw err;
+    }
 
     // Update period dates and cancellation flag. The downgrade markers are cleared ONLY when
     // this event ARMS a cancellation (a cancellation supersedes a scheduled downgrade, as
