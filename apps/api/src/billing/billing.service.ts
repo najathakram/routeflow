@@ -100,7 +100,6 @@ import {
   STRIPE_CHECKOUT_PARK_RESOLVED_ACTION,
   STRIPE_CHECKOUT_PAYMENT_PROCESSING_ACTION,
   STRIPE_CHECKOUT_PRICE_RESYNC_ACTION,
-  STRIPE_PAYMENT_REINSTATE_BLOCKED_ACTION,
 } from "./config-snapshot-audit.constants";
 import {
   isLiveStripeSubscriptionStatus,
@@ -2599,22 +2598,32 @@ export class BillingService {
         `payment_succeeded for tenant ${sub.tenantId}: status ${paidStatus ?? "unknown"}` +
           `${paidReason ? ` (${paidReason})` : ""} is not a payment-reinstatable state - not reinstating`,
       );
-      await this.prisma.auditLog
-        .create({
-          data: {
-            tenantId: sub.tenantId,
-            action: STRIPE_PAYMENT_REINSTATE_BLOCKED_ACTION,
-            entityType: "tenant",
-            entityId: sub.tenantId,
-            meta: {
-              status: paidStatus ?? null,
-              readOnlyReason: paidReason,
-              stripeSubId: sub.stripeSubId,
-              invoiceId: invoice?.id ?? null,
-            },
+      // ONE row in the platform-admin feed: the audit trail AND the ops alert (platformAdmin: true). Money was
+      // taken for a tenant an admin locked - someone must decide on a refund or a deliberate reinstatement.
+      const amountPaid = invoice?.amount_paid ?? null;
+      const message =
+        `Invoice ${invoice?.id ?? "(unknown)"} (${amountPaid ?? "?"} cents) was paid while the tenant is ` +
+        `${paidStatus ?? "unknown"}${paidReason ? ` (${paidReason})` : ""}. The status was NOT changed; ` +
+        `decide on a refund or reinstate it deliberately.`;
+      try {
+        await writeAdminNotice(this.prisma, {
+          tenantId: sub.tenantId,
+          action: AdminAuditAction.PAID_WHILE_ADMIN_LOCKED,
+          message,
+          meta: {
+            status: paidStatus ?? null,
+            readOnlyReason: paidReason,
+            stripeSubId: sub.stripeSubId,
+            invoiceId: invoice?.id ?? null,
+            amountPaid,
           },
-        })
-        .catch(() => undefined);
+        });
+      } catch (e) {
+        this.logger.error(
+          `payment_succeeded for tenant ${sub.tenantId}: the paid-while-locked notice could not be written`,
+          e as Error,
+        );
+      }
       return;
     }
 

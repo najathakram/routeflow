@@ -497,6 +497,8 @@ describe("BillingService — Stripe churn/reactivation MRR ledger", () => {
   // book +MRR, or wipe a live dunning clock - customer-wide matching is what made that possible.
   describe("N1: payment_succeeded reinstates only for the row's OWN subscription", () => {
     const sub = (id: string | null) => ({
+      id: "in_paid",
+      amount_paid: 34900,
       customer: "cus_1",
       ...(id ? { parent: { subscription_details: { subscription: id } } } : {}),
     });
@@ -531,8 +533,22 @@ describe("BillingService — Stripe churn/reactivation MRR ledger", () => {
     describe("F4: a renewal never undoes an admin's READ_ONLY / CANCELLED", () => {
       const blockedAudit = (prisma: any) =>
         prisma.auditLog.create.mock.calls.find(
-          (c: any[]) => c[0].data.action === "STRIPE_PAYMENT_REINSTATE_BLOCKED",
+          (c: any[]) => c[0].data.action === "PAID_WHILE_ADMIN_LOCKED",
         )?.[0].data;
+
+      it("an alert/audit write that fails is logged and never fails the webhook", async () => {
+        const { svc, prisma } = make({
+          transitionCount: 1,
+          sub: row({ status: "READ_ONLY", readOnlyReason: "admin_set" }),
+        });
+        prisma.auditLog.create.mockRejectedValue(new Error("db down"));
+        const err = jest.spyOn(Logger.prototype, "error").mockImplementation(() => undefined);
+        const warn = jest.spyOn(Logger.prototype, "warn").mockImplementation(() => undefined);
+        await expect((svc as any).onPaymentSucceeded(sub("sub_1"))).resolves.toBeUndefined();
+        expect(err).toHaveBeenCalled();
+        err.mockRestore();
+        warn.mockRestore();
+      });
 
       it.each([
         ["READ_ONLY(admin_set)", { status: "READ_ONLY", readOnlyReason: "admin_set" }],
@@ -551,11 +567,19 @@ describe("BillingService — Stripe churn/reactivation MRR ledger", () => {
           expect(prisma.tenant.update).not.toHaveBeenCalled();
           expect(warn).toHaveBeenCalledWith(expect.stringContaining("not reinstating"));
           warn.mockRestore();
+          // ONE row in the platform-admin feed (platformAdmin: true) is both the audit trail and the ops alert
           expect(blockedAudit(prisma)).toMatchObject({
             tenantId: "t1",
             entityType: "tenant",
-            meta: { status: tenant.status, readOnlyReason: tenant.readOnlyReason },
+            meta: {
+              platformAdmin: true,
+              status: tenant.status,
+              readOnlyReason: tenant.readOnlyReason,
+              invoiceId: "in_paid",
+              amountPaid: 34900,
+            },
           });
+          expect(blockedAudit(prisma).meta.message).toMatch(/in_paid/);
         },
       );
 
