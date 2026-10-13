@@ -1,26 +1,24 @@
 import { CATCHUP_META } from "./catchup-claim";
-import { planCheckoutAnchor } from "./checkout-anchor";
 import {
   CATCHUP_TRIAL_MIN_LEAD_MS,
-  CATCHUP_TRIAL_STUB_MIN_LEAD_MS,
   STRIPE_MIN_CHARGE_CENTS,
   type CatchupPlan,
 } from "./catchup-plan";
 
 /**
- * The Stripe Checkout parameters of a catch-up session - a PURE function of the plan, ONE builder per shape
- * (SA-733r5). Only shapes Stripe's Checkout documentation allows are built (docs.stripe.com/payments/checkout/
- * billing-cycle, "Limitations"; docs.stripe.com/billing/subscriptions/trials/free-trials):
+ * The Stripe Checkout parameters of a catch-up session - a PURE function of the plan, ONE builder per shape. Only
+ * shapes Stripe's Checkout documentation allows are built (docs.stripe.com/payments/checkout/billing-cycle,
+ * "Limitations"; docs.stripe.com/billing/subscriptions/trials/free-trials). Two shapes are reachable (SA-733r9 G4):
  *
- *   trial_one_time `subscription_data.trial_end = A` alone (A = the first 1st at 12:00Z >= now + 72 h; no explicit
- *                  billing_cycle_anchor - the anchor follows the trial end - and no proration_behavior), the
- *                  recurring lines, and ONE one-time line = the unpaid [paid-through, A) (base + add-ons, prorated).
- *                  Stripe charges the one-time line at completion; the recurring cycle starts at A. Documented:
- *                  trials combine with one-time prices - the one-time amount is invoiced up front.
- *   trial          prepaid (R16-3): `trial_end = T` alone, recurring lines only; the stub is a post-completion draft
- *                  invoice (catchup-claim.service).
- *   anchor_no_line prepaid with T under 72 h away: `billing_cycle_anchor` + `proration_behavior: none`, recurring
- *                  lines only (a one-time line beside `none` is rejected by Checkout).
+ *   trial_one_time `subscription_data.trial_end = A` alone (A = the first 1st at 12:00Z >= max(now + 72 h, S); no
+ *                  explicit billing_cycle_anchor, no proration_behavior), the recurring lines, and ONE one-time line =
+ *                  [S, A) (base + add-ons, prorated), charged at completion. A line under $0.50 is forgiven: no line,
+ *                  `catchup_stub_cents` "0" and `catchup_forgiven_cents` for the claim's audit row.
+ *   trial          S === A: `trial_end = A` alone, recurring lines only, no line (ruling 8(e)).
+ *
+ * EVERY shape writes `catchup_from` (= S) and `catchup_to` (= A) on the session metadata: settle reads them and never
+ * recomputes paid coverage (MF-A / MF-B). The session never carries `discounts` or `allow_promotion_codes` (no
+ * coupons in the catch-up, so the paid amount always equals the promised line).
  *
  * {@link assertCheckoutAcceptable} is the structural pin (R5-4) that no built params ever pair a one-time line with
  * `proration_behavior`, nor `trial_end` with `billing_cycle_anchor`; it runs on everything returned here. There is
@@ -121,6 +119,9 @@ function buildTrialOneTime(i: CatchupSessionInput): Record<string, any> {
       [CATCHUP_META.shape]: "trial_one_time",
       [CATCHUP_META.stubCents]: String(stubCents),
       [CATCHUP_META.stubLabel]: plan.stub.label,
+      ...(plan.stub.belowStripeMinimum
+        ? { [CATCHUP_META.forgivenCents]: String(plan.stub.totalCents) }
+        : {}),
       ...span,
     },
     subscription_data: {
@@ -130,11 +131,15 @@ function buildTrialOneTime(i: CatchupSessionInput): Record<string, any> {
   };
 }
 
-/** trial: prepaid, T >= 72 h away. */
+/** trial: S === A (paid exactly through a 1st at least 72 h out, ruling 8(e)): no line, trial_end = A alone. */
 function buildTrial(i: CatchupSessionInput): Record<string, any> {
   const { plan } = i;
   const c = common(i);
-  const stubCents = plan.stub.totalCents >= STRIPE_MIN_CHARGE_CENTS ? plan.stub.totalCents : 0;
+  // MF-B: BOTH keys on every shape (here S === A), so settle has one metadata contract to read
+  const span = {
+    [CATCHUP_META.from]: plan.stub.from.toISOString(),
+    [CATCHUP_META.to]: plan.stub.to.toISOString(),
+  };
   return {
     ...c.sessionBase,
     payment_method_collection: "always",
@@ -144,72 +149,23 @@ function buildTrial(i: CatchupSessionInput): Record<string, any> {
       ...c.metaBase,
       [CATCHUP_META.catchup]: "prepaid",
       [CATCHUP_META.shape]: "trial",
-      [CATCHUP_META.stubCents]: String(stubCents),
+      [CATCHUP_META.stubCents]: "0",
       [CATCHUP_META.stubLabel]: plan.stub.label,
-      // r3 N3: the stub is charged at 12:00Z of the paid-through day (the claim service floors it at now + 1 h,
-      // because Stripe rejects a past timestamp)
-      [CATCHUP_META.finalizeAt]: String(
-        epoch(
-          new Date(
-            Date.UTC(
-              plan.paidThrough.getUTCFullYear(),
-              plan.paidThrough.getUTCMonth(),
-              plan.paidThrough.getUTCDate(),
-              12,
-            ),
-          ),
-        ),
-      ),
+      ...span,
     },
     subscription_data: {
       trial_end: epoch(plan.trialEndAt),
-      metadata: { ...c.subMetaBase, [CATCHUP_META.catchup]: "prepaid" },
-    },
-  };
-}
-
-/** anchor_no_line: prepaid, T under 72 h away, nothing to bill before the anchor. */
-function buildAnchorNoLine(i: CatchupSessionInput): Record<string, any> {
-  const { plan } = i;
-  const c = common(i);
-  return {
-    ...c.sessionBase,
-    line_items: c.recurring,
-    expires_at: planCheckoutAnchor(i.now).expiresAt,
-    metadata: {
-      ...c.metaBase,
-      [CATCHUP_META.catchup]: "prepaid",
-      [CATCHUP_META.shape]: "anchor_no_line",
-      [CATCHUP_META.stubCents]: "0",
-      [CATCHUP_META.stubLabel]: plan.stub.label,
-    },
-    subscription_data: {
-      billing_cycle_anchor: epoch(plan.anchorAt),
-      proration_behavior: "none",
-      metadata: { ...c.subMetaBase, [CATCHUP_META.catchup]: "prepaid" },
+      metadata: { ...c.subMetaBase, [CATCHUP_META.catchup]: "prepaid", ...span },
     },
   };
 }
 
 export function buildCatchupSessionParams(i: CatchupSessionInput): Record<string, any> {
-  const params =
-    i.plan.shape === "trial_one_time"
-      ? buildTrialOneTime(i)
-      : i.plan.shape === "trial"
-        ? buildTrial(i)
-        : buildAnchorNoLine(i);
+  const params = i.plan.shape === "trial_one_time" ? buildTrialOneTime(i) : buildTrial(i);
   // the Stripe floor the trial shapes rely on: a trial ends at least 48 h out (we keep 72 h)
   const trialEnd = params.subscription_data?.trial_end;
   if (trialEnd != null && trialEnd * 1000 - i.now.getTime() < CATCHUP_TRIAL_MIN_LEAD_MS) {
     throw new Error("catch-up trial_end is under 72 h away");
-  }
-  // Decision 5: a prepaid trial's stub must finalize before the trial ends (see CATCHUP_TRIAL_STUB_MIN_LEAD_MS)
-  if (
-    i.plan.shape === "trial" &&
-    i.plan.stub.totalCents >= STRIPE_MIN_CHARGE_CENTS &&
-    i.plan.trialEndAt.getTime() - i.now.getTime() < CATCHUP_TRIAL_STUB_MIN_LEAD_MS
-  ) {
-    throw new Error("catch-up trial with a stub ends under 98 h away");
   }
   assertCheckoutAcceptable(params);
   return params;

@@ -7,23 +7,28 @@ import {
 } from "@nestjs/common";
 import { fromCents, toCents } from "@routeflow/pricing";
 import { API_ERROR_CODES } from "../common/api-error-codes";
-import { ADMIN_AUDIT_ENTITY, AdminAuditAction } from "../platform-admin/audit-actions.constant";
+import { ADMIN_AUDIT_ENTITY } from "../platform-admin/audit-actions.constant";
 import { PrismaService } from "../prisma/prisma.service";
 import { billableAddonWhere } from "./addon-row";
 import { BillingService } from "./billing.service";
 import { CatchupClaimService } from "./catchup-claim.service";
 import {
-  CATCHUP_GO_LIVE,
   planCatchup,
   type CatchupAddon,
   type CatchupAddonRow,
   type CatchupPlan,
   type CatchupPlanResult,
-  type ActivationRecord,
 } from "./catchup-plan";
+import {
+  CATCHUP_MARKER_ACTIONS,
+  CATCHUP_MARKER_SELECT,
+  readCatchupMarkers,
+  type MarkerView,
+} from "./catchup-markers";
 import { planRefusalException, refusalCodesOf } from "./catchup-refusal";
 import { buildCatchupSessionParams } from "./catchup-session-params";
 import { PlatformPricingService } from "./platform-pricing.service";
+import { withCheckoutPolicy } from "./checkout-session-params";
 import { StripeService } from "./stripe.service";
 import { SubscriptionMutationService } from "./subscription-mutation.service";
 
@@ -50,6 +55,12 @@ export interface CatchupReport {
   planKey: string | null;
   priceSource: "override" | "catalog" | null;
   monthlyCents: number | null;
+  /** The subscription row's stored base-price snapshot, dollars (null when none) - the dry-run flags an override without one. */
+  basePriceSnapshot: number | null;
+  /** The latest billing-start override marker (valid or not), for the dry-run. */
+  billingStartOverride: { billingStart: string | null; valid: boolean } | null;
+  /** The activation markers and whether each counts as paid coverage, is voided, or was restored. */
+  markers: MarkerView[];
   rfInvoices: { open: number; paid: number };
   /** The manual subscription's current period (printed in the dry-run: the owner checks it against the invoices). */
   subPeriod?: { start: Date | null; end: Date | null } | null;
@@ -85,6 +96,9 @@ export function catchupReportJson(r: CatchupReport) {
     planKey: r.planKey,
     priceSource: r.priceSource,
     monthlyCents: r.monthlyCents,
+    basePriceSnapshot: r.basePriceSnapshot,
+    billingStartOverride: r.billingStartOverride,
+    markers: r.markers,
     rfInvoices: r.rfInvoices,
     subPeriod: r.subPeriod
       ? {
@@ -96,6 +110,8 @@ export function catchupReportJson(r: CatchupReport) {
       ? {
           ok: true as const,
           shape: p.shape,
+          floor: iso(p.floor),
+          floorSource: p.floorSource,
           paidThrough: iso(p.paidThrough),
           paidFromInvoices: p.paidFromInvoices,
           anchorAt: iso(p.anchorAt),
@@ -149,6 +165,7 @@ export class CatchupCheckoutService {
         planKey: true,
         periodStart: true,
         periodEnd: true,
+        basePriceSnapshot: true,
       },
     });
 
@@ -203,48 +220,32 @@ export class CatchupCheckoutService {
       select: { id: true, status: true, periodStart: true, periodEnd: true },
     })) as { id: string; status: string; periodStart: Date | null; periodEnd: Date | null }[];
 
-    // The tenant's billing start (its first manual activation): a tenant activated AFTER go-live is not charged
-    // from Oct 1, and is not plainly eligible - the owner confirms the start (Opus item 9).
-    // Every manual activation, with the period its tx recorded (the in-tx marker, and the post-commit trail row).
-    // The plan measures paid coverage from these - unsnapped - and fails closed on one with no recorded period.
-    const activationRows = (await this.prisma.auditLog.findMany({
+    // ONE query for every marker kind (SA-733r11/r12): the activation marker + trail rows, the coverage VOID /
+    // RESTORE corrections and the billing-start override. The plan measures paid coverage from the activations
+    // (unsnapped, a voided one ignored) and fails closed on one with no recorded period.
+    const markerRows = (await this.prisma.auditLog.findMany({
       where: {
         tenantId,
         entityType: ADMIN_AUDIT_ENTITY,
-        action: {
-          in: [
-            AdminAuditAction.TENANT_MANUAL_ACTIVATION_MARKER,
-            AdminAuditAction.TENANT_SUBSCRIPTION_ACTIVATED,
-          ],
-        },
+        action: { in: [...CATCHUP_MARKER_ACTIONS] },
       },
       orderBy: { createdAt: "asc" },
-      select: { action: true, createdAt: true, meta: true },
-    })) as { action: string; createdAt: Date; meta: Record<string, unknown> | null }[];
-    const asDate = (v: unknown): Date | null =>
-      typeof v === "string" && !Number.isNaN(Date.parse(v)) ? new Date(v) : null;
-    const activations: ActivationRecord[] = activationRows.map((r) => ({
-      action: r.action,
-      at: r.createdAt,
-      periodStart: asDate(r.meta?.periodStart),
-      periodEnd: asDate(r.meta?.periodEnd),
-    }));
-    const billingStart = activations.length
-      ? new Date(Math.min(...activations.map((x) => x.at.getTime())))
-      : null;
+      select: CATCHUP_MARKER_SELECT,
+    })) as { id: string; action: string; createdAt: Date; meta: Record<string, unknown> | null }[];
+    const markers = readCatchupMarkers(markerRows);
+    const override = markers.billingStartOverride;
+    if (override && !override.ok) ineligible.push("invalid_billing_start");
     const plan = planCatchup({
       now,
       monthly,
       addons,
       invoices: rows,
-      billingStart,
       billableRows,
-      manual: { activations },
+      // an override REPLACES the first-activation term of the floor; with none the planner reads the first activation
+      billingStart: override?.ok ? override.billingStart : null,
+      manual: { activations: markers.activations },
     });
     if (!plan.ok) ineligible.push(plan.reason);
-    if (billingStart && billingStart.getTime() > CATCHUP_GO_LIVE.getTime()) {
-      ineligible.push("activated_after_go_live");
-    }
     if (plan.ok) {
       // an OPEN RfInvoice whose period cannot be placed would be left standing beside the card subscription
       if (plan.unplaceableOpenIds.length > 0) ineligible.push("unplaceable_open_invoice");
@@ -267,6 +268,14 @@ export class CatchupCheckoutService {
       planKey: resolvedPlanKey,
       priceSource: source,
       monthlyCents: monthly == null ? null : toCents(monthly),
+      basePriceSnapshot: sub?.basePriceSnapshot == null ? null : Number(sub.basePriceSnapshot),
+      billingStartOverride: override
+        ? {
+            billingStart: override.ok ? override.billingStart.toISOString() : String(override.raw),
+            valid: override.ok,
+          }
+        : null,
+      markers: markers.markers,
       rfInvoices: {
         open: rows.filter((r) => r.status === "OPEN").length,
         paid: rows.filter((r) => r.status === "PAID").length,
@@ -313,7 +322,7 @@ export class CatchupCheckoutService {
         needsRuling: count((t) => !t.plan.ok || t.hasStripeSubscription),
         trialOneTime: count((t) => t.plan.ok && t.plan.shape === "trial_one_time"),
         trial: count((t) => t.plan.ok && t.plan.shape === "trial"),
-        anchorNoLine: count((t) => t.plan.ok && t.plan.shape === "anchor_no_line"),
+        anchorNoLine: 0, // unreachable since SA-733r9 (kept so the dry-run census keeps its columns)
       },
       tenants,
       failed,
@@ -391,7 +400,7 @@ export class CatchupCheckoutService {
         successUrl: `${base}/settings/billing?checkout=success`,
         cancelUrl: `${base}/settings/billing?checkout=cancelled`,
       });
-      session = await this.stripe.client.checkout.sessions.create(params, {
+      session = await this.stripe.client.checkout.sessions.create(withCheckoutPolicy(params), {
         idempotencyKey: `${tenantId}:catchup-session:${plan.paidThrough.getTime()}:${now.getTime()}`,
       });
     } catch (err) {

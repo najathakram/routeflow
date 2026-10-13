@@ -104,6 +104,7 @@ describe("genericToastCopy: codes users rely on", () => {
       API_ERROR_CODES.CATCHUP_ADDON_NOT_CARD_BILLABLE,
       API_ERROR_CODES.CATCHUP_ADDON_SNAPSHOT_NOT_CATALOG,
       API_ERROR_CODES.CATCHUP_MANUAL_PERIOD_AHEAD,
+      API_ERROR_CODES.CATCHUP_NO_BILLABLE_PRICE,
       API_ERROR_CODES.ACTIVATION_CATCHUP_SESSION_OPEN,
     ]) {
       const copy = genericToastCopy(err(409, { code, message: "raw server text" }));
@@ -113,6 +114,13 @@ describe("genericToastCopy: codes users rely on", () => {
     expect(
       genericToastCopy(err(409, { code: API_ERROR_CODES.EXTERNAL_PAYMENT_USE_CATCHUP })),
     ).toMatch(/invoiced directly/);
+    // CATCHUP_MANUAL_PERIOD_AHEAD now means only "a manual activation recorded without a paid period"
+    expect(
+      genericToastCopy(err(409, { code: API_ERROR_CODES.CATCHUP_MANUAL_PERIOD_AHEAD })),
+    ).toMatch(/manual activation recorded without a paid period/);
+    expect(
+      genericToastCopy(err(409, { code: API_ERROR_CODES.CATCHUP_MANUAL_PERIOD_AHEAD })),
+    ).not.toMatch(/part-way/);
   });
 
   it("SA-733r7: the dunning refusals show fixed copy, never the server message", () => {

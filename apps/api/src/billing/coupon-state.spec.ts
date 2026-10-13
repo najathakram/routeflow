@@ -538,7 +538,9 @@ describe("structural pin: ONE writer of the coupon columns (L-223)", () => {
   const SNAPSHOT_READERS = new Set([
     "/scripts/backfill-b294-order-line-taxrate.mjs",
     "/scripts/backfill-refund-tender.mjs",
+    "/scripts/billing-correct-activation.mjs",
     "/scripts/lib/billing-catchup-core.cjs",
+    "/scripts/lib/billing-correct-activation-core.cjs",
     "/scripts/lib/live-target-guard.cjs",
   ]);
 
