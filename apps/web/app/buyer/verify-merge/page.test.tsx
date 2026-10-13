@@ -99,7 +99,7 @@ describe("buyer verify-merge page: confirm only on click", () => {
     await user.click(await screen.findByRole("button", { name: /confirm account merge/i }));
 
     expect(await screen.findByRole("heading", { name: "Verification Failed" })).toBeInTheDocument();
-    expect(screen.getByText("Too many attempts. Wait a minute and try again.")).toBeInTheDocument();
+    expect(screen.getByText("Too many attempts. Try again in 15 minutes.")).toBeInTheDocument();
     expect(screen.queryByText(/ThrottlerException/)).not.toBeInTheDocument();
   });
 

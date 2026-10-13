@@ -13,7 +13,7 @@ import { buyerVerifyMerge } from "@/lib/buyer-auth";
 export const dynamic = "force-dynamic";
 
 // Fixed copy for a throttled confirm; the throttler's own text is never shown.
-const TOO_MANY_ATTEMPTS = "Too many attempts. Wait a minute and try again.";
+const TOO_MANY_ATTEMPTS = "Too many attempts. Try again in 15 minutes.";
 
 function VerifyMergeContent() {
   const params = useSearchParams();
