@@ -17,7 +17,6 @@ import {
   ChevronRight,
   Star,
   Scissors,
-  Plus,
   Power,
   ShieldCheck,
 } from "lucide-react";
@@ -77,6 +76,8 @@ import { CropModal } from "./CropModal";
 import { ProductStockCostCard } from "./ProductStockCostCard";
 import { FamilyVariantsEditor } from "@/components/family/FamilyVariantsEditor";
 import { useReactivateFlow } from "./useReactivateFlow";
+import { ProductHeaderControls } from "./ProductHeaderControls";
+import { LegacyVariantsActions, variantModalTitle } from "./LegacyVariantsActions";
 import { useDeleteProductFlow } from "./useDeleteProductFlow";
 import { DeleteProductConfirm } from "./DeleteProductConfirm";
 import { DemandCard } from "./DemandCard";
@@ -320,6 +321,9 @@ export default function ProductDetailPage() {
   const reactivateFlow = useReactivateFlow();
   const createProduct = useCreateProduct();
   const deleteFlow = useDeleteProductFlow({ onDeleted: () => router.push("/products") });
+  // The header's Delete button opens DeleteProductConfirm: it stays open until the DELETE settles and hands
+  // off to the family cascade prompt.
+  const [showDeleteConfirm, setShowDeleteConfirm] = React.useState(false);
   const uploadImages = useUploadProductImages(id);
   const deleteImage = useDeleteProductImage(id);
 
@@ -410,9 +414,6 @@ export default function ProductDetailPage() {
 
   // ── Variant-split modal state (PR-D) ──────────────────────────────────────
   const [showVariantSplit, setShowVariantSplit] = React.useState(false);
-
-  // ── Delete confirmation (R2 — was declared, never wired) ──────────────────
-  const [showDeleteConfirm, setShowDeleteConfirm] = React.useState(false);
 
   // ── Crop-existing state ───────────────────────────────────────────────────
   // When set, the next crop completion replaces this key instead of adding a new image
@@ -784,7 +785,7 @@ export default function ProductDetailPage() {
     if (variant.isActive) {
       reactivateFlow.askDeactivate(variant.id, variant.variantName ?? variant.name, "variant");
     } else {
-      reactivateFlow.start(variant.id, "variant");
+      reactivateFlow.start(variant.id, "variant", variant.variantName ?? variant.name);
     }
   };
 
@@ -1421,7 +1422,7 @@ export default function ProductDetailPage() {
                 <h3 className="text-[11px] font-semibold uppercase tracking-[0.08em] text-navy/70">
                   Details
                 </h3>
-                <div className="flex shrink-0 items-center gap-2">
+                <div className="flex max-w-full flex-wrap items-center justify-end gap-2">
                   {isEditing ? (
                     <>
                       <button
@@ -1455,54 +1456,21 @@ export default function ProductDetailPage() {
                       >
                         <Pencil className="h-4 w-4" />
                       </button>
-                      {isOperator && !product.parentProductId && product.kind !== "FAMILY" && (
-                        <Button
-                          size="sm"
-                          variant="secondary"
-                          onClick={openMakeVariantModal}
-                          title="Link this product as a variant of another product"
-                        >
-                          Make variant of…
-                        </Button>
-                      )}
-                      <Button
-                        size="sm"
-                        variant="secondary"
-                        onClick={() =>
-                          product.isActive
-                            ? reactivateFlow.askDeactivate(id, product.name)
-                            : reactivateFlow.start(id)
+                      <ProductHeaderControls
+                        product={product}
+                        reactivateFlow={reactivateFlow}
+                        hasTobaccoAddon={hasTobaccoAddon}
+                        isTobacco={!!(product as any).isTobacco}
+                        tobaccoLoading={updateProduct.isPending}
+                        onToggleTobacco={() =>
+                          updateProduct.mutate({
+                            id: id,
+                            isTobacco: !(product as any).isTobacco,
+                          } as any)
                         }
-                        loading={reactivateFlow.isPending}
-                      >
-                        {product.isActive ? "Deactivate" : "Activate"}
-                      </Button>
-                      {hasTobaccoAddon && (
-                        <Button
-                          size="sm"
-                          variant="secondary"
-                          onClick={() =>
-                            updateProduct.mutate({
-                              id: id,
-                              isTobacco: !(product as any).isTobacco,
-                            } as any)
-                          }
-                          loading={updateProduct.isPending}
-                          title="Tobacco products are tracked separately for monthly tax reports"
-                        >
-                          {(product as any).isTobacco ? "Unmark tobacco" : "Mark as tobacco"}
-                        </Button>
-                      )}
-                      {isOperator && (
-                        <Button
-                          size="sm"
-                          variant="danger"
-                          leftIcon={<Trash2 className="h-4 w-4" />}
-                          onClick={() => setShowDeleteConfirm(true)}
-                        >
-                          Delete
-                        </Button>
-                      )}
+                        onMakeVariant={openMakeVariantModal}
+                        onRequestDelete={() => setShowDeleteConfirm(true)}
+                      />
                     </>
                   )}
                 </div>
@@ -2351,28 +2319,13 @@ export default function ProductDetailPage() {
                   <h3 className="text-[11px] font-semibold uppercase tracking-[0.08em] text-navy/70">
                     Variants
                   </h3>
-                  {isOperator && (
-                    <div className="flex items-center gap-2">
-                      <Button
-                        size="sm"
-                        variant="secondary"
-                        leftIcon={<Scissors className="h-3.5 w-3.5" />}
-                        onClick={() => setShowVariantSplit(true)}
-                      >
-                        Assign to variants
-                      </Button>
-                      <Button size="sm" variant="secondary" onClick={openLinkExistingModal}>
-                        Link existing
-                      </Button>
-                      <Button
-                        size="sm"
-                        leftIcon={<Plus className="h-3.5 w-3.5" />}
-                        onClick={() => openVariantModal()}
-                      >
-                        Add Variant
-                      </Button>
-                    </div>
-                  )}
+                  <LegacyVariantsActions
+                    product={product}
+                    isOperator={isOperator}
+                    onSplit={() => setShowVariantSplit(true)}
+                    onLinkExisting={openLinkExistingModal}
+                    onAddVariant={() => openVariantModal()}
+                  />
                 </div>
 
                 {(!product.variants || product.variants.length === 0) && !product.variantName ? (
@@ -2526,7 +2479,7 @@ export default function ProductDetailPage() {
       <Modal
         open={variantModalOpen}
         onClose={closeVariantModal}
-        title={editingVariant ? "Edit Variant" : "Add Variant"}
+        title={variantModalTitle(!!editingVariant)}
         footer={
           <>
             <Button variant="secondary" onClick={closeVariantModal}>
