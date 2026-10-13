@@ -372,7 +372,15 @@ export class ProductsService {
     const readTenantId = this.prisma.getTenantId();
     const includeRelations = {
       parent: {
-        select: { id: true, name: true, kind: true, portalVisible: true, tenantId: true },
+        // `category`: a family variant has none of its own; the buyer catalog shows the family's (H6).
+        select: {
+          id: true,
+          name: true,
+          kind: true,
+          portalVisible: true,
+          category: true,
+          tenantId: true,
+        },
       },
       // #2717 M1 (SA-572b Q5): additive barcodes[] on the list too (rows, else synthesized below).
       barcodes: { orderBy: { level: "asc" as const } },
