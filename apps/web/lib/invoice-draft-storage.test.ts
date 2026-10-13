@@ -1,6 +1,7 @@
 import {
   INVOICE_DRAFT_MAX_AGE_MS,
   INVOICE_DRAFT_VERSION,
+  clearAllInvoiceDrafts,
   clearInvoiceDraft,
   invoiceDraftKey,
   isPristineSnapshot,
@@ -201,5 +202,27 @@ describe("invoice draft storage", () => {
       expect(() => clearInvoiceDraft(KEY)).not.toThrow();
       expect(readInvoiceDraft(KEY, NOW)).toBeNull();
     });
+  });
+});
+
+describe("clearAllInvoiceDrafts (logout)", () => {
+  beforeEach(() => window.localStorage.clear());
+  afterEach(() => jest.restoreAllMocks());
+
+  it("wipes every user's and tenant's draft and nothing else", () => {
+    writeInvoiceDraft(invoiceDraftKey("acme", "u1"), form(), NOW);
+    writeInvoiceDraft(invoiceDraftKey("acme", "u2"), form(), NOW);
+    writeInvoiceDraft(invoiceDraftKey("globex", "u1"), form(), NOW);
+    window.localStorage.setItem("rf.other", "keep");
+    clearAllInvoiceDrafts();
+    expect(window.localStorage.length).toBe(1);
+    expect(window.localStorage.getItem("rf.other")).toBe("keep");
+  });
+
+  it("never throws when storage is broken", () => {
+    jest.spyOn(window, "localStorage", "get").mockImplementation(() => {
+      throw new Error("SecurityError");
+    });
+    expect(() => clearAllInvoiceDrafts()).not.toThrow();
   });
 });

@@ -4,6 +4,7 @@ import { OP_KEYS } from "./auth-keys";
 import { setOpPresenceCookie, clearOpPresenceCookie } from "./presence-cookies";
 import { getImpersonation, clearImpersonation } from "./impersonation";
 import { clearAllLiveCarts } from "./counter-live-cart-keys";
+import { clearAllInvoiceDrafts } from "./invoice-draft-storage";
 
 export { OP_PRESENCE_COOKIE, clearOpPresenceCookie } from "./presence-cookies";
 
@@ -115,6 +116,7 @@ export async function logout(): Promise<void> {
   clearTenantCookie();
   clearImpersonation();
   clearAllLiveCarts(); // an unfinished counter sale never outlives its cashier's session
+  clearAllInvoiceDrafts(); // nor an unsaved new invoice (ROW 447)
   window.location.href = "/login";
 }
 

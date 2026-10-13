@@ -260,6 +260,22 @@ export function clearInvoiceDraft(key: string | null): void {
   }
 }
 
+/** Sign-out: drop every stored draft on this browser, whoever it belonged to. Never throws. */
+export function clearAllInvoiceDrafts(): void {
+  try {
+    const s = store();
+    if (!s) return;
+    const doomed: string[] = [];
+    for (let i = 0; i < s.length; i += 1) {
+      const k = s.key(i);
+      if (k && k.startsWith(`${KEY_PREFIX}:`)) doomed.push(k);
+    }
+    doomed.forEach((k) => s.removeItem(k));
+  } catch {
+    /* storage unavailable: nothing was kept */
+  }
+}
+
 /** Writes the sanitized snapshot. Returns false when nothing was written (no key, pristine, too big, storage broken). */
 export function writeInvoiceDraft(
   key: string | null,
