@@ -1057,7 +1057,7 @@ export class BillingService {
         break;
 
       case "customer.subscription.updated":
-        await this.onSubscriptionUpdated(event.data.object);
+        await this.onSubscriptionUpdated(event.data.object, event.id);
         break;
 
       default:
@@ -3014,7 +3014,31 @@ ${updateLine}
     );
   }
 
-  private async onSubscriptionUpdated(payload: any): Promise<void> {
+  /** A platform-admin notice (the shared audit-feed channel); best-effort, never masks the throw that follows. */
+  private async alertSubscriptionNotFound(
+    sub: { tenantId: string; stripeSubId: string | null },
+    eventId?: string,
+  ): Promise<void> {
+    const message =
+      `Stripe event ${eventId ?? "(unknown)"}: subscription not found in this Stripe account/mode ` +
+      `(${sub.stripeSubId ?? "?"}). The tenant was NOT changed and the event stays failed for retry.`;
+    this.logger.error(`Tenant ${sub.tenantId}: ${message}`);
+    try {
+      await writeAdminNotice(this.prisma, {
+        tenantId: sub.tenantId,
+        action: AdminAuditAction.STRIPE_SUBSCRIPTION_NOT_FOUND,
+        message,
+        meta: { stripeEventId: eventId ?? null, stripeSubId: sub.stripeSubId },
+      });
+    } catch (e) {
+      this.logger.error(
+        `Tenant ${sub.tenantId}: the not-found notice could not be written`,
+        e as Error,
+      );
+    }
+  }
+
+  private async onSubscriptionUpdated(payload: any, eventId?: string): Promise<void> {
     const sub = await this.matchStripeSubscription(
       stripeRefId(payload?.id),
       payload?.customer,
@@ -3032,8 +3056,7 @@ ${updateLine}
       subscription = await this.stripe.getSubscription(sub.stripeSubId as string);
     } catch (err) {
       if ((err as any)?.code === "resource_missing" || (err as any)?.statusCode === 404) {
-        await this.cancelFromStripe(sub, "subscription_deleted");
-        return;
+        await this.alertSubscriptionNotFound(sub, eventId);
       }
       throw err;
     }

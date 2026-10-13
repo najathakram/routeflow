@@ -2906,19 +2906,33 @@ describe("#2440 subscription upkeep — match by subscription id, status mapping
         expect(events.emit).not.toHaveBeenCalled();
       });
 
-      it("Stripe 404 (resource_missing) goes down the subscription.deleted path", async () => {
-        const { svc, stripe, tx, events } = make({ transitionCount: 1, sub: LIVE_SUB });
+      it("Stripe 404 (resource_missing) is NEVER read as deleted: it throws, alerts ops, changes nothing", async () => {
+        const { svc, stripe, prisma, tx, events } = make({ transitionCount: 1, sub: LIVE_SUB });
         stripe.getSubscription.mockRejectedValue(
           Object.assign(new Error("No such subscription"), {
             code: "resource_missing",
             statusCode: 404,
           }),
         );
-        await (svc as any).onSubscriptionUpdated(upd("active"));
-        expect(tx.tenant.updateMany.mock.calls[0][0]).toMatchObject({
-          data: { status: "CANCELLED" },
+        const err = jest.spyOn(Logger.prototype, "error").mockImplementation(() => undefined);
+        await expect(
+          (svc as any).onSubscriptionUpdated(upd("active"), "evt_404"),
+        ).rejects.toBeDefined();
+        err.mockRestore();
+        expect(tx.tenant.updateMany).not.toHaveBeenCalled();
+        expect(prisma.tenantSubscription.update).not.toHaveBeenCalled();
+        expect(events.emit).not.toHaveBeenCalled();
+        const alert = prisma.auditLog.create.mock.calls.find(
+          (c: any[]) => c[0].data.action === "STRIPE_SUBSCRIPTION_NOT_FOUND",
+        );
+        expect(alert?.[0].data).toMatchObject({
+          tenantId: "t1",
+          entityType: "tenant",
+          meta: { platformAdmin: true, stripeEventId: "evt_404" },
         });
-        expect(deltaOf(events, BILLING_EVENTS.SUBSCRIPTION_CANCELED)).toBe(-349);
+        expect(alert?.[0].data.meta.message).toMatch(
+          /evt_404.*subscription not found in this Stripe account\/mode/,
+        );
       });
 
       it("any other fetch error THROWS (the webhook ledger retries) and never falls back to the payload", async () => {
