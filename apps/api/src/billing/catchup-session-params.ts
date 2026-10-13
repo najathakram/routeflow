@@ -1,4 +1,5 @@
 import { CATCHUP_META } from "./catchup-claim";
+import { CHECKOUT_MAX_LIFETIME_MS } from "./checkout-anchor";
 import {
   CATCHUP_TRIAL_MIN_LEAD_MS,
   STRIPE_MIN_CHARGE_CENTS,
@@ -42,11 +43,6 @@ export interface CatchupSessionInput {
 }
 
 const epoch = (d: Date) => Math.floor(d.getTime() / 1000);
-/**
- * Checkout Session lifetime. Stripe rejects `expires_at` at or past 24 h from ITS clock, so exactly now + 24 h on a
- * host clock that runs ahead fails the create; 23 h leaves an hour of skew margin.
- */
-const SESSION_TTL_MS = 23 * 60 * 60 * 1000;
 
 /** R5-4. Throws on a combination Checkout rejects. */
 export function assertCheckoutAcceptable(params: {
@@ -116,7 +112,10 @@ function buildTrialOneTime(i: CatchupSessionInput): Record<string, any> {
     // A >= now + 72 h, so this is now + 23 h (min() kept for the contract: never past A - 60 min)
     expires_at: epoch(
       new Date(
-        Math.min(i.now.getTime() + SESSION_TTL_MS, plan.trialEndAt.getTime() - 60 * 60 * 1000),
+        Math.min(
+          i.now.getTime() + CHECKOUT_MAX_LIFETIME_MS,
+          plan.trialEndAt.getTime() - 60 * 60 * 1000,
+        ),
       ),
     ),
     metadata: {
@@ -150,7 +149,7 @@ function buildTrial(i: CatchupSessionInput): Record<string, any> {
     ...c.sessionBase,
     payment_method_collection: "always",
     line_items: c.recurring,
-    expires_at: epoch(new Date(i.now.getTime() + SESSION_TTL_MS)),
+    expires_at: epoch(new Date(i.now.getTime() + CHECKOUT_MAX_LIFETIME_MS)),
     metadata: {
       ...c.metaBase,
       [CATCHUP_META.catchup]: "prepaid",

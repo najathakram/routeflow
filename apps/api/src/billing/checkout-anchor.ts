@@ -26,15 +26,19 @@ export const MIN_ANCHOR_LEAD_MS = 91 * 60 * 1000;
 /** The session must expire at least this long before the anchor, so it can never complete after it (M6). */
 export const CHECKOUT_EXPIRY_MARGIN_MS = 60 * 60 * 1000;
 
-/** Stripe's own ceiling on a Checkout Session's lifetime (and our default). */
-export const CHECKOUT_MAX_LIFETIME_MS = 24 * 60 * 60 * 1000;
+/**
+ * Longest Checkout Session lifetime we ask for, shared by the regular plan checkout and the catch-up builders.
+ * Stripe rejects `expires_at` at or past 24 h from ITS clock, so exactly now + 24 h on a host clock running ahead
+ * fails the create; 23 h leaves an hour of skew margin.
+ */
+export const CHECKOUT_MAX_LIFETIME_MS = 23 * 60 * 60 * 1000;
 
 export interface CheckoutAnchorPlan {
   /** The anchor instant (the 1st, 12:00 UTC). */
   anchorAt: Date;
   /** `subscription_data.billing_cycle_anchor` - epoch SECONDS. */
   billingCycleAnchor: number;
-  /** The Checkout session `expires_at` - epoch SECONDS: min(now + 24 h, anchor - 60 min). */
+  /** The Checkout session `expires_at` - epoch SECONDS: min(now + 23 h, anchor - 60 min). */
   expiresAt: number;
   prorationBehavior: "create_prorations";
 }

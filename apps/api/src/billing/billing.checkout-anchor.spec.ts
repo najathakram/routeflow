@@ -116,11 +116,11 @@ describe("SA-733 D6 / M6 — createCheckoutSession anchors every new subscriptio
     expect(sent(h).automatic_tax?.enabled).not.toBe(true);
   });
 
-  it("Oct 15: the session lives the plain 24 h", async () => {
+  it("Oct 15: the session lives the plain 23 h", async () => {
     jest.useFakeTimers({ now: new Date("2026-10-15T09:00:00Z"), doNotFake: ONLY_DATE });
     const h = make();
     await h.billing.createCheckoutSession("t1", "month");
-    expect(sent(h).expires_at).toBe(at("2026-10-16T09:00:00Z"));
+    expect(sent(h).expires_at).toBe(at("2026-10-16T08:00:00Z"));
   });
 
   it("add-on SKUs still ride subscription_data.metadata beside the anchor", async () => {

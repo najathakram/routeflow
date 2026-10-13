@@ -46,8 +46,8 @@ describe("SA-733 D6 / M6 — the checkout billing anchor (pure)", () => {
     }
   });
 
-  describe("session expiry — min(now + 24 h, anchor - 60 min)", () => {
-    it("Oct 15: the plain 24 h", () => {
+  describe("session expiry — min(now + 23 h, anchor - 60 min)", () => {
+    it("Oct 15: the plain 23 h", () => {
       const now = at("2026-10-15T09:00:00Z");
       const p = planCheckoutAnchor(now);
       expect(p.expiresAt).toBe(Math.floor((now.getTime() + CHECKOUT_MAX_LIFETIME_MS) / 1000));

@@ -1,6 +1,7 @@
 import { buildCatchupSessionParams, assertCheckoutAcceptable } from "./catchup-session-params";
 import { planCatchup, type CatchupInvoice } from "./catchup-plan";
 import { CATCHUP_META } from "./catchup-claim";
+import { CHECKOUT_MAX_LIFETIME_MS, planCheckoutAnchor } from "./checkout-anchor";
 
 /**
  * SA-733r5 against Stripe's DOCUMENTED Checkout limits (docs.stripe.com/payments/checkout/billing-cycle,
@@ -278,5 +279,36 @@ describe("assertCheckoutAcceptable (Stripe's documented Checkout limits)", () =>
         subscription_data: { billing_cycle_anchor: 2, proration_behavior: "none" },
       }),
     ).not.toThrow();
+  });
+});
+
+describe("row 425: ONE shared Checkout lifetime under Stripe's 24 h cap", () => {
+  const MID_MONTH = d("2026-10-15T09:00:00Z");
+
+  it("the shared constant is 23 h", () => {
+    expect(CHECKOUT_MAX_LIFETIME_MS).toBe(23 * 3600_000);
+  });
+
+  it("expires_at - now <= 23 h for BOTH builders (catch-up period, catch-up prepaid, regular anchor), now mid-month", () => {
+    const nowSec = Math.floor(MID_MONTH.getTime() / 1000);
+    const period = build(plan({ now: MID_MONTH }), MID_MONTH);
+    const prepaid = build(
+      plan({
+        now: MID_MONTH,
+        invoices: [inv("o", "PAID", "2026-10-01T12:00:00Z", "2026-11-01T12:00:00Z")],
+      }),
+      MID_MONTH,
+    );
+    const anchor = planCheckoutAnchor(MID_MONTH);
+    for (const expiresAt of [period.expires_at, prepaid.expires_at, anchor.expiresAt]) {
+      expect(expiresAt - nowSec).toBeLessThanOrEqual(23 * 3600);
+      expect(expiresAt - nowSec).toBeGreaterThan(22 * 3600);
+    }
+  });
+
+  it("the anchor branch is unchanged near the anchor: anchor - 60 min still wins", () => {
+    const near = d("2026-10-31T23:00:00Z");
+    const p = planCheckoutAnchor(near);
+    expect(p.expiresAt * 1000).toBe(p.anchorAt.getTime() - 60 * 60_000);
   });
 });
