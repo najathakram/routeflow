@@ -399,6 +399,23 @@ describe("Units page: archive and restore", () => {
     );
   });
 
+  it("a failed Undo is visible: the Archived list is collapsed, so the failure is toasted in fixed copy", () => {
+    setUnits(u("Pallet", 0));
+    updateMutate.mockImplementation((v, o) =>
+      v.archived
+        ? o.onSuccess({ unit: u("Pallet"), productsUpdated: 0 })
+        : o.onError({ response: { status: 500, data: { message: "raw server text" } } }),
+    );
+    render();
+    fireEvent.click(within(row("Pallet")).getByRole("button", { name: "Archive" }));
+    const t = toast.mock.calls.map(([x]) => x).find((x) => x.title === "Archived Pallet.");
+    act(() => t.action.onClick());
+    const failed = toast.mock.calls.map(([x]) => x).find((x) => x.variant === "error");
+    expect(failed).toBeTruthy();
+    expect(failed.title).toBe("Couldn't save. Your change is still here. Try again.");
+    expect(JSON.stringify(failed)).not.toContain("raw server text");
+  });
+
   it("a used unit asks first: Cancel has focus, the confirm is primary (not red), Cancel changes nothing", () => {
     setUnits(u("Bottle", 40));
     render();

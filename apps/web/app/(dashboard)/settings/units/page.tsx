@@ -20,7 +20,8 @@ import {
 } from "@/lib/api/tenant-units";
 
 // Errors are shown inline under the field. The mutations opt out of the global error toast
-// (meta.localErrorToast), so nothing here toasts a failure (B594).
+// (meta.localErrorToast) (B594). The one exception is a failed Undo: its row sits in the collapsed
+// Archived list, so the inline error would be invisible and the failure is toasted in fixed copy.
 const ok = (title: string, extra: { description?: string; duration?: number } = {}) => ({
   title,
   variant: "success" as const,
@@ -189,14 +190,19 @@ function UnitsScreen() {
     );
   };
 
-  const restore = (u: TenantUnitDto) => {
+  const restore = (u: TenantUnitDto, fromUndo = false) => {
     if (!online) return;
     setRowError(null);
     update.mutate(
       { id: u.id, archived: false },
       {
         onSuccess: () => toast(ok(`Restored ${u.name}.`)),
-        onError: (e) => setRowError({ id: u.id, message: unitErrorMessage(e, u.name) }),
+        onError: (e) => {
+          const message = unitErrorMessage(e, u.name);
+          setRowError({ id: u.id, message });
+          // Undo runs from a toast while the Archived list is collapsed: surface it, fixed copy only.
+          if (fromUndo) toast({ title: message, variant: "error" });
+        },
       },
     );
   };
@@ -213,7 +219,7 @@ function UnitsScreen() {
           focusAfter.current = next?.id ?? "add";
           toast({
             ...ok(`Archived ${u.name}.`, { duration: 6000 }),
-            action: { label: "Undo", onClick: () => restore(u) },
+            action: { label: "Undo", onClick: () => restore(u, true) },
           });
         },
         onError: (e) => setRowError({ id: u.id, message: unitErrorMessage(e, u.name) }),
