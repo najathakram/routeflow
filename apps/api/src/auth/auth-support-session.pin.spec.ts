@@ -1,6 +1,7 @@
 import "reflect-metadata";
 import { RequestMethod } from "@nestjs/common";
 import { GUARDS_METADATA, METHOD_METADATA } from "@nestjs/common/constants";
+import { UsersController } from "../users/users.controller";
 import { AuthController } from "./auth.controller";
 import { JwtAuthGuard } from "./guards/jwt-auth.guard";
 import { NO_IMPERSONATION_KEY, NoImpersonationGuard } from "./guards/no-impersonation.guard";
@@ -64,5 +65,16 @@ describe("account routes carry @NoImpersonation('account') (SA-778 pin)", () => 
     for (const n of ["changePassword", "setPassword", "appleLink"]) {
       expect(verb(n)).toBe(RequestMethod.POST);
     }
+  });
+});
+
+describe("the user-admin account routes (SA-778 pin)", () => {
+  it("POST users/:id/reset-password hands back a temporary password, so it is marked 'account' and guarded after JwtAuthGuard", () => {
+    const fn = (UsersController.prototype as unknown as Record<string, object>).resetPassword;
+    expect(Reflect.getMetadata(NO_IMPERSONATION_KEY, fn)).toBe("account");
+    const own = (Reflect.getMetadata(GUARDS_METADATA, fn) ?? []) as unknown[];
+    expect(own).toContain(NoImpersonationGuard);
+    const cls = (Reflect.getMetadata(GUARDS_METADATA, UsersController) ?? []) as unknown[];
+    expect(cls[0]).toBe(JwtAuthGuard);
   });
 });

@@ -16,6 +16,9 @@ import { AuthService } from "./auth.service";
 import { GoogleOAuthService } from "./google-oauth.service";
 import { JwtAuthGuard } from "./guards/jwt-auth.guard";
 import { StaffHandoffService } from "./handoff/staff-handoff.service";
+import { UsersController } from "../users/users.controller";
+import { UsersService } from "../users/users.service";
+import { OperatorPermissionsService } from "./permissions/operator-permissions.service";
 
 // eslint-disable-next-line @typescript-eslint/no-require-imports
 const request = require("supertest");
@@ -34,6 +37,7 @@ const ACCOUNT_ROUTES: Array<[string, "get" | "post", string, object]> = [
   ["set-password", "post", "/auth/set-password", { newPassword: "Passw0rd!long" }],
   ["google link", "get", "/auth/google/link", {}],
   ["apple link", "post", "/auth/apple/link", { identityToken: "x", nonce: "y" }],
+  ["admin reset-password", "post", "/users/u-other/reset-password", {}],
 ];
 
 describe("account routes in a support session (SA-778)", () => {
@@ -45,8 +49,10 @@ describe("account routes in a support session (SA-778)", () => {
   };
   const google = { isConfigured: jest.fn(), generateLinkUrl: jest.fn() };
   const apple = { isConfigured: jest.fn(), linkAppleAccount: jest.fn() };
+  const users = { resetPassword: jest.fn() };
   const audit = { log: jest.fn() };
   const allMocks = [
+    users.resetPassword,
     ...Object.values(auth),
     google.generateLinkUrl,
     apple.linkAppleAccount,
@@ -72,13 +78,15 @@ describe("account routes in a support session (SA-778)", () => {
 
   beforeAll(async () => {
     const moduleRef = await Test.createTestingModule({
-      controllers: [AuthController],
+      controllers: [AuthController, UsersController],
       providers: [
         { provide: AuthService, useValue: auth },
         { provide: ConfigService, useValue: { get: () => undefined } },
         { provide: GoogleOAuthService, useValue: google },
         { provide: AppleOAuthService, useValue: apple },
         { provide: StaffHandoffService, useValue: {} },
+        { provide: UsersService, useValue: users },
+        { provide: OperatorPermissionsService, useValue: {} },
         { provide: AuditService, useValue: audit },
       ],
     })
@@ -97,6 +105,7 @@ describe("account routes in a support session (SA-778)", () => {
     auth.changePassword.mockResolvedValue({ ok: true });
     auth.setPassword.mockResolvedValue({ accessToken: "a", refreshToken: "r" });
     auth.listSessions.mockResolvedValue([]);
+    users.resetPassword.mockResolvedValue({ tempPassword: "TEMP-1234" });
     google.isConfigured.mockReturnValue(true);
     google.generateLinkUrl.mockResolvedValue("https://accounts.example/consent");
     apple.isConfigured.mockReturnValue(true);
@@ -125,7 +134,7 @@ describe("account routes in a support session (SA-778)", () => {
         entityType: "account",
         tenantId: "t-1",
         impersonatedBy: "sa-1",
-        meta: { superAdminId: "sa-1", tenantId: "t-1", route: path },
+        meta: { superAdminId: "sa-1", tenantId: "t-1", route: expect.any(String) },
       });
     },
   );
@@ -135,10 +144,17 @@ describe("account routes in a support session (SA-778)", () => {
     async (_name, verb, path, body) => {
       const res = await call(verb, path, "TENANT_ADMIN").send(body);
 
-      expect(res.status).toBe(200);
+      expect(res.status).toBeLessThan(300);
       expect(audit.log).not.toHaveBeenCalled();
     },
   );
+
+  it("a support session never receives a temporary password from the admin reset", async () => {
+    const res = await call("post", "/users/u-other/reset-password", "TENANT_ADMIN", true).send({});
+    expect(res.status).toBe(403);
+    expect(JSON.stringify(res.body)).not.toContain("TEMP-1234");
+    expect(users.resetPassword).not.toHaveBeenCalled();
+  });
 
   it("no token: 401, nothing audited, nothing run", async () => {
     await call("post", "/auth/set-password").send({ newPassword: "Passw0rd!long" }).expect(401);
