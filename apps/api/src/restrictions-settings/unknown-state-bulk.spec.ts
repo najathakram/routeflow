@@ -365,6 +365,10 @@ describe("POST .../bulk-state", () => {
     await expect(run({ bucket: "everyone", customerIds: ["c1"], state: "TX" })).rejects.toThrow(
       BadRequestException,
     );
+    // needsDefault is fixed by choosing a default, never by one bulk state
+    await expect(run({ bucket: "needsDefault", customerIds: ["c1"], state: "TX" })).rejects.toThrow(
+      BadRequestException,
+    );
     // the service refuses an over-cap list and a bad state too (defence in depth), writing nothing
     const s = setup();
     await expect(

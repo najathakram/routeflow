@@ -10,16 +10,16 @@
 //
 // GET /settings/restrictions/unknown-state-customers?bucket=&cursor=&limit=
 //   query UnknownStateCustomersQuery → 200 UnknownStateCustomersResponse. Customers whose governing
-//   state cannot be resolved (walk-in excluded), split into three buckets, sorted by name.
-//   Without `bucket` all three buckets come back, first page each. With `bucket` only that bucket
-//   is paged from `cursor`; the other two are returned as empty buckets with their real totals
+//   state cannot be resolved (walk-in excluded), split into four buckets, sorted by name.
+//   Without `bucket` all four buckets come back, first page each. With `bucket` only that bucket
+//   is paged from `cursor`; the others are returned as empty buckets with their real totals
 //   (rows: [], nextCursor: null, total: <real count>). `limit` defaults to
 //   UNKNOWN_STATE_PAGE_DEFAULT and is capped at UNKNOWN_STATE_PAGE_MAX. 400 on a bad bucket,
 //   cursor or limit.
 //
 // POST /settings/restrictions/unknown-state-customers/bulk-state   (TENANT_ADMIN, OPERATOR)
 //   body BulkStateRequest → 200 BulkStateResponse. Sets one state for many customers of one
-//   bucket, in one transaction with one audit row. 400 when customerIds is empty or has more than
+//   bucket (never needsDefault: one state cannot choose a default; 400), in one transaction with one audit row. 400 when customerIds is empty or has more than
 //   BULK_STATE_MAX_CUSTOMERS ids, or when `state` is not a US state / territory code. A customer
 //   that is no longer in the named bucket is skipped, not changed. `changedAddressIds` is the
 //   Undo handle: addresses updated, plus addresses created for no-address customers.
@@ -42,9 +42,24 @@
 // `UnknownStateCustomerRow.suggestedState` is computed server-side from a ZIP-prefix -> state
 // table in packages/types (no network call); null when nothing can be inferred.
 
-/** The three ways a customer can lack a usable state, in the order the card lists them. */
-export const UNKNOWN_STATE_BUCKET_VALUES = ["noAddress", "unusableState", "needsReview"] as const;
+/**
+ * The four ways a customer can lack a usable state, in the order the card lists them. needsDefault:
+ * 2+ addresses and no default (or defaults that disagree, or an untyped default among several), with
+ * no problem address in what the engine reads; it is fixed by choosing a default, via the existing
+ * `PATCH /customers/:id/addresses/:addrId { isDefault: true }` (which clears every other default).
+ * A customer sits in needsDefault only, never also in unusableState/needsReview.
+ */
+export const UNKNOWN_STATE_BUCKET_VALUES = [
+  "noAddress",
+  "unusableState",
+  "needsReview",
+  "needsDefault",
+] as const;
 export type UnknownStateBucketName = (typeof UNKNOWN_STATE_BUCKET_VALUES)[number];
+
+/** The buckets a bulk state write accepts: needsDefault is fixed by choosing a default, not a state. */
+export const BULK_STATE_BUCKET_VALUES = ["noAddress", "unusableState", "needsReview"] as const;
+export type BulkStateBucketName = (typeof BULK_STATE_BUCKET_VALUES)[number];
 
 /** Rows per page when `limit` is omitted. */
 export const UNKNOWN_STATE_PAGE_DEFAULT = 20;
@@ -64,6 +79,19 @@ export interface UnknownStateCustomerRow {
   addressText: string | null;
   /** Best guess from the ZIP prefix (2-letter USPS code); null when none can be inferred. */
   suggestedState: string | null;
+  /** needsDefault rows only: every address of the customer, oldest first, to choose the default from. */
+  choices?: UnknownStateAddressChoice[];
+}
+
+export interface UnknownStateAddressChoice {
+  addressId: string;
+  /** The raw address as stored, for display. */
+  addressText: string;
+  /** BILLING / SHIPPING / DELIVERY as stored (free text; may be blank). */
+  addressType: string;
+  /** The address's usable 2-letter code, or null when it has none. */
+  state: string | null;
+  isDefault: boolean;
 }
 
 export interface UnknownStateBucket {
@@ -75,7 +103,7 @@ export interface UnknownStateBucket {
 }
 
 export interface UnknownStateCustomersQuery {
-  /** Omitted = all three buckets, first page each. */
+  /** Omitted = all four buckets, first page each. */
   bucket?: UnknownStateBucketName;
   cursor?: string;
   /** Default UNKNOWN_STATE_PAGE_DEFAULT, max UNKNOWN_STATE_PAGE_MAX. */
@@ -86,7 +114,8 @@ export interface UnknownStateCustomersResponse {
   noAddress: UnknownStateBucket;
   unusableState: UnknownStateBucket;
   needsReview: UnknownStateBucket;
-  /** Distinct customers across the three buckets (a customer in two buckets counts once): the card header. */
+  needsDefault: UnknownStateBucket;
+  /** Distinct customers across the four buckets (a customer in two buckets counts once): the card header. */
   customersTotal: number;
   /**
    * True only when an active ALL (legal-ban) STATE rule exists and the tenant has no business state on
@@ -97,7 +126,7 @@ export interface UnknownStateCustomersResponse {
 }
 
 export interface BulkStateRequest {
-  bucket: UnknownStateBucketName;
+  bucket: BulkStateBucketName;
   /** 1..BULK_STATE_MAX_CUSTOMERS ids, all from `bucket`. */
   customerIds: string[];
   /** 2-letter USPS code (or full name; stored as the 2-letter code). */

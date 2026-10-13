@@ -23,14 +23,16 @@ import {
   toRow,
   type UnknownStateCursor,
   type UnknownStateCustomer,
+  type UnknownStatePlacement,
 } from "./unknown-state";
 
 const STATE_CODES = US_STATES.map((s) => s.code);
 
 /**
- * SQL pre-filter: every customer that CAN sit in a bucket (no address, or an address with no usable
- * code or flagged for review). A superset — `placeUnknownState` decides exactly — so a tenant whose
- * data is clean reads almost nothing.
+ * SQL pre-filter for the three state buckets: every customer that CAN sit in one (no address, or an
+ * address with no usable code or flagged for review). A superset — `placeUnknownState` decides
+ * exactly. needsDefault cannot be pre-filtered (Prisma cannot say "2+ addresses" or "2+ defaults"),
+ * so every read that feeds needsDefault (all totals, a needsDefault page) sweeps every live customer.
  */
 const CANDIDATE_WHERE = {
   OR: [
@@ -56,6 +58,16 @@ export const UNKNOWN_STATE_CUSTOMER_SELECT = {
   addresses: { select: UNKNOWN_STATE_ADDRESS_SELECT },
 } as const;
 
+/** One wire row: needsDefault rows carry every address as a choice; the others name the problem address. */
+function rowFor(
+  customer: UnknownStateCustomer,
+  bucket: UnknownStateBucketName,
+  placed: UnknownStatePlacement[UnknownStateBucketName],
+): UnknownStateCustomerRow {
+  if (bucket === "needsDefault") return toRow(customer, null, placed?.others ?? []);
+  return toRow(customer, placed?.address ?? null);
+}
+
 /** Rows after `after` in (businessName, id) order, compared by the DB in the same collation it sorts with. */
 function afterWhere(after: UnknownStateCursor) {
   return {
@@ -71,7 +83,7 @@ export interface UnknownStateCustomersParams {
 
 /**
  * GET /settings/restrictions/unknown-state-customers (Addendum D): the customers whose governing
- * state the engine cannot resolve, split into the three buckets `placeUnknownState` defines, sorted
+ * state the engine cannot resolve, split into the four buckets `placeUnknownState` defines, sorted
  * by name then id, keyset-paged per bucket. Same customer scope and paging as the readiness probe
  * (`getEnableReadiness`): live customers of this tenant, the system walk-in excluded by `excludeWalkIn`,
  * read in pages of ENABLE_READINESS_PAGE_SIZE up to ENABLE_READINESS_MAX_PAGES. READ-ONLY.
@@ -103,25 +115,28 @@ export class UnknownStateCustomersService {
       noAddress: 0,
       unusableState: 0,
       needsReview: 0,
+      needsDefault: 0,
     };
     const rows: Record<UnknownStateBucketName, UnknownStateCustomerRow[]> = {
       noAddress: [],
       unusableState: [],
       needsReview: [],
+      needsDefault: [],
     };
     const wantsRows = (b: UnknownStateBucketName) =>
       after === null && (params.bucket === undefined || params.bucket === b);
     let customersTotal = 0;
 
     // Pass 1: every bucket's total (and, with no cursor, each wanted bucket's first page + 1 lookahead).
-    await this.sweep(tenantId, null, (customer) => {
+    // Unfiltered: needsDefault's total needs every customer (the state buckets' results are unchanged).
+    await this.sweep(tenantId, null, false, (customer) => {
       const placement = placeUnknownState(customer, addressPrecedence);
       const names = UNKNOWN_STATE_BUCKETS.filter((b) => placement[b]);
       if (names.length > 0) customersTotal++;
       for (const b of names) {
         totals[b]++;
         if (wantsRows(b) && rows[b].length <= limit) {
-          rows[b].push(toRow(customer, placement[b]?.address ?? null));
+          rows[b].push(rowFor(customer, b, placement[b]));
         }
       }
       return false;
@@ -130,9 +145,9 @@ export class UnknownStateCustomersService {
     // Pass 2 (a later page): only the named bucket, from the cursor, stopping at the lookahead row.
     if (after && params.bucket) {
       const bucket = params.bucket;
-      await this.sweep(tenantId, after, (customer) => {
+      await this.sweep(tenantId, after, bucket !== "needsDefault", (customer) => {
         const placed = placeUnknownState(customer, addressPrecedence)[bucket];
-        if (placed) rows[bucket].push(toRow(customer, placed.address));
+        if (placed) rows[bucket].push(rowFor(customer, bucket, placed));
         return rows[bucket].length > limit;
       });
     }
@@ -152,18 +167,21 @@ export class UnknownStateCustomersService {
       noAddress: page("noAddress"),
       unusableState: page("unusableState"),
       needsReview: page("needsReview"),
+      needsDefault: page("needsDefault"),
       customersTotal,
       businessStateMissing,
     };
   }
 
   /**
-   * Visits the candidate customers in (businessName, id) order, in cursor pages (the readiness idiom),
-   * until `visit` returns true or the customers run out. Every query carries the explicit tenantId.
+   * Visits the customers in (businessName, id) order, in cursor pages (the readiness idiom), until
+   * `visit` returns true or the customers run out: only CANDIDATE_WHERE's when `candidatesOnly`, else
+   * every live customer. Every query carries the explicit tenantId.
    */
   private async sweep(
     tenantId: string,
     after: UnknownStateCursor | null,
+    candidatesOnly: boolean,
     visit: (customer: UnknownStateCustomer) => boolean,
   ): Promise<void> {
     const db = this.prisma.forTenant();
@@ -173,7 +191,10 @@ export class UnknownStateCustomersService {
         where: excludeWalkIn({
           tenantId,
           deletedAt: null,
-          AND: [CANDIDATE_WHERE, ...(after ? [afterWhere(after)] : [])],
+          AND: [
+            ...(candidatesOnly ? [CANDIDATE_WHERE] : []),
+            ...(after ? [afterWhere(after)] : []),
+          ],
         }),
         orderBy: [{ businessName: "asc" }, { id: "asc" }],
         take: ENABLE_READINESS_PAGE_SIZE,

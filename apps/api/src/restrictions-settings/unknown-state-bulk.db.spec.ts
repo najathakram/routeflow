@@ -105,6 +105,50 @@ describeDb("customers without a state: buckets, bulk set and undo against real P
     for (const t of [tenantA, tenantB]) await wipe(t);
   });
 
+  async function addClean(tenantId: string, customerId: string, code: string, isDefault: boolean) {
+    await prisma.customerAddress.create({
+      data: {
+        tenantId,
+        customerId,
+        line1: "1 Test St",
+        city: "Testville",
+        state: code,
+        stateCode: code,
+        stateNeedsReview: false,
+        zip: "",
+        isDefault,
+        addressType: "BILLING",
+      },
+    });
+  }
+
+  it("needsDefault: clean-coded customers with no or conflicting defaults are found and paged without the pre-filter", async () => {
+    const noDefault = await mkCustomer(tenantA, "Delta Acme");
+    await addClean(tenantA, noDefault, "TX", false);
+    await addClean(tenantA, noDefault, "NY", false);
+    const conflict = await mkCustomer(tenantA, "Echo Acme");
+    await addClean(tenantA, conflict, "TX", true);
+    await addClean(tenantA, conflict, "NY", true);
+    const resolved = await mkCustomer(tenantA, "Foxtrot Acme");
+    await addClean(tenantA, resolved, "TX", true);
+    await addClean(tenantA, resolved, "NY", false);
+    const other = await mkCustomer(tenantB, "Other tenant");
+    await addClean(tenantB, other, "TX", false);
+    await addClean(tenantB, other, "NY", false);
+
+    const r = await asA(() => list.list({}));
+    expect(r.needsDefault.total).toBe(2);
+    expect(r.needsDefault.rows.map((x) => x.name)).toEqual(["Delta Acme", "Echo Acme"]);
+    expect(r.needsDefault.rows[0].choices?.map((c) => c.state)).toEqual(["TX", "NY"]);
+    expect(r.customersTotal).toBe(2);
+    const p1 = await asA(() => list.list({ bucket: "needsDefault", limit: 1 }));
+    const p2 = await asA(() =>
+      list.list({ bucket: "needsDefault", limit: 1, cursor: p1.needsDefault.nextCursor as string }),
+    );
+    expect(p2.needsDefault.rows.map((x) => x.name)).toEqual(["Echo Acme"]);
+    expect(p2.needsDefault.nextCursor).toBeNull();
+  });
+
   it("buckets come back from the real relation filters, tenant-scoped and name-sorted", async () => {
     await mkCustomer(tenantA, "Bravo Acme");
     await mkCustomer(tenantA, "Alpha Acme");

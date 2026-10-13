@@ -4,17 +4,20 @@ import { UserRole } from "@prisma/client";
 import {
   BULK_STATE_MAX_CUSTOMERS,
   BULK_STATE_UNDO_WINDOW_MINUTES,
+  BULK_STATE_BUCKET_VALUES,
   UNKNOWN_STATE_BUCKET_VALUES,
   UNKNOWN_STATE_PAGE_DEFAULT,
   UNKNOWN_STATE_PAGE_MAX,
 } from "@routeflow/types";
 import { RolesGuard } from "../auth/guards/roles.guard";
+import { resolveGoverningState } from "../selling-restrictions/selling-restrictions.core";
 import { SellingRestrictionsService } from "../selling-restrictions/selling-restrictions.service";
 import { createMockPrisma } from "../testing/prisma-mock";
 import { UnknownStateCustomersQueryDto } from "./dto/unknown-state-customers-query.dto";
 import { UnknownStateCustomersController } from "./unknown-state-customers.controller";
 import { UnknownStateCustomersService } from "./unknown-state-customers.service";
 import {
+  BULK_STATE_BUCKETS,
   BULK_STATE_MAX,
   BULK_STATE_UNDO_WINDOW_MIN,
   UNKNOWN_STATE_BUCKETS,
@@ -72,7 +75,7 @@ const cust = (id: string, businessName: string, addresses: ReturnType<typeof add
     ...over,
   }) as FakeCustomer;
 
-/** A JS twin of the service's SQL candidate filter (it must never drop a bucket member). */
+/** A JS twin of the service's SQL candidate filter, applied only when the query carries it. */
 const CODES = new Set(["TX", "WA", "NY", "CA"]);
 const candidate = (c: FakeCustomer) =>
   c.addresses.length === 0 ||
@@ -89,9 +92,10 @@ function setup(customers: FakeCustomer[], opts: { businessStateMissing?: boolean
     const w = args.where;
     const ands: any[] = w.AND ?? [];
     const keyset = ands.find((x) => x?.OR?.[0]?.businessName?.gt !== undefined);
+    const prefiltered = ands.some((x) => x?.OR?.[0]?.addresses?.none !== undefined);
     let rows = customers
       .filter((c) => c.tenantId === w.tenantId && c.deletedAt === null && c.isWalkIn !== true)
-      .filter(candidate)
+      .filter((c) => !prefiltered || candidate(c))
       .sort((a, b) =>
         a.businessName < b.businessName
           ? -1
@@ -139,7 +143,7 @@ function world(): FakeCustomer[] {
     cust("c-g", "Golf Shop", [
       addr({ isDefault: false, state: "TX", stateCode: "TX" }),
       addr({ isDefault: false, state: "TX", stateCode: "TX" }),
-    ]), // unresolved, but no address problem: in no bucket
+    ]), // unresolved, but no address problem: needsDefault
     cust("c-h", "Hotel Walk-in", [], { isWalkIn: true }),
     cust("c-i", "India Closed", [], { deletedAt: new Date() }),
     cust("c-j", "Juliet Elsewhere", [], { tenantId: "other-tenant" }),
@@ -192,7 +196,8 @@ describe("GET /settings/restrictions/unknown-state-customers: buckets", () => {
     expect(r.needsReview.rows.map((x) => x.suggestedState)).toEqual(["WA", "TX", "TX", "WA"]);
     expect(r.needsReview.total).toBe(4);
     // Kilo sits in two buckets and counts once; Golf (no address problem) and Lima (resolved) count 0.
-    expect(r.customersTotal).toBe(6);
+    expect(r.customersTotal).toBe(7);
+    expect(names(r.needsDefault.rows)).toEqual(["Golf Shop"]);
     expect(r.businessStateMissing).toBe(false);
   });
 
@@ -221,7 +226,7 @@ describe("GET /settings/restrictions/unknown-state-customers: buckets", () => {
     const r = await setup(customers).service.list({});
     expect(r.noAddress.total).toBe(0);
     expect(names(r.needsReview.rows)).not.toContain("Delta Foods");
-    expect(r.customersTotal).toBe(4);
+    expect(r.customersTotal).toBe(5);
   });
 
   it("sorts by name, then id", async () => {
@@ -395,9 +400,175 @@ describe("roles: OPERATOR and TENANT_ADMIN read; CUSTOMER, DRIVER and buyers get
 describe("API copies of the shared constants", () => {
   it("equal the shared values", () => {
     expect([...UNKNOWN_STATE_BUCKETS]).toEqual([...UNKNOWN_STATE_BUCKET_VALUES]);
+    expect([...BULK_STATE_BUCKETS]).toEqual([...BULK_STATE_BUCKET_VALUES]);
+    expect(BULK_STATE_BUCKETS).not.toContain("needsDefault");
     expect(UNKNOWN_STATE_PAGE_DEFAULT_API).toBe(UNKNOWN_STATE_PAGE_DEFAULT);
     expect(UNKNOWN_STATE_PAGE_MAX_API).toBe(UNKNOWN_STATE_PAGE_MAX);
     expect(BULK_STATE_MAX).toBe(BULK_STATE_MAX_CUSTOMERS);
     expect(BULK_STATE_UNDO_WINDOW_MIN).toBe(BULK_STATE_UNDO_WINDOW_MINUTES);
+  });
+});
+
+describe("needsDefault: 2+ addresses and no usable default", () => {
+  const bucketsOf = (r: Awaited<ReturnType<UnknownStateCustomersService["list"]>>, id: string) =>
+    UNKNOWN_STATE_BUCKETS.filter((b) => r[b].rows.some((x) => x.customerId === id));
+
+  function fixtures(): FakeCustomer[] {
+    seq = 0;
+    return [
+      // (a) two addresses, no default, both clean
+      cust("d-a", "Ambrose Two", [
+        addr({ isDefault: false, state: "TX", stateCode: "TX" }),
+        addr({ isDefault: false, addressType: "SHIPPING", state: "NY", stateCode: "NY" }),
+      ]),
+      // (b) two clean BILLING defaults that disagree
+      cust("d-b", "Brook Conflict", [
+        addr({ state: "TX", stateCode: "TX" }),
+        addr({ state: "NY", stateCode: "NY" }),
+      ]),
+      // (c) an UNKNOWN-typed default next to another default
+      cust("d-c", "Cobalt Untyped", [
+        addr({ state: "TX", stateCode: "TX" }),
+        addr({ addressType: "", state: "TX", stateCode: "TX" }),
+      ]),
+    ];
+  }
+
+  it("(a) no default, (b) clean conflicting defaults and (c) an UNKNOWN default among others all land in needsDefault only", async () => {
+    const r = await setup(fixtures()).service.list({});
+    for (const id of ["d-a", "d-b", "d-c"]) expect(bucketsOf(r, id)).toEqual(["needsDefault"]);
+    expect(r.needsDefault.total).toBe(3);
+    expect(r.customersTotal).toBe(3);
+  });
+
+  it("every needsDefault fixture is UNRESOLVED by the engine's own resolveGoverningState (both precedences)", () => {
+    for (const c of fixtures())
+      for (const p of ["BILLING_FIRST", "SHIPPING_FIRST"] as const)
+        expect(resolveGoverningState(c.addresses, p).resolved).toBe(false);
+  });
+
+  it("a single-address customer, and a single default among several, never land in needsDefault", async () => {
+    seq = 0;
+    const r = await setup([
+      cust("s-1", "Single NonDefault", [addr({ isDefault: false, state: "TX", stateCode: "TX" })]),
+      cust("s-2", "Single Default", [
+        addr({ state: "TX", stateCode: "TX" }),
+        addr({ isDefault: false, state: "NY", stateCode: "NY" }),
+        addr({ isDefault: false, addressType: "SHIPPING", state: "CA", stateCode: "CA" }),
+      ]),
+      cust("s-3", "Billing And Shipping Defaults", [
+        addr({ state: "TX", stateCode: "TX" }),
+        addr({ addressType: "SHIPPING", state: "NY", stateCode: "NY" }),
+      ]), // precedence picks BILLING: resolved
+    ]).service.list({});
+    expect(r.needsDefault.total).toBe(0);
+    expect(r.customersTotal).toBe(0);
+  });
+
+  it("exclusive: a problem address the engine reads wins, so a customer is in exactly one bucket", async () => {
+    seq = 0;
+    const r = await setup([
+      // two defaults that disagree, one of them unusable: unusableState, not needsDefault
+      cust("x-1", "Xenon Bad Default", [
+        addr({ state: "TX", stateCode: "TX" }),
+        addr({ state: "Unknown", stateNeedsReview: true }),
+      ]),
+      // no default and a bad (non-governing) address: the engine reads nothing, so needsDefault only
+      cust("x-2", "Xylo Bad NonDefault", [
+        addr({ isDefault: false, state: "TX", stateCode: "TX" }),
+        addr({ isDefault: false, state: "Unknown", stateNeedsReview: true }),
+      ]),
+    ]).service.list({});
+    expect(bucketsOf(r, "x-1")).toEqual(["unusableState"]);
+    expect(bucketsOf(r, "x-2")).toEqual(["needsDefault"]);
+    expect(r.customersTotal).toBe(2);
+  });
+
+  it("a row carries every address as a choice, oldest first; no addressId/suggestedState", async () => {
+    const r = await setup(fixtures()).service.list({ bucket: "needsDefault" });
+    const row = r.needsDefault.rows.find((x) => x.customerId === "d-a");
+    expect(row).toEqual({
+      customerId: "d-a",
+      name: "Ambrose Two",
+      addressId: null,
+      addressText: null,
+      suggestedState: null,
+      choices: [
+        {
+          addressId: "a001",
+          addressText: "1 Main St, Dallas, TX",
+          addressType: "BILLING",
+          state: "TX",
+          isDefault: false,
+        },
+        {
+          addressId: "a002",
+          addressText: "1 Main St, Dallas, NY",
+          addressType: "SHIPPING",
+          state: "NY",
+          isDefault: false,
+        },
+      ],
+    });
+    // the other buckets' rows carry no choices
+    const w = await setup(world()).service.list({});
+    for (const b of ["noAddress", "unusableState", "needsReview"] as const)
+      for (const x of w[b].rows) expect(x).not.toHaveProperty("choices");
+  });
+
+  it("totals sweep every live customer (no pre-filter); a state-bucket page keeps its pre-filter; a needsDefault page drops it", async () => {
+    const customers = [
+      ...fixtures(),
+      ...world().filter((c) => c.id === "c-a"),
+      cust("c-z", "Zulu Empty", []),
+    ];
+    const { service, calls } = setup(customers);
+    const hasPrefilter = (c: any) =>
+      (c.where.AND ?? []).some((x: any) => x?.OR?.[0]?.addresses?.none !== undefined);
+    await service.list({});
+    expect(calls.every((c) => !hasPrefilter(c))).toBe(true);
+    // walk-in, tenant and deletedAt still scope the unfiltered sweep
+    for (const c of calls) {
+      expect(c.where.tenantId).toBe(T);
+      expect(c.where.deletedAt).toBeNull();
+    }
+
+    const p1 = await service.list({ bucket: "needsDefault", limit: 1 });
+    expect(names(p1.needsDefault.rows)).toEqual(["Ambrose Two"]);
+    calls.length = 0;
+    const p2 = await service.list({
+      bucket: "needsDefault",
+      limit: 1,
+      cursor: p1.needsDefault.nextCursor as string,
+    });
+    expect(names(p2.needsDefault.rows)).toEqual(["Brook Conflict"]); // clean codes: invisible to the pre-filter
+    expect(calls.some(hasPrefilter)).toBe(false);
+
+    const n1 = await setup(customers).service.list({ bucket: "noAddress", limit: 1 });
+    const s2 = setup(customers);
+    await s2.service.list({
+      bucket: "noAddress",
+      limit: 1,
+      cursor: n1.noAddress.nextCursor as string,
+    });
+    const pass2 = s2.calls.filter((c) =>
+      (c.where.AND ?? []).some((x: any) => x?.OR?.[0]?.businessName?.gt !== undefined),
+    );
+    expect(pass2.length).toBeGreaterThan(0);
+    expect(pass2.every(hasPrefilter)).toBe(true);
+  });
+
+  it("the query DTO accepts bucket=needsDefault", async () => {
+    const pipe = new ValidationPipe({
+      whitelist: true,
+      transform: true,
+      forbidNonWhitelisted: true,
+    });
+    await expect(
+      pipe.transform(
+        { bucket: "needsDefault" },
+        { type: "query", metatype: UnknownStateCustomersQueryDto },
+      ),
+    ).resolves.toBeDefined();
   });
 });

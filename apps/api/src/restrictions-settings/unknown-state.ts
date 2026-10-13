@@ -1,5 +1,6 @@
 import { BadRequestException } from "@nestjs/common";
 import type {
+  BulkStateBucketName,
   BULK_STATE_MAX_CUSTOMERS as SharedBulkMax,
   BULK_STATE_UNDO_WINDOW_MINUTES as SharedUndoWindow,
   RestrictionAddressPrecedence,
@@ -24,7 +25,14 @@ export const UNKNOWN_STATE_BUCKETS = [
   "noAddress",
   "unusableState",
   "needsReview",
+  "needsDefault",
 ] as const satisfies readonly UnknownStateBucketName[];
+/** The buckets bulk-state accepts (the shared BULK_STATE_BUCKET_VALUES): needsDefault is never one. */
+export const BULK_STATE_BUCKETS = [
+  "noAddress",
+  "unusableState",
+  "needsReview",
+] as const satisfies readonly BulkStateBucketName[];
 export const UNKNOWN_STATE_PAGE_DEFAULT_API: typeof SharedPageDefault = 20;
 export const UNKNOWN_STATE_PAGE_MAX_API: typeof SharedPageMax = 50;
 export const BULK_STATE_MAX: typeof SharedBulkMax = 200;
@@ -63,7 +71,7 @@ export interface UnknownStateCustomer {
   addresses: UnknownStateAddress[];
 }
 
-/** Where one customer sits: each bucket it is in, with the address the problem sits on (null for noAddress). */
+/** Where one customer sits: each bucket it is in, with the address the problem sits on (null for noAddress and needsDefault). */
 export type UnknownStatePlacement = Partial<
   Record<
     UnknownStateBucketName,
@@ -94,9 +102,12 @@ export function readableState(a: UnknownStateAddress): string | null {
  *                     into `stateCode` (never backfilled, a city-name text, a text its ZIP contradicts).
  *                     "Confirmed" = `stateCode` set and `stateNeedsReview` false.
  *    - unusableState: a problem address whose state nothing can read (blank, "Unknown", a misspelling).
- * A customer can sit in both of the last two (two default addresses). A customer the engine leaves
- * unresolved with NO problem address (several addresses and no default, or defaults that name
- * different states) is in no bucket: setting a state cannot fix them, choosing a default can.
+ * A customer can sit in both of the last two (two default addresses).
+ *  - needsDefault:  unresolved with NO problem address the engine reads: several addresses and no
+ *                   default, defaults that name different usable states, or an UNKNOWN-typed default
+ *                   among several. Setting a state cannot fix them, choosing a default can. Exclusive:
+ *                   a problem address wins, so a customer is never in needsDefault and another bucket.
+ *                   `others` = every address (the choices), oldest first.
  */
 export function placeUnknownState(
   customer: UnknownStateCustomer,
@@ -105,9 +116,7 @@ export function placeUnknownState(
   const { addresses } = customer;
   if (resolveGoverningState(addresses, precedence).resolved) return {};
   if (addresses.length === 0) return { noAddress: { address: null, others: [] } };
-  const group = [...governingAddresses(addresses, precedence)].sort(
-    (x, y) => x.createdAt.getTime() - y.createdAt.getTime() || (x.id < y.id ? -1 : 1),
-  );
+  const group = byAge(governingAddresses(addresses, precedence));
   const problems = group.filter(
     (a) => a.stateNeedsReview || normalizeUsState(a.stateCode) === null,
   );
@@ -116,7 +125,15 @@ export function placeUnknownState(
   const out: UnknownStatePlacement = {};
   if (unusable.length > 0) out.unusableState = { address: unusable[0], others: unusable.slice(1) };
   if (review.length > 0) out.needsReview = { address: review[0], others: review.slice(1) };
+  if (problems.length === 0) out.needsDefault = { address: null, others: byAge(addresses) };
   return out;
+}
+
+/** Oldest first, id as the tie-break: the order rows and choices are shown in. */
+function byAge(addresses: readonly UnknownStateAddress[]): UnknownStateAddress[] {
+  return [...addresses].sort(
+    (x, y) => x.createdAt.getTime() - y.createdAt.getTime() || (x.id < y.id ? -1 : 1),
+  );
 }
 
 /** The raw address for display: the non-blank parts as stored, comma-joined. */
@@ -131,6 +148,7 @@ export function addressText(a: UnknownStateAddress): string {
 export function toRow(
   customer: Pick<UnknownStateCustomer, "id" | "businessName">,
   address: UnknownStateAddress | null,
+  choices?: readonly UnknownStateAddress[],
 ): UnknownStateCustomerRow {
   if (!address) {
     return {
@@ -139,6 +157,17 @@ export function toRow(
       addressId: null,
       addressText: null,
       suggestedState: null,
+      ...(choices
+        ? {
+            choices: choices.map((a) => ({
+              addressId: a.id,
+              addressText: addressText(a),
+              addressType: a.addressType ?? "",
+              state: normalizeUsState(a.stateCode),
+              isDefault: a.isDefault,
+            })),
+          }
+        : {}),
     };
   }
   return {

@@ -38,7 +38,7 @@ export class UnknownStateCustomersController {
   @Roles(UserRole.OPERATOR)
   @ApiOperation({
     summary:
-      "Customers whose state can't be resolved, in three buckets (no address, unusable state, needs a state check), keyset-paged per bucket",
+      "Customers whose state can't be resolved, in four buckets (no address, unusable state, needs a state check, needs a default), keyset-paged per bucket",
   })
   list(@Query() query: UnknownStateCustomersQueryDto) {
     return this.unknownState.list(query);
