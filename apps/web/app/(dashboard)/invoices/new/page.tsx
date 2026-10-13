@@ -1385,17 +1385,28 @@ export default function NewInvoicePage() {
       const dto = buildInvoiceDto(false);
       updateInvoice.mutate({ id: currentDraftId, ...dto } as any, {
         onSuccess: async () => {
+          let sendFailed = false;
           if (sendNow) {
             try {
               await apiClient.post(`/invoices/${currentDraftId}/send`);
             } catch {
-              // fall through to toast below
+              sendFailed = true;
             }
           }
-          toast({
-            title: sendNow ? "Invoice sent" : "Draft saved",
-            variant: "success",
-          });
+          if (sendFailed) {
+            // Saved, but the send failed: never claim "sent". Still open the invoice to resend.
+            toast({
+              title: "Saved as a draft, not sent",
+              description:
+                "The invoice was saved but could not be sent. Open it and send it from the invoice page.",
+              variant: "warning",
+            });
+          } else {
+            toast({
+              title: sendNow ? "Invoice sent" : "Draft saved",
+              variant: "success",
+            });
+          }
           router.push(`/invoices/${currentDraftId}`);
         },
         onError: () => {
