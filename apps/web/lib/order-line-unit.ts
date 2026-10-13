@@ -2,6 +2,7 @@ import {
   isSpecialTier,
   getTierPrice,
   normalizeBoxesPieces,
+  type DerivedBaseMarker,
   type LadderProduct,
 } from "@routeflow/pricing";
 import type { UnitOption } from "@/lib/unit-options";
@@ -31,15 +32,16 @@ export interface PackBase {
   unitCost?: number;
 }
 
-/** The line fields this module reads/writes (structurally satisfied by the modal's LineItem). */
-export interface UnitLine extends PackBase {
+/**
+ * The line fields this module reads/writes (structurally satisfied by the modal's LineItem).
+ *
+ * `derivedBase` (Units P0b / SA-728) comes from the shared `DerivedBaseMarker` in @routeflow/pricing, declared once for
+ * web and mobile: the base option's value while the line sells a DERIVED base unit. Such a line is a PACK-PIECES line
+ * (boxes/pieces, `sellBy: "unit"`, no `unitLabel`) so the preview and the payload are the server's own proration; this
+ * marker only keeps the picker showing the base. Never submitted.
+ */
+export interface UnitLine extends PackBase, DerivedBaseMarker {
   unitLabel?: string;
-  /**
-   * Units P0b / SA-728: the base option's value while the line sells a DERIVED base unit. Such a line is a
-   * PACK-PIECES line (boxes/pieces, `sellBy: "unit"`, no `unitLabel`) so the preview and the payload are the
-   * server's own proration; this marker only keeps the picker showing the base. Never submitted.
-   */
-  derivedBase?: string;
   packBase?: PackBase;
   /** The product's tier-price columns (the modal's snapshot) — lets a restored pack line be re-priced. */
   tierPrices?: Parameters<typeof getTierPrice>[0];
@@ -140,7 +142,7 @@ function backToPack<T extends UnitLine>(li: T): T {
 }
 
 /** What the unit picker shows as selected: the held unit, else the derived base, else the pack (`""`). */
-export const unitPickerValueOf = (li: { unitLabel?: string; derivedBase?: string }): string =>
+export const unitPickerValueOf = (li: { unitLabel?: string } & DerivedBaseMarker): string =>
   li.unitLabel ?? li.derivedBase ?? "";
 
 /** The pack ladder inputs of a line, whichever unit it currently sells by. */
@@ -176,8 +178,8 @@ export const unitLabelPayload = (li: { unitLabel?: string }): { unitLabel?: stri
 
 /** Same product AND same unit = the same line (a Case and a Box of one product are two lines). */
 export const sameProductUnit = (
-  a: { productId: string; unitLabel?: string; derivedBase?: string },
-  b: { productId: string; unitLabel?: string; derivedBase?: string },
+  a: { productId: string; unitLabel?: string } & DerivedBaseMarker,
+  b: { productId: string; unitLabel?: string } & DerivedBaseMarker,
 ): boolean => a.productId === b.productId && unitPickerValueOf(a) === unitPickerValueOf(b);
 
 /**
