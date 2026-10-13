@@ -9,6 +9,12 @@ import { unitNameKey } from "../units/piece-words";
 export const packWordKey = (unit: string | null | undefined): string =>
   unitNameKey(unit ?? "") || "box";
 
+/** The pack's size in pieces: `unitsPerBox` when above 1, else 1 (a loose-piece pack). */
+export const packFactorOf = (pack: { unitsPerBox?: number | null }): number => {
+  const upb = Math.trunc(Number(pack.unitsPerBox ?? 0));
+  return upb > 1 ? upb : 1;
+};
+
 /**
  * Editing a product's PACK (`unit`, `unitsPerBox`, regulated section) must never invalidate the
  * `ProductUnit` levels already defined on it — the ladder resolves a label to the pack FIRST, so

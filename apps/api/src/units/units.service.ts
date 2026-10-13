@@ -9,7 +9,7 @@ import type { JwtPayload } from "../auth/jwt-payload.interface";
 import { PrismaService } from "../prisma/prisma.service";
 import { AuditService } from "../audit/audit.service";
 import { API_ERROR_CODES } from "../common/api-error-codes";
-import { packWordKey } from "../products/unit-pack-rules";
+import { packFactorOf, packWordKey } from "../products/unit-pack-rules";
 import { UNIT_NAME_EMPTY, UNIT_NAME_IS_PIECE, UNIT_NAME_TOO_LONG } from "./dto/create-unit.dto";
 import { isPieceSynonym, unitNameKey } from "./piece-words";
 import { lockTenantUnits } from "./tenant-units-lock";
@@ -333,10 +333,7 @@ export class UnitsService {
           if (l.tenantUnitId === id) factorOf.set(l.productId, l.factorToBase);
         // A pack word that renames with the unit is a level of the pack's own size (Product.unit).
         for (const p of products) {
-          if (matches(p.unit) && !factorOf.has(p.id)) {
-            const upb = Math.trunc(Number(p.unitsPerBox ?? 0));
-            factorOf.set(p.id, upb > 1 ? upb : 1);
-          }
+          if (matches(p.unit) && !factorOf.has(p.id)) factorOf.set(p.id, packFactorOf(p));
         }
         for (const part of chunks([...factorOf.keys()])) {
           const ids = Prisma.join(part);
