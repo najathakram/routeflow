@@ -77,6 +77,7 @@ export function repriceLine(
   const typed = stored.priceEdited === true;
   const common: Partial<InvoiceDraftLine> = {
     pricing: fresh.pricing,
+    tierPrices: fresh.tierPrices,
     ...(product.averageCost ? { avgCost: parseFloat(String(product.averageCost)) } : {}),
     ...(typeof product.category === "string" ? { category: product.category } : {}),
   };

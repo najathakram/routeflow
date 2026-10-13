@@ -259,6 +259,18 @@ describe("checkDraftReferences: prices are re-resolved, not trusted (ROW 447)", 
     });
   });
 
+  it("restored lines carry the live tier columns the unit picker reads", async () => {
+    const r = await run([stored({ unitPrice: 10 })], {
+      "/products/p-1": product({ priceTier2: "9", priceTier4: "6" }),
+    });
+    expect(r.snapshot.lines[0].tierPrices).toMatchObject({
+      pricePerUnit: "10",
+      priceTier2: "9",
+      priceTier3: "7.5",
+      priceTier4: "6",
+    });
+  });
+
   describe("pack size follows the live product", () => {
     it("a pack that grew from 12 to 24 re-splits 1 box + 6 pieces (18 units) with the live size", async () => {
       const r = await run(

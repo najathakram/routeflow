@@ -74,6 +74,14 @@ export interface InvoiceDraftLine {
   category?: string;
   /** Set by a restore from the live product (cost is never stored in the draft). */
   avgCost?: number;
+  /** Set by a restore from the live product (the unit picker reads it); never stored in the draft. */
+  tierPrices?: {
+    pricePerUnit?: unknown;
+    priceTier2?: unknown;
+    priceTier3?: unknown;
+    priceTier4?: unknown;
+    priceTier5?: unknown;
+  };
 }
 
 export interface InvoiceDraftSnapshot {
