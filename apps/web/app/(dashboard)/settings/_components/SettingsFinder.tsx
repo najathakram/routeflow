@@ -171,8 +171,8 @@ function ResultRow({
 }
 
 /**
- * Search, your business, frequent links and the groups: the one body shared by the lg rail and the
- * below-lg hub list. Typing swaps the groups for one flat result list; Enter opens the first link.
+ * Search, your business, frequent links and the groups: the one body shared by the xl rail and the
+ * below-xl hub list (which also shows "Needs attention" under the card). Typing swaps the groups for one flat result list; Enter opens the first link.
  */
 export function SettingsFinder({
   variant,
@@ -180,12 +180,15 @@ export function SettingsFinder({
   query,
   onQuery,
   active = [],
+  afterCard,
 }: {
   variant: Variant;
   nav: SettingsNav;
   query: string;
   onQuery: (q: string) => void;
   active?: string[];
+  /** Shown under the Business card while not searching (the list's "Needs attention"; the rail has none). */
+  afterCard?: React.ReactNode;
 }) {
   const rail = variant === "rail";
   const inputRef = React.useRef<HTMLInputElement>(null);
@@ -268,6 +271,7 @@ export function SettingsFinder({
       {!searching && (
         <>
           <BusinessCard variant={variant} active={active.includes("plan-billing")} />
+          {afterCard}
           <div className="flex flex-wrap items-center gap-2 text-xs text-[var(--ink-500)]">
             <span>Frequently used:</span>
             {CHIPS.map((c) => (

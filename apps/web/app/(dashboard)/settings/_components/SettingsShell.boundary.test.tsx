@@ -34,7 +34,8 @@ beforeEach(() => {
   })) as unknown as typeof window.matchMedia;
 });
 
-const tree = (
+// A fresh element per render: re-passing the same element object would let React bail out of the update.
+const tree = () => (
   <SettingsShell>
     <div>billing-pane</div>
   </SettingsShell>
@@ -42,7 +43,7 @@ const tree = (
 
 it("a throwing rail still renders the pane and leaves no empty column", () => {
   const err = jest.spyOn(console, "error").mockImplementation(() => undefined);
-  const { container } = renderWithProviders(tree);
+  const { container } = renderWithProviders(tree());
   expect(screen.getByText("billing-pane")).toBeInTheDocument();
   expect(screen.queryByRole("navigation", { name: "Settings" })).not.toBeInTheDocument();
   expect(container.querySelector("aside")).toBeNull();
@@ -51,11 +52,11 @@ it("a throwing rail still renders the pane and leaves no empty column", () => {
 
 it("navigating retries the rail", () => {
   const err = jest.spyOn(console, "error").mockImplementation(() => undefined);
-  const { rerender, container } = renderWithProviders(tree);
+  const { rerender, container } = renderWithProviders(tree());
   expect(container.querySelector("aside")).toBeNull();
   railThrows = false;
   mockPath = "/settings?tab=invoicing";
-  rerender(tree);
+  rerender(tree());
   expect(screen.getByRole("navigation", { name: "Settings" })).toBeInTheDocument();
   expect(screen.getByText("billing-pane")).toBeInTheDocument();
   err.mockRestore();
@@ -63,8 +64,8 @@ it("navigating retries the rail", () => {
 
 it("without a navigation the failed rail stays hidden (no render loop)", () => {
   const err = jest.spyOn(console, "error").mockImplementation(() => undefined);
-  const { rerender, container } = renderWithProviders(tree);
-  rerender(tree);
+  const { rerender, container } = renderWithProviders(tree());
+  rerender(tree());
   expect(container.querySelector("aside")).toBeNull();
   err.mockRestore();
 });
