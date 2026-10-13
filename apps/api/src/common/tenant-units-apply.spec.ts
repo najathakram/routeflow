@@ -1,7 +1,9 @@
 /**
  * Units U-6: the write side of scripts/backfill-tenant-units.mjs, driven through an in-memory
- * Prisma stand-in with real transaction rollback. Pins: bounded transactions (N products each),
- * idempotent re-runs, and clean resume after a crash between batches.
+ * Prisma stand-in with real transaction rollback. Pins: bounded transactions (N products each), the
+ * timeouts every transaction sets first, the FOR SHARE re-reads before any write (SA M4), no Product
+ * write at all (SA M1), compare-and-set parent fills (SA M2), idempotent re-runs, clean resume after a
+ * crash between batches, and a row edited between plan and apply never overwritten.
  */
 // eslint-disable-next-line @typescript-eslint/no-var-requires
 const { planTenantUnits } = require("../../scripts/lib/tenant-units-plan.cjs");
@@ -10,51 +12,71 @@ const {
   applyTenantUnitsPlan,
   batchWrites,
   BACKFILL_BATCH_SIZE,
+  WRITE_TIMEOUTS,
 } = require("../../scripts/lib/tenant-units-apply.cjs");
 
 const TENANT = "t1";
 
+type Unit = {
+  id: string;
+  tenantId: string;
+  productId: string;
+  label: string;
+  tenantUnitId: string | null;
+  factorToBase: number;
+  parentUnitId: string | null;
+  perParent: number | null;
+};
 type State = {
   tenantUnits: Array<{ id: string; tenantId: string; nameKey: string; name: string }>;
-  productUnits: Array<{
-    id: string;
-    tenantId: string;
-    productId: string;
-    label: string;
-    tenantUnitId: string | null;
-  }>;
-  products: Array<{ id: string; tenantId: string; unit: string; packLabel: string | null }>;
+  productUnits: Unit[];
+  products: Array<{ id: string; tenantId: string; unit: string }>;
 };
 
 /**
  * Evaluates a Prisma `where` against a row the way Prisma does for the shapes used here: every key
- * must match (null matches NULL), `OR` matches when any branch does, and an `undefined` key is
- * DROPPED (that is how Prisma widens a where, so the fake must widen too).
+ * must match (null matches NULL) and an `undefined` key is DROPPED (that is how Prisma widens a where,
+ * so the fake must widen too).
  */
 function matches(row: Record<string, unknown>, where: Record<string, unknown>): boolean {
-  return Object.entries(where).every(([k, v]) => {
-    if (v === undefined) return true;
-    if (k === "OR") return (v as Array<Record<string, unknown>>).some((sub) => matches(row, sub));
-    return row[k] === v;
-  });
+  return Object.entries(where).every(([k, v]) => v === undefined || row[k] === v);
 }
 
 function fake(
   state: State,
   opts: {
-    failProductUpdateAt?: number;
+    failUnitUpdateAt?: number;
     /** Runs at the start of the nth transaction: an operator edit landing mid-run. */
     beforeTx?: (n: number, state: State) => void;
   } = {},
 ) {
   let seq = 0;
-  let productUpdates = 0;
-  const productWriteKeys = new Set<string>();
-  const stats = { transactions: 0, productsPerTx: [] as number[] };
+  let unitUpdates = 0;
+  const stats = { transactions: 0, productsPerTx: [] as number[], ops: [] as string[][] };
   let touched: Set<string> | null = null;
+  let log: string[] = [];
+  // No `product` model: the backfill must never write (or even reach for) a Product (SA M1).
   const db = {
+    $executeRawUnsafe: async (sql: string) => {
+      log.push(`exec:${sql}`);
+      return 0;
+    },
+    $queryRawUnsafe: async (sql: string, tenantId: string, ids: string[]) => {
+      if (!/FOR SHARE/.test(sql)) throw new Error(`unexpected query: ${sql}`);
+      if (sql.includes('"TenantUnit"')) {
+        log.push("share:units");
+        return state.tenantUnits
+          .filter((u) => u.tenantId === tenantId && ids.includes(u.nameKey))
+          .map((u) => ({ id: u.id, nameKey: u.nameKey }));
+      }
+      log.push("share:parents");
+      return state.productUnits
+        .filter((u) => u.tenantId === tenantId && ids.includes(u.id))
+        .map((u) => ({ id: u.id, productId: u.productId, factorToBase: u.factorToBase }));
+    },
     tenantUnit: {
       upsert: async ({ where, create }: any) => {
+        log.push("upsert");
         const k = where.tenantId_nameKey;
         let row = state.tenantUnits.find(
           (u) => u.tenantId === k.tenantId && u.nameKey === k.nameKey,
@@ -68,23 +90,13 @@ function fake(
     },
     productUnit: {
       updateMany: async ({ where, data }: any) => {
+        log.push("write");
+        unitUpdates += 1;
+        if (opts.failUnitUpdateAt === unitUpdates) throw new Error("boom");
         const rows = state.productUnits.filter((r) => matches(r, where));
         for (const row of rows) {
-          row.tenantUnitId = data.tenantUnitId;
+          Object.assign(row, data);
           touched?.add(row.productId);
-        }
-        return { count: rows.length };
-      },
-    },
-    product: {
-      updateMany: async ({ where, data }: any) => {
-        productUpdates += 1;
-        for (const k of Object.keys(data)) productWriteKeys.add(k);
-        if (opts.failProductUpdateAt === productUpdates) throw new Error("boom");
-        const rows = state.products.filter((p) => matches(p, where));
-        for (const row of rows) {
-          row.packLabel = data.packLabel;
-          touched?.add(row.id);
         }
         return { count: rows.length };
       },
@@ -94,6 +106,7 @@ function fake(
       opts.beforeTx?.(stats.transactions, state);
       const snap = JSON.parse(JSON.stringify(state));
       touched = new Set();
+      log = [];
       try {
         const out = await fn(db);
         stats.productsPerTx.push(touched.size);
@@ -104,13 +117,15 @@ function fake(
         state.products = snap.products;
         throw err;
       } finally {
+        stats.ops.push(log);
         touched = null;
       }
     },
   };
-  return { db, stats, productWriteKeys };
+  return { db, stats };
 }
 
+/** n products, each with one "Case" level of 12 (no base row): plans a link + a parent fill each. */
 const seed = (n: number): State => ({
   tenantUnits: [],
   productUnits: Array.from({ length: n }, (_, i) => ({
@@ -119,58 +134,44 @@ const seed = (n: number): State => ({
     productId: `p${i}`,
     label: "Case",
     tenantUnitId: null,
+    factorToBase: 12,
+    parentUnitId: null,
+    perParent: null,
   })),
-  products: Array.from({ length: n }, (_, i) => ({
-    id: `p${i}`,
-    tenantId: TENANT,
-    unit: "Tray",
-    packLabel: null,
-  })),
+  products: Array.from({ length: n }, (_, i) => ({ id: `p${i}`, tenantId: TENANT, unit: "Tray" })),
 });
 
 async function runOnce(state: State, f: ReturnType<typeof fake>, batchSize?: number) {
-  const productUnits = state.productUnits.map((u) => ({
-    id: u.id,
-    label: u.label,
-    tenantUnitId: u.tenantUnitId,
-  }));
-  const productIdByUnit = new Map(state.productUnits.map((u) => [u.id, u.productId]));
+  const productUnits = state.productUnits.map((u) => ({ ...u }));
   const plan = planTenantUnits({
     productUnits,
     products: state.products,
     existingUnits: state.tenantUnits.map((u) => ({ nameKey: u.nameKey })),
   });
-  const existingUnits = state.tenantUnits.map((u) => ({ id: u.id, nameKey: u.nameKey }));
   return applyTenantUnitsPlan({
     prisma: f.db,
     tenantId: TENANT,
     plan,
-    existingUnits,
-    productIdByUnit,
+    productIdByUnit: new Map(state.productUnits.map((u) => [u.id, u.productId])),
     batchSize,
   });
 }
 
+const fillsFor = (n: number) => ({
+  links: [],
+  parentFills: Array.from({ length: n }, (_, i) => ({
+    productUnitId: `u${i}`,
+    productId: `p${String(i).padStart(4, "0")}`,
+  })),
+});
+
 describe("batched backfill apply (U-6)", () => {
   it("batches at the boundary: 0 / 200 / 201 products are 0 / 1 / 2 batches", () => {
-    const fills = (n: number) => ({
-      links: [],
-      packFills: Array.from({ length: n }, (_, i) => ({
-        productId: `p${String(i).padStart(4, "0")}`,
-        packLabel: "Tray",
-        unit: "Tray",
-      })),
-    });
     expect(BACKFILL_BATCH_SIZE).toBe(200);
-    expect(batchWrites(fills(0), new Map())).toHaveLength(0);
-    expect(batchWrites(fills(200), new Map())).toHaveLength(1);
-    const two = batchWrites(fills(201), new Map());
-    expect(two.map((b: { packFills: unknown[] }) => b.packFills.length)).toEqual([200, 1]);
-  });
-
-  it("names a default batch size", () => {
-    expect(Number.isInteger(BACKFILL_BATCH_SIZE)).toBe(true);
-    expect(BACKFILL_BATCH_SIZE).toBeGreaterThan(0);
+    expect(batchWrites(fillsFor(0), new Map())).toHaveLength(0);
+    expect(batchWrites(fillsFor(200), new Map())).toHaveLength(1);
+    const two = batchWrites(fillsFor(201), new Map());
+    expect(two.map((b: { parentFills: unknown[] }) => b.parentFills.length)).toEqual([200, 1]);
   });
 
   it("batchWrites groups by product, N products per batch, a product's writes stay together", () => {
@@ -180,9 +181,9 @@ describe("batched backfill apply (U-6)", () => {
         { productUnitId: "u2", nameKey: "case" },
         { productUnitId: "u3", nameKey: "case" },
       ],
-      packFills: [
-        { productId: "pa", packLabel: "Tray" },
-        { productId: "pb", packLabel: "Tray" },
+      parentFills: [
+        { productUnitId: "u1", productId: "pa" },
+        { productUnitId: "u4", productId: "pb" },
       ],
     };
     const byUnit = new Map([
@@ -195,33 +196,65 @@ describe("batched backfill apply (U-6)", () => {
     const productsIn = (b: any) =>
       new Set([
         ...b.links.map((l: any) => byUnit.get(l.productUnitId)),
-        ...b.packFills.map((f: any) => f.productId),
+        ...b.parentFills.map((f: any) => f.productId),
       ]);
     for (const b of batches) expect(productsIn(b).size).toBeLessThanOrEqual(2);
-    const all = batches.flatMap((b: any) => b.links.map((l: any) => l.productUnitId)).sort();
-    expect(all).toEqual(["u1", "u2", "u3"]);
-    expect(batches.flatMap((b: any) => b.packFills)).toHaveLength(2);
     const holder = batches.find((b: any) => b.links.some((l: any) => l.productUnitId === "u1"));
     expect(holder.links.map((l: any) => l.productUnitId)).toContain("u2");
-    expect(holder.packFills.map((f: any) => f.productId)).toContain("pa");
+    expect(holder.parentFills.map((f: any) => f.productId)).toContain("pa");
   });
 
   it("rejects a non-positive or non-integer batch size", () => {
-    expect(() => batchWrites({ links: [], packFills: [] }, new Map(), 0)).toThrow();
-    expect(() => batchWrites({ links: [], packFills: [] }, new Map(), 1.5)).toThrow();
+    expect(() => batchWrites({ links: [], parentFills: [] }, new Map(), 0)).toThrow();
+    expect(() => batchWrites({ links: [], parentFills: [] }, new Map(), 1.5)).toThrow();
   });
 
-  it("applies in bounded transactions: never more than N products in one", async () => {
+  it("applies in bounded transactions, each setting lock + statement timeouts first", async () => {
     const state = seed(7);
     const f = fake(state);
-    await runOnce(state, f, 3);
+    const r = await runOnce(state, f, 3);
     // 1 for the unit upserts + ceil(7 / 3) product batches
     expect(f.stats.transactions).toBe(1 + 3);
     expect(Math.max(...f.stats.productsPerTx)).toBeLessThanOrEqual(3);
-    expect(state.productUnits.every((u) => u.tenantUnitId)).toBe(true);
-    expect(state.products.every((p) => p.packLabel === "Tray")).toBe(true);
-    // Product.unit is legacy text that documents still read: only packLabel is ever written.
-    expect([...f.productWriteKeys]).toEqual(["packLabel"]);
+    for (const ops of f.stats.ops) {
+      expect(ops.slice(0, 2)).toEqual(WRITE_TIMEOUTS.map((s: string) => `exec:${s}`));
+    }
+    expect(WRITE_TIMEOUTS.join(" ")).toMatch(/lock_timeout.*statement_timeout/);
+    expect(state.productUnits.every((u) => u.tenantUnitId && u.perParent === 12)).toBe(true);
+    expect(r).toMatchObject({ linked: 7, parentFilled: 7, linksChanged: 0, parentsChanged: 0 });
+  });
+
+  it("never writes a Product (SA M1): products are byte-identical after a run", async () => {
+    const state = seed(4);
+    const before = JSON.stringify(state.products);
+    await runOnce(state, fake(state), 2);
+    expect(JSON.stringify(state.products)).toBe(before);
+  });
+
+  it("re-reads the batch's units and parents FOR SHARE before any write (SA M4)", async () => {
+    const state = seed(2);
+    state.productUnits.push({
+      id: "base0",
+      tenantId: TENANT,
+      productId: "p0",
+      label: "Piece",
+      tenantUnitId: null,
+      factorToBase: 1,
+      parentUnitId: null,
+      perParent: null,
+    });
+    const f = fake(state);
+    await runOnce(state, f, 5);
+    const batch = f.stats.ops[1];
+    const firstWrite = batch.indexOf("write");
+    expect(batch.indexOf("share:units")).toBeGreaterThan(-1);
+    expect(batch.indexOf("share:parents")).toBeGreaterThan(-1);
+    expect(batch.indexOf("share:units")).toBeLessThan(firstWrite);
+    expect(batch.indexOf("share:parents")).toBeLessThan(firstWrite);
+    expect(state.productUnits.find((u) => u.id === "pu0")).toMatchObject({
+      parentUnitId: "base0",
+      perParent: 12,
+    });
   });
 
   it("is idempotent: a second run opens no transaction and writes nothing", async () => {
@@ -237,22 +270,17 @@ describe("batched backfill apply (U-6)", () => {
 
   it("a crash between batches keeps finished batches and resumes cleanly", async () => {
     const state = seed(6);
-    // batch size 2 => 3 product batches; the 4th product update (batch 2) throws
-    await expect(runOnce(state, fake(state, { failProductUpdateAt: 4 }), 2)).rejects.toThrow(
-      "boom",
+    // batch size 2 => 3 product batches of 4 unit writes each; the 5th write (batch 2) throws
+    await expect(runOnce(state, fake(state, { failUnitUpdateAt: 5 }), 2)).rejects.toThrow("boom");
+    const doneProducts = new Set(
+      state.productUnits.filter((u) => u.tenantUnitId || u.perParent).map((u) => u.productId),
     );
-    const done = state.products.filter((p) => p.packLabel).length;
-    expect(done).toBe(2); // batch 1 committed; batch 2 rolled back whole
+    expect(doneProducts.size).toBe(2); // batch 1 committed; batch 2 rolled back whole
     expect(state.tenantUnits).toHaveLength(2); // case + tray survive (own earlier transaction)
-    const linkedProducts = new Set(
-      state.productUnits.filter((u) => u.tenantUnitId).map((u) => u.productId),
-    );
-    expect(linkedProducts.size).toBe(2); // links and fills move together per product
     const f2 = fake(state);
     await runOnce(state, f2, 2);
     expect(state.tenantUnits).toHaveLength(2); // no duplicate unit
-    expect(state.products.every((p) => p.packLabel === "Tray")).toBe(true);
-    expect(state.productUnits.every((u) => u.tenantUnitId)).toBe(true);
+    expect(state.productUnits.every((u) => u.tenantUnitId && u.perParent === 12)).toBe(true);
     // resume only did the remaining 2 batches (no unit-create transaction needed)
     expect(f2.stats.transactions).toBe(2);
   });
@@ -263,35 +291,64 @@ describe("batched backfill apply (U-6)", () => {
     const f = fake(state, {
       beforeTx: (n, st) => {
         if (n !== 3) return;
-        st.products[2].unit = "Other"; // unit edited: the Tray fill is stale
-        st.products[3].packLabel = "Carton"; // someone set a label
         st.productUnits[2].label = "Renamed"; // level renamed: the Case link is stale
+        st.productUnits[2].factorToBase = 10; // factor changed: the parent fill is stale
         st.productUnits[3].tenantUnitId = "manual"; // someone linked it
+        st.productUnits[3].perParent = 3; // someone set the chain
       },
     });
     const r = await runOnce(state, f, 2);
-    expect(state.products[2]).toMatchObject({ unit: "Other", packLabel: null });
-    expect(state.products[3].packLabel).toBe("Carton");
-    expect(state.productUnits[2]).toMatchObject({ label: "Renamed", tenantUnitId: null });
-    expect(state.productUnits[3].tenantUnitId).toBe("manual");
-    // everything outside the edited batch was applied
+    expect(state.productUnits[2]).toMatchObject({
+      label: "Renamed",
+      tenantUnitId: null,
+      factorToBase: 10,
+      perParent: null,
+    });
+    expect(state.productUnits[3]).toMatchObject({ tenantUnitId: "manual", perParent: 3 });
     for (const i of [0, 1, 4, 5]) {
-      expect(state.products[i].packLabel).toBe("Tray");
+      expect(state.productUnits[i]).toMatchObject({ perParent: 12 });
       expect(state.productUnits[i].tenantUnitId).toBeTruthy();
     }
     // counts are what was ACTUALLY written, not what was planned
-    expect(r).toMatchObject({ linked: 4, filled: 4, linksChanged: 2, fillsChanged: 2 });
+    expect(r).toMatchObject({ linked: 4, parentFilled: 4, linksChanged: 2, parentsChanged: 2 });
   });
 
-  it("a whitespace-only packLabel is left alone and never re-planned", async () => {
+  it("a unit deleted since planning is not linked or recreated; the link is reported changed", async () => {
     const state = seed(2);
-    state.products[0].packLabel = "  ";
-    const r = await runOnce(state, fake(state), 5);
-    expect(state.products[0].packLabel).toBe("  ");
-    expect(r.filled).toBe(1);
-    const f2 = fake(state);
-    const again = await runOnce(state, f2, 5);
-    expect(again).toMatchObject({ batches: 0, filled: 0 });
-    expect(f2.stats.transactions).toBe(0);
+    const f = fake(state, {
+      beforeTx: (n, st) => {
+        if (n === 2) st.tenantUnits = st.tenantUnits.filter((u) => u.nameKey !== "case");
+      },
+    });
+    const r = await runOnce(state, f, 5);
+    expect(state.tenantUnits.map((u) => u.nameKey)).toEqual(["tray"]);
+    expect(state.productUnits.every((u) => u.tenantUnitId === null)).toBe(true);
+    expect(r).toMatchObject({ linked: 0, linksChanged: 2, parentFilled: 2 });
+  });
+
+  it("a parent whose factor moved since planning is not filled against", async () => {
+    const state = seed(1);
+    state.productUnits.push({
+      id: "six",
+      tenantId: TENANT,
+      productId: "p0",
+      label: "Six",
+      tenantUnitId: null,
+      factorToBase: 6,
+      parentUnitId: null,
+      perParent: null,
+    });
+    const f = fake(state, {
+      beforeTx: (n, st) => {
+        if (n === 2) st.productUnits.find((u) => u.id === "six")!.factorToBase = 4;
+      },
+    });
+    const r = await runOnce(state, f, 5);
+    // pu0 (12) planned against six (6, x2): the parent is now 4, so pu0 is left alone
+    expect(state.productUnits.find((u) => u.id === "pu0")).toMatchObject({
+      parentUnitId: null,
+      perParent: null,
+    });
+    expect(r.parentsChanged).toBeGreaterThanOrEqual(1);
   });
 });

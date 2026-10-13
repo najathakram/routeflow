@@ -4,22 +4,38 @@
 // eslint-disable-next-line @typescript-eslint/no-var-requires
 const {
   planTenantUnits,
+  planParentFills,
   nameKeyOf,
   archivedLinkLines,
 } = require("../../scripts/lib/tenant-units-plan.cjs");
 
-type PU = { id: string; label: string | null; tenantUnitId: string | null };
-type P = { id: string; unit: string | null; packLabel: string | null };
-const pu = (id: string, label: string, tenantUnitId: string | null = null): PU => ({
+type PU = {
+  id: string;
+  productId: string;
+  label: string | null;
+  tenantUnitId: string | null;
+  factorToBase: number;
+  parentUnitId: string | null;
+  perParent: number | null;
+};
+type P = { id: string; unit: string | null };
+/** A ladder level; factor 1 (the base) by default, so link-only cases plan no parent fill. */
+const pu = (
+  id: string,
+  label: string,
+  tenantUnitId: string | null = null,
+  ladder: Partial<Pick<PU, "productId" | "factorToBase" | "parentUnitId" | "perParent">> = {},
+): PU => ({
   id,
+  productId: `p-${id}`,
   label,
   tenantUnitId,
+  factorToBase: 1,
+  parentUnitId: null,
+  perParent: null,
+  ...ladder,
 });
-const prod = (id: string, unit: string | null, packLabel: string | null = null): P => ({
-  id,
-  unit,
-  packLabel,
-});
+const prod = (id: string, unit: string | null): P => ({ id, unit });
 const plan = (productUnits: PU[], products: P[], existing: string[] = []) =>
   planTenantUnits({
     productUnits,
@@ -61,10 +77,8 @@ describe("planTenantUnits (U-6)", () => {
     const r = plan([pu("a", long), pu("b", ok)], [prod("p1", long)]);
     expect(r.toCreate.map((c: { nameKey: string }) => c.nameKey)).toEqual([ok]);
     expect(r.links).toEqual([{ productUnitId: "b", nameKey: ok, label: ok }]);
-    // 1 distinct too-long level/unit key + 0 pack fills (the long unit is counted once as a key,
-    // and again as a skipped pack fill)
-    expect(r.counts.skippedTooLong).toBe(2);
-    expect(r.packFills).toEqual([]);
+    // one distinct too-long key (the level and the legacy word share it)
+    expect(r.counts.skippedTooLong).toBe(1);
   });
 
   it("links only NULL tenantUnitId levels, including to a pre-existing unit", () => {
@@ -74,82 +88,17 @@ describe("planTenantUnits (U-6)", () => {
     expect(r.counts.tenantUnitsExisting).toBe(1);
   });
 
-  it("fills packLabel from unit only where null/blank and unit non-empty", () => {
-    const r = plan(
-      [],
-      [prod("p1", " Case "), prod("p2", "Box", "Carton"), prod("p3", ""), prod("p4", "Tray", "")],
-    );
-    expect(r.packFills).toEqual([
-      { productId: "p1", packLabel: "Case", unit: " Case " },
-      { productId: "p4", packLabel: "Tray", unit: "Tray" },
-    ]);
+  it("never plans a Product write: no pack-label fill exists (SA M1, SA-729:52)", () => {
+    const r = plan([pu("a", "Case")], [prod("p1", "CASE"), prod("p2", "Tray"), prod("p3", "each")]);
+    expect(r).not.toHaveProperty("packFills");
+    expect(r.counts).not.toHaveProperty("productsPackLabelFilled");
+    // the legacy pack word still NAMES a unit (Tray), it just never writes the product
+    expect(r.toCreate.map((c: { nameKey: string }) => c.nameKey)).toEqual(["case", "tray"]);
   });
 
-  it("fills packLabel with the tenant's canonical casing, never the product's own (a)", () => {
-    const r = plan(
-      [pu("a", "Case"), pu("b", "Case")],
-      [prod("p1", "CASE"), prod("p2", "case"), prod("p3", "Case")],
-    );
-    expect(r.packFills).toEqual([
-      { productId: "p1", packLabel: "Case", unit: "CASE" },
-      { productId: "p2", packLabel: "Case", unit: "case" },
-      { productId: "p3", packLabel: "Case", unit: "Case" },
-    ]);
-  });
-
-  it("uses a pre-existing TenantUnit's own name as the canonical casing (a)", () => {
-    const r = planTenantUnits({
-      productUnits: [],
-      products: [prod("p1", "CASE"), prod("p2", "case")],
-      existingUnits: [{ nameKey: "case", name: "Case" }],
-    });
-    expect(r.packFills.map((f: { packLabel: string }) => f.packLabel)).toEqual(["Case", "Case"]);
-  });
-
-  it("never fills a pack label for a Piece synonym, whatever its casing (b)", () => {
-    const r = plan(
-      [],
-      [
-        prod("p1", "each"),
-        prod("p2", "Pcs"),
-        prod("p3", "PIECE"),
-        prod("p4", " Unit "),
-        prod("p5", "Pieces"),
-      ],
-    );
-    expect(r.packFills).toEqual([]);
-    expect(r.counts.productsPackLabelFilled).toBe(0);
-  });
-
-  it("a fill's data is packLabel only; unit rides along solely as the write guard's source (c)", () => {
-    const r = plan([pu("a", "Case")], [prod("p1", "CASE")]);
-    expect(r.packFills).toEqual([{ productId: "p1", packLabel: "Case", unit: "CASE" }]);
-  });
-
-  it("a second plan after the fill writes nothing (d)", () => {
-    const first = plan([pu("a", "Case")], [prod("p1", "CASE"), prod("p2", "each")]);
-    const filled = first.packFills.map((f: { productId: string; packLabel: string }) =>
-      prod(f.productId, f.productId === "p1" ? "CASE" : "each", f.packLabel),
-    );
-    const second = plan([pu("a", "Case", "u1")], [...filled, prod("p2", "each", null)], ["case"]);
-    expect(second.packFills).toEqual([]);
-    expect(second.links).toEqual([]);
-    expect(second.toCreate).toEqual([]);
-  });
-
-  it("carries the raw source value of every link and fill, for the write guards", () => {
-    const r = plan([pu("a", " Case ")], [prod("p1", " Tray ")]);
+  it("carries the raw source value of every link, for the write guard", () => {
+    const r = plan([pu("a", " Case ")], []);
     expect(r.links).toEqual([{ productUnitId: "a", nameKey: "case", label: " Case " }]);
-    expect(r.packFills).toEqual([{ productId: "p1", packLabel: "Tray", unit: " Tray " }]);
-  });
-
-  it("never plans a fill over a whitespace-only packLabel (the write guard matches NULL or empty)", () => {
-    const r = plan(
-      [],
-      [prod("p1", "Tray", "   "), prod("p2", "Tray", ""), prod("p3", "Tray", null)],
-    );
-    expect(r.packFills.map((f: { productId: string }) => f.productId)).toEqual(["p2", "p3"]);
-    expect(r.counts.productsPackLabelFilled).toBe(2);
   });
 
   it("a casing tie prefers a mixed-case spelling over ALL-CAPS and all-lowercase", () => {
@@ -167,21 +116,96 @@ describe("planTenantUnits (U-6)", () => {
     expect(plan([pu("a", "case"), pu("b", "CASE")], []).toCreate[0].name).toBe("CASE");
   });
 
-  it("skips the fill when the unit's KEY is too long, even if the word itself is not", () => {
-    // 16 x U+0130 is 16 UTF-16 units, but lowercases to 32: no TenantUnit, so no fill either.
-    const word = "\u0130".repeat(16);
+  it("skips a unit whose KEY is too long, even if the word itself is not", () => {
+    // 16 x U+0130 is 16 UTF-16 units, but lowercases to 32: no TenantUnit.
+    const word = "İ".repeat(16);
     expect(word.length).toBeLessThanOrEqual(30);
     const r = plan([], [prod("p1", word)]);
     expect(r.toCreate).toEqual([]);
-    expect(r.packFills).toEqual([]);
+    expect(r.counts.skippedTooLong).toBe(1);
   });
 
-  it("fills a unit that merely CONTAINS a synonym word (Each Case is a pack)", () => {
+  it("names a unit that merely CONTAINS a synonym word (Each Case is a pack)", () => {
     const r = plan([], [prod("p1", "Each Case"), prod("p2", "Unit Pack")]);
-    expect(r.packFills).toEqual([
-      { productId: "p1", packLabel: "Each Case", unit: "Each Case" },
-      { productId: "p2", packLabel: "Unit Pack", unit: "Unit Pack" },
-    ]);
+    expect(r.toCreate.map((c: { name: string }) => c.name)).toEqual(["Each Case", "Unit Pack"]);
+  });
+
+  describe("parent / perParent fill (SA M2, SA-729a item 3)", () => {
+    const lvl = (id: string, factorToBase: number, more: Partial<PU> = {}) =>
+      pu(id, id, null, { productId: "p1", factorToBase, ...more });
+    const fills = (units: PU[]) => planParentFills(units).parentFills;
+
+    it("parent = the largest LOWER level that divides; perParent = the ratio", () => {
+      // 1 (base row), 6, 24, 36: 6 -> base (x6); 24 -> 6 (x4); 36 -> 6 (x6, 24 does not divide 36)
+      const units = [lvl("b", 1), lvl("six", 6), lvl("tf", 24), lvl("ts", 36)];
+      expect(fills(units)).toEqual([
+        expect.objectContaining({ productUnitId: "six", parentUnitId: "b", perParent: 6 }),
+        expect.objectContaining({ productUnitId: "tf", parentUnitId: "six", perParent: 4 }),
+        expect.objectContaining({ productUnitId: "ts", parentUnitId: "six", perParent: 6 }),
+      ]);
+    });
+
+    it("with no base row and no dividing level, the parent is the implicit base piece", () => {
+      const [f] = fills([lvl("c", 12), lvl("odd", 5)]).filter(
+        (x: { productUnitId: string }) => x.productUnitId === "c",
+      );
+      expect(f).toMatchObject({ parentUnitId: null, parentFactor: 1, perParent: 12 });
+    });
+
+    it("a factor-1 level is the base itself: nothing to fill, nothing reported", () => {
+      expect(planParentFills([lvl("b", 1)])).toEqual({ parentFills: [], parentSkips: [] });
+    });
+
+    it("a level that names a parent but has no perParent gets factor / parent factor", () => {
+      expect(fills([lvl("six", 6), lvl("tf", 24, { parentUnitId: "six" })])).toContainEqual(
+        expect.objectContaining({
+          productUnitId: "tf",
+          fromParentUnitId: "six",
+          parentUnitId: "six",
+          perParent: 4,
+        }),
+      );
+    });
+
+    it("a non-divisible pair is reported and skipped, never guessed", () => {
+      const r = planParentFills([lvl("ten", 10), lvl("tf", 24, { parentUnitId: "ten" })]);
+      expect(r.parentFills.map((f: { productUnitId: string }) => f.productUnitId)).toEqual(["ten"]);
+      expect(r.parentSkips).toEqual([
+        {
+          productUnitId: "tf",
+          reason: "its factor is not a whole multiple (>= 2) of its parent's",
+        },
+      ]);
+    });
+
+    it("a parent on another product, or a factor below 1, is reported and skipped", () => {
+      const r = planParentFills([lvl("x", 12, { parentUnitId: "elsewhere" }), lvl("zero", 0)]);
+      expect(r.parentFills).toEqual([]);
+      expect(r.parentSkips.map((s: { productUnitId: string }) => s.productUnitId)).toEqual([
+        "x",
+        "zero",
+      ]);
+    });
+
+    it("never crosses products, and a filled level (perParent set) is done", () => {
+      const r = planParentFills([
+        pu("a6", "a6", null, { productId: "A", factorToBase: 6 }),
+        pu("b12", "b12", null, { productId: "B", factorToBase: 12 }),
+        pu("done", "done", null, { productId: "B", factorToBase: 24, perParent: 2 }),
+      ]);
+      expect(r.parentFills).toEqual([
+        expect.objectContaining({ productUnitId: "a6", parentUnitId: null, perParent: 6 }),
+        expect.objectContaining({ productUnitId: "b12", parentUnitId: null, perParent: 12 }),
+      ]);
+    });
+
+    it("rides the main plan with its counts", () => {
+      const r = plan(
+        [lvl("b", 1), lvl("six", 6), lvl("ten", 10), lvl("bad", 25, { parentUnitId: "ten" })],
+        [],
+      );
+      expect(r.counts).toMatchObject({ productUnitsParentFilled: 2, skippedParent: 1 });
+    });
   });
 
   describe("archived units", () => {
@@ -204,7 +228,6 @@ describe("planTenantUnits (U-6)", () => {
         "b",
         "c",
       ]);
-      expect(r.packFills).toEqual([{ productId: "p1", packLabel: "Case", unit: "CASE" }]);
       expect(r.archivedLinks).toEqual([{ name: "Case", levels: 3 }]);
     });
 
@@ -256,7 +279,6 @@ describe("planTenantUnits (U-6)", () => {
       expect(r.toCreate[0].nameKey).toBe("caf\u00e9");
       expect(r.toCreate[0].name).toBe(composed);
       expect(r.links).toHaveLength(2);
-      expect(r.packFills).toEqual([{ productId: "p1", packLabel: composed, unit: decomposed }]);
     });
 
     it("a synonym with a trailing NBSP or odd case is still excluded", () => {
@@ -266,23 +288,22 @@ describe("planTenantUnits (U-6)", () => {
       );
       expect(r.toCreate).toEqual([]);
       expect(r.links).toEqual([]);
-      expect(r.packFills).toEqual([]);
     });
   });
 
   it("is idempotent: an already-backfilled tenant plans zero changes", () => {
     const r = plan(
-      [pu("a", "Case", "u1")],
-      [prod("p1", "Case", "Case"), prod("p2", "Pack", "Pack")],
+      [pu("a", "Case", "u1", { factorToBase: 12, perParent: 12 })],
+      [prod("p1", "Case"), prod("p2", "Pack")],
       ["case", "pack"],
     );
     expect(r.toCreate).toEqual([]);
     expect(r.links).toEqual([]);
-    expect(r.packFills).toEqual([]);
+    expect(r.parentFills).toEqual([]);
     expect(r.counts).toMatchObject({
       tenantUnitsCreated: 0,
       productUnitsLinked: 0,
-      productsPackLabelFilled: 0,
+      productUnitsParentFilled: 0,
     });
   });
 });
