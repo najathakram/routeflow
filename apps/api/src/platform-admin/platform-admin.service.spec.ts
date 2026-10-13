@@ -306,6 +306,7 @@ describe("PlatformAdminService — audit provenance", () => {
       (prisma as any).tenantSubscription.findUnique.mockResolvedValue({
         stripeSubId:
           (over.subscription as { stripeSubId?: string } | undefined)?.stripeSubId ?? null,
+        stripeCustomerId: "cus_1",
       });
       return prisma.tenant.findUniqueOrThrow.mockResolvedValue({
         id: TENANT_ID,
