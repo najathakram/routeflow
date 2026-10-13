@@ -322,7 +322,7 @@ export function buildEditedLines(ctx: PlanCtx): EditedLine[] {
         trackedSubcategoryId: keepsRow
           ? (row.trackedSubcategoryId ?? null)
           : (product.trackedSubcategoryId ?? null),
-        categoryTaxAmount: levy.categoryTaxAmount,
+        categoryTaxAmount: levy.amount,
         ...levy.categoryTrio,
       };
       return { rowId: row?.id ?? null, untouched: false, data };
@@ -396,7 +396,7 @@ export function buildEditedLines(ctx: PlanCtx): EditedLine[] {
       { qty, boxes, pieces, unitLabel: null },
       basisPack,
     ).unitBasisQty;
-    const { lineCategoryId, categoryTaxAmount, categoryTrio } = rowLevy(ctx, {
+    const levy = rowLevy(ctx, {
       row,
       keepsRow,
       product,
@@ -424,14 +424,14 @@ export function buildEditedLines(ctx: PlanCtx): EditedLine[] {
         // Never CLEAR a pack the line carried (B717); a stored line keeps its own, never a sibling's.
         unitsPerBox: unitsPerBox ?? ownPack ?? null,
         promoFreeUnits: freeUnits > 0 ? freeUnits : null,
-        trackedCategoryId: lineCategoryId,
+        trackedCategoryId: levy.lineCategoryId,
         // Row 338: a kept row keeps the subcategory it was sold under (as it keeps its category and trio); only a
         // new row or a product substitute (a new sale) takes the product's CURRENT subcategory.
         trackedSubcategoryId: keepsRow
           ? (row.trackedSubcategoryId ?? null)
           : (product?.trackedSubcategoryId ?? null),
-        categoryTaxAmount,
-        ...categoryTrio,
+        categoryTaxAmount: levy.amount,
+        ...levy.categoryTrio,
         notes: item.notes ?? null,
         msrp: null as number | null,
       },
@@ -468,7 +468,7 @@ function rowLevy(
         ? null
         : (product?.trackedCategoryId ?? null));
   const category = lineCategoryId ? ctx.categoryMap.get(lineCategoryId) : null;
-  let categoryTaxAmount: number;
+  let levyAmount: number;
   let categoryTrio: ReturnType<typeof categoryTaxSnapshotOf>;
   if (keepsRow) {
     const r = recomputeCategoryTax(
@@ -484,12 +484,12 @@ function rowLevy(
       category,
     );
     if (r.warn) ctx.warn(`line ${row.id}: ${r.warn}`);
-    categoryTaxAmount = r.amount;
+    levyAmount = r.amount;
     categoryTrio =
       r.stamp ??
       (ownCategoryId ? copyCategoryTaxSnapshot(row as any) : categoryTaxSnapshotOf(null));
   } else {
-    categoryTaxAmount = category
+    levyAmount = category
       ? computeCategoryTax({
           taxType: category.taxType as CategoryTaxType,
           rate: Number(category.rate),
@@ -500,7 +500,7 @@ function rowLevy(
       : 0;
     categoryTrio = categoryTaxSnapshotOf(category ?? null);
   }
-  return { lineCategoryId, categoryTaxAmount, categoryTrio };
+  return { lineCategoryId, amount: levyAmount, categoryTrio };
 }
 
 /** What to write in place for a line that already has a stored row (null = nothing changed). */

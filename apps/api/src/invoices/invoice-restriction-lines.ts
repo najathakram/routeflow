@@ -198,6 +198,7 @@ export async function addedRestrictionLines(
     : [];
   // VU-4a: the ladder, read through THIS reader (in the edit's tx after the lock), only for products a unit
   // line is in play on. No reader for it (a legacy caller) leaves those lines unsized: judged, never guessed.
+  const livePacks = new Map(products.map((p) => [p.id, num(p.unitsPerBox)]));
   const unitIds = [
     ...new Set(
       [...held, ...items].flatMap((r) =>
@@ -218,17 +219,16 @@ export async function addedRestrictionLines(
       .map((p) => [
         p.id,
         {
-          product: { unit: p.unit ?? null, unitsPerBox: num(p.unitsPerBox), pricePerUnit: 0 },
+          product: {
+            unit: p.unit ?? null,
+            unitsPerBox: livePacks.get(p.id) ?? null,
+            pricePerUnit: 0,
+          },
           units: rows.filter((u) => u.productId === p.id),
         },
       ]),
   );
-  return netEditRestrictionLines(
-    held,
-    items,
-    new Map(products.map((p) => [p.id, num(p.unitsPerBox)])),
-    ladders,
-  );
+  return netEditRestrictionLines(held, items, livePacks, ladders);
 }
 
 /**
