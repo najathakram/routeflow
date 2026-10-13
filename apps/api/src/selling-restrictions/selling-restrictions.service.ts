@@ -264,17 +264,7 @@ export class SellingRestrictionsService {
     assertAmbientTenant(this.prisma, tenantId, "SellingRestrictionsService");
     const { addressPrecedence } = await this.getPolicy(tenantId);
     const db = this.prisma.forTenant();
-    // A business state matters only when some active STATE rule could need it (the same `stateRuleInPlay` evaluate()
-    // asks): a tenant with no such rule (none, FEDERAL only, or only lifted / expired / buyer-portal-only ones) is
-    // not made "not ready" by a missing business address.
-    const at = new Date();
-    const stateRules: RestrictionRuleFacts[] = await db.sellingRestriction.findMany({
-      where: { tenantId, jurisdiction: "STATE", AND: [activeRuleWhere(at)] },
-      select: RULE_FACTS_SELECT,
-    });
-    const businessStateMissing =
-      stateRuleInPlay(stateRules, "STAFF", at) &&
-      (await tenantBusinessState(this.prisma, tenantId)) === null;
+    const businessStateMissing = await this.businessStateMissing(tenantId);
 
     const tally = {
       customerCount: 0,
@@ -329,6 +319,26 @@ export class SellingRestrictionsService {
       ...tally,
       businessStateMissing,
     };
+  }
+
+  /**
+   * True only when a business state is REQUIRED and absent. A business state matters only when some active STATE
+   * rule could need it (the same `stateRuleInPlay` evaluate() asks, on the STAFF channel: an `ALL` legal-ban rule):
+   * a tenant with no such rule (none, FEDERAL only, or only lifted / expired / buyer-portal-only ones) never needs
+   * one. The ONE answer for the readiness probe and the "customers without a state" card.
+   */
+  async businessStateMissing(tenantId: string, at: Date = new Date()): Promise<boolean> {
+    assertAmbientTenant(this.prisma, tenantId, "SellingRestrictionsService");
+    const stateRules: RestrictionRuleFacts[] = await this.prisma
+      .forTenant()
+      .sellingRestriction.findMany({
+        where: { tenantId, jurisdiction: "STATE", AND: [activeRuleWhere(at)] },
+        select: RULE_FACTS_SELECT,
+      });
+    return (
+      stateRuleInPlay(stateRules, "STAFF", at) &&
+      (await tenantBusinessState(this.prisma, tenantId)) === null
+    );
   }
 
   /**

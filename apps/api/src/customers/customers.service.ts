@@ -45,7 +45,12 @@ import {
 import { settledDateFilter } from "../invoices/settled-date-filter";
 import { CREDIT_NOT_APPLICABLE } from "../invoices/invoice-status-sets";
 import { RECEIVABLE_INVOICE_SELECT, receivableBalance } from "../invoices/credit-exposure";
-import { geocodeAddress, GeocodableAddress, GeocodeCoords } from "../common/geocode.util";
+import {
+  geocodeAddress,
+  GeocodableAddress,
+  GeocodeCoords,
+  hasBlankStreet,
+} from "../common/geocode.util";
 import { withAdvisoryLock, LockTimeoutError, LockUnavailableError } from "../common/db-locks";
 import { SCHEDULED_ROUTE_KIND_WHERE } from "../routes/route-stop-filters.util";
 import { StorageService } from "../storage/storage.service";
@@ -76,6 +81,7 @@ import { EntitlementAuthority } from "../billing/entitlement-authority.service";
 import { buildPlanGateBody, PlanGateUpgrade } from "../billing/plan-gate";
 import { EmailService } from "../email/email.service";
 import { addressStateFields } from "./address-state";
+import { defaultAddresses, isBillingType } from "./address-state-writes";
 import * as compliance from "./customer-compliance-input";
 // Same grace window BillingCronService.expireGrace() clears hourly — the create()
 // gate applies it synchronously rather than waiting for the cron to run.
@@ -86,6 +92,9 @@ import { API_ERROR_CODES, PLAN_GATE_FLAG_KEYS } from "../common/api-error-codes"
 import { assertProductIdNotFamily } from "../products/sellable-lines";
 
 const MS_PER_DAY = 24 * 60 * 60 * 1000;
+
+/** The address fields that place it on the map: a change to any of them re-geocodes. */
+const LOCATION_FIELDS = ["line1", "line2", "city", "state", "zip"] as const;
 
 @Injectable()
 export class CustomersService {
@@ -135,14 +144,27 @@ export class CustomersService {
     return geocodeAddress(addr, key, this.logger);
   }
 
-  /** Geocode all CustomerAddress records that are missing lat/lng. Returns counts. */
-  async geocodeAllAddresses(): Promise<{ total: number; geocoded: number; failed: number }> {
+  /**
+   * Geocode all CustomerAddress records that are missing lat/lng. Returns counts. A blank-street
+   * address (no street, no city) is skipped and counted as `skipped`, never pinned to a centroid.
+   */
+  async geocodeAllAddresses(): Promise<{
+    total: number;
+    geocoded: number;
+    failed: number;
+    skipped: number;
+  }> {
     const addresses = await this.prisma.forTenant().customerAddress.findMany({
       where: { OR: [{ lat: null }, { lng: null }] },
     });
     let geocoded = 0;
     let failed = 0;
+    let skipped = 0;
     for (const addr of addresses) {
+      if (hasBlankStreet(addr)) {
+        skipped++;
+        continue;
+      }
       const coords = await this.geocodeIfPossible(addr);
       if (coords) {
         await this.prisma.forTenant().customerAddress.update({
@@ -154,7 +176,7 @@ export class CustomersService {
         failed++;
       }
     }
-    return { total: addresses.length, geocoded, failed };
+    return { total: addresses.length, geocoded, failed, skipped };
   }
 
   /**
@@ -715,12 +737,36 @@ export class CustomersService {
     assertSafeAddress(dto); // B964: before the geocode call and the transaction
     // Geocode before creating so lat/lng are set from the start
     const coords = await this.geocodeIfPossible(dto);
+    const hasUsableState = addressStateFields(dto.state, dto.zip).stateCode !== null;
     return this.prisma.tenantTransaction(async (tx) => {
       if (dto.isDefault) {
         await tx.customerAddress.updateMany({
           where: { customerId: id },
           data: { isDefault: false },
         });
+      }
+      // Addendum D: with no explicit choice, a billing address becomes the default when the customer
+      // has NO default address of any type, or when every default is a blank-street placeholder (a
+      // "minimal", state-only address) and this one is real: the placeholder is demoted in this
+      // transaction, so exactly one default remains. A default with a street or a city is never demoted, and
+      // neither is a placeholder when the new address has no usable state (M1: that would lose the state the
+      // placeholder carries, e.g. a bulk-set TX, and leave the customer unresolved).
+      let becomesDefaultBilling = false;
+      if (dto.isDefault !== true && isBillingType(dto.addressType ?? "BILLING")) {
+        const defaults = await defaultAddresses(tx, id);
+        const placeholders = defaults.filter((a) => hasBlankStreet(a));
+        if (defaults.length === 0) becomesDefaultBilling = true;
+        else if (
+          !hasBlankStreet(dto) &&
+          hasUsableState &&
+          placeholders.length === defaults.length
+        ) {
+          await tx.customerAddress.updateMany({
+            where: { customerId: id, isDefault: true, id: { in: placeholders.map((a) => a.id) } },
+            data: { isDefault: false },
+          });
+          becomesDefaultBilling = true;
+        }
       }
       return tx.customerAddress.create({
         data: {
@@ -732,7 +778,7 @@ export class CustomersService {
           state: dto.state,
           ...addressStateFields(dto.state, dto.zip),
           zip: dto.zip,
-          isDefault: dto.isDefault ?? false,
+          isDefault: dto.isDefault === true || becomesDefaultBilling,
           addressType: dto.addressType ?? "BILLING",
           ...(coords ?? {}),
         },
@@ -747,6 +793,7 @@ export class CustomersService {
       where: { id: addrId, customerId: id },
     });
     assertSafeAddress(dto, storedAddress);
+    let locationChanged = false;
     const updated = await this.prisma.tenantTransaction(async (tx) => {
       if (dto.isDefault) {
         await tx.customerAddress.updateMany({
@@ -758,26 +805,30 @@ export class CustomersService {
       // on every save) or the code is NULL: a written code must never contradict its zip.
       const current = await tx.customerAddress.findFirst({
         where: { id: addrId, customerId: id },
-        select: { state: true, zip: true, stateCode: true },
+        select: { line1: true, line2: true, city: true, state: true, zip: true, stateCode: true },
       });
       if (!current) throw new NotFoundException("Address not found");
       const stateChanged =
         (dto.state !== undefined && dto.state !== current.state) ||
         (dto.zip !== undefined && dto.zip !== current.zip) ||
         current.stateCode == null;
+      // Only a real change to a location field moves the pin; a default/label/type-only edit (or the
+      // form resending stored values) keeps lat/lng and skips the geocode. A blank resent for a null is no change.
+      locationChanged = LOCATION_FIELDS.some(
+        (f) => dto[f] !== undefined && (dto[f] ?? "") !== (current[f] ?? ""),
+      );
       return tx.customerAddress.update({
         where: { id: addrId, customerId: id },
-        // clear stale coords when the address changes
         data: {
           ...dto,
           ...(stateChanged
             ? addressStateFields(dto.state ?? current.state, dto.zip ?? current.zip)
             : {}),
-          lat: null,
-          lng: null,
+          ...(locationChanged ? { lat: null, lng: null } : {}),
         },
       });
     });
+    if (!locationChanged) return updated;
     // Re-geocode asynchronously (don't block the response)
     this.geocodeIfPossible(updated)
       .then((coords) => {

@@ -286,6 +286,24 @@ function addressKind(a: CustomerAddressFacts): AddressKind {
 }
 
 /**
+ * The address group `resolveGoverningState` reads (the selection half of D4, below): the preferred
+ * type's defaults, else the other defaults, else the only address; empty when none can be chosen
+ * (no address, several and no default, or an UNKNOWN-typed default among several). Exported so the
+ * "customers without a state" buckets name the SAME addresses the engine reads, never a second rule.
+ */
+export function governingAddresses<A extends CustomerAddressFacts>(
+  addresses: readonly A[],
+  precedence: RestrictionAddressPrecedence,
+): readonly A[] {
+  const preferred: AddressKind = precedence === "SHIPPING_FIRST" ? "SHIPPING" : "BILLING";
+  const defaults = addresses.filter((a) => a.isDefault);
+  if (defaults.length === 0) return addresses.length === 1 ? addresses : [];
+  if (defaults.length > 1 && defaults.some((a) => addressKind(a) === "UNKNOWN")) return [];
+  const preferredDefaults = defaults.filter((a) => addressKind(a) === preferred);
+  return preferredDefaults.length > 0 ? preferredDefaults : defaults;
+}
+
+/**
  * The customer's governing state (D4): their DEFAULT address. Only `isDefault` rows ever govern —
  * a non-default address never outranks the real default, whatever its type. The tenant's
  * billing/shipping precedence only chooses between DEFAULTS of different types: the preferred
@@ -300,18 +318,7 @@ export function resolveGoverningState(
   addresses: readonly CustomerAddressFacts[],
   precedence: RestrictionAddressPrecedence,
 ): GoverningState {
-  const preferred: AddressKind = precedence === "SHIPPING_FIRST" ? "SHIPPING" : "BILLING";
-  const defaults = addresses.filter((a) => a.isDefault);
-
-  let group: readonly CustomerAddressFacts[];
-  if (defaults.length === 0) {
-    group = addresses.length === 1 ? addresses : [];
-  } else if (defaults.length > 1 && defaults.some((a) => addressKind(a) === "UNKNOWN")) {
-    group = [];
-  } else {
-    const preferredDefaults = defaults.filter((a) => addressKind(a) === preferred);
-    group = preferredDefaults.length > 0 ? preferredDefaults : defaults;
-  }
+  const group = governingAddresses(addresses, precedence);
   if (group.length === 0) return UNRESOLVED_STATE;
 
   const codes = new Set<string>();
