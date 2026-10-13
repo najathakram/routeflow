@@ -90,7 +90,8 @@ export class UsersController {
   @Patch(":id")
   update(@Param("id") id: string, @Body() dto: UpdateUserDto, @CurrentUser() user: JwtPayload) {
     const isSelf = user.sub === id;
-    const isAdmin = user.role === UserRole.TENANT_ADMIN;
+    // SUPER_ADMIN satisfies every role requirement in the roles guard, so it is an admin here too
+    const isAdmin = user.role === UserRole.TENANT_ADMIN || user.role === UserRole.SUPER_ADMIN;
     if (!isSelf && !isAdmin) {
       throw new ForbiddenException("Access denied");
     }

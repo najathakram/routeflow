@@ -53,6 +53,21 @@ describe("UsersController.update: who may edit whom", () => {
     );
   });
 
+  it("a SUPER_ADMIN may edit another user too (the roles guard admits it everywhere; SA nit)", async () => {
+    const superAdmin = { sub: "sa1", username: "sa", role: UserRole.SUPER_ADMIN } as never;
+    await controller.update(
+      "u9",
+      { email: "x@acme.example", role: "OPERATOR" } as never,
+      superAdmin,
+    );
+    expect(service.updateUser).toHaveBeenLastCalledWith(
+      "u9",
+      { email: "x@acme.example", role: "OPERATOR" },
+      "sa",
+      UserRole.SUPER_ADMIN,
+    );
+  });
+
   it("an admin's own edit strips the role too (nobody changes their own role)", async () => {
     await controller.update("ad1", { role: UserRole.DRIVER }, admin);
     expect(service.updateUser).toHaveBeenLastCalledWith(
