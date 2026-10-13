@@ -722,7 +722,7 @@ function LineUnitControl({
   );
 }
 
-/** A level line's quantity: a whole count of the unit, with "{n} pcs" under it (none at factor 1). */
+/** A level line's quantity: a whole count of the unit, with the piece total under it (none at factor 1). */
 function LevelCount({
   item,
   enabled,
@@ -748,7 +748,9 @@ function LevelCount({
         className="h-9 rounded border border-surface-border bg-white px-2 text-right text-sm text-navy focus:border-transparent focus:outline-none focus:ring-1 focus:ring-brand-500"
       />
       {factor > 1 && (
-        <span className="text-right text-[9px] text-navy/30">{item.qty * factor} pcs</span>
+        <span className="text-right text-[9px] text-navy/30">
+          {item.qty * factor} {unitWords().baseShortFor(item.qty * factor)}
+        </span>
       )}
     </div>
   );
