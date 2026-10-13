@@ -38,6 +38,7 @@ export interface CreateInvoiceItem {
   taxRate?: number;
   /** Buyer-visible line note — prints under the description on the PDF (≤2000). */
   notes?: string;
+  unitLabel?: string;
 }
 
 /** An invoice PATCH line: a create line plus the stored row it edits (SA-186) and
