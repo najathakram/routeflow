@@ -70,9 +70,9 @@ export const OFF_HUB_SCREENS: Record<string, string> = {
   "mobile:settings": "Mobile operator settings (push notifications)",
   implicit: "Remembered last-used default; not a setting anyone edits",
   "/settings?tab=fulfilment#delivery-method":
-    "Fulfillment tab, Delivery method card: reached by its ?tab= link, shown only when self-serve is on",
+    "Fulfillment tab, Delivery method card: listed in the admin hub / rail (Fulfillment row) and reached by its ?tab= link, only when self-serve is on",
   "/settings?tab=fulfilment#counter-sales":
-    "Fulfillment tab, Counter sales card: reached by its ?tab= link, shown only when self-serve is on",
+    "Fulfillment tab, Counter sales card: listed in the admin hub / rail (Counter sales row) and reached by its ?tab= link, only when self-serve is on",
   "/orders/counter-sale":
     "Counter sale screen: the Quick keys grid's Edit keys dialog saves the pins and hides here; opened from the till, not the settings hub",
   "/orders":

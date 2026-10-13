@@ -154,6 +154,41 @@ describe("SubscriptionService.getSubscription", () => {
     ]);
   });
 
+  it("a tenant's negotiated override (set in super admin) is the price the view returns, never the catalog's", async () => {
+    const catalog = {
+      getVersionForTenant: jest.fn().mockResolvedValue({ definitions: DEFS, addonSkus: [] }),
+    } as any;
+    const entitlements = {
+      resolve: jest.fn().mockResolvedValue({
+        planKey: "TEAM",
+        planName: "Team",
+        status: "ACTIVE",
+        planVersionId: "v7",
+        trialEndsAt: null,
+      }),
+    } as any;
+    const prisma = {
+      tenantSubscription: {
+        findUnique: jest.fn().mockResolvedValue({
+          cycle: "MONTHLY",
+          periodEnd: new Date("2027-07-08"),
+          cancelAtPeriodEnd: false,
+          priceOverrideMonthly: 99,
+          priceOverrideAnnual: null,
+        }),
+      },
+      tenantAddon: { findMany: jest.fn().mockResolvedValue([]) },
+    } as any;
+    const s = await new SubscriptionService(
+      prisma,
+      catalog,
+      entitlements,
+      {} as any,
+    ).getSubscription("t1");
+    expect(s.monthlyPrice).toBe(99); // the catalog TEAM price is 149
+    expect(s.monthlyPrice).not.toBe(149);
+  });
+
   // Row 350 / SA-693: a comp add-on (TenantAddon.isComp) is granted free and never billed, so the tenant's
   // add-on list must say so (`comp: true`) and never carry a price for it.
   describe("row 350: comp add-ons are labelled and never priced", () => {

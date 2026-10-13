@@ -2967,9 +2967,10 @@ function SettingsPageInner() {
     if (activeTab === "import") router.replace("/settings/import");
   }, [activeTab, router]);
 
-  // Settings → Fulfillment is dark behind the API's FULFILMENT_SELF_SERVE: the endpoint is asked ONLY on
+  // Settings → Fulfillment is dark behind the API's FULFILMENT_SELF_SERVE: this page asks the endpoint ONLY on
   // `?tab=fulfilment` (staff roles), and the tab exists only when it says `selfServe`; otherwise the page is
-  // exactly what it was (an unknown tab falls back to the hub). No hub entry points at it.
+  // exactly what it was (an unknown tab falls back to the hub). The admin rail / hub (SettingsHub,
+  // useSettingsNav) ask the same read, to list the Fulfillment / Counter sales rows, and nothing else does.
   const fulfilmentQuery = useFulfilmentSettings({
     enabled: activeTab === "fulfilment" && user?.role !== "CUSTOMER" && user?.role !== "DRIVER",
   });
@@ -3052,17 +3053,16 @@ function SettingsPageInner() {
       {!section ? (
         <>
           <h2 className="mb-5 text-2xl font-bold text-navy">Settings</h2>
-          <SettingsHub isAdmin={isAdmin} />
-          {/* Stripe Connect lives on the hub itself (not behind a `?tab=`) because the
-              OAuth callback returns the operator to bare `/settings?stripe=...` and the
-              card renders that banner. */}
-          <div className="mt-5 max-w-3xl">
-            <StripeConnectCard />
-          </div>
-          {/* Pricing tier names — a small card, not worth its own `?tab=` screen. */}
-          <div className="mt-5 max-w-3xl">
-            <TierLabelsCard />
-          </div>
+          {/* Stripe Connect lives on the hub itself (not behind a `?tab=`) because the OAuth callback returns the
+              operator to bare `/settings?stripe=...` and the card renders that banner. Pricing tier names is a small
+              card, not worth its own `?tab=` screen. Both follow the hub's search (hidden by a query they don't match). */}
+          <SettingsHub
+            isAdmin={isAdmin}
+            looseCards={[
+              { id: "card-payments", node: <StripeConnectCard /> },
+              { id: "tier-names", node: <TierLabelsCard /> },
+            ]}
+          />
         </>
       ) : (
         <>

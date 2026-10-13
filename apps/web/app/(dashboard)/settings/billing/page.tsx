@@ -1,6 +1,7 @@
 "use client";
 
 import { endTrialToast } from "./end-trial-toast";
+import { planMoney } from "@/lib/plan-money";
 import * as React from "react";
 import { CreditCard, Check, AlertTriangle, Loader2, Zap } from "lucide-react";
 import { API_ERROR_CODES, type AddonBillingMode, type EnableAddonResult } from "@routeflow/types";
@@ -29,10 +30,8 @@ import {
   type AddonSkuDef,
 } from "@/lib/api/billing";
 
-const money = (n: number | null | undefined) =>
-  n == null
-    ? "—"
-    : `$${n.toLocaleString(undefined, { minimumFractionDigits: 0, maximumFractionDigits: 2 })}`;
+// The one price format the hub's Business card also uses (lib/plan-money).
+const money = planMoney;
 
 const METER_LABEL: Record<string, string> = {
   SEATS: "Seats",
