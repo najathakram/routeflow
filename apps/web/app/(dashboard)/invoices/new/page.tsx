@@ -48,6 +48,7 @@ import {
 } from "@/lib/sale-line-pricing";
 import { reasonRequiredMessage } from "@/lib/staff-price-override";
 import { apiClient } from "@/lib/api-client";
+import { useSaleAttemptKey } from "@/lib/use-sale-attempt-key";
 import {
   KEPT_DRAFT_TOAST,
   KEPT_ORDER_TOAST,
@@ -780,6 +781,7 @@ export default function NewInvoicePage() {
   const createInvoice = useCreateInvoice();
   const updateInvoice = useUpdateInvoice();
   const createSale = useCreateSale();
+  const saleKey = useSaleAttemptKey(); // row 485: one Idempotency-Key per sale attempt
 
   // Which kind of invoice the operator is creating, chosen on the basis screen.
   const [basis, setBasis] = React.useState<"existing" | "newSale" | "standalone" | null>(null);
@@ -1554,31 +1556,36 @@ export default function NewInvoicePage() {
     // deliveredAt at the full current timestamp rather than midnight UTC.
     const backdatedTo = issueDate && issueDate !== todayIso() ? issueDate : undefined;
 
+    const saleDto = {
+      customerId: customer!.id,
+      items: saleItems,
+      deliveredNow,
+      // The delivery-date picker: replaces deliveredNow's binary on the server
+      // (deliveredNow above is still sent for backward compat with older callers).
+      deliveredOn,
+      notes: notes.trim() || undefined,
+      ...(adjustment < 0 ? { discountAmount: Math.abs(adjustment) } : {}),
+      ...(backdatedTo ? { orderDate: backdatedTo } : {}),
+      // Only post a due date some term actually produced: the operator's
+      // pick, their hand-typed date, or the tenant default once it seeded.
+      // Otherwise this page's provisional +30 would override the server's
+      // resolveDefaultTerms() with a date nobody chose.
+      ...((terms || dueDateEditedRef.current) && dueDate ? { dueDate } : {}),
+      ...(termsText.trim() ? { terms: termsText.trim() } : {}),
+      // Structured "Net 30"-style label — orders.ts's CreateSaleDto isn't
+      // part of this package's file set, so the API-supported field is sent
+      // via a local cast rather than widening that shared type here.
+      ...(terms ? { paymentTermsLabel: terms } : {}),
+      send,
+    } as CreateSaleDto & { paymentTermsLabel?: string };
+    // The same cart/form retried (a 5xx, a dropped connection, a kept-order error) sends the SAME key, so
+    // the server resumes the stored sale; a changed cart is a new attempt with a new key.
+    const idempotencyKey = saleKey.keyFor(JSON.stringify(saleDto));
     createSale.mutate(
-      {
-        customerId: customer!.id,
-        items: saleItems,
-        deliveredNow,
-        // The delivery-date picker: replaces deliveredNow's binary on the server
-        // (deliveredNow above is still sent for backward compat with older callers).
-        deliveredOn,
-        notes: notes.trim() || undefined,
-        ...(adjustment < 0 ? { discountAmount: Math.abs(adjustment) } : {}),
-        ...(backdatedTo ? { orderDate: backdatedTo } : {}),
-        // Only post a due date some term actually produced: the operator's
-        // pick, their hand-typed date, or the tenant default once it seeded.
-        // Otherwise this page's provisional +30 would override the server's
-        // resolveDefaultTerms() with a date nobody chose.
-        ...((terms || dueDateEditedRef.current) && dueDate ? { dueDate } : {}),
-        ...(termsText.trim() ? { terms: termsText.trim() } : {}),
-        // Structured "Net 30"-style label — orders.ts's CreateSaleDto isn't
-        // part of this package's file set, so the API-supported field is sent
-        // via a local cast rather than widening that shared type here.
-        ...(terms ? { paymentTermsLabel: terms } : {}),
-        send,
-      } as CreateSaleDto & { paymentTermsLabel?: string },
+      { ...saleDto, idempotencyKey },
       {
         onSuccess: (inv) => {
+          saleKey.settle({ ok: true });
           toast({
             title: deliveredNow ? "Sale recorded" : send ? "Invoice sent" : "Invoice saved",
             variant: "success",
@@ -1586,6 +1593,7 @@ export default function NewInvoicePage() {
           router.push(`/invoices/${inv.id}`);
         },
         onError: (err: unknown) => {
+          saleKey.settle({ ok: false, error: err });
           // Row 466: the sale and its invoice exist; only the send failed. Open the kept draft.
           const keptId = keptDraftInvoiceId(err);
           if (keptId) {

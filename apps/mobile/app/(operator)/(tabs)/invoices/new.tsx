@@ -112,6 +112,7 @@ import {
 } from "../../../../lib/invoice-terms";
 import { MoneyTextInput } from "../../../../components/MoneyTextInput";
 import { alertInfo, chooseAction, confirm } from "../../../../lib/confirm";
+import { createSaleAttemptKey } from "../../../../lib/sale-attempt-key";
 import {
   KEPT_DRAFT_COPY,
   KEPT_ORDER_COPY,
@@ -1198,6 +1199,7 @@ function InvoiceComposer({
 
   const createMut = useCreateInvoice();
   const createSaleMut = useCreateSale();
+  const [saleKey] = useState(createSaleAttemptKey); // row 485: one Idempotency-Key per sale attempt
   // The pending-unit gate in onSave awaits before either request starts; `settling` covers that gap.
   const [settling, setSettling] = useState(false);
   const saving = createMut.isPending || createSaleMut.isPending || settling;
@@ -1375,26 +1377,32 @@ function InvoiceComposer({
         if (u.qty <= 0 || u.name.trim() === "" || u.unitPrice <= 0) continue;
         saleItems.push({ name: u.name.trim(), qty: u.qty, unitPrice: u.unitPrice });
       }
+      const saleDto = {
+        customerId,
+        items: saleItems,
+        deliveredNow,
+        ...(shippingFee && shippingFee > 0 ? { shippingFee } : {}),
+        // Only a genuinely backdated sale carries orderDate — a same-day sale
+        // stays unsent so deliveredAt lands at the full current timestamp.
+        ...(issueTrim && issueTrim !== todayPlusDays(0) ? { orderDate: issueTrim } : {}),
+        // No dueDate: gate rule 4 (lib/sale-mode.ts) makes sale mode
+        // ineligible the moment the operator touches Due date or Terms, so an
+        // eligible sale's `dueDate` is always this screen's hardcoded Net-30
+        // default. Sending it would override the tenant's configured
+        // `invoice.defaultTerms` with a date nobody chose (and put a free-text
+        // field on the wire ahead of this path's ISO_DATE check).
+      };
+      // Row 485: ONE Idempotency-Key per sale attempt. A retry of the same cart (an unknown outcome, a
+      // network error, a 5xx, an error naming a committed order or invoice) reuses it, so the server
+      // resumes the stored sale; a success or a definitive refusal with no committed sale drops it.
+      const idempotencyKey = saleKey.keyFor(JSON.stringify(saleDto));
       createSaleMut.mutate(
-        {
-          customerId,
-          items: saleItems,
-          deliveredNow,
-          ...(shippingFee && shippingFee > 0 ? { shippingFee } : {}),
-          // Only a genuinely backdated sale carries orderDate — a same-day sale
-          // stays unsent so deliveredAt lands at the full current timestamp.
-          ...(issueTrim && issueTrim !== todayPlusDays(0) ? { orderDate: issueTrim } : {}),
-          // No dueDate: gate rule 4 (lib/sale-mode.ts) makes sale mode
-          // ineligible the moment the operator touches Due date or Terms, so an
-          // eligible sale's `dueDate` is always this screen's hardcoded Net-30
-          // default. Sending it would override the tenant's configured
-          // `invoice.defaultTerms` with a date nobody chose (and put a free-text
-          // field on the wire ahead of this path's ISO_DATE check).
-        },
+        { ...saleDto, idempotencyKey },
         {
           // POST /orders/sell resolves to the created INVOICE (not the order) —
           // see CreatedSaleInvoice in lib/api/orders.ts.
           onSuccess: (inv) => {
+            saleKey.settle({ ok: true });
             if (inv?.id) {
               onSaved(inv.id, inv.invoiceNumber);
               return;
@@ -1406,6 +1414,7 @@ function InvoiceComposer({
             showToast("Sale recorded — open the invoice from the Invoices tab.");
           },
           onError: (err: any) => {
+            saleKey.settle({ ok: false, error: err });
             const keptId = keptDraftInvoiceId(err);
             if (keptId) return void onKeptDraft(keptId);
             const keptOrder = keptOrderId(err);

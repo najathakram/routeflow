@@ -406,8 +406,20 @@ export interface CreateSaleDto {
  */
 export function useCreateSale() {
   const qc = useQueryClient();
-  return useMutation<{ id: string; invoiceNumber?: string }, Error, CreateSaleDto>({
-    mutationFn: (dto) => apiClient.post("/orders/sell", dto).then((r) => r.data),
+  // Row 485: `idempotencyKey` travels as the Idempotency-Key HEADER (like the counter sale), never in the body.
+  return useMutation<
+    { id: string; invoiceNumber?: string },
+    Error,
+    CreateSaleDto & { idempotencyKey?: string }
+  >({
+    mutationFn: ({ idempotencyKey, ...dto }) =>
+      apiClient
+        .post(
+          "/orders/sell",
+          dto,
+          idempotencyKey ? { headers: { "Idempotency-Key": idempotencyKey } } : undefined,
+        )
+        .then((r) => r.data),
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ["orders"] });
       qc.invalidateQueries({ queryKey: ["invoices"] });
