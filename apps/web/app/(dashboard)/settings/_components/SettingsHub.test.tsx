@@ -477,23 +477,30 @@ describe("apple-ux U1: page cards under the hub follow the search", () => {
   });
 });
 
-describe("apple-ux U1: the search survives Back", () => {
-  beforeEach(() => sessionStorage.clear());
+describe("apple-ux U1: the search survives Back, and only Back (SA M2)", () => {
+  afterEach(() => window.history.replaceState(null, ""));
 
-  it("a query typed, then a result opened and Back pressed (the hub remounts), is still there", () => {
+  it("back/forward to the hub (its history entry carries the query) restores it", () => {
     const first = renderWithProviders(<SettingsHub isAdmin />);
     fireEvent.change(screen.getByLabelText("Search settings"), { target: { value: "plan" } });
+    expect(window.history.state?.rfSettingsQuery).toBe("plan"); // stored on this entry
     first.unmount();
+    // Back lands on the same history entry, so its state comes back with it
     renderWithProviders(<SettingsHub isAdmin />);
     expect(screen.getByLabelText("Search settings")).toHaveValue("plan");
   });
 
-  it("clearing the box clears what is remembered", () => {
-    const first = renderWithProviders(<SettingsHub isAdmin />);
-    fireEvent.change(screen.getByLabelText("Search settings"), { target: { value: "plan" } });
-    fireEvent.change(screen.getByLabelText("Search settings"), { target: { value: "" } });
-    first.unmount();
+  it("a fresh visit (sidebar, cmd-K, a back link: a NEW history entry) starts empty", () => {
+    window.history.replaceState({ rfSettingsQuery: "plan" }, "");
+    window.history.pushState({}, "", "/settings"); // a new entry without the key
     renderWithProviders(<SettingsHub isAdmin />);
     expect(screen.getByLabelText("Search settings")).toHaveValue("");
+  });
+
+  it("other history state is kept when the query is stored", () => {
+    window.history.replaceState({ __keep: 1 }, "");
+    renderWithProviders(<SettingsHub isAdmin />);
+    fireEvent.change(screen.getByLabelText("Search settings"), { target: { value: "tax" } });
+    expect(window.history.state).toMatchObject({ __keep: 1, rfSettingsQuery: "tax" });
   });
 });

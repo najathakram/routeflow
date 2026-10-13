@@ -4,11 +4,11 @@ import { configure } from "@testing-library/react";
 // findBy*/waitFor default to 1 s; give slow hosts headroom (see testTimeout in jest.config.js).
 configure({ asyncUtilTimeout: 10_000 });
 
-// Per-test isolation for sessionStorage (e.g. the settings hub remembers its search per tab).
+// Per-test isolation for history.state (e.g. the settings hub keeps its search on its own history entry).
 afterEach(() => {
   try {
-    sessionStorage.clear();
+    window.history.replaceState(null, "");
   } catch {
-    /* no DOM storage in this environment */
+    /* no DOM in this environment */
   }
 });

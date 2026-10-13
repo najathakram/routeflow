@@ -236,6 +236,12 @@ describe("Needs attention", () => {
     expect(attentionItems({ ...base, unknownState: null })).toEqual([]);
   });
 
+  it("SA M1: a truncated count is partial, so it never reads as an exact number", () => {
+    expect(
+      attentionItems({ ...base, unknownState: { customersTotal: 7, truncated: true } })[0].label,
+    ).toBe("Some customers may need a state");
+  });
+
   it("does not flag what is still loading or failed", () => {
     expect(
       attentionItems({ isAdmin: true, status: null, remittance: undefined, stripe: undefined }),
