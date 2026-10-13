@@ -96,7 +96,12 @@ describe("PlatformAdminService — audit provenance", () => {
   // SA-733r7 PR-B3: every exit from a dunning pause clears Stripe pause_collection after its commit.
   let dunning: { clearPauseAfterCommit: jest.Mock };
   // the owed-invoice re-read of the PAYMENT_OVERDUE guard
-  let stripeMock: { isConfigured: boolean; getSubscription: jest.Mock; getInvoiceFacts: jest.Mock };
+  let stripeMock: {
+    isConfigured: boolean;
+    getSubscription: jest.Mock;
+    getCustomer: jest.Mock;
+    getInvoiceFacts: jest.Mock;
+  };
 
   const ADMIN_ID = "super-1";
   const TENANT_ID = "tenant-1";
@@ -215,6 +220,7 @@ describe("PlatformAdminService — audit provenance", () => {
     stripeMock = {
       isConfigured: false,
       getSubscription: jest.fn().mockResolvedValue({ status: "active" }),
+      getCustomer: jest.fn().mockResolvedValue({ id: "cus_1" }),
       getInvoiceFacts: jest.fn().mockResolvedValue({
         status: "open",
         amountPaid: 0,

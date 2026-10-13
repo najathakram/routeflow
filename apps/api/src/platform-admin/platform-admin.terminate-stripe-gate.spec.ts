@@ -23,7 +23,9 @@ function make(subs: Subs, opts: { configured?: boolean; status?: string } = {}) 
   }));
   prisma.tenantSubscription = {
     // the plain, pre-transaction read of the tenant's subscription id
-    findUnique: jest.fn(async () => (inTx ? txSub() : { stripeSubId: subs.pre })),
+    findUnique: jest.fn(async () =>
+      inTx ? txSub() : { stripeSubId: subs.pre, stripeCustomerId: "cus_1" },
+    ),
     upsert: jest.fn().mockResolvedValue({}),
     findMany: jest.fn().mockResolvedValue([]),
     updateMany: jest.fn().mockResolvedValue({ count: 0 }),
@@ -55,8 +57,13 @@ function make(subs: Subs, opts: { configured?: boolean; status?: string } = {}) 
   // deleteTenant: the guarded write (where status SUSPENDED) then a re-read of the row it wrote
   prisma.tenant.updateMany.mockResolvedValue({ count: 1 });
   const stripeCalls: boolean[] = []; // was each getSubscription call made inside the transaction?
+  const auditLog = jest.fn().mockResolvedValue(undefined);
   const stripe: any = {
     isConfigured: opts.configured ?? true,
+    getCustomer: jest.fn(async () => {
+      stripeCalls.push(inTx);
+      return { id: "cus_1" };
+    }),
     getSubscription: jest.fn(async () => {
       stripeCalls.push(inTx);
       return { status: "canceled" };
@@ -83,14 +90,14 @@ function make(subs: Subs, opts: { configured?: boolean; status?: string } = {}) 
     { emit: jest.fn().mockResolvedValue({}) } as any,
     {} as any,
     { invalidate: jest.fn() } as any,
-    { log: jest.fn().mockResolvedValue(undefined) } as any,
+    { log: auditLog } as any,
     { priceSubscription: jest.fn().mockReturnValue(0) } as any,
     {} as any,
     {} as any,
     {} as any,
     stripe,
   );
-  return { svc, prisma, stripe, stripeCalls };
+  return { svc, prisma, stripe, stripeCalls, auditLog };
 }
 
 type Op = [string, (svc: PlatformAdminService) => Promise<unknown>];
@@ -119,15 +126,57 @@ describe.each(OPS)("%s - the shared Stripe gate", (_name, run) => {
     const { svc, prisma, stripe } = make({ pre: null });
     await run(svc);
     expect(stripe.getSubscription).not.toHaveBeenCalled();
+    expect(stripe.getCustomer).not.toHaveBeenCalled();
     expect(written(prisma)).toBe(true);
   });
 
-  it("Stripe 404 / resource_missing: allowed", async () => {
-    const { svc, prisma, stripe } = make({ pre: "sub_1" });
-    stripe.getSubscription.mockRejectedValue({ code: "resource_missing", statusCode: 404 });
+  const missing = { code: "resource_missing", statusCode: 404 };
+  const rows = (auditLog: jest.Mock, action: string) =>
+    auditLog.mock.calls.map((c) => c[0]).filter((r) => r.action === action);
+
+  it("Stripe sub 404 + the customer EXISTS: allowed, with exactly one audit row saying so", async () => {
+    const { svc, prisma, stripe, auditLog } = make({ pre: "sub_1" });
+    stripe.getSubscription.mockRejectedValue(missing);
     await run(svc);
     expect(written(prisma)).toBe(true);
     expect(stripe.getSubscription).toHaveBeenCalledTimes(1); // a 404 is an answer: not retried
+    expect(stripe.getCustomer).toHaveBeenCalledWith("cus_1");
+    const r = rows(auditLog, "STRIPE_SUB_NOT_FOUND_TERMINATED");
+    expect(r).toHaveLength(1);
+    expect(r[0].meta).toMatchObject({ note: "stripe sub not found; customer present" });
+  });
+
+  it("Stripe sub 404 + the customer is 404 too: 409 TENANT_CANCEL_SUBSCRIPTION_FIRST, ops alert, nothing written", async () => {
+    const { svc, prisma, stripe, auditLog } = make({ pre: "sub_1" });
+    stripe.getSubscription.mockRejectedValue(missing);
+    stripe.getCustomer.mockRejectedValue(missing);
+    const err: any = await run(svc).catch((e) => e);
+    expect(err.getStatus()).toBe(409);
+    expect(code(err)).toBe("TENANT_CANCEL_SUBSCRIPTION_FIRST");
+    expect(written(prisma)).toBe(false);
+    const a = rows(auditLog, "STRIPE_KEY_MODE_MISMATCH");
+    expect(a).toHaveLength(1);
+    expect(a[0].meta.message).toBe("Stripe key/mode mismatch suspected");
+    expect(rows(auditLog, "STRIPE_SUB_NOT_FOUND_TERMINATED")).toHaveLength(0);
+  });
+
+  it("Stripe sub 404 + a customer read error (after one retry): 409 CONCURRENT_UPDATE, nothing written", async () => {
+    const { svc, prisma, stripe, auditLog } = make({ pre: "sub_1" });
+    stripe.getSubscription.mockRejectedValue(missing);
+    stripe.getCustomer.mockRejectedValue(new Error("network"));
+    const err: any = await run(svc).catch((e) => e);
+    expect(code(err)).toBe("CONCURRENT_UPDATE");
+    expect(stripe.getCustomer).toHaveBeenCalledTimes(2);
+    expect(written(prisma)).toBe(false);
+    expect(rows(auditLog, "STRIPE_SUB_NOT_FOUND_TERMINATED")).toHaveLength(0);
+  });
+
+  it("a terminal status needs no customer read and writes no not-found row", async () => {
+    const { svc, stripe, auditLog } = make({ pre: "sub_1" });
+    stripe.getSubscription.mockResolvedValue({ status: "canceled" });
+    await run(svc);
+    expect(stripe.getCustomer).not.toHaveBeenCalled();
+    expect(rows(auditLog, "STRIPE_SUB_NOT_FOUND_TERMINATED")).toHaveLength(0);
   });
 
   it.each(["canceled", "incomplete_expired"])("terminal status %s: allowed", async (status) => {
@@ -207,6 +256,18 @@ describe.each(OPS)("%s - the shared Stripe gate", (_name, run) => {
     const { svc, stripeCalls } = make({ pre: "sub_1" });
     await run(svc); // the harness records, at call time, whether a transaction was open
     expect(stripeCalls.length).toBeGreaterThan(0);
+    expect(stripeCalls.every((inside) => inside === false)).toBe(true);
+  });
+
+  it("the customer read (after a sub 404) is outside the transaction too", async () => {
+    const { svc, stripe, stripeCalls } = make({ pre: "sub_1" });
+    stripe.getSubscription.mockImplementation(async () => {
+      stripeCalls.push(false);
+      throw { code: "resource_missing", statusCode: 404 };
+    });
+    await run(svc);
+    expect(stripe.getCustomer).toHaveBeenCalledTimes(1);
+    expect(stripeCalls.length).toBe(2);
     expect(stripeCalls.every((inside) => inside === false)).toBe(true);
   });
 });
