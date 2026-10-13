@@ -17,6 +17,7 @@ import { PrismaService } from "../prisma/prisma.service";
 import { TenantContextService } from "../tenant/tenant-context.service";
 import { AuditService } from "../audit/audit.service";
 import { UnitsService } from "./units.service";
+import { unitNameKey } from "./piece-words";
 import type { JwtPayload } from "../auth/jwt-payload.interface";
 
 // eslint-disable-next-line @typescript-eslint/no-var-requires
@@ -386,6 +387,50 @@ describeDb("tenant units against real Postgres", () => {
       await line("invoice", B, p.id, "Crate", 6);
       const out = await asA(() => service.update(caseUnit.id, { name: "Crate" }, user));
       expect(out.unit.name).toBe("Crate");
+    });
+  });
+
+  describe("sold lines snapshot their unit text (S6) and Postgres lower() agrees with unitNameKey (S7)", () => {
+    it.each(["order", "invoice"] as const)(
+      "a rename leaves unitLabel and unitsPerBox on an existing %s line exactly as sold",
+      async (kind) => {
+        const caseUnit = await asA(() => service.create({ name: "Case" }, user));
+        const p = await product(A, "Mug", { unit: "Case" });
+        await level(A, p.id, "Case", 12, caseUnit.id);
+        const sold = await line(kind, A, p.id, "Case", 12);
+        await asA(() => service.update(caseUnit.id, { name: "Carton" }, user));
+        const after =
+          kind === "order"
+            ? await raw.orderItem.findUnique({ where: { id: sold.id } })
+            : await raw.invoiceItem.findUnique({ where: { id: sold.id } });
+        expect(after).toMatchObject({ unitLabel: "Case", unitsPerBox: 12 });
+        // ...while the product and its level did move.
+        expect((await raw.productUnit.findFirst({ where: { productId: p.id } }))?.label).toBe(
+          "Carton",
+        );
+      },
+    );
+
+    it("Postgres lower(normalize(x, NFC)) equals unitNameKey for ÉTUI (NFC and NFD)", async () => {
+      for (const word of ["\u00c9TUI", "E\u0301TUI"]) {
+        const rows = await raw.$queryRaw<
+          Array<{ k: string }>
+        >`SELECT lower(normalize(${word}, NFC)) AS k`;
+        expect(rows[0].k).toBe(unitNameKey(word));
+      }
+    });
+
+    it("a product holding ÉTUI in capitals is counted and renamed under the unit Étui", async () => {
+      const unit = await asA(() => service.create({ name: "\u00c9tui" }, user));
+      const p = await product(A, "P1", { unit: "\u00c9TUI", packLabel: "E\u0301TUI" });
+      const [row] = (await asA(() => service.list(false))).filter((u) => u.id === unit.id);
+      expect(row.productCount).toBe(1);
+      const out = await asA(() => service.update(unit.id, { name: "Carton" }, user));
+      expect(out.productsUpdated).toBe(1);
+      expect(await raw.product.findUnique({ where: { id: p.id } })).toMatchObject({
+        unit: "Carton",
+        packLabel: "Carton",
+      });
     });
   });
 });
