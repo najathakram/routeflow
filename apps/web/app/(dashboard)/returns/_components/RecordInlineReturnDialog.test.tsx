@@ -128,6 +128,11 @@ function quoteResponse(chunks: InlineReturnQuoteChunk[]): InlineReturnQuoteRespo
     categoryTax: chunks.reduce((s, c) => s + c.categoryTax, 0),
     total: chunks.reduce((s, c) => s + c.subtotal + c.taxAmount + c.categoryTax, 0),
     productBreakdown: {},
+    canRefund: false,
+    paidInFull: false,
+    paidMethods: [],
+    paidWithStoreCredit: false,
+    customerIsWalkIn: false,
   };
 }
 
@@ -163,7 +168,7 @@ async function openToStep1(orderId = "order-1") {
 }
 
 async function enterQtyAndGetQuote(pieces: string) {
-  const piecesInput = screen.getByLabelText(/qty \(pieces\)/i);
+  const piecesInput = screen.getByLabelText(/^pieces$/i);
   fireEvent.change(piecesInput, { target: { value: pieces } });
   fireEvent.change(screen.getByLabelText(/^reason$/i), { target: { value: "DAMAGED" } });
   fireEvent.click(screen.getByRole("button", { name: /get quote/i }));
@@ -270,7 +275,10 @@ describe("RecordInlineReturnDialog — boxed product (AC3)", () => {
 
     expect(screen.getByLabelText(/^boxes$/i)).toBeInTheDocument();
     expect(screen.getByLabelText(/^pieces$/i)).toBeInTheDocument();
-    expect(screen.queryByLabelText(/qty \(pieces\)/i)).not.toBeInTheDocument();
+    // A bare loose field would now ALSO be labelled "Pieces" (or the old "Qty (pieces)"), so count:
+    // exactly ONE pieces control (the boxed extra-pieces input) and no Qty-labelled field.
+    expect(screen.getAllByLabelText(/pieces/i)).toHaveLength(1);
+    expect(screen.queryByLabelText(/^qty/i)).not.toBeInTheDocument();
 
     fireEvent.change(screen.getByLabelText(/^boxes$/i), { target: { value: "1" } });
     fireEvent.change(screen.getByLabelText(/^pieces$/i), { target: { value: "3" } });
@@ -390,9 +398,9 @@ describe("RecordInlineReturnDialog — refusals render the API's own message (AC
     expect(
       screen.queryByRole("button", { name: /issue credit note and receive goods/i }),
     ).toBeNull();
-    expect((screen.getByLabelText(/qty \(pieces\)/i) as HTMLInputElement).value).not.toBe("10");
+    expect((screen.getByLabelText(/^pieces$/i) as HTMLInputElement).value).not.toBe("10");
     // and a new attempt is a NEW capture key (the old one was spent on the recorded return)
-    fireEvent.change(screen.getByLabelText(/qty \(pieces\)/i), { target: { value: "4" } });
+    fireEvent.change(screen.getByLabelText(/^pieces$/i), { target: { value: "4" } });
     fireEvent.change(screen.getByLabelText(/^reason$/i), { target: { value: "DAMAGED" } });
     fireEvent.click(screen.getByRole("button", { name: /get quote/i }));
     await waitFor(() => expect(quoteMutate).toHaveBeenCalledTimes(2));
@@ -572,6 +580,49 @@ describe("RecordInlineReturnDialog — office capture never sends routeRunStopId
   });
 });
 
+// ─── SA-740 (row 190): a counter return names the sale it is from ───────────────────────────
+
+describe("RecordInlineReturnDialog — SA-740: sourceOrderId rides on the quote AND the capture", () => {
+  async function openWithSource(sourceOrderId?: string) {
+    renderWithProviders(
+      <RecordInlineReturnDialog
+        open
+        onClose={jest.fn()}
+        customerId="cust-1"
+        orderId="order-1"
+        customerName="Walk-in"
+        sourceOrderId={sourceOrderId}
+      />,
+    );
+    await screen.findByText(/what came back/i);
+  }
+
+  it("a dialog opened from a sale sends that sale as sourceOrderId on the quote and the capture", async () => {
+    await openWithSource("order-1");
+    await enterQtyAndGetQuote("10");
+    expect(quoteMutate.mock.calls[0][0]).toMatchObject({ sourceOrderId: "order-1" });
+    resolveNextQuote(quoteResponse([chunk()]));
+    await screen.findByText(/issue credit note and receive goods/i);
+    fireEvent.click(screen.getByRole("button", { name: /issue credit note and receive goods/i }));
+    await waitFor(() => expect(captureMutate).toHaveBeenCalledTimes(1));
+    expect(captureMutate.mock.calls[0][0]).toMatchObject({
+      orderId: "order-1",
+      sourceOrderId: "order-1",
+    });
+  });
+
+  it("without the prop (named customer, order detail / customer detail) neither request carries one", async () => {
+    await openWithSource(undefined);
+    await enterQtyAndGetQuote("10");
+    expect(quoteMutate.mock.calls[0][0]).not.toHaveProperty("sourceOrderId");
+    resolveNextQuote(quoteResponse([chunk()]));
+    await screen.findByText(/issue credit note and receive goods/i);
+    fireEvent.click(screen.getByRole("button", { name: /issue credit note and receive goods/i }));
+    await waitFor(() => expect(captureMutate).toHaveBeenCalledTimes(1));
+    expect(captureMutate.mock.calls[0][0]).not.toHaveProperty("sourceOrderId");
+  });
+});
+
 // ─── #2097 — the result's credit amount, and the excess option across a re-quote ───────────
 
 const captureResult = (over: Record<string, unknown> = {}) => ({
@@ -641,7 +692,7 @@ describe("RecordInlineReturnDialog — the excess option resets on every re-quot
     // Back to the items, raise the quantity, quote again: the new quote credits the excess.
     fireEvent.click(screen.getByRole("button", { name: /^back$/i }));
     await screen.findByText(/what came back/i);
-    fireEvent.change(screen.getByLabelText(/qty \(pieces\)/i), { target: { value: "20" } });
+    fireEvent.change(screen.getByLabelText(/^pieces$/i), { target: { value: "20" } });
     fireEvent.click(screen.getByRole("button", { name: /get quote/i }));
     await waitFor(() => expect(quoteMutate).toHaveBeenCalledTimes(3));
     resolveNextQuote(
@@ -722,7 +773,7 @@ describe("RecordInlineReturnDialog — the excess option resets on every re-quot
 
     fireEvent.click(screen.getByRole("button", { name: /^back$/i }));
     await screen.findByText(/what came back/i);
-    fireEvent.change(screen.getByLabelText(/qty \(pieces\)/i), { target: { value: "12" } });
+    fireEvent.change(screen.getByLabelText(/^pieces$/i), { target: { value: "12" } });
     fireEvent.click(screen.getByRole("button", { name: /get quote/i }));
     await waitFor(() => expect(quoteMutate).toHaveBeenCalledTimes(2));
     rejectNextQuote({ response: { status: 500, data: { message: "Quote failed" } } });

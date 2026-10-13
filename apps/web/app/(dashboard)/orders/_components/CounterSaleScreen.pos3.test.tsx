@@ -2,9 +2,10 @@ import * as React from "react";
 import { act } from "@testing-library/react";
 import { renderWithProviders, screen, waitFor, fireEvent, within } from "@/test-utils/render";
 import { CounterSaleScreen } from "./CounterSaleScreen";
+import { LINE_UNDO_MS } from "./useCounterLineUndo";
 
 /**
- * POS-3: per-line editing, the two-column layout, 44 px touch targets and the 5 s "Removed <name>. Undo" bar. The API is
+ * POS-3: per-line editing, the two-column layout, 44 px touch targets and the timed "Removed <name>. Undo" bar. The API is
  * mocked at the module boundary exactly as CounterSaleScreen.test.tsx does. RTL cannot measure pixels, so the layout and
  * size pins are CLASS pins (Playwright verifies the rendered 390 / lg layout).
  */
@@ -173,12 +174,26 @@ describe("POS-3 remove with Undo", () => {
     expect(screen.getByTestId("running-total")).toHaveTextContent("$20.00");
   });
 
-  it("after 5 s the removal is final: the bar goes and Undo is gone", async () => {
+  // CQ-27: ten seconds at least, so a clerk who looks away to serve someone can still take the line back.
+  it("the removal can still be taken back almost ten seconds later", async () => {
+    expect(LINE_UNDO_MS).toBeGreaterThanOrEqual(10_000);
     await buildCart();
     jest.useFakeTimers();
     click("Remove Cola");
     act(() => {
-      jest.advanceTimersByTime(4900);
+      jest.advanceTimersByTime(9_900);
+    });
+    expect(screen.getByRole("button", { name: UNDO })).toBeInTheDocument();
+    click(UNDO);
+    expect(itemNames()).toHaveLength(2);
+  });
+
+  it("after the undo window the removal is final: the bar goes and Undo is gone", async () => {
+    await buildCart();
+    jest.useFakeTimers();
+    click("Remove Cola");
+    act(() => {
+      jest.advanceTimersByTime(LINE_UNDO_MS - 100);
     });
     expect(screen.getByRole("button", { name: UNDO })).toBeInTheDocument();
     act(() => {
@@ -187,6 +202,82 @@ describe("POS-3 remove with Undo", () => {
     expect(screen.queryByRole("button", { name: UNDO })).toBeNull();
     expect(screen.getByRole("status", { name: "Removed item" })).toBeEmptyDOMElement();
     expect(itemNames()).toHaveLength(1);
+  });
+
+  it("mouse-leave does NOT resume the countdown while focus is still inside the bar; it resumes when hover AND focus are gone", async () => {
+    await buildCart();
+    jest.useFakeTimers();
+    click("Remove Cola");
+    act(() => {
+      jest.advanceTimersByTime(1); // let the scan-field refocus (0 ms) run BEFORE focus goes into the bar
+    });
+    const bar = screen.getByTestId("line-undo-bar");
+    const undoBtn = screen.getByRole("button", { name: UNDO });
+    fireEvent.mouseEnter(bar);
+    act(() => undoBtn.focus());
+    fireEvent.mouseLeave(bar); // the pointer is gone, the keyboard focus is not
+    act(() => {
+      jest.advanceTimersByTime(8000);
+    });
+    expect(screen.getByRole("button", { name: UNDO })).toBeInTheDocument();
+    act(() => undoBtn.blur()); // now both are gone: the undo window runs again
+    act(() => {
+      jest.advanceTimersByTime(LINE_UNDO_MS - 100);
+    });
+    expect(screen.getByRole("button", { name: UNDO })).toBeInTheDocument();
+    act(() => {
+      jest.advanceTimersByTime(200);
+    });
+    expect(screen.queryByRole("button", { name: UNDO })).toBeNull();
+  });
+
+  it("a removal while the pointer is over the bar does not start the countdown, even after Undo ended the first one", async () => {
+    await buildCart();
+    jest.useFakeTimers();
+    act(() => {
+      jest.advanceTimersByTime(1);
+    });
+    const bar = screen.getByTestId("line-undo-bar");
+    fireEvent.mouseEnter(bar);
+    click("Remove Cola");
+    act(() => {
+      jest.advanceTimersByTime(8000);
+    });
+    expect(screen.getByRole("button", { name: UNDO })).toBeInTheDocument(); // hovered: paused from the start
+    click(UNDO); // ends this removal (the pointer is STILL over the bar)
+    click("Remove Cola");
+    act(() => {
+      jest.advanceTimersByTime(8000);
+    });
+    expect(screen.getByRole("button", { name: UNDO })).toBeInTheDocument(); // still hovered: still paused
+    fireEvent.mouseLeave(bar);
+    act(() => {
+      jest.advanceTimersByTime(LINE_UNDO_MS + 100);
+    });
+    expect(screen.queryByRole("button", { name: UNDO })).toBeNull();
+  });
+
+  it("blur does NOT resume while the pointer is still over the bar", async () => {
+    await buildCart();
+    jest.useFakeTimers();
+    click("Remove Cola");
+    act(() => {
+      jest.advanceTimersByTime(1); // let the scan-field refocus (0 ms) run BEFORE focus goes into the bar
+    });
+    const bar = screen.getByTestId("line-undo-bar");
+    const undoBtn = screen.getByRole("button", { name: UNDO });
+    fireEvent.mouseEnter(bar);
+    act(() => undoBtn.focus());
+    act(() => undoBtn.blur());
+    act(() => {
+      jest.advanceTimersByTime(8000);
+    });
+    expect(screen.getByRole("button", { name: UNDO })).toBeInTheDocument();
+    fireEvent.mouseLeave(bar);
+    act(() => {
+      jest.advanceTimersByTime(LINE_UNDO_MS + 100);
+    });
+    expect(screen.queryByRole("button", { name: UNDO })).toBeNull();
   });
 
   it("Complete & show receipt during the undo window posts the cart WITHOUT the removed line", async () => {

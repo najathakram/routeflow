@@ -237,4 +237,345 @@ describe("InvoicesService — B667 round 5", () => {
     );
     expect(warned).toBe(true);
   });
+
+  // B297 row 373 (review fold): the invoice -> order copier (C17) carries the invoice line's category, subcategory
+  // and rate trio onto the order line it CREATES, like every other order <-> invoice copier. Without it the new
+  // order line is uncategorised (373a removed the live-product fallback), and the next reconcile bills it
+  // uncategorised, dropping a regulated line out of its SEPARATE_INVOICE group.
+  it("recomputeOrderFromInvoices: a NEW order line made from an invoice line carries that line's category and trio", async () => {
+    const l1 = { id: "l1", productId: "p1", status: "PENDING", qty: 4, invoicedQty: 0 };
+    prisma.order.findUnique.mockResolvedValue({
+      id: "order1",
+      status: "PENDING",
+      subtotal: 40,
+      tax: 0,
+      total: 40,
+      shippingFee: 0,
+      lineItems: [l1],
+    });
+    prisma.invoice.findMany.mockResolvedValue([
+      {
+        id: "inv1",
+        shippingFee: 0,
+        items: [
+          {
+            id: "ii-l1", // covers the existing order line, so the recompute runs (B667 coverage)
+            orderItemId: "l1",
+            productId: "p1",
+            qty: 4,
+            subtotal: 40,
+            categoryTaxAmount: 0,
+            promoFreeUnits: 0,
+            unitPrice: 10,
+          },
+          {
+            id: "ii-new",
+            orderItemId: null,
+            productId: "p9", // no order line matches: becomes a NEW order line
+            qty: 3,
+            subtotal: 30,
+            categoryTaxAmount: 1.5,
+            promoFreeUnits: 0,
+            unitPrice: 10,
+            trackedCategoryId: "cat-1",
+            trackedSubcategoryId: "sub-1",
+            categoryTaxType: "EXCISE_PER_UNIT",
+            categoryTaxRate: "0.0500",
+            categoryPriceIncludesTax: false,
+          },
+        ],
+      },
+    ]);
+    prisma.deliveryMutation.findMany.mockResolvedValue([]);
+    prisma.orderItem.update.mockResolvedValue({});
+    prisma.orderItem.create.mockResolvedValue({});
+    prisma.order.update.mockResolvedValue({});
+
+    await service.recomputeOrderFromInvoices("order1", prisma);
+
+    const created = prisma.orderItem.create.mock.calls
+      .map((c: any) => c[0].data)
+      .find((d: any) => d.productId === "p9");
+    expect(created).toBeDefined();
+    expect(created).toMatchObject({
+      trackedCategoryId: "cat-1",
+      trackedSubcategoryId: "sub-1",
+      categoryTaxType: "EXCISE_PER_UNIT",
+      categoryTaxRate: 0.05,
+      categoryPriceIncludesTax: false,
+      categoryTaxAmount: 1.5,
+    });
+  });
+
+  it("recomputeOrderFromInvoices: invoice lines of one product billed under DIFFERENT trios become separate order lines", async () => {
+    const l1 = { id: "l1", productId: "p1", status: "PENDING", qty: 4, invoicedQty: 0 };
+    prisma.order.findUnique.mockResolvedValue({
+      id: "order1",
+      status: "PENDING",
+      subtotal: 70,
+      tax: 0,
+      total: 70,
+      shippingFee: 0,
+      lineItems: [l1],
+    });
+    const base = {
+      orderItemId: null,
+      productId: "p9",
+      categoryTaxAmount: 0,
+      promoFreeUnits: 0,
+      unitPrice: 10,
+    };
+    prisma.invoice.findMany.mockResolvedValue([
+      {
+        id: "inv1",
+        shippingFee: 0,
+        items: [
+          {
+            id: "ii-l1",
+            orderItemId: "l1",
+            productId: "p1",
+            qty: 4,
+            subtotal: 40,
+            categoryTaxAmount: 0,
+            promoFreeUnits: 0,
+            unitPrice: 10,
+          },
+          {
+            ...base,
+            id: "a",
+            qty: 2,
+            subtotal: 20,
+            trackedCategoryId: "cat-1",
+            categoryTaxType: "EXCISE_PER_UNIT",
+            categoryTaxRate: "0.0500",
+            categoryPriceIncludesTax: false,
+          },
+          {
+            ...base,
+            id: "b",
+            qty: 1,
+            subtotal: 10,
+            trackedCategoryId: "cat-1",
+            categoryTaxType: "EXCISE_PER_UNIT",
+            categoryTaxRate: "0.0800",
+            categoryPriceIncludesTax: false,
+          },
+        ],
+      },
+    ]);
+    prisma.deliveryMutation.findMany.mockResolvedValue([]);
+    prisma.orderItem.update.mockResolvedValue({});
+    prisma.orderItem.create.mockResolvedValue({});
+    prisma.order.update.mockResolvedValue({});
+
+    await service.recomputeOrderFromInvoices("order1", prisma);
+
+    const made = prisma.orderItem.create.mock.calls
+      .map((c: any) => c[0].data)
+      .filter((d: any) => d.productId === "p9");
+    expect(made.map((d: any) => [d.qty, d.categoryTaxRate]).sort()).toEqual([
+      [1, 0.08],
+      [2, 0.05],
+    ]);
+  });
+
+  it("recomputeOrderFromInvoices is idempotent for lines split by snapshot: a second recompute creates and cancels nothing", async () => {
+    const trioA = {
+      trackedCategoryId: "cat-1",
+      categoryTaxType: "EXCISE_PER_UNIT",
+      categoryTaxRate: 0.05,
+      categoryPriceIncludesTax: false,
+    };
+    const trioB = { ...trioA, categoryTaxRate: 0.08 };
+    const l1 = {
+      id: "l1",
+      productId: "p1",
+      status: "PENDING",
+      qty: 4,
+      invoicedQty: 0,
+      unitPrice: 10,
+      subtotal: 40,
+    };
+    // state AFTER the first recompute: the two snapshot lines exist; the invoice items still carry no orderItemId
+    const made = [
+      {
+        id: "n1",
+        productId: "p9",
+        status: "PENDING",
+        qty: 2,
+        invoicedQty: 2,
+        unitPrice: 10,
+        subtotal: 20,
+        ...trioA,
+      },
+      {
+        id: "n2",
+        productId: "p9",
+        status: "PENDING",
+        qty: 1,
+        invoicedQty: 1,
+        unitPrice: 10,
+        subtotal: 10,
+        ...trioB,
+      },
+    ];
+    prisma.order.findUnique.mockResolvedValue({
+      id: "order1",
+      status: "PENDING",
+      subtotal: 70,
+      tax: 0,
+      total: 70,
+      shippingFee: 0,
+      lineItems: [l1, ...made],
+    });
+    const base = {
+      orderItemId: null,
+      productId: "p9",
+      categoryTaxAmount: 0,
+      promoFreeUnits: 0,
+      unitPrice: 10,
+    };
+    prisma.invoice.findMany.mockResolvedValue([
+      {
+        id: "inv1",
+        shippingFee: 0,
+        items: [
+          {
+            id: "ii-l1",
+            orderItemId: "l1",
+            productId: "p1",
+            qty: 4,
+            subtotal: 40,
+            categoryTaxAmount: 0,
+            promoFreeUnits: 0,
+            unitPrice: 10,
+          },
+          { ...base, id: "a", qty: 2, subtotal: 20, ...trioA, categoryTaxRate: "0.0500" },
+          { ...base, id: "b", qty: 1, subtotal: 10, ...trioB, categoryTaxRate: "0.0800" },
+        ],
+      },
+    ]);
+    prisma.deliveryMutation.findMany.mockResolvedValue([]);
+    prisma.orderItem.update.mockResolvedValue({});
+    prisma.orderItem.create.mockResolvedValue({});
+    prisma.orderItem.updateMany.mockResolvedValue({ count: 0 });
+    prisma.order.update.mockResolvedValue({});
+
+    await service.recomputeOrderFromInvoices("order1", prisma);
+
+    expect(prisma.orderItem.create).not.toHaveBeenCalled();
+    const cancelled = prisma.orderItem.update.mock.calls.filter(
+      (c: any) => c[0]?.data?.status === "CANCELLED",
+    );
+    expect(cancelled).toHaveLength(0);
+    // row 372 MF2: nothing was written, so the order's revision does not move
+    expect(prisma.orderRevision.create).not.toHaveBeenCalled();
+  });
+
+  it("row 372 MF2: the recompute takes the Order row lock before its first read (the revision append serializes with edits)", async () => {
+    prisma.order.findUnique.mockResolvedValue(null);
+    await service.recomputeOrderFromInvoices("order1", prisma);
+    expect(prisma.$executeRaw).toHaveBeenCalled();
+    const lock = [...(prisma.$executeRaw.mock.calls[0][0] as readonly string[])].join("?");
+    expect(lock).toMatch(/FROM "Order" WHERE id = /);
+    expect(lock).toMatch(/FOR UPDATE/);
+    expect(prisma.$executeRaw.mock.invocationCallOrder[0]).toBeLessThan(
+      prisma.order.findUnique.mock.invocationCallOrder[0],
+    );
+  });
+
+  it("row 372 MF2: a header fee edit moves the order's fee while lines stay gated, and the revision moves with it", async () => {
+    // an under-billed line: coverage is partial, so lines are not rewritten, but the fee back-sync still lands
+    const l1 = { id: "l1", productId: "p1", status: "PENDING", qty: 10, invoicedQty: 0 };
+    prisma.order.findUnique.mockResolvedValue({
+      id: "order1",
+      status: "PENDING",
+      subtotal: 100,
+      tax: 0,
+      total: 100,
+      shippingFee: 0,
+      lineItems: [l1],
+    });
+    prisma.invoice.findMany.mockResolvedValue([
+      {
+        id: "inv1",
+        shippingFee: 7,
+        items: [
+          {
+            id: "ii-l1",
+            orderItemId: "l1",
+            productId: "p1",
+            qty: 4,
+            subtotal: 40,
+            categoryTaxAmount: 0,
+            promoFreeUnits: 0,
+            unitPrice: 10,
+          },
+        ],
+      },
+    ]);
+    prisma.deliveryMutation.findMany.mockResolvedValue([]);
+    prisma.orderItem.update.mockResolvedValue({});
+    prisma.order.update.mockResolvedValue({});
+    prisma.order.findUniqueOrThrow.mockResolvedValue({
+      subtotal: 100,
+      tax: 0,
+      total: 107,
+      shippingFee: 7,
+    });
+
+    await service.recomputeOrderFromInvoices("order1", prisma);
+
+    expect(prisma.order.update.mock.calls.some((c: any) => c[0].data.shippingFee === 7)).toBe(true);
+    expect(prisma.orderRevision.create).toHaveBeenCalledTimes(1);
+  });
+
+  it("row 372 MF2: a recompute that writes an order line appends ONE SYSTEM_INVOICE_SYNC revision in the same tx", async () => {
+    const l1 = { id: "l1", productId: "p1", status: "PENDING", qty: 4, invoicedQty: 0 };
+    prisma.order.findUnique.mockResolvedValue({
+      id: "order1",
+      status: "PENDING",
+      subtotal: 40,
+      tax: 0,
+      total: 40,
+      shippingFee: 0,
+      lineItems: [l1],
+    });
+    prisma.invoice.findMany.mockResolvedValue([
+      {
+        id: "inv1",
+        shippingFee: 0,
+        items: [
+          {
+            id: "ii-l1",
+            orderItemId: "l1",
+            productId: "p1",
+            qty: 5, // the invoice was edited up: the order line follows
+            subtotal: 50,
+            categoryTaxAmount: 0,
+            promoFreeUnits: 0,
+            unitPrice: 10,
+          },
+        ],
+      },
+    ]);
+    prisma.deliveryMutation.findMany.mockResolvedValue([]);
+    prisma.orderItem.update.mockResolvedValue({});
+    prisma.order.update.mockResolvedValue({});
+    prisma.order.findUniqueOrThrow.mockResolvedValue({
+      subtotal: 50,
+      tax: 0,
+      total: 50,
+      shippingFee: 0,
+    });
+
+    await service.recomputeOrderFromInvoices("order1", prisma);
+
+    expect(prisma.orderItem.update.mock.calls.some((c: any) => c[0].data.qty === 5)).toBe(true);
+    expect(prisma.orderRevision.create).toHaveBeenCalledTimes(1);
+    expect(prisma.orderRevision.create.mock.calls[0][0].data).toMatchObject({
+      orderId: "order1",
+      source: "SYSTEM_INVOICE_SYNC",
+    });
+  });
 });

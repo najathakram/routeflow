@@ -86,6 +86,12 @@ export class CreateInvoiceDto {
   @IsOptional() @IsDateString() depositDueDate?: string;
 }
 
+/** Internal options of `recordPayment` (never part of a request body). */
+export interface RecordPaymentOpts {
+  /** The split counter tender's leg group (uuidv5 of orderId:legIndex), written IN the payment's create. */
+  paymentGroupId?: string;
+}
+
 export class RecordInvoicePaymentDto {
   @IsNumber() @Min(0.01) amount: number;
   @IsEnum(PaymentMethod) method: PaymentMethod;

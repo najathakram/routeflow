@@ -135,7 +135,7 @@ function make(
       ),
     },
     tenant: { findUnique: jest.fn(async () => ({ name: "Acme Retail", slug: "acme" })) },
-    tenantConfig: { findFirst: jest.fn(async () => null) },
+    tenantConfig: { findUnique: jest.fn(async () => null) },
     $transaction: jest.fn(async (fn: any) => fn(prisma)),
   };
   const sendPlatform = jest.fn(async (_mail?: any) => ({
@@ -524,6 +524,20 @@ describe("RfInvoiceMailerService", () => {
       expect(prisma.billingNotificationLog.create).not.toHaveBeenCalled();
       expect((await svc.sendManual("inv-1", ADMIN, NOW)).outcome).toBe("sent");
       expect(sendPlatform).toHaveBeenCalledTimes(2);
+    });
+
+    it("Opus nit: a tenant with an October catch-up claim held (even SESSION_OPEN, no stripeSubId yet) gets no automatic email", async () => {
+      for (const catchupState of ["SESSION_OPEN", "AWAITING_FIRST_PAYMENT", "RELEASING"]) {
+        const held = { subscription: { stripeSubId: null, catchupState } };
+        const { svc, sendPlatform } = make({
+          invoices: [inv("inv-1", { dueDate: dueIn(-7), tenant: held })],
+        });
+        expect((await svc.runRemind(NOW)).sent).toBe(0);
+        await svc.sendAuto("inv-1", "issue", NOW);
+        expect(sendPlatform).not.toHaveBeenCalled();
+        // a staff-initiated resend is still allowed
+        expect((await svc.sendManual("inv-1", ADMIN, NOW)).outcome).toBe("sent");
+      }
     });
 
     it("a manual-pay tenant (no stripeSubId) is still reminded", async () => {

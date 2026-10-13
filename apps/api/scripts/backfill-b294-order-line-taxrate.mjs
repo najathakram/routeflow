@@ -26,12 +26,14 @@
 //   2. --guard-sha is a git ancestor of this checkout's HEAD (the fix that stops new 0-rate lines);
 //   3. the DB fingerprint (database, tenant ids) still matches the dry run;
 //   4. a LIVE (non-test) tenant needs --live-tenant-override plus the literal type-back phrase;
-//   4b. #2639 / SA-547: a PROTECTED tenant (paying, or its subscription linked to Stripe) is HELD at
-//      the dry run (PAYING-HELD, never planned) unless --allow-paying-tenant; the apply RE-DERIVES
-//      protection in its transaction and needs --allow-paying-tenant plus
-//      --confirm-paying "APPLY TO PAYING <slug,slug,...>" (sorted) for any protected tenant it
-//      writes, and refuses the whole apply if a tenant turned protected since the dry run. The
-//      plan file and the logs carry tenant IDS and counts only — never slugs;
+//   4b. #2639 / SA-547 / row 195: a PROTECTED tenant (paying, Stripe-linked, or named in
+//      PROTECTED_TENANT_SLUGS) is HELD at the dry run (PAYING-HELD, never planned) unless the
+//      operator names its id with --allow-protected <tenantId> (repeatable). The apply RE-DERIVES
+//      protection in its transaction, refuses the whole apply if a tenant turned protected since
+//      the dry run, and for every protected tenant it writes needs --allow-protected <tenantId>
+//      plus a typed "ALLOW PROTECTED <tenantId>" at a real terminal (live-target-guard.cjs). The
+//      retired --allow-paying-tenant / --confirm-paying are unknown arguments. The plan file and
+//      the logs carry tenant IDS and counts only — never slugs;
 //   5. --i-have-a-fresh-backup, always;
 //   6. every planned invoice is RE-READ: subtotal, taxAmount, updatedAt, its line ids, and every
 //      line still at 0 — any change refuses the whole apply.
@@ -51,6 +53,8 @@ import {
 } from "@routeflow/pricing";
 import { isTestTenant } from "../../../scripts/lib/test-tenants.cjs";
 import payingTenant from "./lib/paying-tenant.cjs";
+import protectedSlugsLib from "./lib/protected-slugs.cjs";
+import liveTargetGuard from "./lib/live-target-guard.cjs";
 import { isLocalDbTarget } from "./lib/local-db-target.cjs";
 import { requireLocalPgConfig } from "./lib/local-pg-config.mjs";
 import { redactUrl, resolveDatabaseUrl } from "./lib/railway-db-url.mjs";
@@ -67,6 +71,9 @@ const argOf = (name) => {
   const i = process.argv.indexOf(name);
   return i >= 0 ? process.argv[i + 1] : undefined;
 };
+/** Every value of a repeatable flag: `--allow-protected a --allow-protected b` -> ["a", "b"]. */
+const argvAll = (name) =>
+  process.argv.flatMap((a, i, all) => (a === name && all[i + 1] !== undefined ? [all[i + 1]] : []));
 const sha256 = (obj) => createHash("sha256").update(JSON.stringify(obj)).digest("hex");
 const refuse = (msg) => Object.assign(new Error(msg), { refuse: true });
 
@@ -121,20 +128,32 @@ export function classifyInvoice(invoice, lines, fixDate = FIX_DATE) {
 }
 
 const { protectedArm } = payingTenant;
+const { loadProtectedSlugs } = protectedSlugsLib;
+const {
+  assertWritableTenant,
+  confirmProtectedOverride,
+  hasBackupAttestation,
+  refuseRetiredFlags,
+  ProtectedTenantError,
+} = liveTargetGuard;
 
 /** #2639: each tenant's protection inputs (same client as the backfill; read in its transaction). */
 const PROTECTION_SQL = `
-  SELECT t.id, t.slug, t.status, t.class, t."deletedAt", s."planKey", s."stripeSubId"
+  SELECT t.id, t.slug, t.status, t.class, t."deletedAt", s."planKey", s."stripeSubId", s."couponFull"
   FROM "Tenant" t LEFT JOIN "TenantSubscription" s ON s."tenantId" = t.id
   WHERE t.id = ANY($1::text[])`;
 
 /** Pure (#2639): rows from PROTECTION_SQL → Map<tenantId, "paying" | "stripe-linked"> (protected only). */
-export function protectedTenants(rows) {
+export function protectedTenants(rows, protectedSlugs) {
   const out = new Map();
   for (const r of rows) {
+    // No plan (a LEFT JOIN miss included) is never paying, so the flag is moot; otherwise it is passed RAW -
+    // an undefined (a select that skipped it) THROWS in isPayingTenant, never coerced.
+    const couponFull = r.planKey == null ? false : r.couponFull;
     const arm = protectedArm(
-      { status: r.status, class: r.class, deletedAt: r.deletedAt },
-      { planKey: r.planKey, stripeSubId: r.stripeSubId },
+      { slug: r.slug, status: r.status, class: r.class, deletedAt: r.deletedAt },
+      { planKey: r.planKey, stripeSubId: r.stripeSubId, couponFull },
+      protectedSlugs,
     );
     if (arm) out.set(r.id, arm);
   }
@@ -143,15 +162,15 @@ export function protectedTenants(rows) {
 
 /**
  * Pure (#2639 / SA-547, dry run): a protected tenant's candidates are HELD (never planned) unless the
- * operator passed --allow-paying-tenant. Returns the plan's apply list, the held list and the protected
- * tenant ids the plan ADMITS (only with the flag) — ids, never slugs.
+ * operator named the tenant's id with --allow-protected. Returns the plan's apply list, the held list
+ * and the protected tenant ids the plan ADMITS (only those named) — ids, never slugs.
  */
-export function splitProtected(candidates, protectedById, allowPayingTenant) {
+export function splitProtected(candidates, protectedById, allowedIds) {
   const apply = [];
   const held = [];
   for (const c of candidates) {
     if (!protectedById.has(c.tenantId)) apply.push(c);
-    else if (allowPayingTenant) apply.push(c);
+    else if (allowedIds.has(c.tenantId)) apply.push(c);
     else
       held.push({
         invoiceId: c.invoiceId,
@@ -159,44 +178,26 @@ export function splitProtected(candidates, protectedById, allowPayingTenant) {
         arm: protectedById.get(c.tenantId),
       });
   }
-  const admitted = allowPayingTenant
-    ? [...new Set(apply.filter((c) => protectedById.has(c.tenantId)).map((c) => c.tenantId))].sort()
-    : [];
+  const admitted = [
+    ...new Set(apply.filter((c) => protectedById.has(c.tenantId)).map((c) => c.tenantId)),
+  ].sort();
   return { apply, held, admittedProtectedTenantIds: admitted };
 }
 
 /**
  * Pure (#2639 / SA-547, apply): the apply NEVER trusts the plan. `nowProtected` is re-derived in the
- * apply transaction for the plan's tenants (Map id → { arm, slug }). A tenant protected NOW that the
- * plan did not admit (it turned protected since the dry run) refuses the WHOLE apply. Any protected
- * tenant being written needs --allow-paying-tenant AND the typed phrase over the sorted slugs. The
- * refusal text names tenant IDS only; the slugs live only in what the operator types.
+ * apply transaction for the plan's tenants (Map id → { arm }). A tenant protected NOW that the plan
+ * did not admit (it turned protected since the dry run) refuses the WHOLE apply. The per-tenant
+ * override itself (flag + terminal + typed phrase) is checked by assertWritableTenant in the apply.
+ * The refusal text names tenant IDS only.
  */
-export function payingGate({
-  admittedProtectedTenantIds,
-  nowProtected,
-  allowPayingTenant,
-  confirmPaying,
-}) {
+export function payingGate({ admittedProtectedTenantIds, nowProtected }) {
   const admitted = new Set(admittedProtectedTenantIds ?? []);
   const turned = [...nowProtected.keys()].filter((id) => !admitted.has(id)).sort();
   if (turned.length)
     return {
       ok: false,
-      reason: `tenant(s) ${turned.join(", ")} became protected (paying / Stripe-linked) since the dry run — re-run the dry run`,
-    };
-  if (nowProtected.size === 0) return { ok: true };
-  const ids = [...nowProtected.keys()].sort();
-  const phrase = `APPLY TO PAYING ${[...nowProtected.values()]
-    .map((v) => v.slug)
-    .sort()
-    .join(",")}`;
-  if (!allowPayingTenant || confirmPaying !== phrase)
-    return {
-      ok: false,
-      reason:
-        `${ids.length} protected tenant(s) in this plan (${ids.join(", ")}): pass --allow-paying-tenant ` +
-        `--confirm-paying "APPLY TO PAYING <their slugs, sorted, comma-joined>"`,
+      reason: `tenant(s) ${turned.join(", ")} became protected (paying / Stripe-linked / listed) since the dry run — re-run the dry run`,
     };
   return { ok: true };
 }
@@ -255,6 +256,7 @@ async function fingerprint(client) {
 
 async function dryRun() {
   const url = await resolveTarget();
+  const protectedSlugs = loadProtectedSlugs(process.env, url);
   const before = argOf("--before") ? new Date(argOf("--before")) : new Date();
   console.log(
     `${TAG}: target ${redactUrl(url)} DRY-RUN (invoices created before ${before.toISOString()})`,
@@ -272,6 +274,7 @@ async function dryRun() {
     const scopeTenantIds = [...new Set(invoices.map((i) => i.tenantId))];
     const protectedById = protectedTenants(
       scopeTenantIds.length ? (await client.query(PROTECTION_SQL, [scopeTenantIds])).rows : [],
+      protectedSlugs,
     );
     await client.query("ROLLBACK");
 
@@ -300,17 +303,16 @@ async function dryRun() {
       });
     }
 
-    // #2639 / SA-547: a protected tenant is HELD unless --allow-paying-tenant (ids + counts only).
-    const allowPayingTenant = process.argv.includes("--allow-paying-tenant");
+    // #2639 / SA-547: a protected tenant is HELD unless --allow-protected names its id (ids + counts only).
+    const allowedIds = new Set(argvAll("--allow-protected"));
     const { apply, held, admittedProtectedTenantIds } = splitProtected(
       candidates,
       protectedById,
-      allowPayingTenant,
+      allowedIds,
     );
     const plan = {
       generatedAt: new Date().toISOString(),
       fingerprint: fp,
-      allowPayingTenant,
       admittedProtectedTenantIds,
       apply,
     };
@@ -331,8 +333,8 @@ async function dryRun() {
     console.log(
       `  PAYING-HELD: ${held.length} invoice(s) across ${new Set(held.map((h) => h.tenantId)).size} protected tenant(s)` +
         (admittedProtectedTenantIds.length
-          ? `; ${admittedProtectedTenantIds.length} protected tenant(s) ADMITTED (--allow-paying-tenant)`
-          : " (pass --allow-paying-tenant to plan them; ids are in the plan file)"),
+          ? `; ${admittedProtectedTenantIds.length} protected tenant(s) ADMITTED (--allow-protected)`
+          : " (pass --allow-protected <tenantId> to plan them; ids are in the plan file)"),
     );
     console.log(`\nplan: ${file}\nplan hash: ${hash}`);
     if (apply.length > 0) {
@@ -365,9 +367,14 @@ async function apply() {
   const planFile = argOf("--plan");
   const confirmPlan = argOf("--confirm-plan");
   const guardSha = argOf("--guard-sha");
-  if (!planFile || !confirmPlan || !guardSha || !process.argv.includes("--i-have-a-fresh-backup")) {
+  if (
+    !planFile ||
+    !confirmPlan ||
+    !guardSha ||
+    !hasBackupAttestation(process.argv.slice(2), "--i-have-a-fresh-backup")
+  ) {
     console.error(
-      `${TAG}: --apply needs --plan, --confirm-plan, --guard-sha and --i-have-a-fresh-backup`,
+      `${TAG}: --apply needs --plan, --confirm-plan, --guard-sha and --backup-taken (the old --i-have-a-fresh-backup still works)`,
     );
     return 1;
   }
@@ -385,6 +392,25 @@ async function apply() {
   }
 
   const url = await resolveTarget();
+  const protectedSlugs = loadProtectedSlugs(process.env, url);
+  // Row 195: every protected tenant the plan admitted needs its OWN operator confirmation, taken
+  // BEFORE the transaction opens (a prompt must not hold row locks).
+  const overrides = new Map();
+  for (const id of plan.admittedProtectedTenantIds ?? []) {
+    try {
+      overrides.set(
+        id,
+        await confirmProtectedOverride({
+          tenantId: id,
+          argv: process.argv.slice(2),
+          backupFlag: "--i-have-a-fresh-backup",
+        }),
+      );
+    } catch (e) {
+      console.error(`${TAG}: ${e.message}`);
+      return 1;
+    }
+  }
   console.log(`${TAG}: target ${redactUrl(url)} APPLY (${plan.apply.length} invoice(s))`);
   const client = new pg.Client(dialConfig(url));
   await client.connect();
@@ -402,17 +428,32 @@ async function apply() {
     const protRows = tenantIds.length
       ? (await client.query(`${PROTECTION_SQL} FOR SHARE OF t`, [tenantIds])).rows
       : [];
-    const nowArm = protectedTenants(protRows);
+    const nowArm = protectedTenants(protRows, protectedSlugs);
     const nowProtected = new Map(
       [...nowArm.entries()].map(([id, arm]) => [id, { arm, slug: slugById.get(id) }]),
     );
     const gate = payingGate({
       admittedProtectedTenantIds: plan.admittedProtectedTenantIds,
       nowProtected,
-      allowPayingTenant: process.argv.includes("--allow-paying-tenant"),
-      confirmPaying: argOf("--confirm-paying"),
     });
     if (!gate.ok) throw refuse(gate.reason);
+    for (const r of protRows) {
+      try {
+        assertWritableTenant(
+          { id: r.id, slug: r.slug, status: r.status, class: r.class, deletedAt: r.deletedAt },
+          {
+            planKey: r.planKey,
+            stripeSubId: r.stripeSubId,
+            couponFull: r.planKey == null ? false : r.couponFull,
+          },
+          protectedSlugs,
+          { allowProtected: overrides.get(r.id) },
+        );
+      } catch (e) {
+        if (e instanceof ProtectedTenantError) throw refuse(e.message);
+        throw e;
+      }
+    }
     const live = tenantIds.filter((id) => !isTestTenant(slugById.get(id)));
     if (live.length > 0) {
       const phrase = `APPLY ${plan.apply.length} INVOICES`;
@@ -570,6 +611,12 @@ function selfTest() {
 
 async function main() {
   if (process.argv.includes("--self-test")) return selfTest();
+  try {
+    refuseRetiredFlags(process.argv.slice(2));
+  } catch (e) {
+    console.error(`${TAG}: ${e.message}`);
+    return 1;
+  }
   return process.argv.includes("--apply") ? apply() : dryRun();
 }
 

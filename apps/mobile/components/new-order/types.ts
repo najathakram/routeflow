@@ -36,6 +36,8 @@ export interface OrderOptions {
   /** Ad-hoc trips (plan §WP11): ROUTE (default) or SHIP (carrier-shipped). */
   fulfillPath: "ROUTE" | "SHIP";
   onChangeFulfillPath: (v: "ROUTE" | "SHIP") => void;
+  /** POS mode: the delivery-only fields (urgent, delivery date, ROUTE/SHIP) step aside; values are kept. */
+  posMode?: boolean;
 }
 
 export interface CreditPicker {

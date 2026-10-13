@@ -338,6 +338,131 @@ describe("BookkeepingService", () => {
     });
   });
 
+  describe("recordPayment — G4: a counter invoice joins the end-of-day close like the office door", () => {
+    const DB_NOW = new Date("2026-10-09T17:30:00.000Z");
+    const CLOSE_END = new Date("2026-10-09T17:00:00.000Z");
+
+    function setup(opts: { counter: boolean; closeEnd?: Date; dbNow?: Date }) {
+      const log: string[] = [];
+      const create = jest.fn(async () => ({ id: "pay-1" }));
+      // counterPay.scope reads the order through forTenant() BEFORE the transaction.
+      prisma.forTenant.mockReturnValue({
+        order: {
+          findFirst: jest.fn(async () =>
+            opts.counter ? { counterSale: true, registerKey: "r1" } : null,
+          ),
+        },
+      } as never);
+      prisma.tenantTransaction.mockImplementation(async (fn: any) =>
+        fn({
+          $executeRaw: jest.fn(async (strings: TemplateStringsArray) => {
+            const q = strings.join("?");
+            log.push(
+              q.includes("counter-close")
+                ? "lock close"
+                : q.includes('"Order"')
+                  ? "lock Order"
+                  : "lock Invoice",
+            );
+          }),
+          $queryRaw: jest.fn(async () => {
+            log.push("db clock");
+            return [{ now: opts.dbNow ?? DB_NOW }];
+          }),
+          counterDayClose: {
+            // The latest-standing-close read answers with its windowEnd; the closed-window question (assertOpen: is this
+            // instant inside a window?) is answered from the same close, whose window ends at closeEnd.
+            findFirst: jest.fn(async ({ where }: any) => {
+              if (!opts.closeEnd) return null;
+              if (where?.windowEnd?.gt)
+                return where.windowEnd.gt < opts.closeEnd ? { id: "close" } : null;
+              return { windowEnd: opts.closeEnd };
+            }),
+          },
+          invoice: {
+            findMany: jest.fn(async () => [{ orderId: "ord-1" }]),
+            findUnique: jest.fn(async () => ({
+              id: "inv-c",
+              orderId: "ord-1",
+              status: "SENT",
+              total: 100,
+              payments: [],
+            })),
+            update: jest.fn().mockResolvedValue({ id: "inv-c" }),
+          },
+          invoicePayment: { create },
+        }),
+      );
+      return { log, create };
+    }
+
+    it("counter invoice: the shared close lock is the FIRST statement and paidAt is the database clock", async () => {
+      const { log, create } = setup({ counter: true });
+      const fixedApp = new Date("2020-01-01T00:00:00.000Z");
+      jest.useFakeTimers({ doNotFake: ["nextTick", "setImmediate"] }).setSystemTime(fixedApp);
+      try {
+        await service.recordPayment("inv-c", { amount: 10, method: "CASH" as any });
+      } finally {
+        jest.useRealTimers();
+      }
+      expect(log[0]).toBe("lock close");
+      expect(log.slice(0, 3)).toEqual(["lock close", "lock Order", "lock Invoice"]);
+      expect(create).toHaveBeenCalledWith(
+        expect.objectContaining({ data: expect.objectContaining({ paidAt: DB_NOW }) }),
+      );
+    });
+
+    it("counter invoice: CASH dated before a standing close is refused DAY_CLOSED_FOR_PAYMENT_DATE and nothing is created", async () => {
+      // the DB clock reads BEFORE the standing close's cutoff, so the row would land inside a closed window
+      const { create } = setup({
+        counter: true,
+        closeEnd: CLOSE_END,
+        dbNow: new Date("2026-10-09T16:00:00.000Z"),
+      });
+      await expect(
+        service.recordPayment("inv-c", { amount: 10, method: "CASH" as any }),
+      ).rejects.toMatchObject({ response: { code: "DAY_CLOSED_FOR_PAYMENT_DATE" } });
+      expect(create).not.toHaveBeenCalled();
+    });
+
+    it("counter invoice: a CHECK dated AFTER the standing close's cutoff is accepted", async () => {
+      const { create } = setup({
+        counter: true,
+        closeEnd: CLOSE_END,
+        dbNow: new Date("2026-10-09T18:00:00.000Z"), // the database clock, after windowEnd
+      });
+      await service.recordPayment("inv-c", { amount: 10, method: "CHECK" as any });
+      expect(create).toHaveBeenCalledTimes(1);
+    });
+
+    it("counter invoice: a CHECK whose date falls INSIDE the closed window is refused (a check moves the closed Z's money in)", async () => {
+      const { create } = setup({
+        counter: true,
+        closeEnd: CLOSE_END,
+        dbNow: new Date("2026-10-09T16:00:00.000Z"), // before windowEnd: inside the closed day
+      });
+      await expect(
+        service.recordPayment("inv-c", { amount: 10, method: "CHECK" as any }),
+      ).rejects.toMatchObject({ response: { code: "COUNTER_SALE_DAY_CLOSED" } });
+      expect(create).not.toHaveBeenCalled();
+    });
+
+    it("non-counter invoice: no close lock, no DB clock read, app-clock paidAt, behaviour unchanged", async () => {
+      const { log, create } = setup({ counter: false });
+      const fixedApp = new Date("2020-01-01T00:00:00.000Z");
+      jest.useFakeTimers({ doNotFake: ["nextTick", "setImmediate"] }).setSystemTime(fixedApp);
+      try {
+        await service.recordPayment("inv-c", { amount: 10, method: "CASH" as any });
+      } finally {
+        jest.useRealTimers();
+      }
+      expect(log).toEqual(["lock Order", "lock Invoice"]);
+      expect(create).toHaveBeenCalledWith(
+        expect.objectContaining({ data: expect.objectContaining({ paidAt: fixedApp }) }),
+      );
+    });
+  });
+
   describe("getPdfUrl", () => {
     it("should return url when PDF exists", async () => {
       invoiceService.getPresignedUrl.mockResolvedValue("https://r2.example.com/invoice.pdf");
@@ -363,11 +488,11 @@ describe("BookkeepingService", () => {
       prisma.creditNote.aggregate.mockResolvedValue({ _sum: { amount: 200 } });
       prisma.return.aggregate.mockResolvedValue({ _sum: { refundAmount: 50 } });
       prisma.invoice.findMany.mockResolvedValue([
-        { total: 200, payments: [{ amount: 50 }] },
-        { total: 300, payments: [{ amount: 100 }] },
+        { total: 200, payments: [{ amount: 50, status: "PAID" }] },
+        { total: 300, payments: [{ amount: 100, status: "PAID" }] },
       ]);
       prisma.invoicePayment.aggregate.mockResolvedValue({ _sum: { amount: 1500 } });
-      prisma.invoice.count.mockResolvedValue(3);
+      prisma.$queryRaw.mockResolvedValue([{ count: 3 }]); // SA-770: the overdue count is the balance-due SQL
 
       const result = await service.getSummary();
 
@@ -391,7 +516,7 @@ describe("BookkeepingService", () => {
       prisma.return.aggregate.mockResolvedValue({ _sum: { refundAmount: null } });
       prisma.invoice.findMany.mockResolvedValue([]);
       prisma.invoicePayment.aggregate.mockResolvedValue({ _sum: { amount: null } });
-      prisma.invoice.count.mockResolvedValue(0);
+      prisma.$queryRaw.mockResolvedValue([{ count: 0 }]);
 
       const result = await service.getSummary();
 
@@ -404,6 +529,359 @@ describe("BookkeepingService", () => {
         paymentsThisWeek: 0,
         overdueCount: 0,
       });
+    });
+
+    it("SA-770: overdueCount counts invoices with a BALANCE DUE � tenant-scoped, bound, never invoice.count", async () => {
+      prisma.invoice.aggregate.mockResolvedValue({ _sum: { total: 0, taxAmount: 0 } });
+      prisma.creditNote.aggregate.mockResolvedValue({ _sum: { amount: 0 } });
+      prisma.return.aggregate.mockResolvedValue({ _sum: { refundAmount: 0 } });
+      prisma.invoice.findMany.mockResolvedValue([]);
+      prisma.invoicePayment.aggregate.mockResolvedValue({ _sum: { amount: 0 } });
+      prisma.getTenantId.mockReturnValue("tenant-acme");
+      // COUNT(*) comes back from Postgres as a bigint
+      prisma.$queryRaw.mockResolvedValue([{ count: BigInt(2) }]);
+
+      const result = await service.getSummary();
+
+      expect(result.overdueCount).toBe(2);
+      expect(prisma.invoice.count).not.toHaveBeenCalled(); // the status + due-date-only count was the bug
+      const { sql, values } = prisma.$queryRaw.mock.calls[0][0] as {
+        sql: string;
+        values: unknown[];
+      };
+      expect(values).toEqual(
+        expect.arrayContaining(["tenant-acme", "SENT", "VIEWED", "PARTIAL", "OVERDUE", "PAID"]),
+      );
+      expect(sql).not.toContain("tenant-acme");
+      expect(sql).toMatch(/"i"\."total"\s*-\s*COALESCE\(/); // the balance predicate is in the query
+    });
+  });
+
+  // ─── SA-770: an overpaid open invoice never makes an overdue figure negative ──
+  describe("getCustomerBalanceSummary — per-customer overdue is clamped (SA-770)", () => {
+    const PAST = new Date("2020-01-01T00:00:00.000Z");
+    const FUTURE = new Date("2099-01-01T00:00:00.000Z");
+    const customer = { id: "c1", businessName: "Acme", contactName: null, phone: null };
+    const inv = (id: string, total: number, paid: number, dueDate: Date, status = "SENT") => ({
+      id,
+      customerId: "c1",
+      customer,
+      status,
+      total,
+      dueDate,
+      payments: paid ? [{ amount: paid, status: "PAID" }] : [],
+    });
+    const run = async (rows: any[]) => {
+      prisma.tenantConfig.findUnique.mockResolvedValue(null);
+      prisma.invoice.findMany.mockResolvedValue(rows);
+      const res: any = await service.getCustomerBalanceSummary();
+      return res.data[0];
+    };
+
+    it("an overpaid open past-due invoice contributes 0, not a negative", async () => {
+      const row = await run([inv("over", 100, 110, PAST)]);
+      expect(row.overdue).toBe(0);
+    });
+
+    it("a mix: only the genuinely overdue invoice counts (before the fix: 50 - 10 = 40)", async () => {
+      const row = await run([inv("over", 100, 110, PAST), inv("owes", 50, 0, PAST, "OVERDUE")]);
+      expect(row.overdue).toBe(50);
+    });
+
+    it("overdue is the sum of the POSITIVE balances of open past-due invoices, in cents", async () => {
+      const row = await run([
+        inv("a", 0.1, 0, PAST),
+        inv("b", 0.2, 0, PAST),
+        inv("partial", 100, 40, PAST, "PARTIAL"),
+        inv("exact", 80, 80, PAST),
+        inv("over", 30, 90, PAST),
+        inv("not-due", 500, 0, FUTURE),
+      ]);
+      expect(row.overdue).toBe(60.3);
+    });
+  });
+
+  // ─── SA-770 row 310: every receivable / aging / AR figure is the clamped invoice balance ──
+  // An OVERPAID open invoice (P-3 keeps it out of PAID) must never net against what other customers
+  // owe: each invoice contributes max(0, roundMoney(total - confirmed payments)). Float dust (11 x $0.10
+  // against $1.10) must not become a phantom receivable either.
+  describe("SA-770 row 310 — receivables, aging and per-customer figures use the clamped balance", () => {
+    const PAST = new Date("2020-01-01T00:00:00.000Z");
+    const FUTURE = new Date("2099-01-01T00:00:00.000Z");
+    const cust = { id: "c1", businessName: "Acme", contactName: null, phone: null };
+    const pay = (amount: number) => ({ amount, status: "PAID", method: "CASH" });
+    const row = (id: string, total: number, payments: any[], dueDate: Date, status = "SENT") => ({
+      id,
+      invoiceNumber: id.toUpperCase(),
+      customerId: "c1",
+      customer: cust,
+      status,
+      total,
+      dueDate,
+      issueDate: PAST,
+      payments,
+    });
+    const overpaid = () => row("over", 100, [pay(130)], PAST);
+    const owing = () => row("owes", 50, [], PAST, "OVERDUE");
+    // 11 x $0.10 sums to 1.0999999999999999 in floats: a phantom $2e-16 balance against $1.10
+    const dusty = () =>
+      row(
+        "dust",
+        1.1,
+        Array.from({ length: 11 }, () => pay(0.1)),
+        FUTURE,
+      );
+
+    beforeEach(() => {
+      prisma.tenantConfig.findUnique.mockResolvedValue(null);
+      prisma.invoice.aggregate.mockResolvedValue({ _sum: { total: 0, taxAmount: 0 } });
+      prisma.creditNote.aggregate.mockResolvedValue({ _sum: { amount: 0 } });
+      prisma.return.aggregate.mockResolvedValue({ _sum: { refundAmount: 0 } });
+      prisma.invoicePayment.aggregate.mockResolvedValue({ _sum: { amount: 0 } });
+      prisma.$queryRaw.mockResolvedValue([{ count: 0 }]);
+    });
+
+    it("getSummary: receivables = ONLY the owing balance (overpaid + owing: 50, not 50 - 30 = 20)", async () => {
+      prisma.invoice.findMany.mockResolvedValue([overpaid(), owing()]);
+      const res = await service.getSummary();
+      expect(res.outstandingReceivables).toBe(50);
+    });
+
+    it("getSummary: float dust is not a receivable", async () => {
+      prisma.invoice.findMany.mockResolvedValue([dusty()]);
+      expect((await service.getSummary()).outstandingReceivables).toBe(0);
+    });
+
+    it("guard: getMobileDashboard totalOutstanding sums only owing balances (overpaid + owing across customers)", async () => {
+      const other = { ...owing(), id: "owes2", customerId: "c2", total: 25 };
+      prisma.invoice.findMany.mockResolvedValue([overpaid(), owing(), other]);
+      expect((await service.getMobileDashboard()).totalOutstanding).toBe(75);
+    });
+
+    it("getMobileDashboard: float dust is exactly 0, not 2e-16", async () => {
+      prisma.invoice.findMany.mockResolvedValue([dusty()]);
+      expect((await service.getMobileDashboard()).totalOutstanding).toBe(0);
+    });
+
+    // The receivables reads select their payments explicitly: dropping `status` would make
+    // confirmedBalance see no CONFIRMED rows and silently show GROSS receivables while the mocks stay green.
+    // (only the OPEN-status receivables reads; the accrual-sales read has its own amount-only select)
+    const paymentsSelect = (calls: any[][]) =>
+      calls
+        .filter((c) => c[0]?.where?.status?.in?.includes("SENT") && c[0]?.select?.payments)
+        .map((c) => c[0].select.payments);
+    it("getSummary and getMobileDashboard select the payments' amount AND status (confirmed rows only)", async () => {
+      prisma.invoice.findMany.mockResolvedValue([]);
+      await service.getSummary();
+      await service.getMobileDashboard();
+      const sels = paymentsSelect(prisma.invoice.findMany.mock.calls);
+      expect(sels).toHaveLength(2);
+      for (const sel of sels)
+        expect(sel).toEqual({
+          where: { status: "PAID" },
+          select: { amount: true, status: true },
+        });
+    });
+
+    it("getFinanceDashboard: AR aging never goes negative and its buckets sum to the total", async () => {
+      prisma.invoice.findMany.mockResolvedValue([overpaid(), owing(), dusty()]);
+      const { arAging } = await service.getFinanceDashboard();
+      expect(arAging.total).toBe(50); // the dust invoice adds exactly 0
+      expect(
+        arAging.days45plus +
+          arAging.current +
+          arAging.days1_15 +
+          arAging.days16_30 +
+          arAging.days31_45,
+      ).toBe(arAging.total);
+      for (const b of [
+        arAging.current,
+        arAging.days1_15,
+        arAging.days16_30,
+        arAging.days31_45,
+        arAging.days45plus,
+      ])
+        expect(b).toBeGreaterThanOrEqual(0);
+      expect(arAging.current).toBe(0); // float dust did not land in "current"
+    });
+
+    it("guard: getFinanceDashboard's summary-table 'due' is the clamped balance", async () => {
+      prisma.invoice.findMany.mockResolvedValue([overpaid(), owing()]);
+      const { summaryTable } = await service.getFinanceDashboard();
+      expect(summaryTable.today.due).toBe(50);
+    });
+
+    it("getFinanceDashboard: the summary-table 'due' of float dust is exactly 0", async () => {
+      prisma.invoice.findMany.mockResolvedValue([dusty()]);
+      const { summaryTable } = await service.getFinanceDashboard();
+      expect(summaryTable.today.due).toBe(0);
+    });
+
+    // Non-trivial bucket arithmetic: cents spread across ALL FIVE buckets, each bucket's sum needing a
+    // round, and the total equal to the rounded sum of the buckets.
+    const daysAgo = (n: number) => new Date(Date.now() - n * 86400000);
+    const spread = () => [
+      row("b0", 0.1, [], FUTURE),
+      row("b1", 0.2, [], daysAgo(5), "OVERDUE"),
+      row("b1x", 0.1, [], daysAgo(6), "OVERDUE"),
+      row("b2", 0.3, [], daysAgo(20), "OVERDUE"),
+      row("b3", 0.4, [], daysAgo(40), "OVERDUE"),
+      row("b4", 0.7, [], daysAgo(90), "OVERDUE"),
+      row("b4x", 0.2, [], daysAgo(91), "OVERDUE"),
+      overpaid(),
+    ];
+    it("getFinanceDashboard: cents across different buckets round, and the buckets sum to the total", async () => {
+      prisma.invoice.findMany.mockResolvedValue(spread());
+      const { arAging } = await service.getFinanceDashboard();
+      expect([
+        arAging.current,
+        arAging.days1_15,
+        arAging.days16_30,
+        arAging.days31_45,
+        arAging.days45plus,
+      ]).toEqual([0.1, 0.3, 0.3, 0.4, 0.9]); // 0.2+0.1 and 0.7+0.2 would be float dust unrounded
+      expect(arAging.total).toBe(2.0);
+    });
+
+    it("getArAgingInvoices: per-bucket totals and the grand total are rounded to cents (they agree with the dashboard)", async () => {
+      prisma.invoice.findMany.mockResolvedValue(spread());
+      const res: any = await service.getArAgingInvoices();
+      const vals = Object.entries(res.totals).filter(([k]) => k !== "total");
+      // current | 1-30 (0.2 + 0.1 + 0.3 = 0.6000000000000001 unrounded) | 31-60 | 61-90 | 90+
+      expect(vals.map(([, v]) => v)).toEqual([0.1, 0.6, 0.4, 0.7, 0.2]);
+      expect(res.totals.total).toBe(2.0);
+    });
+
+    it("getArAgingInvoices: the overpaid and the dust invoices are absent; totals = the owing balance", async () => {
+      prisma.invoice.findMany.mockResolvedValue([overpaid(), owing(), dusty()]);
+      const res: any = await service.getArAgingInvoices();
+      const ids = Object.values(res.buckets)
+        .flat()
+        .map((e: any) => e.id);
+      expect(ids).toEqual(["owes"]);
+      expect(res.totals.total).toBe(50);
+    });
+
+    it("getArAgingDetails: rows with no balance (overpaid, dust) are filtered out", async () => {
+      prisma.invoice.findMany.mockResolvedValue([overpaid(), owing(), dusty()]);
+      const res: any = await service.getArAgingDetails();
+      expect(res.data.map((r: any) => r.id)).toEqual(["owes"]);
+      expect(res.data[0].balance).toBe(50);
+    });
+
+    it("getCustomerBalanceSummary: the per-customer balance is the sum of CLAMPED balances; closingBalance stays SIGNED (a net position)", async () => {
+      prisma.invoice.findMany.mockResolvedValue([overpaid(), owing()]);
+      const [c] = ((await service.getCustomerBalanceSummary()) as any).data;
+      expect(c.balance).toBe(50); // before: 50 + (100 - 130) = 20
+      expect(c.overdue).toBe(50);
+      // closingBalance = invoiced - received, deliberately signed: Dr/Cr indicator (a net, never clamped)
+      expect(c.closingBalance).toBe(150 - 130);
+      prisma.invoice.findMany.mockResolvedValue([overpaid()]);
+      const [o] = ((await service.getCustomerBalanceSummary()) as any).data;
+      expect({ closing: o.closingBalance, ind: o.indicator, balance: o.balance }).toEqual({
+        closing: -30,
+        ind: "Cr",
+        balance: 0,
+      });
+    });
+
+    it("getCustomerBalanceSummary: float dust in the net position reads as zero ('—'), not Dr; the sign is kept", async () => {
+      // 1.1 invoiced, 11 x $0.10 received: 1.1 - 1.0999999999999999 = 2e-16 unrounded
+      prisma.invoice.findMany.mockResolvedValue([dusty()]);
+      const [c] = ((await service.getCustomerBalanceSummary()) as any).data;
+      expect({ closing: c.closingBalance, ind: c.indicator }).toEqual({
+        closing: 0,
+        ind: "—",
+      });
+      // still signed: an overpayment is a credit
+      prisma.invoice.findMany.mockResolvedValue([overpaid()]);
+      const [o] = ((await service.getCustomerBalanceSummary()) as any).data;
+      expect({ closing: o.closingBalance, ind: o.indicator }).toEqual({ closing: -30, ind: "Cr" });
+    });
+
+    // OWNER RULING 2026-10-11 (supersedes the row-310 pin that read 0 here): the Receivable Summary
+    // report alone shows an overpayment as a NEGATIVE invoice-row balance. Every other surface stays
+    // clamped (overdue-readers-inventory.spec.ts pins that `signedBalance` is used by this reader only).
+    describe("getReceivableSummary — signed invoice-row balance (owner ruling 2026-10-11)", () => {
+      const summaryRows = async (invoices: any[]) => {
+        prisma.invoice.findMany.mockResolvedValue(invoices);
+        prisma.creditNote.findMany.mockResolvedValue([]);
+        prisma.invoicePayment.findMany.mockResolvedValue([]);
+        const res: any = await service.getReceivableSummary();
+        return res.data.filter((r: any) => r.type === "INVOICE");
+      };
+
+      it("an overpaid PAID invoice shows -10.00; the surplus is also visible on the PAYMENT row", async () => {
+        const paidOver = row("po", 100, [pay(110)], PAST, "PAID");
+        prisma.invoice.findMany.mockResolvedValue([paidOver, owing()]);
+        prisma.creditNote.findMany.mockResolvedValue([]);
+        prisma.invoicePayment.findMany.mockResolvedValue([
+          {
+            id: "p1",
+            paymentNumber: "PAY-1",
+            createdAt: PAST,
+            status: "PAID",
+            amount: 110,
+            invoice: { invoiceNumber: "PO", customer: cust },
+          },
+        ]);
+        const res: any = await service.getReceivableSummary();
+        const inv = res.data.filter((r: any) => r.type === "INVOICE");
+        expect(inv.map((r: any) => [r.transactionNumber, r.balance])).toEqual([
+          ["PO", -10],
+          ["OWES", 50],
+        ]);
+        expect(res.data.find((r: any) => r.type === "PAYMENT").total).toBe(110);
+      });
+
+      it("exactly paid reads 0 and a partial payment reads a positive balance", async () => {
+        const rows = await summaryRows([
+          row("exact", 100, [pay(100)], PAST, "PAID"),
+          row("part", 100, [pay(40)], PAST, "PARTIAL"),
+        ]);
+        expect(rows.map((r: any) => [r.transactionNumber, r.balance])).toEqual([
+          ["EXACT", 0],
+          ["PART", 60],
+        ]);
+      });
+
+      it("an overpaid + owing pair: each row keeps its own sign (no netting inside a row)", async () => {
+        const rows = await summaryRows([overpaid(), owing()]);
+        expect(rows.map((r: any) => [r.transactionNumber, r.balance])).toEqual([
+          ["OVER", -30],
+          ["OWES", 50],
+        ]);
+      });
+
+      it("float dust (11 x $0.10 against $1.10) reads 0, never -2e-16 / 2e-16", async () => {
+        const rows = await summaryRows([dusty()]);
+        expect(Object.is(rows[0].balance, 0)).toBe(true);
+      });
+
+      it("only confirmed payments count: a VOID payment does not make the row negative", async () => {
+        const rows = await summaryRows([
+          row("v", 100, [{ amount: 100, status: "VOID", method: "CASH" }], PAST, "SENT"),
+        ]);
+        expect(rows[0].balance).toBe(100);
+      });
+    });
+
+    it("getInvoiceDetailsReport: an overpaid row shows balance 0 (paid > total stays visible), not a negative", async () => {
+      prisma.invoice.findMany.mockResolvedValue([overpaid()]);
+      const res: any = await service.getInvoiceDetailsReport();
+      expect(res.data[0]).toMatchObject({ total: 100, paid: 130, balance: 0 });
+    });
+
+    it("getBadDebtsReport: the footer total is the sum of clamped balances", async () => {
+      const wo = (id: string, total: number, paid: number) => ({
+        ...row(id, total, paid ? [pay(paid)] : [], PAST, "WRITTEN_OFF"),
+        writtenOffAt: PAST,
+        writeOffReason: null,
+      });
+      prisma.invoice.findMany.mockResolvedValue([wo("a", 100, 130), wo("b", 40, 0)]);
+      const res: any = await service.getBadDebtsReport();
+      expect(res.data.map((r: any) => r.balance)).toEqual([0, 40]);
+      expect(res.total).toBe(40);
     });
   });
 
@@ -592,7 +1070,7 @@ describe("BookkeepingService", () => {
       customerId: "cust-1",
       customer: { id: "cust-1", businessName: "Acme" },
     };
-    const payment = (over: Record<string, any>) => ({
+    const payment = (over: Record<string, any>): Record<string, any> => ({
       status: "PAID",
       method: "CASH",
       settledAt: null,
@@ -1117,7 +1595,15 @@ describe("BookkeepingService", () => {
       prisma.invoice.findMany.mockImplementation((args: any) => {
         if (args?.where?.writtenOffAt) {
           // balance 300: cash 150 + credit-note-applied 50, same as REG-B456-basis.
-          return Promise.resolve([{ total: 500, payments: [{ amount: 150 }, { amount: 50 }] }]);
+          return Promise.resolve([
+            {
+              total: 500,
+              payments: [
+                { amount: 150, status: "PAID" },
+                { amount: 50, status: "PAID" },
+              ],
+            },
+          ]);
         }
         return Promise.resolve([]); // outstanding receivables: none
       });
@@ -1253,7 +1739,10 @@ describe("BookkeepingService", () => {
       // (which keys on issueDate, so it correctly excludes this invoice).
       const writtenOffInvoice = {
         total: 500,
-        payments: [{ amount: 150 }, { amount: 50 }], // cash 150 + credit-note-applied 50 -> balance 300
+        payments: [
+          { amount: 150, status: "PAID" },
+          { amount: 50, status: "PAID" },
+        ], // cash 150 + credit-note-applied 50 -> balance 300
       };
       prisma.invoice.findMany.mockImplementation((args: any) => {
         if (args?.where?.writtenOffAt) return Promise.resolve([writtenOffInvoice]);
@@ -1339,7 +1828,10 @@ describe("BookkeepingService", () => {
         // gross `total` (300) -- proves the two fields are genuinely split,
         // not coincidentally equal.
         taxAmount: 50,
-        payments: [{ amount: 150 }, { amount: 50 }], // cash 150 + credit-note-applied 50 -> balance 300
+        payments: [
+          { amount: 150, status: "PAID" },
+          { amount: 50, status: "PAID" },
+        ], // cash 150 + credit-note-applied 50 -> balance 300
       };
       prisma.invoice.aggregate.mockResolvedValue({ _sum: { total: 0, taxAmount: 0 } });
       prisma.creditNote.aggregate.mockResolvedValue({ _sum: { amount: 0 } });

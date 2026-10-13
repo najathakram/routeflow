@@ -5,6 +5,7 @@ import {
   type SellLevel,
 } from "@routeflow/pricing";
 import { displayProductName } from "@/lib/product-display";
+import type { PriceOverride } from "@/lib/counter-price-edit";
 import { mergePieceIntoLine, mergeQtyIntoLine, newLineQtyForLevel } from "./add-line-merge";
 
 /**
@@ -33,6 +34,8 @@ export interface SaleLine {
   unit?: string;
   priceType?: "STANDARD" | "SPECIAL";
   category?: string;
+  /** The product's regulated category when the line was added: the estimate adds its levy (excise / deposit). */
+  trackedCategoryId?: string | null;
   /** POS-2: the product's tier columns when the line was added, so a customer pick can re-price it (display only). */
   tierPrices?: {
     pricePerUnit?: unknown;
@@ -41,8 +44,15 @@ export interface SaleLine {
     priceTier4?: unknown;
     priceTier5?: unknown;
   };
-  /** The clerk priced this line by hand: a customer pick never overwrites it (POS-5 sets it). Default false. */
+  /** The clerk priced this line by hand: a customer pick never overwrites its net price (POS-5 sets it). Default false. */
   priceEdited?: boolean;
+  /**
+   * POS-5: present only on an edited line. `unitPrice` is then the NET price the sale is rung at, `tierPrice` the
+   * system price for this customer (the struck "was" figure) and `override` what the clerk chose. Absent on every
+   * other line, which is byte-identical to what the till sent before.
+   */
+  tierPrice?: number;
+  override?: PriceOverride;
 }
 
 /**
@@ -79,6 +89,9 @@ export function addScannedProduct(
       unit: product.unit ?? "each",
       priceType: isSpecialTier(tier) ? "SPECIAL" : "STANDARD",
       ...(product.category ? { category: String(product.category) } : {}),
+      ...(product.trackedCategoryId
+        ? { trackedCategoryId: String(product.trackedCategoryId) }
+        : {}),
       tierPrices: {
         pricePerUnit: product.pricePerUnit,
         priceTier2: product.priceTier2,

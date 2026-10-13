@@ -77,7 +77,7 @@ const stampKey = (l: PreEditLine) =>
 export async function captureCompositionCarry(
   tx: Prisma.TransactionClient,
   lines: PreEditLine[],
-  incoming: Array<{ productId?: string | null }>,
+  incoming: Array<{ productId?: string | null; sourceLineId?: string }>,
 ): Promise<CompositionCarry> {
   const live = lines.filter((l) => l.productId && l.status !== "CANCELLED");
   const fixed = live.filter((l) => l.compositionMode === "FIXED");
@@ -108,14 +108,23 @@ export async function captureCompositionCarry(
       },
     ]),
   );
+  // A line NAMED by an entry's `sourceLineId` is claimed by that entry alone: it never sits in the ordinal
+  // queue, so an id-less entry (a split's new half, a new add) placed before it cannot take its stamp.
+  const named = new Map<string, PreEditLine>();
+  const claimedIds = new Set(incoming.map((i) => i.sourceLineId).filter(Boolean) as string[]);
   const queues = new Map<string, PreEditLine[]>();
   const byPosition = [...live].sort((a, b) => (a.position ?? 1e9) - (b.position ?? 1e9));
-  for (const l of byPosition) queues.set(l.productId!, [...(queues.get(l.productId!) ?? []), l]);
+  for (const l of byPosition) {
+    if (claimedIds.has(l.id)) named.set(l.id, l);
+    else queues.set(l.productId!, [...(queues.get(l.productId!) ?? []), l]);
+  }
   const incomingBy = new Map<string, number>();
   for (const it of incoming) {
-    if (it.productId) incomingBy.set(it.productId, (incomingBy.get(it.productId) ?? 0) + 1);
+    if (it.productId && !(it.sourceLineId && named.has(it.sourceLineId))) {
+      incomingBy.set(it.productId, (incomingBy.get(it.productId) ?? 0) + 1);
+    }
   }
-  // Decided ONCE, from the full pre-edit queue (it shrinks as lines are taken).
+  // Decided ONCE, from the unclaimed pre-edit queue (it shrinks as lines are taken).
   const ordinalOk = new Map<string, boolean>(
     [...queues].map(([pid, q]) => [
       pid,
@@ -124,15 +133,22 @@ export async function captureCompositionCarry(
   );
   return {
     restore: async (txn, newLineId, item) => {
-      const q = item.productId ? queues.get(item.productId) : undefined;
-      if (!q || !item.productId) return;
-      const at = item.sourceLineId
-        ? q.findIndex((l) => l.id === item.sourceLineId)
-        : ordinalOk.get(item.productId)
-          ? 0
-          : -1;
-      if (at < 0 || at >= q.length) return;
-      const [taken] = q.splice(at, 1);
+      if (!item.productId) return;
+      const q = queues.get(item.productId) ?? [];
+      let taken: PreEditLine | undefined;
+      if (item.sourceLineId) {
+        taken = named.get(item.sourceLineId);
+        if (taken) named.delete(taken.id);
+        else {
+          // not announced in `incoming` (a caller that names it only at restore): the queue holds it
+          const at = q.findIndex((l) => l.id === item.sourceLineId);
+          if (at >= 0) [taken] = q.splice(at, 1);
+        }
+        if (!taken || taken.productId !== item.productId) return;
+      } else {
+        if (!ordinalOk.get(item.productId) || q.length === 0) return;
+        [taken] = q.splice(0, 1);
+      }
       const c = carried.get(taken.id);
       if (c) await restoreCarriedComposition(txn, newLineId, c);
     },

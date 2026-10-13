@@ -350,6 +350,10 @@ model InvoiceItem {
   @@index([tenantId])
   @@index([trackedCategoryId])
   @@index([trackedSubcategoryId])
+  // Units rebuild P0a: sale-time unit-name snapshots (null = legacy line).
+  baseLabel String?
+  packLabel String?
+  lineCode  String?
 }
 
 // #2717 M3: the invoice-side twin of OrderItemComponent, frozen at bill time. qty is an INTEGER
@@ -448,6 +452,7 @@ model InvoicePayment {
   @@index([status])
   @@index([tenantId])
   @@index([tenantId, settledAt])
+  @@index([tenantId, paidAt])
   @@index([tenantId, checkDate])
   @@index([tenantId, checkStatus])
 }
@@ -637,6 +642,10 @@ model CreditNoteItem {
   @@index([creditNoteId])
   // #2118: per-line credited amounts on the product sales page (a page's line ids).
   @@index([invoiceItemId])
+  // Units rebuild P0a: sale-time unit-name snapshots (null = legacy line).
+  baseLabel String?
+  packLabel String?
+  lineCode  String?
 }
 
 /// Order↔credit-note INTENT: "apply this credit (up to `amount`, or its remaining
@@ -752,6 +761,9 @@ model EstimateItem {
   @@index([estimateId])
   @@index([productId])
   @@index([tenantId])
+  // Units rebuild P0a: sale-time unit-name snapshots (null = legacy line).
+  baseLabel String?
+  packLabel String?
 }
 
 // ─── Vendor bills (accounts payable) ───────────────────────────────
@@ -952,6 +964,8 @@ model VendorBillItem {
   @@index([vendorBillId])
   @@index([productId])
   @@index([tenantId])
+  // Units rebuild P0a: sale-time unit-name snapshots (null = legacy line).
+  baseLabel String?
 }
 
 model BillPayment {

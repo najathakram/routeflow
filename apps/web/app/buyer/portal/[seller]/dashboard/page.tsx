@@ -24,7 +24,12 @@ import {
   type BuyerOrderTemplate,
 } from "@/lib/api/buyer";
 import { useBuyerCart } from "@/lib/buyer-cart";
+import { isSellerUnavailableRefusal, sellerUnavailableCopy } from "@/lib/seller-unavailable";
 import { useBuyerSellerCapabilities } from "@/lib/api/buyer-capabilities";
+import {
+  SellerUnavailableLine,
+  useSellerAcceptingOrders,
+} from "@/components/SellerUnavailableLine";
 import { buyerOrderStatusLabel } from "@/lib/buyer-fulfilment";
 import { objectPositionForUrl } from "@/lib/image-focal";
 import { PwaInstallPrompt } from "@/components/PwaInstallPrompt";
@@ -75,16 +80,24 @@ function nextDeliveryLabel(daysOfWeek: number[]): string {
   return `This ${DAY_FULL[next]}`;
 }
 
+/** A paused seller: disable an order-creating control and point it at the one quiet line (the cart's Checkout does the same). */
+function sellerGate(accepting: boolean) {
+  return accepting ? {} : { disabled: true, "aria-describedby": "seller-unavailable-line" };
+}
+
 function StandingOrdersPanel({
   sellerSlug,
+  sellerName,
   templates,
   isLoading,
 }: {
   sellerSlug: string;
+  sellerName?: string | null;
   templates: BuyerOrderTemplate[];
   isLoading: boolean;
 }) {
   const reorder = useBuyerReorder({ localErrorToast: true }); // the sheet shows its own sentence
+  const accepting = useSellerAcceptingOrders();
   // A tap on Reorder only OPENS the review sheet (lines + total); the order is placed from its
   // "Place order" button, never from the tap itself.
   const [reviewing, setReviewing] = React.useState<BuyerOrderTemplate | null>(null);
@@ -103,8 +116,11 @@ function StandingOrdersPanel({
     try {
       await reorder.mutateAsync(reviewing.id);
       setReviewing(null);
-    } catch {
-      setPlaceError(REORDER_FAILED_COPY);
+    } catch (err) {
+      // A paused seller says so; every other failure keeps the fixed retry sentence.
+      setPlaceError(
+        isSellerUnavailableRefusal(err) ? sellerUnavailableCopy(sellerName) : REORDER_FAILED_COPY,
+      );
     } finally {
       setPlacing(false);
     }
@@ -168,7 +184,8 @@ function StandingOrdersPanel({
                 </p>
                 <button
                   onClick={() => setReviewing(t)}
-                  className="mt-1 flex items-center gap-1 rounded-lg bg-buyer-500 px-2.5 py-1 text-[11px] font-semibold text-white hover:bg-buyer-600 transition-colors"
+                  {...sellerGate(accepting)}
+                  className="mt-1 flex items-center gap-1 rounded-lg bg-buyer-500 px-2.5 py-1 text-[11px] font-semibold text-white transition-colors hover:bg-buyer-600 disabled:cursor-not-allowed disabled:opacity-50 disabled:hover:bg-buyer-500"
                 >
                   <ShoppingCart className="h-3 w-3" />
                   Reorder
@@ -244,6 +261,8 @@ export default function BuyerDashboardPage() {
         <p className="text-sm text-navy/70 mt-1">Your dashboard at {activeSeller?.tenant.name}</p>
       </div>
 
+      <SellerUnavailableLine className="rounded-lg bg-surface-raised px-4 py-3 text-sm text-navy/80" />
+
       {/* P5-07: replenishment chips → Your Shelf */}
       {(lowCount > 0 || dueSoonCount > 0) && (
         <div className="flex flex-wrap items-center gap-2">
@@ -314,6 +333,7 @@ export default function BuyerDashboardPage() {
       {/* Standing Orders — front and centre */}
       <StandingOrdersPanel
         sellerSlug={sellerSlug}
+        sellerName={activeSeller?.tenant.name}
         templates={templates}
         isLoading={templatesLoading}
       />

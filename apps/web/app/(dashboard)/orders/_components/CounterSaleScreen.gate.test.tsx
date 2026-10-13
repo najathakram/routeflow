@@ -1,5 +1,5 @@
 import * as React from "react";
-import { renderWithProviders, screen } from "@/test-utils/render";
+import { renderWithProviders, screen, fireEvent } from "@/test-utils/render";
 import { CounterSaleScreen } from "./CounterSaleScreen";
 
 /**
@@ -98,10 +98,36 @@ describe("CounterSaleScreen: the capability gate (missing means dark)", () => {
     expect(screen.queryByTestId("counter-sale-loading")).toBeNull();
   });
 
-  it("the features request errored: dark", () => {
-    features = { data: undefined, isError: true };
+  // CQ-30: a FAILED lookup is not the "off" answer: it says the check failed and offers Retry (still no sale UI).
+  it("the features request errored: no sale UI, a retry state, never 'not turned on'", () => {
+    const refetch = jest.fn();
+    features = { data: undefined, isError: true, refetch } as typeof features;
+    renderWithProviders(<CounterSaleScreen />);
+    const offline = screen.getByTestId("counter-sale-offline");
+    expect(offline).toHaveTextContent("Couldn't check whether counter sales are on.");
+    expect(screen.queryByText(DISABLED_COPY)).toBeNull();
+    expect(screen.queryByTestId("counter-sale-off")).toBeNull();
+    expect(screen.queryByLabelText("Scan or search items")).toBeNull();
+    expect(screen.queryByTestId("counter-sale-screen")).toBeNull();
+    fireEvent.click(screen.getByRole("button", { name: "Retry" }));
+    expect(refetch).toHaveBeenCalledTimes(1);
+  });
+
+  it("a refetch error with an earlier answer keeps that answer (the sale UI stays)", () => {
+    features = {
+      data: { capabilities: { fulfilment: { counter: "optional" } } },
+      isError: true,
+    };
+    renderWithProviders(<CounterSaleScreen />);
+    expect(screen.getByLabelText("Scan or search items")).toBeInTheDocument();
+    expect(screen.queryByTestId("counter-sale-offline")).toBeNull();
+  });
+
+  it("a successful lookup that says off still shows 'not turned on'", () => {
+    features = { data: { capabilities: { fulfilment: { counter: "off" } } }, isError: false };
     renderWithProviders(<CounterSaleScreen />);
     expectDark();
+    expect(screen.queryByTestId("counter-sale-offline")).toBeNull();
   });
 
   it.each(["optional", "always"])("counter %s: the full sale UI", (counter) => {

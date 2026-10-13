@@ -39,15 +39,15 @@ import { buildInvoiceUnitLine } from "./invoice-unit-line";
 import {
   categoryTaxSnapshotOf,
   computeCategoryTax,
+  copyCategoryTaxSnapshot,
+  hasNullTrio,
   normalizeBoxesPieces,
   packFromOwnSplit,
+  recomputeCategoryTax,
   regulatedUnitBasis,
-  roundMoney,
   splitMatchesQty,
   type CategoryTaxType,
 } from "@routeflow/pricing";
-import { assertInvoiceTotalsSane, storedInvoiceTotals } from "../common/money-invariants.util";
-import { foldCategoryTax } from "./manual-invoice-context";
 import { priceReplacedLine, resolveUpdateLinePack } from "./update-pack-resolution";
 
 export interface EditPayloadLine {
@@ -358,9 +358,26 @@ export function buildEditedLines(ctx: PlanCtx): EditedLine[] {
     }
     const freeUnits = ctx.clampFreeUnits(item.promoFreeUnits ?? undefined, boxes, qty);
     const lineSub = priceReplacedLine(item as any, { qty, boxes, pieces, unitsPerBox, freeUnits });
-    const category = product?.trackedCategoryId
-      ? ctx.categoryMap.get(product.trackedCategoryId)
-      : null;
+    // B297 PR3 (R3): a CHANGED row that keeps its product re-prices from its OWN rate snapshot (a rate edited
+    // since the sale must not move it); only a new row or a product substitute stamps the live category.
+    const keepsRow = row != null && !productChanged;
+    const ownCategoryId =
+      keepsRow && row.trackedCategoryId && !hasNullTrio(row as any)
+        ? (row.trackedCategoryId as string)
+        : null;
+    // A kept row with a NULL trio is the row's OWN category's line (C), whatever its product's category is now:
+    // pricing it at the product's current category D would move the line to D. A kept row with NO category is a line
+    // SOLD uncategorised (B297 row 338, L1): it stays category-less at its stored amount, 0 included, instead of
+    // being filed under its product's current category and re-priced at the live rate.
+    const keepsStoredLevy = keepsRow && !row.trackedCategoryId;
+    const lineCategoryId =
+      ownCategoryId ??
+      (keepsRow && row.trackedCategoryId
+        ? (row.trackedCategoryId as string)
+        : keepsStoredLevy
+          ? null
+          : (product?.trackedCategoryId ?? null));
+    const category = lineCategoryId ? ctx.categoryMap.get(lineCategoryId) : null;
     // The levy basis reads the SAME resolved pack the money used (SA-180): never the live pack for a stored line.
     const basisPack = Number(unitsPerBox ?? ownPack ?? (row ? 0 : livePack) ?? 0);
     const pieceQty = regulatedUnitBasis(
@@ -368,15 +385,38 @@ export function buildEditedLines(ctx: PlanCtx): EditedLine[] {
       { qty, boxes, pieces, unitLabel: null },
       basisPack,
     ).unitBasisQty;
-    const categoryTaxAmount = category
-      ? computeCategoryTax({
-          taxType: category.taxType as CategoryTaxType,
-          rate: Number(category.rate),
+    let categoryTaxAmount: number;
+    let categoryTrio: ReturnType<typeof categoryTaxSnapshotOf>;
+    if (keepsRow) {
+      const r = recomputeCategoryTax(
+        {
+          trackedCategoryId: lineCategoryId,
+          categoryTaxType: ownCategoryId ? row.categoryTaxType : null,
+          categoryTaxRate: ownCategoryId ? row.categoryTaxRate : null,
+          categoryPriceIncludesTax: ownCategoryId ? row.categoryPriceIncludesTax : null,
+          storedAmount: row.categoryTaxAmount,
           unitBasisQty: pieceQty,
           lineSubtotal: lineSub,
-          priceIncludesTax: category.priceIncludesTax,
-        })
-      : 0;
+        },
+        category,
+      );
+      if (r.warn) ctx.warn(`line ${row.id}: ${r.warn}`);
+      categoryTaxAmount = r.amount;
+      categoryTrio =
+        r.stamp ??
+        (ownCategoryId ? copyCategoryTaxSnapshot(row as any) : categoryTaxSnapshotOf(null));
+    } else {
+      categoryTaxAmount = category
+        ? computeCategoryTax({
+            taxType: category.taxType as CategoryTaxType,
+            rate: Number(category.rate),
+            unitBasisQty: pieceQty,
+            lineSubtotal: lineSub,
+            priceIncludesTax: category.priceIncludesTax,
+          })
+        : 0;
+      categoryTrio = categoryTaxSnapshotOf(category ?? null);
+    }
     return {
       rowId: row?.id ?? null,
       untouched: false,
@@ -398,10 +438,14 @@ export function buildEditedLines(ctx: PlanCtx): EditedLine[] {
         // Never CLEAR a pack the line carried (B717); a stored line keeps its own, never a sibling's.
         unitsPerBox: unitsPerBox ?? ownPack ?? null,
         promoFreeUnits: freeUnits > 0 ? freeUnits : null,
-        trackedCategoryId: product?.trackedCategoryId ?? null,
-        trackedSubcategoryId: product?.trackedSubcategoryId ?? null,
+        trackedCategoryId: lineCategoryId,
+        // Row 338: a kept row keeps the subcategory it was sold under (as it keeps its category and trio); only a
+        // new row or a product substitute (a new sale) takes the product's CURRENT subcategory.
+        trackedSubcategoryId: keepsRow
+          ? (row.trackedSubcategoryId ?? null)
+          : (product?.trackedSubcategoryId ?? null),
         categoryTaxAmount,
-        ...categoryTaxSnapshotOf(category ?? null),
+        ...categoryTrio,
         notes: item.notes ?? null,
         msrp: null as number | null,
       },
@@ -453,24 +497,6 @@ export function orderSyncLines(
   }
   const totalsMoved = !same(discount, cur.discount ?? 0) || !same(shipping, cur.shippingFee ?? 0);
   return changed.length > 0 || totalsMoved ? changed : null;
-}
-
-/**
- * The saved invoice's money from its lines' stored subtotals (same basis as each line): regular tax on the
- * post-discount subtotal, the regulated category tax folded in (RF-4; exempt -> 0 for both, snapshots zeroed).
- */
-export function editInvoiceTotals(
-  itemsData: Array<Record<string, any>>,
-  isTaxExempt: boolean,
-  discount: number,
-  shipping: number,
-): { subtotal: number; taxTotal: number; total: number } {
-  const subtotal = roundMoney(itemsData.reduce((s, it) => s + Number(it.subtotal), 0));
-  const regularTax = isTaxExempt
-    ? 0
-    : roundMoney(itemsData.reduce((s, it) => s + it.subtotal * (it.taxRate ?? 0), 0));
-  const taxTotal = roundMoney(regularTax + foldCategoryTax(itemsData, isTaxExempt));
-  return { subtotal, taxTotal, total: roundMoney(subtotal - discount + shipping + taxTotal) };
 }
 
 /** Reads the products (pack + regulated snapshot) and regulated-section tax config the edited lines reference. */
@@ -535,26 +561,27 @@ export async function auditAttestedPacks(
 }
 
 /**
- * RF-012: a discount / shipping change alone recomputes the invoice total from its STORED lines (moved
- * verbatim out of `update()`, which sits at its size ceiling). Throws when the result is worse than stored.
+ * B297 PR3: the live category of every stored row that still has a NULL (or partly NULL) trio and is not in
+ * `categoryMap` yet. The plan prices such a kept row at ITS OWN category, which can differ from its product's
+ * current one; `loadEditCatalog` only reads the payload products' categories. Rows with a full trio are not
+ * read (A3). Returns `categoryMap` itself when nothing is missing.
  */
-export function recalcTotalsFromItems(
-  existingItems: Array<Record<string, any>>,
-  dto: { discount?: number; shippingFee?: number },
-  inv: { discount?: unknown; shippingFee?: unknown },
-): Record<string, unknown> {
-  const subtotal = roundMoney(
-    existingItems.reduce((s: number, i: any) => s + Number(i.subtotal), 0),
-  );
-  const taxTotal = roundMoney(
-    existingItems.reduce((s: number, i: any) => s + Number(i.subtotal) * Number(i.taxRate ?? 0), 0),
-  );
-  const invDiscount = dto.discount !== undefined ? dto.discount : Number(inv.discount);
-  const shipping = dto.shippingFee !== undefined ? dto.shippingFee : Number(inv.shippingFee);
-  const total = roundMoney(subtotal - invDiscount + shipping + taxTotal);
-  assertInvoiceTotalsSane(
-    { discount: invDiscount, subtotal, total },
-    storedInvoiceTotals(inv as any),
-  ); // B1030 / SA-651
-  return { subtotal, taxAmount: taxTotal, discount: invDiscount, shippingFee: shipping, total };
+export async function withRowCategories(
+  db: any,
+  stored: StoredEditRow[],
+  categoryMap: Map<string, any>,
+): Promise<Map<string, any>> {
+  const missing = [
+    ...new Set(
+      stored
+        .filter(
+          (r) =>
+            r.trackedCategoryId && hasNullTrio(r as any) && !categoryMap.has(r.trackedCategoryId),
+        )
+        .map((r) => r.trackedCategoryId as string),
+    ),
+  ];
+  if (missing.length === 0) return categoryMap;
+  const cats: any[] = await db.trackedCategory.findMany({ where: { id: { in: missing } } });
+  return new Map([...categoryMap, ...cats.map((c): [string, any] => [c.id, c])]);
 }

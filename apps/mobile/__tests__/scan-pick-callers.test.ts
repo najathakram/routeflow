@@ -66,3 +66,43 @@ describe("pick-from-list is handled by every decideScanResult caller (B1220)", (
     expect(sheet).toMatch(/Cancel/);
   });
 });
+
+describe("B1220 nit — a prompt is neutral feedback, not an error", () => {
+  const SCREENS: Array<[string, string]> = [
+    ["invoices/[id]/edit.tsx", A("app", "(operator)", "(tabs)", "invoices", "[id]", "edit.tsx")],
+    [
+      "standing-orders/new.tsx",
+      A("app", "(operator)", "customers", "[id]", "standing-orders", "new.tsx"),
+    ],
+  ];
+  const THREE: Array<[string, string]> = [
+    ...SCREENS,
+    ["stock-count/[id].tsx", A("app", "(operator)", "products", "stock-count", "[id].tsx")],
+  ];
+  it.each(THREE)("%s returns info (not error) feedback for the prompt", (_n, path) => {
+    const src = strip(readFileSync(path, "utf8"));
+    expect(src).toMatch(/kind: "info", text: promptText\(decision\)/);
+    expect(src).not.toMatch(/kind: "error", text: promptText/);
+  });
+
+  it.each(["BarcodeScanner.tsx", "BarcodeScanner.web.tsx"])("%s renders info neutrally", (f) => {
+    const src = strip(readFileSync(A("components", f), "utf8"));
+    expect(src).toContain("information-circle");
+    expect(src).toContain("feedbackInfo");
+  });
+
+  it.each(SCREENS)("%s fires the neutral info haptic on the prompt path", (_n, path) => {
+    const src = strip(readFileSync(path, "utf8"));
+    expect(src).toMatch(/import \{ scanHaptic \} from "[./]*lib\/haptics"/);
+    expect(src).toContain('scanHaptic("info")');
+    expect(src).not.toContain('scanHaptic("error")');
+  });
+
+  it("adjust.tsx carries the B1220 lone-fuzzy comment once", () => {
+    const raw = readFileSync(
+      A("app", "(driver)", "route", "stop", "[stopId]", "adjust.tsx"),
+      "utf8",
+    );
+    expect(raw.match(/B1220: a lone fuzzy match/g)).toHaveLength(1);
+  });
+});

@@ -1,5 +1,6 @@
 import { BadRequestException, Injectable, NotFoundException } from "@nestjs/common";
 import { PrismaService } from "../prisma/prisma.service";
+import { resolveZone } from "../common/tenant-time-zone";
 import { RegulatedService } from "./regulated.service";
 import { buildAggregateReport } from "./filing-csv";
 import { serializeReportCsv } from "./report-csv";
@@ -204,14 +205,7 @@ export class RegulatedReportService {
     if (tenantId && opts.reviewRows !== false) {
       const policy = await this.sellingRestrictions.getPolicy(tenantId);
       // the tenant timezone is only needed (and only read) when the engine is ON
-      const tz = policy.enabled
-        ? ((
-            await this.prisma.tenantConfig.findUnique({
-              where: { tenantId },
-              select: { timezone: true },
-            })
-          )?.timezone ?? null)
-        : null;
+      const tz = policy.enabled ? (await resolveZone(this.prisma, { tenantId })).zone : null;
       report.warnings.push(
         ...(await uncategorisedLineWarnings(db, policy, { from: fromDate, toExclusive }, tz)),
       );

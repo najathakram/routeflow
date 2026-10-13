@@ -82,6 +82,11 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { randomUUID } from "node:crypto";
 import { roundMoney } from "@routeflow/pricing";
+import guardLib from "../apps/api/scripts/lib/live-target-guard.cjs";
+import protectedSlugsLib from "../apps/api/scripts/lib/protected-slugs.cjs";
+
+const { protectedTenantIds } = guardLib;
+const { loadProtectedSlugs } = protectedSlugsLib;
 
 // ─── Status mirrors ──────────────────────────────────────────────────────────
 // Local copy of the STATUS logic only — money math (roundMoney) comes from the compiled
@@ -553,7 +558,7 @@ function resolveUrl() {
  * the whole transaction rolls back — `applyRepairs`'s own pre-write reread already catches most
  * drift, this is the belt-and-braces close of the same-transaction race.
  */
-export function createPgStore(client) {
+export function createPgStore(client, protectedIds = []) {
   const q = async (sql, params = []) => (await client.query(sql, params)).rows;
   // Payment/invoice status seen by the most recent rereadPair, keyed by paymentId — consumed by
   // the compare-and-set inside voidDuplicatePayment.
@@ -724,19 +729,21 @@ export function createPgStore(client) {
           // a harmless per-row skip. scripts/repair-integrity.mjs omits it for the same reason.
           `UPDATE "InvoicePayment"
               SET status = 'VOID'
-            WHERE id = $1 AND "invoiceId" = $2 AND status = $3::text::"PaymentStatus"`,
-          [paymentId, invoiceId, before.paymentStatus],
+            WHERE id = $1 AND "invoiceId" = $2 AND status = $3::text::"PaymentStatus"
+              AND EXISTS (SELECT 1 FROM "Invoice" i WHERE i.id = $2 AND i."tenantId" <> ALL($4::text[]))`,
+          [paymentId, invoiceId, before.paymentStatus, protectedIds],
         );
         if (payRes.rowCount !== 1) {
           throw new Error(
-            "payment row drifted inside the transaction — rolled back, nothing written",
+            "payment row drifted inside the transaction, or belongs to a protected tenant — rolled back, nothing written",
           );
         }
         const invRes = await client.query(
           `UPDATE "Invoice"
               SET status = $2::text::"InvoiceStatus", "paidAt" = $3, "updatedAt" = now()
-            WHERE id = $1 AND status = $4::text::"InvoiceStatus"`,
-          [invoiceId, nextInvoiceStatus, nextPaidAt, before.invoiceStatus],
+            WHERE id = $1 AND status = $4::text::"InvoiceStatus"
+              AND "tenantId" <> ALL($5::text[])`,
+          [invoiceId, nextInvoiceStatus, nextPaidAt, before.invoiceStatus, protectedIds],
         );
         if (invRes.rowCount !== 1) {
           throw new Error(
@@ -793,6 +800,14 @@ async function main() {
     process.exit(2);
   }
 
+  let protectedSlugs;
+  try {
+    protectedSlugs = loadProtectedSlugs(process.env, url);
+  } catch (err) {
+    console.error(err.message);
+    process.exit(2);
+  }
+
   const { default: pg } = await import("pg");
   const client = new pg.Client({ connectionString: url });
   await client.connect();
@@ -808,7 +823,11 @@ async function main() {
     );
     console.log(`    ${new Date().toISOString()}`);
 
-    const store = createPgStore(client);
+    // Row 195: a protected tenant (paying, Stripe-linked, or PROTECTED_TENANT_SLUGS) is never
+    // repaired here; both writes are pinned to its invoice's `tenantId <> ALL(protectedIds)`.
+    const protectedIds = await protectedTenantIds(client, protectedSlugs);
+    console.log(`    protected-tenant guard: ${protectedIds.length} protected tenant(s) excluded`);
+    const store = createPgStore(client, protectedIds);
     const { proposals, unrepairable } = await identifyRepairs(store);
     printReport(proposals, unrepairable);
 

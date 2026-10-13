@@ -25,6 +25,7 @@ import { rescaleBogoFreeUnits, resolveBuyerLinePrice } from "./buyer-merge-prici
 import { decideTierOverride } from "./staff-override";
 import type { UpdateOrderItemsDto } from "./dto/update-order-items.dto";
 import { decideReplaceAllLinePrice } from "./staff-line-price";
+import { carriedCategory, type CarriedCategorySource } from "./carry-line-category";
 
 interface ExistingLineForReplaceAll {
   unitPrice: number;
@@ -32,6 +33,10 @@ interface ExistingLineForReplaceAll {
   originalPrice: number | null;
   overrideReason: string | null;
   overriddenBy: string | null;
+  /** B297 row 340: the line's own category and rate trio, carried onto a folded re-creation of it. */
+  category: CarriedCategorySource;
+  /** B297 row 355: its createdAt, carried too (the free-unit allocation is oldest first by createdAt). */
+  createdAt?: Date | string | null;
 }
 
 /**
@@ -62,16 +67,19 @@ export function buildBogoCounterpart(li: any) {
  * one incoming line for that product) as the fallback for a caller with no sourceLineId.
  */
 export function buildExistingLineMaps(
-  lineItems: Array<{
-    id?: string | null;
-    productId?: string | null;
-    status?: string | null;
-    unitPrice: unknown;
-    priceType: PriceType;
-    originalPrice: unknown;
-    overrideReason?: string | null;
-    overriddenBy?: string | null;
-  }>,
+  lineItems: Array<
+    {
+      id?: string | null;
+      productId?: string | null;
+      status?: string | null;
+      createdAt?: Date | string | null;
+      unitPrice: unknown;
+      priceType: PriceType;
+      originalPrice: unknown;
+      overrideReason?: string | null;
+      overriddenBy?: string | null;
+    } & CarriedCategorySource
+  >,
   preEditLinesByProduct: Map<string, number>,
   incomingLinesByProduct: Map<string, number>,
 ): {
@@ -83,11 +91,21 @@ export function buildExistingLineMaps(
   for (const li of lineItems ?? []) {
     if (!li.id || li.status === "CANCELLED") continue;
     const entry: ExistingLineForReplaceAll = {
+      ...(li.createdAt ? { createdAt: li.createdAt } : {}),
       unitPrice: Number(li.unitPrice),
       priceType: li.priceType,
       originalPrice: li.originalPrice != null ? Number(li.originalPrice) : null,
       overrideReason: li.overrideReason ?? null,
       overriddenBy: li.overriddenBy ?? null,
+      category: {
+        productId: li.productId,
+        trackedCategoryId: li.trackedCategoryId,
+        trackedSubcategoryId: li.trackedSubcategoryId,
+        categoryTaxType: li.categoryTaxType,
+        categoryTaxRate: li.categoryTaxRate,
+        categoryPriceIncludesTax: li.categoryPriceIncludesTax,
+        categoryTaxAmount: li.categoryTaxAmount,
+      },
     };
     existingLineById.set(li.id, entry);
     if (
@@ -381,6 +399,16 @@ export function buildReplaceAllLineData(
         ? (ctx.operatorReplaceCategoryMap.get(product.trackedCategoryId) ?? null)
         : null,
     ),
+    // B297 row 340: ...EXCEPT a folded line that comes from an existing line (`sourceLineId`), which carries
+    // that line's own category and trio, never the product's current ones (a fold is not a new sale).
+    ...(sourceLineId
+      ? (carriedCategory(ctx.existingLineById.get(sourceLineId)?.category, productId) ?? {})
+      : {}),
+    // B297 row 355 (r-note 7): ...and its createdAt, or a re-created old line sorts AFTER a newer one and
+    // the split's free units (allocated oldest first by createdAt) move onto the wrong line.
+    ...(sourceLineId && ctx.existingLineById.get(sourceLineId)?.createdAt
+      ? { createdAt: ctx.existingLineById.get(sourceLineId)!.createdAt as Date }
+      : {}),
   };
 }
 

@@ -68,6 +68,8 @@ export class InvoicePdfService {
         items: {
           include: {
             product: { select: { id: true, name: true, barcode: true, sku: true, unitSku: true } },
+            // CQ-03: the category row names the levy charge ("CRV deposit")
+            trackedCategory: { select: { id: true, name: true, taxType: true } },
             // #2717 M3: the frozen sub-lines of a composed (FIXED) line; empty on a plain line.
             components: { orderBy: { position: "asc" } },
           },
@@ -86,7 +88,7 @@ export class InvoicePdfService {
           orderBy: { paidAt: "asc" },
           include: { creditNote: { select: { creditNoteNumber: true, reason: true } } },
         },
-        order: { select: { status: true, fulfillPath: true, shippedAt: true } },
+        order: { select: { status: true, fulfillPath: true, shippedAt: true, counterSale: true } },
       },
     });
     if (!inv) throw new NotFoundException("Invoice not found");
@@ -253,10 +255,15 @@ export class InvoicePdfService {
     const key = invoicePdfStorageKey(invoiceId);
     await this.storage.upload(key, pdfBuffer, "application/pdf");
 
-    await this.prisma.invoice.update({
-      where: { id: invoiceId },
-      data: { pdfUrl: key },
-    });
+    // The key is deterministic per invoice, so write the pointer only when it changes
+    // (first render, or after an invalidation nulled it). A repeat render leaves the
+    // row, and its updatedAt, untouched.
+    if (inv.pdfUrl !== key) {
+      await this.prisma.invoice.update({
+        where: { id: invoiceId },
+        data: { pdfUrl: key },
+      });
+    }
 
     this.logger.log(`Invoice PDF stored at key: ${key}`);
     return this.storage.presignedUrl(key);

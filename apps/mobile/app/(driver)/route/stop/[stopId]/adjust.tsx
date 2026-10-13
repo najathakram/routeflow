@@ -236,7 +236,6 @@ export default function AdjustOrderScreen() {
         });
         showToast(`Added ${p.name}`);
       };
-      // B1220: a lone fuzzy match is only added after the driver confirms.
       // B1220: a lone fuzzy match asks first; 2+ matches open a list — neither adds unprompted.
       if (
         !runScanDecision(decideScanResult(result, "add"), addScanned, confirm, {

@@ -16,10 +16,15 @@
 // purpose (for debugging) and prints the name.
 //
 // Usage: node scripts/local-db-specs.mjs [--keep] -- "<command string>"
-import { spawnSync } from "node:child_process";
 import { createRequire } from "node:module";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
+import {
+  HeavySlotTimeout,
+  TIMEOUT_EXIT_CODE,
+  spawnAsync,
+  withHeavySlot,
+} from "./lib/heavy-slot.mjs";
 
 const REPO_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const API_DIR = path.join(REPO_ROOT, "apps", "api");
@@ -45,12 +50,28 @@ export function assertSpecDbName(name) {
 
 /**
  * The compose connection (same POSTGRES_USER / POSTGRES_PASSWORD defaults as docker-compose.yml and
- * scripts/local-env.mjs), always on localhost:5432. `database` is the spec database, or the
+ * scripts/local-env.mjs), always on loopback port 5432. `database` is the spec database, or the
  * compose maintenance database `postgres` for CREATE/DROP.
+ *
+ * The host is the literal 127.0.0.1, not the name `localhost`: Prisma's engine resolves the name to
+ * ::1 on some machines, where a stale relay can answer (P1001). RF_DBSPEC_HOST overrides it, but
+ * only with `localhost` or a 127.x.x.x address, so this DROP-capable lane can never be aimed at a
+ * remote database through the environment.
  */
+const LOOPBACK_HOST = /^(localhost|127(\.\d{1,3}){3})$/;
+
+export function dbSpecHost(env) {
+  const host = env.RF_DBSPEC_HOST;
+  if (!host) return "127.0.0.1";
+  if (!LOOPBACK_HOST.test(host)) {
+    throw new Error(`RF_DBSPEC_HOST must be localhost or a 127.x.x.x address, got "${host}"`);
+  }
+  return host;
+}
+
 export function composeConnection(env, database) {
   return {
-    host: "localhost",
+    host: dbSpecHost(env),
     port: 5432,
     user: env.POSTGRES_USER || "user",
     password: env.POSTGRES_PASSWORD || "pass",
@@ -77,10 +98,11 @@ const HELP = `${TAG}.mjs — run the DB spec lane on its own fresh database
 
 Usage: node scripts/local-db-specs.mjs [--keep] -- "<command string>"
 
-Creates rf_dbspec_<time>_<pid> on the local compose Postgres (localhost:5432, POSTGRES_USER /
+Creates rf_dbspec_<time>_<pid> on the local compose Postgres (127.0.0.1:5432, POSTGRES_USER /
 POSTGRES_PASSWORD as in docker-compose.yml), applies every migration, runs the command with the
 compose connection pointed at it and RUN_DB_SPECS=local, then drops it (also on failure or Ctrl-C).
-Any RAILWAY_* variable is removed from the command's environment.
+Any RAILWAY_* variable is removed from the command's environment. RF_DBSPEC_HOST overrides the host
+(localhost or a 127.x.x.x address only).
 
   --keep   leave the database in place afterwards and print its name
   --help   print this help and exit 0
@@ -114,14 +136,17 @@ async function main() {
   try {
     await withAdmin(process.env, (c) => c.query(`CREATE DATABASE "${name}"`));
   } catch (e) {
-    console.error(`${TAG}: could not create ${name} on localhost:5432: ${e.message}`);
+    console.error(
+      `${TAG}: could not create ${name} on ${dbSpecHost(process.env)}:5432: ${e.message}`,
+    );
     console.error(`${TAG}: is the compose Postgres up? (npm run db:up)`);
     return 2;
   }
   console.log(`${TAG}: created ${name}`);
 
-  // Ctrl-C reaches the child too; spawnSync defers this handler until the child has exited, so
-  // the drop below still runs.
+  // Ctrl-C reaches the child too. This handler only records it and lets the awaited child (and the
+  // heavy-slot wait, which sees the signal too) wind down; because another listener exists,
+  // withHeavySlot leaves the exit decision to us, so the drop below still runs.
   let interrupted = false;
   const onSignal = () => {
     interrupted = true;
@@ -137,20 +162,27 @@ async function main() {
     env.DATABASE_URL = connectionUrl(composeConnection(process.env, name));
     env.RUN_DB_SPECS = "local";
 
-    const migrate = spawnSync("npx prisma migrate deploy", {
-      cwd: API_DIR,
-      shell: true,
-      stdio: "inherit",
-      env,
-    });
-    if (migrate.status !== 0 || interrupted) {
-      console.error(`${TAG}: migrate deploy failed on ${name}; not running the specs`);
-      status = migrate.status || 1;
-    } else {
-      const run = spawnSync(opts.command, { shell: true, stdio: "inherit", env });
+    // migrate + the spec run are ONE heavy-slot hold (awaited async spawns so the heartbeat runs).
+    status = await withHeavySlot({ label: "local:test:db" }, async (ctx) => {
+      if (ctx?.token) env.RF_HEAVY_SLOT_TOKEN = ctx.token;
+      const migrate = await spawnAsync("npx prisma migrate deploy", [], {
+        cwd: API_DIR,
+        shell: true,
+        stdio: "inherit",
+        env,
+      });
+      if (migrate.status !== 0 || interrupted) {
+        console.error(`${TAG}: migrate deploy failed on ${name}; not running the specs`);
+        return migrate.status || 1;
+      }
+      const run = await spawnAsync(opts.command, [], { shell: true, stdio: "inherit", env });
       if (run.error) console.error(`${TAG}: ${run.error.message}`);
-      status = run.status ?? 1;
-    }
+      return run.status ?? 1;
+    });
+  } catch (e) {
+    // The slot wait ran out (or was interrupted): nothing ran. Still drop the database below.
+    console.error(e instanceof Error ? e.message : String(e));
+    status = e instanceof HeavySlotTimeout ? TIMEOUT_EXIT_CODE : 1;
   } finally {
     if (opts.keep) {
       console.log(`${TAG}: --keep: left ${name} in place`);
