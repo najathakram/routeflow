@@ -295,8 +295,13 @@ describe("PlatformAdminService — audit provenance", () => {
   // F4: an admin-set READ_ONLY carries the reason `admin_set` (never null) so a later renewal can tell it from a
   // lapsed trial; and a CANCELLED over a LIVE Stripe subscription is refused - cancel the subscription first.
   describe("updateStatus - F4 admin_set / cancel-the-subscription-first", () => {
-    const before = (over: Record<string, unknown> = {}) =>
-      prisma.tenant.findUniqueOrThrow.mockResolvedValue({
+    const before = (over: Record<string, unknown> = {}) => {
+      // M2: the Stripe gate reads the stored subscription id BEFORE the transaction (a plain read).
+      (prisma as any).tenantSubscription.findUnique.mockResolvedValue({
+        stripeSubId:
+          (over.subscription as { stripeSubId?: string } | undefined)?.stripeSubId ?? null,
+      });
+      return prisma.tenant.findUniqueOrThrow.mockResolvedValue({
         id: TENANT_ID,
         slug: "acme",
         plan: "STARTER",
@@ -313,6 +318,7 @@ describe("PlatformAdminService — audit provenance", () => {
         },
         ...over,
       } as any);
+    };
 
     it("READ_ONLY is written with readOnlyReason 'admin_set', never null", async () => {
       before();

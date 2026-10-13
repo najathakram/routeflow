@@ -17,7 +17,7 @@ import * as crypto from "crypto";
 import { PrismaService } from "../prisma/prisma.service";
 import { EmailService } from "../email/email.service";
 import { BillingService } from "../billing/billing.service";
-import { isLiveStripeSubscriptionStatus } from "../billing/stripe-period";
+import { isTerminalStripeSubscriptionStatus } from "../billing/stripe-period";
 import { PlatformPricingService } from "../billing/platform-pricing.service";
 import { PlanCatalogService } from "../billing/plan-catalog.service";
 import { ProrationService } from "../billing/proration.service";
@@ -132,6 +132,31 @@ function cancelSubscriptionFirstRefusal(): ConflictException {
     code: API_ERROR_CODES.TENANT_CANCEL_SUBSCRIPTION_FIRST,
     message: "This tenant has a live subscription. Cancel the subscription first.",
   });
+}
+
+/** 409 CONCURRENT_UPDATE (the existing retryable code): Stripe could not be read, or the subscription moved meanwhile. */
+function retryRefusal(): ConflictException {
+  return new ConflictException({
+    code: API_ERROR_CODES.CONCURRENT_UPDATE,
+    message: "This tenant's subscription could not be confirmed ended. Please retry.",
+  });
+}
+
+/** How long the pre-transaction Stripe read may take, per attempt (one retry follows a failure or a timeout). */
+const STRIPE_TERMINATION_READ_TIMEOUT_MS = 5_000;
+
+async function withTimeout<T>(p: Promise<T>, ms: number): Promise<T> {
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  try {
+    return await Promise.race([
+      p,
+      new Promise<never>((_, reject) => {
+        timer = setTimeout(() => reject(new Error("Stripe read timed out")), ms);
+      }),
+    ]);
+  } finally {
+    if (timer) clearTimeout(timer);
+  }
 }
 
 @Injectable()
@@ -628,22 +653,66 @@ export class PlatformAdminService {
 
   // ─── Mutations ────────────────────────────────────────────────────────────────
 
-  /** Fails CLOSED: anything but a definite "ended / unknown to Stripe" answer counts as live. */
-  private async hasLiveStripeSubscription(stripeSubId: string): Promise<boolean> {
-    if (!this.stripe.isConfigured) return true;
-    try {
-      const sub = await this.stripe.getSubscription(stripeSubId);
-      return isLiveStripeSubscriptionStatus(sub?.status);
-    } catch (err) {
-      const e = err as { code?: string; statusCode?: number } | undefined;
-      if (e?.code === "resource_missing" || e?.statusCode === 404) return false;
-      this.logger.warn(`updateStatus: could not read Stripe subscription ${stripeSubId}; refusing`);
-      return true;
+  /**
+   * M2/M4, the ONE Stripe gate for status -> CANCELLED and tenant delete. Runs BEFORE any transaction (Stripe is
+   * never called under the tenant row lock): a plain read of the stored subscription id, then a Stripe read with a
+   * short timeout and ONE retry. Returns the id it judged (null = none stored) for the in-transaction compare.
+   *  - no stored id, Stripe 404 / resource_missing, or a TERMINAL status (`canceled`, `incomplete_expired`): allowed.
+   *  - anything else is LIVE and refused (TENANT_CANCEL_SUBSCRIPTION_FIRST) - `paused` and `incomplete` can still
+   *    come back, so they are not "ended". Stripe unconfigured with a stored id fails closed the same way.
+   *  - a read that fails or times out twice is a retryable 409 (CONCURRENT_UPDATE).
+   */
+  private async stripeGateBeforeTermination(id: string): Promise<string | null> {
+    const row = await this.prisma.tenantSubscription.findUnique({
+      where: { tenantId: id },
+      select: { stripeSubId: true },
+    });
+    const stripeSubId = row?.stripeSubId ?? null;
+    if (!stripeSubId) return null;
+    if (!this.stripe.isConfigured) throw cancelSubscriptionFirstRefusal();
+    for (let attempt = 1; ; attempt++) {
+      try {
+        const sub = await withTimeout(
+          this.stripe.getSubscription(stripeSubId),
+          STRIPE_TERMINATION_READ_TIMEOUT_MS,
+        );
+        if (!isTerminalStripeSubscriptionStatus(sub?.status))
+          throw cancelSubscriptionFirstRefusal();
+        return stripeSubId;
+      } catch (err) {
+        if (err instanceof ConflictException) throw err;
+        const e = err as { code?: string; statusCode?: number } | undefined;
+        if (e?.code === "resource_missing" || e?.statusCode === 404) return stripeSubId; // Stripe no longer knows it
+        if (attempt >= 2) {
+          this.logger.warn(
+            `Tenant ${id}: could not read Stripe subscription ${stripeSubId} twice; refusing (retry)`,
+          );
+          throw retryRefusal();
+        }
+      }
     }
+  }
+
+  /** Under the tenant row lock: the stored subscription id is still the one the Stripe gate judged, else 409 retry. */
+  private async assertStripeSubUnchangedTx(
+    tx: Prisma.TransactionClient,
+    id: string,
+    readSubId: string | null,
+  ): Promise<void> {
+    const row = await tx.tenantSubscription.findUnique({
+      where: { tenantId: id },
+      select: { stripeSubId: true },
+    });
+    if ((row?.stripeSubId ?? null) !== readSubId) throw retryRefusal();
   }
 
   async updateStatus(id: string, dto: UpdateTenantStatusDto, adminId: string | null = null) {
     await this._findOrThrow(id);
+
+    // M2: CANCELLED over a live Stripe subscription would leave Stripe billing a cancelled tenant. Stripe is read
+    // HERE, before the transaction - never under the tenant row lock - and the id it judged is compared below.
+    const readSubId =
+      dto.status === "CANCELLED" ? await this.stripeGateBeforeTermination(id) : null;
 
     // B216 / FINDING-3 (round 2 review): the prior-status read, the status write, and the
     // downgrade lookup are ONE transaction, using the same non-ACTIVE→ACTIVE CAS shape as
@@ -690,16 +759,9 @@ export class PlatformAdminService {
         },
       });
 
-      // F4: a CANCELLED status over a LIVE Stripe subscription would leave Stripe billing a cancelled tenant (and a
-      // later payment has nothing to say about it): the subscription is cancelled first, through its own flow.
-      // Only a LIVE subscription is refused: an ended one (cancelFromStripe / the scheduled-cancellation sweep keep
-      // stripeSubId) has nothing left to cancel. The local row stores no Stripe status, so Stripe is read; a read
-      // that fails (or Stripe unconfigured) FAILS CLOSED with the same 409 - a cancelled tenant must never be left
-      // over a subscription that may still bill. Stripe no longer knowing the id (404) means it is not live.
-      if (dto.status === "CANCELLED" && before.subscription?.stripeSubId) {
-        if (await this.hasLiveStripeSubscription(before.subscription.stripeSubId)) {
-          throw cancelSubscriptionFirstRefusal();
-        }
+      // F4 / M2: the Stripe judgement above only stands if the subscription is still the one it judged.
+      if (dto.status === "CANCELLED" && (before.subscription?.stripeSubId ?? null) !== readSubId) {
+        throw retryRefusal();
       }
 
       // The same refusal as extendTrial, on the PRIOR status read under the row lock above: the status
