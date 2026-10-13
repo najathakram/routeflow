@@ -1308,11 +1308,20 @@ function InvoiceComposer({
     }
     if (settled.kind === "blocked") {
       showToast(UNITS_BLOCKED_MESSAGE);
+      if (fromReview) setReviewOpen(true); // the lines to fix are on the sheet the press just closed
       return;
     }
-    const lines = normalizeInvoiceUnitLines(settled.lines, (id) => productById.get(id));
+    // the submit-time settle stamps each resolved unit line's list price, as the background resolver does
+    const lines = withUnitListPrices(
+      normalizeInvoiceUnitLines(settled.lines, (id) => productById.get(id)),
+      unitListPriceFor,
+    );
     setItems((cur) => mergeResolvedDefaults(cur, items, lines)); // keeps edits made while this waited
-    if (settled.kind === "stop") return; // the retry press only settles; a second press submits
+    // the retry press only settles; a second press submits, from the sheet it started on
+    if (settled.kind === "stop") {
+      if (fromReview) setReviewOpen(true);
+      return;
+    }
 
     // Van-sale mode: collapse into ONE POST /orders/sell call. saleMode.eligible
     // already re-ran the total-equality assertion against `invoiceLines` — the
@@ -2128,7 +2137,7 @@ function ReviewRow({
     decideTrayPrice({
       typed: line.unitPrice ?? null,
       base: priceBase,
-      listPrice: toNumber(product.pricePerUnit),
+      listPrice: line.unitListPrice ?? toNumber(product.pricePerUnit),
       isSpecial,
       reason: "x",
     }).kind === "set";

@@ -202,3 +202,31 @@ describe("SA nit (b): the default-unit resolver's lines carry the unit's list pr
     expect(lookup).toMatch(/\.listPrice/);
   });
 });
+
+describe("SA nits @9eec5e1b4 (VU-4b PASS-WITH-NITS)", () => {
+  const save = between(
+    screen,
+    "const onSave = async",
+    "if (saleMode.eligible) {\n      const saleItems",
+  );
+
+  it("(a) the submit-time settle stamps unitListPrice too, not only the background resolver", () => {
+    expect(save).toMatch(
+      /withUnitListPrices\(\s*normalizeInvoiceUnitLines\(settled\.lines,[\s\S]{0,80}?\),\s*unitListPriceFor,?\s*\)/,
+    );
+  });
+
+  it("(b) the row's moved-off-special decision reads the unit's own list price first", () => {
+    const moved = between(screen, "const movedOffSpecial =", "const qty = effectiveQty(line");
+    expect(moved).toMatch(
+      /listPrice:\s*line\.unitListPrice\s*\?\?\s*toNumber\(product\.pricePerUnit\)/,
+    );
+  });
+
+  it("(c) a settle that stops or blocks a save started from the review sheet reopens the sheet", () => {
+    const blocked = between(save, 'settled.kind === "blocked"', "return;");
+    expect(blocked).toMatch(/if \(fromReview\) setReviewOpen\(true\)/);
+    const stop = save.slice(save.indexOf('settled.kind === "stop"'));
+    expect(stop.slice(0, 200)).toMatch(/if \(fromReview\) setReviewOpen\(true\);\s*return;/);
+  });
+});
