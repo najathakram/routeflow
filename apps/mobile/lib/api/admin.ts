@@ -1295,9 +1295,12 @@ export function useCreateAdminUser() {
 /** Admin only (PATCH /users/:id/status is TENANT_ADMIN-only): flips a team member between ACTIVE and INACTIVE. */
 export function useToggleUserStatus() {
   const qc = useQueryClient();
-  return useMutation<AppUser, Error, { id: string; status: string }>({
-    mutationFn: ({ id, status }) =>
-      apiClient.patch(`/users/${id}/status`, statusToggleBody({ status })).then((r) => r.data),
+  // `currentStatus` is the user's status NOW; statusToggleBody sends the opposite.
+  return useMutation<AppUser, Error, { id: string; currentStatus: string }>({
+    mutationFn: ({ id, currentStatus }) =>
+      apiClient
+        .patch(`/users/${id}/status`, statusToggleBody({ status: currentStatus }))
+        .then((r) => r.data),
     onSuccess: () => qc.invalidateQueries({ queryKey: ["admin", "users"] }),
   });
 }

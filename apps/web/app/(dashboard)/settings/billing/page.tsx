@@ -8,6 +8,7 @@ import { Card, Button, Badge, Modal, useToast, cn } from "@routeflow/ui/web";
 import { ReadOnlyBanner } from "@/components/ReadOnlyBanner";
 import { ConfirmDialog } from "@/components/ConfirmDialog";
 import { DIALOG_FIT, DIALOG_FOOTER_BUTTON } from "@/components/dialog-mobile-fit";
+import { isAccountAdmin } from "@/lib/auth";
 import { useAuth } from "@/lib/auth-context";
 import { formatMoney } from "@/lib/format";
 import { BillingExportButton } from "./BillingExportButton";
@@ -299,7 +300,7 @@ function EnableAddonSheet({
 export default function BillingSettingsPage() {
   const { toast } = useToast();
   const { user } = useAuth();
-  const isAdmin = user?.role === "TENANT_ADMIN";
+  const isAdmin = isAccountAdmin(user);
   const sub = useSubscription();
   const usage = useUsage();
   const plans = usePlans();

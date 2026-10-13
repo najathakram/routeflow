@@ -193,7 +193,6 @@ const GROUPS: HubGroup[] = [
         label: "GoHighLevel",
         desc: "Create customers from won leads",
         href: "/settings?tab=gohighlevel",
-        show: "admin",
       },
     ],
   },

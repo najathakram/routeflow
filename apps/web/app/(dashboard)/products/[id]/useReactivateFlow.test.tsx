@@ -159,15 +159,17 @@ describe("useReactivateFlow", () => {
         },
       ],
     });
-    patch.mockRejectedValueOnce(two).mockRejectedValueOnce(
-      conflict({
-        field: "unitSku",
-        value: "U-2",
-        productId: "h9",
-        productName: "Z",
-        holders: [],
-      }),
-    );
+    patch
+      .mockRejectedValueOnce(two)
+      .mockRejectedValueOnce(
+        conflict({
+          field: "unitSku",
+          value: "U-2",
+          productId: "h9",
+          productName: "Z",
+          holders: [],
+        }),
+      );
     renderWithProviders(<Harness />);
     fireEvent.click(screen.getByText("go"));
     fireEvent.click(await screen.findByRole("button", { name: "Use a new code instead" }));

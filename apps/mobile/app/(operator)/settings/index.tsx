@@ -317,7 +317,7 @@ function UsersTab() {
 
   const handleToggle = (user: AppUser) => {
     toggleMut.mutate(
-      { id: user.id, status: user.status },
+      { id: user.id, currentStatus: user.status },
       {
         onSuccess: () => {
           showToast(isUserActive(user) ? "User deactivated" : "User activated");

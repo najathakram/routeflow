@@ -103,6 +103,7 @@ import { TIME_ZONE_REQUIRED_COPY, canonicalTimeZone, isValidTimeZone } from "@/l
 import { useInvalidFocus } from "@/lib/form-errors";
 import { ReadOnlyHint, WriteButton } from "@/lib/read-only-gate";
 import { isReadOnlyRefusal, showReadOnlyRefusal } from "@/lib/read-only-refusal";
+import { userStatusRefusalCopy } from "@/lib/user-status-refusal";
 
 // ─── TAB 1: Business Profile ──────────────────────────────────────────────────
 
@@ -899,7 +900,11 @@ function UserManagementTab() {
       { id: user.id, status: nextStatus },
       {
         onError: (err) =>
-          isReadOnlyRefusal(err) || toast({ title: "Failed to update status", variant: "error" }),
+          isReadOnlyRefusal(err) ||
+          toast({
+            title: userStatusRefusalCopy(err) ?? "Failed to update status",
+            variant: "error",
+          }),
       },
     );
   };
@@ -976,7 +981,8 @@ function UserManagementTab() {
                           <Pencil className="h-4 w-4" />
                         </button>
                       )}
-                      {isAdmin && (
+                      {/* SA #3412: no Deactivate on your own row (the API refuses it too) */}
+                      {isAdmin && user.id !== viewer?.id && (
                         <button
                           title={user.status === "ACTIVE" ? "Deactivate" : "Activate"}
                           onClick={() => toggleStatus(user)}

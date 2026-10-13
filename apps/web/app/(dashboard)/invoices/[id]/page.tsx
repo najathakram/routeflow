@@ -97,6 +97,7 @@ import { TenantLogo } from "@/components/TenantLogo";
 import { ShipmentCard } from "@/components/ShipmentCard";
 import { ConfirmDialog } from "@/components/ConfirmDialog";
 import { useTenant } from "@/components/tenant-provider";
+import { isAccountAdmin } from "@/lib/auth";
 import { useAuth } from "@/lib/auth-context";
 import { HandOverStamp } from "@/components/HandOverStamp";
 import { seesHandOverStamp } from "@/lib/handover-stamp";
@@ -1623,6 +1624,15 @@ export default function InvoiceDetailPage() {
           const code = e?.response?.data?.code;
           const description = e?.response?.data?.message || e.message;
           if (code === "EMAIL_NOT_CONFIGURED") {
+            // Email settings are admin-only (Perms PR1): an operator is told who can fix it instead.
+            if (!isAccountAdmin(user)) {
+              toast({
+                title: "Email isn't set up yet",
+                description: "Ask an account admin to set up email.",
+                variant: "error",
+              });
+              return;
+            }
             toast({
               title: "Email isn't set up yet",
               description: "Opening Email settings so you can configure it…",

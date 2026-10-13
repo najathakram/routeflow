@@ -235,24 +235,6 @@ export interface ImportResult {
   errors: Array<{ row: number; name: string; reason: string }>;
 }
 
-export function useImportProducts() {
-  const qc = useQueryClient();
-  return useMutation({
-    mutationFn: (items: ZohoImportItem[]): Promise<ImportResult> =>
-      apiClient.post("/products/import", { items }).then((r) => r.data),
-    onSuccess: () => invalidateProductSet(qc),
-  });
-}
-
-export function useClearAllProducts() {
-  const qc = useQueryClient();
-  return useMutation({
-    mutationFn: (): Promise<{ deleted: number }> =>
-      apiClient.delete("/products/clear-all").then((r) => r.data),
-    onSuccess: () => invalidateProductSet(qc),
-  });
-}
-
 /** Matches the server's @ArrayMaxSize on DELETE /products/bulk (F9-009). */
 const BULK_DELETE_CHUNK = 500;
 
