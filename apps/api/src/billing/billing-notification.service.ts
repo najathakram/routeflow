@@ -347,7 +347,7 @@ export class BillingNotificationService {
       attempted?: boolean;
       periodLabel?: string | null;
     },
-  ): Promise<RfInvoiceSendResult> {
+  ): Promise<RfInvoiceDeliveryResult> {
     return this.sendIfClaimed(tenantId, milestone, key, (admin, businessName) =>
       dunningTemplate({
         kind,
