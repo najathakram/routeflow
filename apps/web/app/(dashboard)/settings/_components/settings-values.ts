@@ -110,9 +110,24 @@ export function attentionItems(o: {
   status: BusinessStatus | null;
   remittance?: object | null;
   stripe?: { connected?: boolean; configured?: boolean } | null;
+  /** The customers-without-a-state card's totals (GET .../unknown-state-customers); null/undefined while loading. */
+  unknownState?: { customersTotal?: number; truncated?: boolean } | null;
 }): AttentionItem[] {
-  if (!o.isAdmin) return [];
   const items: AttentionItem[] = [];
+  // apple-ux U1: the fix list lived only on Selling restrictions; it is raised here for admins AND operators (both may
+  // fix states). A truncated sweep still raises it (never a silent all-clear).
+  const n = o.unknownState?.customersTotal ?? 0;
+  if (n > 0 || o.unknownState?.truncated) {
+    items.push({
+      id: "customers-without-state",
+      label:
+        n > 0
+          ? `${n} ${n === 1 ? "customer needs" : "customers need"} a state`
+          : "Some customers may need a state",
+      href: "/settings/restrictions#customers-without-state",
+    });
+  }
+  if (!o.isAdmin) return items;
   if (o.status?.due) {
     items.push({
       id: "billing",

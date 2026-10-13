@@ -5,28 +5,46 @@ import Link from "next/link";
 import { ChevronRight } from "lucide-react";
 import { useRemittanceConfig } from "@/lib/api/remittance";
 import { useStripeConnectStatus } from "@/lib/api/stripe-connect";
+import { useUnknownStateBuckets } from "@/lib/api/unknown-state";
 import { useBusinessStatus } from "./BusinessCard";
 import { attentionItems } from "./settings-values";
 
 /**
- * The 1440 hub's short "what to do next" list: payment due, no "how to pay" yet, Stripe not connected. Admins
- * only; renders nothing at all (no heading) when there is nothing to do or a read has not answered.
+ * The 1440 hub's short "what to do next" list: customers without a state (admins and operators), then payment due,
+ * no "how to pay" yet, Stripe not connected (admins only). Renders nothing at all (no heading) when there is nothing
+ * to do or a read has not answered.
  */
 export function NeedsAttention({ isAdmin }: { isAdmin: boolean }) {
-  // The reads below are admin-only: an operator never mounts them (no fetch, nothing discarded).
-  return isAdmin ? <AdminAttention /> : null;
+  // The billing/payment reads are admin-only: an operator never mounts them (no fetch, nothing discarded).
+  return isAdmin ? <AdminAttention /> : <OperatorAttention />;
+}
+
+/** Operators fix customer states too (owner ruling), so they get that one row and only its read. */
+function OperatorAttention() {
+  const unknown = useUnknownStateBuckets();
+  return (
+    <AttentionList
+      items={attentionItems({ isAdmin: false, status: null, unknownState: unknown.data })}
+    />
+  );
 }
 
 function AdminAttention() {
   const status = useBusinessStatus();
   const remittance = useRemittanceConfig();
   const stripe = useStripeConnectStatus();
+  const unknown = useUnknownStateBuckets();
   const items = attentionItems({
     isAdmin: true,
     status,
     remittance: remittance.data,
     stripe: stripe.data,
+    unknownState: unknown.data,
   });
+  return <AttentionList items={items} />;
+}
+
+function AttentionList({ items }: { items: ReturnType<typeof attentionItems> }) {
   if (items.length === 0) return null;
   return (
     <section>

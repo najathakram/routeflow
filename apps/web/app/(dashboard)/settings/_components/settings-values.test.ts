@@ -185,6 +185,42 @@ describe("Needs attention", () => {
     ]);
   });
 
+  it("apple-ux U1: customers without a state are flagged first, for admins AND operators", () => {
+    const state = { customersTotal: 8, truncated: false };
+    const href = "/settings/restrictions#customers-without-state";
+    expect(attentionItems({ ...base, unknownState: state })[0]).toEqual({
+      id: "customers-without-state",
+      label: "8 customers need a state",
+      href,
+    });
+    // operators fix customer states too (owner ruling); they get this row and nothing else
+    expect(
+      attentionItems({
+        ...base,
+        isAdmin: false,
+        remittance: {},
+        stripe: { connected: false },
+        unknownState: state,
+      }),
+    ).toEqual([{ id: "customers-without-state", label: "8 customers need a state", href }]);
+    expect(attentionItems({ ...base, unknownState: { customersTotal: 1 } })[0].label).toBe(
+      "1 customer needs a state",
+    );
+  });
+
+  it("apple-ux U1: a truncated sweep still raises the row; zero (or not loaded) raises nothing", () => {
+    expect(
+      attentionItems({ ...base, unknownState: { customersTotal: 0, truncated: true } })[0],
+    ).toMatchObject({
+      id: "customers-without-state",
+      label: "Some customers may need a state",
+    });
+    expect(
+      attentionItems({ ...base, unknownState: { customersTotal: 0, truncated: false } }),
+    ).toEqual([]);
+    expect(attentionItems({ ...base, unknownState: null })).toEqual([]);
+  });
+
   it("does not flag what is still loading or failed", () => {
     expect(
       attentionItems({ isAdmin: true, status: null, remittance: undefined, stripe: undefined }),
