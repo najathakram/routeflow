@@ -104,12 +104,18 @@ describe("SA-767 L-1 — lockProductsForStock is the one Product stock lock", ()
 
   it("the lock_timeout default is the helper's FIRST statement, before the lock, and only where the tx has none (r-note 2 (c); L-2.4)", () => {
     expect(helper).toMatch(/export const STOCK_LOCK_TIMEOUT\s*=\s*"5s"/);
-    const set = helper.search(/set_config\('lock_timeout', \$\{STOCK_LOCK_TIMEOUT\}, true\)/);
-    const lock = helper.search(/FOR UPDATE/);
+    // SA-767 R6: the statement lives in `setStockLockTimeout`, which the helper calls first (a PO / bill tx calls it
+    // before ITS domain-row lock too)
+    expect(helper).toMatch(
+      /export async function setStockLockTimeout[\s\S]*?set_config\('lock_timeout', \$\{STOCK_LOCK_TIMEOUT\}, true\)/,
+    );
+    const body = helper.slice(helper.indexOf("export async function lockProductsForStock"));
+    const set = body.search(/await setStockLockTimeout\(tx\)/);
+    const lock = body.search(/FOR UPDATE/);
     expect(set).toBeGreaterThan(-1);
     expect(set).toBeLessThan(lock);
     // after the empty-tenant / empty-ids guards (nothing to lock = no statement), before the lock
-    expect(helper.search(/if\s*\(\s*ids\.length === 0\s*\)\s*return/)).toBeLessThan(set);
+    expect(body.search(/if\s*\(\s*ids\.length === 0\s*\)\s*return/)).toBeLessThan(set);
     // transaction-local only (set_config(..., true)): a session-level SET would leak the timeout to the pooled connection
     expect(helper).not.toMatch(/SET lock_timeout/);
     expect(helper).not.toMatch(/SET LOCAL lock_timeout/);

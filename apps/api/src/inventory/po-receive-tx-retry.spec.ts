@@ -109,8 +109,10 @@ describe("receivePurchaseOrder retry (SA-767 L-1)", () => {
     const src = fs.readFileSync(path.join(__dirname, "inventory.service.ts"), "utf8");
     const body = src.slice(src.indexOf("async receivePurchaseOrder("));
     expect(body.slice(0, body.indexOf("\n  }\n"))).toMatch(
-      /retryStockTx\(\s*["'`]inventory\.receivePurchaseOrder["'`]\s*,\s*\(\)\s*=>\s*this\.prisma\.tenantTransaction\(runBody\)/,
+      /retryStockTx\(\s*["'`]inventory\.receivePurchaseOrder["'`]\s*,\s*\(\)\s*=>\s*this\.stockTx\(runBody\)/,
     );
+    // SA-767 R6: stockTx is the 15 s budget (the 5 s lock timeout fires before P2028)
+    expect(src).toMatch(/private stockTx<T>[\s\S]*?tenantTransaction\(fn, STOCK_TX_OPTIONS\)/);
   });
 
   it.each([

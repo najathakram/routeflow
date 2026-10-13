@@ -1,5 +1,9 @@
 import { API_ERROR_CODES } from "../common/api-error-codes";
-import { lockProductsForStock } from "../common/product-locks";
+import {
+  STOCK_TX_OPTIONS,
+  lockProductsForStock,
+  setStockLockTimeout,
+} from "../common/product-locks";
 import { productNameViolation } from "../common/text-cell-guards";
 import {
   BadRequestException,
@@ -87,7 +91,7 @@ import { AuditService } from "../audit/audit.service";
  * wait with `lock_timeout` 5 s (STOCK_LOCK_TIMEOUT); Prisma's default tx timeout is also 5 s, so a stuck
  * holder would surface as an unmapped P2028 500. 15 s lets the 5 s lock timeout fire first (55P03 -> 503).
  */
-const COUNT_ADD_TX_OPTIONS = { timeout: 15_000 } as const;
+const COUNT_ADD_TX_OPTIONS = STOCK_TX_OPTIONS;
 
 /** B562 PR-3 (SA-136 §4): the reference prefix of a replay's own COST_BASIS correction. */
 export const REPLAY_CORRECTION_PREFIX = "RECOMPUTE:";
@@ -313,7 +317,7 @@ export class InventoryService {
     // The whole tx re-runs on a 40P01 / 40001 / P2034 (nothing is captured across attempts); the
     // alert fires after the commit.
     const result = await retryStockTx("inventory.recordPurchase", () =>
-      this.prisma.tenantTransaction(async (tx) => {
+      this.stockTx(async (tx) => {
         await this.lockProducts(tx, [dto.productId]);
         const locked = await tx.product.findUnique({
           where: { id: dto.productId },
@@ -406,7 +410,7 @@ export class InventoryService {
     // with INSIDE the tx (a purchase committing since the read above has moved it). The whole tx
     // re-runs on a 40P01 / 40001 / P2034; nothing is captured across attempts.
     const result = await retryStockTx("inventory.recordAdjustment", () =>
-      this.prisma.tenantTransaction(async (tx) => {
+      this.stockTx(async (tx) => {
         await this.lockProducts(tx, [dto.productId]);
         const locked = await tx.product.findUnique({
           where: { id: dto.productId },
@@ -969,7 +973,7 @@ export class InventoryService {
     // moved). The whole tx re-runs on a 40P01 / 40001 / P2034: the id list is cleared per attempt and
     // the alerts fire once, after the commit.
     const result = await retryStockTx("inventory.commitStockCount", () =>
-      this.prisma.tenantTransaction(async (tx) => {
+      this.stockTx(async (tx) => {
         restockedProductIds.length = 0;
         await this.lockProducts(tx, productIds);
         const lockedMap = await this.readLockedStockRows(tx, productIds);
@@ -1580,7 +1584,7 @@ export class InventoryService {
       });
     };
     const result = await retryStockTx("inventory.receivePurchaseOrder", () =>
-      this.prisma.tenantTransaction(runBody),
+      this.stockTx(runBody),
     );
 
     this.fireStockAlerts(restockedProductIds);
@@ -1605,6 +1609,8 @@ export class InventoryService {
    * interleave on stale quantities.
    */
   private async lockPurchaseOrder(tx: Prisma.TransactionClient, id: string) {
+    // SA-767 R6: the PO row lock comes BEFORE the Product rows, so its wait is bounded here (lock_timeout), first.
+    await setStockLockTimeout(tx);
     const tenantId = this.prisma.getTenantId();
     await tx.$executeRaw`SELECT id FROM "PurchaseOrder" WHERE id = ${id} AND "tenantId" = ${tenantId} FOR UPDATE`;
   }
@@ -1615,6 +1621,11 @@ export class InventoryService {
    * currentStock is written as an increment, but the average is derived from
    * the read - the lock is what keeps that read consistent with the write.
    */
+  /** A stock-writer transaction with the 15 s budget (`STOCK_TX_OPTIONS`): the 5 s lock timeout fires before P2028. */
+  private stockTx<T>(fn: (tx: Prisma.TransactionClient) => Promise<T>): Promise<T> {
+    return this.prisma.tenantTransaction(fn, STOCK_TX_OPTIONS);
+  }
+
   async lockProducts(tx: Prisma.TransactionClient, productIds: Iterable<string>) {
     // SA-767 L-1: a thin delegate of the one stock lock (house order: family -> recipe product -> rest).
     await lockProductsForStock(tx, this.prisma.getTenantId(), productIds);
@@ -2213,9 +2224,7 @@ export class InventoryService {
 
       return this.loadPoForResponse(tx, id);
     };
-    const result = await retryStockTx("inventory.updatePurchaseOrder", () =>
-      this.prisma.tenantTransaction(runBody),
-    );
+    const result = await retryStockTx("inventory.updatePurchaseOrder", () => this.stockTx(runBody));
 
     this.fireStockAlerts([...new Set(restockedProductIds)]);
     return result;
@@ -2338,7 +2347,7 @@ export class InventoryService {
     // SA-767 L-2: lock, then stamp the movement from the LOCKED stock (a sale committing since the
     // read above has moved it). The whole tx re-runs on a 40P01 / 40001 / P2034.
     return retryStockTx("inventory.setCostBasis", () =>
-      this.prisma.tenantTransaction(async (tx) => {
+      this.stockTx(async (tx) => {
         await this.lockProducts(tx, [productId]);
         const locked = (await this.readLockedStockRows(tx, [productId])).get(productId);
         if (!locked) throw new NotFoundException("Product not found");
@@ -2364,7 +2373,7 @@ export class InventoryService {
 
     // SA-767 L-2: ONE lock statement over every product (sorted by the helper), then one locked read.
     return retryStockTx("inventory.bulkSetCostBasis", () =>
-      this.prisma.tenantTransaction(async (tx) => {
+      this.stockTx(async (tx) => {
         await this.lockProducts(tx, productIds);
         const lockedMap = await this.readLockedStockRows(tx, productIds);
         const movementIds: string[] = [];

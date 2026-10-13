@@ -1,3 +1,4 @@
+import { STOCK_TX_OPTIONS, setStockLockTimeout } from "../common/product-locks";
 import { retryStockTx } from "../common/tx-retry";
 import {
   BadRequestException,
@@ -1210,6 +1211,7 @@ export class VendorBillsService {
     // (restockedIds, gapsDetected) is declared inside it, the plan was computed before it, and the
     // alerts below fire after the commit, so a rolled-back attempt leaves nothing behind.
     const runBody = async (tx: any) => {
+      await setStockLockTimeout(tx); // SA-767 R6: bound the bill row lock wait too
       await this.lockBillAndAssertReceiptState(tx, bill);
       // Sync inventory for each line in the plan. The whole block works in
       // INVENTORY denomination: lineInventoryDelta converts a case-priced line
@@ -1367,7 +1369,7 @@ export class VendorBillsService {
       return { updatedBill, restockedIds, gapsDetected };
     };
     const updated = await retryStockTx("vendorBills.receive", () =>
-      this.prisma.tenantTransaction(runBody),
+      this.prisma.tenantTransaction(runBody, STOCK_TX_OPTIONS),
     );
 
     // Bill receive is the main restock path — fire the same low-stock-cleared
@@ -1410,6 +1412,7 @@ export class VendorBillsService {
 
     // SA-767 L-1: the whole reversal tx re-runs on a 40P01 / 40001 / P2034 (nothing leaves the tx).
     const runBody = async (tx: any) => {
+      await setStockLockTimeout(tx); // SA-767 R6: bound the bill row lock wait too
       await this.lockBillAndAssertReceiptState(tx, bill);
       // B285: the reversal below read-modify-writes the product's average — lock it first.
       await this.inventory.lockProducts(tx, this.productIdsOf(bill.items));
@@ -1484,7 +1487,9 @@ export class VendorBillsService {
         },
       });
     };
-    return retryStockTx("vendorBills.revertToDraft", () => this.prisma.tenantTransaction(runBody));
+    return retryStockTx("vendorBills.revertToDraft", () =>
+      this.prisma.tenantTransaction(runBody, STOCK_TX_OPTIONS),
+    );
   }
 
   /**
@@ -1531,6 +1536,7 @@ export class VendorBillsService {
     if (needsReversal) {
       // SA-767 L-1: the whole reversal tx re-runs on a 40P01 / 40001 / P2034 (nothing leaves the tx).
       const runBody = async (tx: any) => {
+        await setStockLockTimeout(tx); // SA-767 R6: bound the bill row lock wait too
         await this.lockBillAndAssertReceiptState(tx, bill);
         await this.inventory.lockProducts(tx, this.productIdsOf(bill.items));
         for (const item of bill.items) {
@@ -1597,7 +1603,9 @@ export class VendorBillsService {
           },
         });
       };
-      return retryStockTx("vendorBills.voidBill", () => this.prisma.tenantTransaction(runBody));
+      return retryStockTx("vendorBills.voidBill", () =>
+        this.prisma.tenantTransaction(runBody, STOCK_TX_OPTIONS),
+      );
     }
 
     // Transactional (it used to be a bare update) so the credit refund and the

@@ -63,6 +63,23 @@ export const PRODUCT_LOCK_RANK_SQL = Prisma.sql`CASE
  */
 export const STOCK_LOCK_TIMEOUT = "5s";
 
+/**
+ * The tx budget of a stock-writer transaction (SA-767 R6). Prisma's default interactive-tx timeout is 5 s, the same
+ * as `STOCK_LOCK_TIMEOUT`, so a long lock holder would surface as an unmapped P2028 before 55P03 could fire. 15 s
+ * lets the 5 s lock timeout fire first (55P03 -> retried -> the coded 503), and P2028 stays the backstop.
+ */
+export const STOCK_TX_OPTIONS = { timeout: 15_000 } as const;
+
+/**
+ * Bounds every lock wait of the tx at STOCK_LOCK_TIMEOUT (SET LOCAL semantics: it ends with the tx). Call it as the
+ * FIRST statement of a stock-writer tx whose first lock is NOT the Product rows (a PurchaseOrder / VendorBill row
+ * lock comes first in the house order), so that domain-row wait is bounded too. Set only while the tx still has
+ * Postgres's default `'0'`, so a caller's own value stays.
+ */
+export async function setStockLockTimeout(tx: LockTx): Promise<void> {
+  await tx.$executeRaw`SELECT set_config('lock_timeout', ${STOCK_LOCK_TIMEOUT}, true) WHERE current_setting('lock_timeout') = '0'`;
+}
+
 export async function lockProductsForStock(
   tx: LockTx,
   tenantId: string | null | undefined,
@@ -73,7 +90,7 @@ export async function lockProductsForStock(
   if (ids.length === 0) return;
   // The default, set only where the tx has none yet. `set_config(..., true)` is SET LOCAL: it ends
   // with this tx, so the pooled connection never carries the timeout out. Always the first statement.
-  await tx.$executeRaw`SELECT set_config('lock_timeout', ${STOCK_LOCK_TIMEOUT}, true) WHERE current_setting('lock_timeout') = '0'`;
+  await setStockLockTimeout(tx);
   await tx.$executeRaw`
     SELECT p.id FROM "Product" p
     WHERE p."tenantId" = ${tenantId} AND p.id = ANY(${ids}::text[])

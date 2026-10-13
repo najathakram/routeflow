@@ -374,6 +374,8 @@ const LATER_REASON = /^(?:SA-767 L-[345]\b|new-row create\b)/;
 
 interface MethodInfo {
   writes: boolean;
+  /** The body itself holds a stock write (as opposed to only calling a function that does). */
+  direct?: boolean;
   lockPos: number;
   accessPos: number;
   calls: Map<string, number[]>;
@@ -583,6 +585,275 @@ describe("SA-767 L-2 - every InventoryService stock writer locks before it reads
         ),
       ).toEqual([expect.stringContaining("calls it before taking the lock")]);
     });
+  });
+});
+
+/**
+ * SA-767 R6 (SA must 1): the SAME predicate over ALL non-spec `apps/api/src`, not just InventoryService. A function
+ * (class method or free function; closures count as their parent) that writes `Product.currentStock` /
+ * `averageCost`, a `StockLot` or a `StockMovement` either takes the Product row locks before its first Product
+ * access (locks-first) or is NAMED below with a reason a reviewer can challenge. A new writer anywhere fails the
+ * build until it locks or is named; a stale entry fails too.
+ */
+const OTHER_WRITERS: Record<string, string> = {
+  // The returns restock chain writes stock without the Product lock: SA-767 L-4 moves it under the helper.
+  "returns/returns-restock.util.ts::bookRestockMovement":
+    "SA-767 L-4/L-5: returns restock books the movement and counter without the Product lock",
+  "returns/returns.service.ts::ReturnsService.cancel":
+    "SA-767 L-4/L-5: a return cancel re-takes stock without the Product lock",
+  "returns/inline-returns.service.ts::InlineReturnsService.cancel":
+    "SA-767 L-4/L-5: an inline-return cancel re-takes stock without the Product lock",
+  // The Zoho stock sync SETS the counter (absolute) and writes its ADJUSTMENT row in a second call.
+  "import/import.service.ts::ImportService.importInventory":
+    "SA-767 L-4/L-5: the Zoho stock sync sets the counter without the Product lock (also ALLOW_NON_ATOMIC above)",
+  // The Zoho product import CREATES rows with their opening stock: nothing exists to lock yet.
+  "products/products.service.ts::ProductsService.importFromZoho":
+    "new-row create: opening stock is written on a product created in the same transaction",
+  // Not stock-value writes: they touch the stock tables only to delete a hard-deleted product's rows or to null a link.
+  "products/products.service.ts::ProductsService.bulkDelete":
+    "row delete: removes the lots and movements of products hard-deleted in the same call (no references left)",
+  "suppliers/suppliers.service.ts::SuppliersService.remove":
+    "link null: nulls StockMovement.supplierId only; no quantity, cost or lot changes",
+};
+
+const OTHER_REASON = /^(?:SA-767 L-[45]\b|new-row create\b|row delete\b|link null\b)/;
+/** The lock call as written anywhere in the tree (`this.inventory.lockProducts(...)` included). */
+const WIDE_LOCK_CALL = /(?:^|\.)(?:lockProducts|lockProductsForStock)$/;
+/** Test support, not production code. */
+const OTHER_WRITERS_SKIP = /(?:^|\/)testing\//;
+
+/** Every named function (class method, function declaration, `const f = () => ...`) of a file -> its writer facts. */
+function analyzeFileFunctions(rel: string, text: string): Map<string, MethodInfo> {
+  const sf = parse(rel, text);
+  const out = new Map<string, MethodInfo>();
+  const measure = (body: ts.Node): MethodInfo => {
+    const info: MethodInfo = {
+      writes: false,
+      lockPos: Infinity,
+      accessPos: Infinity,
+      calls: new Map(),
+    };
+    const visit = (n: ts.Node) => {
+      if (isStockWriteNode(n, sf)) {
+        info.writes = true;
+        info.direct = true;
+      }
+      if (ts.isCallExpression(n)) {
+        const callee = n.expression.getText(sf).replace(/\s+/g, "");
+        const pos = n.getStart(sf);
+        if (WIDE_LOCK_CALL.test(callee)) info.lockPos = Math.min(info.lockPos, pos);
+        if (PRODUCT_ACCESS_CALL.test(callee)) info.accessPos = Math.min(info.accessPos, pos);
+        const last = /(\w+)$/.exec(callee);
+        if (last) info.calls.set(last[1], [...(info.calls.get(last[1]) ?? []), pos]);
+      }
+      ts.forEachChild(n, visit);
+    };
+    visit(body);
+    return info;
+  };
+  ts.forEachChild(sf, (top) => {
+    if (ts.isClassDeclaration(top) && top.name) {
+      for (const m of top.members) {
+        if (ts.isMethodDeclaration(m) && m.body) {
+          out.set(`${rel}::${top.name.text}.${m.name.getText(sf)}`, measure(m.body));
+        }
+      }
+    } else if (ts.isFunctionDeclaration(top) && top.name && top.body) {
+      out.set(`${rel}::${top.name.text}`, measure(top.body));
+    } else if (ts.isVariableStatement(top)) {
+      for (const d of top.declarationList.declarations) {
+        const init = d.initializer;
+        if (
+          ts.isIdentifier(d.name) &&
+          init &&
+          (ts.isArrowFunction(init) || ts.isFunctionExpression(init))
+        ) {
+          out.set(`${rel}::${d.name.text}`, measure(init.body));
+        }
+      }
+    }
+  });
+  // A function that calls a local writer is a writer entry point too (its own body may write nothing).
+  for (let grew = true; grew;) {
+    grew = false;
+    for (const [k, info] of out) {
+      if (info.writes) continue;
+      const file = k.split("::")[0];
+      const cls = k.split("::")[1].includes(".") ? k.split("::")[1].split(".")[0] + "." : "";
+      if (
+        [...info.calls.keys()].some(
+          (c) => out.get(`${file}::${cls}${c}`)?.writes || out.get(`${file}::${c}`)?.writes,
+        )
+      ) {
+        info.writes = true;
+        grew = true;
+      }
+    }
+  }
+  return out;
+}
+
+/**
+ * The writers of other files that neither lock first, nor are a helper EVERY caller of which locks first before it
+ * calls it (derived, not declared), nor are named (empty = compliant).
+ */
+function otherWriterProblems(
+  all: Map<string, MethodInfo>,
+  table: Record<string, string>,
+): string[] {
+  const problems: string[] = [];
+  // a function that only CALLS a writer is checked through that writer, not on its own
+  const writers = [...all].filter(([, i]) => i.direct);
+  const lockedFirst = (i: MethodInfo) => Number.isFinite(i.lockPos) && i.accessPos >= i.lockPos;
+  const simple = (k: string) => k.split("::")[1].split(".").pop() as string;
+  const covered = new Set<string>(writers.filter(([, i]) => lockedFirst(i)).map(([k]) => k));
+  // A helper whose every caller (by name, anywhere in the tree) calls it after locking first is covered too.
+  for (let grew = true; grew;) {
+    grew = false;
+    for (const [k] of writers) {
+      if (covered.has(k) || k in table) continue;
+      const name = simple(k);
+      const callers = [...all].filter(([ck, ci]) => ck !== k && ci.calls.has(name));
+      const ok =
+        callers.length > 0 &&
+        callers.every(
+          ([ck, ci]) =>
+            covered.has(ck) ||
+            (Number.isFinite(ci.lockPos) && (ci.calls.get(name) ?? [0])[0] > ci.lockPos),
+        );
+      if (ok) {
+        covered.add(k);
+        grew = true;
+      }
+    }
+  }
+  for (const [k] of writers) {
+    if (covered.has(k) || k in table) continue;
+    problems.push(
+      `${k}: a stock writer that does not lock first - lock via lockProductsForStock, or name it`,
+    );
+  }
+  const writerKeys = new Set(writers.map(([k]) => k));
+  for (const [k, why] of Object.entries(table)) {
+    if (!writerKeys.has(k)) problems.push(`${k}: listed but no longer a stock writer`);
+    else if (covered.has(k))
+      problems.push(`${k}: listed but it now locks first - remove the entry`);
+    else if (!OTHER_REASON.test(why))
+      problems.push(
+        `${k}: allow-list reason must name SA-767 L-4/L-5, "new-row create", "row delete" or "link null"`,
+      );
+  }
+  return problems;
+}
+
+describe("SA-767 R6 - every stock writer outside InventoryService locks first or is named (G4 pin 2, whole tree)", () => {
+  const all = new Map<string, MethodInfo>();
+  for (const abs of collectSourceFiles(SRC_ROOT)) {
+    const rel = path.relative(SRC_ROOT, abs).split(path.sep).join("/");
+    if (rel === INVENTORY_SERVICE || OTHER_WRITERS_SKIP.test(rel)) continue;
+    for (const [k, v] of analyzeFileFunctions(rel, fs.readFileSync(abs, "utf8"))) all.set(k, v);
+  }
+
+  it("the scan is live: it sees writers outside InventoryService", () => {
+    expect([...all.values()].filter((i) => i.writes).length).toBeGreaterThan(5);
+    expect(all.get("orders/order-stock.ts::decrementStockForSale")).toMatchObject({ writes: true });
+  });
+
+  it("every such writer is locks-first or on the named allow-list", () => {
+    expect(otherWriterProblems(all, OTHER_WRITERS)).toEqual([]);
+  });
+
+  describe("the pin has teeth (inline sources)", () => {
+    const run = (src: string, t: Record<string, string> = {}) =>
+      otherWriterProblems(analyzeFileFunctions("x.ts", src), t);
+
+    it("a free-function writer that locks first passes; one that does not fails until named", () => {
+      const good =
+        "async function f(tx) { await lockProductsForStock(tx, []); await tx.product.update({ data: { currentStock: { increment: 1 } } }); }";
+      expect(run(good)).toEqual([]);
+      const bad = "const g = async (tx) => { await tx.stockLot.create({}); };";
+      expect(run(bad)).toEqual([
+        expect.stringContaining("x.ts::g: a stock writer that does not lock first"),
+      ]);
+      expect(run(bad, { "x.ts::g": "SA-767 L-4: restock" })).toEqual([]);
+    });
+
+    it("a stale entry or an entry without an SA-767 L-4/L-5 reason fails", () => {
+      expect(run("function h() {}", { "x.ts::h": "SA-767 L-4: gone" })).toEqual([
+        expect.stringContaining("listed but no longer a stock writer"),
+      ]);
+      expect(
+        run("const g = async (tx) => { await tx.stockLot.create({}); };", { "x.ts::g": "TODO" }),
+      ).toEqual([expect.stringContaining('must name SA-767 L-4/L-5, "new-row create"')]);
+    });
+  });
+});
+
+/**
+ * SA-767 R6 (SA must 2): every stock-writer transaction has a 15 s budget (`STOCK_TX_OPTIONS`) and bounds its lock
+ * waits with `lock_timeout` BEFORE its first lock. Prisma's default tx timeout is 5 s - the same as the lock timeout -
+ * so an unbounded PO / bill row lock waiting behind a long holder used to surface as P2028 (an uncoded 500) before
+ * 55P03 (retried, then the coded 503) could fire.
+ */
+describe("SA-767 R6 - stock-writer transactions carry the 15 s budget and a bounded domain-row lock wait", () => {
+  const strip = (code: string) =>
+    code
+      .replace(/\/\*[\s\S]*?\*\//g, (m) => m.replace(/[^\n]/g, " "))
+      .replace(/(^|[^:])\/\/.*$/gm, (m, lead: string) => lead + " ".repeat(m.length - lead.length));
+  const inv = strip(fs.readFileSync(path.join(SRC_ROOT, INVENTORY_SERVICE), "utf8"));
+  const bills = strip(
+    fs.readFileSync(path.join(SRC_ROOT, "vendor-bills/vendor-bills.service.ts"), "utf8"),
+  );
+  const locks = strip(fs.readFileSync(path.join(SRC_ROOT, "common/product-locks.ts"), "utf8"));
+
+  it("the budget is 15 s and the helper bounds the wait at STOCK_LOCK_TIMEOUT, only while the tx has none", () => {
+    expect(locks).toMatch(/export const STOCK_TX_OPTIONS = \{ timeout: 15_000 \} as const/);
+    expect(locks).toMatch(
+      /export async function setStockLockTimeout[\s\S]*?set_config\('lock_timeout', \$\{STOCK_LOCK_TIMEOUT\}, true\) WHERE current_setting\('lock_timeout'\) = '0'/,
+    );
+    expect(inv).toMatch(/private stockTx<T>[\s\S]*?tenantTransaction\(fn, STOCK_TX_OPTIONS\)/);
+  });
+
+  it.each([
+    "recordPurchase",
+    "recordAdjustment",
+    "commitStockCount",
+    "setCostBasis",
+    "bulkSetCostBasis",
+    "receivePurchaseOrder",
+    "updatePurchaseOrder",
+  ])("InventoryService.%s runs its transaction through stockTx inside retryStockTx", (name) => {
+    expect(inv).toMatch(
+      new RegExp(`retryStockTx\\("inventory\\.${name}", \\(\\) =>\\s+this\\.stockTx\\(`),
+    );
+  });
+
+  it("the PurchaseOrder row lock (taken BEFORE the Product rows) is preceded by the lock_timeout bound", () => {
+    expect(inv).toMatch(
+      /private async lockPurchaseOrder\([^)]*\) \{[\s\S]*?await setStockLockTimeout\(tx\);[\s\S]*?FOR UPDATE/,
+    );
+  });
+
+  it.each(["receive", "revertToDraft", "voidBill"])(
+    "VendorBillsService.%s: the 15 s budget, and the bill row lock waits at most the lock timeout",
+    (name) => {
+      expect(bills).toMatch(
+        new RegExp(
+          `retryStockTx\\("vendorBills\\.${name}", \\(\\) =>\\s+this\\.prisma\\.tenantTransaction\\(runBody, STOCK_TX_OPTIONS\\)`,
+        ),
+      );
+    },
+  );
+
+  it("each bill stock transaction body sets the bound BEFORE it locks the bill row", () => {
+    const bodies = bills.split("const runBody = async (tx: any) => {").slice(1);
+    expect(bodies.length).toBeGreaterThanOrEqual(3);
+    for (const b of bodies) {
+      const set = b.search(/await setStockLockTimeout\(tx\)/);
+      const lock = b.search(/this\.lockBillAndAssertReceiptState\(tx, bill\)/);
+      expect(set).toBeGreaterThan(-1);
+      expect(set).toBeLessThan(lock);
+    }
   });
 });
 
