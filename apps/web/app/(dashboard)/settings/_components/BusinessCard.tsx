@@ -75,7 +75,10 @@ function BusinessCardInner() {
           </span>
           {status && (
             <span className="mt-0.5 flex flex-wrap items-center gap-2 text-sm text-[var(--ink-500)]">
-              <span>{status.plan}</span>
+              <span>
+                {status.plan}
+                {status.price && <span className="tabular-nums"> · {status.price}</span>}
+              </span>
               {status.pill && <Badge variant={status.pill.tone} label={status.pill.label} />}
             </span>
           )}

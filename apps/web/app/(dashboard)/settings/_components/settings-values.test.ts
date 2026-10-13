@@ -151,6 +151,18 @@ describe("Business card status", () => {
   });
 });
 
+describe("apple-ux U1: the Business card shows what the plan costs (the Billing page's own figure)", () => {
+  const now = new Date("2026-10-13T12:00:00Z");
+  it.each([
+    [{}, "$149/mo"],
+    [{ cycle: "ANNUAL" as const, annualPrice: 4990 }, "$4,990/yr"],
+    [{ isCustom: true }, "Custom pricing"],
+    [{ monthlyPrice: null }, null],
+  ])("%j -> %s", (over, price) => {
+    expect(businessStatus(sub(over), "admin", now)?.price).toBe(price);
+  });
+});
+
 describe("Needs attention", () => {
   const base = {
     isAdmin: true,

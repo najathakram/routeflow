@@ -63,6 +63,20 @@ export interface BusinessStatus {
   pay: { label: string; url?: string } | null;
   /** Payment is due, overdue or the workspace is read-only for it. */
   due: boolean;
+  /** What the plan costs, exactly as the Billing page shows it ("$499/mo", "$4,990/yr", "Custom pricing"); null if unknown. */
+  price?: string | null;
+}
+
+/** The Billing page's plan price line (settings/billing/page.tsx), so the hub card never shows a second figure. */
+function planPrice(sub: SubscriptionView): string | null {
+  if (sub.isCustom) return "Custom pricing";
+  const n = sub.cycle === "ANNUAL" ? sub.annualPrice : sub.monthlyPrice;
+  if (n == null) return null;
+  const amount = n.toLocaleString(undefined, {
+    minimumFractionDigits: 0,
+    maximumFractionDigits: 2,
+  });
+  return `$${amount}/${sub.cycle === "ANNUAL" ? "yr" : "mo"}`;
 }
 
 const DAY_MS = 86_400_000;
@@ -74,17 +88,24 @@ export function businessStatus(
 ): BusinessStatus | null {
   const plan = text(sub?.planName);
   if (!sub || !role || !plan) return null;
+  const price = planPrice(sub);
   const model = billingCardModel(sub, role, now);
   const owed = model?.state === "due" || model?.state === "overdue";
   const readOnly = sub.status === "READ_ONLY";
   const due = owed || (readOnly && sub.readOnlyReason === "payment_overdue");
   const pay = model?.pay ?? null;
-  if (readOnly) return { plan, pill: { label: "Read-only", tone: "danger" }, pay, due };
+  if (readOnly) return { plan, price, pill: { label: "Read-only", tone: "danger" }, pay, due };
   if (owed) {
-    return { plan, pill: { label: "Payment due", tone: "warning" }, pay, due };
+    return { plan, price, pill: { label: "Payment due", tone: "warning" }, pay, due };
   }
   if (model?.state === "processing") {
-    return { plan, pill: { label: "Payment processing", tone: "neutral" }, pay: null, due: false };
+    return {
+      plan,
+      price,
+      pill: { label: "Payment processing", tone: "neutral" },
+      pay: null,
+      due: false,
+    };
   }
   if (sub.status === "TRIAL") {
     const end = sub.trialEndsAt ? new Date(sub.trialEndsAt).getTime() : NaN;
@@ -92,10 +113,10 @@ export function businessStatus(
     const label = Number.isNaN(end)
       ? "Trial"
       : `Trial · ${days} ${days === 1 ? "day" : "days"} left`;
-    return { plan, pill: { label, tone: "info" }, pay: null, due: false };
+    return { plan, price, pill: { label, tone: "info" }, pay: null, due: false };
   }
   const pill = sub.status === "ACTIVE" ? ({ label: "Active", tone: "success" } as const) : null;
-  return { plan, pill, pay: null, due: false };
+  return { plan, price, pill, pay: null, due: false };
 }
 
 export interface AttentionItem {
