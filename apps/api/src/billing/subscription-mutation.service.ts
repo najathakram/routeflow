@@ -49,7 +49,6 @@ import {
   planKeyToEnum,
   normalizePlanKey,
   addonSkuCode,
-  isAddonIncludedAtPlan,
   isSelfServiceAddon,
   isInviteOnlyPlanKey,
 } from "./plan-catalog.constants";
@@ -68,6 +67,7 @@ import { API_ERROR_CODES } from "../common/api-error-codes";
 import { ADMIN_AUDIT_ENTITY, AdminAuditAction } from "../platform-admin/audit-actions.constant";
 import { randomUUID } from "crypto";
 import { manualPayContext, readRetiredAddons } from "./addon-retirement";
+import { addonCatalogInvalid, includedAtPlanVerdict } from "./addon-catalog-invalid";
 import { ScheduledPriceChangeService } from "./scheduled-price-change";
 import { TENANT_PRICE_LOCK_SELF_SERVE_WAIT_MS, underTenantPriceLock } from "./price-lock";
 import { beginStripeFirstPlanChange, planChangeArgs } from "./plan-change-flow";
@@ -170,6 +170,10 @@ const ADDON_RAISE_UNBILLED_ROW =
 export interface AddonRefusal {
   code: string;
   message: string;
+  /** B1102: set with `sku` + `value` when the add-on's catalog `includedAtPlan` names no plan. */
+  reason?: "CATALOG_INVALID";
+  sku?: string;
+  value?: string;
 }
 
 const ADDON_ANNUAL_REFUSAL: AddonRefusal = {
@@ -192,8 +196,7 @@ function addonIncludedRefusal(addonName: string): AddonRefusal {
   };
 }
 
-const refusalException = (r: AddonRefusal) =>
-  new ConflictException({ code: r.code, message: r.message });
+const refusalException = (r: AddonRefusal) => new ConflictException({ ...r });
 
 /**
  * The ONE annual predicate for self-serve add-ons (enable of a new item AND a quantity raise on a
@@ -1918,7 +1921,15 @@ export class SubscriptionMutationService {
         continue;
       }
       // A plan-bundled SKU is never sold again: no line, nothing to announce.
-      if (await this.planIncludedRefusal(tenantId, def)) continue;
+      const included = await this.planIncludedRefusal(tenantId, def);
+      if (included) {
+        if (included.reason !== "CATALOG_INVALID") continue;
+        // B1102: an unparseable includedAtPlan fails closed — a user's checkout is refused (409); the quiet
+        // catch-up read drops just this line (never billed) and carries on.
+        if (!opts.quiet) throw refusalException(included);
+        await this.skipInvalidCatalogAddon(tenantId, def.sku, included.value, false);
+        continue;
+      }
       // The row findAddonRow picks (oldest) decides the quantity — the same row the completion adopts onto.
       const oldest = [...rows].sort(
         (x, y) => Number(x.createdAt ?? 0) - Number(y.createdAt ?? 0),
@@ -2481,7 +2492,15 @@ export class SubscriptionMutationService {
     ctx: { sessionId?: string | null },
   ): Promise<boolean> {
     const skuDef = (await this.catalog.getPublishedCatalog()).addonSkus.find((s) => s.sku === sku);
-    if (!skuDef || (await this.planIncludedRefusal(tenantId, skuDef))) return false;
+    if (!skuDef) return false;
+    const included = await this.planIncludedRefusal(tenantId, skuDef);
+    if (included) {
+      // B1102: background path, no user to refuse — never bill it, say so, never throw the billing.
+      if (included.reason === "CATALOG_INVALID") {
+        await this.skipInvalidCatalogAddon(tenantId, sku, included.value, true);
+      }
+      return false;
+    }
     const sub = await this.prisma.tenantSubscription.findUnique({
       where: { tenantId },
       select: { billingInterval: true, cycle: true },
@@ -2539,17 +2558,43 @@ export class SubscriptionMutationService {
    */
   private async planIncludedRefusal(
     tenantId: string,
-    skuDef: { name: string; includedAtPlan?: string | null },
+    skuDef: { sku: string; name: string; includedAtPlan?: string | null },
   ): Promise<AddonRefusal | null> {
-    if (!skuDef.includedAtPlan) return null;
+    if (skuDef.includedAtPlan == null) return null;
     const [sub, tenant] = await Promise.all([
       this.prisma.tenantSubscription.findUnique({ where: { tenantId }, select: { planKey: true } }),
       this.prisma.tenant.findUnique({ where: { id: tenantId }, select: { plan: true } }),
     ]);
     const planKey = this.resolveFromPlanKey(sub?.planKey, tenant?.plan);
-    return isAddonIncludedAtPlan(skuDef.includedAtPlan, planKey)
-      ? addonIncludedRefusal(skuDef.name)
-      : null;
+    // B1102: one parser. A key no plan answers to FAILS CLOSED (reason CATALOG_INVALID), never "not included".
+    const verdict = includedAtPlanVerdict(skuDef, planKey);
+    if (verdict.kind === "CATALOG_INVALID") return addonCatalogInvalid(verdict.sku, verdict.value);
+    return verdict.kind === "INCLUDED" ? addonIncludedRefusal(skuDef.name) : null;
+  }
+
+  /**
+   * B1102: a BACKGROUND reader met an add-on whose catalog `includedAtPlan` names no plan. Its Stripe item is
+   * not created (the caller returns without billing it), the sku is logged (no tenant slug), and — unless the
+   * caller is a dry-run — one deduped platform notice names it. Best-effort: never throws.
+   */
+  private async skipInvalidCatalogAddon(
+    tenantId: string,
+    sku: string,
+    value: string | undefined,
+    audit: boolean,
+  ): Promise<void> {
+    this.logger.error(
+      `Add-on "${sku}": catalog includedAtPlan "${value}" names no plan — skipped, not billed`,
+    );
+    if (!audit) return;
+    const label = await this.tenantLabelOf(tenantId);
+    await this.raiseAdminAlertOnce(
+      tenantId,
+      AdminAuditAction.ADDON_CATALOG_INVALID,
+      `${AdminAuditAction.ADDON_CATALOG_INVALID}:${sku}:${value}`,
+      `Add-on ${sku} was not billed for ${label}: the catalog's includedAtPlan "${value}" is not a plan — fix the catalog entry.`,
+      { sku, value },
+    );
   }
 
   /**
