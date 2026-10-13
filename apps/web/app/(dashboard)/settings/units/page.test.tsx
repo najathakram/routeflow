@@ -434,7 +434,7 @@ describe("Units page: archive and restore", () => {
     const dialog = screen.getByRole("dialog", { name: "Archive Bottle?" });
     expect(
       within(dialog).getByText(
-        "40 products use it. They keep it and it still shows on their orders. You won't see it when you pick a unit for a new product. You can restore it any time.",
+        "40 products use it. They keep it and it still shows on their orders. You can restore it any time.",
       ),
     ).toBeInTheDocument();
     expect(within(dialog).getByRole("button", { name: "Cancel" })).toHaveFocus();

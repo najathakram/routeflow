@@ -579,7 +579,7 @@ function archiveBody(n: number): string {
     n === 1
       ? "1 product uses it. It keeps it and it still shows on its orders."
       : `${n} products use it. They keep it and it still shows on their orders.`;
-  return `${lead} You won't see it when you pick a unit for a new product. You can restore it any time.`;
+  return `${lead} You can restore it any time.`;
 }
 
 function renameNote(n: number): string {
