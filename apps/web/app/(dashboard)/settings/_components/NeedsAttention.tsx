@@ -9,8 +9,11 @@ import { useUnknownStateBuckets } from "@/lib/api/unknown-state";
 import { useBusinessStatus } from "./BusinessCard";
 import { attentionItems } from "./settings-values";
 
+/** The hub only needs to know there is something to fix; the card itself re-reads on open. */
+const ATTENTION_STALE_MS = 5 * 60_000;
+
 /**
- * The 1440 hub's short "what to do next" list: customers without a state (admins and operators), then payment due,
+ * The hub's short "what to do next" list: customers without a state (admins and operators), then payment due,
  * no "how to pay" yet, Stripe not connected (admins only). Renders nothing at all (no heading) when there is nothing
  * to do or a read has not answered.
  */
@@ -21,7 +24,7 @@ export function NeedsAttention({ isAdmin }: { isAdmin: boolean }) {
 
 /** Operators fix customer states too (owner ruling), so they get that one row and only its read. */
 function OperatorAttention() {
-  const unknown = useUnknownStateBuckets();
+  const unknown = useUnknownStateBuckets(undefined, { staleTime: ATTENTION_STALE_MS });
   return (
     <AttentionList
       items={attentionItems({ isAdmin: false, status: null, unknownState: unknown.data })}
@@ -33,7 +36,7 @@ function AdminAttention() {
   const status = useBusinessStatus();
   const remittance = useRemittanceConfig();
   const stripe = useStripeConnectStatus();
-  const unknown = useUnknownStateBuckets();
+  const unknown = useUnknownStateBuckets(undefined, { staleTime: ATTENTION_STALE_MS });
   const items = attentionItems({
     isAdmin: true,
     status,

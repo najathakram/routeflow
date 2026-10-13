@@ -18,14 +18,8 @@ import { useSettingsNav } from "./use-settings-nav";
  * attention, frequent links, the groups with their values, then the loose cards below. Every setting screen
  * stays reachable; role-gated rows are hidden the same way the sidebar hides them.
  */
-const QUERY_KEY = "rf:settings-hub:q";
-function readRememberedQuery(): string {
-  try {
-    return sessionStorage.getItem(QUERY_KEY) ?? "";
-  } catch {
-    return "";
-  }
-}
+/** The hub's query lives on its own history entry, so Back/Forward brings it back and a fresh visit starts empty. */
+const HISTORY_KEY = "rfSettingsQuery";
 
 /** A card the page renders under the hub (Stripe Connect, tier names): shown at `#id`, hidden by a search it doesn't match. */
 export type LooseCard = { id: string; node: React.ReactNode };
@@ -37,16 +31,17 @@ export function SettingsHub({
   isAdmin: boolean;
   looseCards?: LooseCard[];
 }) {
-  // apple-ux U1: a search survives opening a result and pressing Back (the hub remounts). Per-tab, best effort.
-  const [query, setQueryState] = React.useState(readRememberedQuery);
+  // apple-ux U1 + SA M2: a search survives opening a result and pressing Back (Back returns to this history entry,
+  // whose state carries the query), but a NEW visit (sidebar, cmd-K, a back link: a new entry) starts empty.
+  const [query, setQueryState] = React.useState("");
+  React.useEffect(() => {
+    const kept = (window.history.state as Record<string, unknown> | null)?.[HISTORY_KEY];
+    if (typeof kept === "string" && kept) setQueryState(kept);
+  }, []);
   const setQuery = React.useCallback((q: string) => {
     setQueryState(q);
-    try {
-      if (q) sessionStorage.setItem(QUERY_KEY, q);
-      else sessionStorage.removeItem(QUERY_KEY);
-    } catch {
-      /* storage blocked (private window): the box just starts empty next time */
-    }
+    // keep the router's own state on the entry; only our key changes
+    window.history.replaceState({ ...(window.history.state ?? {}), [HISTORY_KEY]: q }, "");
   }, []);
   const nav = useSettingsNav({ isAdmin });
 

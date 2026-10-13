@@ -1,4 +1,5 @@
 import type { SubscriptionView } from "@routeflow/types";
+import { planPriceLabel } from "@/lib/plan-money";
 import { billingCardModel } from "@/lib/billing-card-model";
 import type { BannerRole } from "@/lib/subscription-banner-state";
 
@@ -67,18 +68,6 @@ export interface BusinessStatus {
   price?: string | null;
 }
 
-/** The Billing page's plan price line (settings/billing/page.tsx), so the hub card never shows a second figure. */
-function planPrice(sub: SubscriptionView): string | null {
-  if (sub.isCustom) return "Custom pricing";
-  const n = sub.cycle === "ANNUAL" ? sub.annualPrice : sub.monthlyPrice;
-  if (n == null) return null;
-  const amount = n.toLocaleString(undefined, {
-    minimumFractionDigits: 0,
-    maximumFractionDigits: 2,
-  });
-  return `$${amount}/${sub.cycle === "ANNUAL" ? "yr" : "mo"}`;
-}
-
 const DAY_MS = 86_400_000;
 
 export function businessStatus(
@@ -88,7 +77,7 @@ export function businessStatus(
 ): BusinessStatus | null {
   const plan = text(sub?.planName);
   if (!sub || !role || !plan) return null;
-  const price = planPrice(sub);
+  const price = planPriceLabel(sub);
   const model = billingCardModel(sub, role, now);
   const owed = model?.state === "due" || model?.state === "overdue";
   const readOnly = sub.status === "READ_ONLY";
@@ -125,7 +114,7 @@ export interface AttentionItem {
   href: string;
 }
 
-/** The short "Needs attention" list on the 1440 hub. Admins only; a loading or failed read flags nothing. */
+/** The short "Needs attention" list on the hub: customers without a state for admins and operators, the billing and payment rows for admins only. A loading or failed read flags nothing. */
 export function attentionItems(o: {
   isAdmin: boolean;
   status: BusinessStatus | null;
@@ -141,8 +130,9 @@ export function attentionItems(o: {
   if (n > 0 || o.unknownState?.truncated) {
     items.push({
       id: "customers-without-state",
+      // SA M1: a truncated sweep counted only part of the customers, so it never shows an exact number
       label:
-        n > 0
+        n > 0 && !o.unknownState?.truncated
           ? `${n} ${n === 1 ? "customer needs" : "customers need"} a state`
           : "Some customers may need a state",
       href: "/settings/restrictions#customers-without-state",
