@@ -1,4 +1,6 @@
 import {
+  ORDER_SOURCE_RECORDED_FROM,
+  creationChannelOf,
   channelOfOrderSource,
   channelOfRole,
   channelsToJudge,
@@ -199,5 +201,81 @@ describe("leastPrivilegedPrincipal (the at-door approval): staff only when resol
     expect(leastPrivilegedPrincipal({ role: "CUSTOMER", type: "BUYER" }, "OPERATOR")).toEqual({
       type: "BUYER",
     });
+  });
+});
+
+/**
+ * The legacy-source CUTOFF. `Order.source` was only written from the creating principal from
+ * ORDER_SOURCE_RECORDED_FROM on; before that every row carries the column default APP, which says nothing about who
+ * created it. A row created before the cutoff is UNKNOWN_LEGACY and its creation channel is STAFF; a buyer path that
+ * ADDS a line after the cutoff is still judged on the BUYER channel.
+ */
+describe("legacy-source cutoff", () => {
+  const before = new Date(ORDER_SOURCE_RECORDED_FROM.getTime() - 1);
+  const after = new Date(ORDER_SOURCE_RECORDED_FROM.getTime());
+  const revAt = (
+    createdAt: Date,
+    editedByRole: string | null,
+    ...lines: Array<[string, number]>
+  ) => ({ ...rev(editedByRole, ...lines), createdAt });
+  const line = (productId: string, createdAt: Date) => ({ productId, createdAt });
+
+  it("ORDER_SOURCE_RECORDED_FROM is pinned (PLACEHOLDER: the lead sets the real deploy instant; change it deliberately)", () => {
+    expect(ORDER_SOURCE_RECORDED_FROM.toISOString()).toBe("2026-10-16T00:00:00.000Z");
+  });
+
+  it("creationChannelOf: before the cutoff is STAFF whatever the source says; at/after it follows the source", () => {
+    expect(creationChannelOf({ source: "APP", createdAt: before })).toBe("STAFF");
+    expect(creationChannelOf({ source: "PHONE", createdAt: before })).toBe("STAFF");
+    expect(creationChannelOf({ source: "APP", createdAt: after })).toBe("BUYER_PORTAL");
+    expect(creationChannelOf({ source: "PHONE", createdAt: after })).toBe("STAFF");
+    expect(creationChannelOf({ source: "APP" })).toBe("BUYER_PORTAL"); // no createdAt: the recorded source
+  });
+
+  it("a legacy APP order with no edits is STAFF-authored", () => {
+    expect(resolveLineAuthors({ source: "APP", createdAt: before }, []).channelOf("p1")).toBe(
+      "STAFF",
+    );
+  });
+
+  it("a post-cutoff APP order with no edits is BUYER-authored", () => {
+    expect(resolveLineAuthors({ source: "APP", createdAt: after }, []).channelOf("p1")).toBe(
+      "BUYER_PORTAL",
+    );
+  });
+
+  it("legacy: revisions before the cutoff are unknown history, so STAFF whoever edited", () => {
+    const a = resolveLineAuthors({ source: "APP", createdAt: before }, [
+      revAt(before, "CUSTOMER", ["old", 2]),
+    ]);
+    expect(a.channelOf("old")).toBe("STAFF");
+  });
+
+  it("legacy + a buyer edit after the cutoff: the new line is BUYER, the baseline line stays STAFF", () => {
+    const a = resolveLineAuthors({ source: "APP", createdAt: before }, [
+      revAt(before, "OPERATOR", ["old", 2]),
+      revAt(after, "CUSTOMER", ["old", 2], ["new", 1]),
+    ]);
+    expect(a.channelOf("old")).toBe("STAFF");
+    expect(a.channelOf("new")).toBe("BUYER_PORTAL");
+  });
+
+  it("legacy, the ONLY revision is post-cutoff: lines that predate the cutoff stay STAFF, a later line is BUYER", () => {
+    const a = resolveLineAuthors(
+      { source: "APP", createdAt: before },
+      [revAt(after, "CUSTOMER", ["old", 2], ["new", 1])],
+      [line("old", before), line("new", after)],
+    );
+    expect(a.channelOf("old")).toBe("STAFF");
+    expect(a.channelOf("new")).toBe("BUYER_PORTAL");
+  });
+
+  it("legacy + a system merge revision (no editor role) after the cutoff: its new line is BUYER", () => {
+    const a = resolveLineAuthors({ source: "APP", createdAt: before }, [
+      revAt(before, "OPERATOR", ["old", 2]),
+      revAt(after, null, ["old", 2], ["cart", 1]),
+    ]);
+    expect(a.channelOf("old")).toBe("STAFF");
+    expect(a.channelOf("cart")).toBe("BUYER_PORTAL");
   });
 });

@@ -33,7 +33,12 @@ export async function judgeDraftPromotion(
     restrictions: Pick<SellingRestrictionsService, "assertLinesSellable">;
   },
   a: {
-    order: { id: string; customerId: string; source?: string | null };
+    order: {
+      id: string;
+      customerId: string;
+      source?: string | null;
+      createdAt?: Date | string | null;
+    };
     user: JwtPayload;
     tenantId: string;
   },
@@ -42,7 +47,7 @@ export async function judgeDraftPromotion(
   const { order, user, tenantId } = a;
   const items = await prisma.forTenant().orderItem.findMany({
     where: { orderId: order.id, status: { not: "CANCELLED" } },
-    select: { productId: true, trackedCategoryId: true },
+    select: { productId: true, trackedCategoryId: true, createdAt: true },
   });
   const pids = items.map((li) => li.productId).filter(Boolean) as string[];
   const products = pids.length
@@ -64,9 +69,9 @@ export async function judgeDraftPromotion(
     (await prisma.forTenant().orderRevision.findMany({
       where: { orderId: order.id, ...EDIT_REVISIONS.where },
       orderBy: EDIT_REVISIONS.orderBy,
-      select: { revisionNumber: true, editedByRole: true, snapshot: true },
+      select: { revisionNumber: true, editedByRole: true, snapshot: true, createdAt: true },
     })) ?? [];
-  const authors = resolveLineAuthors(order, revisions);
+  const authors = resolveLineAuthors(order, revisions, items);
   const promoter = restrictionChannelForPrincipal(user); // judged at ENTRY time, like the license guard
   const groups = channelsToJudge([...new Set(pids)], authors, promoter);
   const idsOn = (c: string) => groups.find((g) => g.channel === c)?.productIds ?? [];

@@ -42,9 +42,33 @@ export function channelOfOrderSource(source: string | null | undefined): Restric
   return source === "PHONE" || source === "ROUTE" ? "STAFF" : "BUYER_PORTAL";
 }
 
+/**
+ * The instant `create()` started WRITING `Order.source` from the creating principal. PLACEHOLDER: the lead sets this
+ * to the real merge/deploy instant. Every order created before it carries the column default APP whoever made it, so
+ * that value is not evidence of a buyer: such an order is UNKNOWN_LEGACY and its creation channel is STAFF (the
+ * line-level stricter rule still moves any line a buyer path ADDS afterwards to BUYER_PORTAL). Pinned in
+ * line-author-channel.spec.ts so a change is deliberate.
+ */
+export const ORDER_SOURCE_RECORDED_FROM = new Date("2026-10-16T00:00:00.000Z");
+
+const isLegacyInstant = (at: Date | string | null | undefined): boolean =>
+  !!at && new Date(at).getTime() < ORDER_SOURCE_RECORDED_FROM.getTime();
+
+/**
+ * The channel an order's creation is judged on: STAFF for an UNKNOWN_LEGACY order (createdAt before
+ * ORDER_SOURCE_RECORDED_FROM), else what the recorded `source` says. No createdAt reads as the recorded source.
+ */
+export function creationChannelOf(order: {
+  source?: string | null;
+  createdAt?: Date | string | null;
+}): RestrictionChannel {
+  return isLegacyInstant(order.createdAt) ? "STAFF" : channelOfOrderSource(order.source);
+}
+
 /** The slice of an `OrderRevision` the derivation reads. */
 export interface AuthorRevision {
   editedByRole?: string | null;
+  createdAt?: Date | string | null;
   /** `{ lineItems: [{ productId, qty }] }` after the edit (order-revisions.ts `revisionSnapshot`). */
   snapshot?: unknown;
 }
@@ -76,22 +100,37 @@ function snapshotQuantities(snapshot: unknown): Map<string, number> | null {
  *    unknown, so the buyer channel.
  */
 export function resolveLineAuthors(
-  order: { source?: string | null },
+  order: { source?: string | null; createdAt?: Date | string | null },
   revisions: readonly AuthorRevision[],
+  // The order's live lines, only read for a legacy order whose FIRST recorded revision is post-cutoff (no earlier
+  // snapshot to diff against): a product whose lines all predate the cutoff is legacy-authored.
+  lines: ReadonlyArray<{ productId?: string | null; createdAt?: Date | string | null }> = [],
 ): LineAuthors {
-  const creation = channelOfOrderSource(order.source);
+  const creation = creationChannelOf(order);
+  const legacy = isLegacyInstant(order.createdAt);
   if (revisions.length === 0) return { channelOf: () => creation };
+
+  const byProduct = new Map<string, boolean>(); // productId -> every line predates the cutoff
+  for (const l of lines)
+    if (l.productId)
+      byProduct.set(
+        l.productId,
+        (byProduct.get(l.productId) ?? true) && isLegacyInstant(l.createdAt),
+      );
 
   let state: Map<string, { qty: number; channel: RestrictionChannel }> | null = null;
   for (const r of revisions) {
     const qtys = snapshotQuantities(r.snapshot);
     if (!qtys) return { channelOf: () => "BUYER_PORTAL" }; // history we cannot read: unknown
-    const editor = channelOfRole(r.editedByRole);
+    // A legacy order's pre-cutoff revisions are unknown history: their editor says nothing, so STAFF.
+    const editor = legacy && isLegacyInstant(r.createdAt) ? "STAFF" : channelOfRole(r.editedByRole);
     const next = new Map<string, { qty: number; channel: RestrictionChannel }>();
     for (const [productId, qty] of qtys) {
       const prev = state?.get(productId);
       const channel = !state
-        ? stricterChannel(creation, editor)
+        ? legacy && editor !== "STAFF" && byProduct.get(productId) === true
+          ? "STAFF"
+          : stricterChannel(creation, editor)
         : !prev
           ? editor
           : qty > prev.qty
