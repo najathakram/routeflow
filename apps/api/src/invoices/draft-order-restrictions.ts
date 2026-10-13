@@ -31,6 +31,7 @@ export async function assertDraftOrderSellable(
     status?: string | null;
     customerId: string | null;
     source?: string | null;
+    sourceRecorded?: boolean | null;
     createdAt?: Date | string | null;
     lineItems?: ReadonlyArray<{
       productId?: string | null;
@@ -46,7 +47,7 @@ export async function assertDraftOrderSellable(
       ? await deps.prisma.forTenant().orderRevision.findMany({
           where: { orderId: order.id, ...EDIT_REVISIONS.where },
           orderBy: EDIT_REVISIONS.orderBy,
-          select: { editedByRole: true, snapshot: true, createdAt: true },
+          select: { editedByRole: true, snapshot: true },
         })
       : null) ?? [];
   const authors = resolveLineAuthors(order, revisions, order.lineItems ?? []);

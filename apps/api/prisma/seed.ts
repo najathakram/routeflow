@@ -775,6 +775,7 @@ async function main() {
         status,
         urgent,
         source: "APP",
+        sourceRecorded: true, // F1(i): the seed means APP (a buyer order); not a legacy row
         subtotal: subtotal.toFixed(2),
         tax: tax.toFixed(2),
         total: total.toFixed(2),

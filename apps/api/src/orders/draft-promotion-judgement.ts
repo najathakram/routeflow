@@ -37,6 +37,7 @@ export async function judgeDraftPromotion(
       id: string;
       customerId: string;
       source?: string | null;
+      sourceRecorded?: boolean | null;
       createdAt?: Date | string | null;
     };
     user: JwtPayload;
@@ -69,7 +70,7 @@ export async function judgeDraftPromotion(
     (await prisma.forTenant().orderRevision.findMany({
       where: { orderId: order.id, ...EDIT_REVISIONS.where },
       orderBy: EDIT_REVISIONS.orderBy,
-      select: { revisionNumber: true, editedByRole: true, snapshot: true, createdAt: true },
+      select: { revisionNumber: true, editedByRole: true, snapshot: true },
     })) ?? [];
   const authors = resolveLineAuthors(order, revisions, items);
   const promoter = restrictionChannelForPrincipal(user); // judged at ENTRY time, like the license guard

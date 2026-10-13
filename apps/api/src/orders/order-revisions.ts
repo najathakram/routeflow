@@ -47,6 +47,9 @@ const LIVE_LINES = {
 
 function revisionSnapshot(lines: RevisionLine[], totals: AppendOrderRevisionArgs[2]) {
   return {
+    // F1(i) (#3418): marks a revision written by the code that records `Order.source` (`sourceRecorded`), so the
+    // author rule can tell it from older, unrecorded history on a legacy order (line-author-channel.ts). No clock.
+    sourceRecorded: true as const,
     subtotal: totals.subtotal,
     tax: totals.tax,
     total: totals.total,

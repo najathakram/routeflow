@@ -89,6 +89,16 @@ describe("OrdersService.create: a customer cannot create a DRAFT (F1 ii)", () =>
     expect(h.prisma.order.create).toHaveBeenCalledTimes(1);
   });
 
+  it("create() records who created the order: source from the principal AND sourceRecorded: true", async () => {
+    await h.service.create(input("DRAFT"), operator);
+    await h.service.create(input("PENDING"), buyer);
+    const data = h.prisma.order.create.mock.calls.map((c: any[]) => c[0].data);
+    expect(data.map((d: any) => [d.source, d.sourceRecorded])).toEqual([
+      ["PHONE", true],
+      ["APP", true],
+    ]);
+  });
+
   it("the internal not-on-truck draft (change-request approval) is the one flagged exception", async () => {
     await expect(
       h.service.create(input("DRAFT"), buyerPseudo, { internalCustomerDraft: true }),

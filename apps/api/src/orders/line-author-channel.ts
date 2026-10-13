@@ -10,13 +10,15 @@ import {
  * the channel of whoever AUTHORED the line, mirroring order-templates' `leastPrivilegedAuthor` (an unattended run
  * is STAFF only when the creator AND the last items-editor are both known staff).
  *
- * No order line records its author, and this change adds no column. What an order does record:
- *  - `Order.source` (APP / PHONE / ROUTE): written by `create()` from the creating principal
- *    (`orderSourceForRole`). APP = buyer, PHONE = office staff, ROUTE = driver. Every row that predates the write
- *    (createdAt before ORDER_SOURCE_RECORDED_FROM) carries the column default APP, which says nothing about who made
- *    it: such an order is UNKNOWN_LEGACY and its creation channel is STAFF (see `creationChannelOf`).
+ * No order line records its author. What an order does record:
+ *  - `Order.source` (APP / PHONE / ROUTE): written by every create site from the creating principal
+ *    (`orderSourceForRole`) together with `Order.sourceRecorded: true`. APP = buyer, PHONE = office staff, ROUTE =
+ *    driver. A row with `sourceRecorded: false` (every row that predates the column, or one a rolled-back build
+ *    writes) carries the column default APP, which says nothing about who made it: such an order is UNKNOWN_LEGACY
+ *    and its creation channel is STAFF (see `creationChannelOf`). No clock is involved.
  *  - `OrderRevision` rows (editor role + the line snapshot AFTER each edit). Diffing consecutive snapshots says who
  *    added a line and who raised its quantity; a merge/sweep writes a revision with no editor, which reads as unknown.
+ *    A revision the new code writes carries `sourceRecorded: true` in its snapshot (`revisionSnapshot`): RECORDED.
  * Anything unknown is the BUYER channel. A staff edit never moves a buyer line to the staff channel.
  *
  * Pure: no I/O, no Prisma, no Nest. The callers read the order and its revisions.
@@ -43,34 +45,34 @@ export function channelOfOrderSource(source: string | null | undefined): Restric
   return source === "PHONE" || source === "ROUTE" ? "STAFF" : "BUYER_PORTAL";
 }
 
-/**
- * The instant `create()` started WRITING `Order.source` from the creating principal. PLACEHOLDER: the lead sets this
- * to the real merge/deploy instant. Every order created before it carries the column default APP whoever made it, so
- * that value is not evidence of a buyer: such an order is UNKNOWN_LEGACY and its creation channel is STAFF (the
- * line-level stricter rule still moves any line a buyer path ADDS afterwards to BUYER_PORTAL). Pinned in
- * line-author-channel.spec.ts so a change is deliberate.
- */
-export const ORDER_SOURCE_RECORDED_FROM = new Date("2026-10-16T00:00:00.000Z");
-
-const isLegacyInstant = (at: Date | string | null | undefined): boolean =>
-  !!at && new Date(at).getTime() < ORDER_SOURCE_RECORDED_FROM.getTime();
-
-/**
- * The channel an order's creation is judged on: STAFF for an UNKNOWN_LEGACY order (createdAt before
- * ORDER_SOURCE_RECORDED_FROM), else what the recorded `source` says. No createdAt reads as the recorded source.
- */
-export function creationChannelOf(order: {
+/** The slice of an `Order` the derivation reads. */
+export interface AuthorOrder {
   source?: string | null;
+  /** false = UNKNOWN_LEGACY. A caller that did not read the column (undefined) gets the recorded source. */
+  sourceRecorded?: boolean | null;
+  /** Only read for a legacy order whose first revision is recorded (see `resolveLineAuthors`). */
   createdAt?: Date | string | null;
-}): RestrictionChannel {
-  return isLegacyInstant(order.createdAt) ? "STAFF" : channelOfOrderSource(order.source);
+}
+
+/** UNKNOWN_LEGACY: the row says its `source` was NOT written from the creating principal. */
+const isUnknownLegacy = (order: AuthorOrder): boolean => order.sourceRecorded === false;
+
+/** A revision the new code wrote: `revisionSnapshot` stamps `sourceRecorded: true` on its snapshot. */
+const isRecordedRevision = (r: AuthorRevision): boolean =>
+  (r.snapshot as { sourceRecorded?: unknown } | null | undefined)?.sourceRecorded === true;
+
+/**
+ * The channel an order's creation is judged on: STAFF for an UNKNOWN_LEGACY order (`sourceRecorded` false), else
+ * what the recorded `source` says (APP, missing or unknown = the buyer).
+ */
+export function creationChannelOf(order: AuthorOrder): RestrictionChannel {
+  return isUnknownLegacy(order) ? "STAFF" : channelOfOrderSource(order.source);
 }
 
 /** The slice of an `OrderRevision` the derivation reads. */
 export interface AuthorRevision {
   editedByRole?: string | null;
-  createdAt?: Date | string | null;
-  /** `{ lineItems: [{ productId, qty }] }` after the edit (order-revisions.ts `revisionSnapshot`). */
+  /** `{ sourceRecorded?, lineItems: [{ productId, qty }] }` after the edit (order-revisions.ts `revisionSnapshot`). */
   snapshot?: unknown;
 }
 
@@ -99,42 +101,51 @@ function snapshotQuantities(snapshot: unknown): Map<string, number> | null {
  *    quantity takes the stricter of its current author and the editor; anything else is untouched.
  *  - A product missing from the last snapshot, a revision with no editor role and a malformed snapshot are all
  *    unknown, so the buyer channel.
+ * On an UNKNOWN_LEGACY order (`sourceRecorded` false) an UNRECORDED revision (written before the new code, no marker
+ * in its snapshot) is unknown history: its editor reads STAFF and an unreadable one is skipped. Unknown is STAFF there
+ * unless a RECORDED revision has a non-staff editor (evidence of a buyer path through the new code).
  */
 export function resolveLineAuthors(
-  order: { source?: string | null; createdAt?: Date | string | null },
+  order: AuthorOrder,
   revisions: readonly AuthorRevision[],
-  // The order's live lines, only read for a legacy order whose FIRST recorded revision is post-cutoff (no earlier
-  // snapshot to diff against): a product whose lines all predate the cutoff is legacy-authored.
+  // The order's live lines, only read for a legacy order whose FIRST revision is recorded (no earlier snapshot to
+  // diff against): a product whose lines ALL carry the order's own createdAt was written by the order's create (one
+  // nested write, one timestamp), so it predates that edit. A line an edit adds is written in the edit's transaction
+  // BEFORE its revision row, so "older than the revision" would read it as old: only equality with the order counts.
   lines: ReadonlyArray<{ productId?: string | null; createdAt?: Date | string | null }> = [],
 ): LineAuthors {
   const creation = creationChannelOf(order);
-  const legacy = isLegacyInstant(order.createdAt);
+  const legacy = isUnknownLegacy(order);
   if (revisions.length === 0) return { channelOf: () => creation };
 
-  const byProduct = new Map<string, boolean>(); // productId -> every line predates the cutoff
+  const orderAt = order.createdAt ? new Date(order.createdAt).getTime() : NaN;
+  const byProduct = new Map<string, boolean>(); // productId -> every line was written by the order's create
   for (const l of lines)
     if (l.productId)
       byProduct.set(
         l.productId,
-        (byProduct.get(l.productId) ?? true) && isLegacyInstant(l.createdAt),
+        (byProduct.get(l.productId) ?? true) &&
+          !!l.createdAt &&
+          new Date(l.createdAt).getTime() === orderAt,
       );
 
-  // What "unknown" reads as. A legacy order's lines are STAFF unless a post-cutoff BUYER path touched the order, so with
+  // On a legacy order an unrecorded revision is unknown history whose editor says nothing.
+  const history = (r: AuthorRevision) => legacy && !isRecordedRevision(r);
+  // What "unknown" reads as. A legacy order's lines are STAFF unless a RECORDED buyer path touched the order, so with
   // no such revision there is no evidence of a buyer and unknown is STAFF; everywhere else unknown is the buyer.
-  const postCutoffBuyer = revisions.some(
-    (r) => !(legacy && isLegacyInstant(r.createdAt)) && channelOfRole(r.editedByRole) !== "STAFF",
+  const recordedBuyer = revisions.some(
+    (r) => !history(r) && channelOfRole(r.editedByRole) !== "STAFF",
   );
-  const unknown: RestrictionChannel = legacy && !postCutoffBuyer ? "STAFF" : "BUYER_PORTAL";
+  const unknown: RestrictionChannel = legacy && !recordedBuyer ? "STAFF" : "BUYER_PORTAL";
 
   let state: Map<string, { qty: number; channel: RestrictionChannel }> | null = null;
   for (const r of revisions) {
     const qtys = snapshotQuantities(r.snapshot);
     if (!qtys) {
-      if (legacy && isLegacyInstant(r.createdAt)) continue; // unreadable pre-cutoff history says nothing
+      if (history(r)) continue; // unreadable unrecorded history says nothing
       return { channelOf: () => unknown }; // history we cannot read: unknown
     }
-    // A legacy order's pre-cutoff revisions are unknown history: their editor says nothing, so STAFF.
-    const editor = legacy && isLegacyInstant(r.createdAt) ? "STAFF" : channelOfRole(r.editedByRole);
+    const editor = history(r) ? "STAFF" : channelOfRole(r.editedByRole);
     const next = new Map<string, { qty: number; channel: RestrictionChannel }>();
     for (const [productId, qty] of qtys) {
       const prev = state?.get(productId);

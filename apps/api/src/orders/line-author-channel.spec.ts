@@ -1,5 +1,4 @@
 import {
-  ORDER_SOURCE_RECORDED_FROM,
   creationChannelOf,
   channelOfOrderSource,
   channelOfRole,
@@ -9,6 +8,10 @@ import {
   resolveLineAuthors,
   stricterChannel,
 } from "./line-author-channel";
+import * as channelModule from "./line-author-channel";
+import { appendOrderRevisionInTx } from "./order-revisions";
+import { readFileSync } from "fs";
+import { join } from "path";
 
 /**
  * F1(i): a DRAFT line is judged at the STRICTER of the promoter's channel and the channel of whoever AUTHORED
@@ -205,123 +208,215 @@ describe("leastPrivilegedPrincipal (the at-door approval): staff only when resol
 });
 
 /**
- * The legacy-source CUTOFF. `Order.source` was only written from the creating principal from
- * ORDER_SOURCE_RECORDED_FROM on; before that every row carries the column default APP, which says nothing about who
- * created it. A row created before the cutoff is UNKNOWN_LEGACY and its creation channel is STAFF; a buyer path that
- * ADDS a line after the cutoff is still judged on the BUYER channel.
+ * UNKNOWN_LEGACY, keyed on `Order.sourceRecorded` (no clock). Every create site of the new code writes
+ * `sourceRecorded: true` with the principal's `source`; a row with `sourceRecorded: false` (every row that existed
+ * before the column, and any row a rolled-back build writes) carries the column default APP whoever made it, so its
+ * creation channel is STAFF. A revision is RECORDED when its snapshot carries `sourceRecorded: true`, which
+ * `revisionSnapshot` stamps on every revision the new code writes. On a legacy order an unrecorded revision is
+ * unknown history (STAFF whoever edited); a recorded revision's editor role counts, so a line a buyer path ADDS to a
+ * legacy draft is still judged on the BUYER channel.
  */
-describe("legacy-source cutoff", () => {
-  const before = new Date(ORDER_SOURCE_RECORDED_FROM.getTime() - 1);
-  const after = new Date(ORDER_SOURCE_RECORDED_FROM.getTime());
-  const revAt = (
-    createdAt: Date,
+describe("legacy source (Order.sourceRecorded)", () => {
+  const T0 = new Date("2026-01-01T10:00:00.000Z"); // the legacy order's own createdAt
+  const legacy = { source: "APP", sourceRecorded: false, createdAt: T0 };
+  const recorded = { source: "APP", sourceRecorded: true, createdAt: T0 };
+  /** A revision the new code wrote (marked) or an older one (unmarked). */
+  const revBy = (
+    marked: boolean,
     editedByRole: string | null,
     ...lines: Array<[string, number]>
-  ) => ({ ...rev(editedByRole, ...lines), createdAt });
+  ) => ({
+    editedByRole,
+    snapshot: {
+      ...(marked ? { sourceRecorded: true } : {}),
+      lineItems: lines.map(([productId, qty]) => ({ productId, qty })),
+    },
+  });
   const line = (productId: string, createdAt: Date) => ({ productId, createdAt });
+  const ms = (n: number) => new Date(T0.getTime() + n);
 
-  it("ORDER_SOURCE_RECORDED_FROM is pinned (PLACEHOLDER: the lead sets the real deploy instant; change it deliberately)", () => {
-    expect(ORDER_SOURCE_RECORDED_FROM.toISOString()).toBe("2026-10-16T00:00:00.000Z");
+  it("creationChannelOf: sourceRecorded=false is STAFF whatever the source says; true follows the source", () => {
+    expect(creationChannelOf({ source: "APP", sourceRecorded: false })).toBe("STAFF");
+    expect(creationChannelOf({ source: "PHONE", sourceRecorded: false })).toBe("STAFF");
+    expect(creationChannelOf({ source: "APP", sourceRecorded: true })).toBe("BUYER_PORTAL");
+    expect(creationChannelOf({ source: "PHONE", sourceRecorded: true })).toBe("STAFF");
+    // A caller that did not read the column gets the recorded source (the stricter reading), never STAFF.
+    expect(creationChannelOf({ source: "APP" })).toBe("BUYER_PORTAL");
   });
 
-  it("creationChannelOf: before the cutoff is STAFF whatever the source says; at/after it follows the source", () => {
-    expect(creationChannelOf({ source: "APP", createdAt: before })).toBe("STAFF");
-    expect(creationChannelOf({ source: "PHONE", createdAt: before })).toBe("STAFF");
-    expect(creationChannelOf({ source: "APP", createdAt: after })).toBe("BUYER_PORTAL");
-    expect(creationChannelOf({ source: "PHONE", createdAt: after })).toBe("STAFF");
-    expect(creationChannelOf({ source: "APP" })).toBe("BUYER_PORTAL"); // no createdAt: the recorded source
-  });
-
-  it("a legacy APP order with no edits is STAFF-authored", () => {
-    expect(resolveLineAuthors({ source: "APP", createdAt: before }, []).channelOf("p1")).toBe(
+  it("no clock: createdAt has no bearing on the creation channel", () => {
+    const epoch = new Date(0);
+    const future = new Date("2999-01-01T00:00:00.000Z");
+    expect(creationChannelOf({ source: "APP", sourceRecorded: true, createdAt: epoch })).toBe(
+      "BUYER_PORTAL",
+    );
+    expect(creationChannelOf({ source: "APP", sourceRecorded: false, createdAt: future })).toBe(
       "STAFF",
     );
   });
 
-  it("a post-cutoff APP order with no edits is BUYER-authored", () => {
-    expect(resolveLineAuthors({ source: "APP", createdAt: after }, []).channelOf("p1")).toBe(
-      "BUYER_PORTAL",
-    );
+  it("the module exports no cutoff instant and builds no date", () => {
+    const mod = channelModule as Record<string, unknown>;
+    expect(Object.keys(mod).filter((k) => /RECORDED_FROM|CUTOFF/i.test(k))).toEqual([]);
+    expect(Object.values(mod).filter((v) => v instanceof Date)).toEqual([]);
+    const code = readFileSync(join(__dirname, "line-author-channel.ts"), "utf8");
+    expect(code).not.toMatch(/new Date\(\s*["'`\d]|Date\.now\(/);
   });
 
-  it("legacy: revisions before the cutoff are unknown history, so STAFF whoever edited", () => {
-    const a = resolveLineAuthors({ source: "APP", createdAt: before }, [
-      revAt(before, "CUSTOMER", ["old", 2]),
-    ]);
+  it("a legacy APP order with no edits is STAFF-authored", () => {
+    expect(resolveLineAuthors(legacy, []).channelOf("p1")).toBe("STAFF");
+  });
+
+  it("a recorded APP order with no edits is BUYER-authored", () => {
+    expect(resolveLineAuthors(recorded, []).channelOf("p1")).toBe("BUYER_PORTAL");
+  });
+
+  it("legacy: an unrecorded revision is unknown history, so STAFF whoever edited", () => {
+    const a = resolveLineAuthors(legacy, [revBy(false, "CUSTOMER", ["old", 2])]);
     expect(a.channelOf("old")).toBe("STAFF");
   });
 
-  it("legacy + a buyer edit after the cutoff: the new line is BUYER, the baseline line stays STAFF", () => {
-    const a = resolveLineAuthors({ source: "APP", createdAt: before }, [
-      revAt(before, "OPERATOR", ["old", 2]),
-      revAt(after, "CUSTOMER", ["old", 2], ["new", 1]),
+  it("legacy + a recorded buyer edit: the new line is BUYER, the baseline line stays STAFF", () => {
+    const a = resolveLineAuthors(legacy, [
+      revBy(false, "OPERATOR", ["old", 2]),
+      revBy(true, "CUSTOMER", ["old", 2], ["new", 1]),
     ]);
     expect(a.channelOf("old")).toBe("STAFF");
     expect(a.channelOf("new")).toBe("BUYER_PORTAL");
   });
 
-  it("legacy, the ONLY revision is post-cutoff: lines that predate the cutoff stay STAFF, a later line is BUYER", () => {
-    const a = resolveLineAuthors(
-      { source: "APP", createdAt: before },
-      [revAt(after, "CUSTOMER", ["old", 2], ["new", 1])],
-      [line("old", before), line("new", after)],
-    );
-    expect(a.channelOf("old")).toBe("STAFF");
-    expect(a.channelOf("new")).toBe("BUYER_PORTAL");
+  describe("legacy, the FIRST revision is recorded (no earlier snapshot to diff against)", () => {
+    it("a product whose lines carry the order's own createdAt (written by its create) stays STAFF", () => {
+      const a = resolveLineAuthors(
+        legacy,
+        [revBy(true, "CUSTOMER", ["old", 2], ["new", 1])],
+        [line("old", T0), line("new", ms(60_000))],
+      );
+      expect(a.channelOf("old")).toBe("STAFF");
+      expect(a.channelOf("new")).toBe("BUYER_PORTAL");
+    });
+
+    it("a line written in the edit's own transaction, just before its revision row, is the editor's (BUYER)", () => {
+      const a = resolveLineAuthors(
+        legacy,
+        [{ ...revBy(true, "CUSTOMER", ["added", 1]), createdAt: ms(60_001) }],
+        [line("added", ms(60_000))],
+      );
+      expect(a.channelOf("added")).toBe("BUYER_PORTAL");
+    });
+
+    it("a line OLDER than the order (moved in from another order) is not creation-authored: BUYER", () => {
+      const a = resolveLineAuthors(
+        legacy,
+        [revBy(true, "CUSTOMER", ["moved", 1])],
+        [line("moved", ms(-1))],
+      );
+      expect(a.channelOf("moved")).toBe("BUYER_PORTAL");
+    });
+
+    it("a product with one creation line and one later line is the editor's (BUYER)", () => {
+      const a = resolveLineAuthors(
+        legacy,
+        [revBy(true, "CUSTOMER", ["p", 3])],
+        [line("p", T0), line("p", ms(5))],
+      );
+      expect(a.channelOf("p")).toBe("BUYER_PORTAL");
+    });
+
+    it("no order createdAt: nothing reads as creation-authored (BUYER)", () => {
+      const a = resolveLineAuthors(
+        { source: "APP", sourceRecorded: false },
+        [revBy(true, "CUSTOMER", ["old", 1])],
+        [line("old", T0)],
+      );
+      expect(a.channelOf("old")).toBe("BUYER_PORTAL");
+    });
   });
 
-  it("legacy + a system merge revision (no editor role) after the cutoff: its new line is BUYER", () => {
-    const a = resolveLineAuthors({ source: "APP", createdAt: before }, [
-      revAt(before, "OPERATOR", ["old", 2]),
-      revAt(after, null, ["old", 2], ["cart", 1]),
+  it("legacy + a recorded system merge revision (no editor role): its new line is BUYER", () => {
+    const a = resolveLineAuthors(legacy, [
+      revBy(false, "OPERATOR", ["old", 2]),
+      revBy(true, null, ["old", 2], ["cart", 1]),
     ]);
     expect(a.channelOf("old")).toBe("STAFF");
     expect(a.channelOf("cart")).toBe("BUYER_PORTAL");
   });
 
-  describe("legacy: a line with NO post-cutoff buyer revision is STAFF, not unknown-buyer", () => {
-    const bad = (createdAt: Date, editedByRole: string | null) => ({
+  it("a recorded order ignores the marker: an unmarked buyer revision still counts", () => {
+    const a = resolveLineAuthors({ source: "PHONE", sourceRecorded: true }, [
+      revBy(false, "OPERATOR", ["s", 1]),
+      revBy(false, "CUSTOMER", ["s", 1], ["b", 1]),
+    ]);
+    expect(a.channelOf("s")).toBe("STAFF");
+    expect(a.channelOf("b")).toBe("BUYER_PORTAL");
+  });
+
+  describe("legacy: a line with NO recorded buyer revision is STAFF, not unknown-buyer", () => {
+    const bad = (marked: boolean, editedByRole: string | null) => ({
       editedByRole,
-      createdAt,
-      snapshot: "not-a-snapshot",
-    });
-    const legacy = { source: "APP", createdAt: before };
-
-    it("an unreadable PRE-cutoff snapshot is ignored (STAFF), not BUYER", () => {
-      expect(resolveLineAuthors(legacy, [bad(before, "CUSTOMER")]).channelOf("p")).toBe("STAFF");
+      snapshot: marked ? { sourceRecorded: true, lineItems: "nope" } : "not-a-snapshot",
     });
 
-    it("an unreadable post-cutoff STAFF revision is still STAFF", () => {
-      expect(resolveLineAuthors(legacy, [bad(after, "OPERATOR")]).channelOf("p")).toBe("STAFF");
+    it("an unreadable unrecorded snapshot is ignored (STAFF), not BUYER", () => {
+      expect(resolveLineAuthors(legacy, [bad(false, "CUSTOMER")]).channelOf("p")).toBe("STAFF");
     });
 
-    it("a product no revision lists, with only staff/legacy revisions, is STAFF", () => {
+    it("an unreadable recorded STAFF revision is still STAFF", () => {
+      expect(resolveLineAuthors(legacy, [bad(true, "OPERATOR")]).channelOf("p")).toBe("STAFF");
+    });
+
+    it("a product no revision lists, with only staff/unrecorded revisions, is STAFF", () => {
       const a = resolveLineAuthors(legacy, [
-        revAt(before, "CUSTOMER", ["a", 1]),
-        revAt(after, "OPERATOR", ["a", 1]),
+        revBy(false, "CUSTOMER", ["a", 1]),
+        revBy(true, "OPERATOR", ["a", 1]),
       ]);
       expect(a.channelOf("not-in-any-snapshot")).toBe("STAFF");
     });
 
-    it("control: an unreadable post-cutoff BUYER revision is unknown, so BUYER", () => {
-      expect(resolveLineAuthors(legacy, [bad(after, "CUSTOMER")]).channelOf("p")).toBe(
+    it("control: an unreadable recorded BUYER revision is unknown, so BUYER", () => {
+      expect(resolveLineAuthors(legacy, [bad(true, "CUSTOMER")]).channelOf("p")).toBe(
         "BUYER_PORTAL",
       );
     });
 
-    it("control: a product no revision lists, with a post-cutoff buyer revision present, is BUYER", () => {
-      const a = resolveLineAuthors(legacy, [revAt(after, "CUSTOMER", ["a", 1])]);
+    it("control: a product no revision lists, with a recorded buyer revision present, is BUYER", () => {
+      const a = resolveLineAuthors(legacy, [revBy(true, "CUSTOMER", ["a", 1])]);
       expect(a.channelOf("not-in-any-snapshot")).toBe("BUYER_PORTAL");
     });
 
     it("control: a NON-legacy order keeps unknown = BUYER", () => {
-      const fresh = { source: "PHONE", createdAt: after };
-      expect(resolveLineAuthors(fresh, [bad(after, "OPERATOR")]).channelOf("p")).toBe(
+      const fresh = { source: "PHONE", sourceRecorded: true };
+      expect(resolveLineAuthors(fresh, [bad(true, "OPERATOR")]).channelOf("p")).toBe(
         "BUYER_PORTAL",
       );
-      expect(resolveLineAuthors(fresh, [revAt(after, "OPERATOR", ["a", 1])]).channelOf("zzz")).toBe(
+      expect(resolveLineAuthors(fresh, [revBy(true, "OPERATOR", ["a", 1])]).channelOf("zzz")).toBe(
         "BUYER_PORTAL",
       );
     });
+  });
+});
+
+describe("revisionSnapshot marks every revision the new code writes (sourceRecorded: true)", () => {
+  it("appendOrderRevisionInTx stamps the marker on the snapshot it inserts", async () => {
+    const create = jest.fn().mockResolvedValue({});
+    const tx = {
+      orderItem: { findMany: jest.fn().mockResolvedValue([]) },
+      orderRevision: { aggregate: jest.fn().mockResolvedValue({ _max: {} }), create },
+    };
+    await appendOrderRevisionInTx(
+      tx as never,
+      "t-1",
+      "ord-1",
+      { sub: "u", role: "CUSTOMER" } as never,
+      { subtotal: 0, tax: 0, total: 0 },
+      "EDIT",
+    );
+    expect(create).toHaveBeenCalledWith(
+      expect.objectContaining({
+        data: expect.objectContaining({
+          snapshot: expect.objectContaining({ sourceRecorded: true, lineItems: [] }),
+        }),
+      }),
+    );
   });
 });

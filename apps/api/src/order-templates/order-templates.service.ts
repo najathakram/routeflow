@@ -1011,6 +1011,7 @@ export class OrderTemplatesService {
           // Unattended run: no principal creates it, and the template's author is judged per line
           // (leastPrivilegedAuthor), so the recorded source is the stricter, buyer side (the column default, explicit).
           source: "APP",
+          sourceRecorded: true, // F1(i): the source above is deliberate, not the column default
           subtotal,
           tax,
           total,

@@ -2089,6 +2089,7 @@ export class OrdersService implements OnApplicationBootstrap {
                 commissionRatePct,
                 fulfillPath,
                 source: orderSourceForRole(user.role), // F1(i): who authored the lines (line-author-channel.ts)
+                sourceRecorded: true, // F1(i): the source above is from the creating principal, not the column default
                 // SA-672e/row 317: only the counter-sale POST passes this; it also stamps the cashier (a replay writes nothing).
                 ...(options.counterSale ? { counterSale: true, soldById: user.sub } : {}),
                 lineItems: { create: lineItemsData },

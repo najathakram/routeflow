@@ -1,15 +1,17 @@
 import { ConflictException } from "@nestjs/common";
 import { buildOrdersService, operatorPayload } from "./testing/orders-service-harness";
-import { ORDER_SOURCE_RECORDED_FROM } from "./line-author-channel";
 
 /**
- * The legacy-source CUTOFF at the DRAFT promotion (changeStatus). An order created before
- * ORDER_SOURCE_RECORDED_FROM carries the column-default source APP whoever created it, so it is UNKNOWN_LEGACY and
- * its creation channel is STAFF; a line a buyer path adds after the cutoff is still judged on BUYER_PORTAL.
+ * UNKNOWN_LEGACY at the DRAFT promotion (changeStatus), keyed on `Order.sourceRecorded` (no clock). A row with
+ * sourceRecorded=false carries the column-default source APP whoever created it, so its creation channel is STAFF;
+ * a line a buyer path adds through the new code (a RECORDED revision, `sourceRecorded: true` in its snapshot) is
+ * still judged on BUYER_PORTAL. createdAt plays no part: the legacy row below is dated far in the future and the
+ * recorded one at the epoch, so a clock cutoff would read both the other way round.
  */
-describe("changeStatus: DRAFT promotion and the legacy-source cutoff", () => {
-  const BEFORE = new Date(ORDER_SOURCE_RECORDED_FROM.getTime() - 86_400_000);
-  const AFTER = new Date(ORDER_SOURCE_RECORDED_FROM.getTime() + 86_400_000);
+describe("changeStatus: DRAFT promotion and the legacy source (sourceRecorded)", () => {
+  const CREATED = new Date("2999-01-01T00:00:00.000Z"); // a legacy row's createdAt (no clock reads it)
+  const LATER = new Date(CREATED.getTime() + 60_000);
+  const EPOCH = new Date(0);
   const draft = {
     id: "ord-1",
     customerId: "cust-1",
@@ -17,7 +19,8 @@ describe("changeStatus: DRAFT promotion and the legacy-source cutoff", () => {
     orderNumber: "ORD-1",
     status: "DRAFT",
     source: "APP",
-    createdAt: BEFORE,
+    sourceRecorded: false,
+    createdAt: CREATED,
     orderDate: null as Date | null,
     routeRunId: null,
     routeRunStopId: null,
@@ -31,26 +34,21 @@ describe("changeStatus: DRAFT promotion and the legacy-source cutoff", () => {
     trackedCategoryId: null,
     createdAt,
   });
-  const revision = (
-    revisionNumber: number,
-    createdAt: Date,
-    role: string | null,
-    ...ids: string[]
-  ) => ({
+  /** A revision the new code wrote: its snapshot carries the `sourceRecorded` marker. */
+  const revision = (revisionNumber: number, role: string | null, ...ids: string[]) => ({
     revisionNumber,
-    createdAt,
     editedByRole: role,
-    snapshot: { lineItems: ids.map((productId) => ({ productId, qty: 2 })) },
+    snapshot: { sourceRecorded: true, lineItems: ids.map((productId) => ({ productId, qty: 2 })) },
   });
 
   let h: Awaited<ReturnType<typeof buildOrdersService>>;
   const promote = () => h.service.changeStatus("ord-1", { status: "PENDING" as never }, operator);
   const arrange = (
-    createdAt: Date,
+    order: { sourceRecorded: boolean; createdAt: Date },
     lines: Array<ReturnType<typeof line>>,
     revisions: unknown[],
   ) => {
-    h.prisma.order.findUnique.mockResolvedValue({ ...draft, createdAt });
+    h.prisma.order.findUnique.mockResolvedValue({ ...draft, ...order });
     h.prisma.orderItem.findMany.mockResolvedValue(lines);
     h.prisma.orderRevision.findMany.mockResolvedValue(revisions);
     h.prisma.orderRevision.aggregate.mockResolvedValue({
@@ -79,7 +77,7 @@ describe("changeStatus: DRAFT promotion and the legacy-source cutoff", () => {
   });
 
   it("(a) a legacy APP draft promoted by staff is judged on STAFF: a portal-only limit does not block", async () => {
-    arrange(BEFORE, [line("p-portal-only", BEFORE)], []);
+    arrange({ sourceRecorded: false, createdAt: CREATED }, [line("p-portal-only", CREATED)], []);
     bannedOn("BUYER_PORTAL", "p-portal-only");
 
     await expect(promote()).resolves.toMatchObject({ status: "PENDING" });
@@ -91,15 +89,15 @@ describe("changeStatus: DRAFT promotion and the legacy-source cutoff", () => {
   });
 
   it("(a) a legacy APP draft promoted by staff still refuses a staff-level ban", async () => {
-    arrange(BEFORE, [line("p-banned", BEFORE)], []);
+    arrange({ sourceRecorded: false, createdAt: CREATED }, [line("p-banned", CREATED)], []);
     bannedOn("STAFF", "p-banned");
 
     await expect(promote()).rejects.toMatchObject({ response: { code: "SELLING_RESTRICTED" } });
     expect(h.prisma.order.updateMany).not.toHaveBeenCalled();
   });
 
-  it("(b) a post-cutoff customer draft (source APP) is judged on BUYER_PORTAL", async () => {
-    arrange(AFTER, [line("p-portal-only", AFTER)], []);
+  it("(b) a recorded customer draft (source APP, sourceRecorded) is judged on BUYER_PORTAL", async () => {
+    arrange({ sourceRecorded: true, createdAt: EPOCH }, [line("p-portal-only", EPOCH)], []);
     bannedOn("BUYER_PORTAL", "p-portal-only");
 
     await expect(promote()).rejects.toMatchObject({ response: { code: "SELLING_RESTRICTED" } });
@@ -108,11 +106,11 @@ describe("changeStatus: DRAFT promotion and the legacy-source cutoff", () => {
     );
   });
 
-  it("(c) a legacy draft plus a buyer-added line after the cutoff: the new line is BUYER, the legacy line STAFF", async () => {
+  it("(c) a legacy draft plus a line a buyer added through the new code: the new line is BUYER, the legacy line STAFF", async () => {
     arrange(
-      BEFORE,
-      [line("p-old", BEFORE), line("p-new", AFTER)],
-      [revision(1, AFTER, "CUSTOMER", "p-old", "p-new")],
+      { sourceRecorded: false, createdAt: CREATED },
+      [line("p-old", CREATED), line("p-new", LATER)],
+      [revision(1, "CUSTOMER", "p-old", "p-new")],
     );
     bannedOn("BUYER_PORTAL", "p-new");
 
@@ -125,9 +123,9 @@ describe("changeStatus: DRAFT promotion and the legacy-source cutoff", () => {
 
   it("(c) control: the legacy line alone (portal-only ban on it) still promotes on STAFF", async () => {
     arrange(
-      BEFORE,
-      [line("p-old", BEFORE), line("p-new", AFTER)],
-      [revision(1, AFTER, "CUSTOMER", "p-old", "p-new")],
+      { sourceRecorded: false, createdAt: CREATED },
+      [line("p-old", CREATED), line("p-new", LATER)],
+      [revision(1, "CUSTOMER", "p-old", "p-new")],
     );
     bannedOn("BUYER_PORTAL", "p-old");
 

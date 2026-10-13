@@ -1230,6 +1230,8 @@ async function writeOrders(pricedPlans) {
         orderNumber,
         status: plan.status,
         source: chance(0.35) ? "APP" : chance(0.5) ? "PHONE" : "ROUTE",
+        // F1(i): the synthetic source above is meant as recorded (the column must exist: owner migrates first).
+        sourceRecorded: true,
         subtotal: plan.subtotal,
         tax: plan.tax,
         total: plan.total,

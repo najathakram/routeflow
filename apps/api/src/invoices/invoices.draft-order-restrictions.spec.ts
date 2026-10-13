@@ -30,7 +30,6 @@ import { entitlementAuthorityFromEntitlements } from "../testing/entitlement-aut
 import { CommissionEngineService } from "../sales-agents/commission-engine.service";
 import { SellingRestrictionsService } from "../selling-restrictions/selling-restrictions.service";
 import { EntitlementAuthority } from "../billing/entitlement-authority.service";
-import { ORDER_SOURCE_RECORDED_FROM } from "../orders/line-author-channel";
 import { fillSparseCasBasis } from "./testing/sparse-line-fixtures";
 
 describe("InvoicesService — DRAFT order invoicing is gated (F2)", () => {
@@ -388,22 +387,23 @@ describe("InvoicesService — DRAFT order invoicing is gated (F2)", () => {
   // F2 judges like promotion: each billed line at the STRICTER of the acting STAFF channel and its author's channel,
   // so a buyer-authored DRAFT billed (a deposit mirror goes SENT) cannot slip a portal-only ban through.
   describe("author channel (judged like promotion)", () => {
-    const AFTER = new Date(ORDER_SOURCE_RECORDED_FROM.getTime() + 86_400_000);
-    const BEFORE = new Date(ORDER_SOURCE_RECORDED_FROM.getTime() - 86_400_000);
+    // No clock: a legacy row dated far in the future and a recorded row at the epoch read by the column alone.
+    const RECORDED = { sourceRecorded: true, createdAt: new Date(0) };
+    const LEGACY = { sourceRecorded: false, createdAt: new Date("2999-01-01T00:00:00.000Z") };
     /** A product refused on the buyer portal only (a portal-only limit). */
     const portalOnlyBan = () =>
       restrictions().assertLinesSellable.mockImplementation(async (p: { channel: string }) => {
         if (p.channel === "BUYER_PORTAL") throw refusal();
       });
-    const asOrder = async (source: string, createdAt: Date) => {
+    const asOrder = async (source: string, row: typeof RECORDED) => {
       setup("DRAFT", false, true);
       const cur = await prisma.order.findUnique({} as any);
-      prisma.order.findUnique.mockResolvedValue({ ...cur, source, createdAt });
+      prisma.order.findUnique.mockResolvedValue({ ...cur, source, ...row });
       portalOnlyBan();
     };
 
-    it("a buyer-authored DRAFT (source APP, after the cutoff) billed with a deposit is refused on the BUYER channel", async () => {
-      await asOrder("APP", AFTER);
+    it("a buyer-authored DRAFT (source APP, sourceRecorded) billed with a deposit is refused on the BUYER channel", async () => {
+      await asOrder("APP", RECORDED);
       const err: any = await service.createInvoiceFromOrder("ord-1").catch((e) => e);
       expect(err).toBeInstanceOf(ConflictException);
       expect(restrictions().assertLinesSellable).toHaveBeenCalledWith(
@@ -413,7 +413,7 @@ describe("InvoicesService — DRAFT order invoicing is gated (F2)", () => {
     });
 
     it("control: a staff-authored DRAFT (source PHONE) is judged on STAFF only and bills", async () => {
-      await asOrder("PHONE", AFTER);
+      await asOrder("PHONE", RECORDED);
       await service.createInvoiceFromOrder("ord-1");
       expect(restrictions().assertLinesSellable).toHaveBeenCalledTimes(1);
       expect(restrictions().assertLinesSellable).toHaveBeenCalledWith(
@@ -422,8 +422,8 @@ describe("InvoicesService — DRAFT order invoicing is gated (F2)", () => {
       expect(prisma.invoice.create).toHaveBeenCalledTimes(1);
     });
 
-    it("control: a LEGACY order (created before the cutoff, source APP) is STAFF-authored and bills", async () => {
-      await asOrder("APP", BEFORE);
+    it("control: a LEGACY order (sourceRecorded=false, source APP) is STAFF-authored and bills", async () => {
+      await asOrder("APP", LEGACY);
       await service.createInvoiceFromOrder("ord-1");
       expect(restrictions().assertLinesSellable).toHaveBeenCalledWith(
         expect.objectContaining({ channel: "STAFF" }),
