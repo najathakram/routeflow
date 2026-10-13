@@ -6,7 +6,9 @@ import { SettingsHub } from "./SettingsHub";
 
 const restrictions = jest.fn();
 let unitsEnabled = true;
-jest.mock("@/lib/api/product-units", () => ({ useUnitsEnabled: () => unitsEnabled }));
+jest.mock("@/lib/api/units-settings-flag", () => ({
+  useUnitsSettingsEnabled: () => unitsEnabled,
+}));
 jest.mock("@/lib/api/restrictions-settings", () => ({
   useRestrictionsSettings: () => restrictions(),
 }));
@@ -137,7 +139,7 @@ describe("SettingsHub regroup", () => {
       expect(within(unitsLinks()[0]).getByText("Units")).toBeInTheDocument();
     });
 
-    it("ships DARK: without flag.units_v1 the tile is gone, and search cannot find it either", () => {
+    it("ships DARK: without flag.units_settings_v1 the tile is gone, and search cannot find it either", () => {
       unitsEnabled = false;
       const noUnitsLinks = () =>
         screen.queryAllByRole("link").filter((l) => l.getAttribute("href") === "/settings/units");

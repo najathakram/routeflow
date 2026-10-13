@@ -20,7 +20,7 @@ jest.mock("@routeflow/ui/web", () => ({
 jest.mock("@/lib/page-title-context", () => ({ usePageTitle: () => ({ setTitle: jest.fn() }) }));
 const flagRefetch = jest.fn();
 let flag = { enabled: true, isLoading: false, isError: false, refetch: flagRefetch };
-jest.mock("@/lib/api/product-units", () => ({ useUnitsFlag: () => flag }));
+jest.mock("@/lib/api/units-settings-flag", () => ({ useUnitsSettingsFlag: () => flag }));
 jest.mock("@/lib/api/tenant-units", () => ({
   ...jest.requireActual("@/lib/api/tenant-units"),
   useTenantUnits: () => ({ ...state, refetch }),
@@ -57,7 +57,7 @@ beforeEach(() => {
   setOnline(true);
 });
 
-describe("Units page: ships DARK behind flag.units_v1", () => {
+describe("Units page: ships DARK behind flag.units_settings_v1", () => {
   it("without the flag it shows a plain not-available message and never asks for the units", () => {
     flag = { enabled: false, isLoading: false, isError: false, refetch: flagRefetch };
     setUnits(u("Case"));

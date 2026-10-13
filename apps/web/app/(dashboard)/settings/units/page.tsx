@@ -7,7 +7,7 @@ import { Button, Modal, Skeleton, useToast } from "@routeflow/ui/web";
 import { unitNameKey } from "@routeflow/types";
 import { usePageTitle } from "@/lib/page-title-context";
 import { MORE_UNIT_CHIPS, UNIT_CHIPS } from "@/lib/common-units";
-import { useUnitsFlag } from "@/lib/api/product-units";
+import { useUnitsSettingsFlag } from "@/lib/api/units-settings-flag";
 import {
   checkUnitName,
   normalizeUnitName,
@@ -56,11 +56,11 @@ function useOnline(): boolean {
 }
 
 /**
- * Ships DARK behind `flag.units_v1` (granted per tenant once its unit backfill ran): without the flag
+ * Ships DARK behind `flag.units_settings_v1` (granted per tenant once its unit backfill ran): without the flag
  * the API refuses every call, so the screen is never mounted and the units query is never sent.
  */
 export default function UnitsPage() {
-  const { enabled, isLoading, isError, refetch } = useUnitsFlag();
+  const { enabled, isLoading, isError, refetch } = useUnitsSettingsFlag();
   if (isLoading) return null;
   if (!enabled && isError) {
     return (

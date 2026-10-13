@@ -16,14 +16,14 @@ import { UpdateUnitDto } from "./dto/update-unit.dto";
  * rename, archive and restore; drivers and buyers may not. Deliberately NO DELETE route: units are
  * archived, never deleted.
  *
- * DARK: gated on `flag.units_v1` (enforced but ungranted, so invisible until the owner grants it to a
- * tenant). A rename reaches a level only through `ProductUnit.tenantUnitId`; levels that predate the
+ * Gated on `flag.units_settings_v1` (ENFORCED, never default-granted: invisible and refused until the
+ * owner grants it to a tenant; `flag.units_v1` alone does NOT open it, it already runs on a live tenant). A rename reaches a level only through `ProductUnit.tenantUnitId`; levels that predate the
  * link (and the unit names behind them) are filled in by the U-6 backfill, so the owner grants the
  * flag to a tenant only after that backfill has run for it.
  */
 @Controller("units")
 @UseGuards(JwtAuthGuard, RolesGuard, PlanFlagGuard)
-@RequirePlanFlag("flag.units_v1")
+@RequirePlanFlag("flag.units_settings_v1")
 export class UnitsController {
   constructor(private readonly units: UnitsService) {}
 

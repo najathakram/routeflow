@@ -16,7 +16,7 @@ import {
 } from "lucide-react";
 import { Card, Input, cn } from "@routeflow/ui/web";
 import { useFleetAccess } from "@/lib/api/addons";
-import { useUnitsEnabled } from "@/lib/api/product-units";
+import { useUnitsSettingsEnabled } from "@/lib/api/units-settings-flag";
 import { ReadinessBanner } from "./ReadinessBanner";
 import { RouteDefaultsCard } from "./RouteDefaultsCard";
 import { BuyerOversellCard } from "./BuyerOversellCard";
@@ -259,8 +259,8 @@ export function SettingsHub({ isAdmin }: { isAdmin: boolean }) {
   const [query, setQuery] = React.useState("");
   // Fleet-off (fulfilment model set, no routes / delivery module): no route defaults to configure.
   const { fleet } = useFleetAccess();
-  // Settings > Units ships dark behind flag.units_v1 (granted per tenant once its unit backfill ran).
-  const unitsEnabled = useUnitsEnabled();
+  // Settings > Units ships dark behind flag.units_settings_v1 (granted per tenant once its unit backfill ran).
+  const unitsEnabled = useUnitsSettingsEnabled();
 
   // A hub tile that points at a card on this page ("#out-of-stock-ordering", "#route-defaults") is
   // a plain hash link, but the cards are client-rendered: a page LOADED with the hash has nothing
