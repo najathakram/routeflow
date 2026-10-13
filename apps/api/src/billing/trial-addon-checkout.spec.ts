@@ -580,6 +580,11 @@ function make(opts: Opts = {}) {
     planTransition,
     mutations,
   );
+  // These specs are about the apply transaction, not the price push (a failed post-checkout push now throws so
+  // Stripe redelivers it): the push is stubbed as "already at the resolved price".
+  jest
+    .spyOn(billing, "syncStripeSubscriptionPrice")
+    .mockResolvedValue({ synced: true, unchanged: true, proration: "none" });
 
   const session = (extra: Record<string, unknown> = {}) => ({
     id: "cs_1",
