@@ -47,7 +47,7 @@ import { fileURLToPath } from "node:url";
 import { resolveReportDbUrl } from "./lib/report-db-url.mjs";
 const require = createRequire(import.meta.url);
 const { isTestTenant } = require("../../../scripts/lib/test-tenants.cjs");
-const { computeCategoryTax, regulatedUnitBasis } = require("@routeflow/pricing");
+const { computeCategoryTax, regulatedUnitBasis, roundMoney } = require("@routeflow/pricing");
 
 const NAME = "report-b297-trio-sizing";
 const PAGE = 500;
@@ -90,7 +90,7 @@ export function pageSql(table) {
  LIMIT ${PAGE}`;
 }
 
-const cents = (n) => Math.round((Number(n) || 0) * 100);
+const cents = (n) => Math.round(roundMoney(Number(n) || 0) * 100);
 
 /**
  * Classify one in-scope line. `row`: the page columns above. Returns { nullTrio, mismatch, noCategory }.
