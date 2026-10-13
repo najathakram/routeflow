@@ -120,6 +120,26 @@ describe("ChangeRequestsService.create: ADD_ITEM filing and buyer visibility (F1
     await expectHidden404();
   });
 
+  it("a hidden FAMILY product is the same 404, not a 400 that names it", async () => {
+    prisma.product.findFirst.mockResolvedValue(product({ kind: "FAMILY", portalVisible: false }));
+    await expectHidden404();
+  });
+
+  it("a nonexistent product and a hidden one are indistinguishable (same status and body)", async () => {
+    prisma.product.findFirst.mockResolvedValue(null);
+    const missing = await file(customerUser).catch((e) => e);
+    prisma.product.findFirst.mockResolvedValue(product({ portalVisible: false }));
+    const hidden = await file(customerUser).catch((e) => e);
+    expect(missing).toBeInstanceOf(NotFoundException);
+    expect(hidden).toBeInstanceOf(NotFoundException);
+    expect(missing.getResponse()).toEqual(hidden.getResponse());
+  });
+
+  it("control: a DRIVER's door add of a nonexistent product keeps its 400", async () => {
+    prisma.product.findFirst.mockResolvedValue(null);
+    await expect(file(driverUser)).rejects.toMatchObject({ status: 400 });
+  });
+
   it("control: a visible, allowed product files, judged on the BUYER_PORTAL channel", async () => {
     prisma.product.findFirst.mockResolvedValue(product());
 

@@ -200,9 +200,13 @@ export class ChangeRequestsService {
             ...PORTAL_PARENT_INCLUDE,
           },
         });
-        if (!product) throw new BadRequestException("Product not found");
+        if (user.role === UserRole.CUSTOMER) {
+          // A buyer learns nothing about a product they cannot see: missing and hidden are the SAME 404, and the
+          // visibility check runs BEFORE the family/sellable one (whose 400 names the product).
+          if (!product) throw new NotFoundException("Product not found");
+          await this.assertBuyerMayFile(product, order);
+        } else if (!product) throw new BadRequestException("Product not found");
         assertSellableLines([product]); // WS8: refuse at filing time, not only at approval
-        if (user.role === UserRole.CUSTOMER) await this.assertBuyerMayFile(product, order);
         productId = product.id;
         payload = {
           productId: product.id,
