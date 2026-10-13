@@ -1311,3 +1311,30 @@ describe("applyBoxEdit / applyPieceEdit (SA-085i(c))", () => {
     expect(applyPieceEdit(split, 5, 12)).toMatchObject({ boxes: 2, pieces: 5, qty: 29 });
   });
 });
+
+describe("buildCreditRows", () => {
+  // eslint-disable-next-line @typescript-eslint/no-var-requires
+  const { buildCreditRows } = require("../lib/edit-items-draft");
+  const cn = (id: string) => ({ id, creditNoteNumber: `CN-${id}`, amount: 10 });
+
+  it("merges open, applied-but-spent and just-created credits, deduped by id", () => {
+    const order = {
+      orderCreditNotes: [
+        { creditNoteId: "a", creditNote: { creditNoteNumber: "X", amount: "99" } },
+        {
+          creditNoteId: "b",
+          creditNote: { creditNoteNumber: "CN-b", amount: "5.5", amountUsed: "5.5" },
+        },
+        { creditNoteId: "z" },
+      ],
+    };
+    const rows = buildCreditRows([cn("a")], order, [cn("a"), cn("c")]);
+    expect(rows.map((r: any) => r.id)).toEqual(["a", "b", "c"]);
+    expect(rows[0].amount).toBe(10);
+    expect(rows[1]).toMatchObject({ amount: 5.5, amountUsed: 5.5, expiresAt: null });
+  });
+
+  it("tolerates a missing order and list", () => {
+    expect(buildCreditRows(undefined, undefined, [])).toEqual([]);
+  });
+});

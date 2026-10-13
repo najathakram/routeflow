@@ -1094,6 +1094,64 @@ export function appliedCreditNotesPayload(
   });
 }
 
+export interface CreditRow {
+  id: string;
+  creditNoteNumber: string;
+  reason?: string;
+  amount: number;
+  amountUsed?: number;
+  expiresAt?: string | null;
+}
+
+/**
+ * Rows for the apply-credit list: the customer's open credits, PLUS any credit already applied to
+ * the order even if no longer ISSUED, PLUS any just created this session (deduped by id, in that
+ * order). Moved verbatim out of the screen (size ratchet, row 262).
+ */
+export function buildCreditRows(
+  open: readonly any[] | undefined,
+  order: unknown,
+  justCreated: readonly any[],
+): CreditRow[] {
+  const rows = new Map<string, CreditRow>();
+  for (const cn of open ?? []) {
+    rows.set(cn.id, {
+      id: cn.id,
+      creditNoteNumber: cn.creditNoteNumber,
+      reason: cn.reason,
+      amount: cn.amount,
+      amountUsed: cn.amountUsed,
+      expiresAt: cn.expiresAt,
+    });
+  }
+  for (const oc of (order as any)?.orderCreditNotes ?? []) {
+    if (!rows.has(oc.creditNoteId) && oc.creditNote) {
+      rows.set(oc.creditNoteId, {
+        id: oc.creditNoteId,
+        creditNoteNumber: oc.creditNote.creditNoteNumber,
+        reason: oc.creditNote.reason ?? undefined,
+        amount: toNumber(oc.creditNote.amount),
+        amountUsed:
+          oc.creditNote.amountUsed != null ? toNumber(oc.creditNote.amountUsed) : undefined,
+        expiresAt: oc.creditNote.expiresAt ?? null,
+      });
+    }
+  }
+  for (const cn of justCreated) {
+    if (!rows.has(cn.id)) {
+      rows.set(cn.id, {
+        id: cn.id,
+        creditNoteNumber: cn.creditNoteNumber,
+        reason: cn.reason,
+        amount: cn.amount,
+        amountUsed: cn.amountUsed,
+        expiresAt: cn.expiresAt,
+      });
+    }
+  }
+  return Array.from(rows.values());
+}
+
 // ── Reload re-base ───────────────────────────────────────────────────────────────────────────
 // The editor diffs its staged lines against the order as it OPENED (`frozen`). A line the user never
 // touched but another writer changed would otherwise differ from the refreshed order and be sent as
