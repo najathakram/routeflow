@@ -6,8 +6,11 @@ import { join } from "path";
  * PR #3418 MUST 5: `Order.sourceRecorded` replaces the clock cutoff of the F1(i) author rule. ONE additive column,
  * BOOLEAN NOT NULL DEFAULT false: a constant default, so Postgres 11+ adds it as a catalog change (no table rewrite,
  * no backfill). Every existing row reads false = UNKNOWN_LEGACY (judged on STAFF), which is exactly the intent; the
- * new code writes true at every create site. Pinned by shape: one transaction, the project's bounded lock_timeout,
- * the one ADD COLUMN, nothing else; and the Prisma model carries the same field.
+ * new code writes true at every create site.
+ * SA ruling (#3418): the per-line author is an EXPLICIT marker, `OrderItem.authorChannel` (TEXT, nullable, NO
+ * default, NO backfill: a nullable column without a default is catalog-only too). NULL = written before the marker,
+ * read through the order-level rule. Pinned by shape: one transaction, the project's bounded lock_timeout, the two
+ * ADD COLUMNs, nothing else; and the Prisma models carry the same fields.
  */
 const FOLDER = "20261013000000_order_source_recorded";
 const PREFIX = "20261013000000";
@@ -28,7 +31,7 @@ describe("order sourceRecorded migration shape (PR #3418 MUST 5)", () => {
     expect(readdirSync(MIGRATIONS_DIR).filter((n) => n.startsWith(PREFIX))).toEqual([FOLDER]);
   });
 
-  it("is exactly BEGIN; lock_timeout; ADD COLUMN sourceRecorded BOOLEAN NOT NULL DEFAULT false; COMMIT", () => {
+  it("is exactly BEGIN; lock_timeout; the two ADD COLUMNs (sourceRecorded, authorChannel); COMMIT", () => {
     const sql = executableSql();
     expect((sql.match(/^BEGIN;/gm) ?? []).length).toBe(1);
     expect((sql.match(/^COMMIT;/gm) ?? []).length).toBe(1);
@@ -40,6 +43,7 @@ describe("order sourceRecorded migration shape (PR #3418 MUST 5)", () => {
       "BEGIN",
       "SET LOCAL lock_timeout = '5s'",
       `ALTER TABLE "Order" ADD COLUMN "sourceRecorded" BOOLEAN NOT NULL DEFAULT false`,
+      `ALTER TABLE "OrderItem" ADD COLUMN "authorChannel" TEXT`,
       "COMMIT",
     ]);
   });
@@ -60,6 +64,23 @@ describe("order sourceRecorded migration shape (PR #3418 MUST 5)", () => {
     expect(order.slice(0, order.indexOf("\n}"))).toMatch(
       /^\s+sourceRecorded\s+Boolean\s+@default\(false\)/m,
     );
+  });
+
+  it("authorChannel is nullable with NO default and NO backfill (NULL = the order-level rule)", () => {
+    const sql = executableSql();
+    const add = sql.match(/ADD COLUMN "authorChannel"[^;]*/)?.[0] ?? "";
+    expect(add).toBe('ADD COLUMN "authorChannel" TEXT');
+    expect(add).not.toMatch(/NOT NULL|DEFAULT/i);
+  });
+
+  it("the Prisma OrderItem model carries authorChannel String? with no default (sales.prisma)", () => {
+    const schema = readFileSync(
+      join(__dirname, "..", "..", "prisma", "schema", "sales.prisma"),
+      "utf8",
+    );
+    const item = schema.slice(schema.indexOf("model OrderItem {"));
+    const body = item.slice(0, item.indexOf("\n}"));
+    expect(body).toMatch(/^\s+authorChannel\s+String\?\s*$/m);
   });
 
   it("the schema folder still passes the split's structural check", () => {

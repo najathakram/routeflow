@@ -12,13 +12,24 @@
 -- ADDITIVE ONLY, no data writes. HARD DEPLOY ORDER (L-184): apply to prod (fresh backup, `prod-migrate.mjs`),
 -- `schema-drift.mjs` exit 0, and ONLY THEN merge the code that reads and writes this column.
 --
--- Rollback: none needed for a code rollback (old code never reads the column; rows it creates get false = legacy
--- STAFF). To remove the column itself: ALTER TABLE "Order" DROP COLUMN "sourceRecorded";
+-- SA ruling (#3418): "OrderItem"."authorChannel" TEXT, nullable, NO default, NO backfill: the EXPLICIT per-line
+-- author marker ('STAFF' | 'BUYER', a TS const in line-author-channel.ts, not a Postgres enum: no CREATE TYPE). Every
+-- line write of the new code sets it from the acting principal; NULL = a line written before it, read through the
+-- order-level rule (sourceRecorded=false -> STAFF, else "Order"."source"). Never a timestamp. A nullable column with
+-- no default is catalog-only as well (no rewrite, no scan); it takes ACCESS EXCLUSIVE on "OrderItem" for that moment,
+-- bounded by the same lock_timeout, in the same transaction (both columns land, or neither).
+--
+-- Rollback: none needed for a code rollback (old code never reads either column; rows it creates get false = legacy
+-- STAFF, and lines it writes get NULL = the order-level rule). To remove the columns themselves:
+-- ALTER TABLE "OrderItem" DROP COLUMN "authorChannel"; ALTER TABLE "Order" DROP COLUMN "sourceRecorded";
 
 BEGIN;
 SET LOCAL lock_timeout = '5s';
 
 -- AlterTable
 ALTER TABLE "Order" ADD COLUMN "sourceRecorded" BOOLEAN NOT NULL DEFAULT false;
+
+-- AlterTable
+ALTER TABLE "OrderItem" ADD COLUMN "authorChannel" TEXT;
 
 COMMIT;

@@ -882,6 +882,12 @@ model OrderItem {
   // backorderPieces* helpers, never read by money, invoice, stock or status code. 0 = not
   // backordered OR unknown (history is not backfilled; a recreate-mode edit resets it).
   backorderedPieces        Decimal                 @default(0) @db.Decimal(10, 3)
+  /// F1(i) SA ruling (#3418): who AUTHORED this line, 'STAFF' | 'BUYER' (line-author-channel.ts
+  /// ORDER_ITEM_AUTHOR_CHANNELS), written by every new-code line write from the ACTING principal; a merge
+  /// carries the folded line's own author. NULL = written before the marker: read through the order-level
+  /// rule (sourceRecorded=false -> STAFF, else Order.source). Never derived from a timestamp. No default,
+  /// no backfill. A String, not a Prisma enum: server-internal (never on a DTO), so no CREATE TYPE.
+  authorChannel            String?
   createdAt                DateTime                @default(now())
   updatedAt                DateTime                @updatedAt
   tenantId                 String?
