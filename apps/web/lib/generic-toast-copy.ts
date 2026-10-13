@@ -81,6 +81,9 @@ const CODE_COPY: Record<string, string> = {
     "This invoice has no balance due, so there is nothing to remind about.",
   [API_ERROR_CODES.REMINDER_NOT_ISSUED]:
     "A reminder can only be sent for an invoice that has been issued and is still unpaid.",
+  // SA-778: a billing action refused in a support session. Fixed sentence, same as the server's.
+  [API_ERROR_CODES.IMPERSONATION_NOT_ALLOWED]:
+    "This action isn't available in a support session. Ask the account admin to do it.",
   EMAIL_NOT_CONFIGURED:
     "Email isn't set up for this workspace yet. Connect it under Settings → Email, then try again.",
   EMAIL_SEND_FAILED:
