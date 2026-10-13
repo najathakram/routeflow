@@ -31,6 +31,7 @@ import {
   type PricePushResult,
   priceOverrideIdempotencyKey,
   prorationAllowedFor,
+  isPricePushFailure,
   prorationBehaviorFor,
   itemUnitAmount,
 } from "./price-override";
@@ -98,6 +99,7 @@ import {
   STRIPE_CHECKOUT_PARK_ESCALATED_ACTION,
   STRIPE_CHECKOUT_PARK_RESOLVED_ACTION,
   STRIPE_CHECKOUT_PAYMENT_PROCESSING_ACTION,
+  STRIPE_CHECKOUT_PRICE_RESYNC_ACTION,
 } from "./config-snapshot-audit.constants";
 import {
   isLiveStripeSubscriptionStatus,
@@ -2334,6 +2336,7 @@ export class BillingService {
         stripeSub,
         adoptCtx,
       );
+      await this.resyncPriceAfterCheckout(tenantId, session);
       // SA-736r F2: a redelivery that finds the session applied STILL syncs the coupon (idempotent), so a
       // sync that threw after the upsert is retried instead of being lost behind ALREADY_APPLIED.
       await this.syncCoupon(tenantId, subscriptionId, "checkout_completed");
@@ -2386,11 +2389,54 @@ export class BillingService {
     // time.
     await this.mutations.adoptCheckoutAddons(tenantId, stripeSub, adoptCtx);
 
+    await this.resyncPriceAfterCheckout(tenantId, session);
+
     // SA-736r M3: LAST, after the activation crossing and the add-on adoption (their writes are
     // idempotent), so a throwing sync is retried by Stripe without double-booking anything.
     await this.syncCoupon(tenantId, subscriptionId, "checkout_completed");
 
     this.logger.log(`Tenant ${tenantId} activated via checkout (sub: ${subscriptionId})`);
+  }
+
+  /**
+   * F2: the session was priced when it was CREATED. An admin override saved while it was open found no
+   * subscription to push to, so the subscription this completion made bills the old price. After the apply
+   * transaction the resolved price is pushed (next cycle, idempotent: an item already at it is `unchanged`).
+   * The prorated stub the customer already paid stays at the old price - the audit row says so. Best-effort:
+   * the money is already applied, so a failure here is logged and recorded, never fails the webhook.
+   */
+  private async resyncPriceAfterCheckout(tenantId: string, session: any): Promise<void> {
+    try {
+      const result = await this.syncStripeSubscriptionPrice(tenantId, { effective: "next_cycle" });
+      const changed = result.synced && !result.unchanged;
+      if (!changed && !isPricePushFailure(result)) return;
+      if (!changed) {
+        this.logger.warn(
+          `F2: checkout ${session?.id ?? "?"} for tenant ${tenantId}: the price re-sync failed (${result.reason ?? "unknown"})`,
+        );
+      }
+      await this.prisma.auditLog.create({
+        data: {
+          tenantId,
+          action: STRIPE_CHECKOUT_PRICE_RESYNC_ACTION,
+          entityType: STRIPE_CHECKOUT_ENTITY,
+          entityId: session?.id ?? null,
+          meta: {
+            synced: result.synced,
+            reason: result.reason ?? null,
+            oldAmount: result.oldAmount ?? null,
+            newAmount: result.newAmount ?? null,
+            effective: "next_cycle",
+            note: "the price changed while this checkout was open; the prorated stub already paid stays at the old price",
+          },
+        },
+      });
+    } catch (err) {
+      this.logger.error(
+        `F2: checkout ${session?.id ?? "?"} for tenant ${tenantId}: the price re-sync threw`,
+        err as Error,
+      );
+    }
   }
 
   /** #2440: the Stripe subscription item ids of the tenant's add-ons (never the base plan). */

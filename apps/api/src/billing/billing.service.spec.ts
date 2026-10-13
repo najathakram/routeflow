@@ -3153,3 +3153,128 @@ describe("#2440 Opus nits on #2446 — period source and null-period warnings", 
     expect(warn.mock.calls.some((c: any[]) => /no billing period/.test(String(c[0])))).toBe(true);
   });
 });
+
+// F2: an admin price override saved while a Checkout session is open is never pushed - the override flow found no
+// subscription to update, and the session (priced when it was created) then makes one at the OLD price. After the
+// apply transaction the completion pushes the resolved price (next cycle; idempotent), and says so in the audit row.
+describe("F2: onCheckoutCompleted re-syncs an override saved during the open session", () => {
+  const OVERRIDE_SUB = {
+    tenantId: "t1",
+    planKey: "GROWTH",
+    basePriceSnapshot: 150, // the override's figure, written by the override flow
+    priceOverrideMonthly: 150,
+    discount: 0,
+    stripeSubId: "sub_1",
+    stripeCustomerId: "cus_1",
+    billingInterval: "month",
+    tenant: { status: "ACTIVE", deletedAt: null, class: "PRODUCTION" },
+  };
+  const session = {
+    id: "cs_1",
+    metadata: { tenantId: "t1", planKey: "GROWTH", interval: "month" },
+    subscription: "sub_1",
+    customer: "cus_1",
+    payment_status: "paid",
+  };
+  const liveAtOldPrice = {
+    id: "sub_1",
+    customer: "cus_1",
+    status: "active",
+    items: {
+      data: [
+        {
+          id: "si_1",
+          current_period_start: 1_700_000_000,
+          current_period_end: 1_702_000_000,
+          price: {
+            id: "price_stub",
+            unit_amount: 34_900, // the price the session was created with
+            recurring: { interval: "month" },
+            product: "prod_1",
+          },
+        },
+      ],
+    },
+  };
+
+  it("pushes the resolved price (next_cycle) AFTER the apply transaction and records that the paid stub stays at the old price", async () => {
+    const { svc, prisma } = make({ transitionCount: 1, sub: OVERRIDE_SUB });
+    const sync = jest
+      .spyOn(svc, "syncStripeSubscriptionPrice")
+      .mockResolvedValue({ synced: true, oldAmount: 349, newAmount: 150, proration: "none" });
+    await (svc as any).onCheckoutCompleted(session);
+    expect(sync).toHaveBeenCalledTimes(1);
+    expect(sync).toHaveBeenCalledWith("t1", { effective: "next_cycle" });
+    expect(sync.mock.invocationCallOrder[0]).toBeGreaterThan(
+      prisma.$transaction.mock.invocationCallOrder[0],
+    );
+    const audit = prisma.auditLog.create.mock.calls.find(
+      (c: any[]) => c[0].data.action === "STRIPE_CHECKOUT_PRICE_RESYNC",
+    );
+    expect(audit?.[0].data).toMatchObject({ tenantId: "t1", entityId: "cs_1" });
+    expect(JSON.stringify(audit?.[0].data.meta)).toMatch(/stub/i);
+  });
+
+  it("an unchanged price (the session already billed it) writes no audit row", async () => {
+    const { svc, prisma } = make({ transitionCount: 1, sub: OVERRIDE_SUB });
+    jest.spyOn(svc, "syncStripeSubscriptionPrice").mockResolvedValue({
+      synced: true,
+      unchanged: true,
+      oldAmount: 150,
+      newAmount: 150,
+      proration: "none",
+    });
+    await (svc as any).onCheckoutCompleted(session);
+    expect(
+      prisma.auditLog.create.mock.calls.filter(
+        (c: any[]) => c[0].data.action === "STRIPE_CHECKOUT_PRICE_RESYNC",
+      ),
+    ).toHaveLength(0);
+  });
+
+  it("end to end: the subscription item ends at the override price, and the MRR snapshot already equals it", async () => {
+    const pricing = {
+      resolveCatalogPricing: jest.fn().mockResolvedValue({ monthly: 349 }),
+      resolveTenantPricing: jest.fn().mockResolvedValue({ planKey: "GROWTH", monthly: 150 }),
+      checkoutPriceData: jest.fn().mockResolvedValue({
+        currency: "usd",
+        product_data: { name: "RouteFlow Growth - monthly" },
+        unit_amount: 15_000,
+        recurring: { interval: "month" },
+      }),
+    };
+    const { svc, stripe } = make({ transitionCount: 1, sub: OVERRIDE_SUB, pricing });
+    stripe.getSubscription.mockResolvedValue(liveAtOldPrice);
+    stripe.updateSubscription = jest.fn().mockResolvedValue({});
+    await (svc as any).onCheckoutCompleted(session);
+    expect(stripe.updateSubscription).toHaveBeenCalledTimes(1);
+    const [subId, params] = stripe.updateSubscription.mock.calls[0];
+    expect(subId).toBe("sub_1");
+    expect(params.items[0]).toMatchObject({ id: "si_1", price_data: { unit_amount: 15_000 } });
+    expect(params.proration_behavior).toBe("none");
+  });
+
+  it("a failed push is logged and recorded, and never fails the webhook", async () => {
+    const { svc, prisma } = make({ transitionCount: 1, sub: OVERRIDE_SUB });
+    jest
+      .spyOn(svc, "syncStripeSubscriptionPrice")
+      .mockResolvedValue({ synced: false, reason: "stripe_update_failed" });
+    const warn = jest.spyOn(Logger.prototype, "warn").mockImplementation(() => undefined);
+    await expect((svc as any).onCheckoutCompleted(session)).resolves.toBeUndefined();
+    warn.mockRestore();
+    const audit = prisma.auditLog.create.mock.calls.find(
+      (c: any[]) => c[0].data.action === "STRIPE_CHECKOUT_PRICE_RESYNC",
+    );
+    expect(audit?.[0].data.meta).toMatchObject({ synced: false, reason: "stripe_update_failed" });
+  });
+
+  it("a replayed (already applied) completion still pushes - a push that threw is retried by the redelivery", async () => {
+    const { svc, tx } = make({ transitionCount: 1, sub: OVERRIDE_SUB });
+    tx.auditLog.findFirst.mockResolvedValue({ id: "a1" }); // the applied marker exists
+    const sync = jest
+      .spyOn(svc, "syncStripeSubscriptionPrice")
+      .mockResolvedValue({ synced: true, unchanged: true, newAmount: 150, proration: "none" });
+    await (svc as any).onCheckoutCompleted(session);
+    expect(sync).toHaveBeenCalledWith("t1", { effective: "next_cycle" });
+  });
+});
