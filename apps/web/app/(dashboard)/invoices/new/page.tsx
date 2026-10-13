@@ -1100,7 +1100,13 @@ export default function NewInvoicePage() {
       );
       setErrors({});
       setDraftNotice(
-        draftNoticeCopy(r.droppedLines, r.customerCleared, r.pricesUpdated, r.unitsDropped),
+        draftNoticeCopy(
+          r.droppedLines,
+          r.customerCleared,
+          r.pricesUpdated,
+          r.unitsDropped,
+          r.pricesUnchecked,
+        ),
       );
       setDraftRestored(true);
       draft.resolveOffer();

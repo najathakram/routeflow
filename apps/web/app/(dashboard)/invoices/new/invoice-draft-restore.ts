@@ -19,6 +19,8 @@ export interface RestoreCheck {
   pricesUpdated: number;
   /** Unit-level lines left out because the product no longer offers that unit: the user re-enters them. */
   unitsDropped: number;
+  /** Catalog lines whose price could not be re-checked (a read failed): kept as stored, not counted as updated. */
+  pricesUnchecked: number;
 }
 
 type Get = (url: string) => Promise<{ data?: unknown }>;
@@ -51,6 +53,8 @@ interface Resolved {
   line: InvoiceDraftLine | null;
   updated: boolean;
   unitDropped?: boolean;
+  /** The line's price could not be re-checked (its unit ladder was unreadable). */
+  unchecked?: boolean;
 }
 
 /**
@@ -79,7 +83,9 @@ export function repriceLine(
 
   if (stored.unitLabel) {
     const ladder = o.ladder;
-    if (!ladder || ladder.kind === "unchecked") return { line: stored, updated: false };
+    if (!ladder || ladder.kind === "unchecked") {
+      return { line: stored, updated: false, unchecked: !typed };
+    }
     if (ladder.kind === "gone") return { line: null, updated: false, unitDropped: true };
     const want = stored.unitLabel.trim().toLowerCase();
     const opt = buildUnitOptions(product, ladder.levels, o.lineTier).find(
@@ -163,6 +169,8 @@ export async function checkDraftReferences(
   // The customer's per-product price rows, resolved through their tier like the page's own `priceMap`.
   const customerPrice: Record<string, number> = {};
   const lineTier: Record<string, number> = {};
+  // Only a 403 (the plan flag is off) means "no rows". Any other failure leaves customer prices unknown.
+  let rowsUnknown = false;
   if (customer) {
     try {
       const res = await get(`/customers/${encodeURIComponent(customer.id)}/prices`);
@@ -177,8 +185,9 @@ export async function checkDraftReferences(
           if (Number.isFinite(price)) customerPrice[pid] = price;
         }
       }
-    } catch {
-      /* no per-customer rows: the tier ladder prices the lines */
+    } catch (err) {
+      const st = (err as { response?: { status?: number } } | null)?.response?.status;
+      if (st !== 403) rowsUnknown = true;
     }
   }
 
@@ -213,11 +222,18 @@ export async function checkDraftReferences(
   );
   let pricesUpdated = 0;
   let unitsDropped = 0;
+  let pricesUnchecked = 0;
   const lines: InvoiceDraftLine[] = [];
   for (const l of snapshot.lines) {
     if (l.productId && gone.has(l.productId)) continue;
-    if (!l.productId || !productById.has(l.productId)) {
-      lines.push(l); // free-text line, or the product could not be checked (network)
+    if (!l.productId) {
+      lines.push(l); // free-text line
+      continue;
+    }
+    if (!productById.has(l.productId) || (rowsUnknown && !l.priceEdited)) {
+      // The product (or this customer's price rows) could not be read: keep the line as stored and say so.
+      if (!l.priceEdited) pricesUnchecked += 1;
+      lines.push(l);
       continue;
     }
     const r = repriceLine(l, productById.get(l.productId), {
@@ -227,6 +243,7 @@ export async function checkDraftReferences(
       ladder: ladders.get(l.productId),
     });
     if (r.unitDropped) unitsDropped += 1;
+    if (r.unchecked) pricesUnchecked += 1;
     if (r.updated) pricesUpdated += 1;
     if (r.line) lines.push(r.line);
   }
@@ -236,5 +253,6 @@ export async function checkDraftReferences(
     customerCleared,
     pricesUpdated,
     unitsDropped,
+    pricesUnchecked,
   };
 }

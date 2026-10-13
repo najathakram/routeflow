@@ -209,6 +209,56 @@ describe("checkDraftReferences: prices are re-resolved, not trusted (ROW 447)", 
     expect(r.pricesUpdated).toBe(0);
   });
 
+  describe("prices that could not be checked are kept and reported", () => {
+    it("a 5xx on the customer price rows keeps the stored prices, uncounted, and reports them", async () => {
+      const r = await run([stored({ unitPrice: 5 }), stored({ unitPrice: 6, priceEdited: true })], {
+        "/customers/c-1/prices": status(500),
+      });
+      expect(r.snapshot.lines[0].unitPrice).toBe(5);
+      expect(r.snapshot.lines[1].unitPrice).toBe(6);
+      expect(r.pricesUpdated).toBe(0);
+      expect(r.pricesUnchecked).toBe(1); // the typed price needs no check
+    });
+
+    it("a network failure on the customer price rows does the same", async () => {
+      const r = await run([stored({ unitPrice: 5 })], {
+        "/customers/c-1/prices": { reject: new Error("offline") },
+      });
+      expect(r.snapshot.lines[0].unitPrice).toBe(5);
+      expect(r.pricesUnchecked).toBe(1);
+    });
+
+    it("a 403 on the price rows (plan flag off) simply means there are none", async () => {
+      const r = await run([stored({ unitPrice: 5 })], { "/customers/c-1/prices": status(403) });
+      expect(r.snapshot.lines[0].unitPrice).toBe(10);
+      expect(r.pricesUpdated).toBe(1);
+      expect(r.pricesUnchecked).toBe(0);
+    });
+
+    it("a product that could not be read keeps its stored price and is reported", async () => {
+      const r = await run([stored({ unitPrice: 5 })], {
+        "/products/p-1": { reject: new Error("offline") },
+      });
+      expect(r.snapshot.lines[0].unitPrice).toBe(5);
+      expect(r.pricesUnchecked).toBe(1);
+    });
+
+    it("a typed price on an unreadable product is not reported", async () => {
+      const r = await run([stored({ unitPrice: 5, priceEdited: true })], {
+        "/products/p-1": { reject: new Error("offline") },
+      });
+      expect(r.pricesUnchecked).toBe(0);
+    });
+
+    it("an unreadable unit ladder is reported too", async () => {
+      const r = await run(
+        [stored({ unitPrice: 50, unitLabel: "Half case", unit: "Half case", qty: 3 })],
+        { "/products/p-1/units": { reject: new Error("offline") } },
+      );
+      expect(r.pricesUnchecked).toBe(1);
+    });
+  });
+
   describe("pack size follows the live product", () => {
     it("a pack that grew from 12 to 24 re-splits 1 box + 6 pieces (18 units) with the live size", async () => {
       const r = await run(

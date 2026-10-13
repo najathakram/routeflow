@@ -304,6 +304,7 @@ describe("ROW 447 — unsaved new-invoice draft", () => {
     await user.click(await screen.findByRole("button", { name: "Restore" }));
     expect(await screen.findByDisplayValue("Widget")).toBeInTheDocument();
     expect(screen.getByText("Acme Co")).toBeInTheDocument();
+    expect(screen.getByText("1 price could not be checked.")).toBeInTheDocument();
   });
 
   describe("prices are re-resolved on restore (money)", () => {

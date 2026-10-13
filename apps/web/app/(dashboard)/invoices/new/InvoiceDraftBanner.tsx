@@ -19,6 +19,7 @@ export function draftNoticeCopy(
   customerCleared: boolean,
   pricesUpdated = 0,
   unitsDropped = 0,
+  pricesUnchecked = 0,
 ): string | null {
   const parts: string[] = [];
   if (droppedLines === 1) parts.push("1 item is no longer in your catalog and was left out.");
@@ -33,6 +34,8 @@ export function draftNoticeCopy(
     );
   if (pricesUpdated === 1) parts.push("1 price updated.");
   else if (pricesUpdated > 1) parts.push(`${pricesUpdated} prices updated.`);
+  if (pricesUnchecked === 1) parts.push("1 price could not be checked.");
+  else if (pricesUnchecked > 1) parts.push(`${pricesUnchecked} prices could not be checked.`);
   return parts.length ? parts.join(" ") : null;
 }
 
