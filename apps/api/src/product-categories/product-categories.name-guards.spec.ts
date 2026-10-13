@@ -36,6 +36,15 @@ describe("ProductCategoriesService name guards (B983)", () => {
       updateMany: jest.fn().mockResolvedValue({ count: 1 }),
     };
     (prisma.forTenant() as any).productCategory = cat;
+    // Name writes run in a tx under the per-tenant names lock (label-writer): the same stub, plus the lock's raw calls.
+    (prisma as any).tenantTransaction = jest.fn(async (fn: (tx: unknown) => unknown) =>
+      fn({
+        productCategory: cat,
+        $queryRaw: jest.fn().mockResolvedValue([{ lock_timeout: "0" }]),
+        $executeRaw: jest.fn().mockResolvedValue(0),
+        $executeRawUnsafe: jest.fn().mockResolvedValue(0),
+      }),
+    );
     const mod = await Test.createTestingModule({
       providers: [
         ProductCategoriesService,

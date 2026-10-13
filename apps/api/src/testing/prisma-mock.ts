@@ -15,6 +15,7 @@ const MODEL_METHODS = [
   "createMany",
   "update",
   "updateMany",
+  "updateManyAndReturn",
   "delete",
   "deleteMany",
   "count",
@@ -49,6 +50,7 @@ export function createMockPrisma(): MockPrisma {
   // Sensible defaults so services don't crash when a mock isn't explicitly set up
   const defaultReturnValues: Record<string, unknown> = {
     findMany: [],
+    updateManyAndReturn: [],
     findUnique: null,
     findUniqueOrThrow: {},
     findFirst: null,

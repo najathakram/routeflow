@@ -44,14 +44,20 @@ function isLockTimeout(e: unknown): boolean {
  * Serialise label writes per (tenant, category): a transaction-scoped advisory lock with a bounded wait.
  * The caller's own `lock_timeout` is RESTORED afterwards (a script that set one keeps it).
  */
+/** The caller's lock_timeout, to restore after a bounded lock wait ('0' = Postgres's default, no limit). */
+async function currentLockTimeout(tx: Prisma.TransactionClient): Promise<string> {
+  const rows = await tx.$queryRaw<
+    { lock_timeout: string }[]
+  >`SELECT current_setting('lock_timeout') AS lock_timeout`;
+  return rows?.[0]?.lock_timeout ?? "0";
+}
+
 export async function lockLabelCategory(
   tx: Prisma.TransactionClient,
   tenantId: string,
   categoryId: string,
 ): Promise<void> {
-  const [{ lock_timeout: previous }] = await tx.$queryRaw<
-    { lock_timeout: string }[]
-  >`SELECT current_setting('lock_timeout') AS lock_timeout`;
+  const previous = await currentLockTimeout(tx);
   try {
     await tx.$executeRawUnsafe(`SET LOCAL lock_timeout = '${LOCK_WAIT}'`);
     await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtext(${"product-labels"}), hashtext(${`${tenantId}:${categoryId}`}))`;
@@ -151,7 +157,8 @@ export const LABEL_FROM_TEXT_ACTION = "product_label.added_from_category_text";
  * unarchived label of the tenant (by `labelNameKey`), the product gains that label's INCLUDE, with an audit
  * row "label added from category text". It never creates, renames, archives or removes a label, and never
  * removes a membership (a text change away from a label leaves the old membership in place). Two labels
- * sharing one key are ambiguous: nothing is added.
+ * sharing one key (case duplicates that predate the admin key check) are never merged: the OLDEST is used,
+ * deterministically, and the audit row reports the ambiguity.
  */
 export async function syncCategoryLabel(
   tx: Prisma.TransactionClient,
@@ -162,8 +169,9 @@ export async function syncCategoryLabel(
     actor?: { id: string | null; name: string | null };
   },
 ): Promise<{ addedCategoryId: string | null }> {
-  const categoryId = await matchLabelId(tx, args.tenantId, args.text);
-  if (!categoryId || !args.tenantId) return { addedCategoryId: null };
+  const match = await matchLabel(tx, args.tenantId, args.text);
+  if (!match || !args.tenantId) return { addedCategoryId: null };
+  const categoryId = match.id;
   const outcome = await addIncludeIfAbsent(tx, {
     tenantId: args.tenantId,
     productId: args.productId,
@@ -172,25 +180,73 @@ export async function syncCategoryLabel(
   });
   if (outcome !== "added") return { addedCategoryId: null };
   await tx.auditLog.create({
-    data: auditRow(args.tenantId, args.productId, categoryId, args.actor),
+    data: auditRow(args.tenantId, args.productId, categoryId, args.actor, match.sameKey),
   });
   return { addedCategoryId: categoryId };
 }
 
-/** The ONE unarchived label of the tenant whose name key equals the text's. Blank, absent or ambiguous (two with one key) = null. */
-async function matchLabelId(
+/**
+ * The unarchived label of the tenant whose name key equals the text's: the OLDEST (createdAt, then id) when
+ * case duplicates exist, with `sameKey` = how many share the key (> 1 = ambiguous, reported). Blank/absent = null.
+ */
+async function matchLabel(
   tx: Prisma.TransactionClient,
   tenantId: string | null | undefined,
   text: string | null | undefined,
-): Promise<string | null> {
+): Promise<{ id: string; sameKey: number } | null> {
   const key = labelNameKey(text);
   if (!tenantId || key === "") return null;
   const labels = await tx.productCategory.findMany({
     where: { tenantId, archivedAt: null },
     select: { id: true, name: true },
+    orderBy: [{ createdAt: "asc" }, { id: "asc" }],
   });
   const matches = labels.filter((l) => labelNameKey(l.name) === key);
-  return matches.length === 1 ? matches[0].id : null;
+  return matches.length ? { id: matches[0].id, sameKey: matches.length } : null;
+}
+
+// ─── label NAMES: one key, one per-tenant lock (admin create/rename + the backfill script) ───────────
+
+/** The per-tenant lock every label-NAME writer takes: admin create / rename and labels-from-categories. */
+export const LABEL_NAMES_LOCK = "labels-from-categories";
+
+/**
+ * Serialise label-name writes per tenant (bounded wait, the caller's lock_timeout restored), so the key check
+ * below cannot race a concurrent create or the backfill script's run.
+ */
+export async function lockTenantLabelNames(
+  tx: Prisma.TransactionClient,
+  tenantId: string,
+): Promise<void> {
+  const previous = await currentLockTimeout(tx);
+  try {
+    await tx.$executeRawUnsafe(`SET LOCAL lock_timeout = '${LOCK_WAIT}'`);
+    await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtext(${LABEL_NAMES_LOCK}), hashtext(${tenantId}))`;
+  } catch (e) {
+    if (isLockTimeout(e)) throw new LabelLockTimeoutError();
+    throw e;
+  }
+  await tx.$executeRaw`SELECT set_config('lock_timeout', ${previous}, true)`;
+}
+
+/**
+ * The tenant's existing label (archived included) whose name key equals `name`'s, other than `exceptId` (a rename
+ * of itself, e.g. a case-only change, is not a collision). Oldest first. Take `lockTenantLabelNames` first.
+ */
+export async function findLabelNameCollision(
+  tx: Prisma.TransactionClient,
+  tenantId: string,
+  name: string,
+  exceptId?: string,
+): Promise<{ id: string; name: string } | null> {
+  const key = labelNameKey(name);
+  if (key === "") return null;
+  const labels = await tx.productCategory.findMany({
+    where: { tenantId, ...(exceptId ? { id: { not: exceptId } } : {}) },
+    select: { id: true, name: true },
+    orderBy: [{ createdAt: "asc" }, { id: "asc" }],
+  });
+  return labels.find((l) => labelNameKey(l.name) === key) ?? null;
 }
 
 type Actor = { id: string | null; name: string | null } | undefined;
@@ -200,13 +256,24 @@ const stampOf = (actor: Actor): LabelStamp => ({
   createdByName: actor?.name ?? null,
 });
 
-const auditRow = (tenantId: string, productId: string, categoryId: string, actor: Actor) => ({
+const auditRow = (
+  tenantId: string,
+  productId: string,
+  categoryId: string,
+  actor: Actor,
+  sameKey = 1,
+) => ({
   tenantId,
   userId: actor?.id ?? null,
   action: LABEL_FROM_TEXT_ACTION,
   entityType: "Product",
   entityId: productId,
-  meta: { categoryId, source: "category_text" } as Prisma.InputJsonValue,
+  meta: {
+    categoryId,
+    source: "category_text",
+    // > 1: case-duplicate labels share this name; the oldest was used (reported, never merged).
+    ...(sameKey > 1 ? { ambiguousLabels: sameKey } : {}),
+  } as Prisma.InputJsonValue,
 });
 
 /**
@@ -227,8 +294,9 @@ export async function syncCategoryLabelForProducts(
   const { tenantId, actor } = args;
   const none = { addedProductIds: [] as string[] };
   if (args.productIds.length === 0) return none;
-  const categoryId = await matchLabelId(tx, tenantId, args.text);
-  if (!categoryId || !tenantId) return none;
+  const match = await matchLabel(tx, tenantId, args.text);
+  if (!match || !tenantId) return none;
+  const categoryId = match.id;
   await lockLabelCategory(tx, tenantId, categoryId);
   // Re-read under the lock: an archive that landed first wins.
   const category = await tx.productCategory.findFirst({
@@ -262,7 +330,7 @@ export async function syncCategoryLabelForProducts(
   // The lock above serialises every label writer, so the existence check cannot go stale: count === toAdd.length.
   if (count === 0) return none;
   await tx.auditLog.createMany({
-    data: toAdd.map((productId) => auditRow(tenantId, productId, categoryId, actor)),
+    data: toAdd.map((productId) => auditRow(tenantId, productId, categoryId, actor, match.sameKey)),
   });
   return { addedProductIds: toAdd };
 }

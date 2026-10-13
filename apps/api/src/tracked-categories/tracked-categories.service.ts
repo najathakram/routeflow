@@ -425,20 +425,22 @@ export class TrackedCategoriesService {
         const newName = name;
         // One tx: the mirror write and the add-only label sync of the products it renamed.
         await this.prisma.tenantTransaction(async (tx: any) => {
-          const mirrored: Array<{ id: string }> = await tx.product.findMany({
+          // The SAME guard as before (still mirroring the old name, or blank) in the write itself, so a product
+          // whose text changed meanwhile is never overwritten; only the rows actually renamed are synced.
+          const renamed: Array<{ id: string }> = await tx.product.updateManyAndReturn({
             where: {
               trackedSubcategoryId: subId,
               OR: [{ category: existingSub.name }, { category: null }],
             },
+            data: { category: newName },
             select: { id: true },
           });
-          if (mirrored.length === 0) return;
-          const productIds = mirrored.map((p) => p.id);
-          await tx.product.updateMany({
-            where: { id: { in: productIds }, trackedSubcategoryId: subId },
-            data: { category: newName },
+          if (renamed.length === 0) return;
+          await syncCategoryLabelForProducts(tx, {
+            tenantId,
+            productIds: renamed.map((p) => p.id),
+            text: newName,
           });
-          await syncCategoryLabelForProducts(tx, { tenantId, productIds, text: newName });
         });
       }
       return this.serializeSub(row);

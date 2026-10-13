@@ -13,6 +13,21 @@ import type { JwtPayload } from "../auth/jwt-payload.interface";
 import { CreateProductCategoryDto } from "./dto/create-product-category.dto";
 import { UpdateProductCategoryDto } from "./dto/update-product-category.dto";
 import { assertSafeCategoryName } from "../common/text-cell-guards";
+import { API_ERROR_CODES } from "../common/api-error-codes";
+import {
+  findLabelNameCollision,
+  LabelLockTimeoutError,
+  lockTenantLabelNames,
+} from "./label-writer";
+
+/** 409 LABEL_NAME_TAKEN naming the existing label (the web shows fixed copy; the body carries the name). */
+function labelNameTaken(existing: { id: string; name: string }): ConflictException {
+  return new ConflictException({
+    code: API_ERROR_CODES.LABEL_NAME_TAKEN,
+    message: `A label named "${existing.name}" already exists.`,
+    existingLabel: { id: existing.id, name: existing.name },
+  });
+}
 
 /**
  * Tenant-defined restriction categories ("Alcohol", "THC") — the label vocabulary the selling-
@@ -78,9 +93,16 @@ export class ProductCategoriesService {
     const tenantId = this.requireTenant();
     assertSafeCategoryName(dto.name); // B983: refuse a formula-led name before any write or audit
     try {
-      const row = await this.prisma.forTenant().productCategory.create({
-        data: { name: dto.name, tenantId },
-        select: this.select(new Date()),
+      // One NAME per key (labelNameKey: case/space-insensitive), checked under the per-tenant names lock the
+      // backfill script also takes, so two creates (or a create during a backfill) cannot both pass.
+      const row = await this.prisma.tenantTransaction(async (tx) => {
+        await this.lockNames(tx, tenantId);
+        const clash = await findLabelNameCollision(tx, tenantId, dto.name);
+        if (clash) throw labelNameTaken(clash);
+        return tx.productCategory.create({
+          data: { name: dto.name, tenantId },
+          select: this.select(new Date()),
+        });
       });
       await this.audit.log({
         tenantId,
@@ -93,8 +115,18 @@ export class ProductCategoriesService {
       return this.toDto(row);
     } catch (e) {
       if (e instanceof Prisma.PrismaClientKnownRequestError && e.code === "P2002") {
-        throw new ConflictException(`A category named "${dto.name}" already exists.`);
+        throw labelNameTaken({ id: "", name: dto.name });
       }
+      throw e;
+    }
+  }
+
+  /** The per-tenant label-names lock; a busy lock (e.g. a backfill run) is a clear 409, not a hang. */
+  private async lockNames(tx: Prisma.TransactionClient, tenantId: string): Promise<void> {
+    try {
+      await lockTenantLabelNames(tx, tenantId);
+    } catch (e) {
+      if (e instanceof LabelLockTimeoutError) throw new ConflictException(e.message);
       throw e;
     }
   }
@@ -132,10 +164,22 @@ export class ProductCategoriesService {
     };
     let count: number;
     try {
-      ({ count } = await db.productCategory.updateMany({ where, data }));
+      if (dto.name !== undefined) {
+        // A rename: the key check (itself excluded, so a case-only change is fine) and the write under the
+        // per-tenant names lock.
+        const name = dto.name;
+        ({ count } = await this.prisma.tenantTransaction(async (tx) => {
+          await this.lockNames(tx, tenantId);
+          const clash = await findLabelNameCollision(tx, tenantId, name, id);
+          if (clash) throw labelNameTaken(clash);
+          return tx.productCategory.updateMany({ where, data });
+        }));
+      } else {
+        ({ count } = await db.productCategory.updateMany({ where, data }));
+      }
     } catch (e) {
       if (e instanceof Prisma.PrismaClientKnownRequestError && e.code === "P2002") {
-        throw new ConflictException(`A category named "${dto.name}" already exists.`);
+        throw labelNameTaken({ id: "", name: dto.name ?? "" });
       }
       throw e;
     }

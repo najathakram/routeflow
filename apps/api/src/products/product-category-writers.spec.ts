@@ -19,7 +19,7 @@ import * as path from "path";
 const SRC = path.resolve(__dirname, "..");
 
 const WRITE =
-  /\bproduct\s*\.(?:create|createMany|update|updateMany|upsert)\s*\(|(?:UPDATE|INSERT\s+INTO)\s+"Product"/g;
+  /\bproduct\s*\.(?:create|createMany|createManyAndReturn|update|updateMany|updateManyAndReturn|upsert)\s*\(|(?:UPDATE|INSERT\s+INTO)\s+"Product"/g;
 const SYNC = /\bsyncCategoryLabel(?:ForProducts)?\s*\(/g;
 
 /** Files whose product writes can set `Product.category`: every one must call the sync. */

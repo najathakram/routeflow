@@ -11,8 +11,9 @@
  *   - Normalising: NFC, trim, collapse inner whitespace; the KEY is that, case-folded. Texts with one key
  *     are one label, named by the most common casing (ties: code-point order, so a capitalised form wins). Case variants that
  *     merged are LISTED. Nothing else merges (no fuzzy match). Blank text gets no label.
- *   - A key that matches an EXISTING label (by the same key) reuses it; an ARCHIVED match is listed and
- *     skipped (never unarchived); two existing labels sharing one key are listed and skipped (ambiguous).
+ *   - A key that matches an EXISTING label (by the same key) reuses it; when only ARCHIVED labels match it is
+ *     listed and skipped (never unarchived); case-duplicate labels sharing one key are never merged: the
+ *     OLDEST unarchived one is used (as the sync does) and the ambiguity is listed.
  *   - Memberships are written ONLY through the single label writer (`addIncludeIfAbsent`, compiled from
  *     apps/api/src/product-categories/label-writer.ts): an INCLUDE when the product has NO row for that
  *     label; an existing INCLUDE or opt-out (EXCLUDE) is left exactly as it is. A re-run plans 0.
@@ -141,13 +142,19 @@ export function planLabels({ products, existing, memberships, keyOf, textOf }) {
       (a, b) => b[1] - a[1] || byCodePoint(a[0], b[0]),
     )[0][0];
     if (g.texts.size > 1) merged.push({ name, variants: [...g.texts.keys()].sort() });
+    // `existing` arrives oldest first (createdAt, id): case duplicates are never merged; like the sync, the
+    // OLDEST unarchived one is used and the ambiguity is LISTED.
     const found = byKey.get(key) ?? [];
     const live = found.filter((l) => !l.archivedAt);
-    if (found.length > 1 || live.length > 1) {
-      ambiguous.push({ name, products: g.productIds.length });
-      continue;
+    if (found.length > 1) {
+      ambiguous.push({
+        name,
+        products: g.productIds.length,
+        labels: found.length,
+        using: live[0]?.name ?? null,
+      });
     }
-    if (found.length === 1 && found[0].archivedAt) {
+    if (found.length > 0 && live.length === 0) {
       archived.push({ name: found[0].name, products: g.productIds.length });
       continue;
     }
@@ -215,7 +222,7 @@ async function readState(db, tenantId) {
   const existing = await db.productCategory.findMany({
     where: { tenantId },
     select: { id: true, name: true, archivedAt: true },
-    orderBy: { id: "asc" },
+    orderBy: [{ createdAt: "asc" }, { id: "asc" }], // oldest first: the deterministic pick among case duplicates
   });
   const memberships = await db.productCategoryLabel.findMany({
     where: { tenantId },
@@ -270,8 +277,11 @@ function report(plan) {
     for (const a of plan.archived) console.log(`    ${a.name} (${a.products})`);
   }
   if (plan.ambiguous.length) {
-    console.log("\n  two existing labels share this name, skipped (merge them by hand first):");
-    for (const a of plan.ambiguous) console.log(`    ${a.name} (${a.products})`);
+    console.log("\n  existing labels that share one name (never merged; the oldest is used):");
+    for (const a of plan.ambiguous)
+      console.log(
+        `    ${a.name} (${a.products}): ${a.labels} labels, using ${a.using ?? "none (all archived)"}`,
+      );
   }
   console.log("\n  what users will see change:");
   for (const s of SURFACES) console.log(`    ${s}`);
@@ -391,7 +401,8 @@ async function main() {
       async (tx) => {
         await tx.$executeRawUnsafe(`SET LOCAL statement_timeout = '${STATEMENT_TIMEOUT}'`);
         await tx.$executeRawUnsafe(`SET LOCAL lock_timeout = '${LOCK_TIMEOUT}'`);
-        await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtext(${TAG}), hashtext(${tenantId}))`;
+        // The per-tenant label-NAMES lock the admin create/rename also take (one shared key, label-writer).
+        await writer.lockTenantLabelNames(tx, tenantId);
         const now = planLabels({
           ...(await readState(tx, tenantId)),
           keyOf: writer.labelNameKey,

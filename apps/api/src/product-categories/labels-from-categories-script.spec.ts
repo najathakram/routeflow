@@ -58,7 +58,7 @@ describe("labels-from-categories — the plan", () => {
     expect(out.rows).toBe(7);
   });
 
-  it("reuses an existing label by key, skips an archived match and an ambiguous pair, never flips an opt-out", () => {
+  it("reuses an existing label by key, skips an archived-only match, uses the OLDEST of case duplicates (listed), never flips an opt-out", () => {
     const out = runModule(`
       const plan = m.planLabels({
         products: [
@@ -77,10 +77,13 @@ describe("labels-from-categories — the plan", () => {
         keyOf, textOf,
       });
       console.log(JSON.stringify({ labels: plan.labels.map((l) => [l.name, l.existingId, l.add]), archived: plan.archived, ambiguous: plan.ambiguous, counts: plan.counts }));`);
-    expect(out.labels).toEqual([["drinks", "L-drinks", ["c"]]]); // existing name kept; only c added
+    expect(out.labels).toEqual([
+      ["drinks", "L-drinks", ["c"]], // existing name kept; only c added
+      ["Tea", "L-tea1", ["e"]], // existing arrives oldest first: L-tea1 is used, never merged
+    ]);
     expect(out.archived).toEqual([{ name: "candy", products: 1 }]);
-    expect(out.ambiguous).toEqual([{ name: "Tea", products: 1 }]);
-    expect(out.counts).toMatchObject({ alreadyIn: 1, optedOut: 1, newLabels: 0, memberships: 1 });
+    expect(out.ambiguous).toEqual([{ name: "Tea", products: 1, labels: 2, using: "Tea" }]);
+    expect(out.counts).toMatchObject({ alreadyIn: 1, optedOut: 1, newLabels: 0, memberships: 2 });
   });
 
   it("a fully labelled tenant plans 0 rows (a re-run is a no-op)", () => {
@@ -136,6 +139,7 @@ describe("labels-from-categories — structural rules (SA)", () => {
     expect(code).toContain("assertWritableTenant(");
     expect(code).toContain('has("--live-tenant-override")');
     expect(code).toContain("loadProtectedSlugs(process.env, url)");
+    expect(code).toContain("await writer.lockTenantLabelNames(tx, tenantId)"); // the admin paths' names lock
     expect(code).toContain("couponFull: true"); // the paying predicate needs it selected
   });
 });

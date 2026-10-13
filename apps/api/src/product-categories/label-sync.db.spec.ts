@@ -4,7 +4,7 @@
  * TrackedCategoriesService.updateSubcategory), against real Postgres.
  *
  * What a mocked tx cannot show: the membership row, its stamp and its audit row really land in the writer's own
- * transaction; an archived / ambiguous / other-tenant label is never used; a text change away from a label leaves the
+ * transaction; an archived / other-tenant label is never used, case duplicates use the oldest (reported); a text change away from a label leaves the
  * old membership; an opt-out (EXCLUDE) is never flipped; and a rolled-back product write leaves no membership.
  *
  * Collected only by `jest.db.config.js`. Every tenant is a throwaway `qa-labelsync-<run>-*` slug approved by
@@ -181,10 +181,18 @@ describeDb("category text -> label add-only sync (real Postgres)", () => {
       expect(await membershipsOf(id)).toHaveLength(0);
     });
 
-    it("two labels sharing one name key are ambiguous: nothing is added", async () => {
+    it("case-duplicate labels are never merged: the OLDEST is used, and the audit reports the ambiguity", async () => {
       const id = await seedProduct(A.id, "dup-product", { category: "DUP" });
-      expect((await syncIn(A.id, id, "DUP")).addedCategoryId).toBeNull();
-      expect(await membershipsOf(id)).toHaveLength(0);
+      expect((await syncIn(A.id, id, "DUP")).addedCategoryId).toBe(A.dupUpper); // "Dup" was created first
+      expect(await membershipsOf(id)).toEqual([
+        expect.objectContaining({ categoryId: A.dupUpper, mode: "INCLUDE" }),
+      ]);
+      const [audit] = await auditsOf(id);
+      expect(audit.meta).toMatchObject({ categoryId: A.dupUpper, ambiguousLabels: 2 });
+      // both labels still exist: nothing merged
+      expect(
+        await prisma.productCategory.count({ where: { id: { in: [A.dupUpper, A.dupLower] } } }),
+      ).toBe(2);
     });
 
     it("another tenant's label is never used, and a product of another tenant is never given one", async () => {
@@ -283,9 +291,9 @@ describeDb("category text -> label add-only sync (real Postgres)", () => {
       expect(await auditsOf(hasInclude)).toHaveLength(0);
     });
 
-    it("no label / archived label / ambiguous label / no ids: nothing happens", async () => {
+    it("no label / archived label / no ids: nothing happens; case duplicates use the oldest", async () => {
       const id = await seedProduct(A.id, "bulk-none");
-      for (const text of ["Nope", "Frozen", "dup", "", null]) {
+      for (const text of ["Nope", "Frozen", "", null]) {
         // eslint-disable-next-line no-await-in-loop
         const out = await prisma.$transaction((tx) =>
           syncCategoryLabelForProducts(tx, { tenantId: A.id, productIds: [id], text }),
@@ -297,6 +305,14 @@ describeDb("category text -> label add-only sync (real Postgres)", () => {
       );
       expect(empty.addedProductIds).toEqual([]);
       expect(await membershipsOf(id)).toHaveLength(0);
+      const dup = await prisma.$transaction((tx) =>
+        syncCategoryLabelForProducts(tx, { tenantId: A.id, productIds: [id], text: "dup" }),
+      );
+      expect(dup.addedProductIds).toEqual([id]);
+      expect(await membershipsOf(id)).toEqual([
+        expect.objectContaining({ categoryId: A.dupUpper }),
+      ]);
+      expect((await auditsOf(id))[0].meta).toMatchObject({ ambiguousLabels: 2 });
     });
   });
 
