@@ -1,4 +1,4 @@
-import { getTierPrice } from "@routeflow/pricing";
+import { getTierPrice, normalizeBoxesPieces } from "@routeflow/pricing";
 import type { ProductUnitLevel } from "@routeflow/types";
 import { buildUnitOptions } from "@/lib/unit-options";
 import type { InvoiceDraftLine, InvoiceDraftSnapshot } from "@/lib/invoice-draft-storage";
@@ -101,6 +101,21 @@ export function repriceLine(
     unit: typeof product.unit === "string" && product.unit ? product.unit : (stored.unit ?? "each"),
     listPrice: fresh.listPrice,
   };
+  // The server splits boxes / pieces with the LIVE pack size, so the line follows it (same units, re-split).
+  const liveUpb = Number(product.unitsPerBox) > 1 ? Number(product.unitsPerBox) : undefined;
+  if (liveUpb !== stored.unitsPerBox) {
+    if (liveUpb === undefined) {
+      delete line.unitsPerBox;
+      delete line.boxes;
+      delete line.pieces;
+    } else {
+      const n = normalizeBoxesPieces({ qty: stored.qty, unitsPerBox: liveUpb });
+      line.unitsPerBox = liveUpb;
+      line.boxes = n.boxes ?? 0;
+      line.pieces = n.pieces ?? 0;
+      line.qty = n.qty;
+    }
+  }
   if (!typed) {
     line.unitPrice = fresh.effectivePrice;
     line.priceType = fresh.isSpecial ? "SPECIAL" : "STANDARD";

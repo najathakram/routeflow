@@ -209,6 +209,39 @@ describe("checkDraftReferences: prices are re-resolved, not trusted (ROW 447)", 
     expect(r.pricesUpdated).toBe(0);
   });
 
+  describe("pack size follows the live product", () => {
+    it("a pack that grew from 12 to 24 re-splits 1 box + 6 pieces (18 units) with the live size", async () => {
+      const r = await run(
+        [stored({ unitPrice: 10, qty: 18, boxes: 1, pieces: 6, unitsPerBox: 12 })],
+        { "/products/p-1": product({ unitsPerBox: 24 }) },
+      );
+      const l = r.snapshot.lines[0];
+      expect(l.unitsPerBox).toBe(24);
+      expect([l.boxes, l.pieces, l.qty]).toEqual([0, 18, 18]);
+    });
+
+    it("a product that is no longer boxed becomes a plain count of the same units", async () => {
+      const r = await run(
+        [stored({ unitPrice: 10, qty: 18, boxes: 1, pieces: 6, unitsPerBox: 12 })],
+        { "/products/p-1": product({ unitsPerBox: 1 }) },
+      );
+      const l = r.snapshot.lines[0];
+      expect(l.unitsPerBox).toBeUndefined();
+      expect(l.boxes).toBeUndefined();
+      expect(l.pieces).toBeUndefined();
+      expect(l.qty).toBe(18);
+    });
+
+    it("an unchanged pack size leaves boxes and pieces alone", async () => {
+      const r = await run(
+        [stored({ unitPrice: 10, qty: 18, boxes: 1, pieces: 6, unitsPerBox: 12 })],
+        { "/products/p-1": product({ unitsPerBox: 12 }) },
+      );
+      const l = r.snapshot.lines[0];
+      expect([l.boxes, l.pieces, l.qty, l.unitsPerBox]).toEqual([1, 6, 18, 12]);
+    });
+  });
+
   describe("unit-level lines keep their unit and quantity (units_v1)", () => {
     const level = (over: Record<string, unknown> = {}) => ({
       id: "u-1",
