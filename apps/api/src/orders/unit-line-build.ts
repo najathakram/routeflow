@@ -323,7 +323,7 @@ export function buildUnitLine(input: {
   /** The staff user whose typed price overrides the ladder (H3); stamped only on a real override. */
   overriddenBy?: string | null;
   /**
-   * H3: the stored line this one re-writes. Re-sending the price ALREADY on it is not a new override: the
+   * H3: the stored line this one re-writes. Sending NO price, or re-sending the price ALREADY on it, is not a new override: the
    * line keeps its stored price, type, original price, reason and stamp, no reason needed (an internal
    * re-write must never 400 on a stored override). A CHANGED price is re-decided against the tier price
    * and needs a reason sent with it (a 400 otherwise).
@@ -392,10 +392,12 @@ export function buildUnitLine(input: {
   // H3: ONE rule for a staff-typed price — judged against the customer's TIER unit price, never the list.
   const held =
     input.stored && norm(input.stored.unitLabel ?? "") === norm(label) ? input.stored : null;
+  // no price sent (a qty-only edit) or the stored price re-sent: the line keeps its stored decision, exactly as
+  // the pack branch keeps `existingUnitPrice` (orders.service.ts, updateOrderItems); only a CHANGED price re-decides
   const echoesHeld =
     held != null &&
-    item.unitPrice != null &&
-    withinStaffOverrideTolerance(Number(item.unitPrice), Number(held.unitPrice));
+    (item.unitPrice == null ||
+      withinStaffOverrideTolerance(Number(item.unitPrice), Number(held.unitPrice)));
   const decision =
     item.unitPrice != null && !echoesHeld
       ? decideStaffOverride({

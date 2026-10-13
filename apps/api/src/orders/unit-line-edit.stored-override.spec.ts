@@ -212,9 +212,36 @@ describe("per-line updateUnitLine — the stored line by id", () => {
     ).rejects.toBeInstanceOf(BadRequestException);
   });
 
-  it("a line unchanged in price and edited only in qty still reprices from the ladder (no price sent)", async () => {
+  it("a qty-only edit (no price sent) keeps the stored override: price, type, original, reason and stamp", async () => {
     const ctx = makeCtx();
     await updateUnitLine(ctx, "L1", product, resolved(), item({ id: "L1", qty: 5 }), false);
-    expect(updated(ctx)).toMatchObject({ unitPrice: 20, priceType: "SPECIAL", subtotal: 100 });
+    expect(updated(ctx)).toMatchObject({
+      unitPrice: 24,
+      subtotal: 120, // 5 x the KEPT $24, never the $20 tier price
+      priceType: "MANUAL",
+      originalPrice: 24,
+      overrideReason: "agreed at list",
+      overriddenBy: "u-old",
+    });
+  });
+
+  it("a qty-only edit of a STANDARD / SPECIAL line keeps its stored price, as the pack branch does (existingUnitPrice)", async () => {
+    const ctx = makeCtx([{ ...storedSpecial, unitPrice: "19.00" }]); // tier price has since moved to 20
+    await updateUnitLine(ctx, "L1", product, resolved(), item({ id: "L1", qty: 2 }), false);
+    expect(updated(ctx)).toMatchObject({ unitPrice: 19, subtotal: 38, priceType: "SPECIAL" });
+    expect(updated(ctx)).not.toHaveProperty("overriddenBy");
+  });
+
+  it("a qty-only edit that CHANGES the unit leaves the stored price behind and prices the new unit from the ladder", async () => {
+    const ctx = makeCtx();
+    await updateUnitLine(
+      ctx,
+      "L1",
+      product,
+      resolved("Pallet"),
+      item({ id: "L1", unitLabel: "Pallet", qty: 1 }),
+      false,
+    );
+    expect(updated(ctx)).toMatchObject({ unitPrice: 380, priceType: "SPECIAL", subtotal: 380 });
   });
 });
