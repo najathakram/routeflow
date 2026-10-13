@@ -137,10 +137,12 @@ export async function planOrderEditRestrictions(
 export async function assertNoMirrorAppearedUnderLock(
   tx: { invoice: { findFirst(args: any): Promise<any> } },
   orderId: string,
-  planned: boolean,
+  // The PRE-lock answer: true when the pre-check already saw a live mirror (or the order is not a DRAFT), i.e. the
+  // edit was judged (or the switch is off) on that basis. Only a mirror the pre-check did NOT see refuses here.
+  precheckJudged: boolean,
   status: string | null | undefined,
 ): Promise<void> {
-  if (planned || status !== "DRAFT") return;
+  if (precheckJudged || status !== "DRAFT") return;
   const live = await tx.invoice.findFirst({
     where: { orderId, status: { not: "VOID" } },
     select: { id: true },

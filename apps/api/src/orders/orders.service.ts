@@ -3061,7 +3061,7 @@ export class OrdersService implements OnApplicationBootstrap {
           },
         });
         restrictionPlan?.assertHeld(heldItems);
-        await assertNoMirrorAppearedUnderLock(tx, orderId, !!restrictionPlan, order.status); // DRAFT edit vs a concurrent bill
+        await assertNoMirrorAppearedUnderLock(tx, orderId, judgeEdit, order.status); // DRAFT edit vs a concurrent bill
         await driverAccess.assertDriverMayEditOrder(tx, orderId, user); // SA-429: re-derived under the Order lock
         cancelledLines.assertHeldCancelledLines(heldItems, dto.items, user, isDiffPayload); // SA-422
 
