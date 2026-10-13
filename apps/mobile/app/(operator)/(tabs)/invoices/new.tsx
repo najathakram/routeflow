@@ -112,7 +112,12 @@ import {
 } from "../../../../lib/invoice-terms";
 import { MoneyTextInput } from "../../../../components/MoneyTextInput";
 import { alertInfo, chooseAction, confirm } from "../../../../lib/confirm";
-import { KEPT_DRAFT_COPY, keptDraftInvoiceId } from "../../../../lib/kept-draft-invoice";
+import {
+  KEPT_DRAFT_COPY,
+  KEPT_ORDER_COPY,
+  keptDraftInvoiceId,
+  keptOrderId,
+} from "../../../../lib/kept-draft-invoice";
 import { QtyStepper } from "../../../../components/QtyStepper";
 import { InlineCreateProductSheet } from "../../../../components/InlineCreateProductSheet";
 import { ProductPickerSheet } from "../../../../components/ProductPickerSheet";
@@ -289,6 +294,11 @@ export default function NewInvoiceScreen() {
           showToast(KEPT_DRAFT_COPY);
           router.replace(`/(operator)/invoices/${invoiceId}` as any);
         }}
+        onKeptOrder={(orderId) => {
+          // Row 466: the sale's order exists and only its invoice step failed. Open the order.
+          showToast(KEPT_ORDER_COPY);
+          router.replace(`/(operator)/orders/${orderId}` as any);
+        }}
       />
     </SafeAreaView>
   );
@@ -378,6 +388,7 @@ function InvoiceComposer({
   onChangeCustomer,
   onSaved,
   onKeptDraft,
+  onKeptOrder,
 }: {
   customerId: string;
   customerName: string | null;
@@ -386,6 +397,8 @@ function InvoiceComposer({
   onSaved: (invoiceId: string, invoiceNumber: string) => void;
   /** The create committed but the send step failed: open the kept draft. */
   onKeptDraft: (invoiceId: string) => void;
+  /** The sale's order committed but its invoice step failed: open the order. */
+  onKeptOrder: (orderId: string) => void;
 }) {
   const [category, setCategory] = useState("All");
   const [items, setItems] = useState<Record<string, InvoiceLineState>>({});
@@ -1395,6 +1408,8 @@ function InvoiceComposer({
           onError: (err: any) => {
             const keptId = keptDraftInvoiceId(err);
             if (keptId) return void onKeptDraft(keptId);
+            const keptOrder = keptOrderId(err);
+            if (keptOrder) return void onKeptOrder(keptOrder);
             if (unitNotOfferedCode(err)) return void onUnitNotOffered("Couldn't record the sale");
             alertInfo(
               "Couldn't record the sale",

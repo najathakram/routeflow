@@ -22,21 +22,23 @@ export interface KeptDraft {
  *   `cause` and in the server log, so Sentry still sees it. The raw message never reaches the body.
  * - The error is always rethrown; this never swallows.
  */
+/** Merge `extra` into an HttpException's body in place, so it keeps its class, status and code. */
+function mergeIntoBody(err: HttpException, extra: Record<string, unknown>): HttpException {
+  const body = err.getResponse();
+  const merged =
+    typeof body === "string"
+      ? { statusCode: err.getStatus(), message: body, ...extra }
+      : { ...body, ...extra };
+  (err as unknown as { response: unknown }).response = merged;
+  return err;
+}
+
 export function withKeptDraft(err: unknown, kept: KeptDraft): HttpException {
   const extra = {
     invoiceId: kept.invoiceId,
     ...(kept.orderId ? { orderId: kept.orderId } : {}),
   };
-  if (err instanceof HttpException) {
-    const body = err.getResponse();
-    const merged =
-      typeof body === "string"
-        ? { statusCode: err.getStatus(), message: body, ...extra }
-        : { ...body, ...extra };
-    // Mutate in place so the exception keeps its class (callers and specs match on it).
-    (err as unknown as { response: unknown }).response = merged;
-    return err;
-  }
+  if (err instanceof HttpException) return mergeIntoBody(err, extra);
   logger.error(
     `send failed after invoice ${kept.invoiceId} was committed: ${
       err instanceof Error ? (err.stack ?? err.message) : String(err)
@@ -72,4 +74,33 @@ export function sendCommitted<A extends unknown[], T>(
   ...opts: A
 ): Promise<T> {
   return sendAfterCommit({ invoiceId, orderId }, () => invoices.send(invoiceId, ...opts));
+}
+
+/**
+ * Row 466 (sale path): createSale commits the ORDER first, then builds its invoice. When the invoice
+ * step throws, the error carries `orderId` so the client opens the order instead of retrying into a
+ * duplicate sale. An HttpException keeps its class, status, code and message (and any `invoiceId` it
+ * already carries); anything else becomes a coded 500 with a fixed message, `cause` kept and logged.
+ */
+export function withKeptOrder(err: unknown, orderId: string): HttpException {
+  if (err instanceof HttpException) return mergeIntoBody(err, { orderId });
+  logger.error(
+    `invoice step failed after order ${orderId} was committed: ${
+      err instanceof Error ? (err.stack ?? err.message) : String(err)
+    }`,
+  );
+  return saleInvoiceFailed(orderId, err);
+}
+
+/** The coded 500 for "the order exists, its invoice does not". */
+export function saleInvoiceFailed(orderId: string, cause?: unknown): InternalServerErrorException {
+  return new InternalServerErrorException(
+    {
+      code: API_ERROR_CODES.SALE_INVOICE_CREATE_FAILED,
+      message:
+        "The order was created but its invoice could not be generated. Open the order and use “Generate Invoice”.",
+      orderId,
+    },
+    cause === undefined ? undefined : { cause },
+  );
 }

@@ -174,6 +174,8 @@ export const API_ERROR_CODES = {
   EMAIL_SEND_FAILED: "EMAIL_SEND_FAILED",
   // Row 466: create-and-send committed the invoice, then the send step threw a non-HTTP error. The body carries `invoiceId`.
   INVOICE_SEND_AFTER_CREATE_FAILED: "INVOICE_SEND_AFTER_CREATE_FAILED",
+  // Row 466: createSale committed the order, then its invoice step threw. The body carries `orderId`.
+  SALE_INVOICE_CREATE_FAILED: "SALE_INVOICE_CREATE_FAILED",
   ADDON_DEFAULT_GRANTED: "ADDON_DEFAULT_GRANTED",
   EXPIRES_AT_MUST_BE_FUTURE: "EXPIRES_AT_MUST_BE_FUTURE",
   FEATURE_KEY_UNKNOWN: "FEATURE_KEY_UNKNOWN",

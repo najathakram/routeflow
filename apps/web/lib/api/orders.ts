@@ -2,7 +2,7 @@ import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { apiClient } from "../api-client";
 import type { ChangeRequest, ChangeRequestResolveAction } from "@/lib/change-requests";
 import { fetchPdfBlob } from "../fetch-pdf-blob";
-import { keptDraftInvoiceId } from "../kept-draft-invoice";
+import { keptDraftInvoiceId, keptOrderId } from "../kept-draft-invoice";
 import type {
   ActiveOrderSummary,
   BatchShipRequest,
@@ -414,7 +414,7 @@ export function useCreateSale() {
     },
     // Row 466: the sale and its invoice exist even when the send step failed.
     onError: (err) => {
-      if (keptDraftInvoiceId(err)) {
+      if (keptDraftInvoiceId(err) || keptOrderId(err)) {
         qc.invalidateQueries({ queryKey: ["orders"] });
         qc.invalidateQueries({ queryKey: ["invoices"] });
       }

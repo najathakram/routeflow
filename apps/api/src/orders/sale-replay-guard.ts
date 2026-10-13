@@ -1,6 +1,6 @@
 import { ConflictException } from "@nestjs/common";
 import { API_ERROR_CODES } from "../common/api-error-codes";
-import { sendCommitted } from "../invoices/send-after-commit";
+import { saleInvoiceFailed, sendCommitted, withKeptOrder } from "../invoices/send-after-commit";
 
 /** What a stored counter sale is, judged from its order status and its invoices' statuses (ALL of them, voided included). */
 export type StoredSaleState = "live" | "incomplete" | "voided" | "changed";
@@ -94,4 +94,24 @@ export async function sendSale<A extends unknown[], T>(
 ): Promise<T | typeof inv> {
   if (replay && inv.status && inv.status !== "DRAFT") return inv;
   return sendCommitted(invoices, inv.id, orderId, ...opts);
+}
+
+/**
+ * createSale's invoice step, awaited here so a failure can carry the order. The order is already
+ * committed, so any failure (or an empty result) carries `orderId` and the client opens the order
+ * rather than retrying into a duplicate sale (row 466).
+ */
+export async function keepOrderOnInvoiceFailure<I extends readonly unknown[] | null | undefined>(
+  orderId: string,
+  invoicing: Promise<I>,
+): Promise<NonNullable<I>> {
+  let created: I;
+  try {
+    created = await invoicing;
+  } catch (err) {
+    throw withKeptOrder(err, orderId);
+  }
+  // Unreachable for a freshly-created order (nothing is invoiced yet), but keep the order intact.
+  if (!created || created.length === 0) throw saleInvoiceFailed(orderId);
+  return created as NonNullable<I>;
 }

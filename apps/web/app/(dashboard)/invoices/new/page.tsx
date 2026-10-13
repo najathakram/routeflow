@@ -48,7 +48,12 @@ import {
 } from "@/lib/sale-line-pricing";
 import { reasonRequiredMessage } from "@/lib/staff-price-override";
 import { apiClient } from "@/lib/api-client";
-import { KEPT_DRAFT_TOAST, keptDraftInvoiceId } from "@/lib/kept-draft-invoice";
+import {
+  KEPT_DRAFT_TOAST,
+  KEPT_ORDER_TOAST,
+  keptDraftInvoiceId,
+  keptOrderId,
+} from "@/lib/kept-draft-invoice";
 import { fetchPdfBlob } from "@/lib/fetch-pdf-blob";
 import { displayProductName } from "@/lib/product-display";
 import {
@@ -1586,6 +1591,13 @@ export default function NewInvoicePage() {
           if (keptId) {
             toast({ ...KEPT_DRAFT_TOAST, variant: "warning" });
             router.push(`/invoices/${keptId}`);
+            return;
+          }
+          // Row 466: the order exists and only its invoice step failed. Open the order.
+          const keptOrder = keptOrderId(err);
+          if (keptOrder) {
+            toast({ ...KEPT_ORDER_TOAST, variant: "warning" });
+            router.push(`/orders/${keptOrder}`);
             return;
           }
           toast({

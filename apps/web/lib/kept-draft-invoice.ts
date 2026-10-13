@@ -17,3 +17,21 @@ export const KEPT_DRAFT_TOAST = {
   title: "Saved as a draft, not sent",
   description: "The invoice was saved but could not be sent. Open it to send it.",
 } as const;
+
+/**
+ * createSale commits the ORDER, then builds its invoice. When the invoice step fails the body carries
+ * `orderId` (and `invoiceId` too if the invoice was created and only its send failed). The page opens
+ * the invoice when there is one (keptDraftInvoiceId), else this order, never a second sale.
+ */
+export function keptOrderId(err: unknown): string | null {
+  const id = (err as { response?: { data?: { orderId?: unknown } } } | null)?.response?.data
+    ?.orderId;
+  return typeof id === "string" && id.length > 0 ? id : null;
+}
+
+/** Fixed copy (B980): the order exists, its invoice does not yet. */
+export const KEPT_ORDER_TOAST = {
+  title: "Sale recorded, invoice not created",
+  description:
+    "The order was saved but its invoice could not be created. Open the order to finish it.",
+} as const;

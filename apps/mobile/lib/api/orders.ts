@@ -1,6 +1,6 @@
 import { useQuery, useMutation, useQueryClient, type QueryClient } from "@tanstack/react-query";
 import { apiClient } from "../api-client";
-import { keptDraftInvoiceId } from "../kept-draft-invoice";
+import { keptDraftInvoiceId, keptOrderId } from "../kept-draft-invoice";
 import type { ChangeRequest } from "./change-requests";
 import { creditsPendingFromError } from "../order-credits-pending";
 import type {
@@ -440,7 +440,7 @@ export function useCreateSale() {
     },
     // Row 466: the sale and its invoice exist even when the send step failed.
     onError: (err) => {
-      if (keptDraftInvoiceId(err)) {
+      if (keptDraftInvoiceId(err) || keptOrderId(err)) {
         invalidateOrderCaches(qc);
         qc.invalidateQueries({ queryKey: ["invoices"] });
       }

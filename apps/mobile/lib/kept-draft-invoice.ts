@@ -14,3 +14,17 @@ export function keptDraftInvoiceId(err: unknown): string | null {
 
 /** Fixed copy: the invoice exists, it just was not sent. */
 export const KEPT_DRAFT_COPY = "Saved as a draft, not sent. Open it to send.";
+
+/**
+ * createSale commits the ORDER, then builds its invoice. When the invoice step fails the body carries
+ * `orderId` (and `invoiceId` too if the invoice was created and only its send failed). The composer
+ * opens the invoice when there is one (keptDraftInvoiceId), else this order, never a second sale.
+ */
+export function keptOrderId(err: unknown): string | null {
+  const id = (err as { response?: { data?: { orderId?: unknown } } } | null)?.response?.data
+    ?.orderId;
+  return typeof id === "string" && id.length > 0 ? id : null;
+}
+
+/** Fixed copy: the order exists, its invoice does not yet. */
+export const KEPT_ORDER_COPY = "Sale recorded, but its invoice wasn't created. Open the order.";
