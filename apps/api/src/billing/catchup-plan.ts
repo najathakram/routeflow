@@ -1,27 +1,24 @@
 import { roundMoney, toCents } from "@routeflow/pricing";
 import { prorateDaily } from "./billing-math";
-import { STRIPE_WEBHOOK_RETRY_DAYS } from "./catchup-claim";
-import { nextCheckoutAnchor } from "./checkout-anchor";
-import {
-  BOUNDARY_HOUR_UTC,
-  boundary,
-  paidThrough as sharedPaidThrough,
-  snapToBoundary,
-} from "./rf-invoice/calendar-windows";
+import { boundary, snapToBoundary } from "./rf-invoice/calendar-windows";
 
 /**
- * SA-733 D7 / SA-733r [M5] / r2 / r3 [N3] / r4 / r5: the October CATCH-UP of a manually-invoiced tenant, as a
- * PURE plan. No Stripe, no database, no clock of its own. The caller supplies the tenant's resolved monthly price
- * (the one rule in plan-price.ts: override beats catalog), its billable add-ons and its RfInvoices.
+ * SA-733 D7 / r2 / r3 / r4 / r5 / SA-733r9 + r10 (row 339, the PRORATED catch-up): the catch-up of a manually-invoiced
+ * tenant, as a PURE plan. No Stripe, no database, no clock of its own. The caller supplies the tenant's resolved
+ * monthly price (the one rule in plan-price.ts: override beats catalog), its billable add-ons, its RfInvoices and its
+ * activation markers.
  *
- *   paid-through   snap(last periodEnd) of the contiguous run of PAID RfInvoices (r4a), via the ONE shared helper
- *                  (rf-invoice/calendar-windows.ts: boundary, snap, contiguity, paidThrough - L-167); with none,
- *                  the go-live boundary (Oct 1 12:00Z). A PAID invoice AFTER a gap is NEEDS RULING (r2).
- *   unpaid span    [paid-through, A) - monthly price (+ billable add-ons) x unpaid days / days in month, month by
- *                  month (fractional days allowed, boundary = the 1st at 12:00Z).
- *   shape          SA-733r5: which Checkout parameters carry it, given Stripe's documented Checkout limits
- *                  ("a one-time price cannot sit beside proration_behavior none"; "a trial cannot be combined with
- *                  a billing cycle anchor"). See {@link CheckoutShape} and {@link catchupShape}.
+ *   floor          max(go-live, the billing start): the operator's billing-start override when one exists, else the
+ *                  first activation's period start (SA-733r11). Nothing before it is ever billed.
+ *   paid coverage  ONE walk ({@link paidCoverage}) from the floor over the union of PAID RfInvoice windows and the
+ *                  non-voided activation windows, every boundary compared SNAPPED. A window after a gap: NEEDS RULING.
+ *   S              snap(paid-through): the start of the one-time line. A paid-through within 24 h of a 1st becomes
+ *                  that 1st (no half days); a mid-month one keeps its exact instant and the line prorates exactly.
+ *   A              the first 1st at 12:00Z that is >= max(now + 72 h, S). The trial ends there; the card bills from A.
+ *   line           [S, A) = monthly price (+ billable add-ons) x days / days in month, month by month. A line under
+ *                  $0.50 is forgiven (audited once per session by the claim service).
+ *   shape          S === A: the stub-free 8(e) `trial`; S < A: `trial_one_time` (charged at completion). Nothing else
+ *                  is reachable (SA-733r9 G4).
  */
 
 const DAY_MS = 24 * 60 * 60 * 1000;
@@ -31,17 +28,6 @@ export const CATCHUP_GO_LIVE = boundary(2026, 9);
 
 /** A trial must end at least 48 h out (Stripe); 72 h keeps the floor even if the session completes at its 24 h expiry. */
 export const CATCHUP_TRIAL_MIN_LEAD_MS = 72 * 60 * 60 * 1000;
-
-/**
- * Decision 5. The prepaid `trial` shape bills its stub as a DRAFT invoice that finalizes after the session completes
- * (claim service stubFinalizeAt: at the latest session expiry + Stripe's 3-day webhook retry window + 1 h). If it
- * finalized AFTER the trial ends (T), its payment could fail for good after the renewal at T was already paid, and the
- * release would cancel a subscription that has a paid renewal - the renewal month charged twice. So `trial` with a
- * stub needs T >= session life (24 h) + 3 days + 2 h from now (98 h); closer than that the stub is billed UP FRONT
- * (the one-time-line shape). A prepaid tenant with NO stub keeps the plain 72 h rule: there is nothing to finalize.
- */
-export const CATCHUP_TRIAL_STUB_MIN_LEAD_MS =
-  (24 + STRIPE_WEBHOOK_RETRY_DAYS * 24 + 2) * 60 * 60 * 1000;
 
 /** Stripe's smallest chargeable amount in USD (r3 N3: "the stub is skipped under $0.50"). */
 export const STRIPE_MIN_CHARGE_CENTS = 50;
@@ -59,14 +45,56 @@ export interface CatchupInvoice {
   periodEnd: Date | null;
 }
 
+/** One paid window (a PAID RfInvoice's, or a non-voided activation's): `[periodStart, periodEnd)`. */
+export interface CoverageWindow {
+  periodStart: Date;
+  periodEnd: Date;
+}
+
+export type PaidCoverage =
+  { ok: true; paidThrough: Date; reached: boolean } | { ok: false; reason: "paid_after_gap" };
+
+/**
+ * THE paid-coverage walk (SA-733r9 rule 1 / MF6). From `floor`, over the union of PAID RfInvoice windows AND activation
+ * windows, every boundary compared SNAPPED (a window starts <= the current end after snapping both). It advances
+ * while the next window starts at or before the current end and stops at the first gap. `paidThrough` is the end
+ * reached (a window end is snapped, so a legacy 00:00Z spelling and an Oct 31 evening end read as the 1st). A window
+ * that still ends after the run (it started after a gap) is NEEDS RULING: `paid_after_gap`. History that ends at or
+ * before the floor never lowers it. `reached` says whether any window moved the end past the floor.
+ */
+export function paidCoverage(
+  floor: Date,
+  w: {
+    paidRfWindows: readonly CoverageWindow[];
+    activationWindows: readonly CoverageWindow[];
+  },
+): PaidCoverage {
+  const all = [...w.paidRfWindows, ...w.activationWindows]
+    .map((x) => ({
+      start: snapToBoundary(x.periodStart).getTime(),
+      end: snapToBoundary(x.periodEnd).getTime(),
+    }))
+    .sort((a, b) => a.start - b.start || a.end - b.end);
+  let cursor = floor.getTime();
+  let reached = false;
+  for (const x of all) {
+    if (x.end <= cursor) continue; // inside what is already covered, or before the floor
+    if (x.start <= snapToBoundary(new Date(cursor)).getTime()) {
+      cursor = x.end;
+      reached = true;
+    }
+  }
+  if (all.some((x) => x.end > cursor)) return { ok: false, reason: "paid_after_gap" };
+  return { ok: true, paidThrough: new Date(cursor), reached };
+}
+
 export type PaidThrough =
   | { ok: true; paidThrough: Date; paidInvoiceIds: string[]; fromInvoices: boolean }
   | { ok: false; reason: "paid_after_gap" | "paid_invoice_without_period" };
 
 /**
- * Paid-through = the shared `paidThrough` walked forward from the FLOOR over the PAID invoices; the floor is the
- * go-live boundary, or the tenant's billing start when that is later (a tenant activated after go-live is not
- * charged from Oct 1). A PAID invoice the walk could not reach (after a gap) refuses: NEEDS RULING, never a guess.
+ * Paid-through over the PAID RfInvoices alone, from `floor` (the go-live boundary, or the billing start when later):
+ * {@link paidCoverage} with no activation windows. The planner itself calls paidCoverage with both sources.
  */
 export function paidThroughOf(
   invoices: readonly CatchupInvoice[],
@@ -76,21 +104,20 @@ export function paidThroughOf(
   if (paid.some((i) => !i.periodStart || !i.periodEnd)) {
     return { ok: false, reason: "paid_invoice_without_period" };
   }
-  if (paid.length === 0) {
-    return { ok: true, paidThrough: floor, paidInvoiceIds: [], fromInvoices: false };
-  }
-  const windows = paid.map((i) => ({ periodStart: i.periodStart!, periodEnd: i.periodEnd! }));
-  const reached = sharedPaidThrough(windows, floor) ?? floor;
-  // a PAID period that ends after the run (it started after a gap) was not walked: NEEDS RULING
-  const outside = paid.filter((i) => snapToBoundary(i.periodEnd!).getTime() > reached.getTime());
-  if (outside.length > 0) return { ok: false, reason: "paid_after_gap" };
+  const cov = paidCoverage(floor, {
+    paidRfWindows: paid.map((i) => ({ periodStart: i.periodStart!, periodEnd: i.periodEnd! })),
+    activationWindows: [],
+  });
+  if (!cov.ok) return cov;
   return {
     ok: true,
-    paidThrough: reached,
-    paidInvoiceIds: paid
-      .filter((i) => snapToBoundary(i.periodEnd!).getTime() > floor.getTime())
-      .map((i) => i.id),
-    fromInvoices: true,
+    paidThrough: cov.paidThrough,
+    paidInvoiceIds: cov.reached
+      ? paid
+          .filter((i) => snapToBoundary(i.periodEnd!).getTime() > floor.getTime())
+          .map((i) => i.id)
+      : [],
+    fromInvoices: cov.reached,
   };
 }
 
@@ -160,6 +187,10 @@ export function addonCardRefusal(
 export interface ActivationRecord {
   action: string;
   at: Date;
+  /** The audit row id (the MARKER row's id is what a coverage VOID / RESTORE names). */
+  id?: string;
+  /** True on a marker whose coverage is voided by the latest VOID / RESTORE row (catchup-markers.ts). */
+  voided?: boolean;
   /** The activation's OWN unsnapped period, when the row recorded it. */
   periodStart?: Date | null;
   periodEnd?: Date | null;
@@ -175,42 +206,70 @@ const ACTIVATION_CLUSTER_GAP_MS = 10 * 60 * 1000;
 export function isAnchorFirst(d: Date): boolean {
   return (
     d.getUTCDate() === 1 &&
-    (d.getUTCHours() === BOUNDARY_HOUR_UTC || d.getUTCHours() === 0) &&
+    (d.getUTCHours() === 12 || d.getUTCHours() === 0) &&
     d.getUTCMinutes() === 0 &&
     d.getUTCSeconds() === 0 &&
     d.getUTCMilliseconds() === 0
   );
 }
 
-export type ManualCoverage =
-  { ok: true; latestEnd: Date | null } | { ok: false; reason: "manual_marker_without_period" };
+export interface ActivationCluster {
+  /** The cluster's period start: its recorded `periodStart`, else (an end with no start) its earliest `at`. */
+  start: Date;
+  end: Date;
+  voided: boolean;
+}
+
+export type ActivationClusters =
+  | { ok: true; clusters: ActivationCluster[]; firstStart: Date | null }
+  | { ok: false; reason: "manual_marker_without_period" };
+
+const validDate = (e: unknown): e is Date => e instanceof Date && !Number.isNaN(e.getTime());
 
 /**
- * Money (MF2, SA-733r5 r-note 10-11). What the manual activations ALREADY PAID, unsnapped: the latest recorded
- * period end across EVERY activation (not just the latest one). Rows are grouped per activation (marker + trail row,
- * seconds apart); an activation is usable when EITHER of its rows carries a period. An activation with none -
- * a legacy marker from before periods were recorded - cannot be measured, so the plan fails closed
- * ("manual_marker_without_period"). No activations at all: nothing was paid this way.
+ * Activation rows grouped into ACTIVATIONS (marker + trail row, seconds apart) with the window each recorded.
+ * An activation is usable when EITHER row carries a period END; an activation with none - a legacy marker from before
+ * periods were recorded - cannot be measured, so the plan fails closed ("manual_marker_without_period"), unless a
+ * VOID already says it paid nothing. A cluster with an end but NO start uses its earliest `at` as the start.
+ * `firstStart` is the first activation's period start (voided or not: the activation still happened as an event) -
+ * the floor's first-activation term (SA-733r10 nit 1, r11).
  */
-export function manualCoverage(rows: readonly ActivationRecord[]): ManualCoverage {
+export function activationClusters(rows: readonly ActivationRecord[]): ActivationClusters {
   const sorted = [...rows].sort((x, y) => x.at.getTime() - y.at.getTime());
-  const clusters: ActivationRecord[][] = [];
+  const groups: ActivationRecord[][] = [];
   let prev: number | null = null;
   for (const r of sorted) {
-    if (prev === null || r.at.getTime() - prev > ACTIVATION_CLUSTER_GAP_MS) clusters.push([r]);
-    else clusters[clusters.length - 1].push(r);
+    if (prev === null || r.at.getTime() - prev > ACTIVATION_CLUSTER_GAP_MS) groups.push([r]);
+    else groups[groups.length - 1].push(r);
     prev = r.at.getTime();
   }
-  let latestEnd: Date | null = null;
-  for (const cluster of clusters) {
-    const ends = cluster
-      .map((r) => r.periodEnd)
-      .filter((e): e is Date => e instanceof Date && !Number.isNaN(e.getTime()));
-    if (ends.length === 0) return { ok: false, reason: "manual_marker_without_period" };
-    const end = new Date(Math.max(...ends.map((e) => e.getTime())));
-    if (!latestEnd || end.getTime() > latestEnd.getTime()) latestEnd = end;
+  const clusters: ActivationCluster[] = [];
+  // starts of voided activations that recorded no period at all: no window to ignore, but the activation still
+  // happened as an event, so its earliest `at` still supplies the floor's first-activation term (N5)
+  const eventStarts: Date[] = [];
+  for (const g of groups) {
+    const voided = g.some((r) => r.voided === true);
+    const ends = g.map((r) => r.periodEnd).filter(validDate);
+    const starts = g.map((r) => r.periodStart).filter(validDate);
+    const start = starts.length ? new Date(Math.min(...starts.map((x) => x.getTime()))) : g[0].at; // sorted: the earliest `at`
+    if (ends.length === 0) {
+      if (voided) {
+        eventStarts.push(start); // a voided activation with no period paid nothing and has no window to ignore
+        continue;
+      }
+      return { ok: false, reason: "manual_marker_without_period" };
+    }
+    clusters.push({
+      start,
+      end: new Date(Math.max(...ends.map((e) => e.getTime()))),
+      voided,
+    });
   }
-  return { ok: true, latestEnd };
+  const allStarts = [...clusters.map((c) => c.start), ...eventStarts];
+  const firstStart = allStarts.length
+    ? new Date(Math.min(...allStarts.map((x) => x.getTime())))
+    : null;
+  return { ok: true, clusters, firstStart };
 }
 
 export interface StubLine {
@@ -280,67 +339,73 @@ const MONTHS = [
   "November",
   "December",
 ];
+const MON = MONTHS.map((m) => m.slice(0, 3));
 
-/** "Subscription — October 2026" for one whole month; a range or "(from Oct 15)" otherwise. */
+/**
+ * "Subscription — October 2026" for whole months from a 1st; a mid-month start is labelled with its start and its last
+ * billed day: "Subscription — Nov 11 to Nov 30, 2026" (never a bare month name - SA-733r10 nit 2).
+ */
 export function describeStub(from: Date, to: Date): string {
+  // S === A: there is no line to describe (never "December 2026 to November 2026")
+  if (snapToBoundary(from).getTime() >= snapToBoundary(to).getTime()) return "No catch-up line";
   const monthOf = (d: Date) => `${MONTHS[d.getUTCMonth()]} ${d.getUTCFullYear()}`;
   const snapped = snapToBoundary(from);
   const startsOnBoundary =
-    snapped.getUTCDate() === 1 &&
-    snapped.getUTCHours() === BOUNDARY_HOUR_UTC &&
-    snapped.getUTCMinutes() === 0;
-  const first = startsOnBoundary ? snapped : from;
+    snapped.getUTCDate() === 1 && snapped.getUTCHours() === 12 && snapped.getUTCMinutes() === 0;
   // the last billed day is the one before the (snapped) end
   const last = new Date(snapToBoundary(to).getTime() - DAY_MS);
-  if (
-    first.getUTCFullYear() === last.getUTCFullYear() &&
-    first.getUTCMonth() === last.getUTCMonth()
-  ) {
-    return startsOnBoundary
-      ? `Subscription — ${monthOf(first)}`
-      : `Subscription — ${monthOf(first)} (from ${MONTHS[from.getUTCMonth()].slice(0, 3)} ${from.getUTCDate()})`;
+  if (startsOnBoundary) {
+    return snapped.getUTCFullYear() === last.getUTCFullYear() &&
+      snapped.getUTCMonth() === last.getUTCMonth()
+      ? `Subscription — ${monthOf(snapped)}`
+      : `Subscription — ${monthOf(snapped)} to ${monthOf(last)}`;
   }
-  return `Subscription — ${monthOf(first)} to ${monthOf(last)}`;
+  const day = (d: Date) => `${MON[d.getUTCMonth()]} ${d.getUTCDate()}`;
+  const startLabel =
+    from.getUTCFullYear() === last.getUTCFullYear()
+      ? day(from)
+      : `${day(from)}, ${from.getUTCFullYear()}`;
+  return `Subscription — ${startLabel} to ${day(last)}, ${last.getUTCFullYear()}`;
 }
 
 /**
- * Which Checkout parameters carry the catch-up (SA-733r5). Every shape is one Stripe documents as valid in Checkout;
- * the two invalid pairings (a one-time line with `proration_behavior`, `trial_end` with `billing_cycle_anchor`) are
- * never built (catchup-session-params.ts asserts it on everything it returns).
- *
- *  - `trial_one_time` the COMMON case, paid-through <= now (an unpaid October): `trial_end = A` alone (A = the
- *                     first 1st at 12:00Z that is >= now + 72 h) + the recurring lines + ONE one-time line = the
- *                     unpaid [paid-through, A). Stripe charges the line at completion; the cycle starts at A.
- *  - `trial`          prepaid (R16-3), T (the first boundary on/after paid-through) >= now + 72 h: `trial_end = T`
- *                     alone; the stub [paid-through, T) is a post-completion draft invoice (nothing when T itself).
- *  - `anchor_no_line` prepaid, T under 72 h away and nothing to bill before the anchor: anchor + `none`, no
- *                     one-time line.
+ * Which Checkout parameters carry the catch-up. Only two shapes are reachable (SA-733r9 G4):
+ *  - `trial_one_time` S < A: `trial_end = A` + the recurring lines + ONE one-time line = [S, A), charged AT COMPLETION
+ *                     (a past S, a future mid-month S and a 1-3 days-from-a-1st S alike). A line under $0.50 is
+ *                     forgiven: the session carries no one-time line.
+ *  - `trial`          S === A (paid exactly through a 1st at least 72 h out, ruling 8(e)): `trial_end = A` alone, no line.
+ * The two invalid Checkout pairings (a one-time line with `proration_behavior`, `trial_end` with
+ * `billing_cycle_anchor`) are never built (catchup-session-params.ts asserts it on everything it returns).
  */
-export type CheckoutShape = "trial_one_time" | "trial" | "anchor_no_line";
+export type CheckoutShape = "trial_one_time" | "trial";
 
-/**
- * The selector (SA-733r5): `trial_one_time` iff snap(paid-through) <= now; else `trial` iff T >= now + 72 h, or
- * T >= now + 98 h when it carries a stub (Decision 5: see CATCHUP_TRIAL_STUB_MIN_LEAD_MS); else `anchor_no_line`.
- */
+/** A: the first 1st at 12:00Z that is >= max(now + 72 h, S). */
+export function trialEndFor(i: { start: Date; now: Date }): Date {
+  const earliest = Math.max(i.now.getTime() + CATCHUP_TRIAL_MIN_LEAD_MS, i.start.getTime());
+  return firstBoundaryNotBefore(new Date(earliest));
+}
+
+/** The selector (SA-733r10 nit 4): `trial` iff snap(paid-through) === A, else `trial_one_time`. */
 export function catchupShape(i: { paidThrough: Date; now: Date }): CheckoutShape {
-  if (snapToBoundary(i.paidThrough).getTime() <= i.now.getTime()) return "trial_one_time";
-  const t = firstBoundaryNotBefore(i.paidThrough);
-  const hasStub = t.getTime() > i.paidThrough.getTime();
-  const lead = hasStub ? CATCHUP_TRIAL_STUB_MIN_LEAD_MS : CATCHUP_TRIAL_MIN_LEAD_MS;
-  return t.getTime() - i.now.getTime() >= lead ? "trial" : "anchor_no_line";
+  const s = snapToBoundary(i.paidThrough);
+  return trialEndFor({ start: s, now: i.now }).getTime() === s.getTime()
+    ? "trial"
+    : "trial_one_time";
 }
 
 export interface CatchupPlan {
   ok: true;
   now: Date;
+  /** max(go-live, the billing start): nothing before it is ever billed. */
+  floor: Date;
+  /** Where the floor comes from: the operator's override, the first activation's period start, or go-live. */
+  floorSource: "billing_start_override" | "first_activation" | "go_live";
+  /** S: the snapped paid-through (the floor when nothing is paid) - where the one-time line starts. */
   paidThrough: Date;
   paidFromInvoices: boolean;
-  /** The next 1st (12:00Z) under the 90-minute rule (the anchor_no_line anchor). */
+  /** A (shown as the anchor): the 1st the card starts billing on. */
   anchorAt: Date;
-  /**
-   * The trial end the session sends: A for `trial_one_time`, T for `trial`; for `anchor_no_line` T is shown for
-   * reference (no trial is sent).
-   */
+  /** The trial end the session sends: A. */
   trialEndAt: Date;
   shape: CheckoutShape;
   /** The unpaid span the stub covers and what it comes to. */
@@ -350,11 +415,13 @@ export interface CatchupPlan {
     label: string;
     lines: StubLine[];
     totalCents: number;
+    /** 0 < total < $0.50: the line is forgiven (the session carries none). */
     belowStripeMinimum: boolean;
   };
   /**
-   * OPEN RfInvoices superseded at settlement: every one whose (snapped) period END is after paid-through - the card
-   * subscription bills from paid-through on, so such an invoice would be a second charge (SA-744r2 / b2b review).
+   * OPEN RfInvoices superseded at settlement: every one whose (snapped) period END is after S - the card subscription
+   * bills from S on, so such an invoice would be a second charge (no upper bound: the early-issued next window and a
+   * merged short window are voided too).
    */
   voidInvoiceIds: string[];
   /** OPEN RfInvoices whose period cannot be placed: left alone, reported. */
@@ -367,23 +434,24 @@ export type CatchupPlanRefusal =
   | "paid_after_gap"
   | "paid_invoice_without_period"
   | "no_monthly_price"
+  | "no_billable_price"
   | "billable_addon_not_card_billable"
   | "addon_snapshot_not_catalog"
   | "checkout_addon_without_priced_row"
-  | "manual_period_ahead"
   | "manual_marker_without_period";
 
 export type CatchupPlanResult = CatchupPlan | { ok: false; reason: CatchupPlanRefusal };
 
-/** The OPEN RfInvoice ids a settlement voids: period end (snapped) after paid-through. */
+/** The OPEN RfInvoice ids a settlement voids: period end (snapped) after S, with NO upper bound. */
 export function supersededOpenInvoiceIds(
   invoices: readonly CatchupInvoice[],
   paidThrough: Date,
 ): { void: string[]; unplaceable: string[] } {
   const open = invoices.filter((x) => x.status === "OPEN");
+  const s = snapToBoundary(paidThrough).getTime();
   return {
     void: open
-      .filter((x) => x.periodEnd && snapToBoundary(x.periodEnd).getTime() > paidThrough.getTime())
+      .filter((x) => x.periodEnd && snapToBoundary(x.periodEnd).getTime() > s)
       .map((x) => x.id),
     unplaceable: open.filter((x) => !x.periodEnd).map((x) => x.id),
   };
@@ -394,103 +462,92 @@ export function planCatchup(i: {
   monthly: number | null;
   addons: readonly CatchupAddon[];
   invoices: readonly CatchupInvoice[];
-  /** The tenant's billing start (first manual activation), when known; the floor is max(go-live, this). */
+  /**
+   * The tenant's billing start: the operator's override when one exists, else (when omitted and `manual` is given)
+   * the first activation's period start. The floor is max(go-live, this).
+   */
   billingStart?: Date | null;
   /** The tenant's priced billable add-on ROWS (MF1). Omitted = the check is skipped (pure unit tests only). */
   billableRows?: readonly CatchupAddonRow[];
   /**
-   * The tenant's manual activation rows (MF2). Present = the paid-coverage rule applies: paid coverage - every PAID
-   * RfInvoice window and every activation's recorded period - that reaches past the first charged service start (the
-   * floor) must land EXACTLY on an anchor 1st (ruling 8(e): the trial shape, nothing charged before it); a partial
-   * strictly inside a month is refused. Omitted = the pure planner, no such rule (the shape/builder unit specs).
+   * The tenant's manual activation rows. Present = every non-voided activation window joins the PAID RfInvoice
+   * windows in the one paid-coverage walk. Omitted = the pure planner over the PAID RfInvoices alone.
    */
   manual?: { activations: readonly ActivationRecord[] };
 }): CatchupPlanResult {
-  if (i.monthly == null || !(i.monthly >= 0)) return { ok: false, reason: "no_monthly_price" };
+  if (i.monthly == null || Number.isNaN(i.monthly)) {
+    return { ok: false, reason: "no_monthly_price" };
+  }
+  if (!(i.monthly > 0)) return { ok: false, reason: "no_billable_price" };
+
+  let activationWindows: CoverageWindow[] = [];
+  let firstActivationStart: Date | null = null;
+  if (i.manual) {
+    const c = activationClusters(i.manual.activations);
+    if (!c.ok) return c;
+    activationWindows = c.clusters
+      .filter((x) => !x.voided)
+      .map((x) => ({ periodStart: x.start, periodEnd: x.end }));
+    firstActivationStart = c.firstStart;
+  }
+  const startTerm = i.billingStart ?? firstActivationStart;
   const floor =
-    i.billingStart && i.billingStart.getTime() > CATCHUP_GO_LIVE.getTime()
-      ? i.billingStart
-      : CATCHUP_GO_LIVE;
-  const pt = paidThroughOf(i.invoices, floor);
-  if (!pt.ok) return pt;
+    startTerm && startTerm.getTime() > CATCHUP_GO_LIVE.getTime() ? startTerm : CATCHUP_GO_LIVE;
+
+  const floorSource: CatchupPlan["floorSource"] = i.billingStart
+    ? "billing_start_override"
+    : floor.getTime() > CATCHUP_GO_LIVE.getTime()
+      ? "first_activation"
+      : "go_live";
+
+  const paid = i.invoices.filter((x) => x.status === "PAID");
+  if (paid.some((x) => !x.periodStart || !x.periodEnd)) {
+    return { ok: false, reason: "paid_invoice_without_period" };
+  }
+  const cov = paidCoverage(floor, {
+    paidRfWindows: paid.map((x) => ({ periodStart: x.periodStart!, periodEnd: x.periodEnd! })),
+    activationWindows,
+  });
+  if (!cov.ok) return cov;
   if (i.billableRows) {
     const refusal = addonCardRefusal(i.billableRows, i.addons);
     if (refusal) return { ok: false, reason: refusal };
   }
-  let paidThrough = pt.paidThrough;
-  let paidFromInvoices = pt.fromInvoices;
-  if (i.manual) {
-    // SA-733r5 r-notes 10-11: paid coverage is measured UNSNAPPED, from EVERY paid source - each PAID RfInvoice
-    // window and each manual activation's own recorded period; the LATEST end decides. OPEN windows (rollCycles
-    // periods) are unpaid REQUIREMENTS, not coverage.
-    //  - at or before the floor: nothing paid beyond the first charged service start - the normal catch-up;
-    //  - landing EXACTLY on an anchor 1st (12:00Z or the legacy 00:00Z): ruling 8(e) - the trial shape, nothing is
-    //    charged for days already paid and the card starts at that 1st;
-    //  - strictly inside a month (a partial: Sep 10 -> Oct 10, a PAID window to Oct 5): already-paid days the
-    //    one-time line would charge again - refused until the prorated catch-up (row 339) exists.
-    const cov = manualCoverage(i.manual.activations);
-    if (!cov.ok) return { ok: false, reason: cov.reason };
-    const ends = i.invoices
-      .filter((x) => x.status === "PAID" && x.periodEnd)
-      .map((x) => x.periodEnd!.getTime());
-    if (cov.latestEnd) ends.push(cov.latestEnd.getTime());
-    const latest = ends.length > 0 ? Math.max(...ends) : null;
-    if (latest !== null && latest > floor.getTime()) {
-      if (!isAnchorFirst(new Date(latest))) return { ok: false, reason: "manual_period_ahead" };
-      // paid through an anchor 1st: an ACTIVATION's payment counts even when no PAID RfInvoice shows it, or the
-      // one-time line would charge the days it already covers
-      if (latest > paidThrough.getTime()) {
-        paidThrough = snapToBoundary(new Date(latest));
-        paidFromInvoices = true;
-      }
-    }
-  }
 
-  const anchorAt = nextCheckoutAnchor(i.now);
-  const t = firstBoundaryNotBefore(paidThrough);
-  const a = firstBoundaryNotBefore(new Date(i.now.getTime() + CATCHUP_TRIAL_MIN_LEAD_MS));
+  const s = snapToBoundary(cov.paidThrough);
+  const a = trialEndFor({ start: s, now: i.now });
   const notes: string[] = [];
-  let shape = catchupShape({ paidThrough: paidThrough, now: i.now });
-
-  // where the stub ends: A (>= now + 72 h) for trial_one_time, T for the prepaid trial, the anchor otherwise
-  let trialEndAt = shape === "trial_one_time" ? a : t;
-  let stubTo = shape === "trial_one_time" ? a : shape === "trial" ? t : anchorAt;
-  let lines = stubLines(i.monthly, i.addons, paidThrough, stubTo);
-  let totalCents = lines.reduce((s, l) => s + l.cents, 0);
-
-  // prepaid but a real stub before the anchor (paid through mid-month, 1-3 days from a 1st): anchor_no_line would
-  // leave it unbilled, so the one-time-line shape bills it (edge case of the r5 selector)
-  if (shape === "anchor_no_line" && totalCents >= STRIPE_MIN_CHARGE_CENTS) {
-    shape = "trial_one_time";
-    trialEndAt = a;
-    stubTo = a;
-    lines = stubLines(i.monthly, i.addons, paidThrough, stubTo);
-    totalCents = lines.reduce((s, l) => s + l.cents, 0);
-    notes.push("paid through mid-month with under 72 h to the 1st: the stub rides a one-time line");
-  }
+  const shape: CheckoutShape = a.getTime() === s.getTime() ? "trial" : "trial_one_time";
+  const lines = shape === "trial_one_time" ? stubLines(i.monthly, i.addons, s, a) : [];
+  const totalCents = lines.reduce((sum, l) => sum + l.cents, 0);
   const belowStripeMinimum = totalCents > 0 && totalCents < STRIPE_MIN_CHARGE_CENTS;
-  if (belowStripeMinimum) notes.push("stub is under Stripe's $0.50 minimum: it is skipped");
-  if (shape === "trial_one_time" && a.getTime() > firstBoundaryNotBefore(i.now).getTime()) {
+  if (belowStripeMinimum) notes.push("line is under Stripe's $0.50 minimum: it is forgiven");
+  if (
+    shape === "trial_one_time" &&
+    a.getTime() > firstBoundaryNotBefore(new Date(Math.max(i.now.getTime(), s.getTime()))).getTime()
+  ) {
     // A moved past the next 1st: that month is paid 1-3 days early (R5-2) - the owner can veto
     notes.push(
       "R5-2: the 1st is under 72 h away, so the line includes the following month (paid 1-3 days early)",
     );
   }
 
-  const superseded = supersededOpenInvoiceIds(i.invoices, paidThrough);
+  const superseded = supersededOpenInvoiceIds(i.invoices, s);
 
   return {
     ok: true,
     now: i.now,
-    paidThrough: paidThrough,
-    paidFromInvoices: paidFromInvoices,
-    anchorAt,
-    trialEndAt,
+    floor,
+    floorSource,
+    paidThrough: s,
+    paidFromInvoices: cov.reached,
+    anchorAt: a,
+    trialEndAt: a,
     shape,
     stub: {
-      from: paidThrough,
-      to: stubTo,
-      label: describeStub(paidThrough, stubTo),
+      from: s,
+      to: a,
+      label: describeStub(s, a),
       lines,
       totalCents,
       belowStripeMinimum,

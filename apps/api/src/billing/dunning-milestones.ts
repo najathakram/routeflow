@@ -10,6 +10,12 @@ import { episodeKey } from "./dunning-clock";
 import { autoLockAllowed } from "./auto-lock-gate";
 import { type DunningDeps, remainingCents } from "./dunning-core";
 import { hoursSince } from "./dunning-time";
+import {
+  finalReissueKey,
+  finalReissuePrefix,
+  latestCountingFinal,
+  staleFinalBoundary,
+} from "./dunning-final";
 
 /**
  * SA-733r7 PR-B3 (brief item 2 / SA-733r M4): the d0 / d3 / d6 reminders, keyed in `BillingNotificationLog` by
@@ -25,7 +31,10 @@ import { hoursSince } from "./dunning-time";
  *     suppression is logged once per episode, and ONE `paused_still_owed` notice per episode says the workspace is
  *     still read-only, which invoice is open and how to pay it. The tenant stays paused.
  *
- * Returns the instant `dunning_final` was sent (this run or earlier), or null when it never was.
+ *   - Row 412: for a tenant the rollout pause protects, a final sent BEFORE the switch's last unpause does not count
+ *     (see dunning-final.ts): it is re-issued under a key per unpause, with a new 24 h lead.
+ *
+ * Returns the instant of the `dunning_final` that COUNTS (this run or earlier), or null when none does.
  */
 export async function runMilestones(
   deps: DunningDeps,
@@ -56,6 +65,20 @@ export async function runMilestones(
     select: { milestone: true, sentAt: true },
   });
   const sent = new Map(logged.map((l) => [l.milestone, l.sentAt]));
+  // Row 412: a final sent before the switch's last unpause is stale for a protected tenant (null = nothing is stale).
+  const boundary = await staleFinalBoundary(deps.autoLocks, row.tenantClass);
+  const reissued = boundary
+    ? await deps.prisma.billingNotificationLog.findMany({
+        where: { tenantId, milestone: M.FINAL, key: { startsWith: finalReissuePrefix(key) } },
+        select: { sentAt: true },
+      })
+    : [];
+  const finalClaims = [
+    ...(sent.has(M.FINAL) ? [{ sentAt: sent.get(M.FINAL) as Date }] : []),
+    ...reissued,
+  ];
+  // the claim key of a final sent from here: the episode's own key until one was claimed under it, then one per unpause
+  const finalClaimKey = boundary && sent.has(M.FINAL) ? finalReissueKey(key, boundary) : key;
   const elapsed = hoursSince(row.pastDueSince, now);
   const payUrl = facts.hostedInvoiceUrl ?? null;
 
@@ -112,8 +135,9 @@ export async function runMilestones(
     kind: "d0" | "d3" | "final",
     dates: { readOnlyOn?: string } = {},
     omitLockWarning?: boolean,
+    claimKey: string = key,
   ) =>
-    deps.notifications.notifyDunning(tenantId, milestone, key, kind, {
+    deps.notifications.notifyDunning(tenantId, milestone, claimKey, kind, {
       payUrl,
       attempted: facts.attemptCount > 0,
       amountCents: remainingCents(facts),
@@ -154,7 +178,17 @@ export async function runMilestones(
     sent.set(skipped, now);
   }
 
-  let finalSentAt = sent.get(M.FINAL) ?? null;
+  let finalSentAt = latestCountingFinal(finalClaims, boundary);
+  if (
+    boundary &&
+    finalClaims.length > 0 &&
+    !finalSentAt &&
+    deps.once(`final_stale:${finalClaimKey}`)
+  ) {
+    deps.logger.log(
+      `billing.dunning.final_stale_after_unpause tenant=${tenantId} invoice=${invoiceId} unpausedAt=${boundary.toISOString()}`,
+    );
+  }
   if (top === M.D0) {
     warnUndeliverable(await send(M.D0, "d0"));
   } else if (top === M.D3) {
@@ -171,7 +205,7 @@ export async function runMilestones(
         await send(M.D6, "final", { readOnlyOn: await readOnlyOn() }, omitFor(false)),
       );
       if (res.status === "sent" && !finalSentAt) {
-        await deps.notifications.recordDunningMilestone(tenantId, M.FINAL, key);
+        await deps.notifications.recordDunningMilestone(tenantId, M.FINAL, finalClaimKey);
         finalSentAt = now;
       }
     }
@@ -179,7 +213,13 @@ export async function runMilestones(
     // d6 already logged without a final notice (it went out by another route, or as the neutral held notice): a
     // separate final notice, then the 24 h lead starts. While the lock is held nothing is sent here (no hourly resend).
     const res = warnUndeliverable(
-      await send(M.FINAL, "final", { readOnlyOn: await readOnlyOn() }, omitFor(false)),
+      await send(
+        M.FINAL,
+        "final",
+        { readOnlyOn: await readOnlyOn() },
+        omitFor(false),
+        finalClaimKey,
+      ),
     );
     if (res.status === "sent") finalSentAt = now;
   }

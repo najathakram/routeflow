@@ -138,12 +138,14 @@ describe("plan() is a read-only dry-run", () => {
     expect(r.eligible).toBe(true);
   });
 
-  it("paid to a partial (a PAID window to Oct 5) => refused CATCHUP_MANUAL_PERIOD_AHEAD", async () => {
+  it("paid to a partial (a PAID window to Oct 5) => ELIGIBLE: S = Oct 5, the prorated line is Oct 5 -> Nov 1 (SA-733r9)", async () => {
     const partial = { ...OCT_PAID, periodEnd: new Date("2026-10-05T12:00:00Z") };
     const r = await make({ invoices: [partial] }).svc.plan("t1", NOW);
-    expect(r.plan).toEqual({ ok: false, reason: "manual_period_ahead" });
-    expect(r.eligible).toBe(false);
-    expect(catchupReportJson(r).refusals).toEqual([API_ERROR_CODES.CATCHUP_MANUAL_PERIOD_AHEAD]);
+    expect(r.eligible).toBe(true);
+    expect(r.plan).toMatchObject({ ok: true, shape: "trial_one_time" });
+    if (!r.plan.ok) return;
+    expect(r.plan.stub.from.toISOString()).toBe("2026-10-05T12:00:00.000Z");
+    expect(r.plan.stub.totalCents).toBe(27000); // $310 x 27/31
   });
 
   it("PIN: through the service a prepaid shape is never STUB-bearing (a trial-with-stub / anchor_no_line-with-stub is unreachable); the stub-free 8(e) trial is reachable", async () => {
@@ -160,7 +162,7 @@ describe("plan() is a read-only dry-run", () => {
       for (const day of ["2026-10-09T10:00:00Z", "2026-10-29T04:00:00Z", "2026-10-30T09:00:00Z"]) {
         const r = await make({ invoices }).svc.plan("t1", new Date(day));
         if (!r.plan.ok) continue;
-        if (r.plan.shape === "trial" || r.plan.shape === "anchor_no_line") {
+        if (r.plan.shape === "trial") {
           expect(r.plan.stub.totalCents).toBe(0);
           expect(r.plan.stub.lines).toEqual([]);
           if (r.plan.shape === "trial") reachedTrial = true;
@@ -297,34 +299,44 @@ describe("MF1: add-ons the card checkout cannot bill", () => {
   });
 });
 
-describe("MF2 (SA r-note 10-11): paid coverage measured unsnapped, from every paid source", () => {
+describe("MF2 -> SA-733r9: paid coverage is one walk over every paid source (activations AND PAID invoices)", () => {
   const sub = (over: Record<string, unknown> = {}) => ({
     periodStart: new Date("2026-10-01T12:00:00Z"),
     periodEnd: new Date("2026-11-01T12:00:00Z"),
     ...over,
   });
-  const ahead = { ok: false, reason: "manual_period_ahead" };
 
-  it("activated Sep 10 for 30 days ([Sep 10, Oct 10)): refused, with the coded 409 on open() and nothing claimed or sent", async () => {
+  it("activated Sep 10 for 30 days ([Sep 10, Oct 10)): ELIGIBLE - the line starts at Oct 10; open() sends it with the coded fields", async () => {
     const h = make({ invoices: [OCT_OPEN], sub: sub() });
     activationRows(h, "2026-09-10T09:00:00Z", "2026-10-10T09:00:00Z");
     const r = await h.svc.plan("t1", NOW);
-    expect(r.plan).toEqual(ahead);
-    expect(r.eligible).toBe(false);
+    expect(r.eligible).toBe(true);
+    expect(r.plan).toMatchObject({ ok: true, shape: "trial_one_time" });
+    if (!r.plan.ok) return;
+    expect(r.plan.stub.from.toISOString()).toBe("2026-10-10T09:00:00.000Z");
     const json = catchupReportJson(r);
-    expect(json.refusals).toEqual([API_ERROR_CODES.CATCHUP_MANUAL_PERIOD_AHEAD]);
     expect(json.subPeriod).toEqual({
       start: "2026-10-01T12:00:00.000Z",
       end: "2026-11-01T12:00:00.000Z",
     });
-    const err: any = await h.svc.open("t1", { now: NOW, expectedStubCents: 31000 }).catch((e) => e);
-    expect(err.getResponse()).toMatchObject({ code: API_ERROR_CODES.CATCHUP_MANUAL_PERIOD_AHEAD });
-    expect(JSON.stringify(err.getResponse())).not.toMatch(/manual_period_ahead/);
-    expect(h.sub().catchupState).toBeNull();
-    expect(h.stripe.client.checkout.sessions.create).not.toHaveBeenCalled();
+    await h.svc.open("t1", { now: NOW, expectedStubCents: r.plan.stub.totalCents });
+    const params = h.stripe.client.checkout.sessions.create.mock.calls[0][0];
+    expect(params.metadata.catchup_from).toBe("2026-10-10T09:00:00.000Z");
+    expect(h.sub().catchupState).toBe("SESSION_OPEN");
   });
 
-  it("activated Sep 26 ([Sep 26, Oct 26)): refused before AND after the next window is issued", async () => {
+  it("F1: the catch-up session says Managed Payments is OFF and never enables automatic tax", async () => {
+    const h = make({ invoices: [OCT_OPEN], sub: sub() });
+    activationRows(h, "2026-09-10T09:00:00Z", "2026-10-10T09:00:00Z");
+    const r = await h.svc.plan("t1", NOW);
+    if (!r.plan.ok) throw new Error("plan not ok");
+    await h.svc.open("t1", { now: NOW, expectedStubCents: r.plan.stub.totalCents });
+    const params = h.stripe.client.checkout.sessions.create.mock.calls[0][0];
+    expect(params.managed_payments).toEqual({ enabled: false });
+    expect(params.automatic_tax?.enabled).not.toBe(true);
+  });
+
+  it("activated Sep 26 ([Sep 26, Oct 26)): eligible before AND after the next window is issued (S = Oct 26)", async () => {
     const nextWindow = {
       ...OCT_OPEN,
       id: "next",
@@ -335,18 +347,22 @@ describe("MF2 (SA r-note 10-11): paid coverage measured unsnapped, from every pa
     for (const invoices of [[], [nextWindow]]) {
       const h = make({ invoices });
       activationRows(h, "2026-09-26T09:00:00Z", "2026-10-26T09:00:00Z");
-      expect((await h.svc.plan("t1", NOW)).plan).toEqual(ahead);
+      const r = await h.svc.plan("t1", NOW);
+      expect(r.eligible).toBe(true);
+      expect(r.plan.ok && r.plan.stub.from.toISOString()).toBe("2026-10-26T09:00:00.000Z");
     }
   });
 
-  it("a renewal on Oct 5 (a second activation) is refused", async () => {
+  it("a renewal on Oct 5 after an activation that ended Sep 1 leaves Sep 1..Oct 5 unpaid: NEEDS RULING (paid_after_gap)", async () => {
     const h = make({ invoices: [OCT_OPEN] });
     activationRows(h, "2026-08-02T10:00:00Z", "2026-09-01T10:00:00Z");
     activationRows(h, "2026-10-05T09:00:00Z", "2026-11-04T09:00:00Z");
-    expect((await h.svc.plan("t1", NOW)).plan).toEqual(ahead);
+    const r = await h.svc.plan("t1", NOW);
+    expect(r.plan).toEqual({ ok: false, reason: "paid_after_gap" });
+    expect(catchupReportJson(r).refusals).toEqual([API_ERROR_CODES.CATCHUP_NEEDS_RULING]);
   });
 
-  it("a PAID RfInvoice window reaching Oct 5 is refused", async () => {
+  it("a PAID RfInvoice window reaching Oct 5 is paid coverage: eligible, S = Oct 5", async () => {
     const paid = {
       ...OCT_PAID,
       id: "p",
@@ -355,7 +371,9 @@ describe("MF2 (SA r-note 10-11): paid coverage measured unsnapped, from every pa
       periodEnd: new Date("2026-10-05T12:00:00Z"),
     };
     const h = make({ invoices: [paid, OCT_OPEN] });
-    expect((await h.svc.plan("t1", NOW)).plan).toEqual(ahead);
+    const r = await h.svc.plan("t1", NOW);
+    expect(r.eligible).toBe(true);
+    expect(r.plan.ok && r.plan.stub.from.toISOString()).toBe("2026-10-05T12:00:00.000Z");
   });
 
   it("the normal unpaid-October tenant stays ELIGIBLE (Sept paid through Oct 1, October only an OPEN requirement, activated in August)", async () => {
@@ -500,15 +518,18 @@ describe("open()", () => {
     const params = h.stripe.client.checkout.sessions.create.mock.calls[0][0];
     expect(params.line_items.filter((l: any) => !l.price_data.recurring)).toHaveLength(0);
     expect(params.subscription_data.trial_end).toBe(Date.UTC(2026, 10, 1, 12) / 1000);
+    expect(params.metadata.catchup_from).toBe("2026-11-01T12:00:00.000Z"); // MF-B: S === A, both keys
+    expect(params.metadata.catchup_to).toBe("2026-11-01T12:00:00.000Z");
   });
 
-  it("a PAID window to a partial (Oct 5): the open is refused 409 CATCHUP_MANUAL_PERIOD_AHEAD, nothing claimed or sent", async () => {
+  it("a PAID window to a partial (Oct 5): the open succeeds with the prorated line (27/31), trial_end = Nov 1, catchup_from = Oct 5", async () => {
     const h = make({ invoices: [{ ...OCT_PAID, periodEnd: new Date("2026-10-05T12:00:00Z") }] });
-    await expect(h.svc.open("t1", { now: NOW, expectedStubCents: 0 })).rejects.toMatchObject({
-      response: { code: API_ERROR_CODES.CATCHUP_MANUAL_PERIOD_AHEAD },
-    });
-    expect(h.sub().catchupState).toBeNull();
-    expect(h.stripe.client.checkout.sessions.create).not.toHaveBeenCalled();
+    const out = await h.svc.open("t1", { now: NOW, expectedStubCents: 27000 });
+    expect(out).toMatchObject({ shape: "trial_one_time", stubCents: 27000 });
+    const params = h.stripe.client.checkout.sessions.create.mock.calls[0][0];
+    expect(params.subscription_data.trial_end).toBe(Date.UTC(2026, 10, 1, 12) / 1000);
+    expect(params.metadata.catchup_from).toBe("2026-10-05T12:00:00.000Z");
+    expect(params.metadata.catchup_to).toBe("2026-11-01T12:00:00.000Z");
   });
 
   it("a non-contiguous PAID gap: 409 CATCHUP_NEEDS_RULING, no claim, no Stripe call", async () => {
@@ -599,13 +620,13 @@ describe("Opus review: planning under the claim, the plan key, billing start", (
     expect(params.metadata.planKey).toBe("SCALE");
   });
 
-  it("SHOULD-FIX 9: a tenant activated AFTER go-live is NOT plainly eligible (its own activation already paid its first period)", async () => {
+  it("SA-733r9 rule 6: a tenant activated AFTER go-live is eligible on the same rules (activated_after_go_live is retired) - billed from its first activation", async () => {
     const h = make({ invoices: [] });
     activationRows(h, "2026-10-20T08:30:00Z", "2026-11-19T08:30:00Z");
     const r = await h.svc.plan("t1", NOW);
-    expect(r.eligible).toBe(false);
-    expect(r.ineligible).toContain("activated_after_go_live");
-    expect(r.plan).toEqual({ ok: false, reason: "manual_period_ahead" });
+    expect(r.ineligible).toEqual([]);
+    expect(r.eligible).toBe(true);
+    expect(r.plan.ok && r.plan.stub.from.toISOString()).toBe("2026-11-19T08:30:00.000Z");
   });
 
   it("a tenant activated before go-live (its period ended before Oct 1) is unaffected", async () => {
