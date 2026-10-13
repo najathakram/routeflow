@@ -639,9 +639,16 @@ export class PlatformAdminService {
         "Tenant must be suspended before it can be deleted. Suspend the tenant first.",
       );
     }
-    const tenant = await this.prisma.tenant.update({
-      where: { id },
-      data: { deletedAt: new Date(), status: "CANCELLED" },
+    // M4: the same Stripe gate as status -> CANCELLED - the read happens BEFORE the transaction, the id it read is
+    // compared under the row lock. A deleted tenant must never be left over a subscription that may still bill.
+    const readSubId = await this.stripeGateBeforeTermination(id);
+    const tenant = await this.prisma.$transaction(async (tx) => {
+      await tx.$queryRaw`SELECT id FROM "Tenant" WHERE id = ${id} FOR UPDATE`;
+      await this.assertStripeSubUnchangedTx(tx, id, readSubId);
+      return tx.tenant.update({
+        where: { id },
+        data: { deletedAt: new Date(), status: "CANCELLED" },
+      });
     });
     // Evict cached status so the guard blocks this tenant immediately
     this.tenantStatusGuard.invalidate(id);

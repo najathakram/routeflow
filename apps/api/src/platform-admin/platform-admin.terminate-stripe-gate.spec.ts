@@ -101,6 +101,7 @@ const OPS: Op[] = [
     "updateStatus CANCELLED",
     (s) => s.updateStatus(TENANT_ID, { status: "CANCELLED" } as any, "a1"),
   ],
+  ["deleteTenant", (s) => s.deleteTenant(TENANT_ID, "a1")],
 ];
 const written = (prisma: any) => prisma.tenant.update.mock.calls.length > 0;
 const code = (e: any) => e?.getResponse?.()?.code;
