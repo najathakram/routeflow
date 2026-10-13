@@ -16,8 +16,8 @@ import { useDesktopRail } from "./use-desktop-rail";
 import { useSettingsNav } from "./use-settings-nav";
 
 /**
- * Settings hub: the bare /settings screen. Below lg it is the whole settings list (search, your business,
- * frequent links, the groups with their values). At lg and up the rail (SettingsShell) holds all of that and
+ * Settings hub: the bare /settings screen. Below xl it is the whole settings list (search, your business,
+ * what needs attention, frequent links, the groups with their values). At xl and up the rail (SettingsShell) holds all of that and
  * this shows the big Business card, what needs attention, and the loose cards. Every setting screen stays
  * reachable; role-gated rows are hidden the same way the sidebar hides them.
  */
@@ -84,7 +84,13 @@ export function SettingsHub({
           <NeedsAttention isAdmin={isAdmin} />
         </>
       ) : (
-        <SettingsFinder variant="list" nav={nav} query={query} onQuery={setQuery} />
+        <SettingsFinder
+          variant="list"
+          nav={nav}
+          query={query}
+          onQuery={setQuery}
+          afterCard={<NeedsAttention isAdmin={isAdmin} />}
+        />
       )}
 
       {nav.fleet && (!searching || listed("route-defaults")) && (

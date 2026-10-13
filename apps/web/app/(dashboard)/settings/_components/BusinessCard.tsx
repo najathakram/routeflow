@@ -24,8 +24,8 @@ type Variant = "rail" | "list" | "pane";
 /**
  * Apple-ID-row pattern: logo (or an initial), business name, plan + status pill. The whole card opens Plan &
  * billing; "Pay $X" is a sibling button (never a button inside a link) and only shows when payment is due.
+ * A throw while reading the plan hides the card; the screen and the rest of the list stay.
  */
-/** A throw while reading the plan hides the card; the screen and the rest of the list stay. */
 export function BusinessCard(props: { variant: Variant; active?: boolean }) {
   return (
     <RailBoundary>
@@ -51,13 +51,13 @@ function BusinessCardInner({ variant, active }: { variant: Variant; active?: boo
     <div className="relative">
       <Link
         href="/settings/billing"
-        data-testid="business-card"
+        data-testid={variant === "rail" ? "business-card-rail" : "business-card"}
         aria-current={active ? "page" : undefined}
         className={cn(
           "flex items-center gap-3 rounded-[var(--r-card)] border border-[var(--line)] bg-[var(--paper)] shadow-[var(--sh-card)] transition-colors [transition-duration:120ms] hover:bg-[var(--sunken)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-primary motion-reduce:transition-none",
           big ? "p-5" : "p-3",
           pay && variant !== "rail" && "pr-32",
-          active && "ring-2 ring-inset ring-primary",
+          active && "bg-[var(--accent-soft)] hover:bg-[var(--accent-soft)]",
         )}
       >
         {branding?.logoUrl ? (
