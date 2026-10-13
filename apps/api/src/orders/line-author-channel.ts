@@ -119,10 +119,20 @@ export function resolveLineAuthors(
         (byProduct.get(l.productId) ?? true) && isLegacyInstant(l.createdAt),
       );
 
+  // What "unknown" reads as. A legacy order's lines are STAFF unless a post-cutoff BUYER path touched the order, so with
+  // no such revision there is no evidence of a buyer and unknown is STAFF; everywhere else unknown is the buyer.
+  const postCutoffBuyer = revisions.some(
+    (r) => !(legacy && isLegacyInstant(r.createdAt)) && channelOfRole(r.editedByRole) !== "STAFF",
+  );
+  const unknown: RestrictionChannel = legacy && !postCutoffBuyer ? "STAFF" : "BUYER_PORTAL";
+
   let state: Map<string, { qty: number; channel: RestrictionChannel }> | null = null;
   for (const r of revisions) {
     const qtys = snapshotQuantities(r.snapshot);
-    if (!qtys) return { channelOf: () => "BUYER_PORTAL" }; // history we cannot read: unknown
+    if (!qtys) {
+      if (legacy && isLegacyInstant(r.createdAt)) continue; // unreadable pre-cutoff history says nothing
+      return { channelOf: () => unknown }; // history we cannot read: unknown
+    }
     // A legacy order's pre-cutoff revisions are unknown history: their editor says nothing, so STAFF.
     const editor = legacy && isLegacyInstant(r.createdAt) ? "STAFF" : channelOfRole(r.editedByRole);
     const next = new Map<string, { qty: number; channel: RestrictionChannel }>();
@@ -141,8 +151,8 @@ export function resolveLineAuthors(
     }
     state = next;
   }
-  const last = state as Map<string, { qty: number; channel: RestrictionChannel }>;
-  return { channelOf: (productId) => last.get(productId)?.channel ?? "BUYER_PORTAL" };
+  const last = state as Map<string, { qty: number; channel: RestrictionChannel }> | null;
+  return { channelOf: (productId) => last?.get(productId)?.channel ?? unknown };
 }
 
 /**

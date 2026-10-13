@@ -278,4 +278,50 @@ describe("legacy-source cutoff", () => {
     expect(a.channelOf("old")).toBe("STAFF");
     expect(a.channelOf("cart")).toBe("BUYER_PORTAL");
   });
+
+  describe("legacy: a line with NO post-cutoff buyer revision is STAFF, not unknown-buyer", () => {
+    const bad = (createdAt: Date, editedByRole: string | null) => ({
+      editedByRole,
+      createdAt,
+      snapshot: "not-a-snapshot",
+    });
+    const legacy = { source: "APP", createdAt: before };
+
+    it("an unreadable PRE-cutoff snapshot is ignored (STAFF), not BUYER", () => {
+      expect(resolveLineAuthors(legacy, [bad(before, "CUSTOMER")]).channelOf("p")).toBe("STAFF");
+    });
+
+    it("an unreadable post-cutoff STAFF revision is still STAFF", () => {
+      expect(resolveLineAuthors(legacy, [bad(after, "OPERATOR")]).channelOf("p")).toBe("STAFF");
+    });
+
+    it("a product no revision lists, with only staff/legacy revisions, is STAFF", () => {
+      const a = resolveLineAuthors(legacy, [
+        revAt(before, "CUSTOMER", ["a", 1]),
+        revAt(after, "OPERATOR", ["a", 1]),
+      ]);
+      expect(a.channelOf("not-in-any-snapshot")).toBe("STAFF");
+    });
+
+    it("control: an unreadable post-cutoff BUYER revision is unknown, so BUYER", () => {
+      expect(resolveLineAuthors(legacy, [bad(after, "CUSTOMER")]).channelOf("p")).toBe(
+        "BUYER_PORTAL",
+      );
+    });
+
+    it("control: a product no revision lists, with a post-cutoff buyer revision present, is BUYER", () => {
+      const a = resolveLineAuthors(legacy, [revAt(after, "CUSTOMER", ["a", 1])]);
+      expect(a.channelOf("not-in-any-snapshot")).toBe("BUYER_PORTAL");
+    });
+
+    it("control: a NON-legacy order keeps unknown = BUYER", () => {
+      const fresh = { source: "PHONE", createdAt: after };
+      expect(resolveLineAuthors(fresh, [bad(after, "OPERATOR")]).channelOf("p")).toBe(
+        "BUYER_PORTAL",
+      );
+      expect(resolveLineAuthors(fresh, [revAt(after, "OPERATOR", ["a", 1])]).channelOf("zzz")).toBe(
+        "BUYER_PORTAL",
+      );
+    });
+  });
 });
