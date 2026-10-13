@@ -121,7 +121,7 @@ describe("Units page: load states", () => {
     expect(screen.getByRole("heading", { name: "Units" })).toBeInTheDocument();
     expect(
       screen.getByText(
-        "The names you sell and stock by, like Case, Box or Bottle. Products pick from this list.",
+        "The names you sell and stock by, like Case, Box or Bottle. Product pickers will use this list in an upcoming update.",
       ),
     ).toBeInTheDocument();
     expect(screen.getByText("Piece is always there as the smallest unit.")).toBeInTheDocument();

@@ -259,7 +259,8 @@ function UnitsScreen() {
       </NextLink>
       <h2 className="text-2xl font-bold text-navy">Units</h2>
       <p className="mb-5 mt-1 text-sm text-navy/70">
-        The names you sell and stock by, like Case, Box or Bottle. Products pick from this list.
+        The names you sell and stock by, like Case, Box or Bottle. Product pickers will use this
+        list in an upcoming update.
       </p>
 
       {!online && (
