@@ -25,6 +25,7 @@ const PERMANENT_EXPECTED: Record<string, number> = {
   "lib/e2e-setup-guard.ts": 2,
   "lib/generic-toast-copy.ts": 1,
   "lib/hooks/useRealtimeUpdates.ts": 1,
+  "lib/product-reactivation-refusal.ts": 1,
   "lib/reason-copy.ts": 1,
 };
 /** The exact pending total (reads still to be converted by the B986 area PRs). */
