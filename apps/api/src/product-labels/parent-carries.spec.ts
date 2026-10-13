@@ -8,7 +8,7 @@ import { ancestorChain, parentChainCarries, type InheritanceState } from "./pare
 const L = "cat-L";
 const state = (
   links: Array<[string, string | null]>,
-  rows: Array<[string, "INCLUDE" | "EXCLUDE", string | null?]> = [],
+  rows: Array<[string, "INCLUDE" | "EXCLUDE", (string | null)?]> = [],
 ): InheritanceState => ({
   parentOf: new Map(links),
   rows: new Map(
