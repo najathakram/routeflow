@@ -17,19 +17,49 @@
 
 const { Pool } = require("pg");
 const { randomUUID } = require("crypto");
+const { loadProtectedSlugs } = require("./lib/protected-slugs.cjs");
+const { assertWritableTenant } = require("./lib/live-target-guard.cjs");
 require("dotenv").config({ path: require("path").join(__dirname, "../.env") });
 
 const DRY_RUN = process.argv.includes("--dry-run");
 const pool = new Pool({ connectionString: process.env.DATABASE_URL });
 
 async function run() {
+  // Row 195: the protected list is loaded BEFORE connecting, from the URL this script dials.
+  const protectedSlugs = loadProtectedSlugs(process.env, process.env.DATABASE_URL);
   const client = await pool.connect();
   try {
     await client.query("BEGIN");
 
     // ── 1. Find or create the legacy tenant ───────────────────────────────────
-    let tenantRow = (await client.query(`SELECT id FROM "Tenant" WHERE slug = 'legacy' LIMIT 1`))
-      .rows[0];
+    let tenantRow = (
+      await client.query(
+        `SELECT id, slug, status, class, "deletedAt" FROM "Tenant" WHERE slug = 'legacy' LIMIT 1`,
+      )
+    ).rows[0];
+
+    // Row 195: users are moved INTO this tenant, so it must not be protected (paying, Stripe-linked
+    // or env-listed). A not-yet-existing legacy tenant is judged as the fresh tenant it would be.
+    // A refusal throws into the catch below (ROLLBACK, exit 1) before anything is written.
+    const legacySub = tenantRow
+      ? (
+          await client.query(
+            `SELECT "planKey", "stripeSubId", "couponFull" FROM "TenantSubscription" WHERE "tenantId" = $1`,
+            [tenantRow.id],
+          )
+        ).rows[0]
+      : null;
+    assertWritableTenant(
+      tenantRow ?? {
+        id: "<new legacy tenant>",
+        slug: "legacy",
+        status: "ACTIVE",
+        class: "PRODUCTION",
+        deletedAt: null,
+      },
+      legacySub ?? null,
+      protectedSlugs,
+    );
 
     if (!tenantRow) {
       if (DRY_RUN) {
@@ -114,4 +144,7 @@ async function run() {
   }
 }
 
-run();
+run().catch((err) => {
+  console.error("Migration failed:", err.message);
+  process.exit(1);
+});

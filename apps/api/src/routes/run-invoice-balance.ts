@@ -31,7 +31,8 @@
  */
 import { InvoiceStatus } from "@prisma/client";
 import { PAYABLE } from "../invoices/invoice-status-sets";
-import { CONFIRMED_PAYMENT, sumConfirmed } from "../invoices/payment-predicates";
+import { CONFIRMED_PAYMENT } from "../invoices/payment-predicates";
+import { confirmedBalance } from "../invoices/invoice-balance-classify";
 import { roundMoney } from "@routeflow/pricing";
 
 const PAYABLE_SET = new Set<string>(PAYABLE);
@@ -130,7 +131,7 @@ export function groupPayableInvoicesByOrder(
         id: inv.id,
         status: inv.status,
         total: roundMoney(Number(inv.total)),
-        balanceDue: roundMoney(Math.max(0, Number(inv.total) - sumConfirmed(inv.payments))),
+        balanceDue: confirmedBalance(inv.total, inv.payments),
         isDepositMirror: isSoleDepositMirror,
       }));
   }

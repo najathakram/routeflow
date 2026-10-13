@@ -410,6 +410,8 @@ export interface BuyerOrder extends BuyerOrderListItem {
 export interface BuyerInvoiceListItem {
   id: string;
   invoiceNumber: string;
+  /** Row 401: the server's answer to "a counter sale paid at the till" — no due date is shown. */
+  paidAtSale?: boolean;
   status: InvoiceStatus;
   issueDate: string;
   createdAt: string;
@@ -423,6 +425,10 @@ export interface BuyerInvoiceListItem {
   paidAmount: DecimalWire;
   creditApplied: DecimalWire;
   advanceApplied: DecimalWire;
+  /** SA-763r P-3: external payments beyond the total (0 when none); an overpaid invoice is never PAID. */
+  overpaidBy?: DecimalWire;
+  /** SA-763r P-3: when the final invoice was last restated by an order edit; null when never revised. */
+  revisedAt?: string | null;
   isOverdue: boolean;
   customer: { id: string; businessName: string };
 }

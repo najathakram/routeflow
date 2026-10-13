@@ -32,9 +32,11 @@ export function useCounterReprice<C extends PickedLike>(deps: {
   setLines: React.Dispatch<React.SetStateAction<SaleLine[]>>;
   /** Outcome unknown: the held cart is frozen, never re-priced. */
   locked: boolean;
+  /** SA-748: bumped when a parked cart is restored, so its lines are re-priced even when the customer did not change. */
+  epoch?: number;
 }) {
-  const { customer, lines, setLines, locked } = deps;
-  const key = keyOf(customer);
+  const { customer, lines, setLines, locked, epoch = 0 } = deps;
+  const key = keyOf(customer) + (epoch ? `#${epoch}` : "");
   const prices = useCustomerPrices(customer?.id);
   const cpMap = React.useMemo(() => {
     const m = new Map<string, number | null>();
@@ -69,7 +71,7 @@ export function useCounterReprice<C extends PickedLike>(deps: {
     if (!answered) return; // in flight or failed: the old prices stay
     const before = linesRef.current;
     const r = repriceLines(before, tierFor);
-    if (r.changed) setLines((cur) => repriceLines(cur, tierFor).lines);
+    if (r.lines !== before) setLines((cur) => repriceLines(cur, tierFor).lines);
     if (appliedKeyRef.current !== key) {
       const text = before.length
         ? repriceNote(
@@ -77,6 +79,7 @@ export function useCounterReprice<C extends PickedLike>(deps: {
             r.changed,
             r.kept,
             tierLabel(tierLabels, customer?.pricingTier ?? 1),
+            r.dropped,
           )
         : null;
       setNote(text ? { text, prevLines: before } : null);
@@ -96,7 +99,17 @@ export function useCounterReprice<C extends PickedLike>(deps: {
     setLines((cur) =>
       cur.map((l) => {
         const o = old.find((p) => p.tempId === l.tempId);
-        return o ? { ...l, unitPrice: o.unitPrice, priceType: o.priceType } : l;
+        if (!o) return l;
+        // POS-5: an edited line's price state (net, tier price, choice) goes back with the prices.
+        const { override: _o, tierPrice: _t, priceEdited: _e, ...rest } = l;
+        return {
+          ...rest,
+          unitPrice: o.unitPrice,
+          priceType: o.priceType,
+          ...(o.override
+            ? { tierPrice: o.tierPrice, override: o.override, priceEdited: true as const }
+            : {}),
+        };
       }),
     );
     setNote(null);

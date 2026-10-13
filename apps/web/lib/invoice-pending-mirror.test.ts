@@ -1,4 +1,4 @@
-import { isPendingMirrorInvoice } from "./invoice-pending-mirror";
+import { isPendingMirrorInvoice, pendingMirrorCopy } from "./invoice-pending-mirror";
 
 const draft = {
   orderId: "o1",
@@ -21,5 +21,26 @@ describe("isPendingMirrorInvoice", () => {
     expect(
       isPendingMirrorInvoice({ ...draft, order: { status: "DELIVERED" }, pendingMirror: true }),
     ).toBe(true);
+  });
+});
+
+describe("pendingMirrorCopy: no delivery on a store-only order", () => {
+  it("a delivery business keeps 'after delivery'", () => {
+    const c = pendingMirrorCopy(false);
+    expect(c.badge).toBe("Mirrors the order \u2014 ready to send after delivery");
+    expect(c.note).toBe("you'll review and send this invoice after delivery.");
+  });
+  it("the fulfilment capability not known yet (loading, or a partial answer) never claims delivery", () => {
+    const c = pendingMirrorCopy(null);
+    expect(c.badge).toBe(
+      "Mirrors the order \u2014 ready to send once it is handed over or delivered",
+    );
+    expect(c.note).toBe("you'll review and send this invoice once it is handed over or delivered.");
+  });
+  it("a store-only (POS-forced) business says 'after pickup', never 'delivery'", () => {
+    const c = pendingMirrorCopy(true);
+    expect(c.badge).toBe("Ready to send after pickup.");
+    expect(c.note).toBe("you'll review and send this invoice after pickup.");
+    expect(`${c.badge} ${c.note}`).not.toMatch(/deliver/i);
   });
 });

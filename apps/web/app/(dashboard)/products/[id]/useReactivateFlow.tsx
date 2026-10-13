@@ -10,6 +10,7 @@ import {
   isReadOnlyRefusal,
   type ReactivationRefusal,
 } from "@/lib/product-reactivation-refusal";
+import { getFamilyCascadePrompt, type FamilyCascadePrompt } from "@/lib/product-family-cascade";
 import { ReactivateConflictDialog } from "./ReactivateConflictDialog";
 
 export type ProductKind = "product" | "variant";
@@ -29,6 +30,12 @@ export function useReactivateFlow(opts?: { onReactivated?: (id: string) => void 
     id: string;
     name: string;
     kind: ProductKind;
+  } | null>(null);
+  // 409 FAMILY_HAS_ACTIVE_VARIANTS: ask once; only the operator's confirm resends with confirmCascade.
+  const [cascade, setCascade] = React.useState<{
+    id: string;
+    kind: ProductKind;
+    prompt: FamilyCascadePrompt;
   } | null>(null);
   const [pending, setPending] = React.useState<{
     id: string;
@@ -53,7 +60,7 @@ export function useReactivateFlow(opts?: { onReactivated?: (id: string) => void 
               setPending(null);
               // READ_ONLY already got the global "workspace is read-only" toast: no second one.
               if (!isReadOnlyRefusal(err)) {
-                toast({ title: `Couldn't reactivate this ${noun(kind)}`, variant: "error" });
+                toast(deactivateFailureToast(err, `Couldn't reactivate this ${noun(kind)}`));
               }
             }
           },
@@ -64,17 +71,26 @@ export function useReactivateFlow(opts?: { onReactivated?: (id: string) => void 
     [reactivate.mutate, toast, opts?.onReactivated],
   );
 
+  const runDeactivate = (id: string, kind: ProductKind, confirmCascade?: boolean) => {
+    deactivate.mutate(confirmCascade ? { id, confirmCascade } : { id }, {
+      onSuccess: () => toast({ title: `${Noun(kind)} deactivated`, variant: "success" }),
+      onError: (err) => {
+        if (isReadOnlyRefusal(err)) return;
+        const prompt = confirmCascade ? null : getFamilyCascadePrompt(err);
+        if (prompt) {
+          setCascade({ id, kind, prompt });
+          return;
+        }
+        toast(deactivateFailureToast(err, `Couldn't deactivate this ${noun(kind)}`));
+      },
+    });
+  };
+
   const confirmDeactivate = () => {
     if (!deactivating) return;
     const { id, kind } = deactivating;
     setDeactivating(null);
-    deactivate.mutate(id, {
-      onSuccess: () => toast({ title: `${Noun(kind)} deactivated`, variant: "success" }),
-      onError: (err) => {
-        if (isReadOnlyRefusal(err)) return;
-        toast(deactivateFailureToast(err, `Couldn't deactivate this ${noun(kind)}`));
-      },
-    });
+    runDeactivate(id, kind);
   };
 
   const dialog = (
@@ -86,6 +102,21 @@ export function useReactivateFlow(opts?: { onReactivated?: (id: string) => void 
         title={`Deactivate ${noun(deactivating?.kind ?? "product")}?`}
         description={`${deactivating?.name ?? "This"} will be hidden from the catalog and its SKU, barcodes and unit code are released for other products. You can reactivate it later if they are still free.`}
         confirmLabel="Deactivate"
+        variant="danger"
+        loading={deactivate.isPending}
+      />
+      <ConfirmDialog
+        open={cascade !== null}
+        onClose={() => setCascade(null)}
+        onConfirm={() => {
+          if (!cascade) return;
+          const { id, kind } = cascade;
+          setCascade(null);
+          runDeactivate(id, kind, true);
+        }}
+        title={cascade?.prompt.title ?? ""}
+        description={cascade?.prompt.body}
+        confirmLabel={cascade?.prompt.confirmText}
         variant="danger"
         loading={deactivate.isPending}
       />

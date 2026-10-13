@@ -36,6 +36,18 @@ import { BuyerBackorderViewResolver } from "./buyer-backorder-view";
 // SA-655: staff counter sales (POST /orders/counter-sale). Dark until a tenant's fulfilment capability offers a counter.
 import { CounterSaleController } from "./counter-sale/counter-sale.controller";
 import { CounterSaleService } from "./counter-sale/counter-sale.service";
+import { CounterSaleTodayService } from "./counter-sale/counter-sale-today.service";
+// SA-750r3: counter day close + Z report (separate controller: the counter-sale controller's constructor is pinned by its specs).
+import { CounterDayCloseController } from "./counter-sale/day-close/day-close.controller";
+import { CounterDayCloseService } from "./counter-sale/day-close/day-close.service";
+import { EmailModule } from "../email/email.module";
+// SA-748: parked counter sales (POST|GET /orders/counter-sale/parked, .../:id/resume, DELETE .../:id) + the hourly sweep.
+import { CounterParkController } from "./counter-sale/counter-park.controller";
+import { CounterParkService } from "./counter-sale/counter-park.service";
+import { CounterParkSweepService } from "./counter-sale/counter-park.sweep";
+import { QuickKeysService } from "./counter-sale/quick-keys.service";
+import { CounterSaleVoidController } from "./counter-sale/counter-sale-void.controller";
+import { CounterSaleVoidService } from "./counter-sale/counter-sale-void.service";
 import { CustomersModule } from "../customers/customers.module";
 import { BillingModule } from "../billing/billing.module";
 import { WalkInCustomerService } from "./counter-sale/walk-in-customer";
@@ -75,14 +87,29 @@ import { StorageModule } from "../storage/storage.module";
     // FeatureOverrideService comes from EntitlementsModule). BillingModule never reaches OrdersModule: no cycle.
     BillingModule,
     StorageModule,
+    // CounterDayCloseService sends the Z report through EmailService.
+    EmailModule,
   ],
-  controllers: [OrdersController, CounterSaleController, PickupCompleteController],
+  controllers: [
+    OrdersController,
+    CounterSaleController,
+    CounterSaleVoidController,
+    CounterParkController,
+    CounterDayCloseController,
+    PickupCompleteController,
+  ],
   providers: [
     OrdersService,
     ChangeRequestsService,
     PolicyOversellReader,
     BuyerBackorderViewResolver,
     CounterSaleService,
+    CounterSaleTodayService,
+    CounterDayCloseService,
+    CounterParkService,
+    CounterParkSweepService,
+    QuickKeysService,
+    CounterSaleVoidService,
     PickupCompleteService,
     WalkInCustomerService,
     { provide: FULFILMENT_CAPABILITY_READER, useClass: DefaultFulfilmentCapabilityReader },

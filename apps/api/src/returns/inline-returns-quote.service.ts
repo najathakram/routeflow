@@ -28,6 +28,7 @@ import { REAL_INVOICE_STATUSES } from "../common/invoiced-sales";
 import { currentTaxRate } from "../common/tax-rate";
 import { getTierPrice, isWholeCents, packFromOwnSplit } from "@routeflow/pricing";
 import { returnedPiecesByProduct } from "./returns-pieces.util";
+import { DEAD_RETURN_STATUSES } from "./return-statuses";
 import {
   allocateReturnedPieces,
   applyCreditOverride,
@@ -44,6 +45,12 @@ import {
 } from "./inline-returns-pricing";
 import type { QuoteInlineReturnDto, QuoteInlineReturnItemDto } from "./dto/quote-inline-return.dto";
 import { API_ERROR_CODES } from "../common/api-error-codes";
+import {
+  canRefundRole,
+  loadSourceInvoicesState,
+  sourcesAreRefundable,
+} from "./inline-return-refund";
+import { assertWalkInCoveredBySale, resolveSourceSale } from "./inline-returns-source-sale";
 
 /** PR-1..3 ship fixed defaults (design.md §8) — config reading comes after
  * feature-grants PR-3a's EntitlementsService wiring. */
@@ -127,8 +134,39 @@ export class InlineReturnsQuoteService {
   async quote(
     dto: QuoteInlineReturnDto,
     user: JwtPayload,
-  ): Promise<QuoteBreakdown & { productBreakdown: Record<string, QuoteBreakdown> }> {
-    return this.priceInlineReturn(dto, user, this.prisma.forTenant());
+  ): Promise<
+    QuoteBreakdown & {
+      productBreakdown: Record<string, QuoteBreakdown>;
+      canRefund: boolean;
+      paidInFull: boolean;
+      paidMethods: string[];
+      paidWithStoreCredit: boolean;
+      customerIsWalkIn: boolean;
+    }
+  > {
+    const db = this.prisma.forTenant();
+    const priced = await this.priceInlineReturn(dto, user, db);
+    // SA-727 (additive): what the counter dialog needs to offer a cash/card/check refund. Read-only and unlocked: a hint
+    // only; POST /returns/inline/:id/refund re-checks everything under its locks.
+    const [customer, source] = await Promise.all([
+      db.customer.findFirst({
+        where: { id: dto.customerId, deletedAt: null },
+        select: { isWalkIn: true },
+      }),
+      loadSourceInvoicesState(
+        db,
+        priced.chunks.map((c) => c.sourceInvoiceItemId),
+      ),
+    ]);
+    return {
+      ...priced,
+      // F4/F5: paid in full AND none of it paid with store credit (store credit is never turned into cash) AND worth money
+      canRefund: canRefundRole(user.role) && sourcesAreRefundable(source) && priced.total > 0.001,
+      paidInFull: source.paidInFull,
+      paidMethods: source.paidMethods,
+      paidWithStoreCredit: source.paidWithStoreCredit,
+      customerIsWalkIn: customer?.isWalkIn === true,
+    };
   }
 
   /**
@@ -146,7 +184,8 @@ export class InlineReturnsQuoteService {
     db: any,
     // #2178: invoices to leave out of the matching set — the order-edit preflight passes the ones
     // the edit's revert is about to turn into DRAFTs of an undelivered order (which §3.1 excludes).
-    opts: { excludeInvoiceIds?: readonly string[] } = {},
+    // SA-740: `defaultSourceOrderId` is the capture's carrying order, the source a WALK-IN return defaults to.
+    opts: { excludeInvoiceIds?: readonly string[]; defaultSourceOrderId?: string | null } = {},
   ): Promise<QuoteBreakdown & { productBreakdown: Record<string, QuoteBreakdown> }> {
     // Q5/§7: buyers keep the post-delivery request flow — never captured at order-entry
     // time. `@Roles` on the controller already excludes CUSTOMER, but this is the money-
@@ -204,9 +243,19 @@ export class InlineReturnsQuoteService {
     // used elsewhere (orders.service.ts).
     const customer = await db.customer.findFirst({
       where: { id: dto.customerId, deletedAt: null },
-      select: { id: true, pricingTier: true, isTaxExempt: true },
+      select: { id: true, pricingTier: true, isTaxExempt: true, isWalkIn: true },
     });
     if (!customer) throw new NotFoundException("Customer not found");
+
+    // SA-740 (row 190): the walk-in is decided HERE from the row, never from the client. A walk-in names its source sale
+    // (the quote requires it; the capture defaults to the carrying order); a named customer is pinned only if they send one.
+    const walkIn = customer.isWalkIn === true;
+    const sourceOrderId = await resolveSourceSale(db, {
+      customerId: dto.customerId,
+      isWalkIn: walkIn,
+      requested: dto.sourceOrderId,
+      defaultSourceOrderId: opts.defaultSourceOrderId,
+    });
 
     const productIds = [...new Set(dto.items.map((i) => i.productId))];
 
@@ -242,14 +291,11 @@ export class InlineReturnsQuoteService {
 
     const productMap = new Map(products.map((p) => [p.id, p]));
     const productUpbMap = new Map(products.map((p) => [p.id, p.unitsPerBox]));
-    const matchingSet = await this.fetchMatchingSet(
-      db,
-      dto.customerId,
-      productIds,
-      productUpbMap,
-      undefined,
-      opts.excludeInvoiceIds,
-    );
+    const matchingSet = await this.fetchMatchingSet(db, dto.customerId, productIds, productUpbMap, {
+      excludeInvoiceIds: opts.excludeInvoiceIds,
+      sourceOrderId,
+      withPriorCredits: true, // B905: the pricing set telescopes over what each line already had credited
+    });
 
     const tierByProduct = new Map(
       customerPrices
@@ -319,14 +365,10 @@ export class InlineReturnsQuoteService {
       const cached = lifetimeCache.get(productId);
       if (cached !== undefined) return cached;
       // ONE product-filtered read of the sold lines (null window = whole history; only invoices that HAVE the product)
-      const lifeSet = await this.fetchMatchingSet(
-        db,
-        dto.customerId,
-        [productId],
-        productUpbMap,
-        null,
-        opts.excludeInvoiceIds,
-      );
+      const lifeSet = await this.fetchMatchingSet(db, dto.customerId, [productId], productUpbMap, {
+        soldWindowDays: null,
+        excludeInvoiceIds: opts.excludeInvoiceIds,
+      });
       const lines = lifeSet.filter((l) => l.productId === productId);
       const sold = lines.reduce((n, l) => n + l.piecesQty, 0);
       let exhausted = false;
@@ -418,6 +460,8 @@ export class InlineReturnsQuoteService {
         item.productId,
         requestedPieces,
       );
+      // SA-740: a walk-in never gets an unreferenced chunk (cash out with no sale behind it): over the sale is a 409.
+      if (walkIn) assertWalkInCoveredBySale(item.productId, productName, allocated);
 
       const tierForProduct = tierByProduct.get(item.productId) ?? customer.pricingTier;
       const unreferencedPrice = product ? Number(getTierPrice(product, tierForProduct)) : 0;
@@ -431,8 +475,14 @@ export class InlineReturnsQuoteService {
       // line names the widest-known rate, else the tenant's CURRENT rate (deferred PR-1b
       // item / §3.2 cases 2/3 — never a hand-rolled 0, which silently zero-taxed every
       // unreferenced chunk on a product with no candidate invoice line at all).
-      const fallbackTaxRate =
-        matchingSet.find((l) => l.productId === item.productId)?.taxRate ?? tenantTaxRate;
+      // B463: when that candidate's invoice charged NO tax (m-7), the over-return is untaxed too: never credit a tax the sale
+      // did not charge. A product on no candidate invoice at all takes the tenant's current rate.
+      const candidateLine = matchingSet.find((l) => l.productId === item.productId);
+      const fallbackTaxRate = candidateLine
+        ? candidateLine.invoiceTaxAmount === 0
+          ? 0
+          : candidateLine.taxRate
+        : tenantTaxRate;
 
       const override = overrides.get(item);
       // B961 (SA-071h): flag = unreferenced AND (the in-window lines carry prior returns/credits OR lifetime exhaustion). The 90-day
@@ -528,7 +578,7 @@ export class InlineReturnsQuoteService {
       }
     }
     if (need.length === 0) return { returned, unknown };
-    const notDead = { notIn: ["REJECTED", "CANCELLED"] };
+    const notDead = { notIn: DEAD_RETURN_STATUSES };
     const [standardItems, inlineItems] = await Promise.all([
       db.returnItem.findMany({
         where: {
@@ -603,17 +653,27 @@ export class InlineReturnsQuoteService {
     customerId: string,
     productIds: string[],
     productUpbMap: Map<string, number | null>,
-    // null = the customer's WHOLE history (B961's lifetime flag): no date filter, and only invoices that HAVE the product
-    soldWindowDays: number | null = DEFAULT_SOLD_WINDOW_DAYS,
-    excludeInvoiceIds: readonly string[] = [],
+    o: {
+      // null = the customer's WHOLE history (B961's lifetime flag): no date filter, and only invoices that HAVE the product
+      soldWindowDays?: number | null;
+      excludeInvoiceIds?: readonly string[];
+      // SA-740: pin the matching set to ONE source sale (the walk-in rule, or a named customer who named one)
+      sourceOrderId?: string | null;
+      // B905: also read the pieces each line already had credited by live INLINE returns (one constant read)
+      withPriorCredits?: boolean;
+    } = {},
   ): Promise<CandidateInvoiceLine[]> {
+    const soldWindowDays =
+      o.soldWindowDays === undefined ? DEFAULT_SOLD_WINDOW_DAYS : o.soldWindowDays;
+    const excludeInvoiceIds = o.excludeInvoiceIds ?? [];
+    const sourceOrderId = o.sourceOrderId ?? null;
     const since = new Date();
     since.setDate(since.getDate() - (soldWindowDays ?? 0));
 
     const invoices = await db.invoice.findMany({
       where: {
         customerId,
-        orderId: { not: null },
+        orderId: sourceOrderId ?? { not: null },
         ...(excludeInvoiceIds.length > 0 ? { id: { notIn: [...excludeInvoiceIds] } } : {}),
         ...(soldWindowDays === null
           ? { items: { some: { productId: { in: productIds } } } }
@@ -702,6 +762,29 @@ export class InlineReturnsQuoteService {
         });
       }
     }
+    if (o.withPriorCredits && lines.length > 0) await this.attachPriorCredits(db, lines);
     return lines;
+  }
+
+  /**
+   * B905: sets `priorPieces` on each line to the pieces earlier live INLINE returns already credited against it (their
+   * `ReturnItem.sourceInvoiceItemId`; `ReturnItem.qty` of an inline row is in pieces). ONE read however many lines. A STANDARD
+   * return carries no line link, so it cannot be attributed to a line and does not count here (the first-slice price stands).
+   */
+  private async attachPriorCredits(db: any, lines: CandidateInvoiceLine[]): Promise<void> {
+    const rows: Array<{ sourceInvoiceItemId: string | null; qty: unknown }> =
+      (await db.returnItem.findMany({
+        where: {
+          sourceInvoiceItemId: { in: lines.map((l) => l.sourceInvoiceItemId) },
+          return: { kind: "INLINE", status: { notIn: DEAD_RETURN_STATUSES } },
+        },
+        select: { sourceInvoiceItemId: true, qty: true },
+      })) ?? [];
+    const byLine = new Map<string, number>();
+    for (const r of rows) {
+      if (!r.sourceInvoiceItemId) continue;
+      byLine.set(r.sourceInvoiceItemId, (byLine.get(r.sourceInvoiceItemId) ?? 0) + Number(r.qty));
+    }
+    for (const l of lines) l.priorPieces = byLine.get(l.sourceInvoiceItemId) ?? 0;
   }
 }

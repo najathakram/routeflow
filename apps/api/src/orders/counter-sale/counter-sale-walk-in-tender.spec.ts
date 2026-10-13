@@ -19,6 +19,7 @@ import { FULFILMENT_CAPABILITY_READER } from "./fulfilment-capability-reader";
 import { OrdersService } from "../orders.service";
 import { InvoicesService } from "../../invoices/invoices.service";
 import { PrismaService } from "../../prisma/prisma.service";
+import { AuditService } from "../../audit/audit.service";
 import { createMockPrisma } from "../../testing/prisma-mock";
 import * as fs from "fs";
 import * as path from "path";
@@ -75,6 +76,7 @@ describe("CounterSaleService.ring: walk-in tender must cover the server total (B
           useValue: { getOrCreateWalkIn: jest.fn().mockResolvedValue("cust-walkin") },
         },
         { provide: PrismaService, useValue: prisma },
+        { provide: AuditService, useValue: { log: jest.fn() } },
         {
           provide: FULFILMENT_CAPABILITY_READER,
           useValue: { get: jest.fn().mockResolvedValue(cap) },

@@ -111,6 +111,8 @@ describe("updateOrderItems — operator diff branch reads the locked line, not t
             findOpenOrderDraft: jest.fn().mockResolvedValue(null),
             reconcileOrderDraftInvoice: jest.fn().mockResolvedValue({ id: "inv-1" }),
             resyncOrderInvoicesForEdit: jest.fn().mockResolvedValue([]),
+            followPartialPrices: jest.fn().mockResolvedValue({ issuedPartialsUnchanged: [] }),
+            projectEditedInvoiceTotals: jest.fn().mockResolvedValue([]),
             revertLinkedInvoicesForOrderEdit: jest.fn().mockResolvedValue([]),
           },
         },
@@ -221,14 +223,11 @@ describe("updateOrderItems — operator diff branch reads the locked line, not t
     );
   });
 
-  it("a line hard-deleted under the lock is not silently skipped: its write fails loudly (P2025) and nothing else is written", async () => {
-    // B135's `liveLine ?? li` shape: the held read lacks the row, so the branch proceeds off the
-    // snapshot and the update hits the row Prisma no longer has. The mock rejects the way Prisma
-    // does; the pin is that the error is NOT swallowed and no other write follows. The clean
-    // CONCURRENT_UPDATE 409 for this case lands with the expectedQty token (see PR body).
+  it("a line hard-deleted under the lock is a retryable 409 CONCURRENT_UPDATE and NOTHING is written (row 372)", async () => {
+    // The held read lacks the row (another writer deleted it while this tx waited on the lock). It used to fall
+    // back to the pre-tx snapshot and die on P2025 / write stale state (B135's `liveLine ?? li`); the snapshot
+    // fallback is gone: a payload id the lock does not hold is 409 before the first write.
     lockedLines([]);
-    const p2025 = Object.assign(new Error("Record to update not found."), { code: "P2025" });
-    prisma.orderItem.update.mockRejectedValue(p2025);
 
     await expect(
       service.updateOrderItems(
@@ -236,8 +235,8 @@ describe("updateOrderItems — operator diff branch reads the locked line, not t
         { items: [{ id: "li-1", action: "UPDATE", qty: 3 }] } as any,
         operator,
       ),
-    ).rejects.toBe(p2025);
-    expect(prisma.orderItem.update).toHaveBeenCalledTimes(1);
+    ).rejects.toMatchObject({ response: { code: "CONCURRENT_UPDATE" } });
+    expect(prisma.orderItem.update).not.toHaveBeenCalled();
     expect(prisma.orderItem.delete).not.toHaveBeenCalled();
     expect(prisma.orderItem.create).not.toHaveBeenCalled();
     expect(prisma.order.update).not.toHaveBeenCalled();

@@ -3,12 +3,16 @@
 import * as React from "react";
 import type { BusinessProfilePreviewResponse } from "@routeflow/types";
 import { AdminModal } from "../../../../_components/AdminModal";
+import { INCLUDED_FREE_COPY } from "./profile-plain-copy";
 import { keyLabel } from "./setup-copy";
 
 /**
  * Preview → confirm for one business profile. Billing is built from `plan.billing` (never by slicing `summary`): a
  * Stripe-billed module stops billing on confirm; a MANUALLY billed one must be taken off their manual invoice by hand,
- * and says so. "What will change" is the API's own plain-English `changes` list. It never applies anything
+ * and says so. SA-769: a module the profile will comp (`plan.comps`) is listed on its own with "Included free with this
+ * profile" (copy from profile-plain-copy.ts); a comp row switched off (`plan.billing[].comp`) has no billing to stop,
+ * so it is a plain change line, never a Billing claim. "What will change" is the API's own plain-English `changes`
+ * list. It never applies anything
  * itself — `onConfirm` is the caller's one audited write. While `confirming` the dialog cannot be dismissed: the write
  * is already in flight and Cancel would only hide it.
  */
@@ -34,11 +38,14 @@ export function BusinessProfilePreviewModal({
 }) {
   if (!open || !response) return null;
 
-  const billing = response.plan?.billing ?? [];
+  const allBilling = response.plan?.billing ?? [];
+  const billing = allBilling.filter((b) => !b.comp);
+  const compsOff = allBilling.filter((b) => b.comp);
   const stopsBilling = billing.filter((b) => !b.manual);
   const manualBilling = billing.filter((b) => b.manual);
+  const comps = response.plan?.comps ?? [];
   const changeLines = response.changes ?? [];
-  const empty = billing.length === 0 && changeLines.length === 0;
+  const empty = allBilling.length === 0 && comps.length === 0 && changeLines.length === 0;
   const busy = confirming || refreshing;
   const handleClose = busy ? () => {} : onClose;
 
@@ -123,7 +130,31 @@ export function BusinessProfilePreviewModal({
               )}
             </section>
           )}
-          {changeLines.length > 0 && (
+          {comps.length > 0 && (
+            <section
+              data-testid="profile-preview-comps"
+              aria-labelledby="profile-preview-comps-title"
+              className="rounded-lg bg-emerald-900/20 p-3 ring-1 ring-emerald-500/30"
+            >
+              <h4
+                id="profile-preview-comps-title"
+                className="text-sm font-semibold text-emerald-300"
+              >
+                Turned on for this business
+              </h4>
+              <ul className="mt-2 flex flex-col gap-1 text-sm text-slate-200">
+                {comps.map((c) => (
+                  <li key={c.featureKey} className="flex flex-wrap items-baseline gap-x-2">
+                    <span>{keyLabel(c.featureKey)}</span>
+                    <span className="text-xs font-medium text-emerald-300">
+                      {INCLUDED_FREE_COPY}
+                    </span>
+                  </li>
+                ))}
+              </ul>
+            </section>
+          )}
+          {(changeLines.length > 0 || compsOff.length > 0) && (
             <section
               data-testid="profile-preview-changes"
               aria-labelledby="profile-preview-changes-title"
@@ -136,6 +167,11 @@ export function BusinessProfilePreviewModal({
                 What will change
               </h4>
               <ul className="mt-2 flex list-disc flex-col gap-1 pl-5 text-sm text-slate-200">
+                {compsOff.map((b) => (
+                  <li key={`comp-off-${b.featureKey}`}>
+                    {keyLabel(b.featureKey)} will be switched off (it was included free)
+                  </li>
+                ))}
                 {changeLines.map((line, i) => (
                   <li key={`change-${i}`}>{line}</li>
                 ))}

@@ -29,7 +29,7 @@ import {
 import { BuyerController } from "../buyer/buyer.controller";
 import { getMetadataStorage } from "class-validator";
 import { UpdateCustomerDto } from "./dto/update-customer.dto";
-import { ValidationPipe } from "@nestjs/common";
+import { BadRequestException, ValidationPipe } from "@nestjs/common";
 
 describe("customer self-service profile edit keeps seller-controlled fields out", () => {
   let service: CustomersService;
@@ -162,16 +162,16 @@ describe("customer self-service profile edit keeps seller-controlled fields out"
   });
 
   it("(f) the buyer-portal handler (PATCH /buyer/me) applies the SAME allowlist before the shared update", async () => {
-    const update = jest.fn().mockResolvedValue({});
+    arrange();
     const controller = Object.create(BuyerController.prototype) as any;
-    controller.customersService = { update };
-    await controller.updateMe({ customerId: "cust-1" }, {
+    controller.customersService = service;
+    await controller.updateMe({ customerId: "cust-1" }, { sub: "buyer-1" }, {
       contactName: "Jo B",
       ...SELLER_FIELDS,
     } as never);
-    expect(update).toHaveBeenCalledTimes(1);
-    expect(update.mock.calls[0][0]).toBe("cust-1");
-    expect(Object.keys(update.mock.calls[0][1]).sort()).toEqual(["contactName"]);
+    expect(prisma.customer.update).toHaveBeenCalledTimes(1);
+    expect(prisma.customer.update.mock.calls[0][0].where).toEqual({ id: "cust-1" });
+    expect(Object.keys(written()).sort()).toEqual(["contactName"]);
   });
 
   it("(g) the allowlist is set-equal to the fields UpdateBuyerProfileDto declares (no hand-copy drift)", () => {
@@ -201,14 +201,14 @@ describe("customer self-service profile edit keeps seller-controlled fields out"
       { contactName: "Jo B", notes: "x" } as never,
     );
     expect(written()).not.toHaveProperty("notes");
-    const update = jest.fn().mockResolvedValue({});
+    prisma.customer.update.mockClear();
     const controller = Object.create(BuyerController.prototype) as any;
-    controller.customersService = { update };
-    await controller.updateMe({ customerId: "cust-1" }, {
+    controller.customersService = service;
+    await controller.updateMe({ customerId: "cust-1" }, { sub: "buyer-1" }, {
       contactName: "Jo B",
       notes: "x",
     } as never);
-    expect(update.mock.calls[0][1]).not.toHaveProperty("notes");
+    expect(written()).not.toHaveProperty("notes");
     const pipe = new ValidationPipe({
       whitelist: true,
       forbidNonWhitelisted: true,
@@ -233,12 +233,10 @@ describe("customer self-service profile edit keeps seller-controlled fields out"
       transform: true,
     });
     const body = {
-      businessName: "Acme",
       contactName: "Jo",
       phone: "1",
       email: "jo@example.com",
       mobile: "2",
-      displayName: "Jo",
       salutation: "Mr",
       firstName: "Jo",
       lastName: "B",
@@ -251,6 +249,99 @@ describe("customer self-service profile edit keeps seller-controlled fields out"
       pipe.transform(body, { type: "body", metatype: UpdateBuyerProfileDto }),
     ).resolves.toBeDefined();
   });
+
+  // B1055 residual: a customer does not rename their own account record from the portal, and every
+  // self-service profile change leaves an audit row.
+  const NAME_FIELDS = ["businessName", "displayName"] as const;
+  const auditCalls = () => prisma.auditLog.create.mock.calls.map((c: any[]) => c[0].data);
+
+  it.each(NAME_FIELDS)(
+    "(q) %s is not on the self-service allowlist and is dropped",
+    async (field) => {
+      expect(SELF_SERVICE_FIELDS).not.toContain(field);
+      expect(pickSelfServiceFields({ phone: "1", [field]: "Renamed" } as never)).toEqual({
+        phone: "1",
+      });
+      arrange();
+      await service.updateMyProfile(
+        { sub: "user-1" } as never,
+        { contactName: "Jo B", [field]: "Renamed" } as never,
+      );
+      expect(written()).toMatchObject({ contactName: "Jo B" });
+      expect(written()).not.toHaveProperty(field);
+    },
+  );
+
+  it.each(NAME_FIELDS)("(r) the self-service body pipe refuses %s", async (field) => {
+    const pipe = new ValidationPipe({
+      whitelist: true,
+      forbidNonWhitelisted: true,
+      transform: true,
+    });
+    await expect(
+      pipe.transform({ [field]: "Renamed" }, { type: "body", metatype: UpdateBuyerProfileDto }),
+    ).rejects.toBeInstanceOf(BadRequestException);
+  });
+
+  it("(s) PATCH /customers/me writes one audit row naming the actor, the customer and the fields", async () => {
+    arrange();
+    await service.updateMyProfile(
+      { sub: "user-1", impersonatedBy: "sa-1" } as never,
+      { contactName: "Jo B", phone: "555-0100" } as never,
+    );
+    expect(auditCalls()).toHaveLength(1);
+    expect(auditCalls()[0]).toMatchObject({
+      tenantId: "test-tenant",
+      userId: "user-1",
+      impersonatedBy: "sa-1",
+      entityType: "Customer",
+      entityId: "cust-1",
+      action: "customer.self_service.profile_update",
+      meta: { source: "customers/me", actorType: "USER", fields: ["contactName", "phone"] },
+    });
+  });
+
+  it("(t) PATCH /buyer/me writes the same audit row", async () => {
+    arrange();
+    const controller = Object.create(BuyerController.prototype) as any;
+    controller.customersService = service;
+    await controller.updateMe(
+      { customerId: "cust-1" },
+      { sub: "buyer-1", impersonatedBy: "sa-1" },
+      {
+        email: "jo@example.com",
+      } as never,
+    );
+    expect(auditCalls()).toHaveLength(1);
+    expect(auditCalls()[0]).toMatchObject({
+      userId: "buyer-1",
+      impersonatedBy: "sa-1",
+      entityId: "cust-1",
+      action: "customer.self_service.profile_update",
+      meta: { source: "buyer/me", actorType: "BUYER_ACCOUNT", fields: ["email"] },
+    });
+  });
+
+  it("(u) the audit row records field names only, never the values", async () => {
+    arrange();
+    await service.updateMyProfile(
+      { sub: "user-1" } as never,
+      { phone: "555-0199", email: "private@example.com" } as never,
+    );
+    expect(JSON.stringify(auditCalls()[0])).not.toMatch(/555-0199|private@example\.com/);
+  });
+
+  it("(v) a refused edit writes no audit row, and an empty edit writes none either", async () => {
+    prisma.customer.findFirst.mockResolvedValue(stored());
+    prisma.customer.findUnique.mockResolvedValue(stored());
+    await expect(
+      service.updateMyProfile({ sub: "user-1" } as never, { contactName: "@evil" } as never),
+    ).rejects.toBeInstanceOf(BadRequestException);
+    arrange();
+    await service.updateMyProfile({ sub: "user-1" } as never, { notes: "x" } as never);
+    expect(prisma.auditLog.create).not.toHaveBeenCalled();
+  });
+
   // Customer `notes` is staff-internal: no customer-facing customer response carries it.
   describe("customer-facing customer responses omit staff-only fields", () => {
     const row = () => ({ id: "cust-1", deletedAt: null, contactName: "Jo", notes: "internal" });
@@ -310,13 +401,16 @@ describe("customer self-service profile edit keeps seller-controlled fields out"
 
     it("(n) the buyer-portal profile handlers omit notes", async () => {
       const controller = Object.create(BuyerController.prototype) as any;
-      controller.customersService = { update: jest.fn().mockResolvedValue(row()) };
-      const ctx = { customerId: "cust-1", customer: row() };
+      controller.customersService = service;
+      prisma.customer.findFirst.mockResolvedValue(row());
+      prisma.customer.findUnique.mockResolvedValue(row());
+      prisma.customer.update.mockResolvedValue(row());
+      const ctx = { customerId: "cust-1", userId: "user-1", customer: row() };
       expect(controller.getProfile(ctx)).not.toHaveProperty("notes");
       expect(controller.getMe(ctx)).not.toHaveProperty("notes");
-      expect(await controller.updateMe(ctx, { contactName: "Jo" } as never)).not.toHaveProperty(
-        "notes",
-      );
+      expect(
+        await controller.updateMe(ctx, { sub: "buyer-1" }, { contactName: "Jo" } as never),
+      ).not.toHaveProperty("notes");
     });
   });
 });

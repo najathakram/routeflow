@@ -8,6 +8,7 @@ import {
 import { buyerApiClient, getBuyerSubmitScope, type BuyerSeller } from "../buyer-auth";
 import { trackingRefetchInterval } from "../order-tracking-logic";
 import { buyerSubmitKeyFor, clearBuyerSubmitKey } from "../buyer-submit-key";
+import type { BuyerOrderItemEdit } from "@routeflow/types";
 import type {
   ChangeRequestResolution,
   ChangeRequestStatus,
@@ -79,11 +80,21 @@ export type {
 export interface BuyerInvoice {
   id: string;
   invoiceNumber: string;
+  /** Row 401: the server's answer to "a counter sale paid at the till" — no due date / terms shown. */
+  paidAtSale?: boolean;
+  revisedAt?: string | null;
+  overpaidBy?: number | null;
   status: string;
   issueDate?: string;
   dueDate?: string;
   subtotal?: number;
-  tax?: number;
+  /** The stored header: the regular tax PLUS the regulated levy. Show `regularTaxAmount` and `chargeLines`. */
+  taxAmount?: number | string;
+  /** The regular tax alone, and one named charge per regulated category (server-computed; absent on an older server). */
+  regularTaxAmount?: number;
+  chargeLines?: Array<{ key: string; label: string; amount: number }>;
+  discount?: number | string;
+  shippingFee?: number | string;
   total: number;
   amountPaid?: number;
   paidAmount?: number;
@@ -520,6 +531,8 @@ export function useBuyerCancelOrder() {
 export function useBuyerInvoices(params?: {
   status?: string;
   statuses?: string[];
+  /** Derived overdue set (open status + balance due + past due), not the strict status OVERDUE. */
+  isOverdue?: boolean;
   page?: number;
   limit?: number;
 }) {
@@ -658,13 +671,11 @@ export function useBuyerUpdateTemplate() {
 
 export function useBuyerUpdateOrderItems() {
   const qc = useQueryClient();
-  return useMutation<
-    BuyerOrder,
-    Error,
-    { orderId: string; items: Array<{ productId: string; qty: number }> }
-  >({
+  return useMutation<BuyerOrder, Error, { orderId: string; items: BuyerOrderItemEdit[] }>({
     mutationFn: ({ orderId, items }) =>
-      buyerApiClient.patch(`/buyer/orders/${orderId}/items`, { items }).then((r) => r.data),
+      buyerApiClient
+        .patch(`/buyer/orders/${orderId}/items`, { items, namesLines: true })
+        .then((r) => r.data),
     onSuccess: (_, { orderId }) => {
       qc.invalidateQueries({ queryKey: ["buyer-orders"] });
       qc.invalidateQueries({ queryKey: ["buyer-order", orderId] });

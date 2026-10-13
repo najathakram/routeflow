@@ -183,4 +183,102 @@ describe("RfInvoiceBuilder", () => {
       expect(r.irregularPeriod).toBe(false);
     });
   });
+
+  // SA-744r2 M3: calendar windows are priced by their parts - exact fractional days, one rounding per line.
+  describe("SA-744r2 M3: alignment proration is exact", () => {
+    const D = (iso: string) => new Date(iso);
+    const run = async (
+      start: string,
+      end: string,
+      cycle: "MONTHLY" | "ANNUAL" = "MONTHLY",
+      addons: any[] = [addon({ priceSnapshot: 19.99, quantity: 2 })],
+    ) => {
+      const { builder } = make({ addons });
+      const r = await builder.build("tenant-acme", cycle, {
+        periodStart: D(start),
+        periodEnd: D(end),
+      });
+      if (!r.ok) throw new Error("expected a draft");
+      return r;
+    };
+
+    it("[Nov 22 00:00Z, Dec 1 12:00Z) = 9.5 / 30, per line: plan 47.18, add-on 12.66 (master: a full 149 + irregular flag)", async () => {
+      const r = await run("2026-11-22T00:00:00.000Z", "2026-12-01T12:00:00.000Z");
+      expect(r.lines.map((l) => l.amount)).toEqual([47.18, 12.66]);
+      expect(r.lines[0].label).toContain("prorated 9.5/30 days");
+      expect(r.lines[0].quantity).toBeCloseTo(9.5 / 30, 4);
+      expect(r.total).toBe(59.84);
+      expect(r.irregularPeriod).toBe(false);
+      expect(r.needsReview).toBe(false);
+    });
+
+    it("the unit price is NEVER rounded then multiplied by qty: 19.995 x 2 x 9.5/30 rounds once", async () => {
+      const r = await run("2026-11-22T00:00:00.000Z", "2026-12-01T12:00:00.000Z", "MONTHLY", [
+        addon({ priceSnapshot: 19.995, quantity: 2 }),
+      ]);
+      // cyclePrice rounds 19.995 to 20.00 (the house unit), then x2 x 9.5/30 = 12.6667 -> 12.67
+      expect(r.lines[1].amount).toBe(12.67);
+    });
+
+    it("a 25-hour alignment window is 1.0417 / 30, not 2 days: ONE invoice, two lines per product (alignment + the December month)", async () => {
+      const r = await run("2026-11-30T11:00:00.000Z", "2027-01-01T12:00:00.000Z");
+      expect(r.lines.map((l) => [l.kind, l.amount])).toEqual([
+        ["PLAN", 5.17],
+        ["PLAN", 149],
+        ["ADDON", 1.39],
+        ["ADDON", 39.98],
+      ]);
+      expect(r.lines[0].label).toContain("prorated 1.0417/30 days");
+      expect(r.irregularPeriod).toBe(false);
+    });
+
+    it("the merged < 3-day window [Nov 29, Jan 1 12:00Z): lines 2.5/30 + 1, no IRREGULAR flag", async () => {
+      const r = await run("2026-11-29T00:00:00.000Z", "2027-01-01T12:00:00.000Z");
+      expect(r.lines.filter((l) => l.kind === "PLAN").map((l) => l.amount)).toEqual([12.42, 149]);
+      expect(r.lines[0].label).toContain("prorated 2.5/30 days");
+      expect(r.irregularPeriod).toBe(false);
+      expect(r.needsReview).toBe(false);
+    });
+
+    it("Feb 2028 divides by 29", async () => {
+      const r = await run("2028-02-20T12:00:00.000Z", "2028-03-01T12:00:00.000Z");
+      expect(r.lines[0].amount).toBe(51.38);
+      expect(r.lines[0].label).toContain("prorated 10/29 days");
+    });
+
+    it("M2 clip: [Dec 4 00:00Z, Jan 1 12:00Z) is 28.5 / 31 = 136.98", async () => {
+      const r = await run("2026-12-04T00:00:00.000Z", "2027-01-01T12:00:00.000Z");
+      expect(r.lines[0].amount).toBe(136.98);
+    });
+
+    it("a full aligned month is the plain price, even from legacy 00:00Z ends, with no flag", async () => {
+      const r = await run("2026-10-01T00:00:00.000Z", "2026-11-01T00:00:00.000Z");
+      expect(r.lines.map((l) => l.amount)).toEqual([149, 39.98]);
+      expect(r.irregularPeriod).toBe(false);
+    });
+
+    it("ANNUAL alignment = annual / 12 prorated the same way, merged into the first year: [Oct 8, Nov 1 12:00Z next year)", async () => {
+      const r = await run("2026-10-08T00:00:00.000Z", "2027-11-01T12:00:00.000Z", "ANNUAL");
+      // (1490 / 12) x 24.5 / 31 (Oct 8 00:00 -> Nov 1 12:00 = 24.5 days of a 31-day October cycle) = 98.1...
+      const expected = Math.round((1490 / 12) * (24.5 / 31) * 100) / 100;
+      const planLines = r.lines.filter((l) => l.kind === "PLAN");
+      expect(planLines.map((l) => l.amount)).toEqual([expected, 1490]);
+      expect(r.irregularPeriod).toBe(false);
+    });
+
+    it("a shape the helper never produces (both ends unaligned) still falls back to length-based months and is flagged", async () => {
+      const r = await run("2026-10-12T00:00:00.000Z", "2026-11-26T00:00:00.000Z");
+      expect(r.irregularPeriod).toBe(true);
+      expect(r.needsReview).toBe(true);
+      expect(r.lines).toHaveLength(2);
+    });
+
+    it("a null add-on snapshot is a 0 line per part and needsReview", async () => {
+      const r = await run("2026-11-29T00:00:00.000Z", "2027-01-01T12:00:00.000Z", "MONTHLY", [
+        addon({ priceSnapshot: null }),
+      ]);
+      expect(r.lines.filter((l) => l.kind === "ADDON").map((l) => l.amount)).toEqual([0, 0]);
+      expect(r.needsReview).toBe(true);
+    });
+  });
 });

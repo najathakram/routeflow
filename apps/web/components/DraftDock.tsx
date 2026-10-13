@@ -1,7 +1,7 @@
 "use client";
 
 import * as React from "react";
-import { useRouter } from "next/navigation";
+import { useGuardedRouter } from "@/lib/use-guarded-router";
 import { X, Layers, ChevronUp } from "lucide-react";
 import { Button, cn, useToast } from "@routeflow/ui/web";
 import { useAuth } from "@/lib/auth-context";
@@ -56,7 +56,7 @@ function newOrderHref(scanCode: string): string {
 }
 
 function DraftDockInner() {
-  const router = useRouter();
+  const router = useGuardedRouter(); // POS-7: Resume / Start new cannot leave the counter mid-sale
   const { toast } = useToast();
   const { data: drafts } = useDrafts();
   const deleteDraft = useDeleteDraft();

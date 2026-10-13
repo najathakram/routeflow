@@ -28,6 +28,9 @@ import { fmtCalendarDate } from "@/lib/formatting";
 import { usePageTitle } from "@/lib/page-title-context";
 import { useAuth } from "@/lib/auth-context";
 import { useOrders, type Order } from "@/lib/api/orders";
+import { useShipSlotReserve } from "@/lib/ship-caps-hint";
+import { getTenantCookie } from "@/lib/tenant-cookie";
+import { useTenantFeatures } from "@/lib/tenant-features";
 import { useShippedWeekFrom } from "@/lib/tenant-timezone";
 import { useRouteRuns, type RouteRun } from "@/lib/api/routes";
 import { useDrivers, type Driver } from "@/lib/api/drivers";
@@ -39,11 +42,14 @@ import { useRoutesAccess, useDeliveryAccess } from "@/lib/api/addons";
 import { OrderStatusBadge, useOrderStatusLabel } from "@/components/OrderStatusBadge";
 import { isUnsetCapabilities, useFulfilmentCaps } from "@/lib/fulfilment-caps";
 import { useCounterSaleGate } from "@/lib/api/counter-sale";
+import { quickCreateRule } from "@/lib/counter-sale";
+import { staffMay } from "@routeflow/types";
 import { useLastKnownRoutesAccess } from "@/lib/last-known-routes-access";
 import { DRIVER_LANDING } from "@/lib/portal-routing";
 import { DriverAppBanner } from "./DriverAppBanner";
 import { GettingStartedBanner } from "./GettingStartedBanner";
 import { useTenantOnboarding } from "@/lib/api/onboarding";
+import { ReadOnlyHint, WriteButton } from "@/lib/read-only-gate";
 
 // ─── Column definitions (stable refs, defined outside component) ───────────────
 
@@ -191,10 +197,10 @@ const LOW_STOCK_MIN_H = "min-h-[127px]";
 const ROUTE_RUNS_MIN_H = "min-h-[455px]";
 const DRIVER_STATUS_MIN_H = "min-h-[116px]";
 
-function StatSkeleton() {
+function StatSkeleton({ testId = "stat-skeleton" }: { testId?: string }) {
   return (
     <div
-      data-testid="stat-skeleton"
+      data-testid={testId}
       className={cn(
         "animate-pulse rounded-card border border-line bg-paper p-4 shadow-card",
         STAT_CARD_MIN_H,
@@ -261,7 +267,7 @@ function ArAgingWidget({ aging }: { aging: AgingData }) {
       <div className="flex items-center justify-between border-b border-surface-border px-5 py-3.5">
         <h3 className="text-base font-semibold text-navy">AR Aging</h3>
         <Link
-          href="/finance/reports/ar-aging"
+          href="/finance/reports?report=ar-aging"
           className="flex items-center gap-1 text-xs font-medium text-brand-500 hover:underline"
         >
           Full report <ArrowRight className="h-3 w-3" />
@@ -563,9 +569,14 @@ function ModeSwitcher({ mode, onChange }: { mode: ViewMode; onChange: (m: ViewMo
 
 export default function DashboardPage() {
   const router = useRouter();
-  const counterGate = useCounterSaleGate();
   const { setTitle } = usePageTitle();
   const { user } = useAuth();
+  // The SAME staff-only predicate as the shell (layout.tsx) and the command palette.
+  const counterGate = useCounterSaleGate({
+    enabled: user?.role !== "CUSTOMER" && user?.role !== "DRIVER",
+  });
+  // Row 344 (follows row 331): the SAME store-only header rule as the Orders page, from the same gate.
+  const quickCreate = quickCreateRule(counterGate);
   // Routes/drivers are recurring-routes surfaces, so every gate below (the mode
   // pill AND the route/driver cards it reveals) must use the same condition as
   // the shell's "Drive mode" menu item / exit chip in (dashboard)/layout.tsx —
@@ -590,8 +601,16 @@ export default function DashboardPage() {
   // A SHIPPING account (fulfilment staffDefault SHIP, mode set) gets shipping cards in place of the
   // route / driver ones. Any other account, including an unset one, is untouched.
   const fulfilmentCaps = useFulfilmentCaps();
+  // Answer in flight: reserve the three shipping slots only if this tenant LAST resolved to SHIP (ship-caps-hint).
+  const caps = useTenantFeatures();
+  const capsLoading = caps.isLoading === true;
   const shippingAccount =
     !isUnsetCapabilities(fulfilmentCaps) && fulfilmentCaps.staffDefault === "SHIP";
+  const reserveShipSlots = useShipSlotReserve(
+    getTenantCookie(),
+    capsLoading,
+    caps.data === undefined ? null : shippingAccount,
+  );
 
   const baseIsOperator =
     !user?.role ||
@@ -810,26 +829,53 @@ export default function DashboardPage() {
           </div>
           {/* Quick-create shortcuts */}
           <div className="flex items-center gap-2">
-            <Button href="/invoices/new" size="sm" variant="secondary">
+            <WriteButton
+              href="/invoices/new"
+              size="sm"
+              variant="secondary"
+              className={cn(quickCreate.storeOnly && "max-sm:h-11")}
+            >
               <FileMinus className="mr-1.5 h-3.5 w-3.5" />
               New Invoice
-            </Button>
+            </WriteButton>
             {routesAccess && (
               <Button href="/routes/create" size="sm" variant="secondary">
                 <Truck className="mr-1.5 h-3.5 w-3.5" />
                 New Route
               </Button>
             )}
-            {counterGate.showButton ? (
-              <Button href="/orders/counter-sale" size="sm" variant="secondary">
-                Counter sale
-              </Button>
+            {/* Store-only tenant: the SAME rule as the Orders header. New Order would open the counter too, so the
+                header is Invoice a customer (secondary) + Counter sale (primary); `builder=1` opens the builder
+                itself where the counter is the default. */}
+            {quickCreate.storeOnly && staffMay(user?.role, "USE_POS_MODE") ? (
+              <WriteButton
+                href="/orders?action=new&builder=1"
+                size="sm"
+                variant="secondary"
+                className="max-sm:h-11"
+              >
+                Invoice a customer
+              </WriteButton>
             ) : null}
-            <Button href="/orders?action=new" size="sm" variant="primary">
-              <Plus className="mr-1.5 h-3.5 w-3.5" />
-              New Order
-            </Button>
+            {counterGate.showButton ? (
+              <WriteButton
+                href="/orders/counter-sale"
+                size="sm"
+                // A store-only business has one place to ring a sale: the counter is the filled primary.
+                variant={quickCreate.counterIsPrimary ? "primary" : "secondary"}
+                className={cn(quickCreate.storeOnly && "max-sm:h-11")}
+              >
+                Counter sale
+              </WriteButton>
+            ) : null}
+            {quickCreate.showNewOrder ? (
+              <WriteButton href="/orders?action=new" size="sm" variant="primary">
+                <Plus className="mr-1.5 h-3.5 w-3.5" />
+                New Order
+              </WriteButton>
+            ) : null}
           </div>
+          <ReadOnlyHint />
         </div>
       )}
 
@@ -838,14 +884,15 @@ export default function DashboardPage() {
         <div className="flex flex-wrap items-center gap-2">
           <span className="mr-1 text-sm font-medium text-navy/70">Quick create:</span>
           {counterGate.showButton ? (
-            <Button href="/orders/counter-sale" size="sm" variant="secondary">
+            <WriteButton href="/orders/counter-sale" size="sm" variant="secondary">
               Counter sale
-            </Button>
+            </WriteButton>
           ) : null}
-          <Button href="/orders?action=new" size="sm" variant="secondary">
+          <WriteButton href="/orders?action=new" size="sm" variant="secondary">
             <Plus className="mr-1.5 h-3.5 w-3.5" />
             New Order
-          </Button>
+          </WriteButton>
+          <ReadOnlyHint className="basis-full text-xs text-slate-600" />
         </div>
       )}
 
@@ -901,14 +948,21 @@ export default function DashboardPage() {
             />
           </Link>
         )}
-        {isOperator && shippingAccount && (
+        {isOperator && reserveShipSlots && (
+          <>
+            <StatSkeleton testId="ship-stat-skeleton" />
+            <StatSkeleton testId="ship-stat-skeleton" />
+            <StatSkeleton testId="ship-stat-skeleton" />
+          </>
+        )}
+        {isOperator && !capsLoading && shippingAccount && (
           <>
             <Link href="/orders?status=CONFIRMED&fulfillPath=SHIP" className="block">
               <StatCard
                 label="Ready to ship"
                 value={shipCount(readyToShipQ)}
                 icon={<Package className="h-5 w-5" />}
-                className="cursor-pointer transition-shadow hover:shadow-md"
+                className={cn("cursor-pointer transition-shadow hover:shadow-md", STAT_CARD_MIN_H)}
               />
             </Link>
             <Link
@@ -919,7 +973,7 @@ export default function DashboardPage() {
                 label="Shipped, no tracking"
                 value={shipCount(noTrackingQ)}
                 icon={<AlertTriangle className="h-5 w-5" />}
-                className="cursor-pointer transition-shadow hover:shadow-md"
+                className={cn("cursor-pointer transition-shadow hover:shadow-md", STAT_CARD_MIN_H)}
               />
             </Link>
             <Link href="/orders?fulfillPath=SHIP&shipView=week" className="block">
@@ -927,7 +981,7 @@ export default function DashboardPage() {
                 label="Shipped this week"
                 value={weekStart ? shipCount(shippedWeekQ) : "—"}
                 icon={<Truck className="h-5 w-5" />}
-                className="cursor-pointer transition-shadow hover:shadow-md"
+                className={cn("cursor-pointer transition-shadow hover:shadow-md", STAT_CARD_MIN_H)}
               />
             </Link>
           </>

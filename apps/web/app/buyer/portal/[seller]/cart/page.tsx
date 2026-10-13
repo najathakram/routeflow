@@ -41,7 +41,12 @@ import {
 } from "@/lib/buyer-fulfilment";
 import { buyerBlockedMessage, parseSellingRestricted } from "@/lib/api/selling-restricted";
 import { API_ERROR_CODES } from "@routeflow/types";
+import { isSellerUnavailableRefusal, sellerUnavailableCopy } from "@/lib/seller-unavailable";
 import { BUYER_INSUFFICIENT_STOCK_COPY } from "@/lib/buyer-backorder";
+import {
+  SellerUnavailableLine,
+  useSellerAcceptingOrders,
+} from "@/components/SellerUnavailableLine";
 
 function fmt(n: number) {
   return new Intl.NumberFormat("en-US", { style: "currency", currency: "USD" }).format(n);
@@ -55,7 +60,6 @@ export default function BuyerCartPage() {
 
   const cart = useBuyerCart(buyer?.id, sellerSlug);
   const createOrder = useBuyerCreateOrder();
-  const { data: activeOrder } = useBuyerActiveOrder();
 
   const [notes, setNotes] = React.useState("");
   const [deliveryDate, setDeliveryDate] = React.useState("");
@@ -70,11 +74,17 @@ export default function BuyerCartPage() {
 
   // Order ahead: the seller's offer from the ONE buyer capability source (GET /buyer/capabilities).
   // Loading / error / 503 => no data => no choice and no fulfillPath (the server default applies).
-  const { data: capability } = useBuyerSellerCapabilities();
+  const { data: capability, refetch: refetchCapability } = useBuyerSellerCapabilities();
+  // SA-733r6: a paused seller takes no online orders; the quiet line above says so and Checkout is disabled.
+  const sellerAccepting = useSellerAcceptingOrders();
   const choice = buyerFulfilmentChoice(capability);
   const [pickedMethod, setPickedMethod] = React.useState<FulfilmentMethod | null>(null);
   const fulfillPath =
     pickedMethod && choice.methods.includes(pickedMethod) ? pickedMethod : choice.defaultMethod;
+
+  // Read the active order for the CHOSEN path (the server's merge search is path-scoped), so the
+  // banner can only name an order this cart would really fold into.
+  const { data: activeOrder } = useBuyerActiveOrder(fulfillPath ?? undefined);
 
   // Whether we'll merge into the existing order
   // The server folds a buyer cart only into an order on the SAME fulfil path, so with a path being
@@ -240,6 +250,13 @@ export default function BuyerCartPage() {
         setOrderError(BUYER_INSUFFICIENT_STOCK_COPY);
         return;
       }
+      // A paused seller: the one seller-unavailable sentence (the toast is opted out), then re-read the capability so
+      // the line and the disabled button show the same state.
+      if (isSellerUnavailableRefusal(err)) {
+        setOrderError(sellerUnavailableCopy(activeSeller?.tenant.name));
+        void refetchCapability?.();
+        return;
+      }
       const restricted = parseSellingRestricted(err);
       if (restricted) {
         setOrderError(buyerBlockedMessage(restricted));
@@ -365,25 +382,40 @@ export default function BuyerCartPage() {
         <div className="min-w-0 lg:col-span-2">
           <div className="rounded-xl border border-surface-border bg-white overflow-hidden">
             <div className="overflow-x-auto">
-              <table className="w-full min-w-[640px]">
-                <thead>
-                  <tr className="border-b border-surface-border bg-surface-raised text-xs text-navy/70 uppercase tracking-wider">
-                    <th className="px-4 py-2.5 text-left">Product</th>
-                    <th className="px-4 py-2.5 text-center w-32">Qty</th>
-                    <th className="px-4 py-2.5 text-right w-24">Price</th>
-                    <th className="px-4 py-2.5 text-right w-24">Subtotal</th>
-                    <th className="px-4 py-2.5 w-12"></th>
+              <table role="table" className="w-full max-md:block md:min-w-[640px]">
+                <thead role="rowgroup" className="max-md:hidden">
+                  <tr
+                    role="row"
+                    className="border-b border-surface-border bg-surface-raised text-xs text-navy/70 uppercase tracking-wider"
+                  >
+                    <th role="columnheader" className="px-4 py-2.5 text-left">
+                      Product
+                    </th>
+                    <th role="columnheader" className="px-4 py-2.5 text-center w-32">
+                      Qty
+                    </th>
+                    <th role="columnheader" className="px-4 py-2.5 text-right w-24">
+                      Price
+                    </th>
+                    <th role="columnheader" className="px-4 py-2.5 text-right w-24">
+                      Subtotal
+                    </th>
+                    <th role="columnheader" className="px-4 py-2.5 w-12"></th>
                   </tr>
                 </thead>
-                <tbody className="divide-y divide-surface-border">
+                <tbody role="rowgroup" className="divide-y divide-surface-border max-md:block">
                   {cart.items.map((item) => {
                     const priced = lineByProduct.get(item.productId);
                     const price = priced?.net ?? 0;
                     const original = priced?.original ?? null;
                     const freeUnits = priced?.freeUnits ?? 0;
                     return (
-                      <tr key={item.productId} className="hover:bg-surface-raised/50">
-                        <td className="px-4 py-3">
+                      <tr
+                        role="row"
+                        key={item.productId}
+                        className="hover:bg-surface-raised/50 max-md:flex max-md:flex-wrap max-md:items-center max-md:gap-x-4 max-md:gap-y-2 max-md:p-3"
+                      >
+                        <td role="cell" className="px-4 py-3 max-md:w-full max-md:p-0">
                           <div className="flex items-center gap-3">
                             <div className="h-10 w-10 flex-shrink-0 rounded-lg bg-surface-raised flex items-center justify-center overflow-hidden">
                               {item.thumbnailUrl ? (
@@ -410,7 +442,10 @@ export default function BuyerCartPage() {
                             </div>
                           </div>
                         </td>
-                        <td className="px-4 py-3">
+                        <td
+                          role="cell"
+                          className="px-4 py-3 max-md:min-w-0 max-md:flex-1 max-md:p-0"
+                        >
                           {item.unitsPerBox && item.unitsPerBox > 0 ? (
                             // Boxes + Pieces input
                             <div className="flex flex-col items-center gap-1">
@@ -520,7 +555,13 @@ export default function BuyerCartPage() {
                             </div>
                           )}
                         </td>
-                        <td className="px-4 py-3 text-right text-sm">
+                        <td
+                          role="cell"
+                          className="px-4 py-3 text-right text-sm max-md:p-0 max-md:text-left"
+                        >
+                          <span className="block text-[10px] uppercase tracking-wider text-navy/60 md:hidden">
+                            Price
+                          </span>
                           {priced?.unresolved ? (
                             <span className="text-[11px] text-navy/50">Price unavailable</span>
                           ) : original != null && original > price ? (
@@ -534,17 +575,24 @@ export default function BuyerCartPage() {
                             <span className="text-navy/70">{fmt(price)}</span>
                           )}
                         </td>
-                        <td className="px-4 py-3 text-right text-sm font-medium text-navy">
+                        <td
+                          role="cell"
+                          className="px-4 py-3 text-right text-sm font-medium text-navy max-md:p-0 max-md:text-left"
+                        >
+                          <span className="block text-[10px] font-normal uppercase tracking-wider text-navy/60 md:hidden">
+                            Subtotal
+                          </span>
                           {priced?.unresolved ? (
                             <span className="text-navy/40">—</span>
                           ) : (
                             fmt(priced?.lineSubtotal ?? 0)
                           )}
                         </td>
-                        <td className="px-4 py-3">
+                        <td role="cell" className="px-4 py-3 max-md:ml-auto max-md:p-0">
                           <button
                             onClick={() => cart.removeItem(item.productId)}
-                            className="rounded p-1.5 text-navy/30 hover:bg-danger-bg hover:text-danger transition-colors"
+                            aria-label={`Remove ${item.name}`}
+                            className="inline-flex min-h-11 min-w-11 items-center justify-center rounded p-1.5 text-navy/30 hover:bg-danger-bg hover:text-danger transition-colors"
                           >
                             <Trash2 className="h-4 w-4" />
                           </button>
@@ -662,11 +710,13 @@ export default function BuyerCartPage() {
 
           {/* Actions */}
           <div className="space-y-2">
+            <SellerUnavailableLine className="rounded-lg bg-surface-raised px-3 py-2 text-xs text-navy/80" />
             <Button
               className="w-full bg-buyer-500 hover:bg-buyer-600 focus-visible:ring-buyer-500"
               onClick={handlePlaceOrder}
               loading={createOrder.isPending}
-              disabled={createOrder.isPending}
+              disabled={createOrder.isPending || !sellerAccepting}
+              aria-describedby={sellerAccepting ? undefined : "seller-unavailable-line"}
             >
               {willMerge ? "Add to existing order" : "Place Order"}
             </Button>

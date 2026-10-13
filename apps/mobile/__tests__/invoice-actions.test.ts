@@ -44,7 +44,8 @@ describe("isPaymentEditable", () => {
 });
 
 describe("invoiceActionFlags", () => {
-  const base = { paymentCount: 0, isOrderLinked: false };
+  // balanceDue: the reminder tile needs a known balance (row 318d); the rest of the flags ignore it.
+  const base = { paymentCount: 0, isOrderLinked: false, balanceDue: 100 };
 
   it("DRAFT → edit + duplicate + apply-credit only", () => {
     expect(invoiceActionFlags({ ...base, status: "DRAFT" })).toEqual({
@@ -76,6 +77,37 @@ describe("invoiceActionFlags", () => {
     expect(invoiceActionFlags({ ...base, status: "SENT", paymentCount: 1 }).canRevertToDraft).toBe(
       false,
     );
+  });
+
+  // Row 318d (SA-770): a reminder demands money, so it needs a balance, like the web `canSendReminder` and the
+  // API's REMINDER_NO_BALANCE_DUE refusal. An exactly-paid or overpaid invoice (P-3 keeps it out of PAID) and an
+  // unknown balance hide the tile instead of earning a guaranteed error toast.
+  describe("canSendReminder needs a balance due", () => {
+    it.each(["SENT", "VIEWED", "PARTIAL", "OVERDUE"])("%s with a balance → yes", (status) => {
+      expect(invoiceActionFlags({ ...base, status, balanceDue: 5 }).canSendReminder).toBe(true);
+    });
+    it.each([0, -3, "0", "0.00"])("an open invoice with balanceDue %p → no", (balanceDue) => {
+      expect(invoiceActionFlags({ ...base, status: "SENT", balanceDue }).canSendReminder).toBe(
+        false,
+      );
+    });
+    it("a numeric-string balance from the API still counts", () => {
+      expect(
+        invoiceActionFlags({ ...base, status: "OVERDUE", balanceDue: "12.50" }).canSendReminder,
+      ).toBe(true);
+    });
+    it.each([undefined, null, "n/a", Number.NaN, Infinity, "Infinity"])(
+      "an unknown balance %p → no",
+      (balanceDue) => {
+        expect(
+          invoiceActionFlags({ ...base, status: "SENT", balanceDue: balanceDue as never })
+            .canSendReminder,
+        ).toBe(false);
+      },
+    );
+    it.each(["DRAFT", "PAID", "VOID", "WRITTEN_OFF"])("%s never, even with a balance", (status) => {
+      expect(invoiceActionFlags({ ...base, status, balanceDue: 100 }).canSendReminder).toBe(false);
+    });
   });
 
   it("PAID → reopen only; no reminder, no credit", () => {

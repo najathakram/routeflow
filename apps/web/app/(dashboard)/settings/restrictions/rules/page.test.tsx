@@ -131,14 +131,14 @@ describe("RestrictionRulesPage", () => {
     ok(Array.from({ length: 500 }, (_, i) => rule({ id: `r${i}` })));
     renderWithProviders(<RestrictionRulesPage />);
     expect(await screen.findByText(/Showing the newest 500 rules/)).toBeInTheDocument();
-  });
+  }, 120_000); // renders 500 cards: ~10 s alone, past the 30 s default on a loaded machine
 
   it("does not claim truncation just under the cap", async () => {
     ok(Array.from({ length: 499 }, (_, i) => rule({ id: `r${i}` })));
     renderWithProviders(<RestrictionRulesPage />);
     await screen.findAllByTestId("rule-card");
     expect(screen.queryByText(/Showing the newest/)).toBeNull();
-  });
+  }, 120_000);
 
   it("a tenant admin gets a New rule button that opens the dialog; an operator does not", async () => {
     ok([]);

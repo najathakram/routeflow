@@ -86,6 +86,18 @@ describe("BarcodeScannerButton", () => {
       return utils;
     };
 
+    it("portals the camera overlay to document.body, outside any transformed dialog", async () => {
+      await openScanner(
+        <div role="dialog">
+          <BarcodeScannerButton onScan={jest.fn()} title="Scan barcode" />
+        </div>,
+      );
+      const overlay = screen.getByText("Align barcode within the box").closest(".fixed");
+      expect(overlay).not.toBeNull();
+      expect(overlay!.parentElement).toBe(document.body);
+      expect(screen.getByRole("dialog").contains(overlay)).toBe(false);
+    });
+
     it("acquires the rear camera via getUserMedia and hands that stream to zxing", async () => {
       await openScanner(<BarcodeScannerButton onScan={jest.fn()} title="Scan barcode" />);
 

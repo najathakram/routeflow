@@ -156,7 +156,8 @@ export default function BuyerInvoicesPage() {
                     </Badge>
                   </div>
                   <p className="mt-1 text-xs text-navy/70">
-                    {fmtDate(invoice.createdAt)} · Due {fmtCalendarDate(invoice.dueDate)}
+                    {fmtDate(invoice.createdAt)}
+                    {invoice.paidAtSale ? "" : ` · Due ${fmtCalendarDate(invoice.dueDate)}`}
                   </p>
                   <dl className="mt-3 grid grid-cols-2 gap-3 border-t border-surface-border pt-3">
                     <div>
@@ -222,7 +223,7 @@ export default function BuyerInvoicesPage() {
                         {fmtDate(invoice.createdAt)}
                       </td>
                       <td className="px-4 py-3 text-sm text-navy/70">
-                        {fmtCalendarDate(invoice.dueDate)}
+                        {invoice.paidAtSale ? "\u2014" : fmtCalendarDate(invoice.dueDate)}
                       </td>
                       <td className="px-4 py-3">
                         <Badge variant={invoiceStatusVariant(invoice.status)}>

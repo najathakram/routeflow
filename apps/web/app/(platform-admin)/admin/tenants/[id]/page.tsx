@@ -1,10 +1,14 @@
 "use client";
 
 import * as React from "react";
-import { useParams, useRouter } from "next/navigation";
+import { useParams, useRouter, useSearchParams } from "next/navigation";
 import Link from "next/link";
 import { FEATURE_OVERRIDE_KIND_VALUES, type FeatureOverrideKind } from "@routeflow/types";
-import type { FeatureRegistryRow } from "@routeflow/types";
+import {
+  BILLING_PERIODS,
+  EXTERNAL_PAYMENT_METHODS,
+  type FeatureRegistryRow,
+} from "@routeflow/types";
 import { superAdminClient } from "@/lib/admin-api";
 import { setTenantCookie } from "@/lib/tenant-cookie";
 import { setImpersonation } from "@/lib/impersonation";
@@ -26,6 +30,7 @@ import {
   tenantLabel,
 } from "../../../_components/TenantActionDialogs";
 import { TenantPricingCard } from "./_components/TenantPricingCard";
+import { ReadinessCard, type AdminReadState } from "./_components/ReadinessCard";
 import { LayoutDashboard, CreditCard, Puzzle, Settings, ScrollText, Archive } from "lucide-react";
 import { FeatureConsole } from "./_features/FeatureConsole";
 import { SetupSection } from "./_features/SetupSection";
@@ -83,6 +88,8 @@ interface TenantDetail {
     drivers: number;
     routes: number;
     customerLinks: number;
+    /** SA-3: absent on an older API; the Readiness card then says "Not checked". */
+    products?: number;
   } | null;
   orders30d?: number;
   estMrrUsd?: number;
@@ -111,11 +118,17 @@ interface AuditLogEntry {
 const TABS = [
   { key: "overview", label: "Overview", icon: <LayoutDashboard className="h-4 w-4" /> },
   { key: "billing", label: "Billing & Subscription", icon: <CreditCard className="h-4 w-4" /> },
-  { key: "addons", label: "Setup", icon: <Puzzle className="h-4 w-4" /> },
+  { key: "setup", label: "Setup", icon: <Puzzle className="h-4 w-4" /> },
   { key: "config", label: "Configuration", icon: <Settings className="h-4 w-4" /> },
   { key: "snapshots", label: "Config Snapshots", icon: <Archive className="h-4 w-4" /> },
   { key: "audit", label: "Audit Log", icon: <ScrollText className="h-4 w-4" /> },
 ];
+
+/** The tab named by `?tab=`; the legacy `addons` is the Setup tab, and anything else (or nothing) is Overview. */
+function resolveTab(param: string | null | undefined): string {
+  const key = param === "addons" ? "setup" : param;
+  return TABS.some((t) => t.key === key) ? (key as string) : "overview";
+}
 
 // ─── Helper ────────────────────────────────────────────────────────────────────
 
@@ -151,7 +164,7 @@ function TenantAdminSection({
   tenantId: string;
   onRefreshTenant: () => void;
   /** The admin's username once known (null when there is none): the Impersonate dialog names it. */
-  onAdminChange?: (username: string | null) => void;
+  onAdminChange?: (admin: TenantAdminUser | null, state: AdminReadState) => void;
 }) {
   const [admin, setAdmin] = React.useState<TenantAdminUser | null | undefined>(undefined); // undefined = loading
   const [showCreateForm, setShowCreateForm] = React.useState(false);
@@ -168,11 +181,11 @@ function TenantAdminSection({
       .get(`/platform-admin/tenants/${tenantId}/admin`)
       .then((res) => {
         setAdmin(res.data.admin);
-        onAdminChange?.(res.data.admin?.username ?? null);
+        onAdminChange?.(res.data.admin ?? null, "loaded");
       })
       .catch(() => {
         setAdmin(null);
-        onAdminChange?.(null);
+        onAdminChange?.(null, "failed");
       });
   }, [tenantId, onAdminChange]);
 
@@ -191,6 +204,7 @@ function TenantAdminSection({
       );
       setCreateResult(res.data);
       setAdmin(res.data);
+      onAdminChange?.(res.data, "loaded");
       setShowCreateForm(false);
       setCreateForm({ username: "", email: "" });
       onRefreshTenant();
@@ -376,7 +390,17 @@ function OverviewTab({
   >(null);
   // The server only deletes SUSPENDED tenants: its refusal is shown inside the delete dialog, which stays open.
   const [deleteError, setDeleteError] = React.useState<string | null>(null);
-  const [adminUsername, setAdminUsername] = React.useState<string | null>(null);
+  // The page's single Admin Account read (TenantAdminSection reports it): feeds the Impersonate dialog and the
+  // Readiness card, so a create updates both with no second fetch.
+  const [adminRead, setAdminRead] = React.useState<{
+    admin: TenantAdminUser | null;
+    state: AdminReadState;
+  }>({ admin: null, state: "loading" });
+  const adminUsername = adminRead.admin?.username ?? null;
+  const handleAdminChange = React.useCallback(
+    (admin: TenantAdminUser | null, state: AdminReadState) => setAdminRead({ admin, state }),
+    [],
+  );
 
   const [recentLogs, setRecentLogs] = React.useState<AuditLogEntry[]>([]);
   React.useEffect(() => {
@@ -400,6 +424,8 @@ function OverviewTab({
 
   return (
     <div className="grid gap-6 lg:grid-cols-2">
+      <ReadinessCard tenant={tenant} admin={adminRead.admin} adminState={adminRead.state} />
+
       {/* At-a-glance KPIs */}
       <div className="grid grid-cols-1 gap-3 sm:grid-cols-3 lg:col-span-2">
         <div className="rounded-xl bg-slate-800 p-5 ring-1 ring-white/5">
@@ -526,11 +552,13 @@ function OverviewTab({
       )}
 
       {/* Admin Account */}
-      <TenantAdminSection
-        tenantId={tenant.id}
-        onRefreshTenant={onRefreshTenant}
-        onAdminChange={setAdminUsername}
-      />
+      <div id="admin-account">
+        <TenantAdminSection
+          tenantId={tenant.id}
+          onRefreshTenant={onRefreshTenant}
+          onAdminChange={handleAdminChange}
+        />
+      </div>
 
       <ImpersonateDialog
         open={confirming === "impersonate"}
@@ -822,22 +850,6 @@ function OverviewTab({
 }
 
 // ─── Billing Tab ───────────────────────────────────────────────────────────────
-
-const EXTERNAL_PAYMENT_METHODS = [
-  { value: "ZELLE", label: "Zelle" },
-  { value: "BANK_TRANSFER", label: "Bank Transfer (ACH/Wire)" },
-  { value: "WIRE", label: "Wire Transfer" },
-  { value: "CHECK", label: "Check" },
-  { value: "CASH", label: "Cash" },
-  { value: "OTHER", label: "Other" },
-] as const;
-
-const BILLING_PERIODS = [
-  { value: 30, label: "Monthly (30 days)" },
-  { value: 90, label: "Quarterly (90 days)" },
-  { value: 180, label: "Semi-Annual (180 days)" },
-  { value: 365, label: "Annual (365 days)" },
-] as const;
 
 function BillingTab({
   tenant,
@@ -1151,8 +1163,8 @@ function BillingTab({
 }
 
 // ─── Setup Tab ─────────────────────────────────────────────────────────────────
-// The tab key stays "addons" (it is internal); the label is "Setup": the tenant's current setup in plain English,
-// the business-profile picker, then the feature console and the per-feature overrides.
+// The tab key is "setup" (the legacy ?tab=addons still resolves to it); the label is "Setup": the tenant's current setup in plain English,
+// the business-profile picker, then an Advanced section with the feature console and the per-feature overrides.
 
 function SetupTab({
   tenant,
@@ -1166,6 +1178,8 @@ function SetupTab({
   const overridesRef = React.useRef<FeatureOverridesSectionHandle>(null);
   // Bumped when a business profile changed this tenant's setup: the console and the overrides list remount and reload.
   const [setupVersion, setSetupVersion] = React.useState(0);
+  // Open by default: nothing a super admin used to see is hidden until they choose to fold it.
+  const [advancedOpen, setAdvancedOpen] = React.useState(true);
 
   return (
     <>
@@ -1175,20 +1189,50 @@ function SetupTab({
         onApplied={() => setSetupVersion((v) => v + 1)}
       />
 
-      <FeatureConsole
-        key={`console-${setupVersion}`}
-        tenant={tenant}
-        tenantLabel={tenant.businessName ?? tenant.slug}
-        onChangePlan={(plan) => onAction("change-plan", { plan })}
-        changePlanLoading={actionLoading === "change-plan"}
-        onCustomise={(featureKey) => overridesRef.current?.openFor(featureKey)}
-      />
+      {/* One "Advanced" section holds the two power-user controls; both stay mounted when collapsed so
+          the console's "Customise" ref and any in-flight drawer keep working, and Customise reopens it. */}
+      <section
+        aria-labelledby="setup-advanced-heading"
+        className="mt-6"
+        data-testid="setup-advanced"
+      >
+        <h2 id="setup-advanced-heading" className="text-sm font-semibold text-slate-300">
+          <button
+            type="button"
+            aria-expanded={advancedOpen}
+            aria-controls="setup-advanced-body"
+            onClick={() => setAdvancedOpen((o) => !o)}
+            className="flex w-full items-center gap-2 text-left"
+          >
+            <span aria-hidden="true">{advancedOpen ? "▾" : "▸"}</span>
+            Advanced
+            <span className="text-xs font-normal text-slate-400">
+              Feature console and overrides
+            </span>
+          </button>
+        </h2>
+        <div id="setup-advanced-body" hidden={!advancedOpen}>
+          <div id="features">
+            <FeatureConsole
+              key={`console-${setupVersion}`}
+              tenant={tenant}
+              tenantLabel={tenant.businessName ?? tenant.slug}
+              onChangePlan={(plan) => onAction("change-plan", { plan })}
+              changePlanLoading={actionLoading === "change-plan"}
+              onCustomise={(featureKey) => {
+                setAdvancedOpen(true);
+                overridesRef.current?.openFor(featureKey);
+              }}
+            />
+          </div>
 
-      <FeatureOverridesSection
-        key={`overrides-${setupVersion}`}
-        ref={overridesRef}
-        tenant={tenant}
-      />
+          <FeatureOverridesSection
+            key={`overrides-${setupVersion}`}
+            ref={overridesRef}
+            tenant={tenant}
+          />
+        </div>
+      </section>
     </>
   );
 }
@@ -1911,12 +1955,20 @@ function AuditLogTab({ tenantId }: { tenantId: string }) {
 export default function AdminTenantDetailPage() {
   const { id } = useParams<{ id: string }>();
   const router = useRouter();
+  const searchParams = useSearchParams();
+  const urlTab = resolveTab(searchParams?.get("tab"));
   const [tenant, setTenant] = React.useState<TenantDetail | null>(null);
   const [loading, setLoading] = React.useState(true);
   const [error, setError] = React.useState<string | null>(null);
   const [actionLoading, setActionLoading] = React.useState<string | null>(null);
   const [statusMsg, setStatusMsg] = React.useState<string | null>(null);
-  const [activeTab, setActiveTab] = React.useState("overview");
+  const [activeTab, setActiveTab] = React.useState(urlTab);
+  // The URL is the source of truth: back/forward, a pasted link and an old ?tab=addons all land here.
+  React.useEffect(() => setActiveTab(urlTab), [urlTab]);
+  const changeTab = (key: string) => {
+    setActiveTab(key);
+    router.replace(`/admin/tenants/${id}?tab=${key}`, { scroll: false });
+  };
 
   const fetchTenant = React.useCallback(() => {
     setLoading(true);
@@ -2061,7 +2113,7 @@ export default function AdminTenantDetailPage() {
       </p>
 
       {/* Tabs */}
-      <AdminTabs tabs={TABS} active={activeTab} onChange={setActiveTab} />
+      <AdminTabs tabs={TABS} active={activeTab} onChange={changeTab} />
 
       {/* Tab Content */}
       {activeTab === "overview" && (
@@ -2074,7 +2126,7 @@ export default function AdminTenantDetailPage() {
         />
       )}
       {activeTab === "billing" && <BillingTab tenant={tenant} onRefreshTenant={fetchTenant} />}
-      {activeTab === "addons" && (
+      {activeTab === "setup" && (
         <SetupTab tenant={tenant} onAction={handleAction} actionLoading={actionLoading} />
       )}
       {activeTab === "config" && <ConfigTab tenant={tenant} />}
