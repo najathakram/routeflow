@@ -14,6 +14,8 @@ import { API_ERROR_CODES } from "../../common/api-error-codes";
 import { AdminAuditAction } from "../../platform-admin/audit-actions.constant";
 import {
   assertActivationWindowNotEnded,
+  assertWindowClearOfPaidInvoices,
+  findRecentIdenticalActivation,
   resolveActivationWindow,
   voidCoveredRfInvoices,
 } from "./rf-invoice-activation-void";
@@ -255,7 +257,7 @@ describe("activation window anchored on the earliest OPEN invoice (PR4a, owner r
 
     // the issuer reads the subscription period the activation wrote: its next invoice starts where it ends
     const issuer = new (RfInvoiceIssuerService as any)(
-      { rfInvoice: { findFirst: jest.fn(async () => null) } },
+      { rfInvoice: { findFirst: jest.fn(async () => null), findMany: jest.fn(async () => []) } },
       {},
       {},
     ) as RfInvoiceIssuerService;
@@ -265,7 +267,8 @@ describe("activation window anchored on the earliest OPEN invoice (PR4a, owner r
       Infinity,
     );
     expect(next).toHaveLength(1);
-    expect(next[0].periodStart).toEqual(plus(P, 30));
+    // the issuer snaps every window start to the 12:00Z anchor (a legacy 00:00Z spelling is the same period)
+    expect(next[0].periodStart).toEqual(new Date(plus(P, 30).getTime() + 12 * 60 * 60 * 1000));
   });
 
   it("PIN 2: a 14-day activation at P-3d only PARTLY covers the monthly invoice -> flagged needsReview, not voided", async () => {
@@ -337,6 +340,8 @@ describe("an activation void keeps the period consumed (the issuer's catch-up mu
   const P = D("2026-11-01");
   const plus = (d: Date, days: number) => new Date(d.getTime() + days * DAY_MS);
 
+  const SNAPPED_P = new Date(P.getTime() + 12 * 60 * 60 * 1000).toISOString();
+
   it("PIN 4: PAID [P-30d, P) + OPEN [P, P+30d), activated at P-3d for 30 days -> the issuer's catch-up window for [P, P+30d) is 'exists', nothing is built", async () => {
     const now = plus(P, -3);
     const rows = [
@@ -347,7 +352,8 @@ describe("an activation void keeps the period consumed (the issuer's catch-up mu
         periodEnd: P,
         periodKey: plus(P, -30).toISOString(),
       }),
-      row({ id: "open", periodStart: P, periodEnd: plus(P, 30), periodKey: P.toISOString() }),
+      // an issued row carries the SNAPPED (12:00Z) key, as the issuer writes it
+      row({ id: "open", periodStart: P, periodEnd: plus(P, 30), periodKey: SNAPPED_P }),
     ];
     const tx = fakeTx(rows);
     const w = await resolveActivationWindow(tx, { tenantId: TENANT, now, days: 30 });
@@ -358,7 +364,7 @@ describe("an activation void keeps the period consumed (the issuer's catch-up mu
       actorId: ACTOR,
       now,
     });
-    expect(rows[1]).toMatchObject({ status: "VOID", periodKey: P.toISOString() });
+    expect(rows[1]).toMatchObject({ status: "VOID", periodKey: SNAPPED_P });
 
     // the issuer over the same rows: findFirst honours tenantId / periodKey / periodEnd / status {not}
     const findFirst = jest.fn(async ({ where }: any) => {
@@ -372,9 +378,22 @@ describe("an activation void keeps the period consumed (the issuer's catch-up mu
       );
       return hit ? { id: hit.id } : null;
     });
+    // the issuer's two range reads (a prior invoice ending / one starting near the window), over the same rows
+    const findMany = jest.fn(async ({ where }: any) =>
+      rows.filter((r) => {
+        const inRange = (v: Date | null, f: any) =>
+          f === undefined || (v !== null && v >= f.gte && v <= f.lte);
+        return (
+          r.tenantId === where.tenantId &&
+          (where.status?.not === undefined || r.status !== where.status.not) &&
+          inRange(r.periodEnd, where.periodEnd) &&
+          inRange(r.periodStart, where.periodStart)
+        );
+      }),
+    );
     const build = jest.fn();
     const issuer = new (RfInvoiceIssuerService as any)(
-      { rfInvoice: { findFirst } },
+      { rfInvoice: { findFirst, findMany } },
       { build },
       {},
     ) as RfInvoiceIssuerService;
@@ -481,5 +500,135 @@ describe("assertActivationWindowNotEnded (owner ruling: an ended window is refus
     expect(w.windowEnd.getTime()).toBe(NOW.getTime() - 10 * DAY_MS); // the window is resolved unclamped ...
     expect(w.blocking).toMatchObject({ number: "RF-2026-0001" }); // ... the oldest OPEN invoice is the blocker
     expect(() => assertActivationWindowNotEnded(w, NOW)).toThrow(ConflictException); // ... then refused
+  });
+});
+
+describe("assertWindowClearOfPaidInvoices (SA M2: OPEN Aug, PAID Sep, OPEN Oct must not take September twice)", () => {
+  const aug = row({
+    id: "aug",
+    number: "RF-AUG",
+    periodStart: D("2026-08-01"),
+    periodEnd: D("2026-09-01"),
+  });
+  const sep = row({
+    id: "sep",
+    number: "RF-SEP",
+    status: "PAID",
+    periodStart: D("2026-09-01"),
+    periodEnd: D("2026-10-01"),
+  });
+  const oct = row({
+    id: "oct",
+    number: "RF-OCT",
+    periodStart: D("2026-10-01"),
+    periodEnd: D("2026-11-01"),
+  });
+  const now = D("2026-10-07");
+
+  async function run(rows: Row[], days: number) {
+    const tx = fakeTx(rows);
+    const w = await resolveActivationWindow(tx, { tenantId: TENANT, now, days });
+    return assertWindowClearOfPaidInvoices(tx, { tenantId: TENANT, window: w }).then(
+      () => null,
+      (e) => e as ConflictException,
+    );
+  }
+
+  it("a 90-day window from Aug 1 runs over the PAID September invoice -> 409 naming it, with the longest safe length", async () => {
+    const err = await run([aug, sep, oct], 90);
+    expect(err).toBeInstanceOf(ConflictException);
+    expect(err?.getResponse()).toMatchObject({
+      code: API_ERROR_CODES.ACTIVATION_OVERLAPS_PAID_PERIOD,
+      invoiceNumber: "RF-SEP",
+      paidFrom: "2026-09-01",
+      maxDays: 31,
+    });
+  });
+
+  it("a window that stops at the paid period's start is allowed (31 days from Aug 1 ends Sep 1)", async () => {
+    expect(await run([aug, sep, oct], 31)).toBeNull();
+  });
+
+  it("a paid period covering the window start leaves maxDays 0", async () => {
+    const paidFirst = row({
+      id: "p0",
+      number: "RF-JUL",
+      status: "PAID",
+      periodStart: D("2026-07-15"),
+      periodEnd: D("2026-08-15"),
+    });
+    const err = await run([paidFirst, aug], 30);
+    expect(err?.getResponse()).toMatchObject({ invoiceNumber: "RF-JUL", maxDays: 0 });
+  });
+
+  it("with NO open invoice the window starts now exactly as it always did: a paid current period never refuses", async () => {
+    const paidNow = row({
+      id: "p1",
+      status: "PAID",
+      periodStart: D("2026-10-01"),
+      periodEnd: D("2026-11-01"),
+    });
+    expect(await run([paidNow], 30)).toBeNull();
+  });
+});
+
+describe("findRecentIdenticalActivation (SA M3: a double-click records one period and one marker)", () => {
+  const now = D("2026-10-07");
+  const KEY = {
+    tenantId: TENANT,
+    now,
+    plan: "STARTER",
+    paymentMethod: "CHEQUE",
+    paymentRef: "CHQ-1",
+    days: 30,
+  };
+  const meta = {
+    plan: "STARTER",
+    paymentMethod: "CHEQUE",
+    paymentRef: "CHQ-1",
+    billingPeriodDays: 30,
+    periodStart: "2026-09-12T00:00:00.000Z",
+    periodEnd: "2026-10-12T00:00:00.000Z",
+  };
+  const txWith = (row: { meta: Record<string, unknown> } | null) => ({
+    auditLog: { findFirst: jest.fn(async () => row) },
+  });
+
+  it("the same plan, method, reference and length inside the repeat window is the first activation's period", async () => {
+    const tx = txWith({ meta });
+    expect(await findRecentIdenticalActivation(tx, KEY)).toEqual({
+      periodStart: new Date("2026-09-12T00:00:00.000Z"),
+      periodEnd: new Date("2026-10-12T00:00:00.000Z"),
+    });
+    const where = (tx.auditLog.findFirst.mock.calls[0] as any[])[0].where;
+    expect(where.action).toBe(AdminAuditAction.TENANT_MANUAL_ACTIVATION_MARKER);
+    expect(where.createdAt.gte.getTime()).toBe(now.getTime() - 2 * 60 * 1000);
+  });
+
+  it.each([
+    ["plan", { plan: "GROWTH" }],
+    ["payment method", { paymentMethod: "WIRE" }],
+    ["reference", { paymentRef: "CHQ-2" }],
+    ["length", { billingPeriodDays: 60 }],
+  ])("a different %s is a new payment", async (_n, over) => {
+    expect(
+      await findRecentIdenticalActivation(txWith({ meta: { ...meta, ...over } }), KEY),
+    ).toBeNull();
+  });
+
+  it("no recent marker, a marker from before the key existed, or a malformed one: not a repeat", async () => {
+    expect(await findRecentIdenticalActivation(txWith(null), KEY)).toBeNull();
+    const { billingPeriodDays: _omit, ...legacy } = meta;
+    expect(await findRecentIdenticalActivation(txWith({ meta: legacy }), KEY)).toBeNull();
+    expect(
+      await findRecentIdenticalActivation(txWith({ meta: { ...meta, periodEnd: "junk" } }), KEY),
+    ).toBeNull();
+  });
+
+  it("a null reference matches a null reference", async () => {
+    const m = { ...meta, paymentRef: null };
+    expect(
+      await findRecentIdenticalActivation(txWith({ meta: m }), { ...KEY, paymentRef: null }),
+    ).not.toBeNull();
   });
 });

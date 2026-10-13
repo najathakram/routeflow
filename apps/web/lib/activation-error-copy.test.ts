@@ -74,3 +74,34 @@ describe("codedToastCopy maps the same code for the generic mutation toast", () 
     expect(codedToastCopy(ended(FULL))).toBe(activationEndedSentence(FULL));
   });
 });
+
+describe("activationOverlapsPaidSentence: ACTIVATION_OVERLAPS_PAID_PERIOD copy built from the body fields", () => {
+  const err = (data: Record<string, unknown>) => ({
+    response: {
+      data: { code: API_ERROR_CODES.ACTIVATION_OVERLAPS_PAID_PERIOD, message: RAW, ...data },
+    },
+  });
+
+  it("names the invoice, its start and the longest safe length from the structured fields", () => {
+    const text = activationErrorText(
+      err({ invoiceNumber: "RF-2026-0042", paidFrom: "2026-09-01", maxDays: 31 }),
+    );
+    expect(text).toContain("Invoice RF-2026-0042 is already paid (its period starts 2026-09-01)");
+    expect(text).toContain("Activate for at most 31 days.");
+    expect(text).not.toContain(RAW);
+  });
+
+  it("maxDays 0 points at settling the older open invoices; a single day is singular", () => {
+    expect(activationErrorText(err({ maxDays: 0 }))).toContain("Mark the older open invoices paid");
+    expect(activationErrorText(err({ maxDays: 1 }))).toContain("at most 1 day.");
+  });
+
+  it("malformed fields fall back to plain phrases, never the raw server text", () => {
+    const text = activationErrorText(
+      err({ invoiceNumber: "<b>x</b>", paidFrom: "soon", maxDays: -4 }),
+    );
+    expect(text).toContain("A RouteFlow invoice is already paid");
+    expect(text).toContain("Activate for fewer days.");
+    expect(text).not.toContain(RAW);
+  });
+});

@@ -82,6 +82,100 @@ export function assertActivationWindowNotEnded(window: ActivationWindow, now: Da
   });
 }
 
+/**
+ * PR4a (SA M2): a window anchored at the oldest OPEN invoice may run over a RouteFlow invoice that is already PAID
+ * (OPEN Aug, PAID Sep, OPEN Oct, a 90-day activation from Aug 1). Recording that window would take September's
+ * payment twice. REFUSED 409 ACTIVATION_OVERLAPS_PAID_PERIOD before any write, naming the paid invoice and the
+ * longest activation that stops short of it (`maxDays`, 0 when the paid period already covers the window start).
+ * Only an ANCHORED window is checked: with no OPEN invoice the window starts at now exactly as it always did.
+ */
+export async function assertWindowClearOfPaidInvoices(
+  tx: any,
+  input: { tenantId: string; window: ActivationWindow },
+): Promise<void> {
+  const { window } = input;
+  if (!window.blocking) return;
+  const paid: { number: string; periodStart: Date; periodEnd: Date } | null =
+    await tx.rfInvoice.findFirst({
+      where: {
+        tenantId: input.tenantId,
+        status: "PAID",
+        periodStart: { lt: window.windowEnd },
+        periodEnd: { gt: window.windowStart },
+      },
+      orderBy: { periodStart: "asc" },
+      select: { number: true, periodStart: true, periodEnd: true },
+    });
+  if (!paid) return;
+  const paidFrom = paid.periodStart.toISOString().slice(0, 10);
+  const maxDays = Math.max(
+    0,
+    Math.floor((paid.periodStart.getTime() - window.windowStart.getTime()) / DAY_MS),
+  );
+  throw new ConflictException({
+    code: API_ERROR_CODES.ACTIVATION_OVERLAPS_PAID_PERIOD,
+    message:
+      `Invoice ${paid.number} is already paid (its period starts ${paidFrom}) and this activation window would cover it again. ` +
+      (maxDays >= 1
+        ? `Activate for at most ${maxDays} days, or mark the older open invoices paid or void them instead.`
+        : "Mark the older open invoices paid or void them in RouteFlow invoices instead."),
+    invoiceNumber: paid.number,
+    paidFrom,
+    maxDays,
+  });
+}
+
+/** How long the same payment, sent again, counts as a repeat of the first (a double-click or a retried request). */
+const REPEAT_WINDOW_MS = 2 * 60 * 1000;
+
+export interface RecentActivation {
+  periodStart: Date;
+  periodEnd: Date;
+}
+
+/**
+ * PR4a idempotency (SA M3): the activation recorded by the SAME payment seconds ago. The marker row written in the
+ * first activation's transaction carries the key (plan, payment method, payment reference, length); the caller
+ * looks it up under the Tenant row lock, so two clicks serialise and the second one finds the first's marker.
+ * Markers written before this field existed carry no `billingPeriodDays` and never match.
+ */
+export async function findRecentIdenticalActivation(
+  tx: any,
+  input: {
+    tenantId: string;
+    now: Date;
+    plan: string;
+    paymentMethod: string;
+    paymentRef: string | null;
+    days: number;
+  },
+): Promise<RecentActivation | null> {
+  const row: { meta: Record<string, unknown> | null } | null = await tx.auditLog.findFirst({
+    where: {
+      tenantId: input.tenantId,
+      entityType: ADMIN_AUDIT_ENTITY,
+      action: AdminAuditAction.TENANT_MANUAL_ACTIVATION_MARKER,
+      createdAt: { gte: new Date(input.now.getTime() - REPEAT_WINDOW_MS) },
+    },
+    orderBy: { createdAt: "desc" },
+    select: { meta: true },
+  });
+  const m = row?.meta;
+  if (!m) return null;
+  if (
+    m.plan !== input.plan ||
+    m.paymentMethod !== input.paymentMethod ||
+    (m.paymentRef ?? null) !== input.paymentRef ||
+    m.billingPeriodDays !== input.days
+  ) {
+    return null;
+  }
+  const start = typeof m.periodStart === "string" ? new Date(m.periodStart) : null;
+  const end = typeof m.periodEnd === "string" ? new Date(m.periodEnd) : null;
+  if (!start || !end || Number.isNaN(start.getTime()) || Number.isNaN(end.getTime())) return null;
+  return { periodStart: start, periodEnd: end };
+}
+
 export interface VoidCoveredInput {
   tenantId: string;
   /** The activation's prepaid window: [windowStart, windowEnd). */

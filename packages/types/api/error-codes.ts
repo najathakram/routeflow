@@ -620,6 +620,8 @@ export const API_ERROR_CODES = {
   TENANT_TRIAL_EXTEND_NOT_ALLOWED: "TENANT_TRIAL_EXTEND_NOT_ALLOWED",
   /** Back office: a manual activation whose prepaid window already ended is refused. 409. */
   ACTIVATION_PERIOD_ALREADY_ENDED: "ACTIVATION_PERIOD_ALREADY_ENDED",
+  /** Back office: a manual activation's window would run over an already PAID RouteFlow invoice. 409. */
+  ACTIVATION_OVERLAPS_PAID_PERIOD: "ACTIVATION_OVERLAPS_PAID_PERIOD",
   /** 403 `code` when an operator holds none of the feature groups an endpoint needs; `groups` lists them. */
   PERMISSION_DENIED: "PERMISSION_DENIED",
   /** 409 from PUT /users/:id/permissions: `expectedVersion` is stale (reload and retry). */

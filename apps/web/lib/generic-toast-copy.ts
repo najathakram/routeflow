@@ -7,7 +7,7 @@ import {
   UNCONFIRMED_COPY,
   noResponse,
 } from "./credit-note-error-copy";
-import { activationEndedCopy } from "./activation-error-copy";
+import { activationEndedCopy, activationOverlapsPaidCopy } from "./activation-error-copy";
 import { creditLimitSentence } from "./credit-limit-copy";
 import { COUNTER_VOID_ERROR_COPY } from "./counter-void-copy";
 import { COUNTER_SALE_DAY_CLOSED_COPY, DAY_CLOSED_FOR_PAYMENT_DATE_COPY } from "./day-closed-copy";
@@ -306,6 +306,8 @@ export function codedToastCopy(err: unknown): string | null {
   if (code === API_ERROR_CODES.CREDIT_LIMIT_EXCEEDED)
     return creditLimitSentence(data.limit, data.exposure);
   if (code === API_ERROR_CODES.ACTIVATION_PERIOD_ALREADY_ENDED) return activationEndedCopy(err);
+  if (code === API_ERROR_CODES.ACTIVATION_OVERLAPS_PAID_PERIOD)
+    return activationOverlapsPaidCopy(err);
   // CQ-06 review: a selling-restriction refusal with no dialog of its own says what is wrong and the next step.
   if (code === API_ERROR_CODES.SELLING_RESTRICTED) return sellingRestrictedCopy(data.blockedLines);
   // CQ-06: the license refusal says what is wrong (expired / none on file) and where to fix it (shared with mobile).

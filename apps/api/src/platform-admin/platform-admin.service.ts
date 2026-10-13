@@ -19,8 +19,11 @@ import { EmailService } from "../email/email.service";
 import { BillingService } from "../billing/billing.service";
 import {
   assertActivationWindowNotEnded,
+  assertWindowClearOfPaidInvoices,
+  findRecentIdenticalActivation,
   resolveActivationWindow,
   voidCoveredRfInvoices,
+  type RecentActivation,
 } from "../billing/rf-invoice/rf-invoice-activation-void";
 import { PlatformPricingService } from "../billing/platform-pricing.service";
 import { PlanCatalogService } from "../billing/plan-catalog.service";
@@ -1229,11 +1232,27 @@ export class PlatformAdminService {
     const addonSkusToPrice = await unbilledSelfServeSkus(this.prisma, id);
 
     const exitBox: { exit: PauseExit | null } = { exit: null };
+    const duplicateBox: { hit: RecentActivation | null } = { hit: null };
     const tenant = await withAddonLocks(id, addonSkusToPrice, () =>
       this.prisma.$transaction(async (tx) => {
         // B864 / SA-277 (D2): same tenant row lock as updateStatus/updateTenantClass/
         // updateTenantPriceOverride.
         await tx.$queryRaw`SELECT id FROM "Tenant" WHERE id = ${id} FOR UPDATE`;
+        // PR4a (idempotency): a double-click (or a retried request) of the SAME payment finds its own marker under
+        // this lock and does nothing - the first click's voids consumed the open invoices, so a second run would
+        // otherwise anchor at now and record a SECOND period plus a second marker.
+        const repeated = await findRecentIdenticalActivation(tx, {
+          tenantId: id,
+          now,
+          plan: dto.plan,
+          paymentMethod: dto.paymentMethod,
+          paymentRef: dto.paymentRef ?? null,
+          days: dto.billingPeriodDays,
+        });
+        if (repeated) {
+          duplicateBox.hit = repeated;
+          return tx.tenant.findUniqueOrThrow({ where: { id } });
+        }
         const activationWindow = await resolveActivationWindow(tx, {
           tenantId: id,
           now,
@@ -1241,6 +1260,8 @@ export class PlatformAdminService {
         });
         // Owner ruling: a window that already ended is refused (409), before any write in this transaction.
         assertActivationWindowNotEnded(activationWindow, now);
+        // ...and one that would cover an already PAID RouteFlow invoice again (the payment would be taken twice).
+        await assertWindowClearOfPaidInvoices(tx, { tenantId: id, window: activationWindow });
         periodStart = activationWindow.windowStart;
         periodEnd = activationWindow.windowEnd;
         if (transition && preparedTransition) {
@@ -1363,7 +1384,7 @@ export class PlatformAdminService {
 
         // PR4a (owner ruling): the new prepaid window settles any OPEN RouteFlow invoice it fully covers -
         // void them in THIS transaction, so the activation and the void land or roll back together.
-        await voidCoveredRfInvoices(tx, {
+        const voidResult = await voidCoveredRfInvoices(tx, {
           tenantId: id,
           windowStart: periodStart,
           windowEnd: periodEnd,
@@ -1506,8 +1527,15 @@ export class PlatformAdminService {
               paymentMethod: dto.paymentMethod,
               cycle,
               // the activation's OWN unsnapped period: the October catch-up measures paid coverage from it
-              periodStart: now.toISOString(),
+              // M1: the ANCHORED start (the earliest open invoice's period), never the click time: the catch-up
+              // measures paid coverage from this, and a "now" here would shrink the covered range.
+              periodStart: periodStart.toISOString(),
               periodEnd: periodEnd.toISOString(),
+              // the repeat guard's key (findRecentIdenticalActivation) and the audit trail of what this settled
+              paymentRef: dto.paymentRef ?? null,
+              billingPeriodDays: dto.billingPeriodDays,
+              voidedInvoiceIds: voidResult.voided,
+              flaggedInvoiceIds: voidResult.flagged,
             },
           },
         });
@@ -1515,6 +1543,21 @@ export class PlatformAdminService {
         return updated;
       }, this.planTransition.transactionOptions(preparedTransition)),
     );
+
+    if (duplicateBox.hit) {
+      // The repeat of a payment already recorded: nothing was written, so no cache, no pause, no trail row.
+      return {
+        id: tenant.id,
+        slug: tenant.slug,
+        status: tenant.status,
+        plan: tenant.plan,
+        periodStart: duplicateBox.hit.periodStart,
+        periodEnd: duplicateBox.hit.periodEnd,
+        paymentMethod: dto.paymentMethod,
+        paymentRef: dto.paymentRef ?? null,
+        repeated: true,
+      };
+    }
 
     this.planTransition.invalidateCaches(id, preparedTransition);
     // Invalidate cached tenant status so the guard picks up ACTIVE immediately

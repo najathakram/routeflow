@@ -132,6 +132,8 @@ describe("PlatformAdminService — audit provenance", () => {
       count: jest.fn().mockResolvedValue(0),
       // S3: activateManualSubscription writes its billing marker row inside the transaction.
       create: jest.fn().mockResolvedValue({}),
+      // PR4a: the repeat guard looks for the same payment's marker just written (none by default)
+      findFirst: jest.fn().mockResolvedValue(null),
     };
     // createMockPrisma's default $transaction mock builds `tx` from its internal model
     // set, which — like the top level — omits tenantSubscription. updatePlan writes
@@ -4412,7 +4414,8 @@ describe("PlatformAdminService — audit provenance", () => {
     it("PIN 1 (service): with an OPEN invoice [P, P+30d) ahead, the period is written from P (not from now) and ends P+30d", async () => {
       const DAY = 86_400_000;
       const P = new Date(Date.now() + 3 * DAY);
-      (prisma as any).rfInvoice.findFirst.mockResolvedValue({ periodStart: P });
+      // 1st read = the window anchor (the earliest OPEN invoice); the 2nd = "is a PAID invoice in the way" (none)
+      (prisma as any).rfInvoice.findFirst.mockResolvedValueOnce({ periodStart: P });
       (prisma as any).rfInvoice.findMany.mockResolvedValue([
         {
           id: "inv-1",
@@ -4445,6 +4448,93 @@ describe("PlatformAdminService — audit provenance", () => {
         .map((c: any) => c[0].data)
         .find((d: any) => d.action === "TENANT_MANUAL_ACTIVATION_MARKER");
       expect(marker.meta.periodEnd).toBe(new Date(P.getTime() + 30 * DAY).toISOString());
+      // M1: the marker's start is the ANCHORED start, never the click time
+      expect(marker.meta.periodStart).toBe(P.toISOString());
+      // ...and it carries the repeat guard's key plus what this activation settled
+      expect(marker.meta).toMatchObject({
+        paymentRef: activateDto.paymentRef ?? null,
+        billingPeriodDays: 30,
+        voidedInvoiceIds: ["inv-1"],
+        flaggedInvoiceIds: [],
+      });
+    });
+
+    it("M1 pin: the activation is clicked 10 days BEFORE the open invoice's period P -> marker.periodStart == P, the subscription row agrees", async () => {
+      const DAY = 86_400_000;
+      const P = new Date(Date.now() + 10 * DAY);
+      (prisma as any).rfInvoice.findFirst.mockResolvedValueOnce({
+        number: "RF-2026-0007",
+        periodStart: P,
+        periodEnd: new Date(P.getTime() + 30 * DAY),
+      });
+
+      await service.activateManualSubscription(TENANT_ID, activateDto, ADMIN_ID);
+
+      const marker = (prisma as any).auditLog.create.mock.calls
+        .map((c: any) => c[0].data)
+        .find((d: any) => d.action === "TENANT_MANUAL_ACTIVATION_MARKER");
+      const upsert = (prisma as any).tenantSubscription.upsert.mock.calls[0][0];
+      expect(marker.meta.periodStart).toBe(P.toISOString());
+      expect(marker.meta.periodStart).toBe(upsert.update.periodStart.toISOString());
+    });
+
+    it("M2 pin (service): OPEN Aug, PAID Sep in the way of a 90-day window -> 409 ACTIVATION_OVERLAPS_PAID_PERIOD, nothing written", async () => {
+      const DAY = 86_400_000;
+      const aug = new Date(Date.now() - 2 * DAY);
+      const sepStart = new Date(aug.getTime() + 31 * DAY);
+      (prisma as any).rfInvoice.findFirst
+        .mockResolvedValueOnce({
+          number: "RF-AUG",
+          periodStart: aug,
+          periodEnd: new Date(aug.getTime() + 31 * DAY),
+        })
+        .mockResolvedValueOnce({
+          number: "RF-SEP",
+          periodStart: sepStart,
+          periodEnd: new Date(sepStart.getTime() + 30 * DAY),
+        });
+
+      const err = await service
+        .activateManualSubscription(TENANT_ID, { ...activateDto, billingPeriodDays: 90 }, ADMIN_ID)
+        .then(
+          () => null,
+          (e: unknown) => e,
+        );
+
+      expect(err).toBeInstanceOf(ConflictException);
+      expect((err as ConflictException).getResponse()).toMatchObject({
+        code: "ACTIVATION_OVERLAPS_PAID_PERIOD",
+        invoiceNumber: "RF-SEP",
+        maxDays: 31,
+      });
+      expect((prisma as any).tenantSubscription.upsert).not.toHaveBeenCalled();
+      expect((prisma as any).rfInvoice.updateMany).not.toHaveBeenCalled();
+      expect((prisma as any).auditLog.create).not.toHaveBeenCalled();
+    });
+
+    it("M3 pin (service): the same payment sent twice records ONE period and ONE marker - the repeat writes nothing", async () => {
+      const DAY = 86_400_000;
+      const start = new Date(Date.now() - 1000);
+      (prisma as any).auditLog.findFirst.mockResolvedValueOnce({
+        meta: {
+          plan: activateDto.plan,
+          paymentMethod: activateDto.paymentMethod,
+          paymentRef: activateDto.paymentRef ?? null,
+          billingPeriodDays: activateDto.billingPeriodDays,
+          periodStart: start.toISOString(),
+          periodEnd: new Date(start.getTime() + 30 * DAY).toISOString(),
+        },
+      });
+
+      const out: any = await service.activateManualSubscription(TENANT_ID, activateDto, ADMIN_ID);
+
+      expect(out).toMatchObject({ repeated: true, periodStart: start });
+      expect(out.periodEnd).toEqual(new Date(start.getTime() + 30 * DAY));
+      expect((prisma as any).tenantSubscription.upsert).not.toHaveBeenCalled();
+      expect(prisma.tenant.update).not.toHaveBeenCalled();
+      expect((prisma as any).rfInvoice.findMany).not.toHaveBeenCalled();
+      expect((prisma as any).auditLog.create).not.toHaveBeenCalled();
+      expect(auditLog).not.toHaveBeenCalled(); // no second TENANT_SUBSCRIPTION_ACTIVATED trail row
     });
 
     it("PIN 3 (service): with no OPEN invoice the period starts now and runs the activation length", async () => {

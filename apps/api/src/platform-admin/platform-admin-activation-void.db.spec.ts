@@ -427,4 +427,65 @@ describeDb("manual activation auto-void (DB)", () => {
       "TRIAL",
     );
   });
+
+  const markers = () =>
+    prisma.auditLog.findMany({
+      where: {
+        tenantId,
+        action: AdminAuditAction.TENANT_MANUAL_ACTIVATION_MARKER,
+        entityType: ADMIN_AUDIT_ENTITY,
+      },
+      orderBy: { createdAt: "asc" },
+    });
+
+  it("M1: the marker records the ANCHORED start (the open invoice's period), not the click time", async () => {
+    const P = new Date(Date.now() + 10 * DAY);
+    await monthlyInvoice(P, "OPEN");
+
+    await svc.activateManualSubscription(tenantId, ACTOR_DTO as any, "sa-4a");
+
+    const [marker] = await markers();
+    expect((marker.meta as any).periodStart).toBe(P.toISOString());
+    expect((await subRow())?.periodStart?.toISOString()).toBe(P.toISOString());
+    expect((marker.meta as any).voidedInvoiceIds).toHaveLength(1);
+  });
+
+  it("M2: OPEN + PAID + OPEN with a window that runs over the paid month -> 409 ACTIVATION_OVERLAPS_PAID_PERIOD, nothing written", async () => {
+    const first = new Date(Date.now() - 2 * DAY);
+    const aug = await monthlyInvoice(first, "OPEN");
+    await monthlyInvoice(new Date(first.getTime() + 30 * DAY), "PAID");
+    const oct = await monthlyInvoice(new Date(first.getTime() + 60 * DAY), "OPEN");
+
+    await expect(
+      svc.activateManualSubscription(
+        tenantId,
+        { ...ACTOR_DTO, billingPeriodDays: 90 } as any,
+        "sa-4a",
+      ),
+    ).rejects.toMatchObject({ response: { code: "ACTIVATION_OVERLAPS_PAID_PERIOD", maxDays: 30 } });
+
+    expect(await statusOf(aug.id)).toBe("OPEN");
+    expect(await statusOf(oct.id)).toBe("OPEN");
+    expect(await voidAudits()).toBe(0);
+    expect(await subRow()).toBeNull();
+  });
+
+  it("M3: a double-click (two concurrent identical requests) records one period and one marker", async () => {
+    await monthlyInvoice(new Date(Date.now() + 3 * DAY), "OPEN");
+    const dto = { ...ACTOR_DTO, paymentRef: "CHQ-4A-DBL" } as any;
+
+    const [a, b] = await Promise.all([
+      svc.activateManualSubscription(tenantId, dto, "sa-4a"),
+      svc.activateManualSubscription(tenantId, dto, "sa-4a"),
+    ]);
+
+    expect([a, b].filter((r: any) => r.repeated === true)).toHaveLength(1);
+    expect(await markers()).toHaveLength(1);
+    const sub = (await subRow())!;
+    expect(sub.periodStart?.toISOString()).toBe((a as any).periodStart.toISOString());
+    expect((b as any).periodEnd.toISOString()).toBe((a as any).periodEnd.toISOString());
+    // a DIFFERENT reference is a new payment, not a repeat
+    await svc.activateManualSubscription(tenantId, { ...dto, paymentRef: "CHQ-4A-OTHER" }, "sa-4a");
+    expect(await markers()).toHaveLength(2);
+  });
 });
