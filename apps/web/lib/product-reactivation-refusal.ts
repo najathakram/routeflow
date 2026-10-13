@@ -143,26 +143,20 @@ export function newCodeFields(refusal: ReactivationRefusal | null): ReplaceableC
 }
 
 /**
- * A plain 400 ("SKU already exists" and kin) from a reactivation that sent replacement codes: the typed
- * code was taken between the availability check and the write. Returns the code field it names (sku by
- * default), or null for any other error. The message is only matched, never shown.
+ * A 400 `PRODUCT_CODE_IN_USE` from a reactivation that sent replacement codes: the typed code was taken between the
+ * availability check and the write. Returns the code field the server names, or null for any other error. Only the
+ * code and the field are read; no server text is.
  */
 export function codeTakenOnSubmit(
   err: unknown,
   sent: Partial<Record<ReplaceableCodeField, string>>,
 ): ReplaceableCodeField | null {
-  const res = (err as { response?: { status?: unknown; data?: { message?: unknown } } } | null)
-    ?.response;
-  if (res?.status !== 400) return null;
-  const raw = res.data?.message;
-  const message = Array.isArray(raw) ? raw.join(" ") : typeof raw === "string" ? raw : "";
-  if (!/already (exists|used|in use)|is taken/i.test(message)) return null;
-  const guess: ReplaceableCodeField = /barcode/i.test(message)
-    ? "barcode"
-    : /unit/i.test(message)
-      ? "unitSku"
-      : "sku";
-  if (sent[guess]) return guess;
+  const res = (
+    err as { response?: { status?: unknown; data?: { code?: unknown; field?: unknown } } } | null
+  )?.response;
+  if (res?.status !== 400 || res.data?.code !== API_ERROR_CODES.PRODUCT_CODE_IN_USE) return null;
+  const named = CODE_FIELD_ORDER.find((f) => f === res.data?.field);
+  if (named && sent[named]) return named;
   return CODE_FIELD_ORDER.find((f) => sent[f]) ?? null;
 }
 

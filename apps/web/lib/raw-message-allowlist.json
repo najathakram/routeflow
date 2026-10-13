@@ -415,11 +415,6 @@
     "permanent": true,
     "why": "log: console.error of a websocket error, never rendered"
   },
-  "lib/product-reactivation-refusal.ts": {
-    "count": 1,
-    "permanent": true,
-    "why": "classification: the server text only classifies a code-already-used refusal, it is never displayed"
-  },
   "lib/reason-copy.ts": {
     "count": 1,
     "permanent": true,

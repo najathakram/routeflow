@@ -129,9 +129,13 @@ describe("useReactivateFlow", () => {
     expect(screen.getByText(/The SKU "NEW-1" is now used by/)).toBeInTheDocument();
   });
 
-  it("a 400 'SKU already exists' on a new-code submit keeps the dialog open, input kept, inline message, no toast", async () => {
+  it("a 400 PRODUCT_CODE_IN_USE on a new-code submit keeps the dialog open, input kept, inline message, no toast", async () => {
     patch.mockRejectedValueOnce(conflict()).mockRejectedValueOnce({
-      response: { status: 400, data: { message: "SKU already exists" } },
+      // the server text is deliberately odd: only the code and the field are read
+      response: {
+        status: 400,
+        data: { code: "PRODUCT_CODE_IN_USE", field: "sku", message: "not read" },
+      },
     });
     renderWithProviders(<Harness />);
     fireEvent.click(screen.getByText("go"));
