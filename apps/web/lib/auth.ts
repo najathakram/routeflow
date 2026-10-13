@@ -4,7 +4,7 @@ import { OP_KEYS } from "./auth-keys";
 import { setOpPresenceCookie, clearOpPresenceCookie } from "./presence-cookies";
 import { getImpersonation, clearImpersonation } from "./impersonation";
 import { clearAllLiveCarts } from "./counter-live-cart-keys";
-import { clearAllInvoiceDrafts } from "./invoice-draft-storage";
+import { clearAllInvoiceDrafts, resumeInvoiceDraftWrites } from "./invoice-draft-storage";
 
 export { OP_PRESENCE_COOKIE, clearOpPresenceCookie } from "./presence-cookies";
 
@@ -101,6 +101,7 @@ export async function login(username: string, password: string): Promise<AuthRes
     password,
   });
   adoptTokenPair(data);
+  resumeInvoiceDraftWrites(); // a fresh sign-in may save drafts again
   return data;
 }
 

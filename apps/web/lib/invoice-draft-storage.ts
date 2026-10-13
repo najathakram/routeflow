@@ -268,8 +268,17 @@ export function clearInvoiceDraft(key: string | null): void {
   }
 }
 
-/** Sign-out: drop every stored draft on this browser, whoever it belonged to. Never throws. */
+// Set the moment a sign-out starts. A sign-out ends in a page navigation, and navigation fires `pagehide`: the form's
+// last-chance flush must not write the draft straight back after the wipe. A sign-in resumes writes; so does a reload
+// (module re-init).
+let signingOut = false;
+export function resumeInvoiceDraftWrites(): void {
+  signingOut = false;
+}
+
+/** Sign-out: drop every stored draft on this browser, whoever it belonged to, and refuse new ones. Never throws. */
 export function clearAllInvoiceDrafts(): void {
+  signingOut = true;
   try {
     const s = store();
     if (!s) return;
@@ -290,7 +299,7 @@ export function writeInvoiceDraft(
   form: unknown,
   now: number = Date.now(),
 ): boolean {
-  if (!key) return false;
+  if (!key || signingOut) return false;
   try {
     const snapshot = sanitizeSnapshot(form);
     if (!snapshot || isPristineSnapshot(snapshot)) return false;

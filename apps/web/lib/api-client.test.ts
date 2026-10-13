@@ -148,6 +148,27 @@ describe("api-client", () => {
     expect(localStorage.getItem("rf.invoice-draft.v1:acme:u2")).toBeNull();
   });
 
+  it("after the forced sign-out a late pagehide flush cannot write a draft back", async () => {
+    localStorage.setItem(OP_KEYS.accessToken, "old-token");
+    localStorage.setItem(OP_KEYS.refreshToken, "refresh-token");
+    axiosPost.mockRejectedValue(new Error("refresh denied"));
+    const original: Config = {
+      url: "/orders",
+      method: "get",
+      headers: { Authorization: "Bearer old-token" },
+    };
+    await expect(errorHandler({ response: { status: 401 }, config: original })).rejects.toThrow();
+    // eslint-disable-next-line @typescript-eslint/no-require-imports
+    const store = require("./invoice-draft-storage");
+    const form = {
+      basis: "standalone",
+      customer: { id: "c-1", businessName: "Acme Co" },
+      lines: [],
+    };
+    expect(store.writeInvoiceDraft("rf.invoice-draft.v1:acme:u1", form)).toBe(false);
+    expect(localStorage.getItem("rf.invoice-draft.v1:acme:u1")).toBeNull();
+  });
+
   // FINDING: the brief (PR-9 R3) claims a 401 on /auth/refresh itself "clears the
   // stored tokens". Reading apps/web/lib/api-client.ts:178-187, the guard that
   // matches original.url?.includes("/auth/refresh") returns Promise.reject(error)

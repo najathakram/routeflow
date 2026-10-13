@@ -6,6 +6,7 @@ import {
   invoiceDraftKey,
   isPristineSnapshot,
   readInvoiceDraft,
+  resumeInvoiceDraftWrites,
   sanitizeSnapshot,
   writeInvoiceDraft,
 } from "./invoice-draft-storage";
@@ -224,5 +225,18 @@ describe("clearAllInvoiceDrafts (logout)", () => {
       throw new Error("SecurityError");
     });
     expect(() => clearAllInvoiceDrafts()).not.toThrow();
+  });
+});
+
+describe("writes after sign-out has started (ROW 447)", () => {
+  beforeEach(() => window.localStorage.clear());
+  afterEach(() => resumeInvoiceDraftWrites());
+
+  it("refuses to write once clearAllInvoiceDrafts ran, until a sign-in resumes writes", () => {
+    clearAllInvoiceDrafts();
+    expect(writeInvoiceDraft(KEY, form(), NOW)).toBe(false);
+    expect(window.localStorage.getItem(KEY)).toBeNull();
+    resumeInvoiceDraftWrites();
+    expect(writeInvoiceDraft(KEY, form(), NOW)).toBe(true);
   });
 });
