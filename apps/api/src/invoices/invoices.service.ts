@@ -24,6 +24,7 @@ import { PrismaService } from "../prisma/prisma.service";
 import { overpaidByOf, statusFromPayments } from "./invoice-status";
 import { voidPaymentInTx } from "./payment-void-tx";
 import { TENANT_ZONE_SELECT, configuredZone, tenantTimeZone } from "../common/tenant-time-zone";
+import { assertNoDuplicateLineIds } from "../common/duplicate-line-ids";
 import { StorageService } from "../storage/storage.service";
 import {
   deletePaymentImage,
@@ -3105,6 +3106,7 @@ export class InvoicesService {
 
   async update(id: string, dto: UpdateInvoiceDto) {
     assertFiniteInvoiceInput(dto); // N4: NaN is a 400, not a silent $0
+    assertNoDuplicateLineIds(dto.items); // F3: one line named twice, before any read or write
     const inv = await this.findOneOrThrow(id); // a missing invoice is a 404 whatever else is wrong
     // units_v1: a line can be CREATED by a unit (create(), 4c-1) but not yet REWRITTEN by one (4c-2);
     // the shared DTO accepts `unitLabel`, and this path would silently store a PACK line for it.

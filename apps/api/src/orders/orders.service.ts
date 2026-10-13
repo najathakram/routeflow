@@ -59,6 +59,7 @@ import { lockOrderRow } from "../credit-notes/credit-note-locks";
 import { judgeEditTail } from "./edit-overpay-judge";
 import { RECONCILE_PARTIALS } from "../invoices/invoice-partition";
 import { assertMoneyInvariantsOrThrow } from "../common/money-invariants.util";
+import { assertNoDuplicateLineIds } from "../common/duplicate-line-ids";
 import {
   atStopConflict,
   CHANGE_WINDOW_ORDER_STATUS,
@@ -2811,6 +2812,7 @@ export class OrdersService implements OnApplicationBootstrap {
       buyerLineIds?: boolean; // B297 row 352: ONLY the buyer's PATCH items route (entries name lines)
     },
   ) {
+    assertNoDuplicateLineIds(dto.items); // F3: one line named twice, before any read or write
     assertRemovalsNameALine(dto.items); // #2563: an id-less CANCEL/DELETE, before any read or write
     // SA-429: a DRIVER edits only an order on their own IN_PROGRESS run — FIRST, before any state leaks.
     await driverAccess.assertDriverMayEditOrder(this.prisma.forTenant(), orderId, user);
