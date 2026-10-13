@@ -40,6 +40,7 @@ import { resolveOversellAllowed } from "../orders/oversell-policy";
 import { PolicyOversellReader } from "../orders/policy-oversell-reader";
 import { assertSellableLines } from "../products/sellable-lines";
 import { assertPositiveTemplateQty } from "./template-qty";
+import { assertBuyerMayListProducts } from "./buyer-template-products";
 import { assertMoneyInvariantsOrThrow } from "../common/money-invariants.util";
 import { isoWeekdayUtc, startOfUtcDay } from "../common/utc-day";
 import {
@@ -155,6 +156,11 @@ export class OrderTemplatesService {
         .customer.findFirst({ where: { userId: user.sub } });
       if (!customer) throw new ForbiddenException();
       dto.customerId = customer.id;
+      await assertBuyerMayListProducts(
+        { prisma: this.prisma, restrictions: this.sellingRestrictions },
+        customer.id,
+        (dto.items ?? []).map((i) => i.productId),
+      );
     }
     return this.create(dto, { role: user.role, userId: user.sub });
   }
@@ -166,6 +172,12 @@ export class OrderTemplatesService {
         .forTenant()
         .customer.findFirst({ where: { userId: user.sub } });
       if (!customer || template.customerId !== customer.id) throw new ForbiddenException();
+      if (dto.items)
+        await assertBuyerMayListProducts(
+          { prisma: this.prisma, restrictions: this.sellingRestrictions },
+          customer.id,
+          dto.items.map((i) => i.productId),
+        );
     }
     return this.update(id, dto, { role: user.role, userId: user.sub });
   }
