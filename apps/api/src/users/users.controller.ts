@@ -126,6 +126,11 @@ export class UsersController {
     return this.usersService.unlockUser(id, user.role);
   }
 
+  /**
+   * LEGACY display flag, no authority (Perms PR1 SHOULD): flips `User.isAdmin`, which no guard, handler or screen
+   * reads. Who may administer the account is decided by ROLE (TENANT_ADMIN) alone; to make someone an admin, change
+   * their role (PATCH /users/:id, admin only). No client calls this route; kept so an old integration does not 404.
+   */
   @Patch(":id/admin")
   @UseGuards(RolesGuard)
   @Roles(UserRole.TENANT_ADMIN)

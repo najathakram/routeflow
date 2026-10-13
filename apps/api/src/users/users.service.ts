@@ -463,6 +463,7 @@ export class UsersService {
     return { tempPassword };
   }
 
+  /** Flips the LEGACY `isAdmin` display flag; it grants nothing (authority is the TENANT_ADMIN role). */
   async toggleAdmin(userId: string, callerIsAdmin: boolean) {
     if (!callerIsAdmin) {
       throw new ForbiddenException("Only admins can assign admin rights.");
