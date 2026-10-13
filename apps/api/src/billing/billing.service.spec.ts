@@ -1380,6 +1380,10 @@ describe("onCheckoutCompleted — B445 planKey + basePriceSnapshot write", () =>
 
       it("P0: settling a session that ALREADY linked itself never re-judges the plan: no stale query, no false 'plan not changed' email, no plan re-write", async () => {
         const { svc, prisma, planTransition } = make({ transitionCount: 1 });
+        // an unresolvable price is now alerted (go-live M3): this test is about something else
+        jest
+          .spyOn(svc, "syncStripeSubscriptionPrice")
+          .mockResolvedValue({ synced: true, unchanged: true });
         prisma.tenantSubscription.findUnique.mockResolvedValue({
           tenantId: "t1",
           planKey: "GROWTH",
@@ -1722,6 +1726,10 @@ describe("onCheckoutCompleted — B445 planKey + basePriceSnapshot write", () =>
 
       it("flag OFF: none of the flag-ON guards read anything — no snapshot lookup, no tenant read; the only audit reads are the sticky duplicate decision and the session's APPLIED marker (both read for every flag state, S2)", async () => {
         const { svc, prisma, tx, planTransition } = make({ transitionCount: 1 });
+        // an unresolvable price is now alerted (go-live M3): this test is about something else
+        jest
+          .spyOn(svc, "syncStripeSubscriptionPrice")
+          .mockResolvedValue({ synced: true, unchanged: true });
         planTransition.isEnabled.mockResolvedValue(false);
 
         await (svc as any).onCheckoutCompleted(withId("cs_off", { created: 1 }));

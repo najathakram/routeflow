@@ -16,7 +16,12 @@ import { Logger } from "@nestjs/common";
 import { BillingService } from "./billing.service";
 
 function make() {
-  const prisma: any = { auditLog: { create: jest.fn().mockResolvedValue({}) } };
+  const prisma: any = {
+    auditLog: {
+      create: jest.fn().mockResolvedValue({}),
+      findFirst: jest.fn().mockResolvedValue(null),
+    },
+  };
   const svc: any = new BillingService(
     prisma,
     { isConfigured: true } as any,
@@ -91,6 +96,39 @@ describe("resyncPriceAfterCheckout — permanent reasons alert and acknowledge (
     svc.syncStripeSubscriptionPrice.mockResolvedValue({ synced: true, unchanged: true });
     await svc.resyncPriceAfterCheckout("t1", session, "sub_1");
     expect(alerts(prisma)).toHaveLength(0);
+  });
+});
+
+describe("resyncPriceAfterCheckout — every other non-synced reason alerts and acknowledges", () => {
+  it.each(["price_unresolvable", "no_active_stripe_subscription", "some_reason_added_later"])(
+    "%s (not a known transient): one alert, acknowledged, coupon still synced",
+    async (reason) => {
+      const { svc, prisma, coupon } = make();
+      svc.syncStripeSubscriptionPrice.mockResolvedValue({ synced: false, reason });
+      await expect(svc.resyncPriceAfterCheckout("t1", session, "sub_1")).resolves.toBeUndefined();
+      expect(alerts(prisma)).toHaveLength(1);
+      expect(alerts(prisma)[0].meta).toMatchObject({ reason });
+      expect(coupon).toHaveBeenCalledTimes(1);
+    },
+  );
+
+  it("a non-synced result with NO reason is alerted too", async () => {
+    const { svc, prisma } = make();
+    svc.syncStripeSubscriptionPrice.mockResolvedValue({ synced: false });
+    await expect(svc.resyncPriceAfterCheckout("t1", session, "sub_1")).resolves.toBeUndefined();
+    expect(alerts(prisma)).toHaveLength(1);
+  });
+
+  it("a redelivery does not write a second alert for the same session and reason", async () => {
+    const { svc, prisma } = make();
+    svc.syncStripeSubscriptionPrice.mockResolvedValue({ synced: false, reason: "no_base_item" });
+    prisma.auditLog.findFirst.mockResolvedValue({ id: "already" });
+    await svc.resyncPriceAfterCheckout("t1", session, "sub_1");
+    expect(alerts(prisma)).toHaveLength(0);
+    expect(prisma.auditLog.findFirst.mock.calls[0][0].where).toMatchObject({
+      tenantId: "t1",
+      action: "STRIPE_PRICE_PUSH_BLOCKED",
+    });
   });
 });
 

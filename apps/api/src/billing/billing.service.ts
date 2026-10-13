@@ -31,7 +31,6 @@ import {
   type PricePushResult,
   priceOverrideIdempotencyKey,
   prorationAllowedFor,
-  isPricePushFailure,
   isPermanentPricePushReason,
   prorationBehaviorFor,
   itemUnitAmount,
@@ -2463,8 +2462,8 @@ export class BillingService {
       throw err;
     }
     const changed = result.synced && !result.unchanged;
-    const permanent = isPermanentPricePushReason(result.reason);
-    const failed = isPricePushFailure(result) || (!result.synced && permanent);
+    const permanent = !result.synced && isPermanentPricePushReason(result.reason);
+    const failed = !result.synced;
     if (!changed && !failed) return;
     if (!changed) {
       this.logger.warn(
@@ -2495,14 +2494,30 @@ export class BillingService {
     }
     if (changed) return;
     if (permanent) {
+      // A redelivery of the same session and reason adds no second notice.
+      const sessionId = session?.id ?? null;
+      const already =
+        sessionId != null &&
+        (await this.prisma.auditLog.findFirst({
+          where: {
+            tenantId,
+            action: AdminAuditAction.STRIPE_PRICE_PUSH_BLOCKED,
+            AND: [
+              { meta: { path: ["checkoutSessionId"], equals: sessionId } },
+              { meta: { path: ["reason"], equals: result.reason ?? "unknown" } },
+            ],
+          },
+          select: { id: true },
+        }));
+      if (already) return;
       await writeAdminNotice(this.prisma, {
         tenantId,
         action: AdminAuditAction.STRIPE_PRICE_PUSH_BLOCKED,
         message:
           `Checkout ${session?.id ?? "(unknown)"} completed, but the tenant's price could not be pushed to its ` +
-          `Stripe subscription (${result.reason}). The subscription may bill a different price than the one ` +
+          `Stripe subscription (${result.reason ?? "unknown"}). The subscription may bill a different price than the one ` +
           `RouteFlow holds; reprice it in Stripe or re-save the price. The webhook was acknowledged.`,
-        meta: { reason: result.reason, checkoutSessionId: session?.id ?? null },
+        meta: { reason: result.reason ?? "unknown", checkoutSessionId: session?.id ?? null },
       });
       return;
     }

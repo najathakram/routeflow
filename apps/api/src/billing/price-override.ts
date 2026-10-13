@@ -80,17 +80,22 @@ export const PRICE_PUSH_FAILURE_REASONS: readonly string[] = [
   "stripe_not_configured",
 ];
 
+/** Go-live M3: push failures a redelivery can fix (Stripe or the database hiccuped, or is not configured yet). */
+const TRANSIENT_PRICE_PUSH_REASONS: readonly string[] = [
+  "stripe_retrieve_failed",
+  "stripe_product_create_failed",
+  "stripe_update_failed",
+  "reconcile_flag_failed",
+  "stripe_not_configured",
+];
+
 /**
- * Go-live M3: the push results a redelivery cannot change - the subscription has no base-plan item to reprice, or
- * Stripe holds it in a state that takes no price push (`subscription_not_active_*`: paused, incomplete, ...).
- * The post-checkout webhook alerts ops and acknowledges these; every other failure is transient and throws.
+ * Go-live M3: a non-synced push result a redelivery cannot change - everything that is not a KNOWN transient
+ * failure (no base item, a paused / incomplete subscription, an unresolvable price, no subscription, or a reason
+ * added later). The post-checkout webhook alerts ops and acknowledges these; only a known transient one throws.
  */
 export function isPermanentPricePushReason(reason: string | undefined): boolean {
-  return (
-    reason === "no_base_item" ||
-    reason === "no_subscription_item" ||
-    (reason ?? "").startsWith("subscription_not_active_")
-  );
+  return !TRANSIENT_PRICE_PUSH_REASONS.includes(reason ?? "");
 }
 
 export function isPricePushFailure(result: { synced: boolean; reason?: string }): boolean {
