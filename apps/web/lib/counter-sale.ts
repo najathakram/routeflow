@@ -7,6 +7,7 @@ import {
   type CategoryTaxType,
 } from "@routeflow/pricing";
 import { formatReceiptMoney } from "./counter-receipt";
+import { keptSaleHref } from "./kept-draft-invoice";
 import {
   API_ERROR_CODES,
   type CounterSalePaymentMethod,
@@ -335,6 +336,10 @@ export function isDefinitiveCounterSaleRefusal(err: unknown): boolean {
     err as { response?: { status?: number; data?: { code?: unknown } } } | null | undefined
   )?.response;
   if (res?.status === 409 && ORDER_EXISTS_CODES.has(res.data?.code)) return false;
+  // Row 466: a body naming the committed order or invoice disproves "nothing was written" (the send or the
+  // invoice step failed AFTER the commit, whatever the status). The sale exists: never a definitive refusal,
+  // so the clerk cannot ring it again under a fresh key.
+  if (keptSaleHref(err)) return false;
   return typeof res?.status === "number" && DEFINITIVE_REFUSALS.has(res.status);
 }
 

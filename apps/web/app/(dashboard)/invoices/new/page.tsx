@@ -48,6 +48,12 @@ import {
 } from "@/lib/sale-line-pricing";
 import { reasonRequiredMessage } from "@/lib/staff-price-override";
 import { apiClient } from "@/lib/api-client";
+import {
+  KEPT_DRAFT_TOAST,
+  KEPT_ORDER_TOAST,
+  keptDraftInvoiceId,
+  keptOrderId,
+} from "@/lib/kept-draft-invoice";
 import { fetchPdfBlob } from "@/lib/fetch-pdf-blob";
 import { displayProductName } from "@/lib/product-display";
 import {
@@ -112,7 +118,6 @@ import { useMarginConfig, floorForCategory } from "@/lib/api/margin";
 import { MarginHint } from "@/components/MarginHint";
 import { DecimalInput, MoneyInput } from "@/components/MoneyInput";
 import { ReadOnlyHint, WriteButton } from "@/lib/read-only-gate";
-import { API_ERROR_CODES } from "@routeflow/types";
 
 // ─── Terms options ─────────────────────────────────────────────────────────────
 
@@ -786,25 +791,6 @@ function LevelCount({
 }
 
 // ─── Page ─────────────────────────────────────────────────────────────────────
-
-/** Fixed copy for "the invoice was saved but its send failed" (never the server's text). */
-const SAVED_NOT_SENT_TOAST = {
-  title: "Saved as a draft, not sent",
-  description:
-    "The invoice was saved but could not be sent. Open it and send it from the invoice page.",
-  variant: "warning",
-} as const;
-
-/** The kept draft's id when a create-with-send failed only at delivery (EMAIL_SEND_FAILED), else null. */
-function sendFailedDraftId(err: unknown): string | null {
-  const data = (err as { response?: { data?: { code?: unknown; invoiceId?: unknown } } } | null)
-    ?.response?.data;
-  return data?.code === API_ERROR_CODES.EMAIL_SEND_FAILED &&
-    typeof data.invoiceId === "string" &&
-    data.invoiceId !== ""
-    ? data.invoiceId
-    : null;
-}
 
 export default function NewInvoicePage() {
   const w = unitWords();
@@ -1619,12 +1605,27 @@ export default function NewInvoicePage() {
           });
           router.push(`/invoices/${inv.id}`);
         },
-        onError: (err: unknown) =>
+        onError: (err: unknown) => {
+          // Row 466: the sale and its invoice exist; only the send failed. Open the kept draft.
+          const keptId = keptDraftInvoiceId(err);
+          if (keptId) {
+            toast({ ...KEPT_DRAFT_TOAST, variant: "warning" });
+            router.push(`/invoices/${keptId}`);
+            return;
+          }
+          // Row 466: the order exists and only its invoice step failed. Open the order.
+          const keptOrder = keptOrderId(err);
+          if (keptOrder) {
+            toast({ ...KEPT_ORDER_TOAST, variant: "warning" });
+            router.push(`/orders/${keptOrder}`);
+            return;
+          }
           toast({
             title: "Could not create the sale",
             description: unitRefusal(err, saleLines) ?? "Please check your inputs and try again.",
             variant: "error",
-          }),
+          });
+        },
       },
     );
   }
@@ -1642,18 +1643,16 @@ export default function NewInvoicePage() {
             try {
               await apiClient.post(`/invoices/${currentDraftId}/send`);
             } catch {
+              // Row 466: never say "sent" when it was not. The draft is kept; open it.
               sendFailed = true;
             }
           }
-          if (sendFailed) {
-            // Saved, but the send failed: never claim "sent". Still open the invoice to resend.
-            toast(SAVED_NOT_SENT_TOAST);
-          } else {
+          if (sendFailed) toast({ ...KEPT_DRAFT_TOAST, variant: "warning" });
+          else
             toast({
               title: sendNow ? "Invoice sent" : "Draft saved",
               variant: "success",
             });
-          }
           router.push(`/invoices/${currentDraftId}`);
         },
         onError: (err: unknown) => {
@@ -1681,11 +1680,11 @@ export default function NewInvoicePage() {
         router.push(`/invoices/${invoice.id}`);
       },
       onError: (err: unknown) => {
-        // The API commits the DRAFT before it sends; a delivery failure names that draft. Open
-        // it (retrying the create would duplicate it). No invoiceId (older API) => plain failure.
-        const keptId = sendFailedDraftId(err);
+        // Row 466: the draft was committed and only the send failed. Open it; never offer a
+        // second create (a retry here would duplicate the invoice).
+        const keptId = keptDraftInvoiceId(err);
         if (keptId) {
-          toast(SAVED_NOT_SENT_TOAST);
+          toast({ ...KEPT_DRAFT_TOAST, variant: "warning" });
           router.push(`/invoices/${keptId}`);
           return;
         }

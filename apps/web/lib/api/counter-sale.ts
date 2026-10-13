@@ -12,6 +12,7 @@ import type {
 import { apiClient } from "../api-client";
 import { counterSaleGate, isPickupHandledError } from "../counter-sale";
 import { useTenantFeatures } from "../tenant-features";
+import { keptSaleHref } from "../kept-draft-invoice";
 
 /**
  * The counter-sale gate: ONE read of `capabilities.fulfilment` from GET /tenants/me/features (never the raw `modes`).
@@ -65,6 +66,13 @@ export function useCreateCounterSale() {
     onSuccess: () => {
       void qc.invalidateQueries({ queryKey: ["orders"] });
       void qc.invalidateQueries({ queryKey: ["invoices"] });
+    },
+    // Row 466: a failure after the sale committed still wrote an order (and maybe an invoice).
+    onError: (err) => {
+      if (keptSaleHref(err)) {
+        void qc.invalidateQueries({ queryKey: ["orders"] });
+        void qc.invalidateQueries({ queryKey: ["invoices"] });
+      }
     },
   });
 }
