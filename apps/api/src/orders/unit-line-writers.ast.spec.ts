@@ -159,7 +159,7 @@ const INVENTORY: Record<string, Row> = {
   "invoices/invoices.service.ts::InvoicesService.update": {
     kind: "GUARDED",
     needs: "assertInvoiceRewriteAllowed",
-    why: "delete-and-recreate re-split at the live pack",
+    why: "delete-and-recreate re-split at the live pack; VU-4a (D3): an order-less DRAFT edit also resolves a unit line via resolveLineUnits in update() itself, and still calls the back-sync only behind this guard",
     trioVia: ["buildEditedLines"],
   },
   "invoices/invoices.service.ts::InvoicesService.duplicate": {

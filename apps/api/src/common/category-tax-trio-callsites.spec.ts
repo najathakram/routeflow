@@ -124,8 +124,8 @@ const ALLOWLIST: { file: string; count: number; note: string }[] = [
   { file: "invoices/manual-invoice-lines.ts", count: 1, note: "buildManualInvoiceLines — stamps" },
   {
     file: "invoices/invoice-edit-plan.ts",
-    count: 3,
-    note: "buildEditedLines stamp + the B297 PR3 matched-row storedAmount read + inPlacePatch (writes only a CHANGED amount)",
+    count: 4,
+    note: "buildEditedLines stamp + the unit branch's re-stamp through rowLevy (VU-4a M2: a kept unit row keeps its own levy, B297 PR3 R3) + the B297 PR3 matched-row storedAmount read + inPlacePatch (writes only a CHANGED amount)",
   },
   { file: "invoices/invoice-unit-line.ts", count: 1, note: "buildInvoiceUnitLine — stamps" },
   {
@@ -172,8 +172,8 @@ describe("category tax trio callsites — every categoryTaxAmount writer enumera
     expect(offenders).toEqual([]);
   });
 
-  it("total categoryTaxAmount writes across apps/api/src is exactly 28", () => {
+  it("total categoryTaxAmount writes across apps/api/src is exactly 29", () => {
     const total = FILES.reduce((n, f) => n + writeCount(fs.readFileSync(f, "utf8")), 0);
-    expect(total).toBe(28);
+    expect(total).toBe(29);
   });
 });
