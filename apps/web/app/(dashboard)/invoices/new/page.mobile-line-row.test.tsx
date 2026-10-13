@@ -20,6 +20,11 @@ jest.mock("next/navigation", () => ({
   useRouter: () => ({ push: jest.fn() }),
 }));
 
+jest.mock("@/lib/auth-context", () => ({
+  ...jest.requireActual("@/lib/auth-context"),
+  useAuth: () => ({ user: { id: "u1", role: "OPERATOR" } }),
+}));
+
 let mockCustomers: Array<Record<string, unknown>> = [];
 jest.mock("@/lib/api/customers", () => ({
   useCustomers: () => ({ data: { data: mockCustomers } }),
@@ -29,7 +34,11 @@ jest.mock("@/lib/api/customers", () => ({
 // Keyed by URL so the page's own /settings fetch (tax rate, on mount) doesn't consume the
 // barcode-scan mock — apiClient.get is called for both.
 let mockBarcodeProduct: Record<string, unknown> | undefined;
+let mockFlags: string[] = [];
+let mockLadder: Array<Record<string, unknown>> = [];
 const mockProductsGet = jest.fn((url: string) => {
+  if (url === "/billing/subscription") return Promise.resolve({ data: { flags: mockFlags } });
+  if (/^\/products\/[^/]+\/units$/.test(url)) return Promise.resolve({ data: mockLadder });
   if (url.startsWith("/products/barcode/")) {
     return mockBarcodeProduct
       ? Promise.resolve({ data: mockBarcodeProduct })
@@ -90,7 +99,7 @@ jest.mock("@/components/InlineCreateProductModal", () => ({
   InlineCreateProductModal: () => null,
 }));
 
-async function openBuilderWithOneLine() {
+async function openBuilderWithOneLine(name = "Gum") {
   const user = userEvent.setup();
   renderWithProviders(<NewInvoicePage />);
   await user.click(
@@ -99,7 +108,8 @@ async function openBuilderWithOneLine() {
   await act(async () => {
     capturedOnScan!("012345678905");
   });
-  await screen.findByDisplayValue("Gum");
+  await screen.findByDisplayValue(name);
+  return user;
 }
 
 /** The grid card of the one line: the nearest ancestor of the Unit price input that is a grid. */
@@ -119,6 +129,8 @@ describe("new invoice — the line-item row stacks below md (390px clipping)", (
     mockCustomers = [{ id: "cust-1", businessName: "Acme Co" }];
     mockSearchProducts = [];
     mockBarcodeProduct = { id: "prod-1", name: "Gum", pricePerUnit: "5" };
+    mockFlags = [];
+    mockLadder = [];
   });
 
   it("the row is a 4-column stacked card below md and the table grid from md up", async () => {
@@ -186,5 +198,63 @@ describe("new invoice — the line-item row stacks below md (390px clipping)", (
     expect(mobileTotal).toHaveTextContent("$5.00");
     const strip = screen.getByText("= $5.00").closest("div")!;
     expect(cls(strip)).toEqual(expect.arrayContaining(["hidden", "md:grid"]));
+  });
+});
+
+describe("new invoice — boxed, ladder and Case|Unit controls fit the 130px qty cell below md", () => {
+  const BOXED = { id: "prod-24", name: "Soda", unit: "Box", pricePerUnit: "48", unitsPerBox: 24 };
+  const CASE = {
+    id: "u-case",
+    productId: "prod-24",
+    label: "Case",
+    factorToBase: 12,
+    price: "24.00",
+    priceTier2: null,
+    priceTier3: null,
+    priceTier4: null,
+    priceTier5: null,
+    isDefaultSelling: false,
+    sortOrder: 0,
+  };
+
+  beforeEach(() => {
+    jest.clearAllMocks();
+    capturedOnScan = undefined;
+    mockCustomers = [{ id: "cust-1", businessName: "Acme Co" }];
+    mockSearchProducts = [];
+  });
+
+  it("the boxes and pieces inputs are 44px wide and tall on mobile (w-8 from md up) and the row wraps", async () => {
+    mockBarcodeProduct = BOXED;
+    await openBuilderWithOneLine("Soda");
+    const row = lineRow();
+    const boxes = within(row).getByTitle("Boxes");
+    const pieces = within(row).getByTitle("Extra pieces");
+    for (const el of [boxes, pieces]) {
+      expect(cls(el)).toEqual(expect.arrayContaining(["w-8", "max-md:h-11", "max-md:w-11"]));
+      expect(cls(el)).not.toContain("max-md:w-14");
+    }
+    expect(cls(boxes.parentElement!)).toContain("max-md:flex-wrap");
+  });
+
+  it("the Case | Unit pills are 44px tall on mobile", async () => {
+    mockBarcodeProduct = BOXED;
+    await openBuilderWithOneLine("Soda");
+    const row = lineRow();
+    const pills = within(row)
+      .getAllByRole("button")
+      .filter((b) => b.className.toString().includes("max-w-[104px]"));
+    expect(pills).toHaveLength(2);
+    for (const b of pills) expect(cls(b)).toContain("max-md:min-h-11");
+  });
+
+  it("the unit-ladder count (LevelCount) is 44px tall on mobile and h-9 from md up", async () => {
+    mockFlags = ["flag.units_v1"];
+    mockLadder = [CASE];
+    mockBarcodeProduct = BOXED;
+    const user = await openBuilderWithOneLine("Soda");
+    await user.selectOptions(await screen.findByRole("combobox", { name: "Sell Soda by" }), "Case");
+    const count = await screen.findByLabelText(/^case count$/i);
+    expect(cls(count)).toEqual(expect.arrayContaining(["h-9", "max-md:h-11"]));
   });
 });

@@ -752,7 +752,7 @@ function LevelCount({
           aria-label={`${item.unitLabel} count`}
           value={item.qty}
           onChange={(v) => onCount(Math.max(0, Math.trunc(v ?? 0)))}
-          className="h-9 min-w-0 flex-1 rounded border border-surface-border bg-white px-2 text-right text-sm text-navy focus:border-transparent focus:outline-none focus:ring-1 focus:ring-brand-500 aria-disabled:opacity-60"
+          className="h-9 min-w-0 flex-1 rounded border border-surface-border bg-white px-2 text-right text-sm text-navy focus:border-transparent focus:outline-none focus:ring-1 focus:ring-brand-500 aria-disabled:opacity-60 max-md:h-11"
         />
         {/* The unit the count is in, worded by the vocabulary helper (apple-ux 2026-10-13: Qty never said "Case"). */}
         <span className="shrink-0 text-xs text-navy/70">
@@ -2168,7 +2168,7 @@ export default function NewInvoicePage() {
                                   type="button"
                                   onClick={() => setLineSellBy(item.key, "case")}
                                   className={cn(
-                                    "max-w-[104px] truncate whitespace-nowrap px-1.5 py-0.5 transition-colors",
+                                    "max-w-[104px] truncate whitespace-nowrap px-1.5 py-0.5 transition-colors max-md:min-h-11",
                                     (item.sellBy ?? "case") === "case"
                                       ? "bg-brand-500 text-white"
                                       : "bg-white text-navy/70 hover:bg-surface-raised",
@@ -2180,7 +2180,7 @@ export default function NewInvoicePage() {
                                   type="button"
                                   onClick={() => setLineSellBy(item.key, "unit")}
                                   className={cn(
-                                    "max-w-[104px] truncate whitespace-nowrap border-l border-surface-border px-1.5 py-0.5 transition-colors",
+                                    "max-w-[104px] truncate whitespace-nowrap border-l border-surface-border px-1.5 py-0.5 transition-colors max-md:min-h-11",
                                     item.sellBy === "unit"
                                       ? "bg-brand-500 text-white"
                                       : "bg-white text-navy/70 hover:bg-surface-raised",
@@ -2228,7 +2228,7 @@ export default function NewInvoicePage() {
                           </div>
                         ) : (
                           <div className="flex flex-col gap-0.5">
-                            <div className="flex items-center gap-0.5">
+                            <div className="flex items-center gap-0.5 max-md:flex-wrap">
                               <input
                                 type="number"
                                 min={0}
@@ -2242,7 +2242,7 @@ export default function NewInvoicePage() {
                                   });
                                 }}
                                 onFocus={(e) => e.target.select()}
-                                className="aria-disabled:opacity-60 w-8 rounded border border-surface-border bg-white px-1 py-1 text-center text-xs font-semibold text-navy focus:border-transparent focus:outline-none focus:ring-1 focus:ring-brand-500 max-md:h-11 max-md:w-14"
+                                className="aria-disabled:opacity-60 w-8 rounded border border-surface-border bg-white px-1 py-1 text-center text-xs font-semibold text-navy focus:border-transparent focus:outline-none focus:ring-1 focus:ring-brand-500 max-md:h-11 max-md:w-11"
                                 readOnly={!!pendingUnitOf(item)}
                                 aria-disabled={!!pendingUnitOf(item) || undefined}
                                 title={w.pack.other}
@@ -2262,7 +2262,7 @@ export default function NewInvoicePage() {
                                   });
                                 }}
                                 onFocus={(e) => e.target.select()}
-                                className="aria-disabled:opacity-60 w-8 rounded border border-surface-border bg-white px-1 py-1 text-center text-xs font-semibold text-navy focus:border-transparent focus:outline-none focus:ring-1 focus:ring-brand-500 max-md:h-11 max-md:w-14"
+                                className="aria-disabled:opacity-60 w-8 rounded border border-surface-border bg-white px-1 py-1 text-center text-xs font-semibold text-navy focus:border-transparent focus:outline-none focus:ring-1 focus:ring-brand-500 max-md:h-11 max-md:w-11"
                                 readOnly={!!pendingUnitOf(item)}
                                 aria-disabled={!!pendingUnitOf(item) || undefined}
                                 title={`Extra ${w.base.lowerOther}`}
