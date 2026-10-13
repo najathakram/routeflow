@@ -38,9 +38,9 @@ export interface LadderOption {
  * is the option `value` the picker keeps showing for such a line. It is display state: NEVER submitted. A pack-pieces
  * line WITHOUT it is a pack line, never guessed into a Piece.
  */
-export interface DerivedBaseMarker {
+export type DerivedBaseMarker = {
   derivedBase?: string;
-}
+};
 
 const norm = (s: string) => s.trim().toLowerCase();
 
