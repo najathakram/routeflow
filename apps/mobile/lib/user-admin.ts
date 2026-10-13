@@ -17,3 +17,14 @@ export function isUserActive(u: { status?: string | null }): boolean {
 export function statusToggleBody(u: { status?: string | null }): { status: UserStatus } {
   return { status: isUserActive(u) ? "INACTIVE" : "ACTIVE" };
 }
+
+/**
+ * SA #3412 (mirrors web): only an account admin toggles a team member's status, and never on their own row. The
+ * API refuses a self-deactivation (SELF_DEACTIVATION_REFUSED), so the control is not offered there.
+ */
+export function canToggleUserStatus(
+  viewer: { id?: string | null; role?: string | null } | null | undefined,
+  target: { id: string },
+): boolean {
+  return isAccountAdmin(viewer?.role) && viewer?.id !== target.id;
+}

@@ -28,7 +28,7 @@ import {
   type AppUser,
 } from "../../../lib/api/admin";
 import { useAuthStore } from "../../../lib/auth-store";
-import { isAccountAdmin, isUserActive } from "../../../lib/user-admin";
+import { canToggleUserStatus, isUserActive } from "../../../lib/user-admin";
 import {
   OVERSELL_COPY,
   VISIBILITY_COPY,
@@ -313,7 +313,8 @@ function UsersTab() {
   const { data: usersPage, isLoading, refetch } = useAdminUsers();
   const toggleMut = useToggleUserStatus();
   // Perms PR1: activating / deactivating a team member is account administration (admin only); others read.
-  const canManage = isAccountAdmin(useAuthStore().user?.role);
+  // SA #3412: never on the viewer's own row (the API refuses it).
+  const viewer = useAuthStore().user;
 
   const handleToggle = (user: AppUser) => {
     toggleMut.mutate(
@@ -364,7 +365,7 @@ function UsersTab() {
                   {u.email ? ` · ${u.email}` : ""}
                 </Text>
               </View>
-              {canManage ? (
+              {canToggleUserStatus(viewer, u) ? (
                 <Pressable
                   style={[styles.toggleBtn, !isUserActive(u) && styles.toggleBtnActive]}
                   onPress={() => handleToggle(u)}
