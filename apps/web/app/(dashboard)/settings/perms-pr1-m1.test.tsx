@@ -43,12 +43,13 @@ const mine = {
   createdAt: new Date("2026-01-01").toISOString(),
 };
 const theirs = { ...mine, id: "u2", username: "theirs", email: "them@example.com" };
+const mockChangeStatus = jest.fn();
 jest.mock("@/lib/api/users", () => ({
   ...jest.requireActual("@/lib/api/users"),
   useUsers: () => ({ data: { data: [mine, theirs], meta: { total: 2 } }, isLoading: false }),
   useCreateOperator: () => ({ mutateAsync: jest.fn(), isPending: false, error: null }),
   useUpdateUser: () => ({ mutateAsync: jest.fn(), isPending: false, error: null }),
-  useChangeUserStatus: () => ({ mutate: jest.fn(), isPending: false }),
+  useChangeUserStatus: () => ({ mutate: mockChangeStatus, isPending: false }),
   useResetUserPassword: () => ({ mutate: jest.fn(), isPending: false }),
 }));
 
@@ -96,19 +97,20 @@ describe("T1.3 operator: account-admin controls are not offered", () => {
     mockRole = "OPERATOR";
   });
 
-  it("hub: Import data, Migration, Email, Claude AI scanner and GoHighLevel are not listed or searchable", async () => {
+  it("hub: Import data, Migration, Email and Claude AI scanner are not listed or searchable", async () => {
     const user = userEvent.setup();
     renderWithProviders(<SettingsPage />);
     expect(await screen.findByText("Business profile")).toBeInTheDocument();
-    for (const label of [
-      "Import data",
-      "Migration",
-      "Email (SMTP)",
-      "Claude AI scanner",
-      "GoHighLevel",
-    ]) {
+    for (const label of ["Import data", "Migration", "Email (SMTP)", "Claude AI scanner"]) {
       expect(screen.queryByText(label)).not.toBeInTheDocument();
     }
+    // SA: GoHighLevel stays for operators (its tab is safe; sync, import, retry and handoffs are open to them)
+    // (a one-item group renders as one row under the group title, so find the tile by where it goes)
+    expect(
+      screen
+        .getAllByRole("link")
+        .some((a) => a.getAttribute("href") === "/settings?tab=gohighlevel"),
+    ).toBe(true);
     await user.type(screen.getByLabelText("Search settings"), "smtp");
     expect(screen.queryByText("Email (SMTP)")).not.toBeInTheDocument();
   });
@@ -274,7 +276,8 @@ describe("T1.4 admin: the same controls are all there", () => {
     const user = userEvent.setup();
     renderWithProviders(<SettingsPage />);
     expect(await screen.findByRole("button", { name: /^add user$/i })).toBeInTheDocument();
-    expect(screen.getAllByTitle("Deactivate")).toHaveLength(2);
+    // SA M2 (UI): never on the viewer's OWN row, so only "theirs" can be deactivated
+    expect(screen.getAllByTitle("Deactivate")).toHaveLength(1);
     const edits = screen.getAllByTitle("Edit user");
     expect(edits).toHaveLength(2);
     await user.click(edits[1]);
@@ -316,4 +319,33 @@ describe("T1.3 deep links: an operator who opens an admin-only screen by URL", (
       await waitFor(() => expect(screen.queryByText("Only an admin can change this.")).toBeNull());
     },
   );
+});
+
+describe("SA #3412 musts: the users tab never offers a lockout, and says why when the API refuses", () => {
+  beforeEach(() => {
+    mockRole = "TENANT_ADMIN";
+    mockTab = "users";
+  });
+
+  it("no Deactivate on the viewer's own row", async () => {
+    renderWithProviders(<SettingsPage />);
+    const own = (await screen.findByText("myself")).closest("tr") as HTMLElement;
+    expect(within(own).queryByTitle(/^(Deactivate|Activate)$/)).toBeNull();
+    const other = screen.getByText("theirs").closest("tr") as HTMLElement;
+    expect(within(other).getByTitle("Deactivate")).toBeInTheDocument();
+  });
+
+  it.each([
+    ["LAST_TENANT_ADMIN", "This is the only active admin. Make someone else an admin first."],
+    ["SELF_DEACTIVATION_REFUSED", "You can't deactivate your own account. Ask another admin."],
+  ])("a %s refusal reads as its own sentence", async (code, copy) => {
+    const user = userEvent.setup();
+    mockChangeStatus.mockImplementation((_v: unknown, opts: { onError?: (e: unknown) => void }) =>
+      opts.onError?.({ response: { status: 409, data: { code } } }),
+    );
+    renderWithProviders(<SettingsPage />);
+    const other = (await screen.findByText("theirs")).closest("tr") as HTMLElement;
+    await user.click(within(other).getByTitle("Deactivate"));
+    expect(await screen.findByText(copy)).toBeInTheDocument();
+  });
 });
