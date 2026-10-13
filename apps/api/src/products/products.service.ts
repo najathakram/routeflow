@@ -1,4 +1,5 @@
 import { API_ERROR_CODES } from "../common/api-error-codes";
+import { productCodeInUse } from "./product-code-in-use";
 import {
   assertSafeProductCategory,
   assertSafeProductNames,
@@ -686,7 +687,7 @@ export class ProductsService {
       const clash = await db.findFirst({
         where: { OR: [{ sku: p.sku }, { unitSku: p.sku }], isActive: true, ...notSelf },
       });
-      if (clash) throw new BadRequestException("SKU already exists");
+      if (clash) throw productCodeInUse("sku", "SKU already exists");
     }
     if (p.barcode) {
       const clash = await db.findFirst({
@@ -696,7 +697,7 @@ export class ProductsService {
           ...notSelf,
         },
       });
-      if (clash) throw new BadRequestException("Barcode already exists");
+      if (clash) throw productCodeInUse("barcode", "Barcode already exists");
     }
     if (p.unitSku) {
       const clash = await db.findFirst({
@@ -708,7 +709,8 @@ export class ProductsService {
         select: { id: true },
       });
       if (clash) {
-        throw new BadRequestException(
+        throw productCodeInUse(
+          "unitSku",
           "Unit code already used by another product's SKU, barcode, or unit code",
         );
       }

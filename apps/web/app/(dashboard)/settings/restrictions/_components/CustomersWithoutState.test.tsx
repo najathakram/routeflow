@@ -553,3 +553,38 @@ describe("CustomersWithoutState: SA C-M1 (needsDefault saves are server-truth)",
     );
   });
 });
+
+describe("apple-ux: an opened bucket is brought into view (it opened below the fold at 1440)", () => {
+  it("expanding a bucket scrolls its list into view, nearest edge, smooth", async () => {
+    const user = userEvent.setup();
+    const scroll = jest.fn();
+    Element.prototype.scrollIntoView = scroll;
+    renderWithProviders(<CustomersWithoutState canFix />);
+    await openBucket(user, /3 have no address/);
+    await waitFor(() =>
+      expect(scroll).toHaveBeenCalledWith({ block: "nearest", behavior: "smooth" }),
+    );
+  });
+
+  it("under reduced motion the jump is instant", async () => {
+    const user = userEvent.setup();
+    const scroll = jest.fn();
+    Element.prototype.scrollIntoView = scroll;
+    const mm = window.matchMedia;
+    window.matchMedia = ((q: string) => ({
+      matches: q.includes("reduce"),
+      media: q,
+      addEventListener() {},
+      removeEventListener() {},
+    })) as unknown as typeof window.matchMedia;
+    try {
+      renderWithProviders(<CustomersWithoutState canFix />);
+      await openBucket(user, /3 have no address/);
+      await waitFor(() =>
+        expect(scroll).toHaveBeenCalledWith({ block: "nearest", behavior: "auto" }),
+      );
+    } finally {
+      window.matchMedia = mm;
+    }
+  });
+});

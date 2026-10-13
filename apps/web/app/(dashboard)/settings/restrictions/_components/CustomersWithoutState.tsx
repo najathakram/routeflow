@@ -593,6 +593,16 @@ export function CustomersWithoutState({ canFix }: { canFix: boolean }) {
   const gate = useReadOnlyGate();
   const fixable = canFix && !gate.readOnly;
   const [open, setOpen] = React.useState<BucketKey | null>(null);
+  // An opened bucket can land below the fold (the last rows of the card): bring it into view, nearest edge only, so
+  // a bucket already on screen never moves. Instant under reduced motion.
+  const bucketRefs = React.useRef<Partial<Record<BucketKey, HTMLLIElement | null>>>({});
+  React.useEffect(() => {
+    if (!open) return;
+    bucketRefs.current[open]?.scrollIntoView?.({
+      block: "nearest",
+      behavior: reducedMotion() ? "auto" : "smooth",
+    });
+  }, [open]);
   const [removed, setRemoved] = React.useState<Record<BucketKey, Set<string>>>(noneRemoved);
   const [sheetRow, setSheetRow] = React.useState<{
     bucket: BucketKey;
@@ -669,7 +679,13 @@ export function CustomersWithoutState({ canFix }: { canFix: boolean }) {
       {data && counts && (
         <ul className="mt-3 space-y-2">
           {BUCKET_KEYS.filter((k) => counts[k] > 0).map((k) => (
-            <li key={k} className="rounded-lg border border-warning/30 bg-white">
+            <li
+              key={k}
+              ref={(el) => {
+                bucketRefs.current[k] = el;
+              }}
+              className="rounded-lg border border-warning/30 bg-white"
+            >
               <div className="flex items-center justify-between gap-3 px-3 py-2">
                 <button
                   type="button"
