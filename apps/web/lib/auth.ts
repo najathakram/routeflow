@@ -115,9 +115,10 @@ export async function logout(): Promise<void> {
   localStorage.removeItem(OP_KEYS.refreshToken);
   clearOpPresenceCookie();
   clearTenantCookie();
+  // Before the impersonation marker goes: a support session's sign-out must leave the real user's drafts alone.
+  clearAllInvoiceDrafts(); // nor an unsaved new invoice (ROW 447)
   clearImpersonation();
   clearAllLiveCarts(); // an unfinished counter sale never outlives its cashier's session
-  clearAllInvoiceDrafts(); // nor an unsaved new invoice (ROW 447)
   window.location.href = "/login";
 }
 

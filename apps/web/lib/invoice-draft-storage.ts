@@ -11,6 +11,8 @@
  *   the page re-checks a restored product / customer against the server before it keeps them.
  */
 
+import { getImpersonation } from "./impersonation";
+
 export const INVOICE_DRAFT_VERSION = 1;
 /** A stored draft older than this is dropped (and cleared) on read. */
 export const INVOICE_DRAFT_MAX_AGE_MS = 14 * 24 * 60 * 60 * 1000;
@@ -257,6 +259,15 @@ export function isPristineForm(form: unknown): boolean {
   return !snap || isPristineSnapshot(snap);
 }
 
+// A support (impersonation) session never touches drafts: they belong to the real user of that tenant.
+function impersonating(): boolean {
+  try {
+    return getImpersonation() !== null;
+  } catch {
+    return false;
+  }
+}
+
 // ─── Storage (never throws) ───────────────────────────────────────────────────
 
 function store(): Storage | null {
@@ -268,7 +279,7 @@ function store(): Storage | null {
 }
 
 export function clearInvoiceDraft(key: string | null): void {
-  if (!key) return;
+  if (!key || impersonating()) return;
   try {
     store()?.removeItem(key);
   } catch {
@@ -286,6 +297,7 @@ export function resumeInvoiceDraftWrites(): void {
 
 /** Sign-out: drop every stored draft on this browser, whoever it belonged to, and refuse new ones. Never throws. */
 export function clearAllInvoiceDrafts(): void {
+  if (impersonating()) return;
   signingOut = true;
   try {
     const s = store();
@@ -307,7 +319,7 @@ export function writeInvoiceDraft(
   form: unknown,
   now: number = Date.now(),
 ): boolean {
-  if (!key || signingOut) return false;
+  if (!key || signingOut || impersonating()) return false;
   try {
     const snapshot = sanitizeSnapshot(form);
     if (!snapshot || isPristineSnapshot(snapshot)) return false;
@@ -327,7 +339,7 @@ export function readInvoiceDraft(
   key: string | null,
   now: number = Date.now(),
 ): StoredInvoiceDraft | null {
-  if (!key) return null;
+  if (!key || impersonating()) return null;
   let raw: string | null = null;
   try {
     raw = store()?.getItem(key) ?? null;

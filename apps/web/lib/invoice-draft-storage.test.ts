@@ -1,3 +1,4 @@
+import { clearImpersonation, setImpersonation } from "./impersonation";
 import {
   INVOICE_DRAFT_MAX_AGE_MS,
   INVOICE_DRAFT_VERSION,
@@ -238,5 +239,38 @@ describe("writes after sign-out has started (ROW 447)", () => {
     expect(window.localStorage.getItem(KEY)).toBeNull();
     resumeInvoiceDraftWrites();
     expect(writeInvoiceDraft(KEY, form(), NOW)).toBe(true);
+  });
+});
+
+describe("a support (impersonation) session never touches drafts (ROW 447)", () => {
+  beforeEach(() => window.localStorage.clear());
+  afterEach(() => {
+    clearImpersonation();
+    resumeInvoiceDraftWrites();
+  });
+
+  it("reads, writes and clears nothing, so the real user's draft stays byte-identical", () => {
+    writeInvoiceDraft(KEY, form(), NOW);
+    const before = window.localStorage.getItem(KEY);
+    setImpersonation("tok", "acme", "support");
+    expect(readInvoiceDraft(KEY, NOW)).toBeNull();
+    expect(writeInvoiceDraft(KEY, form({ reference: "CHANGED" }), NOW + 1000)).toBe(false);
+    clearInvoiceDraft(KEY);
+    clearAllInvoiceDrafts();
+    expect(window.localStorage.getItem(KEY)).toBe(before);
+  });
+
+  it("a wipe in a support session does not block the real user's writes afterwards", () => {
+    setImpersonation("tok", "acme", "support");
+    clearAllInvoiceDrafts();
+    clearImpersonation();
+    expect(writeInvoiceDraft(KEY, form(), NOW)).toBe(true);
+  });
+
+  it("an unreadable stored draft is not cleared by a support session either", () => {
+    window.localStorage.setItem(KEY, "{oops");
+    setImpersonation("tok", "acme", "support");
+    expect(readInvoiceDraft(KEY, NOW)).toBeNull();
+    expect(window.localStorage.getItem(KEY)).toBe("{oops");
   });
 });

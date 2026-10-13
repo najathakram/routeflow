@@ -3,6 +3,7 @@ import userEvent from "@testing-library/user-event";
 import { act, renderWithProviders, screen, waitFor, within } from "@/test-utils/render";
 import NewInvoicePage from "./page";
 import { invoiceDraftKey } from "@/lib/invoice-draft-storage";
+import { clearImpersonation, setImpersonation } from "@/lib/impersonation";
 
 /**
  * ROW 447 — the in-progress new invoice survives a refresh. The draft lives in localStorage under a tenant + user
@@ -583,6 +584,45 @@ describe("ROW 447 — unsaved new-invoice draft", () => {
     await user.dblClick(btn);
     await screen.findByDisplayValue("Widget");
     expect(calls).toBe(1);
+  });
+
+  describe("support (impersonation) session", () => {
+    afterEach(() => clearImpersonation());
+
+    it("offers nothing, writes nothing (debounce and pagehide) and leaves the real user's draft byte-identical", async () => {
+      seed({ reference: "ORIGINAL" });
+      const before = stored();
+      setImpersonation("tok", "acme", "support");
+      const user = userEvent.setup();
+      renderWithProviders(<NewInvoicePage />);
+      await screen.findByText("Create an invoice");
+      expect(screen.queryByText("Restore unsaved invoice?")).not.toBeInTheDocument();
+      await user.click(screen.getByRole("button", { name: /other charge/i }));
+      await user.type(screen.getByPlaceholderText(/PO-1234/), "SUPPORT");
+      await act(() => new Promise((r) => setTimeout(r, 800)));
+      act(() => {
+        window.dispatchEvent(new Event("pagehide"));
+      });
+      expect(stored()).toBe(before);
+    });
+
+    it("a save in a support session does not clear the real user's draft", async () => {
+      seed();
+      const before = stored();
+      setImpersonation("tok", "acme", "support");
+      const user = userEvent.setup();
+      renderWithProviders(<NewInvoicePage />);
+      await user.click(await screen.findByRole("button", { name: /other charge/i }));
+      await user.click(screen.getByPlaceholderText(/search customers/i));
+      await user.click(await screen.findByText("Acme Co"));
+      await user.type(screen.getByPlaceholderText(/Description \/ product/), "Fee");
+      await user.click(screen.getByRole("button", { name: /save as draft/i }));
+      await waitFor(() => expect(createInvoiceMutate).toHaveBeenCalled());
+      act(() => {
+        createInvoiceMutate.mock.calls[0][1].onSuccess({ id: "inv-1", invoiceNumber: "INV-1" });
+      });
+      expect(stored()).toBe(before);
+    });
   });
 
   it("while the offer is open, typing in a fresh form does not overwrite the stored draft", async () => {

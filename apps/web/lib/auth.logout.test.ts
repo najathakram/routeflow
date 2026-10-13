@@ -7,6 +7,7 @@ jest.mock("./api-client", () => ({
 }));
 
 import { logout } from "./auth";
+import { setImpersonation } from "./impersonation";
 
 describe("logout and unsaved-invoice drafts", () => {
   beforeEach(() => {
@@ -30,5 +31,12 @@ describe("logout and unsaved-invoice drafts", () => {
       throw new Error("blocked");
     });
     await expect(logout()).resolves.toBeUndefined();
+  });
+
+  it("a support session's logout leaves the real user's draft alone", async () => {
+    window.localStorage.setItem("rf.invoice-draft.v1:acme:u1", '{"keep":1}');
+    setImpersonation("tok", "acme", "support");
+    await logout();
+    expect(window.localStorage.getItem("rf.invoice-draft.v1:acme:u1")).toBe('{"keep":1}');
   });
 });
