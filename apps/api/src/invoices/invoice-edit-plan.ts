@@ -299,19 +299,42 @@ export function buildEditedLines(ctx: PlanCtx): EditedLine[] {
       const category = product.trackedCategoryId
         ? ctx.categoryMap.get(product.trackedCategoryId)
         : null;
-      const { tenantId: _t, ...data } = buildInvoiceUnitLine({
+      const { tenantId: _t, ...built } = buildInvoiceUnitLine({
         item: rawItem as any,
         product,
         resolved: unitRes,
         category,
         tenantId: undefined,
       });
+      // M2: the levy follows the SAME R3 rule as a pack row — a kept row (same product, same unit or a
+      // re-denomination of it) keeps its category, subcategory and rate snapshot; the basis is base pieces.
+      const keepsRow = row != null && !productChanged;
+      const levy = rowLevy(ctx, {
+        row,
+        keepsRow,
+        product,
+        pieceQty: Number(built.qty),
+        lineSub: Number(built.subtotal),
+      });
+      const data = {
+        ...built,
+        trackedCategoryId: levy.lineCategoryId,
+        trackedSubcategoryId: keepsRow
+          ? (row.trackedSubcategoryId ?? null)
+          : (product.trackedSubcategoryId ?? null),
+        categoryTaxAmount: levy.categoryTaxAmount,
+        ...levy.categoryTrio,
+      };
       return { rowId: row?.id ?? null, untouched: false, data };
     }
     const livePack = product?.unitsPerBox ?? null;
-    // A unit row re-sent as a pack line with a bare count: the count is boxes at the LIVE pack (as the unit count was).
+    // A unit row re-sent as a pack line with a bare count: the count is boxes at the LIVE pack (as the unit count was);
+    // a factor-1 (Piece) row's count was pieces, so it stays pieces (the pack split rolls it over).
+    const bareLeave =
+      leftUnit && rawItem.boxes == null && rawItem.pieces == null && Number(livePack) > 1;
+    const pieceLeave = bareLeave && Math.trunc(Number(row?.unitsPerBox ?? 0)) <= 1;
     const item: EditPayloadLine =
-      leftUnit && rawItem.boxes == null && rawItem.pieces == null && Number(livePack) > 1
+      bareLeave && !pieceLeave
         ? { ...rawItem, boxes: rawItem.qty, pieces: 0, qty: rawItem.qty * Number(livePack) }
         : rawItem;
     const qty = item.qty;
@@ -320,7 +343,14 @@ export function buildEditedLines(ctx: PlanCtx): EditedLine[] {
     let unitsPerBox: number | undefined;
     let ownPack: number | null = null;
     let attestedPack: number | undefined;
-    if (row) {
+    if (row && pieceLeave) {
+      // The count is pieces, split at the LIVE pack (what the box path stores too); a count below one box has no
+      // split a pack could be recovered from, and the line was never attested, so the pack is set, not audited.
+      const split = normalizeBoxesPieces({ qty, unitsPerBox: Number(livePack) });
+      boxes = split.boxes;
+      pieces = split.pieces;
+      unitsPerBox = Number(livePack);
+    } else if (row) {
       const r = recoverChangedPack(item, row, productChanged);
       if (r.attested && r.pack != null) attestedPack = r.pack;
       boxes = r.boxes;
@@ -358,26 +388,7 @@ export function buildEditedLines(ctx: PlanCtx): EditedLine[] {
     }
     const freeUnits = ctx.clampFreeUnits(item.promoFreeUnits ?? undefined, boxes, qty);
     const lineSub = priceReplacedLine(item as any, { qty, boxes, pieces, unitsPerBox, freeUnits });
-    // B297 PR3 (R3): a CHANGED row that keeps its product re-prices from its OWN rate snapshot (a rate edited
-    // since the sale must not move it); only a new row or a product substitute stamps the live category.
     const keepsRow = row != null && !productChanged;
-    const ownCategoryId =
-      keepsRow && row.trackedCategoryId && !hasNullTrio(row as any)
-        ? (row.trackedCategoryId as string)
-        : null;
-    // A kept row with a NULL trio is the row's OWN category's line (C), whatever its product's category is now:
-    // pricing it at the product's current category D would move the line to D. A kept row with NO category is a line
-    // SOLD uncategorised (B297 row 338, L1): it stays category-less at its stored amount, 0 included, instead of
-    // being filed under its product's current category and re-priced at the live rate.
-    const keepsStoredLevy = keepsRow && !row.trackedCategoryId;
-    const lineCategoryId =
-      ownCategoryId ??
-      (keepsRow && row.trackedCategoryId
-        ? (row.trackedCategoryId as string)
-        : keepsStoredLevy
-          ? null
-          : (product?.trackedCategoryId ?? null));
-    const category = lineCategoryId ? ctx.categoryMap.get(lineCategoryId) : null;
     // The levy basis reads the SAME resolved pack the money used (SA-180): never the live pack for a stored line.
     const basisPack = Number(unitsPerBox ?? ownPack ?? (row ? 0 : livePack) ?? 0);
     const pieceQty = regulatedUnitBasis(
@@ -385,38 +396,13 @@ export function buildEditedLines(ctx: PlanCtx): EditedLine[] {
       { qty, boxes, pieces, unitLabel: null },
       basisPack,
     ).unitBasisQty;
-    let categoryTaxAmount: number;
-    let categoryTrio: ReturnType<typeof categoryTaxSnapshotOf>;
-    if (keepsRow) {
-      const r = recomputeCategoryTax(
-        {
-          trackedCategoryId: lineCategoryId,
-          categoryTaxType: ownCategoryId ? row.categoryTaxType : null,
-          categoryTaxRate: ownCategoryId ? row.categoryTaxRate : null,
-          categoryPriceIncludesTax: ownCategoryId ? row.categoryPriceIncludesTax : null,
-          storedAmount: row.categoryTaxAmount,
-          unitBasisQty: pieceQty,
-          lineSubtotal: lineSub,
-        },
-        category,
-      );
-      if (r.warn) ctx.warn(`line ${row.id}: ${r.warn}`);
-      categoryTaxAmount = r.amount;
-      categoryTrio =
-        r.stamp ??
-        (ownCategoryId ? copyCategoryTaxSnapshot(row as any) : categoryTaxSnapshotOf(null));
-    } else {
-      categoryTaxAmount = category
-        ? computeCategoryTax({
-            taxType: category.taxType as CategoryTaxType,
-            rate: Number(category.rate),
-            unitBasisQty: pieceQty,
-            lineSubtotal: lineSub,
-            priceIncludesTax: category.priceIncludesTax,
-          })
-        : 0;
-      categoryTrio = categoryTaxSnapshotOf(category ?? null);
-    }
+    const { lineCategoryId, categoryTaxAmount, categoryTrio } = rowLevy(ctx, {
+      row,
+      keepsRow,
+      product,
+      pieceQty,
+      lineSub,
+    });
     return {
       rowId: row?.id ?? null,
       untouched: false,
@@ -451,6 +437,70 @@ export function buildEditedLines(ctx: PlanCtx): EditedLine[] {
       },
     };
   });
+}
+
+/**
+ * B297 PR3 (R3), shared by the pack AND unit branches (VU-4a M2): a CHANGED row that keeps its product re-prices
+ * its levy from its OWN rate snapshot (a rate edited since the sale must not move it); only a new row or a product
+ * substitute (keepsRow false) stamps the live category. `pieceQty` is the levy basis in base pieces.
+ */
+function rowLevy(
+  ctx: Pick<PlanCtx, "categoryMap" | "warn">,
+  args: { row: any; keepsRow: boolean; product: any; pieceQty: number; lineSub: number },
+) {
+  const { row, keepsRow, product, pieceQty, lineSub } = args;
+  // B297 PR3 (R3): a CHANGED row that keeps its product re-prices from its OWN rate snapshot (a rate edited
+  // since the sale must not move it); only a new row or a product substitute stamps the live category.
+  const ownCategoryId =
+    keepsRow && row.trackedCategoryId && !hasNullTrio(row as any)
+      ? (row.trackedCategoryId as string)
+      : null;
+  // A kept row with a NULL trio is the row's OWN category's line (C), whatever its product's category is now:
+  // pricing it at the product's current category D would move the line to D. A kept row with NO category is a line
+  // SOLD uncategorised (B297 row 338, L1): it stays category-less at its stored amount, 0 included, instead of
+  // being filed under its product's current category and re-priced at the live rate.
+  const keepsStoredLevy = keepsRow && !row.trackedCategoryId;
+  const lineCategoryId =
+    ownCategoryId ??
+    (keepsRow && row.trackedCategoryId
+      ? (row.trackedCategoryId as string)
+      : keepsStoredLevy
+        ? null
+        : (product?.trackedCategoryId ?? null));
+  const category = lineCategoryId ? ctx.categoryMap.get(lineCategoryId) : null;
+  let categoryTaxAmount: number;
+  let categoryTrio: ReturnType<typeof categoryTaxSnapshotOf>;
+  if (keepsRow) {
+    const r = recomputeCategoryTax(
+      {
+        trackedCategoryId: lineCategoryId,
+        categoryTaxType: ownCategoryId ? row.categoryTaxType : null,
+        categoryTaxRate: ownCategoryId ? row.categoryTaxRate : null,
+        categoryPriceIncludesTax: ownCategoryId ? row.categoryPriceIncludesTax : null,
+        storedAmount: row.categoryTaxAmount,
+        unitBasisQty: pieceQty,
+        lineSubtotal: lineSub,
+      },
+      category,
+    );
+    if (r.warn) ctx.warn(`line ${row.id}: ${r.warn}`);
+    categoryTaxAmount = r.amount;
+    categoryTrio =
+      r.stamp ??
+      (ownCategoryId ? copyCategoryTaxSnapshot(row as any) : categoryTaxSnapshotOf(null));
+  } else {
+    categoryTaxAmount = category
+      ? computeCategoryTax({
+          taxType: category.taxType as CategoryTaxType,
+          rate: Number(category.rate),
+          unitBasisQty: pieceQty,
+          lineSubtotal: lineSub,
+          priceIncludesTax: category.priceIncludesTax,
+        })
+      : 0;
+    categoryTrio = categoryTaxSnapshotOf(category ?? null);
+  }
+  return { lineCategoryId, categoryTaxAmount, categoryTrio };
 }
 
 /** What to write in place for a line that already has a stored row (null = nothing changed). */

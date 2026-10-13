@@ -132,6 +132,10 @@ describe("InvoicesService.update — a DRAFT invoice edit sells a line by a unit
     prisma.customer.findFirst.mockResolvedValue({ isTaxExempt: false });
     prisma.product.findMany.mockResolvedValue([PRODUCT]);
     scopedUnits.findMany.mockReset().mockResolvedValue(ladder);
+    // The in-lock restriction re-check reads the ladder through the TX (M1): the same tenant ladder.
+    (prisma.productUnit.findMany as jest.Mock).mockImplementation((args: unknown) =>
+      scopedUnits.findMany(args),
+    );
     (prisma.forTenant as jest.Mock).mockReturnValue({
       ...(prisma.forTenant as jest.Mock)(),
       productUnit: scopedUnits,
@@ -325,6 +329,42 @@ describe("InvoicesService.update — a DRAFT invoice edit sells a line by a unit
     expect(row).toEqual(prisma.invoice.create.mock.calls[0][0].data.items.create[0]);
   });
 
+  describe("M2 (B297 PR3 R3): a CHANGED unit row keeps its own levy snapshot, like a pack row", () => {
+    beforeEach(() => {
+      prisma.product.findMany.mockResolvedValue([{ ...PRODUCT, trackedCategoryId: "cat-1" }]);
+      // the category's rate was raised 0.50 -> 0.70 after the draft was saved
+      prisma.trackedCategory.findMany.mockResolvedValue([
+        { id: "cat-1", taxType: "EXCISE_PER_UNIT", rate: 0.7, priceIncludesTax: false },
+      ]);
+    });
+    const patched = () => prisma.invoiceItem.update.mock.calls[0][0].data;
+
+    it("3 -> 5 Cases on a row sold at 0.50 re-prices at ITS 0.50 (60 pcs = 30.00), never the live 0.70", async () => {
+      prisma.invoiceItem.findMany.mockResolvedValue([
+        storedCase({
+          trackedCategoryId: "cat-1",
+          categoryTaxType: "EXCISE_PER_UNIT",
+          categoryTaxRate: 0.5,
+          categoryPriceIncludesTax: false,
+          categoryTaxAmount: 18,
+        }),
+      ]);
+      await update([caseLine({ id: "row-1", qty: 5 })]);
+      expect(patched()).toMatchObject({
+        qty: 60,
+        categoryTaxAmount: 30,
+        trackedCategoryId: "cat-1",
+      });
+      expect(Number(patched().categoryTaxRate)).toBe(0.5);
+    });
+
+    it("a kept unit row SOLD uncategorised stays category-less at its stored levy (row 338)", async () => {
+      prisma.invoiceItem.findMany.mockResolvedValue([storedCase({ trackedCategoryId: null })]);
+      await update([caseLine({ id: "row-1", qty: 5 })]);
+      expect(patched()).toMatchObject({ qty: 60, trackedCategoryId: null, categoryTaxAmount: 0 });
+    });
+  });
+
   describe("factor snapshot: the ladder Case factor changes 12 -> 10 after the draft was saved", () => {
     beforeEach(() => {
       scopedUnits.findMany.mockResolvedValue([{ ...ladder[0], factorToBase: 10 }]);
@@ -413,6 +453,85 @@ describe("InvoicesService.update — a DRAFT invoice edit sells a line by a unit
         });
       },
     );
+  });
+
+  it("a factor-1 Piece row left for the pack with a bare count is PIECES (30 pcs = 1 Box + 6), never 30 Boxes", async () => {
+    prisma.invoiceItem.findMany.mockResolvedValue([
+      storedCase({
+        qty: 5,
+        boxes: 5,
+        unitsPerBox: 1,
+        unitLabel: "Piece",
+        unitPrice: 2,
+        subtotal: 10,
+      }),
+    ]);
+    await update([
+      {
+        id: "row-1",
+        productId: "p1",
+        description: "Widget",
+        qty: 30,
+        unitPrice: 48,
+        unitLabel: null,
+      },
+    ]);
+    expect(prisma.invoiceItem.update.mock.calls[0][0].data).toMatchObject({
+      unitLabel: null,
+      unitsPerBox: 24,
+      qty: 30,
+      boxes: 1,
+      pieces: 6,
+      subtotal: 60, // 48 + 6 x 2.00, never 30 x 48
+    });
+  });
+
+  it("a Piece row left for the pack with fewer pieces than a box (5) is 0 Box + 5 pcs, not refused", async () => {
+    prisma.invoiceItem.findMany.mockResolvedValue([
+      storedCase({
+        qty: 5,
+        boxes: 5,
+        unitsPerBox: 1,
+        unitLabel: "Piece",
+        unitPrice: 2,
+        subtotal: 10,
+      }),
+    ]);
+    await update([
+      { id: "row-1", productId: "p1", description: "Widget", qty: 5, unitPrice: 48, unitLabel: "" },
+    ]);
+    expect(prisma.invoiceItem.update.mock.calls[0][0].data).toMatchObject({
+      unitLabel: null,
+      unitsPerBox: 24,
+      qty: 5,
+      boxes: 0,
+      pieces: 5,
+      subtotal: 10,
+    });
+  });
+
+  describe("inheritHeldUnit both ways (SA-070): the flag gates a NEW unit, never a held one", () => {
+    beforeEach(() => hasFlag.mockImplementation(async () => false)); // flag.units_v1 OFF
+
+    it("flag off: an existing Case row stays editable with its label ABSENT (count of Cases, stored factor 12)", async () => {
+      prisma.invoiceItem.findMany.mockResolvedValue([storedCase()]);
+      await update([
+        { id: "row-1", productId: "p1", description: "Widget", qty: 5, unitPrice: 24 },
+      ]);
+      expect(prisma.invoiceItem.update.mock.calls[0][0].data).toMatchObject({
+        unitLabel: "Case",
+        unitsPerBox: 12,
+        boxes: 5,
+        qty: 60,
+        subtotal: 120,
+      });
+    });
+
+    it("flag off: naming a unit label (a NEW unit line) is refused 403, nothing written", async () => {
+      prisma.invoiceItem.findMany.mockResolvedValue([storedCase()]);
+      await expect(update([caseLine()])).rejects.toMatchObject({ status: 403 });
+      expect(prisma.invoice.update).not.toHaveBeenCalled();
+    });
   });
 
   it("a pack-only PATCH reads no ladder and never asks for flag.units_v1", async () => {
