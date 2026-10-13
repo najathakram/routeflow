@@ -27,7 +27,7 @@ const derived = buildUnitOptions(pack3, [lvl("Case", 12, null)], 1);
 const owned = buildUnitOptions(pack3, [lvl("Case", 12, null), lvl("Piece", 1, "3.00")], 1);
 const pick = (opts: typeof derived, v: string) => opts.find((o) => o.value === v)!;
 
-describe.skip("cart (applyUnitOption): derived Piece", () => {
+describe("cart (applyUnitOption): derived Piece", () => {
   const packLine: LineState = { qty: 3, boxes: 1, pieces: 0 };
   it("2 pcs of a 3-pack @ $10 previews $6.67 with boxes 0 / pieces 2 and no unitLabel", () => {
     const one = applyUnitOption(packLine, pick(derived, "Piece"), 3);
@@ -55,7 +55,7 @@ describe.skip("cart (applyUnitOption): derived Piece", () => {
   });
 });
 
-describe.skip("order edit (applyUnitPick): derived Piece", () => {
+describe("order edit (applyUnitPick): derived Piece", () => {
   const item = {
     productId: "p",
     qty: 3,
