@@ -37,7 +37,7 @@ import {
   writeManualInvoiceNotice,
 } from "./manual-invoice-notice";
 import { isPayingRow } from "./mrr.service";
-import { applyCouponStateTx } from "./coupon-state";
+import { applyCouponStateTx, readCouponStateFromStripe } from "./coupon-state";
 import { NO_COUPON } from "./coupon-unbilled";
 import { b58GuardRefusal } from "./b58-guard";
 import { withAdvisoryLock, LockTimeoutError, LockUnavailableError } from "../common/db-locks";
@@ -2485,11 +2485,20 @@ export class SubscriptionMutationService {
   ): Promise<boolean> {
     const skuDef = (await this.catalog.getPublishedCatalog()).addonSkus.find((s) => s.sku === sku);
     if (!skuDef || (await this.planIncludedRefusal(tenantId, skuDef))) return false;
+    // B1079: the ONE mode decision (`addonModeOf`), like enable/disable. A couponFull tenant is UNBILLED:
+    // the row stays as it is (price 0, no item) - this is the only place a checkout completion CREATES an item.
+    const mode = await this.checkoutAddonMode(tenantId, subId);
+    if (mode !== "STRIPE") {
+      this.logger.warn(
+        `Checkout add-on "${sku}" tenant ${tenantId}: add-on billing mode ${mode} (a 100% coupon, or no live Stripe billing) — no Stripe item, the add-on stays unbilled`,
+      );
+      return false;
+    }
     const sub = await this.prisma.tenantSubscription.findUnique({
       where: { tenantId },
       select: { billingInterval: true, cycle: true },
     });
-    if (isAnnualStripeBilled("STRIPE", { stripeSubId: subId, ...sub })) {
+    if (isAnnualStripeBilled(mode, { stripeSubId: subId, ...sub })) {
       this.logger.warn(
         `Checkout add-on "${sku}" tenant ${tenantId}: annual subscription — the add-on stays unbilled`,
       );
@@ -2714,6 +2723,28 @@ export class SubscriptionMutationService {
       );
       throw new ServiceUnavailableException(ADDON_ENABLE_BILLING_FAILED);
     }
+  }
+
+  /**
+   * B1079: the add-on billing mode for a checkout COMPLETION, decided by `addonModeOf` like every other
+   * path. At completion `couponFull` is not synced yet (the handler syncs it LAST), so it is read the way
+   * the sync reads it - Stripe's retrieve + upcoming-invoice preview (`readCouponStateFromStripe`, never
+   * the webhook payload) - and the stored column is the fallback only when Stripe has nothing to say
+   * (an ended subscription / no upcoming invoice). A `externalPayment` row is never couponFull (as in the
+   * sync). A Stripe failure THROWS: the webhook is retried, no item is ever created on a guess.
+   */
+  private async checkoutAddonMode(tenantId: string, subId: string): Promise<AddonBilling> {
+    const stored = await this.prisma.tenantSubscription.findUnique({
+      where: { tenantId },
+      select: { externalPayment: true, couponFull: true },
+    });
+    const externalPayment = stored?.externalPayment === true;
+    let couponFull = !externalPayment && stored?.couponFull === true;
+    if (!externalPayment) {
+      const reading = await readCouponStateFromStripe(this.stripe, subId);
+      if (reading.kind === "state") couponFull = reading.state.full;
+    }
+    return this.addonModeOf({ stripeSubId: subId, externalPayment, couponFull });
   }
 
   /**
