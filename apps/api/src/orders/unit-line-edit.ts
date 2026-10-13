@@ -162,6 +162,8 @@ export interface UnitWriteContext {
   overriddenBy?: string | null;
   /** H3: the order's lines as held under the edit's row lock, by id: the stored side of a re-sent price. */
   held?: ReadonlyMap<string, unknown>;
+  /** H3: the buyer's count diff re-prices a tier line at the current tier on a qty-only edit (SA-507b). */
+  repriceTierOnQtyOnly?: boolean;
   /** trackedCategoryId -> TrackedCategory row, for the products this edit touches (B297). */
   categoryMap: Map<string, TrackedCategoryRow>;
 }
@@ -279,6 +281,7 @@ export async function updateUnitLine(
     overriddenBy: ctx.overriddenBy,
     // a substitute is a new sale: judged against the tier price, never against the line it replaces
     stored: isSubstitute ? null : (ctx.held?.get(lineId) as StoredUnitLine | undefined),
+    repriceTierOnQtyOnly: ctx.repriceTierOnQtyOnly,
   });
   const data = isSubstitute
     ? {

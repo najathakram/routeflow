@@ -232,6 +232,24 @@ describe("per-line updateUnitLine — the stored line by id", () => {
     expect(updated(ctx)).not.toHaveProperty("overriddenBy");
   });
 
+  it("repriceTierOnQtyOnly (the buyer's count diff): a plain tier line re-prices at the current tier, an override is kept", async () => {
+    const buyerCtx = (held: Array<Record<string, unknown>>) => ({
+      ...makeCtx(held),
+      repriceTierOnQtyOnly: true,
+    });
+    const tierLine = buyerCtx([{ ...storedSpecial, unitPrice: "19.00" }]);
+    await updateUnitLine(tierLine, "L1", product, resolved(), item({ id: "L1", qty: 2 }), false);
+    expect(updated(tierLine)).toMatchObject({ unitPrice: 20, subtotal: 40, priceType: "SPECIAL" });
+    const reasoned = buyerCtx([{ ...storedSpecial, unitPrice: "19.00", overrideReason: "deal" }]);
+    await updateUnitLine(reasoned, "L1", product, resolved(), item({ id: "L1", qty: 2 }), false);
+    // kept as stored: a SPECIAL line's reason column is left untouched by the update (not named in `data`)
+    expect(updated(reasoned)).toMatchObject({ unitPrice: 19, priceType: "SPECIAL", subtotal: 38 });
+    expect(updated(reasoned)).not.toHaveProperty("overrideReason");
+    const manual = buyerCtx([storedOverride]);
+    await updateUnitLine(manual, "L1", product, resolved(), item({ id: "L1", qty: 5 }), false);
+    expect(updated(manual)).toMatchObject({ unitPrice: 24, subtotal: 120, priceType: "MANUAL" });
+  });
+
   it("a qty-only edit that CHANGES the unit leaves the stored price behind and prices the new unit from the ladder", async () => {
     const ctx = makeCtx();
     await updateUnitLine(

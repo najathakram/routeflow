@@ -3392,6 +3392,7 @@ export class OrdersService implements OnApplicationBootstrap {
             tier: (pid) => (atCustomerTier ? (operatorCpMap.get(pid) ?? operatorDefaultTier) : 1),
             overriddenBy: user?.sub ?? null,
             held: heldById,
+            repriceTierOnQtyOnly: user?.role === UserRole.CUSTOMER,
             categoryMap: await loadCategoryMapForProducts(tx, unitCtx.products), // B297
           };
 

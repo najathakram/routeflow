@@ -7,6 +7,8 @@
  *     subtotal is the new count x the KEPT price (never the $20 tier price)
  *  Q2 an explicit price change without a reason is the 400 and the row is untouched
  *  Q3 a STANDARD (tier-priced) stored line keeps its stored price on a qty-only edit, as a pack line does
+ *  Q4 the BUYER's count diff re-prices that tier line at the current tier (SA-507b: 19 -> 20)
+ *  Q5 the BUYER's count diff keeps an override: price, type, reason and stamp
  *
  * Run via `npm run local:test:db` (compose Postgres); collected only by jest.db.config.js. Test tenant only
  * (`qa-*`, enforced by assertTestTenant).
@@ -58,7 +60,7 @@ describeDb("H3 qty-only unit edit keeps the stored price — real Postgres", () 
   }
 
   /** Run the real writer against the real row, the way updateOrderItems wires it. */
-  async function qtyEdit(lineId: string, item: Record<string, unknown>) {
+  async function qtyEdit(lineId: string, item: Record<string, unknown>, buyer = false) {
     const row = await raw.product.findUniqueOrThrow({ where: { id: productId } });
     const product = { ...row, pricePerUnit: String(row.pricePerUnit) } as never;
     const ladder = (await raw.productUnit.findMany({
@@ -75,6 +77,7 @@ describeDb("H3 qty-only unit edit keeps the stored price — real Postgres", () 
       tier: () => 3,
       overriddenBy: userId,
       held,
+      repriceTierOnQtyOnly: buyer, // the buyer's count diff (SA-507b)
       categoryMap: new Map(),
     } as unknown as UnitWriteContext;
     await updateUnitLine(
@@ -182,5 +185,32 @@ describeDb("H3 qty-only unit edit keeps the stored price — real Postgres", () 
     expect(Number(row.subtotal)).toBe(38);
     expect(row.priceType).toBe("STANDARD");
     expect(row.overriddenBy).toBeNull();
+  });
+
+  it("Q4: the BUYER's count diff re-prices a plain tier line at the current tier (SA-507b)", async () => {
+    const line = await seedLine({
+      unitPrice: "19.00",
+      subtotal: "57.00",
+      priceType: "STANDARD",
+      originalPrice: null,
+      overrideReason: null,
+      overriddenBy: null,
+    });
+    const row = await qtyEdit(line.id, { id: line.id, qty: 2 }, true);
+    expect(Number(row.unitPrice)).toBe(20);
+    expect(Number(row.subtotal)).toBe(40);
+    expect(row.priceType).toBe("SPECIAL");
+  });
+
+  it("Q5: the BUYER's count diff keeps an override: price, type, reason and stamp", async () => {
+    const line = await seedLine({});
+    const row = await qtyEdit(line.id, { id: line.id, qty: 5 }, true);
+    expect(Number(row.unitPrice)).toBe(24);
+    expect(Number(row.subtotal)).toBe(120);
+    expect(row).toMatchObject({
+      priceType: "MANUAL",
+      overrideReason: "agreed at list",
+      overriddenBy: "stamp-user",
+    });
   });
 });

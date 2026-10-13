@@ -485,6 +485,31 @@ describe("OrdersService.updateOrderItems — units_v1 (A1) staff conversion", ()
       expect(prisma.orderItem.update).not.toHaveBeenCalled();
     });
 
+    const buyer = {
+      sub: "user-cust",
+      username: "buyer",
+      role: "CUSTOMER" as const,
+      tenantId: "t-1",
+    };
+
+    it("SA-507b: a BUYER count edit of a plain tier line re-prices at the buyer's CURRENT tier (stored 100 -> tier-3 80)", async () => {
+      prisma.order.findUnique.mockResolvedValue({
+        ...MOCK_ORDER,
+        lineItems: [{ ...existingCaseLine, unitPrice: 100, priceType: "STANDARD" }],
+      });
+      await qtyOnly(buyer, 4);
+      expect(prisma.orderItem.update).toHaveBeenCalledWith(
+        expect.objectContaining({
+          data: expect.objectContaining({ unitPrice: 80, subtotal: 320, priceType: "SPECIAL" }),
+        }),
+      );
+    });
+
+    it("a BUYER count edit of an OVERRIDDEN unit line keeps the price and the reason (an override is kept on every path)", async () => {
+      await qtyOnly(buyer, 4);
+      expect(prisma.orderItem.update).toHaveBeenCalledWith(keptOverride(4));
+    });
+
     it("a STANDARD unit line on a qty-only edit keeps its stored price like a pack line does", async () => {
       // the tier price has moved since the sale: the stored $100 stays, as the pack branch's existingUnitPrice does
       prisma.order.findUnique.mockResolvedValue({

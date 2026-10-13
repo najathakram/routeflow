@@ -329,6 +329,12 @@ export function buildUnitLine(input: {
    * and needs a reason sent with it (a 400 otherwise).
    */
   stored?: StoredUnitLine | null;
+  /**
+   * H3: on a qty-only edit (no price sent) re-price a stored TIER line at the customer's current tier instead of
+   * keeping its stored price: the buyer's count diff (SA-507b). Staff edits leave it off and keep, like the pack
+   * branch. An override is kept either way.
+   */
+  repriceTierOnQtyOnly?: boolean;
 }): UnitLineData {
   const { product, units, resolved, item, tier, taxFor } = input;
   const ladderProduct = toLadderProduct(product);
@@ -394,10 +400,18 @@ export function buildUnitLine(input: {
     input.stored && norm(input.stored.unitLabel ?? "") === norm(label) ? input.stored : null;
   // no price sent (a qty-only edit) or the stored price re-sent: the line keeps its stored decision, exactly as
   // the pack branch keeps `existingUnitPrice` (orders.service.ts, updateOrderItems); only a CHANGED price re-decides
+  // an OVERRIDE (DISCOUNTED / MANUAL, or SPECIAL with a reason on file) is kept on every path; a plain tier line is
+  // kept too, except where the caller re-prices tier lines on a qty-only edit (the buyer's count diff, SA-507b)
+  const heldIsOverride =
+    held != null &&
+    (held.priceType === PriceType.DISCOUNTED ||
+      held.priceType === PriceType.MANUAL ||
+      (held.priceType === PriceType.SPECIAL && !!held.overrideReason?.trim()));
   const echoesHeld =
     held != null &&
-    (item.unitPrice == null ||
-      withinStaffOverrideTolerance(Number(item.unitPrice), Number(held.unitPrice)));
+    (item.unitPrice == null
+      ? !input.repriceTierOnQtyOnly || heldIsOverride
+      : withinStaffOverrideTolerance(Number(item.unitPrice), Number(held.unitPrice)));
   const decision =
     item.unitPrice != null && !echoesHeld
       ? decideStaffOverride({
