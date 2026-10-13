@@ -3313,27 +3313,35 @@ describe("F2: onCheckoutCompleted re-syncs an override saved during the open ses
     expect(params.proration_behavior).toBe("none");
   });
 
-  it("a failed push is logged and recorded, and never fails the webhook", async () => {
+  it("a failed push is audited and THROWS, so the webhook ledger redelivers it", async () => {
     const { svc, prisma } = make({ transitionCount: 1, sub: OVERRIDE_SUB });
     jest
       .spyOn(svc, "syncStripeSubscriptionPrice")
       .mockResolvedValue({ synced: false, reason: "stripe_update_failed" });
     const warn = jest.spyOn(Logger.prototype, "warn").mockImplementation(() => undefined);
-    await expect((svc as any).onCheckoutCompleted(session)).resolves.toBeUndefined();
+    await expect((svc as any).onCheckoutCompleted(session)).rejects.toThrow(/price re-sync/i);
     warn.mockRestore();
     const audit = prisma.auditLog.create.mock.calls.find(
       (c: any[]) => c[0].data.action === "STRIPE_CHECKOUT_PRICE_RESYNC",
     );
     expect(audit?.[0].data.meta).toMatchObject({ synced: false, reason: "stripe_update_failed" });
+    expect(JSON.stringify(audit?.[0].data.meta)).not.toMatch(/price changed/i);
   });
 
   it("a replayed (already applied) completion still pushes - a push that threw is retried by the redelivery", async () => {
     const { svc, tx } = make({ transitionCount: 1, sub: OVERRIDE_SUB });
-    tx.auditLog.findFirst.mockResolvedValue({ id: "a1" }); // the applied marker exists
     const sync = jest
       .spyOn(svc, "syncStripeSubscriptionPrice")
-      .mockResolvedValue({ synced: true, unchanged: true, newAmount: 150, proration: "none" });
-    await (svc as any).onCheckoutCompleted(session);
-    expect(sync).toHaveBeenCalledWith("t1", { effective: "next_cycle" });
+      .mockRejectedValueOnce(new Error("stripe down"))
+      .mockResolvedValue({ synced: true, newAmount: 150, oldAmount: 349, proration: "none" });
+    const err = jest.spyOn(Logger.prototype, "error").mockImplementation(() => undefined);
+    // first delivery: the apply lands, the push throws -> the webhook fails (Stripe will redeliver)
+    await expect((svc as any).onCheckoutCompleted(session)).rejects.toThrow("stripe down");
+    err.mockRestore();
+    // redelivery: the applied marker now exists, the resync re-runs and succeeds
+    tx.auditLog.findFirst.mockResolvedValue({ id: "a1" });
+    await expect((svc as any).onCheckoutCompleted(session)).resolves.toBeUndefined();
+    expect(sync).toHaveBeenCalledTimes(2);
+    expect(sync).toHaveBeenLastCalledWith("t1", { effective: "next_cycle" });
   });
 });

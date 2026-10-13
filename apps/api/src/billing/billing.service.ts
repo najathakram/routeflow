@@ -2405,19 +2405,29 @@ export class BillingService {
    * F2: the session was priced when it was CREATED. An admin override saved while it was open found no
    * subscription to push to, so the subscription this completion made bills the old price. After the apply
    * transaction the resolved price is pushed (next cycle, idempotent: an item already at it is `unchanged`).
-   * The prorated stub the customer already paid stays at the old price - the audit row says so. Best-effort:
-   * the money is already applied, so a failure here is logged and recorded, never fails the webhook.
+   * The prorated stub the customer already paid stays at the old price - the audit row says so. A failed push is audited and
+   * then THROWN: the money is already applied and the apply step is idempotent, so Stripe's redelivery
+   * re-runs the push instead of acknowledging a subscription that still bills the old price.
    */
   private async resyncPriceAfterCheckout(tenantId: string, session: any): Promise<void> {
+    let result: Awaited<ReturnType<BillingService["syncStripeSubscriptionPrice"]>>;
     try {
-      const result = await this.syncStripeSubscriptionPrice(tenantId, { effective: "next_cycle" });
-      const changed = result.synced && !result.unchanged;
-      if (!changed && !isPricePushFailure(result)) return;
-      if (!changed) {
-        this.logger.warn(
-          `F2: checkout ${session?.id ?? "?"} for tenant ${tenantId}: the price re-sync failed (${result.reason ?? "unknown"})`,
-        );
-      }
+      result = await this.syncStripeSubscriptionPrice(tenantId, { effective: "next_cycle" });
+    } catch (err) {
+      this.logger.error(
+        `F2: checkout ${session?.id ?? "?"} for tenant ${tenantId}: the price re-sync threw`,
+        err as Error,
+      );
+      throw err;
+    }
+    const changed = result.synced && !result.unchanged;
+    if (!changed && !isPricePushFailure(result)) return;
+    if (!changed) {
+      this.logger.warn(
+        `F2: checkout ${session?.id ?? "?"} for tenant ${tenantId}: the price re-sync failed (${result.reason ?? "unknown"})`,
+      );
+    }
+    try {
       await this.prisma.auditLog.create({
         data: {
           tenantId,
@@ -2430,15 +2440,17 @@ export class BillingService {
             oldAmount: result.oldAmount ?? null,
             newAmount: result.newAmount ?? null,
             effective: "next_cycle",
-            note: "the price changed while this checkout was open; the prorated stub already paid stays at the old price",
+            note: changed
+              ? "the price changed while this checkout was open; the prorated stub already paid stays at the old price"
+              : "the price re-sync failed; the subscription may still bill the old price until the redelivery retries",
           },
         },
       });
     } catch (err) {
-      this.logger.error(
-        `F2: checkout ${session?.id ?? "?"} for tenant ${tenantId}: the price re-sync threw`,
-        err as Error,
-      );
+      this.logger.error(`F2: the price re-sync audit row could not be written`, err as Error);
+    }
+    if (!changed) {
+      throw new Error(`price re-sync failed after checkout (${result.reason ?? "unknown"})`);
     }
   }
 
