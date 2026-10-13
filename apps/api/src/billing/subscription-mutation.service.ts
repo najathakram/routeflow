@@ -37,7 +37,7 @@ import {
   writeManualInvoiceNotice,
 } from "./manual-invoice-notice";
 import { isPayingRow } from "./mrr.service";
-import { applyCouponStateTx } from "./coupon-state";
+import { applyCouponStateTx, readCouponStateFromStripe } from "./coupon-state";
 import { NO_COUPON } from "./coupon-unbilled";
 import { b58GuardRefusal } from "./b58-guard";
 import { withAdvisoryLock, LockTimeoutError, LockUnavailableError } from "../common/db-locks";
@@ -160,7 +160,7 @@ const ADDON_ANNUAL_NOT_SUPPORTED =
 const STRICT_PRORATED = { prorate: true, rethrow: true } as const;
 
 const ADDON_RAISE_UNBILLED_ROW =
-  "This add-on was set up before online billing, so its quantity can't be raised here yet. Please contact support.";
+  "This add-on isn't billed on your subscription yet (it was set up before online billing, or while a promotion covered it), so its quantity can't be raised here. Please contact support.";
 
 /**
  * A refusal of a self-serve add-on enable: a fixed machine code plus fixed tenant-facing copy. The
@@ -221,8 +221,9 @@ function isAnnualStripeBilled(
  *  - STRIPE:   a Stripe subscription item (Stripe configured AND a `stripeSubId`).
  *  - MANUAL:   an `externalPayment` tenant the owner invoices by hand — on at the CATALOG price, counted as
  *              revenue, no Stripe call, and the platform is told to add it to the next manual invoice.
- *  - UNBILLED: a free pilot (no subscription / no `stripeSubId`) or Stripe not configured — on, priced 0,
- *              books no revenue.
+ *  - UNBILLED: a free pilot (no subscription / no `stripeSubId`), Stripe not configured, or a live
+ *              Stripe subscription with `couponFull` (a 100% coupon, B1079) — on, priced 0, books no
+ *              revenue, no Stripe item.
  */
 export type AddonBilling = AddonBillingMode;
 
@@ -1838,6 +1839,8 @@ export class SubscriptionMutationService {
         billingInterval: true,
         cycle: true,
         externalPayment: true,
+        // B1079: read here so the mode decision (addonModeOf) honours a 100%-coupon (unbilled) tenant.
+        couponFull: true,
       },
     });
     return { sub, mode: this.addonModeOf(sub) };
@@ -2067,7 +2070,7 @@ export class SubscriptionMutationService {
     let changed = false;
     let firstError: Error | null = null;
     // Set (and logged once) by the first SKU that finds the tenant no longer stores this subscription.
-    const state = { superseded: false };
+    const state: { superseded: boolean; mode?: AddonBilling } = { superseded: false };
     for (const sku of [...bySku.keys()].sort()) {
       try {
         const adopted = await this.runUnderAddonLock(tenantId, sku, () =>
@@ -2199,7 +2202,7 @@ export class SubscriptionMutationService {
     subId: string,
     currentItemIds: ReadonlySet<string>,
     ctx: { sessionId?: string | null },
-    state: { superseded: boolean },
+    state: { superseded: boolean; mode?: AddonBilling },
   ): Promise<boolean> {
     // Under this SKU's add-on lock: is this subscription still the one the tenant stores? A newer one may have
     // replaced it since the caller looked (A applied, sub_A paused, B applied — or B committing between the
@@ -2235,6 +2238,21 @@ export class SubscriptionMutationService {
       pointer != null &&
       !currentItemIds.has(pointer) &&
       !(await this.itemIsOnSubscription(tenantId, sku, pointer, subId));
+    // B1079: a couponFull tenant is UNBILLED (the ONE mode decision). The checkout's own add-on LINES made
+    // items, so they go (Stripe-first, prorated, strict) exactly like an orphan: the row stays as it is - on,
+    // priced 0, no item - and no item is ever adopted or created for it. Read once per completion; a Stripe
+    // read failure throws (the webhook is retried), never a guess.
+    if (items.length > 0 && row?.active) {
+      state.mode ??= await this.checkoutAddonMode(tenantId, subId);
+      if (state.mode !== "STRIPE") {
+        this.logger.warn(
+          `Checkout add-on "${sku}" tenant ${tenantId}: add-on billing mode ${state.mode} (a 100% coupon) — the checkout's item is removed, the add-on stays unbilled`,
+        );
+        for (const i of items)
+          await this.deleteOrphanItem(i.itemId, tenantId, sku, STRICT_PRORATED);
+        return false;
+      }
+    }
     if (items.length === 0) {
       return row?.active && (!pointer || stale)
         ? this.billUnbilledRow(tenantId, sku, row, subId, pointer, ctx)
@@ -2520,11 +2538,20 @@ export class SubscriptionMutationService {
       }
       return false;
     }
+    // B1079: the ONE mode decision (`addonModeOf`), like enable/disable. A couponFull tenant is UNBILLED:
+    // the row stays as it is (price 0, no item) - this is the only place a checkout completion CREATES an item.
+    const mode = await this.checkoutAddonMode(tenantId, subId);
+    if (mode !== "STRIPE") {
+      this.logger.warn(
+        `Checkout add-on "${sku}" tenant ${tenantId}: add-on billing mode ${mode} (a 100% coupon, or no live Stripe billing) — no Stripe item, the add-on stays unbilled`,
+      );
+      return false;
+    }
     const sub = await this.prisma.tenantSubscription.findUnique({
       where: { tenantId },
       select: { billingInterval: true, cycle: true },
     });
-    if (isAnnualStripeBilled("STRIPE", { stripeSubId: subId, ...sub })) {
+    if (isAnnualStripeBilled(mode, { stripeSubId: subId, ...sub })) {
       this.logger.warn(
         `Checkout add-on "${sku}" tenant ${tenantId}: annual subscription — the add-on stays unbilled`,
       );
@@ -2621,11 +2648,26 @@ export class SubscriptionMutationService {
    * clears `externalPayment`, so a tenant that was manually activated and LATER pays by card carries
    * both, and must be billed through Stripe (same order as onboarding's payment.recorded). Only
    * without a live Stripe subscription does `externalPayment` mean "the owner invoices by hand".
+   * A live Stripe subscription with `couponFull` is the exception: UNBILLED (B1079).
    */
   private addonModeOf(
-    sub: { stripeSubId?: string | null; externalPayment?: boolean | null } | null | undefined,
+    sub:
+      | {
+          stripeSubId?: string | null;
+          externalPayment?: boolean | null;
+          couponFull?: boolean | null;
+        }
+      | null
+      | undefined,
   ): AddonBilling {
-    if (this.stripe.isConfigured && sub?.stripeSubId) return "STRIPE";
+    if (this.stripe.isConfigured && sub?.stripeSubId) {
+      // B1079 (owner ruling: a pilot on a 100% coupon is UNBILLED): `couponFull` (the SA-736r flag, the
+      // same one `isPayingRow` reads) means the subscription's recurring invoice is $0 because of
+      // discounts. Such a tenant is not billed for add-ons either: the add-on is granted at price 0 and
+      // NO Stripe item is created. Checked inside the live-Stripe branch only: `couponFull` never
+      // outlives its Stripe subscription (M5), so without one the mode below is unchanged.
+      return sub.couponFull === true ? "UNBILLED" : "STRIPE";
+    }
     if (sub?.externalPayment) return "MANUAL";
     return "UNBILLED";
   }
@@ -2760,6 +2802,28 @@ export class SubscriptionMutationService {
       );
       throw new ServiceUnavailableException(ADDON_ENABLE_BILLING_FAILED);
     }
+  }
+
+  /**
+   * B1079: the add-on billing mode for a checkout COMPLETION, decided by `addonModeOf` like every other
+   * path. At completion `couponFull` is not synced yet (the handler syncs it LAST), so it is read the way
+   * the sync reads it - Stripe's retrieve + upcoming-invoice preview (`readCouponStateFromStripe`, never
+   * the webhook payload) - and the stored column is the fallback only when Stripe has nothing to say
+   * (an ended subscription / no upcoming invoice). A `externalPayment` row is never couponFull (as in the
+   * sync). A Stripe failure THROWS: the webhook is retried, no item is ever created on a guess.
+   */
+  private async checkoutAddonMode(tenantId: string, subId: string): Promise<AddonBilling> {
+    const stored = await this.prisma.tenantSubscription.findUnique({
+      where: { tenantId },
+      select: { externalPayment: true, couponFull: true },
+    });
+    const externalPayment = stored?.externalPayment === true;
+    let couponFull = !externalPayment && stored?.couponFull === true;
+    if (!externalPayment) {
+      const reading = await readCouponStateFromStripe(this.stripe, subId);
+      if (reading.kind === "state") couponFull = reading.state.full;
+    }
+    return this.addonModeOf({ stripeSubId: subId, externalPayment, couponFull });
   }
 
   /**

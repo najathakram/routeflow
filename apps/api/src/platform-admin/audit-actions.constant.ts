@@ -70,6 +70,8 @@ export const AdminAuditAction = {
   STRIPE_SUB_NOT_FOUND_TERMINATED: "STRIPE_SUB_NOT_FOUND_TERMINATED",
   /** The subscription AND its customer are 404 in Stripe: a wrong account / mode is suspected; nothing was changed. */
   STRIPE_KEY_MODE_MISMATCH: "STRIPE_KEY_MODE_MISMATCH",
+  /** A tenant's 100% coupon ended: its add-ons that never had a Stripe item stay UNBILLED (never auto-billed). */
+  ADDON_COUPON_ENDED_UNBILLED: "ADDON_COUPON_ENDED_UNBILLED",
   ADDON_MANUAL_INVOICE_DUE: "ADDON_MANUAL_INVOICE_DUE",
   ADDON_MANUAL_INVOICE_STOP: "ADDON_MANUAL_INVOICE_STOP",
   /** B1102: a catalog add-on's includedAtPlan names no plan; a background path skipped billing it (meta: sku, value). */
@@ -147,6 +149,7 @@ export const ADMIN_AUDIT_ACTION_LABELS: Record<AdminAuditActionCode, string> = {
   STRIPE_PRICE_PUSH_BLOCKED: "Price not pushed to Stripe (check the subscription)",
   STRIPE_SUB_NOT_FOUND_TERMINATED: "Terminated: Stripe subscription not found (customer present)",
   STRIPE_KEY_MODE_MISMATCH: "Stripe key/mode mismatch suspected (nothing changed)",
+  ADDON_COUPON_ENDED_UNBILLED: "Coupon ended: add-ons still unbilled (decide)",
   ADDON_MANUAL_INVOICE_DUE: "Add-on to invoice manually",
   ADDON_MANUAL_INVOICE_STOP: "Add-on to stop invoicing manually",
   ADDON_NOT_BILLED_CATALOG_INVALID: "Add-on not billed (catalog setting invalid)",
