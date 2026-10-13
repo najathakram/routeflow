@@ -108,3 +108,125 @@ describe("checkDraftReferences: what counts as gone (ROW 447)", () => {
     expect(r.customerCleared).toBe(false);
   });
 });
+
+describe("checkDraftReferences: prices are re-resolved, not trusted (ROW 447)", () => {
+  const product = (over: Record<string, unknown> = {}) => ({
+    data: {
+      id: "p-1",
+      isActive: true,
+      name: "Widget",
+      pricePerUnit: "10",
+      priceTier2: "9",
+      priceTier3: "7.5",
+      averageCost: "4",
+      category: "Snacks",
+      unit: "each",
+      ...over,
+    },
+  });
+  const stored = (over: Record<string, unknown> = {}) => ({ ...line("p-1"), ...over });
+  const run = (
+    lines: Array<Record<string, unknown>>,
+    map: Record<string, Res>,
+    customer: Record<string, unknown> = {},
+  ) =>
+    checkDraftReferences(
+      sanitizeSnapshot({
+        basis: "standalone",
+        customer: { id: "c-1", businessName: "Acme Co", ...customer },
+        lines,
+      })!,
+      getter({ "/products/p-1": product(), ...map }),
+    );
+
+  it("a stored price that was not typed is replaced by the fresh list price, and counted", async () => {
+    const r = await run([stored({ unitPrice: 5 })], {});
+    expect(r.snapshot.lines[0].unitPrice).toBe(10);
+    expect(r.snapshot.lines[0].priceType).toBe("STANDARD");
+    expect(r.pricesUpdated).toBe(1);
+  });
+
+  it("a price the user typed (priceEdited) is kept and not counted", async () => {
+    const r = await run([stored({ unitPrice: 5, priceEdited: true, priceType: "MANUAL" })], {});
+    expect(r.snapshot.lines[0].unitPrice).toBe(5);
+    expect(r.snapshot.lines[0].priceEdited).toBe(true);
+    expect(r.pricesUpdated).toBe(0);
+  });
+
+  it("a catalog price change between save and restore is picked up", async () => {
+    const r = await run([stored({ unitPrice: 10 })], {
+      "/products/p-1": product({ pricePerUnit: "12" }),
+    });
+    expect(r.snapshot.lines[0].unitPrice).toBe(12);
+    expect(r.pricesUpdated).toBe(1);
+  });
+
+  it("an unchanged price shows no update", async () => {
+    const r = await run([stored({ unitPrice: 10 })], {});
+    expect(r.snapshot.lines[0].unitPrice).toBe(10);
+    expect(r.pricesUpdated).toBe(0);
+  });
+
+  it("a tier customer is priced on their ladder, as a fresh add would be", async () => {
+    const r = await run([stored({ unitPrice: 10 })], {}, { pricingTier: 3 });
+    const l = r.snapshot.lines[0];
+    expect(l.unitPrice).toBe(7.5);
+    expect(l.isSpecialPrice).toBe(true);
+    expect(l.regularPrice).toBe(10);
+    expect(l.priceType).toBe("SPECIAL");
+    expect(l.pricing).toMatchObject({ tierPrice: 7.5, listPrice: 10, isSpecialTier: true });
+    expect(r.pricesUpdated).toBe(1);
+  });
+
+  it("the customer's own price row wins over the ladder", async () => {
+    const r = await run([stored({ unitPrice: 10 })], {
+      "/customers/c-1/prices": {
+        data: [{ productId: "p-1", pricingTier: 2, product: product().data }],
+      },
+    });
+    expect(r.snapshot.lines[0].unitPrice).toBe(9);
+    expect(r.snapshot.lines[0].isSpecialPrice).toBe(true);
+  });
+
+  it("the cost used for the margin hint is the fresh one", async () => {
+    const r = await run([stored({ unitPrice: 10 })], {
+      "/products/p-1": product({ averageCost: "6" }),
+    });
+    expect(r.snapshot.lines[0].avgCost).toBe(6);
+  });
+
+  it("a product payload with no price cannot be re-resolved: the stored line is kept, uncounted", async () => {
+    const r = await run([stored({ unitPrice: 5 })], { "/products/p-1": { data: { id: "p-1" } } });
+    expect(r.snapshot.lines[0].unitPrice).toBe(5);
+    expect(r.pricesUpdated).toBe(0);
+  });
+
+  it("a network failure keeps the stored line unchanged", async () => {
+    const r = await run([stored({ unitPrice: 5 })], {
+      "/products/p-1": { reject: new Error("offline") },
+    });
+    expect(r.snapshot.lines[0].unitPrice).toBe(5);
+    expect(r.pricesUpdated).toBe(0);
+  });
+
+  it("a unit-level line that was not typed goes back to the fresh pack price", async () => {
+    const r = await run(
+      [
+        stored({
+          unitPrice: 1.5,
+          unitLabel: "Piece",
+          unit: "Piece",
+          qty: 4,
+          packBase: { unit: "each", qty: 2, listPrice: 9, unitPrice: 9, priceType: "STANDARD" },
+        }),
+      ],
+      {},
+    );
+    const l = r.snapshot.lines[0];
+    expect(l.unitPrice).toBe(10);
+    expect(l.unitLabel).toBeUndefined();
+    expect(l.packBase).toBeUndefined();
+    expect(l.qty).toBe(2);
+    expect(r.pricesUpdated).toBe(1);
+  });
+});

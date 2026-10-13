@@ -114,6 +114,7 @@ import { DecimalInput, MoneyInput } from "@/components/MoneyInput";
 import { ReadOnlyHint, WriteButton } from "@/lib/read-only-gate";
 import { getTenantCookie } from "@/lib/tenant-cookie";
 import { invoiceDraftKey } from "@/lib/invoice-draft-storage";
+import { catalogPricing } from "./invoice-catalog-price";
 import { useInvoiceDraft } from "./use-invoice-draft";
 import { checkDraftReferences } from "./invoice-draft-restore";
 import { InvoiceDraftBanner, draftNoticeCopy, draftSummary } from "./InvoiceDraftBanner";
@@ -1089,7 +1090,7 @@ export default function NewInvoicePage() {
           : [createEmptyItem()],
       );
       setErrors({});
-      setDraftNotice(draftNoticeCopy(r.droppedLines, r.customerCleared));
+      setDraftNotice(draftNoticeCopy(r.droppedLines, r.customerCleared, r.pricesUpdated));
       draft.resolveOffer();
     } finally {
       setDraftBusy(false);
@@ -1203,18 +1204,12 @@ export default function NewInvoicePage() {
   ) {
     const dflt = unitsOn && !!opts?.startOnDefaultUnit;
     const upb = boxedUnitsPerBox(product.unitsPerBox);
-    const listPrice = parseFloat(String(product.pricePerUnit ?? 0));
-    // Per-product tier override first, then the customer's own tier ladder —
-    // a Tier-3 customer previously billed at LIST on every catalog add here.
-    const customerTier = customer?.pricingTier ?? 1;
-    const tierLadderPrice = isSpecialTier(customerTier)
-      ? getTierPrice(product, customerTier)
-      : undefined;
-    const specialPrice: number | undefined = priceMap[product.id] ?? tierLadderPrice;
-    const effectivePrice =
-      specialPrice != null && Number.isFinite(specialPrice) && specialPrice !== listPrice
-        ? specialPrice
-        : listPrice;
+    const fresh = catalogPricing(product, {
+      customerTier: customer?.pricingTier ?? 1,
+      customerPrice: priceMap[product.id],
+      lineTier: tierFor(product.id),
+    });
+    const { listPrice, effectivePrice } = fresh;
 
     const seed = seedLineQty(upb, scanLevel);
     const lineItem: LineItemState = {
@@ -1231,7 +1226,7 @@ export default function NewInvoicePage() {
       taxable: false,
       regularPrice: effectivePrice !== listPrice ? listPrice : undefined,
       isSpecialPrice: effectivePrice !== listPrice,
-      pricing: saleLinePricing(product, tierFor(product.id)),
+      pricing: fresh.pricing,
       avgCost: product.averageCost ? parseFloat(String(product.averageCost)) : undefined,
       category: product.category ?? undefined,
       unitsPerBox: upb,
@@ -1240,13 +1235,7 @@ export default function NewInvoicePage() {
       unit: product.unit ?? "each",
       listPrice,
       priceType: effectivePrice !== listPrice ? "SPECIAL" : "STANDARD",
-      tierPrices: {
-        pricePerUnit: product.pricePerUnit,
-        priceTier2: product.priceTier2,
-        priceTier3: product.priceTier3,
-        priceTier4: product.priceTier4,
-        priceTier5: product.priceTier5,
-      },
+      tierPrices: fresh.tierPrices,
       startOnDefaultUnit: dflt || undefined,
       pendingTaps: dflt ? 1 : undefined,
     };

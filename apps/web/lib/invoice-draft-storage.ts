@@ -72,6 +72,8 @@ export interface InvoiceDraftLine {
   pricing?: { tierPrice: number; listPrice: number; isSpecialTier: boolean };
   packBase?: DraftPackBase;
   category?: string;
+  /** Set by a restore from the live product (cost is never stored in the draft). */
+  avgCost?: number;
 }
 
 export interface InvoiceDraftSnapshot {

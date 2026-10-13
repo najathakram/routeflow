@@ -10,12 +10,18 @@ import type { InvoiceDraftSnapshot } from "@/lib/invoice-draft-storage";
 export const DRAFT_BANNER_TITLE = "Restore unsaved invoice?";
 export const DRAFT_BANNER_LABEL = "Unsaved invoice";
 
-export function draftNoticeCopy(droppedLines: number, customerCleared: boolean): string | null {
+export function draftNoticeCopy(
+  droppedLines: number,
+  customerCleared: boolean,
+  pricesUpdated = 0,
+): string | null {
   const parts: string[] = [];
   if (droppedLines === 1) parts.push("1 item is no longer in your catalog and was left out.");
   else if (droppedLines > 1)
     parts.push(`${droppedLines} items are no longer in your catalog and were left out.`);
   if (customerCleared) parts.push("The customer is no longer available. Choose one to continue.");
+  if (pricesUpdated === 1) parts.push("1 price updated.");
+  else if (pricesUpdated > 1) parts.push(`${pricesUpdated} prices updated.`);
   return parts.length ? parts.join(" ") : null;
 }
 

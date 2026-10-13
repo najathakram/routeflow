@@ -306,6 +306,152 @@ describe("ROW 447 — unsaved new-invoice draft", () => {
     expect(screen.getByText("Acme Co")).toBeInTheDocument();
   });
 
+  describe("prices are re-resolved on restore (money)", () => {
+    const productRow = (over: Record<string, unknown> = {}) => ({
+      id: "p-1",
+      isActive: true,
+      name: "Widget",
+      pricePerUnit: "10",
+      priceTier3: "7.5",
+      ...over,
+    });
+    const serve = (product: Record<string, unknown>, prices: unknown[] = []) =>
+      mockGet.mockImplementation((url: string) => {
+        if (url === "/products/p-1") return Promise.resolve({ data: product });
+        if (url.endsWith("/prices")) return Promise.resolve({ data: prices });
+        return Promise.resolve({ data: {} });
+      });
+
+    it("a stale stored price is replaced by the current one, the total follows, and the page says so", async () => {
+      seed({
+        lines: [
+          {
+            productId: "p-1",
+            description: "Widget",
+            qty: 3,
+            unitPrice: 5,
+            discount: 0,
+            taxable: false,
+          },
+        ],
+      });
+      serve(productRow());
+      const user = userEvent.setup();
+      renderWithProviders(<NewInvoicePage />);
+      await user.click(await screen.findByRole("button", { name: "Restore" }));
+      expect(await screen.findByText("1 price updated.")).toBeInTheDocument();
+      expect(footerTotal()).toBe("$30.00"); // 3 x 10.00, not 3 x 5.00
+      expect(screen.getByDisplayValue(/^10(\.00)?$/)).toBeInTheDocument();
+    });
+
+    it("a price the user typed is kept, with no notice", async () => {
+      seed({
+        lines: [
+          {
+            productId: "p-1",
+            description: "Widget",
+            qty: 3,
+            unitPrice: 5,
+            discount: 0,
+            taxable: false,
+            priceEdited: true,
+            priceType: "MANUAL",
+          },
+        ],
+      });
+      serve(productRow());
+      const user = userEvent.setup();
+      renderWithProviders(<NewInvoicePage />);
+      await user.click(await screen.findByRole("button", { name: "Restore" }));
+      await screen.findByDisplayValue("Widget");
+      expect(footerTotal()).toBe("$15.00");
+      expect(screen.queryByText(/prices? updated/)).not.toBeInTheDocument();
+    });
+
+    it("an unchanged price shows no notice", async () => {
+      seed({
+        lines: [
+          {
+            productId: "p-1",
+            description: "Widget",
+            qty: 3,
+            unitPrice: 10,
+            discount: 0,
+            taxable: false,
+          },
+        ],
+      });
+      serve(productRow());
+      const user = userEvent.setup();
+      renderWithProviders(<NewInvoicePage />);
+      await user.click(await screen.findByRole("button", { name: "Restore" }));
+      await screen.findByDisplayValue("Widget");
+      expect(footerTotal()).toBe("$30.00");
+      expect(screen.queryByText(/prices? updated/)).not.toBeInTheDocument();
+    });
+
+    it("a tier customer restores at their tier price", async () => {
+      seed({
+        customer: { id: "cust-1", businessName: "Acme Co", pricingTier: 3 },
+        lines: [
+          {
+            productId: "p-1",
+            description: "Widget",
+            qty: 2,
+            unitPrice: 10,
+            discount: 0,
+            taxable: false,
+          },
+        ],
+      });
+      mockGet.mockImplementation((url: string) =>
+        url === "/products/p-1"
+          ? Promise.resolve({ data: productRow() })
+          : url === "/customers/cust-1"
+            ? Promise.resolve({ data: { id: "cust-1", businessName: "Acme Co", pricingTier: 3 } })
+            : Promise.resolve({ data: [] }),
+      );
+      const user = userEvent.setup();
+      renderWithProviders(<NewInvoicePage />);
+      await user.click(await screen.findByRole("button", { name: "Restore" }));
+      expect(await screen.findByText("1 price updated.")).toBeInTheDocument();
+      expect(footerTotal()).toBe("$15.00"); // 2 x 7.50
+    });
+
+    it("several lines are counted together", async () => {
+      seed({
+        lines: [
+          {
+            productId: "p-1",
+            description: "Widget",
+            qty: 1,
+            unitPrice: 1,
+            discount: 0,
+            taxable: false,
+          },
+          {
+            productId: "p-2",
+            description: "Gadget",
+            qty: 1,
+            unitPrice: 2,
+            discount: 0,
+            taxable: false,
+          },
+        ],
+      });
+      mockGet.mockImplementation((url: string) =>
+        url.startsWith("/products/")
+          ? Promise.resolve({ data: productRow({ id: url.slice(10) }) })
+          : Promise.resolve({ data: [] }),
+      );
+      const user = userEvent.setup();
+      renderWithProviders(<NewInvoicePage />);
+      await user.click(await screen.findByRole("button", { name: "Restore" }));
+      expect(await screen.findByText("2 prices updated.")).toBeInTheDocument();
+      expect(footerTotal()).toBe("$20.00");
+    });
+  });
+
   it("while the offer is open, typing in a fresh form does not overwrite the stored draft", async () => {
     seed({ reference: "ORIGINAL" });
     const user = userEvent.setup();

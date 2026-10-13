@@ -1,4 +1,6 @@
-import type { InvoiceDraftSnapshot } from "@/lib/invoice-draft-storage";
+import { getTierPrice } from "@routeflow/pricing";
+import type { InvoiceDraftLine, InvoiceDraftSnapshot } from "@/lib/invoice-draft-storage";
+import { catalogPricing } from "./invoice-catalog-price";
 
 /**
  * ROW 447: a stored draft names a customer and products by id. Ids are never trusted: before a restore keeps them the
@@ -11,6 +13,8 @@ export interface RestoreCheck {
   droppedLines: number;
   /** The customer no longer exists and was cleared. */
   customerCleared: boolean;
+  /** Lines (not typed by the user) whose price was re-resolved to a different value than the stored one. */
+  pricesUpdated: number;
 }
 
 type Get = (url: string) => Promise<{ data?: unknown }>;
@@ -34,6 +38,57 @@ export function isRetiredRow(data: unknown): boolean {
 const settledGone = (r: PromiseSettledResult<{ data?: unknown } | null>): boolean =>
   r.status === "rejected" ? isGone(r.reason) : isRetiredRow(r.value?.data);
 
+/**
+ * Re-price one catalog line exactly as adding the product fresh would (`catalogPricing`). The stored `unitPrice` survives
+ * ONLY when the user typed it (`priceEdited`): anything else is a catalog price that may be days old.
+ * A product payload with no usable price cannot be re-resolved, so that line is kept as stored (and not counted).
+ */
+export function repriceLine(
+  stored: InvoiceDraftLine,
+  product: any,
+  o: { customerTier: number; customerPrice?: number; lineTier: number },
+): { line: InvoiceDraftLine; updated: boolean } {
+  if (!product || !Number.isFinite(parseFloat(String(product.pricePerUnit)))) {
+    return { line: stored, updated: false };
+  }
+  const fresh = catalogPricing(product, o);
+  const typed = stored.priceEdited === true;
+  // A unit-level line (units_v1) has no ladder to rebuild from here: it returns to its pack, at the pack's own count.
+  const unitLevel = !!stored.unitLabel || !!stored.packBase;
+  const base: InvoiceDraftLine = { ...stored };
+  if (unitLevel && !typed) {
+    const pack = stored.packBase;
+    delete base.unitLabel;
+    delete base.packBase;
+    base.qty = pack?.qty ?? 1;
+    if (pack?.unitsPerBox !== undefined) base.unitsPerBox = pack.unitsPerBox;
+    if (pack?.boxes !== undefined) base.boxes = pack.boxes;
+    else delete base.boxes;
+    if (pack?.pieces !== undefined) base.pieces = pack.pieces;
+    else delete base.pieces;
+    if (pack?.sellBy) base.sellBy = pack.sellBy;
+  }
+  const line: InvoiceDraftLine = {
+    ...base,
+    unit: typeof product.unit === "string" && product.unit ? product.unit : (base.unit ?? "each"),
+    listPrice: fresh.listPrice,
+    pricing: fresh.pricing,
+    ...(product.averageCost ? { avgCost: parseFloat(String(product.averageCost)) } : {}),
+    ...(typeof product.category === "string" ? { category: product.category } : {}),
+  };
+  if (!typed) {
+    line.unitPrice = fresh.effectivePrice;
+    line.priceType = fresh.isSpecial ? "SPECIAL" : "STANDARD";
+    line.isSpecialPrice = fresh.isSpecial || undefined;
+    line.regularPrice = fresh.isSpecial ? fresh.listPrice : undefined;
+    delete line.priceEdited;
+  }
+  if (line.isSpecialPrice === undefined) delete line.isSpecialPrice;
+  if (line.regularPrice === undefined) delete line.regularPrice;
+  const updated = !typed && line.unitPrice !== stored.unitPrice;
+  return { line, updated };
+}
+
 export async function checkDraftReferences(
   snapshot: InvoiceDraftSnapshot,
   get: Get,
@@ -48,7 +103,6 @@ export async function checkDraftReferences(
     ...productIds.map((id) => get(`/products/${encodeURIComponent(id)}`)),
   ]);
   const gone = new Set(productIds.filter((_, i) => settledGone(productRes[i])));
-  const lines = snapshot.lines.filter((l) => !l.productId || !gone.has(l.productId));
   const customerCleared = !!snapshot.customer && settledGone(customerRes);
   let customer = customerCleared ? null : snapshot.customer;
   // A live customer row refreshes the fields the form reads (name, tier, default terms).
@@ -65,9 +119,55 @@ export async function checkDraftReferences(
       };
     }
   }
+  const customerTier = customer?.pricingTier ?? 1;
+
+  // The customer's per-product price rows, resolved through their tier like the page's own `priceMap`.
+  const customerPrice: Record<string, number> = {};
+  const lineTier: Record<string, number> = {};
+  if (customer) {
+    try {
+      const res = await get(`/customers/${encodeURIComponent(customer.id)}/prices`);
+      const rows = Array.isArray(res?.data) ? (res.data as Array<Record<string, unknown>>) : [];
+      for (const cp of rows) {
+        const pid = cp.productId;
+        if (typeof pid !== "string") continue;
+        const tier = typeof cp.pricingTier === "number" ? cp.pricingTier : customerTier;
+        lineTier[pid] = tier;
+        if (cp.product && typeof cp.product === "object") {
+          const price = getTierPrice(cp.product, tier);
+          if (Number.isFinite(price)) customerPrice[pid] = price;
+        }
+      }
+    } catch {
+      /* no per-customer rows: the tier ladder prices the lines */
+    }
+  }
+
+  const productById = new Map<string, unknown>();
+  productIds.forEach((id, i) => {
+    const r = productRes[i];
+    if (r.status === "fulfilled") productById.set(id, r.value?.data);
+  });
+  let pricesUpdated = 0;
+  const lines: InvoiceDraftLine[] = [];
+  for (const l of snapshot.lines) {
+    if (l.productId && gone.has(l.productId)) continue;
+    if (!l.productId || !productById.has(l.productId)) {
+      lines.push(l); // free-text line, or the product could not be checked (network)
+      continue;
+    }
+    const r = repriceLine(l, productById.get(l.productId), {
+      customerTier,
+      customerPrice: customerPrice[l.productId],
+      lineTier: lineTier[l.productId] ?? customerTier,
+    });
+    if (r.updated) pricesUpdated += 1;
+    lines.push(r.line);
+  }
   return {
     snapshot: { ...snapshot, customer, lines },
     droppedLines: snapshot.lines.length - lines.length,
     customerCleared,
+    pricesUpdated,
   };
 }
