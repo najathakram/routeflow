@@ -1,4 +1,6 @@
+import { BadRequestException } from "@nestjs/common";
 import type { FulfillPath } from "@prisma/client";
+import { API_ERROR_CODES } from "../common/api-error-codes";
 import type { SourceLines } from "./source-line";
 
 /** The ORIGINAL order a replay hands back (create()'s replay lookup includes its lines). */
@@ -32,9 +34,13 @@ export interface ReplayedOrder {
  *    is no override and passes. `undefined` (every other caller) and `true` change nothing.
  *  - `beforeWrite` (B1209): called with the SERVER-computed order total right after pricing and before any
  *    stock lock or transaction (never on a replay, never for a draft); a throw refuses with nothing written.
+ *  - `internalCustomerDraft` (F1 ii): INTERNAL only, never a DTO field. create() refuses a DRAFT from a CUSTOMER
+ *    principal (ORDER_DRAFT_STAFF_ONLY); the one caller that drafts under the buyer pseudo-user on purpose is the
+ *    not-on-truck change-request approval (a next-delivery draft), which sets this.
  */
 export interface CreateOrderOptions {
   skipAutoMerge?: boolean;
+  internalCustomerDraft?: boolean;
   allowArchived?: boolean;
   sourceLines?: SourceLines;
   fulfillPath?: FulfillPath;
@@ -42,4 +48,23 @@ export interface CreateOrderOptions {
   priceEditAllowed?: boolean;
   onReplay?: (order: ReplayedOrder) => void;
   beforeWrite?: (priced: { total: number }) => void | Promise<void>;
+}
+
+/**
+ * F1(ii): a CUSTOMER principal never starts a DRAFT order. A draft skips the selling-restrictions check until it
+ * is promoted, so a buyer-started one would be judged only at the promoter's channel. Called FIRST in
+ * `OrdersService.create`, the choke point no caller (controller, buyer module, internal caller) can go around.
+ * The buyer DTO already forbids `status: DRAFT`; the one internal caller that drafts under the buyer pseudo-user
+ * on purpose (the not-on-truck change-request approval) passes `internalCustomerDraft`.
+ */
+export function assertCustomerMayNotDraft(
+  status: string | null | undefined,
+  role: string | null | undefined,
+  options: CreateOrderOptions,
+): void {
+  if (status !== "DRAFT" || role !== "CUSTOMER" || options.internalCustomerDraft) return;
+  throw new BadRequestException({
+    code: API_ERROR_CODES.ORDER_DRAFT_STAFF_ONLY,
+    message: "Only staff can save an order as a draft.",
+  });
 }

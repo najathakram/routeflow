@@ -544,6 +544,7 @@ export class ChangeRequestsService {
       {
         skipAutoMerge: false,
         allowArchived: true,
+        internalCustomerDraft: true, // F1(ii): the one deliberate draft under the buyer pseudo-user
         ...(sourceItem
           ? {
               sourceLines: {
