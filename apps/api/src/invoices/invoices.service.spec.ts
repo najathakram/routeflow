@@ -1092,6 +1092,40 @@ describe("InvoicesService", () => {
       const createCall = prisma.invoice.create.mock.calls[0][0];
       expect(createCall.data.taxAmount).toBe(0);
     });
+
+    it("create({send:true}) whose send fails with EMAIL_SEND_FAILED names the kept DRAFT's id (row 448)", async () => {
+      prisma.customer.findUnique.mockResolvedValue({ id: "cust-1", businessName: "Acme" });
+      prisma.product.findMany.mockResolvedValue([]);
+      jest.spyOn(service as any, "resolveTenantInvoiceDefaults").mockResolvedValue({
+        notes: null,
+        terms: null,
+      });
+      prisma.invoice.create.mockResolvedValue({
+        id: "inv-kept",
+        taxAmount: 0,
+        total: 100,
+        customer: { id: "cust-1" },
+        items: [],
+        payments: [],
+      });
+      jest
+        .spyOn(service, "send")
+        .mockRejectedValueOnce(
+          new BadRequestException({ code: "EMAIL_SEND_FAILED", message: "boom" }),
+        );
+
+      await expect(
+        service.create({
+          customerId: "cust-1",
+          send: true,
+          items: [{ description: "Widget", qty: 1, unitPrice: 100 }],
+        } as any),
+      ).rejects.toMatchObject({
+        response: { code: "EMAIL_SEND_FAILED", invoiceId: "inv-kept" },
+      });
+      // The draft is NOT rolled back: it was created and nothing deletes it.
+      expect(prisma.invoice.create).toHaveBeenCalledTimes(1);
+    });
   });
 
   // ─── Pending-mirror reconcile ──────────────────────────────────────────────
