@@ -398,7 +398,7 @@ describe("U: the picker", () => {
     const { user } = await open("other");
     await scan(user, BOXED);
     expect(await screen.findByText(/Couldn't load the selling units/)).toBeInTheDocument();
-    expect(screen.getByTitle("Boxes")).toBeDisabled();
+    expect(screen.getByTitle("Boxes")).toHaveAttribute("readonly"); // read-only while pending: keeps focus (apple-ux 2026-10-13)
     await saveDraft(user);
     expect(createInvoiceMutate).not.toHaveBeenCalled();
     mockLadderFail = false;
@@ -440,6 +440,50 @@ describe("U: the picker", () => {
     await pick(user, "Soda", "");
     expect(screen.getByTitle("Boxes")).toHaveValue(1);
     expect(screen.getByTitle("Extra pieces")).toHaveValue(6);
+  });
+});
+
+describe("K: keyboard entry after a unit pick (apple-ux 2026-10-13, SA MUST A/B)", () => {
+  it("K1: Tab into the price and type 2: the price is 2.00, never 272.00 (the field's text is replaced)", async () => {
+    const { user } = await open("other");
+    await scan(user, BOXED);
+    await pick(user, "Soda", "Case");
+    const count = await screen.findByLabelText(/^case count$/i);
+    await waitFor(() => expect(count).not.toHaveAttribute("readonly"));
+    await user.click(count);
+    await user.tab();
+    const price = screen.getByLabelText("Unit price");
+    expect(price).toHaveFocus();
+    await user.keyboard("2");
+    expect(price).toHaveValue("2");
+    await saveDraft(user);
+    expect(posted()[0]).toMatchObject({ unitLabel: "Case", unitPrice: 2 });
+  });
+
+  it("K2: Tab from the picker into the count and type 3: the count is 3, never 13", async () => {
+    const { user } = await open("other");
+    await scan(user, BOXED);
+    await pick(user, "Soda", "Case");
+    const count = await screen.findByLabelText(/^case count$/i);
+    await waitFor(() => expect(count).not.toHaveAttribute("readonly"));
+    (await pickerOf("Soda")).focus();
+    await user.tab();
+    expect(count).toHaveFocus();
+    await user.keyboard("3");
+    expect(count).toHaveValue("3");
+  });
+
+  it("K3: the Qty cell names the unit beside the count (vocabulary helper): '2 Cases' and '24 pcs'", async () => {
+    const { user } = await open("other");
+    await scan(user, BOXED);
+    await pick(user, "Soda", "Case");
+    const count = await screen.findByLabelText(/^case count$/i);
+    await waitFor(() => expect(count).not.toHaveAttribute("readonly"));
+    await typeInto(user, count, "2");
+    const cell = count.closest("[data-testid='level-count']") as HTMLElement;
+    expect(cell).not.toBeNull();
+    expect(within(cell).getByText("Cases")).toBeInTheDocument(); // plural() from the vocabulary helper
+    expect(within(cell).getByText(/24 pcs/)).toBeInTheDocument();
   });
 });
 

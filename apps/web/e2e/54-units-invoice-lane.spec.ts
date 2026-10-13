@@ -170,6 +170,59 @@ test.describe("Units v1 — the invoice unit picker (VU-4a)", () => {
     expect(Number(inv.items[0].subtotal)).toBe(48);
   });
 
+  test("keyboard: Tab from Case to the count and the price; typed digits REPLACE (2 Cases at $2.00, never 272.00)", async ({
+    page,
+  }) => {
+    await openBuilder(page, /other charge \(a fee or correction with no order\)/i);
+    await addFixtureProduct(page); // defaults to Case (the fixture's default selling unit)
+    await expect(picker(page)).toHaveValue("Case");
+    const count = page.getByLabel("Case count");
+    const price = page.getByLabel("Unit price");
+    await expect(count).not.toHaveAttribute("readonly"); // the line's unit ladder has resolved
+    await picker(page).focus();
+    await page.keyboard.press("Tab");
+    await expect(count).toBeFocused();
+    await page.keyboard.type("2");
+    await expect(count).toHaveValue("2");
+    await page.keyboard.press("Tab");
+    await expect(price).toBeFocused();
+    await page.keyboard.type("2");
+    await expect(price).toHaveValue("2");
+    await expect(page.getByText("= $4.00")).toBeVisible(); // 2 Cases x $2.00
+    // The Qty cell names the unit beside the count (vocabulary helper), with the piece total under it.
+    const cell = page.getByTestId("level-count");
+    await expect(cell).toContainText("Cases");
+    await expect(cell).toContainText("24 pcs");
+    await page.screenshot({ path: "test-results/vu4a-case-word-keyboard-1440.png" });
+  });
+
+  test("keyboard: typeahead Case on a loose product, Tab twice, type 2: the late Case price is REPLACED (2.00, never 272.00)", async ({
+    page,
+  }) => {
+    // apple-ux 2026-10-13: the Case price resolves asynchronously; focus can reach the price field first.
+    await openBuilder(page, /new sale/i);
+    const scan = page.getByPlaceholder(/scan barcode, or type product name/i);
+    await scan.fill("E2E Fixture Units Widget"); // loose (no pack), Piece $2.00 + Case x12 $21.00 (e2e-seed)
+    await page.keyboard.press("Enter");
+    const units = page.getByRole("combobox", { name: "Sell E2E Fixture Units Widget by" });
+    await expect(units).toBeVisible({ timeout: 15_000 });
+    await units.focus();
+    await page.keyboard.type("Case"); // typeahead on the closed select, like the walker
+    await page.keyboard.press("Tab");
+    await page.keyboard.press("Tab");
+    const price = page.getByLabel("Unit price");
+    // Read-only (never disabled) while the Case resolves, so focus stays here; the late price lands SELECTED.
+    await expect(price).toBeFocused();
+    await expect(price).not.toHaveAttribute("readonly");
+    await expect(price).toHaveValue("21.00");
+    await expect(price).toBeFocused();
+    await page.keyboard.type("2");
+    await expect(price).toHaveValue("2");
+    await page.keyboard.press("Tab");
+    await expect(price).toHaveValue("2.00");
+    await expect(page.getByText("= $2.00")).toBeVisible(); // 1 Case x $2.00
+  });
+
   for (const [name, width, height] of [
     ["1440", 1440, 900],
     ["768", 768, 1024],

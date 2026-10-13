@@ -74,6 +74,7 @@ import {
   perUnitPrice,
   pendingScanDecision,
   pillLabel,
+  plural,
   unitWords,
   type SellLevel,
 } from "@routeflow/pricing";
@@ -737,16 +738,23 @@ function LevelCount({
   const units = useProductUnits(item.productId ?? "", enabled && !!item.productId);
   const factor = units.data?.find((u) => u.label === item.unitLabel)?.factorToBase ?? 0;
   return (
-    <div className="flex flex-col gap-0.5">
-      <DecimalInput
-        decimals={0}
-        min={0}
-        disabled={locked}
-        aria-label={`${item.unitLabel} count`}
-        value={item.qty}
-        onChange={(v) => onCount(Math.max(0, Math.trunc(v ?? 0)))}
-        className="h-9 rounded border border-surface-border bg-white px-2 text-right text-sm text-navy focus:border-transparent focus:outline-none focus:ring-1 focus:ring-brand-500"
-      />
+    <div className="flex flex-col gap-0.5" data-testid="level-count">
+      <div className="flex items-center gap-1">
+        <DecimalInput
+          decimals={0}
+          min={0}
+          readOnly={locked}
+          aria-disabled={locked || undefined}
+          aria-label={`${item.unitLabel} count`}
+          value={item.qty}
+          onChange={(v) => onCount(Math.max(0, Math.trunc(v ?? 0)))}
+          className="h-9 min-w-0 flex-1 rounded border border-surface-border bg-white px-2 text-right text-sm text-navy focus:border-transparent focus:outline-none focus:ring-1 focus:ring-brand-500 aria-disabled:opacity-60"
+        />
+        {/* The unit the count is in, worded by the vocabulary helper (apple-ux 2026-10-13: Qty never said "Case"). */}
+        <span className="shrink-0 text-xs text-navy/70">
+          {plural(item.unitLabel ?? "", item.qty)}
+        </span>
+      </div>
       {factor > 1 && (
         <span className="text-right text-[9px] text-navy/30">
           {item.qty * factor} {unitWords().baseShortFor(item.qty * factor)}
@@ -2200,8 +2208,9 @@ export default function NewInvoicePage() {
                               setLineUnitQty(item.key, parseInt(e.target.value, 10) || 0)
                             }
                             onFocus={(e) => e.target.select()}
-                            className="w-full rounded border border-surface-border bg-white px-1 py-1 text-center text-xs font-semibold text-navy focus:border-transparent focus:outline-none focus:ring-1 focus:ring-brand-500"
-                            disabled={!!pendingUnitOf(item)}
+                            className="aria-disabled:opacity-60 w-full rounded border border-surface-border bg-white px-1 py-1 text-center text-xs font-semibold text-navy focus:border-transparent focus:outline-none focus:ring-1 focus:ring-brand-500"
+                            readOnly={!!pendingUnitOf(item)}
+                            aria-disabled={!!pendingUnitOf(item) || undefined}
                             title={`Total ${w.base.lowerOther}`}
                           />
                           <span className="text-[9px] text-navy/30 text-right">
@@ -2224,8 +2233,9 @@ export default function NewInvoicePage() {
                                 });
                               }}
                               onFocus={(e) => e.target.select()}
-                              className="w-8 rounded border border-surface-border bg-white px-1 py-1 text-center text-xs font-semibold text-navy focus:border-transparent focus:outline-none focus:ring-1 focus:ring-brand-500"
-                              disabled={!!pendingUnitOf(item)}
+                              className="aria-disabled:opacity-60 w-8 rounded border border-surface-border bg-white px-1 py-1 text-center text-xs font-semibold text-navy focus:border-transparent focus:outline-none focus:ring-1 focus:ring-brand-500"
+                              readOnly={!!pendingUnitOf(item)}
+                              aria-disabled={!!pendingUnitOf(item) || undefined}
                               title={w.pack.other}
                             />
                             <span className="text-[10px] text-navy/70">{w.pack.lower} +</span>
@@ -2243,8 +2253,9 @@ export default function NewInvoicePage() {
                                 });
                               }}
                               onFocus={(e) => e.target.select()}
-                              className="w-8 rounded border border-surface-border bg-white px-1 py-1 text-center text-xs font-semibold text-navy focus:border-transparent focus:outline-none focus:ring-1 focus:ring-brand-500"
-                              disabled={!!pendingUnitOf(item)}
+                              className="aria-disabled:opacity-60 w-8 rounded border border-surface-border bg-white px-1 py-1 text-center text-xs font-semibold text-navy focus:border-transparent focus:outline-none focus:ring-1 focus:ring-brand-500"
+                              readOnly={!!pendingUnitOf(item)}
+                              aria-disabled={!!pendingUnitOf(item) || undefined}
                               title={`Extra ${w.base.lowerOther}`}
                             />
                           </div>
@@ -2257,10 +2268,11 @@ export default function NewInvoicePage() {
                       <DecimalInput
                         decimals={3}
                         min={0}
-                        disabled={!!pendingUnitOf(item)}
+                        readOnly={!!pendingUnitOf(item)}
+                        aria-disabled={!!pendingUnitOf(item) || undefined}
                         value={item.qty}
                         onChange={(v) => updateItem(item.key, { qty: v ?? 0 })}
-                        className="h-9 rounded border border-surface-border bg-white px-2 text-right text-sm text-navy focus:border-transparent focus:outline-none focus:ring-1 focus:ring-brand-500"
+                        className="h-9 rounded border border-surface-border bg-white px-2 text-right text-sm text-navy focus:border-transparent focus:outline-none focus:ring-1 focus:ring-brand-500 aria-disabled:opacity-60"
                       />
                     )}
 
@@ -2275,9 +2287,10 @@ export default function NewInvoicePage() {
                         min={0}
                         value={item.unitPrice}
                         onChange={(v) => setLinePrice(item.key, v ?? 0)}
-                        disabled={!!pendingUnitOf(item)}
+                        readOnly={!!pendingUnitOf(item)}
+                        aria-disabled={!!pendingUnitOf(item) || undefined}
                         aria-label="Unit price"
-                        className="h-9 w-full rounded border border-surface-border bg-white px-2 text-right text-sm text-navy focus:border-transparent focus:outline-none focus:ring-1 focus:ring-brand-500"
+                        className="h-9 w-full rounded border border-surface-border bg-white px-2 text-right text-sm text-navy focus:border-transparent focus:outline-none focus:ring-1 focus:ring-brand-500 aria-disabled:opacity-60"
                       />
                       {/* #2696(c) SA-558e: off the customer's special price ⇒ a reason, as the
                           server requires on a sale (pricing's decideStaffOverride). */}

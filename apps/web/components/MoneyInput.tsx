@@ -79,18 +79,40 @@ export const DecimalInput = React.forwardRef<HTMLInputElement, DecimalInputProps
     const [text, setText] = React.useState(value == null ? "" : value.toFixed(decimals));
     const focusedRef = React.useRef(false);
     const valueAtFocusRef = React.useRef<number | null>(null);
+    // True once the user has typed since focusing: their text is never overwritten from outside.
+    const typedRef = React.useRef(false);
+    const reselectRef = React.useRef(false);
+    const innerRef = React.useRef<HTMLInputElement | null>(null);
+    const setRefs = (el: HTMLInputElement | null) => {
+      innerRef.current = el;
+      if (typeof ref === "function") ref(el);
+      else if (ref) (ref as React.MutableRefObject<HTMLInputElement | null>).current = el;
+    };
 
-    // Echo external value changes into the text ONLY while unfocused — this is
-    // what replaces the old reformat-on-every-render/useEffect behavior.
+    // Echo external value changes into the text while unfocused (this replaces the old
+    // reformat-on-every-render behavior). While FOCUSED, only when the user has not typed yet: a
+    // value that lands after focus (an async unit-price pick) is shown and re-selected, so the next
+    // digit replaces it instead of appending to stale or hidden text (apple-ux 2026-10-13: 272.00).
     React.useEffect(() => {
-      if (focusedRef.current) return;
+      if (focusedRef.current && typedRef.current) return;
       const current = text === "" ? null : parseFloat(text);
       const same =
         (value == null && current == null) ||
         (value != null && current != null && Math.abs(current - value) < 1e-9);
-      if (!same) setText(value == null ? "" : value.toFixed(decimals));
+      if (same) return;
+      setText(value == null ? "" : value.toFixed(decimals));
+      if (focusedRef.current) {
+        valueAtFocusRef.current = value;
+        reselectRef.current = selectOnFocus;
+      }
       // eslint-disable-next-line react-hooks/exhaustive-deps
     }, [value, decimals]);
+    React.useLayoutEffect(() => {
+      if (!reselectRef.current) return;
+      reselectRef.current = false;
+      const el = innerRef.current;
+      if (el && document.activeElement === el) el.select();
+    }, [text]);
 
     const clamp = (n: number): number => {
       let v = n;
@@ -101,17 +123,19 @@ export const DecimalInput = React.forwardRef<HTMLInputElement, DecimalInputProps
 
     return (
       <input
-        ref={ref}
+        ref={setRefs}
         type="text"
         inputMode="decimal"
         autoComplete="off"
         value={text}
         onFocus={(e) => {
           focusedRef.current = true;
+          typedRef.current = false;
           valueAtFocusRef.current = value;
           if (selectOnFocus) e.currentTarget.select();
         }}
         onChange={(e) => {
+          typedRef.current = true;
           const sanitized = sanitizeDecimalText(e.target.value, decimals, allowNegative);
           setText(sanitized);
           const parsed = sanitized === "" || sanitized === "-" ? null : parseFloat(sanitized);
@@ -124,6 +148,7 @@ export const DecimalInput = React.forwardRef<HTMLInputElement, DecimalInputProps
         }}
         onBlur={() => {
           focusedRef.current = false;
+          typedRef.current = false;
           const parsed = text === "" || text === "-" ? null : parseFloat(text);
           if (parsed == null || Number.isNaN(parsed)) {
             setText(value == null ? "" : value.toFixed(decimals));
