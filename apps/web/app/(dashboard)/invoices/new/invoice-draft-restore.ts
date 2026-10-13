@@ -1,4 +1,6 @@
 import { getTierPrice } from "@routeflow/pricing";
+import type { ProductUnitLevel } from "@routeflow/types";
+import { buildUnitOptions } from "@/lib/unit-options";
 import type { InvoiceDraftLine, InvoiceDraftSnapshot } from "@/lib/invoice-draft-storage";
 import { catalogPricing } from "./invoice-catalog-price";
 
@@ -15,6 +17,8 @@ export interface RestoreCheck {
   customerCleared: boolean;
   /** Lines (not typed by the user) whose price was re-resolved to a different value than the stored one. */
   pricesUpdated: number;
+  /** Unit-level lines left out because the product no longer offers that unit: the user re-enters them. */
+  unitsDropped: number;
 }
 
 type Get = (url: string) => Promise<{ data?: unknown }>;
@@ -38,43 +42,64 @@ export function isRetiredRow(data: unknown): boolean {
 const settledGone = (r: PromiseSettledResult<{ data?: unknown } | null>): boolean =>
   r.status === "rejected" ? isGone(r.reason) : isRetiredRow(r.value?.data);
 
+/** What the ladder read (`/products/:id/units`) said for a product with a unit-level line. */
+export type UnitLadder =
+  { kind: "ok"; levels: ProductUnitLevel[] } | { kind: "gone" } | { kind: "unchecked" };
+
+interface Resolved {
+  /** null = the line cannot be kept (its unit is no longer offered). */
+  line: InvoiceDraftLine | null;
+  updated: boolean;
+  unitDropped?: boolean;
+}
+
 /**
  * Re-price one catalog line exactly as adding the product fresh would (`catalogPricing`). The stored `unitPrice` survives
  * ONLY when the user typed it (`priceEdited`): anything else is a catalog price that may be days old.
  * A product payload with no usable price cannot be re-resolved, so that line is kept as stored (and not counted).
+ *
+ * A unit-level line (units_v1) keeps its unit AND its typed count: only the unit's price is re-resolved from the fresh
+ * ladder. A unit the product no longer offers drops the line (`line: null`); an unreadable ladder keeps it as stored.
  */
 export function repriceLine(
   stored: InvoiceDraftLine,
   product: any,
-  o: { customerTier: number; customerPrice?: number; lineTier: number },
-): { line: InvoiceDraftLine; updated: boolean } {
+  o: { customerTier: number; customerPrice?: number; lineTier: number; ladder?: UnitLadder },
+): Resolved {
   if (!product || !Number.isFinite(parseFloat(String(product.pricePerUnit)))) {
     return { line: stored, updated: false };
   }
   const fresh = catalogPricing(product, o);
   const typed = stored.priceEdited === true;
-  // A unit-level line (units_v1) has no ladder to rebuild from here: it returns to its pack, at the pack's own count.
-  const unitLevel = !!stored.unitLabel || !!stored.packBase;
-  const base: InvoiceDraftLine = { ...stored };
-  if (unitLevel && !typed) {
-    const pack = stored.packBase;
-    delete base.unitLabel;
-    delete base.packBase;
-    base.qty = pack?.qty ?? 1;
-    if (pack?.unitsPerBox !== undefined) base.unitsPerBox = pack.unitsPerBox;
-    if (pack?.boxes !== undefined) base.boxes = pack.boxes;
-    else delete base.boxes;
-    if (pack?.pieces !== undefined) base.pieces = pack.pieces;
-    else delete base.pieces;
-    if (pack?.sellBy) base.sellBy = pack.sellBy;
-  }
-  const line: InvoiceDraftLine = {
-    ...base,
-    unit: typeof product.unit === "string" && product.unit ? product.unit : (base.unit ?? "each"),
-    listPrice: fresh.listPrice,
+  const common: Partial<InvoiceDraftLine> = {
     pricing: fresh.pricing,
     ...(product.averageCost ? { avgCost: parseFloat(String(product.averageCost)) } : {}),
     ...(typeof product.category === "string" ? { category: product.category } : {}),
+  };
+
+  if (stored.unitLabel) {
+    const ladder = o.ladder;
+    if (!ladder || ladder.kind === "unchecked") return { line: stored, updated: false };
+    if (ladder.kind === "gone") return { line: null, updated: false, unitDropped: true };
+    const want = stored.unitLabel.trim().toLowerCase();
+    const opt = buildUnitOptions(product, ladder.levels, o.lineTier).find(
+      (x) => x.value.trim().toLowerCase() === want,
+    );
+    if (!opt) return { line: null, updated: false, unitDropped: true };
+    const line: InvoiceDraftLine = { ...stored, ...common, listPrice: opt.listPrice };
+    if (!typed) {
+      line.unitPrice = opt.price;
+      line.priceType = opt.price !== opt.listPrice ? "SPECIAL" : "STANDARD";
+      delete line.priceEdited;
+    }
+    return { line, updated: !typed && line.unitPrice !== stored.unitPrice };
+  }
+
+  const line: InvoiceDraftLine = {
+    ...stored,
+    ...common,
+    unit: typeof product.unit === "string" && product.unit ? product.unit : (stored.unit ?? "each"),
+    listPrice: fresh.listPrice,
   };
   if (!typed) {
     line.unitPrice = fresh.effectivePrice;
@@ -85,8 +110,7 @@ export function repriceLine(
   }
   if (line.isSpecialPrice === undefined) delete line.isSpecialPrice;
   if (line.regularPrice === undefined) delete line.regularPrice;
-  const updated = !typed && line.unitPrice !== stored.unitPrice;
-  return { line, updated };
+  return { line, updated: !typed && line.unitPrice !== stored.unitPrice };
 }
 
 export async function checkDraftReferences(
@@ -148,7 +172,32 @@ export async function checkDraftReferences(
     const r = productRes[i];
     if (r.status === "fulfilled") productById.set(id, r.value?.data);
   });
+  // The ladder is read only for products that have a unit-level line.
+  const unitProductIds = [
+    ...new Set(
+      snapshot.lines
+        .filter((l) => l.unitLabel && l.productId && productById.has(l.productId))
+        .map((l) => l.productId as string),
+    ),
+  ];
+  const ladders = new Map<string, UnitLadder>();
+  await Promise.all(
+    unitProductIds.map(async (id) => {
+      try {
+        const res = await get(`/products/${encodeURIComponent(id)}/units`);
+        ladders.set(
+          id,
+          Array.isArray(res?.data)
+            ? { kind: "ok", levels: res.data as ProductUnitLevel[] }
+            : { kind: "unchecked" },
+        );
+      } catch (err) {
+        ladders.set(id, isGone(err) ? { kind: "gone" } : { kind: "unchecked" });
+      }
+    }),
+  );
   let pricesUpdated = 0;
+  let unitsDropped = 0;
   const lines: InvoiceDraftLine[] = [];
   for (const l of snapshot.lines) {
     if (l.productId && gone.has(l.productId)) continue;
@@ -160,14 +209,17 @@ export async function checkDraftReferences(
       customerTier,
       customerPrice: customerPrice[l.productId],
       lineTier: lineTier[l.productId] ?? customerTier,
+      ladder: ladders.get(l.productId),
     });
+    if (r.unitDropped) unitsDropped += 1;
     if (r.updated) pricesUpdated += 1;
-    lines.push(r.line);
+    if (r.line) lines.push(r.line);
   }
   return {
     snapshot: { ...snapshot, customer, lines },
-    droppedLines: snapshot.lines.length - lines.length,
+    droppedLines: snapshot.lines.length - lines.length - unitsDropped,
     customerCleared,
     pricesUpdated,
+    unitsDropped,
   };
 }

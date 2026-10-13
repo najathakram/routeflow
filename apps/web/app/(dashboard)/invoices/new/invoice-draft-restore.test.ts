@@ -209,24 +209,75 @@ describe("checkDraftReferences: prices are re-resolved, not trusted (ROW 447)", 
     expect(r.pricesUpdated).toBe(0);
   });
 
-  it("a unit-level line that was not typed goes back to the fresh pack price", async () => {
-    const r = await run(
-      [
-        stored({
-          unitPrice: 1.5,
-          unitLabel: "Piece",
-          unit: "Piece",
-          qty: 4,
-          packBase: { unit: "each", qty: 2, listPrice: 9, unitPrice: 9, priceType: "STANDARD" },
-        }),
-      ],
-      {},
-    );
-    const l = r.snapshot.lines[0];
-    expect(l.unitPrice).toBe(10);
-    expect(l.unitLabel).toBeUndefined();
-    expect(l.packBase).toBeUndefined();
-    expect(l.qty).toBe(2);
-    expect(r.pricesUpdated).toBe(1);
+  describe("unit-level lines keep their unit and quantity (units_v1)", () => {
+    const level = (over: Record<string, unknown> = {}) => ({
+      id: "u-1",
+      label: "Half case",
+      factorToBase: 6,
+      price: "55",
+      priceTier2: null,
+      priceTier3: null,
+      priceTier4: null,
+      priceTier5: null,
+      isDefaultSelling: false,
+      sortOrder: 1,
+      ...over,
+    });
+    const unitLine = (over: Record<string, unknown> = {}) =>
+      stored({
+        unitPrice: 50,
+        unitLabel: "Half case",
+        unit: "Half case",
+        qty: 3,
+        listPrice: 50,
+        packBase: { unit: "each", qty: 1, listPrice: 10, unitPrice: 10, priceType: "STANDARD" },
+        ...over,
+      });
+
+    it("the unit and the typed count are kept, only the price is re-resolved from the ladder", async () => {
+      const r = await run([unitLine()], { "/products/p-1/units": { data: [level()] } });
+      const l = r.snapshot.lines[0];
+      expect(l.qty).toBe(3); // not the pack's old count
+      expect(l.unitLabel).toBe("Half case");
+      expect(l.unit).toBe("Half case");
+      expect(l.unitPrice).toBe(55);
+      expect(l.listPrice).toBe(55);
+      expect(r.pricesUpdated).toBe(1);
+    });
+
+    it("a typed unit price is kept", async () => {
+      const r = await run([unitLine({ priceEdited: true, priceType: "MANUAL", unitPrice: 48 })], {
+        "/products/p-1/units": { data: [level()] },
+      });
+      expect(r.snapshot.lines[0].unitPrice).toBe(48);
+      expect(r.snapshot.lines[0].qty).toBe(3);
+      expect(r.pricesUpdated).toBe(0);
+    });
+
+    it("a unit the product no longer offers drops the line and is counted", async () => {
+      const r = await run([unitLine(), stored()], {
+        "/products/p-1/units": { data: [level({ label: "Quarter case" })] },
+      });
+      expect(r.snapshot.lines).toHaveLength(1);
+      expect(r.snapshot.lines[0].unitLabel).toBeUndefined();
+      expect(r.unitsDropped).toBe(1);
+      expect(r.droppedLines).toBe(0); // it is not a missing product
+    });
+
+    it("a refused ladder read (units switched off) drops the unit line too", async () => {
+      const r = await run([unitLine()], { "/products/p-1/units": status(403) });
+      expect(r.snapshot.lines).toHaveLength(0);
+      expect(r.unitsDropped).toBe(1);
+    });
+
+    it("a network failure on the ladder keeps the unit line as stored", async () => {
+      const r = await run([unitLine()], {
+        "/products/p-1/units": { reject: new Error("offline") },
+      });
+      expect(r.snapshot.lines[0].unitPrice).toBe(50);
+      expect(r.snapshot.lines[0].qty).toBe(3);
+      expect(r.unitsDropped).toBe(0);
+      expect(r.pricesUpdated).toBe(0);
+    });
   });
 });

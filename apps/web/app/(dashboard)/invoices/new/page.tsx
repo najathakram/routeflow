@@ -1099,7 +1099,9 @@ export default function NewInvoicePage() {
           : [createEmptyItem()],
       );
       setErrors({});
-      setDraftNotice(draftNoticeCopy(r.droppedLines, r.customerCleared, r.pricesUpdated));
+      setDraftNotice(
+        draftNoticeCopy(r.droppedLines, r.customerCleared, r.pricesUpdated, r.unitsDropped),
+      );
       setDraftRestored(true);
       draft.resolveOffer();
     } finally {

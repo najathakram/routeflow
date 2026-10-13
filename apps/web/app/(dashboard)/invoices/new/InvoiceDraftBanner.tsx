@@ -18,12 +18,19 @@ export function draftNoticeCopy(
   droppedLines: number,
   customerCleared: boolean,
   pricesUpdated = 0,
+  unitsDropped = 0,
 ): string | null {
   const parts: string[] = [];
   if (droppedLines === 1) parts.push("1 item is no longer in your catalog and was left out.");
   else if (droppedLines > 1)
     parts.push(`${droppedLines} items are no longer in your catalog and were left out.`);
   if (customerCleared) parts.push("The customer is no longer available. Choose one to continue.");
+  if (unitsDropped === 1)
+    parts.push("1 line needs to be re-entered because its unit is no longer offered.");
+  else if (unitsDropped > 1)
+    parts.push(
+      `${unitsDropped} lines need to be re-entered because their units are no longer offered.`,
+    );
   if (pricesUpdated === 1) parts.push("1 price updated.");
   else if (pricesUpdated > 1) parts.push(`${pricesUpdated} prices updated.`);
   return parts.length ? parts.join(" ") : null;
