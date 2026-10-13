@@ -51,12 +51,22 @@ for (const vp of VIEWPORTS) {
       await noHorizontalScroll(page);
       await digest.click();
       await expect(page).toHaveURL(/tab=notifications/);
+      // the deep link LANDS on its card, not just the tab (the hash scroll runs on tab screens too)
+      await expect(page).toHaveURL(/#low-stock-digest$/);
+      await expect(page.locator("#low-stock-digest")).toBeInViewport({ timeout: 10_000 });
       if (vp.width >= 1280) {
         await expect(rail.getByTestId("settings-row-notifications")).toHaveAttribute(
           "aria-current",
           "page",
         );
       }
+
+      // a second deep link, into Business profile: lands on the time zone field
+      await page.goto("/settings");
+      await page.getByLabel("Search settings").fill("time zone");
+      await results.getByRole("link", { name: /Time zone/ }).click();
+      await expect(page).toHaveURL(/tab=profile#settings-timezone$/);
+      await expect(page.locator("#settings-timezone")).toBeInViewport({ timeout: 10_000 });
 
       await page.goto("/settings");
       await page.getByLabel("Search settings").fill("zzzzqq");
