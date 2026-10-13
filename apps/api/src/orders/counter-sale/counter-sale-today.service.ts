@@ -9,7 +9,8 @@ import {
   startOfCalendarDay,
   startOfLocalDay,
 } from "../../common/calendar-date";
-import { tenantTimeZone } from "../../common/tenant-time-zone";
+import { resolveTenantZone, resolveZone } from "../../common/tenant-time-zone";
+import { configuredTaxRatePercent } from "../../common/tax-rate";
 import { PrismaService } from "../../prisma/prisma.service";
 import type { CounterSaleTodayDto } from "./counter-sale-today.dto";
 import {
@@ -17,24 +18,28 @@ import {
   counterSalesWhere,
   creditNotesInWindowWhere,
   foldSummary,
+  handOverCandidateSelect,
+  handOverCandidatesWhere,
+  handOverPayments,
   liveCounterSalesWhere,
   pageQuery,
   paidOnDaysSalesWhere,
+  salePaymentSelect,
   salePaymentsWhere,
+  toHandOverRows,
   toTodaysSaleRow,
   windowReturnsWhere,
   type TodayOrderRecord,
 } from "./counter-sale-today";
+import { groupWindowPayments } from "./window-payment-groups";
 
-/** The zone the window is cut in: the tenant's, or UTC when it has none or an unknown one (the helpers' own fallback). */
-function effectiveZone(tz: string | null): string {
-  if (!tz) return "UTC";
-  try {
-    new Intl.DateTimeFormat("en-US", { timeZone: tz });
-    return tz;
-  } catch {
-    return "UTC";
-  }
+/**
+ * The zone the window is cut in: the tenant's, or UTC when it has none or an unknown one. Delegates to the one
+ * resolver the "Today's sales" read uses (resolveZone -> resolveTenantZone), so the void window and the register's
+ * day can never disagree.
+ */
+export function effectiveZone(tz: string | null): string {
+  return resolveTenantZone(tz).zone;
 }
 
 const badDay = (message: string) =>
@@ -46,9 +51,12 @@ const badDay = (message: string) =>
  * calendar-date helpers (DST-safe), never by this class.
  *
  * Query budget (a spec pins it): the zone (1) + the page `findMany` (1) + the `count` (1), and on page 1 only the
- * five whole-day summary queries: `order.aggregate`, `invoicePayment.groupBy` (money in, by paid date),
- * `invoicePayment.aggregate` (paid on the day's own sales), `creditNote.findMany` (ids created in the window) and
- * `return.findMany` (a day's few returns). No per-row call.
+ * six whole-day summary queries: `order.aggregate`, `invoicePayment.findMany` (the day's counter payments, classified in code
+ * by the day close's own predicate),
+ * `invoicePayment.aggregate` (paid on the day's own sales), `creditNote.findMany` (ids created in the window),
+ * `invoicePayment.findMany` (the day's POS-mode hand-over candidates, v5-filtered in code; the same rows feed
+ * the summary's hand-over line and `handOverRows`, so the rows add no query) and `return.findMany` (a day's few
+ * returns). No per-row call.
  * Rows and summary are two reads, not one transaction: a sale rung between them can show in one and not the other
  * until the next refetch (accepted; the web refetches both together).
  */
@@ -61,7 +69,8 @@ export class CounterSaleTodayService {
     // forTenant() is UNSCOPED without a tenant: refuse, like the by-key read.
     if (!tenantId) throw new ForbiddenException("Today's sales needs a tenant-scoped session");
 
-    const zone = effectiveZone(await tenantTimeZone(this.prisma));
+    // SA-738r: the one resolver; the zone is resolved once per request and passed down.
+    const { zone } = await resolveZone(this.prisma, { tenantId });
     const today = calendarDateFromIso(startOfCalendarDay(now, zone));
     const day = query.day ?? today;
     if (!parseCalendarDay(day)) throw badDay("day must be a real calendar day (YYYY-MM-DD)");
@@ -75,14 +84,16 @@ export class CounterSaleTodayService {
     const limit = query.limit ?? TODAYS_SALES_DEFAULT_LIMIT;
     const db = this.prisma.forTenant();
 
-    const [rows, total, summary] = await Promise.all([
+    const [rows, total, whole, configuredTaxPercent] = await Promise.all([
       db.order.findMany(pageQuery(tenantId, window, page, limit)) as Promise<TodayOrderRecord[]>,
       db.order.count({ where: counterSalesWhere(tenantId, window) }),
       page === 1 ? this.summary(db, tenantId, window) : Promise.resolve(null),
+      // one read per page: the rate a stored line rate must equal before a row names it
+      configuredTaxRatePercent(this.prisma),
     ]);
 
     return {
-      data: rows.map(toTodaysSaleRow),
+      data: rows.map((r) => toTodaysSaleRow(r, configuredTaxPercent)),
       meta: {
         total,
         page,
@@ -93,12 +104,14 @@ export class CounterSaleTodayService {
         windowStart: window.start.toISOString(),
         windowEnd: window.end.toISOString(),
       },
-      summary,
+      summary: whole?.summary ?? null,
+      // row 342: the hand-overs the summary already read, as rows; [] on later pages (no summary, no read)
+      handOverRows: whole?.handOverRows ?? [],
     };
   }
 
   /**
-   * The whole day, five queries (never per-row), folded in counter-sale-today.ts: the day's sales (aggregate), the
+   * The whole day, six queries (never per-row), folded in counter-sale-today.ts: the day's sales (aggregate), the
    * money that CAME IN in the window by method (groupBy on `paidAt`, sales of any day), what is paid on the day's own
    * sales (aggregate, for `onAccount`), the ids of the credit notes created in the window, and then the returns counted
    * in the window (a day's few returns are read whole so the per-return amount rule applies; a grouped sum cannot).
@@ -109,16 +122,16 @@ export class CounterSaleTodayService {
     tenantId: string,
     window: { start: Date; end: Date },
   ) {
-    const [sales, payments, paidOnSales, creditNotes] = await Promise.all([
+    const [sales, payments, paidOnSales, creditNotes, handOverCandidates] = await Promise.all([
       db.order.aggregate({
         where: liveCounterSalesWhere(tenantId, window),
         _count: { _all: true },
         _sum: { total: true },
       }),
-      db.invoicePayment.groupBy({
-        by: ["method"],
+      // the rows, not a grouped sum: the till-money predicate needs each row's group id and check state (row 374 a)
+      db.invoicePayment.findMany({
         where: salePaymentsWhere(tenantId, window),
-        _sum: { amount: true },
+        select: salePaymentSelect,
       }),
       db.invoicePayment.aggregate({
         where: paidOnDaysSalesWhere(tenantId, window),
@@ -127,6 +140,11 @@ export class CounterSaleTodayService {
       db.creditNote.findMany({
         where: creditNotesInWindowWhere(tenantId, window),
         select: { id: true },
+      }),
+      // SA-763r R7: candidates by the SQL predicates; the v5 group id is matched in code below.
+      db.invoicePayment.findMany({
+        where: handOverCandidatesWhere(tenantId, window),
+        select: handOverCandidateSelect,
       }),
     ]);
     const returns = await db.return.findMany({
@@ -137,12 +155,36 @@ export class CounterSaleTodayService {
       ),
       select: {
         refundMethod: true,
+        refundTender: true, // SA-740r2: the tender of a recorded refund (the ONLY source; null = not recorded)
         refundAmount: true,
         creditSubtotal: true,
         creditTax: true,
         creditCategoryTax: true,
       },
     });
-    return foldSummary({ sales, payments, paidOnSales, returns });
+    // ONE filter, two folds: the summary's hand-over line and the rows come from the same tenders (row 342).
+    const handOvers = handOverPayments(handOverCandidates);
+    // The counter sales' money in goes through the SAME classification the Z report folds with (a counter tender row, a credit
+    // application, or not till money): an office CASH payment with its own group id on a counter invoice is not till cash here.
+    const grouped = groupWindowPayments(
+      payments.map((p) => ({
+        ...p,
+        invoice: { orderId: p.invoice?.orderId ?? null, order: { counterSale: true } },
+      })),
+    );
+    const paymentGroups = [...grouped.byMethod].map(([method, amount]) => ({
+      method,
+      _sum: { amount },
+    }));
+    return {
+      summary: foldSummary({
+        sales,
+        payments: paymentGroups,
+        paidOnSales,
+        returns,
+        handOvers,
+      }),
+      handOverRows: toHandOverRows(handOvers),
+    };
   }
 }

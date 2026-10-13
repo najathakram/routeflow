@@ -10,7 +10,6 @@ import { AuthController } from "./auth.controller";
 import { AuthService } from "./auth.service";
 import { GoogleOAuthService } from "./google-oauth.service";
 import { AppleOAuthService } from "./apple-oauth.service";
-import { TenantGoogleOAuthService } from "../tenants/tenant-google-oauth.service";
 import { StaffHandoffService } from "./handoff/staff-handoff.service";
 import { JwtStrategy } from "./strategies/jwt.strategy";
 import { UsersController } from "../users/users.controller";
@@ -83,7 +82,6 @@ describe("access-token validation on JwtAuthGuard-only routes", () => {
         JwtStrategy,
         { provide: ConfigService, useValue: config },
         { provide: AuthService, useValue: { listSessions } },
-        { provide: TenantGoogleOAuthService, useValue: {} },
         {
           provide: GoogleOAuthService,
           useValue: { isConfigured: () => true, generateLinkUrl },

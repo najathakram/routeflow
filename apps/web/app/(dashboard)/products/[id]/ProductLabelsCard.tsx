@@ -4,6 +4,7 @@ import * as React from "react";
 import { Loader2, Tag, X } from "lucide-react";
 import { Button, useToast } from "@routeflow/ui/web";
 import { useAuth } from "@/lib/auth-context";
+import { PortalLimitsRow } from "./PortalLimitsRow";
 import {
   useProductCategories,
   useProductLabels,
@@ -211,6 +212,7 @@ export function ProductLabelsCard({ productId }: { productId: string }) {
           </Button>
         </div>
       )}
+      <PortalLimitsRow productId={productId} />
     </div>
   );
 }

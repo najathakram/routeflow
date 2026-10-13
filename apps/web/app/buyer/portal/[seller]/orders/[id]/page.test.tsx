@@ -194,8 +194,40 @@ describe("BuyerOrderDetailPage — order with a custom line (B586)", () => {
     await waitFor(() => expect(mockUpdateItems).toHaveBeenCalledTimes(1));
     expect(mockUpdateItems).toHaveBeenCalledWith({
       orderId: "ord-1",
-      items: [{ productId: "p-1", qty: 2 }],
+      items: [{ productId: "p-1", qty: 2, orderItemId: "li-1" }],
     });
+  });
+
+  // B297 row 352: after a rate change one product can be two lines sold at different excise rates. Each row
+  // is its own stored line: stepping one never touches the other, and Save names each line.
+  it("row 352: two lines of one product are two rows and Save names each line", async () => {
+    mockOrder = order([LISTED, { ...LISTED, id: "li-2", qty: 8 }]);
+    renderWithProviders(<BuyerOrderDetailPage />);
+    fireEvent.click(screen.getByRole("button", { name: /edit items/i }));
+    const qtyInputs = screen.getAllByRole("spinbutton");
+    expect(qtyInputs).toHaveLength(2);
+    fireEvent.change(qtyInputs[1], { target: { value: "5" } });
+    fireEvent.click(screen.getByRole("button", { name: /save changes/i }));
+
+    await waitFor(() => expect(mockUpdateItems).toHaveBeenCalledTimes(1));
+    expect(mockUpdateItems).toHaveBeenCalledWith({
+      orderId: "ord-1",
+      items: [
+        { productId: "p-1", qty: 2, orderItemId: "li-1" },
+        { productId: "p-1", qty: 5, orderItemId: "li-2" },
+      ],
+    });
+  });
+
+  it("row 352: a 409 ORDER_EDIT_NEEDS_LINE_IDS tells the buyer to refresh", async () => {
+    mockUpdateItems.mockRejectedValueOnce({
+      response: { status: 409, data: { code: "ORDER_EDIT_NEEDS_LINE_IDS", message: "x" } },
+    });
+    mockOrder = order([LISTED]);
+    renderWithProviders(<BuyerOrderDetailPage />);
+    fireEvent.click(screen.getByRole("button", { name: /edit items/i }));
+    fireEvent.click(screen.getByRole("button", { name: /save changes/i }));
+    expect(await screen.findByText(/Refresh and try again/)).toBeInTheDocument();
   });
 
   it("a custom line does not get a 'Special' pill (its MANUAL price type is not a customer special)", () => {

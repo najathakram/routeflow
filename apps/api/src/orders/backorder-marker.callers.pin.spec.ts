@@ -33,12 +33,11 @@ const calls = (f: string) =>
   ].map((m) => m[1]);
 
 describe("every caller of the stock helpers is classified for the backorder marker", () => {
-  it("orders.service.ts: create + promotion SET; demote + cancel + reopen-wrapper + edit + at-door", () => {
+  it("orders.service.ts: create + promotion SET; demote + reopen-wrapper + edit + at-door", () => {
     expect(calls("orders/orders.service.ts")).toEqual([
       "decrementStockForSale", // create()                         SETS
       "decrementStockForSale", // changeStatus DRAFT -> PENDING    SETS
       "settleStockForEdit", //    demote                           NONE (final = [])
-      "settleStockForEdit", //    cancel                           NONE (final = [])
       "restoreStockForReopen", // reopenOrder                      SETS (markerMode "set")
       "settleStockForEdit", //    updateOrderItems                 ADJUSTS (NONE when recreated)
       "settleStockForEdit", //    at-door CR approval              ADJUSTS
@@ -65,6 +64,9 @@ describe("every caller of the stock helpers is classified for the backorder mark
     expect(src).toMatch(
       /settleStockForEdit\(tx, demoted, activeItems, \[\], user, \{ notes: "DEMOTE" \}\)/,
     );
-    expect(src).toMatch(/settleStockForEdit\(tx, lockedOrder, activeItems, \[\], user,/);
+    // SA-762r F1: the cancel's credit moved verbatim to cancelOrderInTx (order-cancel-tx.ts), bound dep-style.
+    expect(read("orders/order-cancel-tx.ts")).toMatch(
+      /deps\.settleStockForEdit\(tx, lockedOrder, activeItems, \[\], user,/,
+    );
   });
 });

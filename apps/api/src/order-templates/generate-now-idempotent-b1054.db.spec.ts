@@ -30,6 +30,7 @@ import { TenantContextService } from "../tenant/tenant-context.service";
 import { OrdersService } from "../orders/orders.service";
 import { OrderTemplatesService } from "./order-templates.service";
 import type { JwtPayload } from "../auth/jwt-payload.interface";
+import { INVOICE_EDIT_STUBS } from "../orders/testing/invoice-edit-stubs";
 
 // eslint-disable-next-line @typescript-eslint/no-var-requires
 const { assertTestTenant } = require("../../../../scripts/lib/test-tenants.cjs");
@@ -131,6 +132,7 @@ describeDb("generate order now is idempotent (B1054)", () => {
         findOpenOrderDraft: async () => null,
         revertLinkedInvoicesForOrderEdit: async () => undefined,
         resyncOrderInvoicesForEdit: async () => [],
+        ...INVOICE_EDIT_STUBS,
         reconcileOrderDraftInvoice: async () => undefined,
       },
       creditNotes: { settleOrderCreditsInTx: async () => ({ applied: 0, unapplied: 0 }) },

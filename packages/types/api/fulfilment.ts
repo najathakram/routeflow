@@ -77,7 +77,14 @@ export interface TenantCapabilities {
 export type BuyerSellerCapability = Pick<
   FulfilmentCapability,
   "portalMethods" | "portalDefault" | "fleet"
->;
+> & {
+  /**
+   * SA-733r6 (B4): false while the seller's workspace is read-only. ONE boolean and no reason: a buyer is never
+   * told about the seller's billing. The buyer UI shows a single quiet line and disables Checkout.
+   * The API always sends it; absent (an older server) means accepting.
+   */
+  acceptingOrders?: boolean;
+};
 
 // ─── Settings → Fulfillment (tenant-admin self-serve toggle) ─────────────────────────────────
 //

@@ -15,7 +15,7 @@ import { Ionicons } from "@expo/vector-icons";
 import { useLocalSearchParams, useRouter } from "expo-router";
 import { ios } from "@routeflow/ui/tokens";
 import { NavBackButton, NavBar, Pill, SegmentedControl } from "@routeflow/ui/mobile/ios";
-import { useAdminInvoice, useAdminInvoices } from "../../../../lib/api/admin";
+import { useAdminInvoice, useAdminInvoices, useBusinessSettings } from "../../../../lib/api/admin";
 import {
   useDeleteInvoice,
   useDuplicateInvoice,
@@ -38,6 +38,7 @@ import {
 import { useApplyAdvancePayment, useCustomerAdvancePayments } from "../../../../lib/api/customers";
 import { useGetPaymentImageUrl } from "../../../../lib/api/payments";
 import { deriveInvoiceVariant } from "../../../../lib/invoice-pdf-variant";
+import { invoiceShowsTerms } from "../../../../lib/invoice-sale-terms";
 import { fmtCalendarDate } from "../../../../lib/format-date";
 import { isInternalEmail } from "../../../../lib/internal-email";
 import {
@@ -45,9 +46,11 @@ import {
   canSendInvoiceNow,
   canWriteOff,
   invoiceActionFlags,
+  isOpenInvoiceStatus,
   isPaymentEditable,
   isPendingOrderMirror,
 } from "../../../../lib/invoices-logic";
+import { reminderErrorCopy } from "../../../../lib/invoice-reminder-error-copy";
 import { isCreditOpenForApply, openCreditBalance } from "../../../../lib/credit-notes-logic";
 import { siblingInvoicesOf } from "../../../../lib/invoice-siblings";
 import { showToast } from "../../../../lib/toast";
@@ -57,10 +60,12 @@ import {
   invoiceLineUnitNoun,
   usesUnitDisplay,
 } from "../../../../lib/invoice-line-display";
+import { invoiceTaxLines } from "../../../../lib/invoice-tax-lines";
 import { invoiceLineQtyText } from "@routeflow/pricing";
 import { freeUnitsLabel } from "../../../../lib/buyer-cart-logic";
 import { ACTIVATION_BUDGET_MS, sharePdf } from "../../../../lib/share-pdf";
 import { printPdf } from "../../../../lib/print-pdf";
+import { overpaidText, revisedBadgeText } from "../../../../lib/invoice-revision";
 import {
   nextPdfSharePhase,
   smtpFallbackNotice,
@@ -125,6 +130,7 @@ export default function InvoiceDetailScreen() {
   }, [isCreateAlias, router]);
 
   const { data: invoice, isLoading, refetch } = useAdminInvoice(isCreateAlias ? "" : (id ?? ""));
+  const tenantZone = useBusinessSettings().data?.timezone;
   // REG-5: sibling invoices from the same regulated sale-split. No dedicated
   // "list siblings" endpoint exists — GET /invoices already returns
   // invoiceGroupId as a raw scalar on every row (verified: findAll's `include`
@@ -190,8 +196,12 @@ export default function InvoiceDetailScreen() {
   }
 
   const s = statusPill(invoice.status);
+  // Row 398: the header tax holds the regular tax plus the levy; the totals show them apart (shared invoiceTaxSplit).
+  const taxLines = invoiceTaxLines(invoice as Parameters<typeof invoiceTaxLines>[0]);
   const balance = invoice.balanceDue ?? invoice.total;
   const paymentTermsLabel = (invoice as typeof invoice & InvoiceTermsLabelField).paymentTermsLabel;
+  // Row 401: a counter sale paid at the till shows no due date or terms (the web page's CQ-26 rule).
+  const showTerms = invoiceShowsTerms(invoice);
   const isVoid = invoice.status === "VOID";
   // B4: mirrors web's allow-list exactly. The server only rejects VOID, so a
   // bare "not paid, not void" gate used to offer this on DRAFT/WRITTEN_OFF —
@@ -203,6 +213,7 @@ export default function InvoiceDetailScreen() {
     status: invoice.status,
     paymentCount: invoice.payments?.length ?? 0,
     isOrderLinked: invoice.orderId != null,
+    balanceDue: invoice.balanceDue,
   });
   // Computed BEFORE canSend: a pending mirror is locked server-side, so Send has
   // to know about it or it offers a guaranteed 400.
@@ -530,7 +541,7 @@ export default function InvoiceDetailScreen() {
           if (notice) alertInfo("Reminder sent", notice);
           else showToast(`Reminder emailed to ${res.sentTo}`);
         },
-        onError: (e: any) => showToast(e?.response?.data?.message ?? e?.message ?? "Try again."),
+        onError: (e: unknown) => showToast(reminderErrorCopy(e)), // fixed copy by code, never server text
       },
     );
   };
@@ -623,6 +634,14 @@ export default function InvoiceDetailScreen() {
             <Pill variant={s.variant} dot>
               {s.label}
             </Pill>
+            {revisedBadgeText(invoice.revisedAt, tenantZone) ? (
+              <Text style={styles.headerMeta}>
+                {revisedBadgeText(invoice.revisedAt, tenantZone)}
+              </Text>
+            ) : null}
+            {overpaidText(invoice.overpaidBy) ? (
+              <Text style={styles.headerMeta}>{overpaidText(invoice.overpaidBy)}</Text>
+            ) : null}
             <Text style={styles.customer}>{invoice.customer?.businessName ?? "Customer"}</Text>
             {invoice.subject?.trim() ? (
               <Text style={styles.headerMeta} numberOfLines={2}>
@@ -660,11 +679,15 @@ export default function InvoiceDetailScreen() {
               hitSlop={4}
             >
               <Text style={styles.due}>
-                {invoice.dueDate ? `Due ${fmtCalendarDate(invoice.dueDate)}` : "Set due date"}
+                {!showTerms
+                  ? "Edit due date"
+                  : invoice.dueDate
+                    ? `Due ${fmtCalendarDate(invoice.dueDate)}`
+                    : "Set due date"}
               </Text>
               <Ionicons name="pencil-outline" size={12} color={ios.label3} />
             </Pressable>
-            {paymentTermsLabel ? (
+            {showTerms && paymentTermsLabel ? (
               <Text style={styles.headerMeta}>Terms: {paymentTermsLabel}</Text>
             ) : null}
           </View>
@@ -809,7 +832,7 @@ export default function InvoiceDetailScreen() {
                 status recompute doesn't preserve DRAFT (customers.service
                 applyAdvancePaymentToInvoice), so a draft would silently flip
                 to SENT — gate to the post-send statuses only. */}
-            {["SENT", "VIEWED", "PARTIAL", "OVERDUE"].includes(invoice.status) ? (
+            {isOpenInvoiceStatus(invoice.status) ? (
               <ActionTile
                 icon="wallet-outline"
                 label="Apply advance"
@@ -919,12 +942,19 @@ export default function InvoiceDetailScreen() {
                 <Text style={styles.totalLabel}>Subtotal</Text>
                 <Text style={styles.totalValue}>{fmtCurrency(invoice.subtotal)}</Text>
               </View>
-              {invoice.taxAmount ? (
+              {/* Row 398: Tax is the regular tax; each regulated category (deposit, excise) is its own named row */}
+              {taxLines.tax ? (
                 <View style={styles.totalRow}>
                   <Text style={styles.totalLabel}>Tax</Text>
-                  <Text style={styles.totalValue}>{fmtCurrency(invoice.taxAmount)}</Text>
+                  <Text style={styles.totalValue}>{fmtCurrency(taxLines.tax)}</Text>
                 </View>
               ) : null}
+              {taxLines.charges.map((c) => (
+                <View key={c.key} style={styles.totalRow}>
+                  <Text style={styles.totalLabel}>{c.label}</Text>
+                  <Text style={styles.totalValue}>{fmtCurrency(c.amount)}</Text>
+                </View>
+              ))}
               {invoice.discount ? (
                 <View style={styles.totalRow}>
                   <Text style={styles.totalLabel}>Discount</Text>

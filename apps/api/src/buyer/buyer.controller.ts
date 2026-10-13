@@ -1,3 +1,4 @@
+import type { BuyerReorderSkippedLine } from "@routeflow/types";
 import {
   Body,
   Controller,
@@ -62,6 +63,11 @@ import {
   normalizeBoxUnawareSnapshots,
 } from "../orders/merge-items";
 import { withAdvisoryLock } from "../common/db-locks";
+import { overdueCutoff } from "../common/calendar-date";
+import { tenantTimeZone } from "../common/tenant-time-zone";
+import { summarizeOpenInvoices } from "../invoices/invoice-balance-classify";
+import { OPEN_INVOICE_STATUSES } from "../invoices/invoice-status-sets";
+import { CONFIRMED_PAYMENT } from "../invoices/payment-predicates";
 import { resolveOversellAllowed } from "../orders/oversell-policy";
 import { PolicyOversellReader } from "../orders/policy-oversell-reader";
 import {
@@ -70,7 +76,6 @@ import {
   isMergeContention,
   mapLockError,
 } from "../orders/merge-contention";
-import { buyerVisibleProductWhere, noBuyerRestrictions } from "./buyer-product-visibility";
 import {
   buyerSubmitHash,
   normalizeBuyerIdempotencyKey,
@@ -392,8 +397,8 @@ export class BuyerController {
   @UseInterceptors(BuyerTenantInterceptor)
   @ApiHeader({ name: "X-Tenant-Slug", required: true })
   @ApiOperation({ summary: "List distinct product categories for filter dropdowns" })
-  getCategories() {
-    return this.catalogService.getCategories();
+  getCategories(@CurrentBuyerCustomer() ctx: any) {
+    return this.catalogService.getCategories(ctx.customerId);
   }
 
   @Get("products/counts")
@@ -493,7 +498,8 @@ export class BuyerController {
       this.prisma.forTenant(),
       candidates,
       // B1211: the parent-visibility filter is tenant-scoped, so a parent link across tenants decides nothing.
-      buyerVisibleProductWhere(noBuyerRestrictions(ctx.tenantId)),
+      // The restriction-hidden ids ride the same builder, so a scanned code on a hidden product 404s too.
+      await this.catalogService.scanVisibilityWhere(ctx.customerId, ctx.tenantId),
     );
     if (!hit) throw new NotFoundException("Product not found");
     const match = hit.product;
@@ -533,7 +539,7 @@ export class BuyerController {
     const order = path
       ? await this.ordersService.findActiveOrder(ctx.customerId, {
           forMerge: true,
-          mergeAs: { audience: "buyer", explicit: path },
+          mergeAs: { audience: "buyer", role: UserRole.CUSTOMER, explicit: path },
         })
       : await this.ordersService.findActiveOrder(ctx.customerId);
     return toCustomerOrder(order);
@@ -617,6 +623,7 @@ export class BuyerController {
               // The cart folds only into an order on the path it asked for (the SAME resolver as create).
               mergeAs: {
                 audience: "buyer",
+                role: UserRole.CUSTOMER,
                 ...(dto.fulfillPath ? { explicit: dto.fulfillPath } : {}),
               },
             });
@@ -661,11 +668,6 @@ export class BuyerController {
             // incoming item is expanded only when the STORED line is box-split (where
             // the accumulator is in pieces). Where both sides are bare they already
             // agree in selling units and neither is touched.
-            const boxAwareIncoming = new Set(
-              incomingItems
-                .filter((i) => i.boxes != null || i.pieces != null)
-                .map((i) => i.productId),
-            );
             const productIds = lineItems
               .map((li: { productId?: string | null }) => li.productId)
               .filter((id: string | null | undefined): id is string => !!id);
@@ -676,6 +678,19 @@ export class BuyerController {
                 })
               : [];
             const upbByProduct = new Map(products.map((p) => [p.id, Number(p.unitsPerBox ?? 0)]));
+            // Row 355: "box-aware" is read from the incoming AFTER the bare ones are expanded against a
+            // box-split stored line — a stored PACK line of that product must be normalized to pieces too,
+            // or its packs fold into the expanded boxes as if they were pieces.
+            const normalizedIncoming = normalizeBareIncomingSellingUnits(
+              incomingItems,
+              lineItems,
+              upbByProduct,
+            );
+            const boxAwareIncoming = new Set(
+              normalizedIncoming
+                .filter((i) => i.boxes != null || i.pieces != null)
+                .map((i) => i.productId),
+            );
             const upbForStoredSnapshots = new Map(
               [...upbByProduct].filter(([id]) => boxAwareIncoming.has(id)),
             );
@@ -693,10 +708,15 @@ export class BuyerController {
             // which is F07's file region.
             const foldResult = foldMergeItems(
               normalizeBoxUnawareSnapshots(lineItems, upbForStoredSnapshots),
-              normalizeBareIncomingSellingUnits(incomingItems, lineItems, upbByProduct),
+              normalizedIncoming,
               // SA-124e(3): the price basis follows the RESOLVED pack, not the live one —
               // already built above for the denomination normalizers.
               upbByProduct,
+              // B297 row 343 (foldTarget): the rate trio a NEW sale of each incoming product takes today —
+              // an existing line sold at a different trio does not absorb the added quantity.
+              await this.ordersService.liveTrioByProduct(
+                incomingItems.map((i) => i.productId).filter(Boolean) as string[],
+              ),
             );
             if (foldResult.livePackFallbackProductIds.length > 0) {
               this.logger.warn(
@@ -864,7 +884,12 @@ export class BuyerController {
     @Body() dto: UpdateOrderItemsDto,
     @CurrentBuyerCustomer() ctx: any,
   ) {
-    return toCustomerOrder(await this.ordersService.updateOrderItems(id, dto, makePseudoUser(ctx)));
+    // B297 row 352: the entries name their lines (`orderItemId`), so a line keeps the rate it was sold at.
+    return toCustomerOrder(
+      await this.ordersService.updateOrderItems(id, dto, makePseudoUser(ctx), {
+        buyerLineIds: true,
+      }),
+    );
   }
 
   @Post("orders/:id/change-requests")
@@ -1098,8 +1123,13 @@ export class BuyerController {
       source: "buyer",
       customerId: ctx.customerId,
     });
-    // The generated order goes back to the buyer: the customer-facing allowlist, never the staff row.
-    return toCustomerOrder(await this.templatesService.generateOrder(id, false, allowOversell));
+    // The generated order goes back to the buyer: the customer-facing allowlist, never the staff row. Lines a
+    // selling restriction hides from this buyer are left out and listed in `skipped` (BuyerReorderSkipped).
+    const outcome: { skipped: BuyerReorderSkippedLine[] } = { skipped: [] };
+    const order = toCustomerOrder(
+      await this.templatesService.generateOrder(id, false, allowOversell, outcome),
+    );
+    return order ? { ...order, skipped: outcome.skipped } : order;
   }
 
   @Patch("templates/:id")
@@ -1174,33 +1204,29 @@ export class BuyerController {
     const totalSpend = allOrders.reduce((s, o) => s + Number(o.total), 0);
     const avgOrderValue = totalOrders > 0 ? totalSpend / totalOrders : 0;
 
-    // Invoice breakdown
-    const invoices = await db.invoice.findMany({
-      where: { customerId },
-      select: { status: true, total: true, dueDate: true },
-    });
-    const now = new Date();
-    let paidCount = 0,
-      unpaidCount = 0,
-      overdueCount = 0,
-      unpaidTotal = 0;
-    for (const inv of invoices) {
-      if (inv.status === "PAID") {
-        paidCount++;
-      } else if (
-        inv.status === "SENT" ||
-        inv.status === "VIEWED" ||
-        inv.status === "PARTIAL" ||
-        inv.status === "OVERDUE"
-      ) {
-        if (inv.status === "OVERDUE" || (inv.dueDate && inv.dueDate < now)) {
-          overdueCount++;
-        } else {
-          unpaidCount++;
-        }
-        unpaidTotal += Number(inv.total);
-      }
-    }
+    // Invoice breakdown (SA-770 r-note): the staff rule - an open invoice that still owes a balance and
+    // whose due day has ended in THIS seller's zone is overdue; the total is BALANCE due, never gross.
+    // Bounded: PAID invoices are only counted, and only OPEN ones are fetched, each with just the
+    // confirmed payments (amount, status, method) the classifier nets.
+    const [paidInvoiceCount, openInvoices, zone] = await Promise.all([
+      db.invoice.count({ where: { customerId, status: "PAID" } }),
+      db.invoice.findMany({
+        where: { customerId, status: { in: [...OPEN_INVOICE_STATUSES] } },
+        select: {
+          status: true,
+          total: true,
+          dueDate: true,
+          payments: {
+            where: CONFIRMED_PAYMENT,
+            select: { amount: true, status: true, method: true },
+          },
+        },
+      }),
+      tenantTimeZone(this.prisma),
+    ]);
+    const summary = summarizeOpenInvoices(openInvoices, overdueCutoff(new Date(), zone));
+    const paidCount = paidInvoiceCount + summary.settledCount;
+    const { unpaidCount, overdueCount, unpaidTotal } = summary;
 
     // Recent payments (last 20)
     const payments = await db.invoicePayment.findMany({

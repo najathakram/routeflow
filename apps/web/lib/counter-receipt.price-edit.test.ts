@@ -2,8 +2,10 @@ import { computeLineSubtotal, roundMoney } from "@routeflow/pricing";
 import { buildCounterReceipt, type ReceiptLineInput } from "./counter-receipt";
 
 /**
- * POS-5: an edited counter line (`unitPrice` = the NET price, `tierPrice` = the system price it was rung at) shows the
- * struck original line total, the net and the discount on the receipt. A plain line is exactly what it was.
+ * POS-5: an edited counter line (`unitPrice` = the NET price) shows the struck original line total, the net and the discount on
+ * the receipt. The struck base is the STORED list price the response serves for the line (the invoices' own original-price
+ * rule), here the cart line's `tierPrice` stands in for it; a cart line with no stored line shows nothing struck.
+ * A plain line is exactly what it was.
  */
 const NOW = new Date("2026-10-07T15:30:00Z");
 const PLAIN: ReceiptLineInput = { tempId: "a", name: "Juice", unitPrice: 5, qty: 1 };
@@ -27,7 +29,18 @@ const BOXED_EDITED: ReceiptLineInput = {
   boxes: 2,
   pieces: 3,
 };
-const build = (lines: ReceiptLineInput[], total: number) =>
+/** The stored line the server serves for a cart line: the list it was lowered from (a raised line is a MANUAL upsell). */
+const storedOf = (l: ReceiptLineInput) => ({
+  productId: l.productId ?? l.tempId,
+  unitPrice: l.unitPrice,
+  originalPrice: l.override && l.tierPrice != null ? l.tierPrice : null,
+  priceType: l.override
+    ? l.tierPrice != null && l.unitPrice > l.tierPrice
+      ? "MANUAL"
+      : "DISCOUNTED"
+    : "STANDARD",
+});
+const build = (lines: ReceiptLineInput[], total: number, served = true) =>
   buildCounterReceipt({
     receipt: {
       orderId: "o1",
@@ -39,8 +52,9 @@ const build = (lines: ReceiptLineInput[], total: number) =>
       balanceDue: 0,
       paymentRecorded: true,
       method: "CARD",
+      ...(served ? { lines: lines.map(storedOf) } : {}),
     } as never,
-    lines,
+    lines: lines.map((l) => ({ productId: l.tempId, ...l })),
     enteredTender: null,
     profile: null,
     now: NOW,
@@ -59,9 +73,9 @@ describe("buildCounterReceipt: edited lines (POS-5)", () => {
     expect(m.lines[0].original).toBeNull();
     expect(m.subtotal).toBe(25); // 5 + 20 at the system price, before the discount
     expect(m.discounts).toBe(2);
-    expect(m.adjustment).toBe(0); // the server total equals the net subtotal: nothing unexplained
-    // what the paper shows: Subtotal - Discounts + Tax and adjustments = Total
-    expect(roundMoney(m.subtotal - m.discounts + m.adjustment)).toBe(m.total);
+    expect(m.adjustments).toBe(0); // the server total equals the net subtotal: nothing unexplained
+    // what the paper shows: Subtotal - Discounts + Tax + Adjustments = Total
+    expect(roundMoney(m.subtotal - m.discounts + m.tax + m.adjustments)).toBe(m.total);
   });
 
   it("a boxed edited line is prorated by computeLineSubtotal at both prices, never qty x price", () => {
@@ -93,5 +107,11 @@ describe("buildCounterReceipt: edited lines (POS-5)", () => {
     const { tierPrice: _drop, ...noTier } = EDITED;
     const m = build([noTier], 18);
     expect(m.lines[0]).toMatchObject({ original: null, discount: 0 });
+  });
+
+  it("a response that serves no stored lines (an older server) strikes nothing: the cart's tier price is never a base", () => {
+    const m = build([PLAIN, EDITED], 23, false);
+    expect(m.lines[1]).toMatchObject({ total: 18, original: null, discount: 0 });
+    expect(m.discounts).toBe(0);
   });
 });

@@ -131,14 +131,14 @@ describe("RestrictionRulesPage", () => {
     ok(Array.from({ length: 500 }, (_, i) => rule({ id: `r${i}` })));
     renderWithProviders(<RestrictionRulesPage />);
     expect(await screen.findByText(/Showing the newest 500 rules/)).toBeInTheDocument();
-  });
+  }, 120_000); // renders 500 cards: ~10 s alone, past the 30 s default on a loaded machine
 
   it("does not claim truncation just under the cap", async () => {
     ok(Array.from({ length: 499 }, (_, i) => rule({ id: `r${i}` })));
     renderWithProviders(<RestrictionRulesPage />);
     await screen.findAllByTestId("rule-card");
     expect(screen.queryByText(/Showing the newest/)).toBeNull();
-  });
+  }, 120_000);
 
   it("a tenant admin gets a New rule button that opens the dialog; an operator does not", async () => {
     ok([]);
@@ -169,5 +169,28 @@ describe("RestrictionRulesPage", () => {
     expect(screen.getAllByRole("button", { name: "Lift rule" })).toHaveLength(2);
     fireEvent.click(screen.getAllByRole("button", { name: "Lift rule" })[0]);
     expect(await screen.findByRole("dialog", { name: "Lift this rule?" })).toBeInTheDocument();
+  });
+});
+
+describe("Portal limits & rules: multi-select Lift N", () => {
+  it("is titled Portal limits & rules", async () => {
+    ok([rule()]);
+    renderWithProviders(<RestrictionRulesPage />);
+    expect(await screen.findByText("Portal limits & rules")).toBeInTheDocument();
+  });
+
+  it("ticking rows shows Lift N; only rules that can still be lifted are tickable", async () => {
+    role = "TENANT_ADMIN";
+    ok([
+      rule({ id: "a", categoryName: "Vapes" }),
+      rule({ id: "b", categoryName: "Kratom" }),
+      rule({ id: "c", categoryName: "Old", status: "LIFTED", liftedAt: "2026-03-10T00:00:00Z" }),
+    ]);
+    renderWithProviders(<RestrictionRulesPage />);
+    await screen.findAllByTestId("rule-card");
+    expect(screen.getAllByRole("checkbox")).toHaveLength(2);
+    fireEvent.click(screen.getByRole("checkbox", { name: /limit on vapes/i }));
+    fireEvent.click(screen.getByRole("checkbox", { name: /limit on kratom/i }));
+    expect(screen.getByRole("button", { name: "Lift 2" })).toBeInTheDocument();
   });
 });

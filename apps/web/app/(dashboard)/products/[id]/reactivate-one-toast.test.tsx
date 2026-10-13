@@ -92,7 +92,7 @@ describe("one failed write = exactly one toast (real Providers)", () => {
     });
     mount(<Flow />);
     fireEvent.click(screen.getByText("reactivate"));
-    expect(await screen.findByText(/Can't reactivate: the SKU "COLA-6"/)).toBeInTheDocument();
+    expect(await screen.findByText(/The SKU "COLA-6" is now used by/)).toBeInTheDocument();
     expect(toast).not.toHaveBeenCalled();
   });
 
@@ -140,6 +140,9 @@ describe("one failed write = exactly one toast (real Providers)", () => {
     mount(<Flow />);
     fireEvent.click(screen.getByText("reactivate"));
     await waitFor(() => expect(toast).toHaveBeenCalledTimes(1));
-    expect(toasts()[0]).toMatchObject({ title: "Your workspace is read-only" });
+    expect(toasts()[0]).toMatchObject({
+      title:
+        "This workspace is currently in read-only mode. You can view records, but changes and new transactions are temporarily unavailable.",
+    });
   });
 });

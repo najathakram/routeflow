@@ -38,7 +38,7 @@ jest.mock("@react-pdf/renderer", () => ({
 import { readFileSync } from "fs";
 import { join } from "path";
 import { Test, TestingModule } from "@nestjs/testing";
-import { InvoicePdfService } from "./invoice-pdf.service";
+import { InvoicePdfService, invoicePdfStorageKey } from "./invoice-pdf.service";
 import { promoNote, qtyCellText, showOriginalPrice } from "./invoice-pdf-item";
 import { PrismaService } from "../prisma/prisma.service";
 import { StorageService } from "../storage/storage.service";
@@ -287,6 +287,65 @@ describe("InvoicePdfService.generateAndUpload — hide-original-price setting (T
 });
 
 /**
+ * The stored key is deterministic per invoice, so the `pdfUrl` pointer only needs writing
+ * when it differs from what is already stored. A repeat render must not write the row
+ * again (each write moves `updatedAt`). Invalidation elsewhere nulls `pdfUrl`, so a null
+ * stored value still gets exactly one write. Render and upload are unchanged either way.
+ */
+describe("InvoicePdfService.getOrGenerate — pointer written only on change", () => {
+  beforeEach(() => {
+    mockCapturedInvoice = null;
+    jest.clearAllMocks();
+  });
+
+  async function renderWithStoredPointer(pdfUrl: string | null) {
+    const prisma = createMockPrisma();
+    prisma.invoice.findUnique.mockResolvedValue(baseInvoiceFixture({ pdfUrl }) as any);
+    prisma.tenantConfig.findUnique.mockResolvedValue(TENANT_CONFIG as any);
+    const storage = makeStorage();
+    const service = await makeService(prisma, storage, null);
+    const url = await service.getOrGenerate("inv-1");
+    return { prisma, storage, url };
+  }
+
+  it("writes the pointer once when none is stored", async () => {
+    const { prisma, storage } = await renderWithStoredPointer(null);
+
+    expect(storage.upload).toHaveBeenCalledTimes(1);
+    expect(prisma.invoice.update).toHaveBeenCalledTimes(1);
+    expect(prisma.invoice.update).toHaveBeenCalledWith({
+      where: { id: "inv-1" },
+      data: { pdfUrl: invoicePdfStorageKey("inv-1") },
+    });
+  });
+
+  it("does not write the row again when the stored pointer already equals the key", async () => {
+    const { prisma, storage, url } = await renderWithStoredPointer(invoicePdfStorageKey("inv-1"));
+
+    // Still renders and uploads fresh, and still hands back a presigned URL.
+    expect(storage.upload).toHaveBeenCalledTimes(1);
+    expect(storage.upload).toHaveBeenCalledWith(
+      invoicePdfStorageKey("inv-1"),
+      expect.any(Buffer),
+      "application/pdf",
+    );
+    expect(url).toBe("https://cdn.example.com/invoice-pdfs/inv-1.pdf");
+    expect(prisma.invoice.update).not.toHaveBeenCalled();
+    expect(prisma.invoice.updateMany).not.toHaveBeenCalled();
+  });
+
+  it("writes the pointer once when the stored value is a different key", async () => {
+    const { prisma } = await renderWithStoredPointer("invoice-pdfs/some-older-key.pdf");
+
+    expect(prisma.invoice.update).toHaveBeenCalledTimes(1);
+    expect(prisma.invoice.update).toHaveBeenCalledWith({
+      where: { id: "inv-1" },
+      data: { pdfUrl: invoicePdfStorageKey("inv-1") },
+    });
+  });
+});
+
+/**
  * R9's renderer half. `./invoice-pdf-template` is swapped out wholesale by
  * apps/api/package.json's moduleNameMapper, so the .tsx never executes under Jest and
  * no markup assertion is possible here; the two display DECISIONS the requirement is
@@ -323,12 +382,12 @@ describe("invoice-pdf-item — BOGO/promo line display (T-B103, R9, REG-B103)", 
     // MANUAL upsell: charged ABOVE the base price — the web renderer deliberately
     // shows no strikethrough, so the buyer never sees the lower base.
     expect(
-      showOriginalPrice({ qty: 1, unitPrice: 15, originalPrice: 12, priceType: "MANUAL" }, false),
+      showOriginalPrice({ unitPrice: 15, originalPrice: 12, priceType: "MANUAL" }, false),
     ).toBe(false);
     // MANUAL adjusted DOWN keeps the strike (the "Adjusted" branch of the reference).
-    expect(
-      showOriginalPrice({ qty: 1, unitPrice: 9, originalPrice: 12, priceType: "MANUAL" }, false),
-    ).toBe(true);
+    expect(showOriginalPrice({ unitPrice: 9, originalPrice: 12, priceType: "MANUAL" }, false)).toBe(
+      true,
+    );
   });
 });
 

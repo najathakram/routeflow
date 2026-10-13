@@ -10,7 +10,12 @@ import {
   type LiveUnitsPerBox,
   type ReplaceActor,
 } from "../selling-restrictions/order-edit-lines";
-import { checkableProductIds } from "../selling-restrictions/selling-restrictions.core";
+import {
+  checkableProductIds,
+  restrictionChannelForPrincipal,
+  restrictionsApply,
+  type ChannelPrincipal,
+} from "../selling-restrictions/selling-restrictions.core";
 import type { SellingRestrictionsService } from "../selling-restrictions/selling-restrictions.service";
 import { API_ERROR_CODES } from "../common/api-error-codes";
 
@@ -23,9 +28,11 @@ import { API_ERROR_CODES } from "../common/api-error-codes";
  * connection, so it is called BEFORE the transaction on the lines read before the lock. A pre-lock
  * read can be stale under a concurrent edit, so the plan is RE-CHECKED inside the transaction against
  * the lock-time read the service already makes (`heldItems`): a pure recompute (no query) that refuses
- * with a retryable 409 when a product now needs a check the pre-lock judgment never made. OFF costs
- * exactly ONE read (the tenant policy), before the transaction; nothing here runs inside it. ON costs a
- * second policy read (in `evaluate`) and one product query more than the license guard.
+ * with a retryable 409 when a product now needs a check the pre-lock judgment never made. A STAFF edit with
+ * the switch off costs exactly ONE read (the tenant policy), before the transaction; nothing here runs inside
+ * it. A buyer's edit is always planned (the portal ignores the switch) and, in a tenant with no active rule,
+ * `evaluate` ends after one more read; otherwise it costs a second policy read and one product query more
+ * than the license guard.
  *
  * Known edges (fail closed or vanishingly narrow; pinned by review, not fixed here): a re-check refusal
  * rolls back the item writes but not the earlier `revertLinkedInvoicesForOrderEdit` (every in-tx guard
@@ -79,9 +86,13 @@ export async function planOrderEditRestrictions(
     existing: readonly ExistingLine[];
     items: readonly EditItem[];
     mode: OrderEditMode;
+    /** Who is editing: the switch gates the STAFF channel only, so a buyer's edit is always judged. */
+    principal: ChannelPrincipal | null | undefined;
   },
 ): Promise<OrderEditRestrictionPlan | null> {
-  if (!(await deps.restrictions.getPolicy(p.tenantId)).enabled) return null; // OFF: one read, nothing else
+  // OFF (staff channel, switch off): one read, nothing else. The portal channel always applies its rules.
+  const channel = restrictionChannelForPrincipal(p.principal);
+  if (!restrictionsApply(await deps.restrictions.getPolicy(p.tenantId), channel)) return null;
 
   const ids = [
     ...new Set(

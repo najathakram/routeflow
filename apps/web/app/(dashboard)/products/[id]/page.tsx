@@ -1,5 +1,6 @@
 "use client";
 
+import { priceRowLabel } from "@/lib/product-unit-label";
 import { safeTextErrorCopy } from "@/lib/safe-text-error-copy";
 import * as React from "react";
 import Link from "next/link";
@@ -16,7 +17,6 @@ import {
   ChevronRight,
   Star,
   Scissors,
-  Plus,
   Power,
   ShieldCheck,
 } from "lucide-react";
@@ -49,10 +49,18 @@ import {
   type ReportTemplateDef,
 } from "@/lib/api/tracked-categories";
 import { sectionPickerOptions } from "@/lib/regulated-format";
-import { getTierPrice, cascadeTierPrices, perUnitPrice, type TierField } from "@routeflow/pricing";
+import {
+  getTierPrice,
+  cascadeTierPrices,
+  perUnitPrice,
+  unitWords,
+  type TierField,
+} from "@routeflow/pricing";
 import { useTierLabels } from "@/lib/api/tier-labels";
 import { tierLabel } from "@/lib/tier-label";
 import { unitsLabel } from "@/lib/stock-label";
+import { stockCountLabel } from "../_components/product-status";
+import { PiecesPerBoxValue } from "./PiecesPerBoxValue";
 import { apiClient } from "@/lib/api-client";
 import { BarcodeScannerButton } from "@/components/BarcodeScannerButton";
 import { DecimalInput } from "@/components/MoneyInput";
@@ -68,6 +76,8 @@ import { CropModal } from "./CropModal";
 import { ProductStockCostCard } from "./ProductStockCostCard";
 import { FamilyVariantsEditor } from "@/components/family/FamilyVariantsEditor";
 import { useReactivateFlow } from "./useReactivateFlow";
+import { ProductHeaderControls } from "./ProductHeaderControls";
+import { LegacyVariantsActions, variantModalTitle } from "./LegacyVariantsActions";
 import { useDeleteProductFlow } from "./useDeleteProductFlow";
 import { DeleteProductConfirm } from "./DeleteProductConfirm";
 import { DemandCard } from "./DemandCard";
@@ -79,6 +89,9 @@ import { ProductUnitsCard } from "./ProductUnitsCard";
 import { ImageLightbox } from "./ImageLightbox";
 import { objectPositionForUrl, type FocalPoint } from "@/lib/image-focal";
 import { COMMON_UNITS } from "@/lib/common-units";
+
+// U-3a: no per-product label is read yet, so this page prints the default words.
+const UW = unitWords();
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 
@@ -308,6 +321,9 @@ export default function ProductDetailPage() {
   const reactivateFlow = useReactivateFlow();
   const createProduct = useCreateProduct();
   const deleteFlow = useDeleteProductFlow({ onDeleted: () => router.push("/products") });
+  // The header's Delete button opens DeleteProductConfirm: it stays open until the DELETE settles and hands
+  // off to the family cascade prompt.
+  const [showDeleteConfirm, setShowDeleteConfirm] = React.useState(false);
   const uploadImages = useUploadProductImages(id);
   const deleteImage = useDeleteProductImage(id);
 
@@ -399,9 +415,6 @@ export default function ProductDetailPage() {
   // ── Variant-split modal state (PR-D) ──────────────────────────────────────
   const [showVariantSplit, setShowVariantSplit] = React.useState(false);
 
-  // ── Delete confirmation (R2 — was declared, never wired) ──────────────────
-  const [showDeleteConfirm, setShowDeleteConfirm] = React.useState(false);
-
   // ── Crop-existing state ───────────────────────────────────────────────────
   // When set, the next crop completion replaces this key instead of adding a new image
   const [cropExistingKey, setCropExistingKey] = React.useState<string | null>(null);
@@ -477,6 +490,7 @@ export default function ProductDetailPage() {
     setEditDraft({
       name: product.name,
       sku: product.sku ?? "",
+      barcode: product.barcode ?? "",
       unitSku: product.unitSku ?? "",
       unit: product.unit,
       pricePerUnit: String(priceNumber),
@@ -523,6 +537,7 @@ export default function ProductDetailPage() {
         name: composedName,
         unit: draft.unit || undefined,
         sku: draft.sku?.trim() || null,
+        barcode: draft.barcode?.trim() || null,
         unitSku: draft.unitSku?.trim() || null,
         // One category axis: a regulated type's structured Category picker
         // drives `category` server-side — never send the free-text value
@@ -770,7 +785,7 @@ export default function ProductDetailPage() {
     if (variant.isActive) {
       reactivateFlow.askDeactivate(variant.id, variant.variantName ?? variant.name, "variant");
     } else {
-      reactivateFlow.start(variant.id, "variant");
+      reactivateFlow.start(variant.id, "variant", variant.variantName ?? variant.name);
     }
   };
 
@@ -954,7 +969,9 @@ export default function ProductDetailPage() {
     if (!(activeUnitsPerBox > 1)) return null;
     const pu = perUnitPrice(v, activeUnitsPerBox);
     return pu != null ? (
-      <p className="mt-0.5 text-[11px] text-navy/50">≈ ${pu.toFixed(2)} / unit</p>
+      <p className="mt-0.5 text-[11px] text-navy/50">
+        ≈ ${pu.toFixed(2)} / {UW.base.short.one}
+      </p>
     ) : null;
   };
 
@@ -1040,7 +1057,7 @@ export default function ProductDetailPage() {
                 label={product.isActive ? "Active" : "Inactive"}
               />
               {stockStatus === "OUT_OF_STOCK" ? (
-                <Badge variant="danger" label="Out of Stock" />
+                <Badge variant="warning" label={stockCountLabel(currentStock)} />
               ) : stockStatus === "LOW" ? (
                 <Badge variant="warning" label="Low Stock" />
               ) : null}
@@ -1129,7 +1146,7 @@ export default function ProductDetailPage() {
                           isDragging && "ring-2 ring-brand-500",
                           !hasImages && "cursor-pointer",
                           stockStatus === "LOW" && "border-warning/30 bg-warning-bg",
-                          stockStatus === "OUT_OF_STOCK" && "border-danger/30 bg-danger-bg",
+                          stockStatus === "OUT_OF_STOCK" && "border-warning/30 bg-warning-bg",
                           stockStatus === "IN_STOCK" && "border-surface-border bg-surface-raised",
                         )}
                         onClick={!hasImages ? () => fileInputRef.current?.click() : undefined}
@@ -1216,7 +1233,7 @@ export default function ProductDetailPage() {
                               className={cn(
                                 "h-14 w-14",
                                 stockStatus === "LOW" && "text-warning/30",
-                                stockStatus === "OUT_OF_STOCK" && "text-danger/30",
+                                stockStatus === "OUT_OF_STOCK" && "text-warning/30",
                                 stockStatus === "IN_STOCK" && "text-navy/15",
                               )}
                             />
@@ -1405,7 +1422,7 @@ export default function ProductDetailPage() {
                 <h3 className="text-[11px] font-semibold uppercase tracking-[0.08em] text-navy/70">
                   Details
                 </h3>
-                <div className="flex shrink-0 items-center gap-2">
+                <div className="flex max-w-full flex-wrap items-center justify-end gap-2">
                   {isEditing ? (
                     <>
                       <button
@@ -1439,54 +1456,21 @@ export default function ProductDetailPage() {
                       >
                         <Pencil className="h-4 w-4" />
                       </button>
-                      {isOperator && !product.parentProductId && product.kind !== "FAMILY" && (
-                        <Button
-                          size="sm"
-                          variant="secondary"
-                          onClick={openMakeVariantModal}
-                          title="Link this product as a variant of another product"
-                        >
-                          Make variant of…
-                        </Button>
-                      )}
-                      <Button
-                        size="sm"
-                        variant="secondary"
-                        onClick={() =>
-                          product.isActive
-                            ? reactivateFlow.askDeactivate(id, product.name)
-                            : reactivateFlow.start(id)
+                      <ProductHeaderControls
+                        product={product}
+                        reactivateFlow={reactivateFlow}
+                        hasTobaccoAddon={hasTobaccoAddon}
+                        isTobacco={!!(product as any).isTobacco}
+                        tobaccoLoading={updateProduct.isPending}
+                        onToggleTobacco={() =>
+                          updateProduct.mutate({
+                            id: id,
+                            isTobacco: !(product as any).isTobacco,
+                          } as any)
                         }
-                        loading={reactivateFlow.isPending}
-                      >
-                        {product.isActive ? "Deactivate" : "Activate"}
-                      </Button>
-                      {hasTobaccoAddon && (
-                        <Button
-                          size="sm"
-                          variant="secondary"
-                          onClick={() =>
-                            updateProduct.mutate({
-                              id: id,
-                              isTobacco: !(product as any).isTobacco,
-                            } as any)
-                          }
-                          loading={updateProduct.isPending}
-                          title="Tobacco products are tracked separately for monthly tax reports"
-                        >
-                          {(product as any).isTobacco ? "Unmark tobacco" : "Mark as tobacco"}
-                        </Button>
-                      )}
-                      {isOperator && (
-                        <Button
-                          size="sm"
-                          variant="danger"
-                          leftIcon={<Trash2 className="h-4 w-4" />}
-                          onClick={() => setShowDeleteConfirm(true)}
-                        >
-                          Delete
-                        </Button>
-                      )}
+                        onMakeVariant={openMakeVariantModal}
+                        onRequestDelete={() => setShowDeleteConfirm(true)}
+                      />
                     </>
                   )}
                 </div>
@@ -1640,7 +1624,7 @@ export default function ProductDetailPage() {
 
                 <div className="grid grid-cols-2 gap-x-6 gap-y-4 sm:grid-cols-3">
                   <InfoRow
-                    label="SKU / Barcode"
+                    label={`SKU (${UW.pack.lower} code)`}
                     value={
                       isEditing ? (
                         <input
@@ -1654,18 +1638,32 @@ export default function ProductDetailPage() {
                     }
                   />
                   <InfoRow
+                    label="Barcode"
+                    value={
+                      isEditing ? (
+                        <input
+                          value={(editDraft.barcode as string) ?? ""}
+                          onChange={(e) => setEditDraft((d) => ({ ...d, barcode: e.target.value }))}
+                          className="w-full rounded border border-surface-border px-2 py-1 text-sm text-navy focus:outline-none focus:ring-2 focus:ring-brand-500"
+                        />
+                      ) : (
+                        (product.barcode ?? <span className="text-navy/30">—</span>)
+                      )
+                    }
+                  />
+                  <InfoRow
                     label="Unit code"
                     value={
                       isEditing ? (
                         <input
                           value={(editDraft.unitSku as string) ?? ""}
                           onChange={(e) => setEditDraft((d) => ({ ...d, unitSku: e.target.value }))}
-                          placeholder="Same as case code"
+                          placeholder={`Same as ${UW.pack.lower} code`}
                           className="w-full rounded border border-surface-border px-2 py-1 text-sm text-navy focus:outline-none focus:ring-2 focus:ring-brand-500"
                         />
                       ) : (
                         (product.unitSku ?? (
-                          <span className="text-navy/30">— (same as case code)</span>
+                          <span className="text-navy/30">— (same as {UW.pack.lower} code)</span>
                         ))
                       )
                     }
@@ -1725,7 +1723,7 @@ export default function ProductDetailPage() {
                     }
                   />
                   <InfoRow
-                    label="Units per case"
+                    label={`${UW.base.other} per ${UW.pack.lower}`}
                     value={
                       isEditing ? (
                         <DecimalInput
@@ -1741,15 +1739,16 @@ export default function ProductDetailPage() {
                           }
                           className="w-full rounded border border-surface-border px-2 py-1 text-sm text-navy focus:outline-none focus:ring-2 focus:ring-brand-500"
                         />
-                      ) : Number(product.unitsPerBox) > 1 ? (
-                        `${product.unitsPerBox} units`
                       ) : (
-                        "Sold individually"
+                        <PiecesPerBoxValue unitsPerBox={product.unitsPerBox} />
                       )
                     }
                   />
                   <InfoRow
-                    label={`${tierLabel(tierLabels, 1)} Price (List)`}
+                    label={priceRowLabel(
+                      isEditing ? (editDraft.unit as string) : product.unit,
+                      tierLabel(tierLabels, 1),
+                    )}
                     value={
                       isEditing ? (
                         <>
@@ -2032,7 +2031,7 @@ export default function ProductDetailPage() {
                           className="w-32 rounded border border-surface-border px-2 py-1 text-sm text-navy focus:outline-none focus:ring-2 focus:ring-brand-500"
                         />
                         <p className="mt-1 text-xs text-navy/50">
-                          per piece — even for boxed products
+                          per {UW.base.lower} — even for boxed products
                         </p>
                         {!(editDraft.msrp as string)?.trim() && (
                           <p className="mt-1 text-xs text-navy/50">
@@ -2042,7 +2041,8 @@ export default function ProductDetailPage() {
                         )}
                         {msrpBelowWholesale && (
                           <p className="mt-1 text-xs text-warning">
-                            Below wholesale price (${wholesalePerPiece.toFixed(2)}/pc)
+                            Below wholesale price (${wholesalePerPiece.toFixed(2)}/
+                            {UW.base.short.one})
                           </p>
                         )}
                       </>
@@ -2053,11 +2053,12 @@ export default function ProductDetailPage() {
                     <>
                       <p className="font-mono text-sm font-medium tabular-nums text-navy">
                         ${msrpNumber.toFixed(2)}
-                        <span className="ml-1 text-[10px] text-navy/50">/pc</span>
+                        <span className="ml-1 text-[10px] text-navy/50">/{UW.base.short.one}</span>
                       </p>
                       {msrpBelowWholesale && (
                         <p className="mt-1 text-xs text-warning">
-                          Below wholesale price (${wholesalePerPiece.toFixed(2)}/pc)
+                          Below wholesale price (${wholesalePerPiece.toFixed(2)}/{UW.base.short.one}
+                          )
                         </p>
                       )}
                     </>
@@ -2206,7 +2207,7 @@ export default function ProductDetailPage() {
                     )}
                     {activeProductConfig && (
                       <InfoRow
-                        label="Unit of measure (per piece)"
+                        label={`Unit of measure (per ${UW.base.lower})`}
                         value={
                           isEditing ? (
                             <select
@@ -2267,7 +2268,7 @@ export default function ProductDetailPage() {
                               </select>
                               <p className="mt-0.5 text-xs text-navy/70">
                                 Used when this product is sold by the case. Leave blank to report
-                                every quantity in pieces.
+                                every quantity in {UW.base.lowerOther}.
                               </p>
                             </>
                           ) : (
@@ -2318,28 +2319,13 @@ export default function ProductDetailPage() {
                   <h3 className="text-[11px] font-semibold uppercase tracking-[0.08em] text-navy/70">
                     Variants
                   </h3>
-                  {isOperator && (
-                    <div className="flex items-center gap-2">
-                      <Button
-                        size="sm"
-                        variant="secondary"
-                        leftIcon={<Scissors className="h-3.5 w-3.5" />}
-                        onClick={() => setShowVariantSplit(true)}
-                      >
-                        Assign to variants
-                      </Button>
-                      <Button size="sm" variant="secondary" onClick={openLinkExistingModal}>
-                        Link existing
-                      </Button>
-                      <Button
-                        size="sm"
-                        leftIcon={<Plus className="h-3.5 w-3.5" />}
-                        onClick={() => openVariantModal()}
-                      >
-                        Add Variant
-                      </Button>
-                    </div>
-                  )}
+                  <LegacyVariantsActions
+                    product={product}
+                    isOperator={isOperator}
+                    onSplit={() => setShowVariantSplit(true)}
+                    onLinkExisting={openLinkExistingModal}
+                    onAddVariant={() => openVariantModal()}
+                  />
                 </div>
 
                 {(!product.variants || product.variants.length === 0) && !product.variantName ? (
@@ -2493,7 +2479,7 @@ export default function ProductDetailPage() {
       <Modal
         open={variantModalOpen}
         onClose={closeVariantModal}
-        title={editingVariant ? "Edit Variant" : "Add Variant"}
+        title={variantModalTitle(!!editingVariant)}
         footer={
           <>
             <Button variant="secondary" onClick={closeVariantModal}>
@@ -2545,7 +2531,7 @@ export default function ProductDetailPage() {
                 ref={variantUnitSkuRef}
                 value={variantForm.unitSku}
                 onChange={(e) => setVariantForm((f) => ({ ...f, unitSku: e.target.value }))}
-                placeholder="Leave blank if it matches the case code"
+                placeholder={`Leave blank if it matches the ${UW.pack.lower} code`}
                 className="flex-1 rounded border border-surface-border px-3 py-2 text-sm text-navy focus:outline-none focus:ring-2 focus:ring-brand-500"
               />
               <BarcodeScannerButton

@@ -23,6 +23,7 @@ import { PromotionsModule } from "./promotions/promotions.module";
 import { RoutesModule } from "./routes/routes.module";
 import { TripsModule } from "./trips/trips.module";
 import { OrdersModule } from "./orders/orders.module";
+import { DocumentsModule } from "./documents/documents.module";
 import { BookkeepingModule } from "./bookkeeping/bookkeeping.module";
 import { SystemConfigModule } from "./system-config/system-config.module";
 import { PolicyModule } from "./policy/policy.module";
@@ -141,6 +142,7 @@ import { AppService } from "./app.service";
     RoutesModule,
     TripsModule,
     OrdersModule,
+    DocumentsModule,
     BookkeepingModule,
     SystemConfigModule,
     PolicyModule,

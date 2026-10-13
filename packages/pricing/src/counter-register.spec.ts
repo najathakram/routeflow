@@ -6,11 +6,33 @@ describe("counter register (the one source for every register-keyed counter feat
     expect(REGISTER_KEY_PATTERN.test(COUNTER_DEFAULT_REGISTER)).toBe(true);
   });
 
-  it("a register key is a 1..64 character slug of letters, digits, underscore and dash", () => {
-    for (const ok of ["main", "front-1", "Till_2", "a", "x".repeat(64)]) {
+  it("a register key is a 1..64 character slug of letters, digits, underscore and dash, with ':' allowed after the first character", () => {
+    for (const ok of [
+      "main",
+      "front-1",
+      "Front-1",
+      "Till_2",
+      "a",
+      "a:b",
+      "x".repeat(64),
+      "_x",
+      "-x",
+    ]) {
       expect(REGISTER_KEY_PATTERN.test(ok)).toBe(true);
     }
-    for (const bad of ["", "x".repeat(65), "a b", "a/b", "a.b", "__proto__ ", "é", "a\nb"]) {
+    for (const bad of [
+      "",
+      ":a",
+      ":",
+      "x".repeat(65),
+      "a b",
+      "a/b",
+      "a.b",
+      "__proto__ ",
+      "é",
+      "a\nb",
+      "a:b\n",
+    ]) {
       expect(REGISTER_KEY_PATTERN.test(bad)).toBe(false);
     }
   });

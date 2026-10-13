@@ -4,14 +4,14 @@ export const dynamic = "force-dynamic";
 
 import * as React from "react";
 import { useRouter, useSearchParams } from "next/navigation";
-import { setTenantCookie } from "@/lib/tenant-cookie";
-import { OP_KEYS } from "@/lib/auth-keys";
-import { setOpPresenceCookie } from "@/lib/presence-cookies";
 
-// This page handles the redirect after Google OAuth completes.
-// The API redirects here with ?accessToken=...&refreshToken=...&role=...
-// We store the tokens in localStorage (same as the regular login flow) and
-// redirect to the dashboard.
+// `/callback` never creates a session from the URL. No server path redirects here; tokens in
+// the query string are ignored and nothing is stored. Google sign-in hands the browser a
+// single-use `?code=`, which only the code-only page (`/auth/google/callback`) redeems, so a
+// code is forwarded there unchanged; anything else goes to the sign-in page.
+//
+// The route stays because the mobile route-parity manifest pairs it with mobile's
+// `(auth)/google-callback`.
 //
 // useSearchParams() requires a Suspense boundary to prevent static generation
 // failures during next build (Next.js 14 requirement).
@@ -19,36 +19,10 @@ import { setOpPresenceCookie } from "@/lib/presence-cookies";
 function AuthCallbackInner() {
   const router = useRouter();
   const params = useSearchParams();
-  const [error, setError] = React.useState<string | null>(null);
 
   React.useEffect(() => {
-    const accessToken = params.get("accessToken");
-    const refreshToken = params.get("refreshToken");
-    const tenantSlug = params.get("tenantSlug");
-
-    if (accessToken && refreshToken) {
-      // Store tokens under both the namespaced keys (read by AuthProvider /
-      // getStoredUser) and the legacy keys (read by any unmigrated code).
-      localStorage.setItem(OP_KEYS.accessToken, accessToken);
-      localStorage.setItem(OP_KEYS.refreshToken, refreshToken);
-      localStorage.setItem("accessToken", accessToken);
-      localStorage.setItem("refreshToken", refreshToken);
-      // Set the operator presence cookie so middleware path guards work.
-      setOpPresenceCookie();
-      // Restore the tenant cookie so API calls include the right X-Tenant-Slug header
-      if (tenantSlug) {
-        setTenantCookie(tenantSlug);
-      }
-      // Full document navigation (NOT router.replace): the root AuthProvider only
-      // reads localStorage on mount, so a client-side navigation would leave it
-      // unauthenticated and the dashboard guard would bounce the user back to
-      // login on the first attempt (requiring a second "Sign in with Google"
-      // click). A hard load remounts the provider so it reads the stored token.
-      window.location.replace("/");
-    } else {
-      setError("Google sign-in failed. Please try again.");
-      setTimeout(() => router.replace("/login?error=google_failed"), 2000);
-    }
+    const code = params.get("code");
+    router.replace(code ? `/auth/google/callback?code=${encodeURIComponent(code)}` : "/login");
   }, [params, router]);
 
   return (
@@ -65,11 +39,7 @@ function AuthCallbackInner() {
       >
         RF
       </div>
-      {error ? (
-        <p className="text-sm text-red-300">{error}</p>
-      ) : (
-        <p className="text-sm text-[#c2d0e5]">Signing you in...</p>
-      )}
+      <p className="text-sm text-[#c2d0e5]">Signing you in...</p>
     </div>
   );
 }

@@ -42,11 +42,16 @@ const SEND_SELECT = {
   needsReview: true,
   lines: true,
   lastSentAt: true,
-  tenant: { select: { subscription: { select: { stripeSubId: true } } } },
+  tenant: { select: { subscription: { select: { stripeSubId: true, catchupState: true } } } },
 } as const;
 
-/** A tenant that has since moved to a card subscription is no longer chased by the automatic emails. */
-const paysByCard = (row: any): boolean => !!row?.tenant?.subscription?.stripeSubId;
+/**
+ * A tenant that has since moved to a card subscription is no longer chased by the automatic emails - nor is one
+ * whose October catch-up claim is held (SESSION_OPEN has no stripeSubId yet, and a reminder sent while a card
+ * checkout is open would invite the double payment the claim exists to prevent).
+ */
+const paysByCard = (row: any): boolean =>
+  !!row?.tenant?.subscription?.stripeSubId || !!row?.tenant?.subscription?.catchupState;
 
 export interface RemindSummary {
   mode: ReturnType<typeof rfInvoicingMode>;

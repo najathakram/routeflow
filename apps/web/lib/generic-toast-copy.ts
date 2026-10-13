@@ -1,4 +1,6 @@
-import { API_ERROR_CODES, SHIPPED_ORDER_MESSAGE } from "@routeflow/types";
+import { API_ERROR_CODES, CREDITS_PENDING_COPY, SHIPPED_ORDER_MESSAGE } from "@routeflow/types";
+import { READ_ONLY_SENTENCE } from "@routeflow/types/read-only-copy";
+import { regulatedAuthCopy } from "@routeflow/types/regulated-auth-copy";
 import {
   CREDIT_NOTE_ERROR_COPY,
   RETURN_REFUND_OVER_LINE_HEADROOM_COPY,
@@ -7,9 +9,14 @@ import {
 } from "./credit-note-error-copy";
 import { activationEndedCopy } from "./activation-error-copy";
 import { creditLimitSentence } from "./credit-limit-copy";
+import { COUNTER_VOID_ERROR_COPY } from "./counter-void-copy";
+import { COUNTER_SALE_DAY_CLOSED_COPY, DAY_CLOSED_FOR_PAYMENT_DATE_COPY } from "./day-closed-copy";
 import { KNOWN_SERVER_SENTENCES } from "./customer-form-error-copy";
+import { ORDER_OVERPAY_GENERIC_COPY } from "./order-overpay";
 import { parsePlanGate } from "./plan-gate";
 import { safeTextErrorCopy } from "./safe-text-error-copy";
+import { sellerUnavailableCopy } from "./seller-unavailable";
+import { sellingRestrictedCopy } from "./selling-restricted-copy";
 
 /**
  * B980 (owner rule: no raw strings in the UI): the app-wide mutation error toast shows FIXED copy,
@@ -24,6 +31,8 @@ import { safeTextErrorCopy } from "./safe-text-error-copy";
 
 /** Daily-work refusals, by `body.code`. The sentences name the cause and the next step. */
 const CODE_COPY: Record<string, string> = {
+  // a buyer write toward a paused seller: the seller-unavailable sentence, never "You don't have permission"
+  [API_ERROR_CODES.SELLER_UNAVAILABLE]: sellerUnavailableCopy(null),
   [API_ERROR_CODES.RETURN_REFUND_OVER_LINE_HEADROOM]: RETURN_REFUND_OVER_LINE_HEADROOM_COPY,
   INLINE_RETURN_ALREADY_RETURNED_REASON_REQUIRED:
     "This item was already returned. Add a reason to confirm another return.",
@@ -36,6 +45,8 @@ const CODE_COPY: Record<string, string> = {
   MERGE_PACK_MISMATCH:
     "The pack size on this order no longer matches the product. Refresh and review the line.",
   ORDER_CHANGED_DURING_EDIT: "This order changed while you were editing it. Refresh and try again.",
+  ORDER_BILLING_CHANGED:
+    "This order's billing changed while you were working on it. Refresh and try again.",
   FULFIL_METHOD_NOT_OFFERED: "This business doesn't offer that way of fulfilling orders.",
   ORDER_WITH_CARRIER_NO_CANCEL:
     "This order is already with the carrier. Use a return instead of cancelling.",
@@ -53,8 +64,7 @@ const CODE_COPY: Record<string, string> = {
   CONCURRENT_UPDATE: "Someone else is updating this record. Try again in a moment.",
   MERGE_IN_PROGRESS: "Another change for this customer is in progress. Try again in a moment.",
   LOCK_UNAVAILABLE: "This is busy right now. Try again in a moment.",
-  [API_ERROR_CODES.ORDER_SAVED_CREDITS_PENDING]:
-    "The order was saved, but the credit notes weren't applied yet. Someone in the office needs to apply them on the order.",
+  [API_ERROR_CODES.ORDER_SAVED_CREDITS_PENDING]: CREDITS_PENDING_COPY,
   [API_ERROR_CODES.BARCODE_TAKEN]: "Another product already uses that barcode.",
   [API_ERROR_CODES.FAMILY_NOT_PRICEABLE]:
     "A product family can't be priced or promoted. Use its variants instead.",
@@ -65,6 +75,13 @@ const CODE_COPY: Record<string, string> = {
   // B987-B (#3053) registers them, then switch to the constants.
   [API_ERROR_CODES.UNIT_NOT_OFFERED]:
     "That unit isn't offered for this product any more. Choose another unit, or ask an admin to add it back.",
+  // SA-770: the overdue list refuses past its id cap. The server's text is never shown.
+  [API_ERROR_CODES.OVERDUE_FILTER_TOO_BROAD]:
+    "Too many invoices are overdue to list at once. Filter by customer, then try again.",
+  [API_ERROR_CODES.REMINDER_NO_BALANCE_DUE]:
+    "This invoice has no balance due, so there is nothing to remind about.",
+  [API_ERROR_CODES.REMINDER_NOT_ISSUED]:
+    "A reminder can only be sent for an invoice that has been issued and is still unpaid.",
   EMAIL_NOT_CONFIGURED:
     "Email isn't set up for this workspace yet. Connect it under Settings → Email, then try again.",
   EMAIL_SEND_FAILED:
@@ -89,6 +106,10 @@ const CODE_COPY: Record<string, string> = {
     "The pack size changed, so a change request was filed. Decline it and re-add the item to the next order.",
   [API_ERROR_CODES.INVOICE_CHANGED_CONCURRENTLY]:
     "The invoice changed while this was happening. Refresh and try again.",
+  [API_ERROR_CODES.INVOICE_TAX_STATE_STALE]:
+    "This invoice's tax no longer matches its lines. Re-save the invoice lines, then try again.",
+  [API_ERROR_CODES.INVOICE_TOTAL_BELOW_PAID]:
+    "That change would take the invoice total below what is already paid or credited. Remove the credit first, or change the lines or discount.",
   PO_ALREADY_BILLED: "That purchase order already has a bill.",
   BILL_EXCEEDS_PO: "That bill is more than the purchase order allows.",
   INVOICE_HAS_UNSPENT_CREDIT:
@@ -97,17 +118,61 @@ const CODE_COPY: Record<string, string> = {
     "Part of this invoice was refunded in cash. Issue a credit note for the rest instead of voiding.",
   [API_ERROR_CODES.ORDER_HAS_CASH_REFUND]:
     "Part of this order was refunded in cash. Issue a credit note instead of cancelling.",
+  // SA-762r: the counter-sale void's own refusals (the same sentences the void dialog shows).
+  [API_ERROR_CODES.COUNTER_SALE_VOID_HAS_RETURN]:
+    COUNTER_VOID_ERROR_COPY[API_ERROR_CODES.COUNTER_SALE_VOID_HAS_RETURN],
+  [API_ERROR_CODES.COUNTER_SALE_VOID_FOREIGN_PAYMENT]:
+    COUNTER_VOID_ERROR_COPY[API_ERROR_CODES.COUNTER_SALE_VOID_FOREIGN_PAYMENT],
+  [API_ERROR_CODES.COUNTER_SALE_VOID_NOT_TODAY]:
+    COUNTER_VOID_ERROR_COPY[API_ERROR_CODES.COUNTER_SALE_VOID_NOT_TODAY],
+  [API_ERROR_CODES.COUNTER_SALE_VOID_BUSY]:
+    COUNTER_VOID_ERROR_COPY[API_ERROR_CODES.COUNTER_SALE_VOID_BUSY],
+  // SA-750r3: the end-of-day close refusals. The FALLBACK for any dialog with no copy of its own (a void-payment, a bookkeeping
+  // payment, a refund): a surface with a better next step (Void: Return, Refund: store credit) says it itself.
+  [API_ERROR_CODES.COUNTER_SALE_DAY_CLOSED]: COUNTER_SALE_DAY_CLOSED_COPY,
+  [API_ERROR_CODES.DAY_CLOSED_FOR_PAYMENT_DATE]: DAY_CLOSED_FOR_PAYMENT_DATE_COPY,
+  // P-4: the one overpay copy (order-overpay.ts); a surface with the structured numbers uses orderOverpayCopy.
+  [API_ERROR_CODES.ORDER_EDIT_WOULD_OVERPAY]: ORDER_OVERPAY_GENERIC_COPY,
   HANDOFF_CODE_INVALID: "This sign-in link is invalid or has expired. Sign in again.",
+  // SA-733r5 (billing go-live): a manual-pay account completes card setup through its RouteFlow contact, and a card
+  // checkout already in progress blocks a second one. Fixed sentences; no ids.
+  [API_ERROR_CODES.EXTERNAL_PAYMENT_USE_CATCHUP]:
+    "Your account is invoiced directly. Your RouteFlow contact will send you a secure link to set up card payment.",
+  [API_ERROR_CODES.CATCHUP_SESSION_OPEN]:
+    "A card checkout is open for this account (October catch-up), so this change isn't available yet. Wait for it to complete or expire, then try again.",
+  [API_ERROR_CODES.CATCHUP_PENDING]:
+    "This account's card payment is being confirmed (October catch-up). This change is available once it clears.",
+  // SA-733r5 r-note: a catch-up the plan refuses because card billing would lose or change a charge. The account
+  // stays on invoiced billing; fixed sentences, no ids.
+  [API_ERROR_CODES.CATCHUP_ADDON_NOT_CARD_BILLABLE]:
+    "This account has an add-on that card billing can't carry yet, so it stays on invoiced billing for now. Your RouteFlow contact will follow up.",
+  [API_ERROR_CODES.ACTIVATION_CATCHUP_SESSION_OPEN]:
+    "A card checkout is open for this account (October catch-up), so it can't be activated by hand yet. Wait for the checkout to complete or expire, then try again.",
+  [API_ERROR_CODES.CATCHUP_MANUAL_PERIOD_AHEAD]:
+    "This account has a manual activation recorded without a paid period, so it stays on invoiced billing for now. Your RouteFlow contact will follow up.",
+  [API_ERROR_CODES.CATCHUP_NO_BILLABLE_PRICE]:
+    "This account has no billable monthly price set, so it stays on invoiced billing for now. Your RouteFlow contact will follow up.",
+  [API_ERROR_CODES.CATCHUP_ADDON_SNAPSHOT_NOT_CATALOG]:
+    "This account's add-on price or quantity differs from the standard one, so it stays on invoiced billing for now. Your RouteFlow contact will follow up.",
+  // SA-733r7 PR-B3 (dunning): a plan change is refused while an invoice is overdue; paying it restores everything.
+  [API_ERROR_CODES.PAYMENT_OVERDUE]:
+    "An invoice on this account is overdue. Pay it to continue; plan changes are available again right after.",
+  [API_ERROR_CODES.PAYMENT_STATE_UNKNOWN]:
+    "We couldn't confirm your open invoice just now. Please try again in a moment.",
 };
 
 /** Exact server sentences (already product text) for refusals with no `code`; matched whole, never partially. */
 const KNOWN_REFUSAL_SENTENCES: Record<string, string> = {
+  // a buyer reorder where every line is restricted: the API's own sentence, already product text
+  "None of these items are available to you right now.":
+    "None of these items are available to you right now.",
   "Cannot duplicate an order-linked invoice. Create a new invoice or issue a credit note instead.":
     "This invoice came from an order, so it can't be duplicated. Create a new invoice or issue a credit note instead.",
 };
 
 const PLAN_COPY = "This isn't included in your current plan.";
-const READ_ONLY_COPY = "Your workspace is read-only, so this action is unavailable.";
+// SA-776: the owner's sentence, verbatim (shared with mobile); the reason line needs the subscription read.
+const READ_ONLY_COPY = READ_ONLY_SENTENCE;
 const GENERIC_COPY = "Something went wrong. Please try again.";
 
 function statusCopy(status: number, refusal?: string): string {
@@ -241,6 +306,11 @@ export function codedToastCopy(err: unknown): string | null {
   if (code === API_ERROR_CODES.CREDIT_LIMIT_EXCEEDED)
     return creditLimitSentence(data.limit, data.exposure);
   if (code === API_ERROR_CODES.ACTIVATION_PERIOD_ALREADY_ENDED) return activationEndedCopy(err);
+  // CQ-06 review: a selling-restriction refusal with no dialog of its own says what is wrong and the next step.
+  if (code === API_ERROR_CODES.SELLING_RESTRICTED) return sellingRestrictedCopy(data.blockedLines);
+  // CQ-06: the license refusal says what is wrong (expired / none on file) and where to fix it (shared with mobile).
+  if (code === API_ERROR_CODES.REGULATED_AUTH_REQUIRED)
+    return regulatedAuthCopy(data.blockedCategories);
   if (Object.prototype.hasOwnProperty.call(CREDIT_NOTE_ERROR_COPY, code))
     return CREDIT_NOTE_ERROR_COPY[code as keyof typeof CREDIT_NOTE_ERROR_COPY];
   if (Object.prototype.hasOwnProperty.call(CODE_COPY, code)) return CODE_COPY[code];

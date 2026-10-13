@@ -72,6 +72,8 @@ export interface ProductTileProps {
   isFavorite: boolean;
   onAdd: () => void;
   onUpdateQty: (qty: number) => void;
+  /** Puts the removed cart line back (the stepper's Undo); gets the pre-removal line. */
+  onRestore?: (line: CartItem) => void;
   onToggleFavorite: () => void;
   /** P5-03: Notify-me subscribed state + toggle. Only rendered when the tile is OOS and not in the cart. */
   isAlertSubscribed?: boolean;
@@ -90,6 +92,7 @@ export function ProductTile({
   isFavorite,
   onAdd,
   onUpdateQty,
+  onRestore,
   onToggleFavorite,
   isAlertSubscribed,
   onToggleStockAlert,
@@ -155,6 +158,8 @@ export function ProductTile({
           // 44px hit area; the visible circle (inner span) keeps its old size.
           className="group/fav absolute top-0.5 right-0.5 flex min-h-11 min-w-11 items-center justify-center"
           title={isFavorite ? "Remove from favorites" : "Add to favorites"}
+          aria-label={isFavorite ? "Remove from favorites" : "Add to favorites"}
+          aria-pressed={isFavorite}
         >
           <span
             className={`flex items-center justify-center rounded-full shadow-sm transition-colors ${isCompact ? "h-7 w-7" : "h-8 w-8"} ${
@@ -203,7 +208,9 @@ export function ProductTile({
           </p>
         </div>
 
-        <div className="flex items-end justify-between gap-2">
+        <div
+          className={`flex items-end justify-between gap-2 ${cartItem ? "flex-wrap sm:flex-nowrap" : ""}`}
+        >
           <div className="min-w-0">
             <div className="flex items-baseline gap-1.5">
               <p className={`font-bold text-navy ${isCompact ? "text-base" : "text-lg"}`}>
@@ -220,7 +227,14 @@ export function ProductTile({
           </div>
 
           {cartItem ? (
-            <QtyStepper qty={cartItem.qty} onUpdate={onUpdateQty} onRemove={() => onUpdateQty(0)} />
+            <QtyStepper
+              qty={cartItem.qty}
+              name={product.name}
+              onUpdate={onUpdateQty}
+              onRemove={() => onUpdateQty(0)}
+              onRestore={onRestore ? () => onRestore(cartItem) : undefined}
+              stack
+            />
           ) : outOfStock && onToggleStockAlert ? (
             <button
               onClick={onToggleStockAlert}

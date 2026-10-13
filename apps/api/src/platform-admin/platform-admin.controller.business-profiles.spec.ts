@@ -71,6 +71,8 @@ function fakeTenant(start: {
     setKey: start.setFails as string | undefined,
   };
   const paid = new Set(start.addons ?? []);
+  // SA-769: rows written by a comp enable (the SA-693 path) and seeded comp rows carry isComp
+  const compRows = new Set<string>(start.comped ?? []);
   const modes: Record<string, string> = {
     fulfilment_model: "unset",
     counter_sales: "unset",
@@ -110,6 +112,23 @@ function fakeTenant(start: {
   };
   const addonService = {
     getActiveAddons: jest.fn(async () => [...addons]),
+    // SA-769: the SA-693 comp path (isComp true, no Stripe call, books nothing) - modelled here; the
+    // real AddonService body is exercised in platform-admin.controller.business-profile-comps.sa769.spec.ts
+    enableAddon: jest.fn(
+      async (
+        _t: string,
+        key: string,
+        _price?: string,
+        _ack?: boolean,
+        opts?: { comp?: boolean; lockHeld?: boolean },
+      ) => {
+        if (addons.has(key)) throw new ConflictException(`Add-on "${key}" is already active`);
+        addons.add(key);
+        if (opts?.comp) compRows.add(key);
+        writes.push(`comp ${key}`);
+        return { addonKey: key, active: true, isComp: opts?.comp === true };
+      },
+    ),
     // The EXISTING disable (Stripe item removal + the locked ledger update) — modelled here.
     disableAddon: jest.fn(async (_t: string, key: string) => {
       if (key === failing.key) {
@@ -117,6 +136,7 @@ function fakeTenant(start: {
       }
       addons.delete(key);
       paid.delete(key);
+      compRows.delete(key);
       writes.push(`disable ${key}`);
       return { addonKey: key, active: false };
     }),
@@ -182,6 +202,7 @@ function fakeTenant(start: {
           active: true,
           stripeItemId: isPaid ? "si_x" : null,
           priceSnapshot: isPaid ? "49.00" : null,
+          isComp: compRows.has(key),
         };
       }),
     },
@@ -289,9 +310,9 @@ describe("business-profile routes are platform-admin only", () => {
 });
 
 describe("GET business-profiles / POST preview", () => {
-  it("lists the four profiles", () => {
+  it("lists the five profiles", () => {
     const { controller } = fakeTenant({});
-    expect(controller.listBusinessProfiles().profiles).toHaveLength(4);
+    expect(controller.listBusinessProfiles().profiles).toHaveLength(5);
   });
 
   it("preview writes nothing", async () => {
@@ -361,7 +382,7 @@ describe("confirm applies only the plan that was previewed (#3199 review)", () =
     expect(t.addonService.disableAddon).not.toHaveBeenCalled();
   });
 
-  it("billing and its manual flag are part of the fingerprint", async () => {
+  it("billing and its manual / comp flags are part of the fingerprint", async () => {
     const paidStripe = fakeTenant({ addons: ["driver_payments"] });
     const a = await paidStripe.controller.previewBusinessProfile(T, {
       profile: "shipping_wholesaler",
@@ -369,7 +390,10 @@ describe("confirm applies only the plan that was previewed (#3199 review)", () =
     const comped = fakeTenant({ comped: ["driver_payments"] });
     const b = await comped.controller.previewBusinessProfile(T, { profile: "shipping_wholesaler" });
     expect(a.plan.billing.length).toBe(1);
-    expect(b.plan.billing.length).toBe(0);
+    // SA-769: a comp row is switched off through the same disable, flagged comp (no billing to stop)
+    expect(b.plan.billing).toEqual([
+      { featureKey: "driver_payments", action: "disable", manual: false, comp: true },
+    ]);
     expect(a.planFingerprint).not.toBe(b.planFingerprint);
   });
 
@@ -432,19 +456,31 @@ describe("POST business-profile (confirm) — through the existing audited write
       { profile: "delivery_distributor" },
       admin,
     );
+    // SA-769: the grants are COMP rows (the SA-693 path), never GRANT overrides
     expect(t.writes).toEqual([
-      "override GRANT recurring_routes",
-      "override GRANT order_delivery",
-      "override GRANT driver_payments", // M2: not on by default, so the profile turns it on
+      "comp recurring_routes",
+      "comp order_delivery",
+      "comp driver_payments", // M2: not on by default, so the profile turns it on
       "mode fulfilment_model=delivery",
     ]);
+    expect(t.featureOverrides.create).not.toHaveBeenCalled();
+    expect(t.addonService.enableAddon).toHaveBeenCalledWith(
+      T,
+      "recurring_routes",
+      undefined,
+      undefined,
+      expect.objectContaining({ comp: true, lockHeld: true }),
+    );
     expect(t.state().modes.fulfilment_model).toBe("delivery");
-    // every override write went through the controller's own audited path
+    // every comp went through the controller's own audited path (ADDON_COMPED, reason names the profile)
     expect(t.svc.recordAdminAction).toHaveBeenCalledWith(
       T,
       "admin-1",
-      AdminAuditAction.FEATURE_OVERRIDE_SET,
-      expect.objectContaining({ featureKey: "recurring_routes", effect: "GRANT" }),
+      AdminAuditAction.ADDON_COMPED,
+      expect.objectContaining({
+        addonKey: "recurring_routes",
+        reason: "business profile delivery_distributor",
+      }),
     );
     expect(t.featureConfig.set).toHaveBeenCalledWith(
       T,
@@ -498,19 +534,20 @@ describe("POST business-profile (confirm) — through the existing audited write
       modes: { fulfilment_model: "ship" },
     });
     await t.controller.applyBusinessProfile(T, { profile: "delivery_distributor" }, admin);
+    // SA-769: each DENY is revoked, then the module is comped (no GRANT override is written)
     expect(t.writes).toEqual([
       "revoke DENY recurring_routes",
-      "override GRANT recurring_routes",
+      "comp recurring_routes",
       "revoke DENY order_delivery",
-      "override GRANT order_delivery",
+      "comp order_delivery",
       "revoke DENY driver_payments",
-      "override GRANT driver_payments",
+      "comp driver_payments",
       "mode fulfilment_model=delivery",
     ]);
     expect(t.state()).toEqual({
       modes: { fulfilment_model: "delivery", counter_sales: "unset" },
       held: { recurring_routes: true, order_delivery: true, driver_payments: true },
-      activeOverrides: 3,
+      activeOverrides: 0,
     });
   });
 
@@ -520,7 +557,8 @@ describe("POST business-profile (confirm) — through the existing audited write
     const first = [...t.writes];
     t.writes.length = 0;
     await t.controller.applyBusinessProfile(T, { profile: "shipping_wholesaler" }, admin);
-    expect(first).toEqual(["mode fulfilment_model=ship", "override DENY order_delivery"]);
+    // SA-769: a comp row is switched off by the disable path (no Stripe item, so no billing call)
+    expect(first).toEqual(["disable order_delivery", "mode fulfilment_model=ship"]);
     expect(t.writes).toEqual([]);
   });
 
@@ -657,11 +695,12 @@ describe("OWNER RULING (money, tier 1): switching OFF a module the tenant PAYS f
     });
   });
 
-  it("a free/comped add-on row: NO billing call — the module is switched off with a DENY override", async () => {
+  it("SA-769: a comp add-on row (isComp) is switched off by the add-on disable - it has no Stripe item, so no billing is stopped - and needs no DENY override", async () => {
     const t = fakeTenant({ comped: ["recurring_routes"] });
     await t.controller.applyBusinessProfile(T, { profile: "shipping_wholesaler" }, admin);
-    expect(t.addonService.disableAddon).not.toHaveBeenCalled();
-    expect(t.writes).toEqual(["mode fulfilment_model=ship", "override DENY recurring_routes"]);
+    expect(t.addonService.disableAddon.mock.calls).toEqual([[T, "recurring_routes"]]);
+    expect(t.writes).toEqual(["disable recurring_routes", "mode fulfilment_model=ship"]);
+    expect(t.featureOverrides.create).not.toHaveBeenCalled();
   });
 
   it("a comp via GRANT override: NO billing call", async () => {
@@ -782,6 +821,70 @@ describe("OWNER RULING (money, tier 1): switching OFF a module the tenant PAYS f
   });
 });
 
+describe("SA-769: a COMP switch-off that fails never claims billing was (or could not be) stopped", () => {
+  const compTenant = (over: Parameters<typeof fakeTenant>[0] = {}) =>
+    fakeTenant({
+      comped: ["recurring_routes", "order_delivery", "driver_payments"],
+      modes: { fulfilment_model: "delivery" },
+      ...over,
+    });
+
+  it("the first comp disable fails: the message says it could not be switched off, with no billing wording", async () => {
+    const t = compTenant({ disableFails: "driver_payments" });
+    const err = await t.controller
+      .applyBusinessProfile(T, { profile: "shipping_wholesaler" }, admin)
+      .catch((e) => e);
+    expect(err.getStatus()).toBe(503);
+    const body = err.getResponse();
+    expect(body).toMatchObject({
+      code: "BUSINESS_PROFILE_BILLING_FAILED",
+      featureKey: "driver_payments",
+      alreadyDisabled: [],
+    });
+    expect(body.message).toContain("At-door payment collection could not be switched off");
+    expect(body.message).not.toMatch(/billing/i);
+    expect(t.writes).toEqual([]);
+  });
+
+  it("a later comp disable fails: the earlier ones are named as switched off, with no billing wording", async () => {
+    const t = compTenant({ disableFails: "recurring_routes" });
+    const err = await t.controller
+      .applyBusinessProfile(T, { profile: "shipping_wholesaler" }, admin)
+      .catch((e) => e);
+    const body = err.getResponse();
+    expect(body.alreadyDisabled).toEqual(["driver_payments", "order_delivery"]);
+    expect(body.message).toContain(
+      "Already switched off: At-door payment collection, Ad hoc order delivery.",
+    );
+    expect(body.message).not.toMatch(/billing/i);
+  });
+
+  it("a mode failure after comp switch-offs: the partial-apply copy says add-ons were switched off, not that billing stopped", async () => {
+    const t = compTenant({ setFails: "fulfilment_model" });
+    const err = await t.controller
+      .applyBusinessProfile(T, { profile: "shipping_wholesaler" }, admin)
+      .catch((e) => e);
+    const body = err.getResponse();
+    expect(body.failedStep).toEqual({ step: "mode", key: "fulfilment_model" });
+    expect(body.message).toContain("failed after the add-ons were switched off");
+    expect(body.message).not.toMatch(/billing/i);
+  });
+
+  it("when a PAID add-on was stopped the billing wording stays (the existing contract)", async () => {
+    const t = fakeTenant({
+      addons: ["driver_payments"],
+      comped: ["recurring_routes"],
+      modes: { fulfilment_model: "delivery" },
+      setFails: "fulfilment_model",
+    });
+    const err = await t.controller
+      .applyBusinessProfile(T, { profile: "shipping_wholesaler" }, admin)
+      .catch((e) => e);
+    expect(err.getResponse().message).toContain("Already switched off with billing stopped:");
+    expect(err.getResponse().message).toContain("failed after billing was stopped");
+  });
+});
+
 describe("SA MUST: a failure AFTER a successful billing disable returns the SAME coded 503", () => {
   it("disable ok, then set() rejects → 503 BUSINESS_PROFILE_BILLING_FAILED naming what was stopped and the failing step; a second confirm completes with NO further billing call", async () => {
     const t = fakeTenant({
@@ -833,7 +936,10 @@ describe("SA MUST: a failure AFTER a successful billing disable returns the SAME
   });
 
   it("with NO billing disable done, a later failure keeps its own error (nothing was stopped to report)", async () => {
-    const t = fakeTenant({ comped: ["recurring_routes"], setFails: "fulfilment_model" });
+    const t = fakeTenant({
+      overrides: { recurring_routes: "GRANT" },
+      setFails: "fulfilment_model",
+    });
     const err = await t.controller
       .applyBusinessProfile(T, { profile: "shipping_wholesaler" }, admin)
       .catch((e) => e);
@@ -902,5 +1008,76 @@ describe("effective-features carries the applied fulfilment mode (B1132)", () =>
     t.featureConfig.getState.mockRejectedValueOnce(new Error("db blip"));
     const res = (await t.controller.getTenantFeaturesEffective(T)) as { effective: unknown[] };
     expect(res.effective.length).toBe(FEATURE_REGISTRY.length);
+  });
+});
+
+describe("ROW (c): the BUSINESS_PROFILE_BILLING_FAILED body says, per add-on, what happened", () => {
+  const apply = async (t: ReturnType<typeof fakeTenant>) => {
+    const err = await t.controller
+      .applyBusinessProfile(T, { profile: "shipping_wholesaler" }, admin)
+      .catch((e) => e);
+    expect(err.getStatus()).toBe(503);
+    return err.getResponse();
+  };
+
+  it("a comp row switched off, then a later step fails: wasComp true, switched off, billing never stopped", async () => {
+    const t = fakeTenant({
+      comped: ["recurring_routes"],
+      modes: { fulfilment_model: "delivery" },
+      setFails: "fulfilment_model",
+    });
+    const body = await apply(t);
+    expect(body.addons).toEqual([
+      { key: "recurring_routes", wasComp: true, billingStopped: false, switchedOff: true },
+    ]);
+    // additive: the older top-level fields still ride along
+    expect(body.alreadyDisabled).toEqual(["recurring_routes"]);
+    expect(body.failedStep).toEqual({ step: "mode", key: "fulfilment_model" });
+  });
+
+  it("a paid row stopped, then a later add-on's switch-off failed: the failed one comes first", async () => {
+    const t = fakeTenant({
+      addons: ["driver_payments", "order_delivery"],
+      modes: { fulfilment_model: "delivery" },
+      disableFails: "order_delivery",
+    });
+    const body = await apply(t);
+    expect(body.addons).toEqual([
+      { key: "order_delivery", wasComp: false, billingStopped: false, switchedOff: false },
+      { key: "driver_payments", wasComp: false, billingStopped: true, switchedOff: true },
+    ]);
+  });
+
+  it("a paid row whose stop failed (nothing done before): one entry, still on", async () => {
+    const t = fakeTenant({ addons: ["recurring_routes"], disableFails: "recurring_routes" });
+    const body = await apply(t);
+    expect(body.addons).toEqual([
+      { key: "recurring_routes", wasComp: false, billingStopped: false, switchedOff: false },
+    ]);
+    expect(body.alreadyDisabled).toEqual([]);
+  });
+
+  it("a comp row whose switch-off failed: wasComp true, not switched off", async () => {
+    const t = fakeTenant({ comped: ["driver_payments"], disableFails: "driver_payments" });
+    const body = await apply(t);
+    expect(body.addons).toEqual([
+      { key: "driver_payments", wasComp: true, billingStopped: false, switchedOff: false },
+    ]);
+  });
+
+  it("mixed: paid stopped + comp switched off + a comp that failed, in failed-first then disable order", async () => {
+    const t = fakeTenant({
+      addons: ["driver_payments"],
+      comped: ["order_delivery", "recurring_routes"],
+      modes: { fulfilment_model: "delivery" },
+      disableFails: "recurring_routes",
+    });
+    const body = await apply(t);
+    expect(body.addons).toEqual([
+      { key: "recurring_routes", wasComp: true, billingStopped: false, switchedOff: false },
+      { key: "driver_payments", wasComp: false, billingStopped: true, switchedOff: true },
+      { key: "order_delivery", wasComp: true, billingStopped: false, switchedOff: true },
+    ]);
+    expect(JSON.stringify(body)).not.toContain("connection terminated");
   });
 });

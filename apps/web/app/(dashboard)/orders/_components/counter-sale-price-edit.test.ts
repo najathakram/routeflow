@@ -187,3 +187,38 @@ describe("toSaleItem: the wire carries a price ONLY for an edited line", () => {
     });
   });
 });
+
+describe("CQ-15: the chip says what was typed", () => {
+  // a customer on a special tier: list 9.50, this customer's price 8.55 a box, 2 boxes
+  const cola: SaleLine = {
+    tempId: "c",
+    productId: "p-c",
+    name: "Cola",
+    unitPrice: 8.55,
+    listPrice: 9.5,
+    qty: 2,
+    priceType: "SPECIAL",
+  };
+
+  it("10% off the customer's 8.55 reads '10% off', not the 18.95% it is against the list", () => {
+    const [l] = applyPriceEdit([cola], "c", edit({ value: 10, unitPrice: 7.7 }));
+    const f = editedLineFigures(l)!;
+    expect(f.chip).toBe("10% off");
+    // the struck list and the Discounts row still measure from the list: they are the receipt's figures
+    expect(f.original).toBe(19);
+    expect(f.net).toBe(15.4);
+    expect(f.discount).toBe(3.6);
+  });
+
+  it("an amount off reads the amount typed, per selling unit", () => {
+    const [l] = applyPriceEdit([cola], "c", edit({ mode: "amount", value: 0.85, unitPrice: 7.7 }));
+    expect(editedLineFigures(l)!.chip).toBe("$0.85 off each");
+  });
+
+  it("when the tier moved under a kept edit the chip is re-derived from the list, as before", () => {
+    const moved: SaleLine = { ...cola, unitPrice: 5, listPrice: 10 };
+    const [l] = applyPriceEdit([moved], "c", edit({ value: 50, unitPrice: 5 }));
+    // typed 50% of the tier 8.55 would be 4.28, not the kept 5.00 -> 50% off the list
+    expect(editedLineFigures({ ...l, tierPrice: 8 })!.chip).toBe("50% off");
+  });
+});

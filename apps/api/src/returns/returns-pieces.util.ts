@@ -35,6 +35,7 @@ import {
   type PackLine,
 } from "../common/line-pack-factors";
 import { piecesPerQtyOf } from "../credit-notes/line-credit-headroom";
+import { DEAD_RETURN_STATUSES } from "./return-statuses";
 import {
   liveInvoiceItemsByLine,
   productPackBasis,
@@ -316,13 +317,13 @@ export async function returnedPiecesByProduct(
 ): Promise<Record<string, PriorReturned>> {
   const [standardReturns, inlineItems] = await Promise.all([
     tx.return.findMany({
-      where: { orderId, kind: "STANDARD", status: { notIn: ["REJECTED", "CANCELLED"] } },
+      where: { orderId, kind: "STANDARD", status: { notIn: DEAD_RETURN_STATUSES } },
       include: { items: { select: { productId: true, qty: true } } },
     }),
     tx.returnItem.findMany({
       where: {
         sourceOrderId: orderId,
-        return: { kind: "INLINE", status: { notIn: ["REJECTED", "CANCELLED"] } },
+        return: { kind: "INLINE", status: { notIn: DEAD_RETURN_STATUSES } },
       },
       select: { productId: true, qty: true },
     }),

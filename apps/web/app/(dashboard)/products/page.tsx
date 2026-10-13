@@ -27,7 +27,7 @@ import { useUrlFilters } from "@/lib/hooks/useUrlFilters";
 import { useUrlSearch } from "@/lib/hooks/useUrlSearch";
 import { useUrlPage, useResetPageOnChange, useClampPage } from "@/lib/hooks/useUrlPage";
 import { useProducts, useUpdateProduct, useBulkDeleteProducts } from "@/lib/api/products";
-import { cascadeTierPrices, type TierField } from "@routeflow/pricing";
+import { cascadeTierPrices, unitWords, type TierField } from "@routeflow/pricing";
 import { useTierLabels, type TierLabelsConfig } from "@/lib/api/tier-labels";
 import { unitsLabel } from "@/lib/stock-label";
 import { useTrackedCategories, type TrackedCategory } from "@/lib/api/tracked-categories";
@@ -44,6 +44,7 @@ import { QuickEditCell, type EditRecord } from "./_components/QuickEditCell";
 import { SectionEditCell } from "./_components/SectionEditCell";
 import {
   PortalBulkButtons,
+  PortalLimitButtons,
   PortalHiddenBadge,
   PortalHiddenFilter,
 } from "./_components/PortalVisibilityControls";
@@ -51,6 +52,7 @@ import { portalBadge, portalVisibleFilterParam } from "@/lib/product-portal-visi
 import { NewFamilyButton } from "@/components/family/NewFamilyButton";
 import { deactivateFailureToast, isReadOnlyRefusal } from "@/lib/product-reactivation-refusal";
 import { BulkDeleteSkipReport, type SkippedProduct } from "@/components/BulkDeleteSkipReport";
+import { ReadOnlyHint, WriteButton } from "@/lib/read-only-gate";
 import { ProductsExportButton } from "./_components/ProductsExportButton";
 import {
   STOCK_FILTER_CHIPS,
@@ -59,6 +61,9 @@ import {
   stockFilterParams,
   type ProductStockFilter,
 } from "./_components/product-status";
+
+// U-3a: this list carries no per-product label yet, so it prints the default words.
+const UW = unitWords();
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -155,7 +160,7 @@ function ProductCard({
       className={cn(
         "relative flex flex-col overflow-hidden rounded-lg border bg-white text-left shadow-card transition-shadow hover:shadow-dropdown cursor-pointer",
         status === "LOW" && "border-warning/40",
-        status === "OUT_OF_STOCK" && "border-danger/40",
+        status === "OUT_OF_STOCK" && "border-warning/40",
         (status === "IN_STOCK" || status === "INACTIVE") && "border-surface-border",
         selected && "ring-2 ring-brand-500 border-brand-500",
       )}
@@ -184,7 +189,7 @@ function ProductCard({
         className={cn(
           "relative flex h-28 w-full items-center justify-center overflow-hidden",
           status === "LOW" && "bg-warning-bg",
-          status === "OUT_OF_STOCK" && "bg-danger-bg",
+          status === "OUT_OF_STOCK" && "bg-warning-bg",
           (status === "IN_STOCK" || status === "INACTIVE") && "bg-surface-raised",
         )}
         onClick={selectionMode ? undefined : onClick}
@@ -203,7 +208,7 @@ function ProductCard({
             className={cn(
               "h-10 w-10",
               status === "LOW" && "text-warning/40",
-              status === "OUT_OF_STOCK" && "text-danger/40",
+              status === "OUT_OF_STOCK" && "text-warning/40",
               (status === "IN_STOCK" || status === "INACTIVE") && "text-navy/20",
             )}
           />
@@ -240,7 +245,7 @@ function ProductCard({
           <p className="text-[10px] text-navy/70 truncate">{product.parent.name}</p>
         )}
         <div className="flex items-center gap-1.5">
-          <ProductStatusBadge status={status} />
+          <ProductStatusBadge status={status} currentStock={product.currentStock} />
           <MerchBadges product={product} />
           {product.trackedCategoryId && (
             <span
@@ -377,7 +382,7 @@ function makeTableColumns(
           {p.msrp != null && parseFloat(String(p.msrp)) > 0 ? (
             <>
               ${parseFloat(String(p.msrp)).toFixed(2)}
-              <span className="ml-0.5 text-[10px] text-navy/40">/pc</span>
+              <span className="ml-0.5 text-[10px] text-navy/40">/{UW.base.short.one}</span>
             </>
           ) : (
             <span className="text-navy/30">—</span>
@@ -429,7 +434,7 @@ function makeTableColumns(
                 status === "LOW"
                   ? "border-warning/40 bg-warning-bg"
                   : status === "OUT_OF_STOCK"
-                    ? "border-danger/40 bg-danger-bg"
+                    ? "border-warning/40 bg-warning-bg"
                     : "border-surface-border bg-surface-raised",
               )}
             >
@@ -463,7 +468,9 @@ function makeTableColumns(
               </p>
               <p className="text-[11px] text-navy/40">
                 {p.sku ? `${p.sku} · ` : ""}
-                {p.unitsPerBox && p.unitsPerBox > 1 ? "box + piece" : p.unit}
+                {p.unitsPerBox && p.unitsPerBox > 1
+                  ? `${UW.pack.lower} + ${UW.base.lower}`
+                  : p.unit}
               </p>
             </div>
           </div>
@@ -620,7 +627,7 @@ function makeTableColumns(
     },
     {
       accessorKey: "unitsPerBox",
-      header: "Units / case",
+      header: `${UW.base.other} per ${UW.pack.lower}`,
       enableSorting: false,
       cell: ({ row }) => {
         const p = row.original;
@@ -685,7 +692,7 @@ function makeTableColumns(
         const status = getProductStatus(row.original);
         return (
           <div className="flex items-center gap-2">
-            <ProductStatusBadge status={status} />
+            <ProductStatusBadge status={status} currentStock={row.original.currentStock} />
             {/* `currentStock` is a PIECE count system-wide, so it must never be printed
                 next to `unit` (the box/case noun) — `unitsLabel` keeps that noun only
                 for unboxed products and shows a box+piece split otherwise. */}
@@ -1222,12 +1229,16 @@ export default function ProductsPage() {
               }}
             />
             <NewFamilyButton />
-            <Button leftIcon={<Plus className="h-4 w-4" />} onClick={() => setShowCreate(true)}>
+            <WriteButton
+              leftIcon={<Plus className="h-4 w-4" />}
+              onClick={() => setShowCreate(true)}
+            >
               New Product
-            </Button>
+            </WriteButton>
           </div>
         }
       />
+      <ReadOnlyHint className="px-1 text-xs text-slate-600" />
 
       {/* Quick Edit mode banner */}
       {quickEditMode && (
@@ -1377,11 +1388,11 @@ export default function ProductsPage() {
 
       {/* Selection action bar */}
       {selectMode && selected.size > 0 && (
-        <div className="flex items-center justify-between rounded-lg border border-brand-200 bg-brand-50 px-4 py-3">
+        <div className="flex flex-wrap items-center justify-between gap-2 rounded-lg border border-brand-200 bg-brand-50 px-4 py-3">
           <span className="text-sm font-medium text-navy">
             {selected.size} item{selected.size !== 1 ? "s" : ""} selected
           </span>
-          <div className="flex items-center gap-2">
+          <div className="flex flex-wrap items-center gap-2">
             <button
               onClick={() => setSelected(new Set())}
               className="text-sm text-navy/70 hover:text-navy transition-colors"
@@ -1407,14 +1418,21 @@ export default function ProductsPage() {
               </Button>
             )}
             <PortalBulkButtons selected={selected} onDone={() => setSelected(new Set())} />
-            <Button
-              variant="danger"
-              leftIcon={<Trash2 className="h-4 w-4" />}
-              loading={bulkDelete.isPending}
-              onClick={() => setShowBulkDeleteConfirm(true)}
+            <PortalLimitButtons selected={selected} onDone={() => setSelected(new Set())} />
+            {/* The destructive action sits apart, past a divider, never shoulder to shoulder with Limit in portal. */}
+            <div
+              data-testid="bulk-destructive"
+              className="flex items-center sm:ml-2 sm:border-l sm:border-brand-200 sm:pl-4"
             >
-              Delete {selected.size} item{selected.size !== 1 ? "s" : ""}
-            </Button>
+              <Button
+                variant="danger"
+                leftIcon={<Trash2 className="h-4 w-4" />}
+                loading={bulkDelete.isPending}
+                onClick={() => setShowBulkDeleteConfirm(true)}
+              >
+                Delete {selected.size} item{selected.size !== 1 ? "s" : ""}
+              </Button>
+            </div>
           </div>
         </div>
       )}
@@ -1517,9 +1535,9 @@ export default function ProductsPage() {
               title="No products yet"
               description="Add your first product to build your catalog and start taking orders."
               action={
-                <Button size="sm" onClick={() => setShowCreate(true)}>
+                <WriteButton size="sm" onClick={() => setShowCreate(true)}>
                   New product
-                </Button>
+                </WriteButton>
               }
             />
           )}

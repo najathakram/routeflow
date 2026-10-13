@@ -15,6 +15,7 @@ import { FilterChipRow, NavBar, Pill } from "@routeflow/ui/mobile/ios";
 import { useState } from "react";
 import { useBuyerInvoices, type BuyerInvoice } from "../../../lib/api/buyer";
 import { fmtCalendarDate } from "../../../lib/format-date";
+import { buyerInvoiceQuery } from "../../../lib/buyer-invoice-filter";
 
 const FILTERS = [
   { id: "ALL", label: "All" },
@@ -32,6 +33,7 @@ function invoicePill(status: string) {
     case "PARTIAL":
       return { variant: "orange" as const, label: "Partial" };
     case "SENT":
+    case "VIEWED": // opened by the buyer, still owed: shows under the Unpaid chip, so it reads Unpaid too
       return { variant: "orange" as const, label: "Unpaid" };
     case "OVERDUE":
       return { variant: "red" as const, label: "Overdue" };
@@ -46,11 +48,10 @@ export default function CustomerInvoicesScreen() {
   const router = useRouter();
   const [filter, setFilter] = useState<FilterId>("ALL");
 
-  const statusParam = filter === "ALL" || filter === "UNPAID" ? undefined : filter;
-  const statusesParam = filter === "UNPAID" ? ["SENT", "OVERDUE"] : undefined;
+  // Chip -> params lives in lib/buyer-invoice-filter.ts: Unpaid is the whole open set (SENT, VIEWED, PARTIAL,
+  // OVERDUE) and Overdue is the derived isOverdue filter, never a strict status (row 318e / R4).
   const { data, isLoading, isFetching, refetch } = useBuyerInvoices({
-    status: statusParam,
-    statuses: statusesParam,
+    ...buyerInvoiceQuery(filter),
     limit: 30,
   });
   const invoices = data?.data ?? [];

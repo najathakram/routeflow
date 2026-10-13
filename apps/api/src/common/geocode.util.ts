@@ -21,8 +21,18 @@ export interface GeocodeCoords {
 const GEOCODE_TIMEOUT_MS = 5000;
 
 /**
+ * True when an address has neither a street nor a city (blank or whitespace) — e.g. a "minimal",
+ * state-only customer address. Geocoding ", , TX" would pin it to the state's centroid, so every
+ * geocode path skips such an address.
+ */
+export function hasBlankStreet(addr: { line1?: string | null; city?: string | null }): boolean {
+  return (addr.line1 ?? "").trim() === "" && (addr.city ?? "").trim() === "";
+}
+
+/**
  * Geocode an address via the Google Maps Geocoding API. Returns null when the API
- * key is missing, the address can't be resolved, or the call fails for any reason —
+ * key is missing, the address has no street and no city (`hasBlankStreet`), the address
+ * can't be resolved, or the call fails for any reason —
  * geocoding is always best-effort and must NEVER throw or block the caller's write.
  * Pass the caller's own `Logger` so a failure surfaces under that service's context.
  *
@@ -35,7 +45,7 @@ export async function geocodeAddress(
   logger?: Logger,
 ): Promise<GeocodeCoords | null> {
   const key = apiKey ?? "";
-  if (!key) return null;
+  if (!key || hasBlankStreet(addr)) return null;
   const q = encodeURIComponent(`${addr.line1}, ${addr.city}, ${addr.state} ${addr.zip}`);
   try {
     const res = await fetch(

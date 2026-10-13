@@ -1,15 +1,7 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { apiClient } from "../api-client";
-import type {
-  RestrictionsEnableReadiness,
-  RestrictionsSettingsDto,
-  UpdateRestrictionsSettingsRequest,
-} from "@routeflow/types";
-export type {
-  RestrictionsEnableReadiness,
-  RestrictionsSettingsDto,
-  UpdateRestrictionsSettingsRequest,
-};
+import type { RestrictionsSettingsDto, UpdateRestrictionsSettingsRequest } from "@routeflow/types";
+export type { RestrictionsSettingsDto, UpdateRestrictionsSettingsRequest };
 
 const KEY = ["restrictions-settings"] as const;
 
@@ -17,16 +9,6 @@ export function useRestrictionsSettings() {
   return useQuery<RestrictionsSettingsDto>({
     queryKey: KEY,
     queryFn: () => apiClient.get("/settings/restrictions").then((r) => r.data),
-  });
-}
-
-/** The customer sweep. Never automatic (`enabled: false`): the admin runs it with `refetch()`. */
-export function useRestrictionsReadiness() {
-  return useQuery<RestrictionsEnableReadiness>({
-    queryKey: [...KEY, "readiness"],
-    queryFn: () => apiClient.get("/settings/restrictions/readiness").then((r) => r.data),
-    enabled: false,
-    retry: false,
   });
 }
 
@@ -38,17 +20,7 @@ export function useUpdateRestrictionsSettings() {
   });
 }
 
-type ApiError = {
-  response?: { status?: number; data?: { code?: string; readiness?: RestrictionsEnableReadiness } };
-};
-
-/** The 409 the API returns when the tenant's data isn't ready to enable, with what to fix. */
-export function notReadyReadiness(err: unknown): RestrictionsEnableReadiness | null {
-  const r = (err as ApiError)?.response;
-  return r?.status === 409 && r.data?.code === "SELLING_RESTRICTIONS_NOT_READY"
-    ? (r.data.readiness ?? null)
-    : null;
-}
+type ApiError = { response?: { status?: number; data?: { code?: string } } };
 
 const TWO_STEP_CODE = "SELLING_RESTRICTIONS_ENABLE_AND_POLICY_TOGETHER";
 
@@ -59,12 +31,7 @@ export function twoStepNotice(err: unknown): string | null {
     : null;
 }
 
-/**
- * Friendly copy for the API's known refusals (never a raw 400/429). Keyed on the stable error code /
- * status, not on message text.
- */
+/** Friendly copy for the API's known refusals (never a raw 400). Keyed on the stable error code. */
 export function friendlySettingsError(err: unknown): string | null {
-  if ((err as ApiError)?.response?.status === 429)
-    return "Too many readiness checks. Wait a minute and try again.";
   return twoStepNotice(err);
 }

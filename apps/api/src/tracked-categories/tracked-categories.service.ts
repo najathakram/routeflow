@@ -214,7 +214,13 @@ export class TrackedCategoriesService {
       // subcategory's parent must equal the product's section — leaving the old
       // one behind strands an invariant violation that 400s later product
       // updates). Rows already in this section are untouched.
-      const moverWhere = { id: { in: productIds }, NOT: { trackedCategoryId: id } };
+      // NOT a `NOT: { trackedCategoryId: id }`: `NOT (col = id)` is NULL for a product with no
+      // category, so the most common mover (an uncategorised row) was silently skipped and the
+      // bulk assign answered `assigned: 0`. A NULL category is a mover, spelled out.
+      const moverWhere = {
+        id: { in: productIds },
+        OR: [{ trackedCategoryId: null }, { trackedCategoryId: { not: id } }],
+      };
       // One-category-axis rule: a mover's free-text Product.category is cleared
       // too, but ONLY when it was synced to its OLD subcategory's name — a
       // diverged free-text category (legacy) survives the move. updateMany can't
@@ -249,7 +255,7 @@ export class TrackedCategoriesService {
         data: { isTobacco: isTobaccoCategoryName((category as { name?: string }).name) },
       });
       // `assigned` is MOVERS ONLY — rows already in this category are excluded by
-      // the NOT clause though they were processed just the same. `processed` is
+      // the mover clause though they were processed just the same. `processed` is
       // every requested row this tenant can see (the mirror sync above spans the
       // full id set), so a caller can tell "already in this type" from "not in
       // this tenant" instead of reporting the first as a skip.
