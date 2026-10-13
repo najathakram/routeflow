@@ -477,3 +477,74 @@ export function labelNameProblem(name: string): "too-long" | "unsafe" | null {
   }
   return null;
 }
+
+/** The audit action written when a reparent materialises a label the variant would otherwise have lost. */
+export const LABEL_KEPT_ON_REPARENT_ACTION = "product_label.kept_on_reparent";
+
+/**
+ * REPARENT KEEP (H2): give `productId` its OWN INCLUDE of each of `categoryIds`, the labels it carried through its old
+ * parent and would lose under the new one (a selling ban must never silently stop applying). Unlike the add-only sync it
+ * ignores "the parent chain carries it" / "the family removed it": the caller computed that those do NOT help this
+ * product. A categories-of-this-tenant check only (an ARCHIVED label still bans, so it is kept); an existing INCLUDE is
+ * left as is, an INERT opt-out (an EXCLUDE row that no longer cancels anything) is replaced by the INCLUDE. One audit
+ * row per kept label, same transaction. Returns the kept labels' ids and names, in id order.
+ */
+export async function keepLabelsAsOwnIncludes(
+  tx: Prisma.TransactionClient,
+  args: {
+    tenantId: string;
+    productId: string;
+    categoryIds: readonly string[];
+    fromParentId: string | null;
+    toParentId: string | null;
+    actor?: Actor;
+  },
+): Promise<Array<{ categoryId: string; name: string }>> {
+  const { tenantId, productId, actor } = args;
+  const ids = [...new Set(args.categoryIds)].sort();
+  const kept: Array<{ categoryId: string; name: string }> = [];
+  if (ids.length === 0) return kept;
+  const product = await tx.product.findFirst({
+    where: { id: productId, tenantId },
+    select: { id: true },
+  });
+  if (!product) return kept;
+  for (const categoryId of ids) {
+    await lockLabelCategory(tx, tenantId, categoryId);
+    const category = await tx.productCategory.findFirst({
+      where: { id: categoryId, tenantId },
+      select: { name: true },
+    });
+    if (!category) continue;
+    const existing = await tx.productCategoryLabel.findFirst({
+      where: { tenantId, productId, categoryId },
+      select: { id: true, mode: true },
+    });
+    if (existing?.mode === "INCLUDE") continue;
+    if (existing)
+      await tx.productCategoryLabel.deleteMany({ where: { id: existing.id, tenantId } });
+    await tx.productCategoryLabel.create({
+      // An INCLUDE carries no pin: the column keeps its NULL default.
+      data: { tenantId, productId, categoryId, mode: "INCLUDE", reason: null, ...stampOf(actor) },
+    });
+    kept.push({ categoryId, name: category.name });
+  }
+  if (kept.length > 0) {
+    await tx.auditLog.createMany({
+      data: kept.map((k) => ({
+        tenantId,
+        userId: actor?.id ?? null,
+        action: LABEL_KEPT_ON_REPARENT_ACTION,
+        entityType: "Product",
+        entityId: productId,
+        meta: {
+          categoryId: k.categoryId,
+          source: "reparent",
+          fromParentProductId: args.fromParentId,
+          toParentProductId: args.toParentId,
+        } as Prisma.InputJsonValue,
+      })),
+    });
+  }
+  return kept;
+}

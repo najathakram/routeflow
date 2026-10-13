@@ -58,6 +58,7 @@ import {
   syncProductImagesFromLegacy,
 } from "./product-catalog-sync";
 import { labelNameKey, syncCategoryLabel } from "../product-categories/label-writer";
+import { keepLabelsOnReparent } from "../product-labels/keep-labels-on-reparent";
 import {
   claimCodes,
   codeClaims,
@@ -1227,6 +1228,7 @@ export class ProductsService {
     let propagatedRows = 0;
     let doorDeactivated: string[] = [];
     let cascaded: string[] = [];
+    let keptLabels: string[] | null = null;
     const updated = await this.prisma.tenantTransaction(async (tx: any) => {
       // SA-603a: reactivate restores the retired codes still free; a code this PATCH sets is claimed (an inactive
       // holder is released + audited, an active one is a 409); deactivate releases BEFORE the isActive write.
@@ -1367,7 +1369,10 @@ export class ProductsService {
       }
       // The category text this write REPLACES, read inside the tx (the label sync below compares name keys against it,
       // never the pre-transaction read). A plain read: the UPDATE right after takes the row lock (house lock order).
-      const before = await tx.product.findFirst({ where: { id }, select: { category: true } });
+      const before = await tx.product.findFirst({
+        where: { id },
+        select: { category: true, parentProductId: true },
+      });
       let row;
       try {
         row = await tx.product.update({ where: { id }, data });
@@ -1403,6 +1408,21 @@ export class ProductsService {
           actor: { id: options?.actorId ?? null, name: options?.actorName ?? null },
         });
       }
+      // H2: a CHANGED parent (incl. an unlink) never drops a label the variant carried through the old one: what was
+      // effective before and is not after becomes its own INCLUDE, in this tx (rolls the parent write back on failure).
+      const fromParentId = before?.parentProductId ?? existing.parentProductId ?? null;
+      if (dto.parentProductId !== undefined && (dto.parentProductId ?? null) !== fromParentId) {
+        keptLabels = (
+          await keepLabelsOnReparent(tx, {
+            tenantId,
+            productId: id,
+            fromParentId,
+            toParentId: dto.parentProductId ?? null,
+            text: row.category,
+            actor: { id: options?.actorId ?? null, name: options?.actorName ?? null },
+          })
+        ).keptLabels;
+      }
       if (family.propagate) {
         const moved = await propagateFamilyPrice(tx, { tenantId, familyId: id });
         propagatedRows = moved.variants + moved.recipes;
@@ -1416,7 +1436,8 @@ export class ProductsService {
     if (doorDeactivated.length > 0 || cascaded.length > 0) this.emitProductChanged(null, "bulk");
     // The family edit moved its children's prices: ONE coalesced event, after the commit (L-237).
     if (propagatedRows > 0) this.emitProductChanged(null, "bulk");
-    return updated;
+    // A reparent reports the labels it kept (names; [] = nothing was lost); any other write returns the row as before.
+    return keptLabels ? { ...updated, keptLabels } : updated;
   }
 
   /**
@@ -1554,7 +1575,13 @@ export class ProductsService {
    */
   async bulkAssignParent(
     dto: BulkAssignParentDto,
-  ): Promise<{ succeeded: string[]; failed: { id: string; reason: string }[] }> {
+    actor?: { actorId?: string | null; actorName?: string | null },
+  ): Promise<{
+    succeeded: string[];
+    failed: { id: string; reason: string }[];
+    /** Per child that kept labels it carried through its old parent (children that lost nothing are absent). */
+    keptLabels: { id: string; labels: string[] }[];
+  }> {
     const bulkTenantId = this.prisma.getTenantId();
     if (!bulkTenantId) throw new BadRequestException("No tenant context");
     await assertValidParent(this.prisma.forTenant(), {
@@ -1580,12 +1607,13 @@ export class ProductsService {
     });
     const succeeded: string[] = [];
     const failed: { id: string; reason: string }[] = [];
+    const keptLabels: { id: string; labels: string[] }[] = [];
     for (const assignment of dto.assignments) {
       try {
         // suppressEmit: this loop can reassign N products in one request — emit
         // ONE coalesced event after the loop below, never one per row (the same
         // rule bulkSetMsrp/bulkDelete/importFromZoho already follow).
-        await this.update(
+        const moved = await this.update(
           assignment.id,
           {
             parentProductId: dto.parentProductId,
@@ -1593,9 +1621,15 @@ export class ProductsService {
             // Variants store JUST the variant name in `name` (PR #44).
             name: assignment.variantName,
           } as UpdateProductDto,
-          { suppressEmit: true },
+          {
+            suppressEmit: true,
+            actorId: actor?.actorId ?? null,
+            actorName: actor?.actorName ?? null,
+          },
         );
         succeeded.push(assignment.id);
+        const labels = (moved as { keptLabels?: string[] } | null)?.keptLabels ?? [];
+        if (labels.length > 0) keptLabels.push({ id: assignment.id, labels });
       } catch (err) {
         // F8-003: surface the app's OWN validation messages (HttpException — intentional
         // and user-facing, e.g. "A variant named X already exists"), but genericize any
@@ -1614,7 +1648,7 @@ export class ProductsService {
     // ONE coalesced event for the whole request, never one per reassigned row —
     // each call above ran with suppressEmit so this is the only emit it produces.
     if (succeeded.length > 0) this.emitProductChanged(null, "bulk");
-    return { succeeded, failed };
+    return { succeeded, failed, keptLabels };
   }
 
   async remove(id: string, options?: { confirmCascade?: boolean }) {

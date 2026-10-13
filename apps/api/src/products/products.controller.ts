@@ -111,8 +111,11 @@ export class ProductsController {
   // Must be declared before :id to avoid route collision
   @Post("bulk-assign-parent")
   @Roles(UserRole.OPERATOR)
-  bulkAssignParent(@Body() dto: BulkAssignParentDto) {
-    return this.productsService.bulkAssignParent(dto);
+  bulkAssignParent(@Body() dto: BulkAssignParentDto, @CurrentUser() user: JwtPayload) {
+    return this.productsService.bulkAssignParent(dto, {
+      actorId: user.sub ?? null,
+      actorName: user.username ?? null,
+    });
   }
 
   // Must be declared before :id to avoid route collision. The primary MSRP

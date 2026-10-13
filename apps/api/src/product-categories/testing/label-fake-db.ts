@@ -61,6 +61,10 @@ export class LabelFakeDb {
   categories: FakeCategory[] = [];
   /** Every query issued, so a spec can assert on what was (not) asked. */
   calls: Array<{ model: string; op: string; args: any }> = [];
+  /** Rows written through `auditLog.create|createMany` (rolled back with the transaction). */
+  audits: Array<Record<string, any>> = [];
+  /** When set, `auditLog.createMany|create` rejects with it (simulates a failing write mid-transaction). */
+  auditError: unknown = null;
   /** When set, the advisory-lock statement rejects with it (simulates lock_timeout / a dead connection). */
   lockError: unknown = null;
   private seq = 0;
@@ -101,6 +105,20 @@ export class LabelFakeDb {
           return this.products
             .filter((x) => matches(x as any, args?.where))
             .map((p) => this.productRow(p, args));
+        },
+      },
+      auditLog: {
+        findMany: async (args: any) =>
+          this.audits.filter((a) => matches(a, args?.where)).map((a) => pick(a, args?.select)),
+        create: async (args: any) => {
+          if (this.auditError) throw this.auditError as Error;
+          this.audits.push({ ...args.data });
+          return args.data;
+        },
+        createMany: async (args: any) => {
+          if (this.auditError) throw this.auditError as Error;
+          for (const d of args.data) this.audits.push({ ...d });
+          return { count: args.data.length };
         },
       },
       productCategory: {
@@ -146,6 +164,28 @@ export class LabelFakeDb {
           }
           this.labels.push(l);
           return this.labelRow(l, args);
+        },
+        createMany: async (args: any) => {
+          let count = 0;
+          for (const d of args.data) {
+            if (
+              this.labels.some((x) => x.productId === d.productId && x.categoryId === d.categoryId)
+            ) {
+              if (args.skipDuplicates) continue;
+              throw new Error("createMany: unique violation (productId, categoryId)");
+            }
+            this.labels.push({
+              id: `l${++this.seq}`,
+              reason: null,
+              parentProductIdAtWrite: null,
+              createdById: null,
+              createdByName: null,
+              createdAt: new Date("2026-09-20T00:00:00Z"),
+              ...d,
+            });
+            count++;
+          }
+          return { count };
         },
         update: async (args: any) => {
           const l = this.labels.find((x) => matches(x as any, args.where));
@@ -200,6 +240,7 @@ export class LabelFakeDb {
       tenantTransaction: async (fn: (tx: any) => Promise<unknown>) => {
         // Roll the fake back if the callback throws, like a real transaction.
         const snap = this.labels.map((l) => ({ ...l }));
+        const auditSnap = this.audits.map((a) => ({ ...a }));
         try {
           return await fn({
             ...models,
@@ -222,6 +263,7 @@ export class LabelFakeDb {
           });
         } catch (e) {
           this.labels = snap;
+          this.audits = auditSnap;
           throw e;
         }
       },
