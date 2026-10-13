@@ -39,6 +39,12 @@ import { decrementStockForSale } from "../orders/order-stock";
 import { resolveOversellAllowed } from "../orders/oversell-policy";
 import { PolicyOversellReader } from "../orders/policy-oversell-reader";
 import { assertSellableLines } from "../products/sellable-lines";
+import {
+  buyerVisibilityFor,
+  isBuyerVisibleProduct,
+  PORTAL_PARENT_SELECT,
+} from "../buyer/buyer-product-visibility";
+import type { BuyerVisibilityContext } from "../buyer/buyer-product-visibility";
 import { assertPositiveTemplateQty } from "./template-qty";
 import { assertMoneyInvariantsOrThrow } from "../common/money-invariants.util";
 import { isoWeekdayUtc, startOfUtcDay } from "../common/utc-day";
@@ -76,6 +82,21 @@ function isLegacyStaffBuilt(t: {
   return known.length < roles.length && known.every(staff);
 }
 
+/**
+ * Row 479: what a BUYER-side template read loads per line. The staff shape (`id`, `name`, `unit`) plus exactly
+ * the facts `isBuyerVisibleProduct` needs; the visibility fields are stripped again before the response, so a buyer's
+ * product object keeps the staff read's shape and never gains a field.
+ */
+const BUYER_TEMPLATE_PRODUCT_SELECT = {
+  id: true,
+  name: true,
+  unit: true,
+  isActive: true,
+  kind: true,
+  portalVisible: true,
+  parent: { select: PORTAL_PARENT_SELECT },
+} as const;
+
 @Injectable()
 export class OrderTemplatesService {
   private readonly logger = new Logger(OrderTemplatesService.name);
@@ -110,14 +131,33 @@ export class OrderTemplatesService {
     });
   }
 
+  /**
+   * The BUYER's own templates (portal list, standing orders). Staff keep `findAll`. Every line is judged by the ONE
+   * catalog rule (`isBuyerVisibleProduct` over this buyer's `buyerVisibilityFor` context, exactly as
+   * `BuyerCatalogService.getProductDetail`), and a line whose product the catalog would 404 is DROPPED from the
+   * response, so neither its name nor any other product detail leaves the server. The template row itself stays.
+   */
+  async findAllForBuyer(customerId: string) {
+    const templates = await this.prisma.forTenant().orderTemplate.findMany({
+      where: { customerId },
+      include: {
+        items: { include: { product: { select: BUYER_TEMPLATE_PRODUCT_SELECT } } },
+        customer: { select: { id: true, businessName: true } },
+      },
+      orderBy: { createdAt: "desc" },
+    });
+    const visibility = await this.buyerVisibility(customerId);
+    const data = templates.map((t) => this.toBuyerView(t, visibility));
+    return { data, meta: { total: data.length } };
+  }
+
   async findAllForUser(user: JwtPayload, customerId?: string) {
     if (user.role === "CUSTOMER") {
       const customer = await this.prisma
         .forTenant()
         .customer.findFirst({ where: { userId: user.sub } });
       if (!customer) return { data: [], meta: { total: 0 } };
-      const data = await this.findAll(customer.id);
-      return { data, meta: { total: data.length } };
+      return this.findAllForBuyer(customer.id);
     }
     const data = await this.findAll(customerId);
     return { data, meta: { total: data.length } };
@@ -137,7 +177,12 @@ export class OrderTemplatesService {
     return template;
   }
 
-  async findOneForUser(id: string, user: JwtPayload) {
+  /**
+   * 404 for a missing template, 403 for a CUSTOMER who does not own it; returns the staff-shaped row. The mutation and
+   * generate paths use this (they read ids, qty and ownership, never a name for a response); the READ endpoint is
+   * `findOneForUser`, which adds the buyer filter.
+   */
+  private async assertTemplateAccess(id: string, user: JwtPayload) {
     const template = await this.findOne(id);
     if (user.role === "CUSTOMER") {
       const customer = await this.prisma
@@ -148,6 +193,52 @@ export class OrderTemplatesService {
     return template;
   }
 
+  async findOneForUser(id: string, user: JwtPayload) {
+    const owned = await this.assertTemplateAccess(id, user);
+    if (user.role !== "CUSTOMER") return owned;
+    // A buyer's read: re-load with the visibility facts, judge each line by the catalog rule, drop the hidden ones.
+    const template = await this.prisma.forTenant().orderTemplate.findUnique({
+      where: { id },
+      include: {
+        items: { include: { product: { select: BUYER_TEMPLATE_PRODUCT_SELECT } } },
+        customer: { select: { id: true, businessName: true } },
+      },
+    });
+    if (!template) throw new NotFoundException("Order template not found");
+    return this.toBuyerView(template, await this.buyerVisibility(owned.customerId));
+  }
+
+  private buyerVisibility(customerId: string) {
+    return buyerVisibilityFor(this.sellingRestrictions, this.prisma.getTenantId(), customerId);
+  }
+
+  /** Drop the lines the catalog would hide from this buyer and trim every kept product back to `{ id, name, unit }`. */
+  private toBuyerView<
+    T extends {
+      items: Array<{
+        product: {
+          id: string;
+          name: string;
+          unit: string;
+          isActive: boolean;
+          kind: string;
+          portalVisible: boolean;
+          parent: { portalVisible: boolean; isActive: boolean; tenantId: string | null } | null;
+        };
+      }>;
+    },
+  >(template: T, visibility: BuyerVisibilityContext) {
+    return {
+      ...template,
+      items: template.items
+        .filter((item) => isBuyerVisibleProduct(visibility, item.product))
+        .map((item) => ({
+          ...item,
+          product: { id: item.product.id, name: item.product.name, unit: item.product.unit },
+        })),
+    };
+  }
+
   async createForUser(dto: CreateOrderTemplateDto, user: JwtPayload) {
     if (user.role === "CUSTOMER") {
       const customer = await this.prisma
@@ -155,6 +246,8 @@ export class OrderTemplatesService {
         .customer.findFirst({ where: { userId: user.sub } });
       if (!customer) throw new ForbiddenException();
       dto.customerId = customer.id;
+      const created = await this.create(dto, { role: user.role, userId: user.sub });
+      return this.findOneForUser(created.id, user); // the buyer-filtered read (row 479)
     }
     return this.create(dto, { role: user.role, userId: user.sub });
   }
@@ -167,7 +260,9 @@ export class OrderTemplatesService {
         .customer.findFirst({ where: { userId: user.sub } });
       if (!customer || template.customerId !== customer.id) throw new ForbiddenException();
     }
-    return this.update(id, dto, { role: user.role, userId: user.sub });
+    const updated = await this.update(id, dto, { role: user.role, userId: user.sub });
+    // A buyer's answer is the buyer-filtered read, never the staff-shaped write result (row 479).
+    return user.role === "CUSTOMER" ? this.findOneForUser(id, user) : updated;
   }
 
   async removeForUser(id: string, user: JwtPayload) {
@@ -465,23 +560,23 @@ export class OrderTemplatesService {
   // ─── SECURITY (F2-003): ownership-enforced wrappers ──────────────────────────
   // The customer-reachable item-removal and order-generation endpoints previously
   // had no role guard and no ownership check, letting any CUSTOMER edit/generate
-  // from ANOTHER customer's template. findOneForUser() throws for a non-owner.
+  // from ANOTHER customer's template. assertTemplateAccess() throws for a non-owner.
 
   // B133: every mutation on the controller goes through an ownership wrapper. For
   // OPERATOR this is a pass-through today (the ownership branch is CUSTOMER-only);
   // its value is uniformity — a future CUSTOMER grant on addItem cannot ship unguarded.
   async addItemForUser(templateId: string, dto: AddTemplateItemDto, user: JwtPayload) {
-    await this.findOneForUser(templateId, user);
+    await this.assertTemplateAccess(templateId, user);
     return this.addItem(templateId, dto, { role: user.role });
   }
 
   async removeItemForUser(templateId: string, itemId: string, user: JwtPayload) {
-    await this.findOneForUser(templateId, user);
+    await this.assertTemplateAccess(templateId, user);
     return this.removeItem(templateId, itemId, { role: user.role });
   }
 
   async generateOrderForUser(templateId: string, user: JwtPayload) {
-    const template = await this.findOneForUser(templateId, user);
+    const template = await this.assertTemplateAccess(templateId, user);
     // #1208 review LOW-MED: POST :id/generate is open to CUSTOMER (controller); a buyer's own
     // "Reorder" must not oversell where their own checkout would 409. WS9: the policy is resolved
     // ONCE here, before the run's transaction (source "buyer" for a CUSTOMER, "staff_entry" else).
