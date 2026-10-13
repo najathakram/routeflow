@@ -342,7 +342,7 @@ export function NotificationRulesCard({
                       href="#low-stock-digest"
                       className="font-medium text-brand-600 underline-offset-2 hover:underline"
                     >
-                      The daily low-stock digest is on below
+                      The daily low-stock digest is below
                     </a>
                   </>
                 )}

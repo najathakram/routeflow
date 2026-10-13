@@ -217,7 +217,7 @@ describe("Notifications page — grouped list (#1965)", () => {
   it("apple-ux: 'Low stock' under Coming soon points an admin to the live daily digest below", () => {
     renderWithProviders(<NotificationsSettingsTab />);
     const soon = screen.getByText(/^coming soon$/i).closest("details") as HTMLElement;
-    const link = within(soon).getByRole("link", { name: "The daily low-stock digest is on below" });
+    const link = within(soon).getByRole("link", { name: "The daily low-stock digest is below" });
     expect(link).toHaveAttribute("href", "#low-stock-digest");
   });
 
