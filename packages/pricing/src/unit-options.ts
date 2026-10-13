@@ -31,6 +31,17 @@ export interface LadderOption {
   derived?: { n: number; packPrice: number; exact: boolean };
 }
 
+/**
+ * Units P0b / SA-728: the ONE declaration of the client-only `derivedBase` marker, shared by web and mobile (a
+ * type only, so it adds nothing at runtime). A DERIVED base option (`LadderOption.derived`) is sold as a PACK-PIECES
+ * line (boxes/pieces, no `unitLabel`) so the preview and the payload are the server's own proration; this marker
+ * is the option `value` the picker keeps showing for such a line. It is display state: NEVER submitted. A pack-pieces
+ * line WITHOUT it is a pack line, never guessed into a Piece.
+ */
+export interface DerivedBaseMarker {
+  derivedBase?: string;
+}
+
 const norm = (s: string) => s.trim().toLowerCase();
 
 export function buildLadderOptions(

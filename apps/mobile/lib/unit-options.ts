@@ -3,6 +3,8 @@ import {
   defaultLadderOptionValue,
   ladderOptionLineTotal,
   ladderOptionPriceText,
+  normalizeBoxesPieces,
+  type DerivedBaseMarker,
   type LadderOption,
   type LadderProduct,
   type LadderUnit,
@@ -51,10 +53,25 @@ export function buildUnitOptions(
  * What a unit picker shows as selected (mobile mirror of web's `unitPickerValueOf`): the held unit, else a derived
  * base (units P0b / SA-728), else the pack (`""`).
  */
-export const unitPickerValue = (line: {
-  unitLabel?: string | null;
-  derivedBase?: string;
-}): string => line.unitLabel ?? line.derivedBase ?? "";
+export const unitPickerValue = (line: { unitLabel?: string | null } & DerivedBaseMarker): string =>
+  line.unitLabel ?? line.derivedBase ?? "";
+
+/**
+ * The pack-pieces shape of `count` pieces of a DERIVED base option (units P0b / SA-728): `boxes`/`pieces` split on the
+ * pack size (the option's own `derived.n`, rolled over at a full pack), `qty` the total pieces, NO unit label. The line
+ * then bills through `computeLineSubtotal` at the PACK price, the server's own proration, never `count` x a rounded
+ * per-piece price. Null for any option that is not a derived base (a level, an own-priced Piece, the pack): those keep
+ * the unit-line path.
+ */
+export function derivedPackSplit(
+  option: UnitOption,
+  count: number,
+): { qty: number; boxes: number; pieces: number; unitsPerBox: number } | null {
+  if (!option.derived) return null;
+  const unitsPerBox = option.derived.n;
+  const n = normalizeBoxesPieces({ boxes: 0, pieces: count, unitsPerBox });
+  return { qty: n.qty, boxes: n.boxes ?? 0, pieces: n.pieces ?? 0, unitsPerBox };
+}
 
 /**
  * The correct base a line's `unitPrice` must be compared against to decide "is this a genuine

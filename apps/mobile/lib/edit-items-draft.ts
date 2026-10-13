@@ -25,7 +25,9 @@ import { needsUnitLabelConfirm } from "./scan-unit-confirm";
 import {
   roundMoney,
   effectiveQty,
+  packQtyForTaps,
   unitLineCount,
+  type DerivedBaseMarker,
   type LadderProduct,
   type SellLevel,
 } from "@routeflow/pricing";
@@ -38,7 +40,12 @@ import {
 import { editedLineFreeUnits } from "./invoice-totals";
 import { lineUnitsPerBox } from "./at-door-line-units";
 import { trayRowsFrom, type TrayRow } from "./scan-tray";
-import { defaultStartOption, unitPriceBase, type UnitOption } from "./unit-options";
+import {
+  defaultStartOption,
+  derivedPackSplit,
+  unitPriceBase,
+  type UnitOption,
+} from "./unit-options";
 import { incrementLine, incrementLinePiece, isUnitLine } from "./sale-line";
 import type { UpdateOrderItemInput } from "./api/orders";
 
@@ -52,8 +59,12 @@ export function newLocalId(): string {
  * truth). For products with `unitsPerBox > 1` operators may also set
  * `boxes`/`pieces` and the server recomputes qty + uses BOX-price proration
  * (see apps/api/src/orders/orders.service.ts:594).
+ *
+ * `derivedBase` (the shared client-only `DerivedBaseMarker`, units P0b): set while the line sells a DERIVED base unit as
+ * pack pieces (boxes/pieces, no `unitLabel`). NEVER submitted (`stagedDiffItems` names every key it emits); kept in the
+ * on-device snapshot. A pack-pieces line WITHOUT it is a pack line.
  */
-export type DraftItem = {
+export type DraftItem = DerivedBaseMarker & {
   productId: string;
   qty: number;
   boxes?: number;
@@ -335,25 +346,52 @@ export function applyUnitPick(
   packTierPrice: number,
 ): DraftItem {
   const isPack = option.value === "";
+  // Units P0b / SA-728: a DERIVED Piece is a PACK-PIECES line, not a unit line: boxSplit, boxes 0 / pieces N, the PACK
+  // price, no unitLabel, plus the client-only marker. It is stored and billed exactly as the server's own proration.
+  const split = isPack ? null : derivedPackSplit(option, 1);
+  if (split) {
+    return {
+      ...cur,
+      startOnDefaultUnit: undefined,
+      derivedBase: option.value,
+      unitLabel: undefined,
+      unitBasePrice: undefined,
+      unitsPerBox: split.unitsPerBox,
+      qty: split.qty,
+      boxes: split.boxes,
+      pieces: split.pieces,
+      boxSplit: true,
+      unitPrice: packTierPrice,
+    };
+  }
+  // Back to the pack from a derived Piece: ONE whole pack (a lone piece on a pack line would read as a piece in disguise).
+  const packUpb = cur.packLadder?.unitsPerBox ?? cur.unitsPerBox;
+  const wholePack = isPack && cur.derivedBase ? packQtyForTaps(1, packUpb) : null;
   return {
     ...cur,
     startOnDefaultUnit: undefined,
+    derivedBase: undefined,
     unitLabel: isPack ? undefined : option.value,
     unitBasePrice: isPack ? undefined : option.price,
-    unitsPerBox: isPack ? (cur.packLadder?.unitsPerBox ?? cur.unitsPerBox) : option.factorToBase,
-    qty: 1,
-    boxes: undefined,
-    pieces: undefined,
-    boxSplit: false,
+    unitsPerBox: isPack ? packUpb : option.factorToBase,
+    qty: wholePack?.qty ?? 1,
+    boxes: wholePack?.boxes,
+    pieces: wholePack?.pieces,
+    boxSplit: wholePack?.boxes != null,
     unitPrice: isPack ? packTierPrice : option.price,
   };
 }
 
 /** A line added this session that still waits for its default selling unit: untouched quantity, no unit held. */
 export function startsOnDefaultUnit(
-  item: Pick<DraftItem, "startOnDefaultUnit" | "qty" | "unitLabel">,
+  item: Pick<DraftItem, "startOnDefaultUnit" | "qty" | "unitLabel" | "derivedBase">,
 ): boolean {
-  return item.startOnDefaultUnit != null && item.qty === item.startOnDefaultUnit && !item.unitLabel;
+  return (
+    item.startOnDefaultUnit != null &&
+    item.qty === item.startOnDefaultUnit &&
+    !item.unitLabel &&
+    !item.derivedBase
+  );
 }
 
 /**
@@ -424,8 +462,10 @@ export function applyPieceEdit(cur: DraftItem, pieces: number, unitsPerBox: numb
  * with more than one legacy match (two non-unit lines already on one
  * product — reachable only pre-fix, or from data written outside this
  * screen) this deliberately merges into the FIRST and never touches the
- * others. No match at all — including every genuinely new addition — gets
- * a FRESH key, never the bare productId: two new same-product rows added
+ * others. A line holding the derived-Piece marker (units P0b) is NOT a pack line
+ * — the marker is part of the line's identity (`unitPickerValue`), so a pack
+ * scan never folds into it. No match at all — including every genuinely new
+ * addition — gets a FRESH key, never the bare productId: two new same-product rows added
  * in different units (or two independent adds before either is saved)
  * must never collide the same way hydration did.
  *
@@ -447,7 +487,7 @@ export function resolveDraftKeyForPick(
 ): string {
   if (!unitLabel) {
     const match = Object.entries(draft).find(
-      ([, it]) => it.productId === productId && !it.unitLabel,
+      ([, it]) => it.productId === productId && !it.unitLabel && !it.derivedBase,
     );
     if (match) return match[0];
   }
@@ -913,6 +953,20 @@ function normalizeUnitLineQty(item: DraftItem): DraftItem {
   return { ...item, qty: item.boxes, boxes: undefined, pieces: undefined, boxSplit: false };
 }
 
+/**
+ * Units P0b: the derived-Piece marker survives a restore only as a non-empty string on a line that holds no unit of its
+ * own. Anything else (a stale or hand-edited blob: a unit AND a marker, a non-string) is dropped, so the line reads as
+ * the PACK line its boxes/pieces describe, never a guessed Piece.
+ */
+function sanitizeDerivedBase(item: DraftItem): DraftItem {
+  if (item.derivedBase === undefined) return item;
+  const keep =
+    typeof item.derivedBase === "string" && item.derivedBase.trim() !== "" && !item.unitLabel;
+  if (keep) return item;
+  const { derivedBase: _dropped, ...rest } = item;
+  return rest as DraftItem;
+}
+
 export function deserializeEditItemsSnapshot(
   raw: string | null | undefined,
 ): EditItemsSnapshot | null {
@@ -943,7 +997,7 @@ export function deserializeEditItemsSnapshot(
     draft: Object.fromEntries(
       Object.entries(s.draft as Record<string, DraftItem>).map(([id, item]) => [
         id,
-        normalizeUnitLineQty(item),
+        sanitizeDerivedBase(normalizeUnitLineQty(item)),
       ]),
     ),
     unlisted: s.unlisted as UnlistedDraft[],
