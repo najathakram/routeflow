@@ -2378,6 +2378,8 @@ export class InvoicesService {
             trackedSubcategoryId: agg.sample?.trackedSubcategoryId ?? null,
             ...copyCategoryTaxSnapshot(agg.sample ?? {}),
             promoFreeUnits: lineFreeUnits > 0 ? lineFreeUnits : null,
+            // SA ruling (#3418): an invoice edit is a staff-initiated system path, so its new order line is STAFF.
+            authorChannel: "STAFF",
             invoicedQty: shape.qty,
             status: "PENDING",
             ...(tenantId ? { tenantId } : {}),

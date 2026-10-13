@@ -48,7 +48,8 @@ export async function judgeDraftPromotion(
   const { order, user, tenantId } = a;
   const items = await prisma.forTenant().orderItem.findMany({
     where: { orderId: order.id, status: { not: "CANCELLED" } },
-    select: { productId: true, trackedCategoryId: true, createdAt: true },
+    // SA ruling (#3418): each line's explicit author marker; never its createdAt.
+    select: { productId: true, trackedCategoryId: true, authorChannel: true },
   });
   const pids = items.map((li) => li.productId).filter(Boolean) as string[];
   const products = pids.length

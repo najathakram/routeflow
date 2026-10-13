@@ -15,9 +15,10 @@ import { join } from "path";
 
 /**
  * F1(i): a DRAFT line is judged at the STRICTER of the promoter's channel and the channel of whoever AUTHORED
- * the line. No line records its author, so the author is derived from what an order does record: its creation
- * `source` (APP = buyer, PHONE/ROUTE = staff/driver) and its edit revisions (editor role + line snapshot after
- * each edit). Anything unknown is the BUYER channel, the stricter one.
+ * the line. A line records its author explicitly (`OrderItem.authorChannel`, SA ruling #3418, pinned at the end of
+ * this file); a line without the marker is derived from what its order records: its creation `source` (APP =
+ * buyer, PHONE/ROUTE = staff/driver) and its edit revisions (editor role + line snapshot after each edit).
+ * Anything unknown is the BUYER channel, the stricter one.
  */
 const rev = (editedByRole: string | null, ...lines: Array<[string, number]>) => ({
   editedByRole,
@@ -232,7 +233,6 @@ describe("legacy source (Order.sourceRecorded)", () => {
       lineItems: lines.map(([productId, qty]) => ({ productId, qty })),
     },
   });
-  const line = (productId: string, createdAt: Date) => ({ productId, createdAt });
   const ms = (n: number) => new Date(T0.getTime() + n);
 
   it("creationChannelOf: sourceRecorded=false is STAFF whatever the source says; true follows the source", () => {
@@ -285,49 +285,60 @@ describe("legacy source (Order.sourceRecorded)", () => {
     expect(a.channelOf("new")).toBe("BUYER_PORTAL");
   });
 
-  describe("legacy, the FIRST revision is recorded (no earlier snapshot to diff against)", () => {
-    it("a product whose lines carry the order's own createdAt (written by its create) stays STAFF", () => {
+  describe("legacy, the FIRST revision is recorded: the per-line marker decides, never a timestamp", () => {
+    /** A revision the marker-writing code wrote: every snapshot line carries its `authorChannel` (null = unmarked). */
+    const revMarked = (
+      editedByRole: string | null,
+      ...lines: Array<[string, number, "STAFF" | "BUYER" | null]>
+    ) => ({
+      editedByRole,
+      snapshot: {
+        sourceRecorded: true,
+        lineItems: lines.map(([productId, qty, authorChannel]) => ({
+          productId,
+          qty,
+          authorChannel,
+        })),
+      },
+    });
+    const marked = (productId: string, authorChannel: "STAFF" | "BUYER" | null, at: Date) => ({
+      productId,
+      authorChannel,
+      createdAt: at,
+    });
+
+    it("an unmarked line in a recorded snapshot predates the marker: STAFF on a legacy order", () => {
       const a = resolveLineAuthors(
         legacy,
-        [revBy(true, "CUSTOMER", ["old", 2], ["new", 1])],
-        [line("old", T0), line("new", ms(60_000))],
+        [revMarked("CUSTOMER", ["old", 2, null], ["new", 1, "BUYER"])],
+        [marked("old", null, ms(7)), marked("new", "BUYER", ms(60_000))],
       );
       expect(a.channelOf("old")).toBe("STAFF");
       expect(a.channelOf("new")).toBe("BUYER_PORTAL");
     });
 
-    it("a line written in the edit's own transaction, just before its revision row, is the editor's (BUYER)", () => {
-      // The revision row lands 1 ms after the line it added (same transaction); its timestamp is not read.
-      const revision = { ...revBy(true, "CUSTOMER", ["added", 1]), createdAt: ms(60_001) };
-      const a = resolveLineAuthors(legacy, [revision], [line("added", ms(60_000))]);
+    it("a line the edit wrote carries BUYER whatever its timestamp", () => {
+      const a = resolveLineAuthors(
+        legacy,
+        [revMarked("CUSTOMER", ["added", 1, "BUYER"])],
+        [marked("added", "BUYER", T0)], // same instant as the order: no longer read as creation
+      );
       expect(a.channelOf("added")).toBe("BUYER_PORTAL");
     });
 
-    it("a line OLDER than the order (moved in from another order) is not creation-authored: BUYER", () => {
+    it("a product with one unmarked line and one BUYER line is BUYER (the stricter)", () => {
       const a = resolveLineAuthors(
         legacy,
-        [revBy(true, "CUSTOMER", ["moved", 1])],
-        [line("moved", ms(-1))],
-      );
-      expect(a.channelOf("moved")).toBe("BUYER_PORTAL");
-    });
-
-    it("a product with one creation line and one later line is the editor's (BUYER)", () => {
-      const a = resolveLineAuthors(
-        legacy,
-        [revBy(true, "CUSTOMER", ["p", 3])],
-        [line("p", T0), line("p", ms(5))],
+        [revMarked("CUSTOMER", ["p", 1, null], ["p", 2, "BUYER"])],
+        [marked("p", null, T0), marked("p", "BUYER", ms(5))],
       );
       expect(a.channelOf("p")).toBe("BUYER_PORTAL");
     });
 
-    it("no order createdAt: nothing reads as creation-authored (BUYER)", () => {
-      const a = resolveLineAuthors(
-        { source: "APP", sourceRecorded: false },
-        [revBy(true, "CUSTOMER", ["old", 1])],
-        [line("old", T0)],
-      );
-      expect(a.channelOf("old")).toBe("BUYER_PORTAL");
+    it("a recorded snapshot WITHOUT the per-line field falls through to the order-level derivation", () => {
+      const a = resolveLineAuthors(legacy, [revBy(true, "CUSTOMER", ["old", 2], ["new", 1])], []);
+      expect(a.channelOf("old")).toBe("BUYER_PORTAL"); // stricter of creation STAFF and the buyer editor
+      expect(a.channelOf("new")).toBe("BUYER_PORTAL");
     });
   });
 
@@ -416,5 +427,257 @@ describe("revisionSnapshot marks every revision the new code writes (sourceRecor
         }),
       }),
     );
+  });
+});
+
+/**
+ * SA ruling (#3418): the line's author is an EXPLICIT per-line marker, `OrderItem.authorChannel` ('STAFF' | 'BUYER'),
+ * written by every new-code line write from the ACTING principal. NEVER a timestamp: Prisma stamps nested rows
+ * separately, so `line.createdAt == order.createdAt` is not a fact about who wrote the line. NULL (a line written
+ * before the marker) falls back to the order-level rule.
+ */
+describe("OrderItem.authorChannel (explicit per-line marker)", () => {
+  const T0 = new Date("2026-05-05T05:05:05.000Z");
+  const at = (n: number) => new Date(T0.getTime() + n);
+
+  it("(a) nested-create staff lines are STAFF whatever their timestamps", () => {
+    const a = resolveLineAuthors(
+      { source: "PHONE", sourceRecorded: true, createdAt: T0 },
+      [{ editedByRole: "CUSTOMER", snapshot: { sourceRecorded: true, lineItems: [] } }],
+      [
+        { productId: "s1", authorChannel: "STAFF", createdAt: at(3) },
+        { productId: "s2", authorChannel: "STAFF", createdAt: at(-4) },
+      ],
+    );
+    expect(a.channelOf("s1")).toBe("STAFF");
+    expect(a.channelOf("s2")).toBe("STAFF");
+  });
+
+  it("(a') a marked STAFF line on a legacy order with a recorded buyer revision stays STAFF", () => {
+    const a = resolveLineAuthors(
+      { source: "APP", sourceRecorded: false, createdAt: T0 },
+      [{ editedByRole: "CUSTOMER", snapshot: { sourceRecorded: true, lineItems: [] } }],
+      [{ productId: "s", authorChannel: "STAFF", createdAt: at(9) }],
+    );
+    expect(a.channelOf("s")).toBe("STAFF");
+  });
+
+  it("(b) a buyer-added line on a staff order is BUYER", () => {
+    const a = resolveLineAuthors(
+      { source: "PHONE", sourceRecorded: true, createdAt: T0 },
+      [],
+      [
+        { productId: "s", authorChannel: "STAFF", createdAt: T0 },
+        { productId: "b", authorChannel: "BUYER", createdAt: T0 },
+      ],
+    );
+    expect(a.channelOf("s")).toBe("STAFF");
+    expect(a.channelOf("b")).toBe("BUYER_PORTAL");
+  });
+
+  it("(c) a NULL-marker line on a legacy (sourceRecorded=false) order is STAFF", () => {
+    const a = resolveLineAuthors(
+      { source: "APP", sourceRecorded: false, createdAt: T0 },
+      [],
+      [{ productId: "old", authorChannel: null, createdAt: at(1234) }],
+    );
+    expect(a.channelOf("old")).toBe("STAFF");
+  });
+
+  it("(d) a NULL-marker line on a recorded APP order is BUYER (the order-level rule)", () => {
+    const a = resolveLineAuthors(
+      { source: "APP", sourceRecorded: true, createdAt: T0 },
+      [],
+      [{ productId: "p", authorChannel: null, createdAt: T0 }],
+    );
+    expect(a.channelOf("p")).toBe("BUYER_PORTAL");
+  });
+
+  it("a marker overrides the revision derivation (a staff edit cannot launder a BUYER line, nor the reverse)", () => {
+    const revisions = [
+      { editedByRole: "OPERATOR", snapshot: { lineItems: [{ productId: "b", qty: 1 }] } },
+      { editedByRole: "CUSTOMER", snapshot: { lineItems: [{ productId: "s", qty: 1 }] } },
+    ];
+    const a = resolveLineAuthors({ source: "PHONE", sourceRecorded: true }, revisions, [
+      { productId: "b", authorChannel: "BUYER" },
+      { productId: "s", authorChannel: "STAFF" },
+    ]);
+    expect(a.channelOf("b")).toBe("BUYER_PORTAL");
+    expect(a.channelOf("s")).toBe("STAFF");
+  });
+
+  it("an unreadable marker value is treated as NULL (falls through to the order-level rule)", () => {
+    const a = resolveLineAuthors(
+      { source: "PHONE", sourceRecorded: true },
+      [],
+      [{ productId: "p", authorChannel: "SOMETHING_ELSE" }],
+    );
+    expect(a.channelOf("p")).toBe("STAFF");
+    const b = resolveLineAuthors(
+      { source: "APP", sourceRecorded: true },
+      [],
+      [{ productId: "p", authorChannel: "staff" }],
+    );
+    expect(b.channelOf("p")).toBe("BUYER_PORTAL");
+  });
+
+  it("a recorded snapshot's per-line marker beats the editor diff when the live line is gone", () => {
+    const a = resolveLineAuthors({ source: "PHONE", sourceRecorded: true }, [
+      {
+        editedByRole: "CUSTOMER",
+        snapshot: {
+          sourceRecorded: true,
+          lineItems: [
+            { productId: "s", qty: 2, authorChannel: "STAFF" },
+            { productId: "b", qty: 1, authorChannel: "BUYER" },
+          ],
+        },
+      },
+    ]);
+    expect(a.channelOf("s")).toBe("STAFF");
+    expect(a.channelOf("b")).toBe("BUYER_PORTAL");
+  });
+
+  it("the module never compares a line's createdAt (no timestamp-equality rule left)", () => {
+    const code = readFileSync(join(__dirname, "line-author-channel.ts"), "utf8");
+    expect(code).not.toMatch(/\.createdAt\b/); // the field may be passed in; it is never read
+    expect(code).not.toMatch(/getTime\(|new Date\(/);
+  });
+});
+
+describe("the ONE principal -> marker helper and the edit/merge/raise rules", () => {
+  it("lineAuthorFor: staff roles -> STAFF; buyer principal, customer, unknown, none -> BUYER", () => {
+    const { lineAuthorFor, ORDER_ITEM_AUTHOR_CHANNELS } = channelModule;
+    expect([...ORDER_ITEM_AUTHOR_CHANNELS]).toEqual(["STAFF", "BUYER"]);
+    for (const role of ["OPERATOR", "TENANT_ADMIN", "SUPER_ADMIN", "DRIVER"])
+      expect(lineAuthorFor({ role })).toBe("STAFF");
+    expect(lineAuthorFor({ type: "BUYER" })).toBe("BUYER");
+    expect(lineAuthorFor({ role: "CUSTOMER" })).toBe("BUYER");
+    expect(lineAuthorFor({ role: "NEW_ROLE" })).toBe("BUYER");
+    expect(lineAuthorFor(null)).toBe("BUYER");
+    expect(lineAuthorFor(undefined)).toBe("BUYER");
+  });
+
+  it("authorMarkerOf / channelOfAuthorMarker round-trip; anything else reads as null", () => {
+    const { authorMarkerOf, channelOfAuthorMarker } = channelModule;
+    expect(authorMarkerOf("STAFF")).toBe("STAFF");
+    expect(authorMarkerOf("BUYER_PORTAL")).toBe("BUYER");
+    expect(channelOfAuthorMarker("STAFF")).toBe("STAFF");
+    expect(channelOfAuthorMarker("BUYER")).toBe("BUYER_PORTAL");
+    for (const v of [null, undefined, "", "staff", "BUYER_PORTAL", 1])
+      expect(channelOfAuthorMarker(v)).toBeNull();
+  });
+
+  it("resolvedLineAuthor: the marker when set, else the line's own order-level rule", () => {
+    const { resolvedLineAuthor } = channelModule;
+    expect(
+      resolvedLineAuthor({ authorChannel: "BUYER" }, { source: "PHONE", sourceRecorded: true }),
+    ).toBe("BUYER");
+    expect(
+      resolvedLineAuthor({ authorChannel: "STAFF" }, { source: "APP", sourceRecorded: true }),
+    ).toBe("STAFF");
+    expect(
+      resolvedLineAuthor({ authorChannel: null }, { source: "APP", sourceRecorded: false }),
+    ).toBe("STAFF");
+    expect(
+      resolvedLineAuthor({ authorChannel: null }, { source: "APP", sourceRecorded: true }),
+    ).toBe("BUYER");
+    expect(resolvedLineAuthor({}, { source: "PHONE", sourceRecorded: true })).toBe("STAFF");
+  });
+
+  it("editedLineAuthors: new product -> editor; kept/lowered -> its prior marker; raised by a buyer -> BUYER", () => {
+    const { editedLineAuthors } = channelModule;
+    const prior = [
+      { productId: "s", qty: 4, authorChannel: "STAFF" },
+      { productId: "b", qty: 1, authorChannel: "BUYER" },
+      { productId: "n", qty: 2, authorChannel: null },
+    ];
+    const byBuyer = editedLineAuthors(
+      prior,
+      [
+        { productId: "s", qty: 2 },
+        { productId: "b", qty: 1 },
+        { productId: "n", qty: 3 },
+        { productId: "new", qty: 1 },
+      ],
+      "BUYER",
+    );
+    expect(byBuyer("s")).toBe("STAFF"); // lowered: a buyer does not take a staff line over
+    expect(byBuyer("b")).toBe("BUYER");
+    expect(byBuyer("n")).toBe("BUYER"); // raised by the buyer
+    expect(byBuyer("new")).toBe("BUYER");
+    const byStaff = editedLineAuthors(
+      prior,
+      [
+        { productId: "s", qty: 9 },
+        { productId: "b", qty: 9 },
+        { productId: "n", qty: 9 },
+        { productId: "new", qty: 1 },
+      ],
+      "STAFF",
+    );
+    expect(byStaff("s")).toBe("STAFF");
+    expect(byStaff("b")).toBe("BUYER"); // a staff edit never launders a buyer line
+    expect(byStaff("n")).toBeNull(); // still unmarked: the order-level rule reads it
+    expect(byStaff("new")).toBe("STAFF");
+    expect(byStaff(null)).toBe("STAFF"); // an unlisted line: the editor
+  });
+
+  it("editedLineAuthors: two prior lines of one product combine to the stricter (BUYER, then NULL, then STAFF)", () => {
+    const { editedLineAuthors } = channelModule;
+    const next = [{ productId: "p", qty: 1 }];
+    const of = (...markers: Array<string | null>) =>
+      editedLineAuthors(
+        markers.map((authorChannel) => ({ productId: "p", qty: 5, authorChannel })),
+        next,
+        "STAFF",
+      )("p");
+    expect(of("STAFF", "BUYER")).toBe("BUYER");
+    expect(of("STAFF", null)).toBeNull();
+    expect(of("STAFF", "STAFF")).toBe("STAFF");
+  });
+
+  it("raisedBy: only a BUYER raise stamps (to BUYER); anything else writes nothing", () => {
+    const { raisedBy } = channelModule;
+    expect(raisedBy("BUYER", 1, 2)).toEqual({ authorChannel: "BUYER" });
+    expect(raisedBy("BUYER", 2, 2)).toEqual({});
+    expect(raisedBy("BUYER", 3, 2)).toEqual({});
+    expect(raisedBy("STAFF", 1, 9)).toEqual({});
+  });
+});
+
+describe("revisionSnapshot carries each line's authorChannel", () => {
+  it("appendOrderRevisionInTx copies the marker verbatim (null for an unmarked line)", async () => {
+    const create = jest.fn().mockResolvedValue({});
+    const base = { name: null, qty: 1, unitPrice: 1, subtotal: 1, status: "PENDING" };
+    const tx = {
+      orderItem: {
+        findMany: jest.fn().mockResolvedValue([
+          { ...base, productId: "s", authorChannel: "STAFF" },
+          { ...base, productId: "b", authorChannel: "BUYER" },
+          { ...base, productId: "n", authorChannel: null },
+        ]),
+      },
+      orderRevision: { aggregate: jest.fn().mockResolvedValue({ _max: {} }), create },
+    };
+    await appendOrderRevisionInTx(
+      tx as never,
+      "t-1",
+      "ord-1",
+      { sub: "u", role: "CUSTOMER" } as never,
+      { subtotal: 0, tax: 0, total: 0 },
+      "EDIT",
+    );
+    const lines = create.mock.calls[0][0].data.snapshot.lineItems;
+    expect(
+      lines.map((l: { productId: string; authorChannel: unknown }) => [
+        l.productId,
+        l.authorChannel,
+      ]),
+    ).toEqual([
+      ["s", "STAFF"],
+      ["b", "BUYER"],
+      ["n", null],
+    ]);
   });
 });

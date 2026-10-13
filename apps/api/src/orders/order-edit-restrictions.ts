@@ -53,6 +53,21 @@ export const EXISTING_LINE_SELECT = {
   unitLabel: true,
 } as const;
 
+/** `updateOrderItems`' LOCKED read (B709): plus every column the diff branch reads off an existing line. */
+export const HELD_LINE_SELECT = {
+  ...EXISTING_LINE_SELECT,
+  deliveredQty: true,
+  invoicedQty: true,
+  unitPrice: true,
+  promoFreeUnits: true,
+  overrideReason: true,
+  authorChannel: true, // SA ruling #3418: carried onto a re-created line (editedLineAuthors)
+} as const;
+
+/** The `findMany` args of that LOCKED read, for one order. */
+export const heldLinesOf = (orderId: string) =>
+  ({ where: { orderId }, select: HELD_LINE_SELECT }) as const;
+
 /** How `updateOrderItems` applies this payload for this principal (mirrors its branches). */
 export type OrderEditMode = { kind: "merge" } | { kind: "replace"; actor: ReplaceActor };
 

@@ -34,7 +34,7 @@ import {
   appendReopenRevisionInTx,
   attachRevisionNumber,
 } from "./order-revisions";
-import { leastPrivilegedPrincipal, orderSourceForRole } from "./line-author-channel";
+import * as authorship from "./line-author-channel"; // F1(i) + SA ruling #3418: the line's author
 import {
   assertJudgementHolds,
   judgeDraftPromotion,
@@ -143,6 +143,7 @@ import {
 } from "./order-lifecycle";
 import {
   EXISTING_LINE_SELECT,
+  heldLinesOf,
   orderEditMode,
   planOrderEditRestrictions,
   assertNoMirrorAppearedUnderLock,
@@ -766,9 +767,7 @@ export class OrdersService implements OnApplicationBootstrap {
           // into another, it gets its own line, at its own snapshot and price, with a warn.
           const { writes: mergeWrites, warnings: packWarnings } = buildMergeLineWrites(
             winner.lineItems.filter((li) => li.productId) as unknown as MergeLine[],
-            losers
-              .flatMap((l) => l.lineItems)
-              .filter((li) => li.productId) as unknown as MergeLine[],
+            authorship.loserLinesOf(losers).filter((li) => li.productId) as unknown as MergeLine[],
             {
               promos: bogoPromos,
               canEarnNew: options.buyerInitiated === true,
@@ -821,6 +820,7 @@ export class OrdersService implements OnApplicationBootstrap {
                     categoryPriceIncludesTax: write.data.categoryPriceIncludesTax,
                     backorderedPieces: write.data.backorderedPieces ?? 0, // SA-716: carried
                     ...compositionStampOf(write.data),
+                    authorChannel: write.data.authorChannel, // SA ruling #3418: the folded line's own author
                   },
                 });
               }
@@ -842,6 +842,7 @@ export class OrdersService implements OnApplicationBootstrap {
                   overrideReason: data.overrideReason,
                   overriddenBy: data.overriddenBy,
                   notes: data.notes,
+                  authorChannel: data.authorChannel, // SA ruling #3418: the moved line's own author
                 },
               });
             }
@@ -1030,9 +1031,7 @@ export class OrdersService implements OnApplicationBootstrap {
           // at (never the live product row) before folding — see mergeAllPendingForCustomer.
           const { writes: mergeWrites, warnings: packWarnings } = buildMergeLineWrites(
             winner.lineItems.filter((li) => li.productId) as unknown as MergeLine[],
-            losers
-              .flatMap((l) => l.lineItems)
-              .filter((li) => li.productId) as unknown as MergeLine[],
+            authorship.loserLinesOf(losers).filter((li) => li.productId) as unknown as MergeLine[],
             {
               promos: bogoPromos,
               canEarnNew: false,
@@ -1076,6 +1075,7 @@ export class OrdersService implements OnApplicationBootstrap {
                     categoryPriceIncludesTax: write.data.categoryPriceIncludesTax,
                     backorderedPieces: write.data.backorderedPieces ?? 0, // SA-716: carried
                     ...compositionStampOf(write.data),
+                    authorChannel: write.data.authorChannel, // SA ruling #3418: the folded line's own author
                   },
                 });
               }
@@ -1096,6 +1096,7 @@ export class OrdersService implements OnApplicationBootstrap {
                   overrideReason: data.overrideReason,
                   overriddenBy: data.overriddenBy,
                   notes: data.notes,
+                  authorChannel: data.authorChannel, // SA ruling #3418: the moved line's own author
                 },
               });
             }
@@ -2088,11 +2089,11 @@ export class OrdersService implements OnApplicationBootstrap {
                 // customer/agent default). Validated by parseCommissionRatePct above.
                 commissionRatePct,
                 fulfillPath,
-                source: orderSourceForRole(user.role), // F1(i): who authored the lines (line-author-channel.ts)
+                source: authorship.orderSourceForRole(user.role), // F1(i): who authored the lines (line-author-channel.ts)
                 sourceRecorded: true, // F1(i): the source above is from the creating principal, not the column default
                 // SA-672e/row 317: only the counter-sale POST passes this; it also stamps the cashier (a replay writes nothing).
                 ...(options.counterSale ? { counterSale: true, soldById: user.sub } : {}),
-                lineItems: { create: lineItemsData },
+                lineItems: { create: authorship.withAuthor(lineItemsData, user) }, // SA ruling #3418
               },
               include: {
                 customer: { select: { id: true, businessName: true } },
@@ -3049,18 +3050,8 @@ export class OrdersService implements OnApplicationBootstrap {
           () =>
             this.invoicesService.revertLinkedInvoicesForOrderEdit(orderId, tx, { lockRows: true }),
         );
-        const heldItems = await tx.orderItem.findMany({
-          where: { orderId },
-          // B709: plus every column the diff branch reads off an existing line.
-          select: {
-            ...EXISTING_LINE_SELECT,
-            deliveredQty: true,
-            invoicedQty: true,
-            unitPrice: true,
-            promoFreeUnits: true,
-            overrideReason: true,
-          },
-        });
+        const heldItems = await tx.orderItem.findMany(heldLinesOf(orderId)); // B709: the LOCKED lines
+        const authorOf = authorship.editedLineAuthors(heldItems, dto.items ?? [], user); // SA ruling #3418
         restrictionPlan?.assertHeld(heldItems);
         await assertNoMirrorAppearedUnderLock(tx, orderId, judgeEdit, order.status); // DRAFT edit vs a concurrent bill
         await driverAccess.assertDriverMayEditOrder(tx, orderId, user); // SA-429: re-derived under the Order lock
@@ -3199,6 +3190,7 @@ export class OrdersService implements OnApplicationBootstrap {
                   notes: item.notes,
                   priceType: PriceType.MANUAL,
                   position: pos++,
+                  authorChannel: authorOf(null), // SA ruling #3418
                 },
               });
               continue;
@@ -3294,6 +3286,7 @@ export class OrdersService implements OnApplicationBootstrap {
                 ...carriedLineFor(order.lineItems, item, item.productId),
                 // R2: preserve the client's line order on full replace.
                 position: pos++,
+                authorChannel: authorOf(item.productId), // SA ruling #3418: after the carry, so it wins
               },
             });
             await carry.restore(tx, made.id, item);
@@ -3387,6 +3380,7 @@ export class OrdersService implements OnApplicationBootstrap {
             tenantId: this.prisma.getTenantId(),
             tier: (pid) => (atCustomerTier ? (operatorCpMap.get(pid) ?? operatorDefaultTier) : 1),
             categoryMap: await loadCategoryMapForProducts(tx, unitCtx.products), // B297
+            authorOf, // SA ruling #3418: a unit line's author marker
           };
 
           if (replaceAll) {
@@ -3472,6 +3466,7 @@ export class OrdersService implements OnApplicationBootstrap {
                     notes: item.notes,
                     priceType: PriceType.MANUAL,
                     position: pos++,
+                    authorChannel: authorOf(null), // SA ruling #3418
                   },
                 });
                 continue;
@@ -3480,14 +3475,14 @@ export class OrdersService implements OnApplicationBootstrap {
               if (!product) throw new BadRequestException(`Product ${item.productId} not found`);
               const unitRow = unitRows.get(item);
               if (unitRow && unitLines.isUnitAware(unitRow)) {
-                await unitEdit.createUnitLine(uctx, orderId, product, unitRow, item, pos++);
+                await unitEdit.createUnitLine(uctx, orderId, product, unitRow, item, pos++, true);
                 continue;
               }
 
-              const lineData = buildReplaceAllLineData(itemCtx, item, product);
-              if (!lineData) continue;
+              const built = buildReplaceAllLineData(itemCtx, item, product);
+              if (!built) continue;
               const made = await tx.orderItem.create({
-                data: { orderId, ...lineData, position: pos++ },
+                data: { orderId, ...built, position: pos++, authorChannel: authorOf(product.id) },
               });
               await carry.restore(tx, made.id, item);
             }
@@ -3570,6 +3565,7 @@ export class OrdersService implements OnApplicationBootstrap {
                     priceType: PriceType.MANUAL,
                     // R2: append this newly-added line after the existing lines.
                     position: nextPos++,
+                    authorChannel: authorOf.editor, // SA ruling #3418: a diff-added line is the editor's
                   },
                 });
                 continue;
@@ -3698,6 +3694,7 @@ export class OrdersService implements OnApplicationBootstrap {
                     ),
                     // R2: append this newly-added line after the existing lines.
                     position: nextPos++,
+                    authorChannel: authorOf.editor, // SA ruling #3418: a diff-added line is the editor's
                   },
                 });
                 continue;
@@ -3887,7 +3884,7 @@ export class OrdersService implements OnApplicationBootstrap {
                   const p = unitCtx.products.get(li.productId!);
                   if (!p) throw new ConflictException({ code: API_ERROR_CODES.CONCURRENT_UPDATE });
                   // B297: same product, not a substitute — updateUnitLine must PRESERVE the trio.
-                  await unitEdit.updateUnitLine(uctx, item.id!, p, unitRow, item, false);
+                  await unitEdit.updateUnitLine(uctx, item.id!, p, unitRow, item, false, li.qty);
                   continue;
                 }
                 // A zero boxes+pieces payload is "not using box entry", not "zero
@@ -4017,6 +4014,7 @@ export class OrdersService implements OnApplicationBootstrap {
                   where: { id: item.id },
                   data: {
                     qty,
+                    ...authorship.raisedBy(authorOf.editor, li.qty, qty), // SA ruling #3418: a buyer's raise
                     // Always set the split explicitly so a qty-only edit can't leave
                     // stale boxes/pieces behind (the reverse-divergence class).
                     boxes,
@@ -4676,7 +4674,8 @@ export class OrdersService implements OnApplicationBootstrap {
     const tenantId = this.restrictionTenantId(resolver, order.tenantId);
     // F1(i): the line is judged at the stricter of the resolver's and the REQUESTER's channel (a buyer's add
     // approved by a driver is still a buyer's add); an unknown requester is the buyer.
-    const judgedAs = leastPrivilegedPrincipal(resolver, cr.requestedByRole);
+    const judgedAs = authorship.leastPrivilegedPrincipal(resolver, cr.requestedByRole);
+    const crAuthor = authorship.lineAuthorFor(judgedAs); // SA ruling #3418: requester's (stricter)
     const restrictionPlan = await planChangeRequestRestrictions(
       { restrictions: this.sellingRestrictions },
       { tenantId, existing: order.lineItems ?? [], cr, principal: judgedAs },
@@ -4905,6 +4904,7 @@ export class OrdersService implements OnApplicationBootstrap {
               where: { id: li.id },
               data: {
                 qty: split.qty,
+                ...authorship.raisedBy(crAuthor, src.qty, split.qty), // SA ruling #3418: a buyer's raise is BUYER
                 boxes: split.boxes,
                 pieces: split.pieces,
                 unitsPerBox: split.boxes != null && upb > 1 ? upb : null,
@@ -4983,6 +4983,7 @@ export class OrdersService implements OnApplicationBootstrap {
               where: { id: existing.id },
               data: {
                 qty: split.qty,
+                ...authorship.raisedBy(crAuthor, existing.qty, split.qty), // SA ruling #3418: a buyer's raise is BUYER
                 boxes: split.boxes,
                 pieces: split.pieces,
                 unitsPerBox: split.boxes != null && lineUpb > 1 ? lineUpb : null,
@@ -5068,6 +5069,7 @@ export class OrdersService implements OnApplicationBootstrap {
                 }),
                 status: "PENDING",
                 notes: cr.note ?? null,
+                authorChannel: crAuthor, // SA ruling #3418: the at-door add is the requester's (stricter) line
                 trackedCategoryId: product.trackedCategoryId ?? null,
                 // RF-3: reporting-only subcategory snapshot (mirrors trackedCategoryId).
                 trackedSubcategoryId: product.trackedSubcategoryId ?? null,

@@ -802,6 +802,7 @@ async function main() {
             qty: item.qty.toString(),
             unitPrice: item.unitPrice.toFixed(2),
             subtotal: (item.qty * item.unitPrice).toFixed(2),
+            authorChannel: "BUYER", // F1(i) SA ruling (#3418): the seed order is source APP (a buyer's lines)
           },
         }),
       ),

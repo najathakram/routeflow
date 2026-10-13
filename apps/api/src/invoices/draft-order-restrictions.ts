@@ -35,7 +35,8 @@ export async function assertDraftOrderSellable(
     createdAt?: Date | string | null;
     lineItems?: ReadonlyArray<{
       productId?: string | null;
-      createdAt?: Date | string | null;
+      /** SA ruling (#3418): the line's explicit author marker (NULL = the order-level rule). */
+      authorChannel?: string | null;
     }> | null;
   },
   productIds: ReadonlyArray<string | null | undefined>,

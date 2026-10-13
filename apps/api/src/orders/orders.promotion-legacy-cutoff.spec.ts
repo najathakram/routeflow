@@ -7,6 +7,8 @@ import { buildOrdersService, operatorPayload } from "./testing/orders-service-ha
  * a line a buyer path adds through the new code (a RECORDED revision, `sourceRecorded: true` in its snapshot) is
  * still judged on BUYER_PORTAL. createdAt plays no part: the legacy row below is dated far in the future and the
  * recorded one at the epoch, so a clock cutoff would read both the other way round.
+ * SA ruling (#3418): the new code writes each line's `authorChannel` (and copies it into the revision snapshot); a
+ * line's timestamps never decide its author (the (c) lines carry swapped timestamps on purpose).
  */
 describe("changeStatus: DRAFT promotion and the legacy source (sourceRecorded)", () => {
   const CREATED = new Date("2999-01-01T00:00:00.000Z"); // a legacy row's createdAt (no clock reads it)
@@ -28,17 +30,25 @@ describe("changeStatus: DRAFT promotion and the legacy source (sourceRecorded)",
     lineItems: [],
   };
   const operator = { ...operatorPayload, tenantId: "t-1" } as never;
-  const line = (productId: string, createdAt: Date) => ({
+  const line = (productId: string, createdAt: Date, authorChannel: string | null = null) => ({
     productId,
     qty: 2,
     trackedCategoryId: null,
     createdAt,
+    authorChannel,
   });
-  /** A revision the new code wrote: its snapshot carries the `sourceRecorded` marker. */
-  const revision = (revisionNumber: number, role: string | null, ...ids: string[]) => ({
+  /** A revision the new code wrote: its snapshot carries `sourceRecorded` and each line's `authorChannel`. */
+  const revision = (
+    revisionNumber: number,
+    role: string | null,
+    ...lines: Array<[string, string | null]>
+  ) => ({
     revisionNumber,
     editedByRole: role,
-    snapshot: { sourceRecorded: true, lineItems: ids.map((productId) => ({ productId, qty: 2 })) },
+    snapshot: {
+      sourceRecorded: true,
+      lineItems: lines.map(([productId, authorChannel]) => ({ productId, qty: 2, authorChannel })),
+    },
   });
 
   let h: Awaited<ReturnType<typeof buildOrdersService>>;
@@ -109,8 +119,8 @@ describe("changeStatus: DRAFT promotion and the legacy source (sourceRecorded)",
   it("(c) a legacy draft plus a line a buyer added through the new code: the new line is BUYER, the legacy line STAFF", async () => {
     arrange(
       { sourceRecorded: false, createdAt: CREATED },
-      [line("p-old", CREATED), line("p-new", LATER)],
-      [revision(1, "CUSTOMER", "p-old", "p-new")],
+      [line("p-old", LATER), line("p-new", CREATED, "BUYER")],
+      [revision(1, "CUSTOMER", ["p-old", null], ["p-new", "BUYER"])],
     );
     bannedOn("BUYER_PORTAL", "p-new");
 
@@ -124,8 +134,8 @@ describe("changeStatus: DRAFT promotion and the legacy source (sourceRecorded)",
   it("(c) control: the legacy line alone (portal-only ban on it) still promotes on STAFF", async () => {
     arrange(
       { sourceRecorded: false, createdAt: CREATED },
-      [line("p-old", CREATED), line("p-new", LATER)],
-      [revision(1, "CUSTOMER", "p-old", "p-new")],
+      [line("p-old", LATER), line("p-new", CREATED, "BUYER")],
+      [revision(1, "CUSTOMER", ["p-old", null], ["p-new", "BUYER"])],
     );
     bannedOn("BUYER_PORTAL", "p-old");
 

@@ -8476,6 +8476,7 @@ describe("OrdersService", () => {
     });
 
     it("ADD_ITEM onto an existing line keeps the line's stored (agreed) unitPrice", async () => {
+      const BUYER = { authorChannel: "BUYER" }; // SA ruling #3418: a CUSTOMER-requested raise
       const line = {
         id: "li-1",
         orderId: "ord-1",
@@ -8528,15 +8529,14 @@ describe("OrdersService", () => {
             trackedCategoryId: null,
           },
         ]);
-      // B135: the ADD_ITEM merge target comes from the locked held row, then its authoritative
-      // qty/price is re-read through the tx.
+      // B135: the merge target is the locked held row; its authoritative qty/price is re-read in the tx.
       prisma.orderItem.findUnique.mockResolvedValue(line);
 
       await service.approveChangeRequestAtStop("cr-1", operatorPayload, null);
 
       expect(prisma.orderItem.update).toHaveBeenCalledWith({
         where: { id: "li-1" },
-        data: { qty: 15, boxes: null, pieces: null, unitsPerBox: null, subtotal: 127.5 },
+        data: { qty: 15, boxes: null, pieces: null, unitsPerBox: null, subtotal: 127.5, ...BUYER },
       });
       expect(prisma.orderItem.create).not.toHaveBeenCalled();
     });

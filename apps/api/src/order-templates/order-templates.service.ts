@@ -40,6 +40,7 @@ import { resolveOversellAllowed } from "../orders/oversell-policy";
 import { PolicyOversellReader } from "../orders/policy-oversell-reader";
 import { assertSellableLines } from "../products/sellable-lines";
 import { assertPositiveTemplateQty } from "./template-qty";
+import { authorMarkerOf, withAuthor } from "../orders/line-author-channel";
 import { assertBuyerMayListProducts } from "./buyer-template-products";
 import { assertMoneyInvariantsOrThrow } from "../common/money-invariants.util";
 import { isoWeekdayUtc, startOfUtcDay } from "../common/utc-day";
@@ -1002,6 +1003,7 @@ export class OrderTemplatesService {
           return prior;
         }
       }
+      const authorChannel = authorMarkerOf(channel); // SA ruling (#3418): the run's judged channel
       const order = await tx.order.create({
         data: {
           customerId: template.customerId,
@@ -1019,7 +1021,9 @@ export class OrderTemplatesService {
           requestedDeliveryDate: today,
           // Denormalized flag — true when any (allowed) line is regulated.
           hasRegulated: lineItemsData.some((li) => li.trackedCategoryId != null),
-          lineItems: { create: lineItemsData },
+          // SA ruling (#3418): each line's explicit author marker: the channel this run is judged on (the least
+          // privileged of the template's creator and last editor when unattended; the caller's role otherwise).
+          lineItems: { create: withAuthor(lineItemsData, authorChannel) },
         },
         include: GENERATED_ORDER_INCLUDE,
       });
