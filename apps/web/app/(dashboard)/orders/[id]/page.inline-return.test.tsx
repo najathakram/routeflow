@@ -94,7 +94,7 @@ async function enterEditModeAndOpenReturns({ draft = false } = {}) {
   // also appears in the page's own editable Line Items list above, so wait for TWO matches
   // rather than a single (ambiguous) one.
   await waitFor(() => expect(screen.getAllByText("Widget").length).toBeGreaterThanOrEqual(2));
-  fireEvent.change(screen.getByLabelText(/qty \(pieces\)/i), { target: { value: "3" } });
+  fireEvent.change(screen.getByLabelText(/^pieces$/i), { target: { value: "3" } });
   fireEvent.change(screen.getByLabelText(/^reason$/i), { target: { value: "DAMAGED" } });
 }
 

@@ -1,0 +1,20 @@
+{"id":"B1224","batch":"F65","tier":"T1","state":"already-fixed","pr":3305,"proof":null,"evidence":"fixed by #3305, merged to master 39485bc520aad62b42a64642ab358bd69a8ef6fe (declare idempotencyKey + DTO own-undefined guard)"}
+{"id":"B1210","batch":"F65","tier":"T2","state":"already-fixed","pr":3293,"proof":null,"evidence":"fixed by #3293, landed on master in the W19+W20 squash 2757454dbd7cd446b950c5172d3484286d5139a4 (#3297)"}
+{"id":"B1211","batch":"F65","tier":"T1","state":"already-fixed","pr":3310,"proof":null,"evidence":"fixed by #3310, landed on master in the W21a squash 1bf58be42541d212c4de9f2a114a391ca2f3896a (#3328): product parent validated on create, update and bulk group"}
+{"id":"B1212","batch":"F65","tier":"T2","state":"queued","pr":null,"proof":null,"evidence":null}
+{"id":"B1213","batch":"F65","tier":"T2","state":"queued","pr":null,"proof":null,"evidence":null}
+{"id":"B1214","batch":"F65","tier":"T2","state":"queued","pr":null,"proof":null,"evidence":null}
+{"id":"B1215","batch":"F65","tier":"T2","state":"queued","pr":null,"proof":null,"evidence":null}
+{"id":"B1216","batch":"F65","tier":"T3","state":"queued","pr":null,"proof":null,"evidence":null}
+{"id":"B1217","batch":"F65","tier":"T3","state":"already-fixed","pr":3284,"proof":null,"evidence":"fixed by #3284, landed on master in the W19+W20 squash 2757454dbd7cd446b950c5172d3484286d5139a4 (#3297)"}
+{"id":"B1218","batch":"F65","tier":"T3","state":"queued","pr":null,"proof":null,"evidence":null}
+{"id":"B1219","batch":"F65","tier":"T2","state":"already-fixed","pr":3281,"proof":null,"evidence":"fixed by #3281, landed on master in the W19+W20 squash 2757454dbd7cd446b950c5172d3484286d5139a4 (#3297)"}
+{"id":"B1220","batch":"F65","tier":"T2","state":"already-fixed","pr":3286,"proof":null,"evidence":"fixed by #3286, landed on master in the W19+W20 squash 2757454dbd7cd446b950c5172d3484286d5139a4 (#3297)"}
+{"id":"B1221","batch":"F65","tier":"T2","state":"already-fixed","pr":3289,"proof":null,"evidence":"fixed by #3289, landed on master in the W21a squash 1bf58be42541d212c4de9f2a114a391ca2f3896a (#3328): invoice import skips walk-in customer matches"}
+{"id":"B1222","batch":"F65","tier":"T2","state":"queued","pr":null,"proof":null,"evidence":null}
+{"id":"B1223","batch":"F65","tier":"T2","state":"queued","pr":null,"proof":null,"evidence":null}
+{"id":"B1225","batch":"F65","tier":"T1","state":"already-fixed","pr":3268,"proof":null,"evidence":"duplicate of B1188; the B1188 fix commit 20385500b (#3268 content) is an ancestor of master"}
+{"id":"B1226","batch":"F65","tier":"T2","state":"queued","pr":null,"proof":null,"evidence":null}
+{"id":"B1227","batch":"F65","tier":"T1","state":"queued","pr":null,"proof":null,"evidence":null}
+{"id":"B1228","batch":"F65","tier":"T2","state":"queued","pr":null,"proof":null,"evidence":null}
+{"id":"B1205","batch":"F65","tier":"T3","state":"already-fixed","pr":3287,"proof":null,"evidence":"fixed by #3287, landed on master in the W21a squash 1bf58be42541d212c4de9f2a114a391ca2f3896a (#3328): mobile treats ORDER_SAVED_CREDITS_PENDING as saved"}

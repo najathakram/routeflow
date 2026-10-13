@@ -24,6 +24,8 @@ jest.mock("../invoices/invoices.service", () => ({
     findAll: jest.fn().mockResolvedValue({ data: [], meta: {} }),
     revertLinkedInvoicesForOrderEdit: jest.fn().mockResolvedValue(undefined),
     resyncOrderInvoicesForEdit: jest.fn().mockResolvedValue([{ id: "inv-1" }]),
+    followPartialPrices: jest.fn().mockResolvedValue({ issuedPartialsUnchanged: [] }),
+    projectEditedInvoiceTotals: jest.fn().mockResolvedValue([]),
   })),
 }));
 
@@ -173,6 +175,8 @@ async function buildOrdersService(
             .mockResolvedValue([{ id: "inv-1", invoiceNumber: "INV-1", total: 0 }]),
           revertLinkedInvoicesForOrderEdit: jest.fn().mockResolvedValue(undefined),
           resyncOrderInvoicesForEdit: jest.fn().mockResolvedValue([{ id: "inv-1" }]),
+          followPartialPrices: jest.fn().mockResolvedValue({ issuedPartialsUnchanged: [] }),
+          projectEditedInvoiceTotals: jest.fn().mockResolvedValue([]),
           reconcileOrderDraftInvoice: jest.fn().mockResolvedValue(undefined),
           // T6/T7: forceConsolidateCustomer's loser loop reads this before
           // deleting each loser's order.
@@ -324,6 +328,7 @@ function statefulOrdersService(opts: { orderKey: string | null; throwAfterFirstF
     // B215: the controller re-runs the convergent post-fold tail on every replay.
     replayMergeReconcile: jest.fn().mockResolvedValue(undefined),
     // Fold stand-in; records the key only when the caller hands it in (the fixed controller does).
+    liveTrioByProduct: jest.fn().mockResolvedValue(new Map()),
     updateOrderItems: jest.fn(
       async (
         _id: string,

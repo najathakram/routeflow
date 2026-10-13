@@ -55,8 +55,10 @@ describe("TRIAL / tenant-status write sites (back-office P2)", () => {
       // trial cancel: `where: { id, status: "TRIAL" }` (a predicate, not a write of TRIAL)
       "billing/subscription-mutation.service.ts": 1,
       "billing/mrr.service.ts": 1,
-      // expire / warn crons: read predicates
+      // expire / warn crons: the warn predicates and expireTrials' compare-and-swap (`where: { id, status: "TRIAL" }`)
       "billing/billing-cron.service.ts": 3,
+      // SA-775: expireTrials' scan predicate now lives in the one shared builder (cron + unpause preview)
+      "billing/auto-lock-candidates.ts": 1,
       // self-signup creates the tenant in TRIAL
       "tenants/tenants.service.ts": 1,
     });
@@ -67,7 +69,11 @@ describe("TRIAL / tenant-status write sites (back-office P2)", () => {
     expect(files).toEqual([
       "billing/billing-cron.service.ts",
       "billing/billing.service.ts",
+      // dunning: only moves readOnlyReason on an already READ_ONLY row (payment_overdue -> subscription_cancelled); never a TRIAL write
+      "billing/dunning.service.ts",
       "billing/subscription-mutation.service.ts",
+      // the one transition-to-ACTIVE helper (clears readOnlyReason, closes the dunning clock); writes ACTIVE, never TRIAL
+      "billing/transition-to-active.ts",
       "platform-admin/platform-admin.service.ts",
     ]);
   });

@@ -8,6 +8,8 @@ import { fmt } from "@/lib/formatting";
 import { useOrder } from "@/lib/api/orders";
 import { orderLineName } from "@/lib/product-display";
 import { useInvoice } from "@/lib/api/invoices";
+import { useInvoiceTaxSplit, useOrderCharges } from "@/lib/use-invoice-tax-split";
+import { orderPreviewTotalsRows } from "@/lib/order-preview-totals";
 
 /**
  * Floating previews that let staff jump between an invoice and its source order (in
@@ -105,6 +107,15 @@ export function OrderPreviewModal({
   orderId: string;
 }) {
   const { data: order, isLoading } = useOrder(open ? orderId : "");
+  const liveLines = React.useMemo(
+    // a CANCELLED order keeps its header total (levy included) while every line is cancelled: name the levy from them
+    () =>
+      order?.status === "CANCELLED"
+        ? order.lineItems
+        : order?.lineItems?.filter((li) => li.status !== "CANCELLED"),
+    [order],
+  );
+  const charges = useOrderCharges(liveLines, open);
   // Sum this order's own non-void invoice totals for the divergence note. Only
   // meaningful once the order is fully invoiced; a partial split legitimately bills
   // less, so suppress the note unless the whole order has been invoiced.
@@ -148,14 +159,22 @@ export function OrderPreviewModal({
           <LineTable rows={rows} />
           <div className="flex justify-end">
             <dl className="w-56 space-y-1 text-sm">
-              <div className="flex justify-between text-navy/70">
-                <dt>Subtotal</dt>
-                <dd>{fmt(Number(order.subtotal))}</dd>
-              </div>
-              <div className="flex justify-between text-navy/70">
-                <dt>Tax</dt>
-                <dd>{fmt(Number(order.tax))}</dd>
-              </div>
+              {orderPreviewTotalsRows({
+                subtotal: order.subtotal,
+                tax: order.tax,
+                charges,
+                discountAmount: order.discountAmount,
+                shippingFee: order.shippingFee,
+                total: order.total,
+              }).map((r) => (
+                <div key={r.key} className="flex justify-between text-navy/70">
+                  <dt>{r.label}</dt>
+                  <dd>
+                    {r.amount < 0 ? "-" : ""}
+                    {fmt(Math.abs(r.amount))}
+                  </dd>
+                </div>
+              ))}
               <div className="flex justify-between border-t border-surface-border pt-1 font-semibold text-navy">
                 <dt>Order total</dt>
                 <dd>{fmt(Number(order.total))}</dd>
@@ -182,6 +201,7 @@ export function InvoicePreviewModal({
   orderTotal?: number;
 }) {
   const { data: invoice, isLoading } = useInvoice(open ? invoiceId : "");
+  const taxSplit = useInvoiceTaxSplit(invoice, open); // Tax apart from each named levy charge
   const rows = (invoice?.items ?? []).map((it) => ({
     id: it.id,
     label: it.description,
@@ -223,8 +243,14 @@ export function InvoicePreviewModal({
               </div>
               <div className="flex justify-between text-navy/70">
                 <dt>Tax</dt>
-                <dd>{fmt(Number(invoice.taxAmount ?? 0))}</dd>
+                <dd>{fmt(taxSplit.tax)}</dd>
               </div>
+              {taxSplit.charges.map((c) => (
+                <div key={c.key} className="flex justify-between text-navy/70">
+                  <dt>{c.label}</dt>
+                  <dd>{fmt(c.amount)}</dd>
+                </div>
+              ))}
               <div className="flex justify-between border-t border-surface-border pt-1 font-semibold text-navy">
                 <dt>Invoice total</dt>
                 <dd>{fmt(total)}</dd>

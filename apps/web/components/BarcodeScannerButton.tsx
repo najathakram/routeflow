@@ -1,6 +1,7 @@
 "use client";
 
 import * as React from "react";
+import { createPortal } from "react-dom";
 import { Camera, X, Zap, ZapOff } from "lucide-react";
 import { cn } from "@routeflow/ui/web";
 import {
@@ -224,51 +225,53 @@ export function BarcodeScannerButton({
         <Camera size={16} />
       </button>
 
-      {scannerOpen && (
-        <div className="fixed inset-0 z-[9999] flex flex-col items-center bg-black/90 px-4 pt-[max(1rem,env(safe-area-inset-top))]">
-          <div className="flex w-full max-w-md items-center justify-between">
-            <button
-              type="button"
-              onClick={closeScanner}
-              className="flex items-center gap-2 rounded-full bg-white/20 px-4 py-2 text-sm font-semibold text-white transition hover:bg-white/30"
-            >
-              <X size={16} />
-              Cancel
-            </button>
-            {torchAvailable && (
+      {scannerOpen &&
+        createPortal(
+          <div className="pointer-events-auto fixed inset-0 z-[9999] flex flex-col items-center bg-black/90 px-4 pt-[max(1rem,env(safe-area-inset-top))]">
+            <div className="flex w-full max-w-md items-center justify-between">
               <button
                 type="button"
-                onClick={toggleTorch}
-                aria-pressed={torchOn}
-                aria-label={torchOn ? "Turn flashlight off" : "Turn flashlight on"}
-                className={cn(
-                  "flex h-10 w-10 items-center justify-center rounded-full text-white transition",
-                  torchOn ? "bg-brand-500" : "bg-white/20 hover:bg-white/30",
-                )}
+                onClick={closeScanner}
+                className="flex items-center gap-2 rounded-full bg-white/20 px-4 py-2 text-sm font-semibold text-white transition hover:bg-white/30"
               >
-                {torchOn ? <Zap size={18} /> : <ZapOff size={18} />}
+                <X size={16} />
+                Cancel
               </button>
-            )}
-          </div>
-          {/* Compact landscape viewfinder: a barcode is held wide-and-short, so the preview is a
-              strip (object-cover crops the frame for display only — zxing still reads all of it). */}
-          <div className="relative mt-4 h-40 w-full max-w-md overflow-hidden rounded-lg sm:h-52">
-            <video
-              ref={videoRef}
-              className="h-full w-full cursor-pointer object-cover"
-              autoPlay
-              muted
-              playsInline
-              onClick={() => void nudgeFocus(trackRef.current)}
-            />
-            {/* Scan guide overlay */}
-            <div className="pointer-events-none absolute inset-0 flex items-center justify-center">
-              <div className="h-3/5 w-5/6 rounded border-2 border-brand-400 opacity-80" />
+              {torchAvailable && (
+                <button
+                  type="button"
+                  onClick={toggleTorch}
+                  aria-pressed={torchOn}
+                  aria-label={torchOn ? "Turn flashlight off" : "Turn flashlight on"}
+                  className={cn(
+                    "flex h-10 w-10 items-center justify-center rounded-full text-white transition",
+                    torchOn ? "bg-brand-500" : "bg-white/20 hover:bg-white/30",
+                  )}
+                >
+                  {torchOn ? <Zap size={18} /> : <ZapOff size={18} />}
+                </button>
+              )}
             </div>
-          </div>
-          <p className="mt-3 text-center text-sm text-white/70">Align barcode within the box</p>
-        </div>
-      )}
+            {/* Compact landscape viewfinder: a barcode is held wide-and-short, so the preview is a
+              strip (object-cover crops the frame for display only — zxing still reads all of it). */}
+            <div className="relative mt-4 h-40 w-full max-w-md overflow-hidden rounded-lg sm:h-52">
+              <video
+                ref={videoRef}
+                className="h-full w-full cursor-pointer object-cover"
+                autoPlay
+                muted
+                playsInline
+                onClick={() => void nudgeFocus(trackRef.current)}
+              />
+              {/* Scan guide overlay */}
+              <div className="pointer-events-none absolute inset-0 flex items-center justify-center">
+                <div className="h-3/5 w-5/6 rounded border-2 border-brand-400 opacity-80" />
+              </div>
+            </div>
+            <p className="mt-3 text-center text-sm text-white/70">Align barcode within the box</p>
+          </div>,
+          document.body,
+        )}
     </>
   );
 }

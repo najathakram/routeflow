@@ -8,7 +8,7 @@ import {
 } from "@nestjs/common";
 import type { JwtPayload } from "../auth/jwt-payload.interface";
 import { PrismaService } from "../prisma/prisma.service";
-import { recomputeInvoiceStatus } from "../invoices/invoice-status";
+import { statusFromPayments } from "../invoices/invoice-status";
 import { tenantTimeZone } from "../common/tenant-time-zone";
 import { RouteFlowGateway } from "../gateways/routeflow.gateway";
 import { RegulatedLedgerService } from "../regulated/regulated-ledger.service";
@@ -877,12 +877,13 @@ export class CreditNotesService {
     // on top of a 60-dollar DRAFT sibling was flipping a $100 invoice straight to
     // PAID off unconfirmed money. Matches restoreCreditFromPaymentInTx's own basis.
     const newPaid = roundMoney(sumConfirmed(inv.payments) + applyAmount);
-    const newStatus = recomputeInvoiceStatus(
+    const newStatus = statusFromPayments(
       newPaid,
       Number(inv.total),
       inv.dueDate,
       inv.status,
       tz,
+      "NOT_PAID",
     );
     await tx.invoice.update({
       where: { id: inv.id },
@@ -1215,12 +1216,13 @@ export class CreditNotesService {
         invoiceNumber: inv.invoiceNumber,
         amount,
         statusBefore: inv.status,
-        statusAfter: recomputeInvoiceStatus(
+        statusAfter: statusFromPayments(
           sumConfirmed(remaining),
           Number(inv.total),
           inv.dueDate,
           inv.status,
           tz,
+          "NOT_PAID",
         ),
       };
     });
@@ -1464,12 +1466,13 @@ export class CreditNotesService {
       // confirmed money, never a DRAFT (or, once PENDING exists, an un-cleared check) —
       // sumConfirmed replaces the not-void filter (F03 discipline; design.md §3.4).
       const paid = sumConfirmed(inv.payments);
-      const newStatus = recomputeInvoiceStatus(
+      const newStatus = statusFromPayments(
         paid,
         Number(inv.total),
         inv.dueDate,
         inv.status,
         tz,
+        "NOT_PAID",
       );
       await tx.invoice.update({
         where: { id: inv.id },
@@ -1548,12 +1551,13 @@ export class CreditNotesService {
       // PR-2 (check-payments B1 hardening): same sumConfirmed basis as
       // restoreCreditFromPaymentInTx above.
       const paid = sumConfirmed(inv.payments);
-      const newStatus = recomputeInvoiceStatus(
+      const newStatus = statusFromPayments(
         paid,
         Number(inv.total),
         inv.dueDate,
         inv.status,
         tz,
+        "NOT_PAID",
       );
       await tx.invoice.update({
         where: { id: inv.id },
@@ -1587,7 +1591,10 @@ export class CreditNotesService {
     const seen = new Set<string>();
     for (const s of selections) {
       if (seen.has(s.creditNoteId))
-        throw new BadRequestException(`Duplicate credit note selection: ${s.creditNoteId}`);
+        throw cnBad(
+          API_ERROR_CODES.CREDIT_NOTE_UNAVAILABLE,
+          `Duplicate credit note selection: ${s.creditNoteId}`,
+        );
       seen.add(s.creditNoteId);
     }
 
@@ -1597,15 +1604,26 @@ export class CreditNotesService {
     const now = new Date();
     for (const id of ids) {
       const cn: any = byId.get(id);
-      if (!cn) throw new NotFoundException(`Credit note ${id} not found`);
+      if (!cn)
+        throw new NotFoundException({
+          code: API_ERROR_CODES.CREDIT_NOTE_UNAVAILABLE,
+          message: `Credit note ${id} not found`,
+        });
       if (cn.customerId !== customerId)
-        throw new BadRequestException(
+        throw cnBad(
+          API_ERROR_CODES.CREDIT_NOTE_UNAVAILABLE,
           `Credit note ${cn.creditNoteNumber ?? id} does not belong to this customer`,
         );
       if (cn.status === "VOID")
-        throw new BadRequestException(`Credit note ${cn.creditNoteNumber ?? id} has been voided`);
+        throw cnBad(
+          API_ERROR_CODES.CREDIT_NOTE_UNAVAILABLE,
+          `Credit note ${cn.creditNoteNumber ?? id} has been voided`,
+        );
       if (cn.expiresAt && new Date(cn.expiresAt) <= now)
-        throw new BadRequestException(`Credit note ${cn.creditNoteNumber ?? id} has expired`);
+        throw cnBad(
+          API_ERROR_CODES.CREDIT_NOTE_UNAVAILABLE,
+          `Credit note ${cn.creditNoteNumber ?? id} has expired`,
+        );
     }
   }
 
@@ -1846,7 +1864,7 @@ export class CreditNotesService {
     // the payment would be written tenant-orphaned.
     tenantId: string | null = this.prisma.getTenantId(),
   ): Promise<{ applied: number; unapplied: number }> {
-    const tz = await tenantTimeZone(this.prisma, tenantId); // #2556 B3: the explicit tenant, not the ambient one
+    const tz = await tenantTimeZone(this.prisma, { tenantId }); // #2556 B3: the explicit tenant, not the ambient one
     const result = { applied: 0, unapplied: 0 };
     // B1052: the FIRST statements — lock this Order, its invoices and every note this settle can
     // touch (SA-214 order, each set in id order) BEFORE any balance is read. Two office settles

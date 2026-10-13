@@ -87,6 +87,13 @@ describe("OOS PR2: what customers see about backordered items", () => {
     }
   });
 
+  it("with the switch OFF, an admin may still edit while customers have their own setting", () => {
+    expect(canEditVisibility("TENANT_ADMIN", false, 2)).toBe(true);
+    expect(canEditVisibility("TENANT_ADMIN", false, 0)).toBe(false);
+    expect(canEditVisibility("TENANT_ADMIN", false, undefined)).toBe(false);
+    expect(canEditVisibility("OPERATOR", false, 2)).toBe(false);
+  });
+
   it("matches the web card's copy (title, both choices, toasts)", () => {
     expect(VISIBILITY_COPY.title).toBe("What customers see about backordered items");
     expect(VISIBILITY_COPY.show).toBe(

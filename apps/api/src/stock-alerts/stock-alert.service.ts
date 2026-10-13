@@ -1,7 +1,8 @@
 import { Injectable, Logger, NotFoundException } from "@nestjs/common";
 import { StockAlertStatus } from "@prisma/client";
 import { PrismaService } from "../prisma/prisma.service";
-import { buyerVisibleProductWhere, NO_BUYER_RESTRICTIONS } from "../buyer/buyer-product-visibility";
+import { buyerVisibilityFor, buyerVisibleProductWhere } from "../buyer/buyer-product-visibility";
+import { SellingRestrictionsService } from "../selling-restrictions/selling-restrictions.service";
 import { NotificationsService } from "../notifications/notifications.service";
 
 /**
@@ -26,6 +27,7 @@ export class StockAlertService {
   constructor(
     private readonly prisma: PrismaService,
     private readonly notifications: NotificationsService,
+    private readonly restrictions: SellingRestrictionsService,
   ) {}
 
   /**
@@ -38,8 +40,9 @@ export class StockAlertService {
     productId: string,
     tenantId: string,
   ): Promise<{ subscribed: true }> {
+    const visibility = await buyerVisibilityFor(this.restrictions, tenantId, customerId);
     const product = await this.prisma.forTenant().product.findFirst({
-      where: buyerVisibleProductWhere(NO_BUYER_RESTRICTIONS, { id: productId }),
+      where: buyerVisibleProductWhere(visibility, { id: productId }),
       select: { id: true },
     });
     if (!product) throw new NotFoundException("Product not found");
@@ -90,6 +93,27 @@ export class StockAlertService {
     const unique = [...new Set(productIds)];
     if (unique.length === 0) return { notified: 0 };
 
+    // One restriction read per customer for the whole call (not per product, not per alert).
+    const restrictedFor = new Map<string, Promise<ReadonlySet<string> | null>>();
+    const isRestricted = async (
+      tenantId: string | null,
+      customerId: string,
+      productId: string,
+    ): Promise<boolean> => {
+      // No tenant to resolve rules against (a legacy row outside any tenant): no tenant rule can apply.
+      if (!tenantId) return false;
+      let read = restrictedFor.get(customerId);
+      if (!read) {
+        read = this.restrictions.restrictedProductIdsFor(tenantId, customerId).catch((err) => {
+          this.logger.warn(`Stock-alert restriction read failed for ${customerId}: ${String(err)}`);
+          return null; // unreadable: fail closed, nobody is pushed on a guess
+        });
+        restrictedFor.set(customerId, read);
+      }
+      const ids = await read;
+      return ids === null || ids.has(productId);
+    };
+
     let notified = 0;
     for (const productId of unique) {
       const product = await this.prisma.forTenant().product.findFirst({
@@ -104,6 +128,11 @@ export class StockAlertService {
       });
 
       for (const alert of pending) {
+        // A buyer this product is hidden from (a selling restriction) is never told it is back: their alert is left
+        // PENDING, unclaimed, so it fires on a later restock if the limit is lifted.
+        const tenantId = alert.tenantId ?? this.prisma.getTenantId() ?? null;
+        if (await isRestricted(tenantId, alert.customerId, product.id)) continue;
+
         // Claim the alert atomically BEFORE pushing: updateMany is guarded on
         // status: PENDING, so a concurrent restock of the same product can only
         // win the claim once. Losers (count === 0) skip the push, which keeps the

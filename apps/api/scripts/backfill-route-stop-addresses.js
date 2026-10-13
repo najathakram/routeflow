@@ -13,9 +13,14 @@
 const { PrismaClient } = require("../../../node_modules/@prisma/client");
 const { PrismaPg } = require("../../../node_modules/@prisma/adapter-pg");
 const { Pool } = require("../../../node_modules/pg");
+const { loadProtectedSlugs } = require("./lib/protected-slugs.cjs");
+const { protectedTenantIds } = require("./lib/live-target-guard.cjs");
 
 const apply = process.argv.includes("--apply");
 const DSN = process.env.DATABASE_URL || "postgresql://user:pass@localhost:5432/routeflow_dev";
+
+// Row 195: validated against the URL this run actually dials, before any connection.
+const protectedSlugs = loadProtectedSlugs(process.env, DSN);
 
 const pool = new Pool({ connectionString: DSN });
 const prisma = new PrismaClient({ adapter: new PrismaPg(pool) });
@@ -25,7 +30,7 @@ async function main() {
 
   const orphans = await prisma.routeStop.findMany({
     where: { customerAddressId: null },
-    select: { id: true, customerId: true, routeId: true },
+    select: { id: true, customerId: true, routeId: true, tenantId: true },
   });
   console.log(`Found ${orphans.length} RouteStop rows with null customerAddressId`);
 
@@ -34,7 +39,18 @@ async function main() {
     return;
   }
 
+  // Row 195: never touch a protected tenant's stops. The stop's own tenant, else its customer's;
+  // a stop whose tenant cannot be derived is skipped (it cannot be proven unprotected).
+  const protectedIds = new Set(await protectedTenantIds(prisma, protectedSlugs));
   const customerIds = Array.from(new Set(orphans.map((s) => s.customerId)));
+  const customerTenants = new Map(
+    (
+      await prisma.customer.findMany({
+        where: { id: { in: customerIds } },
+        select: { id: true, tenantId: true },
+      })
+    ).map((c) => [c.id, c.tenantId]),
+  );
   const addresses = await prisma.customerAddress.findMany({
     where: { customerId: { in: customerIds } },
     orderBy: [{ isDefault: "desc" }, { createdAt: "asc" }],
@@ -45,7 +61,13 @@ async function main() {
 
   let fixed = 0;
   let skipped = 0;
+  let protectedSkipped = 0;
   for (const stop of orphans) {
+    const tenantId = stop.tenantId ?? customerTenants.get(stop.customerId) ?? null;
+    if (tenantId === null || protectedIds.has(tenantId)) {
+      protectedSkipped++;
+      continue;
+    }
     const addr = byCustomer.get(stop.customerId);
     if (!addr) {
       skipped++;
@@ -60,7 +82,10 @@ async function main() {
     fixed++;
   }
 
-  console.log(`Summary: scanned=${orphans.length} fixed=${fixed} skipped_no_address=${skipped}`);
+  console.log(
+    `Summary: scanned=${orphans.length} fixed=${fixed} skipped_no_address=${skipped} ` +
+      `skipped_protected_or_untenanted=${protectedSkipped}`,
+  );
   if (!apply) console.log("Run with --apply to write changes.");
 }
 

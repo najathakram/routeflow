@@ -53,6 +53,8 @@ export interface DetailActionsProps {
   promotions?: BuyerPromotion[];
   onAdd: () => void;
   onUpdateQty: (qty: number) => void;
+  /** Puts the removed cart line back (the stepper's Undo). */
+  onRestore?: () => void;
   isAlertSubscribed: boolean;
   onToggleStockAlert: () => void;
 }
@@ -64,6 +66,7 @@ export function DetailActions({
   promotions,
   onAdd,
   onUpdateQty,
+  onRestore,
   isAlertSubscribed,
   onToggleStockAlert,
 }: DetailActionsProps) {
@@ -99,7 +102,13 @@ export function DetailActions({
 
       <div>
         {cartItem ? (
-          <QtyStepper qty={cartItem.qty} onUpdate={onUpdateQty} onRemove={() => onUpdateQty(0)} />
+          <QtyStepper
+            qty={cartItem.qty}
+            name={product.name}
+            onUpdate={onUpdateQty}
+            onRemove={() => onUpdateQty(0)}
+            onRestore={onRestore}
+          />
         ) : outOfStock ? (
           <button
             onClick={onToggleStockAlert}
@@ -121,7 +130,7 @@ export function DetailActions({
             <Plus className="h-4 w-4" /> Add to cart
           </button>
         )}
-        {shipsWhenRestocked && !cartItem && (
+        {shipsWhenRestocked && (
           <p data-testid="ships-when-restocked" className="mt-2 text-sm font-medium text-warning">
             {SHIPS_WHEN_RESTOCKED}
           </p>

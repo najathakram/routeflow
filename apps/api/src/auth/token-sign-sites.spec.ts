@@ -16,6 +16,19 @@ import {
   derivedJwtKey,
   type DerivedJwtLabel,
 } from "../common/derived-jwt-key";
+import {
+  BUYER_ACCESS_AUDIENCE,
+  BUYER_REFRESH_AUDIENCE,
+  STAFF_ACCESS_AUDIENCE,
+  STAFF_REFRESH_AUDIENCE,
+} from "./session-token";
+import { AuthService } from "./auth.service";
+import { AppleOAuthService } from "./apple-oauth.service";
+import { GoogleOAuthService } from "./google-oauth.service";
+import { BuyerAuthService } from "../buyer/buyer-auth.service";
+import { BuyerAdminService } from "../buyer/buyer-admin.service";
+import { PlatformAdminService } from "../platform-admin/platform-admin.service";
+import { createMockPrisma } from "../testing/prisma-mock";
 
 const SRC_ROOT = path.resolve(__dirname, "..");
 const SECRET = "token-sign-sites-test-secret-0123456789";
@@ -64,8 +77,10 @@ const SHAPES: Record<string, Record<string, unknown>> = {
 
 type Site = { cls: Cls; shape: keyof typeof SHAPES; key: Key; aud: string | null };
 
-const ACCESS = { key: "access", aud: null } as const;
-const REFRESH = { key: "refresh", aud: null } as const;
+const STAFF_ACCESS = { key: "access", aud: STAFF_ACCESS_AUDIENCE } as const;
+const BUYER_ACCESS = { key: "access", aud: BUYER_ACCESS_AUDIENCE } as const;
+const STAFF_REFRESH = { key: "refresh", aud: STAFF_REFRESH_AUDIENCE } as const;
+const BUYER_REFRESH = { key: "refresh", aud: BUYER_REFRESH_AUDIENCE } as const;
 const EMAIL_LINK = {
   key: `derived:${DERIVED_JWT_LABELS.emailVerify}`,
   aud: "email-verify",
@@ -79,26 +94,38 @@ const SITES: Record<string, Site> = {
     key: "provider",
     aud: null,
   },
-  "auth/apple-oauth.service.ts#2": { cls: "session-staff", shape: "staff-access", ...ACCESS },
-  "auth/apple-oauth.service.ts#3": { cls: "non-session", shape: "staff-refresh", ...REFRESH },
-  "auth/apple-oauth.service.ts#4": { cls: "buyer", shape: "buyer-access", ...ACCESS },
-  "auth/apple-oauth.service.ts#5": { cls: "non-session", shape: "buyer-refresh", ...REFRESH },
-  "auth/auth.service.ts#1": { cls: "session-staff", shape: "staff-access", ...ACCESS },
-  "auth/auth.service.ts#2": { cls: "non-session", shape: "staff-refresh", ...REFRESH },
-  "auth/auth.service.ts#3": { cls: "session-staff", shape: "staff-access", ...ACCESS },
-  "auth/auth.service.ts#4": { cls: "non-session", shape: "staff-refresh", ...REFRESH },
-  "auth/auth.service.ts#5": { cls: "session-staff", shape: "staff-access", ...ACCESS },
-  "auth/auth.service.ts#6": { cls: "non-session", shape: "staff-refresh", ...REFRESH },
-  "auth/google-oauth.service.ts#1": { cls: "session-staff", shape: "staff-access", ...ACCESS },
-  "auth/google-oauth.service.ts#2": { cls: "non-session", shape: "staff-refresh", ...REFRESH },
-  "auth/google-oauth.service.ts#3": { cls: "buyer", shape: "buyer-access", ...ACCESS },
-  "auth/google-oauth.service.ts#4": { cls: "non-session", shape: "buyer-refresh", ...REFRESH },
+  "auth/apple-oauth.service.ts#2": { cls: "session-staff", shape: "staff-access", ...STAFF_ACCESS },
+  "auth/apple-oauth.service.ts#3": { cls: "non-session", shape: "staff-refresh", ...STAFF_REFRESH },
+  "auth/apple-oauth.service.ts#4": { cls: "buyer", shape: "buyer-access", ...BUYER_ACCESS },
+  "auth/apple-oauth.service.ts#5": { cls: "non-session", shape: "buyer-refresh", ...BUYER_REFRESH },
+  "auth/auth.service.ts#1": { cls: "session-staff", shape: "staff-access", ...STAFF_ACCESS },
+  "auth/auth.service.ts#2": { cls: "non-session", shape: "staff-refresh", ...STAFF_REFRESH },
+  "auth/auth.service.ts#3": { cls: "session-staff", shape: "staff-access", ...STAFF_ACCESS },
+  "auth/auth.service.ts#4": { cls: "non-session", shape: "staff-refresh", ...STAFF_REFRESH },
+  "auth/auth.service.ts#5": { cls: "session-staff", shape: "staff-access", ...STAFF_ACCESS },
+  "auth/auth.service.ts#6": { cls: "non-session", shape: "staff-refresh", ...STAFF_REFRESH },
+  "auth/google-oauth.service.ts#1": {
+    cls: "session-staff",
+    shape: "staff-access",
+    ...STAFF_ACCESS,
+  },
+  "auth/google-oauth.service.ts#2": {
+    cls: "non-session",
+    shape: "staff-refresh",
+    ...STAFF_REFRESH,
+  },
+  "auth/google-oauth.service.ts#3": { cls: "buyer", shape: "buyer-access", ...BUYER_ACCESS },
+  "auth/google-oauth.service.ts#4": {
+    cls: "non-session",
+    shape: "buyer-refresh",
+    ...BUYER_REFRESH,
+  },
   "tenants/tenants.service.ts#1": { cls: "non-session", shape: "email-link", ...EMAIL_LINK },
   "tenants/tenants.service.ts#2": { cls: "non-session", shape: "email-link", ...EMAIL_LINK },
   "platform-admin/platform-admin.service.ts#1": {
     cls: "session-impersonation",
     shape: "staff-impersonation",
-    ...ACCESS,
+    ...STAFF_ACCESS,
   },
   "stripe-connect/stripe-connect.service.ts#1": {
     cls: "non-session",
@@ -106,9 +133,9 @@ const SITES: Record<string, Site> = {
     key: `derived:${DERIVED_JWT_LABELS.stripeConnectState}`,
     aud: "stripe-connect-state",
   },
-  "buyer/buyer-auth.service.ts#1": { cls: "buyer", shape: "buyer-access", ...ACCESS },
-  "buyer/buyer-auth.service.ts#2": { cls: "non-session", shape: "buyer-refresh", ...REFRESH },
-  "buyer/buyer-admin.service.ts#1": { cls: "buyer", shape: "buyer-access", ...ACCESS },
+  "buyer/buyer-auth.service.ts#1": { cls: "buyer", shape: "buyer-access", ...BUYER_ACCESS },
+  "buyer/buyer-auth.service.ts#2": { cls: "non-session", shape: "buyer-refresh", ...BUYER_REFRESH },
+  "buyer/buyer-admin.service.ts#1": { cls: "buyer", shape: "buyer-access", ...BUYER_ACCESS },
 };
 
 function walk(dir: string, out: string[] = []): string[] {
@@ -144,16 +171,27 @@ describe("token signing inventory", () => {
     expect(Object.keys(SITES)).toHaveLength(22);
   });
 
-  it("gives every derived-key site a known label and an audience, and every other site neither", () => {
+  it("gives every derived-key site a known label and an audience, and a session site its realm audience", () => {
     const labels = new Set<string>(Object.values(DERIVED_JWT_LABELS));
     for (const [site, { key, aud }] of Object.entries(SITES)) {
       if (key.startsWith("derived:")) {
         expect(labels.has(key.slice("derived:".length))).toBe(true);
         expect(typeof aud).toBe("string");
-      } else {
+      } else if (key === "provider") {
         expect([site, aud]).toEqual([site, null]);
+      } else {
+        expect([site, typeof aud]).toEqual([site, "string"]);
       }
     }
+  });
+
+  it("pins the four realm audiences", () => {
+    expect([
+      STAFF_ACCESS_AUDIENCE,
+      BUYER_ACCESS_AUDIENCE,
+      STAFF_REFRESH_AUDIENCE,
+      BUYER_REFRESH_AUDIENCE,
+    ]).toEqual(["staff-access", "buyer-access", "staff-refresh", "buyer-refresh"]);
   });
 
   it("derived-key sites sign through the shared helper's label and audience, never the raw secret", () => {
@@ -269,5 +307,276 @@ describe("session token admission by shape", () => {
     await expect(strategy.validate({ sub: "u1" } as any)).rejects.toBeDefined();
     const client = await connect({ sub: "u1" });
     expect(client.disconnect).toHaveBeenCalledWith(true);
+  });
+});
+
+type DepsAfterConfig =
+  ConstructorParameters<typeof PlatformAdminService> extends [any, any, any, ...infer R]
+    ? R
+    : never;
+
+describe("the real services mint the realm audience on every session token", () => {
+  const JWT = {
+    secret: "mint-aud-access-secret-0123456789abcdef",
+    refreshSecret: "mint-aud-refresh-secret-0123456789abcdef",
+    expiresIn: "15m",
+    refreshExpiresIn: "30d",
+  };
+  const real = new JwtService({});
+  const config = { get: (k: string) => (k === "jwt" ? JWT : undefined) } as any;
+  const entitlements = { claimsFor: jest.fn().mockResolvedValue(null) } as any;
+  const email = { send: jest.fn().mockResolvedValue(undefined) } as any;
+  /** Any model method resolves to `{}` - minting only needs the writes not to throw. */
+  const anyPrisma = () =>
+    new Proxy(
+      {},
+      {
+        get: (_t, model) =>
+          model === "then"
+            ? undefined
+            : new Proxy({}, { get: () => jest.fn().mockResolvedValue({}) }),
+      },
+    ) as any;
+
+  const staffUser = {
+    id: "u1",
+    username: "alice",
+    email: "alice@example.test",
+    role: "OPERATOR",
+    status: "ACTIVE",
+    forcePasswordChange: false,
+    tenantId: null as string | null,
+    isAdmin: false,
+    canActAsDriver: false,
+    password: "hash",
+    deletedAt: null,
+  };
+  const SA = { ...staffUser, role: "SUPER_ADMIN" };
+
+  type Pair = { access: string; refresh?: string };
+
+  function authService(prisma: any) {
+    return new AuthService(prisma, {} as any, real, config, email, entitlements);
+  }
+
+  const MINT: Record<string, () => Promise<Pair>> = {
+    "auth.login": async () => {
+      const r = await authService(createMockPrisma()).login(SA as any);
+      return { access: r.accessToken, refresh: r.refreshToken };
+    },
+    "auth.refresh": async () => {
+      const incoming = real.sign(
+        { sub: "u1", type: "staff" },
+        { secret: JWT.refreshSecret, expiresIn: "30d" },
+      );
+      const prisma = createMockPrisma();
+      prisma.refreshToken.findUnique.mockResolvedValue({
+        id: "r1",
+        userId: "u1",
+        tokenHash: "h",
+        expiresAt: new Date(Date.now() + 60_000),
+      } as any);
+      prisma.user.findUnique.mockResolvedValue(SA as any);
+      prisma.refreshToken.updateMany.mockResolvedValue({ count: 1 } as any);
+      const r = await authService(prisma).refresh(incoming);
+      return { access: r.accessToken, refresh: r.refreshToken };
+    },
+    "auth.mintSessionForUser": async () => {
+      const r = await (authService(createMockPrisma()) as any).mintSessionForUser(SA);
+      return { access: r.accessToken, refresh: r.refreshToken };
+    },
+    "google.staff": async () => {
+      const svc = new GoogleOAuthService(anyPrisma(), real, config, email, entitlements);
+      const r = await (svc as any).issueUserTokenPair(SA, null);
+      return { access: r.accessToken, refresh: r.refreshToken };
+    },
+    "google.buyer": async () => {
+      const svc = new GoogleOAuthService(anyPrisma(), real, config, email, entitlements);
+      const r = await (svc as any).issueBuyerTokenPair("b1", "b@example.test", "B", true);
+      return { access: r.accessToken, refresh: r.refreshToken };
+    },
+    "apple.staff": async () => {
+      const svc = new AppleOAuthService(anyPrisma(), real, config, email, entitlements, {} as any);
+      const r = await (svc as any).issueUserTokenPair(SA, null);
+      return { access: r.accessToken, refresh: r.refreshToken };
+    },
+    "apple.buyer": async () => {
+      const svc = new AppleOAuthService(anyPrisma(), real, config, email, entitlements, {} as any);
+      const r = await (svc as any).issueBuyerTokenPair("b1", "b@example.test", "B", true);
+      return { access: r.accessToken, refresh: r.refreshToken };
+    },
+    "buyerAuth.issue": async () => {
+      const svc = new BuyerAuthService(createMockPrisma(), real, config, email, {} as any);
+      const r = await svc.issueBuyerTokenPair("b1", "b@example.test", "B");
+      return { access: r.accessToken, refresh: r.refreshToken };
+    },
+    "buyerAdmin.impersonate": async () => {
+      const prisma = createMockPrisma();
+      prisma.buyerAccount.findUnique.mockResolvedValue({
+        id: "b1",
+        email: "b@example.test",
+        name: "B",
+      } as any);
+      const r = await new BuyerAdminService(prisma, real, config).impersonateBuyer("b1", "sa1");
+      return { access: r.accessToken };
+    },
+    "platformAdmin.impersonate": async () => {
+      const prisma = createMockPrisma();
+      prisma.user.findFirst.mockResolvedValue({ ...staffUser, role: "TENANT_ADMIN" } as any);
+      const svc = new PlatformAdminService(
+        prisma,
+        real,
+        config,
+        ...(Array(15).fill({}) as unknown as DepsAfterConfig),
+      );
+      jest.spyOn(svc as any, "_findOrThrow").mockResolvedValue({ id: "t1", slug: "acme" });
+      jest.spyOn(svc as any, "recordAdminAction").mockResolvedValue(undefined);
+      const r = await svc.impersonate("t1", "sa1");
+      return { access: r.accessToken };
+    },
+  };
+
+  /** site -> [minter, which token of the pair]. Every access/refresh site must appear. */
+  const SITE_MINTER: Record<string, [keyof typeof MINT, "access" | "refresh"]> = {
+    "auth/apple-oauth.service.ts#2": ["apple.staff", "access"],
+    "auth/apple-oauth.service.ts#3": ["apple.staff", "refresh"],
+    "auth/apple-oauth.service.ts#4": ["apple.buyer", "access"],
+    "auth/apple-oauth.service.ts#5": ["apple.buyer", "refresh"],
+    "auth/auth.service.ts#1": ["auth.login", "access"],
+    "auth/auth.service.ts#2": ["auth.login", "refresh"],
+    "auth/auth.service.ts#3": ["auth.refresh", "access"],
+    "auth/auth.service.ts#4": ["auth.refresh", "refresh"],
+    "auth/auth.service.ts#5": ["auth.mintSessionForUser", "access"],
+    "auth/auth.service.ts#6": ["auth.mintSessionForUser", "refresh"],
+    "auth/google-oauth.service.ts#1": ["google.staff", "access"],
+    "auth/google-oauth.service.ts#2": ["google.staff", "refresh"],
+    "auth/google-oauth.service.ts#3": ["google.buyer", "access"],
+    "auth/google-oauth.service.ts#4": ["google.buyer", "refresh"],
+    "platform-admin/platform-admin.service.ts#1": ["platformAdmin.impersonate", "access"],
+    "buyer/buyer-auth.service.ts#1": ["buyerAuth.issue", "access"],
+    "buyer/buyer-auth.service.ts#2": ["buyerAuth.issue", "refresh"],
+    "buyer/buyer-admin.service.ts#1": ["buyerAdmin.impersonate", "access"],
+  };
+
+  it("covers exactly the access and refresh rows of SITES", () => {
+    const sessionRows = Object.entries(SITES)
+      .filter(([, s]) => s.key === "access" || s.key === "refresh")
+      .map(([site]) => site)
+      .sort();
+    expect(Object.keys(SITE_MINTER).sort()).toEqual(sessionRows);
+  });
+
+  const cache = new Map<string, Promise<Pair>>();
+  const minted = (name: string) => {
+    if (!cache.has(name)) cache.set(name, MINT[name]!());
+    return cache.get(name)!;
+  };
+
+  it.each(Object.entries(SITE_MINTER))("%s mints its realm audience", async (site, [m, which]) => {
+    const { aud, key } = SITES[site]!;
+    const token = (await minted(m))[which]!;
+    expect(typeof token).toBe("string");
+    // Verifying with the realm audience proves both the signature key and the `aud` claim.
+    const secret = key === "access" ? JWT.secret : JWT.refreshSecret;
+    const claims = real.verify(token, { secret, audience: aud! }) as { aud?: unknown };
+    expect(claims.aud).toBe(aud);
+  });
+
+  describe("rollout: a token with no audience is still accepted", () => {
+    const strategy = new JwtStrategy({
+      get: () => ({ secret: JWT.secret }),
+    } as unknown as ConstructorParameters<typeof JwtStrategy>[0]);
+
+    it("the staff strategy admits a no-aud and a realm-aud access token", async () => {
+      for (const audience of [undefined, STAFF_ACCESS_AUDIENCE]) {
+        const token = real.sign(
+          { ...staffAccess },
+          { secret: JWT.secret, expiresIn: "15m", ...(audience ? { audience } : {}) },
+        );
+        const outcome = await new Promise<string>((resolve) => {
+          const s = strategy as any;
+          s.success = () => resolve("success");
+          s.fail = () => resolve("fail");
+          s.error = () => resolve("error");
+          s.authenticate({ headers: { authorization: `Bearer ${token}` } });
+        });
+        expect(outcome).toBe("success");
+      }
+    });
+
+    function staffRefreshFixture(prisma: any) {
+      prisma.refreshToken.findUnique.mockResolvedValue({
+        id: "r1",
+        userId: "u1",
+        tokenHash: "h",
+        expiresAt: new Date(Date.now() + 60_000),
+      });
+      prisma.user.findUnique.mockResolvedValue(SA);
+      prisma.refreshToken.updateMany.mockResolvedValue({ count: 1 });
+      return authService(prisma);
+    }
+    function buyerRefreshFixture(prisma: any) {
+      prisma.buyerRefreshToken.findUnique.mockResolvedValue({
+        buyerAccountId: "b1",
+        tokenHash: "h",
+        expiresAt: new Date(Date.now() + 60_000),
+      });
+      prisma.buyerAccount.findUnique.mockResolvedValue({
+        id: "b1",
+        email: "b@example.test",
+        name: "B",
+        status: "ACTIVE",
+        deletedAt: null,
+        password: "x",
+      });
+      prisma.buyerRefreshToken.deleteMany.mockResolvedValue({ count: 1 });
+      return new BuyerAuthService(prisma, real, config, email, {} as any);
+    }
+    const refreshTok = (claims: object, audience?: string) =>
+      real.sign(claims, {
+        secret: JWT.refreshSecret,
+        expiresIn: "30d",
+        ...(audience ? { audience } : {}),
+      });
+
+    it.each([[undefined], [STAFF_REFRESH_AUDIENCE]])(
+      "staff refresh accepts aud %p",
+      async (aud) => {
+        const svc = staffRefreshFixture(createMockPrisma());
+        await expect(
+          svc.refresh(refreshTok({ sub: "u1", type: "staff" }, aud)),
+        ).resolves.toMatchObject({ accessToken: expect.any(String) });
+      },
+    );
+
+    it.each([[BUYER_REFRESH_AUDIENCE], [STAFF_ACCESS_AUDIENCE], ["email-verify"]])(
+      "staff refresh refuses a foreign aud %p",
+      async (aud) => {
+        const svc = staffRefreshFixture(createMockPrisma());
+        await expect(svc.refresh(refreshTok({ sub: "u1", type: "staff" }, aud))).rejects.toThrow(
+          "Invalid or expired refresh token",
+        );
+      },
+    );
+
+    it.each([[undefined], [BUYER_REFRESH_AUDIENCE]])(
+      "buyer refresh accepts aud %p",
+      async (aud) => {
+        const svc = buyerRefreshFixture(createMockPrisma());
+        await expect(
+          svc.refresh(refreshTok({ sub: "b1", type: "buyer" }, aud)),
+        ).resolves.toMatchObject({ accessToken: expect.any(String) });
+      },
+    );
+
+    it.each([[STAFF_REFRESH_AUDIENCE], [BUYER_ACCESS_AUDIENCE], ["stripe-connect-state"]])(
+      "buyer refresh refuses a foreign aud %p",
+      async (aud) => {
+        const svc = buyerRefreshFixture(createMockPrisma());
+        await expect(svc.refresh(refreshTok({ sub: "b1", type: "buyer" }, aud))).rejects.toThrow(
+          "Invalid or expired refresh token",
+        );
+      },
+    );
   });
 });

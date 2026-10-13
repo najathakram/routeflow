@@ -38,9 +38,7 @@ describe("profileErrorCopy — fixed copy chosen by the API's error code", () =>
         }),
         FALLBACK,
       ),
-    ).toBe(
-      "That business profile is not available yet. In-store profiles open when counter sales launch.",
-    );
+    ).toBe("This business profile isn't available for this tenant.");
   });
 
   it("FULFILMENT_MODE_NEEDS_FLEET → names the fleet features, never raw keys", () => {
@@ -168,5 +166,103 @@ describe("profileErrorCopy — fixed copy chosen by the API's error code", () =>
         "The business profile could not be applied because billing could not be stopped. Check the tenant's setup, then try again.",
       );
     });
+  });
+});
+
+describe("BUSINESS_PROFILE_BILLING_FAILED with the per-add-on list (ROW c)", () => {
+  const code = API_ERROR_CODES.BUSINESS_PROFILE_BILLING_FAILED;
+  const item = (key: string, wasComp: boolean, billingStopped: boolean, switchedOff: boolean) => ({
+    key,
+    wasComp,
+    billingStopped,
+    switchedOff,
+  });
+  const copyFor = (addons: unknown, extra: Record<string, unknown> = {}) =>
+    profileErrorCopy(
+      apiError(503, {
+        code,
+        message: "Stripe error sub_1Abc",
+        alreadyDisabled: [],
+        failedStep: { step: "billing", key: "recurring_routes" },
+        ...extra,
+        addons,
+      }),
+      FALLBACK,
+    );
+
+  it("a paid row whose billing was stopped says 'Billing stopped for X'", () => {
+    const copy = copyFor([item("driver_payments", false, true, true)], {
+      alreadyDisabled: ["driver_payments"],
+      failedStep: { step: "mode", key: "fulfilment_model" },
+    });
+    expect(copy).toContain("Billing stopped for At-door payment collection.");
+    expect(copy).not.toMatch(/sub_1Abc|Stripe|driver_payments/);
+  });
+
+  it("a comp row says 'X switched off' and never mentions billing for it", () => {
+    const copy = copyFor([item("order_delivery", true, false, true)], {
+      alreadyDisabled: ["order_delivery"],
+      failedStep: { step: "mode", key: "fulfilment_model" },
+    });
+    expect(copy).toContain("Ad hoc order delivery switched off.");
+    expect(copy).not.toMatch(/[Bb]illing/);
+  });
+
+  it("a paid row whose stop failed says it could not be stopped and is still on", () => {
+    const copy = copyFor([item("recurring_routes", false, false, false)]);
+    expect(copy).toContain("Billing for Recurring routes could not be stopped; it's still on.");
+  });
+
+  it("a comp row whose switch-off failed says it could not be switched off and is still on", () => {
+    const copy = copyFor([item("recurring_routes", true, false, false)]);
+    expect(copy).toContain("Recurring routes could not be switched off; it's still on.");
+    expect(copy).not.toMatch(/[Bb]illing/);
+  });
+
+  it("mixed: failed items first, each in its own phrasing, then the retry line", () => {
+    const copy = copyFor(
+      [
+        item("driver_payments", false, true, true),
+        item("recurring_routes", true, false, false),
+        item("order_delivery", true, false, true),
+      ],
+      { alreadyDisabled: ["driver_payments", "order_delivery"] },
+    );
+    expect(copy).toBe(
+      "The business profile was only partly applied. " +
+        "Recurring routes could not be switched off; it's still on. " +
+        "Billing stopped for At-door payment collection. " +
+        "Ad hoc order delivery switched off. " +
+        "Try again to finish.",
+    );
+  });
+
+  it("nothing switched off yet: 'not applied' and no 'partly'", () => {
+    const copy = copyFor([item("recurring_routes", false, false, false)]);
+    expect(copy).toBe(
+      "The business profile was not applied. Billing for Recurring routes could not be stopped; it's still on. Nothing was changed. Try again.",
+    );
+  });
+
+  it("a later step failed: the step is named after the per-add-on lines", () => {
+    const copy = copyFor([item("driver_payments", false, true, true)], {
+      alreadyDisabled: ["driver_payments"],
+      failedStep: { step: "mode", key: "fulfilment_model" },
+    });
+    expect(copy).toBe(
+      "The business profile was only partly applied. Billing stopped for At-door payment collection. Then saving the fulfilment model failed. Try again to finish.",
+    );
+  });
+
+  it("an unknown key becomes 'Another add-on', never the raw key; malformed items are skipped", () => {
+    const copy = copyFor([item("secret_addon_key", true, false, true), { key: 42 }, null, "x"]);
+    expect(copy).toContain("Another add-on switched off.");
+    expect(copy).not.toMatch(/secret_addon_key/);
+  });
+
+  it("an empty or missing list falls back to the older alreadyDisabled copy", () => {
+    expect(copyFor([], { alreadyDisabled: ["driver_payments"] })).toContain(
+      "Billing was already stopped for At-door payment collection",
+    );
   });
 });

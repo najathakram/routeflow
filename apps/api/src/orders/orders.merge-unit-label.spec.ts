@@ -32,6 +32,8 @@ jest.mock("../invoices/invoices.service", () => ({
     findAll: jest.fn().mockResolvedValue({ data: [], meta: {} }),
     revertLinkedInvoicesForOrderEdit: jest.fn().mockResolvedValue(undefined),
     resyncOrderInvoicesForEdit: jest.fn().mockResolvedValue([{ id: "inv-1" }]),
+    followPartialPrices: jest.fn().mockResolvedValue({ issuedPartialsUnchanged: [] }),
+    projectEditedInvoiceTotals: jest.fn().mockResolvedValue([]),
   })),
 }));
 
@@ -129,6 +131,7 @@ function fakeOrdersService() {
   return {
     findActiveOrder: jest.fn(async () => ({ ...activeOrderFixture })),
     findOrderIdByIdempotencyKey: jest.fn().mockResolvedValue(null),
+    liveTrioByProduct: jest.fn().mockResolvedValue(new Map()),
     updateOrderItems: jest.fn().mockResolvedValue(undefined),
     recordIdempotencyKey: jest.fn().mockResolvedValue(undefined),
     // Post-commit sweep, unrelated to this bug — always reached on a non-replayed merge.

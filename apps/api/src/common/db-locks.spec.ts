@@ -85,6 +85,12 @@ describe("db-locks — withAdvisoryLock (T1, R1)", () => {
       // supersede-then-insert window, keyed `${tenantId}:${key}`.
       // "counter-tender" (2026-10-04, SA-672 M1) backs CounterSaleService's re-read -> 'no tender yet'
       // -> recordPayment window, keyed on the order id.
+      // "fulfilment-settings" (2026-10-07, fulfilment toggle PR1, M2) backs the tenant Settings PATCH
+      // and the Feature Console set()/clear() of the two fulfilment keys, keyed on the tenant id.
+      // "tenant-price" (2026-10-09, SA-733 D8) is the per-tenant lock every writer of a tenant's Stripe
+      // price takes across its Stripe calls: the price override, plan changes, the downgrade cron.
+      // "counter-park" (2026-10-10, SA-748) names the parked-cart cap's transaction-scoped
+      // `pg_advisory_xact_lock(hashtext('counter-park'), hashtext(tenantId))`; it opens no lock pool.
       expect(mod.LOCK_FAMILIES).toEqual([
         "order-merge",
         "cron",
@@ -94,6 +100,9 @@ describe("db-locks — withAdvisoryLock (T1, R1)", () => {
         "mailbox",
         "policy-write",
         "counter-tender",
+        "fulfilment-settings",
+        "tenant-price",
+        "counter-park",
       ]);
     });
   });
@@ -396,6 +405,24 @@ describe("db-locks — withAdvisoryLock (T1, R1)", () => {
       expect(billingPool).not.toBe(mirrorPool);
       expect(callArgs(mockPoolCtor, 1)[0]).toMatchObject({
         max: 4,
+        connectionTimeoutMillis: 5_000,
+        keepAlive: true,
+        keepAliveInitialDelayMillis: 30_000,
+      });
+    });
+
+    it("(p3) fulfilment-settings gets its own small 2-slot pool (a rare tenant-admin settings write)", async () => {
+      await mod._resetLockPoolForTests?.();
+      mockPoolCtor.mockClear();
+
+      await acquireOnce("billing");
+      await acquireOnce("fulfilment-settings");
+
+      expect(mockPoolCtor).toHaveBeenCalledTimes(2);
+      const [billingPool, fulfilmentPool] = mockPoolCtor.mock.results.map((r) => r.value);
+      expect(billingPool).not.toBe(fulfilmentPool);
+      expect(callArgs(mockPoolCtor, 1)[0]).toMatchObject({
+        max: 2,
         connectionTimeoutMillis: 5_000,
         keepAlive: true,
         keepAliveInitialDelayMillis: 30_000,

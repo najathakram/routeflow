@@ -1109,7 +1109,7 @@ export const FEATURE_REGISTRY: readonly FeatureDef[] = [
     key: "fulfilment_model",
     kind: "boolean",
     area: "routes",
-    label: "How orders reach customers",
+    label: "Where orders go",
     description:
       "Whether a tenant's orders go out on its own delivery runs, ship by carrier, or both. Unset keeps today's behavior exactly.",
     gate: {

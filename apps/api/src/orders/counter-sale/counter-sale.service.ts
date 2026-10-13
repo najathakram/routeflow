@@ -11,16 +11,27 @@ import { FulfillPath } from "@prisma/client";
 import { roundMoney, remainingCapacity } from "@routeflow/pricing";
 import type { CounterSaleResponse } from "@routeflow/types";
 import { API_ERROR_CODES } from "../../common/api-error-codes";
+import { configuredTaxRatePercent } from "../../common/tax-rate";
 import { PrismaService } from "../../prisma/prisma.service";
 import { InvoicesService } from "../../invoices/invoices.service";
+import { TILL_LOCK_HELD } from "../../invoices/counter-payment-guard";
 import type { JwtPayload } from "../../auth/jwt-payload.interface";
 import { OrdersService } from "../orders.service";
 import type { CounterSaleDto } from "./counter-sale.dto";
-import { counterSaleGate } from "./capability-shape";
+import { assertCounterSalesEnabled } from "./counter-sale-gate";
 import { resolveLineUnits, type LineUnitsProduct } from "../../products/line-units";
 import { saleChangedConflict, saleVoidedConflict, storedSaleState } from "../sale-replay-guard";
 import { toCounterOrderItem } from "./counter-sale-lines";
-import { buildCounterSaleResponse, isTender, type InvoiceRow } from "./counter-sale-readback";
+import { resolveTierPrices } from "./counter-sale-tier-price";
+import { assertReplaySamePrices } from "./counter-sale-replay-price";
+import { AuditService } from "../../audit/audit.service";
+import { staffMay } from "../../auth/permissions/staff-capabilities";
+import {
+  buildCounterSaleResponse,
+  isCounterTenderCashRow,
+  isTender,
+  type InvoiceRow,
+} from "./counter-sale-readback";
 import {
   FULFILMENT_CAPABILITY_READER,
   type FulfilmentCapabilityReader,
@@ -40,6 +51,7 @@ import {
 } from "../../credit-notes/auto-apply-candidates";
 import { LockTimeoutError, LockUnavailableError, withAdvisoryLock } from "../../common/db-locks";
 import { WalkInCustomerService } from "./walk-in-customer";
+import { counterCloseShared, counterTenderPaidAt } from "./counter-tender-window";
 
 // A customer id no row holds: lets the tenant-wide steps of the replay lookup answer by key alone.
 const NO_CUSTOMER = "00000000-0000-0000-0000-000000000000";
@@ -80,6 +92,7 @@ export class CounterSaleService {
     private readonly prisma: PrismaService,
     @Inject(FULFILMENT_CAPABILITY_READER)
     private readonly capability: FulfilmentCapabilityReader,
+    private readonly audit: AuditService,
   ) {}
 
   async ring(
@@ -88,13 +101,7 @@ export class CounterSaleService {
     idempotencyKey?: string,
   ): Promise<CounterSaleResponse> {
     // 1. Gate: the tenant's capability must offer a counter.
-    const cap = await this.capability.get(this.prisma.getTenantId());
-    if (!counterSaleGate(cap)) {
-      throw new ForbiddenException({
-        code: API_ERROR_CODES.COUNTER_SALES_DISABLED,
-        message: "Counter sales are not turned on for this business.",
-      });
-    }
+    await assertCounterSalesEnabled(this.capability, this.prisma.getTenantId());
 
     // 2. Request-only validation: nothing is written until all of it passes.
     if (dto.walkIn && dto.customerId) {
@@ -140,6 +147,9 @@ export class CounterSaleService {
       {
         fulfillPath: FulfillPath.PICKUP,
         counterSale: true,
+        // POS-5: create() refuses a real price change from a caller who may not make one (403
+        // PRICE_EDIT_NOT_PERMITTED), against its own server-resolved price and before any write.
+        priceEditAllowed: staffMay(user.role, "EDIT_LINE_PRICE"),
         // B1209: a walk-in's tender is judged against the SERVER total inside create(), before anything is written.
         beforeWrite: walkIn
           ? ({ total }) => assertWalkInTenderCoversTotal(dto.payment, total)
@@ -156,6 +166,8 @@ export class CounterSaleService {
                 "This Idempotency-Key already belongs to another order, not a counter sale. Start a new sale.",
             });
           }
+          // POS-5: a price that differs from the stored sale's is a changed cart, like any other.
+          assertReplaySamePrices(existing, dto.items);
           replayed = true;
         },
       },
@@ -163,8 +175,26 @@ export class CounterSaleService {
     const orderId: string = primary.orderId;
     const order = await this.prisma.forTenant().order.findFirst({
       where: { id: orderId },
-      select: { id: true, orderNumber: true },
+      select: {
+        id: true,
+        orderNumber: true,
+        registerKey: true, // SA-750r3: the till this sale is counted on
+        tax: true,
+        // POS-5: only the lines a staff price change produced (read back from storage for the audit row).
+        lineItems: {
+          where: { overriddenBy: { not: null } },
+          select: {
+            productId: true,
+            unitPrice: true,
+            originalPrice: true,
+            priceType: true,
+            overrideReason: true,
+          },
+          orderBy: { position: "asc" },
+        },
+      },
     });
+    if (!replayed) await this.auditPriceEdits(user, order, customerId);
 
     // 5. The tender, against what is STORED now. The re-read -> "no tender yet" -> record window runs
     // under the shared advisory lock keyed on the order, so two concurrent same-key submits cannot
@@ -176,9 +206,17 @@ export class CounterSaleService {
       invoices = await this.readInvoices(orderId);
     } else {
       try {
+        // SA-750r3: the SHARED end-of-day close lock rides this pinned connection (lock order: counter-tender -> counter-close
+        // -> Invoice FOR UPDATE), so a close waits for a tender in flight and the tender never lands behind its cutoff.
+        const till = { counterSale: true, registerKey: order?.registerKey };
         const locked = await withAdvisoryLock(
-          { family: "counter-tender", key: orderId, mode: "wait" },
-          () => this.tender(dto, orderId),
+          {
+            family: "counter-tender",
+            key: orderId,
+            mode: "wait",
+            sharedAlso: counterCloseShared(this.prisma.getTenantId(), till),
+          },
+          () => this.tender(dto, orderId, till),
         );
         if (!locked.acquired) throw new LockTimeoutError("counter-tender", orderId, 0);
         ({ invoices, planError } = locked.value);
@@ -193,7 +231,82 @@ export class CounterSaleService {
       }
     }
 
-    return buildCounterSaleResponse({ payment: dto.payment, order, invoices, replayed, planError });
+    // SA-764: the stored tendered as the tender left it (the pre-tender read above may hold a stale figure).
+    // EVERY request method (row 290), so a CARD or ON_ACCOUNT replay on a sale first tendered in CASH serves
+    // what by-key serves. A new ON_ACCOUNT sale stores no tendered (null): nothing is served, nothing is written.
+    const tendered = await this.prisma.forTenant().order.findFirst({
+      where: { id: orderId },
+      select: { counterCashTendered: true, tax: true },
+    });
+    return buildCounterSaleResponse({
+      payment: dto.payment,
+      order: order && {
+        ...order,
+        counterCashTendered: tendered?.counterCashTendered,
+        // the tax as the tender left it (the invoice back-sync can move it)
+        tax: tendered?.tax ?? order.tax,
+      },
+      configuredTaxPercent: await configuredTaxRatePercent(this.prisma),
+      invoices,
+      replayed,
+      planError,
+    });
+  }
+
+  /**
+   * POS-5: ONE `counter-sale.price-edited` audit row per NEW sale that carries a price change, written from the
+   * STORED lines (never the request). No row when nothing was edited or on a replay (known gap: if the first attempt
+   * died after the sale committed, its retry is a replay and writes none; the line's own `overriddenBy` +
+   * `overrideReason` remain the durable record). The sale is already committed: a failure here is logged, never thrown.
+   */
+  private async auditPriceEdits(
+    user: JwtPayload,
+    order: {
+      id: string;
+      orderNumber?: string | null;
+      lineItems?: Array<{
+        productId?: string | null;
+        unitPrice: unknown;
+        originalPrice?: unknown;
+        priceType?: string | null;
+        overrideReason?: string | null;
+      }> | null;
+    } | null,
+    customerId: string,
+  ): Promise<void> {
+    const edited = order?.lineItems ?? [];
+    if (!order || edited.length === 0) return;
+    try {
+      // The TIER price each edit started from (originalPrice is the LIST price): server-resolved, read-only.
+      const tierPrices = await resolveTierPrices(
+        this.prisma.forTenant(),
+        customerId,
+        edited.flatMap((l) => (l.productId ? [l.productId] : [])),
+      );
+      await this.audit.log({
+        tenantId: this.prisma.getTenantId() ?? null,
+        userId: user.sub,
+        impersonatedBy: user.impersonatedBy ?? null,
+        action: "counter-sale.price-edited",
+        entityType: "Order",
+        entityId: order.id,
+        meta: {
+          orderNumber: order.orderNumber,
+          lines: edited.map((l) => ({
+            productId: l.productId ?? null,
+            originalPrice: l.originalPrice == null ? null : Number(l.originalPrice),
+            tierPrice: (l.productId ? tierPrices.get(l.productId) : undefined) ?? null,
+            unitPrice: Number(l.unitPrice),
+            priceType: l.priceType ?? null,
+            reason: l.overrideReason ?? null,
+          })),
+        },
+      });
+    } catch (e) {
+      this.logger.warn(
+        `counter sale ${order.id}: price-edit audit not written (${(e as Error)?.message ?? e})`,
+      );
+    }
   }
 
   /**
@@ -205,6 +318,7 @@ export class CounterSaleService {
   private async tender(
     dto: CounterSaleDto,
     orderId: string,
+    till: { counterSale: boolean; registerKey?: string | null },
   ): Promise<{ invoices: InvoiceRow[]; planError?: string }> {
     let invoices = await this.readInvoices(orderId);
     let planError: string | undefined;
@@ -229,8 +343,9 @@ export class CounterSaleService {
       // A refusal only stands when nothing was taken yet: a stored tender means a payment already went in.
       if (!invoices.some((i) => (i.payments ?? []).some(isTender))) planError = plan.code;
     } else if (plan.kind === "pay") {
-      try {
-        for (const part of allocateOldestFirst(balances, plan.amount)) {
+      // The allocation is pure, so it is made first: the closed-day check below must run before ANY write.
+      const writes = allocateOldestFirst(balances, plan.amount)
+        .map((part) => {
           const row = invoices.find((i) => i.id === part.invoiceId)!;
           const stored = roundMoney(
             (row.payments ?? [])
@@ -240,18 +355,57 @@ export class CounterSaleService {
           const due = roundMoney(
             Math.min(part.amount - stored, remainingCapacity(Number(row.total), row.payments)),
           );
-          if (due <= 0) continue;
-          await this.invoices.recordPayment(part.invoiceId, {
-            amount: due,
-            method: toPrismaMethod(method)!,
-            reference: dto.payment.reference,
-          } as never);
+          return { invoiceId: part.invoiceId, due };
+        })
+        .filter((w) => w.due > 0);
+      // SA-750r3: with the shared close lock held, the instant the payment is dated (the DATABASE clock) must not sit in a
+      // closed window: 409 COUNTER_SALE_DAY_CLOSED, nothing written. It runs BEFORE the SA-764 cash-tendered write below, so a
+      // closed-day refusal leaves nothing stored, and outside the try so it is not mapped to "not recorded". A replay with
+      // nothing left to record writes nothing and is never refused.
+      const paidAt = writes.length
+        ? await counterTenderPaidAt(this.prisma, this.prisma.getTenantId(), till)
+        : undefined;
+      // SA-764: the CASH handed over is stored BEFORE any money moves, so a paid sale can never lack its tender.
+      // Until a CASH tender row anchors it the amount is overwritten (a failed first attempt's stale figure must
+      // not survive a retry); once one exists it is frozen (only a NULL is filled). A replay with NOTHING left to record
+      // (`writes` empty) is frozen too, anchored or not: it only fills a NULL. Same lock, no transaction.
+      if (method === "CASH") {
+        const anchored = invoices.some((i) => (i.payments ?? []).some(isCounterTenderCashRow));
+        const fillNullOnly = anchored || writes.length === 0;
+        try {
+          await this.prisma.forTenant().order.updateMany({
+            where: fillNullOnly ? { id: orderId, counterCashTendered: null } : { id: orderId },
+            data: { counterCashTendered: roundMoney(plan.tendered) },
+          });
+        } catch (e) {
+          this.logger.warn(
+            `counter sale ${orderId}: cash tendered not stored (${(e as Error)?.message ?? e})`,
+          );
+          planError = API_ERROR_CODES.COUNTER_PAYMENT_NOT_RECORDED;
         }
-      } catch (e) {
-        this.logger.warn(
-          `counter sale ${orderId}: payment not recorded (${(e as Error)?.message ?? e})`,
-        );
-        planError = API_ERROR_CODES.COUNTER_PAYMENT_NOT_RECORDED;
+      }
+      // A tender that could not be stored takes NO money: the payment loop is skipped entirely.
+      if (!planError) {
+        try {
+          for (const { invoiceId, due } of writes) {
+            // SA-750r3: the shared close lock is already held on the pinned connection (tillLockHeld)
+            await this.invoices.recordPayment(
+              invoiceId,
+              {
+                amount: due,
+                method: toPrismaMethod(method)!,
+                reference: dto.payment.reference,
+                ...(paidAt ? { paidAt } : {}),
+              } as never,
+              { tillLockHeld: TILL_LOCK_HELD },
+            );
+          }
+        } catch (e) {
+          this.logger.warn(
+            `counter sale ${orderId}: payment not recorded (${(e as Error)?.message ?? e})`,
+          );
+          planError = API_ERROR_CODES.COUNTER_PAYMENT_NOT_RECORDED;
+        }
       }
       invoices = await this.readInvoices(orderId);
     }
@@ -265,7 +419,7 @@ export class CounterSaleService {
    * Without the request's payment the body carries no `change`, and `paymentRecorded` is read from what is
    * stored: an ON_ACCOUNT sale (no tender, nothing asked of the till) reads `paymentRecorded:true`, a stored
    * tender that leaves balance owing reads `false`. With the till's own `method` POST's rule applies to it
-   * (a tender that failed completely reads `false`). A half-written sale (no invoice rows at all) is a coded 409
+   * (a tender that failed completely reads `false`). A half-written sale (no invoice rows at all, or an invoice still DRAFT on a PENDING / DELIVERED order) is a coded 409
    * COUNTER_SALE_INCOMPLETE (re-POST finishes it); a voided or cancelled one is COUNTER_SALE_VOIDED (start a
    * new sale); a moved order with no invoice is COUNTER_SALE_CHANGED (check with the office, do not re-ring); nothing stored for the key, or an order whose Order.counterSale marker is not true (a staff/buyer order that shares the key store), is a definitive 404.
    */
@@ -284,7 +438,7 @@ export class CounterSaleService {
       });
     }
     // The ONE stored-sale rule (shared with createSale's replay guard): voided / cancelled is definitive,
-    // an order with no invoice rows at all is half-written, anything else is a live sale.
+    // an order with no invoice rows at all (or a still-DRAFT invoice) is half-written, anything else is a live sale.
     const all = await this.prisma
       .forTenant()
       .invoice.findMany({ where: { orderId: order.id }, select: { status: true } });
@@ -307,6 +461,7 @@ export class CounterSaleService {
       order,
       invoices,
       replayed: true,
+      configuredTaxPercent: await configuredTaxRatePercent(this.prisma),
     });
   }
 
@@ -347,7 +502,30 @@ export class CounterSaleService {
       // A VOID / WRITTEN_OFF invoice is not part of the sale (recordPayment refuses both): reading it
       // back would put its id, total and balance into the response and the tender plan.
       where: { orderId, status: { notIn: ["VOID", "WRITTEN_OFF"] } },
-      include: { payments: true },
+      include: {
+        payments: { orderBy: { createdAt: "asc" } },
+        // the stored lines: the rate the sale's tax rate is read from, and the price facts a receipt strikes a list price from
+        items: {
+          select: {
+            id: true,
+            createdAt: true,
+            // the order line's scan position: the read-back sorts by it (lines of one transaction share createdAt)
+            orderItem: { select: { position: true } },
+            taxRate: true,
+            productId: true,
+            unitPrice: true,
+            originalPrice: true,
+            priceType: true,
+            // CQ-03: the levy each line billed and its category name, so the receipt prints it as its own charge
+            categoryTaxAmount: true,
+            trackedCategoryId: true,
+            categoryTaxType: true,
+            trackedCategory: { select: { id: true, name: true, taxType: true } },
+          },
+          // a deterministic base order (row 322a); the read-back then sorts by scan position (inScanOrder)
+          orderBy: [{ createdAt: "asc" }, { id: "asc" }],
+        },
+      },
       orderBy: { createdAt: "asc" },
     });
   }

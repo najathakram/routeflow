@@ -1,5 +1,5 @@
 /**
- * repair-integrity.mjs — SURGICAL repair script for the specific production rows
+ * repair-integrity.mjs — RETIRED (row 195: refuses to connect; only --list runs). Was a SURGICAL repair script for the specific production rows
  * found by scripts/data-integrity-report.mjs on 2026-08-28/29.
  *
  * ⚠️ SCOPE IS A HARDCODED ALLOWLIST. This script can only ever touch the rows
@@ -65,6 +65,19 @@ const EXECUTE = argv.includes("--execute");
 const BACKUP_ATTESTED = argv.includes("--i-have-a-fresh-backup");
 const FORCE_NONPROD = argv.includes("--force-nonprod");
 const LIST = argv.includes("--list");
+
+// Row 195 (lead ruling): RETIRED. This was a dated one-off over a hardcoded allowlist of live client
+// rows (2026-08-28/29) with no uniform tenant column to guard on. Run as a script it refuses in every
+// mode — before any argument handling or connection — except --list, a static registry with no
+// database. Importing it (the B963 specs) is unaffected.
+if (!LIST && import.meta.url === pathToFileURL(fs.realpathSync(process.argv[1] ?? "")).href) {
+  console.error(
+    "repair-integrity.mjs is RETIRED: it repaired a fixed 2026-08 allowlist of live rows and no " +
+      "longer connects in any mode (use --list to read the registry). New repairs get their own " +
+      "script behind the protected-tenant guard (apps/api/scripts/lib/live-target-guard.cjs).",
+  );
+  process.exit(2);
+}
 
 function collectFlag(name) {
   const out = [];

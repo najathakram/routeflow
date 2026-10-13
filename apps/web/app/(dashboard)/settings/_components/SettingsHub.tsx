@@ -52,6 +52,13 @@ const RESTRICTIONS_ITEM: HubItem = {
   href: "/settings/restrictions",
 };
 
+/** The portal limits list (row of the same safety area): where every limit is seen and lifted. */
+const PORTAL_LIMITS_ITEM: HubItem = {
+  label: "Portal limits & rules",
+  desc: "What portal customers can't see, and the rules behind it",
+  href: "/settings/restrictions/rules",
+};
+
 const ROUTE_DEFAULTS_HREF = "#route-defaults";
 const UNITS_HREF = "/settings/units";
 const OVERSELL_HREF = "#out-of-stock-ordering";
@@ -65,7 +72,7 @@ const GROUPS: HubGroup[] = [
     items: [
       {
         label: "Business profile",
-        desc: "Name, address, logo & default tax rate",
+        desc: "Name, address, logo, receipt footer & default tax rate",
         href: "/settings?tab=profile",
       },
       {
@@ -93,6 +100,7 @@ const GROUPS: HubGroup[] = [
         href: "/settings?tab=remittance",
       },
       RESTRICTIONS_ITEM,
+      PORTAL_LIMITS_ITEM,
       {
         label: "Import data",
         desc: "CSV importers, numbering & finish setup",
@@ -165,6 +173,7 @@ const GROUPS: HubGroup[] = [
         show: "admin",
       },
       RESTRICTIONS_ITEM,
+      PORTAL_LIMITS_ITEM,
       {
         label: "Product labels",
         desc: "Restriction categories applied to products",

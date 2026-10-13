@@ -1,6 +1,7 @@
 import { useQuery, useMutation, useQueryClient, type QueryClient } from "@tanstack/react-query";
 import { apiClient } from "../api-client";
 import type { ChangeRequest } from "./change-requests";
+import { creditsPendingFromError } from "../order-credits-pending";
 import type {
   ActiveOrderSummary,
   BatchShipRequest,
@@ -234,7 +235,7 @@ export interface CreateOrderAsDriverDto {
    * excludes it from every trip/route sweep. Seeded from the customer's own
    * default in `NewOrderScreen`.
    */
-  fulfillPath?: "ROUTE" | "SHIP";
+  fulfillPath?: "ROUTE" | "SHIP" | "PICKUP";
   routeRunId?: string;
   routeRunStopId?: string;
   immediateDelivery?: boolean;
@@ -457,6 +458,13 @@ export function useCreateOrderAsDriver() {
       invalidateOrderCaches(qc);
       invalidateOrderMoneySideEffects(qc);
     },
+    // B1205: 503 ORDER_SAVED_CREDITS_PENDING means the order WAS saved - refresh like a success.
+    onError: (err, vars) => {
+      if (!creditsPendingFromError(err)) return;
+      if (vars.routeRunId) qc.invalidateQueries({ queryKey: ["route-runs", vars.routeRunId] });
+      invalidateOrderCaches(qc);
+      invalidateOrderMoneySideEffects(qc);
+    },
   });
 }
 
@@ -638,10 +646,17 @@ export function useCreateAdminOrder() {
  * Look up the most recent DRAFT/PENDING order for a customer (operator only).
  * Used by the operator's create-order screen to ask whether to merge or keep separate.
  */
-export function useActiveOrderForCustomer(customerId: string | null | undefined) {
+export function useActiveOrderForCustomer(
+  customerId: string | null | undefined,
+  /** The path the order being built is on (POS mode: PICKUP), so the preview finds the same merge target. */
+  fulfillPath?: "ROUTE" | "SHIP" | "PICKUP",
+) {
   return useQuery<ActiveOrderSummary | null>({
-    queryKey: ["orders", "active", customerId],
-    queryFn: () => apiClient.get("/orders/active", { params: { customerId } }).then((r) => r.data),
+    queryKey: ["orders", "active", customerId, fulfillPath],
+    queryFn: () =>
+      apiClient
+        .get("/orders/active", { params: { customerId, ...(fulfillPath ? { fulfillPath } : {}) } })
+        .then((r) => r.data),
     enabled: !!customerId,
   });
 }

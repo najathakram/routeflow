@@ -16,6 +16,8 @@
 //                    409 (#2629, disabled until a real import marker exists).
 //   ORDER_LINE_CHANGED — `body.code` of the order-line CAS 409 (invoice-from-order paths:
 //                    qty/price/tax/pack changed mid-create; nothing billed, retriable).
+//   ORDER_REVISION_STALE — `body.code` of the 409 on PATCH /orders/:id/items when the client's
+//                    `expectedRevisionNumber` is behind the order's latest revision (nothing written; reload).
 //   ORDER_INVOICE_SETTLE_FAILED — `body.code` of the 409 raised AFTER a ship/deliver status committed when its
 //                    invoice could not be created, updated or checked (the status stays; open the order).
 //   ORDER_INVOICES_NEED_REVIEW — `body.code` of the 409 when more would be billed on an order whose
@@ -41,6 +43,8 @@
 //   FAMILY_ROWS_CONFLICT — `body.code` of the 409 from POST /products/families and PATCH /products/:id/variants: `rows` lists
 //                    EVERY conflicting row (see FamilyRowsConflictError), never just the first.
 //   FAMILY_NOT_FOUND — `body.code` of the 404 from PATCH /products/:id/variants when `:id` is not a product of the tenant.
+//   PRODUCT_PARENT_INVALID — `body.code` of the 400 when the parent named for a product cannot be used; `body.reason` is
+//                    NOT_FOUND | SELF | VARIANT_PARENT | INACTIVE | HAS_VARIANTS. Nothing was written.
 //   NAME_TAKEN     — `body.code` of the 409 when reactivating a product whose name an ACTIVE product of
 //                    the same scope now holds (SA-603a/b); body carries the holder's `productId`/`productName`.
 //   UNIT_NAME_TAKEN — `body.code` of the 409 when renaming a unit to a name another unit of the tenant already has
@@ -181,7 +185,8 @@
 //                    COUNTER_SALES_DISABLED (the tenant's fulfilment capability has no counter); 409 WALK_IN_OPEN_CREDIT (the walk-in
 //                    customer holds open credit that send would auto-apply); 400 WALK_IN_NO_ACCOUNT (a walk-in cannot buy on account),
 //                    WALK_IN_WITH_CUSTOMER (customerId and walkIn together), COUNTER_CHECK_NUMBER_REQUIRED (a check needs its number),
-//                    IDEMPOTENCY_KEY_REQUIRED (the Idempotency-Key header is missing or blank: the till must send one per sale).
+//                    IDEMPOTENCY_KEY_REQUIRED (the Idempotency-Key header is missing or blank: the till must send one per sale);
+//                    403 PRICE_EDIT_NOT_PERMITTED (a line carries a real price change from a caller who may not edit prices).
 //                    COUNTER_TENDER_SHORT (a zero tender), COUNTER_PAYMENT_EXCEEDS_TOTAL (card or check above the balance) and
 //                    COUNTER_PAYMENT_NOT_RECORDED are NOT HTTP errors: the balance is server-computed, so these are the
 //                    `paymentErrorCode` of a 201 whose sale committed but whose payment did not (`paymentRecorded: false`, the invoice
@@ -192,6 +197,10 @@
 //                    CANCELLED); its payment refusals reuse the counter-sale codes above as the `paymentErrorCode` of a 200 whose hand-over
 //                    committed but whose payment did not. An order create / buyer submit asking for a fulfilment method the business does
 //                    not offer is 400 FULFIL_METHOD_NOT_OFFERED.
+//   B1043 (invoice header-only PATCH, discount or shippingFee without items) — 409 INVOICE_TAX_STATE_STALE: the invoice's stored subtotal or
+//                    tax does not match its lines, so the discount/shipping change cannot be priced safely; nothing is written; re-save the
+//                    invoice lines. 409 INVOICE_TOTAL_BELOW_PAID (B1046): the edit would take a DRAFT's total below the amount already paid
+//                    or credited against it. Body {code, message}.
 
 export const API_ERROR_CODES = {
   ADDON_GATE: "ADDON_GATE",
@@ -202,6 +211,7 @@ export const API_ERROR_CODES = {
   DUPLICATE_VENDOR_BILL: "DUPLICATE_VENDOR_BILL",
   CLEANUP_IMPORTED_DISABLED: "CLEANUP_IMPORTED_DISABLED",
   ORDER_LINE_CHANGED: "ORDER_LINE_CHANGED",
+  ORDER_REVISION_STALE: "ORDER_REVISION_STALE",
   ORDER_INVOICES_NEED_REVIEW: "ORDER_INVOICES_NEED_REVIEW",
   ORDER_INVOICE_SETTLE_FAILED: "ORDER_INVOICE_SETTLE_FAILED",
   NSF_LINE_UNTAXED: "NSF_LINE_UNTAXED",
@@ -213,8 +223,18 @@ export const API_ERROR_CODES = {
   UNITS_RENAME_IN_PROGRESS: "UNITS_RENAME_IN_PROGRESS",
   HOLDERS_CHANGED: "HOLDERS_CHANGED",
   FAMILY_NOT_SELLABLE: "FAMILY_NOT_SELLABLE",
+  /** 400 from PUT customer price overrides and POST/PATCH promotions: a FAMILY container is never priced or promoted; `productIds` names them. Use its variants. */
+  FAMILY_NOT_PRICEABLE: "FAMILY_NOT_PRICEABLE",
   FAMILY_ROWS_CONFLICT: "FAMILY_ROWS_CONFLICT",
   FAMILY_NOT_FOUND: "FAMILY_NOT_FOUND",
+  /** 409 from DELETE /products/bulk and /products/clear-all: a unique violation while deleting; nothing was deleted, reload and retry. */
+  PRODUCT_DELETE_CONFLICT: "PRODUCT_DELETE_CONFLICT",
+  /** 409 from PATCH/DELETE /products/:id: a family still has ACTIVE variants; body carries `variantCount`. Resend with `confirmCascade: true` to deactivate them with it. */
+  FAMILY_HAS_ACTIVE_VARIANTS: "FAMILY_HAS_ACTIVE_VARIANTS",
+  /** 409 from PATCH /products/:id: a variant cannot be reactivated while its parent family is inactive; reactivate the family first. */
+  VARIANT_PARENT_INACTIVE: "VARIANT_PARENT_INACTIVE",
+  /** `skipped[].code` of DELETE /products/bulk and /products/clear-all: the product has active (undelivered) order items, so it was not deleted. */
+  PRODUCT_HAS_ACTIVE_ORDER_ITEMS: "PRODUCT_HAS_ACTIVE_ORDER_ITEMS",
   CODES_CHANGED: "CODES_CHANGED",
   CATALOG_TOO_LARGE_FOR_CLEAR_ALL: "CATALOG_TOO_LARGE_FOR_CLEAR_ALL",
   RECIPE_IMMUTABLE: "RECIPE_IMMUTABLE",
@@ -249,11 +269,14 @@ export const API_ERROR_CODES = {
   CREDIT_NOTE_EXPIRY_NOT_EDITABLE: "CREDIT_NOTE_EXPIRY_NOT_EDITABLE",
   CREDIT_NOTE_LINES_REQUIRED: "CREDIT_NOTE_LINES_REQUIRED",
   CREDIT_NOTE_LINE_INVALID: "CREDIT_NOTE_LINE_INVALID",
+  CREDIT_NOTE_UNAVAILABLE: "CREDIT_NOTE_UNAVAILABLE",
   CUSTOMER_NOT_LINKED: "CUSTOMER_NOT_LINKED",
   BILL_STATE_CHANGED: "BILL_STATE_CHANGED",
   BILL_VOID: "BILL_VOID",
   RETURN_NOTHING_BILLED: "RETURN_NOTHING_BILLED",
   INVOICE_CHANGED_CONCURRENTLY: "INVOICE_CHANGED_CONCURRENTLY",
+  INVOICE_TAX_STATE_STALE: "INVOICE_TAX_STATE_STALE",
+  INVOICE_TOTAL_BELOW_PAID: "INVOICE_TOTAL_BELOW_PAID",
   PRICE_ADJUSTMENT_PARTIAL: "PRICE_ADJUSTMENT_PARTIAL",
   PRICE_ADJUSTMENT_OVERPAYS: "PRICE_ADJUSTMENT_OVERPAYS",
   PRICE_ADJUSTMENT_REFUSED: "PRICE_ADJUSTMENT_REFUSED",
@@ -261,6 +284,8 @@ export const API_ERROR_CODES = {
   PLAN_GATE: "PLAN_GATE",
   PLAN_GATE_UNAVAILABLE: "PLAN_GATE_UNAVAILABLE",
   READ_ONLY: "READ_ONLY",
+  SELLER_UNAVAILABLE: "SELLER_UNAVAILABLE",
+  BILLING_PORTAL_UNAVAILABLE: "BILLING_PORTAL_UNAVAILABLE",
   INSUFFICIENT_STOCK: "INSUFFICIENT_STOCK",
   INLINE_RETURN_ORDER_NOT_FOUND: "INLINE_RETURN_ORDER_NOT_FOUND",
   INLINE_RETURN_ORDER_CUSTOMER_MISMATCH: "INLINE_RETURN_ORDER_CUSTOMER_MISMATCH",
@@ -273,9 +298,18 @@ export const API_ERROR_CODES = {
   INLINE_RETURN_PACK_CONFLICT: "INLINE_RETURN_PACK_CONFLICT",
   INLINE_RETURN_PACK_UNKNOWN: "INLINE_RETURN_PACK_UNKNOWN",
   INLINE_RETURN_USE_INLINE_ENDPOINTS: "INLINE_RETURN_USE_INLINE_ENDPOINTS",
+  /** SA-740: a walk-in return names the sale it is from (the quote requires it; the capture defaults to the carrying order). 400. */
+  SOURCE_SALE_REQUIRED: "SOURCE_SALE_REQUIRED",
+  /** SA-740: the named source sale is not this customer's counter sale or delivered order in this tenant (or is cancelled). 400. */
+  SOURCE_SALE_INVALID: "SOURCE_SALE_INVALID",
+  /** SA-740: a walk-in return of more than the source sale had left to return; never priced as an unreferenced chunk. 409. */
+  RETURN_EXCEEDS_SALE: "RETURN_EXCEEDS_SALE",
   UNIT_AWARE_LINE: "UNIT_AWARE_LINE",
   MERGE_PACK_MISMATCH: "MERGE_PACK_MISMATCH",
   ORDER_CHANGED_DURING_EDIT: "ORDER_CHANGED_DURING_EDIT",
+  ORDER_EDIT_NEEDS_LINE_IDS: "ORDER_EDIT_NEEDS_LINE_IDS",
+  ORDER_BILLING_CHANGED: "ORDER_BILLING_CHANGED",
+  ORDER_EDIT_WOULD_OVERPAY: "ORDER_EDIT_WOULD_OVERPAY",
   FULFIL_METHOD_NOT_OFFERED: "FULFIL_METHOD_NOT_OFFERED",
   ORDER_WITH_CARRIER_NO_CANCEL: "ORDER_WITH_CARRIER_NO_CANCEL",
   ORDER_WITH_CARRIER_NO_REDUCE: "ORDER_WITH_CARRIER_NO_REDUCE",
@@ -288,6 +322,9 @@ export const API_ERROR_CODES = {
   PO_ALREADY_BILLED: "PO_ALREADY_BILLED",
   BILL_EXCEEDS_PO: "BILL_EXCEEDS_PO",
   INVOICE_HAS_UNSPENT_CREDIT: "INVOICE_HAS_UNSPENT_CREDIT",
+  INVOICE_HAS_CASH_REFUND: "INVOICE_HAS_CASH_REFUND",
+  // Order cancel refused: part of the order was refunded in cash (the invoice void keeps INVOICE_HAS_CASH_REFUND).
+  ORDER_HAS_CASH_REFUND: "ORDER_HAS_CASH_REFUND",
   HANDOFF_CODE_INVALID: "HANDOFF_CODE_INVALID",
   CHANGE_REQUEST_ALREADY_RESOLVED: "CHANGE_REQUEST_ALREADY_RESOLVED",
   CHANGE_REQUEST_PACK_CHANGED: "CHANGE_REQUEST_PACK_CHANGED",
@@ -340,9 +377,34 @@ export const API_ERROR_CODES = {
   ADDON_UNCOMP_STRIPE_UNAVAILABLE: "ADDON_UNCOMP_STRIPE_UNAVAILABLE",
   FEATURES_UNAVAILABLE: "FEATURES_UNAVAILABLE",
   FULFILMENT_MODE_NEEDS_FLEET: "FULFILMENT_MODE_NEEDS_FLEET",
+  // Settings -> Fulfillment (tenant admin toggle): 400 body {field} / 403 flag off / 409 stale (body = a fresh
+  // GET /settings/fulfilment) / 409 carrier orders in transit (body {count}).
+  FULFILMENT_TENANT_MISMATCH: "FULFILMENT_TENANT_MISMATCH",
+  FULFILMENT_SETTING_INVALID: "FULFILMENT_SETTING_INVALID",
+  FULFILMENT_SELF_SERVE_OFF: "FULFILMENT_SELF_SERVE_OFF",
+  FULFILMENT_SETTINGS_STALE: "FULFILMENT_SETTINGS_STALE",
+  FULFILMENT_CARRIER_IN_TRANSIT: "FULFILMENT_CARRIER_IN_TRANSIT",
   BUSINESS_PROFILE_UNKNOWN: "BUSINESS_PROFILE_UNKNOWN",
   BUSINESS_PROFILE_UNAVAILABLE: "BUSINESS_PROFILE_UNAVAILABLE",
   BUSINESS_PROFILE_BILLING_FAILED: "BUSINESS_PROFILE_BILLING_FAILED",
+  PRICE_OVERRIDE_STRIPE_AHEAD: "PRICE_OVERRIDE_STRIPE_AHEAD",
+  PLAN_CHANGE_STRIPE_AHEAD: "PLAN_CHANGE_STRIPE_AHEAD",
+  CHECKOUT_ANNUAL_NOT_SUPPORTED: "CHECKOUT_ANNUAL_NOT_SUPPORTED",
+  CATCHUP_SESSION_OPEN: "CATCHUP_SESSION_OPEN",
+  CATCHUP_PENDING: "CATCHUP_PENDING",
+  CATCHUP_NOT_ELIGIBLE: "CATCHUP_NOT_ELIGIBLE",
+  CATCHUP_NEEDS_RULING: "CATCHUP_NEEDS_RULING",
+  CATCHUP_AMOUNT_CHANGED: "CATCHUP_AMOUNT_CHANGED",
+  CATCHUP_SUBSCRIPTION: "CATCHUP_SUBSCRIPTION",
+  CATCHUP_ADDON_NOT_CARD_BILLABLE: "CATCHUP_ADDON_NOT_CARD_BILLABLE",
+  CATCHUP_ADDON_SNAPSHOT_NOT_CATALOG: "CATCHUP_ADDON_SNAPSHOT_NOT_CATALOG",
+  CATCHUP_MANUAL_PERIOD_AHEAD: "CATCHUP_MANUAL_PERIOD_AHEAD",
+  CATCHUP_NO_BILLABLE_PRICE: "CATCHUP_NO_BILLABLE_PRICE",
+  ACTIVATION_CATCHUP_SESSION_OPEN: "ACTIVATION_CATCHUP_SESSION_OPEN",
+  EXTERNAL_PAYMENT_USE_CATCHUP: "EXTERNAL_PAYMENT_USE_CATCHUP",
+  PAYMENT_OVERDUE: "PAYMENT_OVERDUE",
+  PAYMENT_STATE_UNKNOWN: "PAYMENT_STATE_UNKNOWN",
+  SCHEDULED_PRICE_CHANGE_REFUSED: "SCHEDULED_PRICE_CHANGE_REFUSED",
   PROFILE_PLAN_CHANGED: "PROFILE_PLAN_CHANGED",
   HANDOFF_NOT_CONFIGURED: "HANDOFF_NOT_CONFIGURED",
   HANDOFF_ROLE_NOT_ALLOWED: "HANDOFF_ROLE_NOT_ALLOWED",
@@ -387,6 +449,18 @@ export const API_ERROR_CODES = {
   SUPPLIER_ALLOCATION_BILL_VOID: "SUPPLIER_ALLOCATION_BILL_VOID",
   SUPPLIER_ALLOCATION_OVER_BALANCE: "SUPPLIER_ALLOCATION_OVER_BALANCE",
   COUNTER_SALES_DISABLED: "COUNTER_SALES_DISABLED",
+  /** 409 from a counter-sale tender, a payment edit or a refund dated inside a window that has been closed (the closed day's totals never move). Record it with today's date instead. */
+  COUNTER_SALE_DAY_CLOSED: "COUNTER_SALE_DAY_CLOSED",
+  /** 409 from POST /invoices/:id/payments: a CASH payment on a counter sale dated before the latest standing day close would change that closed Z report (body carries `closedThrough`, ISO). Record it with today's date. */
+  DAY_CLOSED_FOR_PAYMENT_DATE: "DAY_CLOSED_FOR_PAYMENT_DATE",
+  /** 409 from POST /orders/counter-sale/day-close: this window was closed by another request first (a first-close race). */
+  DAY_ALREADY_CLOSED: "DAY_ALREADY_CLOSED",
+  /** 409 from POST /orders/counter-sale/parked: this register already holds the maximum open parked carts (COUNTER_PARK_MAX_PER_REGISTER); resume or discard one first. */
+  PARK_LIMIT: "PARK_LIMIT",
+  /** 404 from resume / discard of a parked cart: it was already taken back (by another till), discarded, or has expired. */
+  PARK_TAKEN: "PARK_TAKEN",
+  /** 409 from POST /orders/counter-sale/parked: the client-minted park id already names a row this park may not replay (another tenant's or register's, or one already taken back or expired). Park again; the client mints a new id. */
+  PARK_ID_CONFLICT: "PARK_ID_CONFLICT",
   WALK_IN_NO_ACCOUNT: "WALK_IN_NO_ACCOUNT",
   WALK_IN_WITH_CUSTOMER: "WALK_IN_WITH_CUSTOMER",
   WALK_IN_OPEN_CREDIT: "WALK_IN_OPEN_CREDIT",
@@ -405,8 +479,24 @@ export const API_ERROR_CODES = {
    * counter POST refuses it before any write; use a fresh key.
    */
   COUNTER_SALE_KEY_CONFLICT: "COUNTER_SALE_KEY_CONFLICT",
+  /**
+   * 403 from the counter-sale POST (POS-5): a line carries a real price change (a price off the server's own price
+   * for this customer) from a caller who may not edit prices (`canEditPrices`: account admins only today). Raised
+   * before anything is written; the Idempotency-Key is not consumed. A typed price equal to the server's is no change.
+   */
+  PRICE_EDIT_NOT_PERMITTED: "PRICE_EDIT_NOT_PERMITTED",
   /** 400 on deactivating, deleting or merging the tenant's system walk-in customer (counter sales own it). */
   WALK_IN_PROTECTED: "WALK_IN_PROTECTED",
+  /**
+   * 403 from `PATCH /orders/:id/fulfill-path` switching an order to PICKUP (POS mode, SA-763r): the caller lacks the
+   * `USE_POS_MODE` staff capability (drivers, buyers, no principal). Raised before anything is read or written.
+   */
+  POS_MODE_NOT_PERMITTED: "POS_MODE_NOT_PERMITTED",
+  /**
+   * 409 from `PATCH /orders/:id/fulfill-path` to PICKUP: the order's route-run link changed between the read and
+   * the write (a dispatch attached it), so releasing the old link would have cleared a fresh one. Nothing was written.
+   */
+  ORDER_RUN_LINK_CHANGED: "ORDER_RUN_LINK_CHANGED",
   /**
    * 404 from GET /orders/counter-sale/by-key/:key: NO sale exists for this Idempotency-Key in this tenant.
    * A definitive answer (unlike a timeout): the clerk may ring the sale again with a new key.
@@ -425,6 +515,20 @@ export const API_ERROR_CODES = {
    */
   COUNTER_SALE_VOIDED: "COUNTER_SALE_VOIDED",
   /**
+   * 503 from POST /orders/counter-sale/:orderId/void: the void could not take the order's counter-tender lock in time (a
+   * tender or another void on the same sale is running). Nothing was written; retry the same call.
+   */
+  COUNTER_SALE_VOID_BUSY: "COUNTER_SALE_VOID_BUSY",
+  /** 409 from the counter-sale void: a return exists for the order. Reverse the return in the office, do not void the sale. */
+  COUNTER_SALE_VOID_HAS_RETURN: "COUNTER_SALE_VOID_HAS_RETURN",
+  /**
+   * 409 from the counter-sale void: the sale holds money the counter did not take (an applied credit note or advance, an
+   * office payment, a deposited or cleared check). The office reverses it first; nothing was written.
+   */
+  COUNTER_SALE_VOID_FOREIGN_PAYMENT: "COUNTER_SALE_VOID_FOREIGN_PAYMENT",
+  /** 409 from the counter-sale void: the sale was rung on an earlier day in the tenant's time zone (the window is today only). */
+  COUNTER_SALE_VOID_NOT_TODAY: "COUNTER_SALE_VOID_NOT_TODAY",
+  /**
    * 409 from GET /orders/counter-sale/by-key/:key: the sale EXISTS but staff changed its order (it moved past
    * PENDING/DELIVERED) and no invoice can be read back. Definitive: do not re-ring it, check with the office.
    * (A moved order that still has a live invoice reads back as the normal sale.)
@@ -432,6 +536,18 @@ export const API_ERROR_CODES = {
   COUNTER_SALE_CHANGED: "COUNTER_SALE_CHANGED",
   /** 400 from GET /orders/counter-sale/by-key/:key: the `?method=` is not CASH, CARD, CHECK or ON_ACCOUNT. */
   COUNTER_SALE_METHOD_INVALID: "COUNTER_SALE_METHOD_INVALID",
+  /** 400 from GET /orders/counter-sale/today: `day` is not a real calendar day, or is after the tenant's today. */
+  COUNTER_SALES_DAY_INVALID: "COUNTER_SALES_DAY_INVALID",
+  /** 429 from POST /orders/:id/receipt: this order's receipt was already emailed its per-order maximum (default 3). Final: no retry. */
+  RECEIPT_EMAIL_ORDER_LIMIT: "RECEIPT_EMAIL_ORDER_LIMIT",
+  /** 429 from POST /orders/:id/receipt: the tenant's receipt emails for today reached the per-day maximum (default 100). Final for the day. */
+  RECEIPT_EMAIL_DAY_LIMIT: "RECEIPT_EMAIL_DAY_LIMIT",
+  /** 429 from POST /orders/:id/receipt: this address already received its per-day maximum of receipt emails from the tenant (default 5, counted across all statuses). Final for that address today; another address still works. */
+  RECEIPT_EMAIL_ADDRESS_LIMIT: "RECEIPT_EMAIL_ADDRESS_LIMIT",
+  /** 502 from POST /orders/:id/receipt: the email did not go out (no transport, a rejected address, a provider error). Nothing counted; the cashier may try again. */
+  RECEIPT_EMAIL_NOT_SENT: "RECEIPT_EMAIL_NOT_SENT",
+  /** 409 from POST /orders/:id/receipt: the order is cancelled or has no live invoice (every one VOID / WRITTEN_OFF, or none), so there is no receipt to send. */
+  RECEIPT_NOT_AVAILABLE: "RECEIPT_NOT_AVAILABLE",
   /**
    * 409 from create(): this Idempotency-Key already belongs to ANOTHER customer's order. The order EXISTS: for
    * a counter sale that is an UNKNOWN outcome (never ring it again on a new key; ask GET .../by-key/:key).
@@ -468,6 +584,28 @@ export const API_ERROR_CODES = {
   PICKUP_KEY_CONFLICT: "PICKUP_KEY_CONFLICT",
   PICKUP_INVOICE_MISSING: "PICKUP_INVOICE_MISSING",
   /**
+   * SA-727 (counter refund). POST /returns/inline/:id/refund: the return was already resolved (store credit, or a refund
+   * with a different tender or amount). 409. A same-tender, same-amount replay is a 200 with the stored result instead.
+   */
+  RETURN_ALREADY_RESOLVED: "RETURN_ALREADY_RESOLVED",
+  /** SA-727: the client's expectedAmount differs from the amount the server computed for the return. 409; carries `amount`. */
+  REFUND_AMOUNT_CHANGED: "REFUND_AMOUNT_CHANGED",
+  /** SA-727: a cash/card/check refund needs every source invoice paid in full (non-VOID, balance 0); otherwise issue store credit. 409. */
+  REFUND_NEEDS_PAID_INVOICE: "REFUND_NEEDS_PAID_INVOICE",
+  /** SA-749r2 item 9: a CASH refund above the cash applied to the sale minus the cash already refunded on it. 409; carries `maxCashRefund`. */
+  REFUND_EXCEEDS_CASH_PAID: "REFUND_EXCEEDS_CASH_PAID",
+  /**
+   * SA-727 (F4): any part of a source invoice was paid with store credit (a CREDIT_NOTE or ADVANCE payment), so the return
+   * goes back as store credit only: store credit is never turned into cash. 409 on the refund and on a REFUND capture.
+   */
+  REFUND_PAID_WITH_STORE_CREDIT: "REFUND_PAID_WITH_STORE_CREDIT",
+  /** SA-727: a return that was refunded in cash/card/check cannot be cancelled (the money already left). 409. */
+  RETURN_REFUNDED_CASH: "RETURN_REFUNDED_CASH",
+  /** SA-727: the return is not in a state a refund can resolve (not captured, on hold, rejected, cancelled, or worth $0). 409. */
+  RETURN_NOT_REFUNDABLE: "RETURN_NOT_REFUNDABLE",
+  /** SA-727: the service-level refund gate (office roles only); also guards the REFUND capture and the store-credit conversion. 403. */
+  REFUND_NOT_ALLOWED: "REFUND_NOT_ALLOWED",
+  /**
    * Manual invoices due (platform-admin /rf-invoices). 409s: ALREADY_PAID / IS_VOID / NOT_PAID carry the
    * current `row`; NOTHING_TO_ISSUE, INVOICING_OFF (RF_INVOICING_MODE=off), NOT_MANUAL and NO_PRICE come from
    * POST tenants/:id/rf-invoices/issue. 400s: a missing or card-like payment reference, and a `paidAt` that
@@ -482,10 +620,44 @@ export const API_ERROR_CODES = {
   RF_INVOICE_NO_PRICE: "RF_INVOICE_NO_PRICE",
   RF_INVOICE_REFERENCE_REQUIRED: "RF_INVOICE_REFERENCE_REQUIRED",
   RF_INVOICE_REFERENCE_LOOKS_LIKE_CARD: "RF_INVOICE_REFERENCE_LOOKS_LIKE_CARD",
+  /** Create Tenant (platform-admin): the admin email or username is already used by a user in that tenant (400). */
+  ACCOUNT_IDENTIFIER_IN_USE: "ACCOUNT_IDENTIFIER_IN_USE",
+  /** Create Tenant (platform-admin): startMode "trial" was sent without trialLengthDays (400). Nothing was written. */
+  TENANT_TRIAL_DAYS_REQUIRED: "TENANT_TRIAL_DAYS_REQUIRED",
   RF_INVOICE_PAID_AT_TOO_OLD: "RF_INVOICE_PAID_AT_TOO_OLD",
   RF_INVOICE_PAID_AT_IN_FUTURE: "RF_INVOICE_PAID_AT_IN_FUTURE",
   /** Back office: an ACTIVE tenant cannot be moved to TRIAL (extend-trial or the status PATCH). 409. */
   TENANT_TRIAL_EXTEND_NOT_ALLOWED: "TENANT_TRIAL_EXTEND_NOT_ALLOWED",
+  /** 403 `code` when an operator holds none of the feature groups an endpoint needs; `groups` lists them. */
+  PERMISSION_DENIED: "PERMISSION_DENIED",
+  /** 409 from PUT /users/:id/permissions: `expectedVersion` is stale (reload and retry). */
+  PERMISSIONS_VERSION_CONFLICT: "PERMISSIONS_VERSION_CONFLICT",
+  /** A product's parent cannot be used (400); `reason` names the rule. See the header list. */
+  PRODUCT_PARENT_INVALID: "PRODUCT_PARENT_INVALID",
+  /** A tenant time zone write named something that is not an IANA zone (400, SA-738). Nothing was written. */
+  INVALID_TIME_ZONE: "INVALID_TIME_ZONE",
+  /**
+   * 422 from GET /invoices?isOverdue=true: more than 10 000 invoices owe a balance past their due day for the
+   * tenant (or the customer asked for), so the list is refused rather than silently truncated (SA-770).
+   * Narrow by customer and retry. Nothing was read.
+   */
+  OVERDUE_FILTER_TOO_BROAD: "OVERDUE_FILTER_TOO_BROAD",
+  /**
+   * 400 from POST /invoices/:id/send-reminder: the invoice has no balance due (exactly paid, overpaid or fully
+   * credited but not marked PAID), so there is nothing to remind about. Nothing was sent (SA-770).
+   */
+  REMINDER_NO_BALANCE_DUE: "REMINDER_NO_BALANCE_DUE",
+  /**
+   * 400 from POST /invoices/:id/send-reminder: the invoice is not an issued, unpaid one (a DRAFT that was never
+   * sent, or a PAID, VOID or WRITTEN_OFF invoice), so a payment reminder makes no sense. Nothing was sent (row 318).
+   */
+  REMINDER_NOT_ISSUED: "REMINDER_NOT_ISSUED",
+  /**
+   * 410 from GET /auth/google/:tenantSlug and GET /auth/google/:tenantSlug/callback: the legacy per-tenant
+   * Google sign-in routes are retired. Fixed body, nothing from the request echoed; use the standard Google
+   * sign-in (GET /auth/google).
+   */
+  SIGN_IN_ROUTE_RETIRED: "SIGN_IN_ROUTE_RETIRED",
 } as const;
 
 /** The `flag` of a PLAN_GATE body that gates a count (a meter), not a feature flag. Not an error code. */
@@ -512,6 +684,7 @@ export const CREDIT_NOTE_ERROR_CODES = [
   API_ERROR_CODES.CREDIT_NOTE_EXPIRY_NOT_EDITABLE,
   API_ERROR_CODES.CREDIT_NOTE_LINES_REQUIRED,
   API_ERROR_CODES.CREDIT_NOTE_LINE_INVALID,
+  API_ERROR_CODES.CREDIT_NOTE_UNAVAILABLE,
 ] as const;
 
 export type CreditNoteErrorCode = (typeof CREDIT_NOTE_ERROR_CODES)[number];

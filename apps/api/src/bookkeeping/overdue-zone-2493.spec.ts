@@ -173,13 +173,12 @@ describe("BookkeepingService — overdue ages in the tenant zone (#2493/SA-488)"
   it("summary's overdue count uses the tenant's day as its cutoff", async () => {
     zone(LA);
     prisma.invoice.findMany.mockResolvedValue([]);
-    prisma.invoice.count.mockResolvedValue(0);
+    prisma.$queryRaw.mockResolvedValue([{ count: 0 }]);
     await service.getSummary().catch(() => undefined);
-    const overdueCount = prisma.invoice.count.mock.calls.find(
-      (c: any[]) => c[0]?.where?.dueDate?.lt instanceof Date,
-    );
-    expect(overdueCount).toBeDefined();
+    // SA-770: the count is the balance-due SQL; the cutoff rides as a bound value.
+    expect(prisma.$queryRaw).toHaveBeenCalledTimes(1);
+    const { values } = prisma.$queryRaw.mock.calls[0][0] as { values: unknown[] };
     // The LA tenant's today is still Sep 25, so only invoices due BEFORE Sep 25 count.
-    expect(overdueCount![0].where.dueDate.lt).toEqual(due);
+    expect(values).toContain(due.toISOString());
   });
 });

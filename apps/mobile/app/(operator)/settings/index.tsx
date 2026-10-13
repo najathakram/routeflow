@@ -68,7 +68,11 @@ function OversellSection() {
 
   // OOS PR2: what customers see about backordered items (the seller's choice; off while the switch is off).
   const visibility = visibilityMode(data?.buyerBackorderVisibility);
-  const canEditVis = canEditVisibility(user?.role, oversellIsOn(data?.buyerOversell));
+  const canEditVis = canEditVisibility(
+    user?.role,
+    oversellIsOn(data?.buyerOversell),
+    data?.customerOverrides,
+  );
   const chooseVisibility = (next: "show" | "hide") => {
     if (!data || !canEditVis || next === visibility) return;
     update.mutate(

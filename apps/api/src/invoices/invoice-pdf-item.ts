@@ -44,22 +44,11 @@ export function promoNote(item: InvoicePdfItemLike): string | null {
 }
 
 /**
- * Whether the struck-through pre-promo `originalPrice` renders beside the charged
- * unit price. False when the tenant hid original prices, when there is no original
- * price to show, and for a MANUAL upsell (unitPrice ABOVE originalPrice) — the web
- * renderer deliberately never shows the lower base price to the buyer there. Mirrors
- * the web renderer's SPECIAL/DISCOUNTED/PROMO/adjusted-MANUAL branches, which all
- * strike the original price whenever one is set and the tenant hasn't hidden it.
+ * Whether the struck-through pre-promo `originalPrice` renders beside the charged unit price: the ONE rule now lives in
+ * `@routeflow/pricing` (`showOriginalPrice`) so the receipts read the same decision; re-exported here for the invoice PDF,
+ * the invoice email and the web renderer's mirror.
  */
-export function showOriginalPrice(item: InvoicePdfItemLike, hideOriginalPrice: boolean): boolean {
-  if (hideOriginalPrice) return false;
-  if (item.originalPrice == null) return false;
-  const original = Number(item.originalPrice);
-  const unitPrice = item.unitPrice != null ? Number(item.unitPrice) : 0;
-  // MANUAL upsell (charged ABOVE the base price): never expose the lower base.
-  if (item.priceType === "MANUAL" && unitPrice > original) return false;
-  return true;
-}
+export { showOriginalPrice } from "@routeflow/pricing";
 
 export type InvoicePdfQtyItemLike = {
   qty: DecimalLike;

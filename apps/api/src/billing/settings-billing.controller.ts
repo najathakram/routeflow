@@ -1,4 +1,5 @@
 import {
+  BadRequestException,
   Body,
   Controller,
   ForbiddenException,
@@ -8,6 +9,7 @@ import {
   Param,
   Post,
   Query,
+  ServiceUnavailableException,
   UseGuards,
 } from "@nestjs/common";
 import { UserRole } from "@prisma/client";
@@ -17,6 +19,8 @@ import { RolesGuard } from "../auth/guards/roles.guard";
 import { Roles } from "../auth/decorators/roles.decorator";
 import { CurrentUser } from "../auth/decorators/current-user.decorator";
 import { SubscriptionService } from "./subscription.service";
+import { INTERACTIVE_STRIPE_REQUEST, trimBillingViewForRole } from "./subscription-billing-extras";
+import { API_ERROR_CODES } from "../common/api-error-codes";
 import { ProrationService } from "./proration.service";
 import { SubscriptionMutationService } from "./subscription-mutation.service";
 import { BillingService } from "./billing.service";
@@ -64,8 +68,10 @@ export class SettingsBillingController {
 
   @Get("subscription")
   @ApiOperation({ summary: "The tenant's current plan, add-ons and renewal state" })
-  getSubscription(@CurrentUser() user: AuthUser) {
-    return this.subscription.getSubscription(this.tenantIdOf(user));
+  async getSubscription(@CurrentUser() user: AuthUser & { role?: string }) {
+    // S3: the card, the next charge and the amount are a workspace admin's; an operator keeps the contact's e-mail (who to ask) and the owed marker only.
+    const view = await this.subscription.getSubscription(this.tenantIdOf(user));
+    return trimBillingViewForRole(view, user.role);
   }
 
   @Get("usage")
@@ -211,6 +217,40 @@ export class SettingsBillingController {
     return this.billing.createCheckoutSession(tenantId, {
       successUrl: `${base}/settings/billing?checkout=success`,
       cancelUrl: `${base}/settings/billing?checkout=cancelled`,
+    });
+  }
+
+  /**
+   * SA-733r6 (B4): the Stripe billing portal (update the card) plus, while an invoice is owed, its hosted page (pay it).
+   * TENANT_ADMIN only - an operator is told who to ask and gets no action. The read-only guard allow-lists this exact
+   * route so an admin can always reach Stripe from a paused workspace.
+   */
+  @Post("portal")
+  @HttpCode(HttpStatus.OK)
+  @Roles(UserRole.TENANT_ADMIN)
+  @ApiOperation({ summary: "Stripe billing portal + the owed invoice's hosted page (admin only)" })
+  async createPortal(@CurrentUser() user: AuthUser) {
+    const tenantId = this.tenantIdOf(user);
+    // allSettled: a failure of one Stripe call must not lose the other (the pay link survives a portal outage and
+    // vice versa). Both are capped (#2476) so the route never hangs on Stripe.
+    const [portal, pay] = await Promise.allSettled([
+      this.billing.createBillingPortalSession(tenantId, undefined, INTERACTIVE_STRIPE_REQUEST),
+      this.subscription.openInvoiceUrl(tenantId),
+    ]);
+    const portalUrl = portal.status === "fulfilled" ? portal.value.portalUrl : null;
+    const hostedInvoiceUrl = pay.status === "fulfilled" ? pay.value : null;
+    if (portalUrl || hostedInvoiceUrl) return { portalUrl, hostedInvoiceUrl };
+    // Neither is available. A workspace with no Stripe customer (manual / external payment) is a clean 400; a Stripe
+    // outage is a retryable 503. Both coded, never a bare 500.
+    if (portal.status === "rejected" && portal.reason instanceof BadRequestException) {
+      throw new BadRequestException({
+        code: API_ERROR_CODES.BILLING_PORTAL_UNAVAILABLE,
+        message: "Billing isn't set up online for this workspace.",
+      });
+    }
+    throw new ServiceUnavailableException({
+      code: API_ERROR_CODES.BILLING_PORTAL_UNAVAILABLE,
+      message: "We couldn't open billing just now. Please try again in a moment.",
     });
   }
 

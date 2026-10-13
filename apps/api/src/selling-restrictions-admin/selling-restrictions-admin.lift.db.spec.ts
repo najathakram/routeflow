@@ -18,7 +18,7 @@ import { Pool } from "pg";
 import { describeDb, requireLocalDatabaseUrl } from "../common/testing/db-spec";
 import { PrismaService } from "../prisma/prisma.service";
 import { TenantContextService } from "../tenant/tenant-context.service";
-import { AuditService } from "../audit/audit.service";
+import { ProductLabelsService } from "../product-labels/product-labels.service";
 import { activeRuleWhere } from "../selling-restrictions/selling-restrictions.core";
 import { SellingRestrictionsAdminService } from "./selling-restrictions-admin.service";
 import type { JwtPayload } from "../auth/jwt-payload.interface";
@@ -67,7 +67,7 @@ describeDb("selling-restriction lift against real Postgres", () => {
     ctx = new TenantContextService();
     prisma = new PrismaService(ctx);
     await prisma.$connect();
-    service = new SellingRestrictionsAdminService(prisma, new AuditService(prisma));
+    service = new SellingRestrictionsAdminService(prisma, new ProductLabelsService(prisma));
     const ta = await raw.tenant.create({ data: { slug: slugA, name: `Lift spec ${slugA}` } });
     const tb = await raw.tenant.create({ data: { slug: slugB, name: `Lift spec ${slugB}` } });
     tenantA = ta.id;
