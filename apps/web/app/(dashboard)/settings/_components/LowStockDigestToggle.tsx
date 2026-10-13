@@ -31,7 +31,7 @@ export function LowStockDigestToggle() {
   }
 
   return (
-    <Card title="Low-stock digest">
+    <Card id="low-stock-digest" title="Low-stock digest">
       {isLoading ? (
         <div className="flex items-center gap-2 text-sm text-navy/60">
           <Loader2 className="h-4 w-4 animate-spin" /> Loading…
