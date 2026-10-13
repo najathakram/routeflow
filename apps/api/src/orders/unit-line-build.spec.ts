@@ -166,9 +166,11 @@ describe("buildUnitLine — an order line sold by a non-pack unit", () => {
     expect(l.categoryPriceIncludesTax).toBe(false);
   });
 
-  it("a typed price is compared to the TIER-1 unit price, exactly like the pack branch", () => {
-    // tier 2 Pallet = 9600, tier 1 = 10080: typing 9800 sits BETWEEN them -> below list = DISCOUNTED
-    const l = build({ qty: 1, unitPrice: 9800 }, 2, "Pallet");
+  it("H3: a typed price is judged against the customer's TIER unit price; the TIER-1 unit price stays the original", () => {
+    // tier 2 Pallet = 9600, tier 1 = 10080: typing 9800 moves the special price (needs a reason)
+    // and sits BETWEEN them -> below list = DISCOUNTED, original = the tier-1 unit price
+    expect(() => build({ qty: 1, unitPrice: 9800 }, 2, "Pallet")).toThrow(/reason is required/);
+    const l = build({ qty: 1, unitPrice: 9800, overrideReason: "volume" }, 2, "Pallet");
     expect(l).toMatchObject({
       unitPrice: 9800,
       priceType: PriceType.DISCOUNTED,
@@ -217,6 +219,76 @@ describe("buildUnitLine — an order line sold by a non-pack unit", () => {
   it("carries the item note (itemNote wins over notes)", () => {
     expect(build({ notes: "a", itemNote: "b" }).notes).toBe("b");
     expect(build({ notes: "a" }).notes).toBe("a");
+  });
+});
+
+// H3 (SA ruling): a typed unit price is judged against the CUSTOMER's price for that unit (the tier
+// price), through the ONE staff-override rule (`decideStaffOverride`) — never against the list price.
+describe("buildUnitLine — a typed price is decided against the customer's TIER unit price (H3)", () => {
+  // Case: list $24 / tier-3 $20, three of them.
+  const tierProduct = { ...product, unitsPerBox: 24, pricePerUnit: "1.00", priceTier3: "0.8333" };
+  const tierUnits = [
+    level({ label: "Case", factorToBase: 288, price: "24.00", priceTier3: "20.00" }),
+  ];
+  const tierBuild = (item: Record<string, unknown>, tier = 3) =>
+    buildUnitLine({
+      product: tierProduct,
+      units: tierUnits,
+      resolved: resolveLineUnits(tierProduct, tierUnits, { unitLabel: "Case" }),
+      item: { productId: "p1", qty: 3, unitLabel: "Case", ...item },
+      tier,
+      taxFor,
+      position: 0,
+      tenantId: "t1",
+      overriddenBy: "user-1",
+    });
+
+  it("typed $24 (the LIST price) with a reason bills $24 x 3 = $72, MANUAL, and carries the reason", () => {
+    const l = tierBuild({ unitPrice: 24, overrideReason: "  agreed at list  " });
+    expect(l).toMatchObject({
+      unitPrice: 24,
+      subtotal: 72,
+      priceType: PriceType.MANUAL,
+      originalPrice: 24,
+      overrideReason: "agreed at list",
+      overriddenBy: "user-1",
+    });
+  });
+
+  it("typed $24 with no reason on a special tier is a 400 naming the reason, not a silent SPECIAL $60", () => {
+    expect(() => tierBuild({ unitPrice: 24 })).toThrow(BadRequestException);
+    expect(() => tierBuild({ unitPrice: 24, overrideReason: "   " })).toThrow(
+      /reason is required/i,
+    );
+  });
+
+  it("typed $20 (equal to the tier price) is no override: SPECIAL $20, no reason, no attribution", () => {
+    const l = tierBuild({ unitPrice: 20 });
+    expect(l).toMatchObject({ unitPrice: 20, subtotal: 60, priceType: PriceType.SPECIAL });
+    expect(l.originalPrice).toBe(24);
+    expect(l).not.toHaveProperty("overrideReason");
+    expect(l).not.toHaveProperty("overriddenBy");
+  });
+
+  it("a DISCOUNTED price below the tier carries its reason too", () => {
+    const l = tierBuild({ unitPrice: 18, overrideReason: "damaged cartons" });
+    expect(l).toMatchObject({
+      unitPrice: 18,
+      priceType: PriceType.DISCOUNTED,
+      originalPrice: 24,
+      overrideReason: "damaged cartons",
+      overriddenBy: "user-1",
+    });
+  });
+
+  it("a standard (tier 1) customer needs no reason, but a real override is still attributed", () => {
+    const l = tierBuild({ unitPrice: 22 }, 1);
+    expect(l).toMatchObject({
+      unitPrice: 22,
+      priceType: PriceType.DISCOUNTED,
+      overriddenBy: "user-1",
+    });
+    expect(l.overrideReason).toBeNull();
   });
 });
 

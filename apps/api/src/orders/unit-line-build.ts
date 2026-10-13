@@ -2,6 +2,7 @@ import { BadRequestException, ForbiddenException } from "@nestjs/common";
 import { PriceType } from "@prisma/client";
 import {
   isSpecialTier,
+  decideStaffOverride,
   AmbiguousLineError,
   InvalidTierError,
   UnknownUnitError,
@@ -21,6 +22,7 @@ import {
 import { assertUnitLineSplit } from "./unit-line-split";
 import { lineUnitsPerBoxSnapshot, type ResolvedLineUnits } from "../products/line-units";
 import { API_ERROR_CODES } from "../common/api-error-codes";
+import { specialPriceReasonRequired } from "./staff-override";
 
 /**
  * units_v1, step 4b-2 — building ONE order line that is sold by a non-pack unit (a Case, a Pallet,
@@ -36,11 +38,14 @@ import { API_ERROR_CODES } from "../common/api-error-codes";
  *     `qty = count x factor` (base pieces — what stock, delivery and the invoice copy already read),
  *     `unitsPerBox = factor` (the snapshot a later rewrite keeps), `unitPrice` = price PER UNIT.
  *     A factor-1 unit (a Piece off a boxed pack) is a plain per-piece line that still snapshots 1.
- *   - price mirrors the pack branch: a staff-typed price BELOW the tier-1 unit price is DISCOUNTED,
- *     ABOVE it a MANUAL upsell (both keep the tier-1 unit price as `originalPrice`); otherwise the
- *     ladder price at the customer's tier — STANDARD at tier 1, SPECIAL (original = tier-1 price)
- *     otherwise. Promotions and a customer's remembered upsell price are keyed by pack pricing and
- *     apply to pack lines only (v1 ruling).
+ *   - price mirrors the pack branch (H3): a staff-typed price is decided by THE staff-override rule
+ *     (`decideStaffOverride`, @routeflow/pricing) against the customer's TIER unit price — within
+ *     half a cent of it is no override (the ladder price at the customer's tier: STANDARD at tier 1,
+ *     SPECIAL with original = tier-1 price otherwise); a real change on a special tier needs a
+ *     reason (400 otherwise); an override BELOW the tier-1 unit price is DISCOUNTED, at or ABOVE it a
+ *     MANUAL upsell (both keep the tier-1 unit price as `originalPrice`) and carries
+ *     `overrideReason` + `overriddenBy`. Promotions and a customer's remembered upsell price are
+ *     keyed by pack pricing and apply to pack lines only (v1 ruling).
  */
 
 export interface UnitLineRequest {
@@ -53,6 +58,8 @@ export interface UnitLineRequest {
   unitLabel?: string | null;
   notes?: string | null;
   itemNote?: string | null;
+  /** Why a special-tier customer's price was changed (H3); required by the override rule there. */
+  overrideReason?: string | null;
 }
 
 /** A Prisma `Decimal` (or number/string) — coerced once by `toLadderProduct`. */
@@ -60,6 +67,8 @@ type Money = number | string | { toString(): string };
 
 /** The subset of `Product` a unit line reads (tracked-category snapshots + the ladder base). */
 export interface UnitLineProduct {
+  /** Names the product in the "reason required" 400. */
+  name?: string | null;
   unit?: string | null;
   unitsPerBox?: number | null;
   pricePerUnit: Money;
@@ -250,6 +259,9 @@ export interface UnitLineData {
   unitPrice: number;
   priceType: PriceType;
   originalPrice: number | null;
+  /** Present only on a real staff override (H3) — never written for a ladder-priced line. */
+  overrideReason?: string | null;
+  overriddenBy?: string;
   promoFreeUnits: null;
   subtotal: number;
   notes: string | undefined;
@@ -283,6 +295,8 @@ export function buildUnitLine(input: {
   /** Set on every line by the caller's tenancy: a nested create bypasses `forTenant()`. */
   position: number;
   tenantId: string | null | undefined;
+  /** The staff user whose typed price overrides the ladder (H3); stamped only on a real override. */
+  overriddenBy?: string | null;
 }): UnitLineData {
   const { product, units, resolved, item, tier, taxFor } = input;
   const ladderProduct = toLadderProduct(product);
@@ -343,19 +357,30 @@ export function buildUnitLine(input: {
     }
     throw e;
   }
-  const typed = item.unitPrice != null ? roundMoney(item.unitPrice) : null; // round every write
-  let unitPrice = tierPrice;
-  let priceType: PriceType = isSpecialTier(tier) ? PriceType.SPECIAL : PriceType.STANDARD;
-  let originalPrice: number | null = isSpecialTier(tier) ? listPrice : null;
-  if (typed != null && typed < listPrice) {
-    unitPrice = typed;
-    priceType = PriceType.DISCOUNTED;
-    originalPrice = listPrice;
-  } else if (typed != null && typed > listPrice) {
-    unitPrice = typed; // an operator selling above the ladder deliberately (MANUAL upsell)
-    priceType = PriceType.MANUAL;
-    originalPrice = listPrice;
-  }
+  // H3: ONE rule for a staff-typed price — judged against the customer's TIER unit price, never the list.
+  const decision =
+    item.unitPrice != null
+      ? decideStaffOverride({
+          overridePrice: Number(item.unitPrice),
+          baselinePrice: tierPrice,
+          listPrice,
+          isSpecialTier: isSpecialTier(tier),
+          hasReason: !!item.overrideReason?.trim(),
+        })
+      : null;
+  if (decision && "refused" in decision) throw specialPriceReasonRequired(product.name);
+  const unitPrice = decision ? decision.unitPrice : tierPrice;
+  const priceType: PriceType = decision
+    ? PriceType[decision.priceType]
+    : isSpecialTier(tier)
+      ? PriceType.SPECIAL
+      : PriceType.STANDARD;
+  const originalPrice: number | null = decision
+    ? decision.originalPrice
+    : isSpecialTier(tier)
+      ? listPrice
+      : null;
+  const overridden = priceType === PriceType.DISCOUNTED || priceType === PriceType.MANUAL;
 
   // The real subtotal, now that tier pricing has resolved the actual unitPrice — the split
   // above is already buildLine-validated, so computeLineSubtotalStrict never throws here.
@@ -385,6 +410,9 @@ export function buildUnitLine(input: {
       unitPrice,
       priceType,
       originalPrice,
+      ...(overridden && input.overriddenBy
+        ? { overrideReason: item.overrideReason?.trim() || null, overriddenBy: input.overriddenBy }
+        : {}),
       promoFreeUnits: null,
       subtotal,
       notes: item.itemNote || item.notes || undefined,

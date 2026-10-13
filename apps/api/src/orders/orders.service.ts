@@ -1719,6 +1719,7 @@ export class OrdersService implements OnApplicationBootstrap {
           taxFor: (qty, sub) => unitLines.categoryTaxForLine(category, qty, sub),
           position: index,
           tenantId: this.prisma.getTenantId(),
+          overriddenBy: user.sub,
         });
         subtotal += unitLine.subtotal;
         return unitLine;
@@ -1782,8 +1783,7 @@ export class OrdersService implements OnApplicationBootstrap {
 
       // QTY_BREAK promo threshold is measured in PIECES. A box-split line stores qty
       // in pieces already; a box-UNAWARE boxed line (boxes==null) stores qty as a
-      // SELLING-UNIT (box) count, so expand it — mirrors the merge path so the same
-      // buyer line prices identically at create vs edit.
+      // SELLING-UNIT (box) count, so expand it — mirrors the merge path (create == edit).
       // B679/Opus: the tax basis is derived through regulatedUnitBasis — the ONE place this
       // design allows a box-unaware qty*pack expansion — never an inline copy of it. This is
       // always resolvedUnits.unitLabel (null here — unitLines.isUnitAware(resolvedUnits)
@@ -3395,6 +3395,7 @@ export class OrdersService implements OnApplicationBootstrap {
             ladders: unitCtx.ladders,
             tenantId: this.prisma.getTenantId(),
             tier: (pid) => (atCustomerTier ? (operatorCpMap.get(pid) ?? operatorDefaultTier) : 1),
+            overriddenBy: user?.sub ?? null,
             categoryMap: await loadCategoryMapForProducts(tx, unitCtx.products), // B297
           };
 
@@ -3731,8 +3732,7 @@ export class OrdersService implements OnApplicationBootstrap {
                 assertSellableLines([product]); // WS8: a FAMILY is never a substitute line
                 const unitRow = unitRows.get(item);
                 if (unitRow && unitLines.isUnitAware(unitRow)) {
-                  // updateUnitLine re-stamps from uctx.categoryMap itself (isSubstitute flag) —
-                  // this branch never needs its own category load.
+                  // updateUnitLine re-stamps from uctx.categoryMap itself (isSubstitute): no own load.
                   await unitEdit.updateUnitLine(uctx, item.id!, product, unitRow, item, true);
                   continue;
                 }
@@ -3896,7 +3896,7 @@ export class OrdersService implements OnApplicationBootstrap {
                   const p = unitCtx.products.get(li.productId!);
                   if (!p) throw new ConflictException({ code: API_ERROR_CODES.CONCURRENT_UPDATE });
                   // B297: same product, not a substitute — updateUnitLine must PRESERVE the trio.
-                  await unitEdit.updateUnitLine(uctx, item.id!, p, unitRow, item, false);
+                  await unitEdit.updateUnitLine(uctx, item.id!, p, unitRow, item, false, li);
                   continue;
                 }
                 // A zero boxes+pieces payload is "not using box entry", not "zero

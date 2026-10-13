@@ -157,6 +157,8 @@ export interface UnitWriteContext {
   ladders: Map<string, LadderUnit[]>;
   tenantId: string | null | undefined;
   tier: (productId: string) => number;
+  /** H3: the acting staff user, stamped on a unit line whose typed price overrides the customer's price. */
+  overriddenBy?: string | null;
   /** trackedCategoryId -> TrackedCategory row, for the products this edit touches (B297). */
   categoryMap: Map<string, TrackedCategoryRow>;
 }
@@ -191,6 +193,7 @@ export async function createUnitLine(
     taxFor: (qty, sub) => categoryTaxForLine(category, qty, sub),
     position,
     tenantId: ctx.tenantId,
+    overriddenBy: ctx.overriddenBy,
   });
   // Row 373b: a line paired with a stored line (the ONE pairing helper sets `carriedLine`) keeps that line's
   // category, trio and createdAt: a re-created unit line is not a new sale.
@@ -230,6 +233,8 @@ export async function updateUnitLine(
   resolved: ResolvedLineUnits,
   item: any,
   isSubstitute: boolean,
+  /** H3: the stored line — a same-product edit that re-sends its price keeps the reason on file. */
+  stored?: { overrideReason?: string | null },
 ): Promise<void> {
   const category = product.trackedCategoryId
     ? ctx.categoryMap.get(product.trackedCategoryId)
@@ -249,11 +254,17 @@ export async function updateUnitLine(
     product,
     units: ctx.ladders.get(product.id) ?? [],
     resolved,
-    item: { ...item, productId: product.id },
+    item: {
+      ...item,
+      productId: product.id,
+      overrideReason:
+        item.overrideReason === undefined ? stored?.overrideReason : item.overrideReason,
+    },
     tier: ctx.tier(product.id),
     taxFor: (qty, sub) => categoryTaxForLine(category, qty, sub),
     position: 0,
     tenantId: ctx.tenantId,
+    overriddenBy: ctx.overriddenBy,
   });
   const data = isSubstitute
     ? {
