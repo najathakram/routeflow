@@ -281,4 +281,87 @@ describe("InvoicesService — DRAFT order invoicing is gated (F2)", () => {
       expect(prisma.invoice.create).toHaveBeenCalledTimes(1);
     });
   });
+  // F2b: the pre-check runs outside the transaction; the DRAFT can be edited before the write. The
+  // transaction re-reads the billed lines under the Order row lock and judges again BEFORE the invoice
+  // row exists. (The office path reserves its number before the transaction opens, by design (pool
+  // starvation, fix-round-2.md D1), so a refusal here leaves a series gap, never an invoice.)
+  describe("F2b: re-judged inside the transaction when the DRAFT changed after the pre-check", () => {
+    const dto = { items: [{ orderItemId: "oi-a", qty: 1 }] } as any;
+    /** the in-tx read: what the order's lines are NOW */
+    const inTx = (status: string, lines: Array<{ id: string; productId: string }>) => {
+      prisma.order.findFirst.mockResolvedValue({ status });
+      prisma.orderItem.findMany.mockResolvedValue(lines);
+    };
+    const banPBanned = () =>
+      restrictions().assertLinesSellable.mockImplementation(
+        async (p: { lines: Array<{ productId: string }> }) => {
+          if (p.lines.some((l) => l.productId === "p-banned")) throw refusal();
+        },
+      );
+
+    it("split: a banned product swapped in after the pre-check is refused in the tx, no invoice, no line bump", async () => {
+      setup("DRAFT", false);
+      banPBanned();
+      inTx("DRAFT", [
+        { id: "oi-a", productId: "p-banned" },
+        { id: "oi-b", productId: "p-b" },
+      ]);
+
+      const err: any = await service.createInvoiceFromOrder("ord-1").catch((e) => e);
+
+      expect(err).toBeInstanceOf(ConflictException);
+      expect(err.getResponse().code).toBe(API_ERROR_CODES.SELLING_RESTRICTED);
+      expect(restrictions().assertLinesSellable).toHaveBeenCalledTimes(2); // pre-check ok, in-tx refused
+      expect(prisma.invoice.create).not.toHaveBeenCalled();
+      expect(prisma.orderItem.updateMany).not.toHaveBeenCalled();
+      expect(prisma.auditLog.create).not.toHaveBeenCalled();
+      expect(sendSpy).not.toHaveBeenCalled();
+    });
+
+    it("partial: the same race is refused in the tx and writes no invoice", async () => {
+      setup("DRAFT", false);
+      banPBanned();
+      inTx("DRAFT", [{ id: "oi-a", productId: "p-banned" }]);
+
+      const err: any = await service.createPartialFromOrder("ord-1", dto).catch((e) => e);
+
+      expect(err.getResponse().code).toBe(API_ERROR_CODES.SELLING_RESTRICTED);
+      expect(prisma.invoice.create).not.toHaveBeenCalled();
+      expect(prisma.orderItem.updateMany).not.toHaveBeenCalled();
+    });
+
+    it("control: an unchanged product set is not judged a second time", async () => {
+      setup("DRAFT", false);
+      inTx("DRAFT", [
+        { id: "oi-a", productId: "p-a" },
+        { id: "oi-b", productId: "p-b" },
+      ]);
+
+      await service.createInvoiceFromOrder("ord-1");
+
+      expect(restrictions().assertLinesSellable).toHaveBeenCalledTimes(1);
+      expect(prisma.invoice.create).toHaveBeenCalledTimes(1);
+    });
+
+    it("control: a DRAFT promoted meanwhile (judged by its promotion) is not re-judged here", async () => {
+      setup("DRAFT", false);
+      banPBanned();
+      inTx("PENDING", [{ id: "oi-a", productId: "p-banned" }]);
+
+      await service.createPartialFromOrder("ord-1", dto);
+
+      expect(restrictions().assertLinesSellable).toHaveBeenCalledTimes(1);
+      expect(prisma.invoice.create).toHaveBeenCalledTimes(1);
+    });
+
+    it("a billed line deleted since the pre-check is a retryable 409 and writes nothing", async () => {
+      setup("DRAFT", false);
+      inTx("DRAFT", []); // oi-a is gone
+
+      await expect(service.createPartialFromOrder("ord-1", dto)).rejects.toMatchObject({
+        response: { code: API_ERROR_CODES.ORDER_CHANGED_DURING_EDIT },
+      });
+      expect(prisma.invoice.create).not.toHaveBeenCalled();
+    });
+  });
 });

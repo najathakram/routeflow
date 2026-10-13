@@ -150,6 +150,7 @@ import { assertNsfLinesUntaxed } from "./nsf-line-tax-guard";
 import { AuthorizationGuardService } from "../authorizations/authorization-guard.service";
 import { CreditNotesService } from "../credit-notes/credit-notes.service";
 import { lockCreditsForSend, lockOrderRow } from "../credit-notes/credit-note-locks";
+import { assertDraftOrderSellable, rejudgeDraftOrderInTx } from "./draft-order-restrictions";
 import {
   inOrderBillingTx,
   inOrderBillingTxAfter,
@@ -773,24 +774,17 @@ export class InvoicesService {
     return created;
   }
 
-  /**
-   * F2: a DRAFT order has not been judged by the selling-restrictions engine for these lines since it
-   * was placed, so billing it is a sale (the staff channel, like every writer in this file). Any
-   * other status keeps F-05's flag-not-block. Read-only: a throw leaves nothing mutated.
-   */
-  private async assertDraftOrderSellable(
+  /** F2: see draft-order-restrictions.ts (returns the judged product ids, null for a non-DRAFT order). */
+  private assertDraftOrderSellable(
     order: { status?: string | null; customerId: string | null },
     productIds: ReadonlyArray<string | null | undefined>,
-  ): Promise<void> {
-    if (order.status !== "DRAFT") return;
-    await this.sellingRestrictions.assertLinesSellable({
-      tenantId: requireRestrictionTenantId(this.prisma.getTenantId()),
-      customerId: order.customerId,
-      lines: [...new Set(productIds.filter((id): id is string => !!id))].map((productId) => ({
-        productId,
-      })),
-      channel: "STAFF",
-    });
+  ) {
+    return assertDraftOrderSellable(
+      this.sellingRestrictions,
+      this.prisma.getTenantId(),
+      order,
+      productIds,
+    );
   }
 
   /** RF-4: see foldCategoryTax in manual-invoice-context.ts (shared with estimate conversion, B659). */
@@ -1127,7 +1121,7 @@ export class InvoicesService {
 
     // F2: billing a DRAFT order SELLS its lines. Refuse a banned one (the standard 409) BEFORE the
     // license guard, the split flag + its audit, the number reservation and the deposit-mirror send.
-    await this.assertDraftOrderSellable(
+    const judged = await this.assertDraftOrderSellable(
       order,
       remainingItems.map(({ li }: any) => li.productId),
     );
@@ -1314,6 +1308,8 @@ export class InvoicesService {
       : await this.generateInvoiceNumber(tenantId ?? undefined);
     const runCreation = async (tx: any): Promise<any[]> => {
       if (!callerTx) await lockOrderRow(tx, tenantId, order.id); // SA-706: before the first insert
+      const ids = remainingItems.map(({ li }: any) => li.id); // F2b: re-judge before the first insert
+      await rejudgeDraftOrderInTx(tx, this.sellingRestrictions, tenantId, order, ids, judged);
       // Right before the first insert — never above the caller's transaction.
       const baseNumber =
         hoistedBaseNumber ?? (await this.generateInvoiceNumber(tenantId ?? undefined, tx));
@@ -2723,7 +2719,7 @@ export class InvoicesService {
     }
     // F2: a DRAFT order's partial SELLS these lines: refuse a banned one (standard 409) before the
     // number is reserved (no series gap), the transaction opens or the optional send runs.
-    await this.assertDraftOrderSellable(
+    const judged = await this.assertDraftOrderSellable(
       order,
       dto.items.map((req) => (itemById.get(req.orderItemId) as any)?.productId),
     );
@@ -2816,6 +2812,8 @@ export class InvoicesService {
     const invoiceNumber = await this.generateInvoiceNumber(tenantId ?? undefined);
     const runCreation = async (tx: any) => {
       await lockOrderRow(tx, tenantId, order.id); // SA-706: before the insert's FK takes KEY SHARE
+      const ids = dto.items.map((r) => r.orderItemId); // F2b: edited since the pre-check?
+      await rejudgeDraftOrderInTx(tx, this.sellingRestrictions, tenantId, order, ids, judged);
       let created: any;
       try {
         created = await tx.invoice.create({
