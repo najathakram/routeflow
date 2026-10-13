@@ -1,4 +1,12 @@
-import { ArrayMaxSize, ArrayMinSize, IsArray, IsIn, IsString, MaxLength } from "class-validator";
+import {
+  ArrayMaxSize,
+  ArrayMinSize,
+  IsArray,
+  IsIn,
+  IsNotEmpty,
+  IsString,
+  MaxLength,
+} from "class-validator";
 import type { BulkStateBucketName } from "@routeflow/types";
 import { BULK_STATE_BUCKETS, BULK_STATE_MAX } from "../unknown-state";
 
@@ -28,6 +36,9 @@ export class BulkStateDto {
 
 /** POST .../bulk-state/undo (wire shape `BulkStateUndoRequest`). */
 export class BulkStateUndoDto {
+  /** The action to undo (BulkStateResponse.actionId): required, so a retry can never land on a later action. */
+  @IsString() @IsNotEmpty() @MaxLength(64) actionId: string;
+
   @IsArray()
   @ArrayMinSize(1, { message: "Name at least one address to restore." })
   @ArrayMaxSize(BULK_STATE_UNDO_MAX_ADDRESSES)

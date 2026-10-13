@@ -211,7 +211,11 @@ describeDb("customers without a state: buckets, bulk set and undo against real P
       await prisma.auditLog.count({ where: { tenantId: tenantA, action: AUDIT_BULK_STATE_SET } }),
     ).toBe(2);
 
-    expect(await asA(() => bulk.undo({ changedAddressIds: b.changedAddressIds }, op))).toEqual({
+    expect(
+      await asA(() =>
+        bulk.undo({ actionId: b.actionId as string, changedAddressIds: b.changedAddressIds }, op),
+      ),
+    ).toEqual({
       restored: 1,
     });
     expect((await addressesOf(u1))[0]).toMatchObject({
@@ -219,16 +223,26 @@ describeDb("customers without a state: buckets, bulk set and undo against real P
       stateCode: null,
       stateNeedsReview: true,
     });
-    expect(await asA(() => bulk.undo({ changedAddressIds: a.changedAddressIds }, op))).toEqual({
+    expect(
+      await asA(() =>
+        bulk.undo({ actionId: a.actionId as string, changedAddressIds: a.changedAddressIds }, op),
+      ),
+    ).toEqual({
       restored: 1,
     });
     expect(await addressesOf(n1)).toEqual([]);
 
-    expect(await asA(() => bulk.undo({ changedAddressIds: b.changedAddressIds }, op))).toEqual({
+    expect(
+      await asA(() =>
+        bulk.undo({ actionId: b.actionId as string, changedAddressIds: b.changedAddressIds }, op),
+      ),
+    ).toEqual({
       restored: 0,
     });
     await expect(
-      asB(() => bulk.undo({ changedAddressIds: b.changedAddressIds }, op)),
+      asB(() =>
+        bulk.undo({ actionId: b.actionId as string, changedAddressIds: b.changedAddressIds }, op),
+      ),
     ).rejects.toThrow(NotFoundException);
   }, 30_000);
 
@@ -242,7 +256,11 @@ describeDb("customers without a state: buckets, bulk set and undo against real P
       where: { id: b.changedAddressIds[0] },
       data: { line1: "2 Elm St" },
     });
-    expect(await asA(() => bulk.undo({ changedAddressIds: b.changedAddressIds }, op))).toEqual({
+    expect(
+      await asA(() =>
+        bulk.undo({ actionId: b.actionId as string, changedAddressIds: b.changedAddressIds }, op),
+      ),
+    ).toEqual({
       restored: 0,
     });
     expect((await addressesOf(u1))[0]).toMatchObject({ stateCode: "TX", line1: "2 Elm St" });

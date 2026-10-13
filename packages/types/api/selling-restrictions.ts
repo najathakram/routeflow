@@ -25,9 +25,10 @@
 //   Undo handle: addresses updated, plus addresses created for no-address customers.
 //
 // POST /settings/restrictions/unknown-state-customers/bulk-state/undo   (TENANT_ADMIN, OPERATOR)
-//   body BulkStateUndoRequest → 200 BulkStateUndoResponse. Restores the prior state of each
-//   address and removes only the addresses that same bulk action created. 409 when the 10-minute
-//   window (BULK_STATE_UNDO_WINDOW_MINUTES) has passed, 404 for ids it does not know, and
+//   body BulkStateUndoRequest → 200 BulkStateUndoResponse. Undoes exactly the bulk action named by
+//   `actionId` (the id bulk-state returned): restores the prior state of each named address and
+//   removes only the addresses that action created. 409 when the 10-minute window
+//   (BULK_STATE_UNDO_WINDOW_MINUTES) has passed, 404 for an action id it does not know, and
 //   { restored: 0 } for an idempotent repeat.
 //
 // PATCH /customers/:id/addresses/:addressId/state   (TENANT_ADMIN, OPERATOR)
@@ -143,9 +144,13 @@ export interface BulkStateResponse {
   changed: number;
   /** Addresses updated or created by this action; send them to bulk-state/undo. */
   changedAddressIds: string[];
+  /** This action's id (null when nothing changed: no action, no Undo); bulk-state/undo requires it, so an undo can only ever revert this action. */
+  actionId: string | null;
 }
 
 export interface BulkStateUndoRequest {
+  /** The `actionId` bulk-state returned. */
+  actionId: string;
   changedAddressIds: string[];
 }
 

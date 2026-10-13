@@ -155,11 +155,11 @@ function setup() {
         store.audits.push(row);
         return row;
       }),
-      findMany: jest.fn(async ({ where, take }: any) =>
-        store.audits
-          .filter((r) => r.tenantId === where.tenantId && r.action === where.action)
-          .sort((x, y) => y.createdAt.getTime() - x.createdAt.getTime())
-          .slice(0, take),
+      findFirst: jest.fn(
+        async ({ where }: any) =>
+          store.audits.find(
+            (r) => r.id === where.id && r.tenantId === where.tenantId && r.action === where.action,
+          ) ?? null,
       ),
     },
   };
@@ -278,7 +278,7 @@ describe("POST .../bulk-state", () => {
       { bucket: "unusableState", customerIds: ["u1", "k1"], state: "TX" },
       user,
     );
-    expect(r).toEqual({ changed: 2, changedAddressIds: [bad.id, kBad.id] });
+    expect(r).toEqual({ changed: 2, changedAddressIds: [bad.id, kBad.id], actionId: "audit-1" });
     expect(bad).toMatchObject({ state: "TX", stateCode: "TX", stateNeedsReview: false });
     expect(kReview).toMatchObject({ state: "Washington", stateCode: null });
     expect(s.bucketsOf("u1")).toEqual([]);
@@ -311,7 +311,7 @@ describe("POST .../bulk-state", () => {
       { bucket: "unusableState", customerIds: ["r1"], state: "WA" },
       user,
     );
-    expect(r).toEqual({ changed: 0, changedAddressIds: [] });
+    expect(r).toEqual({ changed: 0, changedAddressIds: [], actionId: null });
     expect(s.tx.customerAddress.updateMany).not.toHaveBeenCalled();
     expect(s.store.audits).toEqual([]);
   });
@@ -405,7 +405,12 @@ describe("POST .../bulk-state/undo", () => {
   it("restores the prior state verbatim and removes only the addresses that action created; ONE audit row", async () => {
     const { s, updated, unusable, noAddr } = await bulkThenUndoSetup();
     s.advanceMinutes(5);
-    expect(await s.service.undo({ changedAddressIds: unusable.changedAddressIds }, user)).toEqual({
+    expect(
+      await s.service.undo(
+        { actionId: unusable.actionId as string, changedAddressIds: unusable.changedAddressIds },
+        user,
+      ),
+    ).toEqual({
       restored: 1,
     });
     expect(updated).toMatchObject({ state: "Unknown", stateCode: null, stateNeedsReview: true });
@@ -413,7 +418,12 @@ describe("POST .../bulk-state/undo", () => {
     // the other action's created address is untouched by this undo
     expect(s.store.addresses.some((a) => a.id === noAddr.changedAddressIds[0])).toBe(true);
 
-    expect(await s.service.undo({ changedAddressIds: noAddr.changedAddressIds }, user)).toEqual({
+    expect(
+      await s.service.undo(
+        { actionId: noAddr.actionId as string, changedAddressIds: noAddr.changedAddressIds },
+        user,
+      ),
+    ).toEqual({
       restored: 1,
     });
     expect(s.store.addresses.filter((a) => a.customerId === "n1")).toEqual([]);
@@ -429,14 +439,30 @@ describe("POST .../bulk-state/undo", () => {
 
   it("is idempotent: a second call restores 0, never errors and writes no second audit row", async () => {
     const { s, updated, noAddr, unusable } = await bulkThenUndoSetup();
-    await s.service.undo({ changedAddressIds: unusable.changedAddressIds }, user);
-    await s.service.undo({ changedAddressIds: noAddr.changedAddressIds }, user);
+    await s.service.undo(
+      { actionId: unusable.actionId as string, changedAddressIds: unusable.changedAddressIds },
+      user,
+    );
+    await s.service.undo(
+      { actionId: noAddr.actionId as string, changedAddressIds: noAddr.changedAddressIds },
+      user,
+    );
     const audits = s.store.audits.length;
     const snapshot = { ...updated };
-    expect(await s.service.undo({ changedAddressIds: unusable.changedAddressIds }, user)).toEqual({
+    expect(
+      await s.service.undo(
+        { actionId: unusable.actionId as string, changedAddressIds: unusable.changedAddressIds },
+        user,
+      ),
+    ).toEqual({
       restored: 0,
     });
-    expect(await s.service.undo({ changedAddressIds: noAddr.changedAddressIds }, user)).toEqual({
+    expect(
+      await s.service.undo(
+        { actionId: noAddr.actionId as string, changedAddressIds: noAddr.changedAddressIds },
+        user,
+      ),
+    ).toEqual({
       restored: 0,
     });
     expect(updated).toEqual(snapshot);
@@ -450,12 +476,13 @@ describe("POST .../bulk-state/undo", () => {
       where: { tenantId: T, id: { in: [updated.id, noAddr.changedAddressIds[0]] } },
       data: { line1: "2 Elm St" },
     });
-    expect(
-      await s.service.undo(
-        { changedAddressIds: [...unusable.changedAddressIds, ...noAddr.changedAddressIds] },
-        user,
-      ),
-    ).toEqual({ restored: 0 });
+    for (const action of [unusable, noAddr])
+      expect(
+        await s.service.undo(
+          { actionId: action.actionId as string, changedAddressIds: action.changedAddressIds },
+          user,
+        ),
+      ).toEqual({ restored: 0 });
     expect(updated).toMatchObject({ stateCode: "TX", line1: "2 Elm St" });
     expect(s.store.addresses.some((a) => a.id === noAddr.changedAddressIds[0])).toBe(true);
   });
@@ -472,7 +499,12 @@ describe("POST .../bulk-state/undo", () => {
       user,
     );
     expect(bulk1.changedAddressIds).toEqual([a.id, b.id]);
-    expect(await s.service.undo({ changedAddressIds: bulk1.changedAddressIds }, user)).toEqual({
+    expect(
+      await s.service.undo(
+        { actionId: bulk1.actionId as string, changedAddressIds: bulk1.changedAddressIds },
+        user,
+      ),
+    ).toEqual({
       restored: 2,
     });
     // bulk2 sets A again (it is back in the bucket after the undo)
@@ -483,24 +515,71 @@ describe("POST .../bulk-state/undo", () => {
     expect(bulk2.changedAddressIds).toEqual([a.id]);
     const audits = s.store.audits.length;
     // a client retry of bulk1's undo: matches bulk1 (it names ALL the ids), not bulk2
-    expect(await s.service.undo({ changedAddressIds: bulk1.changedAddressIds }, user)).toEqual({
+    expect(
+      await s.service.undo(
+        { actionId: bulk1.actionId as string, changedAddressIds: bulk1.changedAddressIds },
+        user,
+      ),
+    ).toEqual({
       restored: 0,
     });
     expect(a).toMatchObject({ stateCode: "OK", stateNeedsReview: false });
     expect(b).toMatchObject({ state: "Unknown", stateCode: null, stateNeedsReview: true });
     expect(s.store.audits).toHaveLength(audits);
     // bulk2's own undo still works
-    expect(await s.service.undo({ changedAddressIds: bulk2.changedAddressIds }, user)).toEqual({
+    expect(
+      await s.service.undo(
+        { actionId: bulk2.actionId as string, changedAddressIds: bulk2.changedAddressIds },
+        user,
+      ),
+    ).toEqual({
       restored: 1,
     });
     expect(a).toMatchObject({ state: "Unknown", stateCode: null, stateNeedsReview: true });
+  });
+
+  it("undo by action id: bulk-set the same customer twice, undo the FIRST by its id, the second stays", async () => {
+    const s = setup();
+    s.syncNow();
+    s.cust("u1");
+    const a = s.addr("u1", { state: "Unknown", stateNeedsReview: true, zip: "75201" });
+    const first = await s.service.bulkSet(
+      { bucket: "unusableState", customerIds: ["u1"], state: "TX" },
+      user,
+    );
+    // back into the bucket by hand, then a second bulk action on the same customer
+    Object.assign(a, { state: "Unknown", stateCode: null, stateNeedsReview: true });
+    s.advanceMinutes(1);
+    const second = await s.service.bulkSet(
+      { bucket: "unusableState", customerIds: ["u1"], state: "OK" },
+      user,
+    );
+    expect(second.actionId).not.toBe(first.actionId);
+    expect(
+      await s.service.undo(
+        { actionId: first.actionId as string, changedAddressIds: first.changedAddressIds },
+        user,
+      ),
+    ).toEqual({ restored: 0 });
+    expect(a).toMatchObject({ stateCode: "OK", stateNeedsReview: false });
+  });
+
+  it("bulk-state returns actionId: null when nothing changed (no action, no Undo)", async () => {
+    const s = setup();
+    s.syncNow();
+    expect(
+      await s.service.bulkSet({ bucket: "noAddress", customerIds: ["ghost"], state: "TX" }, user),
+    ).toEqual({ changed: 0, changedAddressIds: [], actionId: null });
   });
 
   it("409 after the undo window, with nothing changed", async () => {
     const { s, updated, unusable } = await bulkThenUndoSetup();
     s.advanceMinutes(11);
     await expect(
-      s.service.undo({ changedAddressIds: unusable.changedAddressIds }, user),
+      s.service.undo(
+        { actionId: unusable.actionId as string, changedAddressIds: unusable.changedAddressIds },
+        user,
+      ),
     ).rejects.toThrow(ConflictException);
     expect(updated.stateCode).toBe("TX");
   });
@@ -509,11 +588,14 @@ describe("POST .../bulk-state/undo", () => {
     const { s, unusable } = await bulkThenUndoSetup();
     for (const row of s.store.audits) row.tenantId = "other"; // the actions belong to another tenant
     await expect(
-      s.service.undo({ changedAddressIds: unusable.changedAddressIds }, user),
+      s.service.undo(
+        { actionId: unusable.actionId as string, changedAddressIds: unusable.changedAddressIds },
+        user,
+      ),
     ).rejects.toThrow(NotFoundException);
-    await expect(s.service.undo({ changedAddressIds: ["nope"] }, user)).rejects.toThrow(
-      NotFoundException,
-    );
+    await expect(
+      s.service.undo({ actionId: "nope", changedAddressIds: ["nope"] }, user),
+    ).rejects.toThrow(NotFoundException);
   });
 
   it("empty or over-long id lists are 400s", async () => {
@@ -524,9 +606,19 @@ describe("POST .../bulk-state/undo", () => {
     });
     const run = (value: Record<string, unknown>) =>
       pipe.transform(value, { type: "body", metatype: BulkStateUndoDto });
-    await expect(run({ changedAddressIds: [] })).rejects.toThrow(BadRequestException);
-    await expect(run({ changedAddressIds: "a1" })).rejects.toThrow(BadRequestException);
-    await expect(run({ changedAddressIds: ["a1"] })).resolves.toEqual({
+    await expect(run({ actionId: "x", changedAddressIds: [] })).rejects.toThrow(
+      BadRequestException,
+    );
+    await expect(run({ actionId: "x", changedAddressIds: "a1" })).rejects.toThrow(
+      BadRequestException,
+    );
+    // the action id is REQUIRED: an id-only undo would fall back to guessing the action
+    await expect(run({ changedAddressIds: ["a1"] })).rejects.toThrow(BadRequestException);
+    await expect(run({ actionId: "", changedAddressIds: ["a1"] })).rejects.toThrow(
+      BadRequestException,
+    );
+    await expect(run({ actionId: "audit-1", changedAddressIds: ["a1"] })).resolves.toEqual({
+      actionId: "audit-1",
       changedAddressIds: ["a1"],
     });
   });

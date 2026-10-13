@@ -35,9 +35,6 @@ import { UNKNOWN_STATE_CUSTOMER_SELECT } from "./unknown-state-customers.service
 export const AUDIT_BULK_STATE_SET = "customer_address.bulk_state_set";
 export const AUDIT_BULK_STATE_UNDONE = "customer_address.bulk_state_undone";
 
-/** How many recent bulk-state audit rows an undo searches for its originating action. */
-const UNDO_SEARCH_ROWS = 200;
-
 /**
  * One address a bulk-state action touched, as its audit row stores it: whether the action CREATED the
  * address (a no-address customer's minimal address) or updated an existing one (then `prior` is the
@@ -136,7 +133,8 @@ export class UnknownStateBulkService {
       const changedCustomerIds = [
         ...new Set([...updates.map((u) => u.customerId), ...creates.map((c) => c.customerId)]),
       ];
-      if (changedCustomerIds.length === 0) return { changed: 0, changedAddressIds: [] };
+      if (changedCustomerIds.length === 0)
+        return { changed: 0, changedAddressIds: [], actionId: null };
 
       const updateIds = updates.map((u) => u.address.id);
       if (updateIds.length > 0) {
@@ -180,7 +178,7 @@ export class UnknownStateBulkService {
           "The change could not be saved. Nothing was changed. Try again.",
         );
       }
-      await tx.auditLog.create({
+      const action = await tx.auditLog.create({
         data: {
           tenantId,
           userId: user.sub,
@@ -198,17 +196,16 @@ export class UnknownStateBulkService {
           },
         },
       });
-      return { changed: changedCustomerIds.length, changedAddressIds };
+      return { changed: changedCustomerIds.length, changedAddressIds, actionId: action.id };
     });
   }
 
   /**
-   * POST .../bulk-state/undo: within BULK_STATE_UNDO_WINDOW_MIN of the bulk write that produced these
-   * address ids, restores each updated address's prior state columns and removes each address that
-   * same action created — each only while untouched since (an address edited meanwhile is left alone).
-   * The origin is the newest bulk action that recorded ALL the ids (else the newest naming any).
-   * Idempotent: a repeat restores 0 and answers `{ restored: 0 }`. 404 when no bulk action of this
-   * tenant names the ids; 409 (nothing changed) once the window has passed.
+   * POST .../bulk-state/undo: within BULK_STATE_UNDO_WINDOW_MIN of the bulk action `actionId` names,
+   * restores each named address's prior state columns and removes each named address that action
+   * created — each only while untouched since (an address edited meanwhile, including by a later bulk
+   * action, is left alone). Ids the action did not record are ignored. Idempotent: a repeat restores 0.
+   * 404 when this tenant has no bulk action with that id; 409 (nothing changed) once the window has passed.
    */
   async undo(dto: BulkStateUndoDto, user: JwtPayload): Promise<BulkStateUndoResponse> {
     const tenantId = this.requireTenant();
@@ -221,23 +218,11 @@ export class UnknownStateBulkService {
     const now = Date.now();
 
     return this.prisma.tenantTransaction(async (tx: Prisma.TransactionClient) => {
-      const recent = await tx.auditLog.findMany({
-        where: { tenantId, action: AUDIT_BULK_STATE_SET },
-        orderBy: { createdAt: "desc" },
-        take: UNDO_SEARCH_ROWS,
+      const origin = await tx.auditLog.findFirst({
+        where: { id: dto.actionId, tenantId, action: AUDIT_BULK_STATE_SET },
         select: { id: true, createdAt: true, meta: true },
       });
-      // The action these ids came from: the newest one that recorded ALL of them, so a retried undo
-      // of an earlier action never lands on a later action that shares an id (that would revert it).
-      // Only when no single action recorded them all, the newest one naming any of them.
-      const named = (r: (typeof recent)[number]) =>
-        new Set(bulkStateEntries(r.meta).map((e) => e.addressId));
-      const origin =
-        recent.find((r) => {
-          const has = named(r);
-          return ids.every((id) => has.has(id));
-        }) ?? recent.find((r) => ids.some((id) => named(r).has(id)));
-      if (!origin) throw new NotFoundException("There is no change to undo for these addresses.");
+      if (!origin) throw new NotFoundException("There is no change to undo with that id.");
       if (now - origin.createdAt.getTime() > BULK_STATE_UNDO_WINDOW_MIN * 60_000) {
         throw new ConflictException(
           `This change can no longer be undone: undo is available for ${BULK_STATE_UNDO_WINDOW_MIN} minutes after it is made. Nothing was changed.`,
