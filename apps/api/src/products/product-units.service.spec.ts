@@ -186,6 +186,11 @@ describe("ProductUnitsService.create", () => {
     await expect(
       invoice.service.create("p1", { label: "Case", factorToBase: 300 }),
     ).rejects.toThrow(ConflictException);
+    // A coded refusal (UNIT_SIZE_IN_USE), never a raw English sentence.
+    const coded = await order.service
+      .create("p1", { label: "Case", factorToBase: 300 })
+      .catch((e) => e);
+    expect(coded.getResponse()).toEqual(expect.objectContaining({ code: "UNIT_SIZE_IN_USE" }));
     const q = order.db.$queryRaw.mock.calls[0][0] as { sql: string; values: unknown[] };
     // Through the PARENT order / invoice of this tenant (a top-level item read misses a NULL-tenant line).
     expect(q.sql).toContain('JOIN "Order"');
@@ -310,6 +315,60 @@ describe("ProductUnitsService: levels are linked to the tenant's unit by name (t
     await service.update("p1", "u-case", { price: 5 });
     expect(db.tenantUnit.findFirst).not.toHaveBeenCalled();
     expect(tx.productUnit.update.mock.calls[0][0].data).not.toHaveProperty("tenantUnitId");
+  });
+});
+
+describe("ProductUnitsService: an ARCHIVED tenant unit (UNIT_ARCHIVED)", () => {
+  const archived = { id: "tu-old", archivedAt: new Date("2026-10-01") };
+  const usesIt = (db: ReturnType<typeof build>["db"], used: boolean) =>
+    db.productUnit.findFirst.mockImplementation(async ({ where }) => {
+      if (where.tenantUnitId === "tu-old") return used ? { id: "pu-1" } : null;
+      return where.id === caseRow.id ? caseRow : null;
+    });
+
+  it("create refuses a unit archived in Settings when this product does not already use it", async () => {
+    const { service, db, tx } = build({});
+    db.tenantUnit.findFirst.mockResolvedValue(archived);
+    usesIt(db, false);
+    const err = await service.create("p1", { label: "Case", factorToBase: 288 }).catch((e) => e);
+    expect(err).toBeInstanceOf(ConflictException);
+    expect(err.getResponse()).toEqual(expect.objectContaining({ code: "UNIT_ARCHIVED" }));
+    expect(tx.productUnit.create).not.toHaveBeenCalled();
+  });
+
+  it("the check is tenant- and product-scoped (the product's own levels, by tenantUnitId)", async () => {
+    const { service, db } = build({});
+    db.tenantUnit.findFirst.mockResolvedValue(archived);
+    usesIt(db, false);
+    await service.create("p1", { label: "Case", factorToBase: 288 }).catch(() => undefined);
+    expect(db.productUnit.findFirst).toHaveBeenCalledWith(
+      expect.objectContaining({ where: { productId: "p1", tenantUnitId: "tu-old" } }),
+    );
+  });
+
+  it("update refuses a retype onto an archived unit the product does not use", async () => {
+    const { service, db, tx } = build({ rows: [caseRow] });
+    db.tenantUnit.findFirst.mockResolvedValue(archived);
+    usesIt(db, false);
+    await expect(service.update("p1", "u-case", { label: "Crate" })).rejects.toMatchObject({
+      response: expect.objectContaining({ code: "UNIT_ARCHIVED" }),
+    });
+    expect(tx.productUnit.update).not.toHaveBeenCalled();
+  });
+
+  it("allows an archived unit the product ALREADY uses (the level keeps its meaning)", async () => {
+    const { service, db, tx } = build({ rows: [caseRow] });
+    db.tenantUnit.findFirst.mockResolvedValue(archived);
+    usesIt(db, true);
+    await service.update("p1", "u-case", { label: "Crate" });
+    expect(tx.productUnit.update.mock.calls[0][0].data.tenantUnitId).toBe("tu-old");
+  });
+
+  it("an active unit never triggers the product lookup", async () => {
+    const { service, db } = build({});
+    db.tenantUnit.findFirst.mockResolvedValue({ id: "tu-1", archivedAt: null });
+    await service.create("p1", { label: "Case", factorToBase: 288 });
+    expect(db.productUnit.findFirst).not.toHaveBeenCalled();
   });
 });
 

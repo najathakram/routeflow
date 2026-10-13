@@ -57,6 +57,10 @@
 //   UNITS_RENAME_IN_PROGRESS — `body.code` of the 409 when a pack edit, level write or import confirmation could not get the
 //                    tenant units lock within 3 s because a unit rename is running (or a rename could not get it within 5 s
 //                    because writers hold it). Nothing was changed; retry.
+//   UNIT_ARCHIVED — `body.code` of the 409 when a product level is given a unit name that is ARCHIVED in Settings > Units
+//                    and the product does not already use it (restore the unit first). Nothing was written.
+//   UNIT_SIZE_IN_USE — `body.code` of the 409 when a product level's size would change (or a label move onto a size) while
+//                    orders or invoices already carry that label at a different size. Nothing was written.
 //   RECIPE_IMMUTABLE — `body.code` of the 409 when a recipe that is ACTIVE or RETIRED is edited
 //                    in place (#2717 M2, I3); clone it with POST /recipes/:id/versions instead.
 //   RECIPE_CATEGORY_LOCKED — `body.code` of the 409 when a product that sits in a non-RETIRED
@@ -221,6 +225,8 @@ export const API_ERROR_CODES = {
   UNIT_NAME_TAKEN: "UNIT_NAME_TAKEN",
   UNIT_RENAME_COLLISION: "UNIT_RENAME_COLLISION",
   UNITS_RENAME_IN_PROGRESS: "UNITS_RENAME_IN_PROGRESS",
+  UNIT_ARCHIVED: "UNIT_ARCHIVED",
+  UNIT_SIZE_IN_USE: "UNIT_SIZE_IN_USE",
   HOLDERS_CHANGED: "HOLDERS_CHANGED",
   FAMILY_NOT_SELLABLE: "FAMILY_NOT_SELLABLE",
   /** 400 from PUT customer price overrides and POST/PATCH promotions: a FAMILY container is never priced or promoted; `productIds` names them. Use its variants. */

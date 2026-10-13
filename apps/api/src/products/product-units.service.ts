@@ -6,6 +6,7 @@ import {
 } from "@nestjs/common";
 import { Prisma } from "@prisma/client";
 import { PIECE_LABEL } from "@routeflow/pricing";
+import { API_ERROR_CODES } from "../common/api-error-codes";
 import { PrismaService } from "../prisma/prisma.service";
 import { isPieceSynonym, unitNameKey } from "../units/piece-words";
 import { sqlKeyOf } from "../units/unit-name-sql";
@@ -88,7 +89,7 @@ export class ProductUnitsService {
           priceTier5: dto.priceTier5 ?? null,
           isDefaultSelling: makeDefault,
           sortOrder: dto.sortOrder ?? 0,
-          tenantUnitId: await this.tenantUnitIdFor(tx, label, actorId),
+          tenantUnitId: await this.tenantUnitIdFor(tx, productId, label, actorId),
         },
         select: UNIT_SELECT,
       });
@@ -121,7 +122,7 @@ export class ProductUnitsService {
           ...(isDefaultSelling !== undefined ? { isDefaultSelling } : {}),
           // The link follows the NAME: a retyped label must leave the old unit's rename behind.
           ...(dto.label !== undefined
-            ? { tenantUnitId: await this.tenantUnitIdFor(tx, label, actorId) }
+            ? { tenantUnitId: await this.tenantUnitIdFor(tx, productId, label, actorId) }
             : {}),
         },
         select: UNIT_SELECT,
@@ -175,10 +176,13 @@ export class ProductUnitsService {
    * The tenant unit a level's label names, so a unit rename relabels the level. The unit is added
    * when the tenant has none (ON CONFLICT DO NOTHING: a racing add must not abort this transaction).
    * Piece and its synonyms, and any name past the unit-name limit, are never units: unlinked (null).
-   * An ARCHIVED unit still links (it hides from pickers; the level keeps its meaning).
+   * An ARCHIVED unit is refused (UNIT_ARCHIVED) unless this product already uses it: a level that
+   * already carries the name keeps its meaning, but archiving means "stop offering it", so no new
+   * level may pick it up. This is the ONE place that rule lives (create and update both come here).
    */
   private async tenantUnitIdFor(
     tx: any,
+    productId: string,
     label: string,
     actorId: string | null,
   ): Promise<string | null> {
@@ -187,7 +191,10 @@ export class ProductUnitsService {
     const tenantId = this.prisma.getTenantId();
     const nameKey = unitNameKey(name);
     const find = () =>
-      tx.tenantUnit.findFirst({ where: { tenantId, nameKey }, select: { id: true } });
+      tx.tenantUnit.findFirst({
+        where: { tenantId, nameKey },
+        select: { id: true, archivedAt: true },
+      });
     let unit = await find();
     if (!unit) {
       const { count } = await tx.tenantUnit.createMany({
@@ -206,6 +213,18 @@ export class ProductUnitsService {
             entityId: unit.id,
             meta: { name, via: "level" },
           },
+        });
+      }
+    }
+    if (unit?.archivedAt) {
+      const used = await tx.productUnit.findFirst({
+        where: { productId, tenantUnitId: unit.id },
+        select: { id: true },
+      });
+      if (!used) {
+        throw new ConflictException({
+          code: API_ERROR_CODES.UNIT_ARCHIVED,
+          message: `The unit ${name} is archived. Restore it in Settings > Units first.`,
         });
       }
     }
@@ -335,9 +354,10 @@ export class ProductUnitsService {
         AND (ii."unitsPerBox" IS NULL OR ii."unitsPerBox" <> ${factorToBase})
       LIMIT 1`);
     if (hit.length > 0) {
-      throw new ConflictException(
-        `"${label}" is already used on an order or invoice at a different size, so its size cannot change. Create a new unit instead.`,
-      );
+      throw new ConflictException({
+        code: API_ERROR_CODES.UNIT_SIZE_IN_USE,
+        message: `"${label}" is already used on an order or invoice at a different size, so its size cannot change.`,
+      });
     }
   }
 }

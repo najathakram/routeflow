@@ -31,6 +31,8 @@ export const API_ERROR_CODES = {
   UNIT_NAME_TAKEN: "UNIT_NAME_TAKEN",
   UNIT_RENAME_COLLISION: "UNIT_RENAME_COLLISION",
   UNITS_RENAME_IN_PROGRESS: "UNITS_RENAME_IN_PROGRESS",
+  UNIT_ARCHIVED: "UNIT_ARCHIVED",
+  UNIT_SIZE_IN_USE: "UNIT_SIZE_IN_USE",
   HOLDERS_CHANGED: "HOLDERS_CHANGED",
   FAMILY_NOT_SELLABLE: "FAMILY_NOT_SELLABLE",
   /** 400 from PUT customer price overrides and POST/PATCH promotions: a FAMILY container is never priced or promoted; `productIds` names them. Use its variants. */
