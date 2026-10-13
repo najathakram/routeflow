@@ -5,7 +5,7 @@
  * PR1: at 1440 the groups live in a "Settings" rail that stays beside the open section (the open row is
  * aria-current); at 390 there is no rail, the list is the hub.
  *
- * Role: admin (the pre-authed operator state). READ-ONLY: nothing is saved.
+ * Role: tenant admin (tenant-admin.json; the Low-stock digest is admin-only). READ-ONLY: nothing is saved.
  */
 import { test, expect, type Page } from "@playwright/test";
 import { setTenantCookie } from "./helpers/auth";

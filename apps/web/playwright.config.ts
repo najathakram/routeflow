@@ -531,7 +531,8 @@ export default defineConfig({
       name: "settings-search",
       testMatch: /settings-search\.spec\.ts/,
       dependencies: ["setup"],
-      use: { ...devices["Desktop Chrome"], storageState: path.join(AUTH_DIR, "operator.json") },
+      // tenant admin: the spec opens the Low-stock digest, an admin-only setting (an OPERATOR never sees it)
+      use: { ...devices["Desktop Chrome"], storageState: path.join(AUTH_DIR, "tenant-admin.json") },
     },
 
     // ── #2791: /invoices/[id]/edit redirects a pending-mirror draft to its order (spec 64).

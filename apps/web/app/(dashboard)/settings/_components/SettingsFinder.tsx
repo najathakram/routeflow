@@ -174,6 +174,9 @@ function ResultRow({
  * Search, your business, frequent links and the groups: the one body shared by the xl rail and the
  * below-xl hub list (which also shows "Needs attention" under the card). Typing swaps the groups for one flat result list; Enter opens the first link.
  */
+
+/** The Business & team group, by key (never by its position in GROUP_META). */
+const BUSINESS_GROUP = GROUP_META.find((g) => g.key === "business") as (typeof GROUP_META)[number];
 export function SettingsFinder({
   variant,
   nav,
@@ -308,7 +311,7 @@ export function SettingsFinder({
             <ul className="border-t border-[var(--line)] pt-2">
               <Row
                 entry={account}
-                group={GROUP_META[1]}
+                group={BUSINESS_GROUP}
                 variant="rail"
                 current={active.includes(account.id)}
               />
