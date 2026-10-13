@@ -1419,14 +1419,20 @@ export default function ProductsPage() {
             )}
             <PortalBulkButtons selected={selected} onDone={() => setSelected(new Set())} />
             <PortalLimitButtons selected={selected} onDone={() => setSelected(new Set())} />
-            <Button
-              variant="danger"
-              leftIcon={<Trash2 className="h-4 w-4" />}
-              loading={bulkDelete.isPending}
-              onClick={() => setShowBulkDeleteConfirm(true)}
+            {/* The destructive action sits apart, past a divider, never shoulder to shoulder with Limit in portal. */}
+            <div
+              data-testid="bulk-destructive"
+              className="flex items-center sm:ml-2 sm:border-l sm:border-brand-200 sm:pl-4"
             >
-              Delete {selected.size} item{selected.size !== 1 ? "s" : ""}
-            </Button>
+              <Button
+                variant="danger"
+                leftIcon={<Trash2 className="h-4 w-4" />}
+                loading={bulkDelete.isPending}
+                onClick={() => setShowBulkDeleteConfirm(true)}
+              >
+                Delete {selected.size} item{selected.size !== 1 ? "s" : ""}
+              </Button>
+            </div>
           </div>
         </div>
       )}
