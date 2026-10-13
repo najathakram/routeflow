@@ -218,8 +218,9 @@ function isAnnualStripeBilled(
  *  - STRIPE:   a Stripe subscription item (Stripe configured AND a `stripeSubId`).
  *  - MANUAL:   an `externalPayment` tenant the owner invoices by hand — on at the CATALOG price, counted as
  *              revenue, no Stripe call, and the platform is told to add it to the next manual invoice.
- *  - UNBILLED: a free pilot (no subscription / no `stripeSubId`) or Stripe not configured — on, priced 0,
- *              books no revenue.
+ *  - UNBILLED: a free pilot (no subscription / no `stripeSubId`), Stripe not configured, or a live
+ *              Stripe subscription with `couponFull` (a 100% coupon, B1079) — on, priced 0, books no
+ *              revenue, no Stripe item.
  */
 export type AddonBilling = AddonBillingMode;
 
@@ -1835,6 +1836,8 @@ export class SubscriptionMutationService {
         billingInterval: true,
         cycle: true,
         externalPayment: true,
+        // B1079: read here so the mode decision (addonModeOf) honours a 100%-coupon (unbilled) tenant.
+        couponFull: true,
       },
     });
     return { sub, mode: this.addonModeOf(sub) };
@@ -2557,11 +2560,26 @@ export class SubscriptionMutationService {
    * clears `externalPayment`, so a tenant that was manually activated and LATER pays by card carries
    * both, and must be billed through Stripe (same order as onboarding's payment.recorded). Only
    * without a live Stripe subscription does `externalPayment` mean "the owner invoices by hand".
+   * A live Stripe subscription with `couponFull` is the exception: UNBILLED (B1079).
    */
   private addonModeOf(
-    sub: { stripeSubId?: string | null; externalPayment?: boolean | null } | null | undefined,
+    sub:
+      | {
+          stripeSubId?: string | null;
+          externalPayment?: boolean | null;
+          couponFull?: boolean | null;
+        }
+      | null
+      | undefined,
   ): AddonBilling {
-    if (this.stripe.isConfigured && sub?.stripeSubId) return "STRIPE";
+    if (this.stripe.isConfigured && sub?.stripeSubId) {
+      // B1079 (owner ruling: a pilot on a 100% coupon is UNBILLED): `couponFull` (the SA-736r flag, the
+      // same one `isPayingRow` reads) means the subscription's recurring invoice is $0 because of
+      // discounts. Such a tenant is not billed for add-ons either: the add-on is granted at price 0 and
+      // NO Stripe item is created. Checked inside the live-Stripe branch only: `couponFull` never
+      // outlives its Stripe subscription (M5), so without one the mode below is unchanged.
+      return sub.couponFull === true ? "UNBILLED" : "STRIPE";
+    }
     if (sub?.externalPayment) return "MANUAL";
     return "UNBILLED";
   }
