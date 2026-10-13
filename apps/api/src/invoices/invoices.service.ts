@@ -775,20 +775,6 @@ export class InvoicesService {
     return created;
   }
 
-  /** F2: see draft-order-restrictions.ts (returns the judged product ids, null for a non-DRAFT order). */
-  private assertDraftOrderSellable(
-    tenantId: string | null | undefined,
-    order: Parameters<typeof assertDraftOrderSellable>[2],
-    productIds: ReadonlyArray<string | null | undefined>,
-  ) {
-    return assertDraftOrderSellable(
-      { restrictions: this.sellingRestrictions, prisma: this.prisma },
-      tenantId,
-      order,
-      productIds,
-    );
-  }
-
   /** RF-4: see foldCategoryTax in manual-invoice-context.ts (shared with estimate conversion, B659). */
   private foldCategoryTax(
     itemsData: Array<{ categoryTaxAmount?: number }>,
@@ -1123,7 +1109,8 @@ export class InvoicesService {
 
     // F2: billing a DRAFT order SELLS its lines. Refuse a banned one (the standard 409) BEFORE the
     // license guard, the split flag + its audit, the number reservation and the deposit-mirror send.
-    const judged = await this.assertDraftOrderSellable(
+    const judged = await assertDraftOrderSellable(
+      { restrictions: this.sellingRestrictions, prisma: this.prisma },
       tenantId,
       order,
       remainingItems.map(({ li }: any) => li.productId),
@@ -2722,7 +2709,8 @@ export class InvoicesService {
     }
     // F2: a DRAFT order's partial SELLS these lines: refuse a banned one (standard 409) before the
     // number is reserved (no series gap), the transaction opens or the optional send runs.
-    const judged = await this.assertDraftOrderSellable(
+    const judged = await assertDraftOrderSellable(
+      { restrictions: this.sellingRestrictions, prisma: this.prisma },
       this.prisma.getTenantId(),
       order,
       dto.items.map((req) => (itemById.get(req.orderItemId) as any)?.productId),
