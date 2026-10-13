@@ -503,6 +503,47 @@ describe("ROW 447 — unsaved new-invoice draft", () => {
     expect(JSON.parse(stored()!).data.reference).toBe("ORIGINAL");
   });
 
+  describe("banner nits", () => {
+    it("Restore and Discard are at least 44 px tall tap targets", async () => {
+      seed();
+      renderWithProviders(<NewInvoicePage />);
+      const restore = await screen.findByRole("button", { name: "Restore" });
+      const discard = screen.getByRole("button", { name: "Discard" });
+      for (const b of [restore, discard]) {
+        expect(b.className).toContain("min-h-[44px]");
+      }
+    });
+
+    it.each([
+      ["standalone", "Other charge"],
+      ["newSale", "New sale"],
+    ])("the summary names the kind of invoice: %s", async (basis, label) => {
+      seed({ basis });
+      const user = userEvent.setup();
+      renderWithProviders(<NewInvoicePage />);
+      expect(
+        await screen.findByText(`${label} · Acme Co · 1 item · saved 5 min ago`),
+      ).toBeInTheDocument();
+      // The same fixed label is the heading of the form it restores into.
+      await user.click(screen.getByRole("button", { name: "Restore" }));
+      expect(await screen.findByRole("heading", { name: label })).toBeInTheDocument();
+    });
+
+    it("after Restore a polite status line says the draft was restored, without moving focus", async () => {
+      seed();
+      const user = userEvent.setup();
+      renderWithProviders(<NewInvoicePage />);
+      await user.click(await screen.findByRole("button", { name: "Restore" }));
+      await screen.findByDisplayValue("Widget");
+      const region = screen.getByRole("region", { name: "Unsaved invoice" });
+      expect(within(region).getByRole("status")).toHaveTextContent("Draft restored.");
+      expect(within(region).getByRole("status")).toHaveAttribute("aria-live", "polite");
+      expect(region.contains(document.activeElement)).toBe(false);
+      await user.click(within(region).getByRole("button", { name: "Dismiss" }));
+      expect(screen.queryByRole("region", { name: "Unsaved invoice" })).not.toBeInTheDocument();
+    });
+  });
+
   it("while the offer is open, typing in a fresh form does not overwrite the stored draft", async () => {
     seed({ reference: "ORIGINAL" });
     const user = userEvent.setup();

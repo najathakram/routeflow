@@ -1057,6 +1057,7 @@ export default function NewInvoicePage() {
   const draft = useInvoiceDraft(draftKey, draftForm);
   const [draftBusy, setDraftBusy] = React.useState(false);
   const [draftNotice, setDraftNotice] = React.useState<string | null>(null);
+  const [draftRestored, setDraftRestored] = React.useState(false);
   async function restoreDraft() {
     if (!draft.offer || draftBusy) return;
     setDraftBusy(true);
@@ -1099,6 +1100,7 @@ export default function NewInvoicePage() {
       );
       setErrors({});
       setDraftNotice(draftNoticeCopy(r.droppedLines, r.customerCleared, r.pricesUpdated));
+      setDraftRestored(true);
       draft.resolveOffer();
     } finally {
       setDraftBusy(false);
@@ -1108,11 +1110,15 @@ export default function NewInvoicePage() {
     <InvoiceDraftBanner
       summary={draft.offer ? draftSummary(draft.offer.snapshot, draft.offer.savedAt) : null}
       notice={draftNotice}
+      restored={draftRestored}
       warning={!!draft.offer && !isPristineForm(draftForm)}
       busy={draftBusy}
       onRestore={() => void restoreDraft()}
       onDiscard={draft.discard}
-      onDismissNotice={() => setDraftNotice(null)}
+      onDismissNotice={() => {
+        setDraftNotice(null);
+        setDraftRestored(false);
+      }}
     />
   );
 
