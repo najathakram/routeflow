@@ -156,6 +156,9 @@ const CODE_COPY: Record<string, string> = {
     "An invoice on this account is overdue. Pay it to continue; plan changes are available again right after.",
   [API_ERROR_CODES.PAYMENT_STATE_UNKNOWN]:
     "We couldn't confirm your open invoice just now. Please try again in a moment.",
+  // B1102: a catalog add-on whose plan setting is invalid is refused instead of billed; fixed sentence, no ids.
+  [API_ERROR_CODES.ADDON_CATALOG_INVALID]:
+    "This add-on can't be changed right now because of a setup problem on our side. Please contact support.",
 };
 
 /** Exact server sentences (already product text) for refusals with no `code`; matched whole, never partially. */

@@ -190,7 +190,25 @@ export function isAddonIncludedAtPlan(
  * plan — the free-text column cannot be trusted without this check at every write/publish.
  */
 export function isValidIncludedAtPlan(includedAtPlan: string | null | undefined): boolean {
-  return includedAtPlan == null || normalizePlanKey(includedAtPlan) !== null;
+  return resolveIncludedAtPlan(includedAtPlan).ok;
+}
+
+/**
+ * B1102: the ONE parser of a catalog `includedAtPlan` — every reader (write validation, the
+ * choose-plan quote, the enable refusal, plan-change retirement, the background billers) goes
+ * through it, so "is this key legal" is decided in exactly one place. `{ ok: true, plan: null }` =
+ * never bundled; `{ ok: true, plan }` = the CURRENT plan key (legacy aliases normalized);
+ * `{ ok: false }` = a key no plan answers to (a typo) — callers must fail closed, never read it as
+ * "bundled nowhere".
+ */
+export type IncludedAtPlanResolution = { ok: true; plan: PlanKey | null } | { ok: false };
+
+export function resolveIncludedAtPlan(
+  includedAtPlan: string | null | undefined,
+): IncludedAtPlanResolution {
+  if (includedAtPlan == null) return { ok: true, plan: null };
+  const plan = normalizePlanKey(includedAtPlan);
+  return plan ? { ok: true, plan } : { ok: false };
 }
 
 /** The SKUs whose `includedAtPlan` is not a legal value (see `isValidIncludedAtPlan`). */
