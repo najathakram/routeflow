@@ -17,6 +17,7 @@ import { ApiTags, ApiOperation, ApiBearerAuth } from "@nestjs/swagger";
 import { JwtAuthGuard } from "../auth/guards/jwt-auth.guard";
 import { RolesGuard } from "../auth/guards/roles.guard";
 import { Roles } from "../auth/decorators/roles.decorator";
+import { NoImpersonation } from "../auth/decorators/no-impersonation.decorator";
 import { CurrentUser } from "../auth/decorators/current-user.decorator";
 import { SubscriptionService } from "./subscription.service";
 import { INTERACTIVE_STRIPE_REQUEST, trimBillingViewForRole } from "./subscription-billing-extras";
@@ -40,6 +41,10 @@ interface AuthUser {
  * Tenant self-service billing (settings-billing + choose-plan). Authenticated
  * operators/admins only. Reads + quotes + the subscribe/upgrade/downgrade/cancel and
  * add-on enable/disable mutations. (Public pricing lives on GET /billing/plans.)
+ *
+ * SA-778: every mutating route except `quote` (read-like, no state change) carries
+ * `@NoImpersonation("billing")`, so a support session can see these pages but not act on them.
+ * billing-support-session.pin.spec.ts fails the build when a new mutation lacks it.
  */
 @ApiTags("billing")
 @ApiBearerAuth()
@@ -152,6 +157,7 @@ export class SettingsBillingController {
   @Post("subscribe")
   @HttpCode(HttpStatus.OK)
   @Roles(UserRole.TENANT_ADMIN)
+  @NoImpersonation("billing")
   @ApiOperation({ summary: "Commit a subscription / convert a trial by picking a plan" })
   subscribe(@CurrentUser() user: AuthUser, @Body() dto: SubscribeDto) {
     return this.mutations.subscribe(this.tenantIdOf(user), dto, user.sub);
@@ -160,6 +166,7 @@ export class SettingsBillingController {
   @Post("subscription")
   @HttpCode(HttpStatus.OK)
   @Roles(UserRole.TENANT_ADMIN)
+  @NoImpersonation("billing")
   @ApiOperation({ summary: "Upgrade to a higher plan (instant + prorated)" })
   upgrade(@CurrentUser() user: AuthUser, @Body() dto: UpgradeDto) {
     return this.mutations.upgrade(this.tenantIdOf(user), dto.planKey, user.sub);
@@ -168,6 +175,7 @@ export class SettingsBillingController {
   @Post("subscription/downgrade")
   @HttpCode(HttpStatus.OK)
   @Roles(UserRole.TENANT_ADMIN)
+  @NoImpersonation("billing")
   @ApiOperation({ summary: "Schedule a downgrade at period end (nothing deleted)" })
   downgrade(@CurrentUser() user: AuthUser, @Body() dto: DowngradeDto) {
     return this.mutations.downgrade(
@@ -181,6 +189,7 @@ export class SettingsBillingController {
   @Post("subscription/cancel")
   @HttpCode(HttpStatus.OK)
   @Roles(UserRole.TENANT_ADMIN)
+  @NoImpersonation("billing")
   @ApiOperation({ summary: "Schedule cancellation at period end" })
   cancel(@CurrentUser() user: AuthUser) {
     return this.mutations.cancel(this.tenantIdOf(user), user.sub);
@@ -189,6 +198,7 @@ export class SettingsBillingController {
   @Post("subscription/resume")
   @HttpCode(HttpStatus.OK)
   @Roles(UserRole.TENANT_ADMIN)
+  @NoImpersonation("billing")
   @ApiOperation({ summary: "Undo a scheduled cancellation" })
   resume(@CurrentUser() user: AuthUser) {
     return this.mutations.resume(this.tenantIdOf(user), user.sub);
@@ -204,6 +214,7 @@ export class SettingsBillingController {
   @Post("subscription/checkout")
   @HttpCode(HttpStatus.OK)
   @Roles(UserRole.TENANT_ADMIN)
+  @NoImpersonation("billing")
   @ApiOperation({ summary: "Start a Stripe Checkout session for the tenant's own pinned plan" })
   async createCheckout(@CurrentUser() user: AuthUser) {
     const tenantId = this.tenantIdOf(user);
@@ -228,6 +239,7 @@ export class SettingsBillingController {
   @Post("portal")
   @HttpCode(HttpStatus.OK)
   @Roles(UserRole.TENANT_ADMIN)
+  @NoImpersonation("billing")
   @ApiOperation({ summary: "Stripe billing portal + the owed invoice's hosted page (admin only)" })
   async createPortal(@CurrentUser() user: AuthUser) {
     const tenantId = this.tenantIdOf(user);
@@ -257,6 +269,7 @@ export class SettingsBillingController {
   @Post("addons/:sku/enable")
   @HttpCode(HttpStatus.OK)
   @Roles(UserRole.TENANT_ADMIN)
+  @NoImpersonation("billing")
   @ApiOperation({ summary: "Enable an add-on (prorated for the current cycle)" })
   enableAddon(
     @CurrentUser() user: AuthUser,
@@ -269,6 +282,7 @@ export class SettingsBillingController {
   @Post("addons/:sku/disable")
   @HttpCode(HttpStatus.OK)
   @Roles(UserRole.TENANT_ADMIN)
+  @NoImpersonation("billing")
   @ApiOperation({ summary: "Disable an add-on (history kept read-only)" })
   disableAddon(@CurrentUser() user: AuthUser, @Param("sku") sku: string) {
     return this.mutations.disableAddon(this.tenantIdOf(user), sku, user.sub);

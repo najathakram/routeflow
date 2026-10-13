@@ -479,6 +479,11 @@ export const API_ERROR_CODES = {
    * sign-in (GET /auth/google).
    */
   SIGN_IN_ROUTE_RETIRED: "SIGN_IN_ROUTE_RETIRED",
+  /**
+   * 403 from a billing action (subscribe, checkout, portal, plan change, add-on enable/disable) taken in a support
+   * session. Fixed body; nothing was written. Reads stay available (SA-778).
+   */
+  IMPERSONATION_NOT_ALLOWED: "IMPERSONATION_NOT_ALLOWED",
 } as const satisfies Record<string, ApiErrorCode>;
 
 /** The `flag` of a PLAN_GATE body that gates a count (a meter), not a feature flag. Not an error code. */
