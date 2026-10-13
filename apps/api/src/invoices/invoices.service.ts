@@ -1310,7 +1310,7 @@ export class InvoicesService {
     const runCreation = async (tx: any): Promise<any[]> => {
       if (!callerTx) await lockOrderRow(tx, tenantId, order.id); // SA-706: before the first insert
       const ids = remainingItems.map(({ li }: any) => li.id); // F2b: re-judge before the first insert
-      await rejudgeDraftOrderInTx(tx, this.sellingRestrictions, tenantId, order, ids, judged);
+      await rejudgeDraftOrderInTx(tx, order, ids, judged);
       // Right before the first insert — never above the caller's transaction.
       const baseNumber =
         hoistedBaseNumber ?? (await this.generateInvoiceNumber(tenantId ?? undefined, tx));
@@ -2814,7 +2814,7 @@ export class InvoicesService {
     const runCreation = async (tx: any) => {
       await lockOrderRow(tx, tenantId, order.id); // SA-706: before the insert's FK takes KEY SHARE
       const ids = dto.items.map((r) => r.orderItemId); // F2b: edited since the pre-check?
-      await rejudgeDraftOrderInTx(tx, this.sellingRestrictions, tenantId, order, ids, judged);
+      await rejudgeDraftOrderInTx(tx, order, ids, judged);
       let created: any;
       try {
         created = await tx.invoice.create({

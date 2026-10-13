@@ -282,10 +282,12 @@ describe("InvoicesService — DRAFT order invoicing is gated (F2)", () => {
     });
   });
   // F2b: the pre-check runs outside the transaction; the DRAFT can be edited before the write. The
-  // transaction re-reads the billed lines under the Order row lock and judges again BEFORE the invoice
-  // row exists. (The office path reserves its number before the transaction opens, by design (pool
-  // starvation, fix-round-2.md D1), so a refusal here leaves a series gap, never an invoice.)
-  describe("F2b: re-judged inside the transaction when the DRAFT changed after the pre-check", () => {
+  // transaction re-reads the billed lines under the Order row lock and COMPARES their product set with the
+  // one the pre-check judged, BEFORE the invoice row exists. A changed set is a retryable 409 (the retry re-runs
+  // the pre-check); the engine is never called inside the transaction (it opens its own connection: REG-B100-C).
+  // (The office path reserves its number before the transaction opens, by design (pool starvation,
+  // fix-round-2.md D1), so that 409 burns the reserved number: a series gap, never an invoice.)
+  describe("F2b: a DRAFT that changed after the pre-check is a retryable 409 inside the transaction", () => {
     const dto = { items: [{ orderItemId: "oi-a", qty: 1 }] } as any;
     /** the in-tx read: what the order's lines are NOW */
     const inTx = (status: string, lines: Array<{ id: string; productId: string }>) => {
@@ -299,7 +301,7 @@ describe("InvoicesService — DRAFT order invoicing is gated (F2)", () => {
         },
       );
 
-    it("split: a banned product swapped in after the pre-check is refused in the tx, no invoice, no line bump", async () => {
+    it("split: a product swapped in after the pre-check is a 409, no engine call in the tx, no invoice, no line bump", async () => {
       setup("DRAFT", false);
       banPBanned();
       inTx("DRAFT", [
@@ -310,22 +312,23 @@ describe("InvoicesService — DRAFT order invoicing is gated (F2)", () => {
       const err: any = await service.createInvoiceFromOrder("ord-1").catch((e) => e);
 
       expect(err).toBeInstanceOf(ConflictException);
-      expect(err.getResponse().code).toBe(API_ERROR_CODES.SELLING_RESTRICTED);
-      expect(restrictions().assertLinesSellable).toHaveBeenCalledTimes(2); // pre-check ok, in-tx refused
+      expect(err.getResponse().code).toBe(API_ERROR_CODES.ORDER_CHANGED_DURING_EDIT);
+      expect(restrictions().assertLinesSellable).toHaveBeenCalledTimes(1); // the pre-check only
       expect(prisma.invoice.create).not.toHaveBeenCalled();
       expect(prisma.orderItem.updateMany).not.toHaveBeenCalled();
       expect(prisma.auditLog.create).not.toHaveBeenCalled();
       expect(sendSpy).not.toHaveBeenCalled();
     });
 
-    it("partial: the same race is refused in the tx and writes no invoice", async () => {
+    it("partial: the same race is a 409 in the tx and writes no invoice", async () => {
       setup("DRAFT", false);
       banPBanned();
       inTx("DRAFT", [{ id: "oi-a", productId: "p-banned" }]);
 
       const err: any = await service.createPartialFromOrder("ord-1", dto).catch((e) => e);
 
-      expect(err.getResponse().code).toBe(API_ERROR_CODES.SELLING_RESTRICTED);
+      expect(err.getResponse().code).toBe(API_ERROR_CODES.ORDER_CHANGED_DURING_EDIT);
+      expect(restrictions().assertLinesSellable).toHaveBeenCalledTimes(1);
       expect(prisma.invoice.create).not.toHaveBeenCalled();
       expect(prisma.orderItem.updateMany).not.toHaveBeenCalled();
     });
