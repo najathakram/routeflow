@@ -20,7 +20,7 @@ import { createMockPrisma } from "../testing/prisma-mock";
 
 describe("UsersController.update: who may edit whom", () => {
   const service = { updateUser: jest.fn().mockResolvedValue({ id: "x" }) };
-  const controller = new UsersController(service as never);
+  const controller = new UsersController(service as never, {} as never);
   const operator = { sub: "op1", username: "op", role: UserRole.OPERATOR } as never;
   const admin = { sub: "ad1", username: "ad", role: UserRole.TENANT_ADMIN } as never;
   const driver = { sub: "dr1", username: "dr", role: UserRole.DRIVER } as never;
