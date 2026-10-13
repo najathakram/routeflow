@@ -60,3 +60,16 @@ export async function sendAfterCommit<T>(kept: KeptDraft, run: () => Promise<T>)
     throw withKeptDraft(err, kept);
   }
 }
+
+/**
+ * `invoices.send(invoiceId, ...opts)` for a caller that has just committed the invoice (and its
+ * order): a failure carries both ids. A one-line call site for OrdersService, which is at its size cap.
+ */
+export function sendCommitted<A extends unknown[], T>(
+  invoices: { send(id: string, ...opts: A): Promise<T> },
+  invoiceId: string,
+  orderId: string,
+  ...opts: A
+): Promise<T> {
+  return sendAfterCommit({ invoiceId, orderId }, () => invoices.send(invoiceId, ...opts));
+}

@@ -1,5 +1,6 @@
 import { ConflictException } from "@nestjs/common";
 import { API_ERROR_CODES } from "../common/api-error-codes";
+import { sendCommitted } from "../invoices/send-after-commit";
 
 /** What a stored counter sale is, judged from its order status and its invoices' statuses (ALL of them, voided included). */
 export type StoredSaleState = "live" | "incomplete" | "voided" | "changed";
@@ -77,4 +78,20 @@ export async function assertSaleReplayable(
     ) === "voided"
   )
     throw saleVoidedConflict();
+}
+
+/**
+ * createSale's per-invoice send. A replay keeps an invoice that is already past DRAFT as it is
+ * (nothing to resend); otherwise the send runs with the committed invoice and order ids attached to
+ * any failure (row 466), so the client opens what exists instead of retrying into a duplicate.
+ */
+export async function sendSale<A extends unknown[], T>(
+  invoices: { send(id: string, ...opts: A): Promise<T> },
+  inv: { id: string; status?: string | null },
+  orderId: string,
+  replay: boolean,
+  ...opts: A
+): Promise<T | typeof inv> {
+  if (replay && inv.status && inv.status !== "DRAFT") return inv;
+  return sendCommitted(invoices, inv.id, orderId, ...opts);
 }

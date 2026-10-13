@@ -106,7 +106,7 @@ import { assertRemovalsNameALine, writeLineRemoval, writeLineUpdate } from "./or
 import { ORDER_STATUS_TRANSITIONS, assertOrderStatusTransition } from "./order-status-transitions";
 import { buildStatusUpdateData } from "./order-status-claim";
 import { AppliedCreditNoteDto, CreateOrderDto } from "./dto/create-order.dto";
-import { assertSaleReplayable } from "./sale-replay-guard";
+import { assertSaleReplayable, sendSale } from "./sale-replay-guard";
 import { assertReplaySameCart, isIdempotencyKeyViolation } from "./replay-same-cart";
 import { savedCreditsPending, withCreditsPendingHint } from "./create-credit-tail";
 import {
@@ -157,7 +157,6 @@ import { currentTaxRate } from "../common/tax-rate";
 import { NotificationsService } from "../notifications/notifications.service";
 import { InvoicesService } from "../invoices/invoices.service";
 import { dueStamp } from "../invoices/invoice-due-dates";
-import { sendAfterCommit } from "../invoices/send-after-commit";
 import {
   decrementStockForSale,
   restoreStockForReopen,
@@ -2278,13 +2277,7 @@ export class OrdersService implements OnApplicationBootstrap {
       const sendOpts = sale.suppressInvoiceNotify ? [{ suppressNotify: true }] : [];
       let primary: any = null;
       for (const inv of replay ? oldestFirst(invoices) : invoices) {
-        const sent =
-          replay && inv.status && inv.status !== InvoiceStatus.DRAFT
-            ? inv
-            : // Row 466: the order and this invoice are committed; a send failure carries their ids.
-              await sendAfterCommit({ invoiceId: inv.id, orderId: order.id }, () =>
-                this.invoicesService.send(inv.id, ...sendOpts),
-              );
+        const sent = await sendSale(this.invoicesService, inv, order.id, replay, ...sendOpts);
         if (primary === null) primary = sent;
       }
       return primary;
