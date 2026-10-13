@@ -11,6 +11,7 @@ import { OrdersService } from "./orders.service";
 import { NotificationsService } from "../notifications/notifications.service";
 import { AuthorizationGuardService } from "../authorizations/authorization-guard.service";
 import { MessagingService } from "../messaging/messaging.service";
+import { SellingRestrictionsService } from "../selling-restrictions/selling-restrictions.service";
 import { PrismaService } from "../prisma/prisma.service";
 import { createMockPrisma } from "../testing/prisma-mock";
 import { computeLineSubtotal, normalizeBoxesPieces } from "@routeflow/pricing";
@@ -61,6 +62,16 @@ const dispatchedOrder = {
     { id: "item-cancelled", productId: "prod-2", status: "CANCELLED" as const, qty: 3 },
   ],
   routeRun: { status: "IN_PROGRESS" as const },
+};
+
+// F1(iii): a buyer's filing judges the product's portal visibility, so the row carries those facts.
+const VISIBLE_TOMATOES = {
+  id: "prod-1",
+  name: "Tomatoes",
+  isActive: true,
+  kind: "STANDARD",
+  portalVisible: true,
+  parent: null,
 };
 
 const PENDING_CR = {
@@ -136,6 +147,13 @@ describe("ChangeRequestsService", () => {
         { provide: NotificationsService, useValue: notifications },
         { provide: AuthorizationGuardService, useValue: authGuard },
         { provide: MessagingService, useValue: messaging },
+        {
+          provide: SellingRestrictionsService,
+          useValue: {
+            restrictedProductIdsFor: jest.fn().mockResolvedValue(new Set<string>()),
+            assertLinesSellable: jest.fn().mockResolvedValue(undefined),
+          },
+        },
       ],
     }).compile();
 
@@ -150,7 +168,7 @@ describe("ChangeRequestsService", () => {
     it("creates a PENDING ADD_ITEM change request on a dispatched order", async () => {
       prisma.order.findUnique.mockResolvedValue(dispatchedOrder);
       prisma.customer.findFirst.mockResolvedValue({ id: "cust-1" });
-      prisma.product.findFirst.mockResolvedValue({ id: "prod-1", name: "Tomatoes" });
+      prisma.product.findFirst.mockResolvedValue({ ...VISIBLE_TOMATOES });
       prisma.changeRequest.create.mockResolvedValue({ id: "cr-new", status: "PENDING" });
 
       await service.create(
@@ -184,7 +202,7 @@ describe("ChangeRequestsService", () => {
     it("fires ORDER_CHANGED_AT_DOOR via MessagingService on ADD_ITEM creation", async () => {
       prisma.order.findUnique.mockResolvedValue(dispatchedOrder);
       prisma.customer.findFirst.mockResolvedValue({ id: "cust-1" });
-      prisma.product.findFirst.mockResolvedValue({ id: "prod-1", name: "Tomatoes" });
+      prisma.product.findFirst.mockResolvedValue({ ...VISIBLE_TOMATOES });
       prisma.changeRequest.create.mockResolvedValue({ id: "cr-new", status: "PENDING" });
 
       await service.create(

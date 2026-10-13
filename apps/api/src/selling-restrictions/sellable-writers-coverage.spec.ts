@@ -53,6 +53,8 @@ const TABLE: Record<string, Row> = {
   [ord("forceConsolidateCustomer")]: X(
     "owner ruling 2026-09-25 (#2093) / SA-255: MERGE AND WARN — folds orders each checked when placed, never blocked; warns via merge-restriction-warning.ts (pinned in orders.merge-warn.spec.ts)",
   ),
+  // F1(iii): a buyer's ADD_ITEM filing is judged on BUYER_PORTAL when FILED (called by ChangeRequestsService.create).
+  "orders/change-requests.service.ts::ChangeRequestsService.assertBuyerMayFile": G,
   [tpl("createOrderFromTemplate")]: G,
   [ord("deleteOrder")]: X("removes lines"),
   // SA-762r F1: the cancel's line status flip, moved verbatim out of changeStatus (whose own row stays: it calls the choke point).
@@ -140,7 +142,7 @@ const TABLE: Record<string, Row> = {
 /** The RATCHET: how many rows are still PENDING. Lower it in the PR that flips a row to GUARDED. */
 const PENDING_BASELINE = 0; // was 2: createSplitInvoices + importInvoices both EXEMPT with written reasons (F-05 #2093 split/import PR)
 /** GUARDED + PENDING: reclassifying a PENDING row to EXEMPT (an escape, not progress) must change THIS. */
-const ENFORCEMENT_POINTS = 11; // +1 (F2: assertDraftOrderSellable); was 10: -2 (#2093 split/import EXEMPT, this PR); prior -2 (completeWithPayment/reopenStop) + -2 (merge/consolidate, SA-255)
+const ENFORCEMENT_POINTS = 12; // +1 (F1 iii: assertBuyerMayFile); was 11: +1 (F2: assertDraftOrderSellable); was 10: -2 (#2093 split/import EXEMPT, this PR); prior -2 (completeWithPayment/reopenStop) + -2 (merge/consolidate, SA-255)
 const CHOKE_POINT = ["assertLinesSellable", "checkLinesSellable"];
 
 // ─── scanner (same rules as orders/unit-line-writers.ast.spec.ts; exercised on inline source) ──

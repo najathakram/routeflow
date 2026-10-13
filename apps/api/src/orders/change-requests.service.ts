@@ -25,6 +25,13 @@ import {
   UserStatus,
 } from "@prisma/client";
 import { assertSellableLines } from "../products/sellable-lines";
+import {
+  buyerVisibilityFor,
+  isBuyerVisibleProduct,
+  PORTAL_PARENT_INCLUDE,
+} from "../buyer/buyer-product-visibility";
+import { SellingRestrictionsService } from "../selling-restrictions/selling-restrictions.service";
+import { requireRestrictionTenantId } from "../selling-restrictions/restriction-tenant";
 import { CreateChangeRequestDto } from "./dto/create-change-request.dto";
 import {
   ChangeRequestResolveAction,
@@ -126,6 +133,8 @@ export class ChangeRequestsService {
     private readonly notifications: NotificationsService,
     private readonly authGuard: AuthorizationGuardService,
     private readonly messaging: MessagingService,
+    // F1(iii): required (never @Optional): a buyer's ADD_ITEM filing is judged at filing time (L-247).
+    private readonly sellingRestrictions: SellingRestrictionsService,
   ) {}
 
   async create(orderId: string, dto: CreateChangeRequestDto, user: JwtPayload) {
@@ -182,10 +191,18 @@ export class ChangeRequestsService {
         }
         const product = await this.prisma.forTenant().product.findFirst({
           where: { id: dto.productId },
-          select: { id: true, name: true, kind: true },
+          select: {
+            id: true,
+            name: true,
+            kind: true,
+            isActive: true,
+            portalVisible: true,
+            ...PORTAL_PARENT_INCLUDE,
+          },
         });
         if (!product) throw new BadRequestException("Product not found");
         assertSellableLines([product]); // WS8: refuse at filing time, not only at approval
+        if (user.role === UserRole.CUSTOMER) await this.assertBuyerMayFile(product, order);
         productId = product.id;
         payload = {
           productId: product.id,
@@ -254,6 +271,32 @@ export class ChangeRequestsService {
       .catch(() => {});
 
     return created;
+  }
+
+  /**
+   * F1(iii): a BUYER's ADD_ITEM is judged when it is FILED, on the buyer channel, not only when staff approve it.
+   * A product this buyer cannot see in the portal (hidden, inactive, under a hidden parent, or banned for them) is
+   * the plain 404 every hidden-product read gives: no name, no reason. A visible one still goes through the
+   * choke point on BUYER_PORTAL (a rule the visibility set does not cover refuses with the buyer 409).
+   */
+  private async assertBuyerMayFile(
+    product: Parameters<typeof isBuyerVisibleProduct>[1],
+    order: { customerId: string },
+  ): Promise<void> {
+    const tenantId = requireRestrictionTenantId(this.prisma.getTenantId());
+    const visibility = await buyerVisibilityFor(
+      this.sellingRestrictions,
+      tenantId,
+      order.customerId,
+    );
+    if (!isBuyerVisibleProduct(visibility, product))
+      throw new NotFoundException("Product not found");
+    await this.sellingRestrictions.assertLinesSellable({
+      tenantId,
+      customerId: order.customerId,
+      lines: [{ productId: product.id }],
+      channel: "BUYER_PORTAL",
+    });
   }
 
   /** Human-readable one-liner for the ORDER_CHANGED_AT_DOOR {{changeSummary}} var. */
