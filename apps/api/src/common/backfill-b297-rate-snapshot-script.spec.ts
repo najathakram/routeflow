@@ -322,4 +322,26 @@ describe("backfill-b297-rate-snapshot", () => {
     expect(out.hint).toContain("--allow-protected t-9");
     expect(out.hint).toContain('--confirm "APPLY TRIO 1 L2 0 LINES"');
   });
+  it("protection reads couponFull with the subscription: comped plan unprotected, unselected column throws", () => {
+    const out = runModule(`
+      const t = { id: "t-1", slug: "acme", status: "ACTIVE", class: "PRODUCTION", deletedAt: null };
+      const arm = (sub) => m.protectedTenants([{ ...t, ...sub }], new Set()).get("t-1") ?? null;
+      let unselected = null;
+      try { arm({ planKey: "STARTER", stripeSubId: null }); } catch (e) { unselected = e.message; }
+      console.log(JSON.stringify({
+        paying: arm({ planKey: "STARTER", stripeSubId: null, couponFull: false }),
+        comped: arm({ planKey: "STARTER", stripeSubId: null, couponFull: true }),
+        compedLinked: arm({ planKey: "STARTER", stripeSubId: "sub_x", couponFull: true }),
+        noPlan: arm({ planKey: null, stripeSubId: null, couponFull: null }),
+        noSubRow: arm({ planKey: null, stripeSubId: null }),
+        unselected,
+      }));`);
+    expect(out.paying).toBe("paying");
+    expect(out.comped).toBeNull();
+    expect(out.compedLinked).toBe("stripe-linked");
+    expect(out.noPlan).toBeNull();
+    expect(out.noSubRow).toBeNull();
+    expect(out.unselected).toMatch(/couponFull must be a boolean/);
+    expect(code).toMatch(/s\."stripeSubId", s\."couponFull"\s+FROM "Tenant" t/);
+  });
 });

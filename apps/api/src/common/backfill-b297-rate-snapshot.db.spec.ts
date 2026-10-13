@@ -363,6 +363,38 @@ describeDb("B297 PR6 backfill — provable rate snapshot, real Postgres", () => 
     expect(Number(row.categoryTaxAmount)).toBe(0.6);
   }, 180_000);
 
+  it("couponFull is read with the subscription: a paying plan is HELD, a 100%-coupon plan is planned", async () => {
+    const cat = await newCategory("Coupon");
+    const line = await provingLine(cat);
+    // ACTIVE + PRODUCTION + a plan = paying unless the coupon covers it all (owner: 100% coupon = unbilled).
+    await raw.tenant.update({ where: { id: tenantId }, data: { status: "ACTIVE" } });
+    await raw.tenantSubscription.create({
+      data: { tenantId, planKey: "STARTER", couponFull: false },
+    });
+    try {
+      const paying = cli(["--local"]);
+      expect(paying.out).not.toMatch(/couponFull must be a boolean/);
+      expect(paying.status).toBe(0);
+      expect(paying.out).toMatch(/APPLY: 0 line\(s\)/);
+      expect(paying.out).toMatch(/PAYING-HELD: 1 line\(s\)/);
+
+      await raw.tenantSubscription.update({ where: { tenantId }, data: { couponFull: true } });
+      const comped = cli(["--local"]);
+      expect(comped.status).toBe(0);
+      expect(comped.out).toMatch(/APPLY: 1 line\(s\)/);
+      expect(comped.out).toMatch(/PAYING-HELD: 0 line\(s\)/);
+      // The apply re-derives protection in its transaction from the same select.
+      const res = cli(applyArgs(planOf(comped.out), ["--i-have-a-fresh-backup"]));
+      expect(res.out).toMatch(/committed — 1 line\(s\)/);
+      expect(res.status).toBe(0);
+    } finally {
+      await raw.tenantSubscription.deleteMany({ where: { tenantId } });
+      await raw.tenant.update({ where: { id: tenantId }, data: { status: "TRIAL" } });
+    }
+    const row = await raw.orderItem.findUniqueOrThrow({ where: { id: line } });
+    expect(Number(row.categoryTaxRate)).toBe(0.05);
+  }, 180_000);
+
   it("a 2-line plan with ONE stale line rolls back BOTH (whole-apply refusal)", async () => {
     const cat = await newCategory("Two");
     const a = await provingLine(cat);

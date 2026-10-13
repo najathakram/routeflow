@@ -250,17 +250,28 @@ export function classifyL2(line, sources) {
 // ─── pure: protection / plan file (same shape as the B294 backfill) ───────────
 
 const PROTECTION_SQL = `
-  SELECT t.id, t.slug, t.status, t.class, t."deletedAt", s."planKey", s."stripeSubId"
+  SELECT t.id, t.slug, t.status, t.class, t."deletedAt", s."planKey", s."stripeSubId", s."couponFull"
   FROM "Tenant" t LEFT JOIN "TenantSubscription" s ON s."tenantId" = t.id
   WHERE t.id = ANY($1::text[])`;
 
 /** Rows from PROTECTION_SQL -> Map<tenantId, arm> (protected only). */
+/**
+ * The subscription inputs of the shared paying predicate. No plan (a LEFT JOIN miss included) is never
+ * paying, so couponFull is moot there; otherwise it is passed RAW: an unselected (undefined) value THROWS
+ * in isPayingTenant, never coerced (same as the B294 backfill).
+ */
+export const subOf = (r) => ({
+  planKey: r.planKey,
+  stripeSubId: r.stripeSubId,
+  couponFull: r.planKey == null ? false : r.couponFull,
+});
+
 export function protectedTenants(rows, protectedSlugs) {
   const out = new Map();
   for (const r of rows) {
     const arm = protectedArm(
       { slug: r.slug, status: r.status, class: r.class, deletedAt: r.deletedAt },
-      { planKey: r.planKey, stripeSubId: r.stripeSubId },
+      subOf(r),
       protectedSlugs,
     );
     if (arm) out.set(r.id, arm);
@@ -770,7 +781,7 @@ export async function applyPlan(client, plan, ctx) {
     try {
       assertWritableTenant(
         { id: r.id, slug: r.slug, status: r.status, class: r.class, deletedAt: r.deletedAt },
-        { planKey: r.planKey, stripeSubId: r.stripeSubId },
+        subOf(r),
         ctx.protectedSlugs,
         { allowProtected: ctx.overrides?.get(r.id) },
       );
