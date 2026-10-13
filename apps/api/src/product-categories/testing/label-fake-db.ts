@@ -214,6 +214,11 @@ export class LabelFakeDb {
               this.log("$executeRawUnsafe", sql, []);
               return 0;
             },
+            // lockLabelCategory reads the caller's lock_timeout to restore it after the lock.
+            $queryRaw: async (strings: TemplateStringsArray, ...values: unknown[]) => {
+              this.log("$queryRaw", strings.join("?"), values);
+              return [{ lock_timeout: "0" }];
+            },
           });
         } catch (e) {
           this.labels = snap;

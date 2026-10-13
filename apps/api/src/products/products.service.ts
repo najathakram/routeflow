@@ -57,6 +57,7 @@ import {
   syncProductBarcodesFromLegacy,
   syncProductImagesFromLegacy,
 } from "./product-catalog-sync";
+import { labelNameKey, syncCategoryLabel } from "../product-categories/label-writer";
 import {
   claimCodes,
   codeClaims,
@@ -718,7 +719,7 @@ export class ProductsService {
 
   async create(
     dto: CreateProductDto,
-    options?: { suppressEmit?: boolean; actorId?: string | null },
+    options?: { suppressEmit?: boolean; actorId?: string | null; actorName?: string | null },
   ) {
     assertSafeProductNames(dto); // B964-2: a formula-led name/variantName is refused before any read or write
     // B990: the typed free-text category too, UNCONDITIONALLY: even with a structured subcategory chosen or a parent without one
@@ -965,6 +966,13 @@ export class ProductsService {
         barcode: row.barcode,
         unitsPerBox: row.unitsPerBox,
       });
+      // Add-only label sync from the category text this INSERT wrote (same tx).
+      await syncCategoryLabel(tx, {
+        tenantId,
+        productId: row.id,
+        text: row.category,
+        actor: { id: options?.actorId ?? null, name: options?.actorName ?? null },
+      });
       return row;
     });
     if (!options?.suppressEmit) this.emitProductChanged(created.id, "created");
@@ -974,7 +982,7 @@ export class ProductsService {
   async update(
     id: string,
     dto: UpdateProductDto,
-    options?: { suppressEmit?: boolean; actorId?: string | null },
+    options?: { suppressEmit?: boolean; actorId?: string | null; actorName?: string | null },
   ) {
     await this.assertCanFlagTobacco(dto.isTobacco);
     if (dto.msrp !== undefined) await this.assertMsrpAllowed();
@@ -1357,6 +1365,9 @@ export class ProductsService {
           confirmed: !!dto.confirmCascade,
         });
       }
+      // The category text this write REPLACES, read inside the tx (the label sync below compares name keys against it,
+      // never the pre-transaction read). A plain read: the UPDATE right after takes the row lock (house lock order).
+      const before = await tx.product.findFirst({ where: { id }, select: { category: true } });
       let row;
       try {
         row = await tx.product.update({ where: { id }, data });
@@ -1382,6 +1393,16 @@ export class ProductsService {
         productId: id,
         imageKeys: row.imageKeys,
       });
+      // Add-only label sync, only when the category NAME KEY changed: re-saving the same text (or a case/space
+      // variant of it) must not resurrect a membership an operator removed.
+      if (labelNameKey(row.category) !== labelNameKey(before?.category ?? existing.category)) {
+        await syncCategoryLabel(tx, {
+          tenantId,
+          productId: id,
+          text: row.category,
+          actor: { id: options?.actorId ?? null, name: options?.actorName ?? null },
+        });
+      }
       if (family.propagate) {
         const moved = await propagateFamilyPrice(tx, { tenantId, familyId: id });
         propagatedRows = moved.variants + moved.recipes;
@@ -2015,6 +2036,11 @@ export class ProductsService {
             productId: created.id,
             barcode: item.barcode ?? null,
             unitsPerBox: null,
+          });
+          await syncCategoryLabel(tx, {
+            tenantId: tenantIdForBulk,
+            productId: created.id,
+            text: item.category,
           });
           return created;
         });

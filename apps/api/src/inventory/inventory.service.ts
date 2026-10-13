@@ -9,6 +9,7 @@ import {
   Optional,
 } from "@nestjs/common";
 import { assertSellableLines } from "../products/sellable-lines";
+import { syncCategoryLabel } from "../product-categories/label-writer";
 import {
   assertParentUsable,
   parentInvalid,
@@ -479,7 +480,7 @@ export class InventoryService {
             priceTier4: parent.priceTier4,
             priceTier5: parent.priceTier5,
           };
-    return tx.product.create({
+    const created = await tx.product.create({
       data: {
         name: `${parent.name} - ${variantName}`,
         variantName,
@@ -499,6 +500,9 @@ export class InventoryService {
         regUomUnit: parent.regUomUnit ?? null,
       },
     });
+    // The variant copied its parent's category text: add-only label sync, same tx.
+    await syncCategoryLabel(tx, { tenantId, productId: created.id, text: created.category });
+    return created;
   }
 
   async assignToVariants(dto: VariantAssignDto, performedById: string) {

@@ -45,6 +45,7 @@ const ALLOWED: Record<string, string> = {
   // when the operator explicitly asks for a local run.
   "data-questions-report.mjs": "--local mode only",
   "sa077-split-qty-consistency.mjs": "--local mode only",
+  "labels-from-categories.mjs": "--local mode only (writer: requireProxy otherwise)",
   "t6-backfill-census.mjs": "--local mode only",
   "t6-null-census.mjs": "--local mode only",
   "t6-null-rows-report.mjs": "--local mode only",
