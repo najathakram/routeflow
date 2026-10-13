@@ -107,6 +107,33 @@ export async function prepareUnitEditContext(
 }
 
 /**
+ * The edit's customer tier for a staff write: the customer's default tier plus their per-product
+ * rows for `productIds`. A null `customerId` (a non-staff edit) reads nothing and prices at tier 1.
+ */
+export async function loadOperatorTiers(
+  tx: {
+    customer: { findFirst(a: any): Promise<any> };
+    customerPrice: { findMany(a: any): Promise<any[]> };
+  },
+  customerId: string | null | undefined,
+  productIds: string[],
+): Promise<{ operatorCpMap: Map<string, number | null>; operatorDefaultTier: number }> {
+  const customer = customerId
+    ? await tx.customer.findFirst({ where: { id: customerId }, select: { pricingTier: true } })
+    : null;
+  const rows =
+    customerId && productIds.length
+      ? await tx.customerPrice.findMany({ where: { customerId, productId: { in: productIds } } })
+      : [];
+  return {
+    operatorCpMap: new Map<string, number | null>(
+      rows.map((cp: any) => [cp.productId, cp.pricingTier]),
+    ),
+    operatorDefaultTier: customer?.pricingTier ?? 1,
+  };
+}
+
+/**
  * SA-728 / units P0b: an OLD client names the base ("Piece" / the tenant's base label) for a DERIVED
  * base unit. Rewrites that dto item IN PLACE into the pack line's pieces (no unitLabel, boxes/pieces
  * via normalizeBoxesPieces, no echoed per-piece price) so computeLineSubtotal prorates it. Reads the
