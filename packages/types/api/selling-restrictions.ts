@@ -123,6 +123,11 @@ export interface UnknownStateCustomersResponse {
    * state" nudge from it; false when no such rule is in force.
    */
   businessStateMissing: boolean;
+  /**
+   * True when the sweep stopped at its page cap (as readiness's `truncated`): every total is partial. The web
+   * never reads a truncated response as all clear.
+   */
+  truncated: boolean;
 }
 
 export interface BulkStateRequest {

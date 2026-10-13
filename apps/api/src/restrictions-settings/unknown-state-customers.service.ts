@@ -126,10 +126,11 @@ export class UnknownStateCustomersService {
     const wantsRows = (b: UnknownStateBucketName) =>
       after === null && (params.bucket === undefined || params.bucket === b);
     let customersTotal = 0;
+    let truncated = false;
 
     // Pass 1: every bucket's total (and, with no cursor, each wanted bucket's first page + 1 lookahead).
     // Unfiltered: needsDefault's total needs every customer (the state buckets' results are unchanged).
-    await this.sweep(tenantId, null, false, (customer) => {
+    truncated = await this.sweep(tenantId, null, false, (customer) => {
       const placement = placeUnknownState(customer, addressPrecedence);
       const names = UNKNOWN_STATE_BUCKETS.filter((b) => placement[b]);
       if (names.length > 0) customersTotal++;
@@ -145,11 +146,17 @@ export class UnknownStateCustomersService {
     // Pass 2 (a later page): only the named bucket, from the cursor, stopping at the lookahead row.
     if (after && params.bucket) {
       const bucket = params.bucket;
-      await this.sweep(tenantId, after, bucket !== "needsDefault", (customer) => {
-        const placed = placeUnknownState(customer, addressPrecedence)[bucket];
-        if (placed) rows[bucket].push(rowFor(customer, bucket, placed));
-        return rows[bucket].length > limit;
-      });
+      const pageTruncated = await this.sweep(
+        tenantId,
+        after,
+        bucket !== "needsDefault",
+        (customer) => {
+          const placed = placeUnknownState(customer, addressPrecedence)[bucket];
+          if (placed) rows[bucket].push(rowFor(customer, bucket, placed));
+          return rows[bucket].length > limit;
+        },
+      );
+      truncated = truncated || pageTruncated;
     }
 
     const page = (b: UnknownStateBucketName): UnknownStateBucket => {
@@ -170,20 +177,22 @@ export class UnknownStateCustomersService {
       needsDefault: page("needsDefault"),
       customersTotal,
       businessStateMissing,
+      truncated,
     };
   }
 
   /**
    * Visits the customers in (businessName, id) order, in cursor pages (the readiness idiom), until
    * `visit` returns true or the customers run out: only CANDIDATE_WHERE's when `candidatesOnly`, else
-   * every live customer. Every query carries the explicit tenantId.
+   * every live customer. Every query carries the explicit tenantId. Returns true when it stopped at
+   * ENABLE_READINESS_MAX_PAGES with more customers left (the counts are partial), as readiness does.
    */
   private async sweep(
     tenantId: string,
     after: UnknownStateCursor | null,
     candidatesOnly: boolean,
     visit: (customer: UnknownStateCustomer) => boolean,
-  ): Promise<void> {
+  ): Promise<boolean> {
     const db = this.prisma.forTenant();
     let cursor: string | undefined;
     for (let pages = 0; pages < ENABLE_READINESS_MAX_PAGES; pages++) {
@@ -201,9 +210,10 @@ export class UnknownStateCustomersService {
         ...(cursor ? { cursor: { id: cursor }, skip: 1 } : {}),
         select: UNKNOWN_STATE_CUSTOMER_SELECT,
       });
-      for (const customer of page) if (visit(customer)) return;
-      if (page.length < ENABLE_READINESS_PAGE_SIZE) return;
+      for (const customer of page) if (visit(customer)) return false;
+      if (page.length < ENABLE_READINESS_PAGE_SIZE) return false;
       cursor = page[page.length - 1].id;
     }
+    return true;
   }
 }

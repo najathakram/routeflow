@@ -11,6 +11,10 @@ import {
 } from "@routeflow/types";
 import { RolesGuard } from "../auth/guards/roles.guard";
 import { resolveGoverningState } from "../selling-restrictions/selling-restrictions.core";
+import {
+  ENABLE_READINESS_MAX_PAGES,
+  ENABLE_READINESS_PAGE_SIZE,
+} from "../selling-restrictions/selling-restrictions.service";
 import { SellingRestrictionsService } from "../selling-restrictions/selling-restrictions.service";
 import { createMockPrisma } from "../testing/prisma-mock";
 import { UnknownStateCustomersQueryDto } from "./dto/unknown-state-customers-query.dto";
@@ -570,5 +574,55 @@ describe("needsDefault: 2+ addresses and no usable default", () => {
         { type: "query", metatype: UnknownStateCustomersQueryDto },
       ),
     ).resolves.toBeDefined();
+  });
+});
+
+describe("R2: a sweep that hits the page cap reports truncated, never a clean list", () => {
+  it("truncated: true when every page is full up to ENABLE_READINESS_MAX_PAGES; false otherwise", async () => {
+    const prisma = createMockPrisma();
+    const models = prisma.forTenant() as any;
+    const full = Array.from({ length: ENABLE_READINESS_PAGE_SIZE }, (_v, i) => ({
+      id: `c${i}`,
+      businessName: `N${i}`,
+      addresses: [],
+    }));
+    models.customer.findMany.mockResolvedValue(full);
+    const engine = {
+      getPolicy: jest.fn().mockResolvedValue({ addressPrecedence: "BILLING_FIRST" }),
+      businessStateMissing: jest.fn().mockResolvedValue(false),
+    };
+    const service = new UnknownStateCustomersService(
+      prisma,
+      engine as unknown as SellingRestrictionsService,
+    );
+    const r = await service.list({});
+    expect(models.customer.findMany).toHaveBeenCalledTimes(ENABLE_READINESS_MAX_PAGES);
+    expect(r.truncated).toBe(true);
+
+    expect((await setup(world()).service.list({})).truncated).toBe(false);
+  });
+
+  it("a later needsDefault page that hits the cap is truncated too", async () => {
+    const prisma = createMockPrisma();
+    const models = prisma.forTenant() as any;
+    seq = 0;
+    const clean = Array.from({ length: ENABLE_READINESS_PAGE_SIZE }, (_v, i) => ({
+      id: `c${i}`,
+      businessName: `N${i}`,
+      addresses: [addr({ state: "TX", stateCode: "TX" })],
+    }));
+    models.customer.findMany.mockResolvedValue(clean);
+    const engine = {
+      getPolicy: jest.fn().mockResolvedValue({ addressPrecedence: "BILLING_FIRST" }),
+      businessStateMissing: jest.fn().mockResolvedValue(false),
+    };
+    const service = new UnknownStateCustomersService(
+      prisma,
+      engine as unknown as SellingRestrictionsService,
+    );
+    const cursor = Buffer.from(JSON.stringify(["A", "c0"]), "utf8").toString("base64url");
+    const r = await service.list({ bucket: "needsDefault", cursor });
+    expect(r.truncated).toBe(true);
+    expect(r.needsDefault.rows).toEqual([]);
   });
 });
