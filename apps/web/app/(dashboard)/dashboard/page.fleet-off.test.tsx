@@ -68,7 +68,8 @@ jest.mock("@/lib/api/orders", () => ({
       return page(9);
     }
     if (p?.fulfillPath === "SHIP" && p?.status === "CONFIRMED") return page(7);
-    return page(3);
+    // The dashboard's per-status KPI counts sum to 12 (3 x 4), so "9" below stays unique to the week card.
+    return page(p?.status ? 4 : 3);
   },
 }));
 jest.mock("@/lib/api/finance", () => ({
