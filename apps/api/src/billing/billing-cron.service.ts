@@ -34,7 +34,7 @@ import { expiredTrialWhere, scheduledCancellationWhere } from "./auto-lock-candi
 import { markNeedsReconcile } from "./needs-reconcile";
 import { resolvePlanPrice } from "./plan-price";
 import { CHECKOUT_ADDON_EXPAND, stripeAddonItemIds } from "./stripe-addon-items";
-import { stripeBaseItem } from "./stripe-period";
+import { stripeBaseItem, stripeSubscriptionPeriod } from "./stripe-period";
 import { lockTenantPrice } from "./price-lock";
 
 /** A run of this many snapshot failures in one sweep is systemic — the sweep aborts loudly. */
@@ -630,6 +630,76 @@ export class BillingCronService {
     }
   }
 
+  /**
+   * F1 (b): does Stripe itself say this subscription ended? True only for `canceled`, or `cancel_at_period_end`
+   * with the base item's period over. Any read failure is a "no" for this hour, logged, never a lock.
+   */
+  private async stripeConfirmsCancellation(
+    tenantId: string,
+    stripeSubId: string,
+    now: Date,
+    scannedAt: Date,
+  ): Promise<boolean> {
+    try {
+      if (!this.stripe?.isConfigured) return false;
+      const stripeSub = await this.stripe.getSubscription(stripeSubId, {
+        expand: CHECKOUT_ADDON_EXPAND,
+      });
+      if (stripeSub?.status === "canceled") return true;
+      if (stripeSub?.cancel_at_period_end !== true) {
+        // F1b: Stripe says the cancel was resumed, so the local flag is a stale webhook's. Warning about it every
+        // hour for ever helps nobody: the flag is cleared ONCE (compare-and-set on the old value), with one log line.
+        // A `cancel_at` timestamp is another way to schedule a cancel - that is NOT a resume, so it is left alone.
+        if (stripeSub?.cancel_at == null)
+          await this.clearStaleCancelFlag(tenantId, stripeSubId, scannedAt);
+        else {
+          this.logger.warn(
+            `F1: tenant=${tenantId} has a local cancellation and Stripe holds cancel_at, not cancel_at_period_end - not locked`,
+          );
+        }
+        return false;
+      }
+      const ids = await stripeAddonItemIds(this.prisma, tenantId, stripeSub);
+      const period = stripeSubscriptionPeriod(stripeSub, ids);
+      return period != null && period.periodEnd.getTime() <= now.getTime();
+    } catch (e) {
+      this.logger.warn(
+        `F1: could not read Stripe for tenant=${tenantId}'s scheduled cancellation - skipped this hour: ${(e as Error).message}`,
+      );
+      return false;
+    }
+  }
+
+  /** F1b: clear a local `cancelAtPeriodEnd` Stripe no longer has - only while the row still holds that value. */
+  private async clearStaleCancelFlag(
+    tenantId: string,
+    stripeSubId: string,
+    scannedAt: Date,
+  ): Promise<void> {
+    try {
+      const { count } = await this.prisma.tenantSubscription.updateMany({
+        // updatedAt is the row's value from the scan, taken BEFORE the Stripe read: a re-cancel that landed since then
+        // moves it, the CAS misses, and the flag (now a real one) stays armed.
+        where: {
+          tenantId,
+          stripeSubId,
+          cancelAtPeriodEnd: true,
+          updatedAt: scannedAt,
+        },
+        data: { cancelAtPeriodEnd: false },
+      });
+      if (count === 1) {
+        this.logger.log(
+          `F1b: tenant=${tenantId}'s local cancellation was stale (Stripe has the cancel resumed) - flag cleared, not locked`,
+        );
+      }
+    } catch (e) {
+      this.logger.warn(
+        `F1b: could not clear tenant=${tenantId}'s stale cancellation flag - skipped this hour: ${(e as Error).message}`,
+      );
+    }
+  }
+
   /** End access for self-cancelled subscriptions whose period has ended → READ_ONLY
    *  (data intact, exports + sign-in + re-subscribe still work). */
   @LeaderCron(CronExpression.EVERY_HOUR, "billing-cron.applyScheduledCancellations")
@@ -637,11 +707,19 @@ export class BillingCronService {
     const now = new Date();
     const subs = await this.prisma.tenantSubscription.findMany({
       where: scheduledCancellationWhere(now),
-      select: { tenantId: true },
+      select: { tenantId: true, stripeSubId: true, updatedAt: true },
     });
     let applied = 0;
     let held = 0;
     for (const s of subs) {
+      // F1 (b): the local cancel flag can be a stale webhook's. Stripe is re-read BEFORE any lock or add-on
+      // deactivation; a read failure skips the tenant this hour (the next pass retries) - it never locks.
+      if (
+        s.stripeSubId &&
+        !(await this.stripeConfirmsCancellation(s.tenantId, s.stripeSubId, now, s.updatedAt))
+      ) {
+        continue;
+      }
       // #2641 / SA-544: ONE transaction per tenant, Tenant row lock FIRST; the scan's filter is
       // re-proved on the rows read under it (suspended/deleted, cancellation resumed, or period
       // moved since the scan ⇒ no-op). Everything below is priced from those LOCKED rows.

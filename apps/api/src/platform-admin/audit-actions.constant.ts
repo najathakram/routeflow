@@ -60,6 +60,16 @@ export const AdminAuditAction = {
   STRIPE_ASYNC_PAYMENT_FAILED: "STRIPE_ASYNC_PAYMENT_FAILED",
   /** A checkout listed add-on SKUs that no recognised Stripe item carries: not billed, no second item created. */
   ADDON_CHECKOUT_ITEMS_UNRECOGNISED: "ADDON_CHECKOUT_ITEMS_UNRECOGNISED",
+  /** A subscription.updated event named a Stripe subscription this account/mode does not have: not treated as deleted. */
+  STRIPE_SUBSCRIPTION_NOT_FOUND: "STRIPE_SUBSCRIPTION_NOT_FOUND",
+  /** F4: an invoice was paid while an admin had the tenant READ_ONLY (or it is CANCELLED): the status was NOT changed. */
+  PAID_WHILE_ADMIN_LOCKED: "PAID_WHILE_ADMIN_LOCKED",
+  /** A completed checkout could not push the tenant's price to its Stripe subscription, and a redelivery cannot fix it. */
+  STRIPE_PRICE_PUSH_BLOCKED: "STRIPE_PRICE_PUSH_BLOCKED",
+  /** A CANCELLED / delete went ahead because Stripe 404'd the subscription while the customer still exists. */
+  STRIPE_SUB_NOT_FOUND_TERMINATED: "STRIPE_SUB_NOT_FOUND_TERMINATED",
+  /** The subscription AND its customer are 404 in Stripe: a wrong account / mode is suspected; nothing was changed. */
+  STRIPE_KEY_MODE_MISMATCH: "STRIPE_KEY_MODE_MISMATCH",
   ADDON_MANUAL_INVOICE_DUE: "ADDON_MANUAL_INVOICE_DUE",
   ADDON_MANUAL_INVOICE_STOP: "ADDON_MANUAL_INVOICE_STOP",
   IMPERSONATION_STARTED: "IMPERSONATION_STARTED",
@@ -130,6 +140,11 @@ export const ADMIN_AUDIT_ACTION_LABELS: Record<AdminAuditActionCode, string> = {
   STRIPE_PAID_CHECKOUT_NOT_APPLIED: "Paid checkout not applied (reconcile in Stripe)",
   STRIPE_ASYNC_PAYMENT_FAILED: "Bank debit failed (checkout not paid)",
   ADDON_CHECKOUT_ITEMS_UNRECOGNISED: "Checkout add-on items not recognised (check Stripe)",
+  STRIPE_SUBSCRIPTION_NOT_FOUND: "Stripe subscription not found (check account/mode)",
+  PAID_WHILE_ADMIN_LOCKED: "Paid while locked (refund or reinstate deliberately)",
+  STRIPE_PRICE_PUSH_BLOCKED: "Price not pushed to Stripe (check the subscription)",
+  STRIPE_SUB_NOT_FOUND_TERMINATED: "Terminated: Stripe subscription not found (customer present)",
+  STRIPE_KEY_MODE_MISMATCH: "Stripe key/mode mismatch suspected (nothing changed)",
   ADDON_MANUAL_INVOICE_DUE: "Add-on to invoice manually",
   ADDON_MANUAL_INVOICE_STOP: "Add-on to stop invoicing manually",
   IMPERSONATION_STARTED: "Impersonation started",
