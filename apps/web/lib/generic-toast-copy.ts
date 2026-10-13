@@ -103,6 +103,8 @@ const CODE_COPY: Record<string, string> = {
     "This invoice's lines couldn't be verified, so it can't be edited. Ask an admin.",
   [API_ERROR_CODES.CHANGE_REQUEST_PACK_CHANGED]:
     "The pack size changed, so a change request was filed. Decline it and re-add the item to the next order.",
+  [API_ERROR_CODES.MERGE_ALREADY_DECIDED]:
+    "This merge request was already decided by someone else. Refresh to see its status.",
   [API_ERROR_CODES.INVOICE_CHANGED_CONCURRENTLY]:
     "The invoice changed while this was happening. Refresh and try again.",
   [API_ERROR_CODES.INVOICE_TAX_STATE_STALE]:
