@@ -80,6 +80,19 @@ export const PRICE_PUSH_FAILURE_REASONS: readonly string[] = [
   "stripe_not_configured",
 ];
 
+/**
+ * Go-live M3: the push results a redelivery cannot change - the subscription has no base-plan item to reprice, or
+ * Stripe holds it in a state that takes no price push (`subscription_not_active_*`: paused, incomplete, ...).
+ * The post-checkout webhook alerts ops and acknowledges these; every other failure is transient and throws.
+ */
+export function isPermanentPricePushReason(reason: string | undefined): boolean {
+  return (
+    reason === "no_base_item" ||
+    reason === "no_subscription_item" ||
+    (reason ?? "").startsWith("subscription_not_active_")
+  );
+}
+
 export function isPricePushFailure(result: { synced: boolean; reason?: string }): boolean {
   return !result.synced && PRICE_PUSH_FAILURE_REASONS.includes(result.reason ?? "");
 }

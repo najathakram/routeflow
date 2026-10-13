@@ -32,6 +32,7 @@ import {
   priceOverrideIdempotencyKey,
   prorationAllowedFor,
   isPricePushFailure,
+  isPermanentPricePushReason,
   prorationBehaviorFor,
   itemUnitAmount,
 } from "./price-override";
@@ -2339,10 +2340,10 @@ export class BillingService {
         stripeSub,
         adoptCtx,
       );
-      await this.resyncPriceAfterCheckout(tenantId, session);
       // SA-736r F2: a redelivery that finds the session applied STILL syncs the coupon (idempotent), so a
-      // sync that threw after the upsert is retried instead of being lost behind ALREADY_APPLIED.
-      await this.syncCoupon(tenantId, subscriptionId, "checkout_completed");
+      // sync that threw after the upsert is retried instead of being lost behind ALREADY_APPLIED. The coupon
+      // sync is part of the re-sync step below, so a price push that fails cannot skip it.
+      await this.resyncPriceAfterCheckout(tenantId, session, subscriptionId);
       return;
     }
 
@@ -2392,11 +2393,10 @@ export class BillingService {
     // time.
     await this.mutations.adoptCheckoutAddons(tenantId, stripeSub, adoptCtx);
 
-    await this.resyncPriceAfterCheckout(tenantId, session);
-
-    // SA-736r M3: LAST, after the activation crossing and the add-on adoption (their writes are
-    // idempotent), so a throwing sync is retried by Stripe without double-booking anything.
-    await this.syncCoupon(tenantId, subscriptionId, "checkout_completed");
+    // SA-736r M3: the coupon sync is LAST, after the activation crossing and the add-on adoption (their writes are
+    // idempotent), so a throwing sync is retried by Stripe without double-booking anything. It runs inside the
+    // re-sync step, whatever the price push did.
+    await this.resyncPriceAfterCheckout(tenantId, session, subscriptionId);
 
     this.logger.log(`Tenant ${tenantId} activated via checkout (sub: ${subscriptionId})`);
   }
@@ -2405,11 +2405,46 @@ export class BillingService {
    * F2: the session was priced when it was CREATED. An admin override saved while it was open found no
    * subscription to push to, so the subscription this completion made bills the old price. After the apply
    * transaction the resolved price is pushed (next cycle, idempotent: an item already at it is `unchanged`).
-   * The prorated stub the customer already paid stays at the old price - the audit row says so. A failed push is audited and
-   * then THROWN: the money is already applied and the apply step is idempotent, so Stripe's redelivery
-   * re-runs the push instead of acknowledging a subscription that still bills the old price.
+   * The prorated stub the customer already paid stays at the old price - the audit row says so.
+   *
+   * Go-live M3 - what a result means for the webhook:
+   *  - PERMANENT (`no_base_item`, `no_subscription_item`, `subscription_not_active_*`): nothing a redelivery can
+   *    change. ONE ops alert is raised and the webhook is ACKNOWLEDGED (no redelivery storm). An alert that
+   *    cannot be written is not acknowledged: it throws, so the redelivery raises it.
+   *  - TRANSIENT (a Stripe read / write / product failure, the reconcile flag, Stripe unconfigured) or a thrown
+   *    push: audited, then THROWN. The money is already applied and the apply step is idempotent, so Stripe's
+   *    redelivery re-runs the push instead of acknowledging a subscription that still bills the old price.
+   * The coupon sync runs REGARDLESS of that outcome (a failed push must not skip it); if both fail, the push
+   * error is the one that surfaces.
    */
-  private async resyncPriceAfterCheckout(tenantId: string, session: any): Promise<void> {
+  private async resyncPriceAfterCheckout(
+    tenantId: string,
+    session: any,
+    subscriptionId?: string,
+  ): Promise<void> {
+    let pushError: unknown;
+    let pushFailed = false;
+    try {
+      await this.pushPriceAfterCheckout(tenantId, session);
+    } catch (err) {
+      pushFailed = true;
+      pushError = err;
+    }
+    if (subscriptionId) {
+      try {
+        await this.syncCoupon(tenantId, subscriptionId, "checkout_completed");
+      } catch (couponErr) {
+        if (!pushFailed) throw couponErr;
+        this.logger.error(
+          `F2: checkout ${session?.id ?? "?"} for tenant ${tenantId}: the coupon sync also failed`,
+          couponErr as Error,
+        );
+      }
+    }
+    if (pushFailed) throw pushError;
+  }
+
+  private async pushPriceAfterCheckout(tenantId: string, session: any): Promise<void> {
     let result: Awaited<ReturnType<BillingService["syncStripeSubscriptionPrice"]>>;
     try {
       // M1: ONE writer per tenant's Stripe price. The price (override / catalog) is resolved INSIDE the lock, after
@@ -2428,7 +2463,9 @@ export class BillingService {
       throw err;
     }
     const changed = result.synced && !result.unchanged;
-    if (!changed && !isPricePushFailure(result)) return;
+    const permanent = isPermanentPricePushReason(result.reason);
+    const failed = isPricePushFailure(result) || (!result.synced && permanent);
+    if (!changed && !failed) return;
     if (!changed) {
       this.logger.warn(
         `F2: checkout ${session?.id ?? "?"} for tenant ${tenantId}: the price re-sync failed (${result.reason ?? "unknown"})`,
@@ -2456,9 +2493,20 @@ export class BillingService {
     } catch (err) {
       this.logger.error(`F2: the price re-sync audit row could not be written`, err as Error);
     }
-    if (!changed) {
-      throw new Error(`price re-sync failed after checkout (${result.reason ?? "unknown"})`);
+    if (changed) return;
+    if (permanent) {
+      await writeAdminNotice(this.prisma, {
+        tenantId,
+        action: AdminAuditAction.STRIPE_PRICE_PUSH_BLOCKED,
+        message:
+          `Checkout ${session?.id ?? "(unknown)"} completed, but the tenant's price could not be pushed to its ` +
+          `Stripe subscription (${result.reason}). The subscription may bill a different price than the one ` +
+          `RouteFlow holds; reprice it in Stripe or re-save the price. The webhook was acknowledged.`,
+        meta: { reason: result.reason, checkoutSessionId: session?.id ?? null },
+      });
+      return;
     }
+    throw new Error(`price re-sync failed after checkout (${result.reason ?? "unknown"})`);
   }
 
   /** #2440: the Stripe subscription item ids of the tenant's add-ons (never the base plan). */

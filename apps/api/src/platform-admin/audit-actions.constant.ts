@@ -64,6 +64,8 @@ export const AdminAuditAction = {
   STRIPE_SUBSCRIPTION_NOT_FOUND: "STRIPE_SUBSCRIPTION_NOT_FOUND",
   /** F4: an invoice was paid while an admin had the tenant READ_ONLY (or it is CANCELLED): the status was NOT changed. */
   PAID_WHILE_ADMIN_LOCKED: "PAID_WHILE_ADMIN_LOCKED",
+  /** A completed checkout could not push the tenant's price to its Stripe subscription, and a redelivery cannot fix it. */
+  STRIPE_PRICE_PUSH_BLOCKED: "STRIPE_PRICE_PUSH_BLOCKED",
   ADDON_MANUAL_INVOICE_DUE: "ADDON_MANUAL_INVOICE_DUE",
   ADDON_MANUAL_INVOICE_STOP: "ADDON_MANUAL_INVOICE_STOP",
   IMPERSONATION_STARTED: "IMPERSONATION_STARTED",
@@ -136,6 +138,7 @@ export const ADMIN_AUDIT_ACTION_LABELS: Record<AdminAuditActionCode, string> = {
   ADDON_CHECKOUT_ITEMS_UNRECOGNISED: "Checkout add-on items not recognised (check Stripe)",
   STRIPE_SUBSCRIPTION_NOT_FOUND: "Stripe subscription not found (check account/mode)",
   PAID_WHILE_ADMIN_LOCKED: "Paid while locked (refund or reinstate deliberately)",
+  STRIPE_PRICE_PUSH_BLOCKED: "Price not pushed to Stripe (check the subscription)",
   ADDON_MANUAL_INVOICE_DUE: "Add-on to invoice manually",
   ADDON_MANUAL_INVOICE_STOP: "Add-on to stop invoicing manually",
   IMPERSONATION_STARTED: "Impersonation started",
