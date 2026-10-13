@@ -35,4 +35,20 @@ describe("assertNoDuplicateLineIds (F3)", () => {
     expect(() => assertNoDuplicateLineIds(undefined)).not.toThrow();
     expect(() => assertNoDuplicateLineIds([])).not.toThrow();
   });
+
+  it('with keys: ["id"] a shared orderItemId is not a duplicate, a shared id still is', () => {
+    const opts = { keys: ["id"] as const };
+    expect(() =>
+      assertNoDuplicateLineIds(
+        [
+          { id: "L1", orderItemId: "O" },
+          { id: "L2", orderItemId: "O" },
+        ],
+        opts,
+      ),
+    ).not.toThrow();
+    expect(() => assertNoDuplicateLineIds([{ id: "L1" }, { id: "L1" }], opts)).toThrow(
+      BadRequestException,
+    );
+  });
 });

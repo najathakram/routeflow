@@ -9,11 +9,15 @@ import { API_ERROR_CODES } from "./api-error-codes";
  */
 export function assertNoDuplicateLineIds(
   entries: ReadonlyArray<{ id?: string | null; orderItemId?: string | null }> | null | undefined,
+  // Which fields name a line. An INVOICE edit's `orderItemId` is the SOURCE order line (shared by a legitimate
+  // split), so invoices compare `id` only; the buyer order route names its lines with `orderItemId`.
+  options: { keys?: ReadonlyArray<"id" | "orderItemId"> } = {},
 ): void {
+  const keys = options.keys ?? ["id", "orderItemId"];
   const seen = new Set<string>();
   for (const entry of entries ?? []) {
     // One entry naming the same line by both fields is still one mention.
-    const named = new Set([entry?.id, entry?.orderItemId].filter((v): v is string => !!v));
+    const named = new Set(keys.map((k) => entry?.[k]).filter((v): v is string => !!v));
     for (const lineId of named) {
       if (seen.has(lineId)) {
         throw new BadRequestException({

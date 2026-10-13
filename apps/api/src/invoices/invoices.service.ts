@@ -3106,7 +3106,7 @@ export class InvoicesService {
 
   async update(id: string, dto: UpdateInvoiceDto) {
     assertFiniteInvoiceInput(dto); // N4: NaN is a 400, not a silent $0
-    assertNoDuplicateLineIds(dto.items); // F3: one line named twice, before any read or write
+    assertNoDuplicateLineIds(dto.items, { keys: ["id"] }); // F3: the invoice line id only (orderItemId = source line)
     const inv = await this.findOneOrThrow(id); // a missing invoice is a 404 whatever else is wrong
     // units_v1: a line can be CREATED by a unit (create(), 4c-1) but not yet REWRITTEN by one (4c-2);
     // the shared DTO accepts `unitLabel`, and this path would silently store a PACK line for it.

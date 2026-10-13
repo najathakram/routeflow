@@ -131,6 +131,20 @@ describe("InvoicesService.update(): F3 a duplicate line id is refused before any
     nothingTouched();
   });
 
+  it("two invoice items from ONE source order line (shared orderItemId, distinct ids) are not duplicates", async () => {
+    // orderItemId on an invoice edit is the SOURCE order line, round-tripped each edit; a split shares it.
+    await expect(
+      service.update("inv-1", {
+        items: [
+          { id: "L1", orderItemId: "OL1", description: "A", qty: 1, unitPrice: 5 },
+          { id: "L2", orderItemId: "OL1", description: "A", qty: 1, unitPrice: 5 },
+          { orderItemId: "OL1", description: "A", qty: 1, unitPrice: 5 },
+        ],
+      } as never),
+    ).rejects.toMatchObject({ status: 404 });
+    expect(prisma.invoice.findUnique).toHaveBeenCalled();
+  });
+
   it("control: distinct ids and several id-less new lines pass the guard (the invoice is then looked up)", async () => {
     // Past the guard the unconfigured invoice read is a 404, not DUPLICATE_LINE_ID.
     await expect(
