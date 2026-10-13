@@ -26,6 +26,19 @@ describe("classifyAtStopResolveError", () => {
     expect(classifyAtStopResolveError(e)).toEqual({ action: "regulated", blocked });
   });
 
+  it("CQ-06: a license refusal with no categories declines with the shared sentence, not server text", () => {
+    const e = {
+      response: {
+        status: 409,
+        data: { code: "REGULATED_AUTH_REQUIRED", message: "Conflict Exception" },
+      },
+    };
+    const out = classifyAtStopResolveError(e);
+    expect(out.action).toBe("decline");
+    expect((out as { reason: string }).reason).toContain("Licenses tab");
+    expect((out as { reason: string }).reason).not.toContain("Conflict Exception");
+  });
+
   it("REG-B790: CHANGE_REQUEST_ALREADY_RESOLVED — the ONE case with no decline", () => {
     const e = { response: { status: 409, data: { code: "CHANGE_REQUEST_ALREADY_RESOLVED" } } };
     expect(classifyAtStopResolveError(e)).toEqual({ action: "already-resolved" });

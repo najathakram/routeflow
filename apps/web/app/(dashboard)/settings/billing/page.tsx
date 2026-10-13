@@ -1,5 +1,6 @@
 "use client";
 
+import { endTrialToast } from "./end-trial-toast";
 import * as React from "react";
 import { CreditCard, Check, AlertTriangle, Loader2, Zap } from "lucide-react";
 import { API_ERROR_CODES, type AddonBillingMode, type EnableAddonResult } from "@routeflow/types";
@@ -10,6 +11,8 @@ import { DIALOG_FIT, DIALOG_FOOTER_BUTTON } from "@/components/dialog-mobile-fit
 import { useAuth } from "@/lib/auth-context";
 import { formatMoney } from "@/lib/format";
 import { BillingExportButton } from "./BillingExportButton";
+import { BillingStatusCard } from "./BillingStatusCard";
+import { ownsBillingBanner } from "@/lib/subscription-banner-state";
 import {
   useSubscription,
   useUsage,
@@ -81,8 +84,11 @@ function TrialBanner({ sub }: { sub: SubscriptionView }) {
         <strong>
           {days} day{days === 1 ? "" : "s"}
         </strong>{" "}
-        — pick a plan to keep full access. After it expires your workspace goes read-only (exports
-        still work).
+        — pick a plan to keep full access.
+        {/* SA-775: no read-only threat while the rollout pause holds the trial-expiry lock. */}
+        {sub.autoLockHeld === true
+          ? null
+          : " After it expires your workspace goes read-only (exports still work)."}
       </span>
     </div>
   );
@@ -428,6 +434,9 @@ export default function BillingSettingsPage() {
   // is a 403 on these, hence no button. Rows with no canonical SKU (client-only legacy
   // keys such as developer_mode) are not billing lines and stay out.
   const managedAddons = s.addons.filter((a) => a.sku && !catalogSkus.has(a.sku));
+  // Row 350 / SA-693: an add-on RouteFlow granted free on purpose. It is never billed, so its row reads
+  // "Included" with no price anywhere (the catalog price is what it WOULD cost, which the tenant never pays).
+  const compSkus = new Set(s.addons.filter((a) => a.comp === true && a.sku).map((a) => a.sku));
 
   return (
     <div className="mx-auto max-w-4xl space-y-6 p-6">
@@ -441,8 +450,24 @@ export default function BillingSettingsPage() {
         <BillingExportButton />
       </div>
 
+      {/* SA-733r6 (B4): Pay $X primary at the top while an invoice is owed, the autopay / expiring-card line, and the
+          one-time "all set". While an invoice is owed the old read-only banner (and its "Choose a plan") steps aside. */}
+      <BillingStatusCard
+        sub={s}
+        userRole={user?.role}
+        scope={user?.tenantSlug ?? user?.id ?? null}
+      />
       <TrialBanner sub={s} />
-      <ReadOnlyBanner status={s.status} readOnlyReason={s.readOnlyReason} />
+      {!ownsBillingBanner(s) && (
+        <ReadOnlyBanner
+          status={s.status}
+          readOnlyReason={s.readOnlyReason}
+          hideAction={s.readOnlyReason !== "trial_expired"}
+          overdueAmount={s.openInvoiceAmount}
+          billingContactEmail={s.billingContactEmail}
+          isAdmin={isAdmin}
+        />
+      )}
 
       {s.cancelAtPeriodEnd && s.status !== "READ_ONLY" && (
         <div className="flex items-center justify-between gap-2 rounded-lg bg-red-50 px-4 py-3 text-sm text-red-700 ring-1 ring-red-200">
@@ -521,9 +546,12 @@ export default function BillingSettingsPage() {
             </div>
           )}
           <div className="flex items-center gap-2">
-            <a href="/choose-plan">
-              <Button size="sm">Change plan</Button>
-            </a>
+            {/* Never a plan purchase path while an invoice is owed (the server answers 409 PAYMENT_OVERDUE). */}
+            {!ownsBillingBanner(s) && (
+              <a href="/choose-plan">
+                <Button size="sm">Change plan</Button>
+              </a>
+            )}
             {s.status === "TRIAL" && isAdmin && (
               <Button size="sm" variant="ghost" onClick={() => setEndTrialOpen(true)}>
                 End trial
@@ -560,7 +588,7 @@ export default function BillingSettingsPage() {
         onClose={() => setEndTrialOpen(false)}
         onConfirm={() => {
           cancel.mutate(undefined, {
-            onSuccess: () => toast({ title: "Trial ended" }),
+            onSuccess: (data) => toast(endTrialToast(data)),
             onError: () =>
               toast({
                 title: "Trial not ended",
@@ -571,7 +599,7 @@ export default function BillingSettingsPage() {
           setEndTrialOpen(false);
         }}
         title="End your trial now?"
-        description="Your workspace becomes read-only immediately; exports still work."
+        description="Your workspace becomes read-only; exports still work."
         confirmLabel="End trial"
         variant="danger"
         loading={cancel.isPending}
@@ -648,6 +676,7 @@ export default function BillingSettingsPage() {
         <div className="divide-y divide-slate-100">
           {addonCatalog.map((a) => {
             const on = activeSkus.has(a.sku);
+            const comp = on && compSkus.has(a.sku);
             const busy =
               (enable.isPending || disable.isPending) &&
               (enable.variables?.sku === a.sku || disable.variables?.sku === a.sku);
@@ -663,8 +692,14 @@ export default function BillingSettingsPage() {
                     )}
                   </div>
                   <p className="text-sm text-slate-500">
-                    {money(a.monthlyPrice)}/mo
-                    {a.includedAtPlan ? ` · included on ${a.includedAtPlan}+` : ""}
+                    {comp ? (
+                      "Included"
+                    ) : (
+                      <>
+                        {money(a.monthlyPrice)}/mo
+                        {a.includedAtPlan ? ` · included on ${a.includedAtPlan}+` : ""}
+                      </>
+                    )}
                   </p>
                 </div>
                 {isAdmin && (
@@ -696,7 +731,12 @@ export default function BillingSettingsPage() {
                   </span>
                 </div>
                 <p className="text-sm text-slate-500">
-                  {a.monthly != null ? `${money(a.monthly)}/mo · ` : ""}Managed by RouteFlow
+                  {a.comp === true
+                    ? "Included · "
+                    : a.monthly != null
+                      ? `${money(a.monthly)}/mo · `
+                      : ""}
+                  Managed by RouteFlow
                 </p>
               </div>
               <span className="shrink-0 text-xs text-slate-400">Contact support to change</span>

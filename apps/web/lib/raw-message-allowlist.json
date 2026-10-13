@@ -96,7 +96,7 @@
     "why": "B986-6 invoices + bills + finance: per-surface raw message read, pending"
   },
   "app/(dashboard)/invoices/[id]/page.tsx": {
-    "count": 16,
+    "count": 15,
     "why": "B986-6 invoices + bills + finance: per-surface raw message read, pending"
   },
   "app/(dashboard)/invoices/page.tsx": {
@@ -272,10 +272,6 @@
     "count": 7,
     "why": "B986-2 platform-admin: per-surface raw message read, pending"
   },
-  "app/(platform-admin)/admin/tenants/new/page.tsx": {
-    "count": 1,
-    "why": "B986-2 platform-admin: per-surface raw message read, pending (found by the AST scan: a read split across lines that the text scanner missed)"
-  },
   "app/(platform-admin)/admin/tenants/page.tsx": {
     "count": 2,
     "why": "B986-2 platform-admin: per-surface raw message read, pending"
@@ -333,7 +329,7 @@
     "why": "B986-4 buyer portal: per-surface raw message read, pending"
   },
   "app/buyer/verify-merge/page.tsx": {
-    "count": 3,
+    "count": 1,
     "why": "B986-4 buyer portal: per-surface raw message read, pending"
   },
   "app/change-password/page.tsx": {
@@ -419,6 +415,10 @@
     "count": 1,
     "permanent": true,
     "why": "classification: the server text only classifies a code-already-used refusal, it is never displayed"
+  },
+  "lib/invoice-void-copy.ts": {
+    "count": 1,
+    "why": "B986-6 invoices: the void-failure sentence (payments to reverse first) moved here from invoices/[id]/page.tsx; pending"
   },
   "lib/reason-copy.ts": {
     "count": 1,

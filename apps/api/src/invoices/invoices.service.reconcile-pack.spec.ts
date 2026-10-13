@@ -292,7 +292,7 @@ describe("SA-078(b) — reconcile rebuild carries the PRIOR InvoiceItem's unitsP
       await (service as any).rebuildIssuedDepositMirrorOnDelivery("o1", prisma);
       const queryArgs = prisma.invoice.findMany.mock.calls[0][0];
       expect(queryArgs.select.items).toEqual({
-        select: { orderItemId: true, unitsPerBox: true },
+        select: { orderItemId: true, unitsPerBox: true, qty: true, subtotal: true },
       });
     });
   });

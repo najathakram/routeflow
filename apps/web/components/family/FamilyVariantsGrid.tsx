@@ -4,6 +4,7 @@ import * as React from "react";
 import Link from "next/link";
 import { Plus, Trash2 } from "lucide-react";
 import { Button, cn } from "@routeflow/ui/web";
+import { unitWords } from "@routeflow/pricing";
 import { MAX_FAMILY_ROWS, blankRow, type GridRow, type RowField } from "@/lib/family-grid";
 
 export interface CellMessage {
@@ -11,6 +12,9 @@ export interface CellMessage {
   /** The ACTIVE holder of a taken code / name: the message links to it. */
   productId?: string;
 }
+
+// U-3a: the family grid carries no per-product label yet, so it prints the default words.
+const W = unitWords();
 
 const COLUMNS: Array<{
   field: RowField;
@@ -26,8 +30,8 @@ const COLUMNS: Array<{
   { field: "unitSku", label: "Unit code", ariaLabel: "unit code", width: "min-w-[7rem]" },
   {
     field: "unitsPerBox",
-    label: "Units / case",
-    ariaLabel: "units per case",
+    label: `${W.base.other} per ${W.pack.lower}`,
+    ariaLabel: `${W.base.lowerOther} per ${W.pack.lower}`,
     width: "min-w-[5rem]",
     inputMode: "numeric",
   },

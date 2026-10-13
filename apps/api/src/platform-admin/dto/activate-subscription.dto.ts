@@ -2,6 +2,8 @@ import { IsIn, IsInt, IsOptional, IsString, Min } from "class-validator";
 import { TenantPlan } from "@prisma/client";
 import { SELECTABLE_TENANT_PLANS } from "../../billing/plan-catalog.constants";
 
+// The api never value-imports @routeflow/types (L-072): this literal is pinned set-equal to the web's shared
+// EXTERNAL_PAYMENT_METHOD_VALUES (packages/types/api/external-payment.ts) by activate-subscription.parity.spec.ts.
 export const EXTERNAL_PAYMENT_METHODS = [
   "ZELLE",
   "BANK_TRANSFER",

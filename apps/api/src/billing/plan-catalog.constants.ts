@@ -289,6 +289,10 @@ export const BILLING_EVENTS = {
   // TS const (it's a plain script, no compile step) — it re-types the same string literal
   // itself; keep the two in sync by hand if this key's string ever changes.
   RECONCILIATION_SNAPSHOT_BACKFILLED: "reconciliation.snapshot_backfilled",
+  // SA-736r: the paying set was entered/left because the Stripe subscription's next recurring invoice became
+  // (or stopped being) $0 by discounts. Emitted ONLY by billing/coupon-state.ts (the single writer).
+  COUPON_UNBILLED: "coupon.unbilled",
+  COUPON_BILLED: "coupon.billed",
 } as const;
 export type BillingEventType = (typeof BILLING_EVENTS)[keyof typeof BILLING_EVENTS];
 

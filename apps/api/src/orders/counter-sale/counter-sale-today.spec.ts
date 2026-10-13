@@ -1,5 +1,6 @@
 import { ForbiddenException } from "@nestjs/common";
 import { CounterSaleTodayService } from "./counter-sale-today.service";
+import { salePaymentSelect } from "./counter-sale-today";
 import type { CounterSaleTodayDto } from "./counter-sale-today.dto";
 import { createMockPrisma, type MockPrisma } from "../../testing/prisma-mock";
 
@@ -68,6 +69,12 @@ function setup(rows: Row[], timezone: string | null = "America/New_York") {
     service.today({ page: 1, limit: 50, ...q } as CounterSaleTodayDto, now);
   return { prisma, service, call };
 }
+
+/** the call that read the day's counter payments (the one that selects `salePaymentSelect`), as args */
+const saleCall = (prisma: MockPrisma): any =>
+  (prisma.invoicePayment.findMany.mock.calls as any[]).find(
+    (c) => c[0]?.select === salePaymentSelect,
+  )![0];
 
 // 2026-10-07 is an ordinary EDT day in New York (UTC-4): its window is 04:00Z to 04:00Z.
 const NOW = iso("2026-10-07T15:00:00.000Z");
@@ -242,9 +249,9 @@ describe("CounterSaleTodayService: tenant scoping (test 7, unit half)", () => {
       prisma.order.findMany.mock.calls[0][0].where,
       prisma.order.count.mock.calls[0][0].where,
       prisma.order.aggregate.mock.calls[0][0].where,
-      prisma.invoicePayment.groupBy.mock.calls[0][0].where,
-      prisma.invoicePayment.groupBy.mock.calls[0][0].where.invoice,
-      prisma.invoicePayment.groupBy.mock.calls[0][0].where.invoice.order,
+      saleCall(prisma).where,
+      saleCall(prisma).where.invoice,
+      saleCall(prisma).where.invoice.order,
       prisma.invoicePayment.aggregate.mock.calls[0][0].where,
       prisma.invoicePayment.aggregate.mock.calls[0][0].where.invoice,
       prisma.invoicePayment.aggregate.mock.calls[0][0].where.invoice.order,
@@ -263,7 +270,7 @@ describe("CounterSaleTodayService: tenant scoping (test 7, unit half)", () => {
     const live = prisma.order.aggregate.mock.calls[0][0].where;
     expect(live.status).toEqual({ not: "CANCELLED" });
     expect(live.invoices).toEqual({ some: { status: { notIn: ["VOID", "WRITTEN_OFF"] } } });
-    expect(prisma.invoicePayment.groupBy.mock.calls[0][0].where.status).toBe("PAID");
+    expect(saleCall(prisma).where.status).toBe("PAID");
   });
 
   it("MED-1: money in is keyed to the PAID date on counter sales of ANY day; on-account is measured on the day's own sales", async () => {
@@ -271,10 +278,11 @@ describe("CounterSaleTodayService: tenant scoping (test 7, unit half)", () => {
     await call({}, NOW);
     const start = iso("2026-10-07T04:00:00.000Z");
     const end = iso("2026-10-08T04:00:00.000Z");
-    const money = prisma.invoicePayment.groupBy.mock.calls[0][0].where;
+    const money = saleCall(prisma).where;
     expect(money.paidAt).toEqual({ gte: start, lt: end });
     expect(money.status).toBe("PAID");
-    expect(money.invoice.status).toEqual({ notIn: ["VOID", "WRITTEN_OFF"] });
+    // cash taken stays in the day when the invoice is written off later: only VOID drops its payments (the Z's rule)
+    expect(money.invoice.status).toEqual({ not: "VOID" });
     // the SALE's own day is not a filter: a day-1 sale paid today counts today
     expect(money.invoice.order).toEqual({
       tenantId: T,
@@ -296,6 +304,18 @@ describe("CounterSaleTodayService: tenant scoping (test 7, unit half)", () => {
     });
   });
 
+  it("SA-740r2 (test 11): the window's returns are read tenant-scoped WITH their refundTender column and nothing from the audit log", async () => {
+    const { prisma, call } = setup([]);
+    await call({}, NOW);
+    const args = prisma.return.findMany.mock.calls[0][0];
+    expect(args.where.tenantId).toBe(T);
+    expect(args.where.order.tenantId).toBe(T);
+    expect(args.select.refundTender).toBe(true);
+    // no audit-meta read is built: the tender is the column
+    expect(prisma.auditLog.findMany).not.toHaveBeenCalled();
+    expect(prisma.auditLog.findFirst).not.toHaveBeenCalled();
+  });
+
   it("refunds are keyed to the refund date, on counter sales of ANY day (no sale-day filter on the order)", async () => {
     const { prisma, call } = setup([]);
     await call({}, NOW);
@@ -312,7 +332,7 @@ describe("CounterSaleTodayService: tenant scoping (test 7, unit half)", () => {
 });
 
 describe("CounterSaleTodayService: query budget (test 12)", () => {
-  it("a 50-row page 1 is a fixed number of calls: zone 1, page 1, count 1, then exactly four summary queries", async () => {
+  it("a 50-row page 1 is a fixed number of calls: zone 1, page 1, count 1, then exactly six summary queries (one is the hand-over candidates)", async () => {
     const rows = Array.from({ length: 60 }, (_, i) =>
       row(
         `2026-10-07T${String(10 + Math.floor(i / 6)).padStart(2, "0")}:${String((i % 6) * 10).padStart(2, "0")}:00.000Z`,
@@ -325,13 +345,15 @@ describe("CounterSaleTodayService: query budget (test 12)", () => {
     expect(prisma.order.findMany).toHaveBeenCalledTimes(1);
     expect(prisma.order.count).toHaveBeenCalledTimes(1);
     expect(prisma.order.aggregate).toHaveBeenCalledTimes(1);
-    expect(prisma.invoicePayment.groupBy).toHaveBeenCalledTimes(1);
+    // the counter payments (classified in code, row 374 a) and the hand-over candidates: two reads, never a groupBy
+    expect(prisma.invoicePayment.groupBy).not.toHaveBeenCalled();
     expect(prisma.invoicePayment.aggregate).toHaveBeenCalledTimes(1);
     expect(prisma.return.findMany).toHaveBeenCalledTimes(1);
+    expect(prisma.creditNote.findMany).toHaveBeenCalledTimes(1);
     // nothing else is read: no per-row call on any other model
     expect(prisma.invoice.findMany).not.toHaveBeenCalled();
     expect(prisma.return.groupBy).not.toHaveBeenCalled();
-    expect(prisma.invoicePayment.findMany).not.toHaveBeenCalled();
+    expect(prisma.invoicePayment.findMany).toHaveBeenCalledTimes(2); // the sale payments + SA-763r R7 hand-over candidates
     expect(prisma.customer.findMany).not.toHaveBeenCalled();
   });
 
@@ -340,8 +362,10 @@ describe("CounterSaleTodayService: query budget (test 12)", () => {
     await call({ page: 2, limit: 1 }, NOW);
     expect(prisma.order.aggregate).not.toHaveBeenCalled();
     expect(prisma.invoicePayment.groupBy).not.toHaveBeenCalled();
+    expect(prisma.invoicePayment.findMany).not.toHaveBeenCalled();
     expect(prisma.invoicePayment.aggregate).not.toHaveBeenCalled();
     expect(prisma.return.findMany).not.toHaveBeenCalled();
+    expect(prisma.creditNote.findMany).not.toHaveBeenCalled();
     expect(prisma.order.findMany).toHaveBeenCalledTimes(1);
   });
 
@@ -352,6 +376,7 @@ describe("CounterSaleTodayService: query budget (test 12)", () => {
     expect(args.include).toBeUndefined();
     expect(Object.keys(args.select).sort()).toEqual(
       [
+        "counterCashTendered",
         "createdAt",
         "customer",
         "customerId",
@@ -359,9 +384,17 @@ describe("CounterSaleTodayService: query budget (test 12)", () => {
         "invoices",
         "orderNumber",
         "returns",
+        "soldBy", // row 317: the cashier's username only (counter-sale-cashier.spec.ts pins the select)
         "status",
         "total",
       ].sort(),
     );
+  });
+
+  it("the per-invoice payments select is ordered oldest first (the first stored tender is decided by it)", async () => {
+    const { prisma, call } = setup([]);
+    await call({}, NOW);
+    const args = prisma.order.findMany.mock.calls[0][0];
+    expect(args.select.invoices.select.payments.orderBy).toEqual({ createdAt: "asc" });
   });
 });

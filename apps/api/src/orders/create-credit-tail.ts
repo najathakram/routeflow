@@ -21,7 +21,7 @@ export async function savedCreditsPending(orderId: string, run: () => Promise<vo
       code: API_ERROR_CODES.ORDER_SAVED_CREDITS_PENDING,
       orderId,
       message:
-        "The order was saved, but the credit notes weren't applied. Apply them on the order.",
+        "The order was saved, but the credit notes weren't applied yet. Someone in the office needs to apply them on the order.",
     });
   }
 }

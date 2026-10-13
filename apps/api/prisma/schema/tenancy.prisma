@@ -202,6 +202,7 @@ model Tenant {
   supplierStatementScans   SupplierStatementScan[]
   // ─── Units/PO minimal + multi-category labels (2026-09-19) ───
   productUnits             ProductUnit[]
+  tenantUnits              TenantUnit[]
   supplierProducts         SupplierProduct[]
   productCategories        ProductCategory[]
   productCategoryLabels    ProductCategoryLabel[]
@@ -222,6 +223,8 @@ model Tenant {
   onboardingCase           OnboardingCase?
 
   emailDeliveries EmailDelivery[]
+  counterDayCloses   CounterDayClose[]
+  counterParkedCarts CounterParkedCart[]
 
   @@index([slug])
   @@index([status])
@@ -291,6 +294,19 @@ model TenantGoogleOAuth {
   tenant Tenant @relation(fields: [tenantId], references: [id], onDelete: Cascade)
 }
 
+/// Per-operator feature groups. Mirrored in packages/types/api/enums.ts (OPERATOR_PERMISSION_GROUP_VALUES).
+enum OperatorPermissionGroup {
+  ORDERS
+  DISPATCH
+  CUSTOMERS
+  CATALOG
+  PRICING
+  REGULATED
+  FINANCE
+  NOTIFICATIONS
+  REPORTS
+}
+
 // ─── Models (tenancy) ───────────────────────────────────────────────────────────────────
 
 model User {
@@ -309,8 +325,14 @@ model User {
   lockedUntil         DateTime?
   /// Last successful interactive sign-in (#2159 S1 — the onboarding "drivers have logged in" check).
   lastLoginAt         DateTime?
+  /// Feature groups switched OFF for this user. [] = every group. Read for OPERATOR accounts only.
+  deniedPermissionGroups OperatorPermissionGroup[] @default([])
+  /// Bumped on every write to deniedPermissionGroups (compare-and-set token).
+  permissionsVersion  Int        @default(0)
   createdAt           DateTime   @default(now())
   updatedAt           DateTime   @updatedAt
+  // Email verification for staff accounts (sitting 3, SA-741r2): nullable, nothing reads or writes it yet.
+  emailVerifiedAt     DateTime?
   deletedAt           DateTime?
   tenantId            String?
 
@@ -328,6 +350,12 @@ model User {
   messages             Message[]
   preferences          UserPreference[]
   passwordResetTokens  PasswordResetToken[]
+  emailVerificationTokens   UserEmailVerificationToken[]
+  soldOrders                Order[]                      @relation("OrderSoldBy")
+  counterDayClosesClosed    CounterDayClose[]            @relation("CounterDayCloseClosedBy")
+  counterDayClosesReopened  CounterDayClose[]            @relation("CounterDayCloseReopenedBy")
+  counterParkedCartsCreated CounterParkedCart[]          @relation("CounterParkedCartCreatedBy")
+  counterParkedCartsResumed CounterParkedCart[]          @relation("CounterParkedCartResumedBy")
   // Future AGENT-role login seat (records-only v1 — see SalesAgent.userId).
   salesAgentSeat       SalesAgent?
 
@@ -467,6 +495,9 @@ model CustomerLink {
   tenantId        String
   status          CustomerLinkStatus @default(INVITED)
   inviteToken     String?            @unique
+  // SHA-256 of the invite token (sitting 3, SA-741r2): the hashed replacement for `inviteToken`, which stays until a
+  // later cut-over drops it. Nullable and unique; nothing reads or writes it yet.
+  inviteTokenHash String?            @unique
   inviteExpiresAt DateTime?
   inviteMethod    InviteMethod?
   linkedAt        DateTime?
@@ -542,6 +573,22 @@ model BuyerPasswordResetToken {
   buyerAccount BuyerAccount @relation(fields: [buyerAccountId], references: [id], onDelete: Cascade)
 
   @@index([buyerAccountId])
+  @@index([expiresAt])
+}
+
+/// Sitting 3 (SA-741r2), schema only: single-use email verification token for a staff user (mirrors
+/// BuyerEmailVerificationToken). Only the hash is stored. Nothing reads or writes it yet.
+model UserEmailVerificationToken {
+  id        String    @id @default(uuid())
+  userId    String
+  tokenHash String    @unique
+  expiresAt DateTime
+  usedAt    DateTime?
+  createdAt DateTime  @default(now())
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
   @@index([expiresAt])
 }
 

@@ -29,3 +29,24 @@ export function addressStateFields(
   const { code } = resolveAddressState(state, zip);
   return { stateCode: code, stateNeedsReview: code === null };
 }
+
+/** The three state columns of one address, as captured before a bulk state fix. */
+export interface AddressStateSnapshot {
+  state: string;
+  stateCode: string | null;
+  stateNeedsReview: boolean;
+}
+
+/**
+ * UNDO ONLY: puts back exactly the three state columns a bulk state fix captured from the row a moment
+ * earlier — a restore of what the write boundary already stored, never a new state. A writer that
+ * stores a NEW state uses `addressStateFields` (`address-writers-inventory.spec.ts` classifies a call
+ * through this helper as RESTORE and no other).
+ */
+export function restoredStateFields(snapshot: AddressStateSnapshot): AddressStateSnapshot {
+  return {
+    state: snapshot.state,
+    stateCode: snapshot.stateCode,
+    stateNeedsReview: snapshot.stateNeedsReview,
+  };
+}

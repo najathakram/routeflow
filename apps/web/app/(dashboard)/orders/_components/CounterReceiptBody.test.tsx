@@ -84,6 +84,45 @@ describe("CounterReceiptBody", () => {
     expect(h.querySelector("img")).toHaveAttribute("src", "https://cdn.example/logo.png");
   });
 
+  it("SA-762r: the named customer, the server's tax and rate and the footer reach the paper; a walk-in has no customer line", () => {
+    const profile = { receiptFooter: "Thanks!" };
+    const withTax = {
+      ...RECEIPT,
+      total: 24.75,
+      paid: 24.75,
+      change: undefined as never,
+      tax: 2.25,
+      taxRatePercent: 10,
+    };
+    const { unmount } = renderWithProviders(
+      <CounterReceiptBody
+        receipt={withTax}
+        lines={LINES}
+        enteredTender={null}
+        profile={profile}
+        customerName="Acme Co"
+      />,
+    );
+    expect(screen.getByTestId("receipt-customer")).toHaveTextContent("Customer: Acme Co");
+    expect(screen.getByTestId("receipt-tax")).toHaveTextContent("Tax (10%)");
+    expect(screen.getByTestId("receipt-tax")).toHaveTextContent("$2.25");
+    expect(screen.queryByTestId("receipt-adjustment")).not.toBeInTheDocument();
+    expect(screen.getByTestId("receipt-footer")).toHaveTextContent("Thanks!");
+    unmount();
+    show();
+    expect(screen.queryByTestId("receipt-customer")).not.toBeInTheDocument();
+  });
+
+  it("exact cash: the server's served change of 0 prints Tendered and a Change $0.00 row (null would print none)", () => {
+    const { unmount } = show({ ...RECEIPT, total: 22.5, paid: 22.5, change: 0 });
+    expect(screen.getByTestId("receipt-tendered")).toHaveTextContent("$22.50");
+    expect(screen.getByTestId("receipt-change")).toHaveTextContent("Change");
+    expect(screen.getByTestId("receipt-change")).toHaveTextContent("$0.00");
+    unmount();
+    show({ ...RECEIPT, total: 22.5, paid: 22.5, change: undefined as never });
+    expect(screen.queryByTestId("receipt-change")).not.toBeInTheDocument();
+  });
+
   it("header falls back to the settings name, then to name only, then to nothing", () => {
     const { unmount } = show(RECEIPT, { businessName: "Settings Name" });
     expect(screen.getByTestId("receipt-header")).toHaveTextContent("Settings Name");
@@ -99,6 +138,8 @@ describe("CounterReceiptBody", () => {
     expect(screen.getByTestId("receipt-numbers")).toHaveTextContent("Invoice INV-1");
     expect(screen.getByTestId("receipt-date")).toHaveTextContent(/\d{4}.*\d:\d{2}/);
     expect(screen.getByTestId("receipt-cashier")).toHaveTextContent("Cashier: pat");
+    // owner ruling (A): staff see the cashier on screen, but the PRINTED copy (the customer's) never carries it
+    expect(screen.getByTestId("receipt-cashier")).toHaveClass("print:hidden");
     expect(screen.getByTestId("receipt-method")).toHaveTextContent("Cash");
     expect(screen.getByTestId("receipt-tendered")).toHaveTextContent("$30.00");
     expect(screen.getByTestId("receipt-change")).toHaveTextContent("$7.50");
@@ -107,7 +148,14 @@ describe("CounterReceiptBody", () => {
     expect(screen.queryByTestId("receipt-adjustment")).not.toBeInTheDocument();
   });
 
-  it("a repriced sale adds up: Subtotal + Tax and adjustments = the server total", () => {
+  it("the live receipt names the cashier by the shared rule: an email-shaped username prints no Cashier line", () => {
+    authUser = { id: "u1", username: "pat@acme.test" };
+    show();
+    expect(screen.queryByTestId("receipt-cashier")).not.toBeInTheDocument();
+    expect(document.body.textContent).not.toContain("pat@acme.test");
+  });
+
+  it("a repriced sale adds up: Subtotal + Adjustments = the server total", () => {
     show({ ...RECEIPT, total: 24.75, paid: 24.75, change: undefined as never });
     expect(screen.getByTestId("receipt-subtotal")).toHaveTextContent("$22.50");
     expect(screen.getByTestId("receipt-adjustment")).toHaveTextContent("$2.25");

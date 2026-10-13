@@ -46,7 +46,9 @@ import { Test } from "@nestjs/testing";
 import { describeDb, requireLocalDatabaseUrl } from "../common/testing/db-spec";
 import { normalizeScanCode } from "@routeflow/scanning";
 import { findScanMatches } from "../products/scan-match";
-import { buyerVisibleProductWhere, NO_BUYER_RESTRICTIONS } from "./buyer-product-visibility";
+import { buyerVisibilityFor, buyerVisibleProductWhere } from "./buyer-product-visibility";
+import { ProductLabelsService } from "../product-labels/product-labels.service";
+import { SellingRestrictionsService } from "../selling-restrictions/selling-restrictions.service";
 import { PrismaService } from "../prisma/prisma.service";
 import { TenantContextService } from "../tenant/tenant-context.service";
 import { EncryptionService } from "../common/encryption.service";
@@ -73,6 +75,7 @@ import { RegulatedVisibilityService } from "./regulated-visibility.service";
 import { ReplenishmentService } from "./replenishment.service";
 import { ShelfService } from "./shelf.service";
 import type { JwtPayload } from "../auth/jwt-payload.interface";
+import { INVOICE_EDIT_STUBS } from "../orders/testing/invoice-edit-stubs";
 
 // eslint-disable-next-line @typescript-eslint/no-var-requires
 const { assertTestTenant } = require("../../../../scripts/lib/test-tenants.cjs");
@@ -116,6 +119,7 @@ describeDb("buyer portal visibility — the one rule, end to end, real Postgres"
   let replenishment: ReplenishmentService;
   let shelf: ShelfService;
   let stockAlerts: StockAlertService;
+  let restrictions: SellingRestrictionsService;
   let controller: any;
   let orders: any;
   const run = randomUUID().slice(0, 8);
@@ -184,6 +188,7 @@ describeDb("buyer portal visibility — the one rule, end to end, real Postgres"
       invoicesService: {
         revertLinkedInvoicesForOrderEdit: async () => undefined,
         resyncOrderInvoicesForEdit: async () => [],
+        ...INVOICE_EDIT_STUBS,
         reconcileOrderDraftInvoice: async () => undefined,
       },
       creditNotes: { settleOrderCreditsInTx: async () => ({ applied: 0, unapplied: 0 }) },
@@ -191,9 +196,11 @@ describeDb("buyer portal visibility — the one rule, end to end, real Postgres"
 
     const visibility = new RegulatedVisibilityService(prisma);
     const promotions = new PromotionsService(prisma);
-    replenishment = new ReplenishmentService(prisma);
+    // The REAL engine: portal limits (selling restrictions) hide products through the one visibility context.
+    restrictions = new SellingRestrictionsService(prisma, new ProductLabelsService(prisma));
+    replenishment = new ReplenishmentService(prisma, restrictions);
     shelf = new ShelfService(replenishment, prisma, storage as any);
-    stockAlerts = new StockAlertService(prisma, {} as any);
+    stockAlerts = new StockAlertService(prisma, {} as any, restrictions);
     catalog = new BuyerCatalogService(
       prisma,
       products,
@@ -204,8 +211,9 @@ describeDb("buyer portal visibility — the one rule, end to end, real Postgres"
       promotions,
       // OOS PR2: this spec is about portal visibility; the buyer cannot backorder here.
       { resolve: async () => NO_BACKORDER_VIEW } as any,
+      restrictions,
     );
-    dashboard = new BuyerDashboardService(prisma, storage as any, visibility);
+    dashboard = new BuyerDashboardService(prisma, storage as any, visibility, restrictions);
     // scanProduct only touches prisma + the catalog + stock-alert services.
     controller = Object.assign(Object.create(BuyerController.prototype), {
       prisma,
@@ -239,6 +247,8 @@ describeDb("buyer portal visibility — the one rule, end to end, real Postgres"
         "order",
         "stockMovement",
         "productUnit",
+        "sellingRestriction",
+        "productCategoryLabel",
       ]) {
         // eslint-disable-next-line no-await-in-loop
         await del(m, t);
@@ -247,7 +257,8 @@ describeDb("buyer portal visibility — the one rule, end to end, real Postgres"
       await del("product", { tenantId, parentProductId: { not: null } });
       // eslint-disable-next-line no-await-in-loop
       await del("product", t);
-      for (const m of ["customerLink", "customer", "user", "systemConfig"]) {
+      await del("productCategory", t);
+      for (const m of ["customerAddress", "customerLink", "customer", "user", "systemConfig"]) {
         // eslint-disable-next-line no-await-in-loop
         await del(m, t);
       }
@@ -472,7 +483,7 @@ describeDb("buyer portal visibility — the one rule, end to end, real Postgres"
     return inTenant(f, async () => {
       const list = await catalog.getCatalog({ limit: 100 }, f.customerId, f.buyerAccountId);
       const counts = await catalog.getCatalogCounts(f.customerId, f.buyerAccountId);
-      const categories = (await catalog.getCategories()) as string[];
+      const categories = (await catalog.getCategories(f.customerId)) as string[];
       const favorites = await catalog.getFavorites(f.buyerAccountId, f.customerId);
       const dash = await dashboard.getDashboard(f.customerId);
       const replen = await replenishment.estimates(f.customerId);
@@ -514,7 +525,9 @@ describeDb("buyer portal visibility — the one rule, end to end, real Postgres"
     return inTenant(f, async () => {
       const search = await catalog.getCatalog({ search: p.name, limit: 100 }, f.customerId);
       const scan = (code: string) =>
-        asBool(() => controller.scanProduct(code, { customerId: f.customerId }));
+        asBool(() =>
+          controller.scanProduct(code, { customerId: f.customerId, tenantId: f.tenantId }),
+        );
       return {
         search: search.data.some((r: any) => r.id === p.id),
         detail: await asBool(() => catalog.getProductDetail(p.id, f.customerId)),
@@ -528,7 +541,9 @@ describeDb("buyer portal visibility — the one rule, end to end, real Postgres"
           (await findScanMatches(
             prisma.forTenant(),
             normalizeScanCode(f.rowCodes[p.id]),
-            buyerVisibleProductWhere(NO_BUYER_RESTRICTIONS),
+            buyerVisibleProductWhere(
+              await buyerVisibilityFor(restrictions, f.tenantId, f.customerId),
+            ),
           )) !== null,
         ...(opts.write
           ? {
@@ -553,7 +568,13 @@ describeDb("buyer portal visibility — the one rule, end to end, real Postgres"
   }
 
   /** What each rail shows for one product, given what the fixture put on it. */
-  function expectSurfaces(f: Fx, v: View, p: any, visibleIn: boolean) {
+  function expectSurfaces(
+    f: Fx,
+    v: View,
+    p: any,
+    visibleIn: boolean,
+    hiddenBy: "curation" | "restriction" = "curation",
+  ) {
     const id = p.id;
     // P is a FAMILY container (kind FAMILY, WS6/Q3): NON-SELLABLE, so it is in no buyer read whether hidden or not.
     const visible = id === f.P.id ? false : visibleIn;
@@ -569,8 +590,9 @@ describeDb("buyer portal visibility — the one rule, end to end, real Postgres"
     if (id === f.S.id) {
       expect(v.favorites.has(id)).toBe(visible);
       // SA-606 M3: a favourite the tenant hid is kept as a name-only "No longer available online" stub: no price.
+      // A product a selling restriction hides from this buyer is "hidden completely" (owner): the row is dropped.
       const stub = v.favoriteStubs.find((x: any) => x.productId === id);
-      expect(Boolean(stub)).toBe(!visible);
+      expect(Boolean(stub)).toBe(!visible && hiddenBy === "curation");
       if (stub) {
         expect(stub).toMatchObject({
           unavailable: true,
@@ -937,6 +959,213 @@ describeDb("buyer portal visibility — the one rule, end to end, real Postgres"
         inTenant(f, () => portal.setBulk([f.S.id, randomUUID()], false, f.adminUserId)),
       ).rejects.toBeInstanceOf(NotFoundException);
       expect(await flags([f.S.id])).toEqual({ [f.S.id]: true });
+    });
+  });
+  // ─── portal limits: selling restrictions hide products from the buyer portal (lane A) ──────────
+
+  describe("portal limits: a selling restriction hides products from the portal, on every buyer surface", () => {
+    const ruleBase = {
+      jurisdiction: "STATE" as const,
+      states: ["TX"],
+      surface: "BUYER_PORTAL" as const,
+      reason: "Portal limit",
+      effectiveFrom: new Date("2026-01-01T00:00:00Z"),
+    };
+    const addState = (f: Fx, state: string) =>
+      raw.customerAddress.create({
+        data: {
+          tenantId: f.tenantId,
+          customerId: f.customerId,
+          line1: "1 Test St",
+          city: "Testville",
+          state,
+          stateCode: state,
+          zip: "00000",
+          isDefault: true,
+          addressType: "BILLING",
+        },
+      });
+    const productRule = (f: Fx, productId: string, over: Record<string, unknown> = {}) =>
+      raw.sellingRestriction.create({
+        data: { tenantId: f.tenantId, productId, ...ruleBase, ...over } as any,
+      });
+    const categoryRule = (f: Fx, categoryId: string, over: Record<string, unknown> = {}) =>
+      raw.sellingRestriction.create({
+        data: { tenantId: f.tenantId, categoryId, ...ruleBase, ...over } as any,
+      });
+    const mkCategory = (f: Fx, name: string) =>
+      raw.productCategory.create({ data: { tenantId: f.tenantId, name } });
+    const include = (f: Fx, productId: string, categoryId: string) =>
+      raw.productCategoryLabel.create({
+        data: { tenantId: f.tenantId, productId, categoryId, mode: "INCLUDE" },
+      });
+    const check = (f: Fx, p: any, channel: "BUYER_PORTAL" | "STAFF" = "BUYER_PORTAL") =>
+      inTenant(f, () =>
+        restrictions.checkLinesSellable({
+          tenantId: f.tenantId,
+          customerId: f.customerId,
+          lines: [{ productId: p.id, qtyDelta: 1 }],
+          channel,
+        }),
+      );
+
+    it("(a) a TX buyer and a TX BUYER_PORTAL product rule: list, search, counts, detail, scan, rails, favourites, replenishment and alerts all exclude it; staff still see it", async () => {
+      const f = await seedTenant("sr-a");
+      await addState(f, "TX");
+      await productRule(f, f.S.id);
+
+      const v = await buyerView(f);
+      expectSurfaces(f, v, f.S, false, "restriction");
+      for (const p of [f.P, f.V1, f.V2, f.V3]) expectSurfaces(f, v, p, true);
+      expect(v.counts.total).toBe(3);
+      expect(v.categories).toEqual(["Acme Family"]);
+      await expectProbe(f, f.S, false, true);
+      await expectProbe(f, f.V1, true);
+      await expectStaffSees(f, f.S);
+      // past documents are untouched
+      const order = await inTenant(f, () =>
+        prisma.forTenant().order.findUnique({
+          where: { id: f.orderId },
+          include: { lineItems: { include: { product: true } } },
+        }),
+      );
+      expect(order?.lineItems.some((l: any) => l.productId === f.S.id)).toBe(true);
+    });
+
+    it("(a2) the same rule leaves a buyer in another state seeing everything", async () => {
+      const f = await seedTenant("sr-a2");
+      await addState(f, "NY");
+      await productRule(f, f.S.id);
+      const v = await buyerView(f);
+      for (const p of [f.P, f.V1, f.V2, f.V3, f.S]) expectSurfaces(f, v, p, true);
+      await expectProbe(f, f.S, true, true);
+    });
+
+    it("(a3) a product rule on the family parent hides every variant under it", async () => {
+      const f = await seedTenant("sr-a3");
+      await addState(f, "TX");
+      await productRule(f, f.P.id);
+      const v = await buyerView(f);
+      for (const p of [f.V1, f.V2, f.V3]) expectSurfaces(f, v, p, false);
+      expectSurfaces(f, v, f.S, true);
+      expect(v.counts.total).toBe(1);
+    });
+
+    it("(b) a category rule hides a variant through its parent's label (the EXCLUDE opt-out is proven in selling-restrictions/portal-limits-variants.db.spec.ts)", async () => {
+      const f = await seedTenant("sr-b");
+      await addState(f, "TX");
+      const cat = await mkCategory(f, "Limited");
+      await include(f, f.P.id, cat.id);
+      await categoryRule(f, cat.id);
+      const v = await buyerView(f);
+      for (const p of [f.V1, f.V2, f.V3]) expectSurfaces(f, v, p, false);
+      expectSurfaces(f, v, f.S, true);
+      expect((await check(f, f.V1)).outcome).toBe("BLOCK");
+      expect((await check(f, f.S)).outcome).toBe("ALLOW");
+    });
+
+    it("(c) a buyer with no state on file still sees a portal-limit product, and checkout ALLOWs", async () => {
+      const f = await seedTenant("sr-c");
+      await productRule(f, f.S.id);
+      const v = await buyerView(f);
+      expectSurfaces(f, v, f.S, true);
+      await expectProbe(f, f.S, true, true);
+      expect((await check(f, f.S)).outcome).toBe("ALLOW");
+    });
+
+    it("(d) a buyer with no state on file does NOT see a legal-ban (surface ALL) product, and checkout 409s", async () => {
+      const f = await seedTenant("sr-d");
+      await productRule(f, f.S.id, { surface: "ALL" });
+      const v = await buyerView(f);
+      expectSurfaces(f, v, f.S, false, "restriction");
+      await expectProbe(f, f.S, false);
+      await expect(
+        inTenant(f, () =>
+          restrictions.assertLinesSellable({
+            tenantId: f.tenantId,
+            customerId: f.customerId,
+            lines: [{ productId: f.S.id, qtyDelta: 1 }],
+            channel: "BUYER_PORTAL",
+          }),
+        ),
+      ).rejects.toBeInstanceOf(ConflictException);
+    });
+
+    it("(e) the switch is staff-only: with it off a portal rule still hides and 409s the portal, and staff are not gated", async () => {
+      const f = await seedTenant("sr-e"); // no SystemConfig row = switch OFF
+      await addState(f, "TX");
+      await productRule(f, f.S.id);
+      expect((await check(f, f.S, "BUYER_PORTAL")).outcome).toBe("BLOCK");
+      expect((await check(f, f.S, "STAFF")).outcome).toBe("OFF");
+      const v = await buyerView(f);
+      expectSurfaces(f, v, f.S, false, "restriction");
+    });
+
+    it("(g) a rule with a future effectiveFrom does not hide yet, and hides at/after it", async () => {
+      const f = await seedTenant("sr-g");
+      await addState(f, "TX");
+      const from = new Date(Date.now() + 2 * 86_400_000);
+      await productRule(f, f.S.id, { effectiveFrom: from });
+      const now = await buyerView(f);
+      expectSurfaces(f, now, f.S, true);
+      const later = await inTenant(f, () =>
+        restrictions.restrictedProductIdsFor(
+          f.tenantId,
+          f.customerId,
+          new Date(from.getTime() + 1),
+        ),
+      );
+      expect(later.has(f.S.id)).toBe(true);
+      const before = await inTenant(f, () =>
+        restrictions.restrictedProductIdsFor(
+          f.tenantId,
+          f.customerId,
+          new Date(from.getTime() - 1),
+        ),
+      );
+      expect(before.has(f.S.id)).toBe(false);
+    });
+
+    it("(j) a back-in-stock fire never pushes a restricted buyer and leaves their alert PENDING; lifting the limit lets it fire", async () => {
+      const f = await seedTenant("sr-j");
+      await addState(f, "TX");
+      await productRule(f, f.S.id);
+      await raw.stockAlert.create({
+        data: {
+          tenantId: f.tenantId,
+          customerId: f.customerId,
+          productId: f.S.id,
+          status: "PENDING",
+        },
+      });
+      const push = jest.fn().mockResolvedValue(1);
+      const alerts = new StockAlertService(prisma, { sendToCustomer: push } as any, restrictions);
+
+      const blocked = await inTenant(f, () => alerts.fireForProducts([f.S.id]));
+      expect(blocked.notified).toBe(0);
+      expect(push).not.toHaveBeenCalled();
+      const row = await raw.stockAlert.findFirstOrThrow({
+        where: { tenantId: f.tenantId, productId: f.S.id },
+      });
+      expect(row.status).toBe("PENDING");
+
+      await raw.sellingRestriction.updateMany({
+        where: { tenantId: f.tenantId },
+        data: { liftedAt: new Date() },
+      });
+      const lifted = await inTenant(f, () => alerts.fireForProducts([f.S.id]));
+      expect(lifted.notified).toBe(1);
+      expect(push).toHaveBeenCalledTimes(1);
+    });
+
+    it("a lifted rule hides nothing, and an ended rule hides nothing", async () => {
+      const f = await seedTenant("sr-lift");
+      await addState(f, "TX");
+      await productRule(f, f.S.id, { liftedAt: new Date() });
+      await productRule(f, f.V1.id, { effectiveTo: new Date(Date.now() - 86_400_000) });
+      const v = await buyerView(f);
+      expectSurfaces(f, v, f.S, true);
+      expectSurfaces(f, v, f.V1, true);
     });
   });
 });

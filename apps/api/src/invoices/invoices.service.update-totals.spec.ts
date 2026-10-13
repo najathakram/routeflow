@@ -139,7 +139,15 @@ describe("InvoicesService.update() — B1030 the invoice discount cannot exceed 
     stored: Record<string, unknown>[],
     invoice: Record<string, unknown> = {},
   ) => {
-    prisma.invoice.findUnique.mockResolvedValue({ ...draftInvoice, ...invoice });
+    // B1043 (F1): the header-only PATCH trusts the stored header only when it matches the lines, so the
+    // stored subtotal is the lines' sum (and the tax 0: every fixture line is rate 0). total = subtotal.
+    const sum = stored.reduce((t, r) => t + Number(r.subtotal), 0);
+    prisma.invoice.findUnique.mockResolvedValue({
+      ...draftInvoice,
+      subtotal: sum,
+      total: sum,
+      ...invoice,
+    });
     prisma.invoiceItem.findMany.mockResolvedValue(items(stored));
     prisma.invoice.update.mockResolvedValue(draftInvoice);
   };

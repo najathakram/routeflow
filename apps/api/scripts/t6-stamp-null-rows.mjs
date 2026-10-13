@@ -22,6 +22,14 @@ import pg from "pg";
 import { isTestTenant } from "../../../scripts/lib/test-tenants.cjs";
 import { requireLocalPgConfig } from "./lib/local-pg-config.mjs";
 import { redactUrl, resolveDatabaseUrl } from "./lib/railway-db-url.mjs";
+import guard from "./lib/live-target-guard.cjs";
+import protectedSlugsLib from "./lib/protected-slugs.cjs";
+
+// Row 195: --apply never stamps a row into a PROTECTED tenant (paying | stripe-linked |
+// PROTECTED_TENANT_SLUGS), with or without --live-tenant-override. The tenant is the one the row's
+// FK parents derive, so it is excluded by that derived id. Ids and counts only.
+const { protectedTenantIds } = guard;
+const { loadProtectedSlugs } = protectedSlugsLib;
 
 const SELF = resolve(dirname(fileURLToPath(import.meta.url)), "t6-stamp-null-rows.mjs");
 
@@ -89,6 +97,16 @@ async function main() {
   console.log(
     `t6-stamp-null-rows: target ${redactUrl(url)} table ${table} ${apply ? "APPLY" : "DRY-RUN"}`,
   );
+  // Loaded ONCE, against the URL dialled, before connecting (only the write path needs it).
+  let protectedSlugs = null;
+  if (apply) {
+    try {
+      protectedSlugs = loadProtectedSlugs(process.env, url);
+    } catch (e) {
+      console.error(`t6-stamp-null-rows: ${e.message}`);
+      return 1;
+    }
+  }
   const client = new pg.Client(localCfg ?? { connectionString: url });
   try {
     await client.connect();
@@ -153,6 +171,13 @@ async function main() {
         new Error(`no unambiguous owner for: ${ambiguous.map((p) => p.id).join(", ")}`),
         { refuse: true },
       );
+    const protectedIds = await protectedTenantIds(client, protectedSlugs);
+    const protectedRows = plan.filter((p) => protectedIds.includes(p.tenant));
+    if (protectedRows.length)
+      throw Object.assign(
+        new Error(`${protectedRows.length} row(s) derive a PROTECTED tenant: refused`),
+        { refuse: true },
+      );
     const live = plan.filter((p) => !p.test);
     if (live.length) {
       const phrase = `STAMP ${plan.length} ROWS`;
@@ -167,8 +192,9 @@ async function main() {
     }
     for (const p of plan) {
       const r = await client.query(
-        `UPDATE "${table}" SET "tenantId" = $1 WHERE id = $2 AND "tenantId" IS NULL`,
-        [p.tenant, p.id],
+        `UPDATE "${table}" SET "tenantId" = $1 WHERE id = $2 AND "tenantId" IS NULL
+            AND $1::text <> ALL($3::text[])`,
+        [p.tenant, p.id, protectedIds],
       );
       if (r.rowCount !== 1)
         throw Object.assign(new Error(`row ${p.id} was not updated exactly once`), {

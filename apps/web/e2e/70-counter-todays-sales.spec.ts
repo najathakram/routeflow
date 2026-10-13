@@ -105,7 +105,7 @@ test("reprint prints on 80 mm paper with no Tendered or Change", async ({
   await openSheet(page);
   await page.getByTestId("today-row-e2e-o1").getByRole("button", { name: "Reprint" }).click();
   const root = page.getByTestId("receipt-print-root");
-  await expect(root.getByTestId("receipt-reprint")).toContainText("Reprint · sold");
+  await expect(root.getByTestId("receipt-reprint")).toContainText("Reprint · Sold");
   await expect(root).not.toContainText(/Tendered|Change/);
   await page.emulateMedia({ media: "print" });
   const pageRule = await page.evaluate(() =>
@@ -117,5 +117,13 @@ test("reprint prints on 80 mm paper with no Tendered or Change", async ({
   );
   expect(pageRule).toBe(true);
   await expect(page.getByRole("button", { name: "Print" })).toBeHidden();
+  await expect(root).toBeVisible();
+  // only the receipt prints: the sale screen behind the modal (scan field, cart) and the title are hidden
+  await expect(page.getByLabel("Scan or search items")).toBeHidden();
+  await expect(page.getByTestId("counter-sale-screen")).toBeHidden();
+  await expect(page.getByRole("heading", { name: "Reprint receipt" })).toBeHidden();
+  await expect(page.getByTestId("counter-cart-column")).toBeHidden();
+  await expect(page.getByTestId("counter-payment-column")).toBeHidden();
+  await expect(page.getByRole("button", { name: /^Complete/ })).toHaveCount(0);
   await expect(root).toBeVisible();
 });

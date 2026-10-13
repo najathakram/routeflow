@@ -100,7 +100,7 @@ const lineFor = (name: string) =>
 
 async function pick(name: string) {
   fireEvent.change(search(), { target: { value: name.split(" ")[1].toLowerCase() } });
-  const row = await screen.findByRole("button", { name: new RegExp(name, "i") });
+  const row = await screen.findByRole("option", { name: new RegExp(name, "i") });
   fireEvent.click(row);
 }
 

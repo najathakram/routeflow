@@ -88,3 +88,43 @@ describe("priceReorderReview", () => {
     expect(r.subtotal).toBe(5);
   });
 });
+
+import { reorderNoneAvailable, reorderSkippedNote } from "./buyer-reorder-review";
+
+describe("reorderSkippedNote (state portal limits)", () => {
+  it("is null when nothing was skipped (skipped is always present, [] when none)", () => {
+    expect(reorderSkippedNote({ id: "o1", skipped: [] })).toBeNull();
+    expect(reorderSkippedNote({ id: "o1" })).toBeNull();
+    expect(reorderSkippedNote(undefined)).toBeNull();
+  });
+  it("counts what was left out of a placed order", () => {
+    expect(
+      reorderSkippedNote({
+        id: "o1",
+        skipped: [
+          { productId: "a", name: "A" },
+          { productId: "b", name: "B" },
+        ],
+      }),
+    ).toBe("2 items aren't available to you and were left out.");
+    expect(reorderSkippedNote({ id: "o1", skipped: [{ productId: "a", name: "A" }] })).toBe(
+      "1 item isn't available to you and was left out.",
+    );
+  });
+});
+
+describe("reorderNoneAvailable", () => {
+  const e = (status: number, message: string) => ({ response: { status, data: { message } } });
+  it("recognises the API's 400 for a reorder with nothing orderable and shows its sentence as-is", () => {
+    expect(
+      reorderNoneAvailable(e(400, "None of these items are available to you right now.")),
+    ).toBe("None of these items are available to you right now.");
+  });
+  it("is null for any other failure", () => {
+    expect(reorderNoneAvailable(e(400, "Something else"))).toBeNull();
+    expect(
+      reorderNoneAvailable(e(500, "None of these items are available to you right now.")),
+    ).toBeNull();
+    expect(reorderNoneAvailable(new Error("net"))).toBeNull();
+  });
+});

@@ -19,6 +19,12 @@ const dbUrl =
   process.env.DATABASE_URL ||
   "postgresql://user:pass@localhost:5432/routeflow_dev";
 
+const { loadProtectedSlugs } = require("./lib/protected-slugs.cjs");
+const { protectedTenantIds } = require("./lib/live-target-guard.cjs");
+
+// Row 195: load the protected list against the URL this script ACTUALLY dials, before connecting.
+const protectedSlugs = loadProtectedSlugs(process.env, dbUrl);
+
 const pool = new Pool({ connectionString: dbUrl });
 const adapter = new PrismaPg(pool);
 const prisma = new PrismaClient({ adapter });
@@ -28,14 +34,30 @@ async function main() {
   console.log(`   Database: ${dbUrl.replace(/:([^:@]+)@/, ":***@")}`);
   console.log("");
 
+  // Protected tenants (paying | stripe-linked | PROTECTED_TENANT_SLUGS) are never written.
+  const protectedIds = new Set(await protectedTenantIds(prisma, protectedSlugs));
+
   // Find all PAID invoices with no payment records
-  const paidWithNoPayments = await prisma.invoice.findMany({
+  const allPaidWithNoPayments = await prisma.invoice.findMany({
     where: {
       status: "PAID",
       payments: { none: {} },
     },
-    select: { id: true, invoiceNumber: true, total: true, paidAt: true, issueDate: true },
+    select: {
+      id: true,
+      tenantId: true,
+      invoiceNumber: true,
+      total: true,
+      paidAt: true,
+      issueDate: true,
+    },
   });
+  const paidWithNoPayments = allPaidWithNoPayments.filter(
+    (inv) => !(inv.tenantId && protectedIds.has(inv.tenantId)),
+  );
+  console.log(
+    `protected-tenant guard: skipped ${allPaidWithNoPayments.length - paidWithNoPayments.length} invoice(s) of protected tenants`,
+  );
 
   console.log(`📋 Found ${paidWithNoPayments.length} PAID invoices with no payment records`);
 

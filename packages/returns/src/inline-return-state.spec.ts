@@ -124,6 +124,26 @@ describe("buildQuoteRequest — never a bare qty", () => {
     expect(req.items.map((i) => i.productId)).toEqual(["prod-1"]);
   });
 
+  it("SA-740: sends sourceOrderId only when supplied (the sale this return is from), on the quote and the capture", () => {
+    expect(buildQuoteRequest("cust-1", [line({ pieces: "1" })])).not.toHaveProperty(
+      "sourceOrderId",
+    );
+    expect(
+      buildQuoteRequest("cust-1", [line({ pieces: "1" })], undefined, "order-9").sourceOrderId,
+    ).toBe("order-9");
+    const base = {
+      customerId: "cust-1",
+      orderId: "order-1",
+      lines: [line({ pieces: "1" })],
+      returnKey: "k",
+      reason: "DAMAGED" as const,
+    };
+    expect(buildCaptureRequest(base)).not.toHaveProperty("sourceOrderId");
+    expect(buildCaptureRequest({ ...base, sourceOrderId: "order-9" }).sourceOrderId).toBe(
+      "order-9",
+    );
+  });
+
   it("includes routeRunStopId only when supplied (driver captures)", () => {
     expect(buildQuoteRequest("cust-1", [line({ pieces: "1" })])).not.toHaveProperty(
       "routeRunStopId",
@@ -877,5 +897,23 @@ describe("B961: already returned or credited", () => {
     } as any);
     expect(cap.items[0]).toMatchObject({ alreadyReturnedReason: "slip lost" });
     expect(JSON.stringify(buildQuoteRequest("c", lines))).not.toMatch(/alreadyReturnedReason/);
+  });
+});
+
+describe("extractRefusalMessage: READ_ONLY", () => {
+  const readOnly403 = {
+    response: { status: 403, data: { code: "READ_ONLY", message: "RAW GUARD TEXT" } },
+  };
+
+  it("a 403 READ_ONLY is the read-only line, never the server's guard text (web + mobile share this)", () => {
+    expect(extractRefusalMessage(readOnly403)).toBe(
+      "This workspace is currently in read-only mode. You can view records, but changes and new transactions are temporarily unavailable.",
+    );
+  });
+
+  it("a code-less 403 is still the returns-not-enabled copy", () => {
+    expect(extractRefusalMessage({ response: { status: 403, data: {} } })).toBe(
+      RETURNS_NOT_ENABLED_MESSAGE,
+    );
   });
 });

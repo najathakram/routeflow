@@ -1,4 +1,6 @@
 import * as React from "react";
+import * as fs from "fs";
+import * as path from "path";
 import { renderWithProviders, screen } from "@/test-utils/render";
 import { lastKnownRoutesKey } from "@/lib/last-known-routes-access";
 import DashboardPage from "./page";
@@ -226,7 +228,7 @@ describe("D5 no feature lost: per-role cards, links and gates (loaded)", () => {
       "/routes",
       "/drivers",
       "/products?lowStock=true",
-      "/finance/reports/ar-aging",
+      "/finance/reports?report=ar-aging",
       "/orders?status=PENDING",
       "/orders?status=CONFIRMED",
       "/orders?status=OUT_FOR_DELIVERY",
@@ -237,6 +239,24 @@ describe("D5 no feature lost: per-role cards, links and gates (loaded)", () => {
       (t) => expect(screen.getAllByText(t).length).toBeGreaterThan(0),
     );
     expect(screen.getByTestId("pipeline-strip")).toBeTruthy();
+  });
+  // CQ-22: "AR Aging > Full report" pointed at /finance/reports/ar-aging, a route that does not exist (Next prefetches the
+  // visible link on every dashboard load, so it also logged a 404 each time the clerk went on to the counter).
+  it("every internal link on the dashboard points at a page that exists", () => {
+    const { container } = renderWithProviders(<DashboardPage />);
+    const dashboardDir = path.join(__dirname, "..");
+    const missing = hrefs(container)
+      .filter((h) => h.startsWith("/"))
+      .map((h) => h.split(/[?#]/)[0])
+      .filter((p) => p !== "/" && !fs.existsSync(path.join(dashboardDir, p, "page.tsx")));
+    expect(missing).toEqual([]);
+  });
+  it("AR Aging's Full report opens the finance reports page on the AR aging report", () => {
+    const { container } = renderWithProviders(<DashboardPage />);
+    const link = Array.from(container.querySelectorAll("a")).find((a) =>
+      /Full report/.test(a.textContent ?? ""),
+    );
+    expect(link?.getAttribute("href")).toBe("/finance/reports?report=ar-aging");
   });
   it("Counter sale link shows for operator and customer only when the gate says so", () => {
     counterButton = true;

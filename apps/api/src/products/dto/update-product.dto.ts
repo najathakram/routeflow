@@ -43,6 +43,11 @@ export class UpdateProductDto {
   @ArrayMaxSize(20)
   @IsString({ each: true })
   deactivateHolderIds?: string[];
+  /**
+   * Deactivating a FAMILY that still has ACTIVE variants answers a 409 FAMILY_HAS_ACTIVE_VARIANTS with their count.
+   * Resend with `confirmCascade: true` to deactivate the family and those variants in one transaction.
+   */
+  @IsOptional() @IsBoolean() confirmCascade?: boolean;
   @IsOptional() @IsString() sku?: string;
   @IsOptional() @IsString() barcode?: string;
   // "" clears it back to "same as case code" (emptyToNull ⇒ an explicit null write).

@@ -4,6 +4,8 @@ import * as React from "react";
 import { X } from "lucide-react";
 import { Modal, Button, cn, useToast } from "@routeflow/ui/web";
 import { useProducts } from "@/lib/api/products";
+import { displayProductName } from "@/lib/product-display";
+import { sellableFlat } from "@/lib/product-search-groups";
 import {
   useCreateOrderTemplate,
   useUpdateOrderTemplate,
@@ -87,14 +89,16 @@ export function StandingOrderModal({
     return () => clearTimeout(t);
   }, [productSearch]);
 
+  // includeVariants: a family's own name finds its variants; the family itself is never a line (B1215 C7).
   const { data: productsData } = useProducts({
     search: debouncedProductSearch || undefined,
     isActive: true,
+    includeVariants: true,
   });
 
   const filteredProducts = React.useMemo(() => {
     if (!debouncedProductSearch) return [];
-    return (productsData?.data ?? [])
+    return sellableFlat<any>(productsData?.data ?? [])
       .filter((p: { id: string }) => !lineItems.some((li) => li.productId === p.id))
       .slice(0, 8);
   }, [productsData, debouncedProductSearch, lineItems]);
@@ -110,7 +114,7 @@ export function StandingOrderModal({
           template.items.map((item) => ({
             tempId: item.id,
             productId: item.productId,
-            productName: item.product?.name ?? item.productId,
+            productName: item.product ? displayProductName(item.product) : item.productId,
             unit: item.product?.unit ?? "each",
             qty: item.qty,
             notes: item.notes,
@@ -142,7 +146,7 @@ export function StandingOrderModal({
       {
         tempId: product.id + "-" + Date.now(),
         productId: product.id,
-        productName: product.name,
+        productName: displayProductName(product),
         unit: product.unit ?? "each",
         qty: 1,
       },
@@ -365,7 +369,7 @@ export function StandingOrderModal({
                         className="flex w-full items-center justify-between px-3 py-2.5 text-left text-sm text-navy hover:bg-surface-raised"
                       >
                         <div>
-                          <span className="font-medium">{p.name}</span>
+                          <span className="font-medium">{displayProductName(p)}</span>
                           <span className="ml-2 text-xs text-navy/70">{p.unit}</span>
                         </div>
                         <span className="text-xs font-medium text-navy/70">
