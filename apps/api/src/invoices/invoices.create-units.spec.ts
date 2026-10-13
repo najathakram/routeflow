@@ -159,8 +159,8 @@ describe("InvoicesService.create — sell a line by a unit (units_v1, 4c-1)", ()
     expect(prisma.invoice.create).not.toHaveBeenCalled();
   });
 
-  it("a unit on an invoice EDIT is refused (the shared DTO accepts it; update() would store a pack line)", async () => {
-    prisma.invoice.findUnique.mockResolvedValue({ id: "inv-1", status: "DRAFT" });
+  it("a unit on an order-LINKED invoice EDIT is refused (the back-sync would write it onto the order line; VU-4a, D3)", async () => {
+    prisma.invoice.findUnique.mockResolvedValue({ id: "inv-1", status: "DRAFT", orderId: "ord-1" });
     await expect(
       service.update("inv-1", { items: [line({ unitLabel: "Case" })] } as never),
     ).rejects.toThrow(/invoice edit yet/);
