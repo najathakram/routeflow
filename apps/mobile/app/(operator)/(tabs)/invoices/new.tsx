@@ -103,6 +103,7 @@ import {
   type InvoiceTotals,
   type InvoiceTotalsLine,
 } from "../../../../lib/invoice-totals";
+import { invoiceLineCount, lineCountLabel } from "../../../../lib/invoice-line-count";
 import {
   DEFAULT_TERMS,
   ISO_DATE,
@@ -858,8 +859,9 @@ function InvoiceComposer({
   // saleModeGate (WP4). The gate's equality assertion is only meaningful when
   // both the preview and the gate see the identical lines; building them twice
   // (even from the same inputs) would risk the two silently drifting apart.
-  const { invoiceLines, totalItems, hasSeparateInvoiceCategoryLine } = useMemo(() => {
+  const { invoiceLines, totalItems, lineCount, hasSeparateInvoiceCategoryLine } = useMemo(() => {
     const lines: InvoiceTotalsLine[] = [];
+    const catalogQtys: number[] = [];
     let totalItems = 0;
     let hasSeparateInvoiceCategoryLine = false;
     for (const [id, line] of Object.entries(items)) {
@@ -868,6 +870,7 @@ function InvoiceComposer({
       const qty = effectiveQty(line, p.unitsPerBox);
       if (qty <= 0) continue;
       totalItems += qty;
+      catalogQtys.push(qty);
       if (p.trackedCategoryId && separateInvoiceCategoryIds.has(p.trackedCategoryId)) {
         hasSeparateInvoiceCategoryLine = true;
       }
@@ -883,7 +886,9 @@ function InvoiceComposer({
         taxRate: u.taxable ? taxRateFraction : 0,
       });
     }
-    return { invoiceLines: lines, totalItems, hasSeparateInvoiceCategoryLine };
+    // row 440: the header and footer count LINES; the piece total stays the Create gate
+    const lineCount = invoiceLineCount(catalogQtys, unlisted);
+    return { invoiceLines: lines, totalItems, lineCount, hasSeparateInvoiceCategoryLine };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [
     items,
@@ -1229,7 +1234,8 @@ function InvoiceComposer({
 
   /**
    * The server dropped a unit from a product's ladder after it was picked: say so, refresh the
-   * ladders (staleTime 0, so the picker stops offering it) and put those lines back on one Box.
+   * ladders (staleTime 0, so the picker stops offering it) and move those lines onto the pack,
+   * converted by pieces so the count is kept (row 458).
    */
   const onUnitNotOffered = async (title: string) => {
     alertInfo(title, UNIT_NOT_OFFERED_MESSAGE);
@@ -1639,7 +1645,7 @@ function InvoiceComposer({
         >
           <View style={styles.footerSummaryEyebrowRow}>
             <Text style={styles.footerEyebrow} numberOfLines={1}>
-              {totalItems} ITEM{totalItems === 1 ? "" : "S"}
+              {lineCountLabel(lineCount).toUpperCase()}
             </Text>
             {totalItems > 0 ? <Ionicons name="chevron-up" size={12} color={ios.brand} /> : null}
           </View>
@@ -1692,6 +1698,7 @@ function InvoiceComposer({
         unlisted={unlisted}
         totals={totals}
         totalItems={totalItems}
+        lineCount={lineCount}
         taxRateFraction={taxRateFraction}
         tierPriceFor={tierPriceFor}
         isSpecialFor={isSpecialFor}
@@ -1850,6 +1857,7 @@ function ReviewSheet({
   unlisted,
   totals,
   totalItems,
+  lineCount,
   taxRateFraction,
   tierPriceFor,
   isSpecialFor,
@@ -1885,6 +1893,8 @@ function ReviewSheet({
   unlisted: UnlistedLine[];
   totals: InvoiceTotals;
   totalItems: number;
+  /** Lines with a quantity (row 440): what the header counts. */
+  lineCount: number;
   /** 0 hides every taxable toggle (no tenant rate, or tax-exempt customer). */
   taxRateFraction: number;
   /** The customer's effective (tier / customer-price) catalog price per product. */
@@ -1941,9 +1951,7 @@ function ReviewSheet({
               <Ionicons name="chevron-down" size={22} color={ios.label2} />
             </Pressable>
             <Text style={styles.sheetTitle}>Review invoice</Text>
-            <Text style={styles.sheetCount}>
-              {totalItems} item{totalItems === 1 ? "" : "s"}
-            </Text>
+            <Text style={styles.sheetCount}>{lineCountLabel(lineCount)}</Text>
           </View>
 
           <ScrollView
