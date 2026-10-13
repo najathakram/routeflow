@@ -13,6 +13,7 @@ import { CreateSubcategoryDto } from "./dto/create-subcategory.dto";
 import { UpdateSubcategoryDto } from "./dto/update-subcategory.dto";
 import { templateByKey, allColumnKeys } from "../regulated/template-registry";
 import { isTobaccoCategoryName } from "../common/tobacco-category";
+import { syncCategoryLabelForProducts } from "../product-categories/label-writer";
 import {
   assertNoOpenRecipe,
   lockProductsForCategoryWrite,
@@ -420,12 +421,24 @@ export class TrackedCategoriesService {
       // the OLD name, or never synced (NULL). Products whose category diverged
       // (legacy free-text) are left alone until the one-time tidy script.
       if (name !== undefined && name !== existingSub.name) {
-        await this.prisma.forTenant().product.updateMany({
-          where: {
-            trackedSubcategoryId: subId,
-            OR: [{ category: existingSub.name }, { category: null }],
-          },
-          data: { category: name },
+        const tenantId = this.tenantIdOrThrow();
+        const newName = name;
+        // One tx: the mirror write and the add-only label sync of the products it renamed.
+        await this.prisma.tenantTransaction(async (tx: any) => {
+          const mirrored: Array<{ id: string }> = await tx.product.findMany({
+            where: {
+              trackedSubcategoryId: subId,
+              OR: [{ category: existingSub.name }, { category: null }],
+            },
+            select: { id: true },
+          });
+          if (mirrored.length === 0) return;
+          const productIds = mirrored.map((p) => p.id);
+          await tx.product.updateMany({
+            where: { id: { in: productIds }, trackedSubcategoryId: subId },
+            data: { category: newName },
+          });
+          await syncCategoryLabelForProducts(tx, { tenantId, productIds, text: newName });
         });
       }
       return this.serializeSub(row);

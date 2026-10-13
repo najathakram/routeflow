@@ -186,6 +186,10 @@ export function createMockPrisma(): MockPrisma {
     saleDraft: modelProxy(),
     trackedCategory: modelProxy(),
     trackedSubcategory: modelProxy(),
+    // The add-only label sync (`syncCategoryLabel`) every Product.category writer runs in its tx: it finds no
+    // label by default, so a writer's spec writes nothing extra unless it stubs a matching label.
+    productCategory: modelProxy(),
+    productCategoryLabel: modelProxy(),
     customerAuthorization: modelProxy(),
     authorizationOverride: modelProxy(),
     regulatedSalesLedger: modelProxy(),
@@ -274,6 +278,10 @@ export function createMockPrisma(): MockPrisma {
     idempotencyKey: modelProxy(),
     trackedCategory: modelProxy(),
     trackedSubcategory: modelProxy(),
+    // The add-only label sync (`syncCategoryLabel`) every Product.category writer runs in its tx: it finds no
+    // label by default, so a writer's spec writes nothing extra unless it stubs a matching label.
+    productCategory: modelProxy(),
+    productCategoryLabel: modelProxy(),
     customerAuthorization: modelProxy(),
     authorizationOverride: modelProxy(),
     regulatedSalesLedger: modelProxy(),

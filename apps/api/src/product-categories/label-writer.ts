@@ -162,35 +162,107 @@ export async function syncCategoryLabel(
     actor?: { id: string | null; name: string | null };
   },
 ): Promise<{ addedCategoryId: string | null }> {
-  const key = labelNameKey(args.text);
-  if (!args.tenantId || key === "") return { addedCategoryId: null };
-  const labels = await tx.productCategory.findMany({
-    where: { tenantId: args.tenantId, archivedAt: null },
-    select: { id: true, name: true },
-  });
-  const matches = labels.filter((l) => labelNameKey(l.name) === key);
-  if (matches.length !== 1) return { addedCategoryId: null };
-  const categoryId = matches[0].id;
-  const stamp: LabelStamp = {
-    createdById: args.actor?.id ?? null,
-    createdByName: args.actor?.name ?? null,
-  };
+  const categoryId = await matchLabelId(tx, args.tenantId, args.text);
+  if (!categoryId || !args.tenantId) return { addedCategoryId: null };
   const outcome = await addIncludeIfAbsent(tx, {
     tenantId: args.tenantId,
     productId: args.productId,
     categoryId,
-    stamp,
+    stamp: stampOf(args.actor),
   });
   if (outcome !== "added") return { addedCategoryId: null };
   await tx.auditLog.create({
-    data: {
-      tenantId: args.tenantId,
-      userId: args.actor?.id ?? null,
-      action: LABEL_FROM_TEXT_ACTION,
-      entityType: "Product",
-      entityId: args.productId,
-      meta: { categoryId, source: "category_text" } as Prisma.InputJsonValue,
-    },
+    data: auditRow(args.tenantId, args.productId, categoryId, args.actor),
   });
   return { addedCategoryId: categoryId };
+}
+
+/** The ONE unarchived label of the tenant whose name key equals the text's. Blank, absent or ambiguous (two with one key) = null. */
+async function matchLabelId(
+  tx: Prisma.TransactionClient,
+  tenantId: string | null | undefined,
+  text: string | null | undefined,
+): Promise<string | null> {
+  const key = labelNameKey(text);
+  if (!tenantId || key === "") return null;
+  const labels = await tx.productCategory.findMany({
+    where: { tenantId, archivedAt: null },
+    select: { id: true, name: true },
+  });
+  const matches = labels.filter((l) => labelNameKey(l.name) === key);
+  return matches.length === 1 ? matches[0].id : null;
+}
+
+type Actor = { id: string | null; name: string | null } | undefined;
+
+const stampOf = (actor: Actor): LabelStamp => ({
+  createdById: actor?.id ?? null,
+  createdByName: actor?.name ?? null,
+});
+
+const auditRow = (tenantId: string, productId: string, categoryId: string, actor: Actor) => ({
+  tenantId,
+  userId: actor?.id ?? null,
+  action: LABEL_FROM_TEXT_ACTION,
+  entityType: "Product",
+  entityId: productId,
+  meta: { categoryId, source: "category_text" } as Prisma.InputJsonValue,
+});
+
+/**
+ * `syncCategoryLabel` for MANY products that were just given ONE category text (a subcategory rename):
+ * the label is matched and its lock taken ONCE, then every product of the tenant that has no membership
+ * row yet gets the INCLUDE in one `createMany`. Same rules and the same audit row per added product;
+ * an existing row of either mode is left exactly as it is.
+ */
+export async function syncCategoryLabelForProducts(
+  tx: Prisma.TransactionClient,
+  args: {
+    tenantId: string | null | undefined;
+    productIds: readonly string[];
+    text: string | null | undefined;
+    actor?: { id: string | null; name: string | null };
+  },
+): Promise<{ addedProductIds: string[] }> {
+  const { tenantId, actor } = args;
+  const none = { addedProductIds: [] as string[] };
+  if (args.productIds.length === 0) return none;
+  const categoryId = await matchLabelId(tx, tenantId, args.text);
+  if (!categoryId || !tenantId) return none;
+  await lockLabelCategory(tx, tenantId, categoryId);
+  // Re-read under the lock: an archive that landed first wins.
+  const category = await tx.productCategory.findFirst({
+    where: { id: categoryId, tenantId, archivedAt: null },
+    select: { id: true },
+  });
+  if (!category) return none;
+  const ids = [...new Set(args.productIds)];
+  const [products, rows] = await Promise.all([
+    tx.product.findMany({ where: { id: { in: ids }, tenantId }, select: { id: true } }),
+    tx.productCategoryLabel.findMany({
+      where: { categoryId, productId: { in: ids } },
+      select: { productId: true },
+    }),
+  ]);
+  const has = new Set(rows.map((r) => r.productId));
+  const toAdd = products.map((p) => p.id).filter((id) => !has.has(id));
+  if (toAdd.length === 0) return none;
+  const stamp = stampOf(actor);
+  const { count } = await tx.productCategoryLabel.createMany({
+    data: toAdd.map((productId) => ({
+      tenantId,
+      productId,
+      categoryId,
+      mode: "INCLUDE" as const,
+      reason: null,
+      ...stamp,
+    })),
+    skipDuplicates: true,
+  });
+  // The lock above serialises every label writer, so the existence check cannot go stale: count === toAdd.length.
+  if (count === 0) return none;
+  await tx.auditLog.createMany({
+    data: toAdd.map((productId) => auditRow(tenantId, productId, categoryId, actor)),
+  });
+  return { addedProductIds: toAdd };
 }
