@@ -117,7 +117,7 @@ export const ADMIN_AUDIT_ACTION_LABELS: Record<AdminAuditActionCode, string> = {
   ADDON_CHECKOUT_ITEMS_UNRECOGNISED: "Checkout add-on items not recognised (check Stripe)",
   ADDON_MANUAL_INVOICE_DUE: "Add-on to invoice manually",
   ADDON_MANUAL_INVOICE_STOP: "Add-on to stop invoicing manually",
-  ADDON_CATALOG_INVALID: "Add-on not billed (catalog setting invalid)",
+  ADDON_NOT_BILLED_CATALOG_INVALID: "Add-on not billed (catalog setting invalid)",
   IMPERSONATION_STARTED: "Impersonation started",
   TENANT_CLASS_CHANGED: "Class changed",
   FEATURE_OVERRIDE_SET: "Feature override set",
