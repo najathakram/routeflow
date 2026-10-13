@@ -35,3 +35,14 @@ export const KEPT_ORDER_TOAST = {
   description:
     "The order was saved but its invoice could not be created. Open the order to finish it.",
 } as const;
+
+/**
+ * Where to send the clerk when a sale call (POST /orders/sell or /orders/counter-sale) failed AFTER it
+ * committed: the invoice when the body carries one, else the order. Null when nothing was committed.
+ */
+export function keptSaleHref(err: unknown): string | null {
+  const invoiceId = keptDraftInvoiceId(err);
+  if (invoiceId) return `/invoices/${invoiceId}`;
+  const orderId = keptOrderId(err);
+  return orderId ? `/orders/${orderId}` : null;
+}

@@ -71,6 +71,7 @@ import {
   writeAutoPrint,
   writeHeldAttempt,
 } from "@/lib/counter-sale";
+import { keptSaleHref } from "@/lib/kept-draft-invoice";
 import { receiptCustomerName, type ReceiptBusinessProfile } from "@/lib/counter-receipt";
 import { isCounterSaleDayClosed } from "@/lib/day-closed-copy";
 import { CounterReceiptBody } from "./CounterReceiptBody";
@@ -160,6 +161,8 @@ export function CounterSaleScreen() {
   // The total and change the clerk SAW (client figures) when the sale was submitted: compared with the server's on the way out.
   const estimateRef = React.useRef({ total: 0, change: 0 });
   const [outcomeUnknown, setOutcomeUnknown] = React.useState(false);
+  // Row 466: where the sale landed when the call failed AFTER it committed (the invoice, else the order).
+  const [recordedHref, setRecordedHref] = React.useState<string | null>(null);
   const [heldCorrupt, setHeldCorrupt] = React.useState(false); // a stored attempt was unreadable: locked, only "recent sales" or discard
   const [lookupFailed, setLookupFailed] = React.useState(false); // "Check sale status" itself failed (not a 404 answer)
   // CQ-29: the key of a sale that got no answer for want of a connection. The form is usable again, and the next Complete reuses
@@ -685,6 +688,7 @@ export function CounterSaleScreen() {
         });
         // A tender refused for a CLOSED DAY leaves the sale saved but unpaid: say so (the banner below is the generic one).
         setError(isCounterSaleDayClosed(err) ? counterSaleErrorCopy(err) : "");
+        setRecordedHref(keptSaleHref(err));
         setOutcomeUnknown(true);
       }
       return null;
@@ -1341,6 +1345,15 @@ export function CounterSaleScreen() {
             >
               <p className="font-semibold">{COUNTER_OUTCOME_UNKNOWN_COPY}</p>
               {lookupFailed ? <p>{COUNTER_LOOKUP_FAILED_COPY}</p> : null}
+              {recordedHref ? (
+                <p>
+                  The sale was recorded.{" "}
+                  <Link href={recordedHref} className="text-brand-700 underline">
+                    Open it
+                  </Link>{" "}
+                  to check it. Try again finishes it once, without ringing it twice.
+                </p>
+              ) : null}
               {heldCorrupt ? <p>{COUNTER_DISCARD_COPY}</p> : null}
               <div className="flex flex-wrap items-center gap-3">
                 {heldCorrupt ? (
