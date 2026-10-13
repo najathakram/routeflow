@@ -108,6 +108,14 @@ describe("SA-733 D6 / M6 — createCheckoutSession anchors every new subscriptio
     expect(sent(h).expires_at).toBeGreaterThan(at("2026-10-31T23:00:00Z") + 30 * 60);
   });
 
+  it("F1: every session says Managed Payments is OFF and never enables automatic tax", async () => {
+    jest.useFakeTimers({ now: new Date("2026-10-15T09:00:00Z"), doNotFake: ONLY_DATE });
+    const h = make({ addonSkus: ["FORECASTING"] });
+    await h.billing.createCheckoutSession("t1", "month");
+    expect(sent(h).managed_payments).toEqual({ enabled: false });
+    expect(sent(h).automatic_tax?.enabled).not.toBe(true);
+  });
+
   it("Oct 15: the session lives the plain 24 h", async () => {
     jest.useFakeTimers({ now: new Date("2026-10-15T09:00:00Z"), doNotFake: ONLY_DATE });
     const h = make();

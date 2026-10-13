@@ -94,6 +94,13 @@ function money(cents) {
 
 const day = (iso) => (iso ? String(iso).slice(0, 10) : "n/a");
 
+const MON = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
+/** "2026-11-11T04:08:24.000Z" -> "Nov 11" (UTC, as every window boundary is). */
+const monthDay = (iso) => {
+  const d = new Date(iso);
+  return Number.isNaN(d.getTime()) ? "n/a" : `${MON[d.getUTCMonth()]} ${d.getUTCDate()}`;
+};
+
 /** The printed block of one tenant. Ids and amounts only: never a name or a slug. */
 function formatTenantReport(r) {
   const lines = [];
@@ -101,10 +108,28 @@ function formatTenantReport(r) {
   lines.push(
     `  price         ${money(r.monthlyCents)}/month (${r.priceSource ?? "unresolved"}), plan ${r.planKey ?? "n/a"}`,
   );
+  // SA-733r10 nit 3: the stored base-price snapshot beside the resolved price; an override with none is flagged
+  const snapshot =
+    r.basePriceSnapshot == null ? null : money(Math.round(Number(r.basePriceSnapshot) * 100));
+  lines.push(`  snapshot      basePriceSnapshot ${snapshot ?? "none"}`);
+  if (r.priceSource === "override" && snapshot == null) {
+    lines.push("  WARNING       price override set but no snapshot - check before apply");
+  }
   lines.push(
     `  census        stripe subscription: ${r.hasStripeSubscription ? "YES" : "no"} · manual invoicing: ${r.externalPayment ? "yes" : "NO"} · claim: ${r.claimState ?? "none"}`,
   );
   lines.push(`  RfInvoices    ${r.rfInvoices.open} open · ${r.rfInvoices.paid} paid`);
+  if (r.billingStartOverride) {
+    const o = r.billingStartOverride;
+    lines.push(
+      `  override      billing-start override ${o.valid ? day(o.billingStart) : `INVALID (${o.billingStart}) - refused`}`,
+    );
+  }
+  for (const m of r.markers ?? []) {
+    lines.push(
+      `  marker        ${m.id}  ${day(m.periodStart)} -> ${day(m.periodEnd)}  ${m.state}${m.state === "voided" ? " (not paid coverage)" : m.state === "restored" ? " (counts again)" : ""}`,
+    );
+  }
   if (r.subPeriod) {
     lines.push(
       `  sub period    ${day(r.subPeriod.start)} -> ${day(r.subPeriod.end)} (manual subscription)`,
@@ -114,14 +139,37 @@ function formatTenantReport(r) {
     lines.push(`  catch-up      CANNOT PLAN: ${r.plan.reason} (NEEDS RULING)`);
   } else {
     const p = r.plan;
+    // N10: say where the floor comes from; "(nothing paid)" never claims it is go-live
+    if (p.floor) {
+      const source =
+        {
+          billing_start_override: "billing-start override",
+          first_activation: "first activation's period start",
+          go_live: "go-live",
+        }[p.floorSource] ?? "unknown";
+      lines.push(`  floor         ${day(p.floor)} (${source})`);
+    }
     lines.push(
-      `  paid through  ${day(p.paidThrough)}${p.paidFromInvoices ? "" : " (nothing paid: go-live)"}`,
+      `  paid through  ${day(p.paidThrough)}${p.paidFromInvoices ? "" : " (nothing paid since the floor)"}`,
     );
     lines.push(`  anchor        ${day(p.anchorAt)} 12:00Z · trial end ${day(p.trialEndAt)} 12:00Z`);
     lines.push(`  checkout      ${p.shape}`);
     lines.push(
       `  catch-up line "${p.stub.label}" = ${money(p.stub.totalCents)}  (${day(p.stub.from)} -> ${day(p.stub.to)})`,
     );
+    // SA-733r10 nit 4: the same thing in plain words
+    const bills = monthDay(p.trialEndAt);
+    if (p.shape === "trial_one_time" && p.stub.totalCents >= 50) {
+      lines.push(
+        `  in words      Charged today for ${monthDay(p.stub.from)} - ${monthDay(p.stub.to)}; the card then bills on ${bills}.`,
+      );
+    } else if (p.stub.belowStripeMinimum) {
+      lines.push(
+        `  in words      Nothing is charged today (the ${money(p.stub.totalCents)} line is under the card minimum and is forgiven); the card bills on ${bills}.`,
+      );
+    } else {
+      lines.push(`  in words      Nothing is charged today; the card bills on ${bills}.`);
+    }
     for (const l of p.stub.lines)
       lines.push(`                  ${l.kind === "PLAN" ? "plan" : l.code}  ${money(l.cents)}`);
     lines.push(`  void on paid  ${p.voidInvoiceIds.length} OPEN RfInvoice(s)`);

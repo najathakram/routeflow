@@ -31,6 +31,8 @@
 //   CODE_TAKEN     — `body.code` of the 409 when a product sku / unit code (a barcode answers
 //                    BARCODE_TAKEN) is held by another ACTIVE product of the tenant (SA-603a); body
 //                    carries `field` (sku | unitSku), `value`, the holder's `productId` and `productName`.
+//   PRODUCT_CODE_IN_USE — `body.code` of the 400 a product create / update answers when its sku, barcode or unit code
+//                    is already used by another active product; body carries `field` (sku | barcode | unitSku).
 //   CATALOG_TOO_LARGE_FOR_CLEAR_ALL — `body.code` of the 409 from DELETE /products/clear-all AND DELETE /products/bulk (both soft-delete through one code-lock set) when that set holds more
 //                    than 1,000 distinct codes (one advisory lock per code is held to COMMIT; Opus/SA #2860). Delete in smaller batches.
 //   CODES_CHANGED — `body.code` of the 409 when a deactivation finds a live code of the product that was NOT in the
@@ -207,6 +209,7 @@ export const API_ERROR_CODES = {
   NSF_LINE_UNTAXED: "NSF_LINE_UNTAXED",
   BARCODE_TAKEN: "BARCODE_TAKEN",
   CODE_TAKEN: "CODE_TAKEN",
+  PRODUCT_CODE_IN_USE: "PRODUCT_CODE_IN_USE",
   NAME_TAKEN: "NAME_TAKEN",
   HOLDERS_CHANGED: "HOLDERS_CHANGED",
   FAMILY_NOT_SELLABLE: "FAMILY_NOT_SELLABLE",
@@ -386,6 +389,7 @@ export const API_ERROR_CODES = {
   CATCHUP_ADDON_NOT_CARD_BILLABLE: "CATCHUP_ADDON_NOT_CARD_BILLABLE",
   CATCHUP_ADDON_SNAPSHOT_NOT_CATALOG: "CATCHUP_ADDON_SNAPSHOT_NOT_CATALOG",
   CATCHUP_MANUAL_PERIOD_AHEAD: "CATCHUP_MANUAL_PERIOD_AHEAD",
+  CATCHUP_NO_BILLABLE_PRICE: "CATCHUP_NO_BILLABLE_PRICE",
   ACTIVATION_CATCHUP_SESSION_OPEN: "ACTIVATION_CATCHUP_SESSION_OPEN",
   EXTERNAL_PAYMENT_USE_CATCHUP: "EXTERNAL_PAYMENT_USE_CATCHUP",
   PAYMENT_OVERDUE: "PAYMENT_OVERDUE",

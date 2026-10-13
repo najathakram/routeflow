@@ -148,7 +148,9 @@ const CODE_COPY: Record<string, string> = {
   [API_ERROR_CODES.ACTIVATION_CATCHUP_SESSION_OPEN]:
     "A card checkout is open for this account (October catch-up), so it can't be activated by hand yet. Wait for the checkout to complete or expire, then try again.",
   [API_ERROR_CODES.CATCHUP_MANUAL_PERIOD_AHEAD]:
-    "This account has days already paid that end part-way through a month, so it stays on invoiced billing for now. Your RouteFlow contact will follow up.",
+    "This account has a manual activation recorded without a paid period, so it stays on invoiced billing for now. Your RouteFlow contact will follow up.",
+  [API_ERROR_CODES.CATCHUP_NO_BILLABLE_PRICE]:
+    "This account has no billable monthly price set, so it stays on invoiced billing for now. Your RouteFlow contact will follow up.",
   [API_ERROR_CODES.CATCHUP_ADDON_SNAPSHOT_NOT_CATALOG]:
     "This account's add-on price or quantity differs from the standard one, so it stays on invoiced billing for now. Your RouteFlow contact will follow up.",
   // SA-733r7 PR-B3 (dunning): a plan change is refused while an invoice is overdue; paying it restores everything.
@@ -160,6 +162,9 @@ const CODE_COPY: Record<string, string> = {
 
 /** Exact server sentences (already product text) for refusals with no `code`; matched whole, never partially. */
 const KNOWN_REFUSAL_SENTENCES: Record<string, string> = {
+  // a buyer reorder where every line is restricted: the API's own sentence, already product text
+  "None of these items are available to you right now.":
+    "None of these items are available to you right now.",
   "Cannot duplicate an order-linked invoice. Create a new invoice or issue a credit note instead.":
     "This invoice came from an order, so it can't be duplicated. Create a new invoice or issue a credit note instead.",
 };

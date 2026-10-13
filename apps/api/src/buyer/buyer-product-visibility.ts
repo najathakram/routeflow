@@ -9,9 +9,11 @@ import {
 
 /**
  * What a buyer's request knows about selling restrictions. `restrictedIds` is the set of product ids the governing
- * selling-restrictions engine BLOCKS for this buyer (INDETERMINATE stays visible: checkout is the authority), already
- * empty when the tenant's restriction switch is off. It is REQUIRED so no call site can forget it (SA-606 WS6);
- * `noBuyerRestrictions(tenantId)` is the explicit "none" until `restrictedProductIdsFor` is wired at a site.
+ * selling-restrictions engine HIDES from this buyer in the portal (BLOCK and INDETERMINATE both hide, so a legal-ban
+ * product is never shown and then refused at checkout; a portal-only limit fails open for a buyer with no state). It
+ * applies whatever the staff-enforcement switch says. REQUIRED so no call site can forget it (SA-606 WS6); built by
+ * `buyerVisibilityFor`. `noBuyerRestrictions(tenantId)` is the explicit "none", used only by `isBuyerVisibleBase` (the
+ * order gate, where the engine itself is the authority).
  */
 export interface BuyerVisibilityContext {
   restrictedIds: ReadonlySet<string>;
@@ -30,6 +32,27 @@ export function noBuyerRestrictions(
 ): BuyerVisibilityContext {
   if (!tenantId) throw new Error("buyer visibility requires a tenant id (B1211)");
   return { restrictedIds, tenantId };
+}
+
+/**
+ * The visibility context of THIS buyer's request: the ids the selling-restrictions engine hides from them in the portal
+ * (`restrictedProductIdsFor`: product and category rules, variants, label opt-outs, the buyer's state). EVERY buyer read
+ * builds its context here (`selling-restrictions/portal-limits-pins.spec.ts` forbids a bare `noBuyerRestrictions(` anywhere else), and
+ * a tenant with no active rule costs one indexed query.
+ */
+export async function buyerVisibilityFor(
+  restrictions: {
+    restrictedProductIdsFor(t: string, c: string | null, at?: Date): Promise<ReadonlySet<string>>;
+  },
+  tenantId: string | null | undefined,
+  customerId: string | null | undefined,
+  at: Date = new Date(),
+): Promise<BuyerVisibilityContext> {
+  if (!tenantId) throw new Error("buyer visibility requires a tenant id (B1211)");
+  return {
+    tenantId,
+    restrictedIds: await restrictions.restrictedProductIdsFor(tenantId, customerId ?? null, at),
+  };
 }
 
 /**

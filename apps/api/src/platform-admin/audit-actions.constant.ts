@@ -30,6 +30,18 @@ export const AdminAuditAction = {
    * lands after the commit.
    */
   TENANT_MANUAL_ACTIVATION_MARKER: "TENANT_MANUAL_ACTIVATION_MARKER",
+  /**
+   * SA-733r11/r12 (row 385): APPEND-ONLY correction markers read by the catch-up beside the activation markers
+   * (never an edit of the original row). VOID `{ voidsMarkerId, reason, actor, ownerApprovedAt }`: that activation's
+   * window is NOT paid coverage. RESTORE `{ restoresMarkerId, ... }`: undoes a VOID (the latest of the two per
+   * activation marker wins, by createdAt then id). BILLING_START_OVERRIDE `{ billingStart, reason, actor,
+   * ownerApprovedAt }`: the catch-up floor, an anchor 1st at 12:00Z not before go-live.
+   */
+  TENANT_MANUAL_ACTIVATION_COVERAGE_VOID: "TENANT_MANUAL_ACTIVATION_COVERAGE_VOID",
+  TENANT_MANUAL_ACTIVATION_COVERAGE_RESTORE: "TENANT_MANUAL_ACTIVATION_COVERAGE_RESTORE",
+  TENANT_BILLING_START_OVERRIDE: "TENANT_BILLING_START_OVERRIDE",
+  /** SA-733r9: a catch-up line under Stripe's $0.50 minimum was forgiven (one row per session id). */
+  CATCHUP_MINIMUM_FORGIVEN: "catchup.minimum-forgiven",
   TENANT_DELETED: "TENANT_DELETED",
   TENANT_CONFIG_UPDATED: "TENANT_CONFIG_UPDATED",
   TENANT_ADMIN_PASSWORD_RESET: "TENANT_ADMIN_PASSWORD_RESET",
@@ -100,6 +112,11 @@ export const ADMIN_AUDIT_ACTION_LABELS: Record<AdminAuditActionCode, string> = {
   TENANT_TRIAL_EXTENDED: "Trial extended",
   TENANT_SUBSCRIPTION_ACTIVATED: "Subscription activated (manual)",
   TENANT_MANUAL_ACTIVATION_MARKER: "Manual activation recorded (billing marker)",
+  TENANT_MANUAL_ACTIVATION_COVERAGE_VOID: "Manual activation coverage voided (billing correction)",
+  TENANT_MANUAL_ACTIVATION_COVERAGE_RESTORE:
+    "Manual activation coverage restored (billing correction)",
+  TENANT_BILLING_START_OVERRIDE: "Billing start set (billing correction)",
+  "catchup.minimum-forgiven": "Catch-up line under the card minimum forgiven",
   TENANT_DELETED: "Tenant deleted",
   TENANT_CONFIG_UPDATED: "Configuration updated",
   TENANT_ADMIN_PASSWORD_RESET: "Admin password reset",

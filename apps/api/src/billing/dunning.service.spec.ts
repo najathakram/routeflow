@@ -58,11 +58,11 @@ function make(
     openInvoices?: any[];
     localPausedAt?: Date | null;
     /** The tenant row as the resume transaction re-reads it UNDER the Tenant lock. */
-    txTenant?: { status: string; readOnlyReason: string | null };
+    txTenant?: { status: string; readOnlyReason: string | null; class?: string };
     /** The owed marker as the resume transaction re-reads it under the lock (default: still in_1). */
     txClock?: string | null;
     /** SA-775: the rollout switch handed to the service (absent = a bare unit spec, as today). */
-    autoLocks?: { isPaused(): Promise<boolean> };
+    autoLocks?: { isPaused(): Promise<boolean>; unpausedSince?(): Promise<Date | null> };
   } = {},
 ) {
   const order: string[] = [];
@@ -114,7 +114,14 @@ function make(
     billingNotificationLog: {
       findMany: jest.fn(async (a: any) =>
         (opts.logged ?? [])
-          .filter((l: any) => (l.key ?? EP) === a?.where?.key)
+          .filter((l: any) => {
+            const want = a?.where?.key;
+            const k = l.key ?? EP;
+            // a re-issued final (row 412) is looked up by prefix: `<episode key>:u<unpause ISO>`
+            return typeof want === "object" && want?.startsWith
+              ? k.startsWith(want.startsWith)
+              : k === want;
+          })
           .filter(
             (l: any) => !a?.where?.milestone?.in || a.where.milestone.in.includes(l.milestone),
           ),
@@ -439,19 +446,34 @@ describe("DunningService", () => {
       };
 
       // A mutable log + switch so a second sweep sees what the first one sent (the mocks do not persist by themselves).
-      const lifecycle = (cls = "PRODUCTION") => {
+      const lifecycle = (
+        cls = "PRODUCTION",
+        init: {
+          paused?: boolean;
+          /** The switch's last unpause instant (null = none known); exposed only while unpaused. */
+          unpausedAt?: Date | null;
+          /** Claims already in the log (key defaults to this episode's). */
+          logged?: { milestone: string; sentAt: Date; key?: string }[];
+        } = {},
+      ) => {
         mode("enforced");
-        const sw = { paused: true };
+        const sw = { paused: init.paused ?? true, unpausedAt: init.unpausedAt ?? null };
         const logged: { milestone: string; sentAt: Date; key?: string }[] = [
           { milestone: "DUNNING_D0", sentAt: at(0) },
           { milestone: "DUNNING_D3", sentAt: at(72) },
+          ...(init.logged ?? []),
         ];
         let clock = at(150);
         const d = make({
           sweepRows: [row({ tenant: { ...row().tenant, class: cls } })],
           logged,
-          autoLocks: { isPaused: async () => sw.paused },
+          autoLocks: {
+            isPaused: async () => sw.paused,
+            // the contract: null only while paused; an unpaused switch with no instant set = unpaused long ago
+            unpausedSince: async () => (sw.paused ? null : (sw.unpausedAt ?? new Date(0))),
+          },
           localPausedAt: at(177),
+          txTenant: { status: "ACTIVE", readOnlyReason: null, class: cls },
         });
         d.notifications.notifyDunning.mockImplementation(
           async (_t: string, milestone: string, key: string) => {
@@ -509,6 +531,211 @@ describe("DunningService", () => {
         await sweepAt(185); // 25 h after it (09:00+ local)
         expect(d.transition).toHaveBeenCalledTimes(1);
         expect(finals(d)).toHaveLength(2); // sent once, never resent
+      });
+
+      describe("row 412: a final notice sent BEFORE the pause started counts as NOT sent after the unpause", () => {
+        const reKey = (u: Date) => `${EP}:u${u.toISOString()}`;
+        // The tenant got the REAL dated final at +150 h while the switch was unpaused (unpausedAt +100 h).
+        const realFinal = [
+          { milestone: "DUNNING_D6", sentAt: at(144) },
+          { milestone: "DUNNING_FINAL", sentAt: at(150) },
+        ];
+        const world = (cls = "PRODUCTION", unpausedAt: Date | null = at(100)) =>
+          lifecycle(cls, { paused: false, unpausedAt, logged: realFinal });
+
+        it("final -> pause (held) -> unpause: ONE new real final (new claim key, fresh date), no lock until it is 24 h old", async () => {
+          const { d, sw, sweepAt } = world();
+          sw.paused = true; // the SA-775 switch is paused at +160 h: the lock is held
+          sw.unpausedAt = null;
+          await sweepAt(160);
+          expect(finals(d)).toHaveLength(0);
+          expect(d.transition).not.toHaveBeenCalled();
+
+          const U = at(270); // unpaused 5 days after the real final
+          sw.paused = false;
+          sw.unpausedAt = U;
+          await sweepAt(270);
+          expect(finals(d)).toHaveLength(1);
+          expect(finals(d)[0].slice(0, 4)).toEqual(["t1", "DUNNING_FINAL", reKey(U), "final"]);
+          expect(finals(d)[0][4]).toEqual(
+            expect.objectContaining({ omitLockWarning: false, readOnlyOn: "Nov 9, 2026" }),
+          );
+          expect(d.transition).not.toHaveBeenCalled(); // never in the sweep that sent the notice
+
+          await sweepAt(271); // idempotent: the re-issued claim exists, nothing more is sent
+          expect(finals(d)).toHaveLength(1);
+          await sweepAt(293); // 23 h after the NEW final
+          expect(d.transition).not.toHaveBeenCalled();
+          await sweepAt(295); // 25 h after it
+          expect(d.transition).toHaveBeenCalledTimes(1);
+          expect(finals(d)).toHaveLength(1);
+        });
+
+        it("a second pause -> unpause (new boundary) re-issues exactly once more, under a key per boundary", async () => {
+          const { d, sw, sweepAt } = world();
+          sw.paused = false;
+          sw.unpausedAt = at(270);
+          await sweepAt(270);
+          sw.paused = true;
+          sw.unpausedAt = null;
+          await sweepAt(280);
+          const U2 = at(400);
+          sw.paused = false;
+          sw.unpausedAt = U2;
+          await sweepAt(400);
+          await sweepAt(401);
+          expect(finals(d).map((c: any[]) => c[2])).toEqual([reKey(at(270)), reKey(U2)]);
+          await sweepAt(420); // 20 h after the second re-issue
+          expect(d.transition).not.toHaveBeenCalled();
+          await sweepAt(425); // 25 h
+          expect(d.transition).toHaveBeenCalledTimes(1);
+          expect(finals(d)).toHaveLength(2);
+        });
+
+        it("a final sent AFTER the unpause is honoured: no resend, the normal lock 24 h later", async () => {
+          const { d, sweepAt } = world("PRODUCTION", at(140)); // unpaused at +140 h, final at +150 h
+          await sweepAt(173); // 23 h after the final
+          expect(d.transition).not.toHaveBeenCalled();
+          await sweepAt(175); // 25 h
+          expect(d.transition).toHaveBeenCalledTimes(1);
+          expect(finals(d)).toHaveLength(0);
+        });
+
+        it("a final sent exactly AT the unpause instant is honoured", async () => {
+          const { d, sweepAt } = world("PRODUCTION", at(150));
+          await sweepAt(175);
+          expect(finals(d)).toHaveLength(0);
+          expect(d.transition).toHaveBeenCalledTimes(1);
+        });
+
+        it("TEST class: unchanged - a final older than the unpause still counts, and it locks while paused too", async () => {
+          const a = world("TEST", at(270));
+          await a.sweepAt(295);
+          expect(finals(a.d)).toHaveLength(0);
+          expect(a.d.transition).toHaveBeenCalledTimes(1);
+          const b = lifecycle("TEST", { paused: true, logged: realFinal });
+          await b.sweepAt(175);
+          expect(finals(b.d)).toHaveLength(0);
+          expect(b.d.transition).toHaveBeenCalledTimes(1);
+        });
+
+        it("no switch injected: unchanged - the old final counts, the pause follows 24 h after it", async () => {
+          mode("enforced");
+          const d = make({
+            sweepRows: [row()],
+            logged: [
+              { milestone: "DUNNING_D0", sentAt: at(0) },
+              { milestone: "DUNNING_D3", sentAt: at(72) },
+              ...realFinal,
+            ],
+          });
+          await d.svc.sweep(at(295));
+          expect(finals(d)).toHaveLength(0);
+          expect(d.transition).toHaveBeenCalledTimes(1);
+        });
+
+        it("a tenant that never had a real final keeps the first-final key (no re-issue suffix)", async () => {
+          const { d, sw, sweepAt } = lifecycle("PRODUCTION"); // held neutral notice first
+          await sweepAt(150);
+          sw.paused = false;
+          sw.unpausedAt = at(160);
+          await sweepAt(160);
+          expect(finals(d)).toHaveLength(2);
+          expect(finals(d)[1].slice(0, 4)).toEqual(["t1", "DUNNING_FINAL", EP, "final"]);
+        });
+
+        describe("the switch flips BETWEEN the notice lookup and the pause transaction", () => {
+          const oldLog = [
+            { milestone: "DUNNING_D0", sentAt: at(0) },
+            { milestone: "DUNNING_D3", sentAt: at(72) },
+            { milestone: "DUNNING_D6", sentAt: at(144) },
+            { milestone: "DUNNING_FINAL", sentAt: at(150) },
+          ];
+          /**
+           * A scripted switch: the answer changes when the sweep reads the tenant zone, which happens AFTER the
+           * notice lookup (runMilestones) and BEFORE the pause transaction (pauseTenantTx).
+           */
+          const scripted = (
+            first: { paused: boolean; at: Date | null },
+            gate: { paused: boolean; at: Date | null },
+            cls = "PRODUCTION",
+          ) => {
+            const p = { cur: first, unpausedReads: 0 };
+            const autoLocks = {
+              isPaused: async () => p.cur.paused,
+              unpausedSince: async () => {
+                p.unpausedReads += 1;
+                return p.cur.paused ? null : p.cur.at;
+              },
+            };
+            const d = make({
+              sweepRows: [row({ tenant: { ...row().tenant, class: cls } })],
+              logged: oldLog,
+              autoLocks,
+              txTenant: { status: "ACTIVE", readOnlyReason: null, class: cls },
+            });
+            d.prisma.tenantConfig.findUnique.mockImplementation(async () => {
+              p.cur = gate;
+              return { timezone: "UTC" };
+            });
+            return { d, p };
+          };
+
+          it("PAUSED at the notice lookup, UNPAUSED (after the final) at the gate: the stale final does not lock", async () => {
+            mode("enforced");
+            const { d } = scripted({ paused: true, at: null }, { paused: false, at: at(270) });
+            await d.svc.sweep(at(295));
+            expect(d.transition).not.toHaveBeenCalled();
+            expect(d.tx.tenantSubscription.updateMany).not.toHaveBeenCalled();
+            expect(d.tx.tenant.updateMany).not.toHaveBeenCalled();
+          });
+
+          it("a double flip: unpaused before the final (U), then a later unpause (U' > final) at the gate: held", async () => {
+            mode("enforced");
+            const { d } = scripted({ paused: false, at: at(140) }, { paused: false, at: at(270) });
+            await d.svc.sweep(at(295));
+            expect(d.transition).not.toHaveBeenCalled();
+            expect(d.tx.tenantSubscription.updateMany).not.toHaveBeenCalled();
+          });
+
+          it("control: the final sent after the unpause locks, and the gate re-reads the boundary inside the transaction", async () => {
+            mode("enforced");
+            const { d, p } = scripted(
+              { paused: false, at: at(140) },
+              { paused: false, at: at(140) },
+            );
+            await d.svc.sweep(at(295));
+            expect(d.transition).toHaveBeenCalledTimes(1);
+            expect(p.unpausedReads).toBeGreaterThanOrEqual(2); // the notice lookup and the gate
+          });
+
+          it("TEST class keeps locking whatever the switch says (unchanged)", async () => {
+            mode("enforced");
+            const { d } = scripted(
+              { paused: false, at: at(280) },
+              { paused: false, at: at(290) },
+              "TEST",
+            );
+            await d.svc.sweep(at(295));
+            expect(d.transition).toHaveBeenCalledTimes(1);
+          });
+        });
+
+        it("an unpaused switch that reports no boundary (a bare stub) keeps today's behaviour", async () => {
+          mode("enforced");
+          const d = make({
+            sweepRows: [row()],
+            logged: [
+              { milestone: "DUNNING_D0", sentAt: at(0) },
+              { milestone: "DUNNING_D3", sentAt: at(72) },
+              ...realFinal,
+            ],
+            autoLocks: { isPaused: async () => false },
+          });
+          await d.svc.sweep(at(295));
+          expect(finals(d)).toHaveLength(0);
+          expect(d.transition).toHaveBeenCalledTimes(1);
+        });
       });
 
       it.each([

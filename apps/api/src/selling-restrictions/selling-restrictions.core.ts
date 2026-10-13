@@ -19,6 +19,7 @@ import type {
   RestrictionAddressPrecedence,
   RestrictionChannel,
   RestrictionsEvaluation,
+  RestrictionsPolicy,
 } from "@routeflow/types";
 import { normalizeUsState } from "../common/us-states";
 
@@ -105,6 +106,20 @@ export function restrictionChannelForPrincipal(
 ): RestrictionChannel {
   if (!principal || principal.type === "BUYER") return "BUYER_PORTAL";
   return principal.role != null && STAFF_ROLES.has(principal.role) ? "STAFF" : "BUYER_PORTAL";
+}
+
+/**
+ * The ONE gate of the tenant switch (`selling_restrictions.enabled`): it adds STAFF enforcement only. The buyer-portal
+ * channel ALWAYS applies its rules, so a portal limit works the moment the admin sets it; staff-channel blocking touches
+ * orders, invoices, recurring jobs and imports, so it stays opt-in. Any channel that is not exactly "STAFF" is judged as
+ * the portal (fail closed, like `restrictionChannelForPrincipal`). Every short-circuit on the switch calls this, never
+ * `policy.enabled` directly (`portal-limits-pins.spec.ts`).
+ */
+export function restrictionsApply(
+  policy: Pick<RestrictionsPolicy, "enabled">,
+  channel: RestrictionChannel,
+): boolean {
+  return (channel as string) !== "STAFF" || policy.enabled;
 }
 
 /** The OFF outcome: a first-class result, produced without reading anything else. */
@@ -271,6 +286,24 @@ function addressKind(a: CustomerAddressFacts): AddressKind {
 }
 
 /**
+ * The address group `resolveGoverningState` reads (the selection half of D4, below): the preferred
+ * type's defaults, else the other defaults, else the only address; empty when none can be chosen
+ * (no address, several and no default, or an UNKNOWN-typed default among several). Exported so the
+ * "customers without a state" buckets name the SAME addresses the engine reads, never a second rule.
+ */
+export function governingAddresses<A extends CustomerAddressFacts>(
+  addresses: readonly A[],
+  precedence: RestrictionAddressPrecedence,
+): readonly A[] {
+  const preferred: AddressKind = precedence === "SHIPPING_FIRST" ? "SHIPPING" : "BILLING";
+  const defaults = addresses.filter((a) => a.isDefault);
+  if (defaults.length === 0) return addresses.length === 1 ? addresses : [];
+  if (defaults.length > 1 && defaults.some((a) => addressKind(a) === "UNKNOWN")) return [];
+  const preferredDefaults = defaults.filter((a) => addressKind(a) === preferred);
+  return preferredDefaults.length > 0 ? preferredDefaults : defaults;
+}
+
+/**
  * The customer's governing state (D4): their DEFAULT address. Only `isDefault` rows ever govern —
  * a non-default address never outranks the real default, whatever its type. The tenant's
  * billing/shipping precedence only chooses between DEFAULTS of different types: the preferred
@@ -285,18 +318,7 @@ export function resolveGoverningState(
   addresses: readonly CustomerAddressFacts[],
   precedence: RestrictionAddressPrecedence,
 ): GoverningState {
-  const preferred: AddressKind = precedence === "SHIPPING_FIRST" ? "SHIPPING" : "BILLING";
-  const defaults = addresses.filter((a) => a.isDefault);
-
-  let group: readonly CustomerAddressFacts[];
-  if (defaults.length === 0) {
-    group = addresses.length === 1 ? addresses : [];
-  } else if (defaults.length > 1 && defaults.some((a) => addressKind(a) === "UNKNOWN")) {
-    group = [];
-  } else {
-    const preferredDefaults = defaults.filter((a) => addressKind(a) === preferred);
-    group = preferredDefaults.length > 0 ? preferredDefaults : defaults;
-  }
+  const group = governingAddresses(addresses, precedence);
   if (group.length === 0) return UNRESOLVED_STATE;
 
   const codes = new Set<string>();
@@ -306,6 +328,25 @@ export function resolveGoverningState(
     codes.add(code);
   }
   return codes.size === 1 ? { resolved: true, state: [...codes][0] } : UNRESOLVED_STATE;
+}
+
+/**
+ * Does this rule HIDE its products from a portal buyer in `governingState`? One predicate for the visibility engine
+ * (`restrictedProductIdsFor`), matching `evaluateRestrictions` rule by rule: a federal, unrecognised or malformed
+ * (no readable states) rule hides everywhere; a STATE rule hides when the buyer's state is named; and with the state
+ * unresolved a legal ban (surface ALL, INDETERMINATE) hides while a portal-only limit does not (ALLOW). BLOCK and
+ * INDETERMINATE both hide, so a legal-ban product is never shown and then refused at checkout. The caller loads only
+ * rules ACTIVE at `at`; every active rule binds the portal channel.
+ */
+export function ruleHidesFromBuyer(
+  rule: RestrictionRuleFacts,
+  governingState: GoverningState,
+): boolean {
+  if ((rule.jurisdiction as string) !== "STATE") return true;
+  const states = ruleStates(rule);
+  if (states.length === 0) return true;
+  if (!governingState.resolved) return (rule.surface as string) !== "BUYER_PORTAL";
+  return states.includes(governingState.state);
 }
 
 export interface EvaluateInput {
@@ -417,6 +458,9 @@ export function evaluateRestrictions(input: EvaluateInput): RestrictionsEvaluati
     }
 
     if (!input.governingState.resolved) {
+      // Owner ruling 2: a customer with no state on file is ALLOWED where every matched STATE rule is a portal-only limit
+      // (a commercial choice, not law). A legal ban (surface ALL) among them keeps the fail-closed INDETERMINATE.
+      if (stateRules.every((r) => (r.surface as string) === "BUYER_PORTAL")) continue;
       indeterminate = true;
       reasons.push(
         line(
