@@ -1272,6 +1272,7 @@ export function useAdminUsers(params?: {
   });
 }
 
+/** Admin only (POST /users/operator is TENANT_ADMIN-only). No screen calls it today; gate any caller on isAccountAdmin. */
 export function useCreateAdminUser() {
   const qc = useQueryClient();
   return useMutation<
