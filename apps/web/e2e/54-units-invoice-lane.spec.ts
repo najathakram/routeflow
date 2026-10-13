@@ -148,11 +148,11 @@ test.describe("Units v1 — the invoice unit picker (VU-4a)", () => {
     await openBuilder(page, /other charge \(a fee or correction with no order\)/i);
     await addFixtureProduct(page);
     await picker(page).selectOption("Piece");
-    await page.getByTitle("Total units").fill("2");
+    await page.getByTitle("Total pieces").fill("2");
     await expect(page.getByText("= $4.00")).toBeVisible(); // 48 x 2/24, never 2 x a per-piece price
     await picker(page).selectOption("");
-    await page.getByTitle("Cases").fill("1");
-    await page.getByTitle("Extra loose units").fill("0");
+    await page.getByTitle("Boxes").fill("1");
+    await page.getByTitle("Extra pieces").fill("0");
     await expect(page.getByText("= $48.00")).toBeVisible();
     await picker(page).selectOption("Case");
     await page.getByLabel("Case count").fill("2");

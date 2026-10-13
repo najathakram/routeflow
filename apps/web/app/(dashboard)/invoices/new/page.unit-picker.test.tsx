@@ -180,8 +180,8 @@ describe("M: money (pricing helpers only)", () => {
   it("M1: 2 boxes + 3 pcs is prorated, never 51 x 48; payload is the pack shape with no unitLabel", async () => {
     const { user } = await open("other");
     await scan(user, BOXED);
-    await typeInto(user, screen.getByTitle("Cases"), "2");
-    await typeInto(user, screen.getByTitle("Extra loose units"), "3");
+    await typeInto(user, screen.getByTitle("Boxes"), "2");
+    await typeInto(user, screen.getByTitle("Extra pieces"), "3");
     const expected = computeLineSubtotal({
       unitPrice: 48,
       qty: 51,
@@ -218,7 +218,7 @@ describe("M: money (pricing helpers only)", () => {
       await scan(user, { ...THREE_PACK, scanMatch: { levels: ["BOX", "UNIT"] } });
       mockLadder = [level({ productId: "p-3", factorToBase: 3, label: "Tray", price: "9.00" })];
       await pick(user, "Gum", "Piece");
-      await typeInto(user, screen.getByTitle("Total units"), String(pcs));
+      await typeInto(user, screen.getByTitle("Total pieces"), String(pcs));
       const expected = computeLineSubtotal({
         unitPrice: 10,
         qty: pcs,
@@ -236,7 +236,7 @@ describe("M: money (pricing helpers only)", () => {
     const { user } = await open("other");
     await scan(user, THREE_PACK);
     await pick(user, "Gum", "Piece");
-    await typeInto(user, screen.getByTitle("Total units"), "3");
+    await typeInto(user, screen.getByTitle("Total pieces"), "3");
     rowTotal(10);
     await saveDraft(user);
     expect(posted()[0]).toMatchObject({ qty: 3, boxes: 1, pieces: 0, unitPrice: 10 });
@@ -274,7 +274,7 @@ describe("M: money (pricing helpers only)", () => {
       unitsPerBox: 4,
     });
     await pick(user, "Mint", "Piece");
-    await typeInto(user, screen.getByTitle("Total units"), "1");
+    await typeInto(user, screen.getByTitle("Total pieces"), "1");
     rowTotal(computeLineSubtotal({ unitPrice: 0.02, qty: 1, boxes: 0, pieces: 1, unitsPerBox: 4 }));
   });
 
@@ -283,7 +283,7 @@ describe("M: money (pricing helpers only)", () => {
     const { user } = await open("other");
     await scan(user, { id: "p-1", name: "Cup", pricePerUnit: "2", unitsPerBox: 1 });
     expect(screen.queryByRole("combobox", { name: /sell cup by/i })).not.toBeInTheDocument();
-    expect(screen.queryByTitle("Cases")).not.toBeInTheDocument();
+    expect(screen.queryByTitle("Boxes")).not.toBeInTheDocument();
     await saveDraft(user);
     expect(posted()[0].qty).toBe(1);
     expect("boxes" in posted()[0]).toBe(false);
@@ -292,13 +292,13 @@ describe("M: money (pricing helpers only)", () => {
   it("M7: Box -> Case -> Box restores qty / boxes / pieces / unitPrice exactly", async () => {
     const { user } = await open("other");
     await scan(user, BOXED);
-    await typeInto(user, screen.getByTitle("Cases"), "2");
-    await typeInto(user, screen.getByTitle("Extra loose units"), "3");
+    await typeInto(user, screen.getByTitle("Boxes"), "2");
+    await typeInto(user, screen.getByTitle("Extra pieces"), "3");
     await typeInto(user, screen.getByLabelText("Unit price"), "45.50");
     await pick(user, "Soda", "Case");
     await pick(user, "Soda", "");
-    expect(screen.getByTitle("Cases")).toHaveValue(2);
-    expect(screen.getByTitle("Extra loose units")).toHaveValue(3);
+    expect(screen.getByTitle("Boxes")).toHaveValue(2);
+    expect(screen.getByTitle("Extra pieces")).toHaveValue(3);
     expect(screen.getByLabelText("Unit price")).toHaveValue("45.50");
     await saveDraft(user);
     expect(posted()[0]).toMatchObject({ qty: 51, boxes: 2, pieces: 3, unitPrice: 45.5 });
@@ -348,9 +348,9 @@ describe("U: the picker", () => {
     const off = await open("other");
     await scan(off.user, BOXED);
     expect(screen.queryByRole("combobox", { name: /sell soda by/i })).not.toBeInTheDocument();
-    expect(screen.getByRole("button", { name: "Case" })).toBeInTheDocument();
-    expect(screen.getByRole("button", { name: "Unit" })).toBeInTheDocument();
-    expect(screen.getByTitle("Cases")).toHaveValue(1);
+    expect(screen.getByRole("button", { name: "Box" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Piece" })).toBeInTheDocument();
+    expect(screen.getByTitle("Boxes")).toHaveValue(1);
     off.unmount();
 
     mockFlags = ["flag.units_v1"];
@@ -358,7 +358,7 @@ describe("U: the picker", () => {
     const none = await open("other");
     await scan(none.user, BOXED);
     expect(screen.queryByRole("combobox", { name: /sell soda by/i })).not.toBeInTheDocument();
-    expect(screen.getByRole("button", { name: "Unit" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Piece" })).toBeInTheDocument();
   });
 
   it("U4: a shared code is a tap (Case); a distinct piece code is 1 piece; a distinct box code is 1 box", async () => {
@@ -366,7 +366,7 @@ describe("U: the picker", () => {
     const { user } = await open("other");
     await scan(user, { ...BOXED, scanMatch: { levels: ["BOX"] } });
     expect(await pickerOf("Soda")).toHaveValue("");
-    expect(screen.getByTitle("Cases")).toHaveValue(1);
+    expect(screen.getByTitle("Boxes")).toHaveValue(1);
     await saveDraft(user);
     expect(posted()[0]).toMatchObject({ qty: 24, boxes: 1, pieces: 0 });
     expect("unitLabel" in posted()[0]).toBe(false);
@@ -387,7 +387,7 @@ describe("U: the picker", () => {
     await scan(user, BOXED);
     await waitFor(() => expect(screen.getByLabelText(/^case count$/i)).toHaveValue("2"));
     await pick(user, "Soda", "");
-    expect(screen.getByTitle("Cases")).toBeInTheDocument();
+    expect(screen.getByTitle("Boxes")).toBeInTheDocument();
     await waitFor(() => expect(screen.queryByLabelText(/^case count$/i)).not.toBeInTheDocument());
     expect(await pickerOf("Soda")).toHaveValue("");
   });
@@ -398,7 +398,7 @@ describe("U: the picker", () => {
     const { user } = await open("other");
     await scan(user, BOXED);
     expect(await screen.findByText(/Couldn't load the selling units/)).toBeInTheDocument();
-    expect(screen.getByTitle("Cases")).toBeDisabled();
+    expect(screen.getByTitle("Boxes")).toBeDisabled();
     await saveDraft(user);
     expect(createInvoiceMutate).not.toHaveBeenCalled();
     mockLadderFail = false;
@@ -427,7 +427,7 @@ describe("U: the picker", () => {
     await pick(user, "Soda", "Piece");
     expect(await pickerOf("Soda")).toHaveValue("Piece");
     expect(screen.getByLabelText("Unit price")).toHaveValue("48.00");
-    await typeInto(user, screen.getByTitle("Total units"), "30");
+    await typeInto(user, screen.getByTitle("Total pieces"), "30");
     const calls = mockGet.mock.calls.length;
     await act(async () => {
       await Promise.resolve();
@@ -438,8 +438,8 @@ describe("U: the picker", () => {
     expect(posted()[0]).toMatchObject({ qty: 30, boxes: 1, pieces: 6, unitPrice: 48 });
     expect("unitLabel" in posted()[0]).toBe(false);
     await pick(user, "Soda", "");
-    expect(screen.getByTitle("Cases")).toHaveValue(1);
-    expect(screen.getByTitle("Extra loose units")).toHaveValue(6);
+    expect(screen.getByTitle("Boxes")).toHaveValue(1);
+    expect(screen.getByTitle("Extra pieces")).toHaveValue(6);
   });
 });
 
@@ -515,32 +515,32 @@ describe("S: submit paths", () => {
 });
 
 describe("P: parity and the draft preview", () => {
-  it("P1: flag off: the row controls are today's (Case | Unit switch, Cases, Extra loose units, Unit price, Line discount)", async () => {
+  it("P1: flag off: the row controls are today's (Box | Piece switch, Boxes, Extra pieces, Unit price, Line discount)", async () => {
     mockFlags = [];
     const { user } = await open("other");
     await scan(user, BOXED);
     const names = [
-      screen.getByRole("button", { name: "Case" }),
-      screen.getByRole("button", { name: "Unit" }),
-      screen.getByTitle("Cases"),
-      screen.getByTitle("Extra loose units"),
+      screen.getByRole("button", { name: "Box" }),
+      screen.getByRole("button", { name: "Piece" }),
+      screen.getByTitle("Boxes"),
+      screen.getByTitle("Extra pieces"),
       screen.getByLabelText("Unit price"),
       screen.getByLabelText("Line discount"),
       screen.getByTitle("Remove item"),
     ];
     expect(names).toHaveLength(7);
     expect(screen.queryByRole("combobox", { name: /sell/i })).not.toBeInTheDocument();
-    await user.click(screen.getByRole("button", { name: "Unit" }));
-    expect(screen.getByTitle("Total units")).toBeInTheDocument();
+    await user.click(screen.getByRole("button", { name: "Piece" }));
+    expect(screen.getByTitle("Total pieces")).toBeInTheDocument();
   });
 
-  it("P1: the Case | Unit switch is replaced (not duplicated) on a line that has the picker", async () => {
+  it("P1: the Box | Piece switch is replaced (not duplicated) on a line that has the picker", async () => {
     const { user } = await open("other");
     await scan(user, BOXED);
     await pickerOf("Soda");
-    expect(screen.queryByRole("button", { name: "Unit" })).not.toBeInTheDocument();
-    expect(screen.getByTitle("Cases")).toBeInTheDocument();
-    expect(screen.getByTitle("Extra loose units")).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Piece" })).not.toBeInTheDocument();
+    expect(screen.getByTitle("Boxes")).toBeInTheDocument();
+    expect(screen.getByTitle("Extra pieces")).toBeInTheDocument();
   });
 
   it("P3: Other charge: Preview, add a Case line, Preview again, Download, Save: create once then PATCH with the unit line; never a second POST", async () => {
