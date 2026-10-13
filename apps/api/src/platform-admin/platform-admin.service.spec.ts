@@ -214,6 +214,7 @@ describe("PlatformAdminService — audit provenance", () => {
     dunning = { clearPauseAfterCommit: jest.fn().mockResolvedValue(undefined) };
     stripeMock = {
       isConfigured: false,
+      getSubscription: jest.fn().mockResolvedValue({ status: "active" }),
       getInvoiceFacts: jest.fn().mockResolvedValue({
         status: "open",
         amountPaid: 0,
@@ -350,12 +351,73 @@ describe("PlatformAdminService — audit provenance", () => {
           stripeSubId: "sub_live",
         },
       });
+      stripeMock.isConfigured = true;
+      stripeMock.getSubscription.mockResolvedValue({ status: "active" });
       prisma.tenant.findUnique.mockResolvedValue({ id: TENANT_ID, slug: "acme" } as any);
       const err: any = await service
         .updateStatus(TENANT_ID, { status: "CANCELLED" } as any, ADMIN_ID)
         .catch((e) => e);
       expect(err.getStatus()).toBe(409);
       expect(err.getResponse()).toMatchObject({ code: "TENANT_CANCEL_SUBSCRIPTION_FIRST" });
+      expect(prisma.tenant.update).not.toHaveBeenCalled();
+    });
+
+    const withSub = () =>
+      before({
+        subscription: {
+          planKey: "STARTER",
+          basePriceSnapshot: 99,
+          discount: 0,
+          couponFull: false,
+          stripeSubId: "sub_ended",
+        },
+      });
+    const cancelOk = async () => {
+      prisma.tenant.findUnique.mockResolvedValue({ id: TENANT_ID, slug: "acme" } as any);
+      prisma.tenant.update.mockResolvedValue({
+        id: TENANT_ID,
+        slug: "acme",
+        status: "CANCELLED",
+      } as any);
+      await service.updateStatus(TENANT_ID, { status: "CANCELLED" } as any, ADMIN_ID);
+      expect(prisma.tenant.update.mock.calls[0][0].data.status).toBe("CANCELLED");
+    };
+
+    it("CANCELLED over an ENDED Stripe subscription (stripeSubId kept) is allowed", async () => {
+      withSub();
+      stripeMock.isConfigured = true;
+      stripeMock.getSubscription.mockResolvedValue({ status: "canceled" });
+      await cancelOk();
+      expect(stripeMock.getSubscription).toHaveBeenCalledWith("sub_ended");
+    });
+
+    it("CANCELLED when Stripe no longer knows the subscription (404) is allowed", async () => {
+      withSub();
+      stripeMock.isConfigured = true;
+      stripeMock.getSubscription.mockRejectedValue({ code: "resource_missing", statusCode: 404 });
+      await cancelOk();
+    });
+
+    it("a Stripe read failure FAILS CLOSED: 409, nothing written", async () => {
+      withSub();
+      stripeMock.isConfigured = true;
+      stripeMock.getSubscription.mockRejectedValue(new Error("network"));
+      prisma.tenant.findUnique.mockResolvedValue({ id: TENANT_ID, slug: "acme" } as any);
+      const err: any = await service
+        .updateStatus(TENANT_ID, { status: "CANCELLED" } as any, ADMIN_ID)
+        .catch((e) => e);
+      expect(err.getStatus()).toBe(409);
+      expect(prisma.tenant.update).not.toHaveBeenCalled();
+    });
+
+    it("Stripe not configured with a stored subscription FAILS CLOSED too", async () => {
+      withSub();
+      stripeMock.isConfigured = false;
+      prisma.tenant.findUnique.mockResolvedValue({ id: TENANT_ID, slug: "acme" } as any);
+      const err: any = await service
+        .updateStatus(TENANT_ID, { status: "CANCELLED" } as any, ADMIN_ID)
+        .catch((e) => e);
+      expect(err.getStatus()).toBe(409);
       expect(prisma.tenant.update).not.toHaveBeenCalled();
     });
 

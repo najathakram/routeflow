@@ -17,6 +17,7 @@ import * as crypto from "crypto";
 import { PrismaService } from "../prisma/prisma.service";
 import { EmailService } from "../email/email.service";
 import { BillingService } from "../billing/billing.service";
+import { isLiveStripeSubscriptionStatus } from "../billing/stripe-period";
 import { PlatformPricingService } from "../billing/platform-pricing.service";
 import { PlanCatalogService } from "../billing/plan-catalog.service";
 import { ProrationService } from "../billing/proration.service";
@@ -627,6 +628,20 @@ export class PlatformAdminService {
 
   // ─── Mutations ────────────────────────────────────────────────────────────────
 
+  /** Fails CLOSED: anything but a definite "ended / unknown to Stripe" answer counts as live. */
+  private async hasLiveStripeSubscription(stripeSubId: string): Promise<boolean> {
+    if (!this.stripe.isConfigured) return true;
+    try {
+      const sub = await this.stripe.getSubscription(stripeSubId);
+      return isLiveStripeSubscriptionStatus(sub?.status);
+    } catch (err) {
+      const e = err as { code?: string; statusCode?: number } | undefined;
+      if (e?.code === "resource_missing" || e?.statusCode === 404) return false;
+      this.logger.warn(`updateStatus: could not read Stripe subscription ${stripeSubId}; refusing`);
+      return true;
+    }
+  }
+
   async updateStatus(id: string, dto: UpdateTenantStatusDto, adminId: string | null = null) {
     await this._findOrThrow(id);
 
@@ -677,8 +692,14 @@ export class PlatformAdminService {
 
       // F4: a CANCELLED status over a LIVE Stripe subscription would leave Stripe billing a cancelled tenant (and a
       // later payment has nothing to say about it): the subscription is cancelled first, through its own flow.
+      // Only a LIVE subscription is refused: an ended one (cancelFromStripe / the scheduled-cancellation sweep keep
+      // stripeSubId) has nothing left to cancel. The local row stores no Stripe status, so Stripe is read; a read
+      // that fails (or Stripe unconfigured) FAILS CLOSED with the same 409 - a cancelled tenant must never be left
+      // over a subscription that may still bill. Stripe no longer knowing the id (404) means it is not live.
       if (dto.status === "CANCELLED" && before.subscription?.stripeSubId) {
-        throw cancelSubscriptionFirstRefusal();
+        if (await this.hasLiveStripeSubscription(before.subscription.stripeSubId)) {
+          throw cancelSubscriptionFirstRefusal();
+        }
       }
 
       // The same refusal as extendTrial, on the PRIOR status read under the row lock above: the status
