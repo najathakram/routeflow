@@ -93,6 +93,9 @@ import { assertProductIdNotFamily } from "../products/sellable-lines";
 
 const MS_PER_DAY = 24 * 60 * 60 * 1000;
 
+/** The address fields that place it on the map: a change to any of them re-geocodes. */
+const LOCATION_FIELDS = ["line1", "line2", "city", "state", "zip"] as const;
+
 @Injectable()
 export class CustomersService {
   private readonly logger = new Logger(CustomersService.name);
@@ -783,6 +786,7 @@ export class CustomersService {
       where: { id: addrId, customerId: id },
     });
     assertSafeAddress(dto, storedAddress);
+    let locationChanged = false;
     const updated = await this.prisma.tenantTransaction(async (tx) => {
       if (dto.isDefault) {
         await tx.customerAddress.updateMany({
@@ -794,26 +798,30 @@ export class CustomersService {
       // on every save) or the code is NULL: a written code must never contradict its zip.
       const current = await tx.customerAddress.findFirst({
         where: { id: addrId, customerId: id },
-        select: { state: true, zip: true, stateCode: true },
+        select: { line1: true, line2: true, city: true, state: true, zip: true, stateCode: true },
       });
       if (!current) throw new NotFoundException("Address not found");
       const stateChanged =
         (dto.state !== undefined && dto.state !== current.state) ||
         (dto.zip !== undefined && dto.zip !== current.zip) ||
         current.stateCode == null;
+      // Only a real change to a location field moves the pin; a default/label/type-only edit (or the
+      // form resending stored values) keeps lat/lng and skips the geocode. A blank resent for a null is no change.
+      locationChanged = LOCATION_FIELDS.some(
+        (f) => dto[f] !== undefined && (dto[f] ?? "") !== (current[f] ?? ""),
+      );
       return tx.customerAddress.update({
         where: { id: addrId, customerId: id },
-        // clear stale coords when the address changes
         data: {
           ...dto,
           ...(stateChanged
             ? addressStateFields(dto.state ?? current.state, dto.zip ?? current.zip)
             : {}),
-          lat: null,
-          lng: null,
+          ...(locationChanged ? { lat: null, lng: null } : {}),
         },
       });
     });
+    if (!locationChanged) return updated;
     // Re-geocode asynchronously (don't block the response)
     this.geocodeIfPossible(updated)
       .then((coords) => {
