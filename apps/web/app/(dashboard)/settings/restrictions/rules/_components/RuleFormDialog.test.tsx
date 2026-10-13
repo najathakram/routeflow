@@ -18,6 +18,11 @@ jest.mock("@routeflow/ui/web", () => ({
   ...jest.requireActual("@routeflow/ui/web"),
   useToast: () => ({ toast }),
 }));
+let mockRole = "TENANT_ADMIN";
+jest.mock("@/lib/auth-context", () => ({
+  ...jest.requireActual("@/lib/auth-context"),
+  useAuth: () => ({ user: { role: mockRole } }),
+}));
 jest.mock("@/lib/api-client", () => ({
   ...jest.requireActual("@/lib/api-client"),
   apiClient: { get: (...a: unknown[]) => get(...a), post: (...a: unknown[]) => post(...a) },
@@ -35,6 +40,7 @@ const CATS = [
 ];
 beforeEach(() => {
   jest.clearAllMocks();
+  mockRole = "TENANT_ADMIN";
   get.mockImplementation((url: string) =>
     Promise.resolve({ data: url === "/product-categories" ? CATS : { data: [] } }),
   );
@@ -209,4 +215,53 @@ describe("RuleFormDialog", () => {
       unmount();
     }
   }, 60_000);
+});
+
+describe("RuleFormDialog with no product labels", () => {
+  const noLabels = () =>
+    get.mockImplementation((url: string) =>
+      Promise.resolve({ data: url === "/product-categories" ? [] : { data: [] } }),
+    );
+
+  it("admin: says there are none and links to add them; no empty Category select", async () => {
+    noLabels();
+    open();
+    expect(await screen.findByText("No product labels yet")).toBeInTheDocument();
+    expect(screen.getByRole("link", { name: "Add product labels" })).toHaveAttribute(
+      "href",
+      "/settings/product-categories",
+    );
+    expect(screen.queryByRole("combobox", { name: "Category" })).toBeNull();
+  });
+
+  it("operator: same line, asks an admin, and shows no link", async () => {
+    mockRole = "OPERATOR";
+    noLabels();
+    open();
+    expect(await screen.findByText("No product labels yet")).toBeInTheDocument();
+    expect(screen.getByText("Ask an account admin to add product labels.")).toBeInTheDocument();
+    expect(screen.queryByRole("link", { name: "Add product labels" })).toBeNull();
+  });
+
+  it("while the list is loading, no empty-state text shows", async () => {
+    get.mockImplementation(() => new Promise(() => {}));
+    open();
+    expect(screen.queryByText("No product labels yet")).toBeNull();
+    expect(screen.getByLabelText("Category")).toBeInTheDocument();
+  });
+
+  it("with labels, the Category select still lists them and no empty state shows", async () => {
+    open();
+    expect(await screen.findByRole("option", { name: "Hemp" })).toBeInTheDocument();
+    expect(screen.queryByText("No product labels yet")).toBeNull();
+  });
+
+  it("an empty list does not block the One product target", async () => {
+    noLabels();
+    open();
+    await screen.findByText("No product labels yet");
+    fireEvent.click(screen.getByRole("radio", { name: "One product" }));
+    expect(screen.queryByText("No product labels yet")).toBeNull();
+    expect(screen.getByLabelText("Search products")).toBeInTheDocument();
+  });
 });
