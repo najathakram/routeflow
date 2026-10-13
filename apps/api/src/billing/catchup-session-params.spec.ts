@@ -103,8 +103,14 @@ describe("trial_one_time (the common case: an unpaid October, session Oct 9)", (
     });
   });
 
-  it("the session lives min(now + 24 h, A - 60 min) = 24 h", () => {
-    expect(params.expires_at).toBe(Math.floor((NOW.getTime() + 24 * 3600_000) / 1000));
+  it("the session lives min(now + 23 h, A - 60 min) = 23 h (margin under Stripe's 24 h cap)", () => {
+    expect(params.expires_at).toBe(Math.floor((NOW.getTime() + 23 * 3600_000) / 1000));
+  });
+
+  it("Stripe rejects expires_at >= 24 h out when the host clock runs ahead: stay under with margin", () => {
+    const nowSec = Math.floor(NOW.getTime() / 1000);
+    // even with the host clock 30 min ahead of Stripe's, the expiry is still below Stripe's now + 24 h
+    expect(params.expires_at).toBeLessThan(nowSec - 30 * 60 + 24 * 3600);
   });
 
   it("session Oct 30: A = Dec 1, ONE line for Oct 1 -> Nov 30 (two months)", () => {
@@ -136,6 +142,12 @@ describe("trial_one_time (the common case: an unpaid October, session Oct 9)", (
 describe("trial shape (prepaid; October paid, paid-through Nov 1)", () => {
   const p = plan({ invoices: [inv("o", "PAID", "2026-10-01T12:00:00Z", "2026-11-01T12:00:00Z")] });
   const params = build(p);
+
+  it("the prepaid session also expires inside Stripe's 24 h cap with margin (now + 23 h)", () => {
+    const nowSec = Math.floor(NOW.getTime() / 1000);
+    expect(params.expires_at).toBe(nowSec + 23 * 3600);
+    expect(params.expires_at).toBeLessThan(nowSec - 30 * 60 + 24 * 3600);
+  });
 
   it("trial_end = T alone, recurring lines only, catchup=prepaid", () => {
     expect(p.shape).toBe("trial");
