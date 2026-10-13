@@ -542,6 +542,7 @@ describe("structural pin: ONE writer of the coupon columns (L-223)", () => {
     "/scripts/lib/billing-catchup-core.cjs",
     "/scripts/lib/billing-correct-activation-core.cjs",
     "/scripts/lib/live-target-guard.cjs",
+    "/scripts/labels-from-categories.mjs", // the protected-tenant classifier input (subOf)
   ]);
 
   it("src, scripts and prisma (migrations excluded) hold no coupon-column write outside the writer", () => {
