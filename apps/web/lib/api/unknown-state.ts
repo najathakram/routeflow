@@ -1,4 +1,5 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import type { BulkStateRequest } from "@routeflow/types";
 import { apiClient } from "../api-client";
 import type {
   BucketKey,
@@ -79,7 +80,7 @@ export function useBulkSetState() {
   return useMutation<
     BulkStateResult,
     Error,
-    { bucket: BucketKey; customerIds: string[]; state: string }
+    { bucket: BulkStateRequest["bucket"]; customerIds: string[]; state: string }
   >({
     meta: LOCAL,
     mutationFn: (body) => apiClient.post(`${BASE}/bulk-state`, body).then((r) => r.data),

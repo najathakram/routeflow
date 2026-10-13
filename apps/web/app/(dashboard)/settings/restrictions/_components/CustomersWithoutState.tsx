@@ -264,23 +264,27 @@ function StateRow({
 
 /**
  * needsDefault: one customer with 2+ addresses and no usable default. Choose one address and Save makes it the default
- * (the existing address PATCH clears the others in one transaction); then the row confirms and leaves like a state fix.
+ * (the existing address PATCH clears the others in one transaction). An address with no state can't be chosen. After
+ * a save the card RE-READS the server (SA C-M1): the new default may still leave the customer unresolved (it moves to
+ * another bucket), so the row is never dropped locally and the counts never claim a fix the server did not see.
  */
 function DefaultRow({
   row,
   canFix,
   onAdvance,
   onBusy,
-  onSaved,
+  onServerChanged,
 }: {
   row: UnknownStateRow;
   canFix: boolean;
   onAdvance: (row: UnknownStateRow) => void;
   onBusy: (id: string, busy: boolean) => void;
-  onSaved: (row: UnknownStateRow) => void;
+  /** Re-read the buckets from the server (the card's refresh). */
+  onServerChanged: () => void;
 }) {
   const setDefault = useSetDefaultAddress();
   const choices = row.choices ?? [];
+  const firstChoosable = choices.find((c) => c.state)?.addressId;
   const [value, setValue] = React.useState("");
   const [status, setStatus] = React.useState<RowStatus>("idle");
   const [error, setError] = React.useState(false);
@@ -300,11 +304,7 @@ function DefaultRow({
         onSuccess: () => {
           setStatus("saved");
           onAdvance(row);
-          window.setTimeout(() => {
-            if (reducedMotion()) return onSaved(row);
-            setStatus("leaving");
-            window.setTimeout(() => onSaved(row), 200);
-          }, SAVED_MS);
+          window.setTimeout(onServerChanged, SAVED_MS);
         },
         onError: () => {
           setStatus("idle");
@@ -327,8 +327,11 @@ function DefaultRow({
         <p className="truncate text-sm font-medium text-navy">{row.name}</p>
         <fieldset className="mt-1" disabled={!canFix || busy}>
           <legend className="sr-only">Default address for {row.name}</legend>
-          {choices.map((c, i) => (
-            <label key={c.addressId} className="flex items-start gap-2 py-0.5 text-sm text-navy">
+          {choices.map((c) => (
+            <label
+              key={c.addressId}
+              className={`flex items-start gap-2 py-0.5 text-sm ${c.state ? "text-navy" : "text-navy/50"}`}
+            >
               <input
                 type="radio"
                 name={`default-${row.customerId}`}
@@ -341,7 +344,9 @@ function DefaultRow({
                     save();
                   }
                 }}
-                {...(i === 0 ? { "data-row-field": true } : {})}
+                // an address with no state would leave the customer unresolved: it can't be the default
+                disabled={!c.state}
+                {...(c.addressId === firstChoosable ? { "data-row-field": true } : {})}
                 aria-invalid={error || undefined}
                 className="mt-0.5 h-4 w-4 accent-brand-600"
               />
@@ -398,7 +403,7 @@ function BucketList({
   first: { rows: UnknownStateRow[]; nextCursor: string | null };
   removed: ReadonlySet<string>;
   onRemoved: (ids: string[]) => void;
-  /** After a bulk Undo: the card (which outlives this list) re-reads the server. */
+  /** After a bulk Undo or a default save: the card (which outlives this list) re-reads the server. */
   onUndone: () => void;
   onAddFull: (row: UnknownStateRow) => void;
 }) {
@@ -443,7 +448,8 @@ function BucketList({
   const saved = (row: UnknownStateRow) => onRemoved([row.customerId]);
 
   const runBulk = () => {
-    if (!bulkState) return;
+    // needsDefault is fixed by choosing a default, never by one bulk state (the API refuses it too)
+    if (!bulkState || bucket === "needsDefault") return;
     setBulkError(false);
     const ids = rows
       .filter((r) => !busyIds.current.has(r.customerId))
@@ -513,7 +519,7 @@ function BucketList({
               canFix={canFix}
               onAdvance={advance}
               onBusy={setBusy}
-              onSaved={saved}
+              onServerChanged={onUndone}
             />
           ) : (
             <StateRow

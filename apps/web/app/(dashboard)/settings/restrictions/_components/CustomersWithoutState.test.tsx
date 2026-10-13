@@ -371,9 +371,11 @@ describe("CustomersWithoutState: needsDefault (row 414)", () => {
     expect(screen.queryByRole("button", { name: /set state for all shown/i })).toBeNull();
   });
 
-  it("Save sends only isDefault to the address PATCH, removes the row and decrements the counts", async () => {
+  it("Save sends only isDefault to the address PATCH; the refetch drops the row and sets the counts", async () => {
     const user = userEvent.setup();
-    mockGet.mockResolvedValue({ data: withDefaults([nd("d"), nd("e")]) });
+    mockGet
+      .mockResolvedValueOnce({ data: withDefaults([nd("d"), nd("e")]) })
+      .mockResolvedValue({ data: withDefaults([nd("e")]) });
     renderWithProviders(<CustomersWithoutState canFix />);
     await openBucket(user, /2 customers have more than one address/);
     const r = screen.getByTestId("state-row-c-d");
@@ -470,5 +472,84 @@ describe("CustomersWithoutState: SA rows R2 + undo by action id", () => {
     await user.click(within(dialog).getByRole("button", { name: "Set state" }));
     await waitFor(() => expect(toast).toHaveBeenCalled());
     expect(toast.mock.calls[0][0].action).toBeUndefined();
+  });
+});
+
+describe("CustomersWithoutState: SA C-M1 (needsDefault saves are server-truth)", () => {
+  const choice = (id: string, text: string, state: string | null) => ({
+    addressId: id,
+    addressText: text,
+    addressType: "BILLING",
+    state,
+    isDefault: false,
+  });
+  const ndRow = row("d", {
+    choices: [choice("ad-1", "1 Main St, Dallas", "TX"), choice("ad-2", "Back lot", null)],
+  });
+  const only = (over: Record<string, unknown>) => ({
+    noAddress: bucket([]),
+    unusableState: bucket([]),
+    needsReview: bucket([]),
+    needsDefault: bucket([]),
+    customersTotal: 0,
+    truncated: false,
+    ...over,
+  });
+
+  it("a choice with no state reads `No state` and cannot be chosen", async () => {
+    const user = userEvent.setup();
+    mockGet.mockResolvedValue({ data: only({ needsDefault: bucket([ndRow]), customersTotal: 1 }) });
+    renderWithProviders(<CustomersWithoutState canFix />);
+    await openBucket(user, /more than one address/);
+    const r = screen.getByTestId("state-row-c-d");
+    const blank = within(r).getByLabelText(/Back lot/);
+    expect(within(r).getByText(/Back lot · Billing · No state/)).toBeInTheDocument();
+    expect(blank).toBeDisabled();
+    expect(within(r).getByLabelText(/1 Main St, Dallas/)).toBeEnabled();
+  });
+
+  it("after a default save the counts come from the refetch, never a local removal", async () => {
+    const user = userEvent.setup();
+    mockGet
+      .mockResolvedValueOnce({ data: only({ needsDefault: bucket([ndRow]), customersTotal: 1 }) })
+      // the server says the customer is still unresolved, now in another bucket
+      .mockResolvedValue({
+        data: only({
+          unusableState: bucket([row("d", { addressId: "ad-1", addressText: "x" })]),
+          customersTotal: 1,
+        }),
+      });
+    renderWithProviders(<CustomersWithoutState canFix />);
+    await openBucket(user, /more than one address/);
+    const r = screen.getByTestId("state-row-c-d");
+    await user.click(within(r).getByLabelText(/1 Main St, Dallas/));
+    await user.click(within(r).getByRole("button", { name: "Save" }));
+    await waitFor(() => expect(mockGet).toHaveBeenCalledTimes(2));
+    expect(await screen.findByText("1 address has no usable state")).toBeInTheDocument();
+    expect(screen.getByText(/^1 customer needs a state\./)).toBeInTheDocument();
+    expect(screen.queryByText("Every customer has a state on file.")).toBeNull();
+  });
+
+  it.each([409, 404])("an undo the API rejects (%i) shows `Couldn't undo`", async (status) => {
+    const user = userEvent.setup();
+    mockPost
+      .mockResolvedValueOnce({
+        data: { changed: 3, changedAddressIds: ["x1", "x2", "x3"], actionId: "act-1" },
+      })
+      .mockRejectedValueOnce({ response: { status, data: {} } });
+    renderWithProviders(<CustomersWithoutState canFix />);
+    await openBucket(user, /3 have no address/);
+    await user.click(screen.getByRole("button", { name: /set state for all shown/i }));
+    const dialog = screen.getByRole("dialog");
+    await user.selectOptions(within(dialog).getByLabelText(/state/i), "TX");
+    await user.click(within(dialog).getByRole("button", { name: "Set state" }));
+    await waitFor(() => expect(toast).toHaveBeenCalled());
+    toast.mock.calls[0][0].action.onClick();
+    await waitFor(() =>
+      expect(toast).toHaveBeenLastCalledWith({
+        title: "Couldn't undo. Nothing was changed.",
+        variant: "error",
+      }),
+    );
   });
 });
