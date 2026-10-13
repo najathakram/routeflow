@@ -3,6 +3,7 @@ import { useQuery } from "@tanstack/react-query";
 import { apiClient } from "@/lib/api-client";
 import { useFleetAccess } from "@/lib/api/addons";
 import { useCounterSaleGate } from "@/lib/api/counter-sale";
+import { useAuth } from "@/lib/auth-context";
 import { useFulfilmentSettings } from "@/lib/api/fulfilment-settings";
 import { useInventorySettings } from "@/lib/api/inventory-settings";
 import { useInvoiceSettings } from "@/lib/api/invoices";
@@ -37,7 +38,8 @@ export function useSettingsNav({ isAdmin }: { isAdmin: boolean }) {
     queryFn: () => apiClient.get("/settings").then((r) => r.data),
   });
   const invoice = useInvoiceSettings();
-  const numbering = useNumberingSettings();
+  // GET /import/numbering is admin-only (Perms PR1); an operator never asks (SA #3412 M-INT1).
+  const numbering = useNumberingSettings({ enabled: isAdmin });
   const inventory = useInventorySettings();
   const route = useRouteSettings({ enabled: fleet });
   const stripe = useStripeConnectStatus();
@@ -45,9 +47,10 @@ export function useSettingsNav({ isAdmin }: { isAdmin: boolean }) {
   const users = useUsers({ status: "ACTIVE" });
 
   const counter = gate.showButton;
+  const canActAsDriver = !!(useAuth().user as { canActAsDriver?: boolean } | null)?.canActAsDriver;
   const entries = React.useMemo(
-    () => buildIndex({ isAdmin, fleet, selfServe, counter }),
-    [isAdmin, fleet, selfServe, counter],
+    () => buildIndex({ isAdmin, fleet, selfServe, counter, canActAsDriver }),
+    [isAdmin, fleet, selfServe, counter, canActAsDriver],
   );
   const trailing: Record<string, string | undefined> = {
     "business-profile": timeZoneValue(settings.data),

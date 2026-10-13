@@ -23,8 +23,12 @@ export type IndexEntry = {
   page?: string;
   keywords: string[];
   show?: "admin";
-  /** fleet = routes/drivers on the plan; selfServe = Settings > Fulfillment is open to this tenant; counter = counter sales on. */
-  needs?: "fleet" | "selfServe" | "counter";
+  /**
+   * fleet = routes/drivers on the plan; selfServe = Settings > Fulfillment is open to this tenant; counter = counter
+   * sales on; driverAccess = the Driver access card renders (an admin on a fleet account, or a user who can already
+   * act as a driver, the same rule as My account).
+   */
+  needs?: "fleet" | "selfServe" | "counter" | "driverAccess";
   /** false = searchable but not a row in the hub/rail lists (Plan & billing lives in the Business card). */
   listed?: false;
   /** Filled by a later change; a row shows `affects ?? desc`. */
@@ -238,6 +242,7 @@ const ENTRIES: IndexEntry[] = [
     desc: "CSV importers, numbering & finish setup",
     href: "/settings/import",
     groupKey: "integrations",
+    show: "admin",
     keywords: ["numbering", "next number", "sequence", "csv", "upload"],
   },
   {
@@ -247,6 +252,7 @@ const ENTRIES: IndexEntry[] = [
     desc: "Move from Zoho, QuickBooks, CSV or paper",
     href: "/settings/migration",
     groupKey: "integrations",
+    show: "admin",
     keywords: ["zoho", "quickbooks", "switch", "move"],
   },
   // ── Orders & stock ───────────────────────────────────────────────────────────────────────
@@ -303,6 +309,7 @@ const ENTRIES: IndexEntry[] = [
     desc: "Sender identity & delivery settings",
     href: "/settings?tab=email",
     groupKey: "notifications",
+    show: "admin",
     keywords: [
       "smtp",
       "sender",
@@ -372,6 +379,7 @@ const ENTRIES: IndexEntry[] = [
     desc: "API key for invoice/bill scanning",
     href: "/settings?tab=integrations",
     groupKey: "integrations",
+    show: "admin",
     keywords: ["ai", "ocr", "scan", "anthropic", "claude", "photo"],
   },
   {
@@ -547,7 +555,7 @@ const ENTRIES: IndexEntry[] = [
     "payments",
     "Invoicing",
     ["prefix", "invoice number", "next number", "sequence", "invoice"],
-    { anchor: "invoice-number-prefix" },
+    { anchor: "invoice-number-prefix", show: "admin" },
   ),
   ...card(
     "invoice-defaults",
@@ -648,6 +656,7 @@ const ENTRIES: IndexEntry[] = [
     "notifications",
     "Email (SMTP)",
     ["smtp", "server", "host"],
+    { show: "admin" },
   ),
   ...card(
     "sending-domain",
@@ -657,6 +666,7 @@ const ENTRIES: IndexEntry[] = [
     "notifications",
     "Email (SMTP)",
     ["domain", "from address", "dns", "deliverability"],
+    { show: "admin" },
   ),
   ...card(
     "mailbox",
@@ -666,6 +676,7 @@ const ENTRIES: IndexEntry[] = [
     "notifications",
     "Email (SMTP)",
     ["gmail", "outlook", "mailbox", "sender"],
+    { show: "admin" },
   ),
   ...card("password", "Password", "Change your sign-in password", "account", "footer", undefined, [
     "password",
@@ -697,7 +708,7 @@ const ENTRIES: IndexEntry[] = [
     "footer",
     undefined,
     ["driver", "act as driver", "driver view", "switch view", "app"],
-    { needs: "fleet" },
+    { needs: "driverAccess" },
   ),
 
   // ── Answers (not links) ──────────────────────────────────────────────────────────────────
@@ -793,6 +804,10 @@ function card(
 /** Carrier-only (fleet-off) accounts have no drivers: user management must not promise them. */
 const USERS_DESC_NO_FLEET = "Team members, roles, passwords";
 
+/** Invoice numbering is admin-only (SA #3412): an operator's Invoicing row must not promise it or match it. */
+const INVOICING_DESC_NO_NUMBERING = "Terms & default notes";
+const NUMBERING_WORDS = new Set(["prefix", "invoice number"]);
+
 /** The entries a viewer can see: admin-only, fleet-only and flag-gated rows are dropped, never greyed out. */
 export function buildIndex(o: {
   isAdmin: boolean;
@@ -801,14 +816,27 @@ export function buildIndex(o: {
   selfServe?: boolean;
   /** Counter sales are on (the counter capability). Unknown = dark. */
   counter?: boolean;
+  /** The viewer can act as a driver (their Driver access card shows even off-fleet and for an operator). */
+  canActAsDriver?: boolean;
 }): IndexEntry[] {
-  const open = { fleet: o.fleet, selfServe: !!o.selfServe, counter: !!o.counter };
+  const open = {
+    fleet: o.fleet,
+    selfServe: !!o.selfServe,
+    counter: !!o.counter,
+    driverAccess: !!o.canActAsDriver || (o.isAdmin && o.fleet),
+  };
   return ENTRIES.filter((e) => (e.show === "admin" ? o.isAdmin : true))
     .filter((e) => (e.needs ? open[e.needs] : true))
     .map((e) =>
       e.id === "user-management" && !o.fleet
         ? { ...e, desc: USERS_DESC_NO_FLEET, keywords: e.keywords.filter((k) => k !== "driver") }
-        : e,
+        : e.id === "invoicing" && !o.isAdmin
+          ? {
+              ...e,
+              desc: INVOICING_DESC_NO_NUMBERING,
+              keywords: e.keywords.filter((k) => !NUMBERING_WORDS.has(k)),
+            }
+          : e,
     );
 }
 
