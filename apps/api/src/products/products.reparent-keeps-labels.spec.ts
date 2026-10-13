@@ -57,20 +57,6 @@ describe("ProductsService: a reparent keeps the labels the variant carried (H2)"
     images: [],
   };
 
-  /** Rows by id for the parent lookups; the product itself answers the recipe guard's fresh read. */
-  function seed(parents: Record<string, ParentRow>, childCount = 0) {
-    prisma.product.findUnique.mockResolvedValue(PRODUCT);
-    prisma.product.findFirst.mockImplementation(async (args: { where?: { id?: string } }) => {
-      const id = args?.where?.id;
-      if (id === "prod-1") return { parentProductId: null, unitsPerBox: null };
-      return id && id in parents ? parents[id] : null;
-    });
-    prisma.product.count.mockResolvedValue(childCount);
-    prisma.product.update.mockResolvedValue({ ...PRODUCT });
-    prisma.recipe.findFirst.mockResolvedValue(null);
-    prisma.recipe.findMany.mockResolvedValue([]);
-  }
-
   beforeEach(async () => {
     prisma = createMockPrisma();
     const module: TestingModule = await Test.createTestingModule({
@@ -195,7 +181,7 @@ describe("ProductsService: a reparent keeps the labels the variant carried (H2)"
   it("atomic: a failing keep rejects the whole update (it ran inside the tx callback) and nothing is emitted", async () => {
     seedVariant("old");
     keep.mockRejectedValue(new Error("materialise failed"));
-    const emit = jest.spyOn(service, "emitProductChanged");
+    const emit = jest.spyOn(service as never, "emitProductChanged" as never);
     await expect(service.update("prod-1", { parentProductId: "fam" } as never)).rejects.toThrow(
       "materialise failed",
     );
