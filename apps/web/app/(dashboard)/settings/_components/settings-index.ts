@@ -897,7 +897,9 @@ export function searchSettings(q: string, entries: IndexEntry[]): IndexEntry[] {
   const linked = hits.filter((e) => e.kind !== "info");
   const seen = new Set<string>();
   const out = linked.filter((e) => {
-    const k = `${e.href}|${e.label}|${e.groupKey}`;
+    // one result per destination: a row listed in two groups (Selling restrictions in Selling and Compliance) is
+    // one answer to a search, the first group's
+    const k = `${e.href}|${e.label}`;
     return seen.has(k) ? false : (seen.add(k), true);
   });
   const labels = new Set(linked.map((e) => normalize(e.label)));

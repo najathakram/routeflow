@@ -242,15 +242,15 @@ describe("PR1 search", () => {
     expect(searchSettings("counter", buildIndex(o)).some((e) => e.kind === "info")).toBe(true);
   });
 
-  it("collapses identical href+label+group, and an info row a linked row already answers", () => {
+  it("collapses identical href+label (one answer per destination), and an info row a linked row already answers", () => {
     const hits = searchSettings("counter", full);
     const keys = hits.map((e) => `${e.href}|${e.label}|${e.groupKey}`);
     expect(new Set(keys).size).toBe(keys.length);
     expect(hits.filter((e) => e.label === "Counter sales")).toHaveLength(1);
-    // two Selling restrictions rows are different groups: both stay (brief 1, OK-2 is its own PR).
+    // OK-2 (apple-ux U1, Lead ruling): a row in two groups is ONE search answer (browsing keeps both rows).
     expect(
       searchSettings("restrictions", full).filter((e) => e.href === "/settings/restrictions"),
-    ).toHaveLength(2);
+    ).toHaveLength(1);
   });
 
   it("linked results rank before info answers", () => {
@@ -269,5 +269,13 @@ describe("PR1 search", () => {
         .map((p) => p.text),
     ).toEqual(["Low", "stock"]);
     expect(splitHighlight("Costing", "")).toEqual([{ text: "Costing", hit: false }]);
+  });
+});
+
+describe("apple-ux U1: one search result per destination", () => {
+  it("'state' lists Selling restrictions once (it lives in two groups) and Portal limits & rules once", () => {
+    const labels = searchSettings("state", full).map((e) => e.label);
+    expect(labels.filter((l) => l === "Selling restrictions")).toHaveLength(1);
+    expect(labels.filter((l) => l === "Portal limits & rules")).toHaveLength(1);
   });
 });

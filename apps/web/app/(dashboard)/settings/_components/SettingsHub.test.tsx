@@ -89,7 +89,7 @@ describe("SettingsHub regroup", () => {
     const hrefs = screen
       .getAllByRole("link")
       .filter((l) => l.getAttribute("href") === "/settings/restrictions");
-    expect(hrefs).toHaveLength(2);
+    expect(hrefs).toHaveLength(1); // OK-2: one answer per destination
   });
 
   it("search 'receipt' finds the Business profile screen that holds the receipt footer", () => {
@@ -105,7 +105,7 @@ describe("SettingsHub regroup", () => {
     });
   });
 
-  it("search 'restrictions' finds it in both groups", () => {
+  it("search 'restrictions' finds it once (it lives in two groups; OK-2)", () => {
     renderWithProviders(<SettingsHub isAdmin />);
     fireEvent.change(screen.getByLabelText("Search settings"), {
       target: { value: "restrictions" },
@@ -114,9 +114,9 @@ describe("SettingsHub regroup", () => {
     const hrefs = screen
       .getAllByRole("link")
       .filter((l) => l.getAttribute("href") === "/settings/restrictions");
-    expect(hrefs).toHaveLength(2);
+    expect(hrefs).toHaveLength(1); // OK-2: one answer per destination
     expect(screen.getByText("Selling & pricing › Selling restrictions")).toBeInTheDocument();
-    expect(screen.getByText("Compliance › Selling restrictions")).toBeInTheDocument();
+    expect(screen.queryByText("Compliance › Selling restrictions")).toBeNull();
   });
 
   describe("a page loaded with a card's hash scrolls to that card", () => {
@@ -284,13 +284,13 @@ describe("SettingsHub search speaks the user's words", () => {
     expect(within(row).getByText("Invoicing & payments › Invoicing")).toBeInTheDocument();
   });
 
-  it("7: 'restrictions' gives exactly two links to the restrictions page", () => {
+  it("7: 'restrictions' gives exactly one link to the restrictions page (OK-2)", () => {
     renderWithProviders(<SettingsHub isAdmin />);
     search("restrictions");
     const hrefs = within(results())
       .getAllByRole("link")
       .filter((l) => l.getAttribute("href") === "/settings/restrictions");
-    expect(hrefs).toHaveLength(2);
+    expect(hrefs).toHaveLength(1); // OK-2: one answer per destination
   });
 
   it("8: an operator searching 'regulated' gets no link and the no-results text", () => {
