@@ -142,6 +142,13 @@ function retryRefusal(): ConflictException {
   });
 }
 
+/** 400: only a SUSPENDED tenant can be deleted (the pre-check, and again under the row lock). */
+function notSuspendedRefusal(): BadRequestException {
+  return new BadRequestException(
+    "Tenant must be suspended before it can be deleted. Suspend the tenant first.",
+  );
+}
+
 /** How long the pre-transaction Stripe read may take, per attempt (one retry follows a failure or a timeout). */
 const STRIPE_TERMINATION_READ_TIMEOUT_MS = 5_000;
 
@@ -635,9 +642,7 @@ export class PlatformAdminService {
     });
     if (!existing) throw new NotFoundException(`Tenant ${id} not found`);
     if (existing.status !== "SUSPENDED") {
-      throw new BadRequestException(
-        "Tenant must be suspended before it can be deleted. Suspend the tenant first.",
-      );
+      throw notSuspendedRefusal();
     }
     // M4: the same Stripe gate as status -> CANCELLED - the read happens BEFORE the transaction, the id it read is
     // compared under the row lock. A deleted tenant must never be left over a subscription that may still bill.
@@ -652,7 +657,7 @@ export class PlatformAdminService {
         where: { id, status: "SUSPENDED" },
         data: { deletedAt: new Date(), status: "CANCELLED" },
       });
-      if (count !== 1) throw retryRefusal();
+      if (count !== 1) throw notSuspendedRefusal();
       return tx.tenant.findUniqueOrThrow({ where: { id } });
     });
     // Evict cached status so the guard blocks this tenant immediately

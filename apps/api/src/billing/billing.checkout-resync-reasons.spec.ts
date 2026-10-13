@@ -125,10 +125,41 @@ describe("resyncPriceAfterCheckout — every other non-synced reason alerts and 
     prisma.auditLog.findFirst.mockResolvedValue({ id: "already" });
     await svc.resyncPriceAfterCheckout("t1", session, "sub_1");
     expect(alerts(prisma)).toHaveLength(0);
+    // ... nor a second per-attempt audit row
+    expect(
+      prisma.auditLog.create.mock.calls.filter(
+        (c: any[]) => c[0].data.action === "STRIPE_CHECKOUT_PRICE_RESYNC",
+      ),
+    ).toHaveLength(0);
     expect(prisma.auditLog.findFirst.mock.calls[0][0].where).toMatchObject({
       tenantId: "t1",
       action: "STRIPE_PRICE_PUSH_BLOCKED",
     });
+  });
+});
+
+describe("the per-attempt audit note says what really happens on each path", () => {
+  const note = (prisma: any) =>
+    prisma.auditLog.create.mock.calls
+      .map((c: any[]) => c[0].data)
+      .find((d: any) => d.action === "STRIPE_CHECKOUT_PRICE_RESYNC")?.meta.note as string;
+
+  it("acknowledged (permanent): no 'until the redelivery retries'", async () => {
+    const { svc, prisma } = make();
+    svc.syncStripeSubscriptionPrice.mockResolvedValue({ synced: false, reason: "no_base_item" });
+    await svc.resyncPriceAfterCheckout("t1", session, "sub_1");
+    expect(note(prisma)).toMatch(/cannot fix it; ops was alerted/);
+    expect(note(prisma)).not.toMatch(/redelivery retries/);
+  });
+
+  it("transient: still says the redelivery retries", async () => {
+    const { svc, prisma } = make();
+    svc.syncStripeSubscriptionPrice.mockResolvedValue({
+      synced: false,
+      reason: "stripe_update_failed",
+    });
+    await svc.resyncPriceAfterCheckout("t1", session, "sub_1").catch(() => undefined);
+    expect(note(prisma)).toMatch(/until the redelivery retries/);
   });
 });
 

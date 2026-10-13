@@ -638,7 +638,7 @@ export class BillingCronService {
     tenantId: string,
     stripeSubId: string,
     now: Date,
-    scannedAt?: Date,
+    scannedAt: Date,
   ): Promise<boolean> {
     try {
       if (!this.stripe?.isConfigured) return false;
@@ -674,7 +674,7 @@ export class BillingCronService {
   private async clearStaleCancelFlag(
     tenantId: string,
     stripeSubId: string,
-    scannedAt?: Date,
+    scannedAt: Date,
   ): Promise<void> {
     try {
       const { count } = await this.prisma.tenantSubscription.updateMany({
@@ -684,7 +684,7 @@ export class BillingCronService {
           tenantId,
           stripeSubId,
           cancelAtPeriodEnd: true,
-          ...(scannedAt ? { updatedAt: scannedAt } : {}),
+          updatedAt: scannedAt,
         },
         data: { cancelAtPeriodEnd: false },
       });

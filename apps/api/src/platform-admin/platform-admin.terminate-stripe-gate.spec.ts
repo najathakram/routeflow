@@ -281,13 +281,15 @@ describe("updateStatus - other targets never read Stripe", () => {
 });
 
 describe("deleteTenant - the SUSPENDED check is re-proved under the row lock", () => {
-  it("status moved to ACTIVE after the pre-read: 409 CONCURRENT_UPDATE, nothing deleted, no audit row", async () => {
+  it("status moved to ACTIVE after the pre-read: the SAME 'suspend it first' 400 as the pre-check, nothing deleted", async () => {
     const { svc, prisma, stripe } = make({ pre: null });
     stripe.getSubscription.mockResolvedValue({ status: "canceled" });
     prisma.tenant.updateMany.mockResolvedValue({ count: 0 }); // the guarded write finds an ACTIVE row
     const err: any = await svc.deleteTenant(TENANT_ID, "a1").catch((e) => e);
-    expect(err.getStatus()).toBe(409);
-    expect(err.getResponse()).toMatchObject({ code: "CONCURRENT_UPDATE" });
+    // not CONCURRENT_UPDATE: the admin web words that as a Stripe-confirm retry, which would mislead here. A 400
+    // maps to the fixed "Only a suspended tenant can be deleted" copy (deleteFailureCopy).
+    expect(err.getStatus()).toBe(400);
+    expect(err.message).toMatch(/must be suspended/);
     expect(prisma.tenant.updateMany.mock.calls[0][0].where).toEqual({
       id: TENANT_ID,
       status: "SUSPENDED",

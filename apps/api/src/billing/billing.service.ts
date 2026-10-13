@@ -2479,6 +2479,23 @@ export class BillingService {
         `F2: checkout ${session?.id ?? "?"} for tenant ${tenantId}: the price re-sync failed (${result.reason ?? "unknown"})`,
       );
     }
+    // A redelivery of the same session and reason adds neither a second notice nor a second audit row.
+    const sessionId = session?.id ?? null;
+    const already =
+      permanent &&
+      sessionId != null &&
+      (await this.prisma.auditLog.findFirst({
+        where: {
+          tenantId,
+          action: AdminAuditAction.STRIPE_PRICE_PUSH_BLOCKED,
+          AND: [
+            { meta: { path: ["checkoutSessionId"], equals: sessionId } },
+            { meta: { path: ["reason"], equals: result.reason ?? "unknown" } },
+          ],
+        },
+        select: { id: true },
+      }));
+    if (already) return;
     try {
       await this.prisma.auditLog.create({
         data: {
@@ -2494,7 +2511,9 @@ export class BillingService {
             effective: "next_cycle",
             note: changed
               ? "the price changed while this checkout was open; the prorated stub already paid stays at the old price"
-              : "the price re-sync failed; the subscription may still bill the old price until the redelivery retries",
+              : permanent
+                ? "the price re-sync failed and a redelivery cannot fix it; ops was alerted and the webhook acknowledged"
+                : "the price re-sync failed; the subscription may still bill the old price until the redelivery retries",
           },
         },
       });
@@ -2503,22 +2522,6 @@ export class BillingService {
     }
     if (changed) return;
     if (permanent) {
-      // A redelivery of the same session and reason adds no second notice.
-      const sessionId = session?.id ?? null;
-      const already =
-        sessionId != null &&
-        (await this.prisma.auditLog.findFirst({
-          where: {
-            tenantId,
-            action: AdminAuditAction.STRIPE_PRICE_PUSH_BLOCKED,
-            AND: [
-              { meta: { path: ["checkoutSessionId"], equals: sessionId } },
-              { meta: { path: ["reason"], equals: result.reason ?? "unknown" } },
-            ],
-          },
-          select: { id: true },
-        }));
-      if (already) return;
       await writeAdminNotice(this.prisma, {
         tenantId,
         action: AdminAuditAction.STRIPE_PRICE_PUSH_BLOCKED,
