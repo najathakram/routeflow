@@ -110,7 +110,7 @@ const ALLOWED: Record<string, string> = {
   "backfill-product-aliases.mjs": "writer under --apply; DATABASE_URL-first",
   "backfill-supplier-invoice-number.mjs": "writer under --execute; DATABASE_URL-first",
   "backfill-tenant-units.mjs":
-    "writer under --apply; provably-local DATABASE_URL only, no remote override",
+    "writer under --apply; DATABASE_URL only under --local (provably local), else resolveDatabaseUrl(requireProxy)",
 };
 
 const strip = (s: string) => s.replace(/\/\*[\s\S]*?\*\//g, "").replace(/(^|[^:])\/\/.*$/gm, "$1");
