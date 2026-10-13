@@ -535,7 +535,15 @@ describe("ChangeRequestsService", () => {
         ...dispatchedOrder,
         routeRun: { driverId: "drv-1", status: "IN_PROGRESS" },
       });
-      prisma.product.findFirst.mockResolvedValue({ id: "prod-1", trackedCategoryId: null });
+      prisma.product.findFirst.mockResolvedValue({
+        id: "prod-1",
+        trackedCategoryId: null,
+        // portal-visible: a buyer-requested add is re-judged on the buyer channel at approval (F1 iii)
+        kind: "STANDARD",
+        isActive: true,
+        portalVisible: true,
+        parent: null,
+      });
       prisma.customer.findFirst.mockResolvedValue({ userId: "user-cust" });
       prisma.changeRequest.updateMany.mockResolvedValue({ count: 1 });
       prisma.changeRequest.findUnique.mockResolvedValue({ ...PENDING_CR, status: "APPROVED" });
@@ -629,7 +637,15 @@ describe("ChangeRequestsService", () => {
         unitLabel: null,
         status: "PENDING",
       });
-      prisma.product.findFirst.mockResolvedValue({ id: "prod-1", trackedCategoryId: null });
+      prisma.product.findFirst.mockResolvedValue({
+        id: "prod-1",
+        trackedCategoryId: null,
+        // portal-visible: a buyer-requested add is re-judged on the buyer channel at approval (F1 iii)
+        kind: "STANDARD",
+        isActive: true,
+        portalVisible: true,
+        parent: null,
+      });
 
       await service.resolve(
         "ord-1",
@@ -669,7 +685,15 @@ describe("ChangeRequestsService", () => {
       });
       // The live product's pack, if it were read, would derive a DIFFERENT (wrong) split —
       // proves the derivation never touches it.
-      prisma.product.findFirst.mockResolvedValue({ id: "prod-1", trackedCategoryId: null });
+      prisma.product.findFirst.mockResolvedValue({
+        id: "prod-1",
+        trackedCategoryId: null,
+        // portal-visible: a buyer-requested add is re-judged on the buyer channel at approval (F1 iii)
+        kind: "STANDARD",
+        isActive: true,
+        portalVisible: true,
+        parent: null,
+      });
 
       await service.resolve(
         "ord-1",
@@ -701,7 +725,15 @@ describe("ChangeRequestsService", () => {
         unitLabel: null,
         status: "PENDING",
       });
-      prisma.product.findFirst.mockResolvedValue({ id: "prod-1", trackedCategoryId: null });
+      prisma.product.findFirst.mockResolvedValue({
+        id: "prod-1",
+        trackedCategoryId: null,
+        // portal-visible: a buyer-requested add is re-judged on the buyer channel at approval (F1 iii)
+        kind: "STANDARD",
+        isActive: true,
+        portalVisible: true,
+        parent: null,
+      });
 
       await expect(
         service.resolve(
@@ -735,7 +767,15 @@ describe("ChangeRequestsService", () => {
         unitLabel: null,
         status: "PENDING",
       });
-      prisma.product.findFirst.mockResolvedValue({ id: "prod-1", trackedCategoryId: null });
+      prisma.product.findFirst.mockResolvedValue({
+        id: "prod-1",
+        trackedCategoryId: null,
+        // portal-visible: a buyer-requested add is re-judged on the buyer channel at approval (F1 iii)
+        kind: "STANDARD",
+        isActive: true,
+        portalVisible: true,
+        parent: null,
+      });
 
       await service.resolve(
         "ord-1",
@@ -770,7 +810,15 @@ describe("ChangeRequestsService", () => {
         unitLabel: null,
         status: "PENDING",
       });
-      prisma.product.findFirst.mockResolvedValue({ id: "prod-1", trackedCategoryId: null });
+      prisma.product.findFirst.mockResolvedValue({
+        id: "prod-1",
+        trackedCategoryId: null,
+        // portal-visible: a buyer-requested add is re-judged on the buyer channel at approval (F1 iii)
+        kind: "STANDARD",
+        isActive: true,
+        portalVisible: true,
+        parent: null,
+      });
 
       await service.resolve(
         "ord-1",
@@ -805,7 +853,15 @@ describe("ChangeRequestsService", () => {
         unitLabel: null,
         status: "PENDING",
       });
-      prisma.product.findFirst.mockResolvedValue({ id: "prod-1", trackedCategoryId: null });
+      prisma.product.findFirst.mockResolvedValue({
+        id: "prod-1",
+        trackedCategoryId: null,
+        // portal-visible: a buyer-requested add is re-judged on the buyer channel at approval (F1 iii)
+        kind: "STANDARD",
+        isActive: true,
+        portalVisible: true,
+        parent: null,
+      });
 
       await service.resolve(
         "ord-1",
@@ -988,6 +1044,11 @@ describe("ChangeRequestsService", () => {
         name: "Sample Cola 12pk",
         trackedCategoryId: null,
         unitsPerBox: livePack,
+        // portal-visible: a buyer-requested add is re-judged on the buyer channel at approval (F1 iii)
+        kind: "STANDARD",
+        isActive: true,
+        portalVisible: true,
+        parent: null,
       }));
       prisma.customer.findFirst.mockResolvedValue({ userId: "user-cust" });
       prisma.changeRequest.updateMany.mockResolvedValue({ count: 1 });

@@ -51,6 +51,7 @@ const product = (over: Record<string, unknown> = {}) => ({
 
 describe("ChangeRequestsService.create: ADD_ITEM filing and buyer visibility (F1 iii)", () => {
   let service: ChangeRequestsService;
+  const ordersMock = { create: jest.fn() };
   let prisma: ReturnType<typeof createMockPrisma>;
   let restrictions: {
     restrictedProductIdsFor: jest.Mock;
@@ -62,6 +63,7 @@ describe("ChangeRequestsService.create: ADD_ITEM filing and buyer visibility (F1
     service.create("ord-1", { type: "ADD_ITEM" as never, productId: "prod-1", qty: 3 }, user);
 
   beforeEach(async () => {
+    ordersMock.create.mockReset().mockRejectedValue(new Error("PAST_GATE"));
     prisma = createMockPrisma();
     restrictions = {
       restrictedProductIdsFor: jest.fn().mockResolvedValue(new Set<string>()),
@@ -73,9 +75,12 @@ describe("ChangeRequestsService.create: ADD_ITEM filing and buyer visibility (F1
       providers: [
         ChangeRequestsService,
         { provide: PrismaService, useValue: prisma },
-        { provide: OrdersService, useValue: {} },
+        { provide: OrdersService, useValue: ordersMock },
         { provide: NotificationsService, useValue: {} },
-        { provide: AuthorizationGuardService, useValue: {} },
+        {
+          provide: AuthorizationGuardService,
+          useValue: { assertAuthorizedOrThrow: jest.fn().mockResolvedValue(undefined) },
+        },
         {
           provide: MessagingService,
           useValue: { notifyEvent: jest.fn().mockResolvedValue(undefined) },
@@ -85,7 +90,7 @@ describe("ChangeRequestsService.create: ADD_ITEM filing and buyer visibility (F1
     }).compile();
     service = module.get(ChangeRequestsService);
     prisma.order.findUnique.mockResolvedValue(dispatchedOrder);
-    prisma.customer.findFirst.mockResolvedValue({ id: "cust-1" });
+    prisma.customer.findFirst.mockResolvedValue({ id: "cust-1", userId: "user-cust" });
     prisma.changeRequest.create.mockResolvedValue({ id: "cr-new", status: "PENDING" });
   });
 
@@ -175,5 +180,68 @@ describe("ChangeRequestsService.create: ADD_ITEM filing and buyer visibility (F1
 
     expect(prisma.changeRequest.create).toHaveBeenCalledTimes(1);
     expect(restrictions.assertLinesSellable).not.toHaveBeenCalled();
+  });
+
+  /**
+   * F1(iii) at APPROVAL of the next-delivery rollover: the draft it creates is judged only at promotion, so a BUYER's
+   * ADD_ITEM is re-judged here on the buyer channel (a product hidden or banned between filing and approval). A
+   * staff/driver-filed add keeps its own judgement. The sentinel create() rejection proves a request got PAST the gate.
+   */
+  describe("approveNextDelivery of an ADD_ITEM", () => {
+    const operator = { ...base, sub: "u-op", username: "op", role: "OPERATOR" } as JwtPayload;
+    const cr = (requestedByRole: string) => ({
+      id: "cr-1",
+      orderId: "ord-1",
+      status: "PENDING",
+      type: "ADD_ITEM",
+      productId: "prod-1",
+      requestedByRole,
+      payload: { productId: "prod-1", qty: 2, productName: SECRET },
+    });
+    const approve = (role: string) => {
+      prisma.changeRequest.findFirst.mockResolvedValue(cr(role));
+      return service.resolve(
+        "ord-1",
+        "cr-1",
+        { action: "APPROVE_NEXT_DELIVERY" as never },
+        operator,
+      );
+    };
+
+    it("a product hidden between filing and approval is the 404 with no name, and no draft is created", async () => {
+      prisma.product.findFirst.mockResolvedValue(product({ portalVisible: false }));
+      const err: any = await approve("CUSTOMER").catch((e) => e);
+      expect(err).toBeInstanceOf(NotFoundException);
+      expect(JSON.stringify(err.getResponse())).not.toContain(SECRET);
+      expect(ordersMock.create).not.toHaveBeenCalled();
+    });
+
+    it("a product banned between filing and approval is refused with the restriction error", async () => {
+      prisma.product.findFirst.mockResolvedValue(product());
+      restrictions.assertLinesSellable.mockRejectedValue(
+        new ConflictException({ code: "SELLING_RESTRICTED", blockedLines: [] }),
+      );
+      await expect(approve("CUSTOMER")).rejects.toMatchObject({
+        response: { code: "SELLING_RESTRICTED" },
+      });
+      expect(restrictions.assertLinesSellable).toHaveBeenCalledWith(
+        expect.objectContaining({ channel: "BUYER_PORTAL" }),
+      );
+      expect(ordersMock.create).not.toHaveBeenCalled();
+    });
+
+    it("control: a visible, allowed buyer add gets past the gate (judged on BUYER_PORTAL)", async () => {
+      prisma.product.findFirst.mockResolvedValue(product());
+      await expect(approve("CUSTOMER")).rejects.toThrow("PAST_GATE");
+      expect(restrictions.assertLinesSellable).toHaveBeenCalledWith(
+        expect.objectContaining({ channel: "BUYER_PORTAL" }),
+      );
+    });
+
+    it("control: an operator-requested add keeps its current judgement (no buyer gate)", async () => {
+      prisma.product.findFirst.mockResolvedValue(product({ portalVisible: false }));
+      await expect(approve("OPERATOR")).rejects.toThrow("PAST_GATE");
+      expect(restrictions.assertLinesSellable).not.toHaveBeenCalled();
+    });
   });
 });

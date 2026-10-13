@@ -31,6 +31,8 @@ import {
   PORTAL_PARENT_INCLUDE,
 } from "../buyer/buyer-product-visibility";
 import { SellingRestrictionsService } from "../selling-restrictions/selling-restrictions.service";
+import { restrictionChannelForPrincipal } from "../selling-restrictions/selling-restrictions.core";
+import { leastPrivilegedPrincipal } from "./line-author-channel";
 import { requireRestrictionTenantId } from "../selling-restrictions/restriction-tenant";
 import { CreateChangeRequestDto } from "./dto/create-change-request.dto";
 import {
@@ -526,6 +528,29 @@ export class ChangeRequestsService {
         code: API_ERROR_CODES.INVALID_RESOLUTION_FOR_TYPE,
         message: "Only ADD_ITEM / CHANGE_QTY-increase requests can roll to the next delivery",
       });
+    }
+
+    // F1(iii) at approval: the draft below is judged only at its promotion, so a BUYER-requested add is re-judged HERE
+    // on the buyer channel (hidden or banned since it was filed): the same 404 / restriction error as filing. A
+    // staff- or driver-requested add keeps its own judgement.
+    if (
+      cr.type === ChangeRequestType.ADD_ITEM &&
+      restrictionChannelForPrincipal(leastPrivilegedPrincipal(user, cr.requestedByRole)) ===
+        "BUYER_PORTAL"
+    ) {
+      const live = await this.prisma.forTenant().product.findFirst({
+        where: { id: productId },
+        select: {
+          id: true,
+          name: true,
+          kind: true,
+          isActive: true,
+          portalVisible: true,
+          ...PORTAL_PARENT_INCLUDE,
+        },
+      });
+      if (!live) throw new NotFoundException("Product not found");
+      await this.assertBuyerMayFile(live, order);
     }
 
     const product = await this.prisma.forTenant().product.findFirst({
