@@ -27,6 +27,7 @@ export const API_ERROR_CODES = {
   NSF_LINE_UNTAXED: "NSF_LINE_UNTAXED",
   BARCODE_TAKEN: "BARCODE_TAKEN",
   CODE_TAKEN: "CODE_TAKEN",
+  PRODUCT_CODE_IN_USE: "PRODUCT_CODE_IN_USE",
   NAME_TAKEN: "NAME_TAKEN",
   HOLDERS_CHANGED: "HOLDERS_CHANGED",
   FAMILY_NOT_SELLABLE: "FAMILY_NOT_SELLABLE",
@@ -474,6 +475,8 @@ export const API_ERROR_CODES = {
    * sign-in (GET /auth/google).
    */
   SIGN_IN_ROUTE_RETIRED: "SIGN_IN_ROUTE_RETIRED",
+  SELF_DEACTIVATION_REFUSED: "SELF_DEACTIVATION_REFUSED",
+  LAST_TENANT_ADMIN: "LAST_TENANT_ADMIN",
 } as const satisfies Record<string, ApiErrorCode>;
 
 /** The `flag` of a PLAN_GATE body that gates a count (a meter), not a feature flag. Not an error code. */

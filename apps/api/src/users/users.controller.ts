@@ -43,7 +43,7 @@ export class UsersController {
 
   @Post("operator")
   @UseGuards(RolesGuard)
-  @Roles(UserRole.OPERATOR)
+  @Roles(UserRole.TENANT_ADMIN)
   createOperator(@Body() dto: CreateOperatorDto) {
     return this.usersService.createOperator(dto);
   }
@@ -82,36 +82,37 @@ export class UsersController {
   }
 
   /**
-   * RF-073: Previously, `UpdateUserDto.role` was passed straight through Prisma
-   * for self-updates, allowing any authenticated user (driver, customer) to
-   * call PATCH /users/{ownId} with `{role: "OPERATOR"}` and self-promote.
-   * The role field is now stripped for any caller who is not an OPERATOR
-   * or TENANT_ADMIN.
+   * Editing another user's record is account administration: TENANT_ADMIN only. Anyone may edit
+   * THEIR OWN record (email / username), and a self edit never carries a role: RF-073 (a driver or
+   * customer could `PATCH /users/{ownId} {role:"OPERATOR"}` and self-promote) stays closed for every
+   * role, an admin included. Only an admin editing someone else can change a role.
    */
   @Patch(":id")
   update(@Param("id") id: string, @Body() dto: UpdateUserDto, @CurrentUser() user: JwtPayload) {
-    if (user.role !== UserRole.OPERATOR && user.role !== UserRole.TENANT_ADMIN && user.sub !== id) {
+    const isSelf = user.sub === id;
+    // SUPER_ADMIN satisfies every role requirement in the roles guard, so it is an admin here too
+    const isAdmin = user.role === UserRole.TENANT_ADMIN || user.role === UserRole.SUPER_ADMIN;
+    if (!isSelf && !isAdmin) {
       throw new ForbiddenException("Access denied");
     }
-    const isPrivileged = user.role === UserRole.OPERATOR || user.role === UserRole.TENANT_ADMIN;
-    const safeDto: UpdateUserDto = isPrivileged ? dto : { ...dto, role: undefined };
+    const safeDto: UpdateUserDto = isAdmin && !isSelf ? dto : { ...dto, role: undefined };
     return this.usersService.updateUser(id, safeDto, user.username, user.role);
   }
 
   @Patch(":id/status")
   @UseGuards(RolesGuard)
-  @Roles(UserRole.OPERATOR)
+  @Roles(UserRole.TENANT_ADMIN)
   changeStatus(
     @Param("id") id: string,
     @Body() dto: ChangeUserStatusDto,
     @CurrentUser() user: JwtPayload,
   ) {
-    return this.usersService.changeStatus(id, dto, user.role);
+    return this.usersService.changeStatus(id, dto, user.role, user.sub);
   }
 
   @Post(":id/reset-password")
   @UseGuards(RolesGuard)
-  @Roles(UserRole.OPERATOR)
+  @Roles(UserRole.TENANT_ADMIN)
   resetPassword(@Param("id") id: string, @CurrentUser() user: JwtPayload) {
     return this.usersService.resetPassword(id, user.role);
   }
@@ -120,14 +121,19 @@ export class UsersController {
    *  tenant's admin can self-serve instead of waiting out the window. */
   @Post(":id/unlock")
   @UseGuards(RolesGuard)
-  @Roles(UserRole.OPERATOR, UserRole.TENANT_ADMIN)
+  @Roles(UserRole.TENANT_ADMIN)
   unlock(@Param("id") id: string, @CurrentUser() user: JwtPayload) {
     return this.usersService.unlockUser(id, user.role);
   }
 
+  /**
+   * LEGACY display flag, no authority (Perms PR1 SHOULD): flips `User.isAdmin`, which no guard, handler or screen
+   * reads. Who may administer the account is decided by ROLE (TENANT_ADMIN) alone; to make someone an admin, change
+   * their role (PATCH /users/:id, admin only). No client calls this route; kept so an old integration does not 404.
+   */
   @Patch(":id/admin")
   @UseGuards(RolesGuard)
-  @Roles(UserRole.OPERATOR)
+  @Roles(UserRole.TENANT_ADMIN)
   toggleAdmin(@Param("id") id: string, @CurrentUser() user: JwtPayload) {
     const callerIsAdmin = user.isAdmin || user.role === UserRole.TENANT_ADMIN;
     return this.usersService.toggleAdmin(id, callerIsAdmin);
@@ -135,7 +141,7 @@ export class UsersController {
 
   @Patch(":id/driver-permit")
   @UseGuards(RolesGuard)
-  @Roles(UserRole.OPERATOR)
+  @Roles(UserRole.TENANT_ADMIN)
   toggleDriverPermit(@Param("id") id: string, @CurrentUser() user: JwtPayload) {
     return this.usersService.toggleDriverPermit(id, user.role);
   }

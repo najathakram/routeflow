@@ -1,5 +1,6 @@
 import * as React from "react";
 import { render, screen, fireEvent } from "@testing-library/react";
+import userEvent from "@testing-library/user-event";
 import { MoneyInput } from "./MoneyInput";
 
 /**
@@ -37,5 +38,48 @@ describe("MoneyInput", () => {
 
     fireEvent.blur(input);
     expect(input).toHaveValue("2.50");
+  });
+
+  describe("a value that arrives while the field is focused and untouched (apple-ux 2026-10-13: 272.00)", () => {
+    // A unit pick resolves its price asynchronously; focus can reach the field first. The field must show the
+    // new value SELECTED, so the next digit replaces it, never appends to or gets dropped behind it.
+    function Harness({ initial }: { initial: number }) {
+      const [v, setV] = React.useState<number | null>(initial);
+      return (
+        <>
+          <MoneyInput value={v} onChange={setV} aria-label="Unit price" />
+          <button type="button" onClick={() => setV(72)}>
+            late price
+          </button>
+        </>
+      );
+    }
+
+    it("shows the late value, fully selected, and a typed 2 is 2 (not 272.00, not 72.00)", async () => {
+      const user = userEvent.setup();
+      render(<Harness initial={6.99} />);
+      const input = screen.getByLabelText("Unit price") as HTMLInputElement;
+      input.focus();
+      expect(input).toHaveFocus();
+      // the late price lands without moving focus (a programmatic state change, as the async resolution does)
+      fireEvent.click(screen.getByRole("button", { name: "late price" }));
+      input.focus();
+      expect(input).toHaveValue("72.00");
+      expect([input.selectionStart, input.selectionEnd]).toEqual([0, 5]);
+      await user.keyboard("2");
+      expect(input).toHaveValue("2");
+    });
+
+    it("never overwrites what the operator has already typed since focusing", async () => {
+      const user = userEvent.setup();
+      render(<Harness initial={6.99} />);
+      const input = screen.getByLabelText("Unit price") as HTMLInputElement;
+      await user.click(input);
+      await user.keyboard("5");
+      expect(input).toHaveValue("5");
+      fireEvent.click(screen.getByRole("button", { name: "late price" }));
+      input.focus();
+      expect(input).toHaveValue("5");
+    });
   });
 });

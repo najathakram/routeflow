@@ -33,6 +33,7 @@ export class StripeConnectController {
 
   /** Returns the Stripe authorize URL; the web client navigates the browser there. */
   @Post("link")
+  @Roles(UserRole.TENANT_ADMIN)
   async link(@CurrentUser() user: JwtPayload) {
     const url = await this.connect.buildAuthorizeUrl(
       user.tenantId!,
@@ -43,6 +44,7 @@ export class StripeConnectController {
   }
 
   @Delete()
+  @Roles(UserRole.TENANT_ADMIN)
   disconnect(@CurrentUser() user: JwtPayload) {
     return this.connect.disconnect(user.tenantId!);
   }

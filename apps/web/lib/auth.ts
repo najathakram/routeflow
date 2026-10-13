@@ -62,6 +62,15 @@ export function getStoredUser(): AuthUser | null {
   };
 }
 
+/**
+ * True only for the account-admin roles (TENANT_ADMIN, SUPER_ADMIN). The api gates account-level
+ * settings (billing export, numbering, import, SMTP, CRM, user management ...) to these roles, so
+ * the UI offers those controls to nobody else (Perms PR1).
+ */
+export function isAccountAdmin(user: { role?: string } | null | undefined): boolean {
+  return user?.role === "TENANT_ADMIN" || user?.role === "SUPER_ADMIN";
+}
+
 /** Tenant slug of the CURRENT session (JWT beats any cookie); null when logged out. */
 export function getSessionTenantSlug(): string | null {
   return getStoredUser()?.tenantSlug ?? null;
