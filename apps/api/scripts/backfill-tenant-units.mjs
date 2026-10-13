@@ -168,6 +168,25 @@ export function parentSkipLines(parentSkips) {
     .map(([reason, n]) => `parent not filled for ${n} level(s): ${reason}`);
 }
 
+/**
+ * Levels whose existing parent is an explicit factor-1 (Piece) row: left as they are (fill-only), then
+ * one count line and each level name with its count (never an id).
+ */
+export function explicitPieceLines(rows) {
+  if (rows.length === 0) return [];
+  const byLabel = new Map();
+  for (const r of rows) {
+    const name = String(r.label ?? "").trim();
+    byLabel.set(name, (byLabel.get(name) ?? 0) + 1);
+  }
+  return [
+    `parent is an explicit Piece row: ${rows.length}`,
+    ...[...byLabel.entries()]
+      .sort((a, b) => (a[0] < b[0] ? -1 : a[0] > b[0] ? 1 : 0))
+      .map(([name, n]) => `  ${name}: ${n}`),
+  ];
+}
+
 async function main(argv = process.argv.slice(2), env = process.env) {
   let args;
   let target;
@@ -232,6 +251,7 @@ async function main(argv = process.argv.slice(2), env = process.env) {
     console.log(`${args.apply ? "Applied" : "Would apply"}: ${fmt(counts)}`);
     for (const line of archivedLinkLines(plan.archivedLinks)) console.log(line);
     for (const line of parentSkipLines(plan.parentSkips)) console.log(line);
+    for (const line of explicitPieceLines(plan.explicitPieceParents)) console.log(line);
     if (!args.apply) console.log("Dry run only; pass --apply to write.");
   } catch (err) {
     console.error(`Refusing: ${err.message}`);

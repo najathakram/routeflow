@@ -127,7 +127,10 @@ function planTenantUnits({ productUnits, products, existingUnits }) {
     }
   }
 
-  const { parentFills, parentSkips } = planParentFills(productUnits, products);
+  const { parentFills, parentSkips, explicitPieceParents } = planParentFills(
+    productUnits,
+    products,
+  );
 
   return {
     toCreate,
@@ -144,8 +147,10 @@ function planTenantUnits({ productUnits, products, existingUnits }) {
       skippedTooLong: tooLongKeys.size,
       skippedSynonyms: synonymKeys.size,
       skippedParent: parentSkips.length,
+      explicitPieceParent: explicitPieceParents.length,
     },
     parentSkips,
+    explicitPieceParents,
   };
 }
 
@@ -161,6 +166,9 @@ function planTenantUnits({ productUnits, products, existingUnits }) {
  *   - a level that already names a parent but has no perParent gets factor / parent factor;
  *   - perParent must be an integer >= 2, otherwise the level is reported and skipped (never guessed);
  *   - a factor-1 level is the base itself (nothing to fill); a level with perParent set is done.
+ * A level that ALREADY names a factor-1 row as its parent is left as it is (fill-only, SA ruling on
+ * #3336): only its perParent is filled. Every such level is listed in `explicitPieceParents` (id for the
+ * caller, label for the report) so the operator can see them.
  * Every fill carries the values it was planned from (this level's factor and parent, the parent's
  * factor): the apply writes only where they still hold.
  * @returns {{ parentFills: Array<object>, parentSkips: Array<{ productUnitId: string, reason: string }> }}
@@ -179,8 +187,14 @@ function planParentFills(productUnits, products = []) {
   }
   const parentFills = [];
   const parentSkips = [];
+  const explicitPieceParents = [];
   const skip = (u, reason) => parentSkips.push({ productUnitId: u.id, reason });
   for (const u of productUnits) {
+    if (u.parentUnitId != null) {
+      const p = (byProduct.get(u.productId) ?? []).find((c) => c.id === u.parentUnitId);
+      if (p && p.factorToBase === 1)
+        explicitPieceParents.push({ productUnitId: u.id, label: u.label });
+    }
     if (u.perParent != null) continue;
     const f = u.factorToBase;
     if (!Number.isInteger(f) || f < 1) {
@@ -239,7 +253,7 @@ function planParentFills(productUnits, products = []) {
       perParent: per,
     });
   }
-  return { parentFills, parentSkips };
+  return { parentFills, parentSkips, explicitPieceParents };
 }
 
 /** Counts-only report lines (unit names are fine to print; never tenant names, slugs or ids). */
