@@ -28,7 +28,17 @@ jest.mock("@routeflow/ui/web", () => ({
 jest.mock("@/lib/api-client", () => ({
   ...jest.requireActual("@/lib/api-client"),
   apiClient: {
-    get: jest.fn(async () => ({ data: { enabled: false, governingAddress: "BILLING_FIRST" } })),
+    get: jest.fn(async (url: string) =>
+      url.includes("unknown-state-customers")
+        ? {
+            data: {
+              noAddress: { total: 0, rows: [], nextCursor: null },
+              unusableState: { total: 0, rows: [], nextCursor: null },
+              needsReview: { total: 0, rows: [], nextCursor: null },
+            },
+          }
+        : { data: { enabled: false, governingAddress: "BILLING_FIRST" } },
+    ),
     patch: (...a: unknown[]) => patch(...a),
   },
 }));
@@ -49,26 +59,12 @@ const flip = async () => {
 beforeEach(() => jest.clearAllMocks());
 
 describe("one failed save = exactly one toast", () => {
-  it("409 not-ready (guided): the page's toast only", async () => {
-    reject(409, {
-      code: "SELLING_RESTRICTIONS_NOT_READY",
-      message: "raw",
-      readiness: {
-        ready: false,
-        truncated: false,
-        customerCount: 1,
-        customersWithoutAddress: 1,
-        customersAmbiguousNoDefault: 0,
-        addressesMissingStateCode: 0,
-        addressesNeedingReview: 0,
-        indeterminateCustomerCount: 1,
-        businessStateMissing: false,
-      },
-    });
+  it("a not-ready 409 is no longer a guided state: the global handler's toast only, fixed copy", async () => {
+    reject(409, { code: "SELLING_RESTRICTIONS_NOT_READY", message: "raw", readiness: {} });
     await flip();
     await waitFor(() => expect(toast).toHaveBeenCalled());
     expect(toast).toHaveBeenCalledTimes(1);
-    expect(toast.mock.calls[0][0].title).toMatch(/can't enable yet/i);
+    expect(toast.mock.calls[0][0].title).not.toMatch(/can't enable yet|raw/i);
   });
 
   it("400 enable+policy (guided): the page's toast only, never the raw server text", async () => {

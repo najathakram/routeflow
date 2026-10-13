@@ -15,6 +15,7 @@ import {
   Store,
 } from "lucide-react";
 import { Badge, Button, cn } from "@routeflow/ui/web";
+import { reorderNoneAvailable, reorderSkippedNote } from "@/lib/buyer-reorder-review";
 import { useBuyerAuth } from "@/lib/buyer-auth-context";
 import {
   useBuyerDashboard,
@@ -97,6 +98,7 @@ function StandingOrdersPanel({
   isLoading: boolean;
 }) {
   const reorder = useBuyerReorder({ localErrorToast: true }); // the sheet shows its own sentence
+  const [skippedNote, setSkippedNote] = React.useState<string | null>(null);
   const accepting = useSellerAcceptingOrders();
   // A tap on Reorder only OPENS the review sheet (lines + total); the order is placed from its
   // "Place order" button, never from the tap itself.
@@ -114,12 +116,16 @@ function StandingOrdersPanel({
     setPlacing(true);
     setPlaceError(null);
     try {
-      await reorder.mutateAsync(reviewing.id);
+      const res = await reorder.mutateAsync(reviewing.id);
+      setSkippedNote(reorderSkippedNote(res));
       setReviewing(null);
     } catch (err) {
-      // A paused seller says so; every other failure keeps the fixed retry sentence.
+      // Nothing orderable says so; a paused seller says so; every other failure keeps the fixed retry sentence.
       setPlaceError(
-        isSellerUnavailableRefusal(err) ? sellerUnavailableCopy(sellerName) : REORDER_FAILED_COPY,
+        reorderNoneAvailable(err) ??
+          (isSellerUnavailableRefusal(err)
+            ? sellerUnavailableCopy(sellerName)
+            : REORDER_FAILED_COPY),
       );
     } finally {
       setPlacing(false);
@@ -148,6 +154,15 @@ function StandingOrdersPanel({
           Manage <ArrowRight className="h-3 w-3" />
         </button>
       </div>
+      {skippedNote && (
+        <p
+          role="status"
+          data-testid="reorder-skipped-note"
+          className="border-b border-buyer-100 bg-white px-4 py-2 text-sm text-navy"
+        >
+          {skippedNote}
+        </p>
+      )}
       <div className="divide-y divide-buyer-100">
         {active.map((t) => {
           const nextLabel = nextDeliveryLabel(t.daysOfWeek);
