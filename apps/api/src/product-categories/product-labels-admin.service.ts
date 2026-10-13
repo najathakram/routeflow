@@ -15,7 +15,7 @@ import {
   type LabelChainLink,
 } from "../product-labels/effective-labels";
 import { SetProductLabelDto } from "./dto/set-product-label.dto";
-import { LabelLockTimeoutError, lockLabelCategory, writeLabelRow } from "./label-writer";
+import { lockLabelCategory, writeLabelRow } from "./label-writer";
 
 const LABEL_INCLUDE = { category: { select: { name: true, archivedAt: true } } } as const;
 type LabelRow = Prisma.ProductCategoryLabelGetPayload<{ include: typeof LABEL_INCLUDE }>;
@@ -172,12 +172,8 @@ export class ProductLabelsAdminService {
     tenantId: string,
     categoryId: string,
   ): Promise<void> {
-    try {
-      await lockLabelCategory(tx, tenantId, categoryId); // the single writer's lock (label-writer.ts)
-    } catch (e) {
-      if (e instanceof LabelLockTimeoutError) throw new ConflictException(e.message);
-      throw e;
-    }
+    // A busy lock throws LabelLockTimeoutError: a coded 409 (LABEL_CHANGE_IN_PROGRESS).
+    await lockLabelCategory(tx, tenantId, categoryId); // the single writer's lock (label-writer.ts)
   }
 
   /**

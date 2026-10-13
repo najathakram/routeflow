@@ -1,4 +1,8 @@
+import { ConflictException } from "@nestjs/common";
 import { Prisma } from "@prisma/client";
+import { API_ERROR_CODES } from "../common/api-error-codes";
+import { assertSafeCategoryName } from "../common/text-cell-guards";
+import { productsInheritingLabel } from "../product-labels/parent-carries";
 
 /**
  * THE single writer of product label memberships (`ProductCategoryLabel`). Everything that adds, flips
@@ -27,9 +31,16 @@ export function labelNameKey(raw: string | null | undefined): string {
  */
 const LOCK_WAIT = "2s";
 
-export class LabelLockTimeoutError extends Error {
+/**
+ * A busy label lock. It IS a coded 409 (LABEL_CHANGE_IN_PROGRESS), so every caller — the admin endpoints and every
+ * Product.category writer running the sync — answers a clear, retryable 409, never a 500.
+ */
+export class LabelLockTimeoutError extends ConflictException {
   constructor() {
-    super("Another label change for this category is in progress. Try again in a moment.");
+    super({
+      code: API_ERROR_CODES.LABEL_CHANGE_IN_PROGRESS,
+      message: "Another label change is in progress. Try again in a moment.",
+    });
     this.name = "LabelLockTimeoutError";
   }
 }
@@ -107,6 +118,7 @@ export type AddIncludeOutcome =
   | "added"
   | "present" // the product already has an INCLUDE of this label
   | "opted-out" // the product has an EXCLUDE of it: an opt-out is never flipped by an automatic add
+  | "inherited" // its PARENT chain already carries the label: a variant follows its parent (no own row)
   | "archived"
   | "missing"; // no such label (or not this tenant's) / no such product
 
@@ -138,6 +150,11 @@ export async function addIncludeIfAbsent(
     select: { mode: true },
   });
   if (existing) return existing.mode === "EXCLUDE" ? "opted-out" : "present";
+  // Variants FOLLOW the parent: no own row when the parent chain carries it, so removing the parent's label later
+  // un-restricts the variant too.
+  if ((await productsInheritingLabel(tx, tenantId, categoryId, [productId])).has(productId)) {
+    return "inherited";
+  }
   const { count } = await tx.productCategoryLabel.createMany({
     data: [
       // An INCLUDE carries no pin: the column keeps its NULL default.
@@ -277,10 +294,65 @@ const auditRow = (
 });
 
 /**
- * `syncCategoryLabel` for MANY products that were just given ONE category text (a subcategory rename):
- * the label is matched and its lock taken ONCE, then every product of the tenant that has no membership
- * row yet gets the INCLUDE in one `createMany`. Same rules and the same audit row per added product;
- * an existing row of either mode is left exactly as it is.
+ * ADD-ONLY for MANY products and ONE label, under that label's lock, in one `createMany`: the bulk sync (a subcategory
+ * rename) and the backfill script both use it. Re-reads under the lock: the label (an archive that landed first wins),
+ * the products (this tenant's only), the existing rows of either mode (left exactly as they are) and the parent chains
+ * (a product whose parent chain carries the label — including a parent added in this same call — FOLLOWS it and gets
+ * no own row). `ON CONFLICT DO NOTHING`; the lock serialises every label writer, so `added` is exact.
+ */
+export async function addIncludesForProducts(
+  tx: Prisma.TransactionClient,
+  args: { tenantId: string; categoryId: string; productIds: readonly string[]; stamp: LabelStamp },
+): Promise<{ added: string[]; present: number; inherited: string[]; archived: boolean }> {
+  const { tenantId, categoryId, stamp } = args;
+  const none = { added: [] as string[], present: 0, inherited: [] as string[], archived: false };
+  const ids = [...new Set(args.productIds)];
+  if (ids.length === 0) return none;
+  await lockLabelCategory(tx, tenantId, categoryId);
+  const category = await tx.productCategory.findFirst({
+    where: { id: categoryId, tenantId },
+    select: { archivedAt: true },
+  });
+  if (!category) return none;
+  if (category.archivedAt) return { ...none, archived: true };
+  const products = await tx.product.findMany({
+    where: { id: { in: ids }, tenantId },
+    select: { id: true },
+  });
+  const rows = await tx.productCategoryLabel.findMany({
+    where: { categoryId, productId: { in: ids } },
+    select: { productId: true },
+  });
+  const has = new Set(rows.map((r) => r.productId));
+  const candidates = products.map((p) => p.id).filter((id) => !has.has(id));
+  const inherited = await productsInheritingLabel(
+    tx,
+    tenantId,
+    categoryId,
+    candidates,
+    new Set(candidates),
+  );
+  const toAdd = candidates.filter((id) => !inherited.has(id)).sort();
+  if (toAdd.length > 0) {
+    await tx.productCategoryLabel.createMany({
+      // An INCLUDE carries no pin: the column keeps its NULL default.
+      data: toAdd.map((productId) => ({
+        tenantId,
+        productId,
+        categoryId,
+        mode: "INCLUDE" as const,
+        reason: null,
+        ...stamp,
+      })),
+      skipDuplicates: true,
+    });
+  }
+  return { added: toAdd, present: has.size, inherited: [...inherited].sort(), archived: false };
+}
+
+/**
+ * `syncCategoryLabel` for MANY products that were just given ONE category text (a subcategory rename), through
+ * `addIncludesForProducts`: same rules, the same audit row per added product.
  */
 export async function syncCategoryLabelForProducts(
   tx: Prisma.TransactionClient,
@@ -292,45 +364,38 @@ export async function syncCategoryLabelForProducts(
   },
 ): Promise<{ addedProductIds: string[] }> {
   const { tenantId, actor } = args;
-  const none = { addedProductIds: [] as string[] };
-  if (args.productIds.length === 0) return none;
+  if (args.productIds.length === 0 || !tenantId) return { addedProductIds: [] };
   const match = await matchLabel(tx, tenantId, args.text);
-  if (!match || !tenantId) return none;
-  const categoryId = match.id;
-  await lockLabelCategory(tx, tenantId, categoryId);
-  // Re-read under the lock: an archive that landed first wins.
-  const category = await tx.productCategory.findFirst({
-    where: { id: categoryId, tenantId, archivedAt: null },
-    select: { id: true },
+  if (!match) return { addedProductIds: [] };
+  const { added } = await addIncludesForProducts(tx, {
+    tenantId,
+    categoryId: match.id,
+    productIds: args.productIds,
+    stamp: stampOf(actor),
   });
-  if (!category) return none;
-  const ids = [...new Set(args.productIds)];
-  const [products, rows] = await Promise.all([
-    tx.product.findMany({ where: { id: { in: ids }, tenantId }, select: { id: true } }),
-    tx.productCategoryLabel.findMany({
-      where: { categoryId, productId: { in: ids } },
-      select: { productId: true },
-    }),
-  ]);
-  const has = new Set(rows.map((r) => r.productId));
-  const toAdd = products.map((p) => p.id).filter((id) => !has.has(id));
-  if (toAdd.length === 0) return none;
-  const stamp = stampOf(actor);
-  const { count } = await tx.productCategoryLabel.createMany({
-    data: toAdd.map((productId) => ({
-      tenantId,
-      productId,
-      categoryId,
-      mode: "INCLUDE" as const,
-      reason: null,
-      ...stamp,
-    })),
-    skipDuplicates: true,
-  });
-  // The lock above serialises every label writer, so the existence check cannot go stale: count === toAdd.length.
-  if (count === 0) return none;
-  await tx.auditLog.createMany({
-    data: toAdd.map((productId) => auditRow(tenantId, productId, categoryId, actor, match.sameKey)),
-  });
-  return { addedProductIds: toAdd };
+  if (added.length > 0) {
+    await tx.auditLog.createMany({
+      data: added.map((productId) => auditRow(tenantId, productId, match.id, actor, match.sameKey)),
+    });
+  }
+  return { addedProductIds: added };
+}
+
+// ─── label NAME safety (B983) ─────────────────────────────────────────────────
+
+/** The admin DTO's limit on a label name (CreateProductCategoryDto @MaxLength(80)). */
+export const LABEL_NAME_MAX = 80;
+
+/**
+ * Why `name` can't be a label name, or null when it can: the same rules an admin create runs — the formula-injection
+ * guard (B983, assertSafeCategoryName) and the 80-character limit. The backfill lists and skips such texts.
+ */
+export function labelNameProblem(name: string): "too-long" | "unsafe" | null {
+  if (name.length > LABEL_NAME_MAX) return "too-long";
+  try {
+    assertSafeCategoryName(name);
+  } catch {
+    return "unsafe";
+  }
+  return null;
 }

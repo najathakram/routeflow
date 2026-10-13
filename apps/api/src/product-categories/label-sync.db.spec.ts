@@ -27,6 +27,9 @@ import { FeatureOverrideService } from "../billing/feature-override.service";
 import { PlanCatalogService } from "../billing/plan-catalog.service";
 import { RouteFlowGateway } from "../gateways/routeflow.gateway";
 import { describeDb, requireLocalDatabaseUrl } from "../common/testing/db-spec";
+import { Pool } from "pg";
+import { ConflictException } from "@nestjs/common";
+import { ProductLabelsService } from "../product-labels/product-labels.service";
 import {
   LABEL_FROM_TEXT_ACTION,
   syncCategoryLabel,
@@ -435,5 +438,55 @@ describeDb("category text -> label add-only sync (real Postgres)", () => {
       expect((await membershipsOf(never)).map((r) => r.categoryId)).toEqual([A.snacks]);
       expect(await membershipsOf(diverged)).toHaveLength(0);
     });
+  });
+
+  describe("SA round 2: variants follow the parent; a busy lock is a coded 409", () => {
+    it("a variant under a labelled parent gets NO own row; removing the parent's label un-restricts the variant", async () => {
+      const parent = await seedProduct(A.id, "follow-parent", { category: "Snacks" });
+      expect((await syncIn(A.id, parent, "Snacks")).addedCategoryId).toBe(A.snacks);
+      const variant = await seedProduct(A.id, "follow-variant", {
+        category: "snacks",
+        parentProductId: parent,
+      });
+      expect((await syncIn(A.id, variant, "snacks")).addedCategoryId).toBeNull();
+      expect(await membershipsOf(variant)).toEqual([]);
+      const effective = new ProductLabelsService(prisma);
+      const labelsOf = async () =>
+        (await inA(() => effective.effectiveLabels(A.id, [variant]))).get(variant)
+          ?.effectiveCategoryIds ?? [];
+      expect([...(await labelsOf())]).toContain(A.snacks); // inherited from the parent
+      await prisma.productCategoryLabel.deleteMany({
+        where: { productId: parent, categoryId: A.snacks },
+      });
+      expect([...(await labelsOf())]).not.toContain(A.snacks); // no own row kept it restricted
+    });
+
+    it("a product create whose sync meets a busy label lock is a coded 409 LABEL_CHANGE_IN_PROGRESS (never a 500), nothing written", async () => {
+      const pool = new Pool({ connectionString: requireLocalDatabaseUrl() });
+      const holder = await pool.connect();
+      const name = `lock-probe-${randomUUID().slice(0, 6)}`;
+      try {
+        await holder.query("BEGIN");
+        await holder.query("SELECT pg_advisory_xact_lock(hashtext($1), hashtext($2))", [
+          "product-labels",
+          `${A.id}:${A.snacks}`,
+        ]);
+        const err = await inA(() =>
+          products.create({ name, unit: "each", pricePerUnit: "2.00", category: "Snacks" } as any, {
+            actorId: actor.id,
+            actorName: actor.name,
+          }),
+        ).catch((e) => e);
+        expect(err).toBeInstanceOf(ConflictException);
+        expect((err as ConflictException).getResponse()).toMatchObject({
+          code: "LABEL_CHANGE_IN_PROGRESS",
+        });
+        expect(await prisma.product.count({ where: { tenantId: A.id, name } })).toBe(0); // the tx rolled back
+      } finally {
+        await holder.query("ROLLBACK");
+        holder.release();
+        await pool.end();
+      }
+    }, 30_000);
   });
 });

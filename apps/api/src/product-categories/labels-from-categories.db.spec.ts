@@ -93,7 +93,10 @@ describeDb("labels-from-categories — real Postgres, through the CLI", () => {
 
   beforeAll(async () => {
     // Compile ONLY the single writer (the CLI's dist dependency) into a temp dir.
-    tmp = fs.mkdtempSync(path.join(os.tmpdir(), "lfc-writer-"));
+    // Inside apps/api (gitignored node_modules cache) so the compiled writer resolves @nestjs/common & co.
+    const cacheDir = path.resolve(API_DIR, "node_modules/.cache");
+    fs.mkdirSync(cacheDir, { recursive: true });
+    tmp = fs.mkdtempSync(path.join(cacheDir, "lfc-writer-"));
     execFileSync(
       process.execPath,
       [
@@ -106,11 +109,16 @@ describeDb("labels-from-categories — real Postgres, through the CLI", () => {
         "es2021",
         "--esModuleInterop",
         "--skipLibCheck",
+        "--experimentalDecorators",
+        "--emitDecoratorMetadata",
+        "--rootDir",
+        path.resolve(API_DIR, "src"),
         path.resolve(API_DIR, "src/product-categories/label-writer.ts"),
+        path.resolve(API_DIR, "src/product-labels/parent-carries.ts"),
       ],
       { cwd: API_DIR, stdio: "pipe" },
     );
-    writerJs = path.join(tmp, "label-writer.js");
+    writerJs = path.join(tmp, "product-categories", "label-writer.js");
 
     pool = new Pool({ connectionString: url() });
     raw = new PrismaClient({ adapter: new PrismaPg(pool) });
@@ -151,6 +159,23 @@ describeDb("labels-from-categories — real Postgres, through the CLI", () => {
       })
     ).id;
     ids.c1 = await product("Gummies", "candy");
+    // Variants FOLLOW the parent: a family "Tea" parent + two variants with the same text -> only the parent's row.
+    ids.teaParent = await product("Tea Family", "Tea");
+    ids.teaV1 = await product("Tea Small", "tea", { parentProductId: ids.teaParent });
+    ids.teaV2 = await product("Tea Large", "Tea", { parentProductId: ids.teaParent });
+    // A deliberate removal (the admin remove-label audit) is never re-added.
+    ids.d2 = await product("Lemonade", "Drinks");
+    await raw.auditLog.create({
+      data: {
+        tenantId,
+        action: "product_label.removed",
+        entityType: "Product",
+        entityId: ids.d2,
+        meta: { categoryId: ids.drinks },
+      },
+    });
+    // A formula-like text can't be a label name (B983): listed, skipped.
+    ids.u1 = await product("Odd", "=HYPERLINK(1)");
     // Blank and missing text: no label.
     ids.b1 = await product("Thing", "   ");
     ids.b2 = await product("Other", null);
@@ -180,16 +205,25 @@ describeDb("labels-from-categories — real Postgres, through the CLI", () => {
     expect(dry.out).toMatch(/DRY-RUN/);
     expect(await snapshot()).toBe(before);
     // labels: Snacks (new), Frozen Foods (new), drinks (reused); Candy archived -> skipped
-    expect(dry.out).toMatch(/labels: 3 \(new: 2, reusing existing: 1\)/);
+    expect(dry.out).toMatch(/labels: 4 \(new: 3, reusing existing: 1\)/);
     expect(dry.out).toMatch(/\+ Snacks \(4, 4\)/);
     expect(dry.out).toMatch(/\+ Frozen Foods \(2, 2\)/);
-    expect(dry.out).toMatch(/= drinks \(3, 1\)/); // Cola added; Juice already in; the variant opted out
+    expect(dry.out).toMatch(/= drinks \(4, 1\)/); // Cola added; Juice in; the variant opted out; Lemonade removed on purpose
+    // variants FOLLOW the parent: Tea gets ONE row (the family parent), its two variants none
+    expect(dry.out).toMatch(/\+ Tea \(3, 1\)/);
+    expect(dry.out).toMatch(
+      /FOLLOW their parent's label \(no own row\): 2; deliberate removals kept removed: 1/,
+    );
+    expect(dry.out).toMatch(/removed on purpose by an operator, NOT re-added:\s+drinks \(1\)/);
+    expect(dry.out).toMatch(/can't be a label name[\s\S]*\[unsafe\] =HYPERLINK\(1\) \(1\)/);
+    expect(dry.out).toMatch(/re-run: a re-run plans only what is left/);
+    expect(dry.out).toMatch(/owner checklist \(not enforced by code\)/);
     expect(dry.out).toMatch(/Snacks <- SNACKS \| Snacks \| snacks/);
     expect(dry.out).toMatch(/ARCHIVED label, skipped[\s\S]*Candy \(1\)/);
     expect(dry.out).toMatch(/blank: 1/);
     expect(dry.out).toMatch(/opted out, left as is: 1/);
-    // 2 new labels + 4 + 2 + 1 memberships
-    expect(rowsOf(dry.out)).toBe(9);
+    // 3 new labels + 4 (Snacks) + 2 (Frozen Foods) + 1 (drinks) + 1 (Tea parent) memberships
+    expect(rowsOf(dry.out)).toBe(11);
     // the slug is never printed
     expect(dry.out).not.toContain(slug);
   }, 120_000);
@@ -200,15 +234,22 @@ describeDb("labels-from-categories — real Postgres, through the CLI", () => {
       select: { id: true, category: true },
       orderBy: { id: "asc" },
     });
-    const res = cli(["--tenant", tenantId, "--live", "--backup-taken", "--expect-rows", "9"]);
-    expect(res.out).toMatch(/committed — 2 label\(s\) created, 7 membership\(s\) added/);
+    const res = cli(["--tenant", tenantId, "--live", "--backup-taken", "--expect-rows", "11"]);
+    expect(res.out).toMatch(/committed — 3 label\(s\) created, 8 membership\(s\) added/);
     expect(res.status).toBe(0);
 
     const labels = await raw.productCategory.findMany({
       where: { tenantId },
       orderBy: { name: "asc" },
     });
-    expect(labels.map((l) => l.name).sort()).toEqual(["Candy", "Frozen Foods", "Snacks", "drinks"]);
+    expect(labels.map((l) => l.name).sort()).toEqual([
+      "Candy",
+      "Frozen Foods",
+      "Snacks",
+      "Tea",
+      "drinks",
+    ]);
+    const tea = labels.find((l) => l.name === "Tea")!;
     const snacks = labels.find((l) => l.name === "Snacks")!;
     const frozen = labels.find((l) => l.name === "Frozen Foods")!;
     const of = async (productId: string) =>
@@ -223,6 +264,11 @@ describeDb("labels-from-categories — real Postgres, through the CLI", () => {
     expect(await of(ids.d1)).toEqual([{ categoryId: ids.drinks, mode: "INCLUDE" }]);
     expect(await of(ids.dVariant)).toEqual([{ categoryId: ids.drinks, mode: "EXCLUDE" }]); // never flipped
     expect(await of(ids.c1)).toEqual([]); // archived label skipped
+    expect(await of(ids.teaParent)).toEqual([{ categoryId: tea.id, mode: "INCLUDE" }]);
+    expect(await of(ids.teaV1)).toEqual([]); // follows its parent
+    expect(await of(ids.teaV2)).toEqual([]);
+    expect(await of(ids.d2)).toEqual([]); // removed on purpose: not re-added
+    expect(await of(ids.u1)).toEqual([]); // unsafe text: no label
     expect(await of(ids.b1)).toEqual([]);
     expect(
       (await raw.productCategory.findUnique({ where: { id: ids.candy } }))?.archivedAt,

@@ -14,9 +14,15 @@
  *   - A key that matches an EXISTING label (by the same key) reuses it; when only ARCHIVED labels match it is
  *     listed and skipped (never unarchived); case-duplicate labels sharing one key are never merged: the
  *     OLDEST unarchived one is used (as the sync does) and the ambiguity is listed.
- *   - Memberships are written ONLY through the single label writer (`addIncludeIfAbsent`, compiled from
- *     apps/api/src/product-categories/label-writer.ts): an INCLUDE when the product has NO row for that
- *     label; an existing INCLUDE or opt-out (EXCLUDE) is left exactly as it is. A re-run plans 0.
+ *   - Memberships are written ONLY through the single label writer (`addIncludesForProducts`, compiled from
+ *     apps/api/src/product-categories/label-writer.ts): ONE createMany per label under that label's lock, adding only
+ *     where the product has NO row for it; an existing INCLUDE or opt-out (EXCLUDE) is left exactly as it is.
+ *   - Variants FOLLOW the parent: a product whose parent chain carries the label (already, or in this same run) gets
+ *     no own row (the engine's rule, dist/product-labels/parent-carries.js), so removing the parent's label later
+ *     un-restricts its variants. Listed as a count.
+ *   - A (product, label) pair an operator deliberately removed (a `product_label.removed` audit) is never re-added:
+ *     LISTED. A text that can't be a label name (the B983 formula guard, over 80 characters) is LISTED and skipped.
+ *   - A re-run plans 0.
  *   - `Product.category` is never written. No label is ever renamed, archived or deleted.
  *   - Output: counts and label names only, to THIS terminal. Never written to a file.
  *
@@ -91,7 +97,10 @@ export function writerPath(env = process.env) {
 function loadWriter() {
   const p = writerPath();
   try {
-    return require(p);
+    const writer = require(p);
+    // The read side's "variants follow the parent" rule, compiled next to the writer (dist/product-labels/).
+    writer.carries = require(join(dirname(dirname(p)), "product-labels", "parent-carries.js"));
+    return writer;
   } catch (e) {
     throw new Error(
       `cannot load the compiled label writer (${p}). Run \`npm run build -w apps/api\` first (${e.message})`,
@@ -106,10 +115,22 @@ const byCodePoint = (a, b) => (a < b ? -1 : a > b ? 1 : 0);
 
 /**
  * Group product texts into labels. `products`: [{ id, category }]. `existing`: the tenant's labels
- * [{ id, name, archivedAt }]. `memberships`: [{ productId, categoryId, mode }]. `keyOf` / `textOf`: the
- * writer's normalisers. Returns the plan (labels to create, memberships to add) plus the listed exceptions.
+ * [{ id, name, archivedAt }], OLDEST FIRST. `memberships`: [{ productId, categoryId, mode }]. `removed`: Set of
+ * "productId:categoryId" pairs an operator deliberately removed (never re-added). `keyOf` / `textOf` /
+ * `nameProblem`: the writer's normalisers and its label-name check. `inherits(productId, labelKey, planned)`: true
+ * when the product's PARENT chain carries the label (counting `planned` products as carrying) — the engine's rule,
+ * through the read side's parentChainCarries. Returns the plan plus the listed exceptions.
  */
-export function planLabels({ products, existing, memberships, keyOf, textOf }) {
+export function planLabels({
+  products,
+  existing,
+  memberships,
+  removed = new Set(),
+  keyOf,
+  textOf,
+  nameProblem = () => null,
+  inherits = () => false,
+}) {
   const groups = new Map(); // key -> { texts: Map<text, count>, productIds: [] }
   let blank = 0;
   for (const p of products) {
@@ -134,9 +155,12 @@ export function planLabels({ products, existing, memberships, keyOf, textOf }) {
   const labels = []; // { key, name, existingId|null, products: n, add: [productId] }
   const merged = []; // { name, variants: [text] }
   const archived = []; // { name, products }
-  const ambiguous = []; // { name, products }
+  const ambiguous = []; // { name, products, labels, using }
+  const unsafe = []; // { name, problem, products }: a text that can't be a label name (B983 / 80 chars)
+  const kept = []; // { name, products }: deliberate removals, never re-added
   let alreadyIn = 0;
   let optedOut = 0;
+  let inheritedCount = 0;
   for (const [key, g] of [...groups.entries()].sort((a, b) => a[0].localeCompare(b[0]))) {
     const name = [...g.texts.entries()].sort(
       (a, b) => b[1] - a[1] || byCodePoint(a[0], b[0]),
@@ -159,19 +183,37 @@ export function planLabels({ products, existing, memberships, keyOf, textOf }) {
       continue;
     }
     const existingId = live[0]?.id ?? null;
-    const add = [];
+    if (!existingId) {
+      const problem = nameProblem(name);
+      if (problem) {
+        unsafe.push({ name, problem, products: g.productIds.length });
+        continue;
+      }
+    }
+    const candidates = [];
+    let removedHere = 0;
     for (const productId of g.productIds) {
       const mode = existingId ? has.get(`${productId}:${existingId}`) : undefined;
       if (mode === "INCLUDE") alreadyIn++;
       else if (mode === "EXCLUDE") optedOut++;
-      else add.push(productId);
+      else if (existingId && removed.has(`${productId}:${existingId}`)) removedHere++;
+      else candidates.push(productId);
     }
+    if (removedHere) kept.push({ name: live[0]?.name ?? name, products: removedHere });
+    // Variants FOLLOW the parent: a product whose parent chain carries the label (already, or as a candidate of this
+    // very run) gets no own row.
+    const planned = new Set(candidates);
+    const labelRef = existingId ?? `new:${key}`;
+    const add = candidates.filter((id) => !inherits(id, labelRef, planned));
+    const inherited = candidates.length - add.length;
+    inheritedCount += inherited;
     labels.push({
       key,
       name: live[0]?.name ?? name,
       existingId,
       products: g.productIds.length,
       add,
+      inherited,
     });
   }
   const create = labels.filter((l) => !l.existingId && l.add.length > 0);
@@ -190,10 +232,14 @@ export function planLabels({ products, existing, memberships, keyOf, textOf }) {
       memberships: addCount,
       alreadyIn,
       optedOut,
+      inherited: inheritedCount,
+      removedKept: kept.reduce((n, k) => n + k.products, 0),
     },
     merged,
     archived,
     ambiguous,
+    unsafe,
+    kept,
   };
 }
 
@@ -201,7 +247,10 @@ export function planLabels({ products, existing, memberships, keyOf, textOf }) {
 export const confirmPhrase = (plan, tenantId) =>
   `LABEL ${plan.addCount} PRODUCTS WITH ${plan.create.length} NEW LABELS FOR ${tenantId}`;
 
-/** What users see change once labels exist (pre-live census, owner ruling): printed with every dry run. */
+/**
+ * OWNER CHECKLIST (not enforced by code): what users see change once labels exist — the pre-live reader census of
+ * 2026-10-13, printed with every dry run. Re-check it against the code before a run long after that date.
+ */
 export const SURFACES = [
   "staff/admin, at once: Settings > Product categories lists the labels with product counts;",
   "  each product page's Labels card shows its label; the rule form and 'Limit in portal' list them.",
@@ -228,7 +277,31 @@ async function readState(db, tenantId) {
     where: { tenantId },
     select: { productId: true, categoryId: true, mode: true },
   });
-  return { products, existing, memberships };
+  // Deliberate removals (the admin "remove label" audit): those (product, label) pairs are never re-added.
+  const removals = await db.auditLog.findMany({
+    where: { tenantId, action: "product_label.removed", entityType: "Product" },
+    select: { entityId: true, meta: true },
+  });
+  const removed = new Set(
+    removals
+      .filter((r) => r.entityId && r.meta?.categoryId)
+      .map((r) => `${r.entityId}:${r.meta.categoryId}`),
+  );
+  return { products, existing, memberships, removed };
+}
+
+/** The plan from ONE consistent read: the state above plus the parent chains, judged by the writer's own rules. */
+async function planFor(db, tenantId, w) {
+  const state = await readState(db, tenantId);
+  const chains = await w.carries.loadInheritanceState(db, tenantId);
+  return planLabels({
+    ...state,
+    keyOf: w.labelNameKey,
+    textOf: w.labelText,
+    nameProblem: w.labelNameProblem,
+    inherits: (productId, labelRef, planned) =>
+      w.carries.parentChainCarries(chains, productId, labelRef, planned),
+  });
 }
 
 async function tenantRow(db, tenantId) {
@@ -264,6 +337,9 @@ function report(plan) {
   console.log(
     `  memberships to add: ${c.memberships} (already labelled: ${c.alreadyIn}, opted out, left as is: ${c.optedOut})`,
   );
+  console.log(
+    `  variants that FOLLOW their parent's label (no own row): ${c.inherited}; deliberate removals kept removed: ${c.removedKept}`,
+  );
   console.log(`  rows to write: ${plan.rows}  (pass --expect-rows ${plan.rows} with --live)`);
   console.log("\n  label (products, to add):");
   for (const l of plan.labels)
@@ -283,7 +359,22 @@ function report(plan) {
         `    ${a.name} (${a.products}): ${a.labels} labels, using ${a.using ?? "none (all archived)"}`,
       );
   }
-  console.log("\n  what users will see change:");
+  if (plan.kept.length) {
+    console.log("\n  removed on purpose by an operator, NOT re-added:");
+    for (const k of plan.kept) console.log(`    ${k.name} (${k.products})`);
+  }
+  if (plan.unsafe.length) {
+    console.log(
+      "\n  text that can't be a label name, skipped (formula-like or over 80 characters):",
+    );
+    for (const u of plan.unsafe)
+      console.log(`    [${u.problem}] ${u.name.slice(0, 40)} (${u.products})`);
+  }
+  console.log(
+    "\n  note: products created or edited while this runs whose text matches a NEW label stay unlabelled" +
+      " (the sync only adds EXISTING labels). Run it in a quiet period, then re-run: a re-run plans only what is left.",
+  );
+  console.log("\n  owner checklist (not enforced by code) — what users will see change:");
   for (const s of SURFACES) console.log(`    ${s}`);
 }
 
@@ -362,11 +453,7 @@ async function main() {
         await tx.$executeRawUnsafe("SET TRANSACTION READ ONLY");
         await tx.$executeRawUnsafe(`SET LOCAL statement_timeout = '${STATEMENT_TIMEOUT}'`);
         await tx.$executeRawUnsafe(`SET LOCAL lock_timeout = '${LOCK_TIMEOUT}'`);
-        return planLabels({
-          ...(await readState(tx, tenantId)),
-          keyOf: writer.labelNameKey,
-          textOf: writer.labelText,
-        });
+        return planFor(tx, tenantId, writer);
       },
       { isolationLevel: "RepeatableRead" },
     );
@@ -403,11 +490,7 @@ async function main() {
         await tx.$executeRawUnsafe(`SET LOCAL lock_timeout = '${LOCK_TIMEOUT}'`);
         // The per-tenant label-NAMES lock the admin create/rename also take (one shared key, label-writer).
         await writer.lockTenantLabelNames(tx, tenantId);
-        const now = planLabels({
-          ...(await readState(tx, tenantId)),
-          keyOf: writer.labelNameKey,
-          textOf: writer.labelText,
-        });
+        const now = await planFor(tx, tenantId, writer);
         if (now.rows !== expect) {
           throw Object.assign(
             refuse(`--expect-rows ${expect} but this run would write ${now.rows}`),
@@ -416,7 +499,7 @@ async function main() {
         }
         const stamp = { createdById: null, createdByName: TAG };
         let labelsCreated = 0;
-        const outcomes = { added: 0, present: 0, "opted-out": 0, archived: 0, missing: 0 };
+        let added = 0;
         for (const l of now.labels) {
           if (l.add.length === 0) continue;
           let categoryId = l.existingId;
@@ -429,19 +512,24 @@ async function main() {
             ).id;
             labelsCreated++;
           }
-          for (const productId of [...l.add].sort()) {
-            const o = await writer.addIncludeIfAbsent(tx, {
-              tenantId,
-              productId,
-              categoryId,
-              stamp,
-            });
-            outcomes[o]++;
+          // ONE createMany per label, under that label's lock, re-checking existing rows and parent chains there
+          // (the single writer's addIncludesForProducts): never a per-product round trip holding every lock.
+          const r = await writer.addIncludesForProducts(tx, {
+            tenantId,
+            categoryId,
+            productIds: l.add,
+            stamp,
+          });
+          if (r.added.length !== l.add.length) {
+            throw refuse(
+              `label ${l.name}: wrote ${r.added.length} memberships, planned ${l.add.length}`,
+            );
           }
+          added += r.added.length;
         }
-        if (outcomes.added !== now.addCount || labelsCreated !== now.create.length) {
+        if (added !== now.addCount || labelsCreated !== now.create.length) {
           throw refuse(
-            `wrote ${labelsCreated} labels / ${outcomes.added} memberships, planned ${now.create.length} / ${now.addCount}`,
+            `wrote ${labelsCreated} labels / ${added} memberships, planned ${now.create.length} / ${now.addCount}`,
           );
         }
         await tx.auditLog.create({
@@ -451,10 +539,10 @@ async function main() {
             action: "product_label.backfill_from_category_text",
             entityType: "Tenant",
             entityId: tenantId,
-            meta: { labelsCreated, membershipsAdded: outcomes.added },
+            meta: { labelsCreated, membershipsAdded: added },
           },
         });
-        return { labelsCreated, added: outcomes.added };
+        return { labelsCreated, added };
       },
       { timeout: WRITE_TX_TIMEOUT_MS, maxWait: 10_000 },
     );

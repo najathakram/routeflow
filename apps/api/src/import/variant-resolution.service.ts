@@ -6,7 +6,7 @@ import { roundMoney } from "@routeflow/pricing";
 import { assertSafeProductCategory } from "../common/text-cell-guards";
 import { isFormulaLedText } from "../common/safe-text-cell";
 import { lockBarcodeCodes, syncProductBarcodesFromLegacy } from "../products/product-catalog-sync";
-import { syncCategoryLabel } from "../product-categories/label-writer";
+import { labelNameKey, syncCategoryLabel } from "../product-categories/label-writer";
 
 /** Default gross margin for a brand-new product's list price: cost × (1 + margin). */
 const DEFAULT_MARGIN = 0.3;
@@ -158,8 +158,8 @@ export class VariantResolutionService {
         barcode: row.barcode,
         unitsPerBox: row.unitsPerBox,
       });
-      // Add-only label sync when the confirmed category text changed (same tx).
-      if (row.category !== product.category) {
+      // Add-only label sync when the confirmed category's NAME KEY changed (read in this tx; same tx write).
+      if (labelNameKey(row.category) !== labelNameKey(product.category)) {
         await syncCategoryLabel(tx, { tenantId, productId: row.id, text: row.category });
       }
       return row;

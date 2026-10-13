@@ -115,10 +115,54 @@ describe("labels-from-categories — the plan", () => {
   });
 });
 
+describe("labels-from-categories — SA round 2 (variants follow, removals kept, unsafe names)", () => {
+  it("a variant whose parent is labelled in the same run FOLLOWS it (no own row); listed as a count", () => {
+    const out = runModule(`
+      const parentOf = new Map([["v1", "p"], ["v2", "p"], ["p", null], ["q", null]]);
+      const inherits = (id, _label, planned) => { const par = parentOf.get(id); return !!par && planned.has(par); };
+      const plan = m.planLabels({
+        products: [{ id: "p", category: "Vape" }, { id: "v1", category: "vape" }, { id: "v2", category: "Vape" }, { id: "q", category: "Vape" }],
+        existing: [], memberships: [], keyOf, textOf, inherits,
+      });
+      console.log(JSON.stringify({ add: plan.labels[0].add, inherited: plan.counts.inherited, rows: plan.rows }));`);
+    expect(out).toEqual({ add: ["p", "q"], inherited: 2, rows: 3 });
+  });
+
+  it("a deliberately removed (product, label) pair is never re-added, and is LISTED", () => {
+    const out = runModule(`
+      const plan = m.planLabels({
+        products: [{ id: "a", category: "Vape" }, { id: "b", category: "Vape" }],
+        existing: [{ id: "L", name: "Vape", archivedAt: null }],
+        memberships: [], removed: new Set(["a:L"]), keyOf, textOf,
+      });
+      console.log(JSON.stringify({ add: plan.labels[0].add, kept: plan.kept, removedKept: plan.counts.removedKept }));`);
+    expect(out).toEqual({ add: ["b"], kept: [{ name: "Vape", products: 1 }], removedKept: 1 });
+  });
+
+  it("a text that can't be a label name is LISTED and skipped (no label, no rows)", () => {
+    const out = runModule(`
+      const nameProblem = (n) => (n.length > 80 ? "too-long" : /^[=+@-]/.test(n) ? "unsafe" : null);
+      const plan = m.planLabels({
+        products: [{ id: "a", category: "=HYPERLINK(1)" }, { id: "b", category: "x".repeat(81) }, { id: "c", category: "Tea" }],
+        existing: [], memberships: [], keyOf, textOf, nameProblem,
+      });
+      console.log(JSON.stringify({ names: plan.labels.map((l) => l.name), unsafe: plan.unsafe.map((u) => [u.problem, u.products]), rows: plan.rows }));`);
+    expect(out).toEqual({
+      names: ["Tea"],
+      unsafe: [
+        ["unsafe", 1],
+        ["too-long", 1],
+      ],
+      rows: 2,
+    });
+  });
+});
+
 describe("labels-from-categories — structural rules (SA)", () => {
   it("memberships only through the single writer: no raw insert, no pin, no Product.category write", () => {
     expect(code).toContain('join(HERE, "..", "dist", "product-categories", "label-writer.js")');
-    expect(code).toContain("writer.addIncludeIfAbsent(tx,");
+    expect(code).toContain("writer.addIncludesForProducts(tx,");
+    expect(code).not.toContain("addIncludeIfAbsent(");
     expect(code).not.toMatch(/productCategoryLabel\.(create|createMany|upsert|update|delete)/);
     expect(code).not.toContain("parentProductIdAtWrite");
     expect(code).not.toMatch(/\.product\.(update|updateMany|upsert)\(/);

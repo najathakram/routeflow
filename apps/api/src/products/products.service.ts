@@ -57,7 +57,7 @@ import {
   syncProductBarcodesFromLegacy,
   syncProductImagesFromLegacy,
 } from "./product-catalog-sync";
-import { syncCategoryLabel } from "../product-categories/label-writer";
+import { labelNameKey, syncCategoryLabel } from "../product-categories/label-writer";
 import {
   claimCodes,
   codeClaims,
@@ -1365,6 +1365,9 @@ export class ProductsService {
           confirmed: !!dto.confirmCascade,
         });
       }
+      // The category text this write REPLACES, read inside the tx (the label sync below compares name keys against it,
+      // never the pre-transaction read). A plain read: the UPDATE right after takes the row lock (house lock order).
+      const before = await tx.product.findFirst({ where: { id }, select: { category: true } });
       let row;
       try {
         row = await tx.product.update({ where: { id }, data });
@@ -1390,9 +1393,9 @@ export class ProductsService {
         productId: id,
         imageKeys: row.imageKeys,
       });
-      // Add-only label sync, only when the category TEXT changed: re-saving the same text must not
-      // resurrect a membership an operator removed.
-      if (row.category !== existing.category) {
+      // Add-only label sync, only when the category NAME KEY changed: re-saving the same text (or a case/space
+      // variant of it) must not resurrect a membership an operator removed.
+      if (labelNameKey(row.category) !== labelNameKey(before?.category ?? existing.category)) {
         await syncCategoryLabel(tx, {
           tenantId,
           productId: id,

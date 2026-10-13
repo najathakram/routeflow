@@ -14,11 +14,7 @@ import { CreateProductCategoryDto } from "./dto/create-product-category.dto";
 import { UpdateProductCategoryDto } from "./dto/update-product-category.dto";
 import { assertSafeCategoryName } from "../common/text-cell-guards";
 import { API_ERROR_CODES } from "../common/api-error-codes";
-import {
-  findLabelNameCollision,
-  LabelLockTimeoutError,
-  lockTenantLabelNames,
-} from "./label-writer";
+import { findLabelNameCollision, lockTenantLabelNames } from "./label-writer";
 
 /** 409 LABEL_NAME_TAKEN naming the existing label (the web shows fixed copy; the body carries the name). */
 function labelNameTaken(existing: { id: string; name: string }): ConflictException {
@@ -123,12 +119,7 @@ export class ProductCategoriesService {
 
   /** The per-tenant label-names lock; a busy lock (e.g. a backfill run) is a clear 409, not a hang. */
   private async lockNames(tx: Prisma.TransactionClient, tenantId: string): Promise<void> {
-    try {
-      await lockTenantLabelNames(tx, tenantId);
-    } catch (e) {
-      if (e instanceof LabelLockTimeoutError) throw new ConflictException(e.message);
-      throw e;
-    }
+    await lockTenantLabelNames(tx, tenantId); // busy: LabelLockTimeoutError, a coded 409 (LABEL_CHANGE_IN_PROGRESS)
   }
 
   async update(
