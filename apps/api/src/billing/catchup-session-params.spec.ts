@@ -150,48 +150,46 @@ describe("trial shape (prepaid; October paid, paid-through Nov 1)", () => {
     });
   });
 
-  it("with a stub (paid through Nov 14) the 17/30 stub rides the metadata for the post-completion draft invoice", () => {
-    const q = plan({
-      invoices: [inv("o", "PAID", "2026-10-01T12:00:00Z", "2026-11-14T12:00:00Z")],
-    });
-    const x = build(q);
+  it("writes BOTH catchup_from and catchup_to (S === A here) on the session and the subscription", () => {
+    expect(params.metadata[CATCHUP_META.from]).toBe("2026-11-01T12:00:00.000Z");
+    expect(params.metadata[CATCHUP_META.to]).toBe("2026-11-01T12:00:00.000Z");
+    expect(params.subscription_data.metadata[CATCHUP_META.from]).toBe("2026-11-01T12:00:00.000Z");
+  });
+});
+
+describe("a FUTURE mid-month S (paid through Nov 14) is trial_one_time, charged at completion (SA-733r10 nit 4)", () => {
+  const q = plan({
+    invoices: [inv("o", "PAID", "2026-10-01T12:00:00Z", "2026-11-14T12:00:00Z")],
+  });
+  const x = build(q);
+
+  it("ONE one-time line = [Nov 14, Dec 1), labelled with its start; trial_end = Dec 1", () => {
+    expect(q.shape).toBe("trial_one_time");
     expect(x.subscription_data.trial_end).toBe(Date.UTC(2026, 11, 1, 12) / 1000);
     expect(q.stub.totalCents).toBe(17567);
-    expect(x.metadata[CATCHUP_META.stubCents]).toBe("17567");
-    expect(x.metadata[CATCHUP_META.finalizeAt]).toBe(String(Date.UTC(2026, 10, 14, 12) / 1000));
-    expect(x.line_items.filter(isOneTime)).toHaveLength(0); // the stub is NEVER a Checkout line here
+    const oneTime = x.line_items.filter(isOneTime);
+    expect(oneTime).toHaveLength(1);
+    expect(oneTime[0].price_data.unit_amount).toBe(17567);
+    expect(oneTime[0].price_data.product_data.name).toBe("Subscription — Nov 14 to Nov 30, 2026");
+    expect(x.metadata[CATCHUP_META.from]).toBe("2026-11-14T12:00:00.000Z");
+    expect(x.metadata[CATCHUP_META.to]).toBe("2026-12-01T12:00:00.000Z");
   });
 });
 
-describe("Opus item 10: the stub's finalize time is 12:00Z of the paid-through DAY", () => {
-  it("paid through Nov 14 18:45Z -> catchup_finalize_at = Nov 14 12:00Z (the claim floors it at now + 1 h)", () => {
-    const p = plan({
-      invoices: [inv("o", "PAID", "2026-10-01T12:00:00Z", "2026-11-14T18:45:00Z")],
+describe("a forgiven line (under $0.50) names its cents for the claim's audit row", () => {
+  it("catchup_forgiven_cents rides the session metadata; a normal line carries none", () => {
+    const now = d("2026-10-10T12:00:00Z");
+    const tiny = planCatchup({
+      now,
+      monthly: 0.1,
+      addons: [],
+      invoices: [inv("o", "PAID", "2026-10-01T12:00:00Z", "2026-10-20T12:00:00Z")],
     });
-    const x = build(p);
-    expect(x.metadata[CATCHUP_META.finalizeAt]).toBe(String(Date.UTC(2026, 10, 14, 12) / 1000));
-  });
-});
-
-describe("anchor_no_line (prepaid through Nov 1, session Oct 30)", () => {
-  const now = d("2026-10-30T09:00:00Z");
-  const p = plan({
-    now,
-    invoices: [inv("o", "PAID", "2026-10-01T12:00:00Z", "2026-11-01T12:00:00Z")],
-  });
-  const params = build(p, now);
-
-  it("billing_cycle_anchor + proration none and NO one-time line", () => {
-    expect(p.shape).toBe("anchor_no_line");
-    expect(params.subscription_data.billing_cycle_anchor).toBe(Date.UTC(2026, 10, 1, 12) / 1000);
-    expect(params.subscription_data.proration_behavior).toBe("none");
-    expect(params.subscription_data).not.toHaveProperty("trial_end");
-    expect(params.line_items.filter(isOneTime)).toHaveLength(0);
-    expect(params.metadata[CATCHUP_META.catchup]).toBe("prepaid");
-  });
-
-  it("expires BEFORE the anchor (a session completing after it would be charged the full period)", () => {
-    expect(params.expires_at * 1000).toBeLessThanOrEqual(Date.UTC(2026, 10, 1, 11));
+    if (!tiny.ok) throw new Error("plan");
+    const x = build(tiny, now);
+    expect(x.metadata[CATCHUP_META.stubCents]).toBe("0");
+    expect(x.metadata[CATCHUP_META.forgivenCents]).toBe(String(tiny.stub.totalCents));
+    expect(build(plan()).metadata).not.toHaveProperty(CATCHUP_META.forgivenCents);
   });
 });
 
@@ -221,7 +219,7 @@ describe("R5-4 pin: across EVERY shape and instant, the built params never pair 
         expect(params.subscription_data.metadata.catchup).toMatch(/^(period|prepaid)$/);
       }
     }
-    expect([...seen].sort()).toEqual(["anchor_no_line", "trial", "trial_one_time"]); // the sweep exercised all three
+    expect([...seen].sort()).toEqual(["trial", "trial_one_time"]); // the sweep exercised both reachable shapes
   });
 });
 
@@ -268,21 +266,5 @@ describe("assertCheckoutAcceptable (Stripe's documented Checkout limits)", () =>
         subscription_data: { billing_cycle_anchor: 2, proration_behavior: "none" },
       }),
     ).not.toThrow();
-  });
-});
-
-describe("Decision 5: a prepaid trial with a stub never finalizes it after the trial ends", () => {
-  const PAID_TO_OCT30 = inv("oct", "PAID", "2026-10-01T12:00:00Z", "2026-10-30T12:00:00Z");
-
-  it("the builder refuses a trial whose trial_end is under 98 h away when it carries a stub", () => {
-    const farNow = d("2026-10-28T04:00:00Z"); // T = Nov 1 12:00 is 104 h away
-    const far = plan({ now: farNow, invoices: [PAID_TO_OCT30] });
-    expect(far.shape).toBe("trial");
-    expect(() => build(far, farNow)).not.toThrow();
-
-    const nearNow = d("2026-10-29T04:00:00Z"); // 80 h: the OLD selector still said trial
-    const near = plan({ now: nearNow, invoices: [PAID_TO_OCT30] });
-    expect(near.shape).not.toBe("trial");
-    expect(() => build({ ...near, shape: "trial" }, nearNow)).toThrow(/98 h/);
   });
 });

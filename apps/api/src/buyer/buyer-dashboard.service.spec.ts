@@ -1,3 +1,4 @@
+import { noRestrictionsProvider } from "../selling-restrictions/testing/no-restrictions-provider";
 import { Test } from "@nestjs/testing";
 import { BuyerDashboardService } from "./buyer-dashboard.service";
 import { RegulatedVisibilityService } from "./regulated-visibility.service";
@@ -20,6 +21,7 @@ describe("BuyerDashboardService — W7 gate", () => {
         { provide: PrismaService, useValue: prisma },
         { provide: StorageService, useValue: { presignedUrl: jest.fn() } },
         { provide: RegulatedVisibilityService, useValue: visibility },
+        noRestrictionsProvider,
       ],
     }).compile();
     service = mod.get(BuyerDashboardService);

@@ -14,6 +14,7 @@ import { KNOWN_SERVER_SENTENCES } from "./customer-form-error-copy";
 import { ORDER_OVERPAY_GENERIC_COPY } from "./order-overpay";
 import { parsePlanGate } from "./plan-gate";
 import { safeTextErrorCopy } from "./safe-text-error-copy";
+import { sellerUnavailableCopy } from "./seller-unavailable";
 import { sellingRestrictedCopy } from "./selling-restricted-copy";
 
 /**
@@ -29,6 +30,8 @@ import { sellingRestrictedCopy } from "./selling-restricted-copy";
 
 /** Daily-work refusals, by `body.code`. The sentences name the cause and the next step. */
 const CODE_COPY: Record<string, string> = {
+  // a buyer write toward a paused seller: the seller-unavailable sentence, never "You don't have permission"
+  [API_ERROR_CODES.SELLER_UNAVAILABLE]: sellerUnavailableCopy(null),
   [API_ERROR_CODES.RETURN_REFUND_OVER_LINE_HEADROOM]: RETURN_REFUND_OVER_LINE_HEADROOM_COPY,
   INLINE_RETURN_ALREADY_RETURNED_REASON_REQUIRED:
     "This item was already returned. Add a reason to confirm another return.",
@@ -145,7 +148,9 @@ const CODE_COPY: Record<string, string> = {
   [API_ERROR_CODES.ACTIVATION_CATCHUP_SESSION_OPEN]:
     "A card checkout is open for this account (October catch-up), so it can't be activated by hand yet. Wait for the checkout to complete or expire, then try again.",
   [API_ERROR_CODES.CATCHUP_MANUAL_PERIOD_AHEAD]:
-    "This account has days already paid that end part-way through a month, so it stays on invoiced billing for now. Your RouteFlow contact will follow up.",
+    "This account has a manual activation recorded without a paid period, so it stays on invoiced billing for now. Your RouteFlow contact will follow up.",
+  [API_ERROR_CODES.CATCHUP_NO_BILLABLE_PRICE]:
+    "This account has no billable monthly price set, so it stays on invoiced billing for now. Your RouteFlow contact will follow up.",
   [API_ERROR_CODES.CATCHUP_ADDON_SNAPSHOT_NOT_CATALOG]:
     "This account's add-on price or quantity differs from the standard one, so it stays on invoiced billing for now. Your RouteFlow contact will follow up.",
   // SA-733r7 PR-B3 (dunning): a plan change is refused while an invoice is overdue; paying it restores everything.
@@ -157,6 +162,9 @@ const CODE_COPY: Record<string, string> = {
 
 /** Exact server sentences (already product text) for refusals with no `code`; matched whole, never partially. */
 const KNOWN_REFUSAL_SENTENCES: Record<string, string> = {
+  // a buyer reorder where every line is restricted: the API's own sentence, already product text
+  "None of these items are available to you right now.":
+    "None of these items are available to you right now.",
   "Cannot duplicate an order-linked invoice. Create a new invoice or issue a credit note instead.":
     "This invoice came from an order, so it can't be duplicated. Create a new invoice or issue a credit note instead.",
 };

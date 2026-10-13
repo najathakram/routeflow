@@ -225,8 +225,8 @@ const ENTRIES: IndexEntry[] = [
   {
     id: "restriction-rules",
     kind: "item",
-    label: "Restriction rules",
-    desc: "Rules that stop products being sold where they are banned",
+    label: "Portal limits & rules",
+    desc: "What portal customers can't see, and the rules behind it",
     href: "/settings/restrictions/rules",
     groupKey: "selling",
     keywords: ["rules", "banned", "lift", "state", "restriction", "compliance"],
@@ -344,6 +344,15 @@ const ENTRIES: IndexEntry[] = [
     href: R,
     groupKey: "compliance",
     keywords: ["restriction", "state", "blocked", "banned", "age", "tobacco", "vape", "compliance"],
+  },
+  {
+    id: "restriction-rules-compliance",
+    kind: "item",
+    label: "Portal limits & rules",
+    desc: "What portal customers can't see, and the rules behind it",
+    href: "/settings/restrictions/rules",
+    groupKey: "compliance",
+    keywords: ["rules", "banned", "lift", "state", "restriction", "compliance", "portal", "limit"],
   },
   {
     id: "product-labels",

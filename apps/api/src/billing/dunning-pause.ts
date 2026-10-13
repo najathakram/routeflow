@@ -1,5 +1,5 @@
 import { lockTenantForLedger } from "./addon-ledger";
-import { autoLockAllowed, recordAutoLockSkip } from "./auto-lock-gate";
+import { autoLockAllowed, autoLockClassProtected, recordAutoLockSkip } from "./auto-lock-gate";
 import { HOUR_MS, PAYMENT_OVERDUE_REASON, READ_ONLY_STATUS } from "./dunning-config";
 import { type DunningDeps, type DunningRow, isStripeMissing } from "./dunning-core";
 import { forEachRotated } from "./dunning-paging";
@@ -23,6 +23,11 @@ const DAY_MS = 24 * 60 * 60 * 1000;
  *   3. ACTIVE -> READ_ONLY(`payment_overdue`) through `transitionAndEmit` (the −MRR delta, booked once), joined to
  *      this transaction. If that CAS loses after the subscription CAS won, everything rolls back.
  *
+ * Row 412: when the caller passes `finalSentAt` (the sweep always does), a PROTECTED tenant is locked only if the
+ * switch, re-read INSIDE this transaction, is unpaused and its last unpause is not after that final: a flip that
+ * landed after the sweep looked the notice up (or a pause -> unpause since) holds the lock instead. That hold writes
+ * nothing and records nothing - the next sweep judges the notice afresh and re-issues it when it is stale.
+ *
  * Returns true when THIS call paused the tenant. The Stripe `pause_collection` call is the caller's job, AFTER commit.
  */
 export async function pauseTenantTx(
@@ -31,9 +36,11 @@ export async function pauseTenantTx(
   invoiceId: string,
   since: Date,
   now: Date,
+  finalSentAt?: Date | null,
 ): Promise<boolean> {
   const { tenantId } = row;
   let held = false;
+  let staleHeld = false;
   try {
     const paused = await deps.prisma.$transaction(async (tx) => {
       await lockTenantForLedger(tx, tenantId);
@@ -53,6 +60,17 @@ export async function pauseTenantTx(
       ) {
         held = true;
         return false;
+      }
+      if (
+        finalSentAt !== undefined &&
+        deps.autoLocks?.unpausedSince &&
+        autoLockClassProtected(tenant.class)
+      ) {
+        const unpausedAt = await deps.autoLocks.unpausedSince();
+        if (!unpausedAt || !finalSentAt || unpausedAt.getTime() > finalSentAt.getTime()) {
+          staleHeld = true;
+          return false;
+        }
       }
       const cas = await tx.tenantSubscription.updateMany({
         where: {
@@ -77,6 +95,11 @@ export async function pauseTenantTx(
       if (!moved) throw new PauseRollback();
       return true;
     });
+    if (staleHeld) {
+      deps.logger.warn(
+        `billing.dunning.pause_held_stale_final tenant=${tenantId} invoice=${invoiceId} (the switch changed since the final notice was looked up)`,
+      );
+    }
     if (held) {
       await recordAutoLockSkip(
         deps.prisma,

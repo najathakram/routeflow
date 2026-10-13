@@ -2,10 +2,9 @@ import * as fs from "fs";
 import * as path from "path";
 import {
   CATCHUP_GO_LIVE,
-  manualCoverage,
+  activationClusters,
   type ActivationRecord,
   addonCardRefusal,
-  CATCHUP_TRIAL_STUB_MIN_LEAD_MS,
   catchupShape,
   firstBoundaryNotBefore,
   paidThroughOf,
@@ -127,7 +126,7 @@ describe("the stub (r M5): price x unpaid days / days in month, add-ons included
       { kind: "PLAN", code: "PLAN", cents: 17000 }, // 310 x 17/31
       { kind: "ADDON", code: "FORECASTING", cents: 1700 }, // 31 x 17/31
     ]);
-    expect(p.stub.label).toBe("Subscription — October 2026 (from Oct 15)");
+    expect(p.stub.label).toBe("Subscription — Oct 15 to Oct 31, 2026");
   });
 
   it("add-on quantity multiplies the unit price; a zero-priced or zero-quantity row adds no line", () => {
@@ -165,43 +164,45 @@ describe("the stub (r M5): price x unpaid days / days in month, add-ons included
     expect(p.stub.totalCents).toBe(17000);
   });
 
-  it("an under-$0.50 stub is flagged and skipped", () => {
+  it("an under-$0.50 stub is flagged (and forgiven by the session builder)", () => {
     const p = plan({
       monthly: 5,
-      now: d("2026-10-30T20:00:00Z"),
+      now: d("2026-10-20T20:00:00Z"),
       invoices: [inv("a", "PAID", "2026-10-01T12:00:00Z", "2026-10-31T11:00:00Z")],
     });
     // paid-through Oct 31 11:00 (25 h before the boundary: no snap): stub = 25 h = 1.0417 d of 31 of $5 = $0.17
     expect(p.stub.totalCents).toBe(17);
     expect(p.stub.belowStripeMinimum).toBe(true);
-    expect(p.shape).toBe("anchor_no_line");
+    expect(p.shape).toBe("trial_one_time");
   });
 });
 
-describe("the Checkout shape (r3 N3 + Stripe's documented Checkout limits)", () => {
-  it("paid through Nov 14, checkout Oct 9: trial_end = Dec 1 12:00Z, stub [Nov 14, Dec 1) - the trial branch", () => {
+describe("the Checkout shape (SA-733r9: every S < A is trial_one_time, S === A the stub-free trial)", () => {
+  it("paid through Nov 14, checkout Oct 9: trial_one_time, A = Dec 1 12:00Z, the line [Nov 14, Dec 1) is charged at completion", () => {
     const p = plan({
       invoices: [inv("a", "PAID", "2026-10-01T12:00:00Z", "2026-11-14T12:00:00Z")],
     });
-    expect(p.shape).toBe("trial");
+    expect(p.shape).toBe("trial_one_time");
     expect(p.trialEndAt.toISOString()).toBe("2026-12-01T12:00:00.000Z");
+    expect(p.stub.totalCents).toBeGreaterThan(0);
   });
 
-  it("paid through Nov 1 (October paid), checkout Oct 9: trial_end = Nov 1, NO stub", () => {
+  it("paid through Nov 1 (October paid), checkout Oct 9: the stub-free trial, trial_end = Nov 1, NO line", () => {
     const p = plan({ invoices: [OCT("PAID")] });
     expect(p.shape).toBe("trial");
     expect(p.trialEndAt.toISOString()).toBe("2026-11-01T12:00:00.000Z");
     expect(p.stub.totalCents).toBe(0);
   });
 
-  it("paid through Nov 1, checkout Oct 30: T is under 72 h away -> no trial, anchor Nov 1, stub $0, NO one-time line", () => {
+  it("paid through Nov 1, checkout Oct 30: A moves to Dec 1 (>= now + 72 h) and November is a one-time line - anchor_no_line is gone", () => {
     const p = plan({ now: d("2026-10-30T09:00:00Z"), invoices: [OCT("PAID")] });
-    expect(p.shape).toBe("anchor_no_line");
-    expect(p.anchorAt.toISOString()).toBe("2026-11-01T12:00:00.000Z");
-    expect(p.stub.totalCents).toBe(0);
+    expect(p.shape).toBe("trial_one_time");
+    expect(p.trialEndAt.toISOString()).toBe("2026-12-01T12:00:00.000Z");
+    expect(p.stub.from.toISOString()).toBe("2026-11-01T12:00:00.000Z");
+    expect(p.stub.totalCents).toBe(31000);
   });
 
-  it("nothing paid (the usual October case): trial_one_time (SA-733r5) - A = Nov 1 12:00Z, October 31/31 as the one-time line", () => {
+  it("nothing paid (the usual October case): trial_one_time - A = Nov 1 12:00Z, October 31/31 as the one-time line", () => {
     const p = plan();
     expect(p.shape).toBe("trial_one_time");
     expect(p.trialEndAt.toISOString()).toBe("2026-11-01T12:00:00.000Z");
@@ -210,11 +211,26 @@ describe("the Checkout shape (r3 N3 + Stripe's documented Checkout limits)", () 
     expect(p.stub.totalCents).toBe(31000);
   });
 
-  it("the prepaid trial WITH a stub needs 98 h (Decision 5): exactly 98 h out is a trial, 1 minute less is not", () => {
-    // paid through Nov 29 12:00 => T = Dec 1 12:00Z, a two-day stub; 98 h before T is Nov 27 10:00Z
-    const inv98 = [inv("a", "PAID", "2026-10-01T12:00:00Z", "2026-11-29T12:00:00Z")];
-    expect(plan({ now: d("2026-11-27T10:00:00Z"), invoices: inv98 }).shape).toBe("trial");
-    expect(plan({ now: d("2026-11-27T10:01:00Z"), invoices: inv98 }).shape).not.toBe("trial");
+  it("the 98 h trial-with-a-stub machinery is gone: over a spread of paid states and days no prepaid shape carries a stub", () => {
+    for (const end of [
+      "2026-10-30T12:00:00Z",
+      "2026-11-01T12:00:00Z",
+      "2026-11-14T12:00:00Z",
+      "2026-11-29T12:00:00Z",
+    ]) {
+      for (const day of [
+        "2026-10-09T10:00:00Z",
+        "2026-10-28T04:00:00Z",
+        "2026-10-29T04:00:00Z",
+        "2026-11-27T10:00:00Z",
+      ]) {
+        const p = plan({ now: d(day), invoices: [inv("a", "PAID", "2026-10-01T12:00:00Z", end)] });
+        if (p.shape === "trial") {
+          expect(p.stub.totalCents).toBe(0);
+          expect(p.stub.from.getTime()).toBe(p.stub.to.getTime());
+        }
+      }
+    }
   });
 });
 
@@ -265,6 +281,15 @@ describe("refusals", () => {
     });
   });
 
+  it("a plan price of 0 (or less) is not billable", () => {
+    for (const monthly of [0, -1]) {
+      expect(planCatchup({ now: NOW, monthly, addons: [], invoices: [] })).toEqual({
+        ok: false,
+        reason: "no_billable_price",
+      });
+    }
+  });
+
   it("a PAID invoice after a gap", () => {
     const r = planCatchup({
       now: NOW,
@@ -277,52 +302,15 @@ describe("refusals", () => {
 });
 
 describe("SA-733r5 selector rows", () => {
-  it("catchupShape: paid-through <= now => trial_one_time; T >= now + 72 h => trial; else anchor_no_line", () => {
+  it("catchupShape: S === A (>= now + 72 h) => trial; every S < A => trial_one_time", () => {
     const now = d("2026-10-09T10:00:00Z");
     expect(catchupShape({ paidThrough: d("2026-10-01T12:00:00Z"), now })).toBe("trial_one_time");
     expect(catchupShape({ paidThrough: d("2026-10-09T10:00:00Z"), now })).toBe("trial_one_time"); // = now
-    expect(catchupShape({ paidThrough: d("2026-11-14T12:00:00Z"), now })).toBe("trial");
+    expect(catchupShape({ paidThrough: d("2026-11-14T12:00:00Z"), now })).toBe("trial_one_time");
+    expect(catchupShape({ paidThrough: d("2026-11-01T12:00:00Z"), now })).toBe("trial");
     expect(
       catchupShape({ paidThrough: d("2026-11-01T12:00:00Z"), now: d("2026-10-30T09:00:00Z") }),
-    ).toBe("anchor_no_line");
-  });
-
-  describe("Decision 5: the prepaid trial shape needs room for its stub to finalize BEFORE the renewal", () => {
-    // paid through Oct 30 12:00 -> T = Nov 1 12:00, so the stub is two days: [Oct 30 12:00, Nov 1 12:00)
-    const pt = d("2026-10-30T12:00:00Z");
-
-    it("the lead is the session life + Stripe's 3-day webhook retry window + 2 h = 98 h", () => {
-      expect(CATCHUP_TRIAL_STUB_MIN_LEAD_MS).toBe((24 + 72 + 2) * 3600_000);
-    });
-
-    it("WITH a stub: trial only when T >= now + 98 h; closer than that the stub is billed up front", () => {
-      expect(catchupShape({ paidThrough: pt, now: d("2026-10-28T04:00:00Z") })).toBe("trial"); // 104 h
-      expect(catchupShape({ paidThrough: pt, now: d("2026-10-28T10:00:00Z") })).toBe("trial"); // exactly 98 h
-      expect(catchupShape({ paidThrough: pt, now: d("2026-10-28T10:01:00Z") })).toBe(
-        "anchor_no_line",
-      ); // 97 h 59 min
-      expect(catchupShape({ paidThrough: pt, now: d("2026-10-29T04:00:00Z") })).toBe(
-        "anchor_no_line",
-      ); // 80 h: the OLD 72 h rule said trial
-    });
-
-    it("the plan then bills that stub UP FRONT as the one-time line, never as a post-completion draft", () => {
-      const p = plan({
-        now: d("2026-10-29T04:00:00Z"),
-        monthly: 310,
-        invoices: [inv("oct", "PAID", "2026-10-01T12:00:00Z", "2026-10-30T12:00:00Z")],
-      });
-      expect(p.shape).toBe("trial_one_time");
-      expect(p.stub.totalCents).toBeGreaterThan(0);
-    });
-
-    it("with NO stub (paid through exactly on the 1st) the 72 h rule stands: nothing is left to finalize late", () => {
-      const onFirst = d("2026-11-01T12:00:00Z");
-      expect(catchupShape({ paidThrough: onFirst, now: d("2026-10-28T11:00:00Z") })).toBe("trial"); // 97 h
-      expect(catchupShape({ paidThrough: onFirst, now: d("2026-10-30T09:00:00Z") })).toBe(
-        "anchor_no_line",
-      ); // 51 h
-    });
+    ).toBe("trial_one_time"); // A moves to Dec 1 (>= now + 72 h)
   });
 
   it("session Oct 30 unpaid since Oct 1: A = Dec 1 12:00Z, ONE line Oct 1 -> Nov 30 (two months)", () => {
@@ -487,7 +475,7 @@ describe("MF1: the manual invoice's add-ons vs the card checkout's lines", () =>
   });
 });
 
-describe("MF2 (SA-733r5 r-note 10-11): paid coverage is measured UNSNAPPED, from every paid source", () => {
+describe("MF2 -> SA-733r9: paid coverage is ONE walk over every paid source, snapped", () => {
   const MARKER = "TENANT_MANUAL_ACTIVATION_MARKER";
   const TRAIL = "TENANT_SUBSCRIPTION_ACTIVATED";
   /** One manual activation = its in-tx marker (with the recorded period) + the post-commit trail row seconds later. */
@@ -496,20 +484,18 @@ describe("MF2 (SA-733r5 r-note 10-11): paid coverage is measured UNSNAPPED, from
     { action: TRAIL, at: new Date(d(start).getTime() + 3000), periodEnd: d(end) },
   ];
   const OPEN_OCT = inv("oct", "OPEN", "2026-10-01T12:00:00Z", "2026-11-01T12:00:00Z");
-  const run = (activations: ActivationRecord[], invoices: CatchupInvoice[] = [OPEN_OCT]) => {
-    const first = activations.length
-      ? new Date(Math.min(...activations.map((x) => x.at.getTime())))
-      : null;
-    return planCatchup({
+  const run = (activations: ActivationRecord[], invoices: CatchupInvoice[] = [OPEN_OCT]) =>
+    planCatchup({
       now: NOW,
       monthly: 310,
       addons: [],
       invoices,
-      billingStart: first,
       manual: { activations },
     });
+  const okPlan = (r: ReturnType<typeof run>) => {
+    if (!r.ok) throw new Error(`plan refused: ${r.reason}`);
+    return r;
   };
-  const AHEAD = { ok: false, reason: "manual_period_ahead" };
 
   it("the normal unpaid-October tenant (Sept paid by invoice through Oct 1, October only an OPEN requirement) stays eligible", () => {
     const sepPaid = inv("sep", "PAID", "2026-09-01T12:00:00Z", "2026-10-01T12:00:00Z");
@@ -517,46 +503,58 @@ describe("MF2 (SA-733r5 r-note 10-11): paid coverage is measured UNSNAPPED, from
     expect(r.ok).toBe(true);
   });
 
-  it("activated Sep 10 for 30 days ([Sep 10, Oct 10)): refused - Oct 1-10 is already paid (the snapped end would have read Oct 1)", () => {
-    expect(run(activation("2026-09-10T09:00:00Z", "2026-10-10T09:00:00Z"))).toEqual(AHEAD);
+  it("activated Sep 10 for 30 days ([Sep 10, Oct 10)): ELIGIBLE - S = Oct 10, the line is Oct 10 -> Nov 1 (22 of 31 days)", () => {
+    const r = okPlan(run(activation("2026-09-10T09:00:00Z", "2026-10-10T09:00:00Z")));
+    expect(r.stub.from.toISOString()).toBe("2026-10-10T09:00:00.000Z");
+    expect(r.shape).toBe("trial_one_time");
+    expect(r.stub.totalCents).toBeGreaterThan(20000);
   });
 
-  it("activated Sep 26 ([Sep 26, Oct 26)): refused before AND after the next window [Oct 26, Nov 1) is issued", () => {
+  it("activated Sep 26 ([Sep 26, Oct 26)): S = Oct 26 while the next window is OPEN; once it is PAID the run is contiguous to Nov 1", () => {
     const sep26 = activation("2026-09-26T09:00:00Z", "2026-10-26T09:00:00Z");
-    expect(run(sep26, [])).toEqual(AHEAD);
     const next = (status: string) =>
       inv("next", status, "2026-10-26T09:00:00Z", "2026-11-01T12:00:00Z");
-    expect(run(sep26, [next("OPEN")])).toEqual(AHEAD);
-    // once the next window is PAID (rolled) the PAID run has a hole before it: still refused (the generic gap
-    // refusal fires first - the planner reads PAID windows before the manual rule)
-    expect(run(sep26, [next("PAID")]).ok).toBe(false);
-  });
-
-  it("'by ANY amount': coverage ending exactly at the first charged service start is fine, one minute past it is not", () => {
-    expect(run(activation("2026-09-01T12:00:00Z", "2026-10-01T12:00:00Z")).ok).toBe(true);
-    expect(run(activation("2026-09-01T12:01:00Z", "2026-10-01T12:01:00Z"))).toEqual(AHEAD);
-  });
-
-  it("EVERY activation counts, not just the latest: a renewal on Oct 5 refuses, and so does an early one whose end is still ahead", () => {
-    const aug = activation("2026-08-02T10:00:00Z", "2026-09-01T10:00:00Z");
-    expect(run([...aug, ...activation("2026-10-05T09:00:00Z", "2026-11-04T09:00:00Z")])).toEqual(
-      AHEAD,
+    expect(okPlan(run(sep26, [])).stub.from.toISOString()).toBe("2026-10-26T09:00:00.000Z");
+    expect(okPlan(run(sep26, [next("OPEN")])).stub.from.toISOString()).toBe(
+      "2026-10-26T09:00:00.000Z",
     );
-    // the long one is NOT the latest: it must still be seen
+    const paidNext = okPlan(run(sep26, [next("PAID")]));
+    expect(paidNext.stub.from.toISOString()).toBe("2026-11-01T12:00:00.000Z");
+    expect(paidNext.shape).toBe("trial");
+  });
+
+  it("coverage ending one minute past the first charged service start snaps to it (no half-days)", () => {
     expect(
+      okPlan(
+        run(activation("2026-09-01T12:01:00Z", "2026-10-01T12:01:00Z")),
+      ).stub.from.toISOString(),
+    ).toBe("2026-10-01T12:00:00.000Z");
+  });
+
+  it("EVERY activation counts: Aug->Sep 1 then Oct 5 leaves Sep 1..Oct 5 unpaid (a gap): paid_after_gap", () => {
+    const aug = activation("2026-08-02T10:00:00Z", "2026-09-01T10:00:00Z");
+    expect(run([...aug, ...activation("2026-10-05T09:00:00Z", "2026-11-04T09:00:00Z")])).toEqual({
+      ok: false,
+      reason: "paid_after_gap",
+    });
+    // overlapping activations: the long one is NOT the latest and still decides the end
+    const r = okPlan(
       run([
         ...activation("2026-09-05T09:00:00Z", "2026-12-04T09:00:00Z"),
         ...activation("2026-09-20T09:00:00Z", "2026-09-25T09:00:00Z"),
       ]),
-    ).toEqual(AHEAD);
+    );
+    expect(r.stub.from.toISOString()).toBe("2026-12-04T09:00:00.000Z");
   });
 
-  it("a PAID RfInvoice window reaching into the anchor month (to Oct 5) is already-paid days: refused - there is NO 'covered by a PAID window' exemption", () => {
+  it("a PAID RfInvoice window reaching into the anchor month (to Oct 5) is paid coverage: S = Oct 5", () => {
     const paid = inv("p", "PAID", "2026-09-05T12:00:00Z", "2026-10-05T12:00:00Z");
-    expect(run([], [paid, OPEN_OCT])).toEqual(AHEAD);
+    expect(okPlan(run([], [paid, OPEN_OCT])).stub.from.toISOString()).toBe(
+      "2026-10-05T12:00:00.000Z",
+    );
   });
 
-  describe("ruling 8(e), SA correction 10-11: paid coverage that lands EXACTLY on an anchor 1st is the trial shape", () => {
+  describe("ruling 8(e): paid coverage that lands on an anchor 1st is the stub-free trial", () => {
     const trialTo = (r: ReturnType<typeof run>, iso: string) => {
       expect(r.ok).toBe(true);
       if (!r.ok) return;
@@ -566,7 +564,7 @@ describe("MF2 (SA-733r5 r-note 10-11): paid coverage is measured UNSNAPPED, from
       expect(r.stub.lines).toEqual([]);
     };
 
-    it("a PAID October window ending Nov 1 12:00Z: eligible, trial to Nov 1, no stub, no one-time line (the original 8(e) shape)", () => {
+    it("a PAID October window ending Nov 1 12:00Z: trial to Nov 1, no line", () => {
       const paidOct = inv("po", "PAID", "2026-10-01T12:00:00Z", "2026-11-01T12:00:00Z");
       trialTo(run([], [paidOct]), "2026-11-01T12:00:00.000Z");
     });
@@ -576,50 +574,49 @@ describe("MF2 (SA-733r5 r-note 10-11): paid coverage is measured UNSNAPPED, from
       trialTo(run([], [legacy]), "2026-11-01T12:00:00.000Z");
     });
 
-    it("two months paid (to Dec 1): eligible, trial to Dec 1", () => {
+    it("two months paid (to Dec 1): trial to Dec 1", () => {
       const paid2 = inv("p2", "PAID", "2026-10-01T12:00:00Z", "2026-12-01T12:00:00Z");
       trialTo(run([], [paid2]), "2026-12-01T12:00:00.000Z");
     });
 
-    it("paid by an ACTIVATION alone to an anchor 1st (a 365-day one from Sep 1 12:00Z): eligible, trial to that 1st - October is NOT charged again", () => {
+    it("paid by an ACTIVATION alone to an anchor 1st (365 days from Sep 1 12:00Z): trial to that 1st - October is NOT charged again", () => {
       trialTo(
         run(activation("2026-09-01T12:00:00Z", "2027-09-01T12:00:00Z"), [OPEN_OCT]),
         "2027-09-01T12:00:00.000Z",
       );
     });
 
-    it("a PAID window to Oct 5 (strictly inside a month) is refused", () => {
-      const paid = inv("p", "PAID", "2026-09-05T12:00:00Z", "2026-10-05T12:00:00Z");
-      expect(run([], [paid, OPEN_OCT])).toEqual(AHEAD);
-    });
-
-    it("timezone-safe: ONLY the 1st at 12:00Z or 00:00Z UTC counts; any other time on the 1st, or the next day, is a partial", () => {
+    it("a window ending within 24 h of a 1st (06:00Z, a second either side, the 2nd, a local-time spelling) snaps to that 1st", () => {
       const ends = [
-        "2026-11-01T06:00:00Z", // 06:00Z
-        "2026-11-01T12:00:01Z", // a second past
-        "2026-11-01T11:59:59Z", // a second short
-        "2026-11-02T12:00:00Z", // the 2nd
+        "2026-11-01T06:00:00Z",
+        "2026-11-01T12:00:01Z",
+        "2026-11-01T11:59:59Z",
+        "2026-11-02T12:00:00Z",
         "2026-11-01T00:00:01Z",
         "2026-10-31T23:59:59Z",
+        "2026-11-01T05:00:00Z",
       ];
       for (const end of ends) {
-        const paid = inv("x", "PAID", "2026-10-01T12:00:00Z", end);
-        expect(run([], [paid])).toEqual(AHEAD);
+        trialTo(
+          run([], [inv("x", "PAID", "2026-10-01T12:00:00Z", end)]),
+          "2026-11-01T12:00:00.000Z",
+        );
       }
-      // a local-time spelling of the 1st (Nov 1 00:00 at UTC-05:00 = 05:00Z) is not an anchor
-      expect(run([], [inv("tz", "PAID", "2026-10-01T05:00:00Z", "2026-11-01T05:00:00Z")])).toEqual(
-        AHEAD,
-      );
     });
 
-    it("an anchor 1st plus a later partial anywhere in the paid coverage is still refused (the LATEST end decides)", () => {
+    it("a window ending mid-month (Nov 3) is NOT snapped: S = Nov 3 12:00Z exactly and the line prorates", () => {
+      const r = okPlan(run([], [inv("x", "PAID", "2026-10-01T12:00:00Z", "2026-11-03T12:00:00Z")]));
+      expect(r.stub.from.toISOString()).toBe("2026-11-03T12:00:00.000Z");
+      expect(r.shape).toBe("trial_one_time");
+    });
+
+    it("an anchor 1st plus a later activation end: the LATEST end decides (S = Nov 4)", () => {
       const paidOct = inv("po", "PAID", "2026-10-01T12:00:00Z", "2026-11-01T12:00:00Z");
-      expect(run(activation("2026-10-05T09:00:00Z", "2026-11-04T09:00:00Z"), [paidOct])).toEqual(
-        AHEAD,
-      );
+      const r = okPlan(run(activation("2026-10-05T09:00:00Z", "2026-11-04T09:00:00Z"), [paidOct]));
+      expect(r.stub.from.toISOString()).toBe("2026-11-04T09:00:00.000Z");
     });
 
-    it("through the planner a stub-bearing prepaid shape never comes out: a trial / anchor_no_line is always stub-free, a partial is refused", () => {
+    it("through the planner a prepaid shape never carries a line, whatever the paid end", () => {
       const days = [
         "2026-10-09T10:00:00Z",
         "2026-10-28T04:00:00Z",
@@ -642,8 +639,8 @@ describe("MF2 (SA-733r5 r-note 10-11): paid coverage is measured UNSNAPPED, from
             invoices: [inv("p", "PAID", "2026-10-01T12:00:00Z", end)],
             manual: { activations: [] },
           });
-          if (!r.ok) continue; // refused
-          if (r.shape === "trial" || r.shape === "anchor_no_line") {
+          if (!r.ok) continue;
+          if (r.shape === "trial") {
             expect(r.stub.totalCents).toBe(0);
             expect(r.stub.lines).toEqual([]);
           }
@@ -661,10 +658,10 @@ describe("MF2 (SA-733r5 r-note 10-11): paid coverage is measured UNSNAPPED, from
     expect(run([], [OPEN_OCT]).ok).toBe(true);
   });
 
-  it("without the manual input (the pure planner) none of this applies: a prepaid plan still plans", () => {
+  it("without the manual input (the pure planner) activations are not read: a prepaid plan still plans", () => {
     const paid = inv("p", "PAID", "2026-10-01T12:00:00Z", "2026-11-14T12:00:00Z");
     const p = planCatchup({ now: NOW, monthly: 310, addons: [], invoices: [paid] });
-    expect(p.ok && p.shape).toBe("trial");
+    expect(p.ok && p.shape).toBe("trial_one_time");
   });
 
   describe("legacy markers (no recorded period) fail closed, PER activation cluster", () => {
@@ -703,18 +700,41 @@ describe("MF2 (SA-733r5 r-note 10-11): paid coverage is measured UNSNAPPED, from
     });
   });
 
-  describe("manualCoverage", () => {
-    it("no activations: nothing paid by activation", () => {
-      expect(manualCoverage([])).toEqual({ ok: true, latestEnd: null });
+  describe("activationClusters", () => {
+    it("no activations: no clusters, no first start", () => {
+      expect(activationClusters([])).toEqual({ ok: true, clusters: [], firstStart: null });
     });
 
-    it("the latest unsnapped end across ALL clusters", () => {
-      const r = manualCoverage([
+    it("one window per activation, the first start across ALL of them", () => {
+      const r = activationClusters([
         ...activation("2026-08-02T10:00:00Z", "2026-09-01T10:00:00Z"),
         ...activation("2026-09-05T09:00:00Z", "2026-10-05T09:00:00Z"),
-        ...activation("2026-09-20T09:00:00Z", "2026-09-25T09:00:00Z"),
       ]);
-      expect(r.ok && r.latestEnd!.toISOString()).toBe("2026-10-05T09:00:00.000Z");
+      expect(r.ok && r.clusters.map((c) => c.end.toISOString())).toEqual([
+        "2026-09-01T10:00:00.000Z",
+        "2026-10-05T09:00:00.000Z",
+      ]);
+      expect(r.ok && r.firstStart!.toISOString()).toBe("2026-08-02T10:00:00.000Z");
+    });
+
+    it("a cluster with an end but no start uses its earliest `at` as the start", () => {
+      const at = d("2026-10-15T12:00:00Z");
+      const r = activationClusters([
+        { action: MARKER, at },
+        { action: TRAIL, at: new Date(at.getTime() + 3000), periodEnd: d("2026-11-14T12:00:00Z") },
+      ]);
+      expect(r.ok && r.clusters[0].start.toISOString()).toBe("2026-10-15T12:00:00.000Z");
+    });
+
+    it("a voided cluster keeps its start (the activation happened) but the planner ignores its window", () => {
+      const rows = activation("2026-10-12T04:08:24Z", "2026-11-11T04:08:24Z").map((r) => ({
+        ...r,
+        voided: true,
+      }));
+      const r = activationClusters(rows);
+      expect(r.ok && r.clusters[0].voided).toBe(true);
+      const p = okPlan(run(rows, [OPEN_OCT]));
+      expect(p.stub.from.toISOString()).toBe("2026-10-12T04:08:24.000Z");
     });
   });
 });

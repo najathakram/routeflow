@@ -215,8 +215,11 @@ describe("BuyerController — buyer portal 500 fixes (F1-INFRA-500S)", () => {
       const result = await controller.reorderFromTemplate("tpl-1", MOCK_CTX as any);
 
       expect(templatesService.generateOrder).toHaveBeenCalledTimes(1);
-      expect(templatesService.generateOrder).toHaveBeenCalledWith("tpl-1", false, false); // (id, isStaffRole, allowOversell: policy off)
-      expect(result).toEqual({ id: "o1" });
+      // (id, isStaffRole, allowOversell: policy off, the out-param a restriction-trimmed Reorder fills)
+      expect(templatesService.generateOrder).toHaveBeenCalledWith("tpl-1", false, false, {
+        skipped: [],
+      });
+      expect(result).toEqual({ id: "o1", skipped: [] }); // nothing was left out
     });
 
     it("refuses a template belonging to another customer — never calls generateOrder", async () => {

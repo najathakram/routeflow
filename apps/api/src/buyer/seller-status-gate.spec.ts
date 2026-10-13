@@ -56,21 +56,24 @@ describe("sellerAcceptsBuyerWrite", () => {
     );
   });
 
-  it("with no explicit gate it reads SELLER_READ_ONLY_BUYER_GATE (default dark)", () => {
+  it("with no explicit gate it reads SELLER_READ_ONLY_BUYER_GATE (default ENFORCED since the row 390 flip; dark is the rollback)", () => {
     const saved = process.env.SELLER_READ_ONLY_BUYER_GATE;
     try {
       delete process.env.SELLER_READ_ONLY_BUYER_GATE;
-      expect(ask("READ_ONLY")).toEqual({ allowed: true, wouldDeny: true });
-      process.env.SELLER_READ_ONLY_BUYER_GATE = "enforced";
       expect(ask("READ_ONLY")).toEqual({ allowed: false, reason: "SELLER_READ_ONLY" });
+      process.env.SELLER_READ_ONLY_BUYER_GATE = "dark";
+      expect(ask("READ_ONLY")).toEqual({ allowed: true, wouldDeny: true });
     } finally {
       if (saved === undefined) delete process.env.SELLER_READ_ONLY_BUYER_GATE;
       else process.env.SELLER_READ_ONLY_BUYER_GATE = saved;
     }
   });
 
-  it("an unknown gate value is dark", () => {
-    expect(sellerReadOnlyBuyerGate({ SELLER_READ_ONLY_BUYER_GATE: "enforce" })).toBe("dark");
+  it("an unknown gate value is ENFORCED (a typo of the rollback can never turn the refusal OFF); only dark rolls back", () => {
+    expect(sellerReadOnlyBuyerGate({ SELLER_READ_ONLY_BUYER_GATE: "drak" })).toBe("enforced");
+    expect(sellerReadOnlyBuyerGate({ SELLER_READ_ONLY_BUYER_GATE: "" })).toBe("enforced");
+    expect(sellerReadOnlyBuyerGate({})).toBe("enforced");
+    expect(sellerReadOnlyBuyerGate({ SELLER_READ_ONLY_BUYER_GATE: " Dark " })).toBe("dark");
     expect(sellerReadOnlyBuyerGate({ SELLER_READ_ONLY_BUYER_GATE: " Enforced " })).toBe("enforced");
   });
 

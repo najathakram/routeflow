@@ -179,7 +179,6 @@ const CONSUMER_ALLOWLIST: Record<string, string[]> = {
   "apps/web/components/ScanInvoiceModal.tsx": ["AI_KEY_INVALID"],
   "apps/web/lib/api/authorizations.ts": ["REGULATED_AUTH_REQUIRED"],
   "apps/web/lib/api/credit-limit.ts": ["CREDIT_LIMIT_EXCEEDED"],
-  "apps/web/lib/api/restrictions-settings.ts": ["SELLING_RESTRICTIONS_NOT_READY"],
   "apps/web/lib/api/selling-restricted.ts": ["SELLING_RESTRICTED"],
   "apps/web/lib/api/supplier-statements.ts": [
     "AI_KEY_INVALID",
@@ -196,14 +195,13 @@ const CONSUMER_ALLOWLIST: Record<string, string[]> = {
     "MERGE_CHOICE_REQUIRED",
     "STOP_ALREADY_COMPLETED",
     "SELLING_RESTRICTED",
-    "SELLING_RESTRICTIONS_NOT_READY",
     "REGULATED_AUTH_REQUIRED",
   ],
   "apps/web/lib/plan-gate.ts": ["PLAN_GATE", "PLAN_GATE_UNAVAILABLE"],
   "apps/web/lib/po-bill-refusal.ts": ["BILL_EXCEEDS_PO"],
   "apps/web/lib/scan-po-lock.ts": ["PLAN_GATE"],
 };
-const CONSUMER_ALLOWLIST_TOTAL = 74;
+const CONSUMER_ALLOWLIST_TOTAL = 72;
 
 /**
  * B987-D: literals in packages/ that keep a literal because a value import of `@routeflow/types` is ruled out there (a hard runtime constraint for pricing, a build CONVENTION for returns).

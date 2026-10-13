@@ -269,6 +269,14 @@ export async function buyerVerifyEmail(token: string): Promise<{ message: string
   return data;
 }
 
+/**
+ * Row 404: confirms the emailed account-merge link. The single-use token goes in the POST body, and
+ * only on the user's click; the page never calls this on mount, so a link scanner cannot consume it.
+ */
+export async function buyerVerifyMerge(token: string): Promise<void> {
+  await axios.post(`${BASE_URL}/buyer/auth/verify-merge`, { token });
+}
+
 export async function buyerResendVerification(
   accessToken: string,
 ): Promise<{ message: string; sent: boolean; alreadyVerified?: boolean }> {

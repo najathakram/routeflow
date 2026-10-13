@@ -131,7 +131,8 @@ describe("Google callback invite acceptance follows the seller's workspace statu
     expect(prisma.customerLink.update).not.toHaveBeenCalled();
   });
 
-  it("READ_ONLY seller + gate dark (default): accepted as before, and one would-deny line is logged", async () => {
+  it("READ_ONLY seller + gate dark (the explicit rollback): accepted as before, and one would-deny line is logged", async () => {
+    process.env.SELLER_READ_ONLY_BUYER_GATE = "dark"; // the explicit rollback (default is enforced)
     const { prisma, service } = boot("READ_ONLY");
     const result: any = await service.findOrCreateUser(profile as any);
     expect(result.inviteOutcome).toBe("accepted");
@@ -179,7 +180,6 @@ describe("Google callback invite acceptance follows the seller's workspace statu
       const controller = new AuthController(
         {} as any,
         webConfig as any,
-        {} as any,
         service,
         {} as any,
         {} as any,
@@ -221,7 +221,6 @@ describe("Google callback invite acceptance follows the seller's workspace statu
       const controller = new AuthController(
         {} as any,
         webConfig as any,
-        {} as any,
         service,
         {} as any,
         {} as any,

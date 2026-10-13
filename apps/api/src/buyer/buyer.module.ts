@@ -18,6 +18,7 @@ import { OrderTemplatesModule } from "../order-templates/order-templates.module"
 import { StorageModule } from "../storage/storage.module";
 import { AuthorizationsModule } from "../authorizations/authorizations.module";
 import { StockAlertsModule } from "../stock-alerts/stock-alerts.module";
+import { SellingRestrictionsModule } from "../selling-restrictions/selling-restrictions.module";
 import { SystemConfigModule } from "../system-config/system-config.module";
 import { GatewaysModule } from "../gateways/gateways.module";
 
@@ -64,6 +65,7 @@ import { BuyerPaymentsController } from "../payment-requests/buyer-payments.cont
     StorageModule,
     AuthorizationsModule,
     StockAlertsModule,
+    SellingRestrictionsModule,
     SystemConfigModule,
     GatewaysModule,
     PaymentRequestsModule,

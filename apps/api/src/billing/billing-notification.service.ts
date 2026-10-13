@@ -339,6 +339,7 @@ export class BillingNotificationService {
     extra: {
       payUrl: string | null;
       readOnlyOn?: string;
+      omitLockWarning?: boolean;
       byDate?: string;
       invoiceNumber?: string | null;
       amountCents?: number | null;
@@ -354,6 +355,7 @@ export class BillingNotificationService {
         adminName: admin.name,
         payUrl: extra.payUrl,
         readOnlyOn: extra.readOnlyOn,
+        omitLockWarning: extra.omitLockWarning,
         byDate: extra.byDate,
         invoiceNumber: extra.invoiceNumber,
         amountCents: extra.amountCents,

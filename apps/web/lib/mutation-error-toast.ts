@@ -49,9 +49,9 @@ export function handleMutationError(
     "EDIT_WINDOW_OPEN",
     // B1135: a change request on an order with the carrier; the buyer's request form says it inline.
     API_ERROR_CODES.ORDER_WITH_CARRIER_NO_CHANGE_REQUEST,
-    // Selling restrictions settings: the page turns these into guided in-app messages
-    // (a fix list / a two-step instruction) and toasts them itself, once.
-    "SELLING_RESTRICTIONS_NOT_READY",
+    // Selling restrictions settings: the page turns this into a guided in-app message
+    // (a two-step instruction) and toasts it itself, once. (Enabling the switch no longer has a
+    // readiness refusal: readiness is advice, shown in the customers-without-a-state card.)
     "SELLING_RESTRICTIONS_ENABLE_AND_POLICY_TOGETHER",
     // Selling restrictions: the order UIs show a blocked-lines dialog (the lines and why),
     // so the generic toast would only say "Request failed with status code 409".

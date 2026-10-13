@@ -318,4 +318,40 @@ describe("billing-notification.templates", () => {
       expect(dunningTemplate({ ...base }).text).toMatch(/couldn't process/i);
     });
   });
+
+  describe("the dunning final notice drops the lock threat when the pause holds the lock (SA-775 rollout)", () => {
+    const base = {
+      kind: "final" as const,
+      businessName: "Acme",
+      adminName: "Sam",
+      payUrl: "https://pay.example.test/i/in_1",
+    };
+
+    it("omitLockWarning absent or false: the long-standing copy, pinned exactly", () => {
+      for (const extra of [{}, { omitLockWarning: false }]) {
+        const t = dunningTemplate({ ...base, readOnlyOn: "Nov 9, 2026", ...extra });
+        expect(t.subject).toBe("Your workspace becomes read-only tomorrow — Acme");
+        expect(t.text).toContain(
+          "The subscription invoice for Acme is still unpaid. Unless it is paid, your workspace becomes read-only on Nov 9, 2026. Your data stays safe, and paying restores full access right away.",
+        );
+      }
+      expect(dunningTemplate({ ...base }).text).toContain("becomes read-only tomorrow.");
+    });
+
+    it("omitLockWarning true: no 'read-only' / 'tomorrow' anywhere, the pay-now CTA stays", () => {
+      const t = dunningTemplate({ ...base, readOnlyOn: "Nov 9, 2026", omitLockWarning: true });
+      for (const part of [t.subject, t.html, t.text]) {
+        expect(part).not.toMatch(/read-only|readonly|tomorrow|Nov 9, 2026|final notice/i);
+      }
+      expect(t.text).toContain("The subscription invoice for Acme is still unpaid.");
+      expect(t.text).toContain(`Pay now: ${base.payUrl}`);
+      expect(t.html).toContain(base.payUrl);
+      expect(t.html).toContain("Pay now");
+    });
+
+    it("omitLockWarning only changes the final notice (d3 is identical)", () => {
+      const d3 = { ...base, kind: "d3" as const };
+      expect(dunningTemplate({ ...d3, omitLockWarning: true })).toEqual(dunningTemplate(d3));
+    });
+  });
 });

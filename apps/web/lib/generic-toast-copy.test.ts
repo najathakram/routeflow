@@ -104,6 +104,7 @@ describe("genericToastCopy: codes users rely on", () => {
       API_ERROR_CODES.CATCHUP_ADDON_NOT_CARD_BILLABLE,
       API_ERROR_CODES.CATCHUP_ADDON_SNAPSHOT_NOT_CATALOG,
       API_ERROR_CODES.CATCHUP_MANUAL_PERIOD_AHEAD,
+      API_ERROR_CODES.CATCHUP_NO_BILLABLE_PRICE,
       API_ERROR_CODES.ACTIVATION_CATCHUP_SESSION_OPEN,
     ]) {
       const copy = genericToastCopy(err(409, { code, message: "raw server text" }));
@@ -113,6 +114,13 @@ describe("genericToastCopy: codes users rely on", () => {
     expect(
       genericToastCopy(err(409, { code: API_ERROR_CODES.EXTERNAL_PAYMENT_USE_CATCHUP })),
     ).toMatch(/invoiced directly/);
+    // CATCHUP_MANUAL_PERIOD_AHEAD now means only "a manual activation recorded without a paid period"
+    expect(
+      genericToastCopy(err(409, { code: API_ERROR_CODES.CATCHUP_MANUAL_PERIOD_AHEAD })),
+    ).toMatch(/manual activation recorded without a paid period/);
+    expect(
+      genericToastCopy(err(409, { code: API_ERROR_CODES.CATCHUP_MANUAL_PERIOD_AHEAD })),
+    ).not.toMatch(/part-way/);
   });
 
   it("SA-733r7: the dunning refusals show fixed copy, never the server message", () => {
@@ -523,6 +531,34 @@ describe("P-4: ORDER_EDIT_WOULD_OVERPAY", () => {
     const copy = genericToastCopy(err(409, { code: "ORDER_EDIT_WOULD_OVERPAY", excess: 5 }));
     expect(copy).toMatch(/overpaid/);
     expect(copy).not.toContain(RAW);
+  });
+});
+
+describe("SELLER_UNAVAILABLE (a buyer write toward a paused seller)", () => {
+  const body = {
+    code: API_ERROR_CODES.SELLER_UNAVAILABLE,
+    message: "This seller isn't taking online orders right now. Please check back soon.",
+  };
+  const SELLER_COPY =
+    "This seller isn't taking online orders right now. Please check back soon or contact them.";
+
+  it("is the seller-unavailable copy, never the generic permission line", () => {
+    expect(genericToastCopy(err(403, body))).toBe(SELLER_COPY);
+    expect(codedToastCopy(err(403, body))).toBe(SELLER_COPY);
+    expect(genericToastCopy(err(403, body))).not.toMatch(/permission/i);
+  });
+
+  it("the app-wide handler toasts it once with that copy", () => {
+    const toast = jest.fn();
+    handleMutationError(err(403, body), { meta: undefined }, toast, { push: jest.fn() });
+    expect(toast).toHaveBeenCalledTimes(1);
+    expect(toast).toHaveBeenCalledWith({ title: SELLER_COPY, variant: "error" });
+  });
+
+  it("a plain 403 keeps the permission line (unchanged)", () => {
+    expect(genericToastCopy(err(403, { message: "Forbidden" }))).toBe(
+      "You don't have permission to do that.",
+    );
   });
 });
 
