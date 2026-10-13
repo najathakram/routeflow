@@ -646,9 +646,15 @@ export class BillingCronService {
       });
       if (stripeSub?.status === "canceled") return true;
       if (stripeSub?.cancel_at_period_end !== true) {
-        this.logger.warn(
-          `F1: tenant=${tenantId} has a local cancellation but Stripe does not - not locked`,
-        );
+        // F1b: Stripe says the cancel was resumed, so the local flag is a stale webhook's. Warning about it every
+        // hour for ever helps nobody: the flag is cleared ONCE (compare-and-set on the old value), with one log line.
+        // A `cancel_at` timestamp is another way to schedule a cancel - that is NOT a resume, so it is left alone.
+        if (stripeSub?.cancel_at == null) await this.clearStaleCancelFlag(tenantId, stripeSubId);
+        else {
+          this.logger.warn(
+            `F1: tenant=${tenantId} has a local cancellation and Stripe holds cancel_at, not cancel_at_period_end - not locked`,
+          );
+        }
         return false;
       }
       const ids = await stripeAddonItemIds(this.prisma, tenantId, stripeSub);
@@ -659,6 +665,25 @@ export class BillingCronService {
         `F1: could not read Stripe for tenant=${tenantId}'s scheduled cancellation - skipped this hour: ${(e as Error).message}`,
       );
       return false;
+    }
+  }
+
+  /** F1b: clear a local `cancelAtPeriodEnd` Stripe no longer has - only while the row still holds that value. */
+  private async clearStaleCancelFlag(tenantId: string, stripeSubId: string): Promise<void> {
+    try {
+      const { count } = await this.prisma.tenantSubscription.updateMany({
+        where: { tenantId, stripeSubId, cancelAtPeriodEnd: true },
+        data: { cancelAtPeriodEnd: false },
+      });
+      if (count === 1) {
+        this.logger.log(
+          `F1b: tenant=${tenantId}'s local cancellation was stale (Stripe has the cancel resumed) - flag cleared, not locked`,
+        );
+      }
+    } catch (e) {
+      this.logger.warn(
+        `F1b: could not clear tenant=${tenantId}'s stale cancellation flag - skipped this hour: ${(e as Error).message}`,
+      );
     }
   }
 

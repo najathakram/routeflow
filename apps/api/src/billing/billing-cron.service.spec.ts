@@ -88,6 +88,8 @@ function make(
     tenantSubscription: {
       findMany: jest.fn(),
       update: jest.fn().mockResolvedValue({}),
+      // F1b: the compare-and-set that clears a stale local cancel flag.
+      updateMany: jest.fn().mockResolvedValue({ count: 1 }),
       // The revert's fresh read of the committed row (SA-733r M7).
       // Also the cron's re-read UNDER the tenant-price lock (SA-733 D8): the committed row, plus the tenant's
       // status. `data.rereadSubs` lets a test move a column between the scan and the lock.
@@ -1661,6 +1663,91 @@ describe("#2641 scheduled sweeps book on the paying predicate, re-read under the
       await h.svc.applyScheduledCancellations();
       expect(get.mock.calls[0][0]).toBe("sub_1");
       nothingLocked(h);
+    });
+
+    describe("F1b: a stale local cancel flag is cleared once, not warned about hourly", () => {
+      const resumed = (extra: Record<string, unknown> = {}) =>
+        jest.fn().mockResolvedValue({
+          status: "active",
+          cancel_at_period_end: false,
+          items: {
+            data: [
+              {
+                id: "si",
+                current_period_start: nowS() - 86_400,
+                current_period_end: nowS() + 86_400,
+              },
+            ],
+          },
+          ...extra,
+        });
+
+      it("Stripe says resumed: the flag is CAS-cleared on the old value, one log line, no lock", async () => {
+        const log = jest.spyOn(Logger.prototype, "log").mockImplementation(() => undefined);
+        const warn = jest.spyOn(Logger.prototype, "warn").mockImplementation(() => undefined);
+        const h = withStripe(resumed());
+        await h.svc.applyScheduledCancellations();
+        expect(h.prisma.tenantSubscription.updateMany).toHaveBeenCalledTimes(1);
+        expect(h.prisma.tenantSubscription.updateMany).toHaveBeenCalledWith({
+          where: { tenantId: "t1", stripeSubId: "sub_1", cancelAtPeriodEnd: true },
+          data: { cancelAtPeriodEnd: false },
+        });
+        expect(log.mock.calls.filter((c) => /stale/i.test(String(c[0])))).toHaveLength(1);
+        expect(
+          warn.mock.calls.filter((c) => /does not - not locked/.test(String(c[0]))),
+        ).toHaveLength(0);
+        nothingLocked(h);
+        log.mockRestore();
+        warn.mockRestore();
+      });
+
+      it("a lost CAS (another writer moved the flag) is quiet: no throw, no second write", async () => {
+        const h = withStripe(resumed());
+        h.prisma.tenantSubscription.updateMany.mockResolvedValue({ count: 0 });
+        await expect(h.svc.applyScheduledCancellations()).resolves.toBeUndefined();
+        expect(h.prisma.tenantSubscription.updateMany).toHaveBeenCalledTimes(1);
+        nothingLocked(h);
+      });
+
+      it("Stripe holds a cancel_at timestamp (a different way to schedule a cancel): the flag is NOT cleared", async () => {
+        const h = withStripe(resumed({ cancel_at: nowS() + 86_400 }));
+        await h.svc.applyScheduledCancellations();
+        expect(h.prisma.tenantSubscription.updateMany).not.toHaveBeenCalled();
+        nothingLocked(h);
+      });
+
+      it("a failed clear is logged and skips the tenant this hour - the sweep does not throw", async () => {
+        const err = jest.spyOn(Logger.prototype, "error").mockImplementation(() => undefined);
+        const warn = jest.spyOn(Logger.prototype, "warn").mockImplementation(() => undefined);
+        const h = withStripe(resumed());
+        h.prisma.tenantSubscription.updateMany.mockRejectedValue(new Error("db blip"));
+        await expect(h.svc.applyScheduledCancellations()).resolves.toBeUndefined();
+        nothingLocked(h);
+        expect(err.mock.calls.length + warn.mock.calls.length).toBeGreaterThan(0);
+        err.mockRestore();
+        warn.mockRestore();
+      });
+
+      it("the control: Stripe still has the cancel armed -> no clear (and it locks once the period ends)", async () => {
+        const h = withStripe(
+          jest.fn().mockResolvedValue({
+            status: "active",
+            cancel_at_period_end: true,
+            items: {
+              data: [
+                {
+                  id: "si",
+                  current_period_start: nowS() - 86_400,
+                  current_period_end: nowS() - 60,
+                },
+              ],
+            },
+          }),
+        );
+        await h.svc.applyScheduledCancellations();
+        expect(h.prisma.tenantSubscription.updateMany).not.toHaveBeenCalled();
+        expect(h.tx.tenant.update.mock.calls[0][0].data).toMatchObject({ status: "READ_ONLY" });
+      });
     });
 
     it("a Stripe read error skips the tenant this hour (logged) - no lock", async () => {

@@ -3382,4 +3382,20 @@ describe("F2: onCheckoutCompleted re-syncs an override saved during the open ses
     expect(sync).toHaveBeenCalledTimes(2);
     expect(sync).toHaveBeenLastCalledWith("t1", { effective: "next_cycle" });
   });
+
+  it("the RESUMED ledger event is emitted EXACTLY ONCE across the redelivery of a completion whose push threw", async () => {
+    const { svc, tx, events } = make({ transitionCount: 1, sub: OVERRIDE_SUB });
+    jest
+      .spyOn(svc, "syncStripeSubscriptionPrice")
+      .mockRejectedValueOnce(new Error("stripe down"))
+      .mockResolvedValue({ synced: true, unchanged: true });
+    const err = jest.spyOn(Logger.prototype, "error").mockImplementation(() => undefined);
+    await expect((svc as any).onCheckoutCompleted(session)).rejects.toThrow("stripe down");
+    err.mockRestore();
+    tx.auditLog.findFirst.mockResolvedValue({ id: "a1" }); // the applied marker the first delivery wrote
+    await (svc as any).onCheckoutCompleted(session);
+    expect(
+      emitted(events).filter((t: string) => t === BILLING_EVENTS.SUBSCRIPTION_RESUMED),
+    ).toHaveLength(1);
+  });
 });

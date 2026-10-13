@@ -3113,9 +3113,10 @@ ${updateLine}
 
     // F1 (a): the payload is only a pointer. A redelivered or reordered event carries the state of its own
     // moment (a stale cancel_at_period_end=true after a renewal would re-arm a cancel and lock a paying
-    // tenant), so everything below is written from the subscription as Stripe has it NOW. A 404 means Stripe
-    // no longer knows it: the subscription.deleted path. Any other error THROWS (the webhook ledger retries);
-    // the payload is never a fallback.
+    // tenant), so everything below is written from the subscription as Stripe has it NOW. A 404 is NOT read as
+    // "deleted" (a wrong account / mode looks identical): ops is alerted, nothing is changed, and it THROWS so the
+    // ledger event stays FAILED for retry; only a real customer.subscription.deleted event ends a subscription.
+    // Any other error THROWS too (the webhook ledger retries); the payload is never a fallback.
     let subscription: any;
     try {
       subscription = await this.stripe.getSubscription(sub.stripeSubId as string);

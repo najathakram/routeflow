@@ -40,12 +40,39 @@ export const TENANT_ACTION_COPY = {
   planFailed: "Couldn't change the plan. Try again.",
   deleteRefused: "Only a suspended tenant can be deleted. Suspend it first, then delete.",
   deleteFailed: "Couldn't delete the tenant. Try again.",
+  cancelSubscriptionFirst:
+    "This tenant still has a Stripe subscription that hasn't ended (active, paused or incomplete). End it in Stripe first, then try again.",
+  subscriptionUnconfirmed:
+    "Couldn't confirm the tenant's Stripe subscription just now, or it changed meanwhile. Try again in a moment.",
   actionFailed: "That didn't work. Try again.",
   suspendAutoReinstate: "Suspended tenants are reinstated automatically when they pay.",
 } as const;
 
-/** The delete refusal (the server deletes only SUSPENDED tenants: a 400 / 409) or a plain failure. */
+const errorCodeOf = (err: unknown): string | undefined =>
+  (err as { response?: { data?: { code?: string } } } | null)?.response?.data?.code;
+
+/**
+ * The Stripe gate's coded 409s on a tenant status change or delete (a CANCELLED / delete over a subscription that
+ * has not ended, or one Stripe could not be read for): fixed copy, never the server's text. null = not one of them.
+ */
+function stripeGateCopy(err: unknown): string | null {
+  const code = errorCodeOf(err);
+  if (code === API_ERROR_CODES.TENANT_CANCEL_SUBSCRIPTION_FIRST) {
+    return TENANT_ACTION_COPY.cancelSubscriptionFirst;
+  }
+  if (code === API_ERROR_CODES.CONCURRENT_UPDATE) return TENANT_ACTION_COPY.subscriptionUnconfirmed;
+  return null;
+}
+
+/** A failed status change: the Stripe gate's fixed copy, else the plain failure. */
+export function statusFailureCopy(err: unknown): string {
+  return stripeGateCopy(err) ?? TENANT_ACTION_COPY.statusFailed;
+}
+
+/** The delete refusal (the server deletes only SUSPENDED tenants: a 400 / 409), the Stripe gate's, or a plain failure. */
 export function deleteFailureCopy(err: unknown): string {
+  const gate = stripeGateCopy(err);
+  if (gate) return gate;
   const status = (err as { response?: { status?: number } } | null)?.response?.status;
   return status === 400 || status === 409
     ? TENANT_ACTION_COPY.deleteRefused

@@ -1163,9 +1163,11 @@ describe("SA-690 completion — adopt each checkout item onto its row, once", ()
     });
     await h.completed();
     const keys = mockWithAdvisoryLock.mock.calls.map((c) => c[0]);
+    // M1: the completion's price re-sync then takes the tenant price lock - AFTER the add-on locks are released.
     expect(keys).toEqual([
       expect.objectContaining({ family: "billing", key: "addon:t1:CUSTOMER_PACK_100" }),
       expect.objectContaining({ family: "billing", key: "addon:t1:FORECASTING" }),
+      expect.objectContaining({ family: "tenant-price", key: "t1" }),
     ]);
   });
 

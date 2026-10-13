@@ -9,6 +9,7 @@ import {
   DeleteTenantDialog,
   TENANT_ACTION_COPY,
   deleteFailureCopy,
+  statusFailureCopy,
 } from "../../_components/TenantActionDialogs";
 import { usePlanOptions, withCurrentPlan } from "../../_components/usePlanOptions";
 import { ChevronUp, ChevronDown, X } from "lucide-react";
@@ -163,7 +164,7 @@ export default function AdminTenantsPage() {
       });
       fetchTenants(page);
     } catch (err: unknown) {
-      setActionError(TENANT_ACTION_COPY.statusFailed);
+      setActionError(statusFailureCopy(err));
     } finally {
       setActionLoading(null);
     }
