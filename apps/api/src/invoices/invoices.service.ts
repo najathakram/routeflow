@@ -1001,8 +1001,7 @@ export class InvoicesService {
       // MSRP snapshot — set below by the caller's applyMsrpSnapshots (null when
       // flag.msrp is off for the tenant).
       msrp: null as number | null,
-      // Per-line note travels verbatim from the order line (buyer-visible).
-      notes: li.notes ?? null,
+      notes: li.notes ?? null, // the per-line note, verbatim from the order line (buyer-visible)
       unitPrice,
       // `unitPrice` is ALREADY the net (post-override) price — the order stores the
       // override as a reduced unitPrice plus `originalPrice` for the strikethrough.
@@ -1013,6 +1012,8 @@ export class InvoicesService {
       discount: 0,
       originalPrice: li.originalPrice != null ? Number(li.originalPrice) : null,
       priceType: li.priceType ?? "STANDARD",
+      overrideReason: li.overrideReason ?? null, // H3b: verbatim with the override price; STAFF-ONLY
+      overriddenBy: li.overriddenBy ?? null, // (never on the buyer portal nor the customer PDF)
       // B294: placeholder — this builder has no order-level context (isTaxExempt,
       // order.tax/order.subtotal), so every caller MUST overwrite this via
       // `applyOrderDerivedTaxRate(itemsData, order, isTaxExempt)` right after
@@ -4333,6 +4334,8 @@ export class InvoicesService {
       // Price markers and the per-line note travel too (a copy must not reset DISCOUNTED to STANDARD).
       originalPrice: (i as any).originalPrice != null ? Number((i as any).originalPrice) : null,
       priceType: (i as any).priceType ?? undefined, // undefined -> the schema default (STANDARD)
+      overrideReason: (i as any).overrideReason ?? null, // H3b: travels with the override price
+      overriddenBy: (i as any).overriddenBy ?? null,
       notes: (i as any).notes ?? null,
       // BUY_N_GET_M snapshot travels with the copy — the subtotal is verbatim, and
       // without the snapshot the copy's first edit would re-price the line to full.
