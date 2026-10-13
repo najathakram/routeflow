@@ -2,7 +2,6 @@
 
 import * as React from "react";
 import NextLink from "next/link";
-import * as Dialog from "@radix-ui/react-dialog";
 import { ArrowLeft, ChevronDown, ChevronRight, Plus } from "lucide-react";
 import { Button, Modal, Skeleton, useToast } from "@routeflow/ui/web";
 import { unitNameKey } from "@routeflow/types";
@@ -539,40 +538,38 @@ function UnitsScreen() {
       </Modal>
 
       {/* Small screens: one Edit button per row opens this bottom sheet (rename / archive). */}
-      <Dialog.Root open={sheet !== null} onOpenChange={(o) => !o && setSheet(null)}>
-        <Dialog.Portal>
-          <Dialog.Overlay className="fixed inset-0 z-50 bg-black/40" />
-          <Dialog.Content
-            onCloseAutoFocus={(e) => {
-              e.preventDefault();
-              const id = lastEdit.current;
-              if (id)
-                document.querySelector<HTMLElement>(`[data-unit-id="${id}"] [data-edit]`)?.focus();
+      <Modal
+        open={sheet !== null}
+        onClose={() => setSheet(null)}
+        title={sheet ? `Edit ${sheet.name}` : undefined}
+        description={sheet ? usedBy(sheet.productCount) : undefined}
+        onCloseAutoFocus={(e) => {
+          e.preventDefault();
+          const id = lastEdit.current;
+          if (id)
+            document.querySelector<HTMLElement>(`[data-unit-id="${id}"] [data-edit]`)?.focus();
+        }}
+      >
+        {sheet && (
+          <SheetBody
+            unit={sheet}
+            online={online}
+            value={renameValue}
+            error={renameError}
+            saving={update.isPending}
+            onValue={(v) => {
+              setRenameValue(v);
+              setRenameError(null);
             }}
-            className="fixed inset-x-0 bottom-0 z-50 rounded-t-xl bg-white p-5 pb-8 shadow-modal transition-transform duration-200 motion-reduce:transition-none"
-          >
-            {sheet && (
-              <SheetBody
-                unit={sheet}
-                online={online}
-                value={renameValue}
-                error={renameError}
-                saving={update.isPending}
-                onValue={(v) => {
-                  setRenameValue(v);
-                  setRenameError(null);
-                }}
-                onSave={() => saveRename(sheet, renameValue, () => setSheet(null))}
-                onArchive={() => {
-                  const u = sheet;
-                  setSheet(null);
-                  archive(u);
-                }}
-              />
-            )}
-          </Dialog.Content>
-        </Dialog.Portal>
-      </Dialog.Root>
+            onSave={() => saveRename(sheet, renameValue, () => setSheet(null))}
+            onArchive={() => {
+              const u = sheet;
+              setSheet(null);
+              archive(u);
+            }}
+          />
+        )}
+      </Modal>
     </div>
   );
 }
@@ -705,10 +702,6 @@ function SheetBody(props: {
   const { unit: u } = props;
   return (
     <>
-      <Dialog.Title className="text-lg font-semibold text-navy">Edit {u.name}</Dialog.Title>
-      <Dialog.Description className="mt-1 text-sm text-navy/70">
-        {usedBy(u.productCount)}
-      </Dialog.Description>
       <div className="mt-4 flex items-start gap-2">
         <input
           value={props.value}
