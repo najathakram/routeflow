@@ -1,5 +1,6 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { apiClient } from "../api-client";
+import { isDayClosedRefusal } from "../day-closed-copy";
 
 // ─── Types (mirror apps/api/src/payment-requests return shapes) ─────────────────
 
@@ -58,10 +59,14 @@ export function usePaymentRequests(status?: string) {
 
 /** Approve/reject write money or free up the row — refresh the queue plus
  *  whatever balances they can move: invoices and customer account summaries. */
-function useDecisionMutation<TVars, TResult>(fn: (vars: TVars) => Promise<TResult>) {
+function useDecisionMutation<TVars, TResult>(
+  fn: (vars: TVars) => Promise<TResult>,
+  localErrorToast?: (error: unknown) => boolean,
+) {
   const qc = useQueryClient();
   return useMutation<TResult, Error, TVars>({
     mutationFn: fn,
+    meta: localErrorToast ? { localErrorToast } : undefined,
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: KEY });
       qc.invalidateQueries({ queryKey: ["invoices"] });
@@ -71,8 +76,10 @@ function useDecisionMutation<TVars, TResult>(fn: (vars: TVars) => Promise<TResul
 }
 
 export function useApprovePaymentRequest() {
-  return useDecisionMutation<string, ApprovePaymentRequestResult>((id) =>
-    apiClient.post(`/payment-requests/${id}/approve`).then((r) => r.data),
+  return useDecisionMutation<string, ApprovePaymentRequestResult>(
+    (id) => apiClient.post(`/payment-requests/${id}/approve`).then((r) => r.data),
+    // Row 348: approving writes a payment, so a closed day can refuse it; the page toasts that itself, once.
+    isDayClosedRefusal,
   );
 }
 

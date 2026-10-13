@@ -4,10 +4,13 @@
  * The SQL predicate (`balanceDueSql`) is pinned against it row for row by
  * invoice-balance-sql.parity.db.spec.ts.
  */
+import { InvoiceStatus } from "@prisma/client";
 import { overdueCutoff } from "../common/calendar-date";
+import { OPEN_INVOICE_STATUSES } from "./invoice-status-sets";
 import {
   classifyInvoiceBalance,
   confirmedBalance,
+  signedBalance,
   summarizeOpenInvoices,
 } from "./invoice-balance-classify";
 
@@ -41,6 +44,44 @@ describe("confirmedBalance — total minus CONFIRMED payments, floored at zero, 
   it("tolerates a missing payments relation", () => {
     expect(confirmedBalance(50, undefined)).toBe(50);
     expect(confirmedBalance("50.00", null)).toBe(50);
+  });
+});
+
+describe("signedBalance — owner ruling 2026-10-11: the Receivable Summary's unclamped balance", () => {
+  it.each([
+    ["unpaid", 100, [], 100],
+    ["partial", 100, [pay(60)], 40],
+    ["exactly paid", 100, [pay(100)], 0],
+    ["overpaid by $10 is -10, not 0", 100, [pay(110)], -10],
+    [
+      "a VOID / DRAFT / PENDING payment never counts",
+      100,
+      [pay(100, "VOID"), pay(5, "DRAFT")],
+      100,
+    ],
+    ["a credit-note application counts like cash", 100, [pay(110, "PAID", "CREDIT_NOTE")], -10],
+    [
+      "11 x $0.10 against $1.10 is 0 (cents first), not 2e-16",
+      1.1,
+      Array.from({ length: 11 }, () => pay(0.1)),
+      0,
+    ],
+  ])("%s", (_l, total, payments, want) => {
+    const got = signedBalance(total, payments);
+    expect(got).toBe(want);
+    expect(Object.is(got, -0)).toBe(false);
+  });
+
+  it("a sub-cent negative residue is +0, never -0 (0.3 - 0.30000000000000004 = -5.5e-17)", () => {
+    const got = signedBalance(0.3, [pay(0.1), pay(0.2)]);
+    expect(Object.is(got, 0)).toBe(true);
+  });
+
+  it("agrees with confirmedBalance wherever the balance is not negative", () => {
+    for (const p of [[], [pay(40)], [pay(100)], [pay(99.99)]]) {
+      expect(signedBalance(100, p)).toBe(confirmedBalance(100, p));
+    }
+    expect(confirmedBalance(100, [pay(110)])).toBe(0); // the clamp stays the default everywhere else
   });
 });
 
@@ -106,6 +147,28 @@ describe("classifyInvoiceBalance — balanceDue + isOverdue against a cutoff", (
     expect(classifyInvoiceBalance(dueOct1, chicago).isOverdue).toBe(false); // still its grace day
     expect(classifyInvoiceBalance(dueOct1, auckland).isOverdue).toBe(true); // the day has ended there
   });
+});
+
+/**
+ * Row 318b: overdue is a property of an ISSUED, unpaid invoice. The classifier treated only PAID / VOID /
+ * WRITTEN_OFF as not overdue, so a past-due DRAFT with a balance read isOverdue:true in the list enrichment
+ * and the detail DTO while the KPI tiles and the list filter (OPEN_INVOICE_STATUSES) excluded DRAFT.
+ */
+describe("classifyInvoiceBalance - only an issued (open-status) invoice can be overdue (row 318b)", () => {
+  it("a past-due DRAFT with a balance is NOT overdue, and keeps its balanceDue", () => {
+    expect(classifyInvoiceBalance(inv(100, [], "2020-01-01", "DRAFT"), CUTOFF)).toEqual({
+      balanceDue: 100,
+      isOverdue: false,
+    });
+  });
+
+  it.each(Object.values(InvoiceStatus))(
+    "%s past due with a balance is overdue iff it is an open status",
+    (status) => {
+      const { isOverdue } = classifyInvoiceBalance(inv(100, [], "2020-01-01", status), CUTOFF);
+      expect(isOverdue).toBe((OPEN_INVOICE_STATUSES as readonly string[]).includes(status));
+    },
+  );
 });
 
 describe("summarizeOpenInvoices — the buyer receivables figures", () => {

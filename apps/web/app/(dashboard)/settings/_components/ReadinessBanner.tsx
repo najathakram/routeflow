@@ -21,7 +21,8 @@ export function ReadinessBanner({ isAdmin }: { isAdmin: boolean }) {
     >
       <ShieldAlert className="h-5 w-5 flex-none text-warning" />
       <span className="min-w-0 flex-1">
-        Selling restrictions are off, so restricted products can be sold to any customer.
+        Staff orders and invoices aren&apos;t checked against selling restrictions. Portal limits
+        still apply.
       </span>
       {isAdmin && (
         <Link

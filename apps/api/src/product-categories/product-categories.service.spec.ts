@@ -38,6 +38,15 @@ describe("ProductCategoriesService", () => {
     prisma = createMockPrisma();
     cat = stub();
     (prisma.forTenant() as any).productCategory = cat;
+    // Name writes run in a tx under the per-tenant names lock (label-writer): the same stub, plus the lock's raw calls.
+    (prisma as any).tenantTransaction = jest.fn(async (fn: (tx: unknown) => unknown) =>
+      fn({
+        productCategory: cat,
+        $queryRaw: jest.fn().mockResolvedValue([{ lock_timeout: "0" }]),
+        $executeRaw: jest.fn().mockResolvedValue(0),
+        $executeRawUnsafe: jest.fn().mockResolvedValue(0),
+      }),
+    );
     audit = { log: jest.fn().mockResolvedValue(undefined) };
     const mod = await Test.createTestingModule({
       providers: [
@@ -197,6 +206,67 @@ describe("ProductCategoriesService", () => {
       await expect(service.update("c1", { name: "Dup" }, user)).rejects.toBeInstanceOf(
         ConflictException,
       );
+    });
+  });
+
+  describe("one label per name key (SA: LABEL_NAME_TAKEN under the per-tenant names lock)", () => {
+    it('creating "vape" when "Vape" exists is a 409 LABEL_NAME_TAKEN naming the existing label; nothing created', async () => {
+      cat.findMany.mockResolvedValue([{ id: "c-vape", name: "Vape" }]);
+      const err = await service.create({ name: "vape" } as any, user as any).catch((e) => e);
+      expect(err).toBeInstanceOf(ConflictException);
+      expect(err.getResponse()).toMatchObject({
+        code: "LABEL_NAME_TAKEN",
+        message: 'A label named "Vape" already exists.',
+        existingLabel: { id: "c-vape", name: "Vape" },
+      });
+      expect(cat.create).not.toHaveBeenCalled();
+    });
+
+    it('the key ignores case and spacing: "  VAPE  " collides too; an archived label still holds its name', async () => {
+      cat.findMany.mockResolvedValue([{ id: "c-old", name: "Vape" }]);
+      await expect(service.create({ name: "  VAPE  " } as any, user as any)).rejects.toMatchObject({
+        response: { code: "LABEL_NAME_TAKEN" },
+      });
+      // the collision read includes archived labels (no archivedAt filter)
+      expect(cat.findMany.mock.calls[0][0].where).not.toHaveProperty("archivedAt");
+    });
+
+    it("the check runs under the per-tenant names lock, before the write", async () => {
+      const calls: string[] = [];
+      (prisma as any).tenantTransaction = jest.fn(async (fn: (tx: unknown) => unknown) =>
+        fn({
+          productCategory: {
+            ...cat,
+            findMany: jest.fn(async () => (calls.push("check"), [])),
+            create: jest.fn(async () => (calls.push("create"), row({}, 0, 0))),
+          },
+          $queryRaw: jest.fn().mockResolvedValue([{ lock_timeout: "0" }]),
+          $executeRaw: jest.fn(async (strings: TemplateStringsArray) => {
+            if (strings.join("?").includes("pg_advisory_xact_lock")) calls.push("lock");
+            return 0;
+          }),
+          $executeRawUnsafe: jest.fn().mockResolvedValue(0),
+        }),
+      );
+      await service.create({ name: "Hemp" } as any, user as any);
+      expect(calls).toEqual(["lock", "check", "create"]);
+    });
+
+    it("renaming to another label's key is refused; a case-only rename of itself is allowed", async () => {
+      cat.findFirst.mockResolvedValue(row({ id: "c1", name: "Alcohol" }, 0, 0));
+      cat.findMany.mockResolvedValue([{ id: "c2", name: "Vape" }]);
+      await expect(
+        service.update("c1", { name: "VAPE" } as any, user as any),
+      ).rejects.toMatchObject({
+        response: { code: "LABEL_NAME_TAKEN", existingLabel: { id: "c2", name: "Vape" } },
+      });
+      expect(cat.updateMany).not.toHaveBeenCalled();
+      // itself excluded from the check: a case-only rename passes
+      cat.findMany.mockResolvedValue([]);
+      cat.updateMany.mockResolvedValue({ count: 1 });
+      await service.update("c1", { name: "ALCOHOL" } as any, user as any);
+      expect(cat.findMany.mock.calls.at(-1)[0].where).toMatchObject({ id: { not: "c1" } });
+      expect(cat.updateMany).toHaveBeenCalledTimes(1);
     });
   });
 });

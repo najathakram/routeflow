@@ -23,7 +23,12 @@ export function PickupHandOverButton({
   label?: string;
 }) {
   return (
-    <Button size="sm" leftIcon={<CheckCircle2 className="h-4 w-4" />} onClick={onOpen}>
+    <Button
+      size="sm"
+      className="h-11"
+      leftIcon={<CheckCircle2 className="h-4 w-4" />}
+      onClick={onOpen}
+    >
       {label}
     </Button>
   );

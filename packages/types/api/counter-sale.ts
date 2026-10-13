@@ -45,7 +45,9 @@ export interface CounterSaleRequest {
 /**
  * The stored price facts of one sale line (the invoice line the sale produced): what the receipt needs to apply the invoices'
  * own original-price rule (`showOriginalPrice` in @routeflow/pricing). `originalPrice` is the LIST price (never the tier
- * price), `priceType` one of STANDARD / SPECIAL / DISCOUNTED / MANUAL / PROMO.
+ * price), `priceType` one of STANDARD / SPECIAL / DISCOUNTED / MANUAL / PROMO. `unitPrice` is the NET unit price the line was
+ * stored at: the live receipt matches a cart line to its stored line by product + this price (two lines of one product at
+ * different prices must not swap their list prices).
  */
 export interface CounterSaleLinePrice {
   productId: string | null;
@@ -91,6 +93,11 @@ export interface CounterSaleResponse {
    * Adjustments, exactly like the reprint and the emailed receipt. Omitted by an older server; then no Tax row prints.
    */
   tax?: number;
+  /**
+   * The regulated levies the invoices billed, one named charge per category ("CRV deposit"), taken from the stored invoice
+   * lines (an exempt customer's are zero). The receipt prints them as their own rows; omitted by an older server.
+   */
+  charges?: Array<{ key: string; label: string; amount: number }>;
   /**
    * The sale's stored tax rate in percent (`@routeflow/pricing` `storedTaxRatePercent`), a CANDIDATE: the receipt names it
    * only through `explainedTaxRatePercent`. null = mixed / none; omitted with `tax`.
@@ -144,6 +151,8 @@ export interface CounterSaleVoidResponse {
 export interface PickupCompleteRequest {
   /** omit to hand the order over unpaid (an open invoice on account); a walk-in must pay */
   payment?: CounterSalePayment;
+  /** SA-750r3: the till register this hand-over's cash counts on when the order has none stamped yet; default 'main' */
+  registerKey?: string;
 }
 
 export interface PickupCompleteResponse {
@@ -166,7 +175,7 @@ export interface PickupCompleteResponse {
 
 // ─── Today's sales (register panel) — GET /orders/counter-sale/today ──────────────────────────
 //
-// Every counter sale of the tenant's calendar day (all registers and clerks: Order has no createdById), one lean
+// Every counter sale of the tenant's calendar day (all registers and clerks; each row names its cashier), one lean
 // row each (no line items), plus a whole-day summary on page 1. Read-only; the server owns the day window, the
 // web formats times in `meta.timezone` and does no money math.
 
@@ -197,6 +206,12 @@ export interface TodaysSaleRow {
   customerId: string;
   customerName: string;
   isWalkIn: boolean;
+  /**
+   * Who rang the sale: the staff user's display name (`Order.soldBy.username`, stamped by the counter write). null for a sale
+   * rung before it was stamped, or when the stored name looks like an email (a receipt never prints an address). Omitted by an
+   * older server.
+   */
+  cashierName?: string | null;
   status: string;
   total: number;
   /** every PAID payment on the sale's live invoices, store credit included */
@@ -219,6 +234,12 @@ export interface TodaysSaleRow {
    * names it only through `explainedTaxRatePercent`.
    */
   taxRatePercent: number | null;
+  /**
+   * The regulated levies the sale's live invoices billed, one named charge per category ("CRV deposit"), from the stored
+   * invoice lines (an exempt customer's are zero). The reprint prints them as their own rows, never inside Tax.
+   * Omitted by an older server: then none print.
+   */
+  charges?: Array<{ key: string; label: string; amount: number }>;
   returned: {
     amount: number;
     state: TodaysSaleReturnState;
@@ -283,9 +304,36 @@ export interface TodaysSalesMeta {
   windowEnd: string;
 }
 
+/**
+ * One POS-mode pickup hand-over of the day (a named customer's order handed over at the till): the order, who it was for, the
+ * tender that came in, and the register + cashier stamped on it. Staff only. Consistent with the Z report: the same rows
+ * (a non-counter PICKUP order's own `pickupTenderGroupId` tender) that the day close counts under "Pickup hand-overs".
+ */
+export interface TodaysHandOverRow {
+  orderId: string;
+  orderNumber: string;
+  /** the named customer (a walk-in is a counter sale, never a hand-over) */
+  customerName: string;
+  /** when the tender was recorded (the latest tender of this order in the window), ISO */
+  paidAt: string;
+  /** this order's hand-over tender in the window, rounded to cents */
+  amount: number;
+  /** the tender split by method */
+  methods: Array<{ method: TodaysSaleMethod; amount: number }>;
+  /** the register the order is stamped on; "main" when none is stamped */
+  registerKey: string;
+  /** the cashier who handed it over (display name); null when none is stamped */
+  handedOverBy: string | null;
+}
+
 export interface TodaysSalesResponse {
   data: TodaysSaleRow[];
   meta: TodaysSalesMeta;
   /** the whole day, on page 1 only (null on later pages) */
   summary: TodaysSalesSummary | null;
+  /**
+   * The day's POS pickup hand-overs, newest first, on page 1 only ([] on later pages; absent from an older API: read as []).
+   * Bounded (the day's few hand-overs); `summary.handOvers` is the count and money of the same rows.
+   */
+  handOverRows?: TodaysHandOverRow[];
 }

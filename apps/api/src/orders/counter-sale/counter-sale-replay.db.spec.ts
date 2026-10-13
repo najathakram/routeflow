@@ -56,6 +56,7 @@ describeDb(
     let customerId = "";
     let customerUserId = "";
     const productIds: string[] = [];
+    const extraUserIds: string[] = [];
 
     async function boxedProduct(): Promise<string> {
       const p = await raw.product.create({
@@ -149,7 +150,10 @@ describeDb(
       await raw.product.deleteMany({ where: { id: { in: productIds } } });
       await raw.customer.deleteMany({ where: { id: customerId } });
       await raw.systemConfig.deleteMany({ where: { tenantId } });
-      await raw.user.deleteMany({ where: { id: { in: [operatorId, customerUserId] } } });
+      // soldById is ON DELETE SET NULL, but the orders are gone first anyway
+      await raw.user.deleteMany({
+        where: { id: { in: [operatorId, customerUserId, ...extraUserIds] } },
+      });
       await raw.tenant.deleteMany({ where: { id: tenantId } });
       await prisma?.$disconnect();
       await raw?.$disconnect();
@@ -189,5 +193,42 @@ describeDb(
       },
       60_000,
     );
+
+    // Row 317: the counter write stamps Order.soldById; a same-key replay by ANOTHER cashier writes nothing, so the first stays.
+    it("a counter sale stamps soldById with the acting staff user, and a replay by another cashier does not overwrite it", async () => {
+      const productId = await boxedProduct();
+      const key = `cs-sold-${randomUUID()}`;
+      const other = await raw.user.create({
+        data: {
+          email: `op2-${run}@example.test`,
+          username: `op2-${run}`,
+          role: "OPERATOR",
+          tenantId,
+        },
+      });
+      extraUserIds.push(other.id);
+      const ring = (user: JwtPayload) =>
+        tenantCtx.run(tenantId, () =>
+          orders.create(
+            {
+              customerId,
+              items: [toCounterOrderItem({ productId, boxes: 1 } as never, PACK)],
+              idempotencyKey: key,
+            },
+            user,
+            { skipAutoMerge: true, counterSale: true },
+          ),
+        );
+
+      const first = await ring(staff());
+      const replay = await ring({ ...staff(), sub: other.id });
+
+      expect(replay.id).toBe(first.id);
+      const stored = await raw.order.findUniqueOrThrow({
+        where: { id: first.id },
+        select: { soldById: true },
+      });
+      expect(stored.soldById).toBe(operatorId);
+    }, 60_000);
   },
 );

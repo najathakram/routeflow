@@ -34,6 +34,7 @@ const READY = {
   addressesMissingStateCode: 0,
   addressesNeedingReview: 0,
   indeterminateCustomerCount: 0,
+  businessStateMissing: false,
 };
 
 function setup(initial: Record<string, string> = {}, ready = true) {
@@ -164,10 +165,11 @@ describe("RestrictionsSettingsService.update", () => {
     expect(s.engine.getEnableReadiness).not.toHaveBeenCalled();
   });
 
-  it("enabling checks readiness, writes the engine's own 'true' in ONE transaction, and audits from/to", async () => {
+  it("enabling writes the engine's own 'true' in ONE transaction and audits from/to; readiness is not a gate", async () => {
     const s = setup();
     await s.service.update({ enabled: true }, user);
-    expect(s.engine.assertReadyToEnable).toHaveBeenCalledWith("t1");
+    expect(s.engine.assertReadyToEnable).not.toHaveBeenCalled();
+    expect(s.engine.getEnableReadiness).not.toHaveBeenCalled();
     expect(s.store.get(SYSTEM_CONFIG_ENABLED)).toBe("true");
     expect(s.prisma.tenantTransaction).toHaveBeenCalledTimes(1);
     expect(s.audit.log).toHaveBeenCalledWith(
@@ -175,13 +177,14 @@ describe("RestrictionsSettingsService.update", () => {
     );
   });
 
-  it("an un-ready tenant is refused and NOTHING is written", async () => {
-    const s = setup({}, false);
-    await expect(s.service.update({ enabled: true }, user)).rejects.toMatchObject({
-      response: { code: SELLING_RESTRICTIONS_NOT_READY },
+  it("row g: enabling the switch with indeterminate customers succeeds (readiness is advice, owner ruling 3)", async () => {
+    const s = setup({}, false); // the engine would answer NOT READY (customers with no resolvable state)
+    await expect(s.service.update({ enabled: true }, user)).resolves.toEqual({
+      enabled: true,
+      governingAddress: "BILLING_FIRST",
     });
-    expect(s.prisma.tenantTransaction).not.toHaveBeenCalled();
-    expect(s.store.size).toBe(0);
+    expect(s.store.get(SYSTEM_CONFIG_ENABLED)).toBe("true");
+    expect(s.prisma.tenantTransaction).toHaveBeenCalledTimes(1);
   });
 
   it("turning enforcement ON while changing the address policy is refused (judge readiness under the policy in force)", async () => {

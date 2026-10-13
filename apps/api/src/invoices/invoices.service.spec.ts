@@ -694,12 +694,11 @@ describe("InvoicesService", () => {
       expect(created.categoryTaxAmount).toBe(0.5); // 0.1 x 5, never 0.1 x (5*12)=6
     });
 
-    it("SA-144g: refuses ANY non-blank requested unitLabel up front — this is why the tax derivation below never sees one", async () => {
-      // update()'s pieceQty/categoryTaxAmount derivation (:3401) reads item.unitLabel with no
-      // resolveLineUnits call of its own; its safety rests entirely on this refusal running
-      // BEFORE the item loop, for every item, on ANY non-blank label — including one that
-      // would resolve to the pack itself (e.g. "Case" naming a product's own base unit).
-      prisma.invoice.findUnique.mockResolvedValue(draftInvoice);
+    it("SA-144g (VU-4a, D3): an ORDER-LINKED draft refuses ANY non-blank requested unitLabel up front, before the item loop", async () => {
+      // An order-less DRAFT now resolves a unit through resolveLineUnits (invoices.service.update-units.spec.ts);
+      // an order-linked one stays refused for every item — the back-sync would write the unit onto the order
+      // line — including a label that would resolve to the pack itself (e.g. "Case" naming the base unit).
+      prisma.invoice.findUnique.mockResolvedValue({ ...draftInvoice, orderId: "ord-1" });
 
       await expect(
         service.update("inv-box", {
@@ -7362,6 +7361,15 @@ describe("InvoicesService", () => {
         }),
       );
     });
+
+    it("row 401: a paid-at-sale counter invoice's e-mail hides the due date and terms", async () => {
+      const at = new Date("2026-01-01T10:00:00Z");
+      const pay = { id: "p1", amount: 500, status: "PAID", method: "CASH", createdAt: at };
+      const inv = { ...invoiceFixture(InvoiceStatus.PAID), createdAt: at, payments: [pay] };
+      prisma.invoice.findUnique.mockResolvedValue({ ...inv, order: { counterSale: true } });
+      await service.sendEmail("inv-b102");
+      expect(mockEmailService.sendInvoice.mock.calls[0][0].hideTerms).toBe(true);
+    });
   });
 
   // F03 (B421) — a CREDIT_NOTE/ADVANCE application must never reach the
@@ -8626,6 +8634,10 @@ describe("InvoicesService", () => {
         // boundary: today+31 is OUTSIDE every bucket
         { id: "inv-day31", total: 17, dueDate: new Date("2026-09-26T00:00:00.000Z"), payments: [] },
       ]);
+      // Row 318b: the real KPI read selects `status`, and only an OPEN-status invoice can be overdue.
+      const rows = (await prisma.invoice.findMany()) as Array<Record<string, unknown>>;
+      prisma.invoice.findMany.mockResolvedValue(rows.map((r) => ({ status: "SENT", ...r })));
+      prisma.invoice.findMany.mockClear(); // the call above only read the fixture back
       prisma.invoicePayment.count.mockResolvedValue(3);
       prisma.$queryRaw.mockResolvedValue([{ avgDays: 12.5 }]);
 
@@ -8844,7 +8856,13 @@ describe("InvoicesService", () => {
     it("scopes all three reads to the caller's own customer when the viewer is a CUSTOMER", async () => {
       prisma.customer.findFirst.mockResolvedValue({ id: "cust-9" });
       prisma.invoice.findMany.mockResolvedValue([
-        { id: "inv-mine", total: 100, dueDate: new Date("2026-08-25T00:00:00.000Z"), payments: [] },
+        {
+          id: "inv-mine",
+          status: "SENT", // row 318b: only an open-status invoice can be overdue
+          total: 100,
+          dueDate: new Date("2026-08-25T00:00:00.000Z"),
+          payments: [],
+        },
       ]);
       prisma.invoicePayment.count.mockResolvedValue(1);
       prisma.$queryRaw.mockResolvedValue([{ avgDays: 4 }]);

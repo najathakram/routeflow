@@ -200,6 +200,16 @@ export default defineConfig({
         storageState: path.join(AUTH_DIR, "operator.json"),
       },
     },
+    // ── Rows 342 + 345: hand-over stamp, close form, Z report, counter copy (mocked reads, 1440 / 390) ──
+    {
+      name: "day-close-ux",
+      testMatch: /74-day-close-ux\.spec\.ts/,
+      dependencies: ["setup"],
+      use: {
+        ...devices["Desktop Chrome"],
+        storageState: path.join(AUTH_DIR, "operator.json"),
+      },
+    },
     // ── Dashboard CLS (PKG-8) ──────────────────────────────────────────────────
     // /dashboard layout shift with every read delayed 2 s; read-only.
     {
@@ -454,6 +464,14 @@ export default defineConfig({
     {
       name: "units-order-lane",
       testMatch: /53-units-order-lane\.spec\.ts/,
+      dependencies: ["setup"],
+      use: { ...devices["Desktop Chrome"], storageState: path.join(AUTH_DIR, "operator.json") },
+    },
+
+    // VU-4a (B1218): the invoice unit picker. Needs the Case-default fixture (e2e-seed.js) and flag.units_v1.
+    {
+      name: "units-invoice-lane",
+      testMatch: /54-units-invoice-lane\.spec\.ts/,
       dependencies: ["setup"],
       use: { ...devices["Desktop Chrome"], storageState: path.join(AUTH_DIR, "operator.json") },
     },

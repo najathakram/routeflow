@@ -232,7 +232,7 @@ describe("PickupCompleteService.complete", () => {
         expect(recordPayment).toHaveBeenCalledWith(
           "inv-1",
           expect.objectContaining({ amount: 37.25, method: "CASH" }),
-          TENDER_GROUP,
+          { ...TENDER_GROUP, tillLockHeld: true },
         );
         expect(res).toMatchObject({
           orderId: "ord-1",
@@ -253,7 +253,7 @@ describe("PickupCompleteService.complete", () => {
       expect(recordPayment).toHaveBeenCalledWith(
         "inv-1",
         expect.objectContaining({ amount: 37.25 }),
-        TENDER_GROUP,
+        { ...TENDER_GROUP, tillLockHeld: true },
       );
       expect(res).toMatchObject({
         paid: 37.25,
@@ -272,7 +272,7 @@ describe("PickupCompleteService.complete", () => {
       expect(recordPayment).toHaveBeenCalledWith(
         "inv-1",
         expect.objectContaining({ method: "CREDIT_CARD", reference: "auth9" }),
-        TENDER_GROUP,
+        { ...TENDER_GROUP, tillLockHeld: true },
       );
     });
     it("only DRAFT invoices are sent; an already-SENT one is not re-sent", async () => {
@@ -309,7 +309,7 @@ describe("PickupCompleteService.complete", () => {
         expect(recordPayment).toHaveBeenCalledWith(
           "inv-1",
           expect.objectContaining({ amount: 40, method: "CASH" }),
-          TENDER_GROUP,
+          { ...TENDER_GROUP, tillLockHeld: true },
         );
         expect(first).toMatchObject({
           total: 50,
@@ -332,11 +332,10 @@ describe("PickupCompleteService.complete", () => {
       invoices = [inv("inv-1", 50, "SENT", [pay("dep-1", 10, "CASH", T_DEPOSIT)])];
       const res = await run(cash(50));
       expect(recordPayment).toHaveBeenCalledTimes(1);
-      expect(recordPayment).toHaveBeenCalledWith(
-        "inv-1",
-        expect.objectContaining({ amount: 40 }),
-        TENDER_GROUP,
-      );
+      expect(recordPayment).toHaveBeenCalledWith("inv-1", expect.objectContaining({ amount: 40 }), {
+        ...TENDER_GROUP,
+        tillLockHeld: true,
+      });
       expect(res).toMatchObject({ paid: 50, balanceDue: 0, change: 10, alreadyPickedUp: true });
     });
 
@@ -357,7 +356,7 @@ describe("PickupCompleteService.complete", () => {
       expect(recordPayment).toHaveBeenCalledWith(
         "inv-1",
         expect.objectContaining({ amount: 27.25 }),
-        TENDER_GROUP,
+        { ...TENDER_GROUP, tillLockHeld: true },
       );
       expect(res).toMatchObject({ total: 37.25, paid: 37.25, balanceDue: 0 });
     });
@@ -487,11 +486,10 @@ describe("PickupCompleteService.complete", () => {
       invoices = [inv("inv-1", 37.25, "PARTIAL", [pay("pay-1", 20)])];
       await run(cash(30)); // plan 30, 20 already stored for this hand-over
       expect(recordPayment).toHaveBeenCalledTimes(1);
-      expect(recordPayment).toHaveBeenCalledWith(
-        "inv-1",
-        expect.objectContaining({ amount: 10 }),
-        TENDER_GROUP,
-      );
+      expect(recordPayment).toHaveBeenCalledWith("inv-1", expect.objectContaining({ amount: 10 }), {
+        ...TENDER_GROUP,
+        tillLockHeld: true,
+      });
     });
     it("a sibling-invoice first attempt that failed part-way is resumed: only the unpaid sibling is recorded", async () => {
       order = orderRow("DELIVERED");
@@ -639,7 +637,7 @@ describe("PickupCompleteService.complete", () => {
       expect(recordPayment).toHaveBeenCalledWith(
         "inv-2",
         expect.objectContaining({ amount: 12.5, method: "CASH" }),
-        TENDER_GROUP,
+        { ...TENDER_GROUP, tillLockHeld: true },
       );
       expect(res).toMatchObject({ balanceDue: 0, paymentRecorded: true });
     });
@@ -699,7 +697,7 @@ describe("PickupCompleteService.complete", () => {
       expect(recordPayment).toHaveBeenCalledWith(
         "inv-1",
         expect.objectContaining({ amount: 12.25, method: "CASH" }),
-        TENDER_GROUP,
+        { ...TENDER_GROUP, tillLockHeld: true },
       );
       expect(res).toMatchObject({ balanceDue: 0, paymentRecorded: true, alreadyPickedUp: true });
     });
@@ -878,7 +876,7 @@ describe("PickupCompleteService.complete", () => {
       expect(recordPayment).toHaveBeenCalledWith(
         "inv-1",
         expect.objectContaining({ amount: 37.25, method: "CASH" }),
-        TENDER_GROUP,
+        { ...TENDER_GROUP, tillLockHeld: true },
       );
       expect(res).toMatchObject({ paymentRecorded: true, balanceDue: 0 });
     });
@@ -887,6 +885,48 @@ describe("PickupCompleteService.complete", () => {
       const e = await errorOf(run(cash()));
       expect(e.getStatus()).toBe(409);
       expect(e.getResponse().code).toBe("PICKUP_INVOICE_MISSING");
+    });
+  });
+
+  // Owner ruling (B): a hand-over stamps Order.soldById with the acting staff user, by the same replay rule as a counter sale:
+  // the first cashier stays; a replay by another cashier never overwrites it.
+  describe("soldById (who handed it over)", () => {
+    let soldBy: string | null;
+    beforeEach(() => {
+      soldBy = null;
+      prisma.order.updateMany.mockImplementation(async ({ where, data }: any) => {
+        // the day-close branch's register stamp (data.registerKey) shares this delegate: only the cashier stamp is modelled
+        if (!("soldById" in data)) return { count: 1 };
+        if (where.soldById === null && soldBy !== null) return { count: 0 };
+        soldBy = data.soldById;
+        return { count: 1 };
+      });
+    });
+    /** The cashier stamp among the order.updateMany calls (the register stamp is a different write). */
+    const soldByCalls = () =>
+      prisma.order.updateMany.mock.calls
+        .map((c: any[]) => c[0])
+        .filter((a: any) => a?.data && "soldById" in a.data);
+    const other = { sub: "op-2", role: "OPERATOR", tenantId: "t-1" } as never;
+
+    it("stamps the acting staff user, only where no cashier is stored yet", async () => {
+      await run();
+      expect(soldBy).toBe("op-1");
+      expect(soldByCalls()).toHaveLength(1);
+      const call = soldByCalls()[0];
+      expect(call.where).toEqual({ id: "ord-1", soldById: null });
+      expect(call.data).toEqual({ soldById: "op-1" });
+    });
+
+    it("a replay by another cashier does not overwrite the first", async () => {
+      await run();
+      await service.complete("ord-1", cash() as never, other, KEY);
+      expect(soldBy).toBe("op-1");
+    });
+
+    it("a failed stamp never fails the hand-over", async () => {
+      prisma.order.updateMany.mockRejectedValue(new Error("db down"));
+      await expect(run()).resolves.toMatchObject({ orderId: "ord-1" });
     });
   });
 });

@@ -24,6 +24,7 @@ import {
 } from "@/lib/payment-methods";
 import { fmtCalendarDate } from "@/lib/formatting";
 import { BrandMark } from "@/components/brand";
+import { ReadOnlyHint, WriteButton } from "@/lib/read-only-gate";
 
 // ─── Payment status badge ─────────────────────────────────────────────────────
 
@@ -255,13 +256,13 @@ export default function TransactionDetailPage() {
             {downloadInvoice.isPending ? "Loading…" : "Download PDF"}
           </Button>
           {localStatus !== "PAID" && (
-            <Button
+            <WriteButton
               size="sm"
               leftIcon={<Plus className="h-4 w-4" />}
               onClick={() => setIsPaymentOpen(true)}
             >
               Record Payment
-            </Button>
+            </WriteButton>
           )}
         </div>
       </div>
@@ -382,7 +383,7 @@ export default function TransactionDetailPage() {
             )}
             {localStatus !== "PAID" && (
               <div className="mt-4">
-                <Button
+                <WriteButton
                   variant="secondary"
                   size="sm"
                   className="w-full"
@@ -390,7 +391,8 @@ export default function TransactionDetailPage() {
                   onClick={() => setIsPaymentOpen(true)}
                 >
                   Record Payment
-                </Button>
+                </WriteButton>
+                <ReadOnlyHint />
               </div>
             )}
           </Card>

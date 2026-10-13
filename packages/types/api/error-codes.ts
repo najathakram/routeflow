@@ -16,6 +16,8 @@
 //                    409 (#2629, disabled until a real import marker exists).
 //   ORDER_LINE_CHANGED — `body.code` of the order-line CAS 409 (invoice-from-order paths:
 //                    qty/price/tax/pack changed mid-create; nothing billed, retriable).
+//   ORDER_REVISION_STALE — `body.code` of the 409 on PATCH /orders/:id/items when the client's
+//                    `expectedRevisionNumber` is behind the order's latest revision (nothing written; reload).
 //   ORDER_INVOICE_SETTLE_FAILED — `body.code` of the 409 raised AFTER a ship/deliver status committed when its
 //                    invoice could not be created, updated or checked (the status stays; open the order).
 //   ORDER_INVOICES_NEED_REVIEW — `body.code` of the 409 when more would be billed on an order whose
@@ -29,6 +31,8 @@
 //   CODE_TAKEN     — `body.code` of the 409 when a product sku / unit code (a barcode answers
 //                    BARCODE_TAKEN) is held by another ACTIVE product of the tenant (SA-603a); body
 //                    carries `field` (sku | unitSku), `value`, the holder's `productId` and `productName`.
+//   PRODUCT_CODE_IN_USE — `body.code` of the 400 a product create / update answers when its sku, barcode or unit code
+//                    is already used by another active product; body carries `field` (sku | barcode | unitSku).
 //   CATALOG_TOO_LARGE_FOR_CLEAR_ALL — `body.code` of the 409 from DELETE /products/clear-all AND DELETE /products/bulk (both soft-delete through one code-lock set) when that set holds more
 //                    than 1,000 distinct codes (one advisory lock per code is held to COMMIT; Opus/SA #2860). Delete in smaller batches.
 //   CODES_CHANGED — `body.code` of the 409 when a deactivation finds a live code of the product that was NOT in the
@@ -199,11 +203,13 @@ export const API_ERROR_CODES = {
   DUPLICATE_VENDOR_BILL: "DUPLICATE_VENDOR_BILL",
   CLEANUP_IMPORTED_DISABLED: "CLEANUP_IMPORTED_DISABLED",
   ORDER_LINE_CHANGED: "ORDER_LINE_CHANGED",
+  ORDER_REVISION_STALE: "ORDER_REVISION_STALE",
   ORDER_INVOICES_NEED_REVIEW: "ORDER_INVOICES_NEED_REVIEW",
   ORDER_INVOICE_SETTLE_FAILED: "ORDER_INVOICE_SETTLE_FAILED",
   NSF_LINE_UNTAXED: "NSF_LINE_UNTAXED",
   BARCODE_TAKEN: "BARCODE_TAKEN",
   CODE_TAKEN: "CODE_TAKEN",
+  PRODUCT_CODE_IN_USE: "PRODUCT_CODE_IN_USE",
   NAME_TAKEN: "NAME_TAKEN",
   HOLDERS_CHANGED: "HOLDERS_CHANGED",
   FAMILY_NOT_SELLABLE: "FAMILY_NOT_SELLABLE",
@@ -259,6 +265,8 @@ export const API_ERROR_CODES = {
   BILL_VOID: "BILL_VOID",
   RETURN_NOTHING_BILLED: "RETURN_NOTHING_BILLED",
   INVOICE_CHANGED_CONCURRENTLY: "INVOICE_CHANGED_CONCURRENTLY",
+  LABEL_NAME_TAKEN: "LABEL_NAME_TAKEN",
+  LABEL_CHANGE_IN_PROGRESS: "LABEL_CHANGE_IN_PROGRESS",
   INVOICE_TAX_STATE_STALE: "INVOICE_TAX_STATE_STALE",
   INVOICE_TOTAL_BELOW_PAID: "INVOICE_TOTAL_BELOW_PAID",
   PRICE_ADJUSTMENT_PARTIAL: "PRICE_ADJUSTMENT_PARTIAL",
@@ -268,6 +276,8 @@ export const API_ERROR_CODES = {
   PLAN_GATE: "PLAN_GATE",
   PLAN_GATE_UNAVAILABLE: "PLAN_GATE_UNAVAILABLE",
   READ_ONLY: "READ_ONLY",
+  SELLER_UNAVAILABLE: "SELLER_UNAVAILABLE",
+  BILLING_PORTAL_UNAVAILABLE: "BILLING_PORTAL_UNAVAILABLE",
   INSUFFICIENT_STOCK: "INSUFFICIENT_STOCK",
   INLINE_RETURN_ORDER_NOT_FOUND: "INLINE_RETURN_ORDER_NOT_FOUND",
   INLINE_RETURN_ORDER_CUSTOMER_MISMATCH: "INLINE_RETURN_ORDER_CUSTOMER_MISMATCH",
@@ -377,6 +387,21 @@ export const API_ERROR_CODES = {
   BUSINESS_PROFILE_BILLING_FAILED: "BUSINESS_PROFILE_BILLING_FAILED",
   PRICE_OVERRIDE_STRIPE_AHEAD: "PRICE_OVERRIDE_STRIPE_AHEAD",
   PLAN_CHANGE_STRIPE_AHEAD: "PLAN_CHANGE_STRIPE_AHEAD",
+  CHECKOUT_ANNUAL_NOT_SUPPORTED: "CHECKOUT_ANNUAL_NOT_SUPPORTED",
+  CATCHUP_SESSION_OPEN: "CATCHUP_SESSION_OPEN",
+  CATCHUP_PENDING: "CATCHUP_PENDING",
+  CATCHUP_NOT_ELIGIBLE: "CATCHUP_NOT_ELIGIBLE",
+  CATCHUP_NEEDS_RULING: "CATCHUP_NEEDS_RULING",
+  CATCHUP_AMOUNT_CHANGED: "CATCHUP_AMOUNT_CHANGED",
+  CATCHUP_SUBSCRIPTION: "CATCHUP_SUBSCRIPTION",
+  CATCHUP_ADDON_NOT_CARD_BILLABLE: "CATCHUP_ADDON_NOT_CARD_BILLABLE",
+  CATCHUP_ADDON_SNAPSHOT_NOT_CATALOG: "CATCHUP_ADDON_SNAPSHOT_NOT_CATALOG",
+  CATCHUP_MANUAL_PERIOD_AHEAD: "CATCHUP_MANUAL_PERIOD_AHEAD",
+  CATCHUP_NO_BILLABLE_PRICE: "CATCHUP_NO_BILLABLE_PRICE",
+  ACTIVATION_CATCHUP_SESSION_OPEN: "ACTIVATION_CATCHUP_SESSION_OPEN",
+  EXTERNAL_PAYMENT_USE_CATCHUP: "EXTERNAL_PAYMENT_USE_CATCHUP",
+  PAYMENT_OVERDUE: "PAYMENT_OVERDUE",
+  PAYMENT_STATE_UNKNOWN: "PAYMENT_STATE_UNKNOWN",
   SCHEDULED_PRICE_CHANGE_REFUSED: "SCHEDULED_PRICE_CHANGE_REFUSED",
   PROFILE_PLAN_CHANGED: "PROFILE_PLAN_CHANGED",
   HANDOFF_NOT_CONFIGURED: "HANDOFF_NOT_CONFIGURED",
@@ -422,6 +447,12 @@ export const API_ERROR_CODES = {
   SUPPLIER_ALLOCATION_BILL_VOID: "SUPPLIER_ALLOCATION_BILL_VOID",
   SUPPLIER_ALLOCATION_OVER_BALANCE: "SUPPLIER_ALLOCATION_OVER_BALANCE",
   COUNTER_SALES_DISABLED: "COUNTER_SALES_DISABLED",
+  /** 409 from a counter-sale tender, a payment edit or a refund dated inside a window that has been closed (the closed day's totals never move). Record it with today's date instead. */
+  COUNTER_SALE_DAY_CLOSED: "COUNTER_SALE_DAY_CLOSED",
+  /** 409 from POST /invoices/:id/payments: a CASH payment on a counter sale dated before the latest standing day close would change that closed Z report (body carries `closedThrough`, ISO). Record it with today's date. */
+  DAY_CLOSED_FOR_PAYMENT_DATE: "DAY_CLOSED_FOR_PAYMENT_DATE",
+  /** 409 from POST /orders/counter-sale/day-close: this window was closed by another request first (a first-close race). */
+  DAY_ALREADY_CLOSED: "DAY_ALREADY_CLOSED",
   /** 409 from POST /orders/counter-sale/parked: this register already holds the maximum open parked carts (COUNTER_PARK_MAX_PER_REGISTER); resume or discard one first. */
   PARK_LIMIT: "PARK_LIMIT",
   /** 404 from resume / discard of a parked cart: it was already taken back (by another till), discarded, or has expired. */
@@ -614,6 +645,17 @@ export const API_ERROR_CODES = {
    * credited but not marked PAID), so there is nothing to remind about. Nothing was sent (SA-770).
    */
   REMINDER_NO_BALANCE_DUE: "REMINDER_NO_BALANCE_DUE",
+  /**
+   * 400 from POST /invoices/:id/send-reminder: the invoice is not an issued, unpaid one (a DRAFT that was never
+   * sent, or a PAID, VOID or WRITTEN_OFF invoice), so a payment reminder makes no sense. Nothing was sent (row 318).
+   */
+  REMINDER_NOT_ISSUED: "REMINDER_NOT_ISSUED",
+  /**
+   * 410 from GET /auth/google/:tenantSlug and GET /auth/google/:tenantSlug/callback: the legacy per-tenant
+   * Google sign-in routes are retired. Fixed body, nothing from the request echoed; use the standard Google
+   * sign-in (GET /auth/google).
+   */
+  SIGN_IN_ROUTE_RETIRED: "SIGN_IN_ROUTE_RETIRED",
 } as const;
 
 /** The `flag` of a PLAN_GATE body that gates a count (a meter), not a feature flag. Not an error code. */

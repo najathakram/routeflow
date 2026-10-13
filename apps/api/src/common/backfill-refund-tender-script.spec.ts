@@ -196,7 +196,7 @@ describe("row 195 / #3344: the protected-tenant guard in the all-tenants apply p
 
   it("a Stripe-linked tenant is held too, through the subscription map", () => {
     const out = run(
-      'const subs = new Map([["t-open", { planKey: "STARTER", stripeSubId: "sub_x" }]]);',
+      'const subs = new Map([["t-open", { planKey: "STARTER", stripeSubId: "sub_x", couponFull: false }]]);',
     );
     expect(out.apply).toEqual([]);
     expect(out.held.sort()).toEqual(["r1", "r2"]);

@@ -2,6 +2,7 @@ import { roundMoney } from "@routeflow/pricing";
 import {
   buildCounterReceipt,
   formatReceiptMoney,
+  formatSaleDayTime,
   formatSaleTime,
   type ReceiptLineInput,
 } from "./counter-receipt";
@@ -148,6 +149,22 @@ describe("buildCounterReceipt", () => {
   });
 });
 
+describe("formatSaleDayTime (the reprint label's 'Sold Sun, Oct 11, 2:46 PM')", () => {
+  it("reads the sale's own day and time in the sale's zone, day label from the shared helper", () => {
+    expect(formatSaleDayTime("2026-10-11T18:46:00.000Z", "America/New_York")).toBe(
+      "Sun, Oct 11, 2:46 PM",
+    );
+  });
+  it("a sale near midnight keeps the zone's calendar day, not UTC's", () => {
+    expect(formatSaleDayTime("2026-10-08T02:30:00.000Z", "America/New_York")).toBe(
+      "Wed, Oct 7, 10:30 PM",
+    );
+  });
+  it("an unknown zone falls back to UTC and never throws", () => {
+    expect(formatSaleDayTime("2026-10-11T18:46:00.000Z", "Not/AZone")).toBe("Sun, Oct 11, 6:46 PM");
+  });
+});
+
 describe("formatSaleTime", () => {
   const at = "2026-10-07T15:15:00.000Z";
   it("reads the time in the given IANA zone", () => {
@@ -207,8 +224,8 @@ describe("row 298: the receipt line names the product's unit", () => {
     }).lines[0].detail;
 
   it("a plain line prints the unit word after the price", () => {
-    expect(detailOf({ unit: "each" })).toBe("1 × $2.50 / each");
-    expect(detailOf({ unit: " LB ", qty: 3 })).toBe("3 × $2.50 / lb");
+    expect(detailOf({ unit: "each" })).toBe("1 × $2.50 each");
+    expect(detailOf({ unit: " LB ", qty: 3 })).toBe("3 × $2.50 per lb");
   });
   it("a line with no unit on file keeps the bare form", () => {
     expect(detailOf({})).toBe("1 × $2.50");

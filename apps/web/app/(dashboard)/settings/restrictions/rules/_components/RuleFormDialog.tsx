@@ -1,7 +1,9 @@
 "use client";
 
 import * as React from "react";
+import NextLink from "next/link";
 import { Button, Input, Modal, Select, Textarea, useToast } from "@routeflow/ui/web";
+import { useAuth } from "@/lib/auth-context";
 import { useProducts } from "@/lib/api/products";
 import { useProductCategories } from "@/lib/api/product-labels";
 import { useCreateRestriction } from "@/lib/api/restrictions-admin-write";
@@ -105,6 +107,9 @@ export function RuleFormDialog({ open, onClose }: { open: boolean; onClose: () =
   const { toast } = useToast();
   const create = useCreateRestriction();
   const categories = useProductCategories(false);
+  // Same rule as the Product labels page: only the account admin manages labels.
+  const canManageLabels = useAuth().user?.role === "TENANT_ADMIN";
+  const noLabels = categories.isSuccess && (categories.data ?? []).length === 0;
   const [v, setV] = React.useState<RuleFormValues>(emptyRuleForm);
   const [productName, setProductName] = React.useState("");
   const [errors, setErrors] = React.useState<Errors>({});
@@ -179,7 +184,27 @@ export function RuleFormDialog({ open, onClose }: { open: boolean; onClose: () =
           </div>
         </fieldset>
 
-        {v.targetKind === "CATEGORY" ? (
+        {v.targetKind === "CATEGORY" && noLabels ? (
+          <div>
+            <p className="mb-1 text-sm font-medium text-navy">Category</p>
+            <p className="text-sm text-navy/70">No product labels yet</p>
+            {canManageLabels ? (
+              <NextLink
+                href="/settings/product-categories"
+                className="text-sm font-medium text-navy underline"
+              >
+                Add product labels
+              </NextLink>
+            ) : (
+              <p className="text-sm text-navy/70">Ask an account admin to add product labels.</p>
+            )}
+            {errors.categoryId && (
+              <p role="alert" className="mt-1 text-xs text-red-600">
+                {errors.categoryId}
+              </p>
+            )}
+          </div>
+        ) : v.targetKind === "CATEGORY" ? (
           <Select
             label="Category"
             placeholder="Select a category"

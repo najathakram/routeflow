@@ -26,11 +26,19 @@ const BASELINE: Record<string, number> = {
   // Round-4 prefactor (SA-124h, absorbing origin/master's unrelated growth under the size
   // ratchet): the per-item price/data builder moved verbatim to replace-all-line-build.ts,
   // taking 5 of these reads with it — 21 -> 16.
-  "orders/orders.service.ts": 16,
+  "orders/orders.service.ts": 15,
   // Round-4 prefactor (SA-124h): buildReplaceAllLineData, moved verbatim out of
   // orders.service.ts's replaceAll rebuild (see that file's own comment above) — same 5 reads,
   // same behavior, only relocated.
   "orders/replace-all-line-build.ts": 5,
+  // B297 stack (PR3 / rows 355 / 373): the recompute and free-unit-settle bodies moved out of orders.service.ts
+  // (which fell 16 -> 15), and the per-line pack / pairing helpers read the live pack ONLY to mirror the write
+  // path's own denomination gate (a paired line is judged in the unit its write path would use). Reads, never
+  // a new place a line's factor is decided; the count may only go down.
+  "orders/buyer-edit-lines.ts": 2,
+  "orders/recompute-line-category-taxes.ts": 1,
+  "orders/settle-split-free-units.ts": 2,
+  "orders/split-promo-group.ts": 1,
   // #2717 M3: ONE read of a COMPONENT product's pack (`p.unitsPerBox`) in buildComponentSnapshots,
   // feeding synthesizeLegacyBarcodes for a held tenant's legacy unit barcode. It is a barcode
   // synthesis input, never a line-factor decision (the line's own snapshot is planFixedComposition's

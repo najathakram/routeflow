@@ -338,6 +338,131 @@ describe("BookkeepingService", () => {
     });
   });
 
+  describe("recordPayment — G4: a counter invoice joins the end-of-day close like the office door", () => {
+    const DB_NOW = new Date("2026-10-09T17:30:00.000Z");
+    const CLOSE_END = new Date("2026-10-09T17:00:00.000Z");
+
+    function setup(opts: { counter: boolean; closeEnd?: Date; dbNow?: Date }) {
+      const log: string[] = [];
+      const create = jest.fn(async () => ({ id: "pay-1" }));
+      // counterPay.scope reads the order through forTenant() BEFORE the transaction.
+      prisma.forTenant.mockReturnValue({
+        order: {
+          findFirst: jest.fn(async () =>
+            opts.counter ? { counterSale: true, registerKey: "r1" } : null,
+          ),
+        },
+      } as never);
+      prisma.tenantTransaction.mockImplementation(async (fn: any) =>
+        fn({
+          $executeRaw: jest.fn(async (strings: TemplateStringsArray) => {
+            const q = strings.join("?");
+            log.push(
+              q.includes("counter-close")
+                ? "lock close"
+                : q.includes('"Order"')
+                  ? "lock Order"
+                  : "lock Invoice",
+            );
+          }),
+          $queryRaw: jest.fn(async () => {
+            log.push("db clock");
+            return [{ now: opts.dbNow ?? DB_NOW }];
+          }),
+          counterDayClose: {
+            // The latest-standing-close read answers with its windowEnd; the closed-window question (assertOpen: is this
+            // instant inside a window?) is answered from the same close, whose window ends at closeEnd.
+            findFirst: jest.fn(async ({ where }: any) => {
+              if (!opts.closeEnd) return null;
+              if (where?.windowEnd?.gt)
+                return where.windowEnd.gt < opts.closeEnd ? { id: "close" } : null;
+              return { windowEnd: opts.closeEnd };
+            }),
+          },
+          invoice: {
+            findMany: jest.fn(async () => [{ orderId: "ord-1" }]),
+            findUnique: jest.fn(async () => ({
+              id: "inv-c",
+              orderId: "ord-1",
+              status: "SENT",
+              total: 100,
+              payments: [],
+            })),
+            update: jest.fn().mockResolvedValue({ id: "inv-c" }),
+          },
+          invoicePayment: { create },
+        }),
+      );
+      return { log, create };
+    }
+
+    it("counter invoice: the shared close lock is the FIRST statement and paidAt is the database clock", async () => {
+      const { log, create } = setup({ counter: true });
+      const fixedApp = new Date("2020-01-01T00:00:00.000Z");
+      jest.useFakeTimers({ doNotFake: ["nextTick", "setImmediate"] }).setSystemTime(fixedApp);
+      try {
+        await service.recordPayment("inv-c", { amount: 10, method: "CASH" as any });
+      } finally {
+        jest.useRealTimers();
+      }
+      expect(log[0]).toBe("lock close");
+      expect(log.slice(0, 3)).toEqual(["lock close", "lock Order", "lock Invoice"]);
+      expect(create).toHaveBeenCalledWith(
+        expect.objectContaining({ data: expect.objectContaining({ paidAt: DB_NOW }) }),
+      );
+    });
+
+    it("counter invoice: CASH dated before a standing close is refused DAY_CLOSED_FOR_PAYMENT_DATE and nothing is created", async () => {
+      // the DB clock reads BEFORE the standing close's cutoff, so the row would land inside a closed window
+      const { create } = setup({
+        counter: true,
+        closeEnd: CLOSE_END,
+        dbNow: new Date("2026-10-09T16:00:00.000Z"),
+      });
+      await expect(
+        service.recordPayment("inv-c", { amount: 10, method: "CASH" as any }),
+      ).rejects.toMatchObject({ response: { code: "DAY_CLOSED_FOR_PAYMENT_DATE" } });
+      expect(create).not.toHaveBeenCalled();
+    });
+
+    it("counter invoice: a CHECK dated AFTER the standing close's cutoff is accepted", async () => {
+      const { create } = setup({
+        counter: true,
+        closeEnd: CLOSE_END,
+        dbNow: new Date("2026-10-09T18:00:00.000Z"), // the database clock, after windowEnd
+      });
+      await service.recordPayment("inv-c", { amount: 10, method: "CHECK" as any });
+      expect(create).toHaveBeenCalledTimes(1);
+    });
+
+    it("counter invoice: a CHECK whose date falls INSIDE the closed window is refused (a check moves the closed Z's money in)", async () => {
+      const { create } = setup({
+        counter: true,
+        closeEnd: CLOSE_END,
+        dbNow: new Date("2026-10-09T16:00:00.000Z"), // before windowEnd: inside the closed day
+      });
+      await expect(
+        service.recordPayment("inv-c", { amount: 10, method: "CHECK" as any }),
+      ).rejects.toMatchObject({ response: { code: "COUNTER_SALE_DAY_CLOSED" } });
+      expect(create).not.toHaveBeenCalled();
+    });
+
+    it("non-counter invoice: no close lock, no DB clock read, app-clock paidAt, behaviour unchanged", async () => {
+      const { log, create } = setup({ counter: false });
+      const fixedApp = new Date("2020-01-01T00:00:00.000Z");
+      jest.useFakeTimers({ doNotFake: ["nextTick", "setImmediate"] }).setSystemTime(fixedApp);
+      try {
+        await service.recordPayment("inv-c", { amount: 10, method: "CASH" as any });
+      } finally {
+        jest.useRealTimers();
+      }
+      expect(log).toEqual(["lock Order", "lock Invoice"]);
+      expect(create).toHaveBeenCalledWith(
+        expect.objectContaining({ data: expect.objectContaining({ paidAt: fixedApp }) }),
+      );
+    });
+  });
+
   describe("getPdfUrl", () => {
     it("should return url when PDF exists", async () => {
       invoiceService.getPresignedUrl.mockResolvedValue("https://r2.example.com/invoice.pdf");
@@ -674,27 +799,71 @@ describe("BookkeepingService", () => {
       expect({ closing: o.closingBalance, ind: o.indicator }).toEqual({ closing: -30, ind: "Cr" });
     });
 
-    it("getReceivableSummary: an overpaid PAID invoice shows balance 0 (the surplus stays visible through the payment rows), not a negative", async () => {
-      const paidOver = { ...row("po", 100, [pay(130)], PAST, "PAID") };
-      prisma.invoice.findMany.mockResolvedValue([paidOver, owing()]);
-      prisma.creditNote.findMany.mockResolvedValue([]);
-      prisma.invoicePayment.findMany.mockResolvedValue([
-        {
-          id: "p1",
-          paymentNumber: "PAY-1",
-          createdAt: PAST,
-          status: "PAID",
-          amount: 130,
-          invoice: { invoiceNumber: "PO", customer: cust },
-        },
-      ]);
-      const res: any = await service.getReceivableSummary();
-      const inv = res.data.filter((r: any) => r.type === "INVOICE");
-      expect(inv.map((r: any) => [r.transactionNumber, r.balance])).toEqual([
-        ["PO", 0],
-        ["OWES", 50],
-      ]);
-      expect(res.data.find((r: any) => r.type === "PAYMENT").total).toBe(130); // the surplus is visible here
+    // OWNER RULING 2026-10-11 (supersedes the row-310 pin that read 0 here): the Receivable Summary
+    // report alone shows an overpayment as a NEGATIVE invoice-row balance. Every other surface stays
+    // clamped (overdue-readers-inventory.spec.ts pins that `signedBalance` is used by this reader only).
+    describe("getReceivableSummary — signed invoice-row balance (owner ruling 2026-10-11)", () => {
+      const summaryRows = async (invoices: any[]) => {
+        prisma.invoice.findMany.mockResolvedValue(invoices);
+        prisma.creditNote.findMany.mockResolvedValue([]);
+        prisma.invoicePayment.findMany.mockResolvedValue([]);
+        const res: any = await service.getReceivableSummary();
+        return res.data.filter((r: any) => r.type === "INVOICE");
+      };
+
+      it("an overpaid PAID invoice shows -10.00; the surplus is also visible on the PAYMENT row", async () => {
+        const paidOver = row("po", 100, [pay(110)], PAST, "PAID");
+        prisma.invoice.findMany.mockResolvedValue([paidOver, owing()]);
+        prisma.creditNote.findMany.mockResolvedValue([]);
+        prisma.invoicePayment.findMany.mockResolvedValue([
+          {
+            id: "p1",
+            paymentNumber: "PAY-1",
+            createdAt: PAST,
+            status: "PAID",
+            amount: 110,
+            invoice: { invoiceNumber: "PO", customer: cust },
+          },
+        ]);
+        const res: any = await service.getReceivableSummary();
+        const inv = res.data.filter((r: any) => r.type === "INVOICE");
+        expect(inv.map((r: any) => [r.transactionNumber, r.balance])).toEqual([
+          ["PO", -10],
+          ["OWES", 50],
+        ]);
+        expect(res.data.find((r: any) => r.type === "PAYMENT").total).toBe(110);
+      });
+
+      it("exactly paid reads 0 and a partial payment reads a positive balance", async () => {
+        const rows = await summaryRows([
+          row("exact", 100, [pay(100)], PAST, "PAID"),
+          row("part", 100, [pay(40)], PAST, "PARTIAL"),
+        ]);
+        expect(rows.map((r: any) => [r.transactionNumber, r.balance])).toEqual([
+          ["EXACT", 0],
+          ["PART", 60],
+        ]);
+      });
+
+      it("an overpaid + owing pair: each row keeps its own sign (no netting inside a row)", async () => {
+        const rows = await summaryRows([overpaid(), owing()]);
+        expect(rows.map((r: any) => [r.transactionNumber, r.balance])).toEqual([
+          ["OVER", -30],
+          ["OWES", 50],
+        ]);
+      });
+
+      it("float dust (11 x $0.10 against $1.10) reads 0, never -2e-16 / 2e-16", async () => {
+        const rows = await summaryRows([dusty()]);
+        expect(Object.is(rows[0].balance, 0)).toBe(true);
+      });
+
+      it("only confirmed payments count: a VOID payment does not make the row negative", async () => {
+        const rows = await summaryRows([
+          row("v", 100, [{ amount: 100, status: "VOID", method: "CASH" }], PAST, "SENT"),
+        ]);
+        expect(rows[0].balance).toBe(100);
+      });
     });
 
     it("getInvoiceDetailsReport: an overpaid row shows balance 0 (paid > total stays visible), not a negative", async () => {
@@ -901,7 +1070,7 @@ describe("BookkeepingService", () => {
       customerId: "cust-1",
       customer: { id: "cust-1", businessName: "Acme" },
     };
-    const payment = (over: Record<string, any>) => ({
+    const payment = (over: Record<string, any>): Record<string, any> => ({
       status: "PAID",
       method: "CASH",
       settledAt: null,

@@ -3,6 +3,7 @@
 import Link from "next/link";
 import { Badge } from "@routeflow/ui/web";
 import { unitsLabel } from "@/lib/stock-label";
+import { stockCountLabel } from "../_components/product-status";
 
 /**
  * The product detail's "Stock & Cost" card. Not rendered for a FAMILY container (non-stocked, non-sellable):
@@ -37,7 +38,7 @@ export function ProductStockCostCard({
         <div className="flex items-center justify-between border-b border-surface-border py-3 text-sm">
           <span className="text-navy/70">Stock status</span>
           {stockStatus === "OUT_OF_STOCK" ? (
-            <Badge variant="danger" label="Out of Stock" />
+            <Badge variant="warning" label={stockCountLabel(currentStock)} />
           ) : stockStatus === "LOW" ? (
             <Badge variant="warning" label="Low Stock" />
           ) : (

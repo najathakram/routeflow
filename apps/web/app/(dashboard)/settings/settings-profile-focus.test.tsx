@@ -130,3 +130,61 @@ describe("Business profile — receipt footer", () => {
     expect(screen.queryByText("raw server text")).not.toBeInTheDocument();
   });
 });
+
+describe("Business profile — saving one section (row 327)", () => {
+  // A counter shop that never filled in the contact and address fields: the API stores those as empty strings,
+  // so they must not block saving something else.
+  const COUNTER_SHOP = {
+    ...SAVED,
+    ownerName: "",
+    phone: "",
+    street: "",
+    city: "",
+    state: "",
+    zip: "",
+  };
+
+  it("saving ONLY the tax rate is not blocked by untouched empty contact and address fields", async () => {
+    const user = userEvent.setup();
+    get.mockResolvedValue({ data: COUNTER_SHOP });
+    renderWithProviders(<SettingsPage />);
+    const tax = await screen.findByLabelText("Default Tax Rate");
+    await waitFor(() => expect(tax).toHaveValue(8.25));
+    await user.clear(tax);
+    await user.type(tax, "7");
+    await user.click(screen.getByRole("button", { name: /save changes/i }));
+
+    await waitFor(() => expect(patch).toHaveBeenCalledTimes(1));
+    expect(patch.mock.calls[0][1]).toMatchObject({ taxRate: 7 });
+    expect(screen.queryByText(/Fix \d+ fields?/)).toBeNull();
+  });
+
+  it("a field the user DID touch is still checked, even when others are empty", async () => {
+    const user = userEvent.setup();
+    get.mockResolvedValue({ data: COUNTER_SHOP });
+    renderWithProviders(<SettingsPage />);
+    const zip = await screen.findByLabelText("ZIP Code");
+    await waitFor(() => expect(screen.getByLabelText("Default Tax Rate")).toHaveValue(8.25));
+    await user.type(zip, "abc");
+    await user.click(screen.getByRole("button", { name: /save changes/i }));
+
+    expect(await screen.findByText("Fix 1 field")).toBeInTheDocument();
+    expect(screen.getByText("Enter a valid ZIP code")).toBeInTheDocument();
+    expect(patch).not.toHaveBeenCalled();
+  });
+
+  it("a bad tax rate is reported at the tax field itself", async () => {
+    const user = userEvent.setup();
+    get.mockResolvedValue({ data: COUNTER_SHOP });
+    renderWithProviders(<SettingsPage />);
+    const tax = await screen.findByLabelText("Default Tax Rate");
+    await waitFor(() => expect(tax).toHaveValue(8.25));
+    await user.clear(tax);
+    await user.type(tax, "150");
+    await user.click(screen.getByRole("button", { name: /save changes/i }));
+
+    expect(await screen.findByText("Fix 1 field")).toBeInTheDocument();
+    await waitFor(() => expect(tax).toHaveFocus());
+    expect(patch).not.toHaveBeenCalled();
+  });
+});

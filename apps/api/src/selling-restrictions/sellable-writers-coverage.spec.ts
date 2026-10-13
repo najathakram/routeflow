@@ -54,7 +54,6 @@ const TABLE: Record<string, Row> = {
     "owner ruling 2026-09-25 (#2093) / SA-255: MERGE AND WARN — folds orders each checked when placed, never blocked; warns via merge-restriction-warning.ts (pinned in orders.merge-warn.spec.ts)",
   ),
   [tpl("createOrderFromTemplate")]: G,
-  [ord("recomputeLineCategoryTaxes")]: X("categoryTaxAmount only"),
   [ord("deleteOrder")]: X("removes lines"),
   // SA-762r F1: the cancel's line status flip, moved verbatim out of changeStatus (whose own row stays: it calls the choke point).
   "orders/order-cancel-tx.ts::cancelOrderInTx": X(

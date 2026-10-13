@@ -16,6 +16,7 @@ import { ConfigSnapshotFlagService } from "./config-snapshot-flag.service";
 import { PlanTransitionConfigService } from "./plan-transition-config.service";
 import { TenantConfigSnapshotAdminService } from "./tenant-config-snapshot-admin.service";
 import { SubscriptionService } from "./subscription.service";
+import { SubscriptionBillingExtras } from "./subscription-billing-extras";
 import { SubscriptionMutationService } from "./subscription-mutation.service";
 import { BillingEventService } from "./billing-event.service";
 import { BillingCronService } from "./billing-cron.service";
@@ -29,6 +30,11 @@ import { BillingNotificationService } from "./billing-notification.service";
 import { EmailModule } from "../email/email.module";
 import { EntitlementsModule } from "./entitlements.module";
 import { ScheduledPriceChangeService } from "./scheduled-price-change";
+import { CatchupClaimService } from "./catchup-claim.service";
+import { CatchupCheckoutService } from "./catchup-checkout.service";
+import { DunningService } from "./dunning.service";
+import { AutoLockSwitchService } from "./auto-lock-switch.service";
+import { AutoLockAdminService } from "./auto-lock-admin.service";
 
 @Module({
   // forwardRef: MailboxModule (imported by EmailModule for MailboxSendService) imports this
@@ -50,11 +56,22 @@ import { ScheduledPriceChangeService } from "./scheduled-price-change";
     AddonAccessService,
     ProrationService,
     SubscriptionService,
+    // SA-733r6 (B4): billing contact, open-invoice amount, autopay card (Stripe-backed, cached) for the view.
+    SubscriptionBillingExtras,
     SubscriptionMutationService,
     BillingEventService,
     BillingCronService,
     // R1 option B: a scheduled downgrade's price reaches Stripe before the renewal (invoice.upcoming + a backup sweep).
     ScheduledPriceChangeService,
+    // SA-733r3 N2: the October catch-up claim lifecycle (webhook entry points + the hourly sweep).
+    CatchupClaimService,
+    // SA-733 D7: plan + open the October catch-up checkout (platform-admin CatchupAdminController).
+    CatchupCheckoutService,
+    // SA-733r7 PR-B3: dunning (clock stamp, hourly pause sweep, invoice.paid resume, pause_collection reconciler).
+    DunningService,
+    // SA-775 (row 381): the rollout pause on AUTOMATIC locks - the switch, and the super-admin preview over it.
+    AutoLockSwitchService,
+    AutoLockAdminService,
     // Manual invoices due PR1 (DARK: RF_INVOICING_MODE defaults to off, the cron then does nothing).
     RfInvoiceBuilder,
     RfInvoiceIssuerService,
@@ -80,6 +97,14 @@ import { ScheduledPriceChangeService } from "./scheduled-price-change";
   exports: [
     StripeService,
     ScheduledPriceChangeService,
+    // The platform-admin RfInvoice queue refuses payments while a claim is held.
+    CatchupClaimService,
+    CatchupCheckoutService,
+    // Platform-admin activation / extendTrial clear a pause's Stripe pause_collection after their commit.
+    DunningService,
+    // SA-775: the platform-admin controller reads / flips the switch and previews the unpause.
+    AutoLockSwitchService,
+    AutoLockAdminService,
     BillingService,
     PlatformPricingService,
     AddonService,

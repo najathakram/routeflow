@@ -9,6 +9,7 @@ import {
   type PaymentRequest,
 } from "@/lib/api/payment-requests";
 import { useToast, EmptyState, Button, Badge, Modal, Textarea } from "@routeflow/ui/web";
+import { dayClosedCopy } from "@/lib/day-closed-copy";
 import { fmt, fmtCalendarDate, fmtDate } from "@/lib/formatting";
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
@@ -187,7 +188,11 @@ export default function PaymentRequestsPage() {
       });
       setApproveTarget(null);
     } catch (err: unknown) {
-      toast({ title: extractErrorMessage(err) ?? "Failed to approve payment", variant: "error" });
+      // A closed-day refusal is fixed copy (the global toast is quiet for it via the hook's meta): this is the one toast.
+      toast({
+        title: dayClosedCopy(err) ?? extractErrorMessage(err) ?? "Failed to approve payment",
+        variant: "error",
+      });
     }
   };
 

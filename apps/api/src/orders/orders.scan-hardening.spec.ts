@@ -722,6 +722,7 @@ describe("OrdersController.create — staff merge is denomination-aware (T-B199 
           },
         ],
       }),
+      liveTrioByProduct: jest.fn().mockResolvedValue(new Map()),
       updateOrderItems: jest.fn().mockResolvedValue(undefined),
       mergeAllPendingForCustomer: jest.fn().mockResolvedValue(null),
       findOne: jest.fn().mockResolvedValue({ id: "ord-active" }),
@@ -789,6 +790,7 @@ describe("OrdersController.create — staff merge is denomination-aware (T-B199 
           },
         ],
       }),
+      liveTrioByProduct: jest.fn().mockResolvedValue(new Map()),
       updateOrderItems: jest.fn().mockResolvedValue(undefined),
       mergeAllPendingForCustomer: jest.fn().mockResolvedValue(null),
       findOne: jest.fn().mockResolvedValue({ id: "ord-active" }),
@@ -837,6 +839,7 @@ describe("OrdersController.create — staff merge is denomination-aware (T-B199 
         total: storeQty * 5,
         lineItems: [{ id: "li-1", productId: "prod-1", qty: storeQty, unitPrice: 5 }],
       })),
+      liveTrioByProduct: jest.fn().mockResolvedValue(new Map()),
       updateOrderItems: jest.fn(async (_orderId: string, dto: any) => {
         const line = dto.items.find((i: any) => i.productId === "prod-1");
         if (line) storeQty = Number(line.qty);
@@ -931,6 +934,7 @@ describe("OrdersController.create — staff merge is denomination-aware (T-B199 
           },
         ],
       }),
+      liveTrioByProduct: jest.fn().mockResolvedValue(new Map()),
       updateOrderItems: jest.fn(async (orderId: string, dto: any) => {
         capturedOrderId = orderId;
         capturedDto = dto;
@@ -1040,6 +1044,7 @@ describe("OrdersController.create — staff merge is denomination-aware (T-B199 
         total: storeQty * 5,
         lineItems: [{ id: "li-1", productId: "prod-1", qty: storeQty, unitPrice: 5 }],
       })),
+      liveTrioByProduct: jest.fn().mockResolvedValue(new Map()),
       updateOrderItems: jest.fn(async (_orderId: string, dto: any) => {
         // Marker on the SHARED ledger: the fold's write must land between an
         // `enter:` and its matching `exit:` — i.e. INSIDE the critical section.
@@ -1149,6 +1154,7 @@ describe("OrdersController.create — staff merge is denomination-aware (T-B199 
             },
           ],
         }),
+        liveTrioByProduct: jest.fn().mockResolvedValue(new Map()),
         updateOrderItems: jest.fn().mockResolvedValue(undefined),
         mergeAllPendingForCustomer: jest.fn().mockResolvedValue(null),
         findOne: jest.fn().mockResolvedValue({ id: "ord-active" }),
@@ -1208,6 +1214,7 @@ describe("OrdersController.create — staff merge is denomination-aware (T-B199 
             },
           ],
         }),
+        liveTrioByProduct: jest.fn().mockResolvedValue(new Map()),
         updateOrderItems: jest.fn().mockResolvedValue(undefined),
         mergeAllPendingForCustomer: jest.fn().mockResolvedValue(null),
         findOne: jest.fn().mockResolvedValue({ id: "ord-active" }),
@@ -1276,6 +1283,7 @@ describe("OrdersController.create — staff merge is denomination-aware (T-B199 
   it("T2 new-5: the POST-MERGE sweep hitting contention does not fail the request — create() still resolves with the merged order and warns once", async () => {
     const ordersService: any = {
       findActiveOrder: jest.fn().mockResolvedValue(activeOrderFixture),
+      liveTrioByProduct: jest.fn().mockResolvedValue(new Map()),
       updateOrderItems: jest.fn().mockResolvedValue(undefined),
       // The fold inside the lock has ALREADY committed at this point.
       mergeAllPendingForCustomer: jest.fn().mockRejectedValue(mergeInProgress()),
@@ -1329,6 +1337,7 @@ describe("OrdersController.create — staff merge is denomination-aware (T-B199 
   it("T2 new-7: a NON-contention failure from the post-merge sweep still propagates — the swallow is by CODE, not blanket", async () => {
     const ordersService: any = {
       findActiveOrder: jest.fn().mockResolvedValue(activeOrderFixture),
+      liveTrioByProduct: jest.fn().mockResolvedValue(new Map()),
       updateOrderItems: jest.fn().mockResolvedValue(undefined),
       mergeAllPendingForCustomer: jest.fn().mockRejectedValue(new Error("boom")),
       findOne: jest.fn().mockResolvedValue({ id: "ord-active" }),
@@ -1356,6 +1365,7 @@ describe("OrdersController.create — staff merge is denomination-aware (T-B199 
   it("R1: both post-commit consolidations ask for the customer lock with { lockMode: 'try' } — deferrable work never waits out another holder", async () => {
     const ordersService: any = {
       findActiveOrder: jest.fn().mockResolvedValue(activeOrderFixture),
+      liveTrioByProduct: jest.fn().mockResolvedValue(new Map()),
       updateOrderItems: jest.fn().mockResolvedValue(undefined),
       mergeAllPendingForCustomer: jest.fn().mockResolvedValue(null),
       findOne: jest.fn().mockResolvedValue({ id: "ord-active" }),
@@ -1404,6 +1414,7 @@ describe("OrdersController.create — staff merge is denomination-aware (T-B199 
         // … but by the time this request's turn in the lock arrives, the holder before us
         // merged it away (or deleted it).
         .mockResolvedValueOnce(null),
+      liveTrioByProduct: jest.fn().mockResolvedValue(new Map()),
       updateOrderItems: jest.fn().mockResolvedValue(undefined),
       mergeAllPendingForCustomer: jest.fn().mockResolvedValue(null),
       findOne: jest.fn().mockResolvedValue({ id: "ord-active" }),
@@ -1437,6 +1448,7 @@ describe("OrdersController.create — staff merge is denomination-aware (T-B199 
     const ordersService: any = {
       findActiveOrder: jest.fn().mockResolvedValue(activeOrderFixture),
       findOrderIdByIdempotencyKey: jest.fn().mockResolvedValue(null),
+      liveTrioByProduct: jest.fn().mockResolvedValue(new Map()),
       updateOrderItems: jest.fn().mockResolvedValue(undefined),
       recordIdempotencyKey: jest.fn().mockRejectedValue(new Error("unique violation")),
       mergeAllPendingForCustomer: jest.fn().mockResolvedValue(null),
@@ -1524,7 +1536,7 @@ describe("buyer barcode scan — reachable and catalog-scoped (T-B200 / R12 / RE
   let controller: BuyerController;
   let prisma: ReturnType<typeof createMockPrisma>;
   let scopedProductFindMany: jest.Mock;
-  let catalogService: { getProductDetail: jest.Mock };
+  let catalogService: { getProductDetail: jest.Mock; scanVisibilityWhere: jest.Mock };
   let stockAlertService: { isSubscribed: jest.Mock };
 
   beforeEach(async () => {
@@ -1545,7 +1557,13 @@ describe("buyer barcode scan — reachable and catalog-scoped (T-B200 / R12 / RE
       throw new Error("unscoped catalog read — the buyer scan rung must go through forTenant()");
     });
 
-    catalogService = { getProductDetail: jest.fn() };
+    catalogService = {
+      getProductDetail: jest.fn(),
+      // the buyer scope builder with no restriction-hidden ids (hidden ids are proven in the portal db spec)
+      scanVisibilityWhere: jest.fn(async (_c: string, tenantId: string) =>
+        buyerVisibleProductWhere(noBuyerRestrictions(tenantId)),
+      ),
+    };
     stockAlertService = { isSubscribed: jest.fn().mockResolvedValue(false) };
 
     const module: TestingModule = await Test.createTestingModule({

@@ -329,7 +329,7 @@
     "why": "B986-4 buyer portal: per-surface raw message read, pending"
   },
   "app/buyer/verify-merge/page.tsx": {
-    "count": 3,
+    "count": 1,
     "why": "B986-4 buyer portal: per-surface raw message read, pending"
   },
   "app/change-password/page.tsx": {
