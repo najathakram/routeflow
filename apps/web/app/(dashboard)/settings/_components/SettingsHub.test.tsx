@@ -166,6 +166,7 @@ describe("SettingsHub regroup", () => {
         "/settings?tab=costing",
         "/settings?tab=remittance",
         "/settings/restrictions",
+        "/settings/restrictions/rules",
         "/settings/import",
         "/settings/migration",
       ]);
