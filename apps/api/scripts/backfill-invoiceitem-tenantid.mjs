@@ -16,6 +16,11 @@
 // Run (dry-run):  railway run --service postgres node apps/api/scripts/backfill-invoiceitem-tenantid.mjs
 // Run (write):    railway run --service postgres node apps/api/scripts/backfill-invoiceitem-tenantid.mjs --execute
 import pg from "pg";
+import guard from "./lib/live-target-guard.cjs";
+import protectedSlugsLib from "./lib/protected-slugs.cjs";
+
+const { protectedTenantIds } = guard;
+const { loadProtectedSlugs } = protectedSlugsLib;
 
 const EXECUTE = process.argv.includes("--execute");
 
@@ -36,18 +41,24 @@ if (missing.length) {
   process.exit(1);
 }
 
-const client = new pg.Client({
-  connectionString:
-    `postgresql://${e.POSTGRES_USER}:${encodeURIComponent(e.POSTGRES_PASSWORD)}` +
-    `@${e.RAILWAY_TCP_PROXY_DOMAIN}:${e.RAILWAY_TCP_PROXY_PORT}/${e.POSTGRES_DB}`,
-});
+const dbUrl =
+  `postgresql://${e.POSTGRES_USER}:${encodeURIComponent(e.POSTGRES_PASSWORD)}` +
+  `@${e.RAILWAY_TCP_PROXY_DOMAIN}:${e.RAILWAY_TCP_PROXY_PORT}/${e.POSTGRES_DB}`;
 
-const one = async (sql) => (await client.query(sql)).rows[0];
+// Row 195: the protected list is loaded ONCE, against the URL this script actually dials.
+const slugs = loadProtectedSlugs(e, dbUrl);
+const client = new pg.Client({ connectionString: dbUrl });
+
+const one = async (sql, params) => (await client.query(sql, params)).rows[0];
 
 try {
   await client.connect();
   console.log(`Target: ${e.RAILWAY_TCP_PROXY_DOMAIN}:${e.RAILWAY_TCP_PROXY_PORT}/${e.POSTGRES_DB}`);
   console.log(EXECUTE ? "MODE: EXECUTE (will write)\n" : "MODE: dry-run (no writes)\n");
+
+  // Protected tenants are excluded by the DERIVED tenant (the parent's), since the child is NULL.
+  const prot = await protectedTenantIds(client, slugs);
+  console.log(`protected-tenant guard: ${prot.length} protected tenant(s) excluded\n`);
 
   const before = {
     nullInvoices: (await one(`SELECT COUNT(*)::int AS n FROM "Invoice" WHERE "tenantId" IS NULL`))
@@ -55,7 +66,9 @@ try {
     derivableInvoices: (
       await one(
         `SELECT COUNT(*)::int AS n FROM "Invoice" i JOIN "Customer" c ON c.id = i."customerId"
-         WHERE i."tenantId" IS NULL AND c."tenantId" IS NOT NULL`,
+         WHERE i."tenantId" IS NULL AND c."tenantId" IS NOT NULL
+           AND c."tenantId" <> ALL($1::text[])`,
+        [prot],
       )
     ).n,
     nullItems: (await one(`SELECT COUNT(*)::int AS n FROM "InvoiceItem" WHERE "tenantId" IS NULL`))
@@ -85,12 +98,16 @@ try {
   const inv = await client.query(
     `UPDATE "Invoice" i SET "tenantId" = c."tenantId"
      FROM "Customer" c
-     WHERE c.id = i."customerId" AND i."tenantId" IS NULL AND c."tenantId" IS NOT NULL`,
+     WHERE c.id = i."customerId" AND i."tenantId" IS NULL AND c."tenantId" IS NOT NULL
+       AND c."tenantId" <> ALL($1::text[])`,
+    [prot],
   );
   const items = await client.query(
     `UPDATE "InvoiceItem" ii SET "tenantId" = i."tenantId"
      FROM "Invoice" i
-     WHERE i.id = ii."invoiceId" AND ii."tenantId" IS NULL AND i."tenantId" IS NOT NULL`,
+     WHERE i.id = ii."invoiceId" AND ii."tenantId" IS NULL AND i."tenantId" IS NOT NULL
+       AND i."tenantId" <> ALL($1::text[])`,
+    [prot],
   );
   const after = {
     nullInvoices: (await one(`SELECT COUNT(*)::int AS n FROM "Invoice" WHERE "tenantId" IS NULL`))

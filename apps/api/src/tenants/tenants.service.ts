@@ -27,6 +27,9 @@ import { TRIAL_LENGTH_DAYS, planKeyFromEnum } from "../billing/plan-catalog.cons
 import { escapeHtml } from "../common/html-escape";
 import { mayUseVerificationLink } from "../auth/verification-link-eligibility";
 import { assertSafeTextCell } from "../common/safe-text-cell";
+import { isApprovedTestTenantSlug } from "../common/tenant-class.util";
+import { FALLBACK_ZONE } from "../common/tenant-time-zone";
+import { assertValidTenantTimeZone } from "../system-config/tenant-timezone.writer";
 
 const RESERVED_SLUGS = new Set([
   "api",
@@ -96,7 +99,7 @@ export class TenantsService {
   }
 
   async isSlugAvailable(slug: string): Promise<boolean> {
-    if (RESERVED_SLUGS.has(slug)) return false;
+    if (RESERVED_SLUGS.has(slug) || isApprovedTestTenantSlug(slug as unknown)) return false;
     const existing = await this.prisma.tenant.findUnique({ where: { slug } });
     return !existing;
   }
@@ -104,9 +107,19 @@ export class TenantsService {
   async register(dto: RegisterTenantDto) {
     const { slug, businessName, adminEmail, adminUsername, adminPassword } = dto;
     assertSafeTextCell({ businessName }); // B956: the name is mirrored into a Customer row
+    // SA-738: an explicit zone is ALWAYS written (never the column default): the client's, else UTC.
+    const timezone = dto.timezone ? assertValidTenantTimeZone(dto.timezone) : FALLBACK_ZONE;
 
     if (RESERVED_SLUGS.has(slug)) {
       throw new ConflictException(`Slug "${slug}" is reserved`);
+    }
+
+    // Row 195: the test-tenant slug patterns are reserved for the policy's own test tenants — a real
+    // signup can never land on one (the protected-tenant guard and the test-tenant allow-lists key
+    // on them). The message is deliberately neutral: it does not say why.
+    // `as unknown`: the predicate would otherwise narrow `slug` to never on the false branch.
+    if (isApprovedTestTenantSlug(slug as unknown)) {
+      throw new BadRequestException(`Slug "${slug}" is not available`);
     }
 
     const slugTaken = await this.prisma.tenant.findUnique({ where: { slug } });
@@ -136,7 +149,7 @@ export class TenantsService {
         data: { tenantId: tenant.id, currentPlan: "STARTER", planKey: planKeyFromEnum("STARTER") },
       });
 
-      await tx.tenantConfig.create({ data: { tenantId: tenant.id, businessName } });
+      await tx.tenantConfig.create({ data: { tenantId: tenant.id, businessName, timezone } });
 
       // Seed IRS Schedule C expense categories so new tenants have a curated
       // list to pick from immediately.

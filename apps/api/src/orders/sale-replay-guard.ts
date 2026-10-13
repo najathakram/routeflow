@@ -8,7 +8,9 @@ export type StoredSaleState = "live" | "incomplete" | "voided" | "changed";
  * The ONE rule for "is this stored sale still a sale?" (SA-672c/d), used by GET .../by-key (all four answers) and by
  * createSale's replay guard (which separates a moved order BEFORE asking, see assertSaleReplayable):
  *  - voided: the order is CANCELLED, or there is at least one invoice and EVERY one is VOID / WRITTEN_OFF;
- *  - incomplete: a PENDING or DELIVERED order with NO invoice rows at all (a re-POST with the same key finishes it);
+ *  - incomplete: a PENDING or DELIVERED order with NO invoice rows at all, OR whose live invoice is still a DRAFT
+ *    (createSale sends every invoice before the tender, so a DRAFT means the send step never finished, or the office
+ *    pulled the invoice back to draft). A re-POST with the same key finishes it; by-key must say so, never "done";
  *  - changed: an order in any OTHER status (CONFIRMED, OUT_FOR_DELIVERY, PARTIALLY_DELIVERED, ...) with NO invoice
  *    rows: staff moved it on and nothing can be read back;
  *  - live: anything else, which includes a PAID sale that staff moved to CONFIRMED or PARTIALLY_DELIVERED (a live
@@ -23,7 +25,16 @@ export function storedSaleState(
   if (invoiceStatuses.length === 0) {
     return orderStatus === "PENDING" || orderStatus === "DELIVERED" ? "incomplete" : "changed";
   }
-  return invoiceStatuses.every((s) => s === "VOID" || s === "WRITTEN_OFF") ? "voided" : "live";
+  if (invoiceStatuses.every((s) => s === "VOID" || s === "WRITTEN_OFF")) return "voided";
+  // Row 383: a half sale (order + DRAFT invoice, send failed) is not a finished sale. Only a PENDING / DELIVERED order
+  // is judged this way: an order staff moved on stays "live" (never rung twice).
+  if (
+    (orderStatus === "PENDING" || orderStatus === "DELIVERED") &&
+    invoiceStatuses.some((s) => s === "DRAFT")
+  ) {
+    return "incomplete";
+  }
+  return "live";
 }
 
 export const saleChangedConflict = () =>

@@ -242,8 +242,17 @@ function brandHeaderHtml(): string {
  *  (invoices, the low-stock digest). Shows the tenant's business name, not the RouteFlow
  *  mark: this is the tenant's own correspondence: RouteFlow is the platform underneath it,
  *  not the sender the recipient should see. */
-function tenantHeaderHtml(businessName: string): string {
+export function tenantHeaderHtml(businessName: string): string {
   return `<span style="font-family:Arial,Helvetica,sans-serif;font-size:20px;font-weight:700;color:${BRAND_WHITE};letter-spacing:-0.3px;">${escapeHtml(businessName)}</span>`;
+}
+
+/**
+ * A closing sentence that ends in a tenant-typed name ("Sent by Acme Co."): the period is added only when the text does not
+ * already end a sentence, so a business named "Acme Co." is not signed "Acme Co.." (CQ-20).
+ */
+export function endSentence(text: string): string {
+  const t = text.trimEnd();
+  return /[.!?\u2026]$/.test(t) ? t : `${t}.`; // . ! ? and the ellipsis character
 }
 
 /**
@@ -256,7 +265,7 @@ function tenantHeaderHtml(businessName: string): string {
  * structured pieces the caller supplies — never derived by stripping tags, which could
  * silently drop a dollar figure or a link — so the two can never drift apart.
  */
-function renderBrandedEmail(params: {
+export function renderBrandedEmail(params: {
   headerHtml: string;
   heading: string;
   bodyHtml: string;
@@ -1109,6 +1118,11 @@ export class EmailService {
      * price leaks to the buyer.
      */
     hideOriginalPrice?: boolean;
+    /**
+     * Row 401: a counter sale paid at the till is settled when it is rung, so the body prints no Due Date and no
+     * Terms (the caller decides with `isPaidAtSale`, the rule the invoice page follows). Absent/false = both show.
+     */
+    hideTerms?: boolean;
     /** Deposit schedule (display-only, derived server-side) — null/absent renders nothing. */
     depositAmount?: number | null;
     depositDueDate?: string | null;
@@ -1628,6 +1642,8 @@ export class EmailService {
       isReminder?: boolean;
       /** Tenant's `invoice.hideOriginalPrice` — see sendInvoice's doc. */
       hideOriginalPrice?: boolean;
+      /** Row 401: no Due Date / Terms rows for a paid-at-sale counter invoice — see sendInvoice's doc. */
+      hideTerms?: boolean;
       /** Deposit schedule (display-only, derived server-side) — null/absent renders nothing. */
       depositAmount?: number | null;
       depositDueDate?: string | null;
@@ -1680,7 +1696,7 @@ export class EmailService {
     // Deposit schedule banner — only when the invoice carries a deposit. The
     // remainder anchors to the invoice due date; amounts arrive pre-derived.
     const depositBanner =
-      params.depositAmount != null
+      params.depositAmount != null && !params.hideTerms
         ? `<div style="background:#eef2ff;border-left:4px solid #6366f1;padding:12px 16px;margin-bottom:24px;border-radius:4px;">
            <p style="margin:0;font-size:14px;color:#3730a3;font-weight:600;">Deposit due${
              params.depositDueDate ? ` by ${escapeHtml(params.depositDueDate)}` : ""
@@ -1758,12 +1774,16 @@ export class EmailService {
               <td style="font-size:13px;color:#6b7280;padding-top:6px;">Issue Date</td>
               <td style="font-size:13px;color:#1D2A3D;text-align:right;padding-top:6px;">${escapeHtml(params.issueDate)}</td>
             </tr>
-            <tr>
+            ${
+              params.hideTerms
+                ? ""
+                : `<tr>
               <td style="font-size:13px;color:#6b7280;padding-top:6px;">Due Date</td>
               <td style="font-size:13px;color:#1D2A3D;font-weight:600;text-align:right;padding-top:6px;${params.isReminder ? "color:#dc2626;" : ""}">${escapeHtml(params.dueDate)}</td>
-            </tr>
+            </tr>`
+            }
             ${
-              params.paymentTermsLabel
+              params.paymentTermsLabel && !params.hideTerms
                 ? `<tr>
               <td style="font-size:13px;color:#6b7280;padding-top:6px;">Terms</td>
               <td style="font-size:13px;color:#1D2A3D;text-align:right;padding-top:6px;">${escapeHtml(params.paymentTermsLabel)}</td>
@@ -1802,7 +1822,7 @@ export class EmailService {
         "Payment Reminder: This invoice is overdue. Please arrange payment at your earliest convenience.",
       );
     }
-    if (params.depositAmount != null) {
+    if (params.depositAmount != null && !params.hideTerms) {
       bodyText.push(
         `Deposit due${params.depositDueDate ? ` by ${params.depositDueDate}` : ""}: ${fmt(params.depositAmount)}. Remainder due by ${params.dueDate}.`,
       );
@@ -1817,8 +1837,8 @@ export class EmailService {
       [
         `Invoice No. ${params.invoiceNumber}`,
         `Issue Date: ${params.issueDate}`,
-        `Due Date: ${params.dueDate}`,
-        params.paymentTermsLabel ? `Terms: ${params.paymentTermsLabel}` : null,
+        params.hideTerms ? null : `Due Date: ${params.dueDate}`,
+        params.paymentTermsLabel && !params.hideTerms ? `Terms: ${params.paymentTermsLabel}` : null,
       ]
         .filter(Boolean)
         .join("\n"),
@@ -1854,7 +1874,7 @@ export class EmailService {
       heading: "Invoice",
       bodyHtml,
       bodyText,
-      footerNote: `This is an automated email from ${businessName}.`,
+      footerNote: endSentence(`This is an automated email from ${businessName}`),
     });
   }
 

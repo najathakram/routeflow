@@ -40,6 +40,7 @@ import type { FulfilmentCapability } from "@routeflow/types";
 import { OrdersService } from "../orders.service";
 import { InvoicesService } from "../../invoices/invoices.service";
 import { PrismaService } from "../../prisma/prisma.service";
+import { AuditService } from "../../audit/audit.service";
 import { createMockPrisma } from "../../testing/prisma-mock";
 
 /**
@@ -80,9 +81,12 @@ describe("CounterSaleService.ring", () => {
   let findReplayCandidateByKey: jest.Mock;
   let recordPayment: jest.Mock;
   let walkIn: { getOrCreateWalkIn: jest.Mock };
+  let audit: { log: jest.Mock };
   let reader: { get: jest.Mock };
   let invoices: Inv[];
   let replay: boolean;
+  // SA-764: the Order.counterCashTendered column, which the CASH tender writes before paying and the read-back serves change from
+  let storedTendered: number | null;
   let replayOrder: { id: string; counterSale?: boolean };
 
   const inv = (id: string, total: number, payments: any[] = [], at = 1): Inv => ({
@@ -109,6 +113,7 @@ describe("CounterSaleService.ring", () => {
     prisma = createMockPrisma();
     invoices = [inv("inv-1", 37.25)];
     replay = false;
+    storedTendered = null;
     replayOrder = { id: "ord-1", counterSale: true };
     createSale = jest.fn(async (_dto: any, _u: any, sale: any) => {
       if (replay) sale?.onReplay?.(replayOrder);
@@ -129,6 +134,7 @@ describe("CounterSaleService.ring", () => {
     });
     walkIn = { getOrCreateWalkIn: jest.fn().mockResolvedValue("cust-walkin") };
     reader = { get: jest.fn().mockResolvedValue(cap("optional")) };
+    audit = { log: jest.fn().mockResolvedValue(undefined) };
 
     prisma.customer.findFirst.mockResolvedValue({ id: "cust-1" });
     prisma.product.findMany.mockResolvedValue([{ id: "p1" }]);
@@ -136,7 +142,16 @@ describe("CounterSaleService.ring", () => {
     // SA-436: the tenant's send-time sweep switch. ON here so the open-credit guard specs mean something;
     // the OFF case is pinned on its own below.
     prisma.tenantConfig.findUnique.mockResolvedValue({ creditAutoApplyOnSend: true });
-    prisma.order.findFirst.mockResolvedValue({ id: "ord-1", orderNumber: "ORD-1" });
+    prisma.order.findFirst.mockImplementation(async () => ({
+      id: "ord-1",
+      orderNumber: "ORD-1",
+      counterCashTendered: storedTendered,
+    }));
+    prisma.order.updateMany.mockImplementation(async ({ where, data }: any) => {
+      if (where.counterCashTendered === null && storedTendered !== null) return { count: 0 };
+      storedTendered = data.counterCashTendered;
+      return { count: 1 };
+    });
     prisma.invoice.findMany.mockImplementation(async ({ where }: any = {}) =>
       invoices
         .filter((i) => !where?.status?.notIn?.includes(i.status))
@@ -151,6 +166,7 @@ describe("CounterSaleService.ring", () => {
         { provide: WalkInCustomerService, useValue: walkIn },
         { provide: PrismaService, useValue: prisma },
         { provide: FULFILMENT_CAPABILITY_READER, useValue: reader },
+        { provide: AuditService, useValue: audit },
       ],
     }).compile();
     service = mod.get(CounterSaleService);
@@ -497,6 +513,7 @@ describe("CounterSaleService.ring", () => {
       expect(recordPayment).toHaveBeenCalledWith(
         "inv-1",
         expect.objectContaining({ amount: 37.25 }),
+        { tillLockHeld: true },
       );
       expect(r).toMatchObject({
         invoiceId: "inv-1",
@@ -518,13 +535,19 @@ describe("CounterSaleService.ring", () => {
 
     it("CASH 50 on 37.25: pays 37.25, change 12.75, balance 0", async () => {
       const r = await service.ring(named({ method: "CASH", amount: 50 }) as never, staff);
-      expect(recordPayment).toHaveBeenCalledWith("inv-1", {
-        amount: 37.25,
-        method: "CASH",
-        reference: undefined,
-      });
+      expect(recordPayment).toHaveBeenCalledWith(
+        "inv-1",
+        {
+          amount: 37.25,
+          method: "CASH",
+          reference: undefined,
+          paidAt: expect.any(String), // SA-750r3: dated from the database clock
+        },
+        { tillLockHeld: true },
+      );
       expect(r).toEqual({
         orderId: "ord-1",
+        lines: [],
         orderNumber: "ORD-1",
         invoiceId: "inv-1",
         invoiceNumber: "N-inv-1",
@@ -532,6 +555,7 @@ describe("CounterSaleService.ring", () => {
         paid: 37.25,
         balanceDue: 0,
         change: 12.75,
+        cashTendered: 50,
         paymentId: "pay-inv-1",
         method: "CASH",
         paymentRecorded: true,
@@ -540,11 +564,16 @@ describe("CounterSaleService.ring", () => {
 
     it("CARD exact: recorded as CREDIT_CARD with the reference; no change", async () => {
       const r = await service.ring(named({ method: "CARD", reference: "auth-77" }) as never, staff);
-      expect(recordPayment).toHaveBeenCalledWith("inv-1", {
-        amount: 37.25,
-        method: "CREDIT_CARD",
-        reference: "auth-77",
-      });
+      expect(recordPayment).toHaveBeenCalledWith(
+        "inv-1",
+        {
+          amount: 37.25,
+          method: "CREDIT_CARD",
+          reference: "auth-77",
+          paidAt: expect.any(String), // SA-750r3: dated from the database clock
+        },
+        { tillLockHeld: true },
+      );
       expect(r.change).toBeUndefined();
       expect(r.balanceDue).toBe(0);
     });
@@ -558,11 +587,16 @@ describe("CounterSaleService.ring", () => {
 
     it("CASH 20 on a 37.25 sale: a PARTIAL payment of 20, paid 20, balanceDue read back from storage, no change", async () => {
       const r = await service.ring(named({ method: "CASH", amount: 20 }) as never, staff);
-      expect(recordPayment).toHaveBeenCalledWith("inv-1", {
-        amount: 20,
-        method: "CASH",
-        reference: undefined,
-      });
+      expect(recordPayment).toHaveBeenCalledWith(
+        "inv-1",
+        {
+          amount: 20,
+          method: "CASH",
+          reference: undefined,
+          paidAt: expect.any(String), // SA-750r3: dated from the database clock
+        },
+        { tillLockHeld: true },
+      );
       expect(r).toMatchObject({
         paid: 20,
         balanceDue: 17.25,
@@ -598,9 +632,12 @@ describe("CounterSaleService.ring", () => {
         inv("inv-1", 40, [{ id: "cn-pay", amount: 10, method: "CREDIT_NOTE", status: "PAID" }]),
       ];
       const r = await service.ring(named({ method: "CASH", amount: 30 }) as never, staff);
-      expect(recordPayment).toHaveBeenCalledWith("inv-1", expect.objectContaining({ amount: 30 }));
+      expect(recordPayment).toHaveBeenCalledWith("inv-1", expect.objectContaining({ amount: 30 }), {
+        tillLockHeld: true,
+      });
       expect(r).toMatchObject({ total: 40, paid: 40, balanceDue: 0, paymentRecorded: true });
-      expect(r.change).toBeUndefined();
+      // a 30 cash tender on the 30 left after the credit: nothing handed back
+      expect(r.change).toBe(0);
     });
 
     it("mixed regulated order: sibling invoices are paid oldest-first from one tender", async () => {
@@ -795,7 +832,9 @@ describe("CounterSaleService.ring", () => {
       recordPayment.mockClear();
       const second = await service.ring(named({ method: "CASH", amount: 50 }) as never, staff, "k");
       expect(recordPayment).toHaveBeenCalledTimes(1);
-      expect(recordPayment).toHaveBeenCalledWith("inv-2", expect.objectContaining({ amount: 20 }));
+      expect(recordPayment).toHaveBeenCalledWith("inv-2", expect.objectContaining({ amount: 20 }), {
+        tillLockHeld: true,
+      });
       expect(second).toMatchObject({
         total: 50,
         paid: 50,
@@ -923,6 +962,7 @@ describe("CounterSaleService.ring", () => {
       const r = await service.byKey("k1");
       expect(r).toEqual({
         orderId: "ord-1",
+        lines: [],
         orderNumber: "ORD-1",
         invoiceId: "inv-1",
         invoiceNumber: "N-inv-1",
@@ -941,16 +981,15 @@ describe("CounterSaleService.ring", () => {
       expect(walkIn.getOrCreateWalkIn).not.toHaveBeenCalled();
     });
 
-    it("matches what the POST replay returns for the same stored sale (modulo change, which needs the tender)", async () => {
+    it("matches what the POST replay returns for the same stored sale (change included: both serve it from storage)", async () => {
       invoices = [inv("inv-1", 37.25)];
       const first = await service.ring(
         named({ method: "CASH", amount: 37.25 }) as never,
         staff,
         "k",
       );
-      findReplayCandidateByKey.mockResolvedValue(sale);
-      const { change: _c, ...expected } = { ...first, replayed: true } as any;
-      expect(await service.byKey("k")).toEqual(expected);
+      findReplayCandidateByKey.mockResolvedValue({ ...sale, counterCashTendered: storedTendered });
+      expect(await service.byKey("k")).toEqual({ ...first, replayed: true });
     });
 
     it("a PARTIAL stored tender (balance still owing) is NOT paymentRecorded: storage cannot tell an intended partial from an interrupted allocation, so the till must see money is owed", async () => {
@@ -985,15 +1024,18 @@ describe("CounterSaleService.ring", () => {
       ["CARD", { method: "CARD" }, "CREDIT_CARD"],
       ["CHECK", { method: "CHECK", reference: "1042" }, "CHECK"],
     ])("a recovered %s sale", (label, payment, _prisma) => {
-      it("byKey body equals the POST body (except replayed:true and the cash-only change)", async () => {
+      it("byKey body equals the POST body (except replayed:true)", async () => {
         invoices = [inv("inv-1", 37.25)];
         const posted = await service.ring(
           { customerId: "cust-1", items: [item], payment } as never,
           staff,
           `k-${label}`,
         );
-        findReplayCandidateByKey.mockResolvedValue(sale);
-        const { change: _c, replayed: _r, ...expected } = posted as any;
+        findReplayCandidateByKey.mockResolvedValue({
+          ...sale,
+          counterCashTendered: storedTendered,
+        });
+        const { replayed: _r, ...expected } = posted as any;
         const recovered = await service.byKey(`k-${label}`);
         expect(recovered).toEqual({ ...expected, replayed: true });
         expect(recovered.method).toBe(label);
@@ -1261,6 +1303,311 @@ describe("CounterSaleService.ring", () => {
       findReplayCandidateByKey.mockResolvedValue(sale);
       await expect(service.byKey("k1")).rejects.toMatchObject({ status: 403 });
       expect(findReplayCandidateByKey).not.toHaveBeenCalled();
+    });
+  });
+  // ── POS-5: price edit behind canEditPrices ────────────────────────────────
+  describe("price edit (POS-5)", () => {
+    const admin = { sub: "adm-1", role: "TENANT_ADMIN", tenantId: "t-1" } as never;
+    const superAdmin = { sub: "sa-1", role: "SUPER_ADMIN", tenantId: "t-1" } as never;
+    const priced = { productId: "p1", qty: 2, unitPrice: 9, priceReason: "damaged box" };
+    const storedLine = {
+      productId: "p1",
+      unitPrice: 9,
+      originalPrice: 10,
+      priceType: "DISCOUNTED",
+      overrideReason: "damaged box",
+      overriddenBy: "adm-1",
+    };
+    const sendOpts = () => createSale.mock.calls[0][2];
+
+    // SA-762r Ruling A: the gate is staffMay(role, "EDIT_LINE_PRICE"). Owner ruling 10-07: an operator may reprice
+    // (F4: SUPER_ADMIN is not in the row until the other price paths move onto staffMay).
+    const driver = { sub: "drv-1", role: "DRIVER", tenantId: "t-1" } as never;
+    it.each([
+      ["OPERATOR", staff, true],
+      ["TENANT_ADMIN", admin, true],
+      ["SUPER_ADMIN", superAdmin, false],
+      ["DRIVER", driver, false],
+    ])("%s: create() is told priceEditAllowed = %s", async (_r, user, allowed) => {
+      await service.ring(named({ method: "CASH" }) as never, user);
+      expect(sendOpts().priceEditAllowed).toBe(allowed);
+    });
+
+    it("an OPERATOR rings a sale with a changed price: rung (not 403 PRICE_EDIT_NOT_PERMITTED), price applied, ONE price-edited audit row", async () => {
+      // createSale stands in for create()'s own gate (pinned in orders.counter-price-edit.spec.ts): it refuses a
+      // real price change exactly when the counter passed priceEditAllowed === false.
+      createSale.mockImplementation(async (_dto: any, _u: any, sale: any) => {
+        if (sale.priceEditAllowed === false) {
+          const { ForbiddenException } = jest.requireActual("@nestjs/common");
+          throw new ForbiddenException({ code: "PRICE_EDIT_NOT_PERMITTED", message: "no" });
+        }
+        return { id: "inv-1", orderId: "ord-1", invoiceNumber: "INV-1" };
+      });
+      prisma.order.findFirst.mockResolvedValue({
+        id: "ord-1",
+        orderNumber: "ORD-1",
+        lineItems: [{ ...storedLine, overriddenBy: "op-1" }],
+      });
+      const res = await service.ring(
+        named({ method: "CASH" }, { items: [priced] }) as never,
+        staff,
+        "k-1",
+      );
+      expect(res).toMatchObject({ orderId: "ord-1" });
+      expect(sendOpts().priceEditAllowed).toBe(true);
+      expect(audit.log).toHaveBeenCalledTimes(1);
+      expect(audit.log.mock.calls[0][0]).toMatchObject({
+        userId: "op-1",
+        action: "counter-sale.price-edited",
+        entityId: "ord-1",
+        meta: {
+          lines: [{ productId: "p1", originalPrice: 10, unitPrice: 9, reason: "damaged box" }],
+        },
+      });
+    });
+
+    it("a refusal from create() (403 PRICE_EDIT_NOT_PERMITTED) leaves everything unwritten: no payment, no audit row", async () => {
+      const { ForbiddenException } = jest.requireActual("@nestjs/common");
+      createSale.mockRejectedValue(
+        new ForbiddenException({ code: "PRICE_EDIT_NOT_PERMITTED", message: "no" }),
+      );
+      const e = await errorOf(
+        service.ring(named({ method: "CASH" }, { items: [priced] }) as never, staff, "k-1"),
+      );
+      expect(e.getStatus()).toBe(403);
+      expect(e.getResponse().code).toBe("PRICE_EDIT_NOT_PERMITTED");
+      expect(recordPayment).not.toHaveBeenCalled();
+      expect(audit.log).not.toHaveBeenCalled();
+      expect(mockLockCalls).toHaveLength(0);
+    });
+
+    it("an admin sale with an edited line writes exactly ONE counter-sale.price-edited row, from STORED values", async () => {
+      prisma.order.findFirst.mockResolvedValue({
+        id: "ord-1",
+        orderNumber: "ORD-1",
+        lineItems: [storedLine],
+      });
+      prisma.product.findMany.mockResolvedValue([{ id: "p1", pricePerUnit: 10, priceTier2: 9.5 }]);
+      prisma.customer.findFirst.mockResolvedValue({ id: "cust-1", pricingTier: 2 });
+      const imp = { ...(admin as object), impersonatedBy: "plat-1" } as never;
+      await service.ring(named({ method: "CASH" }, { items: [priced] }) as never, imp, "k-1");
+      expect(audit.log).toHaveBeenCalledTimes(1);
+      expect(audit.log).toHaveBeenCalledWith({
+        tenantId: "test-tenant",
+        userId: "adm-1",
+        impersonatedBy: "plat-1",
+        action: "counter-sale.price-edited",
+        entityType: "Order",
+        entityId: "ord-1",
+        meta: {
+          orderNumber: "ORD-1",
+          lines: [
+            {
+              productId: "p1",
+              originalPrice: 10,
+              tierPrice: 9.5,
+              unitPrice: 9,
+              priceType: "DISCOUNTED",
+              reason: "damaged box",
+            },
+          ],
+        },
+      });
+    });
+
+    it("the audit row records the TIER price the edit started from, next to the LIST price (customer tier, per-product override, null when unresolved)", async () => {
+      prisma.order.findFirst.mockResolvedValue({
+        id: "ord-1",
+        orderNumber: "ORD-1",
+        lineItems: [
+          { ...storedLine, productId: "p1" },
+          { ...storedLine, productId: "p2", originalPrice: 20, unitPrice: 15 },
+          { ...storedLine, productId: "p3", originalPrice: 5, unitPrice: 4 },
+          { ...storedLine, productId: null, originalPrice: null, unitPrice: 3 },
+        ],
+      });
+      prisma.customer.findFirst.mockResolvedValue({ id: "cust-1", pricingTier: 3 });
+      // p2 carries a per-product tier override (tier 2); p1 follows the customer's default tier 3.
+      prisma.customerPrice.findMany.mockResolvedValue([{ productId: "p2", pricingTier: 2 }]);
+      // the first product read is the sale's own existence check (the one item); the second is the tier lookup
+      prisma.product.findMany.mockResolvedValueOnce([{ id: "p1", pricePerUnit: 10 }]);
+      prisma.product.findMany.mockResolvedValue([
+        { id: "p1", pricePerUnit: 10, priceTier2: 9.5, priceTier3: 9.25 },
+        { id: "p2", pricePerUnit: 20, priceTier2: 18, priceTier3: 17 },
+      ]);
+      await service.ring(named({ method: "CASH" }, { items: [priced] }) as never, admin, "k-1");
+      const lines = audit.log.mock.calls[0][0].meta.lines;
+      expect(lines.map((l: any) => [l.productId, l.originalPrice, l.tierPrice])).toEqual([
+        ["p1", 10, 9.25],
+        ["p2", 20, 18],
+        ["p3", 5, null],
+        [null, null, null],
+      ]);
+    });
+
+    it("a failed tier-price lookup still writes the audit row, with a null tier price", async () => {
+      prisma.order.findFirst.mockResolvedValue({
+        id: "ord-1",
+        orderNumber: "ORD-1",
+        lineItems: [storedLine],
+      });
+      prisma.customerPrice.findMany.mockRejectedValue(new Error("db down"));
+      await service.ring(named({ method: "CASH" }, { items: [priced] }) as never, admin, "k-1");
+      expect(audit.log).toHaveBeenCalledTimes(1);
+      expect(audit.log.mock.calls[0][0].meta.lines[0]).toMatchObject({
+        originalPrice: 10,
+        tierPrice: null,
+      });
+    });
+
+    it("a sale with no edited line writes no audit row", async () => {
+      prisma.order.findFirst.mockResolvedValue({
+        id: "ord-1",
+        orderNumber: "ORD-1",
+        lineItems: [],
+      });
+      await service.ring(named({ method: "CASH" }) as never, admin, "k-1");
+      expect(audit.log).not.toHaveBeenCalled();
+    });
+
+    it("a replayed sale writes no second audit row", async () => {
+      replay = true;
+      prisma.order.findFirst.mockResolvedValue({
+        id: "ord-1",
+        orderNumber: "ORD-1",
+        lineItems: [storedLine],
+      });
+      await service.ring(named({ method: "CASH" }, { items: [priced] }) as never, admin, "k-1");
+      expect(audit.log).not.toHaveBeenCalled();
+    });
+
+    it("an audit failure never fails the sale", async () => {
+      prisma.order.findFirst.mockResolvedValue({
+        id: "ord-1",
+        orderNumber: "ORD-1",
+        lineItems: [storedLine],
+      });
+      audit.log.mockRejectedValue(new Error("db down"));
+      await expect(
+        service.ring(named({ method: "CASH" }, { items: [priced] }) as never, admin, "k-1"),
+      ).resolves.toMatchObject({ orderId: "ord-1" });
+    });
+
+    describe("replay compares price and discount like any other cart change", () => {
+      const stored = (over: any = {}) => ({
+        id: "ord-1",
+        counterSale: true,
+        lineItems: [
+          {
+            productId: "p1",
+            position: 0,
+            status: "ACTIVE",
+            unitPrice: 9,
+            overriddenBy: "adm-1",
+            ...over,
+          },
+        ],
+      });
+      const ringWith = (item: any, order: any) => {
+        replay = true;
+        replayOrder = order;
+        return service.ring(named({ method: "CASH" }, { items: [item] }) as never, admin, "k-1");
+      };
+
+      it("the same priced body replays (same order, replayed:true)", async () => {
+        await expect(ringWith(priced, stored())).resolves.toMatchObject({
+          orderId: "ord-1",
+          replayed: true,
+        });
+      });
+
+      it("a different price under the same key is 409 IDEMPOTENCY_KEY_CART_MISMATCH carrying the holding order id", async () => {
+        const e = await errorOf(ringWith({ ...priced, unitPrice: 8 }, stored()));
+        expect(e.getStatus()).toBe(409);
+        expect(e.getResponse()).toMatchObject({
+          code: "IDEMPOTENCY_KEY_CART_MISMATCH",
+          orderId: "ord-1",
+        });
+        expect(recordPayment).not.toHaveBeenCalled();
+      });
+
+      it("a price within 1/2 cent of the stored one is the same price (3.335 stores 3.34)", async () => {
+        await expect(
+          ringWith({ ...priced, unitPrice: 3.335 }, stored({ unitPrice: 3.34 })),
+        ).resolves.toMatchObject({ replayed: true });
+      });
+
+      it("an unpriced body against a stored override is a changed cart", async () => {
+        const e = await errorOf(ringWith({ productId: "p1", qty: 2 }, stored()));
+        expect(e.getResponse().code).toBe("IDEMPOTENCY_KEY_CART_MISMATCH");
+      });
+
+      it("an unpriced body against an unpriced stored line is the plain replay of today", async () => {
+        await expect(
+          ringWith({ productId: "p1", qty: 2 }, stored({ unitPrice: 10, overriddenBy: null })),
+        ).resolves.toMatchObject({ replayed: true });
+      });
+
+      it("an order that carries no line detail (older fixture) is not judged", async () => {
+        await expect(ringWith(priced, { id: "ord-1", counterSale: true })).resolves.toBeDefined();
+      });
+    });
+  });
+  // Row 322a: the read-back serves the stored lines in the SCAN order (the order lines' `position`), whatever order the
+  // rows come back in: two lines of one product keep their order across the POST, a replay and GET .../by-key, so the web's
+  // "first unused stored line" fallback is the line the clerk scanned first, not an arbitrary one.
+  describe("the stored lines are served in scan order", () => {
+    const row = (id: string, productId: string, position: number | null, createdAt: string) => ({
+      id,
+      productId,
+      taxRate: "0.08",
+      unitPrice: "5.00",
+      originalPrice: null,
+      priceType: "STANDARD",
+      createdAt: new Date(createdAt),
+      orderItem: position === null ? null : { position },
+    });
+    const SAME = "2026-10-11T10:00:00.000Z";
+    const ringWithItems = async (items: any[]) => {
+      invoices = [{ ...inv("inv-1", 37.25), items } as any];
+      return service.ring(named({ method: "ON_ACCOUNT" }) as never, staff);
+    };
+
+    it("sorts shuffled rows by position, whatever order the database returned them in", async () => {
+      const res = await ringWithItems([
+        row("z", "p-third", 2, SAME),
+        row("a", "p-first", 0, SAME),
+        row("m", "p-second", 1, SAME),
+      ]);
+      expect(res.lines!.map((l) => l.productId)).toEqual(["p-first", "p-second", "p-third"]);
+    });
+
+    it("lines that share a createdAt (one transaction) keep position order, never the random id order", async () => {
+      const res = await ringWithItems([
+        row("a-id", "p-late", 5, SAME),
+        row("b-id", "p-early", 1, SAME),
+      ]);
+      expect(res.lines!.map((l) => l.productId)).toEqual(["p-early", "p-late"]);
+    });
+
+    it("a line with no position (a legacy row) comes after the positioned ones, then by createdAt", async () => {
+      const res = await ringWithItems([
+        row("n2", "p-legacy-2", null, "2026-10-11T10:00:02.000Z"),
+        row("n1", "p-legacy-1", null, "2026-10-11T10:00:01.000Z"),
+        row("p", "p-scanned", 3, SAME),
+      ]);
+      expect(res.lines!.map((l) => l.productId)).toEqual(["p-scanned", "p-legacy-1", "p-legacy-2"]);
+    });
+
+    it("still asks the database for a deterministic order and the position it sorts by", async () => {
+      await ringWithItems([row("a", "p1", 0, SAME)]);
+      const reads = prisma.invoice.findMany.mock.calls.map(([a]: [any]) => a);
+      for (const a of reads) {
+        expect(a.include.items.orderBy).toEqual([{ createdAt: "asc" }, { id: "asc" }]);
+        expect(a.include.items.select.orderItem).toEqual({ select: { position: true } });
+        expect(a.include.items.select.createdAt).toBe(true);
+        expect(a.include.items.select.id).toBe(true);
+      }
     });
   });
 });

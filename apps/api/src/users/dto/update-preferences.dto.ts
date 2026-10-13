@@ -25,6 +25,8 @@ const whenPresent = () => ValidateIf((_o, v) => v !== undefined);
  *  - locale: web lib/i18n (en | es) -> web lib/i18n
  *  - bill.lastSupplierId: web vendor-bills create modal -> same modal (prefill)
  *  - payment.lastMethod: web vendor-bill record-payment -> same modal (default method)
+ *  - orders.posMode: web/mobile Create Order POS mode switch -> the same switch (seed). The server never
+ *    infers a PICKUP order from it: clients send the explicit fulfil path (SA-763r). Unset = off.
  */
 export class UpdatePreferencesDto {
   @whenPresent()
@@ -57,6 +59,10 @@ export class UpdatePreferencesDto {
     message: "payment.lastMethod must be a PaymentMethod value",
   })
   "payment.lastMethod"?: string;
+
+  @whenPresent()
+  @IsIn(["true", "false"], { message: 'orders.posMode must be exactly "true" or "false"' })
+  "orders.posMode"?: string;
 }
 
 /**
@@ -72,6 +78,7 @@ export const PREFERENCE_KEYS = [
   "locale",
   "bill.lastSupplierId",
   "payment.lastMethod",
+  "orders.posMode",
 ] as const;
 
 /**

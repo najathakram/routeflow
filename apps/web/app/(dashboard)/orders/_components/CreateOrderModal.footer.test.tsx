@@ -79,4 +79,13 @@ describe("CreateOrderModal footer layout (B564)", () => {
     // Wrap, don't overflow: the spinners `loading` adds to two buttons widen this row at 390px.
     expect(actions).toHaveClass("flex-wrap", "justify-end");
   });
+  it("every footer action is a 44 px touch target under sm and keeps its own height from sm up (row 344b)", () => {
+    renderWithProviders(<CreateOrderModal isOpen onClose={jest.fn()} />);
+    for (const name of [/minimize/i, /^cancel$/i, /save as draft/i, /^create order$/i]) {
+      const button = screen.getByRole("button", { name });
+      // max-sm:h-11 = 2.75rem = 44 px below the sm breakpoint only; no unprefixed height override.
+      expect(button).toHaveClass("max-sm:h-11");
+      expect(button.className).not.toMatch(/(^|\s)h-11(\s|$)/);
+    }
+  });
 });

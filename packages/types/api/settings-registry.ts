@@ -9,9 +9,13 @@ import { PREF } from "./preferences";
  * Homes (SA-602, split by KIND):
  *  - `policy`       tenant BEHAVIOUR switches (policy store, #1337);
  *  - `systemConfig` tenant CONFIG DATA (SystemConfig); no new behaviour key may live here;
- *  - `userPref`     per-USER preferences (`users/me/preferences`).
+ *  - `userPref`     per-USER preferences (`users/me/preferences`);
+ *  - `tenantConfig` tenant CONFIG DATA stored as columns on `TenantConfig` (e.g. `timezone`,
+ *    SA-738); the key is the column name;
+ *  - `featureConfig` tenant BEHAVIOUR modes stored as `TenantFeatureConfig` rows (the feature
+ *    registry's config blocks, e.g. `fulfilment_model`); the key IS the feature key.
  */
-export type SettingHome = "policy" | "systemConfig" | "userPref";
+export type SettingHome = "policy" | "systemConfig" | "userPref" | "featureConfig" | "tenantConfig";
 export type SettingKind = "config" | "behaviour" | "preference" | "memo";
 export type SettingStatus =
   "live" | "legacy" | "pending #1337" | "moves to policy (PR-3)" | "pending WS4";
@@ -65,6 +69,14 @@ export const OFF_HUB_SCREENS: Record<string, string> = {
   "app:language-switcher": "Web language switcher (locale)",
   "mobile:settings": "Mobile operator settings (push notifications)",
   implicit: "Remembered last-used default; not a setting anyone edits",
+  "/settings?tab=fulfilment#delivery-method":
+    "Fulfillment tab, Delivery method card: reached by its ?tab= link, shown only when self-serve is on",
+  "/settings?tab=fulfilment#counter-sales":
+    "Fulfillment tab, Counter sales card: reached by its ?tab= link, shown only when self-serve is on",
+  "/orders/counter-sale":
+    "Counter sale screen: the Quick keys grid's Edit keys dialog saves the pins and hides here; opened from the till, not the settings hub",
+  "/orders":
+    "Create Order header: the POS mode switch saves orders.posMode here; opened from the orders list, not the settings hub",
 };
 
 const cfg = (key: string, screen: string, extra: Partial<SettingRow> = {}): SettingRow => ({
@@ -80,6 +92,9 @@ export const SETTINGS_REGISTRY: SettingRow[] = [
   // ── systemConfig: settings controller writers ────────────────────────────────
   cfg("settings.taxRate", "/settings?tab=profile"),
   cfg("settings.logoUrl", "/settings?tab=profile"),
+  // Counter sale quick keys (SA-747): pins, hides, window and cap as one JSON value; edited from the counter screen.
+  cfg("settings.quickKeys", "/orders/counter-sale"),
+  cfg("settings.receiptFooter", "/settings?tab=profile"),
   ...[
     "fromName",
     "fromEmail",
@@ -113,6 +128,18 @@ export const SETTINGS_REGISTRY: SettingRow[] = [
   cfg("margin.floor.category.*", "/settings?tab=costing"),
   cfg("remittance.config", "/settings?tab=remittance"),
   cfg("pricing.tierLabels", "/settings"),
+  // Receipt email limits (SA-751r change 4): read with their defaults (3 per order, 100 per tenant per day); no editor yet.
+  ...[
+    "receipts.email.perOrder",
+    "receipts.email.perTenantPerDay",
+    "receipts.email.perAddressPerDay",
+  ].map((key): SettingRow => ({
+    key,
+    home: "systemConfig",
+    kind: "config",
+    status: "pending WS4",
+    plannedSurface: "Receipt email limits (no editor yet; the defaults apply until one ships)",
+  })),
   // ── systemConfig: other writers ──────────────────────────────────────────────
   cfg("tobacco.excludeFromMainAnalytics", "/compliance/[categoryId]", { adminOnly: true }),
   {
@@ -175,6 +202,30 @@ export const SETTINGS_REGISTRY: SettingRow[] = [
     status: "live",
     screen: "#out-of-stock-ordering",
   },
+  // ── featureConfig: tenant-admin Fulfillment tab (`/settings/fulfilment`), dark behind
+  // FULFILMENT_SELF_SERVE. The key is the feature-registry key; both rows are admin-only (an
+  // operator reads the tab but cannot change it).
+  ...(["fulfilment_model", "counter_sales"] as const).map((key): SettingRow => ({
+    key,
+    home: "featureConfig",
+    kind: "behaviour",
+    status: "live",
+    screen:
+      key === "fulfilment_model"
+        ? "/settings?tab=fulfilment#delivery-method"
+        : "/settings?tab=fulfilment#counter-sales",
+    adminOnly: true,
+  })),
+  // -- tenantConfig (SA-738): the business time zone, a `TenantConfig.timezone` column written by
+  // `PATCH /settings` (and by signup / create-tenant). Only a TENANT_ADMIN changes it.
+  {
+    key: "timezone",
+    home: "tenantConfig",
+    kind: "config",
+    status: "live",
+    screen: "/settings?tab=profile",
+    adminOnly: true,
+  },
   // ── userPref: derived from PREF so the list cannot drift ─────────────────────
   {
     key: PREF.lowStockDigestEnabled,
@@ -228,6 +279,13 @@ export const SETTINGS_REGISTRY: SettingRow[] = [
     status: "live",
     screen: "implicit",
   },
+  {
+    key: PREF.ordersPosMode,
+    home: "userPref",
+    kind: "preference",
+    status: "live",
+    screen: "/orders",
+  },
 ];
 
 /** True when `key` is covered by an exact row or a `prefix*` pattern row. */
@@ -243,6 +301,11 @@ export function isRegisteredSettingKey(
 /** Every rule the registry must satisfy; an empty array means valid. */
 export function validateSettingsRegistry(
   rows: readonly SettingRow[] = SETTINGS_REGISTRY,
+  /**
+   * The feature-registry keys that carry a `config` block (the api owns that registry; this package
+   * cannot import it). When given, every `featureConfig` row must name one of them.
+   */
+  featureConfigKeys?: readonly string[],
 ): string[] {
   const problems: string[] = [];
   const seen = new Set<string>();
@@ -265,6 +328,14 @@ export function validateSettingsRegistry(
       problems.push(`${r.key}: policy rows are "pending #1337" until #1337 lands`);
     if (r.home === "policy" && r.kind !== "behaviour")
       problems.push(`${r.key}: the policy store holds behaviour switches only`);
+    if (r.home === "featureConfig") {
+      if (r.kind !== "behaviour")
+        problems.push(`${r.key}: feature-config rows are behaviour modes only`);
+      if (featureConfigKeys && !featureConfigKeys.includes(r.key))
+        problems.push(`${r.key}: not a feature-registry key with a config block`);
+    }
+    if (r.home === "tenantConfig" && r.kind !== "config")
+      problems.push(`${r.key}: tenant-config rows are config data only`);
     if (r.home === "userPref" && r.kind !== "preference" && r.kind !== "memo")
       problems.push(`${r.key}: per-user home holds preferences only`);
     if (r.home === "systemConfig" && r.kind === "behaviour") {

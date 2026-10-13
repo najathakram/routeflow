@@ -6,8 +6,10 @@ import { getStoredActiveSeller, getStoredBuyerId } from "@/lib/buyer-auth";
 import { buyerSubmitKeyFor, clearBuyerSubmitKey } from "./buyer-submit-key";
 import type { ExpiringAuthorization } from "./authorizations";
 import type { PromotionRule } from "@routeflow/pricing";
+import type { BuyerOrderItemEdit } from "@routeflow/types";
 import type { ChangeRequest } from "@/lib/change-requests";
 import { buyerOrderConflict } from "@/lib/buyer-order-conflict";
+import { isSellerUnavailableRefusal } from "@/lib/seller-unavailable";
 import {
   isTrackingLive,
   type FulfilmentMethod,
@@ -326,10 +328,17 @@ export function toPromotionRules(promos: BuyerPromotion[] | undefined): Promotio
 
 // ─── Orders ───────────────────────────────────────────────────────────────────
 
-export function useBuyerActiveOrder() {
+/**
+ * `fulfillPath` scopes the read to the order a cart on that path would fold into (the server's own
+ * merge search); omitted = the buyer's most recent active order, as before.
+ */
+export function useBuyerActiveOrder(fulfillPath?: string) {
   return useQuery<BuyerOrder | null>({
-    queryKey: ["buyer", "activeOrder"],
-    queryFn: () => buyerApiClient.get("/buyer/orders/active").then((r) => r.data),
+    queryKey: fulfillPath ? ["buyer", "activeOrder", fulfillPath] : ["buyer", "activeOrder"],
+    queryFn: () =>
+      buyerApiClient
+        .get("/buyer/orders/active", fulfillPath ? { params: { fulfillPath } } : undefined)
+        .then((r) => r.data),
   });
 }
 
@@ -379,8 +388,11 @@ export function useBuyerOrderTracking(orderId: string) {
 export function useBuyerCreateOrder() {
   const qc = useQueryClient();
   return useMutation({
-    // The cart and shelf render their own sentence for the "order already placed" refusals.
-    meta: { localErrorToast: (err: unknown) => buyerOrderConflict(err) !== null },
+    // The cart and shelf render their own sentence for the "order already placed" refusals and for a paused seller.
+    meta: {
+      localErrorToast: (err: unknown) =>
+        buyerOrderConflict(err) !== null || isSellerUnavailableRefusal(err),
+    },
     mutationFn: (data: {
       items: Array<{
         productId: string;
@@ -420,13 +432,10 @@ export function useBuyerCreateOrder() {
 export function useBuyerUpdateOrderItems() {
   const qc = useQueryClient();
   return useMutation({
-    mutationFn: ({
-      orderId,
-      items,
-    }: {
-      orderId: string;
-      items: Array<{ productId: string; qty: number }>;
-    }) => buyerApiClient.patch(`/buyer/orders/${orderId}/items`, { items }).then((r) => r.data),
+    mutationFn: ({ orderId, items }: { orderId: string; items: BuyerOrderItemEdit[] }) =>
+      buyerApiClient
+        .patch(`/buyer/orders/${orderId}/items`, { items, namesLines: true })
+        .then((r) => r.data),
     onSuccess: (_d, vars) => {
       qc.invalidateQueries({ queryKey: ["buyer", "order", vars.orderId] });
       qc.invalidateQueries({ queryKey: ["buyer", "orders"] });
@@ -472,9 +481,18 @@ export function useBuyerCreateChangeRequest() {
 export interface BuyerInvoiceDetail {
   id: string;
   invoiceNumber: string;
+  /** Row 401: the server's answer to "a counter sale paid at the till" — no due date / terms shown. */
+  paidAtSale?: boolean;
+  revisedAt?: string | null;
+  overpaidBy?: number | null;
   status: InvoiceStatus;
   subtotal: number;
+  /** The stored header: the regular tax PLUS the regulated levy. Show `regularTaxAmount` and `chargeLines` instead. */
   taxAmount: number;
+  /** Row 398: the regular tax alone (the header minus the lines' levy). Absent from an older server. */
+  regularTaxAmount?: number;
+  /** Row 398: one named charge per regulated category ("CRV deposit"), the same lines the PDF prints. */
+  chargeLines?: Array<{ key: string; label: string; amount: number }>;
   discount: number;
   shippingFee: number;
   total: number;

@@ -51,6 +51,7 @@ import { SellingRestrictionsService } from "../selling-restrictions/selling-rest
 import { describeDb, requireLocalDatabaseUrl } from "../common/testing/db-spec";
 import { OrdersService } from "./orders.service";
 import type { JwtPayload } from "../auth/jwt-payload.interface";
+import { INVOICE_EDIT_STUBS } from "./testing/invoice-edit-stubs";
 
 // eslint-disable-next-line @typescript-eslint/no-var-requires
 const { assertTestTenant } = require("../../../../scripts/lib/test-tenants.cjs");
@@ -195,6 +196,7 @@ describeDb("#2716c — edited order's next invoice copies DISCOUNTED + list, rea
       invoicesService: {
         revertLinkedInvoicesForOrderEdit: async () => undefined,
         resyncOrderInvoicesForEdit: async () => [],
+        ...INVOICE_EDIT_STUBS,
         reconcileOrderDraftInvoice: async () => undefined,
       },
       logger: new Logger(OrdersService.name),

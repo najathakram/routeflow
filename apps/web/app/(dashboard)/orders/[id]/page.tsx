@@ -17,7 +17,6 @@ import {
   Search,
   RotateCcw,
   Trash2,
-  Truck,
   Calendar,
   Download,
   Printer,
@@ -37,7 +36,8 @@ import {
   useToast,
   type BadgeStatus,
 } from "@routeflow/ui/web";
-import { orderLineName } from "@/lib/product-display";
+import { displayProductName, orderLineName } from "@/lib/product-display";
+import { sellableFlat, type PickerRow } from "@/lib/product-search-groups";
 import { usePageTitle } from "@/lib/page-title-context";
 import { scheduleScannerRefocus } from "@/lib/refocus-scanner";
 import {
@@ -61,6 +61,9 @@ import { useAuth } from "@/lib/auth-context";
 import { useHasAddon } from "@/lib/api/tobacco";
 import { SALES_AGENTS_ADDON, useOrderUiV2 } from "@/lib/api/addons";
 import { OrderStatusBadge, useOrderStatusLabel } from "@/components/OrderStatusBadge";
+import { HandOverStamp } from "@/components/HandOverStamp";
+import { seesHandOverStamp } from "@/lib/handover-stamp";
+import { useTenantTimeZone } from "@/lib/tenant-timezone";
 import { useStaffFulfilment } from "@/lib/fulfilment-caps";
 import { OrderFulfilmentRow, fulfillPathErrorCopy } from "../_components/OrderFulfilmentRow";
 import { RecordReturnAction } from "../../returns/_components/RecordReturnAction";
@@ -73,9 +76,13 @@ import {
   useOrderInlineReturnSave,
 } from "../_components/use-order-inline-return-save";
 import { OrderReturnsPanel } from "./_components/OrderReturnsPanel";
+import { useOrderOverpayGuard } from "./_components/OrderOverpayNotice";
+import { useOrderStaleRevision } from "./_components/OrderStaleNotice";
+import { rebaseOnReload } from "./_components/order-edit-rebase";
 import { describeCancelImpact } from "@/lib/cancel-impact";
 import { fmtCalendarDate, isInternalEmail } from "@/lib/formatting";
 import { formatMoney, formatQty } from "@/lib/format";
+import { OrderRevisionLog } from "./_components/OrderRevisionLog";
 import {
   describeChangeRequest,
   describeResolution,
@@ -96,9 +103,19 @@ import { OrderLineItemsTable } from "./_components/OrderLineItemsTable";
 import { OrderLineItemCards } from "./_components/OrderLineItemCards";
 import { ActionTier } from "./_components/ActionTier";
 import { PickupHandOverButton, PickupHandOverDialog } from "./_components/PickupHandOver";
+import {
+  ConfirmedPrimaryAction,
+  OutForDeliveryPrimary,
+  PosCutAfterHandOverNote,
+  PosOrderActions,
+  PosProgress,
+} from "./_components/PosOrderActions";
+import { DeleteOrderTier } from "./_components/DeleteOrderTier";
+import { isPosOrder } from "@/lib/api/pos-orders";
 import { FulfillPathMoveConfirm } from "./_components/FulfillPathMoveConfirm";
 import { InvoicesNeedReviewBadge } from "./_components/InvoicesNeedReviewBadge";
 import { DemoteReasonModal } from "./_components/DemoteReasonModal";
+import { EditTaxLabel } from "./_components/EditTaxLabel";
 import { EditScanBar } from "./_components/EditScanBar";
 import {
   findLockedUnitLineEdit,
@@ -145,6 +162,7 @@ import { OrderLineUnitPicker } from "@/components/OrderLineUnitPicker";
 import type { UnitOption } from "@/lib/unit-options";
 import { codedToastCopy } from "@/lib/generic-toast-copy";
 import { markSentErrorText, orderErrorText, sendEmailErrorText } from "@/lib/order-error-text";
+import { ReadOnlyHint, WriteButton } from "@/lib/read-only-gate";
 
 // ─── Send Invoice Modal ────────────────────────────────────────────────────────
 
@@ -517,6 +535,8 @@ export interface EditItemState {
   /** Needed only by `OrderLineUnitPicker` (auto-refresh-on-tier-change effect) —
    *  mirrors the server's stored `priceType`, not otherwise read on this page. */
   priceType?: PriceType;
+  /** A line ADDED here starts on the product's default selling unit (OrderLineUnitPicker applies it). */
+  startOnDefaultUnit?: boolean;
 }
 
 // ─── Boxed proration helpers ──────────────────────────────────────────────────
@@ -945,9 +965,8 @@ function CommissionEditModal({
  * not the replaced product's), and the tier ladder so it can resolve THIS
  * customer's price for the substitute instead of billing list.
  */
-interface SubstituteOption {
-  id: string;
-  name: string;
+interface SubstituteOption extends PickerRow {
+  unit?: string;
   sku?: string;
   pricePerUnit: number;
   unitsPerBox?: number | null;
@@ -972,7 +991,13 @@ function SubstitutePicker({
     return () => clearTimeout(t);
   }, [search]);
 
-  const { data } = useProducts({ search: debouncedSearch || undefined, isActive: true });
+  // includeVariants: a family's name finds its variants; a family is never a line (B1215 C7).
+  const { data } = useProducts({
+    search: debouncedSearch || undefined,
+    isActive: true,
+    includeVariants: true,
+  });
+  const options = sellableFlat<SubstituteOption>(data?.data ?? []);
 
   return (
     <div className="mt-2 rounded-lg border border-surface-border bg-white shadow-md">
@@ -987,10 +1012,10 @@ function SubstitutePicker({
         />
       </div>
       <div className="max-h-48 overflow-y-auto">
-        {data?.data?.length === 0 && (
+        {data?.data && options.length === 0 && (
           <p className="px-3 py-2 text-sm text-navy/70">No products found.</p>
         )}
-        {data?.data?.map((p: SubstituteOption) => (
+        {options.map((p: SubstituteOption) => (
           <button
             key={p.id}
             className="flex w-full items-center justify-between px-3 py-2 text-left text-sm hover:bg-surface-raised"
@@ -1000,8 +1025,9 @@ function SubstitutePicker({
             }}
           >
             <div>
-              <span className="font-medium text-navy">{p.name}</span>
+              <span className="font-medium text-navy">{displayProductName(p)}</span>
               {p.sku && <span className="ml-2 text-xs text-navy/70">{p.sku}</span>}
+              {p.unit && <span className="ml-2 text-xs text-navy/70">{p.unit}</span>}
             </div>
             <span className="text-xs text-navy">{formatMoney(p.pricePerUnit)}</span>
           </button>
@@ -1095,8 +1121,9 @@ export function EditableLineItems({
     scanCode: addTermIsScanCode ? addSearch.trim() : undefined,
     limit: 20,
     isActive: true,
+    includeVariants: true,
   });
-  const products: any[] = (productsData as any)?.data ?? [];
+  const products: any[] = sellableFlat<any>((productsData as any)?.data ?? []);
 
   // Auto-focus the scan input when the component mounts (edit mode opened) so a
   // wedge scanner's keystrokes land in it straight away. B62 (REG-B62): the
@@ -1124,7 +1151,12 @@ export function EditableLineItems({
     return () => document.removeEventListener("mousedown", onClickOutside);
   }, []);
 
-  function addProduct(p: any, level?: scan.SellLevel, explicit?: scan.SellLevel) {
+  function addProduct(
+    p: any,
+    level?: scan.SellLevel,
+    explicit?: scan.SellLevel,
+    startOnDefaultUnit?: boolean,
+  ) {
     const existing = items.find((it) => it.productId === p.id && !it.cancelled);
     const unitScan = scan.isUnitScanOnBoxed(p, level ?? "BOX");
     if (existing) {
@@ -1151,7 +1183,14 @@ export function EditableLineItems({
           : base;
       const newId = `new-${Date.now()}-${Math.random()}`;
       onAdd(
-        scan.buildNewLine(p, { newId, startPrice, base, unitScan, special: isSpecialTierFor(p) }),
+        scan.buildNewLine(p, {
+          newId,
+          startPrice,
+          base,
+          unitScan,
+          special: isSpecialTierFor(p),
+          startOnDefaultUnit,
+        }),
       );
       setScrollToId(newId);
     }
@@ -1193,7 +1232,11 @@ export function EditableLineItems({
           scheduleScannerRefocus(addInputRef, 50, { select: true });
           return;
         }
-        addProduct(result.product, ...scan.scanArgsForHit(code, result.product));
+        addProduct(
+          result.product,
+          ...scan.scanArgsForHit(code, result.product),
+          scan.scanCodeIsShared(code, result.product),
+        );
         return;
       }
       // Nothing found — open create-product modal with scanned code as SKU
@@ -1233,6 +1276,7 @@ export function EditableLineItems({
     if (!current) return;
     update(id, {
       unitLabel: option.value,
+      startOnDefaultUnit: false, // any unit choice consumes the default start
       unit: option.label,
       unitsPerBox: option.factorToBase,
       boxSplit: false,
@@ -1371,7 +1415,7 @@ export function EditableLineItems({
                   value={item.qty}
                   onChange={(e) => {
                     const v = parseInt(e.target.value, 10);
-                    if (!isNaN(v) && v > 0) update(item.id, { qty: v });
+                    if (!isNaN(v) && v > 0) update(item.id, { qty: v, startOnDefaultUnit: false });
                   }}
                 />
                 <scan.SplitLineHint item={item} />
@@ -1406,6 +1450,7 @@ export function EditableLineItems({
                     priceEdited: item.priceEdited,
                   }}
                   tier={tierForProductId(item.productId)}
+                  startOnDefaultUnit={item.startOnDefaultUnit}
                   onChange={(option, refresh) => setLineUnit(item.id, option, refresh)}
                 />
               )}
@@ -1582,7 +1627,7 @@ export function EditableLineItems({
                 update(item.id, {
                   substituteProductId: p.id,
                   productId: p.id,
-                  productName: p.name,
+                  productName: displayProductName(p),
                   // The customer's contracted price for the SUBSTITUTE, over its
                   // list price as the strikethrough base — same split mobile's
                   // buildSubstituteLine stores. Pinning both to list made every
@@ -1645,10 +1690,10 @@ export function EditableLineItems({
                   <button
                     type="button"
                     disabled={!pricingReady}
-                    onMouseDown={() => addProduct(p)}
+                    onMouseDown={() => addProduct(p, undefined, undefined, true)}
                     className="w-full px-3 py-2 text-left text-sm hover:bg-brand-50 flex items-center justify-between gap-2 disabled:opacity-50"
                   >
-                    <span className="font-medium text-navy">{p.name}</span>
+                    <span className="font-medium text-navy">{displayProductName(p)}</span>
                     <span className="text-xs text-navy/70">{p.unit}</span>
                   </button>
                 </li>
@@ -1872,7 +1917,6 @@ export default function OrderDetailPage() {
   const updateStatus = useUpdateOrderStatus();
   // The cancel flow renders its own error (every other status change keeps the global toast), so it has its own instance.
   const cancelOrder = useUpdateOrderStatus({ localErrorToast: true });
-  const updateItems = useUpdateOrderItems();
   const reopenOrder = useReopenOrder();
   const deleteOrder = useDeleteOrder({ localErrorToast: true });
   const updateShipment = useUpdateOrderShipment();
@@ -1900,6 +1944,7 @@ export default function OrderDetailPage() {
   // Order-level commission override (staff + sales_agents addon only — the
   // server independently re-checks both via PlanFlagGuard/parseCommissionRatePct).
   const { user } = useAuth();
+  const stampZone = useTenantTimeZone(seesHandOverStamp(user?.role)); // row 342: the hand-over time
   const isStaff = user?.role === "OPERATOR" || user?.role === "TENANT_ADMIN";
   const hasSalesAgents = useHasAddon(SALES_AGENTS_ADDON);
   const [commissionEditOpen, setCommissionEditOpen] = React.useState(false);
@@ -1919,6 +1964,7 @@ export default function OrderDetailPage() {
   // Opens the guard modal on a REGULATED_AUTH_REQUIRED 409; other errors fall
   // through to the global mutation toast.
   const guardError = (retry: () => void) => (err: unknown) => {
+    if (overpay.capture(err) || stale.capture(err)) return;
     const restricted = parseSellingRestricted(err);
     if (restricted) {
       setRestrictedBlock(restricted);
@@ -1940,6 +1986,30 @@ export default function OrderDetailPage() {
 
   // Item editing
   const [isEditing, setIsEditing] = React.useState(false);
+  const overpay = useOrderOverpayGuard(order, isEditing);
+  const stale = useOrderStaleRevision(order, isEditing, (fresh, base) => {
+    const n = rebaseOnReload(
+      {
+        editItems,
+        editShippingFee,
+        editCredits,
+        creditsTouched,
+        deps: { seed: buildEditItemFromLine },
+        setEditItems,
+        setPendingDeletes,
+        setEditShippingFee,
+        setEditCredits,
+        setCreditsTouched,
+      },
+      fresh,
+      base,
+    );
+    if (n > 0) toast({ title: "Someone else changed this order - re-check it", variant: "error" });
+  });
+  const updateItems = useUpdateOrderItems({
+    localErrorToast: (e) => overpay.ownsToast(e) || stale.ownsToast(e),
+  });
+  const savingItems = updateItems.isPending;
   const [editItems, setEditItems] = React.useState<EditItemState[]>([]);
   const [pendingDeletes, setPendingDeletes] = React.useState<string[]>([]);
   const [draftAutoEntered, setDraftAutoEntered] = React.useState(false);
@@ -2027,6 +2097,9 @@ export default function OrderDetailPage() {
   const canEdit =
     order?.editWindow?.editable ??
     (localStatus === "DRAFT" || localStatus === "PENDING" || localStatus === "CONFIRMED");
+
+  // SA-763r P-2: a POS-mode order = PICKUP and not a counter sale (counter sales keep their own flow).
+  const isPos = isPosOrder(order);
 
   // Fulfillment path can only change while the order is open — mirrors the
   // server's PATCH /orders/:id/fulfill-path rejection rule exactly.
@@ -2178,12 +2251,12 @@ export default function OrderDetailPage() {
     // Hard-delete (or CANCEL fallback) for lines the user removed with the trash button.
     const updates: ItemUpdate[] = [
       ...pendingDeletes.map((id): ItemUpdate => ({ id, action: "DELETE" })),
-      ...buildItemUpdates(editItems, order!.lineItems),
+      ...buildItemUpdates(editItems, stale.baseLines() ?? order!.lineItems),
     ];
 
     // Only send shippingFee when it actually changed — avoids no-op churn (and
     // matches the API's "no dto.shippingFee ⇒ keep the stored fee" rule).
-    const feeChanged = Math.abs(editShippingFee - Number(order!.shippingFee ?? 0)) > 0.0001;
+    const feeChanged = stale.feeChanged(editShippingFee, order!.shippingFee);
 
     // #2406: fold in whatever the operator has typed into the edit-mode Returns section.
     const inlineReturn = returnSave.prepare(order!.customerId, order!.id);
@@ -2203,6 +2276,7 @@ export default function OrderDetailPage() {
         id: order!.id,
         items: updates,
         replaceAll: false,
+        expectedRevisionNumber: stale.expected(), // row 372: the revision this editor loaded
         ...(feeChanged ? { shippingFee: editShippingFee } : {}),
         // Credit-note selection: only sent when the operator actually touched
         // the picker — undefined on the wire leaves the server's stored
@@ -2517,21 +2591,26 @@ export default function OrderDetailPage() {
               </span>
             )}
           </div>
+          {/* Row 342: who handed it over, at which register (staff reads only) */}
+          <div className="mt-1.5">
+            <HandOverStamp order={order} role={user?.role} timeZone={stampZone} />
+          </div>
         </div>
 
         {/* Action bar */}
+        <ReadOnlyHint className="text-xs text-slate-600" />
         <div className="flex flex-wrap items-center gap-2">
           {/* Edit Items button */}
           {canEdit && access.editItems && !isEditing && (
             <ActionTier tier="secondary">
-              <Button
+              <WriteButton
                 size="sm"
                 variant="secondary"
                 leftIcon={<Pencil className="h-4 w-4" />}
                 onClick={enterEditMode}
               >
-                Edit Items
-              </Button>
+                {isPos ? "Edit order" : "Edit Items"}
+              </WriteButton>
             </ActionTier>
           )}
 
@@ -2543,6 +2622,7 @@ export default function OrderDetailPage() {
                 customerId={order.customerId}
                 customerName={order.customer?.businessName}
                 orderId={order.id}
+                allowRefund
               />
             </ActionTier>
           )}
@@ -2558,20 +2638,8 @@ export default function OrderDetailPage() {
             </span>
           )}
 
-          {/* P5-08: revision count (append-only edit history). */}
-          {!isEditing && (order?.revisions?.length ?? 0) > 0 && (
-            <span
-              className="inline-flex items-center rounded-full bg-navy/5 px-2 py-1 text-xs font-medium text-navy/70"
-              title={order!
-                .revisions!.map(
-                  (r) =>
-                    `v${r.revisionNumber} · ${r.editedByName ?? r.editedByRole ?? "system"} · ${new Date(r.createdAt).toLocaleString()} · ${formatMoney(r.snapshot.total)}`,
-                )
-                .join("\n")}
-            >
-              Edited {order!.revisions!.length}×
-            </span>
-          )}
+          {/* P5-08: revision count + log (append-only edit history), one tap (row 330d). */}
+          {!isEditing && <OrderRevisionLog revisions={order?.revisions ?? []} />}
 
           {/* P5-11: pending post-dispatch change requests awaiting resolution. */}
           {!isEditing && pendingChangeRequests.length > 0 && (
@@ -2590,7 +2658,7 @@ export default function OrderDetailPage() {
           {localStatus === "DRAFT" && !isEditing && access.staff && (
             <>
               <ActionTier tier="primary">
-                <Button
+                <WriteButton
                   size="sm"
                   leftIcon={<CheckCircle2 className="h-4 w-4" />}
                   onClick={() => {
@@ -2607,49 +2675,17 @@ export default function OrderDetailPage() {
                   loading={updateStatus.isPending}
                 >
                   Publish Order
-                </Button>
+                </WriteButton>
               </ActionTier>
-              <ActionTier tier="danger">
-                {showDeleteConfirm ? (
-                  <div className="flex items-center gap-2">
-                    <span className="text-sm text-danger font-medium">Delete order?</span>
-                    <Button
-                      size="sm"
-                      variant="danger"
-                      loading={deleteOrder.isPending}
-                      onClick={() => {
-                        deleteOrder.mutate(order.id, {
-                          onSuccess: () => {
-                            toast({ title: "Draft deleted", variant: "success" });
-                            router.push("/orders");
-                          },
-                          onError: (e) => {
-                            toast({ title: orderErrorText(e), variant: "error" });
-                            setShowDeleteConfirm(false);
-                          },
-                        });
-                      }}
-                    >
-                      Confirm Delete
-                    </Button>
-                    <button
-                      onClick={() => setShowDeleteConfirm(false)}
-                      className="text-sm text-navy/70 hover:text-navy transition-colors"
-                    >
-                      No
-                    </button>
-                  </div>
-                ) : (
-                  <Button
-                    size="sm"
-                    variant="ghost"
-                    leftIcon={<Trash2 className="h-4 w-4" />}
-                    onClick={() => setShowDeleteConfirm(true)}
-                  >
-                    Delete Draft
-                  </Button>
-                )}
-              </ActionTier>
+              <DeleteOrderTier
+                orderId={order.id}
+                deleteOrder={deleteOrder}
+                open={showDeleteConfirm}
+                setOpen={setShowDeleteConfirm}
+                idleLabel="Delete Draft"
+                successTitle="Draft deleted"
+                errorText={orderErrorText}
+              />
             </>
           )}
 
@@ -2721,32 +2757,37 @@ export default function OrderDetailPage() {
             </>
           )}
 
+          {/* POS mode: one primary per state (Create invoice -> Hand over -> Record payment / Print). */}
+          {isPos && access.staff && !isEditing && (
+            <PosOrderActions
+              order={order}
+              orderId={order.id}
+              status={localStatus}
+              onHandOver={() => setPickupOpen(true)}
+              onReadyForPickup={handleMarkShipped}
+              readyPending={updateStatus.isPending}
+              onSwitchToDelivery={() =>
+                setPendingPath(
+                  access.fulfillmentPath && !fulfillPathLocked
+                    ? staffFulfilment.formDefault
+                    : "ROUTE",
+                )
+              }
+            />
+          )}
+
           {/* CONFIRMED actions */}
           {access.staff && localStatus === "CONFIRMED" && !isEditing && (
             <>
-              <ActionTier tier="primary">
-                <div className="flex flex-col items-start gap-1">
-                  <Button
-                    size="sm"
-                    variant={orderUiV2.enabled ? undefined : "secondary"}
-                    leftIcon={<Truck className="h-4 w-4" />}
-                    onClick={handleMarkShipped}
-                    loading={updateStatus.isPending}
-                  >
-                    {order.fulfillPath === "SHIP"
-                      ? "Mark shipped"
-                      : order.fulfillPath === "PICKUP"
-                        ? "Ready for pickup"
-                        : "Out for Delivery"}
-                  </Button>
-                  {order.fulfillPath === "SHIP" && (
-                    <p className="text-[11px] text-navy/50">
-                      {`Sets the order to ${statusLabel("OUT_FOR_DELIVERY", "Out for Delivery", order.fulfillPath)} — the customer is notified it's on the way.`}
-                    </p>
-                  )}
-                </div>
-              </ActionTier>
-              {order.fulfillPath === "PICKUP" && (
+              {!isPos && (
+                <ConfirmedPrimaryAction
+                  fulfillPath={order.fulfillPath}
+                  v2={orderUiV2.enabled}
+                  onMarkShipped={handleMarkShipped}
+                  pending={updateStatus.isPending}
+                />
+              )}
+              {order.fulfillPath === "PICKUP" && !isPos && (
                 <ActionTier tier="secondary">
                   <PickupHandOverButton onOpen={() => setPickupOpen(true)} />
                 </ActionTier>
@@ -2780,20 +2821,13 @@ export default function OrderDetailPage() {
           {/* OUT_FOR_DELIVERY actions */}
           {access.staff && localStatus === "OUT_FOR_DELIVERY" && (
             <>
-              <ActionTier tier="primary">
-                {order.fulfillPath === "PICKUP" ? (
-                  <PickupHandOverButton onOpen={() => setPickupOpen(true)} />
-                ) : (
-                  <Button
-                    size="sm"
-                    leftIcon={<CheckCircle2 className="h-4 w-4" />}
-                    onClick={handleDeliver}
-                    loading={updateStatus.isPending}
-                  >
-                    {order.fulfillPath === "SHIP" ? "Mark delivered" : "Mark as Delivered"}
-                  </Button>
-                )}
-              </ActionTier>
+              <OutForDeliveryPrimary
+                fulfillPath={order.fulfillPath}
+                handOverLabel={isPos ? "Hand over" : undefined}
+                onHandOver={() => setPickupOpen(true)}
+                onDeliver={handleDeliver}
+                pending={updateStatus.isPending}
+              />
               <ActionTier tier="secondary">
                 <Button
                   size="sm"
@@ -2874,51 +2908,21 @@ export default function OrderDetailPage() {
                   Reopen Order
                 </Button>
               </ActionTier>
-              <ActionTier tier="danger">
-                {showDeleteConfirm ? (
-                  <div className="flex items-center gap-2">
-                    <span className="text-sm text-danger font-medium">Delete order?</span>
-                    <Button
-                      size="sm"
-                      variant="danger"
-                      loading={deleteOrder.isPending}
-                      onClick={() => {
-                        deleteOrder.mutate(order.id, {
-                          onSuccess: () => {
-                            toast({ title: "Order deleted", variant: "success" });
-                            router.push("/orders");
-                          },
-                          onError: (e) => {
-                            toast({ title: orderErrorText(e), variant: "error" });
-                            setShowDeleteConfirm(false);
-                          },
-                        });
-                      }}
-                    >
-                      Confirm Delete
-                    </Button>
-                    <button
-                      onClick={() => setShowDeleteConfirm(false)}
-                      className="text-sm text-navy/70 hover:text-navy transition-colors"
-                    >
-                      No
-                    </button>
-                  </div>
-                ) : (
-                  <Button
-                    size="sm"
-                    variant="ghost"
-                    leftIcon={<Trash2 className="h-4 w-4" />}
-                    onClick={() => setShowDeleteConfirm(true)}
-                  >
-                    Delete
-                  </Button>
-                )}
-              </ActionTier>
+              <DeleteOrderTier
+                orderId={order.id}
+                deleteOrder={deleteOrder}
+                open={showDeleteConfirm}
+                setOpen={setShowDeleteConfirm}
+                idleLabel="Delete"
+                successTitle="Order deleted"
+                errorText={orderErrorText}
+              />
             </>
           )}
         </div>
       </div>
+
+      {isPos && access.staff && <PosProgress order={order} status={localStatus} />}
 
       {/* B1135: a customer's way forward on an order that has shipped (no change request exists for it). */}
       {access.shippedExits && <ShippedOrderExits />}
@@ -2946,11 +2950,14 @@ export default function OrderDetailPage() {
             </div>
             {isEditing ? (
               <div className="space-y-4">
+                {isPos && localStatus === "DELIVERED" && <PosCutAfterHandOverNote />}
                 <p className="text-sm text-navy/70">
                   Add new items, adjust quantities, substitute or mark as unavailable.
                   {canEdit && " Change a line's price or apply a per-item discount."} Changes are
                   applied when you save.
                 </p>
+                {overpay.node}
+                {stale.node}
                 <EditableLineItems
                   items={editItems}
                   onChange={setEditItems}
@@ -2973,7 +2980,7 @@ export default function OrderDetailPage() {
                     <span className="money text-navy/70">{formatMoney(editSubtotal)}</span>
                   </div>
                   <div className="flex justify-between text-sm text-navy/70 mt-1">
-                    <span>Tax ({(taxRate * 100).toFixed(0)}%)</span>
+                    <EditTaxLabel order={order} />
                     <span className="money text-navy/70">{formatMoney(editTax)}</span>
                   </div>
                   {orderCategoryTax > 0 && (
@@ -3028,16 +3035,16 @@ export default function OrderDetailPage() {
                 <div className="flex gap-2 flex-wrap">
                   {localStatus === "DRAFT" ? (
                     <>
-                      <Button
+                      <WriteButton
                         size="sm"
                         className="bg-amber-500 text-white hover:bg-amber-600"
                         onClick={handleSaveItems}
                         loading={updateItems.isPending}
                       >
                         Save Draft
-                      </Button>
+                      </WriteButton>
                       {access.staff && (
-                        <Button
+                        <WriteButton
                           size="sm"
                           leftIcon={<CheckCircle2 className="h-4 w-4" />}
                           onClick={() => {
@@ -3047,7 +3054,7 @@ export default function OrderDetailPage() {
                             if (refuseLockedUnitLineEdit()) return;
                             const updates: ItemUpdate[] = [
                               ...pendingDeletes.map((id): ItemUpdate => ({ id, action: "DELETE" })),
-                              ...buildItemUpdates(editItems, order!.lineItems),
+                              ...buildItemUpdates(editItems, stale.baseLines() ?? order!.lineItems),
                             ];
                             const doPublish = () =>
                               updateStatus.mutate(
@@ -3066,8 +3073,10 @@ export default function OrderDetailPage() {
                             // Carry a shipping-fee edit into the publish save the same
                             // way handleSaveItems does — otherwise publishing straight
                             // from edit mode silently drops the fee the operator typed.
-                            const feeChanged =
-                              Math.abs(editShippingFee - Number(order!.shippingFee ?? 0)) > 0.0001;
+                            const feeChanged = stale.feeChanged(
+                              editShippingFee,
+                              order!.shippingFee,
+                            );
                             // #2406: the Returns section rides this save too, never silently dropped.
                             const inlineReturn = returnSave.prepare(order!.customerId, order!.id);
                             if (inlineReturn === null) return;
@@ -3088,6 +3097,7 @@ export default function OrderDetailPage() {
                                     // the payload as a full replace and deletes untouched
                                     // lines. Mirrors handleSaveItems.
                                     replaceAll: false,
+                                    expectedRevisionNumber: stale.expected(), // row 372 MF4
                                     ...(feeChanged ? { shippingFee: editShippingFee } : {}),
                                     // Same dual-path threading as handleSaveItems — the
                                     // line payload is shared (buildItemUpdates) but this
@@ -3114,7 +3124,7 @@ export default function OrderDetailPage() {
                           loading={updateItems.isPending || updateStatus.isPending}
                         >
                           Publish Order
-                        </Button>
+                        </WriteButton>
                       )}
                       <Button
                         size="sm"
@@ -3127,9 +3137,9 @@ export default function OrderDetailPage() {
                     </>
                   ) : (
                     <>
-                      <Button size="sm" onClick={handleSaveItems} loading={updateItems.isPending}>
+                      <WriteButton size="sm" onClick={handleSaveItems} loading={savingItems}>
                         Save Changes
-                      </Button>
+                      </WriteButton>
                       <Button
                         size="sm"
                         variant="ghost"

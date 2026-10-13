@@ -44,6 +44,17 @@ export interface EnableAddonOptions {
   comp?: boolean;
   /** Internal: `uncompAddon`'s billed branch re-enters here to bill an active comp row. */
   uncomp?: boolean;
+  /**
+   * SA-769: the CALLER already holds this add-on's advisory key (`addon:<tenant>:<sku>`), so the enable runs
+   * without taking it again. Business-profile confirm holds every profile module's key on one pinned
+   * connection (`withConfirmLock`); a second take on this call's own connection would wait on a key its caller
+   * holds, time out and 503 the whole apply. Honoured for a COMP enable only (it makes no Stripe write): a
+   * billed enable always takes its own lock.
+   */
+  lockHeld?: boolean;
+  /** SA-769: who and why, for the log line only. The audit row is the caller's (ADDON_COMPED). */
+  actorId?: string;
+  reason?: string;
 }
 
 /**
@@ -282,8 +293,14 @@ export class AddonService {
     // keys on itself.
     const lockSku = addonCodeOf(addonKey);
     const lockKey = `addon:${tenantId}:${lockSku}`;
+    // SA-769: a comp enable whose caller already holds this key (business-profile confirm) runs under that
+    // lock; everything else - the admin route, a billed enable - takes it here, exactly as before.
+    const underLock: typeof withAdvisoryLock =
+      comp && opts?.lockHeld === true
+        ? async (_lockOpts, fn) => ({ acquired: true as const, value: await fn() })
+        : withAdvisoryLock;
     try {
-      const result = await withAdvisoryLock(
+      const result = await underLock(
         { family: "billing", key: lockKey, mode: "wait", waitMs: 10_000 },
         async () => {
           // Check if add-on already exists — keyed either way (#2188 / SA-385).
@@ -484,7 +501,12 @@ export class AddonService {
           // an add-on. Real enforcement (AddonGuard/DriverPaymentsGuard) is unaffected — it
           // reads TenantAddon via Prisma directly, uncached.
           this.featureResolver.invalidate(tenantId);
-          this.logger.log(`Add-on "${addonKey}" enabled for tenant ${tenant.slug}`);
+          this.logger.log(
+            `Add-on "${addonKey}" enabled for tenant ${tenant.slug}` +
+              (comp && opts?.reason
+                ? ` as a comp (${opts.reason}, by ${opts.actorId ?? "?"})`
+                : ""),
+          );
           return addon;
         },
       );

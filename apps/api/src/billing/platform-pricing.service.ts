@@ -2,6 +2,9 @@ import { BadRequestException, Injectable, NotFoundException } from "@nestjs/comm
 import { PrismaService } from "../prisma/prisma.service";
 import { PlanCatalogService } from "./plan-catalog.service";
 import { findPlanDefinition, normalizePlanKey } from "./plan-catalog.constants";
+import { toCents } from "@routeflow/pricing";
+import type { ProposedOverride } from "./price-override";
+import { resolvePlanPrice } from "./plan-price";
 
 export type PricingSource = "override" | "catalog";
 
@@ -61,9 +64,21 @@ export class PlatformPricingService {
     return this.resolve(tenantId, true);
   }
 
+  /**
+   * D8 / Stripe-first: the price the tenant WOULD resolve to if its override columns held
+   * `proposed` (null = cleared) — read before the override is written, so Stripe can be updated first.
+   */
+  async resolveTenantPricingWith(
+    tenantId: string,
+    proposed: ProposedOverride,
+  ): Promise<ResolvedTenantPricing> {
+    return this.resolve(tenantId, false, proposed);
+  }
+
   private async resolve(
     tenantId: string,
     ignoreOverrides: boolean,
+    proposed?: ProposedOverride,
   ): Promise<ResolvedTenantPricing> {
     const tenant = await this.prisma.tenant.findUnique({
       where: { id: tenantId },
@@ -90,63 +105,56 @@ export class PlatformPricingService {
     const definition = findPlanDefinition(version.definitions, planKey);
     const planName = definition?.name ?? planKey;
 
-    const overrideMonthly = ignoreOverrides ? null : tenant.subscription?.priceOverrideMonthly;
-    const overrideAnnual = ignoreOverrides ? null : tenant.subscription?.priceOverrideAnnual;
-    // `annualPrice` of 0 is a DELIBERATE promotional price (free first year) — test for
-    // null, never truthiness, or a 0 silently becomes "10× monthly".
-    const catalogMonthly =
-      definition?.monthlyPrice != null ? Number(definition.monthlyPrice) : null;
-    const catalogAnnual = definition?.annualPrice != null ? Number(definition.annualPrice) : null;
-
-    // Either override column on its own counts as a custom fee: an annual-only fee is a
-    // real negotiated case (annual prepay discount off the catalog monthly), and silently
-    // ignoring it would bill the catalog price to a tenant the admin already re-priced.
-    if (overrideMonthly != null || overrideAnnual != null) {
-      const monthly = overrideMonthly != null ? Number(overrideMonthly) : catalogMonthly;
-      if (monthly == null) {
-        throw new BadRequestException(
-          `No monthly price is resolvable for tenant ${tenantId} on plan ${planKey}. ` +
-            `This plan has no catalog price (custom/Enterprise) and only an annual custom ` +
-            `fee is set — set a custom MONTHLY fee too.`,
-        );
-      }
-      const annual = overrideAnnual != null ? Number(overrideAnnual) : monthly * 10;
-      return { planKey, planName, monthly, annual, source: "override", currency: "usd" };
-    }
-
-    if (catalogMonthly == null) {
+    const resolved = resolvePlanPrice(
+      definition,
+      ignoreOverrides
+        ? null
+        : proposed
+          ? { monthly: proposed.monthly, annual: proposed.annual }
+          : {
+              monthly: tenant.subscription?.priceOverrideMonthly,
+              annual: tenant.subscription?.priceOverrideAnnual,
+            },
+    );
+    if (!resolved.ok) {
       throw new BadRequestException(
-        `No price is resolvable for tenant ${tenantId} on plan ${planKey}. ` +
-          `This plan has no catalog price (custom/Enterprise) — set a custom fee first.`,
+        resolved.reason === "annual_override_without_monthly"
+          ? `No monthly price is resolvable for tenant ${tenantId} on plan ${planKey}. ` +
+              `This plan has no catalog price (custom/Enterprise) and only an annual custom ` +
+              `fee is set — set a custom MONTHLY fee too.`
+          : `No price is resolvable for tenant ${tenantId} on plan ${planKey}. ` +
+              `This plan has no catalog price (custom/Enterprise) — set a custom fee first.`,
       );
     }
-    const annual = catalogAnnual != null ? catalogAnnual : catalogMonthly * 10;
     return {
       planKey,
       planName,
-      monthly: catalogMonthly,
-      annual,
-      source: "catalog",
+      monthly: resolved.monthly,
+      annual: resolved.annual,
+      source: resolved.source,
       currency: "usd",
     };
   }
 
   /**
    * Build the Stripe Checkout `price_data` line item for a tenant + billing interval.
-   * Integer cents — `Math.round` guards float drift (e.g. 249 * 100).
+   * Integer cents via the shared `toCents` (rounded to cents first, so float drift never moves a cent).
    */
   async checkoutPriceData(
     tenantId: string,
     interval: "month" | "year",
+    proposed?: ProposedOverride,
   ): Promise<CheckoutPriceData> {
-    const pricing = await this.resolveTenantPricing(tenantId);
+    const pricing = proposed
+      ? await this.resolveTenantPricingWith(tenantId, proposed)
+      : await this.resolveTenantPricing(tenantId);
     const amount = interval === "year" ? pricing.annual : pricing.monthly;
     return {
       currency: pricing.currency,
       product_data: {
         name: `RouteFlow ${pricing.planName} — ${interval === "year" ? "annual" : "monthly"}`,
       },
-      unit_amount: Math.round(amount * 100),
+      unit_amount: toCents(amount),
       recurring: { interval },
     };
   }

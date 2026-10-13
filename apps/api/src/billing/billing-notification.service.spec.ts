@@ -54,7 +54,8 @@ function makeService(overrides?: {
         ),
     },
     tenantConfig: {
-      findFirst: jest
+      // SA-738: the zone is read through the one resolver, which uses findUnique.
+      findUnique: jest
         .fn()
         .mockResolvedValue(overrides?.tenantConfig === undefined ? null : overrides.tenantConfig),
     },
@@ -267,6 +268,17 @@ describe("BillingNotificationService", () => {
       await expect(svc.notifySuspended("t1", "overdue payment")).resolves.toBeUndefined();
     });
 
+    it("notifySuspended passes the reason through: 'subscription canceled' gets the choose-a-plan copy", async () => {
+      const { svc, sendPlatform } = makeService();
+      await svc.notifySuspended("t1", "subscription canceled");
+      expect(sendPlatform).toHaveBeenCalledTimes(1);
+      const mail = sendPlatform.mock.calls[0][0];
+      expect(mail.text).toContain(
+        "Your subscription was canceled. Choose a plan to restore access.",
+      );
+      expect(mail.text).not.toMatch(/payment details/i);
+    });
+
     it("notifyCheckoutPlanNotApplied emails the admin once per checkout session and never throws", async () => {
       const { svc, sendPlatform } = makeService();
       await svc.notifyCheckoutPlanNotApplied("t1", "SCALE", "cs_1");
@@ -371,5 +383,99 @@ describe("BillingNotificationService", () => {
       expect(sendPlatform).toHaveBeenCalledTimes(1);
       expect(email.send).toBeUndefined(); // the mock never even defines .send — proves nothing else was called
     });
+  });
+});
+
+describe("BillingNotificationService - dunning notices (SA-733r7 PR-B3)", () => {
+  const extra = { payUrl: "https://pay.example.test/i/in_1" };
+
+  it("claims (tenant, milestone, invoiceId): the same milestone for the same invoice sends once", async () => {
+    const { svc, sendPlatform, create } = makeService({ createImpl: realUniqueConstraintImpl() });
+    expect((await svc.notifyDunning("t1", "DUNNING_D3", "in_1", "d3", extra)).status).toBe("sent");
+    expect((await svc.notifyDunning("t1", "DUNNING_D3", "in_1", "d3", extra)).status).toBe(
+      "skipped",
+    );
+    expect(sendPlatform).toHaveBeenCalledTimes(1);
+    expect(create).toHaveBeenCalledWith({
+      data: { tenantId: "t1", milestone: "DUNNING_D3", key: "in_1" },
+    });
+  });
+
+  it("a NEW invoice failing later gets its own d0 / d3 / d6 run", async () => {
+    const { svc, sendPlatform } = makeService({ createImpl: realUniqueConstraintImpl() });
+    await svc.notifyDunning("t1", "DUNNING_D0", "in_1", "d0", extra);
+    await svc.notifyDunning("t1", "DUNNING_D0", "in_2", "d0", extra);
+    expect(sendPlatform).toHaveBeenCalledTimes(2);
+  });
+
+  it("a send nobody accepted releases the claim so the next sweep retries", async () => {
+    const { svc, delete: del } = makeService({
+      sendPlatformImpl: async () => ({ delivered: false }),
+    });
+    expect((await svc.notifyDunning("t1", "DUNNING_D0", "in_1", "d0", extra)).status).toBe(
+      "failed",
+    );
+    expect(del).toHaveBeenCalledTimes(1);
+  });
+
+  it("the copy is truthful per kind: d6 names no date, final names the local date, paused says read-only now", async () => {
+    const { svc, sendPlatform } = makeService();
+    await svc.notifyDunning("t1", "DUNNING_D6", "in_1", "d6", { ...extra, byDate: "Nov 8, 2026" });
+    // dark's d6 must not threaten what will not happen (SA r-note 2): neutral, and it names the date
+    expect(sendPlatform.mock.calls[0][0].html).not.toMatch(/read-only|read only/i);
+    expect(sendPlatform.mock.calls[0][0].text).not.toMatch(/read-only|read only/i);
+    expect(sendPlatform.mock.calls[0][0].subject).not.toMatch(/read-only|read only/i);
+    expect(sendPlatform.mock.calls[0][0].text).toContain("update your card by Nov 8, 2026");
+    await svc.notifyDunning("t1", "DUNNING_FINAL", "in_1", "final", {
+      ...extra,
+      readOnlyOn: "Nov 9, 2026",
+    });
+    expect(sendPlatform.mock.calls[1][0].text).toContain("read-only on Nov 9, 2026");
+    await svc.notifyDunning("t1", "DUNNING_PAUSED", "in_1", "paused", extra);
+    expect(sendPlatform.mock.calls[2][0].subject).toContain("now read-only");
+    // every notice links to the invoice's hosted page
+    for (const c of sendPlatform.mock.calls) expect(c[0].text).toContain(extra.payUrl);
+  });
+
+  it("paused_still_owed (SA G8): still read-only, names the invoice number and amount, links to the hosted page, no alarm words", async () => {
+    const { svc, sendPlatform } = makeService();
+    await svc.notifyDunning(
+      "t1",
+      "DUNNING_PAUSED_STILL_OWED",
+      "in_1:2026-11-09T04:00:00.000Z",
+      "paused_still_owed",
+      {
+        ...extra,
+        invoiceNumber: "INV-0042",
+        amountCents: 4900,
+        currency: "usd",
+      },
+    );
+    const mail = sendPlatform.mock.calls[0][0];
+    expect(mail.text).toMatch(/still read-only/i);
+    expect(mail.text).toContain("INV-0042");
+    expect(mail.text).toContain("$49.00");
+    expect(mail.text).toMatch(/pay/i);
+    expect(mail.text).toContain(extra.payUrl);
+    // neutral wording: the workspace is already read-only, so nothing here threatens or accuses
+    for (const part of [mail.subject, mail.text]) {
+      expect(part).not.toMatch(/overdue|failed|final|suspend|delinquen|urgent|immediately/i);
+    }
+  });
+
+  it("paused_still_owed without an invoice number or amount still reads cleanly", async () => {
+    const { svc, sendPlatform } = makeService();
+    await svc.notifyDunning("t1", "DUNNING_PAUSED_STILL_OWED", "k", "paused_still_owed", extra);
+    const text = sendPlatform.mock.calls[0][0].text;
+    expect(text).toMatch(/still read-only/i);
+    expect(text).not.toMatch(/undefined|null|NaN/);
+  });
+
+  it("recordDunningMilestone is the claim alone: no email", async () => {
+    const { svc, sendPlatform, create } = makeService({ createImpl: realUniqueConstraintImpl() });
+    expect(await svc.recordDunningMilestone("t1", "DUNNING_FINAL", "in_1")).toBe(true);
+    expect(await svc.recordDunningMilestone("t1", "DUNNING_FINAL", "in_1")).toBe(false);
+    expect(sendPlatform).not.toHaveBeenCalled();
+    expect(create).toHaveBeenCalledTimes(2);
   });
 });

@@ -112,11 +112,11 @@ const operatorPayload = {
 };
 
 const customerPayload = {
+  ...operatorPayload,
   sub: "user-cust",
   username: "customer1",
   role: "CUSTOMER" as const,
-  status: "ACTIVE" as const,
-  forcePasswordChange: false,
+  tenantId: "test-tenant",
 };
 
 describe("OrdersService", () => {
@@ -199,6 +199,8 @@ describe("OrdersService", () => {
             findOpenOrderDraft: jest.fn().mockResolvedValue(null),
             reconcileOrderDraftInvoice: jest.fn().mockResolvedValue({ id: "inv-1" }),
             resyncOrderInvoicesForEdit: jest.fn().mockResolvedValue([{ id: "inv-1" }]),
+            followPartialPrices: jest.fn().mockResolvedValue({ issuedPartialsUnchanged: [] }),
+            projectEditedInvoiceTotals: jest.fn().mockResolvedValue([]),
             revertLinkedInvoicesForOrderEdit: jest.fn().mockResolvedValue([]),
             voidInvoice: jest.fn().mockResolvedValue({ id: "inv-1", status: "VOID" }),
             voidInvoiceInTx: jest.fn().mockResolvedValue({ id: "inv-1", status: "VOID" }),
@@ -542,7 +544,7 @@ describe("OrdersService", () => {
           unitSku: true,
           variantName: true,
           parentProductId: true,
-          parent: { select: { name: true } },
+          parent: { select: { name: true, tenantId: true } },
         }),
       );
     });
@@ -5317,7 +5319,6 @@ describe("OrdersService", () => {
     it("action DELETE hard-removes a clean (un-invoiced, undelivered) line", async () => {
       prisma.order.findUnique.mockResolvedValue(orderWithItems);
       prisma.deliveryMutation.count.mockResolvedValue(0);
-      prisma.orderItem.findMany.mockResolvedValue([]);
       prisma.orderItem.deleteMany.mockResolvedValue({ count: 1 });
 
       await service.updateOrderItems(
@@ -5339,7 +5340,6 @@ describe("OrdersService", () => {
       };
       prisma.order.findUnique.mockResolvedValue(billed);
       prisma.deliveryMutation.count.mockResolvedValue(0);
-      prisma.orderItem.findMany.mockResolvedValue([]);
       prisma.orderItem.updateMany.mockResolvedValue({ count: 1 });
 
       await service.updateOrderItems(
@@ -6826,7 +6826,7 @@ describe("OrdersService", () => {
       prisma.product.findMany.mockResolvedValue([
         { id: "prod-box", pricePerUnit: 60, unitsPerBox: 6 },
       ]);
-      prisma.orderItem.findMany.mockResolvedValue([]);
+      prisma.orderItem.findMany.mockResolvedValue([{ id: "li-1", productId: "prod-box", qty: 2 }]); // lock-time read
 
       await service.updateOrderItems(
         "ord-1",
@@ -7542,7 +7542,7 @@ describe("OrdersService", () => {
 
       // Post-delivery: the in-place invoice+ledger resync runs (NOT the open-draft
       // reconcile), and the throw-on-payment pre-mutation revert is skipped.
-      expect(invoicesService.resyncOrderInvoicesForEdit).toHaveBeenCalledWith("ord-1");
+      expect(invoicesService.resyncOrderInvoicesForEdit.mock.calls[0][0]).toBe("ord-1");
       expect(invoicesService.reconcileOrderDraftInvoice).not.toHaveBeenCalled();
       expect(invoicesService.revertLinkedInvoicesForOrderEdit).not.toHaveBeenCalled();
       // Delivered orders are edited in place — never reverted to PENDING.
@@ -7553,7 +7553,7 @@ describe("OrdersService", () => {
     });
 
     it("SKIPS the in-place resync when the DELIVERED order is PARTIALLY invoiced (no over-bill)", async () => {
-      prisma.order.findUnique.mockResolvedValue({
+      const order = {
         ...confirmedOrder({ status: "COMPLETED", startedAt: new Date() }),
         status: "DELIVERED",
         lineItems: [
@@ -7572,10 +7572,9 @@ describe("OrdersService", () => {
             originalPrice: null,
           },
         ],
-      });
-      prisma.orderItem.findMany.mockResolvedValue([
-        { id: "li-1", productId: "prod-1", qty: 10, unitPrice: 5, subtotal: 50, status: "PENDING" },
-      ]);
+      };
+      prisma.order.findUnique.mockResolvedValue(order);
+      prisma.orderItem.findMany.mockResolvedValue(order.lineItems); // the held lines (SA-763r P-3)
       prisma.orderRevision.aggregate.mockResolvedValue({ _max: { revisionNumber: null } });
 
       await service.updateOrderItems(
@@ -7593,7 +7592,7 @@ describe("OrdersService", () => {
     });
 
     it("WP3: the partial-billing skip still settles credit notes — they're payment-level, not line-level", async () => {
-      prisma.order.findUnique.mockResolvedValue({
+      const order = {
         ...confirmedOrder({ status: "COMPLETED", startedAt: new Date() }),
         status: "DELIVERED",
         lineItems: [
@@ -7612,10 +7611,9 @@ describe("OrdersService", () => {
             originalPrice: null,
           },
         ],
-      });
-      prisma.orderItem.findMany.mockResolvedValue([
-        { id: "li-1", productId: "prod-1", qty: 10, unitPrice: 5, subtotal: 50, status: "PENDING" },
-      ]);
+      };
+      prisma.order.findUnique.mockResolvedValue(order);
+      prisma.orderItem.findMany.mockResolvedValue(order.lineItems); // the held lines (SA-763r P-3)
       prisma.orderRevision.aggregate.mockResolvedValue({ _max: { revisionNumber: null } });
 
       await service.updateOrderItems(
@@ -7646,7 +7644,7 @@ describe("OrdersService", () => {
       // createPartialFromOrder can bill a SUBSET of LINES at full qty (A) while omitting
       // others (B): every line is then either fully-invoiced or zero-invoiced, so a
       // per-line 'invoicedQty<qty' check would miss it — the gate must be cross-line.
-      prisma.order.findUnique.mockResolvedValue({
+      const order = {
         ...confirmedOrder({ status: "COMPLETED", startedAt: new Date() }),
         status: "DELIVERED",
         lineItems: [
@@ -7679,10 +7677,9 @@ describe("OrdersService", () => {
             originalPrice: null,
           },
         ],
-      });
-      prisma.orderItem.findMany.mockResolvedValue([
-        { id: "li-a", productId: "prod-1", qty: 10, unitPrice: 5, subtotal: 50, status: "PENDING" },
-      ]);
+      };
+      prisma.order.findUnique.mockResolvedValue(order);
+      prisma.orderItem.findMany.mockResolvedValue(order.lineItems); // the held lines (SA-763r P-3)
       prisma.orderRevision.aggregate.mockResolvedValue({ _max: { revisionNumber: null } });
 
       await service.updateOrderItems(
@@ -8048,7 +8045,9 @@ describe("OrdersService", () => {
     // post-edit totals recompute) return whatever the test stubs via
     // `setPostEditItems`. Stubbing both from one mockResolvedValue would make
     // held === requested and silently neuter every case in this block.
-    const heldSnapshot = [{ productId: "prod-1", qty: 5, deliveredQty: 0, status: "PENDING" }];
+    const heldSnapshot = [
+      { id: "li-1", productId: "prod-1", qty: 5, deliveredQty: 0, status: "PENDING" },
+    ];
     let postEditItems: any[] = [];
     const setPostEditItems = (items: any[]) => {
       postEditItems = items;

@@ -1,3 +1,5 @@
+import { SellingRestrictionsService } from "../selling-restrictions/selling-restrictions.service";
+import { noRestrictionsProvider } from "../selling-restrictions/testing/no-restrictions-provider";
 import { Test } from "@nestjs/testing";
 import { NotFoundException } from "@nestjs/common";
 import { BuyerCatalogService } from "./buyer-catalog.service";
@@ -14,13 +16,15 @@ import {
 } from "../orders/buyer-backorder-view";
 import { PromotionsService } from "../promotions/promotions.service";
 import { createMockPrisma } from "../testing/prisma-mock";
-import { buyerVisibleProductWhere, NO_BUYER_RESTRICTIONS } from "./buyer-product-visibility";
+import { buyerVisibleProductWhere, noBuyerRestrictions } from "./buyer-product-visibility";
 
 // The one shared buyer-visibility clause getCatalog always appends to findAll's andWhere.
-const VIS = buyerVisibleProductWhere(NO_BUYER_RESTRICTIONS);
+// The mock prisma's tenant ("test-tenant") scopes the parent filters (B1211).
+const VIS = buyerVisibleProductWhere(noBuyerRestrictions("test-tenant"));
 
 describe("BuyerCatalogService — W7 visibility gate", () => {
   let service: BuyerCatalogService;
+  let restrictions: { restrictedProductIdsFor: jest.Mock };
   let backorderResolve: jest.Mock;
   const viewIs = (v: BuyerBackorderView) => backorderResolve.mockResolvedValue(v);
   let prisma: ReturnType<typeof createMockPrisma>;
@@ -55,9 +59,11 @@ describe("BuyerCatalogService — W7 visibility gate", () => {
         { provide: ReplenishmentService, useValue: replenishment },
         { provide: PromotionsService, useValue: promotions },
         { provide: BuyerBackorderViewResolver, useValue: { resolve: backorderResolve } },
+        noRestrictionsProvider,
       ],
     }).compile();
     service = mod.get(BuyerCatalogService);
+    restrictions = mod.get(SellingRestrictionsService) as unknown as typeof restrictions;
     prisma.customer.findUnique.mockResolvedValue({ pricingTier: 1 });
   });
 
@@ -123,6 +129,7 @@ describe("BuyerCatalogService — W7 visibility gate", () => {
     prisma.customerPrice.findMany.mockResolvedValue([]);
     products.findOne.mockResolvedValue({
       id: "p1",
+      tenantId: "test-tenant",
       kind: "STANDARD",
       portalVisible: true,
       parent: null,
@@ -169,6 +176,7 @@ describe("BuyerCatalogService — W7 visibility gate", () => {
   describe("OOS PR2: the detail uses the SAME view as the listing (tile <-> detail parity)", () => {
     const oosProduct = () => ({
       id: "p1",
+      tenantId: "test-tenant",
       kind: "STANDARD",
       portalVisible: true,
       parent: null,
@@ -218,6 +226,7 @@ describe("BuyerCatalogService — W7 visibility gate", () => {
     prisma.customerPrice.findMany.mockResolvedValue([{ productId: "v1", pricingTier: 3 }]);
     products.findOne.mockResolvedValue({
       id: "p1",
+      tenantId: "test-tenant",
       kind: "STANDARD",
       portalVisible: true,
       parent: null,
@@ -256,6 +265,7 @@ describe("BuyerCatalogService — W7 visibility gate", () => {
     prisma.customerPrice.findMany.mockResolvedValue([]);
     products.findOne.mockResolvedValue({
       id: "p1",
+      tenantId: "test-tenant",
       kind: "STANDARD",
       portalVisible: true,
       parent: null,
@@ -335,6 +345,47 @@ describe("BuyerCatalogService — W7 visibility gate", () => {
       expect(r).toMatchObject({ unavailable: true, unavailableText: "No longer available online" });
       expect(r).not.toHaveProperty("buyerPrice");
     }
+  });
+
+  it("getFavorites: a favourite a selling restriction hides from this buyer is DROPPED, not stubbed; other hidden reasons keep the stub", async () => {
+    gated([]);
+    auths([]);
+    restrictions.restrictedProductIdsFor.mockResolvedValueOnce(
+      new Set(["p-limited", "p-limited-kid"]),
+    );
+    prisma.buyerFavorite.findMany.mockResolvedValue([
+      {
+        id: "f1",
+        productId: "p-limited",
+        createdAt: new Date(),
+        product: { ...VISIBLE, id: "p-limited", name: "State Limited" },
+      },
+      {
+        id: "f2",
+        productId: "p-limited-kid",
+        createdAt: new Date(),
+        product: { ...VISIBLE, id: "p-limited-kid", name: "Limited Variant" },
+      },
+      {
+        id: "f3",
+        productId: "p-gone",
+        createdAt: new Date(),
+        product: { ...VISIBLE, id: "p-gone", name: "Curated Out", portalVisible: false },
+      },
+      {
+        id: "f4",
+        productId: "p-ok",
+        createdAt: new Date(),
+        product: { ...VISIBLE, id: "p-ok", name: "Fine", imageKeys: [] },
+      },
+    ]);
+    prisma.customerPrice.findMany.mockResolvedValue([]);
+    const res = (await service.getFavorites("ba1", "c1")) as any[];
+    expect(res.map((r) => r.id).sort()).toEqual(["f3", "f4"]); // f1 and f2 are gone entirely
+    expect(res.find((r) => r.id === "f3")).toMatchObject({
+      unavailable: true,
+      unavailableText: "No longer available online",
+    });
   });
 
   it("getFavorites filters out products in a locked category", async () => {

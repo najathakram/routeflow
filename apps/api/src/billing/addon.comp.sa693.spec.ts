@@ -410,3 +410,81 @@ describe("SA-671d: the admin add-on DISABLE path takes no advisory lock", () => 
     expect(mockWithAdvisoryLocks).not.toHaveBeenCalled();
   });
 });
+
+describe("SA-769: a comp enable made while the CALLER already holds the add-on lock", () => {
+  // Business-profile confirm holds `addon:<tenant>:<sku>` for every profile module on ONE pinned
+  // connection (`withConfirmLock`). `enableAddon` takes the same key on its OWN connection, so called
+  // from inside the confirm it would wait on a lock its own caller holds, time out after 10 s and 503
+  // the whole apply. `lockHeld` is the caller's promise that it holds the key; it is honoured for a
+  // COMP enable only (no Stripe write inside), never for a billed one.
+  it("a comp enable with lockHeld takes no advisory lock, and still writes the comp row (price 0, no Stripe item, nothing booked)", async () => {
+    const { svc, create, store, events } = make({ stripeSubId: "sub_1" });
+
+    await svc.enableAddon("t1", "REGULATED_ITEMS", undefined, undefined, {
+      comp: true,
+      lockHeld: true,
+      actorId: "admin-1",
+      reason: "business profile delivery_distributor",
+    });
+
+    expect(mockWithAdvisoryLock).not.toHaveBeenCalled();
+    expect(mockWithAdvisoryLocks).not.toHaveBeenCalled();
+    expect(create).not.toHaveBeenCalled();
+    expect(store.rows).toHaveLength(1);
+    expect(store.rows[0]).toMatchObject({
+      active: true,
+      isComp: true,
+      priceSnapshot: 0,
+      stripeItemId: null,
+    });
+    expect(events.emit).not.toHaveBeenCalled();
+  });
+
+  it("a comp enable WITHOUT lockHeld still takes the per-SKU key (the admin route is unchanged)", async () => {
+    const { svc } = make({ stripeSubId: "sub_1" });
+
+    await svc.enableAddon("t1", "REGULATED_ITEMS", undefined, undefined, { comp: true });
+
+    expect(mockWithAdvisoryLock).toHaveBeenCalledTimes(1);
+    expect(mockWithAdvisoryLock.mock.calls[0][0].key).toBe("addon:t1:REGULATED_ITEMS");
+  });
+
+  it("lockHeld is ignored for a BILLED enable: it always takes its lock before any Stripe write", async () => {
+    const { svc } = make({ stripeSubId: "sub_1" });
+
+    await svc.enableAddon("t1", "REGULATED_ITEMS", "price_x", undefined, { lockHeld: true });
+
+    expect(mockWithAdvisoryLock).toHaveBeenCalledTimes(1);
+  });
+
+  it("an already-ACTIVE row is still refused under lockHeld (409): a comp never overwrites what exists", async () => {
+    const { svc, store } = make({
+      rows: [compRow({ isComp: false, priceSnapshot: 10, stripeItemId: "si_paid" })],
+    });
+
+    await expect(
+      svc.enableAddon("t1", "REGULATED_ITEMS", undefined, undefined, {
+        comp: true,
+        lockHeld: true,
+      }),
+    ).rejects.toBeInstanceOf(ConflictException);
+
+    expect(store.rows[0]).toMatchObject({
+      isComp: false,
+      priceSnapshot: 10,
+      stripeItemId: "si_paid",
+    });
+  });
+});
+
+describe("SA-769: switching a profile comp OFF is a plain disable with no Stripe call", () => {
+  it("a comp row carries no Stripe item, so disableAddon never touches Stripe and books nothing", async () => {
+    const { svc, del, events, store } = make({ stripeSubId: "sub_1", rows: [compRow()] });
+
+    await svc.disableAddon("t1", "REGULATED_ITEMS");
+
+    expect(del).not.toHaveBeenCalled();
+    expect(events.emit).not.toHaveBeenCalled();
+    expect(store.rows[0]).toMatchObject({ active: false });
+  });
+});

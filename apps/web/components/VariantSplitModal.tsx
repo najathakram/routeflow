@@ -4,7 +4,7 @@ import * as React from "react";
 import Link from "next/link";
 import { X, ArrowRightLeft, Search, CheckCircle2, AlertCircle } from "lucide-react";
 import { Button, useToast, cn } from "@routeflow/ui/web";
-import { normalizeBoxesPieces, roundUnitCost } from "@routeflow/pricing";
+import { normalizeBoxesPieces, roundUnitCost, unitWords } from "@routeflow/pricing";
 import { useProduct, type CostingMethod } from "@/lib/api/products";
 import {
   useAssignToVariants,
@@ -93,6 +93,7 @@ interface VariantSplitModalProps {
 
 export function VariantSplitModal({ parent, pool, onClose, onSuccess }: VariantSplitModalProps) {
   const { toast } = useToast();
+  const w = unitWords();
   const { data: parentDetail, isLoading: loadingVariants } = useProduct(parent.id);
   const assignToVariants = useAssignToVariants({ localErrorToast: localToastForSafeTextRefusal });
 
@@ -229,7 +230,7 @@ export function VariantSplitModal({ parent, pool, onClose, onSuccess }: VariantS
       const movedQty = res.assignments.reduce((s, a) => s + Number(a.qty), 0);
       toast({
         title: `Assigned ${res.assignments.length} variant${res.assignments.length === 1 ? "" : "s"}`,
-        description: `${movedQty} unit${movedQty === 1 ? "" : "s"} moved off "${parent.name}".`,
+        description: `${movedQty} ${w.baseShortFor(movedQty)} moved off "${parent.name}".`,
         variant: "success",
       });
       setResult(res);
@@ -268,7 +269,7 @@ export function VariantSplitModal({ parent, pool, onClose, onSuccess }: VariantS
 
           <div className="flex-1 overflow-y-auto px-6 py-4">
             <p className="mb-4 text-sm text-navy/70">
-              Moved {movedQty} unit{movedQty === 1 ? "" : "s"} off{" "}
+              Moved {movedQty} {w.baseShortFor(movedQty)} off{" "}
               <span className="font-medium text-navy">{parent.name}</span> into{" "}
               {result.assignments.length} variant{result.assignments.length === 1 ? "" : "s"}.{" "}
               {result.parentRemaining} remain unassigned.
@@ -435,9 +436,9 @@ export function VariantSplitModal({ parent, pool, onClose, onSuccess }: VariantS
                                 }
                                 onFocus={(e) => e.target.select()}
                                 className="w-14 rounded border border-surface-border px-1.5 py-1 text-center text-sm text-navy focus:outline-none focus:ring-1 focus:ring-brand-500"
-                                title="Number of whole cases"
+                                title={`Number of whole ${w.pack.lowerOther}`}
                               />
-                              <span className="text-xs text-navy/70">cases</span>
+                              <span className="text-xs text-navy/70">{w.pack.lowerOther}</span>
                               <span className="text-xs text-navy/30">+</span>
                               <input
                                 type="number"
@@ -453,9 +454,9 @@ export function VariantSplitModal({ parent, pool, onClose, onSuccess }: VariantS
                                 }
                                 onFocus={(e) => e.target.select()}
                                 className="w-14 rounded border border-surface-border px-1.5 py-1 text-center text-sm text-navy focus:outline-none focus:ring-1 focus:ring-brand-500"
-                                title="Extra loose units (less than a full case)"
+                                title={`Extra ${w.base.lowerOther} (less than a full ${w.pack.lower})`}
                               />
-                              <span className="text-xs text-navy/70">units</span>
+                              <span className="text-xs text-navy/70">{w.base.short.other}</span>
                             </div>
                           ) : (
                             <input
@@ -539,9 +540,9 @@ export function VariantSplitModal({ parent, pool, onClose, onSuccess }: VariantS
                           }
                           onFocus={(e) => e.target.select()}
                           className="w-14 rounded border border-surface-border px-1.5 py-1 text-center text-sm text-navy focus:outline-none focus:ring-1 focus:ring-brand-500"
-                          title="Number of whole cases"
+                          title={`Number of whole ${w.pack.lowerOther}`}
                         />
-                        <span className="text-xs text-navy/70">cases</span>
+                        <span className="text-xs text-navy/70">{w.pack.lowerOther}</span>
                         <span className="text-xs text-navy/30">+</span>
                         <input
                           type="number"
@@ -557,9 +558,9 @@ export function VariantSplitModal({ parent, pool, onClose, onSuccess }: VariantS
                           }
                           onFocus={(e) => e.target.select()}
                           className="w-14 rounded border border-surface-border px-1.5 py-1 text-center text-sm text-navy focus:outline-none focus:ring-1 focus:ring-brand-500"
-                          title="Extra loose units (less than a full case)"
+                          title={`Extra ${w.base.lowerOther} (less than a full ${w.pack.lower})`}
                         />
-                        <span className="text-xs text-navy/70">units</span>
+                        <span className="text-xs text-navy/70">{w.base.short.other}</span>
                       </div>
                     ) : (
                       <input
@@ -630,7 +631,7 @@ export function VariantSplitModal({ parent, pool, onClose, onSuccess }: VariantS
             disabled={!canSubmit}
           >
             {assignedTotal > 0
-              ? `Assign ${assignedTotal} unit${assignedTotal === 1 ? "" : "s"}`
+              ? `Assign ${assignedTotal} ${w.baseShortFor(assignedTotal)}`
               : "Assign"}
           </Button>
         </div>

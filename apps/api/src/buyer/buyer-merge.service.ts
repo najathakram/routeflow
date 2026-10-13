@@ -119,7 +119,11 @@ export class BuyerMergeService {
 
   // ─── Buyer: verify merge token ────────────────────────────────────────────────
 
-  async verifyMergeToken(token: string) {
+  /**
+   * The shared, read-only validation behind both the preview and the consume: lookup by token,
+   * still pending verification, not expired. Throws the same NotFound / BadRequest / Gone errors.
+   */
+  private async findPendingMergeByToken(token: string) {
     const mergeRequest = await this.prisma.buyerMergeRequest.findUnique({
       where: { verificationToken: token },
     });
@@ -133,9 +137,23 @@ export class BuyerMergeService {
         "Verification token has expired. Please initiate a new merge request.",
       );
     }
+    return mergeRequest;
+  }
 
-    await this.prisma.buyerMergeRequest.update({
-      where: { id: mergeRequest.id },
+  /** The single-use consume, reached only by the explicit `POST verify-merge` confirm click. */
+  async verifyMergeToken(token: string) {
+    const mergeRequest = await this.findPendingMergeByToken(token);
+
+    // Compare-and-set: the lookup above and this write are separate statements, so a concurrent
+    // consume (token cleared) or an admin rejection (status REJECTED, token left in place) could
+    // land in between. Only a row still holding THIS token and still PENDING_VERIFICATION is
+    // consumed; losing the race is the same 404 a replay gets, never an overwrite of REJECTED.
+    const consumed = await this.prisma.buyerMergeRequest.updateMany({
+      where: {
+        id: mergeRequest.id,
+        verificationToken: token,
+        status: BuyerMergeRequestStatus.PENDING_VERIFICATION,
+      },
       data: {
         status: BuyerMergeRequestStatus.PENDING_REVIEW,
         verifiedAt: new Date(),
@@ -143,6 +161,7 @@ export class BuyerMergeService {
         verificationExpires: null,
       },
     });
+    if (consumed.count === 0) throw new NotFoundException("Invalid verification token");
 
     return {
       success: true,

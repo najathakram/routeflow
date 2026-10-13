@@ -22,6 +22,7 @@ import { ProductPickerSheet } from "../../../../../components/ProductPickerSheet
 import { BarcodeFab } from "../../../../../components/BarcodeFab";
 import { useCreateOrderTemplate } from "../../../../../lib/api/order-templates";
 import { ISO_DAY_OPTIONS, validateTemplateForm } from "../../../../../lib/order-templates-logic";
+import { scanHaptic } from "../../../../../lib/haptics";
 import { showToast } from "../../../../../lib/toast";
 import { hasUnsavedStandingOrder } from "../../../../../lib/discard-guard";
 import { archivedMessage, resolveProductByCode } from "../../../../../lib/barcode-resolve";
@@ -105,9 +106,12 @@ export default function NewStandingOrderScreen() {
           onPromptChange: setScanPromptOpen,
         })
       ) {
-        return decision.kind === "add"
-          ? { feedback: { kind: "added", text: `${decision.product.name} added` } }
-          : { feedback: { kind: "error", text: promptText(decision) } };
+        if (decision.kind === "add") {
+          return { feedback: { kind: "added", text: `${decision.product.name} added` } };
+        }
+        // A confirm/picker prompt is not a failure: neutral haptic, not the error buzz.
+        scanHaptic("info");
+        return { feedback: { kind: "info", text: promptText(decision) } };
       }
     } catch {
       // network error → fall through to the toast

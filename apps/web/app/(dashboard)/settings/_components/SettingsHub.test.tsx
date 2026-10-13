@@ -63,6 +63,14 @@ describe("SettingsHub regroup", () => {
     }
   });
 
+  it("(C h) links the rules page as Portal limits & rules from both groups", () => {
+    renderWithProviders(<SettingsHub isAdmin />);
+    for (const t of ["Selling & catalog", "Compliance"]) {
+      const link = within(section(t)).getByRole("link", { name: /portal limits & rules/i });
+      expect(link).toHaveAttribute("href", "/settings/restrictions/rules");
+    }
+  });
+
   it("operators see Selling restrictions in both groups (read-only page)", () => {
     renderWithProviders(<SettingsHub isAdmin={false} />);
     for (const t of ["Selling & catalog", "Compliance"]) {
@@ -83,6 +91,19 @@ describe("SettingsHub regroup", () => {
       .getAllByRole("link")
       .filter((l) => l.getAttribute("href") === "/settings/restrictions");
     expect(hrefs).toHaveLength(2);
+  });
+
+  it("search 'receipt' finds the Business profile screen that holds the receipt footer", () => {
+    renderWithProviders(<SettingsHub isAdmin={false} />);
+    fireEvent.change(screen.getByLabelText("Search settings"), { target: { value: "receipt" } });
+    const hrefs = screen.getAllByRole("link").map((l) => l.getAttribute("href"));
+    expect(hrefs).toContain("/settings?tab=profile");
+    const row = SETTINGS_REGISTRY.find((r) => r.key === "settings.receiptFooter");
+    expect(row).toMatchObject({
+      key: "settings.receiptFooter",
+      status: "live",
+      screen: "/settings?tab=profile",
+    });
   });
 
   it("search 'restrictions' finds it in both groups", () => {
@@ -209,7 +230,9 @@ describe("SettingsHub readiness banner", () => {
   it("shows the banner with an admin link when the master switch is off", () => {
     restrictions.mockReturnValue({ data: { enabled: false }, isLoading: false, isError: false });
     renderWithProviders(<SettingsHub isAdmin />);
-    expect(screen.getByRole("status")).toHaveTextContent(/selling restrictions are off/i);
+    expect(screen.getByRole("status")).toHaveTextContent(
+      /staff orders and invoices aren.t checked/i,
+    );
     expect(within(screen.getByRole("status")).getByRole("link")).toHaveAttribute(
       "href",
       "/settings/restrictions",
@@ -220,7 +243,7 @@ describe("SettingsHub readiness banner", () => {
     restrictions.mockReturnValue({ data: { enabled: false }, isLoading: false, isError: false });
     renderWithProviders(<SettingsHub isAdmin={false} />);
     const banner = screen.getByRole("status");
-    expect(banner).toHaveTextContent(/selling restrictions are off/i);
+    expect(banner).toHaveTextContent(/staff orders and invoices aren.t checked/i);
     expect(within(banner).queryByRole("link")).not.toBeInTheDocument();
   });
 
