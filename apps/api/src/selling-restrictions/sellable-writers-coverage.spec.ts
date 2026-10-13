@@ -80,8 +80,10 @@ const TABLE: Record<string, Row> = {
   [inv("create")]: G,
   [inv("update")]: G,
   [inv("duplicate")]: G,
+  // F2: the one place a DRAFT order's billing is judged; createSplitInvoices + createPartialFromOrder call it.
+  [inv("assertDraftOrderSellable")]: G,
   [inv("createSplitInvoices")]: X(
-    "owner ruling 2026-09-25 (#2093): SPLIT IS EXEMPT — quantity-neutral (siblings sum to the " +
+    "owner ruling 2026-09-25 (#2093): SPLIT IS EXEMPT for a placed (non-DRAFT) order — quantity-neutral (siblings sum to the " +
       "parent order, already checked when placed); flagged + audited via restricted-lines-flag.ts " +
       "(pinned in invoices.service.spec.ts's F-05 #2093 describe), never blocked",
   ),
@@ -96,7 +98,9 @@ const TABLE: Record<string, Row> = {
     "mirrors the order's own goods (checked at the order)",
   ),
   [inv("rebuildSiblingDrafts")]: X("mirrors the order's own goods"),
-  [inv("createPartialFromOrder")]: X("copies lines of an existing, already-checked order"),
+  [inv("createPartialFromOrder")]: X(
+    "copies lines of an existing, already-checked order; a DRAFT order is re-judged first (assertDraftOrderSellable, F2)",
+  ),
   [inv("recomputeOrderFromInvoices")]: X(
     "back-sync; a new order line comes from an invoice line already checked at the invoice",
   ),
@@ -136,7 +140,7 @@ const TABLE: Record<string, Row> = {
 /** The RATCHET: how many rows are still PENDING. Lower it in the PR that flips a row to GUARDED. */
 const PENDING_BASELINE = 0; // was 2: createSplitInvoices + importInvoices both EXEMPT with written reasons (F-05 #2093 split/import PR)
 /** GUARDED + PENDING: reclassifying a PENDING row to EXEMPT (an escape, not progress) must change THIS. */
-const ENFORCEMENT_POINTS = 10; // -2 (#2093 split/import EXEMPT, this PR); prior -2 (completeWithPayment/reopenStop) + -2 (merge/consolidate, SA-255)
+const ENFORCEMENT_POINTS = 11; // +1 (F2: assertDraftOrderSellable); was 10: -2 (#2093 split/import EXEMPT, this PR); prior -2 (completeWithPayment/reopenStop) + -2 (merge/consolidate, SA-255)
 const CHOKE_POINT = ["assertLinesSellable", "checkLinesSellable"];
 
 // ─── scanner (same rules as orders/unit-line-writers.ast.spec.ts; exercised on inline source) ──

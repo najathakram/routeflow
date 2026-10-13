@@ -773,6 +773,26 @@ export class InvoicesService {
     return created;
   }
 
+  /**
+   * F2: a DRAFT order has not been judged by the selling-restrictions engine for these lines since it
+   * was placed, so billing it is a sale (the staff channel, like every writer in this file). Any
+   * other status keeps F-05's flag-not-block. Read-only: a throw leaves nothing mutated.
+   */
+  private async assertDraftOrderSellable(
+    order: { status?: string | null; customerId: string | null },
+    productIds: ReadonlyArray<string | null | undefined>,
+  ): Promise<void> {
+    if (order.status !== "DRAFT") return;
+    await this.sellingRestrictions.assertLinesSellable({
+      tenantId: requireRestrictionTenantId(this.prisma.getTenantId()),
+      customerId: order.customerId,
+      lines: [...new Set(productIds.filter((id): id is string => !!id))].map((productId) => ({
+        productId,
+      })),
+      channel: "STAFF",
+    });
+  }
+
   /** RF-4: see foldCategoryTax in manual-invoice-context.ts (shared with estimate conversion, B659). */
   private foldCategoryTax(
     itemsData: Array<{ categoryTaxAmount?: number }>,
@@ -1104,6 +1124,13 @@ export class InvoicesService {
     include: any;
   }): Promise<any[]> {
     const { order, remainingItems, isTaxExempt, db, tenantId, extraInvoiceData, include } = params;
+
+    // F2: billing a DRAFT order SELLS its lines. Refuse a banned one (the standard 409) BEFORE the
+    // license guard, the split flag + its audit, the number reservation and the deposit-mirror send.
+    await this.assertDraftOrderSellable(
+      order,
+      remainingItems.map(({ li }: any) => li.productId),
+    );
 
     // W6b backstop: re-run the license guard at invoice time. Catches a regulated
     // line added to the order after its create-time guard (buyer merge) or a license
@@ -2694,6 +2721,12 @@ export class InvoicesService {
       subtotal += itemData.subtotal;
       itemsData.push(itemData);
     }
+    // F2: a DRAFT order's partial SELLS these lines: refuse a banned one (standard 409) before the
+    // number is reserved (no series gap), the transaction opens or the optional send runs.
+    await this.assertDraftOrderSellable(
+      order,
+      dto.items.map((req) => (itemById.get(req.orderItemId) as any)?.productId),
+    );
     subtotal = roundMoney(subtotal);
     await this.applyMsrpSnapshots(this.prisma.forTenant(), order.customerId, itemsData);
 
