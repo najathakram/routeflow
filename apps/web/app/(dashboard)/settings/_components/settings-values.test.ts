@@ -158,6 +158,9 @@ describe("apple-ux U1: the Business card shows what the plan costs (the Billing 
     [{ cycle: "ANNUAL" as const, annualPrice: 4990 }, "$4,990/yr"],
     [{ isCustom: true }, "Custom pricing"],
     [{ monthlyPrice: null }, null],
+    // a negotiated override: the server resolves it into monthlyPrice (subscription.service, priceOverrideMonthly
+    // beats the catalog), and the card shows that figure, the same field the Billing page's plan line reads
+    [{ monthlyPrice: 99 }, "$99/mo"],
   ])("%j -> %s", (over, price) => {
     expect(businessStatus(sub(over), "admin", now)?.price).toBe(price);
   });
