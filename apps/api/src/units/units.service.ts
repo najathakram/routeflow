@@ -359,8 +359,11 @@ export class UnitsService {
         const keys: string[] = others.map((l) => unitNameKey(l.label));
         if (p.baseUnitLabel && !matches(p.baseUnitLabel)) keys.push(unitNameKey(p.baseUnitLabel));
         if (p.packLabel && !matches(p.packLabel)) keys.push(unitNameKey(p.packLabel));
-        // A pack word that renames with this unit is the renamed one, not a clash.
-        if (renamed.length > 0 && !matches(p.unit)) keys.push(packWordKey(p.unit));
+        // A pack word that renames with this unit is the renamed one, not a clash. A renamed level OR a
+        // renamed base label may not take the pack's word (a base named like the pack reads as the pack).
+        if ((renamed.length > 0 || matches(p.baseUnitLabel)) && !matches(p.unit)) {
+          keys.push(packWordKey(p.unit));
+        }
         if (keys.includes(newKey)) return "NAME";
         return lineSizeClash.has(p.id) ? "LINES_AT_OTHER_SIZE" : null;
       };

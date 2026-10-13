@@ -527,6 +527,28 @@ describe("UnitsService", () => {
       expect(h.db.productUnit.updateMany).not.toHaveBeenCalled();
     });
 
+    it("a rename of a product's BASE label onto its pack word refuses the whole rename (409)", async () => {
+      // No level is linked: the product holds the old name only as baseUnitLabel, and "Crate" is
+      // its pack word. The base would read the same as the pack, so the rename is refused.
+      const h = make();
+      seedRename(h, {
+        products: [
+          { id: "p1", name: "Mug", baseUnitLabel: "Case", packLabel: null, unit: " crate " },
+        ],
+        levels: [],
+      });
+      const err = await h.service.update("u1", { name: "Crate" }, user).catch((e) => e);
+      expect(err).toBeInstanceOf(ConflictException);
+      expect(err.getResponse()).toEqual(
+        expect.objectContaining({
+          code: "UNIT_RENAME_COLLISION",
+          products: [{ id: "p1", name: "Mug" }],
+        }),
+      );
+      expect(h.db.tenantUnit.update).not.toHaveBeenCalled();
+      expect(h.db.product.updateMany).not.toHaveBeenCalled();
+    });
+
     it("a blank Product.unit is the implicit pack word Box, so a level cannot be renamed to Box", async () => {
       const h = make();
       seedRename(h, {
