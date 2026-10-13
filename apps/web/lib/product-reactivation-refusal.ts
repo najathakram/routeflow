@@ -143,9 +143,12 @@ export function newCodeFields(refusal: ReactivationRefusal | null): ReplaceableC
 }
 
 /**
- * A 400 `PRODUCT_CODE_IN_USE` from a reactivation that sent replacement codes: the typed code was taken between the
- * availability check and the write. Returns the code field the server names, or null for any other error. Only the
- * code and the field are read; no server text is.
+ * The write refused a replacement code that was free at the availability check: a 400 `PRODUCT_CODE_IN_USE`
+ * (field named in `data.field`), or a 409 `CODE_TAKEN` (field sku | unitSku in `data.field`) / `BARCODE_TAKEN`
+ * (always the barcode) from the write transaction. Returns the sent code field it names, else the first sent
+ * field, or null for any other error. Call it only for a request that carried replacement codes: the pre-write
+ * holders refusal for the ORIGINAL codes is the same 409 code. Only the code, status and field are read; no
+ * server text is.
  */
 export function codeTakenOnSubmit(
   err: unknown,
@@ -154,9 +157,14 @@ export function codeTakenOnSubmit(
   const res = (
     err as { response?: { status?: unknown; data?: { code?: unknown; field?: unknown } } } | null
   )?.response;
-  if (res?.status !== 400 || res.data?.code !== API_ERROR_CODES.PRODUCT_CODE_IN_USE) return null;
-  const named = CODE_FIELD_ORDER.find((f) => f === res.data?.field);
-  if (named && sent[named]) return named;
+  const code = res?.data?.code;
+  let named: unknown;
+  if (res?.status === 400 && code === API_ERROR_CODES.PRODUCT_CODE_IN_USE) named = res.data?.field;
+  else if (res?.status === 409 && code === API_ERROR_CODES.CODE_TAKEN) named = res.data?.field;
+  else if (res?.status === 409 && code === API_ERROR_CODES.BARCODE_TAKEN) named = "barcode";
+  else return null;
+  const field = CODE_FIELD_ORDER.find((f) => f === named);
+  if (field && sent[field]) return field;
   return CODE_FIELD_ORDER.find((f) => sent[f]) ?? null;
 }
 

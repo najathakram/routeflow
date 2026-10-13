@@ -1,6 +1,7 @@
 import * as fs from "fs";
 import * as path from "path";
 import {
+  codeTakenOnSubmit,
   deactivateFailureToast,
   getReactivationRefusal,
   newCodeFields,
@@ -259,5 +260,61 @@ describe("the deactivate / delete call sites use deactivateFailureToast (source 
   });
   it("products list: bulk delete", () => {
     expect(read("../app/(dashboard)/products/page.tsx")).toMatch(/deactivateFailureToast\(/);
+  });
+});
+
+describe("codeTakenOnSubmit — which typed code the server refused, by code + field only", () => {
+  const all = { sku: "S-1", unitSku: "U-1", barcode: "B-1" };
+  // The message is deliberately misleading ("barcode" first, "unit" second): it is never read.
+  const odd = "barcode unit sku";
+  const e400 = (field: unknown) => ({
+    response: { status: 400, data: { code: "PRODUCT_CODE_IN_USE", field, message: odd } },
+  });
+  const e409 = (code: string, data: Record<string, unknown> = {}) => ({
+    response: { status: 409, data: { code, message: odd, ...data } },
+  });
+
+  it.each(["sku", "unitSku", "barcode"] as const)(
+    "a 400 PRODUCT_CODE_IN_USE naming %s flags only that input",
+    (field) => {
+      expect(codeTakenOnSubmit(e400(field), all)).toBe(field);
+    },
+  );
+
+  it("the 400 falls back to the first sent field when the named one was not sent", () => {
+    expect(codeTakenOnSubmit(e400("unitSku"), { barcode: "B-1", sku: "S-1" })).toBe("sku");
+    expect(codeTakenOnSubmit(e400("sku"), { barcode: "B-1" })).toBe("barcode");
+    expect(codeTakenOnSubmit(e400(undefined), { unitSku: "U-1" })).toBe("unitSku");
+  });
+
+  it("a 409 CODE_TAKEN names its field (sku | unitSku) from data.field", () => {
+    expect(codeTakenOnSubmit(e409("CODE_TAKEN", { field: "unitSku" }), all)).toBe("unitSku");
+    expect(codeTakenOnSubmit(e409("CODE_TAKEN", { field: "sku" }), all)).toBe("sku");
+  });
+
+  it("a 409 BARCODE_TAKEN means the barcode field (the body may carry no field)", () => {
+    expect(codeTakenOnSubmit(e409("BARCODE_TAKEN", { barcode: "B-1" }), all)).toBe("barcode");
+    expect(codeTakenOnSubmit(e409("BARCODE_TAKEN", { field: "barcode" }), all)).toBe("barcode");
+  });
+
+  it("a 409 falls back to the first sent field when the named one was not sent", () => {
+    expect(codeTakenOnSubmit(e409("CODE_TAKEN", { field: "unitSku" }), { sku: "S-1" })).toBe("sku");
+    expect(codeTakenOnSubmit(e409("BARCODE_TAKEN"), { unitSku: "U-1" })).toBe("unitSku");
+  });
+
+  it.each([
+    ["NAME_TAKEN", e409("NAME_TAKEN", { field: "name" })],
+    ["HOLDERS_CHANGED", e409("HOLDERS_CHANGED")],
+    ["a 500", { response: { status: 500, data: { code: "CODE_TAKEN", field: "sku" } } }],
+    ["a 400 of another code", { response: { status: 400, data: { code: "VALIDATION" } } }],
+    ["a network error", new Error("Network Error")],
+    ["null", null],
+  ])("%s -> null", (_n, e) => {
+    expect(codeTakenOnSubmit(e, all)).toBeNull();
+  });
+
+  it("nothing sent -> null", () => {
+    expect(codeTakenOnSubmit(e400("sku"), {})).toBeNull();
+    expect(codeTakenOnSubmit(e409("BARCODE_TAKEN"), {})).toBeNull();
   });
 });

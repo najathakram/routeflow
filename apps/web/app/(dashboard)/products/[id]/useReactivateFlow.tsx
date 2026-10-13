@@ -37,8 +37,8 @@ export function useReactivateFlow(opts?: { onReactivated?: (id: string) => void 
     name?: string;
     refusal: ReactivationRefusal;
   } | null>(null);
-  // Codes the server refused on a new-code submit (a plain 400 "already exists"): the dialog stays
-  // open on its new-code step and flags them inline.
+  // Codes the server refused on a new-code submit (a 400, or the write's 409 CODE_TAKEN / BARCODE_TAKEN):
+  // the dialog stays open on its new-code step and flags them inline.
   const [rejected, setRejected] = React.useState<NewCodes | null>(null);
   // A second click before the first request settles must not send a second PATCH.
   const inFlight = React.useRef(false);
@@ -66,14 +66,17 @@ export function useReactivateFlow(opts?: { onReactivated?: (id: string) => void 
             opts?.onReactivated?.(id);
           },
           onError: (err) => {
-            const refusal = getReactivationRefusal(err);
+            // A request that carried replacement codes and was refused on one of them (the 400, or the
+            // write's own 409 CODE_TAKEN / BARCODE_TAKEN): stay on the new-code step, typed codes kept,
+            // the refused one flagged. A request without new codes keeps the holders / retry refusal.
             const takenField = extra?.newCodes ? codeTakenOnSubmit(err, extra.newCodes) : null;
-            if (refusal) setPending({ id, kind, name, refusal });
-            else if (takenField && extra?.newCodes) {
-              // Keep the dialog (and what was typed); the new-code step flags the refused code.
+            const refusal = takenField ? null : getReactivationRefusal(err);
+            if (takenField && extra?.newCodes) {
               const next: NewCodes = {};
               next[takenField] = extra.newCodes[takenField];
               setRejected(next);
+            } else if (refusal) {
+              setPending({ id, kind, name, refusal });
             } else {
               setPending(null);
               // READ_ONLY already got the global "workspace is read-only" toast: no second one.
