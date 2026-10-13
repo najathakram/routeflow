@@ -6,6 +6,7 @@ import { useParams, useRouter } from "next/navigation";
 import { ArrowLeft, Plus, Trash2, Search, Loader2 } from "lucide-react";
 import { Button, Card, useToast, cn } from "@routeflow/ui/web";
 import { usePageTitle } from "@/lib/page-title-context";
+import { codedToastCopy } from "@/lib/generic-toast-copy";
 import { useInvoice, useUpdateInvoice, type UpdateInvoiceItem } from "@/lib/api/invoices";
 import { isPendingMirrorInvoice } from "@/lib/invoice-pending-mirror";
 import { hasUnitLine, unitLabelsOf } from "@/lib/invoice-line-unit";
@@ -663,7 +664,9 @@ export default function EditInvoicePage() {
         toast({
           title: "Failed to update invoice",
           description:
-            (Array.isArray(message) ? message.join("; ") : message) || "Please try again.",
+            codedToastCopy(err) ||
+            (Array.isArray(message) ? message.join("; ") : message) ||
+            "Please try again.",
           variant: "error",
         });
       },
