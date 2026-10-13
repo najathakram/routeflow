@@ -609,6 +609,9 @@ model Order {
   orderNumber            String?
   status                 OrderStatus @default(PENDING)
   source                 OrderSource @default(APP)
+  /// F1(i) (#3418): true when `source` was written from the creating principal (every create site of the new code).
+  /// false = UNKNOWN_LEGACY (rows that predate the column keep the default APP whoever made them): judged on STAFF.
+  sourceRecorded         Boolean     @default(false)
   urgent                 Boolean     @default(false)
   notes                  String?
   driverNote             String?
