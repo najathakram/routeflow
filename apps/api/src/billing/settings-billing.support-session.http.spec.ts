@@ -12,6 +12,8 @@ import { API_ERROR_CODES } from "../common/api-error-codes";
 import { listenOnLoopback } from "../common/testing/listen-loopback";
 import { BillingService } from "./billing.service";
 import { ProrationService } from "./proration.service";
+import { StripeConnectController } from "../stripe-connect/stripe-connect.controller";
+import { StripeConnectService } from "../stripe-connect/stripe-connect.service";
 import { SettingsBillingController } from "./settings-billing.controller";
 import { SubscriptionMutationService } from "./subscription-mutation.service";
 import { SubscriptionService } from "./subscription.service";
@@ -194,6 +196,109 @@ describe("tenant billing routes in a support session (SA-778)", () => {
 
   it("no token: 401, nothing audited", async () => {
     await call("post", "/billing/portal").send({}).expect(401);
+    expect(audit.log).not.toHaveBeenCalled();
+  });
+});
+
+describe("payment setup (Stripe Connect) routes in a support session (SA-778)", () => {
+  let app: INestApplication;
+  const connect = {
+    getStatus: jest.fn(),
+    buildAuthorizeUrl: jest.fn(),
+    disconnect: jest.fn(),
+  };
+  const audit = { log: jest.fn() };
+
+  /** Same stand-in as above: x-role is the token's role, x-impersonated-by the claim. */
+  const fakeJwt: CanActivate = {
+    canActivate(ctx: ExecutionContext) {
+      const req = ctx.switchToHttp().getRequest();
+      const role = req.headers["x-role"];
+      if (!role) throw new UnauthorizedException();
+      req.user = {
+        sub: "u-admin",
+        username: "admin",
+        role,
+        tenantId: "t-1",
+        impersonatedBy: req.headers["x-impersonated-by"] || undefined,
+      };
+      return true;
+    },
+  };
+
+  beforeAll(async () => {
+    const moduleRef = await Test.createTestingModule({
+      controllers: [StripeConnectController],
+      providers: [
+        { provide: StripeConnectService, useValue: connect },
+        { provide: AuditService, useValue: audit },
+      ],
+    })
+      .overrideGuard(JwtAuthGuard)
+      .useValue(fakeJwt)
+      .compile();
+    app = moduleRef.createNestApplication({ logger: false });
+    await listenOnLoopback(app);
+  });
+  afterAll(async () => {
+    await app.close();
+  });
+  beforeEach(() => {
+    for (const m of [...Object.values(connect), audit.log]) m.mockReset();
+    audit.log.mockResolvedValue(undefined);
+    connect.getStatus.mockResolvedValue({ connected: false });
+    connect.buildAuthorizeUrl.mockResolvedValue("https://connect.example/authorize");
+    connect.disconnect.mockResolvedValue({ ok: true });
+  });
+
+  const call = (verb: "get" | "post" | "delete", role?: string, supportSession = false) => {
+    const req = request(app.getHttpServer())[verb](
+      "/settings/stripe-connect" + (verb === "post" ? "/link" : ""),
+    );
+    if (role) req.set("x-role", role);
+    if (supportSession) req.set("x-impersonated-by", "sa-1");
+    return req;
+  };
+
+  it.each([["post" as const], ["delete" as const]])(
+    "a support session on %s is refused 403 with the coded body; the service never runs; one audit row",
+    async (verb) => {
+      const res = await call(verb, "TENANT_ADMIN", true).send({});
+
+      expect(res.status).toBe(403);
+      expect(res.body.code).toBe(API_ERROR_CODES.IMPERSONATION_NOT_ALLOWED);
+      expect(res.body.message).toBe(MESSAGE);
+      expect(connect.buildAuthorizeUrl).not.toHaveBeenCalled();
+      expect(connect.disconnect).not.toHaveBeenCalled();
+      expect(audit.log).toHaveBeenCalledTimes(1);
+      expect(audit.log.mock.calls[0][0]).toMatchObject({
+        action: "impersonation.action-refused",
+        tenantId: "t-1",
+        impersonatedBy: "sa-1",
+        meta: { superAdminId: "sa-1", tenantId: "t-1", method: verb.toUpperCase() },
+      });
+    },
+  );
+
+  it("a support session can still read the connection status (GET)", async () => {
+    const res = await call("get", "TENANT_ADMIN", true);
+    expect(res.status).toBe(200);
+    expect(audit.log).not.toHaveBeenCalled();
+  });
+
+  it("a real tenant admin is unchanged: link returns the authorize URL, disconnect runs", async () => {
+    const link = await call("post", "TENANT_ADMIN").send({});
+    expect(link.status).toBe(201);
+    expect(link.body).toEqual({ url: "https://connect.example/authorize" });
+
+    const gone = await call("delete", "TENANT_ADMIN");
+    expect(gone.status).toBe(200);
+    expect(connect.disconnect).toHaveBeenCalledWith("t-1");
+    expect(audit.log).not.toHaveBeenCalled();
+  });
+
+  it("no token: 401, nothing audited", async () => {
+    await call("post").send({}).expect(401);
     expect(audit.log).not.toHaveBeenCalled();
   });
 });

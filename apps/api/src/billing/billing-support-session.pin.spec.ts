@@ -6,6 +6,10 @@ import { GUARDS_METADATA, METHOD_METADATA } from "@nestjs/common/constants";
 import { NoImpersonation } from "../auth/decorators/no-impersonation.decorator";
 import { JwtAuthGuard } from "../auth/guards/jwt-auth.guard";
 import { NO_IMPERSONATION_KEY, NoImpersonationGuard } from "../auth/guards/no-impersonation.guard";
+import {
+  StripeConnectCallbackController,
+  StripeConnectController,
+} from "../stripe-connect/stripe-connect.controller";
 import { SettingsBillingController } from "./settings-billing.controller";
 
 /**
@@ -87,6 +91,29 @@ describe("tenant billing mutations carry @NoImpersonation (SA-778 pin)", () => {
     ) as unknown[];
     expect(classGuards[0]).toBe(JwtAuthGuard);
     expect(classGuards).not.toContain(NoImpersonationGuard);
+  });
+
+  describe("payment setup (Stripe Connect)", () => {
+    it("every non-GET handler of StripeConnectController is marked and guarded (no allow-list)", () => {
+      expect(unprotectedMutations(StripeConnectController)).toEqual([]);
+    });
+
+    it("its mutating handlers are exactly link and disconnect", () => {
+      expect(mutatingHandlers(StripeConnectController).sort()).toEqual(["disconnect", "link"]);
+    });
+
+    it("it authenticates at class level, so the method-level guard runs after JwtAuthGuard", () => {
+      const classGuards = Reflect.getMetadata(
+        GUARDS_METADATA,
+        StripeConnectController,
+      ) as unknown[];
+      expect(classGuards[0]).toBe(JwtAuthGuard);
+      expect(classGuards).not.toContain(NoImpersonationGuard);
+    });
+
+    it("the public OAuth return controller has no mutating route (signed state, GET only)", () => {
+      expect(mutatingHandlers(StripeConnectCallbackController)).toEqual([]);
+    });
   });
 
   describe("negative control: the detector catches what it should", () => {
@@ -171,5 +198,38 @@ describe("every controller in billing/ is classified (a new one cannot dodge the
   it("the public catalog controller has no mutating route", () => {
     const src = fs.readFileSync(path.join(dir, "plan-catalog.controller.ts"), "utf8");
     expect(src).not.toMatch(/@(Post|Put|Patch|Delete)\(/);
+  });
+});
+
+describe("every controller in the payment-setup directories is classified (SA-778)", () => {
+  const SRC = path.join(__dirname, "..");
+  const controllersIn = (dir: string) =>
+    fs
+      .readdirSync(path.join(SRC, dir))
+      .filter((f) => f.endsWith(".controller.ts"))
+      .sort();
+
+  /** Tenant-facing payment setup: pinned above (the whole file's mutating handlers carry the marker). */
+  const PINNED: Record<string, string[]> = {
+    "stripe-connect": ["stripe-connect.controller.ts"],
+  };
+  /** Everything else in those directories, with why it is not pinned here. */
+  const OTHER: Record<string, Record<string, string>> = {
+    "stripe-connect": {},
+    "payment-requests": {
+      "payment-requests.controller.ts":
+        "tenant review of buyer payment requests (approve and reject): a different action class, left to a follow-up ruling",
+      "buyer-payments.controller.ts": "buyer-portal principal, not a staff session",
+      "connect-webhook.controller.ts":
+        "provider webhook, authenticated by the signed payload, no user session",
+    },
+  };
+
+  it.each(Object.keys(OTHER))("%s: each controller file is pinned or a listed exception", (dir) => {
+    const known = new Set([...(PINNED[dir] ?? []), ...Object.keys(OTHER[dir])]);
+    const files = controllersIn(dir);
+    expect(files.filter((f) => !known.has(f))).toEqual([]);
+    for (const f of known) expect(files).toContain(f);
+    for (const reason of Object.values(OTHER[dir])) expect(reason.length).toBeGreaterThan(20);
   });
 });
