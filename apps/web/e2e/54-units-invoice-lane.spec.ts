@@ -173,6 +173,7 @@ test.describe("Units v1 — the invoice unit picker (VU-4a)", () => {
   test("keyboard: Tab from Case to the count and the price; typed digits REPLACE (2 Cases at $2.00, never 272.00)", async ({
     page,
   }) => {
+    await page.setViewportSize({ width: 1440, height: 900 });
     await openBuilder(page, /other charge \(a fee or correction with no order\)/i);
     await addFixtureProduct(page); // defaults to Case (the fixture's default selling unit)
     await expect(picker(page)).toHaveValue("Case");
@@ -193,6 +194,9 @@ test.describe("Units v1 — the invoice unit picker (VU-4a)", () => {
     const cell = page.getByTestId("level-count");
     await expect(cell).toContainText("Cases");
     await expect(cell).toContainText("24 pcs");
+    await page.keyboard.press("Tab"); // leave the price: it commits as 2.00
+    await expect(price).toHaveValue("2.00");
+    await cell.scrollIntoViewIfNeeded();
     await page.screenshot({ path: "test-results/vu4a-case-word-keyboard-1440.png" });
   });
 

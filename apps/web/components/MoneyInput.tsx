@@ -81,7 +81,6 @@ export const DecimalInput = React.forwardRef<HTMLInputElement, DecimalInputProps
     const valueAtFocusRef = React.useRef<number | null>(null);
     // True once the user has typed since focusing: their text is never overwritten from outside.
     const typedRef = React.useRef(false);
-    const reselectRef = React.useRef(false);
     const innerRef = React.useRef<HTMLInputElement | null>(null);
     const setRefs = (el: HTMLInputElement | null) => {
       innerRef.current = el;
@@ -101,18 +100,16 @@ export const DecimalInput = React.forwardRef<HTMLInputElement, DecimalInputProps
         (value != null && current != null && Math.abs(current - value) < 1e-9);
       if (same) return;
       setText(value == null ? "" : value.toFixed(decimals));
-      if (focusedRef.current) {
-        valueAtFocusRef.current = value;
-        reselectRef.current = selectOnFocus;
-      }
+      if (focusedRef.current) valueAtFocusRef.current = value;
       // eslint-disable-next-line react-hooks/exhaustive-deps
     }, [value, decimals]);
+    // Any text change the user did not type (a late value, whether or not onFocus has run yet) re-selects
+    // the whole field when it holds focus, so the next digit replaces it.
     React.useLayoutEffect(() => {
-      if (!reselectRef.current) return;
-      reselectRef.current = false;
       const el = innerRef.current;
-      if (el && document.activeElement === el) el.select();
-    }, [text]);
+      if (!selectOnFocus || typedRef.current || !el || document.activeElement !== el) return;
+      el.select();
+    }, [text, selectOnFocus]);
 
     const clamp = (n: number): number => {
       let v = n;
