@@ -1,10 +1,14 @@
 "use client";
 
 import * as React from "react";
-import { useParams, useRouter } from "next/navigation";
+import { useParams, useRouter, useSearchParams } from "next/navigation";
 import Link from "next/link";
 import { FEATURE_OVERRIDE_KIND_VALUES, type FeatureOverrideKind } from "@routeflow/types";
-import type { FeatureRegistryRow } from "@routeflow/types";
+import {
+  BILLING_PERIODS,
+  EXTERNAL_PAYMENT_METHODS,
+  type FeatureRegistryRow,
+} from "@routeflow/types";
 import { superAdminClient } from "@/lib/admin-api";
 import { setTenantCookie } from "@/lib/tenant-cookie";
 import { setImpersonation } from "@/lib/impersonation";
@@ -21,10 +25,12 @@ import {
   SuspendDialog,
   TENANT_ACTION_COPY,
   deleteFailureCopy,
+  extendFailureCopy,
   longDate,
   tenantLabel,
 } from "../../../_components/TenantActionDialogs";
 import { TenantPricingCard } from "./_components/TenantPricingCard";
+import { ReadinessCard, type AdminReadState } from "./_components/ReadinessCard";
 import { LayoutDashboard, CreditCard, Puzzle, Settings, ScrollText, Archive } from "lucide-react";
 import { FeatureConsole } from "./_features/FeatureConsole";
 import { SetupSection } from "./_features/SetupSection";
@@ -82,6 +88,8 @@ interface TenantDetail {
     drivers: number;
     routes: number;
     customerLinks: number;
+    /** SA-3: absent on an older API; the Readiness card then says "Not checked". */
+    products?: number;
   } | null;
   orders30d?: number;
   estMrrUsd?: number;
@@ -110,11 +118,17 @@ interface AuditLogEntry {
 const TABS = [
   { key: "overview", label: "Overview", icon: <LayoutDashboard className="h-4 w-4" /> },
   { key: "billing", label: "Billing & Subscription", icon: <CreditCard className="h-4 w-4" /> },
-  { key: "addons", label: "Setup", icon: <Puzzle className="h-4 w-4" /> },
+  { key: "setup", label: "Setup", icon: <Puzzle className="h-4 w-4" /> },
   { key: "config", label: "Configuration", icon: <Settings className="h-4 w-4" /> },
   { key: "snapshots", label: "Config Snapshots", icon: <Archive className="h-4 w-4" /> },
   { key: "audit", label: "Audit Log", icon: <ScrollText className="h-4 w-4" /> },
 ];
+
+/** The tab named by `?tab=`; the legacy `addons` is the Setup tab, and anything else (or nothing) is Overview. */
+function resolveTab(param: string | null | undefined): string {
+  const key = param === "addons" ? "setup" : param;
+  return TABS.some((t) => t.key === key) ? (key as string) : "overview";
+}
 
 // ─── Helper ────────────────────────────────────────────────────────────────────
 
@@ -150,7 +164,7 @@ function TenantAdminSection({
   tenantId: string;
   onRefreshTenant: () => void;
   /** The admin's username once known (null when there is none): the Impersonate dialog names it. */
-  onAdminChange?: (username: string | null) => void;
+  onAdminChange?: (admin: TenantAdminUser | null, state: AdminReadState) => void;
 }) {
   const [admin, setAdmin] = React.useState<TenantAdminUser | null | undefined>(undefined); // undefined = loading
   const [showCreateForm, setShowCreateForm] = React.useState(false);
@@ -167,11 +181,11 @@ function TenantAdminSection({
       .get(`/platform-admin/tenants/${tenantId}/admin`)
       .then((res) => {
         setAdmin(res.data.admin);
-        onAdminChange?.(res.data.admin?.username ?? null);
+        onAdminChange?.(res.data.admin ?? null, "loaded");
       })
       .catch(() => {
         setAdmin(null);
-        onAdminChange?.(null);
+        onAdminChange?.(null, "failed");
       });
   }, [tenantId, onAdminChange]);
 
@@ -190,6 +204,7 @@ function TenantAdminSection({
       );
       setCreateResult(res.data);
       setAdmin(res.data);
+      onAdminChange?.(res.data, "loaded");
       setShowCreateForm(false);
       setCreateForm({ username: "", email: "" });
       onRefreshTenant();
@@ -375,7 +390,17 @@ function OverviewTab({
   >(null);
   // The server only deletes SUSPENDED tenants: its refusal is shown inside the delete dialog, which stays open.
   const [deleteError, setDeleteError] = React.useState<string | null>(null);
-  const [adminUsername, setAdminUsername] = React.useState<string | null>(null);
+  // The page's single Admin Account read (TenantAdminSection reports it): feeds the Impersonate dialog and the
+  // Readiness card, so a create updates both with no second fetch.
+  const [adminRead, setAdminRead] = React.useState<{
+    admin: TenantAdminUser | null;
+    state: AdminReadState;
+  }>({ admin: null, state: "loading" });
+  const adminUsername = adminRead.admin?.username ?? null;
+  const handleAdminChange = React.useCallback(
+    (admin: TenantAdminUser | null, state: AdminReadState) => setAdminRead({ admin, state }),
+    [],
+  );
 
   const [recentLogs, setRecentLogs] = React.useState<AuditLogEntry[]>([]);
   React.useEffect(() => {
@@ -384,6 +409,11 @@ function OverviewTab({
       .then((res) => setRecentLogs(res.data.data))
       .catch(() => {});
   }, [tenant.id]);
+
+  // The server deletes only a SUSPENDED tenant: the control is dim until then, and says why.
+  const canDelete = tenant.status === "SUSPENDED";
+  // An ACTIVE tenant is paying: the server refuses to move it to a trial (409), so the control is off too.
+  const canExtendTrial = tenant.status !== "ACTIVE";
 
   const sub = tenant.subscription;
   const paymentMethodLabel = sub?.externalPayment
@@ -394,6 +424,8 @@ function OverviewTab({
 
   return (
     <div className="grid gap-6 lg:grid-cols-2">
+      <ReadinessCard tenant={tenant} admin={adminRead.admin} adminState={adminRead.state} />
+
       {/* At-a-glance KPIs */}
       <div className="grid grid-cols-1 gap-3 sm:grid-cols-3 lg:col-span-2">
         <div className="rounded-xl bg-slate-800 p-5 ring-1 ring-white/5">
@@ -520,11 +552,13 @@ function OverviewTab({
       )}
 
       {/* Admin Account */}
-      <TenantAdminSection
-        tenantId={tenant.id}
-        onRefreshTenant={onRefreshTenant}
-        onAdminChange={setAdminUsername}
-      />
+      <div id="admin-account">
+        <TenantAdminSection
+          tenantId={tenant.id}
+          onRefreshTenant={onRefreshTenant}
+          onAdminChange={handleAdminChange}
+        />
+      </div>
 
       <ImpersonateDialog
         open={confirming === "impersonate"}
@@ -586,7 +620,7 @@ function OverviewTab({
         <div className="flex flex-wrap gap-3">
           {tenant.status !== "CANCELLED" && (
             <button
-              disabled={actionLoading === "status"}
+              disabled={actionLoading === "toggle-status"}
               onClick={() =>
                 tenant.status === "SUSPENDED" ? onAction("toggle-status") : setConfirming("suspend")
               }
@@ -619,15 +653,22 @@ function OverviewTab({
             </button>
           )}
 
-          <button
-            onClick={() => {
-              setDeleteError(null);
-              setConfirming("delete");
-            }}
-            className="ml-auto rounded-lg bg-red-900/40 px-4 py-2 text-sm font-semibold text-red-400 ring-1 ring-red-700 transition-colors hover:bg-red-900/70"
-          >
-            Delete Tenant
-          </button>
+          <div className="ml-auto flex flex-col items-end gap-1">
+            <button
+              disabled={!canDelete}
+              aria-describedby={canDelete ? undefined : "delete-tenant-hint"}
+              onClick={() => {
+                setDeleteError(null);
+                setConfirming("delete");
+              }}
+              className="rounded-lg bg-red-900/40 px-4 py-2 text-sm font-semibold text-red-400 ring-1 ring-red-700 transition-colors hover:bg-red-900/70 disabled:cursor-not-allowed disabled:opacity-40 disabled:hover:bg-red-900/40"
+            >
+              Delete Tenant
+            </button>
+            <DisabledHint id="delete-tenant-hint" show={!canDelete}>
+              {TENANT_ACTION_COPY.deleteRefused}
+            </DisabledHint>
+          </div>
         </div>
 
         {/* Extend Trial */}
@@ -635,6 +676,11 @@ function OverviewTab({
           <h3 className="mb-3 text-xs font-semibold uppercase tracking-wider text-slate-400">
             Extend Trial
           </h3>
+          {tenant.status !== "TRIAL" && (
+            <p id="not-on-trial-note" className="mb-3 text-sm text-slate-300">
+              Not on a trial.
+            </p>
+          )}
           <div className="flex items-center gap-3">
             <label className="text-sm text-slate-400">Days</label>
             <input
@@ -647,13 +693,21 @@ function OverviewTab({
               className="h-9 w-20 rounded-lg border border-slate-600 bg-slate-700 px-3 text-sm text-white focus:border-indigo-500 focus:outline-none"
             />
             <button
-              disabled={actionLoading === "extend-trial"}
+              disabled={actionLoading === "extend-trial" || !canExtendTrial}
+              aria-describedby={canExtendTrial ? undefined : "extend-trial-hint"}
               onClick={() => setConfirming("extend-trial")}
               className="rounded-lg bg-slate-600 px-4 py-2 text-sm font-semibold text-white transition-colors hover:bg-slate-500 disabled:opacity-50"
             >
               {actionLoading === "extend-trial" ? "Extending..." : "Extend Trial"}
             </button>
           </div>
+          <DisabledHint
+            id="extend-trial-hint"
+            show={!canExtendTrial}
+            className="mt-2 text-xs text-slate-400"
+          >
+            {TENANT_ACTION_COPY.trialNotAllowed}
+          </DisabledHint>
         </div>
 
         {/* Reset Admin Password */}
@@ -796,22 +850,6 @@ function OverviewTab({
 }
 
 // ─── Billing Tab ───────────────────────────────────────────────────────────────
-
-const EXTERNAL_PAYMENT_METHODS = [
-  { value: "ZELLE", label: "Zelle" },
-  { value: "BANK_TRANSFER", label: "Bank Transfer (ACH/Wire)" },
-  { value: "WIRE", label: "Wire Transfer" },
-  { value: "CHECK", label: "Check" },
-  { value: "CASH", label: "Cash" },
-  { value: "OTHER", label: "Other" },
-] as const;
-
-const BILLING_PERIODS = [
-  { value: 30, label: "Monthly (30 days)" },
-  { value: 90, label: "Quarterly (90 days)" },
-  { value: 180, label: "Semi-Annual (180 days)" },
-  { value: 365, label: "Annual (365 days)" },
-] as const;
 
 function BillingTab({
   tenant,
@@ -1125,8 +1163,8 @@ function BillingTab({
 }
 
 // ─── Setup Tab ─────────────────────────────────────────────────────────────────
-// The tab key stays "addons" (it is internal); the label is "Setup": the tenant's current setup in plain English,
-// the business-profile picker, then the feature console and the per-feature overrides.
+// The tab key is "setup" (the legacy ?tab=addons still resolves to it); the label is "Setup": the tenant's current setup in plain English,
+// the business-profile picker, then an Advanced section with the feature console and the per-feature overrides.
 
 function SetupTab({
   tenant,
@@ -1140,6 +1178,8 @@ function SetupTab({
   const overridesRef = React.useRef<FeatureOverridesSectionHandle>(null);
   // Bumped when a business profile changed this tenant's setup: the console and the overrides list remount and reload.
   const [setupVersion, setSetupVersion] = React.useState(0);
+  // Open by default: nothing a super admin used to see is hidden until they choose to fold it.
+  const [advancedOpen, setAdvancedOpen] = React.useState(true);
 
   return (
     <>
@@ -1149,20 +1189,50 @@ function SetupTab({
         onApplied={() => setSetupVersion((v) => v + 1)}
       />
 
-      <FeatureConsole
-        key={`console-${setupVersion}`}
-        tenant={tenant}
-        tenantLabel={tenant.businessName ?? tenant.slug}
-        onChangePlan={(plan) => onAction("change-plan", { plan })}
-        changePlanLoading={actionLoading === "change-plan"}
-        onCustomise={(featureKey) => overridesRef.current?.openFor(featureKey)}
-      />
+      {/* One "Advanced" section holds the two power-user controls; both stay mounted when collapsed so
+          the console's "Customise" ref and any in-flight drawer keep working, and Customise reopens it. */}
+      <section
+        aria-labelledby="setup-advanced-heading"
+        className="mt-6"
+        data-testid="setup-advanced"
+      >
+        <h2 id="setup-advanced-heading" className="text-sm font-semibold text-slate-300">
+          <button
+            type="button"
+            aria-expanded={advancedOpen}
+            aria-controls="setup-advanced-body"
+            onClick={() => setAdvancedOpen((o) => !o)}
+            className="flex w-full items-center gap-2 text-left"
+          >
+            <span aria-hidden="true">{advancedOpen ? "▾" : "▸"}</span>
+            Advanced
+            <span className="text-xs font-normal text-slate-400">
+              Feature console and overrides
+            </span>
+          </button>
+        </h2>
+        <div id="setup-advanced-body" hidden={!advancedOpen}>
+          <div id="features">
+            <FeatureConsole
+              key={`console-${setupVersion}`}
+              tenant={tenant}
+              tenantLabel={tenant.businessName ?? tenant.slug}
+              onChangePlan={(plan) => onAction("change-plan", { plan })}
+              changePlanLoading={actionLoading === "change-plan"}
+              onCustomise={(featureKey) => {
+                setAdvancedOpen(true);
+                overridesRef.current?.openFor(featureKey);
+              }}
+            />
+          </div>
 
-      <FeatureOverridesSection
-        key={`overrides-${setupVersion}`}
-        ref={overridesRef}
-        tenant={tenant}
-      />
+          <FeatureOverridesSection
+            key={`overrides-${setupVersion}`}
+            ref={overridesRef}
+            tenant={tenant}
+          />
+        </div>
+      </section>
     </>
   );
 }
@@ -1181,11 +1251,24 @@ interface FeatureOverrideRow {
   revokedAt: string | null;
 }
 
-const OVERRIDE_EXPIRY_PRESETS = [
-  { value: "none", label: "No expiry (standing)" },
-  { value: "30", label: "30 days" },
-  { value: "90", label: "90 days" },
-] as const;
+type ExpiryPreset = "none" | "30" | "90";
+
+const DAY_MS = 24 * 60 * 60 * 1000;
+
+/** The Expires options (same three values as ever): a timed one names the date it would end. */
+function expiryOptions(now: number): { value: ExpiryPreset; label: string }[] {
+  const ends = (days: number) => longDate(new Date(now + days * DAY_MS));
+  return [
+    { value: "30", label: `30 days (ends ${ends(30)})` },
+    { value: "90", label: `90 days (ends ${ends(90)})` },
+    { value: "none", label: "No end date" },
+  ];
+}
+
+/** A comp or trial is a time-boxed gift, so it starts at 30 days: forgetting to set one must not
+ * make it permanent. Every other kind keeps "no end date" as its default. */
+const defaultExpiryFor = (kind: FeatureOverrideKind): ExpiryPreset =>
+  kind === "COMP" || kind === "TRIAL" ? "30" : "none";
 
 // Plain-English labels for the Kind select — values stay the raw FeatureOverrideKind enum.
 const OVERRIDE_KIND_LABELS: Record<FeatureOverrideKind, string> = {
@@ -1216,7 +1299,9 @@ export const FeatureOverridesSection = React.forwardRef<
     effect: "GRANT" as "GRANT" | "DENY",
     kind: "COMP" as FeatureOverrideKind,
     reason: "",
-    expiryPreset: "none" as "none" | "30" | "90",
+    expiryPreset: defaultExpiryFor("COMP") as ExpiryPreset,
+    // Once the operator picks an Expires value themselves, changing Kind no longer re-defaults it.
+    expiryTouched: false,
   });
   const [submitting, setSubmitting] = React.useState(false);
   const [revokingId, setRevokingId] = React.useState<string | null>(null);
@@ -1277,7 +1362,8 @@ export const FeatureOverridesSection = React.forwardRef<
       effect: "GRANT",
       kind: "COMP",
       reason: "",
-      expiryPreset: "none",
+      expiryPreset: defaultExpiryFor("COMP"),
+      expiryTouched: false,
     });
     setPreviewError(null);
     setPreviewResponse(null);
@@ -1288,7 +1374,14 @@ export const FeatureOverridesSection = React.forwardRef<
     ref,
     () => ({
       openFor: (featureKey: string) => {
-        setForm({ featureKey, effect: "GRANT", kind: "COMP", reason: "", expiryPreset: "none" });
+        setForm({
+          featureKey,
+          effect: "GRANT",
+          kind: "COMP",
+          reason: "",
+          expiryPreset: defaultExpiryFor("COMP"),
+          expiryTouched: false,
+        });
         setPreviewError(null);
         setPreviewResponse(null);
         setShowForm(true);
@@ -1567,7 +1660,14 @@ export const FeatureOverridesSection = React.forwardRef<
               aria-label="Kind"
               value={form.kind}
               onChange={(e) =>
-                setForm((f) => ({ ...f, kind: e.target.value as FeatureOverrideKind }))
+                setForm((f) => {
+                  const kind = e.target.value as FeatureOverrideKind;
+                  return {
+                    ...f,
+                    kind,
+                    expiryPreset: f.expiryTouched ? f.expiryPreset : defaultExpiryFor(kind),
+                  };
+                })
               }
               className="h-9 w-full rounded-lg border border-slate-600 bg-slate-700 px-3 text-sm text-white focus:border-indigo-500 focus:outline-none"
             >
@@ -1597,16 +1697,26 @@ export const FeatureOverridesSection = React.forwardRef<
               aria-label="Expires"
               value={form.expiryPreset}
               onChange={(e) =>
-                setForm((f) => ({ ...f, expiryPreset: e.target.value as "none" | "30" | "90" }))
+                setForm((f) => ({
+                  ...f,
+                  expiryPreset: e.target.value as ExpiryPreset,
+                  expiryTouched: true,
+                }))
               }
+              aria-describedby={form.expiryPreset === "none" ? "override-no-end-note" : undefined}
               className="h-9 w-full rounded-lg border border-slate-600 bg-slate-700 px-3 text-sm text-white focus:border-indigo-500 focus:outline-none"
             >
-              {OVERRIDE_EXPIRY_PRESETS.map((p) => (
+              {expiryOptions(Date.now()).map((p) => (
                 <option key={p.value} value={p.value}>
                   {p.label}
                 </option>
               ))}
             </select>
+            {form.expiryPreset === "none" && (
+              <p id="override-no-end-note" className="mt-1 text-xs text-slate-400">
+                This stays on until someone revokes it.
+              </p>
+            )}
           </div>
 
           {previewError && !previewResponse && (
@@ -1845,12 +1955,20 @@ function AuditLogTab({ tenantId }: { tenantId: string }) {
 export default function AdminTenantDetailPage() {
   const { id } = useParams<{ id: string }>();
   const router = useRouter();
+  const searchParams = useSearchParams();
+  const urlTab = resolveTab(searchParams?.get("tab"));
   const [tenant, setTenant] = React.useState<TenantDetail | null>(null);
   const [loading, setLoading] = React.useState(true);
   const [error, setError] = React.useState<string | null>(null);
   const [actionLoading, setActionLoading] = React.useState<string | null>(null);
   const [statusMsg, setStatusMsg] = React.useState<string | null>(null);
-  const [activeTab, setActiveTab] = React.useState("overview");
+  const [activeTab, setActiveTab] = React.useState(urlTab);
+  // The URL is the source of truth: back/forward, a pasted link and an old ?tab=addons all land here.
+  React.useEffect(() => setActiveTab(urlTab), [urlTab]);
+  const changeTab = (key: string) => {
+    setActiveTab(key);
+    router.replace(`/admin/tenants/${id}?tab=${key}`, { scroll: false });
+  };
 
   const fetchTenant = React.useCallback(() => {
     setLoading(true);
@@ -1897,6 +2015,7 @@ export default function AdminTenantDetailPage() {
               res.data.accessToken,
               tenant.slug,
               res.data.impersonatedUser?.username,
+              tenant.id,
             );
             setTenantCookie(tenant.slug);
             window.location.href = "/dashboard";
@@ -1929,17 +2048,18 @@ export default function AdminTenantDetailPage() {
       fetchTenant();
     } catch (err: unknown) {
       // Fixed copy per action: the server's own text is never shown.
-      setStatusMsg(
-        action === "delete"
-          ? deleteFailureCopy(err)
-          : action === "extend-trial"
-            ? TENANT_ACTION_COPY.extendFailed
+      // A failed delete is shown INSIDE its dialog (the page rethrows below), not as a second banner.
+      if (action !== "delete") {
+        setStatusMsg(
+          action === "extend-trial"
+            ? extendFailureCopy(err)
             : action === "change-plan"
               ? TENANT_ACTION_COPY.planFailed
               : action === "toggle-status"
                 ? TENANT_ACTION_COPY.statusFailed
                 : TENANT_ACTION_COPY.actionFailed,
-      );
+        );
+      }
       // The Feature Console's tier-change confirm (via onChangePlan) awaits this call and must
       // observe the failure to keep its preview drawer open with the error, instead of silently
       // closing as if the change applied — rethrow only for this action; every other call site
@@ -1993,7 +2113,7 @@ export default function AdminTenantDetailPage() {
       </p>
 
       {/* Tabs */}
-      <AdminTabs tabs={TABS} active={activeTab} onChange={setActiveTab} />
+      <AdminTabs tabs={TABS} active={activeTab} onChange={changeTab} />
 
       {/* Tab Content */}
       {activeTab === "overview" && (
@@ -2006,7 +2126,7 @@ export default function AdminTenantDetailPage() {
         />
       )}
       {activeTab === "billing" && <BillingTab tenant={tenant} onRefreshTenant={fetchTenant} />}
-      {activeTab === "addons" && (
+      {activeTab === "setup" && (
         <SetupTab tenant={tenant} onAction={handleAction} actionLoading={actionLoading} />
       )}
       {activeTab === "config" && <ConfigTab tenant={tenant} />}

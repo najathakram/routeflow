@@ -9,7 +9,13 @@ jest.mock("../api-client", () => ({
   apiClient: { post: (...a: unknown[]) => post(...a), get: (...a: unknown[]) => get(...a) },
 }));
 let features: { data?: unknown; isLoading?: boolean; isError?: boolean } = { data: undefined };
-jest.mock("../tenant-features", () => ({ useTenantFeatures: () => features }));
+const featureOpts: unknown[] = [];
+jest.mock("../tenant-features", () => ({
+  useTenantFeatures: (o?: unknown) => {
+    featureOpts.push(o);
+    return features;
+  },
+}));
 
 const wrapper = ({ children }: { children: React.ReactNode }) => (
   <QueryClientProvider
@@ -96,5 +102,53 @@ describe("useCounterSaleByKey: GET /orders/counter-sale/by-key/:key?method=", ()
       params: { method: "CARD" },
     });
     expect(res).toEqual(body);
+  });
+});
+
+describe("useCounterSaleGate enabled option", () => {
+  beforeEach(() => {
+    featureOpts.length = 0;
+    features = { data: undefined };
+  });
+
+  it("passes enabled:false through so the features request is not made, and is never loading", () => {
+    features = { data: undefined, isLoading: true };
+    const { result } = renderHook(() => useCounterSaleGate({ enabled: false }), { wrapper });
+    expect(featureOpts[0]).toEqual({ enabled: false });
+    expect(result.current.showButton).toBe(false);
+    expect(result.current.loading).toBe(false);
+  });
+
+  it("defaults to enabled", () => {
+    renderHook(() => useCounterSaleGate(), { wrapper });
+    expect(featureOpts[0]).toEqual({ enabled: true });
+  });
+});
+
+describe("useCounterSaleGate: a disabled gate stays dark even with cached add-on data (W20-L2)", () => {
+  const cached = (counter: string) => ({ data: { capabilities: { fulfilment: { counter } } } });
+  afterEach(() => {
+    features = { data: undefined };
+  });
+  it.each(["optional", "always"])("enabled:false with cached %s: showButton false", (counter) => {
+    features = cached(counter);
+    const r = renderHook(() => useCounterSaleGate({ enabled: false })).result.current;
+    expect(r.showButton).toBe(false);
+  });
+  it.each(["optional", "always"])("enabled:false with cached %s: capability is null", (counter) => {
+    features = cached(counter);
+    const r = renderHook(() => useCounterSaleGate({ enabled: false })).result.current;
+    expect(r.capability).toBeNull();
+  });
+  it("enabled:true with cached always: capability is passed through", () => {
+    features = cached("always");
+    const r = renderHook(() => useCounterSaleGate({ enabled: true })).result.current;
+    expect(r.capability).toEqual({ counter: "always" });
+  });
+  it("enabled:true with cached optional: unchanged", () => {
+    features = cached("optional");
+    expect(renderHook(() => useCounterSaleGate({ enabled: true })).result.current.showButton).toBe(
+      true,
+    );
   });
 });

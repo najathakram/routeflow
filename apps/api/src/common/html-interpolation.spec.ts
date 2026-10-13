@@ -60,7 +60,7 @@ const ALLOWED: Record<string, Record<string, Allowed>> = {
     "trySend :: params.html": TRANSPORT,
   },
   "billing/billing-notification.service.ts": {
-    "sendIfClaimed :: tmpl.html":
+    "deliverToAdmins :: tmpl.html":
       "built in billing-notification.templates.ts, which this guard scans (0 hits)",
   },
   "messaging/providers/email-channel.provider.ts": {
@@ -85,6 +85,16 @@ const ALLOWED: Record<string, Record<string, Allowed>> = {
   "tenants/tenants.service.ts": {
     "register :: href escapeHtml(verifyUrl)": { reason: ENV_LINK, count: 2 },
     "resendVerification :: href escapeHtml(verifyUrl)": ENV_LINK,
+  },
+  "documents/receipt.service.ts": {
+    "send :: html":
+      "built in documents/render-order-receipt.ts (every dynamic value escapeHtml'd), which this guard scans (0 hits)",
+  },
+  "documents/render-order-receipt.ts": {
+    'renderOrderReceipt :: tenantHeaderHtml(name || "Receipt")':
+      "tenantHeaderHtml escapes the name (email/email.service.ts, which this guard scans)",
+    "renderOrderReceipt :: html":
+      "the shell renderBrandedEmail returns (email/email.service.ts): its heading and footer note are escaped there, the body is built and scanned here",
   },
   "customers/customers.service.ts": {
     "sendPortalInvite :: portalInviteEmailHtml(sellerName, inviteUrl)":

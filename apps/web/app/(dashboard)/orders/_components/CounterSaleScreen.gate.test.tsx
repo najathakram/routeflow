@@ -1,5 +1,5 @@
 import * as React from "react";
-import { renderWithProviders, screen } from "@/test-utils/render";
+import { renderWithProviders, screen, fireEvent } from "@/test-utils/render";
 import { CounterSaleScreen } from "./CounterSaleScreen";
 
 /**
@@ -13,7 +13,16 @@ jest.mock("next/navigation", () => ({
 jest.mock("@/lib/api/products", () => ({
   useProducts: () => ({ data: undefined, isFetching: false }),
 }));
-jest.mock("@/lib/api/customers", () => ({ useCustomers: () => ({ data: { data: [] } }) }));
+jest.mock("@/lib/api/customers", () => ({
+  useCustomers: () => ({ data: { data: [] } }),
+  useCustomerPrices: () => ({
+    data: [],
+    isSuccess: true,
+    isError: false,
+    isFetching: false,
+    refetch: jest.fn(),
+  }),
+}));
 jest.mock("@/lib/api-client", () => ({
   apiClient: { get: jest.fn().mockResolvedValue({ data: { taxRate: 0 } }), post: jest.fn() },
 }));
@@ -27,7 +36,7 @@ const expectDark = () => {
   expect(screen.getByTestId("counter-sale-off")).toHaveTextContent(DISABLED_COPY);
   expect(screen.getByTestId("counter-sale-off").textContent).toBe(DISABLED_COPY);
   expect(screen.queryByLabelText("Scan or search items")).toBeNull();
-  expect(screen.queryByRole("button", { name: "Complete sale" })).toBeNull();
+  expect(screen.queryByRole("button", { name: "Complete & show receipt" })).toBeNull();
   expect(screen.queryByRole("button", { name: "Cash" })).toBeNull();
   expect(screen.queryByTestId("counter-sale-screen")).toBeNull();
   expect(screen.queryByTestId("counter-sale-loading")).toBeNull();
@@ -89,17 +98,43 @@ describe("CounterSaleScreen: the capability gate (missing means dark)", () => {
     expect(screen.queryByTestId("counter-sale-loading")).toBeNull();
   });
 
-  it("the features request errored: dark", () => {
-    features = { data: undefined, isError: true };
+  // CQ-30: a FAILED lookup is not the "off" answer: it says the check failed and offers Retry (still no sale UI).
+  it("the features request errored: no sale UI, a retry state, never 'not turned on'", () => {
+    const refetch = jest.fn();
+    features = { data: undefined, isError: true, refetch } as typeof features;
+    renderWithProviders(<CounterSaleScreen />);
+    const offline = screen.getByTestId("counter-sale-offline");
+    expect(offline).toHaveTextContent("Couldn't check whether counter sales are on.");
+    expect(screen.queryByText(DISABLED_COPY)).toBeNull();
+    expect(screen.queryByTestId("counter-sale-off")).toBeNull();
+    expect(screen.queryByLabelText("Scan or search items")).toBeNull();
+    expect(screen.queryByTestId("counter-sale-screen")).toBeNull();
+    fireEvent.click(screen.getByRole("button", { name: "Retry" }));
+    expect(refetch).toHaveBeenCalledTimes(1);
+  });
+
+  it("a refetch error with an earlier answer keeps that answer (the sale UI stays)", () => {
+    features = {
+      data: { capabilities: { fulfilment: { counter: "optional" } } },
+      isError: true,
+    };
+    renderWithProviders(<CounterSaleScreen />);
+    expect(screen.getByLabelText("Scan or search items")).toBeInTheDocument();
+    expect(screen.queryByTestId("counter-sale-offline")).toBeNull();
+  });
+
+  it("a successful lookup that says off still shows 'not turned on'", () => {
+    features = { data: { capabilities: { fulfilment: { counter: "off" } } }, isError: false };
     renderWithProviders(<CounterSaleScreen />);
     expectDark();
+    expect(screen.queryByTestId("counter-sale-offline")).toBeNull();
   });
 
   it.each(["optional", "always"])("counter %s: the full sale UI", (counter) => {
     features = { data: { capabilities: { fulfilment: { counter } } } };
     renderWithProviders(<CounterSaleScreen />);
     expect(screen.getByLabelText("Scan or search items")).toBeInTheDocument();
-    expect(screen.getByRole("button", { name: "Complete sale" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Complete & show receipt" })).toBeInTheDocument();
     expect(screen.queryByTestId("counter-sale-off")).toBeNull();
   });
 });

@@ -4,21 +4,30 @@ import * as React from "react";
 import { useRouter } from "next/navigation";
 import { QueryClient, QueryClientProvider, MutationCache } from "@tanstack/react-query";
 import { AuthProvider } from "@/lib/auth-context";
+import { getStoredUser } from "@/lib/auth";
 import { BuyerAuthProvider } from "@/lib/buyer-auth-context";
 import { ToastProvider, useToast } from "@routeflow/ui/web";
 import { I18nProvider } from "@/lib/i18n";
 import { ReAuthProvider } from "@/components/ReAuthProvider";
 import { PlanGateNotice } from "@/components/PlanGateNotice";
+import type { SubscriptionView } from "@routeflow/types";
 import { handleMutationError } from "@/lib/mutation-error-toast";
 
 function QueryProviders({ children }: { children: React.ReactNode }) {
   const { toast } = useToast();
   const router = useRouter();
-  const queryClient = React.useRef(
+  const queryClient: QueryClient = React.useRef(
     new QueryClient({
       mutationCache: new MutationCache({
         onError: (error, _variables, _context, mutation) =>
-          handleMutationError(error, mutation, toast, router),
+          handleMutationError(error, mutation, toast, router, {
+            // SA-733r6: the read-only line names the admin from the cached subscription read.
+            view: () => queryClient.getQueryData<SubscriptionView>(["billing", "subscription"]),
+            refresh: () =>
+              void queryClient.invalidateQueries({ queryKey: ["billing", "subscription"] }),
+            // SA-776: the admin sees the action in the read-only toast, anyone else the contact line.
+            isAdmin: () => getStoredUser()?.role === "TENANT_ADMIN",
+          }),
       }),
       defaultOptions: {
         queries: {

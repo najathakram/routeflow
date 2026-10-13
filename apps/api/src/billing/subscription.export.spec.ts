@@ -1,3 +1,4 @@
+import { BILLING_EXPORT_INVOICE_FIELDS } from "./billing-export-fields";
 import { SubscriptionService } from "./subscription.service";
 
 const TENANT = "t-1";
@@ -43,9 +44,7 @@ describe("SubscriptionService.getExport (B1187)", () => {
   it("projects invoices through the allowlist", async () => {
     const { svc } = build([], []);
     const out = await svc.getExport(TENANT);
-    expect(Object.keys(out.invoices[0]).sort()).toEqual(
-      ["amount", "cycle", "issuedAt", "number", "status"].sort(),
-    );
+    expect(Object.keys(out.invoices[0]).sort()).toEqual([...BILLING_EXPORT_INVOICE_FIELDS].sort());
   });
 
   it("actor: a tenant user is 'you'", async () => {
@@ -92,6 +91,14 @@ describe("SubscriptionService.getExport (B1187)", () => {
       "stripeSynced",
       "platformAdmin",
       "futureColumn",
+      // Admin-only RfInvoice columns (manual invoices due).
+      "paidById",
+      "paidNote",
+      "voidReason",
+      "issuedById",
+      "sendCount",
+      "lastSentAt",
+      "needsReview",
     ]) {
       expect(json).not.toContain(`"${k}"`);
     }
@@ -156,6 +163,23 @@ describe("SubscriptionService.getExport (B1187)", () => {
     ]);
   });
 
+  it("row 350: a comp add-on exports comp:true with a null monthly (never a price)", async () => {
+    const { svc } = build([], []);
+    jest.spyOn(svc, "getSubscription").mockResolvedValue({
+      planKey: "GROWTH",
+      flags: [],
+      addons: [
+        { sku: "A", name: "Addon", quantity: 1, comp: true, monthly: null, isComp: true },
+        { sku: "B", name: "Paid", quantity: 2, comp: false, monthly: 10 },
+      ],
+    } as never);
+    const out = await svc.getExport(TENANT);
+    expect(out.subscription.addons).toEqual([
+      { sku: "A", name: "Addon", quantity: 1, comp: true, monthly: null },
+      { sku: "B", name: "Paid", quantity: 2, comp: false, monthly: 10 },
+    ]);
+  });
+
   it("absent addons/flags fail closed to [] (absent => [])", async () => {
     const { svc } = build([], []);
     jest.spyOn(svc, "getSubscription").mockResolvedValue({
@@ -182,7 +206,14 @@ describe("SubscriptionService.getExport (B1187)", () => {
     await svc.getExport(TENANT);
     expect(prisma.billingEvent.findMany.mock.calls[0][0].where).toEqual({
       tenantId: TENANT,
-      type: { notIn: ["tenant.class_changed", "reconciliation.snapshot_backfilled"] },
+      type: {
+        notIn: [
+          "tenant.class_changed",
+          "reconciliation.snapshot_backfilled",
+          "coupon.unbilled",
+          "coupon.billed",
+        ],
+      },
     });
     expect(prisma.rfInvoice.findMany.mock.calls[0][0].where).toEqual({ tenantId: TENANT });
   });

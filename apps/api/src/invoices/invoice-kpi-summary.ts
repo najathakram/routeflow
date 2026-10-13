@@ -6,7 +6,7 @@ import { JwtPayload } from "../auth/jwt-payload.interface";
 import { roundMoney } from "@routeflow/pricing";
 import { addCalendarDays, overdueCutoff } from "../common/calendar-date";
 import { KPI_SUMMARY_EXCLUDED } from "./invoice-status-sets";
-import { sumConfirmed } from "./payment-predicates";
+import { classifyInvoiceBalance } from "./invoice-balance-classify";
 
 /**
  * Moved verbatim out of `invoices.service.ts` (size ratchet, SA-065). `InvoicesService.getKpiSummary`
@@ -146,25 +146,23 @@ export async function computeInvoiceKpiSummary(
   let overdue = 0;
   let dueToday = 0;
   let dueIn30 = 0;
+  // SA-770: "overdue" is the staff rule, from the ONE classifier: a balance is due AND the due DAY has
+  // ended before `today` (the tenant's day when its zone is known). The old m5 disjunct (a stale
+  // status-OVERDUE flag counted as overdue whatever the due date said) is retired.
+  const todayCutoff = new Date(`${today}T00:00:00.000Z`);
   for (const inv of invoices) {
     // Same balance basis as findAll's enrichment above: CONFIRMED (PAID)
     // payments only reduce the outstanding figure.
-    const balance = Math.max(0, Number(inv.total) - sumConfirmed(inv.payments as any));
+    const { balanceDue: balance, isOverdue } = classifyInvoiceBalance(inv as any, todayCutoff);
     totalOutstanding += balance;
     const dueDateIso = inv.dueDate
       ? (inv.dueDate instanceof Date ? inv.dueDate : new Date(inv.dueDate))
           .toISOString()
           .slice(0, 10)
       : null;
-    // m5: the client memo's own basis was `status === "OVERDUE" || (due <
-    // today)` — a disjunct, not a date-only rule. An invoice the server has
-    // already flipped to OVERDUE is overdue whatever its dueDate says (null,
-    // or moved into the future by an edit), so it must not fall into
-    // dueIn30 or out of every bucket.
-    if (inv.status === InvoiceStatus.OVERDUE) overdue += balance;
-    // No dueDate and not flagged OVERDUE: totalOutstanding only, no bucket.
-    else if (dueDateIso == null) continue;
-    else if (dueDateIso < today) overdue += balance;
+    if (isOverdue) overdue += balance;
+    // No dueDate: totalOutstanding only, no bucket. A past due day with nothing owed adds 0 anyway.
+    else if (dueDateIso == null || dueDateIso < today) continue;
     else if (dueDateIso === today) dueToday += balance;
     else if (dueDateIso <= cutoff) dueIn30 += balance;
   }

@@ -41,6 +41,7 @@ import { PolicyService } from "../policy/policy.service";
 import { PolicyOversellReader } from "./policy-oversell-reader";
 import { OrdersService } from "./orders.service";
 import type { JwtPayload } from "../auth/jwt-payload.interface";
+import { INVOICE_EDIT_STUBS } from "./testing/invoice-edit-stubs";
 
 // eslint-disable-next-line @typescript-eslint/no-var-requires
 const { assertTestTenant } = require("../../../../scripts/lib/test-tenants.cjs");
@@ -172,6 +173,7 @@ describeDb(
           findOpenOrderDraft: async () => null,
           revertLinkedInvoicesForOrderEdit: async () => undefined,
           resyncOrderInvoicesForEdit: async () => [],
+          ...INVOICE_EDIT_STUBS,
           reconcileOrderDraftInvoice: async () => undefined,
         },
         creditNotes: { settleOrderCreditsInTx: async () => ({ applied: 0, unapplied: 0 }) },
@@ -319,7 +321,8 @@ describeDb(
       expect(await stockNow()).toBe(3);
       const refused: any = await editQty(created.id, 7, buyer(0)).catch((e) => e);
       expect(refused).toBeInstanceOf(ConflictException);
-      expect(JSON.stringify(refused.getResponse())).toMatch(/insufficient stock|not enough stock/i);
+      expect(refused.getStatus()).toBe(409);
+      expect(refused.getResponse()).toMatchObject({ code: "INSUFFICIENT_STOCK" });
       expect(await stockNow()).toBe(3);
       const kept = await raw.orderItem.findFirstOrThrow({ where: { orderId: created.id } });
       expect(Number(kept.qty)).toBe(2);

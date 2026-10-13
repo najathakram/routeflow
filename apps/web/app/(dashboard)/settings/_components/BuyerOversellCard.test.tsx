@@ -219,6 +219,21 @@ describe("BuyerOversellCard: what customers see about backordered items (OOS PR2
     expect(screen.getByText(OVERSELL_COPY.visibilityNeedsSwitch)).toBeInTheDocument();
   });
 
+  it("switch OFF but customers have their own setting: the choice stays editable and says so", () => {
+    loaded("off", 2, "show");
+    renderWithProviders(<BuyerOversellCard canEdit />);
+    expect(radio(/^Hide it/)).toBeEnabled();
+    fireEvent.click(radio(/^Hide it/));
+    expect(mutate).toHaveBeenCalledWith({ buyerBackorderVisibility: "hide" }, expect.any(Object));
+    expect(screen.getByText(OVERSELL_COPY.visibilityNeedsSwitch)).toBeInTheDocument();
+  });
+
+  it("switch OFF, no overrides, non-admin: still disabled", () => {
+    loaded("off", 3, "show");
+    renderWithProviders(<BuyerOversellCard canEdit={false} />);
+    expect(radio(/^Hide it/)).toBeDisabled();
+  });
+
   it("an operator (read-only) sees it but cannot change it", () => {
     loaded("backorder", 0, "show");
     renderWithProviders(<BuyerOversellCard canEdit={false} />);

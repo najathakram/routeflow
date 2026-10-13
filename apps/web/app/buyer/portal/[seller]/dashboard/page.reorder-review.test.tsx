@@ -120,6 +120,25 @@ describe("buyer dashboard — Standing Orders Reorder review", () => {
     expect(screen.queryByText(/internal detail/)).not.toBeInTheDocument();
   });
 
+  it("a paused seller (403 SELLER_UNAVAILABLE) says so in the sheet, never the generic failure", async () => {
+    mutateAsync.mockRejectedValueOnce(
+      Object.assign(new Error("Request failed"), {
+        response: { status: 403, data: { code: "SELLER_UNAVAILABLE", message: "x" } },
+      }),
+    );
+    const user = userEvent.setup();
+    render(<BuyerDashboardPage />);
+
+    await user.click(await screen.findByRole("button", { name: /^reorder$/i }));
+    const dialog = within(await screen.findByRole("dialog"));
+    await user.click(dialog.getByRole("button", { name: "Place order" }));
+
+    expect(await dialog.findByRole("alert")).toHaveTextContent(
+      "Acme Foods isn't taking online orders right now. Please check back soon or contact them.",
+    );
+    expect(screen.queryByText(/permission|couldn't place/i)).toBeNull();
+  });
+
   it("cancelling the review never places the order", async () => {
     const user = userEvent.setup();
     render(<BuyerDashboardPage />);

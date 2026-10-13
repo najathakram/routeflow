@@ -50,8 +50,8 @@ import {
   checkoutAddonItems,
   listedCheckoutAddonSkus,
   checkoutAddonLineItem,
-  toCents,
 } from "./stripe-addon-items";
+import { toCents } from "@routeflow/pricing";
 
 const CATALOG = {
   addonSkus: [
@@ -195,6 +195,8 @@ interface Opts {
   newerDowngrade?: boolean;
   /** The retrieved subscription's own metadata (the SKUs also ride it); default none. */
   subMetadata?: Record<string, string>;
+  /** B1158: the stored subscription's latest invoice has a PaymentIntent still `processing` (ACH/SEPA in flight). */
+  storedPaymentProcessing?: boolean;
 }
 
 function make(opts: Opts = {}) {
@@ -301,6 +303,7 @@ function make(opts: Opts = {}) {
   };
   // The subscriptions Stripe holds: the session's (any id, built on demand) and the tenant's stored one.
   const canceledSubs = new Set<string>();
+  const sessionsById: Record<string, any> = {};
   const stripeSubObject = (id = "sub_1") => ({
     id,
     object: "subscription",
@@ -336,6 +339,29 @@ function make(opts: Opts = {}) {
         throw Object.assign(new Error("No such subscription"), { code: "resource_missing" });
       }
       return stripeSubObject(id);
+    }),
+    // SA-736r: the coupon sync's two reads - inert (no discount, no upcoming invoice -> nothing is written).
+    retrieveSubscriptionWithDiscounts: jest.fn(async (id: string) => ({
+      id,
+      status: "active",
+      discounts: [],
+    })),
+    previewNextInvoice: jest.fn(async () => null),
+    // B1158: the re-read right before a superseded cancel — status plus "is its payment still processing".
+    getSubscriptionPaymentState: jest.fn(async (id: string) => {
+      if (opts.storedSubStatus === "missing" && id !== "sub_1") {
+        return { status: null, paymentProcessing: false };
+      }
+      return {
+        status: canceledSubs.has(id) ? "canceled" : (opts.storedSubStatus ?? "active"),
+        paymentProcessing: opts.storedPaymentProcessing ?? false,
+      };
+    }),
+    /** B1158 sweep: the Stripe checkout sessions by id (a test sets `h.sessions[id]`). */
+    getCheckoutSession: jest.fn(async (id: string) => {
+      const s = sessionsById[id];
+      if (!s) throw Object.assign(new Error("No such session"), { code: "resource_missing" });
+      return s;
     }),
     cancelSubscription: jest.fn(async (id: string, _params?: unknown, _options?: unknown) => {
       if (opts.cancelFails) throw new Error("stripe down: internal detail");
@@ -440,10 +466,66 @@ function make(opts: Opts = {}) {
             ? { id: "dup-decision" }
             : null;
         }
+        // B1157: the APPLIED marker is a real row now (written by EVERY apply path) — read it from the store.
+        if (
+          where?.action === "STRIPE_CHECKOUT_APPLIED" &&
+          audits.some(
+            (a) =>
+              a.action === where.action &&
+              a.entityId === where.entityId &&
+              (where.tenantId == null || a.tenantId === where.tenantId),
+          )
+        ) {
+          return { id: "applied-marker" };
+        }
         return opts.alreadyApplied ? { id: "audit1" } : null;
       }),
+      // B1158 sweep: the parked / resolved / escalated rows (newest last), filtered like the Prisma query.
+      findMany: jest.fn(async ({ where }: any = {}) =>
+        audits
+          .filter(
+            (a) =>
+              (where?.entityType == null || a.entityType === where.entityType) &&
+              (where?.action == null ||
+                (where.action.in
+                  ? where.action.in.includes(a.action)
+                  : a.action === where.action)) &&
+              (where?.entityId?.in == null || where.entityId.in.includes(a.entityId)),
+          )
+          .map((a, i) => ({ id: `row${i}`, ...a })),
+      ),
       create: jest.fn().mockResolvedValue({}),
     },
+    // B1158 sweep: the open parked rows come from ONE tagged $queryRaw (NOT EXISTS a resolved row for the same
+    // entity). Values are [escalatedAction, entityType, parkedAction, resolvedAction], in the SQL's order.
+    $queryRaw: jest.fn(async (_strings: TemplateStringsArray, ...v: any[]) => {
+      const [escalatedAction, entityType, parkedAction, resolvedAction] = v;
+      return audits
+        .filter(
+          (a) => a.entityType === entityType && a.action === parkedAction && a.entityId != null,
+        )
+        .filter(
+          (a) =>
+            !audits.some(
+              (r) =>
+                r.entityType === a.entityType &&
+                r.entityId === a.entityId &&
+                r.action === resolvedAction,
+            ),
+        )
+        .sort((x, y) => x.createdAt.getTime() - y.createdAt.getTime())
+        .map((a) => ({
+          entityId: a.entityId,
+          tenantId: a.tenantId ?? null,
+          createdAt: a.createdAt,
+          escalated: audits.some(
+            (r) =>
+              r.entityType === a.entityType &&
+              r.entityId === a.entityId &&
+              r.action === escalatedAction,
+          ),
+        }));
+    }),
     tenantFeatureConfigSnapshot: {
       findFirst: jest.fn().mockResolvedValue(opts.newerDowngrade ? { id: "snap-newer" } : null),
     },
@@ -506,6 +588,8 @@ function make(opts: Opts = {}) {
     subscription: "sub_1",
     created: 1791172800,
     metadata: { tenantId: "t1", slug: "acme", planKey: "STARTER", interval: "month" },
+    // P0 hotfix: only a settled session activates; the tests that mean "unpaid" or "no status" say so explicitly
+    payment_status: "paid",
     ...extra,
   });
   /** The checkout.session.completed handler, exactly as the webhook controller dispatches it. */
@@ -537,6 +621,7 @@ function make(opts: Opts = {}) {
     entitlements,
     billingNotification,
     audits,
+    sessionsById,
     session,
     completed,
     ledger,
@@ -606,6 +691,8 @@ describe("SA-690 checkout — the unbilled add-ons ride the card checkout", () =
       addonSkus: "CUSTOMER_PACK_100,FORECASTING",
     });
     expect(args.subscription_data).toEqual({
+      billing_cycle_anchor: expect.any(Number), // SA-733 D6: always anchored (see the D6 block below)
+      proration_behavior: "create_prorations",
       metadata: { tenantId: "t1", addonSkus: "CUSTOMER_PACK_100,FORECASTING" },
     });
   });
@@ -677,7 +764,10 @@ describe("SA-690 checkout — the unbilled add-ons ride the card checkout", () =
       const h = make({ rows: [addonRow("CUSTOMER_PACK_100", { qty: 0 })] });
       await h.billing.createCheckoutSession("t1", "month");
       await h.billing.createCheckoutSession("t1", "month");
-      await h.billing.createCheckoutSession("t1", "year"); // an annual checkout too: nothing to bill, so no refusal
+      // an annual checkout is refused (SA-733 D6) AFTER the add-on lines were read: still the same one notice
+      await expect(h.billing.createCheckoutSession("t1", "year")).rejects.toMatchObject({
+        status: 400,
+      });
       expect(qtyNotices(h)).toHaveLength(1);
     });
 
@@ -723,10 +813,14 @@ describe("SA-690 checkout — the unbilled add-ons ride the card checkout", () =
     expect(call.line_items[1].price_data.product_data.metadata.addonSku).toBe("FORECASTING");
     expect(call.metadata.addonSkus).toBe("FORECASTING");
 
-    // a quantity-0 row alone is nothing to bill: an ANNUAL checkout is the plan line, not a refusal
+    // a quantity-0 row alone is nothing to bill: an ANNUAL checkout is no longer an ADD-ON refusal
+    // (SA-733 D6 refuses every annual checkout, with its own code)
     const only = make({ rows: [addonRow("CUSTOMER_PACK_100", { qty: 0 })] });
-    await only.billing.createCheckoutSession("t1", "year");
-    expect(only.client.checkout.sessions.create.mock.calls[0][0].line_items).toHaveLength(1);
+    const refused: any = await only.billing.createCheckoutSession("t1", "year").catch((e) => e);
+    expect(refused.getResponse()).toMatchObject({
+      code: API_ERROR_CODES.CHECKOUT_ANNUAL_NOT_SUPPORTED,
+    });
+    expect(only.client.checkout.sessions.create).not.toHaveBeenCalled();
   });
 
   it("NIT: the annual-checkout refusal NAMES the add-ons to switch off (sorted by SKU, comma-joined) and says what else to do", async () => {
@@ -783,12 +877,17 @@ describe("SA-690 checkout — the unbilled add-ons ride the card checkout", () =
       planKey: "STARTER",
       interval: "month",
     });
-    expect(m).not.toHaveProperty("subscription_data");
+    // no add-on tags: the subscription_data is the D6 anchor alone (no metadata)
+    expect(m.subscription_data).toEqual({
+      billing_cycle_anchor: expect.any(Number),
+      proration_behavior: "create_prorations",
+    });
 
-    // only a SWITCHED-OFF row means nothing to bill: an annual checkout is then the plan line alone
+    // only a SWITCHED-OFF row means nothing to bill: an annual checkout is then refused by D6 alone
     const annual = make({ rows: [addonRow("CUSTOMER_PACK_100", { active: false })] });
-    await annual.billing.createCheckoutSession("t1", "year");
-    expect(annual.client.checkout.sessions.create.mock.calls[0][0].line_items).toHaveLength(1);
+    await expect(annual.billing.createCheckoutSession("t1", "year")).rejects.toMatchObject({
+      status: 400,
+    });
   });
 
   it("a legacy row keyed by addonKey is billed under its canonical SKU, once", async () => {
@@ -1889,7 +1988,8 @@ describe("X1: a STALE checkout never completes over a newer billing state", () =
         items: items(),
       });
 
-      await expect(h.completed()).resolves.toBeUndefined();
+      // an UNPAID session: nothing was charged, so no refund trail either
+      await expect(h.completed(h.session({ payment_status: "unpaid" }))).resolves.toBeUndefined();
 
       expect(h.stripe.cancelSubscription).not.toHaveBeenCalled();
       expect(h.stripe.getInvoice).not.toHaveBeenCalled();
@@ -1961,12 +2061,32 @@ describe("X1: a STALE checkout never completes over a newer billing state", () =
         expect(paidNotices(h)).toHaveLength(1);
       });
 
-      it("NOT raised when the tenant is fine: its stored subscription is LIVE (the S2 sequence — A applied, sub_A cancelled, B applied, a late retry of A)", async () => {
+      it("B1157: a LIVE stored subscription no longer silences it — a paid, never-applied session (no APPLIED marker) still alerts", async () => {
         const h = make({
           subStatus: "canceled",
           storedSubId: "sub_B",
           rows: rows(),
           items: items(),
+        });
+        await h.completed(paid(h));
+        expect(paidNotices(h)).toHaveLength(1);
+        expect(trails(h)).toHaveLength(1);
+      });
+
+      it("B1157: the S2 sequence (A applied -> sub_A cancelled -> B applied -> late retry of A) stays silent because A carries its APPLIED marker", async () => {
+        const h = make({
+          subStatus: "canceled",
+          storedSubId: "sub_B",
+          rows: rows(),
+          items: items(),
+        });
+        h.audits.push({
+          tenantId: "t1",
+          action: "STRIPE_CHECKOUT_APPLIED",
+          entityType: "stripe_checkout_session",
+          entityId: "cs_1",
+          meta: {},
+          createdAt: new Date(),
         });
         await h.completed(paid(h));
         expect(paidNotices(h)).toEqual([]);
@@ -2000,7 +2120,7 @@ describe("X1: a STALE checkout never completes over a newer billing state", () =
         const h = make({ subStatus: "canceled", rows: rows(), items: items() });
         await h.completed(h.session({ payment_status: "unpaid" }));
         expect(paidNotices(h)).toEqual([]);
-        await h.completed(h.session({ id: "cs_2" })); // no payment_status at all
+        await h.completed(h.session({ id: "cs_2", payment_status: undefined })); // no payment_status at all
         expect(paidNotices(h)).toEqual([]);
       });
 
@@ -2010,7 +2130,7 @@ describe("X1: a STALE checkout never completes over a newer billing state", () =
         await expect(h.completed(paid(h))).resolves.toBeUndefined();
       });
 
-      it("a transient Stripe error reading the stored subscription still fails the webhook (A2: only resource_missing is 'not live')", async () => {
+      it("B1157: the stored subscription is no longer read at all on this path, so a transient Stripe error there cannot matter — the notice is raised", async () => {
         const h = make({
           subStatus: "canceled",
           storedSubId: "sub_old",
@@ -2018,8 +2138,9 @@ describe("X1: a STALE checkout never completes over a newer billing state", () =
           rows: rows(),
           items: items(),
         });
-        await expect(h.completed(paid(h))).rejects.toMatchObject({ type: "StripeConnectionError" });
-        expect(paidNotices(h)).toEqual([]);
+        await expect(h.completed(paid(h))).resolves.toBeUndefined();
+        expect(h.stripe.getSubscription).not.toHaveBeenCalledWith("sub_old");
+        expect(paidNotices(h)).toHaveLength(1);
       });
     });
 
@@ -2741,7 +2862,8 @@ describe("X1: a STALE checkout never completes over a newer billing state", () =
     expect(h.stripe.cancelSubscription).not.toHaveBeenCalled();
     expect(h.sub.stripeSubId).toBe("sub_1");
     expect(h.rows.map((r) => r.stripeItemId)).toEqual(["si_pack", "si_fc"]);
-    expect(h.audits).toEqual([]);
+    // no duplicate decision, no notice — only the APPLIED marker every apply path now writes (B1157)
+    expect(h.audits.map((a: any) => a.action)).toEqual(["STRIPE_CHECKOUT_APPLIED"]);
     expect(h.ledger().length).toBeGreaterThan(0);
   });
 
@@ -2879,7 +3001,12 @@ describe("S4: only a TRANSIENT unreadable item is a coded refusal; a permanent u
         rows: [addonRow("CUSTOMER_PACK_100", { qty: 0 })],
         items: [baseItem(), checkoutItem("si_pack", "CUSTOMER_PACK_100", 5000, 2)],
       });
-      h.tx.auditLog.create.mockRejectedValueOnce(new Error("db down"));
+      // only the NOTICE write fails (the APPLIED marker shares the apply transaction and must not)
+      const create = h.tx.auditLog.create.getMockImplementation()!;
+      h.tx.auditLog.create.mockImplementation(async (args: any) => {
+        if (args.data.action !== "STRIPE_CHECKOUT_APPLIED") throw new Error("db down");
+        return create(args);
+      });
       await expect(h.completed()).resolves.toBeUndefined();
       expect(h.stripeItems.map((i) => i.id)).not.toContain("si_pack");
     });
@@ -3728,13 +3855,18 @@ describe("SA-693 comps: a platform grant (TenantAddon.isComp) is never billed at
     const args = h.client.checkout.sessions.create.mock.calls[0][0];
     expect(args.line_items).toHaveLength(1); // the plan only
     expect(args.metadata).not.toHaveProperty("addonSkus");
-    expect(args).not.toHaveProperty("subscription_data");
+    expect(args.subscription_data).not.toHaveProperty("metadata"); // the D6 anchor only
   });
 
   it("a comp never makes an ANNUAL checkout refuse (nothing billable), while a billable row beside it still does", async () => {
     const onlyComp = make({ rows: [comp("CUSTOMER_PACK_100", { qty: 3 })] });
-    await onlyComp.billing.createCheckoutSession("t1", "year");
-    expect(onlyComp.client.checkout.sessions.create.mock.calls[0][0].line_items).toHaveLength(1);
+    // nothing billable -> no ADD-ON refusal; the annual checkout is refused by D6 (its own code) instead
+    const noAddonRefusal: any = await onlyComp.billing
+      .createCheckoutSession("t1", "year")
+      .catch((e) => e);
+    expect(noAddonRefusal.getResponse()).toMatchObject({
+      code: API_ERROR_CODES.CHECKOUT_ANNUAL_NOT_SUPPORTED,
+    });
 
     const both = make({ rows: [comp("CUSTOMER_PACK_100"), addonRow("FORECASTING")] });
     await expect(both.billing.createCheckoutSession("t1", "year")).rejects.toMatchObject({
@@ -3923,5 +4055,454 @@ describe("SA-690 pure helpers", () => {
       },
     ]);
     expect(checkoutAddonItems(null)).toEqual([]);
+  });
+});
+
+// ─────────────────────────────────────────────────────────────────────────────────────────────────
+describe("B1157: a paid, never-applied checkout is not silenced by a live stored subscription", () => {
+  const paidNotices = (h: ReturnType<typeof make>) =>
+    h.audits.filter((a: any) => a.action === "STRIPE_PAID_CHECKOUT_NOT_APPLIED");
+  const markers = (h: ReturnType<typeof make>) =>
+    h.audits.filter(
+      (a: any) =>
+        a.action === "STRIPE_CHECKOUT_APPLIED" && a.entityType === "stripe_checkout_session",
+    );
+  const paid = (h: ReturnType<typeof make>, extra: Record<string, unknown> = {}) =>
+    h.session({ payment_status: "paid", ...extra });
+
+  it("tenant on a DIFFERENT live sub, paid session, its sub cancelled, NO marker -> notice written", async () => {
+    const h = make({ subStatus: "canceled", storedSubId: "sub_B" });
+    await h.completed(paid(h));
+    expect(paidNotices(h)).toHaveLength(1);
+    expect(paidNotices(h)[0].meta).toMatchObject({ reason: "subscription_already_cancelled" });
+  });
+
+  it("with the APPLIED marker -> silent", async () => {
+    const h = make({ subStatus: "canceled", storedSubId: "sub_B" });
+    h.audits.push({
+      tenantId: "t1",
+      action: "STRIPE_CHECKOUT_APPLIED",
+      entityType: "stripe_checkout_session",
+      entityId: "cs_1",
+      meta: {},
+      createdAt: new Date(),
+    });
+    await h.completed(paid(h));
+    expect(paidNotices(h)).toEqual([]);
+  });
+
+  it("delivered twice -> ONE notice", async () => {
+    const h = make({ subStatus: "canceled", storedSubId: "sub_B" });
+    await h.completed(paid(h));
+    await h.completed(paid(h));
+    expect(paidNotices(h)).toHaveLength(1);
+  });
+
+  describe("wiring pins: EVERY apply path writes the APPLIED marker inside its apply transaction", () => {
+    // The only writer of a checkout's Stripe ids is onCheckoutCompleted's upsert, in two transaction
+    // shapes: (1) the plan-transition hook tx (flag on AND the session names a plan), (2) the plain tx
+    // (flag off, flag on without a plan, flag on with a stale-downgrade plan skip).
+    const expectMarkedOnce = (h: ReturnType<typeof make>) => {
+      expect(h.sub.stripeSubId).toBe("sub_1"); // it really applied
+      const rowsOf = markers(h);
+      expect(rowsOf).toHaveLength(1);
+      expect(rowsOf[0]).toMatchObject({ tenantId: "t1", entityId: "cs_1" });
+    };
+
+    it("flag OFF (plain tx)", async () => {
+      const h = make({ flagOn: false });
+      await h.completed();
+      expectMarkedOnce(h);
+    });
+
+    it("flag ON, the session names a plan (hook tx)", async () => {
+      const h = make({ flagOn: true });
+      await h.completed();
+      expectMarkedOnce(h);
+    });
+
+    it("flag ON, the session names NO plan (plain tx)", async () => {
+      const h = make({ flagOn: true });
+      await h.completed(h.session({ metadata: { tenantId: "t1", interval: "month" } }));
+      expectMarkedOnce(h);
+    });
+
+    it("flag ON, a newer downgrade skips the plan change (plain tx, planKey null)", async () => {
+      const h = make({ flagOn: true, newerDowngrade: true });
+      await h.completed();
+      expectMarkedOnce(h);
+    });
+
+    it("a redelivery of a flag-OFF-applied session writes no second marker and no notice", async () => {
+      const h = make({ flagOn: false });
+      await h.completed();
+      await h.completed();
+      expect(markers(h)).toHaveLength(1);
+      expect(paidNotices(h)).toEqual([]);
+    });
+  });
+});
+
+// ─────────────────────────────────────────────────────────────────────────────────────────────────
+describe("B1158: a superseded subscription whose payment is still PROCESSING is never cancelled", () => {
+  const PARKED = "STRIPE_CHECKOUT_PAYMENT_PROCESSING";
+  const RESOLVED = "STRIPE_CHECKOUT_PARK_RESOLVED";
+  const parked = (h: ReturnType<typeof make>) => h.audits.filter((a: any) => a.action === PARKED);
+  const resolved = (h: ReturnType<typeof make>) =>
+    h.audits.filter((a: any) => a.action === RESOLVED);
+  const notices = (h: ReturnType<typeof make>, reason: string) =>
+    h.audits.filter(
+      (a: any) => a.action === "STRIPE_PAID_CHECKOUT_NOT_APPLIED" && a.meta?.reason === reason,
+    );
+  const sweep = (h: ReturnType<typeof make>) => (h.billing as any).reconcileParkedCheckouts();
+  const nothingApplied = (h: ReturnType<typeof make>, stored: string) => {
+    expect(h.sub.stripeSubId).toBe(stored);
+    expect(h.prisma.tenantSubscription.upsert).not.toHaveBeenCalled();
+    expect(h.ledger()).toEqual([]);
+  };
+  const base = (extra: Record<string, unknown> = {}) => ({
+    storedSubId: "sub_old",
+    storedSubStatus: "incomplete",
+    rows: [addonRow("CUSTOMER_PACK_100", { qty: 2 })],
+    items: [baseItem(), checkoutItem("si_pack", "CUSTOMER_PACK_100", 5000, 2)],
+    ...extra,
+  });
+  const paidSession = (h: ReturnType<typeof make>) => h.session({ payment_status: "paid" });
+
+  it("incomplete + PaymentIntent processing: cancelSubscription NOT called, ONE trail row + ONE notice, the handler rejects, nothing applied", async () => {
+    const h = make(base({ storedPaymentProcessing: true }));
+
+    await expect(h.completed(paidSession(h))).rejects.toThrow(ConflictException);
+
+    expect(h.stripe.cancelSubscription).not.toHaveBeenCalled();
+    expect(parked(h)).toHaveLength(1);
+    expect(parked(h)[0].meta).toMatchObject({
+      reason: "superseded_payment_processing",
+      storedSubId: "sub_old",
+      newSubId: "sub_1",
+    });
+    const told = notices(h, "superseded_payment_processing");
+    expect(told).toHaveLength(1);
+    expect(told[0]).toMatchObject({ tenantId: "t1", entityType: "tenant", entityId: "t1" });
+    expect(told[0].meta).toMatchObject({ checkoutSessionId: "cs_1" });
+    const msg: string = told[0].meta.message;
+    for (const part of [
+      "sub_old",
+      "cs_1",
+      "sub_1",
+      "NOT applied",
+      "nothing was cancelled",
+      "hourly",
+    ]) {
+      expect(msg).toContain(part);
+    }
+    expect(msg).toContain("do not cancel either subscription by hand");
+    nothingApplied(h, "sub_old");
+    expect(h.audits.filter((a: any) => a.action === "STRIPE_CHECKOUT_APPLIED")).toEqual([]);
+  });
+
+  it("delivered TWICE: still ONE trail row and ONE notice (both deliveries fail, Stripe redelivers)", async () => {
+    const h = make(base({ storedPaymentProcessing: true }));
+    await expect(h.completed(paidSession(h))).rejects.toThrow(ConflictException);
+    await expect(h.completed(paidSession(h))).rejects.toThrow(ConflictException);
+    expect(parked(h)).toHaveLength(1);
+    expect(notices(h, "superseded_payment_processing")).toHaveLength(1);
+    expect(h.stripe.cancelSubscription).not.toHaveBeenCalled();
+  });
+
+  it("control: PaymentIntent NOT processing (requires_payment_method) -> cancelled as today, then applied", async () => {
+    const h = make(base({ storedPaymentProcessing: false }));
+    await h.completed(paidSession(h));
+    expect(h.stripe.cancelSubscription).toHaveBeenCalledTimes(1);
+    expect(h.stripe.cancelSubscription.mock.calls[0][0]).toBe("sub_old");
+    expect(parked(h)).toEqual([]);
+    expect(h.sub.stripeSubId).toBe("sub_1");
+  });
+
+  it("control: paused -> cancelled and applied, unchanged", async () => {
+    const h = make(base({ storedSubStatus: "paused" }));
+    await h.completed(paidSession(h));
+    expect(h.stripe.cancelSubscription).toHaveBeenCalledTimes(1);
+    expect(h.sub.stripeSubId).toBe("sub_1");
+  });
+
+  it("the re-read shows the stored sub now LIVE: no cancel, a retryable throw, nothing applied, no trail", async () => {
+    const h = make(base());
+    h.stripe.getSubscriptionPaymentState.mockResolvedValueOnce({
+      status: "active",
+      paymentProcessing: false,
+    });
+    await expect(h.completed(paidSession(h))).rejects.toThrow(ConflictException);
+    expect(h.stripe.cancelSubscription).not.toHaveBeenCalled();
+    expect(parked(h)).toEqual([]);
+    nothingApplied(h, "sub_old");
+  });
+
+  it("a TERMINAL status WITH a payment still processing parks: no apply, no cancel, one row + one notice", async () => {
+    const h = make(base());
+    h.stripe.getSubscriptionPaymentState.mockResolvedValue({
+      status: "incomplete_expired",
+      paymentProcessing: true,
+    });
+    await expect(h.completed(paidSession(h))).rejects.toThrow(ConflictException);
+    expect(h.stripe.cancelSubscription).not.toHaveBeenCalled();
+    expect(parked(h)).toHaveLength(1);
+    expect(notices(h, "superseded_payment_processing")).toHaveLength(1);
+    nothingApplied(h, "sub_old");
+  });
+
+  it("early-terminal + processing -> park: the handler's first read is already terminal, the payment is still in flight", async () => {
+    const h = make(base({ storedSubStatus: "incomplete_expired", storedPaymentProcessing: true }));
+    await expect(h.completed(paidSession(h))).rejects.toThrow(ConflictException);
+    expect(h.stripe.cancelSubscription).not.toHaveBeenCalled();
+    expect(parked(h)).toHaveLength(1);
+    expect(notices(h, "superseded_payment_processing")).toHaveLength(1);
+    nothingApplied(h, "sub_old");
+  });
+
+  it("a LIVE status still wins over a processing payment (live check stays first)", async () => {
+    const h = make(base());
+    h.stripe.getSubscriptionPaymentState.mockResolvedValue({
+      status: "active",
+      paymentProcessing: true,
+    });
+    await expect(h.completed(paidSession(h))).rejects.toThrow(ConflictException);
+    expect(parked(h)).toEqual([]);
+  });
+
+  it("the re-read shows it TERMINAL: the cancel is skipped and the checkout applies", async () => {
+    const h = make(base());
+    h.stripe.getSubscriptionPaymentState.mockResolvedValueOnce({
+      status: "incomplete_expired",
+      paymentProcessing: false,
+    });
+    await h.completed(paidSession(h));
+    expect(h.stripe.cancelSubscription).not.toHaveBeenCalled();
+    expect(h.sub.stripeSubId).toBe("sub_1");
+  });
+
+  describe("the hourly sweep re-runs the SAME checkout handling for each open parked row", () => {
+    /** Park cs_1 first, then let the caller change what Stripe now says about sub_old. */
+    const parkedHarness = async (opts: Record<string, unknown> = {}) => {
+      const o: any = base({ storedPaymentProcessing: true, ...opts });
+      const h = make(o);
+      const s = paidSession(h);
+      h.sessionsById[s.id as string] = s;
+      await expect(h.completed(s)).rejects.toThrow(ConflictException);
+      return { h, o };
+    };
+
+    it("the bank payment SUCCEEDED (stored sub now active): judged a duplicate — the new sub is cancelled, the refund notice written, the park resolved", async () => {
+      const { h, o } = await parkedHarness();
+      o.storedSubStatus = "active";
+      o.storedPaymentProcessing = false;
+
+      await sweep(h);
+
+      expect(h.stripe.cancelSubscription).toHaveBeenCalledTimes(1);
+      expect(h.stripe.cancelSubscription.mock.calls[0][0]).toBe("sub_1");
+      expect(h.audits.filter((a: any) => a.action === "STRIPE_DUPLICATE_CHECKOUT")).toHaveLength(1);
+      expect(h.sub.stripeSubId).toBe("sub_old");
+      expect(resolved(h)).toHaveLength(1);
+      expect(resolved(h)[0]).toMatchObject({ entityId: "cs_1" });
+      await sweep(h); // idempotent: resolved rows are not re-run
+      expect(resolved(h)).toHaveLength(1);
+      expect(h.stripe.cancelSubscription).toHaveBeenCalledTimes(1);
+    });
+
+    it("open parked rows come from ONE parameterised NOT EXISTS query; a resolved row is never re-run", async () => {
+      const { h, o } = await parkedHarness();
+      o.storedSubStatus = "incomplete_expired";
+      o.storedPaymentProcessing = false;
+      await sweep(h);
+      expect(resolved(h)).toHaveLength(1);
+      h.stripe.getCheckoutSession.mockClear();
+      h.prisma.auditLog.findMany.mockClear();
+      h.prisma.$queryRaw.mockClear();
+
+      await sweep(h);
+
+      expect(h.prisma.$queryRaw).toHaveBeenCalledTimes(1);
+      const sqlText = (h.prisma.$queryRaw.mock.calls[0][0] as string[]).join("?");
+      expect(sqlText).toMatch(/NOT EXISTS/);
+      expect(sqlText).toContain('"AuditLog"');
+      expect(h.prisma.auditLog.findMany).not.toHaveBeenCalled(); // no in-memory filter pass
+      expect(h.stripe.getCheckoutSession).not.toHaveBeenCalled();
+    });
+
+    describe("an ESCALATED park is re-run once a day (UTC hour 0), un-escalated rows hourly", () => {
+      /** The next instant at the given UTC hour, within 24 h ahead of now (so the park stays < 10 days old). */
+      const atUtcHour = (hour: number) => {
+        const d = new Date();
+        d.setUTCHours(hour, 5, 0, 0);
+        if (d.getTime() < Date.now()) d.setUTCDate(d.getUTCDate() + 1);
+        return d.getTime();
+      };
+      const escalate = (h: any) =>
+        h.audits.push({
+          tenantId: "t1",
+          action: "STRIPE_CHECKOUT_PARK_ESCALATED",
+          entityType: "stripe_checkout_session",
+          entityId: "cs_1",
+          meta: { reason: "superseded_payment_processing_escalated" },
+          createdAt: new Date(),
+        });
+      afterEach(() => jest.restoreAllMocks());
+
+      it("escalated + non-matching hour: skipped (getCheckoutSession not called)", async () => {
+        const { h } = await parkedHarness();
+        escalate(h);
+        h.stripe.getCheckoutSession.mockClear();
+        jest.spyOn(Date, "now").mockReturnValue(atUtcHour(5));
+        await sweep(h);
+        expect(h.stripe.getCheckoutSession).not.toHaveBeenCalled();
+      });
+
+      it("escalated + UTC hour 0: re-run", async () => {
+        const { h } = await parkedHarness();
+        escalate(h);
+        h.stripe.getCheckoutSession.mockClear();
+        jest.spyOn(Date, "now").mockReturnValue(atUtcHour(0));
+        await sweep(h);
+        expect(h.stripe.getCheckoutSession).toHaveBeenCalledWith("cs_1");
+      });
+
+      it("un-escalated row at a non-matching hour: still re-run", async () => {
+        const { h } = await parkedHarness();
+        h.stripe.getCheckoutSession.mockClear();
+        jest.spyOn(Date, "now").mockReturnValue(atUtcHour(5));
+        await sweep(h);
+        expect(h.stripe.getCheckoutSession).toHaveBeenCalledWith("cs_1");
+      });
+    });
+
+    it("the payment FAILED (stored sub terminal): the new checkout is applied and the park resolved", async () => {
+      const { h, o } = await parkedHarness();
+      o.storedSubStatus = "incomplete_expired";
+      o.storedPaymentProcessing = false;
+
+      await sweep(h);
+
+      expect(h.sub.stripeSubId).toBe("sub_1");
+      expect(h.audits.filter((a: any) => a.action === "STRIPE_CHECKOUT_APPLIED")).toHaveLength(1);
+      expect(resolved(h)).toHaveLength(1);
+    });
+
+    it("still PROCESSING: the row stays open — no resolved row, no second park row, no second notice, no cancel", async () => {
+      const { h } = await parkedHarness();
+      await sweep(h);
+      await sweep(h);
+      expect(resolved(h)).toEqual([]);
+      expect(parked(h)).toHaveLength(1);
+      expect(notices(h, "superseded_payment_processing")).toHaveLength(1);
+      expect(notices(h, "superseded_payment_processing_escalated")).toEqual([]);
+      expect(h.stripe.cancelSubscription).not.toHaveBeenCalled();
+    });
+
+    it("parked for more than 10 days and STILL processing: ONE escalation notice; a second run adds none", async () => {
+      const { h } = await parkedHarness();
+      parked(h)[0].createdAt = new Date(Date.now() - 11 * 24 * 3600 * 1000);
+
+      await sweep(h);
+      await sweep(h);
+
+      const esc = notices(h, "superseded_payment_processing_escalated");
+      expect(esc).toHaveLength(1);
+      expect(esc[0].meta.message).toContain("cs_1");
+      expect(esc[0].meta.message).toMatch(/reconcile/i);
+      expect(resolved(h)).toEqual([]);
+    });
+
+    it("a parked row under 10 days old raises no escalation", async () => {
+      const { h } = await parkedHarness();
+      parked(h)[0].createdAt = new Date(Date.now() - 9 * 24 * 3600 * 1000);
+      await sweep(h);
+      expect(notices(h, "superseded_payment_processing_escalated")).toEqual([]);
+    });
+
+    it("a row whose re-run itself FAILS (session retrieval throws) and is older than 10 days still escalates ONCE (second run: still one); a younger one does not", async () => {
+      const { h } = await parkedHarness();
+      delete h.sessionsById["cs_1"]; // retrieval now throws resource_missing
+      parked(h)[0].createdAt = new Date(Date.now() - 11 * 24 * 3600 * 1000);
+
+      await sweep(h);
+      await sweep(h);
+
+      const esc = notices(h, "superseded_payment_processing_escalated");
+      expect(esc).toHaveLength(1);
+      expect(esc[0].meta.message).toMatch(/re-run itself is failing/);
+      expect(esc[0].tenantId).toBe("t1");
+
+      const young = await parkedHarness();
+      delete young.h.sessionsById["cs_1"];
+      parked(young.h)[0].createdAt = new Date(Date.now() - 9 * 24 * 3600 * 1000);
+      await sweep(young.h);
+      expect(notices(young.h, "superseded_payment_processing_escalated")).toEqual([]);
+    });
+
+    it("one row erroring (its session unreadable at Stripe) does not stop the next", async () => {
+      const { h, o } = await parkedHarness();
+      // a second, older parked row whose session Stripe cannot return
+      h.audits.unshift({
+        tenantId: "t1",
+        action: PARKED,
+        entityType: "stripe_checkout_session",
+        entityId: "cs_gone",
+        meta: { reason: "superseded_payment_processing" },
+        createdAt: new Date(Date.now() - 3600 * 1000),
+      });
+      o.storedSubStatus = "incomplete_expired";
+      o.storedPaymentProcessing = false;
+
+      await expect(sweep(h)).resolves.toBeUndefined();
+
+      expect(h.sub.stripeSubId).toBe("sub_1"); // cs_1 was still handled
+      expect(resolved(h).map((r: any) => r.entityId)).toEqual(["cs_1"]); // cs_gone stays open
+    });
+  });
+});
+
+// ─────────────────────────────────────────────────────────────────────────────────────────────────
+describe("SA-733r5 catch-up completion (trialing sub, ACTIVE manual-pay tenant)", () => {
+  const catchupSession = (h: ReturnType<typeof make>, kind = "period") =>
+    h.session({
+      invoice: "in_ot",
+      metadata: {
+        tenantId: "t1",
+        slug: "acme",
+        planKey: "STARTER",
+        interval: "month",
+        catchup: kind,
+      },
+    });
+
+  it("writes externalPayment=false in the apply transaction, BEFORE the trailing coupon sync; the tenant stays ACTIVE", async () => {
+    const h = make({ status: "ACTIVE", baseSub: { externalPayment: true } });
+    const seen: unknown[] = [];
+    jest.spyOn(h.billing as any, "syncCoupon").mockImplementation(async () => {
+      seen.push(h.sub.externalPayment); // what the coupon sync would read
+    });
+    await h.completed(catchupSession(h));
+    expect(h.sub.externalPayment).toBe(false);
+    expect(seen.length).toBeGreaterThan(0);
+    expect(seen.every((v) => v === false)).toBe(true);
+    expect(h.tenant.status).toBe("ACTIVE");
+  });
+
+  it("an ordinary (non catch-up) checkout leaves externalPayment alone", async () => {
+    const h = make({ status: "ACTIVE", baseSub: { externalPayment: true } });
+    jest.spyOn(h.billing as any, "syncCoupon").mockResolvedValue(undefined);
+    await h.completed(h.session());
+    expect(h.sub.externalPayment).toBe(true);
+  });
+
+  it("MRR is booked ONCE: completion of a trialing catch-up on an ACTIVE tenant books no activation/resume delta", async () => {
+    const h = make({ status: "ACTIVE", baseSub: { externalPayment: true } });
+    jest.spyOn(h.billing as any, "syncCoupon").mockResolvedValue(undefined);
+    await h.completed(catchupSession(h));
+    await h.completed(catchupSession(h)); // a redelivery
+    const resumed = h.ledger().filter((e: any) => e.type === BILLING_EVENTS.SUBSCRIPTION_RESUMED);
+    expect(resumed).toEqual([]);
+    expect(h.ledgerSum()).toBe(0);
   });
 });

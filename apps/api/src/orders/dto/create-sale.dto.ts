@@ -97,9 +97,14 @@ export class CreateSaleDto {
   appliedCreditNotes?: AppliedCreditNoteDto[];
 
   /**
-   * INTERNAL (SA-655): the counter sale sets this in code, never from a request body — it carries no
-   * validator on purpose, so the global whitelist strips it from `POST /orders/sell`. It becomes the
+   * INTERNAL (SA-655): the counter sale sets this in code, never from a request body. It becomes the
    * order's Idempotency-Key; with it createSale RESUMES a replayed sale instead of starting over.
+   *
+   * Why `declare` (B1224): this field has no validator on purpose, so a body-sent value must be refused
+   * by the global whitelist. But the api targets ES2023 (class fields use define semantics), so a plain
+   * `idempotencyKey?: string;` is emitted as an own `undefined` property on every instance, and
+   * forbidNonWhitelisted then rejects EVERY request with 400 "property idempotencyKey should not exist".
+   * `declare` keeps the type and emits no field, so only a client-sent key is refused.
    */
-  idempotencyKey?: string;
+  declare idempotencyKey?: string;
 }

@@ -10,11 +10,11 @@ import { AuthController } from "./auth.controller";
 import { AuthService } from "./auth.service";
 import { GoogleOAuthService } from "./google-oauth.service";
 import { AppleOAuthService } from "./apple-oauth.service";
-import { TenantGoogleOAuthService } from "../tenants/tenant-google-oauth.service";
 import { StaffHandoffService } from "./handoff/staff-handoff.service";
 import { JwtStrategy } from "./strategies/jwt.strategy";
 import { UsersController } from "../users/users.controller";
 import { UsersService } from "../users/users.service";
+import { OperatorPermissionsService } from "./permissions/operator-permissions.service";
 
 const SECRET = "access-token-validation-test-secret";
 
@@ -82,7 +82,6 @@ describe("access-token validation on JwtAuthGuard-only routes", () => {
         JwtStrategy,
         { provide: ConfigService, useValue: config },
         { provide: AuthService, useValue: { listSessions } },
-        { provide: TenantGoogleOAuthService, useValue: {} },
         {
           provide: GoogleOAuthService,
           useValue: { isConfigured: () => true, generateLinkUrl },
@@ -90,6 +89,7 @@ describe("access-token validation on JwtAuthGuard-only routes", () => {
         { provide: StaffHandoffService, useValue: {} },
         { provide: AppleOAuthService, useValue: { isConfigured: () => true, linkAppleAccount } },
         { provide: UsersService, useValue: { findById } },
+        { provide: OperatorPermissionsService, useValue: {} },
       ],
     }).compile();
     app = mod.createNestApplication();

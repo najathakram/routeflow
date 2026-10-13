@@ -4,6 +4,7 @@ import * as React from "react";
 import { useRouter } from "next/navigation";
 import { useForm } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
+import { useInvalidFocus } from "@/lib/form-errors";
 import { z } from "zod";
 import { FULFILL_PATH_VALUES } from "@routeflow/types";
 import { useQueryClient } from "@tanstack/react-query";
@@ -13,7 +14,8 @@ import { AddressAutocomplete } from "@/components/AddressAutocomplete";
 import { isInternalEmail } from "@/lib/formatting";
 import { useHasAddon } from "@/lib/api/tobacco";
 import { SALES_AGENTS_ADDON } from "@/lib/api/addons";
-import { formFulfillPath, writableFulfillPath } from "@/lib/customer-fulfill-path";
+import { useStaffFulfilment } from "@/lib/fulfilment-caps";
+import { formFulfillPath, payloadFulfillPath } from "@/lib/customer-fulfill-path";
 import { customerFormErrorCopy } from "@/lib/customer-form-error-copy";
 import { safeTextErrorCopy } from "@/lib/safe-text-error-copy";
 import { useSalesAgents } from "@/lib/api/sales-agents";
@@ -129,11 +131,12 @@ export interface CustomerFormModalProps {
 
 function buildDefaultValues(
   initialData?: CustomerFormModalProps["initialData"],
+  newCustomerFulfillPath: "ROUTE" | "SHIP" = "ROUTE",
 ): CustomerFormValues {
   if (!initialData) {
     return {
       customerType: "BUSINESS",
-      fulfillPath: "ROUTE",
+      fulfillPath: newCustomerFulfillPath,
       businessName: "",
       contactName: "",
       salutation: "",
@@ -170,7 +173,8 @@ function buildDefaultValues(
     // the stored sentinel — the update payload sends "" which the API clears to null.)
     email: [initialData.email, initialData.user?.email].find((e) => e && !isInternalEmail(e)) ?? "",
     currency: initialData.currency ?? "USD",
-    creditLimit: initialData.creditLimit ? String(initialData.creditLimit) : "",
+    // `!= null`, not truthiness: a real $0 limit (B1032) must show as 0, not as an empty "no limit" field.
+    creditLimit: initialData.creditLimit != null ? String(initialData.creditLimit) : "",
     taxId: initialData.taxId ?? "",
     isTaxExempt: initialData.isTaxExempt ?? false,
     notes: initialData.notes ?? "",
@@ -200,6 +204,10 @@ export function CustomerFormModal({ isOpen, onClose, mode, initialData }: Custom
   // (the PATCH customer route has no agent field; assignment-open lives
   // inside the engine's create() only).
   const hasSalesAgents = useHasAddon(SALES_AGENTS_ADDON);
+  // Fulfilment capabilities: the picker shows only when more than one method is on offer, and a NEW
+  // customer starts on the account default (ROUTE for an account with no fulfilment mode).
+  const staffFulfilment = useStaffFulfilment();
+  const newCustomerPath = staffFulfilment.formDefault;
   const [salesAgentId, setSalesAgentId] = React.useState("");
   const [isAgentModalOpen, setIsAgentModalOpen] = React.useState(false);
   const { data: salesAgents } = useSalesAgents(
@@ -216,8 +224,12 @@ export function CustomerFormModal({ isOpen, onClose, mode, initialData }: Custom
     formState: { errors },
   } = useForm<CustomerFormValues>({
     resolver: zodResolver(customerSchema),
-    defaultValues: buildDefaultValues(initialData),
+    // onInvalid (handleSubmit's second argument) is the single focus owner: it announces "Fix N field(s)" and
+    // scrolls to the first invalid control, so a failed submit never looks like a dead button (row 328).
+    shouldFocusError: false,
+    defaultValues: buildDefaultValues(initialData, newCustomerPath),
   });
+  const onInvalid = useInvalidFocus();
 
   const customerType = watch("customerType");
   const isBusiness = customerType === "BUSINESS";
@@ -227,7 +239,7 @@ export function CustomerFormModal({ isOpen, onClose, mode, initialData }: Custom
     if (isOpen) {
       createCustomer.reset();
       updateCustomer.reset();
-      reset(buildDefaultValues(initialData));
+      reset(buildDefaultValues(initialData, newCustomerPath));
       setStreetError("");
       setCityError("");
       setZipError("");
@@ -236,6 +248,13 @@ export function CustomerFormModal({ isOpen, onClose, mode, initialData }: Custom
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [isOpen, initialData]);
+
+  // The fulfilment capability can arrive AFTER the modal opened: re-seed a NEW customer's default then,
+  // so a ship-only account never keeps the ROUTE the form was first seeded with (the picker is hidden).
+  React.useEffect(() => {
+    if (isOpen && !initialData && staffFulfilment.known) setValue("fulfillPath", newCustomerPath);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [staffFulfilment.known, newCustomerPath]);
 
   const apiError = (createCustomer.error || updateCustomer.error) as Error | null;
   // B956: the form scrolls inside the modal, so a banner at the top is out of view after the address
@@ -310,7 +329,7 @@ export function CustomerFormModal({ isOpen, onClose, mode, initialData }: Custom
           isTaxExempt: data.isTaxExempt || false,
           creditLimit: data.creditLimit ? parseFloat(data.creditLimit) : undefined,
           currency: data.currency || "USD",
-          fulfillPath: writableFulfillPath(data.fulfillPath),
+          fulfillPath: payloadFulfillPath(data.fulfillPath, staffFulfilment.pickForm),
           notes: data.notes,
           addresses: [
             {
@@ -347,8 +366,11 @@ export function CustomerFormModal({ isOpen, onClose, mode, initialData }: Custom
           email: data.email ?? "",
           businessName: resolvedBusinessName,
           contactName: resolvedContactName,
-          phone: data.phone || undefined,
-          mobile: data.mobile || undefined,
+          // B1033: an emptied optional field is an explicit null (the API stores null); `|| undefined`
+          // made it a silent no-op and the old value stayed. Only a value the form actually loaded can be
+          // cleared — an already-empty field is left out, so an edit can never wipe a column it never saw.
+          phone: clearableField(data.phone, initialData.phone),
+          mobile: clearableField(data.mobile, initialData.mobile),
           customerType: data.customerType,
           displayName: resolvedDisplayName,
           // #3206 follow-up: an emptied name field the form loaded is an explicit null (cleared); one
@@ -356,11 +378,15 @@ export function CustomerFormModal({ isOpen, onClose, mode, initialData }: Custom
           salutation: clearableField(data.salutation, initialData.salutation),
           firstName: clearableField(data.firstName, initialData.firstName),
           lastName: clearableField(data.lastName, initialData.lastName),
-          taxId: data.taxId || undefined,
+          taxId: clearableField(data.taxId, initialData.taxId),
           isTaxExempt: data.isTaxExempt || false,
-          creditLimit: data.creditLimit ? parseFloat(data.creditLimit) : undefined,
+          creditLimit: data.creditLimit
+            ? parseFloat(data.creditLimit)
+            : initialData.creditLimit != null
+              ? null
+              : undefined,
           currency: data.currency || "USD",
-          fulfillPath: writableFulfillPath(data.fulfillPath),
+          fulfillPath: payloadFulfillPath(data.fulfillPath, staffFulfilment.pickForm),
           notes: data.notes,
         },
         {
@@ -397,7 +423,7 @@ export function CustomerFormModal({ isOpen, onClose, mode, initialData }: Custom
     >
       <form
         id="customer-form"
-        onSubmit={handleSubmit(onSubmit)}
+        onSubmit={handleSubmit(onSubmit, onInvalid)}
         noValidate
         className="max-h-[60vh] overflow-y-auto pr-1"
       >
@@ -596,25 +622,27 @@ export function CustomerFormModal({ isOpen, onClose, mode, initialData }: Custom
                 </label>
               </div>
             </div>
-            <div className="space-y-1">
-              <Select
-                label="Default fulfillment"
-                options={[
-                  { value: "ROUTE", label: "Delivery route" },
-                  { value: "SHIP", label: "Ship via carrier" },
-                  // Shown only for a customer that already has it: the API does not let a form set PICKUP.
-                  ...(watch("fulfillPath") === "PICKUP"
-                    ? [{ value: "PICKUP", label: "Pickup (counter)" }]
-                    : []),
-                ]}
-                register={register("fulfillPath")}
-              />
-              {watch("fulfillPath") === "SHIP" && (
-                <p className="text-[11px] leading-snug text-navy/70">
-                  Ships via carrier — won&apos;t appear on delivery routes.
-                </p>
-              )}
-            </div>
+            {(staffFulfilment.choice || watch("fulfillPath") === "PICKUP") && (
+              <div className="space-y-1">
+                <Select
+                  label="Default fulfillment"
+                  options={[
+                    ...staffFulfilment.formMethods.map((m) => ({
+                      value: m,
+                      label: m === "ROUTE" ? "Delivery route" : "Ship via carrier",
+                    })),
+                    // Shown only for a customer that already has it: the API does not let a form set PICKUP.
+                    ...(watch("fulfillPath") === "PICKUP"
+                      ? [{ value: "PICKUP", label: "Pickup (counter)" }]
+                      : []),
+                  ]}
+                  register={register("fulfillPath")}
+                />
+                {watch("fulfillPath") === "SHIP" && (
+                  <p className="text-[11px] leading-snug text-navy/70">Ships via carrier.</p>
+                )}
+              </div>
+            )}
           </section>
 
           {/* ── Primary Delivery Address (add mode only) ─────────────────────── */}

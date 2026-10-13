@@ -1,8 +1,9 @@
 "use client";
 
 import * as React from "react";
-import { useForm } from "react-hook-form";
+import { useForm, type Resolver } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
+import { API_ERROR_CODES } from "@routeflow/types";
 import { z } from "zod";
 import {
   Upload,
@@ -80,6 +81,7 @@ import {
 } from "@/lib/api/remittance";
 import { useTierLabels, useUpdateTierLabels, type TierLabelsConfig } from "@/lib/api/tier-labels";
 import { useAuth } from "@/lib/auth-context";
+import { useFleetAccess } from "@/lib/api/addons";
 import { changePassword, setPassword } from "@/lib/auth";
 import { RegulatedSettingsTab } from "./_components/RegulatedSettingsTab";
 import { NotificationsSettingsTab } from "./_components/NotificationsSettingsTab";
@@ -89,14 +91,23 @@ import { MailboxCard } from "./_components/MailboxCard";
 import { StripeConnectCard } from "./_components/StripeConnectCard";
 import { InvoiceNumberingCard, INVOICE_TERMS_OPTIONS } from "./_components/InvoiceNumberingCard";
 import GoHighLevelSettingsTab from "./_components/GoHighLevelSettingsTab";
+import { FulfillmentSettingsTab } from "./_components/FulfillmentSettingsTab";
+import { useFulfilmentSettings } from "@/lib/api/fulfilment-settings";
 import NextLink from "next/link";
 import { useSearchParams, useRouter } from "next/navigation";
 import { describeSaveError } from "@/lib/reason-copy";
 import { isInShell } from "@/lib/in-shell";
+import { TimeZoneDatalist } from "@/components/TimeZoneInput";
+import { TIME_ZONE_REQUIRED_COPY, canonicalTimeZone, isValidTimeZone } from "@/lib/timezones";
+import { useInvalidFocus } from "@/lib/form-errors";
+import { ReadOnlyHint, WriteButton } from "@/lib/read-only-gate";
+import { isReadOnlyRefusal, showReadOnlyRefusal } from "@/lib/read-only-refusal";
 
 // ─── TAB 1: Business Profile ──────────────────────────────────────────────────
 
-const profileSchema = z.object({
+const RECEIPT_FOOTER_MAX_CHARS = 200;
+
+const profileShape = {
   businessName: z.string().min(1, "Required"),
   email: z.string().email("Enter a valid email"),
   ownerName: z.string().min(1, "Required"),
@@ -107,13 +118,30 @@ const profileSchema = z.object({
   state: z.string().optional(),
   zip: z.string().regex(/^\d{5}(-\d{4})?$/, "Enter a valid ZIP code"),
   taxRate: z.coerce.number().min(0).max(100),
-});
-type ProfileFormValues = z.infer<typeof profileSchema>;
+  // Plain text, counted in characters like the API does (SA-762r F6).
+  receiptFooter: z.string().refine((v) => Array.from(v).length <= RECEIPT_FOOTER_MAX_CHARS, {
+    message: `Keep the footer to ${RECEIPT_FOOTER_MAX_CHARS} characters or fewer`,
+  }),
+};
+/** The zone is validated only when the viewer can edit it, so a hidden field can never block a save. */
+const profileSchemaFor = (canEditTimeZone: boolean) =>
+  z.object({
+    ...profileShape,
+    timezone: canEditTimeZone
+      ? z.string().refine((v) => isValidTimeZone(v), TIME_ZONE_REQUIRED_COPY)
+      : z.string().optional(),
+  });
+type ProfileFormValues = z.infer<ReturnType<typeof profileSchemaFor>>;
+
+const INVALID_ZONE_COPY = "That isn't a valid time zone. Pick one from the list.";
+const ZONE_FORBIDDEN_COPY = "Only an account admin can change the time zone.";
 
 function BusinessProfileTab() {
   const { toast } = useToast();
   const qc = useQueryClient();
   const { branding, refresh: refreshBranding } = useTenant();
+  // Only a tenant admin may change the time zone; everyone else sees it read-only.
+  const canEditTimeZone = useAuth().user?.role === "TENANT_ADMIN";
   const [logoPreview, setLogoPreview] = React.useState<string | null>(null);
   const fileInputRef = React.useRef<HTMLInputElement>(null);
 
@@ -123,7 +151,9 @@ function BusinessProfileTab() {
   });
 
   const saveSettings = useMutation({
-    mutationFn: (data: ProfileFormValues) => apiClient.patch("/settings", data).then((r) => r.data),
+    // `timezone` rides along only when an admin actually changed it.
+    mutationFn: (data: Omit<ProfileFormValues, "timezone"> & { timezone?: string }) =>
+      apiClient.patch("/settings", data).then((r) => r.data),
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ["settings"] });
       toast({
@@ -132,7 +162,30 @@ function BusinessProfileTab() {
         variant: "success",
       });
     },
-    onError: () => toast({ title: "Failed to save settings", variant: "error" }),
+    onError: (err: unknown, sent) => {
+      if (isReadOnlyRefusal(err)) return; // F5: the app-wide handler already showed the shared line
+
+      const res = (err as { response?: { status?: number; data?: { code?: string } } })?.response;
+      // The server's own text is never shown: a refused zone and a refused role each get one fixed line.
+      if (res?.data?.code === API_ERROR_CODES.INVALID_TIME_ZONE) {
+        setError("timezone", { message: INVALID_ZONE_COPY });
+        toast({ title: INVALID_ZONE_COPY, variant: "error" });
+        return;
+      }
+      if (res?.status === 403 && sent.timezone) {
+        toast({ title: ZONE_FORBIDDEN_COPY, variant: "error" });
+        return;
+      }
+      toast(
+        res?.status === 400
+          ? {
+              title: "Couldn't save the receipt footer",
+              description: `Use plain text of ${RECEIPT_FOOTER_MAX_CHARS} characters or fewer.`,
+              variant: "error",
+            }
+          : { title: "Failed to save settings", variant: "error" },
+      );
+    },
   });
 
   // Logo upload — POSTs the file to /tenants/me/config/branding/logo as
@@ -158,12 +211,32 @@ function BusinessProfileTab() {
       });
     },
     onError: (err: any) => {
+      // Drop the local preview so the saved logo (if any) shows instead of a stale one (also when read-only).
+      setLogoPreview(null);
+      if (isReadOnlyRefusal(err)) return; // F5: the app-wide handler already showed the shared line
       const msg = err?.response?.data?.message ?? "Try a PNG, JPG, or WEBP under 5 MB.";
       toast({ title: "Logo upload failed", description: msg, variant: "error" });
-      // Drop the local preview so the saved logo (if any) shows instead of a stale one.
-      setLogoPreview(null);
     },
   });
+
+  // Row 327: this is ONE form with one Save button, so validate only the fields the user changed. A counter shop
+  // that never filled in the owner, phone or address (the API stores them as empty strings) can still save its
+  // tax rate; a field the user edits, or clears, is still checked. With nothing edited, the whole form is checked.
+  const dirtyRef = React.useRef<Record<string, unknown>>({});
+  const profileResolver = React.useMemo<Resolver<ProfileFormValues>>(() => {
+    const schema = profileSchemaFor(canEditTimeZone);
+    return async (values, context, options) => {
+      const mask: Record<string, true> = {};
+      for (const key of Object.keys(schema.shape)) if (dirtyRef.current[key]) mask[key] = true;
+      // Nothing changed: Save has nothing to scope to, so check the whole profile and say what is missing.
+      if (Object.keys(mask).length === 0) return zodResolver(schema)(values, context, options);
+      const res = await zodResolver(schema.pick(mask as never))(values, context, options);
+      // The picked schema strips every other key, so hand back the whole form with the parsed fields on top.
+      return Object.keys(res.errors).length === 0
+        ? { values: { ...values, ...res.values }, errors: {} }
+        : res;
+    };
+  }, [canEditTimeZone]);
 
   const {
     register,
@@ -171,9 +244,12 @@ function BusinessProfileTab() {
     reset,
     watch,
     setValue,
-    formState: { errors, isSubmitting },
+    setError,
+    formState: { errors, isSubmitting, dirtyFields },
   } = useForm<ProfileFormValues>({
-    resolver: zodResolver(profileSchema),
+    resolver: profileResolver,
+    // onInvalidFocus (handleSubmit's second argument) is the single focus owner.
+    shouldFocusError: false,
     defaultValues: {
       businessName: "",
       email: "",
@@ -185,8 +261,12 @@ function BusinessProfileTab() {
       state: "",
       zip: "",
       taxRate: 0,
+      timezone: "",
+      receiptFooter: "",
     },
   });
+
+  dirtyRef.current = dirtyFields;
 
   React.useEffect(() => {
     if (savedSettings) {
@@ -201,6 +281,8 @@ function BusinessProfileTab() {
         state: savedSettings.state ?? "",
         zip: savedSettings.zip ?? "",
         taxRate: savedSettings.taxRate ?? 0,
+        ...(canEditTimeZone ? { timezone: savedSettings.timezone ?? "" } : {}),
+        receiptFooter: savedSettings.receiptFooter ?? "",
       });
     }
   }, [savedSettings, reset]);
@@ -217,12 +299,18 @@ function BusinessProfileTab() {
     e.target.value = "";
   };
 
-  const onSubmit = async (data: ProfileFormValues) => {
-    await saveSettings.mutateAsync(data);
+  const onSubmit = async ({ timezone, ...rest }: ProfileFormValues) => {
+    const zone =
+      canEditTimeZone && dirtyFields.timezone && timezone ? canonicalTimeZone(timezone) : null;
+    // onError already told the user (fixed copy); the rejection must not also escape as an unhandled one.
+    await saveSettings
+      .mutateAsync(zone ? { ...rest, timezone: zone } : rest)
+      .catch(() => undefined);
   };
+  const onInvalid = useInvalidFocus();
 
   return (
-    <form onSubmit={handleSubmit(onSubmit)} noValidate className="space-y-6">
+    <form onSubmit={handleSubmit(onSubmit, onInvalid)} noValidate className="space-y-6">
       <Card title="Business Information">
         <div className="grid grid-cols-2 gap-4">
           <Input
@@ -259,6 +347,37 @@ function BusinessProfileTab() {
               Used for invoices, order updates, and customer communications.
             </p>
           </div>
+        </div>
+        <div className="mt-4">
+          {canEditTimeZone ? (
+            <>
+              <Input
+                label="Time zone"
+                list="settings-timezone-zones"
+                autoComplete="off"
+                id="settings-timezone"
+                aria-describedby={`settings-timezone-help${errors.timezone ? " settings-timezone-error" : ""}`}
+                register={register("timezone", {
+                  onBlur: (e) => {
+                    // Tidy the spelling when the admin leaves the field; text that is not a zone stays for the save check.
+                    const zone = canonicalTimeZone(e.target.value);
+                    if (zone && zone !== e.target.value)
+                      setValue("timezone", zone, { shouldDirty: true, shouldValidate: true });
+                  },
+                })}
+                error={errors.timezone?.message}
+              />
+              <TimeZoneDatalist id="settings-timezone-zones" />
+            </>
+          ) : (
+            <dl>
+              <dt className="text-sm font-medium text-navy">Time zone</dt>
+              <dd className="text-sm text-navy">{savedSettings?.timezone ?? "—"}</dd>
+            </dl>
+          )}
+          <p id="settings-timezone-help" className="mt-1 text-xs text-navy/70">
+            Applies to receipts and today&apos;s sales from now on
+          </p>
         </div>
       </Card>
 
@@ -359,11 +478,28 @@ function BusinessProfileTab() {
             />
             <span className="absolute right-3 top-[34px] text-sm text-navy/70">%</span>
           </div>
+          <p className="mt-1 text-xs text-navy/70">Charged on counter sales and invoices</p>
         </div>
       </Card>
 
+      <Card title="Receipt">
+        {/* Plain text only: the footer is never rendered as HTML. */}
+        <Textarea
+          label="Receipt footer"
+          rows={3}
+          register={register("receiptFooter")}
+          error={errors.receiptFooter?.message}
+        />
+        <p className="mt-1 text-xs text-navy/70">
+          Printed at the bottom of counter receipts. Plain text.{" "}
+          <span aria-live="polite">
+            {Array.from(watch("receiptFooter") ?? "").length}/{RECEIPT_FOOTER_MAX_CHARS}
+          </span>
+        </p>
+      </Card>
+
       <div className="flex justify-end">
-        <Button type="submit" loading={isSubmitting} disabled={Object.keys(errors).length > 0}>
+        <Button type="submit" loading={isSubmitting}>
           Save Changes
         </Button>
       </div>
@@ -404,6 +540,8 @@ function AddUserModal({
   onCreated: (tempPassword: string) => void;
 }) {
   const createOperator = useCreateOperator();
+  // Fleet-off (no routes / delivery addon): there are no drivers to add, so no DRIVER role option.
+  const { fleet } = useFleetAccess();
   const [tempPassword, setTempPassword] = React.useState<string | null>(null);
   const [copied, setCopied] = React.useState(false);
 
@@ -418,6 +556,10 @@ function AddUserModal({
     resolver: zodResolver(addUserSchema),
     defaultValues: { role: "DRIVER" },
   });
+
+  React.useEffect(() => {
+    if (!fleet) setValue("role", "OPERATOR");
+  }, [fleet, setValue]);
 
   const nameValue = watch("name") ?? "";
   React.useEffect(() => {
@@ -520,7 +662,7 @@ function AddUserModal({
           <Select
             label="Role"
             options={[
-              { value: "DRIVER", label: "Driver" },
+              ...(fleet ? [{ value: "DRIVER", label: "Driver" }] : []),
               { value: "OPERATOR", label: "Operator" },
             ]}
             register={register("role")}
@@ -568,6 +710,8 @@ function EditUserModal({
 }) {
   const updateUser = useUpdateUser();
   const resetPassword = useResetUserPassword();
+  // Fleet-off: no DRIVER option — unless this user already IS a driver (never silently change a role).
+  const { fleet } = useFleetAccess();
   const { toast } = useToast();
   const [tempPassword, setTempPassword] = React.useState<string | null>(null);
   const [copied, setCopied] = React.useState(false);
@@ -600,6 +744,7 @@ function EditUserModal({
           onClose();
         },
         onError: (err) =>
+          isReadOnlyRefusal(err) ||
           toast({ title: "Update failed", description: err.message, variant: "error" }),
       },
     );
@@ -609,7 +754,8 @@ function EditUserModal({
     if (!user) return;
     resetPassword.mutate(user.id, {
       onSuccess: (result) => setTempPassword(result.tempPassword),
-      onError: () => toast({ title: "Failed to reset password", variant: "error" }),
+      onError: (err) =>
+        isReadOnlyRefusal(err) || toast({ title: "Failed to reset password", variant: "error" }),
     });
   };
 
@@ -661,7 +807,7 @@ function EditUserModal({
           <Select
             label="Role"
             options={[
-              { value: "DRIVER", label: "Driver" },
+              ...(fleet || user?.role === "DRIVER" ? [{ value: "DRIVER", label: "Driver" }] : []),
               { value: "OPERATOR", label: "Operator" },
             ]}
             register={register("role")}
@@ -732,7 +878,8 @@ function UserManagementTab() {
     changeStatus.mutate(
       { id: user.id, status: nextStatus },
       {
-        onError: () => toast({ title: "Failed to update status", variant: "error" }),
+        onError: (err) =>
+          isReadOnlyRefusal(err) || toast({ title: "Failed to update status", variant: "error" }),
       },
     );
   };
@@ -747,10 +894,11 @@ function UserManagementTab() {
         <p className="text-sm text-navy/70">
           {isLoading ? "Loading..." : `${data?.meta.total ?? 0} users total`}
         </p>
-        <Button size="sm" onClick={() => setIsAddOpen(true)}>
+        <WriteButton size="sm" onClick={() => setIsAddOpen(true)}>
           Add User
-        </Button>
+        </WriteButton>
       </div>
+      <ReadOnlyHint className="text-xs text-slate-600" />
 
       <div className="overflow-hidden rounded-lg border border-surface-border bg-white">
         <table className="w-full text-sm">
@@ -872,7 +1020,8 @@ function AIIntegrationsTab() {
         variant: "success",
       });
     },
-    onError: () => toast({ title: "Failed to save API key", variant: "error" }),
+    onError: (err) =>
+      isReadOnlyRefusal(err) || toast({ title: "Failed to save API key", variant: "error" }),
   });
 
   const removeKey = useMutation({
@@ -881,7 +1030,8 @@ function AIIntegrationsTab() {
       qc.invalidateQueries({ queryKey: ["settings", "anthropic"] });
       toast({ title: "API key removed", variant: "success" });
     },
-    onError: () => toast({ title: "Failed to remove key", variant: "error" }),
+    onError: (err) =>
+      isReadOnlyRefusal(err) || toast({ title: "Failed to remove key", variant: "error" }),
   });
 
   const isConfigured = anthropicStatus?.configured === true;
@@ -1286,7 +1436,8 @@ function EmailSettingsTab() {
       });
       qc.invalidateQueries({ queryKey: ["settings", "email"] });
       toast({ title: "Email settings saved", variant: "success" });
-    } catch {
+    } catch (err) {
+      if (showReadOnlyRefusal(err, toast)) return;
       toast({ title: "Failed to save settings", variant: "error" });
     } finally {
       setIsSaving(false);
@@ -1954,7 +2105,11 @@ function MyAccountTab() {
   });
 
   const googleLinked: boolean = me?.googleLinked ?? false;
-  const canToggleDriver = me?.role === "OPERATOR" || me?.role === "TENANT_ADMIN";
+  // Fleet-off (no routes / delivery addon): nothing to drive, so no "Act as driver" switch, EXCEPT while
+  // it is already ON, so it can still be turned off.
+  const { fleet: hasFleet } = useFleetAccess();
+  const canToggleDriver =
+    (hasFleet || !!me?.canActAsDriver) && (me?.role === "OPERATOR" || me?.role === "TENANT_ADMIN");
   const toggleDriverPermit = useToggleDriverPermit();
 
   const handleLinkGoogle = async () => {
@@ -1985,7 +2140,8 @@ function MyAccountTab() {
           : "Sign out and back in to access driver features.",
         variant: "success",
       });
-    } catch {
+    } catch (err) {
+      if (isReadOnlyRefusal(err)) return; // the app-wide handler already showed the shared line
       toast({ title: "Failed to update driver access", variant: "error" });
     }
   };
@@ -2132,7 +2288,8 @@ function CostingTab() {
       { costingMethod: method, defaultMarginFloor: floor },
       {
         onSuccess: () => toast({ title: "Costing settings saved", variant: "success" }),
-        onError: () =>
+        onError: (err) =>
+          isReadOnlyRefusal(err) ||
           toast({
             title: "Could not save",
             description: "Only admins can change costing settings.",
@@ -2228,7 +2385,8 @@ function RemittanceTab() {
   const save = () => {
     update.mutate(form, {
       onSuccess: () => toast({ title: "Payment info saved", variant: "success" }),
-      onError: () =>
+      onError: (err) =>
+        isReadOnlyRefusal(err) ||
         toast({
           title: "Could not save",
           description: "Only admins can change how-to-pay settings.",
@@ -2363,6 +2521,7 @@ function TierLabelsCard() {
     update.mutate(form, {
       onSuccess: () => toast({ title: "Tier names saved", variant: "success" }),
       onError: (err: any) =>
+        isReadOnlyRefusal(err) ||
         toast({
           title: "Could not save",
           description: err?.response?.data?.message ?? "Please try again.",
@@ -2448,7 +2607,8 @@ function InvoicingTab() {
             description: "Default terms updated successfully.",
             variant: "success",
           }),
-        onError: () =>
+        onError: (err) =>
+          isReadOnlyRefusal(err) ||
           toast({
             title: "Failed to save",
             description: "Could not update invoice settings.",
@@ -2468,7 +2628,8 @@ function InvoicingTab() {
             description: "Original price display updated successfully.",
             variant: "success",
           }),
-        onError: () =>
+        onError: (err) =>
+          isReadOnlyRefusal(err) ||
           toast({
             title: "Failed to save",
             description: "Could not update invoice settings.",
@@ -2512,7 +2673,9 @@ function InvoicingTab() {
             variant: "success",
           }),
         onError: (err: any) => {
+          // restore the saved value (also when read-only: the typed figure was never saved)
           setDepositPercentInput(serverDepositPercent != null ? String(serverDepositPercent) : "");
+          if (isReadOnlyRefusal(err)) return; // F5: the app-wide handler already showed the shared line
           toast({
             title: "Failed to save",
             description: err?.response?.data?.message ?? "Could not update invoice settings.",
@@ -2533,7 +2696,8 @@ function InvoicingTab() {
             description: "Deposit collection setting updated successfully.",
             variant: "success",
           }),
-        onError: () =>
+        onError: (err) =>
+          isReadOnlyRefusal(err) ||
           toast({
             title: "Failed to save",
             description: "Could not update invoice settings.",
@@ -2552,7 +2716,8 @@ function InvoicingTab() {
       });
       qc.invalidateQueries({ queryKey: ["settings"] });
       toast({ title: "Invoice defaults saved", variant: "success" });
-    } catch {
+    } catch (err) {
+      if (showReadOnlyRefusal(err, toast)) return;
       toast({ title: "Failed to save", variant: "error" });
     } finally {
       setSavingDefaults(false);
@@ -2763,6 +2928,15 @@ function SettingsPageInner() {
     if (activeTab === "import") router.replace("/settings/import");
   }, [activeTab, router]);
 
+  // Settings → Fulfillment is dark behind the API's FULFILMENT_SELF_SERVE: the endpoint is asked ONLY on
+  // `?tab=fulfilment` (staff roles), and the tab exists only when it says `selfServe`; otherwise the page is
+  // exactly what it was (an unknown tab falls back to the hub). No hub entry points at it.
+  const fulfilmentQuery = useFulfilmentSettings({
+    enabled: activeTab === "fulfilment" && user?.role !== "CUSTOMER" && user?.role !== "DRIVER",
+  });
+  // Only a confirmed `selfServe: true` shows the tab: while loading or on an error nothing of it appears.
+  const showFulfilment = activeTab === "fulfilment" && fulfilmentQuery.data?.selfServe === true;
+
   // Full-hub model: no `?tab=` → the grouped-card hub; a tab → that ONE screen with a
   // "← All settings" back link (the old tab strip is retired). Every screen component
   // is reused unchanged, so the individual settings behave exactly as before, and the
@@ -2787,6 +2961,15 @@ function SettingsPageInner() {
       width: "max-w-4xl",
     },
     account: { title: "My account", node: <MyAccountTab />, width: "max-w-3xl" },
+    ...(showFulfilment
+      ? {
+          fulfilment: {
+            title: "Fulfillment",
+            node: <FulfillmentSettingsTab />,
+            width: "max-w-3xl",
+          },
+        }
+      : {}),
     ...(isAdmin
       ? {
           regulated: {

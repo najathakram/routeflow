@@ -65,6 +65,19 @@ model TenantSubscription {
   priceOverrideMonthly  Decimal?     @db.Decimal(10, 2)
   priceOverrideAnnual   Decimal?     @db.Decimal(10, 2)
   billingInterval       String? // "month" | "year", stamped at checkout completion
+  // Dunning + catch-up + coupon seams (sitting 3, SA-741r2). Schema only: nothing reads or writes them yet.
+  pastDueSince          DateTime?
+  pastDueInvoiceId      String?
+  pausedAt              DateTime?
+  // SESSION_OPEN | AWAITING_FIRST_PAYMENT | RELEASING (CHECK "TenantSubscription_catchupState_chk").
+  catchupState          String?
+  catchupSessionId      String?
+  catchupInvoiceId      String?
+  needsReconcile        Boolean      @default(false)
+  couponFull            Boolean      @default(false)
+  couponId              String?
+  couponEndsAt          DateTime?
+  couponSyncedAt        DateTime?
   createdAt             DateTime     @default(now())
   updatedAt             DateTime     @updatedAt
 
@@ -73,6 +86,7 @@ model TenantSubscription {
 
   @@index([planVersionId])
   @@index([downgradeEffectiveAt])
+  @@index([pastDueInvoiceId])
 }
 
 // N3 (2026-09-16): idempotency log for billing-lifecycle emails to the tenant admin
@@ -366,14 +380,40 @@ model RfInvoice {
   tenantId String
   number   String       @unique // RF-YYYY-NNNN
   amount   Decimal      @db.Decimal(10, 2)
-  status   String // PAID | OPEN | FAILED
+  status   String // OPEN | PAID | VOID (legacy FAILED is never written; deliberately not a Prisma enum)
   cycle    BillingCycle @default(MONTHLY)
   pdfKey   String?
   issuedAt DateTime     @default(now())
 
+  // Manual-pay lifecycle (manual invoices due, PR1). All nullable/defaulted: the table had no
+  // writer before this, so existing rows (none expected) are untouched.
+  periodStart DateTime?
+  periodEnd   DateTime?
+  /// ISO of periodStart; "<iso>:void:<id>" once voided so a new live invoice can take the period.
+  periodKey   String?
+  /// Net 0: equal to periodStart.
+  dueDate     DateTime?
+  currency    String    @default("USD")
+  /// [{ kind: PLAN | ADDON, code, label, quantity, unitAmount, amount }]
+  lines       Json?
+  issuedById  String?
+  paidAt      DateTime?
+  paidMethod  String?
+  paidRef     String?
+  paidNote    String?
+  paidById    String?
+  lastSentAt  DateTime?
+  sendCount   Int       @default(0)
+  voidedAt    DateTime?
+  voidReason  String?
+  /// An add-on line had no price snapshot and was written at 0: the office must look at it.
+  needsReview Boolean   @default(false)
+
   tenant Tenant @relation(fields: [tenantId], references: [id], onDelete: Cascade)
 
+  @@unique([tenantId, periodKey])
   @@index([tenantId, issuedAt])
+  @@index([status, dueDate])
 }
 
 model SystemConfig {
@@ -1393,6 +1433,7 @@ model EmailDelivery {
   tenant Tenant @relation(fields: [tenantId], references: [id], onDelete: Cascade)
 
   @@index([tenantId, createdAt])
+  @@index([tenantId, kind, createdAt])
   @@index([entityType, entityId])
   @@index([providerMessageId])
 }

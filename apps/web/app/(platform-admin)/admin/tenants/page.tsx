@@ -3,14 +3,10 @@
 import * as React from "react";
 import Link from "next/link";
 import { superAdminClient } from "@/lib/admin-api";
-import { setImpersonation } from "@/lib/impersonation";
-import { setTenantCookie } from "@/lib/tenant-cookie";
 import { AdminBadge, planLabel } from "../../_components/AdminBadge";
 import { AdminModal } from "../../_components/AdminModal";
 import {
   DeleteTenantDialog,
-  ImpersonateDialog,
-  SuspendDialog,
   TENANT_ACTION_COPY,
   deleteFailureCopy,
 } from "../../_components/TenantActionDialogs";
@@ -127,8 +123,6 @@ export default function AdminTenantsPage() {
   }, [page, debouncedSearch, statusFilter, planFilter, showDeleted]);
 
   const [deletingTenant, setDeletingTenant] = React.useState<Tenant | null>(null);
-  const [suspendingTenant, setSuspendingTenant] = React.useState<Tenant | null>(null);
-  const [impersonatingTenant, setImpersonatingTenant] = React.useState<Tenant | null>(null);
   const [actionError, setActionError] = React.useState<string | null>(null);
   const [bulkError, setBulkError] = React.useState<string | null>(null);
 
@@ -158,54 +152,18 @@ export default function AdminTenantsPage() {
     }
   };
 
-  const toggleStatus = async (tenant: Tenant) => {
-    const newStatus = tenant.status === "SUSPENDED" ? "ACTIVE" : "SUSPENDED";
-    if (newStatus === "SUSPENDED") {
-      setSuspendingTenant(tenant);
-      return;
-    }
+  // Suspend and Impersonate live on the tenant page only; the list keeps the one safe, undoable
+  // action (Reactivate) and Delete for a suspended tenant.
+  const reactivate = async (tenant: Tenant) => {
     setActionLoading(tenant.id);
     setActionError(null);
     try {
       await superAdminClient.patch(`/platform-admin/tenants/${tenant.id}/status`, {
-        status: newStatus,
+        status: "ACTIVE",
       });
       fetchTenants(page);
     } catch (err: unknown) {
       setActionError(TENANT_ACTION_COPY.statusFailed);
-    } finally {
-      setActionLoading(null);
-    }
-  };
-
-  const confirmSuspend = async () => {
-    if (!suspendingTenant) return;
-    const tenant = suspendingTenant;
-    setSuspendingTenant(null);
-    setActionLoading(tenant.id);
-    setActionError(null);
-    try {
-      await superAdminClient.patch(`/platform-admin/tenants/${tenant.id}/status`, {
-        status: "SUSPENDED",
-      });
-      fetchTenants(page);
-    } catch (err: unknown) {
-      setActionError(TENANT_ACTION_COPY.statusFailed);
-    } finally {
-      setActionLoading(null);
-    }
-  };
-
-  const impersonate = async (tenant: Tenant) => {
-    setActionLoading(tenant.id + "-imp");
-    setActionError(null);
-    try {
-      const res = await superAdminClient.post(`/platform-admin/tenants/${tenant.id}/impersonate`);
-      setImpersonation(res.data.accessToken, tenant.slug, res.data.impersonatedUser?.username);
-      setTenantCookie(tenant.slug);
-      window.location.href = "/dashboard";
-    } catch (err: unknown) {
-      setActionError(TENANT_ACTION_COPY.impersonateFailed);
     } finally {
       setActionLoading(null);
     }
@@ -309,26 +267,6 @@ export default function AdminTenantsPage() {
         </div>
       )}
 
-      {/* Impersonate confirmation: the session starts only from this dialog's confirm. */}
-      <ImpersonateDialog
-        open={!!impersonatingTenant}
-        tenant={impersonatingTenant ?? { name: "" }}
-        onClose={() => setImpersonatingTenant(null)}
-        onConfirm={() => {
-          const tenant = impersonatingTenant;
-          setImpersonatingTenant(null);
-          if (tenant) void impersonate(tenant);
-        }}
-      />
-
-      {/* Suspend confirmation: the shared dialog (the tenant page uses the same one). */}
-      <SuspendDialog
-        open={!!suspendingTenant}
-        tenant={suspendingTenant ?? { name: "" }}
-        onClose={() => setSuspendingTenant(null)}
-        onConfirm={confirmSuspend}
-      />
-
       {/* Header */}
       <div className="mb-6 flex items-center justify-between">
         <div>
@@ -372,9 +310,13 @@ export default function AdminTenantsPage() {
           className="h-9 rounded-lg border border-slate-600 bg-slate-800 px-3 text-sm text-white focus:border-indigo-500 focus:outline-none"
         >
           <option value="">All Plans</option>
-          <option value="STARTER">{planLabel("STARTER")}</option>
-          <option value="PROFESSIONAL">{planLabel("PROFESSIONAL")}</option>
-          <option value="ENTERPRISE">{planLabel("ENTERPRISE")}</option>
+          {/* SA-1: the same plan list every other plan control offers (usePlanOptions); the server
+              filters on the real billing plan (subscription.planKey). */}
+          {withCurrentPlan(planOptions.planKeys, planFilter).map((p) => (
+            <option key={p} value={p}>
+              {planLabel(p)}
+            </option>
+          ))}
         </select>
         <button
           onClick={() => setShowDeleted((v) => !v)}
@@ -632,22 +574,13 @@ export default function AdminTenantsPage() {
                           >
                             View
                           </Link>
-                          {t.status !== "CANCELLED" && (
+                          {t.status === "SUSPENDED" && (
                             <button
                               disabled={actionLoading === t.id}
-                              onClick={() => toggleStatus(t)}
-                              className={`rounded px-2 py-1 text-xs font-medium transition-colors disabled:opacity-50 ${t.status === "SUSPENDED" ? "text-green-400 hover:bg-green-900/30" : "text-yellow-400 hover:bg-yellow-900/30"}`}
+                              onClick={() => reactivate(t)}
+                              className="rounded px-2 py-1 text-xs font-medium text-green-400 transition-colors hover:bg-green-900/30 disabled:opacity-50"
                             >
-                              {t.status === "SUSPENDED" ? "Reactivate" : "Suspend"}
-                            </button>
-                          )}
-                          {t.status !== "CANCELLED" && (
-                            <button
-                              disabled={actionLoading === t.id + "-imp"}
-                              onClick={() => setImpersonatingTenant(t)}
-                              className="rounded px-2 py-1 text-xs font-medium text-slate-400 hover:bg-slate-700 hover:text-white disabled:opacity-50"
-                            >
-                              Impersonate
+                              Reactivate
                             </button>
                           )}
                           {t.status === "SUSPENDED" && (

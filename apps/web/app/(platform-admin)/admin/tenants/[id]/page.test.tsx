@@ -15,9 +15,12 @@ import {
 const TENANT_ID = "tenant-1";
 
 const mockRouterPush = jest.fn();
+const mockRouterReplace = jest.fn();
+let mockSearch = "";
 jest.mock("next/navigation", () => ({
   useParams: () => ({ id: TENANT_ID }),
-  useRouter: () => ({ push: mockRouterPush, replace: jest.fn() }),
+  useRouter: () => ({ push: mockRouterPush, replace: mockRouterReplace }),
+  useSearchParams: () => new URLSearchParams(mockSearch),
 }));
 
 const mockFetchRegistry = jest.fn();
@@ -87,6 +90,7 @@ const OVERRIDES_REGISTRY_OPTION_FIXTURE = REGISTRY_FIXTURE.map((r) => ({
 }));
 
 const mockPost = jest.fn();
+const mockSetImpersonation = jest.fn();
 const mockProfilePreview = jest.fn();
 const mockProfileApply = jest.fn();
 let fulfilmentModeValue = "delivery";
@@ -125,6 +129,11 @@ jest.mock("@/lib/admin-api", () => ({
   },
 }));
 
+// Back-office P2: Impersonate records WHICH tenant it started from, so Exit can return there.
+jest.mock("@/lib/impersonation", () => ({
+  setImpersonation: (...args: unknown[]) => mockSetImpersonation(...args),
+}));
+
 // B857: the plan controls read the published catalog (GET /billing/plans via fetchPlanCatalog).
 const mockFetchPlanCatalog = jest.fn();
 jest.mock("@/lib/api/platform-pricing", () => ({
@@ -134,7 +143,6 @@ jest.mock("@/lib/api/platform-pricing", () => ({
 }));
 
 jest.mock("@/lib/tenant-cookie", () => ({ setTenantCookie: jest.fn() }));
-jest.mock("@/lib/impersonation", () => ({ setImpersonation: jest.fn() }));
 
 async function gotoSetupTab() {
   render(<TenantDetailPage />);
@@ -160,12 +168,44 @@ beforeEach(() => {
   mockProfilePreview.mockResolvedValue({ data: shippingPreviewWithBilling() });
   mockProfileApply.mockResolvedValue({ data: {} });
   fulfilmentModeValue = "delivery";
+  mockSearch = "";
   tenantOverrides = {};
   mockAdmin = null;
   mockFetchPlanCatalog.mockResolvedValue(v11Catalog());
 });
 
-describe("Tenant detail page — Feature Console 'Customise' action (brief D test 4)", () => {
+describe("Tenant detail page — Setup tab groups the Feature Console and Overrides under Advanced", () => {
+  it("both controls live inside the one Advanced section and survive a collapse/expand", async () => {
+    await gotoSetupTab();
+
+    const advanced = screen.getByTestId("setup-advanced");
+    expect(within(advanced).getByRole("button", { name: /^Advanced/ })).toHaveAttribute(
+      "aria-expanded",
+      "true",
+    );
+    // Feature Console: its per-feature rows and "Set override" action; Overrides: its heading + New Override.
+    const tobaccoRow = advanced.querySelector('[data-feature-key="tobacco_dealer"]') as HTMLElement;
+    expect(within(tobaccoRow).getByRole("button", { name: /^Set override/ })).toBeInTheDocument();
+    expect(within(advanced).getByRole("heading", { name: "Overrides" })).toBeInTheDocument();
+    expect(within(advanced).getByRole("button", { name: "+ New Override" })).toBeInTheDocument();
+
+    // Collapsing hides the body but keeps it mounted (the Customise ref stays valid).
+    fireEvent.click(within(advanced).getByRole("button", { name: /^Advanced/ }));
+    expect(document.getElementById("setup-advanced-body")).not.toBeVisible();
+    expect(advanced.querySelector('[data-feature-key="tobacco_dealer"]')).not.toBeNull();
+
+    // "Set override" from a collapsed section reopens it and opens the drawer for that feature.
+    fireEvent.click(
+      within(tobaccoRow).getByRole("button", { name: /^Set override/, hidden: true }),
+    );
+    expect(document.getElementById("setup-advanced-body")).toBeVisible();
+    expect(((await screen.findByLabelText("Feature Key")) as HTMLSelectElement).value).toBe(
+      "tobacco_dealer",
+    );
+  });
+});
+
+describe("Tenant detail page — Feature Console 'Set override' action (brief D test 4)", () => {
   it("opens #795's drawer prefilled for the clicked feature; submit previews, then Confirm creates — in that order", async () => {
     mockPreview.mockResolvedValueOnce(
       previewFixture({
@@ -176,7 +216,7 @@ describe("Tenant detail page — Feature Console 'Customise' action (brief D tes
     await gotoSetupTab();
 
     const tobaccoRow = document.querySelector('[data-feature-key="tobacco_dealer"]') as HTMLElement;
-    fireEvent.click(within(tobaccoRow).getByRole("button", { name: /^Customise/ }));
+    fireEvent.click(within(tobaccoRow).getByRole("button", { name: /^Set override/ }));
 
     // Prefilled: the drawer opens with this feature key already selected.
     const featureSelect = (await screen.findByLabelText("Feature Key")) as HTMLSelectElement;
@@ -195,10 +235,15 @@ describe("Tenant detail page — Feature Console 'Customise' action (brief D tes
           effect: "GRANT",
           kind: "COMP",
           reason: "Pilot waiver",
-          expiresAt: null,
+          // P2: a comp starts at 30 days, never permanent by omission.
+          expiresAt: expect.stringMatching(/^\d{4}-\d{2}-\d{2}T/),
         },
       ],
     });
+    const previewed = mockPreview.mock.calls[0][1].overrides[0].expiresAt as string;
+    const days = (new Date(previewed).getTime() - Date.now()) / 86_400_000;
+    expect(days).toBeGreaterThan(29.9);
+    expect(days).toBeLessThan(30.1);
     expect(mockPost).not.toHaveBeenCalled();
 
     fireEvent.click(await screen.findByRole("button", { name: "Confirm" }));
@@ -215,7 +260,7 @@ describe("Tenant detail page — Feature Console 'Customise' action (brief D tes
         effect: "GRANT",
         kind: "COMP",
         reason: "Pilot waiver",
-        expiresAt: null,
+        expiresAt: previewed,
       },
     );
     const [, sentPayload] = mockPost.mock.calls[0];
@@ -299,12 +344,14 @@ describe("REG-B857: tenant plan controls offer the published catalog, not a hard
     expect(select.value).toBe("LITE");
   });
 
-  it("pin: an unreadable catalog falls back to every plan the API accepts, with a notice", async () => {
+  it("pin: an unreadable catalog falls back to every selectable plan (never the frozen LITE), with a notice", async () => {
     mockFetchPlanCatalog.mockRejectedValue(new Error("down"));
     tenantOverrides = { plan: "STARTER", planKey: "STARTER" };
     await gotoBillingTab();
     const select = await screen.findByRole("combobox", { name: "Plan" });
-    await waitFor(() => expect(optionValues(select)).toEqual([...PLAN_KEYS]));
+    await waitFor(() =>
+      expect(optionValues(select)).toEqual(PLAN_KEYS.filter((k) => k !== "LITE")),
+    );
     expect(screen.getByText(/plan catalog unavailable/i)).toBeInTheDocument();
   });
 });
@@ -324,8 +371,8 @@ describe("Tenant detail page — the Setup tab (business profiles)", () => {
     ).toBeInTheDocument();
     expect(screen.getByText("Counter sales")).toBeInTheDocument();
     expect(await screen.findByRole("radio", { name: /Delivery distributor/ })).toBeEnabled();
-    expect(screen.getByRole("radio", { name: /^In-store retailer/ })).toBeDisabled();
-    expect(screen.getAllByText("Available when counter sales launch")).toHaveLength(2);
+    expect(screen.getByRole("radio", { name: /In-store retailer/ })).toBeDisabled();
+    expect(screen.queryByText("Available when counter sales launch")).toBeNull();
     // The existing feature console is still there, below.
     expect(screen.getByText("compliance")).toBeInTheDocument();
   });
@@ -407,7 +454,23 @@ describe("Tenant detail page — Impersonate and Extend Trial ask first (back of
     ).toBeInTheDocument();
   });
 
-  it("Extend Trial on an ACTIVE tenant: nothing is sent until Confirm, and the dialog says the status becomes Trial", async () => {
+  it("Impersonate remembers the source tenant ID (only the id, never a URL) for Exit", async () => {
+    mockAdmin = ADMIN;
+    render(<TenantDetailPage />);
+    await screen.findByText("Quick Actions");
+    await waitFor(() => expect(screen.getAllByText("acme_admin").length).toBeGreaterThan(0));
+    fireEvent.click(screen.getByRole("button", { name: "Impersonate" }));
+    const dialog = await screen.findByRole("dialog", { name: "Impersonate Acme (acme)?" });
+    post().mockResolvedValueOnce({
+      data: { accessToken: "tok.en.x", impersonatedUser: { username: "acme_admin" } },
+    });
+    fireEvent.click(within(dialog).getByRole("button", { name: "Impersonate" }));
+    await waitFor(() => expect(mockSetImpersonation).toHaveBeenCalledTimes(1));
+    expect(mockSetImpersonation).toHaveBeenCalledWith("tok.en.x", "acme", "acme_admin", TENANT_ID);
+  });
+
+  it("Extend Trial on a SUSPENDED tenant: nothing is sent until Confirm, and the dialog says the status becomes Trial", async () => {
+    tenantOverrides = { status: "SUSPENDED" };
     render(<TenantDetailPage />);
     await screen.findByText("Quick Actions");
     fireEvent.click(screen.getByRole("button", { name: "Extend Trial" }));
@@ -415,7 +478,7 @@ describe("Tenant detail page — Impersonate and Extend Trial ask first (back of
     const dialog = await screen.findByRole("dialog", { name: "Extend the trial for Acme (acme)?" });
     expect(
       within(dialog).getByText(
-        /Acme \(acme\) is Active\. Extending the trial changes its status to Trial until /,
+        /Acme \(acme\) is Suspended\. Extending the trial changes its status to Trial until /,
       ),
     ).toBeInTheDocument();
     expect(within(dialog).getByRole("button", { name: "Cancel" })).toHaveFocus();
@@ -437,6 +500,66 @@ describe("Tenant detail page — Impersonate and Extend Trial ask first (back of
     expect(
       await screen.findByText("Trial extended. It ends October 21, 2026."),
     ).toBeInTheDocument();
+  });
+
+  it("Extend Trial on an ACTIVE tenant is off, with the reason on screen (the server refuses it too)", async () => {
+    render(<TenantDetailPage />);
+    await screen.findByText("Quick Actions");
+    const btn = screen.getByRole("button", { name: "Extend Trial" });
+    expect(btn).toBeDisabled();
+    expect(btn).toHaveAttribute("aria-describedby", "extend-trial-hint");
+    expect(document.getElementById("extend-trial-hint")).toHaveTextContent(
+      "This tenant is Active, so it can't be put on a trial. Suspend it or change its plan instead.",
+    );
+    fireEvent.click(btn);
+    expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
+    expect(calls(/extend-trial$/)).toHaveLength(0);
+  });
+
+  it.each(["ACTIVE", "SUSPENDED", "READ_ONLY"])(
+    "Extend Trial stays VISIBLE on a %s tenant, with a 'Not on a trial.' note (never hidden)",
+    async (status) => {
+      tenantOverrides = { status };
+      render(<TenantDetailPage />);
+      await screen.findByText("Quick Actions");
+      expect(screen.getByRole("heading", { name: "Extend Trial" })).toBeInTheDocument();
+      expect(screen.getByRole("button", { name: "Extend Trial" })).toBeInTheDocument();
+      expect(screen.getByLabelText("Days")).toBeInTheDocument();
+      expect(screen.getByText("Not on a trial.")).toBeInTheDocument();
+      // ACTIVE is blocked (the server refuses it); the others may still be put on a trial.
+      const btn = screen.getByRole("button", { name: "Extend Trial" });
+      if (status === "ACTIVE") expect(btn).toBeDisabled();
+      else expect(btn).toBeEnabled();
+    },
+  );
+
+  it("on a TRIAL tenant there is no 'Not on a trial.' note and Extend Trial is enabled", async () => {
+    tenantOverrides = { status: "TRIAL" };
+    render(<TenantDetailPage />);
+    await screen.findByText("Quick Actions");
+    expect(screen.queryByText("Not on a trial.")).toBeNull();
+    expect(screen.getByRole("button", { name: "Extend Trial" })).toBeEnabled();
+  });
+
+  it("a race: the server's coded refusal reads the fixed Active-tenant copy, never its raw text", async () => {
+    tenantOverrides = { status: "SUSPENDED" };
+    post().mockRejectedValueOnce({
+      response: {
+        status: 409,
+        data: { code: "TENANT_TRIAL_EXTEND_NOT_ALLOWED", message: "raw internal wording" },
+      },
+    });
+    render(<TenantDetailPage />);
+    await screen.findByText("Quick Actions");
+    fireEvent.click(screen.getByRole("button", { name: "Extend Trial" }));
+    const dialog = await screen.findByRole("dialog", { name: "Extend the trial for Acme (acme)?" });
+    fireEvent.click(within(dialog).getByRole("button", { name: "Extend Trial" }));
+    expect(
+      await screen.findByText(
+        "This tenant is Active, so it can't be put on a trial. Suspend it or change its plan instead.",
+      ),
+    ).toBeInTheDocument();
+    expect(screen.queryByText(/raw internal wording/)).toBeNull();
   });
 
   it("Extend Trial on a TRIAL tenant: the dialog states the end date and says nothing about a status change", async () => {
@@ -485,13 +608,48 @@ describe("Tenant detail page — Suspend and Delete ask first (back office P1)",
     expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
   });
 
-  it("Delete Tenant is visible and ENABLED for a tenant that is not suspended (pinned: no dimming)", async () => {
+  it.each(["ACTIVE", "TRIAL", "READ_ONLY"])(
+    "Delete Tenant is visible but DIM for a %s tenant, with the reason on screen (P2 flips the P1 enabled pin)",
+    async (status) => {
+      tenantOverrides = { status };
+      render(<TenantDetailPage />);
+      await screen.findByText("Quick Actions");
+      const del = screen.getByRole("button", { name: "Delete Tenant" });
+      expect(del).toBeDisabled();
+      expect(del).toHaveAttribute("aria-describedby", "delete-tenant-hint");
+      expect(document.getElementById("delete-tenant-hint")).toHaveTextContent(
+        "Only a suspended tenant can be deleted. Suspend it first, then delete.",
+      );
+      fireEvent.click(del);
+      expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
+      expect(client().delete).not.toHaveBeenCalled();
+    },
+  );
+
+  it("Delete Tenant is enabled once the tenant is SUSPENDED, and the suspend-first line is gone", async () => {
+    tenantOverrides = { status: "SUSPENDED" };
     render(<TenantDetailPage />);
     await screen.findByText("Quick Actions");
     expect(screen.getByRole("button", { name: "Delete Tenant" })).toBeEnabled();
+    expect(document.getElementById("delete-tenant-hint")).toBeNull();
+  });
+
+  it("N5: while a Suspend is in flight the Suspend button is disabled (its busy key is the real one)", async () => {
+    let release: (v: unknown) => void = () => {};
+    client().patch.mockImplementationOnce(() => new Promise((r) => (release = r)));
+    render(<TenantDetailPage />);
+    await screen.findByText("Quick Actions");
+    fireEvent.click(screen.getByRole("button", { name: "Suspend" }));
+    const dialog = await screen.findByRole("dialog", { name: 'Suspend "Acme (acme)"?' });
+    fireEvent.click(within(dialog).getByRole("button", { name: "Suspend" }));
+    await waitFor(() => expect(statusPatches()).toHaveLength(1));
+    await waitFor(() => expect(screen.getByRole("button", { name: "Suspend" })).toBeDisabled());
+    release({ data: {} });
+    await waitFor(() => expect(screen.getByRole("button", { name: "Suspend" })).toBeEnabled());
   });
 
   it("Delete: the type-the-slug dialog gates the button; DELETE is sent once and the page navigates away", async () => {
+    tenantOverrides = { status: "SUSPENDED" };
     render(<TenantDetailPage />);
     await screen.findByText("Quick Actions");
     fireEvent.click(screen.getByRole("button", { name: "Delete Tenant" }));
@@ -510,6 +668,7 @@ describe("Tenant detail page — Suspend and Delete ask first (back office P1)",
   });
 
   it("a server refusal shows FIXED copy inside the dialog, which stays open; no navigation", async () => {
+    tenantOverrides = { status: "SUSPENDED" };
     client().delete.mockRejectedValueOnce({
       response: { status: 400, data: { message: "Tenant must be SUSPENDED (internal state 7)" } },
     });
@@ -527,11 +686,16 @@ describe("Tenant detail page — Suspend and Delete ask first (back office P1)",
       ),
     ).toBeInTheDocument();
     expect(screen.queryByText(/internal state 7/)).toBeNull();
+    // N4: ONE message (inside the dialog), not a second banner on the page behind it.
+    expect(
+      screen.getAllByText("Only a suspended tenant can be deleted. Suspend it first, then delete."),
+    ).toHaveLength(1);
     expect(screen.getByRole("dialog", { name: "Delete Acme (acme)?" })).toBeInTheDocument();
     expect(mockRouterPush).not.toHaveBeenCalled();
   });
 
   it("Escape closes the delete dialog and sends nothing", async () => {
+    tenantOverrides = { status: "SUSPENDED" };
     render(<TenantDetailPage />);
     await screen.findByText("Quick Actions");
     fireEvent.click(screen.getByRole("button", { name: "Delete Tenant" }));
@@ -542,6 +706,7 @@ describe("Tenant detail page — Suspend and Delete ask first (back office P1)",
   });
 
   it("Extend Trial: days cleared / 0 / over 365 block Confirm with a plain line and send nothing", async () => {
+    tenantOverrides = { status: "TRIAL" };
     render(<TenantDetailPage />);
     await screen.findByText("Quick Actions");
     fireEvent.change(screen.getByLabelText("Days"), { target: { value: "" } });
@@ -558,6 +723,7 @@ describe("Tenant detail page — Suspend and Delete ask first (back office P1)",
   });
 
   it("a failed Extend Trial shows fixed copy, not the server's text", async () => {
+    tenantOverrides = { status: "TRIAL" };
     (superAdminClient.post as unknown as jest.Mock).mockRejectedValueOnce({
       response: { data: { message: "prisma: unique constraint failed" } },
     });
@@ -568,5 +734,129 @@ describe("Tenant detail page — Suspend and Delete ask first (back office P1)",
     fireEvent.click(within(dialog).getByRole("button", { name: "Extend Trial" }));
     expect(await screen.findByText("Couldn't extend the trial. Try again.")).toBeInTheDocument();
     expect(screen.queryByText(/prisma/)).toBeNull();
+  });
+});
+
+describe("SA-1: the tab lives in the URL (?tab=)", () => {
+  it("no ?tab= opens Overview", async () => {
+    render(<TenantDetailPage />);
+    await screen.findByRole("button", { name: "Setup" });
+    expect(screen.queryByText("Current setup")).toBeNull();
+  });
+
+  it("?tab=setup opens the Setup tab without a click", async () => {
+    mockSearch = "tab=setup";
+    render(<TenantDetailPage />);
+    expect(await screen.findByText("Current setup")).toBeInTheDocument();
+  });
+
+  it("the legacy ?tab=addons resolves to Setup", async () => {
+    mockSearch = "tab=addons";
+    render(<TenantDetailPage />);
+    expect(await screen.findByText("Current setup")).toBeInTheDocument();
+  });
+
+  it("an unknown ?tab= falls back to Overview", async () => {
+    mockSearch = "tab=nonsense";
+    render(<TenantDetailPage />);
+    await screen.findByRole("button", { name: "Setup" });
+    expect(screen.queryByText("Current setup")).toBeNull();
+  });
+
+  it("clicking a tab shows it AND writes ?tab= with router.replace (never push)", async () => {
+    render(<TenantDetailPage />);
+    fireEvent.click(await screen.findByRole("button", { name: "Setup" }));
+    expect(await screen.findByText("Current setup")).toBeInTheDocument();
+    expect(mockRouterReplace).toHaveBeenCalledWith(`/admin/tenants/${TENANT_ID}?tab=setup`, {
+      scroll: false,
+    });
+    expect(mockRouterPush).not.toHaveBeenCalled();
+    fireEvent.click(screen.getByRole("button", { name: "Billing & Subscription" }));
+    expect(mockRouterReplace).toHaveBeenLastCalledWith(`/admin/tenants/${TENANT_ID}?tab=billing`, {
+      scroll: false,
+    });
+  });
+});
+
+describe("SA-1: the applied business profile is marked 'Current'", () => {
+  it("marks the profile the tenant's stored setup matches, and no other row", async () => {
+    fulfilmentModeValue = "delivery";
+    await gotoSetupTab();
+    const current = await screen.findByTestId("profile-current");
+    expect(current).toHaveTextContent("Current");
+    expect(screen.getAllByTestId("profile-current")).toHaveLength(1);
+    expect(
+      within(
+        screen.getByRole("radio", { name: /Delivery distributor/ }).closest("label")!,
+      ).getByTestId("profile-current"),
+    ).toBeInTheDocument();
+    // Still selectable.
+    expect(screen.getByRole("radio", { name: /Delivery distributor/ })).toBeEnabled();
+  });
+
+  it("no profile applied (mode unset) shows no marker", async () => {
+    fulfilmentModeValue = "unset";
+    await gotoSetupTab();
+    await screen.findByRole("radio", { name: /Delivery distributor/ });
+    await screen.findByText(/Not set/);
+    expect(screen.queryByTestId("profile-current")).toBeNull();
+  });
+
+  it("a mode no profile sets ('both') shows no marker", async () => {
+    fulfilmentModeValue = "both";
+    await gotoSetupTab();
+    await screen.findByRole("radio", { name: /Delivery distributor/ });
+    expect(screen.queryByTestId("profile-current")).toBeNull();
+  });
+});
+
+describe("SA-3: the Readiness card on Overview", () => {
+  it("is the first card, above Tenant Info, and the fix anchors exist", async () => {
+    mockFetchEffective.mockResolvedValue([
+      {
+        ...EFFECTIVE_FIXTURE[0],
+        key: "fulfilment_model",
+        mode: { value: "pickup", effective: "pickup", source: "TENANT", allowed: [], blocked: [] },
+      },
+    ]);
+    const { container } = render(<TenantDetailPage />);
+    const heading = await screen.findByRole("heading", { name: "Ready to take a sale?" });
+    const info = await screen.findByRole("heading", { name: "Tenant Info" });
+    expect(heading.compareDocumentPosition(info) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+    expect(container.querySelector("#admin-account")).not.toBeNull();
+  });
+
+  it("fetches the admin once, and Create admin flips the Has an admin row without a refetch", async () => {
+    mockAdmin = null;
+    mockFetchEffective.mockResolvedValue([
+      {
+        ...EFFECTIVE_FIXTURE[0],
+        key: "fulfilment_model",
+        mode: { value: "pickup", effective: "pickup", source: "TENANT", allowed: [], blocked: [] },
+      },
+    ]);
+    (superAdminClient.post as unknown as jest.Mock).mockImplementationOnce(() =>
+      Promise.resolve({
+        data: { id: "u-9", username: "new_admin", email: "a@b.co", status: "ACTIVE" },
+      }),
+    );
+    render(<TenantDetailPage />);
+    const rowOf = async () =>
+      (await screen.findByText("Has an admin")).closest("li") as HTMLElement;
+    await waitFor(async () =>
+      expect(within(await rowOf()).getByText(/Not ready/)).toBeInTheDocument(),
+    );
+    const adminGets = () =>
+      (superAdminClient.get as unknown as jest.Mock).mock.calls.filter((c) =>
+        /\/admin$/.test(String(c[0])),
+      );
+    expect(adminGets()).toHaveLength(1);
+    fireEvent.click(await screen.findByRole("button", { name: "Create Admin Account" }));
+    fireEvent.change(screen.getByLabelText("Username"), { target: { value: "new_admin" } });
+    fireEvent.change(screen.getByLabelText("Email"), { target: { value: "a@b.co" } });
+    fireEvent.click(screen.getByRole("button", { name: "Create Admin" }));
+    await waitFor(async () => expect(within(await rowOf()).queryByText(/Not ready/)).toBeNull());
+    expect(within(await rowOf()).getByText(/Ready/)).toBeInTheDocument();
+    expect(adminGets()).toHaveLength(1);
   });
 });

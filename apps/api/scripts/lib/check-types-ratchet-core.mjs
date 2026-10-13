@@ -15,7 +15,7 @@ const SPEC_FILE = /\.spec\.ts$/;
 // 6144, not 4096: the api program (src + specs, ~1715 files) peaked at 4394 MB RSS under the old
 // 4096 cap and now OOMs on the Mac mini (#2717 M3; CI runners have the headroom). Raise again only
 // with the same evidence.
-export const HEAP_MB = 6144;
+export const HEAP_MB = 8192;
 const OOM_HINT =
   `the type-check ran out of memory at the ${HEAP_MB} MB heap this script already sets ` +
   `(--max-old-space-size=${HEAP_MB}, also exported in NODE_OPTIONS to the compile worker). ` +

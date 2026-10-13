@@ -40,6 +40,7 @@ import { CategoryRail, type RailSelection } from "./_components/CategoryRail";
 import { RunningLowStrip } from "./_components/RunningLowStrip";
 import { ShopSearch } from "./_components/ShopSearch";
 import { deriveTilePrice } from "./_components/tile-pricing";
+import { SellerUnavailableLine } from "@/components/SellerUnavailableLine";
 
 // ─── Grid density ─────────────────────────────────────────────────────────────
 // Persisted density control — default "md" is one notch denser than the
@@ -321,6 +322,7 @@ export default function BuyerShopPage() {
   return (
     <div className="flex flex-col min-h-full">
       <div className="flex-1 p-6">
+        <SellerUnavailableLine />
         {/* Header */}
         <div className="mb-4 flex flex-wrap items-center justify-between gap-3">
           <div>
@@ -558,6 +560,7 @@ export default function BuyerShopPage() {
                           })
                         }
                         onUpdateQty={(qty) => cart.updateQty(p.id, qty)}
+                        onRestore={(line) => cart.addItem(line)}
                         onToggleFavorite={() => toggleFavorite(p.id)}
                         isAlertSubscribed={alertIds.has(p.id)}
                         onToggleStockAlert={() => toggleStockAlert(p.id)}
@@ -651,8 +654,12 @@ export default function BuyerShopPage() {
                                     {qty > 0 ? (
                                       <QtyStepper
                                         qty={qty}
+                                        name={p.name}
                                         onUpdate={(n) => cart.updateQty(p.id, n)}
                                         onRemove={() => cart.updateQty(p.id, 0)}
+                                        onRestore={
+                                          cartItem ? () => cart.addItem(cartItem) : undefined
+                                        }
                                         size="sm"
                                       />
                                     ) : (

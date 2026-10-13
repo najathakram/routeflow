@@ -1,13 +1,19 @@
 import * as React from "react";
 import { roundMoney } from "@routeflow/pricing";
 import userEvent from "@testing-library/user-event";
+import { act } from "@testing-library/react";
 import { renderWithProviders, screen, waitFor, fireEvent } from "@/test-utils/render";
 import { CounterSaleScreen, lineQtyLabel, toSaleItem } from "./CounterSaleScreen";
+import {
+  cancelCounterLeave,
+  confirmCounterLeave,
+  guardCounterLeave,
+} from "@/lib/counter-cart-signal";
 
 /**
  * Counter sale (walk-in pickup): the one screen. The API is mocked at the module boundary. Pins: Walk-in default, On account
  * disabled for a walk-in, quantity-then-scan multiply, a running total through @routeflow/pricing, quick tender + LARGE change,
- * Complete sale -> receipt, Complete & next sale -> a fresh Walk-in sale, per-device auto-print (on once / off never / storage
+ * Complete & show receipt -> receipt, Complete & next sale -> a fresh Walk-in sale, per-device auto-print (on once / off never / storage
  * unavailable), FIXED error copy, the capability-driven "Ship this order instead", and an always-focused scan field.
  */
 
@@ -38,6 +44,13 @@ jest.mock("@/lib/barcode-resolve", () => ({
 let customersFor: unknown[] = [];
 jest.mock("@/lib/api/customers", () => ({
   useCustomers: () => ({ data: { data: customersFor } }),
+  useCustomerPrices: () => ({
+    data: [],
+    isSuccess: true,
+    isError: false,
+    isFetching: false,
+    refetch: jest.fn(),
+  }),
 }));
 jest.mock("@/lib/api-client", () => ({
   apiClient: { get: jest.fn().mockResolvedValue({ data: { taxRate: 0 } }), post: jest.fn() },
@@ -102,6 +115,13 @@ describe("CounterSaleScreen", () => {
     expect(screen.getByLabelText("Scan or search items")).toHaveFocus();
   });
 
+  it("the screen root carries the marker the reprint print rule hides", () => {
+    renderWithProviders(<CounterSaleScreen />);
+    const root = screen.getByTestId("counter-sale-screen");
+    expect(root).toHaveAttribute("data-counter-screen");
+    expect(root).toContainElement(screen.getByLabelText("Scan or search items"));
+  });
+
   it("type a quantity, then scan, to multiply: 3 then a scan = 3 units and the running total", async () => {
     renderWithProviders(<CounterSaleScreen />);
     await scan("3");
@@ -132,16 +152,370 @@ describe("CounterSaleScreen", () => {
     expect(screen.getByTestId("change-due")).toHaveTextContent("Change $17.50");
     expect(screen.getByTestId("change-due").className).toMatch(/text-3xl/);
     fireEvent.click(screen.getByRole("button", { name: "Exact" }));
-    expect(screen.getByTestId("change-due")).toHaveTextContent("Change $0.00");
+    // nothing to give back: the hero stays "Amount due", never "Change $0.00"
+    expect(screen.getByTestId("change-due")).toHaveTextContent("Amount due $0.00");
+    expect(screen.getByTestId("change-due")).not.toHaveTextContent("Change");
   });
 
-  it("Complete sale posts a walk-in sale with the cash tendered, then shows the receipt with Print", async () => {
+  it("cash: the change line sits inside the sticky checkout bar, never under it (row 112)", async () => {
     renderWithProviders(<CounterSaleScreen />);
     await scan("012345678905");
     await waitFor(() => expect(screen.getByTestId("running-total")).toHaveTextContent("$2.50"));
     fireEvent.click(screen.getByRole("button", { name: "$20" }));
-    fireEvent.click(screen.getByRole("button", { name: "Complete sale" }));
+    expect(screen.getByTestId("counter-checkout-bar")).toContainElement(
+      screen.getByTestId("change-due"),
+    );
+  });
+
+  it("the scan field is short enough for a phone and carries the multiply tip as a hint below it", async () => {
+    renderWithProviders(<CounterSaleScreen />);
+    const input = screen.getByLabelText("Scan or search items");
+    expect(input).toHaveAttribute("placeholder", "Scan or type an item");
+    expect(screen.getByTestId("scan-hint")).toHaveTextContent("Type a quantity first to multiply");
+  });
+
+  it("cash: an underpayment reads 'Amount due', never 'Change $0.00' (row 188)", async () => {
+    renderWithProviders(<CounterSaleScreen />);
+    await scan("012345678905");
+    await waitFor(() => expect(screen.getByTestId("running-total")).toHaveTextContent("$2.50"));
+    expect(screen.getByTestId("change-due")).toHaveTextContent("Amount due $2.50");
+    fireEvent.change(screen.getByLabelText("Amount tendered"), { target: { value: "1" } });
+    expect(screen.getByTestId("change-due")).toHaveTextContent("Amount due $1.50");
+    expect(screen.getByTestId("change-due")).not.toHaveTextContent("Change");
+    fireEvent.change(screen.getByLabelText("Amount tendered"), { target: { value: "3" } });
+    expect(screen.getByTestId("change-due")).toHaveTextContent("Change $0.50");
+  });
+
+  it("cash: the 'Enter at least' error clears the moment the tender is fixed (row 188)", async () => {
+    renderWithProviders(<CounterSaleScreen />);
+    await scan("012345678905");
+    await waitFor(() => expect(screen.getByTestId("running-total")).toHaveTextContent("$2.50"));
+    fireEvent.change(screen.getByLabelText("Amount tendered"), { target: { value: "1" } });
+    fireEvent.click(screen.getByRole("button", { name: "Complete & show receipt" }));
+    expect(await screen.findByRole("alert")).toHaveTextContent("Enter at least $2.50.");
+    fireEvent.change(screen.getByLabelText("Amount tendered"), { target: { value: "5" } });
+    expect(screen.queryByText(/Enter at least/)).toBeNull();
+  });
+
+  it("row 238: the underpaid error renders INSIDE the sticky checkout bar, next to Complete (never off-screen below the fold)", async () => {
+    renderWithProviders(<CounterSaleScreen />);
+    await scan("012345678905");
+    await waitFor(() => expect(screen.getByTestId("running-total")).toHaveTextContent("$2.50"));
+    fireEvent.change(screen.getByLabelText("Amount tendered"), { target: { value: "1" } });
+    fireEvent.click(screen.getByRole("button", { name: "Complete & show receipt" }));
+    const alert = await screen.findByRole("alert");
+    expect(alert).toHaveTextContent("Enter at least $2.50.");
+    expect(screen.getByTestId("counter-checkout-bar")).toContainElement(alert);
+    // and it sits before the actions, so the cashier reads why before the buttons
+    const actions = screen.getByTestId("counter-checkout-actions");
+    expect(alert.compareDocumentPosition(actions) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+  });
+
+  describe("row 112: the scroll area ends below the sticky bar", () => {
+    const realDescriptor = Object.getOwnPropertyDescriptor(HTMLElement.prototype, "offsetHeight");
+    let roCallbacks: Array<() => void> = [];
+    beforeEach(() => {
+      roCallbacks = [];
+      Object.defineProperty(HTMLElement.prototype, "offsetHeight", {
+        configurable: true,
+        get() {
+          return (this as HTMLElement).dataset.testid === "counter-checkout-bar" ? 180 : 0;
+        },
+      });
+      (globalThis as unknown as { ResizeObserver: unknown }).ResizeObserver = class {
+        constructor(cb: () => void) {
+          roCallbacks.push(cb);
+        }
+        observe() {}
+        disconnect() {}
+        unobserve() {}
+      };
+    });
+    afterEach(() => {
+      if (realDescriptor)
+        Object.defineProperty(HTMLElement.prototype, "offsetHeight", realDescriptor);
+      else delete (HTMLElement.prototype as unknown as Record<string, unknown>).offsetHeight;
+      delete (globalThis as unknown as Record<string, unknown>).ResizeObserver;
+    });
+
+    it("the screen reserves the bar's height at its bottom (below md), so line 2 and Cash/Card can scroll clear of it", async () => {
+      renderWithProviders(<CounterSaleScreen />);
+      const root = screen.getByTestId("counter-sale-screen");
+      await waitFor(() => expect(root.style.getPropertyValue("--counter-bar-h")).toBe("180px"));
+    });
+
+    it("row 330a: the scroll container keeps a focused control clear of the bar (scroll-padding-bottom), and lets go on unmount", async () => {
+      const main = document.createElement("main");
+      main.id = "main-content";
+      main.style.paddingBottom = "96px"; // the shell's pb-24: the bar sticks above it
+      document.body.appendChild(main);
+      try {
+        const view = renderWithProviders(<CounterSaleScreen />);
+        await waitFor(() =>
+          expect(main.style.getPropertyValue("scroll-padding-bottom")).toBe("180px"),
+        ); // exactly the bar's height (row 368)
+        view.unmount();
+        expect(main.style.getPropertyValue("scroll-padding-bottom")).toBe("");
+      } finally {
+        main.remove();
+      }
+    });
+
+    it("row 368: below md the bar sticks to the real bottom (through the shell's pb-24), and the space reserved is the bar's own height, not extra padding", async () => {
+      const main = document.createElement("main");
+      main.id = "main-content";
+      main.style.paddingBottom = "96px";
+      document.body.appendChild(main);
+      try {
+        const view = renderWithProviders(<CounterSaleScreen />);
+        const root = screen.getByTestId("counter-sale-screen");
+        await waitFor(() => expect(root.style.getPropertyValue("--counter-main-pb")).toBe("96px"));
+        // the bar sits at the scrollport's bottom edge, not 96 px up (sticky respects the container's own padding)
+        expect(screen.getByTestId("counter-checkout-bar").className).toContain(
+          "max-md:bottom-[calc(-1*var(--counter-main-pb,0px))]",
+        );
+        // the screen draws that padding back in and adds none of its own below the bar
+        expect(root.className).toContain("max-md:mb-[calc(-1*var(--counter-main-pb,0px))]");
+        expect(root.className).toContain("max-md:pb-0");
+        expect(root.className).not.toContain("--counter-bar-h");
+        view.unmount();
+      } finally {
+        main.remove();
+      }
+    });
+
+    it("row 330a: at md and wider the bar is static, so no scroll padding is reserved", async () => {
+      const real = window.matchMedia;
+      window.matchMedia = ((q: string) => ({
+        matches: q === "(min-width: 768px)",
+        media: q,
+        addEventListener() {},
+        removeEventListener() {},
+      })) as never;
+      const main = document.createElement("main");
+      main.id = "main-content";
+      document.body.appendChild(main);
+      try {
+        const view = renderWithProviders(<CounterSaleScreen />);
+        const root = screen.getByTestId("counter-sale-screen");
+        await waitFor(() => expect(root.style.getPropertyValue("--counter-bar-h")).toBe("180px"));
+        expect(main.style.getPropertyValue("scroll-padding-bottom")).toBe("");
+        view.unmount();
+      } finally {
+        window.matchMedia = real;
+        main.remove();
+      }
+    });
+
+    it("row 330a: below md the bar clears the home indicator (safe-area inset), so its measured height includes it", () => {
+      renderWithProviders(<CounterSaleScreen />);
+      const bar = screen.getByTestId("counter-checkout-bar");
+      expect(bar.className).toContain("env(safe-area-inset-bottom");
+    });
+
+    it("a cold load (gate loading first) still measures the bar once it mounts", async () => {
+      const loaded = gate;
+      gate = { ...loaded, loading: true };
+      const view = renderWithProviders(<CounterSaleScreen />);
+      expect(screen.getByTestId("counter-sale-loading")).toBeInTheDocument();
+      gate = loaded;
+      view.rerender(<CounterSaleScreen />);
+      const root = await screen.findByTestId("counter-sale-screen");
+      await waitFor(() => expect(root.style.getPropertyValue("--counter-bar-h")).toBe("180px"));
+    });
+
+    it("follows the bar when it grows (an error appears in it)", async () => {
+      renderWithProviders(<CounterSaleScreen />);
+      const root = screen.getByTestId("counter-sale-screen");
+      await waitFor(() => expect(root.style.getPropertyValue("--counter-bar-h")).toBe("180px"));
+      Object.defineProperty(HTMLElement.prototype, "offsetHeight", {
+        configurable: true,
+        get() {
+          return (this as HTMLElement).dataset.testid === "counter-checkout-bar" ? 232 : 0;
+        },
+      });
+      act(() => roCallbacks.forEach((cb) => cb()));
+      await waitFor(() => expect(root.style.getPropertyValue("--counter-bar-h")).toBe("232px"));
+    });
+  });
+
+  describe("row 237: one scan-focus owner", () => {
+    const addNoteBtn = () => screen.getByRole("button", { name: /Add a note to Cola/ });
+    const scanField = () => screen.getByLabelText("Scan or search items");
+
+    async function withCola() {
+      renderWithProviders(<CounterSaleScreen />);
+      await scan("012345678905");
+      await waitFor(() => expect(screen.getByTestId("running-total")).toHaveTextContent("$2.50"));
+    }
+
+    it("Enter in the note saves it, closes the editor and hands focus to the scan box", async () => {
+      await withCola();
+      fireEvent.click(addNoteBtn());
+      const note = screen.getByLabelText("Note for Cola");
+      fireEvent.change(note, { target: { value: "cold" } });
+      fireEvent.keyDown(note, { key: "Enter" });
+      await waitFor(() => expect(scanField()).toHaveFocus());
+      expect(screen.queryByLabelText("Note for Cola")).toBeNull();
+      expect(screen.getByTestId("line-note")).toHaveTextContent("cold");
+    });
+
+    it("Clear note hands focus to the scan box (not <body>)", async () => {
+      await withCola();
+      fireEvent.click(addNoteBtn());
+      fireEvent.change(screen.getByLabelText("Note for Cola"), { target: { value: "cold" } });
+      fireEvent.keyDown(screen.getByLabelText("Note for Cola"), { key: "Enter" });
+      fireEvent.click(await screen.findByRole("button", { name: /Clear the note on Cola/ }));
+      await waitFor(() => expect(scanField()).toHaveFocus());
+      expect(document.body).not.toHaveFocus();
+    });
+
+    it("leaving the note field to nowhere (blur) saves it and returns focus to the scan box", async () => {
+      await withCola();
+      fireEvent.click(addNoteBtn());
+      const note = screen.getByLabelText("Note for Cola");
+      fireEvent.change(note, { target: { value: "cold" } });
+      note.focus();
+      note.blur();
+      await waitFor(() => expect(scanField()).toHaveFocus());
+      expect(screen.getByTestId("line-note")).toHaveTextContent("cold");
+    });
+
+    it("Tab out of the last quantity field goes to the scan box, not to Add note", async () => {
+      await withCola();
+      const qty = screen.getByLabelText("Set quantity of Cola");
+      qty.focus();
+      fireEvent.change(qty, { target: { value: "2" } });
+      fireEvent.keyDown(qty, { key: "Tab" });
+      await waitFor(() => expect(scanField()).toHaveFocus());
+      expect(screen.getByTestId("running-total")).toHaveTextContent("$5.00");
+    });
+
+    it("a plain Tab (no typed draft) is NOT hijacked: the default Tab proceeds", async () => {
+      await withCola();
+      const qty = screen.getByLabelText("Set quantity of Cola");
+      qty.focus();
+      // fireEvent returns false when the handler called preventDefault
+      const notPrevented = fireEvent.keyDown(qty, { key: "Tab" });
+      expect(notPrevented).toBe(true);
+      await new Promise((r) => setTimeout(r, 30));
+      expect(scanField()).not.toHaveFocus();
+    });
+
+    it("Shift+Tab out of the quantity field is left alone", async () => {
+      await withCola();
+      const qty = screen.getByLabelText("Set quantity of Cola");
+      qty.focus();
+      fireEvent.keyDown(qty, { key: "Tab", shiftKey: true });
+      await new Promise((r) => setTimeout(r, 30));
+      expect(scanField()).not.toHaveFocus();
+    });
+
+    it("a digit typed while a button holds focus goes to the scan box", async () => {
+      await withCola();
+      addNoteBtn().focus();
+      fireEvent.keyDown(addNoteBtn(), { key: "5" });
+      expect(scanField()).toHaveFocus();
+    });
+
+    it("a digit is left alone while a listbox / menu / combobox typeahead holds focus", async () => {
+      await withCola();
+      for (const role of ["listbox", "menu", "combobox"]) {
+        const host = document.createElement("div");
+        host.setAttribute("role", role);
+        const item = document.createElement("div");
+        item.tabIndex = 0;
+        host.appendChild(item);
+        document.body.appendChild(host);
+        item.focus();
+        expect(item).toHaveFocus();
+        fireEvent.keyDown(item, { key: "5" });
+        expect(scanField()).not.toHaveFocus();
+        host.remove();
+      }
+    });
+
+    it("a letter is left alone (g-then-x navigation shortcuts keep working)", async () => {
+      await withCola();
+      addNoteBtn().focus();
+      fireEvent.keyDown(addNoteBtn(), { key: "g" });
+      expect(addNoteBtn()).toHaveFocus();
+    });
+
+    it("typing in a text field, or with Ctrl, is never redirected", async () => {
+      await withCola();
+      const qty = screen.getByLabelText("Set quantity of Cola");
+      qty.focus();
+      fireEvent.keyDown(qty, { key: "5" });
+      expect(qty).toHaveFocus();
+      addNoteBtn().focus();
+      fireEvent.keyDown(addNoteBtn(), { key: "c", ctrlKey: true });
+      expect(addNoteBtn()).toHaveFocus();
+    });
+  });
+
+  it("a repeat scan says so: the cue names the item and its new quantity (row 188)", async () => {
+    renderWithProviders(<CounterSaleScreen />);
+    await scan("012345678905");
+    expect(screen.queryByTestId("counter-scan-cue")).toBeNull(); // a new line is its own signal
+    await scan("012345678905");
+    await waitFor(() =>
+      expect(screen.getByTestId("counter-scan-cue")).toHaveTextContent("Cola · now 2"),
+    );
+  });
+
+  it("Enter on a typed quantity hands focus back to the scan field (row 188)", async () => {
+    renderWithProviders(<CounterSaleScreen />);
+    await scan("012345678905");
+    const qty = screen.getByLabelText("Set quantity of Cola");
+    qty.focus();
+    fireEvent.change(qty, { target: { value: "4" } });
+    fireEvent.keyDown(qty, { key: "Enter" });
+    await waitFor(() => expect(screen.getByLabelText("Scan or search items")).toHaveFocus());
+    expect(screen.getByTestId("running-total")).toHaveTextContent("$10.00");
+  });
+
+  it("the repeat-scan cue still clears 2.5 s after it was SET, even when the line changes meanwhile", async () => {
+    renderWithProviders(<CounterSaleScreen />);
+    await scan("012345678905");
+    await scan("012345678905");
+    await waitFor(() => expect(screen.getByTestId("counter-scan-cue")).toBeInTheDocument());
+    fireEvent.click(screen.getByRole("button", { name: "Add one Cola" })); // a line change inside the window
+    await waitFor(() => expect(screen.queryByTestId("counter-scan-cue")).toBeNull(), {
+      timeout: 4000,
+    });
+  }, 10000);
+
+  it("editing the tender keeps a server error on screen; only the underpaid copy clears (review nit)", async () => {
+    mutateAsync.mockRejectedValue({ response: { status: 409, data: { message: "RAW" } } });
+    renderWithProviders(<CounterSaleScreen />);
+    await scan("012345678905");
+    await waitFor(() => expect(screen.getByTestId("running-total")).toHaveTextContent("$2.50"));
+    fireEvent.click(screen.getByRole("button", { name: "$20" }));
+    fireEvent.click(screen.getByRole("button", { name: "Complete & show receipt" }));
+    expect(await screen.findByRole("alert")).toHaveTextContent(/changed/);
+    fireEvent.change(screen.getByLabelText("Amount tendered"), { target: { value: "30" } });
+    fireEvent.click(screen.getByRole("button", { name: "$50" }));
+    expect(screen.getByRole("alert")).toHaveTextContent(/changed/);
+  });
+
+  it("the amount-due / change line is announced politely (review nit)", async () => {
+    renderWithProviders(<CounterSaleScreen />);
+    expect(screen.getByTestId("change-due")).toHaveAttribute("role", "status");
+  });
+
+  it("Complete & show receipt posts a walk-in sale with the cash tendered, then shows the receipt with Print", async () => {
+    renderWithProviders(<CounterSaleScreen />);
+    await scan("012345678905");
+    await waitFor(() => expect(screen.getByTestId("running-total")).toHaveTextContent("$2.50"));
+    fireEvent.click(screen.getByRole("button", { name: "$20" }));
+    fireEvent.click(screen.getByRole("button", { name: "Complete & show receipt" }));
     await waitFor(() => expect(screen.getByTestId("counter-sale-receipt")).toBeInTheDocument());
+    // print: the wrapper drops its padding and width cap so the 72 mm printable area is the receipt's
+    expect(screen.getByTestId("counter-sale-receipt").className).toEqual(
+      expect.stringContaining("print:max-w-none"),
+    );
+    expect(screen.getByTestId("counter-sale-receipt").className).toContain("print:p-0");
     expect(mutateAsync).toHaveBeenCalledWith({
       dto: {
         walkIn: true,
@@ -173,10 +547,10 @@ describe("CounterSaleScreen", () => {
       await scan("012345678905");
       await waitFor(() => expect(screen.getByTestId("running-total")).toHaveTextContent("$2.50"));
       fireEvent.click(screen.getByRole("button", { name: "$20" }));
-      fireEvent.click(screen.getByRole("button", { name: "Complete sale" }));
+      fireEvent.click(screen.getByRole("button", { name: "Complete & show receipt" }));
       await waitFor(() => expect(mutateAsync).toHaveBeenCalled());
     };
-    it("on: window.print once after Complete sale, and the toggle persists locally", async () => {
+    it("on: window.print once after Complete & show receipt, and the toggle persists locally", async () => {
       renderWithProviders(<CounterSaleScreen />);
       fireEvent.click(screen.getByLabelText("Print receipt automatically"));
       expect(window.localStorage.getItem("rf.counterSale.autoPrint")).toBe("1");
@@ -238,7 +612,7 @@ describe("CounterSaleScreen", () => {
     await scan("012345678905");
     await waitFor(() => expect(screen.getByTestId("running-total")).toHaveTextContent("$2.50"));
     fireEvent.click(screen.getByRole("button", { name: "$20" }));
-    fireEvent.click(screen.getByRole("button", { name: "Complete sale" }));
+    fireEvent.click(screen.getByRole("button", { name: "Complete & show receipt" }));
     const banner = await screen.findByTestId("counter-outcome-unknown");
     expect(banner).toHaveTextContent(
       "We couldn't confirm the sale. Check recent sales before trying again.",
@@ -249,13 +623,13 @@ describe("CounterSaleScreen", () => {
 
   it("refuses short cash and an empty sale client-side, without calling the API", async () => {
     renderWithProviders(<CounterSaleScreen />);
-    fireEvent.click(screen.getByRole("button", { name: "Complete sale" }));
+    fireEvent.click(screen.getByRole("button", { name: "Complete & show receipt" }));
     expect(await screen.findByRole("alert")).toHaveTextContent("Add at least one item.");
     await scan("012345678905");
     await waitFor(() => expect(screen.getByTestId("running-total")).toHaveTextContent("$2.50"));
     fireEvent.change(screen.getByLabelText("Amount tendered"), { target: { value: "1" } });
-    fireEvent.click(screen.getByRole("button", { name: "Complete sale" }));
-    expect(await screen.findByRole("alert")).toHaveTextContent(/less than the total/);
+    fireEvent.click(screen.getByRole("button", { name: "Complete & show receipt" }));
+    expect(await screen.findByRole("alert")).toHaveTextContent("Enter at least $2.50.");
     expect(mutateAsync).not.toHaveBeenCalled();
   });
 
@@ -286,6 +660,23 @@ describe("CounterSaleScreen", () => {
     expect(push).toHaveBeenCalledWith("/orders?action=new&ship=1&preselect=SHIP");
   });
 
+  it.each([
+    ["the system walk-in record", { isWalkIn: true }, false],
+    ["a named customer", { isWalkIn: false }, true],
+  ])("receipt Customer line when %s was picked", async (_n, flag, shown) => {
+    customersFor = [{ id: "c1", businessName: "Walk-in customer", ...flag }];
+    renderWithProviders(<CounterSaleScreen />);
+    fireEvent.change(screen.getByLabelText("Find a customer"), { target: { value: "walk" } });
+    fireEvent.click(screen.getByRole("button", { name: "Walk-in customer" }));
+    await scan("012345678905");
+    await waitFor(() => expect(screen.getByTestId("running-total")).toHaveTextContent("$2.50"));
+    fireEvent.click(screen.getByRole("button", { name: "$20" }));
+    fireEvent.click(screen.getByRole("button", { name: "Complete & show receipt" }));
+    await screen.findByTestId("counter-sale-receipt");
+    if (shown) expect(screen.getByTestId("receipt-customer")).toBeInTheDocument();
+    else expect(screen.queryByTestId("receipt-customer")).toBeNull();
+  });
+
   it("a business with the counter off shows nothing to sell with", () => {
     gate = {
       showButton: false,
@@ -312,7 +703,7 @@ describe("CounterSaleScreen: API contract wiring", () => {
     it("every submit sends a key", async () => {
       renderWithProviders(<CounterSaleScreen />);
       await fillCola();
-      fireEvent.click(screen.getByRole("button", { name: "Complete sale" }));
+      fireEvent.click(screen.getByRole("button", { name: "Complete & show receipt" }));
       await waitFor(() => expect(mutateAsync).toHaveBeenCalledTimes(1));
       expect(keyOfCall(0)).toBe("key-1");
     });
@@ -326,7 +717,7 @@ describe("CounterSaleScreen: API contract wiring", () => {
         mutateAsync.mockRejectedValueOnce(failure);
         renderWithProviders(<CounterSaleScreen />);
         await fillCola();
-        fireEvent.click(screen.getByRole("button", { name: "Complete sale" }));
+        fireEvent.click(screen.getByRole("button", { name: "Complete & show receipt" }));
         expect(await screen.findByTestId("counter-outcome-unknown")).toBeInTheDocument();
         fireEvent.click(screen.getByRole("button", { name: "Try again" }));
         await waitFor(() => expect(mutateAsync).toHaveBeenCalledTimes(2));
@@ -340,14 +731,14 @@ describe("CounterSaleScreen: API contract wiring", () => {
       mutateAsync.mockRejectedValueOnce({ response: { status: 400 } });
       renderWithProviders(<CounterSaleScreen />);
       await fillCola();
-      fireEvent.click(screen.getByRole("button", { name: "Complete sale" }));
+      fireEvent.click(screen.getByRole("button", { name: "Complete & show receipt" }));
       expect(await screen.findByRole("alert")).toBeInTheDocument();
       expect(screen.queryByTestId("counter-outcome-unknown")).toBeNull();
       expect(screen.getByLabelText("Scan or search items")).not.toBeDisabled();
       await scan("WATER");
       await waitFor(() => expect(screen.getByTestId("running-total")).toHaveTextContent("$14.50"));
       fireEvent.click(screen.getByRole("button", { name: "$20" }));
-      fireEvent.click(screen.getByRole("button", { name: "Complete sale" }));
+      fireEvent.click(screen.getByRole("button", { name: "Complete & show receipt" }));
       await waitFor(() => expect(mutateAsync).toHaveBeenCalledTimes(2));
       expect(keyOfCall(1)).not.toBe(keyOfCall(0));
     });
@@ -358,10 +749,10 @@ describe("CounterSaleScreen: API contract wiring", () => {
         mutateAsync.mockRejectedValueOnce({ response: { status } });
         renderWithProviders(<CounterSaleScreen />);
         await fillCola();
-        fireEvent.click(screen.getByRole("button", { name: "Complete sale" }));
+        fireEvent.click(screen.getByRole("button", { name: "Complete & show receipt" }));
         expect(await screen.findByRole("alert")).toBeInTheDocument();
         expect(screen.queryByTestId("counter-outcome-unknown")).toBeNull();
-        fireEvent.click(screen.getByRole("button", { name: "Complete sale" }));
+        fireEvent.click(screen.getByRole("button", { name: "Complete & show receipt" }));
         await waitFor(() => expect(mutateAsync).toHaveBeenCalledTimes(2));
         expect(keyOfCall(1)).not.toBe(keyOfCall(0));
       },
@@ -371,7 +762,7 @@ describe("CounterSaleScreen: API contract wiring", () => {
       mutateAsync.mockRejectedValueOnce({ response: { status: 408 } });
       renderWithProviders(<CounterSaleScreen />);
       await fillCola();
-      fireEvent.click(screen.getByRole("button", { name: "Complete sale" }));
+      fireEvent.click(screen.getByRole("button", { name: "Complete & show receipt" }));
       expect(await screen.findByTestId("counter-outcome-unknown")).toBeInTheDocument();
       fireEvent.click(screen.getByRole("button", { name: "Try again" }));
       await waitFor(() => expect(mutateAsync).toHaveBeenCalledTimes(2));
@@ -382,13 +773,13 @@ describe("CounterSaleScreen: API contract wiring", () => {
       mutateAsync.mockRejectedValueOnce({ response: { status: 503 } });
       renderWithProviders(<CounterSaleScreen />);
       await fillCola();
-      fireEvent.click(screen.getByRole("button", { name: "Complete sale" }));
+      fireEvent.click(screen.getByRole("button", { name: "Complete & show receipt" }));
       expect(await screen.findByTestId("counter-outcome-unknown")).toBeInTheDocument();
       fireEvent.click(screen.getByRole("button", { name: "Try again" }));
       await waitFor(() => expect(screen.getByTestId("counter-sale-receipt")).toBeInTheDocument());
       fireEvent.click(screen.getByRole("button", { name: "New sale" }));
       await fillCola();
-      fireEvent.click(screen.getByRole("button", { name: "Complete sale" }));
+      fireEvent.click(screen.getByRole("button", { name: "Complete & show receipt" }));
       await waitFor(() => expect(mutateAsync).toHaveBeenCalledTimes(3));
       expect(keyOfCall(2)).not.toBe(keyOfCall(0));
     });
@@ -407,11 +798,11 @@ describe("CounterSaleScreen: API contract wiring", () => {
     it("a new sale after the receipt's New sale gets a NEW key", async () => {
       renderWithProviders(<CounterSaleScreen />);
       await fillCola();
-      fireEvent.click(screen.getByRole("button", { name: "Complete sale" }));
+      fireEvent.click(screen.getByRole("button", { name: "Complete & show receipt" }));
       await waitFor(() => expect(screen.getByTestId("counter-sale-receipt")).toBeInTheDocument());
       fireEvent.click(screen.getByRole("button", { name: "New sale" }));
       await fillCola();
-      fireEvent.click(screen.getByRole("button", { name: "Complete sale" }));
+      fireEvent.click(screen.getByRole("button", { name: "Complete & show receipt" }));
       await waitFor(() => expect(mutateAsync).toHaveBeenCalledTimes(2));
       expect(keyOfCall(1)).not.toBe(keyOfCall(0));
     });
@@ -422,7 +813,7 @@ describe("CounterSaleScreen: API contract wiring", () => {
       mutateAsync.mockRejectedValueOnce(failure);
       renderWithProviders(<CounterSaleScreen />);
       await fillCola();
-      fireEvent.click(screen.getByRole("button", { name: "Complete sale" }));
+      fireEvent.click(screen.getByRole("button", { name: "Complete & show receipt" }));
       return screen.findByTestId("counter-outcome-unknown");
     };
     it.each([
@@ -447,7 +838,7 @@ describe("CounterSaleScreen: API contract wiring", () => {
         expect(screen.getByRole("button", { name: "Remove Cola" })).toBeDisabled();
         for (const name of ["Cash", "Card", "Check", "Exact", "$20", "$50", "$100"])
           expect(screen.getByRole("button", { name })).toBeDisabled();
-        expect(screen.getByRole("button", { name: "Complete sale" })).toBeDisabled();
+        expect(screen.getByRole("button", { name: "Complete & show receipt" })).toBeDisabled();
         expect(screen.getByRole("button", { name: /Complete & next sale/ })).toBeDisabled();
       },
     );
@@ -474,13 +865,32 @@ describe("CounterSaleScreen: API contract wiring", () => {
       expect(keyOfCall(1)).toBe(keyOfCall(0));
     });
 
+    it("a 409 COUNTER_SALE_DAY_CLOSED: the sale is saved and unpaid, so the closed-day line, the lock and the SAME key", async () => {
+      const banner = await goUnknown({
+        response: { status: 409, data: { code: "COUNTER_SALE_DAY_CLOSED", message: "RAW" } },
+      });
+      expect(banner).toBeInTheDocument();
+      expect(
+        screen.getByText(
+          "This day is closed, so no payment was taken. The sale is saved without payment.",
+        ),
+      ).toBeInTheDocument();
+      expect(document.body.textContent).not.toContain("RAW");
+      expect(screen.queryByText(/nothing was charged/i)).toBeNull();
+      expect(screen.queryByText(/something changed/i)).toBeNull();
+      expect(screen.getByLabelText("Scan or search items")).toBeDisabled();
+      fireEvent.click(screen.getByRole("button", { name: "Try again" }));
+      await waitFor(() => expect(mutateAsync).toHaveBeenCalledTimes(2));
+      expect(keyOfCall(1)).toBe(keyOfCall(0));
+    });
+
     it("any other 409 is still a definitive refusal (editable, new key)", async () => {
       mutateAsync.mockRejectedValueOnce({
         response: { status: 409, data: { code: "WALK_IN_OPEN_CREDIT" } },
       });
       renderWithProviders(<CounterSaleScreen />);
       await fillCola();
-      fireEvent.click(screen.getByRole("button", { name: "Complete sale" }));
+      fireEvent.click(screen.getByRole("button", { name: "Complete & show receipt" }));
       expect(await screen.findByRole("alert")).toBeInTheDocument();
       expect(screen.queryByTestId("counter-outcome-unknown")).toBeNull();
       expect(screen.getByLabelText("Scan or search items")).not.toBeDisabled();
@@ -569,7 +979,7 @@ describe("CounterSaleScreen: API contract wiring", () => {
           );
           if (method === "CHECK")
             fireEvent.change(screen.getByLabelText("Check number"), { target: { value: "1001" } });
-          fireEvent.click(screen.getByRole("button", { name: "Complete sale" }));
+          fireEvent.click(screen.getByRole("button", { name: "Complete & show receipt" }));
           await screen.findByTestId("counter-outcome-unknown");
           lookupAsync.mockRejectedValueOnce({ response: { status: 500 } });
           check();
@@ -594,7 +1004,7 @@ describe("CounterSaleScreen: API contract wiring", () => {
         expect(mutateAsync).toHaveBeenCalledTimes(1); // no re-POST
         expect(screen.queryByText(/nothing was charged/i)).toBeNull();
         fireEvent.click(screen.getByRole("button", { name: "$20" }));
-        fireEvent.click(screen.getByRole("button", { name: "Complete sale" }));
+        fireEvent.click(screen.getByRole("button", { name: "Complete & show receipt" }));
         await waitFor(() => expect(mutateAsync).toHaveBeenCalledTimes(2));
         expect(keyOfCall(1)).not.toBe(keyOfCall(0));
       });
@@ -615,7 +1025,7 @@ describe("CounterSaleScreen: API contract wiring", () => {
         expect(lookupAsync).toHaveBeenCalledTimes(1);
         expect(screen.queryByText(/nothing was charged/i)).toBeNull();
         fireEvent.click(screen.getByRole("button", { name: "$20" }));
-        fireEvent.click(screen.getByRole("button", { name: "Complete sale" }));
+        fireEvent.click(screen.getByRole("button", { name: "Complete & show receipt" }));
         await waitFor(() => expect(mutateAsync).toHaveBeenCalledTimes(2));
         expect(keyOfCall(1)).not.toBe(keyOfCall(0)); // the key was dropped: a NEW sale
       });
@@ -685,7 +1095,7 @@ describe("CounterSaleScreen: API contract wiring", () => {
           expect(lookupAsync).toHaveBeenCalledTimes(1);
           expect(mutateAsync).toHaveBeenCalledTimes(2); // never a third send
           fireEvent.click(screen.getByRole("button", { name: "$20" }));
-          fireEvent.click(screen.getByRole("button", { name: "Complete sale" }));
+          fireEvent.click(screen.getByRole("button", { name: "Complete & show receipt" }));
           await waitFor(() => expect(mutateAsync).toHaveBeenCalledTimes(3));
           expect(keyOfCall(2)).not.toBe(keyOfCall(0)); // the key was dropped: a NEW sale
         });
@@ -713,7 +1123,7 @@ describe("CounterSaleScreen: API contract wiring", () => {
         expect(screen.getByLabelText("Scan or search items")).not.toBeDisabled();
         expect(screen.queryByText(/nothing was charged/i)).toBeNull();
         fireEvent.click(screen.getByRole("button", { name: "$20" }));
-        fireEvent.click(screen.getByRole("button", { name: "Complete sale" }));
+        fireEvent.click(screen.getByRole("button", { name: "Complete & show receipt" }));
         await waitFor(() => expect(mutateAsync).toHaveBeenCalledTimes(2));
         expect(keyOfCall(1)).not.toBe(keyOfCall(0));
       });
@@ -726,7 +1136,7 @@ describe("CounterSaleScreen: API contract wiring", () => {
           expect(screen.getByLabelText("Print receipt automatically")).toBeChecked(),
         );
         await fillCola();
-        fireEvent.click(screen.getByRole("button", { name: "Complete sale" }));
+        fireEvent.click(screen.getByRole("button", { name: "Complete & show receipt" }));
         await screen.findByTestId("counter-outcome-unknown");
         lookupAsync.mockResolvedValueOnce(sale);
         check();
@@ -741,7 +1151,7 @@ describe("CounterSaleScreen: API contract wiring", () => {
           renderWithProviders(<CounterSaleScreen />);
           await fillCola();
           if (method) fireEvent.click(screen.getByRole("button", { name: method }));
-          fireEvent.click(screen.getByRole("button", { name: "Complete sale" }));
+          fireEvent.click(screen.getByRole("button", { name: "Complete & show receipt" }));
           await screen.findByTestId("counter-outcome-unknown");
           lookupAsync.mockResolvedValueOnce({ ...sale, ...body });
           check();
@@ -752,7 +1162,7 @@ describe("CounterSaleScreen: API contract wiring", () => {
           mutateAsync.mockRejectedValueOnce({ response: { status: 503 } });
           renderWithProviders(<CounterSaleScreen />);
           await fillCola();
-          fireEvent.click(screen.getByRole("button", { name: "Complete sale" }));
+          fireEvent.click(screen.getByRole("button", { name: "Complete & show receipt" }));
           await screen.findByTestId("counter-outcome-unknown");
           lookupAsync.mockResolvedValueOnce({
             ...sale,
@@ -777,7 +1187,7 @@ describe("CounterSaleScreen: API contract wiring", () => {
           mutateAsync.mockRejectedValueOnce({ response: { status: 503 } });
           renderWithProviders(<CounterSaleScreen />);
           await fillCola();
-          fireEvent.click(screen.getByRole("button", { name: "Complete sale" }));
+          fireEvent.click(screen.getByRole("button", { name: "Complete & show receipt" }));
           await screen.findByTestId("counter-outcome-unknown");
           const stored = {
             ...sale,
@@ -809,7 +1219,7 @@ describe("CounterSaleScreen: API contract wiring", () => {
             expect(screen.getByTestId("running-total")).toHaveTextContent("$2.50"),
           );
           fireEvent.change(screen.getByLabelText("Amount tendered"), { target: { value: "3" } });
-          fireEvent.click(screen.getByRole("button", { name: "Complete sale" }));
+          fireEvent.click(screen.getByRole("button", { name: "Complete & show receipt" }));
           await screen.findByTestId("counter-outcome-unknown");
           // the server priced it higher than the screen's estimate: stored 3.00 of 5.00, server says recorded
           lookupAsync.mockResolvedValueOnce({
@@ -845,7 +1255,7 @@ describe("CounterSaleScreen: API contract wiring", () => {
             expect(screen.getByTestId("running-total")).toHaveTextContent("$2.50"),
           );
           fireEvent.click(screen.getByRole("button", { name: "On account" }));
-          fireEvent.click(screen.getByRole("button", { name: "Complete sale" }));
+          fireEvent.click(screen.getByRole("button", { name: "Complete & show receipt" }));
           await screen.findByTestId("counter-outcome-unknown");
           lookupAsync.mockResolvedValueOnce({
             ...sale,
@@ -901,7 +1311,7 @@ describe("CounterSaleScreen: API contract wiring", () => {
             renderWithProviders(<CounterSaleScreen />);
             await fillCola();
             fireEvent.click(screen.getByRole("button", { name: "Exact" }));
-            fireEvent.click(screen.getByRole("button", { name: "Complete sale" }));
+            fireEvent.click(screen.getByRole("button", { name: "Complete & show receipt" }));
             await screen.findByTestId("counter-outcome-unknown");
             lookupAsync.mockResolvedValueOnce({ ...sale, change: undefined, method: "CASH" });
             check();
@@ -916,13 +1326,14 @@ describe("CounterSaleScreen: API contract wiring", () => {
             expect(screen.queryByText("Change")).toBeNull();
           });
 
-          it("a live (non-recovered) cash receipt is unchanged: server change, no Tendered row, no 'as entered'", async () => {
+          it("a live (non-recovered) cash receipt: server change, Tendered = paid + change, no 'as entered'", async () => {
             renderWithProviders(<CounterSaleScreen />);
             await fillCola();
-            fireEvent.click(screen.getByRole("button", { name: "Complete sale" }));
+            fireEvent.click(screen.getByRole("button", { name: "Complete & show receipt" }));
             const receipt = await screen.findByTestId("counter-sale-receipt");
             expect(screen.getByText("Change")).toBeInTheDocument();
-            expect(receipt.textContent).not.toMatch(/as entered|Tendered/);
+            expect(screen.getByTestId("receipt-tendered")).toHaveTextContent("$37.50");
+            expect(receipt.textContent).not.toMatch(/as entered/);
           });
         });
 
@@ -1071,13 +1482,29 @@ describe("CounterSaleScreen: API contract wiring", () => {
   });
 
   describe("the displayed total is an ESTIMATE; the receipt carries the server's number", () => {
-    it("the running figure is labelled 'Estimated total' (and still drives quick tender / change)", async () => {
+    it("the running figure stays labelled 'Estimated total' (the server's figure can differ: a credit auto-applied, a re-priced line) and still drives quick tender / change", async () => {
       renderWithProviders(<CounterSaleScreen />);
       await fillCola();
       const running = screen.getByTestId("running-total");
       expect(running).toHaveTextContent("Estimated total");
       expect(running).toHaveTextContent("$2.50");
       expect(screen.getByTestId("change-due")).toHaveTextContent("Change $17.50");
+    });
+
+    it("row 345: the multiply tip is the scan field's accessible description, in a hint line under the form", () => {
+      renderWithProviders(<CounterSaleScreen />);
+      const field = screen.getByLabelText("Scan or search items");
+      expect(field).toHaveAttribute("placeholder", "Scan or type an item");
+      const hint = screen.getByTestId("scan-hint");
+      expect(hint).toHaveTextContent("Type a quantity first to multiply.");
+      // the field keeps its accessible name and gains the tip as its description
+      expect(field).toHaveAccessibleDescription("Type a quantity first to multiply.");
+      // under the field, outside the form
+      expect(hint.closest("form")).toBeNull();
+      expect(
+        screen.getByTestId("counter-scan-bar").compareDocumentPosition(hint) &
+          Node.DOCUMENT_POSITION_FOLLOWING,
+      ).toBeTruthy();
     });
 
     it("the receipt's total is prominent and is the server's number", async () => {
@@ -1094,7 +1521,7 @@ describe("CounterSaleScreen: API contract wiring", () => {
       });
       renderWithProviders(<CounterSaleScreen />);
       await fillCola();
-      fireEvent.click(screen.getByRole("button", { name: "Complete sale" }));
+      fireEvent.click(screen.getByRole("button", { name: "Complete & show receipt" }));
       const total = await screen.findByTestId("receipt-total");
       expect(total).toHaveTextContent("$2.70");
       expect(total.className).toMatch(/text-lg/);
@@ -1244,7 +1671,7 @@ describe("CounterSaleScreen: API contract wiring", () => {
       await scan("WATER");
       await waitFor(() => expect(screen.getByTestId("running-total")).toHaveTextContent("$13.00"));
       fireEvent.click(screen.getByRole("button", { name: "$20" }));
-      fireEvent.click(screen.getByRole("button", { name: "Complete sale" }));
+      fireEvent.click(screen.getByRole("button", { name: "Complete & show receipt" }));
       await waitFor(() => expect(mutateAsync).toHaveBeenCalledTimes(1));
       expect(mutateAsync.mock.calls[0][0].dto.items).toEqual([
         { productId: "p-one", qty: 1 },
@@ -1256,7 +1683,7 @@ describe("CounterSaleScreen: API contract wiring", () => {
   describe("line quantities read right on the cart and the receipt (N1, N2)", () => {
     const completeAndReceipt = async () => {
       fireEvent.click(screen.getByRole("button", { name: "$20" }));
-      fireEvent.click(screen.getByRole("button", { name: "Complete sale" }));
+      fireEvent.click(screen.getByRole("button", { name: "Complete & show receipt" }));
       return screen.findByTestId("counter-sale-receipt");
     };
 
@@ -1268,7 +1695,8 @@ describe("CounterSaleScreen: API contract wiring", () => {
       expect(cart).toHaveTextContent("Single · × 1");
       expect(cart.textContent).not.toMatch(/box/i);
       const receipt = await completeAndReceipt();
-      expect(receipt).toHaveTextContent("Single × 1");
+      expect(receipt).toHaveTextContent("Single");
+      expect(receipt).toHaveTextContent("1 × $1.00");
       expect(receipt.textContent).not.toMatch(/box/i);
     });
 
@@ -1292,7 +1720,7 @@ describe("CounterSaleScreen: API contract wiring", () => {
       await waitFor(() => expect(screen.getByTestId("running-total")).toHaveTextContent("$12.00"));
       expect(screen.getByRole("list", { name: "Items" })).toHaveTextContent("Water · 1 box");
       const receipt = await completeAndReceipt();
-      expect(receipt).toHaveTextContent("Water × 1 box");
+      expect(receipt).toHaveTextContent("1 box × $12.00 per box");
     });
   });
 
@@ -1314,7 +1742,7 @@ describe("CounterSaleScreen: API contract wiring", () => {
     it("says so, links to the invoice, never shows Paid, and shows the server balance due", async () => {
       renderWithProviders(<CounterSaleScreen />);
       await fillCola();
-      fireEvent.click(screen.getByRole("button", { name: "Complete sale" }));
+      fireEvent.click(screen.getByRole("button", { name: "Complete & show receipt" }));
       const notice = await screen.findByTestId("counter-payment-not-recorded");
       expect(notice).toHaveTextContent("Sale recorded — payment not recorded");
       expect(screen.getByRole("link", { name: "Record payment" })).toHaveAttribute(
@@ -1340,7 +1768,7 @@ describe("CounterSaleScreen: API contract wiring", () => {
       });
       renderWithProviders(<CounterSaleScreen />);
       await fillCola();
-      fireEvent.click(screen.getByRole("button", { name: "Complete sale" }));
+      fireEvent.click(screen.getByRole("button", { name: "Complete & show receipt" }));
       await waitFor(() => expect(screen.getByTestId("counter-sale-receipt")).toBeInTheDocument());
       expect(screen.getByText("Paid")).toBeInTheDocument();
       expect(screen.queryByTestId("counter-payment-not-recorded")).toBeNull();
@@ -1363,7 +1791,7 @@ describe("CounterSaleScreen: API contract wiring", () => {
     });
     renderWithProviders(<CounterSaleScreen />);
     await fillCola();
-    fireEvent.click(screen.getByRole("button", { name: "Complete sale" }));
+    fireEvent.click(screen.getByRole("button", { name: "Complete & show receipt" }));
     await waitFor(() => expect(screen.getByTestId("counter-sale-receipt")).toBeInTheDocument());
     expect(screen.getByText(/Order ORD-1/)).toHaveTextContent("Invoice INV-1");
     expect(screen.queryByRole("alert")).toBeNull();
@@ -1374,7 +1802,7 @@ describe("CounterSaleScreen: API contract wiring", () => {
       mutateAsync.mockRejectedValue({ response });
       renderWithProviders(<CounterSaleScreen />);
       await fillCola();
-      fireEvent.click(screen.getByRole("button", { name: "Complete sale" }));
+      fireEvent.click(screen.getByRole("button", { name: "Complete & show receipt" }));
       return (await screen.findByRole("alert")).textContent ?? "";
     };
     it("403 COUNTER_SALES_DISABLED shows the fixed disabled copy", async () => {
@@ -1425,6 +1853,61 @@ describe("CounterSaleScreen: API contract wiring", () => {
       await waitFor(() => expect(screen.getByTestId("counter-sale-receipt")).toBeInTheDocument());
     });
 
+    // POS-1 guards (green before and after: the cash Enter already completes and stays on the receipt).
+    it("POS-1: cash Enter completes and STAYS on the receipt (no auto-reset to a fresh sale)", async () => {
+      const user = userEvent.setup();
+      renderWithProviders(<CounterSaleScreen />);
+      await scan("012345678905");
+      await waitFor(() => expect(screen.getByTestId("running-total")).toHaveTextContent("$2.50"));
+      await user.type(screen.getByLabelText("Amount tendered"), "20{Enter}");
+      await waitFor(() => expect(screen.getByTestId("counter-sale-receipt")).toBeInTheDocument());
+      expect(screen.getByRole("heading", { name: "Receipt" })).toBeInTheDocument();
+      expect(screen.queryByText("No items yet.")).toBeNull();
+      expect(mutateAsync).toHaveBeenCalledTimes(1);
+    });
+
+    it("POS-1: two rapid Enters in the cash field send exactly ONE sale POST", async () => {
+      let release: (v: unknown) => void = () => {};
+      mutateAsync.mockReturnValueOnce(new Promise((r) => (release = r)));
+      renderWithProviders(<CounterSaleScreen />);
+      await fillCola();
+      const tender = screen.getByLabelText("Amount tendered");
+      fireEvent.keyDown(tender, { key: "Enter" });
+      fireEvent.keyDown(tender, { key: "Enter" });
+      expect(mutateAsync).toHaveBeenCalledTimes(1);
+      release({
+        orderId: "o",
+        orderNumber: "O",
+        invoiceId: "i",
+        invoiceNumber: "I",
+        total: 2.5,
+        paid: 20,
+        balanceDue: 0,
+        change: 17.5,
+        paymentRecorded: true,
+      });
+      await waitFor(() => expect(screen.getByTestId("counter-sale-receipt")).toBeInTheDocument());
+      expect(mutateAsync).toHaveBeenCalledTimes(1);
+    });
+
+    it("POS-1: the main button is exactly 'Complete & show receipt'; 'Complete & next sale' is unchanged", () => {
+      renderWithProviders(<CounterSaleScreen />);
+      expect(screen.getByRole("button", { name: "Complete & show receipt" })).toBeInTheDocument();
+      expect(screen.getByRole("button", { name: "Complete & next sale" })).toBeInTheDocument();
+      expect(screen.queryByRole("button", { name: "Complete sale" })).toBeNull();
+    });
+
+    it("POS-1: after completing, keyboard focus lands on the receipt heading", async () => {
+      const user = userEvent.setup();
+      renderWithProviders(<CounterSaleScreen />);
+      await scan("012345678905");
+      await waitFor(() => expect(screen.getByTestId("running-total")).toHaveTextContent("$2.50"));
+      await user.type(screen.getByLabelText("Amount tendered"), "20{Enter}");
+      const heading = await screen.findByRole("heading", { name: "Receipt" });
+      await waitFor(() => expect(heading).toHaveFocus());
+      expect(heading).toHaveAttribute("tabindex", "-1");
+    });
+
     it("Enter in the tendered field does NOT submit while the tender is short", async () => {
       const user = userEvent.setup();
       renderWithProviders(<CounterSaleScreen />);
@@ -1454,7 +1937,7 @@ describe("CounterSaleScreen: API contract wiring", () => {
         expect(screen.getByLabelText("Print receipt automatically")).toBeChecked(),
       );
       await fillCola();
-      fireEvent.click(screen.getByRole("button", { name: "Complete sale" }));
+      fireEvent.click(screen.getByRole("button", { name: "Complete & show receipt" }));
       expect(await screen.findByTestId("counter-outcome-unknown")).toBeInTheDocument();
       expect(printSpy).not.toHaveBeenCalled();
       fireEvent.click(screen.getByRole("button", { name: "Try again" }));
@@ -1490,7 +1973,7 @@ describe("CounterSaleScreen: held attempt hardening", () => {
     mutateAsync.mockRejectedValueOnce(failure);
     const view = renderWithProviders(<CounterSaleScreen />);
     await fillCola();
-    fireEvent.click(screen.getByRole("button", { name: "Complete sale" }));
+    fireEvent.click(screen.getByRole("button", { name: "Complete & show receipt" }));
     await screen.findByTestId("counter-outcome-unknown");
     return view;
   };
@@ -1566,17 +2049,34 @@ describe("CounterSaleScreen: held attempt hardening", () => {
           method: "CASH",
         }),
     ],
-  ])("MUST2: %s stays locked on check-recent-sales, no crash, entry removed", (_n, payload) => {
-    window.sessionStorage.setItem(STORE_KEY, payload());
-    renderWithProviders(<CounterSaleScreen />);
-    expect(screen.getByTestId("counter-outcome-unknown")).toBeInTheDocument();
-    expect(screen.getByRole("link", { name: "Check recent sales" })).toBeInTheDocument();
-    expect(screen.getByLabelText("Scan or search items")).toBeDisabled();
-    expect(window.sessionStorage.getItem(STORE_KEY)).toBeNull();
-    fireEvent.click(screen.getByRole("button", { name: "Discard and start a new sale" }));
-    expect(screen.queryByTestId("counter-outcome-unknown")).toBeNull();
-    expect(screen.getByLabelText("Scan or search items")).not.toBeDisabled();
-  });
+  ])(
+    "MUST2: %s stays locked on check-recent-sales, no crash, marker kept until Discard",
+    (_n, payload) => {
+      window.sessionStorage.setItem(STORE_KEY, payload());
+      const first = renderWithProviders(<CounterSaleScreen />);
+      expect(screen.getByTestId("counter-outcome-unknown")).toBeInTheDocument();
+      expect(screen.getByRole("link", { name: "Check recent sales" })).toBeInTheDocument();
+      expect(screen.getByLabelText("Scan or search items")).toBeDisabled();
+      expect(JSON.parse(window.sessionStorage.getItem(STORE_KEY) as string)).toEqual({
+        state: "unknown",
+      });
+      // a reload (remount) is STILL locked
+      first.unmount();
+      renderWithProviders(<CounterSaleScreen />);
+      expect(screen.getByTestId("counter-outcome-unknown")).toBeInTheDocument();
+      expect(screen.getByLabelText("Scan or search items")).toBeDisabled();
+      // the Discard copy says the sale may have gone through
+      expect(
+        screen.getByText(
+          "The previous sale may have gone through. Check recent sales before ringing it again.",
+        ),
+      ).toBeInTheDocument();
+      fireEvent.click(screen.getByRole("button", { name: "Discard and start a new sale" }));
+      expect(window.sessionStorage.getItem(STORE_KEY)).toBeNull();
+      expect(screen.queryByTestId("counter-outcome-unknown")).toBeNull();
+      expect(screen.getByLabelText("Scan or search items")).not.toBeDisabled();
+    },
+  );
 
   it("restores the locked sale with a slimmed customer (name still shown)", async () => {
     window.sessionStorage.setItem(
@@ -1626,18 +2126,18 @@ describe("CounterSaleScreen: held attempt hardening", () => {
     await scan("012345678905");
     await waitFor(() => expect(screen.getByTestId("running-total")).toHaveTextContent("$2.50"));
     fireEvent.change(screen.getByLabelText("Amount tendered"), { target: { value: "10.005" } });
-    fireEvent.click(screen.getByRole("button", { name: "Complete sale" }));
+    fireEvent.click(screen.getByRole("button", { name: "Complete & show receipt" }));
     await waitFor(() => expect(mutateAsync).toHaveBeenCalledTimes(1));
     expect(mutateAsync.mock.calls[0][0].dto.payment.amount).toBe(roundMoney(10.005));
     expect(mutateAsync.mock.calls[0][0].dto.payment.amount).toBe(10.01);
   });
 
-  it("SHOULD a: a double click on Complete sale sends ONE POST", async () => {
+  it("SHOULD a: a double click on Complete & show receipt sends ONE POST", async () => {
     let release: (v: unknown) => void = () => {};
     mutateAsync.mockReturnValueOnce(new Promise((r) => (release = r)));
     renderWithProviders(<CounterSaleScreen />);
     await fillCola();
-    const btn = screen.getByRole("button", { name: "Complete sale" });
+    const btn = screen.getByRole("button", { name: "Complete & show receipt" });
     fireEvent.click(btn);
     fireEvent.click(btn);
     fireEvent.keyDown(screen.getByLabelText("Amount tendered"), { key: "Enter" });
@@ -1663,7 +2163,7 @@ describe("CounterSaleScreen: held attempt hardening", () => {
     });
     renderWithProviders(<CounterSaleScreen />);
     await fillCola();
-    fireEvent.click(screen.getByRole("button", { name: "Complete sale" }));
+    fireEvent.click(screen.getByRole("button", { name: "Complete & show receipt" }));
     expect(await screen.findByRole("alert")).toHaveTextContent(
       "This walk-in has open credit. Resolve it on the customer, then ring the sale again.",
     );
@@ -1675,12 +2175,12 @@ describe("CounterSaleScreen: held attempt hardening", () => {
     });
     renderWithProviders(<CounterSaleScreen />);
     await fillCola();
-    fireEvent.click(screen.getByRole("button", { name: "Complete sale" }));
+    fireEvent.click(screen.getByRole("button", { name: "Complete & show receipt" }));
     expect(await screen.findByRole("alert")).toHaveTextContent(
       "That sale reference was already used. Ring the sale again.",
     );
     expect(screen.queryByTestId("counter-outcome-unknown")).toBeNull();
-    fireEvent.click(screen.getByRole("button", { name: "Complete sale" }));
+    fireEvent.click(screen.getByRole("button", { name: "Complete & show receipt" }));
     await waitFor(() => expect(mutateAsync).toHaveBeenCalledTimes(2));
     expect(keyOfCall(1)).not.toBe(keyOfCall(0));
   });
@@ -1693,5 +2193,359 @@ describe("CounterSaleScreen: held attempt hardening", () => {
     fireEvent.click(screen.getByRole("button", { name: "Try again" }));
     await waitFor(() => expect(mutateAsync).toHaveBeenCalledTimes(2));
     expect(await screen.findByTestId("counter-outcome-unknown")).toBeInTheDocument();
+  });
+});
+
+describe("CounterSaleScreen: the live cart survives a refresh (SA-748 section 1)", () => {
+  const LIVE_KEY = "rf.counterSale.liveCart:acme:u-a";
+  const HELD_KEY = "rf.counterSale.heldAttempt:acme:u-a";
+  // A refresh keeps the tab's sessionStorage, so the cart's writer id is this tab's id.
+  beforeEach(() =>
+    window.sessionStorage.setItem("rf.counterSale.tabId", "tab-from-before-the-refresh"),
+  );
+  const colaLine = {
+    tempId: "p-cola-0",
+    productId: "p-cola",
+    name: "Cola",
+    unitPrice: 2.5,
+    qty: 3,
+    listPrice: 2.5,
+    unit: "each",
+    priceType: "STANDARD",
+  };
+  const liveCart = (over: Record<string, unknown> = {}) =>
+    JSON.stringify({
+      v: 1,
+      owner: "tab-from-before-the-refresh",
+      lines: [colaLine],
+      customer: null,
+      method: "CASH",
+      tendered: "10",
+      reference: "",
+      ...over,
+    });
+
+  it("saves the cart (debounced) as the clerk rings it", async () => {
+    renderWithProviders(<CounterSaleScreen />);
+    await scan("012345678905");
+    await waitFor(() => expect(window.localStorage.getItem(LIVE_KEY)).not.toBeNull());
+    const saved = JSON.parse(window.localStorage.getItem(LIVE_KEY) as string);
+    expect(saved.lines).toHaveLength(1);
+    expect(saved.lines[0]).toMatchObject({ productId: "p-cola", qty: 1 });
+    expect(saved.method).toBe("CASH");
+  });
+
+  it("puts the cart back UNLOCKED with a banner after a refresh", async () => {
+    window.localStorage.setItem(LIVE_KEY, liveCart());
+    renderWithProviders(<CounterSaleScreen />);
+    expect(await screen.findByTestId("counter-cart-restored")).toBeInTheDocument();
+    expect(screen.getByTestId("running-total")).toHaveTextContent("$7.50");
+    // the cash is NOT restored: prices may have moved, so the clerk taps the amount against today's total
+    expect(screen.getByLabelText("Amount tendered")).toHaveValue("");
+    expect(screen.getByLabelText("Scan or search items")).not.toBeDisabled();
+    expect(screen.queryByTestId("counter-outcome-unknown")).toBeNull();
+    fireEvent.click(screen.getByRole("button", { name: "OK" }));
+    expect(screen.queryByTestId("counter-cart-restored")).toBeNull();
+  });
+
+  it("a held attempt always wins: the live cart is not restored over it, and is dropped", async () => {
+    window.sessionStorage.setItem(
+      HELD_KEY,
+      JSON.stringify({
+        key: "k1",
+        dto: { walkIn: true, items: [], payment: { method: "CASH", amount: 5 } },
+        next: false,
+        estimate: { total: 2.5, change: 2.5 },
+        lines: [{ ...colaLine, qty: 1 }],
+        customer: null,
+        method: "CASH",
+        tendered: "5",
+        reference: "",
+      }),
+    );
+    window.localStorage.setItem(LIVE_KEY, liveCart());
+    renderWithProviders(<CounterSaleScreen />);
+    expect(await screen.findByTestId("counter-outcome-unknown")).toBeInTheDocument();
+    expect(screen.queryByTestId("counter-cart-restored")).toBeNull();
+    expect(screen.getByTestId("running-total")).toHaveTextContent("$2.50"); // the held cart, not the live one
+    await waitFor(() => expect(window.localStorage.getItem(LIVE_KEY)).toBeNull());
+  });
+
+  it("an unreadable stored cart is dropped and never locks the till", async () => {
+    window.localStorage.setItem(LIVE_KEY, "{not json");
+    renderWithProviders(<CounterSaleScreen />);
+    expect(screen.getByLabelText("Scan or search items")).not.toBeDisabled();
+    expect(screen.queryByTestId("counter-cart-restored")).toBeNull();
+    await waitFor(() => expect(window.localStorage.getItem(LIVE_KEY)).toBeNull());
+  });
+
+  it("a completed sale leaves nothing behind to restore", async () => {
+    renderWithProviders(<CounterSaleScreen />);
+    await scan("012345678905");
+    await waitFor(() => expect(window.localStorage.getItem(LIVE_KEY)).not.toBeNull());
+    fireEvent.click(screen.getByRole("button", { name: "$20" }));
+    fireEvent.click(screen.getByRole("button", { name: "Complete & show receipt" }));
+    await waitFor(() => expect(window.localStorage.getItem(LIVE_KEY)).toBeNull());
+    await new Promise((r) => setTimeout(r, 600)); // past the save delay: still nothing
+    expect(window.localStorage.getItem(LIVE_KEY)).toBeNull();
+  });
+
+  it("a cart cleared by the clerk clears the stored one", async () => {
+    window.localStorage.setItem(LIVE_KEY, liveCart());
+    renderWithProviders(<CounterSaleScreen />);
+    await screen.findByTestId("counter-cart-restored");
+    fireEvent.click(screen.getByRole("button", { name: "Remove Cola" }));
+    await waitFor(() => expect(window.localStorage.getItem(LIVE_KEY)).toBeNull());
+  });
+
+  it("a cart stored under an unknown schema version is dropped, not restored", async () => {
+    window.localStorage.setItem(LIVE_KEY, liveCart({ v: 99 }));
+    renderWithProviders(<CounterSaleScreen />);
+    expect(screen.getByLabelText("Scan or search items")).not.toBeDisabled();
+    expect(screen.queryByTestId("counter-cart-restored")).toBeNull();
+    await waitFor(() => expect(window.localStorage.getItem(LIVE_KEY)).toBeNull());
+  });
+
+  it("a refresh MID-SEND cannot write the cart back (pagehide flush stays quiet)", async () => {
+    mutateAsync.mockReturnValue(new Promise(() => undefined)); // the POST never answers
+    renderWithProviders(<CounterSaleScreen />);
+    await scan("012345678905");
+    await waitFor(() => expect(window.localStorage.getItem(LIVE_KEY)).not.toBeNull());
+    fireEvent.click(screen.getByRole("button", { name: "$20" }));
+    fireEvent.click(screen.getByRole("button", { name: "Complete & show receipt" }));
+    expect(window.localStorage.getItem(LIVE_KEY)).toBeNull(); // cleared synchronously, before the POST can answer
+    window.dispatchEvent(new Event("pagehide"));
+    await new Promise((r) => setTimeout(r, 600));
+    expect(window.localStorage.getItem(LIVE_KEY)).toBeNull();
+  });
+
+  it("an UNKNOWN outcome keeps the cart out of live storage (the held attempt owns it)", async () => {
+    mutateAsync.mockRejectedValue({ message: "Network Error" });
+    renderWithProviders(<CounterSaleScreen />);
+    await scan("012345678905");
+    fireEvent.click(screen.getByRole("button", { name: "$20" }));
+    fireEvent.click(screen.getByRole("button", { name: "Complete & show receipt" }));
+    expect(await screen.findByTestId("counter-outcome-unknown")).toBeInTheDocument();
+    window.dispatchEvent(new Event("pagehide"));
+    await new Promise((r) => setTimeout(r, 600));
+    expect(window.localStorage.getItem(LIVE_KEY)).toBeNull();
+  });
+
+  it("a definitive refusal puts the cart back into storage (nothing was written)", async () => {
+    mutateAsync.mockRejectedValue({ response: { status: 400, data: { message: "RAW" } } });
+    renderWithProviders(<CounterSaleScreen />);
+    await scan("012345678905");
+    fireEvent.click(screen.getByRole("button", { name: "$20" }));
+    fireEvent.click(screen.getByRole("button", { name: "Complete & show receipt" }));
+    expect(await screen.findByRole("alert")).toHaveTextContent(/as entered/);
+    await waitFor(() => expect(window.localStorage.getItem(LIVE_KEY)).not.toBeNull());
+  });
+
+  it("Discard on the leave dialog drops the stored cart too, so it is not restored next visit (SA-748 MEDIUM)", async () => {
+    renderWithProviders(<CounterSaleScreen />);
+    await scan("012345678905");
+    await waitFor(() => expect(window.localStorage.getItem(LIVE_KEY)).not.toBeNull());
+    const proceed = jest.fn();
+    expect(guardCounterLeave(proceed)).toBe(true); // the "Discard this sale?" dialog opens
+    expect(window.localStorage.getItem(LIVE_KEY)).not.toBeNull(); // Keep selling would still have it
+    confirmCounterLeave(); // Discard
+    expect(proceed).toHaveBeenCalledTimes(1);
+    expect(window.localStorage.getItem(LIVE_KEY)).toBeNull();
+    await new Promise((r) => setTimeout(r, 600));
+    expect(window.localStorage.getItem(LIVE_KEY)).toBeNull();
+  });
+
+  it("Keep selling leaves the stored cart alone", async () => {
+    renderWithProviders(<CounterSaleScreen />);
+    await scan("012345678905");
+    await waitFor(() => expect(window.localStorage.getItem(LIVE_KEY)).not.toBeNull());
+    expect(guardCounterLeave(jest.fn())).toBe(true);
+    cancelCounterLeave();
+    await new Promise((r) => setTimeout(r, 600));
+    expect(window.localStorage.getItem(LIVE_KEY)).not.toBeNull();
+  });
+
+  describe("two tabs", () => {
+    const original = Object.getOwnPropertyDescriptor(window.navigator, "locks");
+    const installLocks = (granted: boolean) => {
+      Object.defineProperty(window.navigator, "locks", {
+        configurable: true,
+        value: {
+          request: (_name: string, _opts: unknown, cb: (lock: unknown) => unknown) =>
+            Promise.resolve(cb(granted ? { name: "held" } : null)),
+        },
+      });
+    };
+    afterEach(() => {
+      if (original) Object.defineProperty(window.navigator, "locks", original);
+      else delete (window.navigator as unknown as Record<string, unknown>).locks;
+    });
+
+    it("a second live tab does NOT restore the cart, says so, and leaves the stored cart alone", async () => {
+      installLocks(false); // another tab holds the till's lock
+      window.localStorage.setItem(LIVE_KEY, liveCart());
+      renderWithProviders(<CounterSaleScreen />);
+      expect(await screen.findByTestId("counter-cart-other-tab")).toBeInTheDocument();
+      expect(screen.queryByTestId("counter-cart-restored")).toBeNull();
+      expect(screen.getByTestId("running-total")).toHaveTextContent("$0.00");
+      await new Promise((r) => setTimeout(r, 600));
+      expect(window.localStorage.getItem(LIVE_KEY)).not.toBeNull();
+      // and what this tab rings never overwrites the other tab's cart
+      await scan("012345678905");
+      await new Promise((r) => setTimeout(r, 600));
+      expect(JSON.parse(window.localStorage.getItem(LIVE_KEY) as string).lines[0].qty).toBe(3);
+    });
+
+    it("a non-owner tab ringing its own sale never deletes the owner tab's stored cart", async () => {
+      installLocks(false);
+      window.localStorage.setItem(LIVE_KEY, liveCart());
+      mutateAsync.mockReturnValue(new Promise(() => undefined));
+      renderWithProviders(<CounterSaleScreen />);
+      await screen.findByTestId("counter-cart-other-tab");
+      await scan("012345678905");
+      fireEvent.click(screen.getByRole("button", { name: "$20" }));
+      fireEvent.click(screen.getByRole("button", { name: "Complete & show receipt" }));
+      await new Promise((r) => setTimeout(r, 600));
+      expect(JSON.parse(window.localStorage.getItem(LIVE_KEY) as string).lines[0].qty).toBe(3);
+    });
+
+    it("the tab that wins the lock restores, even from a closed tab's cart", async () => {
+      installLocks(true);
+      window.localStorage.setItem(LIVE_KEY, liveCart());
+      renderWithProviders(<CounterSaleScreen />);
+      expect(await screen.findByTestId("counter-cart-restored")).toBeInTheDocument();
+      expect(screen.getByTestId("running-total")).toHaveTextContent("$7.50");
+    });
+
+    it("an untouched restored cart is dropped when another tab clears the stored one", async () => {
+      installLocks(true);
+      window.localStorage.setItem(LIVE_KEY, liveCart());
+      renderWithProviders(<CounterSaleScreen />);
+      await screen.findByTestId("counter-cart-restored");
+      window.localStorage.removeItem(LIVE_KEY);
+      fireEvent(window, new StorageEvent("storage", { key: LIVE_KEY, newValue: null }));
+      await waitFor(() => expect(screen.getByTestId("running-total")).toHaveTextContent("$0.00"));
+      expect(screen.getByTestId("counter-cart-cleared-elsewhere")).toBeInTheDocument();
+    });
+  });
+});
+
+/**
+ * SA-751r on the live receipt: Email receipt right after Print, a closed inline row, a walk-in opens empty, a named customer's
+ * address is only a suggestion, and the next sale is never gated by it.
+ */
+describe("digital receipt on the live receipt (SA-751r)", () => {
+  const { apiClient: api } = jest.requireMock("@/lib/api-client") as {
+    apiClient: { post: jest.Mock };
+  };
+  const finishCashSale = async () => {
+    await scan("012345678905");
+    await waitFor(() => expect(screen.getByTestId("running-total")).toHaveTextContent("$2.50"));
+    fireEvent.click(screen.getByRole("button", { name: "$20" }));
+    fireEvent.click(screen.getByRole("button", { name: "Complete & show receipt" }));
+    await waitFor(() => expect(screen.getByTestId("counter-sale-receipt")).toBeInTheDocument());
+  };
+  beforeEach(() => {
+    api.post.mockReset();
+    api.post.mockResolvedValue({ data: { channel: "email", to: "x" } });
+  });
+
+  it("the receipt's row reads Print · Email receipt · New sale, and the email row is closed", async () => {
+    renderWithProviders(<CounterSaleScreen />);
+    await finishCashSale();
+    const root = screen.getByTestId("counter-sale-receipt");
+    const names = Array.from(root.querySelectorAll("button")).map((b) => b.textContent);
+    expect(names).toEqual(["Print", "Email receipt", "New sale"]);
+    expect(screen.queryByRole("textbox", { name: "Email address" })).toBeNull();
+    expect(api.post).not.toHaveBeenCalled();
+  });
+
+  it("a walk-in sale: the row opens empty and focused; typing an address and pressing Enter posts to this sale's order", async () => {
+    const user = userEvent.setup();
+    renderWithProviders(<CounterSaleScreen />);
+    await finishCashSale();
+    fireEvent.click(screen.getByRole("button", { name: "Email receipt" }));
+    const input = screen.getByRole("textbox", { name: "Email address" }) as HTMLInputElement;
+    expect(input.value).toBe("");
+    expect(input).toHaveFocus();
+    await user.type(input, "someone@example.com{Enter}");
+    expect(await screen.findByText("Receipt sent to someone@example.com.")).toBeInTheDocument();
+    expect(api.post).toHaveBeenCalledWith("/orders/o1/receipt", {
+      channel: "email",
+      to: "someone@example.com",
+    });
+    // only the receipt endpoint was written: the typed address never reaches a customer
+    expect(api.post.mock.calls.map((c) => c[0])).toEqual(["/orders/o1/receipt"]);
+  });
+
+  it("a named customer: their address is pre-filled with Send focused, and nothing is sent until the cashier presses it", async () => {
+    customersFor = [
+      { id: "c1", businessName: "Acme Co", email: "buyer@example.com", fulfillPath: "ROUTE" },
+    ];
+    renderWithProviders(<CounterSaleScreen />);
+    fireEvent.change(screen.getByLabelText("Find a customer"), { target: { value: "acme" } });
+    fireEvent.click(screen.getByRole("button", { name: "Acme Co" }));
+    await finishCashSale();
+    fireEvent.click(screen.getByRole("button", { name: "Email receipt" }));
+    expect((screen.getByRole("textbox", { name: "Email address" }) as HTMLInputElement).value).toBe(
+      "buyer@example.com",
+    );
+    expect(screen.getByRole("button", { name: "Send" })).toHaveFocus();
+    expect(api.post).not.toHaveBeenCalled();
+    fireEvent.click(screen.getByRole("button", { name: "Send" }));
+    expect(await screen.findByText("Receipt sent to buyer@example.com.")).toBeInTheDocument();
+    expect(api.post).toHaveBeenCalledTimes(1); // 2 presses from the receipt: Email receipt, Send
+  });
+
+  it("New sale stays enabled while the email is still sending, and starts a fresh walk-in sale", async () => {
+    let resolve!: (v: unknown) => void;
+    api.post.mockReturnValue(new Promise((r) => (resolve = r)));
+    customersFor = [
+      { id: "c1", businessName: "Acme Co", email: "buyer@example.com", fulfillPath: "ROUTE" },
+    ];
+    renderWithProviders(<CounterSaleScreen />);
+    fireEvent.change(screen.getByLabelText("Find a customer"), { target: { value: "acme" } });
+    fireEvent.click(screen.getByRole("button", { name: "Acme Co" }));
+    await finishCashSale();
+    fireEvent.click(screen.getByRole("button", { name: "Email receipt" }));
+    fireEvent.click(screen.getByRole("button", { name: "Send" }));
+    await screen.findByRole("button", { name: "Sending…" });
+    expect(screen.getByRole("button", { name: "New sale" })).toBeEnabled();
+    fireEvent.click(screen.getByRole("button", { name: "New sale" }));
+    expect(screen.getByText("Walk-in customer")).toBeInTheDocument();
+    expect(screen.queryByTestId("counter-sale-receipt")).toBeNull();
+    resolve({ data: {} });
+  });
+
+  it("a named customer whose own email is empty but whose sign-in account has one: that address is pre-filled with Send focused", async () => {
+    customersFor = [
+      {
+        id: "c1",
+        businessName: "Acme Co",
+        email: null,
+        user: { id: "u1", email: "login@example.com" },
+        fulfillPath: "ROUTE",
+      },
+    ];
+    renderWithProviders(<CounterSaleScreen />);
+    fireEvent.change(screen.getByLabelText("Find a customer"), { target: { value: "acme" } });
+    fireEvent.click(screen.getByRole("button", { name: "Acme Co" }));
+    await finishCashSale();
+    fireEvent.click(screen.getByRole("button", { name: "Email receipt" }));
+    expect((screen.getByRole("textbox", { name: "Email address" }) as HTMLInputElement).value).toBe(
+      "login@example.com",
+    );
+    expect(screen.getByRole("button", { name: "Send" })).toHaveFocus();
+  });
+
+  it("Print is still the receipt's one primary action and still prints once", async () => {
+    renderWithProviders(<CounterSaleScreen />);
+    await finishCashSale();
+    printSpy.mockClear();
+    fireEvent.click(screen.getByRole("button", { name: "Print" }));
+    expect(printSpy).toHaveBeenCalledTimes(1);
+    expect(screen.getByRole("button", { name: "Email receipt" }).className).not.toBe(
+      screen.getByRole("button", { name: "Print" }).className,
+    );
   });
 });

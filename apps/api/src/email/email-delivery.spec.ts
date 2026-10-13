@@ -17,6 +17,8 @@ describe("EMAIL_KINDS", () => {
       "LOW_STOCK_DIGEST",
       "INVOICE_SENT",
       "AUTH_OTHER",
+      "Z_REPORT",
+      "RECEIPT",
     ]) {
       expect(kinds).toContain(k);
     }

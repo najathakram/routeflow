@@ -12,6 +12,7 @@ import type {
   InlineReturnQuoteResponse,
   InlineReturnRecord,
   QuoteInlineReturnRequest,
+  RefundInlineReturnRequest,
 } from "@routeflow/types";
 
 export type {
@@ -25,6 +26,9 @@ export type {
   InlineReturnStatus,
   QuoteInlineReturnItem,
   QuoteInlineReturnRequest,
+  RefundInlineReturnRequest,
+  InlineRefundTender,
+  InlineReturnResolution,
 } from "@routeflow/types";
 
 // ─── Mutations ────────────────────────────────────────────────────────────────
@@ -68,4 +72,24 @@ export function useCaptureInlineReturn() {
       qc.invalidateQueries({ queryKey: ["returns"] });
     },
   });
+}
+
+/**
+ * POS-4b: POST /returns/inline/:id/refund — pay a REFUND-resolution capture back (the standard
+ * POST /returns/:id/refund refuses an inline return). Plain call (not a hook) so
+ * the dialog can re-POST ONLY the refund on a retry; the capture's own cache invalidation already ran.
+ * Errors: 409 REFUND_AMOUNT_CHANGED, RETURN_ALREADY_RESOLVED, REFUND_NEEDS_PAID_INVOICE,
+ * RETURN_REFUNDED_CASH, RETURN_NOT_REFUNDABLE; 403. A network loss = retry the same POST (replay-safe).
+ */
+export function refundReturn(id: string, body: RefundInlineReturnRequest): Promise<unknown> {
+  return apiClient.post(`/returns/inline/${id}/refund`, body).then((r) => r.data);
+}
+
+/**
+ * SA-727b: POST /returns/inline/:id/store-credit — a saved REFUND-intent return whose refund is still
+ * pending is credited instead (mints the credit note). Replay-safe; 409 RETURN_ALREADY_RESOLVED when
+ * the return was already refunded or credited.
+ */
+export function storeCreditInstead(id: string): Promise<InlineReturnRecord> {
+  return apiClient.post(`/returns/inline/${id}/store-credit`, {}).then((r) => r.data);
 }

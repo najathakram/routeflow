@@ -20,7 +20,16 @@ jest.mock("@/lib/auth-context", () => ({
 jest.mock("next/navigation", () => ({
   useRouter: () => ({ push: jest.fn(), replace: jest.fn() }),
 }));
-jest.mock("@/lib/api/customers", () => ({ useCustomers: () => ({ data: { data: [] } }) }));
+jest.mock("@/lib/api/customers", () => ({
+  useCustomers: () => ({ data: { data: [] } }),
+  useCustomerPrices: () => ({
+    data: [],
+    isSuccess: true,
+    isError: false,
+    isFetching: false,
+    refetch: jest.fn(),
+  }),
+}));
 jest.mock("@/lib/api-client", () => ({ apiClient: { get: jest.fn(), post: jest.fn() } }));
 const mutateAsync = jest.fn();
 jest.mock("@/lib/api/counter-sale", () => ({
@@ -128,7 +137,7 @@ const lines = () =>
     .filter((li) => li.textContent !== "No items yet.");
 
 describe("B1206: a FIFO scan queue (no scan is dropped)", () => {
-  it("two scans inside the lookup time are two lines, each with its OWN typed quantity", async () => {
+  it("two scans inside the lookup time are two lines in SCAN order (the queue serializes late replies), each with its OWN typed quantity", async () => {
     const colaReply = deferred<unknown>();
     const chipsReply = deferred<unknown>();
     barcodeFor["200000000001"] = () => colaReply.promise;
@@ -140,8 +149,8 @@ describe("B1206: a FIFO scan queue (no scan is dropped)", () => {
     await scan("3"); // quantity prefix for the NEXT scan only
     await scan("200000000001"); // lookup 1 still in flight ...
     await scan("200000000002"); // ... when scan 2 arrives
-    chipsReply.resolve(CHIPS); // the replies come back OUT of order
-    colaReply.resolve(COLA);
+    chipsReply.resolve(CHIPS); // the later reply arrives FIRST ...
+    colaReply.resolve(COLA); // ... but the queue serializes: cola still lands first
 
     await waitFor(() => expect(lines()).toHaveLength(2));
     expect(lines()[0]).toHaveTextContent("Sample Cola");
@@ -212,7 +221,7 @@ describe("B1208: the scanned level decides the line", () => {
     expect(screen.getByTestId("running-total")).toHaveTextContent("$1.25");
 
     fireEvent.click(screen.getByRole("button", { name: "$20" }));
-    fireEvent.click(screen.getByRole("button", { name: "Complete sale" }));
+    fireEvent.click(screen.getByRole("button", { name: "Complete & show receipt" }));
     await waitFor(() => expect(mutateAsync).toHaveBeenCalledTimes(1));
     expect(mutateAsync.mock.calls[0][0].dto.items).toEqual([
       { productId: "p-pack", boxes: 0, pieces: 1, qty: 1 },
@@ -368,12 +377,12 @@ describe("D6: the receipt is on screen BEFORE it prints", () => {
     fireEvent.click(screen.getByRole("button", { name: name }));
   };
 
-  it("Complete sale: window.print runs with the receipt rendered", async () => {
+  it("Complete & show receipt: window.print runs with the receipt rendered", async () => {
     let receiptShown = false;
     printSpy.mockImplementationOnce(() => {
       receiptShown = screen.queryByTestId("counter-sale-receipt") !== null;
     });
-    await ring("Complete sale");
+    await ring("Complete & show receipt");
     await waitFor(() => expect(printSpy).toHaveBeenCalledTimes(1));
     expect(receiptShown).toBe(true);
   });
@@ -392,7 +401,7 @@ describe("D6: the receipt is on screen BEFORE it prints", () => {
 
 describe("pay guard: a sale never posts without the last scanned item", () => {
   const completeBtns = () => [
-    screen.getByRole("button", { name: "Complete sale" }),
+    screen.getByRole("button", { name: "Complete & show receipt" }),
     screen.getByRole("button", { name: /Complete & next sale/ }),
   ];
 
@@ -449,5 +458,158 @@ describe("pay guard: a sale never posts without the last scanned item", () => {
     completeBtns().forEach((b) => expect(b).toBeDisabled());
     fireEvent.click(within(picker).getByRole("button", { name: "Cancel" }));
     await waitFor(() => expect(completeBtns()[0]).toBeEnabled());
+  });
+});
+
+describe("B1208 nit: a UNIT multiplier at or over the pack size is labelled normalized", () => {
+  beforeEach(() => {
+    barcodeFor["400500600028"] = () => PACK24;
+  });
+
+  it("x30 UNIT scans on a 24-pack read '1 box + 6 pcs' (not '0 boxes + 30 pcs') and post the normalized split", async () => {
+    renderWithProviders(<CounterSaleScreen />);
+    await scan("30"); // a quantity for the next scan
+    await scan("400500600028");
+    await waitFor(() => expect(lines()).toHaveLength(1));
+    expect(lines()[0]).toHaveTextContent("1 box + 6 pcs");
+    expect(lines()[0]).not.toHaveTextContent("30 pcs");
+    expect(screen.getByTestId("running-total")).toHaveTextContent("$37.50"); // 30.00 + 6 x 1.25
+
+    fireEvent.click(screen.getByRole("button", { name: "$50" }));
+    fireEvent.click(screen.getByRole("button", { name: "Complete & show receipt" }));
+    await waitFor(() => expect(mutateAsync).toHaveBeenCalledTimes(1));
+    expect(mutateAsync.mock.calls[0][0].dto.items).toEqual([
+      { productId: "p-pack", boxes: 1, pieces: 6, qty: 30 },
+    ]);
+  });
+});
+
+describe("B1219 on the counter: a fuzzy scan asks 'Did you mean ...?' and never auto-adds", () => {
+  const picker = () => screen.findByRole("group", { name: /did you mean/i });
+  const payButtons = () => [
+    screen.getByRole("button", { name: "Complete & show receipt" }),
+    screen.getByRole("button", { name: /Complete & next sale/ }),
+  ];
+
+  it("ONE fuzzy hit: 'Did you mean <name>?' with Add and Cancel; nothing is added and Pay is blocked", async () => {
+    listFor["COLA"] = () => [COLA];
+    renderWithProviders(<CounterSaleScreen />);
+    await scan("COLA");
+    const group = await picker();
+    expect(group).toHaveTextContent("Did you mean Sample Cola?");
+    expect(within(group).getByRole("button", { name: "Add" })).toBeInTheDocument();
+    expect(within(group).getByRole("button", { name: "Cancel" })).toBeInTheDocument();
+    await new Promise((r) => setTimeout(r, 30));
+    expect(lines()).toHaveLength(0); // never auto-added
+    payButtons().forEach((b) => expect(b).toBeDisabled());
+  });
+
+  it("Add confirms the suggestion: one line, the picker is gone, Pay is back", async () => {
+    listFor["COLA"] = () => [COLA];
+    renderWithProviders(<CounterSaleScreen />);
+    await scan("COLA");
+    fireEvent.click(within(await picker()).getByRole("button", { name: "Add" }));
+    await waitFor(() => expect(lines()).toHaveLength(1));
+    expect(lines()[0]).toHaveTextContent("Sample Cola");
+    expect(screen.queryByRole("group", { name: /did you mean/i })).toBeNull();
+    await waitFor(() => expect(payButtons()[0]).toBeEnabled());
+  });
+
+  it("Cancel and Escape both add nothing and release Pay", async () => {
+    listFor["COLA"] = () => [COLA];
+    renderWithProviders(<CounterSaleScreen />);
+    await scan("COLA");
+    fireEvent.click(within(await picker()).getByRole("button", { name: "Cancel" }));
+    await waitFor(() => expect(payButtons()[0]).toBeEnabled());
+    expect(lines()).toHaveLength(0);
+
+    await scan("COLA");
+    await picker();
+    fireEvent.keyDown(window, { key: "Escape" });
+    await waitFor(() => expect(screen.queryByRole("group", { name: /did you mean/i })).toBeNull());
+    expect(lines()).toHaveLength(0);
+    await waitFor(() => expect(payButtons()[0]).toBeEnabled());
+  });
+
+  it("SEVERAL hits: 'Did you mean one of these?' lists every match, one Add each; Pay is blocked", async () => {
+    listFor["COLA"] = () => [COLA, CHIPS];
+    renderWithProviders(<CounterSaleScreen />);
+    await scan("COLA");
+    const group = await picker();
+    expect(group).toHaveTextContent("Did you mean one of these?");
+    expect(within(group).getByRole("button", { name: "Add Sample Cola" })).toBeInTheDocument();
+    expect(within(group).getByRole("button", { name: "Add Sample Chips" })).toBeInTheDocument();
+    payButtons().forEach((b) => expect(b).toBeDisabled());
+    fireEvent.click(within(group).getByRole("button", { name: "Add Sample Chips" }));
+    await waitFor(() => expect(lines()).toHaveLength(1));
+    expect(lines()[0]).toHaveTextContent("Sample Chips");
+  });
+
+  it("an exact code still adds at once, with no picker", async () => {
+    barcodeFor["200000000001"] = () => COLA;
+    renderWithProviders(<CounterSaleScreen />);
+    await scan("200000000001");
+    await waitFor(() => expect(lines()).toHaveLength(1));
+    expect(screen.queryByRole("group", { name: /did you mean/i })).toBeNull();
+  });
+});
+
+describe("scan queue: edge cases around the picker and removal", () => {
+  it("a scan while the picker is open waits behind it (Pay stays blocked), then lands once the picker is resolved", async () => {
+    listFor["COLA"] = () => [COLA];
+    barcodeFor["200000000002"] = () => CHIPS;
+    renderWithProviders(<CounterSaleScreen />);
+    await scan("COLA");
+    await screen.findByRole("group", { name: /did you mean/i });
+    await scan("200000000002"); // arrives while the picker is open
+    await new Promise((r) => setTimeout(r, 30));
+    expect(lines()).toHaveLength(0); // queued behind the open suggestion, not applied around it
+    expect(screen.getByRole("button", { name: "Complete & show receipt" })).toBeDisabled();
+
+    fireEvent.click(
+      within(screen.getByRole("group", { name: /did you mean/i })).getByRole("button", {
+        name: "Cancel",
+      }),
+    );
+    await waitFor(() => expect(lines()).toHaveLength(1));
+    expect(lines()[0]).toHaveTextContent("Sample Chips");
+    await waitFor(() =>
+      expect(screen.getByRole("button", { name: "Complete & show receipt" })).toBeEnabled(),
+    );
+  });
+
+  it("removing a line while a later scan is pending: the removed line stays gone and the pending scan still lands", async () => {
+    const chipsReply = deferred<unknown>();
+    barcodeFor["200000000001"] = () => COLA;
+    barcodeFor["200000000002"] = () => chipsReply.promise;
+    listFor["200000000002"] = () => chipsReply.promise.then((p) => [p]);
+    renderWithProviders(<CounterSaleScreen />);
+    await scan("200000000001");
+    await waitFor(() => expect(lines()).toHaveLength(1));
+    await scan("200000000002"); // pending
+    fireEvent.click(screen.getByRole("button", { name: "Remove Sample Cola" }));
+    expect(lines()).toHaveLength(0);
+
+    chipsReply.resolve(CHIPS);
+    await waitFor(() => expect(lines()).toHaveLength(1));
+    expect(lines()[0]).toHaveTextContent("Sample Chips");
+    expect(screen.queryByText(/Sample Cola/)).toBeNull();
+    expect(screen.getByTestId("running-total")).toHaveTextContent("$4.00");
+  });
+
+  it("removing the line a pending scan is for: the scan re-adds it fresh (no stale merge into a ghost line)", async () => {
+    const colaReply = deferred<unknown>();
+    barcodeFor["200000000001"] = () => COLA;
+    renderWithProviders(<CounterSaleScreen />);
+    await scan("200000000001");
+    await waitFor(() => expect(lines()).toHaveLength(1));
+    barcodeFor["200000000001"] = () => colaReply.promise;
+    listFor["200000000001"] = () => colaReply.promise.then((p) => [p]);
+    await scan("200000000001"); // a second Cola, pending
+    fireEvent.click(screen.getByRole("button", { name: "Remove Sample Cola" }));
+    colaReply.resolve(COLA);
+    await waitFor(() => expect(lines()).toHaveLength(1));
+    expect(lines()[0]).toHaveTextContent("× 1");
+    expect(screen.getByTestId("running-total")).toHaveTextContent("$2.50");
   });
 });

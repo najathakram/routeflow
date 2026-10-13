@@ -366,7 +366,7 @@ describe("BuyerService.requestSeller — identity-gated auto-connect (security)"
       inviteToken: "secret-token",
       inviteExpiresAt: new Date("2099-01-01"),
       inviteMethod: "EMAIL",
-      tenant: { id: "tenant-1", name: "Acme Foods", slug: "acme-foods" },
+      tenant: { id: "tenant-1", name: "Acme Foods", slug: "acme-foods", status: "ACTIVE" },
     };
     prisma.customerLink.findUnique.mockResolvedValue(requestedAgainstInvite as any);
     prisma.customerLink.findFirst.mockResolvedValue(null); // invitee has no other link here
@@ -719,7 +719,7 @@ describe("BuyerService reconnect paths — removed customer (B141)", () => {
       inviteToken: "secret-token",
       inviteExpiresAt: new Date("2099-01-01"),
       inviteMethod: "EMAIL",
-      tenant: { id: "tenant-1", name: "Acme Foods", slug: "acme-foods" },
+      tenant: { id: "tenant-1", name: "Acme Foods", slug: "acme-foods", status: "ACTIVE" },
       customer: { id: "cust-1", deletedAt },
     };
     prisma.customerLink.findUnique.mockImplementation((async (args: any) => {
@@ -797,5 +797,36 @@ describe("BuyerService reconnect paths — removed customer (B141)", () => {
       tenantSlug: "acme-foods",
     });
     expect(prisma.customerLink.update).toHaveBeenCalled();
+  });
+});
+
+describe("BuyerService.requestSeller: the walk-in customer is never matched", () => {
+  it("looks customers up with the walk-in exclusion, so an email match never links or auto-approves it", async () => {
+    const prisma = createMockPrisma();
+    prisma.tenant.findUnique.mockResolvedValue(TENANT as any);
+    prisma.buyerAccount.findUnique.mockResolvedValue({
+      email: "buyer@example.com",
+      name: "B",
+      emailVerified: true,
+    } as any);
+    // Emulate the database: apply the where-filter the service sends to a walk-in row.
+    const rows = [makeCustomer({ id: "walk", isWalkIn: true })];
+    prisma.customer.findFirst.mockImplementation((async ({ where }: any) => {
+      const excluded = JSON.stringify(where.AND ?? []).includes('"isWalkIn":false');
+      return excluded ? null : rows[0];
+    }) as any);
+    const mod = await Test.createTestingModule({
+      providers: [
+        BuyerService,
+        { provide: PrismaService, useValue: prisma },
+        { provide: EmailService, useValue: { send: jest.fn() } },
+        { provide: ConfigService, useValue: { get: jest.fn() } },
+        { provide: RouteFlowGateway, useValue: { emitBuyerAutoLinked: jest.fn() } },
+      ],
+    }).compile();
+    const svc = mod.get(BuyerService);
+    await expect(svc.requestSeller("acct-1", DTO)).rejects.toBeInstanceOf(NotFoundException);
+    expect(prisma.customerLink.upsert).not.toHaveBeenCalled();
+    expect(prisma.customerLink.create).not.toHaveBeenCalled();
   });
 });

@@ -33,13 +33,23 @@ describe("billing export projection (B1187)", () => {
     futureColumn: "must-not-leak",
   };
 
-  it("invoice is exactly {number, amount, status, cycle, issuedAt}", () => {
-    expect(Object.keys(projectInvoiceForExport(invoiceRow)).sort()).toEqual(
-      ["amount", "cycle", "issuedAt", "number", "status"].sort(),
-    );
-    expect([...BILLING_EXPORT_INVOICE_FIELDS].sort()).toEqual(
-      ["amount", "cycle", "issuedAt", "number", "status"].sort(),
-    );
+  const ALLOWED_INVOICE_FIELDS = [
+    "amount",
+    "currency",
+    "cycle",
+    "dueDate",
+    "issuedAt",
+    "lines",
+    "number",
+    "paidAt",
+    "periodEnd",
+    "periodStart",
+    "status",
+  ];
+
+  it("invoice is exactly the allowlisted tenant-facing fields", () => {
+    expect(Object.keys(projectInvoiceForExport(invoiceRow)).sort()).toEqual(ALLOWED_INVOICE_FIELDS);
+    expect([...BILLING_EXPORT_INVOICE_FIELDS].sort()).toEqual(ALLOWED_INVOICE_FIELDS);
   });
 
   it("invoice never carries pdfKey, tenantId, id or an unlisted futureColumn", () => {
@@ -147,6 +157,8 @@ describe("billing export projection (B1187)", () => {
     expect([...EXPORT_EXCLUDED_EVENT_TYPES]).toEqual([
       "tenant.class_changed",
       "reconciliation.snapshot_backfilled",
+      "coupon.unbilled",
+      "coupon.billed",
     ]);
   });
 

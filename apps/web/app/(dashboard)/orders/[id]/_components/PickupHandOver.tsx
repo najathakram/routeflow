@@ -4,6 +4,9 @@ import * as React from "react";
 import { Button } from "@routeflow/ui/web";
 import { CheckCircle2 } from "lucide-react";
 import type { Order } from "@/lib/api/orders";
+import { useOptionalAuth } from "@/lib/auth-context";
+import { isPosOrder } from "@/lib/api/pos-orders";
+import { heldPickupStoreKey } from "@/lib/counter-sale";
 import { PickupCompleteDialog, type HeldPickupKey } from "./PickupCompleteDialog";
 
 /**
@@ -12,10 +15,21 @@ import { PickupCompleteDialog, type HeldPickupKey } from "./PickupCompleteDialog
  * refetches the order as DELIVERED, which unmounts those rows, and the dialog's result (cash change, "Payment not
  * recorded" + Retry) must outlive that.
  */
-export function PickupHandOverButton({ onOpen }: { onOpen: () => void }) {
+export function PickupHandOverButton({
+  onOpen,
+  label = "Picked up",
+}: {
+  onOpen: () => void;
+  label?: string;
+}) {
   return (
-    <Button size="sm" leftIcon={<CheckCircle2 className="h-4 w-4" />} onClick={onOpen}>
-      Picked up
+    <Button
+      size="sm"
+      className="h-11"
+      leftIcon={<CheckCircle2 className="h-4 w-4" />}
+      onClick={onOpen}
+    >
+      {label}
     </Button>
   );
 }
@@ -31,9 +45,12 @@ export function PickupHandOverDialog({
 }) {
   // An UNKNOWN outcome's key outlives the dialog's close/reopen (cleared only on a known outcome).
   const heldKey = React.useRef<HeldPickupKey>(null);
+  const authUser = useOptionalAuth()?.user;
+  const storeKey = heldPickupStoreKey(authUser?.tenantSlug, authUser?.id, order.id);
   return (
     <PickupCompleteDialog
       heldKey={heldKey}
+      storeKey={storeKey}
       open={open}
       onClose={onClose}
       orderId={order.id}
@@ -41,6 +58,7 @@ export function PickupHandOverDialog({
       total={Number(order.total)}
       invoices={order.invoices ?? []}
       isWalkIn={order.customer?.isWalkIn === true}
+      handOver={isPosOrder(order)}
     />
   );
 }

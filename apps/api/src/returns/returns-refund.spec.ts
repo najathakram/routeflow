@@ -56,6 +56,25 @@ function invoicesAsSelected(args: any, rows: Record<string, any>[]): Record<stri
   });
 }
 
+/**
+ * SA-740r2: a recorded (EXTERNAL_REFUND) refund runs in a locked transaction that reads the order's creditable invoices for
+ * "paid in full" (inside the tx, by the resolver's `orderId` query and the state reader's `id in` query). This mocks both:
+ * the given invoices, with `payments` for the state read. `status` of the return row is what the in-tx re-read sees.
+ */
+function mockExternalRefundSources(
+  prisma: any,
+  invoices: Array<{ id: string; status: string; total: number; payments: any[] }>,
+  returnStatus = "RECEIVED",
+) {
+  prisma.return.findFirst.mockResolvedValue({ id: "ret", status: returnStatus });
+  prisma.invoice.findMany.mockImplementation(async ({ where }: any) => {
+    if (where?.id?.in) return invoices.filter((i) => where.id.in.includes(i.id));
+    const notIn: string[] = where?.status?.notIn ?? [];
+    return invoices.filter((i) => !notIn.includes(i.status)).map((i) => ({ id: i.id }));
+  });
+}
+const PAID = (total: number) => [{ amount: total, status: "PAID", method: "CASH" }];
+
 describe("ReturnsService.processRefund → dispute creates a store credit (P5-13 WP5)", () => {
   let service: ReturnsService;
   let prisma: ReturnType<typeof createMockPrisma>;
@@ -377,6 +396,9 @@ describe("ReturnsService.processRefund → dispute creates a store credit (P5-13
       },
     });
     prisma.return.updateMany.mockResolvedValue({ count: 1 });
+    mockExternalRefundSources(prisma, [
+      { id: "inv-1", status: "SENT", total: 96, payments: PAID(96) },
+    ]);
 
     const result = await service.processRefund("ret-9", { method: "EXTERNAL_REFUND" });
 
@@ -388,6 +410,7 @@ describe("ReturnsService.processRefund → dispute creates a store credit (P5-13
         refundMethod: "EXTERNAL_REFUND",
         refundAmount: 24,
         refundedAt: expect.any(Date),
+        refundTender: null, // SA-740r2: no tender sent = unknown
       },
     });
     expect(prisma.return.update).not.toHaveBeenCalled(); // no creditNoteId written
@@ -415,10 +438,14 @@ describe("ReturnsService.processRefund → dispute creates a store credit (P5-13
       },
     });
     prisma.return.updateMany.mockResolvedValue({ count: 0 });
+    mockExternalRefundSources(prisma, [
+      { id: "inv-1", status: "SENT", total: 100, payments: PAID(100) },
+    ]);
 
     await expect(
       service.processRefund("ret-10", { method: "EXTERNAL_REFUND" }),
     ).rejects.toBeInstanceOf(BadRequestException);
+    expect(prisma.return.updateMany).toHaveBeenCalledTimes(1); // the claim itself was attempted and lost
     expect(creditNotesCreate).not.toHaveBeenCalled();
   });
 
@@ -788,11 +815,9 @@ describe("ReturnsService.processRefund → dispute creates a store credit (P5-13
     expect(dto.amount).toBe(100);
   });
 
-  it("REG-B53 EXTERNAL_REFUND on a VOID-only order still resolves (mints nothing)", async () => {
-    // Same fixture as the refusal case above, resolved the other way: the money was
-    // already returned by cash/card, so there is nothing to mint and nothing to cap.
-    // The creditable/headroom refusals guard the MINT path only — applying them to
-    // EXTERNAL_REFUND leaves the return stuck at RECEIVED with no transition out.
+  it("SA-740r2: EXTERNAL_REFUND on a VOID-only order is refused 409 REFUND_NEEDS_PAID_INVOICE (the B53 escape hatch is closed)", async () => {
+    // Nothing creditable is billed, so no money was paid for these goods that could be handed back: the exits are store credit
+    // when billable, else cancelling the return (the refusal says so). It used to resolve with a recorded $0 (200 REFUNDED).
     prisma.return.findUnique.mockResolvedValue({
       id: "ret-53e3",
       returnNumber: "RET-2026-060",
@@ -814,18 +839,17 @@ describe("ReturnsService.processRefund → dispute creates a store credit (P5-13
       },
     });
     prisma.return.updateMany.mockResolvedValue({ count: 1 });
+    mockExternalRefundSources(prisma, [
+      { id: "inv-1", status: "VOID", total: 100, payments: PAID(100) },
+    ]);
 
-    await expect(
-      service.processRefund("ret-53e3", { method: "EXTERNAL_REFUND" } as any),
-    ).resolves.toBeDefined();
-
-    expect(prisma.return.updateMany).toHaveBeenCalledTimes(1);
-    const claim = prisma.return.updateMany.mock.calls[0][0];
-    expect(claim.data).toMatchObject({
-      status: "REFUNDED",
-      refundMethod: "EXTERNAL_REFUND",
-      refundAmount: 0, // nothing creditable is billed, so nothing is recorded as credited
-    });
+    const err: any = await service
+      .processRefund("ret-53e3", { method: "EXTERNAL_REFUND" } as any)
+      .catch((e) => e);
+    expect(err.getStatus()).toBe(409);
+    expect(err.getResponse()).toMatchObject({ code: "REFUND_NEEDS_PAID_INVOICE" });
+    expect(err.getResponse().message).toMatch(/cancel the return/i);
+    expect(prisma.return.updateMany).not.toHaveBeenCalled();
     expect(creditNotesCreate).not.toHaveBeenCalled();
   });
 

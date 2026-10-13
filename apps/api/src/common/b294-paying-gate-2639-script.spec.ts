@@ -4,12 +4,14 @@ import path from "node:path";
 import { pathToFileURL } from "node:url";
 
 /**
- * #2639 part C / SA-547 — the b294 backfill refuses to touch a PROTECTED tenant (paying, or linked to a
- * Stripe subscription) unless explicitly admitted:
- *   - dry run: a protected tenant's candidates are PAYING-HELD, never planned, unless --allow-paying-tenant;
+ * #2639 part C / SA-547 / row 195 — the b294 backfill refuses to touch a PROTECTED tenant (paying,
+ * Stripe-linked, or named in PROTECTED_TENANT_SLUGS) unless explicitly admitted:
+ *   - dry run: a protected tenant's candidates are PAYING-HELD, never planned, unless its id is named with
+ *     --allow-protected;
  *   - apply: protection is RE-DERIVED in the transaction (the plan is never trusted); a tenant that turned
- *     protected since the dry run refuses the WHOLE apply; any protected tenant written needs
- *     --allow-paying-tenant AND --confirm-paying "APPLY TO PAYING <sorted slugs>";
+ *     protected since the dry run refuses the WHOLE apply; each protected tenant written needs its own
+ *     override token (--allow-protected <id> + a typed phrase at a real terminal, minted BEFORE the tx);
+ *   - --allow-paying-tenant / --confirm-paying are retired (unknown arguments);
  *   - the plan file and every log line carry tenant IDS and counts, never slugs.
  * Pure gates evaluated in a child node (the script is ESM); fixtures are qa-* slugs with a FAKE
  * stripeSubId. The executed dry-run/apply against a real database is F2's.
@@ -20,20 +22,20 @@ const HREF = pathToFileURL(SCRIPT).href;
 const CASES = `
 import * as b from "${HREF}";
 const row = (id, slug, over = {}) => ({ id, slug, status: "ACTIVE", class: "PRODUCTION", deletedAt: null,
-  planKey: "STARTER", stripeSubId: null, ...over });
+  planKey: "STARTER", stripeSubId: null, couponFull: false, ...over });
 const prot = b.protectedTenants([
   row("t-paying", "qa-2639-paying"),
   row("t-stripe", "qa-2639-stripe", { class: "TEST", status: "READ_ONLY", planKey: null, stripeSubId: "sub_fake_qa" }),
   row("t-plain", "qa-2639-plain", { class: "TEST" }),
   row("t-deleted", "qa-2639-deleted", { class: "TEST", planKey: null, stripeSubId: "sub_fake_qa", deletedAt: "2026-01-01" }),
-]);
+], new Set());
 const cands = ["t-paying", "t-stripe", "t-plain"].map((tenantId, i) => ({ invoiceId: "inv-" + i, tenantId }));
 const now = (ids) => new Map(ids.map((id) => [id, { arm: "paying", slug: "qa-2639-" + id.slice(2) }]));
 // Lead's Opus HIGH-1: the plan file the DRY RUN writes must verify at APPLY (it never did: \`held\` was
 // written but hashed out and never stripped back). Built by the script's own functions, round-tripped
 // through JSON exactly as the file is.
 const plan = { generatedAt: "2026-09-28T00:00:00.000Z", fingerprint: { database: "rf_qa", tenantIds: ["t-plain"] },
-  allowPayingTenant: false, admittedProtectedTenantIds: [], apply: [{ invoiceId: "inv-2", tenantId: "t-plain" }] };
+  admittedProtectedTenantIds: [], apply: [{ invoiceId: "inv-2", tenantId: "t-plain" }] };
 // Tolerates the functions being ABSENT (the pre-fix tree), so a red fails on the round-trip assertion
 // itself instead of crashing this whole child (which would mask every other pin).
 const roundTrip =
@@ -56,15 +58,14 @@ const roundTrip =
 console.log(JSON.stringify({
   roundTrip,
   prot: [...prot.entries()],
-  noFlag: b.splitProtected(cands, prot, false),
-  withFlag: b.splitProtected(cands, prot, true),
+  noFlag: b.splitProtected(cands, prot, new Set()),
+  withFlag: b.splitProtected(cands, prot, new Set(["t-paying", "t-stripe"])),
+  onlyOne: b.splitProtected(cands, prot, new Set(["t-paying"])),
   gate: {
-    unprotected: b.payingGate({ admittedProtectedTenantIds: [], nowProtected: new Map(), allowPayingTenant: false }),
-    turnedProtected: b.payingGate({ admittedProtectedTenantIds: [], nowProtected: now(["t-plain"]), allowPayingTenant: true, confirmPaying: "APPLY TO PAYING qa-2639-plain" }),
-    planFlagApplyNoFlag: b.payingGate({ admittedProtectedTenantIds: ["t-paying"], nowProtected: now(["t-paying"]), allowPayingTenant: false }),
-    wrongPhrase: b.payingGate({ admittedProtectedTenantIds: ["t-paying"], nowProtected: now(["t-paying"]), allowPayingTenant: true, confirmPaying: "APPLY TO PAYING nope" }),
-    rightPhrase: b.payingGate({ admittedProtectedTenantIds: ["t-paying", "t-stripe"], nowProtected: now(["t-stripe", "t-paying"]), allowPayingTenant: true, confirmPaying: "APPLY TO PAYING qa-2639-paying,qa-2639-stripe" }),
-    turnedUnprotected: b.payingGate({ admittedProtectedTenantIds: ["t-paying"], nowProtected: new Map(), allowPayingTenant: false }),
+    unprotected: b.payingGate({ admittedProtectedTenantIds: [], nowProtected: new Map() }),
+    turnedProtected: b.payingGate({ admittedProtectedTenantIds: [], nowProtected: now(["t-plain"]) }),
+    admittedStillProtected: b.payingGate({ admittedProtectedTenantIds: ["t-paying", "t-stripe"], nowProtected: now(["t-stripe", "t-paying"]) }),
+    turnedUnprotected: b.payingGate({ admittedProtectedTenantIds: ["t-paying"], nowProtected: new Map() }),
   },
 }));
 `;
@@ -119,27 +120,34 @@ describe("#2639 part C — b294 holds and gates protected tenants (SA-547)", () 
     expect(r.noFlag.admittedProtectedTenantIds).toEqual([]);
   });
 
-  it("dry run with --allow-paying-tenant: planned, and the plan records which protected ids it admitted", () => {
+  it("dry run with --allow-protected <id>: only the NAMED protected tenants are planned, and the plan records them", () => {
     expect(r.withFlag.apply).toHaveLength(3);
     expect(r.withFlag.held).toEqual([]);
     expect(r.withFlag.admittedProtectedTenantIds).toEqual(["t-paying", "t-stripe"]);
+    expect(r.onlyOne.admittedProtectedTenantIds).toEqual(["t-paying"]);
+    expect(r.onlyOne.held.map((h: any) => h.tenantId)).toEqual(["t-stripe"]);
   });
 
-  it("apply: an unprotected plan passes; a tenant that TURNED protected refuses the whole apply, even with the flag", () => {
+  it("apply: an unprotected plan passes; a tenant that TURNED protected refuses the whole apply", () => {
     expect(r.gate.unprotected).toEqual({ ok: true });
     expect(r.gate.turnedProtected.ok).toBe(false);
     expect(r.gate.turnedProtected.reason).toMatch(/became protected .* since the dry run/);
   });
 
-  it("apply: a plan made WITH the flag, applied WITHOUT it, is refused (the apply never trusts the plan)", () => {
-    expect(r.gate.planFlagApplyNoFlag.ok).toBe(false);
-    expect(r.gate.planFlagApplyNoFlag.reason).toMatch(/--allow-paying-tenant/);
+  it("apply: admitted tenants that are still protected, or that turned unprotected, pass the gate (the override is checked per tenant)", () => {
+    expect(r.gate.admittedStillProtected).toEqual({ ok: true });
+    expect(r.gate.turnedUnprotected).toEqual({ ok: true });
   });
 
-  it("apply: flag + wrong phrase refused; flag + the sorted-slug phrase passes; one that turned UNprotected stays fine", () => {
-    expect(r.gate.wrongPhrase.ok).toBe(false);
-    expect(r.gate.rightPhrase).toEqual({ ok: true });
-    expect(r.gate.turnedUnprotected).toEqual({ ok: true });
+  it("the retired flags are unknown arguments (exit 1), not a silent no-op", () => {
+    for (const flag of ["--allow-paying-tenant", "--confirm-paying"]) {
+      const res = spawnSync(process.execPath, [SCRIPT, flag], {
+        encoding: "utf8",
+        timeout: 60_000,
+      });
+      expect(res.status).toBe(1);
+      expect(res.stderr).toMatch(/unknown argument/);
+    }
   });
 
   it("no refusal text names a slug — tenant ids only", () => {
@@ -156,6 +164,10 @@ describe("#2639 part C — b294 holds and gates protected tenants (SA-547)", () 
     expect(begin).toBeGreaterThan(-1);
     expect(protRead).toBeGreaterThan(begin);
     expect(gate).toBeGreaterThan(protRead);
+    // Row 195: each protected tenant is then asserted with its own override token, still inside the tx.
+    const assertAt = applyBody.indexOf("assertWritableTenant(");
+    expect(assertAt).toBeGreaterThan(gate);
+    expect(applyBody.indexOf("confirmProtectedOverride(")).toBeLessThan(begin);
     // The dry run's plan file payload and console lines never interpolate a slug.
     const dry = src.slice(
       src.indexOf("async function dryRun()"),

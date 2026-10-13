@@ -1,6 +1,7 @@
 import * as React from "react";
 import { render, screen, waitFor, fireEvent, within } from "@testing-library/react";
 import AdminTenantsPage from "./page";
+import { superAdminClient } from "@/lib/admin-api";
 
 jest.mock("next/link", () => ({
   __esModule: true,
@@ -10,7 +11,6 @@ jest.mock("next/link", () => ({
 }));
 
 const mockPatch = jest.fn();
-const mockPost = jest.fn();
 const mockDelete = jest.fn();
 let mockStatus = "TRIAL";
 
@@ -38,13 +38,9 @@ jest.mock("@/lib/admin-api", () => ({
       }),
     ),
     patch: (...args: unknown[]) => mockPatch(...args),
-    post: (...args: unknown[]) => mockPost(...args),
     delete: (...args: unknown[]) => mockDelete(...args),
   },
 }));
-
-jest.mock("@/lib/impersonation", () => ({ setImpersonation: jest.fn() }));
-jest.mock("@/lib/tenant-cookie", () => ({ setTenantCookie: jest.fn() }));
 
 const mockFetchPlanCatalog = jest.fn();
 jest.mock("@/lib/api/platform-pricing", () => ({
@@ -67,8 +63,6 @@ beforeEach(() => {
   mockPatch.mockResolvedValue({ data: {} });
   mockDelete.mockResolvedValue({ data: {} });
   mockStatus = "TRIAL";
-  // Rejects so a confirmed impersonation never navigates jsdom; only the request is asserted.
-  mockPost.mockRejectedValue({ response: { data: { message: "No active admin" } } });
   mockFetchPlanCatalog.mockResolvedValue({
     version: 11,
     effectiveAt: null,
@@ -112,59 +106,50 @@ describe("REG-B857: tenants list bulk Change Plan", () => {
   });
 });
 
-describe("Back office P1: Impersonate on the tenants list asks first", () => {
-  it("click opens a dialog naming the tenant and sends NOTHING; Cancel sends nothing; Confirm sends one request", async () => {
+describe("Back office P2: the list row no longer carries Suspend or Impersonate", () => {
+  it.each(["TRIAL", "ACTIVE", "READ_ONLY"])(
+    "a %s tenant's row has View only: no Suspend, no Impersonate, no Delete, no Reactivate",
+    async (status) => {
+      mockStatus = status;
+      render(<AdminTenantsPage />);
+      await screen.findByRole("link", { name: "View" });
+      expect(screen.queryByRole("button", { name: "Suspend" })).toBeNull();
+      expect(screen.queryByRole("button", { name: "Impersonate" })).toBeNull();
+      expect(screen.queryByRole("button", { name: "Delete" })).toBeNull();
+      expect(screen.queryByRole("button", { name: "Reactivate" })).toBeNull();
+    },
+  );
+
+  it("a SUSPENDED tenant's row keeps Reactivate and Delete, and still no Suspend or Impersonate", async () => {
+    mockStatus = "SUSPENDED";
     render(<AdminTenantsPage />);
-    fireEvent.click(await screen.findByRole("button", { name: "Impersonate" }));
-
-    const dialog = await screen.findByRole("dialog", { name: "Impersonate Acme (acme)?" });
-    expect(mockPost).not.toHaveBeenCalled();
-    // The list row does not know the acting user, so the dialog says so plainly.
-    expect(within(dialog).getByText("its admin")).toBeInTheDocument();
-    expect(within(dialog).getByRole("button", { name: "Cancel" })).toHaveFocus();
-
-    fireEvent.click(within(dialog).getByRole("button", { name: "Cancel" }));
-    expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
-    expect(mockPost).not.toHaveBeenCalled();
-
-    fireEvent.click(screen.getByRole("button", { name: "Impersonate" }));
-    const again = await screen.findByRole("dialog", { name: "Impersonate Acme (acme)?" });
-    fireEvent.click(within(again).getByRole("button", { name: "Impersonate" }));
-    await waitFor(() => expect(mockPost).toHaveBeenCalledTimes(1));
-    expect(mockPost).toHaveBeenCalledWith("/platform-admin/tenants/t-1/impersonate");
+    await screen.findByRole("button", { name: "Reactivate" });
+    expect(screen.getByRole("button", { name: "Delete" })).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Suspend" })).toBeNull();
+    expect(screen.queryByRole("button", { name: "Impersonate" })).toBeNull();
   });
 
-  it("Escape closes the dialog without a request", async () => {
+  it("Reactivate sends one PATCH to ACTIVE; a failure shows fixed copy, not the server's text", async () => {
+    mockStatus = "SUSPENDED";
     render(<AdminTenantsPage />);
-    fireEvent.click(await screen.findByRole("button", { name: "Impersonate" }));
-    await screen.findByRole("dialog", { name: "Impersonate Acme (acme)?" });
-    fireEvent.keyDown(window, { key: "Escape" });
-    expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
-    expect(mockPost).not.toHaveBeenCalled();
-  });
-});
-
-describe("Back office P1: Suspend and Delete on the tenants list use the shared dialogs", () => {
-  it("Suspend: the dialog names the tenant and slug; Cancel sends nothing; Confirm sends one PATCH", async () => {
-    render(<AdminTenantsPage />);
-    fireEvent.click(await screen.findByRole("button", { name: "Suspend" }));
-    const dialog = await screen.findByRole("dialog", { name: 'Suspend "Acme (acme)"?' });
-    expect(within(dialog).getByRole("button", { name: "Cancel" })).toHaveFocus();
-    expect(within(dialog).getByText(/can't sign in while it's suspended/)).toBeInTheDocument();
-    fireEvent.click(within(dialog).getByRole("button", { name: "Cancel" }));
-    expect(mockPatch).not.toHaveBeenCalled();
-
-    fireEvent.click(screen.getByRole("button", { name: "Suspend" }));
-    const again = await screen.findByRole("dialog", { name: 'Suspend "Acme (acme)"?' });
-    fireEvent.click(within(again).getByRole("button", { name: "Suspend" }));
+    fireEvent.click(await screen.findByRole("button", { name: "Reactivate" }));
     await waitFor(() =>
       expect(mockPatch).toHaveBeenCalledWith("/platform-admin/tenants/t-1/status", {
-        status: "SUSPENDED",
+        status: "ACTIVE",
       }),
     );
     expect(mockPatch).toHaveBeenCalledTimes(1);
-  });
 
+    mockPatch.mockRejectedValueOnce({ response: { data: { message: "db constraint x_fk" } } });
+    fireEvent.click(await screen.findByRole("button", { name: "Reactivate" }));
+    expect(
+      await screen.findByText("Couldn't change the tenant's status. Try again."),
+    ).toBeInTheDocument();
+    expect(screen.queryByText(/x_fk/)).toBeNull();
+  });
+});
+
+describe("Back office P1: Delete on the tenants list uses the shared dialog", () => {
   it("Delete (a suspended tenant): the type-the-slug dialog; the button is red-gated on the exact slug; one DELETE", async () => {
     mockStatus = "SUSPENDED";
     render(<AdminTenantsPage />);
@@ -203,16 +188,39 @@ describe("Back office P1: Suspend and Delete on the tenants list use the shared 
     expect(screen.queryByText(/internal: tenant has live subscription rows/)).toBeNull();
     expect(screen.getByRole("dialog", { name: "Delete Acme (acme)?" })).toBeInTheDocument();
   });
+});
 
-  it("a failed Suspend and a failed Impersonate show fixed copy, not the server's text", async () => {
-    mockPatch.mockRejectedValueOnce({ response: { data: { message: "db constraint x_fk" } } });
+describe("SA-1: the tenants list plan filter offers the same plans as every other plan control", () => {
+  it("lists the catalog plans in catalog order (not the legacy STARTER/PROFESSIONAL/ENTERPRISE)", async () => {
     render(<AdminTenantsPage />);
-    fireEvent.click(await screen.findByRole("button", { name: "Suspend" }));
-    const dialog = await screen.findByRole("dialog", { name: 'Suspend "Acme (acme)"?' });
-    fireEvent.click(within(dialog).getByRole("button", { name: "Suspend" }));
-    expect(
-      await screen.findByText("Couldn't change the tenant's status. Try again."),
-    ).toBeInTheDocument();
-    expect(screen.queryByText(/x_fk/)).toBeNull();
+    const select = (await screen.findByRole("combobox", {
+      name: "Filter by plan",
+    })) as HTMLSelectElement;
+    await waitFor(() =>
+      expect(Array.from(select.options).map((o) => o.value)).toEqual([
+        "",
+        "STARTER",
+        "GROWTH",
+        "SCALE",
+        "ENTERPRISE",
+      ]),
+    );
+    expect(Array.from(select.options).map((o) => o.value)).not.toContain("PROFESSIONAL");
+  });
+
+  it("picking GROWTH asks the server for plan=GROWTH", async () => {
+    render(<AdminTenantsPage />);
+    const select = (await screen.findByRole("combobox", {
+      name: "Filter by plan",
+    })) as HTMLSelectElement;
+    await waitFor(() => expect(select.options.length).toBe(5));
+    fireEvent.change(select, { target: { value: "GROWTH" } });
+    await waitFor(() =>
+      expect(
+        (superAdminClient.get as jest.Mock).mock.calls.some(([url]) =>
+          String(url).includes("plan=GROWTH"),
+        ),
+      ).toBe(true),
+    );
   });
 });

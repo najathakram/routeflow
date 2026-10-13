@@ -22,6 +22,22 @@ export const STRIPE_CHECKOUT_STALE_ACTION = "STRIPE_CHECKOUT_PLAN_SKIPPED_STALE"
 /** A checkout session refused outright (unknown tenant / a customer that is not the tenant's). */
 export const STRIPE_CHECKOUT_REFUSED_ACTION = "STRIPE_CHECKOUT_REFUSED";
 /**
+ * P0 hotfix (SA-774r2 follows): the notice row of a checkout whose bank debit FAILED
+ * (`checkout.session.async_payment_failed`). One row per session; nothing is activated or cancelled by it yet.
+ */
+export const STRIPE_CHECKOUT_ASYNC_FAILED_ACTION = "STRIPE_CHECKOUT_ASYNC_PAYMENT_FAILED";
+/**
+ * B1158: a paid checkout PARKED (not applied, nothing cancelled) because the tenant's previous subscription it
+ * would supersede has a bank payment (ACH/SEPA PaymentIntent) still `processing`. Keyed by the session id; the
+ * hourly sweep (`billing.reconcileParkedCheckouts`) re-runs the checkout handling for every row that has no
+ * `STRIPE_CHECKOUT_PARK_RESOLVED` row, and writes ONE `STRIPE_CHECKOUT_PARK_ESCALATED` row (with its platform
+ * notice) when a park is still open after PARKED_CHECKOUT_ESCALATE_AFTER_DAYS.
+ */
+export const STRIPE_CHECKOUT_PAYMENT_PROCESSING_ACTION = "STRIPE_CHECKOUT_PAYMENT_PROCESSING";
+export const STRIPE_CHECKOUT_PARK_RESOLVED_ACTION = "STRIPE_CHECKOUT_PARK_RESOLVED";
+export const STRIPE_CHECKOUT_PARK_ESCALATED_ACTION = "STRIPE_CHECKOUT_PARK_ESCALATED";
+export const PARKED_CHECKOUT_ESCALATE_AFTER_DAYS = 10;
+/**
  * The STICKY decision that a completed checkout session is a DUPLICATE (a second paid session for a tenant that
  * already has a live subscription, or one paid after the tenant moved to manual invoicing). Written, keyed by
  * the session id, BEFORE the duplicate subscription is cancelled; a redelivery reads it first and only retries

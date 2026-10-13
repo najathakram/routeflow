@@ -21,14 +21,12 @@ import {
   Clock,
   Pencil,
   Trash2,
-  Zap,
   TrendingDown,
   CheckCircle2,
   DollarSign,
   X,
   MessageSquare,
   User,
-  Building2,
   Camera,
   ZoomIn,
   Upload,
@@ -131,9 +129,13 @@ import {
   type CustomerComment,
 } from "@/lib/api/customers";
 import { useUndo } from "@/lib/undo";
-import { useProducts } from "@/lib/api/products";
+import { useProduct } from "@/lib/api/products";
+import { displayProductName } from "@/lib/product-display";
+import { CustomerPriceProductSearch } from "./customer-price-product-search";
 import { useHasAddon } from "@/lib/api/tobacco";
-import { MSRP_ADDON, SALES_AGENTS_ADDON, useRoutesAccess } from "@/lib/api/addons";
+import { MSRP_ADDON, SALES_AGENTS_ADDON, useFleetAccess, useRoutesAccess } from "@/lib/api/addons";
+import { OrderStatusBadge, useOrderStatusLabel } from "@/components/OrderStatusBadge";
+import { AssignedRoutesCard } from "./_components/AssignedRoutesCard";
 import { RecordReturnAction } from "../../returns/_components/RecordReturnAction";
 import {
   useCustomerCurrentAgent,
@@ -154,11 +156,14 @@ import {
 import { StandingOrderModal } from "./StandingOrderModal";
 import { CustomerStatementCard } from "./customer-statement-card";
 import { CreditLimitPanel } from "./credit-limit-panel";
+import { GenerateOrderNowButton } from "./generate-order-button";
 import { CustomerOversellOverride } from "./customer-oversell-override";
 import { ConfirmDialog } from "@/components/ConfirmDialog";
 import { CustomerRecordPaymentModal } from "@/components/CustomerRecordPaymentModal";
 import { AddressAutocomplete } from "@/components/AddressAutocomplete";
 import { focusRefusedContactField } from "@/lib/refused-text-field";
+import { isOpenInvoiceStatus } from "@/lib/open-invoice-status";
+import { ReadOnlyHint, WriteButton, WriteLink } from "@/lib/read-only-gate";
 
 // ── Types ─────────────────────────────────────────────────────────────────────
 
@@ -190,7 +195,12 @@ const orderColumns: ColumnDef<ApiOrder, unknown>[] = [
     accessorKey: "status",
     header: "Status",
     enableSorting: false,
-    cell: ({ row }) => <Badge status={row.original.status as BadgeStatus} />,
+    cell: ({ row }) => (
+      <OrderStatusBadge
+        status={row.original.status as BadgeStatus}
+        fulfillPath={row.original.fulfillPath as string | undefined}
+      />
+    ),
   },
   {
     accessorKey: "createdAt",
@@ -960,8 +970,6 @@ function SpecialPricesTab({ customerId }: { customerId: string }) {
   // Their price vs cost now — the Price Memory margin column (pos-cost-roles §1).
   const { data: marginConfig } = useMarginConfig();
   const marginFloor = marginConfig?.defaultMarginFloor ?? 0.15;
-  const { data: productsData } = useProducts({ isActive: true, limit: 200 });
-  const allProducts: any[] = productsData?.data ?? [];
 
   const [isModalOpen, setIsModalOpen] = React.useState(false);
   const [editingPrice, setEditingPrice] = React.useState<CustomerPrice | null>(null);
@@ -973,16 +981,14 @@ function SpecialPricesTab({ customerId }: { customerId: string }) {
   const [selectedTier, setSelectedTier] = React.useState<number | null>(null);
   const [msrpInput, setMsrpInput] = React.useState("");
   const [notes, setNotes] = React.useState("");
-  const [productDropdownOpen, setProductDropdownOpen] = React.useState(false);
-
-  const filteredProducts = allProducts.filter(
-    (p: any) =>
-      p.name.toLowerCase().includes(productSearch.toLowerCase()) ||
-      (p.sku ?? "").toLowerCase().includes(productSearch.toLowerCase()),
-  );
+  // The product picked from the server-side search (its tier ladder feeds the price preview);
+  // an EDITED row has no pick yet, so its product is fetched by id.
+  const [pickedProduct, setPickedProduct] = React.useState<any>(null);
+  const { data: fetchedProduct } = useProduct(selectedProductId);
 
   // Get selected product for price preview
-  const selectedProduct = allProducts.find((p: any) => p.id === selectedProductId);
+  const selectedProduct: any =
+    pickedProduct?.id === selectedProductId ? pickedProduct : fetchedProduct;
 
   // An unset tier column (0/null) inherits the list price at checkout — label it.
   const tierUnset = (product: any, tier: number) =>
@@ -991,6 +997,7 @@ function SpecialPricesTab({ customerId }: { customerId: string }) {
   const openAdd = () => {
     setEditingPrice(null);
     setSelectedProductId("");
+    setPickedProduct(null);
     setProductSearch("");
     setSelectedTier(null);
     setMsrpInput("");
@@ -1001,7 +1008,8 @@ function SpecialPricesTab({ customerId }: { customerId: string }) {
   const openEdit = (cp: CustomerPrice) => {
     setEditingPrice(cp);
     setSelectedProductId(cp.productId);
-    setProductSearch(cp.product?.name ?? "");
+    setPickedProduct(null);
+    setProductSearch(cp.product ? displayProductName(cp.product) : "");
     setSelectedTier(cp.pricingTier ?? null);
     setMsrpInput(cp.msrp != null ? String(cp.msrp) : "");
     setNotes(cp.notes ?? "");
@@ -1369,40 +1377,15 @@ function SpecialPricesTab({ customerId }: { customerId: string }) {
         <div className="space-y-4">
           <div>
             <label className="mb-1.5 block text-sm font-medium text-navy/80">Product</label>
-            <div className="relative">
-              <input
-                type="text"
-                placeholder="Search by name or SKU…"
-                value={productSearch}
-                onChange={(e) => {
-                  setProductSearch(e.target.value);
-                  setProductDropdownOpen(true);
-                }}
-                onFocus={() => setProductDropdownOpen(true)}
-                className="h-10 w-full rounded-lg border border-surface-border bg-white px-3 text-sm text-navy placeholder:text-navy/70 focus:border-transparent focus:outline-none focus:ring-2 focus:ring-brand-500"
-              />
-              {productDropdownOpen && productSearch.length > 0 && filteredProducts.length > 0 && (
-                <div className="absolute z-10 mt-1 w-full rounded-lg border border-surface-border bg-white shadow-lg">
-                  <ul className="max-h-40 overflow-y-auto">
-                    {filteredProducts.slice(0, 20).map((p: any) => (
-                      <li key={p.id}>
-                        <button
-                          className="flex w-full items-center justify-between px-3 py-2 text-left hover:bg-surface-raised"
-                          onClick={() => {
-                            setSelectedProductId(p.id);
-                            setProductSearch(p.name);
-                            setProductDropdownOpen(false);
-                          }}
-                        >
-                          <span className="text-sm font-medium text-navy">{p.name}</span>
-                          {p.sku && <span className="font-mono text-xs text-navy/70">{p.sku}</span>}
-                        </button>
-                      </li>
-                    ))}
-                  </ul>
-                </div>
-              )}
-            </div>
+            <CustomerPriceProductSearch
+              value={productSearch}
+              onValueChange={setProductSearch}
+              onPick={(p) => {
+                setSelectedProductId(p.id);
+                setPickedProduct(p);
+                setProductSearch(displayProductName(p));
+              }}
+            />
           </div>
           <div>
             <label className="mb-1.5 block text-sm font-medium text-navy/80">
@@ -1918,9 +1901,8 @@ function DocumentsTab({ customerId }: { customerId: string }) {
 
 // ── Page ──────────────────────────────────────────────────────────────────────
 
-/** "Outstanding" spans four statuses, but ListInvoicesDto validates `status` as a
- *  single enum value (a comma-list 400s) — so it's filtered client-side. */
-const OUTSTANDING_STATUSES = ["SENT", "VIEWED", "PARTIAL", "OVERDUE"];
+// "Outstanding" spans the four open statuses (isOpenInvoiceStatus), but ListInvoicesDto validates
+// `status` as a single enum value (a comma-list 400s) — so it is filtered client-side.
 
 function CustomerDetailPageInner({ id }: { id: string }) {
   const { setTitle } = usePageTitle();
@@ -1934,6 +1916,8 @@ function CustomerDetailPageInner({ id }: { id: string }) {
   // /routes 403s without a dispatch addon, so hide the entry point and keep the
   // modal's query off (this page is not behind the shell's RouteGuard).
   const { enabled: routesAccess } = useRoutesAccess();
+  const { fleet } = useFleetAccess(); // no fleet module: no route assignment surfaces
+  const statusLabel = useOrderStatusLabel();
   const currentAgent = useCustomerCurrentAgent(id, { enabled: hasSalesAgents });
   const [agentModalOpen, setAgentModalOpen] = React.useState(false);
   const closeAssignment = useCloseAssignment();
@@ -1959,7 +1943,7 @@ function CustomerDetailPageInner({ id }: { id: string }) {
   const { data: customer, isLoading } = useCustomer(id);
   const { data: tierLabels } = useTierLabels();
   const { data: ordersResult, isError: ordersError } = useCustomerOrders<ApiOrder>(id);
-  const { data: customerRoutes } = useCustomerRoutes(id);
+  const { data: customerRoutes } = useCustomerRoutes(id, { enabled: fleet });
   const { data: orderTemplates } = useOrderTemplates(id);
   const updateStatus = useUpdateCustomerStatus();
   const updateCustomer = useUpdateCustomer();
@@ -1986,7 +1970,7 @@ function CustomerDetailPageInner({ id }: { id: string }) {
   const customerInvoices = React.useMemo(() => {
     const rows = invoicesData?.data ?? [];
     return invoiceFilter === "outstanding"
-      ? rows.filter((inv) => OUTSTANDING_STATUSES.includes(inv.status))
+      ? rows.filter((inv) => isOpenInvoiceStatus(inv.status))
       : rows;
   }, [invoicesData, invoiceFilter]);
 
@@ -2348,27 +2332,13 @@ function CustomerDetailPageInner({ id }: { id: string }) {
                 <Badge status={currentStatus} />
               )}
               <Badge
-                variant="info"
+                variant="neutral"
                 label={`${tierLabel(tierLabels, customer.pricingTier ?? 1)} pricing`}
               />
-              <span
-                className={cn(
-                  "inline-flex items-center gap-1 rounded-full px-2.5 py-0.5 text-xs font-semibold",
-                  customer.customerType === "individual"
-                    ? "bg-purple-100 text-purple-700"
-                    : "bg-blue-100 text-blue-700",
-                )}
-              >
-                {customer.customerType === "individual" ? (
-                  <>
-                    <User className="h-3 w-3" /> Individual
-                  </>
-                ) : (
-                  <>
-                    <Building2 className="h-3 w-3" /> Business
-                  </>
-                )}
-              </span>
+              <Badge
+                variant="neutral"
+                label={customer.customerType === "individual" ? "Individual" : "Business"}
+              />
             </div>
             <p className="mt-1 text-sm text-navy/70">
               {[
@@ -2392,14 +2362,15 @@ function CustomerDetailPageInner({ id }: { id: string }) {
               Edit
             </Button>
           )}
-          <Button
+          <WriteButton
             variant="secondary"
             size="sm"
             leftIcon={<FileText className="h-3.5 w-3.5" />}
             href={`/invoices/new?customerId=${id}`}
           >
             New Invoice
-          </Button>
+          </WriteButton>
+          <ReadOnlyHint className="basis-full text-xs text-slate-600" />
           <RecordReturnAction customerId={id} customerName={customer.businessName} />
         </div>
       </div>
@@ -2935,47 +2906,13 @@ function CustomerDetailPageInner({ id }: { id: string }) {
                   </div>
                 </Card>
 
-                <Card title="Assigned Routes">
-                  <div className="space-y-3">
-                    {(customerRoutes ?? []).length === 0 ? (
-                      <p className="text-sm text-navy/70">Not assigned to any routes yet.</p>
-                    ) : (
-                      <ul className="-mx-6 divide-y divide-surface-border">
-                        {(customerRoutes as any[]).map((r) => (
-                          <li key={r.id} className="flex items-center gap-3 px-6 py-3">
-                            <Route className="h-4 w-4 shrink-0 text-navy/70" />
-                            <div className="min-w-0 flex-1">
-                              <p className="text-sm font-medium text-navy">{r.name}</p>
-                              {r.driverName && (
-                                <p className="text-xs text-navy/70">Driver: {r.driverName}</p>
-                              )}
-                            </div>
-                            <span
-                              className={cn(
-                                "shrink-0 rounded-full px-2 py-0.5 text-xs font-medium",
-                                r.isActive
-                                  ? "bg-success-bg text-success"
-                                  : "bg-surface-raised text-navy/70",
-                              )}
-                            >
-                              {r.isActive ? "Active" : "Inactive"}
-                            </span>
-                          </li>
-                        ))}
-                      </ul>
-                    )}
-                    {routesAccess && (
-                      <Button
-                        size="sm"
-                        variant="secondary"
-                        leftIcon={<Plus className="h-4 w-4" />}
-                        onClick={() => setIsAssignRouteOpen(true)}
-                      >
-                        Assign to Route
-                      </Button>
-                    )}
-                  </div>
-                </Card>
+                {fleet && (
+                  <AssignedRoutesCard
+                    routes={customerRoutes ?? []}
+                    canAssign={routesAccess}
+                    onAssign={() => setIsAssignRouteOpen(true)}
+                  />
+                )}
               </div>
 
               <div className="space-y-5">
@@ -3266,7 +3203,10 @@ function CustomerDetailPageInner({ id }: { id: string }) {
                     { value: "", label: "All Statuses" },
                     { value: "PENDING", label: "Pending" },
                     { value: "CONFIRMED", label: "Confirmed" },
-                    { value: "OUT_FOR_DELIVERY", label: "Out for Delivery" },
+                    {
+                      value: "OUT_FOR_DELIVERY",
+                      label: statusLabel("OUT_FOR_DELIVERY", "Out for Delivery"),
+                    },
                     { value: "COMPLETED", label: "Completed" },
                     { value: "CANCELLED", label: "Cancelled" },
                   ]}
@@ -3550,20 +3490,14 @@ function CustomerDetailPageInner({ id }: { id: string }) {
                             {tmpl.isActive ? "\u23f8" : "\u25b6"}
                           </span>
                         </button>
-                        <button
-                          title="Generate order now"
-                          className={cn(
-                            TAP_TARGET,
-                            "rounded p-1.5 text-navy/70 transition-colors hover:bg-brand-50 hover:text-brand-600",
-                          )}
-                          onClick={() =>
+                        <GenerateOrderNowButton
+                          pending={generateOrder.isPending}
+                          onGenerate={() =>
                             generateOrder.mutate(tmpl.id, {
                               onSuccess: () => window.alert(`Order generated for "${tmpl.name}"!`),
                             })
                           }
-                        >
-                          <Zap className="h-4 w-4" />
-                        </button>
+                        />
                         <button
                           title="Edit template"
                           className={cn(
@@ -3684,13 +3618,13 @@ function CustomerDetailPageInner({ id }: { id: string }) {
                   </button>
                 ))}
               </div>
-              <Link
+              <WriteLink
                 href={`/invoices/new?customerId=${id}`}
                 className="inline-flex items-center gap-1.5 rounded-lg bg-brand px-3 py-1.5 text-xs font-semibold text-white hover:bg-brand/90"
               >
                 <Plus className="h-3.5 w-3.5" />
                 New Invoice
-              </Link>
+              </WriteLink>
             </div>
 
             {/* Invoice table */}
@@ -3700,13 +3634,13 @@ function CustomerDetailPageInner({ id }: { id: string }) {
               <div className="py-10 text-center">
                 <FileText className="mx-auto mb-3 h-8 w-8 text-navy/20" />
                 <p className="text-sm font-medium text-navy/70">No invoices found</p>
-                <Link
+                <WriteLink
                   href={`/invoices/new?customerId=${id}`}
                   className="mt-3 inline-flex items-center gap-1.5 rounded-lg bg-brand px-3 py-1.5 text-xs font-semibold text-white hover:bg-brand/90"
                 >
                   <Plus className="h-3.5 w-3.5" />
                   Create Invoice
-                </Link>
+                </WriteLink>
               </div>
             ) : (
               <div className="-mx-6 -mb-6 overflow-x-auto">
@@ -3723,7 +3657,7 @@ function CustomerDetailPageInner({ id }: { id: string }) {
                   </thead>
                   <tbody className="divide-y divide-surface-border">
                     {customerInvoices.map((inv) => {
-                      const isOverdue = inv.status === "OVERDUE";
+                      const isOverdue = inv.isOverdue === true; // the server's one rule (row 318c), not status
                       const balanceDue = inv.balanceDue ?? 0;
                       return (
                         <tr
@@ -3783,14 +3717,15 @@ function CustomerDetailPageInner({ id }: { id: string }) {
                     {statementMoney(statement, statementFailed, (x) => x.outstandingAmount, fmt)}
                   </p>
                   <p className="text-xs text-navy/70">Amount currently owed on invoices</p>
-                  <Button
+                  <WriteButton
                     size="sm"
                     className="w-full"
                     leftIcon={<Wallet className="h-4 w-4" />}
                     onClick={() => setIsRecordPaymentOpen(true)}
                   >
                     Record Payment
-                  </Button>
+                  </WriteButton>
+                  <ReadOnlyHint />
                 </div>
               </Card>
               <Card>

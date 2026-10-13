@@ -137,7 +137,9 @@ describe("BuyerController.createOrder — fulfilPath passthrough (SA-655)", () =
     await controller.createOrder({ items, fulfillPath: "SHIP" } as any, MOCK_CTX as any);
     expect(ordersService.findActiveOrder).toHaveBeenCalledWith(
       MOCK_CTX.customerId,
-      expect.objectContaining({ mergeAs: { audience: "buyer", explicit: "SHIP" } }),
+      expect.objectContaining({
+        mergeAs: { audience: "buyer", role: "CUSTOMER", explicit: "SHIP" },
+      }),
     );
   });
 
@@ -145,8 +147,21 @@ describe("BuyerController.createOrder — fulfilPath passthrough (SA-655)", () =
     await controller.createOrder({ items } as any, MOCK_CTX as any);
     expect(ordersService.findActiveOrder).toHaveBeenCalledWith(
       MOCK_CTX.customerId,
-      expect.objectContaining({ mergeAs: { audience: "buyer" } }),
+      expect.objectContaining({ mergeAs: { audience: "buyer", role: "CUSTOMER" } }),
     );
+  });
+
+  it("getActiveOrder: a valid path scopes the read exactly like create's merge search", async () => {
+    await controller.getActiveOrder(MOCK_CTX as any, "SHIP");
+    expect(ordersService.findActiveOrder).toHaveBeenCalledWith(MOCK_CTX.customerId, {
+      forMerge: true,
+      mergeAs: { audience: "buyer", role: "CUSTOMER", explicit: "SHIP" },
+    });
+  });
+
+  it.each([undefined, "", "TELEPORT"])("getActiveOrder(%j): today's unscoped read", async (p) => {
+    await controller.getActiveOrder(MOCK_CTX as any, p as any);
+    expect(ordersService.findActiveOrder).toHaveBeenCalledWith(MOCK_CTX.customerId);
   });
 });
 

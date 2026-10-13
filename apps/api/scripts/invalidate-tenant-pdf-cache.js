@@ -9,6 +9,8 @@
  *   railway run node apps/api/scripts/invalidate-tenant-pdf-cache.js <slug>
  */
 const { Client } = require("pg");
+const { loadProtectedSlugs } = require("./lib/protected-slugs.cjs");
+const { assertWritableTenant, ProtectedTenantError } = require("./lib/live-target-guard.cjs");
 const url = process.env.DATABASE_URL;
 const slug = process.argv[2];
 if (!url || !slug) {
@@ -18,19 +20,37 @@ if (!url || !slug) {
 const isRailway = /\.railway\.internal|\.proxy\.rlwy\.net/i.test(url);
 
 (async () => {
+  // Row 195: load the protected list BEFORE connecting, from the URL this script dials.
+  const protectedSlugs = loadProtectedSlugs(process.env, url);
   const c = new Client({
     connectionString: url,
     ssl: isRailway ? false : { rejectUnauthorized: false },
   });
   await c.connect();
   try {
-    const t = await c.query('SELECT id, name FROM "Tenant" WHERE slug = $1', [slug]);
+    const t = await c.query(
+      'SELECT id, slug, name, status, class, "deletedAt" FROM "Tenant" WHERE slug = $1',
+      [slug],
+    );
     if (t.rows.length === 0) {
       console.error(`No tenant with slug ${slug}`);
       process.exit(2);
     }
     const tenantId = t.rows[0].id;
     console.log(`Tenant: ${t.rows[0].name} (${tenantId})`);
+
+    // Row 195: refuse a protected tenant (paying, Stripe-linked or env-listed) before any write.
+    const sub = await c.query(
+      'SELECT "planKey", "stripeSubId", "couponFull" FROM "TenantSubscription" WHERE "tenantId" = $1',
+      [tenantId],
+    );
+    try {
+      assertWritableTenant(t.rows[0], sub.rows[0] ?? null, protectedSlugs);
+    } catch (err) {
+      if (!(err instanceof ProtectedTenantError)) throw err;
+      console.error(err.message);
+      process.exit(3);
+    }
 
     const before = await c.query(
       'SELECT COUNT(*)::int AS n FROM "Invoice" WHERE "tenantId" = $1 AND "pdfUrl" IS NOT NULL',

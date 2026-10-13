@@ -8,6 +8,11 @@ import {
 import * as bcrypt from "bcrypt";
 import { ConfigService } from "@nestjs/config";
 import { JwtService } from "@nestjs/jwt";
+import {
+  DERIVED_JWT_AUDIENCES,
+  DERIVED_JWT_LABELS,
+  derivedJwtKey,
+} from "../common/derived-jwt-key";
 import { PrismaService } from "../prisma/prisma.service";
 import { EncryptionService } from "../common/encryption.service";
 import { StorageService } from "../storage/storage.service";
@@ -22,6 +27,9 @@ import { TRIAL_LENGTH_DAYS, planKeyFromEnum } from "../billing/plan-catalog.cons
 import { escapeHtml } from "../common/html-escape";
 import { mayUseVerificationLink } from "../auth/verification-link-eligibility";
 import { assertSafeTextCell } from "../common/safe-text-cell";
+import { isApprovedTestTenantSlug } from "../common/tenant-class.util";
+import { FALLBACK_ZONE } from "../common/tenant-time-zone";
+import { assertValidTenantTimeZone } from "../system-config/tenant-timezone.writer";
 
 const RESERVED_SLUGS = new Set([
   "api",
@@ -64,6 +72,7 @@ const RESERVED_USERNAMES = new Set([
 @Injectable()
 export class TenantsService {
   private readonly logger = new Logger(TenantsService.name);
+  private readonly emailVerifyKey: Buffer;
 
   constructor(
     private readonly prisma: PrismaService,
@@ -72,7 +81,13 @@ export class TenantsService {
     private readonly email: EmailService,
     private readonly config: ConfigService,
     private readonly jwt: JwtService,
-  ) {}
+  ) {
+    // Fails the boot on a missing or short secret (see derived-jwt-key.ts).
+    this.emailVerifyKey = derivedJwtKey(
+      DERIVED_JWT_LABELS.emailVerify,
+      config.get<string>("jwt.secret") ?? "",
+    );
+  }
 
   async isUsernameAvailable(username: string): Promise<boolean> {
     if (RESERVED_USERNAMES.has(username.toLowerCase())) return false;
@@ -84,7 +99,7 @@ export class TenantsService {
   }
 
   async isSlugAvailable(slug: string): Promise<boolean> {
-    if (RESERVED_SLUGS.has(slug)) return false;
+    if (RESERVED_SLUGS.has(slug) || isApprovedTestTenantSlug(slug as unknown)) return false;
     const existing = await this.prisma.tenant.findUnique({ where: { slug } });
     return !existing;
   }
@@ -92,9 +107,19 @@ export class TenantsService {
   async register(dto: RegisterTenantDto) {
     const { slug, businessName, adminEmail, adminUsername, adminPassword } = dto;
     assertSafeTextCell({ businessName }); // B956: the name is mirrored into a Customer row
+    // SA-738: an explicit zone is ALWAYS written (never the column default): the client's, else UTC.
+    const timezone = dto.timezone ? assertValidTenantTimeZone(dto.timezone) : FALLBACK_ZONE;
 
     if (RESERVED_SLUGS.has(slug)) {
       throw new ConflictException(`Slug "${slug}" is reserved`);
+    }
+
+    // Row 195: the test-tenant slug patterns are reserved for the policy's own test tenants — a real
+    // signup can never land on one (the protected-tenant guard and the test-tenant allow-lists key
+    // on them). The message is deliberately neutral: it does not say why.
+    // `as unknown`: the predicate would otherwise narrow `slug` to never on the false branch.
+    if (isApprovedTestTenantSlug(slug as unknown)) {
+      throw new BadRequestException(`Slug "${slug}" is not available`);
     }
 
     const slugTaken = await this.prisma.tenant.findUnique({ where: { slug } });
@@ -124,7 +149,7 @@ export class TenantsService {
         data: { tenantId: tenant.id, currentPlan: "STARTER", planKey: planKeyFromEnum("STARTER") },
       });
 
-      await tx.tenantConfig.create({ data: { tenantId: tenant.id, businessName } });
+      await tx.tenantConfig.create({ data: { tenantId: tenant.id, businessName, timezone } });
 
       // Seed IRS Schedule C expense categories so new tenants have a curated
       // list to pick from immediately.
@@ -172,11 +197,13 @@ export class TenantsService {
     let emailSent = false;
     try {
       const webUrl = this.config.get<string>("WEB_URL") ?? "http://localhost:3001";
-      const jwtSecret = this.config.get<string>("jwt.secret")!;
-
       const verifyToken = this.jwt.sign(
         { sub: result.user.id, tenantId: result.tenant.id, type: "email_verify" },
-        { secret: jwtSecret, expiresIn: "24h" },
+        {
+          secret: this.emailVerifyKey,
+          audience: DERIVED_JWT_AUDIENCES.emailVerify,
+          expiresIn: "24h",
+        },
       );
 
       const verifyUrl = `${webUrl}/verify-email?token=${verifyToken}`;
@@ -264,11 +291,13 @@ export class TenantsService {
 
     try {
       const webUrl = this.config.get<string>("WEB_URL") ?? "http://localhost:3001";
-      const jwtSecret = this.config.get<string>("jwt.secret")!;
-
       const verifyToken = this.jwt.sign(
         { sub: user.id, tenantId: user.tenant.id, type: "email_verify" },
-        { secret: jwtSecret, expiresIn: "24h" },
+        {
+          secret: this.emailVerifyKey,
+          audience: DERIVED_JWT_AUDIENCES.emailVerify,
+          expiresIn: "24h",
+        },
       );
 
       const verifyUrl = `${webUrl}/verify-email?token=${verifyToken}`;

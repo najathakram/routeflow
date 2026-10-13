@@ -2,6 +2,7 @@
 
 import * as React from "react";
 import { useRouter } from "next/navigation";
+import { useGuardedRouter } from "@/lib/use-guarded-router";
 import { createPortal } from "react-dom";
 import {
   Search,
@@ -29,6 +30,7 @@ import {
   Route as RouteIcon,
   type LucideIcon,
   PackageCheck,
+  Store,
 } from "lucide-react";
 import { cn } from "@routeflow/ui/web";
 import { useAuth } from "@/lib/auth-context";
@@ -36,6 +38,8 @@ import { apiClient } from "@/lib/api-client";
 import { displayEmail } from "@/lib/formatting";
 import { useI18n } from "@/lib/i18n";
 import { useRoutesAccess, useDeliveryAccess } from "@/lib/api/addons";
+import { useCounterSaleGate } from "@/lib/api/counter-sale";
+import { useReadOnlyGate } from "@/lib/read-only-gate";
 
 /**
  * `?action=new` for a list route, preserving that list's own query state when
@@ -64,6 +68,8 @@ interface CommandItem {
   action: () => void;
   group: string;
   keywords?: string;
+  /** SA-733r6: creates something. In a read-only workspace the row stays, disabled, with the shared line. */
+  readOnlyGated?: boolean;
 }
 
 // ─── Static command definitions ───────────────────────────────────────────────
@@ -75,10 +81,16 @@ interface CommandItem {
  */
 const ROUTES_COMMAND_IDS = ["nav-routes", "nav-drivers", "act-new-route"];
 const DELIVERY_COMMAND_IDS = ["act-plan-trip", "nav-deliveries"];
+/** POS-7a: shown only when the tenant's counter capability is always|optional (useCounterSaleGate.showButton). */
+const COUNTER_COMMAND_IDS = ["act-counter-sale"];
 
 function useStaticCommands(router: ReturnType<typeof useRouter>): CommandItem[] {
+  const { user } = useAuth();
   const { enabled: routesAccess } = useRoutesAccess();
   const { enabled: deliveryAccess } = useDeliveryAccess();
+  const { showButton: counterEnabled } = useCounterSaleGate({
+    enabled: user?.role !== "CUSTOMER" && user?.role !== "DRIVER",
+  });
   return React.useMemo(
     () =>
       [
@@ -237,14 +249,25 @@ function useStaticCommands(router: ReturnType<typeof useRouter>): CommandItem[] 
           group: "Actions",
           label: "New Order",
           icon: Plus,
+          readOnlyGated: true,
           action: () => router.push(createHref("/orders")),
           keywords: "create add order",
+        },
+        {
+          id: "act-counter-sale",
+          group: "Actions",
+          label: "New counter sale",
+          icon: Store,
+          readOnlyGated: true,
+          action: () => router.push("/orders/counter-sale"),
+          keywords: "walk-in pickup pos till scan",
         },
         {
           id: "act-new-invoice",
           group: "Actions",
           label: "New Invoice",
           icon: Plus,
+          readOnlyGated: true,
           action: () => router.push("/invoices/new"),
           keywords: "create add invoice",
         },
@@ -271,6 +294,7 @@ function useStaticCommands(router: ReturnType<typeof useRouter>): CommandItem[] 
           icon: Plus,
           action: () => router.push(createHref("/customers")),
           keywords: "create add customer",
+          readOnlyGated: true,
         },
         {
           id: "act-new-product",
@@ -279,13 +303,15 @@ function useStaticCommands(router: ReturnType<typeof useRouter>): CommandItem[] 
           icon: Plus,
           action: () => router.push(createHref("/products")),
           keywords: "create add product",
+          readOnlyGated: true,
         },
       ].filter((c) => {
         if (ROUTES_COMMAND_IDS.includes(c.id)) return routesAccess;
         if (DELIVERY_COMMAND_IDS.includes(c.id)) return deliveryAccess;
+        if (COUNTER_COMMAND_IDS.includes(c.id)) return counterEnabled;
         return true;
       }),
-    [router, routesAccess, deliveryAccess],
+    [router, routesAccess, deliveryAccess, counterEnabled],
   );
 }
 
@@ -417,7 +443,8 @@ function useGroupLabel() {
 }
 
 export function CommandPalette({ open, onClose }: Props) {
-  const router = useRouter();
+  const router = useGuardedRouter(); // POS-7: a selection cannot leave the counter mid-sale
+  const readOnlyGate = useReadOnlyGate();
   const { user } = useAuth();
   const { t } = useI18n();
   const groupLabel = useGroupLabel();
@@ -497,6 +524,9 @@ export function CommandPalette({ open, onClose }: Props) {
         e.preventDefault();
         const selected = flatItems[activeIndex];
         if (!selected) return;
+        if (selected.type === "static" && selected.item.readOnlyGated && readOnlyGate.readOnly) {
+          return; // disabled while read-only: the row says why
+        }
         if (selected.type === "static") {
           selected.item.action();
         } else {
@@ -507,7 +537,7 @@ export function CommandPalette({ open, onClose }: Props) {
         onClose();
       }
     },
-    [flatItems, activeIndex, router, onClose],
+    [flatItems, activeIndex, router, onClose, readOnlyGate.readOnly],
   );
 
   // Group items for rendering
@@ -574,12 +604,22 @@ export function CommandPalette({ open, onClose }: Props) {
                 {entries.map(({ flatIndex, item, type }) => {
                   const Icon = item.icon;
                   const isActive = flatIndex === activeIndex;
-                  const sublabel = "sublabel" in item ? item.sublabel : undefined;
+                  const blocked =
+                    type === "static" &&
+                    !!(item as CommandItem).readOnlyGated &&
+                    readOnlyGate.readOnly;
+                  const sublabel = blocked
+                    ? (readOnlyGate.line ?? undefined)
+                    : "sublabel" in item
+                      ? item.sublabel
+                      : undefined;
 
                   return (
                     <button
                       key={item.id}
+                      aria-disabled={blocked || undefined}
                       onClick={() => {
+                        if (blocked) return;
                         if (type === "static") {
                           (item as CommandItem).action();
                         } else {
@@ -590,6 +630,7 @@ export function CommandPalette({ open, onClose }: Props) {
                       onMouseEnter={() => setActiveIndex(flatIndex)}
                       className={cn(
                         "flex w-full items-center gap-3 px-4 py-2.5 text-left transition-colors",
+                        blocked && "cursor-not-allowed opacity-60",
                         isActive
                           ? "bg-[var(--primary-mist)] text-navy shadow-[inset_2.5px_0_0_var(--accent-strong)]"
                           : "text-navy/70 hover:bg-surface-raised",

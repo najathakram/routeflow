@@ -129,7 +129,7 @@ describe("CreditNoteReissueService (#2648)", () => {
       voidTx,
       "cn-old",
       "user-1",
-      null,
+      "UTC", // SA-738: tenantTimeZone() is the resolved zone, UTC for a tenant with no config row
       undefined,
       { orderIds: ["ord-src"], invoiceIds: ["inv-1"] },
     );

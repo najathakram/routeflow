@@ -4,7 +4,7 @@ import { ExtractJwt, Strategy } from "passport-jwt";
 import { ConfigService } from "@nestjs/config";
 import { JwtPayload } from "../jwt-payload.interface";
 import { AppConfig } from "../../config/configuration";
-import { isStaffSessionPayload } from "../session-token";
+import { hasForeignAudience, isStaffSessionPayload, STAFF_ACCESS_AUDIENCE } from "../session-token";
 
 @Injectable()
 export class JwtStrategy extends PassportStrategy(Strategy) {
@@ -23,6 +23,7 @@ export class JwtStrategy extends PassportStrategy(Strategy) {
     if ((payload as any).type === "BUYER")
       throw new UnauthorizedException("Use buyer auth endpoint");
     if (!isStaffSessionPayload(payload)) throw new UnauthorizedException();
+    if (hasForeignAudience(payload, STAFF_ACCESS_AUDIENCE)) throw new UnauthorizedException();
     return {
       sub: payload.sub,
       id: payload.sub,

@@ -85,6 +85,7 @@ import { FeatureConfigService } from "../billing/feature-config.service";
 import { ROUTES_DISPATCH_KEY, assertRouteKindDispatchAllowed } from "./route-dispatch-mode";
 import { observeRunCredit } from "./run-credit-observation";
 import { RouteRealtime } from "./route-realtime";
+import { DISPATCH_PATH_WHERE } from "../orders/dispatch-path-where";
 import {
   lockStopOrdersAndFit,
   reconcileDeliveredStopOrders,
@@ -624,7 +625,7 @@ export class RoutesService {
           where: {
             customerId: { in: customerIds },
             status: { in: ["PENDING", "CONFIRMED"] },
-            fulfillPath: { not: FulfillPath.PICKUP }, // SA-655: a counter sale is never loaded on a route
+            fulfillPath: DISPATCH_PATH_WHERE.route, // SA-655: a counter sale is never loaded on a route
           },
           include: {
             customer: { select: { id: true, businessName: true } },
@@ -1296,7 +1297,7 @@ export class RoutesService {
           where: {
             customerId: { in: customerIds },
             status: { notIn: [OrderStatus.CANCELLED] },
-            fulfillPath: { not: FulfillPath.PICKUP }, // SA-655
+            fulfillPath: DISPATCH_PATH_WHERE.route, // SA-655
           },
           // B305 round 5: this legacy fallback's hand-rolled select missed the main query's money fields;
           // `RUN_STOP_INCLUDE.orders.select` carries them (incl. lineItems) + `customerId` to group by.
@@ -2729,7 +2730,7 @@ export class RoutesService {
           where: {
             customerId: { in: customerIds },
             status: { notIn: [OrderStatus.CANCELLED, OrderStatus.DELIVERED] },
-            fulfillPath: { not: FulfillPath.PICKUP }, // SA-655
+            fulfillPath: DISPATCH_PATH_WHERE.route, // SA-655
           },
           include: {
             lineItems: {

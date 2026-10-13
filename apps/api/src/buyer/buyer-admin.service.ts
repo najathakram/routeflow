@@ -1,4 +1,5 @@
 import { assertSafeBuyerName } from "../common/text-cell-guards";
+import { assertNotWalkIn, excludeWalkIn } from "../customers/walk-in-protected";
 import {
   Injectable,
   NotFoundException,
@@ -10,6 +11,7 @@ import { ConfigService } from "@nestjs/config";
 import { PrismaService } from "../prisma/prisma.service";
 import type { AppConfig } from "../config/configuration";
 import type { BuyerJwtPayload } from "./interfaces/buyer-jwt-payload.interface";
+import { BUYER_ACCESS_AUDIENCE } from "../auth/session-token";
 
 /**
  * SUPER_ADMIN buyer account management.
@@ -123,6 +125,7 @@ export class BuyerAdminService {
 
     const accessToken = this.jwtService.sign(payload, {
       secret: jwtConfig.secret,
+      audience: BUYER_ACCESS_AUDIENCE,
       expiresIn: "15m", // match platform admin impersonation window
     });
 
@@ -260,6 +263,7 @@ export class BuyerAdminService {
       where: { id: dto.customerId, tenantId: dto.tenantId },
     });
     if (!customer) throw new NotFoundException("Customer not found in that tenant");
+    assertNotWalkIn(customer);
 
     // Check for existing link on this customer (customerId is @unique in CustomerLink)
     const existing = await this.prisma.customerLink.findUnique({
@@ -328,7 +332,7 @@ export class BuyerAdminService {
     if (!tenant) throw new NotFoundException("Tenant not found");
 
     const customers = await this.prisma.customer.findMany({
-      where: { tenantId },
+      where: excludeWalkIn({ tenantId }),
       orderBy: { businessName: "asc" },
       select: {
         id: true,

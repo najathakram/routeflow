@@ -15,6 +15,7 @@ import {
   Search as SearchIcon,
 } from "lucide-react";
 import { Card, Input, cn } from "@routeflow/ui/web";
+import { useFleetAccess } from "@/lib/api/addons";
 import { ReadinessBanner } from "./ReadinessBanner";
 import { RouteDefaultsCard } from "./RouteDefaultsCard";
 import { BuyerOversellCard } from "./BuyerOversellCard";
@@ -62,7 +63,7 @@ const GROUPS: HubGroup[] = [
     items: [
       {
         label: "Business profile",
-        desc: "Name, address, logo & default tax rate",
+        desc: "Name, address, logo, receipt footer & default tax rate",
         href: "/settings?tab=profile",
       },
       {
@@ -105,7 +106,7 @@ const GROUPS: HubGroup[] = [
   {
     key: "orders",
     title: "Orders & stock",
-    blurb: "How orders, routes and bills are handled day to day.",
+    blurb: "How orders, stock and bills are handled day to day.",
     icon: Truck,
     items: [
       {
@@ -233,8 +234,14 @@ function cardMatches(href: string, q: string): boolean {
   return [item.label, item.desc, group.title].some((t) => t.toLowerCase().includes(q));
 }
 
+/** A carrier-only account has no drivers: the user-management card must not promise them. */
+const USERS_HREF = "/settings?tab=users";
+const USERS_DESC_NO_FLEET = "Team members, roles, passwords";
+
 export function SettingsHub({ isAdmin }: { isAdmin: boolean }) {
   const [query, setQuery] = React.useState("");
+  // Fleet-off (fulfilment model set, no routes / delivery module): no route defaults to configure.
+  const { fleet } = useFleetAccess();
 
   // A hub tile that points at a card on this page ("#out-of-stock-ordering", "#route-defaults") is
   // a plain hash link, but the cards are client-rendered: a page LOADED with the hash has nothing
@@ -245,25 +252,30 @@ export function SettingsHub({ isAdmin }: { isAdmin: boolean }) {
   }, []);
 
   const canShow = React.useCallback(
-    (item: HubItem) => (item.show === "admin" ? isAdmin : true),
-    [isAdmin],
+    (item: HubItem) =>
+      item.href === ROUTE_DEFAULTS_HREF && !fleet ? false : item.show === "admin" ? isAdmin : true,
+    [isAdmin, fleet],
   );
 
   const q = query.trim().toLowerCase();
   const groups = React.useMemo(
     () =>
       GROUPS.map((g) => {
-        const items = g.items.filter(
-          (it) =>
-            canShow(it) &&
-            (!q ||
-              it.label.toLowerCase().includes(q) ||
-              it.desc.toLowerCase().includes(q) ||
-              g.title.toLowerCase().includes(q)),
-        );
+        const items = g.items
+          .map((it) =>
+            it.href === USERS_HREF && !fleet ? { ...it, desc: USERS_DESC_NO_FLEET } : it,
+          )
+          .filter(
+            (it) =>
+              canShow(it) &&
+              (!q ||
+                it.label.toLowerCase().includes(q) ||
+                it.desc.toLowerCase().includes(q) ||
+                g.title.toLowerCase().includes(q)),
+          );
         return { ...g, items };
       }).filter((g) => g.items.length > 0),
-    [q, canShow],
+    [q, canShow, fleet],
   );
 
   return (
@@ -360,7 +372,7 @@ export function SettingsHub({ isAdmin }: { isAdmin: boolean }) {
         </div>
       )}
 
-      {(!q || cardMatches(ROUTE_DEFAULTS_HREF, q)) && (
+      {fleet && (!q || cardMatches(ROUTE_DEFAULTS_HREF, q)) && (
         <div id="route-defaults" className="max-w-3xl">
           <RouteDefaultsCard />
         </div>

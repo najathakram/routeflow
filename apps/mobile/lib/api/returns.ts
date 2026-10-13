@@ -1,6 +1,6 @@
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { apiClient } from "../api-client";
-import type { CreateReturnItemDto } from "@routeflow/types";
+import type { CreateReturnItemDto, InlineRefundTender } from "@routeflow/types";
 export type { CreateReturnItemDto } from "@routeflow/types";
 
 // ─── Types ────────────────────────────────────────────────────────────────────
@@ -187,6 +187,8 @@ export interface RefundReturnDto {
   id: string;
   /** CREDIT_NOTE (default) mints store credit; EXTERNAL_REFUND records nothing minted. */
   method?: RefundMethod;
+  /** SA-740r2: how a recorded refund (EXTERNAL_REFUND) was paid out; optional, never sent with store credit. */
+  tender?: InlineRefundTender;
 }
 
 export function useRefundReturn() {

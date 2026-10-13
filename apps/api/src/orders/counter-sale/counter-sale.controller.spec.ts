@@ -17,7 +17,7 @@ describe("CounterSaleController", () => {
     ring: jest.fn().mockResolvedValue({ orderId: "ord-1" }),
     byKey: jest.fn().mockResolvedValue({ orderId: "ord-1", replayed: true }),
   };
-  const controller = new CounterSaleController(service as never);
+  const controller = new CounterSaleController(service as never, {} as never, {} as never);
   const user = { sub: "op-1", role: "OPERATOR" } as never;
   const dto = { customerId: "c", items: [], payment: { method: "CASH" } } as never;
 

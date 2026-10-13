@@ -5,6 +5,10 @@ import { InventoryService } from "./inventory.service";
 import { PrismaService } from "../prisma/prisma.service";
 import { createMockPrisma } from "../testing/prisma-mock";
 import { StockAlertService } from "../stock-alerts/stock-alert.service";
+import { API_ERROR_CODES } from "../common/api-error-codes";
+import { PRODUCT_PARENT_REASONS } from "../products/product-parent";
+import { readFileSync } from "fs";
+import { join } from "path";
 
 /**
  * PR-D: InventoryService.assignToVariants — moving stock atomically from a
@@ -171,7 +175,69 @@ describe("InventoryService.assignToVariants", () => {
       .catch((e) => e);
 
     expect(err).toBeInstanceOf(BadRequestException);
+    expect(err.getResponse()).toMatchObject({
+      code: API_ERROR_CODES.PRODUCT_PARENT_INVALID,
+      reason: PRODUCT_PARENT_REASONS.VARIANT_PARENT,
+    });
     expect(prisma.product.findFirst).not.toHaveBeenCalled();
+  });
+
+  it("B1211: a missing parent is the coded PRODUCT_PARENT_INVALID (reason NOT_FOUND), nothing written", async () => {
+    prisma.product.findUnique.mockResolvedValue(null);
+
+    const err = await service
+      .assignToVariants(
+        { parentProductId: "nope", assignments: [{ productId: "variant-1", qty: 1 }] } as any,
+        "user-1",
+      )
+      .catch((e) => e);
+
+    expect(err).toBeInstanceOf(BadRequestException);
+    expect(err.getResponse()).toMatchObject({
+      code: API_ERROR_CODES.PRODUCT_PARENT_INVALID,
+      reason: PRODUCT_PARENT_REASONS.NOT_FOUND,
+    });
+    expect(prisma.product.findFirst).not.toHaveBeenCalled();
+    expect(prisma.stockMovement.create).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    ["an inactive product", { isActive: false }, PRODUCT_PARENT_REASONS.INACTIVE],
+    ["a product of kind VARIANT", { kind: "VARIANT" }, PRODUCT_PARENT_REASONS.VARIANT_PARENT],
+  ])(
+    "B1211: %s is an unusable parent: coded 400, nothing is looked up or written",
+    async (_name, overrides, reason) => {
+      prisma.product.findUnique.mockResolvedValue(parent(overrides));
+
+      const err = await service
+        .assignToVariants(
+          { parentProductId: "parent-1", assignments: [{ productId: "variant-1", qty: 1 }] } as any,
+          "user-1",
+        )
+        .catch((e) => e);
+
+      expect(err).toBeInstanceOf(BadRequestException);
+      expect(err.getResponse()).toMatchObject({
+        code: API_ERROR_CODES.PRODUCT_PARENT_INVALID,
+        reason,
+      });
+      expect(prisma.product.findFirst).not.toHaveBeenCalled();
+      expect(prisma.product.update).not.toHaveBeenCalled();
+      expect(prisma.stockMovement.create).not.toHaveBeenCalled();
+    },
+  );
+
+  it("B1211: the parent rule runs in the transaction, after the family lock and the parent read, before any write", () => {
+    const src = readFileSync(join(__dirname, "inventory.service.ts"), "utf8");
+    const body = src.slice(src.indexOf("async assignToVariants("));
+    const lock = body.indexOf("lockFamilyRow(tx");
+    const read = body.indexOf("tx.product.findUnique({ where: { id: dto.parentProductId } })");
+    const rule = body.indexOf("assertParentUsable(parent)");
+    const firstWrite = body.indexOf("tx.product.update(");
+    expect(lock).toBeGreaterThan(-1);
+    expect(read).toBeGreaterThan(lock);
+    expect(rule).toBeGreaterThan(read);
+    expect(firstWrite === -1 || rule < firstWrite).toBe(true);
   });
 
   it("converts a boxed generic's {boxes, pieces} to base units against the parent's unitsPerBox", async () => {

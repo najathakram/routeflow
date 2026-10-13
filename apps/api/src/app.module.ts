@@ -23,6 +23,7 @@ import { PromotionsModule } from "./promotions/promotions.module";
 import { RoutesModule } from "./routes/routes.module";
 import { TripsModule } from "./trips/trips.module";
 import { OrdersModule } from "./orders/orders.module";
+import { DocumentsModule } from "./documents/documents.module";
 import { BookkeepingModule } from "./bookkeeping/bookkeeping.module";
 import { SystemConfigModule } from "./system-config/system-config.module";
 import { PolicyModule } from "./policy/policy.module";
@@ -59,6 +60,7 @@ import { DraftsModule } from "./drafts/drafts.module";
 import { TrackedCategoriesModule } from "./tracked-categories/tracked-categories.module";
 import { RestrictionsSettingsModule } from "./restrictions-settings/restrictions-settings.module";
 import { SettingsInventoryModule } from "./settings-inventory/settings-inventory.module";
+import { SettingsFulfilmentModule } from "./settings-fulfilment/settings-fulfilment.module";
 import { ProductCategoriesModule } from "./product-categories/product-categories.module";
 import { SellingRestrictionsAdminModule } from "./selling-restrictions-admin/selling-restrictions-admin.module";
 import { RegulatedModule } from "./regulated/regulated.module";
@@ -140,6 +142,7 @@ import { AppService } from "./app.service";
     RoutesModule,
     TripsModule,
     OrdersModule,
+    DocumentsModule,
     BookkeepingModule,
     SystemConfigModule,
     PolicyModule,
@@ -184,6 +187,7 @@ import { AppService } from "./app.service";
     TrackedCategoriesModule,
     RestrictionsSettingsModule,
     SettingsInventoryModule,
+    SettingsFulfilmentModule,
     ProductCategoriesModule,
     SellingRestrictionsAdminModule,
     RegulatedModule,

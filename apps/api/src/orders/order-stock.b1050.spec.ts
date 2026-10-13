@@ -23,6 +23,11 @@ function fakeTx(products: P[]) {
   const byId = (id: string) => products.find((p) => p.id === id)!;
   const tx: any = {
     $executeRaw: jest.fn().mockResolvedValue(0), // the FOR UPDATE lock
+    // SA-714: the backorder marker reads its lines' rows and writes only that tag (none held here).
+    orderItem: {
+      findMany: jest.fn(async () => []),
+      updateMany: jest.fn(async () => ({ count: 0 })),
+    },
     product: {
       findMany: jest.fn(async ({ where }: any) =>
         products.filter((p) => where.id.in.includes(p.id)),
@@ -244,14 +249,14 @@ describe("B1050 — green pins that must hold before AND after the fix", () => {
 describe("B1050 — updateOrderItems wires lineIdentity per branch (SA-703 M1)", () => {
   const src = readFileSync(path.join(__dirname, "orders.service.ts"), "utf8");
   it("flips to recreated right before BOTH deleteMany + re-create branches", () => {
-    // CUSTOMER/DRIVER non-diff, then operator replaceAll.
+    // CUSTOMER/DRIVER non-diff, then operator replaceAll (markLinesRecreated returns "recreated").
     expect(src).toMatch(
-      /lineIdentity = "recreated";\s*await tx\.orderItem\.deleteMany\(\{\s*where: \{\s*orderId,\s*\.\.\.\(isBuyerEdit/,
+      /lineIdentity = await markLinesRecreated\(tx, orderId, heldItems\);[^\n]*\s*await tx\.orderItem\.deleteMany\(\{\s*where: \{\s*orderId,\s*\.\.\.\(isBuyerEdit/,
     );
     expect(src).toMatch(
-      /lineIdentity = "recreated";\s*await tx\.orderItem\.deleteMany\(\{ where: \{ orderId \} \}\);/,
+      /lineIdentity = await markLinesRecreated\(tx, orderId, heldItems\);[^\n]*\s*await tx\.orderItem\.deleteMany\(\{ where: \{ orderId \} \}\);/,
     );
-    expect(src.match(/lineIdentity = "recreated"/g)).toHaveLength(2);
+    expect(src.match(/lineIdentity = await markLinesRecreated\(/g)).toHaveLength(2); // SA-763r: returns "recreated"
   });
   it("defaults to stable and hands the value to the edit settle", () => {
     expect(src).toMatch(/let lineIdentity: "stable" \| "recreated" = "stable";/);

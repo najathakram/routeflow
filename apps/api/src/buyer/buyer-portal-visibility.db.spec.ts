@@ -46,7 +46,7 @@ import { Test } from "@nestjs/testing";
 import { describeDb, requireLocalDatabaseUrl } from "../common/testing/db-spec";
 import { normalizeScanCode } from "@routeflow/scanning";
 import { findScanMatches } from "../products/scan-match";
-import { buyerVisibleProductWhere, NO_BUYER_RESTRICTIONS } from "./buyer-product-visibility";
+import { buyerVisibleProductWhere, noBuyerRestrictions } from "./buyer-product-visibility";
 import { PrismaService } from "../prisma/prisma.service";
 import { TenantContextService } from "../tenant/tenant-context.service";
 import { EncryptionService } from "../common/encryption.service";
@@ -73,6 +73,7 @@ import { RegulatedVisibilityService } from "./regulated-visibility.service";
 import { ReplenishmentService } from "./replenishment.service";
 import { ShelfService } from "./shelf.service";
 import type { JwtPayload } from "../auth/jwt-payload.interface";
+import { INVOICE_EDIT_STUBS } from "../orders/testing/invoice-edit-stubs";
 
 // eslint-disable-next-line @typescript-eslint/no-var-requires
 const { assertTestTenant } = require("../../../../scripts/lib/test-tenants.cjs");
@@ -184,6 +185,7 @@ describeDb("buyer portal visibility — the one rule, end to end, real Postgres"
       invoicesService: {
         revertLinkedInvoicesForOrderEdit: async () => undefined,
         resyncOrderInvoicesForEdit: async () => [],
+        ...INVOICE_EDIT_STUBS,
         reconcileOrderDraftInvoice: async () => undefined,
       },
       creditNotes: { settleOrderCreditsInTx: async () => ({ applied: 0, unapplied: 0 }) },
@@ -514,7 +516,9 @@ describeDb("buyer portal visibility — the one rule, end to end, real Postgres"
     return inTenant(f, async () => {
       const search = await catalog.getCatalog({ search: p.name, limit: 100 }, f.customerId);
       const scan = (code: string) =>
-        asBool(() => controller.scanProduct(code, { customerId: f.customerId }));
+        asBool(() =>
+          controller.scanProduct(code, { customerId: f.customerId, tenantId: f.tenantId }),
+        );
       return {
         search: search.data.some((r: any) => r.id === p.id),
         detail: await asBool(() => catalog.getProductDetail(p.id, f.customerId)),
@@ -528,7 +532,7 @@ describeDb("buyer portal visibility — the one rule, end to end, real Postgres"
           (await findScanMatches(
             prisma.forTenant(),
             normalizeScanCode(f.rowCodes[p.id]),
-            buyerVisibleProductWhere(NO_BUYER_RESTRICTIONS),
+            buyerVisibleProductWhere(noBuyerRestrictions(f.tenantId)),
           )) !== null,
         ...(opts.write
           ? {
