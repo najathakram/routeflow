@@ -112,6 +112,7 @@ import { useMarginConfig, floorForCategory } from "@/lib/api/margin";
 import { MarginHint } from "@/components/MarginHint";
 import { DecimalInput, MoneyInput } from "@/components/MoneyInput";
 import { ReadOnlyHint, WriteButton } from "@/lib/read-only-gate";
+import { API_ERROR_CODES } from "@routeflow/types";
 
 // ─── Terms options ─────────────────────────────────────────────────────────────
 
@@ -765,6 +766,25 @@ function LevelCount({
 }
 
 // ─── Page ─────────────────────────────────────────────────────────────────────
+
+/** Fixed copy for "the invoice was saved but its send failed" (never the server's text). */
+const SAVED_NOT_SENT_TOAST = {
+  title: "Saved as a draft, not sent",
+  description:
+    "The invoice was saved but could not be sent. Open it and send it from the invoice page.",
+  variant: "warning",
+} as const;
+
+/** The kept draft's id when a create-with-send failed only at delivery (EMAIL_SEND_FAILED), else null. */
+function sendFailedDraftId(err: unknown): string | null {
+  const data = (err as { response?: { data?: { code?: unknown; invoiceId?: unknown } } } | null)
+    ?.response?.data;
+  return data?.code === API_ERROR_CODES.EMAIL_SEND_FAILED &&
+    typeof data.invoiceId === "string" &&
+    data.invoiceId !== ""
+    ? data.invoiceId
+    : null;
+}
 
 export default function NewInvoicePage() {
   const w = unitWords();
@@ -1597,17 +1617,23 @@ export default function NewInvoicePage() {
       const dto = buildInvoiceDto(false, lines);
       updateInvoice.mutate({ id: currentDraftId, ...dto } as any, {
         onSuccess: async () => {
+          let sendFailed = false;
           if (sendNow) {
             try {
               await apiClient.post(`/invoices/${currentDraftId}/send`);
             } catch {
-              // fall through to toast below
+              sendFailed = true;
             }
           }
-          toast({
-            title: sendNow ? "Invoice sent" : "Draft saved",
-            variant: "success",
-          });
+          if (sendFailed) {
+            // Saved, but the send failed: never claim "sent". Still open the invoice to resend.
+            toast(SAVED_NOT_SENT_TOAST);
+          } else {
+            toast({
+              title: sendNow ? "Invoice sent" : "Draft saved",
+              variant: "success",
+            });
+          }
           router.push(`/invoices/${currentDraftId}`);
         },
         onError: (err: unknown) => {
@@ -1635,6 +1661,14 @@ export default function NewInvoicePage() {
         router.push(`/invoices/${invoice.id}`);
       },
       onError: (err: unknown) => {
+        // The API commits the DRAFT before it sends; a delivery failure names that draft. Open
+        // it (retrying the create would duplicate it). No invoiceId (older API) => plain failure.
+        const keptId = sendFailedDraftId(err);
+        if (keptId) {
+          toast(SAVED_NOT_SENT_TOAST);
+          router.push(`/invoices/${keptId}`);
+          return;
+        }
         toast({
           title: "Failed to create invoice",
           description: unitRefusal(err, lines) ?? "Please check your inputs and try again.",

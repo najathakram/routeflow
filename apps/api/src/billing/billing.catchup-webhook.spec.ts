@@ -115,9 +115,21 @@ describe("a Stripe `trialing` catch-up subscription (r R16-3 / r3 N3): the tenan
       notifyTrialEnding: jest.fn(),
     };
     const email: any = { send: jest.fn() };
+    // F1 (a): the handler re-fetches the subscription; Stripe says what the event said.
+    const stripe: any = {
+      getSubscription: jest.fn(async () => ({
+        id: "sub_1",
+        customer: "cus_1",
+        status: "trialing",
+        cancel_at_period_end: false,
+        items: {
+          data: [{ id: "si_1", current_period_start: 1790856000, current_period_end: 1793534400 }],
+        },
+      })),
+    };
     const billing = new BillingService(
       prisma,
-      {} as any,
+      stripe,
       email,
       { invalidate: jest.fn() } as any,
       { emit: jest.fn() } as any,

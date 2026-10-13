@@ -3,7 +3,8 @@ import { AdminAuditAction } from "../platform-admin/audit-actions.constant";
 import { emitAddonDelta } from "./addon-ledger";
 import { BillingEventService } from "./billing-event.service";
 import { writeManualInvoiceNotice } from "./manual-invoice-notice";
-import { addonSkuCode, isAddonIncludedAtPlan } from "./plan-catalog.constants";
+import { addonCatalogInvalidException, includedAtPlanVerdict } from "./addon-catalog-invalid";
+import { addonSkuCode } from "./plan-catalog.constants";
 import { planChangeAddonsChanged, type PlanChangeProration } from "./plan-change-stripe";
 
 /**
@@ -54,9 +55,13 @@ export function addonsIncludedAtPlan<R extends AddonRowLike>(
     if (row.active === false || Number(row.quantity) > 1) continue;
     const code = addonSkuCode({ sku: row.sku, addonKey: row.addonKey });
     const def = code ? addonSkus.find((s) => s.sku === code) : undefined;
-    if (code && def && isAddonIncludedAtPlan(def.includedAtPlan, toPlanKey)) {
-      out.push({ ...row, code, name: def.name });
+    if (!code || !def) continue;
+    // B1102: a held add-on whose includedAtPlan names no plan fails the plan change closed (409), never "not included".
+    const verdict = includedAtPlanVerdict(def, toPlanKey);
+    if (verdict.kind === "CATALOG_INVALID") {
+      throw addonCatalogInvalidException(verdict.sku, verdict.value);
     }
+    if (verdict.kind === "INCLUDED") out.push({ ...row, code, name: def.name });
   }
   return out;
 }

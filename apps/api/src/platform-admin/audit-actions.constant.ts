@@ -60,8 +60,22 @@ export const AdminAuditAction = {
   STRIPE_ASYNC_PAYMENT_FAILED: "STRIPE_ASYNC_PAYMENT_FAILED",
   /** A checkout listed add-on SKUs that no recognised Stripe item carries: not billed, no second item created. */
   ADDON_CHECKOUT_ITEMS_UNRECOGNISED: "ADDON_CHECKOUT_ITEMS_UNRECOGNISED",
+  /** A subscription.updated event named a Stripe subscription this account/mode does not have: not treated as deleted. */
+  STRIPE_SUBSCRIPTION_NOT_FOUND: "STRIPE_SUBSCRIPTION_NOT_FOUND",
+  /** F4: an invoice was paid while an admin had the tenant READ_ONLY (or it is CANCELLED): the status was NOT changed. */
+  PAID_WHILE_ADMIN_LOCKED: "PAID_WHILE_ADMIN_LOCKED",
+  /** A completed checkout could not push the tenant's price to its Stripe subscription, and a redelivery cannot fix it. */
+  STRIPE_PRICE_PUSH_BLOCKED: "STRIPE_PRICE_PUSH_BLOCKED",
+  /** A CANCELLED / delete went ahead because Stripe 404'd the subscription while the customer still exists. */
+  STRIPE_SUB_NOT_FOUND_TERMINATED: "STRIPE_SUB_NOT_FOUND_TERMINATED",
+  /** The subscription AND its customer are 404 in Stripe: a wrong account / mode is suspected; nothing was changed. */
+  STRIPE_KEY_MODE_MISMATCH: "STRIPE_KEY_MODE_MISMATCH",
+  /** A tenant's 100% coupon ended: its add-ons that never had a Stripe item stay UNBILLED (never auto-billed). */
+  ADDON_COUPON_ENDED_UNBILLED: "ADDON_COUPON_ENDED_UNBILLED",
   ADDON_MANUAL_INVOICE_DUE: "ADDON_MANUAL_INVOICE_DUE",
   ADDON_MANUAL_INVOICE_STOP: "ADDON_MANUAL_INVOICE_STOP",
+  /** B1102: a catalog add-on's includedAtPlan names no plan; a background path skipped billing it (meta: sku, value). */
+  ADDON_CATALOG_INVALID: "ADDON_NOT_BILLED_CATALOG_INVALID",
   IMPERSONATION_STARTED: "IMPERSONATION_STARTED",
   TENANT_CLASS_CHANGED: "TENANT_CLASS_CHANGED",
   FEATURE_OVERRIDE_SET: "FEATURE_OVERRIDE_SET",
@@ -130,8 +144,15 @@ export const ADMIN_AUDIT_ACTION_LABELS: Record<AdminAuditActionCode, string> = {
   STRIPE_PAID_CHECKOUT_NOT_APPLIED: "Paid checkout not applied (reconcile in Stripe)",
   STRIPE_ASYNC_PAYMENT_FAILED: "Bank debit failed (checkout not paid)",
   ADDON_CHECKOUT_ITEMS_UNRECOGNISED: "Checkout add-on items not recognised (check Stripe)",
+  STRIPE_SUBSCRIPTION_NOT_FOUND: "Stripe subscription not found (check account/mode)",
+  PAID_WHILE_ADMIN_LOCKED: "Paid while locked (refund or reinstate deliberately)",
+  STRIPE_PRICE_PUSH_BLOCKED: "Price not pushed to Stripe (check the subscription)",
+  STRIPE_SUB_NOT_FOUND_TERMINATED: "Terminated: Stripe subscription not found (customer present)",
+  STRIPE_KEY_MODE_MISMATCH: "Stripe key/mode mismatch suspected (nothing changed)",
+  ADDON_COUPON_ENDED_UNBILLED: "Coupon ended: add-ons still unbilled (decide)",
   ADDON_MANUAL_INVOICE_DUE: "Add-on to invoice manually",
   ADDON_MANUAL_INVOICE_STOP: "Add-on to stop invoicing manually",
+  ADDON_NOT_BILLED_CATALOG_INVALID: "Add-on not billed (catalog setting invalid)",
   IMPERSONATION_STARTED: "Impersonation started",
   TENANT_CLASS_CHANGED: "Class changed",
   FEATURE_OVERRIDE_SET: "Feature override set",

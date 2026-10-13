@@ -1,3 +1,4 @@
+import { AuditService } from "../audit/audit.service";
 import { listenOnLoopback } from "../common/testing/listen-loopback";
 import "reflect-metadata";
 import { INestApplication, ValidationPipe } from "@nestjs/common";
@@ -41,6 +42,7 @@ describe("PATCH/GET users/me/preferences — typed lowStockDigestEnabled", () =>
         { provide: PrismaService, useValue: prisma },
         { provide: EmailService, useValue: {} },
         { provide: OperatorPermissionsService, useValue: {} },
+        { provide: AuditService, useValue: { log: jest.fn() } }, // NoImpersonationGuard (SA-778)
         { provide: ConfigService, useValue: { get: () => ({}) } },
       ],
     })

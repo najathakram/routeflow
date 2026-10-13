@@ -13,12 +13,15 @@ import { UserRole } from "@prisma/client";
 import { JwtAuthGuard } from "../auth/guards/jwt-auth.guard";
 import { RolesGuard } from "../auth/guards/roles.guard";
 import { Roles } from "../auth/decorators/roles.decorator";
+import { NoImpersonation } from "../auth/decorators/no-impersonation.decorator";
 import { CurrentUser } from "../auth/decorators/current-user.decorator";
 import type { JwtPayload } from "../auth/jwt-payload.interface";
 import { StripeConnectService } from "./stripe-connect.service";
 
 /**
  * Tenant-side Stripe Connect management. TENANT_ADMIN satisfies @Roles(OPERATOR).
+ * SA-778: the two mutations (`link`, `disconnect`) carry `@NoImpersonation("billing")` (payment setup is not
+ * available in a support session); billing-support-session.pin.spec.ts fails the build if a new one lacks it.
  */
 @Controller("settings/stripe-connect")
 @UseGuards(JwtAuthGuard, RolesGuard)
@@ -33,6 +36,7 @@ export class StripeConnectController {
 
   /** Returns the Stripe authorize URL; the web client navigates the browser there. */
   @Post("link")
+  @NoImpersonation("billing")
   async link(@CurrentUser() user: JwtPayload) {
     const url = await this.connect.buildAuthorizeUrl(
       user.tenantId!,
@@ -43,6 +47,7 @@ export class StripeConnectController {
   }
 
   @Delete()
+  @NoImpersonation("billing")
   disconnect(@CurrentUser() user: JwtPayload) {
     return this.connect.disconnect(user.tenantId!);
   }

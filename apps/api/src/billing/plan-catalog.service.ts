@@ -9,7 +9,9 @@ import { PrismaService } from "../prisma/prisma.service";
 import {
   FLAG_TO_ADDON_SKU,
   SELF_SERVICE_ADDON_SKUS,
+  findInvalidIncludedAtPlan,
   isInviteOnlyPlanKey,
+  isValidIncludedAtPlan,
 } from "./plan-catalog.constants";
 import { PlanGateUpgrade } from "./plan-gate";
 
@@ -296,6 +298,12 @@ export class PlanCatalogService {
   /** Patch an add-on SKU in a DRAFT version (price/flags/capacity — not the SKU code or meter). */
   async updateSku(versionId: string, sku: string, patch: AddonSkuPatch) {
     await this.assertDraft(versionId);
+    // B1102: includedAtPlan is free text; an unknown key would silently bill the add-on on every plan.
+    if (patch.includedAtPlan !== undefined && !isValidIncludedAtPlan(patch.includedAtPlan)) {
+      throw new BadRequestException(
+        `Add-on ${sku}: unknown includedAtPlan "${patch.includedAtPlan}" (use a plan key or null)`,
+      );
+    }
     const data: Prisma.AddonSkuUpdateInput = {};
     if (patch.name !== undefined) data.name = patch.name;
     if (patch.monthlyPrice !== undefined) data.monthlyPrice = patch.monthlyPrice;
@@ -319,7 +327,7 @@ export class PlanCatalogService {
   async publish(versionId: string, actorId?: string): Promise<PlanVersionWithCatalog> {
     const version = await this.prisma.planVersion.findUnique({
       where: { id: versionId },
-      include: { definitions: true },
+      include: { definitions: true, addonSkus: true },
     });
     if (!version) throw new NotFoundException("Plan version not found");
     if (version.status !== "DRAFT") {
@@ -327,6 +335,14 @@ export class PlanCatalogService {
     }
     if (version.definitions.length === 0) {
       throw new BadRequestException("Cannot publish a version with no plan definitions");
+    }
+    // B1102: refuse to publish a catalog whose includedAtPlan names no real plan (bills everywhere).
+    const badIncluded = findInvalidIncludedAtPlan(version.addonSkus ?? []);
+    if (badIncluded.length > 0) {
+      throw new BadRequestException(
+        "Cannot publish: unknown includedAtPlan on " +
+          badIncluded.map((b) => `${b.sku}="${b.includedAtPlan}"`).join(", "),
+      );
     }
     const now = new Date();
     try {

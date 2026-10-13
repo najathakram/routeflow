@@ -150,7 +150,9 @@ function make(o: { monthly?: number; invoices?: Record<string, unknown>[] } = {}
       product_data: { name: "RouteFlow Enterprise - monthly" },
     })),
   };
-  const mutations: any = { checkoutAddonLines: jest.fn(async () => ({ lineItems: [], skus: [] })) };
+  const mutations: any = {
+    checkoutAddonLines: jest.fn(async () => ({ lineItems: [], skus: [], invalid: [] })),
+  };
   const claim = new CatchupClaimService(prisma, stripe as any, { emit: jest.fn() } as any);
   const billing: any = { ensureStripeCustomer: jest.fn(async () => "cus_1") };
   const svc = new CatchupCheckoutService(prisma, stripe as any, pricing, mutations, claim, billing);

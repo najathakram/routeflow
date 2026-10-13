@@ -26,6 +26,7 @@ import {
   TENANT_ACTION_COPY,
   deleteFailureCopy,
   extendFailureCopy,
+  statusFailureCopy,
   longDate,
   tenantLabel,
 } from "../../../_components/TenantActionDialogs";
@@ -2056,7 +2057,7 @@ export default function AdminTenantDetailPage() {
             : action === "change-plan"
               ? TENANT_ACTION_COPY.planFailed
               : action === "toggle-status"
-                ? TENANT_ACTION_COPY.statusFailed
+                ? statusFailureCopy(err)
                 : TENANT_ACTION_COPY.actionFailed,
         );
       }

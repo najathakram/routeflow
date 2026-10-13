@@ -36,6 +36,7 @@ describe("UsersController: admin account protection wiring", () => {
       { email: "a@b.example" },
       "op",
       UserRole.OPERATOR,
+      undefined,
     );
   });
   it("unlock and driver-permit pass the caller's role", async () => {

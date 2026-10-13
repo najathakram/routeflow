@@ -100,7 +100,7 @@ describeDb("SA-733r11 correction markers (real Postgres)", () => {
           product_data: { name: "RouteFlow Enterprise - monthly" },
         }),
       } as any,
-      { checkoutAddonLines: async () => ({ lineItems: [], skus: [] }) } as any,
+      { checkoutAddonLines: async () => ({ lineItems: [], skus: [], invalid: [] }) } as any,
       claim,
       { ensureStripeCustomer: async () => "cus_cm" } as any,
     );
