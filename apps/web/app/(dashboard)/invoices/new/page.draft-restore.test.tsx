@@ -452,6 +452,57 @@ describe("ROW 447 — unsaved new-invoice draft", () => {
     });
   });
 
+  describe("terms restored from the customer default stay re-seedable", () => {
+    const custA = { id: "cust-1", businessName: "Acme Co", defaultPaymentTerms: "Net 60" };
+    const custB = { id: "cust-2", businessName: "Globex Ltd", defaultPaymentTerms: "Net 15" };
+    const swapCustomer = async (user: ReturnType<typeof userEvent.setup>) => {
+      await user.click(screen.getByTitle("Remove customer"));
+      await user.click(screen.getByPlaceholderText(/search customers/i));
+      await user.click(await screen.findByText("Globex Ltd"));
+    };
+
+    it("terms that equal the customer's default follow a later customer change", async () => {
+      mockCustomers = [custA, custB];
+      seed({ customer: custA, terms: "Net 60" });
+      const user = userEvent.setup();
+      renderWithProviders(<NewInvoicePage />);
+      await user.click(await screen.findByRole("button", { name: "Restore" }));
+      await screen.findByDisplayValue("Widget");
+      expect(screen.getByDisplayValue("Net 60")).toBeInTheDocument();
+      await swapCustomer(user);
+      expect(await screen.findByDisplayValue("Net 15")).toBeInTheDocument();
+    });
+
+    it("terms the user picked (different from the default) are kept", async () => {
+      mockCustomers = [custA, custB];
+      seed({ customer: custA, terms: "Net 30" });
+      const user = userEvent.setup();
+      renderWithProviders(<NewInvoicePage />);
+      await user.click(await screen.findByRole("button", { name: "Restore" }));
+      await screen.findByDisplayValue("Widget");
+      await swapCustomer(user);
+      expect(screen.getByDisplayValue("Net 30")).toBeInTheDocument();
+    });
+  });
+
+  it("typing a fresh form while the offer is open warns that saving discards the draft, and writes nothing", async () => {
+    seed({ reference: "ORIGINAL" });
+    const user = userEvent.setup();
+    renderWithProviders(<NewInvoicePage />);
+    await screen.findByText("Restore unsaved invoice?");
+    expect(
+      screen.queryByText("Starting a new invoice discards the saved draft."),
+    ).not.toBeInTheDocument();
+    await user.click(screen.getByRole("button", { name: /other charge/i }));
+    await user.type(screen.getByPlaceholderText(/PO-1234/), "NEW");
+    expect(
+      await screen.findByText("Starting a new invoice discards the saved draft."),
+    ).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Restore" })).toBeInTheDocument(); // the offer stays open
+    await act(() => new Promise((r) => setTimeout(r, 800)));
+    expect(JSON.parse(stored()!).data.reference).toBe("ORIGINAL");
+  });
+
   it("while the offer is open, typing in a fresh form does not overwrite the stored draft", async () => {
     seed({ reference: "ORIGINAL" });
     const user = userEvent.setup();

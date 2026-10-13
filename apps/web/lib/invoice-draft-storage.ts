@@ -243,6 +243,12 @@ export function isPristineSnapshot(s: InvoiceDraftSnapshot): boolean {
   );
 }
 
+/** True when the form (raw, unsanitized) holds nothing worth saving. A shape that cannot be read counts as pristine. */
+export function isPristineForm(form: unknown): boolean {
+  const snap = sanitizeSnapshot(form);
+  return !snap || isPristineSnapshot(snap);
+}
+
 // ─── Storage (never throws) ───────────────────────────────────────────────────
 
 function store(): Storage | null {

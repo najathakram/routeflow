@@ -113,7 +113,7 @@ import { MarginHint } from "@/components/MarginHint";
 import { DecimalInput, MoneyInput } from "@/components/MoneyInput";
 import { ReadOnlyHint, WriteButton } from "@/lib/read-only-gate";
 import { getTenantCookie } from "@/lib/tenant-cookie";
-import { invoiceDraftKey } from "@/lib/invoice-draft-storage";
+import { invoiceDraftKey, isPristineForm } from "@/lib/invoice-draft-storage";
 import { catalogPricing } from "./invoice-catalog-price";
 import { useInvoiceDraft } from "./use-invoice-draft";
 import { checkDraftReferences } from "./invoice-draft-restore";
@@ -1067,7 +1067,15 @@ export default function NewInvoicePage() {
       didPrefillRef.current = true;
       didSeedTermsRef.current = true;
       seededCustomerIdRef.current = s.customer?.id ?? null;
-      if (s.terms) termsSourceRef.current = "manual";
+      // Terms that are just the customer's (or tenant's) default stay re-seedable; only a different pick is manual.
+      if (s.terms) {
+        termsSourceRef.current =
+          s.terms === s.customer?.defaultPaymentTerms
+            ? "customer"
+            : s.terms === invoiceSettings?.defaultTerms
+              ? "tenant"
+              : "manual";
+      }
       dueDateEditedRef.current = s.dueDateEdited;
       setBasis(s.basis);
       setCustomer((s.customer as Customer | null) ?? null);
@@ -1100,6 +1108,7 @@ export default function NewInvoicePage() {
     <InvoiceDraftBanner
       summary={draft.offer ? draftSummary(draft.offer.snapshot, draft.offer.savedAt) : null}
       notice={draftNotice}
+      warning={!!draft.offer && !isPristineForm(draftForm)}
       busy={draftBusy}
       onRestore={() => void restoreDraft()}
       onDiscard={draft.discard}

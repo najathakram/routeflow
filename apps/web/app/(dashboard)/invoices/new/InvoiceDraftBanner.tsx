@@ -9,6 +9,7 @@ import type { InvoiceDraftSnapshot } from "@/lib/invoice-draft-storage";
 /** ROW 447: fixed copy. Nothing here is server text. */
 export const DRAFT_BANNER_TITLE = "Restore unsaved invoice?";
 export const DRAFT_BANNER_LABEL = "Unsaved invoice";
+export const DRAFT_BANNER_WARNING = "Starting a new invoice discards the saved draft.";
 
 export function draftNoticeCopy(
   droppedLines: number,
@@ -44,6 +45,7 @@ export function draftSummary(snapshot: InvoiceDraftSnapshot, savedAt: number): s
 export function InvoiceDraftBanner({
   summary,
   notice,
+  warning,
   busy,
   onRestore,
   onDiscard,
@@ -51,6 +53,8 @@ export function InvoiceDraftBanner({
 }: {
   summary: string | null;
   notice: string | null;
+  /** A fresh form is being edited while the offer is open: saving it will discard the stored draft. */
+  warning: boolean;
   busy: boolean;
   onRestore: () => void;
   onDiscard: () => void;
@@ -67,6 +71,7 @@ export function InvoiceDraftBanner({
           <>
             <p className="text-sm font-semibold text-navy">{DRAFT_BANNER_TITLE}</p>
             <p className="text-sm text-navy/70">{summary}</p>
+            {warning ? <p className="text-sm text-navy/70">{DRAFT_BANNER_WARNING}</p> : null}
           </>
         ) : (
           <p className="text-sm text-navy/70">{notice}</p>
