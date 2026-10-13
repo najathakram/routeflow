@@ -10,6 +10,7 @@ import { useNumberingSettings } from "@/lib/api/numbering";
 import { useRouteSettings } from "@/lib/api/routes";
 import { useStripeConnectStatus } from "@/lib/api/stripe-connect";
 import { useUsers } from "@/lib/api/users";
+import { useUnitsSettingsEnabled } from "@/lib/api/product-units";
 import { buildIndex } from "./settings-index";
 import {
   counterValue,
@@ -45,9 +46,10 @@ export function useSettingsNav({ isAdmin }: { isAdmin: boolean }) {
   const users = useUsers({ status: "ACTIVE" });
 
   const counter = gate.showButton;
+  const unitsSettings = useUnitsSettingsEnabled();
   const entries = React.useMemo(
-    () => buildIndex({ isAdmin, fleet, selfServe, counter }),
-    [isAdmin, fleet, selfServe, counter],
+    () => buildIndex({ isAdmin, fleet, selfServe, counter, unitsSettings }),
+    [isAdmin, fleet, selfServe, counter, unitsSettings],
   );
   const trailing: Record<string, string | undefined> = {
     "business-profile": timeZoneValue(settings.data),

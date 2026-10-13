@@ -24,7 +24,7 @@ export type IndexEntry = {
   keywords: string[];
   show?: "admin";
   /** fleet = routes/drivers on the plan; selfServe = Settings > Fulfillment is open to this tenant; counter = counter sales on. */
-  needs?: "fleet" | "selfServe" | "counter";
+  needs?: "fleet" | "selfServe" | "counter" | "unitsSettings";
   /** false = searchable but not a row in the hub/rail lists (Plan & billing lives in the Business card). */
   listed?: false;
   /** Filled by a later change; a row shows `affects ?? desc`. */
@@ -363,6 +363,18 @@ const ENTRIES: IndexEntry[] = [
     groupKey: "selling",
     show: "admin",
     keywords: ["restriction", "category", "tag", "compliance", "state", "blocked", "banned", "age"],
+  },
+  {
+    // U-1 (specs/u1-hub-index-entry-note.md): dark unless the tenant has flag.units_settings_v1 (SA ruling), and
+    // dropped BEFORE search too, so a flag-off tenant can't find it. Operators may edit units (no show: "admin").
+    id: "units",
+    kind: "item",
+    label: "Units",
+    desc: "The names you sell and stock by.",
+    href: "/settings/units",
+    groupKey: "selling",
+    needs: "unitsSettings",
+    keywords: ["unit", "units", "case", "box", "pack", "piece", "bottle", "size", "pieces per box"],
   },
   // ── Integrations ─────────────────────────────────────────────────────────────────────────
   {
@@ -801,8 +813,15 @@ export function buildIndex(o: {
   selfServe?: boolean;
   /** Counter sales are on (the counter capability). Unknown = dark. */
   counter?: boolean;
+  /** The tenant has flag.units_settings_v1 (the Units screen). Unknown = dark. */
+  unitsSettings?: boolean;
 }): IndexEntry[] {
-  const open = { fleet: o.fleet, selfServe: !!o.selfServe, counter: !!o.counter };
+  const open = {
+    fleet: o.fleet,
+    selfServe: !!o.selfServe,
+    counter: !!o.counter,
+    unitsSettings: !!o.unitsSettings,
+  };
   return ENTRIES.filter((e) => (e.show === "admin" ? o.isAdmin : true))
     .filter((e) => (e.needs ? open[e.needs] : true))
     .map((e) =>

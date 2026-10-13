@@ -4,6 +4,13 @@ import { renderWithProviders } from "@/test-utils/render";
 import { OFF_HUB_SCREENS, SETTINGS_REGISTRY, type SettingRow } from "@routeflow/types";
 import { SettingsHub } from "./SettingsHub";
 
+// U-1 Units entry: off unless a test turns it on (the flag-gated hub row, specs/u1-hub-index-entry-note.md)
+let mockUnitsSettings = false;
+jest.mock("@/lib/api/product-units", () => ({
+  ...jest.requireActual("@/lib/api/product-units"),
+  useUnitsSettingsEnabled: () => mockUnitsSettings,
+}));
+
 const restrictions = jest.fn();
 jest.mock("@/lib/api/restrictions-settings", () => ({
   useRestrictionsSettings: () => restrictions(),
@@ -502,5 +509,33 @@ describe("apple-ux U1: the search survives Back, and only Back (SA M2)", () => {
     renderWithProviders(<SettingsHub isAdmin />);
     fireEvent.change(screen.getByLabelText("Search settings"), { target: { value: "tax" } });
     expect(window.history.state).toMatchObject({ __keep: 1, rfSettingsQuery: "tax" });
+  });
+});
+
+describe("Units (U-1), gated on flag.units_settings_v1", () => {
+  afterEach(() => {
+    mockUnitsSettings = false;
+  });
+  const unitLinks = () =>
+    screen.queryAllByRole("link").filter((l) => l.getAttribute("href") === "/settings/units");
+
+  it("flag on: one Units link, and operators see it", () => {
+    mockUnitsSettings = true;
+    renderWithProviders(<SettingsHub isAdmin={false} />);
+    expect(unitLinks()).toHaveLength(1);
+  });
+
+  it("flag off: no Units link, and searching 'unit' finds none", () => {
+    renderWithProviders(<SettingsHub isAdmin />);
+    expect(unitLinks()).toHaveLength(0);
+    fireEvent.change(screen.getByLabelText("Search settings"), { target: { value: "unit" } });
+    expect(unitLinks()).toHaveLength(0);
+  });
+
+  it.each(["unit", "case", "bottle", "pieces per box", "pack"])("flag on: '%s' finds it", (q) => {
+    mockUnitsSettings = true;
+    renderWithProviders(<SettingsHub isAdmin />);
+    fireEvent.change(screen.getByLabelText("Search settings"), { target: { value: q } });
+    expect(unitLinks().length).toBeGreaterThan(0);
   });
 });

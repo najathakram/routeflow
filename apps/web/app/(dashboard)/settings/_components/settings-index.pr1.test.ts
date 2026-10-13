@@ -322,3 +322,30 @@ describe("PR1 row hrefs and the active row", () => {
     expect(act("/settings", null)).toEqual([]);
   });
 });
+
+describe("U-1 Units entry (specs/u1-hub-index-entry-note.md; SA: gated on flag.units_settings_v1)", () => {
+  const on = { isAdmin: false, fleet: true, selfServe: true, counter: true, unitsSettings: true };
+  const off = { ...on, unitsSettings: false };
+
+  it("flag off (or unknown): no Units row and no search hit, for anyone", () => {
+    for (const o of [off, { ...off, isAdmin: true }, { isAdmin: true, fleet: true }]) {
+      const idx = buildIndex(o);
+      expect(idx.some((e) => e.href === "/settings/units")).toBe(false);
+      expect(searchSettings("unit", idx).some((e) => e.href === "/settings/units")).toBe(false);
+    }
+  });
+
+  it("flag on: Units is listed once, last in Selling, and operators see it", () => {
+    const idx = buildIndex(on);
+    expect(idx.filter((e) => e.href === "/settings/units")).toHaveLength(1);
+    const selling = listGroup(idx, "selling", { fleet: true, counter: true }).map((e) => e.id);
+    expect(selling[selling.length - 1]).toBe("units");
+  });
+
+  it.each(["unit", "case", "bottle", "pieces per box", "pack"])(
+    "flag on: '%s' finds Units",
+    (q) => {
+      expect(searchSettings(q, buildIndex(on)).some((e) => e.id === "units")).toBe(true);
+    },
+  );
+});
