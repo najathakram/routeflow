@@ -62,7 +62,8 @@ import {
   refusesLineEdit,
 } from "../../../../lib/default-unit-line";
 import { fetchProductUnits, productUnitsKey } from "../../../../lib/api/product-units";
-import { unitPriceBase, type UnitOption } from "../../../../lib/unit-options";
+import { buildUnitOptions, unitPriceBase, type UnitOption } from "../../../../lib/unit-options";
+import type { ProductUnitLevel } from "@routeflow/types";
 import { needsUnitLabelConfirm } from "../../../../lib/scan-unit-confirm";
 import {
   UNIT_NOT_OFFERED_MESSAGE,
@@ -71,6 +72,7 @@ import {
   invoiceItemDto,
   invoiceTotalsLine,
   normalizeInvoiceUnitLines,
+  withUnitListPrices,
   pickerLineOf,
   saleItemDto,
   unitNotOfferedCode,
@@ -568,12 +570,29 @@ function InvoiceComposer({
         ? { ...m, [id]: chooseInvoiceUnit(m[id], option, productById.get(id)?.unitsPerBox) }
         : m,
     );
+  // SA nit (b): the unit's own tier-1 price off the ladder the resolver just fetched (undefined until it is cached).
+  const unitListPriceFor = (id: string, label: string): number | undefined => {
+    const units = qc.getQueryData<ProductUnitLevel[]>(productUnitsKey(id));
+    const product = productById.get(id);
+    if (!units || !product) return undefined;
+    try {
+      return buildUnitOptions(product, units).find((o) => o.value === label)?.listPrice;
+    } catch {
+      return undefined; // a ladder that will not build leaves the pack fallback, as before
+    }
+  };
   // SA-626c: a flagged line holds its default unit from the moment it is added, never only once a sheet mounts.
   const { resolveBeforeSubmit: resolveDefaultUnits, statusFor: unitStatusFor } =
     useDefaultUnitResolver(
       items,
-      // a factor-1 Piece default on a boxed product must stay a pack line (lib/invoice-unit-pick)
-      (fn) => setItems((m) => normalizeInvoiceUnitLines(fn(m), (id) => productById.get(id))),
+      // a factor-1 Piece default on a boxed product must stay a pack line; a resolved unit line learns its list price
+      (fn) =>
+        setItems((m) =>
+          withUnitListPrices(
+            normalizeInvoiceUnitLines(fn(m), (id) => productById.get(id)),
+            unitListPriceFor,
+          ),
+        ),
       isStaff,
       (id) => productById.get(id),
       effectiveTierFor,

@@ -17,6 +17,7 @@ import {
   type Items,
 } from "../lib/pending-unit-adapter";
 import { setLineQty, setLineUnits, stepLineQty } from "../lib/sale-line";
+import { decideTrayPrice } from "../lib/staff-price-override";
 import { scanAcceptOpts } from "../lib/scan-ladder";
 import { needsUnitLabelConfirm } from "../lib/scan-unit-confirm";
 import {
@@ -30,10 +31,16 @@ import {
   pickerLineOf,
   saleItemDto,
   unitNotOfferedCode,
+  withUnitListPrices,
   type InvoiceLineState,
 } from "../lib/invoice-unit-pick";
 
 jest.mock("../lib/toast", () => ({ showToast: jest.fn() }));
+// a pass-through spy: every test still runs the real decision; the nit test reads its inputs
+jest.mock("../lib/staff-price-override", () => {
+  const actual = jest.requireActual("../lib/staff-price-override");
+  return { ...actual, decideTrayPrice: jest.fn(actual.decideTrayPrice) };
+});
 
 /**
  * VU-4b: the staff unit picker on the mobile New-invoice screen. Fixture (brief): a Box of 24 at
@@ -675,5 +682,57 @@ describe("nits: the picker sees the chosen Piece row; a unit sale carries the un
     const lvl = chooseInvoiceUnit(BOX_LINE, pick(t3, "Case"), 24);
     expect(lvl.unitListPrice).toBe(pick(t3, "Case").listPrice);
     expect(lvl.unitListPrice).not.toBe(48);
+  });
+});
+
+describe("SA nits (10-08 Opus, ledger row 17): unitListPrice is wired end to end", () => {
+  const t3 = optionsFor([CASE], 3);
+  const CTX = { catalogPrice: 40, listPrice: 48, isSpecial: false };
+  const caseLine = (over: Partial<InvoiceLineState> = {}): InvoiceLineState => ({
+    ...chooseInvoiceUnit(BOX_LINE, pick(t3, "Case"), 24),
+    unitPrice: pick(t3, "Case").listPrice, // the operator typed the Case's own tier-1 price
+    ...over,
+  });
+
+  it("(a) saleItemDto hands the override decision the UNIT's list price, not the pack's", () => {
+    const spy = decideTrayPrice as jest.Mock;
+    spy.mockClear();
+    saleItemDto(caseLine(), { id: "p1", unitsPerBox: 24 }, CTX);
+    expect(spy).toHaveBeenLastCalledWith(
+      expect.objectContaining({
+        listPrice: pick(t3, "Case").listPrice,
+        base: pick(t3, "Case").price,
+      }),
+    );
+    expect(pick(t3, "Case").listPrice).not.toBe(CTX.listPrice);
+    // a unit line that never learned its list price falls back to the pack's: the gap nit (b) closes
+    saleItemDto(caseLine({ unitListPrice: undefined }), { id: "p1", unitsPerBox: 24 }, CTX);
+    expect(spy).toHaveBeenLastCalledWith(expect.objectContaining({ listPrice: CTX.listPrice }));
+  });
+
+  it("(b) a resolver-set unit line gets the unit's list price stamped from the ladder", () => {
+    // the shared default-unit resolver writes through applyUnitOption, which knows no list price
+    const resolved: InvoiceLineState = {
+      ...caseLine(),
+      unitPrice: undefined,
+      unitListPrice: undefined,
+    };
+    const pack: InvoiceLineState = { ...BOX_LINE };
+    const already: InvoiceLineState = { ...caseLine(), unitListPrice: 99 };
+    const items = { p1: resolved, p2: pack, p3: already };
+    const lookup = jest.fn((id: string, label: string) =>
+      id === "p1" && label === "Case" ? pick(t3, "Case").listPrice : undefined,
+    );
+    const out = withUnitListPrices(items, lookup);
+    expect(out.p1.unitListPrice).toBe(pick(t3, "Case").listPrice);
+    expect(out.p2).toBe(pack); // a pack line is untouched (same object)
+    expect(out.p3).toBe(already); // a line that already knows its list price is untouched
+    expect(lookup).not.toHaveBeenCalledWith("p2", expect.anything());
+  });
+
+  it("(b) nothing changes, and the SAME map comes back, when the ladder is not known", () => {
+    const resolved: InvoiceLineState = { ...caseLine(), unitListPrice: undefined };
+    const items = { p1: resolved };
+    expect(withUnitListPrices(items, () => undefined)).toBe(items);
   });
 });

@@ -106,7 +106,9 @@ describe("VU-4b: the New-invoice screen reuses Create Order's unit machinery", (
     expect(screen).toContain("normalizeInvoiceUnitLines");
     const hook = between(screen, "useDefaultUnitResolver(", "const anyUnitLoading");
     expect(hook).toMatch(/normalizeInvoiceUnitLines\(/);
-    expect(hook).toMatch(/setItems\(\(m\) => normalizeInvoiceUnitLines\(fn\(m\)/);
+    expect(hook).toMatch(
+      /setItems\(\(m\) =>\s*withUnitListPrices\(\s*normalizeInvoiceUnitLines\(fn\(m\)/,
+    );
     const onSave = between(screen, "const onSave = ", "const unlistedPlacement");
     expect(onSave).toMatch(/normalizeInvoiceUnitLines\(settled\.lines/);
   });
@@ -186,5 +188,17 @@ describe("VU-4b: shared components and the API type", () => {
     expect(pick).toMatch(/export function chooseInvoiceUnit/);
     expect(pick).toMatch(/applyUnitOption/);
     expect(pick).toMatch(/UNIT_NOT_OFFERED_MESSAGE/);
+  });
+});
+
+describe("SA nit (b): the default-unit resolver's lines carry the unit's list price", () => {
+  it("the resolver's setter stamps unitListPrice from the cached ladder after normalizing", () => {
+    const resolver = between(screen, "useDefaultUnitResolver(", "anyLineLoading(");
+    expect(resolver).toMatch(/withUnitListPrices\(\s*normalizeInvoiceUnitLines\(fn\(m\)/);
+    expect(resolver).toMatch(/unitListPriceFor/);
+    const lookup = between(screen, "const unitListPriceFor", "useDefaultUnitResolver(");
+    expect(lookup).toMatch(/getQueryData<[^>]*>\(productUnitsKey\(id\)\)/);
+    expect(lookup).toMatch(/buildUnitOptions\(/);
+    expect(lookup).toMatch(/\.listPrice/);
   });
 });

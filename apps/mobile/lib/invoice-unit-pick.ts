@@ -328,3 +328,25 @@ export function normalizeInvoiceUnitLines<T extends InvoiceLineState>(
   }
   return out;
 }
+
+/**
+ * SA nit (b), as web stamps `listPrice` when its resolver applies a unit: the shared default-unit resolver writes a
+ * unit line through applyUnitOption, which knows no list price, so a line that STARTED on its default unit would be
+ * judged against the pack's list price at Confirm. Each unit line missing `unitListPrice` gets the unit's own tier-1
+ * price from `listPriceFor` (the cached ladder); pack lines, lines that already carry one, and lines whose ladder is
+ * not known are returned as the SAME object (and the SAME map when nothing changed).
+ */
+export function withUnitListPrices<T extends InvoiceLineState>(
+  items: Record<string, T>,
+  listPriceFor: (productId: string, unitLabel: string) => number | undefined,
+): Record<string, T> {
+  let out = items;
+  for (const [id, line] of Object.entries(items)) {
+    if (!isUnitLine(line) || line.unitListPrice != null) continue;
+    const listPrice = listPriceFor(id, line.unitLabel as string);
+    if (listPrice == null) continue;
+    if (out === items) out = { ...items };
+    out[id] = { ...line, unitListPrice: listPrice };
+  }
+  return out;
+}
