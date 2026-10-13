@@ -1,6 +1,6 @@
 import * as React from "react";
 import userEvent from "@testing-library/user-event";
-import { renderWithProviders, screen, waitFor } from "@/test-utils/render";
+import { act, renderWithProviders, screen, waitFor } from "@/test-utils/render";
 import NewInvoicePage from "./page";
 
 /**
@@ -150,13 +150,13 @@ describe("row 485 — the New sale page's Idempotency-Key", () => {
       "a 400 that names the committed invoice",
       { response: { status: 400, data: { message: "x", invoiceId: "inv-1", orderId: "ord-1" } } },
     ],
-  ])("two submits after %s send the SAME key", async (_n, error) => {
+  ])("Try again after %s sends the SAME key", async (_n, error) => {
     const user = await openSaleWithLine();
     await submit(user);
     await waitFor(() => expect(mockCreateSale).toHaveBeenCalledTimes(1));
     expect(keyOf(0)).toBeTruthy();
-    callOpts(0).onError(error);
-    await submit(user);
+    act(() => callOpts(0).onError(error));
+    await user.click(await screen.findByRole("button", { name: "Try again" }));
     await waitFor(() => expect(mockCreateSale).toHaveBeenCalledTimes(2));
     expect(keyOf(1)).toBe(keyOf(0));
   });
@@ -165,7 +165,7 @@ describe("row 485 — the New sale page's Idempotency-Key", () => {
     const user = await openSaleWithLine();
     await submit(user);
     await waitFor(() => expect(mockCreateSale).toHaveBeenCalledTimes(1));
-    callOpts(0).onSuccess({ id: "inv-1" });
+    act(() => callOpts(0).onSuccess({ id: "inv-1" }));
     await submit(user);
     await waitFor(() => expect(mockCreateSale).toHaveBeenCalledTimes(2));
     expect(keyOf(1)).not.toBe(keyOf(0));
@@ -175,20 +175,9 @@ describe("row 485 — the New sale page's Idempotency-Key", () => {
     const user = await openSaleWithLine();
     await submit(user);
     await waitFor(() => expect(mockCreateSale).toHaveBeenCalledTimes(1));
-    callOpts(0).onError({ response: { status: 400, data: { message: "Customer not found" } } });
-    await submit(user);
-    await waitFor(() => expect(mockCreateSale).toHaveBeenCalledTimes(2));
-    expect(keyOf(1)).not.toBe(keyOf(0));
-  });
-
-  it("a changed cart is a new attempt with a new key", async () => {
-    const user = await openSaleWithLine();
-    await submit(user);
-    await waitFor(() => expect(mockCreateSale).toHaveBeenCalledTimes(1));
-    callOpts(0).onError({ response: { status: 500, data: {} } });
-    const price = screen.getByLabelText("Unit price");
-    await user.clear(price);
-    await user.type(price, "7");
+    act(() =>
+      callOpts(0).onError({ response: { status: 400, data: { message: "Customer not found" } } }),
+    );
     await submit(user);
     await waitFor(() => expect(mockCreateSale).toHaveBeenCalledTimes(2));
     expect(keyOf(1)).not.toBe(keyOf(0));

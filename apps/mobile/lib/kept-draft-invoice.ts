@@ -25,6 +25,3 @@ export function keptOrderId(err: unknown): string | null {
     ?.orderId;
   return typeof id === "string" && id.length > 0 ? id : null;
 }
-
-/** Fixed copy: the order exists, its invoice does not yet. */
-export const KEPT_ORDER_COPY = "Sale recorded, but its invoice wasn't created. Open the order.";

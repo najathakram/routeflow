@@ -87,19 +87,76 @@ export function mintSaleKey(): string {
   });
 }
 
+/** What an UNKNOWN sale outcome names, if anything: the committed order and/or invoice (row 466). */
+export interface UnknownSale {
+  invoiceId: string | null;
+  orderId: string | null;
+}
+
+/** Where "open it" goes for an unknown sale: the invoice, else the order, else the recent-orders list. */
+export type SaleRecovery =
+  { kind: "invoice"; id: string } | { kind: "order"; id: string } | { kind: "recent" };
+
+export function saleRecovery(unknown: UnknownSale): SaleRecovery {
+  if (unknown.invoiceId) return { kind: "invoice", id: unknown.invoiceId };
+  if (unknown.orderId) return { kind: "order", id: unknown.orderId };
+  return { kind: "recent" };
+}
+
 /**
- * The holder a screen keeps for one sale form. `keyFor(fingerprint)` returns the held key while the cart/form
- * is unchanged and mints a new one otherwise; `settle` applies `heldAfterSale` once the call answers.
+ * The ONE copy for an unknown sale outcome, shared by web and mobile so the screens cannot diverge. While the
+ * outcome is unknown the cart is locked; the clerk can try again (same key), open what exists, or start a new
+ * sale after an explicit confirm (which tells them to check recent orders first).
+ */
+export const SALE_RECOVERY_COPY = {
+  title: "Sale not confirmed",
+  body: "We couldn't confirm this sale. It may already be recorded, so the cart is locked. Try again to finish it, or open it to check.",
+  tryAgain: "Try again",
+  openOrder: "Open order",
+  openInvoice: "Open invoice",
+  recentOrders: "Check recent orders",
+  startNew: "Start a new sale",
+  confirmTitle: "Start a new sale?",
+  confirmBody:
+    "Check recent orders first. If this sale was recorded, starting a new one rings it up twice.",
+  confirmKeep: "Keep this sale",
+} as const;
+
+const idOrNull = (v: unknown): string | null => (nonEmpty(v) ? v : null);
+
+/**
+ * The holder a screen keeps for one sale form.
+ *  - `keyFor(fingerprint)`: the held key while the cart/form is unchanged, or while the outcome is UNKNOWN (the
+ *    cart is locked then, so a changed fingerprint cannot be a deliberate edit); a new key otherwise.
+ *  - `settle(outcome)`: a success or a definitive refusal clears the key and the lock; anything else keeps the
+ *    key and LOCKS the sale as unknown, recording the order/invoice the error body names.
+ *  - `unknown()`: the lock (null when unlocked). `startNew()`: the clerk confirmed a new sale, so clear both.
  */
 export function createSaleKeyHolder(mint: () => string = mintSaleKey) {
   let held: HeldSaleKey | null = null;
+  let unknown: UnknownSale | null = null;
   return {
     keyFor(fingerprint: string): string {
-      held = saleAttemptKey(held, fingerprint, mint);
+      held = unknown && held ? held : saleAttemptKey(held, fingerprint, mint);
       return held.key;
     },
     settle(outcome: { ok: true } | { ok: false; error: unknown }): void {
-      if (held) held = heldAfterSale(held, outcome);
+      if (!held) return;
+      held = heldAfterSale(held, outcome);
+      if (!held || outcome.ok) {
+        held = null;
+        unknown = null;
+        return;
+      }
+      const data = (outcome.error as ApiErrorLike)?.response?.data;
+      unknown = { invoiceId: idOrNull(data?.invoiceId), orderId: idOrNull(data?.orderId) };
+    },
+    unknown(): UnknownSale | null {
+      return unknown;
+    },
+    startNew(): void {
+      held = null;
+      unknown = null;
     },
     /** The key currently held, or null once a definitive outcome cleared it. */
     peek(): string | null {
