@@ -291,14 +291,15 @@ describe("BuyerSellerContextGuard - read-only seller: payments exempt, everythin
 });
 
 // SA ruling 10-11 A3 (N6): the buyer-side READ_ONLY refusal ships DARK under SELLER_READ_ONLY_BUYER_GATE.
-describe("BuyerSellerContextGuard - SELLER_READ_ONLY_BUYER_GATE (dark | enforced, default dark)", () => {
+describe("BuyerSellerContextGuard - SELLER_READ_ONLY_BUYER_GATE (enforced | dark, default enforced since row 390)", () => {
   const saved = {
     gate: process.env.SELLER_READ_ONLY_BUYER_GATE,
     pause: process.env.BILLING_PAUSE_MODE,
   };
   let warn: jest.SpyInstance;
   beforeEach(() => {
-    delete process.env.SELLER_READ_ONLY_BUYER_GATE;
+    // the block's dark cases rely on the explicit rollback value; the default and unknown-value cases clear it
+    process.env.SELLER_READ_ONLY_BUYER_GATE = "dark";
     warn = jest.spyOn(Logger.prototype, "warn").mockImplementation(() => undefined);
   });
   afterEach(() => {
@@ -315,7 +316,7 @@ describe("BuyerSellerContextGuard - SELLER_READ_ONLY_BUYER_GATE (dark | enforced
   const wouldDeny = () =>
     warn.mock.calls.map((c: any[]) => String(c[0])).filter((l: string) => /would_deny/.test(l));
 
-  it("dark (the default) + a READ_ONLY seller: a buyer order SUCCEEDS and exactly one would-deny line names the seller tenant id and the route", async () => {
+  it("dark (the explicit rollback) + a READ_ONLY seller: a buyer order SUCCEEDS and exactly one would-deny line names the seller tenant id and the route", async () => {
     const { guard, req, ctx } = boot(live(), {
       tenantStatus: "READ_ONLY",
       method: "POST",
@@ -373,8 +374,22 @@ describe("BuyerSellerContextGuard - SELLER_READ_ONLY_BUYER_GATE (dark | enforced
     expect(wouldDeny()).toHaveLength(0);
   });
 
-  it("an unknown value is dark (a typo can never turn the refusal on), and BILLING_PAUSE_MODE=enforced does not turn it on either", async () => {
-    process.env.SELLER_READ_ONLY_BUYER_GATE = "enforce";
+  it("unset (the default) and an unknown value are ENFORCED: a typo of the rollback can never turn the refusal off", async () => {
+    for (const value of [undefined, "", "drak"]) {
+      if (value === undefined) delete process.env.SELLER_READ_ONLY_BUYER_GATE;
+      else process.env.SELLER_READ_ONLY_BUYER_GATE = value;
+      const { guard, ctx } = boot(live(), {
+        tenantStatus: "READ_ONLY",
+        method: "POST",
+        path: "/api/v1/buyer/orders",
+      });
+      await expect(guard.canActivate(ctx)).rejects.toMatchObject({
+        response: { code: "SELLER_UNAVAILABLE" },
+      });
+    }
+  });
+
+  it("BILLING_PAUSE_MODE does not decide the gate: dark stays dark with the pause enforced", async () => {
     process.env.BILLING_PAUSE_MODE = "enforced";
     const { guard, ctx } = boot(live(), {
       tenantStatus: "READ_ONLY",

@@ -1,5 +1,6 @@
 import { AUTO_LOCK_KIND_VALUES } from "@routeflow/types";
 import {
+  AUTO_LOCK_COPY,
   AUTO_LOCK_KIND_LABELS,
   autoLockBanner,
   isReasonValid,
@@ -54,6 +55,16 @@ describe("unpauseConfirmCopy", () => {
 
   it("the confirm label is explicit about what the click does", () => {
     expect(unpauseConfirmCopy({ wouldLock: [] }).confirmLabel).toBe("Unpause and allow locks");
+  });
+});
+
+describe("AUTO_LOCK_COPY", () => {
+  // Only PRODUCTION tenants are held by the pause; TEST / DEMO / INTERNAL still lock, so the banner may not
+  // claim that nothing locks.
+  it("the paused line names production tenants, not every tenant", () => {
+    expect(AUTO_LOCK_COPY.pausedNow).toBe(
+      "Automatic locks are paused. Production tenants don't lock on their own until you unpause.",
+    );
   });
 });
 

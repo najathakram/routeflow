@@ -71,7 +71,11 @@ describe("PR1 groups (direction 2b)", () => {
       "product-labels",
     ]);
     expect(rows("notifications")).toEqual(["notifications", "email-smtp"]);
-    expect(rows("compliance")).toEqual(["regulated-sections", "restrictions-compliance"]);
+    expect(rows("compliance")).toEqual([
+      "regulated-sections",
+      "restrictions-compliance",
+      "restriction-rules-compliance",
+    ]);
     expect(rows("integrations")).toEqual([
       "claude-scanner",
       "gohighlevel",

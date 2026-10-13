@@ -13,6 +13,7 @@ import { BillingModule } from "./billing.module";
 import { BillingService } from "./billing.service";
 import { CatchupCheckoutService } from "./catchup-checkout.service";
 import { AutoLockSwitchService } from "./auto-lock-switch.service";
+import { SubscriptionService } from "./subscription.service";
 import { BillingCronService } from "./billing-cron.service";
 import { CatchupClaimService } from "./catchup-claim.service";
 import { DunningService } from "./dunning.service";
@@ -70,6 +71,8 @@ describe("BillingModule wiring: the @Optional collaborators are really provided"
       expect(billing.autoLocks).toBe(sw);
       expect(mutations.autoLocks).toBe(sw);
       expect(billing.dunning.autoLocks).toBe(sw);
+      // the banners read `autoLockHeld` from this service: an undefined switch would silently report "never held"
+      expect((moduleRef.get(SubscriptionService, { strict: false }) as any).autoLocks).toBe(sw);
       expect((moduleRef.get(BillingCronService, { strict: false }) as any).autoLocks).toBe(sw);
     } finally {
       await moduleRef.close();

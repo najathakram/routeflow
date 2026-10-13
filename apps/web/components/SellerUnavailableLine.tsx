@@ -3,6 +3,7 @@
 import * as React from "react";
 import { useBuyerSellerCapabilities } from "@/lib/api/buyer-capabilities";
 import { useBuyerAuth } from "@/lib/buyer-auth-context";
+import { sellerUnavailableCopy } from "@/lib/seller-unavailable";
 
 /**
  * SA-733r6 (B4), buyer side: while the seller's workspace is read-only the buyer sees ONE quiet line above the
@@ -10,9 +11,7 @@ import { useBuyerAuth } from "@/lib/buyer-auth-context";
  * the seller is actually paused), and never a word about payment, billing or plans: the API sends one boolean
  * (`acceptingOrders`) and no reason.
  */
-export function sellerUnavailableCopy(sellerName: string | null | undefined): string {
-  return `${sellerName?.trim() || "This seller"} isn't taking online orders right now. Please check back soon or contact them.`;
-}
+export { sellerUnavailableCopy };
 
 /** False only when the API says the seller is paused; unknown (loading, error) never blocks a buyer. */
 export function useSellerAcceptingOrders(): boolean {

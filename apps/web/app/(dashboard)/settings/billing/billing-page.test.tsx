@@ -138,6 +138,24 @@ describe("BillingSettingsPage — READ_ONLY / TRIAL visibility (RO-1)", () => {
     expect(await screen.findByRole("button", { name: /end trial/i })).toBeInTheDocument();
   });
 
+  // SA-775 rollout: never threaten a lock the pause will not carry out.
+  it("a trial tenant is told it goes read-only after the trial, unless the server says the lock is held", async () => {
+    const trial = {
+      status: "TRIAL" as const,
+      trialEndsAt: new Date(Date.now() + 5 * 86_400_000).toISOString(),
+    };
+    mockSubscriptionView = subscriptionView(trial);
+    const first = renderWithProviders(<BillingSettingsPage />);
+    expect(await screen.findByText(/goes read-only/i)).toBeInTheDocument();
+    first.unmount();
+
+    mockSubscriptionView = { ...subscriptionView(trial), autoLockHeld: true } as SubscriptionView;
+    renderWithProviders(<BillingSettingsPage />);
+    expect(await screen.findByText(/Trial ends in/i)).toBeInTheDocument();
+    expect(screen.getByText(/pick a plan to keep full access/i)).toBeInTheDocument();
+    expect(screen.queryByText(/goes read-only/i)).not.toBeInTheDocument();
+  });
+
   // Regression guard: an ACTIVE tenant keeps today's Cancel affordance. GREEN today.
   it("RO-1 an active tenant still sees Cancel", async () => {
     mockSubscriptionView = subscriptionView({ status: "ACTIVE", cancelAtPeriodEnd: false });
@@ -191,6 +209,25 @@ describe("BillingSettingsPage — READ_ONLY / TRIAL visibility (RO-1)", () => {
       undefined,
       expect.objectContaining({ onSuccess: expect.any(Function) }),
     );
+  });
+
+  // SA-775 follow-up: while auto-locks are paused a production tenant may stay writable, so the copy must
+  // not promise an immediate lock; it is true both when the pause holds the lock and when it does not.
+  it("RO-1 the End trial dialog does not promise an immediate read-only lock", async () => {
+    mockAuthUser = { role: "TENANT_ADMIN" };
+    mockSubscriptionView = subscriptionView({
+      status: "TRIAL",
+      trialEndsAt: new Date(Date.now() + 5 * 86_400_000).toISOString(),
+    });
+    const user = userEvent.setup();
+    renderWithProviders(<BillingSettingsPage />);
+
+    await user.click(await screen.findByRole("button", { name: "End trial" }));
+    const dialog = within(await screen.findByRole("dialog"));
+    expect(
+      dialog.getByText("Your workspace becomes read-only; exports still work."),
+    ).toBeInTheDocument();
+    expect(dialog.queryByText(/immediately/i)).not.toBeInTheDocument();
   });
 
   it("RO-1 a trial tenant as OPERATOR sees no End trial control and no read-only banner", async () => {

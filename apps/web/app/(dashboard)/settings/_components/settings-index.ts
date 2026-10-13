@@ -225,11 +225,11 @@ const ENTRIES: IndexEntry[] = [
   {
     id: "restriction-rules",
     kind: "item",
-    label: "Restriction rules",
-    desc: "Rules that stop products being sold where they are banned",
+    label: "Portal limits & rules",
+    desc: "What portal customers can't see, and the rules behind it",
     href: "/settings/restrictions/rules",
     groupKey: "selling",
-    keywords: ["rules", "banned", "lift", "state", "restriction", "compliance"],
+    keywords: ["rules", "banned", "lift", "state", "restriction", "compliance", "limits", "portal"],
   },
   {
     id: "import-data",
@@ -344,6 +344,15 @@ const ENTRIES: IndexEntry[] = [
     href: R,
     groupKey: "compliance",
     keywords: ["restriction", "state", "blocked", "banned", "age", "tobacco", "vape", "compliance"],
+  },
+  {
+    id: "restriction-rules-compliance",
+    kind: "item",
+    label: "Portal limits & rules",
+    desc: "What portal customers can't see, and the rules behind it",
+    href: "/settings/restrictions/rules",
+    groupKey: "compliance",
+    keywords: ["rules", "banned", "lift", "state", "restriction", "compliance", "limits", "portal"],
   },
   {
     id: "product-labels",
@@ -854,7 +863,7 @@ export const GROUP_ROWS: Record<string, string[]> = {
   payments: ["invoicing", "how-to-pay", "card-payments"],
   selling: ["tier-names", "costing", "restrictions-selling", "restriction-rules", "product-labels"],
   notifications: ["notifications", "email-smtp"],
-  compliance: ["regulated-sections", "restrictions-compliance"],
+  compliance: ["regulated-sections", "restrictions-compliance", "restriction-rules-compliance"],
   integrations: [
     "claude-scanner",
     "gohighlevel",

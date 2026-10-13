@@ -6826,7 +6826,7 @@ describe("OrdersService", () => {
       prisma.product.findMany.mockResolvedValue([
         { id: "prod-box", pricePerUnit: 60, unitsPerBox: 6 },
       ]);
-      prisma.orderItem.findMany.mockResolvedValue([]);
+      prisma.orderItem.findMany.mockResolvedValue([{ id: "li-1", productId: "prod-box", qty: 2 }]); // lock-time read
 
       await service.updateOrderItems(
         "ord-1",

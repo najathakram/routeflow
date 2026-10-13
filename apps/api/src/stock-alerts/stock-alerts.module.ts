@@ -1,5 +1,6 @@
 import { Module } from "@nestjs/common";
 import { NotificationsModule } from "../notifications/notifications.module";
+import { SellingRestrictionsModule } from "../selling-restrictions/selling-restrictions.module";
 import { StockAlertService } from "./stock-alert.service";
 
 /**
@@ -8,7 +9,7 @@ import { StockAlertService } from "./stock-alert.service";
  * circular dependency. PrismaModule is @Global.
  */
 @Module({
-  imports: [NotificationsModule],
+  imports: [NotificationsModule, SellingRestrictionsModule],
   providers: [StockAlertService],
   exports: [StockAlertService],
 })

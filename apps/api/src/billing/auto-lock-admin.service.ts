@@ -13,13 +13,20 @@ import {
   overdueSubscriptionWhere,
   scheduledCancellationWhere,
 } from "./auto-lock-candidates";
-import { DUNNING_PAUSE_HOURS, billingPauseMode } from "./dunning-config";
+import { DUNNING_MILESTONES, DUNNING_PAUSE_HOURS, billingPauseMode } from "./dunning-config";
+import { episodeKey } from "./dunning-clock";
+import { isFinalKeyOfEpisode, latestCountingFinal } from "./dunning-final";
 
 export interface WouldLockRow {
   tenantId: string;
   kind: AutoLockKind;
   key: string;
-  via?: "stripe_check_pending";
+  /**
+   * `stripe_check_pending`: the nightly job still asks Stripe before it locks. `fresh_final_first` (row 412): the
+   * tenant's final notice was sent before the pause started, so the sweep after an unpause sends a FRESH final and
+   * the lock follows 24 h later - not "within the hour".
+   */
+  via?: "stripe_check_pending" | "fresh_final_first";
 }
 export interface SkippedRow {
   tenantId: string;
@@ -98,15 +105,36 @@ export class AutoLockAdminService {
     if (billingPauseMode() === "enforced") {
       const dunning = await this.prisma.tenantSubscription.findMany({
         where: dunningPauseDueWhere(now, DUNNING_PAUSE_HOURS, PRODUCTION),
-        select: { tenantId: true, pastDueInvoiceId: true },
+        select: { tenantId: true, pastDueInvoiceId: true, pastDueSince: true },
         orderBy: { tenantId: "asc" },
         take: PREVIEW_LIMIT,
       });
+      // Row 412: an unpause starts a new boundary (now, while paused; the last unpause otherwise). A tenant whose
+      // final notice predates it gets a fresh final first, so it is listed but not as "locks within the hour".
+      const state = await this.autoLocks.getState();
+      const boundary = state.paused ? now : state.unpausedAt;
+      const finals = boundary
+        ? await this.prisma.billingNotificationLog.findMany({
+            where: {
+              milestone: DUNNING_MILESTONES.FINAL,
+              tenantId: { in: dunning.map((d) => d.tenantId) },
+            },
+            select: { tenantId: true, key: true, sentAt: true },
+          })
+        : [];
       for (const s of dunning) {
+        const episode = s.pastDueSince
+          ? episodeKey(s.pastDueInvoiceId as string, s.pastDueSince)
+          : null;
+        const claims = episode
+          ? finals.filter((f) => f.tenantId === s.tenantId && isFinalKeyOfEpisode(f.key, episode))
+          : [];
+        const stale = !!boundary && claims.length > 0 && !latestCountingFinal(claims, boundary);
         out.push({
           tenantId: s.tenantId,
           kind: "payment_overdue",
           key: s.pastDueInvoiceId as string,
+          ...(stale ? { via: "fresh_final_first" as const } : {}),
         });
       }
     }

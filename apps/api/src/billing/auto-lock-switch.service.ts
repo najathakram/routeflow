@@ -8,6 +8,27 @@ export interface AutoLockSwitchState {
   since: Date | null;
   reason: string | null;
   by: string | null;
+  /**
+   * Row 412: the instant of the last flip to UNPAUSED; null while paused. The stored `at` when the value has a
+   * valid one; otherwise (a legacy bare `false`, JSON without `at`) the row's write time `since` - an
+   * upper bound of the real flip, so every notice sent before it is treated as stale: the safe direction
+   * (the tenant is told again, never locked unwarned).
+   */
+  unpausedAt: Date | null;
+}
+
+/** The `at` ISO instant inside a JSON switch value, or null (absent, malformed, bare text). */
+export function parseAutoLockAt(raw: string | null | undefined): Date | null {
+  if (raw == null) return null;
+  try {
+    const v: unknown = JSON.parse(raw.trim());
+    const at = v && typeof v === "object" ? (v as { at?: unknown }).at : undefined;
+    if (typeof at !== "string") return null;
+    const d = new Date(at);
+    return Number.isNaN(d.getTime()) ? null : d;
+  } catch {
+    return null;
+  }
 }
 
 /**
@@ -56,9 +77,12 @@ export function parseAutoLockStored(raw: string | null | undefined): {
  * billing crons and the Stripe webhook need it, and `PlatformAdminModule` already imports `BillingModule`, so a
  * back edge would be a module cycle (the precedent is `entitlements-mode.service.ts`).
  *
- * `isPaused()` is read on every automatic lock decision, so it is cached for at most 30 s per process and
- * `setPaused` refreshes the local cache at once (another replica converges within the TTL). A read error is
- * treated as PAUSED: a database that cannot answer must never be the reason a tenant is locked.
+ * `isPaused()` is read on every automatic lock decision. Only a PAUSED answer is cached (at most 30 s per
+ * process): an UNPAUSED answer is never served from cache, so a re-pause takes effect on every replica on its
+ * very next lock decision (one primary-key read per decision; the crons are hourly and the webhook rare).
+ * After an unpause another replica may keep serving its cached `paused` for up to the TTL - the safe
+ * direction. `setPaused` refreshes the local cache at once. A read error is treated as PAUSED and is not
+ * cached: a database that cannot answer must never be the reason a tenant is locked.
  */
 @Injectable()
 export class AutoLockSwitchService implements AutoLockSwitch {
@@ -82,21 +106,34 @@ export class AutoLockSwitchService implements AutoLockSwitch {
       `;
       const row = rows[0];
       const parsed = parseAutoLockStored(row?.value);
+      const since = row?.updatedAt ?? null;
       const state: AutoLockSwitchState = {
         paused: parsed.paused,
-        since: row?.updatedAt ?? null,
+        since,
         reason: parsed.reason,
         by: parsed.by,
+        unpausedAt: parsed.paused ? null : (parseAutoLockAt(row?.value) ?? since),
       };
-      this.cached = { value: state, expiresAt: now + AutoLockSwitchService.CACHE_TTL_MS };
+      // Cache ONLY paused: an unpaused result must be re-read so a re-pause is seen at once.
+      this.cached = state.paused
+        ? { value: state, expiresAt: now + AutoLockSwitchService.CACHE_TTL_MS }
+        : null;
       return state;
     } catch (err) {
       this.logger.error(
         "Failed to read platform.autoLocksPaused - treating as PAUSED",
         err as Error,
       );
-      return { paused: true, since: null, reason: null, by: null };
+      return { paused: true, since: null, reason: null, by: null, unpausedAt: null };
     }
+  }
+
+  /**
+   * Row 412: the last unpause instant while the switch is UNPAUSED, null while paused (or unreadable). Uncached
+   * when unpaused, exactly like `isPaused`, so a re-pause is seen at once.
+   */
+  async unpausedSince(): Promise<Date | null> {
+    return (await this.getState()).unpausedAt;
   }
 
   /** Super admin only (the controller): writes the switch with its reason and actor, then refreshes the cache. */
@@ -105,7 +142,12 @@ export class AutoLockSwitchService implements AutoLockSwitch {
     reason: string,
     actor: string | null,
   ): Promise<AutoLockSwitchState> {
-    const at = new Date();
+    // An unpause of an ALREADY-unpaused switch is not a new unpause: keep the original instant, or every final
+    // notice would be re-issued and every pending lock would slide 24 h (row 412).
+    this.invalidate();
+    const previous = paused ? null : await this.getState();
+    const at =
+      previous && !previous.paused && previous.unpausedAt ? previous.unpausedAt : new Date();
     const value = JSON.stringify({ paused, reason, by: actor, at: at.toISOString() });
     await this.prisma.$executeRaw`
       INSERT INTO "PlatformConfig" ("id", "key", "value", "updatedAt")

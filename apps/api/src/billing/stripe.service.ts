@@ -2,6 +2,7 @@ import { Injectable, Logger, OnModuleInit } from "@nestjs/common";
 import { ConfigService } from "@nestjs/config";
 import { AppConfig } from "../config/configuration";
 import { STRIPE_API_VERSION, stripeInvoiceSubscriptionId } from "./stripe-period";
+import { withCheckoutPolicy } from "./checkout-session-params";
 import type { InvoiceFacts } from "./catchup-claim";
 import { COUPON_SYNC_EXPAND, COUPON_SYNC_REQUEST, isInvoiceUpcomingNone } from "./coupon-unbilled";
 
@@ -80,14 +81,16 @@ export class StripeService implements OnModuleInit {
     cancelUrl: string;
     metadata?: Record<string, string>;
   }): Promise<{ id: string; url: string }> {
-    return this.client.checkout.sessions.create({
-      customer: params.customerId,
-      mode: "subscription",
-      line_items: [{ price: params.priceId, quantity: 1 }],
-      success_url: params.successUrl,
-      cancel_url: params.cancelUrl,
-      metadata: params.metadata,
-    });
+    return this.client.checkout.sessions.create(
+      withCheckoutPolicy({
+        customer: params.customerId,
+        mode: "subscription",
+        line_items: [{ price: params.priceId, quantity: 1 }],
+        success_url: params.successUrl,
+        cancel_url: params.cancelUrl,
+        metadata: params.metadata,
+      }),
+    );
   }
 
   // ─── Subscription ─────────────────────────────────────────────────────────

@@ -74,7 +74,13 @@ function make(
         id: SESSION,
         subscription: SUB,
         status: "complete",
-        metadata: { tenantId: "t1", catchup: "period" },
+        // settle voids from the S the session was built for (SA-733r10 MF-A): the October-from-Oct-1 default
+        metadata: {
+          tenantId: "t1",
+          catchup: "period",
+          catchup_from: "2026-10-01T12:00:00.000Z",
+          catchup_to: "2026-11-01T12:00:00.000Z",
+        },
       },
       ...stripeSeed.sessions,
     },
@@ -381,7 +387,7 @@ describe("invoice.paid settles the claim (and only that)", () => {
     expect(h.sub().catchupState).toBe("RELEASING");
   });
 
-  it("a PAID RfInvoice after a gap voids NOTHING, says NEEDS RULING, and still clears the claim (the customer paid)", async () => {
+  it("a PAID RfInvoice after a gap no longer matters at settle (SA-733r10 MF-A): the void follows the SESSION's S, the claim clears", async () => {
     const gap = {
       ...novOpen,
       id: "inv_dec",
@@ -391,9 +397,38 @@ describe("invoice.paid settles the claim (and only that)", () => {
     };
     const h = make(awaiting(), [octPaid, gap, novOpen]);
     await h.svc.onInvoicePaid(paidInvoice());
-    expect(h.inv("inv_nov").status).toBe("OPEN");
+    expect(h.inv("inv_nov").status).toBe("VOID"); // S = the session's catchup_from (Oct 1)
+    expect(h.inv("inv_dec").status).toBe("PAID"); // a PAID row is never touched
     expect(h.sub().catchupState).toBeNull();
-    expect(h.db.audits.some((a) => a.meta?.kind === "billing_catchup_needs_ruling")).toBe(true);
+    expect(h.db.audits.some((a) => a.meta?.kind === "billing_catchup_needs_ruling")).toBe(false);
+  });
+
+  it("S1 (fail closed): a session with no readable catchup_from HOLDS the claim - nothing voided, NEEDS RULING once, the claim stays so the RfInvoice issuer stays gated, externalPayment is not touched", async () => {
+    const h = make({ ...awaiting(), externalPayment: true }, [octOpen, novOpen], {
+      sessions: {
+        [SESSION]: {
+          id: SESSION,
+          subscription: SUB,
+          status: "complete",
+          metadata: { tenantId: "t1", catchup: "period" },
+        },
+      },
+    });
+    await h.svc.onInvoicePaid(paidInvoice());
+    expect(h.inv("inv_oct").status).toBe("OPEN");
+    expect(h.inv("inv_nov").status).toBe("OPEN");
+    expect(h.sub()).toMatchObject({
+      catchupState: "AWAITING_FIRST_PAYMENT",
+      catchupSessionId: SESSION,
+      externalPayment: true,
+    });
+    const notices = () =>
+      h.db.audits.filter((a) => a.meta?.kind === "billing_catchup_needs_ruling");
+    expect(notices()).toHaveLength(1);
+    // a redelivery / the hourly sweep raises no second notice and still holds
+    await h.svc.onInvoicePaid(paidInvoice());
+    expect(notices()).toHaveLength(1);
+    expect(h.sub().catchupState).toBe("AWAITING_FIRST_PAYMENT");
   });
 
   it("takes the Tenant lock before it writes", async () => {
@@ -787,7 +822,14 @@ describe("the hourly sweep", () => {
       invoices: [
         { id: "in_b", status: "paid", subscription: "sub_b", amountDue: 100, amountPaid: 100 },
       ],
-      sessions: { cs_b: { id: "cs_b", subscription: "sub_b", status: "complete" } },
+      sessions: {
+        cs_b: {
+          id: "cs_b",
+          subscription: "sub_b",
+          status: "complete",
+          metadata: { tenantId: "tb", catchup: "period", catchup_from: "2026-10-01T12:00:00.000Z" },
+        },
+      },
     });
     const svc = new CatchupClaimService(db.prisma, stripe as any, { emit: jest.fn() } as any);
     stripe.getInvoiceFacts.mockImplementationOnce(async () => {
@@ -1046,6 +1088,8 @@ describe("Opus SHOULD-FIX 2: the settling invoice must carry the amount the sess
     catchup: "period",
     catchup_shape: "trial_one_time",
     catchup_stub_cents: "31000",
+    catchup_from: "2026-10-01T12:00:00.000Z",
+    catchup_to: "2026-11-01T12:00:00.000Z",
   };
   const withSession = (amountPaid: number) =>
     make(awaiting({ catchupInvoiceId: "in_ot" }), [octOpen, novOpen], {

@@ -46,6 +46,7 @@ import { stampClock } from "./dunning-stamp";
 import { dunningZone } from "./dunning-zone";
 import { stripeInvoiceSubscriptionId } from "./stripe-period";
 import { StripeService } from "./stripe.service";
+import { DUNNING_SWEEP_WHERE } from "./auto-lock-candidates";
 import { AutoLockSwitchService } from "./auto-lock-switch.service";
 import type { PauseExit } from "./transition-to-active";
 
@@ -162,7 +163,12 @@ export class DunningService {
     try {
       await runMilestones(
         this.deps(),
-        { tenantId: row.tenantId, pastDueInvoiceId: invoiceId, pastDueSince: since },
+        {
+          tenantId: row.tenantId,
+          pastDueInvoiceId: invoiceId,
+          pastDueSince: since,
+          tenantClass: row.tenant.class,
+        },
         facts,
         now,
         { paused: isPausedRow(row) },
@@ -245,13 +251,7 @@ export class DunningService {
     if (mode === "off" || !this.stripe.isConfigured) return out;
 
     const rows = (await this.prisma.tenantSubscription.findMany({
-      where: {
-        pastDueInvoiceId: { not: null },
-        stripeSubId: { not: null },
-        externalPayment: false,
-        catchupState: null, // r3 N2(a): the sweep and the pause skip a held catch-up claim
-        tenant: { deletedAt: null },
-      },
+      where: DUNNING_SWEEP_WHERE, // the one shared predicate: the cron and the unpause preview cannot drift
       select: DUNNING_ROW_SELECT,
     })) as ClockedRow[];
 
@@ -321,7 +321,12 @@ export class DunningService {
 
     const finalSentAt = await runMilestones(
       deps,
-      { tenantId: row.tenantId, pastDueInvoiceId: invoiceId, pastDueSince: since },
+      {
+        tenantId: row.tenantId,
+        pastDueInvoiceId: invoiceId,
+        pastDueSince: since,
+        tenantClass: row.tenant.class,
+      },
       facts,
       now,
       { paused: isPausedRow(row) },
@@ -349,7 +354,7 @@ export class DunningService {
       return "noop";
     }
 
-    const paused = await pauseTenantTx(deps, row, invoiceId, since, now);
+    const paused = await pauseTenantTx(deps, row, invoiceId, since, now, finalSentAt);
     if (!paused) return "noop"; // CAS loser: another sweep paused it, or invoice.paid resumed it first
     this.tenantStatusGuard.invalidate(row.tenantId);
     this.logger.warn(`billing.dunning.paused tenant=${row.tenantId} invoice=${invoiceId}`);

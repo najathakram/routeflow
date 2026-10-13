@@ -133,8 +133,8 @@ describe("a READ_ONLY seller refuses everything else a buyer writes", () => {
 });
 
 describe("A3: SELLER_READ_ONLY_BUYER_GATE", () => {
-  it("dark (the default): the buyer's order is NOT refused by the guard (it reaches the handler)", async () => {
-    delete process.env.SELLER_READ_ONLY_BUYER_GATE;
+  it("dark (the explicit rollback): the buyer's order is NOT refused by the guard (it reaches the handler)", async () => {
+    process.env.SELLER_READ_ONLY_BUYER_GATE = "dark"; // the explicit rollback (default is enforced)
     const res = await post("/buyer/orders", { items: [] });
     expect(res.status).not.toBe(403);
     expect(res.body.code).not.toBe("SELLER_UNAVAILABLE");
