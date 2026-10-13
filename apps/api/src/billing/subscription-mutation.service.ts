@@ -160,7 +160,7 @@ const ADDON_ANNUAL_NOT_SUPPORTED =
 const STRICT_PRORATED = { prorate: true, rethrow: true } as const;
 
 const ADDON_RAISE_UNBILLED_ROW =
-  "This add-on was set up before online billing, so its quantity can't be raised here yet. Please contact support.";
+  "This add-on isn't billed on your subscription yet (it was set up before online billing, or while a promotion covered it), so its quantity can't be raised here. Please contact support.";
 
 /**
  * A refusal of a self-serve add-on enable: a fixed machine code plus fixed tenant-facing copy. The
@@ -2040,7 +2040,7 @@ export class SubscriptionMutationService {
     let changed = false;
     let firstError: Error | null = null;
     // Set (and logged once) by the first SKU that finds the tenant no longer stores this subscription.
-    const state = { superseded: false };
+    const state: { superseded: boolean; mode?: AddonBilling } = { superseded: false };
     for (const sku of [...bySku.keys()].sort()) {
       try {
         const adopted = await this.runUnderAddonLock(tenantId, sku, () =>
@@ -2172,7 +2172,7 @@ export class SubscriptionMutationService {
     subId: string,
     currentItemIds: ReadonlySet<string>,
     ctx: { sessionId?: string | null },
-    state: { superseded: boolean },
+    state: { superseded: boolean; mode?: AddonBilling },
   ): Promise<boolean> {
     // Under this SKU's add-on lock: is this subscription still the one the tenant stores? A newer one may have
     // replaced it since the caller looked (A applied, sub_A paused, B applied — or B committing between the
@@ -2208,6 +2208,21 @@ export class SubscriptionMutationService {
       pointer != null &&
       !currentItemIds.has(pointer) &&
       !(await this.itemIsOnSubscription(tenantId, sku, pointer, subId));
+    // B1079: a couponFull tenant is UNBILLED (the ONE mode decision). The checkout's own add-on LINES made
+    // items, so they go (Stripe-first, prorated, strict) exactly like an orphan: the row stays as it is - on,
+    // priced 0, no item - and no item is ever adopted or created for it. Read once per completion; a Stripe
+    // read failure throws (the webhook is retried), never a guess.
+    if (items.length > 0 && row?.active) {
+      state.mode ??= await this.checkoutAddonMode(tenantId, subId);
+      if (state.mode !== "STRIPE") {
+        this.logger.warn(
+          `Checkout add-on "${sku}" tenant ${tenantId}: add-on billing mode ${state.mode} (a 100% coupon) — the checkout's item is removed, the add-on stays unbilled`,
+        );
+        for (const i of items)
+          await this.deleteOrphanItem(i.itemId, tenantId, sku, STRICT_PRORATED);
+        return false;
+      }
+    }
     if (items.length === 0) {
       return row?.active && (!pointer || stale)
         ? this.billUnbilledRow(tenantId, sku, row, subId, pointer, ctx)

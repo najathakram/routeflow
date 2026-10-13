@@ -77,6 +77,8 @@ interface Opts {
   preview?: unknown;
   /** The coupon sync's Stripe read fails. */
   stripeReadFails?: boolean;
+  /** The checkout's own add-on LINE made this item on the subscription (the session priced it at full price). */
+  checkoutItem?: boolean;
 }
 
 function make(opts: Opts = {}) {
@@ -165,7 +167,26 @@ function make(opts: Opts = {}) {
     { prepare: jest.fn(), onPlanChange: jest.fn() } as any,
   );
   /** The subscription the completion retrieved: only the base plan item - the session had no line for the add-on. */
-  const stripeSub = { id: "sub_1", items: { data: [{ id: "si_base", price: { product: {} } }] } };
+  const stripeSub = {
+    id: "sub_1",
+    items: {
+      data: [
+        { id: "si_base", price: { product: {} } },
+        ...(opts.checkoutItem
+          ? [
+              {
+                id: "si_line",
+                quantity: 2,
+                price: {
+                  unit_amount: 5000,
+                  product: { metadata: { addonSku: "CUSTOMER_PACK_100" } },
+                },
+              },
+            ]
+          : []),
+      ],
+    },
+  };
   const adopt = () => svc.adoptCheckoutAddons("t1", stripeSub, { sessionId: "cs_1" });
   return { adopt, row, stripe, stripeClient, events };
 }
@@ -221,5 +242,38 @@ describe("B1079 - checkout completion does not bill add-ons of a couponFull tena
     const h = make({ storedCouponFull: true, preview: PARTIAL_PREVIEW });
     await h.adopt();
     expect(h.stripeClient.subscriptionItems.create).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe("B1079 - the checkout's own add-on LINE does not bill a couponFull tenant either", () => {
+  it("couponFull: the item the checkout line made is removed (prorated), nothing is adopted, the row stays unbilled", async () => {
+    const h = make({ storedCouponFull: false, preview: FULL_PREVIEW, checkoutItem: true });
+    await h.adopt();
+    expect(h.stripeClient.subscriptionItems.del).toHaveBeenCalledTimes(1);
+    expect(h.stripeClient.subscriptionItems.del).toHaveBeenCalledWith("si_line", {
+      proration_behavior: "create_prorations",
+    });
+    expect(h.stripeClient.subscriptionItems.create).not.toHaveBeenCalled();
+    expect(h.row).toMatchObject({
+      stripeItemId: null,
+      priceSnapshot: 0,
+      quantity: 2,
+      active: true,
+    });
+    expect(h.events.emit).not.toHaveBeenCalled();
+  });
+
+  it("a Stripe read failure with a checkout item present fails the webhook and deletes nothing", async () => {
+    const h = make({ stripeReadFails: true, checkoutItem: true });
+    await expect(h.adopt()).rejects.toThrow();
+    expect(h.stripeClient.subscriptionItems.del).not.toHaveBeenCalled();
+    expect(h.row.stripeItemId).toBeNull();
+  });
+
+  it("a normally billed tenant (no coupon) still adopts the checkout's item", async () => {
+    const h = make({ storedCouponFull: false, preview: null, checkoutItem: true });
+    await h.adopt();
+    expect(h.stripeClient.subscriptionItems.del).not.toHaveBeenCalled();
+    expect(h.row).toMatchObject({ stripeItemId: "si_line", priceSnapshot: 50, quantity: 2 });
   });
 });

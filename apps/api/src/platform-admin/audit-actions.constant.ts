@@ -48,6 +48,8 @@ export const AdminAuditAction = {
   STRIPE_ASYNC_PAYMENT_FAILED: "STRIPE_ASYNC_PAYMENT_FAILED",
   /** A checkout listed add-on SKUs that no recognised Stripe item carries: not billed, no second item created. */
   ADDON_CHECKOUT_ITEMS_UNRECOGNISED: "ADDON_CHECKOUT_ITEMS_UNRECOGNISED",
+  /** A tenant's 100% coupon ended: its add-ons that never had a Stripe item stay UNBILLED (never auto-billed). */
+  ADDON_COUPON_ENDED_UNBILLED: "ADDON_COUPON_ENDED_UNBILLED",
   ADDON_MANUAL_INVOICE_DUE: "ADDON_MANUAL_INVOICE_DUE",
   ADDON_MANUAL_INVOICE_STOP: "ADDON_MANUAL_INVOICE_STOP",
   IMPERSONATION_STARTED: "IMPERSONATION_STARTED",
@@ -113,6 +115,7 @@ export const ADMIN_AUDIT_ACTION_LABELS: Record<AdminAuditActionCode, string> = {
   STRIPE_PAID_CHECKOUT_NOT_APPLIED: "Paid checkout not applied (reconcile in Stripe)",
   STRIPE_ASYNC_PAYMENT_FAILED: "Bank debit failed (checkout not paid)",
   ADDON_CHECKOUT_ITEMS_UNRECOGNISED: "Checkout add-on items not recognised (check Stripe)",
+  ADDON_COUPON_ENDED_UNBILLED: "Coupon ended: add-ons still unbilled (decide)",
   ADDON_MANUAL_INVOICE_DUE: "Add-on to invoice manually",
   ADDON_MANUAL_INVOICE_STOP: "Add-on to stop invoicing manually",
   IMPERSONATION_STARTED: "Impersonation started",
