@@ -62,7 +62,7 @@ describe("lockTenantUnits: a bounded wait", () => {
     expect(err).toBeInstanceOf(ConflictException);
     expect(err.getResponse()).toEqual({
       code: "UNITS_RENAME_IN_PROGRESS",
-      message: "A unit rename is in progress. Try again in a moment.",
+      message: "Another change is in progress. Try again in a moment.",
     });
   });
 

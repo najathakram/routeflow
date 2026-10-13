@@ -56,7 +56,8 @@
 //                    Nothing was changed.
 //   UNITS_RENAME_IN_PROGRESS — `body.code` of the 409 when a pack edit, level write or import confirmation could not get the
 //                    tenant units lock within 3 s because a unit rename is running (or a rename could not get it within 5 s
-//                    because writers hold it). Nothing was changed; retry.
+//                    because writers hold it, or a pack edit could not get one product's lock because another save of that product holds it).
+//                    The user-facing copy is neutral ("Another change is in progress"): the blocker is not always a rename. Nothing was changed; retry.
 //   UNIT_ARCHIVED — `body.code` of the 409 when a product level is given a unit name that is ARCHIVED in Settings > Units
 //                    and the product does not already use it (restore the unit first). Nothing was written.
 //   UNIT_SIZE_IN_USE — `body.code` of the 409 when a product level's size would change (or a label move onto a size) while

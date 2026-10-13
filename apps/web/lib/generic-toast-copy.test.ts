@@ -109,12 +109,12 @@ describe("genericToastCopy: codes users rely on", () => {
     expect(genericToastCopy(err(409, { code, message: "raw server text" }))).toBe(copy);
   });
 
-  it("UNITS_RENAME_IN_PROGRESS says a rename is running and to retry (never the raw 409 text)", () => {
+  it("UNITS_RENAME_IN_PROGRESS is neutral (a product save OR a rename can be the blocker) and says to retry (never the raw 409 text)", () => {
     expect(
       genericToastCopy(
         err(409, { code: API_ERROR_CODES.UNITS_RENAME_IN_PROGRESS, message: "raw" }),
       ),
-    ).toBe("A unit rename is in progress. Try again in a moment.");
+    ).toBe("Another change is in progress. Try again in a moment.");
   });
 
   it("SA-733r5: the catch-up refusals show fixed copy, never the server message", () => {

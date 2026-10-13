@@ -63,7 +63,7 @@ async function bounded(
     if (isLockTimeout(e)) {
       throw new ConflictException({
         code: API_ERROR_CODES.UNITS_RENAME_IN_PROGRESS,
-        message: "A unit rename is in progress. Try again in a moment.",
+        message: "Another change is in progress. Try again in a moment.",
       });
     }
     throw e;
