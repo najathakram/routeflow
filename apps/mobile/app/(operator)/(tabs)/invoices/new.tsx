@@ -32,7 +32,11 @@ import { useProductSearch } from "../../../../lib/use-product-search";
 import { mergeProductIndex } from "../../../../lib/paged-rows";
 import { useCreateInvoice, type CreateInvoiceItem } from "../../../../lib/api/invoices";
 import { depositErrors, depositPayload } from "../../../../lib/invoice-deposit";
-import { useCreateSale, type CreateSaleItemInput } from "../../../../lib/api/orders";
+import {
+  useCreateSale,
+  type CreateSaleDto,
+  type CreateSaleItemInput,
+} from "../../../../lib/api/orders";
 import { decideTrayPrice, reasonRequiredMessage } from "../../../../lib/staff-price-override";
 import { useTrackedCategories } from "../../../../lib/api/tracked-categories";
 import { saleModeGate } from "../../../../lib/sale-mode";
@@ -113,12 +117,15 @@ import {
 } from "../../../../lib/invoice-terms";
 import { MoneyTextInput } from "../../../../components/MoneyTextInput";
 import { alertInfo, chooseAction, confirm } from "../../../../lib/confirm";
+import { createSaleAttemptKey } from "../../../../lib/sale-attempt-key";
 import {
-  KEPT_DRAFT_COPY,
-  KEPT_ORDER_COPY,
-  keptDraftInvoiceId,
-  keptOrderId,
-} from "../../../../lib/kept-draft-invoice";
+  SALE_RECOVERY_COPY,
+  saleRecovery,
+  type SaleRecovery,
+  type UnknownSale,
+} from "@routeflow/types/sale-attempt";
+import { SaleUnknownPanel } from "../../../../components/SaleUnknownPanel";
+import { KEPT_DRAFT_COPY, keptDraftInvoiceId } from "../../../../lib/kept-draft-invoice";
 import { QtyStepper } from "../../../../components/QtyStepper";
 import { InlineCreateProductSheet } from "../../../../components/InlineCreateProductSheet";
 import { ProductPickerSheet } from "../../../../components/ProductPickerSheet";
@@ -295,10 +302,15 @@ export default function NewInvoiceScreen() {
           showToast(KEPT_DRAFT_COPY);
           router.replace(`/(operator)/invoices/${invoiceId}` as any);
         }}
-        onKeptOrder={(orderId) => {
-          // Row 466: the sale's order exists and only its invoice step failed. Open the order.
-          showToast(KEPT_ORDER_COPY);
-          router.replace(`/(operator)/orders/${orderId}` as any);
+        onOpenRecovery={(recovery) => {
+          // Row 485: an unknown sale outcome. Look at what exists; push so the locked cart stays behind it.
+          router.push(
+            (recovery.kind === "invoice"
+              ? `/(operator)/invoices/${recovery.id}`
+              : recovery.kind === "order"
+                ? `/(operator)/orders/${recovery.id}`
+                : "/(operator)/(tabs)/orders") as any,
+          );
         }}
       />
     </SafeAreaView>
@@ -389,7 +401,7 @@ function InvoiceComposer({
   onChangeCustomer,
   onSaved,
   onKeptDraft,
-  onKeptOrder,
+  onOpenRecovery,
 }: {
   customerId: string;
   customerName: string | null;
@@ -398,16 +410,25 @@ function InvoiceComposer({
   onSaved: (invoiceId: string, invoiceNumber: string) => void;
   /** The create committed but the send step failed: open the kept draft. */
   onKeptDraft: (invoiceId: string) => void;
-  /** The sale's order committed but its invoice step failed: open the order. */
-  onKeptOrder: (orderId: string) => void;
+  /** Row 485: open the invoice, the order, or the recent orders for an unknown sale outcome. */
+  onOpenRecovery: (recovery: SaleRecovery) => void;
 }) {
   const [category, setCategory] = useState("All");
-  const [items, setItems] = useState<Record<string, InvoiceLineState>>({});
+  // Row 485: while a sale's outcome is UNKNOWN the cart is locked; every line edit refuses (the ref is set the
+  // moment the sale locks, ahead of the state that renders the panel).
+  const saleLockRef = useRef(false);
+  const [items, setItemsRaw] = useState<Record<string, InvoiceLineState>>({});
+  const setItems: typeof setItemsRaw = (u) => {
+    if (!saleLockRef.current) setItemsRaw(u);
+  };
   const itemsRef = useRef(items); // the latest committed lines, for the pending-line scan/tap decision in addOne
   itemsRef.current = items;
   const qc = useQueryClient();
   // Ad-hoc lines not in the catalog (no productId on submit).
-  const [unlisted, setUnlisted] = useState<UnlistedLine[]>([]);
+  const [unlisted, setUnlistedRaw] = useState<UnlistedLine[]>([]);
+  const setUnlisted: typeof setUnlistedRaw = (u) => {
+    if (!saleLockRef.current) setUnlistedRaw(u);
+  };
   const [unlistedModalOpen, setUnlistedModalOpen] = useState(false);
   // Name to prefill the unlisted-item composer with (from an empty search).
   const [unlistedPrefill, setUnlistedPrefill] = useState("");
@@ -1203,6 +1224,10 @@ function InvoiceComposer({
 
   const createMut = useCreateInvoice();
   const createSaleMut = useCreateSale();
+  const [saleKey] = useState(createSaleAttemptKey); // row 485: one Idempotency-Key per sale attempt
+  // Set while the sale's outcome is UNKNOWN: the cart is locked behind SaleUnknownPanel.
+  const [saleUnknown, setSaleUnknown] = useState<UnknownSale | null>(null);
+  const lastSaleRef = useRef<CreateSaleDto | null>(null);
   // The pending-unit gate in onSave awaits before either request starts; `settling` covers that gap.
   const [settling, setSettling] = useState(false);
   const saving = createMut.isPending || createSaleMut.isPending || settling;
@@ -1212,7 +1237,7 @@ function InvoiceComposer({
   // missed toast can't become a second order, a second stock deduction and a
   // second issued invoice.
   const [saleRecorded, setSaleRecorded] = useState(false);
-  const canSave = totalItems > 0 && !saving && !anyUnitLoading && !saleRecorded;
+  const canSave = totalItems > 0 && !saving && !anyUnitLoading && !saleRecorded && !saleUnknown;
 
   // No FormSheet on this screen, so it applies the same choke-point rule as
   // FormSheet.tsx's handleCancel directly: never prompt "Discard invoice?"
@@ -1286,6 +1311,61 @@ function InvoiceComposer({
         (id) => productById.get(id)?.unitsPerBox,
       ),
     );
+  };
+
+  /**
+   * Posts the sale under its Idempotency-Key (row 485). The same cart retried sends the SAME key, so the
+   * server resumes the stored sale. An UNKNOWN outcome (a 5xx, a dropped connection, an error that names a
+   * committed order or invoice) locks the cart behind SaleUnknownPanel; a success or a definitive refusal
+   * unlocks it.
+   */
+  const postSale = (saleDto: CreateSaleDto) => {
+    const idempotencyKey = saleKey.keyFor(JSON.stringify(saleDto));
+    createSaleMut.mutate(
+      { ...saleDto, idempotencyKey },
+      {
+        // POST /orders/sell resolves to the created INVOICE (not the order) —
+        // see CreatedSaleInvoice in lib/api/orders.ts.
+        onSuccess: (inv) => {
+          saleKey.settle({ ok: true });
+          saleLockRef.current = false;
+          setSaleUnknown(null);
+          if (inv?.id) {
+            onSaved(inv.id, inv.invoiceNumber);
+            return;
+          }
+          // Defensive only: the sale IS already recorded server-side, so lock
+          // the builder instead of leaving a live Create button behind a toast
+          // that's easy to miss on a phone.
+          setSaleRecorded(true);
+          showToast("Sale recorded — open the invoice from the Invoices tab.");
+        },
+        onError: (err: any) => {
+          saleKey.settle({ ok: false, error: err });
+          const unknown = saleKey.unknown();
+          if (unknown) {
+            saleLockRef.current = true;
+            setReviewOpen(false);
+            setSaleUnknown(unknown);
+            return;
+          }
+          saleLockRef.current = false;
+          setSaleUnknown(null);
+          if (unitNotOfferedCode(err)) return void onUnitNotOffered("Couldn't record the sale");
+          alertInfo(
+            "Couldn't record the sale",
+            err?.response?.data?.message ?? err?.message ?? "Try again.",
+          );
+        },
+      },
+    );
+  };
+
+  const startNewSale = () => {
+    saleKey.startNew();
+    saleLockRef.current = false;
+    lastSaleRef.current = null;
+    setSaleUnknown(null);
   };
 
   /**
@@ -1381,49 +1461,23 @@ function InvoiceComposer({
         if (u.qty <= 0 || u.name.trim() === "" || u.unitPrice <= 0) continue;
         saleItems.push({ name: u.name.trim(), qty: u.qty, unitPrice: u.unitPrice });
       }
-      createSaleMut.mutate(
-        {
-          customerId,
-          items: saleItems,
-          deliveredNow,
-          ...(shippingFee && shippingFee > 0 ? { shippingFee } : {}),
-          // Only a genuinely backdated sale carries orderDate — a same-day sale
-          // stays unsent so deliveredAt lands at the full current timestamp.
-          ...(issueTrim && issueTrim !== todayPlusDays(0) ? { orderDate: issueTrim } : {}),
-          // No dueDate: gate rule 4 (lib/sale-mode.ts) makes sale mode
-          // ineligible the moment the operator touches Due date or Terms, so an
-          // eligible sale's `dueDate` is always this screen's hardcoded Net-30
-          // default. Sending it would override the tenant's configured
-          // `invoice.defaultTerms` with a date nobody chose (and put a free-text
-          // field on the wire ahead of this path's ISO_DATE check).
-        },
-        {
-          // POST /orders/sell resolves to the created INVOICE (not the order) —
-          // see CreatedSaleInvoice in lib/api/orders.ts.
-          onSuccess: (inv) => {
-            if (inv?.id) {
-              onSaved(inv.id, inv.invoiceNumber);
-              return;
-            }
-            // Defensive only: the sale IS already recorded server-side, so lock
-            // the builder instead of leaving a live Create button behind a toast
-            // that's easy to miss on a phone.
-            setSaleRecorded(true);
-            showToast("Sale recorded — open the invoice from the Invoices tab.");
-          },
-          onError: (err: any) => {
-            const keptId = keptDraftInvoiceId(err);
-            if (keptId) return void onKeptDraft(keptId);
-            const keptOrder = keptOrderId(err);
-            if (keptOrder) return void onKeptOrder(keptOrder);
-            if (unitNotOfferedCode(err)) return void onUnitNotOffered("Couldn't record the sale");
-            alertInfo(
-              "Couldn't record the sale",
-              err?.response?.data?.message ?? err?.message ?? "Try again.",
-            );
-          },
-        },
-      );
+      const saleDto = {
+        customerId,
+        items: saleItems,
+        deliveredNow,
+        ...(shippingFee && shippingFee > 0 ? { shippingFee } : {}),
+        // Only a genuinely backdated sale carries orderDate — a same-day sale
+        // stays unsent so deliveredAt lands at the full current timestamp.
+        ...(issueTrim && issueTrim !== todayPlusDays(0) ? { orderDate: issueTrim } : {}),
+        // No dueDate: gate rule 4 (lib/sale-mode.ts) makes sale mode
+        // ineligible the moment the operator touches Due date or Terms, so an
+        // eligible sale's `dueDate` is always this screen's hardcoded Net-30
+        // default. Sending it would override the tenant's configured
+        // `invoice.defaultTerms` with a date nobody chose (and put a free-text
+        // field on the wire ahead of this path's ISO_DATE check).
+      };
+      lastSaleRef.current = saleDto;
+      postSale(saleDto);
       return;
     }
 
@@ -1517,155 +1571,183 @@ function InvoiceComposer({
         leading={<NavBackButton label="Back" onPress={handleBack} />}
       />
 
-      <View style={styles.customerChipWrap}>
-        <Pressable style={styles.customerChip} onPress={onChangeCustomer}>
-          <Ionicons name="person-outline" size={14} color={ios.brand} />
-          <Text style={styles.customerChipText} numberOfLines={1}>
-            {customerName ?? "Customer"}
-          </Text>
-          <Text style={styles.customerChipChange}>Change</Text>
-        </Pressable>
-      </View>
-
-      {/* Find: search + categories, pinned so they never scroll away. */}
-      <SearchBar
-        placeholder="Search items…"
-        value={search}
-        onChangeText={setSearch}
-        onSubmitEditing={() => void handleSearchSubmit()}
-        autoFocus
-        trailing={
-          <View style={styles.searchTrailing}>
-            {isSearching ? <ActivityIndicator size="small" color={ios.gray[1]} /> : null}
-            <Pressable
-              onPress={() => setScanOpen(true)}
-              hitSlop={10}
-              accessibilityRole="button"
-              accessibilityLabel="Scan items"
-            >
-              <Ionicons name="barcode-outline" size={20} color={ios.brand} />
-            </Pressable>
-          </View>
-        }
-      />
-
-      {visible.showCategoryChips ? (
-        <View style={styles.browseBar}>
-          {categoryChips.length > 1 ? (
-            <View style={{ flex: 1 }}>
-              <FilterChipRow chips={categoryChips} value={category} onChange={setCategory} />
-            </View>
-          ) : (
-            <View style={{ flex: 1 }} />
-          )}
-          <Pressable
-            onPress={() => {
-              setBrowsing(false);
-              setCategory("All");
-            }}
-            hitSlop={10}
-            accessibilityRole="button"
-            accessibilityLabel="Close the catalogue"
-            style={styles.browseClose}
-          >
-            <Ionicons name="close" size={18} color={ios.label2} />
-          </Pressable>
-        </View>
+      {saleUnknown ? (
+        <SaleUnknownPanel
+          unknown={saleUnknown}
+          busy={createSaleMut.isPending}
+          onTryAgain={() => {
+            if (lastSaleRef.current) postSale(lastSaleRef.current);
+          }}
+          onOpen={() => onOpenRecovery(saleRecovery(saleUnknown))}
+          onStartNew={() =>
+            chooseAction(SALE_RECOVERY_COPY.confirmTitle, SALE_RECOVERY_COPY.confirmBody, [
+              {
+                label: SALE_RECOVERY_COPY.recentOrders,
+                style: "default",
+                onPress: () => onOpenRecovery({ kind: "recent" }),
+              },
+              { label: SALE_RECOVERY_COPY.startNew, style: "destructive", onPress: startNewSale },
+              { label: SALE_RECOVERY_COPY.confirmKeep, style: "cancel" },
+            ])
+          }
+        />
       ) : null}
 
-      <FlatList
-        ref={listRef}
-        style={styles.catalogList}
-        data={filtered}
-        keyExtractor={productKey}
-        renderItem={renderProduct}
-        extraData={items}
-        initialNumToRender={12}
-        maxToRenderPerBatch={12}
-        windowSize={7}
-        // RN's own default is Android-only; forcing it on for iOS is a known
-        // source of cells failing to render. No-op on web.
-        removeClippedSubviews={Platform.OS === "android"}
-        keyboardShouldPersistTaps="handled"
-        showsVerticalScrollIndicator={false}
-        onScrollToIndexFailed={onScrollToIndexFailed}
-        onEndReachedThreshold={0.5}
-        onEndReached={() => {
-          if (isPlaceholder || !hasNextPage || isFetchingNextPage) return;
-          fetchNextPage();
-        }}
-        contentContainerStyle={styles.listContent}
-        ItemSeparatorComponent={RowSpacer}
-        ListEmptyComponent={
-          visible.emptyHint ? (
-            <View style={styles.center}>
-              <Text style={styles.emptyText}>{visible.emptyHint}</Text>
-            </View>
-          ) : unlistedPlacement === "empty-state" ? (
-            <View style={styles.center}>
-              <Text style={styles.emptyText}>
-                No products{searchTerm ? " match your search" : " yet"}.
-              </Text>
+      {/* Row 485: a sale with an unknown outcome locks the whole cart behind the panel above. */}
+      <View
+        style={[styles.lockWrap, saleUnknown ? styles.locked : null]}
+        pointerEvents={saleUnknown ? "none" : "auto"}
+      >
+        <View style={styles.customerChipWrap}>
+          <Pressable style={styles.customerChip} onPress={onChangeCustomer}>
+            <Ionicons name="person-outline" size={14} color={ios.brand} />
+            <Text style={styles.customerChipText} numberOfLines={1}>
+              {customerName ?? "Customer"}
+            </Text>
+            <Text style={styles.customerChipChange}>Change</Text>
+          </Pressable>
+        </View>
+
+        {/* Find: search + categories, pinned so they never scroll away. */}
+        <SearchBar
+          placeholder="Search items…"
+          value={search}
+          onChangeText={setSearch}
+          onSubmitEditing={() => void handleSearchSubmit()}
+          autoFocus
+          trailing={
+            <View style={styles.searchTrailing}>
+              {isSearching ? <ActivityIndicator size="small" color={ios.gray[1]} /> : null}
               <Pressable
-                style={styles.emptyUnlistedBtn}
-                onPress={() => openUnlistedModal(searchTerm)}
+                onPress={() => setScanOpen(true)}
+                hitSlop={10}
                 accessibilityRole="button"
+                accessibilityLabel="Scan items"
               >
-                <Ionicons name="add-circle-outline" size={16} color={ios.brand} />
-                <Text style={styles.emptyUnlistedText} numberOfLines={2}>
-                  {unlistedLabel}
+                <Ionicons name="barcode-outline" size={20} color={ios.brand} />
+              </Pressable>
+            </View>
+          }
+        />
+
+        {visible.showCategoryChips ? (
+          <View style={styles.browseBar}>
+            {categoryChips.length > 1 ? (
+              <View style={{ flex: 1 }}>
+                <FilterChipRow chips={categoryChips} value={category} onChange={setCategory} />
+              </View>
+            ) : (
+              <View style={{ flex: 1 }} />
+            )}
+            <Pressable
+              onPress={() => {
+                setBrowsing(false);
+                setCategory("All");
+              }}
+              hitSlop={10}
+              accessibilityRole="button"
+              accessibilityLabel="Close the catalogue"
+              style={styles.browseClose}
+            >
+              <Ionicons name="close" size={18} color={ios.label2} />
+            </Pressable>
+          </View>
+        ) : null}
+
+        <FlatList
+          ref={listRef}
+          style={styles.catalogList}
+          data={filtered}
+          keyExtractor={productKey}
+          renderItem={renderProduct}
+          extraData={items}
+          initialNumToRender={12}
+          maxToRenderPerBatch={12}
+          windowSize={7}
+          // RN's own default is Android-only; forcing it on for iOS is a known
+          // source of cells failing to render. No-op on web.
+          removeClippedSubviews={Platform.OS === "android"}
+          keyboardShouldPersistTaps="handled"
+          showsVerticalScrollIndicator={false}
+          onScrollToIndexFailed={onScrollToIndexFailed}
+          onEndReachedThreshold={0.5}
+          onEndReached={() => {
+            if (isPlaceholder || !hasNextPage || isFetchingNextPage) return;
+            fetchNextPage();
+          }}
+          contentContainerStyle={styles.listContent}
+          ItemSeparatorComponent={RowSpacer}
+          ListEmptyComponent={
+            visible.emptyHint ? (
+              <View style={styles.center}>
+                <Text style={styles.emptyText}>{visible.emptyHint}</Text>
+              </View>
+            ) : unlistedPlacement === "empty-state" ? (
+              <View style={styles.center}>
+                <Text style={styles.emptyText}>
+                  No products{searchTerm ? " match your search" : " yet"}.
                 </Text>
-              </Pressable>
-            </View>
-          ) : (
-            <View style={styles.center}>
-              <ActivityIndicator color={ios.brand} />
-            </View>
-          )
-        }
-        ListFooterComponent={
-          <>
-            {visible.showBrowseButton ? (
-              <Pressable
-                style={styles.listUnlistedBtn}
-                onPress={() => setBrowsing(true)}
-                accessibilityRole="button"
-                accessibilityLabel="Browse the full catalogue"
-              >
-                <Ionicons name="grid-outline" size={16} color={ios.brand} />
-                <Text style={styles.listUnlistedText}>Browse catalogue</Text>
-              </Pressable>
-            ) : null}
-            {unlistedPlacement === "list-footer" ? (
-              <Pressable
-                style={styles.listUnlistedBtn}
-                onPress={() => openUnlistedModal(searchTerm)}
-                accessibilityRole="button"
-                accessibilityLabel={unlistedLabel}
-                hitSlop={4}
-              >
-                <Ionicons name="add-circle-outline" size={16} color={ios.brand} />
-                <Text style={styles.listUnlistedText} numberOfLines={1}>
-                  {unlistedLabel}
-                </Text>
-              </Pressable>
-            ) : null}
-            {isFetchingNextPage ? (
-              <View style={styles.pageSpinner}>
+                <Pressable
+                  style={styles.emptyUnlistedBtn}
+                  onPress={() => openUnlistedModal(searchTerm)}
+                  accessibilityRole="button"
+                >
+                  <Ionicons name="add-circle-outline" size={16} color={ios.brand} />
+                  <Text style={styles.emptyUnlistedText} numberOfLines={2}>
+                    {unlistedLabel}
+                  </Text>
+                </Pressable>
+              </View>
+            ) : (
+              <View style={styles.center}>
                 <ActivityIndicator color={ios.brand} />
               </View>
-            ) : null}
-          </>
-        }
-      />
+            )
+          }
+          ListFooterComponent={
+            <>
+              {visible.showBrowseButton ? (
+                <Pressable
+                  style={styles.listUnlistedBtn}
+                  onPress={() => setBrowsing(true)}
+                  accessibilityRole="button"
+                  accessibilityLabel="Browse the full catalogue"
+                >
+                  <Ionicons name="grid-outline" size={16} color={ios.brand} />
+                  <Text style={styles.listUnlistedText}>Browse catalogue</Text>
+                </Pressable>
+              ) : null}
+              {unlistedPlacement === "list-footer" ? (
+                <Pressable
+                  style={styles.listUnlistedBtn}
+                  onPress={() => openUnlistedModal(searchTerm)}
+                  accessibilityRole="button"
+                  accessibilityLabel={unlistedLabel}
+                  hitSlop={4}
+                >
+                  <Ionicons name="add-circle-outline" size={16} color={ios.brand} />
+                  <Text style={styles.listUnlistedText} numberOfLines={1}>
+                    {unlistedLabel}
+                  </Text>
+                </Pressable>
+              ) : null}
+              {isFetchingNextPage ? (
+                <View style={styles.pageSpinner}>
+                  <ActivityIndicator color={ios.brand} />
+                </View>
+              ) : null}
+            </>
+          }
+        />
+      </View>
 
       <View style={styles.footer}>
         {/* ONE entry point into review: the summary itself is the button —
             see NewOrderScreen's footer for the history. */}
         <Pressable
           style={[styles.footerSummaryBtn, totalItems === 0 && styles.footerSummaryBtnDisabled]}
-          onPress={totalItems > 0 ? openReview : undefined}
-          disabled={totalItems === 0}
+          onPress={totalItems > 0 && !saleUnknown ? openReview : undefined}
+          disabled={totalItems === 0 || !!saleUnknown}
           accessibilityRole="button"
           accessibilityLabel="Review invoice"
           accessibilityState={{ disabled: totalItems === 0 }}
@@ -2901,6 +2983,8 @@ const styles = StyleSheet.create({
 
   browseBar: { flexDirection: "row", alignItems: "center", gap: 4, paddingRight: 12 },
   browseClose: { padding: 6 },
+  lockWrap: { flex: 1 },
+  locked: { opacity: 0.45 },
   catalogList: { flex: 1 },
   listContent: { paddingHorizontal: 16, paddingTop: 14, paddingBottom: 16, flexGrow: 1 },
   pageSpinner: { paddingVertical: 16, alignItems: "center" },

@@ -7,7 +7,11 @@ import {
   type CategoryTaxType,
 } from "@routeflow/pricing";
 import { formatReceiptMoney } from "./counter-receipt";
-import { keptSaleHref } from "./kept-draft-invoice";
+import {
+  SALE_ORDER_EXISTS_CODES as ORDER_EXISTS_CODES,
+  isDefinitiveSaleRefusal,
+  mintSaleKey,
+} from "@routeflow/types/sale-attempt";
 import {
   API_ERROR_CODES,
   type CounterSalePaymentMethod,
@@ -309,18 +313,6 @@ export function isNotSentOffline(err: unknown, offlineAtSend: boolean): boolean 
   return offlineAtSend && !!e && !e.response;
 }
 
-const DEFINITIVE_REFUSALS = new Set([400, 401, 403, 404, 409, 422, 429]);
-
-/** 409 codes that mean the order EXISTS (the key was already used): an unknown outcome, never a refusal. */
-const ORDER_EXISTS_CODES: ReadonlySet<unknown> = new Set([
-  API_ERROR_CODES.COUNTER_SALE_ORDER_CHANGED,
-  API_ERROR_CODES.IDEMPOTENCY_KEY_OTHER_ORDER,
-  API_ERROR_CODES.IDEMPOTENCY_KEY_CART_MISMATCH,
-  // The sale is committed BEFORE its tender: a tender dated inside a closed day is refused afterwards, so the sale exists
-  // (unpaid). A fresh key would ring it twice; the SAME key finishes it once the close is reopened.
-  API_ERROR_CODES.COUNTER_SALE_DAY_CLOSED,
-]);
-
 /** 409 COUNTER_SALE_DAY_CLOSED from the till's sale: the sale is saved, only its payment was refused (the tender's day is closed). */
 export const COUNTER_SALE_DAY_CLOSED_TILL_COPY =
   "This day is closed, so no payment was taken. The sale is saved without payment.";
@@ -328,20 +320,9 @@ export const COUNTER_SALE_DAY_CLOSED_TILL_COPY =
 /**
  * True only for a 4xx that PROVES nothing was written (the auth guard, the throttler and validation all reject BEFORE the
  * handler runs), and only for a FIRST attempt: once an attempt has been UNKNOWN, no refusal is definitive (the first try may
- * have committed); only a 2xx or the by-key lookup's 404 COUNTER_SALE_NOT_FOUND settles it. Every other failure (5xx,
- * network, timeout, 408) is unknown, and so is a 409 whose code says the order exists.
+ * have committed). The ONE rule lives in `@routeflow/types/sale-attempt` (row 485), shared with the New sale page and mobile.
  */
-export function isDefinitiveCounterSaleRefusal(err: unknown): boolean {
-  const res = (
-    err as { response?: { status?: number; data?: { code?: unknown } } } | null | undefined
-  )?.response;
-  if (res?.status === 409 && ORDER_EXISTS_CODES.has(res.data?.code)) return false;
-  // Row 466: a body naming the committed order or invoice disproves "nothing was written" (the send or the
-  // invoice step failed AFTER the commit, whatever the status). The sale exists: never a definitive refusal,
-  // so the clerk cannot ring it again under a fresh key.
-  if (keptSaleHref(err)) return false;
-  return typeof res?.status === "number" && DEFINITIVE_REFUSALS.has(res.status);
-}
+export const isDefinitiveCounterSaleRefusal = isDefinitiveSaleRefusal;
 
 /** The by-key lookup's one definitive "no": a 404 with COUNTER_SALE_NOT_FOUND. Any other failure proves nothing. */
 export function isCounterSaleNotFound(err: unknown): boolean {
@@ -462,15 +443,7 @@ export function counterSaleErrorCopy(err: unknown, opts: { walkIn?: boolean } = 
 }
 
 /** One key per SALE (sent as `Idempotency-Key`): kept until a DEFINITIVE answer, then a new sale gets a new one. */
-export function newIdempotencyKey(): string {
-  const c = typeof globalThis !== "undefined" ? globalThis.crypto : undefined;
-  if (c && typeof c.randomUUID === "function") return c.randomUUID();
-  // insecure-context fallback (a counter on a plain-http LAN address has no randomUUID)
-  return "xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx".replace(/[xy]/g, (ch) => {
-    const r = Math.floor(Math.random() * 16);
-    return (ch === "x" ? r : (r & 0x3) | 0x8).toString(16);
-  });
-}
+export const newIdempotencyKey = mintSaleKey;
 
 /** Per-DEVICE preference ("Print receipt automatically"): localStorage only, never tenant data, never throws. */
 export const AUTO_PRINT_KEY = "rf.counterSale.autoPrint";

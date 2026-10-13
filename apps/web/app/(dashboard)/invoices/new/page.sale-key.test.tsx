@@ -1,13 +1,14 @@
 import * as React from "react";
 import userEvent from "@testing-library/user-event";
-import { renderWithProviders, screen, waitFor } from "@/test-utils/render";
+import { act, renderWithProviders, screen, waitFor } from "@/test-utils/render";
 import NewInvoicePage from "./page";
 
 /**
- * Row 466 (sale path) — createSale commits the ORDER, then builds its invoice. When the invoice step
- * fails the API body carries `orderId`; the page must open that order (fixed copy, never the server's
- * message) and must not offer a second sale, which would duplicate it. An invoiceId, when present,
- * wins (the invoice exists). Harness copied from page.kept-draft.test.tsx.
+ * Row 485 — the New sale page sends ONE Idempotency-Key per sale attempt and reuses it on any retry of that
+ * attempt (a 5xx, a dropped connection, an error that names a committed order or invoice), so the server
+ * resumes the stored sale instead of writing a second one. The key is dropped only on a success or a definitive
+ * refusal that names no committed sale; a changed cart is a new attempt. Harness copied from
+ * page.kept-order.test.tsx.
  */
 
 const mockPush = jest.fn();
@@ -101,9 +102,18 @@ const WIDGET = { id: "prod-1", name: "Widget", pricePerUnit: "9.99" };
 /** An axios-shaped error: any code (or none), the committed draft's id in the body. */
 const sendFailure = (data: Record<string, unknown>) => ({ response: { status: 400, data } });
 
-const KEPT_ORDER_TITLE = "Sale recorded, invoice not created";
+const submit = async (user: ReturnType<typeof userEvent.setup>) => {
+  await user.click(screen.getByRole("button", { name: /create sale & invoice/i }));
+};
+const callOpts = (n: number) =>
+  mockCreateSale.mock.calls[n][1] as {
+    onSuccess: (r: unknown) => void;
+    onError: (e: unknown) => void;
+  };
+const keyOf = (n: number) =>
+  (mockCreateSale.mock.calls[n][0] as { idempotencyKey?: string }).idempotencyKey;
 
-async function openNewSaleWithLine() {
+async function openSaleWithLine() {
   const user = userEvent.setup();
   renderWithProviders(<NewInvoicePage />);
   await user.click(screen.getByRole("button", { name: /new sale/i }));
@@ -111,12 +121,10 @@ async function openNewSaleWithLine() {
   await user.click(await screen.findByText("Acme Co"));
   capturedOnScan!("012345678905");
   await screen.findByDisplayValue("Widget");
-  await user.click(screen.getByRole("button", { name: /create sale & invoice/i }));
-  await waitFor(() => expect(mockCreateSale).toHaveBeenCalledTimes(1));
-  return (mockCreateSale.mock.calls[0][1] as { onError: (e: unknown) => void }).onError;
+  return user;
 }
 
-describe("row 466 — the New sale path opens the kept order when the invoice step fails", () => {
+describe("row 485 — the New sale page's Idempotency-Key", () => {
   beforeEach(() => {
     jest.clearAllMocks();
     mockCustomers = [{ id: "cust-1", businessName: "Acme Co" }];
@@ -124,37 +132,54 @@ describe("row 466 — the New sale path opens the kept order when the invoice st
     mockApiPost.mockResolvedValue({ data: {} });
   });
 
+  it("the first submit carries a key", async () => {
+    const user = await openSaleWithLine();
+    await submit(user);
+    await waitFor(() => expect(mockCreateSale).toHaveBeenCalledTimes(1));
+    expect(keyOf(0)).toEqual(expect.stringMatching(/\S{8,}/));
+  });
+
   it.each([
-    ["a coded 500", { code: "SALE_INVOICE_CREATE_FAILED", orderId: "ord-1" }],
+    ["a 5xx", { response: { status: 500, data: { statusCode: 500 } } }],
+    ["a dropped connection (no response)", new Error("Network Error")],
     [
-      "a plain 400 with a raw message",
-      { statusCode: 400, message: "raw server words", orderId: "ord-1" },
+      "a kept-order error naming the committed order",
+      { response: { status: 500, data: { code: "SALE_INVOICE_CREATE_FAILED", orderId: "ord-1" } } },
     ],
-  ])("%s with orderId -> opens /orders/:id, fixed copy, one sale", async (_n, body) => {
-    const onError = await openNewSaleWithLine();
-    onError(sendFailure(body));
-
-    expect(mockPush).toHaveBeenCalledWith("/orders/ord-1");
-    expect(mockToast).toHaveBeenCalledWith(
-      expect.objectContaining({ title: KEPT_ORDER_TITLE, variant: "warning" }),
-    );
-    expect(JSON.stringify(mockToast.mock.calls)).not.toContain("raw server words");
-    expect(mockCreateSale).toHaveBeenCalledTimes(1);
+    [
+      "a 400 that names the committed invoice",
+      { response: { status: 400, data: { message: "x", invoiceId: "inv-1", orderId: "ord-1" } } },
+    ],
+  ])("Try again after %s sends the SAME key", async (_n, error) => {
+    const user = await openSaleWithLine();
+    await submit(user);
+    await waitFor(() => expect(mockCreateSale).toHaveBeenCalledTimes(1));
+    expect(keyOf(0)).toBeTruthy();
+    act(() => callOpts(0).onError(error));
+    await user.click(await screen.findByRole("button", { name: "Try again" }));
+    await waitFor(() => expect(mockCreateSale).toHaveBeenCalledTimes(2));
+    expect(keyOf(1)).toBe(keyOf(0));
   });
 
-  it("an error with BOTH ids opens the invoice, not the order", async () => {
-    const onError = await openNewSaleWithLine();
-    onError(sendFailure({ invoiceId: "inv-1", orderId: "ord-1" }));
-    expect(mockPush).toHaveBeenCalledWith("/invoices/inv-1");
-    expect(mockPush).not.toHaveBeenCalledWith("/orders/ord-1");
+  it("after a success, the next sale sends a NEW key", async () => {
+    const user = await openSaleWithLine();
+    await submit(user);
+    await waitFor(() => expect(mockCreateSale).toHaveBeenCalledTimes(1));
+    act(() => callOpts(0).onSuccess({ id: "inv-1" }));
+    await submit(user);
+    await waitFor(() => expect(mockCreateSale).toHaveBeenCalledTimes(2));
+    expect(keyOf(1)).not.toBe(keyOf(0));
   });
 
-  it("control: an error with neither id stays on the form with the create-failed toast", async () => {
-    const onError = await openNewSaleWithLine();
-    onError(sendFailure({ statusCode: 400, message: "Customer not found" }));
-    expect(mockPush).not.toHaveBeenCalled();
-    expect(mockToast).toHaveBeenCalledWith(
-      expect.objectContaining({ title: "Could not create the sale", variant: "error" }),
+  it("a definitive refusal that names no committed sale clears the key", async () => {
+    const user = await openSaleWithLine();
+    await submit(user);
+    await waitFor(() => expect(mockCreateSale).toHaveBeenCalledTimes(1));
+    act(() =>
+      callOpts(0).onError({ response: { status: 400, data: { message: "Customer not found" } } }),
     );
+    await submit(user);
+    await waitFor(() => expect(mockCreateSale).toHaveBeenCalledTimes(2));
+    expect(keyOf(1)).not.toBe(keyOf(0));
   });
 });

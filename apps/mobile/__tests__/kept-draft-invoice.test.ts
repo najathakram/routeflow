@@ -43,18 +43,17 @@ describe("keptDraftInvoiceId", () => {
   });
 });
 
-describe("the invoice composer wires it on BOTH create paths", () => {
+describe("the invoice composer wires it on the plain create path", () => {
   const src = fs.readFileSync(
     path.join(__dirname, "..", "app", "(operator)", "(tabs)", "invoices", "new.tsx"),
     "utf8",
   );
 
-  it("the plain create and the sale create each open the kept draft before any other error branch", () => {
-    for (const marker of ['"Couldn\'t create invoice"', '"Couldn\'t record the sale"']) {
-      const at = src.indexOf(`onUnitNotOffered(${marker})`);
-      expect(at).toBeGreaterThan(0);
-      const before = src.slice(Math.max(0, at - 260), at);
-      expect(before).toMatch(/keptDraftInvoiceId\(err\)[\s\S]*onKeptDraft\(keptId\)/);
-    }
+  // The sale path no longer redirects: an unknown outcome locks the cart (sale-attempt-key.test.ts).
+  it("the plain create opens the kept draft before any other error branch", () => {
+    const at = src.indexOf(`onUnitNotOffered("Couldn't create invoice")`);
+    expect(at).toBeGreaterThan(0);
+    const before = src.slice(Math.max(0, at - 260), at);
+    expect(before).toMatch(/keptDraftInvoiceId\(err\)[\s\S]*onKeptDraft\(keptId\)/);
   });
 });

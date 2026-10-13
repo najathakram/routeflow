@@ -3,6 +3,7 @@ import { apiClient } from "../api-client";
 import type { ChangeRequest, ChangeRequestResolveAction } from "@/lib/change-requests";
 import { fetchPdfBlob } from "../fetch-pdf-blob";
 import { keptDraftInvoiceId, keptOrderId } from "../kept-draft-invoice";
+import { isDefinitiveSaleRefusal } from "@routeflow/types/sale-attempt";
 import type {
   ActiveOrderSummary,
   BatchShipRequest,
@@ -406,8 +407,23 @@ export interface CreateSaleDto {
  */
 export function useCreateSale() {
   const qc = useQueryClient();
-  return useMutation<{ id: string; invoiceNumber?: string }, Error, CreateSaleDto>({
-    mutationFn: (dto) => apiClient.post("/orders/sell", dto).then((r) => r.data),
+  // Row 485: `idempotencyKey` travels as the Idempotency-Key HEADER (like the counter sale), never in the body.
+  return useMutation<
+    { id: string; invoiceNumber?: string },
+    Error,
+    CreateSaleDto & { idempotencyKey?: string }
+  >({
+    // Row 485: an UNKNOWN outcome (a 5xx, a dropped connection, a body naming a committed sale) is rendered by the
+    // page's lock panel alone; the global toast would contradict it. A definitive refusal still reaches the toast.
+    meta: { localErrorToast: (err: unknown) => !isDefinitiveSaleRefusal(err) },
+    mutationFn: ({ idempotencyKey, ...dto }) =>
+      apiClient
+        .post(
+          "/orders/sell",
+          dto,
+          idempotencyKey ? { headers: { "Idempotency-Key": idempotencyKey } } : undefined,
+        )
+        .then((r) => r.data),
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ["orders"] });
       qc.invalidateQueries({ queryKey: ["invoices"] });

@@ -432,8 +432,16 @@ export interface CreatedSaleInvoice {
  */
 export function useCreateSale() {
   const qc = useQueryClient();
-  return useMutation<CreatedSaleInvoice, Error, CreateSaleDto>({
-    mutationFn: (dto) => apiClient.post("/orders/sell", dto).then((r) => r.data),
+  // Row 485: `idempotencyKey` travels as the Idempotency-Key HEADER, never in the body.
+  return useMutation<CreatedSaleInvoice, Error, CreateSaleDto & { idempotencyKey?: string }>({
+    mutationFn: ({ idempotencyKey, ...dto }) =>
+      apiClient
+        .post(
+          "/orders/sell",
+          dto,
+          idempotencyKey ? { headers: { "idempotency-key": idempotencyKey } } : {},
+        )
+        .then((r) => r.data),
     onSuccess: () => {
       invalidateOrderCaches(qc);
       qc.invalidateQueries({ queryKey: ["invoices"] });

@@ -185,33 +185,3 @@ describe("row 466 — create-and-send opens the kept draft on ANY send failure",
     expect(createInvoiceMutate).not.toHaveBeenCalled();
   });
 });
-
-describe("row 466 — the New sale 'Create sale & invoice' path", () => {
-  beforeEach(() => {
-    jest.clearAllMocks();
-    mockCustomers = [{ id: "cust-1", businessName: "Acme Co" }];
-    mockBarcodeProduct = WIDGET;
-    mockApiPost.mockResolvedValue({ data: {} });
-  });
-
-  it("a send failure that carries invoiceId opens the invoice and makes no second sale", async () => {
-    const user = userEvent.setup();
-    renderWithProviders(<NewInvoicePage />);
-    await user.click(screen.getByRole("button", { name: /new sale/i }));
-    await user.click(screen.getByPlaceholderText(/search customers/i));
-    await user.click(await screen.findByText("Acme Co"));
-    capturedOnScan!("012345678905");
-    await screen.findByDisplayValue("Widget");
-    await user.click(screen.getByRole("button", { name: /create sale & invoice/i }));
-    await waitFor(() => expect(mockCreateSale).toHaveBeenCalledTimes(1));
-
-    const opts = mockCreateSale.mock.calls[0][1] as { onError: (e: unknown) => void };
-    opts.onError(
-      sendFailure({ statusCode: 400, message: "raw", invoiceId: "inv-sale", orderId: "ord-1" }),
-    );
-
-    expect(mockPush).toHaveBeenCalledWith("/invoices/inv-sale");
-    expect(mockToast).toHaveBeenCalledWith(expect.objectContaining({ title: KEPT_TITLE }));
-    expect(mockCreateSale).toHaveBeenCalledTimes(1);
-  });
-});

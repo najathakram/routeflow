@@ -48,12 +48,10 @@ import {
 } from "@/lib/sale-line-pricing";
 import { reasonRequiredMessage } from "@/lib/staff-price-override";
 import { apiClient } from "@/lib/api-client";
-import {
-  KEPT_DRAFT_TOAST,
-  KEPT_ORDER_TOAST,
-  keptDraftInvoiceId,
-  keptOrderId,
-} from "@/lib/kept-draft-invoice";
+import { useSaleAttemptKey } from "@/lib/use-sale-attempt-key";
+import type { UnknownSale } from "@routeflow/types/sale-attempt";
+import { SaleUnknownPanel } from "./_components/SaleUnknownPanel";
+import { KEPT_DRAFT_TOAST, keptDraftInvoiceId } from "@/lib/kept-draft-invoice";
 import { fetchPdfBlob } from "@/lib/fetch-pdf-blob";
 import { displayProductName } from "@/lib/product-display";
 import {
@@ -800,6 +798,15 @@ export default function NewInvoicePage() {
   const createInvoice = useCreateInvoice();
   const updateInvoice = useUpdateInvoice();
   const createSale = useCreateSale();
+  const saleKey = useSaleAttemptKey(); // row 485: one Idempotency-Key per sale attempt
+  // Row 485: set while the outcome of a sale is UNKNOWN; the cart is locked behind it.
+  const [saleUnknown, setSaleUnknown] = React.useState<UnknownSale | null>(null);
+  const saleLocked = saleUnknown !== null;
+  const lastSaleRef = React.useRef<{
+    saleDto: CreateSaleDto & { paymentTermsLabel?: string };
+    saleLines: LineItemState[];
+    send: boolean;
+  } | null>(null);
 
   // Which kind of invoice the operator is creating, chosen on the basis screen.
   const [basis, setBasis] = React.useState<"existing" | "newSale" | "standalone" | null>(null);
@@ -1241,7 +1248,7 @@ export default function NewInvoicePage() {
    */
   async function handleScanCode(rawCode: string) {
     const code = rawCode.trim();
-    if (!code) return;
+    if (!code || saleLocked) return;
     setScanQuery("");
     setDebouncedScanQuery("");
     // 1) Dedicated barcode field
@@ -1535,6 +1542,7 @@ export default function NewInvoicePage() {
    * otherwise a PENDING order + DRAFT invoice is created (sent now only when `send`).
    */
   function handleSubmitSale(send: boolean, lines: LineItemState[] = items) {
+    if (saleLocked) return;
     const saleLines = lines.filter((it) => it.productId && Number(it.qty) > 0);
     // #2696(c) SA-558e: never send what the server refuses — a special price needs its reason.
     const needsReason = saleLines.find(saleLineNeedsReason);
@@ -1574,31 +1582,50 @@ export default function NewInvoicePage() {
     // deliveredAt at the full current timestamp rather than midnight UTC.
     const backdatedTo = issueDate && issueDate !== todayIso() ? issueDate : undefined;
 
+    const saleDto = {
+      customerId: customer!.id,
+      items: saleItems,
+      deliveredNow,
+      // The delivery-date picker: replaces deliveredNow's binary on the server
+      // (deliveredNow above is still sent for backward compat with older callers).
+      deliveredOn,
+      notes: notes.trim() || undefined,
+      ...(adjustment < 0 ? { discountAmount: Math.abs(adjustment) } : {}),
+      ...(backdatedTo ? { orderDate: backdatedTo } : {}),
+      // Only post a due date some term actually produced: the operator's
+      // pick, their hand-typed date, or the tenant default once it seeded.
+      // Otherwise this page's provisional +30 would override the server's
+      // resolveDefaultTerms() with a date nobody chose.
+      ...((terms || dueDateEditedRef.current) && dueDate ? { dueDate } : {}),
+      ...(termsText.trim() ? { terms: termsText.trim() } : {}),
+      // Structured "Net 30"-style label — orders.ts's CreateSaleDto isn't
+      // part of this package's file set, so the API-supported field is sent
+      // via a local cast rather than widening that shared type here.
+      ...(terms ? { paymentTermsLabel: terms } : {}),
+      send,
+    } as CreateSaleDto & { paymentTermsLabel?: string };
+    lastSaleRef.current = { saleDto, saleLines, send };
+    postSale(saleDto, saleLines, send);
+  }
+
+  /**
+   * Posts the sale under its Idempotency-Key (row 485). The same cart retried sends the SAME key, so the
+   * server resumes the stored sale. An UNKNOWN outcome (a 5xx, a dropped connection, an error that names a
+   * committed order or invoice) locks the cart behind SaleUnknownPanel; a success or a definitive refusal
+   * unlocks it.
+   */
+  function postSale(
+    saleDto: CreateSaleDto & { paymentTermsLabel?: string },
+    saleLines: LineItemState[],
+    send: boolean,
+  ) {
+    const idempotencyKey = saleKey.keyFor(JSON.stringify(saleDto));
     createSale.mutate(
-      {
-        customerId: customer!.id,
-        items: saleItems,
-        deliveredNow,
-        // The delivery-date picker: replaces deliveredNow's binary on the server
-        // (deliveredNow above is still sent for backward compat with older callers).
-        deliveredOn,
-        notes: notes.trim() || undefined,
-        ...(adjustment < 0 ? { discountAmount: Math.abs(adjustment) } : {}),
-        ...(backdatedTo ? { orderDate: backdatedTo } : {}),
-        // Only post a due date some term actually produced: the operator's
-        // pick, their hand-typed date, or the tenant default once it seeded.
-        // Otherwise this page's provisional +30 would override the server's
-        // resolveDefaultTerms() with a date nobody chose.
-        ...((terms || dueDateEditedRef.current) && dueDate ? { dueDate } : {}),
-        ...(termsText.trim() ? { terms: termsText.trim() } : {}),
-        // Structured "Net 30"-style label — orders.ts's CreateSaleDto isn't
-        // part of this package's file set, so the API-supported field is sent
-        // via a local cast rather than widening that shared type here.
-        ...(terms ? { paymentTermsLabel: terms } : {}),
-        send,
-      } as CreateSaleDto & { paymentTermsLabel?: string },
+      { ...saleDto, idempotencyKey },
       {
         onSuccess: (inv) => {
+          saleKey.settle({ ok: true });
+          setSaleUnknown(null);
           toast({
             title: deliveredNow ? "Sale recorded" : send ? "Invoice sent" : "Invoice saved",
             variant: "success",
@@ -1606,20 +1633,10 @@ export default function NewInvoicePage() {
           router.push(`/invoices/${inv.id}`);
         },
         onError: (err: unknown) => {
-          // Row 466: the sale and its invoice exist; only the send failed. Open the kept draft.
-          const keptId = keptDraftInvoiceId(err);
-          if (keptId) {
-            toast({ ...KEPT_DRAFT_TOAST, variant: "warning" });
-            router.push(`/invoices/${keptId}`);
-            return;
-          }
-          // Row 466: the order exists and only its invoice step failed. Open the order.
-          const keptOrder = keptOrderId(err);
-          if (keptOrder) {
-            toast({ ...KEPT_ORDER_TOAST, variant: "warning" });
-            router.push(`/orders/${keptOrder}`);
-            return;
-          }
+          saleKey.settle({ ok: false, error: err });
+          const unknown = saleKey.unknown();
+          setSaleUnknown(unknown);
+          if (unknown) return; // locked: the panel offers Try again / Open / Start a new sale
           toast({
             title: "Could not create the sale",
             description: unitRefusal(err, saleLines) ?? "Please check your inputs and try again.",
@@ -1706,7 +1723,31 @@ export default function NewInvoicePage() {
 
   return (
     <div className="pb-24">
-      <div className="space-y-5 p-6">
+      {saleUnknown ? (
+        <SaleUnknownPanel
+          unknown={saleUnknown}
+          busy={createSale.isPending}
+          onTryAgain={() => {
+            const last = lastSaleRef.current;
+            if (last) postSale(last.saleDto, last.saleLines, last.send);
+          }}
+          onStartNew={() => {
+            saleKey.startNew();
+            lastSaleRef.current = null;
+            setSaleUnknown(null);
+          }}
+        />
+      ) : null}
+      {/* Row 485: a sale with an unknown outcome locks every control behind the panel above. */}
+      <fieldset
+        disabled={saleLocked}
+        data-locked={saleLocked ? "true" : undefined}
+        className={cn(
+          "m-0 min-w-0 space-y-5 border-0 p-6",
+          // locked behind the panel: visibly inert (the mobile composer dims to the same 0.45)
+          saleLocked && "cursor-not-allowed opacity-[0.45]",
+        )}
+      >
         {/* Back to the basis chooser */}
         <button
           onClick={() => setBasis(null)}
@@ -2588,7 +2629,7 @@ export default function NewInvoicePage() {
             </Card>
           </div>
         </div>
-      </div>
+      </fieldset>
 
       <InlineCreateProductModal
         isOpen={createProductOpen}
@@ -2634,7 +2675,7 @@ export default function NewInvoicePage() {
                 <WriteButton
                   onClick={() => withResolvedItems((l) => handleSubmitSale(true, l))}
                   loading={createSale.isPending}
-                  disabled={createSale.isPending}
+                  disabled={createSale.isPending || saleLocked}
                 >
                   Create sale &amp; invoice
                 </WriteButton>
@@ -2644,7 +2685,7 @@ export default function NewInvoicePage() {
                 <WriteButton
                   onClick={() => withResolvedItems((l) => handleSubmitSale(false, l))}
                   loading={createSale.isPending}
-                  disabled={createSale.isPending}
+                  disabled={createSale.isPending || saleLocked}
                 >
                   Save draft invoice
                 </WriteButton>

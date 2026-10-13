@@ -422,8 +422,19 @@ export class OrdersController {
   @Post("sell")
   @UseGuards(RolesGuard)
   @Roles(UserRole.OPERATOR)
-  sell(@Body() dto: CreateSaleDto, @CurrentUser() user: JwtPayload) {
-    return this.ordersService.createSale(dto, user);
+  @ApiHeader({ name: "Idempotency-Key", required: false })
+  sell(
+    @Body() dto: CreateSaleDto,
+    @CurrentUser() user: JwtPayload,
+    @Headers("Idempotency-Key") rawIdempotencyKey?: string,
+  ) {
+    // Row 485: an optional per-attempt key (the body field stays internal and is refused). With it a
+    // retried ring resumes the stored order instead of writing a second one.
+    const idempotencyKey = this.normalizeIdempotencyKey(rawIdempotencyKey);
+    return this.ordersService.createSale(
+      idempotencyKey ? Object.assign(dto, { idempotencyKey }) : dto,
+      user,
+    );
   }
 
   /** #3168: mark several carrier orders shipped in one request (per-order outcomes, never all-or-nothing). */
