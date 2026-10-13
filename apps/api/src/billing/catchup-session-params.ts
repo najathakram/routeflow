@@ -1,4 +1,5 @@
 import { CATCHUP_META } from "./catchup-claim";
+import { CHECKOUT_MAX_LIFETIME_MS } from "./checkout-anchor";
 import {
   CATCHUP_TRIAL_MIN_LEAD_MS,
   STRIPE_MIN_CHARGE_CENTS,
@@ -42,7 +43,6 @@ export interface CatchupSessionInput {
 }
 
 const epoch = (d: Date) => Math.floor(d.getTime() / 1000);
-const DAY_MS = 24 * 60 * 60 * 1000;
 
 /** R5-4. Throws on a combination Checkout rejects. */
 export function assertCheckoutAcceptable(params: {
@@ -109,9 +109,14 @@ function buildTrialOneTime(i: CatchupSessionInput): Record<string, any> {
     ...c.sessionBase,
     payment_method_collection: "always",
     line_items: [...c.recurring, ...oneTime],
-    // A >= now + 72 h, so this is now + 24 h (min() kept for the contract: never past A - 60 min)
+    // A >= now + 72 h, so this is now + 23 h (min() kept for the contract: never past A - 60 min)
     expires_at: epoch(
-      new Date(Math.min(i.now.getTime() + DAY_MS, plan.trialEndAt.getTime() - 60 * 60 * 1000)),
+      new Date(
+        Math.min(
+          i.now.getTime() + CHECKOUT_MAX_LIFETIME_MS,
+          plan.trialEndAt.getTime() - 60 * 60 * 1000,
+        ),
+      ),
     ),
     metadata: {
       ...c.metaBase,
@@ -144,7 +149,7 @@ function buildTrial(i: CatchupSessionInput): Record<string, any> {
     ...c.sessionBase,
     payment_method_collection: "always",
     line_items: c.recurring,
-    expires_at: epoch(new Date(i.now.getTime() + DAY_MS)),
+    expires_at: epoch(new Date(i.now.getTime() + CHECKOUT_MAX_LIFETIME_MS)),
     metadata: {
       ...c.metaBase,
       [CATCHUP_META.catchup]: "prepaid",

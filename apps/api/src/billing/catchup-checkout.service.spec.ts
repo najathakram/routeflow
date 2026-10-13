@@ -58,6 +58,7 @@ function make(
     monthly?: number | null;
     addonLines?: any[];
     addonRows?: Record<string, unknown>[];
+    invalid?: { sku: string; value: string }[];
   } = {},
 ) {
   const db = fakeCatchupDb({
@@ -94,7 +95,9 @@ function make(
     checkoutAddonLines: jest.fn(async () => ({
       lineItems: o.addonLines ?? [],
       skus: (o.addonLines ?? []).map((l) => l.price_data.product_data.metadata.addonSku),
+      invalid: o.invalid ?? [],
     })),
+    recordInvalidCatalogAddons: jest.fn(async () => undefined),
   };
   const claim = new CatchupClaimService(prisma, stripe as any, { emit: jest.fn() } as any);
   const billing: any = { ensureStripeCustomer: jest.fn(async () => "cus_1") };
@@ -644,5 +647,34 @@ describe("Opus review: planning under the claim, the plan key, billing start", (
     const r = await h.svc.plan("t1", NOW);
     expect(r.eligible).toBe(false);
     expect(r.ineligible).toContain("unplaceable_open_invoice");
+  });
+});
+
+describe("B1102 a held add-on with an unparseable catalog includedAtPlan", () => {
+  const INVALID = [{ sku: "FORECASTING", value: "pro_typo" }];
+  const held = [{ sku: "FORECASTING", quantity: 1, priceSnapshot: 19 }];
+
+  it("the dry-run reports it as addon_catalog_invalid with the catalog code, not 'not card billable', and writes nothing", async () => {
+    const h = make({ invalid: INVALID, addonRows: held });
+    const r = await h.svc.plan("t1", NOW);
+    expect(r.eligible).toBe(false);
+    expect(r.ineligible).toContain("addon_catalog_invalid");
+    expect(catchupReportJson(r).refusals).toContain(API_ERROR_CODES.ADDON_CATALOG_INVALID);
+    expect(h.mutations.recordInvalidCatalogAddons).not.toHaveBeenCalled();
+    expect(h.db.audits).toHaveLength(0);
+  });
+
+  it("open() writes the catalog-invalid notice and answers ADDON_CATALOG_INVALID, with the claim untouched and zero Stripe calls", async () => {
+    const h = make({ invalid: INVALID, addonRows: held });
+    const err: any = await h.svc.open("t1", { now: NOW, expectedStubCents: 31000 }).catch((e) => e);
+    expect(err.getStatus()).toBe(409);
+    expect(err.getResponse()).toMatchObject({
+      code: API_ERROR_CODES.ADDON_CATALOG_INVALID,
+      reason: "CATALOG_INVALID",
+      sku: "FORECASTING",
+    });
+    expect(h.mutations.recordInvalidCatalogAddons).toHaveBeenCalledWith("t1", INVALID);
+    expect(h.stripe.calls).toEqual([]);
+    expect(h.sub().catchupState).toBeNull();
   });
 });

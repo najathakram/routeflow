@@ -4,7 +4,12 @@ import {
   ForbiddenException,
   Logger,
   NotFoundException,
+  Optional,
 } from "@nestjs/common";
+import { AuditService } from "../audit/audit.service";
+import { AUDIT_ACTIONS } from "../audit/audit-actions.constant";
+import { API_ERROR_CODES } from "../common/api-error-codes";
+import { SUPPORT_SESSION_REFUSAL_MESSAGE } from "../auth/guards/no-impersonation.guard";
 import { assertNotWalkIn } from "../customers/walk-in-protected";
 import { assertMayChangeAccount } from "./admin-account-protection";
 import { ConfigService } from "@nestjs/config";
@@ -28,6 +33,8 @@ export class UsersService {
     private readonly prisma: PrismaService,
     private readonly email: EmailService,
     private readonly configService: ConfigService<AppConfig>,
+    // SA-778: records a refused support-session identity edit. Optional so a bare unit module still builds.
+    @Optional() private readonly audit?: AuditService,
   ) {}
 
   /**
@@ -220,6 +227,7 @@ export class UsersService {
     dto: UpdateUserDto,
     changedByUsername: string | undefined,
     callerRole: UserRole,
+    impersonatedBy?: string,
   ) {
     const user = await this.prisma.forTenant().user.findUnique({ where: { id: userId } });
     if (!user) throw new NotFoundException("User not found");
@@ -233,6 +241,28 @@ export class UsersService {
     const normalizedUsername = dto.username !== undefined ? dto.username.trim() : undefined;
     const usernameEdit =
       normalizedUsername !== undefined && normalizedUsername !== (user.username ?? "").trim();
+    // SA-778: a support session may not change a sign-in identity (an email is the way to a reset link in its
+    // own inbox; a username is how the account is found at login).
+    if ((emailEdit || usernameEdit) && impersonatedBy != null) {
+      await this.audit?.log({
+        tenantId: user.tenantId ?? null,
+        userId: null,
+        impersonatedBy,
+        action: AUDIT_ACTIONS.IMPERSONATION_ACTION_REFUSED,
+        entityType: "account",
+        entityId: userId,
+        meta: {
+          superAdminId: impersonatedBy,
+          tenantId: user.tenantId ?? null,
+          method: "PATCH",
+          route: "/users/:id",
+        },
+      });
+      throw new ForbiddenException({
+        code: API_ERROR_CODES.IMPERSONATION_NOT_ALLOWED,
+        message: SUPPORT_SESSION_REFUSAL_MESSAGE,
+      });
+    }
     if (emailEdit || usernameEdit) assertMayChangeAccount(user, callerRole);
     if (emailEdit || usernameEdit || (dto.role && dto.role !== user.role)) {
       await this.assertNotWalkInAccount(userId);
