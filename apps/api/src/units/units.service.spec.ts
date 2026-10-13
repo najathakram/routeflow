@@ -795,6 +795,47 @@ describe("UnitsService", () => {
         expect(h.db.productUnit.updateMany).not.toHaveBeenCalled();
       });
 
+      describe("a PACK-word rename (Product.unit) is held to the pack size too", () => {
+        const seedPack = (h: ReturnType<typeof make>, lines: Array<Record<string, unknown>>) => {
+          seedRename(h, {
+            products: [
+              {
+                id: "p1",
+                name: "Mug",
+                baseUnitLabel: null,
+                packLabel: null,
+                unit: "Case",
+                unitsPerBox: 12,
+              },
+            ],
+            levels: [],
+          });
+          h.db.$queryRaw.mockReset();
+          h.db.$queryRaw.mockResolvedValueOnce([{ id: "p1" }]).mockResolvedValueOnce(lines);
+        };
+
+        it("refuses when lines already say the new word at another unitsPerBox (409)", async () => {
+          const h = make();
+          seedPack(h, [{ productId: "p1", unitsPerBox: 24 }]);
+          const err = await h.service.update("u1", { name: "Crate" }, user).catch((e) => e);
+          expect(err).toBeInstanceOf(ConflictException);
+          expect(err.getResponse()).toEqual(
+            expect.objectContaining({
+              code: "UNIT_RENAME_COLLISION",
+              reason: "LINES_AT_OTHER_SIZE",
+              products: [{ id: "p1", name: "Mug" }],
+            }),
+          );
+          expect(h.db.product.updateMany).not.toHaveBeenCalled();
+        });
+
+        it("allows it when every such line is at the pack's own size", async () => {
+          const h = make();
+          seedPack(h, [{ productId: "p1", unitsPerBox: 12 }]);
+          await expect(h.service.update("u1", { name: "Crate" }, user)).resolves.toBeDefined();
+        });
+      });
+
       it("a line with NO size snapshot counts as a different size", async () => {
         const h = make();
         seedCrate(h, [{ productId: "p1", unitsPerBox: null }]);

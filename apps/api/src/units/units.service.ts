@@ -278,12 +278,20 @@ export class UnitsService {
         baseUnitLabel: string | null;
         packLabel: string | null;
         unit: string | null;
+        unitsPerBox: number | null;
       }> = [];
       for (const part of chunks([...new Set([...levelProductIds, ...textHits.map((h) => h.id)])])) {
         products.push(
           ...(await tx.product.findMany({
             where: { tenantId, id: { in: part } },
-            select: { id: true, name: true, baseUnitLabel: true, packLabel: true, unit: true },
+            select: {
+              id: true,
+              name: true,
+              baseUnitLabel: true,
+              packLabel: true,
+              unit: true,
+              unitsPerBox: true,
+            },
           })),
         );
       }
@@ -323,6 +331,13 @@ export class UnitsService {
         const factorOf = new Map<string, number>();
         for (const l of levelRows)
           if (l.tenantUnitId === id) factorOf.set(l.productId, l.factorToBase);
+        // A pack word that renames with the unit is a level of the pack's own size (Product.unit).
+        for (const p of products) {
+          if (matches(p.unit) && !factorOf.has(p.id)) {
+            const upb = Math.trunc(Number(p.unitsPerBox ?? 0));
+            factorOf.set(p.id, upb > 1 ? upb : 1);
+          }
+        }
         for (const part of chunks([...factorOf.keys()])) {
           const ids = Prisma.join(part);
           const lines: Array<{ productId: string; unitsPerBox: number | null }> =
