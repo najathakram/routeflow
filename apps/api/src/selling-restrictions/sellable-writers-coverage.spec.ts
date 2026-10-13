@@ -100,7 +100,8 @@ const TABLE: Record<string, Row> = {
   ),
   [inv("applyPriceAdjustment")]: X("price only"),
   [inv("reconcileOrderDraftInvoiceLocked")]: X(
-    "mirrors the order's own goods (checked at the order)",
+    "mirrors the order's own goods: checked at the order, and a DRAFT order with a live linked invoice is judged " +
+      "at its edit (updateOrderItems); a DRAFT with none is judged when billed or promoted (F2)",
   ),
   [inv("rebuildSiblingDrafts")]: X("mirrors the order's own goods"),
   [inv("createPartialFromOrder")]: X(

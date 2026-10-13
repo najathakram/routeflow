@@ -2902,9 +2902,15 @@ export class OrdersService implements OnApplicationBootstrap {
     }
 
     // Lane R: a banned product added by this edit refuses (409 SELLING_RESTRICTED) BEFORE the invoice revert and any
-    // write; non-draft only (a draft is judged at its promotion). Re-checked under the row lock (order-edit-restrictions.ts).
+    // write; a draft is judged at its promotion UNLESS it has a live (non-VOID) linked invoice: the reconcile after this
+    // edit copies the order's lines onto that sent mirror. Re-checked under the row lock (order-edit-restrictions.ts).
     let restrictionPlan: OrderEditRestrictionPlan | null = null;
-    if (order.status !== "DRAFT") {
+    const judgeEdit =
+      order.status !== "DRAFT" ||
+      !!(await this.prisma
+        .forTenant()
+        .invoice.findFirst({ where: { orderId, status: { not: "VOID" } }, select: { id: true } }));
+    if (judgeEdit) {
       const tenantId = this.restrictionTenantId(user, order.tenantId);
       restrictionPlan = await planOrderEditRestrictions(
         { restrictions: this.sellingRestrictions, prisma: this.prisma },
