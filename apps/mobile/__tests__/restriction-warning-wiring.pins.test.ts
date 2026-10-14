@@ -123,3 +123,56 @@ describe("row 510: staff-only display", () => {
     }
   });
 });
+
+describe("row 510: POS 'Confirm & invoice' (the finish) carries the ack", () => {
+  it("usePosFinish takes the ack in its variables and builds BOTH status bodies with posStatusBody", () => {
+    const src = read("lib/api/pos-orders.ts");
+    const at = src.indexOf("export function usePosFinish()");
+    expect(at).toBeGreaterThan(-1);
+    const body = src.slice(at, src.indexOf("/** Release the hand-over's Idempotency-Key", at));
+    expect(body).toMatch(/RestrictionAck/);
+    expect(body).toMatch(/\.\.\.ack/);
+    expect(body.match(/posStatusBody\(status, ack\)/g)).toHaveLength(1); // inside the status loop
+    expect(body).not.toMatch(/\{ status \}\)/); // no bare { status } body left behind
+  });
+
+  it("the POS finish sends rw.attach(...) and routes the failed step's cause through rw.handle(...)", () => {
+    const src = read("lib/use-pos-mode.ts");
+    expect(src).toMatch(/rw\.attach\(/);
+    expect(src).toMatch(/rw\.handle\(/);
+    // PosFinishError wraps the axios error: the dialog must read the CAUSE
+    expect(src).toMatch(/\.cause/);
+  });
+
+  it("New order hands its rw to the POS finish, so a confirm into a judged DRAFT opens the same modal", () => {
+    const src = read("components/NewOrderScreen.tsx");
+    const at = src.indexOf("pos.finishAndOpen(");
+    expect(at).toBeGreaterThan(-1);
+    expect(src.slice(at, at + 400)).toMatch(/\brw\b/);
+  });
+});
+
+describe("row 510: the repeat-409 notice and the modal's small accessibility fixes", () => {
+  it("the hook drops the kept reason and passes listChanged to the modal on a repeat (isRepeatWarning)", () => {
+    const src = read("lib/use-restriction-warning-retry.tsx");
+    expect(src).toMatch(/isRepeatWarning\(reasonRef\.current\)/);
+    expect(src).toMatch(/if \(repeat\) forgetReason\(\)/);
+    expect(src).toMatch(/listChanged=\{listChanged\}/);
+  });
+  it("the modal shows it in a polite live region (role=status, aria-live=polite)", () => {
+    const src = read("components/RestrictionWarningModal.tsx");
+    expect(src).toMatch(/listChanged\s*\?/);
+    expect(src).toMatch(/role="status"/);
+    expect(src).toMatch(/aria-live="polite"/);
+    expect(src).toContain("COPY.listChanged");
+  });
+  it("the reason input takes focus on open, and a disabled Sell anyway says so to assistive tech", () => {
+    const src = read("components/RestrictionWarningModal.tsx");
+    expect(src).toMatch(/<FormTextInput[^>]*\bautoFocus\b/s);
+    expect(src).toMatch(/accessibilityState=\{\{ disabled: !check\.ok \}\}/);
+  });
+  it("the blocked modal's OK can resume the caller (the driver's at-stop batch continues behind it)", () => {
+    const src = read("lib/use-restriction-warning-retry.tsx");
+    expect(src).toMatch(/onDismiss/);
+  });
+});

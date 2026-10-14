@@ -342,5 +342,5 @@ export function ruleEditImpactCopy(count: number): string {
   const one = count === 1;
   const n = `${count} open order${one ? "" : "s"}`;
   const them = one ? "it" : "them";
-  return `${n} ${one ? "has" : "have"} products this change now restricts. Staff will be warned when they next edit, promote or invoice ${them}; buyers can't order ${them}.`;
+  return `${n} ${one ? "has" : "have"} products this change now restricts. Staff will be warned when they next edit or promote ${them}; buyers can't order ${them}.`;
 }

@@ -658,11 +658,18 @@ export function useResolveChangeRequest() {
   return useMutation<
     ChangeRequest,
     Error,
-    { orderId: string; crId: string; action: ChangeRequestResolveAction; reason?: string }
+    // Row 510: an approval that would sell a restricted product answers 409 RESTRICTION_WARNING; "Sell anyway" re-sends
+    // the SAME request plus the ack (lineKey `cr:<id>`), so the ack rides the body or the dialog would reopen forever.
+    {
+      orderId: string;
+      crId: string;
+      action: ChangeRequestResolveAction;
+      reason?: string;
+    } & RestrictionAck
   >({
-    mutationFn: ({ orderId, crId, action, reason }) =>
+    mutationFn: ({ orderId, crId, action, reason, ...ack }) =>
       apiClient
-        .post(`/orders/${orderId}/change-requests/${crId}/resolve`, { action, reason })
+        .post(`/orders/${orderId}/change-requests/${crId}/resolve`, { action, reason, ...ack })
         .then((r) => r.data),
     onSettled: (_data, _err, { orderId }) => {
       qc.invalidateQueries({ queryKey: ["orders", orderId] });

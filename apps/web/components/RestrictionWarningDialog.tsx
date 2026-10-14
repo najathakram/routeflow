@@ -31,8 +31,10 @@ export type RestrictionDialogView =
 interface Props {
   /** null = closed. */
   view: RestrictionDialogView | null;
-  /** A reason typed on an earlier attempt of the same save (a fresh 409 re-shows the dialog with it). */
+  /** A reason typed on an earlier attempt of the same save. A repeat 409 clears it (the list changed), so this is "" there. */
   initialReason?: string;
+  /** A repeat 409 with a fresh list: say so in a polite live region; the reason was cleared so the user re-confirms. */
+  listChanged?: boolean;
   /** "Sell anyway": the ack to resubmit with, and the trimmed reason (kept for a second 409). */
   onConfirm: (ack: RestrictionAck, reason: string) => void;
   /** "Go back" / Esc / X: nothing is sent, and the form and cart stay as they were. */
@@ -45,7 +47,13 @@ interface Props {
  * "blocked" form: "Ask the office to approve this sale", no reason field and no override. Opened by an error handler (no
  * Radix trigger), so it hands focus back to whatever held it, like BlockedLinesDialog.
  */
-export function RestrictionWarningDialog({ view, initialReason = "", onConfirm, onCancel }: Props) {
+export function RestrictionWarningDialog({
+  view,
+  initialReason = "",
+  listChanged = false,
+  onConfirm,
+  onCancel,
+}: Props) {
   const [reason, setReason] = React.useState(initialReason);
   const reasonRef = React.useRef<HTMLTextAreaElement | null>(null);
   const returnFocusTo = React.useRef<HTMLElement | null>(null);
@@ -91,7 +99,11 @@ export function RestrictionWarningDialog({ view, initialReason = "", onConfirm, 
         {...common}
         title={COPY.blockedTitle}
         description={COPY.blockedBody}
-        footer={<Button onClick={onCancel}>{COPY.ok}</Button>}
+        footer={
+          <Button className="max-md:min-h-11" onClick={onCancel}>
+            {COPY.ok}
+          </Button>
+        }
       >
         <ul className="space-y-3" aria-label="Blocked items">
           {(view.ruleLines ?? []).length > 0
@@ -134,10 +146,12 @@ export function RestrictionWarningDialog({ view, initialReason = "", onConfirm, 
       description={COPY.body}
       footer={
         <>
-          <Button variant="secondary" onClick={onCancel}>
+          {/* 44px below md (the owner's touch-target rule); desktop keeps the ledger control height. */}
+          <Button variant="secondary" className="max-md:min-h-11" onClick={onCancel}>
             {COPY.goBack}
           </Button>
           <Button
+            className="max-md:min-h-11"
             disabled={!check.ok}
             onClick={() => warning && check.ok && onConfirm(buildAck(warning, reason), check.value)}
           >
@@ -146,6 +160,15 @@ export function RestrictionWarningDialog({ view, initialReason = "", onConfirm, 
         </>
       }
     >
+      {listChanged && (
+        <p
+          role="status"
+          aria-live="polite"
+          className="mb-3 rounded-lg bg-warning-bg px-3 py-2 text-sm font-medium text-navy"
+        >
+          {COPY.listChanged}
+        </p>
+      )}
       <ul className="space-y-3" aria-label="Restricted items">
         {(warning?.lines ?? []).map((l) => (
           <li key={l.lineKey} className="rounded-lg border border-surface-border p-3">

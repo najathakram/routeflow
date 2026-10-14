@@ -26,6 +26,7 @@ import {
   posModePrefPatch,
   posOrderActions,
   posProgressSteps,
+  posStatusBody,
 } from "../lib/pos-mode";
 
 const inv = (status: string, id = "i1") => ({ id, status });
@@ -434,5 +435,20 @@ describe("misc money-safety", () => {
   it("a re-read of CONFIRMED after a refused PENDING skips the CONFIRMED patch", () => {
     expect(posConfirmStepsAfterPending("CONFIRMED")).toEqual([]);
     expect(posConfirmStepsAfterPending("PENDING")).toEqual(["CONFIRMED"]);
+  });
+});
+
+describe("posStatusBody (row 510)", () => {
+  const ack = {
+    restrictionOverrides: [{ lineKey: "l:i1", reason: "Owner approved" }],
+    warningHash: "rw1:abc",
+  };
+  it("is the bare status when there is no acknowledgement (a plain finish is unchanged)", () => {
+    expect(posStatusBody("CONFIRMED")).toEqual({ status: "CONFIRMED" });
+    expect(posStatusBody("PENDING", undefined)).toEqual({ status: "PENDING" });
+  });
+  it("carries the overrides and the hash as top-level fields, for each of the two steps", () => {
+    expect(posStatusBody("PENDING", ack)).toEqual({ status: "PENDING", ...ack });
+    expect(posStatusBody("CONFIRMED", ack)).toEqual({ status: "CONFIRMED", ...ack });
   });
 });

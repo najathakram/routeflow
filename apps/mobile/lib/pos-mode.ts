@@ -4,7 +4,11 @@
  * and `PosOrderActions.tsx`. The order's `fulfillPath` is the snapshot: see `isPosOrder`.
  */
 import { API_ERROR_CODES, PREF, staffMay } from "@routeflow/types";
-import type { PickupCompleteRequest, PickupCompleteResponse } from "@routeflow/types";
+import type {
+  PickupCompleteRequest,
+  PickupCompleteResponse,
+  RestrictionAck,
+} from "@routeflow/types";
 import { roundMoney } from "@routeflow/pricing";
 import { fmtCurrency } from "../utils/format";
 
@@ -188,6 +192,17 @@ export type PosFinishStep = "confirm" | "invoice";
 export function posFinishFailureMessage(step: PosFinishStep, merged = false): string {
   if (step === "invoice") return POS_COPY.invoiceMissing;
   return merged ? POS_COPY.mergedConfirmMissing : POS_COPY.confirmMissing;
+}
+
+/**
+ * Row 510: the body of one status PATCH of the finish. Promoting a judged DRAFT answers 409 RESTRICTION_WARNING; the modal's
+ * "Sell anyway" re-runs the finish and the ack rides BOTH PATCHes as top-level fields (like web's usePosFinish).
+ */
+export function posStatusBody(
+  status: "PENDING" | "CONFIRMED",
+  ack?: RestrictionAck | null,
+): { status: "PENDING" | "CONFIRMED" } & RestrictionAck {
+  return ack ? { status, ...ack } : { status };
 }
 
 /**

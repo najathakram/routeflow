@@ -6,6 +6,7 @@ import {
   useCreateOrder,
   useCreateSale,
   useReopenOrder,
+  useResolveChangeRequest,
   usePatchOrderFulfillPath,
   useUpdateOrderItems,
   useUpdateOrderStatus,
@@ -87,6 +88,13 @@ const rows: Row[] = [
     "/orders/o1/fulfill-path",
   ],
   ["reopen", () => useReopenOrder(), { id: "o1", ...ack }, "post", "/orders/o1/reopen"],
+  [
+    "change-request approve",
+    () => useResolveChangeRequest(),
+    { orderId: "o1", crId: "cr-1", action: "APPROVE_AT_STOP", ...ack },
+    "post",
+    "/orders/o1/change-requests/cr-1/resolve",
+  ],
   [
     "invoice create",
     () => useCreateInvoice(),

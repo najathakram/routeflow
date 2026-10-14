@@ -1,6 +1,13 @@
 import { useRef, useState } from "react";
 import { PosFinishError, usePosFinish, usePosModePreference } from "./api/pos-orders";
 import { posFinishFailureMessage, posFinishSuccessMessage } from "./pos-mode";
+import type { useRestrictionWarningRetry } from "./use-restriction-warning-retry";
+
+/** Row 510: the screen's warning hook (its `attach` and `handle`); the finish borrows them, it never builds its own modal. */
+export type RestrictionRetry = Pick<
+  ReturnType<typeof useRestrictionWarningRetry>,
+  "attach" | "handle"
+>;
 
 /**
  * POS mode (SA-763r P-2) state for NewOrderScreen: the staff-only switch (seeded from
@@ -26,20 +33,28 @@ export function usePosModeState(enabled: boolean) {
       },
     });
   };
-  /** Confirm (+ invoice) the freshly created order; resolves with the toast copy to show. */
+  /**
+   * Confirm (+ invoice) the freshly created order; resolves with the toast copy to show.
+   * Row 510: with `rw`, the request carries a pending ack (`rw.attach`) and a RESTRICTION_WARNING on the confirm opens the
+   * shared modal (`rw.handle` reads the failed step's CAUSE: PosFinishError wraps the axios error). Resolves `null` then:
+   * "Sell anyway" runs `again`, "Go back" runs `dismissed`, and the caller shows nothing meanwhile.
+   */
   const finishOrder = async (
     orderId: string,
     target?: { status?: string | null; merged?: boolean },
-  ): Promise<string> => {
+    rw?: RestrictionRetry,
+    again?: () => void | PromiseLike<unknown>,
+    dismissed?: () => void,
+  ): Promise<string | null> => {
     const mode = finishRef.current;
+    const vars = { orderId, invoice: mode === "invoice", fromStatus: target?.status };
     try {
-      await finish.mutateAsync({
-        orderId,
-        invoice: mode === "invoice",
-        fromStatus: target?.status,
-      });
+      await finish.mutateAsync(rw ? rw.attach(vars) : vars);
       return posFinishSuccessMessage(mode === "invoice");
     } catch (e) {
+      if (rw && again && rw.handle(e instanceof PosFinishError ? e.cause : e, again, dismissed)) {
+        return null;
+      }
       return posFinishFailureMessage(
         e instanceof PosFinishError ? e.step : "confirm",
         !!target?.merged,
@@ -52,8 +67,17 @@ export function usePosModeState(enabled: boolean) {
     target: { status?: string | null; merged?: boolean },
     toast: (m: string) => void,
     open: () => void,
-  ) => {
-    toast(await finishOrder(orderId, target));
+    rw?: RestrictionRetry,
+  ): Promise<void> => {
+    const again = () => finishAndOpen(orderId, target, toast, open, rw);
+    // "Go back" sells nothing: the order exists but is not confirmed, so say so and open it (as any other failed confirm).
+    const dismissed = () => {
+      toast(posFinishFailureMessage("confirm", !!target.merged));
+      open();
+    };
+    const msg = await finishOrder(orderId, target, rw, again, dismissed);
+    if (msg === null) return; // the modal is up
+    toast(msg);
     open();
   };
   return {

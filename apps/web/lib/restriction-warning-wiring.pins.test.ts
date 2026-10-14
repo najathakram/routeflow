@@ -14,6 +14,7 @@ const STAFF_WRITE_HOOKS = [
   "useUpdateOrderItems",
   "useUpdateOrderStatus",
   "useReopenOrder",
+  "useResolveChangeRequest",
   "usePatchOrderFulfillPath",
   "useCreateSale",
   "usePosFinish",
@@ -76,6 +77,17 @@ describe("row 510: every staff write flow is wired to the warning dialog (search
     expect(src).toMatch(WIRED);
     // the dialog must also be RENDERED, or the hook would open nothing
     expect(src).toMatch(/\b(rw\.dialog|dialog)\b/);
+  });
+
+  it("the order page's change-request approval re-sends through rw.attach inside run() (the loop-forever guard)", () => {
+    const src = fs.readFileSync(path.join(WEB, "app/(dashboard)/orders/[id]/page.tsx"), "utf8");
+    const at = src.indexOf("function handleResolve(");
+    expect(at).toBeGreaterThan(-1);
+    const body = src.slice(at, src.indexOf("// ── Edit mode", at)).replace(/^\s*\/\/.*$/gm, ""); // comments between the call and its first argument are not code
+    // run() builds the request: the pending ack rides it, so "Sell anyway" can not re-send the bare payload
+    expect(body).toMatch(/const run = \(\) =>\s*resolveCr\.mutate\(\s*rw\.attach\(\{\s*orderId:/);
+    // and the 409 routes back into run() through the shared guard handler
+    expect(body).toMatch(/guardError\(run\)\(err\)/);
   });
 
   it("the two wrapper hooks use the shared hook and return its dialog", () => {

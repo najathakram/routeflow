@@ -7,6 +7,7 @@ import {
   type RestrictionDialogView,
 } from "@/components/RestrictionWarningDialog";
 import {
+  isRepeatWarning,
   mergeAck,
   type IdWithAck,
   parseDriverRestrictionBlock,
@@ -32,11 +33,14 @@ const REASON_KEPT_MS = 15_000;
  *     and the flow must stop; false = not ours, carry on with the flow's own handling.
  * "Sell anyway" calls `retry()` synchronously with the ack pending, so the flow re-runs its own submit and `attach` adds
  * the ack to the SAME payload exactly once (it is consumed on read, so it can never ride an unrelated later send).
- * A second 409 with a fresh list re-shows the dialog with the new lines and the reason already typed. Render `rw.dialog` once.
+ * A REPEAT 409 (the server's list changed after "Sell anyway") re-shows the dialog with the new lines, a polite "The list
+ * changed; review it again" notice and an EMPTY reason: a reason typed for the old list is never reused for a new one, so
+ * the user re-confirms what is now on it. Render `rw.dialog` once.
  */
 export function useRestrictionWarningRetry() {
   const [view, setView] = React.useState<RestrictionDialogView | null>(null);
   const [seq, setSeq] = React.useState(0);
+  const [listChanged, setListChanged] = React.useState(false);
   const retryRef = React.useRef<Retry | null>(null);
   const ackRef = React.useRef<RestrictionAck | null>(null);
   const reasonRef = React.useRef("");
@@ -49,15 +53,22 @@ export function useRestrictionWarningRetry() {
   }, []);
   React.useEffect(() => () => forgetReason(), [forgetReason]);
 
-  const handle = React.useCallback((err: unknown, retry: Retry): boolean => {
-    const warning = parseRestrictionWarning(err);
-    const blocked = warning ? null : parseDriverRestrictionBlock(err);
-    if (!warning && !blocked) return false;
-    retryRef.current = retry;
-    setSeq((n) => n + 1);
-    setView(warning ? { kind: "warning", warning } : { kind: "blocked", ...blocked! });
-    return true;
-  }, []);
+  const handle = React.useCallback(
+    (err: unknown, retry: Retry): boolean => {
+      const warning = parseRestrictionWarning(err);
+      const blocked = warning ? null : parseDriverRestrictionBlock(err);
+      if (!warning && !blocked) return false;
+      // A reason still kept = "Sell anyway" was pressed a moment ago and this is the answer to the re-send: a REPEAT.
+      const repeat = !!warning && isRepeatWarning(reasonRef.current);
+      if (repeat) forgetReason();
+      setListChanged(repeat);
+      retryRef.current = retry;
+      setSeq((n) => n + 1);
+      setView(warning ? { kind: "warning", warning } : { kind: "blocked", ...blocked! });
+      return true;
+    },
+    [forgetReason],
+  );
 
   const attach = React.useCallback(
     ((vars: string | object) => {
@@ -73,9 +84,11 @@ export function useRestrictionWarningRetry() {
       key={seq}
       view={view}
       initialReason={reasonRef.current}
+      listChanged={listChanged}
       onCancel={() => {
         forgetReason();
         retryRef.current = null;
+        setListChanged(false);
         setView(null);
       }}
       onConfirm={(ack, reason) => {

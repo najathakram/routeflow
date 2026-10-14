@@ -5,6 +5,7 @@ import {
   type RestrictionModalView,
 } from "../components/RestrictionWarningModal";
 import {
+  isRepeatWarning,
   mergeAck,
   parseDriverRestrictionBlock,
   parseRestrictionWarning,
@@ -29,13 +30,20 @@ const REASON_KEPT_MS = 15_000;
  *   - in its error path calls `rw.handle(err, retry)`: true = a RESTRICTION_WARNING (or a driver's hard block) was shown
  *     and the flow must stop; false = not ours, carry on with the flow's own handling.
  * "Sell anyway" calls `retry()` with the ack pending, so the flow re-runs its own submit and `attach` adds the ack to the
- * SAME payload exactly once (consumed on read). A second 409 with a fresh list re-shows the modal with the new lines and
- * the reason already typed. Render `rw.modal` once.
+ * SAME payload exactly once (consumed on read). A REPEAT 409 (the server's list changed after "Sell anyway") re-shows the
+ * modal with the new lines, a polite "The list changed; review it again" notice and an EMPTY reason: a reason typed for
+ * the old list is never reused, so the user re-confirms what is now on it. Render `rw.modal` once.
+ *
+ * `handle(err, retry, onDismiss?)`: `onDismiss` runs when the modal is closed WITHOUT selling ("Go back", the driver
+ * block's OK, the Android back button), so a flow that must carry on (the driver's at-stop batch) or must say what did not
+ * happen (the POS finish) can. It never runs after "Sell anyway".
  */
 export function useRestrictionWarningRetry() {
   const [view, setView] = React.useState<RestrictionModalView | null>(null);
   const [seq, setSeq] = React.useState(0);
+  const [listChanged, setListChanged] = React.useState(false);
   const retryRef = React.useRef<Retry | null>(null);
+  const dismissRef = React.useRef<(() => void) | null>(null);
   const ackRef = React.useRef<RestrictionAck | null>(null);
   const reasonRef = React.useRef("");
   const timerRef = React.useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -47,15 +55,23 @@ export function useRestrictionWarningRetry() {
   }, []);
   React.useEffect(() => () => forgetReason(), [forgetReason]);
 
-  const handle = React.useCallback((err: unknown, retry: Retry): boolean => {
-    const warning = parseRestrictionWarning(err);
-    const blocked = warning ? null : parseDriverRestrictionBlock(err);
-    if (!warning && !blocked) return false;
-    retryRef.current = retry;
-    setSeq((n) => n + 1);
-    setView(warning ? { kind: "warning", warning } : { kind: "blocked", ...blocked! });
-    return true;
-  }, []);
+  const handle = React.useCallback(
+    (err: unknown, retry: Retry, onDismiss?: () => void): boolean => {
+      const warning = parseRestrictionWarning(err);
+      const blocked = warning ? null : parseDriverRestrictionBlock(err);
+      if (!warning && !blocked) return false;
+      // A reason still kept = "Sell anyway" was pressed a moment ago and this is the answer to the re-send: a REPEAT.
+      const repeat = !!warning && isRepeatWarning(reasonRef.current);
+      if (repeat) forgetReason();
+      setListChanged(repeat);
+      retryRef.current = retry;
+      dismissRef.current = onDismiss ?? null;
+      setSeq((n) => n + 1);
+      setView(warning ? { kind: "warning", warning } : { kind: "blocked", ...blocked! });
+      return true;
+    },
+    [forgetReason],
+  );
 
   const attach = React.useCallback(
     ((vars: string | object) => {
@@ -71,14 +87,20 @@ export function useRestrictionWarningRetry() {
       key={seq}
       view={view}
       initialReason={reasonRef.current}
+      listChanged={listChanged}
       onCancel={() => {
+        const dismissed = dismissRef.current;
+        dismissRef.current = null;
         forgetReason();
         retryRef.current = null;
+        setListChanged(false);
         setView(null);
+        dismissed?.();
       }}
       onConfirm={(ack, reason) => {
         const retry = retryRef.current;
         retryRef.current = null;
+        dismissRef.current = null; // sold: "closed without selling" no longer applies
         reasonRef.current = reason;
         if (timerRef.current) clearTimeout(timerRef.current);
         timerRef.current = setTimeout(forgetReason, REASON_KEPT_MS);

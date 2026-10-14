@@ -74,7 +74,7 @@ describe("useRestrictionWarningRetry", () => {
     expect(screen.queryByRole("dialog")).toBeNull();
   });
 
-  it("a second 409 with a fresh list re-shows the dialog with the new lines and keeps the typed reason", async () => {
+  it("a repeat 409 with a fresh list re-shows the dialog, says the list changed and CLEARS the reason so it is re-confirmed", async () => {
     const user = userEvent.setup();
     render(
       <Host
@@ -87,16 +87,48 @@ describe("useRestrictionWarningRetry", () => {
       />,
     );
     await user.click(screen.getByRole("button", { name: "Save" }));
+    expect(screen.queryByRole("status")).toBeNull(); // the first warning has no "changed" notice
     await user.type(screen.getByLabelText(/reason/i), "Owner approved");
     await user.click(screen.getByRole("button", { name: "Sell anyway" }));
-    // second dialog
+    // second dialog: the new lines, a polite notice, and an EMPTY reason
     expect(screen.getByText("Acme Vape")).toBeInTheDocument();
-    expect(screen.getByLabelText(/reason/i)).toHaveValue("Owner approved");
+    const notice = screen.getByRole("status");
+    expect(notice).toHaveTextContent("The list changed; review it again");
+    expect(notice).toHaveAttribute("aria-live", "polite");
+    expect(screen.getByLabelText(/reason/i)).toHaveValue("");
+    expect(screen.getByRole("button", { name: "Sell anyway" })).toBeDisabled();
+    await user.type(screen.getByLabelText(/reason/i), "Reviewed both items");
     await user.click(screen.getByRole("button", { name: "Sell anyway" }));
     const sent = (globalThis as any).__sent;
     expect(sent).toHaveLength(3);
     expect(sent[2].warningHash).toBe("h2");
-    expect(sent[2].restrictionOverrides).toHaveLength(2);
+    expect(sent[2].restrictionOverrides).toEqual([
+      { lineKey: "n:0", reason: "Reviewed both items" },
+      { lineKey: "n:1", reason: "Reviewed both items" },
+    ]);
+    expect(screen.queryByRole("dialog")).toBeNull();
+  });
+
+  it("the notice is for a repeat only: a fresh attempt after Go back shows none", async () => {
+    const user = userEvent.setup();
+    render(
+      <Host
+        script={[
+          err409(mkWarning("h1", ["Acme Gummies"])),
+          err409(mkWarning("h2", ["Acme Gummies", "Acme Vape"])),
+          err409(mkWarning("h3", ["Acme Gummies"])),
+        ]}
+        base={{ a: 1 }}
+      />,
+    );
+    await user.click(screen.getByRole("button", { name: "Save" }));
+    await user.type(screen.getByLabelText(/reason/i), "Owner approved");
+    await user.click(screen.getByRole("button", { name: "Sell anyway" }));
+    expect(screen.getByRole("status")).toBeInTheDocument();
+    await user.click(screen.getByRole("button", { name: "Go back" }));
+    await user.click(screen.getByRole("button", { name: "Save" }));
+    expect(screen.getByRole("dialog")).toBeInTheDocument();
+    expect(screen.queryByRole("status")).toBeNull();
   });
 
   it("Go back keeps the flow untouched: no resubmit, no leaked ack, and the reason is dropped", async () => {

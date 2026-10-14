@@ -11,6 +11,7 @@ import {
   driverBlockRows,
   parseDriverRestrictionBlock,
   parseRestrictionWarning,
+  isRepeatWarning,
   ruleText,
   splitIdAck,
 } from "../lib/restriction-warning";
@@ -203,5 +204,15 @@ describe("ruleText", () => {
     expect(ruleText({ id: "r", states: ["CA"], legal: true, reasonText: "" })).toBe(
       "This product is banned in CA by law.",
     );
+  });
+});
+
+describe("repeat 409 (the server's list changed under the re-send)", () => {
+  it("says so in the fixed copy", () => {
+    expect(RESTRICTION_COPY.listChanged).toBe("The list changed; review it again");
+  });
+  it("is a repeat only while the reason typed for the previous list is still kept", () => {
+    expect(isRepeatWarning("")).toBe(false);
+    expect(isRepeatWarning("Owner approved")).toBe(true);
   });
 });

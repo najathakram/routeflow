@@ -1858,6 +1858,7 @@ function ProductPickView({
               { status: order.status, merged: mergeChoice === "merge" },
               showToast,
               () => router.replace(`/(operator)/orders/${order.id}` as any),
+              rw, // row 510: a confirm into a judged DRAFT opens the same warning modal
             );
             return;
           }

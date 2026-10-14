@@ -24,6 +24,8 @@ import {
 } from "../../../../../lib/api/change-requests";
 import {
   buildAtDoorChangeRequests,
+  dropHandedOffAdded,
+  dropHandedOffQty,
   dropSucceededAddedLine,
   leftoverAddedMessage,
   type AtDoorAddedLine,
@@ -44,7 +46,11 @@ import { LicenseGuardModal } from "../../../../../components/LicenseGuardModal";
 import { CreditLimitGuardModal } from "../../../../../components/CreditLimitGuardModal";
 import { type BlockedCategory } from "../../../../../lib/api/authorizations";
 import { type CreditLimitExceededInfo } from "../../../../../lib/credit-limit-error";
-import { classifyAtStopResolveError } from "../../../../../lib/at-stop-cr-outcome";
+import {
+  AT_STOP_RESTRICTED_SENT_COPY,
+  classifyAtStopResolveError,
+} from "../../../../../lib/at-stop-cr-outcome";
+import { useRestrictionWarningRetry } from "../../../../../lib/use-restriction-warning-retry";
 import { showToast } from "../../../../../lib/toast";
 import { useOfflineQueue } from "../../../../../store/offlineQueue";
 
@@ -125,6 +131,14 @@ export default function AdjustOrderScreen() {
   // only once React has settled it to its TRUE latest value (never a value
   // read mid-function, which could miss a concurrent re-scan's own setAdded).
   const batchJustCompletedRef = useRef(false);
+  // Row 510: a DRIVER may not override a selling restriction, so a restricted add/raise is refused at resolve with the
+  // fixed "Ask the office to approve this sale" block. The shared modal shows it (the same copy and legal lines the
+  // office sees); the CR stays PENDING for the office to approve with an override.
+  const rw = useRestrictionWarningRetry();
+  // Set when an entry was handed to the office this batch: the closing toast must not claim a plain "Order updated".
+  const handedToOfficeRef = useRef(false);
+  // Always the latest render's continuation, so the modal's OK (rendered a render later) resumes with current closures.
+  const resumeAfterBlockRef = useRef<() => void>(() => undefined);
 
   const createCr = useCreateChangeRequest(orderId ?? "");
   const resolveCr = useResolveChangeRequestAtStop(orderId ?? "");
@@ -290,6 +304,23 @@ export default function AdjustOrderScreen() {
           blockedCrRef.current = createdCrId;
           setLicenseBlock(outcome.blocked);
           return false;
+        case "restricted":
+          // Row 510. Mirrors "regulated" above: the CR was created (the buyer is notified) and the resolve refused, so
+          // it stays PENDING and is NOT declined here. Unlike "regulated" it is never declined later either (no
+          // blockedCrRef): the office approves it with an override (a declined CR cannot be approved), and neither
+          // Remove nor Cancel may undo that. The entry now belongs to the office, so drop the local edit or a bare
+          // re-tap of "Save changes" files a SECOND CR for it (an ADD_ITEM draft, or a CHANGE_QTY / REMOVE_ITEM qty).
+          setAdded((prev) => dropHandedOffAdded(prev, entry));
+          setQtyById((m) => dropHandedOffQty(m, entry));
+          handedToOfficeRef.current = true;
+          // The batch pauses behind the modal (return false, like the regulated guard) and resumes AFTER the driver
+          // reads it, at the NEXT entry.
+          rw.handle(
+            e,
+            () => undefined,
+            () => resumeAfterBlockRef.current(),
+          );
+          return false;
         case "already-resolved":
           // Name a DECLINED resolution distinctly (#1302 round 1 finding 3) — an
           // APPROVED-elsewhere race and an office decline read very differently to
@@ -361,9 +392,18 @@ export default function AdjustOrderScreen() {
       showToast(leftover);
       return;
     }
-    showToast("Order updated");
+    const handedOff = handedToOfficeRef.current;
+    handedToOfficeRef.current = false;
+    showToast(handedOff ? AT_STOP_RESTRICTED_SENT_COPY : "Order updated");
     router.back();
   }, [saving, added, router]);
+
+  resumeAfterBlockRef.current = () => {
+    const pending = pendingRef.current;
+    if (!pending) return;
+    setSaving(true);
+    processDiff(pending.diff, pending.index + 1);
+  };
 
   async function handleSave() {
     if (!orderId) return;
@@ -518,6 +558,7 @@ export default function AdjustOrderScreen() {
           during the license block -- a scan landing mid-batch grows a draft
           past what a just-sent ADD_ITEM already covers. */}
       <BarcodeFab onScanned={handleScanned} aimAssist hidden={saving || !!licenseBlock} />
+      {rw.modal}
       <ScanMatchPickerSheet {...matchPicker.props} />
 
       {/* Regulated-license guard — drivers can't capture/override (403 server-side),

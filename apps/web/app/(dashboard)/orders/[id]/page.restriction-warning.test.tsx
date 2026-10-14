@@ -174,7 +174,7 @@ describe("order detail: RESTRICTION_WARNING", () => {
     expect(toast).not.toHaveBeenCalledWith(expect.objectContaining({ variant: "error" }));
   });
 
-  it("a fresh second 409 re-shows the dialog with the new list and keeps the reason", async () => {
+  it("a repeat 409 with a fresh list re-shows the dialog, says it changed and clears the reason", async () => {
     reject(patch, 409, warning);
     reject(patch, 409, {
       ...warning,
@@ -185,11 +185,17 @@ describe("order detail: RESTRICTION_WARNING", () => {
     fireEvent.click(await screen.findByRole("button", { name: /Publish Order/ }));
     await sellAnyway();
     expect(await screen.findByText("Acme Vape")).toBeInTheDocument();
-    expect(screen.getByLabelText(/reason/i)).toHaveValue("Owner approved");
+    expect(screen.getByRole("status")).toHaveTextContent("The list changed; review it again");
+    expect(screen.getByLabelText(/reason/i)).toHaveValue("");
+    const user = userEvent.setup();
+    await user.type(screen.getByLabelText(/reason/i), "Reviewed both lines");
     fireEvent.click(screen.getByRole("button", { name: "Sell anyway" }));
     await waitFor(() => expect(patch).toHaveBeenCalledTimes(3));
     expect(patch.mock.calls[2][1].warningHash).toBe("rw1:def");
-    expect(patch.mock.calls[2][1].restrictionOverrides).toHaveLength(2);
+    expect(patch.mock.calls[2][1].restrictionOverrides).toEqual([
+      { lineKey: "l:item-1", reason: "Reviewed both lines" },
+      { lineKey: "n:1", reason: "Reviewed both lines" },
+    ]);
   });
 
   it("Go back leaves the order untouched: one request, no second send", async () => {
@@ -200,5 +206,82 @@ describe("order detail: RESTRICTION_WARNING", () => {
     fireEvent.click(screen.getByRole("button", { name: "Go back" }));
     await waitFor(() => expect(screen.queryByText("Acme Gummies")).toBeNull());
     expect(patch).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe("order detail: a change request the API answers with RESTRICTION_WARNING", () => {
+  const crAck = {
+    restrictionOverrides: [{ lineKey: "cr:cr-1", reason: "Owner approved" }],
+    warningHash: "rw1:cr",
+  };
+  const crWarning: RestrictionWarningError = {
+    ...warning,
+    warningHash: "rw1:cr",
+    lines: [{ ...warning.lines[0], lineKey: "cr:cr-1" }],
+  };
+  const pendingCr = {
+    id: "cr-1",
+    orderId: "o1",
+    orderItemId: null,
+    productId: "p1",
+    type: "ADD_ITEM",
+    status: "PENDING",
+    payload: { productId: "p1", qty: 3, productName: "Acme Gummies" },
+    note: null,
+    requestedByName: "Dana Driver",
+    requestedByRole: "DRIVER",
+    resolvedByName: null,
+    resolvedByRole: null,
+    resolution: null,
+    resolutionReason: null,
+    nextOrderId: null,
+    resolvedAt: null,
+    createdAt: "2026-10-14T10:00:00.000Z",
+  };
+  const crOrder = { ...baseOrder, status: "OUT_FOR_DELIVERY", changeRequests: [pendingCr] };
+  const RESOLVE = "/orders/o1/change-requests/cr-1/resolve";
+
+  it("Approve at stop: 409 -> Sell anyway -> the resubmit carries the overrides and the hash, then succeeds (no loop)", async () => {
+    reject(post, 409, crWarning);
+    post.mockResolvedValueOnce({ data: { ...pendingCr, status: "APPROVED" } });
+    renderPage(crOrder);
+    fireEvent.click(await screen.findByRole("button", { name: /Approve at stop/ }));
+    const user = userEvent.setup();
+    expect(await screen.findByText("Acme Gummies")).toBeInTheDocument();
+    await user.type(screen.getByLabelText(/reason/i), "Owner approved");
+    await user.click(screen.getByRole("button", { name: "Sell anyway" }));
+    await waitFor(() => expect(post).toHaveBeenCalledTimes(2));
+    expect(post.mock.calls[0]).toEqual([RESOLVE, { action: "APPROVE_AT_STOP" }]);
+    expect(post.mock.calls[1]).toEqual([RESOLVE, { action: "APPROVE_AT_STOP", ...crAck }]);
+    await waitFor(() =>
+      expect(toast).toHaveBeenCalledWith(
+        expect.objectContaining({ title: "Approved — merged into this order" }),
+      ),
+    );
+    // success closed the dialog: the second answer was a 200, so it does not reopen
+    await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
+    expect(post).toHaveBeenCalledTimes(2);
+    expect(toast).not.toHaveBeenCalledWith(expect.objectContaining({ variant: "error" }));
+  });
+
+  it("Approve as next delivery carries the same ack on its resubmit", async () => {
+    reject(post, 409, crWarning);
+    renderPage(crOrder);
+    fireEvent.click(await screen.findByRole("button", { name: /Approve as next delivery/ }));
+    const user = userEvent.setup();
+    await user.type(await screen.findByLabelText(/reason/i), "Owner approved");
+    await user.click(screen.getByRole("button", { name: "Sell anyway" }));
+    await waitFor(() => expect(post).toHaveBeenCalledTimes(2));
+    expect(post.mock.calls[1]).toEqual([RESOLVE, { action: "APPROVE_NEXT_DELIVERY", ...crAck }]);
+  });
+
+  it("Go back leaves the request pending: one request, no ack sent", async () => {
+    reject(post, 409, crWarning);
+    renderPage(crOrder);
+    fireEvent.click(await screen.findByRole("button", { name: /Approve at stop/ }));
+    expect(await screen.findByText("Acme Gummies")).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "Go back" }));
+    await waitFor(() => expect(screen.queryByText("Acme Gummies")).toBeNull());
+    expect(post).toHaveBeenCalledTimes(1);
   });
 });

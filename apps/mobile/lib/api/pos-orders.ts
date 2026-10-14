@@ -1,5 +1,9 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import type { PickupCompleteRequest, PickupCompleteResponse } from "@routeflow/types";
+import type {
+  PickupCompleteRequest,
+  PickupCompleteResponse,
+  RestrictionAck,
+} from "@routeflow/types";
 import { apiClient } from "../api-client";
 import { getOrderSubmitKey, resetOrderSubmitKey } from "../order-submit-key";
 import { invalidateOrderCaches } from "./orders";
@@ -11,6 +15,7 @@ import {
   posConfirmStepsAfterPending,
   posModeFromPreferences,
   posModePrefPatch,
+  posStatusBody,
   type PosFinishStep,
 } from "../pos-mode";
 
@@ -60,15 +65,16 @@ export function usePosFinish() {
   return useMutation<
     void,
     PosFinishError,
-    { orderId: string; invoice: boolean; fromStatus?: string | null }
+    // Row 510: a confirm into a judged DRAFT can answer 409 RESTRICTION_WARNING; the resubmit carries the ack.
+    { orderId: string; invoice: boolean; fromStatus?: string | null } & RestrictionAck
   >({
-    mutationFn: async ({ orderId, invoice, fromStatus }) => {
+    mutationFn: async ({ orderId, invoice, fromStatus, ...ack }) => {
       try {
         let reread: string | null = null;
         for (const status of posConfirmSteps(fromStatus)) {
           if (status === "CONFIRMED" && posConfirmStepsAfterPending(reread).length === 0) continue;
           try {
-            await apiClient.patch(`/orders/${orderId}/status`, { status });
+            await apiClient.patch(`/orders/${orderId}/status`, posStatusBody(status, ack));
           } catch (e) {
             // PENDING is the only step that can be a re-run; a refusal is "done" only if a re-read agrees.
             if (status !== "PENDING") throw e;

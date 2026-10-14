@@ -41,8 +41,10 @@ export type RestrictionModalView =
 interface Props {
   /** null = closed. */
   view: RestrictionModalView | null;
-  /** A reason typed on an earlier attempt of the same save (a fresh 409 re-shows the modal with it). */
+  /** A reason typed on an earlier attempt of the same save. A repeat 409 clears it (the list changed), so this is "" there. */
   initialReason?: string;
+  /** A repeat 409 with a fresh list: say so in a polite live region; the reason was cleared so the user re-confirms. */
+  listChanged?: boolean;
   /** "Sell anyway": the ack to resubmit with, and the trimmed reason (kept for a second 409). */
   onConfirm: (ack: RestrictionAck, reason: string) => void;
   /** "Go back": nothing is sent, and the form and cart stay as they were. */
@@ -55,7 +57,13 @@ interface Props {
  * DRIVER, who may not override, gets the same modal in its "blocked" form: "Ask the office to approve this sale", no
  * reason field and no override. Mount it with a `key` per warning (the hook does) so a re-show starts from the kept reason.
  */
-export function RestrictionWarningModal({ view, initialReason = "", onConfirm, onCancel }: Props) {
+export function RestrictionWarningModal({
+  view,
+  initialReason = "",
+  listChanged = false,
+  onConfirm,
+  onCancel,
+}: Props) {
   const [reason, setReason] = React.useState(initialReason);
   if (!view) return null;
   const check = checkOverrideReason(reason);
@@ -74,6 +82,11 @@ export function RestrictionWarningModal({ view, initialReason = "", onConfirm, o
             <Text style={styles.title}>{blocked ? COPY.blockedTitle : COPY.title}</Text>
           </View>
           <Text style={styles.message}>{blocked ? COPY.blockedBody : COPY.body}</Text>
+          {listChanged && !blocked ? (
+            <Text role="status" aria-live="polite" style={styles.changed}>
+              {COPY.listChanged}
+            </Text>
+          ) : null}
           <ScrollView style={styles.list} keyboardShouldPersistTaps="handled">
             {view.kind === "blocked" && (view.ruleLines ?? []).length > 0
               ? driverBlockRows(view.ruleLines ?? []).map((row) => (
@@ -121,6 +134,7 @@ export function RestrictionWarningModal({ view, initialReason = "", onConfirm, o
                 onChangeText={setReason}
                 placeholder={COPY.reasonPlaceholder}
                 autoCapitalize="sentences"
+                autoFocus
                 multiline
                 style={styles.input}
               />
@@ -141,6 +155,7 @@ export function RestrictionWarningModal({ view, initialReason = "", onConfirm, o
                   disabled={!check.ok}
                   onPress={() => check.ok && onConfirm(buildAck(view.warning, reason), check.value)}
                   accessibilityRole="button"
+                  accessibilityState={{ disabled: !check.ok }}
                 >
                   <Text style={styles.btnFillText}>{COPY.sellAnyway}</Text>
                 </Pressable>
@@ -167,6 +182,7 @@ const styles = StyleSheet.create({
   header: { flexDirection: "row", alignItems: "center", gap: 8 },
   title: { flex: 1, fontSize: 17, fontFamily: "Inter_700Bold", color: ios.label },
   message: { fontSize: 14, fontFamily: "Inter_400Regular", color: ios.label2, lineHeight: 20 },
+  changed: { fontSize: 13, fontFamily: "Inter_600SemiBold", color: ios.label },
   list: { flexGrow: 0 },
   row: { backgroundColor: ios.fill3, borderRadius: 12, padding: 12, marginBottom: 8, gap: 2 },
   name: { fontSize: 15, fontFamily: "Inter_700Bold", color: ios.label },

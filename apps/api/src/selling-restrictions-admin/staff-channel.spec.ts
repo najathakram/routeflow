@@ -67,17 +67,19 @@ describe("ruleEditImpactCopy (row 510)", () => {
   it.each([1, 2, 3, 25])("count %i names the warning for staff and the block for buyers", (n) => {
     const text = ruleEditImpactCopy(n);
     expect(text).not.toMatch(UNAFFECTED);
-    expect(text).toContain("Staff will be warned when they next edit, promote or invoice");
+    expect(text).toContain("Staff will be warned when they next edit or promote");
+    // createInvoiceFromOrder is not re-judged on a non-DRAFT order, so the line must not promise an invoice warning
+    expect(text).not.toMatch(/invoice/i);
     expect(text).toMatch(/buyers can't order (?:it|them)\.$/);
     expect(text.startsWith(`${n} open order`)).toBe(true);
   });
 
   it("keeps the singular and plural handling", () => {
     expect(ruleEditImpactCopy(1)).toBe(
-      "1 open order has products this change now restricts. Staff will be warned when they next edit, promote or invoice it; buyers can't order it.",
+      "1 open order has products this change now restricts. Staff will be warned when they next edit or promote it; buyers can't order it.",
     );
     expect(ruleEditImpactCopy(4)).toBe(
-      "4 open orders have products this change now restricts. Staff will be warned when they next edit, promote or invoice them; buyers can't order them.",
+      "4 open orders have products this change now restricts. Staff will be warned when they next edit or promote them; buyers can't order them.",
     );
   });
 

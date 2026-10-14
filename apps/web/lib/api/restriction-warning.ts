@@ -28,6 +28,8 @@ export const RESTRICTION_COPY = {
   goBack: "Go back",
   legalBadge: "Legal ban",
   unchecked: "This item couldn't be checked.",
+  /** A repeat 409 (the server's list changed after "Sell anyway"): the reason is cleared, so say why. */
+  listChanged: "The list changed; review it again",
   blockedTitle: DRIVER_RESTRICTION_BLOCK_MESSAGE,
   blockedBody: "These items can't be sold from here.",
   ok: "OK",
@@ -78,6 +80,14 @@ export function driverBlockRows(ruleLines: RestrictionWarningLine[]): BlockRow[]
         ? [{ text: RESTRICTION_COPY.unchecked, legal: false }]
         : l.rules.map((r) => ({ text: ruleText(r), legal: r.legal })),
   }));
+}
+
+/**
+ * A warning that arrives while the reason typed for the PREVIOUS list is still kept is the answer to a re-send: the
+ * server's list changed under it. The user must re-confirm what is on the new list, so that reason is dropped, never reused.
+ */
+export function isRepeatWarning(keptReason: string): boolean {
+  return keptReason !== "";
 }
 
 export interface ReasonCheck {

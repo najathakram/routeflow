@@ -52,3 +52,51 @@ describe("B790: adjust.tsx declines the CR for every non-regulated, non-already-
     expect(body).toMatch(/blockedCrRef\.current = createdCrId/);
   });
 });
+
+/**
+ * Row 510: a DRIVER's restricted add/raise. The CR is created (the buyer is notified) and the resolve is refused with
+ * the fixed "Ask the office to approve this sale" 409. Like the regulated case it is NOT declined (a declined CR cannot
+ * be approved, and the office is the one who may override) -- unlike the regulated case nothing here ever declines it
+ * later either: Remove/Cancel have no restricted equivalent.
+ */
+describe("row 510: adjust.tsx leaves a driver's restricted CR PENDING and shows the shared block", () => {
+  const src = readFileSync(
+    join(__dirname, "..", "app/(driver)/route/stop/[stopId]/adjust.tsx"),
+    "utf8",
+  );
+  const branch = () => {
+    const at = src.indexOf('case "restricted":');
+    expect(at).toBeGreaterThan(-1);
+    return src.slice(at, src.indexOf('case "already-resolved":', at));
+  };
+
+  it("builds the shared warning hook and renders its modal (the same blocked copy with the legal lines)", () => {
+    expect(src).toContain("useRestrictionWarningRetry()");
+    expect(src).toContain("{rw.modal}");
+  });
+
+  it('the "restricted" branch opens the shared block through rw.handle and never declines', () => {
+    const body = branch();
+    expect(body).toMatch(/rw\.handle\(\s*e,/);
+    expect(body).not.toMatch(/declineCr\.mutate/);
+    expect(body).not.toMatch(/declineOrphanedBlockedCr/);
+    // the regulated case's deferred cleanup is NOT armed: Remove/Cancel must never decline this CR
+    expect(body).not.toMatch(/blockedCrRef\.current = createdCrId/);
+  });
+
+  it("hands the entry to the office so a bare re-tap of Save changes can not file a second CR for it", () => {
+    const body = branch();
+    expect(body).toMatch(/dropHandedOffAdded\(prev, entry\)/); // an ADD_ITEM draft
+    expect(body).toMatch(/dropHandedOffQty\(m, entry\)/); // a CHANGE_QTY / REMOVE_ITEM edit is dropped too
+    expect(body).toMatch(/return false;/); // the batch pauses behind the modal, like the regulated guard
+  });
+
+  it("resumes the rest of the batch AFTER the driver reads the block (index + 1, never the same entry)", () => {
+    expect(src).toMatch(/processDiff\(pending\.diff, pending\.index \+ 1\)/);
+    expect(src).toMatch(/rw\.handle\(\s*e,\s*\(\) => undefined,/);
+  });
+
+  it("the final toast says a change is waiting for the office instead of a plain 'Order updated'", () => {
+    expect(src).toContain("AT_STOP_RESTRICTED_SENT_COPY");
+  });
+});

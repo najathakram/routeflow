@@ -2132,7 +2132,9 @@ export default function OrderDetailPage() {
   function handleResolve(cr: ChangeRequest, action: ChangeRequestResolveAction, reason?: string) {
     const run = () =>
       resolveCr.mutate(
-        { orderId: order!.id, crId: cr.id, action, reason },
+        // Row 510: a restricted add/raise warns the office (409 RESTRICTION_WARNING, lineKey `cr:<id>`); the dialog's
+        // "Sell anyway" calls run() again and attach() adds the ack to this SAME request, once.
+        rw.attach({ orderId: order!.id, crId: cr.id, action, reason }),
         {
           onSuccess: () => {
             setDeclineTargetId(null);

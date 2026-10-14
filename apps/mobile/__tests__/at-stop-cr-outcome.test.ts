@@ -1,3 +1,4 @@
+import { DRIVER_RESTRICTION_BLOCK_MESSAGE } from "@routeflow/types";
 import { classifyAtStopResolveError } from "../lib/at-stop-cr-outcome";
 
 /**
@@ -147,6 +148,82 @@ describe("classifyAtStopResolveError", () => {
     expect(classifyAtStopResolveError(new Error("network exploded"))).toEqual({
       action: "decline",
       reason: "network exploded",
+    });
+  });
+
+  /**
+   * Row 510: a DRIVER may not override a selling restriction ("Ask the office to approve this sale"), and the office
+   * can only approve a request that is still PENDING. So this is the REGULATED case's sibling (the second deliberate
+   * exception to B790's decline): the caller leaves the CR PENDING, never declines it.
+   */
+  describe("row 510: a driver's restricted change request stays PENDING for the office", () => {
+    const driverBlock = {
+      response: {
+        status: 409,
+        data: {
+          code: "SELLING_RESTRICTED",
+          message: DRIVER_RESTRICTION_BLOCK_MESSAGE,
+          blockedLines: [
+            {
+              productId: "p1",
+              productName: "Acme Gummies",
+              ruleId: "r1",
+              reason: "STATE_BAN",
+              state: "CA",
+              message: "m",
+            },
+          ],
+          lines: [
+            {
+              lineKey: "cr:cr-1",
+              productId: "p1",
+              displayName: "Acme Gummies",
+              outcome: "BLOCK",
+              rules: [
+                {
+                  id: "r1",
+                  states: ["CA"],
+                  legal: true,
+                  reasonText: "This product is banned in CA by law.",
+                },
+              ],
+            },
+          ],
+        },
+      },
+    };
+
+    it("the driver's hard block classifies as `restricted`, never `decline`", () => {
+      expect(classifyAtStopResolveError(driverBlock)).toEqual({ action: "restricted" });
+    });
+
+    it("an ordinary SELLING_RESTRICTED (not the driver's fixed message) keeps the safe decline default", () => {
+      const e = {
+        response: { status: 409, data: { code: "SELLING_RESTRICTED", message: "Sold out here." } },
+      };
+      expect(classifyAtStopResolveError(e)).toEqual({
+        action: "decline",
+        reason: "Sold out here.",
+      });
+    });
+
+    it("a 400 or a different code carrying the driver's sentence is not the block", () => {
+      expect(
+        classifyAtStopResolveError({
+          response: {
+            status: 400,
+            data: { code: "SELLING_RESTRICTED", message: DRIVER_RESTRICTION_BLOCK_MESSAGE },
+          },
+        }).action,
+      ).toBe("decline");
+      expect(
+        classifyAtStopResolveError({
+          response: {
+            status: 409,
+            data: { code: "SOME_OTHER_CODE", message: DRIVER_RESTRICTION_BLOCK_MESSAGE },
+          },
+        }).action,
+      ).toBe("decline");
     });
   });
 });

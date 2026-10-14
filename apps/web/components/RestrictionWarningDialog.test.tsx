@@ -135,6 +135,24 @@ describe("RestrictionWarningDialog (warning)", () => {
     expect(screen.getByRole("button", { name: "Sell anyway" })).toBeEnabled();
   });
 
+  it("says the list changed in a polite live region when it is re-shown (listChanged), and not otherwise", () => {
+    const { unmount } = setup();
+    expect(screen.queryByRole("status")).toBeNull();
+    unmount();
+    setup({ listChanged: true });
+    const notice = screen.getByRole("status");
+    expect(notice).toHaveTextContent("The list changed; review it again");
+    expect(notice).toHaveAttribute("aria-live", "polite");
+  });
+
+  it("Go back and Sell anyway are 44px tall below md (max-md:min-h-11), the owner's touch-target rule", () => {
+    setup();
+    for (const name of ["Go back", "Sell anyway"]) {
+      const cls = screen.getByRole("button", { name }).className;
+      expect(cls).toContain("max-md:min-h-11");
+    }
+  });
+
   it("opens with focus in the Reason field, not on the close button", () => {
     setup();
     expect(document.activeElement).toBe(screen.getByLabelText(/reason/i));
@@ -176,6 +194,10 @@ describe("RestrictionWarningDialog (driver hard block)", () => {
     expect(screen.queryByRole("button", { name: "Sell anyway" })).toBeNull();
     fireEvent.click(screen.getByRole("button", { name: "OK" }));
     expect(onCancel).toHaveBeenCalled();
+  });
+  it("OK is 44px tall below md too", () => {
+    setup({ view });
+    expect(screen.getByRole("button", { name: "OK" }).className).toContain("max-md:min-h-11");
   });
   it("shows the same legal line and badge staff see when the server sent per-rule lines", () => {
     setup({

@@ -1,5 +1,7 @@
 import {
   buildAtDoorChangeRequests,
+  dropHandedOffAdded,
+  dropHandedOffQty,
   dropSucceededAddedLine,
   leftoverAddedMessage,
 } from "../lib/at-door-diff";
@@ -190,5 +192,56 @@ describe("leftoverAddedMessage", () => {
         { productId: "p-2", qty: 1 },
       ]),
     ).toBe("2 items still to send — tap Save again.");
+  });
+});
+
+/**
+ * Row 510: an entry the API refused with the driver's restricted block stays a PENDING change request for the office.
+ * Its local edit is dropped, or a bare re-tap of "Save changes" would file a SECOND request for the same edit.
+ */
+describe("handing a restricted entry to the office", () => {
+  it("an ADD_ITEM draft is reconciled like a sent one (subtracts what was sent, drops it when nothing remains)", () => {
+    const added = [{ productId: "p-1", qty: 3 }];
+    expect(dropHandedOffAdded(added, { type: "ADD_ITEM", productId: "p-1", qty: 3 })).toEqual([]);
+    expect(dropHandedOffAdded(added, { type: "ADD_ITEM", productId: "p-1", qty: 1 })).toEqual([
+      { productId: "p-1", qty: 2 },
+    ]);
+  });
+
+  it("a CHANGE_QTY or REMOVE_ITEM edit is dropped from the stepper state, leaving other lines alone", () => {
+    const qtyById = { "li-1": 8, "li-2": 0 };
+    expect(dropHandedOffQty(qtyById, { type: "CHANGE_QTY", orderItemId: "li-1", qty: 8 })).toEqual({
+      "li-2": 0,
+    });
+    expect(dropHandedOffQty(qtyById, { type: "REMOVE_ITEM", orderItemId: "li-2" })).toEqual({
+      "li-1": 8,
+    });
+    expect(qtyById).toEqual({ "li-1": 8, "li-2": 0 }); // never mutated
+  });
+
+  it("is a no-op returning the SAME object for an ADD_ITEM entry or a line with no edit", () => {
+    const qtyById = { "li-1": 8 };
+    expect(dropHandedOffQty(qtyById, { type: "ADD_ITEM", productId: "p-1", qty: 1 })).toBe(qtyById);
+    expect(dropHandedOffQty(qtyById, { type: "CHANGE_QTY", orderItemId: "li-9", qty: 2 })).toBe(
+      qtyById,
+    );
+  });
+
+  it("the diff rebuilt after the hand-off holds no entry for the handed-off line", () => {
+    const originals = [{ id: "li-1", qty: 10, status: "PENDING" }];
+    const entry = { type: "CHANGE_QTY" as const, orderItemId: "li-1", qty: 12 };
+    const before = buildAtDoorChangeRequests({
+      originals,
+      edited: [{ lineId: "li-1", qty: 12 }],
+      added: [],
+    });
+    expect(before).toEqual([entry]);
+    const after = dropHandedOffQty({ "li-1": 12 }, entry);
+    const rebuilt = buildAtDoorChangeRequests({
+      originals,
+      edited: Object.entries(after).map(([lineId, qty]) => ({ lineId, qty })),
+      added: [],
+    });
+    expect(rebuilt).toEqual([]); // a bare re-tap files nothing for it
   });
 });
