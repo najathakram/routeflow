@@ -154,7 +154,7 @@ beforeEach(() => {
 describe("rule detail: what it shows", () => {
   it("says what the rule does, its status, who can lift it, and counts its products", async () => {
     await open();
-    expect(screen.getByText("Banned in Texas and California · All sales")).toBeInTheDocument();
+    expect(screen.getByText("Banned in Texas and California · All orders")).toBeInTheDocument();
     expect(screen.getByText("Active")).toBeInTheDocument();
     expect(screen.getByRole("heading", { name: "Products & labels (3)" })).toBeInTheDocument();
     for (const n of [1, 2, 3])
@@ -497,8 +497,28 @@ describe("rule detail: roles, ended rules", () => {
     expect(screen.getByRole("button", { name: "Add products" })).toBeEnabled();
     expect(screen.getByRole("button", { name: "Edit settings" })).toBeEnabled();
     expect(screen.getByRole("checkbox", { name: "Select Sample Pod - Flavor 1" })).toBeEnabled();
-    // lifting the whole rule stays with the account admin
-    expect(screen.queryByRole("button", { name: "Lift rule" })).toBeNull();
+    // an operator may lift a STATE rule (owner L5)
+    expect(screen.getByRole("button", { name: "Lift rule" })).toBeEnabled();
+  });
+
+  it("Lift on an everywhere rule is disabled for an operator, with visible text it points at", async () => {
+    role = "OPERATOR";
+    current = detail({ jurisdiction: "FEDERAL", states: [] });
+    await open();
+    const btn = screen.getByRole("button", { name: "Lift rule" });
+    expect(btn).toBeDisabled();
+    expect(btn).not.toHaveAttribute("title");
+    const hint = document.getElementById(btn.getAttribute("aria-describedby") as string);
+    expect(hint).toHaveTextContent(
+      "Only an account admin can lift a rule that applies everywhere.",
+    );
+  });
+
+  it("an operator can open the lift dialog on a state rule", async () => {
+    role = "OPERATOR";
+    await open();
+    fireEvent.click(screen.getByRole("button", { name: "Lift rule" }));
+    expect(await screen.findByRole("dialog", { name: "Lift this rule?" })).toBeInTheDocument();
   });
 
   it("an account admin can change an everywhere rule", async () => {
@@ -506,6 +526,7 @@ describe("rule detail: roles, ended rules", () => {
     await open();
     expect(screen.getByRole("button", { name: "Add products" })).toBeEnabled();
     expect(screen.getByRole("button", { name: "Edit settings" })).toBeEnabled();
+    expect(screen.getByRole("button", { name: "Lift rule" })).toBeEnabled();
   });
 
   it("a lifted rule is read-only: the list shows, nothing can be changed", async () => {

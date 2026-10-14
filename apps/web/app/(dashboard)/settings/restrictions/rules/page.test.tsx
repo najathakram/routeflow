@@ -59,7 +59,7 @@ describe("RestrictionRulesPage", () => {
         .getAllByRole("listitem")
         .map((l) => l.textContent),
     ).toEqual(["TX", "FL"]);
-    expect(within(card).getByText("All sales")).toBeInTheDocument();
+    expect(within(card).getByText("All orders")).toBeInTheDocument();
     expect(within(card).getByText(/no end date/)).toBeInTheDocument();
     expect(within(card).getByText("State ban on hemp edibles")).toBeInTheDocument();
     expect(within(card).getByText(/by Pat Admin/)).toBeInTheDocument();
@@ -263,5 +263,50 @@ describe("Portal limits & rules: rules that cover many products (row 509)", () =
     expect(within(card).getByRole("checkbox", { name: /Select the limit on/ })).toBeInTheDocument();
     expect(within(card).getByRole("button", { name: "Lift rule" })).toBeInTheDocument();
     expect(screen.getByRole("group", { name: "Filter rules by status" })).toBeInTheDocument();
+  });
+});
+
+describe("Portal limits & rules: who sees Lift rule (owner L5)", () => {
+  const lift = (card: HTMLElement) => within(card).getByRole("button", { name: "Lift rule" });
+
+  it("an operator can lift a state rule", async () => {
+    role = "OPERATOR";
+    ok([rule()]);
+    renderWithProviders(<RestrictionRulesPage />);
+    const card = await screen.findByTestId("rule-card");
+    expect(lift(card)).toBeEnabled();
+    fireEvent.click(lift(card));
+    expect(await screen.findByRole("dialog", { name: "Lift this rule?" })).toBeInTheDocument();
+  });
+
+  it("on an everywhere rule an operator sees Lift disabled, with the reason as visible text it points at", async () => {
+    role = "OPERATOR";
+    ok([rule({ jurisdiction: "FEDERAL", states: [] })]);
+    renderWithProviders(<RestrictionRulesPage />);
+    const card = await screen.findByTestId("rule-card");
+    const btn = lift(card);
+    expect(btn).toBeDisabled();
+    const hintId = btn.getAttribute("aria-describedby");
+    expect(hintId).toBeTruthy();
+    const hint = document.getElementById(hintId as string);
+    expect(hint).toHaveTextContent(
+      "Only an account admin can lift a rule that applies everywhere.",
+    );
+    expect(btn).not.toHaveAttribute("title");
+  });
+
+  it("an account admin can lift an everywhere rule", async () => {
+    role = "TENANT_ADMIN";
+    ok([rule({ jurisdiction: "FEDERAL", states: [] })]);
+    renderWithProviders(<RestrictionRulesPage />);
+    expect(lift(await screen.findByTestId("rule-card"))).toBeEnabled();
+  });
+
+  it("an ended rule offers no Lift to anyone", async () => {
+    role = "OPERATOR";
+    ok([rule({ status: "EXPIRED" })]);
+    renderWithProviders(<RestrictionRulesPage />);
+    const card = await screen.findByTestId("rule-card");
+    expect(within(card).queryByRole("button", { name: "Lift rule" })).toBeNull();
   });
 });

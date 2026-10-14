@@ -47,8 +47,32 @@ export function jurisdictionText(
   return r.states.length ? "Banned in" : "Banned everywhere (no states listed)";
 }
 
+/**
+ * The ONE wording for where a rule applies. Neutral on purpose: it says which channel the rule covers
+ * and nothing about what staff can do (row 510 owns any staff sentence). Every surface that names a
+ * channel (cards, detail, settings fields) goes through this.
+ */
 export const surfaceText = (s: SellingRestrictionListItemDto["surface"]) =>
-  s === "BUYER_PORTAL" ? "Buyer portal only (staff can still sell)" : "All sales";
+  s === "BUYER_PORTAL" ? "Buyer portal only" : "All orders";
+
+/** The line next to a disabled Lift on an everywhere rule. */
+export const LIFT_ADMIN_ONLY_HINT =
+  "Only an account admin can lift a rule that applies everywhere.";
+
+/**
+ * Can this viewer lift this rule (owner L5)? Operators may lift a STATE rule; a rule that applies
+ * everywhere (FEDERAL) is the account admin's (TENANT_ADMIN or SUPER_ADMIN, as rule-lock.ts decides).
+ * "none" = nothing to offer (not staff, or the rule is no longer in force).
+ */
+export function liftState(
+  role: string | undefined,
+  rule: Pick<SellingRestrictionListItemDto, "jurisdiction" | "status">,
+): "enabled" | "admin-only" | "none" {
+  if (rule.status !== "ACTIVE" && rule.status !== "SCHEDULED") return "none";
+  if (role === "TENANT_ADMIN" || role === "SUPER_ADMIN") return "enabled";
+  if (role !== "OPERATOR") return "none";
+  return rule.jurisdiction === "FEDERAL" ? "admin-only" : "enabled";
+}
 
 /**
  * The window as an admin reads it. `effectiveTo` is EXCLUSIVE (the engine stops applying the rule AT

@@ -63,7 +63,8 @@ export function EditRuleDialog({
   const preview = useRuleEditPreview();
   const edit = useEditRule();
   // Operators are near-admins, but making a rule apply everywhere is the account admin's (owner L5).
-  const isAdmin = useAuth().user?.role === "TENANT_ADMIN";
+  const role = useAuth().user?.role;
+  const isAdmin = role === "TENANT_ADMIN" || role === "SUPER_ADMIN";
   const [v, setV] = React.useState<RuleFormValues>(() => ruleToFormValues(rule));
   const [note, setNote] = React.useState("");
   const [errors, setErrors] = React.useState<RuleFormErrors>({});
@@ -74,6 +75,13 @@ export function EditRuleDialog({
   const [stale, setStale] = React.useState(false);
   const [impactChanged, setImpactChanged] = React.useState(false);
   const returnFocusTo = React.useRef<HTMLElement | null>(null);
+  const reviewHeading = React.useRef<HTMLHeadingElement>(null);
+
+  // The form's Save button is gone once the review shows, and a fresh preview (after the impact moved)
+  // replaces the numbers: start the keyboard / screen-reader user at the heading each time.
+  React.useEffect(() => {
+    if (review) reviewHeading.current?.focus();
+  }, [review]);
 
   const set = <K extends keyof RuleFormValues>(k: K, val: RuleFormValues[K]) => {
     setV((p) => ({ ...p, [k]: val }));
@@ -168,7 +176,13 @@ export function EditRuleDialog({
     >
       {review ? (
         <div className="space-y-4">
-          <h3 className="text-sm font-semibold text-navy">Review this change</h3>
+          <h3
+            ref={reviewHeading}
+            tabIndex={-1}
+            className="text-sm font-semibold text-navy focus:outline-none"
+          >
+            Review this change
+          </h3>
           {review.preview.changes.length === 0 ? (
             <p className="text-sm text-navy/80">Nothing changed.</p>
           ) : (
@@ -187,7 +201,7 @@ export function EditRuleDialog({
           )}
 
           {impactChanged && (
-            <p className="rounded-lg bg-warning-bg px-3 py-2 text-sm text-navy/80">
+            <p role="status" className="rounded-lg bg-warning-bg px-3 py-2 text-sm text-navy/80">
               The open orders this change affects have changed.
             </p>
           )}

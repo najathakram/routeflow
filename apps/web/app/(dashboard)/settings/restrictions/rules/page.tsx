@@ -16,7 +16,9 @@ import {
   STATUS_BADGE,
   STATUS_FILTERS,
   emptyText,
+  LIFT_ADMIN_ONLY_HINT,
   jurisdictionText,
+  liftState,
   stateName,
   surfaceText,
   windowText,
@@ -29,12 +31,13 @@ import { RuleFormDialog } from "./_components/RuleFormDialog";
 
 function RuleCard({
   rule,
-  onLift,
+  lift,
   selected,
   onToggle,
 }: {
   rule: SellingRestrictionListItemDto;
-  onLift?: () => void;
+  /** Present for staff; `state` decides whether Lift is live or disabled with its reason. */
+  lift?: { state: "enabled" | "admin-only" | "none"; onLift: () => void };
   /** Present only for a rule that can still be lifted by this viewer. */
   selected?: boolean;
   onToggle?: () => void;
@@ -111,13 +114,25 @@ function RuleCard({
         {rule.createdByName ? ` by ${rule.createdByName}` : ""}
       </p>
 
-      {(target.total !== null ||
-        (onLift && (rule.status === "ACTIVE" || rule.status === "SCHEDULED"))) && (
+      {(target.total !== null || (lift && lift.state !== "none")) && (
         <div className="flex flex-wrap items-center gap-x-4 gap-y-1">
-          {onLift && (rule.status === "ACTIVE" || rule.status === "SCHEDULED") && (
-            <Button size="sm" variant="secondary" onClick={onLift}>
-              Lift rule
-            </Button>
+          {lift && lift.state !== "none" && (
+            <>
+              <Button
+                size="sm"
+                variant="secondary"
+                disabled={lift.state === "admin-only"}
+                aria-describedby={lift.state === "admin-only" ? `lift-hint-${rule.id}` : undefined}
+                onClick={lift.onLift}
+              >
+                Lift rule
+              </Button>
+              {lift.state === "admin-only" && (
+                <p id={`lift-hint-${rule.id}`} className="text-xs text-navy/70">
+                  {LIFT_ADMIN_ONLY_HINT}
+                </p>
+              )}
+            </>
           )}
           {target.total !== null && (
             <NextLink
@@ -169,7 +184,7 @@ export default function RestrictionRulesPage() {
         action={isAdmin ? <Button onClick={() => setCreating(true)}>New rule</Button> : undefined}
       />
       {isAdmin && creating && <RuleFormDialog open onClose={() => setCreating(false)} />}
-      {isAdmin && <LiftRuleDialog rule={lifting} onClose={() => setLifting(null)} />}
+      {canLiftMany && <LiftRuleDialog rule={lifting} onClose={() => setLifting(null)} />}
 
       {canLiftMany && picked.size > 0 && (
         <div className="flex items-center justify-between gap-3 rounded-lg border border-brand-200 bg-brand-50 px-4 py-3">
@@ -253,7 +268,11 @@ export default function RestrictionRulesPage() {
               <li key={r.id}>
                 <RuleCard
                   rule={r}
-                  onLift={isAdmin ? () => setLifting(r) : undefined}
+                  lift={
+                    canLiftMany
+                      ? { state: liftState(role, r), onLift: () => setLifting(r) }
+                      : undefined
+                  }
                   selected={picked.has(r.id)}
                   onToggle={
                     canLiftMany && (r.status === "ACTIVE" || r.status === "SCHEDULED")
