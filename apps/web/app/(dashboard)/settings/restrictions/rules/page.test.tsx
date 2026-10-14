@@ -7,6 +7,7 @@ jest.mock("@/lib/api-client", () => ({
   ...jest.requireActual("@/lib/api-client"),
   apiClient: { get: (...a: unknown[]) => get(...a) },
 }));
+jest.mock("next/navigation", () => ({ useRouter: () => ({ push: jest.fn() }) }));
 let role = "OPERATOR";
 jest.mock("@/lib/auth-context", () => ({
   ...jest.requireActual("@/lib/auth-context"),
@@ -192,5 +193,75 @@ describe("Portal limits & rules: multi-select Lift N", () => {
     fireEvent.click(screen.getByRole("checkbox", { name: /limit on vapes/i }));
     fireEvent.click(screen.getByRole("checkbox", { name: /limit on kratom/i }));
     expect(screen.getByRole("button", { name: "Lift 2" })).toBeInTheDocument();
+  });
+});
+
+describe("Portal limits & rules: rules that cover many products (row 509)", () => {
+  const summary = (over: Record<string, unknown> = {}) => ({
+    products: 12,
+    categories: 1,
+    preview: [
+      { kind: "CATEGORY", id: "c1", name: "Vapes" },
+      { kind: "PRODUCT", id: "p1", name: "Sample Pod" },
+      { kind: "PRODUCT", id: "p2", name: "Gummies" },
+    ],
+    ...over,
+  });
+
+  it("the target line says how many products and labels, with the first three names", async () => {
+    ok([rule({ id: "r9", categoryName: null, targetSummary: summary() })]);
+    renderWithProviders(<RestrictionRulesPage />);
+    const card = await screen.findByTestId("rule-card");
+    expect(within(card).getByText("12 products · Vapes label")).toBeInTheDocument();
+    expect(within(card).getByText("Vapes, Sample Pod, Gummies, +10 more")).toBeInTheDocument();
+    expect(card.textContent).not.toMatch(/\bp1\b|\bc1\b/);
+  });
+
+  it("links to the rule's detail from the target line and from 'Products (N)'", async () => {
+    ok([rule({ id: "r9", categoryName: null, targetSummary: summary() })]);
+    renderWithProviders(<RestrictionRulesPage />);
+    const card = await screen.findByTestId("rule-card");
+    const links = within(card).getAllByRole("link");
+    expect(links.length).toBeGreaterThanOrEqual(2);
+    for (const l of links) expect(l).toHaveAttribute("href", "/settings/restrictions/rules/r9");
+    expect(within(card).getByRole("link", { name: "Products (13)" })).toBeInTheDocument();
+  });
+
+  it("a one-target rule keeps its own name, and still links to the detail", async () => {
+    ok([
+      rule({
+        id: "r2",
+        categoryName: null,
+        productName: "Gummies 10ct",
+        targetSummary: {
+          products: 1,
+          categories: 0,
+          preview: [{ kind: "PRODUCT", id: "p1", name: "Gummies 10ct" }],
+        },
+      }),
+    ]);
+    renderWithProviders(<RestrictionRulesPage />);
+    const card = await screen.findByTestId("rule-card");
+    expect(within(card).getByText("Gummies 10ct")).toBeInTheDocument();
+    expect(within(card).getByText("Product")).toBeInTheDocument();
+    expect(within(card).getByRole("link", { name: "Products (1)" })).toBeInTheDocument();
+  });
+
+  it("a rule from a server with no summary reads exactly as before and has no detail link", async () => {
+    ok([rule()]);
+    renderWithProviders(<RestrictionRulesPage />);
+    const card = await screen.findByTestId("rule-card");
+    expect(within(card).getByText("Hemp")).toBeInTheDocument();
+    expect(within(card).queryByRole("link")).toBeNull();
+  });
+
+  it("every control the card had is still there (select, lift, filters)", async () => {
+    role = "TENANT_ADMIN";
+    ok([rule({ id: "r9", categoryName: null, targetSummary: summary() })]);
+    renderWithProviders(<RestrictionRulesPage />);
+    const card = await screen.findByTestId("rule-card");
+    expect(within(card).getByRole("checkbox", { name: /Select the limit on/ })).toBeInTheDocument();
+    expect(within(card).getByRole("button", { name: "Lift rule" })).toBeInTheDocument();
+    expect(screen.getByRole("group", { name: "Filter rules by status" })).toBeInTheDocument();
   });
 });
