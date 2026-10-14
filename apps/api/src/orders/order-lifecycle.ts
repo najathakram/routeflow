@@ -26,6 +26,8 @@ import { staffMay } from "../auth/permissions/staff-capabilities";
 import type { OrdersService } from "./orders.service";
 import { UpdateFulfillPathDto } from "./dto/update-fulfill-path.dto";
 import { UpdateShipmentDto } from "./dto/update-shipment.dto";
+import { assertFulfilPathSwitchAllowed } from "./fulfil-path-restrictions";
+import type { SellingRestrictionsService } from "../selling-restrictions/selling-restrictions.service";
 import { SHIPPED_STATUSES, notifyTrackingAdded } from "./shipment-notifications";
 
 export async function updateShipmentImpl(
@@ -103,6 +105,7 @@ export async function updateFulfillPathImpl(
   orderId: string,
   dto: UpdateFulfillPathDto,
   user?: JwtPayload,
+  restrictions?: Pick<SellingRestrictionsService, "assertLinesSellable">,
 ) {
   // POS mode (SA-763r R3): switching an order to PICKUP is a hand-over at the till, a staff capability.
   if (dto.fulfillPath === FulfillPath.PICKUP && !staffMay(user?.role, "USE_POS_MODE")) {
@@ -121,6 +124,13 @@ export async function updateFulfillPathImpl(
     select: {
       id: true,
       status: true,
+      // L8: what the selling-restrictions re-judge on a switch reads (fulfil-path-restrictions.ts).
+      tenantId: true,
+      customerId: true,
+      fulfillPath: true,
+      counterSale: true,
+      customer: { select: { addresses: { select: { id: true }, take: 1 } } },
+      lineItems: { where: { status: { not: "CANCELLED" } }, select: { productId: true } },
       routeRunId: true,
       routeRunStopId: true,
       routeRunStop: {
@@ -167,6 +177,14 @@ export async function updateFulfillPathImpl(
       }.`,
     );
   }
+  // L8: re-judge selling restrictions on the new path BEFORE any write (a 409 leaves the path unchanged).
+  if (restrictions)
+    await assertFulfilPathSwitchAllowed(restrictions, {
+      order,
+      target: dto.fulfillPath,
+      principal: user,
+      ambientTenantId: self.prisma.getTenantId(),
+    });
   const hasLink = order.routeRunId != null || order.routeRunStopId != null;
   if (dto.fulfillPath !== FulfillPath.PICKUP || !hasLink) {
     return self.prisma.forTenant().order.update({

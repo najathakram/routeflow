@@ -5191,7 +5191,7 @@ export class OrdersService implements OnApplicationBootstrap {
 
   /** Extracted verbatim to `order-lifecycle.ts` (size-ratchet headroom move); thin delegator. */
   async updateFulfillPath(orderId: string, dto: UpdateFulfillPathDto, _user?: JwtPayload) {
-    return updateFulfillPathImpl(this, orderId, dto, _user);
+    return updateFulfillPathImpl(this, orderId, dto, _user, this.sellingRestrictions);
   }
 
   /** Extracted verbatim to `order-lifecycle.ts` (size-ratchet headroom move); thin delegator. */
