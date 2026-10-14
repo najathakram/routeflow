@@ -172,8 +172,8 @@ import { loadLiveTrioByProduct } from "./fold-target";
 import { carriedLineFor } from "./carry-line-category";
 import { assertLockedEditLines, assertRevisionCurrent } from "./locked-edit-guards";
 import { guardBuyerEditLineIds, pairEditLines, piecesDenominated } from "./buyer-edit-lines";
-import { assertSafeOverrideReasons, priceReplacedLine } from "./buyer-replace-keep";
-import { planSplitPromos, type SplitPromoGroup } from "./split-promo-group";
+import * as keep from "./buyer-replace-keep"; // row 497 / 496
+import type { SplitPromoGroup } from "./split-promo-group";
 import { settleSplitFreeUnits } from "./settle-split-free-units";
 import { dateAndShipmentFilters } from "./list-filters";
 import { resolveOversellAllowed } from "./oversell-policy";
@@ -1385,6 +1385,7 @@ export class OrdersService implements OnApplicationBootstrap {
     // customer is known; the P2002 branch further down catches the narrow
     // concurrent-race window that pre-check can't.
     const idempotencyKey = (dto as any).idempotencyKey as string | undefined;
+    keep.assertSafeOverrideReasons(dto.items ?? [], []); // row 496: a typed reason, before any read or write
     const inlineRet = await prepareInlineReturn(this.inlineReturns, dto.inlineReturn, user);
     // The key is stored under @@unique([tenantId, idempotencyKey]) and every
     // lookup rides forTenant(), which hands back the UNSCOPED client when the
@@ -2839,7 +2840,6 @@ export class OrdersService implements OnApplicationBootstrap {
       },
     });
     if (!order) throw new NotFoundException("Order not found");
-    assertSafeOverrideReasons(dto.items ?? [], order.lineItems); // row 496: before any write
     // #2565: a buyer's ownership is settled FIRST, unconditionally — before any status or shape
     // answer and before any side effect (the linked-invoice revert below commits on its own
     // connection). The later buyer checks were each conditional, so a non-owner's diff could revert
@@ -2850,6 +2850,7 @@ export class OrdersService implements OnApplicationBootstrap {
         .customer.findFirst({ where: { userId: user.sub, deletedAt: null } });
       if (!owner || owner.id !== order.customerId) throw new ForbiddenException();
     }
+    keep.assertSafeOverrideReasons(dto.items ?? [], order.lineItems); // row 496: after the owner check, before any write
     // R1: items are editable at ANY live stage — DRAFT/PENDING/CONFIRMED and now
     // OUT_FOR_DELIVERY / PARTIALLY_DELIVERED / DELIVERED too (operator + driver). Only
     // a CANCELLED order is off-limits (nothing to edit). Post-delivery edits re-sync
@@ -3179,7 +3180,7 @@ export class OrdersService implements OnApplicationBootstrap {
           // (skipped/invalid items `continue` before it).
           let pos = 0;
           const splitPromos = isBuyerEdit
-            ? planSplitPromos(dto.items, order.lineItems ?? [], productMap, pieceDenominated)
+            ? keep.planPromos(dto.items, heldById, order.lineItems, productMap, pieceDenominated)
             : new Map<string, SplitPromoGroup>();
           for (const item of dto.items) {
             if (!item.productId) {
@@ -3236,8 +3237,7 @@ export class OrdersService implements OnApplicationBootstrap {
             // BUY_N_GET_M threshold: whole SELLING units (boxes for a boxed line,
             // pieces otherwise) — mirrors create()'s qtyUnits derivation.
             const qtyUnits = boxes != null ? boxes : qty;
-            // P5-04 / row 497: tier price + best promotion, except an unchanged stored OVERRIDE keeps its own.
-            const { priced, stamp } = priceReplacedLine({
+            const { priced, stamp } = keep.priceReplacedLine({
               product,
               item: item as typeof item & { productId: string },
               held: heldById,

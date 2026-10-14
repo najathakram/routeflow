@@ -694,12 +694,14 @@ export class BuyerController {
             const upbForStoredSnapshots = new Map(
               [...upbByProduct].filter(([id]) => boxAwareIncoming.has(id)),
             );
-            // Row 497: `updateOrderItems`' CUSTOMER branch recreates every line, but a line this fold pairs with
-            // its stored line (`sourceLineId`) that carries an operator OVERRIDE (DISCOUNTED / MANUAL, or SPECIAL
-            // with a stored reason) KEEPS its price, type, original price, reason and stamp (the subtotal is
-            // recomputed through @routeflow/pricing). A PLAIN tier line still re-prices at the buyer's current
-            // tier (SA-507b), and a new or changed line prices fresh. The branch never reads a client-supplied
-            // `item.unitPrice` (B13): the kept price comes from the stored row, never the payload.
+            // Row 497 (what the fold below does with prices): `updateOrderItems`' CUSTOMER branch recreates every
+            // line and prices each one itself; it never reads a client-supplied `item.unitPrice` (B13). A line the
+            // fold names by `sourceLineId` KEEPS its stored price, type, original price, reason and stamp ONLY if
+            // it is an operator OVERRIDE (DISCOUNTED / MANUAL, or SPECIAL with a stored reason), the product and
+            // unit are unchanged and its box size is unchanged; the subtotal is recomputed from the kept price
+            // (@routeflow/pricing). Everything else re-prices at the buyer's CURRENT tier (SA-507b): a plain tier
+            // line, a new line, a changed product, and the extra quantity a fold SPLITS onto a new line (that
+            // quantity is a new sale, so it never inherits the override).
             const foldResult = foldMergeItems(
               normalizeBoxUnawareSnapshots(lineItems, upbForStoredSnapshots),
               normalizedIncoming,

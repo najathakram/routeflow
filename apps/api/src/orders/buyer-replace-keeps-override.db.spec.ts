@@ -47,6 +47,9 @@ describeDb("row 497 — a buyer's full-list replace keeps unchanged overrides, r
   let buyerUserId = "";
   let staffUserId = "";
   let customerId = "";
+  let otherUserId = "";
+  let otherCustomerId = "";
+  let activePromos: any[] = [];
   const productIds: string[] = [];
   const orderIds: string[] = [];
 
@@ -168,7 +171,7 @@ describeDb("row 497 — a buyer's full-list replace keeps unchanged overrides, r
         assertLinesSellable: async () => undefined,
       },
       authGuard: { assertAuthorizedOrThrow: async () => undefined },
-      promotionsService: { activeForCatalog: async () => [] },
+      promotionsService: { activeForCatalog: async () => activePromos },
       tenantCtx,
       invoicesService: {
         revertLinkedInvoicesForOrderEdit: async () => undefined,
@@ -191,6 +194,16 @@ describeDb("row 497 — a buyer's full-list replace keeps unchanged overrides, r
         data: { email: `s-${run}@example.test`, username: `s-${run}`, role: "OPERATOR", tenantId },
       })
     ).id;
+    otherUserId = (
+      await raw.user.create({
+        data: { email: `o-${run}@example.test`, username: `o-${run}`, role: "CUSTOMER", tenantId },
+      })
+    ).id;
+    otherCustomerId = (
+      await raw.customer.create({
+        data: { userId: otherUserId, businessName: "497 other", contactName: "Other", tenantId },
+      })
+    ).id;
     customerId = (
       await raw.customer.create({
         data: { userId: buyerUserId, businessName: "497 co", contactName: "Tester", tenantId },
@@ -204,8 +217,8 @@ describeDb("row 497 — a buyer's full-list replace keeps unchanged overrides, r
     await raw.order.deleteMany({ where: { id: { in: orderIds } } });
     await raw.stockMovement.deleteMany({ where: { productId: { in: productIds } } });
     await raw.product.deleteMany({ where: { id: { in: productIds } } });
-    await raw.customer.deleteMany({ where: { id: customerId } });
-    await raw.user.deleteMany({ where: { id: { in: [buyerUserId, staffUserId] } } });
+    await raw.customer.deleteMany({ where: { id: { in: [customerId, otherCustomerId] } } });
+    await raw.user.deleteMany({ where: { id: { in: [buyerUserId, staffUserId, otherUserId] } } });
     await raw.tenant.deleteMany({ where: { id: tenantId } });
     await prisma?.$disconnect();
     await raw?.$disconnect();
@@ -335,6 +348,161 @@ describeDb("row 497 — a buyer's full-list replace keeps unchanged overrides, r
       priceType: "STANDARD",
       overriddenBy: null,
     });
+  });
+
+  it("R7 (must 2): a box-split override is not kept once the product's box size changed (12 to 6); it prices fresh", async () => {
+    const p = await product("r7");
+    // stored: 2 boxes of 12 (24 pieces) at the kept $8 box price = $16.00
+    const o = await order([
+      packLine(p, { ...OVERRIDE, qty: 24, boxes: 2, pieces: 0, subtotal: "16.00" }),
+    ]);
+    await raw.product.update({ where: { id: p }, data: { unitsPerBox: 6 } });
+    await buyerEdit(o.id, [{ productId: p, qty: 24, orderItemId: o.lineItems[0].id }]);
+    const live = await rows(o.id);
+    // hand: 24 pieces are now 4 boxes of 6, at the tier $12 a box = $48.00 (a kept $8 would be $32.00)
+    expect(shape(live[0])).toMatchObject({
+      unitPrice: 12,
+      priceType: "STANDARD",
+      subtotal: 48,
+      overrideReason: null,
+      overriddenBy: null,
+    });
+    expect(live[0].boxes).toBe(4);
+    expect(live[0].pieces).toBe(0);
+  });
+
+  it("R8 (must 3): a kept override stays out of the split-promo group; the plain line of the same product keeps its free units", async () => {
+    // BUY 4 GET 1 (blocks of 5 whole units), unboxed product at $10; an older override line of 10 at $8 beside a
+    // plain tier line of 10. hand: the plain line alone is 10 units: floor(10 / 5) = 2 free, 8 billed x $10 = $80.00
+    // (with the override in the group: 20 units, 4 free, all allocated to the OLDER override line).
+    const p = (
+      await raw.product.create({
+        data: {
+          name: `r8 plain ${run}`,
+          unit: "Each",
+          pricePerUnit: "10.00",
+          currentStock: "10000",
+          tenantId,
+        },
+      })
+    ).id;
+    productIds.push(p);
+    const base = { productId: p, qty: 10, boxes: null, pieces: null, unitsPerBox: null };
+    const o = await order([
+      {
+        ...base,
+        ...OVERRIDE,
+        unitPrice: "8.00",
+        subtotal: "80.00",
+        originalPrice: "10.00",
+        position: 0,
+        createdAt: new Date("2026-01-01"),
+      },
+      {
+        ...base,
+        unitPrice: "10.00",
+        subtotal: "100.00",
+        priceType: "STANDARD",
+        position: 1,
+        createdAt: new Date("2026-02-01"),
+      },
+    ]);
+    activePromos = [
+      {
+        id: "promo-bogo",
+        type: "BUY_N_GET_M",
+        value: 1,
+        minQty: 4,
+        scope: "ALL",
+        category: null,
+        productIds: [],
+      },
+    ];
+    try {
+      await buyerEdit(o.id, [
+        { productId: p, qty: 10, orderItemId: o.lineItems.find((l) => l.position === 0)!.id },
+        { productId: p, qty: 10, orderItemId: o.lineItems.find((l) => l.position === 1)!.id },
+      ]);
+    } finally {
+      activePromos = [];
+    }
+    const live = await rows(o.id);
+    expect(shape(live[0])).toMatchObject({ unitPrice: 8, priceType: "DISCOUNTED", subtotal: 80 });
+    expect(shape(live[1])).toMatchObject({ priceType: "PROMO", subtotal: 80 });
+    expect(Number(live[1].promoFreeUnits)).toBe(2);
+  });
+
+  it("R9 (must 1): the fold path (sourceLineId) keeps an override with a '-'-led stored reason, no 400", async () => {
+    const p = await product("r9");
+    const o = await order([packLine(p, { ...OVERRIDE, overrideReason: "-5 courtesy" })]);
+    await tenantCtx.run(tenantId, () =>
+      orders.updateOrderItems(
+        o.id,
+        {
+          replaceAll: true,
+          items: [
+            {
+              productId: p,
+              qty: 18,
+              sourceLineId: o.lineItems[0].id,
+              overrideReason: "-5 courtesy",
+            },
+          ],
+        },
+        principal("CUSTOMER", buyerUserId),
+      ),
+    );
+    expect(shape((await rows(o.id))[0])).toMatchObject({
+      ...KEPT,
+      overrideReason: "-5 courtesy",
+      subtotal: 12,
+    });
+  });
+
+  it("R10: two lines of the same product with different overrides each keep their own", async () => {
+    const p = await product("r10");
+    const o = await order([
+      packLine(p, { ...OVERRIDE, position: 0, createdAt: new Date("2026-01-01") }),
+      packLine(p, {
+        unitPrice: "15.00",
+        subtotal: "22.50",
+        priceType: "MANUAL",
+        originalPrice: "12.00",
+        overrideReason: "upsell",
+        overriddenBy: "staff-user-497b",
+        position: 1,
+        createdAt: new Date("2026-02-01"),
+      }),
+    ]);
+    const [a, b] = [...o.lineItems].sort((x, y) => (x.position ?? 0) - (y.position ?? 0));
+    await buyerEdit(o.id, [
+      { productId: p, qty: 18, orderItemId: a.id },
+      { productId: p, qty: 18, orderItemId: b.id },
+    ]);
+    const live = (await rows(o.id)).map(shape);
+    expect(live[0]).toMatchObject(KEPT);
+    expect(live[1]).toMatchObject({
+      unitPrice: 15,
+      priceType: "MANUAL",
+      overrideReason: "upsell",
+      overriddenBy: "staff-user-497b",
+    });
+  });
+
+  it("R11 (must 4): a non-owner buyer gets the 403 (never a 400) even with a formula-led reason, and nothing is written", async () => {
+    const p = await product("r11");
+    const o = await order([packLine(p, OVERRIDE)]);
+    const before = (await rows(o.id)).map(shape);
+    await expect(
+      tenantCtx.run(tenantId, () =>
+        orders.updateOrderItems(
+          o.id,
+          { items: [{ id: o.lineItems[0].id, qty: 18, overrideReason: "=1+1" }] },
+          principal("CUSTOMER", otherUserId),
+        ),
+      ),
+    ).rejects.toMatchObject({ status: 403 });
+    expect((await rows(o.id)).map(shape)).toEqual(before);
   });
 
   it("R6 (row 496): a staff edit with a formula-led overrideReason is a 400 and writes nothing", async () => {

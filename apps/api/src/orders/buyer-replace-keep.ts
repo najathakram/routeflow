@@ -2,7 +2,7 @@ import { PriceType } from "@prisma/client";
 import { assertSafeTextCell } from "../common/safe-text-cell";
 import { resolveBuyerLinePrice } from "./buyer-merge-pricing";
 import type { PromotionRule } from "@routeflow/pricing";
-import type { SplitPromoGroup } from "./split-promo-group";
+import { planSplitPromos, type SplitPromoGroup } from "./split-promo-group";
 
 /**
  * Row 497 (SA ruling, option B): a buyer's FULL-LIST replace of PACK lines (updateOrderItems, CUSTOMER branch)
@@ -20,6 +20,8 @@ import type { SplitPromoGroup } from "./split-promo-group";
 export interface HeldPriceLine {
   productId?: string | null;
   unitLabel?: string | null;
+  /** The sale-time box size snapshot on a box-split line; null on a box-unaware (selling-unit) line. */
+  unitsPerBox?: unknown;
   status?: string | null;
   unitPrice?: unknown;
   priceType?: string | null;
@@ -53,12 +55,18 @@ export const isStoredOverride = (l: Pick<HeldPriceLine, "priceType" | "overrideR
 export function keptOverrideFor(
   item: { productId?: string | null; sourceLineId?: string; unitLabel?: string | null },
   held: ReadonlyMap<string, HeldPriceLine>,
+  /** The product's LIVE box size: the replace re-splits at it (see below). */
+  liveUnitsPerBox?: unknown,
 ): KeptOverride | null {
   const own = item.sourceLineId ? held.get(item.sourceLineId) : undefined;
   if (!own || own.status === "CANCELLED" || own.unitPrice == null) return null;
   if (own.productId !== item.productId) return null; // a changed product is a new sale
   if ((own.unitLabel ?? null) !== null || (item.unitLabel ?? null) !== null) return null; // pack lines only
   if (!isStoredOverride(own)) return null;
+  // The kept price is per BOX, and the replace re-splits the quantity at the LIVE box size. A line sold in
+  // boxes of 12 whose product is now boxes of 6 would bill 2 x $36 as 4 x $36, so it prices fresh instead.
+  if (own.unitsPerBox != null && Number(own.unitsPerBox) !== Number(liveUnitsPerBox ?? 0))
+    return null;
   return {
     price: {
       unitPrice: Number(own.unitPrice),
@@ -71,19 +79,57 @@ export function keptOverrideFor(
 }
 
 /**
+ * The entries of a replace payload that price at the tier (not kept). A kept override never combines with a
+ * promotion, so it must stay OUT of `planSplitPromos`: left in, it takes the oldest line's share of a product's
+ * free units and returns without ever asking for it, and the units vanish.
+ */
+export function dropKeptOverrides<T extends { productId?: string | null; sourceLineId?: string }>(
+  items: ReadonlyArray<T>,
+  held: ReadonlyMap<string, HeldPriceLine>,
+  productMap: ReadonlyMap<string, { unitsPerBox?: unknown }>,
+): T[] {
+  return items.filter(
+    (i) => !keptOverrideFor(i, held, i.productId ? productMap.get(i.productId)?.unitsPerBox : null),
+  );
+}
+
+/** `planSplitPromos` over the entries that price at the tier (see `dropKeptOverrides`). */
+export function planPromos(
+  items: ReadonlyArray<{ productId?: string | null; sourceLineId?: string; qty?: number }>,
+  held: ReadonlyMap<string, HeldPriceLine>,
+  lineItems: Parameters<typeof planSplitPromos>[1] | undefined,
+  productMap: ReadonlyMap<string, { unitsPerBox?: unknown }>,
+  pieceDenominated: ReadonlySet<string>,
+) {
+  return planSplitPromos(
+    dropKeptOverrides(items, held, productMap),
+    lineItems ?? [],
+    productMap,
+    pieceDenominated,
+  );
+}
+
+/**
  * Row 496: a typed `overrideReason` is printed on exports, so one a spreadsheet would run as a formula is
  * refused 400 TEXT_CELL_FORMULA_LEAD before any write. Change-only (assertSafeTextCell's rule): a reason that
  * merely echoes the stored line's own never blocks an unrelated edit.
  */
 export function assertSafeOverrideReasons(
-  items: ReadonlyArray<{ id?: string; overrideReason?: string | null }>,
+  items: ReadonlyArray<{
+    id?: string;
+    /** A fold entry names its stored line this way; the buyer's items edit by `orderItemId`. */
+    sourceLineId?: string;
+    orderItemId?: string;
+    overrideReason?: string | null;
+  }>,
   stored: ReadonlyArray<{ id: string; overrideReason?: string | null }>,
 ): void {
   const byId = new Map(stored.map((l) => [l.id, l]));
   for (const it of items) {
+    const own = byId.get(it.id ?? it.sourceLineId ?? it.orderItemId ?? "");
     assertSafeTextCell(
-      { overrideReason: it.overrideReason },
-      it.id ? { overrideReason: byId.get(it.id)?.overrideReason } : null,
+      { overrideReason: it.overrideReason?.trim() },
+      { overrideReason: own?.overrideReason?.trim() },
     );
   }
 }
@@ -94,7 +140,7 @@ export function assertSafeOverrideReasons(
  * else (the driver) keeps the legacy list price. A split-promo `group` shares one product's promotion across its lines.
  */
 export function priceReplacedLine(a: {
-  product: { id: string; category: string | null; pricePerUnit: unknown };
+  product: { id: string; category: string | null; pricePerUnit: unknown; unitsPerBox?: unknown };
   item: { productId: string; sourceLineId?: string };
   held: ReadonlyMap<string, HeldPriceLine>;
   isBuyerEdit: boolean;
@@ -109,7 +155,7 @@ export function priceReplacedLine(a: {
   priced: KeptOverride["price"];
   stamp?: KeptOverride["stamp"];
 } {
-  const kept = a.isBuyerEdit ? keptOverrideFor(a.item, a.held) : null;
+  const kept = a.isBuyerEdit ? keptOverrideFor(a.item, a.held, a.product.unitsPerBox) : null;
   if (kept) return { priced: kept.price, stamp: kept.stamp };
   const raw = a.isBuyerEdit
     ? resolveBuyerLinePrice(

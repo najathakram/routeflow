@@ -56,6 +56,8 @@ import { Prisma } from "@prisma/client";
 import { plainToInstance } from "class-transformer";
 import { validate } from "class-validator";
 import { UpdateOrderItemsDto } from "./dto/update-order-items.dto";
+import { CreateOrderDto } from "./dto/create-order.dto";
+import { ForbiddenException } from "@nestjs/common";
 import { assertSafeOverrideReasons } from "./buyer-replace-keep";
 
 const MOCK_ORDER = {
@@ -92,6 +94,7 @@ const customerPayload = {
 describe("OrdersService.updateOrderItems: a buyer's full-list replace keeps unchanged overrides (row 497)", () => {
   let service: OrdersService;
   let prisma: ReturnType<typeof createMockPrisma>;
+  let promotions: { activeForCatalog: jest.Mock };
 
   beforeEach(async () => {
     prisma = createMockPrisma();
@@ -220,6 +223,7 @@ describe("OrdersService.updateOrderItems: a buyer's full-list replace keeps unch
     }).compile();
 
     service = module.get<OrdersService>(OrdersService);
+    promotions = module.get(PromotionsService);
   });
 
   // Stored pack lines of a boxed product (upb 12, list/tier-1 box price 12): 1 box + 6 pieces = 18 pieces.
@@ -259,16 +263,19 @@ describe("OrdersService.updateOrderItems: a buyer's full-list replace keeps unch
     overriddenBy: "user-op",
   };
 
-  function prime(lines: Array<Record<string, unknown>>) {
+  function prime(lines: Array<Record<string, unknown>>, products?: Array<Record<string, unknown>>) {
     prisma.order.findUnique.mockResolvedValue({ ...MOCK_ORDER, lineItems: lines });
     prisma.orderItem.findMany.mockResolvedValue(lines);
     prisma.customer.findFirst.mockResolvedValue({ id: "cust-1", pricingTier: 1 });
-    prisma.product.findMany.mockResolvedValue([product("prod-a"), product("prod-b")]);
+    prisma.product.findMany.mockResolvedValue(products ?? [product("prod-a"), product("prod-b")]);
   }
   const replace = (items: Array<Record<string, unknown>>) =>
     service.updateOrderItems("ord-1", { items, namesLines: true } as never, customerPayload, {
       buyerLineIds: true,
     });
+  // the buyer cart-merge fold names a stored line by `sourceLineId` (never by orderItemId), with no buyerLineIds
+  const fold = (items: Array<Record<string, unknown>>) =>
+    service.updateOrderItems("ord-1", { items, replaceAll: true } as never, customerPayload);
   const created = () => prisma.orderItem.create.mock.calls.map((c: any) => c[0].data);
 
   it("an overridden line re-sent unchanged keeps price, type, original price, reason and stamp", async () => {
@@ -393,6 +400,169 @@ describe("OrdersService.updateOrderItems: a buyer's full-list replace keeps unch
     expect(prisma.orderItem.update).not.toHaveBeenCalled();
   });
 
+  it("MUST 1: the fold path (sourceLineId) keeps an override whose stored reason is '-'-led, and echoing it is not refused", async () => {
+    prime([line({ ...OVERRIDE, overrideReason: "-5 courtesy", unitPrice: 8 })]);
+    await fold([
+      { productId: "prod-a", qty: 18, sourceLineId: "li-1", overrideReason: "-5 courtesy" },
+    ]);
+    expect(created()[0]).toMatchObject({
+      ...OVERRIDE,
+      overrideReason: "-5 courtesy",
+      subtotal: 12,
+    });
+  });
+
+  it("MUST 1: the buyer's items edit (orderItemId) echoing a '-'-led stored reason is not refused either", async () => {
+    prime([line({ ...OVERRIDE, overrideReason: "-5 courtesy" })]);
+    await replace([
+      { productId: "prod-a", qty: 18, orderItemId: "li-1", overrideReason: "-5 courtesy" },
+    ]);
+    expect(created()[0]).toMatchObject({ overrideReason: "-5 courtesy", unitPrice: 8 });
+  });
+
+  it("MUST 2: a box-split override is NOT kept once the product's box size changed (12 -> 6): it prices fresh", async () => {
+    // stored: 2 boxes of 12 (24 pieces) at the kept $8 box price. Live product: boxes of 6, so 24 pieces is 4 boxes.
+    prime(
+      [line({ ...OVERRIDE, qty: 24, boxes: 2, pieces: 0, unitsPerBox: 12, subtotal: "16.00" })],
+      [{ ...product("prod-a"), unitsPerBox: 6 }],
+    );
+    await replace([{ productId: "prod-a", qty: 24, orderItemId: "li-1" }]);
+    // hand: tier 1 = $12 a box: 4 x $12 = $48.00 (keeping $8 would bill 4 x $8 = $32.00 for what was $16.00)
+    expect(created()[0]).toMatchObject({
+      boxes: 4,
+      pieces: 0,
+      unitPrice: 12,
+      priceType: "STANDARD",
+      subtotal: 48,
+    });
+    expect(created()[0].overriddenBy ?? null).toBeNull();
+    expect(created()[0].overrideReason ?? null).toBeNull();
+  });
+
+  it("MUST 3: a kept override stays out of the split-promo group, so the plain line of the SAME product keeps its free units", async () => {
+    // BUY 4 GET 1 (blocks of 5 whole units). Unboxed product at $10. L-old: an override line of 10 at $8 (older);
+    // L-new: a plain tier line of 10.
+    const bogo = {
+      id: "promo-bogo",
+      type: "BUY_N_GET_M",
+      value: 1,
+      minQty: 4,
+      scope: "ALL",
+      category: null,
+      productIds: [],
+    };
+    promotions.activeForCatalog.mockResolvedValue([bogo]);
+    const plainProduct = {
+      id: "prod-c",
+      pricePerUnit: 10,
+      unitsPerBox: null,
+      category: null,
+      trackedCategoryId: null,
+      trackedSubcategoryId: null,
+    };
+    const base = { productId: "prod-c", qty: 10, boxes: null, pieces: null, unitsPerBox: null };
+    prime(
+      [
+        line({
+          ...base,
+          id: "L-old",
+          unitPrice: 8,
+          subtotal: "80.00",
+          priceType: "DISCOUNTED",
+          originalPrice: 10,
+          overrideReason: "damaged",
+          overriddenBy: "user-op",
+          createdAt: new Date("2026-01-01"),
+          position: 0,
+        }),
+        line({
+          ...base,
+          id: "L-new",
+          unitPrice: 10,
+          subtotal: "100.00",
+          createdAt: new Date("2026-02-01"),
+          position: 1,
+        }),
+      ],
+      [plainProduct],
+    );
+    await replace([
+      { productId: "prod-c", qty: 10, orderItemId: "L-old" },
+      { productId: "prod-c", qty: 10, orderItemId: "L-new" },
+    ]);
+    const [kept, plain] = created();
+    expect(kept).toMatchObject({ unitPrice: 8, priceType: "DISCOUNTED", subtotal: 80 });
+    // hand: the plain line alone is 10 whole units: floor(10 / 5) x 1 = 2 free; 8 billed x $10 = $80.00. (With the
+    // override in the group: 20 units -> 4 free, all allocated to the OLDER override line, the plain line gets 0.)
+    expect(plain).toMatchObject({ priceType: "PROMO", promoFreeUnits: 2, subtotal: 80 });
+  });
+
+  it("two lines of the SAME product with different overrides each keep their own", async () => {
+    prime([
+      line({ ...OVERRIDE, id: "li-1", position: 0 }),
+      line({
+        id: "li-2",
+        unitPrice: 15,
+        subtotal: "22.50",
+        priceType: "MANUAL",
+        originalPrice: 12,
+        overrideReason: "upsell",
+        overriddenBy: "user-op2",
+        createdAt: new Date("2026-02-01"),
+        position: 1,
+      }),
+    ]);
+    await replace([
+      { productId: "prod-a", qty: 18, orderItemId: "li-1" },
+      { productId: "prod-a", qty: 18, orderItemId: "li-2" },
+    ]);
+    expect(created()[0]).toMatchObject({
+      unitPrice: 8,
+      priceType: "DISCOUNTED",
+      overrideReason: "damaged cartons",
+      overriddenBy: "user-op",
+    });
+    expect(created()[1]).toMatchObject({
+      unitPrice: 15,
+      priceType: "MANUAL",
+      overrideReason: "upsell",
+      overriddenBy: "user-op2",
+    });
+  });
+
+  it("the fold path keeps an override line the same way (sourceLineId, no orderItemId)", async () => {
+    prime([line(OVERRIDE)]);
+    await fold([{ productId: "prod-a", qty: 30, sourceLineId: "li-1" }]);
+    expect(created()[0]).toMatchObject({ ...OVERRIDE, qty: 30, subtotal: 20 });
+  });
+
+  it("create(): a formula-led line reason is refused 400 before any read or write", async () => {
+    await expect(
+      service.create(
+        { items: [{ productId: "p", qty: 1, overrideReason: "=1+1" }] } as never,
+        {
+          sub: "user-op",
+          username: "op",
+          role: "OPERATOR",
+          status: "ACTIVE",
+          forcePasswordChange: false,
+        } as never,
+      ),
+    ).rejects.toMatchObject({ response: { code: "TEXT_CELL_FORMULA_LEAD" } });
+  });
+  it("MUST 4: a non-owner meets the 403 before any answer about the reason (never a 400)", async () => {
+    prime([line(OVERRIDE)]);
+    prisma.customer.findFirst.mockResolvedValue({ id: "cust-OTHER", pricingTier: 1 });
+    await expect(
+      service.updateOrderItems(
+        "ord-1",
+        { items: [{ id: "li-1", qty: 18, overrideReason: "=1+1" }] } as never,
+        customerPayload,
+      ),
+    ).rejects.toBeInstanceOf(ForbiddenException);
+    expect(prisma.orderItem.create).not.toHaveBeenCalled();
+  });
+
   it("a stored line of ANOTHER unit is never kept as a pack price", async () => {
     prime([line({ ...OVERRIDE, unitLabel: "Case" })]);
     await expect(
@@ -415,6 +585,17 @@ describe("updateOrderItems: a formula-led overrideReason is refused (row 496)", 
     expect(() =>
       assertSafeOverrideReasons([{ id: "li-1", overrideReason: "@SUM(A1)" }], []),
     ).toThrow();
+  });
+  it("MUST 1: finds the stored line by id, sourceLineId or orderItemId, and judges only a CHANGED reason", () => {
+    const stored = [{ id: "li-1", overrideReason: "-old" }];
+    for (const key of ["id", "sourceLineId", "orderItemId"]) {
+      expect(() =>
+        assertSafeOverrideReasons([{ [key]: "li-1", overrideReason: "-old" }], stored),
+      ).not.toThrow();
+      expect(() =>
+        assertSafeOverrideReasons([{ [key]: "li-1", overrideReason: "-new" }], stored),
+      ).toThrow();
+    }
   });
   it("lets a clean reason, and an unchanged stored legacy value, through", () => {
     expect(() =>
@@ -439,6 +620,18 @@ describe("UpdateOrderItemDto.overrideReason (row 496)", () => {
   });
   it("accepts 200 characters", async () => {
     expect(await check("a".repeat(200))).toHaveLength(0);
+  });
+  it("a whitespace-only reason becomes null (never a stored blank)", () => {
+    const dto = plainToInstance(UpdateOrderItemsDto, {
+      items: [{ id: "x", overrideReason: "   " }],
+    });
+    expect(dto.items[0].overrideReason).toBeNull();
+  });
+  it("create-order.dto.ts: the same cap and trim", async () => {
+    const mk = (r: string) =>
+      plainToInstance(CreateOrderDto, { items: [{ productId: "p", qty: 1, overrideReason: r }] });
+    expect(mk("  why  ").items![0].overrideReason).toBe("why");
+    expect(JSON.stringify(await validate(mk("a".repeat(201))))).toContain("maxLength");
   });
   it("trims the reason", () => {
     const dto = plainToInstance(UpdateOrderItemsDto, {
