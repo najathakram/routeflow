@@ -1,13 +1,9 @@
 import * as React from "react";
 import * as fs from "fs";
 import * as path from "path";
-import { render, screen, waitFor } from "@testing-library/react";
-import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
+import { render, screen } from "@testing-library/react";
 import { RestrictionOverrideNote } from "./RestrictionOverrideNote";
 import { restrictionOverrideLine } from "@/lib/restriction-override-note";
-
-const get = jest.fn();
-jest.mock("@/lib/api-client", () => ({ apiClient: { get: (...a: unknown[]) => get(...a) } }));
 
 const stamp = {
   restrictionOverrideReason: "Owner approved the sale",
@@ -15,14 +11,6 @@ const stamp = {
   restrictionOverrideAt: "2026-10-07T15:14:00.000Z",
   restrictionOverrideRuleIds: ["r1"],
 };
-const withClient = (ui: React.ReactElement) => (
-  <QueryClientProvider client={new QueryClient({ defaultOptions: { queries: { retry: false } } })}>
-    {ui}
-  </QueryClientProvider>
-);
-
-beforeEach(() => jest.clearAllMocks());
-
 describe("restrictionOverrideLine (pure)", () => {
   it("reads 'Sold despite restriction · reason · by name · date'", () => {
     expect(
@@ -52,32 +40,22 @@ describe("RestrictionOverrideNote", () => {
     expect(r2.container).toBeEmptyDOMElement();
   });
 
-  it("shows the reason, the resolved name and the date", async () => {
-    get.mockResolvedValue({ data: { id: "u-1", username: "pat" } });
-    render(withClient(<RestrictionOverrideNote line={stamp} />));
-    expect(await screen.findByText(/by pat/)).toBeInTheDocument();
+  it("shows the reason, the name the API resolved and the date", () => {
+    render(<RestrictionOverrideNote line={{ ...stamp, restrictionOverrideByName: "Pat R" }} />);
     expect(screen.getByTestId("restriction-override-note")).toHaveTextContent(
-      "Sold despite restriction · Owner approved the sale · by pat · Oct 7, 2026",
-    );
-    expect(get).toHaveBeenCalledWith("/users/u-1");
-  });
-
-  it("says 'former user' when the user no longer exists", async () => {
-    get.mockRejectedValue({ response: { status: 404 } });
-    render(withClient(<RestrictionOverrideNote line={stamp} />));
-    await waitFor(() =>
-      expect(screen.getByTestId("restriction-override-note")).toHaveTextContent("by former user"),
+      "Sold despite restriction · Owner approved the sale · by Pat R · Oct 7, 2026",
     );
   });
 
-  it("prefers a name the API already resolved (no lookup)", () => {
-    render(
-      withClient(
-        <RestrictionOverrideNote line={{ ...stamp, restrictionOverrideByName: "Pat R" }} />,
-      ),
-    );
-    expect(screen.getByTestId("restriction-override-note")).toHaveTextContent("by Pat R");
-    expect(get).not.toHaveBeenCalled();
+  it("says 'former user' ONLY when the API sent a null name (the user is gone)", () => {
+    render(<RestrictionOverrideNote line={{ ...stamp, restrictionOverrideByName: null }} />);
+    expect(screen.getByTestId("restriction-override-note")).toHaveTextContent("by former user");
+  });
+
+  it("an absent name field never claims 'former user' (older API): the by part is left out", () => {
+    render(<RestrictionOverrideNote line={stamp} />);
+    const text = screen.getByTestId("restriction-override-note").textContent;
+    expect(text).not.toMatch(/former user|by /);
   });
 });
 
@@ -91,6 +69,15 @@ describe("staff only", () => {
     }
     return out;
   };
+  it("the note fetches nothing: no /users call (user management is admin-only, an operator would get a false 'former user')", () => {
+    for (const f of [
+      "components/RestrictionOverrideNote.tsx",
+      "lib/restriction-override-note.ts",
+    ]) {
+      const src = fs.readFileSync(path.join(WEB, f), "utf8");
+      expect(src).not.toMatch(/\/users|apiClient|useQuery|api-client/);
+    }
+  });
   it("no buyer-portal source mentions the note or an override column", () => {
     for (const p of walk(path.join(WEB, "app/buyer"))) {
       expect(fs.readFileSync(p, "utf8")).not.toMatch(/RestrictionOverrideNote|restrictionOverride/);
