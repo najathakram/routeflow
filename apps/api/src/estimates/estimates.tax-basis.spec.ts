@@ -7,6 +7,7 @@ import { RegulatedLedgerService } from "../regulated/regulated-ledger.service";
 import { NumberingService } from "../import/numbering.service";
 import { SellingRestrictionsService } from "../selling-restrictions/selling-restrictions.service";
 import { createMockPrisma } from "../testing/prisma-mock";
+import { NSF_FEE_DESCRIPTION_PREFIX } from "@routeflow/pricing";
 
 /**
  * H5 (owner ruling 2026-10-13, SA): an estimate carries tax the way an invoice does - the tenant rate
@@ -188,6 +189,8 @@ describe("EstimatesService - H5 estimates carry tax", () => {
       expect(inv.taxBasis).toEqual({
         quotedTax: 5,
         currentTax: 8,
+        currentLevy: 0,
+        invoiceTax: 8,
         delta: 3,
         changed: true,
         quotedRate: 0.05,
@@ -227,6 +230,125 @@ describe("EstimatesService - H5 estimates carry tax", () => {
 
       expect(prisma.invoice.create.mock.calls[0][0].data.taxAmount).toBe(5);
       expect(inv.taxBasis).toMatchObject({ quotedTax: 0, currentTax: 5, delta: 5, changed: true });
+    });
+  });
+
+  describe("round trip: an estimate quoted and converted at the SAME rate changes nothing (SA must 3)", () => {
+    const LINES = [
+      { description: "A", unitPrice: 10, qty: 3 },
+      { description: "B", unitPrice: 20.55, qty: 1 },
+    ];
+
+    it.each([["8.25"], ["5"], ["7.125"], ["0"]])(
+      "rate %s%%: create then convert -> changed:false, the invoice tax and total are the estimate's",
+      async (percent) => {
+        setTenantRate(percent);
+        prisma.customer.findUnique.mockResolvedValue({
+          id: "c1",
+          pricingTier: 1,
+          isTaxExempt: false,
+        });
+        await service.create({ customerId: "c1", items: LINES } as any);
+        const quote = prisma.estimate.create.mock.calls[0][0].data;
+
+        prisma.estimate.updateMany.mockResolvedValue({ count: 1 });
+        prisma.invoice.create.mockImplementation((args: any) =>
+          Promise.resolve(echoInvoice("inv-rt", args)),
+        );
+        prisma.estimate.findUnique.mockResolvedValue({
+          id: "est-rt",
+          status: "ACCEPTED",
+          customerId: "c1",
+          customer: { isTaxExempt: false },
+          subtotal: quote.subtotal,
+          taxAmount: quote.taxAmount,
+          discount: quote.discount,
+          total: quote.total,
+          notes: null,
+          terms: null,
+          items: quote.items.create.map((it: any) => ({ ...it, productId: null })),
+        });
+
+        const inv: any = await service.convertToInvoice("est-rt");
+
+        const data = prisma.invoice.create.mock.calls[0][0].data;
+        expect(data.taxAmount).toBe(quote.taxAmount);
+        expect(data.total).toBe(quote.total);
+        expect(inv.taxBasis).toMatchObject({
+          changed: false,
+          delta: 0,
+          currentLevy: 0,
+          invoiceTax: quote.taxAmount,
+        });
+      },
+    );
+
+    it("more than 4 decimals (B296 / SA-761 s4: InvoiceItem.taxRate is Decimal(5,4)): the quote and the conversion both total at the UNROUNDED rate, so they agree", async () => {
+      setTenantRate("8.125"); // 0.08125: a fifth decimal the column cannot hold
+      prisma.customer.findUnique.mockResolvedValue({
+        id: "c1",
+        pricingTier: 1,
+        isTaxExempt: false,
+      });
+      await service.create({
+        customerId: "c1",
+        items: [{ description: "Big", unitPrice: 10000, qty: 1 }],
+      } as any);
+      const quote = prisma.estimate.create.mock.calls[0][0].data;
+      expect(quote.taxAmount).toBe(812.5); // 10000 x 0.08125 (a Decimal(5,4) 0.0813 would give 813)
+
+      prisma.estimate.updateMany.mockResolvedValue({ count: 1 });
+      prisma.invoice.create.mockImplementation((args: any) =>
+        Promise.resolve(echoInvoice("inv-p", args)),
+      );
+      prisma.estimate.findUnique.mockResolvedValue({
+        id: "est-p",
+        status: "ACCEPTED",
+        customerId: "c1",
+        customer: { isTaxExempt: false },
+        subtotal: quote.subtotal,
+        taxAmount: quote.taxAmount,
+        discount: 0,
+        total: quote.total,
+        notes: null,
+        terms: null,
+        items: quote.items.create.map((it: any) => ({ ...it, productId: null })),
+      });
+      const inv: any = await service.convertToInvoice("est-p");
+
+      expect(prisma.invoice.create.mock.calls[0][0].data.taxAmount).toBe(812.5);
+      expect(inv.taxBasis).toMatchObject({ changed: false, quotedTax: 812.5, currentTax: 812.5 });
+    });
+
+    it("an NSF-fee line is refused at conversion once there is a rate to apply (#2656), before anything is written", async () => {
+      setTenantRate("8");
+      prisma.estimate.updateMany.mockResolvedValue({ count: 1 });
+      prisma.estimate.findUnique.mockResolvedValue({
+        id: "est-nsf",
+        status: "ACCEPTED",
+        customerId: "c1",
+        customer: { isTaxExempt: false },
+        subtotal: 25,
+        taxAmount: 0,
+        discount: 0,
+        total: 25,
+        notes: null,
+        terms: null,
+        items: [
+          {
+            description: `${NSF_FEE_DESCRIPTION_PREFIX} #7`,
+            productId: null,
+            qty: 1,
+            unitPrice: 25,
+            subtotal: 25,
+          },
+        ],
+      });
+
+      await expect(service.convertToInvoice("est-nsf")).rejects.toMatchObject({
+        response: { code: "NSF_LINE_UNTAXED" },
+      });
+      expect(prisma.invoice.create).not.toHaveBeenCalled();
     });
   });
 });

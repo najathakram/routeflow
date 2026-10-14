@@ -169,6 +169,21 @@ describe("EstimatesService.convertToInvoice — regulated levy and quoted pack (
     expect(created().total).toBe(120);
   });
 
+  it("H5 (SA must 2): the levy the quote never carried is REPORTED - taxBasis names it and changed is true even when the regular tax did not move", async () => {
+    // quoted at 10% regular tax (10 on 100); today's rate is still 10%; the regulated line adds a 10% levy = 10
+    arm({ items: [line()], taxAmount: 10 });
+    const inv: any = await service.convertToInvoice("est-1");
+    expect(created().taxAmount).toBe(20);
+    expect(inv.taxBasis).toMatchObject({
+      quotedTax: 10,
+      currentTax: 10,
+      delta: 0,
+      currentLevy: 10,
+      invoiceTax: 20,
+      changed: true,
+    });
+  });
+
   it("an exempt customer owes $0 of BOTH, and the ledger row records the $0 that was billed", async () => {
     arm({ items: [line()], exempt: true, taxAmount: 10 });
     await service.convertToInvoice("est-1");

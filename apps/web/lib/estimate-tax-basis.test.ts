@@ -37,6 +37,21 @@ describe("estimateTaxBasisNotice (H5: converting re-takes today's tax basis)", (
     );
   });
 
+  it("a regulated levy the quote did not carry is named even when the regular tax did not move (SA must 2)", () => {
+    expect(
+      estimateTaxBasisNotice(
+        basis({ currentTax: 5, delta: 0, currentLevy: 10, invoiceTax: 15, changed: true }),
+      ),
+    ).toBe("A regulated-category levy of $10.00 was added; the quote carried none.");
+  });
+
+  it("both clauses when the rate moved and a levy was added", () => {
+    expect(estimateTaxBasisNotice(basis({ currentLevy: 10, invoiceTax: 18 }))).toBe(
+      "Tax was recalculated at today's rate: $8.00 on the invoice, $3.00 more than the $5.00 quoted. " +
+        "A regulated-category levy of $10.00 was added; the quote carried none.",
+    );
+  });
+
   it("never reads a server sentence: a malformed basis is treated as no basis", () => {
     expect(estimateTaxBasisNotice({ changed: true, delta: "x" } as never)).toBeNull();
     expect(estimateTaxBasisNotice({ changed: true } as never)).toBeNull();

@@ -84,10 +84,11 @@ export async function currentTaxRate(systemConfig: SystemConfigService): Promise
 
 /**
  * B294: the effective REGULAR (non-category) tax rate to stamp on invoice
- * lines derived from an order or a converted estimate. Both rows store one
- * flat tax amount over their whole subtotal — `order.tax = subtotal * rate`,
- * `estimate.taxAmount = subtotal * rate` — rather than a per-line rate, so
+ * lines derived from an order. The order stores one flat tax amount over its
+ * whole subtotal — `order.tax = subtotal * rate` — rather than a per-line rate, so
  * `tax / subtotal` recovers that same rate exactly.
+ * (H5: a converted ESTIMATE no longer recovers its rate this way - it re-takes today's tenant
+ * rate; `estimate.taxAmount` is kept only to report the difference against the quote.)
  *
  * Zero for an exempt customer (mirrors foldCategoryTax's contract), and zero
  * for a degenerate zero-or-negative subtotal (the guard this helper always

@@ -12,11 +12,12 @@ import {
   isSpecialTier,
   computeLineSubtotal,
   getTierPrice,
+  round4,
   roundMoney,
-  sumInvoiceTotals,
 } from "@routeflow/pricing";
 import { loadMsrpMap } from "../common/msrp";
 import { configuredTaxRateFraction } from "../common/tax-rate";
+import { assertNsfLinesUntaxed } from "../invoices/nsf-line-tax-guard";
 import { EntitlementsService } from "../billing/entitlements.service";
 import { EntitlementAuthority } from "../billing/entitlement-authority.service";
 import { RegulatedLedgerService } from "../regulated/regulated-ledger.service";
@@ -36,9 +37,6 @@ import {
 import { assertNoUnitAwareLines } from "../orders/unit-aware-guard";
 import { CreateEstimateDto } from "./dto/create-estimate.dto";
 import { describeUniqueViolation, uniqueViolationOn } from "../common/prisma-unique";
-
-/** A tax rate at the 4-decimal scale `InvoiceItem.taxRate` is stored at. */
-const roundRate = (r: number): number => Math.round(r * 10_000) / 10_000;
 
 // B70: terminal status set — CONVERTED is terminal and cannot be re-transitioned; voided
 // (DECLINED) is also terminal per the requirement that send/decline/accept refuse both.
@@ -256,7 +254,7 @@ export class EstimatesService {
     // `taxAmount` is no longer an input at all (H5): it is computed, below.
     const discount = (dto as any).discount ?? 0;
     // H5: the invoice rule - each line's subtotal x the rate, summed unrounded, rounded once; $0 when exempt.
-    const taxed = sumInvoiceTotals(
+    const taxed = sumInvoiceTotalsStrict(
       itemsData.map((it) => ({ subtotal: it.subtotal, taxRate })),
       { discount, isTaxExempt },
     );
@@ -511,6 +509,9 @@ export class EstimatesService {
       // through computeCategoryTax, and the SALE ledger rows are booked below, so a conversion can never
       // file a quote-date rate or skip the ledger. Pack = the estimate line's own (estimate-convert-lines.ts).
       const lines = estimateConvertLineItems(est.items, lineTaxRate);
+      // #2656: an NSF-fee line is never taxed - the same 400 an invoice refuses it with (it would otherwise
+      // convert at today's rate and tax the bounce fee).
+      assertNsfLinesUntaxed(lines);
       const { productMap, categoryMap, unitsByProduct } = await loadManualLineContext(lines, {
         prisma: { getTenantId: () => tenantId, forTenant: () => tx }, // read on THIS transaction's connection
         entitlements: this.entitlements,
@@ -535,24 +536,30 @@ export class EstimatesService {
       });
       const subtotal = roundMoney(linesSubtotal);
       const isTaxExempt = !!est.customer?.isTaxExempt;
-      // B294 (L-159): regular tax and levy both come from THIS call. est.taxAmount holds the quote's REGULAR
-      // tax only (never the display levy of a later stage), so lineTaxRate above is a one-source recovery.
+      // B294 (L-159): regular tax and levy both come from THIS call, at today's rate (H5). est.taxAmount holds the
+      // quote's REGULAR tax only and is read below solely to report the difference; it is never an input here.
       zeroExemptCategoryTax(itemsData, isTaxExempt); // exempt: $0 of BOTH taxes, snapshots zeroed
       const discount = Number(est.discount ?? 0);
       const {
         tax: taxTotal,
         total,
         regularTax: currentTax,
+        categoryTax: currentLevy,
       } = sumInvoiceTotalsStrict(itemsData, { discount, isTaxExempt });
       // H5: the quote's regular tax against today's, so the operator is told when the rate (or the exempt flag) moved.
       const quotedTax = roundMoney(Number(est.taxAmount ?? 0));
       const quotedSubtotal = Number(est.subtotal ?? 0);
+      const taxDelta = roundMoney(currentTax - quotedTax);
       const taxBasis = {
         quotedTax,
         currentTax,
-        delta: roundMoney(currentTax - quotedTax),
-        changed: roundMoney(currentTax - quotedTax) !== 0,
-        quotedRate: quotedSubtotal > 0 ? roundRate(quotedTax / quotedSubtotal) : 0,
+        // The regulated levy is computed at conversion from each product's category at the sale (B659); a quote
+        // never carries one, so any levy on the invoice is news to the operator.
+        currentLevy,
+        invoiceTax: taxTotal,
+        delta: taxDelta,
+        changed: taxDelta !== 0 || currentLevy > 0,
+        quotedRate: quotedSubtotal > 0 ? round4(quotedTax / quotedSubtotal) : 0,
         currentRate: lineTaxRate,
       };
 
