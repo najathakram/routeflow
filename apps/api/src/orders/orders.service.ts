@@ -66,7 +66,7 @@ import {
   type SaleOptions,
 } from "./sale-options";
 import { notifyPickupHandover, pickupOutForDeliveryPush } from "./order-pickup-wording";
-import { decideTierOverride } from "./staff-override";
+import { assertPriceEditAllowed, decideTierOverride } from "./staff-override";
 import { assertMergeLockAcquired, isMergeContention, mapLockError } from "./merge-contention";
 import {
   deleteLoserGuarded,
@@ -171,7 +171,8 @@ import { loadLiveTrioByProduct } from "./fold-target";
 import { carriedLineFor } from "./carry-line-category";
 import { assertLockedEditLines, assertRevisionCurrent } from "./locked-edit-guards";
 import { guardBuyerEditLineIds, pairEditLines, piecesDenominated } from "./buyer-edit-lines";
-import { planSplitPromos, type SplitPromoGroup } from "./split-promo-group";
+import * as keep from "./buyer-replace-keep"; // row 497 / 496
+import type { SplitPromoGroup } from "./split-promo-group";
 import { settleSplitFreeUnits } from "./settle-split-free-units";
 import { dateAndShipmentFilters } from "./list-filters";
 import { resolveOversellAllowed } from "./oversell-policy";
@@ -1383,6 +1384,7 @@ export class OrdersService implements OnApplicationBootstrap {
     // customer is known; the P2002 branch further down catches the narrow
     // concurrent-race window that pre-check can't.
     const idempotencyKey = (dto as any).idempotencyKey as string | undefined;
+    keep.assertSafeOverrideReasons(dto.items ?? [], []); // row 496: a typed reason, before any read or write
     const inlineRet = await prepareInlineReturn(this.inlineReturns, dto.inlineReturn, user);
     // The key is stored under @@unique([tenantId, idempotencyKey]) and every
     // lookup rides forTenant(), which hands back the UNSCOPED client when the
@@ -1718,7 +1720,9 @@ export class OrdersService implements OnApplicationBootstrap {
           taxFor: (qty, sub) => unitLines.categoryTaxForLine(category, qty, sub),
           position: index,
           tenantId: this.prisma.getTenantId(),
+          overriddenBy: user.sub,
         });
+        if (isOverride(unitLine)) assertPriceEditAllowed(options.priceEditAllowed); // POS-5, as the pack branch
         subtotal += unitLine.subtotal;
         return unitLine;
       }
@@ -1781,8 +1785,7 @@ export class OrdersService implements OnApplicationBootstrap {
 
       // QTY_BREAK promo threshold is measured in PIECES. A box-split line stores qty
       // in pieces already; a box-UNAWARE boxed line (boxes==null) stores qty as a
-      // SELLING-UNIT (box) count, so expand it — mirrors the merge path so the same
-      // buyer line prices identically at create vs edit.
+      // SELLING-UNIT (box) count, so expand it — mirrors the merge path (create == edit).
       // B679/Opus: the tax basis is derived through regulatedUnitBasis — the ONE place this
       // design allows a box-unaware qty*pack expansion — never an inline copy of it. This is
       // always resolvedUnits.unitLabel (null here — unitLines.isUnitAware(resolvedUnits)
@@ -1813,12 +1816,7 @@ export class OrdersService implements OnApplicationBootstrap {
           : null;
       if (staff?.overridden) {
         // POS-5: counter callers pass `priceEditAllowed`; judged vs the SERVER tier price, before any lock or write.
-        if (options.priceEditAllowed === false) {
-          throw new ForbiddenException({
-            code: API_ERROR_CODES.PRICE_EDIT_NOT_PERMITTED,
-            message: "You can't change prices. Ask your account admin.",
-          });
-        }
+        assertPriceEditAllowed(options.priceEditAllowed);
         ({ unitPrice, originalPrice } = staff);
         priceType = PriceType[staff.priceType];
         staffOverride = {
@@ -2844,6 +2842,7 @@ export class OrdersService implements OnApplicationBootstrap {
         .customer.findFirst({ where: { userId: user.sub, deletedAt: null } });
       if (!owner || owner.id !== order.customerId) throw new ForbiddenException();
     }
+    keep.assertSafeOverrideReasons(dto.items ?? [], order.lineItems); // row 496: after the owner check, before any write
     // R1: items are editable at ANY live stage — DRAFT/PENDING/CONFIRMED and now
     // OUT_FOR_DELIVERY / PARTIALLY_DELIVERED / DELIVERED too (operator + driver). Only
     // a CANCELLED order is off-limits (nothing to edit). Post-delivery edits re-sync
@@ -3058,9 +3057,8 @@ export class OrdersService implements OnApplicationBootstrap {
             ...EXISTING_LINE_SELECT,
             deliveredQty: true,
             invoicedQty: true,
-            unitPrice: true,
+            ...unitLines.STORED_UNIT_LINE_SELECT,
             promoFreeUnits: true,
-            overrideReason: true,
           },
         });
         restrictionPlan?.assertHeld(heldItems);
@@ -3174,7 +3172,7 @@ export class OrdersService implements OnApplicationBootstrap {
           // (skipped/invalid items `continue` before it).
           let pos = 0;
           const splitPromos = isBuyerEdit
-            ? planSplitPromos(dto.items, order.lineItems ?? [], productMap, pieceDenominated)
+            ? keep.planPromos(dto.items, heldById, order.lineItems, productMap, pieceDenominated)
             : new Map<string, SplitPromoGroup>();
           for (const item of dto.items) {
             if (!item.productId) {
@@ -3231,27 +3229,19 @@ export class OrdersService implements OnApplicationBootstrap {
             // BUY_N_GET_M threshold: whole SELLING units (boxes for a boxed line,
             // pieces otherwise) — mirrors create()'s qtyUnits derivation.
             const qtyUnits = boxes != null ? boxes : qty;
-            const group = splitPromos.get(item.productId);
-            const pricedRaw = isBuyerEdit
-              ? this.resolveBuyerLinePrice(
-                  product,
-                  buyerCpMap.get(item.productId) ?? buyerDefaultTier,
-                  buyerPromos,
-                  group?.qtyPieces ?? qtyPieces,
-                  group?.qtyUnits ?? qtyUnits,
-                  buyerPriceHistory[item.productId]?.lastPrice ?? null,
-                  // REG-B109: the exact denomination this line bills with below.
-                  group?.denomination ?? { boxes, pieces, unitsPerBox: upb },
-                )
-              : {
-                  unitPrice: Number(product.pricePerUnit),
-                  originalPrice: null as number | null,
-                  priceType: PriceType.STANDARD,
-                  freeUnits: 0,
-                };
-            const priced = group
-              ? { ...pricedRaw, freeUnits: group.share(item, pricedRaw.freeUnits) }
-              : pricedRaw;
+            const { priced, stamp } = keep.priceReplacedLine({
+              product,
+              item: item as typeof item & { productId: string },
+              held: heldById,
+              isBuyerEdit,
+              group: splitPromos.get(item.productId),
+              tier: buyerCpMap.get(item.productId) ?? buyerDefaultTier,
+              buyerPromos,
+              qtyPieces,
+              qtyUnits,
+              lastPrice: buyerPriceHistory[item.productId]?.lastPrice ?? null,
+              denomination: { boxes, pieces, unitsPerBox: upb },
+            });
             const made = await tx.orderItem.create({
               data: {
                 orderId,
@@ -3272,6 +3262,7 @@ export class OrdersService implements OnApplicationBootstrap {
                 unitsPerBox: boxes != null && upb > 1 ? upb : null,
                 originalPrice: priced.originalPrice,
                 priceType: priced.priceType,
+                ...stamp,
                 // BUY_N_GET_M sale-time snapshot; null for every other line.
                 promoFreeUnits: priced.freeUnits > 0 ? priced.freeUnits : null,
                 status: "PENDING",
@@ -3387,6 +3378,9 @@ export class OrdersService implements OnApplicationBootstrap {
             ladders: unitCtx.ladders,
             tenantId: this.prisma.getTenantId(),
             tier: (pid) => (atCustomerTier ? (operatorCpMap.get(pid) ?? operatorDefaultTier) : 1),
+            overriddenBy: user?.sub ?? null,
+            held: heldById,
+            repriceTierOnQtyOnly: user?.role === UserRole.CUSTOMER,
             categoryMap: await loadCategoryMapForProducts(tx, unitCtx.products), // B297
           };
 
@@ -3723,8 +3717,7 @@ export class OrdersService implements OnApplicationBootstrap {
                 assertSellableLines([product]); // WS8: a FAMILY is never a substitute line
                 const unitRow = unitRows.get(item);
                 if (unitRow && unitLines.isUnitAware(unitRow)) {
-                  // updateUnitLine re-stamps from uctx.categoryMap itself (isSubstitute flag) —
-                  // this branch never needs its own category load.
+                  // updateUnitLine re-stamps from uctx.categoryMap itself (isSubstitute): no own load.
                   await unitEdit.updateUnitLine(uctx, item.id!, product, unitRow, item, true);
                   continue;
                 }

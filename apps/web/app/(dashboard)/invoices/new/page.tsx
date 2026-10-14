@@ -22,6 +22,7 @@ import { Button, Card, Input, useToast, cn } from "@routeflow/ui/web";
 import { usePageTitle } from "@/lib/page-title-context";
 import { countNoun } from "@/lib/plural";
 import { scheduleScannerRefocus } from "@/lib/refocus-scanner";
+import { useListboxNav } from "@/lib/use-listbox-nav";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import {
   useCreateInvoice,
@@ -47,6 +48,7 @@ import {
   type SaleLinePricing,
 } from "@/lib/sale-line-pricing";
 import { reasonRequiredMessage } from "@/lib/staff-price-override";
+import { INVOICE_STALE_COPY, isInvoiceStale } from "@/lib/invoice-stale";
 import { apiClient } from "@/lib/api-client";
 import { useSaleAttemptKey } from "@/lib/use-sale-attempt-key";
 import type { UnknownSale } from "@routeflow/types/sale-attempt";
@@ -61,7 +63,6 @@ import {
   isGroupExpanded,
   pickerProductName,
   sellableFlat,
-  sellableOnly,
 } from "@/lib/product-search-groups";
 import { BarcodeScannerButton } from "@/components/BarcodeScannerButton";
 import { bumpInvoiceLine, scanLevelForHit, seedLineQty } from "../invoice-scan-level";
@@ -69,7 +70,6 @@ import { InlineCreateProductModal } from "@/components/InlineCreateProductModal"
 import { fmt, fmtCalendarDate } from "@/lib/formatting";
 import { getDaysForTerms, addDaysIso } from "@/lib/invoice-terms";
 import {
-  isSpecialTier,
   computeInvoiceLineTotal,
   computeInvoiceTotals,
   type InvoiceTotalsLine,
@@ -116,6 +116,17 @@ import { useMarginConfig, floorForCategory } from "@/lib/api/margin";
 import { MarginHint } from "@/components/MarginHint";
 import { DecimalInput, MoneyInput } from "@/components/MoneyInput";
 import { ReadOnlyHint, WriteButton } from "@/lib/read-only-gate";
+import { getTenantCookie } from "@/lib/tenant-cookie";
+import { invoiceDraftKey, isPristineForm } from "@/lib/invoice-draft-storage";
+import { catalogPricing } from "./invoice-catalog-price";
+import { useInvoiceDraft } from "./use-invoice-draft";
+import { checkDraftReferences } from "./invoice-draft-restore";
+import {
+  DRAFT_CANCELLED_COPY,
+  InvoiceDraftBanner,
+  draftNoticeCopy,
+  draftSummary,
+} from "./InvoiceDraftBanner";
 
 // ─── Terms options ─────────────────────────────────────────────────────────────
 
@@ -822,6 +833,35 @@ export default function NewInvoicePage() {
   // Track the draft id we've previewed so subsequent "Preview" clicks update
   // the same draft instead of creating a new one each time.
   const [currentDraftId, setCurrentDraftId] = React.useState<string | null>(null);
+  // H4: the composer's own draft token: the updatedAt of the last create / update / read of THAT draft, sent as
+  // expectedUpdatedAt on the next PATCH (a 409 INVOICE_STALE then means someone else changed it).
+  const draftToken = React.useRef<string | undefined>(undefined);
+  /** Creates the preview draft, or saves the dto onto it; returns its id and keeps the token current. */
+  async function upsertDraft(dto: unknown): Promise<string> {
+    if (currentDraftId) {
+      const saved: any = await updateInvoice.mutateAsync({
+        id: currentDraftId,
+        ...(dto as object),
+        expectedUpdatedAt: draftToken.current,
+      } as any);
+      draftToken.current = saved?.updatedAt;
+      return currentDraftId;
+    }
+    const created: any = await createInvoice.mutateAsync(
+      dto as Parameters<typeof createInvoice.mutate>[0],
+    );
+    draftToken.current = created?.updatedAt;
+    setCurrentDraftId(created.id);
+    draft.clear(); // the invoice now exists as a server draft (ROW 447)
+    return created.id;
+  }
+  /** H4: someone else changed this draft since the composer last saw it: fixed copy, never the server's. */
+  const staleCopy = (err: unknown) => (isInvoiceStale(err) ? INVOICE_STALE_COPY : undefined);
+  /** The first PDF render writes the draft's pdfUrl (a new updatedAt): re-read the token after it. */
+  async function refreshDraftToken(id: string) {
+    const fresh = await apiClient.get<{ updatedAt?: string }>(`/invoices/${id}`);
+    draftToken.current = fresh.data?.updatedAt;
+  }
   const [previewUrl, setPreviewUrl] = React.useState<string | null>(null);
   const [previewLoading, setPreviewLoading] = React.useState(false);
 
@@ -1030,6 +1070,149 @@ export default function NewInvoicePage() {
     return copy;
   }
 
+  // ── Unsaved-draft persistence (ROW 447) ─────────────────────────────────────
+  // Inputs only (never a total): the footer totals below are recomputed from the lines on every render, including
+  // right after a restore. Offered, never applied silently; this page has no URL prefill to collide with.
+  const draftKey = invoiceDraftKey(authUser?.tenantSlug ?? getTenantCookie(), authUser?.id);
+  const draftForm = React.useMemo(
+    () =>
+      basis === "newSale" || basis === "standalone"
+        ? {
+            basis,
+            customer: customer && {
+              id: customer.id,
+              businessName: customer.businessName,
+              pricingTier: customer.pricingTier,
+              defaultPaymentTerms: customer.defaultPaymentTerms,
+            },
+            reference,
+            subject,
+            terms,
+            issueDate,
+            dueDate,
+            dueDateEdited: dueDateEditedRef.current,
+            termsText,
+            notes,
+            deliveredNow,
+            deliveredOn,
+            depositOpen,
+            depositPercent,
+            depositDueDate,
+            adjustment,
+            lines: items,
+          }
+        : null,
+    [
+      basis,
+      customer,
+      reference,
+      subject,
+      terms,
+      issueDate,
+      dueDate,
+      termsText,
+      notes,
+      deliveredNow,
+      deliveredOn,
+      depositOpen,
+      depositPercent,
+      depositDueDate,
+      adjustment,
+      items,
+    ],
+  );
+  const draft = useInvoiceDraft(draftKey, draftForm);
+  const [draftBusy, setDraftBusy] = React.useState(false);
+  const [draftNotice, setDraftNotice] = React.useState<string | null>(null);
+  const [draftRestored, setDraftRestored] = React.useState(false);
+  // A ref, not state: two quick clicks must not both start a restore before a re-render shows the busy flag.
+  const draftBusyRef = React.useRef(false);
+  const draftFormRef = React.useRef(draftForm);
+  draftFormRef.current = draftForm;
+  async function restoreDraft() {
+    if (!draft.offer || draftBusyRef.current) return;
+    draftBusyRef.current = true;
+    setDraftBusy(true);
+    const formAtStart = draftFormRef.current;
+    try {
+      const r = await checkDraftReferences(draft.offer.snapshot, (u) => apiClient.get(u));
+      // The form stays usable while the checks run. If it changed meanwhile, applying would overwrite what was typed.
+      if (draftFormRef.current !== formAtStart) {
+        setDraftNotice(DRAFT_CANCELLED_COPY);
+        return;
+      }
+      setDraftNotice(null);
+      const s = r.snapshot;
+      // The seeding effects above must not overwrite what the user had chosen.
+      didPrefillRef.current = true;
+      didSeedTermsRef.current = true;
+      seededCustomerIdRef.current = s.customer?.id ?? null;
+      // Terms that are just the customer's (or tenant's) default stay re-seedable; only a different pick is manual.
+      if (s.terms) {
+        termsSourceRef.current =
+          s.terms === s.customer?.defaultPaymentTerms
+            ? "customer"
+            : s.terms === invoiceSettings?.defaultTerms
+              ? "tenant"
+              : "manual";
+      }
+      dueDateEditedRef.current = s.dueDateEdited;
+      setBasis(s.basis);
+      setCustomer((s.customer as Customer | null) ?? null);
+      setReference(s.reference);
+      setSubject(s.subject);
+      setTerms(s.terms);
+      setIssueDate(s.issueDate || todayIso());
+      setDueDate(s.dueDate || addDaysIso(s.issueDate || todayIso(), 30));
+      setTermsText(s.termsText);
+      setNotes(s.notes);
+      setDeliveredNow(s.deliveredNow);
+      setDeliveredOn(s.deliveredOn || todayIso());
+      setDepositOpen(s.depositOpen);
+      setDepositPercent(s.depositPercent);
+      setDepositDueDate(s.depositDueDate);
+      setAdjustment(s.adjustment);
+      setItems(
+        s.lines.length
+          ? s.lines.map((l) => ({ ...createEmptyItem(), ...l }) as LineItemState)
+          : [createEmptyItem()],
+      );
+      setErrors({});
+      setDraftNotice(
+        draftNoticeCopy(
+          r.droppedLines,
+          r.customerCleared,
+          r.pricesUpdated,
+          r.unitsDropped,
+          r.pricesUnchecked,
+        ),
+      );
+      setDraftRestored(true);
+      draft.resolveOffer();
+    } finally {
+      draftBusyRef.current = false;
+      setDraftBusy(false);
+    }
+  }
+  const draftBanner = (
+    <InvoiceDraftBanner
+      summary={draft.offer ? draftSummary(draft.offer.snapshot, draft.offer.savedAt) : null}
+      notice={draftNotice}
+      restored={draftRestored}
+      warning={!!draft.offer && !isPristineForm(draftForm)}
+      busy={draftBusy}
+      onRestore={() => void restoreDraft()}
+      onDiscard={() => {
+        setDraftNotice(null);
+        draft.discard();
+      }}
+      onDismissNotice={() => {
+        setDraftNotice(null);
+        setDraftRestored(false);
+      }}
+    />
+  );
+
   // ── Auto-update due date when terms change ────────────────────────────────
 
   function handleTermsChange(t: string) {
@@ -1127,18 +1310,12 @@ export default function NewInvoicePage() {
   ) {
     const dflt = unitsOn && !!opts?.startOnDefaultUnit;
     const upb = boxedUnitsPerBox(product.unitsPerBox);
-    const listPrice = parseFloat(String(product.pricePerUnit ?? 0));
-    // Per-product tier override first, then the customer's own tier ladder —
-    // a Tier-3 customer previously billed at LIST on every catalog add here.
-    const customerTier = customer?.pricingTier ?? 1;
-    const tierLadderPrice = isSpecialTier(customerTier)
-      ? getTierPrice(product, customerTier)
-      : undefined;
-    const specialPrice: number | undefined = priceMap[product.id] ?? tierLadderPrice;
-    const effectivePrice =
-      specialPrice != null && Number.isFinite(specialPrice) && specialPrice !== listPrice
-        ? specialPrice
-        : listPrice;
+    const fresh = catalogPricing(product, {
+      customerTier: customer?.pricingTier ?? 1,
+      customerPrice: priceMap[product.id],
+      lineTier: tierFor(product.id),
+    });
+    const { listPrice, effectivePrice } = fresh;
 
     const seed = seedLineQty(upb, scanLevel);
     const lineItem: LineItemState = {
@@ -1155,7 +1332,7 @@ export default function NewInvoicePage() {
       taxable: false,
       regularPrice: effectivePrice !== listPrice ? listPrice : undefined,
       isSpecialPrice: effectivePrice !== listPrice,
-      pricing: saleLinePricing(product, tierFor(product.id)),
+      pricing: fresh.pricing,
       avgCost: product.averageCost ? parseFloat(String(product.averageCost)) : undefined,
       category: product.category ?? undefined,
       unitsPerBox: upb,
@@ -1164,13 +1341,7 @@ export default function NewInvoicePage() {
       unit: product.unit ?? "each",
       listPrice,
       priceType: effectivePrice !== listPrice ? "SPECIAL" : "STANDARD",
-      tierPrices: {
-        pricePerUnit: product.pricePerUnit,
-        priceTier2: product.priceTier2,
-        priceTier3: product.priceTier3,
-        priceTier4: product.priceTier4,
-        priceTier5: product.priceTier5,
-      },
+      tierPrices: fresh.tierPrices,
       startOnDefaultUnit: dflt || undefined,
       pendingTaps: dflt ? 1 : undefined,
     };
@@ -1235,18 +1406,43 @@ export default function NewInvoicePage() {
     limit: 10,
     includeVariants: true,
   });
-  const scanSuggestions = React.useMemo(() => {
+  // Flat typeahead: variants (named under their parent) and standalones, never a FAMILY (B1215).
+  const scanFlat = React.useMemo(() => {
     if (!debouncedScanQuery.trim()) return [] as any[];
-    // Flat typeahead: variants (named under their parent) and standalones, never a FAMILY (B1215).
-    return sellableFlat<any>((scanProductsData?.data as any[]) ?? []).slice(0, 8);
+    return sellableFlat<any>((scanProductsData?.data as any[]) ?? []);
   }, [scanProductsData, debouncedScanQuery]);
+  // The rows the dropdown shows, in order — the ONE list both the dropdown and Enter read (M3).
+  const scanSuggestions = React.useMemo(() => scanFlat.slice(0, 8), [scanFlat]);
+  const scanListOpen = !!scanQuery.trim() && scanSuggestions.length > 0;
+
+  /** Add a dropdown row (click, or Enter on an arrow-highlighted row). */
+  function pickScanSuggestion(p: any) {
+    addProductFromCatalog(p, undefined, { startOnDefaultUnit: true });
+    setScanQuery("");
+    setDebouncedScanQuery("");
+  }
+
+  // Arrow keys move the highlight (clamped); -1 = untouched, which Enter treats as the first shown
+  // row after the exact barcode/SKU check, so a wedge scanner never lands on a different product.
+  const scanNav = useListboxNav({
+    items: scanSuggestions,
+    open: scanListOpen,
+    onPick: pickScanSuggestion,
+    resetKey: scanQuery,
+    idPrefix: "invoice-scan",
+  });
+  const scanHighlight = scanNav.highlight >= 0 ? scanNav.highlight : 0;
 
   /**
    * Resolve a scanned/typed code to a product and add it to the invoice.
    * Mirrors the order modal's flow: barcode endpoint → product search by
    * SKU/name → create-product modal as last resort.
    */
-  async function handleScanCode(rawCode: string) {
+  async function handleScanCode(
+    rawCode: string,
+    /** The dropdown rows currently shown for this exact text: the search fallback reads these. */
+    shown?: { all: any[]; first: any },
+  ) {
     const code = rawCode.trim();
     if (!code || saleLocked) return;
     setScanQuery("");
@@ -1265,16 +1461,23 @@ export default function NewInvoicePage() {
     } catch {
       // not found by barcode — fall through to SKU/name search
     }
-    // 2) SKU / name search; prefer exact SKU
+    // 2) SKU / name search; prefer exact SKU, else the first row the operator was shown (M3).
+    // Without a shown list (a scan sent before the dropdown rendered) fetch the search instead.
     try {
-      const res = await apiClient
-        .get("/products", {
-          params: { search: code, limit: 10, isActive: true, includeVariants: true },
-        })
-        .then((r) => r.data);
-      const matches: any[] = sellableOnly<any>(res?.data ?? []);
+      let matches: any[];
+      if (shown) {
+        matches = shown.all;
+      } else {
+        const res = await apiClient
+          .get("/products", {
+            params: { search: code, limit: 10, isActive: true, includeVariants: true },
+          })
+          .then((r) => r.data);
+        // The same flattening the dropdown uses, so Enter adds what it WILL show first (M3 review).
+        matches = sellableFlat<any>(res?.data ?? []);
+      }
       const skuExact = matches.find((p) => (p.sku ?? "").toLowerCase() === code.toLowerCase());
-      const toAdd = skuExact ?? matches[0];
+      const toAdd = skuExact ?? (shown ? shown.first : matches[0]);
       if (toAdd) {
         addProductFromCatalog(toAdd, scanLevelForHit(code, toAdd), {
           startOnDefaultUnit: matches.length > 1 || scanCodeIsShared(code, toAdd),
@@ -1426,18 +1629,8 @@ export default function NewInvoicePage() {
     if (!validateForPreview()) return;
     setPreviewLoading(true);
     try {
-      const dto = buildPartialInvoiceDto(lines);
-      let invoiceId = currentDraftId;
-      if (invoiceId) {
-        // Update the existing draft so the preview reflects edits
-        await updateInvoice.mutateAsync({ id: invoiceId, ...dto } as any);
-      } else {
-        const created: any = await createInvoice.mutateAsync(
-          dto as Parameters<typeof createInvoice.mutate>[0],
-        );
-        invoiceId = created.id;
-        setCurrentDraftId(invoiceId);
-      }
+      // Create the draft, or update it so the preview reflects edits (H4: with its token).
+      const invoiceId = await upsertDraft(buildPartialInvoiceDto(lines));
       // Two-step: render PDF on the API, then fetch its bytes through the
       // authenticated apiClient. The raw URL points at the storage uploads
       // endpoint which requires a JWT (RF-075); embedding it directly in an
@@ -1446,6 +1639,7 @@ export default function NewInvoicePage() {
       const meta = await apiClient.get<{ url: string }>(`/invoices/${invoiceId}/pdf`, {
         params: { refresh: 1 },
       });
+      await refreshDraftToken(invoiceId);
       if (!meta.data?.url) {
         setPreviewUrl(null);
       } else {
@@ -1459,7 +1653,8 @@ export default function NewInvoicePage() {
     } catch (err) {
       toast({
         title: "Couldn't build preview",
-        description: unitRefusal(err, lines) ?? "Check your inputs and try again.",
+        description:
+          staleCopy(err) ?? unitRefusal(err, lines) ?? "Check your inputs and try again.",
         variant: "error",
       });
     } finally {
@@ -1479,21 +1674,12 @@ export default function NewInvoicePage() {
     if (!validateForPreview()) return;
     setDownloadLoading(true);
     try {
-      const dto = buildPartialInvoiceDto(lines);
-      let invoiceId = currentDraftId;
-      if (invoiceId) {
-        await updateInvoice.mutateAsync({ id: invoiceId, ...dto } as any);
-      } else {
-        const created: any = await createInvoice.mutateAsync(
-          dto as Parameters<typeof createInvoice.mutate>[0],
-        );
-        invoiceId = created.id;
-        setCurrentDraftId(invoiceId);
-      }
+      const invoiceId = await upsertDraft(buildPartialInvoiceDto(lines));
       const meta = await apiClient.get<{ url: string; invoiceNumber?: string }>(
         `/invoices/${invoiceId}/pdf`,
         { params: { refresh: 1 } },
       );
+      await refreshDraftToken(invoiceId);
       if (!meta.data?.url) throw new Error("No PDF URL returned");
       const blob = await fetchPdfBlob(meta.data.url, apiClient);
       const blobUrl = URL.createObjectURL(blob);
@@ -1509,7 +1695,7 @@ export default function NewInvoicePage() {
     } catch (err) {
       toast({
         title: "Couldn't generate PDF",
-        description: unitRefusal(err, lines) ?? "Please try again.",
+        description: staleCopy(err) ?? unitRefusal(err, lines) ?? "Please try again.",
         variant: "error",
       });
     } finally {
@@ -1521,6 +1707,7 @@ export default function NewInvoicePage() {
     if (!currentDraftId) return;
     try {
       await apiClient.post(`/invoices/${currentDraftId}/send`);
+      draft.clear();
       toast({
         title: "Invoice sent",
         description: "The draft has been sent.",
@@ -1626,6 +1813,7 @@ export default function NewInvoicePage() {
         onSuccess: (inv) => {
           saleKey.settle({ ok: true });
           setSaleUnknown(null);
+          draft.clear(); // the sale exists now (ROW 447)
           toast({
             title: deliveredNow ? "Sale recorded" : send ? "Invoice sent" : "Invoice saved",
             variant: "success",
@@ -1636,7 +1824,13 @@ export default function NewInvoicePage() {
           saleKey.settle({ ok: false, error: err });
           const unknown = saleKey.unknown();
           setSaleUnknown(unknown);
-          if (unknown) return; // locked: the panel offers Try again / Open / Start a new sale
+          if (unknown) {
+            // SA ruling (train S2): the outcome is unknown, so the sale may be committed. Drop the local draft:
+            // the in-memory locked cart keeps "Try again" with the held key, while a restore on a fresh page
+            // would mint a new key and could duplicate a committed sale.
+            draft.clear();
+            return; // locked: the panel offers Try again / Open / Start a new sale
+          }
           toast({
             title: "Could not create the sale",
             description: unitRefusal(err, saleLines) ?? "Please check your inputs and try again.",
@@ -1653,33 +1847,40 @@ export default function NewInvoicePage() {
     // If we already have a preview draft, just update it and optionally send.
     if (currentDraftId) {
       const dto = buildInvoiceDto(false, lines);
-      updateInvoice.mutate({ id: currentDraftId, ...dto } as any, {
-        onSuccess: async () => {
-          let sendFailed = false;
-          if (sendNow) {
-            try {
-              await apiClient.post(`/invoices/${currentDraftId}/send`);
-            } catch {
-              // Row 466: never say "sent" when it was not. The draft is kept; open it.
-              sendFailed = true;
+      updateInvoice.mutate(
+        { id: currentDraftId, ...dto, expectedUpdatedAt: draftToken.current } as any,
+        {
+          onSuccess: async () => {
+            draft.clear(); // saved to the server draft (ROW 447)
+            let sendFailed = false;
+            if (sendNow) {
+              try {
+                await apiClient.post(`/invoices/${currentDraftId}/send`);
+              } catch {
+                // Row 466: never say "sent" when it was not. The draft is kept; open it.
+                sendFailed = true;
+              }
             }
-          }
-          if (sendFailed) toast({ ...KEPT_DRAFT_TOAST, variant: "warning" });
-          else
+            if (sendFailed) toast({ ...KEPT_DRAFT_TOAST, variant: "warning" });
+            else
+              toast({
+                title: sendNow ? "Invoice sent" : "Draft saved",
+                variant: "success",
+              });
+            router.push(`/invoices/${currentDraftId}`);
+          },
+          onError: (err: unknown) => {
             toast({
-              title: sendNow ? "Invoice sent" : "Draft saved",
-              variant: "success",
+              title: "Failed to save invoice",
+              description:
+                staleCopy(err) ??
+                unitRefusal(err, lines) ??
+                "Please check your inputs and try again.",
+              variant: "error",
             });
-          router.push(`/invoices/${currentDraftId}`);
+          },
         },
-        onError: (err: unknown) => {
-          toast({
-            title: "Failed to save invoice",
-            description: unitRefusal(err, lines) ?? "Please check your inputs and try again.",
-            variant: "error",
-          });
-        },
-      });
+      );
       return;
     }
 
@@ -1687,6 +1888,7 @@ export default function NewInvoicePage() {
 
     createInvoice.mutate(dto as Parameters<typeof createInvoice.mutate>[0], {
       onSuccess: (invoice) => {
+        draft.clear();
         toast({
           title: sendNow ? "Invoice sent" : "Draft saved",
           description: sendNow
@@ -1701,6 +1903,8 @@ export default function NewInvoicePage() {
         // second create (a retry here would duplicate the invoice).
         const keptId = keptDraftInvoiceId(err);
         if (keptId) {
+          // Train S2 (SA): the server holds this invoice now; a restore + submit would create a SECOND one.
+          draft.clear();
           toast({ ...KEPT_DRAFT_TOAST, variant: "warning" });
           router.push(`/invoices/${keptId}`);
           return;
@@ -1715,7 +1919,13 @@ export default function NewInvoicePage() {
   }
 
   // Pick the basis first so every invoice (except the explicit exception) is tied to an order.
-  if (basis === null) return <InvoiceBasisChooser onPick={setBasis} />;
+  if (basis === null)
+    return (
+      <>
+        <div className="mx-auto max-w-2xl px-6 pt-6">{draftBanner}</div>
+        <InvoiceBasisChooser onPick={setBasis} />
+      </>
+    );
   if (basis === "existing") return <ExistingOrderInvoiceFlow onBack={() => setBasis(null)} />;
 
   // basis === "newSale" | "standalone" — both share the customer + line-item form below.
@@ -1748,6 +1958,7 @@ export default function NewInvoicePage() {
           saleLocked && "cursor-not-allowed opacity-[0.45]",
         )}
       >
+        {draftBanner}
         {/* Back to the basis chooser */}
         <button
           onClick={() => setBasis(null)}
@@ -2027,13 +2238,28 @@ export default function NewInvoicePage() {
                     value={scanQuery}
                     onChange={(e) => setScanQuery(e.target.value)}
                     onKeyDown={(e) => {
+                      // ArrowDown from the untouched first-row highlight must land on row 2.
+                      if (e.key === "ArrowDown" && scanListOpen && scanNav.highlight < 0) {
+                        scanNav.setHighlight(0);
+                      }
+                      // An arrow-highlighted row is picked here and the key is consumed.
+                      if (scanNav.onKeyDown(e)) return;
                       if (e.key === "Enter") {
                         e.preventDefault();
-                        // If a suggestion is open and user picked one with mouse, that path
-                        // already handles add. Otherwise treat the typed text as a scan code.
-                        void handleScanCode(scanQuery);
+                        // Treat the typed text as a scan code (exact barcode / SKU wins); with
+                        // nothing exact, add the first row the dropdown shows. The shown list is
+                        // only trusted once it was built from this exact text (debounce settled).
+                        const settled = scanListOpen && debouncedScanQuery === scanQuery;
+                        void handleScanCode(
+                          scanQuery,
+                          settled ? { all: scanFlat, first: scanSuggestions[0] } : undefined,
+                        );
                       }
                     }}
+                    {...scanNav.inputProps}
+                    aria-activedescendant={
+                      scanListOpen ? scanNav.optionId(scanHighlight) : undefined
+                    }
                     placeholder="Scan barcode, or type product name / SKU and press Enter…"
                     className="h-10 w-full rounded-lg border border-surface-border bg-white pl-9 pr-9 text-sm text-navy placeholder:text-navy/30 focus:border-transparent focus:outline-none focus:ring-2 focus:ring-brand-500"
                   />
@@ -2056,20 +2282,29 @@ export default function NewInvoicePage() {
                           (Enter or click to add)
                         </span>
                       </p>
-                      <ul role="listbox" className="py-1">
-                        {scanSuggestions.map((p: any) => {
+                      <ul
+                        id={scanNav.listId}
+                        role="listbox"
+                        aria-label="Product suggestions"
+                        className="py-1"
+                      >
+                        {scanSuggestions.map((p: any, i: number) => {
                           const alreadyAdded = items.some((it) => it.productId === p.id);
                           return (
-                            <li key={p.id}>
+                            <li key={p.id} role="presentation">
                               <button
                                 type="button"
+                                role="option"
+                                id={scanNav.optionId(i)}
+                                aria-selected={i === scanHighlight}
                                 onMouseDown={(e) => {
                                   e.preventDefault();
-                                  addProductFromCatalog(p, undefined, { startOnDefaultUnit: true });
-                                  setScanQuery("");
-                                  setDebouncedScanQuery("");
+                                  pickScanSuggestion(p);
                                 }}
-                                className="flex w-full items-center gap-3 px-3 py-2 text-left text-sm text-navy transition-colors hover:bg-brand-50"
+                                className={cn(
+                                  "flex w-full items-center gap-3 px-3 py-2 text-left text-sm text-navy transition-colors hover:bg-brand-50",
+                                  i === scanHighlight && "bg-brand-50",
+                                )}
                               >
                                 <div className="min-w-0 flex-1">
                                   {(() => {

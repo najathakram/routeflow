@@ -38,6 +38,8 @@ const SEND_SELECT = {
   periodStart: true,
   periodEnd: true,
   dueDate: true,
+  issuedAt: true,
+  needsReview: true,
   lines: true,
   lastSentAt: true,
   tenant: { select: { subscription: { select: { stripeSubId: true, catchupState: true } } } },
@@ -180,7 +182,7 @@ export class RfInvoiceMailerService {
     if (rfInvoicingMode() !== "live") return;
     try {
       const row = await this.prisma.rfInvoice.findFirst({
-        where: { id: invoiceId },
+        where: { id: invoiceId, tenant: rfInvoiceTenantScope(rfInvoiceTestTenantSlugs()) },
         select: SEND_SELECT,
       });
       if (!row || row.status !== "OPEN" || paysByCard(row)) return;
@@ -197,6 +199,9 @@ export class RfInvoiceMailerService {
     kind: Exclude<RfInvoiceSendTrigger, "manual">,
     now: Date,
   ): Promise<boolean> {
+    // A row flagged `needsReview` (an irregular period, a zero-priced add-on line, a partly covered period) is
+    // never chased automatically at any step - issue email, d0, d7 or d14. A manual resend is still allowed.
+    if (row.needsReview === true) return false;
     const r = await this.notifier.sendRfInvoice(this.forEmail(row, now), kind);
     if (r.status !== "sent") return false;
     await this.record(row, kind, r.recipients, null, now);
@@ -211,7 +216,8 @@ export class RfInvoiceMailerService {
   /**
    * d0 / d7 / d14 reminders for OPEN invoices of PRODUCTION tenants (plus the test allowlist), at the highest stage reached
    * (UTC days after the due date). Claim-keyed "<number>:<stage>", so a rerun sends nothing, and nothing
-   * more follows d14. Tenants now paying by card are skipped. Flag only: no consequence follows a reminder.
+   * more follows d14. Tenants now paying by card are skipped, and so is any invoice flagged `needsReview`.
+   * Flag only: no consequence follows a reminder.
    */
   async runRemind(now: Date): Promise<RemindSummary> {
     const mode = rfInvoicingMode();
@@ -235,7 +241,7 @@ export class RfInvoiceMailerService {
       orderBy: { dueDate: "asc" },
     });
     for (const row of rows as any[]) {
-      if (paysByCard(row)) continue;
+      if (paysByCard(row) || row.needsReview === true) continue;
       const daysAfter = Math.round((today.getTime() - dayStart(row.dueDate).getTime()) / DAY_MS);
       // Bounded catch-up: a stage is live from its stage day to CATCHUP_DAYS after it (a missed cron is
       // made up), then skipped for good. Only the highest live stage is tried and its claim key makes it once.
@@ -243,6 +249,13 @@ export class RfInvoiceMailerService {
         .reverse()
         .find((s) => daysAfter >= s.days && daysAfter <= s.days + RF_INVOICE_REMINDER_CATCHUP_DAYS);
       if (!stage) continue;
+      // The issue email already told the tenant where the invoice stands: a stage whose day was at or before
+      // the day the invoice was issued is covered by it (a same-day d0 would double up), later stages still fire.
+      if (
+        row.issuedAt &&
+        dayStart(row.issuedAt).getTime() >= dayStart(row.dueDate).getTime() + stage.days * DAY_MS
+      )
+        continue;
       summary.considered++;
       try {
         if (await this.sendAutoRow(row, stage.trigger, now)) summary.sent++;

@@ -365,6 +365,8 @@ export function useAdminCustomer(id: string) {
 // ─── Invoices (Admin) ─────────────────────────────────────────────────────────
 
 export interface AdminInvoice {
+  /** H4: sent back as `expectedUpdatedAt` on PATCH /invoices/:id (409 INVOICE_STALE when behind). */
+  updatedAt?: string;
   id: string;
   invoiceNumber: string;
   /** P-4: derived by the API; absent = never revised / not overpaid (nothing shown). */

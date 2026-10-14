@@ -131,6 +131,7 @@ import {
   invoiceListOrderBy,
 } from "./invoice-list-query";
 import { UpdateShipmentDto } from "../orders/dto/update-shipment.dto";
+import { resolveShipmentText } from "../orders/shipment-text";
 import { JwtPayload } from "../auth/jwt-payload.interface";
 import { RouteFlowGateway } from "../gateways/routeflow.gateway";
 import { EmailService } from "../email/email.service";
@@ -216,6 +217,8 @@ import {
   assertStillDraft,
   intakeMoney,
   loadLockedInvoiceForEdit,
+  noTokenWarner,
+  updateHeaderOnly,
   planHeaderOnlyTotals,
 } from "./locked-invoice-edit";
 import { resolveLineUnits } from "../products/line-units";
@@ -3083,6 +3086,7 @@ export class InvoicesService {
 
   async update(id: string, dto: UpdateInvoiceDto) {
     assertFiniteInvoiceInput(dto); // N4: NaN is a 400, not a silent $0
+    const warnNoToken = noTokenWarner(id); // H4: one release of grace for token-less clients
     const inv = await this.findOneOrThrow(id); // a missing invoice is a 404 whatever else is wrong
     // units_v1 (VU-4a, D3): a unit line is accepted only on an order-LESS DRAFT (resolveLineUnits below);
     // a SENT or order-linked one stays refused (the back-sync would write the unit onto the order line).
@@ -3092,7 +3096,7 @@ export class InvoicesService {
     if (inv.status !== InvoiceStatus.DRAFT)
       throw new BadRequestException("Only DRAFT invoices can be edited");
     await this.assertOrderInvoiceUnlocked(inv);
-
+    resolveShipmentText(dto, inv); // row 507: a CHANGED formula-led carrier / tracking is a coded 400
     // #2197: the same literal calendar-day stamp create() writes.
     const issueDate = dto.issueDate ? issueDateStamp(dto.issueDate) : undefined;
     const due = dueDateStamps(dto); // #2256: and the due dates, before either rewrite path runs
@@ -3125,7 +3129,7 @@ export class InvoicesService {
         // Serialize concurrent saves of this invoice: rows are read AFTER the lock, so a second save
         // sees the first's rows and totals instead of writing over them (no P2025, total = its lines).
         // Lock order (SA-137/203): the ORDER row first, then the invoice (loadLockedInvoiceForEdit, B1043).
-        const locked = await loadLockedInvoiceForEdit(tx, id);
+        const locked = await loadLockedInvoiceForEdit(tx, id, dto.expectedUpdatedAt, warnNoToken);
         assertStillDraft(locked.invoice); // r87: DRAFT re-checked under the lock
         assertSameOrderLink(locked.invoice, inv); // the pre-read order is the one we locked
         // SA-674b / SA-689 a: with the carrier, the shipment invoice keeps its lines and quantities. Read
@@ -3292,9 +3296,9 @@ export class InvoicesService {
     // Totals untouched: nothing to lock. Totals touched: the SAME locks and locked reads as the items branch,
     // ONE update for the header fields + the totals (F4), the prior for the sanity guard from the LOCKED row.
     const updated = !needsRecalc
-      ? await this.prisma.forTenant().invoice.update({ where: { id }, data: headerData, include })
+      ? await updateHeaderOnly(this.prisma, id, dto, headerData, include, warnNoToken)
       : await this.prisma.tenantTransaction(async (tx: any) => {
-          const locked = await loadLockedInvoiceForEdit(tx, id);
+          const locked = await loadLockedInvoiceForEdit(tx, id, dto.expectedUpdatedAt, warnNoToken);
           assertStillDraft(locked.invoice); // r87
           assertSameOrderLink(locked.invoice, inv);
           const { subtotal, ...totals } = planHeaderOnlyTotals(locked, dto);
@@ -3317,15 +3321,12 @@ export class InvoicesService {
    * clears `shippedAt`; the first time a number is set we stamp `shippedAt`.
    */
   async updateInvoiceShipment(id: string, dto: UpdateShipmentDto) {
-    const inv = await this.prisma
-      .forTenant()
-      .invoice.findFirst({ where: { id }, select: { id: true, status: true, shippedAt: true } });
+    const inv = await this.prisma.forTenant().invoice.findFirst({ where: { id } });
     if (!inv) throw new NotFoundException("Invoice not found");
     if (inv.status === InvoiceStatus.VOID)
       throw new BadRequestException("Cannot update tracking on a voided invoice");
 
-    const carrier = dto.shippingCarrier?.trim() || null;
-    const tracking = dto.shippingTrackingNumber?.trim() || null;
+    const { carrier, tracking } = resolveShipmentText(dto, inv); // row 507: trim + formula guard
     const shippedAt = tracking ? (inv.shippedAt ?? new Date()) : null;
 
     return this.prisma.forTenant().invoice.update({

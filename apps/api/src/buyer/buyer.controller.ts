@@ -694,18 +694,14 @@ export class BuyerController {
             const upbForStoredSnapshots = new Map(
               [...upbByProduct].filter(([id]) => boxAwareIncoming.has(id)),
             );
-            // ⚠️ The fold's R0/R11 price-survival contract ("a merge is never where an
-            // operator's price override silently disappears") does NOT hold on THIS
-            // caller, and not because of anything here: `updateOrderItems`' CUSTOMER
-            // branch re-prices every catalog line through `resolveBuyerLinePrice` and
-            // never reads `item.unitPrice`, so a preserved MANUAL override is dropped
-            // and the line re-prices at the tier ladder. That is pre-existing (the
-            // naive merge dropped it too) and B13-correct in posture — a buyer payload
-            // must never set a price — but it means an operator's courtesy price on the
-            // buyer's active order does not survive the buyer adding to it. Filed as a
-            // register entry rather than fixed here: the fix belongs in the CUSTOMER
-            // branch (honour a STORED override, still never a client-supplied one),
-            // which is F07's file region.
+            // Row 497 (what the fold below does with prices): `updateOrderItems`' CUSTOMER branch recreates every
+            // line and prices each one itself; it never reads a client-supplied `item.unitPrice` (B13). A line the
+            // fold names by `sourceLineId` KEEPS its stored price, type, original price, reason and stamp ONLY if
+            // it is an operator OVERRIDE (DISCOUNTED / MANUAL, or SPECIAL with a stored reason), the product and
+            // unit are unchanged and its box size is unchanged; the subtotal is recomputed from the kept price
+            // (@routeflow/pricing). Everything else re-prices at the buyer's CURRENT tier (SA-507b): a plain tier
+            // line, a new line, a changed product, and the extra quantity a fold SPLITS onto a new line (that
+            // quantity is a new sale, so it never inherits the override).
             const foldResult = foldMergeItems(
               normalizeBoxUnawareSnapshots(lineItems, upbForStoredSnapshots),
               normalizedIncoming,

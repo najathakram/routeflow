@@ -48,7 +48,7 @@ import { API_ERROR_CODES } from "../common/api-error-codes";
 
 const CATALOG = {
   addonSkus: [
-    { sku: "CUSTOMER_PACK_100", name: "Customer pack", monthlyPrice: 12 },
+    { sku: "CUSTOMER_PACK_100", name: "Customer pack", monthlyPrice: 12, stackable: true },
     { sku: "FORECASTING", name: "Forecasting", monthlyPrice: 25, includedAtPlan: "SCALE" },
     { sku: "MSRP", name: "MSRP", monthlyPrice: 20 },
   ],

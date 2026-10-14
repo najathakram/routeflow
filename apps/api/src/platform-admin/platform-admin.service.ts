@@ -18,6 +18,14 @@ import { PrismaService } from "../prisma/prisma.service";
 import { EmailService } from "../email/email.service";
 import { BillingService } from "../billing/billing.service";
 import { isTerminalStripeSubscriptionStatus } from "../billing/stripe-period";
+import {
+  assertActivationWindowNotEnded,
+  assertWindowClearOfPaidInvoices,
+  findRecentIdenticalActivation,
+  resolveActivationWindow,
+  voidCoveredRfInvoices,
+  type RecentActivation,
+} from "../billing/rf-invoice/rf-invoice-activation-void";
 import { PlatformPricingService } from "../billing/platform-pricing.service";
 import { PlanCatalogService } from "../billing/plan-catalog.service";
 import { ProrationService } from "../billing/proration.service";
@@ -1352,7 +1360,11 @@ export class PlatformAdminService {
     const { version, definition } = await this.resolvePublishedPlan(planKey);
 
     const now = new Date();
-    const periodEnd = new Date(now.getTime() + dto.billingPeriodDays * 24 * 60 * 60 * 1000);
+    // PR4a (owner ruling, option A): the prepaid window starts at the earliest OPEN RouteFlow invoice's period
+    // (else now) and runs billingPeriodDays from there. Resolved inside the transaction, under the tenant row
+    // lock, and written to the subscription; these defaults (no open invoice) are today's [now, now + N).
+    let periodStart = now;
+    let periodEnd = new Date(now.getTime() + dto.billingPeriodDays * 24 * 60 * 60 * 1000);
     // B863 / SA-277: 365-day prepaid = ANNUAL, shorter = MONTHLY; external rows roll length-preserving (rollCycles).
     const cycle: "MONTHLY" | "ANNUAL" = dto.billingPeriodDays >= 365 ? "ANNUAL" : "MONTHLY";
 
@@ -1385,11 +1397,44 @@ export class PlatformAdminService {
     const addonSkusToPrice = await unbilledSelfServeSkus(this.prisma, id);
 
     const exitBox: { exit: PauseExit | null } = { exit: null };
+    const duplicateBox: { hit: RecentActivation | null } = { hit: null };
     const tenant = await withAddonLocks(id, addonSkusToPrice, () =>
       this.prisma.$transaction(async (tx) => {
         // B864 / SA-277 (D2): same tenant row lock as updateStatus/updateTenantClass/
         // updateTenantPriceOverride.
         await tx.$queryRaw`SELECT id FROM "Tenant" WHERE id = ${id} FOR UPDATE`;
+        // PR4a (idempotency): a double-click (or a retried request) of the SAME payment finds its own marker under
+        // this lock and does nothing - the first click's voids consumed the open invoices, so a second run would
+        // otherwise anchor at now and record a SECOND period plus a second marker.
+        const repeated = await findRecentIdenticalActivation(tx, {
+          tenantId: id,
+          now,
+          plan: dto.plan,
+          paymentMethod: dto.paymentMethod,
+          paymentRef: dto.paymentRef ?? null,
+          days: dto.billingPeriodDays,
+        });
+        // Train S2 (money): a repeat is the SAME payment clicked twice while the tenant is still ACTIVE. After a
+        // lapse (SUSPENDED / TRIAL / ...) an identical re-activation is a new one and must book the price again.
+        const stillActive =
+          repeated &&
+          (await tx.tenant.findUniqueOrThrow({ where: { id }, select: { status: true } }))
+            .status === TenantStatus.ACTIVE;
+        if (repeated && stillActive) {
+          duplicateBox.hit = repeated;
+          return tx.tenant.findUniqueOrThrow({ where: { id } });
+        }
+        const activationWindow = await resolveActivationWindow(tx, {
+          tenantId: id,
+          now,
+          days: dto.billingPeriodDays,
+        });
+        // Owner ruling: a window that already ended is refused (409), before any write in this transaction.
+        assertActivationWindowNotEnded(activationWindow, now);
+        // ...and one that would cover an already PAID RouteFlow invoice again (the payment would be taken twice).
+        await assertWindowClearOfPaidInvoices(tx, { tenantId: id, window: activationWindow });
+        periodStart = activationWindow.windowStart;
+        periodEnd = activationWindow.windowEnd;
         if (transition && preparedTransition) {
           await this.planTransition.onPlanChange(tx, transition, preparedTransition);
         }
@@ -1476,7 +1521,7 @@ export class PlatformAdminService {
               currentPlan: dto.plan,
               planKey: definition.planKey,
               planVersionId: version.id,
-              periodStart: now,
+              periodStart,
               periodEnd,
               cycle,
               externalPayment: true,
@@ -1489,7 +1534,7 @@ export class PlatformAdminService {
               currentPlan: dto.plan,
               planKey: definition.planKey,
               planVersionId: version.id,
-              periodStart: now,
+              periodStart,
               periodEnd,
               cycle,
               // Rolling the period forward disarms every pending transition. A downgrade left
@@ -1507,6 +1552,16 @@ export class PlatformAdminService {
             },
           }),
         ]);
+
+        // PR4a (owner ruling): the new prepaid window settles any OPEN RouteFlow invoice it fully covers -
+        // void them in THIS transaction, so the activation and the void land or roll back together.
+        const voidResult = await voidCoveredRfInvoices(tx, {
+          tenantId: id,
+          windowStart: periodStart,
+          windowEnd: periodEnd,
+          actorId: adminId,
+          now,
+        });
 
         // UNCONDITIONAL: the reset also stamps couponSyncedAt = now, so a Stripe read that started before this
         // activation can never write its (now stale) state afterwards, even for a tenant that was not couponFull.
@@ -1643,8 +1698,15 @@ export class PlatformAdminService {
               paymentMethod: dto.paymentMethod,
               cycle,
               // the activation's OWN unsnapped period: the October catch-up measures paid coverage from it
-              periodStart: now.toISOString(),
+              // M1: the ANCHORED start (the earliest open invoice's period), never the click time: the catch-up
+              // measures paid coverage from this, and a "now" here would shrink the covered range.
+              periodStart: periodStart.toISOString(),
               periodEnd: periodEnd.toISOString(),
+              // the repeat guard's key (findRecentIdenticalActivation) and the audit trail of what this settled
+              paymentRef: dto.paymentRef ?? null,
+              billingPeriodDays: dto.billingPeriodDays,
+              voidedInvoiceIds: voidResult.voided,
+              flaggedInvoiceIds: voidResult.flagged,
             },
           },
         });
@@ -1652,6 +1714,21 @@ export class PlatformAdminService {
         return updated;
       }, this.planTransition.transactionOptions(preparedTransition)),
     );
+
+    if (duplicateBox.hit) {
+      // The repeat of a payment already recorded: nothing was written, so no cache, no pause, no trail row.
+      return {
+        id: tenant.id,
+        slug: tenant.slug,
+        status: tenant.status,
+        plan: tenant.plan,
+        periodStart: duplicateBox.hit.periodStart,
+        periodEnd: duplicateBox.hit.periodEnd,
+        paymentMethod: dto.paymentMethod,
+        paymentRef: dto.paymentRef ?? null,
+        repeated: true,
+      };
+    }
 
     this.planTransition.invalidateCaches(id, preparedTransition);
     // Invalidate cached tenant status so the guard picks up ACTIVE immediately
@@ -1670,7 +1747,7 @@ export class PlatformAdminService {
       slug: tenant.slug,
       status: tenant.status,
       plan: tenant.plan,
-      periodStart: now,
+      periodStart,
       periodEnd,
       paymentMethod: dto.paymentMethod,
       paymentRef: dto.paymentRef ?? null,

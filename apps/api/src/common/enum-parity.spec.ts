@@ -127,6 +127,9 @@ const ENUM_TABLE: Array<[string, keyof typeof PrismaEnums]> = [
   ["ROUTE_RUN_STATUS_VALUES", "RouteRunStatus"],
   ["ROUTE_RUN_STOP_STATUS_VALUES", "RouteRunStopStatus"],
   ["HANDOFF_REALM_VALUES", "HandoffRealm"],
+  // M11: the usage meters (a long-standing enum, newly mirrored: the billing page's meter labels are
+  // keyed on it, so a new server meter fails the web type-check instead of printing a raw key).
+  ["METER_KEY_VALUES", "MeterKey"],
   // #2169 (SA-395): brand-new Prisma enum, mirrored immediately as
   // `INVOICE_ITEM_SYSTEM_KIND_VALUES` — see the triage tripwire below.
   ["INVOICE_ITEM_SYSTEM_KIND_VALUES", "InvoiceItemSystemKind"],

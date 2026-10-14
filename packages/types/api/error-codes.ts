@@ -18,6 +18,8 @@
 //                    qty/price/tax/pack changed mid-create; nothing billed, retriable).
 //   ORDER_REVISION_STALE — `body.code` of the 409 on PATCH /orders/:id/items when the client's
 //                    `expectedRevisionNumber` is behind the order's latest revision (nothing written; reload).
+//   INVOICE_STALE — `body.code` of the 409 on PATCH /invoices/:id when the client's `expectedUpdatedAt`
+//                    is not the invoice's current updatedAt (another save landed; nothing written; reload).
 //   ORDER_INVOICE_SETTLE_FAILED — `body.code` of the 409 raised AFTER a ship/deliver status committed when its
 //                    invoice could not be created, updated or checked (the status stays; open the order).
 //   ORDER_INVOICES_NEED_REVIEW — `body.code` of the 409 when more would be billed on an order whose
@@ -137,6 +139,11 @@
 //                    add-on the tenant's plan already bundles, `includedAtPlan`). Both are `body.code` of the refusal and also `refusal.code`
 //                    of GET /billing/proration-preview (billing "REFUSED"), so the confirm sheet and the enable call agree. Clients show
 //                    the body's fixed copy or their own, never a Stripe message.
+//   M11 (stackable add-on quantity) — the enable body's `quantity` is the TARGET total, so a stale page could cut a pack.
+//                    ADDON_QUANTITY_CHANGED (409: `expectedQuantity` no longer matches the stored quantity; nothing was changed, refetch),
+//                    ADDON_QUANTITY_NOT_INCREASED (409: a call carrying `expectedQuantity` is a buy-more and its target is not above it),
+//                    ADDON_NOT_STACKABLE (400: quantity above 1 on a one-per-workspace SKU) and ADDON_RAISE_UNBILLED_ROW (409: raising
+//                    an active row that no Stripe item bills; also `refusal.code` of the preview). Clients show their own fixed copy.
 //   SA-690 (interim gate) — ADDON_BILLING_PENDING_CHECKOUT: the 409 of a Stripe Checkout start (the tenant's own, or the platform-admin
 //                    link) while the tenant holds an active self-serve add-on that no Stripe item bills. Body {code, message}; the message
 //                    names the add-ons and says to turn them off or contact support.
@@ -204,6 +211,7 @@ export const API_ERROR_CODES = {
   CLEANUP_IMPORTED_DISABLED: "CLEANUP_IMPORTED_DISABLED",
   ORDER_LINE_CHANGED: "ORDER_LINE_CHANGED",
   ORDER_REVISION_STALE: "ORDER_REVISION_STALE",
+  INVOICE_STALE: "INVOICE_STALE",
   ORDER_INVOICES_NEED_REVIEW: "ORDER_INVOICES_NEED_REVIEW",
   ORDER_INVOICE_SETTLE_FAILED: "ORDER_INVOICE_SETTLE_FAILED",
   NSF_LINE_UNTAXED: "NSF_LINE_UNTAXED",
@@ -370,6 +378,10 @@ export const API_ERROR_CODES = {
   ADDON_CATALOG_INVALID: "ADDON_CATALOG_INVALID",
   ADDON_BILLING_PENDING_CHECKOUT: "ADDON_BILLING_PENDING_CHECKOUT",
   ADDON_COMP_MANAGED_BY_SUPPORT: "ADDON_COMP_MANAGED_BY_SUPPORT",
+  ADDON_QUANTITY_CHANGED: "ADDON_QUANTITY_CHANGED",
+  ADDON_QUANTITY_NOT_INCREASED: "ADDON_QUANTITY_NOT_INCREASED",
+  ADDON_NOT_STACKABLE: "ADDON_NOT_STACKABLE",
+  ADDON_RAISE_UNBILLED_ROW: "ADDON_RAISE_UNBILLED_ROW",
   ADDON_CHECKOUT_ITEM_UNREADABLE: "ADDON_CHECKOUT_ITEM_UNREADABLE",
   ADDON_CHECKOUT_ITEM_MISSING: "ADDON_CHECKOUT_ITEM_MISSING",
   ADDON_UNCOMP_STRIPE_UNAVAILABLE: "ADDON_UNCOMP_STRIPE_UNAVAILABLE",
@@ -628,6 +640,10 @@ export const API_ERROR_CODES = {
   RF_INVOICE_PAID_AT_IN_FUTURE: "RF_INVOICE_PAID_AT_IN_FUTURE",
   /** Back office: an ACTIVE tenant cannot be moved to TRIAL (extend-trial or the status PATCH). 409. */
   TENANT_TRIAL_EXTEND_NOT_ALLOWED: "TENANT_TRIAL_EXTEND_NOT_ALLOWED",
+  /** Back office: a manual activation whose prepaid window already ended is refused. 409. */
+  ACTIVATION_PERIOD_ALREADY_ENDED: "ACTIVATION_PERIOD_ALREADY_ENDED",
+  /** Back office: a manual activation's window would run over an already PAID RouteFlow invoice. 409. */
+  ACTIVATION_OVERLAPS_PAID_PERIOD: "ACTIVATION_OVERLAPS_PAID_PERIOD",
   /** 403 `code` when an operator holds none of the feature groups an endpoint needs; `groups` lists them. */
   PERMISSION_DENIED: "PERMISSION_DENIED",
   /** 409 from PUT /users/:id/permissions: `expectedVersion` is stale (reload and retry). */

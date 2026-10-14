@@ -3,6 +3,7 @@ import type { LadderUnit, TrackedCategoryRow } from "@routeflow/pricing";
 import {
   assertMayUseUnits,
   buildUnitLine,
+  type StoredUnitLine,
   categoryTaxForLine,
   loadUnitLadders,
   requestsUnit,
@@ -157,8 +158,29 @@ export interface UnitWriteContext {
   ladders: Map<string, LadderUnit[]>;
   tenantId: string | null | undefined;
   tier: (productId: string) => number;
+  /** H3: the acting staff user, stamped on a unit line whose typed price overrides the customer's price. */
+  overriddenBy?: string | null;
+  /** H3: the order's lines as held under the edit's row lock, by id: the stored side of a re-sent price. */
+  held?: ReadonlyMap<string, unknown>;
+  /** H3: the buyer's count diff re-prices a tier line at the current tier on a qty-only edit (SA-507b). */
+  repriceTierOnQtyOnly?: boolean;
   /** trackedCategoryId -> TrackedCategory row, for the products this edit touches (B297). */
   categoryMap: Map<string, TrackedCategoryRow>;
+}
+
+/**
+ * H3: the stored line a replace-all entry re-writes, per the ONE pairing helper (`sourceLineId`: by id, or
+ * the strict same-product, same-unit fallback). The builder re-checks the unit; none = a new sale.
+ */
+export function pairedStoredLine(
+  ctx: Pick<UnitWriteContext, "held">,
+  item: { sourceLineId?: string },
+  productId: string,
+): StoredUnitLine | null {
+  const line = item.sourceLineId ? ctx.held?.get(item.sourceLineId) : undefined;
+  return line && (line as { productId?: string | null }).productId === productId
+    ? (line as StoredUnitLine)
+    : null;
 }
 
 /**
@@ -191,6 +213,8 @@ export async function createUnitLine(
     taxFor: (qty, sub) => categoryTaxForLine(category, qty, sub),
     position,
     tenantId: ctx.tenantId,
+    overriddenBy: ctx.overriddenBy,
+    stored: pairedStoredLine(ctx, item, product.id),
   });
   // Row 373b: a line paired with a stored line (the ONE pairing helper sets `carriedLine`) keeps that line's
   // category, trio and createdAt: a re-created unit line is not a new sale.
@@ -254,6 +278,10 @@ export async function updateUnitLine(
     taxFor: (qty, sub) => categoryTaxForLine(category, qty, sub),
     position: 0,
     tenantId: ctx.tenantId,
+    overriddenBy: ctx.overriddenBy,
+    // a substitute is a new sale: judged against the tier price, never against the line it replaces
+    stored: isSubstitute ? null : (ctx.held?.get(lineId) as StoredUnitLine | undefined),
+    repriceTierOnQtyOnly: ctx.repriceTierOnQtyOnly,
   });
   const data = isSubstitute
     ? {
