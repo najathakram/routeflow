@@ -86,7 +86,7 @@ describe("RestrictionRulesPage", () => {
     ok([rule({ jurisdiction: "FEDERAL", states: [], surface: "BUYER_PORTAL" })]);
     renderWithProviders(<RestrictionRulesPage />);
     const card = await screen.findByTestId("rule-card");
-    expect(within(card).getByText(/federal/)).toBeInTheDocument();
+    expect(within(card).getByText("Banned everywhere (federal)")).toBeInTheDocument();
     expect(within(card).queryByRole("list", { name: "Banned states" })).toBeNull();
     expect(within(card).getByText(/Buyer portal only/)).toBeInTheDocument();
   });
@@ -289,9 +289,7 @@ describe("Portal limits & rules: who sees Lift rule (owner L5)", () => {
     const hintId = btn.getAttribute("aria-describedby");
     expect(hintId).toBeTruthy();
     const hint = document.getElementById(hintId as string);
-    expect(hint).toHaveTextContent(
-      "Only an account admin can lift a rule that hides products from every portal customer.",
-    );
+    expect(hint).toHaveTextContent("Only an account admin can change (or lift) a federal rule.");
     expect(btn).not.toHaveAttribute("title");
   });
 

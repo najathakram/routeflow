@@ -223,7 +223,7 @@ describe("RuleChooserDialog, row 509 SA review", () => {
   });
 
   it("never says `everyone` or `all sales`", () => {
-    expect(ADMIN_ONLY_CHANGE_HINT).toMatch(/every portal customer/);
+    expect(ADMIN_ONLY_CHANGE_HINT).toMatch(/account admin/);
     expect(ADMIN_ONLY_CHANGE_HINT).not.toMatch(/everyone/i);
   });
 

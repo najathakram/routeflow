@@ -16,7 +16,6 @@ import { fmtDate } from "@/lib/formatting";
 import {
   STATUS_BADGE,
   ADMIN_ONLY_CHANGE_HINT,
-  ADMIN_ONLY_LIFT_HINT,
   jurisdictionText,
   liftState,
   ruleSentence,
@@ -224,16 +223,12 @@ export default function RuleDetailPage() {
               size="sm"
               variant="secondary"
               disabled={lift === "admin-only"}
-              aria-describedby={lift === "admin-only" ? "rule-lift-hint" : undefined}
+              // the one hint above says "change (or lift)": the disabled Lift points at it, no second line
+              aria-describedby={lift === "admin-only" ? CHANGE_HINT_ID : undefined}
               onClick={() => setLifting(true)}
             >
               Lift rule
             </Button>
-            {lift === "admin-only" && (
-              <p id="rule-lift-hint" className="text-xs text-navy/70">
-                {ADMIN_ONLY_LIFT_HINT}
-              </p>
-            )}
           </div>
         )}
         {rule.liftedAt && (

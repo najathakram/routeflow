@@ -60,13 +60,12 @@ export const surfaceText = (s: SellingRestrictionListItemDto["surface"]) =>
  * dialog, the catalog chooser, the product page). A rule that hides products from every portal
  * customer is the account admin's to change; operators may still lift a state rule.
  */
-export const ADMIN_ONLY_CHANGE_HINT =
-  "Only an account admin can change a rule that hides products from every portal customer.";
+export const ADMIN_ONLY_CHANGE_HINT = "Only an account admin can change (or lift) a federal rule.";
 /** The note under the disabled "Everywhere (federal)" choice for a viewer who isn't an account admin (SA copy). */
 export const ADMIN_ONLY_FEDERAL_NOTE =
   "Only an account admin can make a rule apply everywhere (federal).";
-export const ADMIN_ONLY_LIFT_HINT =
-  "Only an account admin can lift a rule that hides products from every portal customer.";
+/** Lead copy (M1): one sentence for both operator hints, so a page that shows both says it once. */
+export const ADMIN_ONLY_LIFT_HINT = ADMIN_ONLY_CHANGE_HINT;
 
 /**
  * Can this viewer lift this rule (owner L5)? Operators may lift a STATE rule; a rule that applies

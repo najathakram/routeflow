@@ -491,13 +491,9 @@ describe("rule detail: roles, ended rules", () => {
     role = "OPERATOR";
     current = detail({ jurisdiction: "FEDERAL", states: [] });
     await open();
-    const hint = screen.getByText(
-      "Only an account admin can change a rule that hides products from every portal customer.",
-    );
+    const hint = screen.getByText("Only an account admin can change (or lift) a federal rule.");
     expect(
-      screen.getAllByText(
-        "Only an account admin can change a rule that hides products from every portal customer.",
-      ),
+      screen.getAllByText("Only an account admin can change (or lift) a federal rule."),
     ).toHaveLength(1);
     expect(hint.id).toBeTruthy();
     for (const el of [
@@ -512,9 +508,7 @@ describe("rule detail: roles, ended rules", () => {
     expect(hint.compareDocumentPosition(list) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
     // the lift hint is a different sentence, next to Lift
     expect(
-      screen.getAllByText(
-        "Only an account admin can lift a rule that hides products from every portal customer.",
-      ),
+      screen.getAllByText("Only an account admin can change (or lift) a federal rule."),
     ).toHaveLength(1);
   });
 
@@ -522,9 +516,7 @@ describe("rule detail: roles, ended rules", () => {
     current = detail({ jurisdiction: "FEDERAL", states: [] });
     await open();
     expect(
-      screen.queryByText(
-        "Only an account admin can change a rule that hides products from every portal customer.",
-      ),
+      screen.queryByText("Only an account admin can change (or lift) a federal rule."),
     ).toBeNull();
   });
 
@@ -553,9 +545,7 @@ describe("rule detail: roles, ended rules", () => {
     expect(btn).toBeDisabled();
     expect(btn).not.toHaveAttribute("title");
     const hint = document.getElementById(btn.getAttribute("aria-describedby") as string);
-    expect(hint).toHaveTextContent(
-      "Only an account admin can lift a rule that hides products from every portal customer.",
-    );
+    expect(hint).toHaveTextContent("Only an account admin can change (or lift) a federal rule.");
   });
 
   it("an operator can open the lift dialog on a state rule", async () => {

@@ -104,8 +104,6 @@ export function assertMayManageRule(
     (current !== null && isAllCustomerRule(current)) ||
     (proposed !== undefined && isAllCustomerRule(proposed));
   if (allCustomer && !isTenantAdmin(user)) {
-    throw new ForbiddenException(
-      "Only a workspace admin can change a rule that hides products from every portal customer.",
-    );
+    throw new ForbiddenException("Only an account admin can change (or lift) a federal rule.");
   }
 }
