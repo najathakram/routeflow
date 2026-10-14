@@ -32,6 +32,9 @@ export const SAFE_TEXT_FIELD_LABELS: Record<string, string> = {
   salutation: "Salutation",
   firstName: "First name",
   lastName: "Last name",
+  // Row 507: the shipment tracking text (order and invoice shipment)
+  shippingCarrier: "Carrier",
+  shippingTrackingNumber: "Tracking number",
 };
 
 const UNKNOWN_FIELD_LABEL = "This field";

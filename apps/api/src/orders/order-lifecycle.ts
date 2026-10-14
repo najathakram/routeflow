@@ -27,6 +27,7 @@ import type { OrdersService } from "./orders.service";
 import { UpdateFulfillPathDto } from "./dto/update-fulfill-path.dto";
 import { UpdateShipmentDto } from "./dto/update-shipment.dto";
 import { SHIPPED_STATUSES, notifyTrackingAdded } from "./shipment-notifications";
+import { resolveShipmentText } from "./shipment-text";
 
 export async function updateShipmentImpl(
   self: OrdersService,
@@ -43,13 +44,14 @@ export async function updateShipmentImpl(
       fulfillPath: true,
       customerId: true,
       orderNumber: true,
+      shippingCarrier: true,
       shippingTrackingNumber: true,
     },
   });
   if (!order) throw new NotFoundException("Order not found");
 
-  const carrier = dto.shippingCarrier?.trim() || null;
-  const tracking = dto.shippingTrackingNumber?.trim() || null;
+  // Row 507: trimmed, and a CHANGED formula-led carrier / tracking is a coded 400 (change-only vs the stored pair).
+  const { carrier, tracking } = resolveShipmentText(dto, order);
   // E-b: shippedAt is the SHIP TRANSITION's stamp (changeStatus), never a side effect of saving
   // tracking on an order that has not shipped. Saving tracking keeps whatever is there; it only
   // backfills a legacy already-shipped order that has none.
