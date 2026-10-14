@@ -1297,6 +1297,30 @@ export default function ProductDetailPage() {
                       {/* Operator-only controls for the active image */}
                       {isOperator && !selectMode && hasImages && (
                         <div className="flex flex-wrap items-center gap-1.5 border-t border-surface-border pt-2">
+                          {/* Move left / right */}
+                          <button
+                            onClick={() => handleMoveImage(safeIdx, safeIdx - 1)}
+                            disabled={safeIdx === 0 || updateProduct.isPending}
+                            title="Move left"
+                            className={cn(
+                              TAP_TARGET,
+                              "rounded-lg border border-surface-border text-navy/70 hover:text-navy disabled:opacity-30 transition-colors",
+                            )}
+                          >
+                            <ChevronLeft className="h-3.5 w-3.5" />
+                          </button>
+                          <button
+                            onClick={() => handleMoveImage(safeIdx, safeIdx + 1)}
+                            disabled={safeIdx === images.length - 1 || updateProduct.isPending}
+                            title="Move right"
+                            className={cn(
+                              TAP_TARGET,
+                              "rounded-lg border border-surface-border text-navy/70 hover:text-navy disabled:opacity-30 transition-colors",
+                            )}
+                          >
+                            <ChevronRight className="h-3.5 w-3.5" />
+                          </button>
+
                           {/* Default / Set default */}
                           {safeIdx === 0 ? (
                             <span className="flex items-center gap-1 rounded-lg border border-brand-200 bg-brand-50 px-2.5 py-1 text-xs font-medium text-brand-600 select-none">

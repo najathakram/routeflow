@@ -35,9 +35,9 @@ describe("products/[id]/page.tsx — batch A1 wiring", () => {
     );
   });
 
-  it("J3: the second prev/next pair (Move left / Move right) is gone; on-image arrows stay", () => {
-    expect(src).not.toContain('title="Move left"');
-    expect(src).not.toContain('title="Move right"');
+  it("J3 reverted: the Move left / Move right reorder controls stay (the only reorder path); on-image arrows stay", () => {
+    expect(src).toContain('title="Move left"');
+    expect(src).toContain('title="Move right"');
     expect(src).toContain("Prev / next arrows");
   });
 
