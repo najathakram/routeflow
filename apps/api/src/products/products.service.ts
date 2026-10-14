@@ -61,7 +61,6 @@ import { labelNameKey, syncCategoryLabel } from "../product-categories/label-wri
 import {
   claimCodes,
   codeClaims,
-  lockCodesOfProducts,
   peekProductCodes,
   releaseProductCodes,
   restoreProductCodes,
@@ -71,7 +70,15 @@ import {
   reactivationLockCodes,
   resolveReactivationConflicts,
 } from "./product-reactivation-holders";
-import { recipeReferenceGroupers } from "./recipe-references";
+import {
+  activeOrderItemWhere,
+  applyProductDelete,
+  mapProductDeleteError,
+  planProductDelete,
+  productHasActiveOrderItems,
+  type BulkDeleteSkip,
+  type ProductDeleteOutcome,
+} from "./product-delete-classify";
 import { lockAndAssertRecipeGuards } from "./recipe-update-guard";
 import {
   applyFamilyPriceBeforeUpdate,
@@ -144,12 +151,7 @@ const TENANT_COSTING_TO_PRODUCT: Record<string, CostingMethod> = {
   LAST_COST: CostingMethod.LAST_COST,
 };
 
-/** One product a bulk delete refused: a machine `code` (clients show fixed copy for it) and the legacy `reason` sentence. */
-export interface BulkDeleteSkip {
-  id: string;
-  code: string;
-  reason: string;
-}
+export type { BulkDeleteSkip };
 
 @Injectable()
 export class ProductsService {
@@ -372,7 +374,15 @@ export class ProductsService {
     const readTenantId = this.prisma.getTenantId();
     const includeRelations = {
       parent: {
-        select: { id: true, name: true, kind: true, portalVisible: true, tenantId: true },
+        // `category`: a family variant has none of its own; the buyer catalog shows the family's (H6).
+        select: {
+          id: true,
+          name: true,
+          kind: true,
+          portalVisible: true,
+          category: true,
+          tenantId: true,
+        },
       },
       // #2717 M1 (SA-572b Q5): additive barcodes[] on the list too (rows, else synthesized below).
       barcodes: { orderBy: { level: "asc" as const } },
@@ -1619,12 +1629,11 @@ export class ProductsService {
 
   async remove(id: string, options?: { confirmCascade?: boolean }) {
     await this.findOne(id);
-    const activeItems = await this.prisma.forTenant().orderItem.count({
-      where: { productId: id, status: { notIn: ["DELIVERED", "CANCELLED"] } },
-    });
-    if (activeItems > 0) {
-      throw new BadRequestException("Cannot delete product with active order items");
-    }
+    // M1: "active" is the ORDER's state (an OrderItem.status never advances past PENDING).
+    const activeItems = await this.prisma
+      .forTenant()
+      .orderItem.count({ where: activeOrderItemWhere(id) });
+    if (activeItems > 0) throw productHasActiveOrderItems();
     const tenantId = this.prisma.getTenantId();
     if (!tenantId) throw new BadRequestException("No tenant context");
     let cascaded: string[] = [];
@@ -1694,215 +1703,39 @@ export class ProductsService {
     skipped: BulkDeleteSkip[];
   }> {
     if (ids.length === 0) return { deleted: 0, softDeleted: 0, skipped: [] };
+    const tenantId = this.prisma.getTenantId();
+    if (!tenantId) throw new BadRequestException("No tenant context");
 
-    // R1: per-id classification before any delete — this used to hard-delete
-    // every id unconditionally, which meant a product with real order/invoice
-    // history (or, worse, an in-flight order) lost that history the instant
-    // it was swept up in a bulk selection. Three outcomes, same as remove():
-    //   1. active order items (not DELIVERED/CANCELLED) -> skip, reported by name
-    //   2. any other reference in the dependent tables  -> soft-delete
-    //      (isActive:false, exactly what remove() does), touching NO rows
-    //   3. reference-free                                -> hard delete
-    const products = await this.prisma
-      .forTenant()
-      .product.findMany({ where: { id: { in: ids } }, select: { id: true, name: true } });
-    const nameById = new Map(products.map((p) => [p.id, p.name]));
-
-    // ONE grouped query for the whole batch, never one count per id: the DTO
-    // allows 500 ids and clearAll() passes the entire catalog, so a per-id
-    // `count` would be hundreds of sequential round-trips in a single request.
-    const activeGroups = await this.prisma.forTenant().orderItem.groupBy({
-      by: ["productId"],
-      where: { productId: { in: ids }, status: { notIn: ["DELIVERED", "CANCELLED"] } },
+    // R1: per-id classification (product-delete-classify.ts): a line on a still-open order -> skipped (coded); any
+    // other reference -> soft-delete (isActive:false, exactly what remove() does), no row touched; nothing names
+    // it -> hard delete. HISTORY IS NEVER DELETED. The read here is only a pre-lock peek that chooses which codes
+    // to lock; the decision is re-made inside ONE transaction after the product rows are locked.
+    const db = this.prisma.forTenant();
+    const products = await db.product.findMany({
+      where: { id: { in: ids } },
+      select: { id: true, name: true },
     });
-    const activeIds = new Set(
-      activeGroups.map((g) => g.productId).filter((id): id is string => !!id),
-    );
-
-    const skipped: BulkDeleteSkip[] = [];
-    const remaining: string[] = [];
-    for (const id of ids) {
-      if (activeIds.has(id)) {
-        skipped.push({
-          id,
-          code: API_ERROR_CODES.PRODUCT_HAS_ACTIVE_ORDER_ITEMS,
-          reason: `${nameById.get(id) ?? id} has active order items and cannot be deleted`,
-        });
-        continue;
-      }
-      remaining.push(id);
+    const nameById = new Map(products.map((p) => [p.id, p.name]));
+    const peek = await planProductDelete(db, tenantId, ids, nameById);
+    if (peek.softIds.length === 0 && peek.hardIds.length === 0) {
+      return { deleted: 0, softDeleted: 0, skipped: peek.skipped };
     }
 
-    if (remaining.length === 0) {
-      return { deleted: 0, softDeleted: 0, skipped };
-    }
-
-    // One GROUPED query per dependent table (not per id, and never a row
-    // fetch): `groupBy` collapses to at most one row per referenced product,
-    // so probing a 500-id batch costs eleven bounded queries however much
-    // order/invoice/stock history those products carry — a plain `findMany`
-    // would drag every referencing row into API memory just to build this set.
-    // Each delegate's `groupBy` has an incompatible generic signature from the
-    // next, so the array is typed loosely here — only `productId` is ever read
-    // off the result.
-    const referencedIds = new Set<string>();
-    const dependentModels: Array<{
-      groupBy: (args: unknown) => Promise<Array<{ productId: string | null }>>;
-    }> = [
-      this.prisma.forTenant().orderItem,
-      this.prisma.forTenant().invoiceItem,
-      this.prisma.forTenant().stockMovement,
-      this.prisma.forTenant().vendorBillItem,
-      this.prisma.forTenant().purchaseOrderItem,
-      this.prisma.forTenant().estimateItem,
-      this.prisma.forTenant().returnItem,
-      this.prisma.forTenant().recurringInvoiceItem,
-      this.prisma.forTenant().orderTemplateItem,
-      this.prisma.forTenant().deliveryMutation,
-      this.prisma.forTenant().stockLot,
-      // #2717 M2: a product a recipe names (RESTRICT FKs) is referenced — soft-delete, never P2003.
-      ...recipeReferenceGroupers(this.prisma.forTenant()),
-    ];
-    for (const model of dependentModels) {
-      const groups = await model.groupBy({
-        by: ["productId"],
-        where: { productId: { in: remaining } },
-      });
-      for (const group of groups) if (group.productId) referencedIds.add(group.productId);
-      // Every remaining id is already known to be referenced — the outcome
-      // cannot change, so skip the rest of the tables.
-      if (referencedIds.size === remaining.length) break;
-    }
-
-    let softDeleteIds = remaining.filter((id) => referencedIds.has(id));
-    let hardDeleteIds = remaining.filter((id) => !referencedIds.has(id));
-
-    // B1212: a product that still has variants is never hard-deleted. The variants' parent link is SET NULL on
-    // delete, so they would fall back to standalone products and could collide with another product of the same
-    // name (a unique violation). A parent keeps (or archives) its variants: refused while one of them stays
-    // active, archived when every variant that stays is already inactive or is archived in this same batch, and
-    // only hard-deleted when ALL its variants are hard-deleted with it.
-    const delTenantId = this.prisma.getTenantId();
-    if (!delTenantId) throw new BadRequestException("No tenant context");
-    const variantRows = (await this.prisma.forTenant().product.findMany({
-      where: { tenantId: delTenantId, parentProductId: { in: remaining } },
-      select: { id: true, parentProductId: true, isActive: true },
-    })) as Array<{ id: string; parentProductId: string | null; isActive: boolean }>;
-    if (variantRows.length > 0) {
-      const hardSet = new Set(hardDeleteIds);
-      const inBatch = new Set(remaining);
-      const refused = new Set<string>();
-      const forceSoft = new Set<string>();
-      for (const v of variantRows) {
-        const parentId = v.parentProductId;
-        if (!parentId || hardSet.has(v.id)) continue; // goes away with its parent
-        const archivedHere = inBatch.has(v.id) && !hardSet.has(v.id);
-        if (v.isActive && !archivedHere) refused.add(parentId);
-        else forceSoft.add(parentId);
-      }
-      for (const id of refused) {
-        skipped.push({
-          id,
-          code: API_ERROR_CODES.FAMILY_HAS_ACTIVE_VARIANTS,
-          reason: `${nameById.get(id) ?? id} has variants that are still active; delete or archive them first`,
-        });
-      }
-      softDeleteIds = softDeleteIds.filter((id) => !refused.has(id));
-      hardDeleteIds = hardDeleteIds.filter((id) => !refused.has(id));
-      for (const id of forceSoft) {
-        if (refused.has(id) || !hardDeleteIds.includes(id)) continue;
-        hardDeleteIds = hardDeleteIds.filter((h) => h !== id);
-        softDeleteIds.push(id);
-      }
-    }
-    if (softDeleteIds.length === 0 && hardDeleteIds.length === 0) {
-      return { deleted: 0, softDeleted: 0, skipped };
-    }
-
-    if (softDeleteIds.length > 0) {
-      const clearTenantId = this.prisma.getTenantId();
-      if (!clearTenantId) throw new BadRequestException("No tenant context");
-      await this.prisma.tenantTransaction(async (tx: any) => {
-        // SA-603a: an archived product releases its codes (same rule as remove()), codes + row lock FIRST in sorted id
-        // order, THEN the isActive write (Opus #2860 B1).
-        // ONE sorted lock call over EVERY soft-deleted product's codes BEFORE the loop (Opus #2860 r2): per-product
-        // lock-then-row would deadlock against a concurrent PATCH B {sku: <A's code>} (codes A -> row A -> codes B).
-        const lockedCodes = await lockCodesOfProducts(tx, clearTenantId, softDeleteIds);
-        for (const productId of [...softDeleteIds].sort()) {
-          // eslint-disable-next-line no-await-in-loop
-          await releaseProductCodes(tx, { tenantId: clearTenantId, productId, lockedCodes });
-        }
-        await tx.product.updateMany({
-          where: { id: { in: softDeleteIds } },
-          data: { isActive: false },
-        });
-      });
-    }
-
-    if (hardDeleteIds.length > 0) {
-      // Delete all dependent records first, then the products themselves —
-      // scoped to only the reference-free ids.
-      try {
-        await this.prisma.$transaction([
-          this.prisma
-            .forTenant()
-            .customerPrice.deleteMany({ where: { productId: { in: hardDeleteIds } } }),
-          this.prisma
-            .forTenant()
-            .recurringInvoiceItem.deleteMany({ where: { productId: { in: hardDeleteIds } } }),
-          this.prisma
-            .forTenant()
-            .productMapping.deleteMany({ where: { productId: { in: hardDeleteIds } } }),
-          this.prisma
-            .forTenant()
-            .vendorBillItem.deleteMany({ where: { productId: { in: hardDeleteIds } } }),
-          this.prisma
-            .forTenant()
-            .estimateItem.deleteMany({ where: { productId: { in: hardDeleteIds } } }),
-          this.prisma
-            .forTenant()
-            .returnItem.deleteMany({ where: { productId: { in: hardDeleteIds } } }),
-          this.prisma
-            .forTenant()
-            .purchaseOrderItem.deleteMany({ where: { productId: { in: hardDeleteIds } } }),
-          this.prisma
-            .forTenant()
-            .invoiceItem.deleteMany({ where: { productId: { in: hardDeleteIds } } }),
-          this.prisma
-            .forTenant()
-            .orderTemplateItem.deleteMany({ where: { productId: { in: hardDeleteIds } } }),
-          this.prisma
-            .forTenant()
-            .deliveryMutation.deleteMany({ where: { productId: { in: hardDeleteIds } } }),
-          this.prisma
-            .forTenant()
-            .orderItem.deleteMany({ where: { productId: { in: hardDeleteIds } } }),
-          this.prisma
-            .forTenant()
-            .stockLot.deleteMany({ where: { productId: { in: hardDeleteIds } } }),
-          this.prisma
-            .forTenant()
-            .stockMovement.deleteMany({ where: { productId: { in: hardDeleteIds } } }),
-          this.prisma.forTenant().product.deleteMany({ where: { id: { in: hardDeleteIds } } }),
-        ]);
-      } catch (e) {
-        // B1212: a unique violation (e.g. a variant orphaned by the delete colliding with a same-named product) is a
-        // coded 409 (the delete is one transaction), never an uncoded 500.
-        if (e instanceof Prisma.PrismaClientKnownRequestError && e.code === "P2002") {
-          throw new ConflictException({
-            code: API_ERROR_CODES.PRODUCT_DELETE_CONFLICT,
-            message:
-              "A product in this selection changed while it was being deleted, so the delete did not go through. Reload the list and try again.",
-          });
-        }
-        throw e;
-      }
+    let outcome: ProductDeleteOutcome;
+    try {
+      outcome = await this.prisma.tenantTransaction(
+        (tx: any) => applyProductDelete(tx, { tenantId, ids, nameById, preSoftIds: peek.softIds }),
+        { timeout: 60_000 },
+      );
+    } catch (e) {
+      // A unique or foreign-key violation is a coded 409 (nothing was written), never an uncoded 500.
+      throw mapProductDeleteError(e);
     }
 
     // ONE coalesced event for the whole batch (clearAll delegates HERE, so it
-    // must NOT emit as well — that would double-fire for a single request).
-    if (softDeleteIds.length > 0 || hardDeleteIds.length > 0) this.emitProductChanged(null, "bulk");
-    return { deleted: hardDeleteIds.length, softDeleted: softDeleteIds.length, skipped };
+    // must NOT emit as well - that would double-fire for a single request).
+    if (outcome.softDeleted > 0 || outcome.deleted > 0) this.emitProductChanged(null, "bulk");
+    return outcome;
   }
 
   async importFromZoho(dto: ImportProductsDto): Promise<{

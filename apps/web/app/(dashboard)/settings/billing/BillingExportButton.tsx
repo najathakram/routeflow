@@ -5,12 +5,13 @@ import { Download } from "lucide-react";
 import { Button, useToast } from "@routeflow/ui/web";
 import { apiClient } from "@/lib/api-client";
 import { useAuth } from "@/lib/auth-context";
+import { isAccountAdmin } from "@/lib/auth";
 import { downloadJsonFile, jsonExportFilename } from "@/lib/json-export";
 
 /**
  * "Download billing data (JSON)" — `GET /billing/export` (subscription, usage, billing events,
  * invoices). The endpoint answers JSON and keeps working while the workspace is READ_ONLY, so this
- * never depends on plan state. OPERATOR / TENANT_ADMIN only (the endpoint's own gate). Any failure is
+ * never depends on plan state. Account admins only (the endpoint's own gate). Any failure is
  * one fixed toast: the server text is never shown.
  */
 export function BillingExportButton() {
@@ -18,7 +19,7 @@ export function BillingExportButton() {
   const { toast } = useToast();
   const [busy, setBusy] = React.useState(false);
 
-  if (user?.role !== "OPERATOR" && user?.role !== "TENANT_ADMIN") return null;
+  if (!isAccountAdmin(user)) return null;
 
   async function download() {
     if (busy) return;

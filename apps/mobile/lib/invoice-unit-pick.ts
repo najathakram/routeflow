@@ -270,9 +270,28 @@ const PACK_OPTION: UnitOption = {
 };
 
 /**
+ * A unit line moved onto the pack BY PIECES (row 458): 5 Cases of 12 are 60 pieces, i.e. 2 Boxes of 24
+ * plus 12 loose (entered by the piece when there is a remainder); with no pack the pieces are the count.
+ * The count is never lost. A line whose factor is unknown falls back to one Box.
+ */
+function toPackByPieces(line: InvoiceLineState, unitsPerBox: Upb): InvoiceLineState {
+  const pack = chooseInvoiceUnit(line, PACK_OPTION, unitsPerBox);
+  const factor = Number(line.unitFactor);
+  const count = Math.trunc(Number(line.qty) || 0);
+  if (!Number.isInteger(factor) || factor < 1 || count < 1) return pack;
+  const total = count * factor;
+  const upb = Math.trunc(packSize(unitsPerBox));
+  if (!(upb > 1)) return { ...pack, qty: total };
+  const split = setLineUnits(pack, total, upb);
+  if (!split) return pack;
+  return { ...split, sellBy: split.pieces ? "unit" : "case", pieceLabel: undefined };
+}
+
+/**
  * After the server says a unit is no longer offered: ONLY the unit-sold lines whose label the
- * refreshed ladder no longer offers (`offered` false) go back to ONE Box; the others and lines with no
- * unitLabel (including Piece-as-pack) are returned as the SAME object.
+ * refreshed ladder no longer offers (`offered` false) move onto the pack, converted by pieces so the
+ * count is kept (the web keeps its line too); the others and lines with no unitLabel (including
+ * Piece-as-pack) are returned as the SAME object.
  */
 export function dropStaleUnitLines<T extends InvoiceLineState>(
   items: Record<string, T>,
@@ -283,7 +302,7 @@ export function dropStaleUnitLines<T extends InvoiceLineState>(
   for (const [id, line] of Object.entries(items)) {
     next[id] =
       isUnitLine(line) && !offered(id, line.unitLabel as string)
-        ? (chooseInvoiceUnit(line, PACK_OPTION, unitsPerBox(id)) as T)
+        ? (toPackByPieces(line, unitsPerBox(id)) as T)
         : line;
   }
   return next;

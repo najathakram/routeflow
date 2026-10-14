@@ -5,6 +5,7 @@ import * as bcrypt from "bcrypt";
 import { assertTestTenant } from "../../../scripts/lib/test-tenants.cjs";
 import { localConnectionConfig } from "../scripts/lib/local-db-target.cjs";
 import { ensureParityBuyers } from "./seed-parity-buyer";
+import { addressStateFields } from "../src/customers/address-state";
 
 // A provably-local target dials the explicit fields that were vetted (never the raw string, whose ?host= could
 // redirect it); only a deliberate SEED_ALLOW_REMOTE=1 run uses the raw URL (#2204).
@@ -345,6 +346,8 @@ async function main() {
           line1: def.address.line1,
           city: def.address.city,
           state: def.address.state,
+          // Row 434: the engine reads ONLY stateCode; derive it at the write boundary like every writer
+          ...addressStateFields(def.address.state, def.address.zip),
           zip: def.address.zip,
           lat: def.address.lat,
           lng: def.address.lng,

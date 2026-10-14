@@ -1,3 +1,4 @@
+import { regulatedGateOpenProvider } from "./testing/regulated-gate-open-provider";
 import { oversellReaderOffProvider } from "../orders/testing/policy-reader-provider";
 import { Test } from "@nestjs/testing";
 import { BadRequestException, ConflictException, ForbiddenException } from "@nestjs/common";
@@ -71,6 +72,7 @@ describe("OrderTemplatesService — regulated license guard on reorder", () => {
       providers: [
         oversellReaderOffProvider,
         OrderTemplatesService,
+        regulatedGateOpenProvider,
         { provide: PrismaService, useValue: prisma },
         { provide: TenantContextService, useValue: { run: jest.fn((_id, fn) => fn()) } },
         // settings.taxRate is stored as a PERCENT string — "10" is 10%.
@@ -261,6 +263,7 @@ describe("OrderTemplatesService — template ownership (F2-003)", () => {
       providers: [
         oversellReaderOffProvider,
         OrderTemplatesService,
+        regulatedGateOpenProvider,
         { provide: PrismaService, useValue: prisma },
         { provide: TenantContextService, useValue: { run: jest.fn((_id, fn) => fn()) } },
         // settings.taxRate is stored as a PERCENT string — "10" is 10%.
@@ -277,6 +280,7 @@ describe("OrderTemplatesService — template ownership (F2-003)", () => {
         {
           provide: SellingRestrictionsService,
           useValue: {
+            restrictedProductIdsFor: jest.fn().mockResolvedValue(new Set()),
             assertLinesSellable: jest.fn().mockResolvedValue(undefined),
             checkLinesSellable: jest.fn().mockResolvedValue({ outcome: "ALLOW", reasons: [] }),
           },
@@ -386,6 +390,10 @@ describe("OrderTemplatesService — template ownership (F2-003)", () => {
   it("pin (B133): the owning customer and an operator add items; the operator path skips the ownership read", async () => {
     expect(typeof (service as any).addItemForUser).toBe("function");
     prisma.product.findUnique.mockResolvedValue({ id: "p1" });
+    // the buyer write gate (row 479) reads the product's visibility facts: a plain visible standalone product
+    prisma.product.findMany.mockResolvedValue([
+      { id: "p1", kind: "STANDARD", isActive: true, portalVisible: true, parent: null },
+    ]);
     prisma.orderTemplateItem.create.mockResolvedValue({ id: "i2" });
 
     prisma.customer.findFirst.mockResolvedValue({ id: "c-owner" });
@@ -433,6 +441,7 @@ describe("OrderTemplatesService — pricing pin, tier 1 unchanged (T16)", () => 
       providers: [
         oversellReaderOffProvider,
         OrderTemplatesService,
+        regulatedGateOpenProvider,
         { provide: PrismaService, useValue: prisma },
         { provide: TenantContextService, useValue: { run: jest.fn((_id, fn) => fn()) } },
         { provide: SystemConfigService, useValue: { get: jest.fn().mockResolvedValue("10") } },
@@ -497,6 +506,7 @@ describe("OrderTemplatesService — update() with no items key (T27)", () => {
       providers: [
         oversellReaderOffProvider,
         OrderTemplatesService,
+        regulatedGateOpenProvider,
         { provide: PrismaService, useValue: prisma },
         { provide: TenantContextService, useValue: { run: jest.fn((_id, fn) => fn()) } },
         { provide: SystemConfigService, useValue: { get: jest.fn().mockResolvedValue("10") } },
