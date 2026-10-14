@@ -114,7 +114,7 @@ import { CANCELLABLE_FROM, assertOrderStatusTransition } from "./order-status-tr
 import { buildStatusUpdateData } from "./order-status-claim";
 import { AppliedCreditNoteDto, CreateOrderDto } from "./dto/create-order.dto";
 import { assertSaleReplayable, keepOrderOnInvoiceFailure, sendSale } from "./sale-replay-guard";
-import { assertReplaySameCart, isIdempotencyKeyViolation } from "./replay-same-cart";
+import { assertReplayOfCart, isIdempotencyKeyViolation } from "./replay-cart-normalize";
 import { savedCreditsPending, withCreditsPendingHint } from "./create-credit-tail";
 import {
   IDEMPOTENCY_KEY_CONFLICT,
@@ -1534,7 +1534,7 @@ export class OrdersService implements OnApplicationBootstrap {
           throw otherOrderConflict();
         }
         // R4 + BUG-A: a replay must be of the SAME cart and kind (replay-same-cart.ts).
-        assertReplaySameCart(existing, dto);
+        await assertReplayOfCart(this.prisma.forTenant(), customerId, existing, dto);
         options.onReplay?.(existing);
         const replay = await replayAfterCheck(this.prisma.forTenant(), inlineRet, existing);
         return withCreditsPendingHint(this.prisma, replay, appliedCreditNotes);
@@ -1681,7 +1681,14 @@ export class OrdersService implements OnApplicationBootstrap {
     // RF-079 / RF-4: an exempt customer owes $0 of BOTH taxes on the order, as on the invoice.
     const isTaxExempt = await customerIsTaxExempt(this.prisma.forTenant(), customerId);
     let subtotal = 0;
-    const lineItemsData = items.map((item, index) => {
+    const lineItemsData = items.map((rawItem, index) => {
+      const item = unitLines.derivedBaseAsPack(
+        rawItem,
+        productMap,
+        unitsByProduct,
+        cpMap,
+        defaultTier,
+      );
       // Unlisted (ad-hoc) line: no catalog product. The operator supplies a
       // free-text name + unitPrice; we store it as a MANUAL-priced line with no
       // stock impact and no boxed proration.
@@ -2135,7 +2142,7 @@ export class OrdersService implements OnApplicationBootstrap {
               throw otherOrderConflict();
             }
             if (existing) {
-              assertReplaySameCart(existing, dto); // BUG-A: the race exit compares too
+              await assertReplayOfCart(this.prisma.forTenant(), customerId, existing, dto);
               options.onReplay?.(existing);
               const replay = await replayAfterCheck(this.prisma.forTenant(), inlineRet, existing);
               return withCreditsPendingHint(this.prisma, replay, appliedCreditNotes);
@@ -2862,6 +2869,7 @@ export class OrdersService implements OnApplicationBootstrap {
     // this pre-lock pass is only what a REFUSAL must see before any commit happens.
     const unitCtx = await unitEdit.prepareUnitEditContext(this, order, dto, user);
     const unitRows = new Map<object, ReturnType<typeof resolveLineUnits>>();
+    await unitEdit.normalizeDerivedBaseItems(this.prisma.forTenant(), order, dto, unitCtx, user);
     for (const item of dto.items ?? []) {
       const li = item.id ? unitCtx.existingById.get(item.id) : undefined;
       unitEdit.assertUnitLabelNamed(li, item);
@@ -3050,6 +3058,7 @@ export class OrdersService implements OnApplicationBootstrap {
         // B709 / row 372: every read of an existing line below is the LOCKED row; a payload id the lock does not
         // hold is 409 before any write (no snapshot fallback), and B720's missing products load here.
         const heldById = await assertLockedEditLines(tx, unitCtx, heldItems, dto.items);
+        await unitEdit.normalizeDerivedBaseItems(tx, order, dto, unitCtx, user, heldById);
         for (const item of dto.items ?? []) {
           const li = item.id ? heldById.get(item.id) : undefined;
           unitEdit.assertUnitLabelNamed(li, item);
@@ -3337,20 +3346,10 @@ export class OrdersService implements OnApplicationBootstrap {
                 ]),
               ] as string[])
             : [];
-          const operatorTierCtx = atCustomerTier
-            ? await tx.customer.findFirst({
-                where: { id: order.customerId },
-                select: { pricingTier: true },
-              })
-            : null;
-          const operatorDefaultTier = operatorTierCtx?.pricingTier ?? 1;
-          const operatorCustomerPrices = operatorProductIds.length
-            ? await tx.customerPrice.findMany({
-                where: { customerId: order.customerId, productId: { in: operatorProductIds } },
-              })
-            : [];
-          const operatorCpMap = new Map<string, number | null>(
-            operatorCustomerPrices.map((cp: any) => [cp.productId, cp.pricingTier]),
+          const { operatorCpMap, operatorDefaultTier } = await unitEdit.loadOperatorTiers(
+            tx,
+            atCustomerTier ? order.customerId : null,
+            operatorProductIds,
           );
           const uctx: unitEdit.UnitWriteContext = {
             tx,
