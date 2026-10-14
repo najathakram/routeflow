@@ -111,7 +111,7 @@ function catalog() {
       { sku: "BUYER_PORTAL", name: "Buyer portal", monthlyPrice: 49 },
       { sku: "REGULATED_ITEMS", name: "Regulated", monthlyPrice: 39 },
       // Self-service SKUs (SELF_SERVICE_ADDON_SKUS) — the only two enableAddon may grant.
-      { sku: "CUSTOMER_PACK_100", name: "Customer pack", monthlyPrice: 12 },
+      { sku: "CUSTOMER_PACK_100", name: "Customer pack", monthlyPrice: 12, stackable: true },
       { sku: "FORECASTING", name: "Forecasting", monthlyPrice: 25 },
       // Admin-only SKUs — enableAddon must 403 a self-service request for these.
       { sku: "MSRP", name: "MSRP", monthlyPrice: 20 },

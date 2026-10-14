@@ -57,4 +57,16 @@ export class EnableAddonDto {
   @Min(1)
   @Max(10000)
   quantity?: number;
+
+  @ApiPropertyOptional({
+    description:
+      "The quantity the caller saw (0 = not on). `quantity` is the TARGET total, so a mismatch with the stored " +
+      "quantity is a 409 ADDON_QUANTITY_CHANGED before anything is billed; a target at or below it is " +
+      "ADDON_QUANTITY_NOT_INCREASED. Omit for the legacy set-the-total behaviour.",
+  })
+  @IsOptional()
+  @IsInt()
+  @Min(0)
+  @Max(10000)
+  expectedQuantity?: number;
 }

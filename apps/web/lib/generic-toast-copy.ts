@@ -171,6 +171,14 @@ const CODE_COPY: Record<string, string> = {
   // B1102: a catalog add-on whose plan setting is invalid is refused instead of billed; fixed sentence, no ids.
   [API_ERROR_CODES.ADDON_CATALOG_INVALID]:
     "This add-on can't be changed right now because of a setup problem on our side. Please contact support.",
+  // M11 (stackable add-on quantity): fixed sentences, never the server's text.
+  [API_ERROR_CODES.ADDON_QUANTITY_CHANGED]:
+    "Your add-on changed since this page loaded. Check the new total and try again.",
+  [API_ERROR_CODES.ADDON_QUANTITY_NOT_INCREASED]:
+    "That would not add any more of this add-on, so nothing was changed. Check the total and try again.",
+  [API_ERROR_CODES.ADDON_NOT_STACKABLE]: "This add-on can only be turned on once per workspace.",
+  [API_ERROR_CODES.ADDON_RAISE_UNBILLED_ROW]:
+    "This add-on isn't billed on your subscription yet, so its quantity can't be raised here. Please contact support.",
 };
 
 /** Exact server sentences (already product text) for refusals with no `code`; matched whole, never partially. */
