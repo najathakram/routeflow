@@ -355,6 +355,10 @@ export const API_ERROR_CODES = {
   INVOICE_CHANGED_DURING_EDIT: "INVOICE_CHANGED_DURING_EDIT",
   EMAIL_NOT_CONFIGURED: "EMAIL_NOT_CONFIGURED",
   EMAIL_SEND_FAILED: "EMAIL_SEND_FAILED",
+  // Row 466: create-and-send committed the invoice, then the send step threw a non-HTTP error. The body carries `invoiceId`.
+  INVOICE_SEND_AFTER_CREATE_FAILED: "INVOICE_SEND_AFTER_CREATE_FAILED",
+  // Row 466: createSale committed the order, then its invoice step threw. The body carries `orderId`.
+  SALE_INVOICE_CREATE_FAILED: "SALE_INVOICE_CREATE_FAILED",
   ADDON_DEFAULT_GRANTED: "ADDON_DEFAULT_GRANTED",
   EXPIRES_AT_MUST_BE_FUTURE: "EXPIRES_AT_MUST_BE_FUTURE",
   FEATURE_KEY_UNKNOWN: "FEATURE_KEY_UNKNOWN",
@@ -659,6 +663,17 @@ export const API_ERROR_CODES = {
    * session. Fixed body; nothing was written. Reads stay available (SA-778).
    */
   IMPERSONATION_NOT_ALLOWED: "IMPERSONATION_NOT_ALLOWED",
+  /**
+   * 409 from PATCH /users/:id/status: a tenant admin tried to set their OWN account INACTIVE or SUSPENDED. Refused so
+   * a workspace can never lose the person changing it; another admin must do it. Nothing was written (Perms PR1 M2).
+   */
+  SELF_DEACTIVATION_REFUSED: "SELF_DEACTIVATION_REFUSED",
+  /**
+   * 409 from PATCH /users/:id/status: deactivating this account would leave the workspace with no ACTIVE tenant
+   * admin (nobody could manage users, billing or settings again). Make someone else an admin first. Nothing was
+   * written (Perms PR1 M2).
+   */
+  LAST_TENANT_ADMIN: "LAST_TENANT_ADMIN",
 } as const;
 
 /** The `flag` of a PLAN_GATE body that gates a count (a meter), not a feature flag. Not an error code. */

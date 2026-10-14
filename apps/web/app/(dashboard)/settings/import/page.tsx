@@ -2,6 +2,8 @@
 
 import React from "react";
 import { usePageTitle } from "@/lib/page-title-context";
+import { useAuth } from "@/lib/auth-context";
+import { isAccountAdmin } from "@/lib/auth";
 import { apiClient } from "@/lib/api-client";
 import { useToast } from "@routeflow/ui/web";
 import {
@@ -794,7 +796,7 @@ function FinishSetupCard() {
 
 // ─── Page ─────────────────────────────────────────────────────────────────────
 
-export default function SettingsImportPage() {
+function SettingsImportBody() {
   const { setTitle } = usePageTitle();
   React.useEffect(() => {
     setTitle("Import Data");
@@ -852,4 +854,23 @@ export default function SettingsImportPage() {
       </div>
     </div>
   );
+}
+
+/** The whole /import controller is admin-only on the api: anyone else gets the title and one line, and no requests. */
+export default function SettingsImportPage() {
+  const { user } = useAuth();
+  const { setTitle } = usePageTitle();
+  const allowed = isAccountAdmin(user);
+  React.useEffect(() => {
+    if (!allowed) setTitle("Import Data");
+  }, [allowed, setTitle]);
+  if (!allowed) {
+    return (
+      <div className="space-y-2 p-6">
+        <h2 className="text-xl font-semibold text-navy">Import Data</h2>
+        <p className="text-sm text-navy/50">Only an admin can import data.</p>
+      </div>
+    );
+  }
+  return <SettingsImportBody />;
 }

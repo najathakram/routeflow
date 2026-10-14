@@ -93,6 +93,13 @@ describe("UsersService: admin account protection", () => {
     it("a TENANT_ADMIN can change a TENANT_ADMIN's status", async () => {
       prisma.user.findUnique.mockResolvedValue(ADMIN_TARGET as any);
       prisma.user.update.mockResolvedValue({ id: "t1" } as any);
+      // another active admin remains (M2: the last active admin can't be deactivated)
+      (prisma.tenantTransaction as jest.Mock).mockImplementation((fn: any) =>
+        fn({
+          ...prisma.forTenant(),
+          $queryRaw: jest.fn().mockResolvedValue([{ id: "t1" }, { id: "t2" }]),
+        }),
+      );
       await expect(
         service.changeStatus("t1", { status: "SUSPENDED" } as any, "TENANT_ADMIN" as any),
       ).resolves.toBeDefined();

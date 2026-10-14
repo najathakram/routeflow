@@ -4,7 +4,6 @@ import {
   ConflictException,
   ForbiddenException,
   Injectable,
-  InternalServerErrorException,
   Logger,
   NotFoundException,
   OnApplicationBootstrap,
@@ -106,7 +105,7 @@ import { assertRemovalsNameALine, writeLineRemoval, writeLineUpdate } from "./or
 import { ORDER_STATUS_TRANSITIONS, assertOrderStatusTransition } from "./order-status-transitions";
 import { buildStatusUpdateData } from "./order-status-claim";
 import { AppliedCreditNoteDto, CreateOrderDto } from "./dto/create-order.dto";
-import { assertSaleReplayable } from "./sale-replay-guard";
+import { assertSaleReplayable, keepOrderOnInvoiceFailure, sendSale } from "./sale-replay-guard";
 import { assertReplayOfCart, isIdempotencyKeyViolation } from "./replay-cart-normalize";
 import { savedCreditsPending, withCreditsPendingHint } from "./create-credit-tail";
 import {
@@ -2260,18 +2259,14 @@ export class OrdersService implements OnApplicationBootstrap {
     // Thread the operator's chosen due date / terms through so the invoice matches what
     // was shown on the "New sale" screen instead of silently falling back to the
     // tenant default (client-blocking bug: label said one term, math used another).
-    const invoices = await this.invoicesService.createInvoiceFromOrder(order.id, undefined, {
-      dueDate: dto.dueDate,
-      terms: dto.terms,
-      paymentTermsLabel: dto.paymentTermsLabel,
-    });
-    if (!invoices || invoices.length === 0) {
-      // Unreachable for a freshly-created order (nothing is invoiced yet), but keep the
-      // order intact and surface a clear error so the operator can retry from the order page.
-      throw new InternalServerErrorException(
-        "The order was created but its invoice could not be generated. Open the order and use “Generate Invoice”.",
-      );
-    }
+    const invoices = await keepOrderOnInvoiceFailure(
+      order.id,
+      this.invoicesService.createInvoiceFromOrder(order.id, undefined, {
+        dueDate: dto.dueDate,
+        terms: dto.terms,
+        paymentTermsLabel: dto.paymentTermsLabel,
+      }),
+    );
 
     // 4. Van sale (delivered now) → issue immediately (SENT). Deliver-later →
     //    NEVER auto-send: this draft is the order's "pending mirror" — it stays a
@@ -2284,10 +2279,7 @@ export class OrdersService implements OnApplicationBootstrap {
       const sendOpts = sale.suppressInvoiceNotify ? [{ suppressNotify: true }] : [];
       let primary: any = null;
       for (const inv of replay ? oldestFirst(invoices) : invoices) {
-        const sent =
-          replay && inv.status && inv.status !== InvoiceStatus.DRAFT
-            ? inv
-            : await this.invoicesService.send(inv.id, ...sendOpts);
+        const sent = await sendSale(this.invoicesService, inv, order.id, replay, ...sendOpts);
         if (primary === null) primary = sent;
       }
       return primary;

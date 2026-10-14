@@ -184,6 +184,8 @@ const DEACTIVATE_CONFLICT_LINES: Record<string, string> = {
     "Turn the family back on first, then reactivate this variant.",
   [API_ERROR_CODES.PRODUCT_DELETE_CONFLICT]:
     "Nothing was deleted because something changed at the same time. Reload and try again.",
+  [API_ERROR_CODES.PRODUCT_HAS_ACTIVE_ORDER_ITEMS]:
+    "This product is on an order that is still open. Finish or cancel the order first.",
   [API_ERROR_CODES.FAMILY_NOT_PRICEABLE]:
     "A product family can't be priced or promoted. Use its variants instead.",
 };
