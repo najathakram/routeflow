@@ -73,10 +73,10 @@ const openBucket = async (user: ReturnType<typeof userEvent.setup>, name: RegExp
 
 describe("CustomersWithoutState (Addendum D)", () => {
   it("shows the header count and one collapsed disclosure per bucket, with Fix / Review", async () => {
-    renderWithProviders(<CustomersWithoutState canFix />);
+    renderWithProviders(<CustomersWithoutState canFix staffOrdersChecked={false} />);
     expect(
       await screen.findByText(
-        "5 customers need a state. They can still order — state limits just can't reach them until it's set.",
+        "5 customers need a state. Until it's set, products with a legal state ban stay hidden from them in your portal and can't be ordered there. Other state limits won't reach them. Staff orders and invoices aren't checked (turn on 'Also block restricted products on staff orders and invoices' to block them).",
       ),
     ).toBeInTheDocument();
     expect(screen.getByText("3 have no address")).toBeInTheDocument();
@@ -87,8 +87,21 @@ describe("CustomersWithoutState (Addendum D)", () => {
     expect(screen.queryByText("Customer a")).toBeNull();
   });
 
+  it("header says staff orders are not checked when the switch is off", async () => {
+    renderWithProviders(<CustomersWithoutState canFix staffOrdersChecked={false} />);
+    expect(await screen.findByText(/Staff orders and invoices aren't checked/)).toBeInTheDocument();
+  });
+
+  it("header says the products cannot be sold on any order when the switch is on", async () => {
+    renderWithProviders(<CustomersWithoutState canFix staffOrdersChecked />);
+    expect(
+      await screen.findByText(/they can't be sold those products on any order/),
+    ).toBeInTheDocument();
+    expect(screen.queryByText(/Staff orders and invoices aren't checked/)).toBeNull();
+  });
+
   it("is amber, never red", async () => {
-    renderWithProviders(<CustomersWithoutState canFix />);
+    renderWithProviders(<CustomersWithoutState canFix staffOrdersChecked={false} />);
     const card = await screen.findByTestId("customers-without-state");
     expect(card.className).toMatch(/warning/);
     expect(card.className).not.toMatch(/danger|red/);
@@ -102,7 +115,7 @@ describe("CustomersWithoutState (Addendum D)", () => {
         needsReview: bucket([]),
       },
     });
-    renderWithProviders(<CustomersWithoutState canFix />);
+    renderWithProviders(<CustomersWithoutState canFix staffOrdersChecked={false} />);
     expect(await screen.findByText("Every customer has a state on file.")).toBeInTheDocument();
     expect(screen.queryByRole("button", { name: /check readiness/i })).toBeNull();
     expect(screen.getByRole("button", { name: "Refresh" })).toBeInTheDocument();
@@ -110,7 +123,7 @@ describe("CustomersWithoutState (Addendum D)", () => {
 
   it("Save on a no-address row creates the minimal address, removes the row and decrements the counts", async () => {
     const user = userEvent.setup();
-    renderWithProviders(<CustomersWithoutState canFix />);
+    renderWithProviders(<CustomersWithoutState canFix staffOrdersChecked={false} />);
     await openBucket(user, /3 have no address/);
     const first = screen.getByTestId("state-row-c-a");
     await user.selectOptions(within(first).getByLabelText(/state for customer a/i), "TX");
@@ -131,7 +144,7 @@ describe("CustomersWithoutState (Addendum D)", () => {
   it("an error keeps the row and the input, with the message under the field", async () => {
     const user = userEvent.setup();
     mockPost.mockRejectedValueOnce({ response: { status: 500, data: {} } });
-    renderWithProviders(<CustomersWithoutState canFix />);
+    renderWithProviders(<CustomersWithoutState canFix staffOrdersChecked={false} />);
     await openBucket(user, /3 have no address/);
     const first = screen.getByTestId("state-row-c-a");
     await user.selectOptions(within(first).getByLabelText(/state for customer a/i), "NY");
@@ -145,7 +158,7 @@ describe("CustomersWithoutState (Addendum D)", () => {
 
   it("Enter saves, and focus lands on the next row's state field", async () => {
     const user = userEvent.setup();
-    renderWithProviders(<CustomersWithoutState canFix />);
+    renderWithProviders(<CustomersWithoutState canFix staffOrdersChecked={false} />);
     await openBucket(user, /3 have no address/);
     const first = screen.getByTestId("state-row-c-a");
     const select = within(first).getByLabelText(/state for customer a/i);
@@ -162,7 +175,7 @@ describe("CustomersWithoutState (Addendum D)", () => {
 
   it("an unusable-state row prefills the suggested state and saves with PATCH", async () => {
     const user = userEvent.setup();
-    renderWithProviders(<CustomersWithoutState canFix />);
+    renderWithProviders(<CustomersWithoutState canFix staffOrdersChecked={false} />);
     await openBucket(user, /1 address has no usable state/);
     const r = screen.getByTestId("state-row-c-u");
     expect(within(r).getByText("12 Main St, Dallas, Texs 75201")).toBeInTheDocument();
@@ -180,7 +193,7 @@ describe("CustomersWithoutState (Addendum D)", () => {
     mockPatch.mockResolvedValueOnce({
       data: { customerId: "c-r", addressId: "ad-r", state: "TX" },
     });
-    renderWithProviders(<CustomersWithoutState canFix />);
+    renderWithProviders(<CustomersWithoutState canFix staffOrdersChecked={false} />);
     await openBucket(user, /1 address needs a state check/);
     const r = screen.getByTestId("state-row-c-r");
     expect(within(r).getByText('We read TX from "Dallas, Tx 75201"')).toBeInTheDocument();
@@ -196,7 +209,7 @@ describe("CustomersWithoutState (Addendum D)", () => {
   it("read-only: rows render with no Save, and the shared read-only line shows", async () => {
     const user = userEvent.setup();
     mockReadOnly = true;
-    renderWithProviders(<CustomersWithoutState canFix />);
+    renderWithProviders(<CustomersWithoutState canFix staffOrdersChecked={false} />);
     await openBucket(user, /3 have no address/);
     expect(screen.getByTestId("read-only-line")).toBeInTheDocument();
     expect(screen.queryByRole("button", { name: "Save" })).toBeNull();
@@ -205,7 +218,7 @@ describe("CustomersWithoutState (Addendum D)", () => {
 
   it("a user who cannot fix sees the list without any control", async () => {
     const user = userEvent.setup();
-    renderWithProviders(<CustomersWithoutState canFix={false} />);
+    renderWithProviders(<CustomersWithoutState canFix={false} staffOrdersChecked={false} />);
     await openBucket(user, /3 have no address/);
     expect(screen.getByText("Customer a")).toBeInTheDocument();
     expect(screen.queryByRole("button", { name: "Save" })).toBeNull();
@@ -217,7 +230,7 @@ describe("CustomersWithoutState (Addendum D)", () => {
       data: { changed: 3, changedAddressIds: ["x1", "x2", "x3"], actionId: "act-1" },
     });
     mockPost.mockResolvedValueOnce({ data: { restored: 3 } });
-    renderWithProviders(<CustomersWithoutState canFix />);
+    renderWithProviders(<CustomersWithoutState canFix staffOrdersChecked={false} />);
     await openBucket(user, /3 have no address/);
     await user.click(screen.getByRole("button", { name: /set state for all shown/i }));
     const dialog = screen.getByRole("dialog");
@@ -251,7 +264,7 @@ describe("CustomersWithoutState (Addendum D)", () => {
       data: { changed: 3, changedAddressIds: ["x1", "x2", "x3"], actionId: "act-1" },
     });
     mockPost.mockResolvedValueOnce({ data: { restored: 3 } });
-    renderWithProviders(<CustomersWithoutState canFix />);
+    renderWithProviders(<CustomersWithoutState canFix staffOrdersChecked={false} />);
     await openBucket(user, /3 have no address/);
     await user.click(screen.getByRole("button", { name: /set state for all shown/i }));
     const dialog = screen.getByRole("dialog");
@@ -265,7 +278,7 @@ describe("CustomersWithoutState (Addendum D)", () => {
 
   it("a refresh after saving rows never subtracts them twice", async () => {
     const user = userEvent.setup();
-    renderWithProviders(<CustomersWithoutState canFix />);
+    renderWithProviders(<CustomersWithoutState canFix staffOrdersChecked={false} />);
     await openBucket(user, /3 have no address/);
     const first = screen.getByTestId("state-row-c-a");
     await user.selectOptions(within(first).getByLabelText(/state for customer a/i), "TX");
@@ -284,7 +297,7 @@ describe("CustomersWithoutState (Addendum D)", () => {
     mockGet.mockResolvedValue({
       data: data({ customersTotal: 4 }),
     });
-    renderWithProviders(<CustomersWithoutState canFix />);
+    renderWithProviders(<CustomersWithoutState canFix staffOrdersChecked={false} />);
     expect(await screen.findByText(/^4 customers need a state\./)).toBeInTheDocument();
     // bucket rows keep their own counts
     expect(screen.getByText("3 have no address")).toBeInTheDocument();
@@ -292,7 +305,7 @@ describe("CustomersWithoutState (Addendum D)", () => {
 
   it("shows one business-state line with a link when a legal ban cannot be judged", async () => {
     mockGet.mockResolvedValue({ data: data({ businessStateMissing: true }) });
-    renderWithProviders(<CustomersWithoutState canFix />);
+    renderWithProviders(<CustomersWithoutState canFix staffOrdersChecked={false} />);
     const line = await screen.findByTestId("business-state-missing");
     expect(line).toHaveTextContent(
       "Add your business address in Settings › Business so counter sales can check state rules.",
@@ -304,7 +317,7 @@ describe("CustomersWithoutState (Addendum D)", () => {
   });
 
   it("shows no business-state line otherwise", async () => {
-    renderWithProviders(<CustomersWithoutState canFix />);
+    renderWithProviders(<CustomersWithoutState canFix staffOrdersChecked={false} />);
     await screen.findByText(/need a state/);
     expect(screen.queryByTestId("business-state-missing")).toBeNull();
   });
@@ -336,14 +349,16 @@ describe("CustomersWithoutState: needsDefault (row 414)", () => {
 
   it("the disclosure row reads the exact copy, pluralised, with `Choose default`", async () => {
     mockGet.mockResolvedValue({ data: withDefaults([nd("d"), nd("e")]) });
-    const { unmount } = renderWithProviders(<CustomersWithoutState canFix />);
+    const { unmount } = renderWithProviders(
+      <CustomersWithoutState canFix staffOrdersChecked={false} />,
+    );
     expect(
       await screen.findByText("2 customers have more than one address and no default"),
     ).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "Choose default" })).toBeInTheDocument();
     unmount();
     mockGet.mockResolvedValue({ data: withDefaults([nd("d")]) });
-    renderWithProviders(<CustomersWithoutState canFix />);
+    renderWithProviders(<CustomersWithoutState canFix staffOrdersChecked={false} />);
     expect(
       await screen.findByText("1 customer has more than one address and no default"),
     ).toBeInTheDocument();
@@ -352,7 +367,7 @@ describe("CustomersWithoutState: needsDefault (row 414)", () => {
   it("expanded: the supporting line and hint, a radio per address, Open customer, and no bulk set", async () => {
     const user = userEvent.setup();
     mockGet.mockResolvedValue({ data: withDefaults([nd("d")]) });
-    renderWithProviders(<CustomersWithoutState canFix />);
+    renderWithProviders(<CustomersWithoutState canFix staffOrdersChecked={false} />);
     await openBucket(user, /more than one address and no default/);
     expect(
       screen.getByText(
@@ -376,7 +391,7 @@ describe("CustomersWithoutState: needsDefault (row 414)", () => {
     mockGet
       .mockResolvedValueOnce({ data: withDefaults([nd("d"), nd("e")]) })
       .mockResolvedValue({ data: withDefaults([nd("e")]) });
-    renderWithProviders(<CustomersWithoutState canFix />);
+    renderWithProviders(<CustomersWithoutState canFix staffOrdersChecked={false} />);
     await openBucket(user, /2 customers have more than one address/);
     const r = screen.getByTestId("state-row-c-d");
     await user.click(within(r).getByLabelText(/Albany, NY/));
@@ -397,7 +412,7 @@ describe("CustomersWithoutState: needsDefault (row 414)", () => {
     const user = userEvent.setup();
     mockPatch.mockRejectedValueOnce({ response: { status: 500, data: {} } });
     mockGet.mockResolvedValue({ data: withDefaults([nd("d")]) });
-    renderWithProviders(<CustomersWithoutState canFix />);
+    renderWithProviders(<CustomersWithoutState canFix staffOrdersChecked={false} />);
     await openBucket(user, /more than one address/);
     const r = screen.getByTestId("state-row-c-d");
     await user.click(within(r).getByLabelText(/Dallas, TX/));
@@ -409,7 +424,7 @@ describe("CustomersWithoutState: needsDefault (row 414)", () => {
   it("Enter on a chosen address saves", async () => {
     const user = userEvent.setup();
     mockGet.mockResolvedValue({ data: withDefaults([nd("d"), nd("e")]) });
-    renderWithProviders(<CustomersWithoutState canFix />);
+    renderWithProviders(<CustomersWithoutState canFix staffOrdersChecked={false} />);
     await openBucket(user, /more than one address/);
     const r = screen.getByTestId("state-row-c-d");
     await user.click(within(r).getByLabelText(/Dallas, TX/));
@@ -425,7 +440,7 @@ describe("CustomersWithoutState: needsDefault (row 414)", () => {
     const user = userEvent.setup();
     mockReadOnly = true;
     mockGet.mockResolvedValue({ data: withDefaults([nd("d")]) });
-    renderWithProviders(<CustomersWithoutState canFix />);
+    renderWithProviders(<CustomersWithoutState canFix staffOrdersChecked={false} />);
     await openBucket(user, /more than one address/);
     const r = screen.getByTestId("state-row-c-d");
     expect(within(r).queryByRole("button", { name: "Save" })).toBeNull();
@@ -434,7 +449,7 @@ describe("CustomersWithoutState: needsDefault (row 414)", () => {
   });
 
   it("an older API without needsDefault still renders the other buckets", async () => {
-    renderWithProviders(<CustomersWithoutState canFix />);
+    renderWithProviders(<CustomersWithoutState canFix staffOrdersChecked={false} />);
     expect(await screen.findByText("3 have no address")).toBeInTheDocument();
     expect(screen.queryByText(/no default/)).toBeNull();
   });
@@ -452,10 +467,10 @@ describe("CustomersWithoutState: SA rows R2 + undo by action id", () => {
         truncated: true,
       },
     });
-    renderWithProviders(<CustomersWithoutState canFix />);
+    renderWithProviders(<CustomersWithoutState canFix staffOrdersChecked={false} />);
     expect(
       await screen.findByText(
-        "Your customer list is too large to check all at once, so some customers may still need a state.",
+        /^Your customer list is too large to check all at once, so some customers may still need a state\. Until it's set/,
       ),
     ).toBeInTheDocument();
     expect(screen.queryByText("Every customer has a state on file.")).toBeNull();
@@ -464,7 +479,7 @@ describe("CustomersWithoutState: SA rows R2 + undo by action id", () => {
   it("a bulk set that changed nothing (actionId null) offers no Undo", async () => {
     const user = userEvent.setup();
     mockPost.mockResolvedValueOnce({ data: { changed: 0, changedAddressIds: [], actionId: null } });
-    renderWithProviders(<CustomersWithoutState canFix />);
+    renderWithProviders(<CustomersWithoutState canFix staffOrdersChecked={false} />);
     await openBucket(user, /3 have no address/);
     await user.click(screen.getByRole("button", { name: /set state for all shown/i }));
     const dialog = screen.getByRole("dialog");
@@ -499,7 +514,7 @@ describe("CustomersWithoutState: SA C-M1 (needsDefault saves are server-truth)",
   it("a choice with no state reads `No state` and cannot be chosen", async () => {
     const user = userEvent.setup();
     mockGet.mockResolvedValue({ data: only({ needsDefault: bucket([ndRow]), customersTotal: 1 }) });
-    renderWithProviders(<CustomersWithoutState canFix />);
+    renderWithProviders(<CustomersWithoutState canFix staffOrdersChecked={false} />);
     await openBucket(user, /more than one address/);
     const r = screen.getByTestId("state-row-c-d");
     const blank = within(r).getByLabelText(/Back lot/);
@@ -519,7 +534,7 @@ describe("CustomersWithoutState: SA C-M1 (needsDefault saves are server-truth)",
           customersTotal: 1,
         }),
       });
-    renderWithProviders(<CustomersWithoutState canFix />);
+    renderWithProviders(<CustomersWithoutState canFix staffOrdersChecked={false} />);
     await openBucket(user, /more than one address/);
     const r = screen.getByTestId("state-row-c-d");
     await user.click(within(r).getByLabelText(/1 Main St, Dallas/));
@@ -537,7 +552,7 @@ describe("CustomersWithoutState: SA C-M1 (needsDefault saves are server-truth)",
         data: { changed: 3, changedAddressIds: ["x1", "x2", "x3"], actionId: "act-1" },
       })
       .mockRejectedValueOnce({ response: { status, data: {} } });
-    renderWithProviders(<CustomersWithoutState canFix />);
+    renderWithProviders(<CustomersWithoutState canFix staffOrdersChecked={false} />);
     await openBucket(user, /3 have no address/);
     await user.click(screen.getByRole("button", { name: /set state for all shown/i }));
     const dialog = screen.getByRole("dialog");
@@ -559,7 +574,7 @@ describe("apple-ux: an opened bucket is brought into view (it opened below the f
     const user = userEvent.setup();
     const scroll = jest.fn();
     Element.prototype.scrollIntoView = scroll;
-    renderWithProviders(<CustomersWithoutState canFix />);
+    renderWithProviders(<CustomersWithoutState canFix staffOrdersChecked={false} />);
     await openBucket(user, /3 have no address/);
     await waitFor(() =>
       expect(scroll).toHaveBeenCalledWith({ block: "nearest", behavior: "smooth" }),
@@ -578,7 +593,7 @@ describe("apple-ux: an opened bucket is brought into view (it opened below the f
       removeEventListener() {},
     })) as unknown as typeof window.matchMedia;
     try {
-      renderWithProviders(<CustomersWithoutState canFix />);
+      renderWithProviders(<CustomersWithoutState canFix staffOrdersChecked={false} />);
       await openBucket(user, /3 have no address/);
       await waitFor(() =>
         expect(scroll).toHaveBeenCalledWith({ block: "nearest", behavior: "auto" }),
