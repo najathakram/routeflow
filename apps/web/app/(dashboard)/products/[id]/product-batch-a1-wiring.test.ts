@@ -45,4 +45,12 @@ describe("products/[id]/page.tsx — batch A1 wiring", () => {
     expect(src).toMatch(/\{isEditing && \(\s*<InfoRow\s+label="Variant of"/);
     expect(src).not.toContain("(isEditing || product.parentProductId)");
   });
+
+  it("D4: below lg the hero photo is shown whole (contain, centred); lg+ keeps object-cover + focal point", () => {
+    expect(src).toMatch(/object-contain max-lg:!\[object-position:50%_50%\] lg:object-cover/);
+  });
+
+  it("D1: the Details actions container left-aligns full-width below sm, stays justify-end from sm", () => {
+    expect(src).toContain("justify-end gap-2 max-sm:w-full max-sm:justify-start");
+  });
 });

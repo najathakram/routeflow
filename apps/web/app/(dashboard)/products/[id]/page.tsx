@@ -1138,10 +1138,9 @@ export default function ProductDetailPage() {
                   return (
                     <div className="space-y-2">
                       {/* Main image / drop zone — 4:5 portrait viewport matching the
-                    upload ratio. object-cover + object-position uses each
-                    image's stored focal point to keep the right area visible
-                    even when the image is from before the focal-point
-                    feature (those default to centre). */}
+                    upload ratio. Below lg the photo is shown whole (contain, centred);
+                    lg+ crops with object-cover by each image's stored focal point
+                    (older images default to centre). */}
                       <div
                         onDragOver={(e) => {
                           e.preventDefault();
@@ -1169,7 +1168,7 @@ export default function ProductDetailPage() {
                             <img
                               src={images[safeIdx]}
                               alt={`${product.name} — image ${safeIdx + 1}`}
-                              className="absolute inset-0 h-full w-full object-cover cursor-zoom-in"
+                              className="absolute inset-0 h-full w-full cursor-zoom-in object-contain max-lg:![object-position:50%_50%] lg:object-cover"
                               style={{ objectPosition: objectPositionForUrl(images[safeIdx]) }}
                               onClick={(e) => {
                                 e.stopPropagation();
@@ -1435,7 +1434,7 @@ export default function ProductDetailPage() {
                 <h3 className="text-[11px] font-semibold uppercase tracking-[0.08em] text-navy/70">
                   Details
                 </h3>
-                <div className="flex max-w-full flex-wrap items-center justify-end gap-2">
+                <div className="flex max-w-full flex-wrap items-center justify-end gap-2 max-sm:w-full max-sm:justify-start">
                   {isEditing ? (
                     <>
                       <EditActionButtons

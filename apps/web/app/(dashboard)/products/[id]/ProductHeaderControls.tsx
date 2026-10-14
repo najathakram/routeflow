@@ -78,7 +78,7 @@ export function ProductHeaderControls({
         </Button>
       )}
       {isOperator && (
-        <div className="flex items-center max-sm:basis-full max-sm:justify-end sm:ml-2 sm:border-l sm:border-surface-border sm:pl-3">
+        <div className="flex items-center max-sm:basis-full max-sm:justify-start max-sm:border-t max-sm:border-surface-border max-sm:pt-2 sm:ml-2 sm:border-l sm:border-surface-border sm:pl-3">
           <Button
             size="sm"
             variant="danger-outline"

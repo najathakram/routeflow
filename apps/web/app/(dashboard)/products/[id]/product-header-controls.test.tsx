@@ -98,4 +98,13 @@ describe("ProductHeaderControls (VU-2)", () => {
     expect(wrap.className).toMatch(/sm:ml-2/);
     expect(wrap.className).toMatch(/max-sm:basis-full/);
   });
+
+  it("D1: below sm the Delete row starts at the leading edge, set apart by a hairline above", () => {
+    setup();
+    const wrap = screen.getByRole("button", { name: "Delete" }).parentElement as HTMLElement;
+    expect(wrap.className).toMatch(/max-sm:justify-start/);
+    expect(wrap.className).toMatch(/max-sm:border-t/);
+    expect(wrap.className).toMatch(/max-sm:basis-full/);
+    expect(wrap.className).not.toMatch(/max-sm:justify-end/);
+  });
 });
