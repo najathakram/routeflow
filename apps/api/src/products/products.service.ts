@@ -348,10 +348,18 @@ export class ProductsService {
     });
   }
 
+  /** The tenant this request runs in; the catalog is only ever listed inside one. */
+  private requireTenant(): string {
+    const tenantId = this.prisma.getTenantId();
+    if (!tenantId) throw new BadRequestException("A tenant context is required.");
+    return tenantId;
+  }
+
   async findAll(
     query: ListProductsDto,
     opts?: { excludeTrackedCategoryIds?: string[]; andWhere?: Record<string, unknown>[] },
   ) {
+    this.requireTenant();
     const page = Number(query.page ?? 1);
     // limit=0 is the "fetch-all" sentinel used by BuyerCatalogService for
     // price-based sorts (buyer pricing is resolved in-memory so can't use DB ORDER BY).
@@ -440,6 +448,7 @@ export class ProductsService {
    * no effect here.
    */
   async findIds(query: ListProductsDto): Promise<ProductIdsForFilterResponse> {
+    this.requireTenant();
     const where: any = buildProductListWhere(query);
     const db = this.prisma.forTenant();
     const [rows, total] = await Promise.all([

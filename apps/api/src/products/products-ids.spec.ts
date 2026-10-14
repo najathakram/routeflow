@@ -1,6 +1,7 @@
 import { readFileSync } from "fs";
 import { join } from "path";
 import { UserRole } from "@prisma/client";
+import { BadRequestException } from "@nestjs/common";
 import { ROLES_KEY } from "../auth/decorators/roles.decorator";
 import { createMockPrisma } from "../testing/prisma-mock";
 import { ProductsController } from "./products.controller";
@@ -58,6 +59,19 @@ describe("ProductsService.findIds", () => {
     product.count.mockResolvedValue(1000);
     expect((await svc.findIds({} as never)).capped).toBe(false);
   });
+});
+
+describe("tenant context is required to list products", () => {
+  it.each(["findIds", "findAll"] as const)(
+    "%s is a 400 with no tenant context, before any read",
+    async (method) => {
+      const { svc, product } = service();
+      ((svc as any).prisma.getTenantId as jest.Mock).mockReturnValue(null);
+      await expect((svc as any)[method]({})).rejects.toBeInstanceOf(BadRequestException);
+      expect(product.findMany).not.toHaveBeenCalled();
+      expect(product.count).not.toHaveBeenCalled();
+    },
+  );
 });
 
 describe("GET /products/ids route", () => {

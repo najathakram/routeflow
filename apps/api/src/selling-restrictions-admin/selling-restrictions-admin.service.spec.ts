@@ -200,7 +200,10 @@ describe("SellingRestrictionsAdminService.create", () => {
       data: expect.objectContaining({ action: "selling_restriction.created", entityId: "r1" }),
     });
     // The response is still the single rule's list item (the web's create caller reads it).
-    expect(s.rules.findFirst.mock.calls[0][0].where).toEqual({ id: data.id });
+    expect(s.rules.findFirst.mock.calls[0][0].where).toEqual({
+      id: data.id,
+      tenantId: "test-tenant",
+    });
   });
 
   it("a FEDERAL rule stores no states; a product-scoped rule needs the product to exist", async () => {
