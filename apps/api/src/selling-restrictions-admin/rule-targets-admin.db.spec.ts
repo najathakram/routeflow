@@ -93,7 +93,10 @@ describeDb("row 509 PR2: rule targets admin API — real Postgres", () => {
     asA(() =>
       rules.create(
         {
-          jurisdiction: "FEDERAL",
+          // A STATE rule by default: an all-customer (FEDERAL) rule is TENANT_ADMIN-only, so the tests that
+          // exercise it say so (`federal`) and the operator tests stay on a rule an operator may change.
+          jurisdiction: "STATE",
+          states: ["TX"],
           surface: "BUYER_PORTAL",
           reason: "R509 PR2",
           ...over,
@@ -129,8 +132,8 @@ describeDb("row 509 PR2: rule targets admin API — real Postgres", () => {
         data: {
           tenantId: tenantA,
           ...legacy,
-          jurisdiction: "FEDERAL",
-          states: [],
+          jurisdiction: "STATE",
+          states: ["TX"],
           surface: "BUYER_PORTAL",
           reason: "R509 legacy",
           effectiveFrom: PAST,
@@ -363,7 +366,10 @@ describeDb("row 509 PR2: rule targets admin API — real Postgres", () => {
     });
 
     it("an all-customer (FEDERAL) rule is admin-only (403, nothing written); a STATE rule is operator-ok", async () => {
-      await fails(create({ targets: { productIds: [p.a] } }, operator), 403);
+      await fails(
+        create({ jurisdiction: "FEDERAL", states: [], targets: { productIds: [p.a] } }, operator),
+        403,
+      );
       expect(await raw.sellingRestriction.count({ where: { tenantId: tenantA } })).toBe(0);
       const ok = await create(
         { jurisdiction: "STATE", states: ["TX"], targets: { productIds: [p.a] } },
@@ -550,7 +556,11 @@ describeDb("row 509 PR2: rule targets admin API — real Postgres", () => {
     });
 
     it("SA condition 5: an operator adding to / removing from an all-customer rule is 403; an admin is fine", async () => {
-      const rule = await create({ targets: { productIds: [p.a, p.b] } }); // FEDERAL, made by the admin
+      const rule = await create({
+        jurisdiction: "FEDERAL",
+        states: [],
+        targets: { productIds: [p.a, p.b] },
+      }); // all-customer, made by the admin
       await fails(
         asA(() => targets.addTargets(rule.id, { productIds: [p.d] }, operator)),
         403,

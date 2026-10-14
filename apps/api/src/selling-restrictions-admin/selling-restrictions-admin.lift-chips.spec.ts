@@ -48,6 +48,8 @@ const rule = (id: string, over: Rule = {}): Rule => ({
   liftReason: null,
   category: null,
   product: { name: "Acme pod" },
+  // Row 509: a rule row's target rows (none = a pre-509 rule, read by its legacy column).
+  targets: [] as Rule[],
   ...over,
 });
 
@@ -57,6 +59,12 @@ function matches(row: Rule, where: Rule | undefined): boolean {
   return Object.entries(where).every(([k, v]) => {
     if (k === "AND") return (v as Rule[]).every((w) => matches(row, w));
     if (k === "OR") return (v as Rule[]).some((w) => matches(row, w));
+    if (k === "targets") {
+      const rows = (row.targets ?? []) as Rule[];
+      return "some" in v
+        ? rows.some((t) => matches(t, v.some))
+        : rows.every((t) => !matches(t, v.none));
+    }
     if (v === null) return row[k] === null;
     if (v instanceof Date || typeof v !== "object") return row[k] === v;
     if ("in" in v) return (v.in as unknown[]).includes(row[k]);
@@ -77,7 +85,13 @@ function setup(rules: Rule[] = []) {
       let rows = store.rules.filter((r) => matches(r, a?.where));
       if (a?.orderBy?.id === "asc") rows = [...rows].sort((x, y) => (x.id < y.id ? -1 : 1));
       if (a?.take) rows = rows.slice(0, a.take);
-      return rows.map((r) => ({ ...r }));
+      return rows.map((r) => ({
+        ...r,
+        targets: ((r.targets ?? []) as Rule[]).filter((t) =>
+          matches(t, a?.include?.targets?.where),
+        ),
+        _count: { targets: (r.targets ?? []).length },
+      }));
     }),
     findFirst: jest.fn(
       async (a: any) =>
@@ -90,6 +104,8 @@ function setup(rules: Rule[] = []) {
     }),
     createMany: jest.fn(),
   };
+  // The row lock (`SELECT … FOR UPDATE`) and the target summary reads are raw SQL; the fake has nothing to wait on.
+  models.$queryRaw = jest.fn().mockResolvedValue([]);
   models.auditLog.create.mockImplementation(async (a: any) => {
     const row = { id: `audit-${store.audits.length + 1}`, ...a.data };
     store.audits.push(row);
@@ -149,6 +165,13 @@ describe("row f: POST /selling-restrictions/lift-batch", () => {
       id: { in: ["r1", "r2", "r3"] },
       liftedAt: null,
     });
+    // Row 509: the rule rows are locked (FOR UPDATE, shared with target edits) BEFORE the guarded write.
+    const lock = s.models.$queryRaw as jest.Mock;
+    expect(lock).toHaveBeenCalledTimes(1);
+    expect(lock.mock.invocationCallOrder[0]).toBeLessThan(
+      s.models.sellingRestriction.updateMany.mock.invocationCallOrder[0],
+    );
+    expect(String(lock.mock.calls[0][0].join(" "))).toContain("FOR UPDATE");
   });
 
   it("a second lift-batch of the same ids is a 409 and overwrites nothing (liftedAt, liftReason, actor)", async () => {
@@ -322,12 +345,48 @@ describe("row i: GET /selling-restrictions?productId= — the product-page chips
       via: "PARENT",
       viaLabel: "Acme pod",
       liftedAt: null,
+      directTarget: false,
+      targetSummary: { products: 0, categories: 0, preview: [] },
     });
     // Tenant-scoped, ACTIVE only (the engine's own predicate), deterministic keyset order.
     const q = s.models.sellingRestriction.findMany.mock.calls[0][0];
     expect(q.where.tenantId).toBe(TENANT);
     expect(q.where.AND[0]).toEqual(activeRuleWhere(q.where.AND[0].effectiveFrom.lte));
     expect(q.orderBy).toEqual({ id: "asc" });
+  });
+
+  it("row 509: rules WITH target rows reach the product through active targets only (TARGET, PARENT, CATEGORY); a removed target is gone", async () => {
+    const t = (over: Rule) => ({ removedAt: null, addedAt: new Date(Date.now() - DAY), ...over });
+    const s = setup([
+      rule("t-own", {
+        productId: "first",
+        targets: [
+          t({ productId: "first" }),
+          t({ productId: VARIANT, product: { name: "Acme pod mint" } }),
+        ],
+      }),
+      rule("t-parent", {
+        productId: PARENT,
+        targets: [t({ productId: PARENT, product: { name: "Acme pod" } })],
+      }),
+      rule("t-cat", {
+        productId: null,
+        categoryId: "cat-vapes",
+        targets: [t({ productId: null, categoryId: "cat-vapes", category: { name: "Vapes" } })],
+      }),
+      // the legacy column still names the variant, but its only target row was removed: no longer binds it
+      rule("t-removed", {
+        productId: VARIANT,
+        targets: [t({ productId: VARIANT, removedAt: new Date(Date.now() - 1000) })],
+      }),
+    ]);
+    s.labels.effectiveLabels.mockResolvedValue(labelsFor(["cat-vapes"]));
+    const res = await s.service.productLimits(VARIANT);
+    expect(res.items.map((i) => [i.id, i.via, i.viaLabel, i.directTarget])).toEqual([
+      ["t-cat", "CATEGORY", "Vapes", false],
+      ["t-own", "PRODUCT", null, true],
+      ["t-parent", "PARENT", "Acme pod", false],
+    ]);
   });
 
   it("an EXCLUDE opt-out (the category is not in the product's effective labels) hides the category chip", async () => {

@@ -23,7 +23,7 @@ describe("ProductCategoriesService name guards (B983)", () => {
     name: "Alcohol",
     archivedAt: null,
     createdAt: new Date("2026-09-19T00:00:00Z"),
-    _count: { labels: 0, sellingRestrictions: 0 },
+    _count: { labels: 0, sellingRestrictionTargets: 0, sellingRestrictions: 0 },
     ...over,
   });
 

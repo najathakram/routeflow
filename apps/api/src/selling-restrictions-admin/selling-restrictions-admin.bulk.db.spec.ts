@@ -13,7 +13,7 @@
  */
 import { randomUUID } from "crypto";
 import { ConflictException, NotFoundException } from "@nestjs/common";
-import { PrismaClient } from "@prisma/client";
+import { PrismaClient, UserRole } from "@prisma/client";
 import { PrismaPg } from "@prisma/adapter-pg";
 import { Pool } from "pg";
 import { describeDb, requireLocalDatabaseUrl } from "../common/testing/db-spec";
@@ -28,7 +28,12 @@ import type { JwtPayload } from "../auth/jwt-payload.interface";
 // eslint-disable-next-line @typescript-eslint/no-var-requires
 const { assertTestTenant } = require("../../../../scripts/lib/test-tenants.cjs");
 
-const admin = { sub: "u-bulk-op", username: "bulk-operator" } as JwtPayload;
+// TENANT_ADMIN: the specs create an all-customer (FEDERAL) rule, which an operator may not (row 509, SA condition 5).
+const admin = {
+  sub: "u-bulk-op",
+  username: "bulk-operator",
+  role: UserRole.TENANT_ADMIN,
+} as JwtPayload;
 const SPEC = "selling-restrictions-admin.bulk.db.spec.ts";
 
 describeDb("selling-restriction bulk create against real Postgres", () => {
@@ -49,8 +54,11 @@ describeDb("selling-restriction bulk create against real Postgres", () => {
   let productB: string;
 
   const asA = <T>(fn: () => Promise<T>) => ctx.run(tenantA, fn);
-  const rulesFor = (productIds: string[]) =>
-    raw.sellingRestriction.findMany({ where: { productId: { in: productIds } } });
+  /** The rules that hold any of these products as an active target. */
+  const rulesFor = async (productIds: string[]) =>
+    raw.sellingRestriction.findMany({
+      where: { targets: { some: { productId: { in: productIds }, removedAt: null } } },
+    });
   const bulkAudits = (tenantId: string) =>
     raw.auditLog.findMany({ where: { tenantId, action: "selling_restriction.bulk_created" } });
 
@@ -88,6 +96,7 @@ describeDb("selling-restriction bulk create against real Postgres", () => {
   afterAll(async () => {
     for (const t of [tenantA, tenantB].filter(Boolean)) {
       await raw.auditLog.deleteMany({ where: { tenantId: t } });
+      await raw.sellingRestrictionTarget.deleteMany({ where: { tenantId: t } });
       await raw.sellingRestriction.deleteMany({ where: { tenantId: t } });
       await raw.productCategoryLabel.deleteMany({ where: { tenantId: t } });
       await raw.product.deleteMany({ where: { tenantId: t, parentProductId: { not: null } } });
@@ -104,39 +113,42 @@ describeDb("selling-restriction bulk create against real Postgres", () => {
     jest.restoreAllMocks();
     for (const t of [tenantA, tenantB]) {
       await raw.auditLog.deleteMany({ where: { tenantId: t } });
+      await raw.sellingRestrictionTarget.deleteMany({ where: { tenantId: t } });
       await raw.sellingRestriction.deleteMany({ where: { tenantId: t } });
     }
   });
 
-  it("bulk with 12 products creates 12 rows and ONE audit row naming them", async () => {
+  it("bulk with 12 products creates ONE rule with 12 targets and ONE audit row naming it (owner Q6)", async () => {
     const twelve = productsA.slice(0, 12);
     const res = await asA(() =>
       service.bulkCreate({ jurisdiction: "STATE", states: ["Texas"], productIds: twelve }, admin),
     );
-    expect(res.created).toBe(12);
-    expect(res.skipped).toBe(0);
+    expect(res).toMatchObject({ created: 1, skipped: 0 });
+    expect(res.createdIds).toHaveLength(1);
+    expect(res.ruleId).toBe(res.createdIds[0]);
     const rows = await rulesFor(twelve);
-    expect(rows).toHaveLength(12);
-    expect(new Set(rows.map((r) => r.id))).toEqual(new Set(res.createdIds));
-    for (const r of rows) {
-      expect(r).toMatchObject({
-        tenantId: tenantA,
-        categoryId: null,
-        jurisdiction: "STATE",
-        states: ["TX"],
-        surface: "BUYER_PORTAL",
-        reason: "Portal limit",
-        createdById: admin.sub,
-        liftedAt: null,
-      });
-    }
+    expect(rows).toHaveLength(1);
+    expect(rows[0]).toMatchObject({
+      id: res.ruleId,
+      tenantId: tenantA,
+      categoryId: null,
+      productId: twelve[0], // the legacy column mirrors the first target
+      jurisdiction: "STATE",
+      states: ["TX"],
+      surface: "BUYER_PORTAL",
+      reason: "Portal limit",
+      createdById: admin.sub,
+      liftedAt: null,
+    });
+    const targets = await raw.sellingRestrictionTarget.findMany({ where: { ruleId: res.ruleId } });
+    expect(targets.map((t) => t.productId).sort()).toEqual([...twelve].sort());
     const audits = await bulkAudits(tenantA);
     expect(audits).toHaveLength(1);
     expect(audits[0].id).toBe(res.auditId);
-    expect((audits[0].meta as { ids: string[] }).ids).toEqual(res.createdIds);
+    expect((audits[0].meta as { ids: string[] }).ids).toEqual([res.ruleId]);
   }, 30_000);
 
-  it("a failure after the insert rolls the WHOLE batch back: 0 rows, 0 audit rows", async () => {
+  it("a failure after the insert rolls the WHOLE rule back: 0 rules, 0 targets, 0 audit rows", async () => {
     const twelve = productsA.slice(0, 12);
     let seenInsideTx = -1;
     const original = prisma.tenantTransaction.bind(prisma);
@@ -147,8 +159,8 @@ describeDb("selling-restriction bulk create against real Postgres", () => {
             if (key !== "auditLog") return target[key];
             return {
               create: async () => {
-                // The rows ARE there inside the transaction ...
-                seenInsideTx = await target.sellingRestriction.count({
+                // The target rows ARE there inside the transaction ...
+                seenInsideTx = await target.sellingRestrictionTarget.count({
                   where: { productId: { in: twelve } },
                 });
                 throw new Error("audit insert failed");
@@ -167,26 +179,38 @@ describeDb("selling-restriction bulk create against real Postgres", () => {
     expect(seenInsideTx).toBe(12);
     // ... and none of them survived the rollback.
     expect(await rulesFor(twelve)).toHaveLength(0);
+    expect(await raw.sellingRestriction.count({ where: { tenantId: tenantA } })).toBe(0);
+    expect(await raw.sellingRestrictionTarget.count({ where: { tenantId: tenantA } })).toBe(0);
     expect(await bulkAudits(tenantA)).toHaveLength(0);
   }, 30_000);
 
-  it("an identical live rule is skipped and reported; a lifted one no longer counts", async () => {
+  it("an identical live rule holding ALL the products skips the create; a partial overlap makes a new rule; a lifted one no longer counts", async () => {
     const [p1, p2, p3] = productsA;
-    await asA(() =>
+    const first = await asA(() =>
       service.bulkCreate(
         { jurisdiction: "STATE", states: ["TX", "OK"], productIds: [p1, p2] },
         admin,
       ),
     );
-    const again = await asA(() =>
+    // p3 is not in the first rule: not identical, so ONE new rule with all three
+    const wider = await asA(() =>
       service.bulkCreate(
         { jurisdiction: "STATE", states: ["oklahoma", "texas"], productIds: [p1, p2, p3] },
         admin,
       ),
     );
-    expect(again).toMatchObject({ created: 1, skipped: 2, skippedProductIds: [p1, p2] });
-    expect(await rulesFor([p1])).toHaveLength(1);
-    expect(await rulesFor([p3])).toHaveLength(1);
+    expect(wider).toMatchObject({ created: 1, skipped: 0 });
+    expect(wider.ruleId).not.toBe(first.ruleId);
+    // the same set again (any order, any state spelling): skipped, nothing written
+    const again = await asA(() =>
+      service.bulkCreate(
+        { jurisdiction: "STATE", states: ["oklahoma", "texas"], productIds: [p2, p1] },
+        admin,
+      ),
+    );
+    expect(again).toMatchObject({ created: 0, skipped: 2, createdIds: [] });
+    expect(again.skippedProductIds?.sort()).toEqual([p1, p2].sort());
+    expect(await raw.sellingRestriction.count({ where: { tenantId: tenantA } })).toBe(2);
 
     // A different surface is not identical.
     const legal = await asA(() =>
@@ -197,9 +221,9 @@ describeDb("selling-restriction bulk create against real Postgres", () => {
     );
     expect(legal.created).toBe(1);
 
-    // Lift p2's portal rule: the next identical request creates it again.
+    // Lift both portal rules: the next identical request creates it again.
     await raw.sellingRestriction.updateMany({
-      where: { productId: p2, surface: "BUYER_PORTAL" },
+      where: { surface: "BUYER_PORTAL", tenantId: tenantA },
       data: { liftedAt: new Date(Date.now() - 1000), liftReason: "spec" },
     });
     const afterLift = await asA(() =>
@@ -216,9 +240,11 @@ describeDb("selling-restriction bulk create against real Postgres", () => {
     const rows = await raw.sellingRestriction.findMany({ where: { tenantId: tenantA } });
     expect(rows).toHaveLength(1);
     expect(rows[0]).toMatchObject({ categoryId: categoryA, productId: null, states: [] });
+    const targets = await raw.sellingRestrictionTarget.findMany({ where: { ruleId: rows[0].id } });
+    expect(targets).toEqual([expect.objectContaining({ categoryId: categoryA, productId: null })]);
   }, 30_000);
 
-  it("another tenant's product or category is a 404 and nothing is written in either tenant", async () => {
+  it("another tenant's product or category is the coded 409 and nothing is written in either tenant", async () => {
     await expect(
       asA(() =>
         service.bulkCreate(
@@ -226,12 +252,12 @@ describeDb("selling-restriction bulk create against real Postgres", () => {
           admin,
         ),
       ),
-    ).rejects.toBeInstanceOf(NotFoundException);
+    ).rejects.toMatchObject({ response: { code: "RULE_TARGETS_NOT_FOUND" } });
     await expect(
       asA(() =>
         service.bulkCreate({ jurisdiction: "STATE", states: ["TX"], categoryId: categoryB }, admin),
       ),
-    ).rejects.toBeInstanceOf(NotFoundException);
+    ).rejects.toMatchObject({ response: { code: "RULE_TARGETS_NOT_FOUND" } });
     expect(
       await raw.sellingRestriction.count({ where: { tenantId: { in: [tenantA, tenantB] } } }),
     ).toBe(0);
@@ -243,9 +269,17 @@ describeDb("selling-restriction bulk create against real Postgres", () => {
 
   it("lift-batch lifts N with one audit row; a second call is a 409 and overwrites nothing", async () => {
     const three = productsA.slice(0, 3);
-    const { createdIds } = await asA(() =>
-      service.bulkCreate({ jurisdiction: "STATE", states: ["TX"], productIds: three }, admin),
-    );
+    // three separate rules (a bulk is now ONE rule, so the batch is made of three bulks)
+    const createdIds: string[] = [];
+    for (const productId of three) {
+      const r = await asA(() =>
+        service.bulkCreate(
+          { jurisdiction: "STATE", states: ["TX"], productIds: [productId] },
+          admin,
+        ),
+      );
+      createdIds.push(...r.createdIds);
+    }
     const res = await asA(() =>
       service.liftBatch({ ids: createdIds, reason: "Undone right after creating" }, admin),
     );
@@ -275,12 +309,16 @@ describeDb("selling-restriction bulk create against real Postgres", () => {
   }, 30_000);
 
   it("lift-batch is all-or-nothing: an already-lifted or another tenant's id leaves every rule as it was", async () => {
-    const { createdIds } = await asA(() =>
-      service.bulkCreate(
-        { jurisdiction: "STATE", states: ["TX"], productIds: productsA.slice(0, 2) },
-        admin,
-      ),
-    );
+    const createdIds: string[] = [];
+    for (const productId of productsA.slice(0, 2)) {
+      const r = await asA(() =>
+        service.bulkCreate(
+          { jurisdiction: "STATE", states: ["TX"], productIds: [productId] },
+          admin,
+        ),
+      );
+      createdIds.push(...r.createdIds);
+    }
     const foreign = await raw.sellingRestriction.create({
       data: {
         tenantId: tenantB,
