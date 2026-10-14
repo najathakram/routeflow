@@ -70,6 +70,9 @@ function setup() {
   // Row 509: a rule's targets are written as rows, read back as a summary (raw SQL) and the lift takes a row lock.
   const targetRows = { createMany: jest.fn().mockResolvedValue({ count: 1 }) };
   models.sellingRestrictionTarget = targetRows;
+  // Row 509 PR3: every rule is written with its revision 1.
+  const revisionRows = { create: jest.fn().mockResolvedValue({}) };
+  models.sellingRestrictionRevision = revisionRows;
   models.$queryRaw = jest.fn().mockResolvedValue([]);
   // `findMany` resolves the target ids (non-archived labels only): "c1" is the one label this tenant has.
   models.productCategory = {
@@ -84,6 +87,7 @@ function setup() {
     models,
     rules,
     targetRows,
+    revisionRows,
     service: new SellingRestrictionsAdminService(prisma, labels as any),
   };
 }
@@ -179,11 +183,27 @@ describe("SellingRestrictionsAdminService.create", () => {
         addedByName: "admin",
       }),
     ]);
+    // Row 509 PR3: revision 1 = the rule as created, by its creator, in the same transaction.
+    expect(s.revisionRows.create).toHaveBeenCalledTimes(1);
+    expect(s.revisionRows.create.mock.calls[0][0].data).toMatchObject({
+      tenantId: "test-tenant",
+      ruleId: data.id,
+      revision: 1,
+      jurisdiction: "STATE",
+      states: ["TX", "FL"],
+      surface: "ALL",
+      reason: data.reason,
+      editedById: "u1",
+      editedByName: "admin",
+    });
     expect(s.models.auditLog.create).toHaveBeenCalledWith({
       data: expect.objectContaining({ action: "selling_restriction.created", entityId: "r1" }),
     });
     // The response is still the single rule's list item (the web's create caller reads it).
-    expect(s.rules.findFirst.mock.calls[0][0].where).toEqual({ id: data.id });
+    expect(s.rules.findFirst.mock.calls[0][0].where).toEqual({
+      id: data.id,
+      tenantId: "test-tenant",
+    });
   });
 
   it("a FEDERAL rule stores no states; a product-scoped rule needs the product to exist", async () => {

@@ -168,6 +168,11 @@ export interface ProductLimitsResponse {
 //                               RULE_TARGETS_MAX_PER_RULE active targets (body.field "rule", body.max).
 //   RULE_STALE             409  `expectedRevision` is not the rule's current revision (PR3).
 //   RULE_IMPACT_CHANGED    409  the impact behind `confirmImpactHash` changed since the preview (PR3); preview again.
+//                               The hash covers the affected documents AND the proposed settings, so confirming a
+//                               different edit than the one previewed is this error too.
+//   RULE_END_USE_LIFT      400  an edit set `effectiveTo` to now or earlier; "To end this rule now, lift it." (PR3)
+//   RULE_IMPACT_TOO_LARGE  409  a tightening edit reaches more open orders and drafts than the preview counts
+//                               (body.max); narrow the change or add a new rule instead (PR3). Nothing is written.
 // Already-present targets (add) and ids not in the rule (remove) are skipped and reported, never errors.
 
 /** Ids per add / remove / create call, in ONE atomic transaction (owner Q5: select-all-matching up to 1,000). */

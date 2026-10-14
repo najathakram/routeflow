@@ -245,6 +245,7 @@ describeDb("row 509 PR2: rule targets admin API — real Postgres", () => {
     for (const t of [tenantA, tenantB].filter(Boolean)) {
       await raw.auditLog.deleteMany({ where: { tenantId: t } });
       await raw.sellingRestrictionTarget.deleteMany({ where: { tenantId: t } });
+      await raw.sellingRestrictionRevision.deleteMany({ where: { tenantId: t } });
       await raw.sellingRestriction.deleteMany({ where: { tenantId: t } });
       await raw.productCategoryLabel.deleteMany({ where: { tenantId: t } });
       await raw.customerAddress.deleteMany({ where: { tenantId: t } });
@@ -265,6 +266,7 @@ describeDb("row 509 PR2: rule targets admin API — real Postgres", () => {
     for (const t of [tenantA, tenantB]) {
       await raw.auditLog.deleteMany({ where: { tenantId: t } });
       await raw.sellingRestrictionTarget.deleteMany({ where: { tenantId: t } });
+      await raw.sellingRestrictionRevision.deleteMany({ where: { tenantId: t } });
       await raw.sellingRestriction.deleteMany({ where: { tenantId: t } });
     }
   });
@@ -470,6 +472,7 @@ describeDb("row 509 PR2: rule targets admin API — real Postgres", () => {
         );
       } finally {
         await raw.sellingRestrictionTarget.deleteMany({ where: { tenantId: tenantA } });
+        await raw.sellingRestrictionRevision.deleteMany({ where: { tenantId: tenantA } });
         await raw.sellingRestriction.deleteMany({ where: { tenantId: tenantA } });
         await raw.product.deleteMany({
           where: { tenantId: tenantA, name: { startsWith: "R509 bulk" } },
@@ -813,7 +816,15 @@ describeDb("row 509 PR2: rule targets admin API — real Postgres", () => {
       );
       const d = await asA(() => targets.detail(rule.id));
       expect(d.id).toBe(rule.id);
-      expect(d.revisions).toEqual([]);
+      // Row 509 PR3: a rule made through the service carries revision 1 (the rule as created).
+      expect(d.revisions).toHaveLength(1);
+      expect(d.revisions[0]).toMatchObject({
+        revision: 1,
+        jurisdiction: "STATE",
+        states: ["TX"],
+        surface: "BUYER_PORTAL",
+        reason: "R509 PR2",
+      });
       expect(d.nextCursor).toBeNull();
       expect(d.targets).toHaveLength(4); // fam, v1, vape, b (a was removed)
       const fam = d.targets.find((t) => t.productId === p.fam);
@@ -871,6 +882,7 @@ describeDb("row 509 PR2: rule targets admin API — real Postgres", () => {
         );
       } finally {
         await raw.sellingRestrictionTarget.deleteMany({ where: { tenantId: tenantA } });
+        await raw.sellingRestrictionRevision.deleteMany({ where: { tenantId: tenantA } });
         await raw.sellingRestriction.deleteMany({ where: { tenantId: tenantA } });
         await raw.product.deleteMany({
           where: { tenantId: tenantA, name: { startsWith: "R509 page" } },
@@ -880,6 +892,62 @@ describeDb("row 509 PR2: rule targets admin API — real Postgres", () => {
   });
 
   // ─── list / chips / holding / bulk / label guard ───────────────────────────────────────────────
+
+  describe("who may lift", () => {
+    const stateRule = () => create({ targets: { productIds: [p.a] } }); // STATE, operator-ok
+    const allCustomerRule = () =>
+      create({ jurisdiction: "FEDERAL", states: [], targets: { productIds: [p.b] } }); // admin-only
+
+    it("an operator lifting an all-customer rule is 403 and the rule stays in force; an admin may lift it", async () => {
+      const rule = await allCustomerRule();
+      await fails(
+        asA(() => rules.lift(rule.id, { reason: "no" }, operator)),
+        403,
+      );
+      expect(
+        (await raw.sellingRestriction.findUniqueOrThrow({ where: { id: rule.id } })).liftedAt,
+      ).toBeNull();
+      expect(await audits("selling_restriction.lifted")).toHaveLength(0);
+      await asA(() => rules.lift(rule.id, { reason: "ok" }, admin));
+      expect(
+        (await raw.sellingRestriction.findUniqueOrThrow({ where: { id: rule.id } })).liftedAt,
+      ).not.toBeNull();
+    });
+
+    it("an operator may lift a STATE rule", async () => {
+      const rule = await stateRule();
+      const dto = await asA(() => rules.lift(rule.id, { reason: "fine" }, operator));
+      expect(dto.status).toBe("LIFTED");
+    });
+
+    it("lift-batch: one all-customer rule among the ids refuses the WHOLE batch for an operator, nothing changed", async () => {
+      const state = await stateRule();
+      const all = await allCustomerRule();
+      await fails(
+        asA(() => rules.liftBatch({ ids: [state.id, all.id], reason: "x" }, operator)),
+        403,
+      );
+      for (const id of [state.id, all.id]) {
+        expect(
+          (await raw.sellingRestriction.findUniqueOrThrow({ where: { id } })).liftedAt,
+        ).toBeNull();
+      }
+      expect(await audits("selling_restriction.batch_lifted")).toHaveLength(0);
+      // an admin lifts both; an operator lifts a batch of STATE rules
+      const res = await asA(() => rules.liftBatch({ ids: [state.id, all.id], reason: "x" }, admin));
+      expect(res.lifted).toBe(2);
+      const s1 = await stateRule();
+      const s2 = await create({ targets: { productIds: [p.d] } });
+      expect((await asA(() => rules.liftBatch({ ids: [s1.id, s2.id] }, operator))).lifted).toBe(2);
+    });
+  });
+
+  describe("the rule's re-read after create is tenant-scoped", () => {
+    it("create returns the rule it wrote (tenant in the where)", async () => {
+      const dto = await create({ targets: { productIds: [p.a] } });
+      expect(dto.tenantId).toBe(tenantA);
+    });
+  });
 
   describe("readers that moved to targets", () => {
     it("list: targetSummary counts and the first three names; a legacy rule summarises its column", async () => {
