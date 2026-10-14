@@ -77,6 +77,14 @@ import { ProductStockCostCard } from "./ProductStockCostCard";
 import { FamilyVariantsEditor } from "@/components/family/FamilyVariantsEditor";
 import { useReactivateFlow } from "./useReactivateFlow";
 import { ProductHeaderControls } from "./ProductHeaderControls";
+import { ProductHeaderLine } from "./ProductHeaderLine";
+import {
+  EditActionButtons,
+  EditButton,
+  StickyEditBar,
+  ThumbImage,
+  scrollCardIntoView,
+} from "./ProductEditActions";
 import { LegacyVariantsActions, variantModalTitle } from "./LegacyVariantsActions";
 import { useDeleteProductFlow } from "./useDeleteProductFlow";
 import { DeleteProductConfirm } from "./DeleteProductConfirm";
@@ -367,6 +375,7 @@ export default function ProductDetailPage() {
   const [selectedImages, setSelectedImages] = React.useState<Set<number>>(new Set());
   const [selectMode, setSelectMode] = React.useState(false);
   const fileInputRef = React.useRef<HTMLInputElement>(null);
+  const detailsCardRef = React.useRef<HTMLDivElement>(null);
 
   // ── Variant modal state ──────────────────────────────────────────────────
   const [variantModalOpen, setVariantModalOpen] = React.useState(false);
@@ -575,6 +584,10 @@ export default function ProductDetailPage() {
           : {}),
       },
       {
+        onSuccess: () => {
+          toast({ title: "Saved", variant: "success" });
+          scrollCardIntoView(detailsCardRef.current);
+        },
         onError: (e: any) =>
           toast({
             title: "Failed to save product",
@@ -1037,7 +1050,10 @@ export default function ProductDetailPage() {
         onClose={() => setShowDeleteConfirm(false)}
         flow={deleteFlow}
       />
-      <div className="space-y-5 p-6">
+      <div className={cn("space-y-5 p-6", isEditing && "pb-24 md:pb-6")}>
+        {isEditing && (
+          <StickyEditBar onCancel={cancelEdit} onSave={saveEdit} saving={updateProduct.isPending} />
+        )}
         {/* Back */}
         <Link
           href="/products"
@@ -1066,11 +1082,7 @@ export default function ProductDetailPage() {
               {(product as any).isNew && <Badge variant="info" label="New" />}
               {(product as any).isDeal && <Badge variant="success" label="Deal" />}
             </div>
-            <p className="mt-1.5 text-sm text-navy/70">
-              {product.sku && <span className="font-mono">{product.sku}</span>}
-              {product.sku && (product.category || product.parent) ? " · " : ""}
-              {product.parent ? `Variant of ${product.parent.name}` : product.category}
-            </p>
+            <ProductHeaderLine product={product} currentStock={currentStock} />
           </div>
         </div>
 
@@ -1142,7 +1154,7 @@ export default function ProductDetailPage() {
                           handleUpload(e.dataTransfer.files);
                         }}
                         className={cn(
-                          "relative aspect-[4/5] w-full overflow-hidden rounded-xl border",
+                          "relative h-44 w-full overflow-hidden rounded-xl border lg:h-auto lg:aspect-[4/5]",
                           isDragging && "ring-2 ring-brand-500",
                           !hasImages && "cursor-pointer",
                           stockStatus === "LOW" && "border-warning/30 bg-warning-bg",
@@ -1263,12 +1275,10 @@ export default function ProductDetailPage() {
                                       : "border-surface-border",
                                 )}
                               >
-                                {/* eslint-disable-next-line @next/next/no-img-element */}
-                                <img
-                                  src={url}
-                                  alt={`thumb ${i + 1}`}
-                                  className="h-full w-full object-cover"
-                                  style={{ objectPosition: objectPositionForUrl(url) }}
+                                <ThumbImage
+                                  url={url}
+                                  alt={`Image ${i + 1} of ${images.length}`}
+                                  objectPosition={objectPositionForUrl(url)}
                                 />
                               </button>
                               {selectMode && (
@@ -1287,30 +1297,6 @@ export default function ProductDetailPage() {
                       {/* Operator-only controls for the active image */}
                       {isOperator && !selectMode && hasImages && (
                         <div className="flex flex-wrap items-center gap-1.5 border-t border-surface-border pt-2">
-                          {/* Move left / right */}
-                          <button
-                            onClick={() => handleMoveImage(safeIdx, safeIdx - 1)}
-                            disabled={safeIdx === 0 || updateProduct.isPending}
-                            title="Move left"
-                            className={cn(
-                              TAP_TARGET,
-                              "rounded-lg border border-surface-border text-navy/70 hover:text-navy disabled:opacity-30 transition-colors",
-                            )}
-                          >
-                            <ChevronLeft className="h-3.5 w-3.5" />
-                          </button>
-                          <button
-                            onClick={() => handleMoveImage(safeIdx, safeIdx + 1)}
-                            disabled={safeIdx === images.length - 1 || updateProduct.isPending}
-                            title="Move right"
-                            className={cn(
-                              TAP_TARGET,
-                              "rounded-lg border border-surface-border text-navy/70 hover:text-navy disabled:opacity-30 transition-colors",
-                            )}
-                          >
-                            <ChevronRight className="h-3.5 w-3.5" />
-                          </button>
-
                           {/* Default / Set default */}
                           {safeIdx === 0 ? (
                             <span className="flex items-center gap-1 rounded-lg border border-brand-200 bg-brand-50 px-2.5 py-1 text-xs font-medium text-brand-600 select-none">
@@ -1417,7 +1403,10 @@ export default function ProductDetailPage() {
           {/* ── Right: details + chart ── */}
           <div className="space-y-5 lg:col-span-2">
             {/* Product details */}
-            <div className="overflow-hidden rounded-lg border border-surface-border bg-white shadow-card">
+            <div
+              ref={detailsCardRef}
+              className="overflow-hidden rounded-lg border border-surface-border bg-white shadow-card"
+            >
               <div className="flex flex-wrap items-center justify-between gap-3 border-b border-surface-border px-5 py-3.5">
                 <h3 className="text-[11px] font-semibold uppercase tracking-[0.08em] text-navy/70">
                   Details
@@ -1425,37 +1414,18 @@ export default function ProductDetailPage() {
                 <div className="flex max-w-full flex-wrap items-center justify-end gap-2">
                   {isEditing ? (
                     <>
-                      <button
-                        onClick={cancelEdit}
-                        title="Cancel"
-                        className={cn(
-                          TAP_TARGET,
-                          "rounded p-1.5 text-navy/70 hover:bg-surface-raised hover:text-navy transition-colors",
-                        )}
-                      >
-                        <X className="h-4 w-4" />
-                      </button>
-                      <Button
-                        size="sm"
-                        onClick={saveEdit}
-                        loading={updateProduct.isPending}
-                        leftIcon={<Check className="h-4 w-4" />}
-                      >
-                        Save
-                      </Button>
+                      <EditActionButtons
+                        className="max-md:hidden"
+                        onCancel={cancelEdit}
+                        onSave={saveEdit}
+                        saving={updateProduct.isPending}
+                      />
                     </>
                   ) : (
                     <>
-                      <button
-                        onClick={startEdit}
-                        title="Edit product"
-                        className={cn(
-                          TAP_TARGET,
-                          "rounded p-1.5 text-navy/70 hover:bg-surface-raised hover:text-navy transition-colors",
-                        )}
-                      >
-                        <Pencil className="h-4 w-4" />
-                      </button>
+                      <div className="max-sm:basis-full">
+                        <EditButton onClick={startEdit} />
+                      </div>
                       <ProductHeaderControls
                         product={product}
                         reactivateFlow={reactivateFlow}
@@ -1545,6 +1515,11 @@ export default function ProductDetailPage() {
                       <Star className="h-4 w-4 text-brand-500" />
                       <h3 className="text-sm font-semibold text-navy">Buyer merchandising</h3>
                     </div>
+                    {isEditing && (
+                      <p className="mb-2 text-xs font-medium text-navy/60">
+                        These switches apply immediately, without Save.
+                      </p>
+                    )}
                     <p className="mb-3 text-xs text-navy/60">
                       Highlight this product on the buyer catalogue with badges and smart
                       collections. These are display flags only — they don&apos;t change price.
@@ -1768,41 +1743,30 @@ export default function ProductDetailPage() {
                       )
                     }
                   />
-                  {/* Variant of — always show when editing; in view mode show only if product has a parent */}
-                  {(isEditing || product.parentProductId) && (
+                  {/* Variant of — edit only; view mode shows the parent in the header line and the banner */}
+                  {isEditing && (
                     <InfoRow
                       label="Variant of"
                       value={
-                        isEditing ? (
-                          <select
-                            value={(editDraft.parentProductId as string) ?? ""}
-                            onChange={(e) =>
-                              setEditDraft((d) => ({
-                                ...d,
-                                parentProductId: e.target.value,
-                                variantName: e.target.value ? (d.variantName as string) : "",
-                              }))
-                            }
-                            className="w-full rounded border border-surface-border px-2 py-1 text-sm text-navy focus:outline-none focus:ring-2 focus:ring-brand-500"
-                          >
-                            <option value="">None (standalone product)</option>
-                            {variantOfCandidates.map((p: any) => (
-                              <option key={p.id} value={p.id}>
-                                {p.name}
-                                {p.sku ? ` — ${p.sku}` : ""}
-                              </option>
-                            ))}
-                          </select>
-                        ) : product.parent ? (
-                          <Link
-                            href={`/products/${product.parentProductId}`}
-                            className="text-brand-600 underline text-sm"
-                          >
-                            {product.parent.name}
-                          </Link>
-                        ) : (
-                          "—"
-                        )
+                        <select
+                          value={(editDraft.parentProductId as string) ?? ""}
+                          onChange={(e) =>
+                            setEditDraft((d) => ({
+                              ...d,
+                              parentProductId: e.target.value,
+                              variantName: e.target.value ? (d.variantName as string) : "",
+                            }))
+                          }
+                          className="w-full rounded border border-surface-border px-2 py-1 text-sm text-navy focus:outline-none focus:ring-2 focus:ring-brand-500"
+                        >
+                          <option value="">None (standalone product)</option>
+                          {variantOfCandidates.map((p: any) => (
+                            <option key={p.id} value={p.id}>
+                              {p.name}
+                              {p.sku ? ` — ${p.sku}` : ""}
+                            </option>
+                          ))}
+                        </select>
                       }
                     />
                   )}
