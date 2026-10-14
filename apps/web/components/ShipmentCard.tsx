@@ -4,7 +4,7 @@ import * as React from "react";
 import { genericToastCopy } from "@/lib/generic-toast-copy";
 import { Truck, ExternalLink, Pencil } from "lucide-react";
 import { Button, Card, Modal, cn, useToast } from "@routeflow/ui/web";
-import { isShippedOrderStatus } from "@routeflow/types";
+import { isShippedOrderStatus, notShippedNote, shipmentSaveDecision } from "@routeflow/types";
 import { CARRIERS, carrierLabel, getTrackingUrl } from "@/lib/shipping";
 
 /**
@@ -32,6 +32,8 @@ export interface ShipmentCardProps {
    * under its saved tracking: saving tracking never ships the order, "Mark shipped" does (M8).
    */
   fulfillPath?: string | null;
+  /** The order-shipped notification is on for this account: only then does the note say the customer is told. */
+  customerNotified?: boolean;
   /** Persist a new carrier + tracking number. Empty strings clear the shipment. */
   onSave: (values: { shippingCarrier: string; shippingTrackingNumber: string }) => Promise<unknown>;
   isSaving?: boolean;
@@ -45,6 +47,7 @@ export function ShipmentCard({
   shippedAt,
   orderStatus,
   fulfillPath,
+  customerNotified,
   onSave,
   isSaving,
   readOnly = false,
@@ -57,8 +60,6 @@ export function ShipmentCard({
   const [formTracking, setFormTracking] = React.useState<string>(trackingNumber ?? "");
 
   const hasTracking = !!(trackingNumber && trackingNumber.trim());
-  // Anything stored at all (a carrier without a number counts): only then is a save a real change.
-  const hasStored = hasTracking || !!carrier?.trim();
   const notShippedYet =
     hasTracking &&
     fulfillPath === "SHIP" &&
@@ -74,21 +75,22 @@ export function ShipmentCard({
   }
 
   async function handleSave() {
-    const tracking = formTracking.trim();
-    // M8c: nothing stored and nothing typed is not a change: close without a call or a "cleared" toast.
-    if (!tracking && !hasStored) {
+    // One rule shared with mobile (`shipmentSaveDecision`): nothing stored and no number typed is not a
+    // change, so close without a call or a "cleared" toast (M8c).
+    const { outcome, payload } = shipmentSaveDecision(
+      { shippingCarrier: carrier, shippingTrackingNumber: trackingNumber },
+      formCarrier,
+      formTracking,
+    );
+    if (!payload) {
       setEditOpen(false);
       return;
     }
     try {
-      await onSave({
-        // Clear the carrier too when the tracking number is removed.
-        shippingCarrier: tracking ? formCarrier : "",
-        shippingTrackingNumber: tracking,
-      });
+      await onSave(payload);
       setEditOpen(false);
       toast({
-        title: tracking ? "Shipment saved" : "Shipment cleared",
+        title: outcome === "saved" ? "Shipment saved" : "Shipment cleared",
         variant: "success",
       });
     } catch (e: unknown) {
@@ -129,9 +131,7 @@ export function ShipmentCard({
                   </p>
                 )}
                 {notShippedYet && (
-                  <p className="mt-0.5 text-xs text-navy/70">
-                    Not shipped yet. The customer is told when you mark the order shipped.
-                  </p>
+                  <p className="mt-0.5 text-xs text-navy/70">{notShippedNote(customerNotified)}</p>
                 )}
               </div>
             </div>

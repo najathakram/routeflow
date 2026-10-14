@@ -62,6 +62,7 @@ import {
 } from "../../../../lib/invoice-line-display";
 import { invoiceTaxLines } from "../../../../lib/invoice-tax-lines";
 import { invoiceLineQtyText } from "@routeflow/pricing";
+import { shipmentSaveDecision } from "@routeflow/types/shipment-save";
 import { freeUnitsLabel } from "../../../../lib/buyer-cart-logic";
 import { ACTIVATION_BUDGET_MS, sharePdf } from "../../../../lib/share-pdf";
 import { printPdf } from "../../../../lib/print-pdf";
@@ -72,7 +73,7 @@ import {
   type PdfSharePhase,
 } from "../../../../lib/invoice-send-logic";
 import { ShipmentSection, ShipmentEditModal } from "../../../../components/ShipmentSection";
-import { shipmentForDisplay, shipmentSaveOutcome } from "../../../../lib/shipment-display";
+import { shipmentForDisplay } from "../../../../lib/shipment-display";
 
 // admin.ts's AdminInvoice.payments doesn't declare the image fields even
 // though the API already returns them (findOne's `payments` include has no
@@ -385,14 +386,14 @@ export default function InvoiceDetailScreen() {
 
   const handleSaveShipment = (carrier: string, trackingNumber: string) => {
     if (!id) return;
-    const outcome = shipmentSaveOutcome(invoice ?? {}, carrier, trackingNumber);
-    if (outcome === "nothing") {
+    const { outcome, payload } = shipmentSaveDecision(invoice ?? {}, carrier, trackingNumber);
+    if (!payload) {
       // Nothing stored and nothing typed: not a change, so no request and no "cleared" toast.
       setShipmentModal(false);
       return;
     }
     shipmentMut.mutate(
-      { id, shippingCarrier: carrier, shippingTrackingNumber: trackingNumber },
+      { id, ...payload },
       {
         onSuccess: () => {
           showToast(outcome === "saved" ? "Shipment saved" : "Shipment cleared");

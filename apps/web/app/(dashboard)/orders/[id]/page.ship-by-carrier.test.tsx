@@ -52,10 +52,24 @@ const order = (status: string, extra: Record<string, unknown> = {}) => ({
   ...extra,
 });
 
-const open = async (status: string, extra: Record<string, unknown> = {}) => {
+const shippedRule = (enabled: boolean) => ({
+  events: [
+    { eventKey: "ORDER_SHIPPED", channels: [{ channel: "EMAIL", enabled }] },
+    { eventKey: "ORDER_CONFIRMED", channels: [{ channel: "EMAIL", enabled: true }] },
+  ],
+});
+
+const open = async (
+  status: string,
+  extra: Record<string, unknown> = {},
+  messaging: unknown = [],
+) => {
   seedSession("OPERATOR");
   get.mockImplementation((url: string) =>
-    Promise.resolve({ data: url === "/orders/o1" ? order(status, extra) : [] }),
+    Promise.resolve({
+      data:
+        url === "/orders/o1" ? order(status, extra) : url === "/messaging/config" ? messaging : [],
+    }),
   );
   patch.mockResolvedValue({ data: order(status, extra) });
   render(
@@ -136,5 +150,28 @@ describe("M8d: a step still to do reads as the next step", () => {
     const confirmed = within(list).getAllByRole("listitem")[0];
     expect(confirmed).toHaveAttribute("aria-current", "step");
     expect(confirmed).toHaveTextContent(/Confirmed\s*\(next step\)/);
+  });
+});
+
+describe("M8d: the not-shipped line follows the order-shipped notification setting", () => {
+  const ship = { fulfillPath: "SHIP", shippingCarrier: "ups", shippingTrackingNumber: "1Z999" };
+
+  it("on: says the customer is told when the order is marked shipped", async () => {
+    await open("PENDING", ship, shippedRule(true));
+    expect(
+      await screen.findByText(/The customer is told when you mark the order shipped/),
+    ).toBeInTheDocument();
+  });
+
+  it("off: just 'Not shipped yet.'", async () => {
+    await open("PENDING", ship, shippedRule(false));
+    const line = await screen.findByText(/^Not shipped yet\./);
+    await waitFor(() => expect(get).toHaveBeenCalledWith("/messaging/config"));
+    expect(line).toHaveTextContent(/^Not shipped yet\.$/);
+  });
+
+  it("setting unknown (config not loaded): no claim either", async () => {
+    await open("PENDING", ship);
+    expect(await screen.findByText(/^Not shipped yet\./)).toHaveTextContent(/^Not shipped yet\.$/);
   });
 });

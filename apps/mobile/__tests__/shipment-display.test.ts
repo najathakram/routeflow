@@ -26,30 +26,43 @@ describe("shipmentForDisplay (F10a)", () => {
   });
 });
 
-import { shipmentNotShippedNote, shipmentSaveOutcome } from "../lib/shipment-display";
+import { shipmentNotShippedNote } from "../lib/shipment-display";
+import { shipmentSaveDecision } from "@routeflow/types/shipment-save";
 
-describe("shipmentSaveOutcome (M8c)", () => {
-  it("blank over nothing stored changes nothing: no 'cleared'", () => {
-    expect(shipmentSaveOutcome({}, "", "")).toBe("nothing");
+// The SAME table is pinned on web in apps/web/components/ShipmentCard.test.tsx (carrier-only saves, M8):
+// both apps call this one rule, so a carrier alone behaves the same on both.
+describe("shipmentSaveDecision (M8c, shared with web)", () => {
+  it("blank over nothing stored changes nothing: no request, no 'cleared'", () => {
+    expect(shipmentSaveDecision({}, "", "")).toEqual({ outcome: "nothing", payload: null });
     expect(
-      shipmentSaveOutcome({ shippingCarrier: null, shippingTrackingNumber: " " }, " ", ""),
-    ).toBe("nothing");
+      shipmentSaveDecision({ shippingCarrier: null, shippingTrackingNumber: " " }, " ", ""),
+    ).toEqual({ outcome: "nothing", payload: null });
   });
-  it("blank over a stored shipment is 'cleared'", () => {
-    expect(shipmentSaveOutcome({ shippingTrackingNumber: "1Z999" }, "", "")).toBe("cleared");
-    expect(shipmentSaveOutcome({ shippingCarrier: "UPS" }, "", "")).toBe("cleared");
+  it("carrier only (no number) over nothing stored is also nothing", () => {
+    expect(shipmentSaveDecision({}, "UPS", "")).toEqual({ outcome: "nothing", payload: null });
   });
-  it("a carrier or a number is 'saved'", () => {
-    expect(shipmentSaveOutcome({}, "UPS", "")).toBe("saved");
-    expect(shipmentSaveOutcome({}, "", "1Z999")).toBe("saved");
+  it("blank, or a carrier alone, over a stored shipment clears it", () => {
+    const cleared = {
+      outcome: "cleared",
+      payload: { shippingCarrier: "", shippingTrackingNumber: "" },
+    };
+    expect(shipmentSaveDecision({ shippingTrackingNumber: "1Z999" }, "", "")).toEqual(cleared);
+    expect(shipmentSaveDecision({ shippingCarrier: "UPS" }, "", "")).toEqual(cleared);
+    expect(shipmentSaveDecision({ shippingCarrier: "UPS" }, "FedEx", "  ")).toEqual(cleared);
+  });
+  it("a tracking number saves it with the chosen carrier", () => {
+    expect(shipmentSaveDecision({}, "UPS", " 1Z999 ")).toEqual({
+      outcome: "saved",
+      payload: { shippingCarrier: "UPS", shippingTrackingNumber: "1Z999" },
+    });
   });
 });
 
 describe("shipmentNotShippedNote (M8d)", () => {
   it.each(["PENDING", "CONFIRMED", "DRAFT"])(
-    "a SHIP order that is %s with tracking says so",
+    "a SHIP order that is %s with tracking says so, without claiming a notification",
     (s) => {
-      expect(shipmentNotShippedNote("SHIP", s, "1Z999")).toMatch(/^Not shipped yet/);
+      expect(shipmentNotShippedNote("SHIP", s, "1Z999")).toBe("Not shipped yet.");
     },
   );
   it.each(["OUT_FOR_DELIVERY", "DELIVERED", "CANCELLED"])("%s: no note", (s) => {

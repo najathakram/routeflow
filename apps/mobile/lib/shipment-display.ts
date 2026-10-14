@@ -4,6 +4,7 @@
  * Mirrors apps/web/components/ShipmentCard.tsx (`orderStatus`).
  */
 import { isShippedOrderStatus } from "@routeflow/types";
+import { notShippedNote } from "@routeflow/types/shipment-save";
 
 /** The shipment with `shippedAt` dropped when the order is no longer shipped. No order status
  *  (a standalone invoice) leaves it untouched. */
@@ -16,25 +17,10 @@ export function shipmentForDisplay<T extends { shippedAt?: string | null }>(
 }
 
 /**
- * What a shipment save did, so the toast tells the truth (M8): saving a carrier or tracking number is
- * "saved"; blanking a stored shipment is "cleared"; saving blank over nothing changes nothing, so it
- * is "nothing" (the caller closes the modal without a request or a toast). Mirrors apps/web
- * `ShipmentCard`.
- */
-export function shipmentSaveOutcome(
-  stored: { shippingCarrier?: string | null; shippingTrackingNumber?: string | null },
-  carrier: string,
-  trackingNumber: string,
-): "saved" | "cleared" | "nothing" {
-  if (carrier.trim() || trackingNumber.trim()) return "saved";
-  const hadStored = !!(stored.shippingCarrier?.trim() || stored.shippingTrackingNumber?.trim());
-  return hadStored ? "cleared" : "nothing";
-}
-
-/**
  * Saved tracking on a carrier (SHIP) order that has not shipped: saving tracking never ships the
  * order, "Mark shipped" does. Null once shipped or cancelled, off a SHIP order, or with no tracking.
- * Mirrors apps/web `ShipmentCard`.
+ * The wording is shared with web (`notShippedNote`); mobile has no notification setting to read, so it
+ * never claims the customer is told.
  */
 export function shipmentNotShippedNote(
   fulfillPath: string | null | undefined,
@@ -43,5 +29,5 @@ export function shipmentNotShippedNote(
 ): string | null {
   if (fulfillPath !== "SHIP" || !orderStatus || !trackingNumber?.trim()) return null;
   if (isShippedOrderStatus(orderStatus) || orderStatus === "CANCELLED") return null;
-  return "Not shipped yet. The customer is told when you mark the order shipped.";
+  return notShippedNote(false);
 }

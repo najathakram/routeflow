@@ -73,6 +73,14 @@ describe("ShipmentCard save feedback (M8c)", () => {
     expect(onSave).toHaveBeenCalledWith({ shippingCarrier: "", shippingTrackingNumber: "" });
   });
 
+  it("a carrier alone over a stored shipment clears it (same rule as mobile: the number decides)", async () => {
+    const onSave = editable({ carrier: "ups", trackingNumber: null });
+    fireEvent.click(screen.getByRole("button", { name: /Add tracking/ }));
+    fireEvent.click(screen.getByRole("button", { name: "Save" }));
+    expect(await screen.findByText("Shipment cleared")).toBeInTheDocument();
+    expect(onSave).toHaveBeenCalledWith({ shippingCarrier: "", shippingTrackingNumber: "" });
+  });
+
   it("a real tracking number toasts 'Shipment saved'", async () => {
     editable({ carrier: null, trackingNumber: null });
     fireEvent.click(screen.getByRole("button", { name: /Add tracking/ }));
@@ -83,7 +91,11 @@ describe("ShipmentCard save feedback (M8c)", () => {
 });
 
 describe("ShipmentCard says whether it has shipped (M8d)", () => {
-  const withStatus = (orderStatus: string, fulfillPath: string | null = "SHIP") =>
+  const withStatus = (
+    orderStatus: string,
+    fulfillPath: string | null = "SHIP",
+    customerNotified?: boolean,
+  ) =>
     render(
       <ToastProvider>
         <ShipmentCard
@@ -91,6 +103,7 @@ describe("ShipmentCard says whether it has shipped (M8d)", () => {
           trackingNumber="1Z999"
           orderStatus={orderStatus}
           fulfillPath={fulfillPath}
+          customerNotified={customerNotified}
           onSave={async () => undefined}
         />
       </ToastProvider>,
@@ -103,6 +116,16 @@ describe("ShipmentCard says whether it has shipped (M8d)", () => {
       expect(screen.getByText(/Not shipped yet/)).toBeInTheDocument();
     },
   );
+
+  it("claims the customer is told only while the order-shipped notification is on", () => {
+    const { unmount } = withStatus("PENDING", "SHIP", true);
+    expect(screen.getByText(/^Not shipped yet\./)).toHaveTextContent(
+      "Not shipped yet. The customer is told when you mark the order shipped.",
+    );
+    unmount();
+    withStatus("PENDING", "SHIP", false);
+    expect(screen.getByText(/^Not shipped yet\./)).toHaveTextContent(/^Not shipped yet\.$/);
+  });
 
   it.each(["OUT_FOR_DELIVERY", "DELIVERED", "CANCELLED"])("%s: no 'not shipped' line", (status) => {
     withStatus(status);

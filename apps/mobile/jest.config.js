@@ -59,6 +59,8 @@ module.exports = {
     // CQ-06: the shared license-refusal sentence (it imports only the pure error-code constants), same subpath trick.
     "^@routeflow/types/regulated-auth-copy$":
       "<rootDir>/../../packages/types/regulated-auth-copy.ts",
+    // M8: the shared shipment save rule + not-shipped line (pure, no imports), same subpath trick.
+    "^@routeflow/types/shipment-save$": "<rootDir>/../../packages/types/shipment-save.ts",
     "^expo-secure-store$": "<rootDir>/__tests__/__mocks__/expo-secure-store.js",
     // #2653: the shell bridge is pure TS (zod only) — resolve it to SOURCE, ahead of the ui stub.
     "^@routeflow/ui/shell-bridge$": "<rootDir>/../../packages/ui/src/shell-bridge.ts",

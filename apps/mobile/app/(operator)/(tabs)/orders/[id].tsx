@@ -50,6 +50,7 @@ import {
 } from "../../../../lib/credit-limit-error";
 import { parseSellingRestricted } from "../../../../lib/selling-restricted";
 import { postDeliveryInvoicePrompt, type BlockedLine } from "@routeflow/types";
+import { shipmentSaveDecision } from "@routeflow/types/shipment-save";
 import { lineBackorderPieces } from "@routeflow/types/order-line-backorder";
 import { useOfflineQueue } from "../../../../store/offlineQueue";
 import { alertInfo, confirm } from "../../../../lib/confirm";
@@ -67,11 +68,7 @@ import {
   sharePdf,
 } from "../../../../lib/share-pdf";
 import { ShipmentSection, ShipmentEditModal } from "../../../../components/ShipmentSection";
-import {
-  shipmentForDisplay,
-  shipmentNotShippedNote,
-  shipmentSaveOutcome,
-} from "../../../../lib/shipment-display";
+import { shipmentForDisplay, shipmentNotShippedNote } from "../../../../lib/shipment-display";
 import { SendInvoiceSheet } from "../../../../components/SendInvoiceSheet";
 import { ReasonSheet } from "../../../../components/ReasonSheet";
 import {
@@ -728,14 +725,14 @@ export default function OrderDetailScreen() {
   };
 
   const handleSaveShipment = (carrier: string, trackingNumber: string) => {
-    const outcome = shipmentSaveOutcome(order, carrier, trackingNumber);
-    if (outcome === "nothing") {
+    const { outcome, payload } = shipmentSaveDecision(order, carrier, trackingNumber);
+    if (!payload) {
       // Nothing stored and nothing typed: not a change, so no request and no "cleared" toast.
       setShipmentModal(false);
       return;
     }
     shipmentMut.mutate(
-      { id: order.id, shippingCarrier: carrier, shippingTrackingNumber: trackingNumber },
+      { id: order.id, ...payload },
       {
         onSuccess: () => {
           showToast(outcome === "saved" ? "Shipment saved" : "Shipment cleared");
