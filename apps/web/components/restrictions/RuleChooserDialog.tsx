@@ -13,8 +13,8 @@ import {
   addRuleTargetsRequest,
   removeRuleTargetsRequest,
   ruleErrorOf,
-  useAddRuleTargets,
-  useRemoveRuleTargets,
+  useAddToRule,
+  useRemoveFromRule,
   useRulesHolding,
 } from "@/lib/api/rule-targets";
 import { UNDO_VISIBLE_MS } from "@/lib/portal-limits";
@@ -119,8 +119,8 @@ function Chooser({
   const router = useRouter();
   const qc = useQueryClient();
   const { toast } = useToast();
-  const add = useAddRuleTargets();
-  const remove = useRemoveRuleTargets();
+  const add = useAddToRule();
+  const remove = useRemoveFromRule();
   const [q, setQ] = React.useState("");
   const [chosen, setChosen] = React.useState<Row | null>(null);
   const [error, setError] = React.useState<React.ReactNode>(null);

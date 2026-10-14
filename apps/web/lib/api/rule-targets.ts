@@ -41,7 +41,7 @@ export async function removeRuleTargetsRequest(
  * Add products to a rule. No global error toast: the chooser renders the coded errors itself (a second message would
  * double it).
  */
-export function useAddRuleTargets() {
+export function useAddToRule() {
   const qc = useQueryClient();
   return useMutation<AddRuleTargetsResponse, Error, RuleTargetsBody & { ruleId: string }>({
     meta: { localErrorToast: true },
@@ -50,7 +50,7 @@ export function useAddRuleTargets() {
   });
 }
 
-export function useRemoveRuleTargets(options?: { localErrorToast?: boolean }) {
+export function useRemoveFromRule(options?: { localErrorToast?: boolean }) {
   const qc = useQueryClient();
   return useMutation<
     RemoveRuleTargetsResponse,

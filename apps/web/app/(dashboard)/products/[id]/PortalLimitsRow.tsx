@@ -10,7 +10,7 @@ import { useToast } from "@routeflow/ui/web";
 import { useAuth } from "@/lib/auth-context";
 import { useReadOnlyGate } from "@/lib/read-only-gate";
 import { useProductLimits } from "@/lib/api/portal-limits";
-import { addRuleTargetsRequest, useRemoveRuleTargets } from "@/lib/api/rule-targets";
+import { addRuleTargetsRequest, useRemoveFromRule } from "@/lib/api/rule-targets";
 import { LiftLimitsDialog } from "@/components/portal-limits/LiftLimitsDialog";
 import { RuleChooserDialog } from "@/components/restrictions/RuleChooserDialog";
 import { limitChipText, limitViaText, UNDO_VISIBLE_MS } from "@/lib/portal-limits";
@@ -39,7 +39,7 @@ export function PortalLimitsRow({ productId }: { productId: string }) {
   const qc = useQueryClient();
   const { toast } = useToast();
   // The global handler toasts a refused remove (no local error surface here).
-  const removeFromRule = useRemoveRuleTargets({ localErrorToast: false });
+  const removeFromRule = useRemoveFromRule({ localErrorToast: false });
   const [lifting, setLifting] = React.useState<string | null>(null);
   const [adding, setAdding] = React.useState(false);
 

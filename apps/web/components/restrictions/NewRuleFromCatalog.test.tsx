@@ -22,8 +22,27 @@ describe("NewRuleFromCatalog", () => {
       expect.objectContaining({
         open: true,
         onClose,
-        initialTargets: { productIds: ["p1", "p2"], names: { p1: "Mint Pod" } },
+        initialTargets: [
+          { kind: "PRODUCT", id: "p1", name: "Mint Pod" },
+          { kind: "PRODUCT", id: "p2", name: "Selected product" }, // off-page (select-all-matching)
+        ],
       }),
     );
+  });
+
+  it("a created rule clears the catalog selection (onCreated), a cancel does not", () => {
+    const onCreated = jest.fn();
+    renderWithProviders(
+      <NewRuleFromCatalog
+        productIds={["p1"]}
+        names={{}}
+        onClose={jest.fn()}
+        onCreated={onCreated}
+      />,
+    );
+    const props = formProps.mock.calls.at(-1)![0] as { onCreated: (id: string) => void };
+    expect(onCreated).not.toHaveBeenCalled();
+    props.onCreated("r1");
+    expect(onCreated).toHaveBeenCalledTimes(1);
   });
 });

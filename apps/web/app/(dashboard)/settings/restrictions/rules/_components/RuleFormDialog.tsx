@@ -27,11 +27,14 @@ export function RuleFormDialog({
   open,
   onClose,
   initialTargets,
+  onCreated,
 }: {
   open: boolean;
   onClose: () => void;
   /** Products already chosen elsewhere (the catalog's "New rule with N products"). */
   initialTargets?: PickedTarget[];
+  /** Row 509 integration: called after the rule is created (before close), e.g. so the catalog clears its selection. */
+  onCreated?: (ruleId: string) => void;
 }) {
   const { toast } = useToast();
   const router = useRouter();
@@ -79,6 +82,7 @@ export function RuleFormDialog({
             onClick: () => router.push(`/settings/restrictions/rules/${rule.id}`),
           },
         });
+        onCreated?.(rule.id);
         onClose();
       },
     });

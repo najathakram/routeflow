@@ -71,7 +71,12 @@ export function RestrictMenu({
         </DropdownMenu.Portal>
       </DropdownMenu.Root>
       {action === "new" && (
-        <NewRuleFromCatalog productIds={ids} names={names} onClose={() => setAction(null)} />
+        <NewRuleFromCatalog
+          productIds={ids}
+          names={names}
+          onClose={() => setAction(null)}
+          onCreated={onDone}
+        />
       )}
       {(action === "add" || action === "remove") && (
         <RuleChooserDialog
