@@ -16,6 +16,7 @@ import { toLineComponentViews } from "../orders/component-view";
 import { readFamilyPriceMode } from "../products/family-price";
 import { pdfSubLine } from "./invoice-pdf-item";
 import { orderQrUrl } from "./invoice-qr";
+import { withoutOverrideStamp } from "../common/restriction-override-columns";
 
 import bwipjs from "bwip-js";
 
@@ -165,9 +166,10 @@ export class InvoicePdfService {
 
     this.logger.log(`Generating PDF for invoice ${invoiceId}`);
 
-    // Generate barcodes for each line item
+    // Generate barcodes for each line item. Row 510: the staff-only override stamp is stripped here, in the one
+    // mapper the template model is built from (the findUnique above includes whole item rows).
     const itemsWithBarcodes = await Promise.all(
-      inv.items.map(async (item) => {
+      inv.items.map(withoutOverrideStamp).map(async (item) => {
         const barcodeText = invoiceItemCode((item as any).product);
         if (barcodeText) {
           try {

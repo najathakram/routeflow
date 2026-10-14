@@ -86,6 +86,25 @@ describe("staffMay: the POS-mode rows (SA-763r)", () => {
   });
 });
 
+describe("staffMay: the restriction-override row (row 510)", () => {
+  it("OVERRIDE_SELLING_RESTRICTION is OPERATOR + TENANT_ADMIN, group ORDERS; DRIVER, SUPER_ADMIN and CUSTOMER may not", () => {
+    expect(STAFF_CAPABILITY_RULES.OVERRIDE_SELLING_RESTRICTION).toEqual({
+      roles: ["OPERATOR", "TENANT_ADMIN"],
+      group: "ORDERS",
+    });
+    for (const role of ["OPERATOR", "TENANT_ADMIN"])
+      expect(staffMay(role, "OVERRIDE_SELLING_RESTRICTION")).toBe(true);
+    for (const role of ["DRIVER", "SUPER_ADMIN", "CUSTOMER", "", null, undefined])
+      expect(staffMay(role, "OVERRIDE_SELLING_RESTRICTION")).toBe(false);
+  });
+
+  it("an OPERATOR denied ORDERS loses it; TENANT_ADMIN ignores the denial", () => {
+    expect(staffMay("OPERATOR", "OVERRIDE_SELLING_RESTRICTION", ["ORDERS"])).toBe(false);
+    expect(staffMay("OPERATOR", "OVERRIDE_SELLING_RESTRICTION", ["PRICING", "FINANCE"])).toBe(true);
+    expect(staffMay("TENANT_ADMIN", "OVERRIDE_SELLING_RESTRICTION", ["ORDERS"])).toBe(true);
+  });
+});
+
 describe("voidWindowAllows: SAME_TENANT_DAY_BEFORE_CLOSE", () => {
   // A tenant in New York on 2026-10-08 (EDT, UTC-4): its day is [04:00Z on the 8th, 04:00Z on the 9th).
   const zone = "America/New_York";

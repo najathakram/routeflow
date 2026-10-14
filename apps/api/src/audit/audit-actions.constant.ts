@@ -16,6 +16,12 @@ export const AUDIT_ACTIONS = {
   INVOICE_DELIBERATE_OVERPAYMENT: "invoice.deliberate-overpayment",
   /** SA-778: a support-session request refused by @NoImpersonation before the handler ran; meta {superAdminId, tenantId, method, route}. */
   IMPERSONATION_ACTION_REFUSED: "impersonation.action-refused",
+  /**
+   * Row 510: a staff member sold a restricted product with a reason. ONE row per newly stamped line, written in the
+   * write's own tx (selling-restrictions/restriction-override-audit.ts); entityType OrderItem | InvoiceItem, entityId the
+   * line; meta {documentType, documentId, productId, ruleIds, reason, lineKey, warningHash, basis}. A carried stamp writes none.
+   */
+  SELLING_RESTRICTION_OVERRIDDEN: "selling_restriction.overridden",
 } as const;
 
 export type AuditActionName = (typeof AUDIT_ACTIONS)[keyof typeof AUDIT_ACTIONS];
