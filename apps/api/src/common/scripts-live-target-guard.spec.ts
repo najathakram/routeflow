@@ -96,6 +96,7 @@ const EXEMPT: Record<string, Reason> = {
   "apps/api/scripts/report-2201-commission-sync-drift.mjs": "read-only",
   "apps/api/scripts/report-2392-taxed-nsf-lines.mjs": "read-only",
   "apps/api/scripts/report-2520-first-overdue-sweep.mjs": "read-only",
+  "apps/api/scripts/report-477-sub-without-customer.mjs": "read-only",
   "apps/api/scripts/report-2533-product-image-keys.mjs": "read-only",
   "apps/api/scripts/report-2542-pod-keys.mjs": "read-only",
   "apps/api/scripts/report-addon-comp-candidates.mjs": "read-only",
