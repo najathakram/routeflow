@@ -263,17 +263,19 @@ describe("#2255 Serializable invoice transactions retry on conflict, guards re-r
     // stockTx("orders.cancel", ...), which wraps retryStockTx - whose conflict set (40001 / 40P01 / P2034 and
     // the lock timeouts) is a superset of retryOnTxConflict's. The intent is unchanged: the Serializable
     // cancel/void tx runs inside a conflict-retry wrapper.
-    // (1) the Serializable cancel tx is wrapped by this.stockTx("orders.cancel", ...)
-    expect(ord).toMatch(/this\.stockTx\(\s*"orders\.cancel"/);
-    // (2) stockTx itself calls retryStockTx and passes the tx options (isolationLevel, timeout) through
+    // (1) the Serializable cancel tx is wrapped by this.stockTx(`order cancel void order=${id}`, ...) - the retry-warn
+    // label the send/void race DB spec counts
+    expect(ord).toMatch(/this\.stockTx\(\s*`order cancel void order=\$\{id\}`/);
+    // (2) stockTx itself delegates to stockTxBounded (retryStockTx + the lock bound first) and passes the tx options through
     expect(ord).toMatch(
-      /private stockTx = <T>\(label: string, fn: \(tx: any\) => Promise<T>, opts\?: any\) =>\s*retryStockTx\(label, \(\) => this\.prisma\.tenantTransaction\(fn, opts\)\)/,
+      /private stockTx<T>\(label: string, fn: \(tx: any\) => Promise<T>, opts\?: any\): Promise<T> \{\s*return stockTxBounded\(this\.prisma, label, fn, opts\);/,
     );
-    // (3) retryStockTx retries through retryOnTxConflict with stockTxRetryState
+    // (3) retryStockTx retries through retryOnTxConflict with a predicate built on stockTxRetryState
     const retrySrc = read("common/tx-retry.ts");
     expect(retrySrc).toMatch(
-      /export async function retryStockTx[\s\S]{0,200}retryOnTxConflict\(label, run, stockTxRetryState\)/,
+      /export async function retryStockTx[\s\S]{0,900}retryOnTxConflict\(label, run, retryable\)/,
     );
+    expect(retrySrc).toMatch(/: stockTxRetryState\(err\)/);
     // (4) FUNCTIONAL: that retry predicate retries at least everything retryOnTxConflict retried
     // (40001, 40P01, P2034 and the driver-adapter shapes), plus the stock lock timeouts.
     const shapes = [
@@ -293,7 +295,7 @@ describe("#2255 Serializable invoice transactions retry on conflict, guards re-r
     expect(stockTxRetryState(new Error("not a conflict"))).toBeNull();
     // SA-404: the order-cancel body already decides from IN-TX reads (its items and its
     // invoices), so a retry's fresh snapshot is what it acts on — pin that it stays so.
-    const cancel = ord.slice(ord.search(/this\.stockTx\(\s*"orders\.cancel"/));
+    const cancel = ord.slice(ord.search(/this\.stockTx\(\s*`order cancel void order=\$\{id\}`/));
     // SA-762r F1: the body moved verbatim to order-cancel-tx.ts; changeStatus runs it inside this retried tx.
     expect(cancel.slice(0, cancel.indexOf('isolationLevel: "Serializable"'))).toMatch(
       /this\.cancelOrderInTx\(tx, order,/,

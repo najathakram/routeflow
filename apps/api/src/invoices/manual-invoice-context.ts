@@ -3,7 +3,7 @@ import { sumInvoiceTotalsStrict } from "../common/money-invariants.util";
 import { assertSellableLines } from "../products/sellable-lines";
 import type { CreateInvoiceDto } from "./dto/create-invoice.dto";
 import type { EntitlementsService } from "../billing/entitlements.service";
-import { prepareUnitLadders } from "../orders/unit-line-build";
+import { prepareUnitLadders, requestsUnit } from "../orders/unit-line-build";
 import { asLadderProduct, normalizeDerivedBaseLine } from "../products/line-units";
 
 /**
@@ -67,7 +67,7 @@ export async function loadManualLineContext(
   // units_v1 (4c-1): the server ladder of the products a line names a unit for. The CALLER runs
   // resolveLineUnits per item (the unit-line-writers scanner requires every writer to call it itself).
   const unitsByProduct = await prepareUnitLadders(items, { isStaff: true, prisma, entitlements });
-  if (deps.derivedBaseCustomer) {
+  if (deps.derivedBaseCustomer && items.some(requestsUnit)) {
     const { id: customerId, tier } = deps.derivedBaseCustomer;
     const overrides: Array<{ productId: string; pricingTier: number | null }> =
       productIds.length > 0
