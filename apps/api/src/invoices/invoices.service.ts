@@ -422,29 +422,6 @@ export class InvoicesService {
   // ─── CRUD ─────────────────────────────────────────────────────────────────
 
   /**
-   * create()/createFromOrder `send: true`: the DRAFT is already committed when send() runs, so a
-   * delivery failure leaves a real draft behind. Name it in the EMAIL_SEND_FAILED body (additive)
-   * so the caller routes to it instead of retrying into a duplicate. Never rolls the draft back.
-   */
-  private async sendCreatedDraft(id: string) {
-    try {
-      return await this.send(id);
-    } catch (err) {
-      if (err instanceof BadRequestException) {
-        const body = err.getResponse();
-        if (
-          body &&
-          typeof body === "object" &&
-          (body as { code?: unknown }).code === API_ERROR_CODES.EMAIL_SEND_FAILED
-        ) {
-          throw new BadRequestException({ ...(body as object), invoiceId: id });
-        }
-      }
-      throw err;
-    }
-  }
-
-  /**
    * RF-026: Previously, concurrent invoice creates both read the same last
    * invoice number and one crashed with Prisma P2002 → HTTP 500. Now catches
    * P2002 and returns 409 Conflict instead.
@@ -580,7 +557,7 @@ export class InvoicesService {
     // If the caller wants to immediately send the invoice, transition DRAFT → SENT
     // Row 466: the draft is committed; a send failure must still hand the client its id.
     if (dto.send) {
-      return sendAfterCommit({ invoiceId: invoice.id }, () => this.sendCreatedDraft(invoice.id));
+      return sendAfterCommit({ invoiceId: invoice.id }, () => this.send(invoice.id));
     }
 
     return invoice;
@@ -2864,7 +2841,7 @@ export class InvoicesService {
     const invoice = await this.prisma.tenantTransaction(runCreation);
 
     if (dto.send) {
-      return sendAfterCommit({ invoiceId: invoice.id }, () => this.sendCreatedDraft(invoice.id));
+      return sendAfterCommit({ invoiceId: invoice.id }, () => this.send(invoice.id));
     }
     return invoice;
   }
