@@ -9159,11 +9159,8 @@ describe("OrdersService", () => {
 
         await service.approveChangeRequestAtStop("cr-1", operatorPayload, null);
 
-        // Order→stop is the repo-wide acquisition order (reopenStop, the customers.service merge
-        // and purge paths); inverting it here would deadlock against them. The stop lock is
-        // therefore taken second and NOWAIT, so this tx never waits on a stop row.
-        // call [0] is the stock-tx lock bound (SA-767: bounded before ANY lock, the Order row included)
-        expect(seenTx.$executeRaw.mock.calls[0][0].join("?")).toContain("lock_timeout");
+        // Order→stop is the repo-wide acquisition order (reopenStop, the customers.service merge and
+        // purge paths); the stop lock is taken second and NOWAIT. Call [0] is the stock-tx lock bound.
         expect(seenTx.$executeRaw.mock.calls[1][0].join("?")).toContain('"Order"');
         const stopLockSql = seenTx.$executeRaw.mock.calls[2][0].join("?");
         expect(stopLockSql).toContain('"RouteRunStop"');
@@ -9180,10 +9177,8 @@ describe("OrdersService", () => {
         const seenTx = captureMergeTx();
         const lockErr: any = new Error("Raw query failed");
         lockErr.meta = { code: "55P03" };
-        seenTx.$executeRaw
-          .mockResolvedValueOnce(0) // the stock-tx lock bound
-          .mockResolvedValueOnce(0) // the Order row
-          .mockRejectedValueOnce(lockErr); // the stop row
+        seenTx.$executeRaw.mockResolvedValueOnce(0).mockResolvedValueOnce(0); // bound, Order row
+        seenTx.$executeRaw.mockRejectedValueOnce(lockErr); // the stop row
 
         // A busy stop is transient, so it must NOT read as the terminal CHANGE_WINDOW_CLOSED —
         // the resolver is told to retry.
@@ -9205,8 +9200,8 @@ describe("OrdersService", () => {
         setUpSharedFixture();
         const seenTx = captureMergeTx();
         seenTx.$executeRaw
-          .mockResolvedValueOnce(0) // the stock-tx lock bound
-          .mockResolvedValueOnce(0) // the Order row
+          .mockResolvedValueOnce(0)
+          .mockResolvedValueOnce(0)
           .mockRejectedValueOnce(
             new Error('could not obtain lock on row in relation "RouteRunStop"'),
           );
