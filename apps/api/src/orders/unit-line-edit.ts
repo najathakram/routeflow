@@ -293,6 +293,21 @@ export function pairedStoredLine(
 }
 
 /**
+ * units P0b: the held line's own snapshot (unit, price, type, override stamp), for a rewrite that must re-resolve a unit
+ * the ladder lost. Same-product only, like {@link pairedStoredLine}: another product has no claim on that line's price.
+ */
+function snapshotOfHeldLine(
+  ctx: Pick<UnitWriteContext, "held">,
+  lineId: string | undefined,
+  productId: string,
+): UnitSnapshotLine | undefined {
+  const line = lineId ? ctx.held?.get(lineId) : undefined;
+  return line && (line as { productId?: string | null }).productId === productId
+    ? (line as UnitSnapshotLine)
+    : undefined;
+}
+
+/**
  * B635: this function's own `tx.orderItem.create` call is itself invisible to
  * `unit-line-writers.ast.spec.ts`'s scanner — it only inspects methods inside a class. Filed, not
  * fixed here (do not widen the scanner in this PR); `updateOrderItems`'s literal `resolveLineUnits`
@@ -327,8 +342,9 @@ export async function createUnitLine(
     tenantId: ctx.tenantId,
     overriddenBy: ctx.overriddenBy,
     stored: pairedStoredLine(ctx, item, product.id),
-    // units P0b: the line's own snapshot, so a rewrite re-resolves a unit the ladder lost
-    existing: item.id ? (ctx.held?.get(item.id) as UnitSnapshotLine | undefined) : undefined,
+    // units P0b: the line's own snapshot, so a rewrite re-resolves a unit the ladder lost; ONLY for the same product
+    // (a replace-all entry naming another product under a held line's id must not be billed at that line's price)
+    existing: snapshotOfHeldLine(ctx, item.id, product.id),
   });
   // Row 373b: a line paired with a stored line (the ONE pairing helper sets `carriedLine`) keeps that line's
   // category, trio and createdAt: a re-created unit line is not a new sale.
