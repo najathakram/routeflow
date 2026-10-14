@@ -3,6 +3,7 @@ import {
   dayToIso,
   emptyRuleForm,
   ruleFormSchema,
+  ruleSettingsSchema,
   toCreateRequest,
   ruleToFormValues,
   toEditRequest,

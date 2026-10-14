@@ -1,6 +1,7 @@
 "use client";
 
 import * as React from "react";
+import NextLink from "next/link";
 import { Badge, Button, Card, EmptyState, PageHeader, Skeleton, cn } from "@routeflow/ui/web";
 import { usePageTitle } from "@/lib/page-title-context";
 import { useAuth } from "@/lib/auth-context";
@@ -16,11 +17,11 @@ import {
   STATUS_FILTERS,
   emptyText,
   jurisdictionText,
-  ruleTarget,
   stateName,
   surfaceText,
   windowText,
 } from "@/lib/restriction-rules";
+import { ruleCardTarget } from "@/lib/rule-targets";
 import { WriteButton } from "@/lib/read-only-gate";
 import { LiftLimitsDialog } from "@/components/portal-limits/LiftLimitsDialog";
 import { LiftRuleDialog } from "./_components/LiftRuleDialog";
@@ -38,7 +39,8 @@ function RuleCard({
   selected?: boolean;
   onToggle?: () => void;
 }) {
-  const target = ruleTarget(rule);
+  const target = ruleCardTarget(rule);
+  const detailHref = `/settings/restrictions/rules/${rule.id}`;
   const badge = STATUS_BADGE[rule.status];
   return (
     <Card className="space-y-3 p-4" data-testid="rule-card">
@@ -54,8 +56,19 @@ function RuleCard({
             />
           )}
           <div className="min-w-0">
-            <p className="break-words font-semibold text-navy">{target.name}</p>
-            <p className="text-xs text-navy/60">{target.kind}</p>
+            {target.total !== null ? (
+              <NextLink
+                href={detailHref}
+                className="break-words font-semibold text-navy underline-offset-2 hover:underline"
+              >
+                {target.name}
+              </NextLink>
+            ) : (
+              <p className="break-words font-semibold text-navy">{target.name}</p>
+            )}
+            {(target.kind ?? target.names) && (
+              <p className="break-words text-xs text-navy/60">{target.kind ?? target.names}</p>
+            )}
           </div>
         </div>
         <Badge variant={badge.variant} label={badge.label} />
@@ -98,10 +111,23 @@ function RuleCard({
         {rule.createdByName ? ` by ${rule.createdByName}` : ""}
       </p>
 
-      {onLift && (rule.status === "ACTIVE" || rule.status === "SCHEDULED") && (
-        <Button size="sm" variant="secondary" onClick={onLift}>
-          Lift rule
-        </Button>
+      {(target.total !== null ||
+        (onLift && (rule.status === "ACTIVE" || rule.status === "SCHEDULED"))) && (
+        <div className="flex flex-wrap items-center gap-x-4 gap-y-1">
+          {onLift && (rule.status === "ACTIVE" || rule.status === "SCHEDULED") && (
+            <Button size="sm" variant="secondary" onClick={onLift}>
+              Lift rule
+            </Button>
+          )}
+          {target.total !== null && (
+            <NextLink
+              href={detailHref}
+              className="inline-flex min-h-11 items-center text-sm font-medium text-navy underline sm:min-h-0"
+            >
+              Products ({target.total})
+            </NextLink>
+          )}
+        </div>
       )}
 
       {rule.liftedAt && (

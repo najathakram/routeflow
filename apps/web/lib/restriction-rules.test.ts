@@ -2,6 +2,7 @@ import { dayEndToIso, dayToIso } from "./restriction-rule-form";
 import {
   emptyText,
   jurisdictionText,
+  ruleSentence,
   ruleTarget,
   stateName,
   surfaceText,
@@ -68,5 +69,38 @@ describe("restriction-rules display helpers", () => {
   it("empty copy differs for the unfiltered list and a filtered one", () => {
     expect(emptyText("ALL").title).toBe("No selling restrictions yet");
     expect(emptyText("LIFTED").title).toBe("No lifted rules");
+  });
+});
+
+describe("ruleSentence (the detail page's one-line summary)", () => {
+  it("names the states in words and the channel", () => {
+    expect(ruleSentence({ jurisdiction: "STATE", states: ["TX", "CA"], surface: "ALL" })).toBe(
+      "Banned in Texas and California · All sales",
+    );
+    expect(
+      ruleSentence({ jurisdiction: "STATE", states: ["TX", "CA", "FL"], surface: "BUYER_PORTAL" }),
+    ).toBe("Banned in Texas, California and Florida · Buyer portal only (staff can still sell)");
+  });
+
+  it("many states read as a count, one state as itself", () => {
+    expect(
+      ruleSentence({
+        jurisdiction: "STATE",
+        states: ["TX", "CA", "FL", "NY", "WA"],
+        surface: "ALL",
+      }),
+    ).toBe("Banned in 5 states · All sales");
+    expect(ruleSentence({ jurisdiction: "STATE", states: ["TX"], surface: "ALL" })).toBe(
+      "Banned in Texas · All sales",
+    );
+  });
+
+  it("federal and state-with-no-states read as everywhere", () => {
+    expect(ruleSentence({ jurisdiction: "FEDERAL", states: [], surface: "ALL" })).toBe(
+      "Banned everywhere (federal) · All sales",
+    );
+    expect(ruleSentence({ jurisdiction: "STATE", states: [], surface: "ALL" })).toBe(
+      "Banned everywhere (no states listed) · All sales",
+    );
   });
 });

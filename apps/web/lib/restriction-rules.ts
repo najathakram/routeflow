@@ -87,3 +87,22 @@ export function emptyText(filter: RestrictionStatus | "ALL"): {
   const label = STATUS_FILTERS.find((f) => f.value === filter)!.label.toLowerCase();
   return { title: `No ${label} rules`, description: "Try another filter to see the rest." };
 }
+
+/** One line for a rule's header: who it bans and where it applies ("Banned in Texas and California · All sales"). */
+export function ruleSentence(
+  r: Pick<SellingRestrictionListItemDto, "jurisdiction" | "states" | "surface">,
+): string {
+  let where: string;
+  if (r.jurisdiction === "STATE" && r.states.length > 0) {
+    const names = r.states.map(stateName);
+    where =
+      names.length > 4
+        ? `Banned in ${names.length} states`
+        : names.length === 1
+          ? `Banned in ${names[0]}`
+          : `Banned in ${names.slice(0, -1).join(", ")} and ${names[names.length - 1]}`;
+  } else {
+    where = jurisdictionText(r);
+  }
+  return `${where} · ${surfaceText(r.surface)}`;
+}

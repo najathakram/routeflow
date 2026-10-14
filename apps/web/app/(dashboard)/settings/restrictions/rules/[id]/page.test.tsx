@@ -171,7 +171,7 @@ describe("rule detail: what it shows", () => {
     expect(screen.getByText("State ban on pods", { selector: "dd" })).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "Edit settings" })).toBeEnabled();
     const history = screen.getByRole("list", { name: "History" });
-    expect(within(history).getByText(/3 products added by Pat Admin/)).toBeInTheDocument();
+    expect(within(history).getByText(/3 added by Pat Admin/)).toBeInTheDocument();
     expect(within(history).getByText(/1 removed by Sam Admin/)).toBeInTheDocument();
     expect(within(history).getByText("Discontinued")).toBeInTheDocument();
     expect(within(history).getByText(/Settings changed by Sam Admin/)).toBeInTheDocument();
@@ -242,6 +242,20 @@ describe("rule detail: add products", () => {
     });
     fireEvent.click(await screen.findByRole("option", { name }, { timeout: 3000 }));
   };
+
+  it("opens with focus in the search, and Escape gives focus back to the button", async () => {
+    await open();
+    const opener = screen.getByRole("button", { name: "Add products" });
+    opener.focus();
+    fireEvent.click(opener);
+    await screen.findByRole("dialog", { name: "Add products" });
+    await waitFor(() =>
+      expect(screen.getByRole("combobox", { name: "Search products" })).toHaveFocus(),
+    );
+    fireEvent.keyDown(document.activeElement ?? document.body, { key: "Escape" });
+    await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
+    await waitFor(() => expect(opener).toHaveFocus());
+  });
 
   it("Add products is the one primary; the picker adds several, then one click saves them", async () => {
     post.mockResolvedValueOnce({

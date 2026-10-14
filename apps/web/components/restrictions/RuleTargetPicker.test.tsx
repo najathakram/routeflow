@@ -163,7 +163,7 @@ describe("RuleTargetPicker: multi-add", () => {
     expect(screen.queryByRole("list", { name: "Selected products and labels" })).toBeNull();
   });
 
-  it("says when nothing matches, and when the list is at its limit", async () => {
+  it("says when nothing matches", async () => {
     products = [];
     renderWithProviders(<Harness />);
     type("zzz");
