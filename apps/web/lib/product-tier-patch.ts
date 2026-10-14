@@ -39,7 +39,10 @@ export function editTierPatch(
     untouched,
   );
   const out = {} as Record<TierPriceKey, string | undefined>;
-  for (const k of TIER_PRICE_KEYS) out[k] = moved[k] ?? asDecimal(draft[k]);
+  // Only an UNTOUCHED tier may take a moved value: a typed tier is absent from `untouched` (read there as 0), so its
+  // own draft always wins, whatever the old list was (#3470 review).
+  for (const k of TIER_PRICE_KEYS)
+    out[k] = (k in untouched ? moved[k] : undefined) ?? asDecimal(draft[k]);
   return out;
 }
 

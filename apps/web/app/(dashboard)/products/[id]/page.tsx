@@ -92,10 +92,6 @@ import { objectPositionForUrl, type FocalPoint } from "@/lib/image-focal";
 import { COMMON_UNITS } from "@/lib/common-units";
 import { editTierPatch, editTierPatchMoves } from "@/lib/product-tier-patch";
 
-/** Shown while editing when a list change will move tiers 2-5 on save (SA ruling 2026-10-14: never silent). */
-const TIERS_MOVE_NOTE =
-  "Tiers that matched the old list price (or sit above the new one) will move with it when you save.";
-
 // U-3a: no per-product label is read yet, so this page prints the default words.
 const UW = unitWords();
 
@@ -739,27 +735,36 @@ export default function ProductDetailPage() {
       return;
     }
     if (editingVariant) {
+      // ONE list value for the PATCH and the tier rule (#3470 review): a blank price keeps the variant's own list,
+      // never the parent's.
+      const vList = variantForm.price || String(editingVariant.pricePerUnit);
+      const vDraft = {
+        pricePerUnit: vList,
+        priceTier2: variantForm.priceTier2 || variantForm.price,
+        priceTier3: variantForm.priceTier3 || variantForm.price,
+        priceTier4: variantForm.priceTier4 || variantForm.price,
+        priceTier5: variantForm.priceTier5 || variantForm.price,
+      };
+      const vMoved = ladderChangeNote(editTierPatchMoves(editingVariant as any, vDraft), (n) =>
+        tierLabel(tierLabels, n),
+      );
       updateProduct.mutate(
         {
           id: editingVariant.id,
           variantName: variantForm.variantName,
           sku: variantForm.sku || undefined,
           unitSku: variantForm.unitSku || undefined,
-          // Cleared fields fall back like the create branch — never send ""
-          // (rejected by @IsDecimal).
-          pricePerUnit: variantForm.price || String(product.pricePerUnit),
+          pricePerUnit: vList,
           // Untouched tiers move with the variant's list change, the same rule as the products list (audit 2026-10-14).
-          ...editTierPatch(editingVariant as any, {
-            pricePerUnit: variantForm.price || String(editingVariant.pricePerUnit),
-            priceTier2: variantForm.priceTier2 || variantForm.price,
-            priceTier3: variantForm.priceTier3 || variantForm.price,
-            priceTier4: variantForm.priceTier4 || variantForm.price,
-            priceTier5: variantForm.priceTier5 || variantForm.price,
-          }),
+          ...editTierPatch(editingVariant as any, vDraft),
         },
         {
           onSuccess: () => {
-            toast({ title: "Variant updated", variant: "success" });
+            toast({
+              title: "Variant updated",
+              ...(vMoved ? { description: vMoved } : {}),
+              variant: "success",
+            });
             closeVariantModal();
           },
           onError: () => toast({ title: "Failed to update variant", variant: "error" }),
@@ -1919,12 +1924,18 @@ export default function ProductDetailPage() {
                     )}
                   </div>
                   {isEditing &&
-                    Object.keys(editTierPatchMoves(product, editDraft as Record<string, string>))
-                      .length > 0 && (
-                      <p className="mb-2 text-xs text-navy/70" data-testid="tiers-move-note">
-                        {TIERS_MOVE_NOTE}
-                      </p>
-                    )}
+                    (() => {
+                      // Names the tiers a save would move with the list (#3470 review: never a fixed string).
+                      const note = ladderChangeNote(
+                        editTierPatchMoves(product, editDraft as Record<string, string>),
+                        (n) => tierLabel(tierLabels, n),
+                      );
+                      return note ? (
+                        <p className="mb-2 text-xs text-navy/70" data-testid="tiers-move-note">
+                          {note.replace(/\.$/, "")} when you save.
+                        </p>
+                      ) : null;
+                    })()}
                   <div className="grid grid-cols-1 gap-2 sm:grid-cols-4">
                     {(
                       [

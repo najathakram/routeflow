@@ -600,6 +600,14 @@ export const CASCADE_TIER_PRICE_FIXTURES: CascadeTierPriceFixture[] = [
     expected: { priceTier3: "6.00", priceTier5: "6.00" },
   },
   {
+    label: "a LIST change from 0 keeps every 0 tier at 0 (they follow the list), #3470 review",
+    field: "pricePerUnit",
+    oldValue: "0",
+    value: 12,
+    tiers: { priceTier2: "0", priceTier3: "0", priceTier4: "9.00", priceTier5: "0" },
+    expected: {},
+  },
+  {
     label: "committing tier 5 cascades nothing (bottom of the ladder)",
     field: "priceTier5",
     oldValue: "4",

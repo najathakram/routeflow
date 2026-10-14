@@ -26,9 +26,24 @@ describe("ProductForm tier commit (P0 2026-10-14)", () => {
 
   it("the list field's commit moves tiers by listCommitTierPatch (the shared ladder rule) and typed tiers win", () => {
     expect(src).toMatch(
-      /listCommitTierPatch\(listFocusRef\.current, text, form, touchedTiersRef\.current\)/,
+      /listCommitTierPatch\(\s*listFocusRef\.current,\s*text \?\? form\.pricePerUnit,\s*form,\s*touchedTiersRef\.current,?\s*\)/,
     );
     expect(src).toMatch(/onEndEditing=\{\(e\) => onListEndEditing\(e\.nativeEvent\.text\)\}/);
     expect((src.match(/touchedTiersRef\.current\.add\("priceTier[2-5]"\)/g) ?? []).length).toBe(4);
+  });
+
+  it("#3470 review: Expo web fires only onBlur, so every price field commits on onBlur too, once per focus", () => {
+    expect(src).toMatch(/onBlur=\{\(\) => onListEndEditing\(\)\}/);
+    for (const k of ["priceTier2", "priceTier3", "priceTier4", "priceTier5"])
+      expect(src).toContain(`onBlur={() => onTierEndEditing("${k}")}`);
+    expect(src).toMatch(/if \(!pendingCommitRef\.current\.delete\("pricePerUnit"\)\) return;/);
+    expect(src).toMatch(/if \(!pendingCommitRef\.current\.delete\(field\)\) return;/);
+  });
+
+  it("#3470 review: submit re-applies the list cascade from the list the form opened with", () => {
+    expect(src).toMatch(
+      /listCommitTierPatch\(\s*initial\.pricePerUnit,\s*form\.pricePerUnit,\s*form,\s*touchedTiersRef\.current,?\s*\)/,
+    );
+    expect(src).toMatch(/buildProductPayload\(final, mode\)/);
   });
 });

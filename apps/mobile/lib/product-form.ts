@@ -253,5 +253,9 @@ export function listCommitTierPatch(
   for (const k of ["priceTier2", "priceTier3", "priceTier4", "priceTier5"] as const) {
     if (!touched.has(k)) untouched[k] = form[k];
   }
-  return applyLadderChange("pricePerUnit", before, after, untouched);
+  const moved = applyLadderChange("pricePerUnit", before, after, untouched);
+  // Only untouched tiers may move: a typed one is absent above (read as 0) and must keep its value (#3470 review).
+  const out: Partial<Record<TierFormKey, string>> = {};
+  for (const k of Object.keys(moved) as TierFormKey[]) if (k in untouched) out[k] = moved[k];
+  return out;
 }

@@ -102,3 +102,23 @@ describe("editTierPatchMoves: the note shows only when a save would move a tier"
     expect(editTierPatchMoves(s, typed)).toEqual({});
   });
 });
+
+describe("#3470 review: a list change from 0 and typed tiers", () => {
+  it("a list change from 0 keeps 0 tiers at 0 and a typed tier keeps its value", () => {
+    const s = {
+      pricePerUnit: "0",
+      priceTier2: "0",
+      priceTier3: "0",
+      priceTier4: "0",
+      priceTier5: "0",
+    };
+    const p = editTierPatch(s, {
+      pricePerUnit: "12",
+      priceTier2: "0",
+      priceTier3: "9",
+      priceTier4: "0",
+      priceTier5: "0",
+    });
+    expect(p).toEqual({ priceTier2: "0", priceTier3: "9", priceTier4: "0", priceTier5: "0" });
+  });
+});

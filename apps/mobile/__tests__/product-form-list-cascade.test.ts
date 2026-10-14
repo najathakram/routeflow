@@ -41,3 +41,11 @@ describe("listCommitTierPatch", () => {
     expect(listCommitTierPatch("10", "", form("10", "10", "10", "10"), new Set())).toEqual({});
   });
 });
+
+describe("#3470 review", () => {
+  it("a typed tier never moves, even when the old list was 0; 0 tiers stay 0 on a list change", () => {
+    expect(
+      listCommitTierPatch("0", "12", form("0", "9", "0", "0"), new Set(["priceTier3"])),
+    ).toEqual({});
+  });
+});
