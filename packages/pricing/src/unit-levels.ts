@@ -21,7 +21,7 @@ export interface ResolveUnitPriceLevel {
 
 /**
  * A level price counts as EXPLICIT only when it is a positive number — the same convention as
- * `getTierPrice`'s `|| fallback` (and `cascadeTierPrices`, which writes "0.00" to mean "inherit
+ * `getTierPrice`'s `|| fallback` (and `applyLadderChange`, which writes "0.00" to mean "inherit
  * again"). NULL, 0, NaN and negatives are all "derive". Coerces Decimal/string so an operator's
  * typed price can never silently round to 0.00.
  */
