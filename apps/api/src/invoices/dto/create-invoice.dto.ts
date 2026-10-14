@@ -16,7 +16,7 @@ import {
   Min,
   ValidateNested,
 } from "class-validator";
-import { Type } from "class-transformer";
+import { Transform, Type } from "class-transformer";
 import { CheckStatus, PaymentMethod } from "@prisma/client";
 import { StripHtml } from "../../common/transforms/strip-html.transform";
 
@@ -48,6 +48,15 @@ export class CreateInvoiceItemDto {
   @IsOptional() @IsInt() @Min(0) promoFreeUnits?: number;
   /** Per-line note (buyer-visible; prints under the description on the PDF). */
   @IsOptional() @StripHtml() @IsString() @MaxLength(2000) notes?: string;
+  /**
+   * H3b: why a staff price moves off this customer's tier price (required when it moves off a SPECIAL one).
+   * Trimmed, then judged by `decideStaffOverride`; stored on the line with the acting user.
+   */
+  @IsOptional()
+  @Transform(({ value }) => (typeof value === "string" ? value.trim() : value))
+  @IsString()
+  @MaxLength(200)
+  overrideReason?: string;
 }
 
 export class CreateInvoiceDto {

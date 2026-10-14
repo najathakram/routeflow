@@ -36,6 +36,7 @@ import type { ResolvedLineUnits } from "../products/line-units";
 import { isUnitAware, prepareUnitLadders, requestsUnit } from "../orders/unit-line-build";
 import { keepsHeldUnit, norm } from "../orders/unit-label-norm";
 import { buildInvoiceUnitLine } from "./invoice-unit-line";
+import { priceLineItem, type LineOverrideCtx } from "./invoice-line-override";
 import {
   categoryTaxSnapshotOf,
   computeCategoryTax,
@@ -65,6 +66,8 @@ export interface EditPayloadLine {
   unitsPerBox?: number | null;
   promoFreeUnits?: number | null;
   notes?: string | null;
+  /** H3b: why this line's price moves off the customer's tier price (a changed price only). */
+  overrideReason?: string | null;
 }
 
 /** A stored InvoiceItem row, as this module reads it (Prisma Decimals arrive as objects). */
@@ -165,7 +168,15 @@ interface PlanCtx {
   productMap: ReadonlyMap<
     string,
     {
+      id?: string;
+      name?: string | null;
+      unit?: string | null;
       unitsPerBox?: number | null;
+      pricePerUnit?: unknown;
+      priceTier2?: unknown;
+      priceTier3?: unknown;
+      priceTier4?: unknown;
+      priceTier5?: unknown;
       trackedCategoryId?: string | null;
       trackedSubcategoryId?: string | null;
     }
@@ -175,6 +186,8 @@ interface PlanCtx {
   warn: (message: string) => void;
   /** VU-4a: `resolveLineUnits` per item (index-aligned; undefined = no unit requested). The CALLER resolves. */
   resolved?: ReadonlyArray<ResolvedLineUnits | undefined>;
+  /** H3b: set by PATCH /invoices/:id — a CHANGED price is judged against the customer's tier price; an unchanged one is kept. */
+  override?: LineOverrideCtx;
 }
 
 const lineLabel = (item: EditPayloadLine) =>
@@ -271,7 +284,7 @@ function isEditOfUnmatchedLegacyRow(ctx: PlanCtx, item: EditPayloadLine): boolea
 }
 
 export function buildEditedLines(ctx: PlanCtx): EditedLine[] {
-  return ctx.items.map((rawItem, i): EditedLine => {
+  return ctx.items.map((sentItem, i): EditedLine => {
     const { row, untouched, productChanged, leftUnit } = ctx.matches[i];
     if (row && untouched) {
       // Verbatim: stored money, split, pack, levy and snapshots. Only cosmetic fields follow the payload.
@@ -286,14 +299,22 @@ export function buildEditedLines(ctx: PlanCtx): EditedLine[] {
           taxRate: Number(row.taxRate ?? 0),
           subtotal: Number(row.subtotal),
           categoryTaxAmount: Number(row.categoryTaxAmount ?? 0),
-          description: rawItem.description ?? row.description,
-          notes: rawItem.notes ?? null,
-          orderItemId: rawItem.orderItemId ?? row.orderItemId ?? null,
+          description: sentItem.description ?? row.description,
+          notes: sentItem.notes ?? null,
+          orderItemId: sentItem.orderItemId ?? row.orderItemId ?? null,
         },
       };
     }
-    const product = rawItem.productId ? ctx.productMap.get(rawItem.productId) : undefined;
+    const product = sentItem.productId ? ctx.productMap.get(sentItem.productId) : undefined;
     const unitRes = ctx.resolved?.[i];
+    // H3b: a re-sent stored price keeps its stored type/reason/author; a changed one is decided afresh.
+    const { item: rawItem, stamp } = priceLineItem(
+      ctx.override,
+      sentItem,
+      product,
+      unitRes?.unitLabel ?? null,
+      productChanged ? null : row,
+    );
     if (product && unitRes && isUnitAware(unitRes)) {
       // VU-4a (D3): the SAME builder create() uses for a unit line; a changed line writes its whole data.
       const category = product.trackedCategoryId
@@ -318,6 +339,7 @@ export function buildEditedLines(ctx: PlanCtx): EditedLine[] {
       });
       const data = {
         ...built,
+        ...stamp,
         trackedCategoryId: levy.lineCategoryId,
         trackedSubcategoryId: keepsRow
           ? (row.trackedSubcategoryId ?? null)
@@ -434,6 +456,7 @@ export function buildEditedLines(ctx: PlanCtx): EditedLine[] {
         ...levy.categoryTrio,
         notes: item.notes ?? null,
         msrp: null as number | null,
+        ...stamp,
       },
     };
   });
@@ -571,6 +594,11 @@ export async function loadEditCatalog(
             kind: true,
             unit: true,
             unitsPerBox: true,
+            pricePerUnit: true,
+            priceTier2: true,
+            priceTier3: true,
+            priceTier4: true,
+            priceTier5: true,
             trackedCategoryId: true,
             trackedSubcategoryId: true,
           },

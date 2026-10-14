@@ -51,6 +51,7 @@ import {
   type InvoiceEditSnapshot,
 } from "../../../../../lib/discard-guard";
 import { hydratedLineTax } from "../../../../../lib/invoice-edit-tax";
+import { reasonField, showsReason } from "../../../../../lib/invoice-edit-reason";
 
 /**
  * Invoice edit screen — DRAFT-only, mirroring web's invoices/[id]/edit page.
@@ -99,6 +100,11 @@ type EditLine = {
   promoFreeUnits: number | null;
   /** Whole selling units the snapshot was earned at, so a qty edit rescales it. */
   promoBaseUnits: number | null;
+  /** H3b: the price the line was offered at (the stored price on load). Absent on a line added here, whose
+   *  price is the catalog list the server judges against the customer's tier price. */
+  offeredPrice?: number;
+  /** H3b: why the price moved off the customer's special price; sent with a moved or newly added price. */
+  overrideReason?: string;
 };
 
 let lineSeq = 0;
@@ -170,6 +176,7 @@ export default function EditInvoiceScreen() {
         packFromOwnSplit({ qty: Number(it.qty), boxes: it.boxes, pieces: it.pieces }) ??
         null,
       unitPrice: Number(it.unitPrice),
+      offeredPrice: Number(it.unitPrice),
       discount: it.discount != null && Number(it.discount) > 0 ? Number(it.discount) : null,
       ...lineTax[i],
       note: it.notes ?? "",
@@ -420,6 +427,8 @@ export default function EditInvoiceScreen() {
           ...(l.locked ? { boxes: l.storedBoxes ?? 0, pieces: l.storedPieces ?? 0 } : {}),
           // SA-189: only an operator-attested pack is ever sent.
           ...(l.attestedPack ? { unitsPerBox: l.attestedPack } : {}),
+          // H3b: the reason a price moved off the customer's special price (the server decides if it needs one)
+          ...reasonField(l),
           ...invoiceLineDto(
             {
               description: l.description.trim(),
@@ -764,6 +773,17 @@ function LineCard({
               />
             </View>
           </View>
+          {showsReason(line) ? (
+            <TextInput
+              style={styles.reasonInput}
+              value={line.overrideReason ?? ""}
+              onChangeText={(t) => onPatch({ overrideReason: t })}
+              maxLength={200}
+              placeholder="Reason (needed off a special price)"
+              placeholderTextColor={ios.label3}
+              accessibilityLabel="Reason for the price change"
+            />
+          ) : null}
 
           {isSplit ? (
             <>
@@ -937,6 +957,15 @@ const styles = StyleSheet.create({
     paddingVertical: 7,
     fontSize: 14,
     fontFamily: "Inter_600SemiBold",
+    color: ios.label,
+  },
+  reasonInput: {
+    backgroundColor: ios.fill3,
+    borderRadius: 8,
+    paddingHorizontal: 10,
+    paddingVertical: 7,
+    fontSize: 14,
+    fontFamily: "Inter_400Regular",
     color: ios.label,
   },
   lineMeta: { fontSize: 12, fontFamily: "Inter_400Regular", color: ios.label2, marginTop: 2 },

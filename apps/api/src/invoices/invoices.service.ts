@@ -112,7 +112,6 @@ import type { InvoiceKpiSummary } from "@routeflow/types";
 import { computeInvoiceKpiSummary } from "./invoice-kpi-summary";
 import { CHECK_TRANSITIONS } from "../common/check-transitions";
 import {
-  CreateInvoiceDto,
   RecordInvoicePaymentDto,
   type RecordPaymentOpts,
   SetCheckStatusDto,
@@ -202,7 +201,8 @@ import {
   assertEditStillJudged,
   catalogRestrictionLines,
 } from "./invoice-restriction-lines";
-import { buildManualInvoiceLines, type ManualLineItem } from "./manual-invoice-lines";
+import { buildManualInvoiceLines } from "./manual-invoice-lines";
+import { loadOverride, type ManualInvoiceDto } from "./invoice-line-override";
 import {
   foldCategoryTax,
   loadManualLineContext,
@@ -443,13 +443,9 @@ export class InvoicesService {
     }
   }
 
-  /**
-   * RF-026: Previously, concurrent invoice creates both read the same last
-   * invoice number and one crashed with Prisma P2002 → HTTP 500. Now catches
-   * P2002 and returns 409 Conflict instead.
-   */
-  /** SA-135: an internal caller's line may carry `packSnapshot` (ManualLineItem); the HTTP DTO never can. */
-  async create(dto: Omit<CreateInvoiceDto, "items"> & { items: ManualLineItem[] }) {
+  /** RF-026: concurrent creates racing on the invoice number (Prisma P2002) get a 409, not a 500. */
+  /** SA-135: an internal caller's line may carry `packSnapshot`; the HTTP DTO never can. `actorId` (HTTP only): H3b. */
+  async create(dto: ManualInvoiceDto, actorId?: string) {
     const issueDateInput = dto.issueDate ? issueDateStamp(dto.issueDate) : null; // #2197: 400 first
     const due = dueDateStamps(dto); // #2256: the due dates too, refused before any read or write
     assertFiniteInvoiceInput(dto); // N4: NaN is a 400, not a silent $0
@@ -489,6 +485,7 @@ export class InvoicesService {
       tenantId: this.prisma.getTenantId(),
       clampFreeUnits: (free, boxes, qty) => this.clampLineFreeUnits(free, boxes, qty),
       resolved,
+      override: await loadOverride(this.prisma, dto, unitsByProduct, actorId),
     });
     // A regulated line makes this a filable sale — the SALE ledger rows are written below.
     const hasRegulated = itemsData.some((it: any) => it.trackedCategoryId != null);
@@ -3098,7 +3095,7 @@ export class InvoicesService {
     });
   }
 
-  async update(id: string, dto: UpdateInvoiceDto) {
+  async update(id: string, dto: UpdateInvoiceDto, actorId?: string) {
     assertFiniteInvoiceInput(dto); // N4: NaN is a 400, not a silent $0
     const inv = await this.findOneOrThrow(id); // a missing invoice is a 404 whatever else is wrong
     // units_v1 (VU-4a, D3): a unit line is accepted only on an order-LESS DRAFT (resolveLineUnits below);
@@ -3137,6 +3134,7 @@ export class InvoicesService {
         items,
         { isStaff: true, prisma: this.prisma, entitlements: this.entitlements },
       );
+      const override = await loadOverride(this.prisma, { ...inv, items }, unitsByProduct, actorId);
 
       const { updated } = await this.prisma.tenantTransaction(async (tx: any) => {
         // Serialize concurrent saves of this invoice: rows are read AFTER the lock, so a second save
@@ -3185,6 +3183,7 @@ export class InvoicesService {
           categoryMap: await withRowCategories(tx, storedRows, categoryMap),
           clampFreeUnits: (f, b, q) => this.clampLineFreeUnits(f, b, q),
           warn: (m) => this.logger.warn(`update(): invoiceId ${id} ${m}`),
+          override,
         });
         const itemsData = editLines.map((l) => l.data);
         // B1026: the SAME discount-exceeds-line guard create() runs, over the lines THIS edit writes

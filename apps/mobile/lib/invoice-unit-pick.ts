@@ -259,6 +259,28 @@ export function saleItemDto(
   };
 }
 
+/**
+ * H3b: the override field of ONE catalog line of a POST /invoices body. The server judges an invoice line
+ * exactly as a sale line (the ONE staff-override rule, against the customer's TIER price), so the same
+ * decision decides here what to send: the trimmed reason when the price moved off the tier price, nothing
+ * when it did not. `{ refused: true }` = off a special price with no reason (the screen blocks the save).
+ */
+export function invoiceItemOverride(
+  line: InvoiceLineState,
+  ctx: { catalogPrice: number; listPrice: number; isSpecial: boolean },
+): { refused: true } | { overrideReason?: string } {
+  const unit = isUnitLine(line);
+  const d = decideTrayPrice({
+    typed: invoiceLinePrice(line, ctx.catalogPrice),
+    base: unit ? unitPriceBase(line, ctx.catalogPrice) : ctx.catalogPrice,
+    listPrice: unit ? (line.unitListPrice ?? ctx.listPrice) : ctx.listPrice,
+    isSpecial: ctx.isSpecial,
+    reason: line.overrideReason,
+  });
+  if (d.kind === "refused") return { refused: true };
+  return d.kind === "set" && d.overrideReason ? { overrideReason: d.overrideReason } : {};
+}
+
 /** The pack option, for resetting a line. */
 const PACK_OPTION: UnitOption = {
   value: "",
