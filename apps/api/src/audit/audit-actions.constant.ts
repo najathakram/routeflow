@@ -14,6 +14,8 @@ export const AUDIT_ACTIONS = {
   INVOICE_OVERPAID_AFTER_RESTATEMENT: "invoice.overpaid-after-restatement",
   /** SA-763r P-3 [L-O2]: the operator's deliberate standalone overpayment; meta {invoiceId, paymentGroupId, overpaidBy, actor}. */
   INVOICE_DELIBERATE_OVERPAYMENT: "invoice.deliberate-overpayment",
+  /** SA-778: a support-session request refused by @NoImpersonation before the handler ran; meta {superAdminId, tenantId, method, route}. */
+  IMPERSONATION_ACTION_REFUSED: "impersonation.action-refused",
 } as const;
 
 export type AuditActionName = (typeof AUDIT_ACTIONS)[keyof typeof AUDIT_ACTIONS];

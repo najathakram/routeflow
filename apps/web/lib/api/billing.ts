@@ -242,9 +242,17 @@ export function apiErrorCodeOf(error: unknown): string | undefined {
   return typeof code === "string" ? code : undefined;
 }
 
-/** A refused Complete payment checkout the billing page words itself (ADDON_BILLING_PENDING_CHECKOUT). */
-export const isMappedCheckoutError = (error: unknown): boolean =>
-  apiErrorCodeOf(error) === API_ERROR_CODES.ADDON_BILLING_PENDING_CHECKOUT;
+/**
+ * A refused Complete payment checkout the billing page words itself: ADDON_BILLING_PENDING_CHECKOUT, and
+ * CHECKOUT_ANCHOR_WINDOW (the window before the 1st: fixed copy + the local time of `retryAt`).
+ */
+export const isMappedCheckoutError = (error: unknown): boolean => {
+  const code = apiErrorCodeOf(error);
+  return (
+    code === API_ERROR_CODES.ADDON_BILLING_PENDING_CHECKOUT ||
+    code === API_ERROR_CODES.CHECKOUT_ANCHOR_WINDOW
+  );
+};
 
 /** A refused add-on enable the confirm sheet words itself (annual plan, or already in the plan). */
 export const isMappedEnableAddonError = (error: unknown): boolean => {

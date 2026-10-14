@@ -96,7 +96,12 @@ describe("PlatformAdminService — audit provenance", () => {
   // SA-733r7 PR-B3: every exit from a dunning pause clears Stripe pause_collection after its commit.
   let dunning: { clearPauseAfterCommit: jest.Mock };
   // the owed-invoice re-read of the PAYMENT_OVERDUE guard
-  let stripeMock: { isConfigured: boolean; getInvoiceFacts: jest.Mock };
+  let stripeMock: {
+    isConfigured: boolean;
+    getSubscription: jest.Mock;
+    getCustomer: jest.Mock;
+    getInvoiceFacts: jest.Mock;
+  };
 
   const ADMIN_ID = "super-1";
   const TENANT_ID = "tenant-1";
@@ -214,6 +219,8 @@ describe("PlatformAdminService — audit provenance", () => {
     dunning = { clearPauseAfterCommit: jest.fn().mockResolvedValue(undefined) };
     stripeMock = {
       isConfigured: false,
+      getSubscription: jest.fn().mockResolvedValue({ status: "active" }),
+      getCustomer: jest.fn().mockResolvedValue({ id: "cus_1" }),
       getInvoiceFacts: jest.fn().mockResolvedValue({
         status: "open",
         amountPaid: 0,
@@ -289,6 +296,155 @@ describe("PlatformAdminService — audit provenance", () => {
     expect(auditLog).toHaveBeenCalledWith(
       expect.objectContaining({ action: "TENANT_REACTIVATED", tenantId: TENANT_ID }),
     );
+  });
+
+  // F4: an admin-set READ_ONLY carries the reason `admin_set` (never null) so a later renewal can tell it from a
+  // lapsed trial; and a CANCELLED over a LIVE Stripe subscription is refused - cancel the subscription first.
+  describe("updateStatus - F4 admin_set / cancel-the-subscription-first", () => {
+    const before = (over: Record<string, unknown> = {}) => {
+      // M2: the Stripe gate reads the stored subscription id BEFORE the transaction (a plain read).
+      (prisma as any).tenantSubscription.findUnique.mockResolvedValue({
+        stripeSubId:
+          (over.subscription as { stripeSubId?: string } | undefined)?.stripeSubId ?? null,
+        stripeCustomerId: "cus_1",
+      });
+      return prisma.tenant.findUniqueOrThrow.mockResolvedValue({
+        id: TENANT_ID,
+        slug: "acme",
+        plan: "STARTER",
+        status: "ACTIVE",
+        readOnlyReason: null,
+        class: "PRODUCTION",
+        deletedAt: null,
+        subscription: {
+          planKey: "STARTER",
+          basePriceSnapshot: 99,
+          discount: 0,
+          couponFull: false,
+          stripeSubId: null,
+        },
+        ...over,
+      } as any);
+    };
+
+    it("READ_ONLY is written with readOnlyReason 'admin_set', never null", async () => {
+      before();
+      prisma.tenant.findUnique.mockResolvedValue({ id: TENANT_ID, slug: "acme" } as any);
+      prisma.tenant.update.mockResolvedValue({
+        id: TENANT_ID,
+        slug: "acme",
+        status: "READ_ONLY",
+      } as any);
+      await service.updateStatus(TENANT_ID, { status: "READ_ONLY" } as any, ADMIN_ID);
+      expect(prisma.tenant.update.mock.calls[0][0].data).toEqual({
+        status: "READ_ONLY",
+        readOnlyReason: "admin_set",
+      });
+    });
+
+    it("READ_ONLY over a payment_overdue pause is 'admin_set' too (not nulled)", async () => {
+      before({ status: "READ_ONLY", readOnlyReason: "payment_overdue" });
+      prisma.tenant.findUnique.mockResolvedValue({ id: TENANT_ID, slug: "acme" } as any);
+      prisma.tenant.update.mockResolvedValue({
+        id: TENANT_ID,
+        slug: "acme",
+        status: "READ_ONLY",
+      } as any);
+      await service.updateStatus(TENANT_ID, { status: "READ_ONLY" } as any, ADMIN_ID);
+      expect(prisma.tenant.update.mock.calls[0][0].data.readOnlyReason).toBe("admin_set");
+    });
+
+    it("CANCELLED with a live stripeSubId: 409 TENANT_CANCEL_SUBSCRIPTION_FIRST, nothing written", async () => {
+      before({
+        subscription: {
+          planKey: "STARTER",
+          basePriceSnapshot: 99,
+          discount: 0,
+          couponFull: false,
+          stripeSubId: "sub_live",
+        },
+      });
+      stripeMock.isConfigured = true;
+      stripeMock.getSubscription.mockResolvedValue({ status: "active" });
+      prisma.tenant.findUnique.mockResolvedValue({ id: TENANT_ID, slug: "acme" } as any);
+      const err: any = await service
+        .updateStatus(TENANT_ID, { status: "CANCELLED" } as any, ADMIN_ID)
+        .catch((e) => e);
+      expect(err.getStatus()).toBe(409);
+      expect(err.getResponse()).toMatchObject({ code: "TENANT_CANCEL_SUBSCRIPTION_FIRST" });
+      expect(prisma.tenant.update).not.toHaveBeenCalled();
+    });
+
+    const withSub = () =>
+      before({
+        subscription: {
+          planKey: "STARTER",
+          basePriceSnapshot: 99,
+          discount: 0,
+          couponFull: false,
+          stripeSubId: "sub_ended",
+        },
+      });
+    const cancelOk = async () => {
+      prisma.tenant.findUnique.mockResolvedValue({ id: TENANT_ID, slug: "acme" } as any);
+      prisma.tenant.update.mockResolvedValue({
+        id: TENANT_ID,
+        slug: "acme",
+        status: "CANCELLED",
+      } as any);
+      await service.updateStatus(TENANT_ID, { status: "CANCELLED" } as any, ADMIN_ID);
+      expect(prisma.tenant.update.mock.calls[0][0].data.status).toBe("CANCELLED");
+    };
+
+    it("CANCELLED over an ENDED Stripe subscription (stripeSubId kept) is allowed", async () => {
+      withSub();
+      stripeMock.isConfigured = true;
+      stripeMock.getSubscription.mockResolvedValue({ status: "canceled" });
+      await cancelOk();
+      expect(stripeMock.getSubscription).toHaveBeenCalledWith("sub_ended");
+    });
+
+    it("CANCELLED when Stripe no longer knows the subscription (404) is allowed", async () => {
+      withSub();
+      stripeMock.isConfigured = true;
+      stripeMock.getSubscription.mockRejectedValue({ code: "resource_missing", statusCode: 404 });
+      await cancelOk();
+    });
+
+    it("a Stripe read failure FAILS CLOSED: 409, nothing written", async () => {
+      withSub();
+      stripeMock.isConfigured = true;
+      stripeMock.getSubscription.mockRejectedValue(new Error("network"));
+      prisma.tenant.findUnique.mockResolvedValue({ id: TENANT_ID, slug: "acme" } as any);
+      const err: any = await service
+        .updateStatus(TENANT_ID, { status: "CANCELLED" } as any, ADMIN_ID)
+        .catch((e) => e);
+      expect(err.getStatus()).toBe(409);
+      expect(prisma.tenant.update).not.toHaveBeenCalled();
+    });
+
+    it("Stripe not configured with a stored subscription FAILS CLOSED too", async () => {
+      withSub();
+      stripeMock.isConfigured = false;
+      prisma.tenant.findUnique.mockResolvedValue({ id: TENANT_ID, slug: "acme" } as any);
+      const err: any = await service
+        .updateStatus(TENANT_ID, { status: "CANCELLED" } as any, ADMIN_ID)
+        .catch((e) => e);
+      expect(err.getStatus()).toBe(409);
+      expect(prisma.tenant.update).not.toHaveBeenCalled();
+    });
+
+    it("CANCELLED with no Stripe subscription is allowed", async () => {
+      before();
+      prisma.tenant.findUnique.mockResolvedValue({ id: TENANT_ID, slug: "acme" } as any);
+      prisma.tenant.update.mockResolvedValue({
+        id: TENANT_ID,
+        slug: "acme",
+        status: "CANCELLED",
+      } as any);
+      await service.updateStatus(TENANT_ID, { status: "CANCELLED" } as any, ADMIN_ID);
+      expect(prisma.tenant.update.mock.calls[0][0].data.status).toBe("CANCELLED");
+    });
   });
 
   // FINDING-4 RULING (2026-09-14, lead): an admin reactivation LEAVES an armed downgrade armed.

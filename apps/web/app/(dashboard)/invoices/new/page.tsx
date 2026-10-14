@@ -48,6 +48,10 @@ import {
 } from "@/lib/sale-line-pricing";
 import { reasonRequiredMessage } from "@/lib/staff-price-override";
 import { apiClient } from "@/lib/api-client";
+import { useSaleAttemptKey } from "@/lib/use-sale-attempt-key";
+import type { UnknownSale } from "@routeflow/types/sale-attempt";
+import { SaleUnknownPanel } from "./_components/SaleUnknownPanel";
+import { KEPT_DRAFT_TOAST, keptDraftInvoiceId } from "@/lib/kept-draft-invoice";
 import { fetchPdfBlob } from "@/lib/fetch-pdf-blob";
 import { displayProductName } from "@/lib/product-display";
 import {
@@ -265,6 +269,7 @@ function ProductSearchInput({
   const [expandedParentId, setExpandedParentId] = React.useState<string | null>(null);
   const ref = React.useRef<HTMLDivElement>(null);
   const inputRef = React.useRef<HTMLInputElement>(null);
+  const listRef = React.useRef<HTMLDivElement>(null);
 
   React.useEffect(() => {
     const t = setTimeout(() => setDebouncedQuery(query), 300);
@@ -323,10 +328,20 @@ function ProductSearchInput({
           setExpandedParentId(null);
         }}
         onFocus={() => setOpen(true)}
-        className="h-9 w-full rounded border border-surface-border bg-white px-2.5 text-sm text-navy placeholder:text-navy/30 focus:border-transparent focus:outline-none focus:ring-1 focus:ring-brand-500"
+        // Row 446: Tab (or any focus move) away from the field closes its popup, so it never sits
+        // over the unit select below; focus moving into the popup's own list keeps it open.
+        onBlur={(e) => {
+          if (!listRef.current?.contains(e.relatedTarget as Node | null)) setOpen(false);
+        }}
+        // Tab leaves the field: close first, so focus moves to the next field, never into the list
+        onKeyDown={(e) => {
+          if (e.key === "Tab") setOpen(false);
+        }}
+        className="h-9 w-full rounded border border-surface-border bg-white px-2.5 text-sm text-navy placeholder:text-navy/30 focus:border-transparent focus:outline-none focus:ring-1 focus:ring-brand-500 max-md:h-11"
       />
       <BarcodeScannerButton
         inputRef={inputRef}
+        className="max-md:h-11 max-md:w-11 max-md:shrink-0"
         onScan={async (code) => {
           try {
             const product = await apiClient
@@ -346,7 +361,13 @@ function ProductSearchInput({
         }}
       />
       {open && debouncedQuery.length > 0 && (products.length > 0 || onCreateProduct) && (
-        <div className="absolute left-0 top-full z-10 mt-1 w-full rounded-lg border border-surface-border bg-white shadow-lg">
+        <div
+          ref={listRef}
+          // a press inside the list keeps focus on the input (Safari never focuses a clicked
+          // button, so a blur would close the list before the click lands)
+          onMouseDown={(e) => e.preventDefault()}
+          className="absolute left-0 top-full z-10 mt-1 w-full rounded-lg border border-surface-border bg-white shadow-lg"
+        >
           <ul className="max-h-48 overflow-y-auto">
             {products.length === 0 && (
               <li className="px-3 py-2 text-sm text-navy/70">No products found.</li>
@@ -449,6 +470,9 @@ interface LineItemState extends InvoiceUnitFields {
   taxable: boolean;
   category?: string; // product category — for the per-category margin floor
 }
+
+/** Visible per-field label of the stacked (below md) line card; the table header carries them from md up. */
+const MOBILE_FIELD_LABEL = "mb-1 block text-xs font-medium text-navy/70 md:hidden";
 
 function createEmptyItem(): LineItemState {
   return {
@@ -712,7 +736,7 @@ function LineUnitControl({
   const hasPicker = enabled && !!item.productId && (units.data?.length ?? 0) > 0;
   if (!hasPicker) return <>{legacy}</>;
   return (
-    <div className="mt-1 [&_select]:h-8">
+    <div className="mt-1 [&_select]:h-8 max-md:[&_select]:h-11">
       <OrderLineUnitPicker
         line={pickerLineOf(item)}
         tier={tier}
@@ -748,7 +772,7 @@ function LevelCount({
           aria-label={`${item.unitLabel} count`}
           value={item.qty}
           onChange={(v) => onCount(Math.max(0, Math.trunc(v ?? 0)))}
-          className="h-9 min-w-0 flex-1 rounded border border-surface-border bg-white px-2 text-right text-sm text-navy focus:border-transparent focus:outline-none focus:ring-1 focus:ring-brand-500 aria-disabled:opacity-60"
+          className="h-9 min-w-0 flex-1 rounded border border-surface-border bg-white px-2 text-right text-sm text-navy focus:border-transparent focus:outline-none focus:ring-1 focus:ring-brand-500 aria-disabled:opacity-60 max-md:h-11"
         />
         {/* The unit the count is in, worded by the vocabulary helper (apple-ux 2026-10-13: Qty never said "Case"). */}
         <span className="shrink-0 text-xs text-navy/70">
@@ -774,6 +798,15 @@ export default function NewInvoicePage() {
   const createInvoice = useCreateInvoice();
   const updateInvoice = useUpdateInvoice();
   const createSale = useCreateSale();
+  const saleKey = useSaleAttemptKey(); // row 485: one Idempotency-Key per sale attempt
+  // Row 485: set while the outcome of a sale is UNKNOWN; the cart is locked behind it.
+  const [saleUnknown, setSaleUnknown] = React.useState<UnknownSale | null>(null);
+  const saleLocked = saleUnknown !== null;
+  const lastSaleRef = React.useRef<{
+    saleDto: CreateSaleDto & { paymentTermsLabel?: string };
+    saleLines: LineItemState[];
+    send: boolean;
+  } | null>(null);
 
   // Which kind of invoice the operator is creating, chosen on the basis screen.
   const [basis, setBasis] = React.useState<"existing" | "newSale" | "standalone" | null>(null);
@@ -1215,7 +1248,7 @@ export default function NewInvoicePage() {
    */
   async function handleScanCode(rawCode: string) {
     const code = rawCode.trim();
-    if (!code) return;
+    if (!code || saleLocked) return;
     setScanQuery("");
     setDebouncedScanQuery("");
     // 1) Dedicated barcode field
@@ -1509,6 +1542,7 @@ export default function NewInvoicePage() {
    * otherwise a PENDING order + DRAFT invoice is created (sent now only when `send`).
    */
   function handleSubmitSale(send: boolean, lines: LineItemState[] = items) {
+    if (saleLocked) return;
     const saleLines = lines.filter((it) => it.productId && Number(it.qty) > 0);
     // #2696(c) SA-558e: never send what the server refuses — a special price needs its reason.
     const needsReason = saleLines.find(saleLineNeedsReason);
@@ -1548,43 +1582,67 @@ export default function NewInvoicePage() {
     // deliveredAt at the full current timestamp rather than midnight UTC.
     const backdatedTo = issueDate && issueDate !== todayIso() ? issueDate : undefined;
 
+    const saleDto = {
+      customerId: customer!.id,
+      items: saleItems,
+      deliveredNow,
+      // The delivery-date picker: replaces deliveredNow's binary on the server
+      // (deliveredNow above is still sent for backward compat with older callers).
+      deliveredOn,
+      notes: notes.trim() || undefined,
+      ...(adjustment < 0 ? { discountAmount: Math.abs(adjustment) } : {}),
+      ...(backdatedTo ? { orderDate: backdatedTo } : {}),
+      // Only post a due date some term actually produced: the operator's
+      // pick, their hand-typed date, or the tenant default once it seeded.
+      // Otherwise this page's provisional +30 would override the server's
+      // resolveDefaultTerms() with a date nobody chose.
+      ...((terms || dueDateEditedRef.current) && dueDate ? { dueDate } : {}),
+      ...(termsText.trim() ? { terms: termsText.trim() } : {}),
+      // Structured "Net 30"-style label — orders.ts's CreateSaleDto isn't
+      // part of this package's file set, so the API-supported field is sent
+      // via a local cast rather than widening that shared type here.
+      ...(terms ? { paymentTermsLabel: terms } : {}),
+      send,
+    } as CreateSaleDto & { paymentTermsLabel?: string };
+    lastSaleRef.current = { saleDto, saleLines, send };
+    postSale(saleDto, saleLines, send);
+  }
+
+  /**
+   * Posts the sale under its Idempotency-Key (row 485). The same cart retried sends the SAME key, so the
+   * server resumes the stored sale. An UNKNOWN outcome (a 5xx, a dropped connection, an error that names a
+   * committed order or invoice) locks the cart behind SaleUnknownPanel; a success or a definitive refusal
+   * unlocks it.
+   */
+  function postSale(
+    saleDto: CreateSaleDto & { paymentTermsLabel?: string },
+    saleLines: LineItemState[],
+    send: boolean,
+  ) {
+    const idempotencyKey = saleKey.keyFor(JSON.stringify(saleDto));
     createSale.mutate(
-      {
-        customerId: customer!.id,
-        items: saleItems,
-        deliveredNow,
-        // The delivery-date picker: replaces deliveredNow's binary on the server
-        // (deliveredNow above is still sent for backward compat with older callers).
-        deliveredOn,
-        notes: notes.trim() || undefined,
-        ...(adjustment < 0 ? { discountAmount: Math.abs(adjustment) } : {}),
-        ...(backdatedTo ? { orderDate: backdatedTo } : {}),
-        // Only post a due date some term actually produced: the operator's
-        // pick, their hand-typed date, or the tenant default once it seeded.
-        // Otherwise this page's provisional +30 would override the server's
-        // resolveDefaultTerms() with a date nobody chose.
-        ...((terms || dueDateEditedRef.current) && dueDate ? { dueDate } : {}),
-        ...(termsText.trim() ? { terms: termsText.trim() } : {}),
-        // Structured "Net 30"-style label — orders.ts's CreateSaleDto isn't
-        // part of this package's file set, so the API-supported field is sent
-        // via a local cast rather than widening that shared type here.
-        ...(terms ? { paymentTermsLabel: terms } : {}),
-        send,
-      } as CreateSaleDto & { paymentTermsLabel?: string },
+      { ...saleDto, idempotencyKey },
       {
         onSuccess: (inv) => {
+          saleKey.settle({ ok: true });
+          setSaleUnknown(null);
           toast({
             title: deliveredNow ? "Sale recorded" : send ? "Invoice sent" : "Invoice saved",
             variant: "success",
           });
           router.push(`/invoices/${inv.id}`);
         },
-        onError: (err: unknown) =>
+        onError: (err: unknown) => {
+          saleKey.settle({ ok: false, error: err });
+          const unknown = saleKey.unknown();
+          setSaleUnknown(unknown);
+          if (unknown) return; // locked: the panel offers Try again / Open / Start a new sale
           toast({
             title: "Could not create the sale",
             description: unitRefusal(err, saleLines) ?? "Please check your inputs and try again.",
             variant: "error",
-          }),
+          });
+        },
       },
     );
   }
@@ -1597,17 +1655,21 @@ export default function NewInvoicePage() {
       const dto = buildInvoiceDto(false, lines);
       updateInvoice.mutate({ id: currentDraftId, ...dto } as any, {
         onSuccess: async () => {
+          let sendFailed = false;
           if (sendNow) {
             try {
               await apiClient.post(`/invoices/${currentDraftId}/send`);
             } catch {
-              // fall through to toast below
+              // Row 466: never say "sent" when it was not. The draft is kept; open it.
+              sendFailed = true;
             }
           }
-          toast({
-            title: sendNow ? "Invoice sent" : "Draft saved",
-            variant: "success",
-          });
+          if (sendFailed) toast({ ...KEPT_DRAFT_TOAST, variant: "warning" });
+          else
+            toast({
+              title: sendNow ? "Invoice sent" : "Draft saved",
+              variant: "success",
+            });
           router.push(`/invoices/${currentDraftId}`);
         },
         onError: (err: unknown) => {
@@ -1635,6 +1697,14 @@ export default function NewInvoicePage() {
         router.push(`/invoices/${invoice.id}`);
       },
       onError: (err: unknown) => {
+        // Row 466: the draft was committed and only the send failed. Open it; never offer a
+        // second create (a retry here would duplicate the invoice).
+        const keptId = keptDraftInvoiceId(err);
+        if (keptId) {
+          toast({ ...KEPT_DRAFT_TOAST, variant: "warning" });
+          router.push(`/invoices/${keptId}`);
+          return;
+        }
         toast({
           title: "Failed to create invoice",
           description: unitRefusal(err, lines) ?? "Please check your inputs and try again.",
@@ -1653,7 +1723,31 @@ export default function NewInvoicePage() {
 
   return (
     <div className="pb-24">
-      <div className="space-y-5 p-6">
+      {saleUnknown ? (
+        <SaleUnknownPanel
+          unknown={saleUnknown}
+          busy={createSale.isPending}
+          onTryAgain={() => {
+            const last = lastSaleRef.current;
+            if (last) postSale(last.saleDto, last.saleLines, last.send);
+          }}
+          onStartNew={() => {
+            saleKey.startNew();
+            lastSaleRef.current = null;
+            setSaleUnknown(null);
+          }}
+        />
+      ) : null}
+      {/* Row 485: a sale with an unknown outcome locks every control behind the panel above. */}
+      <fieldset
+        disabled={saleLocked}
+        data-locked={saleLocked ? "true" : undefined}
+        className={cn(
+          "m-0 min-w-0 space-y-5 border-0 p-6",
+          // locked behind the panel: visibly inert (the mobile composer dims to the same 0.45)
+          saleLocked && "cursor-not-allowed opacity-[0.45]",
+        )}
+      >
         {/* Back to the basis chooser */}
         <button
           onClick={() => setBasis(null)}
@@ -2043,10 +2137,11 @@ export default function NewInvoicePage() {
                 {/* Table header */}
                 <div
                   className={cn(
-                    "gap-2 rounded-t bg-gray-50 px-1 py-2 text-xs font-semibold uppercase tracking-wider text-gray-500",
+                    // Below md the labels sit on each field of the stacked card, so the header hides.
+                    "hidden gap-2 rounded-t bg-gray-50 px-1 py-2 text-xs font-semibold uppercase tracking-wider text-gray-500 md:grid",
                     showAvgCost
-                      ? "grid grid-cols-[1fr_70px_100px_90px_72px_44px_32px]"
-                      : "grid grid-cols-[1fr_70px_100px_90px_44px_32px]",
+                      ? "md:grid-cols-[1fr_70px_100px_90px_72px_44px_32px]"
+                      : "md:grid-cols-[1fr_70px_100px_90px_44px_32px]",
                   )}
                 >
                   <span>Item Details</span>
@@ -2066,14 +2161,16 @@ export default function NewInvoicePage() {
                       else rowRefs.current.delete(item.key);
                     }}
                     className={cn(
-                      "items-center gap-2 border-b border-surface-border pb-2",
+                      // Below md: a 4-column stacked card (item + delete / qty + rate / discount + tax
+                      // / total). From md up: the table row it always was.
+                      "grid grid-cols-4 items-start gap-x-2 gap-y-3 border-surface-border max-md:mb-3 max-md:rounded-lg max-md:border max-md:bg-white max-md:p-3 md:items-center md:gap-y-2 md:border-b md:pb-2",
                       showAvgCost
-                        ? "grid grid-cols-[1fr_70px_100px_90px_72px_44px_32px]"
-                        : "grid grid-cols-[1fr_70px_100px_90px_44px_32px]",
+                        ? "md:grid-cols-[1fr_70px_100px_90px_72px_44px_32px]"
+                        : "md:grid-cols-[1fr_70px_100px_90px_44px_32px]",
                     )}
                   >
                     {/* Description / product search */}
-                    <div className="min-w-0">
+                    <div className="min-w-0 max-md:col-span-3 max-md:col-start-1 max-md:row-start-1">
                       <ProductSearchInput
                         value={item.description}
                         onCreateProduct={(searchTerm) => {
@@ -2161,7 +2258,7 @@ export default function NewInvoicePage() {
                                   type="button"
                                   onClick={() => setLineSellBy(item.key, "case")}
                                   className={cn(
-                                    "max-w-[104px] truncate whitespace-nowrap px-1.5 py-0.5 transition-colors",
+                                    "max-w-[104px] truncate whitespace-nowrap px-1.5 py-0.5 transition-colors max-md:min-h-11",
                                     (item.sellBy ?? "case") === "case"
                                       ? "bg-brand-500 text-white"
                                       : "bg-white text-navy/70 hover:bg-surface-raised",
@@ -2173,7 +2270,7 @@ export default function NewInvoicePage() {
                                   type="button"
                                   onClick={() => setLineSellBy(item.key, "unit")}
                                   className={cn(
-                                    "max-w-[104px] truncate whitespace-nowrap border-l border-surface-border px-1.5 py-0.5 transition-colors",
+                                    "max-w-[104px] truncate whitespace-nowrap border-l border-surface-border px-1.5 py-0.5 transition-colors max-md:min-h-11",
                                     item.sellBy === "unit"
                                       ? "bg-brand-500 text-white"
                                       : "bg-white text-navy/70 hover:bg-surface-raised",
@@ -2190,94 +2287,99 @@ export default function NewInvoicePage() {
                     </div>
 
                     {/* Qty — box/piece mode if unitsPerBox set, otherwise plain number */}
-                    {item.unitLabel ? (
-                      <LevelCount
-                        item={item}
-                        enabled={unitsOn}
-                        locked={!!pendingUnitOf(item)}
-                        onCount={(n) => updateItem(item.key, { qty: n })}
-                      />
-                    ) : (item.unitsPerBox ?? 0) > 1 ? (
-                      item.sellBy === "unit" ? (
-                        <div className="flex flex-col gap-0.5">
-                          <input
-                            type="number"
-                            min={0}
-                            value={item.qty}
-                            onChange={(e) =>
-                              setLineUnitQty(item.key, parseInt(e.target.value, 10) || 0)
-                            }
-                            onFocus={(e) => e.target.select()}
-                            className="aria-disabled:opacity-60 w-full rounded border border-surface-border bg-white px-1 py-1 text-center text-xs font-semibold text-navy focus:border-transparent focus:outline-none focus:ring-1 focus:ring-brand-500"
-                            readOnly={!!pendingUnitOf(item)}
-                            aria-disabled={!!pendingUnitOf(item) || undefined}
-                            title={`Total ${w.base.lowerOther}`}
-                          />
-                          <span className="text-[9px] text-navy/30 text-right">
-                            {w.base.short.other}
-                          </span>
-                        </div>
-                      ) : (
-                        <div className="flex flex-col gap-0.5">
-                          <div className="flex items-center gap-0.5">
+                    <div className="min-w-0 max-md:col-span-2 md:contents">
+                      <span className={MOBILE_FIELD_LABEL}>Qty</span>
+                      {item.unitLabel ? (
+                        <LevelCount
+                          item={item}
+                          enabled={unitsOn}
+                          locked={!!pendingUnitOf(item)}
+                          onCount={(n) => updateItem(item.key, { qty: n })}
+                        />
+                      ) : (item.unitsPerBox ?? 0) > 1 ? (
+                        item.sellBy === "unit" ? (
+                          <div className="flex flex-col gap-0.5">
                             <input
                               type="number"
                               min={0}
-                              value={item.boxes ?? 0}
-                              onChange={(e) => {
-                                const boxes = Math.max(0, parseInt(e.target.value, 10) || 0);
-                                const pieces = item.pieces ?? 0;
-                                updateItem(item.key, {
-                                  boxes,
-                                  qty: boxes * item.unitsPerBox! + pieces,
-                                });
-                              }}
+                              value={item.qty}
+                              onChange={(e) =>
+                                setLineUnitQty(item.key, parseInt(e.target.value, 10) || 0)
+                              }
                               onFocus={(e) => e.target.select()}
-                              className="aria-disabled:opacity-60 w-8 rounded border border-surface-border bg-white px-1 py-1 text-center text-xs font-semibold text-navy focus:border-transparent focus:outline-none focus:ring-1 focus:ring-brand-500"
+                              className="aria-disabled:opacity-60 w-full rounded border border-surface-border bg-white px-1 py-1 text-center text-xs font-semibold text-navy focus:border-transparent focus:outline-none focus:ring-1 focus:ring-brand-500 max-md:h-11"
                               readOnly={!!pendingUnitOf(item)}
                               aria-disabled={!!pendingUnitOf(item) || undefined}
-                              title={w.pack.other}
+                              title={`Total ${w.base.lowerOther}`}
                             />
-                            <span className="text-[10px] text-navy/70">{w.pack.lower} +</span>
-                            <input
-                              type="number"
-                              min={0}
-                              max={(item.unitsPerBox ?? 0) - 1}
-                              value={item.pieces ?? 0}
-                              onChange={(e) => {
-                                const pieces = Math.max(0, parseInt(e.target.value, 10) || 0);
-                                const boxes = item.boxes ?? 0;
-                                updateItem(item.key, {
-                                  pieces,
-                                  qty: boxes * item.unitsPerBox! + pieces,
-                                });
-                              }}
-                              onFocus={(e) => e.target.select()}
-                              className="aria-disabled:opacity-60 w-8 rounded border border-surface-border bg-white px-1 py-1 text-center text-xs font-semibold text-navy focus:border-transparent focus:outline-none focus:ring-1 focus:ring-brand-500"
-                              readOnly={!!pendingUnitOf(item)}
-                              aria-disabled={!!pendingUnitOf(item) || undefined}
-                              title={`Extra ${w.base.lowerOther}`}
-                            />
+                            <span className="text-[9px] text-navy/30 text-right">
+                              {w.base.short.other}
+                            </span>
                           </div>
-                          <span className="text-[9px] text-navy/30 text-right">
-                            {item.qty} {w.baseShortFor(item.qty)}
-                          </span>
-                        </div>
-                      )
-                    ) : (
-                      <DecimalInput
-                        decimals={3}
-                        min={0}
-                        readOnly={!!pendingUnitOf(item)}
-                        aria-disabled={!!pendingUnitOf(item) || undefined}
-                        value={item.qty}
-                        onChange={(v) => updateItem(item.key, { qty: v ?? 0 })}
-                        className="h-9 rounded border border-surface-border bg-white px-2 text-right text-sm text-navy focus:border-transparent focus:outline-none focus:ring-1 focus:ring-brand-500 aria-disabled:opacity-60"
-                      />
-                    )}
+                        ) : (
+                          <div className="flex flex-col gap-0.5">
+                            <div className="flex items-center gap-0.5 max-md:flex-wrap">
+                              <input
+                                type="number"
+                                min={0}
+                                value={item.boxes ?? 0}
+                                onChange={(e) => {
+                                  const boxes = Math.max(0, parseInt(e.target.value, 10) || 0);
+                                  const pieces = item.pieces ?? 0;
+                                  updateItem(item.key, {
+                                    boxes,
+                                    qty: boxes * item.unitsPerBox! + pieces,
+                                  });
+                                }}
+                                onFocus={(e) => e.target.select()}
+                                className="aria-disabled:opacity-60 w-8 rounded border border-surface-border bg-white px-1 py-1 text-center text-xs font-semibold text-navy focus:border-transparent focus:outline-none focus:ring-1 focus:ring-brand-500 max-md:h-11 max-md:w-11"
+                                readOnly={!!pendingUnitOf(item)}
+                                aria-disabled={!!pendingUnitOf(item) || undefined}
+                                title={w.pack.other}
+                              />
+                              <span className="text-[10px] text-navy/70">{w.pack.lower} +</span>
+                              <input
+                                type="number"
+                                min={0}
+                                max={(item.unitsPerBox ?? 0) - 1}
+                                value={item.pieces ?? 0}
+                                onChange={(e) => {
+                                  const pieces = Math.max(0, parseInt(e.target.value, 10) || 0);
+                                  const boxes = item.boxes ?? 0;
+                                  updateItem(item.key, {
+                                    pieces,
+                                    qty: boxes * item.unitsPerBox! + pieces,
+                                  });
+                                }}
+                                onFocus={(e) => e.target.select()}
+                                className="aria-disabled:opacity-60 w-8 rounded border border-surface-border bg-white px-1 py-1 text-center text-xs font-semibold text-navy focus:border-transparent focus:outline-none focus:ring-1 focus:ring-brand-500 max-md:h-11 max-md:w-11"
+                                readOnly={!!pendingUnitOf(item)}
+                                aria-disabled={!!pendingUnitOf(item) || undefined}
+                                title={`Extra ${w.base.lowerOther}`}
+                              />
+                            </div>
+                            <span className="text-[9px] text-navy/30 text-right">
+                              {item.qty} {w.baseShortFor(item.qty)}
+                            </span>
+                          </div>
+                        )
+                      ) : (
+                        <DecimalInput
+                          decimals={3}
+                          min={0}
+                          readOnly={!!pendingUnitOf(item)}
+                          aria-disabled={!!pendingUnitOf(item) || undefined}
+                          value={item.qty}
+                          onChange={(v) => updateItem(item.key, { qty: v ?? 0 })}
+                          aria-label="Qty"
+                          className="h-9 rounded border border-surface-border bg-white px-2 text-right text-sm text-navy focus:border-transparent focus:outline-none focus:ring-1 focus:ring-brand-500 aria-disabled:opacity-60 max-md:h-11 max-md:w-full"
+                        />
+                      )}
+                    </div>
 
                     {/* Unit price */}
-                    <div>
+                    <div className="max-md:col-span-2">
+                      <span className={MOBILE_FIELD_LABEL}>Rate</span>
                       {item.isSpecialPrice && item.regularPrice !== undefined && (
                         <p className="text-xs line-through text-navy/70 mb-0.5 text-right">
                           ${item.regularPrice.toFixed(2)}
@@ -2290,7 +2392,7 @@ export default function NewInvoicePage() {
                         readOnly={!!pendingUnitOf(item)}
                         aria-disabled={!!pendingUnitOf(item) || undefined}
                         aria-label="Unit price"
-                        className="h-9 w-full rounded border border-surface-border bg-white px-2 text-right text-sm text-navy focus:border-transparent focus:outline-none focus:ring-1 focus:ring-brand-500 aria-disabled:opacity-60"
+                        className="h-9 w-full rounded border border-surface-border bg-white px-2 text-right text-sm text-navy focus:border-transparent focus:outline-none focus:ring-1 focus:ring-brand-500 aria-disabled:opacity-60 max-md:h-11"
                       />
                       {/* #2696(c) SA-558e: off the customer's special price ⇒ a reason, as the
                           server requires on a sale (pricing's decideStaffOverride). */}
@@ -2304,7 +2406,7 @@ export default function NewInvoicePage() {
                           aria-invalid={saleLineNeedsReason(item)}
                           placeholder="Reason (required)"
                           className={cn(
-                            "mt-1 h-8 w-full rounded border bg-white px-2 text-xs text-navy placeholder:text-navy/40 focus:outline-none focus:ring-1 focus:ring-brand-500",
+                            "mt-1 h-8 w-full rounded border bg-white px-2 text-xs max-md:h-11 max-md:text-sm text-navy placeholder:text-navy/40 focus:outline-none focus:ring-1 focus:ring-brand-500",
                             saleLineNeedsReason(item) ? "border-danger" : "border-surface-border",
                           )}
                         />
@@ -2317,7 +2419,7 @@ export default function NewInvoicePage() {
                       )}
                       {/* Live cost & margin — the negotiation floor (shared component) */}
                       {item.productId && (
-                        <div className="mt-0.5">
+                        <div className="mt-0.5 max-md:[&_button]:min-h-11">
                           <MarginHint
                             unitPrice={item.unitPrice}
                             unitCost={item.avgCost}
@@ -2335,41 +2437,57 @@ export default function NewInvoicePage() {
                     </div>
 
                     {/* Discount */}
-                    <MoneyInput
-                      aria-label="Line discount"
-                      min={0}
-                      placeholder="0.00"
-                      value={item.discount || null}
-                      onChange={(v) => updateItem(item.key, { discount: v ?? 0 })}
-                      className="h-9 rounded border border-surface-border bg-white px-2 text-right text-sm text-navy placeholder:text-navy/30 focus:border-transparent focus:outline-none focus:ring-1 focus:ring-brand-500"
-                    />
+                    <div className="max-md:col-span-2 md:contents">
+                      <span className={MOBILE_FIELD_LABEL}>Discount</span>
+                      <MoneyInput
+                        aria-label="Line discount"
+                        min={0}
+                        placeholder="0.00"
+                        value={item.discount || null}
+                        onChange={(v) => updateItem(item.key, { discount: v ?? 0 })}
+                        className="h-9 rounded border border-surface-border bg-white px-2 text-right text-sm text-navy placeholder:text-navy/30 focus:border-transparent focus:outline-none focus:ring-1 focus:ring-brand-500 max-md:h-11 max-md:w-full"
+                      />
+                    </div>
 
                     {/* Avg cost (optional column) */}
                     {showAvgCost && (
-                      <span className="text-right text-xs text-navy/70">
-                        {item.avgCost ? "$" + item.avgCost.toFixed(2) : "—"}
-                      </span>
+                      <div className="max-md:col-span-2 md:contents">
+                        <span className={MOBILE_FIELD_LABEL}>Avg. cost</span>
+                        <span className="text-right text-xs text-navy/70 max-md:block max-md:text-sm">
+                          {item.avgCost ? "$" + item.avgCost.toFixed(2) : "—"}
+                        </span>
+                      </div>
                     )}
 
                     {/* Taxable checkbox */}
-                    <label className="flex cursor-pointer items-center justify-center">
+                    <label className="flex cursor-pointer items-center justify-center max-md:col-span-2 max-md:min-h-11 max-md:justify-start max-md:gap-2">
                       <input
                         type="checkbox"
                         checked={item.taxable}
                         onChange={(e) => updateItem(item.key, { taxable: e.target.checked })}
-                        className="h-4 w-4 rounded border-surface-border text-brand-500 focus:ring-brand-500"
+                        className="h-4 w-4 rounded border-surface-border text-brand-500 focus:ring-brand-500 max-md:h-5 max-md:w-5"
                       />
+                      <span className="text-sm font-medium text-navy/70 md:hidden">Tax</span>
                     </label>
 
                     {/* Remove */}
                     <button
                       onClick={() => removeItem(item.key)}
                       disabled={items.length === 1}
-                      className="flex items-center justify-center rounded p-1 text-navy/30 hover:text-danger transition-colors disabled:opacity-30 disabled:cursor-not-allowed"
+                      className="flex items-center justify-center rounded p-1 text-navy/30 hover:text-danger transition-colors disabled:opacity-30 disabled:cursor-not-allowed max-md:col-start-4 max-md:row-start-1 max-md:h-11 max-md:w-11 max-md:justify-self-end"
                       title="Remove item"
                     >
                       <Trash2 className="h-4 w-4" />
                     </button>
+
+                    {/* Line total — inside the card below md (the desktop strip below is md-only) */}
+                    <div
+                      data-testid="line-total-mobile"
+                      className="flex items-center justify-end gap-2 text-sm font-semibold text-navy max-md:col-span-2 md:hidden"
+                    >
+                      <span className="text-xs font-medium text-navy/70">Line total</span>
+                      {fmt(lineTotal(item))}
+                    </div>
                   </div>
                 ))}
 
@@ -2378,10 +2496,10 @@ export default function NewInvoicePage() {
                   <div
                     key={item.key + "-total"}
                     className={cn(
-                      "gap-2 px-1",
+                      "hidden gap-2 px-1 md:grid",
                       showAvgCost
-                        ? "grid grid-cols-[1fr_70px_100px_90px_72px_44px_32px]"
-                        : "grid grid-cols-[1fr_70px_100px_90px_44px_32px]",
+                        ? "md:grid-cols-[1fr_70px_100px_90px_72px_44px_32px]"
+                        : "md:grid-cols-[1fr_70px_100px_90px_44px_32px]",
                     )}
                   >
                     <span />
@@ -2511,7 +2629,7 @@ export default function NewInvoicePage() {
             </Card>
           </div>
         </div>
-      </div>
+      </fieldset>
 
       <InlineCreateProductModal
         isOpen={createProductOpen}
@@ -2557,7 +2675,7 @@ export default function NewInvoicePage() {
                 <WriteButton
                   onClick={() => withResolvedItems((l) => handleSubmitSale(true, l))}
                   loading={createSale.isPending}
-                  disabled={createSale.isPending}
+                  disabled={createSale.isPending || saleLocked}
                 >
                   Create sale &amp; invoice
                 </WriteButton>
@@ -2567,7 +2685,7 @@ export default function NewInvoicePage() {
                 <WriteButton
                   onClick={() => withResolvedItems((l) => handleSubmitSale(false, l))}
                   loading={createSale.isPending}
-                  disabled={createSale.isPending}
+                  disabled={createSale.isPending || saleLocked}
                 >
                   Save draft invoice
                 </WriteButton>

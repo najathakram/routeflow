@@ -1,3 +1,4 @@
+import { AuditService } from "../audit/audit.service";
 import { listenOnLoopback } from "../common/testing/listen-loopback";
 import "reflect-metadata";
 import { GUARDS_METADATA } from "@nestjs/common/constants";
@@ -31,6 +32,7 @@ describe("GET /users/me/permissions", () => {
         OperatorPermissionsService,
         { provide: PrismaService, useValue: prisma },
         { provide: UsersService, useValue: { findById } },
+        { provide: AuditService, useValue: { log: jest.fn() } }, // NoImpersonationGuard (SA-778)
       ],
     })
       .overrideGuard(JwtAuthGuard)

@@ -14,11 +14,12 @@ const BASE = "/settings/restrictions/unknown-state-customers";
 export const UNKNOWN_STATE_KEY = ["restrictions-settings", "unknown-state-customers"] as const;
 
 /** The four buckets, first page of each (the card loads its own data; there is no "Check readiness" gate). */
-export function useUnknownStateBuckets(limit = PAGE) {
+export function useUnknownStateBuckets(limit = PAGE, opts: { staleTime?: number } = {}) {
   return useQuery<UnknownStateBuckets>({
     queryKey: [...UNKNOWN_STATE_KEY, limit],
     queryFn: () => apiClient.get(BASE, { params: { limit } }).then((r) => r.data),
     retry: false,
+    ...(opts.staleTime != null ? { staleTime: opts.staleTime } : {}),
   });
 }
 

@@ -19,6 +19,7 @@ jest.mock("../common/db-locks", () => ({
  *    lift is its own audited action.
  * The choke point itself is proven in `selling-restrictions.service.spec.ts`.
  */
+import { regulatedGateOpenProvider } from "./testing/regulated-gate-open-provider";
 import { oversellReaderOffProvider } from "../orders/testing/policy-reader-provider";
 import { Test } from "@nestjs/testing";
 import { BadRequestException, ConflictException } from "@nestjs/common";
@@ -95,6 +96,7 @@ describe("OrderTemplatesService — selling restrictions (F-05)", () => {
       providers: [
         oversellReaderOffProvider,
         OrderTemplatesService,
+        regulatedGateOpenProvider,
         { provide: PrismaService, useValue: prisma },
         { provide: TenantContextService, useValue: { run: jest.fn((_i, fn) => fn()) } },
         { provide: SystemConfigService, useValue: { get: jest.fn().mockResolvedValue("10") } },

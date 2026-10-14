@@ -1,6 +1,7 @@
 "use client";
 
 import { endTrialToast } from "./end-trial-toast";
+import { planMoney } from "@/lib/plan-money";
 import * as React from "react";
 import { CreditCard, Check, AlertTriangle, Loader2, Zap } from "lucide-react";
 import { API_ERROR_CODES, type AddonBillingMode, type EnableAddonResult } from "@routeflow/types";
@@ -8,6 +9,7 @@ import { Card, Button, Badge, Modal, useToast, cn } from "@routeflow/ui/web";
 import { ReadOnlyBanner } from "@/components/ReadOnlyBanner";
 import { ConfirmDialog } from "@/components/ConfirmDialog";
 import { DIALOG_FIT, DIALOG_FOOTER_BUTTON } from "@/components/dialog-mobile-fit";
+import { isAccountAdmin } from "@/lib/auth";
 import { useAuth } from "@/lib/auth-context";
 import { formatMoney } from "@/lib/format";
 import { BillingExportButton } from "./BillingExportButton";
@@ -28,10 +30,8 @@ import {
   type AddonSkuDef,
 } from "@/lib/api/billing";
 
-const money = (n: number | null | undefined) =>
-  n == null
-    ? "—"
-    : `$${n.toLocaleString(undefined, { minimumFractionDigits: 0, maximumFractionDigits: 2 })}`;
+// The one price format the hub's Business card also uses (lib/plan-money).
+const money = planMoney;
 
 const METER_LABEL: Record<string, string> = {
   SEATS: "Seats",
@@ -108,6 +108,7 @@ const NOT_BILLED_ONLINE_COPY = "Not billed online yet; your account manager will
 // ("Turn it off before adding your card...") is gone from the sheet.
 const TRIAL_BILLED_COPY = "It is billed from your first paid month, once you add your card.";
 const CHECKOUT_FAILED_COPY = "We couldn't start checkout. Nothing was changed. Please try again.";
+const CHECKOUT_REOPENS_SOON_COPY = "Checkout reopens in a few minutes.";
 const CHECKOUT_ADDONS_PENDING_FALLBACK =
   "Turn off your add-ons before adding your card, or contact support to set them up.";
 const addonIncludedCopy = (name: string) => `${name} is already included in your plan.`;
@@ -128,6 +129,17 @@ function checkoutErrorCopy(err: unknown): string {
   if (body?.code === API_ERROR_CODES.ADDON_BILLING_PENDING_CHECKOUT) {
     const text = body.message; // the one deliberate raw-message read on this page (allowlisted)
     return typeof text === "string" && text.trim() ? text : CHECKOUT_ADDONS_PENDING_FALLBACK;
+  }
+  if (body?.code === API_ERROR_CODES.CHECKOUT_ANCHOR_WINDOW) {
+    // F3: fixed copy plus the browser-local time of the `retryAt` FIELD (never the server's message).
+    const retryAt = new Date(
+      typeof (body as { retryAt?: unknown }).retryAt === "string"
+        ? (body as { retryAt: string }).retryAt
+        : NaN,
+    );
+    return Number.isNaN(retryAt.getTime())
+      ? CHECKOUT_REOPENS_SOON_COPY
+      : `Checkout reopens at ${retryAt.toLocaleTimeString([], { hour: "numeric", minute: "2-digit" })}`;
   }
   return CHECKOUT_FAILED_COPY;
 }
@@ -299,7 +311,7 @@ function EnableAddonSheet({
 export default function BillingSettingsPage() {
   const { toast } = useToast();
   const { user } = useAuth();
-  const isAdmin = user?.role === "TENANT_ADMIN";
+  const isAdmin = isAccountAdmin(user);
   const sub = useSubscription();
   const usage = useUsage();
   const plans = usePlans();

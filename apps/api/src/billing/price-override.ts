@@ -80,6 +80,26 @@ export const PRICE_PUSH_FAILURE_REASONS: readonly string[] = [
   "stripe_not_configured",
 ];
 
+/** Go-live M3: push failures a redelivery can fix (Stripe or the database hiccuped, or is not configured yet). */
+const TRANSIENT_PRICE_PUSH_REASONS: readonly string[] = [
+  "stripe_retrieve_failed",
+  "stripe_product_create_failed",
+  "stripe_update_failed",
+  "reconcile_flag_failed",
+  "stripe_not_configured",
+  // the tenant's price could not be LOOKED UP (infrastructure), not "has no price"
+  "pricing_lookup_failed",
+];
+
+/**
+ * Go-live M3: a non-synced push result a redelivery cannot change - everything that is not a KNOWN transient
+ * failure (no base item, a paused / incomplete subscription, an unresolvable price, no subscription, or a reason
+ * added later). The post-checkout webhook alerts ops and acknowledges these; only a known transient one throws.
+ */
+export function isPermanentPricePushReason(reason: string | undefined): boolean {
+  return !TRANSIENT_PRICE_PUSH_REASONS.includes(reason ?? "");
+}
+
 export function isPricePushFailure(result: { synced: boolean; reason?: string }): boolean {
   return !result.synced && PRICE_PUSH_FAILURE_REASONS.includes(result.reason ?? "");
 }

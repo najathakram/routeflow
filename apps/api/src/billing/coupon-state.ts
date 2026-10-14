@@ -28,7 +28,9 @@ import {
   type CouponState,
 } from "./coupon-unbilled";
 import { isPayingRow } from "./mrr.service";
-import { BILLING_EVENTS } from "./plan-catalog.constants";
+import { AdminAuditAction } from "../platform-admin/audit-actions.constant";
+import { writeAdminNotice } from "./manual-invoice-notice";
+import { BILLING_EVENTS, addonSkuCode } from "./plan-catalog.constants";
 import type { StripeService } from "./stripe.service";
 
 /**
@@ -76,6 +78,32 @@ export interface ApplyCouponResult {
 const NOT_APPLIED: ApplyCouponResult = { applied: false, stale: false, amountDelta: 0 };
 const STALE: ApplyCouponResult = { applied: false, stale: true, amountDelta: 0 };
 
+/**
+ * B1079: one platform notice (the admin audit feed) listing the tenant's active billable add-on rows that have
+ * NO Stripe item - counts and SKUs only, no names. Nothing is billed, queued or changed here.
+ */
+async function noteUnbilledAddonsAfterCouponEnd(
+  tx: Prisma.TransactionClient,
+  tenantId: string,
+  reason: string,
+): Promise<void> {
+  const rows = await tx.tenantAddon.findMany({
+    where: billableAddonWhere({ tenantId, active: true }),
+    select: { sku: true, addonKey: true, stripeItemId: true },
+  });
+  const unbilled = rows.filter((r) => !r.stripeItemId);
+  if (unbilled.length === 0) return;
+  const skus = [...new Set(unbilled.map((r) => String(addonSkuCode(r) ?? "ADDON")))].sort();
+  await writeAdminNotice(tx, {
+    tenantId,
+    action: AdminAuditAction.ADDON_COUPON_ENDED_UNBILLED,
+    message:
+      `The coupon on this account ended. ${unbilled.length} add-on row(s) (${skus.join(", ")}) have no Stripe item ` +
+      `and stay UNBILLED - they are NOT billed automatically. Decide whether to start billing them.`,
+    meta: { unbilledRows: unbilled.length, skus, reason },
+  });
+}
+
 /** The Tx form. `tenantLockHeld: true` is the caller's statement that it holds the Tenant `FOR UPDATE`. */
 export async function applyCouponStateTx(
   tx: Prisma.TransactionClient,
@@ -122,6 +150,11 @@ export async function applyCouponStateTx(
     },
   });
   if (count === 0) return STALE;
+  // B1079 (owner ruling): when a coupon ENDS on a live Stripe subscription, the add-ons that rode it unbilled are
+  // NEVER auto-billed. The platform is told which rows are still unbilled and decides.
+  if (wasFull && !state.full && row.stripeSubId && row.externalPayment !== true) {
+    await noteUnbilledAddonsAfterCouponEnd(tx, tenantId, opts.reason);
+  }
   if (wasFull === state.full || opts.bookDelta === false) {
     return { applied: true, stale: false, amountDelta: 0 };
   }
