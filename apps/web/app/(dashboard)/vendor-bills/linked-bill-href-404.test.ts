@@ -15,12 +15,14 @@ describe("linked supplier-bill hrefs", () => {
     expect(existsSync(join(DASHBOARD, "finance", "vendor-bills"))).toBe(false);
   });
 
-  it("never builds the 404ing /finance/vendor-bills/ path", () => {
-    expect(page).not.toContain("/finance/vendor-bills/");
+  it("never builds the 404ing /finance/vendor-bills path, however it is spelled", () => {
+    expect(page).not.toMatch(/["'`]\/finance\/vendor-bills\b/);
   });
 
-  it("links both the expense row and the expense detail to /vendor-bills/<id>", () => {
-    expect(page).toContain("href={`/vendor-bills/${e.vendorBillId}`}");
-    expect(page).toContain("href={`/vendor-bills/${expense.vendorBillId}`}");
+  it("every link to a linked bill goes to /vendor-bills/<id> (row icon and detail modal)", () => {
+    const hrefs = page.match(/href=\{`[^`]*vendorBillId[^`]*`\}/g) ?? [];
+    expect(hrefs).toHaveLength(2);
+    for (const h of hrefs)
+      expect(h).toMatch(/^href=\{`\/vendor-bills\/\$\{\w+\.vendorBillId\}`\}$/);
   });
 });
