@@ -13,7 +13,7 @@ import { normalizeUsState } from "../common/us-states";
 import { excludeWalkIn } from "../customers/walk-in-protected";
 import { PrismaService } from "../prisma/prisma.service";
 import { tenantBusinessState } from "./tenant-business-state";
-import { tenantIsPickupOnly } from "./tenant-fulfilment-model";
+import { tenantIsPickupOnly, tenantOffersPickup } from "./tenant-fulfilment-model";
 import { judgedAtStore, type SaleFulfilmentKind } from "./sale-fulfilment";
 import { ProductLabelsService } from "../product-labels/product-labels.service";
 import {
@@ -384,12 +384,12 @@ export class SellingRestrictionsService {
         where: { tenantId, jurisdiction: "STATE", AND: [activeRuleWhere(at)] },
         select: RULE_FACTS_SELECT,
       });
-    // L8 M1: a pickup-only tenant's PORTAL is judged by the store state too, so a state rule that binds the portal
-    // (any surface) needs one there as well. Read lazily: only when no staff rule already asks for it.
+    // L8 M1: a tenant WITH a pickup path (pickup-only or pickup+ship) judges that path by the store state, so a state
+    // rule that binds the portal (any surface) needs one there as well. Read lazily: only when no staff rule already asks for it.
     const needed =
       stateRuleInPlay(stateRules, "STAFF", at) ||
       (stateRuleInPlay(stateRules, "BUYER_PORTAL", at) &&
-        (await tenantIsPickupOnly(this.prisma, tenantId)));
+        (await tenantOffersPickup(this.prisma, tenantId)));
     return needed && (await tenantBusinessState(this.prisma, tenantId)) === null;
   }
 
@@ -554,7 +554,15 @@ export class SellingRestrictionsService {
       for (const c of cats) categoryNames.set(c.id, c.name);
     }
 
-    return evaluateRestrictions({ channel, at, products, rules, governingState, categoryNames });
+    return evaluateRestrictions({
+      channel,
+      at,
+      products,
+      rules,
+      governingState,
+      categoryNames,
+      storeJudged: judgedAtStore(options.fulfilmentKind),
+    });
   }
 
   /**

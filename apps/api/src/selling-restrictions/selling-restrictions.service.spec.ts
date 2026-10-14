@@ -1272,7 +1272,7 @@ describe("SellingRestrictionsService.evaluate", () => {
         expect((await service.getEnableReadiness(T)).businessStateMissing).toBe(true);
       });
 
-      describe("L8 M1: a PICKUP-ONLY tenant's portal is judged by the store state, so a portal rule needs one", () => {
+      describe("L8 M1: a tenant with a PICKUP path judges it by the store state, so a portal rule needs one", () => {
         const portalRule = () => stateRule({ surface: "BUYER_PORTAL" });
         const modelIs = (mode: string | null) =>
           prisma.tenantFeatureConfig.findFirst.mockResolvedValue(mode ? { mode } : null);
@@ -1300,8 +1300,18 @@ describe("SellingRestrictionsService.evaluate", () => {
           });
         });
 
-        it.each(["pickup_ship", "ship", "both", "delivery", null])(
-          "%s + a portal-only STATE rule + no store state stays READY (the buyer's state judges it)",
+        it("pickup_ship (MIXED) + a portal-only STATE rule + no store state is NOT READY (its pickup path needs one)", async () => {
+          modelIs("pickup_ship");
+          prisma.sellingRestriction.findMany.mockResolvedValue([portalRule()]);
+          prisma.tenantConfig.findUnique.mockResolvedValue(null);
+          expect(await service.getEnableReadiness(T)).toMatchObject({
+            ready: false,
+            businessStateMissing: true,
+          });
+        });
+
+        it.each(["ship", "both", "delivery", null])(
+          "%s + a portal-only STATE rule + no store state stays READY (no pickup path)",
           async (mode) => {
             modelIs(mode);
             prisma.sellingRestriction.findMany.mockResolvedValue([portalRule()]);

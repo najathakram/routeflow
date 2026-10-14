@@ -106,6 +106,25 @@ describe("restrictedProductIdsFor: the portal hides by the fulfilment model's st
     });
   });
 
+  it("a STORE-judged sale with NO store state is INDETERMINATE even for a portal-only STATE rule", async () => {
+    storeIn(null);
+    prisma.sellingRestriction.findMany.mockResolvedValue([rule(["NY"], "BUYER_PORTAL")]);
+    const res = await service.evaluate(T, "c-ca", [{ productId: "p1" }], {
+      channel: "BUYER_PORTAL",
+      at: NOW,
+      fulfilmentKind: "PICKUP",
+    });
+    expect(res.outcome).toBe("INDETERMINATE");
+    // a DELIVERY sale to a customer with no state keeps the owner's portal-only allowance
+    prisma.customer.findFirst.mockResolvedValue({ isWalkIn: false, addresses: [] });
+    const delivery = await service.evaluate(T, "c-none", [{ productId: "p1" }], {
+      channel: "BUYER_PORTAL",
+      at: NOW,
+      fulfilmentKind: "DELIVERY",
+    });
+    expect(delivery.outcome).toBe("ALLOW");
+  });
+
   it("the fulfilment model is read only when a STATE rule is in play (the common case stays one query)", async () => {
     prisma.sellingRestriction.findMany.mockResolvedValue([]);
     await hidden();

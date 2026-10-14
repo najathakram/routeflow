@@ -418,6 +418,8 @@ export interface EvaluateInput {
   products: readonly ProductFacts[];
   rules: readonly RestrictionRuleFacts[];
   governingState: GoverningState;
+  /** L8: a counter / pickup sale is judged on the STORE state: a missing one is INDETERMINATE even for portal-only rules. */
+  storeJudged?: boolean;
   /** categoryId → display name, for messages. */
   categoryNames?: ReadonlyMap<string, string>;
 }
@@ -523,7 +525,8 @@ export function evaluateRestrictions(input: EvaluateInput): RestrictionsEvaluati
     if (!input.governingState.resolved) {
       // Owner ruling 2: a customer with no state on file is ALLOWED where every matched STATE rule is a portal-only limit
       // (a commercial choice, not law). A legal ban (surface ALL) among them keeps the fail-closed INDETERMINATE.
-      if (stateRules.every((r) => (r.surface as string) === "BUYER_PORTAL")) continue;
+      if (!input.storeJudged && stateRules.every((r) => (r.surface as string) === "BUYER_PORTAL"))
+        continue;
       indeterminate = true;
       reasons.push(
         line(

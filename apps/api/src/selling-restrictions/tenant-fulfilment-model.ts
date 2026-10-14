@@ -18,6 +18,14 @@ export async function tenantIsPickupOnly(
   return methods.length === 1 && methods[0] === "PICKUP";
 }
 
+/** True when the tenant's model offers PICKUP at all (pickup-only or pickup+ship): that path needs a store state. */
+export async function tenantOffersPickup(
+  prisma: Pick<PrismaService, "tenantFeatureConfig">,
+  tenantId: string,
+): Promise<boolean> {
+  return capabilityForMode(await storedFulfilmentMode(prisma, tenantId)).methods.includes("PICKUP");
+}
+
 /** The tenant's stored `fulfilment_model` mode ("unset" when no row). */
 export async function storedFulfilmentMode(
   prisma: Pick<PrismaService, "tenantFeatureConfig">,
