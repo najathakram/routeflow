@@ -23,6 +23,7 @@ export function CartRowQty({
   onCount,
   onUnit,
   onRemove,
+  align = "center",
 }: {
   item: CartLineShape;
   name: string;
@@ -30,6 +31,8 @@ export function CartRowQty({
   onCount: (count: number) => void;
   onUnit: (unit: CartUnit) => void;
   onRemove: () => void;
+  /** Below md it is always left-aligned; from md up a table cell centres it, a card keeps it left. */
+  align?: "center" | "start";
 }) {
   const count = lineCount(item);
   const [val, setVal] = React.useState(String(count));
@@ -48,10 +51,12 @@ export function CartRowQty({
   const btn =
     "flex min-h-11 min-w-11 items-center justify-center text-buyer-600 transition-colors hover:bg-buyer-100";
   return (
-    <div className="flex flex-col items-start gap-1.5 md:items-center">
+    <div
+      className={`flex flex-col items-start gap-1.5 ${align === "center" ? "md:items-center" : ""}`}
+    >
       <div
         data-testid="cart-row-stepper"
-        className="grid h-11 grid-cols-[44px_minmax(48px,64px)_44px] overflow-hidden rounded-lg border border-buyer-200 bg-buyer-50"
+        className="grid h-11 grid-cols-[44px_minmax(36px,64px)_44px] overflow-hidden rounded-lg border border-buyer-200 bg-buyer-50"
       >
         <button
           type="button"

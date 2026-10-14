@@ -214,9 +214,7 @@ export function ProductTile({
           </p>
         </div>
 
-        <div
-          className={`flex items-end justify-between gap-2 ${cartItem ? "flex-wrap sm:flex-nowrap" : ""}`}
-        >
+        <div className={`flex items-end justify-between gap-2 ${cartItem ? "flex-wrap" : ""}`}>
           <div className="min-w-0">
             <div className="flex items-baseline gap-1.5">
               <p className={`font-bold text-navy ${isCompact ? "text-base" : "text-lg"}`}>

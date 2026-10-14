@@ -2,7 +2,7 @@
 
 import * as React from "react";
 import { useParams, useRouter } from "next/navigation";
-import { Heart, Plus, Minus, Package, Loader2, Trash2, Store, AlertTriangle } from "lucide-react";
+import { Heart, Plus, Package, Loader2, Trash2, Store, AlertTriangle } from "lucide-react";
 import { Button } from "@routeflow/ui/web";
 import { useBuyerAuth } from "@/lib/buyer-auth-context";
 import {
@@ -13,7 +13,7 @@ import {
 import { useBuyerCart } from "@/lib/buyer-cart";
 import { newCartLine, type CartUnit } from "@/lib/buyer-cart-line";
 import type { CartItem } from "@/lib/buyer-cart";
-import { CartLineUnit } from "../_components/CartLineUnit";
+import { CartRowQty } from "../_components/CartRowQty";
 import { objectPositionForUrl } from "@/lib/image-focal";
 import { SHIPS_WHEN_RESTOCKED, canOrderOutOfStock, isOrderBlocked } from "@/lib/buyer-backorder";
 
@@ -105,32 +105,25 @@ function FavoriteCard({
           )}
         </div>
 
-        <div className="flex items-end justify-between gap-2">
+        <div className={`flex items-end justify-between gap-2 ${cartQty > 0 ? "flex-wrap" : ""}`}>
           <div>
             <p className="text-lg font-bold text-navy">{fmt(item.buyerPrice)}</p>
             <p className="text-[11px] text-navy/70">per {item.unit}</p>
           </div>
 
-          {cartQty > 0 ? (
-            <div className="flex flex-col items-end gap-1.5">
-              <div className="flex items-center gap-1 rounded-lg border border-buyer-200 bg-buyer-50">
-                <button
-                  onClick={() => onUpdateQty(cartQty - 1)}
-                  className="rounded-l-lg p-1.5 text-buyer-600 hover:bg-buyer-100 transition-colors"
-                >
-                  <Minus className="h-3.5 w-3.5" />
-                </button>
-                <span className="min-w-[28px] text-center text-sm font-semibold text-buyer-700">
-                  {cartQty}
-                </span>
-                <button
-                  onClick={() => onUpdateQty(cartQty + 1)}
-                  className="rounded-r-lg p-1.5 text-buyer-600 hover:bg-buyer-100 transition-colors"
-                >
-                  <Plus className="h-3.5 w-3.5" />
-                </button>
-              </div>
-              {cartItem && <CartLineUnit item={cartItem} name={item.name} onUnit={onSetUnit} />}
+          {cartQty > 0 && cartItem ? (
+            // Row 531 S5: the shared 44px stepper (it was a ~26px control), on its own full-width row so the
+            // narrow 5-column card never clips its "+" (the shop tile's R3 defect). It counts the line's
+            // selling unit, names it, and offers the Case / Each toggle.
+            <div className="w-full">
+              <CartRowQty
+                item={cartItem}
+                name={item.name}
+                align="start"
+                onCount={onUpdateQty}
+                onUnit={onSetUnit}
+                onRemove={() => onUpdateQty(0)}
+              />
             </div>
           ) : isOrderBlocked(item) ? (
             // Same rule as the shop: an out-of-stock item this buyer cannot order is not addable.
