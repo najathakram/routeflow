@@ -147,26 +147,25 @@ test.describe("Destructive-write guards (F02b / P4)", () => {
     await expect(confirmDialog).toBeVisible({ timeout: 10_000 });
     await expect(confirmDialog.getByText(/Delete 1 product\?/i)).toBeVisible();
     await confirmDialog.getByRole("button", { name: "Delete", exact: true }).click();
-    await expect(confirmDialog).toHaveCount(0, { timeout: 10_000 });
 
-    // Result toast reports the skip BY NAME (R1's {skipped: [{id, reason}]}
-    // shape, where `reason` is built from the product's own name). Both
-    // assertions are scoped to the toast itself: the search box is still
-    // filtered to this product and the row was SKIPPED, so it is still on
-    // screen — a page-wide name match would be satisfied by that table cell
-    // even if the toast carried no description at all. The toast viewport is
-    // Radix's `role="region"` labelled "Notifications (F8)"; each toast inside
-    // it is a plain <li> (implicit role "listitem" — the installed
-    // @radix-ui/react-toast puts role="status" only on its aria-live announcer,
-    // which portals to <body>); scoping through the region still excludes that
-    // announcer mirror, and "listitem" matches the visible toast itself.
-    const resultToast = page
-      .getByRole("region", { name: /notifications/i })
-      .getByRole("listitem")
-      .filter({ hasText: /skipped/i })
-      .first();
-    await expect(resultToast).toBeVisible({ timeout: 10_000 });
-    await expect(resultToast).toContainText(new RegExp(escapeRegExp(guardedProduct.name)));
+    // Since #3406 a bulk delete that skipped something answers with a RESULT DIALOG
+    // (BulkDeleteSkipReport) that stays until dismissed - not a toast. It replaces the confirm
+    // dialog, so wait for it by its title instead of asserting "no dialog" in between. The title
+    // counts the skips, each line names the product from the selection the page holds (the
+    // server's reason text is never rendered) and gives the FIXED reason for the machine code -
+    // this product is guarded by an active order item.
+    const resultDialog = page.getByRole("dialog").filter({ hasText: /not deleted/i });
+    await expect(resultDialog).toBeVisible({ timeout: 10_000 });
+    await expect(
+      resultDialog.getByRole("heading", { name: "1 product was not deleted" }),
+    ).toBeVisible();
+    const skippedLine = resultDialog.getByRole("listitem");
+    await expect(skippedLine).toHaveCount(1);
+    await expect(skippedLine).toContainText(new RegExp(escapeRegExp(guardedProduct.name)));
+    await expect(skippedLine).toContainText(/active order items and cannot be deleted/i);
+
+    await resultDialog.getByRole("button", { name: "Done", exact: true }).click();
+    await expect(page.getByRole("dialog")).toHaveCount(0, { timeout: 10_000 });
 
     // Nothing was destroyed: the product still resolves, unchanged.
     const afterRes = await request.get(`${api}/api/v1/products/${guardedProductId}`, {

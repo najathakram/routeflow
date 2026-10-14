@@ -37,10 +37,10 @@ const VIEWPORTS = [
   { name: "390", width: 390, height: 844 },
 ] as const;
 
-/** This tenant's own gate message (PlanGateBoundary.tsx) — deterministic per plan, never
- *  per-flag, so asserting it proves the notice is THIS route's own gate, not a stray 403
- *  from an unrelated widget naming a different tier. */
-const LITE_GATE_MESSAGE = "This feature isn't included in the Lite plan.";
+/** This tenant's own gate message on the lock card (PlanGateBoundary.tsx: `${routeLabel} isn't on the
+ *  ${planName} plan.`) - deterministic per route + plan, so asserting it proves the card is THIS
+ *  route's own gate, not a stray 403 from an unrelated widget naming a different tier. */
+const LITE_GATE_MESSAGE = /Estimates isn['\u2019]t on the Lite plan\./;
 
 async function loginAsLiteOperator(
   page: import("@playwright/test").Page,
@@ -88,9 +88,12 @@ test.describe("Lite locked-route UX (B449)", () => {
         // The real Estimates page must never mount: its own list/table content
         // (rendered only once the page's data has loaded) must never appear,
         // at any point during the navigation — not even for a frame.
-        await expect(page.getByRole("heading", { name: "Not on your plan" })).toBeVisible({
-          timeout: 10_000,
-        });
+        // The gate names the feature ("Estimates isn't on your plan", PlanGateBoundary's
+        // `${routeLabel} isn't on your plan`); the generic "Not on your plan" is only the
+        // PlanGates.tsx fallback when no route label resolves.
+        await expect(
+          page.getByRole("heading", { name: /^Estimates isn['\u2019]t on your plan$/ }),
+        ).toBeVisible({ timeout: 10_000 });
         await expect(page.locator("table")).toHaveCount(0);
 
         // B471: the locked panel renders INSIDE the dashboard shell, not in place of it —
@@ -101,19 +104,21 @@ test.describe("Lite locked-route UX (B449)", () => {
         // elements that are display:none, so below lg the CSS-hidden sidebar has NO navigation
         // role in the accessibility tree and the role locator never resolved at 768/390 (B572).
         // `.first()` — a page can carry more than one <nav> (sidebar + drawer).
-        await expect(
-          page.locator("nav").getByText("Dashboard", { exact: true }).first(),
-        ).toBeAttached();
+        // The Dashboard LINK (by href), not its label text: under 768px the rail auto-collapses to
+        // icons and renders the label only as a `title` (layout.tsx NavLink `!collapsed && <span>`),
+        // so a text match finds nothing at 390 while the nav is plainly mounted.
+        await expect(page.locator('nav a[href="/dashboard"]').first()).toBeAttached();
 
         const dir = path.join(SCREENSHOT_DIR, vp.name);
         await page.screenshot({ path: shot(dir, "estimates-locked"), fullPage: true });
 
-        // At most one plan-gate toast for this whole navigation, and its text is
-        // THIS tenant's own gate message — never a different, contradictory tier
-        // from a stray gated fetch elsewhere on the page.
-        const items = notifications.getByRole("listitem");
-        await expect(items).toHaveCount(1);
-        await expect(items).toContainText(LITE_GATE_MESSAGE);
+        // The lock card is the ONE notice (PlanGateBoundary: "no toast repeating it"), and its text is
+        // THIS tenant's own gate message - never a different, contradictory tier from a stray gated
+        // fetch elsewhere on the page - so there is no toast at all. Let the page's requests settle
+        // first so a late stray gated 403 would have raised its toast by the time we count.
+        await expect(page.locator("#main-content")).toContainText(LITE_GATE_MESSAGE);
+        await page.waitForLoadState("networkidle");
+        await expect(notifications.getByRole("listitem")).toHaveCount(0);
       });
 
       test(`an ungated neighbour route renders normally, no notice`, async ({

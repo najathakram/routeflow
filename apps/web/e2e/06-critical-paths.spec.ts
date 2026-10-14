@@ -332,6 +332,17 @@ test.describe("Critical Paths — Money Math & Core Integrity", () => {
       .locator("td, span, p, [class*='amount'], [class*='total'], [class*='price']")
       .filter({ hasText: /^\s*\$/ });
 
+    // waitForURL resolves on the route change, while the detail page is still fetching (it renders
+    // a spinner until the order loads). Wait for the loaded summary and the first amount before
+    // counting - a count() taken against the spinner is 0 and fails for the wrong reason.
+    await expect(page.locator("dt", { hasText: /^Line items$/ }).first()).toBeVisible({
+      timeout: 30_000,
+    });
+    await expect(
+      dollarEls.first(),
+      "The order detail page rendered no dollar amounts (B566)",
+    ).toBeVisible({ timeout: 15_000 });
+
     const count = await dollarEls.count();
     expect(count, "The order detail page rendered no dollar amounts (B566)").toBeGreaterThan(0);
 
