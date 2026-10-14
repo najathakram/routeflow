@@ -3109,7 +3109,7 @@ export class InvoicesService {
     if (inv.status !== InvoiceStatus.DRAFT)
       throw new BadRequestException("Only DRAFT invoices can be edited");
     await this.assertOrderInvoiceUnlocked(inv);
-
+    resolveShipmentText(dto, inv); // row 507: a CHANGED formula-led carrier / tracking is a coded 400
     // #2197: the same literal calendar-day stamp create() writes.
     const issueDate = dto.issueDate ? issueDateStamp(dto.issueDate) : undefined;
     const due = dueDateStamps(dto); // #2256: and the due dates, before either rewrite path runs
