@@ -90,6 +90,7 @@ import { ProductUnitsCard } from "./ProductUnitsCard";
 import { ImageLightbox } from "./ImageLightbox";
 import { objectPositionForUrl, type FocalPoint } from "@/lib/image-focal";
 import { COMMON_UNITS } from "@/lib/common-units";
+import { editTierPatch, editTierPatchMoves } from "@/lib/product-tier-patch";
 
 // U-3a: no per-product label is read yet, so this page prints the default words.
 const UW = unitWords();
@@ -550,10 +551,8 @@ export default function ProductDetailPage() {
         category: draft.trackedCategoryId ? undefined : draft.category?.trim() || null,
         description: draft.description?.trim() || null,
         pricePerUnit: asDecimal(draft.pricePerUnit),
-        priceTier2: asDecimal(draft.priceTier2),
-        priceTier3: asDecimal(draft.priceTier3),
-        priceTier4: asDecimal(draft.priceTier4),
-        priceTier5: asDecimal(draft.priceTier5),
+        // Untouched tiers move with a list change exactly like the products list (applyLadderChange, audit 2026-10-14).
+        ...editTierPatch(product, draft),
         unitsPerBox: draft.unitsPerBox?.trim() ? parseInt(draft.unitsPerBox, 10) : null,
         // Regulated tags: value to set, null to clear (server auto-nulls the
         // category when the type is cleared).
@@ -736,23 +735,36 @@ export default function ProductDetailPage() {
       return;
     }
     if (editingVariant) {
+      // ONE list value for the PATCH and the tier rule (#3470 review): a blank price keeps the variant's own list,
+      // never the parent's.
+      const vList = variantForm.price || String(editingVariant.pricePerUnit);
+      const vDraft = {
+        pricePerUnit: vList,
+        priceTier2: variantForm.priceTier2 || variantForm.price,
+        priceTier3: variantForm.priceTier3 || variantForm.price,
+        priceTier4: variantForm.priceTier4 || variantForm.price,
+        priceTier5: variantForm.priceTier5 || variantForm.price,
+      };
+      const vMoved = ladderChangeNote(editTierPatchMoves(editingVariant as any, vDraft), (n) =>
+        tierLabel(tierLabels, n),
+      );
       updateProduct.mutate(
         {
           id: editingVariant.id,
           variantName: variantForm.variantName,
           sku: variantForm.sku || undefined,
           unitSku: variantForm.unitSku || undefined,
-          // Cleared fields fall back like the create branch — never send ""
-          // (rejected by @IsDecimal).
-          pricePerUnit: variantForm.price || String(product.pricePerUnit),
-          priceTier2: variantForm.priceTier2 || variantForm.price || undefined,
-          priceTier3: variantForm.priceTier3 || variantForm.price || undefined,
-          priceTier4: variantForm.priceTier4 || variantForm.price || undefined,
-          priceTier5: variantForm.priceTier5 || variantForm.price || undefined,
+          pricePerUnit: vList,
+          // Untouched tiers move with the variant's list change, the same rule as the products list (audit 2026-10-14).
+          ...editTierPatch(editingVariant as any, vDraft),
         },
         {
           onSuccess: () => {
-            toast({ title: "Variant updated", variant: "success" });
+            toast({
+              title: "Variant updated",
+              ...(vMoved ? { description: vMoved } : {}),
+              variant: "success",
+            });
             closeVariantModal();
           },
           onError: () => toast({ title: "Failed to update variant", variant: "error" }),
@@ -1911,6 +1923,19 @@ export default function ProductDetailPage() {
                       </button>
                     )}
                   </div>
+                  {isEditing &&
+                    (() => {
+                      // Names the tiers a save would move with the list (#3470 review: never a fixed string).
+                      const note = ladderChangeNote(
+                        editTierPatchMoves(product, editDraft as Record<string, string>),
+                        (n) => tierLabel(tierLabels, n),
+                      );
+                      return note ? (
+                        <p className="mb-2 text-xs text-navy/70" data-testid="tiers-move-note">
+                          {note.replace(/\.$/, "")} when you save.
+                        </p>
+                      ) : null;
+                    })()}
                   <div className="grid grid-cols-1 gap-2 sm:grid-cols-4">
                     {(
                       [

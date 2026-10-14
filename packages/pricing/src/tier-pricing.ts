@@ -65,13 +65,14 @@ export function applyLadderChange(
     const raw = parseFloat(String(tiers[f] ?? 0));
     const tier = Number.isFinite(raw) ? roundMoney(raw) : 0;
     if (tier === to) continue;
+    if (tier === 0 && idx === 0) continue; // rule 2 first on a LIST change: 0 follows the list even when it was 0
     if (tier === from)
       patch[f] = v; // rule 1
     else if (to === 0)
       continue; // committing 0: only tracking tiers follow
-    else if (tier === 0) {
-      if (idx > 0) patch[f] = v; // rule 2 (a list change keeps 0)
-    } else if (tier > to) patch[f] = v; // rule 3
+    else if (tier === 0)
+      patch[f] = v; // rule 2 on a Tier 2-4 change (a list change returned above)
+    else if (tier > to) patch[f] = v; // rule 3
   }
   return patch;
 }
