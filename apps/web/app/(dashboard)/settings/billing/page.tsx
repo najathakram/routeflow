@@ -4,6 +4,7 @@ import { endTrialToast } from "./end-trial-toast";
 import * as React from "react";
 import { CreditCard, Check, AlertTriangle, Loader2, Zap } from "lucide-react";
 import { API_ERROR_CODES, type AddonBillingMode, type EnableAddonResult } from "@routeflow/types";
+import { roundMoney } from "@routeflow/pricing";
 import { Card, Button, Badge, Modal, useToast, cn } from "@routeflow/ui/web";
 import { ReadOnlyBanner } from "@/components/ReadOnlyBanner";
 import { ConfirmDialog } from "@/components/ConfirmDialog";
@@ -12,6 +13,8 @@ import { useAuth } from "@/lib/auth-context";
 import { formatMoney } from "@/lib/format";
 import { BillingExportButton } from "./BillingExportButton";
 import { BillingStatusCard } from "./BillingStatusCard";
+import { ADDON_QTY_MAX, AddonQuantityStepper } from "./AddonQuantityStepper";
+import { meterLabel } from "@/lib/billing-meter-label";
 import { ownsBillingBanner } from "@/lib/subscription-banner-state";
 import {
   useSubscription,
@@ -33,13 +36,6 @@ const money = (n: number | null | undefined) =>
     ? "—"
     : `$${n.toLocaleString(undefined, { minimumFractionDigits: 0, maximumFractionDigits: 2 })}`;
 
-const METER_LABEL: Record<string, string> = {
-  SEATS: "Seats",
-  ROUTES: "Routes / day",
-  SCANS: "AI scans",
-  MSGS: "Messages",
-};
-
 function MeterBar({ m }: { m: MeterReading }) {
   const unlimited = m.included == null;
   const pct = unlimited
@@ -49,7 +45,7 @@ function MeterBar({ m }: { m: MeterReading }) {
   return (
     <div className="space-y-1">
       <div className="flex items-center justify-between text-sm">
-        <span className="font-medium text-slate-700">{METER_LABEL[m.meter] ?? m.meter}</span>
+        <span className="font-medium text-slate-700">{meterLabel(m.meter)}</span>
         <span className={cn("tabular-nums", over ? "text-red-600" : "text-slate-500")}>
           {m.used}
           {unlimited ? " · Unlimited" : ` / ${m.included}`}
@@ -169,6 +165,7 @@ function blockReasonOf(code: string | undefined): "annual" | "included" | "other
  */
 function EnableAddonSheet({
   addon,
+  owned,
   annual,
   trial,
   busy,
@@ -177,6 +174,9 @@ function EnableAddonSheet({
   onClose,
 }: {
   addon: AddonSkuDef | null;
+  /** How many of this add-on the workspace already has (0 = not on). Only a STACKABLE add-on can be
+   *  bought again, so `owned > 0` there turns the sheet into "Buy more". */
+  owned: number;
   /** The tenant is on an annual plan (a monthly Stripe add-on can't be added online). */
   annual: boolean;
   /** The tenant is on a trial (`status === "TRIAL"`): an unbilled add-on is free until it ends. Only the
@@ -184,12 +184,25 @@ function EnableAddonSheet({
   trial: boolean;
   busy: boolean;
   error: EnableAddonError;
-  /** Confirmed; `monthly` is the fresh preview figure the sheet showed (for the success toast). */
-  onConfirm: (monthly?: number) => void;
+  /** Confirmed; `monthly` is the fresh preview figure the sheet showed (for the success toast).
+   *  `quantity` is the TOTAL the workspace will have (the server sets the quantity, it does not add
+   *  to it) and is sent for a STACKABLE add-on only. */
+  onConfirm: (monthly?: number, quantity?: number) => void;
   onClose: () => void;
 }) {
   const preview = useProrationPreview(addon?.sku ?? null);
   const p = preview.data;
+  // M11: a stackable add-on (e.g. a Customer pack) is bought in units. `add` is how many units this
+  // confirm adds (min 1); the call sends owned + add, because the server's `quantity` is the new total.
+  const stackable = addon?.stackable === true;
+  const buyMore = stackable && owned > 0;
+  const [add, setAdd] = React.useState(1);
+  React.useEffect(() => setAdd(1), [addon?.sku]);
+  const total = owned + add;
+  const unit = p?.monthly ?? addon?.monthlyPrice ?? 0;
+  // The preview carries no quantity: its prorated figure is for ONE unit, so the estimate scales with
+  // the units being added now (Stripe's own figure comes back from the enable call).
+  const proratedEstimate = roundMoney((p?.proratedToday ?? 0) * (stackable ? add : 1));
   const fresh = !!p && !preview.isFetching && !preview.isError;
   // A REFUSED preview is BLOCKED, never a billed mode: `billing === "REFUSED"` and a `refusal`
   // each mean the enable call would 409. An older API without `billing` is worded as the cautious
@@ -220,7 +233,7 @@ function EnableAddonSheet({
     <Modal
       open={addon != null}
       onClose={onClose}
-      title={addon ? `Enable ${addon.name}?` : "Enable add-on"}
+      title={addon ? `${buyMore ? "Buy more" : "Enable"} ${addon.name}?` : "Enable add-on"}
       className={DIALOG_FIT}
       footer={
         <>
@@ -234,11 +247,16 @@ function EnableAddonSheet({
           </Button>
           <Button
             className={DIALOG_FOOTER_BUTTON}
-            onClick={() => onConfirm(p?.monthly)}
+            onClick={() =>
+              onConfirm(
+                p?.monthly != null && stackable ? roundMoney(p.monthly * total) : p?.monthly,
+                stackable ? total : undefined,
+              )
+            }
             loading={busy}
             disabled={!ready || busy}
           >
-            Enable add-on
+            {buyMore ? "Buy more" : "Enable add-on"}
           </Button>
         </>
       }
@@ -249,15 +267,43 @@ function EnableAddonSheet({
             <div className="flex justify-between">
               <span className="font-medium text-slate-800">{addon.name}</span>
               {fresh && !blocked && mode !== "UNBILLED" && (
-                <span className="tabular-nums text-slate-800">{formatMoney(p.monthly)}/mo</span>
+                <span className="tabular-nums text-slate-800">
+                  {stackable
+                    ? `${buyMore ? "+" : ""}${add} × ${formatMoney(p.monthly)} = ${formatMoney(roundMoney(p.monthly * add))}/mo`
+                    : `${formatMoney(p.monthly)}/mo`}
+                </span>
               )}
             </div>
+            {fresh && buyMore && !blocked && mode !== "UNBILLED" && (
+              <div className="mt-1 flex justify-between gap-2 tabular-nums text-slate-600">
+                <span>
+                  New total: {total} × {formatMoney(p.monthly)} ={" "}
+                  {formatMoney(roundMoney(p.monthly * total))}/mo
+                </span>
+              </div>
+            )}
             {fresh && mode === "STRIPE" && !blocked && (
               <div className="mt-2 border-t border-slate-200 pt-2 font-medium tabular-nums text-slate-900">
-                About {formatMoney(p.proratedToday)} this cycle
+                About {formatMoney(proratedEstimate)} this cycle
               </div>
             )}
           </div>
+          {stackable && (
+            <div className="flex items-center justify-between gap-3">
+              <div>
+                <div className="font-medium text-slate-800">
+                  {buyMore ? "How many more?" : "How many?"}
+                </div>
+                {buyMore && <div className="text-xs text-slate-500">You have {owned} now</div>}
+              </div>
+              <AddonQuantityStepper
+                value={add}
+                onChange={setAdd}
+                max={ADDON_QTY_MAX - owned}
+                disabled={busy}
+              />
+            </div>
+          )}
           {preview.isFetching && !preview.isError && (
             <p className="flex items-center gap-2 text-slate-500">
               <Loader2 className="h-4 w-4 animate-spin" /> Working out the cost…
@@ -281,7 +327,7 @@ function EnableAddonSheet({
             <p>
               Turns on right away. Prorated for the {p.daysRemaining} of {p.daysInCycle} days left
               in this cycle; the exact amount is confirmed when you turn it on and is added to your
-              next bill, then {formatMoney(p.monthly)}/mo.
+              next bill, then {formatMoney(stackable ? roundMoney(unit * total) : p.monthly)}/mo.
             </p>
           )}
           {fresh && !blocked && mode === "MANUAL" && (
@@ -291,7 +337,7 @@ function EnableAddonSheet({
             <>
               <p>
                 {onTrial
-                  ? `Free during your trial, then ${formatMoney(p.monthly)}/mo`
+                  ? `Free during your trial, then ${formatMoney(stackable ? roundMoney(p.monthly * total) : p.monthly)}/mo`
                   : NOT_BILLED_ONLINE_COPY}
               </p>
               {onTrial && <p>{TRIAL_BILLED_COPY}</p>}
@@ -336,20 +382,28 @@ export default function BillingSettingsPage() {
     (sub.data?.addons ?? []).map((a) => a.sku).filter(Boolean) as string[],
   );
 
-  const toggleAddon = (addon: AddonSkuDef) => {
-    if (activeSkus.has(addon.sku)) setDisableTarget(addon);
-    else {
-      setEnableError(null);
-      setEnableTarget(addon);
-    }
+  // How many of each add-on the workspace has (a stackable pack can be more than 1).
+  const ownedQty = (sku: string) =>
+    (sub.data?.addons ?? []).find((a) => a.sku === sku)?.quantity ?? 0;
+
+  const openEnable = (addon: AddonSkuDef) => {
+    setEnableError(null);
+    setEnableTarget(addon);
   };
 
-  const confirmEnable = (shownMonthly?: number) => {
+  const toggleAddon = (addon: AddonSkuDef) => {
+    if (activeSkus.has(addon.sku)) setDisableTarget(addon);
+    else openEnable(addon);
+  };
+
+  const confirmEnable = (shownMonthly?: number, quantity?: number) => {
     const addon = enableTarget;
     if (!addon) return;
+    const buyMore = addon.stackable && ownedQty(addon.sku) > 0;
     setEnableError(null);
     enable.mutate(
-      { sku: addon.sku },
+      // `quantity` only for a stackable add-on (the new total); every other add-on is the boolean grant.
+      { sku: addon.sku, ...(quantity != null ? { quantity } : {}) },
       {
         onSuccess: (res) => {
           // The server returns what actually happened: Stripe's prorated figure (STRIPE), nothing to
@@ -368,7 +422,7 @@ export default function BillingSettingsPage() {
                 : out?.proratedNow != null
                   ? `Prorated ${formatMoney(out.proratedNow)} this cycle.`
                   : "The prorated amount will show on your next bill.";
-          toast({ title: `${addon.name} enabled`, description });
+          toast({ title: `${addon.name} ${buyMore ? "updated" : "enabled"}`, description });
           setEnableTarget(null);
         },
         // Stay open so nothing is lost; fixed copy only (never the server's text). The known
@@ -643,6 +697,7 @@ export default function BillingSettingsPage() {
 
       <EnableAddonSheet
         addon={enableTarget}
+        owned={enableTarget ? ownedQty(enableTarget.sku) : 0}
         annual={s.cycle === "ANNUAL"}
         trial={s.status === "TRIAL"}
         busy={enable.isPending}
@@ -689,6 +744,10 @@ export default function BillingSettingsPage() {
           {addonCatalog.map((a) => {
             const on = activeSkus.has(a.sku);
             const comp = on && compSkus.has(a.sku);
+            // M11: a stackable pack can be owned many times over; an admin can buy more of it (not
+            // while it is a RouteFlow-managed comp, whose quantity is support's to change).
+            const qty = on ? ownedQty(a.sku) : 0;
+            const canBuyMore = isAdmin && a.stackable && on && !comp;
             const busy =
               (enable.isPending || disable.isPending) &&
               (enable.variables?.sku === a.sku || disable.variables?.sku === a.sku);
@@ -702,6 +761,11 @@ export default function BillingSettingsPage() {
                         <Check className="h-3 w-3" /> Active
                       </span>
                     )}
+                    {on && a.stackable && qty > 1 && (
+                      <span className="text-xs font-medium tabular-nums text-slate-500">
+                        × {qty}
+                      </span>
+                    )}
                   </div>
                   <p className="text-sm text-slate-500">
                     {comp ? (
@@ -709,26 +773,41 @@ export default function BillingSettingsPage() {
                     ) : (
                       <>
                         {money(a.monthlyPrice)}/mo
+                        {a.stackable && qty > 1
+                          ? ` each · ${money(roundMoney(a.monthlyPrice * qty))}/mo total`
+                          : ""}
                         {a.includedAtPlan ? ` · included on ${a.includedAtPlan}+` : ""}
                       </>
                     )}
                   </p>
                 </div>
                 {isAdmin && (
-                  <Button
-                    size="sm"
-                    variant={on ? "ghost" : "secondary"}
-                    onClick={() => toggleAddon(a)}
-                    disabled={busy}
-                  >
-                    {busy ? (
-                      <Loader2 className="h-4 w-4 animate-spin" />
-                    ) : on ? (
-                      "Disable"
-                    ) : (
-                      "Enable"
+                  <div className="flex shrink-0 flex-wrap items-center justify-end gap-1">
+                    {canBuyMore && (
+                      <Button
+                        size="sm"
+                        variant="secondary"
+                        onClick={() => openEnable(a)}
+                        disabled={busy}
+                      >
+                        Buy more
+                      </Button>
                     )}
-                  </Button>
+                    <Button
+                      size="sm"
+                      variant={on ? "ghost" : "secondary"}
+                      onClick={() => toggleAddon(a)}
+                      disabled={busy}
+                    >
+                      {busy ? (
+                        <Loader2 className="h-4 w-4 animate-spin" />
+                      ) : on ? (
+                        "Disable"
+                      ) : (
+                        "Enable"
+                      )}
+                    </Button>
+                  </div>
                 )}
               </div>
             );

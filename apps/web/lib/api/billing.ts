@@ -4,6 +4,7 @@ import {
   type AddonBillingMode,
   type EnableAddonResult,
   type BillingPortalResult,
+  type MeterKey,
   type SubscriptionView,
 } from "@routeflow/types";
 import { apiClient } from "../api-client";
@@ -49,7 +50,7 @@ export interface PublicCatalog {
   addons: AddonSkuDef[];
 }
 
-export type MeterKey = "SEATS" | "ROUTES" | "SCANS" | "MSGS";
+export type { MeterKey };
 
 export interface MeterReading {
   meter: MeterKey;
