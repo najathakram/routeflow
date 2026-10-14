@@ -116,6 +116,22 @@ describe("EditRuleDialog", () => {
     expect(put).not.toHaveBeenCalled();
   });
 
+  it("entering the review step puts focus on its heading", async () => {
+    post.mockResolvedValueOnce({ data: preview() });
+    open();
+    addCA();
+    save();
+    await screen.findByRole("button", { name: "Confirm change" });
+    expect(screen.getByRole("heading", { name: "Review this change" })).toHaveFocus();
+  });
+
+  it("the Sold through choices use the neutral wording", () => {
+    open();
+    expect(screen.getByRole("option", { name: "All orders" })).toBeInTheDocument();
+    expect(screen.getByRole("option", { name: "Buyer portal only" })).toBeInTheDocument();
+    expect(screen.queryByText(/staff/i)).toBeNull();
+  });
+
   it("a loosening change is named as one", async () => {
     post.mockResolvedValueOnce({
       data: preview({
