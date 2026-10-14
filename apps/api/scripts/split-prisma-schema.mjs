@@ -285,6 +285,8 @@ const MODEL_DOMAIN = {
   ReturnParkedRestock: "compliance",
   RegulatedFiling: "compliance",
   SellingRestriction: "compliance",
+  SellingRestrictionTarget: "compliance",
+  SellingRestrictionRevision: "compliance",
 };
 
 const HEADER_RE =

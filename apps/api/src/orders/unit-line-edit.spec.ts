@@ -34,11 +34,16 @@ const units: LadderUnit[] = [
 const resolved = resolveLineUnits(regulatedProduct, units, { unitLabel: "Case" });
 const category = { taxType: "EXCISE_PER_UNIT", rate: 0.5, priceIncludesTax: false };
 
+/** SA ruling (#3418): an `editedLineAuthors` answer: `carried` for every product, `editor` for fresh lines. */
+const lookupOf = (editor: "STAFF" | "BUYER", carried: "STAFF" | "BUYER" | null = editor) =>
+  Object.assign(() => carried, { editor });
+
 function makeCtx(): UnitWriteContext & {
   tx: { orderItem: { create: jest.Mock; update: jest.Mock } };
 } {
   return {
     tx: { orderItem: { create: jest.fn(), update: jest.fn() } },
+    authorOf: lookupOf("STAFF"), // SA ruling #3418
     orderId: "ord-1", // #2577: every line rewrite is scoped to the edited order
     ladders: new Map([["p1", units]]),
     tenantId: "t1",
@@ -160,5 +165,57 @@ describe("createUnitLine / updateUnitLine — price + stamp the trio at write (S
     expect(data.categoryTaxType).toBeNull();
     expect(data.categoryTaxRate).toBeNull();
     expect(data.categoryPriceIncludesTax).toBeNull();
+  });
+});
+
+describe("SA ruling (#3418): unit-line writes carry the explicit author marker", () => {
+  it("createUnitLine defaults to ctx.editor (a diff-add)", async () => {
+    const ctx = { ...makeCtx(), authorOf: lookupOf("BUYER", "STAFF") };
+    await createUnitLine(
+      ctx,
+      "order-1",
+      unregulatedProduct,
+      resolveLineUnits(unregulatedProduct, units, { unitLabel: "Case" }),
+      { qty: 2, unitLabel: "Case" },
+      0,
+    );
+    expect(ctx.tx.orderItem.create.mock.calls[0][0].data.authorChannel).toBe("BUYER");
+  });
+
+  it("createUnitLine (replace-all) writes the product's carried marker, even over a carried line's keys", async () => {
+    const ctx = { ...makeCtx(), authorOf: lookupOf("STAFF", "BUYER") };
+    await createUnitLine(
+      ctx,
+      "order-1",
+      unregulatedProduct,
+      resolveLineUnits(unregulatedProduct, units, { unitLabel: "Case" }),
+      {
+        qty: 2,
+        unitLabel: "Case",
+        carriedLine: { authorChannel: "STAFF", createdAt: new Date(0) },
+      },
+      0,
+      true,
+    );
+    expect(ctx.tx.orderItem.create.mock.calls[0][0].data.authorChannel).toBe("BUYER");
+  });
+
+  it("updateUnitLine (same product): a BUYER raise stamps BUYER; a staff raise or a buyer cut writes no marker", async () => {
+    const run = async (editor: "STAFF" | "BUYER", beforeQty: number) => {
+      const ctx = { ...makeCtx(), authorOf: lookupOf(editor) };
+      await updateUnitLine(
+        ctx,
+        "line-1",
+        unregulatedProduct,
+        resolveLineUnits(unregulatedProduct, units, { unitLabel: "Case" }),
+        { qty: 2, unitLabel: "Case" },
+        false,
+        beforeQty,
+      );
+      return ctx.tx.orderItem.update.mock.calls[0][0].data;
+    };
+    expect((await run("BUYER", 1)).authorChannel).toBe("BUYER");
+    expect(await run("STAFF", 1)).not.toHaveProperty("authorChannel");
+    expect(await run("BUYER", 10_000)).not.toHaveProperty("authorChannel");
   });
 });

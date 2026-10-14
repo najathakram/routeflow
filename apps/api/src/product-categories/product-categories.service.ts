@@ -9,12 +9,28 @@ import type { LabelCategoryDto } from "@routeflow/types";
 import { PrismaService } from "../prisma/prisma.service";
 import { AuditService } from "../audit/audit.service";
 import { activeRuleWhere } from "../selling-restrictions/selling-restrictions.core";
+import { activeTargetsWhere } from "../selling-restrictions-admin/rule-target-read";
 import type { JwtPayload } from "../auth/jwt-payload.interface";
 import { CreateProductCategoryDto } from "./dto/create-product-category.dto";
 import { UpdateProductCategoryDto } from "./dto/update-product-category.dto";
 import { assertSafeCategoryName } from "../common/text-cell-guards";
 import { API_ERROR_CODES } from "../common/api-error-codes";
 import { findLabelNameCollision, lockTenantLabelNames } from "./label-writer";
+
+/**
+ * Row 509: an ACTIVE target row (of a label) whose rule is in force. The engine's own `activeRuleWhere` and the
+ * target-window predicate, never a local copy.
+ */
+const heldByRuleInForce = (now: Date) =>
+  ({
+    AND: [activeTargetsWhere(now), { rule: activeRuleWhere(now) }],
+  }) satisfies Prisma.SellingRestrictionTargetWhereInput;
+
+/** A pre-509 rule in force with ZERO target rows: read by its legacy `categoryId`, as the engine does. */
+const legacyRuleInForce = (now: Date) =>
+  ({
+    AND: [activeRuleWhere(now), { targets: { none: {} } }],
+  }) satisfies Prisma.SellingRestrictionWhereInput;
 
 /** 409 LABEL_NAME_TAKEN naming the existing label (the web shows fixed copy; the body carries the name). */
 function labelNameTaken(existing: { id: string; name: string }): ConflictException {
@@ -54,7 +70,11 @@ export class ProductCategoriesService {
       _count: {
         select: {
           labels: { where: { mode: "INCLUDE" as const } },
-          sellingRestrictions: { where: activeRuleWhere(now) },
+          // Row 509: the rules in force that hold this label as an ACTIVE target, plus the pre-509 rules with
+          // ZERO target rows that name it by the legacy column (a rule has at most one active row per label and a
+          // zero-row rule has none, so the two counts never double-count a rule).
+          sellingRestrictionTargets: { where: heldByRuleInForce(now) },
+          sellingRestrictions: { where: legacyRuleInForce(now) },
         },
       },
     } satisfies Prisma.ProductCategorySelect;
@@ -71,7 +91,7 @@ export class ProductCategoriesService {
       archivedAt: row.archivedAt ? row.archivedAt.toISOString() : null,
       createdAt: row.createdAt.toISOString(),
       productCount: row._count.labels,
-      activeRestrictionCount: row._count.sellingRestrictions,
+      activeRestrictionCount: row._count.sellingRestrictionTargets + row._count.sellingRestrictions,
     };
   }
 
@@ -151,7 +171,12 @@ export class ProductCategoriesService {
     // rule created between a pre-read and the write cannot slip past it.
     const where: Prisma.ProductCategoryWhereInput = {
       id,
-      ...(archiving ? { sellingRestrictions: { none: activeRuleWhere(now) } } : {}),
+      ...(archiving
+        ? {
+            sellingRestrictionTargets: { none: heldByRuleInForce(now) },
+            sellingRestrictions: { none: legacyRuleInForce(now) },
+          }
+        : {}),
     };
     let count: number;
     try {

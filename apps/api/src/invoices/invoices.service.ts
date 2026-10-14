@@ -25,6 +25,7 @@ import { PrismaService } from "../prisma/prisma.service";
 import { overpaidByOf, statusFromPayments } from "./invoice-status";
 import { voidPaymentInTx } from "./payment-void-tx";
 import { TENANT_ZONE_SELECT, configuredZone, tenantTimeZone } from "../common/tenant-time-zone";
+import { assertNoDuplicateLineIds } from "../common/duplicate-line-ids";
 import { StorageService } from "../storage/storage.service";
 import {
   deletePaymentImage,
@@ -113,7 +114,6 @@ import type { InvoiceKpiSummary } from "@routeflow/types";
 import { computeInvoiceKpiSummary } from "./invoice-kpi-summary";
 import { CHECK_TRANSITIONS } from "../common/check-transitions";
 import {
-  CreateInvoiceDto,
   RecordInvoicePaymentDto,
   type RecordPaymentOpts,
   SetCheckStatusDto,
@@ -154,6 +154,7 @@ import { assertNsfLinesUntaxed } from "./nsf-line-tax-guard";
 import { AuthorizationGuardService } from "../authorizations/authorization-guard.service";
 import { CreditNotesService } from "../credit-notes/credit-notes.service";
 import { lockCreditsForSend, lockOrderRow } from "../credit-notes/credit-note-locks";
+import { judgeDraftOrderSale, rejudgeDraftOrderInTx } from "./draft-order-restrictions";
 import {
   inOrderBillingTx,
   inOrderBillingTxAfter,
@@ -204,7 +205,8 @@ import {
   assertEditStillJudged,
   catalogRestrictionLines,
 } from "./invoice-restriction-lines";
-import { buildManualInvoiceLines, type ManualLineItem } from "./manual-invoice-lines";
+import { buildManualInvoiceLines } from "./manual-invoice-lines";
+import { loadOverride, type ManualInvoiceDto } from "./invoice-line-override";
 import {
   foldCategoryTax,
   loadManualLineContext,
@@ -424,13 +426,9 @@ export class InvoicesService {
 
   // ─── CRUD ─────────────────────────────────────────────────────────────────
 
-  /**
-   * RF-026: Previously, concurrent invoice creates both read the same last
-   * invoice number and one crashed with Prisma P2002 → HTTP 500. Now catches
-   * P2002 and returns 409 Conflict instead.
-   */
-  /** SA-135: an internal caller's line may carry `packSnapshot` (ManualLineItem); the HTTP DTO never can. */
-  async create(dto: Omit<CreateInvoiceDto, "items"> & { items: ManualLineItem[] }) {
+  /** RF-026: concurrent creates racing on the invoice number (Prisma P2002) get a 409, not a 500. */
+  /** SA-135: an internal caller's line may carry `packSnapshot` (ManualLineItem); the HTTP DTO never can. `actorId` (HTTP only): H3b. */
+  async create(dto: ManualInvoiceDto, actorId?: string) {
     const issueDateInput = dto.issueDate ? issueDateStamp(dto.issueDate) : null; // #2197: 400 first
     const due = dueDateStamps(dto); // #2256: the due dates too, refused before any read or write
     assertFiniteInvoiceInput(dto); // N4: NaN is a 400, not a silent $0
@@ -470,6 +468,7 @@ export class InvoicesService {
       tenantId: this.prisma.getTenantId(),
       clampFreeUnits: (free, boxes, qty) => this.clampLineFreeUnits(free, boxes, qty),
       resolved,
+      override: await loadOverride(this.prisma, dto, unitsByProduct, actorId),
     });
     // A regulated line makes this a filable sale — the SALE ledger rows are written below.
     const hasRegulated = itemsData.some((it: any) => it.trackedCategoryId != null);
@@ -988,18 +987,17 @@ export class InvoicesService {
       // MSRP snapshot — set below by the caller's applyMsrpSnapshots (null when
       // flag.msrp is off for the tenant).
       msrp: null as number | null,
-      // Per-line note travels verbatim from the order line (buyer-visible).
-      notes: li.notes ?? null,
+      notes: li.notes ?? null, // the per-line note, verbatim from the order line (buyer-visible)
       unitPrice,
-      // `unitPrice` is ALREADY the net (post-override) price — the order stores the
-      // override as a reduced unitPrice plus `originalPrice` for the strikethrough.
-      // Re-deriving a `discount` from originalPrice here double-counts it: every
-      // invoice consumer computes `computeLineSubtotal(unitPrice) - discount`, so a
-      // line of {unitPrice 90, discount 10} would bill 80 for a 100→90 override.
-      // Keep discount 0; the savings is shown via `originalPrice` (mirrors the order).
+      // `unitPrice` is ALREADY the net (post-override) price: the order stores the override as a reduced unitPrice
+      // plus `originalPrice` for the strikethrough. Re-deriving a `discount` from originalPrice double-counts it:
+      // every invoice consumer computes `computeLineSubtotal(unitPrice) - discount`, so {unitPrice 90, discount 10}
+      // would bill 80 for a 100→90 override. Keep discount 0; `originalPrice` shows the savings (mirrors the order).
       discount: 0,
       originalPrice: li.originalPrice != null ? Number(li.originalPrice) : null,
       priceType: li.priceType ?? "STANDARD",
+      overrideReason: li.overrideReason ?? null, // H3b: verbatim with the override price; STAFF-ONLY
+      overriddenBy: li.overriddenBy ?? null, // (never on the buyer portal nor the customer PDF)
       // B294: placeholder — this builder has no order-level context (isTaxExempt,
       // order.tax/order.subtotal), so every caller MUST overwrite this via
       // `applyOrderDerivedTaxRate(itemsData, order, isTaxExempt)` right after
@@ -1116,6 +1114,11 @@ export class InvoicesService {
     include: any;
   }): Promise<any[]> {
     const { order, remainingItems, isTaxExempt, db, tenantId, extraInvoiceData, include } = params;
+
+    // F2: billing a DRAFT order SELLS its lines. Refuse a banned one (the standard 409) BEFORE the
+    // license guard, the split flag + its audit, the number reservation and the deposit-mirror send.
+    const productIds = remainingItems.map(({ li }: any) => li.productId);
+    const judged = await judgeDraftOrderSale(this, tenantId, order, productIds);
 
     // W6b backstop: re-run the license guard at invoice time. Catches a regulated
     // line added to the order after its create-time guard (buyer merge) or a license
@@ -1299,6 +1302,8 @@ export class InvoicesService {
       : await this.generateInvoiceNumber(tenantId ?? undefined);
     const runCreation = async (tx: any): Promise<any[]> => {
       if (!callerTx) await lockOrderRow(tx, tenantId, order.id); // SA-706: before the first insert
+      const ids = remainingItems.map(({ li }: any) => li.id); // F2b: re-judge before the first insert
+      await rejudgeDraftOrderInTx(tx, tenantId, order, ids, judged);
       // Right before the first insert — never above the caller's transaction.
       const baseNumber =
         hoistedBaseNumber ?? (await this.generateInvoiceNumber(tenantId ?? undefined, tx));
@@ -2377,6 +2382,8 @@ export class InvoicesService {
             trackedSubcategoryId: agg.sample?.trackedSubcategoryId ?? null,
             ...copyCategoryTaxSnapshot(agg.sample ?? {}),
             promoFreeUnits: lineFreeUnits > 0 ? lineFreeUnits : null,
+            // SA ruling (#3418): an invoice edit is a staff-initiated system path, so its new order line is STAFF.
+            authorChannel: "STAFF",
             invoicedQty: shape.qty,
             status: "PENDING",
             ...(tenantId ? { tenantId } : {}),
@@ -2706,6 +2713,10 @@ export class InvoicesService {
       subtotal += itemData.subtotal;
       itemsData.push(itemData);
     }
+    // F2: a DRAFT order's partial SELLS these lines: refuse a banned one (standard 409) before the
+    // number is reserved (no series gap), the transaction opens or the optional send runs.
+    const partialIds = dto.items.map((req) => (itemById.get(req.orderItemId) as any)?.productId);
+    const judged = await judgeDraftOrderSale(this, this.prisma.getTenantId(), order, partialIds);
     subtotal = roundMoney(subtotal);
     await this.applyMsrpSnapshots(this.prisma.forTenant(), order.customerId, itemsData);
 
@@ -2795,6 +2806,8 @@ export class InvoicesService {
     const invoiceNumber = await this.generateInvoiceNumber(tenantId ?? undefined);
     const runCreation = async (tx: any) => {
       await lockOrderRow(tx, tenantId, order.id); // SA-706: before the insert's FK takes KEY SHARE
+      const ids = dto.items.map((r) => r.orderItemId); // F2b: edited since the pre-check?
+      await rejudgeDraftOrderInTx(tx, tenantId, order, ids, judged);
       let created: any;
       try {
         created = await tx.invoice.create({
@@ -3084,9 +3097,10 @@ export class InvoicesService {
     });
   }
 
-  async update(id: string, dto: UpdateInvoiceDto) {
+  async update(id: string, dto: UpdateInvoiceDto, actorId?: string) {
     assertFiniteInvoiceInput(dto); // N4: NaN is a 400, not a silent $0
     const warnNoToken = noTokenWarner(id); // H4: one release of grace for token-less clients
+    assertNoDuplicateLineIds(dto.items, { keys: ["id"] }); // F3: the invoice line id only (orderItemId = source line)
     const inv = await this.findOneOrThrow(id); // a missing invoice is a 404 whatever else is wrong
     // units_v1 (VU-4a, D3): a unit line is accepted only on an order-LESS DRAFT (resolveLineUnits below);
     // a SENT or order-linked one stays refused (the back-sync would write the unit onto the order line).
@@ -3124,6 +3138,7 @@ export class InvoicesService {
         items,
         { isStaff: true, prisma: this.prisma, entitlements: this.entitlements },
       );
+      const override = await loadOverride(this.prisma, { ...inv, items }, unitsByProduct, actorId);
 
       const { updated } = await this.prisma.tenantTransaction(async (tx: any) => {
         // Serialize concurrent saves of this invoice: rows are read AFTER the lock, so a second save
@@ -3172,6 +3187,7 @@ export class InvoicesService {
           categoryMap: await withRowCategories(tx, storedRows, categoryMap),
           clampFreeUnits: (f, b, q) => this.clampLineFreeUnits(f, b, q),
           warn: (m) => this.logger.warn(`update(): invoiceId ${id} ${m}`),
+          override,
         });
         const itemsData = editLines.map((l) => l.data);
         // B1026: the SAME discount-exceeds-line guard create() runs, over the lines THIS edit writes
@@ -4318,6 +4334,8 @@ export class InvoicesService {
       // Price markers and the per-line note travel too (a copy must not reset DISCOUNTED to STANDARD).
       originalPrice: (i as any).originalPrice != null ? Number((i as any).originalPrice) : null,
       priceType: (i as any).priceType ?? undefined, // undefined -> the schema default (STANDARD)
+      overrideReason: (i as any).overrideReason ?? null, // H3b: travels with the override price
+      overriddenBy: (i as any).overriddenBy ?? null,
       notes: (i as any).notes ?? null,
       // BUY_N_GET_M snapshot travels with the copy — the subtotal is verbatim, and
       // without the snapshot the copy's first edit would re-price the line to full.

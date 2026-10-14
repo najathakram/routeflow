@@ -79,6 +79,14 @@ export class ProductsController {
     return this.productsService.listCategories();
   }
 
+  // Row 509: the ids of every product the list filters match (catalog "Select all N matching"), capped at 1,000.
+  // Must be declared before :id to avoid route collision.
+  @Get("ids")
+  @Roles(UserRole.OPERATOR)
+  findIds(@Query() query: ListProductsDto) {
+    return this.productsService.findIds(query);
+  }
+
   // Must be declared before :id to avoid route collision
   @Get("barcode/:barcode")
   @Roles(UserRole.OPERATOR, UserRole.DRIVER)

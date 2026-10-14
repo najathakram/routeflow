@@ -74,6 +74,7 @@ import {
   chooseInvoiceUnit,
   dropStaleUnitLines,
   invoiceItemDto,
+  invoiceItemOverride,
   invoiceTotalsLine,
   normalizeInvoiceUnitLines,
   withUnitListPrices,
@@ -144,6 +145,7 @@ import {
 import { isCatalogHeader, visibleCatalogRows, type CatalogRow } from "../../../../lib/visible-cart";
 import { unlistedAffordancePlacement } from "../../../../lib/unlisted-affordance";
 import { sanitizeIntInput } from "../../../../lib/qty";
+import { safeTextErrorCopy } from "../../../../lib/safe-text-error-copy";
 import { MONEY_INPUT_MAX_WIDTH } from "../../../../lib/row-layout";
 
 /**
@@ -1500,15 +1502,26 @@ function InvoiceComposer({
       const p = productById.get(productId);
       if (!p) continue;
       if (effectiveQty(line, p.unitsPerBox) <= 0) continue;
-      payload.push(
-        invoiceItemDto(
+      // H3b: the server judges an invoice line like a sale line — a special price moves only with a reason.
+      const over = invoiceItemOverride(line, {
+        catalogPrice: tierPriceFor(p),
+        listPrice: toNumber(p.pricePerUnit),
+        isSpecial: isSpecialFor(p),
+      });
+      if ("refused" in over) {
+        alertInfo("Reason needed", reasonRequiredMessage(displayName(p)));
+        return;
+      }
+      payload.push({
+        ...invoiceItemDto(
           line,
           { id: productId, description: displayName(p) },
           tierPriceFor(p),
           p.unitsPerBox,
           taxRateFraction,
         ),
-      );
+        ...over,
+      });
     }
     // Unlisted lines → `{ description, qty, unitPrice }` (no productId).
     for (const u of unlisted) {
@@ -1544,7 +1557,7 @@ function InvoiceComposer({
           if (unitNotOfferedCode(err)) return void onUnitNotOffered("Couldn't create invoice");
           alertInfo(
             "Couldn't create invoice",
-            err?.response?.data?.message ?? err?.message ?? "Try again.",
+            safeTextErrorCopy(err) ?? err?.response?.data?.message ?? err?.message ?? "Try again.",
           );
         },
       },
@@ -2083,7 +2096,7 @@ function ReviewSheet({
                     line={line}
                     taxRateFraction={taxRateFraction}
                     catalogPrice={tierPriceFor(product)}
-                    isSpecial={details.saleEligible && isSpecialFor(product)}
+                    isSpecial={isSpecialFor(product)}
                     tier={tierFor(id)}
                     isStaff={isStaff}
                     onChangeUnit={(o) => onChangeUnit(id, o)}

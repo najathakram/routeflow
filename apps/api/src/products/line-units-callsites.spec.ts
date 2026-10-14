@@ -112,6 +112,9 @@ const NON_WRITERS = new Set([
   "products/product-units.service.ts",
   "products/line-units.ts",
   "orders/unit-line-build.ts", // copies unit/unitsPerBox into the ladder base; never derives a factor
+  // H3b (#3435): ladderProduct copies the live unitsPerBox into the price-ladder input the override decision
+  // reads (the same base as unit-line-build); it derives no line factor and writes no pack. (Train M1.)
+  "invoices/invoice-line-override.ts",
   "regulated/tx-report.ts",
   // B661: packAtSaleByProduct's `p.unitsPerBox` read is a write-time SNAPSHOT for the ledger's
   // regulatedUnitBasis, not a line-factor decision — never re-read later to reclassify an old row.

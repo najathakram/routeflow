@@ -778,6 +778,7 @@ async function main() {
         status,
         urgent,
         source: "APP",
+        sourceRecorded: true, // F1(i): the seed means APP (a buyer order); not a legacy row
         subtotal: subtotal.toFixed(2),
         tax: tax.toFixed(2),
         total: total.toFixed(2),
@@ -804,6 +805,7 @@ async function main() {
             qty: item.qty.toString(),
             unitPrice: item.unitPrice.toFixed(2),
             subtotal: (item.qty * item.unitPrice).toFixed(2),
+            authorChannel: "BUYER", // F1(i) SA ruling (#3418): the seed order is source APP (a buyer's lines)
           },
         }),
       ),

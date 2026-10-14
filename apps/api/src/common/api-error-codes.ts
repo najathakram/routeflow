@@ -159,6 +159,13 @@ export const API_ERROR_CODES = {
   STOP_SKIPPED: "STOP_SKIPPED",
   SELLING_RESTRICTED: "SELLING_RESTRICTED",
   SELLING_RESTRICTIONS_NOT_READY: "SELLING_RESTRICTIONS_NOT_READY",
+  RULE_NOT_EDITABLE: "RULE_NOT_EDITABLE",
+  RULE_TARGETS_NOT_FOUND: "RULE_TARGETS_NOT_FOUND",
+  RULE_NEEDS_A_TARGET: "RULE_NEEDS_A_TARGET",
+  RULE_TARGET_LIMIT: "RULE_TARGET_LIMIT",
+  RULE_STALE: "RULE_STALE",
+  RULE_IMPACT_CHANGED: "RULE_IMPACT_CHANGED",
+  RULE_END_USE_LIFT: "RULE_END_USE_LIFT",
   PO_LINK_CONFLICT: "PO_LINK_CONFLICT",
   SCAN_ALREADY_POSTED: "SCAN_ALREADY_POSTED",
   PO_LINK_BROKEN: "PO_LINK_BROKEN",
@@ -381,6 +388,16 @@ export const API_ERROR_CODES = {
    * order (or the reverse). The body carries `orderId`: open that order to confirm it, never resubmit on a new key.
    */
   IDEMPOTENCY_KEY_DRAFT_MISMATCH: "IDEMPOTENCY_KEY_DRAFT_MISMATCH",
+  /**
+   * 400 from create(): a CUSTOMER (buyer) asked for a DRAFT order. A draft is the staff working copy and is
+   * judged only when promoted, so a buyer-started one is refused outright. Nothing is written.
+   */
+  ORDER_DRAFT_STAFF_ONLY: "ORDER_DRAFT_STAFF_ONLY",
+  /**
+   * 400 from every order and invoice edit: the same stored line id appears twice in the incoming `items`. Checked on
+   * the payload alone before any read or write, so nothing is saved; the client refreshes and resubmits once.
+   */
+  DUPLICATE_LINE_ID: "DUPLICATE_LINE_ID",
   /**
    * 503 from create(): the order WAS saved but its credit-note sync exhausted its retries. The body carries
    * `orderId`: open that order and apply the credits there; a replay of the key never applies them.

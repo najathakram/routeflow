@@ -350,6 +350,7 @@ describe("InvoicesService — B652 unit-line partial billing", () => {
     const txFor = (invoicedQty: number) => {
       const txClient = {
         order: {
+          findFirst: jest.fn().mockResolvedValue({ status: "PENDING" }), // F2b re-judge
           findUnique: jest.fn().mockResolvedValue({
             id: "ord-c2",
             customerId: "cust-1",

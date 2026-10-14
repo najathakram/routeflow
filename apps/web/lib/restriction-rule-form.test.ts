@@ -3,13 +3,16 @@ import {
   dayToIso,
   emptyRuleForm,
   ruleFormSchema,
+  ruleSettingsSchema,
   toCreateRequest,
+  ruleToFormValues,
+  toEditRequest,
   type RuleFormValues,
 } from "./restriction-rule-form";
 
 const valid: RuleFormValues = {
   ...emptyRuleForm,
-  categoryId: "c1",
+  targets: [{ kind: "CATEGORY", id: "c1", name: "Hemp" }],
   states: ["TX", "FL"],
   reason: "State ban on hemp edibles",
 };
@@ -25,14 +28,31 @@ describe("ruleFormSchema (mirrors the API's validation, in plain words)", () => 
     expect(errorsOf(valid)).toEqual({});
   });
 
-  it("needs the chosen target: a category for CATEGORY, a product for PRODUCT", () => {
-    expect(errorsOf({ ...valid, categoryId: "" })).toEqual({ categoryId: "Pick a category" });
-    expect(errorsOf({ ...valid, targetKind: "PRODUCT", categoryId: "" })).toEqual({
-      productId: "Pick a product",
+  it("needs at least one product or label, in any mix", () => {
+    expect(errorsOf({ ...valid, targets: [] })).toEqual({
+      targets: "Pick at least one product or label",
     });
-    expect(errorsOf({ ...valid, targetKind: "PRODUCT", categoryId: "", productId: "p1" })).toEqual(
-      {},
-    );
+    expect(
+      errorsOf({ ...valid, targets: [{ kind: "PRODUCT", id: "p1", name: "Gummies" }] }),
+    ).toEqual({});
+    expect(
+      errorsOf({
+        ...valid,
+        targets: [
+          { kind: "PRODUCT", id: "p1", name: "Gummies" },
+          { kind: "CATEGORY", id: "c1", name: "Hemp" },
+        ],
+      }),
+    ).toEqual({});
+  });
+
+  it("caps one rule at the per-rule limit", () => {
+    const many = Array.from({ length: 5001 }, (_, i) => ({
+      kind: "PRODUCT" as const,
+      id: `p${i}`,
+      name: `P${i}`,
+    }));
+    expect(errorsOf({ ...valid, targets: many }).targets).toMatch(/5,000/);
   });
 
   it("a STATE rule needs at least one state; a FEDERAL rule does not", () => {
@@ -69,22 +89,26 @@ describe("ruleFormSchema (mirrors the API's validation, in plain words)", () => 
 });
 
 describe("toCreateRequest", () => {
-  it("sends only the chosen target and the states of a STATE rule (de-duplicated)", () => {
-    expect(toCreateRequest({ ...valid, productId: "stale", states: ["TX", "TX", "FL"] })).toEqual({
-      categoryId: "c1",
+  it("sends the picked targets and the states of a STATE rule (de-duplicated)", () => {
+    expect(toCreateRequest({ ...valid, states: ["TX", "TX", "FL"] })).toEqual({
+      targets: { categoryIds: ["c1"] },
       jurisdiction: "STATE",
       states: ["TX", "FL"],
       surface: "ALL",
       reason: "State ban on hemp edibles",
     });
-    const p = toCreateRequest({
+    const mixed = toCreateRequest({
       ...valid,
-      targetKind: "PRODUCT",
-      productId: "p1",
-      categoryId: "stale",
+      targets: [
+        { kind: "PRODUCT", id: "p1", name: "Gummies" },
+        { kind: "CATEGORY", id: "c1", name: "Hemp" },
+        { kind: "PRODUCT", id: "f1", name: "Sample Pod (all variants)", isFamily: true },
+      ],
     });
-    expect(p.productId).toBe("p1");
-    expect(p).not.toHaveProperty("categoryId");
+    expect(mixed.targets).toEqual({ productIds: ["p1", "f1"], categoryIds: ["c1"] });
+    // the legacy single-target keys are never sent alongside `targets`
+    expect(mixed).not.toHaveProperty("productId");
+    expect(mixed).not.toHaveProperty("categoryId");
   });
 
   it("never sends states on a FEDERAL rule, even if some were picked before switching", () => {
@@ -126,5 +150,65 @@ describe("toCreateRequest", () => {
         reason: "law",
       },
     );
+  });
+});
+
+describe("editing a rule's settings", () => {
+  const rule = {
+    jurisdiction: "STATE" as const,
+    states: ["TX", "FL"],
+    surface: "ALL" as const,
+    effectiveFrom: new Date("2026-10-10T00:00:00").toISOString(),
+    effectiveTo: new Date("2027-01-01T00:00:00").toISOString(),
+    reason: "State ban",
+  };
+
+  it("prefills the form from the rule: days in the admin's timezone, the LAST day in force", () => {
+    expect(ruleToFormValues(rule)).toMatchObject({
+      jurisdiction: "STATE",
+      states: ["TX", "FL"],
+      surface: "ALL",
+      startsOn: "2026-10-10",
+      endsOn: "2026-12-31",
+      reason: "State ban",
+      targets: [],
+    });
+    expect(ruleToFormValues({ ...rule, effectiveTo: null }).endsOn).toBe("");
+  });
+
+  it("an untouched window goes back byte-for-byte (a mid-afternoon API end is not rounded)", () => {
+    const afternoon = { ...rule, effectiveTo: "2026-12-31T15:30:00.000Z" };
+    const req = toEditRequest(ruleToFormValues(afternoon), afternoon);
+    expect(req.effectiveFrom).toBe(afternoon.effectiveFrom);
+    expect(req.effectiveTo).toBe("2026-12-31T15:30:00.000Z");
+  });
+
+  it("a changed day is converted like create does; a cleared end is an explicit null", () => {
+    const v = { ...ruleToFormValues(rule), endsOn: "2027-02-28", startsOn: "2026-11-01" };
+    const req = toEditRequest(v, rule);
+    expect(req.effectiveFrom).toBe(new Date("2026-11-01T00:00:00").toISOString());
+    expect(req.effectiveTo).toBe(new Date("2027-03-01T00:00:00").toISOString());
+    expect(toEditRequest({ ...ruleToFormValues(rule), endsOn: "" }, rule).effectiveTo).toBeNull();
+  });
+
+  it("never sends states on a federal edit, and trims the reason and note", () => {
+    const req = toEditRequest(
+      { ...ruleToFormValues(rule), jurisdiction: "FEDERAL", reason: "  law  " },
+      rule,
+      "  because  ",
+    );
+    expect(req).not.toHaveProperty("states");
+    expect(req).toMatchObject({ jurisdiction: "FEDERAL", reason: "law", note: "because" });
+    expect(toEditRequest(ruleToFormValues(rule), rule)).not.toHaveProperty("note");
+  });
+
+  it("the settings schema ignores targets (an edit never changes them) but keeps every other rule", () => {
+    expect(ruleSettingsSchema.safeParse(ruleToFormValues(rule)).success).toBe(true);
+    const bad = ruleSettingsSchema.safeParse({ ...ruleToFormValues(rule), states: [], reason: "" });
+    expect(bad.success).toBe(false);
+    expect(bad.success ? [] : bad.error.issues.map((i) => i.message).sort()).toEqual([
+      "Add a reason",
+      "Pick at least one state",
+    ]);
   });
 });

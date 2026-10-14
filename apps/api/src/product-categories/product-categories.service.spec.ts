@@ -23,7 +23,7 @@ function row(over: Record<string, unknown> = {}, labels = 2, active = 0) {
     name: "Alcohol",
     archivedAt: null,
     createdAt: new Date("2026-09-19T00:00:00Z"),
-    _count: { labels, sellingRestrictions: active },
+    _count: { labels, sellingRestrictionTargets: active, sellingRestrictions: 0 },
     ...over,
   };
 }
@@ -90,10 +90,17 @@ describe("ProductCategoriesService", () => {
       await service.list();
       const counts = cat.findMany.mock.calls[0][0].select._count.select;
       expect(counts.labels).toEqual({ where: { mode: "INCLUDE" } });
-      const where = counts.sellingRestrictions.where;
-      // Same shape as `activeRuleWhere` for the very instant the query used — incl. effectiveFrom.
-      expect(where.effectiveFrom).toEqual({ lte: expect.any(Date) });
-      expect(where).toEqual(activeRuleWhere(where.effectiveFrom.lte));
+      // Row 509: a rule counts through an ACTIVE target of the label whose rule is in force...
+      const held = counts.sellingRestrictionTargets.where;
+      const at = held.AND[1].rule.effectiveFrom.lte as Date;
+      expect(held.AND[1]).toEqual({ rule: activeRuleWhere(at) });
+      expect(held.AND[0]).toEqual({
+        addedAt: { lte: at },
+        OR: [{ removedAt: null }, { removedAt: { gt: at } }],
+      });
+      // ...and a pre-509 rule with ZERO target rows counts by its legacy column.
+      const legacy = counts.sellingRestrictions.where;
+      expect(legacy).toEqual({ AND: [activeRuleWhere(at), { targets: { none: {} } }] });
     });
   });
 
@@ -139,8 +146,20 @@ describe("ProductCategoriesService", () => {
       );
       const where = cat.updateMany.mock.calls[0][0].where;
       expect(where.id).toBe("c1");
+      const at = where.sellingRestrictionTargets.none.AND[1].rule.effectiveFrom.lte as Date;
+      expect(where.sellingRestrictionTargets).toEqual({
+        none: {
+          AND: [
+            {
+              addedAt: { lte: at },
+              OR: [{ removedAt: null }, { removedAt: { gt: at } }],
+            },
+            { rule: activeRuleWhere(at) },
+          ],
+        },
+      });
       expect(where.sellingRestrictions).toEqual({
-        none: activeRuleWhere(where.sellingRestrictions.none.effectiveFrom.lte),
+        none: { AND: [activeRuleWhere(at), { targets: { none: {} } }] },
       });
       expect(audit.log).not.toHaveBeenCalled();
     });
@@ -189,6 +208,7 @@ describe("ProductCategoriesService", () => {
       await service.update("c1", { archived: false }, user);
       expect(cat.updateMany.mock.calls[0][0].data.archivedAt).toBeNull();
       expect(cat.updateMany.mock.calls[0][0].where.sellingRestrictions).toBeUndefined();
+      expect(cat.updateMany.mock.calls[0][0].where.sellingRestrictionTargets).toBeUndefined();
     });
 
     it("a no-op patch writes and audits nothing", async () => {

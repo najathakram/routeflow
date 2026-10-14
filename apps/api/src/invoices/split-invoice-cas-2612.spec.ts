@@ -143,6 +143,8 @@ describe("split/full invoices: the invoicedQty bump is a compare-and-set (#2612,
     categoryPriceIncludesTax: null,
     unitLabel: null,
     originalPrice: null,
+    overrideReason: null, // H3b: a real OrderItem row always carries both (CAS basis)
+    overriddenBy: null,
     priceType: "STANDARD",
     name: null,
     notes: null,
