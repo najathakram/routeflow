@@ -33,6 +33,8 @@ describe("selling restrictions: counter / pickup judge the STORE state (L8)", ()
     effectiveTo: null,
     liftedAt: null,
     reason: "State ban",
+    targets: [], // row 509: a pre-targets rule (legacy-column fallback)
+    _count: { targets: 0 },
   });
   const storeIn = (state: string | null) =>
     prisma.tenantConfig.findUnique.mockResolvedValue(state === null ? null : { state });
@@ -213,6 +215,8 @@ describe("store state unset: the choke point refuses counter, POS and pickup (L8
         effectiveTo: null,
         liftedAt: null,
         reason: "State ban",
+        targets: [],
+        _count: { targets: 0 },
       },
     ]);
     prisma.productCategory = model([{ id: "cat-thc", name: "THC" }]);

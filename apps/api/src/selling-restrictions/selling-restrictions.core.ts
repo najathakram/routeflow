@@ -401,11 +401,14 @@ export function resolveGoverningState(
 export function ruleHidesFromBuyer(
   rule: RestrictionRuleFacts,
   governingState: GoverningState,
+  /** L8 M1: a pickup-only tenant whose STORE state is unset hides every state rule (fail closed). */
+  hideWhenUnresolved = false,
 ): boolean {
   if ((rule.jurisdiction as string) !== "STATE") return true;
   const states = ruleStates(rule);
   if (states.length === 0) return true;
-  if (!governingState.resolved) return (rule.surface as string) !== "BUYER_PORTAL";
+  if (!governingState.resolved)
+    return hideWhenUnresolved || (rule.surface as string) !== "BUYER_PORTAL";
   return states.includes(governingState.state);
 }
 

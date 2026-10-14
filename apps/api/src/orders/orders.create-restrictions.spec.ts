@@ -29,6 +29,7 @@ import { ConflictException, ForbiddenException } from "@nestjs/common";
 import { getQueueToken } from "@nestjs/bull";
 import { ConfigService } from "@nestjs/config";
 
+import { FeatureConfigService } from "../billing/feature-config.service";
 import { OrdersService } from "./orders.service";
 import { InvoicesService } from "../invoices/invoices.service";
 import { SystemConfigService } from "../system-config/system-config.service";
@@ -67,15 +68,18 @@ const operatorPayload = {
 
 describe("OrdersService.create — selling restrictions call site (lane R 2a-5)", () => {
   let service: OrdersService;
+  const featureConfig = { getEffectiveMode: jest.fn() };
   let prisma: ReturnType<typeof createMockPrisma>;
 
   beforeEach(async () => {
+    featureConfig.getEffectiveMode.mockReset().mockResolvedValue("unset");
     prisma = createMockPrisma();
 
     const module: TestingModule = await Test.createTestingModule({
       providers: [
         oversellReaderOffProvider,
         OrdersService,
+        { provide: FeatureConfigService, useValue: featureConfig },
         {
           provide: TenantContextService,
           // B323: sweepAllPendingOrders() now takes TenantContextService; this spec never
@@ -305,6 +309,27 @@ describe("OrdersService.create — selling restrictions call site (lane R 2a-5)"
       );
       expect(restrictions.assertLinesSellable).toHaveBeenCalledWith(
         expect.objectContaining({ fulfilmentKind: kind }),
+      );
+    },
+  );
+
+  // L8 M1: the buyer's CHOSEN path decides the state: pickup -> the store's, ship -> the buyer's own.
+  it.each([
+    ["pickup", undefined, "PICKUP"], // pickup-only: a buyer order is always an in-store pickup
+    ["pickup", "PICKUP", "PICKUP"],
+    ["pickup_ship", "PICKUP", "PICKUP"],
+    ["pickup_ship", "SHIP", "DELIVERY"],
+  ])(
+    "L8 checkout: a buyer on a %s tenant who picks %s is judged as %s",
+    async (mode, chosen, kind) => {
+      featureConfig.getEffectiveMode.mockResolvedValue(mode);
+      prisma.customer.findUnique.mockResolvedValue(activeCustomer);
+      await service.create(input({ customerId: "cust-1", fulfillPath: chosen }), {
+        ...buyerPrincipal,
+        tenantId: "t-1",
+      } as never);
+      expect(restrictions.assertLinesSellable).toHaveBeenCalledWith(
+        expect.objectContaining({ channel: "BUYER_PORTAL", fulfilmentKind: kind }),
       );
     },
   );

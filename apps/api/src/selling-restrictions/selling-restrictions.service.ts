@@ -13,6 +13,7 @@ import { normalizeUsState } from "../common/us-states";
 import { excludeWalkIn } from "../customers/walk-in-protected";
 import { PrismaService } from "../prisma/prisma.service";
 import { tenantBusinessState } from "./tenant-business-state";
+import { tenantIsPickupOnly } from "./tenant-fulfilment-model";
 import { judgedAtStore, type SaleFulfilmentKind } from "./sale-fulfilment";
 import { ProductLabelsService } from "../product-labels/product-labels.service";
 import {
@@ -585,20 +586,29 @@ export class SellingRestrictionsService {
     const rules = withTargetSets(rows, at);
 
     let governingState = UNRESOLVED_STATE;
-    if (customerId && stateRuleInPlay(rules, "BUYER_PORTAL", at)) {
-      const { addressPrecedence } = await this.getPolicy(tenantId);
-      const customer = await db.customer.findFirst({
-        where: { id: customerId, tenantId },
-        select: { isWalkIn: true, addresses: { select: ADDRESS_SELECT } },
-      });
-      if (customer?.isWalkIn === true) {
+    let judgedOnStore = false;
+    if (stateRuleInPlay(rules, "BUYER_PORTAL", at)) {
+      if (await tenantIsPickupOnly(this.prisma, tenantId)) {
+        // L8 M1: buyers of a pickup-only tenant collect in store, so the portal hides by the STORE's state (no customer
+        // needed); an unset store state stays UNRESOLVED and hides the restricted products (fail closed).
+        judgedOnStore = true;
         const state = await tenantBusinessState(this.prisma, tenantId);
         governingState = state ? { resolved: true, state } : UNRESOLVED_STATE;
-      } else if (customer) {
-        governingState = resolveGoverningState(customer.addresses, addressPrecedence);
+      } else if (customerId) {
+        const { addressPrecedence } = await this.getPolicy(tenantId);
+        const customer = await db.customer.findFirst({
+          where: { id: customerId, tenantId },
+          select: { isWalkIn: true, addresses: { select: ADDRESS_SELECT } },
+        });
+        if (customer?.isWalkIn === true) {
+          const state = await tenantBusinessState(this.prisma, tenantId);
+          governingState = state ? { resolved: true, state } : UNRESOLVED_STATE;
+        } else if (customer) {
+          governingState = resolveGoverningState(customer.addresses, addressPrecedence);
+        }
       }
     }
-    const hiding = rules.filter((r) => ruleHidesFromBuyer(r, governingState));
+    const hiding = rules.filter((r) => ruleHidesFromBuyer(r, governingState, judgedOnStore));
     if (hiding.length === 0) return new Set<string>();
 
     // Candidates: the rules' own products and the products labelled with a hiding category, plus their variants.
