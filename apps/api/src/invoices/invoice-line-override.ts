@@ -73,7 +73,7 @@ export interface HeldLine {
   id?: string;
   unitLabel?: string | null;
   unitPrice?: unknown;
-  priceType?: unknown;
+  priceType?: string | null;
   originalPrice?: unknown;
   overrideReason?: string | null;
   overriddenBy?: string | null;
@@ -85,11 +85,17 @@ export interface PricedLine {
   stamp: LinePriceStamp;
 }
 
-const str = (v: unknown): string | null => (v == null ? null : String(v));
+/** A Prisma Decimal, number or numeric string as text (null stays null). */
+const str = (v: unknown): string | null => {
+  if (v == null) return null;
+  if (typeof v === "string") return v;
+  if (typeof v === "number") return String(v);
+  return (v as { toString(): string }).toString();
+};
 const ladderProduct = (p: PricedProduct): LadderProduct => ({
   unit: p.unit,
   unitsPerBox: p.unitsPerBox,
-  pricePerUnit: String(p.pricePerUnit ?? 0),
+  pricePerUnit: str(p.pricePerUnit) ?? "0",
   priceTier2: str(p.priceTier2),
   priceTier3: str(p.priceTier3),
   priceTier4: str(p.priceTier4),
@@ -145,7 +151,7 @@ export function priceInvoiceLine(args: {
     return {
       unitPrice: roundMoney(Number(held.unitPrice)),
       stamp: {
-        priceType: (str(held.priceType) ?? "STANDARD") as LinePriceType,
+        priceType: (held.priceType ?? "STANDARD") as LinePriceType,
         originalPrice: held.originalPrice == null ? null : Number(held.originalPrice),
         overrideReason: held.overrideReason ?? null,
         overriddenBy: held.overriddenBy ?? null,
