@@ -405,7 +405,11 @@ export function useUpdateInvoice() {
   return useMutation<
     Invoice,
     Error,
-    { id: string } & Partial<Omit<CreateInvoiceDto, "items">> & { items?: UpdateInvoiceItem[] }
+    { id: string } & Partial<Omit<CreateInvoiceDto, "items">> & {
+        items?: UpdateInvoiceItem[];
+        /** H4: the invoice's `updatedAt` when the editor opened it; behind the server's it is 409 INVOICE_STALE. */
+        expectedUpdatedAt?: string;
+      }
   >({
     mutationFn: ({ id, ...dto }) => apiClient.patch(`/invoices/${id}`, dto).then((r) => r.data),
     onSuccess: (_, { id }) => {

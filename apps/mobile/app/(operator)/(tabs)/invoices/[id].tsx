@@ -16,6 +16,7 @@ import { useLocalSearchParams, useRouter } from "expo-router";
 import { ios } from "@routeflow/ui/tokens";
 import { NavBackButton, NavBar, Pill, SegmentedControl } from "@routeflow/ui/mobile/ios";
 import { useAdminInvoice, useAdminInvoices, useBusinessSettings } from "../../../../lib/api/admin";
+import { INVOICE_STALE_COPY, isInvoiceStale } from "../../../../lib/invoice-stale";
 import {
   useDeleteInvoice,
   useDuplicateInvoice,
@@ -1124,15 +1125,25 @@ export default function InvoiceDetailScreen() {
                 onPress={() => {
                   if (!id) return;
                   updateMut.mutate(
-                    { id, dueDate: dueDateInput.trim() || undefined },
+                    {
+                      id,
+                      dueDate: dueDateInput.trim() || undefined,
+                      expectedUpdatedAt: invoice?.updatedAt, // H4
+                    },
                     {
                       onSuccess: () => {
                         showToast("Due date updated");
                         setDueDateModal(false);
                         refetch();
                       },
-                      onError: (e: any) =>
-                        showToast(e?.response?.data?.message ?? e?.message ?? "Try again."),
+                      onError: (e: any) => {
+                        if (isInvoiceStale(e)) {
+                          showToast(INVOICE_STALE_COPY); // H4: fixed copy, then the latest
+                          refetch();
+                          return;
+                        }
+                        showToast(e?.response?.data?.message ?? e?.message ?? "Try again.");
+                      },
                     },
                   );
                 }}

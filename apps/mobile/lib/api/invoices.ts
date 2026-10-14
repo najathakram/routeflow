@@ -274,7 +274,14 @@ export function useDeleteInvoice() {
  */
 export function useUpdateInvoice() {
   const qc = useQueryClient();
-  return useMutation<Invoice, Error, { id: string } & Partial<CreateInvoiceDto>>({
+  return useMutation<
+    Invoice,
+    Error,
+    { id: string } & Partial<CreateInvoiceDto> & {
+        /** H4: the invoice's updatedAt when the editor opened it; behind the server's it is 409 INVOICE_STALE. */
+        expectedUpdatedAt?: string;
+      }
+  >({
     mutationFn: ({ id, ...body }) => apiClient.patch(`/invoices/${id}`, body).then((r) => r.data),
     onSuccess: (_, { id }) => {
       qc.invalidateQueries({ queryKey: ["invoices"] });

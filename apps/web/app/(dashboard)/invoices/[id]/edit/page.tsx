@@ -3,11 +3,13 @@
 import * as React from "react";
 import Link from "next/link";
 import { useParams, useRouter } from "next/navigation";
+import { useQueryClient } from "@tanstack/react-query";
 import { ArrowLeft, Plus, Trash2, Search, Loader2 } from "lucide-react";
 import { Button, Card, useToast, cn } from "@routeflow/ui/web";
 import { usePageTitle } from "@/lib/page-title-context";
 import { useInvoice, useUpdateInvoice, type UpdateInvoiceItem } from "@/lib/api/invoices";
 import { isPendingMirrorInvoice } from "@/lib/invoice-pending-mirror";
+import { INVOICE_STALE_COPY, isInvoiceStale } from "@/lib/invoice-stale";
 import { hasUnitLine, unitLabelsOf } from "@/lib/invoice-line-unit";
 import {
   useCustomers,
@@ -395,6 +397,10 @@ export default function EditInvoicePage() {
   const { toast } = useToast();
 
   const { data: invoice, isLoading, isError } = useInvoice(id);
+  const queryClient = useQueryClient();
+  // H4: the updatedAt the form was SEEDED from (a background refetch never moves it) and the 409 notice.
+  const openedUpdatedAt = React.useRef<string | undefined>(undefined);
+  const [stale, setStale] = React.useState(false);
   const updateInvoice = useUpdateInvoice();
 
   // #2791: a pending-mirror draft can't be edited here (the API refuses by design — the order is the
@@ -476,6 +482,7 @@ export default function EditInvoicePage() {
 
   React.useEffect(() => {
     if (invoice && !initialized) {
+      openedUpdatedAt.current = invoice.updatedAt;
       setTitle(`Edit ${invoice.invoiceNumber}`);
       setIssueDate(
         invoice.issueDate ? invoice.issueDate.slice(0, 10) : new Date().toISOString().slice(0, 10),
@@ -604,6 +611,7 @@ export default function EditInvoicePage() {
 
     const dto = {
       id,
+      expectedUpdatedAt: openedUpdatedAt.current,
       issueDate: issueDate || undefined,
       dueDate: dueDate || undefined,
       discount: invDiscount,
@@ -656,6 +664,10 @@ export default function EditInvoicePage() {
         router.push(`/invoices/${id}`);
       },
       onError: (err: any) => {
+        if (isInvoiceStale(err)) {
+          setStale(true); // H4: the notice owns it; no toast
+          return;
+        }
         // A class-validator 400 carries `message` as a string[] when more than
         // one constraint fails at once — join it into one readable sentence
         // instead of handing the array straight to the toast (B788).
@@ -668,6 +680,13 @@ export default function EditInvoicePage() {
         });
       },
     });
+  }
+
+  // H4: Reload refetches the invoice, then re-seeds the form from it (and its updatedAt) for the user to re-apply.
+  async function reloadStale() {
+    await queryClient.invalidateQueries({ queryKey: ["invoices", id] });
+    setStale(false);
+    setInitialized(false);
   }
 
   // ── Guards ────────────────────────────────────────────────────────────────────
@@ -1089,6 +1108,23 @@ export default function EditInvoicePage() {
             </dl>
 
             <div className="mt-5 space-y-2">
+              {stale && (
+                <div
+                  role="alert"
+                  data-testid="invoice-stale-notice"
+                  className="rounded-lg border border-amber-200 bg-amber-50 p-3 text-sm text-navy"
+                >
+                  <p>{INVOICE_STALE_COPY}</p>
+                  <Button
+                    className="mt-2"
+                    variant="secondary"
+                    size="sm"
+                    onClick={() => void reloadStale()}
+                  >
+                    Reload
+                  </Button>
+                </div>
+              )}
               <Button
                 className="w-full"
                 onClick={handleSubmit}
