@@ -83,6 +83,11 @@ test.describe("Lite locked-route UX (B449)", () => {
 
         const notifications = page.getByRole("region", { name: /notifications/i });
 
+        // The gate renders once GET /billing/subscription resolves (PlanGateBoundary holds a spinner
+        // until then) - register the wait before navigating so the response cannot be missed.
+        const subscriptionResolved = page.waitForResponse(
+          (r) => r.request().method() === "GET" && /\/billing\/subscription(\?|$)/.test(r.url()),
+        );
         await page.goto("/estimates");
 
         // The real Estimates page must never mount: its own list/table content
@@ -114,10 +119,10 @@ test.describe("Lite locked-route UX (B449)", () => {
 
         // The lock card is the ONE notice (PlanGateBoundary: "no toast repeating it"), and its text is
         // THIS tenant's own gate message - never a different, contradictory tier from a stray gated
-        // fetch elsewhere on the page - so there is no toast at all. Let the page's requests settle
-        // first so a late stray gated 403 would have raised its toast by the time we count.
+        // fetch elsewhere on the page - so there is no toast at all. The subscription response is the
+        // call that decides the lock, so once it has landed a plan-gate toast would already be up.
         await expect(page.locator("#main-content")).toContainText(LITE_GATE_MESSAGE);
-        await page.waitForLoadState("networkidle");
+        await subscriptionResolved;
         await expect(notifications.getByRole("listitem")).toHaveCount(0);
       });
 

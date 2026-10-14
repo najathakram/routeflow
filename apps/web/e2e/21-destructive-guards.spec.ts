@@ -164,6 +164,18 @@ test.describe("Destructive-write guards (F02b / P4)", () => {
     await expect(skippedLine).toContainText(new RegExp(escapeRegExp(guardedProduct.name)));
     await expect(skippedLine).toContainText(/active order items and cannot be deleted/i);
 
+    // The page still raises its summary toast ("0 deleted, 1 skipped") alongside the dialog. Scope
+    // it to the toast region: the table row is still on screen, so a page-wide match could be
+    // satisfied by something else. includeHidden: the open modal marks everything outside it
+    // aria-hidden, which drops the toast region from a default role query.
+    await expect(
+      page
+        .getByRole("region", { name: /notifications/i, includeHidden: true })
+        .getByRole("listitem", { includeHidden: true })
+        .filter({ hasText: /1 skipped/i })
+        .first(),
+    ).toBeVisible({ timeout: 10_000 });
+
     await resultDialog.getByRole("button", { name: "Done", exact: true }).click();
     await expect(page.getByRole("dialog")).toHaveCount(0, { timeout: 10_000 });
 

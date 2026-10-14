@@ -324,8 +324,21 @@ test.describe("Critical Paths — Money Math & Core Integrity", () => {
       throw new Error("No orders to inspect — run `node apps/api/scripts/e2e-seed.js` (B566)");
     }
 
+    // The detail page fetches GET /orders/:id after the route change (the row is a click target,
+    // not an <a href>, so there is no id to read off it); wait for that exact response by its
+    // UUID path - the list call (/orders?...) and /orders/active-style routes never match.
+    // Registered before the click so it cannot be missed.
+    const orderLoaded = page.waitForResponse(
+      (r) =>
+        r.request().method() === "GET" &&
+        /\/api\/v1\/orders\/[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}(\?|$)/.test(
+          r.url(),
+        ),
+      { timeout: 30_000 },
+    );
     await firstRow.click();
     await page.waitForURL(/\/orders\/.+/, { timeout: 30_000 });
+    expect((await orderLoaded).ok(), "GET /orders/:id failed").toBe(true);
 
     // Any dollar amount visible on the order detail page should be $X.XX
     const dollarEls = page
