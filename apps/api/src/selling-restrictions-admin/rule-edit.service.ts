@@ -13,7 +13,6 @@ import {
   ruleMatchesProduct,
   ruleTargetSets,
   resolveGoverningState,
-  restrictionsApply,
   UNRESOLVED_STATE,
   type GoverningState,
   type ProductFacts,
@@ -26,6 +25,7 @@ import {
 import { tenantBusinessState } from "../selling-restrictions/tenant-business-state";
 import { CommitEditRuleDto, EditRuleDto } from "./dto/edit-rule.dto";
 import { assertMayManageRule, lockEditableRule } from "./rule-lock";
+import { staffChannelJudged } from "./staff-channel";
 import { ruleImpactChanged, ruleStale } from "./rule-errors";
 import { ruleEditChanges, type RuleEditChange, type RuleEditSettings } from "./rule-edit-direction";
 import { impactHash, newlyRestricted } from "./rule-edit-impact";
@@ -260,7 +260,7 @@ export class RuleEditService {
     const policy = await this.restrictions.getPolicy(tenantId);
     const prev = settingsOf(rule);
     const changes = ruleEditChanges(prev, next, {
-      staffEnforced: restrictionsApply(policy, "STAFF"),
+      staffEnforced: staffChannelJudged(policy),
     });
     // Only a TIGHTENING edit can newly restrict anyone; a loosening or neutral one reaches nothing.
     const ids: string[] = [];
@@ -273,7 +273,7 @@ export class RuleEditService {
       ]);
       const hit = (customerId: string) =>
         newlyRestricted(prev, next, governing.get(customerId) ?? UNRESOLVED_STATE, {
-          staffEnforced: restrictionsApply(policy, "STAFF"),
+          staffEnforced: staffChannelJudged(policy),
           at: now,
         });
       for (const o of reached.orders) {
