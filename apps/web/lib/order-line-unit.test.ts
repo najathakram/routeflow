@@ -254,3 +254,74 @@ describe("SA-728 / units P0b: a derived-Piece pick is a PACK-PIECES line (previe
     expect(back).toMatchObject({ unitsPerBox: 3, boxes: 1, pieces: 0, qty: 3 });
   });
 });
+
+describe("SA P0b must 1: a derived Piece picked FROM a level starts from the PACK", () => {
+  const prod = { unit: "Pack", unitsPerBox: 3, pricePerUnit: "20.00" };
+  const opts = buildUnitOptions(prod, [level("Case", 12, "190.00")], 1);
+  const packLine: UnitLine & { tempId: string; productId: string } = {
+    tempId: "t9",
+    productId: "p9",
+    unit: "Pack",
+    qty: 3,
+    unitsPerBox: 3,
+    boxes: 1,
+    pieces: 0,
+    sellBy: "case",
+    listPrice: 20,
+    unitPrice: 20,
+    priceType: "STANDARD",
+    tierPrices: { pricePerUnit: "20.00" },
+  };
+  const total = (li: UnitLine) =>
+    computeLineSubtotal({
+      unitPrice: li.unitPrice,
+      qty: li.qty * 2,
+      boxes: 0,
+      pieces: 2,
+      unitsPerBox: li.unitsPerBox ?? null,
+    });
+
+  it("Case $190 -> Piece previews the pack's $20 prorated: 2 pcs = $13.33, never the level price", () => {
+    const onCase = applyLineUnit(packLine, by(opts, "Case"), { tier: 1 });
+    expect(onCase).toMatchObject({ unitLabel: "Case", unitPrice: 190 });
+    const piece = applyLineUnit(onCase, by(opts, "Piece"), { tier: 1 });
+    expect(piece).toMatchObject({
+      derivedBase: "Piece",
+      unitsPerBox: 3,
+      boxes: 0,
+      pieces: 1,
+      unitPrice: 20,
+      priceType: "STANDARD",
+    });
+    expect(piece.unitLabel).toBeUndefined();
+    expect(piece.packBase).toBeUndefined();
+    expect(piece.discountedPrice).toBeUndefined();
+    expect(unitLabelPayload(piece)).toEqual({});
+    expect(total({ ...piece, qty: 1 })).toBe(13.33);
+  });
+
+  it("a DISCOUNTED Case ($180 typed) does not bill $60/pc: the one-time price is gone", () => {
+    const onCase = applyLineUnit(packLine, by(opts, "Case"), { tier: 1 });
+    const discounted = {
+      ...onCase,
+      unitPrice: 180,
+      discountedPrice: 180,
+      priceType: "DISCOUNTED" as const,
+    };
+    const piece = applyLineUnit(discounted, by(opts, "Piece"), { tier: 1 });
+    expect(piece).toMatchObject({ unitPrice: 20, priceType: "STANDARD" });
+    expect(piece.discountedPrice).toBeUndefined();
+  });
+
+  it("a pack line carrying a one-time price also drops it for the derived Piece", () => {
+    const typed = {
+      ...packLine,
+      unitPrice: 15,
+      discountedPrice: 15,
+      priceType: "DISCOUNTED" as const,
+    };
+    const piece = applyLineUnit(typed, by(opts, "Piece"), { tier: 1 });
+    expect(piece).toMatchObject({ unitPrice: 20, priceType: "STANDARD" });
+    expect(piece.discountedPrice).toBeUndefined();
+  });
+});

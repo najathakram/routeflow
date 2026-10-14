@@ -168,6 +168,29 @@ describe("OrdersService.create — sell by a unit (units_v1, 4b-2b)", () => {
       expect(orderData().subtotal).toBe(6.67);
     });
 
+    it("SA-759r B1: an old client's retry of the derived Piece create replays the stored pack line (no cartMismatch 409)", async () => {
+      scopedUnits.findMany.mockResolvedValue([caseRow]);
+      // what the first press stored: the PACK line's pieces, no unitLabel
+      const original = {
+        id: "ord-old",
+        customerId: "cust-1",
+        lineItems: [
+          { productId: "prod-3", qty: 2, boxes: 0, pieces: 2, unitLabel: null, status: "PENDING" },
+        ],
+      };
+      jest.spyOn(service as any, "findReplayCandidateByKey").mockResolvedValue(original);
+      const retry = (items: unknown[]) =>
+        service.create({ customerId: "cust-1", items, idempotencyKey: "k-old" } as never, staff);
+      await expect(
+        retry([{ productId: "prod-3", qty: 2, unitLabel: "Piece", unitPrice: 3.33 }]),
+      ).resolves.toBe(original);
+      // a DIFFERENT count is still a different cart
+      await expect(
+        retry([{ productId: "prod-3", qty: 3, unitLabel: "Piece", unitPrice: 3.33 }]),
+      ).rejects.toThrow(/different cart/);
+      expect(prisma.order.create).not.toHaveBeenCalled();
+    });
+
     it("an own-priced Piece row keeps the unit-line path: unitLabel Piece at the row's price", async () => {
       scopedUnits.findMany.mockResolvedValue([
         { ...caseRow, label: "Piece", factorToBase: 1, price: "3.00" },

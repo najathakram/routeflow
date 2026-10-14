@@ -473,7 +473,8 @@ export class InvoicesService {
     const { productMap, categoryMap, unitsByProduct } = await loadManualLineContext(dto.items, {
       prisma: this.prisma,
       entitlements: this.entitlements,
-      derivedBaseTier: (customer as any).pricingTier ?? 1, // units P0b: old-client derived Piece -> pack pieces
+      // units P0b: old-client derived Piece -> pack pieces, at the customer's tier per product (cpMap, as orders)
+      derivedBaseCustomer: { id: customer.id, tier: customer.pricingTier ?? 1 },
     });
     const resolved = dto.items.map((it) =>
       resolveLineUnits(

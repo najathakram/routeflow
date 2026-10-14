@@ -159,6 +159,7 @@ import { printPdfBlob } from "@/lib/print-pdf-blob";
 import { fetchPdfBlob } from "@/lib/fetch-pdf-blob";
 import { CreditNotePicker, type CreditSelection } from "../_components/CreditNotePicker";
 import { OrderLineUnitPicker } from "@/components/OrderLineUnitPicker";
+import { derivedUnitPatch } from "@/lib/edit-line-derived-unit";
 import type { UnitOption } from "@/lib/unit-options";
 import { codedToastCopy } from "@/lib/generic-toast-copy";
 import { markSentErrorText, orderErrorText, sendEmailErrorText } from "@/lib/order-error-text";
@@ -469,6 +470,8 @@ type ApiOrderStatus =
 
 export interface EditItemState {
   priceEdited?: boolean; // #2381: the operator typed this price (picker remounts keep it)
+  /** Units P0b: the picker shows this derived base option for a pack-pieces line. Display state, never submitted. */
+  derivedBase?: string;
   id: string; // real DB id for existing items; temp "new-{uuid}" for new items
   isNew?: boolean;
   /** True for a free-text, non-catalog line (no productId; { name, qty, unitPrice }). */
@@ -1271,11 +1274,15 @@ export function EditableLineItems({
    * new baseline (via `PriceEditRow`) should.
    */
   function setLineUnit(id: string, option: UnitOption, refresh: boolean) {
-    if (option.kind === "pack") return;
     const current = items.find((it) => it.id === id);
     if (!current) return;
+    // Units P0b / SA-728: a DERIVED Piece is the pack's pieces, and going back to the pack from it is one whole pack.
+    const derived = derivedUnitPatch(current, option, refresh);
+    if (derived) return update(id, derived);
+    if (option.kind === "pack") return;
     update(id, {
       unitLabel: option.value,
+      derivedBase: undefined,
       startOnDefaultUnit: false, // any unit choice consumes the default start
       unit: option.label,
       unitsPerBox: option.factorToBase,
@@ -1447,6 +1454,7 @@ export function EditableLineItems({
                         ? item.priceType
                         : "STANDARD",
                     unitLabel: item.unitLabel,
+                    derivedBase: item.derivedBase,
                     priceEdited: item.priceEdited,
                   }}
                   tier={tierForProductId(item.productId)}

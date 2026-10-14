@@ -131,6 +131,20 @@ describe("InvoicesService.create — sell a line by a unit (units_v1, 4c-1)", ()
       expect(created().subtotal).toBe(6.67);
     });
 
+    it("SA P0b must 4: the derived price resolves at the customer's tier PER PRODUCT (a CustomerPrice override), as an order does", async () => {
+      prisma.product.findMany.mockResolvedValue([{ ...PACK3, priceTier3: 8 }]);
+      scopedUnits.findMany.mockResolvedValue([caseRow]);
+      // the customer sits at tier 1, but THIS product is priced at tier 3 for them: pack $8, so a piece is $2.67
+      (prisma.customerPrice.findMany as jest.Mock).mockResolvedValue([
+        { productId: "p1", pricingTier: 3 },
+      ]);
+      await create([line({ qty: 2, unitPrice: 2.67, unitLabel: "Piece" })]);
+      const l = created().items.create[0];
+      expect(l.unitLabel ?? null).toBeNull();
+      expect(l).toMatchObject({ boxes: 0, pieces: 2, qty: 2, unitsPerBox: 3, unitPrice: 8 });
+      expect(l.subtotal).toBe(5.33);
+    });
+
     it("an own-priced Piece row keeps the unit line: 1 pc of a 24-pack @48 + Piece @2.50 = $2.50", async () => {
       prisma.product.findMany.mockResolvedValue([{ ...PRODUCT, pricePerUnit: 48 }]);
       scopedUnits.findMany.mockResolvedValue([
