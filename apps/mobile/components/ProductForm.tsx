@@ -89,9 +89,11 @@ export function ProductForm({
   const onTierEndEditing = (field: TierField, text: string) => {
     const before = parseOptionalNumber(tierFocusRef.current[field] ?? "");
     const after = parseOptionalNumber(text);
-    if (after == null) return; // cleared/invalid — nothing to cascade
-    const changed = before == null || Math.abs(after - before) >= 1e-9;
-    if (!changed) return;
+    const changed = after != null && (before == null || Math.abs(after - before) >= 1e-9);
+    if (after == null || !changed) {
+      setLadderNote(null); // a blur with no commit clears a stale note (SA should)
+      return; // cleared/invalid or unchanged — nothing to cascade
+    }
     // P0 2026-10-14: lower tiers move only by applyLadderChange (tracking the old value, 0, or above the new
     // price), never a blind copy-down, and the move is named under the tiers.
     const moved = applyLadderChange(field, tierFocusRef.current[field] ?? "", after, form);

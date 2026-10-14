@@ -15,6 +15,10 @@ describe("ProductForm tier commit (P0 2026-10-14)", () => {
     expect(src).not.toMatch(/cascadeTierPrices/);
   });
 
+  it("a blur with no commit clears the note", () => {
+    expect(src).toMatch(/if \(after == null \|\| !changed\) \{\s*setLadderNote\(null\);/);
+  });
+
   it("shows the ladder note under the tiers", () => {
     expect(src).toMatch(/setLadderNote\(ladderChangeNote\(moved,/);
     expect(src).toMatch(/testID="ladder-note"/);

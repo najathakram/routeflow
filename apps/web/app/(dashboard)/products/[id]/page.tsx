@@ -219,7 +219,7 @@ function EditableNumber({
 }: {
   value: number;
   onChange: (v: number) => void;
-  onCommit?: (v: number) => void;
+  onCommit?: (v: number, valueAtFocus: number | null) => void;
 }) {
   return (
     <DecimalInput
@@ -367,8 +367,7 @@ export default function ProductDetailPage() {
   const [isDragging, setIsDragging] = React.useState(false);
   const [selectedImages, setSelectedImages] = React.useState<Set<number>>(new Set());
   const [selectMode, setSelectMode] = React.useState(false);
-  // P0 2026-10-14: each tier's last committed value (the "old" side of a ladder commit) and the visible note.
-  const tierCommitBaseRef = React.useRef<Record<string, string>>({});
+  // P0 2026-10-14: the note shown after a tier commit moved other tiers.
   const [ladderNote, setLadderNote] = React.useState<string | null>(null);
   const fileInputRef = React.useRef<HTMLInputElement>(null);
 
@@ -514,7 +513,6 @@ export default function ProductDetailPage() {
       regUomUnit: product.regUomUnit ?? "",
       unitsPerBox: product.unitsPerBox != null ? String(product.unitsPerBox) : "",
     });
-    tierCommitBaseRef.current = {};
     setLadderNote(null);
     setIsEditing(true);
   };
@@ -1960,19 +1958,16 @@ export default function ProductDetailPage() {
                                 onChange={(v) =>
                                   setEditDraft((d) => ({ ...d, [field]: String(v) }))
                                 }
-                                onCommit={(v) => {
+                                onCommit={(v, atFocus) => {
                                   // P0 2026-10-14: lower tiers move only by applyLadderChange (tracking, 0 or above
-                                  // the new price), never a blind copy-down, and the move is named on screen.
-                                  const base = tierCommitBaseRef.current;
-                                  const old = base[field] ?? String(productVal ?? priceNumber);
+                                  // the new price), never a blind copy-down, and the move is named on screen. The
+                                  // OLD side is the field's own focus-time value (SA MUST: no staleable copy).
                                   const moved = applyLadderChange(
                                     field as TierField,
-                                    old,
+                                    atFocus ?? productVal,
                                     v,
                                     editDraft as Record<string, string>,
                                   );
-                                  base[field] = String(v);
-                                  Object.assign(base, moved);
                                   setEditDraft((d) => ({ ...d, ...moved }));
                                   setLadderNote(
                                     ladderChangeNote(moved, (n) => tierLabel(tierLabels, n)),

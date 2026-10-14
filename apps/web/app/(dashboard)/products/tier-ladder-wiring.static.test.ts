@@ -15,9 +15,15 @@ describe("tier commits go through applyLadderChange with the old value", () => {
     for (const src of [detail, list]) expect(src).not.toMatch(/cascadeTierPrices/);
   });
 
-  it("detail page: the old side is the tier's last committed value, and the move is shown", () => {
-    expect(detail).toMatch(/const old = base\[field\] \?\? String\(productVal \?\? priceNumber\);/);
-    expect(detail).toMatch(/applyLadderChange\(\s*field as TierField,\s*old,\s*v,/);
+  it("detail page: the old side is the field's focus-time value, and the move is shown", () => {
+    // SA MUST: the old side is DecimalInput's focus-time value, never a page-held copy (stale after "Set all to
+    // Tier 1" or a cleared-field blur).
+    expect(detail).toMatch(/onCommit=\{\(v, atFocus\) => \{/);
+    expect(detail).toMatch(
+      /applyLadderChange\(\s*field as TierField,\s*atFocus \?\? productVal,\s*v,/,
+    );
+    expect(detail).not.toMatch(/tierCommitBaseRef/);
+    expect(detail).toMatch(/onCommit\?: \(v: number, valueAtFocus: number \| null\) => void;/);
     expect(detail).toMatch(/setLadderNote\(\s*ladderChangeNote\(moved,/);
     expect(detail).toMatch(/data-testid="ladder-note"/);
   });
