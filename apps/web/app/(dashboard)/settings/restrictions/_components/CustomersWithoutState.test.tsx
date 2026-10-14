@@ -76,7 +76,7 @@ describe("CustomersWithoutState (Addendum D)", () => {
     renderWithProviders(<CustomersWithoutState canFix staffOrdersChecked={false} />);
     expect(
       await screen.findByText(
-        "5 customers need a state. Until it's set, products with a legal state ban stay hidden from them in your portal and can't be ordered there. Other state limits won't reach them. Staff orders aren't checked (turn on 'Also block restricted products on staff orders and invoices' to block them).",
+        "5 customers need a state. Until it's set, products with a legal state ban stay hidden from them in your portal and can't be ordered there. Other state limits won't reach them. Staff orders and invoices aren't checked (turn on 'Also block restricted products on staff orders and invoices' to block them).",
       ),
     ).toBeInTheDocument();
     expect(screen.getByText("3 have no address")).toBeInTheDocument();
@@ -89,7 +89,7 @@ describe("CustomersWithoutState (Addendum D)", () => {
 
   it("header says staff orders are not checked when the switch is off", async () => {
     renderWithProviders(<CustomersWithoutState canFix staffOrdersChecked={false} />);
-    expect(await screen.findByText(/Staff orders aren't checked/)).toBeInTheDocument();
+    expect(await screen.findByText(/Staff orders and invoices aren't checked/)).toBeInTheDocument();
   });
 
   it("header says the products cannot be sold on any order when the switch is on", async () => {
@@ -97,7 +97,7 @@ describe("CustomersWithoutState (Addendum D)", () => {
     expect(
       await screen.findByText(/they can't be sold those products on any order/),
     ).toBeInTheDocument();
-    expect(screen.queryByText(/Staff orders aren't checked/)).toBeNull();
+    expect(screen.queryByText(/Staff orders and invoices aren't checked/)).toBeNull();
   });
 
   it("is amber, never red", async () => {

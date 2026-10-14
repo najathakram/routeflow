@@ -43,9 +43,9 @@ export const STAFF_ORDERS_SWITCH_LABEL =
 const noStateEffect = (staffOrdersChecked: boolean) =>
   staffOrdersChecked
     ? "Until it's set, products with a legal state ban stay hidden from them in your portal, and they can't be sold those products on any order. Other state limits won't reach them."
-    : `Until it's set, products with a legal state ban stay hidden from them in your portal and can't be ordered there. Other state limits won't reach them. Staff orders aren't checked (turn on '${STAFF_ORDERS_SWITCH_LABEL}' to block them).`;
+    : `Until it's set, products with a legal state ban stay hidden from them in your portal and can't be ordered there. Other state limits won't reach them. Staff orders and invoices aren't checked (turn on '${STAFF_ORDERS_SWITCH_LABEL}' to block them).`;
 
-export function headerLine(total: number, truncated = false, staffOrdersChecked = false): string {
+export function headerLine(total: number, truncated = false, staffOrdersChecked: boolean): string {
   if (truncated) return `${TRUNCATED_LINE} ${noStateEffect(staffOrdersChecked)}`;
   if (total === 0) return "Every customer has a state on file.";
   return `${plural(total, "customer needs", "customers need")} a state. ${noStateEffect(staffOrdersChecked)}`;

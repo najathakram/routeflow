@@ -1,7 +1,7 @@
 import { headerLine } from "./unknown-state";
 
 const OFF_TAIL =
-  "Until it's set, products with a legal state ban stay hidden from them in your portal and can't be ordered there. Other state limits won't reach them. Staff orders aren't checked (turn on 'Also block restricted products on staff orders and invoices' to block them).";
+  "Until it's set, products with a legal state ban stay hidden from them in your portal and can't be ordered there. Other state limits won't reach them. Staff orders and invoices aren't checked (turn on 'Also block restricted products on staff orders and invoices' to block them).";
 const ON_TAIL =
   "Until it's set, products with a legal state ban stay hidden from them in your portal, and they can't be sold those products on any order. Other state limits won't reach them.";
 
