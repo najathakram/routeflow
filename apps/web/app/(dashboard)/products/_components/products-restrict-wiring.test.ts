@@ -12,7 +12,7 @@ const src = fs.readFileSync(path.join(__dirname, "..", "page.tsx"), "utf8");
 
 describe("products/page.tsx - row 509 wiring", () => {
   it("renders the Restrict… menu right after the Limit in portal… buttons", () => {
-    expect(src).toMatch(/<PortalLimitButtons\b[\s\S]{0,120}?\/>\s*<RestrictMenu\b/);
+    expect(src).toMatch(/<PortalLimitButtons\b[\s\S]{0,200}?\/>\s*<RestrictMenu\b/);
   });
 
   it("keeps every existing bulk control", () => {
@@ -51,7 +51,10 @@ describe("products/page.tsx - row 509 wiring", () => {
   });
   describe("a banner selection holds off-page ids: only Restrict… may act on it", () => {
     it("tracks the banner state and gives every other bulk action the hint", () => {
-      expect(src).toMatch(/<SelectAllMatching[\s\S]{0,800}?onActiveChange=\{setBannerSelected\}/);
+      // derived from the ids (any selected id the page does not hold), so un-ticking one row cannot re-enable them
+      expect(src).toMatch(
+        /const bannerSelected =[^;]*Array\.from\(selected\)\.some\(\(id\) => !productById\.has\(id\)\)/,
+      );
       expect(src).toMatch(/<PortalBulkButtons[\s\S]{0,200}?offPageHint=\{offPageHint\}/);
       expect(src).toMatch(/<PortalLimitButtons[\s\S]{0,200}?offPageHint=\{offPageHint\}/);
     });

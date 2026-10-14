@@ -22,6 +22,9 @@ export const RESTRICT_SAVE_FAILED = "Couldn't save. Nothing was changed. Try aga
 export const RESTRICT_UNDO_FAILED = "Couldn't undo. Nothing was changed.";
 export const RESTRICT_TOO_MANY = `Select up to ${RESTRICT_MAX.toLocaleString("en-US")} products at a time.`;
 
+/** Why a bulk action is off while the selection came from "Select all matching" (it holds ids beyond this page). */
+export const OFF_PAGE_HINT = "Choose products on this page to use this action.";
+
 export const ruleHref = (id: string) => `/settings/restrictions/rules/${id}`;
 
 const plural = (n: number, one: string, many: string) => `${n} ${n === 1 ? one : many}`;

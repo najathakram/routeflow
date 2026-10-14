@@ -109,8 +109,16 @@ export function LimitInPortalDialog({
         const ruleId = res.ruleId;
         const createdIds = ruleId ? [ruleId] : (res.createdIds ?? []);
         const changed = res.created > 0 && createdIds.length > 0;
+        // `created` counts RULES (1 or 0). Every PRODUCT count comes from the request: ids sent minus the ones the
+        // server skipped. A category scope keeps its copy, which only asks whether a rule was created.
+        const sent = scope.kind === "products" ? scope.productIds.length : 0;
+        const hidden =
+          res.created > 0 ? Math.max(0, sent - (res.skippedProductIds?.length ?? 0)) : 0;
         toast({
-          title: doneTitle(scope, chosen, res.created, res.skipped),
+          title:
+            scope.kind === "products"
+              ? doneTitle(scope, chosen, hidden, sent - hidden)
+              : doneTitle(scope, chosen, res.created, res.skipped),
           variant: "success",
           duration: UNDO_VISIBLE_MS,
           secondaryAction: ruleId
@@ -126,10 +134,10 @@ export function LimitInPortalDialog({
                       .then((r) => {
                         qc.invalidateQueries({ queryKey: ["selling-restrictions"] });
                         toast({
-                          // One rule lifted = `created` products un-hidden; the old N-rows path lifted N rules.
+                          // One rule lifted un-hides `hidden` products; the old N-rows path lifted N rules.
                           title: undoneTitle(
                             chosen,
-                            ruleId ? res.created : (r.lifted ?? createdIds.length),
+                            ruleId ? hidden : (r.lifted ?? createdIds.length),
                             scope,
                           ),
                           variant: "success",

@@ -17,6 +17,9 @@ import {
   type PortalVisibilityRow,
 } from "@/lib/product-portal-visibility-ui";
 
+/** The id of the one visible hint line the page renders while the selection is off-page; disabled controls point at it. */
+export const OFF_PAGE_HINT_ID = "bulk-off-page-hint";
+
 /** "Hidden" / "Hidden by parent" badge for a list row; renders nothing for a visible row. */
 export function PortalHiddenBadge({ product }: { product: PortalVisibilityRow }) {
   const kind = portalBadge(product);
@@ -53,16 +56,21 @@ export function PortalHiddenFilter({
 export function PortalBulkButtons({
   selected,
   onDone,
+  offPageHint,
 }: {
   selected: Set<string>;
   onDone: () => void;
+  /** Set while the selection came from "Select all matching" (ids beyond the page): both buttons are off, with this hint. */
+  offPageHint?: string;
 }) {
   const role = useAuth().user?.role;
   const { toast } = useToast();
   const bulk = useBulkSetPortalVisibility();
   if (!canBulkSetPortalVisibility(role, selected.size)) return null;
+  const offPage = !!offPageHint;
   const tooMany = bulkPortalTooMany(selected.size);
   const run = (portalVisible: boolean) =>
+    !offPage &&
     bulk.mutate(bulkPortalPayload(selected, portalVisible), {
       onSuccess: (res) => {
         toast({
@@ -74,7 +82,7 @@ export function PortalBulkButtons({
     });
   return (
     <>
-      {tooMany && (
+      {tooMany && !offPage && (
         <span className="text-xs text-amber-700" data-testid="portal-bulk-limit">
           Select up to {BULK_PORTAL_MAX} products to hide or show ({selected.size} selected).
         </span>
@@ -82,7 +90,9 @@ export function PortalBulkButtons({
       <Button
         variant="secondary"
         leftIcon={<EyeOff className="h-4 w-4" />}
-        disabled={tooMany}
+        disabled={tooMany || offPage}
+        title={offPageHint}
+        aria-describedby={offPage ? OFF_PAGE_HINT_ID : undefined}
         loading={bulk.isPending}
         data-testid="portal-bulk-hide"
         onClick={() => run(false)}
@@ -92,7 +102,9 @@ export function PortalBulkButtons({
       <Button
         variant="secondary"
         leftIcon={<Eye className="h-4 w-4" />}
-        disabled={tooMany}
+        disabled={tooMany || offPage}
+        title={offPageHint}
+        aria-describedby={offPage ? OFF_PAGE_HINT_ID : undefined}
         loading={bulk.isPending}
         data-testid="portal-bulk-show"
         onClick={() => run(true)}
@@ -111,9 +123,12 @@ export function PortalBulkButtons({
 export function PortalLimitButtons({
   selected,
   onDone,
+  offPageHint,
 }: {
   selected: Set<string>;
   onDone: () => void;
+  /** Set while the selection came from "Select all matching" (ids beyond the page): both controls are off, with this hint. */
+  offPageHint?: string;
 }) {
   const role = useAuth().user?.role;
   const readOnly = useReadOnlyGate().readOnly;
@@ -126,6 +141,9 @@ export function PortalLimitButtons({
         variant="secondary"
         leftIcon={<Ban className="h-4 w-4" />}
         data-testid="portal-bulk-limit-open"
+        disabled={!!offPageHint}
+        title={offPageHint}
+        aria-describedby={offPageHint ? OFF_PAGE_HINT_ID : undefined}
         onClick={() => setMode("products")}
       >
         Limit in portal…
@@ -133,7 +151,9 @@ export function PortalLimitButtons({
       <button
         type="button"
         data-testid="portal-select-all-category"
-        disabled={readOnly}
+        disabled={readOnly || !!offPageHint}
+        title={offPageHint}
+        aria-describedby={offPageHint ? OFF_PAGE_HINT_ID : undefined}
         className="text-sm font-medium text-brand-600 hover:underline disabled:cursor-not-allowed disabled:opacity-50"
         onClick={() => setMode("category")}
       >

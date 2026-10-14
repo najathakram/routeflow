@@ -47,6 +47,7 @@ import {
   PortalLimitButtons,
   PortalHiddenBadge,
   PortalHiddenFilter,
+  OFF_PAGE_HINT_ID,
 } from "./_components/PortalVisibilityControls";
 import { portalBadge, portalVisibleFilterParam } from "@/lib/product-portal-visibility-ui";
 import { NewFamilyButton } from "@/components/family/NewFamilyButton";
@@ -56,6 +57,7 @@ import { ReadOnlyHint, WriteButton } from "@/lib/read-only-gate";
 import { ProductsExportButton } from "./_components/ProductsExportButton";
 import { RestrictMenu } from "@/components/restrictions/RestrictMenu";
 import { SelectAllMatching } from "@/components/restrictions/SelectAllMatching";
+import { OFF_PAGE_HINT } from "@/lib/rule-chooser";
 import {
   STOCK_FILTER_CHIPS,
   ProductStatusBadge,
@@ -1104,6 +1106,13 @@ export default function ProductsPage() {
   // silently dropped any id selected on a different page/filter view.
   const productById = React.useMemo(() => new Map(filtered.map((p) => [p.id, p])), [filtered]);
 
+  // Row 509: "Select all matching" puts ids BEYOND this page in the selection. Derived from the ids themselves (not from
+  // the banner's state), so deselecting one visible row cannot turn the other actions back on for ids the operator
+  // cannot see. Only Restrict… may act on such a selection; every other bulk action is off, with a hint.
+  const bannerSelected =
+    selected.size > 0 && Array.from(selected).some((id) => !productById.has(id));
+  const offPageHint = bannerSelected ? OFF_PAGE_HINT : undefined;
+
   // Names of the selected products this page holds (the rule editor labels its chips from them).
   const selectedNames = React.useMemo(() => {
     const out: Record<string, string> = {};
@@ -1132,6 +1141,7 @@ export default function ProductsPage() {
     });
 
   const handleBulkDelete = async () => {
+    if (bannerSelected) return;
     const ids = Array.from(selected);
     try {
       // R1's server contract is {deleted, softDeleted, skipped[]} (vendor-bills'
@@ -1430,6 +1440,18 @@ export default function ProductsPage() {
           <span className="text-sm font-medium text-navy">
             {selected.size} item{selected.size !== 1 ? "s" : ""} selected
           </span>
+          {bannerSelected && (
+            <p id={OFF_PAGE_HINT_ID} className="basis-full text-xs text-navy/70">
+              {OFF_PAGE_HINT}{" "}
+              <button
+                type="button"
+                className="min-h-11 font-medium text-brand-600 hover:underline sm:min-h-0"
+                onClick={() => setSelected(new Set())}
+              >
+                Clear selection
+              </button>
+            </p>
+          )}
           <div className="flex flex-wrap items-center gap-2">
             <button
               onClick={() => setSelected(new Set())}
@@ -1441,7 +1463,9 @@ export default function ProductsPage() {
               variant="secondary"
               leftIcon={<GitBranch className="h-4 w-4" />}
               onClick={() => setShowGroupAsVariants(true)}
-              disabled={selected.size < 1}
+              disabled={selected.size < 1 || bannerSelected}
+              title={offPageHint}
+              aria-describedby={bannerSelected ? OFF_PAGE_HINT_ID : undefined}
             >
               Group as variants of…
             </Button>
@@ -1450,13 +1474,23 @@ export default function ProductsPage() {
                 variant="secondary"
                 leftIcon={<Layers className="h-4 w-4" />}
                 onClick={() => setShowAssignToSection(true)}
-                disabled={selected.size < 1}
+                disabled={selected.size < 1 || bannerSelected}
+                title={offPageHint}
+                aria-describedby={bannerSelected ? OFF_PAGE_HINT_ID : undefined}
               >
                 Assign to type…
               </Button>
             )}
-            <PortalBulkButtons selected={selected} onDone={() => setSelected(new Set())} />
-            <PortalLimitButtons selected={selected} onDone={() => setSelected(new Set())} />
+            <PortalBulkButtons
+              selected={selected}
+              onDone={() => setSelected(new Set())}
+              offPageHint={offPageHint}
+            />
+            <PortalLimitButtons
+              selected={selected}
+              onDone={() => setSelected(new Set())}
+              offPageHint={offPageHint}
+            />
             <RestrictMenu
               selected={selected}
               names={selectedNames}
@@ -1471,6 +1505,9 @@ export default function ProductsPage() {
                 variant="danger"
                 leftIcon={<Trash2 className="h-4 w-4" />}
                 loading={bulkDelete.isPending}
+                disabled={bannerSelected}
+                title={offPageHint}
+                aria-describedby={bannerSelected ? OFF_PAGE_HINT_ID : undefined}
                 onClick={() => setShowBulkDeleteConfirm(true)}
               >
                 Delete {selected.size} item{selected.size !== 1 ? "s" : ""}

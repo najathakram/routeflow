@@ -126,6 +126,7 @@ describe("LimitInPortalDialog (C a-d)", () => {
       "Nothing changed. 12 products were already hidden from Texas portal customers.",
     );
     expect(shown.action).toBeUndefined();
+    expect(shown.secondaryAction.label).toBe("View limits");
   });
 
   it("(b) the primary is disabled until a state is chosen", async () => {
@@ -217,9 +218,9 @@ describe("LimitInPortalDialog (C a-d)", () => {
     const shown = toast.mock.calls[0][0];
     expect(shown.title).toBe("10 products hidden from Texas portal customers. 2 already were.");
     expect(shown.action.label).toBe("Undo");
-    expect(shown.secondaryAction.label).toBe("View limits");
+    expect(shown.secondaryAction.label).toBe("View rule");
     shown.secondaryAction.onClick();
-    expect(push).toHaveBeenCalledWith("/settings/restrictions/rules");
+    expect(push).toHaveBeenCalledWith("/settings/restrictions/rules/rule-1");
     expect(shown.duration).toBe(10_000);
     expect(onDone).toHaveBeenCalled();
 
