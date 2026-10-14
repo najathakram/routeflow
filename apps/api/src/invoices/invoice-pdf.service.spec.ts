@@ -308,15 +308,25 @@ describe("InvoicePdfService.getOrGenerate — pointer written only on change", (
     return { prisma, storage, url };
   }
 
+  /**
+   * Row 502: the pointer is written by ONE tenant-scoped raw UPDATE of pdfUrl only (no Prisma update, which
+   * would move updatedAt, the H4 edit token).
+   */
+  function expectPointerWrite(prisma: any) {
+    expect(prisma.invoice.update).not.toHaveBeenCalled();
+    expect(prisma.$executeRaw).toHaveBeenCalledTimes(1);
+    const [strings, ...values] = prisma.$executeRaw.mock.calls[0];
+    expect(strings.join("?")).toBe(
+      'UPDATE "Invoice" SET "pdfUrl" = ? WHERE id = ? AND "tenantId" = ?',
+    );
+    expect(values).toEqual([invoicePdfStorageKey("inv-1"), "inv-1", expect.any(String)]);
+  }
+
   it("writes the pointer once when none is stored", async () => {
     const { prisma, storage } = await renderWithStoredPointer(null);
 
     expect(storage.upload).toHaveBeenCalledTimes(1);
-    expect(prisma.invoice.update).toHaveBeenCalledTimes(1);
-    expect(prisma.invoice.update).toHaveBeenCalledWith({
-      where: { id: "inv-1" },
-      data: { pdfUrl: invoicePdfStorageKey("inv-1") },
-    });
+    expectPointerWrite(prisma);
   });
 
   it("does not write the row again when the stored pointer already equals the key", async () => {
@@ -337,11 +347,7 @@ describe("InvoicePdfService.getOrGenerate — pointer written only on change", (
   it("writes the pointer once when the stored value is a different key", async () => {
     const { prisma } = await renderWithStoredPointer("invoice-pdfs/some-older-key.pdf");
 
-    expect(prisma.invoice.update).toHaveBeenCalledTimes(1);
-    expect(prisma.invoice.update).toHaveBeenCalledWith({
-      where: { id: "inv-1" },
-      data: { pdfUrl: invoicePdfStorageKey("inv-1") },
-    });
+    expectPointerWrite(prisma);
   });
 });
 

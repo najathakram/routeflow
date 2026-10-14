@@ -1,3 +1,4 @@
+import { clearTenantInvoicePdfPointers } from "../invoices/invoice-pdf-pointer";
 import {
   BadRequestException,
   Body,
@@ -235,10 +236,7 @@ export class SettingsController {
         ];
         const touchesInvoice = invoiceVisibleKeys.some((k) => k in configUpdate);
         if (touchesInvoice) {
-          await this.prisma.invoice.updateMany({
-            where: { tenantId, pdfUrl: { not: null } },
-            data: { pdfUrl: null },
-          });
+          await clearTenantInvoicePdfPointers(this.prisma, tenantId); // row 502: no updatedAt bump
         }
       }
     }
