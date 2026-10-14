@@ -24,11 +24,13 @@ describe("flagRestrictedLines", () => {
 
   it("checks only the deduped catalog product ids (productless lines dropped)", async () => {
     await flagRestrictedLines({ restrictions, warn } as never, {
+      fulfilmentKind: "DELIVERY",
       tenantId: "t1",
       customerId: "c1",
       productIds: ["p-b", "p-b", null, undefined, "p-ok"],
     });
     expect(restrictions.checkLinesSellable).toHaveBeenCalledWith({
+      fulfilmentKind: "DELIVERY",
       tenantId: "t1",
       customerId: "c1",
       lines: [{ productId: "p-b" }, { productId: "p-ok" }],
@@ -67,6 +69,7 @@ describe("flagRestrictedLines", () => {
 
   it("BLOCK returns the flagged lines", async () => {
     const lines = await flagRestrictedLines({ restrictions, warn } as never, {
+      fulfilmentKind: "DELIVERY",
       tenantId: "t1",
       customerId: "c1",
       productIds: ["p-b"],
@@ -79,6 +82,7 @@ describe("flagRestrictedLines", () => {
   it("INDETERMINATE also flags", async () => {
     restrictions.checkLinesSellable.mockResolvedValue({ ...banned, outcome: "INDETERMINATE" });
     const lines = await flagRestrictedLines({ restrictions, warn } as never, {
+      fulfilmentKind: "DELIVERY",
       tenantId: "t1",
       customerId: "c1",
       productIds: ["p-b"],
@@ -89,6 +93,7 @@ describe("flagRestrictedLines", () => {
   it("ALLOW returns no flags", async () => {
     restrictions.checkLinesSellable.mockResolvedValue({ outcome: "ALLOW", reasons: [] });
     const lines = await flagRestrictedLines({ restrictions, warn } as never, {
+      fulfilmentKind: "DELIVERY",
       tenantId: "t1",
       customerId: "c1",
       productIds: ["p-ok"],
@@ -98,6 +103,7 @@ describe("flagRestrictedLines", () => {
 
   it("no catalog product ids at all short-circuits with no read", async () => {
     const lines = await flagRestrictedLines({ restrictions, warn } as never, {
+      fulfilmentKind: "DELIVERY",
       tenantId: "t1",
       customerId: "c1",
       productIds: [null, undefined],
@@ -110,6 +116,7 @@ describe("flagRestrictedLines", () => {
     restrictions.checkLinesSellable.mockRejectedValue(new Error("db down"));
     await expect(
       flagRestrictedLines({ restrictions, warn } as never, {
+        fulfilmentKind: "DELIVERY",
         tenantId: "t1",
         customerId: "c1",
         productIds: ["p-b"],

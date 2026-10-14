@@ -40,6 +40,7 @@ describe("selling restrictions: counter / pickup judge the STORE state (L8)", ()
     prisma.tenantConfig.findUnique.mockResolvedValue(state === null ? null : { state });
   const judge = (customerId: string | null, fulfilmentKind?: "COUNTER" | "PICKUP" | "DELIVERY") =>
     service.evaluate(T, customerId, [{ productId: "p1" }], {
+      fulfilmentKind: "DELIVERY",
       at: NOW,
       channel: "STAFF",
       ...(fulfilmentKind ? { fulfilmentKind } : {}),
@@ -161,6 +162,7 @@ describe("selling restrictions: counter / pickup judge the STORE state (L8)", ()
       lines: [{ productId: "p1" }],
       channel: "STAFF" as const,
       at: NOW,
+      fulfilmentKind: "DELIVERY" as const,
     };
     expect((await service.checkLinesSellable({ ...base, fulfilmentKind: "COUNTER" })).outcome).toBe(
       "ALLOW",
@@ -177,16 +179,15 @@ describe("sale-fulfilment: the one classifier", () => {
     expect(saleFulfilmentKind({ counterSale: true, fulfillPath: "PICKUP" })).toBe("COUNTER");
     expect(saleFulfilmentKind({ counterSale: true, fulfillPath: "ROUTE" })).toBe("COUNTER");
     expect(saleFulfilmentKind({ counterSale: false, fulfillPath: "PICKUP" })).toBe("PICKUP");
-    expect(saleFulfilmentKind({ fulfillPath: "ROUTE" })).toBe("DELIVERY");
-    expect(saleFulfilmentKind({ fulfillPath: "SHIP" })).toBe("DELIVERY");
+    expect(saleFulfilmentKind({ counterSale: undefined, fulfillPath: "ROUTE" })).toBe("DELIVERY");
+    expect(saleFulfilmentKind({ counterSale: undefined, fulfillPath: "SHIP" })).toBe("DELIVERY");
     expect(saleFulfilmentKind(null)).toBe("DELIVERY");
-    expect(saleFulfilmentKind({})).toBe("DELIVERY");
+    expect(saleFulfilmentKind({ counterSale: undefined, fulfillPath: undefined })).toBe("DELIVERY");
   });
   it("only COUNTER / PICKUP are judged at the store", () => {
     expect(judgedAtStore("COUNTER")).toBe(true);
     expect(judgedAtStore("PICKUP")).toBe(true);
     expect(judgedAtStore("DELIVERY")).toBe(false);
-    expect(judgedAtStore(undefined)).toBe(false);
   });
 });
 
@@ -245,7 +246,7 @@ describe("store state unset: the choke point refuses counter, POS and pickup (L8
 
   it.each([
     ["COUNTER", { counterSale: true, fulfillPath: "PICKUP" }],
-    ["POS hand-over (stored as PICKUP)", { fulfillPath: "PICKUP" }],
+    ["POS hand-over (stored as PICKUP)", { counterSale: undefined, fulfillPath: "PICKUP" }],
     ["PICKUP", { counterSale: false, fulfillPath: "PICKUP" }],
   ])(
     "%s with no store state is refused 409, for a named, walk-in and absent customer",
