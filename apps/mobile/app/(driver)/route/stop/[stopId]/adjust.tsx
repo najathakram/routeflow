@@ -27,7 +27,6 @@ import {
   dropHandedOffAdded,
   dropHandedOffQty,
   dropSucceededAddedLine,
-  leftoverAddedMessage,
   type AtDoorAddedLine,
   type AtDoorEditedLine,
 } from "../../../../../lib/at-door-diff";
@@ -48,8 +47,10 @@ import { type BlockedCategory } from "../../../../../lib/api/authorizations";
 import { type CreditLimitExceededInfo } from "../../../../../lib/credit-limit-error";
 import {
   AT_STOP_RESTRICTED_SENT_COPY,
+  AT_STOP_RESTRICTED_SENT_TITLE,
   classifyAtStopResolveError,
 } from "../../../../../lib/at-stop-cr-outcome";
+import { useAtStopBatchEnd } from "../../../../../lib/use-at-stop-batch-end";
 import { useRestrictionWarningRetry } from "../../../../../lib/use-restriction-warning-retry";
 import { showToast } from "../../../../../lib/toast";
 import { useOfflineQueue } from "../../../../../store/offlineQueue";
@@ -126,17 +127,14 @@ export default function AdjustOrderScreen() {
   // failure below, B790): removing the line or getting an override are both real next
   // steps here, not just "retry the same thing again".
   const blockedCrRef = useRef<string | null>(null);
-  // Set by processDiff right after a batch finishes successfully — the actual
-  // toast/navigate decision waits for the effect below, which reads `added`
-  // only once React has settled it to its TRUE latest value (never a value
-  // read mid-function, which could miss a concurrent re-scan's own setAdded).
-  const batchJustCompletedRef = useRef(false);
   // Row 510: a DRIVER may not override a selling restriction, so a restricted add/raise is refused at resolve with the
   // fixed "Ask the office to approve this sale" block. The shared modal shows it (the same copy and legal lines the
   // office sees); the CR stays PENDING for the office to approve with an override.
   const rw = useRestrictionWarningRetry();
-  // Set when an entry was handed to the office this batch: the closing toast must not claim a plain "Order updated".
+  // Set when an entry was handed to the office this batch: the batch must end in the confirmation, not a plain "Order updated".
   const handedToOfficeRef = useRef(false);
+  // True once the batch ended with an entry handed to the office: a confirmation stays on screen until the driver taps Done.
+  const [sentToOffice, setSentToOffice] = useState(false);
   // Always the latest render's continuation, so the modal's OK (rendered a render later) resumes with current closures.
   const resumeAfterBlockRef = useRef<() => void>(() => undefined);
 
@@ -373,30 +371,36 @@ export default function AdjustOrderScreen() {
     }
     pendingRef.current = null;
     setSaving(false);
-    // B795 review round 2: the toast/navigate decision below waits for the
-    // effect (reads the TRUE latest `added`) rather than deciding here --
-    // a concurrent re-scan's own setAdded may not have committed yet.
-    batchJustCompletedRef.current = true;
+    // B795 review round 2: the end-of-batch decision is made by useAtStopBatchEnd below, after the commit, from the TRUE
+    // latest `added` (a concurrent re-scan's own setAdded may not have committed yet). It is signalled here by its OWN
+    // counter, not inferred from `saving` changing: the resume after the restricted block does setSaving(true) then
+    // setSaving(false) in one tick, `saving` never changes, and the old effect never ran (no confirmation, no navigation).
+    markBatchEnded();
   }
 
-  // Fires once the batch-completion flag is set AND `saving` has settled to
-  // false, reading whatever `added` React has ACTUALLY committed by then. A
-  // concurrent re-scan mid-batch can leave units here that were never part of
-  // the diff just processed -- never silently discard them by navigating away
-  // (Opus review, #1302 round 2: router.back() used to fire unconditionally).
-  useEffect(() => {
-    if (!batchJustCompletedRef.current || saving) return;
-    batchJustCompletedRef.current = false;
-    const leftover = leftoverAddedMessage(added);
-    if (leftover) {
-      showToast(leftover);
-      return;
-    }
-    const handedOff = handedToOfficeRef.current;
-    handedToOfficeRef.current = false;
-    showToast(handedOff ? AT_STOP_RESTRICTED_SENT_COPY : "Order updated");
-    router.back();
-  }, [saving, added, router]);
+  // Fires once per markBatchEnded(), after `saving` has settled false. A concurrent re-scan mid-batch can leave units in
+  // the draft that were never part of the diff just processed -- never silently discard them by navigating away (Opus
+  // review, #1302 round 2). A restricted entry handed to the office ends in a confirmation that stays until Done.
+  const { markEnded: markBatchEnded } = useAtStopBatchEnd({
+    saving,
+    added,
+    handedToOffice: () => handedToOfficeRef.current,
+    onEnd: (end) => {
+      switch (end.kind) {
+        case "leftover":
+          showToast(end.message);
+          return;
+        case "sent-to-office":
+          handedToOfficeRef.current = false;
+          setSentToOffice(true);
+          return;
+        case "done":
+          showToast(end.message);
+          router.back();
+          return;
+      }
+    },
+  });
 
   resumeAfterBlockRef.current = () => {
     const pending = pendingRef.current;
@@ -544,12 +548,33 @@ export default function AdjustOrderScreen() {
         </View>
 
         <View style={{ paddingHorizontal: 16 }}>
+          {sentToOffice ? (
+            // The driver read the block, then the rest was applied: say so in a card that stays until Done (a timed
+            // toast, or navigating away at once, is how this confirmation went unseen).
+            <View
+              style={styles.sentCard}
+              testID="sent-to-office"
+              accessible
+              accessibilityRole="alert"
+              accessibilityLiveRegion="polite"
+              accessibilityLabel={`${AT_STOP_RESTRICTED_SENT_TITLE}. ${AT_STOP_RESTRICTED_SENT_COPY}`}
+            >
+              <Ionicons name="checkmark-circle" size={22} color={ios.system.green} />
+              <View style={{ flex: 1 }}>
+                <Text style={styles.sentTitle}>{AT_STOP_RESTRICTED_SENT_TITLE}</Text>
+                <Text style={styles.sentBody}>{AT_STOP_RESTRICTED_SENT_COPY}</Text>
+              </View>
+            </View>
+          ) : null}
           <Pressable
             style={[styles.saveBtn, saving && styles.saveBtnDisabled]}
-            onPress={saving ? undefined : handleSave}
+            onPress={sentToOffice ? () => router.back() : saving ? undefined : handleSave}
             disabled={saving}
+            accessibilityRole="button"
           >
-            <Text style={styles.saveBtnText}>{saving ? "Saving…" : "Save changes"}</Text>
+            <Text style={styles.saveBtnText}>
+              {sentToOffice ? "Done" : saving ? "Saving…" : "Save changes"}
+            </Text>
           </Pressable>
         </View>
       </ScrollView>
@@ -557,7 +582,11 @@ export default function AdjustOrderScreen() {
       {/* B795 review round 2: hide the scanner while saving too, not just
           during the license block -- a scan landing mid-batch grows a draft
           past what a just-sent ADD_ITEM already covers. */}
-      <BarcodeFab onScanned={handleScanned} aimAssist hidden={saving || !!licenseBlock} />
+      <BarcodeFab
+        onScanned={handleScanned}
+        aimAssist
+        hidden={saving || !!licenseBlock || sentToOffice}
+      />
       {rw.modal}
       <ScanMatchPickerSheet {...matchPicker.props} />
 
@@ -927,5 +956,22 @@ const styles = StyleSheet.create({
     alignItems: "center",
   },
   saveBtnDisabled: { opacity: 0.55 },
+  sentCard: {
+    flexDirection: "row",
+    alignItems: "flex-start",
+    gap: 10,
+    backgroundColor: ios.system.greenWash,
+    borderRadius: 14,
+    padding: 14,
+    marginBottom: 12,
+  },
+  sentTitle: { fontSize: 15, fontFamily: "Inter_700Bold", color: ios.label },
+  sentBody: {
+    fontSize: 14,
+    fontFamily: "Inter_400Regular",
+    color: ios.label2,
+    lineHeight: 20,
+    marginTop: 2,
+  },
   saveBtnText: { color: "#fff", fontSize: 17, fontFamily: "Inter_600SemiBold" },
 });

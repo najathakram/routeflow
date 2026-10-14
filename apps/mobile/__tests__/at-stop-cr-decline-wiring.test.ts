@@ -96,7 +96,24 @@ describe("row 510: adjust.tsx leaves a driver's restricted CR PENDING and shows 
     expect(src).toMatch(/rw\.handle\(\s*e,\s*\(\) => undefined,/);
   });
 
-  it("the final toast says a change is waiting for the office instead of a plain 'Order updated'", () => {
+  it("the batch end goes through useAtStopBatchEnd: its OWN completion signal, not the saving flag alone", () => {
+    expect(src).toContain("useAtStopBatchEnd(");
+    expect(src).toMatch(/markBatchEnded\(\)/);
+    // the old pattern (a flag ref + an effect that waits on `saving` changing) is gone
+    expect(src).not.toContain("batchJustCompletedRef");
+  });
+
+  it("a hand-off ends in a CONFIRMATION that stays until the driver taps Done: no auto-navigation, no timed toast", () => {
+    const at = src.indexOf('case "sent-to-office":');
+    expect(at).toBeGreaterThan(-1);
+    const body = src.slice(at, src.indexOf('case "done":', at));
+    expect(body).toMatch(/setSentToOffice\(true\)/);
+    expect(body).not.toMatch(/router\.back\(\)|showToast/);
+    expect(src).toContain('testID="sent-to-office"');
+    expect(src).toContain("AT_STOP_RESTRICTED_SENT_TITLE");
     expect(src).toContain("AT_STOP_RESTRICTED_SENT_COPY");
+    // the primary button becomes Done and goes back
+    expect(src).toMatch(/sentToOffice \? "Done"/);
+    expect(src).toMatch(/sentToOffice \? \(\) => router\.back\(\)/);
   });
 });

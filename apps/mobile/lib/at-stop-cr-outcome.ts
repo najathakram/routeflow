@@ -4,6 +4,7 @@ import {
   regulatedAuthErrorCopy,
   type BlockedCategory,
 } from "./authorizations-logic";
+import { leftoverAddedMessage } from "./at-door-diff";
 import { parseRestrictionHardBlock } from "./restriction-warning";
 
 /**
@@ -77,6 +78,35 @@ export function classifyAtStopResolveError(e: unknown): AtStopResolveOutcome {
   return { action: "decline", reason };
 }
 
-/** The final toast when a batch finished but a restricted change was handed to the office instead of applied. */
+/** The confirmation when a batch finished but a restricted change was handed to the office instead of applied. */
+export const AT_STOP_RESTRICTED_SENT_TITLE = "Sent to the office";
 export const AT_STOP_RESTRICTED_SENT_COPY =
   "Order updated. The office will review the restricted item.";
+
+/**
+ * How an at-door batch ends. Pure, so it is unit-tested, and it reads the SETTLED state:
+ *   - leftover: units a concurrent re-scan left in the draft are never discarded (the driver stays and taps Save again);
+ *   - sent-to-office: a restricted entry went to the office. This is a confirmation that STAYS until the driver taps
+ *     Done (no timed toast, no automatic navigation): the driver just read a block and must see that the rest went through;
+ *   - done: a plain finish, "Order updated", then back.
+ */
+export type AtStopBatchEnd =
+  | { kind: "leftover"; message: string }
+  | { kind: "sent-to-office"; title: string; body: string }
+  | { kind: "done"; message: string };
+
+export function decideAtStopBatchEnd(p: {
+  added: ReadonlyArray<unknown>;
+  handedToOffice: boolean;
+}): AtStopBatchEnd {
+  const leftover = leftoverAddedMessage(p.added);
+  if (leftover) return { kind: "leftover", message: leftover };
+  if (p.handedToOffice) {
+    return {
+      kind: "sent-to-office",
+      title: AT_STOP_RESTRICTED_SENT_TITLE,
+      body: AT_STOP_RESTRICTED_SENT_COPY,
+    };
+  }
+  return { kind: "done", message: "Order updated" };
+}

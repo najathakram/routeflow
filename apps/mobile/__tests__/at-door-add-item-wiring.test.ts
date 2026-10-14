@@ -107,32 +107,34 @@ describe("adjust.tsx never silently discards leftover added units (round 2)", ()
     expect(at).toBeGreaterThan(-1);
     const tagEnd = src.indexOf("/>", at);
     const tag = src.slice(at, tagEnd);
-    expect(tag).toMatch(/hidden=\{saving \|\| !!licenseBlock\}/);
+    // row 510: and once the batch ended in the "sent to the office" confirmation
+    expect(tag).toMatch(/hidden=\{saving \|\| !!licenseBlock \|\| sentToOffice\}/);
   });
 
   it("processDiff's success path never calls router.back() or shows 'Order updated' directly", () => {
     const fnAt = src.indexOf("async function processDiff(");
-    const fnEnd = src.indexOf("batchJustCompletedRef.current = true;", fnAt);
+    const fnEnd = src.indexOf("markBatchEnded();", fnAt);
     expect(fnEnd).toBeGreaterThan(-1);
     const body = src.slice(fnAt, fnEnd);
     expect(body).not.toMatch(/router\.back\(\)/);
     expect(body).not.toMatch(/Order updated/);
   });
 
-  it("imports leftoverAddedMessage and uses it to decide whether to stay or navigate away", () => {
-    expect(src).toMatch(/leftoverAddedMessage/);
-    const at = src.indexOf("leftoverAddedMessage(");
-    expect(at).toBeGreaterThan(-1);
+  it("the stay-or-navigate decision still goes through leftoverAddedMessage (via decideAtStopBatchEnd)", () => {
+    const outcome = readFileSync(join(__dirname, "..", "lib/at-stop-cr-outcome.ts"), "utf8");
+    expect(outcome).toMatch(/leftoverAddedMessage\(p\.added\)/);
+    const hook = readFileSync(join(__dirname, "..", "lib/use-at-stop-batch-end.ts"), "utf8");
+    expect(hook).toMatch(/decideAtStopBatchEnd\(/);
+    expect(src).toMatch(/useAtStopBatchEnd\(/);
   });
 
-  it("the leftover-decision effect reads the CURRENT `added` and `saving` (never a stale closure)", () => {
-    const at = src.indexOf("leftoverAddedMessage(");
-    const effectStart = src.lastIndexOf("useEffect(", at);
-    const depsAt = src.indexOf("}, [", at);
-    const depsEnd = src.indexOf(")", depsAt);
-    const deps = src.slice(depsAt, depsEnd);
-    expect(effectStart).toBeGreaterThan(-1);
+  it("the batch-end effect reads the CURRENT `added` and `saving` (never a stale closure) and has its own signal", () => {
+    const hook = readFileSync(join(__dirname, "..", "lib/use-at-stop-batch-end.ts"), "utf8");
+    const at = hook.indexOf("decideAtStopBatchEnd(");
+    const depsAt = hook.indexOf("}, [", at);
+    const deps = hook.slice(depsAt, hook.indexOf(")", depsAt));
     expect(deps).toMatch(/\bsaving\b/);
     expect(deps).toMatch(/\badded\b/);
+    expect(deps).toMatch(/\bended\b/);
   });
 });
