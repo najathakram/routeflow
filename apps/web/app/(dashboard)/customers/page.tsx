@@ -35,6 +35,8 @@ import {
   type BadgeStatus,
 } from "@routeflow/ui/web";
 import { useToast } from "@routeflow/ui/web";
+import { useAuth } from "@/lib/auth-context";
+import { isAccountAdmin } from "@/lib/auth";
 import { usePageTitle } from "@/lib/page-title-context";
 import { ConfirmDialog } from "@/components/ConfirmDialog";
 import { CustomerFormModal } from "./_components/CustomerFormModal";
@@ -208,6 +210,8 @@ export default function CustomersPage() {
   }, [searchParams]);
   const [isAddOpen, setIsAddOpen] = React.useState(false);
   const [isImportOpen, setIsImportOpen] = React.useState(false);
+  // POST /import/contacts is admin-only on the api.
+  const canImport = isAccountAdmin(useAuth().user);
   const [editingCustomer, setEditingCustomer] = React.useState<any>(null);
   const [selectMode, setSelectMode] = React.useState(false);
   const [selected, setSelected] = React.useState<Set<string>>(new Set());
@@ -756,13 +760,15 @@ export default function CustomersPage() {
           // the PageHeader level too (packages/ui/src/web/PageHeader.tsx), this row's own
           // wrap is still needed so the content itself has somewhere to go once it can.
           <div className="flex flex-wrap items-center justify-end gap-2">
-            <Button
-              variant="secondary"
-              leftIcon={<Upload className="h-4 w-4" />}
-              onClick={() => setIsImportOpen(true)}
-            >
-              Import
-            </Button>
+            {canImport && (
+              <Button
+                variant="secondary"
+                leftIcon={<Upload className="h-4 w-4" />}
+                onClick={() => setIsImportOpen(true)}
+              >
+                Import
+              </Button>
+            )}
             <Button
               variant="secondary"
               leftIcon={<Download className="h-4 w-4" />}

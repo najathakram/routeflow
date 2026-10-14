@@ -19,6 +19,7 @@ import { PrismaService } from "../prisma/prisma.service";
 import { OrdersService } from "./orders.service";
 import { ORDER_STATUS_TRANSITIONS } from "./order-status-transitions";
 import { SHIPPED_STATUSES } from "./shipment-notifications";
+import { MAX_SHIPPING_CARRIER, MAX_SHIPPING_TRACKING } from "./shipment-text";
 
 /** The api's literal copy of packages/types BATCH_SHIP_OUTCOMES (L-072; order-batch-ship.spec.ts pins it). */
 export const BATCH_SHIP_OUTCOMES = [
@@ -83,9 +84,6 @@ export const TRACKING_SAVED_MESSAGES: Record<BatchShipOutcome, string> = {
   FAILED: "Could not be marked shipped. Try it from the order page. The tracking was saved.",
 };
 
-/** Same limits as UpdateShipmentDto (carrier 64, tracking 128). */
-const MAX_CARRIER = 64;
-const MAX_TRACKING = 128;
 const SHIPPED_OUTCOMES: ReadonlySet<BatchShipOutcome> = new Set<BatchShipOutcome>([
   "SHIPPED",
   "SHIPPED_INVOICE_PENDING",
@@ -189,7 +187,7 @@ export class OrderBatchShipService {
 
     const carrier = input.carrier?.trim() ?? "";
     const tracking = input.trackingNumber?.trim() ?? "";
-    if (carrier.length > MAX_CARRIER || tracking.length > MAX_TRACKING) {
+    if (carrier.length > MAX_SHIPPING_CARRIER || tracking.length > MAX_SHIPPING_TRACKING) {
       return this.row(orderId, num, "INVALID_TRACKING");
     }
 

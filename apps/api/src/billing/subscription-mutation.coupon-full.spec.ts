@@ -32,7 +32,9 @@ import { SubscriptionMutationService } from "./subscription-mutation.service";
 import { BILLING_EVENTS } from "./plan-catalog.constants";
 
 const CATALOG = {
-  addonSkus: [{ sku: "CUSTOMER_PACK_100", name: "Customer pack", monthlyPrice: 12 }],
+  addonSkus: [
+    { sku: "CUSTOMER_PACK_100", name: "Customer pack", monthlyPrice: 12, stackable: true },
+  ],
   definitions: [],
 };
 

@@ -2133,7 +2133,7 @@ function OtherExpensesTab() {
                         )}
                         {e.vendorBillId && (
                           <Link
-                            href={`/finance/vendor-bills/${e.vendorBillId}`}
+                            href={`/vendor-bills/${e.vendorBillId}`}
                             title="View in Supplier Bills"
                             className="rounded p-1 text-teal-600 hover:bg-teal-50 transition-colors"
                           >
@@ -2350,7 +2350,7 @@ function ExpenseDetailModal({
 
         {expense.vendorBillId && (
           <Link
-            href={`/finance/vendor-bills/${expense.vendorBillId}`}
+            href={`/vendor-bills/${expense.vendorBillId}`}
             className="inline-flex items-center gap-2 text-sm text-brand-600 hover:underline"
           >
             <ExternalLink className="h-4 w-4" /> View linked supplier bill

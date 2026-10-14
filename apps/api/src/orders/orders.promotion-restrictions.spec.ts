@@ -14,6 +14,7 @@ describe("OrdersService.changeStatus — DRAFT promotion and selling restriction
     tenantId: "t-1",
     orderNumber: "ORD-1",
     status: "DRAFT",
+    source: "PHONE", // F1(i): built by office staff; an order with no staff source is judged as the buyer's
     orderDate: null as Date | null,
     routeRunId: null,
     routeRunStopId: null,
@@ -54,9 +55,9 @@ describe("OrdersService.changeStatus — DRAFT promotion and selling restriction
       tenantId: "t-1",
       customerId: "cust-1",
       lines: [{ productId: "prod-1" }],
-      // The channel is the PROMOTING principal's, so a draft a BUYER started and staff promotes is
-      // judged on STAFF (not BUYER_PORTAL): an open ruling, flagged in the PR. No `at`: judged at
-      // entry time, like the license guard (owner ruling pending).
+      // The stricter of the PROMOTING principal's channel and the line author's (F1 i): a staff-built
+      // draft promoted by staff is STAFF; buyer-authored lines are judged on BUYER_PORTAL
+      // (orders.promotion-line-authors.spec.ts). No `at`: judged at entry time, like the license guard.
       channel: "STAFF",
       fulfilmentKind: "DELIVERY",
     });

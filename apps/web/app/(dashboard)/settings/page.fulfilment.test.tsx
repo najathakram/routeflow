@@ -100,12 +100,29 @@ describe("SettingsPage — Fulfillment tab", () => {
     expect(screen.queryByText("All settings")).toBeNull();
   });
 
-  it("the bare hub never calls the endpoint and has no Fulfillment entry", async () => {
+  // PR1: the hub lists Fulfillment / Counter sales ONLY when the flag says so, so the bare hub asks once
+  // (read-only GET, staff roles only). Flag off or unknown = no entry, exactly as before.
+  it("the bare hub asks the flag once; flag off means no Fulfillment entry", async () => {
+    get.mockImplementation((url: string) =>
+      Promise.resolve({ data: url === "/settings/fulfilment" ? fulfilment(false) : {} }),
+    );
     renderWithProviders(<SettingsPage />);
     expect(await screen.findByRole("heading", { name: "Settings" })).toBeInTheDocument();
-    expect(asked()).toHaveLength(0);
+    await waitFor(() => expect(asked()).toHaveLength(1));
     expect(screen.queryByText("Fulfillment")).not.toBeInTheDocument();
     expect(document.querySelector('a[href*="tab=fulfilment"]')).toBeNull();
+  });
+
+  it("the bare hub lists Fulfillment and Counter sales when the flag is on", async () => {
+    renderWithProviders(<SettingsPage />);
+    expect(await screen.findByRole("link", { name: /Fulfillment/ })).toHaveAttribute(
+      "href",
+      "/settings?tab=fulfilment#delivery-method",
+    );
+    expect(screen.getByRole("link", { name: /Counter sales/ })).toHaveAttribute(
+      "href",
+      "/settings?tab=fulfilment#counter-sales",
+    );
   });
 
   it("another tab never calls the endpoint either", async () => {

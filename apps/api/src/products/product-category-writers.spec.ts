@@ -25,7 +25,7 @@ const SYNC = /\bsyncCategoryLabel(?:ForProducts)?\s*\(/g;
 /** Files whose product writes can set `Product.category`: every one must call the sync. */
 const HOOKED: Record<string, { writes: number; syncs: number; via: string }> = {
   "products/products.service.ts": {
-    writes: 8,
+    writes: 7,
     syncs: 3,
     via: "create (dto.category / parent's), update (dto.category / structured-subcategory mirror), importProducts (item.category)",
   },
@@ -65,6 +65,7 @@ const EXEMPT: Record<string, { writes: number; reason: string }> = {
   "products/product-reactivation-holders.ts": { writes: 1, reason: "sets isActive = false" },
   "products/product-portal-visibility.service.ts": { writes: 1, reason: "sets portalVisible" },
   "products/product-family-cascade.ts": { writes: 1, reason: "sets isActive = false" },
+  "products/product-delete-classify.ts": { writes: 1, reason: "sets isActive = false" },
   "returns/returns-restock.util.ts": { writes: 1, reason: "increments currentStock" },
   "returns/returns.service.ts": { writes: 1, reason: "decrements currentStock" },
   "returns/inline-returns.service.ts": { writes: 1, reason: "decrements currentStock" },

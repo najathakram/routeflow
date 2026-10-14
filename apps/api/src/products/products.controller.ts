@@ -79,6 +79,14 @@ export class ProductsController {
     return this.productsService.listCategories();
   }
 
+  // Row 509: the ids of every product the list filters match (catalog "Select all N matching"), capped at 1,000.
+  // Must be declared before :id to avoid route collision.
+  @Get("ids")
+  @Roles(UserRole.OPERATOR)
+  findIds(@Query() query: ListProductsDto) {
+    return this.productsService.findIds(query);
+  }
+
   // Must be declared before :id to avoid route collision
   @Get("barcode/:barcode")
   @Roles(UserRole.OPERATOR, UserRole.DRIVER)
@@ -103,7 +111,7 @@ export class ProductsController {
 
   // Must be declared before :id to avoid route collision
   @Post("import")
-  @Roles(UserRole.OPERATOR)
+  @Roles(UserRole.TENANT_ADMIN)
   importFromZoho(@Body() dto: ImportProductsDto) {
     return this.productsService.importFromZoho(dto);
   }
@@ -134,7 +142,7 @@ export class ProductsController {
   // real outcomes and the response carries the {deleted, softDeleted, skipped}
   // breakdown rather than a bare count that would under-report the result.
   @Delete("clear-all")
-  @Roles(UserRole.OPERATOR)
+  @Roles(UserRole.TENANT_ADMIN)
   clearAll(@Query("confirm") confirm?: string) {
     if (confirm !== "true") {
       throw new BadRequestException(

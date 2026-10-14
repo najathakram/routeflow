@@ -12,6 +12,7 @@ jest.mock("../common/db-locks", () => ({
  * calendar day's midnight (startOfUtcDay), the same boundary the stored UTC dates use, not the
  * host's local midnight. Only Date is faked (the rest of the clock stays real so awaits run).
  */
+import { regulatedGateOpenProvider } from "./testing/regulated-gate-open-provider";
 import { Test } from "@nestjs/testing";
 import { OrderTemplatesService } from "./order-templates.service";
 import { oversellReaderOffProvider } from "../orders/testing/policy-reader-provider";
@@ -55,6 +56,7 @@ describe("OrderTemplatesService.generateDailyOrders — UTC day window (B955)", 
     const mod = await Test.createTestingModule({
       providers: [
         OrderTemplatesService,
+        regulatedGateOpenProvider,
         { provide: PrismaService, useValue: prisma },
         { provide: TenantContextService, useValue: { run: jest.fn((_i, fn) => fn()) } },
         { provide: SystemConfigService, useValue: { get: jest.fn().mockResolvedValue("10") } },

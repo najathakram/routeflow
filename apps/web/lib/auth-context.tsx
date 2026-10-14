@@ -12,6 +12,7 @@ import {
 } from "./auth";
 import { subscribeImpersonation } from "./impersonation";
 import { clearAllLiveCarts } from "./counter-live-cart-keys";
+import { clearAllInvoiceDrafts } from "./invoice-draft-storage";
 import { MARKETING_PAGE_PATHS } from "./marketing-routes";
 
 // ─── Types ────────────────────────────────────────────────────────────────────
@@ -70,6 +71,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   React.useEffect(() => {
     return onCrossTabTokenChange(() => {
       clearAllLiveCarts(); // signed out in another tab: this browser keeps no unfinished counter sale
+      clearAllInvoiceDrafts();
       // Don't punt the user to /login if they're on a public marketing route —
       // they may not even know they were ever signed in. Marketing pages are
       // public and should keep rendering regardless of token state.

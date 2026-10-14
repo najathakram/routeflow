@@ -279,6 +279,11 @@ model InvoiceItem {
   // from the live product at render time. Null when unset or flag.msrp is off.
   msrp                     Decimal?                @db.Decimal(10, 2)
   priceType                PriceType               @default(STANDARD)
+  // H3b: the staff price-override reason and author, copied verbatim from OrderItem's own
+  // pair by every order-to-invoice copier (null on manual lines and on lines billed before
+  // H3b). STAFF-ONLY: never selected by the buyer portal nor rendered on the customer PDF.
+  overrideReason           String?
+  overriddenBy             String?
   taxRate                  Decimal                 @default(0) @db.Decimal(5, 4)
   subtotal                 Decimal                 @db.Decimal(10, 2)
   boxes                    Int?

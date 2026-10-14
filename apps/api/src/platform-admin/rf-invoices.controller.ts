@@ -25,7 +25,7 @@ import {
 } from "./dto/rf-invoice.dto";
 import { RfInvoicesAdminService } from "./rf-invoices.service";
 
-/** 20 sends a minute per caller on both send routes. */
+/** 20 sends a minute per IP on both send routes. */
 const SEND_THROTTLE = { default: { limit: 20, ttl: 60_000 } };
 
 /**

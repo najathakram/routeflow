@@ -427,7 +427,7 @@ describe("S: payloads", () => {
     expect(dto).toMatchObject({ qty: 2, unitPrice: 21, unitLabel: "Case" });
   });
 
-  it("S2 a stale unit is dropped to one Box; UNIT_NOT_OFFERED is recognised, a generic 500 is not", () => {
+  it("S2 a stale unit converts BY PIECES onto the pack (row 458); UNIT_NOT_OFFERED is recognised, a generic 500 is not", () => {
     const lvl = {
       ...chooseInvoiceUnit(BOX_LINE, pick(optionsFor(), "Case"), 24),
       qty: 4,
@@ -442,11 +442,34 @@ describe("S: payloads", () => {
       () => 24,
     );
     expect(fixed.d).toBe(still); // B2: only the refused label is reset, not every unit line
-    expect(fixed.a).toMatchObject({ qty: 24, boxes: 1, pieces: 0, sellBy: "case" });
+    // row 458: 4 Cases of 12 = 48 pieces = 2 Boxes of 24 (was reset to 1 Box, losing the count)
+    expect(fixed.a).toMatchObject({ qty: 48, boxes: 2, pieces: 0, sellBy: "case" });
     expect(fixed.a!.unitLabel).toBeUndefined();
     expect(fixed.a!.unitPrice).toBeUndefined(); // a unit price is meaningless on a box
     expect(fixed.b).toBe(piece); // a Piece-as-pack line carries no unitLabel: not stale
     expect(fixed.c).toBe(plain);
+    // 5 Cases of 12 = 60 pieces = 2 Boxes + 12 loose, entered by the piece
+    const five = dropStaleUnitLines(
+      { a: { ...lvl, qty: 5 } },
+      () => false,
+      () => 24,
+    );
+    expect(five.a).toMatchObject({ qty: 60, boxes: 2, pieces: 12, sellBy: "unit" });
+    // no pack (unitsPerBox 1): the pieces are the count
+    const loose = dropStaleUnitLines(
+      { a: { ...lvl, qty: 5 } },
+      () => false,
+      () => 1,
+    );
+    expect(loose.a).toMatchObject({ qty: 60 });
+    expect(loose.a!.boxes).toBeUndefined();
+    // a line whose factor is unknown cannot be converted: one Box, as before
+    const unknown = dropStaleUnitLines(
+      { a: { ...lvl, qty: 5, unitFactor: undefined } },
+      () => false,
+      () => 24,
+    );
+    expect(unknown.a).toMatchObject({ qty: 24, boxes: 1, pieces: 0, sellBy: "case" });
     expect(unitNotOfferedCode({ response: { data: { code: "UNIT_NOT_OFFERED" } } })).toBe(true);
     expect(unitNotOfferedCode({ response: { status: 500, data: { message: "boom" } } })).toBe(
       false,

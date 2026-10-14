@@ -1,3 +1,4 @@
+import { regulatedGateOpenProvider } from "./testing/regulated-gate-open-provider";
 import { oversellReaderOffProvider } from "../orders/testing/policy-reader-provider";
 import { Test } from "@nestjs/testing";
 import { OrderTemplatesService } from "./order-templates.service";
@@ -60,6 +61,7 @@ describe("OrderTemplatesService — deactivated product on a standing order (REG
       providers: [
         oversellReaderOffProvider,
         OrderTemplatesService,
+        regulatedGateOpenProvider,
         { provide: PrismaService, useValue: prisma },
         { provide: TenantContextService, useValue: { run: jest.fn((_id, fn) => fn()) } },
         { provide: SystemConfigService, useValue: { get: jest.fn().mockResolvedValue("10") } },

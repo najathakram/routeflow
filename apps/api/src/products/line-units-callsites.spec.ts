@@ -98,6 +98,12 @@ const BASELINE: Record<string, number> = {
   // reaches it (B655's SA ruling). Count-pinned rather than exempted, so a second read here
   // still fails the build.
   "orders/change-requests.service.ts": 1,
+  // Row 497 (#3437): the buyer full-replace keeps a staff price override only while the line's OWN pack snapshot
+  // still equals the LIVE pack, so it reads the live pack twice (the batch filter's productMap lookup and the
+  // per-line keptOverrideFor guard) purely to COMPARE. It derives no line factor, quantity or price and writes no
+  // pack. Count-pinned rather than exempted, so a third read still fails the build. (Train S2: this ratchet
+  // landed on master after #3437 branched.)
+  "orders/buyer-replace-keep.ts": 2,
 };
 
 // Files that legitimately read a product's pack and are not line writers.
@@ -106,6 +112,9 @@ const NON_WRITERS = new Set([
   "products/product-units.service.ts",
   "products/line-units.ts",
   "orders/unit-line-build.ts", // copies unit/unitsPerBox into the ladder base; never derives a factor
+  // H3b (#3435): ladderProduct copies the live unitsPerBox into the price-ladder input the override decision
+  // reads (the same base as unit-line-build); it derives no line factor and writes no pack. (Train M1.)
+  "invoices/invoice-line-override.ts",
   "regulated/tx-report.ts",
   // B661: packAtSaleByProduct's `p.unitsPerBox` read is a write-time SNAPSHOT for the ledger's
   // regulatedUnitBasis, not a line-factor decision — never re-read later to reclassify an old row.

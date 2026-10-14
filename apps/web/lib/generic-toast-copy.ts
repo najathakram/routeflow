@@ -7,6 +7,7 @@ import {
   UNCONFIRMED_COPY,
   noResponse,
 } from "./credit-note-error-copy";
+import { activationEndedCopy, activationOverlapsPaidCopy } from "./activation-error-copy";
 import { creditLimitSentence } from "./credit-limit-copy";
 import { COUNTER_VOID_ERROR_COPY } from "./counter-void-copy";
 import { COUNTER_SALE_DAY_CLOSED_COPY, DAY_CLOSED_FOR_PAYMENT_DATE_COPY } from "./day-closed-copy";
@@ -16,6 +17,7 @@ import { parsePlanGate } from "./plan-gate";
 import { safeTextErrorCopy } from "./safe-text-error-copy";
 import { sellerUnavailableCopy } from "./seller-unavailable";
 import { sellingRestrictedCopy } from "./selling-restricted-copy";
+import { RULE_ERROR_COPY } from "./restriction-rule-errors";
 
 /**
  * B980 (owner rule: no raw strings in the UI): the app-wide mutation error toast shows FIXED copy,
@@ -30,6 +32,8 @@ import { sellingRestrictedCopy } from "./selling-restricted-copy";
 
 /** Daily-work refusals, by `body.code`. The sentences name the cause and the next step. */
 const CODE_COPY: Record<string, string> = {
+  // Row 509: selling-restriction rule targets and edits (fixed copy; the guided cases are rendered in place).
+  ...RULE_ERROR_COPY,
   // a buyer write toward a paused seller: the seller-unavailable sentence, never "You don't have permission"
   [API_ERROR_CODES.SELLER_UNAVAILABLE]: sellerUnavailableCopy(null),
   [API_ERROR_CODES.RETURN_REFUND_OVER_LINE_HEADROOM]: RETURN_REFUND_OVER_LINE_HEADROOM_COPY,
@@ -46,6 +50,8 @@ const CODE_COPY: Record<string, string> = {
   ORDER_DELIVERY_ADDRESS_MISSING:
     "This customer has no delivery address on file. Add one before switching the order to delivery.",
   ORDER_CHANGED_DURING_EDIT: "This order changed while you were editing it. Refresh and try again.",
+  // F3: the edit named one line twice; nothing was saved.
+  DUPLICATE_LINE_ID: "A line appears twice. Refresh the page and try again.",
   ORDER_BILLING_CHANGED:
     "This order's billing changed while you were working on it. Refresh and try again.",
   FULFIL_METHOD_NOT_OFFERED: "This business doesn't offer that way of fulfilling orders.",
@@ -172,6 +178,14 @@ const CODE_COPY: Record<string, string> = {
   // B1102: a catalog add-on whose plan setting is invalid is refused instead of billed; fixed sentence, no ids.
   [API_ERROR_CODES.ADDON_CATALOG_INVALID]:
     "This add-on can't be changed right now because of a setup problem on our side. Please contact support.",
+  // M11 (stackable add-on quantity): fixed sentences, never the server's text.
+  [API_ERROR_CODES.ADDON_QUANTITY_CHANGED]:
+    "Your add-on changed since this page loaded. Check the new total and try again.",
+  [API_ERROR_CODES.ADDON_QUANTITY_NOT_INCREASED]:
+    "That would not add any more of this add-on, so nothing was changed. Check the total and try again.",
+  [API_ERROR_CODES.ADDON_NOT_STACKABLE]: "This add-on can only be turned on once per workspace.",
+  [API_ERROR_CODES.ADDON_RAISE_UNBILLED_ROW]:
+    "This add-on isn't billed on your subscription yet, so its quantity can't be raised here. Please contact support.",
 };
 
 /** Exact server sentences (already product text) for refusals with no `code`; matched whole, never partially. */
@@ -318,6 +332,9 @@ export function codedToastCopy(err: unknown): string | null {
   if (code === API_ERROR_CODES.DUPLICATE_VENDOR_BILL) return duplicateBillCopy(data);
   if (code === API_ERROR_CODES.CREDIT_LIMIT_EXCEEDED)
     return creditLimitSentence(data.limit, data.exposure);
+  if (code === API_ERROR_CODES.ACTIVATION_PERIOD_ALREADY_ENDED) return activationEndedCopy(err);
+  if (code === API_ERROR_CODES.ACTIVATION_OVERLAPS_PAID_PERIOD)
+    return activationOverlapsPaidCopy(err);
   // CQ-06 review: a selling-restriction refusal with no dialog of its own says what is wrong and the next step.
   if (code === API_ERROR_CODES.SELLING_RESTRICTED) return sellingRestrictedCopy(data.blockedLines);
   // CQ-06: the license refusal says what is wrong (expired / none on file) and where to fix it (shared with mobile).

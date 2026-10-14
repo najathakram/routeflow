@@ -187,6 +187,7 @@ model Product {
   supplierProducts      SupplierProduct[]
   categoryLabels        ProductCategoryLabel[]
   sellingRestrictions   SellingRestriction[]
+  sellingRestrictionTargets SellingRestrictionTarget[]
   barcodes              ProductBarcode[]
   images                ProductImage[]
   recipesAsProduct      Recipe[]               @relation("RecipeProduct")
@@ -599,6 +600,7 @@ model ProductCategory {
   tenant              Tenant?                @relation(fields: [tenantId], references: [id])
   labels              ProductCategoryLabel[]
   sellingRestrictions SellingRestriction[]
+  sellingRestrictionTargets SellingRestrictionTarget[]
 
   @@unique([tenantId, name])
 }

@@ -3,12 +3,14 @@ import type { LadderUnit, TrackedCategoryRow } from "@routeflow/pricing";
 import {
   assertMayUseUnits,
   buildUnitLine,
+  type StoredUnitLine,
   categoryTaxForLine,
   loadUnitLadders,
   requestsUnit,
   type UnitLineProduct,
 } from "./unit-line-build";
 import type { ResolvedLineUnits } from "../products/line-units";
+import { raisedBy, type LineAuthorLookup } from "./line-author-channel";
 import { liveLines } from "./order-edit-cancelled";
 import { writeLineUpdate } from "./order-line-removal";
 import type { UpdateOrderItemsDto } from "./dto/update-order-items.dto";
@@ -157,8 +159,31 @@ export interface UnitWriteContext {
   ladders: Map<string, LadderUnit[]>;
   tenantId: string | null | undefined;
   tier: (productId: string) => number;
+  /** H3: the acting staff user, stamped on a unit line whose typed price overrides the customer's price. */
+  overriddenBy?: string | null;
+  /** H3: the order's lines as held under the edit's row lock, by id: the stored side of a re-sent price. */
+  held?: ReadonlyMap<string, unknown>;
+  /** H3: the buyer's count diff re-prices a tier line at the current tier on a qty-only edit (SA-507b). */
+  repriceTierOnQtyOnly?: boolean;
   /** trackedCategoryId -> TrackedCategory row, for the products this edit touches (B297). */
   categoryMap: Map<string, TrackedCategoryRow>;
+  /** SA ruling (#3418): each re-created line's author marker, and `.editor` (the acting principal's). */
+  authorOf: LineAuthorLookup;
+}
+
+/**
+ * H3: the stored line a replace-all entry re-writes, per the ONE pairing helper (`sourceLineId`: by id, or
+ * the strict same-product, same-unit fallback). The builder re-checks the unit; none = a new sale.
+ */
+export function pairedStoredLine(
+  ctx: Pick<UnitWriteContext, "held">,
+  item: { sourceLineId?: string },
+  productId: string,
+): StoredUnitLine | null {
+  const line = item.sourceLineId ? ctx.held?.get(item.sourceLineId) : undefined;
+  return line && (line as { productId?: string | null }).productId === productId
+    ? (line as StoredUnitLine)
+    : null;
 }
 
 /**
@@ -176,6 +201,9 @@ export async function createUnitLine(
   resolved: ResolvedLineUnits,
   item: any,
   position: number,
+  // SA ruling (#3418): replace-all re-creates a line, so it keeps the product's carried marker (true); a diff-add
+  // (false) is the editor's own line.
+  carried = false,
 ): Promise<void> {
   // B297: price + stamp the trio at WRITE, like every other writer — a NULL/zero placeholder here
   // would become a PERMANENT $0 levy once PR 3's "keep the stored amount" rule reads it back.
@@ -191,6 +219,8 @@ export async function createUnitLine(
     taxFor: (qty, sub) => categoryTaxForLine(category, qty, sub),
     position,
     tenantId: ctx.tenantId,
+    overriddenBy: ctx.overriddenBy,
+    stored: pairedStoredLine(ctx, item, product.id),
   });
   // Row 373b: a line paired with a stored line (the ONE pairing helper sets `carriedLine`) keeps that line's
   // category, trio and createdAt: a re-created unit line is not a new sale.
@@ -199,6 +229,7 @@ export async function createUnitLine(
       orderId,
       ...built,
       ...((item.carriedLine as Record<string, unknown> | undefined) ?? {}),
+      authorChannel: carried ? ctx.authorOf(product.id) : ctx.authorOf.editor, // after the carry: it wins
     },
   });
 }
@@ -230,6 +261,8 @@ export async function updateUnitLine(
   resolved: ResolvedLineUnits,
   item: any,
   isSubstitute: boolean,
+  // SA ruling (#3418): the line's quantity before a same-product edit; a BUYER raise stamps it BUYER.
+  beforeQty?: unknown,
 ): Promise<void> {
   const category = product.trackedCategoryId
     ? ctx.categoryMap.get(product.trackedCategoryId)
@@ -254,6 +287,10 @@ export async function updateUnitLine(
     taxFor: (qty, sub) => categoryTaxForLine(category, qty, sub),
     position: 0,
     tenantId: ctx.tenantId,
+    overriddenBy: ctx.overriddenBy,
+    // a substitute is a new sale: judged against the tier price, never against the line it replaces
+    stored: isSubstitute ? null : (ctx.held?.get(lineId) as StoredUnitLine | undefined),
+    repriceTierOnQtyOnly: ctx.repriceTierOnQtyOnly,
   });
   const data = isSubstitute
     ? {
@@ -266,7 +303,11 @@ export async function updateUnitLine(
         categoryPriceIncludesTax,
       }
     : rest;
-  await writeLineUpdate(ctx.tx, ctx.orderId, lineId, data); // #2577: { id, orderId }, never bare
+  const stamp =
+    beforeQty !== undefined && !isSubstitute
+      ? raisedBy(ctx.authorOf.editor, beforeQty, rest.qty)
+      : {};
+  await writeLineUpdate(ctx.tx, ctx.orderId, lineId, { ...data, ...stamp }); // #2577: { id, orderId }, never bare
 }
 
 /**

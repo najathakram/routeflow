@@ -237,6 +237,19 @@ describe("deactivateFailureToast — CODES_CHANGED on the deactivate/delete path
     });
   });
 
+  it("PRODUCT_HAS_ACTIVE_ORDER_ITEMS (single delete of a product on an open order) -> the fixed open-order sentence, never the server message", () => {
+    const t = deactivateFailureToast(
+      err({ code: "PRODUCT_HAS_ACTIVE_ORDER_ITEMS", message: "RAW SERVER TEXT" }),
+      "Failed to delete product",
+    );
+    expect(t).toEqual({
+      title: "Failed to delete product",
+      description:
+        "This product is on an order that is still open. Finish or cancel the order first.",
+      variant: "error",
+    });
+  });
+
   it.each([
     ["another 409", err({ code: "CODE_TAKEN", message: "RAW" })],
     ["a 500", { response: { status: 500, data: { message: "boom" } } }],
