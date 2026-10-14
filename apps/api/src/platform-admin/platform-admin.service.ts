@@ -1414,7 +1414,13 @@ export class PlatformAdminService {
           paymentRef: dto.paymentRef ?? null,
           days: dto.billingPeriodDays,
         });
-        if (repeated) {
+        // Train S2 (money): a repeat is the SAME payment clicked twice while the tenant is still ACTIVE. After a
+        // lapse (SUSPENDED / TRIAL / ...) an identical re-activation is a new one and must book the price again.
+        const stillActive =
+          repeated &&
+          (await tx.tenant.findUniqueOrThrow({ where: { id }, select: { status: true } }))
+            .status === TenantStatus.ACTIVE;
+        if (repeated && stillActive) {
           duplicateBox.hit = repeated;
           return tx.tenant.findUniqueOrThrow({ where: { id } });
         }

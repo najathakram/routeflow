@@ -4668,6 +4668,30 @@ describe("PlatformAdminService — audit provenance", () => {
       expect((prisma as any).auditLog.create).not.toHaveBeenCalled();
     });
 
+    it("train S2 (money): an identical activation after a LAPSE is not a repeat - it books again", async () => {
+      const DAY = 86_400_000;
+      const start = new Date(Date.now() - 1000);
+      (prisma as any).auditLog.findFirst.mockResolvedValueOnce({
+        meta: {
+          plan: activateDto.plan,
+          paymentMethod: activateDto.paymentMethod,
+          paymentRef: activateDto.paymentRef ?? null,
+          billingPeriodDays: activateDto.billingPeriodDays,
+          periodStart: start.toISOString(),
+          periodEnd: new Date(start.getTime() + 30 * DAY).toISOString(),
+        },
+      });
+      const baseFind = (prisma as any).tenant.findUniqueOrThrow.getMockImplementation();
+      (prisma as any).tenant.findUniqueOrThrow.mockImplementation((args: any) =>
+        args?.select?.status ? Promise.resolve({ status: "SUSPENDED" }) : baseFind?.(args),
+      );
+
+      const out: any = await service.activateManualSubscription(TENANT_ID, activateDto, ADMIN_ID);
+
+      expect(out?.repeated).not.toBe(true);
+      expect((prisma as any).tenantSubscription.upsert).toHaveBeenCalled();
+    });
+
     it("M3 pin (service): the same payment sent twice records ONE period and ONE marker - the repeat writes nothing", async () => {
       const DAY = 86_400_000;
       const start = new Date(Date.now() - 1000);
@@ -4681,6 +4705,11 @@ describe("PlatformAdminService — audit provenance", () => {
           periodEnd: new Date(start.getTime() + 30 * DAY).toISOString(),
         },
       });
+      // the first click activated it: the tenant is ACTIVE under the lock (train S2: a repeat needs that)
+      const baseFind = (prisma as any).tenant.findUniqueOrThrow.getMockImplementation();
+      (prisma as any).tenant.findUniqueOrThrow.mockImplementation((args: any) =>
+        args?.select?.status ? Promise.resolve({ status: "ACTIVE" }) : baseFind?.(args),
+      );
 
       const out: any = await service.activateManualSubscription(TENANT_ID, activateDto, ADMIN_ID);
 
