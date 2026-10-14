@@ -61,6 +61,20 @@ export class LabelFakeDb {
   categories: FakeCategory[] = [];
   /** Every query issued, so a spec can assert on what was (not) asked. */
   calls: Array<{ model: string; op: string; args: any }> = [];
+  /**
+   * Active selling rules as `labelHasActiveFederalRule` reads them (already filtered to ACTIVE by the caller's where;
+   * the fake honours only the jurisdiction and category filters).
+   */
+  rules: Array<{
+    jurisdiction: string;
+    categoryId: string | null;
+    targets: Array<{
+      productId: string | null;
+      categoryId: string | null;
+      addedAt: Date;
+      removedAt: Date | null;
+    }>;
+  }> = [];
   /** Rows written through `auditLog.create|createMany` (rolled back with the transaction). */
   audits: Array<Record<string, any>> = [];
   /** When set, `auditLog.createMany|create` rejects with it (simulates a failing write mid-transaction). */
@@ -129,6 +143,25 @@ export class LabelFakeDb {
           return this.categories
             .filter((x) => matches(x as any, args?.where))
             .map((c) => pick(c as unknown as Record<string, unknown>, args?.select));
+        },
+      },
+      sellingRestriction: {
+        findMany: async (args: any) => {
+          this.log("sellingRestriction", "findMany", args);
+          // The one-label read narrows by category; the tenant-wide read (the card's list) takes every rule.
+          const cat = args?.where?.AND?.[1]?.OR?.[0]?.categoryId;
+          return this.rules
+            .filter((r) => !args?.where?.jurisdiction || r.jurisdiction === args.where.jurisdiction)
+            .filter(
+              (r) => !cat || r.categoryId === cat || r.targets.some((t) => t.categoryId === cat),
+            )
+            .map((r) => ({
+              ...r,
+              targets: r.targets.filter((t) =>
+                cat ? t.categoryId === cat : t.categoryId !== null,
+              ),
+              _count: { targets: r.targets.length },
+            }));
         },
       },
       productCategoryLabel: {

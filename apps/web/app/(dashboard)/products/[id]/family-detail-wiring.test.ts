@@ -33,7 +33,7 @@ describe("products/[id]/page.tsx — family wiring (WS8)", () => {
     // "Make variant of…" is not offered on a family
     // (the header buttons live in ProductHeaderControls since VU-2)
     const header = fs.readFileSync(path.join(__dirname, "ProductHeaderControls.tsx"), "utf8");
-    expect(header).toMatch(/isOperator && !product\.parentProductId && product\.kind !== "FAMILY"/);
+    expect(header).toMatch(/isStaff && !product\.parentProductId && product\.kind !== "FAMILY"/);
     expect(src).toMatch(/<ProductHeaderControls/);
   });
 

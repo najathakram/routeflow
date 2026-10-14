@@ -26,6 +26,12 @@ describe("product DTO validation (tolerant optionals)", () => {
     expect(dto.parentProductId).toBeNull();
   });
 
+  it("REG (audit 2026-10-14): parentProductId: null is KEPT as null — an explicit unlink, never 'no change'", async () => {
+    const { dto, errors } = await validateUpdate({ parentProductId: null, variantName: null });
+    expect(errors).toHaveLength(0);
+    expect(dto.parentProductId).toBeNull();
+  });
+
   it("still accepts a real parent UUID and rejects a malformed one", async () => {
     const ok = await validateUpdate({ parentProductId: "b4b2ff28-9d55-4c62-8f39-1d1a0f6f4e11" });
     expect(ok.errors).toHaveLength(0);

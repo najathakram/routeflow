@@ -37,6 +37,10 @@ import { SellingRestrictionsAdminService } from "../selling-restrictions-admin/s
 import { LABEL_KEPT_ON_REPARENT_ACTION } from "../product-categories/label-writer";
 import { ProductChainUnreadableError } from "../product-labels/keep-labels-on-reparent";
 import { API_ERROR_CODES } from "../common/api-error-codes";
+import { plainToInstance } from "class-transformer";
+import { UpdateProductDto } from "./dto/update-product.dto";
+import { ProductLabelsAdminService } from "../product-categories/product-labels-admin.service";
+import { AuditService } from "../audit/audit.service";
 
 // eslint-disable-next-line @typescript-eslint/no-var-requires
 const { assertTestTenant } = require("../../../../scripts/lib/test-tenants.cjs");
@@ -289,6 +293,65 @@ describeDb("H2: a reparent keeps the CA/NY ban (real Postgres)", () => {
       replacedOptOut: { id: optOut.id, reason: "seed approval" },
     });
     await expectBanned(v);
+  }, 60_000);
+
+  it("#3467 x H2: unlinking a variant under a FEDERAL-labelled family keeps it blocked, and an operator cannot remove the kept label", async () => {
+    const fedCategory = (
+      await prisma.productCategory.create({ data: { tenantId, name: `Federal ${RUN}` } })
+    ).id;
+    await prisma.sellingRestriction.create({
+      data: {
+        tenantId,
+        categoryId: fedCategory,
+        jurisdiction: "FEDERAL",
+        states: [],
+        surface: "ALL",
+        reason: `federal ${RUN}`,
+        effectiveFrom: new Date("2026-01-01T00:00:00Z"),
+      },
+    });
+    const fam = await family("fed family");
+    await prisma.productCategoryLabel.create({
+      data: { tenantId, productId: fam, categoryId: fedCategory, mode: "INCLUDE" },
+    });
+    const v = await variant("fed v0", fam);
+    const blocked = async () =>
+      (
+        await as(() =>
+          engine.checkLinesSellable({
+            tenantId,
+            customerId: customers.TX,
+            lines: [{ productId: v, qtyDelta: 1 }],
+            channel: "STAFF",
+          }),
+        )
+      ).outcome;
+    expect(await blocked()).toBe("BLOCK");
+
+    // The web Unlink body, through the same transform the ValidationPipe applies.
+    const body = plainToInstance(UpdateProductDto, { parentProductId: null });
+    const out = (await as(() => products.update(v, body as never, ACTOR))) as {
+      parentProductId: string | null;
+    };
+    expect(out.parentProductId).toBeNull();
+    expect(await blocked()).toBe("BLOCK");
+
+    const labelsAdmin = new ProductLabelsAdminService(
+      prisma,
+      new AuditService(prisma),
+      new ProductLabelsService(prisma),
+    );
+    const operator = { sub: "op", username: "op", role: "OPERATOR" } as never;
+    const refusal = await as(() => labelsAdmin.removeLabel(v, fedCategory, operator)).catch(
+      (e: { getResponse(): unknown }) => e.getResponse(),
+    );
+    expect(refusal).toMatchObject({ code: "RULE_ADMIN_ONLY" });
+    expect(
+      await prisma.productCategoryLabel.findFirst({
+        where: { tenantId, productId: v, categoryId: fedCategory, mode: "INCLUDE" },
+      }),
+    ).not.toBeNull();
+    expect(await blocked()).toBe("BLOCK");
   }, 60_000);
 
   it("an unreadable (cyclic) old chain is the coded 409, and nothing is written", async () => {

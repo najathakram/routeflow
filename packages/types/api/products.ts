@@ -383,3 +383,11 @@ export interface UpdateFamilyVariantsRequest {
   update?: Array<Partial<FamilyVariantInput> & { id: string }>;
   deactivate?: string[];
 }
+
+/**
+ * The "Delete product?" confirm's body, shared by web and mobile (audit 2026-10-14: mobile said "removed
+ * permanently", but a delete deactivates the product and keeps its history).
+ */
+export function deleteProductConfirmText(name: string): string {
+  return `${name} will be deactivated and hidden from the catalog. Its SKU and barcode are freed, so another product can use them. Order and invoice history is kept. A product on an undelivered order can't be deleted.`;
+}
