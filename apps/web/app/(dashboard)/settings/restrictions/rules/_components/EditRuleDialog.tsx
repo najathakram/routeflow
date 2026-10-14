@@ -20,7 +20,7 @@ import {
   toEditRequest,
   type RuleFormValues,
 } from "@/lib/restriction-rule-form";
-import { ADMIN_ONLY_CHANGE_HINT } from "@/lib/restriction-rules";
+import { ADMIN_ONLY_FEDERAL_NOTE } from "@/lib/restriction-rules";
 import { RULE_ERROR_COPY, ruleErrorCode } from "@/lib/restriction-rule-errors";
 import { RuleSettingsFields, type RuleFormErrors } from "./RuleSettingsFields";
 
@@ -258,7 +258,7 @@ export function EditRuleDialog({
             v={v}
             set={set}
             errors={errors}
-            federalNote={isAdmin ? undefined : ADMIN_ONLY_CHANGE_HINT}
+            federalNote={isAdmin ? undefined : ADMIN_ONLY_FEDERAL_NOTE}
           />
           <Textarea
             label="Note (optional)"
