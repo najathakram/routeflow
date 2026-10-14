@@ -557,6 +557,8 @@ export default function ProductDetailPage() {
   };
 
   const saveEdit = () => {
+    // No double submit: the Save button is disabled while pending, this covers Enter / a fast second tap.
+    if (updateProduct.isPending) return;
     const draft = editDraft as Record<string, string>;
     const selectedParent = draft.parentProductId
       ? allProducts.find((p: any) => p.id === draft.parentProductId)
@@ -622,9 +624,14 @@ export default function ProductDetailPage() {
               : {}),
       },
       {
+        // Close edit mode ONLY once the PATCH lands. A 409/500 keeps the form open with the typed draft
+        // (startEdit re-seeds the draft, so closing early threw the operator's edits away).
         onSuccess: (data: { keptLabels?: string[] }) => {
           const kept = keptLabelsNote(data?.keptLabels);
           if (kept) toast({ title: "Product moved", description: kept, variant: "success" });
+          setEditDraft({});
+          setIsEditing(false);
+          setLadderNote(null);
         },
         onError: (e: any) =>
           toast({
@@ -637,8 +644,6 @@ export default function ProductDetailPage() {
           }),
       },
     );
-    setIsEditing(false);
-    setLadderNote(null);
   };
 
   const cancelEdit = () => {
@@ -1513,6 +1518,7 @@ export default function ProductDetailPage() {
                         size="sm"
                         onClick={saveEdit}
                         loading={updateProduct.isPending}
+                        disabled={updateProduct.isPending}
                         leftIcon={<Check className="h-4 w-4" />}
                       >
                         Save

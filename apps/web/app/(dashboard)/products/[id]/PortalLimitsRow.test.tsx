@@ -63,6 +63,22 @@ describe("PortalLimitsRow (C f)", () => {
     expect(mockGet).toHaveBeenCalledWith("/selling-restrictions", { params: { productId: "p1" } });
   });
 
+  it("a legal ban (surface ALL) reads `Banned in TX` / `Banned everywhere`, never portal-only wording", async () => {
+    mockGet.mockResolvedValue({
+      data: {
+        items: [
+          limit({ id: "r1", surface: "ALL" }),
+          limit({ id: "r2", surface: "ALL", jurisdiction: "FEDERAL", states: [], via: "CATEGORY" }),
+        ],
+        nextCursor: null,
+      },
+    });
+    renderWithProviders(<PortalLimitsRow productId="p1" />);
+    expect(await screen.findByText("Banned in TX")).toBeInTheDocument();
+    expect(screen.getByText("Banned everywhere")).toBeInTheDocument();
+    expect(screen.queryByText(/Not offered|Hidden from all portal/)).toBeNull();
+  });
+
   it("Lift asks `Lift this limit?`, then lifts that rule with the note", async () => {
     const user = userEvent.setup();
     mockGet.mockResolvedValue({ data: { items: [limit({ id: "r1" })], nextCursor: null } });
