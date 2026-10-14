@@ -76,6 +76,14 @@ describe("RecurringInvoicesService — selling restrictions (F-05)", () => {
     expect(prisma.recurringInvoice.updateMany).not.toHaveBeenCalled();
   });
 
+  it("L8: at a PICKUP-ONLY tenant this sale is judged as PICKUP (the store's state), not DELIVERY", async () => {
+    prisma.tenantFeatureConfig.findFirst.mockResolvedValue({ mode: "pickup" });
+    await cron();
+    expect(restrictions.checkLinesSellable).toHaveBeenCalledWith(
+      expect.objectContaining({ fulfilmentKind: "PICKUP" }),
+    );
+  });
+
   it("suspends the template with the reason, audits it (rule ids) and notifies each operator once", async () => {
     await cron();
     expect(prisma.recurringInvoice.update).toHaveBeenCalledWith({

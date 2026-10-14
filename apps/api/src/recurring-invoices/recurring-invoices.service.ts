@@ -6,6 +6,7 @@ import { InvoicesService } from "../invoices/invoices.service";
 import { SellingRestrictionsService } from "../selling-restrictions/selling-restrictions.service";
 import { requireRestrictionTenantId } from "../selling-restrictions/restriction-tenant";
 import { CronExpression } from "@nestjs/schedule";
+import { defaultSaleFulfilmentKind } from "../orders/default-sale-fulfilment";
 import { blockedTemplateLines } from "./recurring-invoice-restrictions";
 import { calcNextRunAt } from "./recurring-schedule";
 import { NotificationsService } from "../notifications/notifications.service";
@@ -358,11 +359,19 @@ export class RecurringInvoicesService {
     // that would change the invoice's money with nobody deciding. "Run now" is an operator deciding (409, the
     // template is untouched); the unattended run skips the cycle BEFORE it is claimed, notifies once and
     // SUSPENDS the template until a tenant admin reactivates it. A tenant-owned template sells as STAFF.
+    const restrictionTenantId = requireRestrictionTenantId(this.prisma.getTenantId());
     const blocked = await blockedTemplateLines(
       this.sellingRestrictions,
-      requireRestrictionTenantId(this.prisma.getTenantId()),
+      restrictionTenantId,
       ri,
       unattended,
+      {
+        fulfilmentKind: await defaultSaleFulfilmentKind(
+          this.prisma,
+          restrictionTenantId,
+          ri.customerId,
+        ),
+      },
     );
     if (blocked) {
       await this.suspendForSellingRestriction(ri, blocked);

@@ -89,7 +89,7 @@ export interface ImportRowPlan {
   reason?: string;
   warnings?: string[];
 }
-import { saleFulfilmentKind } from "../selling-restrictions/sale-fulfilment";
+import { defaultSaleFulfilmentKind } from "../orders/default-sale-fulfilment";
 import { SellingRestrictionsService } from "../selling-restrictions/selling-restrictions.service";
 import {
   assertBarcodeAvailable,
@@ -1797,7 +1797,7 @@ export class ImportService {
           tenantId,
           customerId,
           productIds: entries.flatMap((e) => e.productIds),
-          fulfilmentKind: saleFulfilmentKind(null), // an imported invoice has no fulfilment of its own: the customer-address rule
+          fulfilmentKind: await defaultSaleFulfilmentKind(this.prisma, tenantId, customerId), // no order: how the next order would go
         },
       );
       const byProduct = new Map(flagged.map((f) => [f.productId, f]));

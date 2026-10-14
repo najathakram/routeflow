@@ -200,7 +200,8 @@ import { NumberingService } from "../import/numbering.service";
 import { SellingRestrictionsService } from "../selling-restrictions/selling-restrictions.service";
 import { requireRestrictionTenantId } from "../selling-restrictions/restriction-tenant";
 import { flagSplitRestrictedLines } from "../selling-restrictions/restricted-lines-flag";
-import { orderFulfilmentKind, saleFulfilmentKind } from "../selling-restrictions/sale-fulfilment";
+import { defaultSaleFulfilmentKind } from "../orders/default-sale-fulfilment";
+import { orderFulfilmentKind } from "../selling-restrictions/sale-fulfilment";
 import {
   addedRestrictionLines,
   assertEditStillJudged,
@@ -446,7 +447,11 @@ export class InvoicesService {
       customerId: dto.customerId,
       lines: dto.items.flatMap((it) => (it.productId ? [{ productId: it.productId }] : [])),
       channel: "STAFF",
-      fulfilmentKind: saleFulfilmentKind(null), // a manual invoice has no order, so no fulfilment: the customer-address rule
+      fulfilmentKind: await defaultSaleFulfilmentKind(
+        this.prisma,
+        requireRestrictionTenantId(this.prisma.getTenantId()),
+        dto.customerId,
+      ), // no order: how the next order would go
     });
 
     // Products (box size + regulated snapshot), the unit ladders and the regulated tax config of every
@@ -4314,7 +4319,11 @@ export class InvoicesService {
       customerId: inv.customerId,
       lines: catalogRestrictionLines(inv.items),
       channel: "STAFF",
-      fulfilmentKind: saleFulfilmentKind(null), // a copy is never order-linked (refused above): the customer-address rule
+      fulfilmentKind: await defaultSaleFulfilmentKind(
+        this.prisma,
+        requireRestrictionTenantId(this.prisma.getTenantId()),
+        inv.customerId,
+      ), // a copy has no order: how the next order would go
     });
 
     const customer = await this.prisma

@@ -35,7 +35,7 @@ export function forbiddenNames(text: string): string[] {
   return out;
 }
 
-const HELPERS = new Set(["saleFulfilmentKind", "orderFulfilmentKind"]);
+const HELPERS = new Set(["saleFulfilmentKind", "orderFulfilmentKind", "defaultSaleFulfilmentKind"]);
 const isHelperCall = (e: ts.Expression): boolean => {
   if (ts.isAwaitExpression(e)) return isHelperCall(e.expression);
   return ts.isCallExpression(e) && ts.isIdentifier(e.expression) && HELPERS.has(e.expression.text);

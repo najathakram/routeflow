@@ -96,6 +96,14 @@ describe("EstimatesService.convertToInvoice — selling restrictions (F-05)", ()
     );
   });
 
+  it("L8: at a PICKUP-ONLY tenant this sale is judged as PICKUP (the store's state), not DELIVERY", async () => {
+    prisma.tenantFeatureConfig.findFirst.mockResolvedValue({ mode: "pickup" });
+    await expect(service.convertToInvoice("est-1")).rejects.toThrow("stop: past the guard");
+    expect(restrictions.assertLinesSellable).toHaveBeenCalledWith(
+      expect.objectContaining({ fulfilmentKind: "PICKUP" }),
+    );
+  });
+
   it("refuses a tenant-less session (403) rather than skipping the check", async () => {
     prisma.getTenantId.mockReturnValue(null);
     await expect(service.convertToInvoice("est-1")).rejects.toBeInstanceOf(ForbiddenException);

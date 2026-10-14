@@ -162,6 +162,21 @@ describe("invoice edit / copy — selling restrictions (F-05)", () => {
       });
       expect(prisma.invoice.create).not.toHaveBeenCalled();
     });
+
+    it("L8: at a PICKUP-ONLY tenant a copy is judged as PICKUP (the store's state)", async () => {
+      prisma.tenantFeatureConfig.findFirst.mockResolvedValue({ mode: "pickup" });
+      prisma.invoice.findUnique.mockResolvedValue({
+        id: "inv-1",
+        customerId: "cust-1",
+        orderId: null,
+        items: [{ productId: "p-banned", description: "B" }],
+      });
+      restrictions.assertLinesSellable.mockRejectedValue(banned());
+      await expect(service.duplicate("inv-1")).rejects.toBeDefined();
+      expect(restrictions.assertLinesSellable).toHaveBeenCalledWith(
+        expect.objectContaining({ fulfilmentKind: "PICKUP" }),
+      );
+    });
   });
 
   describe("pieces through the line's pack (SA-228 / SA-247)", () => {

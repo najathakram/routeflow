@@ -76,6 +76,22 @@ describe("selling restrictions: counter / pickup judge the STORE state (L8)", ()
     service = mod.get(SellingRestrictionsService);
   });
 
+  describe("a pickup customer with NO address is judged on the store, never INDETERMINATE", () => {
+    beforeEach(() =>
+      prisma.customer.findFirst.mockResolvedValue({ isWalkIn: false, addresses: [] }),
+    );
+    it("store in TX, TX ban: BLOCK", async () => {
+      prisma.sellingRestriction.findMany.mockResolvedValue([stateRule(["TX"])]);
+      storeIn("TX");
+      expect((await judge("c-none", "PICKUP")).outcome).toBe("BLOCK");
+    });
+    it("store in CA, TX ban: ALLOW", async () => {
+      prisma.sellingRestriction.findMany.mockResolvedValue([stateRule(["TX"])]);
+      storeIn("CA");
+      expect((await judge("c-none", "PICKUP")).outcome).toBe("ALLOW");
+    });
+  });
+
   describe("(a) a named CA customer at the COUNTER, store in TX", () => {
     it("a CA-only ban does NOT block", async () => {
       prisma.sellingRestriction.findMany.mockResolvedValue([stateRule(["CA"])]);

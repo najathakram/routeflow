@@ -9,12 +9,8 @@ import type {
 } from "@routeflow/types";
 import { PrismaService } from "../prisma/prisma.service";
 import { tenantSafeParent } from "../products/product-parent";
-import { resolveFulfilPath } from "../orders/fulfil-path-resolver";
-import {
-  saleFulfilmentKind,
-  type SaleFulfilmentKind,
-} from "../selling-restrictions/sale-fulfilment";
-import { storedFulfilmentMode } from "../selling-restrictions/tenant-fulfilment-model";
+import { defaultSaleFulfilmentKind } from "../orders/default-sale-fulfilment";
+import type { SaleFulfilmentKind } from "../selling-restrictions/sale-fulfilment";
 import { SellingRestrictionsService } from "../selling-restrictions/selling-restrictions.service";
 
 /** "Usually buys" looks back this many days from now. */
@@ -118,7 +114,7 @@ export class CustomerOrderSuggestionsService {
 
     const customer = await db.customer.findFirst({
       where: { id: customerId, tenantId },
-      select: { id: true, fulfillPath: true },
+      select: { id: true },
     });
     if (!customer) throw new NotFoundException("Customer not found");
 
@@ -188,16 +184,8 @@ export class CustomerOrderSuggestionsService {
         ...orders.flatMap((o) => o.lineItems.flatMap((l) => (l.productId ? [l.productId] : []))),
       ]),
     ];
-    // L8: judged as the NEXT order would be: the ONE fulfil-path resolver over the customer's stored path and the
-    // tenant's fulfilment model (a pickup business's order is an in-store pickup: the store's state judges it).
-    const fulfillPath = await resolveFulfilPath(
-      {
-        featureConfig: { getEffectiveMode: () => storedFulfilmentMode(this.prisma, tenantId) },
-        tenantId,
-      },
-      { stored: customer.fulfillPath, audience: "staff", role: null },
-    );
-    const fulfilmentKind = saleFulfilmentKind({ counterSale: false, fulfillPath });
+    // L8: judged as the NEXT order would be (the tenant's model + the customer's stored path).
+    const fulfilmentKind = await defaultSaleFulfilmentKind(this.prisma, tenantId, customerId);
     const banned = await this.bannedAmong(tenantId, customerId, wanted, fulfilmentKind);
 
     const usuallyBuys = candidates
