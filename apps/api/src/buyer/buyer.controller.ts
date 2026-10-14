@@ -1112,7 +1112,7 @@ export class BuyerController {
   async reorderFromTemplate(@Param("id") id: string, @CurrentBuyerCustomer() ctx: any) {
     // Row 531 S4 (intentional): this path is NOT enforced by assertBuyerQtySplit. Its lines come from the stored
     // template rows, not from a client cart, so a disagreeing qty / split here is stored-data drift for the
-    // WARN-mode log inside OrdersService.create() (path "orders.create") to surface, not a buyer payload to refuse.
+    // WARN-mode log inside OrdersService.create() (path "orders.create.lines") to surface, not a buyer payload to refuse.
     // Enforcement on template-generated orders waits for its own ruling, like every staff / shared path.
     // Ownership check: verify the template belongs to this buyer's customer
     const template = await this.prisma
