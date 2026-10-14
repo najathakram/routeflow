@@ -38,6 +38,7 @@ describe("UsersController: admin account protection wiring", () => {
       { email: "a@b.example" },
       "ad",
       UserRole.TENANT_ADMIN,
+      undefined, // SA-778: no impersonatedBy claim
     );
     await controller.update("op1", { email: "a@b.example" } as any, operator);
     expect(service.updateUser).toHaveBeenLastCalledWith(

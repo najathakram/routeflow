@@ -40,6 +40,7 @@ describe("UsersController.update: who may edit whom", () => {
       { email: "a@b.example", role: undefined },
       "op",
       UserRole.OPERATOR,
+      undefined, // SA-778: the caller's impersonatedBy claim (none)
     );
   });
 
@@ -50,6 +51,7 @@ describe("UsersController.update: who may edit whom", () => {
       { role: UserRole.DRIVER },
       "ad",
       UserRole.TENANT_ADMIN,
+      undefined, // SA-778: no impersonatedBy claim
     );
   });
 
@@ -65,6 +67,7 @@ describe("UsersController.update: who may edit whom", () => {
       { email: "x@acme.example", role: "OPERATOR" },
       "sa",
       UserRole.SUPER_ADMIN,
+      undefined, // SA-778: no impersonatedBy claim
     );
   });
 
@@ -75,6 +78,7 @@ describe("UsersController.update: who may edit whom", () => {
       { role: undefined },
       "ad",
       UserRole.TENANT_ADMIN,
+      undefined, // SA-778: no impersonatedBy claim
     );
   });
 
@@ -85,6 +89,7 @@ describe("UsersController.update: who may edit whom", () => {
       { role: undefined },
       "dr",
       UserRole.DRIVER,
+      undefined, // SA-778: no impersonatedBy claim
     );
     expect(() => controller.update("other", { email: "a@b.example" }, driver)).toThrow(
       ForbiddenException,
