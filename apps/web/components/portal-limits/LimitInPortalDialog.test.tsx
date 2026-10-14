@@ -222,4 +222,32 @@ describe("LimitInPortalDialog (C a-d)", () => {
       { ids: ids(10), reason: "Undone right after creating" },
     ]);
   });
+  it("(row 509) one rule: Undo lifts [ruleId] and the toast offers View rule", async () => {
+    const user = userEvent.setup();
+    mockPost
+      .mockResolvedValueOnce({
+        data: { created: 12, skipped: 0, createdIds: ["rule-1"], ruleId: "rule-1" },
+      })
+      .mockResolvedValueOnce({ data: { lifted: 1 } });
+    open();
+    await pickTexas(user);
+    await user.click(screen.getByRole("button", { name: "Hide from Texas" }));
+    await waitFor(() => expect(toast).toHaveBeenCalledTimes(1));
+    const shown = toast.mock.calls[0][0];
+    expect(shown.title).toBe("12 products hidden from Texas portal customers");
+    expect(shown.action.label).toBe("Undo");
+    expect(shown.secondaryAction.label).toBe("View rule");
+    shown.secondaryAction.onClick();
+    expect(push).toHaveBeenCalledWith("/settings/restrictions/rules/rule-1");
+
+    shown.action.onClick();
+    await waitFor(() => expect(mockPost).toHaveBeenCalledTimes(2));
+    expect(mockPost.mock.calls[1]).toEqual([
+      "/selling-restrictions/lift-batch",
+      { ids: ["rule-1"], reason: "Undone right after creating" },
+    ]);
+    // the undone toast counts PRODUCTS (12), not the one rule that was lifted
+    await waitFor(() => expect(toast).toHaveBeenCalledTimes(2));
+    expect(toast.mock.calls[1][0].title).toBe("Texas limit removed from 12 products");
+  });
 });
