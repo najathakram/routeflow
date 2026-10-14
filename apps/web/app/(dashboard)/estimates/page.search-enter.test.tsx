@@ -105,6 +105,23 @@ const FAMILY = {
     },
   ],
 };
+// A FAMILY with two sellable variants: Enter must OPEN it, never add a hidden variant (SA must).
+const DUO = {
+  ...FAMILY,
+  id: "f-duo",
+  name: "Sample Duo",
+  variants: [
+    { ...FAMILY.variants[0], id: "v-mint2", name: "Mint", parentProductId: "f-duo", sku: "DUO-M" },
+    {
+      ...FAMILY.variants[0],
+      id: "v-lime",
+      name: "Lime",
+      variantName: "Lime",
+      parentProductId: "f-duo",
+      sku: "DUO-L",
+    },
+  ],
+};
 const PARENT = {
   id: "p-bar",
   name: "Protein Bar",
@@ -160,7 +177,7 @@ describe("new estimate - Enter adds the first SHOWN row (row 503)", () => {
     expect(within(ctx.dialog).queryByText("Sample Pod - Strawberry")).toBeNull();
   });
 
-  it("a FAMILY first row adds its first variant (never the family, never the next row)", async () => {
+  it("a single-variant FAMILY first row adds that variant (never the family, never the next row)", async () => {
     mockRows = mockRawSearch = [FAMILY, DISTILLED];
     const ctx = await openDialog();
     await typeWaitEnter(ctx, "s", /Sample Pod/);
@@ -198,5 +215,40 @@ describe("new estimate - Enter adds the first SHOWN row (row 503)", () => {
     await ctx.user.type(ctx.box, "ample{Enter}");
     await expectQuoted(ctx, "Sample Pod - Mint");
     expect(mockGet).toHaveBeenCalledWith("/products");
+  });
+
+  it("a multi-variant FAMILY first row EXPANDS on Enter and adds no line", async () => {
+    mockRows = mockRawSearch = [DUO, DISTILLED];
+    const ctx = await openDialog();
+    await typeWaitEnter(ctx, "duo", /Sample Duo/);
+    expect(
+      await within(ctx.dialog).findByRole("button", { name: /Sample Duo - Lime/ }),
+    ).toBeInTheDocument();
+    expect(ctx.box.value).toBe("duo"); // nothing was added (an add clears the box)
+  });
+
+  it("once the family is open, Enter adds the highlighted visible variant; arrows move it", async () => {
+    mockRows = mockRawSearch = [DUO, DISTILLED];
+    const ctx = await openDialog();
+    await typeWaitEnter(ctx, "duo", /Sample Duo/);
+    await within(ctx.dialog).findByRole("button", { name: /Sample Duo - Lime/ });
+    expect(within(ctx.dialog).getByRole("button", { name: /Sample Duo - Mint/ })).toHaveAttribute(
+      "aria-selected",
+      "true",
+    );
+    await ctx.user.keyboard("{ArrowDown}");
+    expect(within(ctx.dialog).getByRole("button", { name: /Sample Duo - Lime/ })).toHaveAttribute(
+      "aria-selected",
+      "true",
+    );
+    await ctx.user.keyboard("{Enter}");
+    await expectQuoted(ctx, "Sample Duo - Lime");
+  });
+
+  it("an exact VARIANT SKU still wins over expanding its family", async () => {
+    mockRows = mockRawSearch = [DUO, DISTILLED];
+    const ctx = await openDialog();
+    await typeWaitEnter(ctx, "DUO-L", /Sample Duo/);
+    await expectQuoted(ctx, "Sample Duo - Lime");
   });
 });

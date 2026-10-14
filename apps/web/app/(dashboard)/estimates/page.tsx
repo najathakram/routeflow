@@ -30,7 +30,7 @@ import { displayProductName } from "@/lib/product-display";
 import {
   attachParent,
   groupOffered,
-  groupRowPick,
+  groupEnterAction,
   groupSearchRows,
   isFamilyProduct,
   isGroupExpanded,
@@ -187,6 +187,9 @@ function CreateEstimateModal({
   const productSearchRef = React.useRef<HTMLInputElement>(null);
   // The group last toggled in the dropdown ("" = closed it); null = not toggled yet.
   const [expandedParentId, setExpandedParentId] = React.useState<string | null>(null);
+  // Row 503: the highlighted visible variant of an OPEN family in the first row (Enter adds it; arrows move it).
+  const [variantHighlight, setVariantHighlight] = React.useState(0);
+  React.useEffect(() => setVariantHighlight(0), [productSearch, expandedParentId]);
 
   // Line items
   const [lineItems, setLineItems] = React.useState<EstimateLineItem[]>([]);
@@ -318,22 +321,37 @@ function CreateEstimateModal({
     }
     try {
       // Row 503: the rows the dropdown shows (or, before it caught up, the search grouped the same way).
-      const rows: any[] =
-        shownRows ??
-        groupSearchRows<any>(
-          (
-            await apiClient
-              .get("/products", {
-                params: { search: code, limit: 10, isActive: true, includeVariants: true },
-              })
-              .then((r) => r.data)
-          )?.data ?? [],
-        ).rows;
+      const grouped = shownRows
+        ? { rows: shownRows, expandedIds: productGroups.expandedIds }
+        : groupSearchRows<any>(
+            (
+              await apiClient
+                .get("/products", {
+                  params: { search: code, limit: 10, isActive: true, includeVariants: true },
+                })
+                .then((r) => r.data)
+            )?.data ?? [],
+          );
+      const rows: any[] = grouped.rows;
       const offered = groupOffered<any>(rows);
       const skuMatch = offered.find((p: any) => (p.sku ?? "").toLowerCase() === code.toLowerCase());
-      const toAdd = skuMatch ?? groupRowPick<any>(rows[0]);
-      if (toAdd) {
-        addLineItem(toAdd);
+      if (skuMatch) {
+        addLineItem(skuMatch);
+        return;
+      }
+      // Enter does what a click on the first shown row does: a FAMILY opens (SA must, row 503).
+      const first = rows[0];
+      const action = groupEnterAction<any>(
+        first,
+        !!first && isGroupExpanded(expandedParentId, grouped.expandedIds, first.id),
+        variantHighlight,
+      );
+      if (action.kind === "add") {
+        addLineItem(action.product);
+        return;
+      }
+      if (action.kind === "expand") {
+        setExpandedParentId(action.id);
         return;
       }
     } catch {
@@ -563,6 +581,21 @@ function CreateEstimateModal({
                   setExpandedParentId(null);
                 }}
                 onKeyDown={(e) => {
+                  // Row 503: arrows move over the visible variants of an open family in the first row.
+                  const head = filteredProducts[0];
+                  const navigable =
+                    head &&
+                    isFamilyProduct(head) &&
+                    (head.variants?.length ?? 0) > 1 &&
+                    isGroupExpanded(expandedParentId, productGroups.expandedIds, head.id);
+                  if (navigable && (e.key === "ArrowDown" || e.key === "ArrowUp")) {
+                    e.preventDefault();
+                    const last = head.variants.length - 1;
+                    setVariantHighlight((h) =>
+                      e.key === "ArrowDown" ? Math.min(h + 1, last) : Math.max(h - 1, 0),
+                    );
+                    return;
+                  }
                   if (e.key === "Enter") {
                     e.preventDefault();
                     // Trust the shown rows only once they were built from this exact text (row 503).
@@ -635,12 +668,23 @@ function CreateEstimateModal({
                         )}
                         {hasVariants &&
                           isExpanded &&
-                          p.variants.map((v: any) => (
+                          p.variants.map((v: any, vi: number) => (
                             <li key={v.id} className="bg-surface-raised/50">
                               <button
                                 type="button"
                                 onClick={() => addLineItem(attachParent(v, p))}
-                                className="flex w-full items-center justify-between py-2 pl-8 pr-3 text-left text-sm hover:bg-surface-raised"
+                                aria-selected={
+                                  p.id === filteredProducts[0]?.id && isFamilyProduct(p)
+                                    ? vi === variantHighlight
+                                    : undefined
+                                }
+                                className={`flex w-full items-center justify-between py-2 pl-8 pr-3 text-left text-sm hover:bg-surface-raised${
+                                  p.id === filteredProducts[0]?.id &&
+                                  isFamilyProduct(p) &&
+                                  vi === variantHighlight
+                                    ? " bg-surface-raised"
+                                    : ""
+                                }`}
                               >
                                 <div className="flex min-w-0 items-center gap-1.5">
                                   <span className="font-medium text-navy">

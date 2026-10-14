@@ -1,6 +1,6 @@
 import {
   groupOffered,
-  groupRowPick,
+  groupEnterAction,
   groupSearchRows,
   isFamilyProduct,
   isGroupExpanded,
@@ -139,7 +139,7 @@ describe("sellableFlat (typeahead lists, C7)", () => {
   });
 });
 
-describe("row 503 groupRowPick / groupOffered", () => {
+describe("row 503 groupEnterAction / groupOffered", () => {
   const fam = {
     id: "f",
     name: "Pod",
@@ -153,12 +153,38 @@ describe("row 503 groupRowPick / groupOffered", () => {
   const parent = { ...fam, id: "p", name: "Bar", kind: "STANDARD" };
   const plain = { id: "s", name: "Water", parentProductId: null };
 
-  it("a FAMILY row stands for its first variant, named under it; any other row for itself", () => {
-    expect(groupRowPick<any>(fam)).toMatchObject({ id: "v1", parent: { id: "f", name: "Pod" } });
-    expect(groupRowPick<any>(parent)!.id).toBe("p");
-    expect(groupRowPick<any>(plain)!.id).toBe("s");
-    expect(groupRowPick<any>({ ...fam, variants: [] })).toBeUndefined();
-    expect(groupRowPick<any>(undefined)).toBeUndefined();
+  it("Enter on a FAMILY row expands it; one variant adds it; once open, the highlighted variant", () => {
+    expect(groupEnterAction<any>(fam, false)).toEqual({ kind: "expand", id: "f" });
+    expect(groupEnterAction<any>(fam, true)).toMatchObject({
+      kind: "add",
+      product: { id: "v1", parent: { id: "f", name: "Pod" } },
+    });
+    expect(groupEnterAction<any>(fam, true, 1)).toMatchObject({
+      kind: "add",
+      product: { id: "v2" },
+    });
+    expect(groupEnterAction<any>(fam, true, 9)).toMatchObject({
+      kind: "add",
+      product: { id: "v2" },
+    });
+    const single = { ...fam, variants: [fam.variants[0]] };
+    expect(groupEnterAction<any>(single, false)).toMatchObject({
+      kind: "add",
+      product: { id: "v1" },
+    });
+    expect(groupEnterAction<any>({ ...fam, variants: [] }, false)).toEqual({ kind: "none" });
+    expect(groupEnterAction<any>(undefined, false)).toEqual({ kind: "none" });
+  });
+
+  it("a non-family parent and a standalone add themselves (#3323)", () => {
+    expect(groupEnterAction<any>(parent, false)).toMatchObject({
+      kind: "add",
+      product: { id: "p" },
+    });
+    expect(groupEnterAction<any>(plain, false)).toMatchObject({
+      kind: "add",
+      product: { id: "s" },
+    });
   });
 
   it("offers every sellable row and its variants in display order, never a FAMILY", () => {
