@@ -42,6 +42,15 @@ describe("tenant status / delete failures from the Stripe gate (fixed copy, neve
     expect(TENANT_ACTION_COPY.stripeNotConfigured).not.toMatch(/raw server text/);
   });
 
+  it("STRIPE_ACCOUNT_MISMATCH tells the admin to check the Stripe key and mode, on a status change and a delete", () => {
+    const e = coded(409, API_ERROR_CODES.STRIPE_ACCOUNT_MISMATCH);
+    expect(statusFailureCopy(e)).toBe(TENANT_ACTION_COPY.stripeAccountMismatch);
+    expect(deleteFailureCopy(e)).toBe(TENANT_ACTION_COPY.stripeAccountMismatch);
+    expect(TENANT_ACTION_COPY.stripeAccountMismatch).toBe(
+      "Stripe can't find this tenant's subscription or customer. Check the Stripe key and mode before cancelling.",
+    );
+  });
+
   it("any other failure keeps the plain status copy", () => {
     expect(statusFailureCopy(coded(409, "SOMETHING_ELSE"))).toBe(TENANT_ACTION_COPY.statusFailed);
     expect(statusFailureCopy(new Error("boom"))).toBe(TENANT_ACTION_COPY.statusFailed);

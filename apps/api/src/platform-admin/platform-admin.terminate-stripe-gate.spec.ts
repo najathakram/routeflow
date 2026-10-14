@@ -146,13 +146,16 @@ describe.each(OPS)("%s - the shared Stripe gate", (_name, run) => {
     expect(r[0].meta).toMatchObject({ note: "stripe sub not found; customer present" });
   });
 
-  it("Stripe sub 404 + the customer is 404 too: 409 TENANT_CANCEL_SUBSCRIPTION_FIRST, ops alert, nothing written", async () => {
+  it("Stripe sub 404 + the customer is 404 too: 409 STRIPE_ACCOUNT_MISMATCH, ops alert, nothing written", async () => {
     const { svc, prisma, stripe, auditLog } = make({ pre: "sub_1" });
     stripe.getSubscription.mockRejectedValue(missing);
     stripe.getCustomer.mockRejectedValue(missing);
     const err: any = await run(svc).catch((e) => e);
     expect(err.getStatus()).toBe(409);
-    expect(code(err)).toBe("TENANT_CANCEL_SUBSCRIPTION_FIRST");
+    expect(code(err)).toBe("STRIPE_ACCOUNT_MISMATCH");
+    expect(err.getResponse().message).toBe(
+      "Stripe can't find this tenant's subscription or customer. Check the Stripe key and mode before cancelling.",
+    );
     expect(written(prisma)).toBe(false);
     const a = rows(auditLog, "STRIPE_KEY_MODE_MISMATCH");
     expect(a).toHaveLength(1);

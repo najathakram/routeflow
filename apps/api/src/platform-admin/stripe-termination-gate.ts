@@ -13,6 +13,15 @@ export function cancelSubscriptionFirstRefusal(): ConflictException {
   });
 }
 
+/** 409 STRIPE_ACCOUNT_MISMATCH: Stripe knows neither the subscription nor the customer - wrong key or mode. */
+export function stripeAccountMismatchRefusal(): ConflictException {
+  return new ConflictException({
+    code: API_ERROR_CODES.STRIPE_ACCOUNT_MISMATCH,
+    message:
+      "Stripe can't find this tenant's subscription or customer. Check the Stripe key and mode before cancelling.",
+  });
+}
+
 /** 409 STRIPE_NOT_CONFIGURED: no Stripe key in this environment (or Stripe rejected it), so nothing can be checked. */
 export function stripeNotConfiguredRefusal(): ConflictException {
   return new ConflictException({
@@ -148,7 +157,7 @@ export async function stripeGateBeforeTermination(
       stripeSubId,
       stripeCustomerId: customerId,
     });
-    throw cancelSubscriptionFirstRefusal();
+    throw stripeAccountMismatchRefusal();
   }
   return { stripeSubId, notFound: true };
 }

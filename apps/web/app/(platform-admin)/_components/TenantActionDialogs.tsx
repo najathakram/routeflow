@@ -44,6 +44,8 @@ export const TENANT_ACTION_COPY = {
     "This tenant still has a Stripe subscription that hasn't ended (active, paused or incomplete). End it in Stripe first, then try again.",
   stripeNotConfigured:
     "Stripe isn't connected in this environment, so the subscription can't be checked.",
+  stripeAccountMismatch:
+    "Stripe can't find this tenant's subscription or customer. Check the Stripe key and mode before cancelling.",
   subscriptionUnconfirmed:
     "Couldn't confirm the tenant's Stripe subscription just now, or it changed meanwhile. Try again in a moment.",
   tenantChanged: "This tenant changed while you were editing. Reload and try again.",
@@ -68,6 +70,9 @@ function stripeGateCopy(err: unknown): string | null {
   const code = errorCodeOf(err);
   if (code === API_ERROR_CODES.TENANT_CANCEL_SUBSCRIPTION_FIRST) {
     return TENANT_ACTION_COPY.cancelSubscriptionFirst;
+  }
+  if (code === API_ERROR_CODES.STRIPE_ACCOUNT_MISMATCH) {
+    return TENANT_ACTION_COPY.stripeAccountMismatch;
   }
   if (code === API_ERROR_CODES.STRIPE_NOT_CONFIGURED) return TENANT_ACTION_COPY.stripeNotConfigured;
   if (code === API_ERROR_CODES.CONCURRENT_UPDATE) {
