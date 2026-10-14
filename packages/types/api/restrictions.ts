@@ -101,3 +101,80 @@ export interface SellingRestrictionDto {
 /** Product-list "Restricted (TX, FL)" / "Restricted (federal)" chip. */
 export type RestrictedProductChip =
   { kind: "federal" } | { kind: "state"; states: string[] } | null;
+
+// ─── Row 510: staff restriction warnings with override ──────────────────────────────────────────
+// A staff write that would sell a restricted product gets a 409 RESTRICTION_WARNING (not a hard
+// SELLING_RESTRICTED) when the principal may override (`staffMay(role, "OVERRIDE_SELLING_RESTRICTION")`).
+// The client shows `lines`, collects ONE reason, and resubmits the SAME payload plus a RestrictionAck.
+// The server is the only computer of `warningHash`; clients echo it opaquely (L-303: no shared runtime logic).
+// The API keeps literal mirrors of the constants below in selling-restrictions/override-constants.ts.
+
+/** One rule behind a warned line. `legal` = the rule binds every channel (surface ALL). */
+export interface RestrictionWarningRule {
+  id: string;
+  states: string[];
+  legal: boolean;
+  /** Fixed server copy ("This product is banned in CA by law."); display only, never hashed. */
+  reasonText: string;
+}
+
+/** One warned line. `lineKey` = "n:<index>" | "l:<lineId>" | "cr:<changeRequestId>" (stable for the same payload). */
+export interface RestrictionWarningLine {
+  lineKey: string;
+  productId: string;
+  displayName: string;
+  outcome: "BLOCK" | "INDETERMINATE";
+  rules: RestrictionWarningRule[];
+}
+
+/** The 409 body a staff write gets when an override is possible. */
+export interface RestrictionWarningError {
+  code: typeof API_ERROR_CODES.RESTRICTION_WARNING;
+  message: string;
+  lines: RestrictionWarningLine[];
+  warningHash: string;
+}
+
+/** One acknowledged line: the same reason is sent for every warned lineKey. */
+export interface RestrictionOverrideInput {
+  lineKey: string;
+  reason: string;
+}
+
+/** The top-level fields a staff write body may carry on resubmit after a RESTRICTION_WARNING. */
+export interface RestrictionAck {
+  restrictionOverrides?: RestrictionOverrideInput[];
+  warningHash?: string;
+}
+
+/** The stamp a STAFF read of an order / invoice line carries (never on a buyer read, a PDF or a receipt). */
+export interface OverrideStampView {
+  restrictionOverrideReason: string | null;
+  /** The overriding User id (staff reads resolve the name). */
+  restrictionOverrideBy: string | null;
+  restrictionOverrideAt: string | null;
+  restrictionOverrideRuleIds: string[];
+}
+
+/** API-internal: one breached product as the engine judged it for a staff write (mirrored for the contract). */
+export interface StaffBreach {
+  productId: string;
+  outcome: "BLOCK" | "INDETERMINATE";
+  ruleIds: string[];
+}
+
+/** Reason length bounds, applied after trim (400 RESTRICTION_OVERRIDE_REASON_INVALID outside them). */
+export const RESTRICTION_OVERRIDE_REASON_MIN = 3;
+export const RESTRICTION_OVERRIDE_REASON_MAX = 200;
+
+/** The `message` of the 409 SELLING_RESTRICTED a DRIVER (who may not override) gets on a staff write. */
+export const DRIVER_RESTRICTION_BLOCK_MESSAGE = "Ask the office to approve this sale";
+
+/** The staff-only line note label. */
+export const RESTRICTION_OVERRIDE_LABEL = "Sold despite restriction";
+
+/**
+ * Ruling #2093 (2026-10-13): a historical invoice import is exempt, never refused. Its breached lines are stamped with
+ * this fixed reason, the importing user and the rules matched at import, plus an audit row (no new column).
+ */
+export const RESTRICTION_OVERRIDE_IMPORTED_REASON = "Imported (historical)";

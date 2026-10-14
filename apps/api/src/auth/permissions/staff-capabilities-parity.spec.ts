@@ -19,6 +19,10 @@ describe("staff-capabilities: the API literal is pinned to packages/types", () =
     for (const copy of [api, shared]) {
       expect(copy.STAFF_CAPABILITY_RULES.USE_POS_MODE.group).toBe("ORDERS");
       expect(copy.STAFF_CAPABILITY_RULES.EDIT_AFTER_FINAL.group).toBe("FINANCE");
+      expect(copy.STAFF_CAPABILITY_RULES.OVERRIDE_SELLING_RESTRICTION.roles).toEqual([
+        "OPERATOR",
+        "TENANT_ADMIN",
+      ]);
     }
   });
 

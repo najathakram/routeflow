@@ -6,6 +6,10 @@ describe("AUDIT_ACTIONS", () => {
     expect(AUDIT_ACTIONS.COUNTER_SALE_VOIDED).toBe("counter-sale.voided");
   });
 
+  it("pins the row-510 restriction-override action name", () => {
+    expect(AUDIT_ACTIONS.SELLING_RESTRICTION_OVERRIDDEN).toBe("selling_restriction.overridden");
+  });
+
   it("has unique values and none collides with an API error code (the parity spec bans bare code literals)", () => {
     const values = Object.values(AUDIT_ACTIONS);
     expect(new Set(values).size).toBe(values.length);

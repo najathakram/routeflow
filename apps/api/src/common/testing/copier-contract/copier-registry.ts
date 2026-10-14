@@ -57,6 +57,26 @@ export const INFRA: Record<Model, string> = {
 const P0A_LABELS: Record<string, GapRef> = { baseLabel: "unfiled", packLabel: "unfiled" };
 const P0A_LABELS_LINECODE: Record<string, GapRef> = { ...P0A_LABELS, lineCode: "unfiled" };
 
+/**
+ * Row 510: the staff restriction-override stamp on OrderItem / InvoiceItem (the four columns below). Lead + owner ruling
+ * 2026-10-13 (#2093 stands): order->invoice (C1, which also builds the SPLIT-out lines: split is a copy that keeps the
+ * stamp), invoice->order back-sync (C17) and merge (C9a/C9b: carry and warn) CARRY it; duplicate (C2), estimate convert
+ * (C5), next-delivery approval (C8), recurring (C6) and template (C7) RESET it (a new sale is judged afresh; an old
+ * override is never carried forward; a fresh override on C2/C5/C8 is a NEW stamp from that write's own judgement, never
+ * a copy); historical import (C14) STAMPS a fixed "Imported (historical)" marker with the importing user and the rules
+ * matched at import (no new column). Brief 1 lands every non-reset row as `gaps: "unfiled"` (true at its land: no copier
+ * writes the columns yet), so the contract goes red the moment brief 2 (C1/C17/C9) or the import change (C14 -> rederived)
+ * starts writing them, and the entry must flip with the code.
+ */
+const R510_STAMP =
+  "restrictionOverrideReason restrictionOverrideBy restrictionOverrideAt restrictionOverrideRuleIds";
+const R510_STAMP_GAPS: Record<string, GapRef> = {
+  restrictionOverrideReason: "unfiled",
+  restrictionOverrideBy: "unfiled",
+  restrictionOverrideAt: "unfiled",
+  restrictionOverrideRuleIds: "unfiled",
+};
+
 const ORDER_FRESH = "deliveredQty invoicedQty overrideReason overriddenBy status";
 const MERGE = {
   file: "orders/orders.service.ts",
@@ -81,6 +101,7 @@ const MERGE = {
     unitLabel: "unfiled",
     trackedSubcategoryId: "unverified",
     position: "unverified",
+    ...R510_STAMP_GAPS, // row 510: carry (a fold keeps the loser line's acknowledged sale); brief 2 flips to carried
   } as Record<string, GapRef>,
 };
 
@@ -101,7 +122,8 @@ export const COPIERS: Copier[] = [
     reset: "discount",
     // #2169 (SA-395): built from a request line, never a copy of a system-stamped source line.
     na: "systemKind",
-    gaps: { ...P0A_LABELS_LINECODE },
+    // row 510: carry (order->invoice, and the split-out lines it builds); brief 2 flips to carried
+    gaps: { ...P0A_LABELS_LINECODE, ...R510_STAMP_GAPS },
   },
   {
     id: "C2",
@@ -116,6 +138,7 @@ export const COPIERS: Copier[] = [
       "categoryTaxType categoryTaxRate categoryPriceIncludesTax systemKind", // B297: the source line's trio, verbatim
     // unit lines are refused (409); order-linked invoices are refused (RF-011), and composed lines exist only on those
     na: "unitLabel orderItemId compositionMode recipeId recipeVersion",
+    reset: R510_STAMP, // row 510: a duplicate is a new sale, re-judged; the source line's override is never copied
     components: "na",
     gaps: { ...P0A_LABELS_LINECODE },
   },
@@ -148,7 +171,8 @@ export const COPIERS: Copier[] = [
     // rate), and the B297 trio is stamped beside it (`...categorySnapshot`, an opaque spread).
     rederived:
       "taxRate msrp trackedCategoryId trackedSubcategoryId categoryTaxAmount categoryTaxType categoryTaxRate categoryPriceIncludesTax",
-    reset: "discount",
+    // row 510: the estimate line has no stamp; a convert is re-judged (a fresh override is a new stamp, not a copy)
+    reset: "discount " + R510_STAMP,
     // The estimate line has no such column / no order link; unit-aware lines are refused (409 UNIT_AWARE_LINE).
     // #2169 (SA-395): an estimate line, never a copy of a system-stamped source line.
     na: "promoFreeUnits notes orderItemId unitLabel systemKind compositionMode recipeId recipeVersion",
@@ -171,6 +195,7 @@ export const COPIERS: Copier[] = [
       "subtotal msrp categoryTaxAmount categoryTaxType categoryTaxRate categoryPriceIncludesTax",
     // #2169 (SA-395): a template-generated line, never a copy of a system-stamped source line.
     na: "originalPrice priceType promoFreeUnits notes orderItemId systemKind compositionMode recipeId recipeVersion", // RecurringInvoiceItem has none of these columns
+    reset: R510_STAMP, // row 510 (#2093): a breached line is skipped, never stamped; an override is never carried forward
     components: "na",
     gaps: {
       ...P0A_LABELS_LINECODE,
@@ -197,6 +222,7 @@ export const COPIERS: Copier[] = [
       "backorderedPieces",
     components: "rederived", // #2717 M3: syncOrderLineCompositions plans a RECIPE line from the ACTIVE recipe, mode-gated
     na: ORDER_FRESH,
+    reset: R510_STAMP, // row 510 (#2093): template items have no stamp; a banned line is skipped, never stamped
     gaps: {
       ...P0A_LABELS,
       boxes: "B647",
@@ -227,6 +253,7 @@ export const COPIERS: Copier[] = [
       "backorderedPieces",
     components: "rederived", // #2717 M3: written by OrdersService.create, which syncs compositions in its tx
     na: "deliveredQty invoicedQty status", // overrideReason/overriddenBy ride viaOptions (D-20)
+    reset: R510_STAMP, // row 510: the rollover is a new sale through create(), re-judged; the source stamp is not passed
     gaps: {
       ...P0A_LABELS,
       unitLabel: "unfiled",
@@ -290,7 +317,9 @@ export const COPIERS: Copier[] = [
     // #2169 (SA-395): an imported CSV line, never a copy of a system-stamped source line.
     na: "originalPrice msrp priceType boxes pieces unitsPerBox promoFreeUnits notes orderItemId trackedCategoryId trackedSubcategoryId categoryTaxAmount unitLabel categoryTaxType categoryTaxRate categoryPriceIncludesTax systemKind compositionMode recipeId recipeVersion",
     components: "na",
-    gaps: { ...P0A_LABELS_LINECODE },
+    // row 510 (#2093): historical import is exempt; it STAMPS the fixed "Imported (historical)" marker (importing user,
+    // rules matched at import). Not written yet: flips to rederived with the import change.
+    gaps: { ...P0A_LABELS_LINECODE, ...R510_STAMP_GAPS },
   }, // CSV: per-piece by construction
   // C17 (not in R-ui's first table: the discovery pass found it; R-ui then verified it, invoices.service.ts
   // 2273-2420, callers 3540/3601/6342 = invoice edit and status flows). It UPDATES an existing order line, and
@@ -320,6 +349,7 @@ export const COPIERS: Copier[] = [
       originalPrice: "unfiled",
       notes: "unfiled",
       position: "unfiled",
+      ...R510_STAMP_GAPS, // row 510: carry (a line rebuilt from an invoice line keeps its stamp); brief 2 flips to carried
     },
   },
   // Client copiers: NOT column-checked (the spec is API-side; a request body is not a Prisma model).
