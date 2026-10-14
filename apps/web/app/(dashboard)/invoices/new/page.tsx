@@ -22,6 +22,7 @@ import { Button, Card, Input, useToast, cn } from "@routeflow/ui/web";
 import { usePageTitle } from "@/lib/page-title-context";
 import { countNoun } from "@/lib/plural";
 import { scheduleScannerRefocus } from "@/lib/refocus-scanner";
+import { useListboxNav } from "@/lib/use-listbox-nav";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import {
   useCreateInvoice,
@@ -62,7 +63,6 @@ import {
   isGroupExpanded,
   pickerProductName,
   sellableFlat,
-  sellableOnly,
 } from "@/lib/product-search-groups";
 import { BarcodeScannerButton } from "@/components/BarcodeScannerButton";
 import { bumpInvoiceLine, scanLevelForHit, seedLineQty } from "../invoice-scan-level";
@@ -1406,18 +1406,43 @@ export default function NewInvoicePage() {
     limit: 10,
     includeVariants: true,
   });
-  const scanSuggestions = React.useMemo(() => {
+  // Flat typeahead: variants (named under their parent) and standalones, never a FAMILY (B1215).
+  const scanFlat = React.useMemo(() => {
     if (!debouncedScanQuery.trim()) return [] as any[];
-    // Flat typeahead: variants (named under their parent) and standalones, never a FAMILY (B1215).
-    return sellableFlat<any>((scanProductsData?.data as any[]) ?? []).slice(0, 8);
+    return sellableFlat<any>((scanProductsData?.data as any[]) ?? []);
   }, [scanProductsData, debouncedScanQuery]);
+  // The rows the dropdown shows, in order — the ONE list both the dropdown and Enter read (M3).
+  const scanSuggestions = React.useMemo(() => scanFlat.slice(0, 8), [scanFlat]);
+  const scanListOpen = !!scanQuery.trim() && scanSuggestions.length > 0;
+
+  /** Add a dropdown row (click, or Enter on an arrow-highlighted row). */
+  function pickScanSuggestion(p: any) {
+    addProductFromCatalog(p, undefined, { startOnDefaultUnit: true });
+    setScanQuery("");
+    setDebouncedScanQuery("");
+  }
+
+  // Arrow keys move the highlight (clamped); -1 = untouched, which Enter treats as the first shown
+  // row after the exact barcode/SKU check, so a wedge scanner never lands on a different product.
+  const scanNav = useListboxNav({
+    items: scanSuggestions,
+    open: scanListOpen,
+    onPick: pickScanSuggestion,
+    resetKey: scanQuery,
+    idPrefix: "invoice-scan",
+  });
+  const scanHighlight = scanNav.highlight >= 0 ? scanNav.highlight : 0;
 
   /**
    * Resolve a scanned/typed code to a product and add it to the invoice.
    * Mirrors the order modal's flow: barcode endpoint → product search by
    * SKU/name → create-product modal as last resort.
    */
-  async function handleScanCode(rawCode: string) {
+  async function handleScanCode(
+    rawCode: string,
+    /** The dropdown rows currently shown for this exact text: the search fallback reads these. */
+    shown?: { all: any[]; first: any },
+  ) {
     const code = rawCode.trim();
     if (!code || saleLocked) return;
     setScanQuery("");
@@ -1436,16 +1461,23 @@ export default function NewInvoicePage() {
     } catch {
       // not found by barcode — fall through to SKU/name search
     }
-    // 2) SKU / name search; prefer exact SKU
+    // 2) SKU / name search; prefer exact SKU, else the first row the operator was shown (M3).
+    // Without a shown list (a scan sent before the dropdown rendered) fetch the search instead.
     try {
-      const res = await apiClient
-        .get("/products", {
-          params: { search: code, limit: 10, isActive: true, includeVariants: true },
-        })
-        .then((r) => r.data);
-      const matches: any[] = sellableOnly<any>(res?.data ?? []);
+      let matches: any[];
+      if (shown) {
+        matches = shown.all;
+      } else {
+        const res = await apiClient
+          .get("/products", {
+            params: { search: code, limit: 10, isActive: true, includeVariants: true },
+          })
+          .then((r) => r.data);
+        // The same flattening the dropdown uses, so Enter adds what it WILL show first (M3 review).
+        matches = sellableFlat<any>(res?.data ?? []);
+      }
       const skuExact = matches.find((p) => (p.sku ?? "").toLowerCase() === code.toLowerCase());
-      const toAdd = skuExact ?? matches[0];
+      const toAdd = skuExact ?? (shown ? shown.first : matches[0]);
       if (toAdd) {
         addProductFromCatalog(toAdd, scanLevelForHit(code, toAdd), {
           startOnDefaultUnit: matches.length > 1 || scanCodeIsShared(code, toAdd),
@@ -2198,13 +2230,28 @@ export default function NewInvoicePage() {
                     value={scanQuery}
                     onChange={(e) => setScanQuery(e.target.value)}
                     onKeyDown={(e) => {
+                      // ArrowDown from the untouched first-row highlight must land on row 2.
+                      if (e.key === "ArrowDown" && scanListOpen && scanNav.highlight < 0) {
+                        scanNav.setHighlight(0);
+                      }
+                      // An arrow-highlighted row is picked here and the key is consumed.
+                      if (scanNav.onKeyDown(e)) return;
                       if (e.key === "Enter") {
                         e.preventDefault();
-                        // If a suggestion is open and user picked one with mouse, that path
-                        // already handles add. Otherwise treat the typed text as a scan code.
-                        void handleScanCode(scanQuery);
+                        // Treat the typed text as a scan code (exact barcode / SKU wins); with
+                        // nothing exact, add the first row the dropdown shows. The shown list is
+                        // only trusted once it was built from this exact text (debounce settled).
+                        const settled = scanListOpen && debouncedScanQuery === scanQuery;
+                        void handleScanCode(
+                          scanQuery,
+                          settled ? { all: scanFlat, first: scanSuggestions[0] } : undefined,
+                        );
                       }
                     }}
+                    {...scanNav.inputProps}
+                    aria-activedescendant={
+                      scanListOpen ? scanNav.optionId(scanHighlight) : undefined
+                    }
                     placeholder="Scan barcode, or type product name / SKU and press Enter…"
                     className="h-10 w-full rounded-lg border border-surface-border bg-white pl-9 pr-9 text-sm text-navy placeholder:text-navy/30 focus:border-transparent focus:outline-none focus:ring-2 focus:ring-brand-500"
                   />
@@ -2227,20 +2274,29 @@ export default function NewInvoicePage() {
                           (Enter or click to add)
                         </span>
                       </p>
-                      <ul role="listbox" className="py-1">
-                        {scanSuggestions.map((p: any) => {
+                      <ul
+                        id={scanNav.listId}
+                        role="listbox"
+                        aria-label="Product suggestions"
+                        className="py-1"
+                      >
+                        {scanSuggestions.map((p: any, i: number) => {
                           const alreadyAdded = items.some((it) => it.productId === p.id);
                           return (
-                            <li key={p.id}>
+                            <li key={p.id} role="presentation">
                               <button
                                 type="button"
+                                role="option"
+                                id={scanNav.optionId(i)}
+                                aria-selected={i === scanHighlight}
                                 onMouseDown={(e) => {
                                   e.preventDefault();
-                                  addProductFromCatalog(p, undefined, { startOnDefaultUnit: true });
-                                  setScanQuery("");
-                                  setDebouncedScanQuery("");
+                                  pickScanSuggestion(p);
                                 }}
-                                className="flex w-full items-center gap-3 px-3 py-2 text-left text-sm text-navy transition-colors hover:bg-brand-50"
+                                className={cn(
+                                  "flex w-full items-center gap-3 px-3 py-2 text-left text-sm text-navy transition-colors hover:bg-brand-50",
+                                  i === scanHighlight && "bg-brand-50",
+                                )}
                               >
                                 <div className="min-w-0 flex-1">
                                   {(() => {
