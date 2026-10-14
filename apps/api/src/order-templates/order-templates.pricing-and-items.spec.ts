@@ -1,3 +1,4 @@
+import { regulatedGateOpenProvider } from "./testing/regulated-gate-open-provider";
 import { oversellReaderOffProvider } from "../orders/testing/policy-reader-provider";
 import { Test } from "@nestjs/testing";
 import { BadRequestException } from "@nestjs/common";
@@ -61,6 +62,7 @@ describe("OrderTemplatesService — pricing via the shared resolver, PATCH item 
       providers: [
         oversellReaderOffProvider,
         OrderTemplatesService,
+        regulatedGateOpenProvider,
         { provide: PrismaService, useValue: prisma },
         { provide: TenantContextService, useValue: { run: jest.fn((_id, fn) => fn()) } },
         // settings.taxRate is stored as a PERCENT string — "10" is 10%.

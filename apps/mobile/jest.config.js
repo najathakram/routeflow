@@ -61,6 +61,8 @@ module.exports = {
       "<rootDir>/../../packages/types/regulated-auth-copy.ts",
     // H5: the shared estimate tax-basis notice (pure), same subpath trick.
     "^@routeflow/types/estimate-tax-basis$": "<rootDir>/../../packages/types/estimate-tax-basis.ts",
+    // Row 485: the pure sale-retry rule (definitive refusal, per-attempt key), same subpath trick.
+    "^@routeflow/types/sale-attempt$": "<rootDir>/../../packages/types/sale-attempt.ts",
     "^expo-secure-store$": "<rootDir>/__tests__/__mocks__/expo-secure-store.js",
     // #2653: the shell bridge is pure TS (zod only) — resolve it to SOURCE, ahead of the ui stub.
     "^@routeflow/ui/shell-bridge$": "<rootDir>/../../packages/ui/src/shell-bridge.ts",

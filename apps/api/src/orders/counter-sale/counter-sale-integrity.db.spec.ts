@@ -432,7 +432,10 @@ describeDb("Counter Sale integrity, the real chain on Postgres (row 383)", () =>
       const spy = jest
         .spyOn(invoices, "createInvoiceFromOrder")
         .mockRejectedValueOnce(new Error("invoice pipeline unavailable"));
-      await expect(ring(A, k)).rejects.toThrow(/invoice pipeline unavailable/);
+      // Row 466: the order committed, so the failure is the coded 500 carrying orderId (cause kept).
+      await expect(ring(A, k)).rejects.toMatchObject({
+        response: { code: "SALE_INVOICE_CREATE_FAILED", orderId: expect.any(String) },
+      });
       spy.mockRestore();
 
       let f = await footprint(A, k);
@@ -456,7 +459,10 @@ describeDb("Counter Sale integrity, the real chain on Postgres (row 383)", () =>
       const k = key();
       const before = await stockOf(A.cola);
       const spy = jest.spyOn(invoices, "send").mockRejectedValueOnce(new Error("send unavailable"));
-      await expect(ring(A, k)).rejects.toThrow(/send unavailable/);
+      // Row 466: the invoice committed, so the failure carries invoiceId and orderId (cause kept).
+      await expect(ring(A, k)).rejects.toMatchObject({
+        response: { code: "INVOICE_SEND_AFTER_CREATE_FAILED", invoiceId: expect.any(String) },
+      });
       spy.mockRestore();
       let f = await footprint(A, k);
       expect(f.orders).toHaveLength(1);
@@ -625,9 +631,9 @@ describeDb("Counter Sale integrity, the real chain on Postgres (row 383)", () =>
     it("RED-FIRST (the till's own path): an ON_ACCOUNT half sale read WITH its method is also 409 INCOMPLETE, not a receipt for an unsent DRAFT", async () => {
       const k = key();
       const spy = jest.spyOn(invoices, "send").mockRejectedValueOnce(new Error("send unavailable"));
-      await expect(ring(A, k, { payment: { method: "ON_ACCOUNT" } as Pay })).rejects.toThrow(
-        /send unavailable/,
-      );
+      await expect(ring(A, k, { payment: { method: "ON_ACCOUNT" } as Pay })).rejects.toMatchObject({
+        response: { code: "INVOICE_SEND_AFTER_CREATE_FAILED", invoiceId: expect.any(String) },
+      });
       spy.mockRestore();
       // the real till passes its method to by-key; the old rule answered 200 paymentRecorded:true for ON_ACCOUNT
       await expect(
@@ -638,7 +644,10 @@ describeDb("Counter Sale integrity, the real chain on Postgres (row 383)", () =>
     it("RED-FIRST: after the send step failed (invoice DRAFT, no payment) by-key is 409 COUNTER_SALE_INCOMPLETE, and the same-key re-POST finishes it", async () => {
       const k = key();
       const spy = jest.spyOn(invoices, "send").mockRejectedValueOnce(new Error("send unavailable"));
-      await expect(ring(A, k)).rejects.toThrow(/send unavailable/);
+      // Row 466: the invoice committed, so the failure carries invoiceId and orderId (cause kept).
+      await expect(ring(A, k)).rejects.toMatchObject({
+        response: { code: "INVOICE_SEND_AFTER_CREATE_FAILED", invoiceId: expect.any(String) },
+      });
       spy.mockRestore();
 
       await expect(tenantCtx.run(A.tenantId, () => service.byKey(k))).rejects.toMatchObject({

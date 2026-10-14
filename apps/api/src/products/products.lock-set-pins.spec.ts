@@ -8,6 +8,7 @@ import { join } from "path";
  * Source-order pins, because the deadlock itself is timing-dependent (see products-code-reuse.db.spec.ts for the races).
  */
 const src = readFileSync(join(__dirname, "products.service.ts"), "utf8");
+const deleteSrc = readFileSync(join(__dirname, "product-delete-classify.ts"), "utf8");
 const body = (startMarker: string, endMarker: string) => {
   const a = src.indexOf(startMarker);
   expect(a).toBeGreaterThan(-1);
@@ -34,10 +35,13 @@ describe("every deactivate path locks its codes (one sorted set) BEFORE releasin
     expect(fn).toMatch(/releaseProductCodes\(tx, \{[^}]*lockedCodes/);
   });
 
-  it("the soft-delete path (clearAll): ONE lockCodesOfProducts over EVERY id precedes the per-id releases, which receive lockedCodes", () => {
-    const fn = body("if (softDeleteIds.length > 0) {", "if (hardDeleteIds.length > 0) {");
+  it("the soft-delete path (clearAll / bulkDelete): ONE lockCodesOfProducts over EVERY id precedes the row locks and the per-id releases, which receive lockedCodes", () => {
+    const fn = deleteSrc.slice(deleteSrc.indexOf("export async function applyProductDelete("));
     const lock = fn.indexOf("lockCodesOfProducts(");
     expect(lock).toBeGreaterThan(-1);
+    // house order: code advisory locks, THEN the product rows, THEN the authoritative classification
+    expect(lock).toBeLessThan(fn.indexOf("lockProductsForDelete("));
+    expect(fn.indexOf("lockProductsForDelete(")).toBeLessThan(fn.indexOf("planProductDelete("));
     expect(lock).toBeLessThan(fn.indexOf("releaseProductCodes("));
     expect(fn).toMatch(/releaseProductCodes\(tx, \{[^}]*lockedCodes/);
     // never lock-then-release per product inside the loop

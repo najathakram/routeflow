@@ -141,7 +141,7 @@ describe("VU-4b: the New-invoice screen reuses Create Order's unit machinery", (
     expect(onSave).toMatch(/settled\.kind === "blocked"/);
     expect(onSave).toMatch(/showToast\(UNITS_BLOCKED_MESSAGE\)/);
     const gate = onSave.indexOf('settled.kind === "blocked"');
-    expect(gate).toBeLessThan(onSave.indexOf("createSaleMut.mutate("));
+    expect(gate).toBeLessThan(onSave.indexOf("postSale(saleDto)"));
     expect(gate).toBeLessThan(onSave.indexOf("createMut.mutate("));
     expect(gate).toBeLessThan(onSave.indexOf("Object.entries(lines)"));
     expect(onSave).not.toMatch(/Object\.entries\(items\)/); // prices from the RESOLVED lines

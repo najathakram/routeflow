@@ -1074,12 +1074,9 @@ export class BuyerController {
   @ApiHeader({ name: "X-Tenant-Slug", required: true })
   @ApiOperation({ summary: "List buyer's standing order templates" })
   getTemplates(@CurrentBuyerCustomer() ctx: any) {
-    // Pass OPERATOR role + customerId to avoid userId-based customer lookup
-    // (buyer-portal-only accounts may have userId=null on the Customer record).
-    return this.templatesService.findAllForUser(
-      makePseudoUser({ ...ctx, role: UserRole.OPERATOR }),
-      ctx.customerId,
-    );
+    // By customerId (buyer-portal-only accounts may have userId=null on the Customer record); lines for
+    // products the catalog hides from this buyer are dropped (row 479).
+    return this.templatesService.findAllForBuyer(ctx.customerId);
   }
 
   @Get("standing-orders")
@@ -1090,11 +1087,8 @@ export class BuyerController {
     summary: "Alias: list buyer's standing order templates (same as /buyer/templates)",
   })
   getStandingOrders(@CurrentBuyerCustomer() ctx: any) {
-    // Pass OPERATOR role + customerId to avoid userId-based customer lookup.
-    return this.templatesService.findAllForUser(
-      makePseudoUser({ ...ctx, role: UserRole.OPERATOR }),
-      ctx.customerId,
-    );
+    // Same buyer-filtered list as GET /buyer/templates.
+    return this.templatesService.findAllForBuyer(ctx.customerId);
   }
 
   @Post("templates/:id/reorder")

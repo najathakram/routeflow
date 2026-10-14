@@ -83,13 +83,22 @@ const same = (a: unknown, b: unknown): boolean =>
   a == null || b == null ? a == null && b == null : Math.abs(Number(a) - Number(b)) < 1e-9;
 
 /**
+ * The stored count of a unit line: `boxes` holds the unit count. A factor-1 unit row (its `unitsPerBox`
+ * snapshot is the unit's factor, <= 1) stores no boxes, and there the base-piece `qty` IS the unit count
+ * (row 457). A larger unit never falls back to `qty` (base pieces), so a stale row cannot read as
+ * untouched.
+ */
+const storedUnitCount = (row: StoredEditRow): unknown =>
+  Number(row.unitsPerBox ?? 1) <= 1 ? (row.boxes ?? row.qty) : row.boxes;
+
+/**
  * qty, boxes, pieces, unitPrice, discount, taxRate — the tuple SA-184 calls "untouched" — plus the unit
  * (VU-4a). A unit line's payload qty counts the UNIT (stored as `boxes`; its `qty` column is base pieces).
  */
 const sameMoneyTuple = (item: EditPayloadLine, row: StoredEditRow): boolean =>
   norm(item.unitLabel ?? "") === norm(row.unitLabel ?? "") &&
   (requestsUnit(item)
-    ? same(item.qty, row.boxes)
+    ? same(item.qty, storedUnitCount(row))
     : same(item.qty, row.qty) && same(item.boxes, row.boxes) && same(item.pieces, row.pieces)) &&
   same(item.unitPrice, row.unitPrice) &&
   same(item.discount ?? 0, row.discount ?? 0) &&
