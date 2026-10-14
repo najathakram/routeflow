@@ -60,7 +60,8 @@ describe("ProductStockCostCard (extracted from the product detail page)", () => 
     );
     expect(screen.queryByText("Unassigned stock")).toBeNull();
     const label = screen.getByText(/^On hand/);
-    expect(label).toHaveTextContent("On hand (not yet split to variants)");
+    expect(label).toHaveTextContent("On hand");
+    expect(label).toHaveTextContent("Not yet split to variants");
     expect(label).toHaveAttribute("title", "Stock on this generic not yet attributed to a variant");
     rerender(
       <ProductStockCostCard
@@ -72,5 +73,40 @@ describe("ProductStockCostCard (extracted from the product detail page)", () => 
     );
     expect(screen.getByText("On hand")).not.toHaveAttribute("title");
     expect(screen.queryByText(/not yet split/)).toBeNull();
+  });
+
+  it("D3: split-parent qualifier is a block caption and the value never wraps", () => {
+    render(
+      <ProductStockCostCard
+        product={{ ...product, variants: [{ id: "v1" }] }}
+        stockStatus="IN_STOCK"
+        currentStock={417}
+        onSetCost={jest.fn()}
+      />,
+    );
+    const caption = screen.getByText("Not yet split to variants");
+    expect(caption.className).toMatch(/\bblock\b/);
+    expect(caption.className).toMatch(/\btext-xs\b/);
+    expect(screen.queryByText(/\(not yet split/)).toBeNull();
+    const value = screen.getByText(/pcs/);
+    expect(value.className).toMatch(/\bwhitespace-nowrap\b/);
+    expect(value.className).toMatch(/\bshrink-0\b/);
+    expect(screen.getByText(/^On hand/)).toHaveAttribute(
+      "title",
+      "Stock on this generic not yet attributed to a variant",
+    );
+  });
+
+  it("D3: a product without variants shows exactly On hand and no qualifier", () => {
+    render(
+      <ProductStockCostCard
+        product={product}
+        stockStatus="IN_STOCK"
+        currentStock={5}
+        onSetCost={jest.fn()}
+      />,
+    );
+    expect(screen.getByText("On hand")).toBeInTheDocument();
+    expect(screen.queryByText("Not yet split to variants")).toBeNull();
   });
 });

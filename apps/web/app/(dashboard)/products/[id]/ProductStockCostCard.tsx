@@ -35,17 +35,19 @@ export function ProductStockCostCard({
         </button>
       </div>
       <div className="px-4">
-        <div className="flex items-center justify-between border-b border-surface-border py-3 text-sm">
+        <div className="flex items-center justify-between gap-3 border-b border-surface-border py-3 text-sm">
           <span
-            className="text-navy/70"
+            className="min-w-0 text-navy/70"
             title={
               isSplitParent ? "Stock on this generic not yet attributed to a variant" : undefined
             }
           >
             On hand
-            {isSplitParent && <span className="text-navy/50"> (not yet split to variants)</span>}
+            {isSplitParent && (
+              <span className="block text-xs text-navy/50">Not yet split to variants</span>
+            )}
           </span>
-          <span className="font-mono font-medium tabular-nums text-navy">
+          <span className="shrink-0 whitespace-nowrap text-right font-mono font-medium tabular-nums text-navy">
             {unitsLabel(currentStock, product.unitsPerBox, product.unit)}
           </span>
         </div>

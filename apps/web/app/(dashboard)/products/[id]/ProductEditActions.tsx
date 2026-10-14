@@ -59,7 +59,7 @@ export function StickyEditBar({
   return (
     <div
       data-testid="sticky-edit-bar"
-      className="fixed inset-x-0 bottom-0 z-30 flex items-center justify-end gap-2 border-t border-surface-border bg-white/85 px-4 py-3 pb-[max(12px,env(safe-area-inset-bottom))] backdrop-blur md:hidden"
+      className="fixed inset-x-0 bottom-0 z-30 flex items-center justify-end gap-2 border-t border-surface-border bg-white/85 px-4 py-3 pb-[max(12px,env(safe-area-inset-bottom))] backdrop-blur md:hidden [@media(prefers-reduced-transparency:reduce)]:bg-white [@media(prefers-reduced-transparency:reduce)]:backdrop-blur-none"
     >
       <Button variant="secondary" className="min-h-11 flex-1" onClick={onCancel}>
         Cancel

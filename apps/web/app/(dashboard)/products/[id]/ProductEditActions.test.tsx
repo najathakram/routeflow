@@ -48,6 +48,13 @@ describe("StickyEditBar (P-02)", () => {
     expect(onCancel).toHaveBeenCalledTimes(1);
   });
 
+  it("D5: falls back to a solid, unblurred bar under prefers-reduced-transparency", () => {
+    render(<StickyEditBar onCancel={jest.fn()} onSave={jest.fn()} saving={false} />);
+    const cls = screen.getByTestId("sticky-edit-bar").className;
+    expect(cls).toContain("[@media(prefers-reduced-transparency:reduce)]:bg-white");
+    expect(cls).toContain("[@media(prefers-reduced-transparency:reduce)]:backdrop-blur-none");
+  });
+
   it("buttons are 44px tall", () => {
     render(<StickyEditBar onCancel={jest.fn()} onSave={jest.fn()} saving={false} />);
     for (const b of screen.getAllByRole("button")) expect(b.className).toMatch(/min-h-11/);
