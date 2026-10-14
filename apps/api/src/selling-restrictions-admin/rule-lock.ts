@@ -2,6 +2,7 @@ import { ConflictException, ForbiddenException, NotFoundException } from "@nestj
 import { UserRole } from "@prisma/client";
 import { API_ERROR_CODES } from "../common/api-error-codes";
 import type { JwtPayload } from "../auth/jwt-payload.interface";
+import { activeRuleWhere, ruleTargetSets } from "../selling-restrictions/selling-restrictions.core";
 
 /**
  * Row 509 — the ONE seam every rule write shares (target add/remove, settings edit, lift). Two rules:
@@ -104,6 +105,91 @@ export function assertMayManageRule(
     (current !== null && isAllCustomerRule(current)) ||
     (proposed !== undefined && isAllCustomerRule(proposed));
   if (allCustomer && !isTenantAdmin(user)) {
-    throw new ForbiddenException("Only an account admin can change (or lift) a federal rule.");
+    throw new ForbiddenException({
+      code: API_ERROR_CODES.RULE_ADMIN_ONLY,
+      message: "Only an account admin can change (or lift) a federal rule.",
+    });
   }
+}
+
+type LabelRuleTx = {
+  sellingRestriction: {
+    findMany(args: unknown): Promise<
+      Array<{
+        jurisdiction: string;
+        categoryId: string | null;
+        targets: Array<{
+          productId: string | null;
+          categoryId: string | null;
+          addedAt: Date;
+          removedAt: Date | null;
+        }>;
+        _count: { targets: number };
+      }>
+    >;
+  };
+};
+
+/**
+ * The label (category) ids an ACTIVE all-customer rule covers at `now`: its active label target rows, or its legacy
+ * categoryId when it has no target rows at all (the engine's own matching, `ruleTargetSets`). `onlyCategoryId`
+ * narrows the read to one label.
+ */
+export async function activeFederalCategoryIds(
+  db: LabelRuleTx,
+  tenantId: string,
+  now: Date = new Date(),
+  onlyCategoryId?: string,
+): Promise<Set<string>> {
+  const cat = onlyCategoryId ? { categoryId: onlyCategoryId } : { categoryId: { not: null } };
+  const rules = await db.sellingRestriction.findMany({
+    where: {
+      tenantId,
+      jurisdiction: "FEDERAL",
+      AND: [
+        activeRuleWhere(now),
+        onlyCategoryId
+          ? {
+              OR: [
+                { categoryId: onlyCategoryId },
+                { targets: { some: { categoryId: onlyCategoryId } } },
+              ],
+            }
+          : {},
+      ],
+    },
+    select: {
+      jurisdiction: true,
+      categoryId: true,
+      targets: {
+        where: cat,
+        select: { productId: true, categoryId: true, addedAt: true, removedAt: true },
+      },
+      _count: { select: { targets: true } },
+    },
+  });
+  const out = new Set<string>();
+  for (const r of rules) {
+    if (!isAllCustomerRule(r)) continue;
+    const sets = ruleTargetSets(r.targets, r._count.targets, now);
+    if (sets) for (const c of sets.categoryIds) out.add(c);
+    else if (r.categoryId) out.add(r.categoryId);
+  }
+  if (onlyCategoryId) for (const c of [...out]) if (c !== onlyCategoryId) out.delete(c);
+  return out;
+}
+
+/**
+ * Owner ruling 2026-10-14 (SA option A): an operator may add or remove a product label, EXCEPT one an ACTIVE
+ * all-customer rule covers. Writing such a label changes what that rule hides, so it is a federal-rule change: the
+ * caller follows a true here with `assertMayManageRule(user, { jurisdiction: "FEDERAL" })`. Read inside the label
+ * writer's transaction, after its category lock.
+ */
+export async function labelHasActiveFederalRule(
+  tx: LabelRuleTx,
+  tenantId: string,
+  categoryId: string,
+  now: Date = new Date(),
+): Promise<boolean> {
+  return (await activeFederalCategoryIds(tx, tenantId, now, categoryId)).has(categoryId);
 }

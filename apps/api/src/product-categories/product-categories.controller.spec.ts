@@ -2,8 +2,9 @@ import { UserRole } from "@prisma/client";
 import { ROLES_KEY } from "../auth/decorators/roles.decorator";
 import { ProductCategoriesController } from "./product-categories.controller";
 
-// Labels decide what a selling ban covers, so every WRITE is TENANT_ADMIN-only (owner ruling,
-// Lane R) — pinned per handler so a new route cannot quietly land at OPERATOR.
+// Category create/edit stays TENANT_ADMIN-only (owner ruling, Lane R). Product label add/remove is open to
+// OPERATOR (owner ruling 2026-10-14); a label an active federal rule covers stays admin-only in the service.
+// Pinned per handler so a route cannot quietly change level.
 const proto = ProductCategoriesController.prototype as unknown as Record<string, unknown>;
 const rolesOf = (handler: string) =>
   Reflect.getMetadata(ROLES_KEY, proto[handler] as object) as UserRole[] | undefined;
@@ -16,11 +17,11 @@ describe("ProductCategoriesController role gates", () => {
     expect(guards).toEqual(expect.arrayContaining(["JwtAuthGuard", "RolesGuard"]));
   });
 
-  it.each(["create", "update", "setLabel", "removeLabel"])("%s is TENANT_ADMIN only", (h) => {
+  it.each(["create", "update"])("%s is TENANT_ADMIN only", (h) => {
     expect(rolesOf(h)).toEqual([UserRole.TENANT_ADMIN]);
   });
 
-  it.each(["list", "getLabels"])("%s is readable by OPERATOR", (h) => {
+  it.each(["list", "getLabels", "setLabel", "removeLabel"])("%s is open to OPERATOR", (h) => {
     expect(rolesOf(h)).toEqual([UserRole.OPERATOR]);
   });
 

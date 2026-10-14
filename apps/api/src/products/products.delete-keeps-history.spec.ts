@@ -159,7 +159,7 @@ describe("ProductsService delete: history is never written", () => {
     service = mod.get(ProductsService);
     // The tx the delete runs in: the same models, plus a recording raw-SQL tag (the row lock).
     prisma.tenantTransaction.mockImplementation((fn: any) =>
-      fn({ ...prisma, $executeRaw: jest.fn().mockResolvedValue(0), $queryRaw: raw }),
+      fn({ ...prisma, $executeRaw: raw, $queryRaw: raw }),
     );
     prisma.product.findMany.mockImplementation(async (args: any) =>
       args?.where?.id?.in ? args.where.id.in.map((id: string) => ({ id, name: id })) : [],
@@ -225,6 +225,26 @@ describe("ProductsService delete: history is never written", () => {
     expect(lastClassify).toBeGreaterThan(firstLock);
     expect(order.indexOf("delete")).toBeGreaterThan(lastClassify);
     expect(prisma.tenantTransaction).toHaveBeenCalledTimes(1);
+  });
+
+  it("bulkDelete: ONE ranked lock statement over the targets AND their families (SA-767 R6), never a second per-family lock", async () => {
+    prisma.product.findMany.mockImplementation(async (args: any) =>
+      args?.where?.parentProductId
+        ? [{ parentProductId: "fam-9" }, { parentProductId: "fam-9" }]
+        : args?.where?.id?.in
+          ? args.where.id.in.map((id: string) => ({ id, name: id }))
+          : [],
+    );
+
+    await service.bulkDelete(["v2", "v1"]);
+
+    const sqlCalls = raw.mock.calls.map((c) => (Array.isArray(c[0]) ? c[0].join("?") : ""));
+    const lockCalls = raw.mock.calls.filter((_c, i) => /FOR UPDATE/.test(sqlCalls[i]));
+    expect(lockCalls).toHaveLength(1);
+    const lockedIds = lockCalls[0].slice(1).find((a: unknown) => Array.isArray(a));
+    expect([...(lockedIds as string[])].sort()).toEqual(["fam-9", "v1", "v2"]);
+    // the statement is the shared ranked one: family role first (the rank expression), then id
+    expect(sqlCalls.find((q) => /FOR UPDATE/.test(q))).toMatch(/ORDER BY/);
   });
 
   it("bulkDelete: a Restrict foreign-key violation that fires after the lock is a coded 409, not a 500", async () => {

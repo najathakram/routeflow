@@ -33,3 +33,14 @@ export function shipmentNotShippedNote(
   if (isShippedOrderStatus(orderStatus) || orderStatus === "CANCELLED") return null;
   return notShippedNote(false);
 }
+
+/**
+ * Where the Shipment card sits on the order screen (row 505, web M8): a carrier (SHIP) order shows it ABOVE the
+ * Items card with its totals (web: above Summary), where the ship step is found; any other order keeps the card
+ * after the Invoice card, as before.
+ */
+export function shipmentCardPlacement(
+  fulfillPath: string | null | undefined,
+): "aboveItems" | "afterInvoice" {
+  return fulfillPath === "SHIP" ? "aboveItems" : "afterInvoice";
+}
