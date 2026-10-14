@@ -15,6 +15,7 @@ import type {
   TripEligibilityRow,
   TripOrigin,
 } from "@routeflow/types";
+import type { InvoiceSendLock, InvoiceSendState } from "../invoice-send-state";
 export type { TripEligibilityRow, TripIneligibleReason, TripOrigin } from "@routeflow/types";
 
 export interface PaginationMeta {
@@ -400,6 +401,9 @@ export interface AdminInvoice {
   /** The server's one answer to "is this a pending order mirror" (invoice detail only). Wins over
    *  the client derivation: only the server knows a shipped carrier order's invoice is unlocked. */
   pendingMirror?: boolean;
+  /** #2088: the tracked email state ("emailed, modified since" ...) and the pre-delivery lock (staff detail reads). */
+  sendState?: InvoiceSendState;
+  sendLocked?: InvoiceSendLock | null;
   /** The server's default PDF stage (invoice detail only): a shipment invoice is "final" before delivery. */
   pdfVariant?: "draft" | "final";
   /** Invoice-level fields the mobile builders can now WRITE — all raw scalars

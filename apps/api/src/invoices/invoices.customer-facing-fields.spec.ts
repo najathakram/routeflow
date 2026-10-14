@@ -53,7 +53,10 @@ function serviceReading(row: ReturnType<typeof invoiceRow>) {
           count: jest.fn().mockResolvedValue(1),
         },
         customer: { findFirst: jest.fn().mockResolvedValue({ id: "cust-1" }) },
-        auditLog: { groupBy: jest.fn().mockResolvedValue([]) }, // revisedAt: never revised
+        auditLog: {
+          groupBy: jest.fn().mockResolvedValue([]),
+          findFirst: jest.fn().mockResolvedValue(null), // #2088: no tracked email
+        }, // revisedAt: never revised
       }),
     },
     systemConfig: { get: jest.fn().mockResolvedValue(null) },

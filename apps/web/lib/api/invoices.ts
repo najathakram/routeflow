@@ -1,4 +1,5 @@
 import type { InvoiceItemSystemKind, InvoiceStatus } from "@routeflow/types";
+import type { InvoiceSendLock, InvoiceSendState } from "@/lib/invoice-send-state";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { apiClient } from "../api-client";
 import { isDayClosedRefusal } from "../day-closed-copy";
@@ -147,6 +148,9 @@ export interface Invoice {
   revisedAt?: string | null;
   /** P-4: > 0 only when overpaid; absent = nothing shown. */
   overpaidBy?: number | null;
+  /** #2088: the tracked email state ("emailed, modified since" ...) and the pre-delivery lock; staff reads only. */
+  sendState?: InvoiceSendState;
+  sendLocked?: InvoiceSendLock | null;
   customerId: string;
   customer?: {
     id: string;

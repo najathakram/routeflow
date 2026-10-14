@@ -3,6 +3,13 @@
  * stay unit-testable in the node Jest env). Mirror the server's guards.
  */
 import { OPEN_INVOICE_STATUS_VALUES } from "@routeflow/types";
+import {
+  SENDS_AFTER_DELIVERY_SHORT,
+  canEmailAgain,
+  invoiceResendCopy,
+  type InvoiceSendLock,
+  type InvoiceSendState,
+} from "./invoice-send-state";
 
 /**
  * True for the shared OPEN invoice statuses (SENT, VIEWED, PARTIAL, OVERDUE: issued and not settled).
@@ -126,4 +133,34 @@ export function isPendingOrderMirror(inv: {
  */
 export function canSendInvoiceNow(status: string, pendingMirror: boolean): boolean {
   return status === "DRAFT" && !pendingMirror;
+}
+
+/**
+ * #2088: the Send / "Email again" tile. A DRAFT sends (first send, or "Email again" if the invoice was emailed before
+ * a revert); SENT/VIEWED/OVERDUE/PARTIAL/PAID can be emailed again; a pending order mirror shows the tile LOCKED with
+ * the reason (never a missing tile). The words come from the shared module, so web says the same.
+ */
+export function invoiceSendAction(input: {
+  status: string;
+  pendingMirror: boolean;
+  sendState?: InvoiceSendState | null;
+  sendLocked?: InvoiceSendLock | null;
+}): {
+  show: boolean;
+  locked: boolean;
+  label: string;
+  confirm: string | null;
+  confirmButton: string;
+} {
+  const copy = invoiceResendCopy(input.sendState);
+  const locked = Boolean(input.sendLocked) || (input.status === "DRAFT" && input.pendingMirror);
+  const show =
+    locked || canSendInvoiceNow(input.status, input.pendingMirror) || canEmailAgain(input.status);
+  return {
+    show,
+    locked,
+    label: locked ? SENDS_AFTER_DELIVERY_SHORT : copy.action,
+    confirm: locked ? null : copy.confirm,
+    confirmButton: copy.confirmButton,
+  };
 }

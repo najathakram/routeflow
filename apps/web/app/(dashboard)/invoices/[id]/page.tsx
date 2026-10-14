@@ -66,6 +66,8 @@ import { isPendingMirrorInvoice, pendingMirrorCopy } from "@/lib/invoice-pending
 import { useCounterSaleGate } from "@/lib/api/counter-sale";
 import { isStoreOnly } from "@/lib/counter-sale";
 import { canSendReminder } from "@/lib/invoice-reminder";
+import { canEmailAgain } from "@/lib/invoice-send-state";
+import { EmailInvoiceAction } from "@/components/invoices/EmailInvoiceAction";
 import { useParams, useRouter } from "next/navigation";
 import { useTrackedCategories } from "@/lib/api/tracked-categories";
 import { useUnapplyCreditNote } from "@/lib/api/credit-notes";
@@ -2083,17 +2085,17 @@ export default function InvoiceDetailPage() {
             </Button>
           )}
 
-          {/* Send (DRAFT) / Send Reminder (SENT/VIEWED/OVERDUE) */}
-          {status === "DRAFT" && !isPendingMirror && (
-            <Button
-              size="sm"
-              variant="primary"
-              leftIcon={<Send className="h-3.5 w-3.5" />}
-              onClick={handleSend}
+          {/* #2088: Send (DRAFT) / Email again (SENT/VIEWED/OVERDUE/PARTIAL/PAID), with the tracked state in the
+              confirmation; a locked draft says why instead of hiding the action. Send Reminder stays separate. */}
+          {((status === "DRAFT" && !isPendingMirror) ||
+            canEmailAgain(status) ||
+            (isPendingMirror && invoice.sendLocked)) && (
+            <EmailInvoiceAction
+              sendState={invoice.sendState}
+              sendLocked={invoice.sendLocked}
               loading={sendInvoiceEmail.isPending || sendInvoice.isPending}
-            >
-              Send
-            </Button>
+              onSend={handleSend}
+            />
           )}
           {canSendReminder({ status, balanceDue }) && (
             <Button

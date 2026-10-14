@@ -61,6 +61,8 @@ module.exports = {
       "<rootDir>/../../packages/types/regulated-auth-copy.ts",
     // Row 485: the pure sale-retry rule (definitive refusal, per-attempt key), same subpath trick.
     "^@routeflow/types/sale-attempt$": "<rootDir>/../../packages/types/sale-attempt.ts",
+    // #2088: the shared invoice re-email copy + states (pure), same subpath trick.
+    "^@routeflow/types/invoice-send-state$": "<rootDir>/../../packages/types/invoice-send-state.ts",
     // M8: the shared shipment save rule + not-shipped line (pure, no imports), same subpath trick.
     "^@routeflow/types/shipment-save$": "<rootDir>/../../packages/types/shipment-save.ts",
     "^expo-secure-store$": "<rootDir>/__tests__/__mocks__/expo-secure-store.js",

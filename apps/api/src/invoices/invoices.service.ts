@@ -99,6 +99,14 @@ import { buildPaymentsCsv } from "./payments-csv";
 import { settledAtShipment } from "../orders/order-status-invoicing";
 import { assertCarrierLinesUnchanged, invoiceOrderWithCarrier } from "./invoice-carrier-lock";
 import { resolvePendingMirror } from "./pending-mirror";
+import {
+  guardedEmail,
+  invoiceFingerprintOf,
+  recordInvoiceEmailed,
+  assertOrderInvoiceUnlockedFor,
+  sendFieldsFor,
+  type SendEmailArgs,
+} from "./invoice-send-state";
 import { resolveInvoiceVariant } from "./invoice-stage";
 import { orderShipmentFields } from "./order-shipment-fields";
 import {
@@ -3081,6 +3089,10 @@ export class InvoicesService {
       pendingMirror: await resolvePendingMirror(this.featureConfig, inv.tenantId, inv, inv.order),
       // F3: the server's default PDF stage (a shipment invoice is FINAL); clients read it, never re-derive.
       pdfVariant: await resolveInvoiceVariant(this.featureConfig, inv.tenantId, inv, inv.order),
+      // #2088: the tracked send state ("emailed, modified since") and the pre-delivery lock, staff only.
+      ...(user?.role === UserRole.CUSTOMER
+        ? {}
+        : await sendFieldsFor(this.prisma, this.featureConfig, inv, inv.order)),
     });
   }
 
@@ -3447,28 +3459,12 @@ export class InvoicesService {
    * van-sale flow, reminders), so a plain pending mirror keeps refusing to be sent
    * pre-delivery exactly as before.
    */
-  private async assertOrderInvoiceUnlocked(
-    inv: {
-      orderId: string | null;
-      status: InvoiceStatus;
-      deliveryBatchId: string | null;
-    },
+  private assertOrderInvoiceUnlocked(
+    inv: Parameters<typeof assertOrderInvoiceUnlockedFor>[2],
     opts?: { allowPreDelivery?: boolean },
   ): Promise<void> {
-    if (!inv.orderId || inv.status !== InvoiceStatus.DRAFT || inv.deliveryBatchId != null) return;
-    if (opts?.allowPreDelivery) return;
-    const order = await this.prisma.forTenant().order.findFirst({
-      where: { id: inv.orderId },
-      select: { status: true, orderNumber: true, fulfillPath: true },
-    });
-    if (
-      order &&
-      (await resolvePendingMirror(this.featureConfig, this.prisma.getTenantId(), inv, order))
-    ) {
-      throw new BadRequestException(
-        `This invoice mirrors order #${order.orderNumber ?? ""} and can't be sent or edited until the order is delivered. Edit the order instead — the invoice updates automatically.`,
-      );
-    }
+    // #2088: the body moved to invoice-send-state.ts, beside `sendLocked` - ONE predicate for both.
+    return assertOrderInvoiceUnlockedFor(this.prisma, this.featureConfig, inv, opts);
   }
 
   async send(id: string, opts?: { allowPreDelivery?: boolean; suppressNotify?: boolean }) {
@@ -3530,7 +3526,7 @@ export class InvoicesService {
           await lockCreditsForSend(tx, this.prisma.getTenantId(), locked);
           const updated = await tx.invoice.update({
             where: { id },
-            data: { status: nextStatus, sentAt: new Date() },
+            data: { status: nextStatus, sentAt: locked.sentAt ?? new Date() }, // #2088: a re-send keeps the FIRST sentAt
           });
           // B108: make the "send() catches up" comment above actually true. An
           // operator's explicit-amount OrderCreditNote intents are settled HERE,
@@ -3620,7 +3616,13 @@ export class InvoicesService {
   }
 
   /** Send the invoice as an actual email and mark as SENT. */
-  async sendEmail(id: string, overrideEmail?: string, variant?: "draft" | "final") {
+  /** #2088: the per-invoice throttle (429) around the delivery; `actorId` is the sender, for the send record. */
+  sendEmail(...args: SendEmailArgs) {
+    return guardedEmail(this.prisma, args[0], () => this.deliverEmail(...args));
+  }
+
+  private async deliverEmail(...args: SendEmailArgs) {
+    const [id, overrideEmail, variant, actorId = null] = args;
     const inv = await this.prisma.forTenant().invoice.findUnique({
       where: { id },
       include: {
@@ -3748,6 +3750,7 @@ export class InvoicesService {
       depositDueDate: inv.depositDueDate ? formatDate(inv.depositDueDate) : null,
     };
     await this.assertSendableUnderLock(id, inv.orderId); // SA-404a: VOID now ⇒ 400, no email
+    const fingerprint = await invoiceFingerprintOf(this.prisma.forTenant(), id); // #2088: what this email shows
     const sendResult = await this.emailService.sendInvoice(emailPayload);
 
     // R5: the email server was configured but the actual send did NOT succeed
@@ -3761,6 +3764,14 @@ export class InvoicesService {
       });
     }
 
+    // #2088: the send record (best-effort: the email went, a failed audit write is logged, never thrown).
+    await recordInvoiceEmailed(this.prisma, {
+      id,
+      actorId,
+      to: recipientEmail,
+      fingerprint,
+      variant,
+    });
     // Mark as SENT. P5-13: SENT flip + oldest-first credit auto-apply are ONE atomic
     // operation. PDF/email I/O above stays OUTSIDE the tx (a retry never re-sends the email).
     const { updated, auto } = await this.markSent(id, inv.orderId, true);

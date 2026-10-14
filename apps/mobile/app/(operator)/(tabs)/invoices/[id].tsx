@@ -44,7 +44,7 @@ import { fmtCalendarDate } from "../../../../lib/format-date";
 import { isInternalEmail } from "../../../../lib/internal-email";
 import {
   canRecordPayment,
-  canSendInvoiceNow,
+  invoiceSendAction,
   canWriteOff,
   invoiceActionFlags,
   isOpenInvoiceStatus,
@@ -227,7 +227,13 @@ export default function InvoiceDetailScreen() {
     deliveryBatchId: invoice.deliveryBatchId,
     orderStatus: invoice.order?.status,
   });
-  const canSend = canSendInvoiceNow(invoice.status, pendingMirror);
+  // #2088: Send / "Email again" (with the tracked state in the confirmation) / locked-with-reason.
+  const sendAction = invoiceSendAction({
+    status: invoice.status,
+    pendingMirror,
+    sendState: invoice.sendState,
+    sendLocked: invoice.sendLocked,
+  });
   // Draft/Final PDF stage (mirrors web): smart default per stage, operator-overridable
   // via the toggle. Governs BOTH Share and Send.
   const defaultPdfVariant = deriveInvoiceVariant(invoice);
@@ -775,13 +781,19 @@ export default function InvoiceDetailScreen() {
                 onPress={() => router.push(`/(operator)/invoices/${id}/record-payment`)}
               />
             ) : null}
-            {canSend ? (
+            {sendAction.show ? (
               <ActionTile
                 icon="paper-plane-outline"
-                label={sendMut.isPending ? "Sending…" : "Send"}
+                label={sendMut.isPending ? "Sending…" : sendAction.label}
                 // B6: was tappable while pending — a fast double-tap fired two send emails.
-                disabled={sendMut.isPending}
-                onPress={handleSend}
+                disabled={sendMut.isPending || sendAction.locked}
+                onPress={() =>
+                  sendAction.confirm
+                    ? confirm(sendAction.label, sendAction.confirm, handleSend, {
+                        confirmText: sendAction.confirmButton,
+                      })
+                    : handleSend()
+                }
               />
             ) : null}
             {flags.canEdit && !pendingMirror ? (

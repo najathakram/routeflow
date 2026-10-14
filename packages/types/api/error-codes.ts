@@ -363,6 +363,8 @@ export const API_ERROR_CODES = {
   INVOICE_CHANGED_DURING_EDIT: "INVOICE_CHANGED_DURING_EDIT",
   EMAIL_NOT_CONFIGURED: "EMAIL_NOT_CONFIGURED",
   EMAIL_SEND_FAILED: "EMAIL_SEND_FAILED",
+  /** #2088: the same invoice was emailed too many times in a short window (429). */
+  EMAIL_SEND_THROTTLED: "EMAIL_SEND_THROTTLED",
   // Row 466: create-and-send committed the invoice, then the send step threw a non-HTTP error. The body carries `invoiceId`.
   INVOICE_SEND_AFTER_CREATE_FAILED: "INVOICE_SEND_AFTER_CREATE_FAILED",
   // Row 466: createSale committed the order, then its invoice step threw. The body carries `orderId`.
