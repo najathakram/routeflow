@@ -26,6 +26,7 @@ import { scanRowQty } from "../../invoice-scan-level";
 import { DecimalInput, MoneyInput } from "@/components/MoneyInput";
 import { displayProductName } from "@/lib/product-display";
 import { sellableFlat } from "@/lib/product-search-groups";
+import { safeTextErrorCopy } from "@/lib/safe-text-error-copy";
 import {
   isSpecialTier,
   computeInvoiceLineTotal,
@@ -321,7 +322,18 @@ interface LineItemState {
   /** Whole selling units the snapshot above was earned at, so a qty edit rescales
    *  it instead of handing over free units the new quantity never earned. */
   promoBaseUnits?: number;
+  /** H3b: the price this line was offered at (the stored price on load, the tier price on a pick). A
+   *  Reason field shows once the price moves off it; the server judges the move against the customer's
+   *  tier price (a special price needs the reason). */
+  offeredPrice?: number;
+  overrideReason?: string;
 }
+
+/** H3b: this product line's price has moved off the price it was offered at (half a cent, pricing's own band). */
+const priceMoved = (it: LineItemState): boolean =>
+  !!it.productId &&
+  it.offeredPrice != null &&
+  Math.abs(Number(it.unitPrice) - it.offeredPrice) >= 0.005;
 
 /**
  * Boxed split for a line, derived from its `qty` (total pieces) + `unitsPerBox`.
@@ -542,6 +554,7 @@ export default function EditInvoicePage() {
                 systemKind: it.systemKind ?? null,
                 qty: Number(it.qty),
                 unitPrice: Number(it.unitPrice),
+                offeredPrice: Number(it.unitPrice),
                 // #2656: the NSF fee line is never taxed — a legacy stored rate loads (and saves) as 0.
                 taxRate: isNsfLine(it) ? 0 : Number(it.taxRate ?? 0),
                 discount: Number(it.discount ?? 0),
@@ -663,6 +676,10 @@ export default function EditInvoicePage() {
               : {}),
           // SA-189: only an operator-attested pack is ever sent.
           ...(it.attestedPack ? { unitsPerBox: it.attestedPack } : {}),
+          // H3b: why the price moved off the customer's special price (the server decides if it needs one).
+          ...(priceMoved(it) && it.overrideReason?.trim()
+            ? { overrideReason: it.overrideReason.trim() }
+            : {}),
           // Round-trip the BUY_N_GET_M snapshot — the server replaces every line.
           ...(freeUnits > 0 ? { promoFreeUnits: freeUnits } : {}),
           // Round-trip the per-line note — the server recreates all items on update.
@@ -692,9 +709,10 @@ export default function EditInvoicePage() {
         toast({
           title: "Failed to update invoice",
           description:
-            codedToastCopy(err) ||
-            (Array.isArray(message) ? message.join("; ") : message) ||
-            "Please try again.",
+            safeTextErrorCopy(err) ??
+            (codedToastCopy(err) ||
+              (Array.isArray(message) ? message.join("; ") : message) ||
+              "Please try again."),
           variant: "error",
         });
       },
@@ -892,6 +910,10 @@ export default function EditInvoicePage() {
                           ...(swapped
                             ? { id: undefined, locked: undefined, attestedPack: undefined }
                             : {}),
+                          // H3b: a picked product is offered at the tier price; a new sale, a new reason
+                          ...(swapped
+                            ? { offeredPrice: unitPrice, overrideReason: undefined }
+                            : {}),
                           description,
                           productId,
                           unitPrice: unitPrice !== undefined ? unitPrice : item.unitPrice,
@@ -957,6 +979,21 @@ export default function EditInvoicePage() {
                           onChange={(v) => updateItem(item.key, { unitPrice: v ?? 0 })}
                           className="h-9 rounded border border-surface-border bg-white px-2 text-right text-sm text-navy focus:border-transparent focus:outline-none focus:ring-1 focus:ring-brand-500"
                         />
+                        {/* H3b: the same reason field the new-invoice page shows off a special price. The
+                            server decides whether this move needs one and says so in the save error. */}
+                        {priceMoved(item) && (
+                          <input
+                            type="text"
+                            maxLength={200}
+                            value={item.overrideReason ?? ""}
+                            onChange={(e) =>
+                              updateItem(item.key, { overrideReason: e.target.value })
+                            }
+                            aria-label="Reason for the price change"
+                            placeholder="Reason (needed off a special price)"
+                            className="mt-1 h-8 w-full rounded border border-surface-border bg-white px-2 text-xs text-navy placeholder:text-navy/40 focus:outline-none focus:ring-1 focus:ring-brand-500"
+                          />
+                        )}
                       </MobileField>
                       <MobileField label="Disc. $">
                         <MoneyInput
@@ -1181,6 +1218,7 @@ export default function EditInvoicePage() {
                       description: displayProductName(product),
                       productId: product.id,
                       unitPrice: tierPriceFor(product),
+                      offeredPrice: tierPriceFor(product),
                     }
                   : item,
               ),

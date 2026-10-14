@@ -20,6 +20,7 @@ import {
 } from "lucide-react";
 import { Button, Card, Input, useToast, cn } from "@routeflow/ui/web";
 import { usePageTitle } from "@/lib/page-title-context";
+import { safeTextErrorCopy } from "@/lib/safe-text-error-copy";
 import { countNoun } from "@/lib/plural";
 import { scheduleScannerRefocus } from "@/lib/refocus-scanner";
 import { useListboxNav } from "@/lib/use-listbox-nav";
@@ -1061,8 +1062,13 @@ export default function NewInvoicePage() {
         resolvingRef.current = false;
       });
   }
-  /** A refused unit (UNIT_NOT_OFFERED): the coded copy, and the stale ladder cache is dropped. */
+  /**
+   * A refused unit (UNIT_NOT_OFFERED): the coded copy, and the stale ladder cache is dropped. A
+   * formula-led text refusal (e.g. an override reason starting with "-") gets its fixed copy first.
+   */
   function unitRefusal(err: unknown, lines: LineItemState[]): string | null {
+    const textCopy = safeTextErrorCopy(err);
+    if (textCopy) return textCopy;
     const copy = unitRefusalCopy(err);
     if (copy)
       for (const id of unitProductIds(lines))
@@ -1517,6 +1523,12 @@ export default function NewInvoicePage() {
         errs.items = "Line discount cannot exceed the line total.";
         break;
       }
+      // H3b: the server judges a typed price on an invoice line exactly as on a sale — a special price
+      // moves only with a reason. Never send what it refuses.
+      if (saleLineNeedsReason(it)) {
+        errs.items = reasonRequiredMessage(it.description);
+        break;
+      }
     }
     if (depositOpen) {
       if (depositPercent != null && depositPercent > 0 && !depositDueDate) {
@@ -1545,6 +1557,9 @@ export default function NewInvoicePage() {
     if (!customer) errs.customer = "Please select a customer.";
     if (!issueDate) errs.issueDate = "Issue date is required.";
     if (!dueDate) errs.dueDate = "Due date is required.";
+    // H3b: the preview saves a draft through the same server rule (a special price needs its reason).
+    const needsReason = items.find((it) => Number(it.qty) > 0 && saleLineNeedsReason(it));
+    if (needsReason) errs.items = reasonRequiredMessage(needsReason.description);
     setErrors(errs);
     return Object.keys(errs).length === 0;
   }
@@ -1586,6 +1601,10 @@ export default function NewInvoicePage() {
         ...((it.unitsPerBox ?? 0) > 1 ? { boxes: it.boxes ?? 0, pieces: it.pieces ?? 0 } : {}),
         // A unit line (Case...) sends its count + per-unit price + label; never boxes/pieces.
         ...unitPayload(it),
+        // H3b: the reason a special price moved (the same field the sale path sends)
+        ...(saleLineMovedOffSpecial(it) && it.overrideReason?.trim()
+          ? { overrideReason: it.overrideReason.trim() }
+          : {}),
       })),
       notes: notes.trim() || undefined,
       referenceNumber: reference.trim() || undefined,
@@ -2621,9 +2640,9 @@ export default function NewInvoicePage() {
                         aria-label="Unit price"
                         className="h-9 w-full rounded border border-surface-border bg-white px-2 text-right text-sm text-navy focus:border-transparent focus:outline-none focus:ring-1 focus:ring-brand-500 aria-disabled:opacity-60 max-md:h-11"
                       />
-                      {/* #2696(c) SA-558e: off the customer's special price ⇒ a reason, as the
-                          server requires on a sale (pricing's decideStaffOverride). */}
-                      {isSale && saleLineMovedOffSpecial(item) && (
+                      {/* #2696(c) SA-558e / H3b: off the customer's special price ⇒ a reason, as the
+                          server requires on a sale AND on an invoice (pricing's decideStaffOverride). */}
+                      {saleLineMovedOffSpecial(item) && (
                         <input
                           type="text"
                           maxLength={200}
