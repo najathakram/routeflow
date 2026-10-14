@@ -1,9 +1,7 @@
 "use client";
 
 import Link from "next/link";
-import { Badge } from "@routeflow/ui/web";
 import { unitsLabel } from "@/lib/stock-label";
-import { stockCountLabel } from "../_components/product-status";
 
 /**
  * The product detail's "Stock & Cost" card. Not rendered for a FAMILY container (non-stocked, non-sellable):
@@ -20,6 +18,8 @@ export function ProductStockCostCard({
   currentStock: number;
   onSetCost: () => void;
 }) {
+  // J9: shown only when it differs from On hand (the same number twice is noise).
+  const unassignedStock = currentStock;
   return (
     <div className="overflow-hidden rounded-lg border border-surface-border bg-white shadow-card">
       <div className="flex items-center justify-between border-b border-surface-border px-4 py-3">
@@ -36,34 +36,26 @@ export function ProductStockCostCard({
       </div>
       <div className="px-4">
         <div className="flex items-center justify-between border-b border-surface-border py-3 text-sm">
-          <span className="text-navy/70">Stock status</span>
-          {stockStatus === "OUT_OF_STOCK" ? (
-            <Badge variant="warning" label={stockCountLabel(currentStock)} />
-          ) : stockStatus === "LOW" ? (
-            <Badge variant="warning" label="Low Stock" />
-          ) : (
-            <Badge variant="success" label="In Stock" />
-          )}
-        </div>
-        <div className="flex items-center justify-between border-b border-surface-border py-3 text-sm">
           <span className="text-navy/70">On hand</span>
           <span className="font-mono font-medium tabular-nums text-navy">
             {unitsLabel(currentStock, product.unitsPerBox, product.unit)}
           </span>
         </div>
-        {!product.parentProductId && (product.variants?.length ?? 0) > 0 && (
-          <div className="flex items-center justify-between border-b border-surface-border py-3 text-sm">
-            <span
-              className="text-navy/70"
-              title="Stock on this generic not yet attributed to a variant"
-            >
-              Unassigned stock
-            </span>
-            <span className="font-mono font-medium tabular-nums text-navy">
-              {unitsLabel(currentStock, product.unitsPerBox, product.unit)}
-            </span>
-          </div>
-        )}
+        {!product.parentProductId &&
+          (product.variants?.length ?? 0) > 0 &&
+          unassignedStock !== currentStock && (
+            <div className="flex items-center justify-between border-b border-surface-border py-3 text-sm">
+              <span
+                className="text-navy/70"
+                title="Stock on this generic not yet attributed to a variant"
+              >
+                Unassigned stock
+              </span>
+              <span className="font-mono font-medium tabular-nums text-navy">
+                {unitsLabel(unassignedStock, product.unitsPerBox, product.unit)}
+              </span>
+            </div>
+          )}
         <div className="flex items-center justify-between border-b border-surface-border py-3 text-sm">
           <span className="text-navy/70">Waitlist</span>
           <span
