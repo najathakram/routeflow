@@ -505,6 +505,21 @@ describeDb("row 497 — a buyer's full-list replace keeps unchanged overrides, r
     expect((await rows(o.id)).map(shape)).toEqual(before);
   });
 
+  it("R12: a legacy box-split row (boxes set, unitsPerBox null) holding an override is re-priced fresh, no stamp", async () => {
+    const p = await product("r12");
+    const o = await order([packLine(p, { ...OVERRIDE, unitsPerBox: null })]);
+    await buyerEdit(o.id, [{ productId: p, qty: 18, orderItemId: o.lineItems[0].id }]);
+    const live = await rows(o.id);
+    // hand: 1 box + 6 pieces at the tier $12 box price: 12 + 6 x (12 / 12) = $18.00 (a kept $8 would be $12.00)
+    expect(shape(live[0])).toMatchObject({
+      unitPrice: 12,
+      priceType: "STANDARD",
+      subtotal: 18,
+      overrideReason: null,
+      overriddenBy: null,
+    });
+  });
+
   it("R6 (row 496): a staff edit with a formula-led overrideReason is a 400 and writes nothing", async () => {
     const p = await product("r6");
     const o = await order([packLine(p, OVERRIDE)]);

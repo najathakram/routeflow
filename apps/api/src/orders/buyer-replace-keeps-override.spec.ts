@@ -439,6 +439,31 @@ describe("OrdersService.updateOrderItems: a buyer's full-list replace keeps unch
     expect(created()[0].overrideReason ?? null).toBeNull();
   });
 
+  it("a LEGACY box-split row (boxes set, unitsPerBox null) holding an override prices fresh (fail closed)", async () => {
+    // the box size it was sold at is unknown, so the kept $8 box price could be re-split at a different size
+    prime([line({ ...OVERRIDE, unitsPerBox: null })]);
+    await replace([{ productId: "prod-a", qty: 18, orderItemId: "li-1" }]);
+    // hand: 1 box + 6 pieces at the tier $12 box price: 12 + 6 x (12 / 12) = $18.00
+    expect(created()[0]).toMatchObject({ unitPrice: 12, priceType: "STANDARD", subtotal: 18 });
+    expect(created()[0].overrideReason ?? null).toBeNull();
+    expect(created()[0].overriddenBy ?? null).toBeNull();
+  });
+
+  it("a box-UNAWARE selling-unit override (boxes null, unitsPerBox null) is still kept", async () => {
+    prime([
+      line({
+        ...OVERRIDE,
+        qty: 2,
+        boxes: null,
+        pieces: null,
+        unitsPerBox: null,
+        subtotal: "16.00",
+      }),
+    ]);
+    await replace([{ productId: "prod-a", qty: 2, orderItemId: "li-1" }]);
+    expect(created()[0]).toMatchObject({ ...OVERRIDE, qty: 2, subtotal: 16 });
+  });
+
   it("MUST 3: a kept override stays out of the split-promo group, so the plain line of the SAME product keeps its free units", async () => {
     // BUY 4 GET 1 (blocks of 5 whole units). Unboxed product at $10. L-old: an override line of 10 at $8 (older);
     // L-new: a plain tier line of 10.
@@ -596,6 +621,14 @@ describe("updateOrderItems: a formula-led overrideReason is refused (row 496)", 
         assertSafeOverrideReasons([{ [key]: "li-1", overrideReason: "-new" }], stored),
       ).toThrow();
     }
+  });
+  it("tolerates a non-string reason on the payload or the stored row", () => {
+    expect(() =>
+      assertSafeOverrideReasons(
+        [{ id: "li-1", overrideReason: 5 as never }],
+        [{ id: "li-1", overrideReason: 7 as never }],
+      ),
+    ).not.toThrow();
   });
   it("lets a clean reason, and an unchanged stored legacy value, through", () => {
     expect(() =>

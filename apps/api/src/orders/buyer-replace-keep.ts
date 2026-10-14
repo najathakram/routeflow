@@ -22,6 +22,8 @@ export interface HeldPriceLine {
   unitLabel?: string | null;
   /** The sale-time box size snapshot on a box-split line; null on a box-unaware (selling-unit) line. */
   unitsPerBox?: unknown;
+  /** Set on a box-split line. With no `unitsPerBox` snapshot it is a legacy row whose box size is unknown. */
+  boxes?: unknown;
   status?: string | null;
   unitPrice?: unknown;
   priceType?: string | null;
@@ -65,6 +67,8 @@ export function keptOverrideFor(
   if (!isStoredOverride(own)) return null;
   // The kept price is per BOX, and the replace re-splits the quantity at the LIVE box size. A line sold in
   // boxes of 12 whose product is now boxes of 6 would bill 2 x $36 as 4 x $36, so it prices fresh instead.
+  // Fail closed: a legacy box-split row has no snapshot of the box size its price was set at.
+  if (own.boxes != null && own.unitsPerBox == null) return null;
   if (own.unitsPerBox != null && Number(own.unitsPerBox) !== Number(liveUnitsPerBox ?? 0))
     return null;
   return {
@@ -128,8 +132,14 @@ export function assertSafeOverrideReasons(
   for (const it of items) {
     const own = byId.get(it.id ?? it.sourceLineId ?? it.orderItemId ?? "");
     assertSafeTextCell(
-      { overrideReason: it.overrideReason?.trim() },
-      { overrideReason: own?.overrideReason?.trim() },
+      {
+        overrideReason:
+          typeof it.overrideReason === "string" ? it.overrideReason.trim() : undefined,
+      },
+      {
+        overrideReason:
+          typeof own?.overrideReason === "string" ? own.overrideReason.trim() : undefined,
+      },
     );
   }
 }
