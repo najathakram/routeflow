@@ -1413,20 +1413,20 @@ enum EmailDeliveryStatus {
 /// One outbound transactional email attempt (SA-603). PII minimal: NO subject/body columns, the
 /// content is re-derivable from `kind` + `entityType`/`entityId`. Retention 90 days (purge in app).
 model EmailDelivery {
-  id                String              @id @default(uuid())
-  tenantId          String
+  id                 String              @id @default(uuid())
+  tenantId           String
   // An app allow-list of template keys, no enum churn.
-  kind              String
-  toAddress         String
-  entityType        String?
-  entityId          String?
-  status            EmailDeliveryStatus @default(QUEUED)
-  providerMessageId String?
+  kind               String
+  toAddress          String
+  entityType         String?
+  entityId           String?
+  status             EmailDeliveryStatus @default(QUEUED)
+  providerMessageId  String?
   // Provider text, truncated to 500 in the app.
-  error             String?
-  attempts          Int                 @default(0)
-  sentAt            DateTime?
-  createdAt         DateTime            @default(now())
+  error              String?
+  attempts           Int                 @default(0)
+  sentAt             DateTime?
+  createdAt          DateTime            @default(now())
   // SHA-256 of the rendered subject+body computed in the app, stored as a hash never the content; no index yet.
   contentFingerprint String?
 

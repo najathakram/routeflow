@@ -110,119 +110,120 @@ model Tenant {
   billingNotificationLogs BillingNotificationLog[]
   rfInvoices              RfInvoice[]
 
-  userPreferences          UserPreference[]
-  customers                Customer[]
-  customerAddresses        CustomerAddress[]
-  customerDocuments        CustomerDocument[]
-  drivers                  Driver[]
-  products                 Product[]
-  routes                   Route[]
-  routeStops               RouteStop[]
-  routeCustomers           RouteCustomer[]
-  routeRuns                RouteRun[]
-  routeRunStops            RouteRunStop[]
-  orders                   Order[]
-  orderItems               OrderItem[]
-  deliveryMutations        DeliveryMutation[]
-  transactions             Transaction[]
-  transactionItems         TransactionItem[]
-  payments                 Payment[]
-  deviceTokens             DeviceToken[]
-  orderTemplates           OrderTemplate[]
-  orderTemplateItems       OrderTemplateItem[]
-  refreshTokens            RefreshToken[]
-  suppliers                Supplier[]
-  stockLots                StockLot[]
-  stockMovements           StockMovement[]
-  invoices                 Invoice[]
-  invoiceItems             InvoiceItem[]
-  invoicePayments          InvoicePayment[]
-  paymentCounters          PaymentCounter[]
-  expenseCategories        ExpenseCategory[]
-  expenses                 Expense[]
-  expenseLineItems         ExpenseLineItem[]
-  mileageRates             MileageRate[]
-  contactPersons           ContactPerson[]
-  customerTags             CustomerTag[]
-  customerTagAssignments   CustomerTagAssignment[]
-  customerComments         CustomerComment[]
-  purchaseOrders           PurchaseOrder[]
-  purchaseOrderItems       PurchaseOrderItem[]
-  creditNotes              CreditNote[]
-  creditNoteItems          CreditNoteItem[]
-  orderCreditNotes         OrderCreditNote[]
-  creditNoteApplyBlocks    CreditNoteApplyBlock[]
-  estimates                Estimate[]
-  estimateItems            EstimateItem[]
-  vendorBills              VendorBill[]
-  invoiceScans             InvoiceScan[]
-  vendorBillItems          VendorBillItem[]
-  billPayments             BillPayment[]
-  productMappings          ProductMapping[]
-  returns                  Return[]
-  returnItems              ReturnItem[]
-  advancePayments          AdvancePayment[]
-  supplierCredits          SupplierCredit[]
-  recurringInvoices        RecurringInvoice[]
-  recurringInvoiceItems    RecurringInvoiceItem[]
-  messages                 Message[]
-  messageThreads           MessageThread[]
-  messageTemplates         MessageTemplate[]
-  notificationRules        NotificationRule[]
-  messageOptOuts           MessageOptOut[]
-  messagingSettings        MessagingSettings?
-  inboundTriages           InboundTriage[]
-  customerPrices           CustomerPrice[]
-  systemConfigs            SystemConfig[]
-  policyValues             PolicyValue[]
-  customerLinks            CustomerLink[]
-  stripeConnect            TenantStripeConnect?
-  buyerPaymentRequests     BuyerPaymentRequest[]
-  buyerMergeRequests       BuyerMergeRequest[]
-  buyerFavorites           BuyerFavorite[]
-  deliveryBatches          DeliveryBatch[]
-  driverLocations          DriverLocation[]
-  tobaccoReports           TobaccoReport[]
-  saleDrafts               SaleDraft[]
-  trackedCategories        TrackedCategory[]
-  trackedSubcategories     TrackedSubcategory[]
-  customerAuthorizations   CustomerAuthorization[]
-  authorizationOverrides   AuthorizationOverride[]
-  regulatedSalesLedger     RegulatedSalesLedger[]
-  parkedLedgerReversals    RegulatedLedgerParkedReversal[]
-  parkedReturnRestocks     ReturnParkedRestock[]
-  regulatedFilings         RegulatedFiling[]
-  promotions               Promotion[]
-  orderRevisions           OrderRevision[]
-  changeRequests           ChangeRequest[]
-  replenishmentSnoozes     ReplenishmentSnooze[]
-  stockAlerts              StockAlert[]
-  stockCountSessions       StockCountSession[]
-  stockCountLines          StockCountLine[]
-  supplierStatementScans   SupplierStatementScan[]
+  userPreferences           UserPreference[]
+  customers                 Customer[]
+  customerAddresses         CustomerAddress[]
+  customerDocuments         CustomerDocument[]
+  drivers                   Driver[]
+  products                  Product[]
+  routes                    Route[]
+  routeStops                RouteStop[]
+  routeCustomers            RouteCustomer[]
+  routeRuns                 RouteRun[]
+  routeRunStops             RouteRunStop[]
+  orders                    Order[]
+  orderItems                OrderItem[]
+  deliveryMutations         DeliveryMutation[]
+  transactions              Transaction[]
+  transactionItems          TransactionItem[]
+  payments                  Payment[]
+  deviceTokens              DeviceToken[]
+  orderTemplates            OrderTemplate[]
+  orderTemplateItems        OrderTemplateItem[]
+  refreshTokens             RefreshToken[]
+  suppliers                 Supplier[]
+  stockLots                 StockLot[]
+  stockMovements            StockMovement[]
+  invoices                  Invoice[]
+  invoiceItems              InvoiceItem[]
+  invoicePayments           InvoicePayment[]
+  paymentCounters           PaymentCounter[]
+  expenseCategories         ExpenseCategory[]
+  expenses                  Expense[]
+  expenseLineItems          ExpenseLineItem[]
+  mileageRates              MileageRate[]
+  contactPersons            ContactPerson[]
+  customerTags              CustomerTag[]
+  customerTagAssignments    CustomerTagAssignment[]
+  customerComments          CustomerComment[]
+  purchaseOrders            PurchaseOrder[]
+  purchaseOrderItems        PurchaseOrderItem[]
+  creditNotes               CreditNote[]
+  creditNoteItems           CreditNoteItem[]
+  orderCreditNotes          OrderCreditNote[]
+  creditNoteApplyBlocks     CreditNoteApplyBlock[]
+  estimates                 Estimate[]
+  estimateItems             EstimateItem[]
+  vendorBills               VendorBill[]
+  invoiceScans              InvoiceScan[]
+  vendorBillItems           VendorBillItem[]
+  billPayments              BillPayment[]
+  productMappings           ProductMapping[]
+  returns                   Return[]
+  returnItems               ReturnItem[]
+  advancePayments           AdvancePayment[]
+  supplierCredits           SupplierCredit[]
+  recurringInvoices         RecurringInvoice[]
+  recurringInvoiceItems     RecurringInvoiceItem[]
+  messages                  Message[]
+  messageThreads            MessageThread[]
+  messageTemplates          MessageTemplate[]
+  notificationRules         NotificationRule[]
+  messageOptOuts            MessageOptOut[]
+  messagingSettings         MessagingSettings?
+  inboundTriages            InboundTriage[]
+  customerPrices            CustomerPrice[]
+  systemConfigs             SystemConfig[]
+  policyValues              PolicyValue[]
+  customerLinks             CustomerLink[]
+  stripeConnect             TenantStripeConnect?
+  buyerPaymentRequests      BuyerPaymentRequest[]
+  buyerMergeRequests        BuyerMergeRequest[]
+  buyerFavorites            BuyerFavorite[]
+  deliveryBatches           DeliveryBatch[]
+  driverLocations           DriverLocation[]
+  tobaccoReports            TobaccoReport[]
+  saleDrafts                SaleDraft[]
+  trackedCategories         TrackedCategory[]
+  trackedSubcategories      TrackedSubcategory[]
+  customerAuthorizations    CustomerAuthorization[]
+  authorizationOverrides    AuthorizationOverride[]
+  regulatedSalesLedger      RegulatedSalesLedger[]
+  parkedLedgerReversals     RegulatedLedgerParkedReversal[]
+  parkedReturnRestocks      ReturnParkedRestock[]
+  regulatedFilings          RegulatedFiling[]
+  promotions                Promotion[]
+  orderRevisions            OrderRevision[]
+  changeRequests            ChangeRequest[]
+  replenishmentSnoozes      ReplenishmentSnooze[]
+  stockAlerts               StockAlert[]
+  stockCountSessions        StockCountSession[]
+  stockCountLines           StockCountLine[]
+  supplierStatementScans    SupplierStatementScan[]
   // ─── Units/PO minimal + multi-category labels (2026-09-19) ───
-  productUnits             ProductUnit[]
-  tenantUnits              TenantUnit[]
-  supplierProducts         SupplierProduct[]
-  productCategories        ProductCategory[]
-  productCategoryLabels    ProductCategoryLabel[]
+  productUnits              ProductUnit[]
+  tenantUnits               TenantUnit[]
+  supplierProducts          SupplierProduct[]
+  productCategories         ProductCategory[]
+  productCategoryLabels     ProductCategoryLabel[]
   // ─── Selling restrictions (2026-09-19) ───
-  sellingRestrictions      SellingRestriction[]
+  sellingRestrictions       SellingRestriction[]
+  sellingRestrictionTargets SellingRestrictionTarget[]
   // ─── Sales agents & commissions (flag.sales_agents) ───
-  salesAgents              SalesAgent[]
-  salesAgentRates          SalesAgentRate[]
-  customerCommissionRates  CustomerCommissionRate[]
-  agentAssignments         AgentAssignment[]
-  commissionAccruals       CommissionAccrual[]
-  commissionAdjustments    CommissionAdjustment[]
-  commissionStatements     CommissionStatement[]
-  commissionStatementLines CommissionStatementLine[]
-  commissionPayouts        CommissionPayout[]
-  crmConnection            CrmConnection?
-  mailboxConnection        MailboxConnection?
-  onboardingCase           OnboardingCase?
+  salesAgents               SalesAgent[]
+  salesAgentRates           SalesAgentRate[]
+  customerCommissionRates   CustomerCommissionRate[]
+  agentAssignments          AgentAssignment[]
+  commissionAccruals        CommissionAccrual[]
+  commissionAdjustments     CommissionAdjustment[]
+  commissionStatements      CommissionStatement[]
+  commissionStatementLines  CommissionStatementLine[]
+  commissionPayouts         CommissionPayout[]
+  crmConnection             CrmConnection?
+  mailboxConnection         MailboxConnection?
+  onboardingCase            OnboardingCase?
 
-  emailDeliveries EmailDelivery[]
+  emailDeliveries    EmailDelivery[]
   counterDayCloses   CounterDayClose[]
   counterParkedCarts CounterParkedCart[]
 
@@ -310,46 +311,46 @@ enum OperatorPermissionGroup {
 // ─── Models (tenancy) ───────────────────────────────────────────────────────────────────
 
 model User {
-  id                  String     @id @default(uuid())
-  email               String
-  username            String
-  password            String?
-  googleId            String?
-  appleId             String? // #2309 (SA-418): Apple's stable `sub`, scoped per tenant like googleId.
-  role                UserRole
-  status              UserStatus @default(ACTIVE)
-  forcePasswordChange Boolean    @default(false)
-  isAdmin             Boolean    @default(false)
-  canActAsDriver      Boolean    @default(false)
-  failedLoginAttempts Int        @default(0)
-  lockedUntil         DateTime?
+  id                     String                    @id @default(uuid())
+  email                  String
+  username               String
+  password               String?
+  googleId               String?
+  appleId                String? // #2309 (SA-418): Apple's stable `sub`, scoped per tenant like googleId.
+  role                   UserRole
+  status                 UserStatus                @default(ACTIVE)
+  forcePasswordChange    Boolean                   @default(false)
+  isAdmin                Boolean                   @default(false)
+  canActAsDriver         Boolean                   @default(false)
+  failedLoginAttempts    Int                       @default(0)
+  lockedUntil            DateTime?
   /// Last successful interactive sign-in (#2159 S1 — the onboarding "drivers have logged in" check).
-  lastLoginAt         DateTime?
+  lastLoginAt            DateTime?
   /// Feature groups switched OFF for this user. [] = every group. Read for OPERATOR accounts only.
   deniedPermissionGroups OperatorPermissionGroup[] @default([])
   /// Bumped on every write to deniedPermissionGroups (compare-and-set token).
-  permissionsVersion  Int        @default(0)
-  createdAt           DateTime   @default(now())
-  updatedAt           DateTime   @updatedAt
+  permissionsVersion     Int                       @default(0)
+  createdAt              DateTime                  @default(now())
+  updatedAt              DateTime                  @updatedAt
   // Email verification for staff accounts (sitting 3, SA-741r2): nullable, nothing reads or writes it yet.
-  emailVerifiedAt     DateTime?
-  deletedAt           DateTime?
-  tenantId            String?
+  emailVerifiedAt        DateTime?
+  deletedAt              DateTime?
+  tenantId               String?
 
-  tenant               Tenant?              @relation(fields: [tenantId], references: [id])
-  customer             Customer?
-  driver               Driver?
-  deviceTokens         DeviceToken[]
-  refreshTokens        RefreshToken[]
-  authHandoffCodes     AuthHandoffCode[]
-  stockMovements       StockMovement[]
-  stockCountsStarted   StockCountSession[]  @relation("StockCountStarted")
-  stockCountsCommitted StockCountSession[]  @relation("StockCountCommitted")
-  stockCountLines      StockCountLine[]
-  expenses             Expense[]
-  messages             Message[]
-  preferences          UserPreference[]
-  passwordResetTokens  PasswordResetToken[]
+  tenant                    Tenant?                      @relation(fields: [tenantId], references: [id])
+  customer                  Customer?
+  driver                    Driver?
+  deviceTokens              DeviceToken[]
+  refreshTokens             RefreshToken[]
+  authHandoffCodes          AuthHandoffCode[]
+  stockMovements            StockMovement[]
+  stockCountsStarted        StockCountSession[]          @relation("StockCountStarted")
+  stockCountsCommitted      StockCountSession[]          @relation("StockCountCommitted")
+  stockCountLines           StockCountLine[]
+  expenses                  Expense[]
+  messages                  Message[]
+  preferences               UserPreference[]
+  passwordResetTokens       PasswordResetToken[]
   emailVerificationTokens   UserEmailVerificationToken[]
   soldOrders                Order[]                      @relation("OrderSoldBy")
   counterDayClosesClosed    CounterDayClose[]            @relation("CounterDayCloseClosedBy")
@@ -357,7 +358,7 @@ model User {
   counterParkedCartsCreated CounterParkedCart[]          @relation("CounterParkedCartCreatedBy")
   counterParkedCartsResumed CounterParkedCart[]          @relation("CounterParkedCartResumedBy")
   // Future AGENT-role login seat (records-only v1 — see SalesAgent.userId).
-  salesAgentSeat       SalesAgent?
+  salesAgentSeat            SalesAgent?
 
   @@unique([tenantId, email])
   @@unique([tenantId, username])
@@ -447,31 +448,31 @@ model PasswordResetToken {
 // ─── Buyer Portal ─────────────────────────────────────────────────────────────
 
 model BuyerAccount {
-  id                  String             @id @default(uuid())
-  email               String             @unique
-  passwordHash        String
+  id                   String             @id @default(uuid())
+  email                String             @unique
+  passwordHash         String
   // false only for Google-auto-created accounts (random unguessable hash) —
   // gates the no-current-password "set password" flow. Accounts created via
   // Google before this column existed keep the default true and must use the
   // email reset flow instead (indistinguishable from password accounts).
-  passwordSet         Boolean            @default(true)
-  name                String
-  phone               String?
-  mobile              String?
-  googleId            String?            @unique
-  appleId             String?            @unique // #2309 (SA-418): Apple's stable `sub`.
+  passwordSet          Boolean            @default(true)
+  name                 String
+  phone                String?
+  mobile               String?
+  googleId             String?            @unique
+  appleId              String?            @unique // #2309 (SA-418): Apple's stable `sub`.
   // #2309 (SA-418): AES-256-GCM ciphertext of the Apple refresh token (common/encryption.service.ts),
   // obtained by exchanging authorizationCode at first sign-in — used to call Apple's /auth/revoke
   // on account deletion.
   appleRefreshTokenEnc String?
-  status              BuyerAccountStatus @default(ACTIVE)
-  emailVerified       Boolean            @default(false)
-  failedLoginAttempts Int                @default(0)
-  lockedUntil         DateTime?
-  createdAt           DateTime           @default(now())
-  updatedAt           DateTime           @updatedAt
-  deletedAt           DateTime?
-  mergedIntoId        String? // audit: set on the secondary after a completed merge
+  status               BuyerAccountStatus @default(ACTIVE)
+  emailVerified        Boolean            @default(false)
+  failedLoginAttempts  Int                @default(0)
+  lockedUntil          DateTime?
+  createdAt            DateTime           @default(now())
+  updatedAt            DateTime           @updatedAt
+  deletedAt            DateTime?
+  mergedIntoId         String? // audit: set on the secondary after a completed merge
 
   customerLinks            CustomerLink[]
   refreshTokens            BuyerRefreshToken[]

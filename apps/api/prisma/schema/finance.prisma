@@ -336,13 +336,17 @@ model InvoiceItem {
   updatedAt                DateTime                @updatedAt
   tenantId                 String?
 
-  invoice            Invoice             @relation(fields: [invoiceId], references: [id], onDelete: Cascade)
-  tenant             Tenant?             @relation(fields: [tenantId], references: [id])
-  product            Product?            @relation(fields: [productId], references: [id])
-  orderItem          OrderItem?          @relation(fields: [orderItemId], references: [id], onDelete: SetNull)
-  trackedCategory    TrackedCategory?    @relation(fields: [trackedCategoryId], references: [id], onDelete: SetNull)
-  trackedSubcategory TrackedSubcategory? @relation(fields: [trackedSubcategoryId], references: [id], onDelete: SetNull)
+  invoice            Invoice                @relation(fields: [invoiceId], references: [id], onDelete: Cascade)
+  tenant             Tenant?                @relation(fields: [tenantId], references: [id])
+  product            Product?               @relation(fields: [productId], references: [id])
+  orderItem          OrderItem?             @relation(fields: [orderItemId], references: [id], onDelete: SetNull)
+  trackedCategory    TrackedCategory?       @relation(fields: [trackedCategoryId], references: [id], onDelete: SetNull)
+  trackedSubcategory TrackedSubcategory?    @relation(fields: [trackedSubcategoryId], references: [id], onDelete: SetNull)
   components         InvoiceItemComponent[]
+  // Units rebuild P0a: sale-time unit-name snapshots (null = legacy line).
+  baseLabel          String?
+  packLabel          String?
+  lineCode           String?
 
   @@index([invoiceId])
   @@index([productId])
@@ -350,10 +354,6 @@ model InvoiceItem {
   @@index([tenantId])
   @@index([trackedCategoryId])
   @@index([trackedSubcategoryId])
-  // Units rebuild P0a: sale-time unit-name snapshots (null = legacy line).
-  baseLabel String?
-  packLabel String?
-  lineCode  String?
 }
 
 // #2717 M3: the invoice-side twin of OrderItemComponent, frozen at bill time. qty is an INTEGER
@@ -361,21 +361,21 @@ model InvoiceItem {
 // per invoice line from componentUnitPrice4(that line's net, its pieces) (SA-589) and never read by any
 // sum, tax or credit path (I5).
 model InvoiceItemComponent {
-  id                   String            @id @default(uuid())
-  tenantId             String
-  invoiceItemId        String
-  componentProductId   String
-  qty                  Int
-  name                 String
-  unitSku              String?
-  unitBarcode          String?
-  barcodeSymbology     BarcodeSymbology?
-  displayUnitPrice4    Decimal?          @db.Decimal(12, 4)
-  position             Int               @default(0)
-  createdAt            DateTime          @default(now())
+  id                 String            @id @default(uuid())
+  tenantId           String
+  invoiceItemId      String
+  componentProductId String
+  qty                Int
+  name               String
+  unitSku            String?
+  unitBarcode        String?
+  barcodeSymbology   BarcodeSymbology?
+  displayUnitPrice4  Decimal?          @db.Decimal(12, 4)
+  position           Int               @default(0)
+  createdAt          DateTime          @default(now())
 
-  invoiceItem        InvoiceItem         @relation(fields: [invoiceItemId], references: [id], onDelete: Cascade)
-  componentProduct   Product             @relation(fields: [componentProductId], references: [id], onDelete: Restrict)
+  invoiceItem      InvoiceItem @relation(fields: [invoiceItemId], references: [id], onDelete: Cascade)
+  componentProduct Product     @relation(fields: [componentProductId], references: [id], onDelete: Restrict)
 
   @@unique([invoiceItemId, componentProductId])
   @@index([componentProductId])
@@ -637,15 +637,15 @@ model CreditNoteItem {
 
   tenant     Tenant     @relation(fields: [tenantId], references: [id], onDelete: Cascade)
   creditNote CreditNote @relation(fields: [creditNoteId], references: [id], onDelete: Cascade)
+  // Units rebuild P0a: sale-time unit-name snapshots (null = legacy line).
+  baseLabel  String?
+  packLabel  String?
+  lineCode   String?
 
   @@index([tenantId])
   @@index([creditNoteId])
   // #2118: per-line credited amounts on the product sales page (a page's line ids).
   @@index([invoiceItemId])
-  // Units rebuild P0a: sale-time unit-name snapshots (null = legacy line).
-  baseLabel String?
-  packLabel String?
-  lineCode  String?
 }
 
 /// Order↔credit-note INTENT: "apply this credit (up to `amount`, or its remaining
@@ -754,16 +754,16 @@ model EstimateItem {
   updatedAt     DateTime  @updatedAt
   tenantId      String?
 
-  estimate Estimate @relation(fields: [estimateId], references: [id], onDelete: Cascade)
-  tenant   Tenant?  @relation(fields: [tenantId], references: [id])
-  product  Product? @relation(fields: [productId], references: [id])
+  estimate  Estimate @relation(fields: [estimateId], references: [id], onDelete: Cascade)
+  tenant    Tenant?  @relation(fields: [tenantId], references: [id])
+  product   Product? @relation(fields: [productId], references: [id])
+  // Units rebuild P0a: sale-time unit-name snapshots (null = legacy line).
+  baseLabel String?
+  packLabel String?
 
   @@index([estimateId])
   @@index([productId])
   @@index([tenantId])
-  // Units rebuild P0a: sale-time unit-name snapshots (null = legacy line).
-  baseLabel String?
-  packLabel String?
 }
 
 // ─── Vendor bills (accounts payable) ───────────────────────────────
@@ -960,12 +960,12 @@ model VendorBillItem {
   vendorBill VendorBill @relation(fields: [vendorBillId], references: [id], onDelete: Cascade)
   tenant     Tenant?    @relation(fields: [tenantId], references: [id])
   product    Product?   @relation(fields: [productId], references: [id])
+  // Units rebuild P0a: sale-time unit-name snapshots (null = legacy line).
+  baseLabel  String?
 
   @@index([vendorBillId])
   @@index([productId])
   @@index([tenantId])
-  // Units rebuild P0a: sale-time unit-name snapshots (null = legacy line).
-  baseLabel String?
 }
 
 model BillPayment {

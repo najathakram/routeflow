@@ -883,22 +883,25 @@ model OrderItem {
   updatedAt                DateTime                @updatedAt
   tenantId                 String?
 
-  order              Order               @relation(fields: [orderId], references: [id])
-  tenant             Tenant?             @relation(fields: [tenantId], references: [id])
+  order              Order                @relation(fields: [orderId], references: [id])
+  tenant             Tenant?              @relation(fields: [tenantId], references: [id])
   // Restrict, stated explicitly: production has always enforced RESTRICT here, while
   // an un-annotated optional relation means SetNull to Prisma — so the schema quietly
   // disagreed with the database. Nothing relies on SetNull: remove() soft-deletes,
   // bulkDelete() clears dependants first, and clearAll() delegates to bulkDelete, so
   // no path reaches this FK. Keeping RESTRICT preserves the backstop that stops a
   // stray hard-delete silently orphaning order history.
-  product            Product?            @relation(fields: [productId], references: [id], onDelete: Restrict)
-  trackedCategory    TrackedCategory?    @relation(fields: [trackedCategoryId], references: [id], onDelete: SetNull)
-  trackedSubcategory TrackedSubcategory? @relation(fields: [trackedSubcategoryId], references: [id], onDelete: SetNull)
+  product            Product?             @relation(fields: [productId], references: [id], onDelete: Restrict)
+  trackedCategory    TrackedCategory?     @relation(fields: [trackedCategoryId], references: [id], onDelete: SetNull)
+  trackedSubcategory TrackedSubcategory?  @relation(fields: [trackedSubcategoryId], references: [id], onDelete: SetNull)
   deliveryMutations  DeliveryMutation[]
   transactionItems   TransactionItem[]
   invoiceItems       InvoiceItem[]
   changeRequests     ChangeRequest[]
   components         OrderItemComponent[]
+  // Units rebuild P0a: sale-time unit-name snapshots (null = legacy line).
+  baseLabel          String?
+  packLabel          String?
 
   @@index([orderId])
   @@index([productId])
@@ -906,9 +909,6 @@ model OrderItem {
   @@index([tenantId])
   @@index([trackedCategoryId])
   @@index([trackedSubcategoryId])
-  // Units rebuild P0a: sale-time unit-name snapshots (null = legacy line).
-  baseLabel String?
-  packLabel String?
 }
 
 // #2717 M3 (SA-572 A1/I9/I12): the frozen per-component snapshot of a FIXED order line. Sum of qty
@@ -928,8 +928,8 @@ model OrderItemComponent {
   position           Int               @default(0)
   createdAt          DateTime          @default(now())
 
-  orderItem             OrderItem              @relation(fields: [orderItemId], references: [id], onDelete: Cascade)
-  componentProduct      Product                @relation(fields: [componentProductId], references: [id], onDelete: Restrict)
+  orderItem        OrderItem @relation(fields: [orderItemId], references: [id], onDelete: Cascade)
+  componentProduct Product   @relation(fields: [componentProductId], references: [id], onDelete: Restrict)
 
   @@unique([orderItemId, componentProductId])
   @@index([componentProductId])
@@ -995,22 +995,22 @@ model DeliveryBatch {
 }
 
 model OrderTemplate {
-  id         String   @id @default(uuid())
-  customerId String
-  name       String
-  isActive   Boolean  @default(true)
-  daysOfWeek Int[]
-  notes      String?
+  id                String    @id @default(uuid())
+  customerId        String
+  name              String
+  isActive          Boolean   @default(true)
+  daysOfWeek        Int[]
+  notes             String?
   // F-05 (SA-210): provenance, snapshotted at creation. The unattended run's sell channel is derived from
   // it through the live path's own predicate; NULL = unknown = the STRICTER BUYER_PORTAL channel.
-  createdByRole   UserRole?
-  createdByUserId String?
+  createdByRole     UserRole?
+  createdByUserId   String?
   // F-05 (SA-247): the role of whoever last wrote the template's ITEMS. The unattended run sells as STAFF only
   // when BOTH this and createdByRole are known staff; NULL (unknown) is the stricter BUYER_PORTAL.
   itemsEditedByRole UserRole?
-  createdAt  DateTime @default(now())
-  updatedAt  DateTime @updatedAt
-  tenantId   String?
+  createdAt         DateTime  @default(now())
+  updatedAt         DateTime  @updatedAt
+  tenantId          String?
 
   customer Customer            @relation(fields: [customerId], references: [id])
   tenant   Tenant?             @relation(fields: [tenantId], references: [id])
@@ -1023,21 +1023,21 @@ model OrderTemplate {
 }
 
 model OrderTemplateItem {
-  id         String   @id @default(uuid())
-  templateId String
-  productId  String
-  qty        Int
-  notes      String?
+  id              String    @id @default(uuid())
+  templateId      String
+  productId       String
+  qty             Int
+  notes           String?
   // U1 (A0): the selling unit chosen for this line (OrderItem.unitLabel's twin). Null = the pack,
   // exactly as every existing row is today.
-  unitLabel  String?
+  unitLabel       String?
   // F-05: a line the unattended run skipped because a selling restriction bans it (NULL = active). Cleared by
   // an edit of THIS line's product or qty, or by an explicit audited lift; every suspend and lift is an AuditLog row.
   suspendedAt     DateTime?
   suspendedReason String?
-  createdAt  DateTime @default(now())
-  updatedAt  DateTime @updatedAt
-  tenantId   String?
+  createdAt       DateTime  @default(now())
+  updatedAt       DateTime  @updatedAt
+  tenantId        String?
 
   template OrderTemplate @relation(fields: [templateId], references: [id], onDelete: Cascade)
   tenant   Tenant?       @relation(fields: [tenantId], references: [id])
@@ -1117,12 +1117,12 @@ model CustomerComment {
 // ─── Sprint 8: Returns / RMA ──────────────────────────────────────────────────
 
 model Return {
-  id           String       @id @default(uuid())
+  id           String         @id @default(uuid())
   returnNumber String?
   orderId      String
   customerId   String
   reason       ReturnReason
-  status       ReturnStatus @default(PENDING)
+  status       ReturnStatus   @default(PENDING)
   notes        String?
   photoUrls    String[]
   creditNoteId String?
@@ -1131,12 +1131,12 @@ model Return {
   // is minted, this is the audit trail). Kept as String? rather than an enum to avoid a
   // CREATE TYPE migration; validated at the DTO edge.
   refundMethod String?
-  refundAmount Decimal?     @db.Decimal(10, 2)
+  refundAmount Decimal?       @db.Decimal(10, 2)
   refundedAt   DateTime?
   // How the refund was paid out (sitting 3, SA-741r2): nullable, nothing reads or writes it yet.
   refundTender PaymentMethod?
-  createdAt    DateTime     @default(now())
-  updatedAt    DateTime     @updatedAt
+  createdAt    DateTime       @default(now())
+  updatedAt    DateTime       @updatedAt
   tenantId     String?
 
   // Returns Inside Order Creation (PR-1a schema, 2026-09-15): STANDARD (the rest of this
@@ -1223,17 +1223,17 @@ model ReturnItem {
   overrideReason      String?
   overriddenBy        String?
 
-  return  Return  @relation(fields: [returnId], references: [id], onDelete: Cascade)
-  tenant  Tenant? @relation(fields: [tenantId], references: [id])
-  product Product @relation(fields: [productId], references: [id])
+  return    Return  @relation(fields: [returnId], references: [id], onDelete: Cascade)
+  tenant    Tenant? @relation(fields: [tenantId], references: [id])
+  product   Product @relation(fields: [productId], references: [id])
+  // Units rebuild P0a: sale-time unit-name snapshots (null = legacy line).
+  baseLabel String?
+  packLabel String?
 
   @@index([returnId])
   @@index([productId])
   @@index([tenantId])
   @@index([sourceOrderId, productId])
-  // Units rebuild P0a: sale-time unit-name snapshots (null = legacy line).
-  baseLabel String?
-  packLabel String?
 }
 
 // ─── Customer Special Prices ──────────────────────────────────────────────────
