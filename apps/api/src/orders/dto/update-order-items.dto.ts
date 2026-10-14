@@ -12,7 +12,7 @@ import {
   Min,
   ValidateNested,
 } from "class-validator";
-import { Type } from "class-transformer";
+import { Transform, Type } from "class-transformer";
 import { StripHtml } from "../../common/transforms/strip-html.transform";
 import { AppliedCreditNoteDto } from "./create-order.dto";
 import { InlineReturnLinesDto } from "../../returns/dto/capture-inline-return.dto";
@@ -106,8 +106,11 @@ class UpdateOrderItemDto {
   @IsString()
   substitution?: string;
 
+  /** Row 496: capped (as create-order.dto.ts) and trimmed; a formula-led value is refused in the service. */
   @IsOptional()
+  @Transform(({ value }) => (typeof value === "string" ? value.trim() : value))
   @IsString()
+  @MaxLength(200)
   overrideReason?: string;
 }
 
