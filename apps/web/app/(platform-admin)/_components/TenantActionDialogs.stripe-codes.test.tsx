@@ -18,6 +18,13 @@ describe("tenant status / delete failures from the Stripe gate (fixed copy, neve
     );
   });
 
+  it("STRIPE_NOT_CONFIGURED says Stripe isn't connected here, on a status change and a delete", () => {
+    const e = coded(409, API_ERROR_CODES.STRIPE_NOT_CONFIGURED);
+    expect(statusFailureCopy(e)).toBe(TENANT_ACTION_COPY.stripeNotConfigured);
+    expect(deleteFailureCopy(e)).toBe(TENANT_ACTION_COPY.stripeNotConfigured);
+    expect(TENANT_ACTION_COPY.stripeNotConfigured).not.toMatch(/raw server text/);
+  });
+
   it("any other failure keeps the plain status copy", () => {
     expect(statusFailureCopy(coded(409, "SOMETHING_ELSE"))).toBe(TENANT_ACTION_COPY.statusFailed);
     expect(statusFailureCopy(new Error("boom"))).toBe(TENANT_ACTION_COPY.statusFailed);

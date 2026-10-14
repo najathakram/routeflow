@@ -42,6 +42,8 @@ export const TENANT_ACTION_COPY = {
   deleteFailed: "Couldn't delete the tenant. Try again.",
   cancelSubscriptionFirst:
     "This tenant still has a Stripe subscription that hasn't ended (active, paused or incomplete). End it in Stripe first, then try again.",
+  stripeNotConfigured:
+    "Stripe isn't connected in this environment, so the subscription can't be checked.",
   subscriptionUnconfirmed:
     "Couldn't confirm the tenant's Stripe subscription just now, or it changed meanwhile. Try again in a moment.",
   actionFailed: "That didn't work. Try again.",
@@ -60,6 +62,7 @@ function stripeGateCopy(err: unknown): string | null {
   if (code === API_ERROR_CODES.TENANT_CANCEL_SUBSCRIPTION_FIRST) {
     return TENANT_ACTION_COPY.cancelSubscriptionFirst;
   }
+  if (code === API_ERROR_CODES.STRIPE_NOT_CONFIGURED) return TENANT_ACTION_COPY.stripeNotConfigured;
   if (code === API_ERROR_CODES.CONCURRENT_UPDATE) return TENANT_ACTION_COPY.subscriptionUnconfirmed;
   return null;
 }

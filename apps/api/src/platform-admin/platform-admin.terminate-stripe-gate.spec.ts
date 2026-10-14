@@ -229,10 +229,34 @@ describe.each(OPS)("%s - the shared Stripe gate", (_name, run) => {
     expect(written(prisma)).toBe(false);
   });
 
-  it("Stripe not configured with a stored subscription fails closed: TENANT_CANCEL_SUBSCRIPTION_FIRST", async () => {
-    const { svc, prisma } = make({ pre: "sub_1" }, { configured: false });
+  it("Stripe not configured with a stored subscription fails closed: 409 STRIPE_NOT_CONFIGURED, fixed copy", async () => {
+    const { svc, prisma, stripe } = make({ pre: "sub_1" }, { configured: false });
     const err: any = await run(svc).catch((e) => e);
-    expect(code(err)).toBe("TENANT_CANCEL_SUBSCRIPTION_FIRST");
+    expect(err.getStatus()).toBe(409);
+    expect(code(err)).toBe("STRIPE_NOT_CONFIGURED");
+    expect(stripe.getSubscription).not.toHaveBeenCalled();
+    expect(written(prisma)).toBe(false);
+  });
+
+  const badKey = { type: "StripeAuthenticationError", statusCode: 401 };
+
+  it("a Stripe 401 (bad key) on the subscription read is NOT retried: 409 STRIPE_NOT_CONFIGURED, nothing written", async () => {
+    const { svc, prisma, stripe } = make({ pre: "sub_1" });
+    stripe.getSubscription.mockRejectedValue(badKey);
+    const err: any = await run(svc).catch((e) => e);
+    expect(err.getStatus()).toBe(409);
+    expect(code(err)).toBe("STRIPE_NOT_CONFIGURED");
+    expect(stripe.getSubscription).toHaveBeenCalledTimes(1);
+    expect(written(prisma)).toBe(false);
+  });
+
+  it("a Stripe 401 on the customer read (after a sub 404) is the same coded refusal, not retried", async () => {
+    const { svc, prisma, stripe } = make({ pre: "sub_1" });
+    stripe.getSubscription.mockRejectedValue({ code: "resource_missing", statusCode: 404 });
+    stripe.getCustomer.mockRejectedValue(badKey);
+    const err: any = await run(svc).catch((e) => e);
+    expect(code(err)).toBe("STRIPE_NOT_CONFIGURED");
+    expect(stripe.getCustomer).toHaveBeenCalledTimes(1);
     expect(written(prisma)).toBe(false);
   });
 
