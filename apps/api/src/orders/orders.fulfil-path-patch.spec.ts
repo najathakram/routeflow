@@ -1,3 +1,4 @@
+import { Logger } from "@nestjs/common";
 import {
   buildOrdersService,
   customerPayload,
@@ -93,6 +94,40 @@ describe("OrdersService.updateFulfillPath: refuses a path the account does not o
     mode(new Error("db down"));
     expect((await toPath("ROUTE")).fulfillPath).toBe("ROUTE");
     expect((await toPath("SHIP")).fulfillPath).toBe("SHIP");
+  });
+
+  describe("fail-open is visible: one WARN with the tenant id", () => {
+    let warn: jest.SpyInstance;
+    beforeEach(() => {
+      warn = jest.spyOn(Logger.prototype, "warn").mockImplementation(() => undefined);
+    });
+    afterEach(() => warn.mockRestore());
+    const ours = () =>
+      warn.mock.calls.filter((c) => String(c[0]).includes("fulfil path")).map((c) => String(c[0]));
+
+    it("a capability read that throws: warned once with the tenant and the error", async () => {
+      h.prisma.getTenantId.mockReturnValue("tenant-9");
+      mode(new Error("db down"));
+      await toPath("ROUTE");
+      expect(ours()).toHaveLength(1);
+      expect(ours()[0]).toContain("tenant-9");
+      expect(ours()[0]).toContain("db down");
+    });
+
+    it("no config service wired: warned once with the tenant", async () => {
+      h.prisma.getTenantId.mockReturnValue("tenant-9");
+      await toPath("ROUTE");
+      expect(ours()).toHaveLength(1);
+      expect(ours()[0]).toContain("tenant-9");
+    });
+
+    it("a normal read (offered or refused) logs nothing", async () => {
+      h.prisma.getTenantId.mockReturnValue("tenant-9");
+      mode("ship");
+      await toPath("SHIP");
+      await expect(toPath("ROUTE")).rejects.toMatchObject({ status: 400 });
+      expect(ours()).toHaveLength(0);
+    });
   });
 
   it("no config service wired: today's behaviour", async () => {
