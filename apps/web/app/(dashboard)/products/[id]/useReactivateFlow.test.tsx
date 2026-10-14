@@ -342,3 +342,12 @@ describe("useReactivateFlow — Deactivate confirm (moved out of the page, #2861
     expect(JSON.stringify(toast.mock.calls)).not.toMatch(/RAW SERVER TEXT/);
   });
 });
+
+describe("useReactivateFlow — P-15 Deactivate confirm is not red", () => {
+  it("the Deactivate confirm button has no danger styling", async () => {
+    renderWithProviders(<Harness />);
+    fireEvent.click(screen.getByText("off"));
+    const btn = await screen.findByRole("button", { name: "Deactivate" });
+    expect(btn.className).not.toMatch(/bg-danger/);
+  });
+});

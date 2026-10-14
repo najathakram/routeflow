@@ -37,7 +37,7 @@ export function DeleteProductConfirm({
         });
       }}
       title="Delete product?"
-      description={`${name} will be deactivated and hidden from the catalog. Its SKU and barcode are freed, so another product can use them. Order and invoice history is kept. A product on an undelivered order can't be deleted.`}
+      description={`${name} is removed from the catalog (a soft delete). Its SKU and barcode are freed, so another product can use them. Order and invoice history is kept. A product on an undelivered order can't be deleted.`}
       confirmLabel="Yes, delete"
       variant="danger"
       loading={flow.isPending}

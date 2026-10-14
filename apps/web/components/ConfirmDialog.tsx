@@ -18,8 +18,9 @@ export interface ConfirmDialogProps {
   /** Label of the dismiss button — default "Cancel". Set it where "Cancel" would be ambiguous
    *  (e.g. confirming a cancellation: "Keep my plan"). */
   cancelLabel?: string;
-  /** "danger" = red button, "secondary" = neutral button */
-  variant?: "danger" | "secondary";
+  /** "danger" = red button (opens with focus on Cancel), "warning" = primary button + amber icon
+   *  (reversible actions such as Deactivate), "secondary" = neutral button */
+  variant?: "danger" | "secondary" | "warning";
   loading?: boolean;
 }
 
@@ -34,15 +35,26 @@ export function ConfirmDialog({
   variant = "danger",
   loading = false,
 }: ConfirmDialogProps) {
+  const cancelRef = React.useRef<HTMLButtonElement>(null);
   return (
     <Modal
       open={open}
       onClose={onClose}
       title={title}
       className={DIALOG_FIT}
+      // A destructive confirm must not be one Enter away: focus lands on Cancel, not the close X.
+      onOpenAutoFocus={
+        variant === "danger"
+          ? (e) => {
+              e.preventDefault();
+              cancelRef.current?.focus();
+            }
+          : undefined
+      }
       footer={
         <>
           <Button
+            ref={cancelRef}
             variant="secondary"
             className={DIALOG_FOOTER_BUTTON}
             onClick={onClose}
@@ -51,7 +63,7 @@ export function ConfirmDialog({
             {cancelLabel}
           </Button>
           <Button
-            variant={variant}
+            variant={variant === "warning" ? "primary" : variant}
             className={DIALOG_FOOTER_BUTTON}
             onClick={onConfirm}
             loading={loading}
