@@ -200,12 +200,11 @@ import { NumberingService } from "../import/numbering.service";
 import { SellingRestrictionsService } from "../selling-restrictions/selling-restrictions.service";
 import { requireRestrictionTenantId } from "../selling-restrictions/restriction-tenant";
 import { flagSplitRestrictedLines } from "../selling-restrictions/restricted-lines-flag";
-import { defaultSaleFulfilmentKind } from "../orders/default-sale-fulfilment";
 import { orderFulfilmentKind } from "../selling-restrictions/sale-fulfilment";
 import {
   addedRestrictionLines,
   assertEditStillJudged,
-  catalogRestrictionLines,
+  assertOrderlessSellable,
 } from "./invoice-restriction-lines";
 import { buildManualInvoiceLines } from "./manual-invoice-lines";
 import { loadOverride, type ManualInvoiceDto } from "./invoice-line-override";
@@ -442,17 +441,7 @@ export class InvoicesService {
     // on the row just read (L-081), so restoreCustomer() re-enables it with no other write.
     if (!customer || customer.deletedAt) throw new NotFoundException("Customer not found");
     // F-05 (#2093): a manual invoice SELLS its lines — a banned product refuses (409) before anything is read.
-    await this.sellingRestrictions.assertLinesSellable({
-      tenantId: requireRestrictionTenantId(this.prisma.getTenantId()),
-      customerId: dto.customerId,
-      lines: dto.items.flatMap((it) => (it.productId ? [{ productId: it.productId }] : [])),
-      channel: "STAFF",
-      fulfilmentKind: await defaultSaleFulfilmentKind(
-        this.prisma,
-        requireRestrictionTenantId(this.prisma.getTenantId()),
-        dto.customerId,
-      ), // no order: how the next order would go
-    });
+    await assertOrderlessSellable(this.prisma, this.sellingRestrictions, dto.customerId, dto.items);
 
     // Products (box size + regulated snapshot), the unit ladders and the regulated tax config of every
     // line: see manual-invoice-context.ts (B659: shared with EstimatesService.convertToInvoice).
@@ -4314,17 +4303,7 @@ export class InvoicesService {
     }
     unitAware.assertNoUnitAwareLines(inv.items, "duplicated"); // the copy drops the unit
     // F-05: a copy is a new sale of every catalog line it carries.
-    await this.sellingRestrictions.assertLinesSellable({
-      tenantId: requireRestrictionTenantId(this.prisma.getTenantId()),
-      customerId: inv.customerId,
-      lines: catalogRestrictionLines(inv.items),
-      channel: "STAFF",
-      fulfilmentKind: await defaultSaleFulfilmentKind(
-        this.prisma,
-        requireRestrictionTenantId(this.prisma.getTenantId()),
-        inv.customerId,
-      ), // a copy has no order: how the next order would go
-    });
+    await assertOrderlessSellable(this.prisma, this.sellingRestrictions, inv.customerId, inv.items);
 
     const customer = await this.prisma
       .forTenant()
