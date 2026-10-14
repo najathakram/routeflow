@@ -237,10 +237,12 @@ describe("RuleFormDialog", () => {
   it("opens pre-filled when the caller hands it targets (the catalog's New rule with N products)", async () => {
     post.mockResolvedValueOnce({ data: { id: "r1" } });
     const onClose = jest.fn();
+    const onCreated = jest.fn();
     renderWithProviders(
       <RuleFormDialog
         open
         onClose={onClose}
+        onCreated={onCreated}
         initialTargets={[
           { kind: "PRODUCT", id: "p1", name: "Gummies 10ct" },
           { kind: "PRODUCT", id: "p2", name: "Gummy Chews" },
@@ -253,6 +255,8 @@ describe("RuleFormDialog", () => {
     submit();
     await waitFor(() => expect(post).toHaveBeenCalled());
     expect(post.mock.calls[0][1].targets).toEqual({ productIds: ["p1", "p2"] });
+    // the catalog's selection is cleared only by a created rule
+    await waitFor(() => expect(onCreated).toHaveBeenCalledWith("r1"));
   });
 
   it("Escape returns focus to the button that opened it", async () => {

@@ -3,6 +3,7 @@ import { screen, fireEvent } from "@testing-library/react";
 import { renderWithProviders } from "@/test-utils/render";
 import {
   PortalBulkButtons,
+  PortalLimitButtons,
   PortalHiddenBadge,
   PortalHiddenFilter,
 } from "./PortalVisibilityControls";
@@ -18,6 +19,7 @@ jest.mock("@routeflow/ui/web", () => ({
   ...jest.requireActual("@routeflow/ui/web"),
   useToast: () => ({ toast: jest.fn() }),
 }));
+jest.mock("next/navigation", () => ({ useRouter: () => ({ push: jest.fn() }) }));
 jest.mock("@/lib/api/product-portal-visibility", () => ({
   useBulkSetPortalVisibility: () => ({ mutate, isPending: false }),
 }));
@@ -80,5 +82,37 @@ describe("PortalVisibilityControls", () => {
     renderWithProviders(<PortalBulkButtons selected={new Set(["a"])} onDone={jest.fn()} />);
     expect(screen.queryByTestId("portal-bulk-hide")).not.toBeInTheDocument();
     expect(screen.queryByTestId("portal-bulk-show")).not.toBeInTheDocument();
+  });
+
+  describe("row 509: a selection that came from Select all matching (off-page ids)", () => {
+    const HINT = "Choose products on this page to use this action.";
+
+    it("Hide / Show in portal are disabled with the hint and never call the server", () => {
+      renderWithProviders(
+        <PortalBulkButtons selected={new Set(["a", "b"])} onDone={jest.fn()} offPageHint={HINT} />,
+      );
+      for (const id of ["portal-bulk-hide", "portal-bulk-show"]) {
+        expect(screen.getByTestId(id)).toBeDisabled();
+        expect(screen.getByTestId(id)).toHaveAttribute("title", HINT);
+        fireEvent.click(screen.getByTestId(id));
+      }
+      expect(mutate).not.toHaveBeenCalled();
+    });
+
+    it("Limit in portal… and Select all in category are disabled with the hint", () => {
+      renderWithProviders(
+        <PortalLimitButtons selected={new Set(["a", "b"])} onDone={jest.fn()} offPageHint={HINT} />,
+      );
+      for (const name of ["Limit in portal…", "Select all in category"]) {
+        const b = screen.getByRole("button", { name });
+        expect(b).toBeDisabled();
+        expect(b).toHaveAttribute("title", HINT);
+      }
+    });
+
+    it("without the hint both stay enabled (page selection)", () => {
+      renderWithProviders(<PortalLimitButtons selected={new Set(["a"])} onDone={jest.fn()} />);
+      expect(screen.getByRole("button", { name: "Limit in portal…" })).toBeEnabled();
+    });
   });
 });
