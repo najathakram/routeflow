@@ -1824,7 +1824,13 @@ export default function NewInvoicePage() {
           saleKey.settle({ ok: false, error: err });
           const unknown = saleKey.unknown();
           setSaleUnknown(unknown);
-          if (unknown) return; // locked: the panel offers Try again / Open / Start a new sale
+          if (unknown) {
+            // SA ruling (train S2): the outcome is unknown, so the sale may be committed. Drop the local draft:
+            // the in-memory locked cart keeps "Try again" with the held key, while a restore on a fresh page
+            // would mint a new key and could duplicate a committed sale.
+            draft.clear();
+            return; // locked: the panel offers Try again / Open / Start a new sale
+          }
           toast({
             title: "Could not create the sale",
             description: unitRefusal(err, saleLines) ?? "Please check your inputs and try again.",
@@ -1897,6 +1903,8 @@ export default function NewInvoicePage() {
         // second create (a retry here would duplicate the invoice).
         const keptId = keptDraftInvoiceId(err);
         if (keptId) {
+          // Train S2 (SA): the server holds this invoice now; a restore + submit would create a SECOND one.
+          draft.clear();
           toast({ ...KEPT_DRAFT_TOAST, variant: "warning" });
           router.push(`/invoices/${keptId}`);
           return;
