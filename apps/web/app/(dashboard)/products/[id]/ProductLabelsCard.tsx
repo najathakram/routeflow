@@ -2,7 +2,7 @@
 
 import * as React from "react";
 import { Loader2, Tag, X } from "lucide-react";
-import { Button, useToast } from "@routeflow/ui/web";
+import { Button, cn, TAP_TARGET, useToast } from "@routeflow/ui/web";
 import { useAuth } from "@/lib/auth-context";
 import { isStaffRole } from "@/lib/default-unit-line";
 import { isRuleAdmin } from "@/lib/rule-chooser";
@@ -117,6 +117,8 @@ export function ProductLabelsCard({ productId }: { productId: string }) {
               {canWrite && (
                 <button
                   type="button"
+                  // 44px hit area: now operator-visible on phones (SA should, #3467).
+                  className={cn(TAP_TARGET, "disabled:opacity-50")}
                   aria-label={`Remove ${l.categoryName}`}
                   disabled={busy || locked(l.categoryId)}
                   aria-describedby={hintFor(l.categoryId)}
@@ -142,7 +144,10 @@ export function ProductLabelsCard({ productId }: { productId: string }) {
                 {canWrite && (
                   <button
                     type="button"
-                    className="text-[11px] font-medium text-brand-600 hover:underline disabled:opacity-50"
+                    className={cn(
+                      TAP_TARGET,
+                      "text-[11px] font-medium text-brand-600 hover:underline disabled:opacity-50",
+                    )}
                     disabled={busy || locked(l.categoryId)}
                     aria-describedby={hintFor(l.categoryId)}
                     onClick={() =>

@@ -249,3 +249,16 @@ describe("ProductLabelsCard", () => {
     );
   });
 });
+
+describe("ProductLabelsCard: 44px hit areas on the small label controls (SA, #3467)", () => {
+  it("the chip remove and the opt-out button carry TAP_TARGET", () => {
+    role = "OPERATOR";
+    labels = view({ own: [own({ id: "l2", categoryId: "c2", categoryName: "THC" })] });
+    render();
+    const { TAP_TARGET } = jest.requireActual("@routeflow/ui/web");
+    for (const name of ["Remove THC", "Opt out"]) {
+      const cls = screen.getByRole("button", { name }).className;
+      for (const c of String(TAP_TARGET).split(/\s+/).filter(Boolean)) expect(cls).toContain(c);
+    }
+  });
+});

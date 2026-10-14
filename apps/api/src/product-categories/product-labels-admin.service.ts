@@ -187,7 +187,8 @@ export class ProductLabelsAdminService {
   /**
    * Owner ruling 2026-10-14 (SA option A): operators write labels too, except a label an ACTIVE federal rule covers:
    * that write changes what the rule hides from every portal customer, so it is admin-only (403, the shared copy).
-   * Runs after the category lock, so a rule edit cannot slip between the check and the write.
+   * Runs after the category lock. That lock serializes label writes only, not rule writes: a rule change committed
+   * after this read applies from then on (label write first, then the rule), never a stale mix within one write.
    */
   private async assertMayWriteLabel(
     tx: Prisma.TransactionClient,

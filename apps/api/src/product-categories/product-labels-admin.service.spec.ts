@@ -576,6 +576,19 @@ describe("ProductLabelsAdminService — owner ruling 2026-10-14: operators write
     expect(s.db.labels).toHaveLength(0);
   });
 
+  it("the 403 is coded RULE_ADMIN_ONLY with the shared copy", async () => {
+    const s = family();
+    s.db.rules.push(federalLegacy);
+    const err = await s.service
+      .setLabel("GP", "c", { mode: "INCLUDE" }, operator)
+      .catch((e: { getStatus(): number; getResponse(): unknown }) => e);
+    expect((err as { getStatus(): number }).getStatus()).toBe(403);
+    expect((err as { getResponse(): unknown }).getResponse()).toEqual({
+      code: "RULE_ADMIN_ONLY",
+      message: COPY,
+    });
+  });
+
   it("an operator removing a federal-covered label: 403, the row stays", async () => {
     const s = family();
     await s.service.setLabel("GP", "c", { mode: "INCLUDE" }, admin);

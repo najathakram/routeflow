@@ -250,6 +250,34 @@ describeDb("label write side against real Postgres", () => {
       expect(await labelsOf(A.gp)).toHaveLength(1);
       await clear();
 
+      // legacy categoryId = the label, but the rule HAS target rows and every one is removed: it must NOT fall back
+      // to the legacy column (row 509 SA condition 1), so the label is not protected
+      const legacyGone = await mkRule({ categoryId: A.cat, jurisdiction: "FEDERAL" });
+      await raw.sellingRestrictionTarget.create({
+        data: {
+          tenantId: A.tenantId,
+          ruleId: legacyGone.id,
+          categoryId: A.cat,
+          addedAt: FROM,
+          removedAt: FROM,
+        },
+      });
+      await setGp();
+      expect(await labelsOf(A.gp)).toHaveLength(1);
+      await clear();
+
+      // an operator REMOVING a federal-covered label: 403 RULE_ADMIN_ONLY, the row stays
+      await raw.productCategoryLabel.create({
+        data: { tenantId: A.tenantId, productId: A.gp, categoryId: A.cat, mode: "INCLUDE" },
+      });
+      await mkRule({ categoryId: A.cat, jurisdiction: "FEDERAL" });
+      const removal = await asA(() => service.removeLabel(A.gp, A.cat, operator)).catch(
+        (e: { getResponse(): unknown }) => e.getResponse(),
+      );
+      expect(removal).toMatchObject({ code: "RULE_ADMIN_ONLY" });
+      expect(await labelsOf(A.gp)).toHaveLength(1);
+      await clear();
+
       // a LIFTED federal rule no longer protects the label
       await mkRule({ categoryId: A.cat, jurisdiction: "FEDERAL", liftedAt: FROM });
       await setGp();

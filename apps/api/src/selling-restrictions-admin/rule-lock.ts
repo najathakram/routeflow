@@ -105,7 +105,10 @@ export function assertMayManageRule(
     (current !== null && isAllCustomerRule(current)) ||
     (proposed !== undefined && isAllCustomerRule(proposed));
   if (allCustomer && !isTenantAdmin(user)) {
-    throw new ForbiddenException("Only an account admin can change (or lift) a federal rule.");
+    throw new ForbiddenException({
+      code: API_ERROR_CODES.RULE_ADMIN_ONLY,
+      message: "Only an account admin can change (or lift) a federal rule.",
+    });
   }
 }
 

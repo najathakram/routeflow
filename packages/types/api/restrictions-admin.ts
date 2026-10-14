@@ -162,6 +162,7 @@ export interface ProductLimitsResponse {
 //
 // Coded errors (body.code, API_ERROR_CODES):
 //   RULE_NOT_EDITABLE      409  the rule is lifted or expired.
+//   RULE_ADMIN_ONLY        403  a federal (all-customer) rule, or a label one covers, needs an account admin.
 //   RULE_TARGETS_NOT_FOUND 409  an id is unknown in this tenant (body.notFoundIds); nothing written.
 //   RULE_NEEDS_A_TARGET    409  the call would remove the rule's last active target; lift the rule instead.
 //   RULE_TARGET_LIMIT      400  over RULE_TARGETS_MAX_PER_REQUEST ids (body.field "request") or over
