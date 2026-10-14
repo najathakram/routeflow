@@ -42,16 +42,20 @@ describe("OrdersService.reopenOrder — selling restrictions (F-05)", () => {
 
   it("asks about EVERY catalog line (cancelled or not; productless dropped), as STAFF, with no delta", async () => {
     await reopen(order([cancelledBanned, cancelledFree, draftLine, live])).catch(() => undefined);
-    expect(h.restrictions.assertLinesSellable).toHaveBeenCalledWith({
-      tenantId: "t-row",
-      customerId: "cust-1",
-      lines: [
-        { productId: "prod-banned" },
-        { productId: "prod-banned" },
-        { productId: "prod-live" },
-      ],
-      channel: "STAFF",
-    });
+    expect(h.restrictions.assertLinesSellable).toHaveBeenCalledWith(
+      expect.objectContaining({
+        tenantId: "t-row",
+        customerId: "cust-1",
+        // row 510: each line carries the key the client echoes on a warning
+        lines: [
+          { productId: "prod-banned", lineKey: "l:li-b" },
+          { productId: "prod-banned", lineKey: "l:li-d" },
+          { productId: "prod-live", lineKey: "l:li-l" },
+        ],
+        channel: "STAFF",
+        document: "ORDER",
+      }),
+    );
   });
 
   it("a ban on an item-CANCELLED line refuses the reopen with the 409 and writes NOTHING", async () => {
@@ -70,7 +74,7 @@ describe("OrdersService.reopenOrder — selling restrictions (F-05)", () => {
       response: { code: "SELLING_RESTRICTED" },
     });
     expect(h.restrictions.assertLinesSellable).toHaveBeenCalledWith(
-      expect.objectContaining({ lines: [{ productId: "prod-banned" }] }),
+      expect.objectContaining({ lines: [{ productId: "prod-banned", lineKey: "l:li-d" }] }),
     );
     expect(h.prisma.tenantTransaction).not.toHaveBeenCalled();
     expect(h.prisma.order.update).not.toHaveBeenCalled();

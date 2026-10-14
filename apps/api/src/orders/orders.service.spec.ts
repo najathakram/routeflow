@@ -9129,7 +9129,7 @@ describe("OrdersService", () => {
           baseCr({
             type: "CHANGE_QTY",
             orderItemId: "li-1",
-            payload: { orderItemId: "li-1", newQty: 18 },
+            payload: { orderItemId: "li-1", newQty: 30 }, // row 510: an INCREASE, so ORDER_CHANGED is not met first
           }),
         );
         prisma.order.findUnique.mockResolvedValue(baseOrder([sharedLine])); // snapshot line: PENDING

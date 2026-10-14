@@ -320,7 +320,7 @@ export class ChangeRequestsService {
       case ChangeRequestResolveAction.DECLINE:
         return this.decline(cr, order, dto.reason, user);
       case ChangeRequestResolveAction.APPROVE_AT_STOP: {
-        await this.ordersService.approveChangeRequestAtStop(cr.id, user, dto.reason ?? null);
+        await this.ordersService.approveChangeRequestAtStop(cr.id, user, dto.reason ?? null, dto);
         await this.notifyRequester(
           cr,
           order,

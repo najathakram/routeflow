@@ -15,7 +15,8 @@ import { EntitlementsService } from "../billing/entitlements.service";
 import { EntitlementAuthority } from "../billing/entitlement-authority.service";
 import { RegulatedLedgerService } from "../regulated/regulated-ledger.service";
 import { SellingRestrictionsService } from "../selling-restrictions/selling-restrictions.service";
-import { requireRestrictionTenantId } from "../selling-restrictions/restriction-tenant";
+import * as iGate from "../invoices/invoice-restriction-gate";
+import type { JwtPayload } from "../auth/jwt-payload.interface";
 import { buildManualInvoiceLines } from "../invoices/manual-invoice-lines";
 import { loadManualLineContext, zeroExemptCategoryTax } from "../invoices/manual-invoice-context";
 import { packAtSaleByProduct, toSaleLedgerLines } from "../invoices/pack-at-sale";
@@ -376,7 +377,7 @@ export class EstimatesService {
     return this.prisma.forTenant().estimate.findUniqueOrThrow({ where: { id } });
   }
 
-  async convertToInvoice(id: string) {
+  async convertToInvoice(id: string, actor?: JwtPayload, ack?: iGate.Ack) {
     // D9 (fix-round-2b.md): validate BEFORE reserving. Every reservation commits on
     // its own (see below), so a convert rejected AFTER one burns a number for good —
     // and "estimate missing" / "not ACCEPTED" is the ordinary rejection here, not a
@@ -397,6 +398,7 @@ export class EstimatesService {
         items: {
           orderBy: { id: "asc" }, // B659 finding 4: pins "line N" to the SAME line the tx builds
           select: {
+            id: true,
             description: true,
             productId: true,
             qty: true,
@@ -434,12 +436,8 @@ export class EstimatesService {
     estimateConvertLineItems(existing.items ?? [], 0);
     // F-05 (#2093): an estimate becoming an invoice SELLS its goods — a banned product refuses (409) BEFORE a
     // number is reserved. Judged now, at the sale, by the tenant's rules (owner rulings 2026-09-25).
-    await this.sellingRestrictions.assertLinesSellable({
-      tenantId: requireRestrictionTenantId(this.prisma.getTenantId()),
-      customerId: existing.customerId,
-      lines: (existing.items ?? []).flatMap((i) =>
-        i.productId ? [{ productId: i.productId }] : [],
-      ),
+    const restriction = await this.sellingRestrictions.assertLinesSellable({
+      ...iGate.copy(iGate.tenantId(this.prisma), existing.customerId, existing.items, actor, ack),
       channel: "STAFF",
     });
 
@@ -552,6 +550,7 @@ export class EstimatesService {
           },
           include: { customer: { select: { id: true, businessName: true } }, items: true },
         });
+        await restriction?.stamp(tx, inv.id); // row 510: the staff override of a restricted line
         // Same pattern invoices.service.ts's own create() uses (pack-at-sale.ts): the FULL
         // boxes/pieces/unitsPerBox/packAtSale shape, never a thinner ledger-line mapping that
         // would re-derive the pack from the live product for a converted estimate line.

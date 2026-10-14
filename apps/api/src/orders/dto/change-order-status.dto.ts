@@ -1,7 +1,8 @@
 import { IsEnum, IsOptional, IsString, MaxLength } from "class-validator";
 import { OrderStatus } from "@prisma/client";
+import { RestrictionAckDto } from "../../selling-restrictions/dto/restriction-ack.dto";
 
-export class ChangeOrderStatusDto {
+export class ChangeOrderStatusDto extends RestrictionAckDto {
   @IsEnum(OrderStatus) status: OrderStatus;
 
   /**

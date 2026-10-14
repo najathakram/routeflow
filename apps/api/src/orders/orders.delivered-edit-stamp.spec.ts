@@ -72,6 +72,9 @@ describe("SA-763r: an edit of a DELIVERED order keeps the delivered quantities",
   const seed = (lines: Line[], evidence: Array<Record<string, unknown>> = []) => {
     store = lines.map((l) => ({ ...l }));
     const o = order(lines);
+    // The pre-lock read is as fresh as the locked one: row 510 re-judges the edit under the lock against it, so a
+    // fixture whose pre-lock lines lagged the store (three edits in a row) would read as a concurrent edit.
+    Object.defineProperty(o, "lineItems", { get: () => store.map((l) => ({ ...l })) });
     h.prisma.order.findUnique.mockImplementation(async (args: any) => {
       const sel = args?.select ? Object.keys(args.select) : [];
       if (sel.length === 1 && sel[0] === "status") return { status: o.status };

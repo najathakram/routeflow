@@ -74,13 +74,19 @@ describe("InvoicesService.create — selling restrictions (F-05)", () => {
   it("asks the choke point for the invoice's customer and catalog lines as STAFF, ahead of the line context read", async () => {
     await expect(create()).rejects.toBeDefined();
     expect(restrictions.assertLinesSellable).toHaveBeenCalledTimes(1);
-    expect(restrictions.assertLinesSellable).toHaveBeenCalledWith({
-      tenantId: "test-tenant",
-      customerId: "cust-1",
-      // the freeform fee line has no product: nothing to check
-      lines: [{ productId: "p-banned" }, { productId: "p-ok" }],
-      channel: "STAFF",
-    });
+    expect(restrictions.assertLinesSellable).toHaveBeenCalledWith(
+      expect.objectContaining({
+        tenantId: "test-tenant",
+        customerId: "cust-1",
+        // the freeform fee line has no product: nothing to check (row 510: each line keyed by its payload index)
+        lines: [
+          { productId: "p-banned", lineKey: "n:0" },
+          { productId: "p-ok", lineKey: "n:2" },
+        ],
+        channel: "STAFF",
+        document: "INVOICE",
+      }),
+    );
     expect(restrictions.assertLinesSellable.mock.invocationCallOrder[0]).toBeLessThan(
       prisma.product.findMany.mock.invocationCallOrder[0],
     );

@@ -195,14 +195,10 @@ import { counterPay, type CounterPayOpts } from "./counter-payment-guard";
 import { API_ERROR_CODES } from "../common/api-error-codes";
 import { NumberingService } from "../import/numbering.service";
 import { SellingRestrictionsService } from "../selling-restrictions/selling-restrictions.service";
-import { requireRestrictionTenantId } from "../selling-restrictions/restriction-tenant";
+import * as iGate from "./invoice-restriction-gate";
 import { flagSplitRestrictedLines } from "../selling-restrictions/restricted-lines-flag";
-import {
-  addedRestrictionLines,
-  assertEditStillJudged,
-  catalogRestrictionLines,
-} from "./invoice-restriction-lines";
-import { buildManualInvoiceLines, type ManualLineItem } from "./manual-invoice-lines";
+import { assertEditStillJudged } from "./invoice-restriction-lines";
+import { buildManualInvoiceLines, type ManualInvoiceDto } from "./manual-invoice-lines";
 import {
   foldCategoryTax,
   loadManualLineContext,
@@ -449,7 +445,7 @@ export class InvoicesService {
    * P2002 and returns 409 Conflict instead.
    */
   /** SA-135: an internal caller's line may carry `packSnapshot` (ManualLineItem); the HTTP DTO never can. */
-  async create(dto: Omit<CreateInvoiceDto, "items"> & { items: ManualLineItem[] }) {
+  async create(dto: ManualInvoiceDto, actor?: JwtPayload) {
     const issueDateInput = dto.issueDate ? issueDateStamp(dto.issueDate) : null; // #2197: 400 first
     const due = dueDateStamps(dto); // #2256: the due dates too, refused before any read or write
     assertFiniteInvoiceInput(dto); // N4: NaN is a 400, not a silent $0
@@ -461,10 +457,8 @@ export class InvoicesService {
     // on the row just read (L-081), so restoreCustomer() re-enables it with no other write.
     if (!customer || customer.deletedAt) throw new NotFoundException("Customer not found");
     // F-05 (#2093): a manual invoice SELLS its lines — a banned product refuses (409) before anything is read.
-    await this.sellingRestrictions.assertLinesSellable({
-      tenantId: requireRestrictionTenantId(this.prisma.getTenantId()),
-      customerId: dto.customerId,
-      lines: dto.items.flatMap((it) => (it.productId ? [{ productId: it.productId }] : [])),
+    const restriction = await this.sellingRestrictions.assertLinesSellable({
+      ...iGate.create(iGate.tenantId(this.prisma), dto.customerId, dto.items, actor, dto),
       channel: "STAFF",
     });
 
@@ -566,6 +560,7 @@ export class InvoicesService {
             payments: true,
           },
         });
+        await restriction?.stamp(tx, created.id); // row 510: the staff override of a restricted line
         if (hasRegulated) await this.writeCreatedInvoiceLedger(tx, created);
         return created;
       });
@@ -1033,6 +1028,10 @@ export class InvoicesService {
       categoryTaxType: li.categoryTaxType ?? null, // B297: COPY verbatim, never a live fallback.
       categoryTaxRate: li.categoryTaxRate != null ? Number(li.categoryTaxRate) : null,
       categoryPriceIncludesTax: li.categoryPriceIncludesTax ?? null,
+      restrictionOverrideReason: li.restrictionOverrideReason ?? null, // row 510: the staff override travels
+      restrictionOverrideBy: li.restrictionOverrideBy ?? null,
+      restrictionOverrideAt: li.restrictionOverrideAt ?? null,
+      restrictionOverrideRuleIds: li.restrictionOverrideRuleIds ?? [],
       ...(tenantId ? { tenantId } : {}),
       // #2717 M3: FIXED provenance + frozen component rows for THIS bill; {} on a plain line.
       ...invoiceCompositionFields(li, billQty, prior, subtotal, tenantId),
@@ -2392,6 +2391,10 @@ export class InvoicesService {
             promoFreeUnits: lineFreeUnits > 0 ? lineFreeUnits : null,
             invoicedQty: shape.qty,
             status: "PENDING",
+            restrictionOverrideReason: agg.sample?.restrictionOverrideReason ?? null, // row 510: carried back
+            restrictionOverrideBy: agg.sample?.restrictionOverrideBy ?? null,
+            restrictionOverrideAt: agg.sample?.restrictionOverrideAt ?? null,
+            restrictionOverrideRuleIds: agg.sample?.restrictionOverrideRuleIds ?? [],
             ...(tenantId ? { tenantId } : {}),
           },
         });
@@ -3080,6 +3083,7 @@ export class InvoicesService {
     // hide-original-price preference too.
     const hideOriginalPrice = (await this.systemConfig.get("invoice.hideOriginalPrice")) === "true";
     stampHandedOverBy(inv.order, user); // row 342: staff only (`invoiceDetailFor` drops `order` for a buyer)
+    await iGate.stampOverrideNames(this.prisma.forTenant(), inv.items, user); // row 510: staff only
     return invoiceDetailFor(user, {
       ...inv,
       ...deriveInvoiceDetailFields(
@@ -3097,7 +3101,7 @@ export class InvoicesService {
     });
   }
 
-  async update(id: string, dto: UpdateInvoiceDto) {
+  async update(id: string, dto: UpdateInvoiceDto, actor?: JwtPayload) {
     assertFiniteInvoiceInput(dto); // N4: NaN is a 400, not a silent $0
     const inv = await this.findOneOrThrow(id); // a missing invoice is a 404 whatever else is wrong
     // units_v1 (VU-4a, D3): a unit line is accepted only on an order-LESS DRAFT (resolveLineUnits below);
@@ -3122,11 +3126,9 @@ export class InvoicesService {
     const items = dto.items;
     if (items) {
       // F-05: netted per product (qtyDelta = requested - held); re-checked under the row lock in the tx below.
-      const restrictionLines = await addedRestrictionLines(this.prisma.forTenant(), id, items);
-      await this.sellingRestrictions.assertLinesSellable({
-        tenantId: requireRestrictionTenantId(this.prisma.getTenantId()),
-        customerId: inv.customerId,
-        lines: restrictionLines,
+      const gate = await iGate.editParams(this.prisma, inv, items, actor, dto);
+      const restriction = await this.sellingRestrictions.assertLinesSellable({
+        ...gate.params,
         channel: "STAFF",
       });
       await assertOrderItemIdsBelongToOrder(this.prisma.forTenant(), inv.orderId, items); // SA-093a rd6
@@ -3150,7 +3152,8 @@ export class InvoicesService {
           { featureConfig: this.featureConfig, prisma: { forTenant: () => tx } },
           inv.orderId,
         );
-        await assertEditStillJudged(tx, id, items, restrictionLines); // F-05: under the Invoice row lock
+        await assertEditStillJudged(tx, id, items, gate.lines); // F-05: under the Invoice row lock
+        const overridden = restriction?.recheck(locked.storedRows); // row 510: the override re-judged under it
         // SA-184/186: match the payload to THIS invoice's stored rows (by id, tenant-scoped; never by
         // productId), keep untouched rows verbatim and in place, re-price only changed lines. Rules
         // and reasoning: invoice-edit-plan.ts.
@@ -3266,6 +3269,7 @@ export class InvoicesService {
             payments: true,
           },
         });
+        await overridden?.stamp(tx, id);
         const syncLines = orderSyncLines(editLines, storedRows, cur, invDiscount, shipping);
         // A save that changed no line leaves the ledger alone too (no reverse-and-rewrite churn).
         if (syncLines?.length)
@@ -4291,7 +4295,7 @@ export class InvoicesService {
     });
   }
 
-  async duplicate(id: string) {
+  async duplicate(id: string, actor?: JwtPayload, ack?: iGate.Ack) {
     const inv = await this.prisma
       .forTenant()
       .invoice.findUnique({ where: { id }, include: { items: true } });
@@ -4305,10 +4309,8 @@ export class InvoicesService {
     }
     unitAware.assertNoUnitAwareLines(inv.items, "duplicated"); // the copy drops the unit
     // F-05: a copy is a new sale of every catalog line it carries.
-    await this.sellingRestrictions.assertLinesSellable({
-      tenantId: requireRestrictionTenantId(this.prisma.getTenantId()),
-      customerId: inv.customerId,
-      lines: catalogRestrictionLines(inv.items),
+    const restriction = await this.sellingRestrictions.assertLinesSellable({
+      ...iGate.copy(iGate.tenantId(this.prisma), inv.customerId, inv.items, actor, ack),
       channel: "STAFF",
     });
 
@@ -4418,6 +4420,7 @@ export class InvoicesService {
             payments: true,
           },
         });
+        await restriction?.stamp(tx, copy.id); // row 510: a copy is a new sale, judged afresh
         // B680: the copy's regulated lines get their own SALE rows, same path as create().
         if (itemsData.some((it) => it.trackedCategoryId != null))
           await this.writeCreatedInvoiceLedger(tx, copy);

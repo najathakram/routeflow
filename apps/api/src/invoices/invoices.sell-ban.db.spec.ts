@@ -296,15 +296,21 @@ describeDb("F05 ban check on estimate convert + invoice create — real Postgres
     );
   });
 
-  it("flag OFF ('false') + CA customer + banned category: both paths are ALLOWED", async () => {
+  it("row 510: a leftover switch row set to 'false' changes nothing: both paths are refused (no actor, so no override)", async () => {
     const s = await seed("off", "off", "CA");
-    expect(((await createInvoice(s)) as any).id).toBeDefined();
-    expect(((await convert(s)) as any).id).toBeDefined();
+    await expect(createInvoice(s)).rejects.toMatchObject({
+      response: { code: "SELLING_RESTRICTED" },
+    });
+    await expect(convert(s)).rejects.toMatchObject({ response: { code: "SELLING_RESTRICTED" } });
+    await nothingWritten(s);
   });
 
-  it("flag ABSENT (default OFF) + CA customer + banned category: both paths are ALLOWED", async () => {
+  it("row 510: no switch row at all changes nothing either (the switch is gone): both paths are refused", async () => {
     const s = await seed("absent", "absent", "CA");
-    expect(((await createInvoice(s)) as any).id).toBeDefined();
-    expect(((await convert(s)) as any).id).toBeDefined();
+    await expect(createInvoice(s)).rejects.toMatchObject({
+      response: { code: "SELLING_RESTRICTED" },
+    });
+    await expect(convert(s)).rejects.toMatchObject({ response: { code: "SELLING_RESTRICTED" } });
+    await nothingWritten(s);
   });
 });

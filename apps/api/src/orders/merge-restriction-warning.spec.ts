@@ -53,7 +53,7 @@ describe("warnBannedMergedLines", () => {
       customerId: "c1",
       lines: [{ productId: "p-ok" }, { productId: "p-b" }],
       channel: "STAFF",
-      switchGated: true, // a warning follows the tenant switch: a portal limit alone alerts no one
+      skipPortalOnlyRules: true, // a warning, never a block: a portal-only limit alone alerts no one (row 510: no switch)
     });
   });
 

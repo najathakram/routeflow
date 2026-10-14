@@ -83,13 +83,20 @@ describe("EstimatesService.convertToInvoice — selling restrictions (F-05)", ()
   it("asks the choke point for the estimate's customer and product lines as STAFF, ahead of the number reservation", async () => {
     await expect(service.convertToInvoice("est-1")).rejects.toThrow("stop: past the guard");
     expect(restrictions.assertLinesSellable).toHaveBeenCalledTimes(1);
-    expect(restrictions.assertLinesSellable).toHaveBeenCalledWith({
-      tenantId: "test-tenant",
-      customerId: "cust-1",
-      // a product-less (freeform) line has nothing to check; the two catalog lines are asked about
-      lines: [{ productId: "p-banned" }, { productId: "p-ok" }],
-      channel: "STAFF",
-    });
+    expect(restrictions.assertLinesSellable).toHaveBeenCalledWith(
+      expect.objectContaining({
+        tenantId: "test-tenant",
+        customerId: "cust-1",
+        // a product-less (freeform) line has nothing to check; the two catalog lines are asked about
+        // (row 510: each keyed by its source line, "n:<index>" when it has no id)
+        lines: [
+          { productId: "p-banned", lineKey: "n:0" },
+          { productId: "p-ok", lineKey: "n:2" },
+        ],
+        channel: "STAFF",
+        document: "INVOICE",
+      }),
+    );
     expect(restrictions.assertLinesSellable.mock.invocationCallOrder[0]).toBeLessThan(
       numbering.reserveNext.mock.invocationCallOrder[0],
     );

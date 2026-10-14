@@ -17,10 +17,15 @@ import { mergeBoxedContributions } from "./buyer-merge-pricing";
 import { groupContributionsByPack, type PackCandidate } from "./merge-pack-resolve";
 import { compositionStampOf } from "./order-composition";
 import { foldTarget } from "./fold-target";
+import {
+  carryOverrideStamp,
+  hasOverrideStamp,
+  type OverrideStamp,
+} from "../common/restriction-override-columns";
 
 export { compositionStampOf };
 
-export interface MergeLine extends PackCandidate {
+export interface MergeLine extends PackCandidate, Partial<OverrideStamp> {
   /** Set only on the winner's own existing OrderItem row — identity distinguishes it in a group. */
   id?: string;
   productId: string | null;
@@ -45,7 +50,8 @@ export interface MergeLine extends PackCandidate {
   backorderedPieces?: unknown;
 }
 
-export interface MergeLineWriteData {
+/** Row 510: extends the staff-override stamp (a created line carries the losing line's; NULL columns when none). */
+export interface MergeLineWriteData extends OverrideStamp {
   productId: string;
   qty: number;
   boxes: number | null;
@@ -77,7 +83,7 @@ export interface MergeLineWriteData {
 type MergeLineUpdateData = Pick<
   MergeLineWriteData,
   "qty" | "boxes" | "pieces" | "unitsPerBox" | "subtotal"
-> & { promoFreeUnits?: number | null; backorderedPieces?: number };
+> & { promoFreeUnits?: number | null; backorderedPieces?: number } & Partial<OverrideStamp>;
 
 export type MergeLineWrite =
   | { kind: "update"; lineId: string; data: MergeLineUpdateData }
@@ -245,6 +251,7 @@ export function buildMergeLineWrites(
               categoryPriceIncludesTax: c.categoryPriceIncludesTax,
             }),
             ...compositionStampOf(c),
+            ...carryOverrideStamp(c), // row 510: a fold keeps the acknowledged sale
             ...(markerSum([c]) > 0 ? { backorderedPieces: markerSum([c]) } : {}),
           },
         });
@@ -277,6 +284,9 @@ export function buildMergeLineWrites(
       const unitsPerBox = packForWrite(group.pack, merged.boxes);
 
       if (group.isWinnerGroup) {
+        const stampFill = hasOverrideStamp(group.winnerInGroup)
+          ? undefined
+          : losersInGroup.find((c) => hasOverrideStamp(c));
         writes.push({
           kind: "update",
           lineId: group.winnerInGroup!.id!,
@@ -295,6 +305,8 @@ export function buildMergeLineWrites(
             ...(markerSum(losersInGroup) > 0
               ? { backorderedPieces: markerSum([group.winnerInGroup!, ...losersInGroup]) }
               : {}),
+            // Row 510: a winner line with no stamp takes the first folded loser's (it now holds that loser's goods).
+            ...(stampFill ? carryOverrideStamp(stampFill) : {}),
           },
         });
       } else {
@@ -321,6 +333,7 @@ export function buildMergeLineWrites(
               categoryPriceIncludesTax: primary.categoryPriceIncludesTax,
             }),
             ...compositionStampOf(primary),
+            ...carryOverrideStamp([primary, ...others].find((c) => hasOverrideStamp(c))),
             ...(markerSum(losersInGroup) > 0
               ? { backorderedPieces: markerSum(losersInGroup) }
               : {}),

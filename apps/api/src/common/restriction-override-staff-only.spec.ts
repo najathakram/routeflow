@@ -49,6 +49,8 @@ const STAMP = {
   restrictionOverrideAt: new Date("2026-10-14T12:00:00.000Z"),
   restrictionOverrideRuleIds: ["r1"],
 };
+/** What a STAFF read carries: the stamp plus the resolved name of the overriding user (row 510, ruling 2026-10-14). */
+const STAFF_STAMP = { ...STAMP, restrictionOverrideByName: "Pat Lee" };
 const stampKeys = (row: object) =>
   Object.keys(row).filter((k) => k.startsWith("restrictionOverride"));
 
@@ -57,7 +59,7 @@ const stampedOrder = () => ({
   status: "PENDING",
   total: 10,
   lineItems: [
-    { id: "li-1", productId: "p-1", qty: 1, unitPrice: 10, subtotal: 10, ...STAMP },
+    { id: "li-1", productId: "p-1", qty: 1, unitPrice: 10, subtotal: 10, ...STAFF_STAMP },
     { id: "li-2", productId: "p-2", qty: 1, unitPrice: 0, subtotal: 0 },
   ],
 });
@@ -66,7 +68,7 @@ const stampedInvoice = () => ({
   status: "SENT",
   total: 10,
   taxAmount: 0,
-  items: [{ id: "ii-1", productId: "p-1", qty: 1, unitPrice: 10, subtotal: 10, ...STAMP }],
+  items: [{ id: "ii-1", productId: "p-1", qty: 1, unitPrice: 10, subtotal: 10, ...STAFF_STAMP }],
   payments: [],
 });
 
@@ -76,14 +78,14 @@ describe("row 510: buyer reads omit the override stamp (allowlist)", () => {
     expect(Object.keys(OVERRIDE_STAMP_SELECT).sort()).toEqual(Object.keys(STAMP).sort());
   });
 
-  it("no buyer allowlist names a stamp column", () => {
+  it("no buyer allowlist names a stamp column, nor the resolved name of the overriding user", () => {
     for (const list of [
       CUSTOMER_ORDER_FIELDS,
       CUSTOMER_ORDER_ITEM_FIELDS,
       CUSTOMER_INVOICE_FIELDS,
       CUSTOMER_INVOICE_ITEM_FIELDS,
     ])
-      for (const col of OVERRIDE_STAMP_COLUMNS)
+      for (const col of [...OVERRIDE_STAMP_COLUMNS, "restrictionOverrideByName"])
         expect(list as readonly string[]).not.toContain(col);
   });
 
@@ -107,17 +109,17 @@ describe("row 510: buyer reads omit the override stamp (allowlist)", () => {
   });
 
   it("mutation proof: the same fixture DOES carry the stamp before projection", () => {
-    expect(stampKeys(stampedOrder().lineItems[0])).toHaveLength(4);
-    expect(stampKeys(stampedInvoice().items[0])).toHaveLength(4);
+    expect(stampKeys(stampedOrder().lineItems[0])).toHaveLength(5); // the four columns + the resolved name
+    expect(stampKeys(stampedInvoice().items[0])).toHaveLength(5);
   });
 });
 
 describe("row 510: the column helper", () => {
-  it("withoutOverrideStamp removes the keys and keeps the rest; the source is not mutated", () => {
-    const src = { id: "x", qty: 2, ...STAMP };
+  it("withoutOverrideStamp removes the keys (and a resolved name) and keeps the rest; the source is not mutated", () => {
+    const src = { id: "x", qty: 2, ...STAFF_STAMP };
     const out = withoutOverrideStamp(src);
     expect(out).toEqual({ id: "x", qty: 2 });
-    expect(stampKeys(src)).toHaveLength(4);
+    expect(stampKeys(src)).toHaveLength(5);
   });
 
   it("carryOverrideStamp copies the stamp as stored, never aliasing the rule list; a missing stamp reads cleared", () => {
@@ -170,7 +172,7 @@ describe("row 510: the invoice PDF model never carries the stamp", () => {
           qty: 1,
           unitPrice: 10,
           subtotal: 10,
-          ...STAMP,
+          ...STAFF_STAMP,
           product: { id: "p-1", name: "Widget", barcode: null, sku: null, unitSku: null },
         },
       ],

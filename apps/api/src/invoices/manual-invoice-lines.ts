@@ -36,6 +36,9 @@ export type ManualLineItem = CreateInvoiceDto["items"][number] & {
   subtotalSnapshot?: number | null;
 };
 
+/** `InvoicesService.create`'s input: the HTTP body, with lines an internal caller may give a pack snapshot. */
+export type ManualInvoiceDto = Omit<CreateInvoiceDto, "items"> & { items: ManualLineItem[] };
+
 export function buildManualInvoiceLines(
   items: ManualLineItem[],
   ctx: {

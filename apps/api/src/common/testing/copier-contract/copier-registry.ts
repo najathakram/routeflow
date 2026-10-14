@@ -64,9 +64,10 @@ const P0A_LABELS_LINECODE: Record<string, GapRef> = { ...P0A_LABELS, lineCode: "
  * (C5), next-delivery approval (C8), recurring (C6) and template (C7) RESET it (a new sale is judged afresh; an old
  * override is never carried forward; a fresh override on C2/C5/C8 is a NEW stamp from that write's own judgement, never
  * a copy); historical import (C14) STAMPS a fixed "Imported (historical)" marker with the importing user and the rules
- * matched at import (no new column). Brief 1 lands every non-reset row as `gaps: "unfiled"` (true at its land: no copier
- * writes the columns yet), so the contract goes red the moment brief 2 (C1/C17/C9) or the import change (C14 -> rederived)
- * starts writing them, and the entry must flip with the code.
+ * matched at import (no new column). Brief 1 landed every non-reset row as `gaps: "unfiled"` (true at its land: no copier
+ * wrote the columns yet); brief 2 writes the four columns EXPLICITLY (never through a spread the contract cannot see) in C1
+ * (`buildInvoiceItemData`), C17 (`recomputeOrderFromInvoices`'s create) and C9a/C9b (the merge's two create literals), so
+ * those flipped to `carried`. Still a gap until the import change writes it: C14 (-> rederived).
  */
 const R510_STAMP =
   "restrictionOverrideReason restrictionOverrideBy restrictionOverrideAt restrictionOverrideRuleIds";
@@ -87,7 +88,9 @@ const MERGE = {
     // B297: the loser line's trio, via `...copyCategoryTaxSnapshot(meta)` (SPREAD_HELPER_KEYS).
     "categoryTaxType categoryTaxRate categoryPriceIncludesTax " +
     // SA-716 MUST 2: the backorder marker is a fact of the sale; the fold CARRIES it (winner += losers').
-    "backorderedPieces",
+    "backorderedPieces " +
+    // row 510: the loser line's staff-override stamp (a fold keeps the acknowledged sale), via write.data.
+    R510_STAMP,
   // #2717 M3: the stamp rides `...compositionStampOf(write.data)` (an opaque local spread, so not checked as
   // carried); the components are rescaled from the winner's own stored rows by syncOrderLineCompositions.
   rederived: "categoryTaxAmount compositionMode recipeId recipeVersion", // recomputeLineCategoryTaxes after the fold
@@ -101,7 +104,6 @@ const MERGE = {
     unitLabel: "unfiled",
     trackedSubcategoryId: "unverified",
     position: "unverified",
-    ...R510_STAMP_GAPS, // row 510: carry (a fold keeps the loser line's acknowledged sale); brief 2 flips to carried
   } as Record<string, GapRef>,
 };
 
@@ -114,7 +116,8 @@ export const COPIERS: Copier[] = [
     anchor: { via: "return" },
     carried:
       "productId qty unitPrice subtotal boxes pieces unitsPerBox unitLabel promoFreeUnits originalPrice priceType notes categoryTaxAmount orderItemId trackedCategoryId trackedSubcategoryId " +
-      "categoryTaxType categoryTaxRate categoryPriceIncludesTax", // B297: the order line's own trio, verbatim
+      "categoryTaxType categoryTaxRate categoryPriceIncludesTax " + // B297: the order line's own trio, verbatim
+      R510_STAMP, // row 510: order -> invoice carries the staff override (no re-warn), split included
     // #2717 M3: the FIXED stamp and the frozen component rows ride `...invoiceCompositionFields(...)`, an opaque
     // local spread (invoice-line-composition.ts), for exactly the pieces this bill covers.
     rederived: "description msrp taxRate compositionMode recipeId recipeVersion",
@@ -122,8 +125,7 @@ export const COPIERS: Copier[] = [
     reset: "discount",
     // #2169 (SA-395): built from a request line, never a copy of a system-stamped source line.
     na: "systemKind",
-    // row 510: carry (order->invoice, and the split-out lines it builds); brief 2 flips to carried
-    gaps: { ...P0A_LABELS_LINECODE, ...R510_STAMP_GAPS },
+    gaps: { ...P0A_LABELS_LINECODE },
   },
   {
     id: "C2",
@@ -338,7 +340,8 @@ export const COPIERS: Copier[] = [
     anchor: { via: "delegate", model: "orderItem" },
     carried:
       "productId qty unitPrice subtotal boxes pieces unitsPerBox unitLabel categoryTaxAmount promoFreeUnits " +
-      "trackedCategoryId trackedSubcategoryId categoryTaxType categoryTaxRate categoryPriceIncludesTax", // row 373
+      "trackedCategoryId trackedSubcategoryId categoryTaxType categoryTaxRate categoryPriceIncludesTax " + // row 373
+      R510_STAMP, // row 510: a line rebuilt from an invoice line keeps its staff-override stamp
     // SA-716: a line rebuilt from invoice lines has no sale-time stock history — backorderedPieces stays 0.
     reset: "priceType status invoicedQty backorderedPieces",
     rederived: "name compositionMode recipeId recipeVersion",
@@ -349,7 +352,6 @@ export const COPIERS: Copier[] = [
       originalPrice: "unfiled",
       notes: "unfiled",
       position: "unfiled",
-      ...R510_STAMP_GAPS, // row 510: carry (a line rebuilt from an invoice line keeps its stamp); brief 2 flips to carried
     },
   },
   // Client copiers: NOT column-checked (the spec is API-side; a request body is not a Prisma model).

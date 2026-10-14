@@ -6,6 +6,7 @@ import {
   type LadderUnit,
 } from "@routeflow/pricing";
 import { keepsHeldUnit, norm } from "../orders/unit-label-norm";
+import { OVERRIDE_STAMP_SELECT, type OverrideStamp } from "../common/restriction-override-columns";
 import { checkableProductIds } from "../selling-restrictions/selling-restrictions.core";
 import { API_ERROR_CODES } from "../common/api-error-codes";
 
@@ -173,6 +174,7 @@ const HELD_SELECT = {
   pieces: true,
   unitsPerBox: true,
   unitLabel: true,
+  ...OVERRIDE_STAMP_SELECT, // row 510: the coverage test reads the held lines' stamps
 };
 type Reader = {
   invoiceItem: { findMany(args: any): Promise<EditRow[]> };
@@ -188,6 +190,18 @@ export async function addedRestrictionLines(
   invoiceId: string,
   items: ReadonlyArray<EditRow>,
 ): Promise<{ productId: string; qtyDelta?: number }[]> {
+  return (await addedRestrictionLinesWithHeld(db, invoiceId, items)).lines;
+}
+
+/** `addedRestrictionLines` plus the held rows it read (with their override stamps), for the coverage test (row 510). */
+export async function addedRestrictionLinesWithHeld(
+  db: Reader,
+  invoiceId: string,
+  items: ReadonlyArray<EditRow>,
+): Promise<{
+  lines: { productId: string; qtyDelta?: number }[];
+  held: Array<EditRow & Partial<OverrideStamp>>;
+}> {
   const held = await db.invoiceItem.findMany({ where: { invoiceId }, select: HELD_SELECT });
   const ids = [...new Set([...held, ...items].flatMap((r) => (r.productId ? [r.productId] : [])))];
   const products = ids.length
@@ -228,7 +242,7 @@ export async function addedRestrictionLines(
         },
       ]),
   );
-  return netEditRestrictionLines(held, items, livePacks, ladders);
+  return { lines: netEditRestrictionLines(held, items, livePacks, ladders), held };
 }
 
 /**

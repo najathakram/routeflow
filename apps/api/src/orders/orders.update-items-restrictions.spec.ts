@@ -61,7 +61,7 @@ describe("OrdersService.updateOrderItems — selling restrictions (lane R 2a-7)"
     h.prisma.order.findUnique.mockResolvedValue({ ...order });
     return h.service.updateOrderItems("ord-1", dto as never, user);
   };
-  const on = () => h.restrictions.getPolicy.mockResolvedValue({ enabled: true });
+  const on = () => undefined; // row 510: nothing to switch on
   const firstCall = (m: jest.Mock) => m.mock.invocationCallOrder[0];
 
   beforeEach(async () => {
@@ -75,37 +75,19 @@ describe("OrdersService.updateOrderItems — selling restrictions (lane R 2a-7)"
     h.prisma.orderItem.findMany.mockResolvedValue(EXISTING);
   });
 
-  describe("OFF (the default): inert", () => {
-    it("ONE policy read for the row's tenant before the transaction, and nothing else — no plan query, no choke point, nothing inside the tx", async () => {
-      let readsAtTxStart = -1;
-      let readsAtTxEnd = -1;
-      const runTx = h.prisma.tenantTransaction.getMockImplementation() as (
-        fn: (tx: unknown) => Promise<unknown>,
-      ) => Promise<unknown>;
-      h.prisma.tenantTransaction.mockImplementation(
-        async (fn: (tx: unknown) => Promise<unknown>) => {
-          readsAtTxStart = h.restrictions.getPolicy.mock.calls.length;
-          const result = await runTx(fn);
-          readsAtTxEnd = h.restrictions.getPolicy.mock.calls.length;
-          return result;
-        },
-      );
-
+  describe("row 510: the tenant switch is gone, so a staff edit is always judged", () => {
+    it("never reads the tenant policy itself (the engine reads what it needs); the plan query and the choke point run with NO switch on", async () => {
       await edit(ADD_X);
 
-      expect(h.restrictions.getPolicy).toHaveBeenCalledTimes(1);
-      expect(h.restrictions.getPolicy).toHaveBeenCalledWith("t-row");
-      expect([readsAtTxStart, readsAtTxEnd]).toEqual([1, 1]);
-      expect(h.restrictions.assertLinesSellable).not.toHaveBeenCalled();
-      expect(h.restrictions.checkLinesSellable).not.toHaveBeenCalled();
+      expect(h.restrictions.getPolicy).not.toHaveBeenCalled();
+      expect(h.restrictions.assertLinesSellable).toHaveBeenCalledTimes(1);
       const planReads = h.prisma.product.findMany.mock.calls.filter(
         ([a]) => JSON.stringify(a.select) === JSON.stringify({ id: true, unitsPerBox: true }),
       );
-      expect(planReads).toHaveLength(0);
+      expect(planReads).toHaveLength(1);
     });
 
     it("a DRAFT edit reads nothing at all: a draft is judged at its promotion", async () => {
-      on();
       await edit(ADD_X, operator, { ...ORDER, status: "DRAFT" });
       expect(h.restrictions.getPolicy).not.toHaveBeenCalled();
       expect(h.restrictions.assertLinesSellable).not.toHaveBeenCalled();
@@ -119,12 +101,16 @@ describe("OrdersService.updateOrderItems — selling restrictions (lane R 2a-7)"
       await edit(ADD_X);
 
       expect(h.restrictions.assertLinesSellable).toHaveBeenCalledTimes(1);
-      expect(h.restrictions.assertLinesSellable).toHaveBeenCalledWith({
-        tenantId: "t-row",
-        customerId: "cust-1",
-        lines: [{ productId: "prod-x" }],
-        channel: "STAFF",
-      });
+      expect(h.restrictions.assertLinesSellable).toHaveBeenCalledWith(
+        expect.objectContaining({
+          tenantId: "t-row",
+          customerId: "cust-1",
+          lines: [{ productId: "prod-x", lineKey: "n:0" }], // row 510: keyed by its payload index
+          channel: "STAFF",
+          path: "DELIVERY",
+          document: "ORDER",
+        }),
+      );
       const asked = firstCall(h.restrictions.assertLinesSellable);
       expect(asked).toBeLessThan(firstCall(revert));
       expect(asked).toBeLessThan(firstCall(h.prisma.tenantTransaction));
@@ -196,7 +182,8 @@ describe("OrdersService.updateOrderItems — selling restrictions (lane R 2a-7)"
               });
         const call = h.restrictions.assertLinesSellable.mock.calls[0][0];
         expect(call.channel).toBe(channel);
-        expect(call.lines).toEqual(expected);
+        // row 510: the same lines, each now carrying the key a warning echoes back
+        expect(call.lines).toEqual(expected.map((l) => ({ ...l, lineKey: expect.any(String) })));
       },
     );
 
@@ -213,7 +200,7 @@ describe("OrdersService.updateOrderItems — selling restrictions (lane R 2a-7)"
       await edit({ ...extra, items: [{ productId: "prod-a", qty: 3, pieces: 5 }] }, user as never);
 
       expect(h.restrictions.assertLinesSellable.mock.calls[0][0].lines).toEqual([
-        { productId: "prod-a", qtyDelta: delta },
+        { productId: "prod-a", qtyDelta: delta, lineKey: "n:0" },
       ]);
     });
 

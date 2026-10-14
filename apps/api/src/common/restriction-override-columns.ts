@@ -60,9 +60,10 @@ export function carryOverrideStamp(src: Partial<OverrideStamp> | null | undefine
   };
 }
 
-/** A shallow copy of `row` without the four stamp columns (keys absent, not undefined). */
+/** A shallow copy of `row` without the four stamp columns and the staff-read name (keys absent, not undefined). */
 export function withoutOverrideStamp<T extends object>(row: T): Omit<T, OverrideStampColumn> {
   const out = { ...row } as Record<string, unknown>;
   for (const col of OVERRIDE_STAMP_COLUMNS) delete out[col];
+  delete out.restrictionOverrideByName; // a staff read's resolved name (restriction-override-names.ts) is staff-only too
   return out as Omit<T, OverrideStampColumn>;
 }

@@ -167,43 +167,49 @@ function unitLineEdit(
 export function sellableLinesForMergeEdit(
   existing: readonly ExistingLine[],
   items: readonly EditItem[],
-  opts: { liveUnitsPerBox?: LiveUnitsPerBox } = {},
+  opts: { liveUnitsPerBox?: LiveUnitsPerBox; keys?: string[] } = {},
 ): EditLine[] {
   const lines: EditLine[] = [];
+  // Row 510: `opts.keys` (when given) is filled PARALLEL to the returned lines: the warning key of each one.
+  const emit = (line: EditLine, key: string) => {
+    lines.push(line);
+    opts.keys?.push(key);
+  };
   const byId = new Map(existing.map((l) => [l.id, l]));
 
-  for (const item of items) {
+  items.forEach((item, index) => {
+    const key = item.id ? `l:${item.id}` : `n:${index}`;
     // A removal never needs a check (owner rule: a ban must not keep stock on an order) — but
     // only when it NAMES a line; an id-less "CANCEL" is an append in the service (see header).
-    if (item.id && (item.action === "CANCEL" || item.action === "DELETE")) continue;
+    if (item.id && (item.action === "CANCEL" || item.action === "DELETE")) return;
     // A substitute is a product NEW to the order.
-    if (item.substituteProductId) lines.push({ productId: item.substituteProductId });
+    if (item.substituteProductId) emit({ productId: item.substituteProductId }, key);
 
     if (item.id) {
       const line = byId.get(item.id);
       // The service ignores a productId that rides along with an id; check it anyway (fail
       // closed) whenever it names something other than the line's own product.
       if (item.productId && item.productId !== line?.productId) {
-        lines.push({ productId: item.productId });
+        emit({ productId: item.productId }, key);
       }
       // A substituted line changes product — its old product's quantity no longer matters.
-      if (!line?.productId || item.substituteProductId) continue;
+      if (!line?.productId || item.substituteProductId) return;
       const edit = existingLineEdit(
         item,
         { ...line, productId: line.productId },
         opts.liveUnitsPerBox,
       );
-      if (edit) lines.push(edit);
-      continue;
+      if (edit) emit(edit, key);
+      return;
     }
 
-    if (!item.productId) continue; // unlisted (catalog-free) line: no product to restrict
+    if (!item.productId) return; // unlisted (catalog-free) line: no product to restrict
     // An id-less line is APPENDED as a new line. A known quantity <= 0 (and no split) is never
     // written by the service — nothing is sold, so it is not checked (belt and braces: the DTO's
     // @Min(1) already refuses it); an unsized one is.
-    if (!hasSplit(item) && hasNumber(item.qty) && item.qty <= 0) continue;
-    lines.push({ productId: item.productId });
-  }
+    if (!hasSplit(item) && hasNumber(item.qty) && item.qty <= 0) return;
+    emit({ productId: item.productId }, key);
+  });
   return lines;
 }
 
@@ -234,33 +240,42 @@ export type ReplaceActor = "staff" | "buyer" | "driver";
 export function sellableLinesForReplaceEdit(
   existing: readonly ExistingLine[],
   items: readonly EditItem[],
-  opts: { actor: ReplaceActor; liveUnitsPerBox?: LiveUnitsPerBox },
+  opts: { actor: ReplaceActor; liveUnitsPerBox?: LiveUnitsPerBox; keys?: string[] },
 ): EditLine[] {
   const lines: EditLine[] = [];
+  // Row 510: `opts.keys` is filled parallel to the returned lines. Replace-all recreates every line, so a product's
+  // key is the payload index of its first entry ("n:<i>"): stable for the SAME payload.
+  const emit = (line: EditLine, key: string) => {
+    lines.push(line);
+    opts.keys?.push(key);
+  };
+  const firstIndex = new Map<string, number>();
   const byProduct = new Map<string, EditItem[]>();
-  for (const item of items) {
-    if (item.substituteProductId) lines.push({ productId: item.substituteProductId });
-    if (!item.productId) continue; // unlisted line: no product to restrict
+  items.forEach((item, index) => {
+    if (item.substituteProductId) emit({ productId: item.substituteProductId }, `n:${index}`);
+    if (!item.productId) return; // unlisted line: no product to restrict
+    if (!firstIndex.has(item.productId)) firstIndex.set(item.productId, index);
     byProduct.set(item.productId, [...(byProduct.get(item.productId) ?? []), item]);
-  }
+  });
 
   const staff = opts.actor === "staff";
   for (const [productId, list] of byProduct) {
+    const key = `n:${firstIndex.get(productId)}`;
     const rows = existing.filter((l) => l.productId === productId);
     const current = rows.filter((l) => l.status !== "CANCELLED");
     if (list.some(unreadableQty)) {
-      lines.push({ productId }); // an unreadable qty is never a removal
+      emit({ productId }, key); // an unreadable qty is never a removal
       continue;
     }
     // an item the service writes: a positive qty, or (staff only) a positive split
     if (!list.some((i) => (hasNumber(i.qty) && i.qty > 0) || (staff && hasSplit(i)))) continue;
     if (current.length === 0) {
-      lines.push({ productId }); // not on the order: a NEW line
+      emit({ productId }, key); // not on the order: a NEW line
       continue;
     }
     const size = opts.liveUnitsPerBox?.get(productId);
     if (size === undefined) {
-      lines.push({ productId }); // cannot size against the live catalog: checked
+      emit({ productId }, key); // cannot size against the live catalog: checked
       continue;
     }
     const upb = Math.trunc(Number(size ?? 0));
@@ -287,7 +302,7 @@ export function sellableLinesForReplaceEdit(
         (boxed && l.boxes == null && l.pieces == null ? existingQty(l) * upb : existingQty(l)),
       0,
     );
-    lines.push({ productId, qtyDelta: incoming - before });
+    emit({ productId, qtyDelta: incoming - before }, key);
   }
   return lines;
 }

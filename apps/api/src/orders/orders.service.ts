@@ -134,13 +134,9 @@ import {
   updateFulfillPathImpl,
   updateShipmentImpl,
 } from "./order-lifecycle";
-import {
-  EXISTING_LINE_SELECT,
-  orderEditMode,
-  planOrderEditRestrictions,
-  type OrderEditRestrictionPlan,
-} from "./order-edit-restrictions";
-import { planChangeRequestRestrictions } from "./change-request-restrictions";
+import { EXISTING_LINE_SELECT } from "./order-edit-restrictions";
+import * as rGate from "./order-restriction-gate";
+import { restrictionChannelForPrincipal } from "../selling-restrictions/selling-restrictions.core";
 import { parseCommissionRatePct, parseOrderDate } from "./order-parsers";
 import { getOrderTracking } from "./order-tracking";
 import { CreateSaleDto } from "./dto/create-sale.dto";
@@ -221,7 +217,6 @@ import {
   type MergeWinner,
 } from "./merge-restriction-warning";
 import { collectUnlistedLoserItems } from "./merge-unlisted-lines";
-import { restrictionChannelForPrincipal } from "../selling-restrictions/selling-restrictions.core";
 import { SellingRestrictionsService } from "../selling-restrictions/selling-restrictions.service";
 import { PromotionsService } from "../promotions/promotions.service";
 import { MessagingService } from "../messaging/messaging.service";
@@ -297,18 +292,6 @@ export class OrdersService implements OnApplicationBootstrap {
     // #2717 M3: the `mixed_packs` mode read; absent = off (no composition work at all).
     @Optional() readonly featureConfig?: FeatureConfigService,
   ) {}
-
-  /**
-   * Tenant scope for the selling-restrictions choke point: the row being written's own tenant
-   * when there is one (authoritative for an existing order), else the caller's, else the ambient
-   * one. None of them means the check cannot be evaluated — refuse (fail closed, 403) rather than
-   * skip: a tenant-less caller must act inside a tenant-scoped session.
-   */
-  private restrictionTenantId(user: JwtPayload | undefined, rowTenantId?: string | null): string {
-    const tenantId = rowTenantId ?? user?.tenantId ?? this.prisma.getTenantId();
-    if (tenantId) return tenantId;
-    throw new ForbiddenException("Selling restrictions require a tenant-scoped session");
-  }
 
   /**
    * P5-04: active promotions for the current tenant (window + isActive filtered).
@@ -532,6 +515,7 @@ export class OrdersService implements OnApplicationBootstrap {
       }
     }
 
+    await rGate.stampOverrideNames(this.prisma.forTenant(), order.lineItems, user); // row 510: staff only
     if (user.role === UserRole.CUSTOMER) {
       // REG-B131: `deletedAt: null` here — a removal deactivates the user but an access token
       // minted just before it stays valid for up to 15 minutes, so a removed customer's own
@@ -812,6 +796,10 @@ export class OrdersService implements OnApplicationBootstrap {
                     categoryTaxRate: write.data.categoryTaxRate,
                     categoryPriceIncludesTax: write.data.categoryPriceIncludesTax,
                     backorderedPieces: write.data.backorderedPieces ?? 0, // SA-716: carried
+                    restrictionOverrideReason: write.data.restrictionOverrideReason, // row 510: carried
+                    restrictionOverrideBy: write.data.restrictionOverrideBy,
+                    restrictionOverrideAt: write.data.restrictionOverrideAt,
+                    restrictionOverrideRuleIds: write.data.restrictionOverrideRuleIds,
                     ...compositionStampOf(write.data),
                   },
                 });
@@ -952,7 +940,7 @@ export class OrdersService implements OnApplicationBootstrap {
       notifications: this.notifications,
       warn: (m: string) => this.logger.warn(m),
     };
-    const tenantId = () => this.restrictionTenantId(undefined, winner.tenantId);
+    const tenantId = () => rGate.tenantId(this.prisma, undefined, winner.tenantId);
     return warnBannedMergedLines(deps, { tenantId, customerId, winner, losers, ...o });
   }
 
@@ -1067,6 +1055,10 @@ export class OrdersService implements OnApplicationBootstrap {
                     categoryTaxRate: write.data.categoryTaxRate,
                     categoryPriceIncludesTax: write.data.categoryPriceIncludesTax,
                     backorderedPieces: write.data.backorderedPieces ?? 0, // SA-716: carried
+                    restrictionOverrideReason: write.data.restrictionOverrideReason, // row 510: carried
+                    restrictionOverrideBy: write.data.restrictionOverrideBy,
+                    restrictionOverrideAt: write.data.restrictionOverrideAt,
+                    restrictionOverrideRuleIds: write.data.restrictionOverrideRuleIds,
                     ...compositionStampOf(write.data),
                   },
                 });
@@ -1967,17 +1959,16 @@ export class OrdersService implements OnApplicationBootstrap {
     // a customer without a VERIFIED authorization (or active §8 override) throws a
     // structured 409 BEFORE the stock transaction, so nothing is half-committed.
     // Tobacco (requiresLicense=false) is never gated — its warn-only flow is intact.
+    let restriction: rGate.Decision | undefined; // row 510: the staff override, stamped in the create tx
     if (!isDraft) {
       await this.authGuard.assertAuthorizedOrThrow({
         customerId,
         lines: lineItemsData.map((li) => ({ trackedCategoryId: li.trackedCategoryId })),
       });
-      // Lane R: selling restrictions — a banned product refuses (409 SELLING_RESTRICTED) BEFORE the
-      // stock transaction, like the license guard above; a DRAFT is checked at its promotion.
-      await this.sellingRestrictions.assertLinesSellable({
-        tenantId: this.restrictionTenantId(user),
-        customerId,
-        lines: lineItemsData.flatMap((li) => (li.productId ? [{ productId: li.productId }] : [])),
+      // Lane R: a banned product warns (staff) or refuses BEFORE the stock tx; a DRAFT is judged at its promotion.
+      const tenant = rGate.tenantId(this.prisma, user);
+      restriction = await this.sellingRestrictions.assertLinesSellable({
+        ...rGate.create({ tenant, customerId, user, lineItemsData, fulfillPath, options, dto }),
         channel: restrictionChannelForPrincipal(user), // judged at ENTRY time, like the license guard
       });
       // B585: credit check for a NEW order (nothing runs unless the tenant switch is set).
@@ -2092,6 +2083,7 @@ export class OrdersService implements OnApplicationBootstrap {
               },
             });
             await this.syncCompositions(tx, created.id);
+            await restriction?.stamp(tx, created.id);
             inlineMinted = await applyReturn(tx, inlineRet, {
               customerId,
               orderId: created.id,
@@ -2231,6 +2223,8 @@ export class OrdersService implements OnApplicationBootstrap {
         // honors the same per-order override as a plain order create.
         commissionRatePct: dto.commissionRatePct,
         ...(dto.idempotencyKey ? { idempotencyKey: dto.idempotencyKey } : {}),
+        restrictionOverrides: dto.restrictionOverrides, // row 510: the staff's acknowledgement rides the sale
+        warningHash: dto.warningHash,
       },
       user,
       saleCreateOptions(sale, dto.idempotencyKey, () => (replay = true)),
@@ -2347,10 +2341,11 @@ export class OrdersService implements OnApplicationBootstrap {
     // re-run the license guard (drafts are created/edited without it — that's the
     // "draft escape"). Categories resolve from each line's snapshot or its product.
     let checkedProductIds: ReadonlySet<string> | undefined; // what the Lane R check saw
+    let restriction: rGate.Decision | undefined; // row 510: the staff override, stamped in the promotion tx
     if (order.status === "DRAFT" && dto.status !== OrderStatus.CANCELLED) {
       const items = await this.prisma.forTenant().orderItem.findMany({
         where: { orderId: id, status: { not: "CANCELLED" } },
-        select: { productId: true, trackedCategoryId: true },
+        select: { ...rGate.WHOLE_LINE_SELECT, trackedCategoryId: true },
       });
       const pids = items.map((li) => li.productId).filter(Boolean) as string[];
       const products = pids.length
@@ -2369,14 +2364,12 @@ export class OrdersService implements OnApplicationBootstrap {
         })),
         orderId: id,
       });
-      // Lane R: the same "becomes a real sale" moment — a banned product refuses (409
-      // SELLING_RESTRICTED) BEFORE the status write / stock reservation. Drafts are created and
-      // edited without the check; this is the draft escape's second half.
-      await this.sellingRestrictions.assertLinesSellable({
-        tenantId: this.restrictionTenantId(user, order.tenantId),
-        customerId: order.customerId,
-        lines: items.flatMap((li) => (li.productId ? [{ productId: li.productId }] : [])),
-        channel: restrictionChannelForPrincipal(user), // judged at ENTRY time, like the license guard
+      // Lane R: the same "becomes a real sale" moment — a banned product warns / refuses BEFORE the status write
+      // / stock reservation. Drafts are created and edited without the check; this is the draft escape's second half.
+      const tenant = rGate.tenantId(this.prisma, user, order.tenantId);
+      restriction = await this.sellingRestrictions.assertLinesSellable({
+        ...rGate.whole({ tenant, order, user, lines: items, dto }),
+        channel: restrictionChannelForPrincipal(user),
       });
       checkedProductIds = new Set(pids);
     }
@@ -2470,6 +2463,8 @@ export class OrdersService implements OnApplicationBootstrap {
                 "The order's items changed while it was being promoted — review it and promote again.",
               );
             }
+            // Row 510: the override re-judged under the claim (a stamp cleared since the pre-read re-warns).
+            const stamped = await rGate.recheck(tx, restriction, id, checkedProductIds);
             const stockLines = activeItems.filter((li): li is StockLine => !!li.productId);
             await this.decrementStockForSale(tx, stockLines, allowOversell, {
               orderId: id,
@@ -2477,6 +2472,7 @@ export class OrdersService implements OnApplicationBootstrap {
               performedById: user.sub,
               customerFacing: user.role === UserRole.CUSTOMER,
             });
+            await stamped?.stamp(tx, id);
             return tx.order.findUniqueOrThrow({ where: { id } });
           },
           { isolationLevel: "Serializable", timeout: 15_000 },
@@ -2744,7 +2740,7 @@ export class OrdersService implements OnApplicationBootstrap {
     );
   }
 
-  async reopenOrder(id: string) {
+  async reopenOrder(id: string, user?: JwtPayload, ack?: rGate.Ack) {
     const order = await this.prisma.forTenant().order.findUnique({
       where: { id },
       include: { lineItems: true },
@@ -2769,14 +2765,19 @@ export class OrdersService implements OnApplicationBootstrap {
     // F-05 (SA-272): reopening moves the ORDER to PENDING, so EVERY line goes live — a new sale of the whole order,
     // not only of the item-CANCELLED lines (cancelling a DRAFT never marks its lines CANCELLED, and drafts are
     // written without the check). Staff-only path; no delta, so every catalog line is checked, before any write.
-    await this.sellingRestrictions.assertLinesSellable({
-      tenantId: this.restrictionTenantId(undefined, order.tenantId),
-      customerId: order.customerId,
-      lines: order.lineItems.flatMap((li) => (li.productId ? [{ productId: li.productId }] : [])),
-      channel: "STAFF",
+    const tenant = rGate.tenantId(this.prisma, user, order.tenantId);
+    const restriction = await this.sellingRestrictions.assertLinesSellable({
+      ...rGate.whole({ tenant, order, user, lines: order.lineItems, dto: ack, allLive: true }),
+      channel: "STAFF", // a staff-only route; the principal below decides who may override
     });
     return this.prisma.tenantTransaction(
       async (tx) => {
+        // Row 510: the Order lock first, then the override re-judged against the locked lines.
+        const judged = new Set(order.lineItems.map((li) => li.productId as string));
+        const stamped = await rGate.recheck(tx, restriction, id, judged, {
+          lock: true,
+          allLive: true,
+        });
         // B64 (REG-B64): read the item-CANCELLED lines BEFORE they flip below —
         // this is exactly the set an F07 cancel credited stock back for (a
         // pre-F07 cancel left lines untouched, so this reads empty and
@@ -2794,6 +2795,7 @@ export class OrdersService implements OnApplicationBootstrap {
 
         // Re-take exactly what the cancel credited back (order-stock.ts).
         await restoreStockForReopen(this.stockDeps(), tx, id, cancelledLines);
+        await stamped?.stamp(tx, id);
 
         const reopened = await tx.order.update({
           where: { id },
@@ -2919,28 +2921,22 @@ export class OrdersService implements OnApplicationBootstrap {
       throw new ForbiddenException(await carrierGuard.buyerEditClosedMessage(this, order)); // B1135
     }
 
-    // Lane R: a banned product added by this edit refuses (409 SELLING_RESTRICTED) BEFORE the invoice revert and any
-    // write; non-draft only (a draft is judged at its promotion). Re-checked under the row lock (order-edit-restrictions.ts).
-    let restrictionPlan: OrderEditRestrictionPlan | null = null;
+    // Lane R: a banned product added by this edit warns / refuses BEFORE the invoice revert and any write; non-draft
+    // only (a draft is judged at its promotion). Re-judged under the row lock (order-edit-restrictions.ts).
+    let restrictionPlan: rGate.EditPlan | null = null;
     if (order.status !== "DRAFT") {
-      const tenantId = this.restrictionTenantId(user, order.tenantId);
-      restrictionPlan = await planOrderEditRestrictions(
-        { restrictions: this.sellingRestrictions, prisma: this.prisma },
-        {
-          tenantId,
-          existing: order.lineItems ?? [],
-          items: dto.items ?? [],
-          mode: orderEditMode(user?.role, dto.replaceAll, isDiffPayload),
-          principal: user,
-        },
-      );
-      if (restrictionPlan)
-        await this.sellingRestrictions.assertLinesSellable({
-          tenantId,
-          customerId: order.customerId,
-          lines: restrictionPlan.lines,
-          channel: restrictionChannelForPrincipal(user),
-        });
+      const tenant = rGate.tenantId(this.prisma, user, order.tenantId);
+      restrictionPlan = await rGate.editPlan(this.prisma, {
+        tenant,
+        order,
+        user,
+        dto,
+        isDiffPayload,
+      });
+      restrictionPlan.decision = await this.sellingRestrictions.assertLinesSellable({
+        ...restrictionPlan.params,
+        channel: restrictionChannelForPrincipal(user),
+      });
     }
 
     // R1: a POST-DELIVERY edit (order already OUT_FOR_DELIVERY / PARTIALLY_DELIVERED /
@@ -4188,6 +4184,7 @@ export class OrdersService implements OnApplicationBootstrap {
           await creditGate();
         }
 
+        await restrictionPlan?.stamp(tx, orderId); // row 510: stamps after every line write
         await stampDeliveredAfterEdit(tx, orderId, heldItems, lineIdentity); // SA-763r: DELIVERED only
         // Revert a CONFIRMED order back to PENDING when items are edited so the office
         // must re-confirm the updated pick list before dispatch. R1: scope this to a
@@ -4600,6 +4597,7 @@ export class OrdersService implements OnApplicationBootstrap {
     crId: string,
     resolver: JwtPayload,
     reason?: string | null,
+    ack?: rGate.Ack,
   ): Promise<{ merged: true; subtotal: number; tax: number; total: number }> {
     const cr = await this.prisma.forTenant().changeRequest.findUnique({ where: { id: crId } });
     if (!cr) throw new NotFoundException("Change request not found");
@@ -4680,20 +4678,14 @@ export class OrdersService implements OnApplicationBootstrap {
       });
     }
 
-    // Lane R: an at-door add / qty raise of a banned product refuses (409 SELLING_RESTRICTED) BEFORE
-    // the tx; OFF = one policy read. Re-checked under the row lock below (change-request-restrictions.ts).
-    const tenantId = this.restrictionTenantId(resolver, order.tenantId);
-    const restrictionPlan = await planChangeRequestRestrictions(
-      { restrictions: this.sellingRestrictions },
-      { tenantId, existing: order.lineItems ?? [], cr, principal: resolver },
-    );
-    if (restrictionPlan)
-      await this.sellingRestrictions.assertLinesSellable({
-        tenantId,
-        customerId: order.customerId,
-        lines: restrictionPlan.lines,
-        channel: restrictionChannelForPrincipal(resolver),
-      });
+    // Lane R: an at-door add / qty raise of a banned product warns the office (a DRIVER is refused) BEFORE the tx;
+    // re-judged under the row lock below (change-request-restrictions.ts).
+    const tenant = rGate.tenantId(this.prisma, resolver, order.tenantId);
+    const restrictionPlan = rGate.crPlan({ tenant, order, cr, user: resolver, ack });
+    restrictionPlan.decision = await this.sellingRestrictions.assertLinesSellable({
+      ...restrictionPlan.params,
+      channel: restrictionChannelForPrincipal(resolver),
+    });
 
     // P5-08b posture: reference reads on separate pooled connections are
     // hoisted BEFORE the interactive tx (pool-starvation guard, :1660-1672).
@@ -5094,6 +5086,7 @@ export class OrdersService implements OnApplicationBootstrap {
           }
         }
 
+        await restrictionPlan.stamp(tx, order.id); // row 510: the acknowledged stamp, with the line
         await settleSplitFreeUnits(tx, order.id, heldItems, buyerPromos);
         await this.syncCompositions(tx, order.id);
         // ── Totals recompute — identical to updateOrderItems :2163-2168 ──────
@@ -5192,7 +5185,14 @@ export class OrdersService implements OnApplicationBootstrap {
 
   /** Extracted verbatim to `order-lifecycle.ts` (size-ratchet headroom move); thin delegator. */
   async updateFulfillPath(orderId: string, dto: UpdateFulfillPathDto, _user?: JwtPayload) {
-    return updateFulfillPathImpl(this, orderId, dto, _user);
+    return updateFulfillPathImpl(
+      this,
+      orderId,
+      dto,
+      _user,
+      async (p: rGate.Args) =>
+        await this.sellingRestrictions.assertLinesSellable({ ...p, channel: "STAFF" }),
+    );
   }
 
   /** Extracted verbatim to `order-lifecycle.ts` (size-ratchet headroom move); thin delegator. */

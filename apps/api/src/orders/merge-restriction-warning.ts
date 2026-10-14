@@ -74,8 +74,8 @@ export async function warnBannedMergedLines(
       customerId: p.customerId,
       lines: productIds.map((productId) => ({ productId })),
       channel,
-      // A warning, never a block: it follows the tenant switch, so a portal limit alone raises no operator alert.
-      switchGated: true,
+      // A warning, never a block: a portal-only limit alone raises no operator alert (a legal ban always does).
+      skipPortalOnlyRules: true,
     });
     if (verdict.outcome !== "BLOCK" && verdict.outcome !== "INDETERMINATE") return undefined;
     const banned: BannedMergedLine[] = verdict.reasons.map((r) => ({

@@ -32,6 +32,7 @@ import { ChangeOrderStatusDto } from "./dto/change-order-status.dto";
 import { UpdateOrderItemsDto } from "./dto/update-order-items.dto";
 import { UpdateShipmentDto } from "./dto/update-shipment.dto";
 import { UpdateFulfillPathDto } from "./dto/update-fulfill-path.dto";
+import { ReopenOrderDto } from "./dto/reopen-order.dto";
 import { CreateChangeRequestDto } from "./dto/create-change-request.dto";
 import { ResolveChangeRequestDto } from "./dto/resolve-change-request.dto";
 import { foldMergeItems } from "./merge-items";
@@ -290,6 +291,9 @@ export class OrdersController {
                     : {}),
                   // #2094: a return taken on a merge lands on the winner in the same tx (updateOrderItems).
                   ...(dto.inlineReturn ? { inlineReturn: dto.inlineReturn } : {}),
+                  // Row 510: the staff's acknowledgement of a restriction warning rides the fold unchanged.
+                  restrictionOverrides: dto.restrictionOverrides,
+                  warningHash: dto.warningHash,
                 } as any;
                 // B215: the idempotency key (when present) rides INTO updateOrderItems and
                 // commits inside the fold's own transaction — a crash or a later throw can no
@@ -533,8 +537,12 @@ export class OrdersController {
   @Post(":id/reopen")
   @UseGuards(RolesGuard)
   @Roles(UserRole.OPERATOR)
-  reopenOrder(@Param("id") id: string) {
-    return this.ordersService.reopenOrder(id);
+  reopenOrder(
+    @Param("id") id: string,
+    @Body() dto: ReopenOrderDto,
+    @CurrentUser() user: JwtPayload,
+  ) {
+    return this.ordersService.reopenOrder(id, user, dto);
   }
 
   @Patch(":id/items")

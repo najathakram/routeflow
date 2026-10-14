@@ -438,7 +438,8 @@ describe("OrdersService — F07 lifecycle-conservation (TP-API)", () => {
         id: "ord-1",
         status: "CANCELLED",
         notes: null,
-        lineItems: [],
+        // the same line the locked re-read below returns (row 510: reopen re-judges the order's lines under its lock)
+        lineItems: [{ id: "li-1", productId: "prod-1", qty: 4, deliveredQty: 1 }],
       });
       prisma.invoice.findFirst.mockResolvedValue(null); // no PAID invoice blocks the reopen
       prisma.orderItem.findMany.mockResolvedValue([

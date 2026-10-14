@@ -1,6 +1,9 @@
 import { ConflictException } from "@nestjs/common";
 import { UserRole } from "@prisma/client";
+import { OVERRIDE_STAMP_SELECT, type OverrideStamp } from "../common/restriction-override-columns";
 import type { PrismaService } from "../prisma/prisma.service";
+import type { SalePath } from "../selling-restrictions/jurisdiction";
+import type { StaffWriteDecision } from "../selling-restrictions/restriction-warning";
 import {
   sellableLinesForMergeEdit,
   sellableLinesForReplaceEdit,
@@ -12,11 +15,12 @@ import {
 } from "../selling-restrictions/order-edit-lines";
 import {
   checkableProductIds,
-  restrictionChannelForPrincipal,
-  restrictionsApply,
   type ChannelPrincipal,
 } from "../selling-restrictions/selling-restrictions.core";
-import type { SellingRestrictionsService } from "../selling-restrictions/selling-restrictions.service";
+import type {
+  SellableLinesArgs,
+  SellableLinesParams,
+} from "../selling-restrictions/selling-restrictions.service";
 import { API_ERROR_CODES } from "../common/api-error-codes";
 
 /**
@@ -28,11 +32,14 @@ import { API_ERROR_CODES } from "../common/api-error-codes";
  * connection, so it is called BEFORE the transaction on the lines read before the lock. A pre-lock
  * read can be stale under a concurrent edit, so the plan is RE-CHECKED inside the transaction against
  * the lock-time read the service already makes (`heldItems`): a pure recompute (no query) that refuses
- * with a retryable 409 when a product now needs a check the pre-lock judgment never made. A STAFF edit with
- * the switch off costs exactly ONE read (the tenant policy), before the transaction; nothing here runs inside
- * it. A buyer's edit is always planned (the portal ignores the switch) and, in a tenant with no active rule,
- * `evaluate` ends after one more read; otherwise it costs a second policy read and one product query more
- * than the license guard.
+ * with a retryable 409 when a product now needs a check the pre-lock judgment never made.
+ *
+ * Row 510: every edit is planned (the tenant switch no longer gates the staff channel), and the plan carries the
+ * choke point's whole parameter set (`params`: the lines with their warning keys, the principal, the acknowledgement)
+ * and, once the service has called it, the staff-write `decision`. The re-check ALSO re-judges the override under the
+ * lock (`decision.recheck(heldItems)`: coverage and the acknowledged hash, a pure recompute), and `stamp` writes the
+ * acknowledged stamps (and re-applies carried ones to recreated lines) inside the same transaction. In a tenant with no
+ * active rule, `evaluate` ends after one indexed read.
  *
  * Known edges (fail closed or vanishingly narrow; pinned by review, not fixed here): a re-check refusal
  * rolls back the item writes but not the earlier `revertLinkedInvoicesForOrderEdit` (every in-tx guard
@@ -51,6 +58,8 @@ export const EXISTING_LINE_SELECT = {
   status: true,
   // units_v1 (A1): the post-lock unit-resolution recompute needs the line's own snapshot.
   unitLabel: true,
+  // Row 510: the override stamp the coverage test reads under the lock.
+  ...OVERRIDE_STAMP_SELECT,
 } as const;
 
 /** How `updateOrderItems` applies this payload for this principal (mirrors its branches). */
@@ -69,31 +78,34 @@ export function orderEditMode(
   return replaceAll === true ? { kind: "replace", actor: "staff" } : { kind: "merge" };
 }
 
+/** A lock-time line: the edit decision's columns plus (optionally) its override stamp. */
+export type HeldEditLine = ExistingLine & Partial<OverrideStamp>;
+
 export interface OrderEditRestrictionPlan {
-  /** The lines for the choke point, from the order rows read BEFORE the lock. */
-  lines: EditLine[];
-  /** Inside the transaction, after the lock-time read: refuses (409, retryable) when a product now needs a check. */
-  assertHeld(lockTimeRows: readonly ExistingLine[]): void;
+  /** The choke point's parameters (the call site states the channel): the lines, each with its warning key, from the rows read BEFORE the lock. */
+  params: SellableLinesArgs;
+  /** The choke point's answer, set by the service (undefined when nothing came back). */
+  decision?: StaffWriteDecision;
+  /** Inside the transaction, after the lock-time read: refuses (409, retryable) when a product now needs a check, and re-judges the override. */
+  assertHeld(lockTimeRows: readonly HeldEditLine[]): void;
+  /** Inside the transaction, after the line writes: stamps the acknowledged lines and re-applies carried stamps. */
+  stamp(tx: any, orderId: string): Promise<number>;
 }
 
 export async function planOrderEditRestrictions(
-  deps: {
-    restrictions: Pick<SellingRestrictionsService, "getPolicy">;
-    prisma: Pick<PrismaService, "forTenant">;
-  },
+  prisma: Pick<PrismaService, "forTenant">,
   p: {
     tenantId: string;
-    existing: readonly ExistingLine[];
+    customerId: string;
+    existing: readonly HeldEditLine[];
     items: readonly EditItem[];
     mode: OrderEditMode;
-    /** Who is editing: the switch gates the STAFF channel only, so a buyer's edit is always judged. */
+    /** Who is editing: the channel (a buyer's edit is judged at the portal) and the override right. */
     principal: ChannelPrincipal | null | undefined;
+    path: SalePath;
+    ack?: SellableLinesParams["ack"];
   },
-): Promise<OrderEditRestrictionPlan | null> {
-  // OFF (staff channel, switch off): one read, nothing else. The portal channel always applies its rules.
-  const channel = restrictionChannelForPrincipal(p.principal);
-  if (!restrictionsApply(await deps.restrictions.getPolicy(p.tenantId), channel)) return null;
-
+): Promise<OrderEditRestrictionPlan> {
   const ids = [
     ...new Set(
       [...p.items.map((i) => i.productId), ...p.existing.map((l) => l.productId)].filter(
@@ -102,28 +114,45 @@ export async function planOrderEditRestrictions(
     ),
   ];
   const products: Array<{ id: string; unitsPerBox: number | null }> = ids.length
-    ? await deps.prisma.forTenant().product.findMany({
+    ? await prisma.forTenant().product.findMany({
         where: { tenantId: p.tenantId, id: { in: ids } },
         select: { id: true, unitsPerBox: true },
       })
     : [];
   const live: LiveUnitsPerBox = new Map(products.map((r) => [r.id, r.unitsPerBox]));
 
-  const linesFor = (rows: readonly ExistingLine[]): EditLine[] =>
+  const linesFor = (rows: readonly ExistingLine[], keys?: string[]): EditLine[] =>
     p.mode.kind === "merge"
-      ? sellableLinesForMergeEdit(rows, p.items, { liveUnitsPerBox: live })
-      : sellableLinesForReplaceEdit(rows, p.items, { actor: p.mode.actor, liveUnitsPerBox: live });
+      ? sellableLinesForMergeEdit(rows, p.items, { liveUnitsPerBox: live, keys })
+      : sellableLinesForReplaceEdit(rows, p.items, {
+          actor: p.mode.actor,
+          liveUnitsPerBox: live,
+          keys,
+        });
 
-  const lines = linesFor(p.existing);
+  const keys: string[] = [];
+  const lines = linesFor(p.existing, keys);
   const judged = new Set(checkableProductIds(lines));
-  return {
-    lines,
+  const plan: OrderEditRestrictionPlan = {
+    params: {
+      tenantId: p.tenantId,
+      customerId: p.customerId,
+      lines: lines.map((l, i) => ({ ...l, lineKey: keys[i] })),
+      path: p.path,
+      principal: p.principal,
+      ack: p.ack,
+      held: p.existing,
+      document: "ORDER",
+    },
     assertHeld(lockTimeRows) {
       if (checkableProductIds(linesFor(lockTimeRows)).some((id) => !judged.has(id)))
         throw new ConflictException({
           code: API_ERROR_CODES.ORDER_CHANGED_DURING_EDIT,
           message: "The order changed while your edit was being applied — review it and try again.",
         });
+      plan.decision = plan.decision?.recheck(lockTimeRows);
     },
+    stamp: async (tx, orderId) => (await plan.decision?.stamp(tx, orderId)) ?? 0,
   };
+  return plan;
 }

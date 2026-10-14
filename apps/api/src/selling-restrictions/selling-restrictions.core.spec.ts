@@ -9,7 +9,6 @@ import {
   resolveGoverningState,
   restrictedSummary,
   restrictionChannelForPrincipal,
-  restrictionsApply,
   ruleBindsChannel,
   ruleHidesFromBuyer,
   ruleIsActive,
@@ -918,22 +917,6 @@ describe("restrictedSummary — the 409's human `message`", () => {
 
   it("an empty list (should not happen) still yields a real sentence, never an empty toast", () => {
     expect(restrictedSummary([])).toBe("This order can't be sold to this customer.");
-  });
-});
-
-describe("portal limits: the switch is staff-channel only (restrictionsApply)", () => {
-  it("the portal channel always applies its rules, switch on or off", () => {
-    expect(restrictionsApply({ enabled: false }, "BUYER_PORTAL")).toBe(true);
-    expect(restrictionsApply({ enabled: true }, "BUYER_PORTAL")).toBe(true);
-  });
-
-  it("the staff channel applies them only when the switch is on", () => {
-    expect(restrictionsApply({ enabled: false }, "STAFF")).toBe(false);
-    expect(restrictionsApply({ enabled: true }, "STAFF")).toBe(true);
-  });
-
-  it("an unrecognised channel is treated as the portal (fails closed)", () => {
-    expect(restrictionsApply({ enabled: false }, "SOMETHING_ELSE" as never)).toBe(true);
   });
 });
 

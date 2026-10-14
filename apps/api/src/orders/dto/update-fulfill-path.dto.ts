@@ -1,6 +1,7 @@
 import { IsIn } from "class-validator";
 import { FulfillPath } from "@prisma/client";
 import { STAFF_ORDER_FULFILL_PATHS } from "../writable-fulfill-paths";
+import { RestrictionAckDto } from "../../selling-restrictions/dto/restriction-ack.dto";
 
 /**
  * Ad-hoc trips + fulfillment mode: PATCH /orders/:id/fulfill-path body. The
@@ -8,7 +9,7 @@ import { STAFF_ORDER_FULFILL_PATHS } from "../writable-fulfill-paths";
  * CANCELLED — the fulfillment path can only be set while the order is open.
  * PICKUP (POS mode) is staff-only and needs the USE_POS_MODE capability (checked in the service).
  */
-export class UpdateFulfillPathDto {
+export class UpdateFulfillPathDto extends RestrictionAckDto {
   @IsIn(STAFF_ORDER_FULFILL_PATHS)
   fulfillPath!: FulfillPath;
 }

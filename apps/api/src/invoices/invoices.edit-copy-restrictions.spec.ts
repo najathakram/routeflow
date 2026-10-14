@@ -76,12 +76,19 @@ describe("invoice edit / copy — selling restrictions (F-05)", () => {
       await expect(
         edit([line("p-held", 50), line("p-new", 1), line(null, 1)]),
       ).rejects.toMatchObject({ response: { code: "SELLING_RESTRICTED" } });
-      expect(restrictions.assertLinesSellable).toHaveBeenCalledWith({
-        tenantId: "test-tenant",
-        customerId: "cust-1",
-        lines: [{ productId: "p-held", qtyDelta: 45 }, { productId: "p-new" }],
-        channel: "STAFF",
-      });
+      expect(restrictions.assertLinesSellable).toHaveBeenCalledWith(
+        expect.objectContaining({
+          tenantId: "test-tenant",
+          customerId: "cust-1",
+          // row 510: each netted line carries the key of the first payload entry of its product
+          lines: [
+            { productId: "p-held", qtyDelta: 45, lineKey: "n:0" },
+            { productId: "p-new", lineKey: "n:1" },
+          ],
+          channel: "STAFF",
+          document: "INVOICE",
+        }),
+      );
     });
 
     it("an increase on a banned line already on the draft is REFUSED, writing nothing", async () => {
@@ -125,12 +132,15 @@ describe("invoice edit / copy — selling restrictions (F-05)", () => {
       await expect(service.duplicate("inv-1")).rejects.toMatchObject({
         response: { code: "SELLING_RESTRICTED" },
       });
-      expect(restrictions.assertLinesSellable).toHaveBeenCalledWith({
-        tenantId: "test-tenant",
-        customerId: "cust-1",
-        lines: [{ productId: "p-banned" }],
-        channel: "STAFF",
-      });
+      expect(restrictions.assertLinesSellable).toHaveBeenCalledWith(
+        expect.objectContaining({
+          tenantId: "test-tenant",
+          customerId: "cust-1",
+          lines: [{ productId: "p-banned", lineKey: "n:0" }],
+          channel: "STAFF",
+          document: "INVOICE",
+        }),
+      );
       expect(prisma.invoice.create).not.toHaveBeenCalled();
     });
   });

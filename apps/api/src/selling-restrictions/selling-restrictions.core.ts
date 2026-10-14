@@ -3,11 +3,12 @@
  * clock (the one Prisma import is type-only, shaping `activeRuleWhere`): `SellingRestrictionsService`
  * loads the facts and hands them in, so every outcome below is unit-testable without a database.
  *
- * Three outcomes never share a code path (owner ruling):
- *   OFF            — the tenant switch is off. Nothing is read or evaluated (see `offEvaluation`).
- *   ALLOW / BLOCK  — switch on, the governing state (if a rule needs it) is known.
- *   INDETERMINATE  — switch on, a STATE rule matches a line, but the customer's state can't be
- *                    resolved (no address / unnormalised state). Fail closed: block + explain.
+ * Outcomes never share a code path (owner ruling):
+ *   ALLOW / BLOCK  — the governing state (if a rule needs it) is known.
+ *   INDETERMINATE  — a STATE rule matches a line, but the sale's state can't be resolved
+ *                    (no address / unnormalised state). Fail closed: block + explain.
+ *   OFF            — retired by row 510: the tenant switch no longer gates ANY channel, so the engine never returns
+ *                    it (`offEvaluation` and the type member stay until the switch's settings plumbing is removed).
  * INDETERMINATE arises ONLY when a non-empty STATE rule matches a line — a customer with no
  * address can still buy a product no rule touches, and a FEDERAL rule blocks without consulting
  * the address at all.
@@ -19,7 +20,6 @@ import type {
   RestrictionAddressPrecedence,
   RestrictionChannel,
   RestrictionsEvaluation,
-  RestrictionsPolicy,
 } from "@routeflow/types";
 import { normalizeUsState } from "../common/us-states";
 
@@ -156,20 +156,6 @@ export function restrictionChannelForPrincipal(
 ): RestrictionChannel {
   if (!principal || principal.type === "BUYER") return "BUYER_PORTAL";
   return principal.role != null && STAFF_ROLES.has(principal.role) ? "STAFF" : "BUYER_PORTAL";
-}
-
-/**
- * The ONE gate of the tenant switch (`selling_restrictions.enabled`): it adds STAFF enforcement only. The buyer-portal
- * channel ALWAYS applies its rules, so a portal limit works the moment the admin sets it; staff-channel blocking touches
- * orders, invoices, recurring jobs and imports, so it stays opt-in. Any channel that is not exactly "STAFF" is judged as
- * the portal (fail closed, like `restrictionChannelForPrincipal`). Every short-circuit on the switch calls this, never
- * `policy.enabled` directly (`portal-limits-pins.spec.ts`).
- */
-export function restrictionsApply(
-  policy: Pick<RestrictionsPolicy, "enabled">,
-  channel: RestrictionChannel,
-): boolean {
-  return (channel as string) !== "STAFF" || policy.enabled;
 }
 
 /** The OFF outcome: a first-class result, produced without reading anything else. */

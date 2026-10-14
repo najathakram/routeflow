@@ -501,6 +501,8 @@ describe("ChangeRequestsService", () => {
         "cr-1",
         operatorUser,
         "on the truck",
+        // row 510: the resolve body rides along, so the office's acknowledgement of a restriction warning reaches the gate
+        expect.objectContaining({ action: ChangeRequestResolveAction.APPROVE_AT_STOP }),
       );
       expect(notifications.sendToCustomer).toHaveBeenCalledWith(
         "cust-1",

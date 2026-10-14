@@ -19,6 +19,7 @@ import {
 import { Type } from "class-transformer";
 import { CheckStatus, PaymentMethod } from "@prisma/client";
 import { StripHtml } from "../../common/transforms/strip-html.transform";
+import { RestrictionAckDto } from "../../selling-restrictions/dto/restriction-ack.dto";
 
 export class CreateInvoiceItemDto {
   @IsString() description: string;
@@ -50,7 +51,7 @@ export class CreateInvoiceItemDto {
   @IsOptional() @StripHtml() @IsString() @MaxLength(2000) notes?: string;
 }
 
-export class CreateInvoiceDto {
+export class CreateInvoiceDto extends RestrictionAckDto {
   @IsUUID() customerId: string;
   @IsArray()
   @ArrayMinSize(1)

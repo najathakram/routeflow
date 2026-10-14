@@ -70,7 +70,7 @@ describe("OrdersService.approveChangeRequestAtStop — selling restrictions (lan
     h.prisma.changeRequest.findUnique.mockResolvedValue(row);
     return h.service.approveChangeRequestAtStop("cr-1", who, null);
   };
-  const on = () => h.restrictions.getPolicy.mockResolvedValue({ enabled: true });
+  const on = () => undefined; // row 510: nothing to switch on
   const firstCall = (m: jest.Mock) => m.mock.invocationCallOrder[0];
 
   beforeEach(async () => {
@@ -90,23 +90,11 @@ describe("OrdersService.approveChangeRequestAtStop — selling restrictions (lan
     h.prisma.product.findFirst.mockResolvedValue({ id: "prod-x", trackedCategoryId: null });
   });
 
-  it("OFF (default): ONE policy read for the row's tenant before the transaction, no choke point, nothing inside the tx", async () => {
-    let readsAtTxStart = -1;
-    const runTx = h.prisma.tenantTransaction.getMockImplementation() as (
-      fn: (tx: unknown) => Promise<unknown>,
-    ) => Promise<unknown>;
-    h.prisma.tenantTransaction.mockImplementation(async (fn: (tx: unknown) => Promise<unknown>) => {
-      readsAtTxStart = h.restrictions.getPolicy.mock.calls.length;
-      return runTx(fn);
-    });
-
+  it("row 510: the switch is gone — the edit reads no tenant policy itself and the choke point always runs", async () => {
     await approve(ADD_X);
 
-    expect(h.restrictions.getPolicy).toHaveBeenCalledTimes(1);
-    expect(h.restrictions.getPolicy).toHaveBeenCalledWith("t-row");
-    expect(readsAtTxStart).toBe(1);
-    expect(h.restrictions.getPolicy.mock.calls).toHaveLength(1); // still 1 after the tx
-    expect(h.restrictions.assertLinesSellable).not.toHaveBeenCalled();
+    expect(h.restrictions.getPolicy).not.toHaveBeenCalled();
+    expect(h.restrictions.assertLinesSellable).toHaveBeenCalledTimes(1);
   });
 
   it("ON: an ADD_ITEM asks the choke point once — row tenant, customer, the product, STAFF — before the invoice revert and the transaction", async () => {
@@ -114,12 +102,15 @@ describe("OrdersService.approveChangeRequestAtStop — selling restrictions (lan
     await approve(ADD_X);
 
     expect(h.restrictions.assertLinesSellable).toHaveBeenCalledTimes(1);
-    expect(h.restrictions.assertLinesSellable).toHaveBeenCalledWith({
-      tenantId: "t-row",
-      customerId: "cust-1",
-      lines: [{ productId: "prod-x" }],
-      channel: "STAFF",
-    });
+    expect(h.restrictions.assertLinesSellable).toHaveBeenCalledWith(
+      expect.objectContaining({
+        tenantId: "t-row",
+        customerId: "cust-1",
+        lines: [{ productId: "prod-x", lineKey: "cr:cr-1" }], // row 510: keyed by the change request
+        channel: "STAFF",
+        document: "ORDER",
+      }),
+    );
     const asked = firstCall(h.restrictions.assertLinesSellable);
     expect(asked).toBeLessThan(firstCall(revert));
     expect(asked).toBeLessThan(firstCall(h.prisma.tenantTransaction));
@@ -129,11 +120,15 @@ describe("OrdersService.approveChangeRequestAtStop — selling restrictions (lan
     on();
     await approve(RAISE_A);
     expect(h.restrictions.assertLinesSellable).toHaveBeenLastCalledWith(
-      expect.objectContaining({ lines: [{ productId: "prod-a", qtyDelta: 3 }] }),
+      expect.objectContaining({
+        lines: [{ productId: "prod-a", qtyDelta: 3, lineKey: "cr:cr-1" }],
+      }),
     );
     await approve(LOWER_A);
     expect(h.restrictions.assertLinesSellable).toHaveBeenLastCalledWith(
-      expect.objectContaining({ lines: [{ productId: "prod-a", qtyDelta: -1 }] }),
+      expect.objectContaining({
+        lines: [{ productId: "prod-a", qtyDelta: -1, lineKey: "cr:cr-1" }],
+      }),
     );
   });
 
@@ -183,11 +178,5 @@ describe("OrdersService.approveChangeRequestAtStop — selling restrictions (lan
       response: { code: "ORDER_CHANGED_DURING_EDIT" },
     });
     expect(h.prisma.orderItem.update).not.toHaveBeenCalled();
-  });
-
-  it("OFF never runs the lock-time re-check (nothing extra inside the tx)", async () => {
-    h.prisma.order.findUnique.mockResolvedValue({ ...ORDER, lineItems: [{ ...LINE, qty: 6 }] });
-    h.prisma.orderItem.findMany.mockResolvedValue([LINE]);
-    await expect(approve(RAISE_A)).resolves.toMatchObject({ merged: true });
   });
 });

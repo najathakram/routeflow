@@ -27,6 +27,8 @@ import type { OrdersService } from "./orders.service";
 import { UpdateFulfillPathDto } from "./dto/update-fulfill-path.dto";
 import { UpdateShipmentDto } from "./dto/update-shipment.dto";
 import { SHIPPED_STATUSES, notifyTrackingAdded } from "./shipment-notifications";
+import { judgeFulfilSwitch } from "./fulfil-path-restrictions";
+import * as rGate from "./order-restriction-gate";
 
 export async function updateShipmentImpl(
   self: OrdersService,
@@ -97,12 +99,18 @@ export async function updateShipmentImpl(
  * "open" states — a shipped/delivered/cancelled order's fulfillment history
  * shouldn't move out from under its trip/shipment records after the fact —
  * and locked toward SHIP or PICKUP while the order sits on a live run.
+ *
+ * Row 510: the switch changes which state judges the sale (PICKUP = the store's, ROUTE / SHIP = the customer's), so it
+ * re-judges the order's lines at the path it is switching TO (`assertSellable` is the choke point, passed down by the
+ * class method that the coverage ratchet scans). A breach warns / refuses; an acknowledged one is stamped in the SAME
+ * transaction as the path change (fulfil-path-restrictions.ts).
  */
 export async function updateFulfillPathImpl(
   self: OrdersService,
   orderId: string,
   dto: UpdateFulfillPathDto,
   user?: JwtPayload,
+  assertSellable?: Parameters<typeof judgeFulfilSwitch>[4],
 ) {
   // POS mode (SA-763r R3): switching an order to PICKUP is a hand-over at the till, a staff capability.
   if (dto.fulfillPath === FulfillPath.PICKUP && !staffMay(user?.role, "USE_POS_MODE")) {
@@ -121,6 +129,10 @@ export async function updateFulfillPathImpl(
     select: {
       id: true,
       status: true,
+      tenantId: true,
+      customerId: true,
+      fulfillPath: true,
+      counterSale: true,
       routeRunId: true,
       routeRunStopId: true,
       routeRunStop: {
@@ -168,42 +180,58 @@ export async function updateFulfillPathImpl(
     );
   }
   const hasLink = order.routeRunId != null || order.routeRunStopId != null;
-  if (dto.fulfillPath !== FulfillPath.PICKUP || !hasLink) {
-    return self.prisma.forTenant().order.update({
-      where: { id: orderId },
-      data: { fulfillPath: dto.fulfillPath },
+  // The path write itself (unchanged), on `db`: the tenant client, or the transaction below.
+  const write = async (db: any) => {
+    if (dto.fulfillPath !== FulfillPath.PICKUP || !hasLink) {
+      return db.order.update({
+        where: { id: orderId },
+        data: { fulfillPath: dto.fulfillPath },
+      });
+    }
+    // B692 class: a PICKUP order that stays linked to a finished (COMPLETED / CANCELLED) run's stop is
+    // skipped by the later stock stamp, which excludes rows carrying a routeRunStopId, so a later quantity
+    // cut would restock what was never stamped. The link is released ONLY when every run it points at was
+    // read and is finished: an active run was refused above, and a link whose run row could not be read is
+    // refused too (fail closed), because clearing a link we cannot classify could detach a live run.
+    if (
+      (order.routeRunStopId != null && stopRun == null) ||
+      (order.routeRunId != null && idRun == null)
+    ) {
+      throw new BadRequestException(
+        "This order is linked to a delivery run that could not be read. Check its run before switching it to pickup.",
+      );
+    }
+    // The read above and this write are not one transaction: a dispatch attaching in between would have
+    // its fresh link cleared by an unconditional write. The release is conditional on the exact link that
+    // was read, and a miss is a coded 409 with nothing written.
+    const released = await db.order.updateMany({
+      where: { id: orderId, routeRunId: order.routeRunId, routeRunStopId: order.routeRunStopId },
+      data: { fulfillPath: dto.fulfillPath, routeRunId: null, routeRunStopId: null },
     });
-  }
-  // B692 class: a PICKUP order that stays linked to a finished (COMPLETED / CANCELLED) run's stop is
-  // skipped by the later stock stamp, which excludes rows carrying a routeRunStopId, so a later quantity
-  // cut would restock what was never stamped. The link is released ONLY when every run it points at was
-  // read and is finished: an active run was refused above, and a link whose run row could not be read is
-  // refused too (fail closed), because clearing a link we cannot classify could detach a live run.
-  if (
-    (order.routeRunStopId != null && stopRun == null) ||
-    (order.routeRunId != null && idRun == null)
-  ) {
-    throw new BadRequestException(
-      "This order is linked to a delivery run that could not be read. Check its run before switching it to pickup.",
-    );
-  }
-  // The read above and this write are not one transaction: a dispatch attaching in between would have
-  // its fresh link cleared by an unconditional write. The release is conditional on the exact link that
-  // was read, and a miss is a coded 409 with nothing written.
-  const released = await self.prisma.forTenant().order.updateMany({
-    where: { id: orderId, routeRunId: order.routeRunId, routeRunStopId: order.routeRunStopId },
-    data: { fulfillPath: dto.fulfillPath, routeRunId: null, routeRunStopId: null },
+    if (released.count === 0) {
+      throw new ConflictException({
+        code: API_ERROR_CODES.ORDER_RUN_LINK_CHANGED,
+        message:
+          "This order's delivery run changed while you were switching it. Reload and try again.",
+      });
+    }
+    const updated = await db.order.findFirst({ where: { id: orderId } });
+    if (!updated) throw new NotFoundException("Order not found");
+    return updated;
+  };
+  const switched = assertSellable
+    ? await judgeFulfilSwitch(self, order, dto.fulfillPath, user, assertSellable, dto)
+    : null;
+  // Row 510: with a restriction in play the Order lock, the re-judge, the write and the stamps are ONE transaction.
+  if (!switched?.needsTx) return write(self.prisma.forTenant());
+  return self.prisma.tenantTransaction(async (tx: any) => {
+    const stamped = await rGate.recheck(tx, switched.decision, orderId, switched.judged, {
+      lock: true,
+    });
+    const written = await write(tx);
+    await stamped?.stamp(tx, orderId);
+    return written;
   });
-  if (released.count === 0) {
-    throw new ConflictException({
-      code: API_ERROR_CODES.ORDER_RUN_LINK_CHANGED,
-      message:
-        "This order's delivery run changed while you were switching it. Reload and try again.",
-    });
-  }
-  const updated = await self.prisma.forTenant().order.findFirst({ where: { id: orderId } });
-  if (!updated) throw new NotFoundException("Order not found");
-  return updated;
 }
 
 export async function toggleUrgentImpl(

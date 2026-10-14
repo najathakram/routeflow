@@ -154,6 +154,8 @@ export interface OverrideStampView {
   restrictionOverrideBy: string | null;
   restrictionOverrideAt: string | null;
   restrictionOverrideRuleIds: string[];
+  /** The overriding user's name, resolved on a STAFF read (null when the user is gone); never on a buyer read. */
+  restrictionOverrideByName?: string | null;
 }
 
 /** API-internal: one breached product as the engine judged it for a staff write (mirrored for the contract). */

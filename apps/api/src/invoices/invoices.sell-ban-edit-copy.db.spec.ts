@@ -4,7 +4,8 @@
  * in pieces — qtyDelta = requested - held) and `InvoicesService.duplicate` (a copy is a new sale of
  * every catalog line). REAL InvoicesService + SellingRestrictionsService + ProductLabelsService over a
  * REAL STATE ban on a category and a REAL CA customer address. Each DRAFT invoice is created while the
- * tenant flag is OFF (the "since-banned" state), then the flag is turned ON before the edit/copy.
+ * rule is not yet in force (the "since-banned" state), then the rule is put in force before the edit/copy
+ * (row 510: the tenant switch is gone, so "flag on/off" is now "rule in force / not yet in force").
  * Every tenant is a throwaway `qa-f2ban-*` slug approved by `assertTestTenant`; afterAll deletes what
  * it made. Collected only by `jest.db.config.js`; run via `npm run local:test:db`.
  */
@@ -47,6 +48,8 @@ import { entitlementAuthorityFromEntitlements } from "../testing/entitlement-aut
 const { assertTestTenant } = require("../../../../scripts/lib/test-tenants.cjs");
 
 const RUN_SUFFIX = randomUUID().slice(0, 8);
+const IN_FORCE = new Date("2026-01-01T00:00:00Z");
+const NOT_YET = new Date("2099-01-01T00:00:00Z");
 let tenantSeq = 0;
 /** A fresh, policy-approved throwaway tenant slug — never reused across tests in this file. */
 function freshTenantSlug(label: string): string {
@@ -224,20 +227,18 @@ describeDb("F05 ban check on invoice update (net delta) + duplicate — real Pos
         jurisdiction: "STATE",
         states: ["CA"],
         reason: "F05 edit/copy pin",
-        effectiveFrom: new Date("2026-01-01T00:00:00Z"),
+        effectiveFrom: NOT_YET,
       },
-    });
-    await prisma.systemConfig.create({
-      data: { tenantId, key: "selling_restrictions.enabled", value: "false" },
     });
     return { tenantId, customerId: customer.id, banned: banned.id, boxed: boxed.id, ok: ok.id };
   }
   type Seed = Awaited<ReturnType<typeof seed>>;
 
+  /** Put the rule in force (`on`) or back to "not yet effective" (the since-banned state). */
   const setFlag = (s: Seed, on: boolean) =>
-    prisma.systemConfig.updateMany({
-      where: { tenantId: s.tenantId, key: "selling_restrictions.enabled" },
-      data: { value: on ? "true" : "false" },
+    prisma.sellingRestriction.updateMany({
+      where: { tenantId: s.tenantId },
+      data: { effectiveFrom: on ? IN_FORCE : NOT_YET },
     });
   const run = <T>(s: Seed, fn: () => Promise<T>) => tenantCtx.run(s.tenantId, fn);
   const createDraft = (s: Seed, items: any[]) =>
@@ -446,7 +447,7 @@ describeDb("F05 ban check on invoice update (net delta) + duplicate — real Pos
   });
 
   describe("duplicate(): a copy is a new sale of every catalog line", () => {
-    it("C1 flag ON: duplicating an invoice holding a banned line is REFUSED, no copy written", async () => {
+    it("C1 rule in force: duplicating an invoice holding a banned line is REFUSED, no copy written", async () => {
       const s = await seed("c1");
       const inv = await createDraft(s, [line(s.ok, 1), line(s.banned, 1)]);
       await setFlag(s, true);
@@ -454,7 +455,7 @@ describeDb("F05 ban check on invoice update (net delta) + duplicate — real Pos
       expect(await prisma.invoice.count({ where: { tenantId: s.tenantId } })).toBe(1);
     });
 
-    it("C2 flag ON: duplicating an invoice with only unbanned lines is ALLOWED", async () => {
+    it("C2 rule in force: duplicating an invoice with only unbanned lines is ALLOWED", async () => {
       const s = await seed("c2");
       const inv = await createDraft(s, [line(s.ok, 1)]);
       await setFlag(s, true);
@@ -463,7 +464,7 @@ describeDb("F05 ban check on invoice update (net delta) + duplicate — real Pos
       expect(await prisma.invoice.count({ where: { tenantId: s.tenantId } })).toBe(2);
     });
 
-    it("C3 flag OFF: duplicating the banned invoice is ALLOWED", async () => {
+    it("C3 rule not yet in force: duplicating the banned invoice is ALLOWED", async () => {
       const s = await seed("c3");
       const inv = await createDraft(s, [line(s.banned, 1)]);
       const copy: any = await run(s, () => invoicesService.duplicate(inv.id));
