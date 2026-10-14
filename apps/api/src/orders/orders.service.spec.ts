@@ -9160,8 +9160,7 @@ describe("OrdersService", () => {
 
         await service.approveChangeRequestAtStop("cr-1", operatorPayload, null);
 
-        // Order→stop is the repo-wide acquisition order (reopenStop, the customers.service merge and
-        // purge paths); the stop lock is taken second and NOWAIT. Call [0] is the stock-tx lock bound.
+        // Order→stop is the repo-wide acquisition order; the stop lock is second and NOWAIT. Call [0] is the lock bound.
         expect(seenTx.$executeRaw.mock.calls[1][0].join("?")).toContain('"Order"');
         const stopLockSql = seenTx.$executeRaw.mock.calls[2][0].join("?");
         expect(stopLockSql).toContain('"RouteRunStop"');
