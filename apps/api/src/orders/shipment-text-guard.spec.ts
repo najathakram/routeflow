@@ -18,6 +18,11 @@ describe("UpdateShipmentDto: trim + cap", () => {
     expect(out.shippingTrackingNumber).toBe("1Z999");
   });
 
+  it("strips markup, THEN trims (class-transformer runs a property's transforms top first)", () => {
+    expect(dto({ shippingCarrier: " <b>UPS</b> " }).shippingCarrier).toBe("UPS");
+    expect(dto({ shippingTrackingNumber: "<i> </i> 1Z " }).shippingTrackingNumber).toBe("1Z");
+  });
+
   it("whitespace-only becomes an empty string (the clear signal), not a padded value", () => {
     const out = dto({ shippingCarrier: "   ", shippingTrackingNumber: " " });
     expect(out.shippingCarrier).toBe("");

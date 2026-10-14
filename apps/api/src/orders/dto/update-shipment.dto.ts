@@ -14,15 +14,15 @@ export class UpdateShipmentDto {
   /** Carrier label — UPS/FedEx/USPS/DHL/Other, or any custom courier name. */
   @IsOptional()
   @IsString()
-  @Trim()
   @StripHtml()
+  @Trim()
   @MaxLength(MAX_SHIPPING_CARRIER)
   shippingCarrier?: string;
   /** Tracking number from the carrier. */
   @IsOptional()
   @IsString()
-  @Trim()
   @StripHtml()
+  @Trim()
   @MaxLength(MAX_SHIPPING_TRACKING)
   shippingTrackingNumber?: string;
 }

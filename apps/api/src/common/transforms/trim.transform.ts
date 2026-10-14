@@ -1,7 +1,8 @@
 /**
  * Trims a string value (leading and trailing whitespace); a non-string passes through unchanged and is
- * left for the validators to reject. Listed ABOVE `@StripHtml()` on a property so the strip runs first
- * (decorators apply bottom-up) and the stored text is trimmed after any tag removal.
+ * left for the validators to reject. class-transformer applies a property's @Transform decorators in the
+ * order they are LISTED (top first), so list `@StripHtml()` ABOVE `@Trim()`: the text is trimmed after any
+ * tag removal.
  */
 
 import { Transform } from "class-transformer";
