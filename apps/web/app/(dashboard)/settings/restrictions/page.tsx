@@ -134,7 +134,7 @@ export default function RestrictionsSettingsPage() {
         ))}
       </section>
 
-      <CustomersWithoutState canFix={canFix} />
+      <CustomersWithoutState canFix={canFix} staffOrdersChecked={data.enabled} />
     </div>
   );
 }

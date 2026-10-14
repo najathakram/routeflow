@@ -35,10 +35,20 @@ const plural = (n: number, one: string, many: string) => `${n} ${n === 1 ? one :
 export const TRUNCATED_LINE =
   "Your customer list is too large to check all at once, so some customers may still need a state.";
 
-export function headerLine(total: number, truncated = false): string {
-  if (truncated) return TRUNCATED_LINE;
+/** The label of the tenant switch on the Selling restrictions page; the OFF copy quotes it. */
+export const STAFF_ORDERS_SWITCH_LABEL =
+  "Also block restricted products on staff orders and invoices";
+
+/** What a missing state does, by the staff-orders switch: the portal always hides legal bans; staff orders only if on. */
+const noStateEffect = (staffOrdersChecked: boolean) =>
+  staffOrdersChecked
+    ? "Until it's set, products with a legal state ban stay hidden from them in your portal, and they can't be sold those products on any order. Other state limits won't reach them."
+    : `Until it's set, products with a legal state ban stay hidden from them in your portal and can't be ordered there. Other state limits won't reach them. Staff orders aren't checked (turn on '${STAFF_ORDERS_SWITCH_LABEL}' to block them).`;
+
+export function headerLine(total: number, truncated = false, staffOrdersChecked = false): string {
+  if (truncated) return `${TRUNCATED_LINE} ${noStateEffect(staffOrdersChecked)}`;
   if (total === 0) return "Every customer has a state on file.";
-  return `${plural(total, "customer needs", "customers need")} a state. Until it's set, products with a legal state ban stay hidden from them and can't be sold to them, and other state limits won't reach them.`;
+  return `${plural(total, "customer needs", "customers need")} a state. ${noStateEffect(staffOrdersChecked)}`;
 }
 
 export function bucketLine(key: BucketKey, n: number): string {
