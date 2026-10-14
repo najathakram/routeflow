@@ -13,6 +13,7 @@ import {
   ruleMatchesProduct,
   ruleTargetSets,
   resolveGoverningState,
+  restrictionsApply,
   UNRESOLVED_STATE,
   type GoverningState,
   type ProductFacts,
@@ -30,6 +31,7 @@ import { ruleEditChanges, type RuleEditChange, type RuleEditSettings } from "./r
 import { impactHash, newlyRestricted } from "./rule-edit-impact";
 import { prepareRuleSettings, type PreparedRuleSettings } from "./rule-settings";
 import { restrictionStatus } from "./selling-restrictions-admin.service";
+import { EMPTY_TARGET_SUMMARY, targetSummaries } from "./rule-target-read";
 
 const INCLUDE = {
   category: { select: { name: true } },
@@ -135,6 +137,16 @@ export class RuleEditService {
     private readonly productLabels: ProductLabelsService,
   ) {}
 
+  /** Integration: the response carries the rule's target summary, like every list item (PR2's one helper). */
+  private async withSummary(
+    tx: Prisma.TransactionClient,
+    tenantId: string,
+    dto: SellingRestrictionListItemDto,
+  ): Promise<SellingRestrictionListItemDto> {
+    const summaries = await targetSummaries(tx as never, tenantId, [dto.id]);
+    return { ...dto, targetSummary: summaries.get(dto.id) ?? EMPTY_TARGET_SUMMARY };
+  }
+
   private requireTenant(): string {
     const tenantId = this.prisma.getTenantId();
     if (!tenantId) throw new BadRequestException("A tenant context is required.");
@@ -184,7 +196,7 @@ export class RuleEditService {
       assertMayManageRule(user, locked, next);
       const ev = await this.evaluate(tx, tenantId, rule, next, now);
       if (ev.hash !== dto.confirmImpactHash) throw ruleImpactChanged();
-      if (ev.changes.length === 0) return toDto(rule, now); // nothing to save: no revision, no audit
+      if (ev.changes.length === 0) return this.withSummary(tx, tenantId, toDto(rule, now)); // nothing to save
 
       const toRevision = rule.revision + 1;
       const updated: Row = await tx.sellingRestriction.update({
@@ -233,7 +245,7 @@ export class RuleEditService {
           },
         },
       });
-      return toDto(updated, now);
+      return this.withSummary(tx, tenantId, toDto(updated, now));
     }, TX_OPTIONS);
   }
 
@@ -247,7 +259,9 @@ export class RuleEditService {
   ): Promise<EditEvaluation> {
     const policy = await this.restrictions.getPolicy(tenantId);
     const prev = settingsOf(rule);
-    const changes = ruleEditChanges(prev, next, { staffEnforced: policy.enabled });
+    const changes = ruleEditChanges(prev, next, {
+      staffEnforced: restrictionsApply(policy, "STAFF"),
+    });
     // Only a TIGHTENING edit can newly restrict anyone; a loosening or neutral one reaches nothing.
     const ids: string[] = [];
     let openOrders = 0;
@@ -259,7 +273,7 @@ export class RuleEditService {
       ]);
       const hit = (customerId: string) =>
         newlyRestricted(prev, next, governing.get(customerId) ?? UNRESOLVED_STATE, {
-          staffEnforced: policy.enabled,
+          staffEnforced: restrictionsApply(policy, "STAFF"),
           at: now,
         });
       for (const o of reached.orders) {

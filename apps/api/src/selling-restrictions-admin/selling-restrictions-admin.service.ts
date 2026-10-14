@@ -285,6 +285,10 @@ export function toDto(
     categoryName: row.category?.name ?? null,
     productName: row.product?.name ?? null,
     ...(summary ? { targetSummary: summary } : {}),
+    // Row 509 PR3: the current settings revision (an edit sends it back as expectedRevision).
+    ...(typeof (row as { revision?: number }).revision === "number"
+      ? { revision: (row as { revision: number }).revision }
+      : {}),
   };
 }
 
