@@ -14,6 +14,7 @@ import { effectiveTaxRateFromTotals } from "../common/tax-rate";
 import { EntitlementsService } from "../billing/entitlements.service";
 import { EntitlementAuthority } from "../billing/entitlement-authority.service";
 import { RegulatedLedgerService } from "../regulated/regulated-ledger.service";
+import { saleFulfilmentKind } from "../selling-restrictions/sale-fulfilment";
 import { SellingRestrictionsService } from "../selling-restrictions/selling-restrictions.service";
 import { requireRestrictionTenantId } from "../selling-restrictions/restriction-tenant";
 import { buildManualInvoiceLines } from "../invoices/manual-invoice-lines";
@@ -441,6 +442,7 @@ export class EstimatesService {
         i.productId ? [{ productId: i.productId }] : [],
       ),
       channel: "STAFF",
+      fulfilmentKind: saleFulfilmentKind(null), // an estimate has no fulfilment of its own: the customer-address rule
     });
 
     // B100/F16b: reserved BEFORE the transaction below opens (fix-round-2.md D1).

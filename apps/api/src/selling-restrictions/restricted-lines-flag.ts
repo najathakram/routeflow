@@ -38,8 +38,8 @@ export async function flagRestrictedLines(
     customerId: string | null;
     /** Catalog product ids of the lines being imported/split; a null/undefined entry is dropped. */
     productIds: ReadonlyArray<string | null | undefined>;
-    /** L8: the order's fulfilment kind (counter / pickup are judged on the store state); omitted = unchanged. */
-    fulfilmentKind?: SaleFulfilmentKind;
+    /** L8: the order's fulfilment kind (counter / pickup are judged on the store state): required. */
+    fulfilmentKind: SaleFulfilmentKind;
   },
 ): Promise<RestrictedFlagLine[]> {
   try {

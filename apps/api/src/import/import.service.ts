@@ -89,6 +89,7 @@ export interface ImportRowPlan {
   reason?: string;
   warnings?: string[];
 }
+import { saleFulfilmentKind } from "../selling-restrictions/sale-fulfilment";
 import { SellingRestrictionsService } from "../selling-restrictions/selling-restrictions.service";
 import {
   assertBarcodeAvailable,
@@ -1792,7 +1793,12 @@ export class ImportService {
     for (const [customerId, entries] of byCustomer) {
       const flagged = await flagRestrictedLines(
         { restrictions: this.sellingRestrictions, warn: (m) => this.logger.warn(m) },
-        { tenantId, customerId, productIds: entries.flatMap((e) => e.productIds) },
+        {
+          tenantId,
+          customerId,
+          productIds: entries.flatMap((e) => e.productIds),
+          fulfilmentKind: saleFulfilmentKind(null), // an imported invoice has no fulfilment of its own: the customer-address rule
+        },
       );
       const byProduct = new Map(flagged.map((f) => [f.productId, f]));
       for (const e of entries)

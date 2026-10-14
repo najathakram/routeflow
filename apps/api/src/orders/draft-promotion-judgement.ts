@@ -40,8 +40,8 @@ export async function judgeDraftPromotion(
       source?: string | null;
       sourceRecorded?: boolean | null;
       createdAt?: Date | string | null;
-      counterSale?: boolean | null; // L8: which state judges (store vs customer)
-      fulfillPath?: string | null;
+      counterSale: boolean | null | undefined; // L8: which state judges (store vs customer)
+      fulfillPath: string | null | undefined;
     };
     user: JwtPayload;
     tenantId: string;

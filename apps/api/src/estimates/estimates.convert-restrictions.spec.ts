@@ -89,6 +89,7 @@ describe("EstimatesService.convertToInvoice — selling restrictions (F-05)", ()
       // a product-less (freeform) line has nothing to check; the two catalog lines are asked about
       lines: [{ productId: "p-banned" }, { productId: "p-ok" }],
       channel: "STAFF",
+      fulfilmentKind: "DELIVERY",
     });
     expect(restrictions.assertLinesSellable.mock.invocationCallOrder[0]).toBeLessThan(
       numbering.reserveNext.mock.invocationCallOrder[0],

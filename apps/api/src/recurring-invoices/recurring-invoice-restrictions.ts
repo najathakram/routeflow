@@ -1,3 +1,4 @@
+import { saleFulfilmentKind } from "../selling-restrictions/sale-fulfilment";
 import type { SellingRestrictionsService } from "../selling-restrictions/selling-restrictions.service";
 
 /**
@@ -22,6 +23,7 @@ export async function blockedTemplateLines(
       customerId: ri.customerId,
       lines,
       channel: "STAFF",
+      fulfilmentKind: saleFulfilmentKind(null), // a recurring invoice has no fulfilment of its own: the customer-address rule
     });
     return null;
   }
@@ -30,6 +32,7 @@ export async function blockedTemplateLines(
     customerId: ri.customerId,
     lines,
     channel: "STAFF",
+    fulfilmentKind: saleFulfilmentKind(null), // as above: no fulfilment of its own
   });
   return verdict.outcome === "BLOCK" || verdict.outcome === "INDETERMINATE"
     ? verdict.reasons

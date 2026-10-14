@@ -81,6 +81,7 @@ describe("invoice edit / copy — selling restrictions (F-05)", () => {
         customerId: "cust-1",
         lines: [{ productId: "p-held", qtyDelta: 45 }, { productId: "p-new" }],
         channel: "STAFF",
+        fulfilmentKind: "DELIVERY",
       });
     });
 
@@ -102,12 +103,12 @@ describe("invoice edit / copy — selling restrictions (F-05)", () => {
       );
     });
 
-    it("L8: an order-less draft passes no kind at all (the unchanged customer-address rule)", async () => {
+    it("L8: an order-less draft is judged as DELIVERY (the customer-address rule), stated not omitted", async () => {
       restrictions.assertLinesSellable.mockRejectedValue(banned());
       await expect(edit([line("p-new", 1)])).rejects.toBeDefined();
-      expect(restrictions.assertLinesSellable.mock.calls[0][0]).not.toHaveProperty(
+      expect(restrictions.assertLinesSellable.mock.calls[0][0]).toHaveProperty(
         "fulfilmentKind",
-        expect.anything(),
+        "DELIVERY",
       );
     });
 
@@ -157,6 +158,7 @@ describe("invoice edit / copy — selling restrictions (F-05)", () => {
         customerId: "cust-1",
         lines: [{ productId: "p-banned" }],
         channel: "STAFF",
+        fulfilmentKind: "DELIVERY",
       });
       expect(prisma.invoice.create).not.toHaveBeenCalled();
     });

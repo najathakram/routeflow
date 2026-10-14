@@ -187,8 +187,8 @@ export interface SellableLinesParams {
   switchGated?: boolean;
   /** As `EvaluateOptions.skipPortalOnlyRules`. */
   skipPortalOnlyRules?: boolean;
-  /** As `EvaluateOptions.fulfilmentKind`. */
-  fulfilmentKind?: SaleFulfilmentKind;
+  /** As `EvaluateOptions.fulfilmentKind`: REQUIRED, so every caller states how the goods change hands. */
+  fulfilmentKind: SaleFulfilmentKind;
 }
 
 export interface EvaluateOptions {
@@ -209,10 +209,10 @@ export interface EvaluateOptions {
    */
   skipPortalOnlyRules?: boolean;
   /**
-   * L8: how the goods change hands (`sale-fulfilment.ts`). COUNTER / PICKUP judge a STATE rule on the STORE's state for
-   * every customer, named or walk-in; DELIVERY or omitted keeps the customer-address rule (the unchanged behaviour).
+   * L8: how the goods change hands (`sale-fulfilment.ts`), REQUIRED so no caller can forget to say. COUNTER / PICKUP
+   * judge a STATE rule on the STORE's state for every customer, named or walk-in; DELIVERY keeps the customer's address.
    */
-  fulfilmentKind?: SaleFulfilmentKind;
+  fulfilmentKind: SaleFulfilmentKind;
 }
 
 /**
@@ -508,7 +508,7 @@ export class SellingRestrictionsService {
     }
     let governingState = UNRESOLVED_STATE;
     const stateInPlay = stateRuleInPlay(matched, channel, at); // asked ONCE (readiness asks the same)
-    if (stateInPlay && judgedAtStore(options?.fulfilmentKind)) {
+    if (stateInPlay && judgedAtStore(options.fulfilmentKind)) {
       // L8: a counter sale / pickup is judged where the STORE is, whoever the customer is (or none). No usable store
       // state stays UNRESOLVED (INDETERMINATE, fail closed) — never the customer's address instead.
       const state = await tenantBusinessState(this.prisma, tenantId);

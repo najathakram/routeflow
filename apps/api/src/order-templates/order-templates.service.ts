@@ -760,7 +760,7 @@ export class OrderTemplatesService {
       // role null: a system caller never gets POS mode (SA-763r M1).
       { stored: storedPath, audience: "staff", role: null },
     );
-    const fulfilmentKind = saleFulfilmentKind({ fulfillPath });
+    const fulfilmentKind = saleFulfilmentKind({ counterSale: false, fulfillPath });
     let live = template.items.filter((i) => !i.suspendedAt);
     let banNote: { count: number; names: string } | null = null;
     if (!unattended) {

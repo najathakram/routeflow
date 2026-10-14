@@ -69,6 +69,7 @@ describe("RecurringInvoicesService — selling restrictions (F-05)", () => {
       customerId: "c1",
       lines: [{ productId: "p-banned" }],
       channel: "STAFF",
+      fulfilmentKind: "DELIVERY",
     });
     expect(invoices.create).not.toHaveBeenCalled();
     // the only template write is the suspension — the cycle is never claimed (nextRunAt untouched)

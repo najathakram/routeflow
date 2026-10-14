@@ -14,10 +14,18 @@ export async function tenantIsPickupOnly(
   prisma: Pick<PrismaService, "tenantFeatureConfig">,
   tenantId: string,
 ): Promise<boolean> {
+  const methods = capabilityForMode(await storedFulfilmentMode(prisma, tenantId)).methods;
+  return methods.length === 1 && methods[0] === "PICKUP";
+}
+
+/** The tenant's stored `fulfilment_model` mode ("unset" when no row). */
+export async function storedFulfilmentMode(
+  prisma: Pick<PrismaService, "tenantFeatureConfig">,
+  tenantId: string,
+): Promise<string> {
   const row = await prisma.tenantFeatureConfig.findFirst({
     where: { tenantId, featureKey: FULFILMENT_MODEL_FEATURE_KEY },
     select: { mode: true },
   });
-  const methods = capabilityForMode(row?.mode ?? "unset").methods;
-  return methods.length === 1 && methods[0] === "PICKUP";
+  return row?.mode ?? "unset";
 }
