@@ -70,7 +70,6 @@ import { InlineCreateProductModal } from "@/components/InlineCreateProductModal"
 import { fmt, fmtCalendarDate } from "@/lib/formatting";
 import { getDaysForTerms, addDaysIso } from "@/lib/invoice-terms";
 import {
-  isSpecialTier,
   computeInvoiceLineTotal,
   computeInvoiceTotals,
   type InvoiceTotalsLine,
@@ -117,6 +116,17 @@ import { useMarginConfig, floorForCategory } from "@/lib/api/margin";
 import { MarginHint } from "@/components/MarginHint";
 import { DecimalInput, MoneyInput } from "@/components/MoneyInput";
 import { ReadOnlyHint, WriteButton } from "@/lib/read-only-gate";
+import { getTenantCookie } from "@/lib/tenant-cookie";
+import { invoiceDraftKey, isPristineForm } from "@/lib/invoice-draft-storage";
+import { catalogPricing } from "./invoice-catalog-price";
+import { useInvoiceDraft } from "./use-invoice-draft";
+import { checkDraftReferences } from "./invoice-draft-restore";
+import {
+  DRAFT_CANCELLED_COPY,
+  InvoiceDraftBanner,
+  draftNoticeCopy,
+  draftSummary,
+} from "./InvoiceDraftBanner";
 
 // ─── Terms options ─────────────────────────────────────────────────────────────
 
@@ -842,6 +852,7 @@ export default function NewInvoicePage() {
     );
     draftToken.current = created?.updatedAt;
     setCurrentDraftId(created.id);
+    draft.clear(); // the invoice now exists as a server draft (ROW 447)
     return created.id;
   }
   /** H4: someone else changed this draft since the composer last saw it: fixed copy, never the server's. */
@@ -1059,6 +1070,149 @@ export default function NewInvoicePage() {
     return copy;
   }
 
+  // ── Unsaved-draft persistence (ROW 447) ─────────────────────────────────────
+  // Inputs only (never a total): the footer totals below are recomputed from the lines on every render, including
+  // right after a restore. Offered, never applied silently; this page has no URL prefill to collide with.
+  const draftKey = invoiceDraftKey(authUser?.tenantSlug ?? getTenantCookie(), authUser?.id);
+  const draftForm = React.useMemo(
+    () =>
+      basis === "newSale" || basis === "standalone"
+        ? {
+            basis,
+            customer: customer && {
+              id: customer.id,
+              businessName: customer.businessName,
+              pricingTier: customer.pricingTier,
+              defaultPaymentTerms: customer.defaultPaymentTerms,
+            },
+            reference,
+            subject,
+            terms,
+            issueDate,
+            dueDate,
+            dueDateEdited: dueDateEditedRef.current,
+            termsText,
+            notes,
+            deliveredNow,
+            deliveredOn,
+            depositOpen,
+            depositPercent,
+            depositDueDate,
+            adjustment,
+            lines: items,
+          }
+        : null,
+    [
+      basis,
+      customer,
+      reference,
+      subject,
+      terms,
+      issueDate,
+      dueDate,
+      termsText,
+      notes,
+      deliveredNow,
+      deliveredOn,
+      depositOpen,
+      depositPercent,
+      depositDueDate,
+      adjustment,
+      items,
+    ],
+  );
+  const draft = useInvoiceDraft(draftKey, draftForm);
+  const [draftBusy, setDraftBusy] = React.useState(false);
+  const [draftNotice, setDraftNotice] = React.useState<string | null>(null);
+  const [draftRestored, setDraftRestored] = React.useState(false);
+  // A ref, not state: two quick clicks must not both start a restore before a re-render shows the busy flag.
+  const draftBusyRef = React.useRef(false);
+  const draftFormRef = React.useRef(draftForm);
+  draftFormRef.current = draftForm;
+  async function restoreDraft() {
+    if (!draft.offer || draftBusyRef.current) return;
+    draftBusyRef.current = true;
+    setDraftBusy(true);
+    const formAtStart = draftFormRef.current;
+    try {
+      const r = await checkDraftReferences(draft.offer.snapshot, (u) => apiClient.get(u));
+      // The form stays usable while the checks run. If it changed meanwhile, applying would overwrite what was typed.
+      if (draftFormRef.current !== formAtStart) {
+        setDraftNotice(DRAFT_CANCELLED_COPY);
+        return;
+      }
+      setDraftNotice(null);
+      const s = r.snapshot;
+      // The seeding effects above must not overwrite what the user had chosen.
+      didPrefillRef.current = true;
+      didSeedTermsRef.current = true;
+      seededCustomerIdRef.current = s.customer?.id ?? null;
+      // Terms that are just the customer's (or tenant's) default stay re-seedable; only a different pick is manual.
+      if (s.terms) {
+        termsSourceRef.current =
+          s.terms === s.customer?.defaultPaymentTerms
+            ? "customer"
+            : s.terms === invoiceSettings?.defaultTerms
+              ? "tenant"
+              : "manual";
+      }
+      dueDateEditedRef.current = s.dueDateEdited;
+      setBasis(s.basis);
+      setCustomer((s.customer as Customer | null) ?? null);
+      setReference(s.reference);
+      setSubject(s.subject);
+      setTerms(s.terms);
+      setIssueDate(s.issueDate || todayIso());
+      setDueDate(s.dueDate || addDaysIso(s.issueDate || todayIso(), 30));
+      setTermsText(s.termsText);
+      setNotes(s.notes);
+      setDeliveredNow(s.deliveredNow);
+      setDeliveredOn(s.deliveredOn || todayIso());
+      setDepositOpen(s.depositOpen);
+      setDepositPercent(s.depositPercent);
+      setDepositDueDate(s.depositDueDate);
+      setAdjustment(s.adjustment);
+      setItems(
+        s.lines.length
+          ? s.lines.map((l) => ({ ...createEmptyItem(), ...l }) as LineItemState)
+          : [createEmptyItem()],
+      );
+      setErrors({});
+      setDraftNotice(
+        draftNoticeCopy(
+          r.droppedLines,
+          r.customerCleared,
+          r.pricesUpdated,
+          r.unitsDropped,
+          r.pricesUnchecked,
+        ),
+      );
+      setDraftRestored(true);
+      draft.resolveOffer();
+    } finally {
+      draftBusyRef.current = false;
+      setDraftBusy(false);
+    }
+  }
+  const draftBanner = (
+    <InvoiceDraftBanner
+      summary={draft.offer ? draftSummary(draft.offer.snapshot, draft.offer.savedAt) : null}
+      notice={draftNotice}
+      restored={draftRestored}
+      warning={!!draft.offer && !isPristineForm(draftForm)}
+      busy={draftBusy}
+      onRestore={() => void restoreDraft()}
+      onDiscard={() => {
+        setDraftNotice(null);
+        draft.discard();
+      }}
+      onDismissNotice={() => {
+        setDraftNotice(null);
+        setDraftRestored(false);
+      }}
+    />
+  );
+
   // ── Auto-update due date when terms change ────────────────────────────────
 
   function handleTermsChange(t: string) {
@@ -1156,18 +1310,12 @@ export default function NewInvoicePage() {
   ) {
     const dflt = unitsOn && !!opts?.startOnDefaultUnit;
     const upb = boxedUnitsPerBox(product.unitsPerBox);
-    const listPrice = parseFloat(String(product.pricePerUnit ?? 0));
-    // Per-product tier override first, then the customer's own tier ladder —
-    // a Tier-3 customer previously billed at LIST on every catalog add here.
-    const customerTier = customer?.pricingTier ?? 1;
-    const tierLadderPrice = isSpecialTier(customerTier)
-      ? getTierPrice(product, customerTier)
-      : undefined;
-    const specialPrice: number | undefined = priceMap[product.id] ?? tierLadderPrice;
-    const effectivePrice =
-      specialPrice != null && Number.isFinite(specialPrice) && specialPrice !== listPrice
-        ? specialPrice
-        : listPrice;
+    const fresh = catalogPricing(product, {
+      customerTier: customer?.pricingTier ?? 1,
+      customerPrice: priceMap[product.id],
+      lineTier: tierFor(product.id),
+    });
+    const { listPrice, effectivePrice } = fresh;
 
     const seed = seedLineQty(upb, scanLevel);
     const lineItem: LineItemState = {
@@ -1184,7 +1332,7 @@ export default function NewInvoicePage() {
       taxable: false,
       regularPrice: effectivePrice !== listPrice ? listPrice : undefined,
       isSpecialPrice: effectivePrice !== listPrice,
-      pricing: saleLinePricing(product, tierFor(product.id)),
+      pricing: fresh.pricing,
       avgCost: product.averageCost ? parseFloat(String(product.averageCost)) : undefined,
       category: product.category ?? undefined,
       unitsPerBox: upb,
@@ -1193,13 +1341,7 @@ export default function NewInvoicePage() {
       unit: product.unit ?? "each",
       listPrice,
       priceType: effectivePrice !== listPrice ? "SPECIAL" : "STANDARD",
-      tierPrices: {
-        pricePerUnit: product.pricePerUnit,
-        priceTier2: product.priceTier2,
-        priceTier3: product.priceTier3,
-        priceTier4: product.priceTier4,
-        priceTier5: product.priceTier5,
-      },
+      tierPrices: fresh.tierPrices,
       startOnDefaultUnit: dflt || undefined,
       pendingTaps: dflt ? 1 : undefined,
     };
@@ -1533,6 +1675,7 @@ export default function NewInvoicePage() {
     if (!currentDraftId) return;
     try {
       await apiClient.post(`/invoices/${currentDraftId}/send`);
+      draft.clear();
       toast({
         title: "Invoice sent",
         description: "The draft has been sent.",
@@ -1638,6 +1781,7 @@ export default function NewInvoicePage() {
         onSuccess: (inv) => {
           saleKey.settle({ ok: true });
           setSaleUnknown(null);
+          draft.clear(); // the sale exists now (ROW 447)
           toast({
             title: deliveredNow ? "Sale recorded" : send ? "Invoice sent" : "Invoice saved",
             variant: "success",
@@ -1669,6 +1813,7 @@ export default function NewInvoicePage() {
         { id: currentDraftId, ...dto, expectedUpdatedAt: draftToken.current } as any,
         {
           onSuccess: async () => {
+            draft.clear(); // saved to the server draft (ROW 447)
             let sendFailed = false;
             if (sendNow) {
               try {
@@ -1705,6 +1850,7 @@ export default function NewInvoicePage() {
 
     createInvoice.mutate(dto as Parameters<typeof createInvoice.mutate>[0], {
       onSuccess: (invoice) => {
+        draft.clear();
         toast({
           title: sendNow ? "Invoice sent" : "Draft saved",
           description: sendNow
@@ -1733,7 +1879,13 @@ export default function NewInvoicePage() {
   }
 
   // Pick the basis first so every invoice (except the explicit exception) is tied to an order.
-  if (basis === null) return <InvoiceBasisChooser onPick={setBasis} />;
+  if (basis === null)
+    return (
+      <>
+        <div className="mx-auto max-w-2xl px-6 pt-6">{draftBanner}</div>
+        <InvoiceBasisChooser onPick={setBasis} />
+      </>
+    );
   if (basis === "existing") return <ExistingOrderInvoiceFlow onBack={() => setBasis(null)} />;
 
   // basis === "newSale" | "standalone" — both share the customer + line-item form below.
@@ -1766,6 +1918,7 @@ export default function NewInvoicePage() {
           saleLocked && "cursor-not-allowed opacity-[0.45]",
         )}
       >
+        {draftBanner}
         {/* Back to the basis chooser */}
         <button
           onClick={() => setBasis(null)}

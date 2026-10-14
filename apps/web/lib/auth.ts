@@ -4,6 +4,7 @@ import { OP_KEYS } from "./auth-keys";
 import { setOpPresenceCookie, clearOpPresenceCookie } from "./presence-cookies";
 import { getImpersonation, clearImpersonation } from "./impersonation";
 import { clearAllLiveCarts } from "./counter-live-cart-keys";
+import { clearAllInvoiceDrafts, resumeInvoiceDraftWrites } from "./invoice-draft-storage";
 
 export { OP_PRESENCE_COOKIE, clearOpPresenceCookie } from "./presence-cookies";
 
@@ -109,6 +110,7 @@ export async function login(username: string, password: string): Promise<AuthRes
     password,
   });
   adoptTokenPair(data);
+  resumeInvoiceDraftWrites(); // a fresh sign-in may save drafts again
   return data;
 }
 
@@ -122,6 +124,8 @@ export async function logout(): Promise<void> {
   localStorage.removeItem(OP_KEYS.refreshToken);
   clearOpPresenceCookie();
   clearTenantCookie();
+  // Before the impersonation marker goes: a support session's sign-out must leave the real user's drafts alone.
+  clearAllInvoiceDrafts(); // nor an unsaved new invoice (ROW 447)
   clearImpersonation();
   clearAllLiveCarts(); // an unfinished counter sale never outlives its cashier's session
   window.location.href = "/login";
