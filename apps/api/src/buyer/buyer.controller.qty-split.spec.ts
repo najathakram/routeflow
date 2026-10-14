@@ -197,6 +197,83 @@ describe("row 531 F2: buyer paths refuse a contradictory qty / box split", () =>
       expect(svc.updateOrderItems).not.toHaveBeenCalled();
     });
 
+    // S3: an entry that names a stored line is checked against THAT line's pack snapshot (what the buyer
+    // sees and echoes back), falling back to the live product's pack only when no line is named / found.
+    describe("S3: against the stored line's pack", () => {
+      const entry = (over: Record<string, unknown>) => ({
+        items: [{ productId: "boxed", orderItemId: "li-1", ...over }],
+      });
+      const asStored = (pack: number | null) =>
+        prisma
+          .forTenant()
+          .orderItem.findMany.mockResolvedValue([{ id: "li-1", unitsPerBox: pack }]);
+
+      it("a pair consistent with the STORED pack (6) passes although the live pack is 12", async () => {
+        asStored(6);
+        await controller.updateOrderItems(
+          "ord-1",
+          entry({ qty: 12, boxes: 2, pieces: 0 }) as any,
+          CTX as any,
+        );
+        expect(svc.updateOrderItems).toHaveBeenCalledTimes(1);
+      });
+
+      it("a pair that contradicts the STORED pack is a coded 400, nothing written", async () => {
+        asStored(6);
+        const err = await controller
+          .updateOrderItems("ord-1", entry({ qty: 2, boxes: 1, pieces: 0 }) as any, CTX as any)
+          .then(
+            () => null,
+            (e) => e,
+          );
+        expect((err as BadRequestException).getResponse()).toMatchObject({
+          code: "QTY_SPLIT_MISMATCH",
+        });
+        expect(svc.updateOrderItems).not.toHaveBeenCalled();
+      });
+
+      it("the stored-line lookup is scoped to THIS order and THIS buyer's customer", async () => {
+        asStored(6);
+        await controller.updateOrderItems(
+          "ord-1",
+          entry({ qty: 12, boxes: 2, pieces: 0 }) as any,
+          CTX as any,
+        );
+        expect(prisma.forTenant().orderItem.findMany).toHaveBeenCalledWith(
+          expect.objectContaining({
+            where: expect.objectContaining({
+              id: { in: ["li-1"] },
+              orderId: "ord-1",
+              order: { customerId: CTX.customerId },
+            }),
+          }),
+        );
+      });
+
+      it("no stored line found (a foreign or unknown id) falls back to the live pack (12)", async () => {
+        prisma.forTenant().orderItem.findMany.mockResolvedValue([]);
+        const err = await controller
+          .updateOrderItems("ord-1", entry({ qty: 12, boxes: 2, pieces: 0 }) as any, CTX as any)
+          .then(
+            () => null,
+            (e) => e,
+          );
+        expect((err as BadRequestException).getResponse()).toMatchObject({
+          code: "QTY_SPLIT_MISMATCH",
+        });
+      });
+
+      it("an old line with no pack snapshot (null) falls back to the live pack", async () => {
+        asStored(null);
+        await controller.updateOrderItems(
+          "ord-1",
+          entry({ qty: 24, boxes: 2, pieces: 0 }) as any,
+          CTX as any,
+        );
+        expect(svc.updateOrderItems).toHaveBeenCalledTimes(1);
+      });
+    });
+
     it("the usual buyer edit entry ({productId, orderItemId, qty}) is untouched", async () => {
       await controller.updateOrderItems(
         "ord-1",

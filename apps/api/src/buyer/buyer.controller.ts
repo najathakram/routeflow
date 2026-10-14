@@ -888,12 +888,14 @@ export class BuyerController {
     @Body() dto: UpdateOrderItemsDto,
     @CurrentBuyerCustomer() ctx: any,
   ) {
+    // Row 531 F2 + S3: each entry that names a stored line is checked in THAT line's own pack.
     await assertBuyerQtySplit(
       this.prisma.forTenant(),
       dto.items,
       "buyer.updateOrderItems",
       ctx.tenantId,
-    ); // row 531 F2
+      { orderId: id, customerId: ctx.customerId },
+    );
     // B297 row 352: the entries name their lines (`orderItemId`), so a line keeps the rate it was sold at.
     return toCustomerOrder(
       await this.ordersService.updateOrderItems(id, dto, makePseudoUser(ctx), {
@@ -1108,6 +1110,10 @@ export class BuyerController {
   @ApiHeader({ name: "X-Tenant-Slug", required: true })
   @ApiOperation({ summary: "Generate a new order from a standing order template" })
   async reorderFromTemplate(@Param("id") id: string, @CurrentBuyerCustomer() ctx: any) {
+    // Row 531 S4 (intentional): this path is NOT enforced by assertBuyerQtySplit. Its lines come from the stored
+    // template rows, not from a client cart, so a disagreeing qty / split here is stored-data drift for the
+    // WARN-mode log inside OrdersService.create() (path "orders.create") to surface, not a buyer payload to refuse.
+    // Enforcement on template-generated orders waits for its own ruling, like every staff / shared path.
     // Ownership check: verify the template belongs to this buyer's customer
     const template = await this.prisma
       .forTenant()

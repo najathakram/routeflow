@@ -63,6 +63,7 @@ describeDb(
     let buyerUserId = "";
     let operatorUserId = "";
     let customerId = "";
+    let otherCustomerId = "";
     let productId = "";
 
     const ctx = () => ({
@@ -177,6 +178,14 @@ describeDb(
       customerId = (
         await raw.customer.create({
           data: { userId: buyerUserId, businessName: `Acme ${run}`, contactName: "T", tenantId },
+        })
+      ).id;
+      const otherUser = await raw.user.create({
+        data: { email: `x-${run}@example.test`, username: `x-${run}`, role: "CUSTOMER", tenantId },
+      });
+      otherCustomerId = (
+        await raw.customer.create({
+          data: { userId: otherUser.id, businessName: `Other ${run}`, contactName: "T", tenantId },
         })
       ).id;
       productId = (
@@ -322,6 +331,95 @@ describeDb(
         await wipe();
         await buyerCreate([{ productId, qty: 24, boxes: 2, pieces: 0 }]);
         expect(Number((await lines())[0].subtotal)).toBe(24);
+      }, 120_000);
+    });
+
+    describe("BUYER channel, edit-lines (S3): checked against the line's STORED pack", () => {
+      /** A stored boxed line on a PENDING order. `pack` is the line's own sale-time snapshot. */
+      async function storedLine(pack: number, qty: number, boxes: number, owner = customerId) {
+        const o = await raw.order.create({
+          data: {
+            customerId: owner,
+            tenantId,
+            status: "PENDING",
+            subtotal: "0.00",
+            total: "0.00",
+            lineItems: {
+              create: [
+                {
+                  tenantId,
+                  productId,
+                  qty,
+                  boxes,
+                  pieces: 0,
+                  unitsPerBox: pack,
+                  unitPrice: String(BOX_PRICE),
+                  subtotal: String(boxes * BOX_PRICE),
+                  priceType: "STANDARD",
+                  authorChannel: "BUYER",
+                },
+              ],
+            },
+          },
+          include: { lineItems: true },
+        });
+        return { orderId: o.id, lineId: o.lineItems[0].id };
+      }
+      const buyerEdit = (orderId: string, entry: Record<string, unknown>) =>
+        tenantCtx.run(tenantId, () =>
+          controller.updateOrderItems(
+            orderId,
+            { items: [{ productId, ...entry }], namesLines: true },
+            ctx(),
+          ),
+        );
+      const snapshot = async () =>
+        JSON.stringify(
+          (await lines()).map((l) => [l.id, String(l.qty), l.boxes, l.pieces, String(l.subtotal)]),
+        );
+
+      it("an entry that contradicts the stored line's pack is a coded 400 and the order is untouched", async () => {
+        const { orderId, lineId } = await storedLine(UPB, 24, 2);
+        const before = await snapshot();
+        const err = await buyerEdit(orderId, {
+          orderItemId: lineId,
+          qty: 2,
+          boxes: 1,
+          pieces: 0,
+        }).then(
+          () => null,
+          (e: unknown) => e,
+        );
+        expect(err).toBeInstanceOf(BadRequestException);
+        expect((err as BadRequestException).getResponse()).toMatchObject({
+          code: "QTY_SPLIT_MISMATCH",
+        });
+        expect(await snapshot()).toBe(before);
+      }, 120_000);
+
+      it("a pair consistent with the STORED pack (6) is not refused although the product is a 12-pack today", async () => {
+        const { orderId, lineId } = await storedLine(6, 12, 2);
+        // live product is 12/box: 2 boxes x 12 = 24 != 12, so only the stored pack (2 x 6 = 12) accepts it
+        await expect(
+          buyerEdit(orderId, { orderItemId: lineId, qty: 12, boxes: 2, pieces: 0 }),
+        ).resolves.toBeDefined();
+      }, 120_000);
+
+      it("the stored-pack lookup never reads ANOTHER customer's line: a foreign id gets the live-pack answer", async () => {
+        const foreign = await storedLine(6, 12, 2, otherCustomerId);
+        const err = await buyerEdit(foreign.orderId, {
+          orderItemId: foreign.lineId,
+          qty: 12,
+          boxes: 2,
+          pieces: 0,
+        }).then(
+          () => null,
+          (e: unknown) => e,
+        );
+        // consistent with the foreign line's pack (6) but not the live pack (12): refused as if the line were unknown
+        expect((err as BadRequestException).getResponse()).toMatchObject({
+          code: "QTY_SPLIT_MISMATCH",
+        });
       }, 120_000);
     });
 

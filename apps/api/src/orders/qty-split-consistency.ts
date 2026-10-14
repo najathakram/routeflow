@@ -25,6 +25,8 @@ export type QtySplitMode = "enforce" | "warn";
 
 export interface QtySplitLine {
   productId?: string | null;
+  /** The stored order line an edit entry names (buyer edit-lines); the buyer check reads THAT line's own pack. */
+  orderItemId?: string | null;
   qty?: number | string | null;
   boxes?: number | null;
   pieces?: number | null;
