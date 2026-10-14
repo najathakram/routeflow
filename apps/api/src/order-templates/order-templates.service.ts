@@ -23,6 +23,7 @@ import { SystemConfigService } from "../system-config/system-config.service";
 import { SellingRestrictionsService } from "../selling-restrictions/selling-restrictions.service";
 import { restrictionChannelForPrincipal } from "../selling-restrictions/selling-restrictions.core";
 import { requireRestrictionTenantId } from "../selling-restrictions/restriction-tenant";
+import { saleFulfilmentKind } from "../selling-restrictions/sale-fulfilment";
 import { CreateOrderTemplateDto } from "./dto/create-order-template.dto";
 import { UpdateOrderTemplateDto } from "./dto/update-order-template.dto";
 import { AddTemplateItemDto } from "./dto/add-template-item.dto";
@@ -651,6 +652,27 @@ export class OrderTemplatesService {
     );
     const restrictionTenantId = requireRestrictionTenantId(this.prisma.getTenantId());
     const customerId = template.customerId;
+    // L8: the path decides which state judges a STATE rule (a PICKUP standing order: the store's), so it is
+    // resolved BEFORE the restriction judgments below.
+    // Fulfil path (SA-678): the standing order takes the path order create would give it (the shared
+    // resolver) for EVERY tenant, so a SHIP customer's standing order is SHIP and folds with their
+    // other SHIP orders (the column default made it ROUTE).
+    const storedPath = (
+      await this.prisma.forTenant().customer.findFirst({
+        where: { id: template.customerId },
+        select: { fulfillPath: true },
+      })
+    )?.fulfillPath;
+    const fulfillPath = await resolveFulfilPath(
+      {
+        featureConfig: this.featureConfig,
+        tenantId: this.prisma.getTenantId(),
+        logger: this.logger,
+      },
+      // role null: a system caller never gets POS mode (SA-763r M1).
+      { stored: storedPath, audience: "staff", role: null },
+    );
+    const fulfilmentKind = saleFulfilmentKind({ fulfillPath });
     let live = template.items.filter((i) => !i.suspendedAt);
     let banNote: { count: number; names: string } | null = null;
     if (!unattended) {
@@ -667,6 +689,7 @@ export class OrderTemplatesService {
           customerId,
           lines: live.map((i) => ({ productId: i.productId })),
           channel,
+          fulfilmentKind,
         });
         if (verdict.outcome === "BLOCK" || verdict.outcome === "INDETERMINATE") {
           const nameOf = new Map(verdict.reasons.map((r) => [r.productId, r.productName]));
@@ -685,6 +708,7 @@ export class OrderTemplatesService {
         customerId,
         lines: live.map((i) => ({ productId: i.productId })),
         channel,
+        fulfilmentKind,
       });
     } else {
       const verdict = await this.sellingRestrictions.checkLinesSellable({
@@ -692,6 +716,7 @@ export class OrderTemplatesService {
         customerId,
         lines: live.map((i) => ({ productId: i.productId })),
         channel,
+        fulfilmentKind,
         // A staff-built legacy template is not suspended by a portal limit; a legal ban still is.
         ...(isLegacyStaffBuilt(template) ? { skipPortalOnlyRules: true } : {}),
       });
@@ -957,24 +982,6 @@ export class OrderTemplatesService {
         })
       : (allowOversellArg ?? isStaffRole);
     let replayed = false;
-    // Fulfil path (SA-678): the standing order takes the path order create would give it (the shared
-    // resolver) for EVERY tenant, so a SHIP customer's standing order is SHIP and folds with their
-    // other SHIP orders (the column default made it ROUTE).
-    const storedPath = (
-      await this.prisma.forTenant().customer.findFirst({
-        where: { id: template.customerId },
-        select: { fulfillPath: true },
-      })
-    )?.fulfillPath;
-    const fulfillPath = await resolveFulfilPath(
-      {
-        featureConfig: this.featureConfig,
-        tenantId: this.prisma.getTenantId(),
-        logger: this.logger,
-      },
-      // role null: a system caller never gets POS mode (SA-763r M1).
-      { stored: storedPath, audience: "staff", role: null },
-    );
     const created = await this.prisma.tenantTransaction(async (tx) => {
       if (replaySince) {
         // B1054: first statement. A concurrent twin that committed while we waited is returned as is.

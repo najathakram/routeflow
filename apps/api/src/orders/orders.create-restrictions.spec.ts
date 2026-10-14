@@ -280,9 +280,34 @@ describe("OrdersService.create — selling restrictions call site (lane R 2a-5)"
       customerId: "cust-1",
       lines: [{ productId: "prod-1" }], // every line of a new order is a NEW line: no qtyDelta
       channel: "STAFF",
+      fulfilmentKind: "DELIVERY",
     });
     expect(order).toEqual(["restrictions", "stock-tx"]);
   });
+
+  it.each([
+    [{ counterSale: true, fulfillPath: "PICKUP" }, "COUNTER"],
+    [{ fulfillPath: "PICKUP" }, "PICKUP"],
+    [{}, "DELIVERY"],
+  ])(
+    "L8: create with options %j is judged as %s (counter / pickup: the store's state)",
+    async (options, kind) => {
+      prisma.customer.findUnique.mockResolvedValue({
+        id: "cust-1",
+        pricingTier: 1,
+        user: { status: "ACTIVE" },
+        deletedAt: null,
+      });
+      await service.create(
+        input({ customerId: "cust-1" }),
+        { ...operatorPayload, tenantId: "t-1" } as never,
+        options as never,
+      );
+      expect(restrictions.assertLinesSellable).toHaveBeenCalledWith(
+        expect.objectContaining({ fulfilmentKind: kind }),
+      );
+    },
+  );
 
   it("the channel comes from the PRINCIPAL: the buyer pseudo-user (type BUYER) and the plain CUSTOMER role are BUYER_PORTAL", async () => {
     for (const user of [buyerPrincipal, customerPayload]) {

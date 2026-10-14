@@ -1,4 +1,8 @@
-import { flagRestrictedLines, writeRestrictedLinesAudit } from "./restricted-lines-flag";
+import {
+  flagRestrictedLines,
+  flagSplitRestrictedLines,
+  writeRestrictedLinesAudit,
+} from "./restricted-lines-flag";
 
 /**
  * F-05 (#2093, owner ruling 2026-09-25) — the shared flag-never-block helper split/import lean
@@ -30,6 +34,35 @@ describe("flagRestrictedLines", () => {
       lines: [{ productId: "p-b" }, { productId: "p-ok" }],
       channel: "STAFF",
     });
+  });
+
+  it("L8: an explicit fulfilment kind is passed through; an omitted one passes none", async () => {
+    await flagRestrictedLines({ restrictions, warn } as never, {
+      tenantId: "t1",
+      customerId: "c1",
+      productIds: ["p-b"],
+      fulfilmentKind: "PICKUP",
+    });
+    expect(restrictions.checkLinesSellable).toHaveBeenCalledWith(
+      expect.objectContaining({ fulfilmentKind: "PICKUP" }),
+    );
+  });
+
+  it("L8: the split flag judges the order by its own counterSale / fulfillPath", async () => {
+    const prisma = { auditLog: { create: jest.fn().mockResolvedValue({}) } };
+    await flagSplitRestrictedLines(
+      restrictions as never,
+      prisma as never,
+      { warn },
+      {
+        tenantId: "t1",
+        order: { id: "o1", customerId: "c1", counterSale: true, fulfillPath: "PICKUP" },
+        remainingItems: [{ li: { productId: "p-b" } }],
+      },
+    );
+    expect(restrictions.checkLinesSellable).toHaveBeenCalledWith(
+      expect.objectContaining({ fulfilmentKind: "COUNTER" }),
+    );
   });
 
   it("BLOCK returns the flagged lines", async () => {

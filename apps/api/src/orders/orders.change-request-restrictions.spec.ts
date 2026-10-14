@@ -109,6 +109,18 @@ describe("OrdersService.approveChangeRequestAtStop — selling restrictions (lan
     expect(h.restrictions.assertLinesSellable).not.toHaveBeenCalled();
   });
 
+  it.each([
+    [{ fulfillPath: "PICKUP" }, "PICKUP"],
+    [{ fulfillPath: "ROUTE" }, "DELIVERY"],
+  ])("L8: an at-door add on an order with %j is judged as %s", async (facts, kind) => {
+    on();
+    h.prisma.order.findUnique.mockResolvedValue({ ...ORDER, ...facts });
+    await approve(ADD_X);
+    expect(h.restrictions.assertLinesSellable).toHaveBeenCalledWith(
+      expect.objectContaining({ fulfilmentKind: kind }),
+    );
+  });
+
   it("ON: an ADD_ITEM asks the choke point once — row tenant, customer, the product, STAFF — before the invoice revert and the transaction", async () => {
     on();
     await approve(ADD_X);
@@ -119,6 +131,7 @@ describe("OrdersService.approveChangeRequestAtStop — selling restrictions (lan
       customerId: "cust-1",
       lines: [{ productId: "prod-x" }],
       channel: "STAFF",
+      fulfilmentKind: "DELIVERY",
     });
     const asked = firstCall(h.restrictions.assertLinesSellable);
     expect(asked).toBeLessThan(firstCall(revert));

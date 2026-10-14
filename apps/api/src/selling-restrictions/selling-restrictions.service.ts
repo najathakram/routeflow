@@ -456,12 +456,13 @@ export class SellingRestrictionsService {
       }
     }
     let governingState = UNRESOLVED_STATE;
-    if (stateRuleInPlay(matched, channel, at) && judgedAtStore(options?.fulfilmentKind)) {
+    const stateInPlay = stateRuleInPlay(matched, channel, at); // asked ONCE (readiness asks the same)
+    if (stateInPlay && judgedAtStore(options?.fulfilmentKind)) {
       // L8: a counter sale / pickup is judged where the STORE is, whoever the customer is (or none). No usable store
       // state stays UNRESOLVED (INDETERMINATE, fail closed) — never the customer's address instead.
       const state = await tenantBusinessState(this.prisma, tenantId);
       governingState = state ? { resolved: true, state } : UNRESOLVED_STATE;
-    } else if (stateRuleInPlay(matched, channel, at) && customerId) {
+    } else if (stateInPlay && customerId) {
       // Ownership check + addresses in ONE query through the customer: a nested select is not
       // rewritten by the tenant extension, so a legacy address row with a NULL tenantId is still
       // seen (dropping it could let a different, stamped address govern), and a customer that

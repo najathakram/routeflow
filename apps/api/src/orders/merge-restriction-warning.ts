@@ -1,3 +1,7 @@
+import {
+  saleFulfilmentKind,
+  type SaleFulfilmentFacts,
+} from "../selling-restrictions/sale-fulfilment";
 import { restrictionChannelForPrincipal } from "../selling-restrictions/selling-restrictions.core";
 import type { ChannelPrincipal } from "../selling-restrictions/selling-restrictions.core";
 import type { SellingRestrictionsService } from "../selling-restrictions/selling-restrictions.service";
@@ -51,7 +55,10 @@ export async function warnBannedMergedLines(
     /** Resolved INSIDE the try: a tenant-less caller must never fail a merge that already committed. */
     tenantId: () => string;
     customerId: string;
-    winner: { id: string; lineItems: ReadonlyArray<{ productId: string | null }> };
+    winner: SaleFulfilmentFacts & {
+      id: string;
+      lineItems: ReadonlyArray<{ productId: string | null }>;
+    };
     losers: ReadonlyArray<{ id: string; lineItems: ReadonlyArray<{ productId: string | null }> }>;
     /** The acting principal; null / undefined = an automatic run (sweep, cron), judged as the buyer. */
     actor?: ChannelPrincipal | null;
@@ -76,6 +83,7 @@ export async function warnBannedMergedLines(
       channel,
       // A warning, never a block: it follows the tenant switch, so a portal limit alone raises no operator alert.
       switchGated: true,
+      fulfilmentKind: saleFulfilmentKind(p.winner), // L8: a pickup winner is judged on the store state
     });
     if (verdict.outcome !== "BLOCK" && verdict.outcome !== "INDETERMINATE") return undefined;
     const banned: BannedMergedLine[] = verdict.reasons.map((r) => ({

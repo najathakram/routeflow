@@ -1,5 +1,10 @@
 import type { SellingRestrictionsService } from "./selling-restrictions.service";
 import type { PrismaService } from "../prisma/prisma.service";
+import {
+  saleFulfilmentKind,
+  type SaleFulfilmentFacts,
+  type SaleFulfilmentKind,
+} from "./sale-fulfilment";
 
 /** One flagged catalog line — mirrors `BannedMergedLine` (merge-restriction-warning.ts). */
 export interface RestrictedFlagLine {
@@ -33,6 +38,8 @@ export async function flagRestrictedLines(
     customerId: string | null;
     /** Catalog product ids of the lines being imported/split; a null/undefined entry is dropped. */
     productIds: ReadonlyArray<string | null | undefined>;
+    /** L8: the order's fulfilment kind (counter / pickup are judged on the store state); omitted = unchanged. */
+    fulfilmentKind?: SaleFulfilmentKind;
   },
 ): Promise<RestrictedFlagLine[]> {
   try {
@@ -43,6 +50,7 @@ export async function flagRestrictedLines(
       customerId: p.customerId,
       lines: productIds.map((productId) => ({ productId })),
       channel: "STAFF",
+      fulfilmentKind: p.fulfilmentKind,
     });
     if (verdict.outcome !== "BLOCK" && verdict.outcome !== "INDETERMINATE") return [];
     return verdict.reasons.map((r) => ({
@@ -70,7 +78,7 @@ export async function flagSplitRestrictedLines(
   logger: { warn: (message: string) => void },
   p: {
     tenantId: string | null;
-    order: { id: string; customerId: string | null };
+    order: { id: string; customerId: string | null } & SaleFulfilmentFacts;
     remainingItems: ReadonlyArray<{ li: { productId?: string | null } }>;
   },
 ): Promise<RestrictedFlagLine[]> {
@@ -82,6 +90,7 @@ export async function flagSplitRestrictedLines(
       tenantId,
       customerId: p.order.customerId,
       productIds: p.remainingItems.map(({ li }) => li.productId),
+      fulfilmentKind: saleFulfilmentKind(p.order),
     },
   );
   if (flagged.length > 0) {

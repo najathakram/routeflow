@@ -222,6 +222,7 @@ import {
 } from "./merge-restriction-warning";
 import { collectUnlistedLoserItems } from "./merge-unlisted-lines";
 import { restrictionChannelForPrincipal } from "../selling-restrictions/selling-restrictions.core";
+import { saleFulfilmentKind } from "../selling-restrictions/sale-fulfilment";
 import { SellingRestrictionsService } from "../selling-restrictions/selling-restrictions.service";
 import { PromotionsService } from "../promotions/promotions.service";
 import { MessagingService } from "../messaging/messaging.service";
@@ -1951,9 +1952,7 @@ export class OrdersService implements OnApplicationBootstrap {
       shipping: orderShippingFee,
     });
 
-    // B451 gap 4: reject a bounded-but-oversized discountAmount before it can
-    // drive the persisted total negative. Fails fast, before any stock lock
-    // or transaction opens.
+    // B451 gap 4: reject an oversized discountAmount (negative total) before any stock lock or tx.
     assertMoneyInvariantsOrThrow({
       subtotal,
       discount: orderDiscount,
@@ -1972,13 +1971,13 @@ export class OrdersService implements OnApplicationBootstrap {
         customerId,
         lines: lineItemsData.map((li) => ({ trackedCategoryId: li.trackedCategoryId })),
       });
-      // Lane R: selling restrictions — a banned product refuses (409 SELLING_RESTRICTED) BEFORE the
-      // stock transaction, like the license guard above; a DRAFT is checked at its promotion.
+      // Lane R: a banned product refuses (409) BEFORE the stock tx; a DRAFT is checked at promotion.
       await this.sellingRestrictions.assertLinesSellable({
         tenantId: this.restrictionTenantId(user),
         customerId,
         lines: lineItemsData.flatMap((li) => (li.productId ? [{ productId: li.productId }] : [])),
         channel: restrictionChannelForPrincipal(user), // judged at ENTRY time, like the license guard
+        fulfilmentKind: saleFulfilmentKind({ counterSale: options.counterSale, fulfillPath }),
       });
       // B585: credit check for a NEW order (nothing runs unless the tenant switch is set).
       await this.creditGate({ customerId, projectedTotal: total, principal: user });
@@ -2369,14 +2368,13 @@ export class OrdersService implements OnApplicationBootstrap {
         })),
         orderId: id,
       });
-      // Lane R: the same "becomes a real sale" moment — a banned product refuses (409
-      // SELLING_RESTRICTED) BEFORE the status write / stock reservation. Drafts are created and
-      // edited without the check; this is the draft escape's second half.
+      // Lane R: the draft's promotion to a real sale — a banned product refuses (409) BEFORE any write.
       await this.sellingRestrictions.assertLinesSellable({
         tenantId: this.restrictionTenantId(user, order.tenantId),
         customerId: order.customerId,
         lines: items.flatMap((li) => (li.productId ? [{ productId: li.productId }] : [])),
         channel: restrictionChannelForPrincipal(user), // judged at ENTRY time, like the license guard
+        fulfilmentKind: saleFulfilmentKind(order),
       });
       checkedProductIds = new Set(pids);
     }
@@ -2774,6 +2772,7 @@ export class OrdersService implements OnApplicationBootstrap {
       customerId: order.customerId,
       lines: order.lineItems.flatMap((li) => (li.productId ? [{ productId: li.productId }] : [])),
       channel: "STAFF",
+      fulfilmentKind: saleFulfilmentKind(order),
     });
     return this.prisma.tenantTransaction(
       async (tx) => {
@@ -2919,8 +2918,7 @@ export class OrdersService implements OnApplicationBootstrap {
       throw new ForbiddenException(await carrierGuard.buyerEditClosedMessage(this, order)); // B1135
     }
 
-    // Lane R: a banned product added by this edit refuses (409 SELLING_RESTRICTED) BEFORE the invoice revert and any
-    // write; non-draft only (a draft is judged at its promotion). Re-checked under the row lock (order-edit-restrictions.ts).
+    // Lane R: a banned product added by this edit refuses (409) BEFORE any write; non-draft only; re-checked in-tx.
     let restrictionPlan: OrderEditRestrictionPlan | null = null;
     if (order.status !== "DRAFT") {
       const tenantId = this.restrictionTenantId(user, order.tenantId);
@@ -2940,6 +2938,7 @@ export class OrdersService implements OnApplicationBootstrap {
           customerId: order.customerId,
           lines: restrictionPlan.lines,
           channel: restrictionChannelForPrincipal(user),
+          fulfilmentKind: saleFulfilmentKind(order),
         });
     }
 
@@ -4680,8 +4679,7 @@ export class OrdersService implements OnApplicationBootstrap {
       });
     }
 
-    // Lane R: an at-door add / qty raise of a banned product refuses (409 SELLING_RESTRICTED) BEFORE
-    // the tx; OFF = one policy read. Re-checked under the row lock below (change-request-restrictions.ts).
+    // Lane R: an at-door add / qty raise of a banned product refuses (409) BEFORE the tx; re-checked in-tx.
     const tenantId = this.restrictionTenantId(resolver, order.tenantId);
     const restrictionPlan = await planChangeRequestRestrictions(
       { restrictions: this.sellingRestrictions },
@@ -4693,6 +4691,7 @@ export class OrdersService implements OnApplicationBootstrap {
         customerId: order.customerId,
         lines: restrictionPlan.lines,
         channel: restrictionChannelForPrincipal(resolver),
+        fulfilmentKind: saleFulfilmentKind(order),
       });
 
     // P5-08b posture: reference reads on separate pooled connections are

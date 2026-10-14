@@ -31,22 +31,25 @@ export function judgedAtStore(kind: SaleFulfilmentKind | undefined): boolean {
   return kind === "COUNTER" || kind === "PICKUP";
 }
 
-/** The kind of a stored order (tenant-scoped client); a missing order is DELIVERY (the unchanged behaviour). */
+/**
+ * The kind of a stored order, read through the TENANT-scoped client (`prisma.forTenant()`); `undefined` for no order
+ * (a manual invoice: the unchanged customer-address rule) and DELIVERY for an order that cannot be read.
+ */
 export async function orderFulfilmentKind(
   db: {
     order: {
       findFirst(args: {
-        where: { id: string; tenantId: string };
+        where: { id: string };
         select: { counterSale: true; fulfillPath: true };
       }): Promise<SaleFulfilmentFacts | null>;
     };
   },
-  tenantId: string,
-  orderId: string,
-): Promise<SaleFulfilmentKind> {
+  orderId: string | null | undefined,
+): Promise<SaleFulfilmentKind | undefined> {
+  if (!orderId) return undefined;
   return saleFulfilmentKind(
     await db.order.findFirst({
-      where: { id: orderId, tenantId },
+      where: { id: orderId },
       select: { counterSale: true, fulfillPath: true },
     }),
   );

@@ -197,6 +197,7 @@ import { NumberingService } from "../import/numbering.service";
 import { SellingRestrictionsService } from "../selling-restrictions/selling-restrictions.service";
 import { requireRestrictionTenantId } from "../selling-restrictions/restriction-tenant";
 import { flagSplitRestrictedLines } from "../selling-restrictions/restricted-lines-flag";
+import { orderFulfilmentKind } from "../selling-restrictions/sale-fulfilment";
 import {
   addedRestrictionLines,
   assertEditStillJudged,
@@ -3128,6 +3129,7 @@ export class InvoicesService {
         customerId: inv.customerId,
         lines: restrictionLines,
         channel: "STAFF",
+        fulfilmentKind: await orderFulfilmentKind(this.prisma.forTenant(), inv.orderId),
       });
       await assertOrderItemIdsBelongToOrder(this.prisma.forTenant(), inv.orderId, items); // SA-093a rd6
       // Products (pack + regulated snapshot) and section tax config for the edited lines (mirrors create()).

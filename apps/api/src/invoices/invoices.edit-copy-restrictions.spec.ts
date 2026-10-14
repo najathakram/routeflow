@@ -84,6 +84,33 @@ describe("invoice edit / copy — selling restrictions (F-05)", () => {
       });
     });
 
+    it.each([
+      [{ counterSale: false, fulfillPath: "PICKUP" }, "PICKUP"],
+      [{ counterSale: true, fulfillPath: "PICKUP" }, "COUNTER"],
+      [{ counterSale: false, fulfillPath: "ROUTE" }, "DELIVERY"],
+    ])("L8: an order-linked draft whose order is %j is judged as %s", async (facts, kind) => {
+      prisma.invoice.findUnique.mockResolvedValue({
+        ...draft,
+        orderId: "ord-1",
+        deliveryBatchId: "batch-1",
+      });
+      prisma.order.findFirst.mockResolvedValue(facts);
+      restrictions.assertLinesSellable.mockRejectedValue(banned());
+      await expect(edit([line("p-new", 1)])).rejects.toBeDefined();
+      expect(restrictions.assertLinesSellable).toHaveBeenCalledWith(
+        expect.objectContaining({ fulfilmentKind: kind }),
+      );
+    });
+
+    it("L8: an order-less draft passes no kind at all (the unchanged customer-address rule)", async () => {
+      restrictions.assertLinesSellable.mockRejectedValue(banned());
+      await expect(edit([line("p-new", 1)])).rejects.toBeDefined();
+      expect(restrictions.assertLinesSellable.mock.calls[0][0]).not.toHaveProperty(
+        "fulfilmentKind",
+        expect.anything(),
+      );
+    });
+
     it("an increase on a banned line already on the draft is REFUSED, writing nothing", async () => {
       restrictions.assertLinesSellable.mockRejectedValue(banned());
       await expect(edit([line("p-held", 50)])).rejects.toBeDefined();

@@ -58,8 +58,24 @@ describe("OrdersService.changeStatus — DRAFT promotion and selling restriction
       // judged on STAFF (not BUYER_PORTAL): an open ruling, flagged in the PR. No `at`: judged at
       // entry time, like the license guard (owner ruling pending).
       channel: "STAFF",
+      fulfilmentKind: "DELIVERY",
     });
   });
+
+  it.each([
+    [{ fulfillPath: "PICKUP" }, "PICKUP"],
+    [{ counterSale: true, fulfillPath: "PICKUP" }, "COUNTER"],
+    [{ fulfillPath: "ROUTE" }, "DELIVERY"],
+  ])(
+    "L8: promoting an order with %j judges it as %s (counter / pickup: the store's state)",
+    async (facts, kind) => {
+      h.prisma.order.findUnique.mockResolvedValue({ ...draft, ...facts });
+      await promote();
+      expect(h.restrictions.assertLinesSellable).toHaveBeenCalledWith(
+        expect.objectContaining({ fulfilmentKind: kind }),
+      );
+    },
+  );
 
   it("a refusal (409 SELLING_RESTRICTED) is thrown BEFORE the transition commits: no transaction, no status write", async () => {
     h.restrictions.assertLinesSellable.mockRejectedValue(
