@@ -278,13 +278,16 @@ describe("SA-767 r-note 3 (b) — the order sale sites use retryStockTx", () => 
     "orders.create",
     "orders.promoteDraft",
     "orders.demoteToDraft",
-    "orders.cancel",
     "orders.reopen",
     "orders.approveChangeRequestAtStop",
   ])("orders.service runs %s through stockTx", (label) => {
     const at = orders.indexOf(`"${label}"`);
     expect(at).toBeGreaterThan(-1);
     expect(orders.slice(Math.max(0, at - 40), at)).toMatch(/this\.stockTx\(\s*$/);
+  });
+
+  it("the cancel tx runs through stockTx under the retry-warn label the send/void race spec counts", () => {
+    expect(orders).toMatch(/this\.stockTx\(\s*`order cancel void order=\$\{id\}`/);
   });
 
   it("stockTx is retryStockTx around the unchanged tenantTransaction(fn, opts)", () => {
