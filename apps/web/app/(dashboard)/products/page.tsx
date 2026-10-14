@@ -8,7 +8,6 @@ import {
   LayoutGrid,
   LayoutList,
   Plus,
-  Trash2,
   X as XIcon,
   CheckSquare,
   Pencil,
@@ -47,7 +46,6 @@ import {
   PortalLimitButtons,
   PortalHiddenBadge,
   PortalHiddenFilter,
-  OFF_PAGE_HINT_ID,
 } from "./_components/PortalVisibilityControls";
 import { portalBadge, portalVisibleFilterParam } from "@/lib/product-portal-visibility-ui";
 import { NewFamilyButton } from "@/components/family/NewFamilyButton";
@@ -57,7 +55,8 @@ import { ReadOnlyHint, WriteButton } from "@/lib/read-only-gate";
 import { ProductsExportButton } from "./_components/ProductsExportButton";
 import { RestrictMenu } from "@/components/restrictions/RestrictMenu";
 import { SelectAllMatching } from "@/components/restrictions/SelectAllMatching";
-import { OFF_PAGE_HINT } from "@/lib/rule-chooser";
+import { OFF_PAGE_HINT, OFF_PAGE_HINT_ID } from "@/lib/rule-chooser";
+import { BulkDeleteButton, useOffPageSelection } from "@/components/restrictions/OffPageSelection";
 import {
   STOCK_FILTER_CHIPS,
   ProductStatusBadge,
@@ -1109,9 +1108,9 @@ export default function ProductsPage() {
   // Row 509: "Select all matching" puts ids BEYOND this page in the selection. Derived from the ids themselves (not from
   // the banner's state), so deselecting one visible row cannot turn the other actions back on for ids the operator
   // cannot see. Only Restrict… may act on such a selection; every other bulk action is off, with a hint.
-  const bannerSelected =
-    selected.size > 0 && Array.from(selected).some((id) => !productById.has(id));
-  const offPageHint = bannerSelected ? OFF_PAGE_HINT : undefined;
+  const { offPage: bannerSelected, hint: offPageHint } = useOffPageSelection(selected, (id) =>
+    productById.has(id),
+  );
 
   // Names of the selected products this page holds (the rule editor labels its chips from them).
   const selectedNames = React.useMemo(() => {
@@ -1501,17 +1500,13 @@ export default function ProductsPage() {
               data-testid="bulk-destructive"
               className="flex items-center sm:ml-2 sm:border-l sm:border-brand-200 sm:pl-4"
             >
-              <Button
-                variant="danger"
-                leftIcon={<Trash2 className="h-4 w-4" />}
+              <BulkDeleteButton
+                count={selected.size}
+                offPage={bannerSelected}
+                hint={offPageHint}
                 loading={bulkDelete.isPending}
-                disabled={bannerSelected}
-                title={offPageHint}
-                aria-describedby={bannerSelected ? OFF_PAGE_HINT_ID : undefined}
                 onClick={() => setShowBulkDeleteConfirm(true)}
-              >
-                Delete {selected.size} item{selected.size !== 1 ? "s" : ""}
-              </Button>
+              />
             </div>
           </div>
         </div>

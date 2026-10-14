@@ -28,6 +28,7 @@ export function RuleFormDialog({
   onClose,
   initialTargets,
   onCreated,
+  federalNote,
 }: {
   open: boolean;
   onClose: () => void;
@@ -35,6 +36,8 @@ export function RuleFormDialog({
   initialTargets?: PickedTarget[];
   /** Row 509 integration: called after the rule is created (before close), e.g. so the catalog clears its selection. */
   onCreated?: (ruleId: string) => void;
+  /** Disables the "everywhere" choice and says why (an operator may not make a rule apply everywhere, owner L5). */
+  federalNote?: string;
 }) {
   const { toast } = useToast();
   const router = useRouter();
@@ -117,7 +120,7 @@ export function RuleFormDialog({
           />
         </fieldset>
 
-        <RuleSettingsFields v={v} set={set} errors={errors} />
+        <RuleSettingsFields v={v} set={set} errors={errors} federalNote={federalNote} />
 
         <p aria-live="polite" className="min-h-[1.25rem] text-sm font-medium text-navy">
           {appliesToLine(v.targets, v.jurisdiction, v.states)}

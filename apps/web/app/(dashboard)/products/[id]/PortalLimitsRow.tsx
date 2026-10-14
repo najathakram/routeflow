@@ -16,6 +16,7 @@ import { RuleChooserDialog } from "@/components/restrictions/RuleChooserDialog";
 import { limitChipText, limitViaText, UNDO_VISIBLE_MS } from "@/lib/portal-limits";
 import {
   FEDERAL_ADMIN_ONLY,
+  isRuleAdmin,
   RESTRICT_UNDO_FAILED,
   coverageCount,
   coverageText,
@@ -94,7 +95,11 @@ export function PortalLimitsRow({ productId }: { productId: string }) {
           {limits.map((l) => {
             const via = limitViaText(l);
             const many = isMany(l);
-            const adminOnly = l.jurisdiction === "FEDERAL" && role !== "TENANT_ADMIN";
+            // L5: a rule that hides products from every portal customer is admin-only to change, either way.
+            const locked = canLift && l.jurisdiction === "FEDERAL" && !isRuleAdmin(role);
+            const hintId = `rule-admin-only-${l.id}`;
+            const btn =
+              "text-[11px] font-medium text-brand-600 hover:underline disabled:cursor-not-allowed disabled:opacity-50";
             return (
               <li
                 key={l.id}
@@ -113,27 +118,42 @@ export function PortalLimitsRow({ productId }: { productId: string }) {
                   </span>
                 )}
                 {via && <span className="font-normal text-navy/60">{via}</span>}
-                {canLift &&
-                  (removable(l) ? (
-                    <button
-                      type="button"
-                      disabled={readOnly || adminOnly || removeFromRule.isPending}
-                      title={adminOnly ? FEDERAL_ADMIN_ONLY : undefined}
-                      className="text-[11px] font-medium text-brand-600 hover:underline disabled:cursor-not-allowed disabled:opacity-50"
-                      onClick={() => remove(l)}
-                    >
-                      Remove from rule
-                    </button>
-                  ) : (
-                    <button
-                      type="button"
-                      disabled={readOnly}
-                      className="text-[11px] font-medium text-brand-600 hover:underline disabled:cursor-not-allowed disabled:opacity-50"
-                      onClick={() => setLifting(l.id)}
-                    >
-                      Lift
-                    </button>
-                  ))}
+                {canLift && removable(l) && (
+                  <button
+                    type="button"
+                    disabled={readOnly || locked || removeFromRule.isPending}
+                    aria-describedby={locked ? hintId : undefined}
+                    className={btn}
+                    onClick={() => remove(l)}
+                  >
+                    Remove from rule
+                  </button>
+                )}
+                {canLift && many && (
+                  <NextLink
+                    href={ruleHref(l.id)}
+                    className="text-[11px] font-medium text-brand-600 hover:underline"
+                  >
+                    View rule
+                  </NextLink>
+                )}
+                {/* One-step Lift stays for a rule that covers only this product (master) and for an inherited chip. */}
+                {canLift && !removable(l) && (
+                  <button
+                    type="button"
+                    disabled={readOnly || locked}
+                    aria-describedby={locked ? hintId : undefined}
+                    className={btn}
+                    onClick={() => setLifting(l.id)}
+                  >
+                    Lift
+                  </button>
+                )}
+                {locked && (
+                  <span id={hintId} className="basis-full text-[11px] font-normal text-navy/70">
+                    {FEDERAL_ADMIN_ONLY}
+                  </span>
+                )}
               </li>
             );
           })}

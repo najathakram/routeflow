@@ -33,7 +33,7 @@ export function SelectAllMatching({
 }) {
   const fetchIds = useProductIdsForFilter(filters);
   const [matched, setMatched] = React.useState<{
-    count: number;
+    ids: ReadonlySet<string>;
     total: number;
     capped: boolean;
   } | null>(null);
@@ -43,7 +43,15 @@ export function SelectAllMatching({
 
   React.useEffect(() => setMatched(null), [resetKey]);
 
-  const active = matched !== null && selected.size === matched.count;
+  // Active only while the selection IS the set the banner made. Any other set, even one of the same size (a row
+  // un-ticked, a different one ticked), is no longer "all matching", and it does not come back if the row returns.
+  const active =
+    matched !== null &&
+    selected.size === matched.ids.size &&
+    Array.from(selected).every((id) => matched.ids.has(id));
+  React.useEffect(() => {
+    if (matched !== null && !active) setMatched(null);
+  }, [matched, active]);
   const pageAllSelected = pageIds.length > 0 && pageIds.every((id) => selected.has(id));
   const capped = total > RESTRICT_MAX;
 
@@ -56,8 +64,8 @@ export function SelectAllMatching({
       >
         <span>
           {matched.capped
-            ? `The first ${fmt(matched.count)} of ${fmt(matched.total)} matching are selected.`
-            : `All ${fmt(matched.count)} matching are selected.`}
+            ? `The first ${fmt(matched.ids.size)} of ${fmt(matched.total)} matching are selected.`
+            : `All ${fmt(matched.ids.size)} matching are selected.`}
         </span>
         {matched.capped && (
           <span className="text-navy/70">Narrow the filters to reach the rest.</span>
@@ -82,7 +90,7 @@ export function SelectAllMatching({
         if (keyRef.current !== sentFor) return;
         const next = new Set(res.ids);
         setSelected(next);
-        setMatched({ count: next.size, total: res.total, capped: res.capped });
+        setMatched({ ids: next, total: res.total, capped: res.capped });
       },
     });
   };

@@ -1,5 +1,6 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { apiClient } from "../api-client";
+import { ruleErrorCode } from "../restriction-rule-errors";
 import type {
   AddRuleTargetsResponse,
   ProductIdsForFilterResponse,
@@ -101,23 +102,11 @@ export function useProductIdsForFilter(filters: ProductIdsFilters) {
   });
 }
 
-/** The coded error a rule-target write was refused with (`body.code`), plus the 403 a role gate gives. */
-export function ruleErrorOf(err: unknown): {
-  status: number | null;
-  code: string | null;
-  field: string | null;
-  max: number | null;
-} {
-  const res = (
-    err as {
-      response?: { status?: number; data?: { code?: unknown; field?: unknown; max?: unknown } };
-    } | null
-  )?.response;
-  const d = res?.data;
-  return {
-    status: typeof res?.status === "number" ? res.status : null,
-    code: typeof d?.code === "string" ? d.code : null,
-    field: typeof d?.field === "string" ? d.field : null,
-    max: typeof d?.max === "number" ? d.max : null,
-  };
+/**
+ * The status of a refused rule-target write plus its `body.code` (the ONE reader, `ruleErrorCode`, from
+ * restriction-rule-errors.ts). The 403 a role gate gives has no code.
+ */
+export function ruleErrorOf(err: unknown): { status: number | null; code: string | null } {
+  const status = (err as { response?: { status?: unknown } } | null)?.response?.status;
+  return { status: typeof status === "number" ? status : null, code: ruleErrorCode(err) };
 }

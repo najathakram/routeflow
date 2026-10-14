@@ -5,6 +5,7 @@ import { Ban, Eye, EyeOff } from "lucide-react";
 import { Badge, Button, useToast } from "@routeflow/ui/web";
 import { useAuth } from "@/lib/auth-context";
 import { WriteButton, useReadOnlyGate } from "@/lib/read-only-gate";
+import { OFF_PAGE_HINT_ID } from "@/lib/rule-chooser";
 import { LimitInPortalDialog } from "@/components/portal-limits/LimitInPortalDialog";
 import { useBulkSetPortalVisibility } from "@/lib/api/product-portal-visibility";
 import {
@@ -16,9 +17,6 @@ import {
   PORTAL_BADGE_LABEL,
   type PortalVisibilityRow,
 } from "@/lib/product-portal-visibility-ui";
-
-/** The id of the one visible hint line the page renders while the selection is off-page; disabled controls point at it. */
-export const OFF_PAGE_HINT_ID = "bulk-off-page-hint";
 
 /** "Hidden" / "Hidden by parent" badge for a list row; renders nothing for a visible row. */
 export function PortalHiddenBadge({ product }: { product: PortalVisibilityRow }) {

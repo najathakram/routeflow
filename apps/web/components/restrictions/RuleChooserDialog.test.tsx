@@ -202,7 +202,7 @@ describe("RuleChooserDialog, add mode", () => {
     const { onClose } = open();
     await user.click(await screen.findByRole("button", { name: /vape ban tx/i }));
     await user.click(screen.getByRole("button", { name: "Add 8 products" }));
-    expect(await screen.findByText(/a rule can cover up to 5,000 products/i)).toBeInTheDocument();
+    expect(await screen.findByText(/a rule can cover up to 5,000/i)).toBeInTheDocument();
     expect(onClose).not.toHaveBeenCalled();
   });
 

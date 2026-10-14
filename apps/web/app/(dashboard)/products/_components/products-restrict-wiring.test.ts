@@ -52,7 +52,9 @@ describe("products/page.tsx - row 509 wiring", () => {
   describe("a banner selection holds off-page ids: only Restrict… may act on it", () => {
     it("tracks the banner state and gives every other bulk action the hint", () => {
       // derived from the ids (any selected id the page does not hold) by the one extracted rule
-      expect(src).toMatch(/useOffPageSelection\(selected, \(id\) => productById\.has\(id\)\)/);
+      expect(src).toMatch(
+        /useOffPageSelection\(selected,\s*\(id\)\s*=>\s*productById\.has\(id\),?\s*\)/,
+      );
       expect(src).toMatch(/<PortalBulkButtons[\s\S]{0,200}?offPageHint=\{offPageHint\}/);
       expect(src).toMatch(/<PortalLimitButtons[\s\S]{0,200}?offPageHint=\{offPageHint\}/);
     });

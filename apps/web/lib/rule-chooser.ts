@@ -1,10 +1,10 @@
 import {
   RULE_TARGETS_MAX_PER_REQUEST,
-  RULE_TARGETS_MAX_PER_RULE,
   type RuleTargetSummary,
   type SellingRestrictionListItemDto,
 } from "@routeflow/types";
 import { fmtDate } from "./formatting";
+import { ruleSentence } from "./restriction-rules";
 
 /**
  * Row 509 PR5: every sentence the rule chooser, the catalog's Restrict… menu and the product card say, in one place.
@@ -12,11 +12,10 @@ import { fmtDate } from "./formatting";
  */
 
 export const RESTRICT_MAX = RULE_TARGETS_MAX_PER_REQUEST;
-export const RULE_MAX = RULE_TARGETS_MAX_PER_RULE;
 export const UNDO_ADD_REASON = "Undone right after adding";
 
 export const FEDERAL_ADMIN_ONLY =
-  "Only an admin can change a rule that hides products from everyone.";
+  "Only an admin can change a rule that hides products from every portal customer.";
 export const ALREADY_IN_RULE = "Already in this rule.";
 export const RESTRICT_SAVE_FAILED = "Couldn't save. Nothing was changed. Try again.";
 export const RESTRICT_UNDO_FAILED = "Couldn't undo. Nothing was changed.";
@@ -24,6 +23,13 @@ export const RESTRICT_TOO_MANY = `Select up to ${RESTRICT_MAX.toLocaleString("en
 
 /** Why a bulk action is off while the selection came from "Select all matching" (it holds ids beyond this page). */
 export const OFF_PAGE_HINT = "Choose products on this page to use this action.";
+
+/** The id of the one visible hint line the catalog bar renders while the selection is off-page; disabled controls point at it. */
+export const OFF_PAGE_HINT_ID = "bulk-off-page-hint";
+
+/** An account admin: the only roles that may change a rule that applies to every portal customer (owner L5). */
+export const isRuleAdmin = (role: string | undefined): boolean =>
+  role === "TENANT_ADMIN" || role === "SUPER_ADMIN";
 
 export const ruleHref = (id: string) => `/settings/restrictions/rules/${id}`;
 
@@ -47,15 +53,12 @@ export function coverageText(summary?: RuleTargetSummary): string | null {
 export const coverageCount = (summary?: RuleTargetSummary): number =>
   summary ? summary.products + summary.categories : 0;
 
-function whereText(r: Pick<SellingRestrictionListItemDto, "jurisdiction" | "states">): string {
-  if (r.jurisdiction === "FEDERAL" || r.states.length === 0) return "Hidden from everyone";
-  if (r.states.length <= 3) return `Hidden in ${r.states.map((s) => s.toUpperCase()).join(", ")}`;
-  return `Hidden in ${r.states.length} states`;
-}
-
-/** "Hidden in TX, CA · portal only · 12 products" - one sentence of what the rule does. */
-export function ruleSentence(r: SellingRestrictionListItemDto): string {
-  const parts = [whereText(r), r.surface === "BUYER_PORTAL" ? "portal only" : "all sales"];
+/**
+ * One line of what a rule does: the rules page's own sentence ("Banned in Texas and California · <surface>", one
+ * wording for both screens) plus what it covers and, for a scheduled rule, when it starts.
+ */
+export function ruleLine(r: SellingRestrictionListItemDto): string {
+  const parts = [ruleSentence(r)];
   const cover = coverageText(r.targetSummary);
   if (cover) parts.push(cover);
   if (r.status === "SCHEDULED") parts.push(`starts ${fmtDate(r.effectiveFrom)}`);
@@ -108,9 +111,3 @@ export function removedTitle(removed: number): string {
 
 export const needsATargetText = (label: string) =>
   `This would leave “${label}” covering nothing. Lift the rule instead?`;
-
-export function targetLimitText(field: string | null, max: number | null, label: string): string {
-  if (field === "request")
-    return `Select up to ${(max ?? RESTRICT_MAX).toLocaleString("en-US")} products at a time.`;
-  return `A rule can cover up to ${(max ?? RULE_MAX).toLocaleString("en-US")} products. “${label}” can't take that many more.`;
-}

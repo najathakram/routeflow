@@ -35,10 +35,12 @@ import {
   removedTitle,
   ruleHref,
   ruleLabel,
-  ruleSentence,
-  targetLimitText,
+  ruleLine,
+  isRuleAdmin,
 } from "@/lib/rule-chooser";
 import { stateName } from "@/lib/restriction-rules";
+import { RULE_ERROR_COPY } from "@/lib/restriction-rule-errors";
+import { API_ERROR_CODES } from "@routeflow/types";
 
 /**
  * "Add to a rule…" / "Remove from a rule…" (row 509 PR5): pick a rule, confirm the count, done. Add mode lists the
@@ -115,7 +117,7 @@ function Chooser({
   alreadyInRuleIds?: readonly string[];
 }) {
   const role = useAuth().user?.role;
-  const isAdmin = role === "TENANT_ADMIN";
+  const isAdmin = isRuleAdmin(role);
   const router = useRouter();
   const qc = useQueryClient();
   const { toast } = useToast();
@@ -136,9 +138,9 @@ function Chooser({
   };
 
   const failure = (err: unknown, rule: SellingRestrictionListItemDto): React.ReactNode => {
-    const { status, code, field, max } = ruleErrorOf(err);
+    const { status, code } = ruleErrorOf(err);
     const label = ruleLabel(rule);
-    if (code === "RULE_NEEDS_A_TARGET")
+    if (code === API_ERROR_CODES.RULE_NEEDS_A_TARGET)
       return (
         <>
           <span>{needsATargetText(label)}</span>{" "}
@@ -147,11 +149,8 @@ function Chooser({
           </NextLink>
         </>
       );
-    if (code === "RULE_TARGET_LIMIT") return targetLimitText(field, max, label);
-    if (code === "RULE_NOT_EDITABLE")
-      return `“${label}” was lifted or has ended. Pick another rule.`;
-    if (code === "RULE_TARGETS_NOT_FOUND")
-      return "Some of these products no longer exist. Refresh the list and try again.";
+    // The coded refusals share PR4's one copy table (RULE_NEEDS_A_TARGET above is this surface's own).
+    if (code && RULE_ERROR_COPY[code]) return RULE_ERROR_COPY[code];
     if (status === 403)
       return rule.jurisdiction === "FEDERAL"
         ? FEDERAL_ADMIN_ONLY
@@ -244,7 +243,7 @@ function Chooser({
     !needle ||
     [
       ruleLabel(r),
-      ruleSentence(r),
+      ruleLine(r),
       previewText(r) ?? "",
       ...r.states.map((s) => stateName(s.toUpperCase())),
     ]
@@ -296,7 +295,7 @@ function Chooser({
                 <span className="block break-words text-sm font-medium text-navy">
                   {ruleLabel(row.rule)}
                 </span>
-                <span className="block text-xs text-navy/80">{ruleSentence(row.rule)}</span>
+                <span className="block text-xs text-navy/80">{ruleLine(row.rule)}</span>
                 {row.holds !== undefined && (
                   <span className="block text-xs font-medium text-brand-700">
                     {holdsText(row.holds)}
@@ -315,6 +314,12 @@ function Chooser({
       </ul>
     );
   };
+
+  // The confirm step replaces the list: put focus on its heading so a keyboard / screen-reader user lands on it.
+  const headingRef = React.useRef<HTMLHeadingElement>(null);
+  React.useEffect(() => {
+    if (chosen) headingRef.current?.focus();
+  }, [chosen]);
 
   const confirmCount = mode === "remove" ? (chosen?.holds ?? n) : n;
 
@@ -356,10 +361,14 @@ function Chooser({
         )}
         {chosen ? (
           <div className="space-y-2" aria-live="polite">
-            <p className="text-sm font-semibold text-navy">
+            <h3
+              ref={headingRef}
+              tabIndex={-1}
+              className="text-sm font-semibold text-navy outline-none"
+            >
               {confirmTitle(mode, confirmCount, ruleLabel(chosen.rule))}
-            </p>
-            <p className="text-sm text-navy/80">{ruleSentence(chosen.rule)}</p>
+            </h3>
+            <p className="text-sm text-navy/80">{ruleLine(chosen.rule)}</p>
             {mode === "remove" && chosen.holds !== undefined && (
               <p className="text-xs text-navy/70">{holdsText(chosen.holds)}</p>
             )}
