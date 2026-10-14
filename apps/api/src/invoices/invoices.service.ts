@@ -146,6 +146,7 @@ import { EmailService } from "../email/email.service";
 import { isTxTimeout, splitInvoiceRetry } from "./split-invoice-retry";
 import { InvoicePdfService } from "./invoice-pdf.service";
 import { invoiceItemQtyFields } from "./invoice-pdf-item";
+import { buildInvoiceEmailPayload } from "./invoice-email-payload";
 import { buildInvoiceEmailAttachment, InvoiceEmailAttachment } from "./invoice-attachment";
 import { SystemConfigService } from "../system-config/system-config.service";
 import { RegulatedLedgerService } from "../regulated/regulated-ledger.service";
@@ -3697,76 +3698,18 @@ export class InvoicesService {
       );
     }
 
-    // F03/R8/T-B102: CONFIRMED (PAID) basis — mirrors the PDF and the invoice
-    // detail's own paidAmount/balanceDue math. A DRAFT (unconfirmed) payment must
-    // not inflate what the email tells the customer they've already paid.
-    // B421: totalPaid is cash-only — a CREDIT_NOTE or ADVANCE application must
-    // never render as "Amount Paid" in an email sent to the customer. balanceDue
-    // stays on the full confirmed total (sumConfirmed) — a credit note or
-    // advance genuinely reduces what's still owed.
-    const { cash: totalPaid, creditApplied, advanceApplied } = splitConfirmed(inv.payments);
-    const balanceDue = confirmedBalance(inv.total, inv.payments);
-    const creditNoteNumbers = Array.from(
-      new Set(
-        (inv.payments ?? [])
-          .filter((p) => p.method === CREDIT_NOTE_METHOD)
-          .map((p) => (p as any).creditNote?.creditNoteNumber)
-          .filter((n): n is string => !!n),
-      ),
-    );
-
-    // F03/R9: the SAME tenant setting findOneOrThrow and the PDF read. The email
-    // body renders the same item table as the PDF attached to this very message,
-    // so it has to honour the hide-original-price preference too — otherwise
-    // forwarding the promo scalars below would newly leak the struck pre-promo
-    // price a tenant deliberately configured away.
+    // F03/R9: the SAME tenant setting findOneOrThrow and the PDF read: the email renders the same item table as the
+    // PDF attached to it, so it honours the hide-original-price preference too. The payload (the F03/R8/B421 paid
+    // basis, the item table, the deposit schedule) is built in invoice-email-payload.ts (the service is on the ratchet).
     const hideOriginalPrice = (await this.systemConfig.get("invoice.hideOriginalPrice")) === "true";
-
-    // Built as a variable (not an inline literal) so the extra totalPaid/
-    // balanceDue fields don't trip TS's excess-property check ahead of the F03
-    // batch's matching email.service.ts `sendInvoice` param-type update (a
-    // different file/package in this same campaign batch) — the runtime call
-    // carries them either way, which is what email.service.spec.ts and the
-    // T-B102 caller-leg assertion here both need.
-    const emailPayload = {
-      to: recipientEmail,
-      customerName: inv.customer?.businessName ?? "Customer",
-      invoiceNumber: inv.invoiceNumber,
-      invoiceId: inv.id,
-      issueDate: formatDate(inv.issueDate),
-      dueDate: formatDate(inv.dueDate),
-      paymentTermsLabel: inv.paymentTermsLabel ?? undefined,
-      total: Number(inv.total),
-      totalPaid,
-      creditApplied,
-      advanceApplied,
-      creditNoteNumbers,
-      balanceDue,
-      items: inv.items.map((it: any) => ({
-        description: it.description,
-        qty: Number(it.qty),
-        unitPrice: Number(it.unitPrice),
-        subtotal: Number(it.subtotal),
-        msrp: it.msrp != null ? Number(it.msrp) : null,
-        // F03/R9: without these, buildInvoiceEmail's strike/"N free" note and a BOGO line's reduced subtotal read as a pricing error.
-        originalPrice: it.originalPrice != null ? Number(it.originalPrice) : null,
-        priceType: it.priceType ?? null,
-        promoFreeUnits: it.promoFreeUnits != null ? Number(it.promoFreeUnits) : null,
-        ...invoiceItemQtyFields(it),
-      })),
+    const emailPayload = buildInvoiceEmailPayload(inv, {
+      recipientEmail,
       pdfUrl,
       attachment,
-      isReminder: false,
-      hideTerms: isPaidAtSale(inv),
       hideOriginalPrice,
-      // Deposit schedule (display-only): derive with the same read-time math the
-      // detail endpoint uses; null when the invoice carries no deposit.
-      depositAmount: computeDepositFields(inv as any, 0, new Date().toISOString().slice(0, 10))
-        .depositAmount,
-      depositDueDate: inv.depositDueDate ? formatDate(inv.depositDueDate) : null,
-    };
+    });
     await this.assertSendableUnderLock(id, inv.orderId); // SA-404a: VOID now ⇒ 400, no email
-    const fingerprint = await invoiceFingerprintOf(this.prisma.forTenant(), id); // #2088: what this email shows
+    const fingerprint = await invoiceFingerprintOf(this.prisma, this.featureConfig, id, variant); // #2088: what this email shows
     const sendResult = await this.emailService.sendInvoice(emailPayload);
 
     // R5: the email server was configured but the actual send did NOT succeed

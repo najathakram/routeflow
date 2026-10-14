@@ -4,8 +4,10 @@
  * a pure module here, a thin re-export in each app, a subpath import so mobile's jest can map it).
  *
  * The state is decided by the server from an exact content fingerprint of what renders on the customer's PDF / email
- * (never inferred from updatedAt). `sentBeforeTracking` is an invoice emailed before this shipped (or under another
- * fingerprint version): it was emailed, but whether it changed since cannot be checked.
+ * (never inferred from updatedAt). `sentBeforeTracking` is an invoice with a `sentAt` from BEFORE tracking began (or
+ * emailed under another fingerprint version): it was probably emailed, but whether it changed since cannot be checked.
+ * `markedSentNotEmailed` is an invoice with a `sentAt` from AFTER tracking began and no email on record: it was marked
+ * sent (Mark as Sent, a counter sale, a pickup hand-over), never emailed.
  */
 
 export const INVOICE_SEND_STATES = [
@@ -13,6 +15,7 @@ export const INVOICE_SEND_STATES = [
   "unchanged",
   "changedSinceSent",
   "sentBeforeTracking",
+  "markedSentNotEmailed",
 ] as const;
 export type InvoiceSendStateName = (typeof INVOICE_SEND_STATES)[number];
 
@@ -29,8 +32,15 @@ export interface InvoiceSendLock {
   reason: "SENDS_AFTER_DELIVERY";
 }
 
-/** The short label beside a locked Send action. */
-export const SENDS_AFTER_DELIVERY_SHORT = "Sends after delivery";
+/**
+ * The short label beside a locked Send action. `storeOnly` = the business has no delivery (it is "pickup"); `null` =
+ * not known yet, so neither moment is named (a store-only business never flashes "delivery").
+ */
+export function sendsAfterLabel(storeOnly: boolean | null | undefined): string {
+  if (storeOnly === true) return "Sends after pickup";
+  if (storeOnly === false) return "Sends after delivery";
+  return "Sends once handed over or delivered";
+}
 
 export const SENDS_AFTER_DELIVERY_COPY =
   "This invoice sends after delivery. Edit the order instead; the invoice updates automatically.";
@@ -79,6 +89,9 @@ export function invoiceResendCopy(
         confirm: `This invoice was emailed on ${when}. Changes since then can't be checked. Email it again?`,
         confirmButton: "Email again",
       };
+    case "markedSentNotEmailed":
+      // Never emailed: a first email, no confirmation (the detail line says it was only marked as sent).
+      return { action: "Email invoice", confirm: null, confirmButton: "Email invoice" };
     default:
       return { action: "Send", confirm: null, confirmButton: "Send" };
   }
@@ -95,6 +108,8 @@ export function invoiceSendStateLine(
   const when = dateOf(sendState.lastSentAt);
   const to = sendState.lastSentTo ? ` to ${sendState.lastSentTo}` : "";
   switch (sendState.state) {
+    case "markedSentNotEmailed":
+      return `Marked as sent ${when}. No email on record.`;
     case "unchanged":
       return `Emailed ${when}${to}. No changes since.`;
     case "changedSinceSent":

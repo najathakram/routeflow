@@ -66,7 +66,7 @@ import { isPendingMirrorInvoice, pendingMirrorCopy } from "@/lib/invoice-pending
 import { useCounterSaleGate } from "@/lib/api/counter-sale";
 import { isStoreOnly } from "@/lib/counter-sale";
 import { canSendReminder } from "@/lib/invoice-reminder";
-import { canEmailAgain, invoiceSendStateLine } from "@/lib/invoice-send-state";
+import { canEmailAgain, invoiceSendStateLine, sendsAfterLabel } from "@/lib/invoice-send-state";
 import { EmailInvoiceAction } from "@/components/invoices/EmailInvoiceAction";
 import { useParams, useRouter } from "next/navigation";
 import { useTrackedCategories } from "@/lib/api/tracked-categories";
@@ -2090,10 +2090,13 @@ export default function InvoiceDetailPage() {
               confirmation; a locked draft says why instead of hiding the action. Send Reminder stays separate. */}
           {((status === "DRAFT" && !isPendingMirror) ||
             canEmailAgain(status) ||
-            (isPendingMirror && invoice.sendLocked)) && (
+            invoice.sendLocked) && (
             <EmailInvoiceAction
               sendState={invoice.sendState}
               sendLocked={invoice.sendLocked}
+              lockedLabel={sendsAfterLabel(
+                fulfilmentCapability == null ? null : isStoreOnly(fulfilmentCapability),
+              )}
               loading={sendInvoiceEmail.isPending || sendInvoice.isPending}
               onSend={handleSend}
             />

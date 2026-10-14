@@ -14,7 +14,7 @@ const same = { ...changed, state: "unchanged" } as const;
 describe("EmailInvoiceAction", () => {
   it("never emailed: a plain Send that sends at once, no confirmation", () => {
     const onSend = jest.fn();
-    renderWithProviders(<EmailInvoiceAction onSend={onSend} />);
+    renderWithProviders(<EmailInvoiceAction lockedLabel="Sends after delivery" onSend={onSend} />);
     fireEvent.click(screen.getByRole("button", { name: "Send" }));
     expect(onSend).toHaveBeenCalledTimes(1);
     expect(screen.queryByRole("dialog")).toBeNull();
@@ -22,7 +22,9 @@ describe("EmailInvoiceAction", () => {
 
   it("modified since: 'Email again' asks with the modified-since sentence; Cancel sends nothing, the button sends", () => {
     const onSend = jest.fn();
-    renderWithProviders(<EmailInvoiceAction sendState={changed} onSend={onSend} />);
+    renderWithProviders(
+      <EmailInvoiceAction sendState={changed} lockedLabel="Sends after delivery" onSend={onSend} />,
+    );
     fireEvent.click(screen.getByRole("button", { name: "Email again" }));
     expect(onSend).not.toHaveBeenCalled();
     expect(screen.getByRole("dialog")).toHaveTextContent(
@@ -36,7 +38,9 @@ describe("EmailInvoiceAction", () => {
   });
 
   it("no changes: the no-changes sentence", () => {
-    renderWithProviders(<EmailInvoiceAction sendState={same} onSend={jest.fn()} />);
+    renderWithProviders(
+      <EmailInvoiceAction sendState={same} lockedLabel="Sends after delivery" onSend={jest.fn()} />,
+    );
     fireEvent.click(screen.getByRole("button", { name: "Email again" }));
     expect(screen.getByRole("dialog")).toHaveTextContent(
       /No changes since the last email on .* Email it again\?/,
@@ -46,11 +50,15 @@ describe("EmailInvoiceAction", () => {
   it("locked (pre-delivery): a disabled action that says why, never a missing button; it cannot send", () => {
     const onSend = jest.fn();
     renderWithProviders(
-      <EmailInvoiceAction sendLocked={{ reason: "SENDS_AFTER_DELIVERY" }} onSend={onSend} />,
+      <EmailInvoiceAction
+        sendLocked={{ reason: "SENDS_AFTER_DELIVERY" }}
+        lockedLabel="Sends after pickup"
+        onSend={onSend}
+      />,
     );
     const button = screen.getByRole("button", { name: "Send" });
     expect(button).toBeDisabled();
-    expect(screen.getByText("Sends after delivery")).toBeInTheDocument();
+    expect(screen.getByText("Sends after pickup")).toBeInTheDocument(); // the business's own words
     fireEvent.click(button);
     expect(onSend).not.toHaveBeenCalled();
   });

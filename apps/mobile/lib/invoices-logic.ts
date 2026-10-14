@@ -4,7 +4,7 @@
  */
 import { OPEN_INVOICE_STATUS_VALUES } from "@routeflow/types";
 import {
-  SENDS_AFTER_DELIVERY_SHORT,
+  sendsAfterLabel,
   canEmailAgain,
   invoiceResendCopy,
   type InvoiceSendLock,
@@ -145,6 +145,8 @@ export function invoiceSendAction(input: {
   pendingMirror: boolean;
   sendState?: InvoiceSendState | null;
   sendLocked?: InvoiceSendLock | null;
+  /** True/false once known; null/absent = not known, so neither "delivery" nor "pickup" is named. */
+  storeOnly?: boolean | null;
 }): {
   show: boolean;
   locked: boolean;
@@ -153,13 +155,14 @@ export function invoiceSendAction(input: {
   confirmButton: string;
 } {
   const copy = invoiceResendCopy(input.sendState);
-  const locked = Boolean(input.sendLocked) || (input.status === "DRAFT" && input.pendingMirror);
+  // The SERVER decides the lock (`sendLocked`), from the one predicate it refuses on; the client never re-derives it.
+  const locked = Boolean(input.sendLocked);
   const show =
     locked || canSendInvoiceNow(input.status, input.pendingMirror) || canEmailAgain(input.status);
   return {
     show,
     locked,
-    label: locked ? SENDS_AFTER_DELIVERY_SHORT : copy.action,
+    label: locked ? sendsAfterLabel(input.storeOnly ?? null) : copy.action,
     confirm: locked ? null : copy.confirm,
     confirmButton: copy.confirmButton,
   };

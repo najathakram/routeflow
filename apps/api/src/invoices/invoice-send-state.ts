@@ -1,10 +1,13 @@
 import { createHash } from "node:crypto";
 import { BadRequestException, HttpException, HttpStatus, Logger } from "@nestjs/common";
 import { InvoiceStatus } from "@prisma/client";
-import { CONFIRMED_PAYMENT, roundMoney, splitConfirmed } from "@routeflow/pricing";
+import { CONFIRMED_PAYMENT, round4, roundMoney, splitConfirmed } from "@routeflow/pricing";
 import { AUDIT_ACTIONS } from "../audit/audit-actions.constant";
 import { API_ERROR_CODES } from "../common/api-error-codes";
 import { resolvePendingMirror } from "./pending-mirror";
+import { BILL_TO_ADDRESS_ORDER } from "./invoice-bill-to";
+import { invoiceItemCode } from "./invoice-item-code";
+import { resolveInvoiceVariant } from "./invoice-stage";
 
 /**
  * Owner issue #2088: re-emailing an invoice, with "sent before, modified since" vs "no changes since".
@@ -15,19 +18,29 @@ import { resolvePendingMirror } from "./pending-mirror";
  *
  * FINGERPRINT: a versioned hash of exactly what renders on the customer's PDF / email. `v1:<sha256>`; only the same
  * version is compared, so a later field change cannot flip every invoice to "changed" - a missing or different
- * version reads as `sentBeforeTracking` (emailed, changes cannot be checked). Internal-only fields (internal notes,
- * override reasons, restriction stamps, cost/margin, updatedAt) are NEVER part of it.
+ * version reads as `sentBeforeTracking` (emailed, changes cannot be checked). The DRAFT / FINAL stage is part of it (a
+ * final after a proforma is a different document). Internal-only fields (internal notes, override reasons, restriction
+ * stamps, cost/margin, updatedAt) are NEVER part of it.
+ *
+ * A `sentAt` with NO tracked row is two different things: before `TRACKING_SINCE` it is an old send we cannot check
+ * (`sentBeforeTracking`); on/after it, every real email has a row, so it was only MARKED sent (`markedSentNotEmailed`:
+ * Mark as Sent, a counter sale, a pickup hand-over, a deposit invoice).
  */
 
 export const FINGERPRINT_VERSION = "v1";
 /** Per-invoice email throttle: at most this many emails in the window (a double-tap or a loop cannot spam a customer). */
 export const SEND_THROTTLE_MAX = 5;
 export const SEND_THROTTLE_WINDOW_MS = 15 * 60_000;
+/**
+ * When email tracking started: the release of #2088. MUST be on/after the deploy of this change (bump it if the release
+ * slips): a real email sent between this instant and the deploy would read as "marked sent, not emailed".
+ */
+export const TRACKING_SINCE = new Date("2026-10-20T00:00:00.000Z");
 
 const logger = new Logger("invoice-send-state");
 
 export type InvoiceSendStateName =
-  "never" | "unchanged" | "changedSinceSent" | "sentBeforeTracking";
+  "never" | "unchanged" | "changedSinceSent" | "sentBeforeTracking" | "markedSentNotEmailed";
 export interface InvoiceSendState {
   state: InvoiceSendStateName;
   lastSentAt: string | null;
@@ -36,10 +49,8 @@ export interface InvoiceSendState {
 
 type Num = number | string | { toString(): string } | null | undefined;
 const money = (v: Num): number | null => (v == null ? null : roundMoney(Number(v.toString())));
-const qty3 = (v: Num): number | null =>
-  v == null ? null : Math.round(Number(v.toString()) * 1000) / 1000;
-const rate4 = (v: Num): number | null =>
-  v == null ? null : Math.round(Number(v.toString()) * 10000) / 10000;
+const rate4 = (v: Num): number | null => (v == null ? null : round4(Number(v.toString())));
+const qty3 = rate4; // a quantity has at most 3 decimals; round4 is a superset and the shared rounding helper
 const text = (v: string | null | undefined): string | null => {
   const t = (v ?? "").trim();
   return t === "" ? null : t;
@@ -53,8 +64,8 @@ export interface FingerprintSource {
   issueDate?: Date | string | null;
   dueDate?: Date | string | null;
   paymentTermsLabel?: string | null;
-  referenceNumber?: string | null;
-  subject?: string | null;
+  /** "draft" | "final": the PDF / email stage this fingerprint is for (a final after a proforma is a new document). */
+  variant?: string | null;
   notes?: string | null;
   terms?: string | null;
   subtotal?: Num;
@@ -69,6 +80,7 @@ export interface FingerprintSource {
   customer?: {
     businessName?: string | null;
     contactName?: string | null;
+    phone?: string | null;
     addresses?: ReadonlyArray<{
       line1?: string | null;
       line2?: string | null;
@@ -96,27 +108,35 @@ export interface FingerprintSource {
     subtotal?: Num;
     categoryTaxAmount?: Num;
     trackedCategory?: { name?: string | null } | null;
+    /** The printed item code (barcode / SKU), read live from the product like the PDF does. */
+    product?: { unitSku?: string | null; barcode?: string | null; sku?: string | null } | null;
     components?: ReadonlyArray<{
       name?: string | null;
       qty?: Num;
       position?: number;
     }> | null;
   }> | null;
-  /** CONFIRMED payments only (the email's Amount Paid / Balance Due basis). */
-  payments?: ReadonlyArray<{ amount?: Num; method?: string | null; status?: string | null }> | null;
+  /** The PDF's payment listing (every non-VOID row); the confirmed ones also feed Amount Paid / Balance Due. */
+  payments?: ReadonlyArray<{
+    amount?: Num;
+    method?: string | null;
+    status?: string | null;
+    paidAt?: Date | string | null;
+    reference?: string | null;
+  }> | null;
 }
 
 /** The canonical, customer-visible content. Field order is fixed here, so the JSON (and the hash) is stable. */
 export function fingerprintContent(src: FingerprintSource): unknown {
   const addr = src.customer?.addresses?.[0];
-  const paid = splitConfirmed((src.payments ?? []) as never);
+  const listed = src.payments ?? [];
+  const paid = splitConfirmed(listed.filter((p) => p.status === CONFIRMED_PAYMENT.status) as never);
   return {
     n: text(src.invoiceNumber),
     issued: day(src.issueDate),
     due: day(src.dueDate),
     terms: text(src.paymentTermsLabel),
-    ref: text(src.referenceNumber),
-    subject: text(src.subject),
+    variant: text(src.variant),
     notes: text(src.notes),
     conditions: text(src.terms),
     subtotal: money(src.subtotal),
@@ -129,11 +149,20 @@ export function fingerprintContent(src: FingerprintSource): unknown {
     billTo: [
       text(src.customer?.businessName),
       text(src.customer?.contactName),
+      text(src.customer?.phone),
       addr
         ? [text(addr.line1), text(addr.line2), text(addr.city), text(addr.state), text(addr.zip)]
         : null,
     ],
     paid: [money(paid.cash), money(paid.creditApplied), money(paid.advanceApplied)],
+    // the PDF's Payment History lists every non-VOID row, a DRAFT one as "pending confirmation"
+    payments: listed.map((p) => [
+      text(p.method),
+      text(p.status),
+      money(p.amount),
+      day(p.paidAt),
+      text(p.reference),
+    ]),
     items: (src.items ?? []).map((it) => [
       text(it.description),
       text(it.notes),
@@ -152,6 +181,7 @@ export function fingerprintContent(src: FingerprintSource): unknown {
       money(it.subtotal),
       money(it.categoryTaxAmount),
       text(it.trackedCategory?.name),
+      text(invoiceItemCode(it.product)),
       (it.components ?? [])
         .slice()
         .sort((a, b) => (a.position ?? 0) - (b.position ?? 0))
@@ -168,32 +198,47 @@ export function invoiceFingerprint(src: FingerprintSource): string {
   return `${FINGERPRINT_VERSION}:${hash}`;
 }
 
-/** The invoice include that carries every field `invoiceFingerprint` reads (confirmed payments only). */
+/** The invoice include that carries every field `invoiceFingerprint` reads. */
 export const FINGERPRINT_INCLUDE = {
   customer: {
     select: {
       businessName: true,
       contactName: true,
-      addresses: { orderBy: { isDefault: "desc" as const }, take: 1 },
+      phone: true,
+      addresses: { orderBy: BILL_TO_ADDRESS_ORDER, take: 1 },
     },
   },
   items: {
     orderBy: [{ createdAt: "asc" as const }, { id: "asc" as const }],
     include: {
       trackedCategory: { select: { name: true } },
+      product: { select: { unitSku: true, barcode: true, sku: true } },
       components: { orderBy: { position: "asc" as const } },
     },
   },
-  payments: { where: CONFIRMED_PAYMENT },
+  // the PDF's Payment History: every non-VOID row (the confirmed ones also feed Amount Paid / Balance Due)
+  payments: { where: { status: { not: "VOID" as const } }, orderBy: { paidAt: "asc" as const } },
+  order: { select: { status: true, fulfillPath: true, shippedAt: true } },
 } as const;
 
-/** Reads the invoice with `FINGERPRINT_INCLUDE` and fingerprints it. Null when the invoice does not exist. */
-export async function invoiceFingerprintOf(db: any, invoiceId: string): Promise<string | null> {
-  const inv = await db.invoice.findUnique({
+/**
+ * Reads the invoice with `FINGERPRINT_INCLUDE` and fingerprints it for `variant` (the stage the PDF / email is for;
+ * undefined = the stage a plain send would use, resolved exactly like the PDF does). Null when the invoice does not exist.
+ */
+export async function invoiceFingerprintOf(
+  prisma: PrismaLike,
+  featureConfig: any,
+  invoiceId: string,
+  variant?: string,
+): Promise<string | null> {
+  const inv = await prisma.forTenant().invoice.findUnique({
     where: { id: invoiceId },
     include: FINGERPRINT_INCLUDE,
   });
-  return inv ? invoiceFingerprint(inv) : null;
+  if (!inv) return null;
+  const stage =
+    variant ?? (await resolveInvoiceVariant(featureConfig, prisma.getTenantId(), inv, inv.order));
+  return invoiceFingerprint({ ...inv, variant: stage });
 }
 
 type EmailRow = { createdAt: Date; meta: unknown };
@@ -228,8 +273,10 @@ export function decideSendState(
     };
   }
   if (legacySentAt) {
+    // No row: before tracking began this may well have been an email (changes cannot be checked); on/after it every
+    // real email has a row, so this send was only MARKED (Mark as Sent, counter sale, pickup hand-over, deposit).
     return {
-      state: "sentBeforeTracking",
+      state: legacySentAt < TRACKING_SINCE ? "sentBeforeTracking" : "markedSentNotEmailed",
       lastSentAt: legacySentAt.toISOString(),
       lastSentTo: null,
     };
@@ -253,12 +300,12 @@ export function lastEmailRow(db: any, tenantId: string | null | undefined, invoi
 
 /** What the detail read returns as `sendState`. */
 export async function readSendState(
-  db: any,
-  tenantId: string | null | undefined,
+  prisma: PrismaLike,
+  featureConfig: any,
   inv: { id: string; sentAt: Date | null },
 ): Promise<InvoiceSendState> {
-  const last = await lastEmailRow(db, tenantId, inv.id);
-  const current = last ? await invoiceFingerprintOf(db, inv.id) : null;
+  const last = await lastEmailRow(prisma.forTenant(), prisma.getTenantId(), inv.id);
+  const current = last ? await invoiceFingerprintOf(prisma, featureConfig, inv.id) : null;
   return decideSendState(last, current, inv.sentAt);
 }
 
@@ -408,7 +455,7 @@ export async function sendFieldsFor(
   const tenantId = prisma.getTenantId();
   const locked = await sendLockedByOrder({ featureConfig, tenantId }, inv, order);
   return {
-    sendState: await readSendState(prisma.forTenant(), tenantId, inv),
+    sendState: await readSendState(prisma, featureConfig, inv),
     sendLocked: locked ? { reason: "SENDS_AFTER_DELIVERY" } : null,
   };
 }

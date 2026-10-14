@@ -5,8 +5,6 @@ import { Send } from "lucide-react";
 import { Button } from "@routeflow/ui/web";
 import { ConfirmDialog } from "@/components/ConfirmDialog";
 import {
-  SENDS_AFTER_DELIVERY_COPY,
-  SENDS_AFTER_DELIVERY_SHORT,
   invoiceResendCopy,
   type InvoiceSendLock,
   type InvoiceSendState,
@@ -21,11 +19,14 @@ import {
 export function EmailInvoiceAction({
   sendState,
   sendLocked,
+  lockedLabel,
   loading,
   onSend,
 }: {
   sendState?: InvoiceSendState | null;
   sendLocked?: InvoiceSendLock | null;
+  /** The locked reason in the business's own words ("Sends after pickup" for a store-only business). */
+  lockedLabel: string;
   loading?: boolean;
   onSend: () => void;
 }) {
@@ -41,12 +42,12 @@ export function EmailInvoiceAction({
           leftIcon={<Send className="h-3.5 w-3.5" />}
           disabled
           aria-describedby="send-locked-reason"
-          title={SENDS_AFTER_DELIVERY_COPY}
+          title={`${lockedLabel}. Edit the order instead; the invoice updates automatically.`}
         >
           {copy.action}
         </Button>
         <span id="send-locked-reason" className="text-xs font-medium text-navy/60">
-          {SENDS_AFTER_DELIVERY_SHORT}
+          {lockedLabel}
         </span>
       </span>
     );
@@ -75,6 +76,7 @@ export function EmailInvoiceAction({
           description={copy.confirm}
           confirmLabel={copy.confirmButton}
           variant="secondary"
+          loading={loading}
         />
       )}
     </>

@@ -189,8 +189,9 @@ describeDb("Invoice re-email: tracked send state - real Postgres", () => {
         } as never),
       )) as { id: string }
     ).id;
-  const email = (id: string) =>
-    run(() => invoicesService.sendEmail(id, undefined, undefined, actor));
+  // "final": the stage a SENT invoice sends at by default, so the state after a send is not a stage change
+  const email = (id: string, variant: "draft" | "final" = "final") =>
+    run(() => invoicesService.sendEmail(id, undefined, variant, actor));
   const state = async (id: string) =>
     (
       (await run(() =>
@@ -218,6 +219,15 @@ describeDb("Invoice re-email: tracked send state - real Postgres", () => {
     await email(id);
     expect((await state(id)).state).toBe("unchanged");
     expect(await emailed(id)).toBe(2);
+  }, 60_000);
+
+  it("a proforma emailed from a DRAFT and then issued reads as modified: the FINAL is a different document", async () => {
+    const id = await create();
+    await email(id, "draft"); // the DRAFT-stamped proforma; the send issues the invoice (DRAFT -> SENT)
+    expect((await row(id)).status).toBe("SENT");
+    expect((await state(id)).state).toBe("changedSinceSent"); // an Email again would now send the FINAL stage
+    await email(id, "final");
+    expect((await state(id)).state).toBe("unchanged");
   }, 60_000);
 
   it("an internal-only change does not read as modified", async () => {
@@ -261,7 +271,20 @@ describeDb("Invoice re-email: tracked send state - real Postgres", () => {
     expect(s.lastSentAt).not.toBeNull();
   }, 60_000);
 
-  it("a legacy sentAt with no tracked row reads sentBeforeTracking", async () => {
+  it("a sentAt after the tracking cutover with no tracked row was only MARKED sent, not emailed", async () => {
+    const id = await create();
+    await prisma.invoice.update({
+      where: { id },
+      data: { status: "SENT", sentAt: new Date("2027-01-05T10:00:00Z") },
+    });
+    expect(await state(id)).toMatchObject({
+      state: "markedSentNotEmailed",
+      lastSentAt: "2027-01-05T10:00:00.000Z",
+      lastSentTo: null,
+    });
+  }, 60_000);
+
+  it("a legacy sentAt (before the cutover) with no tracked row reads sentBeforeTracking", async () => {
     const id = await create();
     await prisma.invoice.update({
       where: { id },

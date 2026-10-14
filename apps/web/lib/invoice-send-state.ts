@@ -5,8 +5,7 @@
  */
 export {
   EMAIL_AGAIN_STATUSES,
-  SENDS_AFTER_DELIVERY_COPY,
-  SENDS_AFTER_DELIVERY_SHORT,
+  sendsAfterLabel,
   canEmailAgain,
   invoiceResendCopy,
   invoiceSendStateLine,

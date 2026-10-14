@@ -7,6 +7,7 @@ const sent = {
   lastSentTo: "a@b.test",
 } as const;
 const changed = { ...sent, state: "changedSinceSent" } as const;
+const lock = { reason: "SENDS_AFTER_DELIVERY" } as const;
 
 describe("invoiceSendAction", () => {
   it("a DRAFT never emailed: a plain Send tile with no confirmation", () => {
@@ -33,21 +34,49 @@ describe("invoiceSendAction", () => {
     expect(a.confirmButton).toBe("Email updated invoice");
   });
 
-  it("a pending order mirror: the tile is shown LOCKED with the reason, never missing, and cannot confirm", () => {
-    expect(invoiceSendAction({ status: "DRAFT", pendingMirror: true })).toMatchObject({
+  it("a server lock: shown LOCKED with the reason in the business's words, never missing, no confirmation", () => {
+    expect(
+      invoiceSendAction({ status: "DRAFT", pendingMirror: true, sendLocked: lock }),
+    ).toMatchObject({
       show: true,
       locked: true,
-      label: "Sends after delivery",
+      label: "Sends once handed over or delivered",
       confirm: null,
     });
-    // the server's own lock wins even where the client derivation says unlocked
+    expect(
+      invoiceSendAction({ status: "DRAFT", pendingMirror: true, sendLocked: lock, storeOnly: true })
+        .label,
+    ).toBe("Sends after pickup");
     expect(
       invoiceSendAction({
         status: "DRAFT",
-        pendingMirror: false,
-        sendLocked: { reason: "SENDS_AFTER_DELIVERY" },
-      }),
-    ).toMatchObject({ locked: true });
+        pendingMirror: true,
+        sendLocked: lock,
+        storeOnly: false,
+      }).label,
+    ).toBe("Sends after delivery");
+  });
+
+  it("the client never derives the lock: a pending mirror WITHOUT sendLocked shows no send tile (older API)", () => {
+    expect(invoiceSendAction({ status: "DRAFT", pendingMirror: true })).toMatchObject({
+      show: false,
+      locked: false,
+    });
+  });
+
+  it("marked sent, not emailed: a first email with no confirmation (the detail line says it was only marked)", () => {
+    const marked = {
+      state: "markedSentNotEmailed",
+      lastSentAt: "2027-01-05T10:00:00.000Z",
+      lastSentTo: null,
+    } as const;
+    expect(
+      invoiceSendAction({ status: "SENT", pendingMirror: false, sendState: marked }),
+    ).toMatchObject({
+      show: true,
+      label: "Email invoice",
+      confirm: null,
+    });
   });
 
   it("VOID and written-off invoices show no send tile", () => {

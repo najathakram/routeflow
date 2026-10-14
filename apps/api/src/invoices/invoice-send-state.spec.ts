@@ -6,6 +6,7 @@ import { AUDIT_ACTIONS } from "../audit/audit-actions.constant";
 import { resolvePendingMirror } from "./pending-mirror";
 import {
   FINGERPRINT_VERSION,
+  TRACKING_SINCE,
   assertOrderInvoiceUnlockedFor,
   sendFieldsFor,
   SEND_THROTTLE_MAX,
@@ -13,6 +14,7 @@ import {
   decideSendState,
   guardedEmail,
   invoiceFingerprint,
+  invoiceFingerprintOf,
   recordInvoiceEmailed,
   sendLockedByOrder,
   type FingerprintSource,
@@ -28,8 +30,7 @@ const base = (): FingerprintSource => ({
   issueDate: new Date("2026-10-01T12:00:00Z"),
   dueDate: new Date("2026-10-31T12:00:00Z"),
   paymentTermsLabel: "Net 30",
-  referenceNumber: "PO-77",
-  subject: "October order",
+  variant: "final",
   notes: "Thanks!",
   terms: "Pay within 30 days",
   subtotal: "100.00",
@@ -40,6 +41,7 @@ const base = (): FingerprintSource => ({
   customer: {
     businessName: "Acme",
     contactName: "Pat",
+    phone: "555-0100",
     addresses: [{ line1: "1 Main St", line2: null, city: "Austin", state: "TX", zip: "78701" }],
   },
   items: [
@@ -92,8 +94,19 @@ describe("invoiceFingerprint", () => {
     ["the invoice number", (s) => (s.invoiceNumber = "INV-1002")],
     ["the issue date", (s) => (s.issueDate = new Date("2026-10-02T12:00:00Z"))],
     ["the due date", (s) => (s.dueDate = new Date("2026-11-01T12:00:00Z"))],
-    ["the reference / PO", (s) => (s.referenceNumber = "PO-78")],
-    ["the subject", (s) => (s.subject = "November order")],
+    [
+      "the DRAFT / FINAL stage (a final after a proforma is a different document)",
+      (s) => (s.variant = "draft"),
+    ],
+    ["the bill-to phone", (s) => (s.customer!.phone = "555-0199")],
+    [
+      "a payment row listed on the PDF (even an unconfirmed one)",
+      (s) => (s.payments = [{ amount: "5", method: "CASH", status: "DRAFT" }]),
+    ],
+    [
+      "the printed item code (barcode / SKU)",
+      (s) => (s.items![0].product = { barcode: "0123456789012" }),
+    ],
     ["the customer notes", (s) => (s.notes = "Thanks a lot!")],
     ["the terms text", (s) => (s.terms = "Pay within 15 days")],
     ["the bill-to name", (s) => (s.customer!.businessName = "Acme Inc")],
@@ -108,6 +121,8 @@ describe("invoiceFingerprint", () => {
 
   it("ignores internal-only fields: internal notes, override reasons, cost, margin, updatedAt", () => {
     const withInternal = base() as FingerprintSource & Record<string, unknown>;
+    withInternal.referenceNumber = "PO-77"; // renders on neither the PDF nor the email
+    withInternal.subject = "October order";
     withInternal.internalNotes = "customer is difficult";
     withInternal.updatedAt = new Date();
     (withInternal.items![0] as Record<string, unknown>).overrideReason = "manager ok";
@@ -153,12 +168,34 @@ describe("decideSendState", () => {
     );
   });
 
-  it("sentBeforeTracking: a legacy sentAt with no tracked row (emailed before this shipped)", () => {
+  it("sentBeforeTracking: a sentAt BEFORE the tracking cutover with no tracked row (may have been emailed)", () => {
     expect(decideSendState(null, null, new Date("2026-09-01T10:00:00Z"))).toEqual({
       state: "sentBeforeTracking",
       lastSentAt: "2026-09-01T10:00:00.000Z",
       lastSentTo: null,
     });
+    expect(decideSendState(null, null, new Date(TRACKING_SINCE.getTime() - 1)).state).toBe(
+      "sentBeforeTracking",
+    );
+  });
+
+  it("markedSentNotEmailed: a sentAt ON/AFTER the cutover with no row (Mark as Sent, counter sale, pickup hand-over)", () => {
+    expect(decideSendState(null, null, TRACKING_SINCE)).toEqual({
+      state: "markedSentNotEmailed",
+      lastSentAt: TRACKING_SINCE.toISOString(),
+      lastSentTo: null,
+    });
+    expect(decideSendState(null, null, new Date("2027-01-05T10:00:00Z")).state).toBe(
+      "markedSentNotEmailed",
+    );
+  });
+
+  it("a tracked row always wins over the cutover: a post-cutover send WITH a row is unchanged / changed", () => {
+    const after = {
+      createdAt: new Date("2027-01-05T10:00:00Z"),
+      meta: { fp: cur, to: "x@y.test" },
+    };
+    expect(decideSendState(after, cur, new Date("2027-01-05T10:00:00Z")).state).toBe("unchanged");
   });
 });
 
@@ -307,5 +344,46 @@ describe("the refusal and the read share ONE predicate (sendLocked == what the s
     await expect(
       assertOrderInvoiceUnlockedFor(prismaWith(order), {}, draft, { allowPreDelivery: true }),
     ).resolves.toBeUndefined();
+  });
+});
+
+describe("the bill-to address is ONE ordering for the PDF and the fingerprint", () => {
+  it("both read the customer's addresses with BILL_TO_ADDRESS_ORDER (default, oldest, id) and take the first", () => {
+    const { BILL_TO_ADDRESS_ORDER } = jest.requireActual("./invoice-bill-to");
+    expect(BILL_TO_ADDRESS_ORDER).toEqual([
+      { isDefault: "desc" },
+      { createdAt: "asc" },
+      { id: "asc" },
+    ]);
+    // eslint-disable-next-line @typescript-eslint/no-var-requires
+    const { FINGERPRINT_INCLUDE } = require("./invoice-send-state");
+    expect(FINGERPRINT_INCLUDE.customer.select.addresses).toEqual({
+      orderBy: BILL_TO_ADDRESS_ORDER,
+      take: 1,
+    });
+    // eslint-disable-next-line @typescript-eslint/no-var-requires
+    const pdf = require("fs").readFileSync(
+      require("path").join(__dirname, "invoice-pdf.service.ts"),
+      "utf8",
+    );
+    expect(pdf).toContain("addresses: { orderBy: BILL_TO_ADDRESS_ORDER }");
+  });
+});
+
+describe("invoiceFingerprintOf - the stage is part of the fingerprint", () => {
+  const inv = { id: "inv-1", ...base(), order: null };
+  const prisma = (found: unknown) =>
+    ({
+      getTenantId: () => "t-1",
+      forTenant: () => ({ invoice: { findUnique: jest.fn().mockResolvedValue(found) } }),
+    }) as never;
+
+  it("an explicit stage is used as given; no stage resolves the plain-send default like the PDF", async () => {
+    const draft = await invoiceFingerprintOf(prisma(inv), {}, "inv-1", "draft");
+    const final = await invoiceFingerprintOf(prisma(inv), {}, "inv-1", "final");
+    expect(draft).not.toBe(final);
+    // a SENT invoice sends FINAL by default (deriveInvoiceVariant), so the default equals the explicit final
+    expect(await invoiceFingerprintOf(prisma({ ...inv, status: "SENT" }), {}, "inv-1")).toBe(final);
+    expect(await invoiceFingerprintOf(prisma(null), {}, "inv-1")).toBeNull();
   });
 });

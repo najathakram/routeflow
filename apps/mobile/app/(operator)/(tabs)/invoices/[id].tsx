@@ -298,6 +298,11 @@ export default function InvoiceDetailScreen() {
         onError: (e: any) => {
           const code = e?.response?.data?.code;
           const msg = e?.response?.data?.message ?? e?.message ?? "Try again.";
+          if (code === "EMAIL_SEND_FAILED" && invoice.status !== "DRAFT") {
+            // #2088: a re-send of an invoice that was already sent: it is NOT "not sent", and Mark as Sent is meaningless.
+            showToast(msg);
+            return;
+          }
           if (code === "EMAIL_SEND_FAILED") {
             // Invoice is still DRAFT (R5 honesty). Offer Mark as Sent so a broken
             // mail transport can't leave it stuck. Mirrors the web recovery modal.
