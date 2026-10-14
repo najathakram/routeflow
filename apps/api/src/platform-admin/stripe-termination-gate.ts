@@ -1,7 +1,7 @@
 import { ConflictException, Logger } from "@nestjs/common";
 import { API_ERROR_CODES } from "../common/api-error-codes";
 import { isTerminalStripeSubscriptionStatus } from "../billing/stripe-period";
-import { AdminAuditAction } from "./audit-actions.constant";
+import { AdminAuditAction, type AdminAuditActionCode } from "./audit-actions.constant";
 import type { PrismaService } from "../prisma/prisma.service";
 import type { StripeService } from "../billing/stripe.service";
 
@@ -74,7 +74,7 @@ export interface StripeGateDeps {
   record: (
     tenantId: string,
     adminId: string | null,
-    action: AdminAuditAction,
+    action: AdminAuditActionCode,
     meta: Record<string, unknown>,
   ) => Promise<unknown>;
 }
