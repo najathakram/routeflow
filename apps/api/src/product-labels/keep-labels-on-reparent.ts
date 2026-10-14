@@ -14,6 +14,21 @@ import { ancestorsOf, readableChainFrom } from "./parent-carries";
  * engine's `computeEffectiveCategoryIds`); moving it to a parent that does not carry them would silently stop a legal
  * ban applying. So, in the SAME transaction as the `parentProductId` write, whatever was effective under the OLD parent
  * and is not under the NEW one (or none: an unlink) becomes the product's OWN INCLUDE, through the single label writer.
+ *
+ * SCOPE — LABELS ONLY. A selling restriction can also target a PRODUCT (`SellingRestriction.productId`), and the
+ * engine applies such a rule to every product whose LINEAGE contains the target (`ruleMatchesProduct` in
+ * selling-restrictions.core.ts: `lineageIds.has(rule.productId)`). So a rule targeting the OLD parent (or any old
+ * ancestor) ALSO stops applying to the variant after a move or an unlink, and nothing here carries it: this function
+ * only materialises labels. Row 509
+ * extends this function for that case: for each surface-ALL product-target rule on the old lineage that the new one
+ * lacks, it adds the variant as its OWN target, in the same transaction and under the same lock order (plan read-only,
+ * locks first, re-check under the row locks).
+ *
+ * LOCK ORDER (SA #3457 MUST 3). `planReparentLabels` is read-only and runs BEFORE any row lock; update() takes the
+ * planned labels' advisory locks (sorted, `lockLabelCategories`) right after its barcode locks, then the family/product
+ * rows FOR UPDATE. `keepLabelsOnReparent` runs after the parent write and re-checks against `lockedCategoryIds`: a
+ * label it would write outside that set is the retryable 409, never a label lock taken after a row lock (that order
+ * cycles with `setLabel`, which takes the label lock and then the product row's FK KEY SHARE: 40P01).
  */
 
 /**
