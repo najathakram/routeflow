@@ -9,7 +9,8 @@ import * as rGate from "./order-restriction-gate";
  * judges an order and was not judged at all. Switching to PICKUP moves the sale to the store's state; switching to ROUTE
  * or SHIP moves it to the customer's address (`jurisdiction.ts`). So the switch re-judges every live catalog line of the
  * order at the path it is switching TO, warns / refuses like any staff sale, and writes the acknowledged stamps in the
- * SAME transaction as the path change (under `Order FOR UPDATE`, the product set re-checked, the hash re-judged).
+ * SAME transaction as the path change (under `Order FOR UPDATE`, the product set re-checked, the hash re-judged). The
+ * lock and the product-set re-check run EVERY time a line was judged, clean read or not.
  *
  * The choke-point CALL stays in `OrdersService.updateFulfillPath` (the coverage ratchet scans class methods): it passes
  * `assertSellable` down, and this module builds the parameters around it. A DRAFT is judged at its promotion; a switch
@@ -22,7 +23,11 @@ type AssertSellable = (params: SellableLinesArgs) => Promise<rGate.Decision | un
 export interface FulfilSwitch {
   decision?: rGate.Decision;
   judged: ReadonlySet<string>;
-  /** Anything for the lock-time re-judge to find? When false the switch needs no transaction of its own. */
+  /**
+   * Always true once any line was judged: the Order lock, the lock-time product-set check and the write are ONE
+   * transaction even when the read before the lock was clean (a banned line added between that read and the write is a
+   * product the judgement never saw), the same as reopen. Only a switch that judges nothing (null) skips it.
+   */
   needsTx: boolean;
 }
 
@@ -52,5 +57,5 @@ export async function judgeFulfilSwitch(
     rGate.whole({ tenant, order, user, lines, dto: ack, fulfillPath: toPath }),
   );
   const judged = new Set<string>(lines.flatMap((l) => (l.productId ? [l.productId] : [])));
-  return { decision, judged, needsTx: !!decision?.active };
+  return { decision, judged, needsTx: true };
 }

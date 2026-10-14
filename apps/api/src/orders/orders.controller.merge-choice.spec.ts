@@ -122,6 +122,42 @@ describe("OrdersController — merge choice vs orderDate", () => {
     );
   });
 
+  it("row 510: the fold forwards the staff's acknowledgement (reasons + hash) to updateOrderItems unchanged", async () => {
+    const restrictionOverrides = [{ lineKey: "n:1", reason: "Licensed buyer, paperwork on file" }];
+    await controller.create(
+      {
+        customerId: "cust-1",
+        items: [{ productId: "prod-1", qty: 1 }],
+        mergeChoice: "merge",
+        restrictionOverrides,
+        warningHash: "rw1:abc",
+      } as any,
+      operatorPayload,
+    );
+
+    expect(ordersService.updateOrderItems).toHaveBeenCalledWith(
+      "ord-open",
+      expect.objectContaining({ restrictionOverrides, warningHash: "rw1:abc", replaceAll: true }),
+      operatorPayload,
+      expect.objectContaining({ isCreateMerge: true }),
+    );
+  });
+
+  it("row 510: a merge with no acknowledgement sends none (the fold never invents one)", async () => {
+    await controller.create(
+      {
+        customerId: "cust-1",
+        items: [{ productId: "prod-1", qty: 1 }],
+        mergeChoice: "merge",
+      } as any,
+      operatorPayload,
+    );
+
+    const [, foldDto] = ordersService.updateOrderItems.mock.calls[0];
+    expect(foldDto.restrictionOverrides).toBeUndefined();
+    expect(foldDto.warningHash).toBeUndefined();
+  });
+
   it("a dated order chosen as separate goes through create()", async () => {
     const orderDate = isoDaysAgo(4);
 
