@@ -7,18 +7,26 @@ import {
   type BlockedLine,
   type RestrictionAck,
   type RestrictionWarningError,
+  type RestrictionWarningLine,
 } from "@routeflow/types";
 import { restrictionReasonText } from "@/lib/api/selling-restricted";
 import {
   RESTRICTION_COPY as COPY,
   buildAck,
   checkOverrideReason,
+  driverBlockRows,
   ruleText,
 } from "@/lib/api/restriction-warning";
 
 export type RestrictionDialogView =
   | { kind: "warning"; warning: RestrictionWarningError }
-  | { kind: "blocked"; message: string; lines: BlockedLine[] };
+  | {
+      kind: "blocked";
+      message: string;
+      lines: BlockedLine[];
+      /** Per-rule lines the server adds to the driver body: the same text and badge staff see. */
+      ruleLines?: RestrictionWarningLine[];
+    };
 
 interface Props {
   /** null = closed. */
@@ -39,6 +47,7 @@ interface Props {
  */
 export function RestrictionWarningDialog({ view, initialReason = "", onConfirm, onCancel }: Props) {
   const [reason, setReason] = React.useState(initialReason);
+  const reasonRef = React.useRef<HTMLTextAreaElement | null>(null);
   const returnFocusTo = React.useRef<HTMLElement | null>(null);
   const lastFocused = React.useRef<HTMLElement | null>(null);
   React.useEffect(() => {
@@ -57,9 +66,14 @@ export function RestrictionWarningDialog({ view, initialReason = "", onConfirm, 
     open: !!view,
     onClose: onCancel,
     scroll: true,
-    onOpenAutoFocus: () => {
+    onOpenAutoFocus: (e: Event) => {
       const active = document.activeElement as HTMLElement | null;
       returnFocusTo.current = active && active !== document.body ? active : lastFocused.current;
+      // The next step is typing a reason, so land there instead of on the X (the blocked form has no field).
+      if (reasonRef.current) {
+        e.preventDefault();
+        reasonRef.current.focus();
+      }
     },
     onCloseAutoFocus: (e: Event) => {
       const el = returnFocusTo.current;
@@ -80,15 +94,34 @@ export function RestrictionWarningDialog({ view, initialReason = "", onConfirm, 
         footer={<Button onClick={onCancel}>{COPY.ok}</Button>}
       >
         <ul className="space-y-3" aria-label="Blocked items">
-          {view.lines.map((l) => (
-            <li
-              key={`${l.productId}-${l.ruleId ?? l.reason}`}
-              className="rounded-lg border border-surface-border p-3"
-            >
-              <p className="font-medium text-navy">{l.productName}</p>
-              <p className="mt-1 text-sm text-danger">{restrictionReasonText(l)}</p>
-            </li>
-          ))}
+          {(view.ruleLines ?? []).length > 0
+            ? driverBlockRows(view.ruleLines ?? []).map((row) => (
+                <li key={row.key} className="rounded-lg border border-surface-border p-3">
+                  <p className="font-medium text-navy">{row.name}</p>
+                  {row.items.map((it, i) => (
+                    <p
+                      key={i}
+                      className="mt-1 flex flex-wrap items-center gap-2 text-sm text-danger"
+                    >
+                      <span>{it.text}</span>
+                      {it.legal && (
+                        <span className="rounded bg-danger-bg px-1.5 py-0.5 text-xs font-medium">
+                          {COPY.legalBadge}
+                        </span>
+                      )}
+                    </p>
+                  ))}
+                </li>
+              ))
+            : view.lines.map((l) => (
+                <li
+                  key={`${l.productId}-${l.ruleId ?? l.reason}`}
+                  className="rounded-lg border border-surface-border p-3"
+                >
+                  <p className="font-medium text-navy">{l.productName}</p>
+                  <p className="mt-1 text-sm text-danger">{restrictionReasonText(l)}</p>
+                </li>
+              ))}
         </ul>
       </Modal>
     );
@@ -139,6 +172,7 @@ export function RestrictionWarningDialog({ view, initialReason = "", onConfirm, 
       </ul>
       <div className="mt-4">
         <Textarea
+          ref={reasonRef}
           label={COPY.reasonLabel}
           placeholder={COPY.reasonPlaceholder}
           value={reason}

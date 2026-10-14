@@ -14,6 +14,7 @@ import {
   type BlockedLine,
   type RestrictionAck,
   type RestrictionWarningError,
+  type RestrictionWarningLine,
   type RestrictionWarningRule,
 } from "@routeflow/types";
 
@@ -48,14 +49,35 @@ export function parseRestrictionWarning(err: unknown): RestrictionWarningError |
 /** The hard block a DRIVER gets (409 SELLING_RESTRICTED with the fixed "Ask the office" message): no override exists. */
 export function parseDriverRestrictionBlock(
   err: unknown,
-): { message: string; lines: BlockedLine[] } | null {
+): { message: string; lines: BlockedLine[]; ruleLines: RestrictionWarningLine[] } | null {
   const res = (err as AxiosLike)?.response;
   if (res?.status !== 409 || res.data?.code !== API_ERROR_CODES.SELLING_RESTRICTED) return null;
   if (res.data.message !== DRIVER_RESTRICTION_BLOCK_MESSAGE) return null;
   const lines = Array.isArray(res.data.blockedLines)
     ? (res.data.blockedLines as BlockedLine[])
     : [];
-  return { message: DRIVER_RESTRICTION_BLOCK_MESSAGE, lines };
+  const ruleLines = Array.isArray(res.data.lines)
+    ? (res.data.lines as RestrictionWarningLine[])
+    : [];
+  return { message: DRIVER_RESTRICTION_BLOCK_MESSAGE, lines, ruleLines };
+}
+
+export interface BlockRow {
+  key: string;
+  name: string;
+  items: { text: string; legal: boolean }[];
+}
+
+/** The driver block's rows from the server's per-line rules: the SAME text and legal flag staff see. */
+export function driverBlockRows(ruleLines: RestrictionWarningLine[]): BlockRow[] {
+  return ruleLines.map((l) => ({
+    key: l.lineKey,
+    name: l.displayName,
+    items:
+      l.rules.length === 0
+        ? [{ text: RESTRICTION_COPY.unchecked, legal: false }]
+        : l.rules.map((r) => ({ text: ruleText(r), legal: r.legal })),
+  }));
 }
 
 export interface ReasonCheck {

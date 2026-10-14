@@ -2,6 +2,7 @@ import { ConflictException, Injectable, Logger } from "@nestjs/common";
 import type {
   BlockedLine,
   BuyerBlockedLine,
+  RestrictionWarningLine,
   BuyerSellingRestrictedError,
   RestrictionAck,
   RestrictionAddressPrecedence,
@@ -674,11 +675,16 @@ function stampTargetOf(params: SellableLinesParams): StampTarget | null {
  * `assertLinesSellable` and the protocol's hard block for a principal who may not override. Built HERE with the buyer
  * body, at the one construction site (the B612 pin). `message` overrides the summary (the DRIVER's "ask the office").
  */
-export function staffRestrictedError(reasons: BlockedLine[], message?: string): ConflictException {
+export function staffRestrictedError(
+  reasons: BlockedLine[],
+  message?: string,
+  lines?: RestrictionWarningLine[],
+): ConflictException {
   const body: SellingRestrictedError = {
     code: API_ERROR_CODES.SELLING_RESTRICTED,
     message: message ?? restrictedSummary(reasons),
     blockedLines: reasons,
+    ...(lines && lines.length > 0 ? { lines } : {}),
   };
   return new ConflictException(body);
 }

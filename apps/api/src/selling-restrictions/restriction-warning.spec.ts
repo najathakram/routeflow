@@ -56,11 +56,12 @@ const judgement = (
   basis,
 });
 const blocked = jest.fn(
-  (reasons: BlockedLine[], message?: string) =>
+  (reasons: BlockedLine[], message?: string, lines?: unknown) =>
     new ConflictException({
       code: "SELLING_RESTRICTED",
       message: message ?? "blocked",
       blockedLines: reasons,
+      ...(lines ? { lines } : {}),
     }),
 );
 const lines: GateLine[] = [
@@ -290,8 +291,34 @@ describe("decideStaffWrite: who may override", () => {
         code: "SELLING_RESTRICTED",
         message: DRIVER_RESTRICTION_BLOCK_MESSAGE,
       });
-      expect(blocked).toHaveBeenCalledWith(expect.any(Array), DRIVER_RESTRICTION_BLOCK_MESSAGE);
+      expect(blocked).toHaveBeenCalledWith(
+        expect.any(Array),
+        DRIVER_RESTRICTION_BLOCK_MESSAGE,
+        expect.any(Array),
+      );
     }
+  });
+
+  it("a DRIVER's block carries the per-rule lines (legal flag + text) with no warningHash", () => {
+    const e = thrown(() => decideStaffWrite(base({ principal: { role: "DRIVER", sub: "d" } })));
+    const body = e.getResponse();
+    expect(body.warningHash).toBeUndefined();
+    expect(body.lines).toEqual([
+      {
+        lineKey: "n:0",
+        productId: "p1",
+        displayName: "Product p1",
+        outcome: "BLOCK",
+        rules: [
+          {
+            id: "r1",
+            states: ["CA"],
+            legal: true,
+            reasonText: "This product is banned in CA by law.",
+          },
+        ],
+      },
+    ]);
   });
 
   it("a SUPER_ADMIN and a system caller (no principal) are hard-blocked too, with the engine's own message", () => {
@@ -299,7 +326,7 @@ describe("decideStaffWrite: who may override", () => {
       blocked.mockClear();
       const e = thrown(() => decideStaffWrite(base({ principal, ack: ackFor() })));
       expect(e.getResponse().code).toBe("SELLING_RESTRICTED");
-      expect(blocked).toHaveBeenCalledWith(expect.any(Array), undefined);
+      expect(blocked).toHaveBeenCalledWith(expect.any(Array), undefined, undefined);
     }
   });
 
@@ -472,7 +499,11 @@ describe("recheck under the write's lock", () => {
     expect(() => withBreach.recheck([{ id: "li-p1", productId: "p1", status: "PENDING" }])).toThrow(
       ConflictException,
     );
-    expect(blocked).toHaveBeenCalledWith(expect.any(Array), DRIVER_RESTRICTION_BLOCK_MESSAGE);
+    expect(blocked).toHaveBeenCalledWith(
+      expect.any(Array),
+      DRIVER_RESTRICTION_BLOCK_MESSAGE,
+      expect.any(Array),
+    );
   });
 
   it("the judged lines can be replaced (promote / reopen judge every live line of the locked order)", () => {

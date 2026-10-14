@@ -16,6 +16,7 @@ import {
   type BlockedLine,
   type RestrictionAck,
   type RestrictionWarningError,
+  type RestrictionWarningLine,
 } from "@routeflow/types";
 import { FormField, FormTextInput } from "./FormSheet";
 import { restrictionReasonText } from "../lib/selling-restricted";
@@ -23,12 +24,19 @@ import {
   RESTRICTION_COPY as COPY,
   buildAck,
   checkOverrideReason,
+  driverBlockRows,
   ruleText,
 } from "../lib/restriction-warning";
 
 export type RestrictionModalView =
   | { kind: "warning"; warning: RestrictionWarningError }
-  | { kind: "blocked"; message: string; lines: BlockedLine[] };
+  | {
+      kind: "blocked";
+      message: string;
+      lines: BlockedLine[];
+      /** Per-rule lines the server adds to the driver body: the same text and badge staff see. */
+      ruleLines?: RestrictionWarningLine[];
+    };
 
 interface Props {
   /** null = closed. */
@@ -67,28 +75,40 @@ export function RestrictionWarningModal({ view, initialReason = "", onConfirm, o
           </View>
           <Text style={styles.message}>{blocked ? COPY.blockedBody : COPY.body}</Text>
           <ScrollView style={styles.list} keyboardShouldPersistTaps="handled">
-            {view.kind === "blocked"
-              ? view.lines.map((l) => (
-                  <View key={`${l.productId}:${l.ruleId ?? l.reason}`} style={styles.row}>
-                    <Text style={styles.name}>{l.productName}</Text>
-                    <Text style={styles.reason}>{restrictionReasonText(l)}</Text>
+            {view.kind === "blocked" && (view.ruleLines ?? []).length > 0
+              ? driverBlockRows(view.ruleLines ?? []).map((row) => (
+                  <View key={row.key} style={styles.row}>
+                    <Text style={styles.name}>{row.name}</Text>
+                    {row.items.map((it, i) => (
+                      <View key={i} style={styles.ruleRow}>
+                        <Text style={styles.reason}>{it.text}</Text>
+                        {it.legal ? <Text style={styles.badge}>{COPY.legalBadge}</Text> : null}
+                      </View>
+                    ))}
                   </View>
                 ))
-              : view.warning.lines.map((l) => (
-                  <View key={l.lineKey} style={styles.row}>
-                    <Text style={styles.name}>{l.displayName}</Text>
-                    {l.rules.length === 0 ? (
-                      <Text style={styles.reason}>{COPY.unchecked}</Text>
-                    ) : (
-                      l.rules.map((r) => (
-                        <View key={r.id} style={styles.ruleRow}>
-                          <Text style={styles.reason}>{ruleText(r)}</Text>
-                          {r.legal ? <Text style={styles.badge}>{COPY.legalBadge}</Text> : null}
-                        </View>
-                      ))
-                    )}
-                  </View>
-                ))}
+              : view.kind === "blocked"
+                ? view.lines.map((l) => (
+                    <View key={`${l.productId}:${l.ruleId ?? l.reason}`} style={styles.row}>
+                      <Text style={styles.name}>{l.productName}</Text>
+                      <Text style={styles.reason}>{restrictionReasonText(l)}</Text>
+                    </View>
+                  ))
+                : view.warning.lines.map((l) => (
+                    <View key={l.lineKey} style={styles.row}>
+                      <Text style={styles.name}>{l.displayName}</Text>
+                      {l.rules.length === 0 ? (
+                        <Text style={styles.reason}>{COPY.unchecked}</Text>
+                      ) : (
+                        l.rules.map((r) => (
+                          <View key={r.id} style={styles.ruleRow}>
+                            <Text style={styles.reason}>{ruleText(r)}</Text>
+                            {r.legal ? <Text style={styles.badge}>{COPY.legalBadge}</Text> : null}
+                          </View>
+                        ))
+                      )}
+                    </View>
+                  ))}
           </ScrollView>
           {view.kind === "warning" ? (
             <FormField

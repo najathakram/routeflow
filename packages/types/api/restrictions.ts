@@ -56,6 +56,8 @@ export interface SellingRestrictedError {
   /** One human sentence (a client with no blocked-lines panel toasts it); the detail is `blockedLines`. */
   message: string;
   blockedLines: BlockedLine[];
+  /** DRIVER block only: the same per-line outcome/rules staff see in RESTRICTION_WARNING (no hash, no override). */
+  lines?: RestrictionWarningLine[];
 }
 
 /**

@@ -328,7 +328,11 @@ function validReason(lineKey: string, raw: unknown): string {
 // ─── the decision ─────────────────────────────────────────────────────────────────────────────────────────────────
 
 /** The service's ONE builder of the staff SELLING_RESTRICTED 409 (the B612 pin: no other file builds that body). */
-export type StaffBlock = (reasons: BlockedLine[], message?: string) => Error;
+export type StaffBlock = (
+  reasons: BlockedLine[],
+  message?: string,
+  lines?: RestrictionWarningLine[],
+) => Error;
 
 interface DecisionInput {
   judgement: StaffJudgement;
@@ -389,6 +393,8 @@ function raise(
   return d.blocked(
     d.judgement.reasons.filter((r) => products.has(r.productId)),
     d.driver ? DRIVER_RESTRICTION_BLOCK_MESSAGE : undefined,
+    // The driver modal shows the same per-line outcome staff see (legal flag + text); no hash, no override.
+    d.driver ? rows.map((r) => warningLine(r, d.judgement)) : undefined,
   );
 }
 

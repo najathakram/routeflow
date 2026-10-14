@@ -135,6 +135,18 @@ describe("RestrictionWarningDialog (warning)", () => {
     expect(screen.getByRole("button", { name: "Sell anyway" })).toBeEnabled();
   });
 
+  it("opens with focus in the Reason field, not on the close button", () => {
+    setup();
+    expect(document.activeElement).toBe(screen.getByLabelText(/reason/i));
+  });
+
+  it("still closes on Escape", async () => {
+    const user = userEvent.setup();
+    const { onCancel } = setup();
+    await user.keyboard("{Escape}");
+    expect(onCancel).toHaveBeenCalled();
+  });
+
   it("renders nothing when closed", () => {
     setup({ view: null });
     expect(screen.queryByRole("dialog")).toBeNull();
@@ -164,5 +176,31 @@ describe("RestrictionWarningDialog (driver hard block)", () => {
     expect(screen.queryByRole("button", { name: "Sell anyway" })).toBeNull();
     fireEvent.click(screen.getByRole("button", { name: "OK" }));
     expect(onCancel).toHaveBeenCalled();
+  });
+  it("shows the same legal line and badge staff see when the server sent per-rule lines", () => {
+    setup({
+      view: {
+        ...view,
+        ruleLines: [
+          {
+            lineKey: "n:0",
+            productId: "p1",
+            displayName: "Acme Gummies",
+            outcome: "BLOCK",
+            rules: [
+              {
+                id: "r1",
+                states: ["CA"],
+                legal: true,
+                reasonText: "This product is banned in CA by law.",
+              },
+            ],
+          },
+        ],
+      },
+    });
+    expect(screen.getByText("This product is banned in CA by law.")).toBeInTheDocument();
+    expect(screen.getByText("Legal ban")).toBeInTheDocument();
+    expect(screen.queryByText("Restricted in CA")).toBeNull();
   });
 });

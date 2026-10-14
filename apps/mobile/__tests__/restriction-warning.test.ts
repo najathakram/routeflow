@@ -4,9 +4,11 @@ import {
   type RestrictionWarningError,
 } from "@routeflow/types";
 import {
+  RESTRICTION_COPY,
   buildAck,
   checkOverrideReason,
   mergeAck,
+  driverBlockRows,
   parseDriverRestrictionBlock,
   parseRestrictionWarning,
   ruleText,
@@ -87,7 +89,50 @@ describe("parseDriverRestrictionBlock", () => {
         blockedLines,
       }),
     );
-    expect(got).toEqual({ message: DRIVER_RESTRICTION_BLOCK_MESSAGE, lines: blockedLines });
+    expect(got).toEqual({
+      message: DRIVER_RESTRICTION_BLOCK_MESSAGE,
+      lines: blockedLines,
+      ruleLines: [],
+    });
+  });
+  const ruleLines = [
+    {
+      lineKey: "n:0",
+      productId: "p1",
+      displayName: "Acme Gummies",
+      outcome: "BLOCK" as const,
+      rules: [
+        {
+          id: "r1",
+          states: ["CA"],
+          legal: true,
+          reasonText: "This product is banned in CA by law.",
+        },
+      ],
+    },
+  ];
+  it("carries the per-rule lines the server adds to the driver body", () => {
+    const got = parseDriverRestrictionBlock(
+      axiosErr(409, {
+        code: "SELLING_RESTRICTED",
+        message: DRIVER_RESTRICTION_BLOCK_MESSAGE,
+        blockedLines,
+        lines: ruleLines,
+      }),
+    );
+    expect(got?.ruleLines).toEqual(ruleLines);
+  });
+  it("driverBlockRows shows the same outcome text and legal badge staff see", () => {
+    expect(driverBlockRows(ruleLines)).toEqual([
+      {
+        key: "n:0",
+        name: "Acme Gummies",
+        items: [{ text: "This product is banned in CA by law.", legal: true }],
+      },
+    ]);
+    expect(driverBlockRows([{ ...ruleLines[0], rules: [] }])[0].items).toEqual([
+      { text: RESTRICTION_COPY.unchecked, legal: false },
+    ]);
   });
   it("is null for an ordinary SELLING_RESTRICTED (buyer or other staff refusal)", () => {
     expect(
