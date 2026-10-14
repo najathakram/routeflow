@@ -1160,6 +1160,48 @@ describe("SellingRestrictionsService.evaluate", () => {
         expect((await service.getEnableReadiness(T)).businessStateMissing).toBe(true);
       });
 
+      describe("L8 M1: a PICKUP-ONLY tenant's portal is judged by the store state, so a portal rule needs one", () => {
+        const portalRule = () => stateRule({ surface: "BUYER_PORTAL" });
+        const modelIs = (mode: string | null) =>
+          prisma.tenantFeatureConfig.findFirst.mockResolvedValue(mode ? { mode } : null);
+
+        it("pickup + a portal-only STATE rule + no store state is NOT READY (the existing reporting shape)", async () => {
+          modelIs("pickup");
+          prisma.sellingRestriction.findMany.mockResolvedValue([portalRule()]);
+          prisma.tenantConfig.findUnique.mockResolvedValue(null);
+          expect(await service.getEnableReadiness(T)).toMatchObject({
+            ready: false,
+            businessStateMissing: true,
+          });
+          await expect(service.assertReadyToEnable(T)).rejects.toMatchObject({
+            response: { code: "SELLING_RESTRICTIONS_NOT_READY" },
+          });
+        });
+
+        it("pickup + a portal-only STATE rule + a store state is READY", async () => {
+          modelIs("pickup");
+          prisma.sellingRestriction.findMany.mockResolvedValue([portalRule()]);
+          prisma.tenantConfig.findUnique.mockResolvedValue({ state: "TX" });
+          expect(await service.getEnableReadiness(T)).toMatchObject({
+            ready: true,
+            businessStateMissing: false,
+          });
+        });
+
+        it.each(["pickup_ship", "ship", "both", "delivery", null])(
+          "%s + a portal-only STATE rule + no store state stays READY (the buyer's state judges it)",
+          async (mode) => {
+            modelIs(mode);
+            prisma.sellingRestriction.findMany.mockResolvedValue([portalRule()]);
+            prisma.tenantConfig.findUnique.mockResolvedValue(null);
+            expect(await service.getEnableReadiness(T)).toMatchObject({
+              ready: true,
+              businessStateMissing: false,
+            });
+          },
+        );
+      });
+
       it("a business state in the legacy settings.state counts as present", async () => {
         prisma.sellingRestriction.findMany.mockResolvedValue([stateRule()]);
         prisma.tenantConfig.findUnique.mockResolvedValue(null);

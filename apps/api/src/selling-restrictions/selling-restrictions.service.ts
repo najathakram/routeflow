@@ -371,8 +371,9 @@ export class SellingRestrictionsService {
 
   /**
    * True only when a business state is REQUIRED and absent. A business state matters only when some active STATE
-   * rule could need it (the same `stateRuleInPlay` evaluate() asks, on the STAFF channel: an `ALL` legal-ban rule):
-   * a tenant with no such rule (none, FEDERAL only, or only lifted / expired / buyer-portal-only ones) never needs
+   * rule could need it (the same `stateRuleInPlay` evaluate() asks, on the STAFF channel: an `ALL` legal-ban rule, or
+   * on the portal channel of a PICKUP-ONLY tenant):
+   * a tenant with no such rule (none, FEDERAL only, or only lifted / expired ones, or portal-only ones on a shipping tenant) never needs
    * one. The ONE answer for the readiness probe and the "customers without a state" card.
    */
   async businessStateMissing(tenantId: string, at: Date = new Date()): Promise<boolean> {
@@ -383,10 +384,13 @@ export class SellingRestrictionsService {
         where: { tenantId, jurisdiction: "STATE", AND: [activeRuleWhere(at)] },
         select: RULE_FACTS_SELECT,
       });
-    return (
-      stateRuleInPlay(stateRules, "STAFF", at) &&
-      (await tenantBusinessState(this.prisma, tenantId)) === null
-    );
+    // L8 M1: a pickup-only tenant's PORTAL is judged by the store state too, so a state rule that binds the portal
+    // (any surface) needs one there as well. Read lazily: only when no staff rule already asks for it.
+    const needed =
+      stateRuleInPlay(stateRules, "STAFF", at) ||
+      (stateRuleInPlay(stateRules, "BUYER_PORTAL", at) &&
+        (await tenantIsPickupOnly(this.prisma, tenantId)));
+    return needed && (await tenantBusinessState(this.prisma, tenantId)) === null;
   }
 
   /**
