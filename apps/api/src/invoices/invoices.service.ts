@@ -206,7 +206,7 @@ import {
   catalogRestrictionLines,
 } from "./invoice-restriction-lines";
 import { buildManualInvoiceLines } from "./manual-invoice-lines";
-import { loadOverride, overrideFieldsOf, type ManualInvoiceDto } from "./invoice-line-override";
+import { loadOverride, type ManualInvoiceDto } from "./invoice-line-override";
 import {
   foldCategoryTax,
   loadManualLineContext,
@@ -989,16 +989,15 @@ export class InvoicesService {
       msrp: null as number | null,
       notes: li.notes ?? null, // the per-line note, verbatim from the order line (buyer-visible)
       unitPrice,
-      // `unitPrice` is ALREADY the net (post-override) price — the order stores the
-      // override as a reduced unitPrice plus `originalPrice` for the strikethrough.
-      // Re-deriving a `discount` from originalPrice here double-counts it: every
-      // invoice consumer computes `computeLineSubtotal(unitPrice) - discount`, so a
-      // line of {unitPrice 90, discount 10} would bill 80 for a 100→90 override.
-      // Keep discount 0; the savings is shown via `originalPrice` (mirrors the order).
+      // `unitPrice` is ALREADY the net (post-override) price: the order stores the override as a reduced unitPrice
+      // plus `originalPrice` for the strikethrough. Re-deriving a `discount` from originalPrice double-counts it:
+      // every invoice consumer computes `computeLineSubtotal(unitPrice) - discount`, so {unitPrice 90, discount 10}
+      // would bill 80 for a 100→90 override. Keep discount 0; `originalPrice` shows the savings (mirrors the order).
       discount: 0,
       originalPrice: li.originalPrice != null ? Number(li.originalPrice) : null,
       priceType: li.priceType ?? "STANDARD",
-      ...overrideFieldsOf(li), // H3b: verbatim with the override price; STAFF-ONLY
+      overrideReason: li.overrideReason ?? null, // H3b: verbatim with the override price; STAFF-ONLY
+      overriddenBy: li.overriddenBy ?? null, // (never on the buyer portal nor the customer PDF)
       // B294: placeholder — this builder has no order-level context (isTaxExempt,
       // order.tax/order.subtotal), so every caller MUST overwrite this via
       // `applyOrderDerivedTaxRate(itemsData, order, isTaxExempt)` right after
@@ -4335,7 +4334,8 @@ export class InvoicesService {
       // Price markers and the per-line note travel too (a copy must not reset DISCOUNTED to STANDARD).
       originalPrice: (i as any).originalPrice != null ? Number((i as any).originalPrice) : null,
       priceType: (i as any).priceType ?? undefined, // undefined -> the schema default (STANDARD)
-      ...overrideFieldsOf(i as any), // H3b: travels with the override price
+      overrideReason: (i as any).overrideReason ?? null, // H3b: travels with the override price
+      overriddenBy: (i as any).overriddenBy ?? null,
       notes: (i as any).notes ?? null,
       // BUY_N_GET_M snapshot travels with the copy — the subtotal is verbatim, and
       // without the snapshot the copy's first edit would re-price the line to full.

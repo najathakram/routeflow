@@ -55,6 +55,8 @@ const storedSpecial = {
 function makeCtx(held: Array<Record<string, unknown>> = [storedOverride]) {
   const ctx = {
     tx: { orderItem: { create: jest.fn(), update: jest.fn() } },
+    // SA ruling #3418 (train M1): a staff edit's fresh line is STAFF-authored; a carried line keeps its author
+    authorOf: Object.assign(() => "STAFF" as const, { editor: "STAFF" as const }),
     orderId: "ord-1",
     ladders: new Map([["p1", units]]),
     tenantId: "t1",

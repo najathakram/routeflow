@@ -245,13 +245,3 @@ export function priceLineItem<T extends { productId?: string | null; unitPrice: 
   });
   return { item: { ...item, unitPrice: priced.unitPrice }, stamp: priced.stamp };
 }
-
-/**
- * H3b: a line's staff price-override reason and author, copied verbatim with the override price (null when the
- * source line has none). STAFF-ONLY: never selected by the buyer portal nor rendered on the customer PDF.
- * (Train M1: one spread keeps invoices.service.ts under its size-ratchet cap.)
- */
-export const overrideFieldsOf = (line: { overrideReason?: unknown; overriddenBy?: unknown }) => ({
-  overrideReason: (line.overrideReason ?? null) as string | null,
-  overriddenBy: (line.overriddenBy ?? null) as string | null,
-});
