@@ -1,6 +1,7 @@
 import { useQuery } from "@tanstack/react-query";
 import type { TenantFeaturesResponse } from "@routeflow/types";
 import { apiClient } from "./api-client";
+import { staffFormFulfilment } from "./fulfilment-caps";
 import { useAuthStore } from "./auth-store";
 import { useTenantStore } from "./tenant-store";
 
@@ -20,4 +21,10 @@ export function useTenantFeatures() {
     retry: 2,
     enabled: isAuthenticated,
   });
+}
+
+/** Staff-side fulfilment options from the same `/tenants/me/features` answer (web `useStaffFulfilment`). */
+export function useStaffFulfilment() {
+  const { data } = useTenantFeatures();
+  return staffFormFulfilment(data);
 }
