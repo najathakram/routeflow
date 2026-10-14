@@ -47,6 +47,7 @@ import {
   type SaleLinePricing,
 } from "@/lib/sale-line-pricing";
 import { reasonRequiredMessage } from "@/lib/staff-price-override";
+import { INVOICE_STALE_COPY, isInvoiceStale } from "@/lib/invoice-stale";
 import { apiClient } from "@/lib/api-client";
 import { useSaleAttemptKey } from "@/lib/use-sale-attempt-key";
 import type { UnknownSale } from "@routeflow/types/sale-attempt";
@@ -822,6 +823,34 @@ export default function NewInvoicePage() {
   // Track the draft id we've previewed so subsequent "Preview" clicks update
   // the same draft instead of creating a new one each time.
   const [currentDraftId, setCurrentDraftId] = React.useState<string | null>(null);
+  // H4: the composer's own draft token: the updatedAt of the last create / update / read of THAT draft, sent as
+  // expectedUpdatedAt on the next PATCH (a 409 INVOICE_STALE then means someone else changed it).
+  const draftToken = React.useRef<string | undefined>(undefined);
+  /** Creates the preview draft, or saves the dto onto it; returns its id and keeps the token current. */
+  async function upsertDraft(dto: unknown): Promise<string> {
+    if (currentDraftId) {
+      const saved: any = await updateInvoice.mutateAsync({
+        id: currentDraftId,
+        ...(dto as object),
+        expectedUpdatedAt: draftToken.current,
+      } as any);
+      draftToken.current = saved?.updatedAt;
+      return currentDraftId;
+    }
+    const created: any = await createInvoice.mutateAsync(
+      dto as Parameters<typeof createInvoice.mutate>[0],
+    );
+    draftToken.current = created?.updatedAt;
+    setCurrentDraftId(created.id);
+    return created.id;
+  }
+  /** H4: someone else changed this draft since the composer last saw it: fixed copy, never the server's. */
+  const staleCopy = (err: unknown) => (isInvoiceStale(err) ? INVOICE_STALE_COPY : undefined);
+  /** The first PDF render writes the draft's pdfUrl (a new updatedAt): re-read the token after it. */
+  async function refreshDraftToken(id: string) {
+    const fresh = await apiClient.get<{ updatedAt?: string }>(`/invoices/${id}`);
+    draftToken.current = fresh.data?.updatedAt;
+  }
   const [previewUrl, setPreviewUrl] = React.useState<string | null>(null);
   const [previewLoading, setPreviewLoading] = React.useState(false);
 
@@ -1426,18 +1455,8 @@ export default function NewInvoicePage() {
     if (!validateForPreview()) return;
     setPreviewLoading(true);
     try {
-      const dto = buildPartialInvoiceDto(lines);
-      let invoiceId = currentDraftId;
-      if (invoiceId) {
-        // Update the existing draft so the preview reflects edits
-        await updateInvoice.mutateAsync({ id: invoiceId, ...dto } as any);
-      } else {
-        const created: any = await createInvoice.mutateAsync(
-          dto as Parameters<typeof createInvoice.mutate>[0],
-        );
-        invoiceId = created.id;
-        setCurrentDraftId(invoiceId);
-      }
+      // Create the draft, or update it so the preview reflects edits (H4: with its token).
+      const invoiceId = await upsertDraft(buildPartialInvoiceDto(lines));
       // Two-step: render PDF on the API, then fetch its bytes through the
       // authenticated apiClient. The raw URL points at the storage uploads
       // endpoint which requires a JWT (RF-075); embedding it directly in an
@@ -1446,6 +1465,7 @@ export default function NewInvoicePage() {
       const meta = await apiClient.get<{ url: string }>(`/invoices/${invoiceId}/pdf`, {
         params: { refresh: 1 },
       });
+      await refreshDraftToken(invoiceId);
       if (!meta.data?.url) {
         setPreviewUrl(null);
       } else {
@@ -1459,7 +1479,8 @@ export default function NewInvoicePage() {
     } catch (err) {
       toast({
         title: "Couldn't build preview",
-        description: unitRefusal(err, lines) ?? "Check your inputs and try again.",
+        description:
+          staleCopy(err) ?? unitRefusal(err, lines) ?? "Check your inputs and try again.",
         variant: "error",
       });
     } finally {
@@ -1479,21 +1500,12 @@ export default function NewInvoicePage() {
     if (!validateForPreview()) return;
     setDownloadLoading(true);
     try {
-      const dto = buildPartialInvoiceDto(lines);
-      let invoiceId = currentDraftId;
-      if (invoiceId) {
-        await updateInvoice.mutateAsync({ id: invoiceId, ...dto } as any);
-      } else {
-        const created: any = await createInvoice.mutateAsync(
-          dto as Parameters<typeof createInvoice.mutate>[0],
-        );
-        invoiceId = created.id;
-        setCurrentDraftId(invoiceId);
-      }
+      const invoiceId = await upsertDraft(buildPartialInvoiceDto(lines));
       const meta = await apiClient.get<{ url: string; invoiceNumber?: string }>(
         `/invoices/${invoiceId}/pdf`,
         { params: { refresh: 1 } },
       );
+      await refreshDraftToken(invoiceId);
       if (!meta.data?.url) throw new Error("No PDF URL returned");
       const blob = await fetchPdfBlob(meta.data.url, apiClient);
       const blobUrl = URL.createObjectURL(blob);
@@ -1509,7 +1521,7 @@ export default function NewInvoicePage() {
     } catch (err) {
       toast({
         title: "Couldn't generate PDF",
-        description: unitRefusal(err, lines) ?? "Please try again.",
+        description: staleCopy(err) ?? unitRefusal(err, lines) ?? "Please try again.",
         variant: "error",
       });
     } finally {
@@ -1653,33 +1665,39 @@ export default function NewInvoicePage() {
     // If we already have a preview draft, just update it and optionally send.
     if (currentDraftId) {
       const dto = buildInvoiceDto(false, lines);
-      updateInvoice.mutate({ id: currentDraftId, ...dto } as any, {
-        onSuccess: async () => {
-          let sendFailed = false;
-          if (sendNow) {
-            try {
-              await apiClient.post(`/invoices/${currentDraftId}/send`);
-            } catch {
-              // Row 466: never say "sent" when it was not. The draft is kept; open it.
-              sendFailed = true;
+      updateInvoice.mutate(
+        { id: currentDraftId, ...dto, expectedUpdatedAt: draftToken.current } as any,
+        {
+          onSuccess: async () => {
+            let sendFailed = false;
+            if (sendNow) {
+              try {
+                await apiClient.post(`/invoices/${currentDraftId}/send`);
+              } catch {
+                // Row 466: never say "sent" when it was not. The draft is kept; open it.
+                sendFailed = true;
+              }
             }
-          }
-          if (sendFailed) toast({ ...KEPT_DRAFT_TOAST, variant: "warning" });
-          else
+            if (sendFailed) toast({ ...KEPT_DRAFT_TOAST, variant: "warning" });
+            else
+              toast({
+                title: sendNow ? "Invoice sent" : "Draft saved",
+                variant: "success",
+              });
+            router.push(`/invoices/${currentDraftId}`);
+          },
+          onError: (err: unknown) => {
             toast({
-              title: sendNow ? "Invoice sent" : "Draft saved",
-              variant: "success",
+              title: "Failed to save invoice",
+              description:
+                staleCopy(err) ??
+                unitRefusal(err, lines) ??
+                "Please check your inputs and try again.",
+              variant: "error",
             });
-          router.push(`/invoices/${currentDraftId}`);
+          },
         },
-        onError: (err: unknown) => {
-          toast({
-            title: "Failed to save invoice",
-            description: unitRefusal(err, lines) ?? "Please check your inputs and try again.",
-            variant: "error",
-          });
-        },
-      });
+      );
       return;
     }
 
