@@ -458,6 +458,24 @@ export class SellingRestrictionsAdminService {
         createdByName: user.username,
       },
     });
+    // Row 509 PR3: revision 1 = the rule "as created", so its first in-place edit keeps the original settings in
+    // the history (append-only; an edit adds revision n+1, nothing ever rewrites this row).
+    await tx.sellingRestrictionRevision.create({
+      data: {
+        tenantId,
+        ruleId,
+        revision: 1,
+        jurisdiction: p.jurisdiction,
+        states: p.states,
+        surface: p.surface,
+        effectiveFrom: p.effectiveFrom,
+        effectiveTo: p.effectiveTo,
+        reason: p.reason,
+        editedById: user.sub,
+        editedByName: user.username,
+        editedAt: p.now,
+      },
+    });
     const addedAt = p.effectiveFrom.getTime() < p.now.getTime() ? p.effectiveFrom : p.now;
     const stamp = { tenantId, ruleId, addedAt, addedById: user.sub, addedByName: user.username };
     await tx.sellingRestrictionTarget.createMany({

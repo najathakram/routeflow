@@ -707,13 +707,17 @@ describeDb("row 509 PR3: edit a rule in place, with history — real Postgres", 
 
   it("SHOULD (b): the impact scan is bounded: past the cap it is a coded 409, never a 500", async () => {
     const rule = await mkRule();
-    const capped = new RuleEditService(prisma, engine, new ProductLabelsService(prisma), 3);
+    const withCap = (scanCap: number) =>
+      Object.assign(new RuleEditService(prisma, engine, new ProductLabelsService(prisma)), {
+        scanCap,
+      });
+    const capped = withCap(3);
     for (let i = 0; i < 4; i++) await mkOrder(cust.ca, "a", "PENDING");
     expect(
       await refusal(() => as(() => capped.preview(rule.id, body({ states: ["TX", "CA"] }), admin))),
     ).toEqual({ status: 409, code: "RULE_IMPACT_TOO_LARGE" });
     // within the cap it answers; a loosening edit never scans
-    const ok = new RuleEditService(prisma, engine, new ProductLabelsService(prisma), 4);
+    const ok = withCap(4);
     expect(
       (await as(() => ok.preview(rule.id, body({ states: ["TX", "CA"] }), admin))).impact
         .openOrders,
