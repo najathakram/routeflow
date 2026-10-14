@@ -66,7 +66,7 @@ describe("OrderLineItemsTable — stacked cards below md (row 508)", () => {
   it("re-flows the table into blocks and hides the column header below md", () => {
     renderThree();
     expect(screen.getByRole("table")).toHaveClass("max-md:block");
-    expect(screen.getAllByRole("columnheader")[0].closest("thead")).toHaveClass("max-md:hidden");
+    expect(screen.getAllByRole("columnheader")[0].closest("thead")).toHaveClass("max-md:sr-only");
     expect(document.querySelector("tbody")).toHaveClass("max-md:block", "max-md:divide-y-0");
   });
 
@@ -132,5 +132,52 @@ describe("OrderLineItemsTable — stacked cards below md (row 508)", () => {
     );
     expect(cells[4]).toHaveClass("px-6", "py-3");
     expect(document.querySelector("tfoot td")).toHaveClass("px-6", "py-3", "text-right");
+  });
+});
+
+describe("OrderLineItemsTable — table semantics survive display:block below md", () => {
+  it("puts an explicit ARIA table role on every element", () => {
+    renderThree();
+    expect(document.querySelector("table")).toHaveAttribute("role", "table");
+    ["thead", "tbody", "tfoot"].forEach((tag) =>
+      expect(document.querySelector(tag)).toHaveAttribute("role", "rowgroup"),
+    );
+    document.querySelectorAll("tr").forEach((tr) => expect(tr).toHaveAttribute("role", "row"));
+    document
+      .querySelectorAll("th")
+      .forEach((th) => expect(th).toHaveAttribute("role", "columnheader"));
+    document.querySelectorAll("td").forEach((td) => expect(td).toHaveAttribute("role", "cell"));
+  });
+
+  it("exposes the header row plus one row per line, and the five column headers", () => {
+    renderThree();
+    // header row + 3 lines + the Order Total footer row
+    expect(screen.getAllByRole("row")).toHaveLength(5);
+    expect(screen.getAllByRole("columnheader").map((h) => h.textContent)).toEqual([
+      "Product",
+      "Qty",
+      "Unit Price",
+      "Line Total",
+      "Status",
+    ]);
+  });
+
+  it("exposes a Line Total cell per line", () => {
+    renderThree();
+    const cells = screen.getAllByRole("cell");
+    // 3 lines x 5 cells + footer's 3 (total label, total, empty)
+    expect(cells).toHaveLength(18);
+    ["$520.00", "$15.98", "$5.00"].forEach((t) =>
+      expect(
+        cells.some((c) => c.getAttribute("data-label") === "Line Total" && c.textContent === t),
+      ).toBe(true),
+    );
+  });
+
+  it("keeps the column headers in the accessibility tree below md (sr-only, never display:none)", () => {
+    renderThree();
+    const thead = document.querySelector("thead") as HTMLElement;
+    expect(thead).toHaveClass("max-md:sr-only");
+    expect(thead).not.toHaveClass("max-md:hidden");
   });
 });
