@@ -38,7 +38,7 @@ export const TRUNCATED_LINE =
 export function headerLine(total: number, truncated = false): string {
   if (truncated) return TRUNCATED_LINE;
   if (total === 0) return "Every customer has a state on file.";
-  return `${plural(total, "customer needs", "customers need")} a state. They can still order — state limits just can't reach them until it's set.`;
+  return `${plural(total, "customer needs", "customers need")} a state. Until it's set, products with a legal state ban stay hidden from them and can't be sold to them, and other state limits won't reach them.`;
 }
 
 export function bucketLine(key: BucketKey, n: number): string {

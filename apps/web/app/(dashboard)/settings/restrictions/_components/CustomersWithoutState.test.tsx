@@ -76,7 +76,7 @@ describe("CustomersWithoutState (Addendum D)", () => {
     renderWithProviders(<CustomersWithoutState canFix />);
     expect(
       await screen.findByText(
-        "5 customers need a state. They can still order — state limits just can't reach them until it's set.",
+        "5 customers need a state. Until it's set, products with a legal state ban stay hidden from them and can't be sold to them, and other state limits won't reach them.",
       ),
     ).toBeInTheDocument();
     expect(screen.getByText("3 have no address")).toBeInTheDocument();
