@@ -16,7 +16,7 @@ import {
   STATUS_BADGE,
   STATUS_FILTERS,
   emptyText,
-  LIFT_ADMIN_ONLY_HINT,
+  ADMIN_ONLY_LIFT_HINT,
   jurisdictionText,
   liftState,
   stateName,
@@ -129,7 +129,7 @@ function RuleCard({
               </Button>
               {lift.state === "admin-only" && (
                 <p id={`lift-hint-${rule.id}`} className="text-xs text-navy/70">
-                  {LIFT_ADMIN_ONLY_HINT}
+                  {ADMIN_ONLY_LIFT_HINT}
                 </p>
               )}
             </>

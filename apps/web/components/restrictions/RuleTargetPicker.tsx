@@ -34,6 +34,47 @@ type Item =
   | { type: "whole"; row: Row }
   | { type: "variant"; row: Row; parent: Row };
 
+/** A bottom fade, on only while there is more to scroll to, so a cut-off last row reads as scrollable. */
+const FADE_CLASS =
+  "[mask-image:linear-gradient(to_bottom,#000_calc(100%_-_28px),transparent)] [-webkit-mask-image:linear-gradient(to_bottom,#000_calc(100%_-_28px),transparent)]";
+
+function useMoreBelow(deps: React.DependencyList) {
+  const ref = React.useRef<HTMLUListElement>(null);
+  const [moreBelow, setMoreBelow] = React.useState(false);
+  const measure = React.useCallback(() => {
+    const el = ref.current;
+    setMoreBelow(!!el && el.scrollHeight - el.scrollTop - el.clientHeight > 4);
+  }, []);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  React.useLayoutEffect(measure, deps);
+  return { ref, moreBelow, onScroll: measure };
+}
+
+/**
+ * A name that truncates to one line (full name in a title). Only when it really is cut off does the
+ * full name also show, wrapped, on a second muted line, so a long variant name is never lost.
+ */
+function TruncName({ text }: { text: string }) {
+  const ref = React.useRef<HTMLSpanElement>(null);
+  const [cut, setCut] = React.useState(false);
+  React.useLayoutEffect(() => {
+    const el = ref.current;
+    if (!el) return;
+    const measure = () => setCut(el.scrollWidth > el.clientWidth + 1);
+    measure();
+    window.addEventListener("resize", measure);
+    return () => window.removeEventListener("resize", measure);
+  }, [text]);
+  return (
+    <span className="min-w-0 flex-1">
+      <span ref={ref} title={text} className="block truncate font-medium text-navy">
+        {text}
+      </span>
+      {cut && <span className="block break-words text-xs text-navy/60">{text}</span>}
+    </span>
+  );
+}
+
 const rowClass =
   "flex min-h-[44px] w-full cursor-pointer items-center gap-2 px-3 text-left text-sm sm:min-h-[36px]";
 
@@ -113,6 +154,7 @@ export function RuleTargetPicker({
   }, [groups, toggled]);
 
   const open = q.trim() !== "" && items.length > 0;
+  const results = useMoreBelow([items, open]);
 
   const addProduct = (t: PickedTarget) => {
     // A whole family covers its variants: their chips become redundant.
@@ -193,6 +235,7 @@ export function RuleTargetPicker({
   const shown = listing
     ? value.filter((t) => t.name.toLowerCase().includes(addedFilter.trim().toLowerCase()))
     : value;
+  const added = useMoreBelow([shown, listing]);
 
   const chip = (t: PickedTarget) => (
     <li
@@ -245,10 +288,15 @@ export function RuleTargetPicker({
 
       {open && (
         <ul
+          ref={results.ref}
           id={nav.listId}
           role="listbox"
           aria-label="Matching products"
-          className="max-h-64 overflow-y-auto rounded border border-surface-border bg-white"
+          data-more-below={results.moreBelow}
+          onScroll={results.onScroll}
+          className={`max-h-64 overflow-y-auto rounded border border-surface-border bg-white ${
+            results.moreBelow ? FADE_CLASS : ""
+          }`}
         >
           {items.map((item, i) => {
             const parentId =
@@ -288,7 +336,7 @@ export function RuleTargetPicker({
                     aria-hidden
                   />
                 )}
-                <span className="min-w-0 break-words font-medium text-navy">{label}</span>
+                <TruncName text={label} />
                 {item.type !== "group" && item.row.sku && (
                   <span className="shrink-0 font-mono text-xs text-navy/60">{item.row.sku}</span>
                 )}
@@ -384,10 +432,14 @@ export function RuleTargetPicker({
                 />
               )}
               <ul
+                ref={added.ref}
                 aria-label="Selected products and labels"
+                onScroll={added.onScroll}
                 className={
                   listing
-                    ? "max-h-56 space-y-1 overflow-y-auto rounded border border-surface-border p-2"
+                    ? `max-h-56 space-y-1 overflow-y-auto rounded border border-surface-border p-2 ${
+                        added.moreBelow ? FADE_CLASS : ""
+                      }`
                     : "flex flex-wrap gap-2"
                 }
               >

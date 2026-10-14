@@ -398,10 +398,10 @@ describe("RuleTargetPicker: long names and the scrollable results", () => {
     });
     fireEvent.scroll(list);
     expect(list).toHaveAttribute("data-more-below", "true");
-    expect(list.style.maskImage || list.style.webkitMaskImage).toMatch(/linear-gradient/);
+    expect(list.className).toMatch(/mask-image:linear-gradient/);
     (list as HTMLElement).scrollTop = 244;
     fireEvent.scroll(list);
     expect(list).toHaveAttribute("data-more-below", "false");
-    expect(list.style.maskImage || list.style.webkitMaskImage || "").not.toMatch(/linear-gradient/);
+    expect(list.className).not.toMatch(/mask-image/);
   });
 });
