@@ -48,7 +48,11 @@ describe("LimitInPortalDialog: all-portal hide is admin-only (L5)", () => {
   it("an operator sees 'Hide from all portal customers' disabled with 'Ask an account admin'", () => {
     const dialog = open();
     expect(within(dialog).getByRole("radio", { name: /all portal customers/i })).toBeDisabled();
-    expect(within(dialog).getByText("Ask an account admin")).toBeInTheDocument();
+    const line = within(dialog).getByText("Ask an account admin");
+    expect(line).toBeInTheDocument();
+    const radio = within(dialog).getByRole("radio", { name: /all portal customers/i });
+    expect(radio.getAttribute("aria-describedby")).toBeTruthy();
+    expect(line.id).toBe(radio.getAttribute("aria-describedby"));
     expect(within(dialog).getByRole("radio", { name: /certain states/i })).toBeEnabled();
   });
 

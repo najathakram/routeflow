@@ -64,6 +64,7 @@ function RuleCard({
               checked={!!selected}
               onChange={onToggle}
               disabled={toggleLocked}
+              aria-describedby={toggleLocked ? `rule-${rule.id}-admin-only` : undefined}
               aria-label={`Select the limit on ${target.name}`}
             />
           )}
@@ -82,7 +83,9 @@ function RuleCard({
               <p className="break-words text-xs text-navy/60">{target.kind ?? target.names}</p>
             )}
             {onToggle && toggleLocked && (
-              <p className="text-xs text-navy/60">{ASK_ACCOUNT_ADMIN}</p>
+              <p id={`rule-${rule.id}-admin-only`} className="text-xs text-navy/60">
+                {ASK_ACCOUNT_ADMIN}
+              </p>
             )}
           </div>
         </div>

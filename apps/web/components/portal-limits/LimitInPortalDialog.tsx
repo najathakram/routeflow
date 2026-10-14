@@ -218,12 +218,15 @@ export function LimitInPortalDialog({
               name="limit-who"
               checked={everyone}
               disabled={!mayHideAll}
+              aria-describedby={!mayHideAll ? "limit-all-portal-admin-only" : undefined}
               onChange={() => setEveryone(true)}
             />
             <span>
               Hide from all portal customers
               {!mayHideAll && (
-                <span className="block text-xs text-navy/60">{ASK_ACCOUNT_ADMIN}</span>
+                <span id="limit-all-portal-admin-only" className="block text-xs text-navy/60">
+                  {ASK_ACCOUNT_ADMIN}
+                </span>
               )}
             </span>
           </label>

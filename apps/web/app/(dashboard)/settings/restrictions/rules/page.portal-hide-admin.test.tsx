@@ -60,7 +60,13 @@ describe("rules page: all-portal hide is admin-only to lift (L5)", () => {
     expect(within(state).getByRole("checkbox")).toBeEnabled();
     expect(within(state).queryByText("Ask an account admin")).toBeNull();
     expect(within(fed).getByRole("checkbox")).toBeDisabled();
-    expect(within(fed).getByText("Ask an account admin")).toBeInTheDocument();
+    const line = within(fed).getByText("Ask an account admin");
+    expect(line).toBeInTheDocument();
+    // the disabled tick box names its reason for assistive tech
+    const id = within(fed).getByRole("checkbox").getAttribute("aria-describedby");
+    expect(id).toBeTruthy();
+    expect(line.id).toBe(id);
+    expect(within(state).getByRole("checkbox")).not.toHaveAttribute("aria-describedby");
   });
 
   it("an admin can tick both", async () => {
