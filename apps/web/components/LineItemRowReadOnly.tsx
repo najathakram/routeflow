@@ -66,6 +66,11 @@ export interface LineItemRowReadOnlyProps {
   components?: ReadonlyArray<LineComponentView> | null;
   /** SA-714: pieces sold past stock (staff-only); > 0 shows the "Backorder" tag. Display only. */
   backorderPieces?: number;
+  /**
+   * Row 510: staff-only content that belongs to THIS line (the "Sold despite restriction" note). Rendered inside the
+   * line's own text column, so it is part of the row and never a separate row or a block under the list.
+   */
+  footer?: React.ReactNode;
   className?: string;
 }
 
@@ -99,6 +104,7 @@ export function LineItemRowReadOnly({
   custom,
   components,
   backorderPieces,
+  footer,
   className,
 }: LineItemRowReadOnlyProps) {
   const [imageFailed, setImageFailed] = React.useState(false);
@@ -250,6 +256,7 @@ export function LineItemRowReadOnly({
             <Badge status={lineStatus} />
           </div>
         )}
+        {footer}
       </div>
 
       <div className="shrink-0 text-right">

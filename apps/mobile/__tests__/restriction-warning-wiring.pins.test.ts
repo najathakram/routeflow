@@ -99,6 +99,32 @@ describe("row 510: staff-only display", () => {
     expect(read("app/(operator)/(tabs)/orders/[id].tsx")).toContain("<RestrictionOverrideNote");
     expect(read("app/(operator)/(tabs)/invoices/[id].tsx")).toContain("<RestrictionOverrideNote");
   });
+  it("the note is attached to ITS line: the card renders model.overrideNote inside its own body, and the screen adds no sibling block", () => {
+    const card = read("components/OrderLineCard.tsx");
+    const bodyAt = card.indexOf("<View style={styles.body}>");
+    const noteAt = card.indexOf("model.overrideNote");
+    const totalAt = card.indexOf("styles.total");
+    expect(bodyAt).toBeGreaterThan(-1);
+    expect(noteAt).toBeGreaterThan(bodyAt); // inside the text column ...
+    expect(noteAt).toBeLessThan(totalAt); // ... before the row's total
+    expect(card).toContain('testID="restriction-override-note"');
+    // the v2 branch of the order detail renders the card and nothing after it
+    const ord = read("app/(operator)/(tabs)/orders/[id].tsx");
+    const cardAt = ord.indexOf("<OrderLineCard");
+    expect(cardAt).toBeGreaterThan(-1);
+    const afterCard = ord.slice(cardAt, ord.indexOf("// #2046 review (B757)", cardAt));
+    expect(afterCard).not.toContain("<RestrictionOverrideNote");
+  });
+  it("on the invoice detail the note sits inside its line's row (between the row's start and its total)", () => {
+    const inv = read("app/(operator)/(tabs)/invoices/[id].tsx");
+    const rowAt = inv.indexOf("styles.itemRow,");
+    const noteAt = inv.indexOf("<RestrictionOverrideNote line={it} />");
+    const totalAt = inv.indexOf("styles.itemTotal", noteAt);
+    expect(rowAt).toBeGreaterThan(-1);
+    expect(noteAt).toBeGreaterThan(rowAt);
+    expect(totalAt).toBeGreaterThan(noteAt);
+    expect(totalAt - rowAt).toBeLessThan(6000); // one row, not the whole list
+  });
   it("the note fetches nothing: no /users call (admin-only; an operator would get a false 'former user')", () => {
     for (const f of [
       "components/RestrictionOverrideNote.tsx",

@@ -385,3 +385,52 @@ describe("unit-aware FACTOR-1 line names its own unit even with no split (#2049)
     expect(m.qtyPriceLine).toBe("5 × $2.00");
   });
 });
+
+/**
+ * Row 510 (SA final pass): the staff-only "Sold despite restriction" note belongs to ITS line. The card model carries it, so
+ * the card renders it inside its own row and the screen adds no block between rows.
+ */
+describe("orderLineCardModel: the override note is part of the line's own model", () => {
+  const stamp = {
+    restrictionOverrideReason: "Owner approved the sale",
+    restrictionOverrideBy: "u-1",
+    restrictionOverrideByName: "pat",
+    restrictionOverrideAt: "2026-10-07T15:14:00.000Z",
+    restrictionOverrideRuleIds: ["r1:CA"],
+  };
+
+  it("in a two-line order with one overridden line, only that line's model carries the note", () => {
+    const stamped = orderLineCardModel(line({ id: "li-1", ...stamp }), "PENDING");
+    const plain = orderLineCardModel(
+      line({ id: "li-2", product: { name: "Sample Water", unit: "each" } }),
+      "PENDING",
+    );
+    expect(stamped.overrideNote).toMatch(
+      /^Sold despite restriction · Owner approved the sale · by pat/,
+    );
+    expect(plain.overrideNote).toBeNull();
+  });
+
+  it("a user who is gone reads 'former user'; a stamp with no reason is no note", () => {
+    expect(
+      orderLineCardModel(line({ ...stamp, restrictionOverrideByName: null }), "PENDING")
+        .overrideNote,
+    ).toContain("by former user");
+    expect(
+      orderLineCardModel(line({ ...stamp, restrictionOverrideReason: "  " }), "PENDING")
+        .overrideNote,
+    ).toBeNull();
+    expect(orderLineCardModel(line(), "PENDING").overrideNote).toBeNull();
+  });
+
+  it("the note is the same sentence the invoice and legacy rows show (one formatter)", () => {
+    const { restrictionOverrideLine } = require("../lib/restriction-override-note");
+    expect(orderLineCardModel(line(stamp), "PENDING").overrideNote).toBe(
+      restrictionOverrideLine({
+        reason: "Owner approved the sale",
+        name: "pat",
+        at: "2026-10-07T15:14:00.000Z",
+      }),
+    );
+  });
+});

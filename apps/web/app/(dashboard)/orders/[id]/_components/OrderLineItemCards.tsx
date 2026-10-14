@@ -82,14 +82,14 @@ export function OrderLineItemCards({
 
       <ul className="divide-y divide-surface-border">
         {visible.map((li) => (
-          <React.Fragment key={li.id}>
-            <LineItemRowReadOnly className="px-6" {...lineRowProps(li, orderStatus)} />
-            {li.restrictionOverrideReason && (
-              <li className="px-6 pb-3 pl-[4.5rem]">
-                <RestrictionOverrideNote line={li} />
-              </li>
-            )}
-          </React.Fragment>
+          // Row 510: the staff-only override note rides INSIDE its own line's row (a footer of the row), never as a
+          // second list item between rows.
+          <LineItemRowReadOnly
+            key={li.id}
+            className="px-6"
+            {...lineRowProps(li, orderStatus)}
+            footer={<RestrictionOverrideNote line={li} />}
+          />
         ))}
       </ul>
 

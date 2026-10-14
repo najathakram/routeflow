@@ -2,7 +2,7 @@ import * as React from "react";
 import { StyleSheet, Text } from "react-native";
 import { ios } from "@routeflow/ui/tokens";
 import {
-  restrictionOverrideLine,
+  restrictionOverrideNoteOf,
   type OverrideStampSource,
 } from "../lib/restriction-override-note";
 
@@ -17,16 +17,11 @@ import {
  */
 export function RestrictionOverrideNote({ line }: { line: object | null | undefined }) {
   // Any staff line shape is accepted (the order and invoice read types differ); only the stamp fields are read.
-  const stamp = line as OverrideStampSource | null | undefined;
-  const reason = stamp?.restrictionOverrideReason?.trim();
-  if (!stamp || !reason) return null;
+  const text = restrictionOverrideNoteOf(line as OverrideStampSource | null | undefined);
+  if (!text) return null;
   return (
     <Text style={styles.note} testID="restriction-override-note">
-      {restrictionOverrideLine({
-        reason,
-        name: stamp.restrictionOverrideByName,
-        at: stamp.restrictionOverrideAt,
-      })}
+      {text}
     </Text>
   );
 }

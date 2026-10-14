@@ -1,4 +1,4 @@
-import { Fragment, useRef, useState } from "react";
+import { useRef, useState } from "react";
 import {
   ActivityIndicator,
   Linking,
@@ -819,11 +819,13 @@ export default function OrderDetailScreen() {
             ) : (
               order.lineItems.map((li, i) => {
                 if (orderUiV2.enabled) {
+                  // Row 510: the override note rides INSIDE its card (model.overrideNote), not as a block between cards.
                   return (
-                    <Fragment key={li.id}>
-                      <OrderLineCard model={orderLineCardModel(li, order.status)} first={i === 0} />
-                      <RestrictionOverrideNote line={li} />
-                    </Fragment>
+                    <OrderLineCard
+                      key={li.id}
+                      model={orderLineCardModel(li, order.status)}
+                      first={i === 0}
+                    />
                   );
                 }
                 // #2046 review (B757): the pack size is the LINE's own snapshot first — the

@@ -8,6 +8,7 @@ import { freeUnitsLabel } from "./buyer-cart-logic";
 import type { LineComponentView } from "@routeflow/types";
 import { lineBackorderPieces } from "@routeflow/types/order-line-backorder";
 import { componentSubLineTexts } from "./line-components";
+import { restrictionOverrideNoteOf } from "./restriction-override-note";
 
 /**
  * Pure display logic for the operator order-detail line CARD (order-ui-redesign-spec §3, T8 — the
@@ -158,6 +159,11 @@ export interface OrderLineCardModel {
   backorderPieces: number;
   /** One screen-reader sentence for the whole card (see `spokenLine`). */
   spoken: string;
+  /**
+   * Row 510: "Sold despite restriction · reason · by · when" for a line sold with an override (staff reads only: this
+   * model is built on the operator screen from a staff read), else null. Part of the card, not a block between cards.
+   */
+  overrideNote: string | null;
 }
 
 /**
@@ -214,6 +220,10 @@ interface LineInput {
   deliveredQty?: number | null;
   /** #2717 M3: frozen components of a composed (mixed-pack) line. */
   components?: ReadonlyArray<LineComponentView> | null;
+  /** Row 510: the staff override stamp, as a staff read carries it (see `restriction-override-note.ts`). */
+  restrictionOverrideReason?: string | null;
+  restrictionOverrideByName?: string | null;
+  restrictionOverrideAt?: string | null;
 }
 
 /** Everything the card renders for one order line. Pure — the view only lays it out. */
@@ -326,5 +336,6 @@ export function orderLineCardModel(li: LineInput, orderStatus: string): OrderLin
     status,
     deliveryText,
     spoken,
+    overrideNote: restrictionOverrideNoteOf(li),
   };
 }

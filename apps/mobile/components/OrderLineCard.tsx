@@ -81,6 +81,12 @@ export function OrderLineCard({
             {model.note}
           </Text>
         ) : null}
+        {model.overrideNote ? (
+          // Row 510: the staff-only "Sold despite restriction" note is part of THIS card, under its product.
+          <Text style={styles.override} testID="restriction-override-note">
+            {model.overrideNote}
+          </Text>
+        ) : null}
         {model.subLines?.map((text, i) => (
           <Text key={i} style={styles.sub} testID="line-component-sub-line">
             {text}
@@ -108,6 +114,12 @@ const styles = StyleSheet.create({
   stem: { fontSize: 12, fontFamily: "Inter_400Regular", color: ios.label2 },
   anchor: { fontSize: 14, fontFamily: "Inter_500Medium", color: ios.label },
   struck: { textDecorationLine: "line-through" },
+  override: {
+    fontSize: 12,
+    fontFamily: "Inter_400Regular",
+    color: ios.system.orangeInk,
+    marginTop: 2,
+  },
   sku: { fontSize: 11, fontFamily: "Inter_400Regular", color: ios.label3, marginTop: 2 },
   sub: { fontSize: 12, fontFamily: "Inter_400Regular", color: ios.label2, marginTop: 2 },
   tagRow: { flexDirection: "row", alignItems: "baseline", gap: 6, marginTop: 2 },

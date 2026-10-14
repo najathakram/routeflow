@@ -29,3 +29,19 @@ export function restrictionOverrideLine(p: {
   if (when) parts.push(when);
   return parts.join(" · ");
 }
+
+/**
+ * The note for a line, or null when the line carries no override reason. The ONE place a line becomes its note: the
+ * order card model, the legacy order row and the invoice row all read it (a line with no reason is no note).
+ */
+export function restrictionOverrideNoteOf(
+  line: OverrideStampSource | null | undefined,
+): string | null {
+  const reason = line?.restrictionOverrideReason?.trim();
+  if (!line || !reason) return null;
+  return restrictionOverrideLine({
+    reason,
+    name: line.restrictionOverrideByName,
+    at: line.restrictionOverrideAt,
+  });
+}
