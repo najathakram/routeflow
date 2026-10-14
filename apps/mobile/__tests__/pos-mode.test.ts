@@ -16,6 +16,7 @@ import {
   posMayHandOverUnpaid,
   posBalanceDue,
   posCanSwitchToDelivery,
+  posSwitchToDeliveryHint,
   posCartSaveLabel,
   posCutNote,
   posFinishFailureMessage,
@@ -438,5 +439,14 @@ describe("misc money-safety", () => {
   it("a re-read of CONFIRMED after a refused PENDING skips the CONFIRMED patch", () => {
     expect(posConfirmStepsAfterPending("CONFIRMED")).toEqual([]);
     expect(posConfirmStepsAfterPending("PENDING")).toEqual(["CONFIRMED"]);
+  });
+});
+
+describe("M6 posSwitchToDeliveryHint", () => {
+  it("explains the lock only on a Ready-for-pickup order", () => {
+    expect(posSwitchToDeliveryHint("OUT_FOR_DELIVERY")).toMatch(/back to Confirmed/);
+    for (const s of ["PENDING", "CONFIRMED", "DELIVERED", "CANCELLED"]) {
+      expect(posSwitchToDeliveryHint(s)).toBeNull();
+    }
   });
 });

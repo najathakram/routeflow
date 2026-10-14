@@ -61,6 +61,7 @@ export const POS_COPY = {
   printInvoice: "Print invoice",
   invoiceCreated: "Invoice created",
   switchToDelivery: "Switch to delivery",
+  switchToDeliveryLocked: "Ready for pickup: move it back to Confirmed to switch to delivery.",
   invoiceFailed: "Couldn't create the invoice. Try again.",
 } as const;
 
@@ -176,6 +177,15 @@ export function posOrderActions(
  */
 export function posCanSwitchToDelivery(status: string): boolean {
   return status === "PENDING" || status === "CONFIRMED";
+}
+
+/**
+ * M6 review: why "Switch to delivery" is gone on a "Ready for pickup" order and how to get it back (web shows
+ * the same lock on its fulfilment control). Only OUT_FOR_DELIVERY can walk back; a delivered or cancelled
+ * order has nothing to switch, so no hint.
+ */
+export function posSwitchToDeliveryHint(status: string): string | null {
+  return status === "OUT_FOR_DELIVERY" ? POS_COPY.switchToDeliveryLocked : null;
 }
 
 /** The note shown while editing a handed-over POS order: a cut never restocks. */
