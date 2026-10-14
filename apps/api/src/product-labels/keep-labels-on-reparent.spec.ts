@@ -1,6 +1,8 @@
 import { LabelFakeDb } from "../product-categories/testing/label-fake-db";
 import {
+  familyRemovedLabel,
   LABEL_KEPT_ON_REPARENT_ACTION,
+  LABEL_REMOVED_ACTION,
   LabelLockTimeoutError,
 } from "../product-categories/label-writer";
 import {
@@ -172,10 +174,45 @@ describe("keepLabelsOnReparent", () => {
     expect([...(await effectiveOf(db, "C", "P2"))].sort()).toEqual(["ca", "ny"]);
   });
 
-  it("(4d) a label removed on purpose from the NEW family is still kept (never skipped as 'parent-removed')", async () => {
+  it("(4d) removal audits: one on the NEW parent does not suppress the keep; one on the OLD parent for a label it no longer carries keeps nothing", async () => {
     const db = world();
+    db.addCategory("wa", "WA ban");
+    // An operator removed CA from the NEW family P2 on purpose (the add-only sync would honour it: "parent-removed").
+    db.audits.push({
+      tenantId: "t1",
+      action: LABEL_REMOVED_ACTION,
+      entityType: "Product",
+      entityId: "P2",
+      meta: { categoryId: "ca", mode: "INCLUDE" },
+    });
+    // …and WA from the OLD family P1 earlier: P1 no longer carries WA, so the child never did.
+    db.audits.push({
+      tenantId: "t1",
+      action: LABEL_REMOVED_ACTION,
+      entityType: "Product",
+      entityId: "P1",
+      meta: { categoryId: "wa", mode: "INCLUDE" },
+    });
+    db.products.find((p) => p.id === "C")!.parentProductId = "P2"; // update() wrote the parent first
+    // Not vacuous: the audit IS read, and it would make an add-only write skip CA on C under P2.
+    const removedUnderNew = await db
+      .prisma("t1")
+      .tenantTransaction((tx: any) => familyRemovedLabel(tx, "t1", "ca", ["C"]));
+    expect([...removedUnderNew]).toEqual(["C"]);
+
     const out = await run(db, { productId: "C", fromParentId: "P1", toParentId: "P2" });
-    expect(out.keptLabels).toHaveLength(2);
+
+    // Direction 1: CA was effective under P1, so it is KEPT despite the removal on the new family.
+    expect(out.keptLabels).toEqual(["CA ban", "NY ban"]);
+    expect(db.label("C", "ca")?.mode).toBe("INCLUDE");
+    expect([...(await effectiveOf(db, "C", "P2"))].sort()).toEqual(["ca", "ny"]);
+    // Direction 2: WA was removed from the old family before the move, so it was not effective: nothing kept for it.
+    expect(db.label("C", "wa")).toBeUndefined();
+    expect(
+      db.audits
+        .filter((a) => a.action === LABEL_KEPT_ON_REPARENT_ACTION)
+        .map((a) => (a.meta as { categoryId: string }).categoryId),
+    ).toEqual(["ca", "ny"]);
   });
 
   it("(4e) an ARCHIVED label still bans, so it is kept too", async () => {
