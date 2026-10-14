@@ -312,6 +312,23 @@ describe("rule detail: add products", () => {
     expect(post.mock.calls[1][1]).toMatchObject({ productIds: ["p9"] });
   });
 
+  it("Undo that would empty the rule says so once, in fixed copy", async () => {
+    post.mockResolvedValueOnce({
+      data: { added: 1, skippedIds: [], addedTargetIds: ["x"], activeTargets: 1 },
+    });
+    post.mockRejectedValueOnce(reject(409, { code: "RULE_NEEDS_A_TARGET", message: "raw" }));
+    await openAdd();
+    await pick("gum", /Gummies 10ct/);
+    fireEvent.click(screen.getByRole("button", { name: "Add 1" }));
+    await waitFor(() => expect(toast).toHaveBeenCalled());
+    toast.mock.calls[0][0].action.onClick();
+    await waitFor(() => expect(toast).toHaveBeenCalledTimes(2));
+    expect(toast.mock.calls[1][0]).toMatchObject({
+      title: "A rule has to cover at least one product or label. Lift the rule instead.",
+      variant: "error",
+    });
+  });
+
   it("products already shown in the rule are disabled in the picker (In rule)", async () => {
     get.mockImplementation((url: string) => {
       if (url === "/selling-restrictions/r1") return Promise.resolve({ data: current });

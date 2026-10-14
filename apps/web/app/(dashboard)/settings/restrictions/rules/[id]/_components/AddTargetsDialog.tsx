@@ -5,7 +5,7 @@ import { Button, Modal, useToast } from "@routeflow/ui/web";
 import { API_ERROR_CODES } from "@routeflow/types";
 import { RuleTargetPicker } from "@/components/restrictions/RuleTargetPicker";
 import { useAddRuleTargets, useRemoveRuleTargets } from "@/lib/api/restrictions-admin-write";
-import { ruleErrorCode } from "@/lib/restriction-rule-errors";
+import { RULE_ERROR_COPY, ruleErrorCode } from "@/lib/restriction-rule-errors";
 import { targetsToInput, type PickedTarget } from "@/lib/rule-targets";
 
 /** The reason Undo leaves on the audit trail. */
@@ -68,7 +68,17 @@ export function AddTargetsDialog({
                     onClick: () =>
                       undo.mutate(
                         { id: ruleId, targets: targetsToInput(added), reason: UNDO_ADD_REASON },
-                        { onSuccess: () => toast({ title: "Undone", variant: "success" }) },
+                        {
+                          onSuccess: () => toast({ title: "Undone", variant: "success" }),
+                          // useRemoveRuleTargets leaves this one code to its caller (no global toast).
+                          onError: (err) => {
+                            if (ruleErrorCode(err) === API_ERROR_CODES.RULE_NEEDS_A_TARGET)
+                              toast({
+                                title: RULE_ERROR_COPY.RULE_NEEDS_A_TARGET,
+                                variant: "error",
+                              });
+                          },
+                        },
                       ),
                   },
                 }
