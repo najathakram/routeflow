@@ -13,9 +13,9 @@ import { useProductLimits } from "@/lib/api/portal-limits";
 import { addRuleTargetsRequest, useRemoveFromRule } from "@/lib/api/rule-targets";
 import { LiftLimitsDialog } from "@/components/portal-limits/LiftLimitsDialog";
 import { RuleChooserDialog } from "@/components/restrictions/RuleChooserDialog";
+import { ADMIN_ONLY_CHANGE_HINT, ADMIN_ONLY_LIFT_HINT } from "@/lib/restriction-rules";
 import { limitChipText, limitViaText, UNDO_VISIBLE_MS } from "@/lib/portal-limits";
 import {
-  FEDERAL_ADMIN_ONLY,
   isRuleAdmin,
   RESTRICT_UNDO_FAILED,
   coverageCount,
@@ -98,60 +98,64 @@ export function PortalLimitsRow({ productId }: { productId: string }) {
             // L5: a rule that hides products from every portal customer is admin-only to change, either way.
             const locked = canLift && l.jurisdiction === "FEDERAL" && !isRuleAdmin(role);
             const hintId = `rule-admin-only-${l.id}`;
-            const btn =
-              "text-[11px] font-medium text-brand-600 hover:underline disabled:cursor-not-allowed disabled:opacity-50";
+            // 44px touch targets on a phone; the compact 11px link look from `sm` up.
+            const action =
+              "inline-flex min-h-11 items-center text-[11px] font-medium text-brand-600 hover:underline disabled:cursor-not-allowed disabled:opacity-50 sm:min-h-0";
             return (
               <li
                 key={l.id}
-                className="inline-flex flex-wrap items-center gap-1.5 rounded-full border border-surface-border bg-surface-raised px-2.5 py-1 text-xs font-medium text-navy"
+                className="flex flex-col gap-1 rounded-lg border border-surface-border bg-surface-raised px-2.5 py-1 text-xs font-medium text-navy sm:flex-row sm:flex-wrap sm:items-center sm:gap-1.5"
               >
-                {canLift ? (
-                  <NextLink href={ruleHref(l.id)} className="hover:underline">
-                    {limitChipText(l)}
-                  </NextLink>
-                ) : (
-                  <span>{limitChipText(l)}</span>
-                )}
-                {many && (
-                  <span className="font-normal text-navy/60">
-                    {`· ${coverageText(l.targetSummary)}`}
+                <span className="flex flex-wrap items-center gap-1.5">
+                  {canLift ? (
+                    <NextLink href={ruleHref(l.id)} className="hover:underline">
+                      {limitChipText(l)}
+                    </NextLink>
+                  ) : (
+                    <span>{limitChipText(l)}</span>
+                  )}
+                  {many && (
+                    <span className="font-normal text-navy/60">
+                      {`· ${coverageText(l.targetSummary)}`}
+                    </span>
+                  )}
+                  {via && <span className="font-normal text-navy/60">{via}</span>}
+                </span>
+                {canLift && (
+                  <span className="flex flex-wrap items-center gap-x-4 sm:gap-x-1.5">
+                    {removable(l) && (
+                      <button
+                        type="button"
+                        disabled={readOnly || locked || removeFromRule.isPending}
+                        aria-describedby={locked ? hintId : undefined}
+                        className={action}
+                        onClick={() => remove(l)}
+                      >
+                        Remove from rule
+                      </button>
+                    )}
+                    {many && (
+                      <NextLink href={ruleHref(l.id)} className={action}>
+                        View rule
+                      </NextLink>
+                    )}
+                    {/* One-step Lift stays for a rule that covers only this product (master) and for an inherited chip. */}
+                    {!removable(l) && (
+                      <button
+                        type="button"
+                        disabled={readOnly || locked}
+                        aria-describedby={locked ? hintId : undefined}
+                        className={action}
+                        onClick={() => setLifting(l.id)}
+                      >
+                        Lift
+                      </button>
+                    )}
                   </span>
-                )}
-                {via && <span className="font-normal text-navy/60">{via}</span>}
-                {canLift && removable(l) && (
-                  <button
-                    type="button"
-                    disabled={readOnly || locked || removeFromRule.isPending}
-                    aria-describedby={locked ? hintId : undefined}
-                    className={btn}
-                    onClick={() => remove(l)}
-                  >
-                    Remove from rule
-                  </button>
-                )}
-                {canLift && many && (
-                  <NextLink
-                    href={ruleHref(l.id)}
-                    className="text-[11px] font-medium text-brand-600 hover:underline"
-                  >
-                    View rule
-                  </NextLink>
-                )}
-                {/* One-step Lift stays for a rule that covers only this product (master) and for an inherited chip. */}
-                {canLift && !removable(l) && (
-                  <button
-                    type="button"
-                    disabled={readOnly || locked}
-                    aria-describedby={locked ? hintId : undefined}
-                    className={btn}
-                    onClick={() => setLifting(l.id)}
-                  >
-                    Lift
-                  </button>
                 )}
                 {locked && (
                   <span id={hintId} className="basis-full text-[11px] font-normal text-navy/70">
-                    {FEDERAL_ADMIN_ONLY}
+                    {removable(l) ? ADMIN_ONLY_CHANGE_HINT : ADMIN_ONLY_LIFT_HINT}
                   </span>
                 )}
               </li>

@@ -1441,20 +1441,13 @@ export default function ProductsPage() {
           </span>
           {bannerSelected && (
             <p id={OFF_PAGE_HINT_ID} className="basis-full text-xs text-navy/70">
-              {OFF_PAGE_HINT}{" "}
-              <button
-                type="button"
-                className="min-h-11 font-medium text-brand-600 hover:underline sm:min-h-0"
-                onClick={() => setSelected(new Set())}
-              >
-                Clear selection
-              </button>
+              {OFF_PAGE_HINT}
             </p>
           )}
           <div className="flex flex-wrap items-center gap-2">
             <button
               onClick={() => setSelected(new Set())}
-              className="text-sm text-navy/70 hover:text-navy transition-colors"
+              className="text-sm font-medium text-brand-600 hover:underline"
             >
               Deselect all
             </button>

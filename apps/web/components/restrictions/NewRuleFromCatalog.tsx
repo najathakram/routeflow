@@ -3,10 +3,9 @@
 import * as React from "react";
 import { useAuth } from "@/lib/auth-context";
 import { isRuleAdmin } from "@/lib/rule-chooser";
+import { ADMIN_ONLY_CHANGE_HINT } from "@/lib/restriction-rules";
 import type { PickedTarget } from "@/lib/rule-targets";
 import { RuleFormDialog } from "@/app/(dashboard)/settings/restrictions/rules/_components/RuleFormDialog";
-
-const FEDERAL_NOTE = "Only an account admin can make a rule apply everywhere.";
 
 /**
  * "New rule with N products…" from the catalog (row 509 PR5): the rule editor, opened with the selected products
@@ -48,7 +47,7 @@ export function NewRuleFromCatalog({
       onCreated={() => onCreated?.()}
       // The catalog is open to OPERATORs; a rule that applies everywhere is admin-only (owner L5), so for them the
       // option is off and the editor says why, instead of offering it and failing with a 403.
-      federalNote={isRuleAdmin(role) ? undefined : FEDERAL_NOTE}
+      federalNote={isRuleAdmin(role) ? undefined : ADMIN_ONLY_CHANGE_HINT}
     />
   );
 }

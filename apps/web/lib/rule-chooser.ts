@@ -14,8 +14,6 @@ import { ruleSentence } from "./restriction-rules";
 export const RESTRICT_MAX = RULE_TARGETS_MAX_PER_REQUEST;
 export const UNDO_ADD_REASON = "Undone right after adding";
 
-export const FEDERAL_ADMIN_ONLY =
-  "Only an admin can change a rule that hides products from every portal customer.";
 export const ALREADY_IN_RULE = "Already in this rule.";
 export const RESTRICT_SAVE_FAILED = "Couldn't save. Nothing was changed. Try again.";
 export const RESTRICT_UNDO_FAILED = "Couldn't undo. Nothing was changed.";

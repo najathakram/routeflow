@@ -20,7 +20,6 @@ import {
 import { UNDO_VISIBLE_MS } from "@/lib/portal-limits";
 import {
   ALREADY_IN_RULE,
-  FEDERAL_ADMIN_ONLY,
   RESTRICT_MAX,
   RESTRICT_SAVE_FAILED,
   RESTRICT_TOO_MANY,
@@ -38,7 +37,7 @@ import {
   ruleLine,
   isRuleAdmin,
 } from "@/lib/rule-chooser";
-import { stateName } from "@/lib/restriction-rules";
+import { ADMIN_ONLY_CHANGE_HINT, stateName } from "@/lib/restriction-rules";
 import { RULE_ERROR_COPY } from "@/lib/restriction-rule-errors";
 import { API_ERROR_CODES } from "@routeflow/types";
 
@@ -132,7 +131,7 @@ function Chooser({
   const pending = add.isPending || remove.isPending;
 
   const disabledReason = (r: SellingRestrictionListItemDto): string | null => {
-    if (r.jurisdiction === "FEDERAL" && !isAdmin) return FEDERAL_ADMIN_ONLY;
+    if (r.jurisdiction === "FEDERAL" && !isAdmin) return ADMIN_ONLY_CHANGE_HINT;
     if (already.has(r.id)) return ALREADY_IN_RULE;
     return null;
   };
@@ -153,7 +152,7 @@ function Chooser({
     if (code && RULE_ERROR_COPY[code]) return RULE_ERROR_COPY[code];
     if (status === 403)
       return rule.jurisdiction === "FEDERAL"
-        ? FEDERAL_ADMIN_ONLY
+        ? ADMIN_ONLY_CHANGE_HINT
         : "You don't have permission to change this rule.";
     return RESTRICT_SAVE_FAILED;
   };
