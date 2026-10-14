@@ -248,4 +248,49 @@ describe("ProductsService.update: a lossy reparent takes the label locks BEFORE 
     await service.update("prod-1", { parentProductId: "fam" } as never);
     expect(labelLocks()).toEqual([]);
   });
+
+  it("SHOULD (b): a parent change with UNCHANGED category text never runs the text sync, so a label the operator removed from the product itself is not resurrected", async () => {
+    // The text "Produce" names an existing label an operator removed from prod-1 on purpose (no row left; the audit is
+    // on prod-1 itself, which familyRemovedLabel never reads: it reads ancestors only).
+    prisma.productCategory.findMany.mockResolvedValue([{ id: "produce", name: "Produce" }]);
+    prisma.auditLog.findMany.mockResolvedValue([]);
+    prisma.productCategoryLabel.createMany.mockImplementation(
+      async (args: { data: Array<{ categoryId: string }> }) => {
+        for (const d of args.data) events.push(`write:label:${d.categoryId}`);
+        return { count: args.data.length };
+      },
+    );
+    const out = await service.update("prod-1", { parentProductId: "fam" } as never);
+    expect((out as { keptLabels?: string[] }).keptLabels).toEqual(["CA ban", "NY ban"]);
+    expect(events.filter((e) => e.startsWith("write:label:"))).toEqual([
+      "write:label:ca",
+      "write:label:ny",
+    ]);
+    expect(labelLocks()).not.toContain(`advisory:product-labels:${TENANT}:produce`);
+  });
+
+  it("a reparent that ALSO changes the category text pre-locks the text's label before the row locks, and the sync adds it", async () => {
+    prisma.productCategory.findMany.mockResolvedValue([{ id: "snack", name: "Snacks" }]);
+    prisma.auditLog.findMany.mockResolvedValue([]);
+    prisma.auditLog.create.mockResolvedValue({});
+    prisma.productCategoryLabel.createMany.mockImplementation(
+      async (args: { data: Array<{ categoryId: string }> }) => {
+        for (const d of args.data) events.push(`write:label:${d.categoryId}`);
+        return { count: args.data.length };
+      },
+    );
+    prisma.product.update.mockImplementation(async () => {
+      events.push("write:product");
+      return { ...PRODUCT, parentProductId: "fam", category: "Snacks" };
+    });
+    await service.update("prod-1", { parentProductId: "fam", category: "Snacks" } as never);
+    const firstRowLock = firstIndex((e) => e.startsWith("for-update:"));
+    expect(labelLocks().slice(0, 3)).toEqual([
+      `advisory:product-labels:${TENANT}:ca`,
+      `advisory:product-labels:${TENANT}:ny`,
+      `advisory:product-labels:${TENANT}:snack`,
+    ]);
+    expect(events.indexOf(`advisory:product-labels:${TENANT}:snack`)).toBeLessThan(firstRowLock);
+    expect(events).toContain("write:label:snack");
+  });
 });

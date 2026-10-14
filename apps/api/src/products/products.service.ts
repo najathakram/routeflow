@@ -1242,7 +1242,7 @@ export class ProductsService {
     // A parent CHANGE (an unlink included); an echo of the current parent is not one.
     const reparenting =
       dto.parentProductId !== undefined &&
-      (dto.parentProductId ?? null) !== (existing.parentProductId ?? null);
+      dto.parentProductId !== (existing.parentProductId ?? null);
     const txDone = this.prisma.tenantTransaction(async (tx: any) => {
       // SA-603a: reactivate restores the retired codes still free; a code this PATCH sets is claimed (an inactive
       // holder is released + audited, an active one is a 409); deactivate releases BEFORE the isActive write.
@@ -1293,11 +1293,12 @@ export class ProductsService {
           fromParentId: existing.parentProductId ?? null,
           toParentId: dto.parentProductId ?? null,
         });
-        const textLabel = await labelIdForText(
-          tx,
-          tenantId,
-          data.category !== undefined ? data.category : existing.category,
-        );
+        // The category text's label, only when this PATCH changes the text's name key: only then does the sync below run.
+        const nextText = data.category !== undefined ? data.category : existing.category;
+        const textLabel =
+          labelNameKey(nextText) !== labelNameKey(existing.category)
+            ? await labelIdForText(tx, tenantId, nextText)
+            : null;
         reparentLocks = new Set([...planned, ...(textLabel ? [textLabel] : [])]);
         await lockLabelCategories(tx, tenantId, reparentLocks);
       }
@@ -1452,14 +1453,13 @@ export class ProductsService {
       // H2: a CHANGED parent (incl. an unlink) never drops a label the variant carried through the old one: what was
       // effective before and is not after becomes its own INCLUDE, in this tx (rolls the parent write back on failure).
       const fromParentId = before?.parentProductId ?? null;
-      if (dto.parentProductId !== undefined && (dto.parentProductId ?? null) !== fromParentId) {
+      if (dto.parentProductId !== undefined && dto.parentProductId !== fromParentId) {
         keptLabels = (
           await keepLabelsOnReparent(tx, {
             tenantId,
             productId: id,
             fromParentId,
             toParentId: dto.parentProductId ?? null,
-            text: row.category,
             actor: { id: options?.actorId ?? null, name: options?.actorName ?? null },
             // An echo of a parent that moved concurrently took no locks up front: an empty set, so anything to keep is the
             // retryable 409 rather than a label lock after the row lock.

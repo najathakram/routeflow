@@ -4,6 +4,7 @@ import {
   LABEL_KEPT_ON_REPARENT_ACTION,
   LABEL_REMOVED_ACTION,
   LabelLockTimeoutError,
+  syncCategoryLabel,
 } from "../product-categories/label-writer";
 import {
   effectiveCategoryIdsUnder,
@@ -39,7 +40,7 @@ const run = (
   db
     .prisma("t1")
     .tenantTransaction((tx: any) =>
-      keepLabelsOnReparent(tx, { tenantId: "t1", actor: ACTOR, text: null, ...args }),
+      keepLabelsOnReparent(tx, { tenantId: "t1", actor: ACTOR, ...args }),
     );
 
 const effectiveOf = async (
@@ -291,18 +292,20 @@ describe("keepLabelsOnReparent", () => {
     ).rejects.toBeInstanceOf(LabelLockTimeoutError);
   });
 
-  it("runs the add-only category-text sync after a keep (and not for a no-loss move)", async () => {
+  it("never runs the add-only category-text sync (SHOULD b): a label removed from the product itself stays removed", async () => {
     const db = world();
     db.addCategory("snack", "Snacks");
-    await run(db, { productId: "C", fromParentId: "P1", toParentId: "P2", text: "Snacks" });
-    expect(db.label("C", "snack")?.mode).toBe("INCLUDE");
-
-    const db2 = world();
-    db2.addCategory("snack", "Snacks");
-    db2.addLabel("P2", "ca", "INCLUDE");
-    db2.addLabel("P2", "ny", "INCLUDE");
-    await run(db2, { productId: "C", fromParentId: "P1", toParentId: "P2", text: "Snacks" });
-    expect(db2.label("C", "snack")).toBeUndefined();
+    db.audits.push({
+      tenantId: "t1",
+      action: LABEL_REMOVED_ACTION,
+      entityType: "Product",
+      entityId: "C",
+      meta: { categoryId: "snack", mode: "INCLUDE" },
+    });
+    const out = await run(db, { productId: "C", fromParentId: "P1", toParentId: "P2" });
+    expect(out.keptLabels).toEqual(["CA ban", "NY ban"]);
+    expect(db.label("C", "snack")).toBeUndefined();
+    expect(db.calls.some((c) => c.model === "productCategory" && c.op === "findMany")).toBe(false);
   });
 
   describe("(7) an unreadable OLD chain is refused (409), never read short: a short chain drops bans", () => {
@@ -395,33 +398,34 @@ describe("keepLabelsOnReparent", () => {
       expect(locked.some((v) => v.endsWith(":ny"))).toBe(false);
     });
 
-    it("(8b) the category-text label must be pre-locked too: else the retryable 409", async () => {
+    it("(8b) a pre-locked superset is fine", async () => {
       const db = world();
-      db.addCategory("snack", "Snacks");
-      await expect(
-        run(db, {
-          productId: "C",
-          fromParentId: "P1",
-          toParentId: "P2",
-          text: "Snacks",
-          lockedCategoryIds: new Set(["ca", "ny"]),
-        }),
-      ).rejects.toBeInstanceOf(LabelLockTimeoutError);
-      expect(db.labels.filter((l) => l.productId === "C")).toEqual([]);
-    });
-
-    it("(8c) a pre-locked superset is fine", async () => {
-      const db = world();
-      db.addCategory("snack", "Snacks");
       const out = await run(db, {
         productId: "C",
         fromParentId: "P1",
         toParentId: "P2",
-        text: "Snacks",
-        lockedCategoryIds: new Set(["ca", "ny", "snack", "misc"]),
+        lockedCategoryIds: new Set(["ca", "ny", "misc"]),
       });
       expect(out.keptLabels).toEqual(["CA ban", "NY ban"]);
-      expect(db.label("C", "snack")?.mode).toBe("INCLUDE");
     });
+  });
+
+  it("(8c) syncCategoryLabel with a pre-locked set refuses (retryable 409) a matched label outside it, writing nothing", async () => {
+    const db = world();
+    db.addCategory("snack", "Snacks");
+    const sync = (locked: ReadonlySet<string>) =>
+      db.prisma("t1").tenantTransaction((tx: any) =>
+        syncCategoryLabel(tx, {
+          tenantId: "t1",
+          productId: "P3",
+          text: "Snacks",
+          actor: ACTOR,
+          lockedCategoryIds: locked,
+        }),
+      );
+    await expect(sync(new Set(["ca"]))).rejects.toBeInstanceOf(LabelLockTimeoutError);
+    expect(db.label("P3", "snack")).toBeUndefined();
+    await expect(sync(new Set(["snack"]))).resolves.toEqual({ addedCategoryId: "snack" });
+    expect(db.label("P3", "snack")?.mode).toBe("INCLUDE");
   });
 });

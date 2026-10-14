@@ -1,11 +1,7 @@
 import { ConflictException } from "@nestjs/common";
 import { Prisma } from "@prisma/client";
 import { API_ERROR_CODES } from "../common/api-error-codes";
-import {
-  keepLabelsAsOwnIncludes,
-  LabelLockTimeoutError,
-  syncCategoryLabel,
-} from "../product-categories/label-writer";
+import { keepLabelsAsOwnIncludes, LabelLockTimeoutError } from "../product-categories/label-writer";
 import { computeEffectiveCategoryIds, type LabelChainLink } from "./effective-labels";
 import { ancestorsOf, readableChainFrom } from "./parent-carries";
 
@@ -98,7 +94,7 @@ export async function planReparentLabels(
   },
 ): Promise<string[]> {
   const { tenantId, productId, fromParentId, toParentId } = args;
-  if ((fromParentId ?? null) === (toParentId ?? null)) return [];
+  if (fromParentId === toParentId) return [];
   const before = await effectiveCategoryIdsUnder(tx, tenantId, productId, fromParentId);
   if (!before) throw new ProductChainUnreadableError();
   if (before.size === 0) return [];
@@ -108,8 +104,16 @@ export async function planReparentLabels(
 }
 
 /**
- * Call after the `parentProductId` write (same tx). Materialises `before \ after` as own INCLUDEs, then runs the
- * add-only category-text sync. Writes NOTHING when nothing is lost. `keptLabels` = the kept labels' names (the response note).
+ * Call after the `parentProductId` write (same tx). Materialises `planReparentLabels` (before \ after) as own INCLUDEs.
+ * Writes NOTHING when nothing is lost. `keptLabels` = the kept labels' names (the response note).
+ *
+ * It does NOT run the add-only category-text sync (`syncCategoryLabel`), on a lossy move or any other parent change
+ * (SA #3457 SHOULD b). That sync adds the INCLUDE of the label the product's text names unless the product has a row,
+ * its parent chain carries the label, or an ANCESTOR had it removed on purpose; it never reads a removal on the product
+ * ITSELF. Every writer therefore runs it only when the text's name key CHANGES (re-saving the same text must not
+ * resurrect a membership an operator removed). A parent change with unchanged text would do exactly that. The labels a
+ * move actually threatens, those inherited from the old chain, are the `lost` set kept here; a text change in the same
+ * PATCH still runs the sync in update(), under the label locks taken before the row locks.
  */
 export async function keepLabelsOnReparent(
   tx: Prisma.TransactionClient,
@@ -118,8 +122,6 @@ export async function keepLabelsOnReparent(
     productId: string;
     fromParentId: string | null;
     toParentId: string | null;
-    /** The product's category text after the write, for the add-only sync. */
-    text?: string | null;
     actor?: { id: string | null; name: string | null };
     /**
      * The label locks the caller took BEFORE its row locks (update(): the planned lost set + the text's label, sorted).
@@ -142,13 +144,6 @@ export async function keepLabelsOnReparent(
     fromParentId,
     toParentId,
     actor: args.actor,
-  });
-  await syncCategoryLabel(tx, {
-    tenantId,
-    productId,
-    text: args.text,
-    actor: args.actor,
-    lockedCategoryIds,
   });
   return { keptLabels: kept.map((k) => k.name) };
 }
