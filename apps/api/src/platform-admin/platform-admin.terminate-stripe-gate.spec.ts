@@ -15,7 +15,10 @@ const TENANT_ID = "tenant-1";
 
 type Subs = { pre: string | null; inTx?: string | null };
 
-function make(subs: Subs, opts: { configured?: boolean; status?: string } = {}) {
+function make(
+  subs: Subs,
+  opts: { configured?: boolean; status?: string; customer?: string | null } = {},
+) {
   const prisma: any = createMockPrisma();
   let inTx = false;
   const txSub = jest.fn(async () => ({
@@ -24,7 +27,12 @@ function make(subs: Subs, opts: { configured?: boolean; status?: string } = {}) 
   prisma.tenantSubscription = {
     // the plain, pre-transaction read of the tenant's subscription id
     findUnique: jest.fn(async () =>
-      inTx ? txSub() : { stripeSubId: subs.pre, stripeCustomerId: "cus_1" },
+      inTx
+        ? txSub()
+        : {
+            stripeSubId: subs.pre,
+            stripeCustomerId: opts.customer === undefined ? "cus_1" : opts.customer,
+          },
     ),
     upsert: jest.fn().mockResolvedValue({}),
     findMany: jest.fn().mockResolvedValue([]),
@@ -173,6 +181,58 @@ describe.each(OPS)("%s - the shared Stripe gate", (_name, run) => {
     expect(stripe.getCustomer).toHaveBeenCalledTimes(2);
     expect(written(prisma)).toBe(false);
     expect(rows(auditLog, "STRIPE_SUB_NOT_FOUND_TERMINATED")).toHaveLength(0);
+  });
+
+  describe("a stripeSubId but NO stripeCustomerId (#477b): the customer check cannot run", () => {
+    it("sub 404 + no customer id to check: refused STRIPE_ACCOUNT_MISMATCH + ops notice, NEVER allowed blind", async () => {
+      const { svc, prisma, stripe, auditLog } = make({ pre: "sub_1" }, { customer: null });
+      stripe.getSubscription.mockRejectedValue(missing);
+      const err: any = await run(svc).catch((e) => e);
+      expect(err.getStatus()).toBe(409);
+      expect(code(err)).toBe("STRIPE_ACCOUNT_MISMATCH");
+      expect(stripe.getCustomer).not.toHaveBeenCalled();
+      expect(written(prisma)).toBe(false);
+      const a = rows(auditLog, "STRIPE_KEY_MODE_MISMATCH");
+      expect(a).toHaveLength(1);
+      expect(a[0].meta).toMatchObject({ stripeSubId: "sub_1", stripeCustomerId: null });
+      expect(rows(auditLog, "STRIPE_SUB_NOT_FOUND_TERMINATED")).toHaveLength(0);
+    });
+
+    it.each(["active", "past_due", "paused", "incomplete"])(
+      "sub returned LIVE (%s): TENANT_CANCEL_SUBSCRIPTION_FIRST, nothing written",
+      async (status) => {
+        const { svc, prisma, stripe } = make({ pre: "sub_1" }, { customer: null });
+        stripe.getSubscription.mockResolvedValue({ status, customer: "cus_x" });
+        const err: any = await run(svc).catch((e) => e);
+        expect(code(err)).toBe("TENANT_CANCEL_SUBSCRIPTION_FIRST");
+        expect(written(prisma)).toBe(false);
+      },
+    );
+
+    it("sub returned TERMINAL: allowed (Stripe answered, so it is not a blind allow); no mismatch notice", async () => {
+      const { svc, prisma, stripe, auditLog } = make({ pre: "sub_1" }, { customer: null });
+      stripe.getSubscription.mockResolvedValue({ status: "canceled", customer: "cus_x" });
+      await run(svc);
+      expect(written(prisma)).toBe(true);
+      expect(rows(auditLog, "STRIPE_KEY_MODE_MISMATCH")).toHaveLength(0);
+    });
+
+    it("sub read fails twice: 409 CONCURRENT_UPDATE (Stripe unconfirmed), nothing written", async () => {
+      const { svc, prisma, stripe } = make({ pre: "sub_1" }, { customer: null });
+      stripe.getSubscription.mockRejectedValue(new Error("network"));
+      const err: any = await run(svc).catch((e) => e);
+      expect(code(err)).toBe("CONCURRENT_UPDATE");
+      expect(err.getResponse().reason).toBe("STRIPE_UNCONFIRMED");
+      expect(stripe.getSubscription).toHaveBeenCalledTimes(2);
+      expect(written(prisma)).toBe(false);
+    });
+
+    it("every Stripe read is outside the transaction", async () => {
+      const { svc, stripeCalls } = make({ pre: "sub_1" }, { customer: null });
+      await run(svc); // the harness's default sub is terminal; it records whether a transaction was open
+      expect(stripeCalls.length).toBeGreaterThan(0);
+      expect(stripeCalls.every((inside) => inside === false)).toBe(true);
+    });
   });
 
   it("a terminal status needs no customer read and writes no not-found row", async () => {
