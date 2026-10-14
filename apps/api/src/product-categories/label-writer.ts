@@ -279,7 +279,6 @@ export async function lockLabelCategories(
 ): Promise<void> {
   for (const categoryId of [...new Set(categoryIds)].sort()) {
     // Serial by design: one lock at a time, in key order.
-    // eslint-disable-next-line no-await-in-loop
     await lockLabelCategory(tx, tenantId, categoryId);
   }
 }
