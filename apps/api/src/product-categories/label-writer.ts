@@ -511,6 +511,18 @@ export function labelNameProblem(name: string): "too-long" | "unsafe" | null {
   return null;
 }
 
+/**
+ * An inert opt-out a reparent keep REPLACED with an INCLUDE, as its audit row records it. Identifying fields only: the
+ * pin column stays the admin service's alone (label-pin-single-writer.spec.ts).
+ */
+export type ReplacedOptOut = {
+  id: string;
+  reason: string | null;
+  createdById: string | null;
+  createdByName: string | null;
+  createdAt: string;
+};
+
 /** The audit action written when a reparent materialises a label the variant would otherwise have lost. */
 export const LABEL_KEPT_ON_REPARENT_ACTION = "product_label.kept_on_reparent";
 
@@ -519,8 +531,9 @@ export const LABEL_KEPT_ON_REPARENT_ACTION = "product_label.kept_on_reparent";
  * parent and would lose under the new one (a selling ban must never silently stop applying). Unlike the add-only sync it
  * ignores "the parent chain carries it" / "the family removed it": the caller computed that those do NOT help this
  * product. A categories-of-this-tenant check only (an ARCHIVED label still bans, so it is kept); an existing INCLUDE is
- * left as is, an INERT opt-out (an EXCLUDE row that no longer cancels anything) is replaced by the INCLUDE. One audit
- * row per kept label, same transaction. Returns the kept labels' ids and names, in id order.
+ * left as is, an INERT opt-out (an EXCLUDE row that no longer cancels anything) is replaced by the INCLUDE (the audit
+ * row names it: `replacedOptOut`). One audit row per kept label, same transaction. Returns the kept labels' ids and
+ * names, in id order.
  */
 export async function keepLabelsAsOwnIncludes(
   tx: Prisma.TransactionClient,
@@ -532,10 +545,10 @@ export async function keepLabelsAsOwnIncludes(
     toParentId: string | null;
     actor?: Actor;
   },
-): Promise<Array<{ categoryId: string; name: string }>> {
+): Promise<Array<{ categoryId: string; name: string; replacedOptOut?: ReplacedOptOut }>> {
   const { tenantId, productId, actor } = args;
   const ids = [...new Set(args.categoryIds)].sort();
-  const kept: Array<{ categoryId: string; name: string }> = [];
+  const kept: Array<{ categoryId: string; name: string; replacedOptOut?: ReplacedOptOut }> = [];
   if (ids.length === 0) return kept;
   const product = await tx.product.findFirst({
     where: { id: productId, tenantId },
@@ -551,7 +564,14 @@ export async function keepLabelsAsOwnIncludes(
     if (!category) continue;
     const existing = await tx.productCategoryLabel.findFirst({
       where: { tenantId, productId, categoryId },
-      select: { id: true, mode: true },
+      select: {
+        id: true,
+        mode: true,
+        reason: true,
+        createdById: true,
+        createdByName: true,
+        createdAt: true,
+      },
     });
     if (existing?.mode === "INCLUDE") continue;
     if (existing)
@@ -560,7 +580,22 @@ export async function keepLabelsAsOwnIncludes(
       // An INCLUDE carries no pin: the column keeps its NULL default.
       data: { tenantId, productId, categoryId, mode: "INCLUDE", reason: null, ...stampOf(actor) },
     });
-    kept.push({ categoryId, name: category.name });
+    kept.push({
+      categoryId,
+      name: category.name,
+      // The deleted opt-out's reason was an approval: keep what identifies it in the audit trail.
+      ...(existing
+        ? {
+            replacedOptOut: {
+              id: existing.id,
+              reason: existing.reason,
+              createdById: existing.createdById,
+              createdByName: existing.createdByName,
+              createdAt: new Date(existing.createdAt).toISOString(),
+            },
+          }
+        : {}),
+    });
   }
   if (kept.length > 0) {
     await tx.auditLog.createMany({
@@ -575,6 +610,7 @@ export async function keepLabelsAsOwnIncludes(
           source: "reparent",
           fromParentProductId: args.fromParentId,
           toParentProductId: args.toParentId,
+          ...(k.replacedOptOut ? { replacedOptOut: k.replacedOptOut } : {}),
         } as Prisma.InputJsonValue,
       })),
     });

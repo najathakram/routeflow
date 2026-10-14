@@ -165,13 +165,27 @@ describe("keepLabelsOnReparent", () => {
 
   it("(4c) an INERT opt-out (pinned to no parent) does not block the keep: it is replaced by an INCLUDE", async () => {
     const db = world();
-    db.addLabel("C", "ca", "EXCLUDE", null); // inert: the label still applies via P1
+    const optOutId = db.addLabel("C", "ca", "EXCLUDE", null); // inert: the label still applies via P1
     expect([...(await effectiveOf(db, "C", "P1"))].sort()).toEqual(["ca", "ny"]);
     const out = await run(db, { productId: "C", fromParentId: "P1", toParentId: "P2" });
     expect(out.keptLabels).toEqual(["CA ban", "NY ban"]);
     expect(db.label("C", "ca")).toMatchObject({ mode: "INCLUDE" });
     expect(db.labels.filter((l) => l.productId === "C" && l.categoryId === "ca")).toHaveLength(1);
     expect([...(await effectiveOf(db, "C", "P2"))].sort()).toEqual(["ca", "ny"]);
+    // The deleted opt-out (its reason was an approval) is identified in the keep's audit row; the other keep's is not.
+    const metaOf = (c: string) =>
+      db.audits.find((a) => (a.meta as { categoryId: string }).categoryId === c)?.meta as Record<
+        string,
+        unknown
+      >;
+    expect(metaOf("ca").replacedOptOut).toEqual({
+      id: optOutId,
+      reason: "seed",
+      createdById: null,
+      createdByName: null,
+      createdAt: "2026-09-19T00:00:00.000Z",
+    });
+    expect(metaOf("ny")).not.toHaveProperty("replacedOptOut");
   });
 
   it("(4d) removal audits: one on the NEW parent does not suppress the keep; one on the OLD parent for a label it no longer carries keeps nothing", async () => {
