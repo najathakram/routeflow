@@ -62,6 +62,9 @@ export const surfaceText = (s: SellingRestrictionListItemDto["surface"]) =>
  */
 export const ADMIN_ONLY_CHANGE_HINT =
   "Only an account admin can change a rule that hides products from every portal customer.";
+/** The note under the disabled "Everywhere (federal)" choice for a viewer who isn't an account admin (SA copy). */
+export const ADMIN_ONLY_FEDERAL_NOTE =
+  "Only an account admin can make a rule apply everywhere (federal).";
 export const ADMIN_ONLY_LIFT_HINT =
   "Only an account admin can lift a rule that hides products from every portal customer.";
 

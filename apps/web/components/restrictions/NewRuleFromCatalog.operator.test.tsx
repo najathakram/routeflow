@@ -1,6 +1,6 @@
+import { ADMIN_ONLY_FEDERAL_NOTE } from "@/lib/restriction-rules";
 import * as React from "react";
 import { renderWithProviders, screen } from "@/test-utils/render";
-import { ADMIN_ONLY_CHANGE_HINT } from "@/lib/restriction-rules";
 import { NewRuleFromCatalog } from "./NewRuleFromCatalog";
 
 /**
@@ -17,7 +17,7 @@ jest.mock("@/lib/api-client", () => ({
   apiClient: { get: jest.fn().mockResolvedValue({ data: [] }), post: jest.fn() },
 }));
 
-const NOTE = ADMIN_ONLY_CHANGE_HINT;
+const NOTE = ADMIN_ONLY_FEDERAL_NOTE;
 
 function open() {
   renderWithProviders(

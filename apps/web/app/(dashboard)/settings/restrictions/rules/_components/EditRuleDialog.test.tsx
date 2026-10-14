@@ -247,9 +247,7 @@ describe("EditRuleDialog", () => {
     open();
     expect(screen.getByRole("radio", { name: "Everywhere (federal)" })).toBeDisabled();
     expect(
-      screen.getByText(
-        "Only an account admin can change a rule that hides products from every portal customer.",
-      ),
+      screen.getByText("Only an account admin can make a rule apply everywhere (federal)."),
     ).toBeInTheDocument();
   });
 
