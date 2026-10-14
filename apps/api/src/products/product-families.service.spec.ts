@@ -73,6 +73,25 @@ describe("POST /products/families (createFamily)", () => {
     expect(gateway.emitProductUpdated).toHaveBeenCalledTimes(1);
   });
 
+  it("B1: a variant typed as '<family> - <label>' (any case, repeated) is stored as the bare label", async () => {
+    const { service, tx } = build();
+    const out = await service.createFamily(
+      dto([variant("SODA - Cola"), variant("soda  -  Soda - Lime"), variant("Sodaberry - Plum")]),
+      ACTOR,
+    );
+    const names = tx.products
+      .filter((p) => (p as Record<string, unknown>).parentProductId === out.family.id)
+      .map((p) => [
+        (p as Record<string, unknown>).name,
+        (p as Record<string, unknown>).variantName,
+      ]);
+    expect(names).toEqual([
+      ["Cola", "Cola"],
+      ["Lime", "Lime"],
+      ["Sodaberry - Plum", "Sodaberry - Plum"],
+    ]);
+  });
+
   it("money: prices go through roundMoney, standardCost through roundUnitCost; the family price is copied ONLY when asked", async () => {
     const a = build();
     await a.service.createFamily(
@@ -226,6 +245,21 @@ describe("PATCH /products/:id/variants (updateVariants)", () => {
       other.service.updateVariants("fam", { deactivate: ["k1", "k2"] }, ACTOR),
     ).rejects.toBeInstanceOf(BadRequestException);
     expect(other.tx.products.find((p) => p.id === "k1")!.isActive).toBe(true);
+  });
+
+  it("B1: an added or renamed variant is stored as the bare label (family name stripped, any case)", async () => {
+    const { service, tx } = build({ products: [fam(), kid("k1")] });
+    const out = await service.updateVariants(
+      "fam",
+      {
+        add: [variant("soda - Mint")],
+        update: [{ id: "k1", name: "SODA - Berry" }],
+      } as never,
+      ACTOR,
+    );
+    const row = (id: string) => tx.products.find((p) => p.id === id) as Record<string, unknown>;
+    expect(row("k1")).toMatchObject({ name: "Berry", variantName: "Berry" });
+    expect(row(out.added[0])).toMatchObject({ name: "Mint", variantName: "Mint" });
   });
 
   it("more than 200 rows in total is a 400", async () => {

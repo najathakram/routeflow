@@ -17,7 +17,7 @@
  * WHAT IT PRINTS, per tenant ID (all tenants; never a slug or a business name): the variants scanned, how many
  * are COMPOSED (the name starts with "<parent name> - ") and how many are DOUBLED (that prefix appears twice in a
  * row, or the whole prefix is repeated inside the value), the affected product ids, and a few samples with each
- * name truncated to 14 characters. The match is case-sensitive, the same string the page and the server compose.
+ * name truncated to 14 characters. The match is the server normaliser's: NFC, trimmed, whitespace-collapsed and case-insensitive, whole parent name plus " - " only.
  *
  * SAFETY: the Prisma client is used only through `product.findMany` / `product.count`; the connection pool runs
  * with `default_transaction_read_only = on`; there is no write branch and no --apply flag. A source pin
@@ -41,13 +41,20 @@ const ID_CAP_TEXT = 25;
  * they are bare. DOUBLED wins over COMPOSED.
  */
 export function classifyVariantName({ name, variantName, parentName }) {
-  if (!parentName) return null;
-  const prefix = `${parentName}${SEPARATOR}`;
+  // Mirrors src/products/product-variant-name.ts: NFC, trimmed, whitespace-collapsed, case-insensitive, whole parent
+  // name plus the " - " separator (never a partial word).
+  const tokens = (parentName ?? "").normalize("NFC").trim().split(/\s+/).filter(Boolean);
+  if (tokens.length === 0) return null;
+  const body = tokens.map((t) => t.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")).join("\\s+");
+  const one = new RegExp(`^\\s*${body}\\s+-\\s+(?=\\S)`, "iu");
+  const two = new RegExp(`^\\s*${body}\\s+-\\s+${body}\\s+-\\s+(?=\\S)`, "iu");
+  const inner = new RegExp(`${body}\\s+-\\s+${body}\\s+-\\s+`, "iu");
   let kind = null;
-  for (const value of [variantName, name]) {
-    if (typeof value !== "string") continue;
-    if (value.includes(`${prefix}${prefix}`)) return "DOUBLED";
-    if (value.startsWith(prefix) && value.length > prefix.length) kind = "COMPOSED";
+  for (const raw of [variantName, name]) {
+    if (typeof raw !== "string") continue;
+    const value = raw.normalize("NFC");
+    if (two.test(value) || inner.test(value)) return "DOUBLED";
+    if (one.test(value)) kind = "COMPOSED";
   }
   return kind;
 }
@@ -107,7 +114,9 @@ export function selfTest() {
   eq(c("Acme - Classic", "Classic", "Acme"), "COMPOSED", "composed name only");
   eq(c("Acme - Acme - Classic", "Acme - Acme - Classic", "Acme"), "DOUBLED", "doubled");
   eq(c("Acme - ", "Acme - ", "Acme"), null, "prefix only is not a label");
-  eq(c("acme - Classic", "acme - Classic", "Acme"), null, "case-sensitive");
+  eq(c("acme - Classic", "acme - Classic", "Acme"), "COMPOSED", "case-insensitive");
+  eq(c("ACME  -  acme - Classic", "x", "Acme"), "DOUBLED", "doubled, case and spacing");
+  eq(c("Acmeberry - X", "Acmeberry - X", "Acme"), null, "partial word");
   eq(c("Cool - Mint", "Cool - Mint", "Acme"), null, "other dash name");
   eq(c("Acme - Classic", "Acme - Classic", null), null, "no parent");
   const s = summarize(

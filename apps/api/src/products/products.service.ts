@@ -766,6 +766,9 @@ export class ProductsService {
     dto: CreateProductDto,
     options?: { suppressEmit?: boolean; actorId?: string | null; actorName?: string | null },
   ) {
+    // B1: a variant stores its BARE label; strip a composed "<parent> - <label>" first, so the guard and the name
+    // uniqueness check below judge what will actually be stored.
+    await bareVariantNames(this.prisma.forTenant(), dto, dto.parentProductId);
     assertSafeProductNames(dto); // B964-2: a formula-led name/variantName is refused before any read or write
     // B990: the typed free-text category too, UNCONDITIONALLY: even with a structured subcategory chosen or a parent without one
     // the written value can still be the typed text, and checking at the top is before any read or write.

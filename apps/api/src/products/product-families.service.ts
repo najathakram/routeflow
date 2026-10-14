@@ -43,6 +43,7 @@ import {
   type FamilyPriceColumn,
 } from "./family-price";
 import { lockProductName } from "./product-name-rules";
+import { bareRowNames } from "./product-variant-name";
 import { syncCategoryLabel } from "../product-categories/label-writer";
 import type {
   CreateFamilyDto,
@@ -201,8 +202,10 @@ export class ProductFamiliesService {
     if (dto.variants.length < 1 || dto.variants.length > MAX_ROWS) {
       throw new BadRequestException(`A family takes 1 to ${MAX_ROWS} variants per request.`);
     }
-    const variantRows = dto.variants.map((v, i) => ({ row: i, ...v }));
     const familyName = dto.family.name.trim();
+    // B1: every variant stores its BARE label; a name typed or pasted as "<family> - <label>" is stripped first.
+    bareRowNames(dto.variants, familyName);
+    const variantRows = dto.variants.map((v, i) => ({ row: i, ...v }));
     // B964-2: a formula-led family / variant name is refused before any read or write (it is printed on invoices, exports, filings)
     assertSafeProductNames({ name: familyName });
     dto.variants.forEach((v, i) =>
@@ -411,6 +414,15 @@ export class ProductFamiliesService {
     const deactivate = [...new Set(dto.deactivate ?? [])];
     if (add.length + update.length + deactivate.length > MAX_ROWS) {
       throw new BadRequestException(`At most ${MAX_ROWS} rows per request.`);
+    }
+    // B1: an added / renamed variant stores its BARE label; the family's name is read once (tenant-scoped) to strip a
+    // pasted "<family> - <label>". An unreadable family is left to the 404 inside the transaction.
+    if (add.length + update.length > 0) {
+      const family: { name: string } | null = await this.prisma
+        .forTenant()
+        .product.findFirst({ where: { id: familyId }, select: { name: true } });
+      bareRowNames(add, family?.name);
+      bareRowNames(update, family?.name);
     }
     // M2 price authority: while mixed_packs is ON the family owns the variants' price, so a price EDIT is a 409 and an
     // added variant takes the family's five columns (never a price of its own).

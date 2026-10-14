@@ -1,22 +1,35 @@
-import { PRODUCT_NAME_SEPARATOR } from "./product-display-name";
-
 /**
  * B1: a family variant stores ONLY its own label ("Classic") in `name` / `variantName`; every read composes
  * "<Parent> - <Variant>" for display (`productDisplayName`). A client that sends the composed display name back
  * ("Acme - Classic") used to be stored verbatim, so each edit re-prefixed it ("Acme - Acme - Classic").
  *
- * Strips one OR MORE leading "<parentName> - " prefixes (case-sensitive, the exact string the composers build) so
- * only the bare label is stored. A value that is nothing but the prefix(es) is left as sent, so the name-rules
- * guard still sees what the caller typed rather than an empty label.
+ * THE ONE NORMALISER: every write of a variant's name / variantName goes through `stripParentPrefix` (directly, or via
+ * `bareVariantNames` / `bareRowNames`); `variant-name-writers-census.spec.ts` turns a writer that does not into a red build.
+ *
+ * Strips REPEATED leading "<parent full name> - " prefixes. Both sides are compared NFC-normalised, trimmed, with
+ * internal whitespace collapsed and case-folded ("ACME  -  acme - Classic" under "Acme" -> "Classic"). Only the parent's
+ * FULL name plus the separator counts, never a partial word ("Acmeberry - X" under "Acme" is untouched). The stored
+ * remainder keeps its own casing. A value that is nothing but the prefix(es) is left exactly as sent, so the name-rules
+ * guard still sees what the caller typed rather than an empty label; an untouched value is returned as given.
  */
 export function stripParentPrefix(value: string, parentName: string | null | undefined): string {
-  if (!parentName) return value;
-  const prefix = `${parentName}${PRODUCT_NAME_SEPARATOR}`;
-  let bare = value;
-  while (bare.startsWith(prefix) && bare.slice(prefix.length).trim().length > 0) {
-    bare = bare.slice(prefix.length);
+  const tokens = (parentName ?? "").normalize("NFC").trim().split(/\s+/).filter(Boolean);
+  if (tokens.length === 0) return value;
+  const name = tokens.map((t) => t.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")).join("\\s+");
+  const leading = new RegExp(`^\\s*${name}\\s+-\\s+`, "iu");
+  const prefixOnly = new RegExp(`^\\s*${name}\\s+-\\s*$`, "iu");
+  let bare = value.normalize("NFC");
+  let stripped = false;
+  for (;;) {
+    const m = leading.exec(bare);
+    if (!m) break;
+    const rest = bare.slice(m[0].length);
+    if (rest.trim().length === 0) break;
+    bare = rest;
+    stripped = true;
   }
-  return bare;
+  if (!stripped || prefixOnly.test(bare.trim())) return value;
+  return bare.trim();
 }
 
 type NameDto = { name?: string; variantName?: string | null };
@@ -47,5 +60,18 @@ export async function bareVariantNames(
   if (typeof dto.name === "string") dto.name = stripParentPrefix(dto.name, parent.name);
   if (typeof dto.variantName === "string") {
     dto.variantName = stripParentPrefix(dto.variantName, parent.name);
+  }
+}
+
+/**
+ * Writers that hold a batch of rows and already know the parent's name (family create / add / rename, a grid):
+ * rewrites each row's `name` in place to its bare label.
+ */
+export function bareRowNames(
+  rows: Array<{ name?: string }>,
+  parentName: string | null | undefined,
+): void {
+  for (const row of rows) {
+    if (typeof row.name === "string") row.name = stripParentPrefix(row.name, parentName);
   }
 }
