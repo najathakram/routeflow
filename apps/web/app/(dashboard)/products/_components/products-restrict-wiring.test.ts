@@ -80,4 +80,19 @@ describe("products/page.tsx - row 509 wiring", () => {
       expect(m![0]).not.toMatch(/bannerSelected|offPageHint/);
     });
   });
+  describe("apple-ux fixes on the selection bars", () => {
+    it("Clear selection lives once, in the banner, not again in the action bar", () => {
+      expect(src).not.toContain("Clear selection");
+    });
+
+    it("Deselect all reads as a link, not as a disabled control", () => {
+      const m =
+        /<button\s+onClick=\{\(\) => setSelected\(new Set\(\)\)\}\s+className="([^"]*)"\s*>\s*Deselect all/.exec(
+          src,
+        );
+      expect(m).not.toBeNull();
+      expect(m![1]).toMatch(/text-brand-600/);
+      expect(m![1]).not.toMatch(/text-navy\/70/);
+    });
+  });
 });

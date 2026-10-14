@@ -2,7 +2,7 @@ import * as React from "react";
 import userEvent from "@testing-library/user-event";
 import { renderWithProviders, screen, waitFor, within } from "@/test-utils/render";
 import { ruleSentence as prRuleSentence } from "@/lib/restriction-rules";
-import { FEDERAL_ADMIN_ONLY } from "@/lib/rule-chooser";
+import { ADMIN_ONLY_CHANGE_HINT } from "@/lib/restriction-rules";
 import { RuleChooserDialog } from "./RuleChooserDialog";
 
 /**
@@ -118,7 +118,7 @@ describe("RuleChooserDialog, add mode", () => {
     const dialog = screen.getByRole("dialog");
     const fed = await within(dialog).findByRole("button", { name: /everything banned/i });
     expect(fed).toBeDisabled();
-    expect(within(dialog).getByText(FEDERAL_ADMIN_ONLY)).toBeInTheDocument();
+    expect(within(dialog).getByText(ADMIN_ONLY_CHANGE_HINT)).toBeInTheDocument();
     expect(within(dialog).getByRole("button", { name: /vape ban tx/i })).toBeEnabled();
   });
 
@@ -218,13 +218,13 @@ describe("RuleChooserDialog, row 509 SA review", () => {
     open();
     const fed = await screen.findByRole("button", { name: /everything banned/i });
     expect(fed).not.toHaveAttribute("title");
-    const why = screen.getByText(FEDERAL_ADMIN_ONLY);
+    const why = screen.getByText(ADMIN_ONLY_CHANGE_HINT);
     expect(fed.getAttribute("aria-describedby")).toBe(why.id);
   });
 
   it("never says `everyone` or `all sales`", () => {
-    expect(FEDERAL_ADMIN_ONLY).toMatch(/every portal customer/);
-    expect(FEDERAL_ADMIN_ONLY).not.toMatch(/everyone/i);
+    expect(ADMIN_ONLY_CHANGE_HINT).toMatch(/every portal customer/);
+    expect(ADMIN_ONLY_CHANGE_HINT).not.toMatch(/everyone/i);
   });
 
   it("moves focus to the count-confirm heading when that step appears", async () => {

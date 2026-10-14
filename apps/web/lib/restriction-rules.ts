@@ -55,6 +55,14 @@ export function jurisdictionText(
 export const surfaceText = (s: SellingRestrictionListItemDto["surface"]) =>
   s === "BUYER_PORTAL" ? "Buyer portal only" : "All orders";
 
+/** The line next to a disabled change (add, remove, edit) on an all-customer rule. Same text PR4 defines. */
+export const ADMIN_ONLY_CHANGE_HINT =
+  "Only an account admin can change a rule that hides products from every portal customer.";
+
+/** The line next to a disabled Lift on an all-customer rule. Same text PR4 defines. */
+export const ADMIN_ONLY_LIFT_HINT =
+  "Only an account admin can lift a rule that hides products from every portal customer.";
+
 /** The line next to a disabled Lift on an everywhere rule. */
 export const LIFT_ADMIN_ONLY_HINT =
   "Only an account admin can lift a rule that applies everywhere.";

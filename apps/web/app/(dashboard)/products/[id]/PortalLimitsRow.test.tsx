@@ -1,7 +1,7 @@
 import * as React from "react";
 import userEvent from "@testing-library/user-event";
 import { renderWithProviders, screen, waitFor } from "@/test-utils/render";
-import { FEDERAL_ADMIN_ONLY } from "@/lib/rule-chooser";
+import { ADMIN_ONLY_CHANGE_HINT, ADMIN_ONLY_LIFT_HINT } from "@/lib/restriction-rules";
 import { PortalLimitsRow } from "./PortalLimitsRow";
 
 /** C f: the product page's "Portal limits" chips render what the rule does and where it came from, with Lift. */
@@ -177,7 +177,7 @@ describe("PortalLimitsRow (C f)", () => {
       const btn = await screen.findByRole("button", { name: "Remove from rule" });
       expect(btn).toBeDisabled();
       expect(btn).not.toHaveAttribute("title");
-      const why = screen.getByText(FEDERAL_ADMIN_ONLY);
+      const why = screen.getByText(ADMIN_ONLY_CHANGE_HINT);
       expect(btn.getAttribute("aria-describedby")).toBe(why.id);
     });
 
@@ -209,12 +209,37 @@ describe("PortalLimitsRow (C f)", () => {
       const { unmount } = renderWithProviders(<PortalLimitsRow productId="p1" />);
       const lift = await screen.findByRole("button", { name: "Lift" });
       expect(lift).toBeDisabled();
-      expect(lift.getAttribute("aria-describedby")).toBe(screen.getByText(FEDERAL_ADMIN_ONLY).id);
+      expect(lift.getAttribute("aria-describedby")).toBe(screen.getByText(ADMIN_ONLY_LIFT_HINT).id);
       unmount();
       mockRole = "TENANT_ADMIN";
       renderWithProviders(<PortalLimitsRow productId="p1" />);
       expect(await screen.findByRole("button", { name: "Lift" })).toBeEnabled();
-      expect(screen.queryByText(FEDERAL_ADMIN_ONLY)).toBeNull();
+      expect(screen.queryByText(ADMIN_ONLY_LIFT_HINT)).toBeNull();
+    });
+
+    it("chips are rounded-lg (never a pill) and every action is a 44px target on a phone", async () => {
+      mockGet.mockResolvedValue({
+        data: {
+          items: [multi(), limit({ id: "r1", directTarget: true })],
+          nextCursor: null,
+        },
+      });
+      renderWithProviders(<PortalLimitsRow productId="p1" />);
+      const remove = await screen.findByRole("button", { name: "Remove from rule" });
+      const lift = screen.getByRole("button", { name: "Lift" });
+      const view = screen.getByRole("link", { name: "View rule" });
+      for (const el of [remove, lift, view]) {
+        expect(el.className).toMatch(/\bmin-h-11\b/);
+        expect(el.className).toMatch(/\bsm:min-h-0\b/);
+      }
+      for (const el of [remove, lift]) {
+        const chip = el.closest("li")!;
+        expect(chip.className).toMatch(/\brounded-lg\b/);
+        expect(chip.className).not.toMatch(/rounded-full/);
+        // the actions stack under the chip text on a narrow screen
+        expect(chip.className).toMatch(/\bflex-col\b/);
+        expect(chip.className).toMatch(/\bsm:flex-row\b/);
+      }
     });
 
     it("Add to a rule… opens the chooser for this one product (operator and up)", async () => {
