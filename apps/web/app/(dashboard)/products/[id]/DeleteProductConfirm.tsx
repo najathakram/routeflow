@@ -1,6 +1,7 @@
 "use client";
 
 import * as React from "react";
+import { deleteProductConfirmText } from "@routeflow/types";
 import { ConfirmDialog } from "@/components/ConfirmDialog";
 import type { useDeleteProductFlow } from "./useDeleteProductFlow";
 
@@ -37,7 +38,7 @@ export function DeleteProductConfirm({
         });
       }}
       title="Delete product?"
-      description={`${name} is removed from the catalog (a soft delete). Its SKU and barcode are freed, so another product can use them. Order and invoice history is kept. A product on an undelivered order can't be deleted.`}
+      description={deleteProductConfirmText(name)}
       confirmLabel="Yes, delete"
       variant="danger"
       loading={flow.isPending}

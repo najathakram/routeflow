@@ -4,6 +4,7 @@ import * as React from "react";
 import { Trash2 } from "lucide-react";
 import { Button } from "@routeflow/ui/web";
 import { useAuth } from "@/lib/auth-context";
+import { isStaffRole } from "@/lib/default-unit-line";
 
 /**
  * The product Details card's view-mode actions: Make variant of…, Deactivate / Reactivate, the tobacco
@@ -40,11 +41,12 @@ export function ProductHeaderControls({
   onRequestDelete: () => void;
 }) {
   const { user } = useAuth();
-  const isOperator = user?.role === "OPERATOR";
+  // Owner ruling 2026-10-14: staff (an operator or an account admin) get every product control.
+  const isStaff = isStaffRole(user?.role);
 
   return (
     <>
-      {isOperator && !product.parentProductId && product.kind !== "FAMILY" && (
+      {isStaff && !product.parentProductId && product.kind !== "FAMILY" && (
         <Button
           size="sm"
           variant="ghost"
@@ -77,7 +79,7 @@ export function ProductHeaderControls({
           {isTobacco ? "Unmark tobacco" : "Mark as tobacco"}
         </Button>
       )}
-      {isOperator && (
+      {isStaff && (
         <div className="flex items-center max-sm:basis-full max-sm:justify-start max-sm:border-t max-sm:border-surface-border max-sm:pt-2 sm:ml-2 sm:border-l sm:border-surface-border sm:pl-3">
           <Button
             size="sm"

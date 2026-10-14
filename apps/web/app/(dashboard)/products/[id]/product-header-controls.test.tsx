@@ -74,11 +74,22 @@ describe("ProductHeaderControls (VU-2)", () => {
     expect(del.className).not.toContain("bg-danger ");
   });
 
-  it.each(["TENANT_ADMIN", "DRIVER", "CUSTOMER", "STAFF"])("Delete is absent for %s", (r) => {
+  it.each(["DRIVER", "CUSTOMER", "STAFF"])("Delete and Make variant of… are absent for %s", (r) => {
     role = r;
     setup();
     expect(screen.queryByRole("button", { name: "Delete" })).toBeNull();
+    expect(screen.queryByRole("button", { name: "Make variant of…" })).toBeNull();
   });
+
+  it.each(["OPERATOR", "TENANT_ADMIN"])(
+    "owner ruling 2026-10-14: %s gets Delete and Make variant of…",
+    (r) => {
+      role = r;
+      setup();
+      expect(screen.getByRole("button", { name: "Delete" })).toBeEnabled();
+      expect(screen.getByRole("button", { name: "Make variant of…" })).toBeEnabled();
+    },
+  );
 
   it("Delete asks the page to open its DeleteProductConfirm (no second dialog here)", () => {
     const { onRequestDelete } = setup();

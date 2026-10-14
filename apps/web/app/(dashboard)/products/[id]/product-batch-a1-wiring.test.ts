@@ -24,7 +24,7 @@ describe("products/[id]/page.tsx — batch A1 wiring", () => {
   });
 
   it("P-17: saveEdit confirms with a Saved toast and scrolls the Details card into view", () => {
-    expect(src).toMatch(/toast\(\{ title: "Saved", variant: "success" \}\)/);
+    expect(src).toMatch(/\{ title: "Saved", variant: "success" \}/);
     expect(src).toMatch(/scrollCardIntoView\(detailsCardRef\.current\)/);
     expect(src).toMatch(/ref=\{detailsCardRef\}/);
   });

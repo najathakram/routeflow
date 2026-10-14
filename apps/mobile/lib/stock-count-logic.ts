@@ -190,6 +190,8 @@ export interface StockCountSessionLine {
 
 export interface StockCountSessionDetail extends StockCountSessionSummary {
   lines: StockCountSessionLine[];
+  /** SA-767 L-2.4 D: how far an UNFINISHED commit got (some movement exists, not COMMITTED); else null. */
+  commit?: { committedLines: number; totalLines: number } | null;
 }
 
 export interface StartStockCountResult extends StockCountSessionSummary {

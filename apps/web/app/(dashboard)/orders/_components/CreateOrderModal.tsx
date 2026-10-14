@@ -41,6 +41,7 @@ import {
   computeLineSubtotal,
   pendingScanDecision,
   undoPendingTap,
+  type DerivedBaseMarker,
   type SellLevel,
 } from "@routeflow/pricing";
 import {
@@ -159,7 +160,7 @@ interface SelectedCustomer {
   fulfillPath?: "ROUTE" | "SHIP";
 }
 
-interface LineItem {
+interface LineItem extends DerivedBaseMarker {
   tempId: string;
   /** Empty string for unlisted (ad-hoc) lines — `isUnlisted` is the real flag. */
   productId: string;

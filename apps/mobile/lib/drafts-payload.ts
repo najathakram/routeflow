@@ -1,4 +1,4 @@
-import { computeLineSubtotal } from "@routeflow/pricing";
+import { computeLineSubtotal, type DerivedBaseMarker } from "@routeflow/pricing";
 import type { DraftLinePriceSource } from "@routeflow/types";
 import type { SaleDraft } from "./api/drafts";
 
@@ -51,7 +51,7 @@ export interface DraftPackBase {
 export type DraftLineExtra = Record<string, unknown>;
 
 /** One line item as parked in a draft — mirrors web's `DraftLineItem` field-for-field. */
-export interface DraftLineItem {
+export interface DraftLineItem extends DerivedBaseMarker {
   tempId: string;
   productId: string;
   productName: string;
@@ -137,7 +137,7 @@ export interface OrderDraftPayload {
  * `productId` doubles as the stable `tempId` so `floorAcked` entries survive
  * a park/resume round-trip untouched.
  */
-export interface DraftCatalogLine {
+export interface DraftCatalogLine extends DerivedBaseMarker {
   productId: string;
   productName: string;
   unit: string;
@@ -199,6 +199,7 @@ const CATALOG_MODELED_KEYS = new Set([
   "category",
   "note",
   "unitLabel",
+  "derivedBase",
   "packBase",
   "priceSource",
 ]);
@@ -283,6 +284,8 @@ export function toOrderDraftPayload(state: DraftBuilderState): OrderDraftPayload
     category: li.category,
     note: li.note,
     unitLabel: li.unitLabel,
+    // units P0b: the derived-Piece marker rides along (web parks the same key); emitted only when set.
+    ...(li.derivedBase ? { derivedBase: li.derivedBase } : {}),
     packBase: li.packBase,
     priceSource: li.priceSource,
   }));
@@ -357,6 +360,9 @@ export function fromOrderDraftPayload(payload: OrderDraftPayload): DraftBuilderS
         category: li.category,
         note: li.note,
         unitLabel: li.unitLabel,
+        ...(typeof li.derivedBase === "string" && li.derivedBase
+          ? { derivedBase: li.derivedBase }
+          : {}),
         packBase: li.packBase,
         priceSource: li.priceSource,
         extra: splitLine(li, CATALOG_MODELED_KEYS),
