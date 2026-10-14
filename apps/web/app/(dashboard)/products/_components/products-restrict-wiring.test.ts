@@ -12,7 +12,7 @@ const src = fs.readFileSync(path.join(__dirname, "..", "page.tsx"), "utf8");
 
 describe("products/page.tsx - row 509 wiring", () => {
   it("renders the Restrict… menu right after the Limit in portal… buttons", () => {
-    expect(src).toMatch(/<PortalLimitButtons[^>]*\/>\s*<RestrictMenu\b/);
+    expect(src).toMatch(/<PortalLimitButtons\b[\s\S]{0,120}?\/>\s*<RestrictMenu\b/);
   });
 
   it("keeps every existing bulk control", () => {

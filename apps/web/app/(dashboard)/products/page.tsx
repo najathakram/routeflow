@@ -54,6 +54,8 @@ import { deactivateFailureToast, isReadOnlyRefusal } from "@/lib/product-reactiv
 import { BulkDeleteSkipReport, type SkippedProduct } from "@/components/BulkDeleteSkipReport";
 import { ReadOnlyHint, WriteButton } from "@/lib/read-only-gate";
 import { ProductsExportButton } from "./_components/ProductsExportButton";
+import { RestrictMenu } from "@/components/restrictions/RestrictMenu";
+import { SelectAllMatching } from "@/components/restrictions/SelectAllMatching";
 import {
   STOCK_FILTER_CHIPS,
   ProductStatusBadge,
@@ -1049,19 +1051,25 @@ export default function ProductsPage() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [page, debouncedSearch, categoryFilter, stockFilter, sectionFilter, pageSize, hiddenOnly]);
 
-  const {
-    data: result,
-    isLoading,
-    isError,
-  } = useProducts({
+  // The filters the list shows. "Select all matching" (row 509) fetches ids with THIS object, so the ids can never
+  // drift from the rows on screen.
+  const listFilters = {
     search: debouncedSearch,
     category: categoryFilter || undefined,
     ...stockFilterParams(stockFilter),
     section: sectionFilter || undefined,
     ...portalVisibleFilterParam(hiddenOnly),
+    includeVariants: true,
+  };
+
+  const {
+    data: result,
+    isLoading,
+    isError,
+  } = useProducts({
+    ...listFilters,
     page,
     limit: pageSize, // 0 = all
-    includeVariants: true,
   });
 
   // Separate unfiltered query just to populate the category dropdown — always fetches all
@@ -1095,6 +1103,16 @@ export default function ProductsPage() {
   // the intersection of the selection with whatever page happened to be loaded, which
   // silently dropped any id selected on a different page/filter view.
   const productById = React.useMemo(() => new Map(filtered.map((p) => [p.id, p])), [filtered]);
+
+  // Names of the selected products this page holds (the rule editor labels its chips from them).
+  const selectedNames = React.useMemo(() => {
+    const out: Record<string, string> = {};
+    selected.forEach((id) => {
+      const name = productById.get(id)?.name;
+      if (name) out[id] = name;
+    });
+    return out;
+  }, [selected, productById]);
 
   const toggleOne = (id: string) =>
     setSelected((prev) => {
@@ -1386,6 +1404,26 @@ export default function ProductsPage() {
         </div>
       </div>
 
+      {/* Row 509 (owner Q5): "Select all N matching" - only under the toolbar, only in select mode. */}
+      {selectMode && (
+        <SelectAllMatching
+          filters={listFilters}
+          resetKey={[
+            page,
+            debouncedSearch,
+            categoryFilter,
+            stockFilter,
+            sectionFilter,
+            pageSize,
+            hiddenOnly,
+          ].join("|")}
+          selected={selected}
+          setSelected={setSelected}
+          pageIds={filteredIds}
+          total={totalItems}
+        />
+      )}
+
       {/* Selection action bar */}
       {selectMode && selected.size > 0 && (
         <div className="flex flex-wrap items-center justify-between gap-2 rounded-lg border border-brand-200 bg-brand-50 px-4 py-3">
@@ -1419,6 +1457,11 @@ export default function ProductsPage() {
             )}
             <PortalBulkButtons selected={selected} onDone={() => setSelected(new Set())} />
             <PortalLimitButtons selected={selected} onDone={() => setSelected(new Set())} />
+            <RestrictMenu
+              selected={selected}
+              names={selectedNames}
+              onDone={() => setSelected(new Set())}
+            />
             {/* The destructive action sits apart, past a divider, never shoulder to shoulder with Limit in portal. */}
             <div
               data-testid="bulk-destructive"

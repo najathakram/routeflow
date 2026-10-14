@@ -30,6 +30,7 @@ import {
 
 const REVIEW_HREF = "/settings/restrictions#customers-without-state";
 const LIMITS_HREF = "/settings/restrictions/rules";
+const ruleHref = (id: string) => `${LIMITS_HREF}/${id}`;
 const FORM_ID = "limit-in-portal-form";
 
 /**
@@ -104,13 +105,17 @@ export function LimitInPortalDialog({
     const request = buildBulkRequest({ scope, states: chosen, legalBan, note });
     bulk.mutate(request, {
       onSuccess: (res) => {
-        const createdIds = res.createdIds ?? [];
+        // Row 509 (owner Q6): the products went into ONE rule, named by `ruleId` (also createdIds[0]); Undo lifts it.
+        const ruleId = res.ruleId;
+        const createdIds = ruleId ? [ruleId] : (res.createdIds ?? []);
         const changed = res.created > 0 && createdIds.length > 0;
         toast({
           title: doneTitle(scope, chosen, res.created, res.skipped),
           variant: "success",
           duration: UNDO_VISIBLE_MS,
-          secondaryAction: { label: "View limits", onClick: () => router.push(LIMITS_HREF) },
+          secondaryAction: ruleId
+            ? { label: "View rule", onClick: () => router.push(ruleHref(ruleId)) }
+            : { label: "View limits", onClick: () => router.push(LIMITS_HREF) },
           // Undo is a plain call: this component is usually gone (selection cleared) by the time it is clicked.
           ...(changed
             ? {
@@ -121,7 +126,12 @@ export function LimitInPortalDialog({
                       .then((r) => {
                         qc.invalidateQueries({ queryKey: ["selling-restrictions"] });
                         toast({
-                          title: undoneTitle(chosen, r.lifted ?? createdIds.length, scope),
+                          // One rule lifted = `created` products un-hidden; the old N-rows path lifted N rules.
+                          title: undoneTitle(
+                            chosen,
+                            ruleId ? res.created : (r.lifted ?? createdIds.length),
+                            scope,
+                          ),
                           variant: "success",
                         });
                       })
