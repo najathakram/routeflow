@@ -37,6 +37,8 @@ type RevisionLine = {
   trackedSubcategoryId: unknown;
   notes: unknown;
   status: unknown;
+  /** SA ruling (#3418): the line's explicit author marker; absent on a caller that did not read it. */
+  authorChannel?: string | null;
 };
 
 const LIVE_LINES = {
@@ -47,6 +49,10 @@ const LIVE_LINES = {
 
 function revisionSnapshot(lines: RevisionLine[], totals: AppendOrderRevisionArgs[2]) {
   return {
+    // F1(i) (#3418): marks a revision written by the code that records `Order.source` (`sourceRecorded`) and each
+    // line's `authorChannel`, so the author rule can tell it from older, unrecorded history on a legacy order
+    // (line-author-channel.ts). No clock.
+    sourceRecorded: true as const,
     subtotal: totals.subtotal,
     tax: totals.tax,
     total: totals.total,
@@ -66,6 +72,9 @@ function revisionSnapshot(lines: RevisionLine[], totals: AppendOrderRevisionArgs
       trackedSubcategoryId: li.trackedSubcategoryId,
       notes: li.notes,
       status: li.status,
+      // SA ruling (#3418): the line's author marker, verbatim (null = written before the marker). The author rule
+      // reads it per line; a snapshot without the field falls through to the order-level rule.
+      authorChannel: li.authorChannel ?? null,
     })),
   };
 }

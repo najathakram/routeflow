@@ -17,6 +17,7 @@ import { parsePlanGate } from "./plan-gate";
 import { safeTextErrorCopy } from "./safe-text-error-copy";
 import { sellerUnavailableCopy } from "./seller-unavailable";
 import { sellingRestrictedCopy } from "./selling-restricted-copy";
+import { RULE_ERROR_COPY } from "./restriction-rule-errors";
 
 /**
  * B980 (owner rule: no raw strings in the UI): the app-wide mutation error toast shows FIXED copy,
@@ -31,6 +32,8 @@ import { sellingRestrictedCopy } from "./selling-restricted-copy";
 
 /** Daily-work refusals, by `body.code`. The sentences name the cause and the next step. */
 const CODE_COPY: Record<string, string> = {
+  // Row 509: selling-restriction rule targets and edits (fixed copy; the guided cases are rendered in place).
+  ...RULE_ERROR_COPY,
   // a buyer write toward a paused seller: the seller-unavailable sentence, never "You don't have permission"
   [API_ERROR_CODES.SELLER_UNAVAILABLE]: sellerUnavailableCopy(null),
   [API_ERROR_CODES.RETURN_REFUND_OVER_LINE_HEADROOM]: RETURN_REFUND_OVER_LINE_HEADROOM_COPY,
@@ -45,6 +48,8 @@ const CODE_COPY: Record<string, string> = {
   MERGE_PACK_MISMATCH:
     "The pack size on this order no longer matches the product. Refresh and review the line.",
   ORDER_CHANGED_DURING_EDIT: "This order changed while you were editing it. Refresh and try again.",
+  // F3: the edit named one line twice; nothing was saved.
+  DUPLICATE_LINE_ID: "A line appears twice. Refresh the page and try again.",
   ORDER_BILLING_CHANGED:
     "This order's billing changed while you were working on it. Refresh and try again.",
   FULFIL_METHOD_NOT_OFFERED: "This business doesn't offer that way of fulfilling orders.",

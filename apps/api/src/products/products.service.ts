@@ -47,6 +47,8 @@ import { isValidItemType, isValidUom, templateByKey } from "../regulated/templat
 import { normalizeScanCode } from "@routeflow/scanning";
 import { findScanMatches } from "./scan-match";
 import { buildProductListWhere } from "./product-list-where";
+import type { ProductIdsForFilterResponse } from "@routeflow/types";
+import { RULE_TARGETS_MAX_PER_REQUEST as PRODUCT_IDS_CAP } from "../selling-restrictions-admin/dto/rule-targets.dto";
 import { assertPackKeepsLevelsValid } from "./unit-pack-rules";
 import { isMsrpBelowWholesale, wholesalePerPiece } from "../common/msrp";
 import { TOBACCO_CATEGORY_NAME, isTobaccoCategoryName } from "../common/tobacco-category";
@@ -348,10 +350,18 @@ export class ProductsService {
     });
   }
 
+  /** The tenant this request runs in; the catalog is only ever listed inside one. */
+  private requireTenant(): string {
+    const tenantId = this.prisma.getTenantId();
+    if (!tenantId) throw new BadRequestException("A tenant context is required.");
+    return tenantId;
+  }
+
   async findAll(
     query: ListProductsDto,
     opts?: { excludeTrackedCategoryIds?: string[]; andWhere?: Record<string, unknown>[] },
   ) {
+    this.requireTenant();
     const page = Number(query.page ?? 1);
     // limit=0 is the "fetch-all" sentinel used by BuyerCatalogService for
     // price-based sorts (buyer pricing is resolved in-memory so can't use DB ORDER BY).
@@ -437,6 +447,30 @@ export class ProductsService {
         totalPages: fetchAll ? 1 : Math.ceil(total / limit),
       },
     };
+  }
+
+  /**
+   * Row 509: GET /products/ids — the ids of EVERY product the list filters (search, category, stock filter,
+   * portalVisible, section, isActive, isTobacco) match, for the catalog's "Select all N matching" and the rule
+   * pickers. The SAME where-clause as `findAll` (`buildProductListWhere`), in the list's order, ids only; `page` /
+   * `limit` are ignored. At most RULE_TARGETS_MAX_PER_REQUEST ids come back; `total` is every match and `capped`
+   * says some were left out. `includeVariants` only widens each list row's payload, never the matches, so it has
+   * no effect here.
+   */
+  async findIds(query: ListProductsDto): Promise<ProductIdsForFilterResponse> {
+    this.requireTenant();
+    const where: any = buildProductListWhere(query);
+    const db = this.prisma.forTenant();
+    const [rows, total] = await Promise.all([
+      db.product.findMany({
+        where,
+        select: { id: true },
+        orderBy: [{ name: "asc" }, { id: "asc" }],
+        take: PRODUCT_IDS_CAP,
+      }),
+      db.product.count({ where }),
+    ]);
+    return { ids: rows.map((r: { id: string }) => r.id), total, capped: total > PRODUCT_IDS_CAP };
   }
 
   /**

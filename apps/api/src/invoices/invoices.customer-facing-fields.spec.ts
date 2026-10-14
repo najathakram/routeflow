@@ -202,3 +202,17 @@ describe("InvoicesService.findAll — paidAtSale on list rows (row 401 follow-up
     );
   });
 });
+
+describe("invoice PDF — the H3b staff override reason never prints", () => {
+  // The ONE invoice PDF is customer-facing (the buyer portal and the invoice email serve the same cached
+  // file), and the template is mocked under Jest, so this pins its SOURCE: it must never read the
+  // staff-only InvoiceItem.overrideReason / overriddenBy columns the H3b copier now stores.
+  it("invoice-pdf-template.tsx and invoice-pdf-item.ts do not reference either column", () => {
+    const fs = jest.requireActual<typeof import("fs")>("fs");
+    const path = jest.requireActual<typeof import("path")>("path");
+    for (const f of ["invoice-pdf-template.tsx", "invoice-pdf-item.ts"]) {
+      const src = fs.readFileSync(path.join(__dirname, f), "utf8");
+      expect({ f, hits: src.match(/overrideReason|overriddenBy/g) ?? [] }).toEqual({ f, hits: [] });
+    }
+  });
+});

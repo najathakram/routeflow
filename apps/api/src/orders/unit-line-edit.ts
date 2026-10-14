@@ -10,6 +10,7 @@ import {
   type UnitLineProduct,
 } from "./unit-line-build";
 import type { ResolvedLineUnits } from "../products/line-units";
+import { raisedBy, type LineAuthorLookup } from "./line-author-channel";
 import { liveLines } from "./order-edit-cancelled";
 import { writeLineUpdate } from "./order-line-removal";
 import type { UpdateOrderItemsDto } from "./dto/update-order-items.dto";
@@ -166,6 +167,8 @@ export interface UnitWriteContext {
   repriceTierOnQtyOnly?: boolean;
   /** trackedCategoryId -> TrackedCategory row, for the products this edit touches (B297). */
   categoryMap: Map<string, TrackedCategoryRow>;
+  /** SA ruling (#3418): each re-created line's author marker, and `.editor` (the acting principal's). */
+  authorOf: LineAuthorLookup;
 }
 
 /**
@@ -198,6 +201,9 @@ export async function createUnitLine(
   resolved: ResolvedLineUnits,
   item: any,
   position: number,
+  // SA ruling (#3418): replace-all re-creates a line, so it keeps the product's carried marker (true); a diff-add
+  // (false) is the editor's own line.
+  carried = false,
 ): Promise<void> {
   // B297: price + stamp the trio at WRITE, like every other writer — a NULL/zero placeholder here
   // would become a PERMANENT $0 levy once PR 3's "keep the stored amount" rule reads it back.
@@ -223,6 +229,7 @@ export async function createUnitLine(
       orderId,
       ...built,
       ...((item.carriedLine as Record<string, unknown> | undefined) ?? {}),
+      authorChannel: carried ? ctx.authorOf(product.id) : ctx.authorOf.editor, // after the carry: it wins
     },
   });
 }
@@ -254,6 +261,8 @@ export async function updateUnitLine(
   resolved: ResolvedLineUnits,
   item: any,
   isSubstitute: boolean,
+  // SA ruling (#3418): the line's quantity before a same-product edit; a BUYER raise stamps it BUYER.
+  beforeQty?: unknown,
 ): Promise<void> {
   const category = product.trackedCategoryId
     ? ctx.categoryMap.get(product.trackedCategoryId)
@@ -294,7 +303,11 @@ export async function updateUnitLine(
         categoryPriceIncludesTax,
       }
     : rest;
-  await writeLineUpdate(ctx.tx, ctx.orderId, lineId, data); // #2577: { id, orderId }, never bare
+  const stamp =
+    beforeQty !== undefined && !isSubstitute
+      ? raisedBy(ctx.authorOf.editor, beforeQty, rest.qty)
+      : {};
+  await writeLineUpdate(ctx.tx, ctx.orderId, lineId, { ...data, ...stamp }); // #2577: { id, orderId }, never bare
 }
 
 /**

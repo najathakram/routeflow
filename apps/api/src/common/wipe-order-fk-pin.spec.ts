@@ -148,6 +148,8 @@ const ALLOWED_PREEXISTING = new Map<string, string>([
 
 const key = (v: Violation) => `${v.list}|${v.model}|${v.referencing}`;
 
+// Any FUTURE child of Product with a Restrict FK (e.g. row 509's SellingRestrictionTarget) must be listed in
+// NUKE_MODELS ahead of "product", or this pin goes red: children are deleted before the rows they point at.
 describe("wipe / fresh-start order lists respect RESTRICT FKs (SA-594)", () => {
   const lists: Record<string, () => string[]> = {
     "wipe-tenant-fresh-start.js NUKE_MODELS": nukeModels,
