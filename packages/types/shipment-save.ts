@@ -41,3 +41,9 @@ export const notShippedNote = (customerNotified?: boolean): string =>
   customerNotified
     ? "Not shipped yet. The customer is told when you mark the order shipped."
     : "Not shipped yet.";
+
+/** Shown near the carrier picker when a tracking number is entered with no carrier chosen. */
+export const CARRIER_HINT = "Pick a carrier to give your customer a tracking link";
+
+export const needsCarrierHint = (carrier: string, trackingNumber: string): boolean =>
+  !!trackingNumber.trim() && !carrier.trim();

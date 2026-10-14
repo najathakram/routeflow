@@ -4,7 +4,13 @@ import * as React from "react";
 import { genericToastCopy } from "@/lib/generic-toast-copy";
 import { Truck, ExternalLink, Pencil } from "lucide-react";
 import { Button, Card, Modal, cn, useToast } from "@routeflow/ui/web";
-import { isShippedOrderStatus, notShippedNote, shipmentSaveDecision } from "@routeflow/types";
+import {
+  CARRIER_HINT,
+  isShippedOrderStatus,
+  needsCarrierHint,
+  notShippedNote,
+  shipmentSaveDecision,
+} from "@routeflow/types";
 import { CARRIERS, carrierLabel, getTrackingUrl } from "@/lib/shipping";
 
 /**
@@ -206,17 +212,16 @@ export function ShipmentCard({
                 </option>
               ))}
             </select>
+            {needsCarrierHint(formCarrier, formTracking) && (
+              <p className="text-xs text-navy/50">{CARRIER_HINT}</p>
+            )}
           </div>
           <div className="space-y-1">
             <label className="block text-xs font-medium text-navy/70">Tracking number</label>
             <input
               type="text"
               value={formTracking}
-              onChange={(e) => {
-                setFormTracking(e.target.value);
-                // A number needs a carrier to link to: preselect the first when none is chosen yet.
-                if (e.target.value.trim() && !formCarrier) setFormCarrier(CARRIERS[0].id);
-              }}
+              onChange={(e) => setFormTracking(e.target.value)}
               placeholder="e.g. 1Z999AA10123456784"
               className={cn(
                 "h-10 w-full rounded border border-surface-border bg-white px-3 text-sm text-navy placeholder:text-navy/40",

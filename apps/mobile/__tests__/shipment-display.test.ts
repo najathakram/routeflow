@@ -27,7 +27,11 @@ describe("shipmentForDisplay (F10a)", () => {
 });
 
 import { shipmentNotShippedNote } from "../lib/shipment-display";
-import { shipmentSaveDecision } from "@routeflow/types/shipment-save";
+import {
+  CARRIER_HINT,
+  needsCarrierHint,
+  shipmentSaveDecision,
+} from "@routeflow/types/shipment-save";
 
 // The SAME table is pinned on web in apps/web/components/ShipmentCard.test.tsx (carrier-only saves, M8):
 // both apps call this one rule, so a carrier alone behaves the same on both.
@@ -87,5 +91,20 @@ describe("shipmentNotShippedNote (M8d)", () => {
     expect(shipmentNotShippedNote("SHIP", "PENDING", null, null)).toBeNull();
     expect(shipmentNotShippedNote("ROUTE", "PENDING", "1Z999", "UPS")).toBeNull();
     expect(shipmentNotShippedNote("SHIP", undefined, "1Z999", "UPS")).toBeNull();
+  });
+});
+
+describe("carrier hint (M8, shared with web)", () => {
+  it("says to pick a carrier for a tracking link, only when a number is entered with no carrier", () => {
+    expect(CARRIER_HINT).toBe("Pick a carrier to give your customer a tracking link");
+    expect(needsCarrierHint("", "1Z999")).toBe(true);
+    expect(needsCarrierHint("UPS", "1Z999")).toBe(false);
+    expect(needsCarrierHint("", "")).toBe(false);
+  });
+  it("a number with no carrier still saves (no carrier sent)", () => {
+    expect(shipmentSaveDecision({}, "", "1Z999")).toEqual({
+      outcome: "saved",
+      payload: { shippingCarrier: "", shippingTrackingNumber: "1Z999" },
+    });
   });
 });

@@ -1,7 +1,7 @@
 import * as React from "react";
 import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { ToastProvider } from "@routeflow/ui/web";
-import { shipmentSaveDecision } from "@routeflow/types";
+import { CARRIER_HINT, needsCarrierHint, shipmentSaveDecision } from "@routeflow/types";
 import { ShipmentCard } from "./ShipmentCard";
 
 const SHIPPED_AT = "2026-06-20T12:00:00.000Z";
@@ -98,16 +98,31 @@ describe("ShipmentCard save feedback (M8c)", () => {
     expect(onSave).toHaveBeenCalledWith({ shippingCarrier: "ups", shippingTrackingNumber: "" });
   });
 
-  it("typing a tracking number selects UPS when no carrier is chosen yet", async () => {
+  it("typing a tracking number leaves the carrier at No carrier, shows the hint, and saves the number with no carrier", async () => {
     const onSave = editable({ carrier: null, trackingNumber: null });
     fireEvent.click(screen.getByRole("button", { name: /Add tracking/ }));
+    expect(screen.queryByText(CARRIER_HINT)).toBeNull();
     fireEvent.change(screen.getByPlaceholderText(/1Z999AA/), { target: { value: "1Z123" } });
+    expect((screen.getByRole("combobox") as HTMLSelectElement).value).toBe("");
+    expect(screen.getByText(CARRIER_HINT)).toBeInTheDocument();
     fireEvent.click(screen.getByRole("button", { name: "Save" }));
     await screen.findByText("Shipment saved");
-    expect(onSave).toHaveBeenCalledWith({
-      shippingCarrier: "ups",
-      shippingTrackingNumber: "1Z123",
-    });
+    expect(onSave).toHaveBeenCalledWith({ shippingCarrier: "", shippingTrackingNumber: "1Z123" });
+  });
+
+  it("the hint goes away once a carrier is picked", () => {
+    editable({ carrier: null, trackingNumber: null });
+    fireEvent.click(screen.getByRole("button", { name: /Add tracking/ }));
+    fireEvent.change(screen.getByPlaceholderText(/1Z999AA/), { target: { value: "1Z123" } });
+    expect(screen.getByText(CARRIER_HINT)).toBeInTheDocument();
+    pickCarrier("ups");
+    expect(screen.queryByText(CARRIER_HINT)).toBeNull();
+  });
+
+  it("a saved tracking number with no carrier shows as text, with no tracking link", () => {
+    editable({ carrier: null, trackingNumber: "1Z999" });
+    expect(screen.getByText("1Z999")).toBeInTheDocument();
+    expect(screen.queryByRole("link")).toBeNull();
   });
 
   it("a real tracking number toasts 'Shipment saved'", async () => {
@@ -199,5 +214,15 @@ describe("shipmentSaveDecision (shared with mobile)", () => {
       payload: { shippingCarrier: "", shippingTrackingNumber: "" },
     });
     expect(shipmentSaveDecision({}, "", "")).toEqual({ outcome: "nothing", payload: null });
+  });
+});
+
+describe("needsCarrierHint (shared with mobile)", () => {
+  it("only when a tracking number is entered with no carrier", () => {
+    expect(needsCarrierHint("", "1Z")).toBe(true);
+    expect(needsCarrierHint("  ", " 1Z ")).toBe(true);
+    expect(needsCarrierHint("ups", "1Z")).toBe(false);
+    expect(needsCarrierHint("", "")).toBe(false);
+    expect(needsCarrierHint("", "  ")).toBe(false);
   });
 });

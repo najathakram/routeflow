@@ -3,6 +3,7 @@ import { Linking, Modal, Pressable, StyleSheet, Text, TextInput, View } from "re
 import { Ionicons } from "@expo/vector-icons";
 import { ios } from "@routeflow/ui/tokens";
 import { CARRIERS, carrierLabel, getTrackingUrl } from "../lib/shipping";
+import { CARRIER_HINT, needsCarrierHint } from "@routeflow/types/shipment-save";
 import { showToast } from "../lib/toast";
 
 /**
@@ -161,6 +162,9 @@ export function ShipmentEditModal({
               );
             })}
           </View>
+          {needsCarrierHint(carrier, tracking) ? (
+            <Text style={styles.carrierHint}>{CARRIER_HINT}</Text>
+          ) : null}
 
           <Text style={styles.fieldLabel}>Tracking number</Text>
           <TextInput
@@ -272,6 +276,13 @@ const styles = StyleSheet.create({
     marginBottom: 8,
   },
   carrierRow: { flexDirection: "row", flexWrap: "wrap", gap: 8, marginBottom: 16 },
+  carrierHint: {
+    fontSize: 12,
+    fontFamily: "Inter_400Regular",
+    color: ios.label2,
+    marginTop: -8,
+    marginBottom: 16,
+  },
   carrierChip: {
     paddingHorizontal: 14,
     paddingVertical: 8,
