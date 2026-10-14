@@ -37,8 +37,9 @@ export function deriveTilePrice(
   promoRules: PromotionRule[],
   cartItem: CartItem | undefined,
 ): PromoResult {
-  // The CATALOG's pack first, exactly as the cart prices (row 531 R1): the server bills the live pack.
-  const unitsPerBox = product.unitsPerBox ?? cartItem?.unitsPerBox ?? null;
+  // The CATALOG's pack only, exactly as the cart prices (row 531 R1 / R1-b): the server bills the live pack, and a
+  // product that is no longer boxed (null) is billed qty x price whatever pack the line was stored with.
+  const unitsPerBox = product.unitsPerBox ?? null;
   const norm = normalizeBoxesPieces({
     boxes: cartItem?.boxes ?? null,
     pieces: cartItem?.pieces ?? null,

@@ -200,14 +200,18 @@ export function useBuyerCart(buyerAccountId?: string, sellerSlug?: string) {
    * Once the catalog is loaded, align each line with its pack size (`completeLineFromCatalog`): a line
    * stored WITHOUT one (an older Add from favorites / the dashboard) gets it as whole Cases; a line
    * stored with a DIFFERENT one (the product was repacked) is rebuilt, keeping its Case count or its
-   * pieces, and flagged `corrected`.
+   * pieces, and flagged `corrected`; a line whose product is no longer boxed becomes a plain line of the
+   * same pieces, flagged `corrected`.
    */
   const adoptCatalogPacks = React.useCallback(
     (packs: ReadonlyMap<string, number | null | undefined>) => {
       setCart((prev) => {
         let changed = false;
         const items = prev.items.map((i) => {
-          const done = completeLineFromCatalog(i, packs.get(i.productId));
+          // Only a product the catalog has a row for is touched (an absent key = no row = left as stored).
+          const done = packs.has(i.productId)
+            ? completeLineFromCatalog(i, packs.get(i.productId))
+            : i;
           if (done !== i) changed = true;
           return done;
         });

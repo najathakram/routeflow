@@ -330,6 +330,45 @@ describe("R1: a stored pack that differs from the catalog's (a repack) is rebuil
   });
 });
 
+describe("R1-b: a catalog row that is no longer boxed prices what the server bills", () => {
+  it("a stored '2 Cases' line of a now-unboxed product costs 24 x the piece price, shown as 24 pieces, payload qty 24", async () => {
+    // the product is sold by the piece now (pack null); its price is per piece
+    (mockProduct as { unitsPerBox: number | null }).unitsPerBox = null;
+    localStorage.setItem(
+      "buyerCart_b1_acme",
+      JSON.stringify({
+        items: [
+          {
+            productId: "p1",
+            name: "Widget",
+            unit: "each",
+            unitsPerBox: 12,
+            qty: 24,
+            boxes: 2,
+            pieces: 0,
+            sellBy: "CASE",
+          },
+        ],
+      }),
+    );
+    wrap(<BuyerCartPage />);
+    const row = screen.getAllByRole("row")[1];
+    // 24 pieces x $15.60 each, exactly what create() bills for qty 24 on an unboxed product; NOT 2 x $15.60
+    const shownTotal = screen.getByText("Estimated Total").nextElementSibling!.textContent;
+    expect(shownTotal).toBe("$374.40");
+    expect(within(row).getByText("$374.40")).toBeInTheDocument();
+    expect(within(row).queryByTestId("cart-line-unit")).toBeNull(); // no Case / Each toggle on a plain line
+    expect(within(row).getByRole("spinbutton")).toHaveValue(24);
+    expect(screen.getByTestId("cart-corrected-notice")).toHaveTextContent(
+      "We corrected the quantity on 1 item. Please review.",
+    );
+    await act(async () => {
+      fireEvent.click(screen.getByRole("button", { name: /place order/i }));
+    });
+    expect(mutateAsync.mock.calls[0][0].items).toEqual([{ productId: "p1", qty: 24 }]);
+  });
+});
+
 describe("R2: a silently repriced cart is announced once (qty wins; the buyer reviews)", () => {
   const stale = (id: string) => ({
     productId: id,

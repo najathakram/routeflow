@@ -151,11 +151,15 @@ export default function BuyerCartPage() {
   const promoRules = React.useMemo(() => toPromotionRules(promotions), [promotions]);
 
   // R1: the server enforces and bills the CATALOG's pack, so every line is read in it. A line stored
-  // with a different pack (a repack) or none is rebuilt here before it is priced, shown or sent;
-  // `adoptCatalogPacks` (above) writes the same rebuild back to storage.
+  // with a different pack (a repack), none, or for a product that is no longer boxed is rebuilt here
+  // before it is priced, shown or sent; `adoptCatalogPacks` (above) writes the same rebuild back to
+  // storage. A product with NO catalog row is passed through as stored (it is priced "unavailable").
   const lines = React.useMemo(
     () =>
-      cart.items.map((i) => completeLineFromCatalog(i, productMeta.get(i.productId)?.unitsPerBox)),
+      cart.items.map((i) => {
+        const row = productMeta.get(i.productId);
+        return row ? completeLineFromCatalog(i, row.unitsPerBox) : i;
+      }),
     [cart.items, productMeta],
   );
 
@@ -166,7 +170,9 @@ export default function BuyerCartPage() {
       // the regulated-category rules. Never quietly price it at 0 — say so.
       const unresolved = meta == null;
       const base = meta?.buyerPrice ?? 0;
-      const unitsPerBox = meta?.unitsPerBox ?? item.unitsPerBox ?? null;
+      // The CATALOG's pack when the row exists (null = not boxed: the server bills qty x price), never the
+      // stored pack; only an unresolved line falls back to what it was stored with.
+      const unitsPerBox = meta ? meta.unitsPerBox : (item.unitsPerBox ?? null);
       const norm = normalizeBoxesPieces({
         boxes: item.boxes ?? null,
         pieces: item.pieces ?? null,

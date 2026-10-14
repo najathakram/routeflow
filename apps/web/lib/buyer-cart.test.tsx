@@ -238,11 +238,40 @@ describe("R1: a stored pack size that differs from the catalog's is rebuilt (a r
     expect(result.current.items[0].corrected).toBe(true);
   });
 
-  it("leaves a line alone when the catalog reports no pack at all", () => {
-    localStorage.setItem(KEY, JSON.stringify({ items: [caseLine()] }));
+  it("R1-b: a catalog row that is NOT boxed (pack null) rebuilds the line as a plain one: qty = pieces, split dropped, flagged", () => {
+    localStorage.setItem(
+      KEY,
+      JSON.stringify({ items: [caseLine({ qty: 24, boxes: 2, pieces: 0, sellBy: "CASE" })] }),
+    );
     const { result } = setup();
     act(() => result.current.adoptCatalogPacks(packs(null)));
+    const i = result.current.items[0];
+    expect(i).toMatchObject({ qty: 24, corrected: true });
+    expect(i.boxes).toBeUndefined();
+    expect(i.pieces).toBeUndefined();
+    expect(i.sellBy).toBeUndefined();
+    expect(i.unitsPerBox).toBeNull();
+    expect(stored().items[0]).toMatchObject({ qty: 24, corrected: true });
+    expect(stored().items[0].boxes).toBeUndefined();
+  });
+
+  it("R1-b: a pack of 1 is not boxed either, and an Each line keeps its pieces", () => {
+    localStorage.setItem(
+      KEY,
+      JSON.stringify({ items: [caseLine({ qty: 14, boxes: 1, pieces: 2, sellBy: "EACH" })] }),
+    );
+    const { result } = setup();
+    act(() => result.current.adoptCatalogPacks(packs(1)));
+    expect(result.current.items[0]).toMatchObject({ qty: 14, corrected: true });
+    expect(result.current.items[0].boxes).toBeUndefined();
+  });
+
+  it("NO catalog row at all (the product is absent from the map) leaves the line exactly as stored", () => {
+    localStorage.setItem(KEY, JSON.stringify({ items: [caseLine()] }));
+    const { result } = setup();
+    act(() => result.current.adoptCatalogPacks(new Map()));
     expect(result.current.items[0]).toMatchObject({ unitsPerBox: 12, qty: 12, boxes: 1 });
+    expect(result.current.items[0].corrected).toBeFalsy();
   });
 });
 
@@ -319,10 +348,27 @@ describe("S2: re-adding merges by Cases, taking the boxed side's pack", () => {
     expect(result.current.items[0]).toMatchObject({ unitsPerBox: 6, qty: 18, boxes: 3, pieces: 0 });
   });
 
-  it("two boxed sides with different packs: the incoming (current catalog) pack wins, Case count kept", () => {
+  it("two boxed sides with different packs: the incoming (current catalog) pack wins; a stored Case line keeps its Case count", () => {
     const { result } = setup();
     act(() => result.current.addItem(caseLine({ qty: 24, boxes: 2 })));
     act(() => result.current.addItem(caseLine({ unitsPerBox: 6, qty: 6, boxes: 1 })));
     expect(result.current.items[0]).toMatchObject({ unitsPerBox: 6, qty: 18, boxes: 3, pieces: 0 });
+  });
+
+  it("two boxed sides with different packs: a stored EACH line keeps its pieces (only a Case line keeps its Case count)", () => {
+    localStorage.setItem(
+      KEY,
+      JSON.stringify({ items: [caseLine({ qty: 14, boxes: 1, pieces: 2, sellBy: "EACH" })] }),
+    );
+    const { result } = setup();
+    act(() => result.current.addItem(caseLine({ unitsPerBox: 6, qty: 6, boxes: 1 })));
+    // 14 stored pieces (not 14/12 Cases) + the incoming 6-piece Case = 20 pieces of a 6-pack
+    expect(result.current.items[0]).toMatchObject({
+      unitsPerBox: 6,
+      qty: 20,
+      boxes: 3,
+      pieces: 2,
+      sellBy: "EACH",
+    });
   });
 });

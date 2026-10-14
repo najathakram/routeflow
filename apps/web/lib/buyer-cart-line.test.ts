@@ -313,3 +313,32 @@ describe("mergeCartLines (S2)", () => {
     });
   });
 });
+
+describe("completeLineFromCatalog: no catalog row vs a row that is not boxed (R1-b)", () => {
+  it("undefined = no catalog row: the line is left exactly as stored", () => {
+    const l = line({ qty: 24, boxes: 2, sellBy: "CASE" });
+    expect(completeLineFromCatalog(l, undefined)).toBe(l);
+  });
+
+  it.each([null, 0, 1])(
+    "a row that exists with pack %s rebuilds the boxed line as a plain one: qty = pieces, flagged",
+    (pack) => {
+      const r = completeLineFromCatalog(line({ qty: 24, boxes: 2, sellBy: "CASE" }), pack);
+      expect(r).toMatchObject({ qty: 24, unitsPerBox: null, corrected: true });
+      expect(r.boxes).toBeUndefined();
+      expect(r.pieces).toBeUndefined();
+      expect(r.sellBy).toBeUndefined();
+    },
+  );
+
+  it("an Each line keeps its pieces (14), a Case line its pieces too (the count of goods the server bills)", () => {
+    expect(
+      completeLineFromCatalog(line({ qty: 14, boxes: 1, pieces: 2, sellBy: "EACH" }), null),
+    ).toMatchObject({ qty: 14, unitsPerBox: null, corrected: true });
+  });
+
+  it("a plain line against a not-boxed row is returned as-is", () => {
+    const plain = { qty: 3, unitsPerBox: null } as CartLineShape;
+    expect(completeLineFromCatalog(plain, null)).toBe(plain);
+  });
+});

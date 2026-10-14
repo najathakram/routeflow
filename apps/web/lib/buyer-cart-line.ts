@@ -166,21 +166,40 @@ export function hydrateCartLine<T extends CartLineShape>(l: T): T {
 
 /**
  * Align a stored line with the CATALOG's pack size (the server enforces and bills the live pack).
+ * The argument says what the catalog said about this product:
  *
- *  - no pack stored (an older Add from favorites / dashboard wrote `{ qty: 1 }`): a bare qty on every
- *    buyer path counts SELLING UNITS (the server bills `qty x BOX price`), so the old qty is a Case
- *    count: `qty` Cases, the amount the order would have billed. NOT flagged: nothing was corrected.
- *  - a DIFFERENT pack stored (the product was repacked since): the line is rebuilt in the new pack,
- *    keeping what the buyer chose to count. A Case line keeps its Case count (2 Cases of 12 become
- *    2 Cases of 6); an Each line keeps its pieces. Flagged `corrected`: the quantity in pieces moved.
- *  - the same pack, or a catalog that reports none: returned as-is.
+ *  - `undefined`: NO catalog row (the product is not in the map the caller read): the line is left exactly
+ *    as stored. Callers pass `undefined` only for a product they have no row for.
+ *  - a pack > 1: the product is boxed.
+ *      - no pack stored (an older Add from favorites / dashboard wrote `{ qty: 1 }`): a bare qty on every
+ *        buyer path counts SELLING UNITS (the server bills `qty x BOX price`), so the old qty is a Case
+ *        count: `qty` Cases, the amount the order would have billed. NOT flagged: nothing was corrected.
+ *      - a DIFFERENT pack stored (the product was repacked since): the line is rebuilt in the new pack,
+ *        keeping what the buyer chose to count. A CASE line keeps its Case count (2 Cases of 12 become 2
+ *        Cases of 6); an EACH line keeps its pieces. Flagged `corrected`: the quantity in pieces may move.
+ *      - the same pack: returned as-is.
+ *  - `null` / 0 / 1: a row EXISTS and the product is NOT boxed now. A stored boxed line is rebuilt as a plain
+ *    one: `qty` stays its pieces (what the server bills, qty x the piece price), the split, unit and pack
+ *    are dropped, and it is flagged `corrected`. Keeping the stored pack here priced a "2 Cases" line at 2
+ *    boxes while the server billed 24 pieces (about 12x). A plain line stays as it is.
  */
 export function completeLineFromCatalog<T extends CartLineShape>(
   l: T,
   catalogUnitsPerBox: number | null | undefined,
 ): T {
+  if (catalogUnitsPerBox === undefined) return l;
   const upb = Math.trunc(Number(catalogUnitsPerBox ?? 0));
-  if (!(upb > 1)) return l;
+  if (!(upb > 1)) {
+    if (!isBoxedLine(l)) return l;
+    const { boxes: _b, pieces: _p, sellBy: _s, ...rest } = l;
+    void _b;
+    void _p;
+    void _s;
+    return {
+      ...normalizeCartLine({ ...rest, unitsPerBox: null, qty: l.qty }),
+      corrected: true,
+    } as T;
+  }
   if (!isBoxedLine(l)) {
     const cases = Math.max(1, Math.trunc(Number(l.qty) || 0));
     return normalizeCartLine({ ...l, unitsPerBox: upb, sellBy: "CASE" as const, qty: cases * upb });
@@ -195,7 +214,8 @@ export function completeLineFromCatalog<T extends CartLineShape>(
  * Merge a re-added line into the stored one, in PIECES, then re-derive the split. A BARE incoming
  * qty (no pack: a dashboard Add) on a boxed line is Cases, as everywhere on the buyer paths; a bare
  * STORED line takes the boxed incoming side's pack; two boxed lines with different packs take the
- * INCOMING pack (it came from the current catalog) and keep the stored line's Case count.
+ * INCOMING pack (it came from the current catalog) and rebuild the stored line in it: a stored CASE
+ * line keeps its Case count, a stored EACH line keeps its pieces.
  */
 export function mergeCartLines<T extends CartLineShape>(existing: T, incoming: T): T {
   const ex = packOf(existing);
