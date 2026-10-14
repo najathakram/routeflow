@@ -609,9 +609,7 @@ const OTHER_WRITERS: Record<string, string> = {
   // The Zoho product import CREATES rows with their opening stock: nothing exists to lock yet.
   "products/products.service.ts::ProductsService.importFromZoho":
     "new-row create: opening stock is written on a product created in the same transaction",
-  // Not stock-value writes: they touch the stock tables only to delete a hard-deleted product's rows or to null a link.
-  "products/products.service.ts::ProductsService.bulkDelete":
-    "row delete: removes the lots and movements of products hard-deleted in the same call (no references left)",
+  // Not a stock-value write: it nulls a link on the stock tables only.
   "suppliers/suppliers.service.ts::SuppliersService.remove":
     "link null: nulls StockMovement.supplierId only; no quantity, cost or lot changes",
 };
@@ -740,7 +738,7 @@ function otherWriterProblems(
       problems.push(`${k}: listed but it now locks first - remove the entry`);
     else if (!OTHER_REASON.test(why))
       problems.push(
-        `${k}: allow-list reason must name SA-767 L-4/L-5, "new-row create", "row delete" or "link null"`,
+        `${k}: allow-list reason must name SA-767 L-4/L-5, "new-row create" or "link null"`,
       );
   }
   return problems;

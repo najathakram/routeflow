@@ -47,4 +47,14 @@ describe("every deactivate path locks its codes (one sorted set) BEFORE releasin
     // never lock-then-release per product inside the loop
     expect((fn.match(/lockBarcodeCodes\(/g) ?? []).length).toBe(0);
   });
+
+  it("the delete row lock is the shared ranked stock lock (family role first), not a private id-order statement", () => {
+    const fn = deleteSrc.slice(deleteSrc.indexOf("export async function lockProductsForDelete("));
+    const end = fn.indexOf("\n}\n");
+    const lockFn = fn.slice(0, end);
+    expect(lockFn).toContain("lockProductsForStock(tx, tenantId,");
+    expect(lockFn).not.toMatch(/FOR UPDATE|lockFamilyRow\(/);
+    // the tx around it is the bounded-wait retry wrapper
+    expect(body("async bulkDelete(", "emitProductChanged(null")).toContain("retryStockTx(");
+  });
 });

@@ -79,6 +79,7 @@ import {
   type BulkDeleteSkip,
   type ProductDeleteOutcome,
 } from "./product-delete-classify";
+import { retryStockTx } from "../common/tx-retry";
 import { lockAndAssertRecipeGuards } from "./recipe-update-guard";
 import {
   applyFamilyPriceBeforeUpdate,
@@ -1723,9 +1724,12 @@ export class ProductsService {
 
     let outcome: ProductDeleteOutcome;
     try {
-      outcome = await this.prisma.tenantTransaction(
-        (tx: any) => applyProductDelete(tx, { tenantId, ids, nameById, preSoftIds: peek.softIds }),
-        { timeout: 60_000 },
+      // The row locks are bounded (5 s): a lock wait that times out is retried, then the coded 503 (SA-767 R6).
+      outcome = await retryStockTx("products.bulkDelete", () =>
+        this.prisma.tenantTransaction(
+          (tx: any) => applyProductDelete(tx, { tenantId, ids, nameById, preSoftIds: peek.softIds }),
+          { timeout: 60_000 },
+        ),
       );
     } catch (e) {
       // A unique or foreign-key violation is a coded 409 (nothing was written), never an uncoded 500.
