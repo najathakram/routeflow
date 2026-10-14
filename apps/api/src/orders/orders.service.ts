@@ -2524,7 +2524,7 @@ export class OrdersService implements OnApplicationBootstrap {
         // SA-404f F2: compare-and-set on the cancellable set the pre-check used — a retry after
         // a 40001 caused by a concurrent DELIVERED must never cancel a delivered order.
         return this.stockTx(
-          "orders.cancel",
+          `order cancel void order=${id}`, // the retry-warn label the send/void race spec counts
           (tx) =>
             this.cancelOrderInTx(tx, order, {
               fromStatuses: CANCELLABLE_FROM,
@@ -4497,8 +4497,9 @@ export class OrdersService implements OnApplicationBootstrap {
   }
 
   /** SA-767 r-note 3 (b): `tenantTransaction(fn, opts)` inside retryStockTx (see its replay-safety rules). */
-  private stockTx = <T>(label: string, fn: (tx: any) => Promise<T>, opts?: any) =>
-    retryStockTx(label, () => this.prisma.tenantTransaction(fn, opts));
+  private stockTx<T>(label: string, fn: (tx: any) => Promise<T>, opts?: any): Promise<T> {
+    return retryStockTx(label, () => this.prisma.tenantTransaction(fn, opts));
+  }
 
   private decrementStockForSale(...args: StockArgs<typeof decrementStockForSale>) {
     return decrementStockForSale(this.stockDeps(), ...args);
