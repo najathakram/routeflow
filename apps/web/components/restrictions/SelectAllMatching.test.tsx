@@ -156,4 +156,45 @@ describe("SelectAllMatching", () => {
     await user.click(screen.getByRole("button", { name: "drop-one" }));
     expect(screen.queryByText("All 640 matching are selected.")).toBeNull();
   });
+  it("deselect then pick a DIFFERENT row (same count) is not still `all matching`", async () => {
+    const user = userEvent.setup();
+    mockGet.mockResolvedValue({ data: { ids: idsOf(640, "m"), total: 640, capped: false } });
+    const Wrap = () => {
+      const [selected, setSelected] = React.useState<Set<string>>(new Set(idsOf(50)));
+      return (
+        <>
+          <SelectAllMatching
+            filters={{}}
+            resetKey="k"
+            selected={selected}
+            setSelected={setSelected}
+            pageIds={idsOf(50)}
+            total={640}
+          />
+          <button
+            onClick={() =>
+              setSelected((s) => {
+                const n = new Set(s);
+                n.delete("m1");
+                return n;
+              })
+            }
+          >
+            drop
+          </button>
+          <button onClick={() => setSelected((s) => new Set(s).add("zz"))}>add-other</button>
+          <button onClick={() => setSelected((s) => new Set(s).add("m1"))}>add-same</button>
+        </>
+      );
+    };
+    renderWithProviders(<Wrap />);
+    await user.click(screen.getByRole("button", { name: "Select all 640 matching" }));
+    await screen.findByText("All 640 matching are selected.");
+    await user.click(screen.getByRole("button", { name: "drop" }));
+    await user.click(screen.getByRole("button", { name: "add-other" }));
+    expect(screen.queryByText("All 640 matching are selected.")).toBeNull();
+    // and putting the dropped row back does not resurrect the banner either
+    await user.click(screen.getByRole("button", { name: "add-same" }));
+    expect(screen.queryByText("All 640 matching are selected.")).toBeNull();
+  });
 });

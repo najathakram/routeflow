@@ -1,6 +1,7 @@
 import * as React from "react";
 import userEvent from "@testing-library/user-event";
 import { renderWithProviders, screen, waitFor } from "@/test-utils/render";
+import { FEDERAL_ADMIN_ONLY } from "@/lib/rule-chooser";
 import { PortalLimitsRow } from "./PortalLimitsRow";
 
 /** C f: the product page's "Portal limits" chips render what the rule does and where it came from, with Lift. */
@@ -167,13 +168,53 @@ describe("PortalLimitsRow (C f)", () => {
       expect(screen.queryByRole("button", { name: "Remove from rule" })).toBeNull();
     });
 
-    it("an operator cannot remove a product from an all-customer rule (owner L5)", async () => {
+    it("an operator cannot remove a product from an all-customer rule: disabled, with a VISIBLE reason (owner L5)", async () => {
       mockRole = "OPERATOR";
       mockGet.mockResolvedValue({
         data: { items: [multi({ jurisdiction: "FEDERAL", states: [] })], nextCursor: null },
       });
       renderWithProviders(<PortalLimitsRow productId="p1" />);
-      expect(await screen.findByRole("button", { name: "Remove from rule" })).toBeDisabled();
+      const btn = await screen.findByRole("button", { name: "Remove from rule" });
+      expect(btn).toBeDisabled();
+      expect(btn).not.toHaveAttribute("title");
+      const why = screen.getByText(FEDERAL_ADMIN_ONLY);
+      expect(btn.getAttribute("aria-describedby")).toBe(why.id);
+    });
+
+    it("a MANY-product rule shows Remove from rule and a View rule link, and no Lift", async () => {
+      mockGet.mockResolvedValue({ data: { items: [multi()], nextCursor: null } });
+      renderWithProviders(<PortalLimitsRow productId="p1" />);
+      await screen.findByRole("button", { name: "Remove from rule" });
+      expect(screen.getByRole("link", { name: "View rule" })).toHaveAttribute(
+        "href",
+        "/settings/restrictions/rules/r9",
+      );
+      expect(screen.queryByRole("button", { name: "Lift" })).toBeNull();
+    });
+
+    it("a SINGLE-target rule keeps the one-step Lift for an operator on a STATE rule", async () => {
+      mockRole = "OPERATOR";
+      mockGet.mockResolvedValue({
+        data: { items: [limit({ id: "r1", directTarget: true })], nextCursor: null },
+      });
+      renderWithProviders(<PortalLimitsRow productId="p1" />);
+      expect(await screen.findByRole("button", { name: "Lift" })).toBeEnabled();
+      expect(screen.queryByRole("link", { name: "View rule" })).toBeNull();
+    });
+
+    it("an operator cannot lift a single-target FEDERAL rule: disabled with a visible hint; an admin can", async () => {
+      mockRole = "OPERATOR";
+      const fed = limit({ id: "r1", jurisdiction: "FEDERAL", states: [], directTarget: true });
+      mockGet.mockResolvedValue({ data: { items: [fed], nextCursor: null } });
+      const { unmount } = renderWithProviders(<PortalLimitsRow productId="p1" />);
+      const lift = await screen.findByRole("button", { name: "Lift" });
+      expect(lift).toBeDisabled();
+      expect(lift.getAttribute("aria-describedby")).toBe(screen.getByText(FEDERAL_ADMIN_ONLY).id);
+      unmount();
+      mockRole = "TENANT_ADMIN";
+      renderWithProviders(<PortalLimitsRow productId="p1" />);
+      expect(await screen.findByRole("button", { name: "Lift" })).toBeEnabled();
+      expect(screen.queryByText(FEDERAL_ADMIN_ONLY)).toBeNull();
     });
 
     it("Add to a rule… opens the chooser for this one product (operator and up)", async () => {

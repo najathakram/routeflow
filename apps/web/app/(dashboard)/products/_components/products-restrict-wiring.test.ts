@@ -51,10 +51,8 @@ describe("products/page.tsx - row 509 wiring", () => {
   });
   describe("a banner selection holds off-page ids: only Restrict… may act on it", () => {
     it("tracks the banner state and gives every other bulk action the hint", () => {
-      // derived from the ids (any selected id the page does not hold), so un-ticking one row cannot re-enable them
-      expect(src).toMatch(
-        /const bannerSelected =[^;]*Array\.from\(selected\)\.some\(\(id\) => !productById\.has\(id\)\)/,
-      );
+      // derived from the ids (any selected id the page does not hold) by the one extracted rule
+      expect(src).toMatch(/useOffPageSelection\(selected, \(id\) => productById\.has\(id\)\)/);
       expect(src).toMatch(/<PortalBulkButtons[\s\S]{0,200}?offPageHint=\{offPageHint\}/);
       expect(src).toMatch(/<PortalLimitButtons[\s\S]{0,200}?offPageHint=\{offPageHint\}/);
     });
@@ -65,9 +63,8 @@ describe("products/page.tsx - row 509 wiring", () => {
         expect(m).not.toBeNull();
         expect(m![1]).toContain("bannerSelected");
       }
-      const del = /<Button\s+variant="danger"[\s\S]{0,400}?Delete \{selected\.size\}/.exec(src);
-      expect(del).not.toBeNull();
-      expect(del![0]).toMatch(/disabled=\{[^}]*bannerSelected/);
+      // Delete is the extracted button that owns the disabled rule (behaviour: OffPageSelection.test.tsx)
+      expect(src).toMatch(/<BulkDeleteButton[\s\S]{0,300}?offPage=\{bannerSelected\}/);
     });
 
     it("the delete handler itself refuses banner-selected ids (not just the button)", () => {

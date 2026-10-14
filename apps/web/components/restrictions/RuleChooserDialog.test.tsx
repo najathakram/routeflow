@@ -1,6 +1,8 @@
 import * as React from "react";
 import userEvent from "@testing-library/user-event";
 import { renderWithProviders, screen, waitFor, within } from "@/test-utils/render";
+import { ruleSentence as prRuleSentence } from "@/lib/restriction-rules";
+import { FEDERAL_ADMIN_ONLY } from "@/lib/rule-chooser";
 import { RuleChooserDialog } from "./RuleChooserDialog";
 
 /**
@@ -93,7 +95,7 @@ describe("RuleChooserDialog, add mode", () => {
     const dialog = screen.getByRole("dialog");
     expect(await within(dialog).findByRole("button", { name: /vape ban tx/i })).toBeInTheDocument();
     expect(
-      within(dialog).getByText("Hidden in TX, CA · portal only · 12 products"),
+      within(dialog).getByText(`${prRuleSentence(RULES[0] as never)} · 12 products`),
     ).toBeInTheDocument();
     expect(within(dialog).getByRole("button", { name: /everything banned/i })).toBeInTheDocument();
     expect(within(dialog).getByRole("button", { name: /summer promo/i })).toBeInTheDocument();
@@ -116,11 +118,7 @@ describe("RuleChooserDialog, add mode", () => {
     const dialog = screen.getByRole("dialog");
     const fed = await within(dialog).findByRole("button", { name: /everything banned/i });
     expect(fed).toBeDisabled();
-    expect(
-      within(dialog).getByText(
-        "Only an admin can change a rule that hides products from everyone.",
-      ),
-    ).toBeInTheDocument();
+    expect(within(dialog).getByText(FEDERAL_ADMIN_ONLY)).toBeInTheDocument();
     expect(within(dialog).getByRole("button", { name: /vape ban tx/i })).toBeEnabled();
   });
 
@@ -211,6 +209,30 @@ describe("RuleChooserDialog, add mode", () => {
   it("more than 1,000 products cannot be sent: says so and disables the pick", async () => {
     open({ productIds: ids(1001) });
     expect(await screen.findByText("Select up to 1,000 products at a time.")).toBeInTheDocument();
+  });
+});
+
+describe("RuleChooserDialog, row 509 SA review", () => {
+  it("the admin-only reason is visible text the disabled row points at, not a title", async () => {
+    mockRole = "OPERATOR";
+    open();
+    const fed = await screen.findByRole("button", { name: /everything banned/i });
+    expect(fed).not.toHaveAttribute("title");
+    const why = screen.getByText(FEDERAL_ADMIN_ONLY);
+    expect(fed.getAttribute("aria-describedby")).toBe(why.id);
+  });
+
+  it("never says `everyone` or `all sales`", () => {
+    expect(FEDERAL_ADMIN_ONLY).toMatch(/every portal customer/);
+    expect(FEDERAL_ADMIN_ONLY).not.toMatch(/everyone/i);
+  });
+
+  it("moves focus to the count-confirm heading when that step appears", async () => {
+    const user = userEvent.setup();
+    open();
+    await user.click(await screen.findByRole("button", { name: /vape ban tx/i }));
+    const heading = screen.getByRole("heading", { name: "Add 8 products to “Vape ban TX”?" });
+    expect(heading).toHaveFocus();
   });
 });
 
