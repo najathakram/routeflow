@@ -52,6 +52,7 @@ import {
 } from "../../../../../lib/discard-guard";
 import { hydratedLineTax } from "../../../../../lib/invoice-edit-tax";
 import { reasonField, showsReason } from "../../../../../lib/invoice-edit-reason";
+import { safeTextErrorCopy } from "../../../../../lib/safe-text-error-copy";
 
 /**
  * Invoice edit screen — DRAFT-only, mirroring web's invoices/[id]/edit page.
@@ -456,7 +457,10 @@ export default function EditInvoiceScreen() {
         // Server messages here are actionable (mirror guard, number conflict…) —
         // surface them verbatim instead of a fixed string.
         onError: (e: any) =>
-          alertInfo("Couldn't save", e?.response?.data?.message ?? e?.message ?? "Try again."),
+          alertInfo(
+            "Couldn't save",
+            safeTextErrorCopy(e) ?? e?.response?.data?.message ?? e?.message ?? "Try again.",
+          ),
       },
     );
   };

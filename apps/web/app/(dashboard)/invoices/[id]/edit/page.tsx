@@ -23,6 +23,7 @@ import { scanRowQty } from "../../invoice-scan-level";
 import { DecimalInput, MoneyInput } from "@/components/MoneyInput";
 import { displayProductName } from "@/lib/product-display";
 import { sellableFlat } from "@/lib/product-search-groups";
+import { safeTextErrorCopy } from "@/lib/safe-text-error-copy";
 import {
   isSpecialTier,
   computeInvoiceLineTotal,
@@ -679,7 +680,8 @@ export default function EditInvoicePage() {
         toast({
           title: "Failed to update invoice",
           description:
-            (Array.isArray(message) ? message.join("; ") : message) || "Please try again.",
+            safeTextErrorCopy(err) ??
+            ((Array.isArray(message) ? message.join("; ") : message) || "Please try again."),
           variant: "error",
         });
       },

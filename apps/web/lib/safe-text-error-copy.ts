@@ -36,10 +36,15 @@ export const SAFE_TEXT_FIELD_LABELS: Record<string, string> = {
 
 const UNKNOWN_FIELD_LABEL = "This field";
 
+/** H3b (SA): a price-override reason refused for a formula lead gets its own fixed sentence with an example. */
+export const OVERRIDE_REASON_FORMULA_COPY =
+  "A reason can't start with -, =, + or @. Try 'Discount 5% agreed'.";
+
 /** The copy for a refusal body `{ code, field }`, or null when the body is not that refusal. */
 export function safeTextBodyCopy(body: unknown): string | null {
   const b = body as { code?: unknown; field?: unknown } | null | undefined;
   if (!b || b.code !== API_ERROR_CODES.TEXT_CELL_FORMULA_LEAD) return null;
+  if (b.field === "overrideReason") return OVERRIDE_REASON_FORMULA_COPY;
   const label =
     typeof b.field === "string" &&
     Object.prototype.hasOwnProperty.call(SAFE_TEXT_FIELD_LABELS, b.field)

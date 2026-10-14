@@ -20,6 +20,7 @@ import {
 } from "lucide-react";
 import { Button, Card, Input, useToast, cn } from "@routeflow/ui/web";
 import { usePageTitle } from "@/lib/page-title-context";
+import { safeTextErrorCopy } from "@/lib/safe-text-error-copy";
 import { countNoun } from "@/lib/plural";
 import { scheduleScannerRefocus } from "@/lib/refocus-scanner";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
@@ -1008,8 +1009,13 @@ export default function NewInvoicePage() {
         resolvingRef.current = false;
       });
   }
-  /** A refused unit (UNIT_NOT_OFFERED): the coded copy, and the stale ladder cache is dropped. */
+  /**
+   * A refused unit (UNIT_NOT_OFFERED): the coded copy, and the stale ladder cache is dropped. A
+   * formula-led text refusal (e.g. an override reason starting with "-") gets its fixed copy first.
+   */
   function unitRefusal(err: unknown, lines: LineItemState[]): string | null {
+    const textCopy = safeTextErrorCopy(err);
+    if (textCopy) return textCopy;
     const copy = unitRefusalCopy(err);
     if (copy)
       for (const id of unitProductIds(lines))

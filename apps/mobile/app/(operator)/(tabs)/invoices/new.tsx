@@ -131,6 +131,7 @@ import {
 import { isCatalogHeader, visibleCatalogRows, type CatalogRow } from "../../../../lib/visible-cart";
 import { unlistedAffordancePlacement } from "../../../../lib/unlisted-affordance";
 import { sanitizeIntInput } from "../../../../lib/qty";
+import { safeTextErrorCopy } from "../../../../lib/safe-text-error-copy";
 import { MONEY_INPUT_MAX_WIDTH } from "../../../../lib/row-layout";
 
 /**
@@ -1468,7 +1469,7 @@ function InvoiceComposer({
           if (unitNotOfferedCode(err)) return void onUnitNotOffered("Couldn't create invoice");
           alertInfo(
             "Couldn't create invoice",
-            err?.response?.data?.message ?? err?.message ?? "Try again.",
+            safeTextErrorCopy(err) ?? err?.response?.data?.message ?? err?.message ?? "Try again.",
           );
         },
       },
