@@ -3,6 +3,7 @@
 import * as React from "react";
 import { Input, Select, Textarea } from "@routeflow/ui/web";
 import { REASON_MAX, type RuleFormValues } from "@/lib/restriction-rule-form";
+import { surfaceText } from "@/lib/restriction-rules";
 import { StatePicker } from "./StatePicker";
 
 export type RuleFormErrors = Partial<Record<keyof RuleFormValues, string>>;
@@ -56,8 +57,8 @@ export function RuleSettingsFields({
         value={v.surface}
         onChange={(e) => set("surface", e.target.value as RuleFormValues["surface"])}
         options={[
-          { value: "ALL", label: "Every order (staff and buyers)" },
-          { value: "BUYER_PORTAL", label: "Buyer portal only" },
+          { value: "ALL", label: surfaceText("ALL") },
+          { value: "BUYER_PORTAL", label: surfaceText("BUYER_PORTAL") },
         ]}
       />
 

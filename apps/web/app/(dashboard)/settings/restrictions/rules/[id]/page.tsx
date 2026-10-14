@@ -15,7 +15,9 @@ import { ruleErrorCode } from "@/lib/restriction-rule-errors";
 import { fmtDate } from "@/lib/formatting";
 import {
   STATUS_BADGE,
+  LIFT_ADMIN_ONLY_HINT,
   jurisdictionText,
+  liftState,
   ruleSentence,
   stateName,
   surfaceText,
@@ -23,7 +25,6 @@ import {
 } from "@/lib/restriction-rules";
 import { ruleCardTarget, targetsToInput } from "@/lib/rule-targets";
 import { ReadOnlyHint, WriteButton } from "@/lib/read-only-gate";
-import { LiftLimitsDialog } from "@/components/portal-limits/LiftLimitsDialog";
 import { LiftRuleDialog } from "../_components/LiftRuleDialog";
 import { EditRuleDialog } from "../_components/EditRuleDialog";
 import { AddTargetsDialog } from "./_components/AddTargetsDialog";
@@ -65,7 +66,6 @@ export default function RuleDetailPage() {
   const [guard, setGuard] = React.useState(false);
   const [editing, setEditing] = React.useState(false);
   const [lifting, setLifting] = React.useState(false);
-  const [liftingMany, setLiftingMany] = React.useState(false);
 
   const rule = first.data;
   const pages: RuleDetailDto[] = [
@@ -117,6 +117,7 @@ export default function RuleDetailPage() {
   // Owner L5: a rule that hides products from ALL portal customers is the account admin's to change.
   const roleBlocked = rule.jurisdiction === "FEDERAL" && !isAdmin;
   const canChange = editable && !roleBlocked;
+  const lift = liftState(role, rule);
   const total = rule.targetSummary
     ? rule.targetSummary.products + rule.targetSummary.categories
     : rows.length;
@@ -210,11 +211,22 @@ export default function RuleDetailPage() {
           <Badge variant={badge.variant} label={badge.label} />
         </div>
         <p className="text-sm text-navy/80">{ruleSentence(rule)}</p>
-        {isAdmin && editable && (
-          <div>
-            <Button size="sm" variant="secondary" onClick={() => setLifting(true)}>
+        {lift !== "none" && (
+          <div className="space-y-1">
+            <Button
+              size="sm"
+              variant="secondary"
+              disabled={lift === "admin-only"}
+              aria-describedby={lift === "admin-only" ? "rule-lift-hint" : undefined}
+              onClick={() => setLifting(true)}
+            >
               Lift rule
             </Button>
+            {lift === "admin-only" && (
+              <p id="rule-lift-hint" className="text-xs text-navy/70">
+                {LIFT_ADMIN_ONLY_HINT}
+              </p>
+            )}
           </div>
         )}
         {rule.liftedAt && (
@@ -277,8 +289,7 @@ export default function RuleDetailPage() {
                 size="sm"
                 onClick={() => {
                   setGuard(false);
-                  if (isAdmin) setLifting(true);
-                  else setLiftingMany(true);
+                  setLifting(true);
                 }}
               >
                 Lift rule
@@ -422,8 +433,9 @@ export default function RuleDetailPage() {
         onConfirm={confirmRemove}
       />
       {editing && <EditRuleDialog rule={rule} open onClose={() => setEditing(false)} />}
-      {isAdmin && <LiftRuleDialog rule={lifting ? rule : null} onClose={() => setLifting(false)} />}
-      {liftingMany && <LiftLimitsDialog ids={[id]} onClose={() => setLiftingMany(false)} />}
+      {lift === "enabled" && (
+        <LiftRuleDialog rule={lifting ? rule : null} onClose={() => setLifting(false)} />
+      )}
     </div>
   );
 }
