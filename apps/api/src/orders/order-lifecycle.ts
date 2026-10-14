@@ -17,6 +17,7 @@ import {
   BadRequestException,
   ConflictException,
   ForbiddenException,
+  Logger,
   NotFoundException,
 } from "@nestjs/common";
 import { FulfillPath, OrderStatus, RouteRunStatus, UserRole } from "@prisma/client";
@@ -27,6 +28,9 @@ import type { OrdersService } from "./orders.service";
 import { UpdateFulfillPathDto } from "./dto/update-fulfill-path.dto";
 import { UpdateShipmentDto } from "./dto/update-shipment.dto";
 import { SHIPPED_STATUSES, notifyTrackingAdded } from "./shipment-notifications";
+import { assertFulfilPathOffered } from "./fulfil-path-resolver";
+
+const switchLogger = new Logger("OrderFulfilPathSwitch");
 
 export async function updateShipmentImpl(
   self: OrdersService,
@@ -111,6 +115,16 @@ export async function updateFulfillPathImpl(
       message: "You don't have access to switch an order to pickup.",
     });
   }
+  // Row 506: the account must offer the requested path (the one capability the web's select reads).
+  await assertFulfilPathOffered(
+    {
+      featureConfig: self.featureConfig,
+      tenantId: self.prisma.getTenantId(),
+      logger: switchLogger,
+    },
+    dto.fulfillPath,
+    user?.role ?? null,
+  );
   // `findFirst`, NOT `findUnique`: forTenant()'s findUnique can only POST-filter
   // on the returned row's `tenantId`, and an exclusive `select` that omits it
   // silently disables that check — which would leak another tenant's order
