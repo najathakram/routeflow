@@ -90,18 +90,18 @@ export interface RuleRow {
 }
 
 /**
- * The rule lines to DISPLAY for one product: two rules with the same state(s) and the same wording show ONE line (the
- * wording is the whole message to the user), and the line is legal if any merged rule is. Display only: the ack and the
- * server's `warningHash` still cover every rule, because they are built from the lines and the hash, never from these rows.
+ * The rule lines to DISPLAY for one product. The merge is keyed on exactly what is DISPLAYED, the rendered sentence: the
+ * sentence names only the state the sale was judged at, so rules for [CA] and [CA, NV] both read "banned in CA" and show
+ * ONE line. A merged line is legal if any merged rule is. Display only: the ack and the server's `warningHash` still cover
+ * every rule, because they are built from the lines and the hash, never from these rows.
  */
 export function lineRuleRows(rules: readonly RestrictionWarningRule[]): RuleRow[] {
   const rows = new Map<string, RuleRow>();
   for (const r of rules) {
     const text = ruleText(r);
-    const key = `${[...r.states].sort().join(",")}|${text}`;
-    const have = rows.get(key);
+    const have = rows.get(text);
     if (have) have.legal = have.legal || r.legal;
-    else rows.set(key, { key, text, legal: r.legal });
+    else rows.set(text, { key: text, text, legal: r.legal });
   }
   return [...rows.values()];
 }

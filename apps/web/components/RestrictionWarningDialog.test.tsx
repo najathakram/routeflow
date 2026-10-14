@@ -184,6 +184,34 @@ describe("RestrictionWarningDialog (warning)", () => {
     );
   });
 
+  it("rules for [CA] and [CA, NV] both read 'banned in CA': ONE line and one badge, in the dialog and in the driver block", () => {
+    const rules = [
+      { id: "r1", states: ["CA"], legal: true, reasonText: "This product is banned in CA by law." },
+      {
+        id: "r2",
+        states: ["CA", "NV"],
+        legal: true,
+        reasonText: "This product is banned in CA by law.",
+      },
+    ];
+    const { unmount } = setup({
+      view: { kind: "warning", warning: { ...warning, lines: [{ ...warning.lines[0], rules }] } },
+    });
+    expect(screen.getAllByText("This product is banned in CA by law.")).toHaveLength(1);
+    expect(screen.getAllByText("Legal ban")).toHaveLength(1);
+    unmount();
+    setup({
+      view: {
+        kind: "blocked",
+        message: DRIVER_RESTRICTION_BLOCK_MESSAGE,
+        lines: [],
+        ruleLines: [{ ...warning.lines[0], rules }],
+      },
+    });
+    expect(screen.getAllByText("This product is banned in CA by law.")).toHaveLength(1);
+    expect(screen.getAllByText("Legal ban")).toHaveLength(1);
+  });
+
   it("the driver block dedupes identically worded rules too", () => {
     const twin = (id: string) => ({
       id,

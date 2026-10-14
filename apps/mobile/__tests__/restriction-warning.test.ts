@@ -244,11 +244,36 @@ describe("lineRuleRows: the displayed rule lines of one product (display-only de
   it("two rules with the same state and wording show ONE line", () => {
     expect(lineRuleRows([rule("r1"), rule("r2")])).toEqual([
       {
-        key: "CA|This product is banned in CA by law.",
+        key: "This product is banned in CA by law.",
         text: "This product is banned in CA by law.",
         legal: true,
       },
     ]);
+  });
+
+  it("the merge is keyed on what is DISPLAYED: [CA] and [CA, NV] both read 'banned in CA', so they show ONE line", () => {
+    const rows = lineRuleRows([rule("r1"), rule("r2", { states: ["CA", "NV"] })]);
+    expect(rows).toHaveLength(1);
+    expect(rows[0].text).toBe("This product is banned in CA by law.");
+    expect(rows[0].legal).toBe(true);
+  });
+
+  it("[CA] + [CA, NV] + [CA] is still ONE line (a later twin never splits an earlier merge)", () => {
+    const rows = lineRuleRows([rule("r1"), rule("r2", { states: ["CA", "NV"] }), rule("r3")]);
+    expect(rows).toHaveLength(1);
+    expect(rows[0].legal).toBe(true);
+  });
+
+  it("a CA legal ban plus a CA non-legal rule with DIFFERENT text are two lines, in order", () => {
+    const rows = lineRuleRows([
+      rule("r1"),
+      rule("r2", { states: ["CA", "NV"], legal: false, reasonText: "Limited in CA." }),
+    ]);
+    expect(rows.map((r) => r.text)).toEqual([
+      "This product is banned in CA by law.",
+      "Limited in CA.",
+    ]);
+    expect(rows.map((r) => r.legal)).toEqual([true, false]);
   });
 
   it("a different state, or different wording, is its own line; order is kept", () => {
@@ -279,6 +304,21 @@ describe("lineRuleRows: the displayed rule lines of one product (display-only de
     expect(
       lineRuleRows([rule("r1", { reasonText: "" }), rule("r2", { reasonText: "" })]),
     ).toHaveLength(1);
+  });
+
+  it("deduping a [CA] + [CA, NV] pair leaves the ack and the echoed hash exactly as the server sent them", () => {
+    const line = {
+      lineKey: "n:0",
+      productId: "p1",
+      displayName: "Acme Gummies",
+      outcome: "BLOCK" as const,
+      rules: [rule("r1"), rule("r2", { states: ["CA", "NV"] })],
+    };
+    expect(buildAck({ ...warning, lines: [line] }, "Owner approved")).toEqual({
+      restrictionOverrides: [{ lineKey: "n:0", reason: "Owner approved" }],
+      warningHash: "rw1:abc",
+    });
+    expect(line.rules).toHaveLength(2); // the input is never mutated
   });
 
   it("is display-only: the ack still covers the line and echoes the server's hash, whatever the rule count", () => {
