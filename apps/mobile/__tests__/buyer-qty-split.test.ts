@@ -1,6 +1,11 @@
 import * as fs from "fs";
 import * as path from "path";
-import { BUYER_QTY_SPLIT_MISMATCH_COPY, isQtySplitMismatch } from "../lib/buyer-qty-split";
+import {
+  BUYER_QTY_SPLIT_MISMATCH_COPY,
+  BUYER_REORDER_PACK_CHANGED_COPY,
+  isQtySplitMismatch,
+  reorderErrorCopy,
+} from "../lib/buyer-qty-split";
 import { useCartStore } from "../store/cartStore";
 
 /**
@@ -82,5 +87,29 @@ describe("QTY_SPLIT_MISMATCH on mobile", () => {
     const src = fs.readFileSync(path.join(__dirname, "../app/(customer)/orders/cart.tsx"), "utf8");
     expect(src).toContain("isQtySplitMismatch(e)");
     expect(src).toContain("BUYER_QTY_SPLIT_MISMATCH_COPY");
+  });
+});
+
+describe("S1: reorder from a past order, after the product's pack size changed", () => {
+  const err = (status: number, code: string, message = "raw server text") => ({
+    response: { status, data: { code, message } },
+  });
+
+  it("a QTY_SPLIT_MISMATCH on reorder says the pack sizes changed and points at the catalog", () => {
+    expect(BUYER_REORDER_PACK_CHANGED_COPY).toBe(
+      "Pack sizes changed since this order. Add the items from the catalog.",
+    );
+    expect(reorderErrorCopy(err(400, "QTY_SPLIT_MISMATCH"))).toBe(BUYER_REORDER_PACK_CHANGED_COPY);
+  });
+
+  it("any other failure keeps the screen's old fallback chain (server message, error message, Try again.)", () => {
+    expect(reorderErrorCopy(err(409, "OTHER", "Out of stock"))).toBe("Out of stock");
+    expect(reorderErrorCopy(new Error("Network Error"))).toBe("Network Error");
+    expect(reorderErrorCopy(null)).toBe("Try again.");
+  });
+
+  it("the order detail screen routes its reorder failure through it", () => {
+    const src = fs.readFileSync(path.join(__dirname, "../app/(customer)/orders/[id].tsx"), "utf8");
+    expect(src).toContain("reorderErrorCopy(e)");
   });
 });

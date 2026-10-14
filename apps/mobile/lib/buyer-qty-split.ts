@@ -15,3 +15,21 @@ export function isQtySplitMismatch(err: unknown): boolean {
     ?.response;
   return res?.status === 400 && res.data?.code === API_ERROR_CODES.QTY_SPLIT_MISMATCH;
 }
+
+/**
+ * Reorder from a past order replays that order's stored `{qty, boxes, pieces}`. When the product's pack size has
+ * changed since, the pair no longer agrees under today's pack and the server refuses it (QTY_SPLIT_MISMATCH):
+ * the buyer cannot "review the cart" there, so the copy says what happened and where to go instead.
+ */
+export const BUYER_REORDER_PACK_CHANGED_COPY =
+  "Pack sizes changed since this order. Add the items from the catalog.";
+
+/** The reorder failure toast: the pack-changed sentence for the coded refusal, else the screen's old fallback chain. */
+export function reorderErrorCopy(err: unknown): string {
+  if (isQtySplitMismatch(err)) return BUYER_REORDER_PACK_CHANGED_COPY;
+  const e = err as { response?: { data?: { message?: unknown } }; message?: unknown } | null;
+  const server = e?.response?.data?.message;
+  if (typeof server === "string" && server) return server;
+  if (typeof e?.message === "string" && e.message) return e.message;
+  return "Try again.";
+}
