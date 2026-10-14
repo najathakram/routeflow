@@ -166,6 +166,7 @@ describe.each(OPS)("%s - the shared Stripe gate", (_name, run) => {
     stripe.getCustomer.mockRejectedValue(new Error("network"));
     const err: any = await run(svc).catch((e) => e);
     expect(code(err)).toBe("CONCURRENT_UPDATE");
+    expect(err.getResponse().reason).toBe("STRIPE_UNCONFIRMED");
     expect(stripe.getCustomer).toHaveBeenCalledTimes(2);
     expect(written(prisma)).toBe(false);
     expect(rows(auditLog, "STRIPE_SUB_NOT_FOUND_TERMINATED")).toHaveLength(0);
@@ -204,6 +205,7 @@ describe.each(OPS)("%s - the shared Stripe gate", (_name, run) => {
     const err: any = await run(svc).catch((e) => e);
     expect(err.getStatus()).toBe(409);
     expect(code(err)).toBe("CONCURRENT_UPDATE");
+    expect(err.getResponse().reason).toBe("STRIPE_UNCONFIRMED");
     expect(stripe.getSubscription).toHaveBeenCalledTimes(2);
     expect(written(prisma)).toBe(false);
   });
@@ -266,6 +268,8 @@ describe.each(OPS)("%s - the shared Stripe gate", (_name, run) => {
     const err: any = await run(svc).catch((e) => e);
     expect(err.getStatus()).toBe(409);
     expect(code(err)).toBe("CONCURRENT_UPDATE");
+    // not a Stripe-read failure: no reason, so the web shows the generic 'tenant changed' text
+    expect(err.getResponse().reason).toBeUndefined();
     expect(written(prisma)).toBe(false);
   });
 
@@ -273,6 +277,7 @@ describe.each(OPS)("%s - the shared Stripe gate", (_name, run) => {
     const { svc, prisma } = make({ pre: null, inTx: "sub_new" });
     const err: any = await run(svc).catch((e) => e);
     expect(code(err)).toBe("CONCURRENT_UPDATE");
+    expect(err.getResponse().reason).toBeUndefined();
     expect(written(prisma)).toBe(false);
   });
 

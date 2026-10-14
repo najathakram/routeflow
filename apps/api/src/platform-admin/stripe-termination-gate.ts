@@ -21,11 +21,23 @@ export function stripeNotConfiguredRefusal(): ConflictException {
   });
 }
 
-/** 409 CONCURRENT_UPDATE (the existing retryable code): Stripe could not be read, or the subscription moved meanwhile. */
-export function retryRefusal(): ConflictException {
+/** `reason` on a CONCURRENT_UPDATE body: the Stripe read failed, so the web shows the Stripe-specific text. */
+export const STRIPE_UNCONFIRMED_REASON = "STRIPE_UNCONFIRMED";
+
+/** 409 CONCURRENT_UPDATE (reason STRIPE_UNCONFIRMED): Stripe could not be read twice. Retryable. */
+export function stripeUnconfirmedRefusal(): ConflictException {
   return new ConflictException({
     code: API_ERROR_CODES.CONCURRENT_UPDATE,
+    reason: STRIPE_UNCONFIRMED_REASON,
     message: "This tenant's subscription could not be confirmed ended. Please retry.",
+  });
+}
+
+/** 409 CONCURRENT_UPDATE (no reason): the tenant's subscription moved between the Stripe read and the row lock. */
+export function tenantChangedRefusal(): ConflictException {
+  return new ConflictException({
+    code: API_ERROR_CODES.CONCURRENT_UPDATE,
+    message: "This tenant changed while you were editing. Reload and try again.",
   });
 }
 
@@ -65,7 +77,7 @@ const isBadKey = (e: { type?: string; statusCode?: number } | undefined): boolea
 /**
  * One Stripe read with the gate's short timeout and ONE retry. Resolves null when Stripe answers 404 /
  * resource_missing; a 401 / bad key is STRIPE_NOT_CONFIGURED at once (never retried); a read that fails or
- * times out twice is a retryable 409 (CONCURRENT_UPDATE).
+ * times out twice is a retryable 409 (CONCURRENT_UPDATE, reason STRIPE_UNCONFIRMED).
  */
 async function readStripeOrMissing<T>(
   deps: StripeGateDeps,
@@ -85,7 +97,7 @@ async function readStripeOrMissing<T>(
       }
       if (attempt >= 2) {
         deps.logger.warn(`Tenant ${id}: could not read Stripe ${what} twice; refusing (retry)`);
-        throw retryRefusal();
+        throw stripeUnconfirmedRefusal();
       }
     }
   }
@@ -103,7 +115,7 @@ async function readStripeOrMissing<T>(
  *    tenant's Stripe CUSTOMER is still there (read the same way): then it is allowed and `notFound` tells the
  *    caller to write the audit row. A customer that is ALSO 404 is refused with STRIPE_ACCOUNT_MISMATCH plus an
  *    ops alert ("key/mode mismatch suspected") and NEVER allowed.
- *  - any other read that fails or times out twice is a retryable 409 (CONCURRENT_UPDATE).
+ *  - any other read that fails or times out twice is a retryable 409 (CONCURRENT_UPDATE, reason STRIPE_UNCONFIRMED).
  */
 export async function stripeGateBeforeTermination(
   deps: StripeGateDeps,

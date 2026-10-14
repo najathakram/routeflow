@@ -46,12 +46,19 @@ export const TENANT_ACTION_COPY = {
     "Stripe isn't connected in this environment, so the subscription can't be checked.",
   subscriptionUnconfirmed:
     "Couldn't confirm the tenant's Stripe subscription just now, or it changed meanwhile. Try again in a moment.",
+  tenantChanged: "This tenant changed while you were editing. Reload and try again.",
   actionFailed: "That didn't work. Try again.",
   suspendAutoReinstate: "Suspended tenants are reinstated automatically when they pay.",
 } as const;
 
 const errorCodeOf = (err: unknown): string | undefined =>
   (err as { response?: { data?: { code?: string } } } | null)?.response?.data?.code;
+
+const errorReasonOf = (err: unknown): string | undefined =>
+  (err as { response?: { data?: { reason?: string } } } | null)?.response?.data?.reason;
+
+/** Matches the API's `reason` on a CONCURRENT_UPDATE caused by a failed Stripe read. */
+const STRIPE_UNCONFIRMED_REASON = "STRIPE_UNCONFIRMED";
 
 /**
  * The Stripe gate's coded 409s on a tenant status change or delete (a CANCELLED / delete over a subscription that
@@ -63,7 +70,12 @@ function stripeGateCopy(err: unknown): string | null {
     return TENANT_ACTION_COPY.cancelSubscriptionFirst;
   }
   if (code === API_ERROR_CODES.STRIPE_NOT_CONFIGURED) return TENANT_ACTION_COPY.stripeNotConfigured;
-  if (code === API_ERROR_CODES.CONCURRENT_UPDATE) return TENANT_ACTION_COPY.subscriptionUnconfirmed;
+  if (code === API_ERROR_CODES.CONCURRENT_UPDATE) {
+    // Only a failed Stripe read says so (reason); any other lost race is the generic reload text.
+    return errorReasonOf(err) === STRIPE_UNCONFIRMED_REASON
+      ? TENANT_ACTION_COPY.subscriptionUnconfirmed
+      : TENANT_ACTION_COPY.tenantChanged;
+  }
   return null;
 }
 

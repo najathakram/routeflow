@@ -74,7 +74,7 @@ import {
 } from "../billing/manual-activation-addons";
 import { roundMoney } from "@routeflow/pricing";
 import { StripeService } from "../billing/stripe.service";
-import { stripeGateBeforeTermination, retryRefusal } from "./stripe-termination-gate";
+import { stripeGateBeforeTermination, tenantChangedRefusal } from "./stripe-termination-gate";
 import { ScheduledPriceChangeService } from "../billing/scheduled-price-change";
 import {
   beginStripeFirstPlanChange,
@@ -677,7 +677,7 @@ export class PlatformAdminService {
       where: { tenantId: id },
       select: { stripeSubId: true },
     });
-    if ((row?.stripeSubId ?? null) !== readSubId) throw retryRefusal();
+    if ((row?.stripeSubId ?? null) !== readSubId) throw tenantChangedRefusal();
   }
 
   async updateStatus(id: string, dto: UpdateTenantStatusDto, adminId: string | null = null) {
@@ -738,7 +738,7 @@ export class PlatformAdminService {
 
       // F4 / M2: the Stripe judgement above only stands if the subscription is still the one it judged.
       if (dto.status === "CANCELLED" && (before.subscription?.stripeSubId ?? null) !== readSubId) {
-        throw retryRefusal();
+        throw tenantChangedRefusal();
       }
 
       // The same refusal as extendTrial, on the PRIOR status read under the row lock above: the status
