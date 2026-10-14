@@ -190,3 +190,21 @@ export async function resolveFulfilPath(
   if (explicit === PICKUP) throw notOffered();
   return explicit ?? input.stored ?? ROUTE;
 }
+
+/**
+ * The order SWITCH (`PATCH /orders/:id/fulfill-path`, row 506): the requested path must be one the account's
+ * stored fulfilment mode offers (`capability.methods`, the list the web's Fulfillment select shows), else the
+ * coded 400 FULFIL_METHOD_NOT_OFFERED with nothing written. A move to PICKUP by a staff member who may use
+ * POS mode is a hand-over at the till and is not limited by the offer (SA-763r), exactly as in
+ * `resolveFulfilPath`. Fail-open like the resolver: an unknown capability (no config service, no tenant, a
+ * read blip) refuses nothing.
+ */
+export async function assertFulfilPathOffered(
+  deps: FulfilPathDeps,
+  requested: FulfillPath,
+  role: UserRole | null,
+): Promise<void> {
+  if (requested === PICKUP && staffPosMode({ audience: "staff", role })) return;
+  const cap = await readCapability(deps);
+  if (cap && !asFulfillPaths(cap.methods).includes(requested)) throw notOffered();
+}
