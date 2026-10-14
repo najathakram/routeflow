@@ -51,7 +51,8 @@ import {
 import { sectionPickerOptions } from "@/lib/regulated-format";
 import {
   getTierPrice,
-  cascadeTierPrices,
+  applyLadderChange,
+  ladderChangeNote,
   perUnitPrice,
   unitWords,
   type TierField,
@@ -218,7 +219,7 @@ function EditableNumber({
 }: {
   value: number;
   onChange: (v: number) => void;
-  onCommit?: (v: number) => void;
+  onCommit?: (v: number, valueAtFocus: number | null) => void;
 }) {
   return (
     <DecimalInput
@@ -366,6 +367,8 @@ export default function ProductDetailPage() {
   const [isDragging, setIsDragging] = React.useState(false);
   const [selectedImages, setSelectedImages] = React.useState<Set<number>>(new Set());
   const [selectMode, setSelectMode] = React.useState(false);
+  // P0 2026-10-14: the note shown after a tier commit moved other tiers.
+  const [ladderNote, setLadderNote] = React.useState<string | null>(null);
   const fileInputRef = React.useRef<HTMLInputElement>(null);
 
   // ── Variant modal state ──────────────────────────────────────────────────
@@ -510,6 +513,7 @@ export default function ProductDetailPage() {
       regUomUnit: product.regUomUnit ?? "",
       unitsPerBox: product.unitsPerBox != null ? String(product.unitsPerBox) : "",
     });
+    setLadderNote(null);
     setIsEditing(true);
   };
 
@@ -587,11 +591,13 @@ export default function ProductDetailPage() {
       },
     );
     setIsEditing(false);
+    setLadderNote(null);
   };
 
   const cancelEdit = () => {
     setEditDraft({});
     setIsEditing(false);
+    setLadderNote(null);
   };
 
   // ── Delete (mirrors the mobile app's confirm → toast → navigate-back flow) ─
@@ -1952,12 +1958,21 @@ export default function ProductDetailPage() {
                                 onChange={(v) =>
                                   setEditDraft((d) => ({ ...d, [field]: String(v) }))
                                 }
-                                onCommit={(v) =>
-                                  setEditDraft((d) => ({
-                                    ...d,
-                                    ...cascadeTierPrices(field as TierField, v),
-                                  }))
-                                }
+                                onCommit={(v, atFocus) => {
+                                  // P0 2026-10-14: lower tiers move only by applyLadderChange (tracking, 0 or above
+                                  // the new price), never a blind copy-down, and the move is named on screen. The
+                                  // OLD side is the field's own focus-time value (SA MUST: no staleable copy).
+                                  const moved = applyLadderChange(
+                                    field as TierField,
+                                    atFocus ?? productVal,
+                                    v,
+                                    editDraft as Record<string, string>,
+                                  );
+                                  setEditDraft((d) => ({ ...d, ...moved }));
+                                  setLadderNote(
+                                    ladderChangeNote(moved, (n) => tierLabel(tierLabels, n)),
+                                  );
+                                }}
                               />
                               {perUnitHint(curVal)}
                             </>
@@ -1978,6 +1993,15 @@ export default function ProductDetailPage() {
                       );
                     })}
                   </div>
+                  {isEditing && ladderNote && (
+                    <p
+                      role="status"
+                      data-testid="ladder-note"
+                      className="mt-2 text-xs text-navy/70"
+                    >
+                      {ladderNote}
+                    </p>
+                  )}
                   {isEditing &&
                     (() => {
                       const t1 = parseFloat(String(editDraft.pricePerUnit ?? priceNumber));

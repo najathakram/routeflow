@@ -26,7 +26,8 @@ import { useUrlFilters } from "@/lib/hooks/useUrlFilters";
 import { useUrlSearch } from "@/lib/hooks/useUrlSearch";
 import { useUrlPage, useResetPageOnChange, useClampPage } from "@/lib/hooks/useUrlPage";
 import { useProducts, useUpdateProduct, useBulkDeleteProducts } from "@/lib/api/products";
-import { cascadeTierPrices, unitWords, type TierField } from "@routeflow/pricing";
+import { applyLadderChange, ladderChangeNote, unitWords, type TierField } from "@routeflow/pricing";
+import { tierLabel } from "@/lib/tier-label";
 import { useTierLabels, type TierLabelsConfig } from "@/lib/api/tier-labels";
 import { unitsLabel } from "@/lib/stock-label";
 import { useTrackedCategories, type TrackedCategory } from "@/lib/api/tracked-categories";
@@ -826,14 +827,27 @@ export default function ProductsPage() {
         }
       }
 
-      // Committing a tier price copies it down the ladder (T3..T5 when T2 is edited, etc).
-      // The list price (pricePerUnit) deliberately keeps its smarter behavior above.
+      // P0 2026-10-14: a tier commit moves lower tiers only by applyLadderChange (tracking the old value, 0, or above
+      // the new price), never a blind copy-down. The list price keeps its own behaviour above.
+      let ladderNote: string | null = null;
       if (field.startsWith("priceTier") && newVal) {
-        Object.assign(updates, cascadeTierPrices(field as TierField, parseFloat(newVal)));
+        const moved = applyLadderChange(
+          field as TierField,
+          (product as unknown as Record<string, unknown>)[field] as string,
+          newVal,
+          product as never,
+        );
+        Object.assign(updates, moved);
+        ladderNote = ladderChangeNote(moved, (n) => tierLabel(tierLabels, n));
       }
 
       await updateProduct.mutateAsync(updates);
-      toast({ title: `${field} updated`, variant: "success" });
+      // A save that moved other tiers names them (SA: never silent).
+      toast({
+        title: `${field} updated`,
+        ...(ladderNote ? { description: ladderNote } : {}),
+        variant: "success",
+      });
 
       // Push an OBJECT PATCH covering every field this save touched — not just the field
       // the operator edited — so a cascade (pricePerUnit or priceTierN) can be undone/redone
@@ -849,7 +863,7 @@ export default function ProductsPage() {
       setUndoStack((prev) => [...prev.slice(-19), { ...record, oldValue, newValue }]);
       setRedoStack([]);
     },
-    [updateProduct, toast],
+    [updateProduct, toast, tierLabels],
   );
 
   // Regulated section + subcategory save from the Section Quick-Edit cell — an

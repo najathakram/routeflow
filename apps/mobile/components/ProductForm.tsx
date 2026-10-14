@@ -14,7 +14,12 @@ import {
   useRegulatedTemplates,
 } from "../lib/api/tracked-categories";
 import { sectionPickerOptions, subcategoryPickerOptions } from "../lib/regulated-format";
-import { cascadeTierPrices, perUnitPrice, type TierField } from "@routeflow/pricing";
+import {
+  applyLadderChange,
+  ladderChangeNote,
+  perUnitPrice,
+  type TierField,
+} from "@routeflow/pricing";
 import {
   buildProductPayload,
   emptyProductForm,
@@ -77,16 +82,23 @@ export function ProductForm({
   // doesn't re-cascade. Tier 1 / pricePerUnit deliberately keeps its own
   // behavior and is never wired here.
   const tierFocusRef = React.useRef<Partial<Record<TierField, string>>>({});
+  const [ladderNote, setLadderNote] = React.useState<string | null>(null);
   const onTierFocus = (field: TierField) => {
     tierFocusRef.current[field] = form[field];
   };
   const onTierEndEditing = (field: TierField, text: string) => {
     const before = parseOptionalNumber(tierFocusRef.current[field] ?? "");
     const after = parseOptionalNumber(text);
-    if (after == null) return; // cleared/invalid — nothing to cascade
-    const changed = before == null || Math.abs(after - before) >= 1e-9;
-    if (!changed) return;
-    setForm((f) => ({ ...f, ...cascadeTierPrices(field, after) }));
+    const changed = after != null && (before == null || Math.abs(after - before) >= 1e-9);
+    if (after == null || !changed) {
+      setLadderNote(null); // a blur with no commit clears a stale note (SA should)
+      return; // cleared/invalid or unchanged — nothing to cascade
+    }
+    // P0 2026-10-14: lower tiers move only by applyLadderChange (tracking the old value, 0, or above the new
+    // price), never a blind copy-down, and the move is named under the tiers.
+    const moved = applyLadderChange(field, tierFocusRef.current[field] ?? "", after, form);
+    if (Object.keys(moved).length > 0) setForm((f) => ({ ...f, ...moved }));
+    setLadderNote(ladderChangeNote(moved, (n) => tierLabel(tierLabels, n)));
   };
 
   const unitsPerBoxNum = parseOptionalNumber(form.unitsPerBox);
@@ -447,6 +459,11 @@ export function ProductForm({
             keyboardType="decimal-pad"
           />
         </FormField>
+        {ladderNote ? (
+          <Text accessibilityRole="text" testID="ladder-note" style={styles.ladderNote}>
+            {ladderNote}
+          </Text>
+        ) : null}
         <FormField label="Standard cost (optional)">
           <FormTextInput
             value={form.standardCost}
@@ -632,6 +649,7 @@ const styles = StyleSheet.create({
     borderRadius: 10,
   },
   errorText: { fontSize: 13, fontFamily: "Inter_500Medium", color: ios.system.redInk, flex: 1 },
+  ladderNote: { fontSize: 13, fontFamily: "Inter_500Medium", color: ios.label2 },
   scanBtn: {
     width: 44,
     height: 44,
