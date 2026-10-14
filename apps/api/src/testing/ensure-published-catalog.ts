@@ -7,7 +7,7 @@
  */
 export interface CatalogNeed {
   plans: Array<{ planKey: string; name: string; monthlyPrice: number }>;
-  addons: Array<{ sku: string; name: string; monthlyPrice: number }>;
+  addons: Array<{ sku: string; name: string; monthlyPrice: number; stackable?: boolean }>;
 }
 
 export async function ensurePublishedCatalog(

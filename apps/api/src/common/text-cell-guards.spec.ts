@@ -33,6 +33,8 @@ describe("TEXT_CELL_FIELD_LABELS: the readable 400 text names the field by a hum
     ["lastName", "Last name"],
     ["productName", "Product name"],
     ["variantName", "Variant name"],
+    ["shippingCarrier", "Carrier"],
+    ["shippingTrackingNumber", "Tracking number"],
   ])("%s -> %s", (field, label) => {
     expect(TEXT_CELL_FIELD_LABELS[field]).toBe(label);
     expect(formulaLeadMessage(field)).toBe(

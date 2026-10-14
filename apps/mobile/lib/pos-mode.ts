@@ -61,6 +61,7 @@ export const POS_COPY = {
   printInvoice: "Print invoice",
   invoiceCreated: "Invoice created",
   switchToDelivery: "Switch to delivery",
+  switchToDeliveryLocked: "Ready for pickup: move it back to Confirmed to switch to delivery.",
   invoiceFailed: "Couldn't create the invoice. Try again.",
 } as const;
 
@@ -124,7 +125,7 @@ export interface PosAction {
  * CONFIRMED: Create invoice (primary) then Hand over, or Hand over (primary) once invoiced; "Ready for
  * pickup" stays secondary on every open order until handed over. DELIVERED: Record payment / Print.
  * An order already "Ready for pickup" (OUT_FOR_DELIVERY) keeps Hand over / Create invoice but does
- * not offer the notification again.
+ * not offer the notification again, nor Switch to delivery (the server locks the fulfil path).
  */
 export function posOrderActions(
   order: { invoices?: PosInvoiceLike[] | null },
@@ -148,7 +149,7 @@ export function posOrderActions(
     if (status === "CONFIRMED") {
       out.push({ key: "readyForPickup", label: POS_COPY.readyForPickup, tier: "secondary" });
     }
-    out.push(switchToDelivery);
+    if (posCanSwitchToDelivery(status)) out.push(switchToDelivery);
     return out;
   }
   // A written-off invoice is never a payment or print target.
@@ -169,9 +170,22 @@ export function posOrderActions(
   return [];
 }
 
-/** "Switch to delivery" is offered until the order is delivered (open states only). */
+/**
+ * "Switch to delivery" is offered only while the order is open. The server refuses a fulfil-path
+ * change at OUT_FOR_DELIVERY, DELIVERED and CANCELLED (order-lifecycle.ts), so a "Ready for pickup"
+ * order can no longer switch.
+ */
 export function posCanSwitchToDelivery(status: string): boolean {
-  return status === "PENDING" || status === "CONFIRMED" || status === "OUT_FOR_DELIVERY";
+  return status === "PENDING" || status === "CONFIRMED";
+}
+
+/**
+ * M6 review: why "Switch to delivery" is gone on a "Ready for pickup" order and how to get it back (web shows
+ * the same lock on its fulfilment control). Only OUT_FOR_DELIVERY can walk back; a delivered or cancelled
+ * order has nothing to switch, so no hint.
+ */
+export function posSwitchToDeliveryHint(status: string): string | null {
+  return status === "OUT_FOR_DELIVERY" ? POS_COPY.switchToDeliveryLocked : null;
 }
 
 /** The note shown while editing a handed-over POS order: a cut never restocks. */

@@ -33,6 +33,8 @@ describe("safeTextErrorCopy (B956)", () => {
     ["salutation", "Salutation can't start with =, +, -, @ or a tab/line break."],
     ["firstName", "First name can't start with =, +, -, @ or a tab/line break."],
     ["lastName", "Last name can't start with =, +, -, @ or a tab/line break."],
+    ["shippingCarrier", "Carrier can't start with =, +, -, @ or a tab/line break."],
+    ["shippingTrackingNumber", "Tracking number can't start with =, +, -, @ or a tab/line break."],
   ])("%s → human label copy", (field, expected) => {
     expect(safeTextErrorCopy({ response: { data: body(field) } })).toBe(expected);
     expect(safeTextBodyCopy(body(field))).toBe(expected);
@@ -83,6 +85,8 @@ describe("safeTextErrorCopy (B956)", () => {
         "salutation",
         "firstName",
         "lastName",
+        "shippingCarrier",
+        "shippingTrackingNumber",
       ].sort(),
     );
   });

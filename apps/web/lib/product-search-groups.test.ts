@@ -1,4 +1,6 @@
 import {
+  groupOffered,
+  groupEnterAction,
   groupSearchRows,
   isFamilyProduct,
   isGroupExpanded,
@@ -134,5 +136,65 @@ describe("sellableFlat (typeahead lists, C7)", () => {
   it("de-duplicates a variant that is both nested and its own row", () => {
     const v1 = variant("v1", "f1", "Sample Pod", "Mint");
     expect(sellableFlat([family("f1", "Sample Pod", [v1]), v1]).map((r) => r.id)).toEqual(["v1"]);
+  });
+});
+
+describe("row 503 groupEnterAction / groupOffered", () => {
+  const fam = {
+    id: "f",
+    name: "Pod",
+    kind: "FAMILY",
+    parentProductId: null,
+    variants: [
+      { id: "v1", name: "Mint", kind: "VARIANT", parentProductId: "f" },
+      { id: "v2", name: "Lime", kind: "VARIANT", parentProductId: "f" },
+    ],
+  };
+  const parent = { ...fam, id: "p", name: "Bar", kind: "STANDARD" };
+  const plain = { id: "s", name: "Water", parentProductId: null };
+
+  it("Enter on a FAMILY row expands it; one variant adds it; once open, the highlighted variant", () => {
+    expect(groupEnterAction<any>(fam, false)).toEqual({ kind: "expand", id: "f" });
+    expect(groupEnterAction<any>(fam, true)).toMatchObject({
+      kind: "add",
+      product: { id: "v1", parent: { id: "f", name: "Pod" } },
+    });
+    expect(groupEnterAction<any>(fam, true, 1)).toMatchObject({
+      kind: "add",
+      product: { id: "v2" },
+    });
+    expect(groupEnterAction<any>(fam, true, 9)).toMatchObject({
+      kind: "add",
+      product: { id: "v2" },
+    });
+    const single = { ...fam, variants: [fam.variants[0]] };
+    expect(groupEnterAction<any>(single, false)).toMatchObject({
+      kind: "add",
+      product: { id: "v1" },
+    });
+    expect(groupEnterAction<any>({ ...fam, variants: [] }, false)).toEqual({ kind: "none" });
+    expect(groupEnterAction<any>(undefined, false)).toEqual({ kind: "none" });
+  });
+
+  it("a non-family parent and a standalone add themselves (#3323)", () => {
+    expect(groupEnterAction<any>(parent, false)).toMatchObject({
+      kind: "add",
+      product: { id: "p" },
+    });
+    expect(groupEnterAction<any>(plain, false)).toMatchObject({
+      kind: "add",
+      product: { id: "s" },
+    });
+  });
+
+  it("offers every sellable row and its variants in display order, never a FAMILY", () => {
+    expect(groupOffered<any>([fam, parent, plain]).map((p) => p.id)).toEqual([
+      "v1",
+      "v2",
+      "p",
+      "v1",
+      "v2",
+      "s",
+    ]);
   });
 });

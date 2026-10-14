@@ -230,6 +230,9 @@ test.describe("Operator — order date survives a parked draft (WP-4)", () => {
     const patched = await mockDraft(page, "");
     test.skip(!(await resumeDraft(page)), SKIP_REASON);
 
+    // Row 100: with no parked date the Order date input is hidden behind a "Backdate this order"
+    // control (CreateOrderModal.tsx `showOrderDate = backdateOpen`); open it first.
+    await page.getByRole("button", { name: "Backdate this order" }).click();
     const orderDateInput = page.locator("#order-date");
     await expect(orderDateInput).toHaveValue("");
     await orderDateInput.fill(BACKDATE);

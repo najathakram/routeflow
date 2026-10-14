@@ -181,6 +181,11 @@ describe("genericToastCopy: codes users rely on", () => {
     ["PRODUCT_IN_OPEN_COUNT", /^Already being counted in another count$/],
     ["BARCODE_TAKEN", /barcode/],
     ["ADDON_GATE", /isn't included in your current plan/],
+    // M11: the stackable add-on quantity refusals
+    ["ADDON_QUANTITY_CHANGED", /^Your add-on changed since this page loaded\. Check the new total/],
+    ["ADDON_QUANTITY_NOT_INCREASED", /would not add any more/],
+    ["ADDON_NOT_STACKABLE", /only be turned on once per workspace/],
+    ["ADDON_RAISE_UNBILLED_ROW", /isn't billed on your subscription yet/],
   ])("%s", (code, re) => {
     const copy = genericToastCopy(err(409, { code }));
     expect(copy).toMatch(re);

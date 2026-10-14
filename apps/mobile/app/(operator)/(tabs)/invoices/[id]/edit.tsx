@@ -2,6 +2,7 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { Pressable, StyleSheet, Text, TextInput, View } from "react-native";
 import { Ionicons } from "@expo/vector-icons";
 import { useLocalSearchParams, useRouter } from "expo-router";
+import { useQueryClient } from "@tanstack/react-query";
 import { ios } from "@routeflow/ui/tokens";
 import {
   FormField,
@@ -29,6 +30,11 @@ import type { ScanOutcome } from "../../../../../lib/scan-loop";
 import { canRemoveLooseUnits, looseUnitsVisible } from "../../../../../lib/loose-units";
 import { useUpdateInvoice } from "../../../../../lib/api/invoices";
 import { alertInfo, confirm } from "../../../../../lib/confirm";
+import {
+  INVOICE_STALE_COPY,
+  INVOICE_STALE_TITLE,
+  isInvoiceStale,
+} from "../../../../../lib/invoice-stale";
 import { ISO_DATE } from "../../../../../lib/invoice-terms";
 import {
   computeInvoiceTotals,
@@ -133,6 +139,9 @@ export default function EditInvoiceScreen() {
 
   // Hydrate once per invoice id — refetches must not clobber in-progress edits.
   const hydratedFor = useRef<string | null>(null);
+  // H4: the updatedAt the form hydrated from — sent as expectedUpdatedAt; a refetch never moves it.
+  const openedUpdatedAt = useRef<string | undefined>(undefined);
+  const qc = useQueryClient();
   // Snapshot taken at hydration, compared against the live form by `dirty`
   // below (lib/discard-guard.ts#hasUnsavedInvoiceLineEdits). Null until the
   // effect below has run once for this invoice.
@@ -140,6 +149,7 @@ export default function EditInvoiceScreen() {
   useEffect(() => {
     if (!invoice || invoice.status !== "DRAFT" || hydratedFor.current === invoice.id) return;
     hydratedFor.current = invoice.id;
+    openedUpdatedAt.current = invoice.updatedAt;
     // B294 (SA-141): a legacy invoice's 0-rate lines load at its verified inferred rate.
     const lineTax = hydratedLineTax(invoice);
     const hydratedLines = (invoice.items ?? []).map((it, i) => ({
@@ -407,6 +417,7 @@ export default function EditInvoiceScreen() {
     updateMut.mutate(
       {
         id,
+        expectedUpdatedAt: openedUpdatedAt.current,
         ...(issueDate.trim() ? { issueDate: issueDate.trim() } : {}),
         dueDate,
         discount: invDiscount ?? 0,
@@ -446,8 +457,22 @@ export default function EditInvoiceScreen() {
         },
         // Server messages here are actionable (mirror guard, number conflict…) —
         // surface them verbatim instead of a fixed string.
-        onError: (e: any) =>
-          alertInfo("Couldn't save", e?.response?.data?.message ?? e?.message ?? "Try again."),
+        onError: (e: any) => {
+          if (isInvoiceStale(e)) {
+            // H4: Reload refetches and re-hydrates the form (and its token) for the user to re-apply.
+            confirm(
+              INVOICE_STALE_TITLE,
+              INVOICE_STALE_COPY,
+              () => {
+                hydratedFor.current = null;
+                void qc.invalidateQueries({ queryKey: ["admin", "invoices", id] });
+              },
+              { confirmText: "Reload" },
+            );
+            return;
+          }
+          alertInfo("Couldn't save", e?.response?.data?.message ?? e?.message ?? "Try again.");
+        },
       },
     );
   };

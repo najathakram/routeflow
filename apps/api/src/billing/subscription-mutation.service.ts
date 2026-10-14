@@ -161,6 +161,12 @@ const STRICT_PRORATED = { prorate: true, rethrow: true } as const;
 
 const ADDON_RAISE_UNBILLED_ROW =
   "This add-on isn't billed on your subscription yet (it was set up before online billing, or while a promotion covered it), so its quantity can't be raised here. Please contact support.";
+/** M11: the enable body's `expectedQuantity` no longer matches what is stored (nothing was changed). */
+const ADDON_QUANTITY_CHANGED_MESSAGE =
+  "This add-on's quantity changed since you loaded the page, so nothing was changed. Check the new total and try again.";
+const ADDON_QUANTITY_NOT_INCREASED_MESSAGE =
+  "A buy-more has to raise the quantity above what you have now, so nothing was changed.";
+const ADDON_NOT_STACKABLE_MESSAGE = "This add-on can only be turned on once per workspace.";
 
 /**
  * A refusal of a self-serve add-on enable: a fixed machine code plus fixed tenant-facing copy. The
@@ -186,6 +192,12 @@ const ADDON_COMP_REFUSAL: AddonRefusal = {
   code: API_ERROR_CODES.ADDON_COMP_MANAGED_BY_SUPPORT,
   message:
     "This add-on was set up for you by support, so its quantity can't be changed here. Please contact support.",
+};
+
+/** M11: the fixed refusal of a raise on an ACTIVE row that no Stripe item bills (the enable call and the preview agree). */
+const ADDON_RAISE_UNBILLED_REFUSAL: AddonRefusal = {
+  code: API_ERROR_CODES.ADDON_RAISE_UNBILLED_ROW,
+  message: ADDON_RAISE_UNBILLED_ROW,
 };
 
 /** The fixed refusal for an add-on the tenant's plan already bundles (F3). */
@@ -1768,12 +1780,25 @@ export class SubscriptionMutationService {
    * genuine quantity bump nets only the real incremental delta. Never add a second,
    * in-process lock on top of this (see `common/db-locks.ts`).
    */
-  async enableAddon(tenantId: string, sku: string, quantity: number | undefined, actorId?: string) {
+  async enableAddon(
+    tenantId: string,
+    sku: string,
+    quantity: number | undefined,
+    actorId?: string,
+    expectedQuantity?: number,
+  ) {
     const version = await this.catalog.getPublishedCatalog();
     const skuDef = version.addonSkus.find((s) => s.sku === sku);
     if (!skuDef) throw new BadRequestException(`Unknown add-on "${sku}"`);
     if (!isSelfServiceAddon(sku)) throw new ForbiddenException(ADMIN_ONLY_ADDON_MESSAGE);
     const qty = Math.max(1, Math.trunc(quantity ?? 1));
+    // M11: a one-per-workspace SKU is a boolean grant; a quantity above 1 is refused, never silently stored.
+    if (!skuDef.stackable && qty > 1) {
+      throw new BadRequestException({
+        code: API_ERROR_CODES.ADDON_NOT_STACKABLE,
+        message: ADDON_NOT_STACKABLE_MESSAGE,
+      });
+    }
 
     // F3 (#3129 sandbox checklist): an add-on the tenant's plan already bundles is never sold
     // again. Refused before the lock and before ANY Stripe call, row write or ledger event.
@@ -1788,7 +1813,7 @@ export class SubscriptionMutationService {
     try {
       const result = await withAdvisoryLock(
         { family: "billing", key: lockKey, mode: "wait", waitMs: 10_000 },
-        () => this.enableAddonLocked(tenantId, sku, skuDef, qty, actorId),
+        () => this.enableAddonLocked(tenantId, sku, skuDef, qty, actorId, expectedQuantity),
       );
 
       if (!result.acquired) {
@@ -1864,6 +1889,9 @@ export class SubscriptionMutationService {
     const row = await findAddonRow(this.prisma, tenantId, sku);
     if (row?.active && row.isComp) return ADDON_COMP_REFUSAL;
     const { sub, mode } = await this.addonBillingContext(tenantId);
+    // M11: an ACTIVE row that no Stripe item bills can't be raised on a Stripe-billed tenant (the only
+    // reason the preview is opened for an active row is a buy-more). Refused here so no quote is shown.
+    if (row?.active && !row.stripeItemId && mode === "STRIPE") return ADDON_RAISE_UNBILLED_REFUSAL;
     return isAnnualStripeBilled(mode, sub) ? ADDON_ANNUAL_REFUSAL : null;
   }
 
@@ -2923,10 +2951,31 @@ export class SubscriptionMutationService {
     skuDef: PlanVersionWithCatalog["addonSkus"][number],
     qty: number,
     actorId?: string,
+    expectedQuantity?: number,
   ): Promise<{ changed: boolean; proratedNow: number | null; billing: AddonBilling }> {
     const { sub, mode } = await this.addonBillingContext(tenantId);
     const existing = await findAddonRow(this.prisma, tenantId, sku);
     const existingBilling: AddonBilling = existing?.stripeItemId ? "STRIPE" : mode;
+
+    // M11 compare-and-set. `qty` is the TARGET total, so a page that showed a stale owned count could cut
+    // a pack. A caller that sends `expectedQuantity` (the web's buy-more / first purchase) says what it saw:
+    // read here, under the add-on lock and before ANY Stripe call, row write or ledger event.
+    if (expectedQuantity !== undefined) {
+      const current = existing?.active ? existing.quantity : 0;
+      if (current !== expectedQuantity) {
+        throw new ConflictException({
+          code: API_ERROR_CODES.ADDON_QUANTITY_CHANGED,
+          message: ADDON_QUANTITY_CHANGED_MESSAGE,
+        });
+      }
+      // ...and a call that carries it is a buy-more / first purchase: it only ever RAISES the quantity.
+      if (qty <= current) {
+        throw new ConflictException({
+          code: API_ERROR_CODES.ADDON_QUANTITY_NOT_INCREASED,
+          message: ADDON_QUANTITY_NOT_INCREASED_MESSAGE,
+        });
+      }
+    }
 
     // Idempotent: already on at this quantity — nothing to create, update or book.
     if (existing?.active && existing.quantity === qty) {
@@ -2979,7 +3028,7 @@ export class SubscriptionMutationService {
       if (mode === "STRIPE" && qty > existing.quantity) {
         // Raising billable quantity on a Stripe-billed tenant's OLD unbilled row would book MRR with
         // no Stripe charge. Refuse until that row is billed (support moves it onto an item).
-        throw new ConflictException(ADDON_RAISE_UNBILLED_ROW);
+        throw refusalException(ADDON_RAISE_UNBILLED_REFUSAL);
       }
       const stored = Number(existing.priceSnapshot ?? 0);
       if (mode === "MANUAL" && qty > existing.quantity) {
