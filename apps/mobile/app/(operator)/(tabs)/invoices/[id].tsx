@@ -63,6 +63,7 @@ import {
 } from "../../../../lib/invoice-line-display";
 import { invoiceTaxLines } from "../../../../lib/invoice-tax-lines";
 import { invoiceLineQtyText } from "@routeflow/pricing";
+import { shipmentSaveDecision } from "@routeflow/types/shipment-save";
 import { freeUnitsLabel } from "../../../../lib/buyer-cart-logic";
 import { ACTIVATION_BUDGET_MS, sharePdf } from "../../../../lib/share-pdf";
 import { printPdf } from "../../../../lib/print-pdf";
@@ -388,11 +389,17 @@ export default function InvoiceDetailScreen() {
 
   const handleSaveShipment = (carrier: string, trackingNumber: string) => {
     if (!id) return;
+    const { outcome, payload } = shipmentSaveDecision(invoice ?? {}, carrier, trackingNumber);
+    if (!payload) {
+      // Nothing stored and nothing typed: not a change, so no request and no "cleared" toast.
+      setShipmentModal(false);
+      return;
+    }
     shipmentMut.mutate(
-      { id, shippingCarrier: carrier, shippingTrackingNumber: trackingNumber },
+      { id, ...payload },
       {
         onSuccess: () => {
-          showToast(carrier || trackingNumber ? "Shipment saved" : "Shipment cleared");
+          showToast(outcome === "saved" ? "Shipment saved" : "Shipment cleared");
           setShipmentModal(false);
           refetch();
         },
