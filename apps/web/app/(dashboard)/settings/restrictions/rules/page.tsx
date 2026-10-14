@@ -22,6 +22,11 @@ import {
   windowText,
 } from "@/lib/restriction-rules";
 import { WriteButton } from "@/lib/read-only-gate";
+import {
+  ASK_ACCOUNT_ADMIN,
+  hidesFromAllPortalCustomers,
+  mayHideFromAllPortal,
+} from "@/lib/portal-hide-admin";
 import { LiftLimitsDialog } from "@/components/portal-limits/LiftLimitsDialog";
 import { LiftRuleDialog } from "./_components/LiftRuleDialog";
 import { RuleFormDialog } from "./_components/RuleFormDialog";
@@ -31,12 +36,15 @@ function RuleCard({
   onLift,
   selected,
   onToggle,
+  toggleLocked,
 }: {
   rule: SellingRestrictionListItemDto;
   onLift?: () => void;
   /** Present only for a rule that can still be lifted by this viewer. */
   selected?: boolean;
   onToggle?: () => void;
+  /** L5: the rule hides products from every portal customer and the viewer is not an account admin. */
+  toggleLocked?: boolean;
 }) {
   const target = ruleTarget(rule);
   const badge = STATUS_BADGE[rule.status];
@@ -50,12 +58,16 @@ function RuleCard({
               className="mt-1 h-4 w-4"
               checked={!!selected}
               onChange={onToggle}
+              disabled={toggleLocked}
               aria-label={`Select the limit on ${target.name}`}
             />
           )}
           <div className="min-w-0">
             <p className="break-words font-semibold text-navy">{target.name}</p>
             <p className="text-xs text-navy/60">{target.kind}</p>
+            {onToggle && toggleLocked && (
+              <p className="text-xs text-navy/60">{ASK_ACCOUNT_ADMIN}</p>
+            )}
           </div>
         </div>
         <Badge variant={badge.variant} label={badge.label} />
@@ -229,6 +241,7 @@ export default function RestrictionRulesPage() {
                   rule={r}
                   onLift={isAdmin ? () => setLifting(r) : undefined}
                   selected={picked.has(r.id)}
+                  toggleLocked={!mayHideFromAllPortal(role) && hidesFromAllPortalCustomers(r)}
                   onToggle={
                     canLiftMany && (r.status === "ACTIVE" || r.status === "SCHEDULED")
                       ? () =>
