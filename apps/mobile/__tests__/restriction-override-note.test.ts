@@ -17,7 +17,7 @@ describe("restrictionOverrideLine", () => {
     );
     expect(FORMER_USER).toBe("former user");
   });
-  it("leaves the 'by' part out while the name is still resolving", () => {
+  it("leaves the 'by' part out when the name field is absent", () => {
     expect(restrictionOverrideLine({ reason: "Owner approved", name: undefined, at: null })).toBe(
       "Sold despite restriction · Owner approved",
     );

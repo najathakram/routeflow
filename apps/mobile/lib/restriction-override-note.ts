@@ -3,7 +3,7 @@ import { RESTRICTION_OVERRIDE_LABEL, type OverrideStampView } from "@routeflow/t
 /** Row 510: the fallback when the overriding user no longer exists (or can't be read). */
 export const FORMER_USER = "former user";
 
-/** The stamp as a STAFF read carries it; the API may also hand over an already-resolved `restrictionOverrideByName`. */
+/** The stamp as a STAFF read carries it: the API always sends `restrictionOverrideByName` (null = the user is gone). */
 export type OverrideStampSource = Partial<OverrideStampView> & {
   restrictionOverrideByName?: string | null;
 };
@@ -19,7 +19,7 @@ function shortDate(at: string | null | undefined): string | null {
 /** `Sold despite restriction · <reason> · by <name> · <when>`; the date is left out when the stamp has none. */
 export function restrictionOverrideLine(p: {
   reason: string;
-  /** null = could not be resolved: "former user". undefined = still resolving: the "by" part is left out for now. */
+  /** The API's resolved name; null = the user is gone ("former user"). undefined = the field is absent (older API): the "by" part is left out. */
   name: string | null | undefined;
   at: string | null | undefined;
 }): string {

@@ -99,6 +99,17 @@ describe("row 510: staff-only display", () => {
     expect(read("app/(operator)/(tabs)/orders/[id].tsx")).toContain("<RestrictionOverrideNote");
     expect(read("app/(operator)/(tabs)/invoices/[id].tsx")).toContain("<RestrictionOverrideNote");
   });
+  it("the note fetches nothing: no /users call (admin-only; an operator would get a false 'former user')", () => {
+    for (const f of [
+      "components/RestrictionOverrideNote.tsx",
+      "lib/restriction-override-note.ts",
+    ]) {
+      expect(read(f)).not.toMatch(/\/users|apiClient|useQuery|api-client/);
+    }
+  });
+  it("the name comes from the API's restrictionOverrideByName field", () => {
+    expect(read("components/RestrictionOverrideNote.tsx")).toContain("restrictionOverrideByName");
+  });
   it("no customer (buyer) screen or component mentions the note, the modal or an override column", () => {
     const customerFiles = [
       ...walk(path.join(MOBILE, "app/(customer)")),
