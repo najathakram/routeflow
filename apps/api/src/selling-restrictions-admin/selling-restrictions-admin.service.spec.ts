@@ -53,6 +53,8 @@ describe("restrictionStatus (the engine's own window rule)", () => {
 });
 
 const user = { sub: "u1", username: "admin" } as JwtPayload;
+// Row 509 (SA condition 5): an all-customer (FEDERAL) rule is TENANT_ADMIN-only.
+const tenantAdmin = { ...user, role: UserRole.TENANT_ADMIN } as JwtPayload;
 
 function setup() {
   const prisma = createMockPrisma();
@@ -65,8 +67,15 @@ function setup() {
     updateMany: jest.fn(),
   };
   models.sellingRestriction = rules;
+  // Row 509: a rule's targets are written as rows, read back as a summary (raw SQL) and the lift takes a row lock.
+  const targetRows = { createMany: jest.fn().mockResolvedValue({ count: 1 }) };
+  models.sellingRestrictionTarget = targetRows;
+  models.$queryRaw = jest.fn().mockResolvedValue([]);
+  // `findMany` resolves the target ids (non-archived labels only): "c1" is the one label this tenant has.
   models.productCategory = {
-    findFirst: jest.fn().mockResolvedValue({ id: "c1", archivedAt: null }),
+    findMany: jest.fn(async (a: any) =>
+      (a?.where?.id?.in ?? []).filter((id: string) => id === "c1").map((id: string) => ({ id })),
+    ),
   };
   models.product.findMany.mockResolvedValue([{ id: "p1" }]);
   const labels = { effectiveLabels: jest.fn() };
@@ -74,6 +83,7 @@ function setup() {
     prisma,
     models,
     rules,
+    targetRows,
     service: new SellingRestrictionsAdminService(prisma, labels as any),
   };
 }
@@ -136,15 +146,17 @@ describe("SellingRestrictionsAdminService.create", () => {
     await expect(s.service.create({ ...base, ...over } as any, user)).rejects.toBeInstanceOf(
       BadRequestException,
     );
-    expect(s.rules.createMany).not.toHaveBeenCalled();
+    expect(s.rules.create).not.toHaveBeenCalled();
+    expect(s.targetRows.createMany).not.toHaveBeenCalled();
   });
 
   it("stores state names as de-duplicated USPS codes, stamped with tenant and user, then audits in the same transaction", async () => {
     const s = setup();
     s.rules.findFirst.mockResolvedValue(row({ states: ["TX", "FL"] }));
     await s.service.create({ ...base, states: ["Texas", "tx", " fl "] }, user);
-    expect(s.rules.createMany).toHaveBeenCalledTimes(1);
-    const data = s.rules.createMany.mock.calls[0][0].data[0];
+    expect(s.rules.create).toHaveBeenCalledTimes(1);
+    expect(s.targetRows.createMany).toHaveBeenCalledTimes(1);
+    const data = s.rules.create.mock.calls[0][0].data;
     expect(data).toMatchObject({
       tenantId: "test-tenant",
       categoryId: "c1",
@@ -156,37 +168,61 @@ describe("SellingRestrictionsAdminService.create", () => {
       createdByName: "admin",
     });
     expect(data.effectiveFrom).toBeInstanceOf(Date);
+    // Row 509: one target row for the one label, stamped with the rule's id, tenant and creator.
+    expect(s.targetRows.createMany.mock.calls[0][0].data).toEqual([
+      expect.objectContaining({
+        tenantId: "test-tenant",
+        ruleId: data.id,
+        productId: null,
+        categoryId: "c1",
+        addedById: "u1",
+        addedByName: "admin",
+      }),
+    ]);
     expect(s.models.auditLog.create).toHaveBeenCalledWith({
       data: expect.objectContaining({ action: "selling_restriction.created", entityId: "r1" }),
     });
     // The response is still the single rule's list item (the web's create caller reads it).
-    expect(s.rules.findFirst.mock.calls[0][0].where).toEqual({ id: data.id });
+    expect(s.rules.findFirst.mock.calls[0][0].where).toEqual({
+      id: data.id,
+      tenantId: "test-tenant",
+    });
   });
 
   it("a FEDERAL rule stores no states; a product-scoped rule needs the product to exist", async () => {
     const s = setup();
     s.rules.findFirst.mockResolvedValue(row({ jurisdiction: "FEDERAL", states: [] }));
-    await s.service.create({ productId: "p1", jurisdiction: "FEDERAL", reason: "x" }, user);
-    expect(s.rules.createMany.mock.calls[0][0].data[0]).toMatchObject({
+    await s.service.create({ productId: "p1", jurisdiction: "FEDERAL", reason: "x" }, tenantAdmin);
+    expect(s.rules.create.mock.calls[0][0].data).toMatchObject({
       productId: "p1",
       categoryId: null,
       states: [],
     });
     s.models.product.findMany.mockResolvedValue([]);
-    await expect(
-      s.service.create({ productId: "nope", jurisdiction: "FEDERAL", reason: "x" }, user),
-    ).rejects.toBeInstanceOf(NotFoundException);
+    // Row 509: an unknown id is the coded 409 RULE_TARGETS_NOT_FOUND (was a plain 404).
+    const err = await s.service
+      .create({ productId: "nope", jurisdiction: "FEDERAL", reason: "x" }, tenantAdmin)
+      .catch((e: unknown) => e);
+    expect(err).toBeInstanceOf(ConflictException);
+    expect((err as ConflictException).getResponse()).toMatchObject({
+      code: "RULE_TARGETS_NOT_FOUND",
+      notFoundIds: ["nope"],
+    });
   });
 
-  it("404s an unknown category, refuses an archived one, and needs a tenant context", async () => {
+  it("an unknown or archived label is RULE_TARGETS_NOT_FOUND (409, was 404 / 409), and a tenant context is needed", async () => {
     const s = setup();
-    s.models.productCategory.findFirst.mockResolvedValueOnce(null);
-    await expect(s.service.create(base, user)).rejects.toBeInstanceOf(NotFoundException);
-    s.models.productCategory.findFirst.mockResolvedValueOnce({ id: "c1", archivedAt: new Date() });
-    await expect(s.service.create(base, user)).rejects.toBeInstanceOf(ConflictException);
+    // unknown AND archived both resolve to "not among the tenant's non-archived labels"
+    await expect(s.service.create({ ...base, categoryId: "gone" }, user)).rejects.toBeInstanceOf(
+      ConflictException,
+    );
+    expect(s.models.productCategory.findMany.mock.calls[0][0].where).toMatchObject({
+      tenantId: "test-tenant",
+      archivedAt: null,
+    });
     (s.prisma.getTenantId as jest.Mock).mockReturnValue(null);
     await expect(s.service.create(base, user)).rejects.toBeInstanceOf(BadRequestException);
-    expect(s.rules.createMany).not.toHaveBeenCalled();
+    expect(s.rules.create).not.toHaveBeenCalled();
   });
 });
 

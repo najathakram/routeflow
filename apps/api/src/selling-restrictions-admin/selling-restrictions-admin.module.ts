@@ -1,12 +1,18 @@
 import { Module } from "@nestjs/common";
 import { ProductLabelsModule } from "../product-labels/product-labels.module";
+import { RuleTargetsController } from "./rule-targets.controller";
+import { RuleTargetsService } from "./rule-targets.service";
 import { SellingRestrictionsAdminController } from "./selling-restrictions-admin.controller";
 import { SellingRestrictionsAdminService } from "./selling-restrictions-admin.service";
 
-/** Rule admin (list / create / bulk / lift / lift-batch / product chips). The chips read effective labels. */
+/**
+ * Rule admin (list / create / bulk / lift / lift-batch / product chips) and, row 509, a rule's targets (detail /
+ * add / remove / holding). The chips read effective labels. `RuleTargetsController` is registered FIRST so its
+ * `GET :id` and `POST holding` can never be shadowed by a route of the admin controller.
+ */
 @Module({
   imports: [ProductLabelsModule],
-  controllers: [SellingRestrictionsAdminController],
-  providers: [SellingRestrictionsAdminService],
+  controllers: [RuleTargetsController, SellingRestrictionsAdminController],
+  providers: [SellingRestrictionsAdminService, RuleTargetsService],
 })
 export class SellingRestrictionsAdminModule {}
