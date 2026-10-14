@@ -54,7 +54,7 @@ export async function assertBuyerQtySplit(
   // echoes back), falling back to the live pack when no line is named, the line is not found on this buyer's own
   // order, or it carries no snapshot. The lookup is scoped to this order and this customer: another buyer's line
   // is never read, so its pack size cannot be probed through the 400.
-  const linePack = new Map<string, number>();
+  const storedPackByLine = new Map<string, number>();
   const lineIds = [
     ...new Set(splitLines.map((i) => i.orderItemId).filter((v): v is string => !!v)),
   ];
@@ -64,14 +64,14 @@ export async function assertBuyerQtySplit(
       select: { id: true, unitsPerBox: true },
     });
     for (const r of rows)
-      if (Number(r.unitsPerBox ?? 0) > 1) linePack.set(r.id, Number(r.unitsPerBox));
+      if (Number(r.unitsPerBox ?? 0) > 1) storedPackByLine.set(r.id, Number(r.unitsPerBox));
   }
   checkQtySplitConsistency({
     mode: "enforce",
     path,
     items: splitLines,
     upbFor: (l) =>
-      (l.orderItemId ? linePack.get(l.orderItemId) : undefined) ??
+      (l.orderItemId ? storedPackByLine.get(l.orderItemId) : undefined) ??
       livePack.get(l.productId as string),
     tenantId,
   });
