@@ -288,6 +288,8 @@ export function useBulkDeleteProducts() {
 export interface BulkAssignParentResult {
   succeeded: string[];
   failed: Array<{ id: string; reason: string }>;
+  /** H2: per product that kept labels it carried through its old parent (absent from older servers). */
+  keptLabels?: Array<{ id: string; labels: string[] }>;
 }
 
 export function useBulkAssignParent(options?: LocalErrorToastOption) {

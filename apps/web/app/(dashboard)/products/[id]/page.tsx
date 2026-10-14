@@ -89,6 +89,7 @@ import { ProductUnitsCard } from "./ProductUnitsCard";
 import { ImageLightbox } from "./ImageLightbox";
 import { objectPositionForUrl, type FocalPoint } from "@/lib/image-focal";
 import { COMMON_UNITS } from "@/lib/common-units";
+import { keptLabelsNote } from "@/lib/kept-labels-copy";
 import { isStaffRole } from "@/lib/default-unit-line";
 import { ConfirmDialog } from "@/components/ConfirmDialog";
 
@@ -611,13 +612,17 @@ export default function ProductDetailPage() {
             }
           : product.parentProductId
             ? // "Variant of: None" on a linked product unlinks it: the same write as the Unlink button (audit 2026-10-14).
-              { parentProductId: null, variantName: null }
+              { parentProductId: null }
             : (product.variants?.length ?? 0) > 0
               ? // A product with variants names its own row ("assign name", audit 2026-10-14); its name is unchanged.
                 { variantName: draft.variantName?.trim() || null }
               : {}),
       },
       {
+        onSuccess: (data: { keptLabels?: string[] }) => {
+          const kept = keptLabelsNote(data?.keptLabels);
+          if (kept) toast({ title: "Product moved", description: kept, variant: "success" });
+        },
         onError: (e: any) =>
           toast({
             title: "Failed to save product",
@@ -887,8 +892,12 @@ export default function ProductDetailPage() {
           name: newName,
         },
         {
-          onSuccess: () => {
-            toast({ title: "Product linked as variant", variant: "success" });
+          onSuccess: (data: { keptLabels?: string[] }) => {
+            toast({
+              title: "Product linked as variant",
+              description: keptLabelsNote(data?.keptLabels) ?? undefined,
+              variant: "success",
+            });
             setMakeVariantOpen(false);
           },
           onError: () => toast({ title: "Failed to link as variant", variant: "error" }),
@@ -961,8 +970,12 @@ export default function ProductDetailPage() {
           name: composedName,
         },
         {
-          onSuccess: () => {
-            toast({ title: "Product linked as variant", variant: "success" });
+          onSuccess: (data: { keptLabels?: string[] }) => {
+            toast({
+              title: "Product linked as variant",
+              description: keptLabelsNote(data?.keptLabels) ?? undefined,
+              variant: "success",
+            });
             setLinkExistingOpen(false);
           },
           onError: () => toast({ title: "Failed to link product", variant: "error" }),
@@ -995,9 +1008,15 @@ export default function ProductDetailPage() {
     )
       return;
     updateProduct.mutate(
-      { id: id, parentProductId: null, variantName: null },
+      // H2: the name and variantName stay (never sent as null); the labels it carried are kept by the API.
+      { id: id, parentProductId: null },
       {
-        onSuccess: () => toast({ title: "Product unlinked — now standalone", variant: "success" }),
+        onSuccess: (data: { keptLabels?: string[] }) =>
+          toast({
+            title: "Product unlinked — now standalone",
+            description: keptLabelsNote(data?.keptLabels) ?? undefined,
+            variant: "success",
+          }),
         onError: () => toast({ title: "Failed to unlink", variant: "error" }),
       },
     );

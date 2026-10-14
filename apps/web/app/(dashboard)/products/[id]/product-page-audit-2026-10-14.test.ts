@@ -21,9 +21,7 @@ describe("role gate (owner ruling): every product control is for staff", () => {
 
 describe("dead controls", () => {
   it("'Variant of: None' on a linked product sends the unlink (the Unlink button's write)", () => {
-    expect(page).toMatch(
-      /: product\.parentProductId\s*\?[\s\S]{0,200}\{ parentProductId: null, variantName: null \}/,
-    );
+    expect(page).toMatch(/: product\.parentProductId\s*\?[\s\S]{0,200}\{ parentProductId: null \}/);
   });
 
   it("'assign name' opens the form on the Flavor / variety field, which a product with variants now shows", () => {

@@ -11,14 +11,6 @@ export const emptyToUndefined = ({ value }: { value: unknown }) =>
   value == null || (typeof value === "string" && value.trim() === "") ? undefined : value;
 
 /**
- * null → null (an explicit clear), "" → absent. For a pointer whose clients send `null` ONLY to clear it (the web
- * Unlink button, "Variant of: None") while an empty form field must stay "no change" (audit 2026-10-14: with
- * `emptyToUndefined` an unlink returned 200 and changed nothing).
- */
-export const nullClearsEmptyAbsent = ({ value }: { value: unknown }) =>
-  value === null ? null : emptyToUndefined({ value });
-
-/**
  * "" / null → null (treat an empty selection as an explicit clear, not absent).
  * Use for optional FK pointers a form must be able to CLEAR (e.g. removing a
  * product's regulated section/subcategory) — `null` reaches Prisma as a real
