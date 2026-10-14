@@ -209,6 +209,7 @@ model Tenant {
   // ─── Selling restrictions (2026-09-19) ───
   sellingRestrictions      SellingRestriction[]
   sellingRestrictionTargets SellingRestrictionTarget[]
+  sellingRestrictionRevisions SellingRestrictionRevision[]
   // ─── Sales agents & commissions (flag.sales_agents) ───
   salesAgents              SalesAgent[]
   salesAgentRates          SalesAgentRate[]

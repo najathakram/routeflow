@@ -286,6 +286,7 @@ const MODEL_DOMAIN = {
   RegulatedFiling: "compliance",
   SellingRestriction: "compliance",
   SellingRestrictionTarget: "compliance",
+  SellingRestrictionRevision: "compliance",
 };
 
 const HEADER_RE =
