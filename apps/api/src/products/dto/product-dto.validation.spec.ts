@@ -16,14 +16,14 @@ describe("product DTO validation (tolerant optionals)", () => {
     return { dto, errors: await validate(dto) };
   };
 
-  it('treats parentProductId: "" as absent (the tier-save 400 root cause)', async () => {
+  it('accepts parentProductId: "" (no 400 on a tier save) and reads it as null = unlink, M2', async () => {
     const { dto, errors } = await validateUpdate({
       name: "Cherry Tomatoes",
       priceTier2: "9.00",
       parentProductId: "",
     });
     expect(errors).toHaveLength(0);
-    expect(dto.parentProductId).toBeUndefined();
+    expect(dto.parentProductId).toBeNull();
   });
 
   it("still accepts a real parent UUID and rejects a malformed one", async () => {
