@@ -609,6 +609,9 @@ model Order {
   orderNumber            String?
   status                 OrderStatus @default(PENDING)
   source                 OrderSource @default(APP)
+  /// F1(i) (#3418): true when `source` was written from the creating principal (every create site of the new code).
+  /// false = UNKNOWN_LEGACY (rows that predate the column keep the default APP whoever made them): judged on STAFF.
+  sourceRecorded         Boolean     @default(false)
   urgent                 Boolean     @default(false)
   notes                  String?
   driverNote             String?
@@ -879,6 +882,12 @@ model OrderItem {
   // backorderPieces* helpers, never read by money, invoice, stock or status code. 0 = not
   // backordered OR unknown (history is not backfilled; a recreate-mode edit resets it).
   backorderedPieces        Decimal                 @default(0) @db.Decimal(10, 3)
+  /// F1(i) SA ruling (#3418): who AUTHORED this line, 'STAFF' | 'BUYER' (line-author-channel.ts
+  /// ORDER_ITEM_AUTHOR_CHANNELS), written by every new-code line write from the ACTING principal; a merge
+  /// carries the folded line's own author. NULL = written before the marker: read through the order-level
+  /// rule (sourceRecorded=false -> STAFF, else Order.source). Never derived from a timestamp. No default,
+  /// no backfill. A String, not a Prisma enum: server-internal (never on a DTO), so no CREATE TYPE.
+  authorChannel            String?
   createdAt                DateTime                @default(now())
   updatedAt                DateTime                @updatedAt
   tenantId                 String?

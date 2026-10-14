@@ -382,6 +382,16 @@ export const API_ERROR_CODES = {
    */
   IDEMPOTENCY_KEY_DRAFT_MISMATCH: "IDEMPOTENCY_KEY_DRAFT_MISMATCH",
   /**
+   * 400 from create(): a CUSTOMER (buyer) asked for a DRAFT order. A draft is the staff working copy and is
+   * judged only when promoted, so a buyer-started one is refused outright. Nothing is written.
+   */
+  ORDER_DRAFT_STAFF_ONLY: "ORDER_DRAFT_STAFF_ONLY",
+  /**
+   * 400 from every order and invoice edit: the same stored line id appears twice in the incoming `items`. Checked on
+   * the payload alone before any read or write, so nothing is saved; the client refreshes and resubmits once.
+   */
+  DUPLICATE_LINE_ID: "DUPLICATE_LINE_ID",
+  /**
    * 503 from create(): the order WAS saved but its credit-note sync exhausted its retries. The body carries
    * `orderId`: open that order and apply the credits there; a replay of the key never applies them.
    */

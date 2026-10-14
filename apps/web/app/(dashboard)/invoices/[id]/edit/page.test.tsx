@@ -161,6 +161,27 @@ describe("invoice edit page — save-error toast (B788)", () => {
     expect(screen.getByText("Invoice number already in use.")).toBeInTheDocument();
   });
 
+  it("F3: a coded DUPLICATE_LINE_ID shows the fixed sentence, never the server text", async () => {
+    mockInvoice = draft([packLine]);
+    updateMutate.mockImplementation(
+      (_dto: unknown, handlers: { onError: (e: unknown) => void }) => {
+        handlers.onError({
+          response: {
+            status: 400,
+            data: { code: "DUPLICATE_LINE_ID", message: "raw server sentence" },
+          },
+        });
+      },
+    );
+    renderWithProviders(<EditInvoicePage />);
+    await userEvent.click(screen.getByRole("button", { name: /save changes/i }));
+
+    expect(
+      screen.getByText("A line appears twice. Refresh the page and try again."),
+    ).toBeInTheDocument();
+    expect(screen.queryByText("raw server sentence")).toBeNull();
+  });
+
   it("falls back to the generic message when the server sends none", async () => {
     mockInvoice = draft([packLine]);
     updateMutate.mockImplementation(

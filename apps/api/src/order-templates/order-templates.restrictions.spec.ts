@@ -433,6 +433,31 @@ describe("OrderTemplatesService — selling restrictions (F-05)", () => {
     });
   });
 
+  describe("SA ruling (#3418): every generated line carries its explicit author marker", () => {
+    const markers = () =>
+      prisma.order.create.mock.calls[0][0].data.lineItems.create.map((l: any) => l.authorChannel);
+
+    it("a STAFF manual run writes STAFF on each line", async () => {
+      await service.generateOrder("t1", true);
+      expect(markers()).toEqual(["STAFF", "STAFF"]);
+    });
+
+    it("a buyer's manual run (reorder) writes BUYER on each line", async () => {
+      await service.generateOrder("t1", false);
+      expect(markers()).toEqual(["BUYER", "BUYER"]);
+    });
+
+    it("the unattended run writes the least privileged author: STAFF for a staff-only template", async () => {
+      await run(template({ createdByRole: "OPERATOR", itemsEditedByRole: "OPERATOR" }));
+      expect(markers()).toEqual(["STAFF", "STAFF"]);
+    });
+
+    it("the unattended run writes BUYER once a buyer edited the template (or the author is unknown)", async () => {
+      await run(template({ createdByRole: "OPERATOR", itemsEditedByRole: "CUSTOMER" }));
+      expect(markers()).toEqual(["BUYER", "BUYER"]);
+    });
+  });
+
   describe("provenance on create", () => {
     it("snapshots the creator's role and id; an internal caller leaves it NULL", async () => {
       prisma.customer.findUnique.mockResolvedValue({ id: "c1" });

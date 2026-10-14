@@ -25,6 +25,7 @@ import { PrismaService } from "../prisma/prisma.service";
 import { overpaidByOf, statusFromPayments } from "./invoice-status";
 import { voidPaymentInTx } from "./payment-void-tx";
 import { TENANT_ZONE_SELECT, configuredZone, tenantTimeZone } from "../common/tenant-time-zone";
+import { assertNoDuplicateLineIds } from "../common/duplicate-line-ids";
 import { StorageService } from "../storage/storage.service";
 import {
   deletePaymentImage,
@@ -154,6 +155,7 @@ import { assertNsfLinesUntaxed } from "./nsf-line-tax-guard";
 import { AuthorizationGuardService } from "../authorizations/authorization-guard.service";
 import { CreditNotesService } from "../credit-notes/credit-notes.service";
 import { lockCreditsForSend, lockOrderRow } from "../credit-notes/credit-note-locks";
+import { judgeDraftOrderSale, rejudgeDraftOrderInTx } from "./draft-order-restrictions";
 import {
   inOrderBillingTx,
   inOrderBillingTxAfter,
@@ -1117,6 +1119,11 @@ export class InvoicesService {
   }): Promise<any[]> {
     const { order, remainingItems, isTaxExempt, db, tenantId, extraInvoiceData, include } = params;
 
+    // F2: billing a DRAFT order SELLS its lines. Refuse a banned one (the standard 409) BEFORE the
+    // license guard, the split flag + its audit, the number reservation and the deposit-mirror send.
+    const productIds = remainingItems.map(({ li }: any) => li.productId);
+    const judged = await judgeDraftOrderSale(this, tenantId, order, productIds);
+
     // W6b backstop: re-run the license guard at invoice time. Catches a regulated
     // line added to the order after its create-time guard (buyer merge) or a license
     // that EXPIRED between order creation and invoicing. Runs before any invoice row
@@ -1299,6 +1306,8 @@ export class InvoicesService {
       : await this.generateInvoiceNumber(tenantId ?? undefined);
     const runCreation = async (tx: any): Promise<any[]> => {
       if (!callerTx) await lockOrderRow(tx, tenantId, order.id); // SA-706: before the first insert
+      const ids = remainingItems.map(({ li }: any) => li.id); // F2b: re-judge before the first insert
+      await rejudgeDraftOrderInTx(tx, tenantId, order, ids, judged);
       // Right before the first insert — never above the caller's transaction.
       const baseNumber =
         hoistedBaseNumber ?? (await this.generateInvoiceNumber(tenantId ?? undefined, tx));
@@ -2377,6 +2386,8 @@ export class InvoicesService {
             trackedSubcategoryId: agg.sample?.trackedSubcategoryId ?? null,
             ...copyCategoryTaxSnapshot(agg.sample ?? {}),
             promoFreeUnits: lineFreeUnits > 0 ? lineFreeUnits : null,
+            // SA ruling (#3418): an invoice edit is a staff-initiated system path, so its new order line is STAFF.
+            authorChannel: "STAFF",
             invoicedQty: shape.qty,
             status: "PENDING",
             ...(tenantId ? { tenantId } : {}),
@@ -2706,6 +2717,10 @@ export class InvoicesService {
       subtotal += itemData.subtotal;
       itemsData.push(itemData);
     }
+    // F2: a DRAFT order's partial SELLS these lines: refuse a banned one (standard 409) before the
+    // number is reserved (no series gap), the transaction opens or the optional send runs.
+    const partialIds = dto.items.map((req) => (itemById.get(req.orderItemId) as any)?.productId);
+    const judged = await judgeDraftOrderSale(this, this.prisma.getTenantId(), order, partialIds);
     subtotal = roundMoney(subtotal);
     await this.applyMsrpSnapshots(this.prisma.forTenant(), order.customerId, itemsData);
 
@@ -2795,6 +2810,8 @@ export class InvoicesService {
     const invoiceNumber = await this.generateInvoiceNumber(tenantId ?? undefined);
     const runCreation = async (tx: any) => {
       await lockOrderRow(tx, tenantId, order.id); // SA-706: before the insert's FK takes KEY SHARE
+      const ids = dto.items.map((r) => r.orderItemId); // F2b: edited since the pre-check?
+      await rejudgeDraftOrderInTx(tx, tenantId, order, ids, judged);
       let created: any;
       try {
         created = await tx.invoice.create({
@@ -3087,6 +3104,7 @@ export class InvoicesService {
   async update(id: string, dto: UpdateInvoiceDto) {
     assertFiniteInvoiceInput(dto); // N4: NaN is a 400, not a silent $0
     const warnNoToken = noTokenWarner(id); // H4: one release of grace for token-less clients
+    assertNoDuplicateLineIds(dto.items, { keys: ["id"] }); // F3: the invoice line id only (orderItemId = source line)
     const inv = await this.findOneOrThrow(id); // a missing invoice is a 404 whatever else is wrong
     // units_v1 (VU-4a, D3): a unit line is accepted only on an order-LESS DRAFT (resolveLineUnits below);
     // a SENT or order-linked one stays refused (the back-sync would write the unit onto the order line).

@@ -48,6 +48,7 @@ import {
   toBuyerView,
 } from "./buyer-template-view";
 import { assertPositiveTemplateQty } from "./template-qty";
+import { authorMarkerOf, withAuthor } from "../orders/line-author-channel";
 import { assertMoneyInvariantsOrThrow } from "../common/money-invariants.util";
 import { isoWeekdayUtc, startOfUtcDay } from "../common/utc-day";
 import {
@@ -1077,12 +1078,17 @@ export class OrderTemplatesService {
           return prior;
         }
       }
+      const authorChannel = authorMarkerOf(channel); // SA ruling (#3418): the run's judged channel
       const order = await tx.order.create({
         data: {
           customerId: template.customerId,
           templateId: template.id,
           fulfillPath,
           orderNumber,
+          // Unattended run: no principal creates it, and the template's author is judged per line
+          // (leastPrivilegedAuthor), so the recorded source is the stricter, buyer side (the column default, explicit).
+          source: "APP",
+          sourceRecorded: true, // F1(i): the source above is deliberate, not the column default
           subtotal,
           tax,
           total,
@@ -1090,7 +1096,9 @@ export class OrderTemplatesService {
           requestedDeliveryDate: today,
           // Denormalized flag — true when any (allowed) line is regulated.
           hasRegulated: lineItemsData.some((li) => li.trackedCategoryId != null),
-          lineItems: { create: lineItemsData },
+          // SA ruling (#3418): each line's explicit author marker: the channel this run is judged on (the least
+          // privileged of the template's creator and last editor when unattended; the caller's role otherwise).
+          lineItems: { create: withAuthor(lineItemsData, authorChannel) },
         },
         include: GENERATED_ORDER_INCLUDE,
       });
