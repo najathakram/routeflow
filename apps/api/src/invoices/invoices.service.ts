@@ -131,6 +131,7 @@ import {
   invoiceListOrderBy,
 } from "./invoice-list-query";
 import { UpdateShipmentDto } from "../orders/dto/update-shipment.dto";
+import { resolveShipmentText } from "../orders/shipment-text";
 import { JwtPayload } from "../auth/jwt-payload.interface";
 import { RouteFlowGateway } from "../gateways/routeflow.gateway";
 import { EmailService } from "../email/email.service";
@@ -3095,7 +3096,7 @@ export class InvoicesService {
     if (inv.status !== InvoiceStatus.DRAFT)
       throw new BadRequestException("Only DRAFT invoices can be edited");
     await this.assertOrderInvoiceUnlocked(inv);
-
+    resolveShipmentText(dto, inv); // row 507: a CHANGED formula-led carrier / tracking is a coded 400
     // #2197: the same literal calendar-day stamp create() writes.
     const issueDate = dto.issueDate ? issueDateStamp(dto.issueDate) : undefined;
     const due = dueDateStamps(dto); // #2256: and the due dates, before either rewrite path runs
@@ -3320,15 +3321,12 @@ export class InvoicesService {
    * clears `shippedAt`; the first time a number is set we stamp `shippedAt`.
    */
   async updateInvoiceShipment(id: string, dto: UpdateShipmentDto) {
-    const inv = await this.prisma
-      .forTenant()
-      .invoice.findFirst({ where: { id }, select: { id: true, status: true, shippedAt: true } });
+    const inv = await this.prisma.forTenant().invoice.findFirst({ where: { id } });
     if (!inv) throw new NotFoundException("Invoice not found");
     if (inv.status === InvoiceStatus.VOID)
       throw new BadRequestException("Cannot update tracking on a voided invoice");
 
-    const carrier = dto.shippingCarrier?.trim() || null;
-    const tracking = dto.shippingTrackingNumber?.trim() || null;
+    const { carrier, tracking } = resolveShipmentText(dto, inv); // row 507: trim + formula guard
     const shippedAt = tracking ? (inv.shippedAt ?? new Date()) : null;
 
     return this.prisma.forTenant().invoice.update({
