@@ -276,7 +276,13 @@ export class SettingsBillingController {
     @Param("sku") sku: string,
     @Body() dto: EnableAddonDto,
   ) {
-    return this.mutations.enableAddon(this.tenantIdOf(user), sku, dto.quantity, user.sub);
+    return this.mutations.enableAddon(
+      this.tenantIdOf(user),
+      sku,
+      dto.quantity,
+      user.sub,
+      dto.expectedQuantity,
+    );
   }
 
   @Post("addons/:sku/disable")

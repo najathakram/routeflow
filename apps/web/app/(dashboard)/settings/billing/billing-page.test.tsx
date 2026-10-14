@@ -31,6 +31,8 @@ const mockPortalMutate = jest.fn();
 let mockCheckoutPending = false;
 // Add-on fixtures: the catalog the page lists, and the mutations/preview the confirm sheet drives.
 const mockEnableMutate = jest.fn();
+// M11: the page's own re-read of the subscription after a 409 ADDON_QUANTITY_CHANGED.
+const mockSubRefetch = jest.fn();
 const mockDisableMutate = jest.fn();
 let mockPlansAddons: Array<Record<string, unknown>> = [];
 // M11: the usage meters the "Usage this cycle" card renders (empty unless a test sets them).
@@ -43,7 +45,12 @@ let mockProrationPreview: {
 } = { isLoading: false, isFetching: false, isError: false };
 
 jest.mock("@/lib/api/billing", () => ({
-  useSubscription: () => ({ data: mockSubscriptionView, isLoading: false, isError: false }),
+  useSubscription: () => ({
+    data: mockSubscriptionView,
+    isLoading: false,
+    isError: false,
+    refetch: mockSubRefetch,
+  }),
   useUsage: () => ({ data: mockUsage, isLoading: false }),
   usePlans: () => ({ data: { plans: [], addons: mockPlansAddons }, isLoading: false }),
   useCancelSubscription: () => ({ mutate: mockCancelMutate, isPending: false }),
@@ -1309,7 +1316,7 @@ describe("BillingSettingsPage — stackable add-on quantity (M11)", () => {
 
     expect(mockEnableMutate).toHaveBeenCalledTimes(1);
     expect(mockEnableMutate).toHaveBeenCalledWith(
-      { sku: "CUSTOMER_PACK_100", quantity: 3 },
+      { sku: "CUSTOMER_PACK_100", quantity: 3, expectedQuantity: 0 },
       expect.objectContaining({ onSuccess: expect.any(Function) }),
     );
   });
@@ -1377,7 +1384,7 @@ describe("BillingSettingsPage — stackable add-on quantity (M11)", () => {
 
     // The server's `quantity` is the target TOTAL, not an increment: 2 owned + 2 more = 4.
     expect(mockEnableMutate).toHaveBeenCalledWith(
-      { sku: "CUSTOMER_PACK_100", quantity: 4 },
+      { sku: "CUSTOMER_PACK_100", quantity: 4, expectedQuantity: 2 },
       expect.objectContaining({ onSuccess: expect.any(Function) }),
     );
   });
@@ -1424,5 +1431,142 @@ describe("BillingSettingsPage — stackable add-on quantity (M11)", () => {
     await screen.findByText("Customer pack (+100)");
 
     expect(screen.queryByRole("button", { name: "Buy more" })).toBeNull();
+  });
+});
+
+// ─── M11 SA must: a stale page must never CUT a pack ─────────────────────────────────────────────
+
+describe("BillingSettingsPage — stale owned count (M11, SA must)", () => {
+  const rowOf = (name: string) => {
+    const row = screen.getByText(name).closest(".py-3");
+    if (!row) throw new Error(`no add-on row for ${name}`);
+    return within(row as HTMLElement);
+  };
+  const OWNED_2 = [
+    { sku: "CUSTOMER_PACK_100", name: "Customer pack (+100)", quantity: 2, monthly: 100 },
+  ];
+  const previewFor = (over: Record<string, unknown> = {}) => ({
+    data: {
+      sku: "CUSTOMER_PACK_100",
+      name: "Customer pack (+100)",
+      monthly: 50,
+      proratedToday: 20,
+      daysRemaining: 12,
+      daysInCycle: 30,
+      effectiveAt: "2026-10-02T00:00:00.000Z",
+      nextChargeAt: "2026-10-17T00:00:00.000Z",
+      billing: "STRIPE",
+      billed: true,
+      ...over,
+    },
+    isLoading: false,
+    isFetching: false,
+    isError: false,
+  });
+
+  beforeEach(() => {
+    jest.clearAllMocks();
+    mockAuthUser = { role: "TENANT_ADMIN" };
+    mockPlansAddons = [PACK];
+    mockProrationPreview = previewFor();
+    mockSubscriptionView = subscriptionView({ status: "ACTIVE", addons: OWNED_2 });
+    mockEnableMutate.mockReset();
+    mockSubRefetch.mockReset();
+  });
+
+  it("a 409 ADDON_QUANTITY_CHANGED refetches the subscription and re-shows the sheet with the NEW owned total, in fixed copy", async () => {
+    // The server holds 6; the page showed 2. The click targets 3, which would cut the pack.
+    mockEnableMutate.mockImplementation((_v: unknown, o: any) =>
+      o.onError({
+        response: {
+          status: 409,
+          data: { code: API_ERROR_CODES.ADDON_QUANTITY_CHANGED, message: "RAW server text" },
+        },
+      }),
+    );
+    mockSubRefetch.mockImplementation(async () => {
+      mockSubscriptionView = subscriptionView({
+        status: "ACTIVE",
+        addons: [{ ...OWNED_2[0], quantity: 6, monthly: 300 }],
+      });
+      return { data: mockSubscriptionView };
+    });
+    const user = userEvent.setup();
+    renderWithProviders(<BillingSettingsPage />);
+    await screen.findByText("Customer pack (+100)");
+
+    await user.click(rowOf("Customer pack (+100)").getByRole("button", { name: "Buy more" }));
+    const dialog = within(await screen.findByRole("dialog"));
+    expect(dialog.getByText("You have 2 now")).toBeInTheDocument();
+    await user.click(dialog.getByRole("button", { name: "Buy more" }));
+
+    expect(mockEnableMutate).toHaveBeenCalledWith(
+      { sku: "CUSTOMER_PACK_100", quantity: 3, expectedQuantity: 2 },
+      expect.anything(),
+    );
+    expect(mockSubRefetch).toHaveBeenCalledTimes(1);
+    // Still open, the fixed copy (never the server's text), and the sheet now shows the real total.
+    expect(
+      await screen.findByText(
+        "Your add-on changed since this page loaded. Check the new total and try again.",
+      ),
+    ).toBeInTheDocument();
+    expect(screen.queryByText(/RAW server text/)).not.toBeInTheDocument();
+    expect(await dialog.findByText("You have 6 now")).toBeInTheDocument();
+    expect(dialog.getByText("New total: 7 × $50.00 = $350.00/mo")).toBeInTheDocument();
+    expect(dialog.getByRole("button", { name: "Buy more" })).toBeEnabled();
+  });
+
+  it("an owned pack whose row no Stripe item bills is blocked: fixed copy, no 'About $' quote, Confirm disabled", async () => {
+    mockProrationPreview = previewFor({
+      billing: "REFUSED",
+      billed: false,
+      proratedToday: null,
+      refusal: { code: API_ERROR_CODES.ADDON_RAISE_UNBILLED_ROW, message: "server text" },
+    });
+    const user = userEvent.setup();
+    renderWithProviders(<BillingSettingsPage />);
+    await screen.findByText("Customer pack (+100)");
+
+    await user.click(rowOf("Customer pack (+100)").getByRole("button", { name: "Buy more" }));
+    const dialog = within(await screen.findByRole("dialog"));
+    expect(
+      dialog.getByText(
+        "This add-on isn't billed on your subscription yet, so its quantity can't be raised here. Please contact support.",
+      ),
+    ).toBeInTheDocument();
+    expect(dialog.queryByText(/About \$/)).not.toBeInTheDocument();
+    expect(dialog.getByRole("button", { name: "Buy more" })).toBeDisabled();
+  });
+
+  it("an enable 409 ADDON_RAISE_UNBILLED_ROW is worded inline, not as the generic refusal", async () => {
+    mockEnableMutate.mockImplementation((_v: unknown, o: any) =>
+      o.onError({
+        response: { status: 409, data: { code: API_ERROR_CODES.ADDON_RAISE_UNBILLED_ROW } },
+      }),
+    );
+    const user = userEvent.setup();
+    renderWithProviders(<BillingSettingsPage />);
+    await screen.findByText("Customer pack (+100)");
+
+    await user.click(rowOf("Customer pack (+100)").getByRole("button", { name: "Buy more" }));
+    const dialog = within(await screen.findByRole("dialog"));
+    await user.click(dialog.getByRole("button", { name: "Buy more" }));
+
+    expect(await dialog.findByText(/isn't billed on your subscription yet/)).toBeInTheDocument();
+  });
+
+  it("Buy more is hidden once the pack is at the 10,000 cap", async () => {
+    mockSubscriptionView = subscriptionView({
+      status: "ACTIVE",
+      addons: [{ ...OWNED_2[0], quantity: 10000, monthly: 500000 }],
+    });
+    renderWithProviders(<BillingSettingsPage />);
+    await screen.findByText("Customer pack (+100)");
+
+    expect(rowOf("Customer pack (+100)").queryByRole("button", { name: "Buy more" })).toBeNull();
+    expect(
+      rowOf("Customer pack (+100)").getByRole("button", { name: "Disable" }),
+    ).toBeInTheDocument();
   });
 });

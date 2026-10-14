@@ -108,12 +108,18 @@ const CHECKOUT_REOPENS_SOON_COPY = "Checkout reopens in a few minutes.";
 const CHECKOUT_ADDONS_PENDING_FALLBACK =
   "Turn off your add-ons before adding your card, or contact support to set them up.";
 const addonIncludedCopy = (name: string) => `${name} is already included in your plan.`;
+// M11: the quantity moved under this page (409 ADDON_QUANTITY_CHANGED), and a row no Stripe item bills.
+const ADDON_CHANGED_COPY =
+  "Your add-on changed since this page loaded. Check the new total and try again.";
+const ADDON_UNBILLED_COPY =
+  "This add-on isn't billed on your subscription yet, so its quantity can't be raised here. Please contact support.";
 
 /** Why an add-on enable failed, read from the server body `code` (never the status alone):
  *  "annual" (annual Stripe plan), "included" (the plan already bundles it), "refused" (a 409 whose
  *  code this page does not know: BLOCKED like an unknown refusal on the preview), or "failed"
  *  (anything else: retryable). */
-export type EnableAddonError = "annual" | "included" | "refused" | "failed" | null;
+export type EnableAddonError =
+  "annual" | "included" | "unbilled" | "changed" | "refused" | "failed" | null;
 
 /** The copy for a failed "Complete payment" checkout. A trial tenant refused because of add-ons it
  *  switched on (`ADDON_BILLING_PENDING_CHECKOUT`) is shown that error's own message (the API's
@@ -142,9 +148,10 @@ function checkoutErrorCopy(err: unknown): string {
 
 /** Maps a refusal `code` (the preview's `refusal.code` or the enable call's `response.data.code`)
  *  to the fixed block reason; a code this page does not know is the generic "other" block. */
-function blockReasonOf(code: string | undefined): "annual" | "included" | "other" {
+function blockReasonOf(code: string | undefined): "annual" | "included" | "unbilled" | "other" {
   if (code === API_ERROR_CODES.ADDON_ANNUAL_NOT_SUPPORTED) return "annual";
   if (code === API_ERROR_CODES.ADDON_INCLUDED_IN_PLAN) return "included";
+  if (code === API_ERROR_CODES.ADDON_RAISE_UNBILLED_ROW) return "unbilled";
   return "other";
 }
 
@@ -169,6 +176,7 @@ function EnableAddonSheet({
   annual,
   trial,
   busy,
+  syncing,
   error,
   onConfirm,
   onClose,
@@ -183,6 +191,8 @@ function EnableAddonSheet({
    *  fallback for an API whose preview predates `trial`; the preview's own flag wins when present. */
   trial: boolean;
   busy: boolean;
+  /** The page is re-reading the subscription after a stale-quantity 409: Confirm waits for the new total. */
+  syncing: boolean;
   error: EnableAddonError;
   /** Confirmed; `monthly` is the fresh preview figure the sheet showed (for the success toast).
    *  `quantity` is the TOTAL the workspace will have (the server sets the quantity, it does not add
@@ -197,7 +207,9 @@ function EnableAddonSheet({
   const stackable = addon?.stackable === true;
   const buyMore = stackable && owned > 0;
   const [add, setAdd] = React.useState(1);
-  React.useEffect(() => setAdd(1), [addon?.sku]);
+  // A new owned total (after a stale-quantity 409 refetch) starts the stepper over, so "add 1" is always
+  // relative to the total the sheet is showing.
+  React.useEffect(() => setAdd(1), [addon?.sku, owned]);
   const total = owned + add;
   const unit = p?.monthly ?? addon?.monthlyPrice ?? 0;
   // The preview carries no quantity: its prorated figure is for ONE unit, so the estimate scales with
@@ -214,8 +226,8 @@ function EnableAddonSheet({
     billing === "REFUSED" || refusal != null ? "BLOCKED" : (billing ?? "STRIPE");
   // The server's latest answer (the enable call's refusal) wins, then the preview's refusal, then
   // the client-side annual check for an API that predates `refusal`.
-  const blockReason: "annual" | "included" | "other" | null =
-    error === "annual" || error === "included"
+  const blockReason: "annual" | "included" | "unbilled" | "other" | null =
+    error === "annual" || error === "included" || error === "unbilled"
       ? error
       : error === "refused"
         ? "other"
@@ -225,7 +237,7 @@ function EnableAddonSheet({
             ? "annual"
             : null;
   const blocked = blockReason != null;
-  const ready = fresh && !blocked;
+  const ready = fresh && !blocked && !syncing;
   // The server says whether this tenant is on its trial (the preview's `trial`); an older API that
   // does not send it falls back to the subscription status.
   const onTrial = p?.trial ?? trial;
@@ -264,10 +276,10 @@ function EnableAddonSheet({
       {addon && (
         <div className="space-y-3 text-sm text-slate-600">
           <div className="rounded-lg bg-slate-50 px-4 py-3 ring-1 ring-slate-200">
-            <div className="flex justify-between">
+            <div className="flex flex-wrap justify-between gap-x-3">
               <span className="font-medium text-slate-800">{addon.name}</span>
               {fresh && !blocked && mode !== "UNBILLED" && (
-                <span className="tabular-nums text-slate-800">
+                <span className="whitespace-nowrap tabular-nums text-slate-800">
                   {stackable
                     ? `${buyMore ? "+" : ""}${add} × ${formatMoney(p.monthly)} = ${formatMoney(roundMoney(p.monthly * add))}/mo`
                     : `${formatMoney(p.monthly)}/mo`}
@@ -320,7 +332,9 @@ function EnableAddonSheet({
                 ? ANNUAL_ADDON_COPY
                 : blockReason === "included"
                   ? addonIncludedCopy(addon.name)
-                  : ADDON_REFUSED_COPY}
+                  : blockReason === "unbilled"
+                    ? ADDON_UNBILLED_COPY
+                    : ADDON_REFUSED_COPY}
             </p>
           )}
           {fresh && !blocked && mode === "STRIPE" && (
@@ -342,6 +356,11 @@ function EnableAddonSheet({
               </p>
               {onTrial && <p>{TRIAL_BILLED_COPY}</p>}
             </>
+          )}
+          {error === "changed" && (
+            <p role="alert" className="text-red-700">
+              {ADDON_CHANGED_COPY}
+            </p>
           )}
           {error === "failed" && (
             <p role="alert" className="text-red-700">
@@ -374,6 +393,7 @@ export default function BillingSettingsPage() {
   // so a click only OPENS the matching confirm — the mutation fires from the confirm, never here.
   const [enableTarget, setEnableTarget] = React.useState<AddonSkuDef | null>(null);
   const [enableError, setEnableError] = React.useState<EnableAddonError>(null);
+  const [syncing, setSyncing] = React.useState(false);
   const [disableTarget, setDisableTarget] = React.useState<AddonSkuDef | null>(null);
   // A trial tenant's checkout can be refused because of add-ons it switched on; show why.
   const [checkoutError, setCheckoutError] = React.useState<string | null>(null);
@@ -403,7 +423,12 @@ export default function BillingSettingsPage() {
     setEnableError(null);
     enable.mutate(
       // `quantity` only for a stackable add-on (the new total); every other add-on is the boolean grant.
-      { sku: addon.sku, ...(quantity != null ? { quantity } : {}) },
+      // `expectedQuantity` = the owned count this page showed: the server refuses (409) rather than cut a pack
+      // whose quantity changed since (the body's `quantity` is the target TOTAL).
+      {
+        sku: addon.sku,
+        ...(quantity != null ? { quantity, expectedQuantity: ownedQty(addon.sku) } : {}),
+      },
       {
         onSuccess: (res) => {
           // The server returns what actually happened: Stripe's prorated figure (STRIPE), nothing to
@@ -433,14 +458,23 @@ export default function BillingSettingsPage() {
             err as { response?: { status?: number; data?: { code?: string } } } | undefined
           )?.response;
           const code = res?.data?.code;
+          if (code === API_ERROR_CODES.ADDON_QUANTITY_CHANGED) {
+            // Nothing was changed. Re-read the subscription so the sheet re-shows the REAL total.
+            setSyncing(true);
+            void Promise.resolve(sub.refetch()).finally(() => setSyncing(false));
+          }
           setEnableError(
             code === API_ERROR_CODES.ADDON_ANNUAL_NOT_SUPPORTED
               ? "annual"
               : code === API_ERROR_CODES.ADDON_INCLUDED_IN_PLAN
                 ? "included"
-                : res?.status === 409
-                  ? "refused"
-                  : "failed",
+                : code === API_ERROR_CODES.ADDON_RAISE_UNBILLED_ROW
+                  ? "unbilled"
+                  : code === API_ERROR_CODES.ADDON_QUANTITY_CHANGED
+                    ? "changed"
+                    : res?.status === 409
+                      ? "refused"
+                      : "failed",
           );
         },
       },
@@ -701,6 +735,7 @@ export default function BillingSettingsPage() {
         annual={s.cycle === "ANNUAL"}
         trial={s.status === "TRIAL"}
         busy={enable.isPending}
+        syncing={syncing}
         error={enableError}
         onConfirm={confirmEnable}
         onClose={() => setEnableTarget(null)}
@@ -747,22 +782,25 @@ export default function BillingSettingsPage() {
             // M11: a stackable pack can be owned many times over; an admin can buy more of it (not
             // while it is a RouteFlow-managed comp, whose quantity is support's to change).
             const qty = on ? ownedQty(a.sku) : 0;
-            const canBuyMore = isAdmin && a.stackable && on && !comp;
+            const canBuyMore = isAdmin && a.stackable && on && !comp && qty < ADDON_QTY_MAX;
             const busy =
               (enable.isPending || disable.isPending) &&
               (enable.variables?.sku === a.sku || disable.variables?.sku === a.sku);
             return (
-              <div key={a.sku} className="flex items-center justify-between gap-4 py-3">
-                <div>
-                  <div className="flex items-center gap-2">
+              <div
+                key={a.sku}
+                className="flex flex-wrap items-center justify-between gap-x-4 gap-y-2 py-3"
+              >
+                <div className="min-w-0 flex-1 basis-40">
+                  <div className="flex flex-wrap items-center gap-x-2">
                     <span className="font-medium text-slate-800">{a.name}</span>
                     {on && (
-                      <span className="inline-flex items-center gap-1 text-xs font-medium text-emerald-600">
+                      <span className="inline-flex items-center gap-1 whitespace-nowrap text-xs font-medium text-emerald-600">
                         <Check className="h-3 w-3" /> Active
                       </span>
                     )}
                     {on && a.stackable && qty > 1 && (
-                      <span className="text-xs font-medium tabular-nums text-slate-500">
+                      <span className="whitespace-nowrap text-xs font-medium tabular-nums text-slate-500">
                         × {qty}
                       </span>
                     )}
