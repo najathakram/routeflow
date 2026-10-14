@@ -66,6 +66,9 @@ describe("SellingRestrictionsService.evaluate", () => {
     effectiveTo: null,
     liftedAt: null,
     reason: "State ban",
+    // row 509: a pre-targets rule (no target rows: the legacy-column fallback)
+    targets: [],
+    _count: { targets: 0 },
     ...over,
   });
 
@@ -408,8 +411,22 @@ describe("SellingRestrictionsService.evaluate", () => {
     expect(res.outcome).toBe("ALLOW");
     // no label survives the opt-out, so no category-scoped rule query is even built; the
     // product-scoped prefilter covers the variant AND its parent (lineage)
+    // row 509: the same scope OR, once on the legacy columns and once on the rule's target rows
     expect(prisma.sellingRestriction.findMany.mock.calls[0][0].where.OR).toEqual([
       { productId: { in: ["v1", "p1"] } },
+      {
+        targets: {
+          some: {
+            AND: [
+              {
+                addedAt: { lte: expect.any(Date) },
+                OR: [{ removedAt: null }, { removedAt: { gt: expect.any(Date) } }],
+              },
+              { OR: [{ productId: { in: ["v1", "p1"] } }] },
+            ],
+          },
+        },
+      },
     ]);
   });
 
@@ -824,10 +841,15 @@ describe("SellingRestrictionsService.evaluate", () => {
       await service.evaluate(T, "c1", [{ productId: "p1" }], { at: NOW });
       const where = prisma.sellingRestriction.findMany.mock.calls[0][0].where;
       expect(where.tenantId).toBe(T);
+      const scope = [{ productId: { in: ["p1"] } }, { categoryId: { in: ["cat-thc"] } }];
+      const activeTarget = {
+        addedAt: { lte: NOW },
+        OR: [{ removedAt: null }, { removedAt: { gt: NOW } }],
+      };
       expect(where.OR).toEqual([
-        { productId: { in: ["p1"] } },
-        { categoryId: { in: ["cat-thc"] } },
-      ]);
+        ...scope,
+        { targets: { some: { AND: [activeTarget, { OR: scope }] } } },
+      ]); // row 509
       expect(where.AND).toEqual([activeRuleWhere(NOW)]);
     });
 
@@ -1778,6 +1800,8 @@ describe("SellingRestrictionsService.restrictedProductIdsFor (portal limits: wha
     effectiveTo: null,
     liftedAt: null,
     reason: "Portal limit",
+    targets: [], // row 509: a pre-targets rule (legacy-column fallback)
+    _count: { targets: 0 },
     ...over,
   });
   const customerIn = (state: string | null, isWalkIn = false) =>
@@ -1852,6 +1876,18 @@ describe("SellingRestrictionsService.restrictedProductIdsFor (portal limits: wha
     expect((await service.restrictedProductIdsFor(T, "c1", NOW)).size).toBe(0);
     prisma.sellingRestriction.findMany.mockResolvedValue([portalRule({ surface: "ALL" })]);
     expect([...(await service.restrictedProductIdsFor(T, "c1", NOW))]).toEqual(["p1"]);
+  });
+
+  it("row 509: a rule row read without its target count fails loud (never a silent legacy fallback)", async () => {
+    const {
+      targets: _t,
+      _count: _c,
+      ...bare
+    } = portalRule({ jurisdiction: "FEDERAL", states: [] });
+    prisma.sellingRestriction.findMany.mockResolvedValue([bare]);
+    await expect(service.restrictedProductIdsFor(T, "c1", NOW)).rejects.toThrow(
+      /without its targets and count/,
+    );
   });
 
   it("a FEDERAL rule hides without consulting any address", async () => {

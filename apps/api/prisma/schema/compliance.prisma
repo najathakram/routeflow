@@ -461,8 +461,41 @@ model SellingRestriction {
   tenant   Tenant?          @relation(fields: [tenantId], references: [id])
   category ProductCategory? @relation(fields: [categoryId], references: [id])
   product  Product?         @relation(fields: [productId], references: [id])
+  // Row 509: what the rule covers. A rule with target rows is matched ONLY by its active targets; a rule
+  // with none (written before the targets table, or by old code during a deploy) falls back to the
+  // legacy categoryId / productId above (SA condition 1). The legacy columns stay one release so a
+  // rollback still enforces (a multi-target rule mirrors its FIRST target there, SA condition 2).
+  targets SellingRestrictionTarget[]
 
   @@index([tenantId, effectiveTo])
   @@index([categoryId])
   @@index([productId])
+}
+
+// Row 509: one product or one label a SellingRestriction covers. History rows: never deleted, a removal
+// stamps removedAt (+ who / why), so "was X covered at time t" stays answerable. Exactly one of
+// productId / categoryId (raw CHECK SellingRestrictionTarget_scope_xor). The partial uniques
+// (ruleId, productId) / (ruleId, categoryId) WHERE removedAt IS NULL and the partial lookups
+// (tenantId, productId) / (tenantId, categoryId) WHERE removedAt IS NULL are raw SQL in the migration
+// (Prisma can't express a partial index; same precedent as DemoBooking_startsAt_confirmed_key).
+model SellingRestrictionTarget {
+  id            String    @id @default(uuid())
+  tenantId      String
+  ruleId        String
+  productId     String?
+  categoryId    String?
+  addedAt       DateTime  @default(now())
+  addedById     String?
+  addedByName   String?
+  removedAt     DateTime?
+  removedById   String?
+  removedByName String?
+  removeReason  String?
+
+  tenant   Tenant             @relation(fields: [tenantId], references: [id], onDelete: Restrict)
+  rule     SellingRestriction @relation(fields: [ruleId], references: [id], onDelete: Restrict)
+  product  Product?           @relation(fields: [productId], references: [id], onDelete: Restrict)
+  category ProductCategory?   @relation(fields: [categoryId], references: [id], onDelete: Restrict)
+
+  @@index([ruleId])
 }
