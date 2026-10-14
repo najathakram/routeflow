@@ -187,3 +187,94 @@ describe("sale-fulfilment: the one classifier", () => {
     expect(judgedAtStore(undefined)).toBe(false);
   });
 });
+
+/**
+ * SA ruling 2026-10-14: a store with NO usable state is INDETERMINATE (fail closed) for COUNTER, POS and PICKUP —
+ * never "no restriction". POS mode is not a column: a POS hand-over is stored as fulfillPath PICKUP (the server
+ * never infers it from the preference), so it is judged exactly like PICKUP.
+ */
+describe("store state unset: the choke point refuses counter, POS and pickup (L8)", () => {
+  let service: SellingRestrictionsService;
+  let prisma: any;
+  beforeEach(async () => {
+    const mock = createMockPrisma();
+    mock.getTenantId.mockReturnValue(null);
+    prisma = mock.forTenant();
+    const model = (rows: unknown[]) => ({ findMany: jest.fn().mockResolvedValue(rows) });
+    prisma.sellingRestriction = model([
+      {
+        id: "r1",
+        categoryId: "cat-thc",
+        productId: null,
+        jurisdiction: "STATE",
+        states: ["TX"],
+        surface: "ALL",
+        effectiveFrom: new Date("2026-01-01T00:00:00Z"),
+        effectiveTo: null,
+        liftedAt: null,
+        reason: "State ban",
+      },
+    ]);
+    prisma.productCategory = model([{ id: "cat-thc", name: "THC" }]);
+    prisma.systemConfig.findMany.mockResolvedValue([
+      { key: "selling_restrictions.enabled", value: "true" },
+    ]);
+    prisma.systemConfig.findFirst.mockResolvedValue(null);
+    prisma.product.findMany.mockResolvedValue([
+      {
+        id: "p1",
+        name: "Gummies",
+        parentProductId: null,
+        categoryLabels: [{ categoryId: "cat-thc", mode: "INCLUDE" }],
+      },
+    ]);
+    prisma.customer.findFirst.mockResolvedValue(CA_CUSTOMER);
+    const mod = await Test.createTestingModule({
+      providers: [
+        SellingRestrictionsService,
+        ProductLabelsService,
+        { provide: PrismaService, useValue: mock },
+      ],
+    }).compile();
+    service = mod.get(SellingRestrictionsService);
+  });
+
+  it.each([
+    ["COUNTER", { counterSale: true, fulfillPath: "PICKUP" }],
+    ["POS hand-over (stored as PICKUP)", { fulfillPath: "PICKUP" }],
+    ["PICKUP", { counterSale: false, fulfillPath: "PICKUP" }],
+  ])(
+    "%s with no store state is refused 409, for a named, walk-in and absent customer",
+    async (_n, facts) => {
+      prisma.tenantConfig.findUnique.mockResolvedValue(null); // no TenantConfig, no legacy settings.state
+      for (const customerId of ["c-ca", null]) {
+        await expect(
+          service.assertLinesSellable({
+            tenantId: T,
+            customerId,
+            lines: [{ productId: "p1" }],
+            channel: "STAFF",
+            at: NOW,
+            fulfilmentKind: saleFulfilmentKind(facts),
+          }),
+        ).rejects.toMatchObject({ status: 409 });
+      }
+    },
+  );
+
+  it("a blank store state is no state; a readable one lets the same sale through", async () => {
+    const sale = () =>
+      service.checkLinesSellable({
+        tenantId: T,
+        customerId: "c-ca",
+        lines: [{ productId: "p1" }],
+        channel: "STAFF",
+        at: NOW,
+        fulfilmentKind: "COUNTER",
+      });
+    prisma.tenantConfig.findUnique.mockResolvedValue({ state: "  " });
+    expect((await sale()).outcome).toBe("INDETERMINATE");
+    prisma.tenantConfig.findUnique.mockResolvedValue({ state: "FL" });
+    expect((await sale()).outcome).toBe("ALLOW");
+  });
+});
