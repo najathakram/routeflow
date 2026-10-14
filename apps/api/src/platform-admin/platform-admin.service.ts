@@ -17,6 +17,7 @@ import * as crypto from "crypto";
 import { PrismaService } from "../prisma/prisma.service";
 import { EmailService } from "../email/email.service";
 import { BillingService } from "../billing/billing.service";
+import { isTerminalStripeSubscriptionStatus } from "../billing/stripe-period";
 import { PlatformPricingService } from "../billing/platform-pricing.service";
 import { PlanCatalogService } from "../billing/plan-catalog.service";
 import { ProrationService } from "../billing/proration.service";
@@ -26,7 +27,11 @@ import { FeatureOverrideService } from "../billing/feature-override.service";
 import { PlanTransitionConfigService } from "../billing/plan-transition-config.service";
 import { gateVia } from "../billing/feature-registry";
 import { BillingEventService } from "../billing/billing-event.service";
-import { PAYMENT_OVERDUE_REASON, READ_ONLY_STATUS } from "../billing/dunning-config";
+import {
+  ADMIN_SET_REASON,
+  PAYMENT_OVERDUE_REASON,
+  READ_ONLY_STATUS,
+} from "../billing/dunning-config";
 import { DunningService } from "../billing/dunning.service";
 import { assertTenantNotPaymentOverdue } from "../billing/payment-overdue";
 import {
@@ -119,6 +124,46 @@ function activeTenantTrialRefusal(): ConflictException {
     code: API_ERROR_CODES.TENANT_TRIAL_EXTEND_NOT_ALLOWED,
     message: "This tenant is Active. A trial can't be set on a paying tenant.",
   });
+}
+
+/** 409 TENANT_CANCEL_SUBSCRIPTION_FIRST: a status CANCELLED over a live Stripe subscription would keep billing. */
+function cancelSubscriptionFirstRefusal(): ConflictException {
+  return new ConflictException({
+    code: API_ERROR_CODES.TENANT_CANCEL_SUBSCRIPTION_FIRST,
+    message: "This tenant has a live subscription. Cancel the subscription first.",
+  });
+}
+
+/** 409 CONCURRENT_UPDATE (the existing retryable code): Stripe could not be read, or the subscription moved meanwhile. */
+function retryRefusal(): ConflictException {
+  return new ConflictException({
+    code: API_ERROR_CODES.CONCURRENT_UPDATE,
+    message: "This tenant's subscription could not be confirmed ended. Please retry.",
+  });
+}
+
+/** 400: only a SUSPENDED tenant can be deleted (the pre-check, and again under the row lock). */
+function notSuspendedRefusal(): BadRequestException {
+  return new BadRequestException(
+    "Tenant must be suspended before it can be deleted. Suspend the tenant first.",
+  );
+}
+
+/** How long the pre-transaction Stripe read may take, per attempt (one retry follows a failure or a timeout). */
+const STRIPE_TERMINATION_READ_TIMEOUT_MS = 5_000;
+
+async function withTimeout<T>(p: Promise<T>, ms: number): Promise<T> {
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  try {
+    return await Promise.race([
+      p,
+      new Promise<never>((_, reject) => {
+        timer = setTimeout(() => reject(new Error("Stripe read timed out")), ms);
+      }),
+    ]);
+  } finally {
+    if (timer) clearTimeout(timer);
+  }
 }
 
 @Injectable()
@@ -597,26 +642,132 @@ export class PlatformAdminService {
     });
     if (!existing) throw new NotFoundException(`Tenant ${id} not found`);
     if (existing.status !== "SUSPENDED") {
-      throw new BadRequestException(
-        "Tenant must be suspended before it can be deleted. Suspend the tenant first.",
-      );
+      throw notSuspendedRefusal();
     }
-    const tenant = await this.prisma.tenant.update({
-      where: { id },
-      data: { deletedAt: new Date(), status: "CANCELLED" },
+    // M4: the same Stripe gate as status -> CANCELLED - the read happens BEFORE the transaction, the id it read is
+    // compared under the row lock. A deleted tenant must never be left over a subscription that may still bill.
+    const gate = await this.stripeGateBeforeTermination(id, adminId);
+    const readSubId = gate.stripeSubId;
+    const tenant = await this.prisma.$transaction(async (tx) => {
+      await tx.$queryRaw`SELECT id FROM "Tenant" WHERE id = ${id} FOR UPDATE`;
+      await this.assertStripeSubUnchangedTx(tx, id, readSubId);
+      // The SUSPENDED check above ran before the Stripe read; re-prove it under the lock. An admin who set the
+      // tenant ACTIVE meanwhile must not get a paying tenant CANCELLED + deleted with no ledger delta.
+      const { count } = await tx.tenant.updateMany({
+        where: { id, status: "SUSPENDED" },
+        data: { deletedAt: new Date(), status: "CANCELLED" },
+      });
+      if (count !== 1) throw notSuspendedRefusal();
+      return tx.tenant.findUniqueOrThrow({ where: { id } });
     });
     // Evict cached status so the guard blocks this tenant immediately
     this.tenantStatusGuard.invalidate(id);
     await this.recordAdminAction(id, adminId, AdminAuditAction.TENANT_DELETED, {
       slug: tenant.slug,
     });
+    if (gate.notFound) await this.noteStripeSubNotFound(id, adminId, gate.stripeSubId);
     return { id: tenant.id, slug: tenant.slug, status: tenant.status, deletedAt: tenant.deletedAt };
   }
 
   // ─── Mutations ────────────────────────────────────────────────────────────────
 
+  /**
+   * One Stripe read with the gate's short timeout and ONE retry. Resolves null when Stripe answers 404 /
+   * resource_missing; a read that fails or times out twice is a retryable 409 (CONCURRENT_UPDATE).
+   */
+  private async readStripeOrMissing<T>(id: string, what: string, read: () => Promise<T>) {
+    for (let attempt = 1; ; attempt++) {
+      try {
+        return await withTimeout(read(), STRIPE_TERMINATION_READ_TIMEOUT_MS);
+      } catch (err) {
+        const e = err as { code?: string; statusCode?: number } | undefined;
+        if (e?.code === "resource_missing" || e?.statusCode === 404) return null;
+        if (attempt >= 2) {
+          this.logger.warn(`Tenant ${id}: could not read Stripe ${what} twice; refusing (retry)`);
+          throw retryRefusal();
+        }
+      }
+    }
+  }
+
+  /**
+   * M2/M4, the ONE Stripe gate for status -> CANCELLED and tenant delete. Runs BEFORE any transaction (Stripe is
+   * never called under the tenant row lock): a plain read of the stored subscription id, then a Stripe read with a
+   * short timeout and ONE retry. Returns the id it judged (null = none stored) for the in-transaction compare.
+   *  - no stored id: allowed, no Stripe call. A TERMINAL status (`canceled`, `incomplete_expired`): allowed.
+   *  - a live status is refused (TENANT_CANCEL_SUBSCRIPTION_FIRST) - `paused` and `incomplete` can still come
+   *    back, so they are not "ended". Stripe unconfigured with a stored id fails closed the same way.
+   *  - a subscription 404 is the same signal as a WRONG Stripe account / mode, so it is only trusted when the
+   *    tenant's Stripe CUSTOMER is still there (read the same way): then it is allowed and `notFound` tells the
+   *    caller to write the audit row. A customer that is ALSO 404 is refused with the same
+   *    TENANT_CANCEL_SUBSCRIPTION_FIRST plus an ops alert ("key/mode mismatch suspected") and NEVER allowed.
+   *  - any read that fails or times out twice is a retryable 409 (CONCURRENT_UPDATE).
+   */
+  private async stripeGateBeforeTermination(
+    id: string,
+    adminId: string | null,
+  ): Promise<{ stripeSubId: string | null; notFound: boolean }> {
+    const row = await this.prisma.tenantSubscription.findUnique({
+      where: { tenantId: id },
+      select: { stripeSubId: true, stripeCustomerId: true },
+    });
+    const stripeSubId = row?.stripeSubId ?? null;
+    if (!stripeSubId) return { stripeSubId: null, notFound: false };
+    if (!this.stripe.isConfigured) throw cancelSubscriptionFirstRefusal();
+    const sub = await this.readStripeOrMissing(id, `subscription ${stripeSubId}`, () =>
+      this.stripe.getSubscription(stripeSubId),
+    );
+    if (sub) {
+      if (!isTerminalStripeSubscriptionStatus(sub.status)) throw cancelSubscriptionFirstRefusal();
+      return { stripeSubId, notFound: false };
+    }
+    const customerId = row?.stripeCustomerId ?? null;
+    const customer = customerId
+      ? await this.readStripeOrMissing(id, `customer ${customerId}`, () =>
+          this.stripe.getCustomer(customerId),
+        )
+      : null;
+    if (!customer) {
+      await this.recordAdminAction(id, adminId, AdminAuditAction.STRIPE_KEY_MODE_MISMATCH, {
+        message: "Stripe key/mode mismatch suspected",
+        stripeSubId,
+        stripeCustomerId: customerId,
+      });
+      throw cancelSubscriptionFirstRefusal();
+    }
+    return { stripeSubId, notFound: true };
+  }
+
+  private noteStripeSubNotFound(id: string, adminId: string | null, stripeSubId: string | null) {
+    return this.recordAdminAction(id, adminId, AdminAuditAction.STRIPE_SUB_NOT_FOUND_TERMINATED, {
+      note: "stripe sub not found; customer present",
+      stripeSubId,
+    });
+  }
+
+  /** Under the tenant row lock: the stored subscription id is still the one the Stripe gate judged, else 409 retry. */
+  private async assertStripeSubUnchangedTx(
+    tx: Prisma.TransactionClient,
+    id: string,
+    readSubId: string | null,
+  ): Promise<void> {
+    const row = await tx.tenantSubscription.findUnique({
+      where: { tenantId: id },
+      select: { stripeSubId: true },
+    });
+    if ((row?.stripeSubId ?? null) !== readSubId) throw retryRefusal();
+  }
+
   async updateStatus(id: string, dto: UpdateTenantStatusDto, adminId: string | null = null) {
     await this._findOrThrow(id);
+
+    // M2: CANCELLED over a live Stripe subscription would leave Stripe billing a cancelled tenant. Stripe is read
+    // HERE, before the transaction - never under the tenant row lock - and the id it judged is compared below.
+    const gate =
+      dto.status === "CANCELLED"
+        ? await this.stripeGateBeforeTermination(id, adminId)
+        : { stripeSubId: null, notFound: false };
+    const readSubId = gate.stripeSubId;
 
     // B216 / FINDING-3 (round 2 review): the prior-status read, the status write, and the
     // downgrade lookup are ONE transaction, using the same non-ACTIVE→ACTIVE CAS shape as
@@ -652,10 +803,21 @@ export class PlatformAdminService {
           class: true,
           deletedAt: true,
           subscription: {
-            select: { planKey: true, basePriceSnapshot: true, discount: true, couponFull: true },
+            select: {
+              planKey: true,
+              basePriceSnapshot: true,
+              discount: true,
+              couponFull: true,
+              stripeSubId: true,
+            },
           },
         },
       });
+
+      // F4 / M2: the Stripe judgement above only stands if the subscription is still the one it judged.
+      if (dto.status === "CANCELLED" && (before.subscription?.stripeSubId ?? null) !== readSubId) {
+        throw retryRefusal();
+      }
 
       // The same refusal as extendTrial, on the PRIOR status read under the row lock above: the status
       // PATCH accepts any TenantStatus, so it must not be the back door for ACTIVE -> TRIAL.
@@ -685,6 +847,8 @@ export class PlatformAdminService {
                 ...(before.readOnlyReason === PAYMENT_OVERDUE_REASON
                   ? { readOnlyReason: null }
                   : {}),
+                // F4: an admin-set READ_ONLY says so (never null), so a renewal can tell it from a lapsed trial
+                ...(dto.status === READ_ONLY_STATUS ? { readOnlyReason: ADMIN_SET_REASON } : {}),
               },
             });
       // Same exit, local side: a PAUSED tenant moved to SUSPENDED / CANCELLED / TRIAL / ... by an admin loses its
@@ -801,6 +965,7 @@ export class PlatformAdminService {
           }
         : {}),
     });
+    if (gate.notFound) await this.noteStripeSubNotFound(id, adminId, gate.stripeSubId);
 
     return { id: tenant.id, slug: tenant.slug, status: tenant.status };
   }
@@ -1518,7 +1683,9 @@ export class PlatformAdminService {
    * Issues a short-lived (15-min) access token with the target tenant-admin
    * user's claims plus `impersonatedBy: superAdminId`.
    * The ImpersonationGuard logs write operations for audit trail purposes;
-   * impersonation sessions have full write access (same as the impersonated user).
+   * impersonation sessions have write access (same as the impersonated user) EXCEPT the routes marked
+   * `@NoImpersonation(scope)` (billing actions, payment setup, and the account's own credentials and linked
+   * identities), which a support session is refused with 403 IMPERSONATION_NOT_ALLOWED.
    */
   async impersonate(tenantId: string, superAdminId: string) {
     const tenant = await this._findOrThrow(tenantId);

@@ -1,3 +1,5 @@
+import { ConflictException } from "@nestjs/common";
+import { API_ERROR_CODES } from "../common/api-error-codes";
 import { BOUNDARY_HOUR_UTC, nextBoundaryAfter } from "./rf-invoice/calendar-windows";
 
 /**
@@ -20,37 +22,53 @@ import { BOUNDARY_HOUR_UTC, nextBoundaryAfter } from "./rf-invoice/calendar-wind
 /** The anchor's wall-clock hour (UTC) on the 1st: the SAME boundary every billing window uses. */
 export const ANCHOR_HOUR_UTC = BOUNDARY_HOUR_UTC;
 
-/** An anchor closer than this to "now" is skipped for the following 1st (M6). */
+/** An anchor closer than this to "now" is REFUSED (F3): the checkout reopens just after the 1st. */
 export const MIN_ANCHOR_LEAD_MS = 91 * 60 * 1000;
 
 /** The session must expire at least this long before the anchor, so it can never complete after it (M6). */
 export const CHECKOUT_EXPIRY_MARGIN_MS = 60 * 60 * 1000;
 
-/** Stripe's own ceiling on a Checkout Session's lifetime (and our default). */
-export const CHECKOUT_MAX_LIFETIME_MS = 24 * 60 * 60 * 1000;
+/**
+ * Longest Checkout Session lifetime we ask for, shared by the regular plan checkout and the catch-up builders.
+ * Stripe rejects `expires_at` at or past 24 h from ITS clock, so exactly now + 24 h on a host clock running ahead
+ * fails the create; 23 h leaves an hour of skew margin.
+ */
+export const CHECKOUT_MAX_LIFETIME_MS = 23 * 60 * 60 * 1000;
 
 export interface CheckoutAnchorPlan {
   /** The anchor instant (the 1st, 12:00 UTC). */
   anchorAt: Date;
   /** `subscription_data.billing_cycle_anchor` - epoch SECONDS. */
   billingCycleAnchor: number;
-  /** The Checkout session `expires_at` - epoch SECONDS: min(now + 24 h, anchor - 60 min). */
+  /** The Checkout session `expires_at` - epoch SECONDS: min(now + 23 h, anchor - 60 min). */
   expiresAt: number;
   prorationBehavior: "create_prorations";
 }
 
 /**
- * The anchor for a checkout created at `now`: the next 1st at 12:00 UTC; when that is under 91 minutes away, the
- * following 1st. A start ON the 1st still gets an anchor (the next one at least 91 minutes away (Stripe's 30-minute floor on `expires_at`, with the 60-minute margin and a minute of rounding)).
+ * The anchor for a checkout created at `now`: the next 1st at 12:00 UTC. Never skipped to the FOLLOWING 1st
+ * (F3): that is a month and more away, and Stripe requires the anchor within the first billing period.
+ * Callers that must keep the lead use {@link planCheckoutAnchor}, which refuses a start too close to it.
  */
 export function nextCheckoutAnchor(now: Date): Date {
-  const first = nextBoundaryAfter(now);
-  if (first.getTime() - now.getTime() >= MIN_ANCHOR_LEAD_MS) return first;
-  return nextBoundaryAfter(first);
+  return nextBoundaryAfter(now);
 }
 
-/** Everything a new-subscription Checkout session needs for its anchor, from `now`. */
+/**
+ * Everything a new-subscription Checkout session needs for its anchor, from `now`. F3: a start under
+ * {@link MIN_ANCHOR_LEAD_MS} (91 minutes: Stripe's 30-minute floor on `expires_at`, the 60-minute margin and a
+ * minute of rounding) before the 1st is REFUSED with a 409 `CHECKOUT_ANCHOR_WINDOW` carrying `retryAt` (the 1st
+ * plus one minute), the earliest instant the next anchor is a valid one. No stub, no dropped anchor.
+ */
 export function planCheckoutAnchor(now: Date): CheckoutAnchorPlan {
+  const boundary = nextBoundaryAfter(now);
+  if (boundary.getTime() - now.getTime() < MIN_ANCHOR_LEAD_MS) {
+    throw new ConflictException({
+      code: API_ERROR_CODES.CHECKOUT_ANCHOR_WINDOW,
+      message: "Checkout is paused around the start of the month.",
+      retryAt: new Date(boundary.getTime() + 60_000).toISOString(),
+    });
+  }
   const anchorAt = nextCheckoutAnchor(now);
   const expiresMs = Math.min(
     now.getTime() + CHECKOUT_MAX_LIFETIME_MS,

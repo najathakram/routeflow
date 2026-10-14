@@ -22,6 +22,7 @@ import { CreateOperatorDto } from "./dto/create-operator.dto";
 import { UpdateUserDto } from "./dto/update-user.dto";
 import { ChangeUserStatusDto } from "./dto/change-user-status.dto";
 import { PreferencesBodyPipe } from "./dto/update-preferences.dto";
+import { NoImpersonation } from "../auth/decorators/no-impersonation.decorator";
 import { OperatorPermissionsService } from "../auth/permissions/operator-permissions.service";
 
 @ApiTags("users")
@@ -95,7 +96,7 @@ export class UsersController {
     }
     const isPrivileged = user.role === UserRole.OPERATOR || user.role === UserRole.TENANT_ADMIN;
     const safeDto: UpdateUserDto = isPrivileged ? dto : { ...dto, role: undefined };
-    return this.usersService.updateUser(id, safeDto, user.username, user.role);
+    return this.usersService.updateUser(id, safeDto, user.username, user.role, user.impersonatedBy);
   }
 
   @Patch(":id/status")
@@ -109,6 +110,8 @@ export class UsersController {
     return this.usersService.changeStatus(id, dto, user.role);
   }
 
+  // SA-778: hands the caller a fresh temporary password. Topmost so the guard lands after JwtAuthGuard/RolesGuard.
+  @NoImpersonation("account")
   @Post(":id/reset-password")
   @UseGuards(RolesGuard)
   @Roles(UserRole.OPERATOR)

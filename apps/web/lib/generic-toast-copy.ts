@@ -81,6 +81,9 @@ const CODE_COPY: Record<string, string> = {
     "This invoice has no balance due, so there is nothing to remind about.",
   [API_ERROR_CODES.REMINDER_NOT_ISSUED]:
     "A reminder can only be sent for an invoice that has been issued and is still unpaid.",
+  // SA-778: a billing action refused in a support session. Fixed sentence, same as the server's.
+  [API_ERROR_CODES.IMPERSONATION_NOT_ALLOWED]:
+    "This action isn't available in a support session. Ask the account admin to do it.",
   EMAIL_NOT_CONFIGURED:
     "Email isn't set up for this workspace yet. Connect it under Settings → Email, then try again.",
   EMAIL_SEND_FAILED:
@@ -103,8 +106,14 @@ const CODE_COPY: Record<string, string> = {
     "This invoice's lines couldn't be verified, so it can't be edited. Ask an admin.",
   [API_ERROR_CODES.CHANGE_REQUEST_PACK_CHANGED]:
     "The pack size changed, so a change request was filed. Decline it and re-add the item to the next order.",
+  [API_ERROR_CODES.MERGE_ALREADY_DECIDED]:
+    "This merge request was already decided by someone else. Refresh to see its status.",
   [API_ERROR_CODES.INVOICE_CHANGED_CONCURRENTLY]:
     "The invoice changed while this was happening. Refresh and try again.",
+  [API_ERROR_CODES.LABEL_NAME_TAKEN]:
+    "A product label with this name already exists. Use that label or pick another name.",
+  [API_ERROR_CODES.LABEL_CHANGE_IN_PROGRESS]:
+    "Another product label change is in progress. Try again in a moment.",
   [API_ERROR_CODES.INVOICE_TAX_STATE_STALE]:
     "This invoice's tax no longer matches its lines. Re-save the invoice lines, then try again.",
   [API_ERROR_CODES.INVOICE_TOTAL_BELOW_PAID]:
@@ -158,6 +167,9 @@ const CODE_COPY: Record<string, string> = {
     "An invoice on this account is overdue. Pay it to continue; plan changes are available again right after.",
   [API_ERROR_CODES.PAYMENT_STATE_UNKNOWN]:
     "We couldn't confirm your open invoice just now. Please try again in a moment.",
+  // B1102: a catalog add-on whose plan setting is invalid is refused instead of billed; fixed sentence, no ids.
+  [API_ERROR_CODES.ADDON_CATALOG_INVALID]:
+    "This add-on can't be changed right now because of a setup problem on our side. Please contact support.",
 };
 
 /** Exact server sentences (already product text) for refusals with no `code`; matched whole, never partially. */

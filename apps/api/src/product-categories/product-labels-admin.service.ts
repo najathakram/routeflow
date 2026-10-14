@@ -15,25 +15,13 @@ import {
   type LabelChainLink,
 } from "../product-labels/effective-labels";
 import { SetProductLabelDto } from "./dto/set-product-label.dto";
+import { lockLabelCategory, writeLabelRow } from "./label-writer";
 
 const LABEL_INCLUDE = { category: { select: { name: true, archivedAt: true } } } as const;
 type LabelRow = Prisma.ProductCategoryLabelGetPayload<{ include: typeof LABEL_INCLUDE }>;
 
 /** Same hop bound as the engine (`MAX_ANCESTOR_DEPTH` in product-labels.service): a product has at most this many ancestors. */
 const MAX_HOPS = 5;
-/**
- * How long a label write waits for the per-category advisory lock. Kept well inside Prisma's 5 s
- * interactive-transaction budget: a longer wait would surface contention as an opaque P2028
- * (transaction expired) instead of the clear 409 below.
- */
-const LOCK_WAIT = "2s";
-
-/** Postgres `lock_not_available` (SQLSTATE 55P03), however Prisma wraps it (P2010 raw error / message). */
-function isLockTimeout(e: unknown): boolean {
-  const err = e as { meta?: { code?: string }; message?: string };
-  return err?.meta?.code === "55P03" || /55P03|lock timeout/i.test(err?.message ?? "");
-}
-
 /** Upper bound on the descendants one label removal will inspect — a runaway subtree fails closed. */
 const MAX_SUBTREE = 5000;
 /** How many voided opt-outs are spelled out in the audit row (the rest are counted). */
@@ -184,19 +172,8 @@ export class ProductLabelsAdminService {
     tenantId: string,
     categoryId: string,
   ): Promise<void> {
-    try {
-      // Bound only THIS wait; then restore the default so later row-lock waits are unaffected.
-      await tx.$executeRawUnsafe(`SET LOCAL lock_timeout = '${LOCK_WAIT}'`);
-      await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtext(${"product-labels"}), hashtext(${`${tenantId}:${categoryId}`}))`;
-      await tx.$executeRawUnsafe("SET LOCAL lock_timeout = 0");
-    } catch (e) {
-      if (isLockTimeout(e)) {
-        throw new ConflictException(
-          "Another label change for this category is in progress. Try again in a moment.",
-        );
-      }
-      throw e;
-    }
+    // A busy lock throws LabelLockTimeoutError: a coded 409 (LABEL_CHANGE_IN_PROGRESS).
+    await lockLabelCategory(tx, tenantId, categoryId); // the single writer's lock (label-writer.ts)
   }
 
   /**
@@ -394,21 +371,13 @@ export class ProductLabelsAdminService {
           pin = product.parentProductId;
         }
 
-        const existing = await tx.productCategoryLabel.findFirst({
-          where: { productId, categoryId },
-          select: { id: true, mode: true },
+        const written: LabelRow = await writeLabelRow(tx, {
+          tenantId,
+          productId,
+          categoryId,
+          data: { mode: dto.mode, reason, parentProductIdAtWrite: pin, ...stamp },
+          include: LABEL_INCLUDE,
         });
-        const data = { mode: dto.mode, reason, parentProductIdAtWrite: pin, ...stamp };
-        const written: LabelRow = existing
-          ? await tx.productCategoryLabel.update({
-              where: { id: existing.id },
-              data,
-              include: LABEL_INCLUDE,
-            })
-          : await tx.productCategoryLabel.create({
-              data: { tenantId, productId, categoryId, ...data },
-              include: LABEL_INCLUDE,
-            });
         const voidedRows = await this.voidIfStoppedCarrying(
           tx,
           tenantId,
@@ -449,7 +418,7 @@ export class ProductLabelsAdminService {
   ): Promise<{ removed: true; clearedOptOuts: number }> {
     const tenantId = this.requireTenant();
     await this.loadProduct(productId);
-    const voided = await this.prisma.tenantTransaction(async (tx) => {
+    const removal = await this.prisma.tenantTransaction(async (tx) => {
       await this.lockCategory(tx, tenantId, categoryId);
       const row = await tx.productCategoryLabel.findFirst({ where: { productId, categoryId } });
       if (!row) throw new NotFoundException("Label not found on this product");
@@ -457,8 +426,16 @@ export class ProductLabelsAdminService {
       await tx.productCategoryLabel.deleteMany({ where: { id: row.id } });
       // Removing an opt-out re-applies the label (nothing stops reaching the subtree); removing an
       // INCLUDE can stop it. The membership rule decides — never the row's mode.
-      return this.voidIfStoppedCarrying(tx, tenantId, productId, categoryId, before);
+      const voidedRows = await this.voidIfStoppedCarrying(
+        tx,
+        tenantId,
+        productId,
+        categoryId,
+        before,
+      );
+      return { voidedRows, mode: row.mode };
     });
+    const { voidedRows: voided, mode } = removal;
     await this.audit.log({
       tenantId,
       userId: user.sub,
@@ -467,6 +444,9 @@ export class ProductLabelsAdminService {
       entityId: productId,
       meta: {
         categoryId,
+        // The removed row's mode: an INCLUDE removal is a deliberate "not this label" that automatic adds honour
+        // (the product itself and, through its family, its variants); an opt-out removal is not.
+        mode,
         clearedOptOuts: voided.length,
         voided: voided.slice(0, AUDIT_VOIDED_CAP),
       },

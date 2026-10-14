@@ -11,7 +11,8 @@ import {
   prorateDaily,
   Cycle,
 } from "./billing-math";
-import { planRank } from "./plan-catalog.constants";
+import { addonCatalogInvalidException } from "./addon-catalog-invalid";
+import { planRank, resolveIncludedAtPlan } from "./plan-catalog.constants";
 
 /**
  * Plan ordering for "included at plan and above" checks. Goes through `planRank`
@@ -105,9 +106,11 @@ export class ProrationService {
       if (seen.has(sku.sku)) throw new BadRequestException(`Duplicate add-on "${sku.sku}"`);
       seen.add(sku.sku);
       const qty = Math.max(1, Math.trunc(a.quantity ?? 1));
+      // B1102: one parser; a key no plan answers to fails closed (409) instead of billing the add-on everywhere.
+      const included = resolveIncludedAtPlan(sku.includedAtPlan);
+      if (!included.ok) throw addonCatalogInvalidException(sku.sku, sku.includedAtPlan);
       const includedFree =
-        !!sku.includedAtPlan &&
-        rankOrDefault(req.planKey, 0) >= rankOrDefault(sku.includedAtPlan, Number.MAX_SAFE_INTEGER);
+        included.plan !== null && rankOrDefault(req.planKey, 0) >= planRank(included.plan);
       const unitMonthly = Number(sku.monthlyPrice);
       const lineMonthly = unitMonthly * qty;
       lines.push({

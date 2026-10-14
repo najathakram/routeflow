@@ -15,6 +15,7 @@ const MODEL_METHODS = [
   "createMany",
   "update",
   "updateMany",
+  "updateManyAndReturn",
   "delete",
   "deleteMany",
   "count",
@@ -49,6 +50,7 @@ export function createMockPrisma(): MockPrisma {
   // Sensible defaults so services don't crash when a mock isn't explicitly set up
   const defaultReturnValues: Record<string, unknown> = {
     findMany: [],
+    updateManyAndReturn: [],
     findUnique: null,
     findUniqueOrThrow: {},
     findFirst: null,
@@ -186,6 +188,10 @@ export function createMockPrisma(): MockPrisma {
     saleDraft: modelProxy(),
     trackedCategory: modelProxy(),
     trackedSubcategory: modelProxy(),
+    // The add-only label sync (`syncCategoryLabel`) every Product.category writer runs in its tx: it finds no
+    // label by default, so a writer's spec writes nothing extra unless it stubs a matching label.
+    productCategory: modelProxy(),
+    productCategoryLabel: modelProxy(),
     customerAuthorization: modelProxy(),
     authorizationOverride: modelProxy(),
     regulatedSalesLedger: modelProxy(),
@@ -274,6 +280,10 @@ export function createMockPrisma(): MockPrisma {
     idempotencyKey: modelProxy(),
     trackedCategory: modelProxy(),
     trackedSubcategory: modelProxy(),
+    // The add-only label sync (`syncCategoryLabel`) every Product.category writer runs in its tx: it finds no
+    // label by default, so a writer's spec writes nothing extra unless it stubs a matching label.
+    productCategory: modelProxy(),
+    productCategoryLabel: modelProxy(),
     customerAuthorization: modelProxy(),
     authorizationOverride: modelProxy(),
     regulatedSalesLedger: modelProxy(),

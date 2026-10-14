@@ -562,6 +562,29 @@ describe("SELLER_UNAVAILABLE (a buyer write toward a paused seller)", () => {
   });
 });
 
+describe("SA-778: a billing action refused in a support session", () => {
+  const SUPPORT_COPY =
+    "This action isn't available in a support session. Ask the account admin to do it.";
+  const body = {
+    code: API_ERROR_CODES.IMPERSONATION_NOT_ALLOWED,
+    message: "This action isn't available in a support session. Ask the account admin to do it.",
+  };
+
+  it("is fixed copy, not the generic permission line and not the raw server message", () => {
+    expect(genericToastCopy(err(403, body))).toBe(SUPPORT_COPY);
+    expect(codedToastCopy(err(403, body))).toBe(SUPPORT_COPY);
+    expect(genericToastCopy(err(403, { ...body, message: RAW }))).toBe(SUPPORT_COPY);
+    expect(genericToastCopy(err(403, body))).not.toMatch(/permission/i);
+  });
+
+  it("the app-wide handler toasts it once with that copy", () => {
+    const toast = jest.fn();
+    handleMutationError(err(403, body), { meta: undefined }, toast, { push: jest.fn() });
+    expect(toast).toHaveBeenCalledTimes(1);
+    expect(toast).toHaveBeenCalledWith({ title: SUPPORT_COPY, variant: "error" });
+  });
+});
+
 describe("CQ-06: a license refusal (409 REGULATED_AUTH_REQUIRED) says what is wrong and the next step", () => {
   const licenseErr = (blockedCategories: unknown) =>
     err(409, { code: API_ERROR_CODES.REGULATED_AUTH_REQUIRED, blockedCategories });

@@ -502,6 +502,7 @@ describe("SA-769 red row 3: checkout for a comped tenant is not blocked and show
     await expect(checkout.checkoutAddonLines(T, "year")).resolves.toEqual({
       lineItems: [],
       skus: [],
+      invalid: [],
     });
   });
 

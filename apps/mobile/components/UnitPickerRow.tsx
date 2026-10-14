@@ -119,6 +119,7 @@ export function UnitPickerRow({
     <View style={style}>
       <Pressable
         style={styles.trigger}
+        hitSlop={{ top: 4, bottom: 4 }}
         onPress={() => setOpen(true)}
         accessibilityRole="button"
         accessibilityLabel={`Sell by, currently ${selected.label}`}

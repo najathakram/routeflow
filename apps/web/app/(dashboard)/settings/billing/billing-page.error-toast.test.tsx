@@ -144,6 +144,34 @@ describe("BillingSettingsPage: the global error toast only yields to codes the p
     expect(globalToast).not.toHaveBeenCalled();
   });
 
+  // F3: the window before the 1st 12:00Z. The page words it with FIXED copy and the browser-local time of
+  // `retryAt` (a field, never the server's message); no second (global) toast.
+  it("checkout refused with CHECKOUT_ANCHOR_WINDOW: fixed 'Checkout reopens at <local time>' copy, no raw server text, no generic toast", async () => {
+    const retryAt = "2026-11-01T12:01:00.000Z";
+    mockPost.mockImplementation(() =>
+      reject(409, {
+        code: API_ERROR_CODES.CHECKOUT_ANCHOR_WINDOW,
+        message: "SERVER-WORDS-THAT-MUST-NOT-RENDER",
+        retryAt,
+      }),
+    );
+    const { globalToast } = await completePayment();
+    const local = new Date(retryAt).toLocaleTimeString([], { hour: "numeric", minute: "2-digit" });
+    expect(await screen.findByText(`Checkout reopens at ${local}`)).toBeInTheDocument();
+    expect(screen.queryByText("SERVER-WORDS-THAT-MUST-NOT-RENDER")).toBeNull();
+    expect(screen.queryByText(GENERIC_409)).toBeNull();
+    expect(globalToast).not.toHaveBeenCalled();
+  });
+
+  it("CHECKOUT_ANCHOR_WINDOW with an unreadable retryAt falls back to fixed copy without a time", async () => {
+    mockPost.mockImplementation(() =>
+      reject(409, { code: API_ERROR_CODES.CHECKOUT_ANCHOR_WINDOW, retryAt: "not-a-date" }),
+    );
+    const { globalToast } = await completePayment();
+    expect(await screen.findByText("Checkout reopens in a few minutes.")).toBeInTheDocument();
+    expect(globalToast).not.toHaveBeenCalled();
+  });
+
   it("checkout refused with any OTHER code keeps the generic toast beside the page's fixed copy", async () => {
     mockPost.mockImplementation(() => reject(409, { code: "SOMETHING_ELSE", message: "x" }));
     const { globalToast } = await completePayment();

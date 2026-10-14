@@ -43,6 +43,7 @@ import {
   type FamilyPriceColumn,
 } from "./family-price";
 import { lockProductName } from "./product-name-rules";
+import { syncCategoryLabel } from "../product-categories/label-writer";
 import type {
   CreateFamilyDto,
   FamilyVariantDto,
@@ -284,6 +285,13 @@ export class ProductFamiliesService {
             parentProductId: null,
             isActive: true,
           },
+        });
+        // Add-only label sync from the family's category text (the variants carry none), same tx.
+        await syncCategoryLabel(tx, {
+          tenantId,
+          productId: family.id,
+          text: family.category,
+          actor: { id: actorId, name: null },
         });
         const variants: Array<{ id: string; name: string }> = [];
         for (const v of dto.variants) {
