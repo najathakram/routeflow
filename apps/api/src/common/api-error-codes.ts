@@ -398,6 +398,7 @@ export const API_ERROR_CODES = {
    * the payload alone before any read or write, so nothing is saved; the client refreshes and resubmits once.
    */
   DUPLICATE_LINE_ID: "DUPLICATE_LINE_ID",
+  QTY_SPLIT_MISMATCH: "QTY_SPLIT_MISMATCH",
   /**
    * 503 from create(): the order WAS saved but its credit-note sync exhausted its retries. The body carries
    * `orderId`: open that order and apply the credits there; a replay of the key never applies them.

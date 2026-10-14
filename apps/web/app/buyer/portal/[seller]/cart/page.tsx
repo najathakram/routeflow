@@ -7,8 +7,6 @@ import {
   ArrowLeft,
   ShoppingCart,
   Trash2,
-  Minus,
-  Plus,
   Package,
   Loader2,
   AlertTriangle,
@@ -17,6 +15,8 @@ import {
 import { Button } from "@routeflow/ui/web";
 import { useBuyerAuth } from "@/lib/buyer-auth-context";
 import { useBuyerCart } from "@/lib/buyer-cart";
+import { BUYER_QTY_SPLIT_MISMATCH_COPY, cartOrderItems } from "@/lib/buyer-cart-line";
+import { CartRowQty } from "../_components/CartRowQty";
 import {
   BUYER_ORDER_CONFLICT_COPY,
   BUYER_ORDER_CONFLICT_NO_ID_COPY,
@@ -113,6 +113,14 @@ export default function BuyerCartPage() {
     setRemovedNames((prev) => [...prev, ...gone.map((g) => g.name)]);
     // eslint-disable-next-line react-hooks/exhaustive-deps -- runs once per loaded catalog result
   }, [catalogLoaded, productsResult]);
+  // An older Add (dashboard / favorites) may have stored a boxed product without its pack size;
+  // give it the catalog's pack as whole Cases BEFORE it is priced, so the row, the subtotal and
+  // the payload agree.
+  const { adoptCatalogPacks } = cart;
+  React.useEffect(() => {
+    if (!catalogLoaded) return;
+    adoptCatalogPacks(new Map((productsResult?.data ?? []).map((p) => [p.id, p.unitsPerBox])));
+  }, [catalogLoaded, productsResult, adoptCatalogPacks]);
   const { data: promotions } = useBuyerPromotions();
 
   // Catalog meta (price/category/box) keyed by product id — category drives
@@ -218,12 +226,7 @@ export default function BuyerCartPage() {
     setConflict(null);
     try {
       const result = await createOrder.mutateAsync({
-        items: cart.items.map((i) => ({
-          productId: i.productId,
-          qty: i.qty,
-          ...(i.boxes != null ? { boxes: i.boxes } : {}),
-          ...(i.pieces != null ? { pieces: i.pieces } : {}),
-        })),
+        items: cartOrderItems(cart.items),
         notes: notes || undefined,
         urgent,
         requestedDeliveryDate: deliveryDate || undefined,
@@ -256,6 +259,11 @@ export default function BuyerCartPage() {
         setOrderError(
           `Your order includes regulated items${names ? ` (${names})` : ""} that need a verified license. Submit or renew it on the Licenses page, then try again.`,
         );
+        return;
+      }
+      // Row 531: the server refused a cart whose qty and box split disagree; nothing was saved.
+      if (err?.response?.status === 400 && data?.code === API_ERROR_CODES.QTY_SPLIT_MISMATCH) {
+        setOrderError(BUYER_QTY_SPLIT_MISMATCH_COPY);
         return;
       }
       // OOS PR2 (R4): a stock refusal is coded; show the portal's own fixed copy, never a raw server string.
@@ -482,116 +490,15 @@ export default function BuyerCartPage() {
                         </td>
                         <td
                           role="cell"
-                          className="px-4 py-3 max-md:min-w-0 max-md:flex-1 max-md:p-0"
+                          className="px-4 py-3 max-md:w-full max-md:min-w-0 max-md:p-0"
                         >
-                          {item.unitsPerBox && item.unitsPerBox > 0 ? (
-                            // Boxes + Pieces input
-                            <div className="flex flex-col items-center gap-1">
-                              <div className="flex items-center gap-1.5 text-xs">
-                                <div className="flex items-center gap-0.5">
-                                  <button
-                                    onClick={() => {
-                                      const b = Math.max(0, (item.boxes ?? 0) - 1);
-                                      const p = item.pieces ?? 0;
-                                      const qty = b * item.unitsPerBox! + p;
-                                      if (qty > 0) {
-                                        cart.addItem({ ...item, qty, boxes: b, pieces: p });
-                                      } else {
-                                        cart.removeItem(item.productId);
-                                      }
-                                    }}
-                                    className="rounded p-1 text-navy/70 hover:bg-surface-raised"
-                                  >
-                                    <Minus className="h-3 w-3" />
-                                  </button>
-                                  <input
-                                    type="number"
-                                    min={0}
-                                    value={item.boxes ?? 0}
-                                    onChange={(e) => {
-                                      const b = Math.max(0, Number(e.target.value));
-                                      const p = item.pieces ?? 0;
-                                      const qty = b * item.unitsPerBox! + p;
-                                      if (qty > 0)
-                                        cart.addItem({ ...item, qty, boxes: b, pieces: p });
-                                    }}
-                                    className="w-10 rounded border border-surface-border bg-white px-1 py-0.5 text-center text-xs text-navy"
-                                  />
-                                  <button
-                                    onClick={() => {
-                                      const b = (item.boxes ?? 0) + 1;
-                                      const p = item.pieces ?? 0;
-                                      cart.addItem({
-                                        ...item,
-                                        qty: b * item.unitsPerBox! + p,
-                                        boxes: b,
-                                        pieces: p,
-                                      });
-                                    }}
-                                    className="rounded p-1 text-navy/70 hover:bg-surface-raised"
-                                  >
-                                    <Plus className="h-3 w-3" />
-                                  </button>
-                                  <span className="text-navy/70 ml-0.5">box</span>
-                                </div>
-                                <span className="text-navy/30">+</span>
-                                <div className="flex items-center gap-0.5">
-                                  <input
-                                    type="number"
-                                    min={0}
-                                    max={(item.unitsPerBox ?? 1) - 1}
-                                    value={item.pieces ?? 0}
-                                    onChange={(e) => {
-                                      const b = item.boxes ?? 0;
-                                      const p = Math.max(
-                                        0,
-                                        Math.min(
-                                          Number(e.target.value),
-                                          (item.unitsPerBox ?? 1) - 1,
-                                        ),
-                                      );
-                                      const qty = b * item.unitsPerBox! + p;
-                                      if (qty > 0)
-                                        cart.addItem({ ...item, qty, boxes: b, pieces: p });
-                                    }}
-                                    className="w-10 rounded border border-surface-border bg-white px-1 py-0.5 text-center text-xs text-navy"
-                                  />
-                                  <span className="text-navy/70">pcs</span>
-                                </div>
-                              </div>
-                              <p className="text-[10px] text-navy/70">
-                                = {item.qty} {item.unit}
-                              </p>
-                            </div>
-                          ) : (
-                            // Simple qty input
-                            <div className="flex items-center justify-center gap-1">
-                              <button
-                                onClick={() => cart.updateQty(item.productId, item.qty - 1)}
-                                className="rounded p-1.5 text-navy/70 hover:bg-surface-raised hover:text-navy"
-                              >
-                                <Minus className="h-3.5 w-3.5" />
-                              </button>
-                              <input
-                                type="number"
-                                min={1}
-                                value={item.qty}
-                                onChange={(e) =>
-                                  cart.updateQty(
-                                    item.productId,
-                                    Math.max(1, Number(e.target.value)),
-                                  )
-                                }
-                                className="w-14 rounded border border-surface-border bg-white px-2 py-1 text-center text-sm text-navy"
-                              />
-                              <button
-                                onClick={() => cart.updateQty(item.productId, item.qty + 1)}
-                                className="rounded p-1.5 text-navy/70 hover:bg-surface-raised hover:text-navy"
-                              >
-                                <Plus className="h-3.5 w-3.5" />
-                              </button>
-                            </div>
-                          )}
+                          <CartRowQty
+                            item={item}
+                            name={item.name}
+                            onCount={(n) => cart.updateQty(item.productId, n)}
+                            onUnit={(unit) => cart.setUnit(item.productId, unit)}
+                            onRemove={() => cart.removeItem(item.productId)}
+                          />
                         </td>
                         <td
                           role="cell"

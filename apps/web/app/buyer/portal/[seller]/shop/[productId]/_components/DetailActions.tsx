@@ -4,6 +4,8 @@ import { Plus, Bell } from "lucide-react";
 import type { PromotionRule, PromoResult } from "@routeflow/pricing";
 import type { BuyerProductDetail, BuyerPromotion } from "@/lib/api/buyer";
 import type { CartItem } from "@/lib/buyer-cart";
+import { lineCount, type CartUnit } from "@/lib/buyer-cart-line";
+import { CartLineUnit } from "../../../_components/CartLineUnit";
 import { bogoChipLabel, deriveTilePrice } from "../../_components/tile-pricing";
 import { SHIPS_WHEN_RESTOCKED, canOrderOutOfStock, isOrderBlocked } from "@/lib/buyer-backorder";
 import { QtyStepper } from "../../_components/QtyStepper";
@@ -52,7 +54,10 @@ export interface DetailActionsProps {
   /** Raw promo list — only for the BUY_N_GET_M chip's `bannerText` (not pricing). */
   promotions?: BuyerPromotion[];
   onAdd: () => void;
+  /** The stepper's new count, in the line's selling unit (Cases for a boxed Case line). */
   onUpdateQty: (qty: number) => void;
+  /** Switches a boxed line between Case and Each (qty in pieces is unchanged). */
+  onSetUnit?: (unit: CartUnit) => void;
   /** Puts the removed cart line back (the stepper's Undo). */
   onRestore?: () => void;
   isAlertSubscribed: boolean;
@@ -66,6 +71,7 @@ export function DetailActions({
   promotions,
   onAdd,
   onUpdateQty,
+  onSetUnit,
   onRestore,
   isAlertSubscribed,
   onToggleStockAlert,
@@ -102,13 +108,16 @@ export function DetailActions({
 
       <div>
         {cartItem ? (
-          <QtyStepper
-            qty={cartItem.qty}
-            name={product.name}
-            onUpdate={onUpdateQty}
-            onRemove={() => onUpdateQty(0)}
-            onRestore={onRestore}
-          />
+          <div className="flex flex-col gap-1.5">
+            <QtyStepper
+              qty={lineCount(cartItem)}
+              name={product.name}
+              onUpdate={onUpdateQty}
+              onRemove={() => onUpdateQty(0)}
+              onRestore={onRestore}
+            />
+            {onSetUnit && <CartLineUnit item={cartItem} name={product.name} onUnit={onSetUnit} />}
+          </div>
         ) : outOfStock ? (
           <button
             onClick={onToggleStockAlert}

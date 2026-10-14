@@ -11,6 +11,9 @@ import {
   type BuyerFavoriteProduct,
 } from "@/lib/api/buyer";
 import { useBuyerCart } from "@/lib/buyer-cart";
+import { newCartLine, type CartUnit } from "@/lib/buyer-cart-line";
+import type { CartItem } from "@/lib/buyer-cart";
+import { CartLineUnit } from "../_components/CartLineUnit";
 import { objectPositionForUrl } from "@/lib/image-focal";
 import { SHIPS_WHEN_RESTOCKED, canOrderOutOfStock, isOrderBlocked } from "@/lib/buyer-backorder";
 
@@ -21,15 +24,20 @@ function fmt(n: number) {
 function FavoriteCard({
   item,
   cartQty,
+  cartItem,
   onAdd,
   onUpdateQty,
+  onSetUnit,
   onRemoveFavorite,
   isRemoving,
 }: {
   item: BuyerFavoriteProduct;
+  /** The stepper's count, in the line's selling unit (Cases for a boxed Case line). */
   cartQty: number;
+  cartItem?: CartItem;
   onAdd: () => void;
   onUpdateQty: (qty: number) => void;
+  onSetUnit: (unit: CartUnit) => void;
   onRemoveFavorite: () => void;
   isRemoving: boolean;
 }) {
@@ -104,22 +112,25 @@ function FavoriteCard({
           </div>
 
           {cartQty > 0 ? (
-            <div className="flex items-center gap-1 rounded-lg border border-buyer-200 bg-buyer-50">
-              <button
-                onClick={() => onUpdateQty(cartQty - 1)}
-                className="rounded-l-lg p-1.5 text-buyer-600 hover:bg-buyer-100 transition-colors"
-              >
-                <Minus className="h-3.5 w-3.5" />
-              </button>
-              <span className="min-w-[28px] text-center text-sm font-semibold text-buyer-700">
-                {cartQty}
-              </span>
-              <button
-                onClick={() => onUpdateQty(cartQty + 1)}
-                className="rounded-r-lg p-1.5 text-buyer-600 hover:bg-buyer-100 transition-colors"
-              >
-                <Plus className="h-3.5 w-3.5" />
-              </button>
+            <div className="flex flex-col items-end gap-1.5">
+              <div className="flex items-center gap-1 rounded-lg border border-buyer-200 bg-buyer-50">
+                <button
+                  onClick={() => onUpdateQty(cartQty - 1)}
+                  className="rounded-l-lg p-1.5 text-buyer-600 hover:bg-buyer-100 transition-colors"
+                >
+                  <Minus className="h-3.5 w-3.5" />
+                </button>
+                <span className="min-w-[28px] text-center text-sm font-semibold text-buyer-700">
+                  {cartQty}
+                </span>
+                <button
+                  onClick={() => onUpdateQty(cartQty + 1)}
+                  className="rounded-r-lg p-1.5 text-buyer-600 hover:bg-buyer-100 transition-colors"
+                >
+                  <Plus className="h-3.5 w-3.5" />
+                </button>
+              </div>
+              {cartItem && <CartLineUnit item={cartItem} name={item.name} onUnit={onSetUnit} />}
             </div>
           ) : isOrderBlocked(item) ? (
             // Same rule as the shop: an out-of-stock item this buyer cannot order is not addable.
@@ -214,19 +225,25 @@ export default function BuyerFavoritesPage() {
             <FavoriteCard
               key={item.id}
               item={item}
-              cartQty={cart.getItemQty(item.productId)}
+              cartQty={cart.getItemCount(item.productId)}
+              cartItem={cart.items.find((i) => i.productId === item.productId)}
               onAdd={() =>
                 !item.unavailable &&
                 !isOrderBlocked(item) &&
-                cart.addItem({
-                  productId: item.productId,
-                  qty: 1,
-                  name: item.name,
-                  unit: item.unit,
-                  thumbnailUrl: item.thumbnailUrl,
-                })
+                cart.addItem(
+                  newCartLine(
+                    {
+                      productId: item.productId,
+                      name: item.name,
+                      unit: item.unit,
+                      thumbnailUrl: item.thumbnailUrl,
+                    },
+                    item.unitsPerBox,
+                  ),
+                )
               }
               onUpdateQty={(qty) => cart.updateQty(item.productId, qty)}
+              onSetUnit={(unit) => cart.setUnit(item.productId, unit)}
               onRemoveFavorite={() => handleRemove(item.productId)}
               isRemoving={removingId === item.productId}
             />

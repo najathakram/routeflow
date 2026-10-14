@@ -1,7 +1,21 @@
 "use client";
 
 import * as React from "react";
+import {
+  completeLineFromCatalog,
+  hydrateCartLine,
+  lineCount,
+  normalizeCartLine,
+  setLineCount,
+  setLineUnit,
+  type CartUnit,
+} from "./buyer-cart-line";
 
+/**
+ * A buyer cart line. For a boxed product (`unitsPerBox > 1`) `qty` is PIECES and
+ * `qty === boxes * unitsPerBox + pieces` after every mutation (see `buyer-cart-line.ts`, the one
+ * place that is computed); `sellBy` is the unit the stepper counts in (default CASE).
+ */
 export interface CartItem {
   productId: string;
   qty: number;
@@ -9,8 +23,9 @@ export interface CartItem {
   unit: string;
   thumbnailUrl?: string | null;
   unitsPerBox?: number | null;
-  boxes?: number;
-  pieces?: number;
+  boxes?: number | null;
+  pieces?: number | null;
+  sellBy?: CartUnit;
 }
 
 interface CartState {
@@ -26,7 +41,10 @@ function readCart(key: string): CartState {
   try {
     const raw = localStorage.getItem(key);
     if (!raw) return { items: [] };
-    return JSON.parse(raw) as CartState;
+    const parsed = JSON.parse(raw) as CartState;
+    // Hydration: a stored line whose qty and box split disagree (the row-531 shape) is rebuilt
+    // from `qty`, so the row, the subtotal and the checkout payload can never disagree.
+    return { items: (parsed.items ?? []).map((i) => hydrateCartLine(i)) };
   } catch {
     return { items: [] };
   }
@@ -75,16 +93,20 @@ export function useBuyerCart(buyerAccountId?: string, sellerSlug?: string) {
   const addItem = React.useCallback(
     (item: CartItem) => {
       setCart((prev) => {
+        const incoming = normalizeCartLine(item);
         const existing = prev.items.find((i) => i.productId === item.productId);
         let next: CartState;
         if (existing) {
+          // Merge in PIECES, then re-derive the split: never add a qty onto a stale split.
           next = {
             items: prev.items.map((i) =>
-              i.productId === item.productId ? { ...i, qty: i.qty + item.qty } : i,
+              i.productId === item.productId
+                ? normalizeCartLine({ ...i, qty: i.qty + incoming.qty })
+                : i,
             ),
           };
         } else {
-          next = { items: [...prev.items, item] };
+          next = { items: [...prev.items, incoming] };
         }
         if (key) writeCart(key, next);
         return next;
@@ -104,21 +126,61 @@ export function useBuyerCart(buyerAccountId?: string, sellerSlug?: string) {
     [key],
   );
 
+  /**
+   * Set a line's count in its SELLING UNIT (what the stepper shows and the buyer types): Cases for
+   * a boxed CASE line, otherwise pieces. The box split is re-derived, never spread.
+   */
   const updateQty = React.useCallback(
-    (productId: string, qty: number) => {
-      if (qty <= 0) {
+    (productId: string, count: number) => {
+      if (count <= 0) {
         removeItem(productId);
         return;
       }
       setCart((prev) => {
         const next = {
-          items: prev.items.map((i) => (i.productId === productId ? { ...i, qty } : i)),
+          items: prev.items.map((i) => (i.productId === productId ? setLineCount(i, count) : i)),
         };
         if (key) writeCart(key, next);
         return next;
       });
     },
     [key, removeItem],
+  );
+
+  /** Switch the stepper's unit (Case / Each). `qty` is unchanged, so the money never moves. */
+  const setUnit = React.useCallback(
+    (productId: string, unit: CartUnit) => {
+      setCart((prev) => {
+        const next = {
+          items: prev.items.map((i) => (i.productId === productId ? setLineUnit(i, unit) : i)),
+        };
+        if (key) writeCart(key, next);
+        return next;
+      });
+    },
+    [key],
+  );
+
+  /**
+   * Once the catalog is loaded, give a line stored WITHOUT its pack size (an older Add from
+   * favorites / the dashboard) the pack size the catalog reports, as whole Cases.
+   */
+  const adoptCatalogPacks = React.useCallback(
+    (packs: ReadonlyMap<string, number | null | undefined>) => {
+      setCart((prev) => {
+        let changed = false;
+        const items = prev.items.map((i) => {
+          const done = completeLineFromCatalog(i, packs.get(i.productId));
+          if (done !== i) changed = true;
+          return done;
+        });
+        if (!changed) return prev;
+        const next = { items };
+        if (key) writeCart(key, next);
+        return next;
+      });
+    },
+    [key],
   );
 
   const clearCart = React.useCallback(() => {
@@ -134,13 +196,25 @@ export function useBuyerCart(buyerAccountId?: string, sellerSlug?: string) {
     [cart],
   );
 
+  /** The stepper's count for a product: Cases for a boxed Case line, else pieces; 0 when absent. */
+  const getItemCount = React.useCallback(
+    (productId: string) => {
+      const line = cart.items.find((i) => i.productId === productId);
+      return line ? lineCount(line) : 0;
+    },
+    [cart],
+  );
+
   return {
     items: cart.items,
     addItem,
     removeItem,
     updateQty,
+    setUnit,
+    adoptCatalogPacks,
     clearCart,
     getItemQty,
+    getItemCount,
     itemCount: cart.items.length,
     totalQty: cart.items.reduce((s, i) => s + i.qty, 0),
   };
