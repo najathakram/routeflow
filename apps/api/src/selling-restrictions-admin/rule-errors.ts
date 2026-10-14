@@ -65,12 +65,3 @@ export function ruleEndUseLift(): BadRequestException {
     message: "To end this rule now, lift it.",
   });
 }
-
-/** 409: the edit reaches more open orders and drafts than the preview counts (the scan is bounded). */
-export function ruleImpactTooLarge(max: number): ConflictException {
-  return new ConflictException({
-    code: API_ERROR_CODES.RULE_IMPACT_TOO_LARGE,
-    message: `This change reaches more than ${max.toLocaleString("en-US")} open orders and drafts, too many to check here. Narrow the change, or add a new rule instead.`,
-    max,
-  });
-}

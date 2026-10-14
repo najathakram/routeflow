@@ -119,3 +119,22 @@ describe("impactHash", () => {
     );
   });
 });
+
+describe("impactHash when the scan was capped", () => {
+  const cap = { capped: true as const, cap: 2000 };
+
+  it("covers the proposed settings and the cap, not the ids", () => {
+    const h = impactHash("r1", 2, [], prev, cap);
+    expect(h).toMatch(/^[0-9a-f]{64}$/);
+    // the ids do not matter once capped (the count is a lower bound that more orders cannot invalidate)
+    expect(impactHash("r1", 2, ["o:a", "o:b"], prev, cap)).toBe(h);
+    expect(impactHash("r1", 2, ["o:z"], prev, cap)).toBe(h);
+    // the settings, the rule, the revision and the cap still do
+    expect(impactHash("r1", 2, [], { ...prev, states: ["CA"] }, cap)).not.toBe(h);
+    expect(impactHash("r2", 2, [], prev, cap)).not.toBe(h);
+    expect(impactHash("r1", 3, [], prev, cap)).not.toBe(h);
+    expect(impactHash("r1", 2, [], prev, { capped: true, cap: 50 })).not.toBe(h);
+    // and a capped hash is never an uncapped one
+    expect(impactHash("r1", 2, [], prev)).not.toBe(h);
+  });
+});
