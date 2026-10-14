@@ -9160,16 +9160,15 @@ describe("OrdersService", () => {
 
         await service.approveChangeRequestAtStop("cr-1", operatorPayload, null);
 
-        // Order→stop is the repo-wide acquisition order (reopenStop, the customers.service merge
-        // and purge paths); inverting it here would deadlock against them. The stop lock is
-        // therefore taken second and NOWAIT, so this tx never waits on a stop row.
-        expect(seenTx.$executeRaw.mock.calls[0][0].join("?")).toContain('"Order"');
-        const stopLockSql = seenTx.$executeRaw.mock.calls[1][0].join("?");
+        // Order→stop is the repo-wide acquisition order (reopenStop, the customers.service merge and
+        // purge paths); the stop lock is taken second and NOWAIT. Call [0] is the stock-tx lock bound.
+        expect(seenTx.$executeRaw.mock.calls[1][0].join("?")).toContain('"Order"');
+        const stopLockSql = seenTx.$executeRaw.mock.calls[2][0].join("?");
         expect(stopLockSql).toContain('"RouteRunStop"');
         expect(stopLockSql).toContain("FOR NO KEY UPDATE NOWAIT");
         // order.findUnique call [0] is the pre-tx snapshot, [1] is the in-tx `live` re-read: both
         // locks must be held before that re-read, or an in-flight completion stays invisible.
-        expect(seenTx.$executeRaw.mock.invocationCallOrder[1]).toBeLessThan(
+        expect(seenTx.$executeRaw.mock.invocationCallOrder[2]).toBeLessThan(
           seenTx.order.findUnique.mock.invocationCallOrder[1],
         );
       });
@@ -9179,7 +9178,8 @@ describe("OrdersService", () => {
         const seenTx = captureMergeTx();
         const lockErr: any = new Error("Raw query failed");
         lockErr.meta = { code: "55P03" };
-        seenTx.$executeRaw.mockResolvedValueOnce(0).mockRejectedValueOnce(lockErr);
+        seenTx.$executeRaw.mockResolvedValueOnce(0).mockResolvedValueOnce(0); // bound, Order row
+        seenTx.$executeRaw.mockRejectedValueOnce(lockErr); // the stop row
 
         // A busy stop is transient, so it must NOT read as the terminal CHANGE_WINDOW_CLOSED —
         // the resolver is told to retry.
@@ -9201,6 +9201,7 @@ describe("OrdersService", () => {
         setUpSharedFixture();
         const seenTx = captureMergeTx();
         seenTx.$executeRaw
+          .mockResolvedValueOnce(0)
           .mockResolvedValueOnce(0)
           .mockRejectedValueOnce(
             new Error('could not obtain lock on row in relation "RouteRunStop"'),

@@ -83,7 +83,7 @@ describe("every Postgres connection in production source goes through utcPoolCon
       else if (
         /\.tsx?$/.test(name) &&
         !/\.(spec|test)\.tsx?$/.test(name) &&
-        !p.includes("/testing/")
+        !p.split(path.sep).join("/").includes("/testing/")
       )
         out.push(p);
     }

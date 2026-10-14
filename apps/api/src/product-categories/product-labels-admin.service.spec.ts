@@ -533,6 +533,9 @@ describe("ProductLabelsAdminService — lock budget and in-transaction checks (#
         meta: { code: "55P03" },
       });
       await expect(run(s)).rejects.toBeInstanceOf(ConflictException);
+      // a deadlock the label lock lost (a stock writer holds the Product rows and waits here) is the same retryable 409
+      s.db.lockError = Object.assign(new Error("deadlock detected"), { meta: { code: "40P01" } });
+      await expect(run(s)).rejects.toBeInstanceOf(ConflictException);
       s.db.lockError = new Error("connection reset");
       await expect(run(s)).rejects.toThrow("connection reset"); // anything else still propagates
     },

@@ -54,6 +54,9 @@ module.exports = {
     // SA-714: the pure staff "Backorder" tag rule, same subpath trick (the package root is stubbed).
     "^@routeflow/types/order-line-backorder$":
       "<rootDir>/../../packages/types/order-line-backorder.ts",
+    // SA-767 L-2.4 D: the stock-count commit copy, same subpath trick (the package root is stubbed).
+    "^@routeflow/types/stock-count-commit-copy$":
+      "<rootDir>/../../packages/types/stock-count-commit-copy.ts",
     // SA-776: the shared read-only copy composer, same subpath trick (the package root is stubbed).
     "^@routeflow/types/read-only-copy$": "<rootDir>/../../packages/types/read-only-copy.ts",
     // CQ-06: the shared license-refusal sentence (it imports only the pure error-code constants), same subpath trick.

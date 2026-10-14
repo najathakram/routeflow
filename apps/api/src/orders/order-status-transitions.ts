@@ -1,4 +1,5 @@
 import { BadRequestException } from "@nestjs/common";
+import type { OrderStatus } from "@prisma/client";
 
 /**
  * `OrdersService.changeStatus`'s transition table and demotion-reason rule, lifted VERBATIM out of the
@@ -19,6 +20,11 @@ export const ORDER_STATUS_TRANSITIONS: Record<string, string[]> = {
   PARTIALLY_DELIVERED: ["OUT_FOR_DELIVERY", "DELIVERED", "CANCELLED"],
   DELIVERED: ["CONFIRMED", "PARTIALLY_DELIVERED"],
 };
+
+/** The statuses an order may be cancelled FROM: the office cancel's compare-and-set set (SA-404f F2). */
+export const CANCELLABLE_FROM = Object.keys(ORDER_STATUS_TRANSITIONS).filter((k) =>
+  ORDER_STATUS_TRANSITIONS[k].includes("CANCELLED"),
+) as OrderStatus[];
 
 /**
  * Throws the service's own 400s for an illegal transition, and for a demotion with no reason.

@@ -92,6 +92,7 @@ import {
   type BulkDeleteSkip,
   type ProductDeleteOutcome,
 } from "./product-delete-classify";
+import { stockTxBounded } from "../common/stock-tx";
 import { lockAndAssertRecipeGuards } from "./recipe-update-guard";
 import {
   applyFamilyPriceBeforeUpdate,
@@ -1841,7 +1842,10 @@ export class ProductsService {
 
     let outcome: ProductDeleteOutcome;
     try {
-      outcome = await this.prisma.tenantTransaction(
+      // The row locks are bounded (5 s): a lock wait that times out is retried, then the coded 503 (SA-767 R6).
+      outcome = await stockTxBounded(
+        this.prisma,
+        "products.bulkDelete",
         (tx: any) => applyProductDelete(tx, { tenantId, ids, nameById, preSoftIds: peek.softIds }),
         { timeout: 60_000 },
       );

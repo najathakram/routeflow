@@ -15,6 +15,7 @@ import { Test, TestingModule } from "@nestjs/testing";
 import { InvoiceStatus } from "@prisma/client";
 
 import { InvoicesService } from "./invoices.service";
+import { stockTxRetryState, txConflictState } from "../common/tx-retry";
 import { InvoicePdfService } from "./invoice-pdf.service";
 import { PrismaService } from "../prisma/prisma.service";
 import { RouteFlowGateway } from "../gateways/routeflow.gateway";
@@ -258,10 +259,41 @@ describe("#2255 Serializable invoice transactions retry on conflict, guards re-r
     // send() and sendEmail() share the one retried mark-sent transaction.
     expect(inv.match(/this\.markSent\(/g)).toHaveLength(2);
     const ord = read("orders/orders.service.ts");
-    expect(ord).toMatch(/retryOnTxConflict\(\s*`order cancel void/);
+    // SA-767 L-2.3: the cancel tx moved from a bare retryOnTxConflict(`order cancel void`) to the service's
+    // stockTx("orders.cancel", ...), which wraps retryStockTx - whose conflict set (40001 / 40P01 / P2034 and
+    // the lock timeouts) is a superset of retryOnTxConflict's. The intent is unchanged: the Serializable
+    // cancel/void tx runs inside a conflict-retry wrapper.
+    // (1) the Serializable cancel tx is wrapped by this.stockTx("orders.cancel", ...)
+    expect(ord).toMatch(/this\.stockTx\(\s*"orders\.cancel"/);
+    // (2) stockTx itself calls retryStockTx and passes the tx options (isolationLevel, timeout) through
+    expect(ord).toMatch(
+      /private stockTx = <T>\(label: string, fn: \(tx: any\) => Promise<T>, opts\?: any\) =>\s*retryStockTx\(label, \(\) => this\.prisma\.tenantTransaction\(fn, opts\)\)/,
+    );
+    // (3) retryStockTx retries through retryOnTxConflict with stockTxRetryState
+    const retrySrc = read("common/tx-retry.ts");
+    expect(retrySrc).toMatch(
+      /export async function retryStockTx[\s\S]{0,200}retryOnTxConflict\(label, run, stockTxRetryState\)/,
+    );
+    // (4) FUNCTIONAL: that retry predicate retries at least everything retryOnTxConflict retried
+    // (40001, 40P01, P2034 and the driver-adapter shapes), plus the stock lock timeouts.
+    const shapes = [
+      { code: "P2034" },
+      { code: "40001" },
+      { code: "40P01" },
+      { meta: { driverAdapterError: { cause: { originalCode: "40001" } } } },
+      { meta: { driverAdapterError: { cause: { originalCode: "40P01" } } } },
+      { name: "DriverAdapterError", cause: { kind: "TransactionWriteConflict" } },
+    ];
+    for (const shape of shapes) {
+      const err = Object.assign(new Error("conflict"), shape);
+      expect(txConflictState(err)).toBeTruthy();
+      expect(stockTxRetryState(err)).toBe(txConflictState(err));
+    }
+    expect(stockTxRetryState(Object.assign(new Error("lock"), { code: "55P03" }))).toBe("55P03");
+    expect(stockTxRetryState(new Error("not a conflict"))).toBeNull();
     // SA-404: the order-cancel body already decides from IN-TX reads (its items and its
     // invoices), so a retry's fresh snapshot is what it acts on — pin that it stays so.
-    const cancel = ord.slice(ord.indexOf("`order cancel void"));
+    const cancel = ord.slice(ord.search(/this\.stockTx\(\s*"orders\.cancel"/));
     // SA-762r F1: the body moved verbatim to order-cancel-tx.ts; changeStatus runs it inside this retried tx.
     expect(cancel.slice(0, cancel.indexOf('isolationLevel: "Serializable"'))).toMatch(
       /this\.cancelOrderInTx\(tx, order,/,
