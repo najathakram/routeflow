@@ -55,7 +55,9 @@ const dateOf = (iso: string | null | undefined): string => {
  * The copy for the Send / Email again action given the server's state. `never` (or an absent state from an older
  * API) is the plain first send: no confirmation. Every other state asks first, in the owner's words.
  */
-export function invoiceResendCopy(sendState: InvoiceSendState | null | undefined): InvoiceResendCopy {
+export function invoiceResendCopy(
+  sendState: InvoiceSendState | null | undefined,
+): InvoiceResendCopy {
   const state = sendState?.state ?? "never";
   const when = dateOf(sendState?.lastSentAt);
   switch (state) {
@@ -79,6 +81,26 @@ export function invoiceResendCopy(sendState: InvoiceSendState | null | undefined
       };
     default:
       return { action: "Send", confirm: null, confirmButton: "Send" };
+  }
+}
+
+/**
+ * The muted line on the invoice detail: what was emailed and whether it changed. Null when never emailed (nothing to
+ * say). Same words on web and mobile.
+ */
+export function invoiceSendStateLine(
+  sendState: InvoiceSendState | null | undefined,
+): string | null {
+  if (!sendState || sendState.state === "never") return null;
+  const when = dateOf(sendState.lastSentAt);
+  const to = sendState.lastSentTo ? ` to ${sendState.lastSentTo}` : "";
+  switch (sendState.state) {
+    case "unchanged":
+      return `Emailed ${when}${to}. No changes since.`;
+    case "changedSinceSent":
+      return `Emailed ${when}${to}. Modified since.`;
+    default:
+      return `Emailed ${when}${to}. Changes since then can't be checked.`;
   }
 }
 

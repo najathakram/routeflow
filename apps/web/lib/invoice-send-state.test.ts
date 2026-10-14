@@ -67,3 +67,24 @@ describe("canEmailAgain / lock copy", () => {
     expect(SENDS_AFTER_DELIVERY_SHORT).toBe("Sends after delivery");
   });
 });
+
+import { invoiceSendStateLine } from "./invoice-send-state";
+
+describe("invoiceSendStateLine", () => {
+  const at = "2026-10-02T15:00:00.000Z";
+  it("is null when never emailed (or no state from an older API)", () => {
+    expect(invoiceSendStateLine(undefined)).toBeNull();
+    expect(invoiceSendStateLine({ state: "never", lastSentAt: null, lastSentTo: null })).toBeNull();
+  });
+  it("unchanged / modified / cannot-check, with the recipient when known", () => {
+    expect(
+      invoiceSendStateLine({ state: "unchanged", lastSentAt: at, lastSentTo: "a@b.test" }),
+    ).toMatch(/^Emailed Oct \d{1,2}, 2026 to a@b\.test\. No changes since\.$/);
+    expect(
+      invoiceSendStateLine({ state: "changedSinceSent", lastSentAt: at, lastSentTo: "a@b.test" }),
+    ).toMatch(/Modified since\.$/);
+    expect(
+      invoiceSendStateLine({ state: "sentBeforeTracking", lastSentAt: at, lastSentTo: null }),
+    ).toMatch(/^Emailed Oct \d{1,2}, 2026\. Changes since then can't be checked\.$/);
+  });
+});

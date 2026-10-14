@@ -66,7 +66,7 @@ import { isPendingMirrorInvoice, pendingMirrorCopy } from "@/lib/invoice-pending
 import { useCounterSaleGate } from "@/lib/api/counter-sale";
 import { isStoreOnly } from "@/lib/counter-sale";
 import { canSendReminder } from "@/lib/invoice-reminder";
-import { canEmailAgain } from "@/lib/invoice-send-state";
+import { canEmailAgain, invoiceSendStateLine } from "@/lib/invoice-send-state";
 import { EmailInvoiceAction } from "@/components/invoices/EmailInvoiceAction";
 import { useParams, useRouter } from "next/navigation";
 import { useTrackedCategories } from "@/lib/api/tracked-categories";
@@ -1579,6 +1579,7 @@ export default function InvoiceDetailPage() {
   // the order and can't be edited or sent until the order is delivered. Edit the
   // order, not the invoice.
   const isPendingMirror = isPendingMirrorInvoice({ ...invoice, status });
+  const sendStateLine = invoiceSendStateLine(invoice.sendState); // #2088: "Emailed Oct 2 to x. Modified since."
 
   const canRecordPayment = isOpenInvoiceStatus(status);
   const canWriteOff = isOpenInvoiceStatus(status);
@@ -2298,6 +2299,12 @@ export default function InvoiceDetailPage() {
           />
         </div>
       </div>
+
+      {sendStateLine && (
+        <p data-testid="invoice-send-state-line" className="text-xs font-medium text-navy/60">
+          {sendStateLine}
+        </p>
+      )}
 
       {/* Write-off reason banner */}
       {status === "WRITTEN_OFF" && invoice.writeOffReason && (

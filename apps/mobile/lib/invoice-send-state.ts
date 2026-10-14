@@ -9,6 +9,7 @@ export {
   SENDS_AFTER_DELIVERY_SHORT,
   canEmailAgain,
   invoiceResendCopy,
+  invoiceSendStateLine,
   type InvoiceResendCopy,
   type InvoiceSendLock,
   type InvoiceSendState,

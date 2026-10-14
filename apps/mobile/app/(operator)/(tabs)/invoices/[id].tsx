@@ -52,6 +52,7 @@ import {
   isPendingOrderMirror,
 } from "../../../../lib/invoices-logic";
 import { reminderErrorCopy } from "../../../../lib/invoice-reminder-error-copy";
+import { invoiceSendStateLine } from "../../../../lib/invoice-send-state";
 import { isCreditOpenForApply, openCreditBalance } from "../../../../lib/credit-notes-logic";
 import { siblingInvoicesOf } from "../../../../lib/invoice-siblings";
 import { showToast } from "../../../../lib/toast";
@@ -770,6 +771,13 @@ export default function InvoiceDetailScreen() {
                 is delivered.
               </Text>
             </View>
+          ) : null}
+
+          {/* #2088: what was emailed and whether it changed since (same words as web). */}
+          {invoiceSendStateLine(invoice.sendState) ? (
+            <Text testID="invoice-send-state-line" style={styles.mirrorHintText}>
+              {invoiceSendStateLine(invoice.sendState)}
+            </Text>
           ) : null}
 
           {/* Action grid */}
