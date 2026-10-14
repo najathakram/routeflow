@@ -58,7 +58,6 @@ import {
   isGroupExpanded,
   pickerProductName,
   sellableFlat,
-  sellableOnly,
 } from "@/lib/product-search-groups";
 import { BarcodeScannerButton } from "@/components/BarcodeScannerButton";
 import { bumpInvoiceLine, scanLevelForHit, seedLineQty } from "../invoice-scan-level";
@@ -1290,7 +1289,8 @@ export default function NewInvoicePage() {
             params: { search: code, limit: 10, isActive: true, includeVariants: true },
           })
           .then((r) => r.data);
-        matches = sellableOnly<any>(res?.data ?? []);
+        // The same flattening the dropdown uses, so Enter adds what it WILL show first (M3 review).
+        matches = sellableFlat<any>(res?.data ?? []);
       }
       const skuExact = matches.find((p) => (p.sku ?? "").toLowerCase() === code.toLowerCase());
       const toAdd = skuExact ?? (shown ? shown.first : matches[0]);

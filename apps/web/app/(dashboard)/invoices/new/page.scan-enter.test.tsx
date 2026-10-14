@@ -194,4 +194,18 @@ describe("new invoice scan bar - Enter adds the row that is shown (M3)", () => {
     await user.type(bar(), "8000000000017{Enter}");
     await waitFor(() => expect(lineNames()).toEqual(["Distilled Water 1 Gallon"]));
   });
+
+  it("Enter typed before the dropdown catches up takes the fetch path, ordered like the dropdown will be", async () => {
+    // The open list was built from an OLDER query ("wat": Distilled only); the API now answers "water"
+    // with the family first. Enter must not add the stale first row, and must add what the dropdown WILL
+    // show first (the family's first variant), never sellableOnly's first standalone.
+    mockSearchProducts = [DISTILLED];
+    mockRawSearch = [SPRING_FAMILY, DISTILLED];
+    const user = await openBuilder();
+    await typeAndWaitForDropdown(user, "wat");
+    expect(options()[0]).toHaveTextContent("Distilled Water 1 Gallon");
+    await user.type(bar(), "er{Enter}");
+    await waitFor(() => expect(lineNames()).toEqual(["Spring Water - 12 Pack"]));
+    expect(mockGet).toHaveBeenCalledWith("/products");
+  });
 });
