@@ -200,9 +200,9 @@ export async function decrementStockForSale(
   //
   // Raw SQL bypasses the tenant proxy that scoped the ORM call it replaces,
   // so the tenant predicate is re-stated explicitly here — a cross-tenant
-  // productId must not be able to move another tenant's stock. Null
-  // tenantId (SUPER_ADMIN context) keeps the unscoped behaviour the ORM
-  // call had in that same context.
+  // productId must not be able to move another tenant's stock. A missing tenantId never reaches this
+  // statement (lockProductsForStock above throws without one), so the predicate below is always applied; the
+  // empty arm is unreachable defence only.
   const stockTenantId = deps.tenantId;
   const qtyByProduct = new Map<string, number>();
   for (const li of pieceLines) {

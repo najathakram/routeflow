@@ -17,6 +17,8 @@ export const TX_CONFLICT_MAX_ATTEMPTS = 3;
 /** 100 ms then 300 ms between attempts (exported so a caller with its own loop backs off the same way). */
 export const TX_CONFLICT_BACKOFF_MS = [100, 300];
 const logger = new Logger("tx-retry");
+/** A tx budget at or above this is long enough that an expiry (P2028) is not retried (see `retryStockTx`). */
+const LONG_BUDGET_MS = 30_000;
 
 /** The SQLSTATE / Prisma code in any shape Prisma 7 or `pg` reports it (raw query, adapter, pg). */
 function errorState(err: any): unknown {
@@ -120,11 +122,21 @@ export async function retryRouteTx<T>(label: string, run: () => Promise<T>): Pro
  * A lock wait that timed out (55P03) or a tx budget that expired (P2028) is retried the same way
  * (`stockTxRetryState`; SA-767 r-note 2 (c)). Any other error propagates untouched.
  */
-export async function retryStockTx<T>(label: string, run: () => Promise<T>): Promise<T> {
+export async function retryStockTx<T>(
+  label: string,
+  run: () => Promise<T>,
+  opts?: { budgetMs?: number },
+): Promise<T> {
+  // A tx given a LONG budget (>= 30 s: a bulk delete, a count commit) that still expired is not a lock race the
+  // 5 s lock timeout lost; re-running it would hold the caller for 3 x the budget. P2028 is not retried there.
+  const retryable = (err: any) =>
+    (opts?.budgetMs ?? 0) >= LONG_BUDGET_MS && errorState(err) === "P2028"
+      ? null
+      : stockTxRetryState(err);
   try {
-    return await retryOnTxConflict(label, run, stockTxRetryState);
+    return await retryOnTxConflict(label, run, retryable);
   } catch (err) {
-    if (!stockTxRetryState(err)) throw err;
+    if (!retryable(err)) throw err;
     throw new ServiceUnavailableException({
       code: API_ERROR_CODES.LOCK_UNAVAILABLE,
       message: "Another stock change was in progress. Nothing was saved; please retry.",

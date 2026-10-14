@@ -35,6 +35,7 @@ import { TenantContextService } from "../tenant/tenant-context.service";
 import { decrementStockForSale } from "../orders/order-stock";
 import { describeDb, requireLocalDatabaseUrl } from "./testing/db-spec";
 import { lockProductsForStock, PRODUCT_LOCK_RANK_SQL } from "./product-locks";
+import { lockProductsForDelete } from "../products/product-delete-classify";
 import { stockTxRetryState } from "./tx-retry";
 
 // eslint-disable-next-line @typescript-eslint/no-var-requires
@@ -252,6 +253,25 @@ describeDb("SA-767 L-1 — lockProductsForStock (real Postgres)", () => {
     const r = await interleave((tx, w) => lockProductsForStock(tx, w.tenantId, [w.c, w.r, w.f]));
     expect(r.blocked).toBe(true);
     expect(r.stockHoldsC).toBe(false);
+    expect(r.stockHoldsR).toBe(false);
+    expect(r.writerError).toBeUndefined();
+    expect(r.stockError).toBeUndefined();
+  }, 60_000);
+
+  it("(i-c) the OLD bulk-delete row lock (one id-ordered FOR UPDATE statement) deadlocks against the catalog writer", async () => {
+    const r = await interleave(async (tx, w) => {
+      await tx.$queryRaw`SELECT "id" FROM "Product" WHERE "tenantId" = ${w.tenantId} AND "id" = ANY(${[w.c, w.r, w.f]}::text[]) ORDER BY "id" FOR UPDATE`;
+    });
+    expect(r.blocked).toBe(true);
+    expect(isDeadlock(r.writerError) || isDeadlock(r.stockError)).toBe(true);
+  }, 60_000);
+
+  it("(i-c) bulk delete (lockProductsForDelete) vs a concurrent stock/catalog writer: one serialises behind the other, no 40P01", async () => {
+    const r = await interleave((tx, w) =>
+      lockProductsForDelete(tx as any, w.tenantId, [w.c, w.r, w.f]),
+    );
+    expect(r.blocked).toBe(true); // it waits on the family row the writer holds...
+    expect(r.stockHoldsC).toBe(false); // ...holding nothing, so the writer's next row is free
     expect(r.stockHoldsR).toBe(false);
     expect(r.writerError).toBeUndefined();
     expect(r.stockError).toBeUndefined();

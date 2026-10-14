@@ -7,11 +7,11 @@ import { stockTxRetryState } from "./tx-retry";
 
 /**
  * The coded body of the backstop 503. The copy never names the holder (a sale cannot know who holds
- * the lock: a count commit, a receive, another sale); it matches the SA r-note 2 (c) wording.
+ * the lock: a count commit, a receive, another sale); it matches the SA r-note 2 (c) wording, kept neutral because the filter maps the SQLSTATE on every route, not only stock ones.
  */
 export const LOCK_UNAVAILABLE_BODY = {
   code: API_ERROR_CODES.LOCK_UNAVAILABLE,
-  message: "Stock is busy being updated — try again in a moment.",
+  message: "This is busy being updated — try again in a moment.",
 } as const;
 
 /** Seconds a client should wait before retrying (a stock lock window is 5 s at most). */

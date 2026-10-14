@@ -51,6 +51,7 @@ import { assertPositiveTemplateQty } from "./template-qty";
 import { assertMoneyInvariantsOrThrow } from "../common/money-invariants.util";
 import { isoWeekdayUtc, startOfUtcDay } from "../common/utc-day";
 import { retryStockTx } from "../common/tx-retry";
+import { STOCK_TX_OPTIONS } from "../common/product-locks";
 import {
   GENERATED_ORDER_INCLUDE,
   findReplayOrder,
@@ -1136,7 +1137,7 @@ export class OrderTemplatesService {
           },
         );
         return order;
-      }),
+      }, STOCK_TX_OPTIONS),
     );
 
     if (replayed) return created; // B1054: nothing was placed by THIS call: no notice, no merge

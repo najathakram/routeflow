@@ -15,7 +15,7 @@ import {
   ServiceUnavailableException,
 } from "@nestjs/common";
 import { assertSellableLines } from "../products/sellable-lines";
-import { syncCategoryLabel } from "../product-categories/label-writer";
+import { lockLabelCategoriesForText, syncCategoryLabel } from "../product-categories/label-writer";
 import {
   assertParentUsable,
   parentInvalid,
@@ -605,6 +605,15 @@ export class InventoryService {
     // Serializable tx, so the WHOLE attempt is retried (SA-767 L-2: through retryStockTx, so the
     // exhausted attempts are a coded 503 LOCK_UNAVAILABLE). The array is cleared at the start of each
     // attempt (a rolled-back attempt must not leak ids); alerts fire once, after the commit.
+    // The parent's category text, read UNLOCKED and only to choose WHICH label to pre-lock below (nothing is decided on
+    // it: the parent is re-read under its row lock). Needed only when a new variant will copy it.
+    const preCategoryText = dto.assignments.some((a) => a.newVariant)
+      ? ((
+          await this.prisma
+            .forTenant()
+            .product.findUnique({ where: { id: dto.parentProductId }, select: { category: true } })
+        )?.category ?? null)
+      : null;
     const result = await retryStockTx("inventory.assignToVariants", () =>
       this.prisma.tenantTransaction(
         async (tx) => {
@@ -615,6 +624,15 @@ export class InventoryService {
           // (`familyPricesForNewVariant`); a family price edit holds F and then writes V, so V -> F here
           // against F -> V there is a 40P01. Taken before the parent read too (lock first, read after).
           const lockTenantId = this.prisma.getTenantId();
+          // SA-767: bound EVERY lock wait of this tx (the family row too) before the first lock; the stock helper
+          // below only sets it while still unset, so this one stands.
+          await setStockLockTimeout(tx);
+          // House order label -> Product (SA-767 fold 5 / H2): a NEW variant copies the parent's category text and its
+          // label sync (inside createVariantRowInTx) takes the label's advisory lock AFTER the Product rows, the
+          // inverse of an admin label write. Pre-lock that label here, from the unlocked pre-tx read of the text.
+          if (preCategoryText != null && lockTenantId) {
+            await lockLabelCategoriesForText(tx, lockTenantId, [preCategoryText]);
+          }
           if (familyMode === "on" && lockTenantId) {
             await lockFamilyRow(tx, lockTenantId, dto.parentProductId);
           }

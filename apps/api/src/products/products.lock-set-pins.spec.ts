@@ -55,6 +55,6 @@ describe("every deactivate path locks its codes (one sorted set) BEFORE releasin
     expect(lockFn).toContain("lockProductsForStock(tx, tenantId,");
     expect(lockFn).not.toMatch(/FOR UPDATE|lockFamilyRow\(/);
     // the tx around it is the bounded-wait retry wrapper
-    expect(body("async bulkDelete(", "emitProductChanged(null")).toContain("retryStockTx(");
+    expect(body("async bulkDelete(", "emitProductChanged(null")).toContain("stockTxBounded(");
   });
 });

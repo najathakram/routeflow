@@ -432,12 +432,12 @@ describe("placement: the order sale sites use retryStockTx", () => {
   });
 
   it("stockTx is retryStockTx around the unchanged tenantTransaction(fn, opts)", () => {
-    expect(orders).toContain("retryStockTx(label, () => this.prisma.tenantTransaction(fn, opts))");
+    expect(orders).toContain("stockTxBounded(this.prisma, label, fn, opts)");
   });
 
-  it("the edit tx helper wraps every edit (plain or with an inline return) in retryStockTx", () => {
+  it("the edit tx helper wraps every edit (plain or with an inline return) in stockTxBounded", () => {
     expect(read("orders/order-inline-return.ts")).toContain(
-      'retryStockTx("orders.updateOrderItems"',
+      'stockTxBounded(prisma, "orders.updateOrderItems"',
     );
   });
 

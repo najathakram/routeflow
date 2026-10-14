@@ -47,7 +47,8 @@ import {
   type PromotionRule,
 } from "@routeflow/pricing";
 import { lockRowsNoWait, withAdvisoryLock, type LockMode } from "../common/db-locks";
-import { retryCreditTx, retryStockTx } from "../common/tx-retry";
+import { retryCreditTx } from "../common/tx-retry";
+import { stockTxBounded } from "../common/stock-tx";
 import { lockOrderRow } from "../credit-notes/credit-note-locks";
 import { judgeEditTail } from "./edit-overpay-judge";
 import { RECONCILE_PARTIALS } from "../invoices/invoice-partition";
@@ -4498,7 +4499,7 @@ export class OrdersService implements OnApplicationBootstrap {
 
   /** SA-767 r-note 3 (b): `tenantTransaction(fn, opts)` inside retryStockTx (see its replay-safety rules). */
   private stockTx<T>(label: string, fn: (tx: any) => Promise<T>, opts?: any): Promise<T> {
-    return retryStockTx(label, () => this.prisma.tenantTransaction(fn, opts));
+    return stockTxBounded(this.prisma, label, fn, opts);
   }
 
   private decrementStockForSale(...args: StockArgs<typeof decrementStockForSale>) {

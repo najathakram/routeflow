@@ -291,17 +291,46 @@ describe("SA-767 r-note 3 (b) — the order sale sites use retryStockTx", () => 
   });
 
   it("stockTx is retryStockTx around the unchanged tenantTransaction(fn, opts)", () => {
-    expect(orders).toContain("retryStockTx(label, () => this.prisma.tenantTransaction(fn, opts))");
+    expect(orders).toContain("stockTxBounded(this.prisma, label, fn, opts)");
   });
 
-  it.each([
-    ["orders/order-inline-return.ts", "orders.updateOrderItems"],
-    ["order-templates/order-templates.service.ts", "orderTemplates.generate"],
-  ])("%s wraps %s in retryStockTx", (rel, label) => {
-    expect(read(rel)).toContain(`retryStockTx("${label}"`);
+  it("the edit tx helper runs every edit through stockTxBounded (bound first, retried)", () => {
+    expect(read("orders/order-inline-return.ts")).toContain(
+      'stockTxBounded(prisma, "orders.updateOrderItems"',
+    );
+  });
+
+  it("the template generation tx is in retryStockTx and carries the 15 s stock budget", () => {
+    const tpl = read("order-templates/order-templates.service.ts");
+    expect(tpl).toContain('retryStockTx("orderTemplates.generate"');
+    expect(tpl).toContain("STOCK_TX_OPTIONS");
+  });
+
+  it("stockTxBounded sets the lock bound as the tx's FIRST statement, inside retryStockTx", () => {
+    const src = read("common/stock-tx.ts");
+    expect(src).toMatch(/retryStockTx<T>\(/);
+    expect(src.indexOf("setStockLockTimeout(tx)")).toBeGreaterThan(-1);
+    expect(src.indexOf("setStockLockTimeout(tx)")).toBeLessThan(src.indexOf("return fn(tx)"));
   });
 
   it("the orders service no longer uses the bare retryOnTxConflict", () => {
     expect(orders).not.toMatch(/\bretryOnTxConflict\b/);
+  });
+});
+
+describe("SA-767 fold 5 / H2: assignToVariants takes the label lock BEFORE any Product row", () => {
+  const inv = read("inventory/inventory.service.ts");
+  const fn = inv.slice(inv.indexOf("async assignToVariants("));
+  const at = (needle: string) => fn.indexOf(needle);
+
+  it("setStockLockTimeout, then the new variant's label, then the family row, then the stock lock", () => {
+    const bound = at("await setStockLockTimeout(tx)");
+    const label = at("lockLabelCategoriesForText(tx");
+    const family = at("await lockFamilyRow(tx");
+    const stock = at("await this.lockProducts(tx");
+    expect(bound).toBeGreaterThan(-1);
+    expect(label).toBeGreaterThan(bound);
+    expect(family).toBeGreaterThan(label);
+    expect(stock).toBeGreaterThan(family);
   });
 });

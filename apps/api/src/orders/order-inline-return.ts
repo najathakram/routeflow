@@ -3,7 +3,7 @@ import {
   assertReplayItems,
   type InlineReturnReplayLines,
 } from "../returns/inline-return-fingerprint";
-import { retryStockTx } from "../common/tx-retry";
+import { stockTxBounded } from "../common/stock-tx";
 import type { JwtPayload } from "../auth/jwt-payload.interface";
 import type { InlineReturnLinesDto } from "../returns/dto/capture-inline-return.dto";
 import { INLINE_RETURN_KEY_TAKEN } from "../returns/inline-returns.service";
@@ -247,5 +247,5 @@ export async function reserveEditReturnNumber(p: PreparedInlineReturn | null): P
  * retried callback carries no wrapper of its own.
  */
 export function runEditTx<T>(prisma: any, fn: (tx: any) => Promise<T>, opts?: any): Promise<T> {
-  return retryStockTx("orders.updateOrderItems", () => prisma.tenantTransaction(fn, opts));
+  return stockTxBounded(prisma, "orders.updateOrderItems", fn, opts);
 }

@@ -49,10 +49,19 @@ export class LabelLockTimeoutError extends ConflictException {
   }
 }
 
-/** Postgres `lock_not_available` (SQLSTATE 55P03), however Prisma wraps it (P2010 raw error / message). */
+/**
+ * Postgres `lock_not_available` (SQLSTATE 55P03) OR `deadlock_detected` (40P01), however Prisma wraps it (P2010 raw
+ * error / message). A label lock that lost a deadlock (a stock writer holds Product rows and waits here while a label
+ * writer holds this lock and waits for those rows) is the same retryable 409 as one that timed out, never a 500.
+ */
 function isLockTimeout(e: unknown): boolean {
-  const err = e as { meta?: { code?: string }; message?: string };
-  return err?.meta?.code === "55P03" || /55P03|lock timeout/i.test(err?.message ?? "");
+  const err = e as { meta?: { code?: string }; code?: string; message?: string };
+  const state = err?.meta?.code ?? err?.code;
+  return (
+    state === "55P03" ||
+    state === "40P01" ||
+    /55P03|40P01|lock timeout|deadlock detected/i.test(err?.message ?? "")
+  );
 }
 
 /**
@@ -81,6 +90,31 @@ export async function lockLabelCategory(
     throw e;
   }
   await tx.$executeRaw`SELECT set_config('lock_timeout', ${previous}, true)`;
+}
+
+/**
+ * Take the label locks of the categories whose NAME the given texts match (the ones `syncCategoryLabel` would lock),
+ * in SORTED id order, for a writer that must hold them BEFORE its Product row locks (house order: label -> Product).
+ * `assignToVariants` copies the parent's category text onto a new variant, so it pre-locks that label here, then takes
+ * the Product rows; the sync inside the tx re-takes the same lock (re-entrant in one session). Blank texts and texts
+ * that match no label take nothing.
+ */
+export async function lockLabelCategoriesForText(
+  tx: Prisma.TransactionClient,
+  tenantId: string | null | undefined,
+  texts: ReadonlyArray<string | null | undefined>,
+): Promise<void> {
+  if (!tenantId) return;
+  const ids = new Set<string>();
+  for (const text of texts) {
+    // eslint-disable-next-line no-await-in-loop -- a handful of texts at most (one parent category)
+    const match = await matchLabel(tx, tenantId, text);
+    if (match) ids.add(match.id);
+  }
+  for (const id of [...ids].sort()) {
+    // eslint-disable-next-line no-await-in-loop -- sorted: one lock at a time is the order
+    await lockLabelCategory(tx, tenantId, id);
+  }
 }
 
 export type LabelStamp = { createdById: string | null; createdByName: string | null };

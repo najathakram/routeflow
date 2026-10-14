@@ -332,7 +332,13 @@ describe("runEditTx (SA-340, SA-767 r-note 3)", () => {
     const opts = { isolationLevel: "Serializable", timeout: 15_000 };
     await expect(runEditTx(prismaOf(run), body, opts)).resolves.toBe("ok");
     expect(run).toHaveBeenCalledTimes(2);
-    expect(run).toHaveBeenLastCalledWith(body, opts);
+    // the callback is wrapped (the lock bound is its first statement); the caller's options are kept
+    expect(run).toHaveBeenLastCalledWith(expect.any(Function), opts);
+    const exec = jest.fn().mockResolvedValue(0);
+    const bodySpy = jest.fn().mockResolvedValue("ran");
+    await runEditTx(prismaOf(jest.fn((fn: any) => fn({ $executeRaw: exec }))), bodySpy, opts);
+    expect(exec).toHaveBeenCalledTimes(1); // the bound, before the body
+    expect(exec.mock.invocationCallOrder[0]).toBeLessThan(bodySpy.mock.invocationCallOrder[0]);
   });
 
   it("a conflict on every attempt is the coded 503 LOCK_UNAVAILABLE after 3 attempts", async () => {

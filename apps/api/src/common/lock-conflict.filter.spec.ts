@@ -132,7 +132,7 @@ describe("LockConflictFilter (unit)", () => {
     expect(res.header).toHaveBeenCalledWith("Retry-After", "2");
     expect(res.json).toHaveBeenCalledWith({
       code: "LOCK_UNAVAILABLE",
-      message: "Stock is busy being updated — try again in a moment.",
+      message: "This is busy being updated — try again in a moment.",
     });
     expect(res.json.mock.calls[0][0]).toEqual(LOCK_UNAVAILABLE_BODY);
     expect(next.catch).not.toHaveBeenCalled();
@@ -407,7 +407,7 @@ describe("registerGlobalExceptionFilters (real Nest dispatch)", () => {
     expect(res.headers["retry-after"]).toBe("2");
     expect(res.body).toEqual({
       code: "LOCK_UNAVAILABLE",
-      message: "Stock is busy being updated — try again in a moment.",
+      message: "This is busy being updated — try again in a moment.",
     });
   });
 
