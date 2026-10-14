@@ -16,7 +16,7 @@ import {
   ValidateIf,
   ValidateNested,
 } from "class-validator";
-import { Type } from "class-transformer";
+import { Transform, Type } from "class-transformer";
 import { FulfillPath } from "@prisma/client";
 import { StripHtml } from "../../common/transforms/strip-html.transform";
 import { InlineReturnLinesDto } from "../../returns/dto/capture-inline-return.dto";
@@ -52,7 +52,11 @@ export class OrderItemDto {
   @IsOptional() @IsString() @MaxLength(2000) itemNote?: string;
   @IsOptional() @IsString() @MaxLength(200) substitution?: string;
   /** #2696(c): why a staff price moves off this customer's special (tier) price — required then. */
-  @IsOptional() @IsString() @MaxLength(200) overrideReason?: string;
+  @IsOptional()
+  @Transform(({ value }) => (typeof value === "string" ? value.trim() || null : value))
+  @IsString()
+  @MaxLength(200)
+  overrideReason?: string;
 }
 
 export class AppliedCreditNoteDto {
