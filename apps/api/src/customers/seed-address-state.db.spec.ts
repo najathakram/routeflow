@@ -34,6 +34,8 @@ describeDb("prisma/seed.ts addresses carry a derived stateCode (row 434)", () =>
       env,
       encoding: "utf8",
       timeout: 300_000,
+      // On Windows `npx` is npx.cmd, which spawnSync cannot start without a shell (status null, no output).
+      shell: process.platform === "win32",
     });
     if (res.status !== 0)
       throw new Error(`seed exited ${res.status}\n${res.stdout}\n${res.stderr}`);
