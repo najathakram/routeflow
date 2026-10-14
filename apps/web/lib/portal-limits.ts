@@ -114,13 +114,26 @@ export function buildBulkRequest(args: {
   };
 }
 
-/** A product-page chip: what the rule does to portal customers. */
-export function limitChipText(l: Pick<ProductLimitDto, "jurisdiction" | "states">): string {
-  if (l.jurisdiction === "FEDERAL" || l.states.length === 0)
-    return "Hidden from all portal customers";
-  if (l.states.length <= 3)
-    return `Not offered in ${l.states.map((c) => c.toUpperCase()).join(", ")}`;
-  return `Not offered in ${l.states.length} states`;
+/**
+ * A product-page chip: what the rule does. A BUYER_PORTAL rule only hides the product from portal customers
+ * ("Not offered in TX"); a legal ban (surface ALL) is not offered anywhere, staff included, so it reads "Banned in
+ * TX" / "Banned everywhere". Staff-facing wording beyond that is row 510's.
+ */
+export function limitChipText(
+  l: Pick<ProductLimitDto, "jurisdiction" | "states" | "surface">,
+): string {
+  const everywhere = l.jurisdiction === "FEDERAL" || l.states.length === 0;
+  const states = l.states.map((c) => c.toUpperCase());
+  if (l.surface === "ALL") {
+    if (everywhere) return "Banned everywhere";
+    return states.length <= 3
+      ? `Banned in ${states.join(", ")}`
+      : `Banned in ${states.length} states`;
+  }
+  if (everywhere) return "Hidden from all portal customers";
+  return states.length <= 3
+    ? `Not offered in ${states.join(", ")}`
+    : `Not offered in ${states.length} states`;
 }
 
 /** "via Vapes" when the rule is inherited from a category or a parent product; null when it targets this product. */
