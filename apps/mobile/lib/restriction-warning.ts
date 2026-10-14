@@ -56,10 +56,11 @@ const OVERRIDE_BLOCK_MESSAGES: readonly string[] = [
 ];
 
 /**
- * The hard block a DRIVER gets (409 SELLING_RESTRICTED with the fixed "Ask the office" message) or a support session gets
- * ("Ask the account admin"): no override exists. `message` echoes the server's sentence, which the modal titles itself with.
+ * The hard block a principal who can't override gets (409 SELLING_RESTRICTED with one of the two fixed sentences: a
+ * DRIVER's "Ask the office to approve this sale", or a support session's "Ask the account admin"): no override exists.
+ * `message` echoes the server's sentence, which the modal titles itself with.
  */
-export function parseDriverRestrictionBlock(
+export function parseRestrictionHardBlock(
   err: unknown,
 ): { message: string; lines: BlockedLine[]; ruleLines: RestrictionWarningLine[] } | null {
   const res = (err as AxiosLike)?.response;
@@ -81,6 +82,30 @@ export interface BlockRow {
   items: { text: string; legal: boolean }[];
 }
 
+/** One displayed rule line of a product. */
+export interface RuleRow {
+  key: string;
+  text: string;
+  legal: boolean;
+}
+
+/**
+ * The rule lines to DISPLAY for one product: two rules with the same state(s) and the same wording show ONE line (the
+ * wording is the whole message to the user), and the line is legal if any merged rule is. Display only: the ack and the
+ * server's `warningHash` still cover every rule, because they are built from the lines and the hash, never from these rows.
+ */
+export function lineRuleRows(rules: readonly RestrictionWarningRule[]): RuleRow[] {
+  const rows = new Map<string, RuleRow>();
+  for (const r of rules) {
+    const text = ruleText(r);
+    const key = `${[...r.states].sort().join(",")}|${text}`;
+    const have = rows.get(key);
+    if (have) have.legal = have.legal || r.legal;
+    else rows.set(key, { key, text, legal: r.legal });
+  }
+  return [...rows.values()];
+}
+
 /** The driver block's rows from the server's per-line rules: the SAME text and legal flag staff see. */
 export function driverBlockRows(ruleLines: RestrictionWarningLine[]): BlockRow[] {
   return ruleLines.map((l) => ({
@@ -89,16 +114,17 @@ export function driverBlockRows(ruleLines: RestrictionWarningLine[]): BlockRow[]
     items:
       l.rules.length === 0
         ? [{ text: RESTRICTION_COPY.unchecked, legal: false }]
-        : l.rules.map((r) => ({ text: ruleText(r), legal: r.legal })),
+        : lineRuleRows(l.rules).map(({ text, legal }) => ({ text, legal })),
   }));
 }
 
 /**
- * A warning that arrives while the reason typed for the PREVIOUS list is still kept is the answer to a re-send: the
- * server's list changed under it. The user must re-confirm what is on the new list, so that reason is dropped, never reused.
+ * Is `nextHash` the answer to the re-send of an earlier warning, with a DIFFERENT list? `sentHash` is the hash the user
+ * just acknowledged (null when no re-send is pending: a first warning). A different hash is "the list changed", so the
+ * reason typed for the old list is dropped, never reused. The same hash is not a repeat, and no clock decides it.
  */
-export function isRepeatWarning(keptReason: string): boolean {
-  return keptReason !== "";
+export function isRepeatWarning(sentHash: string | null, nextHash: string): boolean {
+  return sentHash !== null && sentHash !== nextHash;
 }
 
 export interface ReasonCheck {

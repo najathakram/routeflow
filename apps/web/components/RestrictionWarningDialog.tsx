@@ -15,7 +15,7 @@ import {
   buildAck,
   checkOverrideReason,
   driverBlockRows,
-  ruleText,
+  lineRuleRows,
 } from "@/lib/api/restriction-warning";
 
 export type RestrictionDialogView =
@@ -74,6 +74,9 @@ export function RestrictionWarningDialog({
     open: !!view,
     onClose: onCancel,
     scroll: true,
+    // The X hit area is 44px below md (the owner's touch-target rule); the icon stays 16px.
+    closeClassName:
+      "max-md:flex max-md:min-h-11 max-md:min-w-11 max-md:items-center max-md:justify-center",
     onOpenAutoFocus: (e: Event) => {
       const active = document.activeElement as HTMLElement | null;
       returnFocusTo.current = active && active !== document.body ? active : lastFocused.current;
@@ -176,13 +179,13 @@ export function RestrictionWarningDialog({
             {l.rules.length === 0 ? (
               <p className="mt-1 text-sm text-danger">{COPY.unchecked}</p>
             ) : (
-              l.rules.map((r) => (
+              lineRuleRows(l.rules).map((row) => (
                 <p
-                  key={r.id}
+                  key={row.key}
                   className="mt-1 flex flex-wrap items-center gap-2 text-sm text-danger"
                 >
-                  <span>{ruleText(r)}</span>
-                  {r.legal && (
+                  <span>{row.text}</span>
+                  {row.legal && (
                     <span className="rounded bg-danger-bg px-1.5 py-0.5 text-xs font-medium">
                       {COPY.legalBadge}
                     </span>

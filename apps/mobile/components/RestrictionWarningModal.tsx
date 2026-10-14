@@ -25,7 +25,7 @@ import {
   buildAck,
   checkOverrideReason,
   driverBlockRows,
-  ruleText,
+  lineRuleRows,
 } from "../lib/restriction-warning";
 
 export type RestrictionModalView =
@@ -115,10 +115,10 @@ export function RestrictionWarningModal({
                       {l.rules.length === 0 ? (
                         <Text style={styles.reason}>{COPY.unchecked}</Text>
                       ) : (
-                        l.rules.map((r) => (
-                          <View key={r.id} style={styles.ruleRow}>
-                            <Text style={styles.reason}>{ruleText(r)}</Text>
-                            {r.legal ? <Text style={styles.badge}>{COPY.legalBadge}</Text> : null}
+                        lineRuleRows(l.rules).map((row) => (
+                          <View key={row.key} style={styles.ruleRow}>
+                            <Text style={styles.reason}>{row.text}</Text>
+                            {row.legal ? <Text style={styles.badge}>{COPY.legalBadge}</Text> : null}
                           </View>
                         ))
                       )}

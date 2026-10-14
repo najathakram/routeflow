@@ -10,7 +10,7 @@ import {
   isRepeatWarning,
   mergeAck,
   type IdWithAck,
-  parseDriverRestrictionBlock,
+  parseRestrictionHardBlock,
   parseRestrictionWarning,
 } from "@/lib/api/restriction-warning";
 
@@ -23,9 +23,6 @@ interface Attach {
   <T extends object>(vars: T): T;
 }
 
-/** How long a typed reason is kept for a second 409 of the SAME save (a re-show comes one round trip after "Sell anyway"). */
-const REASON_KEPT_MS = 15_000;
-
 /**
  * Row 510: ONE hook per staff write flow. The flow does two things:
  *   - sends `rw.attach(vars)` (a plain payload when there is no pending ack), and
@@ -33,9 +30,12 @@ const REASON_KEPT_MS = 15_000;
  *     and the flow must stop; false = not ours, carry on with the flow's own handling.
  * "Sell anyway" calls `retry()` synchronously with the ack pending, so the flow re-runs its own submit and `attach` adds
  * the ack to the SAME payload exactly once (it is consumed on read, so it can never ride an unrelated later send).
- * A REPEAT 409 (the server's list changed after "Sell anyway") re-shows the dialog with the new lines, a polite "The list
- * changed; review it again" notice and an EMPTY reason: a reason typed for the old list is never reused for a new one, so
- * the user re-confirms what is now on it. Render `rw.dialog` once.
+ * A REPEAT 409 is keyed on the hash, never a clock: the dialog was shown with hash H1, the user re-sent with H1, and the
+ * answer is a warning with H2 ≠ H1, so the server's list changed. The dialog re-shows with the new lines, a polite "The
+ * list changed; review it again" notice and an EMPTY reason: a reason typed for the old list is never reused for a new
+ * one. The same hash again, or a first warning, is not a repeat (the reason is kept / empty). `attach` with no pending ack
+ * is a fresh attempt and forgets the old hash and reason, so an earlier save never makes a later warning look like a
+ * repeat. Render `rw.dialog` once.
  */
 export function useRestrictionWarningRetry() {
   const [view, setView] = React.useState<RestrictionDialogView | null>(null);
@@ -44,23 +44,22 @@ export function useRestrictionWarningRetry() {
   const retryRef = React.useRef<Retry | null>(null);
   const ackRef = React.useRef<RestrictionAck | null>(null);
   const reasonRef = React.useRef("");
-  const timerRef = React.useRef<ReturnType<typeof setTimeout> | null>(null);
+  /** The warningHash the user last acknowledged (the re-send in flight); null = no re-send is pending. */
+  const sentHashRef = React.useRef<string | null>(null);
 
   const forgetReason = React.useCallback(() => {
     reasonRef.current = "";
-    if (timerRef.current) clearTimeout(timerRef.current);
-    timerRef.current = null;
   }, []);
-  React.useEffect(() => () => forgetReason(), [forgetReason]);
 
   const handle = React.useCallback(
     (err: unknown, retry: Retry): boolean => {
       const warning = parseRestrictionWarning(err);
-      const blocked = warning ? null : parseDriverRestrictionBlock(err);
+      const blocked = warning ? null : parseRestrictionHardBlock(err);
       if (!warning && !blocked) return false;
-      // A reason still kept = "Sell anyway" was pressed a moment ago and this is the answer to the re-send: a REPEAT.
-      const repeat = !!warning && isRepeatWarning(reasonRef.current);
-      if (repeat) forgetReason();
+      // The answer to our re-send carries a DIFFERENT hash: the list changed. Nothing else makes a repeat.
+      const repeat = !!warning && isRepeatWarning(sentHashRef.current, warning.warningHash);
+      if (repeat || !warning) forgetReason();
+      if (!warning) sentHashRef.current = null;
       setListChanged(repeat);
       retryRef.current = retry;
       setSeq((n) => n + 1);
@@ -74,6 +73,11 @@ export function useRestrictionWarningRetry() {
     ((vars: string | object) => {
       const ack = ackRef.current;
       ackRef.current = null;
+      if (!ack) {
+        // a fresh attempt, not our re-send: nothing from an earlier warning applies to it
+        sentHashRef.current = null;
+        reasonRef.current = "";
+      }
       return mergeAck(vars as string, ack);
     }) as Attach,
     [],
@@ -87,6 +91,7 @@ export function useRestrictionWarningRetry() {
       listChanged={listChanged}
       onCancel={() => {
         forgetReason();
+        sentHashRef.current = null;
         retryRef.current = null;
         setListChanged(false);
         setView(null);
@@ -95,8 +100,7 @@ export function useRestrictionWarningRetry() {
         const retry = retryRef.current;
         retryRef.current = null;
         reasonRef.current = reason;
-        if (timerRef.current) clearTimeout(timerRef.current);
-        timerRef.current = setTimeout(forgetReason, REASON_KEPT_MS);
+        sentHashRef.current = ack.warningHash ?? null;
         setView(null);
         if (!retry) return;
         ackRef.current = ack;

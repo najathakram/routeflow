@@ -7,7 +7,7 @@ import {
 import {
   isRepeatWarning,
   mergeAck,
-  parseDriverRestrictionBlock,
+  parseRestrictionHardBlock,
   parseRestrictionWarning,
   type IdWithAck,
 } from "./restriction-warning";
@@ -21,18 +21,18 @@ interface Attach {
   <T extends object>(vars: T): T;
 }
 
-/** How long a typed reason is kept for a second 409 of the SAME save (a re-show comes one round trip after "Sell anyway"). */
-const REASON_KEPT_MS = 15_000;
-
 /**
  * Row 510: ONE hook per staff write flow (mobile twin of web's useRestrictionWarningRetry). The flow:
  *   - sends `rw.attach(vars)` (a plain payload when there is no pending ack), and
  *   - in its error path calls `rw.handle(err, retry)`: true = a RESTRICTION_WARNING (or a driver's hard block) was shown
  *     and the flow must stop; false = not ours, carry on with the flow's own handling.
  * "Sell anyway" calls `retry()` with the ack pending, so the flow re-runs its own submit and `attach` adds the ack to the
- * SAME payload exactly once (consumed on read). A REPEAT 409 (the server's list changed after "Sell anyway") re-shows the
- * modal with the new lines, a polite "The list changed; review it again" notice and an EMPTY reason: a reason typed for
- * the old list is never reused, so the user re-confirms what is now on it. Render `rw.modal` once.
+ * SAME payload exactly once (consumed on read). A REPEAT 409 is keyed on the hash, never a clock: the modal was shown
+ * with hash H1, the user re-sent with H1, and the answer is a warning with H2 ≠ H1, so the server's list changed. The modal
+ * re-shows with the new lines, a polite "The list changed; review it again" notice and an EMPTY reason: a reason typed for
+ * the old list is never reused. The same hash again, or a first warning, is not a repeat. `attach` with no pending ack is
+ * a fresh attempt and forgets the old hash and reason, so an earlier save never makes a later warning look like a repeat.
+ * Render `rw.modal` once.
  *
  * `handle(err, retry, onDismiss?)`: `onDismiss` runs when the modal is closed WITHOUT selling ("Go back", the driver
  * block's OK, the Android back button), so a flow that must carry on (the driver's at-stop batch) or must say what did not
@@ -46,23 +46,22 @@ export function useRestrictionWarningRetry() {
   const dismissRef = React.useRef<(() => void) | null>(null);
   const ackRef = React.useRef<RestrictionAck | null>(null);
   const reasonRef = React.useRef("");
-  const timerRef = React.useRef<ReturnType<typeof setTimeout> | null>(null);
+  /** The warningHash the user last acknowledged (the re-send in flight); null = no re-send is pending. */
+  const sentHashRef = React.useRef<string | null>(null);
 
   const forgetReason = React.useCallback(() => {
     reasonRef.current = "";
-    if (timerRef.current) clearTimeout(timerRef.current);
-    timerRef.current = null;
   }, []);
-  React.useEffect(() => () => forgetReason(), [forgetReason]);
 
   const handle = React.useCallback(
     (err: unknown, retry: Retry, onDismiss?: () => void): boolean => {
       const warning = parseRestrictionWarning(err);
-      const blocked = warning ? null : parseDriverRestrictionBlock(err);
+      const blocked = warning ? null : parseRestrictionHardBlock(err);
       if (!warning && !blocked) return false;
-      // A reason still kept = "Sell anyway" was pressed a moment ago and this is the answer to the re-send: a REPEAT.
-      const repeat = !!warning && isRepeatWarning(reasonRef.current);
-      if (repeat) forgetReason();
+      // The answer to our re-send carries a DIFFERENT hash: the list changed. Nothing else makes a repeat.
+      const repeat = !!warning && isRepeatWarning(sentHashRef.current, warning.warningHash);
+      if (repeat || !warning) forgetReason();
+      if (!warning) sentHashRef.current = null;
       setListChanged(repeat);
       retryRef.current = retry;
       dismissRef.current = onDismiss ?? null;
@@ -77,6 +76,11 @@ export function useRestrictionWarningRetry() {
     ((vars: string | object) => {
       const ack = ackRef.current;
       ackRef.current = null;
+      if (!ack) {
+        // a fresh attempt, not our re-send: nothing from an earlier warning applies to it
+        sentHashRef.current = null;
+        reasonRef.current = "";
+      }
       return mergeAck(vars as string, ack);
     }) as Attach,
     [],
@@ -92,6 +96,7 @@ export function useRestrictionWarningRetry() {
         const dismissed = dismissRef.current;
         dismissRef.current = null;
         forgetReason();
+        sentHashRef.current = null;
         retryRef.current = null;
         setListChanged(false);
         setView(null);
@@ -102,8 +107,7 @@ export function useRestrictionWarningRetry() {
         retryRef.current = null;
         dismissRef.current = null; // sold: "closed without selling" no longer applies
         reasonRef.current = reason;
-        if (timerRef.current) clearTimeout(timerRef.current);
-        timerRef.current = setTimeout(forgetReason, REASON_KEPT_MS);
+        sentHashRef.current = ack.warningHash ?? null;
         setView(null);
         if (!retry) return;
         ackRef.current = ack;

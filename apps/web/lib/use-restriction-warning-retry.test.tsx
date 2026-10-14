@@ -1,5 +1,5 @@
 import * as React from "react";
-import { render, screen, waitFor } from "@testing-library/react";
+import { act, render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import {
   API_ERROR_CODES,
@@ -107,6 +107,89 @@ describe("useRestrictionWarningRetry", () => {
       { lineKey: "n:1", reason: "Reviewed both items" },
     ]);
     expect(screen.queryByRole("dialog")).toBeNull();
+  });
+
+  it("a 409 carrying the SAME hash is not a repeat: no notice, and the typed reason is kept", async () => {
+    const user = userEvent.setup();
+    render(
+      <Host
+        script={[
+          err409(mkWarning("h1", ["Acme Gummies"])),
+          err409(mkWarning("h1", ["Acme Gummies"])),
+          "ok",
+        ]}
+        base={{ a: 1 }}
+      />,
+    );
+    await user.click(screen.getByRole("button", { name: "Save" }));
+    await user.type(screen.getByLabelText(/reason/i), "Owner approved");
+    await user.click(screen.getByRole("button", { name: "Sell anyway" }));
+    expect(screen.getByRole("dialog")).toBeInTheDocument();
+    expect(screen.queryByRole("status")).toBeNull();
+    expect(screen.getByLabelText(/reason/i)).toHaveValue("Owner approved");
+  });
+
+  it("the repeat is keyed on the hash, not a clock: an answer a minute later is still 'the list changed'", async () => {
+    jest.useFakeTimers({ advanceTimers: true });
+    try {
+      const user = userEvent.setup({ advanceTimers: jest.advanceTimersByTime });
+      let release: (v: unknown) => void = () => undefined;
+      const slow = new Promise((r) => (release = r));
+      function SlowHost() {
+        const rw = useRestrictionWarningRetry();
+        const calls = React.useRef(0);
+        const submit = async (): Promise<void> => {
+          rw.attach({ a: 1 });
+          calls.current += 1;
+          if (calls.current === 1) {
+            rw.handle(err409(mkWarning("h1", ["Acme Gummies"])), submit);
+          } else if (calls.current === 2) {
+            await slow; // a slow server
+            rw.handle(err409(mkWarning("h2", ["Acme Gummies", "Acme Vape"])), submit);
+          }
+        };
+        return (
+          <>
+            <button onClick={() => void submit()}>Save</button>
+            {rw.dialog}
+          </>
+        );
+      }
+      render(<SlowHost />);
+      await user.click(screen.getByRole("button", { name: "Save" }));
+      await user.type(screen.getByLabelText(/reason/i), "Owner approved");
+      await user.click(screen.getByRole("button", { name: "Sell anyway" }));
+      act(() => {
+        jest.advanceTimersByTime(60_000); // far past the old 15 s window
+      });
+      release(undefined);
+      expect(await screen.findByText("Acme Vape")).toBeInTheDocument();
+      expect(screen.getByRole("status")).toHaveTextContent("The list changed; review it again");
+      expect(screen.getByLabelText(/reason/i)).toHaveValue("");
+    } finally {
+      jest.useRealTimers();
+    }
+  });
+
+  it("a first warning after an EARLIER save went through is not a repeat, whatever its hash", async () => {
+    const user = userEvent.setup();
+    render(
+      <Host
+        script={[
+          err409(mkWarning("h1", ["Acme Gummies"])),
+          "ok",
+          err409(mkWarning("h9", ["Acme Vape"])),
+        ]}
+        base={{ a: 1 }}
+      />,
+    );
+    await user.click(screen.getByRole("button", { name: "Save" }));
+    await user.type(screen.getByLabelText(/reason/i), "Owner approved");
+    await user.click(screen.getByRole("button", { name: "Sell anyway" })); // saved ("ok")
+    await user.click(screen.getByRole("button", { name: "Save" })); // a brand-new attempt
+    expect(screen.getByText("Acme Vape")).toBeInTheDocument();
+    expect(screen.queryByRole("status")).toBeNull();
+    expect(screen.getByLabelText(/reason/i)).toHaveValue("");
   });
 
   it("the notice is for a repeat only: a fresh attempt after Go back shows none", async () => {

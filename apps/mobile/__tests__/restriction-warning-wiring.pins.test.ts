@@ -155,9 +155,16 @@ describe("row 510: POS 'Confirm & invoice' (the finish) carries the ack", () => 
 describe("row 510: the repeat-409 notice and the modal's small accessibility fixes", () => {
   it("the hook drops the kept reason and passes listChanged to the modal on a repeat (isRepeatWarning)", () => {
     const src = read("lib/use-restriction-warning-retry.tsx");
-    expect(src).toMatch(/isRepeatWarning\(reasonRef\.current\)/);
-    expect(src).toMatch(/if \(repeat\) forgetReason\(\)/);
+    expect(src).toMatch(/isRepeatWarning\(sentHashRef\.current, warning\.warningHash\)/);
+    expect(src).toMatch(/if \(repeat \|\| !warning\) forgetReason\(\)/);
     expect(src).toMatch(/listChanged=\{listChanged\}/);
+  });
+  it("a repeat is keyed on the previous warningHash, never a clock: no timer, and a fresh send forgets the old hash", () => {
+    const src = read("lib/use-restriction-warning-retry.tsx");
+    expect(src).not.toMatch(/setTimeout|clearTimeout|REASON_KEPT_MS/);
+    expect(src).toMatch(/sentHashRef\.current = ack\.warningHash/);
+    // attach() with no pending ack = a fresh attempt, not our re-send
+    expect(src).toMatch(/if \(!ack\) \{[^}]*sentHashRef\.current = null/s);
   });
   it("the modal shows it in a polite live region (role=status, aria-live=polite)", () => {
     const src = read("components/RestrictionWarningModal.tsx");
@@ -170,6 +177,12 @@ describe("row 510: the repeat-409 notice and the modal's small accessibility fix
     const src = read("components/RestrictionWarningModal.tsx");
     expect(src).toMatch(/<FormTextInput[^>]*\bautoFocus\b/s);
     expect(src).toMatch(/accessibilityState=\{\{ disabled: !check\.ok \}\}/);
+  });
+  it("the modal lists rule lines through lineRuleRows / driverBlockRows (identically worded rules show once), never the raw rule list", () => {
+    const src = read("components/RestrictionWarningModal.tsx");
+    expect(src).toMatch(/lineRuleRows\(l\.rules\)/);
+    expect(src).toMatch(/driverBlockRows\(/);
+    expect(src).not.toMatch(/l\.rules\.map/);
   });
   it("the blocked modal's title follows the server's message (a support session reads 'Ask the account admin')", () => {
     expect(read("components/RestrictionWarningModal.tsx")).toMatch(/blocked \? view\.message/);

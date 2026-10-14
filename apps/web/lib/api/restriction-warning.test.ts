@@ -3,14 +3,16 @@ import {
   DRIVER_RESTRICTION_BLOCK_MESSAGE,
   SUPPORT_SESSION_RESTRICTION_BLOCK_MESSAGE,
   type RestrictionWarningError,
+  type RestrictionWarningLine,
 } from "@routeflow/types";
 import {
   RESTRICTION_COPY,
   buildAck,
   checkOverrideReason,
   mergeAck,
+  lineRuleRows,
   driverBlockRows,
-  parseDriverRestrictionBlock,
+  parseRestrictionHardBlock,
   parseRestrictionWarning,
   ruleText,
   splitIdAck,
@@ -71,7 +73,7 @@ describe("parseRestrictionWarning", () => {
   });
 });
 
-describe("parseDriverRestrictionBlock", () => {
+describe("parseRestrictionHardBlock", () => {
   const blockedLines = [
     {
       productId: "p1",
@@ -83,7 +85,7 @@ describe("parseDriverRestrictionBlock", () => {
     },
   ];
   it("recognises the driver 409 SELLING_RESTRICTED by its fixed message", () => {
-    const got = parseDriverRestrictionBlock(
+    const got = parseRestrictionHardBlock(
       axiosErr(409, {
         code: "SELLING_RESTRICTED",
         message: DRIVER_RESTRICTION_BLOCK_MESSAGE,
@@ -113,7 +115,7 @@ describe("parseDriverRestrictionBlock", () => {
     },
   ];
   it("carries the per-rule lines the server adds to the driver body", () => {
-    const got = parseDriverRestrictionBlock(
+    const got = parseRestrictionHardBlock(
       axiosErr(409, {
         code: "SELLING_RESTRICTED",
         message: DRIVER_RESTRICTION_BLOCK_MESSAGE,
@@ -136,7 +138,7 @@ describe("parseDriverRestrictionBlock", () => {
     ]);
   });
   it("recognises a support session's hard block ('Ask the account admin') the same way, echoing its own message", () => {
-    const got = parseDriverRestrictionBlock(
+    const got = parseRestrictionHardBlock(
       axiosErr(409, {
         code: "SELLING_RESTRICTED",
         message: SUPPORT_SESSION_RESTRICTION_BLOCK_MESSAGE,
@@ -152,7 +154,7 @@ describe("parseDriverRestrictionBlock", () => {
   });
   it("is null for an ordinary SELLING_RESTRICTED (buyer or other staff refusal)", () => {
     expect(
-      parseDriverRestrictionBlock(
+      parseRestrictionHardBlock(
         axiosErr(409, { code: "SELLING_RESTRICTED", message: "x", blockedLines }),
       ),
     ).toBeNull();
@@ -219,5 +221,83 @@ describe("ruleText", () => {
     expect(ruleText({ id: "r", states: ["CA"], legal: true, reasonText: "" })).toBe(
       "This product is banned in CA by law.",
     );
+  });
+});
+
+describe("lineRuleRows: the displayed rule lines of one product (display-only dedupe)", () => {
+  const rule = (id: string, over: Partial<RestrictionWarningLine["rules"][number]> = {}) => ({
+    id,
+    states: ["CA"],
+    legal: true,
+    reasonText: "This product is banned in CA by law.",
+    ...over,
+  });
+
+  it("two rules with the same state and wording show ONE line", () => {
+    expect(lineRuleRows([rule("r1"), rule("r2")])).toEqual([
+      {
+        key: "CA|This product is banned in CA by law.",
+        text: "This product is banned in CA by law.",
+        legal: true,
+      },
+    ]);
+  });
+
+  it("a different state, or different wording, is its own line; order is kept", () => {
+    const rows = lineRuleRows([
+      rule("r1"),
+      rule("r2", { states: ["TX"], reasonText: "This product is banned in TX by law." }),
+      rule("r3", { reasonText: "Limited in CA.", legal: false }),
+      rule("r4"),
+    ]);
+    expect(rows.map((r) => r.text)).toEqual([
+      "This product is banned in CA by law.",
+      "This product is banned in TX by law.",
+      "Limited in CA.",
+    ]);
+    expect(rows.map((r) => r.legal)).toEqual([true, true, false]);
+  });
+
+  it("a merged line is legal when ANY merged rule is legal (the badge never disappears)", () => {
+    const rows = lineRuleRows([
+      rule("r1", { legal: false, reasonText: "Same words." }),
+      rule("r2", { legal: true, reasonText: "Same words." }),
+    ]);
+    expect(rows).toHaveLength(1);
+    expect(rows[0].legal).toBe(true);
+  });
+
+  it("falls back to the legal sentence built from the states when the text is missing, and still dedupes", () => {
+    expect(
+      lineRuleRows([rule("r1", { reasonText: "" }), rule("r2", { reasonText: "" })]),
+    ).toHaveLength(1);
+  });
+
+  it("is display-only: the ack still covers the line and echoes the server's hash, whatever the rule count", () => {
+    const line = {
+      lineKey: "n:0",
+      productId: "p1",
+      displayName: "Acme Gummies",
+      outcome: "BLOCK" as const,
+      rules: [rule("r1"), rule("r2"), rule("r3")],
+    };
+    const doubled = { ...warning, lines: [line] };
+    expect(buildAck(doubled, "Owner approved")).toEqual({
+      restrictionOverrides: [{ lineKey: "n:0", reason: "Owner approved" }],
+      warningHash: "rw1:abc",
+    });
+  });
+
+  it("the driver block shows one line for two identically worded rules too", () => {
+    const rows = driverBlockRows([
+      {
+        lineKey: "n:0",
+        productId: "p1",
+        displayName: "Acme Gummies",
+        outcome: "BLOCK",
+        rules: [rule("r1"), rule("r2")],
+      },
+    ]);
+    expect(rows[0].items).toEqual([{ text: "This product is banned in CA by law.", legal: true }]);
   });
 });

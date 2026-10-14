@@ -146,6 +146,63 @@ describe("RestrictionWarningDialog (warning)", () => {
     expect(notice).toHaveAttribute("aria-live", "polite");
   });
 
+  it("the close X has a 44px hit area below md (min-h-11 min-w-11); the icon stays small", () => {
+    setup();
+    const x = screen.getByRole("button", { name: "Close" });
+    expect(x.className).toContain("max-md:min-h-11");
+    expect(x.className).toContain("max-md:min-w-11");
+    expect(x.querySelector("svg")?.getAttribute("class")).toContain("h-4");
+  });
+
+  it("two rules with identical wording show ONE line (and one Legal ban badge); the ack still covers the line", async () => {
+    const twin = (id: string) => ({
+      id,
+      states: ["CA"],
+      legal: true,
+      reasonText: "This product is banned in CA by law.",
+    });
+    const user = userEvent.setup();
+    const { onConfirm } = setup({
+      view: {
+        kind: "warning",
+        warning: {
+          ...warning,
+          lines: [{ ...warning.lines[0], rules: [twin("r1"), twin("r1b")] }],
+        },
+      },
+    });
+    expect(screen.getAllByText("This product is banned in CA by law.")).toHaveLength(1);
+    expect(screen.getAllByText("Legal ban")).toHaveLength(1);
+    await user.type(screen.getByLabelText(/reason/i), "Owner approved it");
+    await user.click(screen.getByRole("button", { name: "Sell anyway" }));
+    expect(onConfirm).toHaveBeenCalledWith(
+      {
+        restrictionOverrides: [{ lineKey: "n:0", reason: "Owner approved it" }],
+        warningHash: "rw1:abc",
+      },
+      "Owner approved it",
+    );
+  });
+
+  it("the driver block dedupes identically worded rules too", () => {
+    const twin = (id: string) => ({
+      id,
+      states: ["CA"],
+      legal: true,
+      reasonText: "This product is banned in CA by law.",
+    });
+    setup({
+      view: {
+        kind: "blocked",
+        message: DRIVER_RESTRICTION_BLOCK_MESSAGE,
+        lines: [],
+        ruleLines: [{ ...warning.lines[0], rules: [twin("r1"), twin("r2")] }],
+      },
+    });
+    expect(screen.getAllByText("This product is banned in CA by law.")).toHaveLength(1);
+    expect(screen.getAllByText("Legal ban")).toHaveLength(1);
+  });
+
   it("Go back and Sell anyway are 44px tall below md (max-md:min-h-11), the owner's touch-target rule", () => {
     setup();
     for (const name of ["Go back", "Sell anyway"]) {

@@ -4,7 +4,7 @@ import {
   regulatedAuthErrorCopy,
   type BlockedCategory,
 } from "./authorizations-logic";
-import { parseDriverRestrictionBlock } from "./restriction-warning";
+import { parseRestrictionHardBlock } from "./restriction-warning";
 
 /**
  * B790 — the at-door adjust screen's submitEntry() creates a change request, then
@@ -49,7 +49,7 @@ export function classifyAtStopResolveError(e: unknown): AtStopResolveOutcome {
   }
   // Row 510: the driver's hard block. The screen shows it through the shared warning modal (`rw.handle(e, ...)`), which
   // reads the same body; nothing is declined (see the header above).
-  if (parseDriverRestrictionBlock(e)) {
+  if (parseRestrictionHardBlock(e)) {
     return { action: "restricted" };
   }
   const data = (e as { response?: { data?: { code?: string; message?: string } } } | null)?.response
