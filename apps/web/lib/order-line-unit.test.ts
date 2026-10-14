@@ -272,12 +272,13 @@ describe("SA P0b must 1: a derived Piece picked FROM a level starts from the PAC
     priceType: "STANDARD",
     tierPrices: { pricePerUnit: "20.00" },
   };
-  const total = (li: UnitLine) =>
+  // the server's proration for `pieces` loose pieces of this line's pack
+  const total = (li: UnitLine, pieces: number) =>
     computeLineSubtotal({
       unitPrice: li.unitPrice,
-      qty: li.qty * 2,
+      qty: pieces,
       boxes: 0,
-      pieces: 2,
+      pieces,
       unitsPerBox: li.unitsPerBox ?? null,
     });
 
@@ -297,7 +298,7 @@ describe("SA P0b must 1: a derived Piece picked FROM a level starts from the PAC
     expect(piece.packBase).toBeUndefined();
     expect(piece.discountedPrice).toBeUndefined();
     expect(unitLabelPayload(piece)).toEqual({});
-    expect(total({ ...piece, qty: 1 })).toBe(13.33);
+    expect(total(piece, 2)).toBe(13.33);
   });
 
   it("a DISCOUNTED Case ($180 typed) does not bill $60/pc: the one-time price is gone", () => {
@@ -323,5 +324,18 @@ describe("SA P0b must 1: a derived Piece picked FROM a level starts from the PAC
     const piece = applyLineUnit(typed, by(opts, "Piece"), { tier: 1 });
     expect(piece).toMatchObject({ unitPrice: 20, priceType: "STANDARD" });
     expect(piece.discountedPrice).toBeUndefined();
+  });
+
+  it("a special-tier customer on a line with no tier columns gets the SHOWN pack price, never the tier-1 list price", () => {
+    // tier 3 pack is $16 (what the picker shows); the snapshot only knows the tier-1 $20
+    const noTiers = { ...packLine, tierPrices: undefined };
+    const special = buildUnitOptions(
+      { ...prod, priceTier3: "16.00" },
+      [level("Case", 12, "190.00")],
+      3,
+    );
+    const onCase = applyLineUnit(noTiers, by(special, "Case"), { tier: 3 });
+    const piece = applyLineUnit(onCase, by(special, "Piece"), { tier: 3 });
+    expect(piece).toMatchObject({ unitPrice: 16, priceType: "SPECIAL", specialPrice: 16 });
   });
 });

@@ -88,7 +88,7 @@ export function applyLineUnit<T extends UnitLine>(
     // qty x a rounded per-piece price — the same line the server stores for it. It starts from the PACK: a line
     // held on a level (a Case) gets its pack back first, with the level's price and one-time price gone, so the
     // preview and the bill are the pack's tier price prorated (SA: Case $190 -> Piece is $6.67, not $63.33).
-    const pack = restorePack(line, ctx, true);
+    const pack = restorePack(line, ctx, true, option.derived.packPrice);
     const keep = ctx.keepQty && li.derivedBase === option.value ? li.qty : 1;
     const n = normalizeBoxesPieces({ boxes: 0, pieces: keep, unitsPerBox: option.derived.n });
     return {
@@ -129,15 +129,25 @@ export function applyLineUnit<T extends UnitLine>(
  * is theirs to keep across a plain switch back. `dropOneTime` (the derived-Piece start) discards that too: the
  * pieces are billed at the pack's tier price, never at a one-time price typed for another unit.
  */
-function restorePack<T extends UnitLine>(line: T, ctx: { tier: number }, dropOneTime: boolean): T {
+function restorePack<T extends UnitLine>(
+  line: T,
+  ctx: { tier: number },
+  dropOneTime: boolean,
+  /** The pack price the picker already shows at the customer's tier: the fallback when the line has no tier columns. */
+  shownPackPrice?: number,
+): T {
   const { packBase, ...rest } = line;
   const pb = packBase ?? snapshot(line);
   const restored = { ...rest, ...pb, unitLabel: undefined } as T;
   if (dropOneTime) {
     restored.discountedPrice = undefined;
     if (!line.tierPrices) {
-      restored.unitPrice = pb.listPrice;
-      restored.priceType = "STANDARD";
+      // No tier columns on the line: the price the derived option shows (the pack at the customer's tier), else the
+      // snapshot's list price (tier 1). A special-tier customer must never fall back to the tier-1 price.
+      restored.unitPrice = shownPackPrice ?? pb.listPrice;
+      const special = shownPackPrice != null && isSpecialTier(ctx.tier);
+      restored.priceType = special ? "SPECIAL" : "STANDARD";
+      restored.specialPrice = special ? shownPackPrice : undefined;
     }
   }
   if ((dropOneTime || pb.discountedPrice == null) && line.tierPrices) {

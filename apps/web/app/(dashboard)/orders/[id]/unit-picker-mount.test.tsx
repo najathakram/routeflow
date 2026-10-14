@@ -175,4 +175,34 @@ describe("setLineUnit - a DERIVED Piece is the pack's pieces, not a unit line (S
     const updates = buildItemUpdates([{ ...picked, qty: 2 }], [orig]);
     expect(updates).toEqual([{ id: "li-pack", action: "UPDATE", qty: 2, boxes: 0, pieces: 2 }]);
   });
+
+  it("a pack line with a TYPED price switched to Piece sends the pack price with no reason (the server stores STANDARD)", () => {
+    let captured: EditItemState[] = [];
+    const typed: EditItemState = {
+      ...packLine(),
+      unitPrice: 35,
+      priceEdited: true,
+      overrideReason: "customer asked",
+    };
+    renderRow([typed], (items) => {
+      captured = items;
+    });
+    fireEvent.change(screen.getByRole("combobox", { name: /Sell Widget by/i }), {
+      target: { value: "Piece" },
+    });
+    const picked = captured[0]!;
+    expect(picked).toMatchObject({ unitPrice: 40, priceEdited: false });
+    expect(picked.overrideReason).toBeUndefined();
+    const orig = {
+      id: "li-pack",
+      productId: "p-case",
+      qty: 24,
+      unitPrice: "35",
+      unitLabel: null,
+    } as never;
+    const [update] = buildItemUpdates([{ ...picked, qty: 2 }], [orig]);
+    expect(update).toMatchObject({ id: "li-pack", unitPrice: 40, boxes: 0, pieces: 2 });
+    expect(update.overrideReason).toBeUndefined();
+    expect(update).not.toHaveProperty("unitLabel");
+  });
 });

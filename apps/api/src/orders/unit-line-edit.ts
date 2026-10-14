@@ -133,9 +133,6 @@ export async function loadOperatorTiers(
   };
 }
 
-/** The request items as they arrived, before `normalizeDerivedBaseItems` rewrote them in place (keyed by object). */
-const RAW_ITEMS = new WeakMap<object, Record<string, any>>();
-
 /**
  * SA-728 / units P0b: an OLD client names the base ("Piece" / the tenant's base label) for a DERIVED
  * base unit. Rewrites that dto item IN PLACE into the pack line's pieces (no unitLabel, boxes/pieces
@@ -151,21 +148,15 @@ export async function normalizeDerivedBaseItems(
   dto: { items?: ReadonlyArray<any> },
   ctx: UnitEditContext,
   user: { role?: string } | undefined,
-  /** The LOCKED lines (the in-tx call): the held label and product are read off them, never the pre-lock snapshot. */
+  /**
+   * The LOCKED lines (the in-tx call): the held label and product are read off them, never the pre-lock snapshot. A line
+   * the pre-lock pass already rewrote is not named any more and stays rewritten; one the pre-lock pass left alone
+   * (held as a Piece unit line then, a pack line under the lock) is rewritten here. The reverse (rewritten, then held
+   * as a Piece) fails closed in `assertNoPackRedenomination`.
+   */
   heldById?: ReadonlyMap<string, any>,
 ): Promise<void> {
   const existing = heldById ?? ctx.existingById;
-  // The pre-lock pass rewrote these items IN PLACE. The in-tx pass starts from the request as it arrived, so a line
-  // that changed under the lock is rewritten (or left alone) by what is held NOW, not by the first pass.
-  for (const item of dto.items ?? []) {
-    const raw = RAW_ITEMS.get(item);
-    if (!raw) {
-      RAW_ITEMS.set(item, { ...item });
-      continue;
-    }
-    for (const k of Object.keys(item)) delete item[k];
-    Object.assign(item, raw);
-  }
   const productOf = (i: any): any => {
     const pid = i.substituteProductId ?? i.productId ?? existing.get(i.id)?.productId;
     return pid ? ctx.products.get(pid) : undefined;
