@@ -116,8 +116,8 @@ export function buildBulkRequest(args: {
 
 /**
  * A product-page chip: what the rule does. A BUYER_PORTAL rule only hides the product from portal customers
- * ("Not offered in TX"); a legal ban (surface ALL) is not offered anywhere, staff included, so it reads "Banned in
- * TX" / "Banned everywhere". Staff-facing wording beyond that is row 510's.
+ * ("Not offered in TX"); a legal ban (surface ALL) is a ban by law, so it reads "Banned in TX" / "Banned everywhere".
+ * Staff-facing wording is row 510's.
  */
 export function limitChipText(
   l: Pick<ProductLimitDto, "jurisdiction" | "states" | "surface">,
