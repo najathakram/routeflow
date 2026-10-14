@@ -1,6 +1,5 @@
 import { BadRequestException, Injectable, NotFoundException } from "@nestjs/common";
 import type {
-  RestrictionStatus,
   RuleEditPreviewResponse,
   RuleRevisionDto,
   SellingRestrictionListItemDto,
@@ -13,7 +12,6 @@ import {
   ruleMatchesProduct,
   ruleTargetSets,
   resolveGoverningState,
-  restrictionsApply,
   UNRESOLVED_STATE,
   type GoverningState,
   type ProductFacts,
@@ -25,24 +23,30 @@ import {
 } from "../selling-restrictions/selling-restrictions.service";
 import { tenantBusinessState } from "../selling-restrictions/tenant-business-state";
 import { CommitEditRuleDto, EditRuleDto } from "./dto/edit-rule.dto";
-import { assertMayManageRule, lockEditableRule } from "./rule-lock";
-import { ruleImpactChanged, ruleStale } from "./rule-errors";
+import { assertMayManageRule, lockEditableRule, readEditableRule } from "./rule-lock";
+import { staffChannelJudged } from "./staff-channel";
+import { ruleEndUseLift, ruleImpactChanged, ruleImpactTooLarge, ruleStale } from "./rule-errors";
 import { ruleEditChanges, type RuleEditChange, type RuleEditSettings } from "./rule-edit-direction";
 import { impactHash, newlyRestricted } from "./rule-edit-impact";
 import { prepareRuleSettings, type PreparedRuleSettings } from "./rule-settings";
-import { restrictionStatus } from "./selling-restrictions-admin.service";
+import {
+  RULE_INCLUDE as INCLUDE,
+  toDto,
+  type RuleRow as Row,
+} from "./selling-restrictions-admin.service";
 import { EMPTY_TARGET_SUMMARY, targetSummaries } from "./rule-target-read";
-
-const INCLUDE = {
-  category: { select: { name: true } },
-  product: { select: { name: true } },
-} as const;
-type Row = Prisma.SellingRestrictionGetPayload<{ include: typeof INCLUDE }>;
 
 /** Interactive-transaction budget: the impact reads open orders and drafts of a whole tenant. */
 const TX_OPTIONS = { timeout: 30_000, maxWait: 10_000 };
 /** Product / customer ids per `in (...)` read and per label lookup. */
 const CHUNK = 500;
+/**
+ * The most open orders + drafts (together) a tightening edit's impact scan will count; past it the edit is a coded
+ * 409 RULE_IMPACT_TOO_LARGE, never a slow scan that dies on a transaction timeout.
+ */
+export const IMPACT_SCAN_MAX_DOCUMENTS = 2000;
+/** The most distinct products on open lines the scan will label-check before giving up the same way. */
+const IMPACT_SCAN_MAX_PRODUCTS = 20_000;
 
 const chunks = <T>(xs: readonly T[], n: number): T[][] => {
   const out: T[][] = [];
@@ -58,32 +62,6 @@ const settingsOf = (r: Row): RuleEditSettings => ({
   effectiveTo: r.effectiveTo,
   reason: r.reason,
 });
-
-function toDto(row: Row, now: Date): SellingRestrictionListItemDto {
-  return {
-    id: row.id,
-    tenantId: row.tenantId,
-    categoryId: row.categoryId,
-    productId: row.productId,
-    jurisdiction: row.jurisdiction,
-    states: row.states,
-    surface: row.surface,
-    effectiveFrom: row.effectiveFrom.toISOString(),
-    effectiveTo: row.effectiveTo ? row.effectiveTo.toISOString() : null,
-    reason: row.reason,
-    createdById: row.createdById,
-    createdByName: row.createdByName,
-    createdAt: row.createdAt.toISOString(),
-    liftedById: row.liftedById,
-    liftedByName: row.liftedByName,
-    liftedAt: row.liftedAt ? row.liftedAt.toISOString() : null,
-    liftReason: row.liftReason,
-    status: restrictionStatus(row, now) satisfies RestrictionStatus,
-    categoryName: row.category?.name ?? null,
-    productName: row.product?.name ?? null,
-    revision: row.revision,
-  };
-}
 
 /**
  * A rule's settings history, NEWEST first (GET /selling-restrictions/:id `revisions`). Takes the caller's
@@ -137,14 +115,21 @@ export class RuleEditService {
     private readonly productLabels: ProductLabelsService,
   ) {}
 
-  /** Integration: the response carries the rule's target summary, like every list item (PR2's one helper). */
-  private async withSummary(
+  /**
+   * The document cap of the impact scan (`IMPACT_SCAN_MAX_DOCUMENTS`). A field rather than a constructor argument so
+   * Nest keeps injecting three providers; a spec lowers it to prove the overflow path.
+   */
+  scanCap = IMPACT_SCAN_MAX_DOCUMENTS;
+
+  /** The response item: the shared list DTO plus the rule's target summary (PR2's one helper). */
+  private async dtoOf(
     tx: Prisma.TransactionClient,
     tenantId: string,
-    dto: SellingRestrictionListItemDto,
+    row: Row,
+    now: Date,
   ): Promise<SellingRestrictionListItemDto> {
-    const summaries = await targetSummaries(tx as never, tenantId, [dto.id]);
-    return { ...dto, targetSummary: summaries.get(dto.id) ?? EMPTY_TARGET_SUMMARY };
+    const summaries = await targetSummaries(tx as never, tenantId, [row.id]);
+    return toDto(row, now, summaries.get(row.id) ?? EMPTY_TARGET_SUMMARY);
   }
 
   private requireTenant(): string {
@@ -163,22 +148,32 @@ export class RuleEditService {
     return row;
   }
 
+  /**
+   * NO transaction and NO lock: the impact scan can take a while and must not hold the rule (a lift or a target edit
+   * waiting behind a preview would be a stall). A plain tenant-scoped read decides what the preview says; the commit
+   * re-verifies all of it under `lockEditableRule`, so a rule that changed in between is a coded 409 there.
+   */
   async preview(id: string, dto: EditRuleDto, user: JwtPayload): Promise<RuleEditPreviewResponse> {
     const tenantId = this.requireTenant();
     const now = new Date();
-    return this.prisma.tenantTransaction(async (tx: Prisma.TransactionClient) => {
-      const locked = await lockEditableRule(tx, tenantId, id, now);
-      const rule = await this.loadRule(tx, tenantId, id);
-      const next = prepareRuleSettings(dto, rule);
-      assertMayManageRule(user, locked, next);
-      const ev = await this.evaluate(tx, tenantId, rule, next, now);
-      return {
-        changes: ev.changes,
-        impact: ev.impact,
-        impactHash: ev.hash,
-        revision: rule.revision,
-      };
-    }, TX_OPTIONS);
+    const db = this.prisma.forTenant() as unknown as Prisma.TransactionClient;
+    const readRule = await readEditableRule(db, tenantId, id, now);
+    const rule = await this.loadRule(db, tenantId, id);
+    const next = prepareRuleSettings(dto, rule);
+    assertMayManageRule(user, readRule, next);
+    this.assertNotEndingNow(next, now);
+    const ev = await this.evaluate(db, tenantId, rule, next, now);
+    return {
+      changes: ev.changes,
+      impact: ev.impact,
+      impactHash: ev.hash,
+      revision: rule.revision,
+    };
+  }
+
+  /** Ending a rule is a lift (reason, immediate): an edit may shorten the window, never close it. */
+  private assertNotEndingNow(next: PreparedRuleSettings, now: Date): void {
+    if (next.effectiveTo && next.effectiveTo.getTime() <= now.getTime()) throw ruleEndUseLift();
   }
 
   async commit(
@@ -194,9 +189,10 @@ export class RuleEditService {
       if (dto.expectedRevision !== rule.revision) throw ruleStale();
       const next = prepareRuleSettings(dto, rule);
       assertMayManageRule(user, locked, next);
+      this.assertNotEndingNow(next, now);
       const ev = await this.evaluate(tx, tenantId, rule, next, now);
       if (ev.hash !== dto.confirmImpactHash) throw ruleImpactChanged();
-      if (ev.changes.length === 0) return this.withSummary(tx, tenantId, toDto(rule, now)); // nothing to save
+      if (ev.changes.length === 0) return this.dtoOf(tx, tenantId, rule, now); // nothing to save
 
       const toRevision = rule.revision + 1;
       const updated: Row = await tx.sellingRestriction.update({
@@ -245,7 +241,7 @@ export class RuleEditService {
           },
         },
       });
-      return this.withSummary(tx, tenantId, toDto(updated, now));
+      return this.dtoOf(tx, tenantId, updated, now);
     }, TX_OPTIONS);
   }
 
@@ -258,10 +254,9 @@ export class RuleEditService {
     now: Date,
   ): Promise<EditEvaluation> {
     const policy = await this.restrictions.getPolicy(tenantId);
+    const staffEnforced = staffChannelJudged(policy);
     const prev = settingsOf(rule);
-    const changes = ruleEditChanges(prev, next, {
-      staffEnforced: restrictionsApply(policy, "STAFF"),
-    });
+    const changes = ruleEditChanges(prev, next, { staffEnforced });
     // Only a TIGHTENING edit can newly restrict anyone; a loosening or neutral one reaches nothing.
     const ids: string[] = [];
     let openOrders = 0;
@@ -273,7 +268,7 @@ export class RuleEditService {
       ]);
       const hit = (customerId: string) =>
         newlyRestricted(prev, next, governing.get(customerId) ?? UNRESOLVED_STATE, {
-          staffEnforced: restrictionsApply(policy, "STAFF"),
+          staffEnforced,
           at: now,
         });
       for (const o of reached.orders) {
@@ -295,7 +290,7 @@ export class RuleEditService {
     return {
       changes,
       impact: { openOrders, drafts },
-      hash: impactHash(rule.id, rule.revision, ids),
+      hash: impactHash(rule.id, rule.revision, ids, next),
     };
   }
 
@@ -337,19 +332,30 @@ export class RuleEditService {
       status: { notIn: ["DELIVERED", "CANCELLED"] as OrderStatus[] },
     };
     const liveLine = { productId: { not: null }, status: { not: "CANCELLED" } } as const;
-    const orderProducts: Array<{ productId: string | null }> = await tx.orderItem.findMany({
+    // SQL GROUP BY (never `distinct`, which Prisma de-duplicates in memory): the distinct products on live lines,
+    // bounded, so a tenant with a huge open book is a coded 409 instead of a slow scan.
+    // (`as never`: Prisma's groupBy generics reject a literal `by` + `orderBy` + `take` through the tx client type.)
+    const orderProducts: Array<{ productId: string | null }> = await tx.orderItem.groupBy({
+      by: ["productId"],
       where: { tenantId, ...liveLine, order: liveOrder },
-      distinct: ["productId"],
-      select: { productId: true },
-    });
-    const invoiceProducts: Array<{ productId: string | null }> = await tx.invoiceItem.findMany({
+      orderBy: { productId: "asc" },
+      take: IMPACT_SCAN_MAX_PRODUCTS + 1,
+    } as never);
+    const invoiceProducts: Array<{ productId: string | null }> = await tx.invoiceItem.groupBy({
+      by: ["productId"],
       where: { tenantId, productId: { not: null }, invoice: { tenantId, status: "DRAFT" } },
-      distinct: ["productId"],
-      select: { productId: true },
-    });
+      orderBy: { productId: "asc" },
+      take: IMPACT_SCAN_MAX_PRODUCTS + 1,
+    } as never);
     const candidates = [
       ...new Set([...orderProducts, ...invoiceProducts].map((r) => r.productId)),
     ].filter((id): id is string => typeof id === "string");
+    if (
+      orderProducts.length > IMPACT_SCAN_MAX_PRODUCTS ||
+      invoiceProducts.length > IMPACT_SCAN_MAX_PRODUCTS
+    ) {
+      throw ruleImpactTooLarge(this.scanCap);
+    }
 
     const matched = new Set<string>();
     for (const part of chunks(candidates, CHUNK)) {
@@ -367,28 +373,35 @@ export class RuleEditService {
     }
     if (matched.size === 0) return { orders: [], invoices: [] };
 
-    const orders: Array<{ id: string; status: string; customerId: string }> = [];
-    const invoices: Array<{ id: string; customerId: string }> = [];
+    // Documents are collected by id (one holding lines in two chunks counts once) and the read stops the moment
+    // the cap is passed, so the scan is bounded in rows read as well as in time.
+    const orders = new Map<string, { id: string; status: string; customerId: string }>();
+    const invoices = new Map<string, { id: string; customerId: string }>();
+    const guard = () => {
+      if (orders.size + invoices.size > this.scanCap) throw ruleImpactTooLarge(this.scanCap);
+    };
     for (const part of chunks([...matched], CHUNK)) {
-      const o: typeof orders = await tx.order.findMany({
+      const o: Array<{ id: string; status: string; customerId: string }> = await tx.order.findMany({
         where: {
           ...liveOrder,
           lineItems: { some: { productId: { in: part }, status: { not: "CANCELLED" } } },
         },
         select: { id: true, status: true, customerId: true },
+        orderBy: { id: "asc" },
+        take: this.scanCap + 1,
       });
-      const i: typeof invoices = await tx.invoice.findMany({
+      for (const row of o) orders.set(row.id, row);
+      guard();
+      const i: Array<{ id: string; customerId: string }> = await tx.invoice.findMany({
         where: { tenantId, status: "DRAFT", items: { some: { productId: { in: part } } } },
         select: { id: true, customerId: true },
+        orderBy: { id: "asc" },
+        take: this.scanCap + 1,
       });
-      orders.push(...o);
-      invoices.push(...i);
+      for (const row of i) invoices.set(row.id, row);
+      guard();
     }
-    // a document with lines in two chunks is read twice; count it once
-    const uniq = <T extends { id: string }>(xs: T[]): T[] => [
-      ...new Map(xs.map((x) => [x.id, x])).values(),
-    ];
-    return { orders: uniq(orders), invoices: uniq(invoices) };
+    return { orders: [...orders.values()], invoices: [...invoices.values()] };
   }
 
   /** Each customer's governing state, by the engine's own resolver (walk-in: the tenant's business state). */

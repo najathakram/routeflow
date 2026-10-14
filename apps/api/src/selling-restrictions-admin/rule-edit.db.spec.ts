@@ -16,6 +16,7 @@
  * by `assertTestTenant`; afterAll deletes exactly what it made.
  */
 import { randomUUID } from "crypto";
+import { Client as PgClient } from "pg";
 import { readFileSync } from "fs";
 import { join } from "path";
 import { describeDb, requireLocalDatabaseUrl } from "../common/testing/db-spec";
@@ -25,6 +26,7 @@ import { TenantContextService } from "../tenant/tenant-context.service";
 import { SellingRestrictionsService } from "../selling-restrictions/selling-restrictions.service";
 import type { JwtPayload } from "../auth/jwt-payload.interface";
 import { RuleEditService, ruleRevisions } from "./rule-edit.service";
+import { SellingRestrictionsAdminService } from "./selling-restrictions-admin.service";
 
 // eslint-disable-next-line @typescript-eslint/no-var-requires
 const { assertTestTenant } = require("../../../../scripts/lib/test-tenants.cjs");
@@ -52,6 +54,7 @@ describeDb("row 509 PR3: edit a rule in place, with history — real Postgres", 
   let ctx: TenantContextService;
   let engine: SellingRestrictionsService;
   let service: RuleEditService;
+  let adminService: SellingRestrictionsAdminService;
   let tenantId: string;
   let admin: JwtPayload;
   let operator: JwtPayload;
@@ -72,42 +75,33 @@ describeDb("row 509 PR3: edit a rule in place, with history — real Postgres", 
     });
   };
 
-  /** A rule as the app creates it: the row, its target, and revision 1. */
+  /**
+   * A rule as the app creates it: THROUGH the admin service (so it carries its target and revision 1, exactly as
+   * production writes them). Raw overrides (a lift) are applied after.
+   */
   const mkRule = async (over: Record<string, unknown> = {}) => {
-    const rule = await prisma.sellingRestriction.create({
-      data: {
-        tenantId,
-        productId: p.a,
-        jurisdiction: "STATE",
-        states: ["TX"],
-        surface: "ALL",
-        reason: REASON,
-        effectiveFrom: FROM,
-        createdById: admin.sub,
-        createdByName: admin.username,
-        ...over,
-      } as never,
-    });
-    await prisma.sellingRestrictionTarget.create({
-      data: { tenantId, ruleId: rule.id, productId: p.a, addedAt: FROM },
-    });
-    await prisma.sellingRestrictionRevision.create({
-      data: {
-        tenantId,
-        ruleId: rule.id,
-        revision: 1,
-        jurisdiction: rule.jurisdiction,
-        states: rule.states,
-        surface: rule.surface,
-        effectiveFrom: rule.effectiveFrom,
-        effectiveTo: rule.effectiveTo,
-        reason: rule.reason,
-        editedById: admin.sub,
-        editedByName: admin.username,
-        editedAt: rule.createdAt,
-      },
-    });
-    return rule;
+    const { liftedAt, liftReason, ...settings } = over;
+    const created = await as(() =>
+      adminService.create(
+        {
+          productId: p.a,
+          jurisdiction: "STATE",
+          states: ["TX"],
+          surface: "ALL",
+          reason: REASON,
+          effectiveFrom: FROM.toISOString(),
+          ...settings,
+        } as never,
+        admin,
+      ),
+    );
+    if (liftedAt) {
+      await prisma.sellingRestriction.update({
+        where: { id: created.id },
+        data: { liftedAt: liftedAt as Date, liftReason: (liftReason as string) ?? "done" },
+      });
+    }
+    return created;
   };
   const mkOrder = async (
     customer: string,
@@ -177,6 +171,25 @@ describeDb("row 509 PR3: edit a rule in place, with history — real Postgres", 
     return null;
   };
 
+  /** Like `refusal`, with the response message. */
+  const refusalBody = async (fn: () => Promise<unknown>) => {
+    try {
+      await fn();
+    } catch (e) {
+      const err = e as {
+        getStatus?: () => number;
+        getResponse?: () => { code?: string; message?: string };
+      };
+      const res = err.getResponse?.();
+      return {
+        status: err.getStatus?.(),
+        code: typeof res === "object" ? res?.code : undefined,
+        message: typeof res === "object" ? res?.message : undefined,
+      };
+    }
+    return null;
+  };
+
   beforeAll(async () => {
     requireLocalDatabaseUrl();
     ctx = new TenantContextService();
@@ -185,6 +198,7 @@ describeDb("row 509 PR3: edit a rule in place, with history — real Postgres", 
     const labels = new ProductLabelsService(prisma);
     engine = new SellingRestrictionsService(prisma, labels);
     service = new RuleEditService(prisma, engine, labels);
+    adminService = new SellingRestrictionsAdminService(prisma, labels);
 
     const slug = assertTestTenant(`qa-r509e-${RUN}`, "rule-edit.db.spec.ts");
     tenantId = (await prisma.tenant.create({ data: { slug, name: `R509E ${slug}` } })).id;
@@ -345,18 +359,7 @@ describeDb("row 509 PR3: edit a rule in place, with history — real Postgres", 
         effectiveFrom: FROM,
       },
     });
-    await prisma.sellingRestrictionRevision.create({
-      data: {
-        tenantId,
-        ruleId: legacy.id,
-        revision: 1,
-        jurisdiction: "STATE",
-        states: ["TX"],
-        surface: "ALL",
-        effectiveFrom: FROM,
-        reason: REASON,
-      },
-    });
+    await prisma.$executeRawUnsafe(backfillSql()); // a pre-509 rule: the migration gives it revision 1
     await mkOrder(cust.ca, "a", "PENDING");
     await mkOrder(cust.ca, "other", "PENDING");
     expect((await preview(legacy.id, { states: ["TX", "CA"] })).impact.openOrders).toBe(1);
@@ -564,6 +567,164 @@ describeDb("row 509 PR3: edit a rule in place, with history — real Postgres", 
         }),
       ),
     ).rejects.toMatchObject({ status: 409 });
+  });
+
+  // ─── SA review MUSTs / SHOULDs ───────────────────────────────────────────────────────────────
+  it("MUST 1: create() and bulkCreate() write revision 1 with the rule's settings and the creator", async () => {
+    const one = await mkRule({ states: ["TX", "CA"], surface: "BUYER_PORTAL" });
+    const listed = await as(() =>
+      prisma.tenantTransaction((tx) => ruleRevisions(tx, tenantId, one.id)),
+    );
+    expect(listed).toHaveLength(1);
+    expect(listed[0]).toMatchObject({
+      revision: 1,
+      jurisdiction: "STATE",
+      states: ["TX", "CA"],
+      surface: "BUYER_PORTAL",
+      reason: REASON,
+      effectiveFrom: FROM.toISOString(),
+      effectiveTo: null,
+      editedByName: admin.username,
+    });
+    expect((await revisions(one.id))[0].editedById).toBe(admin.sub);
+
+    const bulk = await as(() =>
+      adminService.bulkCreate(
+        {
+          productIds: [p.a, p.other],
+          jurisdiction: "STATE",
+          states: ["NY"],
+          reason: "bulk reason",
+        } as never,
+        admin,
+      ),
+    );
+    expect(bulk.ruleId).toBeDefined();
+    const rows = await revisions(bulk.ruleId as string);
+    expect(rows).toHaveLength(1);
+    expect(rows[0]).toMatchObject({
+      revision: 1,
+      jurisdiction: "STATE",
+      states: ["NY"],
+      surface: "BUYER_PORTAL",
+      reason: "bulk reason",
+      editedById: admin.sub,
+      editedByName: admin.username,
+    });
+    // and a first edit keeps the as-created settings as revision 1
+    const pre = await preview(one.id, { states: ["TX"], surface: "BUYER_PORTAL" });
+    await commit(one.id, 1, pre.impactHash, { states: ["TX"], surface: "BUYER_PORTAL" });
+    const after = await revisions(one.id);
+    expect(after.map((r) => r.revision)).toEqual([1, 2]);
+    expect(after[0].states).toEqual(["TX", "CA"]);
+  });
+
+  it("MUST 2: the confirm hash covers the proposed settings: preview A, commit B with A's hash is RULE_IMPACT_CHANGED", async () => {
+    const rule = await mkRule();
+    const a = await preview(rule.id, { states: ["TX", "CA"] });
+    const b = await preview(rule.id, { states: ["TX", "NY"] });
+    expect(a.impactHash).not.toBe(b.impactHash); // same (empty) impact, different settings
+    expect(await refusal(() => commit(rule.id, 1, a.impactHash, { states: ["TX", "NY"] }))).toEqual(
+      { status: 409, code: "RULE_IMPACT_CHANGED" },
+    );
+    expect((await ruleRow(rule.id)).states).toEqual(["TX"]);
+    expect(await revisions(rule.id)).toHaveLength(1);
+    // the same settings spelled differently (order, case, full name) hash identically
+    const spelled = await preview(rule.id, { states: ["ca", "Texas"] });
+    expect(spelled.impactHash).toBe(a.impactHash);
+    await commit(rule.id, 1, a.impactHash, { states: ["CA", "TX"] });
+    expect((await ruleRow(rule.id)).revision).toBe(2);
+  });
+
+  it("MUST 3: preview holds no row lock: it answers while another session holds FOR UPDATE on the rule", async () => {
+    const rule = await mkRule();
+    const holder = new PgClient({ connectionString: process.env.DATABASE_URL });
+    await holder.connect();
+    try {
+      await holder.query("BEGIN");
+      await holder.query('SELECT 1 FROM "SellingRestriction" WHERE "id" = $1 FOR UPDATE', [
+        rule.id,
+      ]);
+      const outcome = await Promise.race([
+        preview(rule.id, { states: ["TX", "CA"] }).then(() => "answered"),
+        new Promise<string>((resolve) => setTimeout(() => resolve("blocked"), 4000)),
+      ]);
+      expect(outcome).toBe("answered");
+    } finally {
+      await holder.query("ROLLBACK");
+      await holder.end();
+    }
+  }, 30_000);
+
+  it("MUST 3: a lifted rule is still RULE_NOT_EDITABLE on the unlocked preview read", async () => {
+    const lifted = await mkRule({ liftedAt: new Date(Date.now() - 60_000) });
+    expect(await refusal(() => preview(lifted.id))).toEqual({
+      status: 409,
+      code: "RULE_NOT_EDITABLE",
+    });
+  });
+
+  it("MUST 4: an edit that ends the rule now or in the past is 400 RULE_END_USE_LIFT", async () => {
+    const rule = await mkRule();
+    for (const effectiveTo of [
+      new Date(Date.now() - 86_400_000).toISOString(),
+      new Date(Date.now() - 1).toISOString(),
+    ]) {
+      const e = await refusalBody(() => preview(rule.id, { effectiveTo }));
+      expect(e).toMatchObject({
+        status: 400,
+        code: "RULE_END_USE_LIFT",
+        message: "To end this rule now, lift it.",
+      });
+      expect(await refusal(() => commit(rule.id, 1, "x", { effectiveTo }))).toEqual({
+        status: 400,
+        code: "RULE_END_USE_LIFT",
+      });
+    }
+    expect(await revisions(rule.id)).toHaveLength(1);
+    // a future end is fine
+    const future = new Date(Date.now() + 86_400_000 * 30).toISOString();
+    expect((await preview(rule.id, { effectiveTo: future })).changes).toEqual([
+      { field: "window", direction: "LOOSENS" },
+    ]);
+  });
+
+  it("SHOULD (a): extending the END counts the customers it restricts across the ADDED interval", async () => {
+    const soon = new Date(Date.now() + 86_400_000 * 10);
+    const rule = await mkRule({ effectiveTo: soon.toISOString() });
+    await mkOrder(cust.tx, "a", "PENDING"); // restricted today, and after the old end only if extended
+    await mkOrder(cust.ca, "a", "PENDING"); // never in the rule's states
+    const later = new Date(Date.now() + 86_400_000 * 60).toISOString();
+    expect((await preview(rule.id, { effectiveTo: later })).impact).toEqual({
+      openOrders: 1,
+      drafts: 0,
+    });
+    expect((await preview(rule.id, { effectiveTo: null })).impact.openOrders).toBe(1);
+    // shortening the end reaches nobody new
+    const sooner = new Date(Date.now() + 86_400_000 * 5).toISOString();
+    expect((await preview(rule.id, { effectiveTo: sooner })).impact.openOrders).toBe(0);
+  });
+
+  it("SHOULD (b): the impact scan is bounded: past the cap it is a coded 409, never a 500", async () => {
+    const rule = await mkRule();
+    const withCap = (scanCap: number) =>
+      Object.assign(new RuleEditService(prisma, engine, new ProductLabelsService(prisma)), {
+        scanCap,
+      });
+    const capped = withCap(3);
+    for (let i = 0; i < 4; i++) await mkOrder(cust.ca, "a", "PENDING");
+    expect(
+      await refusal(() => as(() => capped.preview(rule.id, body({ states: ["TX", "CA"] }), admin))),
+    ).toEqual({ status: 409, code: "RULE_IMPACT_TOO_LARGE" });
+    // within the cap it answers; a loosening edit never scans
+    const ok = withCap(4);
+    expect(
+      (await as(() => ok.preview(rule.id, body({ states: ["TX", "CA"] }), admin))).impact
+        .openOrders,
+    ).toBe(4);
+    expect(
+      await refusal(() => as(() => capped.preview(rule.id, body({ states: ["TX"] }), admin))),
+    ).toBeNull();
   });
 
   // ─── the migration's backfill ────────────────────────────────────────────────────────────────

@@ -27,7 +27,9 @@ describe("rule error codes", () => {
       );
     }
     expect(Object.keys(RULE_ERROR_COPY).sort()).toEqual([
+      "RULE_END_USE_LIFT",
       "RULE_IMPACT_CHANGED",
+      "RULE_IMPACT_TOO_LARGE",
       "RULE_NEEDS_A_TARGET",
       "RULE_NOT_EDITABLE",
       "RULE_STALE",

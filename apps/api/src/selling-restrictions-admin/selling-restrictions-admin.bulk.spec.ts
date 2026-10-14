@@ -31,7 +31,12 @@ const ids = (n: number, prefix = "p") => Array.from({ length: n }, (_, i) => `${
 function setup(opts: { foreignProductIds?: string[] } = {}) {
   const prisma = createMockPrisma();
   const models = prisma.forTenant() as any;
-  const store = { rules: [] as any[], targets: [] as any[], audits: [] as any[] };
+  const store = {
+    rules: [] as any[],
+    targets: [] as any[],
+    audits: [] as any[],
+    revisions: [] as any[],
+  };
   let failAudit = false;
   const rules = {
     findMany: jest.fn().mockResolvedValue([]),
@@ -53,6 +58,13 @@ function setup(opts: { foreignProductIds?: string[] } = {}) {
   };
   models.sellingRestriction = rules;
   models.sellingRestrictionTarget = targetRows;
+  // Row 509 PR3: revision 1 of each rule, written in the same transaction.
+  models.sellingRestrictionRevision = {
+    create: jest.fn(async (a: any) => {
+      store.revisions.push(a.data);
+      return a.data;
+    }),
+  };
   models.$queryRaw = jest.fn().mockResolvedValue([]);
   // The label resolver asks for the tenant's non-archived labels among the ids: "c1" is the one it has.
   models.productCategory = {
@@ -75,6 +87,7 @@ function setup(opts: { foreignProductIds?: string[] } = {}) {
       rules: [...store.rules],
       targets: [...store.targets],
       audits: [...store.audits],
+      revisions: [...store.revisions],
     };
     try {
       return await fn({ ...models });
@@ -82,6 +95,7 @@ function setup(opts: { foreignProductIds?: string[] } = {}) {
       store.rules = snap.rules;
       store.targets = snap.targets;
       store.audits = snap.audits;
+      store.revisions = snap.revisions;
       throw e;
     }
   });
@@ -128,6 +142,20 @@ describe("POST /selling-restrictions/bulk (row a, owner Q6): N products become O
       createdByName: "admin",
     });
     expect(typeof rule.id).toBe("string");
+    // revision 1 = the rule as created, by its creator
+    expect(s.store.revisions).toEqual([
+      expect.objectContaining({
+        tenantId: "test-tenant",
+        ruleId: rule.id,
+        revision: 1,
+        jurisdiction: "STATE",
+        states: ["TX"],
+        surface: "BUYER_PORTAL",
+        reason: "Portal limit",
+        editedById: "u1",
+        editedByName: "admin",
+      }),
+    ]);
     const targets = s.targetRows.createMany.mock.calls[0][0].data;
     expect(targets).toHaveLength(12);
     expect(targets.map((t: any) => t.productId)).toEqual(ids(12));
@@ -217,6 +245,7 @@ describe("row b: a failing write rolls the whole rule back", () => {
     expect(s.targetRows.createMany).toHaveBeenCalledTimes(1); // the rows WERE written inside the tx ...
     expect(s.store.rules).toHaveLength(0); // ... and rolled back with it
     expect(s.store.targets).toHaveLength(0);
+    expect(s.store.revisions).toHaveLength(0); // revision 1 rolls back with the rule
     expect(s.store.audits).toHaveLength(0);
   });
 

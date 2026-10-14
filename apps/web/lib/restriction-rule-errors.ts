@@ -17,6 +17,9 @@ export const RULE_ERROR_COPY: Record<string, string> = {
   RULE_STALE:
     "Someone changed this rule since you opened it. Reload to see the latest, then make your change again.",
   RULE_IMPACT_CHANGED: "The open orders this change affects have changed. Review the change again.",
+  RULE_END_USE_LIFT: "To end this rule now, lift it.",
+  RULE_IMPACT_TOO_LARGE:
+    "This change reaches too many open orders to check at once. Narrow it (fewer states or products), or lift the rule and add a new one.",
 };
 
 /** The server's `body.code` of a refused request, or null. */

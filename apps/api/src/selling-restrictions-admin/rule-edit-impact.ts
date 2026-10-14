@@ -7,6 +7,7 @@ import {
   type GoverningState,
   type RestrictionRuleFacts,
 } from "../selling-restrictions/selling-restrictions.core";
+import { normalizeUsState } from "../common/us-states";
 import type { RuleEditSettings } from "./rule-edit-direction";
 
 /**
@@ -50,8 +51,28 @@ export interface NewlyRestrictedOptions {
 }
 
 /**
- * True when the NEW settings restrict a customer in `governingState` on some channel the OLD settings did not.
- * A state the edit only keeps, or removes, is never "newly" restricted.
+ * The instants an edit is judged at. The first moment the NEW rule can bind (now, or its start when that is later);
+ * and, when the edit EXTENDS the END (a later or removed `effectiveTo`), the OLD end instant: the rule is half-open
+ * `[from, to)`, so at the old `to` the old rule has stopped and the new one has not. Without the second instant an
+ * end extension would always count 0 (today both rules cover everyone they cover today).
+ */
+function judgedAt(prev: RuleEditSettings, next: RuleEditSettings, now: Date): Date[] {
+  const first = next.effectiveFrom.getTime() > now.getTime() ? next.effectiveFrom : now;
+  const times = [first];
+  const oldEnd = prev.effectiveTo;
+  if (
+    oldEnd !== null &&
+    oldEnd.getTime() > first.getTime() &&
+    (next.effectiveTo === null || next.effectiveTo.getTime() > oldEnd.getTime())
+  ) {
+    times.push(oldEnd);
+  }
+  return times;
+}
+
+/**
+ * True when the NEW settings restrict a customer in `governingState` on some channel, at some judged instant, that the
+ * OLD settings did not. A state the edit only keeps, or removes, is never "newly" restricted.
  */
 export function newlyRestricted(
   prev: RuleEditSettings,
@@ -59,22 +80,40 @@ export function newlyRestricted(
   governingState: GoverningState,
   opts: NewlyRestrictedOptions,
 ): boolean {
-  const at = next.effectiveFrom.getTime() > opts.at.getTime() ? next.effectiveFrom : opts.at;
   const channels: RestrictionChannel[] = opts.staffEnforced
     ? ["BUYER_PORTAL", "STAFF"]
     : ["BUYER_PORTAL"];
-  return channels.some(
-    (ch) => restricts(next, governingState, ch, at) && !restricts(prev, governingState, ch, at),
+  return judgedAt(prev, next, opts.at).some((at) =>
+    channels.some(
+      (ch) => restricts(next, governingState, ch, at) && !restricts(prev, governingState, ch, at),
+    ),
   );
 }
 
 /**
- * The fingerprint of "which documents this edit affects": sha256 over the rule, its revision and the sorted ids
- * (callers prefix the kind, e.g. `o:` order, `d:` draft order, `i:` draft invoice). The commit recomputes it and
- * a different value is 409 RULE_IMPACT_CHANGED.
+ * The fingerprint of an edit: sha256 over the rule, its revision, the NORMALISED proposed settings (jurisdiction,
+ * sorted USPS states, surface, window, reason) and the sorted ids of the documents it affects (callers prefix the
+ * kind: `o:` order, `d:` draft order, `i:` draft invoice). The commit recomputes it from ITS body, so confirming a
+ * different edit than the one previewed, or a changed set of documents, is 409 RULE_IMPACT_CHANGED.
  */
-export function impactHash(ruleId: string, revision: number, ids: readonly string[]): string {
+export function impactHash(
+  ruleId: string,
+  revision: number,
+  ids: readonly string[],
+  proposed: RuleEditSettings,
+): string {
+  const states = [
+    ...new Set(proposed.states.map((x) => normalizeUsState(x) ?? x.trim().toUpperCase())),
+  ].sort();
+  const settings = {
+    jurisdiction: proposed.jurisdiction,
+    states,
+    surface: proposed.surface,
+    effectiveFrom: proposed.effectiveFrom.toISOString(),
+    effectiveTo: proposed.effectiveTo ? proposed.effectiveTo.toISOString() : null,
+    reason: proposed.reason.trim(),
+  };
   return createHash("sha256")
-    .update(JSON.stringify([ruleId, revision, [...ids].sort()]))
+    .update(JSON.stringify([ruleId, revision, settings, [...ids].sort()]))
     .digest("hex");
 }
