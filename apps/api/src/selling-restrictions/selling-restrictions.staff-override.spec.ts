@@ -131,7 +131,7 @@ describe("SellingRestrictionsService: a STAFF write of a restricted product (row
       }),
     );
     expect(decision.stamps).toEqual([
-      { lineKey: "n:0", productId: "p1", reason: "Licensed buyer", ruleIds: ["r-ca"] },
+      { lineKey: "n:0", productId: "p1", reason: "Licensed buyer", ruleIds: ["r-ca:CA"] },
     ]);
     expect(decision.warningHash).toBe(hash);
     expect(decision.basis).toBe("CUSTOMER");

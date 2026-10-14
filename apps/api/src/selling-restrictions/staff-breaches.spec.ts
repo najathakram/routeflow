@@ -6,7 +6,7 @@ import {
   type ProductFacts,
   type RestrictionRuleFacts,
 } from "./selling-restrictions.core";
-import { staffBreaches } from "./staff-breaches";
+import { breachKeys, OVERRIDE_STATE_UNKNOWN, staffBreaches } from "./staff-breaches";
 
 /**
  * Row 510: `staffBreaches` lists EVERY rule that breaches a staff sale, by the core's own predicates. The parity block
@@ -113,6 +113,45 @@ describe("staffBreaches", () => {
   it("records the governing state the STATE hits were judged at", () => {
     const [b] = staffBreaches(input({ rules: [rule()] }));
     expect(b.state).toBe("CA");
+  });
+
+  describe("breachKeys: a stamp is by (rule id, judged state)", () => {
+    it("is ruleId:STATE for a resolved sale, one per listed rule", () => {
+      const [b] = staffBreaches(
+        input({
+          rules: [rule({ id: "ca" }), rule({ id: "fed", jurisdiction: "FEDERAL", states: [] })],
+        }),
+      );
+      expect([...breachKeys(b)].sort()).toEqual(["ca:CA", "fed:CA"]);
+    });
+
+    it("is ruleId:UNKNOWN when the state could not be resolved (an INDETERMINATE breach)", () => {
+      const [b] = staffBreaches(
+        input({ governingState: UNRESOLVED_STATE, rules: [rule({ id: "a" }), rule({ id: "b" })] }),
+      );
+      expect(b.outcome).toBe("INDETERMINATE");
+      expect([...breachKeys(b)].sort()).toEqual(["a:UNKNOWN", "b:UNKNOWN"]);
+      expect(OVERRIDE_STATE_UNKNOWN).toBe("UNKNOWN");
+    });
+
+    it("differs when the judged state differs, with the same rule", () => {
+      const [ca] = staffBreaches(input({ rules: [rule({ id: "r", states: ["CA", "TX"] })] }));
+      const [tx] = staffBreaches(
+        input({
+          governingState: { resolved: true, state: "TX" },
+          rules: [rule({ id: "r", states: ["CA", "TX"] })],
+        }),
+      );
+      expect(breachKeys(ca)).toEqual(["r:CA"]);
+      expect(breachKeys(tx)).toEqual(["r:TX"]);
+    });
+
+    it("an unresolvable product has no keys (no rule could be matched)", () => {
+      const [b] = staffBreaches(
+        input({ products: [product("ghost", { unresolvable: true, nameKnown: false })] }),
+      );
+      expect(breachKeys(b)).toEqual([]);
+    });
   });
 
   describe("parity with evaluateRestrictions (a product is breached iff the engine reports it)", () => {

@@ -154,6 +154,7 @@ export interface OverrideStampView {
   /** The overriding User id (staff reads resolve the name). */
   restrictionOverrideBy: string | null;
   restrictionOverrideAt: string | null;
+  /** One `ruleId:STATE` per rule the override covered (`UNKNOWN` as the STATE of a sale whose state was unresolved). */
   restrictionOverrideRuleIds: string[];
   /** The overriding user's name, resolved on a STAFF read (null when the user is gone); never on a buyer read. */
   restrictionOverrideByName?: string | null;

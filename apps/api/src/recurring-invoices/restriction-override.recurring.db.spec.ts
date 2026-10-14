@@ -265,7 +265,7 @@ describeDb(
         expect(bannedLine).toMatchObject({
           restrictionOverrideReason: REASON,
           restrictionOverrideBy: w.adminId, // the user who clicked, not the template's creator
-          restrictionOverrideRuleIds: [w.ruleId],
+          restrictionOverrideRuleIds: [`${w.ruleId}:CA`],
         });
         expect(bannedLine.restrictionOverrideAt).toBeInstanceOf(Date);
         expect(inv.items.filter((i) => i.restrictionOverrideAt !== null)).toHaveLength(1);

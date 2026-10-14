@@ -137,7 +137,7 @@ describeDb(
       expect(bannedItem).toMatchObject({
         restrictionOverrideReason: RESTRICTION_OVERRIDE_IMPORTED_REASON,
         restrictionOverrideBy: w.operatorId,
-        restrictionOverrideRuleIds: [w.ruleId],
+        restrictionOverrideRuleIds: [`${w.ruleId}:CA`],
       });
       expect(bannedItem.restrictionOverrideAt).toBeInstanceOf(Date);
       const cleanItem = invoice.items.find((i) => i.productId === w.clean)!;
@@ -154,7 +154,7 @@ describeDb(
       expect(rows[0].meta).toMatchObject({
         documentType: "INVOICE",
         productId: w.banned,
-        ruleIds: [w.ruleId],
+        ruleIds: [`${w.ruleId}:CA`],
         reason: RESTRICTION_OVERRIDE_IMPORTED_REASON,
         warningHash: null,
         basis: "CUSTOMER",

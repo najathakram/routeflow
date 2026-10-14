@@ -67,16 +67,12 @@ const P0A_LABELS_LINECODE: Record<string, GapRef> = { ...P0A_LABELS, lineCode: "
  * matched at import (no new column). Brief 1 landed every non-reset row as `gaps: "unfiled"` (true at its land: no copier
  * wrote the columns yet); brief 2 writes the four columns EXPLICITLY (never through a spread the contract cannot see) in C1
  * (`buildInvoiceItemData`), C17 (`recomputeOrderFromInvoices`'s create) and C9a/C9b (the merge's two create literals), so
- * those flipped to `carried`. Still a gap until the import change writes it: C14 (-> rederived).
+ * those flipped to `carried`. C14 is `rederived`: its `itemsData` literal never holds the columns, and the import marker
+ * (`import/import-restriction-marker.ts`) re-judges the imported catalog lines after the loop and writes all four in the
+ * invoice's own run (`ruleId:STATE` keys at the state each rule matched, the importing user, "Imported (historical)").
  */
 const R510_STAMP =
   "restrictionOverrideReason restrictionOverrideBy restrictionOverrideAt restrictionOverrideRuleIds";
-const R510_STAMP_GAPS: Record<string, GapRef> = {
-  restrictionOverrideReason: "unfiled",
-  restrictionOverrideBy: "unfiled",
-  restrictionOverrideAt: "unfiled",
-  restrictionOverrideRuleIds: "unfiled",
-};
 
 const ORDER_FRESH = "deliveredQty invoicedQty overrideReason overriddenBy status";
 const MERGE = {
@@ -316,12 +312,13 @@ export const COPIERS: Copier[] = [
     anchor: { via: "push", name: "itemsData" },
     carried: "description productId qty unitPrice subtotal discount",
     reset: "taxRate", // forced 0
+    rederived: R510_STAMP, // row 510: the import marker (see R510_STAMP), written after the loop, not in this literal
     // #2169 (SA-395): an imported CSV line, never a copy of a system-stamped source line.
     na: "originalPrice msrp priceType boxes pieces unitsPerBox promoFreeUnits notes orderItemId trackedCategoryId trackedSubcategoryId categoryTaxAmount unitLabel categoryTaxType categoryTaxRate categoryPriceIncludesTax systemKind compositionMode recipeId recipeVersion",
     components: "na",
     // row 510 (#2093): historical import is exempt; it STAMPS the fixed "Imported (historical)" marker (importing user,
-    // rules matched at import). Not written yet: flips to rederived with the import change.
-    gaps: { ...P0A_LABELS_LINECODE, ...R510_STAMP_GAPS },
+    // rules matched at import) AFTER the loop, through import-restriction-marker.ts: re-derived from the live rules.
+    gaps: { ...P0A_LABELS_LINECODE },
   }, // CSV: per-piece by construction
   // C17 (not in R-ui's first table: the discovery pass found it; R-ui then verified it, invoices.service.ts
   // 2273-2420, callers 3540/3601/6342 = invoice edit and status flows). It UPDATES an existing order line, and

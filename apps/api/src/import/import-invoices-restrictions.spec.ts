@@ -101,7 +101,7 @@ describe("ImportService.importInvoices — historical import is exempt, marked a
         restrictionOverrideReason: RESTRICTION_OVERRIDE_IMPORTED_REASON,
         restrictionOverrideBy: "user-1",
         restrictionOverrideAt: expect.any(Date),
-        restrictionOverrideRuleIds: ["r1", "r2"],
+        restrictionOverrideRuleIds: ["r1:CA", "r2:CA"],
       },
     });
     expect(RESTRICTION_OVERRIDE_IMPORTED_REASON).toBe("Imported (historical)");
@@ -116,7 +116,7 @@ describe("ImportService.importInvoices — historical import is exempt, marked a
         documentType: "INVOICE",
         documentId: "inv-1",
         productId: "p-tob",
-        ruleIds: ["r1", "r2"],
+        ruleIds: ["r1:CA", "r2:CA"],
         reason: "Imported (historical)",
         warningHash: null,
       },
@@ -124,6 +124,25 @@ describe("ImportService.importInvoices — historical import is exempt, marked a
     expect(audits.find((a: any) => a.action === "invoice.import.restricted_lines")).toMatchObject({
       meta: { invoiceNumbers: ["INV-200"], productIds: ["p-tob"] },
     });
+  });
+
+  it("the marker stores each rule at the state it was matched at: an unresolved customer state is ruleId:UNKNOWN", async () => {
+    restrictions.judgeStaffWrite.mockResolvedValue({
+      ...block,
+      outcome: "INDETERMINATE",
+      breaches: [{ ...block.breaches[0], outcome: "INDETERMINATE", state: null }],
+    });
+
+    await service.importInvoices(csv("INV-204"), "user-1");
+
+    expect(prisma.invoiceItem.updateMany.mock.calls[0][0].data.restrictionOverrideRuleIds).toEqual([
+      "r1:UNKNOWN",
+      "r2:UNKNOWN",
+    ]);
+    const overridden = prisma.auditLog.create.mock.calls
+      .map((c: any) => c[0].data)
+      .find((a: any) => a.action === "selling_restriction.overridden");
+    expect(overridden.meta.ruleIds).toEqual(["r1:UNKNOWN", "r2:UNKNOWN"]);
   });
 
   it("ALLOW imports normally: empty restrictedLines, no marker, no audit row", async () => {

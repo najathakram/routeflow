@@ -19,7 +19,8 @@ export const AUDIT_ACTIONS = {
   /**
    * Row 510: a staff member sold a restricted product with a reason. ONE row per newly stamped line, written in the
    * write's own tx (selling-restrictions/restriction-override-audit.ts); entityType OrderItem | InvoiceItem, entityId the
-   * line; meta {documentType, documentId, productId, ruleIds, reason, lineKey, warningHash, basis}. A carried stamp writes none.
+   * line; meta {documentType, documentId, productId, ruleIds, reason, lineKey, warningHash, basis} (ruleIds are the stamp's
+   * `ruleId:STATE` keys). A carried stamp writes none.
    */
   SELLING_RESTRICTION_OVERRIDDEN: "selling_restriction.overridden",
 } as const;

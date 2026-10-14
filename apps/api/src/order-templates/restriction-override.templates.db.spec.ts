@@ -236,7 +236,7 @@ describeDb(
         expect(banned).toMatchObject({
           restrictionOverrideReason: REASON,
           restrictionOverrideBy: w.adminId,
-          restrictionOverrideRuleIds: [w.ruleId],
+          restrictionOverrideRuleIds: [`${w.ruleId}:CA`],
         });
         expect(banned.restrictionOverrideAt).toBeInstanceOf(Date);
         expect(stored.lineItems.filter((l) => l.restrictionOverrideAt !== null)).toHaveLength(1);

@@ -274,7 +274,7 @@ describeDb(
       expect(banned).toMatchObject({
         restrictionOverrideReason: REASON,
         restrictionOverrideBy: w.operatorId,
-        restrictionOverrideRuleIds: [w.ruleId],
+        restrictionOverrideRuleIds: [`${w.ruleId}:CA`],
       });
       expect(banned.restrictionOverrideAt).toBeInstanceOf(Date);
       const clean = rows.find((r) => r.productId === w.clean)!;
@@ -290,7 +290,7 @@ describeDb(
           documentType: "ORDER",
           documentId: orderId,
           productId: w.banned,
-          ruleIds: [w.ruleId],
+          ruleIds: [`${w.ruleId}:CA`],
           reason: REASON,
           lineKey: `cr:${cr.id}`,
           basis: "CUSTOMER",

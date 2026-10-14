@@ -103,7 +103,7 @@ describeDb(
       restrictionOverrideReason: "earlier reason",
       restrictionOverrideBy: w.operatorId,
       restrictionOverrideAt: new Date("2026-10-01T00:00:00Z"),
-      restrictionOverrideRuleIds: [w.ruleId],
+      restrictionOverrideRuleIds: [`${w.ruleId}:CA`],
     });
 
     async function seedInvoice(
@@ -269,7 +269,7 @@ describeDb(
         expect(banned).toMatchObject({
           restrictionOverrideReason: REASON,
           restrictionOverrideBy: w.operatorId,
-          restrictionOverrideRuleIds: [w.ruleId],
+          restrictionOverrideRuleIds: [`${w.ruleId}:CA`],
         });
         expect(banned.restrictionOverrideAt).toBeInstanceOf(Date);
         expect(rows.find((r) => r.productId === w.clean)!.restrictionOverrideAt).toBeNull();
@@ -552,7 +552,7 @@ describeDb(
         expect(r).toMatchObject({
           restrictionOverrideReason: "earlier reason",
           restrictionOverrideBy: w.operatorId,
-          restrictionOverrideRuleIds: [w.ruleId],
+          restrictionOverrideRuleIds: [`${w.ruleId}:CA`],
         });
         expect(r.restrictionOverrideAt).toEqual(new Date("2026-10-01T00:00:00Z"));
         expect(await audits(inv.id)).toHaveLength(0); // a carried stamp writes no audit row
@@ -628,7 +628,7 @@ describeDb(
         expect(banned).toMatchObject({
           restrictionOverrideReason: "earlier reason",
           restrictionOverrideBy: w.operatorId,
-          restrictionOverrideRuleIds: [w.ruleId],
+          restrictionOverrideRuleIds: [`${w.ruleId}:CA`],
         });
         expect(lines.find((l) => l.productId === w.clean)!.restrictionOverrideAt).toBeNull();
       });

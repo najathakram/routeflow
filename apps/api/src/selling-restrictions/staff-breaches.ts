@@ -13,7 +13,7 @@ import {
  * `evaluateRestrictions` decides on, so a product is breached here IFF it appears in that function's `reasons`
  * (pinned by `staff-breaches.spec.ts`, a parity run over generated inputs). `evaluateRestrictions` cites ONE rule per
  * product; the warning must list EVERY rule that binds it, or an override of one rule would silently cover a second
- * that arrives later (the coverage test is `stamp.ruleIds ⊇ breach.ruleIds`).
+ * that arrives later (the coverage test is `stamp keys ⊇ breachKeys(breach)`, each key `ruleId:STATE`).
  *
  * Rows 509/510 boundary: this file reads rule FACTS only. It does not load rules and does not edit the core.
  */
@@ -41,6 +41,25 @@ export interface StaffBreachDetail extends StaffBreach {
   unknownProduct: boolean;
   /** The governing state the STATE hits were judged at (null when unresolved / not needed). */
   state: string | null;
+}
+
+/**
+ * The state label of a stamp key when the sale's state could not be resolved (an INDETERMINATE breach): `ruleId:UNKNOWN`.
+ * A cost of the stored shape: a real USPS code is two letters, so this never collides with one.
+ */
+export const OVERRIDE_STATE_UNKNOWN = "UNKNOWN";
+
+/**
+ * The stamp keys of a breach: one `ruleId:STATE` per rule that binds it, STATE being the state the sale was JUDGED at
+ * (`UNKNOWN` when it could not be resolved). A stamp (`restrictionOverrideRuleIds`) holds these strings and a breach is
+ * covered only when EVERY current key is in the stored set, so an override given for one state, or for an unresolved
+ * one, never silently covers the same rule at another state (a store sale at TX that becomes a delivery into CA; an
+ * INDETERMINATE sale whose customer later gets a CA address). The whole key is the only thing the stamp compares: a
+ * copier carries the strings as-is.
+ */
+export function breachKeys(b: Pick<StaffBreachDetail, "ruleIds" | "state">): string[] {
+  const at = b.state ?? OVERRIDE_STATE_UNKNOWN;
+  return b.ruleIds.map((id) => `${id}:${at}`);
 }
 
 const isLegal = (r: RestrictionRuleFacts): boolean => (r.surface as string) !== "BUYER_PORTAL";

@@ -126,7 +126,7 @@ describeDb(
       });
     const orderCount = (customerId: string) =>
       raw.order.count({ where: { tenantId: w.tenantId, customerId } });
-    const STAMP_RULES = () => [w.ruleId];
+    const STAMP_RULES = () => [`${w.ruleId}:CA`];
 
     /** An order written straight to the table: `lines` may carry a stamp. */
     async function seedOrder(
@@ -336,7 +336,7 @@ describeDb(
           productId: w.banned,
           restrictionOverrideReason: REASON,
           restrictionOverrideBy: w.operatorId,
-          restrictionOverrideRuleIds: [w.ruleId],
+          restrictionOverrideRuleIds: [`${w.ruleId}:CA`],
         });
         expect(rows[0].restrictionOverrideAt).toBeInstanceOf(Date);
         expect(rows[1]).toMatchObject({
@@ -354,7 +354,7 @@ describeDb(
             documentType: "ORDER",
             documentId: order.id,
             productId: w.banned,
-            ruleIds: [w.ruleId],
+            ruleIds: [`${w.ruleId}:CA`],
             reason: REASON,
             lineKey: "n:0",
             basis: "CUSTOMER",
@@ -603,7 +603,7 @@ describeDb(
             ).toEqual([w.ruleId, second.id].sort());
             await edit(orderId, { items: [{ id: lines[0].id, qty: 3 }], ...ackFrom(e) });
             expect((await lineRows(orderId))[0].restrictionOverrideRuleIds.sort()).toEqual(
-              [w.ruleId, second.id].sort(),
+              [w.ruleId, second.id].map((id) => `${id}:CA`).sort(),
             );
           } finally {
             await raw.sellingRestriction.update({

@@ -182,7 +182,7 @@ describe("decideStaffWrite: the resubmit", () => {
     ...over,
   });
 
-  it("the stamp stores the trimmed reason and the SORTED rule ids of the breach", () => {
+  it("the stamp stores the trimmed reason and the SORTED ruleId:STATE keys of the breach", () => {
     const j = judgement([breach("p1", ["rb", "ra"])]);
     const hash = thrown(() => decideStaffWrite(base({ judgement: j }))).getResponse().warningHash;
     const d = decideStaffWrite(
@@ -195,14 +195,19 @@ describe("decideStaffWrite: the resubmit", () => {
       }),
     );
     expect(d.stamps).toEqual([
-      { lineKey: "n:0", productId: "p1", reason: "Licensed buyer", ruleIds: ["ra", "rb"] },
+      {
+        lineKey: "n:0",
+        productId: "p1",
+        reason: "Licensed buyer",
+        ruleIds: ["ra:CA", "rb:CA"],
+      },
     ]);
   });
 
   it("the acknowledged resubmit stamps each warned line", () => {
     const d = decideStaffWrite(base({ ack: ack() }));
     expect(d.stamps).toEqual([
-      { lineKey: "n:0", productId: "p1", reason: "Customer is licensed", ruleIds: ["r1"] },
+      { lineKey: "n:0", productId: "p1", reason: "Customer is licensed", ruleIds: ["r1:CA"] },
     ]);
     expect(d.warningHash).toBe(warn().warningHash);
   });
@@ -349,32 +354,103 @@ describe("decideStaffWrite: sticky coverage", () => {
   });
 
   it("a product already carrying a stamp that covers its rules never warns again", () => {
-    const d = decideStaffWrite(base({ held: [stamp("p1", ["r1"])] }));
+    const d = decideStaffWrite(base({ held: [stamp("p1", ["r1:CA"])] }));
     expect(d.stamps).toEqual([]);
     expect(d.carried).toEqual([expect.objectContaining({ productId: "p1" })]);
   });
 
   it("a stamp that is a SUPERSET of the breach's rules still covers (a rule since lifted)", () => {
-    expect(decideStaffWrite(base({ held: [stamp("p1", ["r1", "r0"])] })).stamps).toEqual([]);
+    expect(decideStaffWrite(base({ held: [stamp("p1", ["r1:CA", "r0:CA"])] })).stamps).toEqual([]);
   });
 
   it("a NEW rule id on a covered product warns again", () => {
     const j = judgement([breach("p1", ["r1", "r2"])]);
     expect(
       thrown(() =>
-        decideStaffWrite(base({ judgement: j, held: [stamp("p1", ["r1"])] })),
+        decideStaffWrite(base({ judgement: j, held: [stamp("p1", ["r1:CA"])] })),
       ).getResponse().code,
     ).toBe("RESTRICTION_WARNING");
   });
 
   it("a product the document does not hold (a swap or an add) warns, whatever else is stamped", () => {
     expect(
-      thrown(() => decideStaffWrite(base({ held: [stamp("p9", ["r1"])] }))).getResponse().code,
+      thrown(() => decideStaffWrite(base({ held: [stamp("p9", ["r1:CA"])] }))).getResponse().code,
     ).toBe("RESTRICTION_WARNING");
   });
 
+  describe("a stamp is by (rule id, judged state)", () => {
+    const at = (state: string | null, outcome: "BLOCK" | "INDETERMINATE" = "BLOCK") =>
+      judgement([breach("p1", ["r1"], { state, outcome })]);
+
+    it("an INDETERMINATE override (stored r1:UNKNOWN) does not cover the same rule once the state resolves to CA", () => {
+      const held = [stamp("p1", ["r1:UNKNOWN"])];
+      expect(
+        thrown(() => decideStaffWrite(base({ judgement: at("CA"), held }))).getResponse().code,
+      ).toBe("RESTRICTION_WARNING");
+      // and an unresolved sale is covered by it
+      expect(decideStaffWrite(base({ judgement: at(null, "INDETERMINATE"), held })).stamps).toEqual(
+        [],
+      );
+    });
+
+    it("a stamp for the same rule at ANOTHER state (a store sale at TX, now a delivery into CA) warns again", () => {
+      const held = [stamp("p1", ["r1:TX"])];
+      expect(
+        thrown(() => decideStaffWrite(base({ judgement: at("CA"), held }))).getResponse().code,
+      ).toBe("RESTRICTION_WARNING");
+      expect(decideStaffWrite(base({ judgement: at("TX"), held })).stamps).toEqual([]);
+    });
+
+    it("a stamp must hold EVERY current (rule, state) pair: a second rule at the same state warns", () => {
+      const j = judgement([breach("p1", ["r1", "r2"])]);
+      expect(
+        thrown(() =>
+          decideStaffWrite(base({ judgement: j, held: [stamp("p1", ["r1:CA"])] })),
+        ).getResponse().code,
+      ).toBe("RESTRICTION_WARNING");
+      expect(
+        decideStaffWrite(base({ judgement: j, held: [stamp("p1", ["r2:CA", "r1:CA"])] })).stamps,
+      ).toEqual([]);
+    });
+
+    it("the same rule at the same state is still covered after a quantity change (no state change)", () => {
+      const j = judgement([breach("p1", ["r1"])]);
+      const d = decideStaffWrite(
+        base({
+          judgement: j,
+          lines: [{ productId: "p1", lineKey: "l:li-p1", qtyDelta: 5 }],
+          held: [stamp("p1", ["r1:CA"])],
+        }),
+      );
+      expect(d.stamps).toEqual([]);
+    });
+
+    it("the warning hash binds the judged state: the same rule and outcome at TX is a different acknowledgement", () => {
+      const caHash = thrown(() => decideStaffWrite(base({ judgement: at("CA") }))).getResponse()
+        .warningHash;
+      const txHash = thrown(() => decideStaffWrite(base({ judgement: at("TX") }))).getResponse()
+        .warningHash;
+      expect(caHash).not.toBe(txHash);
+    });
+
+    it("an INDETERMINATE acknowledgement stamps r1:UNKNOWN", () => {
+      const j = at(null, "INDETERMINATE");
+      const hash = thrown(() => decideStaffWrite(base({ judgement: j }))).getResponse().warningHash;
+      const d = decideStaffWrite(
+        base({
+          judgement: j,
+          ack: {
+            restrictionOverrides: [{ lineKey: "n:0", reason: "Address on file next week" }],
+            warningHash: hash,
+          },
+        }),
+      );
+      expect(d.stamps[0].ruleIds).toEqual(["r1:UNKNOWN"]);
+    });
+  });
+
   it("a CANCELLED stamped line does not cover", () => {
-    const cancelled = { ...stamp("p1", ["r1"]), status: "CANCELLED" };
+    const cancelled = { ...stamp("p1", ["r1:CA"]), status: "CANCELLED" };
     expect(thrown(() => decideStaffWrite(base({ held: [cancelled] }))).getResponse().code).toBe(
       "RESTRICTION_WARNING",
     );
@@ -468,7 +544,7 @@ describe("recheck under the write's lock", () => {
     restrictionOverrideReason: "earlier",
     restrictionOverrideBy: "user-op",
     restrictionOverrideAt: new Date("2026-10-01T00:00:00Z"),
-    restrictionOverrideRuleIds: ["r1"],
+    restrictionOverrideRuleIds: ["r1:CA"],
   };
 
   it("an acknowledged write whose lines are unchanged under the lock passes, and carries held stamps", () => {
@@ -526,7 +602,7 @@ describe("noRestrictionOverride", () => {
       id: "li-1",
       productId: "p1",
       restrictionOverrideAt: new Date(),
-      restrictionOverrideRuleIds: ["r1"],
+      restrictionOverrideRuleIds: ["r1:CA"],
       restrictionOverrideReason: "x",
       restrictionOverrideBy: "u",
     };

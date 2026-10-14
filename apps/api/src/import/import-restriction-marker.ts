@@ -1,14 +1,16 @@
 import type { SellingRestrictionsService } from "../selling-restrictions/selling-restrictions.service";
 import { RESTRICTION_OVERRIDE_IMPORTED_REASON } from "../selling-restrictions/override-constants";
 import { writeOverrideAuditRows } from "../selling-restrictions/restriction-override-audit";
+import { breachKeys } from "../selling-restrictions/staff-breaches";
 
 /**
  * Row 510 (ruling #2093, 2026-10-13): HISTORICAL invoice IMPORT (`ImportService.importInvoices`, the Zoho invoice CSV) is
  * EXEMPT and never refused: it records sales that already happened, so history is not rewritten. A catalog line that
  * the engine would breach today is MARKED instead: its invoice item carries the stamp columns with the fixed reason
- * `RESTRICTION_OVERRIDE_IMPORTED_REASON`, the importing user, the time and ALL the rules matched at import, with one
- * `selling_restriction.overridden` audit row per marked line (same transaction, so a mark without its audit row rolls
- * back) and the caller's run-level `invoice.import.restricted_lines` audit row. A productless (custom) line is exempt
+ * `RESTRICTION_OVERRIDE_IMPORTED_REASON`, the importing user, the time and ALL the rules matched at import (each as
+ * `ruleId:STATE`, the state it was matched at, `UNKNOWN` when unresolved), with one `selling_restriction.overridden`
+ * audit row per marked line (same transaction, so a mark without its audit row rolls back) and the caller's run-level
+ * `invoice.import.restricted_lines` audit row. A productless (custom) line is exempt
  * and never marked.
  *
  * WHICH IMPORT PATH IS WHICH (grep-pinned in import-restriction-marker.spec.ts): `importInvoices` is the ONLY import that
@@ -92,7 +94,9 @@ export async function markImportedRestrictedLines(
           for (const pid of new Set(e.productIds)) {
             if (!flagged.has(pid)) continue;
             if (!e.invoiceId || !pid) continue; // the widening trap: never an updateMany without ids
-            const ruleIds = [...(breachOf.get(pid)?.ruleIds ?? [])].sort();
+            // each key is ruleId:STATE at the state the line was judged at when imported (UNKNOWN when unresolved)
+            const b = breachOf.get(pid);
+            const ruleIds = (b ? breachKeys(b) : []).sort();
             const items = await tx.invoiceItem.findMany({
               where: { invoiceId: e.invoiceId, productId: pid },
               select: { id: true },

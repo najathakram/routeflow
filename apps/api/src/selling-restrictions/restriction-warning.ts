@@ -24,7 +24,7 @@ import {
 } from "./override-constants";
 import { stampRestrictionOverrides, type StampTx } from "./restriction-override-stamps";
 import type { ChannelPrincipal } from "./selling-restrictions.core";
-import type { StaffBreachDetail, StaffBreachRule } from "./staff-breaches";
+import { breachKeys, type StaffBreachDetail, type StaffBreachRule } from "./staff-breaches";
 
 /**
  * Row 510: the warning-and-override protocol for a STAFF sale of a restricted product.
@@ -40,8 +40,10 @@ import type { StaffBreachDetail, StaffBreachRule } from "./staff-breaches";
  * `restriction-override-stamps.ts`. This file is the ONLY place a RESTRICTION_WARNING body is built (a pin).
  *
  * Coverage (sticky): a breached product is COVERED, and never warns, when a live line of it already on the document
- * carries a stamp whose rule ids are a superset of the product's current breach rule ids. A new rule id, or a product
- * the document does not hold (an add, a swap), is UNCOVERED. A decrease or removal is never judged by the engine.
+ * carries a stamp whose keys are a superset of the product's current breach keys (`breachKeys`: one `ruleId:STATE` per
+ * rule, STATE the state the sale is judged at, `UNKNOWN` when unresolved). A new rule id, the same rule at ANOTHER state
+ * (a store sale that becomes a delivery, an unresolved sale whose customer gets an address), or a product the document
+ * does not hold (an add, a swap), is UNCOVERED. A decrease or removal is never judged by the engine.
  */
 
 export type LineKey = string;
@@ -76,6 +78,7 @@ export interface StampPlan {
   productId: string;
   /** Trimmed, 3..200 characters, not formula-led. */
   reason: string;
+  /** The stamp keys, sorted: `ruleId:STATE` per rule (`staff-breaches.ts` `breachKeys`). Stored as-is. */
   ruleIds: string[];
 }
 
@@ -180,7 +183,8 @@ const hashOfRows = (rows: readonly WarningRow[], customerId: string | null, basi
       lineKey: r.lineKey,
       productId: r.breach.productId,
       outcome: r.breach.outcome,
-      ruleIds: r.breach.ruleIds,
+      // the state-qualified keys: an acknowledgement given at one judged state is not one for another
+      ruleIds: breachKeys(r.breach),
     })),
     customerId,
     basis,
@@ -199,7 +203,7 @@ function isCovered(breach: StaffBreachDetail, held: readonly HeldLine[]): boolea
       isLive(h) &&
       h.productId === breach.productId &&
       hasOverrideStamp(h) &&
-      isSuperset(h.restrictionOverrideRuleIds ?? [], breach.ruleIds),
+      isSuperset(h.restrictionOverrideRuleIds ?? [], breachKeys(breach)),
   );
 }
 
@@ -452,7 +456,7 @@ export function decideStaffWrite(p: DecideParams): StaffWriteDecision {
       lineKey: r.lineKey,
       productId: r.breach.productId,
       reason: given.get(r.lineKey)!,
-      ruleIds: sortedIds(r.breach.ruleIds),
+      ruleIds: sortedIds(breachKeys(r.breach)),
     })),
   });
 }
