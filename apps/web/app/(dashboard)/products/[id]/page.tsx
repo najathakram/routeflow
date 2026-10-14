@@ -90,6 +90,11 @@ import { ProductUnitsCard } from "./ProductUnitsCard";
 import { ImageLightbox } from "./ImageLightbox";
 import { objectPositionForUrl, type FocalPoint } from "@/lib/image-focal";
 import { COMMON_UNITS } from "@/lib/common-units";
+import { editTierPatch, editTierPatchMoves } from "@/lib/product-tier-patch";
+
+/** Shown while editing when a list change will move tiers 2-5 on save (SA ruling 2026-10-14: never silent). */
+const TIERS_MOVE_NOTE =
+  "Tiers that matched the old list price (or sit above the new one) will move with it when you save.";
 
 // U-3a: no per-product label is read yet, so this page prints the default words.
 const UW = unitWords();
@@ -550,10 +555,8 @@ export default function ProductDetailPage() {
         category: draft.trackedCategoryId ? undefined : draft.category?.trim() || null,
         description: draft.description?.trim() || null,
         pricePerUnit: asDecimal(draft.pricePerUnit),
-        priceTier2: asDecimal(draft.priceTier2),
-        priceTier3: asDecimal(draft.priceTier3),
-        priceTier4: asDecimal(draft.priceTier4),
-        priceTier5: asDecimal(draft.priceTier5),
+        // Untouched tiers move with a list change exactly like the products list (applyLadderChange, audit 2026-10-14).
+        ...editTierPatch(product, draft),
         unitsPerBox: draft.unitsPerBox?.trim() ? parseInt(draft.unitsPerBox, 10) : null,
         // Regulated tags: value to set, null to clear (server auto-nulls the
         // category when the type is cleared).
@@ -745,10 +748,14 @@ export default function ProductDetailPage() {
           // Cleared fields fall back like the create branch — never send ""
           // (rejected by @IsDecimal).
           pricePerUnit: variantForm.price || String(product.pricePerUnit),
-          priceTier2: variantForm.priceTier2 || variantForm.price || undefined,
-          priceTier3: variantForm.priceTier3 || variantForm.price || undefined,
-          priceTier4: variantForm.priceTier4 || variantForm.price || undefined,
-          priceTier5: variantForm.priceTier5 || variantForm.price || undefined,
+          // Untouched tiers move with the variant's list change, the same rule as the products list (audit 2026-10-14).
+          ...editTierPatch(editingVariant as any, {
+            pricePerUnit: variantForm.price || String(editingVariant.pricePerUnit),
+            priceTier2: variantForm.priceTier2 || variantForm.price,
+            priceTier3: variantForm.priceTier3 || variantForm.price,
+            priceTier4: variantForm.priceTier4 || variantForm.price,
+            priceTier5: variantForm.priceTier5 || variantForm.price,
+          }),
         },
         {
           onSuccess: () => {
@@ -1911,6 +1918,13 @@ export default function ProductDetailPage() {
                       </button>
                     )}
                   </div>
+                  {isEditing &&
+                    Object.keys(editTierPatchMoves(product, editDraft as Record<string, string>))
+                      .length > 0 && (
+                      <p className="mb-2 text-xs text-navy/70" data-testid="tiers-move-note">
+                        {TIERS_MOVE_NOTE}
+                      </p>
+                    )}
                   <div className="grid grid-cols-1 gap-2 sm:grid-cols-4">
                     {(
                       [

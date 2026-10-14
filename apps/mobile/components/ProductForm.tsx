@@ -26,6 +26,7 @@ import {
   productFormFromValues,
   type ProductFormValues,
   type SubmitPayload,
+  listCommitTierPatch,
 } from "../lib/product-form";
 import { useTierLabels } from "../lib/api/tier-labels";
 import { tierLabel } from "../lib/tier-label";
@@ -83,6 +84,15 @@ export function ProductForm({
   // behavior and is never wired here.
   const tierFocusRef = React.useRef<Partial<Record<TierField, string>>>({});
   const [ladderNote, setLadderNote] = React.useState<string | null>(null);
+  // The list price moves tiers 2-5 on COMMIT by the same ladder rule (listCommitTierPatch, audit 2026-10-14). A tier
+  // typed in this session wins; the list's value at focus is the "old" list. The move is named in the same note.
+  const touchedTiersRef = React.useRef<Set<string>>(new Set());
+  const listFocusRef = React.useRef<string>("");
+  const onListEndEditing = (text: string) => {
+    const moved = listCommitTierPatch(listFocusRef.current, text, form, touchedTiersRef.current);
+    if (Object.keys(moved).length > 0) setForm((f) => ({ ...f, ...moved }));
+    setLadderNote(ladderChangeNote(moved, (n) => tierLabel(tierLabels, n)));
+  };
   const onTierFocus = (field: TierField) => {
     tierFocusRef.current[field] = form[field];
   };
@@ -415,6 +425,10 @@ export function ProductForm({
           <FormTextInput
             value={form.pricePerUnit}
             onChangeText={(v) => set("pricePerUnit", v)}
+            onFocus={() => {
+              listFocusRef.current = form.pricePerUnit;
+            }}
+            onEndEditing={(e) => onListEndEditing(e.nativeEvent.text)}
             placeholder="0.00"
             keyboardType="decimal-pad"
           />
@@ -422,7 +436,10 @@ export function ProductForm({
         <FormField label={`${tierLabel(tierLabels, 2)} price`}>
           <FormTextInput
             value={form.priceTier2}
-            onChangeText={(v) => set("priceTier2", v)}
+            onChangeText={(v) => {
+              touchedTiersRef.current.add("priceTier2");
+              set("priceTier2", v);
+            }}
             onFocus={() => onTierFocus("priceTier2")}
             onEndEditing={(e) => onTierEndEditing("priceTier2", e.nativeEvent.text)}
             placeholder="0.00"
@@ -432,7 +449,10 @@ export function ProductForm({
         <FormField label={`${tierLabel(tierLabels, 3)} price`}>
           <FormTextInput
             value={form.priceTier3}
-            onChangeText={(v) => set("priceTier3", v)}
+            onChangeText={(v) => {
+              touchedTiersRef.current.add("priceTier3");
+              set("priceTier3", v);
+            }}
             onFocus={() => onTierFocus("priceTier3")}
             onEndEditing={(e) => onTierEndEditing("priceTier3", e.nativeEvent.text)}
             placeholder="0.00"
@@ -442,7 +462,10 @@ export function ProductForm({
         <FormField label={`${tierLabel(tierLabels, 4)} price`}>
           <FormTextInput
             value={form.priceTier4}
-            onChangeText={(v) => set("priceTier4", v)}
+            onChangeText={(v) => {
+              touchedTiersRef.current.add("priceTier4");
+              set("priceTier4", v);
+            }}
             onFocus={() => onTierFocus("priceTier4")}
             onEndEditing={(e) => onTierEndEditing("priceTier4", e.nativeEvent.text)}
             placeholder="0.00"
@@ -452,7 +475,10 @@ export function ProductForm({
         <FormField label={`${tierLabel(tierLabels, 5)} price`}>
           <FormTextInput
             value={form.priceTier5}
-            onChangeText={(v) => set("priceTier5", v)}
+            onChangeText={(v) => {
+              touchedTiersRef.current.add("priceTier5");
+              set("priceTier5", v);
+            }}
             onFocus={() => onTierFocus("priceTier5")}
             onEndEditing={(e) => onTierEndEditing("priceTier5", e.nativeEvent.text)}
             placeholder="0.00"
