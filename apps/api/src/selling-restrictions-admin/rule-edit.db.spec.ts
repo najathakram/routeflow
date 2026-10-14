@@ -705,26 +705,67 @@ describeDb("row 509 PR3: edit a rule in place, with history — real Postgres", 
     expect((await preview(rule.id, { effectiveTo: sooner })).impact.openOrders).toBe(0);
   });
 
-  it("SHOULD (b): the impact scan is bounded: past the cap it is a coded 409, never a 500", async () => {
+  it("SHOULD (b): the scan is bounded, never the edit: past the cap preview says capped and the commit goes through", async () => {
     const rule = await mkRule();
     const withCap = (scanCap: number) =>
       Object.assign(new RuleEditService(prisma, engine, new ProductLabelsService(prisma)), {
         scanCap,
       });
     const capped = withCap(3);
+    for (let i = 0; i < 5; i++) await mkOrder(cust.ca, "a", "PENDING");
+    const pre = await as(() => capped.preview(rule.id, body({ states: ["TX", "CA"] }), admin));
+    expect(pre.impact.capped).toBe(true);
+    // counting stopped at the cap: the numbers are lower bounds
+    expect(pre.impact.openOrders).toBeGreaterThan(0);
+    expect(pre.impact.openOrders + pre.impact.drafts).toBeLessThanOrEqual(3);
+
+    // one more matching order after the preview: a capped hash does not depend on the ids
+    await mkOrder(cust.ca, "a", "PENDING");
+    const out = await as(() =>
+      capped.commit(rule.id, commitBody(1, pre.impactHash, { states: ["TX", "CA"] }), admin),
+    );
+    expect(out.revision).toBe(2);
+    expect((await ruleRow(rule.id)).states).toEqual(["TX", "CA"]);
+
+    // a capped hash still covers the settings: confirming a different edit is RULE_IMPACT_CHANGED
+    const again = await as(() =>
+      capped.preview(rule.id, body({ states: ["TX", "CA", "NY"] }), admin),
+    );
+    expect(again.impact.capped).toBe(true);
+    expect(
+      await refusal(() =>
+        as(() =>
+          capped.commit(
+            rule.id,
+            commitBody(2, again.impactHash, { states: ["TX", "CA", "FL"] }),
+            admin,
+          ),
+        ),
+      ),
+    ).toEqual({ status: 409, code: "RULE_IMPACT_CHANGED" });
+  });
+
+  it("an uncapped preview carries no capped flag and still hashes the exact ids", async () => {
+    const rule = await mkRule();
+    await mkOrder(cust.ca, "a", "PENDING");
+    const pre = await preview(rule.id, { states: ["TX", "CA"] });
+    expect(pre.impact).toEqual({ openOrders: 1, drafts: 0 });
+    expect("capped" in pre.impact).toBe(false);
+    await mkOrder(cust.ca, "a", "PENDING");
+    expect(
+      await refusal(() => commit(rule.id, 1, pre.impactHash, { states: ["TX", "CA"] })),
+    ).toEqual({ status: 409, code: "RULE_IMPACT_CHANGED" });
+  });
+
+  it("a loosening edit never scans, so it is never capped", async () => {
+    const both = await mkRule({ states: ["TX", "CA"] });
     for (let i = 0; i < 4; i++) await mkOrder(cust.ca, "a", "PENDING");
-    expect(
-      await refusal(() => as(() => capped.preview(rule.id, body({ states: ["TX", "CA"] }), admin))),
-    ).toEqual({ status: 409, code: "RULE_IMPACT_TOO_LARGE" });
-    // within the cap it answers; a loosening edit never scans
-    const ok = withCap(4);
-    expect(
-      (await as(() => ok.preview(rule.id, body({ states: ["TX", "CA"] }), admin))).impact
-        .openOrders,
-    ).toBe(4);
-    expect(
-      await refusal(() => as(() => capped.preview(rule.id, body({ states: ["TX"] }), admin))),
-    ).toBeNull();
+    const capped = Object.assign(
+      new RuleEditService(prisma, engine, new ProductLabelsService(prisma)),
+      { scanCap: 2 },
+    );
+    const pre = await as(() => capped.preview(both.id, body({ states: ["TX"] }), admin));
+    expect(pre.impact).toEqual({ openOrders: 0, drafts: 0 });
   });
 
   // ─── the migration's backfill ────────────────────────────────────────────────────────────────
