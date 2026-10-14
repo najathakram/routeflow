@@ -98,6 +98,12 @@ const BASELINE: Record<string, number> = {
   // reaches it (B655's SA ruling). Count-pinned rather than exempted, so a second read here
   // still fails the build.
   "orders/change-requests.service.ts": 1,
+  // Row 497 (#3437): the buyer full-replace keeps a staff price override only while the line's OWN pack snapshot
+  // still equals the LIVE pack, so it reads the live pack twice (the batch filter's productMap lookup and the
+  // per-line keptOverrideFor guard) purely to COMPARE. It derives no line factor, quantity or price and writes no
+  // pack. Count-pinned rather than exempted, so a third read still fails the build. (Train S2: this ratchet
+  // landed on master after #3437 branched.)
+  "orders/buyer-replace-keep.ts": 2,
 };
 
 // Files that legitimately read a product's pack and are not line writers.
