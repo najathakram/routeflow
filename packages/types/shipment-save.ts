@@ -9,9 +9,10 @@ export interface StoredShipment {
 
 /**
  * What saving the Shipment form does (M8), ONE rule for web `ShipmentCard` and the mobile edit modal so they
- * cannot drift. The tracking number decides whether a shipment exists: a number saves it (with the carrier
- * chosen); no number (a carrier alone included) clears a stored shipment, and changes nothing when none is
- * stored, so the caller makes no request and shows no toast. `payload` is the exact PATCH body, or null.
+ * cannot drift. A carrier and/or a tracking number saves (a carrier alone is a real shipment: it is never
+ * dropped, and a legacy carrier-only row is never cleared by a save). Both empty clears a stored shipment, and
+ * changes nothing when none is stored, so the caller makes no request and shows no toast. `payload` is the
+ * exact PATCH body, or null.
  */
 export function shipmentSaveDecision(
   stored: StoredShipment,
@@ -21,12 +22,10 @@ export function shipmentSaveDecision(
   outcome: "saved" | "cleared" | "nothing";
   payload: { shippingCarrier: string; shippingTrackingNumber: string } | null;
 } {
+  const c = carrier.trim();
   const tracking = trackingNumber.trim();
-  if (tracking) {
-    return {
-      outcome: "saved",
-      payload: { shippingCarrier: carrier.trim(), shippingTrackingNumber: tracking },
-    };
+  if (c || tracking) {
+    return { outcome: "saved", payload: { shippingCarrier: c, shippingTrackingNumber: tracking } };
   }
   const hadStored = !!(stored.shippingCarrier?.trim() || stored.shippingTrackingNumber?.trim());
   return hadStored
@@ -35,7 +34,7 @@ export function shipmentSaveDecision(
 }
 
 /**
- * The line under saved tracking on a SHIP order that has not shipped. Saving tracking never ships the order.
+ * The line under a saved shipment (a carrier and/or tracking number) on a SHIP order that has not shipped. Saving tracking never ships the order.
  * The "customer is told" clause is only true while the order-shipped notification is on for the account.
  */
 export const notShippedNote = (customerNotified?: boolean): string =>

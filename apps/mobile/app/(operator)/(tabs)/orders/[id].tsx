@@ -1022,6 +1022,7 @@ export default function OrderDetailScreen() {
                 order.fulfillPath,
                 order.status,
                 order.shippingTrackingNumber,
+                order.shippingCarrier,
               )}
               onEdit={() => setShipmentModal(true)}
             />

@@ -2717,6 +2717,26 @@ export default function OrderDetailPage() {
                   </Button>
                 </ActionTier>
               )}
+            </>
+          )}
+
+          {/* POS mode: one primary per state (Create invoice -> Hand over -> Record payment / Print). */}
+          {isPos && access.staff && !isEditing && (
+            <PosOrderActions
+              order={order}
+              orderId={order.id}
+              status={localStatus}
+              onHandOver={() => setPickupOpen(true)}
+              onReadyForPickup={handleMarkShipped}
+              readyPending={updateStatus.isPending}
+              moveOptions={posMoveOptions(staffFulfilment.formMethods, staffFulfilment.formDefault)}
+              onMove={setPendingPath}
+            />
+          )}
+
+          {/* PENDING danger tier (Cancel, Delete): after the POS path moves so Delete is always last. */}
+          {localStatus === "PENDING" && !isEditing && (
+            <>
               <ActionTier tier="danger">
                 {access.cancel && (
                   <CancelOrderButton
@@ -2768,20 +2788,6 @@ export default function OrderDetailPage() {
                   ))}
               </ActionTier>
             </>
-          )}
-
-          {/* POS mode: one primary per state (Create invoice -> Hand over -> Record payment / Print). */}
-          {isPos && access.staff && !isEditing && (
-            <PosOrderActions
-              order={order}
-              orderId={order.id}
-              status={localStatus}
-              onHandOver={() => setPickupOpen(true)}
-              onReadyForPickup={handleMarkShipped}
-              readyPending={updateStatus.isPending}
-              moveOptions={posMoveOptions(staffFulfilment.formMethods, staffFulfilment.formDefault)}
-              onMove={setPendingPath}
-            />
           )}
 
           {/* CONFIRMED actions */}

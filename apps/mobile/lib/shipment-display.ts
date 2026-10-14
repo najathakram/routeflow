@@ -17,8 +17,8 @@ export function shipmentForDisplay<T extends { shippedAt?: string | null }>(
 }
 
 /**
- * Saved tracking on a carrier (SHIP) order that has not shipped: saving tracking never ships the
- * order, "Mark shipped" does. Null once shipped or cancelled, off a SHIP order, or with no tracking.
+ * A saved shipment (carrier and/or tracking) on a carrier (SHIP) order that has not shipped: saving tracking never ships the
+ * order, "Mark shipped" does. Null once shipped or cancelled, off a SHIP order, or with nothing recorded.
  * The wording is shared with web (`notShippedNote`); mobile has no notification setting to read, so it
  * never claims the customer is told.
  */
@@ -26,8 +26,10 @@ export function shipmentNotShippedNote(
   fulfillPath: string | null | undefined,
   orderStatus: string | null | undefined,
   trackingNumber: string | null | undefined,
+  carrier?: string | null,
 ): string | null {
-  if (fulfillPath !== "SHIP" || !orderStatus || !trackingNumber?.trim()) return null;
+  if (fulfillPath !== "SHIP" || !orderStatus) return null;
+  if (!trackingNumber?.trim() && !carrier?.trim()) return null;
   if (isShippedOrderStatus(orderStatus) || orderStatus === "CANCELLED") return null;
   return notShippedNote(false);
 }

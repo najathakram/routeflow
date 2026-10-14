@@ -130,36 +130,41 @@ export function PosOrderActions({
   const invoices = invoicesOf(order);
   const firstInvoice = invoices[0];
 
-  const switchToDelivery = (
-    <>
-      {moveOptions.delivery && (
-        <ActionTier tier="secondary">
-          <Button
-            size="sm"
-            className="h-11"
-            variant="secondary"
-            leftIcon={<Truck className="h-4 w-4" />}
-            onClick={() => moveOptions.delivery && onMove(moveOptions.delivery)}
-          >
-            {POS_COPY.switchToDelivery}
-          </Button>
-        </ActionTier>
-      )}
-      {moveOptions.ship && (
-        <ActionTier tier="secondary">
-          <Button
-            size="sm"
-            className="h-11"
-            variant="secondary"
-            leftIcon={<Package className="h-4 w-4" />}
-            onClick={() => onMove("SHIP")}
-          >
-            {POS_COPY.shipByCarrier}
-          </Button>
-        </ActionTier>
-      )}
-    </>
-  );
+  // ONE wrap unit: the path moves sit in a single flex group that is full width below md, so on a phone they
+  // wrap together on their own row (never one of them beside Delete, which the page renders after this).
+  const switchToDelivery =
+    moveOptions.delivery || moveOptions.ship ? (
+      <ActionTier tier="secondary">
+        <div
+          role="group"
+          aria-label="Move this order off pickup"
+          className="flex flex-wrap items-center gap-2 max-md:w-full"
+        >
+          {moveOptions.delivery && (
+            <Button
+              size="sm"
+              className="h-11"
+              variant="secondary"
+              leftIcon={<Truck className="h-4 w-4" />}
+              onClick={() => moveOptions.delivery && onMove(moveOptions.delivery)}
+            >
+              {POS_COPY.switchToDelivery}
+            </Button>
+          )}
+          {moveOptions.ship && (
+            <Button
+              size="sm"
+              className="h-11"
+              variant="secondary"
+              leftIcon={<Package className="h-4 w-4" />}
+              onClick={() => onMove("SHIP")}
+            >
+              {POS_COPY.shipByCarrier}
+            </Button>
+          )}
+        </div>
+      </ActionTier>
+    ) : null;
 
   if (status === "PENDING") return switchToDelivery;
 

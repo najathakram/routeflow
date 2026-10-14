@@ -56,12 +56,14 @@ export function ShipmentCard({
   const [editOpen, setEditOpen] = React.useState(false);
   // Local form state for the dialog. `carrier` defaults to UPS so the select is
   // never blank; the tracking number drives whether a shipment exists at all.
-  const [formCarrier, setFormCarrier] = React.useState<string>(carrier || CARRIERS[0].id);
+  const [formCarrier, setFormCarrier] = React.useState<string>(carrier ?? "");
   const [formTracking, setFormTracking] = React.useState<string>(trackingNumber ?? "");
 
   const hasTracking = !!(trackingNumber && trackingNumber.trim());
+  // A carrier alone is a shipment too (it saves, and a legacy carrier-only row keeps showing).
+  const hasShipment = hasTracking || !!carrier?.trim();
   const notShippedYet =
-    hasTracking &&
+    hasShipment &&
     fulfillPath === "SHIP" &&
     !!orderStatus &&
     !isShippedOrderStatus(orderStatus) &&
@@ -69,7 +71,7 @@ export function ShipmentCard({
   const trackUrl = getTrackingUrl(carrier, trackingNumber);
 
   function openEdit() {
-    setFormCarrier(carrier || CARRIERS[0].id);
+    setFormCarrier(carrier ?? "");
     setFormTracking(trackingNumber ?? "");
     setEditOpen(true);
   }
@@ -106,13 +108,13 @@ export function ShipmentCard({
   return (
     <>
       <Card title="Shipment">
-        {hasTracking ? (
+        {hasShipment ? (
           <div className="space-y-3">
             <div className="flex items-start gap-2">
               <Truck className="mt-0.5 h-4 w-4 shrink-0 text-navy/70" />
               <div className="min-w-0">
                 <p className="text-sm font-medium text-navy">{carrierLabel(carrier)}</p>
-                {trackUrl ? (
+                {!hasTracking ? null : trackUrl ? (
                   <a
                     href={trackUrl}
                     target="_blank"
@@ -193,6 +195,11 @@ export function ShipmentCard({
                 "focus:border-transparent focus:outline-none focus:ring-2 focus:ring-brand-500",
               )}
             >
+              <option value="">No carrier</option>
+              {formCarrier && !CARRIERS.some((c) => c.id === formCarrier) && (
+                // A stored carrier that is not a picker id (a label or a custom courier): keep it selectable.
+                <option value={formCarrier}>{carrierLabel(formCarrier)}</option>
+              )}
               {CARRIERS.map((c) => (
                 <option key={c.id} value={c.id}>
                   {c.label}
@@ -205,7 +212,11 @@ export function ShipmentCard({
             <input
               type="text"
               value={formTracking}
-              onChange={(e) => setFormTracking(e.target.value)}
+              onChange={(e) => {
+                setFormTracking(e.target.value);
+                // A number needs a carrier to link to: preselect the first when none is chosen yet.
+                if (e.target.value.trim() && !formCarrier) setFormCarrier(CARRIERS[0].id);
+              }}
               placeholder="e.g. 1Z999AA10123456784"
               className={cn(
                 "h-10 w-full rounded border border-surface-border bg-white px-3 text-sm text-navy placeholder:text-navy/40",
@@ -213,7 +224,7 @@ export function ShipmentCard({
               )}
             />
             <p className="text-xs text-navy/50">
-              Leave the tracking number empty and save to clear the shipment.
+              To clear the shipment, empty the tracking number and choose No carrier.
             </p>
           </div>
         </div>

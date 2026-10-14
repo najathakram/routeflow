@@ -32,28 +32,38 @@ import { shipmentSaveDecision } from "@routeflow/types/shipment-save";
 // The SAME table is pinned on web in apps/web/components/ShipmentCard.test.tsx (carrier-only saves, M8):
 // both apps call this one rule, so a carrier alone behaves the same on both.
 describe("shipmentSaveDecision (M8c, shared with web)", () => {
-  it("blank over nothing stored changes nothing: no request, no 'cleared'", () => {
+  it("both empty over nothing stored: nothing (no request, no toast)", () => {
     expect(shipmentSaveDecision({}, "", "")).toEqual({ outcome: "nothing", payload: null });
     expect(
       shipmentSaveDecision({ shippingCarrier: null, shippingTrackingNumber: " " }, " ", ""),
     ).toEqual({ outcome: "nothing", payload: null });
   });
-  it("carrier only (no number) over nothing stored is also nothing", () => {
-    expect(shipmentSaveDecision({}, "UPS", "")).toEqual({ outcome: "nothing", payload: null });
-  });
-  it("blank, or a carrier alone, over a stored shipment clears it", () => {
+  it("both empty over a stored shipment clears it", () => {
     const cleared = {
       outcome: "cleared",
       payload: { shippingCarrier: "", shippingTrackingNumber: "" },
     };
     expect(shipmentSaveDecision({ shippingTrackingNumber: "1Z999" }, "", "")).toEqual(cleared);
-    expect(shipmentSaveDecision({ shippingCarrier: "UPS" }, "", "")).toEqual(cleared);
-    expect(shipmentSaveDecision({ shippingCarrier: "UPS" }, "FedEx", "  ")).toEqual(cleared);
+    expect(shipmentSaveDecision({ shippingCarrier: "UPS" }, " ", "  ")).toEqual(cleared);
   });
-  it("a tracking number saves it with the chosen carrier", () => {
+  it("a carrier alone saves, new or over a legacy carrier-only row (never cleared)", () => {
+    expect(shipmentSaveDecision({}, "UPS", "")).toEqual({
+      outcome: "saved",
+      payload: { shippingCarrier: "UPS", shippingTrackingNumber: "" },
+    });
+    expect(shipmentSaveDecision({ shippingCarrier: "UPS" }, "UPS", "")).toEqual({
+      outcome: "saved",
+      payload: { shippingCarrier: "UPS", shippingTrackingNumber: "" },
+    });
+  });
+  it("a tracking number saves with the chosen carrier", () => {
     expect(shipmentSaveDecision({}, "UPS", " 1Z999 ")).toEqual({
       outcome: "saved",
       payload: { shippingCarrier: "UPS", shippingTrackingNumber: "1Z999" },
+    });
+    expect(shipmentSaveDecision({}, "", "1Z999")).toEqual({
+      outcome: "saved",
+      payload: { shippingCarrier: "", shippingTrackingNumber: "1Z999" },
     });
   });
 });
@@ -68,9 +78,14 @@ describe("shipmentNotShippedNote (M8d)", () => {
   it.each(["OUT_FOR_DELIVERY", "DELIVERED", "CANCELLED"])("%s: no note", (s) => {
     expect(shipmentNotShippedNote("SHIP", s, "1Z999")).toBeNull();
   });
-  it("no tracking, not SHIP, or no status: no note", () => {
-    expect(shipmentNotShippedNote("SHIP", "PENDING", "")).toBeNull();
-    expect(shipmentNotShippedNote("ROUTE", "PENDING", "1Z999")).toBeNull();
-    expect(shipmentNotShippedNote("SHIP", undefined, "1Z999")).toBeNull();
+  it("a carrier-only shipment says it has not shipped yet too", () => {
+    expect(shipmentNotShippedNote("SHIP", "PENDING", "1Z999", "UPS")).toBe("Not shipped yet.");
+    expect(shipmentNotShippedNote("SHIP", "PENDING", "", "UPS")).toBe("Not shipped yet.");
+  });
+  it("nothing recorded, not SHIP, or no status: no note", () => {
+    expect(shipmentNotShippedNote("SHIP", "PENDING", "", "")).toBeNull();
+    expect(shipmentNotShippedNote("SHIP", "PENDING", null, null)).toBeNull();
+    expect(shipmentNotShippedNote("ROUTE", "PENDING", "1Z999", "UPS")).toBeNull();
+    expect(shipmentNotShippedNote("SHIP", undefined, "1Z999", "UPS")).toBeNull();
   });
 });

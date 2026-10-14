@@ -1,6 +1,7 @@
 import * as React from "react";
 import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { ToastProvider } from "@routeflow/ui/web";
+import { shipmentSaveDecision } from "@routeflow/types";
 import { ShipmentCard } from "./ShipmentCard";
 
 const SHIPPED_AT = "2026-06-20T12:00:00.000Z";
@@ -64,21 +65,49 @@ describe("ShipmentCard save feedback (M8c)", () => {
     expect(onSave).not.toHaveBeenCalled();
   });
 
-  it("removing a stored tracking number still saves and toasts 'Shipment cleared'", async () => {
+  const pickCarrier = (v: string) =>
+    fireEvent.change(screen.getByRole("combobox"), { target: { value: v } });
+
+  it("emptying BOTH the number and the carrier of a stored shipment clears it: 'Shipment cleared'", async () => {
     const onSave = editable({ carrier: "ups", trackingNumber: "1Z999" });
     fireEvent.click(screen.getByRole("button", { name: /Edit shipment/ }));
     fireEvent.change(screen.getByPlaceholderText(/1Z999AA/), { target: { value: "" } });
+    pickCarrier("");
     fireEvent.click(screen.getByRole("button", { name: "Save" }));
     expect(await screen.findByText("Shipment cleared")).toBeInTheDocument();
     expect(onSave).toHaveBeenCalledWith({ shippingCarrier: "", shippingTrackingNumber: "" });
   });
 
-  it("a carrier alone over a stored shipment clears it (same rule as mobile: the number decides)", async () => {
-    const onSave = editable({ carrier: "ups", trackingNumber: null });
+  it("a carrier alone SAVES on a new shipment (no tracking number needed)", async () => {
+    const onSave = editable({ carrier: null, trackingNumber: null });
     fireEvent.click(screen.getByRole("button", { name: /Add tracking/ }));
+    pickCarrier("fedex");
     fireEvent.click(screen.getByRole("button", { name: "Save" }));
-    expect(await screen.findByText("Shipment cleared")).toBeInTheDocument();
-    expect(onSave).toHaveBeenCalledWith({ shippingCarrier: "", shippingTrackingNumber: "" });
+    expect(await screen.findByText("Shipment saved")).toBeInTheDocument();
+    expect(onSave).toHaveBeenCalledWith({ shippingCarrier: "fedex", shippingTrackingNumber: "" });
+  });
+
+  it("a legacy carrier-only row shows as a shipment and a plain save KEEPS the carrier", async () => {
+    const onSave = editable({ carrier: "ups", trackingNumber: null });
+    expect(screen.queryByText("No carrier shipment recorded.")).toBeNull();
+    expect(screen.getByText("UPS")).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: /Edit shipment/ }));
+    fireEvent.click(screen.getByRole("button", { name: "Save" }));
+    expect(await screen.findByText("Shipment saved")).toBeInTheDocument();
+    expect(screen.queryByText("Shipment cleared")).toBeNull();
+    expect(onSave).toHaveBeenCalledWith({ shippingCarrier: "ups", shippingTrackingNumber: "" });
+  });
+
+  it("typing a tracking number selects UPS when no carrier is chosen yet", async () => {
+    const onSave = editable({ carrier: null, trackingNumber: null });
+    fireEvent.click(screen.getByRole("button", { name: /Add tracking/ }));
+    fireEvent.change(screen.getByPlaceholderText(/1Z999AA/), { target: { value: "1Z123" } });
+    fireEvent.click(screen.getByRole("button", { name: "Save" }));
+    await screen.findByText("Shipment saved");
+    expect(onSave).toHaveBeenCalledWith({
+      shippingCarrier: "ups",
+      shippingTrackingNumber: "1Z123",
+    });
   });
 
   it("a real tracking number toasts 'Shipment saved'", async () => {
@@ -132,8 +161,43 @@ describe("ShipmentCard says whether it has shipped (M8d)", () => {
     expect(screen.queryByText(/Not shipped yet/)).toBeNull();
   });
 
+  it("a carrier-only shipment on a SHIP order that has not shipped says so too", () => {
+    render(
+      <ToastProvider>
+        <ShipmentCard
+          carrier="ups"
+          trackingNumber={null}
+          orderStatus="PENDING"
+          fulfillPath="SHIP"
+          onSave={async () => undefined}
+        />
+      </ToastProvider>,
+    );
+    expect(screen.getByText(/^Not shipped yet\./)).toBeInTheDocument();
+  });
+
   it("no fulfillPath (invoice page) or a non-SHIP order: unchanged, no line", () => {
     withStatus("PENDING", null);
     expect(screen.queryByText(/Not shipped yet/)).toBeNull();
+  });
+});
+
+// The SAME three outcomes are pinned on mobile in apps/mobile/__tests__/shipment-display.test.ts: both apps
+// call this one rule.
+describe("shipmentSaveDecision (shared with mobile)", () => {
+  it("a carrier and/or a number saves; both empty clears a stored shipment or does nothing", () => {
+    expect(shipmentSaveDecision({}, "ups", "")).toEqual({
+      outcome: "saved",
+      payload: { shippingCarrier: "ups", shippingTrackingNumber: "" },
+    });
+    expect(shipmentSaveDecision({}, "", "1Z")).toEqual({
+      outcome: "saved",
+      payload: { shippingCarrier: "", shippingTrackingNumber: "1Z" },
+    });
+    expect(shipmentSaveDecision({ shippingCarrier: "ups" }, " ", " ")).toEqual({
+      outcome: "cleared",
+      payload: { shippingCarrier: "", shippingTrackingNumber: "" },
+    });
+    expect(shipmentSaveDecision({}, "", "")).toEqual({ outcome: "nothing", payload: null });
   });
 });
