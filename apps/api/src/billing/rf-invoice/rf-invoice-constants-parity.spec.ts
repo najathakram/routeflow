@@ -61,6 +61,13 @@ describe("rf-invoice constants parity", () => {
     );
   });
 
+  it("the partly-covered activation notice is registered with its label", () => {
+    expect(AdminAuditAction.RF_INVOICE_PARTLY_COVERED).toBe("RF_INVOICE_PARTLY_COVERED");
+    expect(ADMIN_AUDIT_ACTION_LABELS.RF_INVOICE_PARTLY_COVERED).toBe(
+      "RouteFlow invoice partly covered by manual activation",
+    );
+  });
+
   it("PR2 lifecycle audit codes are registered with their labels", () => {
     expect(AdminAuditAction.RF_INVOICE_MARKED_PAID).toBe("RF_INVOICE_MARKED_PAID");
     expect(AdminAuditAction.RF_INVOICE_REOPENED).toBe("RF_INVOICE_REOPENED");

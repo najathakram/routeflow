@@ -351,8 +351,15 @@ describe("OrdersService.create — selling restrictions call site (lane R 2a-5)"
   });
 
   it("a DRAFT is not a sale yet: never checked here (its promotion is the enforcement point)", async () => {
-    await service.create(input({ status: "DRAFT" }), {
-      ...customerPayload,
+    // F1(ii): a buyer can no longer start a draft at all; a staff draft is the case that skips the check.
+    prisma.customer.findUnique.mockResolvedValue({
+      id: "cust-1",
+      pricingTier: 1,
+      user: { status: "ACTIVE" },
+      deletedAt: null,
+    });
+    await service.create(input({ status: "DRAFT", customerId: "cust-1" }), {
+      ...operatorPayload,
       tenantId: "t-1",
     } as never);
     expect(restrictions.assertLinesSellable).not.toHaveBeenCalled();

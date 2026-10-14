@@ -587,7 +587,14 @@ const noneRemoved = (): Record<BucketKey, Set<string>> =>
  * "Customers without a state on file" (Addendum D): readiness as advice, fixed in place. Amber, never red; the card
  * loads its own data (no Check readiness gate) and rows leave the list as they are saved.
  */
-export function CustomersWithoutState({ canFix }: { canFix: boolean }) {
+export function CustomersWithoutState({
+  canFix,
+  staffOrdersChecked,
+}: {
+  canFix: boolean;
+  /** The tenant switch (`enabled`) the settings page already loaded; decides what the header promises. */
+  staffOrdersChecked: boolean;
+}) {
   const buckets = useUnknownStateBuckets();
   const refresh = useRefreshUnknownState();
   const gate = useReadOnlyGate();
@@ -649,7 +656,7 @@ export function CustomersWithoutState({ canFix }: { canFix: boolean }) {
               {total === 0 && !data?.truncated && (
                 <Check className="mr-1 inline h-4 w-4 text-success" aria-hidden />
               )}
-              {headerLine(total, data?.truncated === true)}
+              {headerLine(total, data?.truncated === true, staffOrdersChecked)}
             </p>
           )}
         </div>

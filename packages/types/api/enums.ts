@@ -570,3 +570,8 @@ export const OPERATOR_PERMISSION_GROUP_VALUES = [
   "REPORTS",
 ] as const;
 export type OperatorPermissionGroup = (typeof OPERATOR_PERMISSION_GROUP_VALUES)[number];
+
+// M11: the billing usage meters (Prisma `MeterKey`, returned by `GET /billing/usage`). The web
+// meter labels are keyed on this union, so a new server meter is a type error, not a raw key.
+export const METER_KEY_VALUES = ["SEATS", "ROUTES", "SCANS", "MSGS", "CUSTOMERS"] as const;
+export type MeterKey = (typeof METER_KEY_VALUES)[number];

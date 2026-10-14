@@ -8,7 +8,6 @@ import {
   LayoutGrid,
   LayoutList,
   Plus,
-  Trash2,
   X as XIcon,
   CheckSquare,
   Pencil,
@@ -54,6 +53,10 @@ import { deactivateFailureToast, isReadOnlyRefusal } from "@/lib/product-reactiv
 import { BulkDeleteSkipReport, type SkippedProduct } from "@/components/BulkDeleteSkipReport";
 import { ReadOnlyHint, WriteButton } from "@/lib/read-only-gate";
 import { ProductsExportButton } from "./_components/ProductsExportButton";
+import { RestrictMenu } from "@/components/restrictions/RestrictMenu";
+import { SelectAllMatching } from "@/components/restrictions/SelectAllMatching";
+import { OFF_PAGE_HINT, OFF_PAGE_HINT_ID } from "@/lib/rule-chooser";
+import { BulkDeleteButton, useOffPageSelection } from "@/components/restrictions/OffPageSelection";
 import {
   STOCK_FILTER_CHIPS,
   ProductStatusBadge,
@@ -1049,19 +1052,25 @@ export default function ProductsPage() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [page, debouncedSearch, categoryFilter, stockFilter, sectionFilter, pageSize, hiddenOnly]);
 
-  const {
-    data: result,
-    isLoading,
-    isError,
-  } = useProducts({
+  // The filters the list shows. "Select all matching" (row 509) fetches ids with THIS object, so the ids can never
+  // drift from the rows on screen.
+  const listFilters = {
     search: debouncedSearch,
     category: categoryFilter || undefined,
     ...stockFilterParams(stockFilter),
     section: sectionFilter || undefined,
     ...portalVisibleFilterParam(hiddenOnly),
+    includeVariants: true,
+  };
+
+  const {
+    data: result,
+    isLoading,
+    isError,
+  } = useProducts({
+    ...listFilters,
     page,
     limit: pageSize, // 0 = all
-    includeVariants: true,
   });
 
   // Separate unfiltered query just to populate the category dropdown — always fetches all
@@ -1096,6 +1105,23 @@ export default function ProductsPage() {
   // silently dropped any id selected on a different page/filter view.
   const productById = React.useMemo(() => new Map(filtered.map((p) => [p.id, p])), [filtered]);
 
+  // Row 509: "Select all matching" puts ids BEYOND this page in the selection. Derived from the ids themselves (not from
+  // the banner's state), so deselecting one visible row cannot turn the other actions back on for ids the operator
+  // cannot see. Only Restrict… may act on such a selection; every other bulk action is off, with a hint.
+  const { offPage: bannerSelected, hint: offPageHint } = useOffPageSelection(selected, (id) =>
+    productById.has(id),
+  );
+
+  // Names of the selected products this page holds (the rule editor labels its chips from them).
+  const selectedNames = React.useMemo(() => {
+    const out: Record<string, string> = {};
+    selected.forEach((id) => {
+      const name = productById.get(id)?.name;
+      if (name) out[id] = name;
+    });
+    return out;
+  }, [selected, productById]);
+
   const toggleOne = (id: string) =>
     setSelected((prev) => {
       const next = new Set(prev);
@@ -1114,6 +1140,7 @@ export default function ProductsPage() {
     });
 
   const handleBulkDelete = async () => {
+    if (bannerSelected) return;
     const ids = Array.from(selected);
     try {
       // R1's server contract is {deleted, softDeleted, skipped[]} (vendor-bills'
@@ -1386,16 +1413,41 @@ export default function ProductsPage() {
         </div>
       </div>
 
+      {/* Row 509 (owner Q5): "Select all N matching" - only under the toolbar, only in select mode. */}
+      {selectMode && (
+        <SelectAllMatching
+          filters={listFilters}
+          resetKey={[
+            page,
+            debouncedSearch,
+            categoryFilter,
+            stockFilter,
+            sectionFilter,
+            pageSize,
+            hiddenOnly,
+          ].join("|")}
+          selected={selected}
+          setSelected={setSelected}
+          pageIds={filteredIds}
+          total={totalItems}
+        />
+      )}
+
       {/* Selection action bar */}
       {selectMode && selected.size > 0 && (
         <div className="flex flex-wrap items-center justify-between gap-2 rounded-lg border border-brand-200 bg-brand-50 px-4 py-3">
           <span className="text-sm font-medium text-navy">
             {selected.size} item{selected.size !== 1 ? "s" : ""} selected
           </span>
+          {bannerSelected && (
+            <p id={OFF_PAGE_HINT_ID} className="basis-full text-xs text-navy/70">
+              {OFF_PAGE_HINT}
+            </p>
+          )}
           <div className="flex flex-wrap items-center gap-2">
             <button
               onClick={() => setSelected(new Set())}
-              className="text-sm text-navy/70 hover:text-navy transition-colors"
+              className="text-sm font-medium text-brand-600 hover:underline"
             >
               Deselect all
             </button>
@@ -1403,7 +1455,9 @@ export default function ProductsPage() {
               variant="secondary"
               leftIcon={<GitBranch className="h-4 w-4" />}
               onClick={() => setShowGroupAsVariants(true)}
-              disabled={selected.size < 1}
+              disabled={selected.size < 1 || bannerSelected}
+              title={offPageHint}
+              aria-describedby={bannerSelected ? OFF_PAGE_HINT_ID : undefined}
             >
               Group as variants of…
             </Button>
@@ -1412,26 +1466,40 @@ export default function ProductsPage() {
                 variant="secondary"
                 leftIcon={<Layers className="h-4 w-4" />}
                 onClick={() => setShowAssignToSection(true)}
-                disabled={selected.size < 1}
+                disabled={selected.size < 1 || bannerSelected}
+                title={offPageHint}
+                aria-describedby={bannerSelected ? OFF_PAGE_HINT_ID : undefined}
               >
                 Assign to type…
               </Button>
             )}
-            <PortalBulkButtons selected={selected} onDone={() => setSelected(new Set())} />
-            <PortalLimitButtons selected={selected} onDone={() => setSelected(new Set())} />
+            <PortalBulkButtons
+              selected={selected}
+              onDone={() => setSelected(new Set())}
+              offPageHint={offPageHint}
+            />
+            <PortalLimitButtons
+              selected={selected}
+              onDone={() => setSelected(new Set())}
+              offPageHint={offPageHint}
+            />
+            <RestrictMenu
+              selected={selected}
+              names={selectedNames}
+              onDone={() => setSelected(new Set())}
+            />
             {/* The destructive action sits apart, past a divider, never shoulder to shoulder with Limit in portal. */}
             <div
               data-testid="bulk-destructive"
               className="flex items-center sm:ml-2 sm:border-l sm:border-brand-200 sm:pl-4"
             >
-              <Button
-                variant="danger"
-                leftIcon={<Trash2 className="h-4 w-4" />}
+              <BulkDeleteButton
+                count={selected.size}
+                offPage={bannerSelected}
+                hint={offPageHint}
                 loading={bulkDelete.isPending}
                 onClick={() => setShowBulkDeleteConfirm(true)}
-              >
-                Delete {selected.size} item{selected.size !== 1 ? "s" : ""}
-              </Button>
+              />
             </div>
           </div>
         </div>

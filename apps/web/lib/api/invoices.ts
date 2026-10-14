@@ -20,6 +20,7 @@ import type {
   UpdateInvoiceItem,
 } from "@routeflow/types";
 import type { LocalErrorToastOption } from "@/lib/local-error-toast";
+import { keptDraftInvoiceId } from "@/lib/kept-draft-invoice";
 import type { HandOverSoldBy } from "@/lib/handover-stamp";
 
 // ─── Types ────────────────────────────────────────────────────────────────────
@@ -382,6 +383,10 @@ export function useCreateInvoice() {
   return useMutation<Invoice, Error, CreateInvoiceDto>({
     mutationFn: (dto) => apiClient.post("/invoices", dto).then((r) => r.data),
     onSuccess: () => qc.invalidateQueries({ queryKey: ["invoices"] }),
+    // Row 466: a send that failed after the draft committed still created an invoice.
+    onError: (err) => {
+      if (keptDraftInvoiceId(err)) qc.invalidateQueries({ queryKey: ["invoices"] });
+    },
   });
 }
 
@@ -405,7 +410,11 @@ export function useUpdateInvoice() {
   return useMutation<
     Invoice,
     Error,
-    { id: string } & Partial<Omit<CreateInvoiceDto, "items">> & { items?: UpdateInvoiceItem[] }
+    { id: string } & Partial<Omit<CreateInvoiceDto, "items">> & {
+        items?: UpdateInvoiceItem[];
+        /** H4: the invoice's `updatedAt` when the editor opened it; behind the server's it is 409 INVOICE_STALE. */
+        expectedUpdatedAt?: string;
+      }
   >({
     mutationFn: ({ id, ...dto }) => apiClient.patch(`/invoices/${id}`, dto).then((r) => r.data),
     onSuccess: (_, { id }) => {
@@ -971,6 +980,13 @@ export function useCreatePartialInvoiceFromOrder(options?: LocalErrorToastOption
       qc.invalidateQueries({ queryKey: ["invoices"] });
       qc.invalidateQueries({ queryKey: ["orders"] });
       qc.invalidateQueries({ queryKey: ["orders", orderId] });
+    },
+    // Row 466: a send that failed after the partial invoice committed still created it.
+    onError: (err, { orderId }) => {
+      if (keptDraftInvoiceId(err)) {
+        qc.invalidateQueries({ queryKey: ["invoices"] });
+        qc.invalidateQueries({ queryKey: ["orders", orderId] });
+      }
     },
   });
 }

@@ -39,7 +39,16 @@ import { decrementStockForSale } from "../orders/order-stock";
 import { resolveOversellAllowed } from "../orders/oversell-policy";
 import { PolicyOversellReader } from "../orders/policy-oversell-reader";
 import { assertSellableLines } from "../products/sellable-lines";
+import { RegulatedVisibilityService } from "../buyer/regulated-visibility.service";
+import { assertBuyerMayListProducts } from "./buyer-template-products";
+import { assertBuyerMayListRegulated } from "./buyer-template-regulated";
+import {
+  BUYER_TEMPLATE_PRODUCT_SELECT,
+  buyerTemplateReadContext,
+  toBuyerView,
+} from "./buyer-template-view";
 import { assertPositiveTemplateQty } from "./template-qty";
+import { authorMarkerOf, withAuthor } from "../orders/line-author-channel";
 import { assertMoneyInvariantsOrThrow } from "../common/money-invariants.util";
 import { isoWeekdayUtc, startOfUtcDay } from "../common/utc-day";
 import {
@@ -91,6 +100,8 @@ export class OrderTemplatesService {
     // WS9: the backorder policy reader behind resolveOversellAllowed (once per generated order, before
     // the transaction). Required (never @Optional): a missing provider is a DI error (L-247).
     private readonly oversellReader: PolicyOversellReader,
+    // The catalog's regulated-category gate, applied to a buyer's template reads and writes (row 479). Required.
+    private readonly regulated: RegulatedVisibilityService,
     // #2717 M3: the `mixed_packs` mode read; absent = off (no composition work).
     @Optional() private readonly featureConfig?: FeatureConfigService,
   ) {}
@@ -110,14 +121,33 @@ export class OrderTemplatesService {
     });
   }
 
+  /**
+   * The BUYER's own templates (portal list, standing orders). Staff keep `findAll`. Every line is judged by the ONE
+   * catalog rule (`isBuyerVisibleProduct` over this buyer's `buyerVisibilityFor` context, exactly as
+   * `BuyerCatalogService.getProductDetail`), and a line whose product the catalog would 404 is DROPPED from the
+   * response, so neither its name nor any other product detail leaves the server. The template row itself stays.
+   */
+  async findAllForBuyer(customerId: string) {
+    const templates = await this.prisma.forTenant().orderTemplate.findMany({
+      where: { customerId },
+      include: {
+        items: { include: { product: { select: BUYER_TEMPLATE_PRODUCT_SELECT } } },
+        customer: { select: { id: true, businessName: true } },
+      },
+      orderBy: { createdAt: "desc" },
+    });
+    const ctx = await this.buyerReadContext(customerId);
+    const data = templates.map((t) => toBuyerView(t, ctx));
+    return { data, meta: { total: data.length } };
+  }
+
   async findAllForUser(user: JwtPayload, customerId?: string) {
     if (user.role === "CUSTOMER") {
       const customer = await this.prisma
         .forTenant()
         .customer.findFirst({ where: { userId: user.sub } });
       if (!customer) return { data: [], meta: { total: 0 } };
-      const data = await this.findAll(customer.id);
-      return { data, meta: { total: data.length } };
+      return this.findAllForBuyer(customer.id);
     }
     const data = await this.findAll(customerId);
     return { data, meta: { total: data.length } };
@@ -137,7 +167,12 @@ export class OrderTemplatesService {
     return template;
   }
 
-  async findOneForUser(id: string, user: JwtPayload) {
+  /**
+   * 404 for a missing template, 403 for a CUSTOMER who does not own it; returns the staff-shaped row. The mutation and
+   * generate paths use this (they read ids, qty and ownership, never a name for a response); the READ endpoint is
+   * `findOneForUser`, which adds the buyer filter.
+   */
+  private async assertTemplateAccess(id: string, user: JwtPayload) {
     const template = await this.findOne(id);
     if (user.role === "CUSTOMER") {
       const customer = await this.prisma
@@ -148,6 +183,44 @@ export class OrderTemplatesService {
     return template;
   }
 
+  async findOneForUser(id: string, user: JwtPayload) {
+    const owned = await this.assertTemplateAccess(id, user);
+    if (user.role !== "CUSTOMER") return owned;
+    // A buyer's read: re-load with the visibility facts, judge each line by the catalog rule, drop the hidden ones.
+    const template = await this.prisma.forTenant().orderTemplate.findUnique({
+      where: { id },
+      include: {
+        items: { include: { product: { select: BUYER_TEMPLATE_PRODUCT_SELECT } } },
+        customer: { select: { id: true, businessName: true } },
+      },
+    });
+    if (!template) throw new NotFoundException("Order template not found");
+    return toBuyerView(template, await this.buyerReadContext(owned.customerId));
+  }
+
+  /** The catalog rules a buyer's request is judged by: the portal context and the locked regulated categories. */
+  private buyerReadContext(customerId: string) {
+    return buyerTemplateReadContext(
+      { restrictions: this.sellingRestrictions, regulated: this.regulated },
+      this.prisma.getTenantId(),
+      customerId,
+    );
+  }
+
+  /** The buyer write gate: the same 404 for a hidden, regulated-locked, or missing product; nothing is stored first. */
+  private async assertBuyerMayList(customerId: string, productIds: readonly string[]) {
+    await assertBuyerMayListProducts(
+      { prisma: this.prisma, restrictions: this.sellingRestrictions },
+      customerId,
+      productIds,
+    );
+    await assertBuyerMayListRegulated(
+      { prisma: this.prisma, regulated: this.regulated },
+      customerId,
+      productIds,
+    );
+  }
+
   async createForUser(dto: CreateOrderTemplateDto, user: JwtPayload) {
     if (user.role === "CUSTOMER") {
       const customer = await this.prisma
@@ -155,6 +228,12 @@ export class OrderTemplatesService {
         .customer.findFirst({ where: { userId: user.sub } });
       if (!customer) throw new ForbiddenException();
       dto.customerId = customer.id;
+      await this.assertBuyerMayList(
+        customer.id,
+        (dto.items ?? []).map((i) => i.productId),
+      );
+      const created = await this.create(dto, { role: user.role, userId: user.sub });
+      return this.findOneForUser(created.id, user); // the buyer-filtered read (row 479)
     }
     return this.create(dto, { role: user.role, userId: user.sub });
   }
@@ -166,8 +245,15 @@ export class OrderTemplatesService {
         .forTenant()
         .customer.findFirst({ where: { userId: user.sub } });
       if (!customer || template.customerId !== customer.id) throw new ForbiddenException();
+      if (dto.items)
+        await this.assertBuyerMayList(
+          customer.id,
+          dto.items.map((i) => i.productId),
+        );
     }
-    return this.update(id, dto, { role: user.role, userId: user.sub });
+    const updated = await this.update(id, dto, { role: user.role, userId: user.sub });
+    // A buyer's answer is the buyer-filtered read, never the staff-shaped write result (row 479).
+    return user.role === "CUSTOMER" ? this.findOneForUser(id, user) : updated;
   }
 
   async removeForUser(id: string, user: JwtPayload) {
@@ -465,23 +551,25 @@ export class OrderTemplatesService {
   // ─── SECURITY (F2-003): ownership-enforced wrappers ──────────────────────────
   // The customer-reachable item-removal and order-generation endpoints previously
   // had no role guard and no ownership check, letting any CUSTOMER edit/generate
-  // from ANOTHER customer's template. findOneForUser() throws for a non-owner.
+  // from ANOTHER customer's template. assertTemplateAccess() throws for a non-owner.
 
   // B133: every mutation on the controller goes through an ownership wrapper. For
   // OPERATOR this is a pass-through today (the ownership branch is CUSTOMER-only);
   // its value is uniformity — a future CUSTOMER grant on addItem cannot ship unguarded.
   async addItemForUser(templateId: string, dto: AddTemplateItemDto, user: JwtPayload) {
-    await this.findOneForUser(templateId, user);
+    const template = await this.assertTemplateAccess(templateId, user);
+    if (user.role === "CUSTOMER")
+      await this.assertBuyerMayList(template.customerId, [dto.productId]);
     return this.addItem(templateId, dto, { role: user.role });
   }
 
   async removeItemForUser(templateId: string, itemId: string, user: JwtPayload) {
-    await this.findOneForUser(templateId, user);
+    await this.assertTemplateAccess(templateId, user);
     return this.removeItem(templateId, itemId, { role: user.role });
   }
 
   async generateOrderForUser(templateId: string, user: JwtPayload) {
-    const template = await this.findOneForUser(templateId, user);
+    const template = await this.assertTemplateAccess(templateId, user);
     // #1208 review LOW-MED: POST :id/generate is open to CUSTOMER (controller); a buyer's own
     // "Reorder" must not oversell where their own checkout would 409. WS9: the policy is resolved
     // ONCE here, before the run's transaction (source "buyer" for a CUSTOMER, "staff_entry" else).
@@ -990,12 +1078,17 @@ export class OrderTemplatesService {
           return prior;
         }
       }
+      const authorChannel = authorMarkerOf(channel); // SA ruling (#3418): the run's judged channel
       const order = await tx.order.create({
         data: {
           customerId: template.customerId,
           templateId: template.id,
           fulfillPath,
           orderNumber,
+          // Unattended run: no principal creates it, and the template's author is judged per line
+          // (leastPrivilegedAuthor), so the recorded source is the stricter, buyer side (the column default, explicit).
+          source: "APP",
+          sourceRecorded: true, // F1(i): the source above is deliberate, not the column default
           subtotal,
           tax,
           total,
@@ -1003,7 +1096,9 @@ export class OrderTemplatesService {
           requestedDeliveryDate: today,
           // Denormalized flag — true when any (allowed) line is regulated.
           hasRegulated: lineItemsData.some((li) => li.trackedCategoryId != null),
-          lineItems: { create: lineItemsData },
+          // SA ruling (#3418): each line's explicit author marker: the channel this run is judged on (the least
+          // privileged of the template's creator and last editor when unattended; the caller's role otherwise).
+          lineItems: { create: withAuthor(lineItemsData, authorChannel) },
         },
         include: GENERATED_ORDER_INCLUDE,
       });

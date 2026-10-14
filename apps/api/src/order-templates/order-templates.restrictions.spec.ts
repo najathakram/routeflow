@@ -19,6 +19,7 @@ jest.mock("../common/db-locks", () => ({
  *    lift is its own audited action.
  * The choke point itself is proven in `selling-restrictions.service.spec.ts`.
  */
+import { regulatedGateOpenProvider } from "./testing/regulated-gate-open-provider";
 import { oversellReaderOffProvider } from "../orders/testing/policy-reader-provider";
 import { Test } from "@nestjs/testing";
 import { BadRequestException, ConflictException } from "@nestjs/common";
@@ -95,6 +96,7 @@ describe("OrderTemplatesService — selling restrictions (F-05)", () => {
       providers: [
         oversellReaderOffProvider,
         OrderTemplatesService,
+        regulatedGateOpenProvider,
         { provide: PrismaService, useValue: prisma },
         { provide: TenantContextService, useValue: { run: jest.fn((_i, fn) => fn()) } },
         { provide: SystemConfigService, useValue: { get: jest.fn().mockResolvedValue("10") } },
@@ -428,6 +430,31 @@ describe("OrderTemplatesService — selling restrictions (F-05)", () => {
       expect(restrictions.assertLinesSellable).toHaveBeenCalledWith(
         expect.objectContaining({ lines: [{ productId: "p-banned" }, { productId: "p-ok" }] }),
       );
+    });
+  });
+
+  describe("SA ruling (#3418): every generated line carries its explicit author marker", () => {
+    const markers = () =>
+      prisma.order.create.mock.calls[0][0].data.lineItems.create.map((l: any) => l.authorChannel);
+
+    it("a STAFF manual run writes STAFF on each line", async () => {
+      await service.generateOrder("t1", true);
+      expect(markers()).toEqual(["STAFF", "STAFF"]);
+    });
+
+    it("a buyer's manual run (reorder) writes BUYER on each line", async () => {
+      await service.generateOrder("t1", false);
+      expect(markers()).toEqual(["BUYER", "BUYER"]);
+    });
+
+    it("the unattended run writes the least privileged author: STAFF for a staff-only template", async () => {
+      await run(template({ createdByRole: "OPERATOR", itemsEditedByRole: "OPERATOR" }));
+      expect(markers()).toEqual(["STAFF", "STAFF"]);
+    });
+
+    it("the unattended run writes BUYER once a buyer edited the template (or the author is unknown)", async () => {
+      await run(template({ createdByRole: "OPERATOR", itemsEditedByRole: "CUSTOMER" }));
+      expect(markers()).toEqual(["BUYER", "BUYER"]);
     });
   });
 

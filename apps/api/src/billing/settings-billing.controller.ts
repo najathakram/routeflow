@@ -147,6 +147,7 @@ export class SettingsBillingController {
   }
 
   @Get("export")
+  @Roles(UserRole.TENANT_ADMIN)
   @ApiOperation({ summary: "Export billing data (works while READ_ONLY)" })
   export(@CurrentUser() user: AuthUser) {
     return this.subscription.getExport(this.tenantIdOf(user));
@@ -276,7 +277,13 @@ export class SettingsBillingController {
     @Param("sku") sku: string,
     @Body() dto: EnableAddonDto,
   ) {
-    return this.mutations.enableAddon(this.tenantIdOf(user), sku, dto.quantity, user.sub);
+    return this.mutations.enableAddon(
+      this.tenantIdOf(user),
+      sku,
+      dto.quantity,
+      user.sub,
+      dto.expectedQuantity,
+    );
   }
 
   @Post("addons/:sku/disable")

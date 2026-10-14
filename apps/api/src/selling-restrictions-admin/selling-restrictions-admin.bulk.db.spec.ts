@@ -97,6 +97,7 @@ describeDb("selling-restriction bulk create against real Postgres", () => {
     for (const t of [tenantA, tenantB].filter(Boolean)) {
       await raw.auditLog.deleteMany({ where: { tenantId: t } });
       await raw.sellingRestrictionTarget.deleteMany({ where: { tenantId: t } });
+      await raw.sellingRestrictionRevision.deleteMany({ where: { tenantId: t } });
       await raw.sellingRestriction.deleteMany({ where: { tenantId: t } });
       await raw.productCategoryLabel.deleteMany({ where: { tenantId: t } });
       await raw.product.deleteMany({ where: { tenantId: t, parentProductId: { not: null } } });
@@ -114,6 +115,7 @@ describeDb("selling-restriction bulk create against real Postgres", () => {
     for (const t of [tenantA, tenantB]) {
       await raw.auditLog.deleteMany({ where: { tenantId: t } });
       await raw.sellingRestrictionTarget.deleteMany({ where: { tenantId: t } });
+      await raw.sellingRestrictionRevision.deleteMany({ where: { tenantId: t } });
       await raw.sellingRestriction.deleteMany({ where: { tenantId: t } });
     }
   });

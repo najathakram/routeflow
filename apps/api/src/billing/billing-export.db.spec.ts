@@ -141,6 +141,13 @@ describeDb("B1187 — billing export projection (real Postgres)", () => {
     expect(types).toContain("seat.added");
   });
 
+  it("no history event carries amountDelta (the internal MRR change is never exported)", async () => {
+    const out = await svc.getExport(tenantA);
+    expect(out.billingEvents.length).toBeGreaterThan(0);
+    for (const e of out.billingEvents) expect("amountDelta" in e).toBe(false);
+    expect(JSON.stringify(out)).not.toContain("amountDelta");
+  });
+
   it("exports the projected shape only", async () => {
     const out = await svc.getExport(tenantA);
     const json = JSON.stringify(out);

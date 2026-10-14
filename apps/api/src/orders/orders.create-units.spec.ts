@@ -269,4 +269,26 @@ describe("OrdersService.create — sell by a unit (units_v1, 4b-2b)", () => {
     );
     expect(prisma.order.create).not.toHaveBeenCalled();
   });
+
+  describe("SA ruling (#3418): each nested line carries its explicit author marker from the creator", () => {
+    it("a staff create writes STAFF on every line (pack and unit), whatever the timestamps", async () => {
+      await create([
+        { productId: "prod-1", qty: 2, boxes: 2, pieces: 0 },
+        { productId: "prod-1", qty: 1, unitLabel: "Pallet" },
+      ]);
+      const lines = orderData().lineItems.create;
+      expect(lines.map((l: any) => l.authorChannel)).toEqual(["STAFF", "STAFF"]);
+      expect(orderData()).toMatchObject({ source: "PHONE", sourceRecorded: true });
+    });
+
+    it("a buyer create writes BUYER on every line", async () => {
+      (service as any).promotionsService.activeForCatalog.mockResolvedValue([]);
+      await create([{ productId: "prod-1", qty: 2 }], {
+        ...customerPayload,
+        tenantId: "t-1",
+      } as never);
+      expect(orderData().lineItems.create.map((l: any) => l.authorChannel)).toEqual(["BUYER"]);
+      expect(orderData()).toMatchObject({ source: "APP", sourceRecorded: true });
+    });
+  });
 });

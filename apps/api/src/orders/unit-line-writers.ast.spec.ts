@@ -250,10 +250,6 @@ const INVENTORY: Record<string, Row> = {
     kind: "DELETE_ONLY",
     why: "customer purge",
   },
-  "products/products.service.ts::ProductsService.bulkDelete": {
-    kind: "DELETE_ONLY",
-    why: "product purge",
-  },
   "system-config/settings.controller.ts::SettingsController.clearFinancialData": {
     kind: "DELETE_ONLY",
     why: "financial reset",
@@ -1034,10 +1030,6 @@ const REVISIONS: Record<string, RevisionRow> = {
   "customers/customers.service.ts::CustomersService.runImportedCustomersCleanup": {
     kind: "ORDER_GONE",
     why: "deletes imported customers' orders with their lines",
-  },
-  "products/products.service.ts::ProductsService.bulkDelete": {
-    kind: "ORDER_GONE",
-    why: "hard-deletes a product with no live history; its lines are removed with it (no editable order depends on it)",
   },
   "bookkeeping/bookkeeping.service.ts::BookkeepingService.createExpense": {
     kind: "NOT_AN_ORDER",

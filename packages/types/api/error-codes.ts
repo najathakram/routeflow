@@ -18,6 +18,8 @@
 //                    qty/price/tax/pack changed mid-create; nothing billed, retriable).
 //   ORDER_REVISION_STALE — `body.code` of the 409 on PATCH /orders/:id/items when the client's
 //                    `expectedRevisionNumber` is behind the order's latest revision (nothing written; reload).
+//   INVOICE_STALE — `body.code` of the 409 on PATCH /invoices/:id when the client's `expectedUpdatedAt`
+//                    is not the invoice's current updatedAt (another save landed; nothing written; reload).
 //   ORDER_INVOICE_SETTLE_FAILED — `body.code` of the 409 raised AFTER a ship/deliver status committed when its
 //                    invoice could not be created, updated or checked (the status stays; open the order).
 //   ORDER_INVOICES_NEED_REVIEW — `body.code` of the 409 when more would be billed on an order whose
@@ -138,6 +140,11 @@
 //                    add-on the tenant's plan already bundles, `includedAtPlan`). Both are `body.code` of the refusal and also `refusal.code`
 //                    of GET /billing/proration-preview (billing "REFUSED"), so the confirm sheet and the enable call agree. Clients show
 //                    the body's fixed copy or their own, never a Stripe message.
+//   M11 (stackable add-on quantity) — the enable body's `quantity` is the TARGET total, so a stale page could cut a pack.
+//                    ADDON_QUANTITY_CHANGED (409: `expectedQuantity` no longer matches the stored quantity; nothing was changed, refetch),
+//                    ADDON_QUANTITY_NOT_INCREASED (409: a call carrying `expectedQuantity` is a buy-more and its target is not above it),
+//                    ADDON_NOT_STACKABLE (400: quantity above 1 on a one-per-workspace SKU) and ADDON_RAISE_UNBILLED_ROW (409: raising
+//                    an active row that no Stripe item bills; also `refusal.code` of the preview). Clients show their own fixed copy.
 //   SA-690 (interim gate) — ADDON_BILLING_PENDING_CHECKOUT: the 409 of a Stripe Checkout start (the tenant's own, or the platform-admin
 //                    link) while the tenant holds an active self-serve add-on that no Stripe item bills. Body {code, message}; the message
 //                    names the add-ons and says to turn them off or contact support.
@@ -205,6 +212,7 @@ export const API_ERROR_CODES = {
   CLEANUP_IMPORTED_DISABLED: "CLEANUP_IMPORTED_DISABLED",
   ORDER_LINE_CHANGED: "ORDER_LINE_CHANGED",
   ORDER_REVISION_STALE: "ORDER_REVISION_STALE",
+  INVOICE_STALE: "INVOICE_STALE",
   ORDER_INVOICES_NEED_REVIEW: "ORDER_INVOICES_NEED_REVIEW",
   ORDER_INVOICE_SETTLE_FAILED: "ORDER_INVOICE_SETTLE_FAILED",
   NSF_LINE_UNTAXED: "NSF_LINE_UNTAXED",
@@ -347,6 +355,7 @@ export const API_ERROR_CODES = {
   RULE_TARGET_LIMIT: "RULE_TARGET_LIMIT",
   RULE_STALE: "RULE_STALE",
   RULE_IMPACT_CHANGED: "RULE_IMPACT_CHANGED",
+  RULE_END_USE_LIFT: "RULE_END_USE_LIFT",
   PO_LINK_CONFLICT: "PO_LINK_CONFLICT",
   SCAN_ALREADY_POSTED: "SCAN_ALREADY_POSTED",
   PO_LINK_BROKEN: "PO_LINK_BROKEN",
@@ -362,6 +371,10 @@ export const API_ERROR_CODES = {
   INVOICE_CHANGED_DURING_EDIT: "INVOICE_CHANGED_DURING_EDIT",
   EMAIL_NOT_CONFIGURED: "EMAIL_NOT_CONFIGURED",
   EMAIL_SEND_FAILED: "EMAIL_SEND_FAILED",
+  // Row 466: create-and-send committed the invoice, then the send step threw a non-HTTP error. The body carries `invoiceId`.
+  INVOICE_SEND_AFTER_CREATE_FAILED: "INVOICE_SEND_AFTER_CREATE_FAILED",
+  // Row 466: createSale committed the order, then its invoice step threw. The body carries `orderId`.
+  SALE_INVOICE_CREATE_FAILED: "SALE_INVOICE_CREATE_FAILED",
   ADDON_DEFAULT_GRANTED: "ADDON_DEFAULT_GRANTED",
   EXPIRES_AT_MUST_BE_FUTURE: "EXPIRES_AT_MUST_BE_FUTURE",
   FEATURE_KEY_UNKNOWN: "FEATURE_KEY_UNKNOWN",
@@ -373,6 +386,10 @@ export const API_ERROR_CODES = {
   ADDON_CATALOG_INVALID: "ADDON_CATALOG_INVALID",
   ADDON_BILLING_PENDING_CHECKOUT: "ADDON_BILLING_PENDING_CHECKOUT",
   ADDON_COMP_MANAGED_BY_SUPPORT: "ADDON_COMP_MANAGED_BY_SUPPORT",
+  ADDON_QUANTITY_CHANGED: "ADDON_QUANTITY_CHANGED",
+  ADDON_QUANTITY_NOT_INCREASED: "ADDON_QUANTITY_NOT_INCREASED",
+  ADDON_NOT_STACKABLE: "ADDON_NOT_STACKABLE",
+  ADDON_RAISE_UNBILLED_ROW: "ADDON_RAISE_UNBILLED_ROW",
   ADDON_CHECKOUT_ITEM_UNREADABLE: "ADDON_CHECKOUT_ITEM_UNREADABLE",
   ADDON_CHECKOUT_ITEM_MISSING: "ADDON_CHECKOUT_ITEM_MISSING",
   ADDON_UNCOMP_STRIPE_UNAVAILABLE: "ADDON_UNCOMP_STRIPE_UNAVAILABLE",
@@ -567,6 +584,16 @@ export const API_ERROR_CODES = {
    */
   IDEMPOTENCY_KEY_DRAFT_MISMATCH: "IDEMPOTENCY_KEY_DRAFT_MISMATCH",
   /**
+   * 400 from create(): a CUSTOMER (buyer) asked for a DRAFT order. A draft is the staff working copy and is
+   * judged only when promoted, so a buyer-started one is refused outright. Nothing is written.
+   */
+  ORDER_DRAFT_STAFF_ONLY: "ORDER_DRAFT_STAFF_ONLY",
+  /**
+   * 400 from every order and invoice edit: the same stored line id appears twice in the incoming `items`. Checked on
+   * the payload alone before any read or write, so nothing is saved; the client refreshes and resubmits once.
+   */
+  DUPLICATE_LINE_ID: "DUPLICATE_LINE_ID",
+  /**
    * 503 from create(): the order WAS saved but its credit-note sync exhausted its retries. The body carries
    * `orderId`: open that order and apply the credits there; a replay of the key never applies them.
    */
@@ -631,6 +658,10 @@ export const API_ERROR_CODES = {
   RF_INVOICE_PAID_AT_IN_FUTURE: "RF_INVOICE_PAID_AT_IN_FUTURE",
   /** Back office: an ACTIVE tenant cannot be moved to TRIAL (extend-trial or the status PATCH). 409. */
   TENANT_TRIAL_EXTEND_NOT_ALLOWED: "TENANT_TRIAL_EXTEND_NOT_ALLOWED",
+  /** Back office: a manual activation whose prepaid window already ended is refused. 409. */
+  ACTIVATION_PERIOD_ALREADY_ENDED: "ACTIVATION_PERIOD_ALREADY_ENDED",
+  /** Back office: a manual activation's window would run over an already PAID RouteFlow invoice. 409. */
+  ACTIVATION_OVERLAPS_PAID_PERIOD: "ACTIVATION_OVERLAPS_PAID_PERIOD",
   /** 403 `code` when an operator holds none of the feature groups an endpoint needs; `groups` lists them. */
   PERMISSION_DENIED: "PERMISSION_DENIED",
   /** 409 from PUT /users/:id/permissions: `expectedVersion` is stale (reload and retry). */
@@ -666,6 +697,17 @@ export const API_ERROR_CODES = {
    * session. Fixed body; nothing was written. Reads stay available (SA-778).
    */
   IMPERSONATION_NOT_ALLOWED: "IMPERSONATION_NOT_ALLOWED",
+  /**
+   * 409 from PATCH /users/:id/status: a tenant admin tried to set their OWN account INACTIVE or SUSPENDED. Refused so
+   * a workspace can never lose the person changing it; another admin must do it. Nothing was written (Perms PR1 M2).
+   */
+  SELF_DEACTIVATION_REFUSED: "SELF_DEACTIVATION_REFUSED",
+  /**
+   * 409 from PATCH /users/:id/status: deactivating this account would leave the workspace with no ACTIVE tenant
+   * admin (nobody could manage users, billing or settings again). Make someone else an admin first. Nothing was
+   * written (Perms PR1 M2).
+   */
+  LAST_TENANT_ADMIN: "LAST_TENANT_ADMIN",
 } as const;
 
 /** The `flag` of a PLAN_GATE body that gates a count (a meter), not a feature flag. Not an error code. */

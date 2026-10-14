@@ -92,11 +92,9 @@ import {
 import { useCreateInvoiceFromOrder, useSendInvoice, useSendInvoiceEmail } from "@/lib/api/invoices";
 import { LicenseGuardModal } from "../_components/LicenseGuardModal";
 import { CancelOrderButton } from "./CancelOrderButton";
-import { ShipWithTrackingDialog } from "./ShipWithTrackingDialog";
-import { shipWithTracking } from "@/lib/ship-with-tracking";
+import { OrderShipmentSection } from "./_components/OrderShipmentSection";
 import { UnmarkShippedConfirm } from "./UnmarkShippedConfirm";
 import { orderHasFinalInvoice } from "@/lib/unmark-shipped";
-import { genericToastCopy } from "@/lib/generic-toast-copy";
 import { orderActionAccess } from "./order-action-access";
 import { ShippedOrderExits } from "./ShippedOrderExits";
 import { OrderLineItemsTable } from "./_components/OrderLineItemsTable";
@@ -109,6 +107,7 @@ import {
   PosCutAfterHandOverNote,
   PosOrderActions,
   PosProgress,
+  posMoveOptions,
 } from "./_components/PosOrderActions";
 import { DeleteOrderTier } from "./_components/DeleteOrderTier";
 import { isPosOrder } from "@/lib/api/pos-orders";
@@ -150,7 +149,6 @@ import { AppliedCreditsPanel, appliedOnOrderRows } from "./AppliedCreditsPanel";
 import { InlineCreateProductModal } from "@/components/InlineCreateProductModal";
 import { resolveProductByCode } from "@/lib/barcode-resolve";
 import * as scan from "./scan-level-line";
-import { ShipmentCard } from "@/components/ShipmentCard";
 import { SplitInvoiceModal } from "../_components/SplitInvoiceModal";
 import { toSplitInvoiceLine } from "@/lib/split-invoice-line";
 import { InvoicePreviewModal, DivergenceNote } from "../../_components/LinkedDocPreviewModal";
@@ -2539,6 +2537,21 @@ export default function OrderDetailPage() {
       ? order.lineItems
       : order.lineItems.filter((li) => li.status !== "CANCELLED");
 
+  const shipFirst = order.fulfillPath === "SHIP";
+  const shipmentSection = (
+    <OrderShipmentSection
+      order={order}
+      status={localStatus}
+      staff={access.staff}
+      canEditShipment={access.shipmentEdit}
+      dialogOpen={showShipDialog}
+      onDialogClose={() => setShowShipDialog(false)}
+      updateShipment={updateShipment}
+      statusPending={updateStatus.isPending}
+      onShip={handleLock}
+    />
+  );
+
   return (
     <div className="space-y-5 p-6">
       {/* Back */}
@@ -2704,6 +2717,26 @@ export default function OrderDetailPage() {
                   </Button>
                 </ActionTier>
               )}
+            </>
+          )}
+
+          {/* POS mode: one primary per state (Create invoice -> Hand over -> Record payment / Print). */}
+          {isPos && access.staff && !isEditing && (
+            <PosOrderActions
+              order={order}
+              orderId={order.id}
+              status={localStatus}
+              onHandOver={() => setPickupOpen(true)}
+              onReadyForPickup={handleMarkShipped}
+              readyPending={updateStatus.isPending}
+              moveOptions={posMoveOptions(staffFulfilment.formMethods, staffFulfilment.formDefault)}
+              onMove={setPendingPath}
+            />
+          )}
+
+          {/* PENDING danger tier (Cancel, Delete): after the POS path moves so Delete is always last. */}
+          {localStatus === "PENDING" && !isEditing && (
+            <>
               <ActionTier tier="danger">
                 {access.cancel && (
                   <CancelOrderButton
@@ -2755,25 +2788,6 @@ export default function OrderDetailPage() {
                   ))}
               </ActionTier>
             </>
-          )}
-
-          {/* POS mode: one primary per state (Create invoice -> Hand over -> Record payment / Print). */}
-          {isPos && access.staff && !isEditing && (
-            <PosOrderActions
-              order={order}
-              orderId={order.id}
-              status={localStatus}
-              onHandOver={() => setPickupOpen(true)}
-              onReadyForPickup={handleMarkShipped}
-              readyPending={updateStatus.isPending}
-              onSwitchToDelivery={() =>
-                setPendingPath(
-                  access.fulfillmentPath && !fulfillPathLocked
-                    ? staffFulfilment.formDefault
-                    : "ROUTE",
-                )
-              }
-            />
           )}
 
           {/* CONFIRMED actions */}
@@ -3328,6 +3342,9 @@ export default function OrderDetailPage() {
             </div>
           </div>
 
+          {/* M8: a carrier (SHIP) order shows its Shipment card above Summary, where the ship step is found. */}
+          {shipFirst && shipmentSection}
+
           {/* Order summary */}
           <Card title="Summary">
             <dl className="space-y-2.5 text-sm">
@@ -3420,50 +3437,7 @@ export default function OrderDetailPage() {
           {/* Returns on this order (#2406) — server figures only, never the quote's. */}
           <OrderReturnsPanel orderId={order.id} />
 
-          {/* Carrier shipment — operator records carrier + tracking when goods ship
-              via a carrier instead of our own route. Gated so it doesn't render on
-              every order: only carrier-shipped (fulfillPath === "SHIP") orders, or
-              historical rows that already carry tracking data. */}
-          {order.fulfillPath === "SHIP" && access.staff && (
-            <ShipWithTrackingDialog
-              open={showShipDialog}
-              onClose={() => setShowShipDialog(false)}
-              isPending={updateShipment.isPending || updateStatus.isPending}
-              initialCarrier={order.shippingCarrier}
-              initialTracking={order.shippingTrackingNumber}
-              onSkip={() => handleLock()}
-              onShipWithTracking={(values) =>
-                shipWithTracking(
-                  {
-                    saveShipment: (v) =>
-                      updateShipment.mutateAsync({ id: order.id, ...v }).catch((e: unknown) => {
-                        toast({
-                          title: "Could not save shipment",
-                          description: genericToastCopy(e),
-                          variant: "error",
-                        });
-                        throw e;
-                      }),
-                    ship: () => handleLock(),
-                  },
-                  values,
-                )
-              }
-            />
-          )}
-          {(order.fulfillPath === "SHIP" ||
-            order.shippingCarrier ||
-            order.shippingTrackingNumber) && (
-            <ShipmentCard
-              carrier={order.shippingCarrier}
-              trackingNumber={order.shippingTrackingNumber}
-              shippedAt={order.shippedAt}
-              orderStatus={localStatus}
-              isSaving={updateShipment.isPending}
-              onSave={(values) => updateShipment.mutateAsync({ id: order.id, ...values })}
-              readOnly={!access.shipmentEdit}
-            />
-          )}
+          {!shipFirst && shipmentSection}
 
           {/* Invoice card — show for any non-draft, non-cancelled order so the operator
               can split into multiple invoices any time after the order is confirmed. */}
@@ -3636,6 +3610,7 @@ export default function OrderDetailPage() {
       )}
       <FulfillPathMoveConfirm
         open={pendingPath !== null}
+        path={pendingPath}
         onClose={() => setPendingPath(null)}
         loading={patchFulfillPath.isPending}
         onConfirm={() => {

@@ -10,6 +10,7 @@ import {
   type FeatureRegistryRow,
 } from "@routeflow/types";
 import { superAdminClient } from "@/lib/admin-api";
+import { activationErrorText } from "@/lib/activation-error-copy";
 import { setTenantCookie } from "@/lib/tenant-cookie";
 import { setImpersonation } from "@/lib/impersonation";
 import { AdminTabs } from "../../../_components/AdminTabs";
@@ -920,12 +921,7 @@ function BillingTab({
       });
       onRefreshTenant();
     } catch (err: unknown) {
-      setMsg({
-        type: "error",
-        text:
-          (err as { response?: { data?: { message?: string } } })?.response?.data?.message ??
-          "Activation failed",
-      });
+      setMsg({ type: "error", text: activationErrorText(err) });
     } finally {
       setActivating(false);
     }
