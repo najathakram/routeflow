@@ -457,6 +457,9 @@ model SellingRestriction {
   liftedByName  String?
   liftedAt      DateTime?
   liftReason    String?
+  // Row 509 PR3: the settings revision (jurisdiction, states, surface, window, reason). Edited in place under a
+  // row lock; each edit bumps it and appends a SellingRestrictionRevision (revision 1 = as created).
+  revision      Int                     @default(1)
 
   tenant   Tenant?          @relation(fields: [tenantId], references: [id])
   category ProductCategory? @relation(fields: [categoryId], references: [id])
@@ -465,7 +468,8 @@ model SellingRestriction {
   // with none (written before the targets table, or by old code during a deploy) falls back to the
   // legacy categoryId / productId above (SA condition 1). The legacy columns stay one release so a
   // rollback still enforces (a multi-target rule mirrors its FIRST target there, SA condition 2).
-  targets SellingRestrictionTarget[]
+  targets   SellingRestrictionTarget[]
+  revisions SellingRestrictionRevision[]
 
   @@index([tenantId, effectiveTo])
   @@index([categoryId])
@@ -498,4 +502,30 @@ model SellingRestrictionTarget {
   category ProductCategory?   @relation(fields: [categoryId], references: [id], onDelete: Restrict)
 
   @@index([ruleId])
+}
+
+// Row 509 PR3: one revision of a rule's settings. APPEND-ONLY: never updated, never deleted. Revision 1 is the rule
+// as created (backfilled in the migration for every existing rule); each in-place edit appends n+1 with the NEW
+// settings and who made them. The rule row itself always holds the current values (the engine reads it directly).
+model SellingRestrictionRevision {
+  id            String                  @id @default(uuid())
+  tenantId      String
+  ruleId        String
+  revision      Int
+  jurisdiction  RestrictionJurisdiction
+  states        String[]
+  surface       RestrictionSurface
+  effectiveFrom DateTime
+  effectiveTo   DateTime?
+  reason        String
+  editedById    String?
+  editedByName  String?
+  editedAt      DateTime                @default(now())
+  note          String?
+
+  tenant Tenant             @relation(fields: [tenantId], references: [id], onDelete: Restrict)
+  rule   SellingRestriction @relation(fields: [ruleId], references: [id], onDelete: Restrict)
+
+  @@unique([ruleId, revision])
+  @@index([tenantId, ruleId])
 }

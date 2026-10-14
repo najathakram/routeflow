@@ -57,3 +57,11 @@ export function ruleImpactChanged(): ConflictException {
       "The orders this change affects have changed since you checked. Review the change again.",
   });
 }
+
+/** 400: an edit set the end to now or earlier. Ending a rule is a lift (it needs a reason and ends the rule at once). */
+export function ruleEndUseLift(): BadRequestException {
+  return new BadRequestException({
+    code: API_ERROR_CODES.RULE_END_USE_LIFT,
+    message: "To end this rule now, lift it.",
+  });
+}

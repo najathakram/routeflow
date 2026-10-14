@@ -29,6 +29,20 @@ type RawTx = {
   $queryRaw<T = unknown>(query: TemplateStringsArray, ...values: unknown[]): Promise<T>;
 };
 
+/** 409 RULE_NOT_EDITABLE when the rule is lifted or has ended at `now`. */
+export function assertRuleEditable(rule: LockedRule, now: Date): void {
+  const lifted = rule.liftedAt !== null && rule.liftedAt.getTime() <= now.getTime();
+  const expired = rule.effectiveTo !== null && rule.effectiveTo.getTime() <= now.getTime();
+  if (lifted || expired) {
+    throw new ConflictException({
+      code: API_ERROR_CODES.RULE_NOT_EDITABLE,
+      message: lifted
+        ? "This rule has been lifted, so it can't be changed. Add a new rule instead."
+        : "This rule has ended, so it can't be changed. Add a new rule instead.",
+    });
+  }
+}
+
 /** Locks the tenant's rule row and returns it; 404 when it is not this tenant's, 409 when it is lifted/expired. */
 export async function lockEditableRule(
   tx: RawTx,
@@ -44,16 +58,28 @@ export async function lockEditableRule(
     FOR UPDATE`;
   const rule = rows[0];
   if (!rule) throw new NotFoundException("Restriction not found");
-  const lifted = rule.liftedAt !== null && rule.liftedAt.getTime() <= now.getTime();
-  const expired = rule.effectiveTo !== null && rule.effectiveTo.getTime() <= now.getTime();
-  if (lifted || expired) {
-    throw new ConflictException({
-      code: API_ERROR_CODES.RULE_NOT_EDITABLE,
-      message: lifted
-        ? "This rule has been lifted, so it can't be changed. Add a new rule instead."
-        : "This rule has ended, so it can't be changed. Add a new rule instead.",
-    });
-  }
+  assertRuleEditable(rule, now);
+  return rule;
+}
+
+/**
+ * The same checks as `lockEditableRule` WITHOUT the lock: for a read that must not hold the rule while it works (the
+ * edit preview's impact scan). A plain tenant-scoped read; whatever it decides is re-verified under the lock at commit.
+ */
+export async function readEditableRule(
+  db: RawTx,
+  tenantId: string,
+  ruleId: string,
+  now: Date,
+): Promise<LockedRule> {
+  const rows = await db.$queryRaw<LockedRule[]>`
+    SELECT "id", "tenantId", "jurisdiction"::text AS "jurisdiction", "surface"::text AS "surface",
+           "effectiveTo", "liftedAt"
+    FROM "SellingRestriction"
+    WHERE "id" = ${ruleId} AND "tenantId" = ${tenantId}`;
+  const rule = rows[0];
+  if (!rule) throw new NotFoundException("Restriction not found");
+  assertRuleEditable(rule, now);
   return rule;
 }
 

@@ -285,6 +285,10 @@ export function toDto(
     categoryName: row.category?.name ?? null,
     productName: row.product?.name ?? null,
     ...(summary ? { targetSummary: summary } : {}),
+    // Row 509 PR3: the current settings revision (an edit sends it back as expectedRevision).
+    ...(typeof (row as { revision?: number }).revision === "number"
+      ? { revision: (row as { revision: number }).revision }
+      : {}),
   };
 }
 
@@ -452,6 +456,24 @@ export class SellingRestrictionsAdminService {
         reason: p.reason,
         createdById: user.sub,
         createdByName: user.username,
+      },
+    });
+    // Row 509 PR3: revision 1 = the rule "as created", so its first in-place edit keeps the original settings in
+    // the history (append-only; an edit adds revision n+1, nothing ever rewrites this row).
+    await tx.sellingRestrictionRevision.create({
+      data: {
+        tenantId,
+        ruleId,
+        revision: 1,
+        jurisdiction: p.jurisdiction,
+        states: p.states,
+        surface: p.surface,
+        effectiveFrom: p.effectiveFrom,
+        effectiveTo: p.effectiveTo,
+        reason: p.reason,
+        editedById: user.sub,
+        editedByName: user.username,
+        editedAt: p.now,
       },
     });
     const addedAt = p.effectiveFrom.getTime() < p.now.getTime() ? p.effectiveFrom : p.now;

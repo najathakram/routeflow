@@ -39,6 +39,7 @@ import {
   statusWhere,
   toDto,
 } from "./selling-restrictions-admin.service";
+import { ruleRevisions } from "./rule-edit.service";
 
 /** Targets per page of GET /selling-restrictions/:id (the shared RULE_TARGETS_PAGE_SIZE). */
 export const RULE_TARGETS_PAGE_SIZE = 100;
@@ -153,7 +154,7 @@ export class RuleTargetsService {
       targets,
       nextCursor:
         rows.length > RULE_TARGETS_PAGE_SIZE ? encodeCursor(page[page.length - 1].id) : null,
-      revisions: [], // PR3 fills this
+      revisions: await ruleRevisions(db, tenantId, id),
       targetEvents: await this.targetEvents(db, tenantId, id),
     };
   }

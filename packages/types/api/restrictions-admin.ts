@@ -168,6 +168,9 @@ export interface ProductLimitsResponse {
 //                               RULE_TARGETS_MAX_PER_RULE active targets (body.field "rule", body.max).
 //   RULE_STALE             409  `expectedRevision` is not the rule's current revision (PR3).
 //   RULE_IMPACT_CHANGED    409  the impact behind `confirmImpactHash` changed since the preview (PR3); preview again.
+//                               The hash covers the affected documents AND the proposed settings, so confirming a
+//                               different edit than the one previewed is this error too.
+//   RULE_END_USE_LIFT      400  an edit set `effectiveTo` to now or earlier; "To end this rule now, lift it." (PR3)
 // Already-present targets (add) and ids not in the rule (remove) are skipped and reported, never errors.
 
 /** Ids per add / remove / create call, in ONE atomic transaction (owner Q5: select-all-matching up to 1,000). */
@@ -321,8 +324,13 @@ export type RuleChangeField = (typeof RULE_CHANGE_FIELD_VALUES)[number];
 
 export interface RuleEditPreviewResponse {
   changes: Array<{ field: RuleChangeField; direction: RuleChangeDirection }>;
-  /** OPEN orders and drafts on the affected channels whose lines newly fall under the rule. */
-  impact: { openOrders: number; drafts: number };
+  /**
+   * OPEN orders and drafts on the affected channels whose lines newly fall under the rule. When `capped` is true the
+   * scan stopped at its bound (IMPACT_SCAN_MAX_DOCUMENTS documents, or 20,000 distinct products) and the numbers are
+   * LOWER BOUNDS; the edit is never refused for it, and the hash then covers the proposed settings and the cap, not
+   * the ids. Absent when the scan was complete.
+   */
+  impact: { openOrders: number; drafts: number; capped?: boolean };
   /** Send back as `confirmImpactHash`; a different impact at commit is 409 RULE_IMPACT_CHANGED. */
   impactHash: string;
   /** The revision this preview was computed against. */
@@ -334,8 +342,16 @@ export interface RuleEditCommitRequest extends RuleEditRequest {
   confirmImpactHash: string;
 }
 
+/** The most open orders + drafts (together) the edit preview counts; past it the impact is `capped` (a lower bound). */
+export const IMPACT_SCAN_MAX_DOCUMENTS = 2000;
+
 /** The ONE copy for the edit impact line (row 510 changes this text in one place). */
-export function ruleEditImpactCopy(count: number): string {
+export function ruleEditImpactCopy(count: number, capped = false): string {
+  const tail =
+    "have products this change now restricts. They'll be checked when they're next edited, promoted or invoiced.";
+  if (capped) {
+    return `${IMPACT_SCAN_MAX_DOCUMENTS.toLocaleString("en-US")}+ open orders and drafts ${tail}`;
+  }
   const n = `${count} open order${count === 1 ? "" : "s"}`;
   return `${n} ${count === 1 ? "has" : "have"} products this change now restricts. They'll be checked when they're next edited, promoted or invoiced.`;
 }

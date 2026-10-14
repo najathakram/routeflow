@@ -245,6 +245,7 @@ describeDb("row 509 PR2: rule targets admin API — real Postgres", () => {
     for (const t of [tenantA, tenantB].filter(Boolean)) {
       await raw.auditLog.deleteMany({ where: { tenantId: t } });
       await raw.sellingRestrictionTarget.deleteMany({ where: { tenantId: t } });
+      await raw.sellingRestrictionRevision.deleteMany({ where: { tenantId: t } });
       await raw.sellingRestriction.deleteMany({ where: { tenantId: t } });
       await raw.productCategoryLabel.deleteMany({ where: { tenantId: t } });
       await raw.customerAddress.deleteMany({ where: { tenantId: t } });
@@ -265,6 +266,7 @@ describeDb("row 509 PR2: rule targets admin API — real Postgres", () => {
     for (const t of [tenantA, tenantB]) {
       await raw.auditLog.deleteMany({ where: { tenantId: t } });
       await raw.sellingRestrictionTarget.deleteMany({ where: { tenantId: t } });
+      await raw.sellingRestrictionRevision.deleteMany({ where: { tenantId: t } });
       await raw.sellingRestriction.deleteMany({ where: { tenantId: t } });
     }
   });
@@ -470,6 +472,7 @@ describeDb("row 509 PR2: rule targets admin API — real Postgres", () => {
         );
       } finally {
         await raw.sellingRestrictionTarget.deleteMany({ where: { tenantId: tenantA } });
+        await raw.sellingRestrictionRevision.deleteMany({ where: { tenantId: tenantA } });
         await raw.sellingRestriction.deleteMany({ where: { tenantId: tenantA } });
         await raw.product.deleteMany({
           where: { tenantId: tenantA, name: { startsWith: "R509 bulk" } },
@@ -813,7 +816,15 @@ describeDb("row 509 PR2: rule targets admin API — real Postgres", () => {
       );
       const d = await asA(() => targets.detail(rule.id));
       expect(d.id).toBe(rule.id);
-      expect(d.revisions).toEqual([]);
+      // Row 509 PR3: a rule made through the service carries revision 1 (the rule as created).
+      expect(d.revisions).toHaveLength(1);
+      expect(d.revisions[0]).toMatchObject({
+        revision: 1,
+        jurisdiction: "STATE",
+        states: ["TX"],
+        surface: "BUYER_PORTAL",
+        reason: "R509 PR2",
+      });
       expect(d.nextCursor).toBeNull();
       expect(d.targets).toHaveLength(4); // fam, v1, vape, b (a was removed)
       const fam = d.targets.find((t) => t.productId === p.fam);
@@ -871,6 +882,7 @@ describeDb("row 509 PR2: rule targets admin API — real Postgres", () => {
         );
       } finally {
         await raw.sellingRestrictionTarget.deleteMany({ where: { tenantId: tenantA } });
+        await raw.sellingRestrictionRevision.deleteMany({ where: { tenantId: tenantA } });
         await raw.sellingRestriction.deleteMany({ where: { tenantId: tenantA } });
         await raw.product.deleteMany({
           where: { tenantId: tenantA, name: { startsWith: "R509 page" } },
