@@ -24,6 +24,7 @@ import { Logger } from "@nestjs/common";
 import { Test, TestingModule } from "@nestjs/testing";
 import { randomUUID } from "crypto";
 import { InvoicesService } from "./invoices.service";
+import { clearTenantInvoicePdfPointers, writeInvoicePdfPointer } from "./invoice-pdf-pointer";
 import { InvoicePdfService } from "./invoice-pdf.service";
 import { PrismaService } from "../prisma/prisma.service";
 import { TenantContextService } from "../tenant/tenant-context.service";
@@ -1622,6 +1623,32 @@ describeDb(
         expect(end.notes).toBe("editor 1");
         expect(Number(end.discount)).toBe(Number(mid.discount));
         expect(end.updatedAt.toISOString()).toBe(mid.updatedAt.toISOString());
+      });
+
+      it("row 502: a PDF render (pointer write) and a tenant PDF invalidation while the form is open do not stale it", async () => {
+        const s = await seed("r502");
+        const opened = await stamp(s);
+        await writeInvoicePdfPointer(prisma, s.t.id, s.inv.id, `invoice-pdfs/${s.inv.id}.pdf`);
+        const pointed = await prisma.invoice.findUniqueOrThrow({ where: { id: s.inv.id } });
+        expect(pointed.pdfUrl).toBe(`invoice-pdfs/${s.inv.id}.pdf`);
+        expect(pointed.updatedAt.toISOString()).toBe(opened);
+        await clearTenantInvoicePdfPointers(prisma, s.t.id);
+        const cleared = await prisma.invoice.findUniqueOrThrow({ where: { id: s.inv.id } });
+        expect(cleared.pdfUrl).toBeNull();
+        expect(cleared.updatedAt.toISOString()).toBe(opened);
+        // the editor who opened before both writes saves with no 409
+        await run(s, { ...s.payload({ l2: { qty: 4 } }), expectedUpdatedAt: opened });
+        expect(Number((await rows(s)).find((r) => r.id === s.l2.id)!.qty)).toBe(4);
+      });
+
+      it("row 502: the pointer write is tenant-scoped (another tenant's id writes nothing)", async () => {
+        const a = await seed("r502a");
+        const b = await seed("r502b");
+        const n = await writeInvoicePdfPointer(prisma, b.t.id, a.inv.id, "invoice-pdfs/x.pdf");
+        expect(n).toBe(0);
+        expect(
+          (await prisma.invoice.findUniqueOrThrow({ where: { id: a.inv.id } })).pdfUrl,
+        ).toBeNull();
       });
 
       it("H4-D a client that sends no token is still accepted for one release, with a warn log", async () => {
