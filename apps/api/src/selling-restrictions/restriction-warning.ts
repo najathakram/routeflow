@@ -115,6 +115,9 @@ export interface StaffWriteDecision {
    * (the fresh list), or the hard block for a principal who may not override. `lines` replaces the judged lines when
    * the path judges every live line of the document (promote, reopen, the path switch). Returns the final decision
    * (with `carried` and `heldStamped` set).
+   *
+   * Rule-set race (accepted, SA): the RULES are loaded pre-lock. A rule added mid-request is equivalent to one added
+   * after commit: row 509 is not retroactive, and the next touch of the document re-judges it.
    */
   recheck(held: readonly HeldLine[], lines?: readonly GateLine[]): StaffWriteDecision;
   /**
