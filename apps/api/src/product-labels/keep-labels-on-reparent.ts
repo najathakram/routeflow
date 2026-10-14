@@ -1,7 +1,11 @@
 import { ConflictException } from "@nestjs/common";
 import { Prisma } from "@prisma/client";
 import { API_ERROR_CODES } from "../common/api-error-codes";
-import { keepLabelsAsOwnIncludes, syncCategoryLabel } from "../product-categories/label-writer";
+import {
+  keepLabelsAsOwnIncludes,
+  LabelLockTimeoutError,
+  syncCategoryLabel,
+} from "../product-categories/label-writer";
 import { computeEffectiveCategoryIds, type LabelChainLink } from "./effective-labels";
 import { ancestorsOf, readableChainFrom } from "./parent-carries";
 
@@ -102,10 +106,19 @@ export async function keepLabelsOnReparent(
     /** The product's category text after the write, for the add-only sync. */
     text?: string | null;
     actor?: { id: string | null; name: string | null };
+    /**
+     * The label locks the caller took BEFORE its row locks (update(): the planned lost set + the text's label, sorted).
+     * Re-checked here, under the row locks: a label outside it (the chain changed since the plan) is the retryable
+     * 409 LabelLockTimeoutError, never a label lock taken after a row lock (the setLabel deadlock, 40P01).
+     */
+    lockedCategoryIds?: ReadonlySet<string>;
   },
 ): Promise<{ keptLabels: string[] }> {
-  const { tenantId, productId, fromParentId, toParentId } = args;
+  const { tenantId, productId, fromParentId, toParentId, lockedCategoryIds } = args;
   const lost = await planReparentLabels(tx, { tenantId, productId, fromParentId, toParentId });
+  if (lockedCategoryIds && lost.some((id) => !lockedCategoryIds.has(id))) {
+    throw new LabelLockTimeoutError();
+  }
   if (lost.length === 0) return { keptLabels: [] };
   const kept = await keepLabelsAsOwnIncludes(tx, {
     tenantId,
@@ -115,6 +128,12 @@ export async function keepLabelsOnReparent(
     toParentId,
     actor: args.actor,
   });
-  await syncCategoryLabel(tx, { tenantId, productId, text: args.text, actor: args.actor });
+  await syncCategoryLabel(tx, {
+    tenantId,
+    productId,
+    text: args.text,
+    actor: args.actor,
+    lockedCategoryIds,
+  });
   return { keptLabels: kept.map((k) => k.name) };
 }

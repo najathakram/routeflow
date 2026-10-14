@@ -57,7 +57,14 @@ import {
   syncProductBarcodesFromLegacy,
   syncProductImagesFromLegacy,
 } from "./product-catalog-sync";
-import { labelNameKey, syncCategoryLabel } from "../product-categories/label-writer";
+import {
+  labelIdForText,
+  labelNameKey,
+  LabelLockTimeoutError,
+  lockLabelCategories,
+  syncCategoryLabel,
+} from "../product-categories/label-writer";
+import { txConflictState } from "../common/tx-retry";
 import {
   keepLabelsOnReparent,
   planReparentLabels,
@@ -1232,7 +1239,11 @@ export class ProductsService {
     let doorDeactivated: string[] = [];
     let cascaded: string[] = [];
     let keptLabels: string[] | null = null;
-    const updated = await this.prisma.tenantTransaction(async (tx: any) => {
+    // A parent CHANGE (an unlink included); an echo of the current parent is not one.
+    const reparenting =
+      dto.parentProductId !== undefined &&
+      (dto.parentProductId ?? null) !== (existing.parentProductId ?? null);
+    const txDone = this.prisma.tenantTransaction(async (tx: any) => {
       // SA-603a: reactivate restores the retired codes still free; a code this PATCH sets is claimed (an inactive
       // holder is released + audited, an active one is a 409); deactivate releases BEFORE the isActive write.
       const claims = codeClaims(dto, existing);
@@ -1240,10 +1251,8 @@ export class ProductsService {
       const deactivating = existing.isActive !== false && data.isActive === false;
       const effectiveParent =
         dto.parentProductId !== undefined ? dto.parentProductId : existing.parentProductId;
-      // A parent CHANGE (an unlink included); an echo of the current parent is not one.
-      const reparenting =
-        dto.parentProductId !== undefined &&
-        (dto.parentProductId ?? null) !== (existing.parentProductId ?? null);
+      /** The label locks a reparent took before its row locks (see below); the keep may write only these. */
+      let reparentLocks: Set<string> | undefined;
       // B1213: deactivating a family that still has ACTIVE variants is a coded 409 unless confirmed; a confirmed one
       // deactivates them in this tx, so their codes join the ONE sorted lock call below.
       const cascadeIds = deactivating ? await activeVariantIds(tx, tenantId, id) : [];
@@ -1272,15 +1281,25 @@ export class ProductsService {
           : []),
       ].filter((c): c is string => typeof c === "string" && c.trim().length > 0);
       await lockBarcodeCodes(tx, tenantId, lockList);
-      // H2: a parent CHANGE first reads, read-only, which labels the move would lose. An OLD family chain that can't be
-      // read in full is refused here (a coded 409), before any write or row lock.
+      // H2: a parent CHANGE first reads, read-only, which labels the move would lose (an OLD family chain that can't be
+      // read in full is refused here, a coded 409, before any write or row lock), then takes THOSE label locks and the
+      // category text's label lock, sorted, BEFORE the family/product rows FOR UPDATE below. setLabel takes the label
+      // lock and then the product row (FK KEY SHARE); the reverse order here cycled (40P01). The keep re-checks under
+      // the row locks and refuses (retryable 409) a label outside this set instead of locking it late.
       if (reparenting) {
-        await planReparentLabels(tx, {
+        const planned = await planReparentLabels(tx, {
           tenantId,
           productId: id,
           fromParentId: existing.parentProductId ?? null,
           toParentId: dto.parentProductId ?? null,
         });
+        const textLabel = await labelIdForText(
+          tx,
+          tenantId,
+          data.category !== undefined ? data.category : existing.category,
+        );
+        reparentLocks = new Set([...planned, ...(textLabel ? [textLabel] : [])]);
+        await lockLabelCategories(tx, tenantId, reparentLocks);
       }
       // B1213: a variant is only as live as its family. The family row is locked before anything of this variant is
       // written (house order F -> V); a CHANGED parent is judged by assertValidParent below, which refuses an
@@ -1375,7 +1394,11 @@ export class ProductsService {
       // Codes + row lock BEFORE the isActive write (Opus #2860 B1): the release takes this product's code locks, then
       // its row lock; the UPDATE below must never be the first thing to lock the row.
       if (deactivating) {
-        await releaseProductCodes(tx, { tenantId, productId: id, lockedCodes: new Set(lockList) });
+        await releaseProductCodes(tx, {
+          tenantId,
+          productId: id,
+          lockedCodes: new Set(lockList),
+        });
         // The family row is held now: its variants follow in id order (re-read under the lock).
         cascaded = await cascadeDeactivate(tx, {
           tenantId,
@@ -1423,11 +1446,12 @@ export class ProductsService {
           productId: id,
           text: row.category,
           actor: { id: options?.actorId ?? null, name: options?.actorName ?? null },
+          lockedCategoryIds: reparentLocks,
         });
       }
       // H2: a CHANGED parent (incl. an unlink) never drops a label the variant carried through the old one: what was
       // effective before and is not after becomes its own INCLUDE, in this tx (rolls the parent write back on failure).
-      const fromParentId = before?.parentProductId ?? existing.parentProductId ?? null;
+      const fromParentId = before?.parentProductId ?? null;
       if (dto.parentProductId !== undefined && (dto.parentProductId ?? null) !== fromParentId) {
         keptLabels = (
           await keepLabelsOnReparent(tx, {
@@ -1437,6 +1461,9 @@ export class ProductsService {
             toParentId: dto.parentProductId ?? null,
             text: row.category,
             actor: { id: options?.actorId ?? null, name: options?.actorName ?? null },
+            // An echo of a parent that moved concurrently took no locks up front: an empty set, so anything to keep is the
+            // retryable 409 rather than a label lock after the row lock.
+            lockedCategoryIds: reparentLocks ?? new Set<string>(),
           })
         ).keptLabels;
       }
@@ -1445,6 +1472,12 @@ export class ProductsService {
         propagatedRows = moved.variants + moved.recipes;
       }
       return row;
+    });
+    // H2: a reparent's deadlock / write conflict (40P01, 40001, P2034 in any shape: the shared L-221 predicate) is the
+    // retryable coded 409, never a raw 500. Nothing was saved (the transaction rolled back).
+    const updated = await txDone.catch((e: unknown): never => {
+      if (reparenting && txConflictState(e)) throw new LabelLockTimeoutError();
+      throw e;
     });
     // suppressEmit lets a caller that loops this method (bulkAssignParent) emit
     // ONE coalesced event after the loop instead of one per row.

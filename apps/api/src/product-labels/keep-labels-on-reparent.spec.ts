@@ -322,4 +322,55 @@ describe("keepLabelsOnReparent", () => {
       nothingWritten(db);
     });
   });
+
+  describe("(8) re-verify under the row locks: only labels the caller pre-locked may be written", () => {
+    it("(8a) a lost label outside the pre-locked set is the retryable 409, and nothing is written or locked for it", async () => {
+      const db = world();
+      const err = await run(db, {
+        productId: "C",
+        fromParentId: "P1",
+        toParentId: "P2",
+        lockedCategoryIds: new Set(["ca"]),
+      }).then(
+        () => null,
+        (e: unknown) => e,
+      );
+      expect(err).toBeInstanceOf(LabelLockTimeoutError);
+      expect(db.labels.filter((l) => l.productId === "C")).toEqual([]);
+      expect(db.audits).toEqual([]);
+      const locked = db.calls
+        .filter((c) => c.model === "$executeRaw")
+        .flatMap((c) => (c.args as unknown[]).map(String));
+      expect(locked.some((v) => v.endsWith(":ny"))).toBe(false);
+    });
+
+    it("(8b) the category-text label must be pre-locked too: else the retryable 409", async () => {
+      const db = world();
+      db.addCategory("snack", "Snacks");
+      await expect(
+        run(db, {
+          productId: "C",
+          fromParentId: "P1",
+          toParentId: "P2",
+          text: "Snacks",
+          lockedCategoryIds: new Set(["ca", "ny"]),
+        }),
+      ).rejects.toBeInstanceOf(LabelLockTimeoutError);
+      expect(db.labels.filter((l) => l.productId === "C")).toEqual([]);
+    });
+
+    it("(8c) a pre-locked superset is fine", async () => {
+      const db = world();
+      db.addCategory("snack", "Snacks");
+      const out = await run(db, {
+        productId: "C",
+        fromParentId: "P1",
+        toParentId: "P2",
+        text: "Snacks",
+        lockedCategoryIds: new Set(["ca", "ny", "snack", "misc"]),
+      });
+      expect(out.keptLabels).toEqual(["CA ban", "NY ban"]);
+      expect(db.label("C", "snack")?.mode).toBe("INCLUDE");
+    });
+  });
 });

@@ -233,11 +233,19 @@ export async function syncCategoryLabel(
     productId: string;
     text: string | null | undefined;
     actor?: { id: string | null; name: string | null };
+    /**
+     * Set by a caller that took its label locks UP FRONT (a reparent: label locks before row locks). The matched label
+     * must be one of them; else the retryable 409, never a lock taken after the caller's row locks.
+     */
+    lockedCategoryIds?: ReadonlySet<string>;
   },
 ): Promise<{ addedCategoryId: string | null }> {
   const match = await matchLabel(tx, args.tenantId, args.text);
   if (!match || !args.tenantId) return { addedCategoryId: null };
   const categoryId = match.id;
+  if (args.lockedCategoryIds && !args.lockedCategoryIds.has(categoryId)) {
+    throw new LabelLockTimeoutError();
+  }
   const outcome = await addIncludeIfAbsent(tx, {
     tenantId: args.tenantId,
     productId: args.productId,
@@ -249,6 +257,31 @@ export async function syncCategoryLabel(
     data: auditRow(args.tenantId, args.productId, categoryId, args.actor, match.sameKey),
   });
   return { addedCategoryId: categoryId };
+}
+
+/** READ-ONLY: the id of the label `syncCategoryLabel` would match for `text` (null = none). Takes no lock. */
+export async function labelIdForText(
+  tx: Prisma.TransactionClient,
+  tenantId: string | null | undefined,
+  text: string | null | undefined,
+): Promise<string | null> {
+  return (await matchLabel(tx, tenantId, text))?.id ?? null;
+}
+
+/**
+ * Take several label locks in ONE deterministic order (sorted, de-duplicated): the order every multi-label writer
+ * uses, so two of them can never cycle. Same family and keys as `lockLabelCategory` (and so as `setLabel`).
+ */
+export async function lockLabelCategories(
+  tx: Prisma.TransactionClient,
+  tenantId: string,
+  categoryIds: Iterable<string>,
+): Promise<void> {
+  for (const categoryId of [...new Set(categoryIds)].sort()) {
+    // Serial by design: one lock at a time, in key order.
+    // eslint-disable-next-line no-await-in-loop
+    await lockLabelCategory(tx, tenantId, categoryId);
+  }
 }
 
 /**
