@@ -166,6 +166,8 @@ export default function InvoiceDetailScreen() {
   const revertMut = useRevertInvoiceToDraft();
   const [loadingReceiptId, setLoadingReceiptId] = useState<string | null>(null);
   const [dueDateModal, setDueDateModal] = useState(false);
+  // H4: the invoice updatedAt captured when the due-date modal OPENS (a refetch while it is open never moves it).
+  const dueDateToken = useRef<string | undefined>(undefined);
   const [dueDateInput, setDueDateInput] = useState("");
   const [shipmentModal, setShipmentModal] = useState(false);
   const [creditSheetOpen, setCreditSheetOpen] = useState(false);
@@ -675,6 +677,7 @@ export default function InvoiceDetailScreen() {
               style={styles.dueRow}
               onPress={() => {
                 setDueDateInput(invoice.dueDate ? invoice.dueDate.slice(0, 10) : "");
+                dueDateToken.current = invoice.updatedAt;
                 setDueDateModal(true);
               }}
               hitSlop={4}
@@ -1128,7 +1131,7 @@ export default function InvoiceDetailScreen() {
                     {
                       id,
                       dueDate: dueDateInput.trim() || undefined,
-                      expectedUpdatedAt: invoice?.updatedAt, // H4
+                      expectedUpdatedAt: dueDateToken.current, // H4: as the modal opened
                     },
                     {
                       onSuccess: () => {

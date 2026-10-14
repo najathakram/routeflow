@@ -78,4 +78,27 @@ describe("H4 invoice edit stale token", () => {
     expect(notice).toHaveTextContent(/re-apply/);
     expect(screen.getByRole("button", { name: "Reload" })).toBeInTheDocument();
   });
+
+  it("Reload re-seeds the form and the NEXT save sends the new token", async () => {
+    const user = userEvent.setup();
+    mockInvoice = draft(
+      [{ id: "li-1", description: "Gum", qty: 1, unitPrice: 2, taxRate: 0, discount: 0 }],
+      { updatedAt: OPENED },
+    );
+    updateMutate.mockImplementationOnce((_dto, opts) =>
+      opts.onError({ response: { status: 409, data: { code: "INVOICE_STALE" } } }),
+    );
+    const view = renderWithProviders(<EditInvoicePage />);
+    await user.click(screen.getByRole("button", { name: /save changes/i }));
+    await screen.findByTestId("invoice-stale-notice");
+    // the other editor's save is what the refetch brings back
+    const NEWER = "2026-10-13T10:07:00.000Z";
+    mockInvoice = { ...mockInvoice, updatedAt: NEWER };
+    view.rerender(<EditInvoicePage />);
+    await user.click(screen.getByRole("button", { name: "Reload" }));
+    expect(screen.queryByTestId("invoice-stale-notice")).not.toBeInTheDocument();
+    await user.click(screen.getByRole("button", { name: /save changes/i }));
+    expect(updateMutate).toHaveBeenCalledTimes(2);
+    expect(updateMutate.mock.calls[1][0]).toMatchObject({ expectedUpdatedAt: NEWER });
+  });
 });
