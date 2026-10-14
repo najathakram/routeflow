@@ -91,9 +91,10 @@ const TABLE: Record<string, Row> = {
   ),
   "estimates/estimates.service.ts::EstimatesService.convertToInvoice": G,
   "import/import.service.ts::ImportService.importInvoices": X(
-    "owner ruling 2026-09-25 (#2093): historical IMPORT IS EXEMPT — every row imports unchanged " +
-      "(history is never rewritten); flagged + audited via restricted-lines-flag.ts (pinned in " +
-      "import-invoices-restrictions.spec.ts), never blocked",
+    "owner ruling 2026-09-25 (#2093), row 510 2026-10-13: historical IMPORT IS EXEMPT — every row imports " +
+      "unchanged (history is never rewritten); a breached catalog line is MARKED (Imported (historical) " +
+      "stamp + audit row) and flagged in the report via import-restriction-marker.ts (pinned in " +
+      "import-invoices-restrictions.spec.ts), never blocked. It is the only import that writes a customer sale",
   ),
   [inv("applyPriceAdjustment")]: X("price only"),
   [inv("reconcileOrderDraftInvoiceLocked")]: X(

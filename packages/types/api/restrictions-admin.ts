@@ -334,8 +334,13 @@ export interface RuleEditCommitRequest extends RuleEditRequest {
   confirmImpactHash: string;
 }
 
-/** The ONE copy for the edit impact line (row 510 changes this text in one place). */
+/**
+ * The ONE copy for the edit impact line. Row 510: staff are WARNED (and may sell with a reason), buyers are blocked, so
+ * the line says both. It never says staff are untouched (a pin in the API reads this function's output).
+ */
 export function ruleEditImpactCopy(count: number): string {
-  const n = `${count} open order${count === 1 ? "" : "s"}`;
-  return `${n} ${count === 1 ? "has" : "have"} products this change now restricts. They'll be checked when they're next edited, promoted or invoiced.`;
+  const one = count === 1;
+  const n = `${count} open order${one ? "" : "s"}`;
+  const them = one ? "it" : "them";
+  return `${n} ${one ? "has" : "have"} products this change now restricts. Staff will be warned when they next edit, promote or invoice ${them}; buyers can't order ${them}.`;
 }

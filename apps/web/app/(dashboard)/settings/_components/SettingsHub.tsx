@@ -16,7 +16,6 @@ import {
 } from "lucide-react";
 import { Card, Input, cn } from "@routeflow/ui/web";
 import { useFleetAccess } from "@/lib/api/addons";
-import { ReadinessBanner } from "./ReadinessBanner";
 import { RouteDefaultsCard } from "./RouteDefaultsCard";
 import { BuyerOversellCard } from "./BuyerOversellCard";
 
@@ -305,8 +304,6 @@ export function SettingsHub({ isAdmin }: { isAdmin: boolean }) {
           />
         </div>
       </div>
-
-      <ReadinessBanner isAdmin={isAdmin} />
 
       {/* Frequently used */}
       {!q && (

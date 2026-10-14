@@ -11,7 +11,7 @@ describe("uncategorisedLineWarnings", () => {
     from: new Date("2026-09-01T00:00:00Z"),
     toExclusive: new Date("2026-10-01T00:00:00Z"),
   };
-  const ON = { enabled: true, addressPrecedence: "BILLING_FIRST" as const };
+  const ON = { addressPrecedence: "BILLING_FIRST" as const };
   const addr = (stateCode: string | null, over: object = {}) => ({
     isDefault: true,
     addressType: "BILLING",
@@ -146,12 +146,20 @@ describe("uncategorisedLineWarnings", () => {
     expect(w[0].message).toContain("in an unknown state");
   });
 
-  it("no overlapping rule, or the engine OFF, reads no invoice and lists nothing", async () => {
+  it("no overlapping rule reads no invoice and lists nothing", async () => {
     const none = await run([], [inv("1", [addr("CA")])]);
     expect(none.w).toEqual([]);
     expect(none.db.invoice.findMany).not.toHaveBeenCalled();
-    const off = await run([rule()], [inv("1", [addr("CA")])], { ...ON, enabled: false });
-    expect(off.w).toEqual([]);
-    expect(off.db.sellingRestriction.findMany).not.toHaveBeenCalled();
+  });
+
+  it("row 510: there is no switch. A policy carrying only the address precedence judges, and a stale `enabled: false` field changes nothing", async () => {
+    const plain = await run([rule()], [inv("1", [addr("CA")])]);
+    expect(plain.w).toHaveLength(1);
+    const stale = await run([rule()], [inv("1", [addr("CA")])], {
+      ...ON,
+      enabled: false,
+    } as never);
+    expect(stale.w).toHaveLength(1);
+    expect(stale.db.sellingRestriction.findMany).toHaveBeenCalled();
   });
 });

@@ -38,10 +38,7 @@ import {
   CREDIT_LIMIT_DELIVERY_ENFORCE_KEY,
   CREDIT_LIMIT_ENFORCE_KEY,
 } from "../orders/credit-limit-guard";
-import {
-  SYSTEM_CONFIG_ENABLED,
-  SYSTEM_CONFIG_GOVERNING_ADDRESS,
-} from "../selling-restrictions/selling-restrictions.service";
+import { SYSTEM_CONFIG_GOVERNING_ADDRESS } from "../selling-restrictions/selling-restrictions.service";
 
 const row = (over: Partial<SettingRow>): SettingRow => ({
   key: "x.y",
@@ -89,20 +86,23 @@ describe("settings registry — rules", () => {
     expect(out).toMatch(/behaviour switches only/);
   });
 
-  it("selling_restrictions.enabled is allow-listed as legacy; credit_limit.* move to policy", () => {
+  it("selling_restrictions.enabled is GONE (row 510); governing_address stays legacy; credit_limit.* move to policy", () => {
     const find = (k: string) => SETTINGS_REGISTRY.find((r) => r.key === k)!;
-    expect(find("selling_restrictions.enabled")).toMatchObject({
+    expect(SETTINGS_REGISTRY.map((r) => r.key)).not.toContain("selling_restrictions.enabled");
+    expect(Object.keys(LEGACY_SYSTEM_CONFIG_BEHAVIOUR)).not.toContain(
+      "selling_restrictions.enabled",
+    );
+    expect(find("selling_restrictions.governing_address")).toMatchObject({
       kind: "behaviour",
       status: "legacy",
     });
-    expect(Object.keys(LEGACY_SYSTEM_CONFIG_BEHAVIOUR)).toContain("selling_restrictions.enabled");
     for (const k of ["credit_limit.enforce_new_orders", "credit_limit.enforce_delivery"]) {
       expect(find(k)).toMatchObject({ home: "systemConfig", status: "moves to policy (PR-3)" });
     }
     // A grandfathered key must keep its legacy status.
     expect(
       validateSettingsRegistry([
-        row({ key: "selling_restrictions.enabled", kind: "behaviour", status: "live" }),
+        row({ key: "selling_restrictions.governing_address", kind: "behaviour", status: "live" }),
       ]).join("\n"),
     ).toMatch(/must carry status "legacy"/);
   });
@@ -110,7 +110,6 @@ describe("settings registry — rules", () => {
   it("the legacy allow-list is FROZEN: exact keys, each with a reason and a policy target", () => {
     expect(Object.keys(LEGACY_SYSTEM_CONFIG_BEHAVIOUR).sort()).toEqual([
       "invoice.depositCollectAtOrder",
-      "selling_restrictions.enabled",
       "selling_restrictions.governing_address",
     ]);
     for (const [k, v] of Object.entries(LEGACY_SYSTEM_CONFIG_BEHAVIOUR)) {
@@ -312,7 +311,6 @@ describe("settings registry — every SystemConfig key the settings writers writ
       TOBACCO_EXCLUDE_KEY,
       CREDIT_LIMIT_ENFORCE_KEY,
       CREDIT_LIMIT_DELIVERY_ENFORCE_KEY,
-      SYSTEM_CONFIG_ENABLED,
       SYSTEM_CONFIG_GOVERNING_ADDRESS,
     ]) {
       expect(isRegisteredSettingKey(k)).toBe(true);
@@ -504,15 +502,16 @@ describe("settings registry — structural source scan of every SystemConfig wri
     }
   });
 
-  it("restrictions-settings writes exactly the two selling_restrictions constants, in order", () => {
+  it("restrictions-settings writes exactly ONE selling_restrictions constant (the switch is gone, row 510)", () => {
     const r = writers.find(
       (w) => w.rel === "restrictions-settings/restrictions-settings.service.ts",
     )!;
-    const pushed = [...r.src.matchAll(/writes\.push\(\[\s*([^,\]]+)/g)].map((m) => m[1].trim());
-    expect(pushed).toEqual(["SYSTEM_CONFIG_GOVERNING_ADDRESS", "SYSTEM_CONFIG_ENABLED"]);
-    for (const k of [SYSTEM_CONFIG_ENABLED, SYSTEM_CONFIG_GOVERNING_ADDRESS]) {
-      expect(isRegisteredSettingKey(k)).toBe(true);
-    }
+    const keys = [...r.src.matchAll(/this\.setConfig\(\s*tx,\s*tenantId,\s*([A-Z_]+)/g)].map(
+      (m) => m[1],
+    );
+    expect(keys).toEqual(["SYSTEM_CONFIG_GOVERNING_ADDRESS"]);
+    expect(r.src).not.toMatch(/SYSTEM_CONFIG_ENABLED/);
+    expect(isRegisteredSettingKey(SYSTEM_CONFIG_GOVERNING_ADDRESS)).toBe(true);
   });
 
   it("the prisma-direct writer files are frozen, each with a pinned key source", () => {

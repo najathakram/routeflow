@@ -17,18 +17,17 @@ import type { ReportWarning } from "./report-types";
  *
  * A customer is listed when a FEDERAL rule was active, when an active STATE rule names their governing state,
  * when a STATE rule is unreadable or blank or of an unrecognised jurisdiction (it blocks everywhere, fail
- * closed), or when their governing state cannot be resolved (unknown is never assumed safe). Read-only; nothing here blocks or changes an invoice. Only runs
- * when the tenant has the engine switched ON.
+ * closed), or when their governing state cannot be resolved (unknown is never assumed safe). Read-only; nothing here blocks or changes an invoice. Row 510: always on (the
+ * tenant switch is gone); a tenant with no active rule gets no rows.
  */
 const DAY_MS = 24 * 60 * 60 * 1000;
 
 export async function uncategorisedLineWarnings(
   db: { sellingRestriction: any; invoice: any },
-  policy: { enabled: boolean; addressPrecedence: "BILLING_FIRST" | "SHIPPING_FIRST" },
+  policy: { addressPrecedence: "BILLING_FIRST" | "SHIPPING_FIRST" },
   range: { from: Date; toExclusive: Date },
   timezone: string | null = null,
 ): Promise<ReportWarning[]> {
-  if (!policy.enabled) return [];
   // Rules are judged as of each INVOICE'S issue date, not today: a rule lifted on Oct 1 must still flag
   // September. So read every rule whose window overlaps the range (widened by a day each side, because the
   // per-invoice test below is at DAY granularity), then filter per invoice.

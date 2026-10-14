@@ -157,7 +157,7 @@ describeDb("F05 uncategorised-lines report row — real Postgres", () => {
     await prisma?.$disconnect();
   });
 
-  const on = { enabled: true, addressPrecedence: "BILLING_FIRST" as const };
+  const on = { addressPrecedence: "BILLING_FIRST" as const };
 
   it("lists only the CA customer's custom (productless, non-NSF) lines on ISSUED invoices", async () => {
     const warnings = await tenantCtx.run(tenantId, () =>
@@ -170,11 +170,20 @@ describeDb("F05 uncategorised-lines report row — real Postgres", () => {
     });
   });
 
-  it("lists nothing when the engine is OFF", async () => {
-    const warnings = await tenantCtx.run(tenantId, () =>
-      uncategorisedLineWarnings(prisma.forTenant() as never, { ...on, enabled: false }, range),
-    );
-    expect(warnings).toEqual([]);
+  it("needs no tenant switch (row 510): a stored selling_restrictions.enabled=false row changes nothing", async () => {
+    await prisma.systemConfig.create({
+      data: { tenantId, key: "selling_restrictions.enabled", value: "false" },
+    });
+    try {
+      const warnings = await tenantCtx.run(tenantId, () =>
+        uncategorisedLineWarnings(prisma.forTenant() as never, on, range),
+      );
+      expect(warnings.map((w) => w.invoiceId).sort()).toEqual([ids.ca, ids.caMixed].sort());
+    } finally {
+      await prisma.systemConfig.deleteMany({
+        where: { tenantId, key: "selling_restrictions.enabled" },
+      });
+    }
   });
 
   it("judged as of the invoice's issue date: a rule lifted AFTER the invoice still flags it; lifted BEFORE does not", async () => {

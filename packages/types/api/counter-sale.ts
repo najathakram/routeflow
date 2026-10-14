@@ -3,6 +3,8 @@
 // POST /orders/counter-sale. The server (OrdersModule, counter-sale/) and the web screen both import this one file;
 // never keep a second copy. The server always rings the sale as a PICKUP order (the client sends no fulfillPath).
 
+import type { RestrictionAck } from "./restrictions";
+
 export const COUNTER_SALE_PAYMENT_METHOD_VALUES = ["CASH", "CARD", "CHECK", "ON_ACCOUNT"] as const;
 export type CounterSalePaymentMethod = (typeof COUNTER_SALE_PAYMENT_METHOD_VALUES)[number];
 
@@ -33,7 +35,11 @@ export interface CounterSalePayment {
   reference?: string;
 }
 
-export interface CounterSaleRequest {
+/**
+ * Row 510: after a 409 RESTRICTION_WARNING the till resubmits the SAME cart with the SAME Idempotency-Key plus the ack
+ * (`restrictionOverrides`, `warningHash`). The key's cart comparison ignores the ack, so a resubmit never conflicts.
+ */
+export interface CounterSaleRequest extends RestrictionAck {
   /** a known customer; omit and send `walkIn: true` for a walk-in */
   customerId?: string;
   walkIn?: boolean;

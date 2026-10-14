@@ -104,7 +104,12 @@ describe("#2190 invoice importer: a bad money cell skips the invoice, never impo
         {
           provide: SellingRestrictionsService,
           useValue: {
-            checkLinesSellable: jest.fn().mockResolvedValue({ outcome: "ALLOW", reasons: [] }),
+            judgeStaffWrite: jest.fn().mockResolvedValue({
+              outcome: "ALLOW",
+              reasons: [],
+              breaches: [],
+              basis: "CUSTOMER",
+            }),
           },
         },
       ],

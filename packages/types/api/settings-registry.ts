@@ -39,14 +39,9 @@ export interface SettingRow {
  * and where it moves (the policy registry, #1337, R1.3 keys).
  */
 export const LEGACY_SYSTEM_CONFIG_BEHAVIOUR: Record<string, { reason: string; target: string }> = {
-  "selling_restrictions.enabled": {
-    reason:
-      "Master on/off for selling restrictions; shipped as a SystemConfig switch before SA-602.",
-    target: "policy key (R1.3) once #1337 lands; moved per key with a backfill, never in bulk",
-  },
   "selling_restrictions.governing_address": {
-    reason: "Billing-first vs shipping-first changes enforcement outcomes; written with .enabled.",
-    target: "policy key (R1.3) moving together with selling_restrictions.enabled",
+    reason: "Billing-first vs shipping-first changes enforcement outcomes; shipped before SA-602.",
+    target: "policy key (R1.3) once #1337 lands; moved per key with a backfill, never in bulk",
   },
   "invoice.depositCollectAtOrder": {
     reason: "Boolean tenant policy switch in SystemConfig since #465 (2026-08-27), before SA-602.",
@@ -142,14 +137,6 @@ export const SETTINGS_REGISTRY: SettingRow[] = [
   })),
   // ── systemConfig: other writers ──────────────────────────────────────────────
   cfg("tobacco.excludeFromMainAnalytics", "/compliance/[categoryId]", { adminOnly: true }),
-  {
-    key: "selling_restrictions.enabled",
-    home: "systemConfig",
-    kind: "behaviour",
-    status: "legacy",
-    screen: "/settings/restrictions",
-    adminOnly: true,
-  },
   {
     key: "selling_restrictions.governing_address",
     home: "systemConfig",

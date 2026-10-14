@@ -33,9 +33,7 @@ describe("RegulatedReportService", () => {
         {
           provide: SellingRestrictionsService,
           useValue: {
-            getPolicy: jest
-              .fn()
-              .mockResolvedValue({ enabled: false, addressPrecedence: "BILLING_FIRST" }),
+            getPolicy: jest.fn().mockResolvedValue({ addressPrecedence: "BILLING_FIRST" }),
           },
         },
         { provide: PrismaService, useValue: prisma },
@@ -45,6 +43,10 @@ describe("RegulatedReportService", () => {
     service = mod.get(RegulatedReportService);
 
     prisma.trackedCategory.findUnique.mockResolvedValue(category);
+    // row 510: the review row is always on, so the preview asks for the tenant's rules (none here)
+    (prisma.forTenant() as any).sellingRestriction = {
+      findMany: jest.fn().mockResolvedValue([]),
+    };
   });
 
   describe("date/range validation", () => {
@@ -425,9 +427,8 @@ describe("RegulatedReportService", () => {
   describe("F-05 uncategorised-lines row: the tenant timezone", () => {
     const range = { category: "cat-1", from: "2026-09-01", to: "2026-09-30" };
     let warnings: jest.SpyInstance;
-    const policy = (enabled: boolean) =>
+    const policy = () =>
       ((service as any).sellingRestrictions.getPolicy as jest.Mock).mockResolvedValue({
-        enabled,
         addressPrecedence: "BILLING_FIRST",
       });
     beforeEach(() => {
@@ -436,8 +437,8 @@ describe("RegulatedReportService", () => {
     });
     afterEach(() => warnings.mockRestore());
 
-    it("policy ON: the tenant's timezone is read and passed through to the rule check", async () => {
-      policy(true);
+    it("the tenant's timezone is read and passed through to the rule check", async () => {
+      policy();
       prisma.tenantConfig.findUnique.mockResolvedValue({ timezone: "America/Chicago" });
       await service.buildReport(range);
       expect(prisma.tenantConfig.findUnique).toHaveBeenCalledWith({
@@ -448,11 +449,13 @@ describe("RegulatedReportService", () => {
       expect(warnings.mock.calls[0][3]).toBe("America/Chicago");
     });
 
-    it("policy OFF: the tenant config is never read (and no timezone is passed)", async () => {
-      policy(false);
+    it("row 510: there is no switch, so the row is always judged: a policy with no `enabled` field still reads the timezone", async () => {
+      policy();
+      prisma.tenantConfig.findUnique.mockResolvedValue({ timezone: "America/Denver" });
       await service.buildReport(range);
-      expect(prisma.tenantConfig.findUnique).not.toHaveBeenCalled();
-      expect(warnings.mock.calls[0][3]).toBeNull();
+      expect(prisma.tenantConfig.findUnique).toHaveBeenCalledTimes(1);
+      expect(warnings.mock.calls[0][1]).toEqual({ addressPrecedence: "BILLING_FIRST" });
+      expect(warnings.mock.calls[0][3]).toBe("America/Denver");
     });
   });
 });

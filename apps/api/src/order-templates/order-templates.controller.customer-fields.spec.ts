@@ -28,7 +28,11 @@ describe("OrderTemplatesController.generateOrder — customer-facing fields only
   it("CUSTOMER: only allowlisted fields, no staff-internal key at any depth", async () => {
     const { controller, service } = build(leakyOrder());
     const out = await controller.generateOrder("tpl-1", principal("CUSTOMER"));
-    expect(service.generateOrderForUser).toHaveBeenCalledWith("tpl-1", principal("CUSTOMER"));
+    expect(service.generateOrderForUser).toHaveBeenCalledWith(
+      "tpl-1",
+      principal("CUSTOMER"),
+      undefined, // row 510: the optional restriction ack body (a buyer sends none)
+    );
     expectNoStaffLeaks(out);
     expect(out).toMatchObject({ id: "ord-1", status: "PENDING" });
     expect((out as { lineItems: object[] }).lineItems[0]).toMatchObject({ id: "li-1", qty: 2 });

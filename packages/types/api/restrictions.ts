@@ -6,13 +6,12 @@ import type { RestrictionAddressPrecedence } from "./enums";
 import type { API_ERROR_CODES } from "./error-codes";
 
 /**
- * Tenant policy. `addressPrecedence` = which customer address TYPE governs a STATE rule first
+ * Tenant policy (row 510: the old on/off switch is gone, staff sales are always judged). `addressPrecedence` = which customer address TYPE governs a STATE rule first
  * (owner ruling D4: the customer's DEFAULT address; see `RESTRICTION_ADDRESS_PRECEDENCE_VALUES`).
  * A licensed-premises address source (`CustomerAuthorization.premisesState`) is deliberately
  * deferred — owner: "no licensed-premises field now"; reintroduce it as a third source when ruled in.
  */
 export interface RestrictionsPolicy {
-  enabled: boolean;
   addressPrecedence: RestrictionAddressPrecedence;
 }
 

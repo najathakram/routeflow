@@ -123,7 +123,12 @@ describeDb(
           {
             provide: SellingRestrictionsService,
             useValue: {
-              checkLinesSellable: jest.fn().mockResolvedValue({ outcome: "ALLOW", reasons: [] }),
+              judgeStaffWrite: jest.fn().mockResolvedValue({
+                outcome: "ALLOW",
+                reasons: [],
+                breaches: [],
+                basis: "CUSTOMER",
+              }),
             },
           },
           // ProductsService peripherals — everything permitted, no side channel. Gate-refusal

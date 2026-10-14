@@ -16,6 +16,7 @@ import {
 } from "class-validator";
 import { Type } from "class-transformer";
 import { StripHtml } from "../../common/transforms/strip-html.transform";
+import { RestrictionAckDto } from "../../selling-restrictions/dto/restriction-ack.dto";
 
 /** Mirrors `COUNTER_SALE_PAYMENT_METHOD_VALUES` in @routeflow/types (API source never value-imports that package). */
 export const COUNTER_SALE_METHODS = ["CASH", "CARD", "CHECK", "ON_ACCOUNT"] as const;
@@ -42,8 +43,13 @@ export class CounterSalePaymentDto {
   @IsOptional() @IsString() @MaxLength(100) reference?: string;
 }
 
-/** `CounterSaleRequest` of the shared contract (packages/types/api/counter-sale.ts). */
-export class CounterSaleDto {
+/**
+ * `CounterSaleRequest` of the shared contract (packages/types/api/counter-sale.ts). Row 510: it extends the staff
+ * restriction ack (`restrictionOverrides`, `warningHash`): after a 409 RESTRICTION_WARNING the till resubmits the SAME
+ * cart with the SAME Idempotency-Key plus the ack. The ack is never part of the replay's cart comparison, so it can
+ * never turn into a key conflict.
+ */
+export class CounterSaleDto extends RestrictionAckDto {
   @IsOptional() @IsUUID() customerId?: string;
   @IsOptional() @IsBoolean() walkIn?: boolean;
 

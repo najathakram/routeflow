@@ -127,7 +127,15 @@ describe("OrderTemplatesService — selling restrictions (F-05)", () => {
       expect(restrictions.assertLinesSellable).toHaveBeenNthCalledWith(1, {
         tenantId: "test-tenant",
         customerId: "c1",
-        lines: [{ productId: "p-banned" }, { productId: "p-ok" }],
+        // row 510: each line carries its stable key; no actor on an internal call (so it can never override)
+        lines: [
+          { productId: "p-banned", lineKey: "n:0" },
+          { productId: "p-ok", lineKey: "n:1" },
+        ],
+        path: "DELIVERY",
+        principal: undefined,
+        ack: undefined,
+        document: "ORDER",
         channel: "STAFF",
       });
       expect(restrictions.assertLinesSellable).toHaveBeenNthCalledWith(
@@ -346,7 +354,7 @@ describe("OrderTemplatesService — selling restrictions (F-05)", () => {
       );
       await service.generateOrder("t1");
       expect(restrictions.assertLinesSellable).toHaveBeenCalledWith(
-        expect.objectContaining({ lines: [{ productId: "p-ok" }] }),
+        expect.objectContaining({ lines: [{ productId: "p-ok", lineKey: "n:0" }] }),
       );
       expect(prisma.order.create.mock.calls[0][0].data.lineItems.create).toHaveLength(1);
       prisma.orderTemplate.findUnique.mockResolvedValue(
@@ -373,7 +381,10 @@ describe("OrderTemplatesService — selling restrictions (F-05)", () => {
       );
       // the 409 authority is still asked, but only about the lines left in
       expect(restrictions.assertLinesSellable).toHaveBeenCalledWith(
-        expect.objectContaining({ lines: [{ productId: "p-ok" }], channel: "BUYER_PORTAL" }),
+        expect.objectContaining({
+          lines: [{ productId: "p-ok", lineKey: "n:0" }],
+          channel: "BUYER_PORTAL",
+        }),
       );
       expect(
         prisma.order.create.mock.calls[0][0].data.lineItems.create.map((l: any) => l.productId),
@@ -426,7 +437,12 @@ describe("OrderTemplatesService — selling restrictions (F-05)", () => {
       });
       expect(restrictions.checkLinesSellable).not.toHaveBeenCalled();
       expect(restrictions.assertLinesSellable).toHaveBeenCalledWith(
-        expect.objectContaining({ lines: [{ productId: "p-banned" }, { productId: "p-ok" }] }),
+        expect.objectContaining({
+          lines: [
+            { productId: "p-banned", lineKey: "n:0" },
+            { productId: "p-ok", lineKey: "n:1" },
+          ],
+        }),
       );
     });
   });

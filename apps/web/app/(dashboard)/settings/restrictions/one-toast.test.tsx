@@ -6,8 +6,7 @@ import RestrictionsSettingsPage from "./page";
 /**
  * End to end for the toast contract (B594 class): the REAL global MutationCache handler
  * (app/providers.tsx) around the REAL page, only the network mocked. Each failed save must raise
- * exactly ONE toast — the page's own for the guided cases (which HANDLED_CODES tells the global
- * handler to skip), the global handler's for everything else.
+ * exactly ONE toast, the global handler's (row 510 removed the page's own guided toast with the switch).
  */
 const toast = jest.fn();
 const patch = jest.fn();
@@ -37,7 +36,7 @@ jest.mock("@/lib/api-client", () => ({
               needsReview: { total: 0, rows: [], nextCursor: null },
             },
           }
-        : { data: { enabled: false, governingAddress: "BILLING_FIRST" } },
+        : { data: { governingAddress: "BILLING_FIRST" } },
     ),
     patch: (...a: unknown[]) => patch(...a),
   },
@@ -53,7 +52,7 @@ const flip = async () => {
       <RestrictionsSettingsPage />
     </Providers>,
   );
-  fireEvent.click(await screen.findByRole("switch"));
+  fireEvent.click(await screen.findByLabelText(/shipping address first/i));
 };
 
 beforeEach(() => jest.clearAllMocks());
@@ -65,17 +64,6 @@ describe("one failed save = exactly one toast", () => {
     await waitFor(() => expect(toast).toHaveBeenCalled());
     expect(toast).toHaveBeenCalledTimes(1);
     expect(toast.mock.calls[0][0].title).not.toMatch(/can't enable yet|raw/i);
-  });
-
-  it("400 enable+policy (guided): the page's toast only, never the raw server text", async () => {
-    reject(400, {
-      code: "SELLING_RESTRICTIONS_ENABLE_AND_POLICY_TOGETHER",
-      message: "raw server text",
-    });
-    await flip();
-    await waitFor(() => expect(toast).toHaveBeenCalled());
-    expect(toast).toHaveBeenCalledTimes(1);
-    expect(toast.mock.calls[0][0].title).toMatch(/two steps/i);
   });
 
   it("any other error: the global handler's toast only, with FIXED copy (B980)", async () => {

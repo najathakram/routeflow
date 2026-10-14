@@ -98,7 +98,12 @@ describeDb("B268 import-fallback numbering — green regression pins (T3b)", () 
         {
           provide: SellingRestrictionsService,
           useValue: {
-            checkLinesSellable: jest.fn().mockResolvedValue({ outcome: "ALLOW", reasons: [] }),
+            judgeStaffWrite: jest.fn().mockResolvedValue({
+              outcome: "ALLOW",
+              reasons: [],
+              breaches: [],
+              basis: "CUSTOMER",
+            }),
           },
         },
       ],

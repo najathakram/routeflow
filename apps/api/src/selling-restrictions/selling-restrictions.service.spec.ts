@@ -2,7 +2,6 @@ import * as fs from "fs";
 import * as path from "path";
 import { ConflictException, InternalServerErrorException, Logger } from "@nestjs/common";
 import { Test } from "@nestjs/testing";
-import { excludeWalkIn } from "../customers/walk-in-protected";
 import * as core from "./selling-restrictions.core";
 import { PrismaService } from "../prisma/prisma.service";
 import { ProductLabelsService } from "../product-labels/product-labels.service";
@@ -13,18 +12,13 @@ import {
   restrictionChannelForPrincipal,
 } from "./selling-restrictions.core";
 import {
-  ENABLE_READINESS_MAX_PAGES,
-  ENABLE_READINESS_PAGE_SIZE,
-  SELLING_RESTRICTIONS_DISABLED_VALUE,
-  SELLING_RESTRICTIONS_ENABLED_VALUE,
-  SELLING_RESTRICTIONS_NOT_READY,
   SellingRestrictionsService,
-  SYSTEM_CONFIG_ENABLED,
   SYSTEM_CONFIG_GOVERNING_ADDRESS,
 } from "./selling-restrictions.service";
 
 const T = "tenant-1";
-const ENABLED_KEY = SYSTEM_CONFIG_ENABLED;
+/** A stored row of the removed switch: never read (row 510), kept in fixtures to prove it is ignored. */
+const ENABLED_KEY = "selling_restrictions.enabled";
 const GOVERNING_KEY = SYSTEM_CONFIG_GOVERNING_ADDRESS;
 const NOW = new Date("2026-09-19T12:00:00Z");
 
@@ -471,7 +465,7 @@ describe("SellingRestrictionsService.evaluate", () => {
     await service.evaluate(T, "c1", [{ productId: "p1" }], { at: NOW });
     expect(prisma.systemConfig.findMany.mock.calls[0][0].where).toEqual({
       tenantId: T,
-      key: { in: [ENABLED, GOVERNING] },
+      key: GOVERNING,
     });
     expect(prisma.product.findMany.mock.calls[0][0].where.tenantId).toBe(T);
     expect(prisma.sellingRestriction.findMany.mock.calls[0][0].where.tenantId).toBe(T); // the probe
@@ -576,22 +570,10 @@ describe("SellingRestrictionsService.evaluate", () => {
   });
 
   describe("getPolicy (SystemConfig keys)", () => {
-    it.each([
-      ["absent", []],
-      ['"false"', [[ENABLED_KEY, "false"]]],
-      ['" FALSE "', [[ENABLED_KEY, " FALSE "]]],
-    ] as Array<[string, Array<[string, string]>]>)("%s → OFF", async (_n, rows) => {
-      policyRows(rows);
-      expect((await service.getPolicy(T)).enabled).toBe(false);
+    it("absent -> BILLING_FIRST, and there is no `enabled` field (the switch is gone)", async () => {
+      policyRows([]);
+      expect(await service.getPolicy(T)).toEqual({ addressPrecedence: "BILLING_FIRST" });
     });
-
-    it.each(["true", "TRUE", "1", "yes", "garbage"])(
-      "%j → ON (an unrecognised value fails closed, never OFF)",
-      async (value) => {
-        policyRows([[ENABLED_KEY, value]]);
-        expect((await service.getPolicy(T)).enabled).toBe(true);
-      },
-    );
 
     it("governing_address: SHIPPING_FIRST (any case) selects shipping first; anything else is billing first", async () => {
       policyRows([
@@ -891,21 +873,26 @@ describe("SellingRestrictionsService.evaluate", () => {
     });
   });
 
-  describe("review MINOR 5: the stored switch literals", () => {
-    it('are exactly "true" / "false"', () => {
-      expect(SELLING_RESTRICTIONS_ENABLED_VALUE).toBe("true");
-      expect(SELLING_RESTRICTIONS_DISABLED_VALUE).toBe("false");
+  describe("row 510: the stored switch is gone", () => {
+    it("the switch constants no longer exist", () => {
+      const mod = jest.requireActual("./selling-restrictions.service") as Record<string, unknown>;
+      for (const name of [
+        "SELLING_RESTRICTIONS_ENABLED_VALUE",
+        "SELLING_RESTRICTIONS_DISABLED_VALUE",
+        "SYSTEM_CONFIG_ENABLED",
+      ])
+        expect(mod).not.toHaveProperty(name);
     });
 
-    it("the ENABLED literal parses ON, the DISABLED literal parses OFF, anything else fails closed to ON", async () => {
-      policyRows([[ENABLED_KEY, SELLING_RESTRICTIONS_ENABLED_VALUE]]);
-      expect((await service.getPolicy(T)).enabled).toBe(true);
-      policyRows([[ENABLED_KEY, SELLING_RESTRICTIONS_DISABLED_VALUE]]);
-      expect((await service.getPolicy(T)).enabled).toBe(false);
-      for (const other of ["0", "off", "no", "disabled", "", "fasle"]) {
-        policyRows([[ENABLED_KEY, other]]);
-        expect((await service.getPolicy(T)).enabled).toBe(true);
+    it("a stored selling_restrictions.enabled row of any value is ignored: the policy carries the address precedence only", async () => {
+      for (const stored of ["true", "false", "0", "garbage", ""]) {
+        policyRows([[ENABLED_KEY, stored]]);
+        expect(await service.getPolicy(T)).toEqual({ addressPrecedence: "BILLING_FIRST" });
       }
+      // and the read itself asks for the governing-address row only
+      const calls = prisma.systemConfig.findMany.mock.calls;
+      const where = calls[calls.length - 1][0].where;
+      expect(JSON.stringify(where)).not.toContain("selling_restrictions.enabled");
     });
   });
 
@@ -948,428 +935,100 @@ describe("SellingRestrictionsService.evaluate", () => {
     });
   });
 
-  describe("round 1 (Opus): the readiness sweep is bounded and never reads green when partial", () => {
-    it("stops at ENABLE_READINESS_MAX_PAGES with truncated: true and ready: false", async () => {
-      const page = Array.from({ length: ENABLE_READINESS_PAGE_SIZE }, (_v, i) => ({
-        id: `c${i}`,
-        addresses: [
-          { isDefault: true, addressType: "BILLING", stateCode: "TX", stateNeedsReview: false },
-        ],
-      }));
-      prisma.customer.findMany.mockResolvedValue(page);
-      policyRows([]);
-      const r = await service.getEnableReadiness(T);
-      expect(prisma.customer.findMany).toHaveBeenCalledTimes(ENABLE_READINESS_MAX_PAGES);
-      expect(r.truncated).toBe(true);
-      expect(r.ready).toBe(false); // every customer resolved, yet a partial sweep is NOT ready
-      expect(r.indeterminateCustomerCount).toBe(0);
-      await expect(service.assertReadyToEnable(T)).rejects.toMatchObject({
-        response: { code: "SELLING_RESTRICTIONS_NOT_READY" },
-      });
-    });
-  });
-
-  describe("review MAJOR 3: getEnableReadiness / assertReadyToEnable", () => {
-    const addr = (over: Record<string, unknown> = {}) => ({
-      isDefault: true,
-      addressType: "BILLING",
-      stateCode: "TX",
-      stateNeedsReview: false,
-      ...over,
-    });
-    const cid = (i: number) => `c${String(i).padStart(5, "0")}`;
-    const customer = (id: string, addresses: unknown[]) => ({ id, addresses });
-
-    /** A `customer.findMany` that honours orderBy id / cursor / skip / take over a fixed table. */
-    const serveCustomers = (rows: Array<{ id: string; addresses: unknown[] }>) =>
-      prisma.customer.findMany.mockImplementation(async (args: any) => {
-        const sorted = [...rows].sort((a, b) => (a.id < b.id ? -1 : 1));
-        const start = args.cursor
-          ? sorted.findIndex((r) => r.id === args.cursor.id) + (args.skip ?? 0)
-          : 0;
-        return sorted.slice(start, start + args.take);
-      });
+  describe("businessStateMissing (the 'customers without a state' card; the readiness sweep and switch are gone, row 510)", () => {
+    const stateRule = (over: Record<string, unknown> = {}) => dbRule({ states: ["TX"], ...over });
+    const NOW_PAST = new Date("2026-01-01T00:00:00Z");
 
     beforeEach(() => {
-      // a tenant that HAS a business state (Settings > Business); the missing case is its own test below
       prisma.tenantConfig.findUnique.mockResolvedValue({ state: "TX" });
       prisma.systemConfig.findFirst.mockResolvedValue(null);
     });
 
-    it("counts every bucket, with the switch still OFF (readiness is asked BEFORE enabling)", async () => {
-      enable(false);
-      serveCustomers([
-        customer("ok-default", [addr()]),
-        customer("ok-sole-nondefault", [addr({ isDefault: false })]),
-        customer("no-address", []),
-        customer("ambiguous", [
-          addr({ isDefault: false, stateCode: "TX" }),
-          addr({ isDefault: false, addressType: "SHIPPING", stateCode: "FL" }),
-        ]),
-        customer("null-state", [addr({ stateCode: null })]),
-        customer("bogus-state", [addr({ stateCode: "ZZ" })]),
-        customer("needs-review", [addr({ stateNeedsReview: true })]),
-        // resolvable-looking rows that DISAGREE: counted only by resolveGoverningState
-        customer("conflicting-defaults", [addr({ stateCode: "TX" }), addr({ stateCode: "FL" })]),
+    it("an active STATE rule + no business state is MISSING", async () => {
+      prisma.sellingRestriction.findMany.mockResolvedValue([stateRule()]);
+      prisma.tenantConfig.findUnique.mockResolvedValue(null);
+      expect(await service.businessStateMissing(T)).toBe(true);
+    });
+
+    it("asks the database only for the tenant's ACTIVE STATE rules", async () => {
+      prisma.sellingRestriction.findMany.mockResolvedValue([]);
+      await service.businessStateMissing(T);
+      const where = prisma.sellingRestriction.findMany.mock.calls[0][0].where;
+      expect(where).toMatchObject({ tenantId: T, jurisdiction: "STATE" });
+      expect(JSON.stringify(where.AND)).toContain("liftedAt"); // activeRuleWhere(at), the SQL twin
+    });
+
+    it("no rules at all + no business state is NOT missing (nothing needs a state), and the state is not even read", async () => {
+      prisma.sellingRestriction.findMany.mockResolvedValue([]);
+      prisma.tenantConfig.findUnique.mockResolvedValue(null);
+      expect(await service.businessStateMissing(T)).toBe(false);
+      expect(prisma.tenantConfig.findUnique).not.toHaveBeenCalled();
+    });
+
+    it("only FEDERAL rules + no business state is not missing", async () => {
+      prisma.sellingRestriction.findMany.mockResolvedValue([
+        stateRule({ jurisdiction: "FEDERAL", states: [] }),
       ]);
-      expect(await service.getEnableReadiness(T)).toEqual({
-        ready: false,
-        truncated: false,
-        customerCount: 8,
-        customersWithoutAddress: 1,
-        customersAmbiguousNoDefault: 1,
-        addressesMissingStateCode: 2, // null-state + bogus-state (no USABLE code)
-        addressesNeedingReview: 1,
-        indeterminateCustomerCount: 6, // everyone except the two resolvable customers
-        businessStateMissing: false,
-      });
+      prisma.tenantConfig.findUnique.mockResolvedValue(null);
+      expect(await service.businessStateMissing(T)).toBe(false);
     });
 
-    it("ready: every customer resolves → ready true, indeterminate 0", async () => {
-      enable(true);
-      serveCustomers([
-        customer("a", [addr()]),
-        customer("b", [addr({ stateCode: "fl" }), addr({ isDefault: false, stateCode: "TX" })]),
-        customer("c", [addr({ isDefault: false })]),
-      ]);
-      expect(await service.getEnableReadiness(T)).toEqual({
-        ready: true,
-        truncated: false,
-        customerCount: 3,
-        customersWithoutAddress: 0,
-        customersAmbiguousNoDefault: 0,
-        addressesMissingStateCode: 0,
-        addressesNeedingReview: 0,
-        indeterminateCustomerCount: 0,
-        businessStateMissing: false,
-      });
-    });
-
-    it("a tenant with no customers is ready", async () => {
-      policyRows([]);
-      serveCustomers([]);
-      const r = await service.getEnableReadiness(T);
-      expect(r.ready).toBe(true);
-      expect(r.customerCount).toBe(0);
-    });
-
-    it("counts with the SAME resolver and the tenant's CURRENT precedence policy", async () => {
-      // default BILLING has no usable state; default SHIPPING is TX.
-      serveCustomers([
-        customer("split", [
-          addr({ addressType: "BILLING", stateCode: null }),
-          addr({ addressType: "SHIPPING", stateCode: "TX" }),
-        ]),
-      ]);
-      policyRows([[GOVERNING_KEY, "BILLING_FIRST"]]);
-      expect((await service.getEnableReadiness(T)).indeterminateCustomerCount).toBe(1);
-      policyRows([[GOVERNING_KEY, "SHIPPING_FIRST"]]);
-      const shippingFirst = await service.getEnableReadiness(T);
-      expect(shippingFirst.indeterminateCustomerCount).toBe(0);
-      expect(shippingFirst.ready).toBe(true);
-    });
-
-    it("reads customers in cursor PAGES (>1 page), tenant-scoped, ignoring soft-deleted", async () => {
-      const total = ENABLE_READINESS_PAGE_SIZE * 2 + 201; // 1201 → 3 pages
-      const rows = Array.from({ length: total }, (_, i) =>
-        // every 100th customer has no address; the rest resolve
-        customer(cid(i), i % 100 === 0 ? [] : [addr()]),
-      );
-      serveCustomers(rows);
-      enable(true);
-      const r = await service.getEnableReadiness(T);
-
-      expect(r).toMatchObject({
-        customerCount: total,
-        customersWithoutAddress: Math.ceil(total / 100),
-        indeterminateCustomerCount: Math.ceil(total / 100),
-        ready: false,
-      });
-      const calls = prisma.customer.findMany.mock.calls.map((c: any[]) => c[0]);
-      expect(calls).toHaveLength(3);
-      for (const c of calls) {
-        expect(c.where).toEqual(excludeWalkIn({ tenantId: T, deletedAt: null }));
-        expect(c.orderBy).toEqual({ id: "asc" });
-        expect(c.take).toBe(ENABLE_READINESS_PAGE_SIZE);
+    it("an INACTIVE STATE rule (lifted, expired or buyer-portal-only) + no state is not missing", async () => {
+      prisma.tenantConfig.findUnique.mockResolvedValue(null);
+      for (const inactive of [
+        stateRule({ liftedAt: NOW_PAST }),
+        stateRule({ effectiveTo: NOW_PAST }),
+        stateRule({ surface: "BUYER_PORTAL" }), // does not bind the counter (staff channel)
+        stateRule({ states: [] }), // malformed: blocks everywhere, needs no state
+      ]) {
+        prisma.sellingRestriction.findMany.mockResolvedValue([inactive]);
+        expect(await service.businessStateMissing(T)).toBe(false);
       }
-      expect(calls[0].cursor).toBeUndefined();
-      expect(calls[1]).toMatchObject({
-        cursor: { id: cid(ENABLE_READINESS_PAGE_SIZE - 1) },
-        skip: 1,
-      });
-      expect(calls[2]).toMatchObject({
-        cursor: { id: cid(ENABLE_READINESS_PAGE_SIZE * 2 - 1) },
-        skip: 1,
-      });
     });
 
-    describe("the tenant's own business state (counter sales judge the walk-in by it)", () => {
-      const resolvable = [customer("ok", [addr()])];
-      const stateRule = (over: Record<string, unknown> = {}) => dbRule({ states: ["TX"], ...over });
-      const NOW_PAST = new Date("2026-01-01T00:00:00Z");
+    it("an active STATE rule + a business state is not missing; an unreadable one counts as missing", async () => {
+      prisma.sellingRestriction.findMany.mockResolvedValue([stateRule()]);
+      prisma.tenantConfig.findUnique.mockResolvedValue({ state: "TX" });
+      expect(await service.businessStateMissing(T)).toBe(false);
+      prisma.tenantConfig.findUnique.mockResolvedValue({ state: "  " });
+      expect(await service.businessStateMissing(T)).toBe(true);
+    });
 
-      beforeEach(() => {
-        enable(true);
-        serveCustomers(resolvable);
-      });
+    it("a business state in the legacy settings.state counts as present", async () => {
+      prisma.sellingRestriction.findMany.mockResolvedValue([stateRule()]);
+      prisma.tenantConfig.findUnique.mockResolvedValue(null);
+      prisma.systemConfig.findFirst.mockResolvedValue({ value: "fl" });
+      expect(await service.businessStateMissing(T)).toBe(false);
+    });
 
-      it("an active STATE rule + no business state is NOT READY, the walk-in never the cause", async () => {
-        prisma.sellingRestriction.findMany.mockResolvedValue([stateRule()]);
-        prisma.tenantConfig.findUnique.mockResolvedValue(null);
-        const r = await service.getEnableReadiness(T);
-        expect(r).toMatchObject({
-          ready: false,
-          businessStateMissing: true,
-          customersWithoutAddress: 0,
-          indeterminateCustomerCount: 0,
-        });
-        await expect(service.assertReadyToEnable(T)).rejects.toMatchObject({
-          response: {
-            code: "SELLING_RESTRICTIONS_NOT_READY",
-            readiness: { businessStateMissing: true },
-          },
-        });
-      });
-
-      it("asks the database only for the tenant's ACTIVE STATE rules", async () => {
-        prisma.sellingRestriction.findMany.mockResolvedValue([]);
-        await service.getEnableReadiness(T);
-        const where = prisma.sellingRestriction.findMany.mock.calls[0][0].where;
-        expect(where).toMatchObject({ tenantId: T, jurisdiction: "STATE" });
-        expect(JSON.stringify(where.AND)).toContain("liftedAt"); // activeRuleWhere(at), the SQL twin
-      });
-
-      it("no rules at all + no business state is READY (nothing needs a state)", async () => {
-        prisma.sellingRestriction.findMany.mockResolvedValue([]);
-        prisma.tenantConfig.findUnique.mockResolvedValue(null);
-        const r = await service.getEnableReadiness(T);
-        expect(r).toMatchObject({ ready: true, businessStateMissing: false });
-        expect(prisma.tenantConfig.findUnique).not.toHaveBeenCalled(); // not even read
-      });
-
-      it("only FEDERAL rules + no business state is READY", async () => {
-        prisma.sellingRestriction.findMany.mockResolvedValue([
-          stateRule({ jurisdiction: "FEDERAL", states: [] }),
-        ]);
-        prisma.tenantConfig.findUnique.mockResolvedValue(null);
-        expect(await service.getEnableReadiness(T)).toMatchObject({
-          ready: true,
-          businessStateMissing: false,
-        });
-      });
-
-      it("an INACTIVE STATE rule (lifted, expired or buyer-portal-only) + no state is READY", async () => {
-        prisma.tenantConfig.findUnique.mockResolvedValue(null);
-        for (const inactive of [
-          stateRule({ liftedAt: NOW_PAST }),
-          stateRule({ effectiveTo: NOW_PAST }),
-          stateRule({ surface: "BUYER_PORTAL" }), // does not bind the counter (staff channel)
-          stateRule({ states: [] }), // malformed: blocks everywhere, needs no state
-        ]) {
-          prisma.sellingRestriction.findMany.mockResolvedValue([inactive]);
-          expect(await service.getEnableReadiness(T)).toMatchObject({
-            ready: true,
-            businessStateMissing: false,
-          });
-        }
-      });
-
-      it("an active STATE rule + a business state is READY", async () => {
+    it("businessStateMissing and evaluate() ask the SAME stateRuleInPlay (they cannot drift)", async () => {
+      const spy = jest.spyOn(core, "stateRuleInPlay");
+      try {
         prisma.sellingRestriction.findMany.mockResolvedValue([stateRule()]);
         prisma.tenantConfig.findUnique.mockResolvedValue({ state: "TX" });
-        expect(await service.getEnableReadiness(T)).toMatchObject({
-          ready: true,
-          businessStateMissing: false,
+        await service.businessStateMissing(T);
+        expect(spy).toHaveBeenCalledTimes(1);
+        expect(spy.mock.calls[0][1]).toBe("STAFF");
+        spy.mockClear();
+        withProduct();
+        prisma.customer.findFirst.mockResolvedValue({ isWalkIn: true, addresses: [] });
+        await service.evaluate(T, "walk-in-id", [{ productId: "p1" }], {
+          at: NOW,
+          channel: "STAFF",
         });
-      });
-
-      it("a business state the engine cannot read counts as missing", async () => {
-        prisma.sellingRestriction.findMany.mockResolvedValue([stateRule()]);
-        prisma.tenantConfig.findUnique.mockResolvedValue({ state: "  " });
-        expect((await service.getEnableReadiness(T)).businessStateMissing).toBe(true);
-      });
-
-      it("a business state in the legacy settings.state counts as present", async () => {
-        prisma.sellingRestriction.findMany.mockResolvedValue([stateRule()]);
-        prisma.tenantConfig.findUnique.mockResolvedValue(null);
-        prisma.systemConfig.findFirst.mockResolvedValue({ value: "fl" });
-        const r = await service.getEnableReadiness(T);
-        expect(r.businessStateMissing).toBe(false);
-        expect(r.ready).toBe(true);
-      });
-
-      it("readiness and evaluate() ask the SAME stateRuleInPlay (they cannot drift)", async () => {
-        const spy = jest.spyOn(core, "stateRuleInPlay");
-        try {
-          // readiness
-          prisma.sellingRestriction.findMany.mockResolvedValue([stateRule()]);
-          prisma.tenantConfig.findUnique.mockResolvedValue({ state: "TX" });
-          await service.getEnableReadiness(T);
-          expect(spy).toHaveBeenCalledTimes(1);
-          expect(spy.mock.calls[0][1]).toBe("STAFF");
-          // evaluate(): a walk-in sale with a STATE rule in play
-          spy.mockClear();
-          withProduct();
-          prisma.customer.findFirst.mockResolvedValue({ isWalkIn: true, addresses: [] });
-          await service.evaluate(T, "walk-in-id", [{ productId: "p1" }], {
-            at: NOW,
-            channel: "STAFF",
-          });
-          expect(spy).toHaveBeenCalledTimes(1);
-          expect(spy.mock.results[0].value).toBe(true);
-        } finally {
-          spy.mockRestore();
-        }
-      });
-    });
-
-    describe("system walk-in customer (CQ-04): excluded by predicate, never by name", () => {
-      type Row = {
-        id: string;
-        businessName: string;
-        isWalkIn?: boolean | null;
-        addresses: unknown[];
-      };
-      /** Evaluates the query's own `where` (null-or-false `isWalkIn` filter), so the SQL predicate is proven. */
-      const matches = (row: Row, cond: any): boolean => {
-        if (!cond || typeof cond !== "object") return true;
-        if (Array.isArray(cond.AND) && !cond.AND.every((c: any) => matches(row, c))) return false;
-        if (Array.isArray(cond.OR) && !cond.OR.some((c: any) => matches(row, c))) return false;
-        if ("isWalkIn" in cond && (row.isWalkIn ?? null) !== cond.isWalkIn) return false;
-        return true;
-      };
-      const serveWhere = (rows: Row[]) =>
-        prisma.customer.findMany.mockImplementation(async (args: any) =>
-          rows.filter((r) => matches(r, args.where)).slice(0, args.take),
-        );
-      const walkIn: Row = { id: "walk-in", businessName: "Walk-in", isWalkIn: true, addresses: [] };
-
-      it("a tenant whose only address-less customer is the system walk-in is READY", async () => {
-        enable(true);
-        serveWhere([
-          walkIn,
-          { id: "a", businessName: "Acme", isWalkIn: null, addresses: [addr()] },
-          { id: "b", businessName: "Beta", isWalkIn: false, addresses: [addr()] },
-        ]);
-        expect(await service.getEnableReadiness(T)).toEqual({
-          ready: true,
-          truncated: false,
-          customerCount: 2,
-          customersWithoutAddress: 0,
-          customersAmbiguousNoDefault: 0,
-          addressesMissingStateCode: 0,
-          addressesNeedingReview: 0,
-          indeterminateCustomerCount: 0,
-          businessStateMissing: false,
-        });
-      });
-
-      it("a real customer without an address is still counted", async () => {
-        enable(true);
-        serveWhere([
-          walkIn,
-          { id: "real", businessName: "Real Co", isWalkIn: null, addresses: [] },
-        ]);
-        const r = await service.getEnableReadiness(T);
-        expect(r).toMatchObject({
-          ready: false,
-          customerCount: 1,
-          customersWithoutAddress: 1,
-          indeterminateCustomerCount: 1,
-        });
-      });
-
-      it("a customer NAMED 'Walk-in' that is not a system customer is still counted", async () => {
-        enable(true);
-        serveWhere([
-          walkIn,
-          { id: "lookalike", businessName: "Walk-in", isWalkIn: null, addresses: [] },
-          { id: "lookalike-false", businessName: "Walk-in", isWalkIn: false, addresses: [] },
-        ]);
-        const r = await service.getEnableReadiness(T);
-        expect(r).toMatchObject({
-          ready: false,
-          customerCount: 2,
-          customersWithoutAddress: 2,
-          indeterminateCustomerCount: 2,
-        });
-      });
-    });
-
-    it("an exact multiple of the page size costs one extra (empty) page, then stops", async () => {
-      serveCustomers(
-        Array.from({ length: ENABLE_READINESS_PAGE_SIZE }, (_, i) => customer(cid(i), [addr()])),
-      );
-      enable(true);
-      const r = await service.getEnableReadiness(T);
-      expect(r.customerCount).toBe(ENABLE_READINESS_PAGE_SIZE);
-      expect(prisma.customer.findMany).toHaveBeenCalledTimes(2);
-    });
-
-    it("refuses a tenant other than the ambient one, reading nothing", async () => {
-      mockAmbient("tenant-2");
-      await expect(service.getEnableReadiness(T)).rejects.toThrow(InternalServerErrorException);
-      expect(prisma.systemConfig.findMany).not.toHaveBeenCalled();
-      expect(prisma.customer.findMany).not.toHaveBeenCalled();
-    });
-
-    it("a DB error propagates — readiness is never silently 'ready'", async () => {
-      enable(true);
-      prisma.customer.findMany.mockRejectedValue(new Error("db down"));
-      await expect(service.getEnableReadiness(T)).rejects.toThrow("db down");
-    });
-
-    it("is read-only", async () => {
-      enable(true);
-      serveCustomers([customer("a", [addr()])]);
-      await service.getEnableReadiness(T);
-      for (const m of ["create", "update", "upsert", "delete", "updateMany", "deleteMany"]) {
-        expect(prisma.customer[m]).not.toHaveBeenCalled();
-        expect(prisma.systemConfig[m]).not.toHaveBeenCalled();
+        expect(spy).toHaveBeenCalledTimes(1);
+        expect(spy.mock.results[0].value).toBe(true);
+      } finally {
+        spy.mockRestore();
       }
     });
 
-    it("assertReadyToEnable returns the readiness when ready", async () => {
-      enable(true);
-      serveCustomers([customer("a", [addr()])]);
-      expect(await service.assertReadyToEnable(T)).toMatchObject({ ready: true, customerCount: 1 });
-    });
-
-    it("assertReadyToEnable throws a 409 SELLING_RESTRICTIONS_NOT_READY carrying the readiness", async () => {
-      enable(true);
-      serveCustomers([customer("a", [addr()]), customer("b", [])]);
-      const err = await service.assertReadyToEnable(T).catch((e) => e);
-      expect(err).toBeInstanceOf(ConflictException);
-      expect(err.getStatus()).toBe(409);
-      expect(SELLING_RESTRICTIONS_NOT_READY).toBe("SELLING_RESTRICTIONS_NOT_READY");
-      expect(err.getResponse()).toEqual({
-        code: "SELLING_RESTRICTIONS_NOT_READY",
-        readiness: {
-          ready: false,
-          truncated: false,
-          customerCount: 2,
-          customersWithoutAddress: 1,
-          customersAmbiguousNoDefault: 0,
-          addressesMissingStateCode: 0,
-          addressesNeedingReview: 0,
-          indeterminateCustomerCount: 1,
-          businessStateMissing: false,
-        },
-      });
-    });
-
-    it("evaluate() NEVER consults readiness: an un-backfilled tenant is INDETERMINATE, not blocked by a readiness error", async () => {
-      const probe = jest.spyOn(service, "getEnableReadiness");
-      const assertProbe = jest.spyOn(service, "assertReadyToEnable");
-      enable(true);
-      withProduct();
-      prisma.sellingRestriction.findMany.mockResolvedValue([dbRule()]);
-      withAddresses([addr({ stateCode: null })]); // state not backfilled yet
-      const res = await service.evaluate(T, "c1", [{ productId: "p1" }], { at: NOW });
-      expect(res.outcome).toBe("INDETERMINATE");
-      expect(probe).not.toHaveBeenCalled();
-      expect(assertProbe).not.toHaveBeenCalled();
-      expect(prisma.customer.findMany).not.toHaveBeenCalled();
+    it("the readiness probe, the assert-ready gate and the NOT_READY constant are gone from the engine", () => {
+      expect(service).not.toHaveProperty("getEnableReadiness");
+      expect(service).not.toHaveProperty("assertReadyToEnable");
+      expect(Object.keys(jest.requireActual("./selling-restrictions.service"))).not.toEqual(
+        expect.arrayContaining(["SELLING_RESTRICTIONS_NOT_READY"]),
+      );
     });
   });
 

@@ -7,7 +7,6 @@ import { useToast } from "@routeflow/ui/web";
 import { usePageTitle } from "@/lib/page-title-context";
 import { useAuth } from "@/lib/auth-context";
 import {
-  twoStepNotice,
   useRestrictionsSettings,
   useUpdateRestrictionsSettings,
 } from "@/lib/api/restrictions-settings";
@@ -26,7 +25,7 @@ const PRECEDENCE = [
   },
 ] as const;
 
-/** Selling restrictions: the tenant switch and which customer address decides the state. */
+/** Selling restrictions: which customer address decides the state. Staff sales are always checked (row 510). */
 export default function RestrictionsSettingsPage() {
   const { setTitle } = usePageTitle();
   React.useEffect(() => setTitle("Selling restrictions"), [setTitle]);
@@ -37,28 +36,10 @@ export default function RestrictionsSettingsPage() {
   const { toast } = useToast();
   const { data, isLoading, isError } = useRestrictionsSettings();
   const update = useUpdateRestrictionsSettings();
-  const [notice, setNotice] = React.useState<string | null>(null);
 
-  const save = (dto: {
-    enabled?: boolean;
-    governingAddress?: "BILLING_FIRST" | "SHIPPING_FIRST";
-  }) =>
-    update.mutate(dto, {
-      onSuccess: () => {
-        setNotice(null);
-        toast({ title: "Saved", variant: "success" });
-      },
-      onError: (e) => {
-        // Only the guided case toasts here (it is in providers.tsx's HANDLED_CODES so the global
-        // handler skips it). Any other error is toasted once, with the server message, by that
-        // global handler — a second toast here would double it (B594 class).
-        const twoStep = twoStepNotice(e);
-        if (twoStep) {
-          setNotice(twoStep);
-          toast({ title: "Do this in two steps", variant: "error" });
-        }
-      },
-    });
+  // A failed save is toasted once, by the global handler (a second toast here would double it, B594 class).
+  const save = (dto: { governingAddress: "BILLING_FIRST" | "SHIPPING_FIRST" }) =>
+    update.mutate(dto, { onSuccess: () => toast({ title: "Saved", variant: "success" }) });
 
   if (isLoading)
     return <Loader2 className="mx-auto my-10 h-6 w-6 animate-spin" aria-label="Loading" />;
@@ -75,7 +56,7 @@ export default function RestrictionsSettingsPage() {
       </NextLink>
       <h2 className="text-2xl font-bold text-navy">Selling restrictions</h2>
       <p className="mb-2 mt-1 text-sm text-navy/70">
-        Portal limits always apply. These settings decide what else is checked.
+        Portal limits always apply.
         {!isAdmin && " Only a workspace admin can change these settings."}
       </p>
       <p className="mb-5 text-sm">
@@ -87,33 +68,9 @@ export default function RestrictionsSettingsPage() {
         </NextLink>
       </p>
 
-      {notice && (
-        <p
-          role="alert"
-          className="mb-5 rounded-lg border border-surface-border bg-surface-raised/40 px-3 py-2 text-sm text-navy"
-        >
-          {notice}
-        </p>
-      )}
-
-      <section className="mb-5 rounded-xl border border-surface-border bg-white p-4">
-        <label className="flex items-center justify-between gap-3">
-          <span className="font-medium text-navy">
-            Also block restricted products on staff orders and invoices
-          </span>
-          <input
-            type="checkbox"
-            role="switch"
-            aria-label="Also block restricted products on staff orders and invoices"
-            checked={data.enabled}
-            disabled={!isAdmin || update.isPending}
-            onChange={(e) => save({ enabled: e.target.checked })}
-          />
-        </label>
-        <p className="mt-1 text-xs text-navy/60">
-          Portal limits always apply. Turn this on for legal bans your staff must not sell.
-        </p>
-      </section>
+      <p className="mb-5 rounded-xl border border-surface-border bg-white p-4 text-sm text-navy">
+        Staff sales are always checked. Staff can sell a restricted product with a reason.
+      </p>
 
       <section className="mb-5 rounded-xl border border-surface-border bg-white p-4">
         <p className="mb-2 font-medium text-navy">Which address decides the state</p>

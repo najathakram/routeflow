@@ -84,8 +84,8 @@ export interface UnknownStateCustomersParams {
 /**
  * GET /settings/restrictions/unknown-state-customers (Addendum D): the customers whose governing
  * state the engine cannot resolve, split into the four buckets `placeUnknownState` defines, sorted
- * by name then id, keyset-paged per bucket. Same customer scope and paging as the readiness probe
- * (`getEnableReadiness`): live customers of this tenant, the system walk-in excluded by `excludeWalkIn`,
+ * by name then id, keyset-paged per bucket. Customer scope and paging (the retired readiness probe's idiom):
+ * live customers of this tenant, the system walk-in excluded by `excludeWalkIn`,
  * read in pages of ENABLE_READINESS_PAGE_SIZE up to ENABLE_READINESS_MAX_PAGES. READ-ONLY.
  */
 @Injectable()

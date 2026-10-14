@@ -109,7 +109,9 @@ describe("LimitInPortalDialog (C a-d)", () => {
     await pickTexas(user);
     await user.click(screen.getByRole("checkbox", { name: /legal ban/i }));
     expect(screen.queryByText(/your staff can still sell them/i)).toBeNull();
-    expect(screen.getByText(/staff orders and invoices are blocked too/i)).toBeInTheDocument();
+    expect(
+      screen.getByText(/staff are warned and must give a reason to sell them/i),
+    ).toBeInTheDocument();
   });
 
   it("when every product already had the limit: says so, and offers no Undo", async () => {
@@ -187,9 +189,11 @@ describe("LimitInPortalDialog (C a-d)", () => {
     open();
     await pickTexas(user);
     await user.click(screen.getByRole("checkbox", { name: /legal ban/i }));
-    expect(
-      screen.getByText("Staff orders are blocked once enforcement is on."),
-    ).toBeInTheDocument();
+    // row 510: there is no enforcement switch to turn on any more; staff are always warned
+    expect(screen.getAllByText(/staff are warned and must give a reason/i).length).toBeGreaterThan(
+      0,
+    );
+    expect(screen.queryByText(/once enforcement is on/i)).toBeNull();
     await user.click(screen.getByRole("button", { name: "Hide from Texas" }));
     await waitFor(() => expect(mockPost).toHaveBeenCalled());
     expect(mockPost.mock.calls[0][1]).toEqual(expect.objectContaining({ surface: "ALL" }));

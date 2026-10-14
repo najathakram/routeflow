@@ -56,9 +56,9 @@ export function liveLine(scope: LimitScope, states: string[] | null, legalBan = 
   if (scope.kind === "category")
     return `${who} won't see the ${scope.productCount} products labelled ${scope.categoryName}, or any you label later.`;
   const what = `these ${scope.productIds.length} products`;
-  // A legal ban (surface ALL) blocks staff too, so the line must not promise staff can still sell them.
+  // A legal ban (surface ALL) reaches staff too (row 510: a warning and a reason), so the line must not promise staff can still sell them freely.
   const tail = legalBan
-    ? "Staff orders and invoices are blocked too."
+    ? "Staff are warned and must give a reason to sell them."
     : "Your staff can still sell them.";
   return `${who} won't see ${what} in the portal. ${tail}`;
 }

@@ -8,8 +8,8 @@ import type { JwtPayload } from "../auth/jwt-payload.interface";
 import { RestrictionsSettingsService } from "./restrictions-settings.service";
 import { UpdateRestrictionsSettingsDto } from "./update-restrictions-settings.dto";
 
-// Reads OPERATOR; the switch, the address policy and the readiness sweep are TENANT_ADMIN
-// (SUPER_ADMIN satisfies it via the RolesGuard hierarchy; OPERATOR gets 403).
+// Reads OPERATOR; the address policy is TENANT_ADMIN (SUPER_ADMIN satisfies it via the RolesGuard hierarchy;
+// OPERATOR gets 403). Row 510: the on/off switch and the readiness sweep route are gone.
 @Controller("settings/restrictions")
 @UseGuards(JwtAuthGuard, RolesGuard)
 export class RestrictionsSettingsController {
@@ -21,14 +21,6 @@ export class RestrictionsSettingsController {
     return this.settings.get();
   }
 
-  /** Sweeps every customer, so it is admin-only and throttled per tenant (see the service). */
-  @Get("readiness")
-  @Roles(UserRole.TENANT_ADMIN)
-  readiness() {
-    return this.settings.readiness();
-  }
-
-  /** Readiness is advice: switching ON with customers whose state can't be resolved succeeds (200). */
   @Patch()
   @Roles(UserRole.TENANT_ADMIN)
   update(@Body() dto: UpdateRestrictionsSettingsDto, @CurrentUser() user: JwtPayload) {

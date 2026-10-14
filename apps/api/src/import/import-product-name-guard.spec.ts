@@ -58,7 +58,12 @@ describe("ImportService.importProducts — formula-led product name (B964-2, pre
         {
           provide: SellingRestrictionsService,
           useValue: {
-            checkLinesSellable: jest.fn().mockResolvedValue({ outcome: "ALLOW", reasons: [] }),
+            judgeStaffWrite: jest.fn().mockResolvedValue({
+              outcome: "ALLOW",
+              reasons: [],
+              breaches: [],
+              basis: "CUSTOMER",
+            }),
           },
         },
         ImportService,

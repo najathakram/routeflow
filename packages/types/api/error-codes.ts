@@ -114,7 +114,7 @@
 //                    order line and credit guards (LINE_ALREADY_DELIVERED, ORDER_BELOW_RETURN_CREDIT, CREDIT_LIMIT_EXCEEDED,
 //                    MERGE_CHOICE_REQUIRED, SOURCE_LINE_*, UNIT_AWARE_LINE_UNVERIFIABLE, UNIT_NOT_OFFERED), route dispatch
 //                    (FEATURE_MODE, RUN_ALREADY_SETTLED, STOP_ALREADY_COMPLETED, STOP_SKIPPED) and the selling-restrictions
-//                    409s (SELLING_RESTRICTED, SELLING_RESTRICTIONS_NOT_READY). Row 509 rule-target and rule-edit
+//                    409 (SELLING_RESTRICTED; the NOT_READY readiness 409 left with the switch, row 510). Row 509 rule-target and rule-edit
 //                    codes (RULE_*) are documented in ./restrictions-admin.ts. SELLING_RESTRICTED is also a suspension REASON
 //                    value in recurring invoices / order templates, which is data, not an error code.
 //   B987-B — vendor-bill / supplier-statement / inventory / invoice refusals, now named here (value == key, byte-identical to what
@@ -340,7 +340,6 @@ export const API_ERROR_CODES = {
   STOP_ALREADY_COMPLETED: "STOP_ALREADY_COMPLETED",
   STOP_SKIPPED: "STOP_SKIPPED",
   SELLING_RESTRICTED: "SELLING_RESTRICTED",
-  SELLING_RESTRICTIONS_NOT_READY: "SELLING_RESTRICTIONS_NOT_READY",
   RULE_NOT_EDITABLE: "RULE_NOT_EDITABLE",
   RULE_TARGETS_NOT_FOUND: "RULE_TARGETS_NOT_FOUND",
   RULE_NEEDS_A_TARGET: "RULE_NEEDS_A_TARGET",

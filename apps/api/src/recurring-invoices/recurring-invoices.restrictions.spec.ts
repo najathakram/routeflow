@@ -112,7 +112,10 @@ describe("RecurringInvoicesService — selling restrictions (F-05)", () => {
       response: { code: "SELLING_RESTRICTED" },
     });
     expect(restrictions.assertLinesSellable).toHaveBeenCalledWith(
-      expect.objectContaining({ channel: "STAFF", lines: [{ productId: "p-banned" }] }),
+      expect.objectContaining({
+        channel: "STAFF",
+        lines: [{ productId: "p-banned", lineKey: "n:0" }], // the invoice create's own key: n:<index in the items>
+      }),
     );
     expect(prisma.recurringInvoice.update).not.toHaveBeenCalled();
     expect(prisma.recurringInvoice.updateMany).not.toHaveBeenCalled();

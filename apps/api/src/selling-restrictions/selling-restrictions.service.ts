@@ -11,8 +11,6 @@ import type {
   SellingRestrictedError,
 } from "@routeflow/types";
 import { assertAmbientTenant } from "../common/ambient-tenant";
-import { normalizeUsState } from "../common/us-states";
-import { excludeWalkIn } from "../customers/walk-in-protected";
 import { PrismaService } from "../prisma/prisma.service";
 import { tenantBusinessState } from "./tenant-business-state";
 import { ProductLabelsService } from "../product-labels/product-labels.service";
@@ -58,55 +56,14 @@ export interface EvaluateLine {
   productId: string;
 }
 
-/**
- * The two values the `selling_restrictions.enabled` switch stores — the settings step must write
- * EXACTLY these. `getPolicy` reads "false" (trimmed, any case) as OFF and every other stored value,
- * a typo included, as ON: an unreadable switch fails closed and never silently disables a ban.
- */
-export const SELLING_RESTRICTIONS_ENABLED_VALUE = "true";
-export const SELLING_RESTRICTIONS_DISABLED_VALUE = "false";
-
-/** `ConflictException` code `assertReadyToEnable` throws while the tenant's data is not ready. */
-export const SELLING_RESTRICTIONS_NOT_READY = API_ERROR_CODES.SELLING_RESTRICTIONS_NOT_READY;
-
-/** Customers the enable-readiness probe reads per query (keeps a large tenant off one giant read). */
+/** Customers the unknown-state sweep reads per query (keeps a large tenant off one giant read). */
 export const ENABLE_READINESS_PAGE_SIZE = 500;
 
 /**
- * Upper bound on the probe's sweep (pages). A tenant bigger than PAGE_SIZE × MAX_PAGES customers
- * gets `truncated: true` and `ready: false` — a partial sweep must never read as green.
+ * Upper bound on the unknown-state sweep (pages). A tenant bigger than PAGE_SIZE x MAX_PAGES customers
+ * gets `truncated: true` — a partial sweep must never read as complete.
  */
 export const ENABLE_READINESS_MAX_PAGES = 400;
-
-/**
- * What flipping `selling_restrictions.enabled` ON would meet in this tenant's live (non-deleted)
- * customers. Buckets are independent tallies, not a partition — one customer can be counted in
- * several. `ready` is true only when NO customer's governing state would resolve UNRESOLVED (which
- * would make every order that meets a STATE rule INDETERMINATE, with no warning).
- */
-export interface EnableReadiness {
-  ready: boolean;
-  /** true when the sweep hit ENABLE_READINESS_MAX_PAGES — the counts are partial and `ready` is false. */
-  truncated: boolean;
-  customerCount: number;
-  /** Customers with zero addresses. */
-  customersWithoutAddress: number;
-  /** Customers with 2+ addresses and none flagged `isDefault` (no way to pick one). */
-  customersAmbiguousNoDefault: number;
-  /** Addresses with no USABLE state code — NULL, blank, or not a USPS code (`normalizeUsState` → null). */
-  addressesMissingStateCode: number;
-  /** Addresses flagged `stateNeedsReview`. */
-  addressesNeedingReview: number;
-  /** Customers `resolveGoverningState` (the engine's own) leaves UNRESOLVED under the tenant's precedence. */
-  indeterminateCustomerCount: number;
-  /**
-   * True only when a business state is REQUIRED and absent: the tenant has at least one active STATE rule (one that
-   * binds the staff channel and names a readable state) and no usable business-address state (Settings > Business).
-   * A counter sale to the system walk-in is judged by that state, so without one every such rule is INDETERMINATE and
-   * the tenant is not ready. With no STATE rule in play a missing business address is not a blocker: false.
-   */
-  businessStateMissing: boolean;
-}
 
 /** The `SellingRestriction` columns the decision reads (`RestrictionRuleFacts`). */
 const RULE_FACTS_SELECT = {
@@ -248,8 +205,10 @@ export const RESTRICTION_ADDRESS_PRECEDENCE_VALUES = [
   "SHIPPING_FIRST",
 ] as const satisfies readonly RestrictionAddressPrecedence[];
 
-/** `SystemConfig` keys for the tenant policy (plan §1.5). Step 6's settings endpoint writes them. */
-export const SYSTEM_CONFIG_ENABLED = "selling_restrictions.enabled";
+/**
+ * `SystemConfig` key for the tenant policy (plan §1.5). Row 510 removed the `selling_restrictions.enabled` switch: a
+ * stored row of that name is simply never read.
+ */
 export const SYSTEM_CONFIG_GOVERNING_ADDRESS = "selling_restrictions.governing_address";
 
 /**
@@ -279,30 +238,22 @@ export class SellingRestrictionsService {
   ) {}
 
   /**
-   * The tenant's policy, from two `SystemConfig` rows (plan §1.5 — tenant-owned, so no new table):
-   *   `selling_restrictions.enabled`           — absent or "false" = OFF (owner ruling: OFF by
-   *                                               default); any other stored value = ON (an
-   *                                               unrecognised value fails closed, never OFF).
-   *                                               Write `SELLING_RESTRICTIONS_ENABLED_VALUE` /
-   *                                               `SELLING_RESTRICTIONS_DISABLED_VALUE`.
+   * The tenant's policy, from one `SystemConfig` row (plan §1.5 — tenant-owned, so no new table):
    *   `selling_restrictions.governing_address` — "BILLING_FIRST" (default) | "SHIPPING_FIRST"; an
    *                                               unknown value parses to BILLING_FIRST with a warn.
-   * A DB error propagates: an unreadable switch is never silently treated as OFF.
+   * Row 510: there is no on/off switch. Staff and buyer sales are always judged; a stored
+   * `selling_restrictions.enabled` row is ignored (never read, never written). A DB error propagates.
    */
   async getPolicy(tenantId: string): Promise<RestrictionsPolicy> {
     assertAmbientTenant(this.prisma, tenantId, "SellingRestrictionsService");
     const rows: Array<{ key: string; value: string }> = await this.prisma
       .forTenant()
       .systemConfig.findMany({
-        where: { tenantId, key: { in: [SYSTEM_CONFIG_ENABLED, SYSTEM_CONFIG_GOVERNING_ADDRESS] } },
+        where: { tenantId, key: SYSTEM_CONFIG_GOVERNING_ADDRESS },
         select: { key: true, value: true },
       });
     const value = (key: string) => rows.find((r) => r.key === key)?.value;
-    const enabled = value(SYSTEM_CONFIG_ENABLED);
     return {
-      enabled:
-        enabled !== undefined &&
-        enabled.trim().toLowerCase() !== SELLING_RESTRICTIONS_DISABLED_VALUE,
       addressPrecedence: this.parsePrecedence(tenantId, value(SYSTEM_CONFIG_GOVERNING_ADDRESS)),
     };
   }
@@ -319,83 +270,10 @@ export class SellingRestrictionsService {
   }
 
   /**
-   * Enable-readiness probe: what turning `selling_restrictions.enabled` ON would meet in this
-   * tenant's data. A governing state needs `CustomerAddress.stateCode`, which is NULL everywhere
-   * until the owner-run normalize script has run — flipping the switch on an un-backfilled tenant
-   * would make nearly every order that meets a STATE rule INDETERMINATE, with no warning.
-   *
-   * Counts with the SAME `resolveGoverningState` the engine uses, under the tenant's CURRENT
-   * precedence policy (the switch itself is irrelevant here — this is asked before it flips).
-   * Customers are read in cursor pages of `ENABLE_READINESS_PAGE_SIZE`, never in one query.
-   * READ-ONLY, and never called from `evaluate()`: readiness is advice for the settings step, it
-   * must not block an order.
-   */
-  async getEnableReadiness(tenantId: string): Promise<EnableReadiness> {
-    assertAmbientTenant(this.prisma, tenantId, "SellingRestrictionsService");
-    const { addressPrecedence } = await this.getPolicy(tenantId);
-    const db = this.prisma.forTenant();
-    const businessStateMissing = await this.businessStateMissing(tenantId);
-
-    const tally = {
-      customerCount: 0,
-      customersWithoutAddress: 0,
-      customersAmbiguousNoDefault: 0,
-      addressesMissingStateCode: 0,
-      addressesNeedingReview: 0,
-      indeterminateCustomerCount: 0,
-    };
-    let cursor: string | undefined;
-    let pages = 0;
-    let truncated = false;
-    for (;;) {
-      if (pages >= ENABLE_READINESS_MAX_PAGES) {
-        truncated = true;
-        break;
-      }
-      pages++;
-      // Same shape as `evaluate`'s address read: the nested select is not rewritten by the tenant
-      // extension, so a legacy address row with a NULL tenantId still counts as the customer's.
-      const page = await db.customer.findMany({
-        // The tenant's system walk-in customer has no address by design (counter sales to an
-        // anonymous buyer), so it is excluded in SQL by the shared `isWalkIn` predicate — never by
-        // name, and never counted as "missing an address".
-        where: excludeWalkIn({ tenantId, deletedAt: null }),
-        orderBy: { id: "asc" },
-        take: ENABLE_READINESS_PAGE_SIZE,
-        ...(cursor ? { cursor: { id: cursor }, skip: 1 } : {}),
-        select: { id: true, addresses: { select: ADDRESS_SELECT } },
-      });
-      for (const customer of page) {
-        const addresses = customer.addresses;
-        tally.customerCount++;
-        if (addresses.length === 0) tally.customersWithoutAddress++;
-        else if (addresses.length >= 2 && !addresses.some((a) => a.isDefault)) {
-          tally.customersAmbiguousNoDefault++;
-        }
-        for (const a of addresses) {
-          if (normalizeUsState(a.stateCode) === null) tally.addressesMissingStateCode++;
-          if (a.stateNeedsReview) tally.addressesNeedingReview++;
-        }
-        if (!resolveGoverningState(addresses, addressPrecedence).resolved) {
-          tally.indeterminateCustomerCount++;
-        }
-      }
-      if (page.length < ENABLE_READINESS_PAGE_SIZE) break;
-      cursor = page[page.length - 1].id;
-    }
-    return {
-      ready: !truncated && tally.indeterminateCustomerCount === 0 && !businessStateMissing,
-      truncated,
-      ...tally,
-      businessStateMissing,
-    };
-  }
-
-  /**
    * True only when a business state is REQUIRED and absent. A business state matters only when some active STATE
    * rule could need it (the same `stateRuleInPlay` evaluate() asks, on the STAFF channel: an `ALL` legal-ban rule):
    * a tenant with no such rule (none, FEDERAL only, or only lifted / expired / buyer-portal-only ones) never needs
-   * one. The ONE answer for the readiness probe and the "customers without a state" card.
+   * one. The ONE answer for the "customers without a state" card.
    */
   async businessStateMissing(tenantId: string, at: Date = new Date()): Promise<boolean> {
     assertAmbientTenant(this.prisma, tenantId, "SellingRestrictionsService");
@@ -409,19 +287,6 @@ export class SellingRestrictionsService {
       stateRuleInPlay(stateRules, "STAFF", at) &&
       (await tenantBusinessState(this.prisma, tenantId)) === null
     );
-  }
-
-  /**
-   * For the settings/enable endpoint (another lane's step): returns the readiness when the tenant
-   * is ready, otherwise throws a 409 `{ code: "SELLING_RESTRICTIONS_NOT_READY", readiness }` so the
-   * UI can show what to fix. Never called from `evaluate()` — orders never block on readiness.
-   */
-  async assertReadyToEnable(tenantId: string): Promise<EnableReadiness> {
-    const readiness = await this.getEnableReadiness(tenantId);
-    if (!readiness.ready) {
-      throw new ConflictException({ code: SELLING_RESTRICTIONS_NOT_READY, readiness });
-    }
-    return readiness;
   }
 
   async evaluate(

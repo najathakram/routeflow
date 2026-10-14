@@ -142,6 +142,10 @@ export class CounterSaleService {
         notes: dto.notes,
         deliveredNow: true,
         idempotencyKey,
+        // Row 510: the till's acknowledgement of a RESTRICTION_WARNING. create() judges the sale at the STORE's state
+        // (counterSale -> COUNTER -> jurisdiction.ts) and stamps for THIS user; it is not part of the replay's cart.
+        restrictionOverrides: dto.restrictionOverrides,
+        warningHash: dto.warningHash,
       } as never,
       user,
       {

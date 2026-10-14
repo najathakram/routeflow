@@ -1,7 +1,7 @@
 /**
  * Row 509 PR3 — edit a rule's settings IN PLACE, with history, on REAL Postgres. Pins:
- *  - preview direction per field (state add TIGHTENS, remove LOOSENS, BUYER_PORTAL -> ALL TIGHTENS only with the
- *    tenant switch ON, a wider window TIGHTENS);
+ *  - preview direction per field (state add TIGHTENS, remove LOOSENS, BUYER_PORTAL -> ALL TIGHTENS always (the
+ *    tenant switch is gone, row 510), a wider window TIGHTENS);
  *  - the impact counts an OPEN order / a DRAFT whose customer is newly restricted by a state add, and not a
  *    delivered order, not a customer the old settings already restricted, not a line outside the rule's targets;
  *  - a stale expectedRevision is 409 RULE_STALE and a changed impact is 409 RULE_IMPACT_CHANGED, each with nothing
@@ -263,6 +263,7 @@ describeDb("row 509 PR3: edit a rule in place, with history — real Postgres", 
   }, 120_000);
 
   beforeEach(async () => {
+    // row 510: the tenant switch is gone and never read; a stored value of it must change no result below
     await setSwitch(true);
   });
 
@@ -287,15 +288,22 @@ describeDb("row 509 PR3: edit a rule in place, with history — real Postgres", 
     ]);
   });
 
-  it("BUYER_PORTAL -> ALL TIGHTENS only with the tenant switch ON; NEUTRAL with it OFF", async () => {
-    const rule = await mkRule({ surface: "BUYER_PORTAL" });
+  it("BUYER_PORTAL -> ALL TIGHTENS, always (row 510: staff are judged; a stored enabled=false row changes nothing) and the impact counts staff-channel open work", async () => {
+    const rule = await mkRule({ surface: "BUYER_PORTAL" }); // TX, portal-only
     expect((await preview(rule.id, { surface: "ALL" })).changes).toEqual([
       { field: "surface", direction: "TIGHTENS" },
     ]);
+    // the removed switch, stored as false, is never read
     await setSwitch(false);
-    const off = await preview(rule.id, { surface: "ALL" });
-    expect(off.changes).toEqual([{ field: "surface", direction: "NEUTRAL" }]);
-    expect(off.impact).toEqual({ openOrders: 0, drafts: 0 });
+    const stored = await preview(rule.id, { surface: "ALL" });
+    expect(stored.changes).toEqual([{ field: "surface", direction: "TIGHTENS" }]);
+    // staff-channel open work in TX: an open order and a draft invoice are reached, a delivered order is not
+    await mkOrder(cust.tx, "a", "PENDING");
+    await mkOrder(cust.tx, "a", "DELIVERED");
+    await mkDraftInvoice(cust.tx, "a");
+    const withWork = await preview(rule.id, { surface: "ALL" });
+    expect(withWork.impact).toEqual({ openOrders: 1, drafts: 1 });
+    expect(withWork.impact).toEqual((await preview(rule.id, { surface: "ALL" })).impact);
   });
 
   // ─── preview: impact ─────────────────────────────────────────────────────────────────────────

@@ -75,7 +75,12 @@ describe("#2468 invoice re-import never resurrects a VOID / WRITTEN_OFF invoice 
         {
           provide: SellingRestrictionsService,
           useValue: {
-            checkLinesSellable: jest.fn().mockResolvedValue({ outcome: "ALLOW", reasons: [] }),
+            judgeStaffWrite: jest.fn().mockResolvedValue({
+              outcome: "ALLOW",
+              reasons: [],
+              breaches: [],
+              basis: "CUSTOMER",
+            }),
           },
         },
       ],

@@ -80,6 +80,8 @@ describe("filing gate: unresolved parked reversals", () => {
         .map((id: string) => ({ id, trackedCategoryId: salesCategory[id] })),
     );
     prisma.trackedCategory.findUnique.mockResolvedValue(category);
+    // row 510: the preview's uncategorised-lines row is always on; this tenant has no selling rule
+    (prisma.forTenant() as any).sellingRestriction = { findMany: jest.fn().mockResolvedValue([]) };
     prisma.regulatedFiling.findFirst.mockResolvedValue(null);
     prisma.regulatedFiling.create.mockImplementation((args: any) =>
       Promise.resolve({ id: "filing-1", ...args.data }),
@@ -95,9 +97,7 @@ describe("filing gate: unresolved parked reversals", () => {
         {
           provide: SellingRestrictionsService,
           useValue: {
-            getPolicy: jest
-              .fn()
-              .mockResolvedValue({ enabled: false, addressPrecedence: "BILLING_FIRST" }),
+            getPolicy: jest.fn().mockResolvedValue({ addressPrecedence: "BILLING_FIRST" }),
           },
         },
         { provide: PrismaService, useValue: prisma },

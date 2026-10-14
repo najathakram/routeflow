@@ -26,8 +26,8 @@ export interface RuleEditChange {
 
 export interface RuleEditDirectionOptions {
   /**
-   * The tenant switch `selling_restrictions.enabled` is ON, so STAFF sales are judged by rules too. With it OFF only
-   * the buyer portal enforces, and a rule's surface (portal-only vs everywhere) changes nothing in practice: NEUTRAL.
+   * STAFF sales are judged by rules too (`staffChannelJudged`, always true since row 510). With it false only the
+   * buyer portal enforces, and a rule's surface (portal-only vs everywhere) would change nothing: NEUTRAL.
    */
   staffEnforced: boolean;
 }

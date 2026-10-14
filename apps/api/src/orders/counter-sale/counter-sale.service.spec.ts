@@ -229,6 +229,59 @@ describe("CounterSaleService.ring", () => {
       );
     });
 
+    // Row 510: the till's acknowledgement of a 409 RESTRICTION_WARNING rides the SAME request, with the SAME key.
+    describe("restriction ack (row 510)", () => {
+      const ackFields = {
+        warningHash: "rw1:abc",
+        restrictionOverrides: [{ lineKey: "n:0", reason: "Licensed buyer" }],
+      };
+
+      it("hands the ack to createSale untouched, with the counter-sale options (COUNTER path: the store's state judges)", async () => {
+        await service.ring(named({ method: "CARD" }, ackFields) as never, staff, "k-ack");
+        const [dto, user, sale] = createSale.mock.calls[0];
+        expect(dto.warningHash).toBe("rw1:abc");
+        expect(dto.restrictionOverrides).toEqual(ackFields.restrictionOverrides);
+        expect(user).toBe(staff);
+        // counterSale + PICKUP is exactly what salePathForOrder maps to COUNTER (jurisdiction.ts), the store's state
+        expect(sale).toMatchObject({ counterSale: true, fulfillPath: "PICKUP" });
+      });
+
+      it("the first press and the resubmit carry the SAME Idempotency-Key and the same cart; only the ack differs", async () => {
+        await service.ring(named({ method: "CARD" }) as never, staff, "k-same");
+        await service.ring(named({ method: "CARD" }, ackFields) as never, staff, "k-same");
+        const [first, second] = createSale.mock.calls.map((c) => c[0]);
+        expect(first.idempotencyKey).toBe("k-same");
+        expect(second.idempotencyKey).toBe("k-same");
+        expect(second.items).toEqual(first.items);
+        expect(first.warningHash).toBeUndefined();
+        expect(first.restrictionOverrides).toBeUndefined();
+        expect(second.warningHash).toBe("rw1:abc");
+      });
+
+      it("the ack is never part of the replay's cart (a same-key replay with a different ack is still a replay, not a key conflict)", async () => {
+        replay = true;
+        await expect(
+          service.ring(named({ method: "CARD" }, ackFields) as never, staff, "k-replay"),
+        ).resolves.toBeDefined();
+        const [dto] = createSale.mock.calls[0];
+        // the cart the replay compares is the items; the ack fields are top-level and ignored by that comparison
+        expect(Object.keys(dto.items[0])).not.toEqual(
+          expect.arrayContaining(["warningHash", "restrictionOverrides"]),
+        );
+      });
+
+      it("a 409 RESTRICTION_WARNING from create() propagates untouched: no tender, no audit", async () => {
+        createSale.mockRejectedValue(
+          new ConflictException({ code: "RESTRICTION_WARNING", warningHash: "rw1:abc", lines: [] }),
+        );
+        await expect(
+          service.ring(named({ method: "CASH" }) as never, staff, "k-warn"),
+        ).rejects.toMatchObject({ response: { code: "RESTRICTION_WARNING" } });
+        expect(recordPayment).not.toHaveBeenCalled();
+        expect(audit.log).not.toHaveBeenCalled();
+      });
+    });
+
     it("a key that belongs to a NON-counter order is 409 COUNTER_SALE_KEY_CONFLICT before any write", async () => {
       replay = true;
       replayOrder = { id: "ord-staff", counterSale: false };
