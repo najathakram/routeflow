@@ -8,11 +8,14 @@ export function FulfillPathMoveConfirm({
   onClose,
   onConfirm,
   loading,
+  path,
 }: {
   open: boolean;
   onClose: () => void;
   onConfirm: () => void;
   loading?: boolean;
+  /** Where it is going: SHIP says it becomes a carrier shipment (carrier + tracking), the rest the old copy. */
+  path?: "ROUTE" | "SHIP" | null;
 }) {
   return (
     <ConfirmDialog
@@ -20,7 +23,11 @@ export function FulfillPathMoveConfirm({
       onClose={onClose}
       onConfirm={onConfirm}
       title="Move this order off in-store pickup?"
-      description="It will no longer be a pickup order."
+      description={
+        path === "SHIP"
+          ? "It will no longer be a pickup order. It will ship by carrier: add the carrier and tracking number in the Shipment card, then mark it shipped."
+          : "It will no longer be a pickup order."
+      }
       confirmLabel="Move order"
       variant="secondary"
       loading={loading}

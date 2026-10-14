@@ -27,6 +27,11 @@ export interface ShipmentCardProps {
    * actually shipped. Undefined (a standalone invoice) = show the date as before.
    */
   orderStatus?: string | null;
+  /**
+   * The linked order's fulfilment path. With `orderStatus`, a SHIP order that is not shipped yet says so
+   * under its saved tracking: saving tracking never ships the order, "Mark shipped" does (M8).
+   */
+  fulfillPath?: string | null;
   /** Persist a new carrier + tracking number. Empty strings clear the shipment. */
   onSave: (values: { shippingCarrier: string; shippingTrackingNumber: string }) => Promise<unknown>;
   isSaving?: boolean;
@@ -39,6 +44,7 @@ export function ShipmentCard({
   trackingNumber,
   shippedAt,
   orderStatus,
+  fulfillPath,
   onSave,
   isSaving,
   readOnly = false,
@@ -51,6 +57,14 @@ export function ShipmentCard({
   const [formTracking, setFormTracking] = React.useState<string>(trackingNumber ?? "");
 
   const hasTracking = !!(trackingNumber && trackingNumber.trim());
+  // Anything stored at all (a carrier without a number counts): only then is a save a real change.
+  const hasStored = hasTracking || !!carrier?.trim();
+  const notShippedYet =
+    hasTracking &&
+    fulfillPath === "SHIP" &&
+    !!orderStatus &&
+    !isShippedOrderStatus(orderStatus) &&
+    orderStatus !== "CANCELLED";
   const trackUrl = getTrackingUrl(carrier, trackingNumber);
 
   function openEdit() {
@@ -61,6 +75,11 @@ export function ShipmentCard({
 
   async function handleSave() {
     const tracking = formTracking.trim();
+    // M8c: nothing stored and nothing typed is not a change: close without a call or a "cleared" toast.
+    if (!tracking && !hasStored) {
+      setEditOpen(false);
+      return;
+    }
     try {
       await onSave({
         // Clear the carrier too when the tracking number is removed.
@@ -107,6 +126,11 @@ export function ShipmentCard({
                 {shippedAt && (!orderStatus || isShippedOrderStatus(orderStatus)) && (
                   <p className="mt-0.5 text-xs text-navy/70">
                     Shipped {new Date(shippedAt).toLocaleDateString()}
+                  </p>
+                )}
+                {notShippedYet && (
+                  <p className="mt-0.5 text-xs text-navy/70">
+                    Not shipped yet. The customer is told when you mark the order shipped.
                   </p>
                 )}
               </div>

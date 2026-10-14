@@ -23,9 +23,12 @@ export interface ShipmentInfo {
 export function ShipmentSection({
   shipment,
   onEdit,
+  note,
 }: {
   shipment: ShipmentInfo;
   onEdit: () => void;
+  /** A line under the tracking, e.g. "Not shipped yet." (see `shipmentNotShippedNote`). */
+  note?: string | null;
 }) {
   const carrier = shipment.shippingCarrier ?? null;
   const tracking = shipment.shippingTrackingNumber ?? null;
@@ -82,6 +85,7 @@ export function ShipmentSection({
               </View>
             )
           ) : null}
+          {note ? <Text style={styles.empty}>{note}</Text> : null}
           {shipment.shippedAt ? (
             <View style={styles.row}>
               <Text style={styles.rowLabel}>Shipped</Text>

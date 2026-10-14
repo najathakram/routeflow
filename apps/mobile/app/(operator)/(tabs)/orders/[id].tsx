@@ -67,7 +67,11 @@ import {
   sharePdf,
 } from "../../../../lib/share-pdf";
 import { ShipmentSection, ShipmentEditModal } from "../../../../components/ShipmentSection";
-import { shipmentForDisplay } from "../../../../lib/shipment-display";
+import {
+  shipmentForDisplay,
+  shipmentNotShippedNote,
+  shipmentSaveOutcome,
+} from "../../../../lib/shipment-display";
 import { SendInvoiceSheet } from "../../../../components/SendInvoiceSheet";
 import { ReasonSheet } from "../../../../components/ReasonSheet";
 import {
@@ -724,11 +728,17 @@ export default function OrderDetailScreen() {
   };
 
   const handleSaveShipment = (carrier: string, trackingNumber: string) => {
+    const outcome = shipmentSaveOutcome(order, carrier, trackingNumber);
+    if (outcome === "nothing") {
+      // Nothing stored and nothing typed: not a change, so no request and no "cleared" toast.
+      setShipmentModal(false);
+      return;
+    }
     shipmentMut.mutate(
       { id: order.id, shippingCarrier: carrier, shippingTrackingNumber: trackingNumber },
       {
         onSuccess: () => {
-          showToast(carrier || trackingNumber ? "Shipment saved" : "Shipment cleared");
+          showToast(outcome === "saved" ? "Shipment saved" : "Shipment cleared");
           setShipmentModal(false);
           refetch();
         },
@@ -1011,6 +1021,11 @@ export default function OrderDetailScreen() {
           {order.fulfillPath === "SHIP" || order.shippingCarrier || order.shippingTrackingNumber ? (
             <ShipmentSection
               shipment={shipmentForDisplay(order, order.status)}
+              note={shipmentNotShippedNote(
+                order.fulfillPath,
+                order.status,
+                order.shippingTrackingNumber,
+              )}
               onEdit={() => setShipmentModal(true)}
             />
           ) : null}
