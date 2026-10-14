@@ -261,6 +261,8 @@ export class InvoicePdfService {
     // updatedAt (the H4 edit token), so a render can't make an open edit form go stale.
     if (inv.pdfUrl !== key) {
       if (invTenantId) await writeInvoicePdfPointer(this.prisma, invTenantId, invoiceId, key);
+      // A tenant-less invoice cannot take the tenant-scoped write: say so, never a silent cache miss.
+      else this.logger.warn(`Invoice ${invoiceId} has no tenantId: PDF pointer not written`);
     }
 
     this.logger.log(`Invoice PDF stored at key: ${key}`);

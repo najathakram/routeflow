@@ -344,6 +344,19 @@ describe("InvoicePdfService.getOrGenerate — pointer written only on change", (
     expect(prisma.invoice.updateMany).not.toHaveBeenCalled();
   });
 
+  it("a tenant-less invoice writes no pointer and warns (never a silent cache miss)", async () => {
+    const prisma = createMockPrisma();
+    prisma.invoice.findUnique.mockResolvedValue(
+      baseInvoiceFixture({ pdfUrl: null, tenantId: null }) as any,
+    );
+    prisma.tenantConfig.findUnique.mockResolvedValue(TENANT_CONFIG as any);
+    const service = await makeService(prisma, makeStorage(), null);
+    const warn = jest.spyOn((service as any).logger, "warn").mockImplementation(() => undefined);
+    await service.getOrGenerate("inv-1");
+    expect(prisma.$executeRaw).not.toHaveBeenCalled();
+    expect(warn).toHaveBeenCalledWith(expect.stringContaining("PDF pointer not written"));
+  });
+
   it("writes the pointer once when the stored value is a different key", async () => {
     const { prisma } = await renderWithStoredPointer("invoice-pdfs/some-older-key.pdf");
 
