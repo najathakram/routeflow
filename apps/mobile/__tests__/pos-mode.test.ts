@@ -16,6 +16,7 @@ import {
   posMayHandOverUnpaid,
   posBalanceDue,
   posCanSwitchToDelivery,
+  posSwitchToDeliveryHint,
   posCartSaveLabel,
   posCutNote,
   posFinishFailureMessage,
@@ -67,7 +68,8 @@ describe("posOrderActions", () => {
   });
   it("once Ready for pickup (OUT_FOR_DELIVERY) the notification is not offered again", () => {
     const a = posOrderActions({ invoices: [inv("DRAFT")] }, "OUT_FOR_DELIVERY");
-    expect(keys(a)).toEqual(["handOver", "switchToDelivery"]);
+    // The server refuses a fulfil-path change once OUT_FOR_DELIVERY, so it is not offered either.
+    expect(keys(a)).toEqual(["handOver"]);
   });
   it("DELIVERED: Record payment until every live invoice is PAID, then Print", () => {
     const due = posOrderActions({ invoices: [inv("SENT", "a"), inv("PAID", "b")] }, "DELIVERED");
@@ -83,9 +85,12 @@ describe("posOrderActions", () => {
       expect(keys(posOrderActions({ invoices: [inv("SENT")] }, st))).not.toContain("markDelivered");
     }
   });
-  it("Switch to delivery only while the order is open", () => {
+  it("Switch to delivery only while the order is open (mirrors order-lifecycle's blocked set)", () => {
+    expect(posCanSwitchToDelivery("PENDING")).toBe(true);
     expect(posCanSwitchToDelivery("CONFIRMED")).toBe(true);
+    expect(posCanSwitchToDelivery("OUT_FOR_DELIVERY")).toBe(false);
     expect(posCanSwitchToDelivery("DELIVERED")).toBe(false);
+    expect(posCanSwitchToDelivery("CANCELLED")).toBe(false);
   });
 });
 
@@ -434,5 +439,14 @@ describe("misc money-safety", () => {
   it("a re-read of CONFIRMED after a refused PENDING skips the CONFIRMED patch", () => {
     expect(posConfirmStepsAfterPending("CONFIRMED")).toEqual([]);
     expect(posConfirmStepsAfterPending("PENDING")).toEqual(["CONFIRMED"]);
+  });
+});
+
+describe("M6 posSwitchToDeliveryHint", () => {
+  it("explains the lock only on a Ready-for-pickup order", () => {
+    expect(posSwitchToDeliveryHint("OUT_FOR_DELIVERY")).toMatch(/back to Confirmed/);
+    for (const s of ["PENDING", "CONFIRMED", "DELIVERED", "CANCELLED"]) {
+      expect(posSwitchToDeliveryHint(s)).toBeNull();
+    }
   });
 });

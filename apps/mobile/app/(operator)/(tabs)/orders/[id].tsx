@@ -83,7 +83,7 @@ import {
   decidePickupResponse,
   posHandOverBalance,
   posLiveInvoices,
-  posCanSwitchToDelivery,
+  posSwitchToDeliveryHint,
   posCutNote,
   posOrderActions,
   posProgressSteps,
@@ -1030,9 +1030,7 @@ export default function OrderDetailScreen() {
               {posActions.length > 0 ? (
                 <View style={[styles.actionsCol, posSteps ? { marginTop: 10 } : null]}>
                   {posActions.map((a) => {
-                    const hidden =
-                      a.key === "switchToDelivery" && !posCanSwitchToDelivery(order.status);
-                    if (hidden) return null;
+                    // posOrderActions already leaves Switch to delivery out once it can't succeed (M6).
                     const busy =
                       pickupMut.isPending ||
                       createInvoiceMut.isPending ||
@@ -1059,6 +1057,9 @@ export default function OrderDetailScreen() {
                     );
                   })}
                 </View>
+              ) : null}
+              {posSwitchToDeliveryHint(order.status) ? (
+                <Text style={styles.shipHint}>{posSwitchToDeliveryHint(order.status)}</Text>
               ) : null}
               {posCutNote(order, order.status) ? (
                 <Text style={styles.shipHint}>{posCutNote(order, order.status)}</Text>
