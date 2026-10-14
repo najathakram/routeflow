@@ -18,8 +18,8 @@ export function ProductStockCostCard({
   currentStock: number;
   onSetCost: () => void;
 }) {
-  // J9: shown only when it differs from On hand (the same number twice is noise).
-  const unassignedStock = currentStock;
+  // J9: on a generic with variants, On hand IS its own not-yet-split stock (no second row).
+  const isSplitParent = !product.parentProductId && (product.variants?.length ?? 0) > 0;
   return (
     <div className="overflow-hidden rounded-lg border border-surface-border bg-white shadow-card">
       <div className="flex items-center justify-between border-b border-surface-border px-4 py-3">
@@ -36,26 +36,19 @@ export function ProductStockCostCard({
       </div>
       <div className="px-4">
         <div className="flex items-center justify-between border-b border-surface-border py-3 text-sm">
-          <span className="text-navy/70">On hand</span>
+          <span
+            className="text-navy/70"
+            title={
+              isSplitParent ? "Stock on this generic not yet attributed to a variant" : undefined
+            }
+          >
+            On hand
+            {isSplitParent && <span className="text-navy/50"> (not yet split to variants)</span>}
+          </span>
           <span className="font-mono font-medium tabular-nums text-navy">
             {unitsLabel(currentStock, product.unitsPerBox, product.unit)}
           </span>
         </div>
-        {!product.parentProductId &&
-          (product.variants?.length ?? 0) > 0 &&
-          unassignedStock !== currentStock && (
-            <div className="flex items-center justify-between border-b border-surface-border py-3 text-sm">
-              <span
-                className="text-navy/70"
-                title="Stock on this generic not yet attributed to a variant"
-              >
-                Unassigned stock
-              </span>
-              <span className="font-mono font-medium tabular-nums text-navy">
-                {unitsLabel(unassignedStock, product.unitsPerBox, product.unit)}
-              </span>
-            </div>
-          )}
         <div className="flex items-center justify-between border-b border-surface-border py-3 text-sm">
           <span className="text-navy/70">Waitlist</span>
           <span

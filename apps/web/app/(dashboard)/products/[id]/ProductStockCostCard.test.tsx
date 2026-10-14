@@ -49,8 +49,8 @@ describe("ProductStockCostCard (extracted from the product detail page)", () => 
     expect(onSetCost).toHaveBeenCalledTimes(2);
   });
 
-  it("J9: Unassigned stock is hidden when it equals On hand (a generic with variants)", () => {
-    render(
+  it("J9: no Unassigned row; On hand on a generic with variants carries the suffix and title", () => {
+    const { rerender } = render(
       <ProductStockCostCard
         product={{ ...product, variants: [{ id: "v1" }] }}
         stockStatus="IN_STOCK"
@@ -58,7 +58,19 @@ describe("ProductStockCostCard (extracted from the product detail page)", () => 
         onSetCost={jest.fn()}
       />,
     );
-    expect(screen.getByText("On hand")).toBeInTheDocument();
     expect(screen.queryByText("Unassigned stock")).toBeNull();
+    const label = screen.getByText(/^On hand/);
+    expect(label).toHaveTextContent("On hand (not yet split to variants)");
+    expect(label).toHaveAttribute("title", "Stock on this generic not yet attributed to a variant");
+    rerender(
+      <ProductStockCostCard
+        product={product}
+        stockStatus="IN_STOCK"
+        currentStock={5}
+        onSetCost={jest.fn()}
+      />,
+    );
+    expect(screen.getByText("On hand")).not.toHaveAttribute("title");
+    expect(screen.queryByText(/not yet split/)).toBeNull();
   });
 });
