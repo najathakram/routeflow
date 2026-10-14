@@ -26,6 +26,8 @@ import {
   restrictionsApply,
   ruleHidesFromBuyer,
   ruleMatchesProduct,
+  ruleTargetSets,
+  type RuleTargetRow,
   ruleStates,
   stateRuleInPlay,
   UNRESOLVED_STATE,
@@ -101,6 +103,32 @@ const RULE_FACTS_SELECT = {
   liftedAt: true,
   reason: true,
 } as const;
+
+/** Row 509: the `SellingRestrictionTarget` columns the decision reads (`RuleTargetRow`). */
+const TARGET_ROW_SELECT = {
+  productId: true,
+  categoryId: true,
+  addedAt: true,
+  removedAt: true,
+} as const;
+
+/** A rule row as the two product-matching loaders read it: its facts plus (some of) its target rows and their count. */
+type RuleRowWithTargets = Omit<RestrictionRuleFacts, "targets"> & {
+  targets?: RuleTargetRow[];
+  _count?: { targets: number };
+};
+
+/**
+ * Row 509: rule rows → facts with their target sets at `at`. A rule with no target rows at all keeps `targets: null`
+ * (matched by its legacy column, SA condition 1); `_count` is the rule's FULL row count, so a loader may fetch only
+ * the target rows that touch its products.
+ */
+function withTargetSets(rows: readonly RuleRowWithTargets[], at: Date): RestrictionRuleFacts[] {
+  return rows.map(({ targets, _count, ...rule }) => ({
+    ...rule,
+    targets: ruleTargetSets(targets ?? [], _count?.targets ?? 0, at),
+  }));
+}
 
 /** Levels of variants under a rule's product the buyer visibility expansion follows (a malformed cycle's bound). */
 const BUYER_VISIBILITY_MAX_DEPTH = 5;
@@ -409,13 +437,16 @@ export class SellingRestrictionsService {
       for (const id of p.lineageIds ?? new Set<string>()) lineageIds.add(id);
     }
 
-    const loadedRules: RestrictionRuleFacts[] = await db.sellingRestriction.findMany({
+    // Row 509: a rule touches these products through its legacy column OR any target row (the pure match below
+    // decides with the ACTIVE targets; a rule with targets never matches by its legacy column).
+    const touches = [
+      { productId: { in: [...lineageIds] } },
+      ...(categoryIds.size > 0 ? [{ categoryId: { in: [...categoryIds] } }] : []),
+    ];
+    const loadedRows: RuleRowWithTargets[] = await db.sellingRestriction.findMany({
       where: {
         tenantId,
-        OR: [
-          { productId: { in: [...lineageIds] } },
-          ...(categoryIds.size > 0 ? [{ categoryId: { in: [...categoryIds] } }] : []),
-        ],
+        OR: [...touches, { targets: { some: { OR: touches } } }],
         // Only rules active at `at` (the SQL twin of `ruleIsActive`; `matchingRules` re-checks in JS).
         AND: [activeRuleWhere(at)],
       },
@@ -423,8 +454,13 @@ export class SellingRestrictionsService {
       // deterministic (a database collation's `id` order need not equal JS string order) — do NOT
       // drop that sort because this ordering exists.
       orderBy: [{ effectiveFrom: "desc" }, { id: "asc" }],
-      select: RULE_FACTS_SELECT,
+      select: {
+        ...RULE_FACTS_SELECT,
+        targets: { where: { OR: touches }, select: TARGET_ROW_SELECT },
+        _count: { select: { targets: true } },
+      },
     });
+    const loadedRules = withTargetSets(loadedRows, at);
     // A staff-built run ignores portal-only limits (a legal ban, surface ALL, still binds).
     const rules = options?.skipPortalOnlyRules
       ? loadedRules.filter((r) => (r.surface as string) !== "BUYER_PORTAL")
@@ -507,11 +543,21 @@ export class SellingRestrictionsService {
   ): Promise<ReadonlySet<string>> {
     assertAmbientTenant(this.prisma, tenantId, "SellingRestrictionsService");
     const db = this.prisma.forTenant();
-    const rules: RestrictionRuleFacts[] = await db.sellingRestriction.findMany({
+    // Row 509: every active rule with its targets active at `at` (bounded by the per-rule cap the admin writes
+    // enforce, SA condition 6) and its full row count (the zero-target legacy fallback).
+    const rows: RuleRowWithTargets[] = await db.sellingRestriction.findMany({
       where: { tenantId, AND: [activeRuleWhere(at)] },
-      select: RULE_FACTS_SELECT,
+      select: {
+        ...RULE_FACTS_SELECT,
+        targets: {
+          where: { addedAt: { lte: at }, OR: [{ removedAt: null }, { removedAt: { gt: at } }] },
+          select: TARGET_ROW_SELECT,
+        },
+        _count: { select: { targets: true } },
+      },
     });
-    if (rules.length === 0) return new Set<string>();
+    if (rows.length === 0) return new Set<string>();
+    const rules = withTargetSets(rows, at);
 
     let governingState = UNRESOLVED_STATE;
     if (customerId && stateRuleInPlay(rules, "BUYER_PORTAL", at)) {
@@ -531,10 +577,17 @@ export class SellingRestrictionsService {
     if (hiding.length === 0) return new Set<string>();
 
     // Candidates: the rules' own products and the products labelled with a hiding category, plus their variants.
-    const seeds = new Set<string>(hiding.map((r) => r.productId).filter((x): x is string => !!x));
-    const categoryIds = [
-      ...new Set(hiding.map((r) => r.categoryId).filter((x): x is string => !!x)),
-    ];
+    // Row 509: a rule's product / label targets, or its legacy column when it has no target rows.
+    const seeds = new Set<string>();
+    const hidingCategories = new Set<string>();
+    for (const r of hiding) {
+      if (r.targets) {
+        r.targets.productIds.forEach((id) => seeds.add(id));
+        r.targets.categoryIds.forEach((id) => hidingCategories.add(id));
+      } else if (r.productId) seeds.add(r.productId);
+      else if (r.categoryId) hidingCategories.add(r.categoryId);
+    }
+    const categoryIds = [...hidingCategories];
     if (categoryIds.length > 0) {
       const labelled = await db.productCategoryLabel.findMany({
         where: { tenantId, categoryId: { in: categoryIds }, mode: "INCLUDE" },

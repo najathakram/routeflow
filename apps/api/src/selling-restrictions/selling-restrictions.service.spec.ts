@@ -408,8 +408,10 @@ describe("SellingRestrictionsService.evaluate", () => {
     expect(res.outcome).toBe("ALLOW");
     // no label survives the opt-out, so no category-scoped rule query is even built; the
     // product-scoped prefilter covers the variant AND its parent (lineage)
+    // row 509: the same scope OR, once on the legacy columns and once on the rule's target rows
     expect(prisma.sellingRestriction.findMany.mock.calls[0][0].where.OR).toEqual([
       { productId: { in: ["v1", "p1"] } },
+      { targets: { some: { OR: [{ productId: { in: ["v1", "p1"] } }] } } },
     ]);
   });
 
@@ -824,10 +826,8 @@ describe("SellingRestrictionsService.evaluate", () => {
       await service.evaluate(T, "c1", [{ productId: "p1" }], { at: NOW });
       const where = prisma.sellingRestriction.findMany.mock.calls[0][0].where;
       expect(where.tenantId).toBe(T);
-      expect(where.OR).toEqual([
-        { productId: { in: ["p1"] } },
-        { categoryId: { in: ["cat-thc"] } },
-      ]);
+      const scope = [{ productId: { in: ["p1"] } }, { categoryId: { in: ["cat-thc"] } }];
+      expect(where.OR).toEqual([...scope, { targets: { some: { OR: scope } } }]); // row 509
       expect(where.AND).toEqual([activeRuleWhere(NOW)]);
     });
 
