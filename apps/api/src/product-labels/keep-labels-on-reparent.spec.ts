@@ -3,7 +3,12 @@ import {
   LABEL_KEPT_ON_REPARENT_ACTION,
   LabelLockTimeoutError,
 } from "../product-categories/label-writer";
-import { effectiveCategoryIdsUnder, keepLabelsOnReparent } from "./keep-labels-on-reparent";
+import {
+  effectiveCategoryIdsUnder,
+  keepLabelsOnReparent,
+  ProductChainUnreadableError,
+} from "./keep-labels-on-reparent";
+import { API_ERROR_CODES } from "../common/api-error-codes";
 
 /**
  * H2: reparenting a variant must never silently drop a label (a legal selling ban) that the variant carried
@@ -35,10 +40,32 @@ const run = (
       keepLabelsOnReparent(tx, { tenantId: "t1", actor: ACTOR, text: null, ...args }),
     );
 
-const effectiveOf = (db: LabelFakeDb, productId: string, parentId: string | null) =>
-  db
+const effectiveOf = async (
+  db: LabelFakeDb,
+  productId: string,
+  parentId: string | null,
+): Promise<Set<string>> => {
+  const set = await db
     .prisma("t1")
     .tenantTransaction((tx: any) => effectiveCategoryIdsUnder(tx, "t1", productId, parentId));
+  if (!set) throw new Error(`chain under ${parentId} unreadable`);
+  return set as Set<string>;
+};
+
+/** The refusal is the coded, fixed-copy 409 (never a 500, never the raw chain). */
+async function expectChainUnreadable(p: Promise<unknown>): Promise<void> {
+  const err = await p.then(
+    () => null,
+    (e: unknown) => e,
+  );
+  expect(err).toBeInstanceOf(ProductChainUnreadableError);
+  const http = err as ProductChainUnreadableError;
+  expect(http.getStatus()).toBe(409);
+  expect(http.getResponse()).toEqual({
+    code: API_ERROR_CODES.PRODUCT_CHAIN_UNREADABLE,
+    message: "This product's family chain can't be read.",
+  });
+}
 
 describe("keepLabelsOnReparent", () => {
   it("(1) a variant moved to an UNLABELLED parent keeps the inherited bans as its own INCLUDEs", async () => {
@@ -225,5 +252,74 @@ describe("keepLabelsOnReparent", () => {
     db2.addLabel("P2", "ny", "INCLUDE");
     await run(db2, { productId: "C", fromParentId: "P1", toParentId: "P2", text: "Snacks" });
     expect(db2.label("C", "snack")).toBeUndefined();
+  });
+
+  describe("(7) an unreadable OLD chain is refused (409), never read short: a short chain drops bans", () => {
+    const nothingWritten = (db: LabelFakeDb) => {
+      expect(db.labels.filter((l) => l.productId === "C")).toEqual([]);
+      expect(db.audits).toEqual([]);
+      expect(
+        db.calls.some((c) => ["create", "createMany", "update", "deleteMany"].includes(c.op)),
+      ).toBe(false);
+    };
+
+    it("(7a) a cycle above the old parent", async () => {
+      const db = new LabelFakeDb();
+      db.addCategory("ca", "CA ban").addCategory("ny", "NY ban");
+      // C -> P1 -> X -> P1 …: X carries NY; a truncated read would see only P1's CA.
+      db.addProduct("P1", "X").addProduct("X", "P1").addProduct("C", "P1").addProduct("P2");
+      db.addLabel("P1", "ca", "INCLUDE");
+      db.addLabel("X", "ny", "INCLUDE");
+      await expectChainUnreadable(
+        run(db, { productId: "C", fromParentId: "P1", toParentId: "P2" }),
+      );
+      nothingWritten(db);
+    });
+
+    it("(7b) a chain back through the product itself is a cycle too", async () => {
+      const db = new LabelFakeDb();
+      db.addCategory("ca", "CA ban");
+      db.addProduct("C", "P1").addProduct("P1", "C").addProduct("P2");
+      db.addLabel("P1", "ca", "INCLUDE");
+      await expectChainUnreadable(
+        run(db, { productId: "C", fromParentId: "P1", toParentId: "P2" }),
+      );
+      nothingWritten(db);
+    });
+
+    it("(7c) deeper than the engine's cap (6 ancestors); exactly 5 still reads", async () => {
+      const deep = (ancestors: number) => {
+        const db = new LabelFakeDb();
+        db.addCategory("ca", "CA ban");
+        for (let i = 1; i <= ancestors; i++)
+          db.addProduct(`A${i}`, i < ancestors ? `A${i + 1}` : null);
+        db.addProduct("C", "A1").addProduct("P2");
+        db.addLabel(`A${ancestors}`, "ca", "INCLUDE"); // the ban sits on the root
+        return db;
+      };
+      const tooDeep = deep(6);
+      await expectChainUnreadable(
+        run(tooDeep, { productId: "C", fromParentId: "A1", toParentId: "P2" }),
+      );
+      nothingWritten(tooDeep);
+      const atCap = deep(5);
+      const out = await run(atCap, { productId: "C", fromParentId: "A1", toParentId: "P2" });
+      expect(out.keptLabels).toEqual(["CA ban"]);
+    });
+
+    it("(7d) a missing link (an ancestor that is not this tenant's / does not exist)", async () => {
+      const db = new LabelFakeDb();
+      db.addCategory("ca", "CA ban");
+      db.addProduct("G", null, "t2"); // another tenant's row: unknown to t1's read
+      db.addProduct("P1", "G").addProduct("Q", "ghost").addProduct("C", "P1").addProduct("P2");
+      db.addLabel("P1", "ca", "INCLUDE");
+      await expectChainUnreadable(
+        run(db, { productId: "C", fromParentId: "P1", toParentId: "P2" }),
+      );
+      nothingWritten(db);
+      db.products.find((p) => p.id === "C")!.parentProductId = "Q";
+      await expectChainUnreadable(run(db, { productId: "C", fromParentId: "Q", toParentId: null }));
+      nothingWritten(db);
+    });
   });
 });

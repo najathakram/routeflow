@@ -58,7 +58,10 @@ import {
   syncProductImagesFromLegacy,
 } from "./product-catalog-sync";
 import { labelNameKey, syncCategoryLabel } from "../product-categories/label-writer";
-import { keepLabelsOnReparent } from "../product-labels/keep-labels-on-reparent";
+import {
+  keepLabelsOnReparent,
+  planReparentLabels,
+} from "../product-labels/keep-labels-on-reparent";
 import {
   claimCodes,
   codeClaims,
@@ -1237,6 +1240,10 @@ export class ProductsService {
       const deactivating = existing.isActive !== false && data.isActive === false;
       const effectiveParent =
         dto.parentProductId !== undefined ? dto.parentProductId : existing.parentProductId;
+      // A parent CHANGE (an unlink included); an echo of the current parent is not one.
+      const reparenting =
+        dto.parentProductId !== undefined &&
+        (dto.parentProductId ?? null) !== (existing.parentProductId ?? null);
       // B1213: deactivating a family that still has ACTIVE variants is a coded 409 unless confirmed; a confirmed one
       // deactivates them in this tx, so their codes join the ONE sorted lock call below.
       const cascadeIds = deactivating ? await activeVariantIds(tx, tenantId, id) : [];
@@ -1265,6 +1272,16 @@ export class ProductsService {
           : []),
       ].filter((c): c is string => typeof c === "string" && c.trim().length > 0);
       await lockBarcodeCodes(tx, tenantId, lockList);
+      // H2: a parent CHANGE first reads, read-only, which labels the move would lose. An OLD family chain that can't be
+      // read in full is refused here (a coded 409), before any write or row lock.
+      if (reparenting) {
+        await planReparentLabels(tx, {
+          tenantId,
+          productId: id,
+          fromParentId: existing.parentProductId ?? null,
+          toParentId: dto.parentProductId ?? null,
+        });
+      }
       // B1213: a variant is only as live as its family. The family row is locked before anything of this variant is
       // written (house order F -> V); a CHANGED parent is judged by assertValidParent below, which refuses an
       // inactive one.

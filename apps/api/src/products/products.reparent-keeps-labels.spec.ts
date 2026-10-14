@@ -29,13 +29,20 @@ import { createMockPrisma } from "../testing/prisma-mock";
 import { RouteFlowGateway } from "../gateways/routeflow.gateway";
 
 jest.mock("../product-labels/keep-labels-on-reparent", () => ({
+  ...jest.requireActual("../product-labels/keep-labels-on-reparent"),
   keepLabelsOnReparent: jest.fn(),
   effectiveCategoryIdsUnder: jest.fn(),
+  planReparentLabels: jest.fn(),
 }));
-import { keepLabelsOnReparent } from "../product-labels/keep-labels-on-reparent";
+import {
+  keepLabelsOnReparent,
+  planReparentLabels,
+  ProductChainUnreadableError,
+} from "../product-labels/keep-labels-on-reparent";
 
 const TENANT = "t-1";
 const keep = keepLabelsOnReparent as jest.Mock;
+const plan = planReparentLabels as jest.Mock;
 
 describe("ProductsService: a reparent keeps the labels the variant carried (H2)", () => {
   let service: ProductsService;
@@ -113,6 +120,28 @@ describe("ProductsService: a reparent keeps the labels the variant carried (H2)"
   beforeEach(() => {
     keep.mockReset();
     keep.mockResolvedValue({ keptLabels: [] });
+    plan.mockReset();
+    plan.mockResolvedValue([]);
+  });
+
+  it("an unreadable OLD chain refuses the move with the coded 409 BEFORE any write", async () => {
+    seedVariant("old");
+    plan.mockRejectedValue(new ProductChainUnreadableError());
+    const err = await service.update("prod-1", { parentProductId: "fam" } as never).then(
+      () => null,
+      (e: unknown) => e,
+    );
+    expect(err).toBeInstanceOf(ProductChainUnreadableError);
+    expect((err as ProductChainUnreadableError).getStatus()).toBe(409);
+    expect((err as ProductChainUnreadableError).getResponse()).toMatchObject({
+      code: API_ERROR_CODES.PRODUCT_CHAIN_UNREADABLE,
+    });
+    expect(plan).toHaveBeenCalledWith(
+      expect.anything(),
+      expect.objectContaining({ productId: "prod-1", fromParentId: "old", toParentId: "fam" }),
+    );
+    expect(prisma.product.update).not.toHaveBeenCalled();
+    expect(keep).not.toHaveBeenCalled();
   });
 
   it("a parent change calls the keep AFTER the parent write, in the same tx, and reports keptLabels", async () => {
