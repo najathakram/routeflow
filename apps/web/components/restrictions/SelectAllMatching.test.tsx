@@ -15,6 +15,8 @@ jest.mock("@/lib/api-client", () => ({
 
 const idsOf = (n: number, prefix = "p") => Array.from({ length: n }, (_, i) => `${prefix}${i + 1}`);
 
+const onActive = jest.fn();
+
 function Harness({
   total,
   filters = { search: "pod", stockStatus: "IN_STOCK" as const },
@@ -36,6 +38,7 @@ function Harness({
         setSelected={setSelected}
         pageIds={idsOf(50)}
         total={total}
+        onActiveChange={onActive}
       />
       <output data-testid="count">{selected.size}</output>
       <button onClick={() => setSelected(new Set())}>clear-all</button>
@@ -155,5 +158,16 @@ describe("SelectAllMatching", () => {
     await screen.findByText("All 640 matching are selected.");
     await user.click(screen.getByRole("button", { name: "drop-one" }));
     expect(screen.queryByText("All 640 matching are selected.")).toBeNull();
+  });
+  it("tells the page while the selection came from the banner, and when it stops", async () => {
+    const user = userEvent.setup();
+    mockGet.mockResolvedValue({ data: { ids: idsOf(640, "m"), total: 640, capped: false } });
+    renderWithProviders(<Harness total={640} />);
+    expect(onActive).toHaveBeenLastCalledWith(false);
+    await user.click(screen.getByRole("button", { name: "Select all 640 matching" }));
+    await screen.findByText("All 640 matching are selected.");
+    expect(onActive).toHaveBeenLastCalledWith(true);
+    await user.click(screen.getByRole("button", { name: "Clear selection" }));
+    expect(onActive).toHaveBeenLastCalledWith(false);
   });
 });

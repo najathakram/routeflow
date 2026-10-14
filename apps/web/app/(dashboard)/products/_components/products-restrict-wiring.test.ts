@@ -49,4 +49,33 @@ describe("products/page.tsx - row 509 wiring", () => {
     ])
       expect(m![1]).toContain(k);
   });
+  describe("a banner selection holds off-page ids: only Restrict… may act on it", () => {
+    it("tracks the banner state and gives every other bulk action the hint", () => {
+      expect(src).toMatch(/<SelectAllMatching[\s\S]{0,800}?onActiveChange=\{setBannerSelected\}/);
+      expect(src).toMatch(/<PortalBulkButtons[\s\S]{0,200}?offPageHint=\{offPageHint\}/);
+      expect(src).toMatch(/<PortalLimitButtons[\s\S]{0,200}?offPageHint=\{offPageHint\}/);
+    });
+
+    it("Group as variants, Assign to type and Delete are disabled while it is on", () => {
+      for (const label of ["Group as variants of…", "Assign to type…"]) {
+        const m = new RegExp("disabled=\\{([^}]*)\\}[^<]*?>\\s*" + label).exec(src);
+        expect(m).not.toBeNull();
+        expect(m![1]).toContain("bannerSelected");
+      }
+      const del = /<Button\s+variant="danger"[\s\S]{0,400}?Delete \{selected\.size\}/.exec(src);
+      expect(del).not.toBeNull();
+      expect(del![0]).toMatch(/disabled=\{[^}]*bannerSelected/);
+    });
+
+    it("the delete handler itself refuses banner-selected ids (not just the button)", () => {
+      expect(src).toMatch(
+        /const handleBulkDelete = async \(\) => \{\s*if \(bannerSelected\) return;/,
+      );
+    });
+
+    it("RestrictMenu is NOT disabled by it", () => {
+      const m = /<RestrictMenu[\s\S]*?\/>/.exec(src);
+      expect(m![0]).not.toMatch(/bannerSelected|offPageHint/);
+    });
+  });
 });
