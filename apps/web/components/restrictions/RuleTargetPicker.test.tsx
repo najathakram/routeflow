@@ -343,3 +343,65 @@ describe("RuleTargetPicker: chips", () => {
     expect(screen.queryByRole("searchbox", { name: "Search added" })).toBeNull();
   });
 });
+
+describe("RuleTargetPicker: long names and the scrollable results", () => {
+  const LONG = "Sample Pod - Extra Long Flavour Name That Will Not Fit On A Phone";
+  const sizes = (client: number, scroll: number) => {
+    const c = jest.spyOn(HTMLElement.prototype, "clientWidth", "get").mockReturnValue(client);
+    const sw = jest.spyOn(HTMLElement.prototype, "scrollWidth", "get").mockReturnValue(scroll);
+    return () => {
+      c.mockRestore();
+      sw.mockRestore();
+    };
+  };
+  afterEach(() => jest.restoreAllMocks());
+
+  it("a name truncates on one line and keeps its full name in a title", async () => {
+    products = [{ ...GUMMIES, name: LONG }];
+    renderWithProviders(<Harness />);
+    type("sample");
+    const row = await option(/Extra Long/);
+    const name = within(row).getByText(LONG);
+    expect(name.className).toMatch(/truncate/);
+    expect(name).toHaveAttribute("title", LONG);
+    // not cut off, so no second line
+    expect(within(row).getAllByText(LONG)).toHaveLength(1);
+  });
+
+  it("when the name is actually cut off, the full name also shows on a second muted line", async () => {
+    const restore = sizes(100, 400);
+    products = [{ ...GUMMIES, name: LONG }];
+    renderWithProviders(<Harness />);
+    type("sample");
+    const row = await option(/Extra Long/);
+    await waitFor(() => expect(within(row).getAllByText(LONG)).toHaveLength(2));
+    restore();
+  });
+
+  it("rows keep the 44px target at phone width", async () => {
+    renderWithProviders(<Harness />);
+    type("gum");
+    const row = await option(/Gummies 10ct/);
+    expect(row.className).toMatch(/min-h-\[44px\]/);
+  });
+
+  it("the results list fades at the bottom only while there is more to scroll to", async () => {
+    renderWithProviders(<Harness />);
+    type("gum");
+    await option(/Gummies 10ct/);
+    const list = screen.getByRole("listbox", { name: "Matching products" });
+    expect(list).toHaveAttribute("data-more-below", "false");
+    Object.defineProperties(list, {
+      scrollHeight: { configurable: true, value: 500 },
+      clientHeight: { configurable: true, value: 256 },
+      scrollTop: { configurable: true, writable: true, value: 0 },
+    });
+    fireEvent.scroll(list);
+    expect(list).toHaveAttribute("data-more-below", "true");
+    expect(list.style.maskImage || list.style.webkitMaskImage).toMatch(/linear-gradient/);
+    (list as HTMLElement).scrollTop = 244;
+    fireEvent.scroll(list);
+    expect(list).toHaveAttribute("data-more-below", "false");
+    expect(list.style.maskImage || list.style.webkitMaskImage || "").not.toMatch(/linear-gradient/);
+  });
+});

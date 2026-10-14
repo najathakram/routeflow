@@ -290,7 +290,7 @@ describe("Portal limits & rules: who sees Lift rule (owner L5)", () => {
     expect(hintId).toBeTruthy();
     const hint = document.getElementById(hintId as string);
     expect(hint).toHaveTextContent(
-      "Only an account admin can lift a rule that applies everywhere.",
+      "Only an account admin can lift a rule that hides products from every portal customer.",
     );
     expect(btn).not.toHaveAttribute("title");
   });
