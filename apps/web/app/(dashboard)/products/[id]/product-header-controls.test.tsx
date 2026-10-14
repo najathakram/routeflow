@@ -86,4 +86,16 @@ describe("ProductHeaderControls (VU-2)", () => {
     expect(onRequestDelete).toHaveBeenCalledTimes(1);
     expect(screen.queryByRole("dialog")).toBeNull();
   });
+
+  it("P-14: secondary actions are ghost; Delete sits apart behind a divider wrapper", () => {
+    setup();
+    const deactivate = screen.getByRole("button", { name: "Deactivate" });
+    expect(deactivate.className).not.toMatch(/border-line-strong/); // not the secondary look
+    expect(deactivate.className).toMatch(/text-ink-500/); // ghost
+    const del = screen.getByRole("button", { name: "Delete" });
+    const wrap = del.parentElement as HTMLElement;
+    expect(wrap.className).toMatch(/sm:border-l/);
+    expect(wrap.className).toMatch(/sm:ml-2/);
+    expect(wrap.className).toMatch(/max-sm:basis-full/);
+  });
 });

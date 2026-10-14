@@ -47,7 +47,7 @@ export function ProductHeaderControls({
       {isOperator && !product.parentProductId && product.kind !== "FAMILY" && (
         <Button
           size="sm"
-          variant="secondary"
+          variant="ghost"
           onClick={onMakeVariant}
           title="Link this product as a variant of another product"
         >
@@ -56,7 +56,7 @@ export function ProductHeaderControls({
       )}
       <Button
         size="sm"
-        variant="secondary"
+        variant="ghost"
         onClick={() =>
           product.isActive
             ? reactivateFlow.askDeactivate(product.id, product.name)
@@ -69,7 +69,7 @@ export function ProductHeaderControls({
       {hasTobaccoAddon && (
         <Button
           size="sm"
-          variant="secondary"
+          variant="ghost"
           onClick={onToggleTobacco}
           loading={tobaccoLoading}
           title="Tobacco products are tracked separately for monthly tax reports"
@@ -78,14 +78,16 @@ export function ProductHeaderControls({
         </Button>
       )}
       {isOperator && (
-        <Button
-          size="sm"
-          variant="danger-outline"
-          leftIcon={<Trash2 className="h-4 w-4" />}
-          onClick={onRequestDelete}
-        >
-          Delete
-        </Button>
+        <div className="flex items-center max-sm:basis-full max-sm:justify-end sm:ml-2 sm:border-l sm:border-surface-border sm:pl-3">
+          <Button
+            size="sm"
+            variant="danger-outline"
+            leftIcon={<Trash2 className="h-4 w-4" />}
+            onClick={onRequestDelete}
+          >
+            Delete
+          </Button>
+        </div>
       )}
     </>
   );
