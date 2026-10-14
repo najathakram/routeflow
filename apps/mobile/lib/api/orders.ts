@@ -2,7 +2,10 @@ import { useQuery, useMutation, useQueryClient, type QueryClient } from "@tansta
 import { apiClient } from "../api-client";
 import type { ChangeRequest } from "./change-requests";
 import { creditsPendingFromError } from "../order-credits-pending";
+import { splitIdAck, type IdWithAck } from "../restriction-warning";
 import type {
+  OverrideStampView,
+  RestrictionAck,
   ActiveOrderSummary,
   BatchShipRequest,
   BatchShipResult,
@@ -23,7 +26,9 @@ export type {
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
-export interface OrderItem {
+/** Row 510: a STAFF read also carries the override stamp (and may carry the resolved name); a buyer read never does. */
+export interface OrderItem extends Partial<OverrideStampView> {
+  restrictionOverrideByName?: string | null;
   id: string;
   /** #2717 M3: frozen sub-lines of a composed (mixed-pack) line; absent on a plain line. */
   components?: LineComponentView[];
@@ -401,7 +406,7 @@ export type CreateSaleItemInput =
  *    Net-30 default, which would override the tenant's configured
  *    `invoice.defaultTerms`. The server's default stays authoritative here.
  */
-export interface CreateSaleDto {
+export interface CreateSaleDto extends RestrictionAck {
   customerId: string;
   items: CreateSaleItemInput[];
   /** true = van/cash sale (order DELIVERED + invoice SENT). false = PENDING order + linked DRAFT invoice. */
@@ -442,7 +447,7 @@ export function useCreateSale() {
 
 export function useCreateOrderAsDriver() {
   const qc = useQueryClient();
-  return useMutation<Order, Error, CreateOrderAsDriverDto>({
+  return useMutation<Order, Error, CreateOrderAsDriverDto & RestrictionAck>({
     // `idempotencyKey` travels as a HEADER, never in the body (the same idiom
     // as `useCompleteWithPayment` in lib/api/routes.ts) — api-client also
     // preserves that header across an offline-queue replay, so a replayed cart
@@ -552,14 +557,15 @@ export function useUpdateOrderItems() {
        * desired set.
        */
       appliedCreditNotes?: AppliedCreditNoteInput[];
-    }
+    } & RestrictionAck // row 510: the resubmit after a RESTRICTION_WARNING
   >({
-    mutationFn: ({ orderId, items, replaceAll, appliedCreditNotes }) =>
+    mutationFn: ({ orderId, items, replaceAll, appliedCreditNotes, ...ack }) =>
       apiClient
         .patch(`/orders/${orderId}/items`, {
           items,
           replaceAll,
           ...(appliedCreditNotes !== undefined ? { appliedCreditNotes } : {}),
+          ...ack,
         })
         .then((r) => r.data),
     onSuccess: () => {
@@ -597,9 +603,13 @@ export function useToggleOrderUrgent() {
 
 export function useChangeOrderStatus() {
   const qc = useQueryClient();
-  return useMutation<Order, Error, { id: string; status: OrderStatus; reason?: string }>({
-    mutationFn: ({ id, status, reason }) =>
-      apiClient.patch(`/orders/${id}/status`, { status, reason }).then((r) => r.data),
+  return useMutation<
+    Order,
+    Error,
+    { id: string; status: OrderStatus; reason?: string } & RestrictionAck
+  >({
+    mutationFn: ({ id, status, reason, ...ack }) =>
+      apiClient.patch(`/orders/${id}/status`, { status, reason, ...ack }).then((r) => r.data),
     onSuccess: () => {
       invalidateOrderCaches(qc);
       qc.invalidateQueries({ queryKey: ["route-runs"] });
@@ -619,8 +629,13 @@ export function useChangeOrderStatus() {
  */
 export function useReopenOrder() {
   const qc = useQueryClient();
-  return useMutation<Order, Error, string>({
-    mutationFn: (id) => apiClient.post(`/orders/${id}/reopen`).then((r) => r.data),
+  return useMutation<Order, Error, IdWithAck>({
+    mutationFn: (v) => {
+      const { id, ack } = splitIdAck(v); // row 510: a reopen is re-judged, so it can carry an ack
+      return (
+        ack ? apiClient.post(`/orders/${id}/reopen`, ack) : apiClient.post(`/orders/${id}/reopen`)
+      ).then((r) => r.data);
+    },
     onSuccess: () => invalidateOrderCaches(qc),
   });
 }

@@ -65,6 +65,8 @@ import { invoiceLineQtyText } from "@routeflow/pricing";
 import { freeUnitsLabel } from "../../../../lib/buyer-cart-logic";
 import { ACTIVATION_BUDGET_MS, sharePdf } from "../../../../lib/share-pdf";
 import { printPdf } from "../../../../lib/print-pdf";
+import { RestrictionOverrideNote } from "../../../../components/RestrictionOverrideNote";
+import { useRestrictionWarningRetry } from "../../../../lib/use-restriction-warning-retry";
 import { overpaidText, revisedBadgeText } from "../../../../lib/invoice-revision";
 import {
   nextPdfSharePhase,
@@ -160,6 +162,7 @@ export default function InvoiceDetailScreen() {
   const getImageUrlMut = useGetPaymentImageUrl();
   const reminderMut = useSendInvoiceReminder();
   const duplicateMut = useDuplicateInvoice();
+  const rw = useRestrictionWarningRetry(); // row 510: staff warning + override dialog
   const reopenMut = useReopenInvoice();
   const unvoidMut = useUnvoidInvoice();
   const revertMut = useRevertInvoiceToDraft();
@@ -551,12 +554,14 @@ export default function InvoiceDetailScreen() {
     // Real POST /invoices/:id/duplicate — preserves the box split + per-line
     // discount/taxRate (web hand-rolls a lossy re-create here; deliberately
     // not mirrored, RF-011).
-    duplicateMut.mutate(id, {
+    duplicateMut.mutate(rw.attach(id), {
       onSuccess: (inv) => {
         showToast(`New draft ${inv.invoiceNumber} created`);
         router.push(`/(operator)/invoices/${inv.id}`);
       },
-      onError: (e: any) => showToast(e?.response?.data?.message ?? e?.message ?? "Try again."),
+      onError: (e: any) =>
+        rw.handle(e, handleDuplicate) ||
+        showToast(e?.response?.data?.message ?? e?.message ?? "Try again."),
     });
   };
 
@@ -919,6 +924,7 @@ export default function InvoiceDetailScreen() {
                           {it.notes}
                         </Text>
                       ) : null}
+                      <RestrictionOverrideNote line={it} />
                       {invoiceLineSubLines(it).map((text, i) => (
                         <Text key={i} style={styles.itemSub} testID="line-component-sub-line">
                           {text}
@@ -1123,18 +1129,18 @@ export default function InvoiceDetailScreen() {
                 ]}
                 onPress={() => {
                   if (!id) return;
-                  updateMut.mutate(
-                    { id, dueDate: dueDateInput.trim() || undefined },
-                    {
+                  const saveDueDate = () =>
+                    updateMut.mutate(rw.attach({ id, dueDate: dueDateInput.trim() || undefined }), {
                       onSuccess: () => {
                         showToast("Due date updated");
                         setDueDateModal(false);
                         refetch();
                       },
                       onError: (e: any) =>
+                        rw.handle(e, saveDueDate) ||
                         showToast(e?.response?.data?.message ?? e?.message ?? "Try again."),
-                    },
-                  );
+                    });
+                  saveDueDate();
                 }}
                 disabled={updateMut.isPending}
               >
@@ -1148,6 +1154,7 @@ export default function InvoiceDetailScreen() {
           </Pressable>
         </Pressable>
       </Modal>
+      {rw.modal}
 
       <ShipmentEditModal
         open={shipmentModal}

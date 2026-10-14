@@ -49,6 +49,12 @@ module.exports = {
     if (role === "OPERATOR" && deniedGroups.includes(rule.group)) return false;
     return true;
   },
+  // Row 510: hand copies of packages/types/api/restrictions.ts; pinned equal by
+  // apps/mobile/__tests__/restriction-warning-constants.test.ts (which reads the REAL source).
+  RESTRICTION_OVERRIDE_REASON_MIN: 3,
+  RESTRICTION_OVERRIDE_REASON_MAX: 200,
+  DRIVER_RESTRICTION_BLOCK_MESSAGE: "Ask the office to approve this sale",
+  RESTRICTION_OVERRIDE_LABEL: "Sold despite restriction",
   FULFILL_PATH_VALUES: ["ROUTE", "SHIP", "PICKUP"],
   EMAIL_DELIVERY_STATUS_VALUES: ["QUEUED", "SENT", "FAILED", "BOUNCED", "WOULD_SEND", "OPTED_OUT"],
   // Hand copy of packages/types/api/preferences.ts PREF; pinned equal by

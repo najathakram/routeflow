@@ -7,6 +7,7 @@ import { ArrowLeft, Plus, Trash2, Search, Loader2 } from "lucide-react";
 import { Button, Card, useToast, cn } from "@routeflow/ui/web";
 import { usePageTitle } from "@/lib/page-title-context";
 import { useInvoice, useUpdateInvoice, type UpdateInvoiceItem } from "@/lib/api/invoices";
+import { useRestrictionWarningRetry } from "@/lib/use-restriction-warning-retry";
 import { isPendingMirrorInvoice } from "@/lib/invoice-pending-mirror";
 import { hasUnitLine, unitLabelsOf } from "@/lib/invoice-line-unit";
 import {
@@ -396,6 +397,7 @@ export default function EditInvoicePage() {
 
   const { data: invoice, isLoading, isError } = useInvoice(id);
   const updateInvoice = useUpdateInvoice();
+  const rw = useRestrictionWarningRetry(); // row 510: staff warning + override dialog
 
   // #2791: a pending-mirror draft can't be edited here (the API refuses by design — the order is the
   // source of truth until delivery). Send the user to the order instead of showing a form that can only fail.
@@ -646,7 +648,7 @@ export default function EditInvoicePage() {
       }),
     };
 
-    updateInvoice.mutate(dto, {
+    updateInvoice.mutate(rw.attach(dto), {
       onSuccess: () => {
         toast({
           title: "Invoice updated",
@@ -656,6 +658,7 @@ export default function EditInvoicePage() {
         router.push(`/invoices/${id}`);
       },
       onError: (err: any) => {
+        if (rw.handle(err, handleSubmit)) return; // row 510
         // A class-validator 400 carries `message` as a string[] when more than
         // one constraint fails at once — join it into one readable sentence
         // instead of handing the array straight to the toast (B788).
@@ -1137,6 +1140,7 @@ export default function EditInvoicePage() {
         initialName={createProductInitialName}
         initialSku={createProductInitialSku}
       />
+      {rw.dialog}
     </div>
   );
 }

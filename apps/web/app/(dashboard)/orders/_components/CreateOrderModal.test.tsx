@@ -1033,6 +1033,90 @@ describe("CreateOrderModal", () => {
         expect(screen.queryByText("Over their credit limit of 100.00.")).not.toBeInTheDocument();
       });
     });
+
+    describe("row 510 - a staff 409 RESTRICTION_WARNING opens the warning dialog and resubmits with the ack", () => {
+      const warning409 = {
+        response: {
+          status: 409,
+          data: {
+            code: "RESTRICTION_WARNING",
+            message: "Some items are restricted.",
+            warningHash: "rw1:abc",
+            lines: [
+              {
+                lineKey: "n:0",
+                productId: "p1",
+                displayName: "Hemp Gummies",
+                outcome: "BLOCK",
+                rules: [
+                  {
+                    id: "r1",
+                    states: ["CA"],
+                    legal: true,
+                    reasonText: "This product is banned in CA by law.",
+                  },
+                ],
+              },
+            ],
+          },
+        },
+      };
+
+      afterEach(() => {
+        mockCreateOrderError = null;
+      });
+
+      it("shows the lines, takes ONE reason, and re-sends the SAME payload and Idempotency-Key plus the ack", async () => {
+        const user = userEvent.setup();
+        mockCustomers = [acme];
+        renderWithProviders(<CreateOrderModal isOpen onClose={jest.fn()} />);
+        await pickCustomer("Acme Foods");
+        fireEvent.click(screen.getByRole("button", { name: /save as draft/i }));
+        expect(createOrderMutate).toHaveBeenCalledTimes(1);
+        const first = createOrderMutate.mock.calls[0][0];
+
+        act(() => createOrderMutate.mock.calls[0][1].onError(warning409));
+
+        const dialog = await screen.findByRole("dialog", { name: /sell a restricted product/i });
+        expect(within(dialog).getByText("Hemp Gummies")).toBeInTheDocument();
+        expect(
+          within(dialog).getByText("This product is banned in CA by law."),
+        ).toBeInTheDocument();
+        await user.type(within(dialog).getByLabelText(/reason/i), "Owner approved");
+        await user.click(within(dialog).getByRole("button", { name: "Sell anyway" }));
+
+        expect(createOrderMutate).toHaveBeenCalledTimes(2);
+        const second = createOrderMutate.mock.calls[1][0];
+        expect(second).toEqual({
+          ...first,
+          restrictionOverrides: [{ lineKey: "n:0", reason: "Owner approved" }],
+          warningHash: "rw1:abc",
+        });
+        expect(second.idempotencyKey).toBe(first.idempotencyKey);
+        expect(mockToast).not.toHaveBeenCalled();
+      });
+
+      it("Go back keeps the form and the cart: no second send", async () => {
+        const user = userEvent.setup();
+        mockCustomers = [acme];
+        renderWithProviders(<CreateOrderModal isOpen onClose={jest.fn()} />);
+        await pickCustomer("Acme Foods");
+        fireEvent.click(screen.getByRole("button", { name: /save as draft/i }));
+        act(() => createOrderMutate.mock.calls[0][1].onError(warning409));
+        await user.click(await screen.findByRole("button", { name: "Go back" }));
+        expect(createOrderMutate).toHaveBeenCalledTimes(1);
+        expect(screen.getByText("Acme Foods")).toBeInTheDocument(); // the customer is still picked
+      });
+
+      it("shows no inline red banner for it (the dialog is the one message)", async () => {
+        mockCustomers = [acme];
+        mockCreateOrderError = { ...warning409, message: "Request failed" };
+        renderWithProviders(<CreateOrderModal isOpen onClose={jest.fn()} />);
+        await pickCustomer("Acme Foods");
+        expect(screen.queryByText(/Request failed/)).toBeNull();
+        expect(screen.queryByText(/Some items are restricted/)).toBeNull();
+      });
+    });
   });
   describe("units_v1 - selling an order line by a unit", () => {
     const caseLevel = {

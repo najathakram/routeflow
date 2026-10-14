@@ -5,6 +5,7 @@ import { Select, useToast } from "@routeflow/ui/web";
 import { usePatchOrderFulfillPath } from "@/lib/api/orders";
 import { codedToastCopy } from "@/lib/generic-toast-copy";
 import { fulfilPathOptions, type FulfilPath } from "@/lib/fulfil-path-options";
+import { useRestrictionWarningRetry } from "@/lib/use-restriction-warning-retry";
 
 type Writable = "ROUTE" | "SHIP";
 
@@ -34,6 +35,7 @@ export function OrderFulfilmentRow({
 }) {
   const { toast } = useToast();
   const patchFulfillPath = usePatchOrderFulfillPath({ localErrorToast: true });
+  const rw = useRestrictionWarningRetry(); // row 510: staff warning + override dialog
   const allowed = new Set<FulfilPath>([fulfillPath, ...(offered ?? ["ROUTE", "SHIP"])]);
   const options = fulfilPathOptions(fulfillPath).filter((o) => allowed.has(o.value));
   return (
@@ -52,18 +54,18 @@ export function OrderFulfilmentRow({
               const next = e.target.value as FulfilPath;
               if (next === fulfillPath || next === "PICKUP") return;
               if (fulfillPath === "PICKUP" && onLeavePickup) return onLeavePickup(next);
-              patchFulfillPath.mutate(
-                { id: orderId, fulfillPath: next },
-                {
+              const apply = () =>
+                patchFulfillPath.mutate(rw.attach({ id: orderId, fulfillPath: next }), {
                   onSuccess: () => toast({ title: "Fulfillment updated", variant: "success" }),
                   onError: (err: any) =>
+                    rw.handle(err, apply) ||
                     toast({
                       title: "Could not update fulfillment",
                       description: fulfillPathErrorCopy(err),
                       variant: "error",
                     }),
-                },
-              );
+                });
+              apply();
             }}
           />
         </div>
@@ -73,6 +75,7 @@ export function OrderFulfilmentRow({
           </span>
         )}
       </dd>
+      {rw.dialog}
     </div>
   );
 }

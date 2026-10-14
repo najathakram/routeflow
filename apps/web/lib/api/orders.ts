@@ -17,6 +17,8 @@ import type {
   OrderCancelBlockedReason,
 } from "@routeflow/types";
 import type { LocalErrorToastOption } from "@/lib/local-error-toast";
+import type { OverrideStampView, RestrictionAck } from "@routeflow/types";
+import { splitIdAck, type IdWithAck } from "@/lib/api/restriction-warning";
 import type { HandOverSoldBy } from "@/lib/handover-stamp";
 
 export type { ChangeRequest } from "@/lib/change-requests";
@@ -166,7 +168,9 @@ export interface OrderRevision {
   createdAt: string;
 }
 
-export interface OrderItem {
+/** Row 510: a STAFF read also carries the override stamp (and may carry the resolved name); a buyer read never does. */
+export interface OrderItem extends Partial<OverrideStampView> {
+  restrictionOverrideByName?: string | null;
   id: string;
   /** Null for unlisted (ad-hoc, non-catalog) lines — `name` carries the label instead. */
   productId: string | null;
@@ -340,7 +344,7 @@ export function useCreateOrder(options?: LocalErrorToastOption) {
       /** SA-484a: the B215 replay key, sent as the `Idempotency-Key` HEADER (never in the body),
        *  paired with `inlineReturn.returnKey` — one per save attempt, reused on its retries. */
       idempotencyKey?: string;
-    }
+    } & RestrictionAck // row 510: the resubmit after a RESTRICTION_WARNING (rides in ...dto)
   >({
     meta: options?.localErrorToast ? { localErrorToast: options.localErrorToast } : undefined,
     mutationFn: ({ idempotencyKey, ...dto }) =>
@@ -360,7 +364,7 @@ export function useCreateOrder(options?: LocalErrorToastOption) {
   });
 }
 
-export interface CreateSaleDto {
+export interface CreateSaleDto extends RestrictionAck {
   customerId: string;
   items: {
     productId: string;
@@ -466,10 +470,14 @@ export function useCustomerPriceHistory(customerId: string | null | undefined) {
  */
 export function useUpdateOrderStatus(options?: LocalErrorToastOption) {
   const qc = useQueryClient();
-  return useMutation<Order, Error, { id: string; status: string; reason?: string }>({
+  return useMutation<
+    Order,
+    Error,
+    { id: string; status: string; reason?: string } & RestrictionAck
+  >({
     meta: options?.localErrorToast ? { localErrorToast: options.localErrorToast } : undefined,
-    mutationFn: ({ id, status, reason }) =>
-      apiClient.patch(`/orders/${id}/status`, { status, reason }).then((r) => r.data),
+    mutationFn: ({ id, status, reason, ...ack }) =>
+      apiClient.patch(`/orders/${id}/status`, { status, reason, ...ack }).then((r) => r.data),
     onSuccess: (_, { id }) => {
       qc.invalidateQueries({ queryKey: ["orders"] });
       qc.invalidateQueries({ queryKey: ["orders", id] });
@@ -529,7 +537,7 @@ export function useUpdateOrderItems(options?: LocalErrorToastOption) {
       inlineReturn?: InlineReturnLinesRequest;
       /** Row 372: the `revisionNumber` the editor loaded; behind the server's latest it is 409 ORDER_REVISION_STALE. */
       expectedRevisionNumber?: number;
-    }
+    } & RestrictionAck
   >({
     meta: options?.localErrorToast ? { localErrorToast: options.localErrorToast } : undefined,
     mutationFn: ({
@@ -541,6 +549,7 @@ export function useUpdateOrderItems(options?: LocalErrorToastOption) {
       appliedCreditNotes,
       inlineReturn,
       expectedRevisionNumber,
+      ...ack
     }) =>
       apiClient
         .patch<Order>(`/orders/${id}/items`, {
@@ -551,6 +560,7 @@ export function useUpdateOrderItems(options?: LocalErrorToastOption) {
           appliedCreditNotes,
           inlineReturn,
           expectedRevisionNumber,
+          ...ack,
         })
         .then((r) => r.data),
     onSuccess: (data, variables) => {
@@ -576,9 +586,15 @@ export function useToggleUrgent() {
 
 export function useReopenOrder() {
   const qc = useQueryClient();
-  return useMutation<Order, Error, string>({
-    mutationFn: (id) => apiClient.post(`/orders/${id}/reopen`).then((r) => r.data),
-    onSuccess: (_, id) => {
+  return useMutation<Order, Error, IdWithAck>({
+    mutationFn: (v) => {
+      const { id, ack } = splitIdAck(v);
+      return (
+        ack ? apiClient.post(`/orders/${id}/reopen`, ack) : apiClient.post(`/orders/${id}/reopen`)
+      ).then((r) => r.data);
+    },
+    onSuccess: (_, v) => {
+      const { id } = splitIdAck(v);
       qc.invalidateQueries({ queryKey: ["orders"] });
       qc.invalidateQueries({ queryKey: ["orders", id] });
     },
@@ -666,10 +682,14 @@ export function usePatchOrderCommissionRate() {
 
 export function usePatchOrderFulfillPath(options?: LocalErrorToastOption) {
   const qc = useQueryClient();
-  return useMutation<Order, Error, { id: string; fulfillPath: "ROUTE" | "SHIP" | "PICKUP" }>({
+  return useMutation<
+    Order,
+    Error,
+    { id: string; fulfillPath: "ROUTE" | "SHIP" | "PICKUP" } & RestrictionAck
+  >({
     meta: options?.localErrorToast ? { localErrorToast: options.localErrorToast } : undefined,
-    mutationFn: ({ id, fulfillPath }) =>
-      apiClient.patch(`/orders/${id}/fulfill-path`, { fulfillPath }).then((r) => r.data),
+    mutationFn: ({ id, fulfillPath, ...ack }) =>
+      apiClient.patch(`/orders/${id}/fulfill-path`, { fulfillPath, ...ack }).then((r) => r.data),
     onSuccess: (_d, vars) => qc.invalidateQueries({ queryKey: ["orders", vars.id] }),
   });
 }

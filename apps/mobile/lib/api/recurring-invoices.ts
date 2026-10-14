@@ -1,6 +1,7 @@
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { apiClient } from "../api-client";
 import type { CreateRecurringInvoiceDto, RecurringInvoice } from "@routeflow/types";
+import { splitIdAck, type IdWithAck } from "../restriction-warning";
 export type {
   CreateRecurringInvoiceDto,
   CreateRecurringInvoiceItem,
@@ -59,8 +60,15 @@ export function useCreateRecurringInvoice() {
  */
 export function useRunRecurringInvoice() {
   const qc = useQueryClient();
-  return useMutation<{ id: string } | null, Error, string>({
-    mutationFn: (id) => apiClient.post(`/recurring-invoices/${id}/run`).then((r) => r.data),
+  return useMutation<{ id: string } | null, Error, IdWithAck>({
+    mutationFn: (v) => {
+      const { id, ack } = splitIdAck(v); // row 510 Q2: a manual run is judged for the clicker
+      return (
+        ack
+          ? apiClient.post(`/recurring-invoices/${id}/run`, ack)
+          : apiClient.post(`/recurring-invoices/${id}/run`)
+      ).then((r) => r.data);
+    },
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ["recurring-invoices"] });
       qc.invalidateQueries({ queryKey: ["invoices"] });

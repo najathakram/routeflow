@@ -7,6 +7,7 @@ import {
 } from "@/components/LineItemRowReadOnly";
 import { lineBackorderPieces } from "@routeflow/types";
 import { formatMoney } from "@/lib/format";
+import { RestrictionOverrideNote } from "@/components/RestrictionOverrideNote";
 import type { OrderItem } from "@/lib/api/orders";
 import { orderLineName } from "@/lib/product-display";
 import { displayLineStatus } from "./line-status";
@@ -81,7 +82,14 @@ export function OrderLineItemCards({
 
       <ul className="divide-y divide-surface-border">
         {visible.map((li) => (
-          <LineItemRowReadOnly key={li.id} className="px-6" {...lineRowProps(li, orderStatus)} />
+          <React.Fragment key={li.id}>
+            <LineItemRowReadOnly className="px-6" {...lineRowProps(li, orderStatus)} />
+            {li.restrictionOverrideReason && (
+              <li className="px-6 pb-3 pl-[4.5rem]">
+                <RestrictionOverrideNote line={li} />
+              </li>
+            )}
+          </React.Fragment>
         ))}
       </ul>
 

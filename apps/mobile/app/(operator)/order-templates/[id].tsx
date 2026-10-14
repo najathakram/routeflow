@@ -17,6 +17,7 @@ import {
 } from "../../../lib/order-templates-logic";
 import { showToast } from "../../../lib/toast";
 import { confirm } from "../../../lib/confirm";
+import { useRestrictionWarningRetry } from "../../../lib/use-restriction-warning-retry";
 
 const onErr = (e: any) => showToast(e?.response?.data?.message ?? e?.message ?? "Try again.");
 
@@ -26,6 +27,7 @@ export default function OrderTemplateDetailScreen() {
 
   const { data: template, isLoading, refetch } = useOrderTemplate(id ?? "");
   const genMut = useGenerateTemplateOrder();
+  const rw = useRestrictionWarningRetry(); // row 510 Q2: a manual Generate is judged for the clicker
   const updateMut = useUpdateOrderTemplate();
   const deleteMut = useDeleteOrderTemplate();
 
@@ -48,18 +50,19 @@ export default function OrderTemplateDetailScreen() {
 
   const handleGenerate = () => {
     if (!id) return;
+    const generate = () =>
+      genMut.mutate(rw.attach(id), {
+        onSuccess: (order) => {
+          showToast("Order created");
+          // generate returns the created (or merged-winner) ORDER keyed `id`.
+          router.push(`/(operator)/orders/${order.id}`);
+        },
+        onError: (e: any) => rw.handle(e, generate) || onErr(e),
+      });
     confirm(
       "Generate order now?",
       "Creates a pending order for this customer from the template.",
-      () =>
-        genMut.mutate(id, {
-          onSuccess: (order) => {
-            showToast("Order created");
-            // generate returns the created (or merged-winner) ORDER keyed `id`.
-            router.push(`/(operator)/orders/${order.id}`);
-          },
-          onError: onErr,
-        }),
+      generate,
       { confirmText: "Generate" },
     );
   };
@@ -197,6 +200,7 @@ export default function OrderTemplateDetailScreen() {
         </View>
         <View style={{ height: 24 }} />
       </ScrollView>
+      {rw.modal}
     </SafeAreaView>
   );
 }
