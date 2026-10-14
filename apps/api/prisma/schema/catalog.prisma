@@ -159,42 +159,42 @@ model Product {
   // #2717 M2 (Q3): FIXED-recipe products may keep their own tiers while the family propagates.
   familyPriceOverride Boolean @default(false)
 
-  tenant                    Tenant?                    @relation(fields: [tenantId], references: [id])
-  orderItems                OrderItem[]
-  deliveryMutations         DeliveryMutation[]
-  changeRequests            ChangeRequest[]
-  templateItems             OrderTemplateItem[]
-  stockMovements            StockMovement[]
-  stockLots                 StockLot[]
-  stockCountLines           StockCountLine[]
-  invoiceItems              InvoiceItem[]
-  estimateItems             EstimateItem[]
-  purchaseOrderItems        PurchaseOrderItem[]
-  returnItems               ReturnItem[]
-  recurringInvoiceItems     RecurringInvoiceItem[]
-  vendorBillItems           VendorBillItem[]
-  customerPrices            CustomerPrice[]
-  productMappings           ProductMapping[]
-  buyerFavorites            BuyerFavorite[]
-  promotionProducts         PromotionProduct[]
-  replenishmentSnoozes      ReplenishmentSnooze[]
-  stockAlerts               StockAlert[]
-  parent                    Product?                   @relation("ProductVariants", fields: [parentProductId], references: [id])
-  variants                  Product[]                  @relation("ProductVariants")
-  trackedCategory           TrackedCategory?           @relation(fields: [trackedCategoryId], references: [id], onDelete: SetNull)
-  trackedSubcategory        TrackedSubcategory?        @relation(fields: [trackedSubcategoryId], references: [id], onDelete: SetNull)
-  units                     ProductUnit[]
-  supplierProducts          SupplierProduct[]
-  categoryLabels            ProductCategoryLabel[]
-  sellingRestrictions       SellingRestriction[]
+  tenant                Tenant?                @relation(fields: [tenantId], references: [id])
+  orderItems            OrderItem[]
+  deliveryMutations     DeliveryMutation[]
+  changeRequests        ChangeRequest[]
+  templateItems         OrderTemplateItem[]
+  stockMovements        StockMovement[]
+  stockLots             StockLot[]
+  stockCountLines       StockCountLine[]
+  invoiceItems          InvoiceItem[]
+  estimateItems         EstimateItem[]
+  purchaseOrderItems    PurchaseOrderItem[]
+  returnItems           ReturnItem[]
+  recurringInvoiceItems RecurringInvoiceItem[]
+  vendorBillItems       VendorBillItem[]
+  customerPrices        CustomerPrice[]
+  productMappings       ProductMapping[]
+  buyerFavorites        BuyerFavorite[]
+  promotionProducts     PromotionProduct[]
+  replenishmentSnoozes  ReplenishmentSnooze[]
+  stockAlerts           StockAlert[]
+  parent                Product?               @relation("ProductVariants", fields: [parentProductId], references: [id])
+  variants              Product[]              @relation("ProductVariants")
+  trackedCategory       TrackedCategory?       @relation(fields: [trackedCategoryId], references: [id], onDelete: SetNull)
+  trackedSubcategory    TrackedSubcategory?    @relation(fields: [trackedSubcategoryId], references: [id], onDelete: SetNull)
+  units                 ProductUnit[]
+  supplierProducts      SupplierProduct[]
+  categoryLabels        ProductCategoryLabel[]
+  sellingRestrictions   SellingRestriction[]
   sellingRestrictionTargets SellingRestrictionTarget[]
-  barcodes                  ProductBarcode[]
-  images                    ProductImage[]
-  recipesAsProduct          Recipe[]                   @relation("RecipeProduct")
-  recipesAsFamily           Recipe[]                   @relation("RecipeFamily")
-  recipeComponents          RecipeComponent[]
-  orderItemComponents       OrderItemComponent[]
-  invoiceItemComponents     InvoiceItemComponent[]
+  barcodes              ProductBarcode[]
+  images                ProductImage[]
+  recipesAsProduct      Recipe[]               @relation("RecipeProduct")
+  recipesAsFamily       Recipe[]               @relation("RecipeFamily")
+  recipeComponents      RecipeComponent[]
+  orderItemComponents   OrderItemComponent[]
+  invoiceItemComponents InvoiceItemComponent[]
 
   @@unique([tenantId, sku])
   @@unique([tenantId, barcode])
@@ -366,15 +366,15 @@ model PurchaseOrderItem {
   packSize    Int?
   tenantId    String?
 
-  po        PurchaseOrder @relation(fields: [poId], references: [id], onDelete: Cascade)
-  tenant    Tenant?       @relation(fields: [tenantId], references: [id])
-  product   Product       @relation(fields: [productId], references: [id])
-  // Units rebuild P0a: sale-time unit-name snapshots (null = legacy line).
-  baseLabel String?
+  po      PurchaseOrder @relation(fields: [poId], references: [id], onDelete: Cascade)
+  tenant  Tenant?       @relation(fields: [tenantId], references: [id])
+  product Product       @relation(fields: [productId], references: [id])
 
   @@index([poId])
   @@index([productId])
   @@index([tenantId])
+  // Units rebuild P0a: sale-time unit-name snapshots (null = legacy line).
+  baseLabel String?
 }
 
 // ─── Multi-level units + purchase-order supplier mapping (2026-09-19) ─────────
@@ -420,8 +420,8 @@ model ProductUnit {
   tenant     Tenant?          @relation(fields: [tenantId], references: [id])
   tenantUnit TenantUnit?      @relation(fields: [tenantUnitId], references: [id], onDelete: SetNull)
   barcodes   ProductBarcode[]
-  parent     ProductUnit?     @relation("ProductUnitParent", fields: [parentUnitId], references: [id], onDelete: SetNull)
-  children   ProductUnit[]    @relation("ProductUnitParent")
+  parent   ProductUnit?  @relation("ProductUnitParent", fields: [parentUnitId], references: [id], onDelete: SetNull)
+  children ProductUnit[] @relation("ProductUnitParent")
 
   @@unique([productId, label])
   @@unique([productId, factorToBase])
@@ -597,9 +597,9 @@ model ProductCategory {
   createdAt  DateTime  @default(now())
   updatedAt  DateTime  @updatedAt
 
-  tenant                    Tenant?                    @relation(fields: [tenantId], references: [id])
-  labels                    ProductCategoryLabel[]
-  sellingRestrictions       SellingRestriction[]
+  tenant              Tenant?                @relation(fields: [tenantId], references: [id])
+  labels              ProductCategoryLabel[]
+  sellingRestrictions SellingRestriction[]
   sellingRestrictionTargets SellingRestrictionTarget[]
 
   @@unique([tenantId, name])

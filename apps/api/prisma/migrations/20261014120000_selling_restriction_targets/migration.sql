@@ -1,7 +1,23 @@
--- Row 509 (SA design gate 2026-10-14, option A): a selling restriction rule covers MANY products and/or
--- labels through SellingRestrictionTarget. Additive only: a new table, its indexes and CHECK, and an
--- idempotent backfill of one target per existing rule. The legacy SellingRestriction.productId /
--- categoryId columns and SellingRestriction_scope_xor stay one release (rollback; SA conditions 1-3).
+-- Row 509 (SA design gate 2026-10-14, option A): a selling restriction rule covers MANY products and/or labels
+-- through "SellingRestrictionTarget". Additive: a new table, its CHECK and indexes, and an idempotent backfill of
+-- one target per existing rule. The legacy "SellingRestriction"."productId" / "categoryId" columns and
+-- "SellingRestriction_scope_xor" stay one release (rollback; SA conditions 1-3).
+--
+-- LOCK PROFILE: a NEW table, so its CREATE / CHECK / indexes lock nothing anyone waits on. The FKs take a
+-- SHARE ROW EXCLUSIVE lock on "Tenant", "SellingRestriction", "Product" and "ProductCategory" for the instant of
+-- their validation (an empty table validates at once). The backfill only READS "SellingRestriction".
+-- `SET LOCAL lock_timeout = '5s'` applies PER STATEMENT inside the one transaction: a statement that waits longer
+-- than 5s for its lock fails and rolls the whole file back (recorded FAILED; recover with
+-- `prisma migrate resolve --rolled-back <folder>` from apps/api, then re-run; NEVER `--applied`).
+-- HARD DEPLOY ORDER (L-184): apply to prod (fresh backup, `prod-migrate.mjs`), `schema-drift.mjs` exit 0, and
+-- ONLY THEN merge the code that reads the targets. After that code deploys, re-run the backfill INSERT below once
+-- (it is idempotent) to sweep any rule a legacy-only writer created in between (SA condition 1).
+--
+-- Rollback:
+--   DROP TABLE "SellingRestrictionTarget";
+
+BEGIN;
+SET LOCAL lock_timeout = '5s';
 
 -- CreateTable
 CREATE TABLE "SellingRestrictionTarget" (
@@ -60,13 +76,17 @@ CREATE INDEX "SellingRestrictionTarget_tenant_product_active_idx"
 CREATE INDEX "SellingRestrictionTarget_tenant_category_active_idx"
   ON "SellingRestrictionTarget"("tenantId", "categoryId") WHERE "removedAt" IS NULL;
 
--- Backfill (SA condition 3): one target per existing rule, from its legacy scope column, dated and
--- attributed like the rule. Idempotent: a rule that already has ANY target row is skipped, so the same
--- statement can be re-run after the code deploys to sweep rules old code wrote in between.
+-- Backfill (SA condition 3): one target per existing rule, from its legacy scope column, attributed like the
+-- rule and dated LEAST(createdAt, effectiveFrom): a BACKDATED rule (effectiveFrom before createdAt) must never
+-- read as ALLOW between its effectiveFrom and createdAt once the engine judges by target windows. Idempotent:
+-- a rule that already has ANY target row is skipped, so the same statement can be re-run after the code deploys
+-- to sweep rules old code wrote in between.
 INSERT INTO "SellingRestrictionTarget"
   ("id", "tenantId", "ruleId", "productId", "categoryId", "addedAt", "addedById", "addedByName")
 SELECT gen_random_uuid()::text, r."tenantId", r."id", r."productId", r."categoryId",
-       r."createdAt", r."createdById", r."createdByName"
+       LEAST(r."createdAt", r."effectiveFrom"), r."createdById", r."createdByName"
 FROM "SellingRestriction" r
 WHERE (r."productId" IS NOT NULL OR r."categoryId" IS NOT NULL)
   AND NOT EXISTS (SELECT 1 FROM "SellingRestrictionTarget" t WHERE t."ruleId" = r."id");
+
+COMMIT;

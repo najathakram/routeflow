@@ -124,11 +124,22 @@ type RuleRowWithTargets = Omit<RestrictionRuleFacts, "targets"> & {
  * the target rows that touch its products.
  */
 function withTargetSets(rows: readonly RuleRowWithTargets[], at: Date): RestrictionRuleFacts[] {
-  return rows.map(({ targets, _count, ...rule }) => ({
-    ...rule,
-    targets: ruleTargetSets(targets ?? [], _count?.targets ?? 0, at),
-  }));
+  return rows.map(({ targets, _count, ...rule }) => {
+    // A missing count would silently read as "no target rows" and fall back to the legacy column: fail loud.
+    if (typeof _count?.targets !== "number" || !targets) {
+      throw new Error(
+        `selling restrictions: rule ${rule.id} was read without its targets and count`,
+      );
+    }
+    return { ...rule, targets: ruleTargetSets(targets, _count.targets, at) };
+  });
 }
+
+/** Row 509: a target row active at `at` (the SQL twin of `targetIsActive`; the core re-checks in JS). */
+const activeTargetWhere = (at: Date) => ({
+  addedAt: { lte: at },
+  OR: [{ removedAt: null }, { removedAt: { gt: at } }],
+});
 
 /** Levels of variants under a rule's product the buyer visibility expansion follows (a malformed cycle's bound). */
 const BUYER_VISIBILITY_MAX_DEPTH = 5;
@@ -446,7 +457,7 @@ export class SellingRestrictionsService {
     const loadedRows: RuleRowWithTargets[] = await db.sellingRestriction.findMany({
       where: {
         tenantId,
-        OR: [...touches, { targets: { some: { OR: touches } } }],
+        OR: [...touches, { targets: { some: { AND: [activeTargetWhere(at), { OR: touches }] } } }],
         // Only rules active at `at` (the SQL twin of `ruleIsActive`; `matchingRules` re-checks in JS).
         AND: [activeRuleWhere(at)],
       },
@@ -456,7 +467,10 @@ export class SellingRestrictionsService {
       orderBy: [{ effectiveFrom: "desc" }, { id: "asc" }],
       select: {
         ...RULE_FACTS_SELECT,
-        targets: { where: { OR: touches }, select: TARGET_ROW_SELECT },
+        targets: {
+          where: { AND: [activeTargetWhere(at), { OR: touches }] },
+          select: TARGET_ROW_SELECT,
+        },
         _count: { select: { targets: true } },
       },
     });
@@ -549,10 +563,7 @@ export class SellingRestrictionsService {
       where: { tenantId, AND: [activeRuleWhere(at)] },
       select: {
         ...RULE_FACTS_SELECT,
-        targets: {
-          where: { addedAt: { lte: at }, OR: [{ removedAt: null }, { removedAt: { gt: at } }] },
-          select: TARGET_ROW_SELECT,
-        },
+        targets: { where: activeTargetWhere(at), select: TARGET_ROW_SELECT },
         _count: { select: { targets: true } },
       },
     });

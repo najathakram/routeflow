@@ -40,7 +40,9 @@ function backfillSql(): string {
   );
   const start = sql.indexOf('INSERT INTO "SellingRestrictionTarget"');
   if (start < 0) throw new Error("backfill INSERT not found in the migration");
-  return sql.slice(start).trim();
+  const end = sql.indexOf(";", start); // the statement ends at its own `;` (COMMIT follows)
+  if (end < 0) throw new Error("backfill INSERT has no terminating ;");
+  return sql.slice(start, end + 1);
 }
 
 describeDb("row 509: rule targets in the one engine — real Postgres", () => {
@@ -94,7 +96,10 @@ describeDb("row 509: rule targets in the one engine — real Postgres", () => {
     ).id;
   };
   /** A FEDERAL portal rule; `legacy` is what the old column holds (the XOR CHECK needs exactly one). */
-  const mkRule = async (legacy: { productId?: string; categoryId?: string }) =>
+  const mkRule = async (
+    legacy: { productId?: string; categoryId?: string },
+    over: Record<string, unknown> = {},
+  ) =>
     (
       await prisma.sellingRestriction.create({
         data: {
@@ -105,7 +110,8 @@ describeDb("row 509: rule targets in the one engine — real Postgres", () => {
           surface: "BUYER_PORTAL",
           reason: `R509 ${RUN}`,
           effectiveFrom: FROM,
-        },
+          ...over,
+        } as never,
       })
     ).id;
   const mkTarget = (
@@ -243,17 +249,33 @@ describeDb("row 509: rule targets in the one engine — real Postgres", () => {
   });
 
   it("SA condition 3 / parity 5: the migration's backfill gives every legacy rule one equal target, idempotently, and changes no decision", async () => {
-    const r1 = await mkRule({ productId: p.legacyOnly });
-    const r2 = await mkRule({ categoryId: c.legacy });
-    const r3 = await mkRule({ productId: p.fam });
+    const createdBy = { createdById: `u-${RUN}`, createdByName: "R509 Admin" };
+    const r1 = await mkRule({ productId: p.legacyOnly }, createdBy);
+    // a STATE / surface ALL legal ban (the customer is in TX)
+    const r2 = await mkRule(
+      { categoryId: c.legacy },
+      { jurisdiction: "STATE", states: ["TX"], surface: "ALL", ...createdBy },
+    );
+    const r3 = await mkRule({ productId: p.fam }, createdBy);
+    // a LIFTED rule is history too: it gets its target, and still decides nothing
+    const r4 = await mkRule(
+      { productId: p.a },
+      { liftedAt: new Date(Date.now() - 60_000), liftReason: "done", ...createdBy },
+    );
     const keys = ["legacyOnly", "legacyCat", "v1", "free", "a"];
     const before = await Promise.all(keys.map((k) => outcome(k)));
     const hiddenBefore = await hidden();
 
     await prisma.$executeRawUnsafe(backfillSql());
     const rows = await prisma.sellingRestrictionTarget.findMany({ where: { tenantId } });
-    expect(rows).toHaveLength(3);
+    expect(rows).toHaveLength(4);
     const byRule = new Map(rows.map((r) => [r.ruleId, r]));
+    for (const r of rows) {
+      expect(r.addedAt.toISOString()).toBe(FROM.toISOString()); // LEAST(createdAt, effectiveFrom)
+      expect(r.addedById).toBe(`u-${RUN}`);
+      expect(r.addedByName).toBe("R509 Admin");
+    }
+    expect(byRule.get(r4)).toMatchObject({ productId: p.a, removedAt: null });
     expect(byRule.get(r1)).toMatchObject({
       productId: p.legacyOnly,
       categoryId: null,
@@ -267,10 +289,21 @@ describeDb("row 509: rule targets in the one engine — real Postgres", () => {
     expect(byRule.get(r3)).toMatchObject({ productId: p.fam, categoryId: null, removedAt: null });
 
     await prisma.$executeRawUnsafe(backfillSql()); // re-run: idempotent
-    expect(await prisma.sellingRestrictionTarget.count({ where: { tenantId } })).toBe(3);
+    expect(await prisma.sellingRestrictionTarget.count({ where: { tenantId } })).toBe(4);
 
     expect(await Promise.all(keys.map((k) => outcome(k)))).toEqual(before);
     const hiddenAfter = await hidden();
     expect(keys.map(hiddenAfter)).toEqual(keys.map(hiddenBefore));
+  });
+
+  it("SA must 2: a BACKDATED rule's backfilled target starts at effectiveFrom, never at createdAt", async () => {
+    // effectiveFrom (FROM, Jan 1) is long before createdAt (now): the rule has been in force since Jan 1
+    const r = await mkRule({ productId: p.b });
+    await prisma.$executeRawUnsafe(backfillSql());
+    const t = await prisma.sellingRestrictionTarget.findFirstOrThrow({ where: { ruleId: r } });
+    expect(t.addedAt.toISOString()).toBe(FROM.toISOString());
+    const between = new Date(FROM.getTime() + 86_400_000); // after effectiveFrom, before createdAt
+    expect(await outcome("b", between)).toBe("BLOCK");
+    expect((await hiddenAt(between))("b")).toBe(true);
   });
 });

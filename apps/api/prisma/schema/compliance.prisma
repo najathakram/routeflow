@@ -458,14 +458,14 @@ model SellingRestriction {
   liftedAt      DateTime?
   liftReason    String?
 
-  tenant   Tenant?                    @relation(fields: [tenantId], references: [id])
-  category ProductCategory?           @relation(fields: [categoryId], references: [id])
-  product  Product?                   @relation(fields: [productId], references: [id])
+  tenant   Tenant?          @relation(fields: [tenantId], references: [id])
+  category ProductCategory? @relation(fields: [categoryId], references: [id])
+  product  Product?         @relation(fields: [productId], references: [id])
   // Row 509: what the rule covers. A rule with target rows is matched ONLY by its active targets; a rule
   // with none (written before the targets table, or by old code during a deploy) falls back to the
   // legacy categoryId / productId above (SA condition 1). The legacy columns stay one release so a
   // rollback still enforces (a multi-target rule mirrors its FIRST target there, SA condition 2).
-  targets  SellingRestrictionTarget[]
+  targets SellingRestrictionTarget[]
 
   @@index([tenantId, effectiveTo])
   @@index([categoryId])
