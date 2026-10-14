@@ -73,6 +73,7 @@ import { BarcodeFab } from "../../../../../components/BarcodeFab";
 import { scanFabHidden } from "../../../../../lib/scan-fab-visibility";
 import { LicenseGuardModal } from "../../../../../components/LicenseGuardModal";
 import { BlockedLinesModal } from "../../../../../components/BlockedLinesModal";
+import { useRestrictionWarningRetry } from "../../../../../lib/use-restriction-warning-retry";
 import { parseSellingRestricted } from "../../../../../lib/selling-restricted";
 import type { BlockedLine } from "@routeflow/types";
 import { CreditLimitGuardModal } from "../../../../../components/CreditLimitGuardModal";
@@ -212,6 +213,7 @@ export function EditOrderItemsScreen({ orderId }: { orderId?: string } = {}) {
   const [restrictedBlock, setRestrictedBlock] = useState<BlockedLine[] | null>(null);
   const [creditBlock, setCreditBlock] = useState<CreditLimitExceededInfo | null>(null);
   const updateMut = useUpdateOrderItems();
+  const rw = useRestrictionWarningRetry(); // row 510: staff warning + override (a driver's hard block)
 
   // ── Apply-credit section (mirrors NewOrderScreen) ──────────────────────────
   // Driver-gated off below (drivers don't manage credits). `creditsTouched`
@@ -794,15 +796,11 @@ export function EditOrderItemsScreen({ orderId }: { orderId?: string } = {}) {
 
   const save = () => {
     if (!id) return;
-    // Build an incremental diff (replaceAll:false) so untouched lines keep their
-    // ids, invoiced qty, and override history — the old full-replace clobbered them.
-    // `notes` (per-line, buyer-visible) is threaded through the diff so editing a
-    // note is picked up as a change and never silently wiped.
-    // buildOrderItemDiff auto-DELETEs any original line absent from the surviving
-    // catalog/unlisted lines — covering removals via the qty stepper (zeroing),
-    // not just the trash button — so `pendingDeletes` here is just the explicit
-    // trash-button set. The whole mapping lives in lib/edit-items-draft.ts so
-    // the dirty check and this payload are ONE derivation.
+    // An incremental diff (replaceAll:false): untouched lines keep their ids, invoiced qty and override
+    // history. `notes` is threaded through so a note edit is a change and never wiped. buildOrderItemDiff
+    // auto-DELETEs any original line absent from the surviving lines (qty stepper to zero too), so
+    // `pendingDeletes` is just the trash-button set. The mapping lives in lib/edit-items-draft.ts: the
+    // dirty check and this payload are ONE derivation.
     const items = stagedDiffItems({ draft, unlisted, pendingDeletes }, originals);
     const repair = repairBlockedLines(draft, originals); // #2231: LOCKED unit line, send nothing
     if (repair.length) return showToast(`${repair.join(", ")} needs repair — not saved.`);
@@ -815,7 +813,7 @@ export function EditOrderItemsScreen({ orderId }: { orderId?: string } = {}) {
       return;
     }
     updateMut.mutate(
-      {
+      rw.attach({
         orderId: id,
         items,
         replaceAll: false,
@@ -843,7 +841,7 @@ export function EditOrderItemsScreen({ orderId }: { orderId?: string } = {}) {
               }),
             }
           : {}),
-      },
+      }),
       {
         onSuccess: () => {
           showToast("Items updated");
@@ -851,14 +849,12 @@ export function EditOrderItemsScreen({ orderId }: { orderId?: string } = {}) {
           // also stops the unmount/beforeRemove flush re-writing it behind us.
           savedRef.current = true;
           void clearSnapshot();
-          // Land on the orders LIST after a successful save instead of
-          // popping back to the order detail. The user reported "Back" not
-          // taking them to all orders after submit; explicit navigation
-          // sidesteps any unstable back-stack state when the screen was
-          // reached via deep link or a fresh tab switch. (Driver → back to stop.)
+          // Land on the orders LIST (explicit navigation sidesteps an unstable back stack after a
+          // deep link or tab switch). Driver → back to stop.
           leaveEditor();
         },
         onError: (e: any) => {
+          if (rw.handle(e, save)) return; // row 510: warning + override (a driver's hard block)
           const restricted = parseSellingRestricted(e);
           if (restricted) {
             setRestrictedBlock(restricted);
@@ -1036,6 +1032,7 @@ export function EditOrderItemsScreen({ orderId }: { orderId?: string } = {}) {
       />
 
       <BlockedLinesModal lines={restrictedBlock} onClose={() => setRestrictedBlock(null)} />
+      {rw.modal}
 
       <CreditLimitGuardModal
         open={!!creditBlock}

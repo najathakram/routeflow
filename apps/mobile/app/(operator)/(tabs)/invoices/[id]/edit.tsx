@@ -28,6 +28,7 @@ import { levelsForScan } from "../../../../../lib/wedge-scan";
 import type { ScanOutcome } from "../../../../../lib/scan-loop";
 import { canRemoveLooseUnits, looseUnitsVisible } from "../../../../../lib/loose-units";
 import { useUpdateInvoice } from "../../../../../lib/api/invoices";
+import { useRestrictionWarningRetry } from "../../../../../lib/use-restriction-warning-retry";
 import { alertInfo, confirm } from "../../../../../lib/confirm";
 import { ISO_DATE } from "../../../../../lib/invoice-terms";
 import {
@@ -114,6 +115,7 @@ export default function EditInvoiceScreen() {
   const { data: settings } = useBusinessSettings();
   const { data: customer } = useAdminCustomer(invoice?.customer?.id ?? "");
   const updateMut = useUpdateInvoice();
+  const rw = useRestrictionWarningRetry(); // row 510: staff warning + override dialog
 
   const isTaxExempt = !!customer?.isTaxExempt;
   const tenantTaxRate = (Number(settings?.taxRate) || 0) / 100;
@@ -405,7 +407,7 @@ export default function EditInvoiceScreen() {
       return;
     }
     updateMut.mutate(
-      {
+      rw.attach({
         id,
         ...(issueDate.trim() ? { issueDate: issueDate.trim() } : {}),
         dueDate,
@@ -438,7 +440,7 @@ export default function EditInvoiceScreen() {
           ),
           ...(l.locked ? { boxes: l.storedBoxes ?? 0, pieces: l.storedPieces ?? 0 } : {}),
         })),
-      },
+      }),
       {
         onSuccess: () => {
           showToast("Invoice updated");
@@ -447,6 +449,7 @@ export default function EditInvoiceScreen() {
         // Server messages here are actionable (mirror guard, number conflict…) —
         // surface them verbatim instead of a fixed string.
         onError: (e: any) =>
+          rw.handle(e, submit) ||
           alertInfo("Couldn't save", e?.response?.data?.message ?? e?.message ?? "Try again."),
       },
     );
@@ -637,6 +640,7 @@ export default function EditInvoiceScreen() {
       </FormSheet>
       <BarcodeFab onScanned={onScanned} continuous hidden={pickerOpen} paused={scanPromptOpen} />
       <ScanMatchPickerSheet {...matchPicker.props} />
+      {rw.modal}
     </>
   );
 }

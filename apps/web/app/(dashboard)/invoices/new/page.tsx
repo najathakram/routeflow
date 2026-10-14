@@ -31,6 +31,7 @@ import {
   type CreateInvoiceItem,
 } from "@/lib/api/invoices";
 import { useCreateSale, useUninvoicedOrders, type CreateSaleDto } from "@/lib/api/orders";
+import { useRestrictionWarningRetry } from "@/lib/use-restriction-warning-retry";
 import { SplitInvoiceModal } from "../../orders/_components/SplitInvoiceModal";
 import { toSplitInvoiceLine, type SplitInvoiceLine } from "@/lib/split-invoice-line";
 import {
@@ -794,6 +795,7 @@ export default function NewInvoicePage() {
   const createInvoice = useCreateInvoice();
   const updateInvoice = useUpdateInvoice();
   const createSale = useCreateSale();
+  const rw = useRestrictionWarningRetry(); // row 510: staff warning + override dialog
 
   // Which kind of invoice the operator is creating, chosen on the basis screen.
   const [basis, setBasis] = React.useState<"existing" | "newSale" | "standalone" | null>(null);
@@ -1417,10 +1419,10 @@ export default function NewInvoicePage() {
       let invoiceId = currentDraftId;
       if (invoiceId) {
         // Update the existing draft so the preview reflects edits
-        await updateInvoice.mutateAsync({ id: invoiceId, ...dto } as any);
+        await updateInvoice.mutateAsync(rw.attach({ id: invoiceId, ...dto }) as any);
       } else {
         const created: any = await createInvoice.mutateAsync(
-          dto as Parameters<typeof createInvoice.mutate>[0],
+          rw.attach(dto) as Parameters<typeof createInvoice.mutate>[0],
         );
         invoiceId = created.id;
         setCurrentDraftId(invoiceId);
@@ -1444,6 +1446,7 @@ export default function NewInvoicePage() {
         });
       }
     } catch (err) {
+      if (rw.handle(err, () => handlePreview(lines))) return; // row 510
       toast({
         title: "Couldn't build preview",
         description: unitRefusal(err, lines) ?? "Check your inputs and try again.",
@@ -1469,10 +1472,10 @@ export default function NewInvoicePage() {
       const dto = buildPartialInvoiceDto(lines);
       let invoiceId = currentDraftId;
       if (invoiceId) {
-        await updateInvoice.mutateAsync({ id: invoiceId, ...dto } as any);
+        await updateInvoice.mutateAsync(rw.attach({ id: invoiceId, ...dto }) as any);
       } else {
         const created: any = await createInvoice.mutateAsync(
-          dto as Parameters<typeof createInvoice.mutate>[0],
+          rw.attach(dto) as Parameters<typeof createInvoice.mutate>[0],
         );
         invoiceId = created.id;
         setCurrentDraftId(invoiceId);
@@ -1494,6 +1497,7 @@ export default function NewInvoicePage() {
       setTimeout(() => URL.revokeObjectURL(blobUrl), 60_000);
       toast({ title: "Invoice downloaded", variant: "success" });
     } catch (err) {
+      if (rw.handle(err, () => handleDownload(lines))) return; // row 510
       toast({
         title: "Couldn't generate PDF",
         description: unitRefusal(err, lines) ?? "Please try again.",
@@ -1569,7 +1573,7 @@ export default function NewInvoicePage() {
     const backdatedTo = issueDate && issueDate !== todayIso() ? issueDate : undefined;
 
     createSale.mutate(
-      {
+      rw.attach({
         customerId: customer!.id,
         items: saleItems,
         deliveredNow,
@@ -1590,7 +1594,7 @@ export default function NewInvoicePage() {
         // via a local cast rather than widening that shared type here.
         ...(terms ? { paymentTermsLabel: terms } : {}),
         send,
-      } as CreateSaleDto & { paymentTermsLabel?: string },
+      } as CreateSaleDto & { paymentTermsLabel?: string }),
       {
         onSuccess: (inv) => {
           toast({
@@ -1600,6 +1604,7 @@ export default function NewInvoicePage() {
           router.push(`/invoices/${inv.id}`);
         },
         onError: (err: unknown) =>
+          rw.handle(err, () => handleSubmitSale(send, lines)) ||
           toast({
             title: "Could not create the sale",
             description: unitRefusal(err, saleLines) ?? "Please check your inputs and try again.",
@@ -1615,7 +1620,7 @@ export default function NewInvoicePage() {
     // If we already have a preview draft, just update it and optionally send.
     if (currentDraftId) {
       const dto = buildInvoiceDto(false, lines);
-      updateInvoice.mutate({ id: currentDraftId, ...dto } as any, {
+      updateInvoice.mutate(rw.attach({ id: currentDraftId, ...dto }) as any, {
         onSuccess: async () => {
           let sendFailed = false;
           if (sendNow) {
@@ -1637,6 +1642,7 @@ export default function NewInvoicePage() {
           router.push(`/invoices/${currentDraftId}`);
         },
         onError: (err: unknown) => {
+          if (rw.handle(err, () => handleSubmit(sendNow, lines))) return; // row 510
           toast({
             title: "Failed to save invoice",
             description: unitRefusal(err, lines) ?? "Please check your inputs and try again.",
@@ -1649,7 +1655,7 @@ export default function NewInvoicePage() {
 
     const dto = buildInvoiceDto(sendNow, lines);
 
-    createInvoice.mutate(dto as Parameters<typeof createInvoice.mutate>[0], {
+    createInvoice.mutate(rw.attach(dto) as Parameters<typeof createInvoice.mutate>[0], {
       onSuccess: (invoice) => {
         toast({
           title: sendNow ? "Invoice sent" : "Draft saved",
@@ -1661,6 +1667,7 @@ export default function NewInvoicePage() {
         router.push(`/invoices/${invoice.id}`);
       },
       onError: (err: unknown) => {
+        if (rw.handle(err, () => handleSubmit(sendNow, lines))) return; // row 510
         // The API commits the DRAFT before it sends; a delivery failure names that draft. Open
         // it (retrying the create would duplicate it). No invoiceId (older API) => plain failure.
         const keptId = sendFailedDraftId(err);
@@ -2688,6 +2695,7 @@ export default function NewInvoicePage() {
           </div>
         </div>
       ) : null}
+      {rw.dialog}
     </div>
   );
 }

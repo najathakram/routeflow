@@ -49,13 +49,12 @@ export function handleMutationError(
     "EDIT_WINDOW_OPEN",
     // B1135: a change request on an order with the carrier; the buyer's request form says it inline.
     API_ERROR_CODES.ORDER_WITH_CARRIER_NO_CHANGE_REQUEST,
-    // Selling restrictions settings: the page turns this into a guided in-app message
-    // (a two-step instruction) and toasts it itself, once. (Enabling the switch no longer has a
-    // readiness refusal: readiness is advice, shown in the customers-without-a-state card.)
-    "SELLING_RESTRICTIONS_ENABLE_AND_POLICY_TOGETHER",
     // Selling restrictions: the order UIs show a blocked-lines dialog (the lines and why),
     // so the generic toast would only say "Request failed with status code 409".
     "SELLING_RESTRICTED",
+    // Row 510: a staff sale of a restricted product opens the warning dialog (useRestrictionWarningRetry), which
+    // asks for a reason and resubmits; the generic toast would only say "Request failed with status code 409".
+    API_ERROR_CODES.RESTRICTION_WARNING,
     // Credit limit: the order detail opens a guard dialog (the server's limit / exposure and a
     // "collect a payment" exit); CreateOrderModal keeps its inline banner. No override exists.
     "CREDIT_LIMIT_EXCEEDED",

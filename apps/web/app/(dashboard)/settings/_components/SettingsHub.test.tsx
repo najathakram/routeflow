@@ -28,7 +28,7 @@ const TITLES = [
 ];
 
 beforeEach(() => {
-  restrictions.mockReturnValue({ data: { enabled: true }, isLoading: false, isError: false });
+  restrictions.mockReturnValue({ data: { enabled: false }, isLoading: false, isError: false });
 });
 
 const SECTION_IDS: Record<string, string> = {
@@ -46,6 +46,12 @@ describe("SettingsHub regroup", () => {
     for (const t of TITLES) expect(screen.getAllByText(t).length).toBeGreaterThan(0);
     expect(screen.queryByText("Finance")).not.toBeInTheDocument();
     expect(screen.queryByText("Data & import")).not.toBeInTheDocument();
+  });
+
+  it("row 510: no 'staff orders aren't checked' banner, whatever the old setting says (staff sales are always checked)", () => {
+    renderWithProviders(<SettingsHub isAdmin />);
+    expect(screen.queryByText(/aren.t checked against selling restrictions/i)).toBeNull();
+    expect(screen.queryByRole("link", { name: /review restrictions/i })).toBeNull();
   });
 
   it("hides admin-only items from operators", () => {
@@ -223,48 +229,6 @@ describe("SettingsHub regroup", () => {
     expect(document.getElementById("route-defaults")).toContainElement(
       screen.getByText("route-defaults-card"),
     );
-  });
-});
-
-describe("SettingsHub readiness banner", () => {
-  it("shows the banner with an admin link when the master switch is off", () => {
-    restrictions.mockReturnValue({ data: { enabled: false }, isLoading: false, isError: false });
-    renderWithProviders(<SettingsHub isAdmin />);
-    expect(screen.getByRole("status")).toHaveTextContent(
-      /staff orders and invoices aren.t checked/i,
-    );
-    expect(within(screen.getByRole("status")).getByRole("link")).toHaveAttribute(
-      "href",
-      "/settings/restrictions",
-    );
-  });
-
-  it("shows text but no link to operators", () => {
-    restrictions.mockReturnValue({ data: { enabled: false }, isLoading: false, isError: false });
-    renderWithProviders(<SettingsHub isAdmin={false} />);
-    const banner = screen.getByRole("status");
-    expect(banner).toHaveTextContent(/staff orders and invoices aren.t checked/i);
-    expect(within(banner).queryByRole("link")).not.toBeInTheDocument();
-  });
-
-  it("can be dismissed", () => {
-    restrictions.mockReturnValue({ data: { enabled: false }, isLoading: false, isError: false });
-    renderWithProviders(<SettingsHub isAdmin />);
-    fireEvent.click(screen.getByRole("button", { name: /dismiss/i }));
-    expect(screen.queryByRole("status")).not.toBeInTheDocument();
-  });
-
-  it("no banner when enabled, loading, or errored", () => {
-    for (const r of [
-      { data: { enabled: true }, isLoading: false, isError: false },
-      { data: undefined, isLoading: true, isError: false },
-      { data: undefined, isLoading: false, isError: true },
-    ]) {
-      restrictions.mockReturnValue(r);
-      const { unmount } = renderWithProviders(<SettingsHub isAdmin />);
-      expect(screen.queryByRole("status")).not.toBeInTheDocument();
-      unmount();
-    }
   });
 });
 

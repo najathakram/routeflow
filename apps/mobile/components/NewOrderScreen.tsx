@@ -104,6 +104,7 @@ import {
 } from "../lib/sale-line";
 import { LicenseGuardModal } from "./LicenseGuardModal";
 import { BlockedLinesModal } from "./BlockedLinesModal";
+import { useRestrictionWarningRetry } from "../lib/use-restriction-warning-retry";
 import { parseSellingRestricted } from "../lib/selling-restricted";
 import type { BlockedLine } from "@routeflow/types";
 import {
@@ -1673,6 +1674,7 @@ function ProductPickView({
   };
 
   const createOrder = useCreateOrderAsDriver();
+  const rw = useRestrictionWarningRetry(); // row 510: staff warning + override (a driver gets the hard block)
   // Pre-check the customer's open draft/pending order so we can ask before submitting.
   // POS mode (SA-763r P-2): staff only, never a driver's at-door cart (lib/use-pos-mode.ts).
   const showPosSwitch = canUsePosMode(userRole) && !runId && !stopId;
@@ -1798,7 +1800,7 @@ function ProductPickView({
     // Blank = today (the server stamps it); only staff can reach the field.
     const orderDateTrim = isStaff ? orderDate.trim() : "";
     createOrder.mutate(
-      {
+      rw.attach({
         customerId,
         items: itemPayload,
         routeRunId: runId,
@@ -1823,7 +1825,7 @@ function ProductPickView({
         // Sent as the Idempotency-Key header (see useCreateOrderAsDriver). The
         // SAME value on every retry/replay of this cart is the point.
         idempotencyKey: getOrderSubmitKey(customerId),
-      },
+      }),
       {
         onSuccess: async (order) => {
           // This cart is now a real order; anything submitted next for THIS customer is a NEW
@@ -1971,6 +1973,7 @@ function ProductPickView({
             );
             return;
           }
+          if (rw.handle(err, () => submitOrder(mergeChoice, asDraft))) return; // row 510
           const restricted = parseSellingRestricted(err);
           if (restricted) {
             setRestrictedBlock(restricted);
@@ -2404,6 +2407,7 @@ function ProductPickView({
       />
 
       <BlockedLinesModal lines={restrictedBlock} onClose={() => setRestrictedBlock(null)} />
+      {rw.modal}
 
       <LicenseGuardModal
         open={!!licenseBlock}

@@ -150,13 +150,13 @@ import {
   useOrderTemplates,
   useUpdateOrderTemplate,
   useDeleteOrderTemplate,
-  useGenerateTemplateOrder,
   type OrderTemplate,
 } from "@/lib/api/order-templates";
 import { StandingOrderModal } from "./StandingOrderModal";
 import { CustomerStatementCard } from "./customer-statement-card";
 import { CreditLimitPanel } from "./credit-limit-panel";
 import { GenerateOrderNowButton } from "./generate-order-button";
+import { useGenerateTemplateOrderAction } from "@/lib/use-generate-template-order-action";
 import { CustomerOversellOverride } from "./customer-oversell-override";
 import { ConfirmDialog } from "@/components/ConfirmDialog";
 import { CustomerRecordPaymentModal } from "@/components/CustomerRecordPaymentModal";
@@ -1952,7 +1952,7 @@ function CustomerDetailPageInner({ id }: { id: string }) {
   const deleteAddress = useDeleteCustomerAddress();
   const updateTemplate = useUpdateOrderTemplate();
   const deleteTemplate = useDeleteOrderTemplate();
-  const generateOrder = useGenerateTemplateOrder();
+  const generateOrder = useGenerateTemplateOrderAction(); // row 510 Q2: a manual Generate is judged for the clicker
 
   const { data: statement, isError: statementFailed } = useCustomerStatement(id);
   const { data: advancePayments } = useCustomerAdvancePayments(id);
@@ -3492,11 +3492,7 @@ function CustomerDetailPageInner({ id }: { id: string }) {
                         </button>
                         <GenerateOrderNowButton
                           pending={generateOrder.isPending}
-                          onGenerate={() =>
-                            generateOrder.mutate(tmpl.id, {
-                              onSuccess: () => window.alert(`Order generated for "${tmpl.name}"!`),
-                            })
-                          }
+                          onGenerate={() => generateOrder.generate(tmpl.id, tmpl.name)}
                         />
                         <button
                           title="Edit template"
@@ -4089,6 +4085,7 @@ function CustomerDetailPageInner({ id }: { id: string }) {
       {/* ── Tax document lightbox — routed through DocumentViewer so a PDF tax-exempt
            document is viewable too, not just images ─────────────────────────────── */}
       <DocumentViewer doc={taxDocLightbox} onClose={() => setTaxDocLightbox(null)} />
+      {generateOrder.dialog}
     </div>
   );
 }

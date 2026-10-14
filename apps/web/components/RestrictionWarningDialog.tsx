@@ -1,0 +1,156 @@
+"use client";
+
+import * as React from "react";
+import { Button, Modal, Textarea } from "@routeflow/ui/web";
+import {
+  RESTRICTION_OVERRIDE_REASON_MAX,
+  type BlockedLine,
+  type RestrictionAck,
+  type RestrictionWarningError,
+} from "@routeflow/types";
+import { restrictionReasonText } from "@/lib/api/selling-restricted";
+import {
+  RESTRICTION_COPY as COPY,
+  buildAck,
+  checkOverrideReason,
+  ruleText,
+} from "@/lib/api/restriction-warning";
+
+export type RestrictionDialogView =
+  | { kind: "warning"; warning: RestrictionWarningError }
+  | { kind: "blocked"; message: string; lines: BlockedLine[] };
+
+interface Props {
+  /** null = closed. */
+  view: RestrictionDialogView | null;
+  /** A reason typed on an earlier attempt of the same save (a fresh 409 re-shows the dialog with it). */
+  initialReason?: string;
+  /** "Sell anyway": the ack to resubmit with, and the trimmed reason (kept for a second 409). */
+  onConfirm: (ack: RestrictionAck, reason: string) => void;
+  /** "Go back" / Esc / X: nothing is sent, and the form and cart stay as they were. */
+  onCancel: () => void;
+}
+
+/**
+ * Row 510: the ONE staff warning. Lists the breached lines (name, outcome, rules), asks for ONE reason (3-200 characters,
+ * sent for every listed line) and resolves the ack. A DRIVER, who may not override, gets the same dialog in its
+ * "blocked" form: "Ask the office to approve this sale", no reason field and no override. Opened by an error handler (no
+ * Radix trigger), so it hands focus back to whatever held it, like BlockedLinesDialog.
+ */
+export function RestrictionWarningDialog({ view, initialReason = "", onConfirm, onCancel }: Props) {
+  const [reason, setReason] = React.useState(initialReason);
+  const returnFocusTo = React.useRef<HTMLElement | null>(null);
+  const lastFocused = React.useRef<HTMLElement | null>(null);
+  React.useEffect(() => {
+    const onFocusIn = (e: FocusEvent) => {
+      const t = e.target as HTMLElement | null;
+      if (t && t !== document.body && !t.closest('[role="dialog"]')) lastFocused.current = t;
+    };
+    document.addEventListener("focusin", onFocusIn);
+    return () => document.removeEventListener("focusin", onFocusIn);
+  }, []);
+
+  const warning = view?.kind === "warning" ? view.warning : null;
+  const check = checkOverrideReason(reason);
+  const showError = reason.length > 0 && !check.ok;
+  const common = {
+    open: !!view,
+    onClose: onCancel,
+    scroll: true,
+    onOpenAutoFocus: () => {
+      const active = document.activeElement as HTMLElement | null;
+      returnFocusTo.current = active && active !== document.body ? active : lastFocused.current;
+    },
+    onCloseAutoFocus: (e: Event) => {
+      const el = returnFocusTo.current;
+      returnFocusTo.current = null;
+      if (el && el.isConnected && el !== document.body) {
+        e.preventDefault();
+        el.focus();
+      }
+    },
+  };
+
+  if (view?.kind === "blocked") {
+    return (
+      <Modal
+        {...common}
+        title={COPY.blockedTitle}
+        description={COPY.blockedBody}
+        footer={<Button onClick={onCancel}>{COPY.ok}</Button>}
+      >
+        <ul className="space-y-3" aria-label="Blocked items">
+          {view.lines.map((l) => (
+            <li
+              key={`${l.productId}-${l.ruleId ?? l.reason}`}
+              className="rounded-lg border border-surface-border p-3"
+            >
+              <p className="font-medium text-navy">{l.productName}</p>
+              <p className="mt-1 text-sm text-danger">{restrictionReasonText(l)}</p>
+            </li>
+          ))}
+        </ul>
+      </Modal>
+    );
+  }
+
+  return (
+    <Modal
+      {...common}
+      title={COPY.title}
+      description={COPY.body}
+      footer={
+        <>
+          <Button variant="secondary" onClick={onCancel}>
+            {COPY.goBack}
+          </Button>
+          <Button
+            disabled={!check.ok}
+            onClick={() => warning && check.ok && onConfirm(buildAck(warning, reason), check.value)}
+          >
+            {COPY.sellAnyway}
+          </Button>
+        </>
+      }
+    >
+      <ul className="space-y-3" aria-label="Restricted items">
+        {(warning?.lines ?? []).map((l) => (
+          <li key={l.lineKey} className="rounded-lg border border-surface-border p-3">
+            <p className="font-medium text-navy">{l.displayName}</p>
+            {l.rules.length === 0 ? (
+              <p className="mt-1 text-sm text-danger">{COPY.unchecked}</p>
+            ) : (
+              l.rules.map((r) => (
+                <p
+                  key={r.id}
+                  className="mt-1 flex flex-wrap items-center gap-2 text-sm text-danger"
+                >
+                  <span>{ruleText(r)}</span>
+                  {r.legal && (
+                    <span className="rounded bg-danger-bg px-1.5 py-0.5 text-xs font-medium">
+                      {COPY.legalBadge}
+                    </span>
+                  )}
+                </p>
+              ))
+            )}
+          </li>
+        ))}
+      </ul>
+      <div className="mt-4">
+        <Textarea
+          label={COPY.reasonLabel}
+          placeholder={COPY.reasonPlaceholder}
+          value={reason}
+          onChange={(e) => setReason(e.target.value)}
+          error={showError ? (check.error ?? undefined) : undefined}
+          maxLength={RESTRICTION_OVERRIDE_REASON_MAX * 2}
+          className="min-h-[72px]"
+        />
+        <p className="mt-1 text-right text-xs text-navy/60" aria-live="polite">
+          {check.length}/{RESTRICTION_OVERRIDE_REASON_MAX}
+        </p>
+      </div>
+    </Modal>
+  );
+}

@@ -3,6 +3,7 @@ import type { PickupCompleteRequest, PickupCompleteResponse } from "@routeflow/t
 import { apiClient } from "../api-client";
 import { getOrderSubmitKey, resetOrderSubmitKey } from "../order-submit-key";
 import { invalidateOrderCaches } from "./orders";
+import { splitIdAck, type IdWithAck } from "../restriction-warning";
 import {
   POS_MODE_PREF_KEY,
   pendingRefusalIsDone,
@@ -125,8 +126,11 @@ export function usePickupComplete(orderId: string) {
 /** "Switch to delivery": `PATCH /orders/:id/fulfill-path` ROUTE (open states only; the server decides). */
 export function useSwitchOrderToDelivery() {
   const qc = useQueryClient();
-  return useMutation<unknown, Error, string>({
-    mutationFn: (id) => apiClient.patch(`/orders/${id}/fulfill-path`, { fulfillPath: "ROUTE" }),
+  return useMutation<unknown, Error, IdWithAck>({
+    mutationFn: (v) => {
+      const { id, ack } = splitIdAck(v); // row 510: the path switch is re-judged, so it can carry an ack
+      return apiClient.patch(`/orders/${id}/fulfill-path`, { fulfillPath: "ROUTE", ...ack });
+    },
     onSuccess: () => invalidateOrderCaches(qc),
   });
 }

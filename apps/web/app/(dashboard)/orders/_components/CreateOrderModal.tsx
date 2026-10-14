@@ -92,6 +92,8 @@ import { API_ERROR_CODES, staffMay } from "@routeflow/types";
 import { parseRegulatedAuthError, type BlockedCategory } from "@/lib/api/authorizations";
 import { parseSellingRestricted } from "@/lib/api/selling-restricted";
 import { BlockedLinesDialog } from "@/components/BlockedLinesDialog";
+import { parseRestrictionWarning } from "@/lib/api/restriction-warning";
+import { useRestrictionWarningRetry } from "@/lib/use-restriction-warning-retry";
 import type { BlockedLine } from "@routeflow/types";
 import { useTrackedCategories } from "@/lib/api/tracked-categories";
 import { CreditNotePicker, type CreditSelection } from "./CreditNotePicker";
@@ -238,7 +240,8 @@ function isSameAttemptRefusal(err: any): boolean {
   ) {
     return true;
   }
-  return (parseRegulatedAuthError(err)?.length ?? 0) > 0;
+  // Row 510: a RESTRICTION_WARNING wrote nothing; the dialog resubmits this SAME attempt (same key) with the ack.
+  return parseRestrictionWarning(err) !== null || (parseRegulatedAuthError(err)?.length ?? 0) > 0;
 }
 
 export function CreateOrderModal({
@@ -251,6 +254,7 @@ export function CreateOrderModal({
 }: CreateOrderModalProps) {
   const { toast } = useToast();
   const createOrder = useCreateOrder({ localErrorToast: true });
+  const rw = useRestrictionWarningRetry(); // row 510: staff warning + override dialog
   const pos = usePosMode(); // SA-763r P-2: server-backed preference, never localStorage
   const { user: posUser } = useAuth();
   // The switch and PICKUP are for roles with USE_POS_MODE only: a stored preference never applies without it.
@@ -1455,7 +1459,7 @@ export function CreateOrderModal({
       : undefined;
     posFinish
       .mutateAsync({
-        orderId: created.id,
+        ...rw.attach({ orderId: created.id }),
         invoice: finish === "invoice",
         fromStatus: created.status ?? merged?.fromStatus,
       })
@@ -1467,6 +1471,7 @@ export function CreateOrderModal({
         });
       })
       .catch((err: unknown) => {
+        if (rw.handle(err, () => finishPosOrder(created, finish, viewOrder, merged))) return; // row 510: promote
         const step = err instanceof PosFinishError ? err.step : "confirm";
         toast({
           title:
@@ -1561,7 +1566,7 @@ export function CreateOrderModal({
     const attemptKey = submitKey.begin(JSON.stringify(cartForKey));
     if (attemptKey === null) return;
     createOrder.mutate(
-      { ...payload, idempotencyKey: attemptKey },
+      { ...rw.attach(payload), idempotencyKey: attemptKey },
       {
         onSuccess: (created: any) => {
           submitKey.settle("success");
@@ -1629,6 +1634,7 @@ export function CreateOrderModal({
             setMergePrompt(body.activeOrder as ActiveOrderSummary);
             return;
           }
+          if (rw.handle(err, () => submitOrder(data, options))) return; // row 510
           const restricted = parseSellingRestricted(err);
           if (restricted) {
             setRestrictedBlock(restricted);
@@ -1711,7 +1717,7 @@ export function CreateOrderModal({
     if (!err) return null;
     // A SELLING_RESTRICTED 409 has its own dialog; the banner would repeat it (with the rule's
     // admin-written reason) and outlive the dialog's OK.
-    if (parseSellingRestricted(err)) return null;
+    if (parseSellingRestricted(err) || parseRestrictionWarning(err)) return null;
     // B986-7 (Opus): a RECOGNISED refusal (a coded one, a stock shortfall, a credit limit...) is fixed copy; an UNCODED one keeps
     // today's server sentence, which says what to fix (B991 / B987-E mint the codes + fields, then this read goes).
     return (
@@ -2742,6 +2748,7 @@ export function CreateOrderModal({
 
       {/* License guard (W6b): the sale hit a 409 REGULATED_AUTH_REQUIRED. */}
       <BlockedLinesDialog lines={restrictedBlock} onClose={() => setRestrictedBlock(null)} />
+      {rw.dialog}
       {licenseBlock && selectedCustomer && (
         <LicenseGuardModal
           open

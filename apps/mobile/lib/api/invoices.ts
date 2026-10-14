@@ -1,7 +1,8 @@
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { apiClient } from "../api-client";
 import type { InvoicePdfVariant } from "../invoice-pdf-variant";
-import type { PaymentMethod } from "@routeflow/types";
+import type { OverrideStampView, PaymentMethod, RestrictionAck } from "@routeflow/types";
+import { splitIdAck, type IdWithAck } from "../restriction-warning";
 import type {
   CreateInvoiceItem,
   CreatePartialInvoiceDto,
@@ -14,7 +15,9 @@ import type {
 export type InvoiceStatus =
   "DRAFT" | "SENT" | "VIEWED" | "PARTIAL" | "PAID" | "OVERDUE" | "VOID" | "WRITTEN_OFF";
 
-export interface InvoiceItem {
+/** Row 510: a STAFF read also carries the override stamp (and may carry the resolved name). */
+export interface InvoiceItem extends Partial<OverrideStampView> {
+  restrictionOverrideByName?: string | null;
   id: string;
   description: string;
   /** #2169: the system line kind ("NSF_FEE" for the bounce-fee line), null for a normal line. */
@@ -147,7 +150,7 @@ export function useRecordInvoicePayment() {
   });
 }
 
-export interface CreateInvoiceDto {
+export interface CreateInvoiceDto extends RestrictionAck {
   customerId: string;
   items: CreateInvoiceItem[];
   /** Business date of the invoice (YYYY-MM-DD); defaults to today server-side. */
@@ -310,8 +313,15 @@ export function useSendInvoiceReminder() {
  */
 export function useDuplicateInvoice() {
   const qc = useQueryClient();
-  return useMutation<Invoice, Error, string>({
-    mutationFn: (id) => apiClient.post(`/invoices/${id}/duplicate`).then((r) => r.data),
+  return useMutation<Invoice, Error, IdWithAck>({
+    mutationFn: (v) => {
+      const { id, ack } = splitIdAck(v); // row 510: the copy is a new sale, re-judged
+      return (
+        ack
+          ? apiClient.post(`/invoices/${id}/duplicate`, ack)
+          : apiClient.post(`/invoices/${id}/duplicate`)
+      ).then((r) => r.data);
+    },
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ["invoices"] });
       qc.invalidateQueries({ queryKey: ["admin", "invoices"] });

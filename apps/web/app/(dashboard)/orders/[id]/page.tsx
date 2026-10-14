@@ -129,6 +129,7 @@ import {
 import { parseRegulatedAuthError, type BlockedCategory } from "@/lib/api/authorizations";
 import { parseSellingRestricted } from "@/lib/api/selling-restricted";
 import { BlockedLinesDialog } from "@/components/BlockedLinesDialog";
+import { useRestrictionWarningRetry } from "@/lib/use-restriction-warning-retry";
 import { postDeliveryInvoicePrompt, type BlockedLine } from "@routeflow/types";
 import { CreditLimitGuardDialog } from "@/components/CreditLimitGuardDialog";
 import { parseCreditLimitError, type CreditLimitInfo } from "@/lib/api/credit-limit";
@@ -1918,23 +1919,22 @@ export default function OrderDetailPage() {
   // The cancel flow renders its own error (every other status change keeps the global toast), so it has its own instance.
   const cancelOrder = useUpdateOrderStatus({ localErrorToast: true });
   const reopenOrder = useReopenOrder();
+  const rw = useRestrictionWarningRetry(); // row 510: staff warning + override dialog
   const deleteOrder = useDeleteOrder({ localErrorToast: true });
   const updateShipment = useUpdateOrderShipment();
   const createInvoiceFromOrder = useCreateInvoiceFromOrder();
   const patchFulfillPath = usePatchOrderFulfillPath({ localErrorToast: true });
   const applyFulfillPath = (fulfillPath: "ROUTE" | "SHIP") =>
-    patchFulfillPath.mutate(
-      { id, fulfillPath },
-      {
-        onSuccess: () => toast({ title: "Fulfillment updated", variant: "success" }),
-        onError: (err: any) =>
-          toast({
-            title: "Could not update fulfillment",
-            description: fulfillPathErrorCopy(err),
-            variant: "error",
-          }),
-      },
-    );
+    patchFulfillPath.mutate(rw.attach({ id, fulfillPath }), {
+      onSuccess: () => toast({ title: "Fulfillment updated", variant: "success" }),
+      onError: (err: any) =>
+        rw.handle(err, () => applyFulfillPath(fulfillPath)) ||
+        toast({
+          title: "Could not update fulfillment",
+          description: fulfillPathErrorCopy(err),
+          variant: "error",
+        }),
+    });
   const [showShipDialog, setShowShipDialog] = React.useState(false);
   const [showUnmarkConfirm, setShowUnmarkConfirm] = React.useState(false);
   // Picked-up dialog + a pending move off pickup: page-level so they outlive the status-gated action rows.
@@ -1964,7 +1964,7 @@ export default function OrderDetailPage() {
   // Opens the guard modal on a REGULATED_AUTH_REQUIRED 409; other errors fall
   // through to the global mutation toast.
   const guardError = (retry: () => void) => (err: unknown) => {
-    if (overpay.capture(err) || stale.capture(err)) return;
+    if (overpay.capture(err) || stale.capture(err) || rw.handle(err, retry)) return;
     const restricted = parseSellingRestricted(err);
     if (restricted) {
       setRestrictedBlock(restricted);
@@ -2272,7 +2272,7 @@ export default function OrderDetailPage() {
     // too; sending false states the intent at the call site rather than relying on
     // the server default.
     updateItems.mutate(
-      {
+      rw.attach({
         id: order!.id,
         items: updates,
         replaceAll: false,
@@ -2283,7 +2283,7 @@ export default function OrderDetailPage() {
         // intents untouched (see CreditNotePicker / syncOrderCreditSelections).
         ...(creditsTouched ? { appliedCreditNotes: editCredits } : {}),
         ...(inlineReturn ? { inlineReturn } : {}),
-      },
+      }),
       {
         onSuccess: () => {
           setIsEditing(false);
@@ -2663,13 +2663,10 @@ export default function OrderDetailPage() {
                   leftIcon={<CheckCircle2 className="h-4 w-4" />}
                   onClick={() => {
                     const publish = () =>
-                      updateStatus.mutate(
-                        { id: order.id, status: "PENDING" as any },
-                        {
-                          onSuccess: () => setLocalStatus("PENDING"),
-                          onError: guardError(() => publish()),
-                        },
-                      );
+                      updateStatus.mutate(rw.attach({ id: order.id, status: "PENDING" as any }), {
+                        onSuccess: () => setLocalStatus("PENDING"),
+                        onError: guardError(() => publish()),
+                      });
                     publish();
                   }}
                   loading={updateStatus.isPending}
@@ -2898,9 +2895,12 @@ export default function OrderDetailPage() {
                   leftIcon={<RotateCcw className="h-4 w-4" />}
                   onClick={() => {
                     if (confirm("Reopen this order? It will return to Pending status.")) {
-                      reopenOrder.mutate(order.id, {
-                        onSuccess: () => setLocalStatus("PENDING"),
-                      });
+                      const reopen = () =>
+                        reopenOrder.mutate(rw.attach(order.id), {
+                          onSuccess: () => setLocalStatus("PENDING"),
+                          onError: guardError(reopen),
+                        });
+                      reopen();
                     }
                   }}
                   loading={reopenOrder.isPending}
@@ -3058,7 +3058,7 @@ export default function OrderDetailPage() {
                             ];
                             const doPublish = () =>
                               updateStatus.mutate(
-                                { id: order!.id, status: "PENDING" as any },
+                                rw.attach({ id: order!.id, status: "PENDING" as any }),
                                 {
                                   onSuccess: () => {
                                     setLocalStatus("PENDING");
@@ -3088,7 +3088,7 @@ export default function OrderDetailPage() {
                                 inlineReturn
                               ) {
                                 updateItems.mutate(
-                                  {
+                                  rw.attach({
                                     id: order!.id,
                                     items: updates,
                                     // replaceAll:false — this is an incremental diff (new
@@ -3106,7 +3106,7 @@ export default function OrderDetailPage() {
                                     // this exact miss last PR — do not repeat it).
                                     ...(creditsTouched ? { appliedCreditNotes: editCredits } : {}),
                                     ...(inlineReturn ? { inlineReturn } : {}),
-                                  },
+                                  }),
                                   {
                                     onSuccess: () => (returnSave.onSuccess(), doPublish()),
                                     onError: returnSave.chainError(
@@ -3681,6 +3681,7 @@ export default function OrderDetailPage() {
       {/* License guard (W6b): an edit/promote hit a 409 REGULATED_AUTH_REQUIRED.
           Lines are removed via the edit UI here, so the remove exit is omitted. */}
       <BlockedLinesDialog lines={restrictedBlock} onClose={() => setRestrictedBlock(null)} />
+      {rw.dialog}
       {licenseBlock && order && (
         <LicenseGuardModal
           open

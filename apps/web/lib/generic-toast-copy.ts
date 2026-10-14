@@ -33,6 +33,12 @@ const CODE_COPY: Record<string, string> = {
   // a buyer write toward a paused seller: the seller-unavailable sentence, never "You don't have permission"
   [API_ERROR_CODES.SELLER_UNAVAILABLE]: sellerUnavailableCopy(null),
   [API_ERROR_CODES.RETURN_REFUND_OVER_LINE_HEADROOM]: RETURN_REFUND_OVER_LINE_HEADROOM_COPY,
+  // Row 510: a staff sale of a restricted product. The warning dialog owns the flow (HANDLED_CODES); these are the
+  // fixed sentences for a surface with no dialog, never the server's text.
+  [API_ERROR_CODES.RESTRICTION_WARNING]:
+    "Some items are restricted. Review them and add a reason to sell them anyway.",
+  [API_ERROR_CODES.RESTRICTION_OVERRIDE_REASON_INVALID]:
+    "Give a reason of 3 to 200 characters to sell a restricted item.",
   INLINE_RETURN_ALREADY_RETURNED_REASON_REQUIRED:
     "This item was already returned. Add a reason to confirm another return.",
   INLINE_RETURN_KEY_CONFLICT: "This return was already submitted. Refresh to see it.",

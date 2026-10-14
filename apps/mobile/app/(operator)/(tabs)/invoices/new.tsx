@@ -33,6 +33,7 @@ import { mergeProductIndex } from "../../../../lib/paged-rows";
 import { useCreateInvoice, type CreateInvoiceItem } from "../../../../lib/api/invoices";
 import { depositErrors, depositPayload } from "../../../../lib/invoice-deposit";
 import { useCreateSale, type CreateSaleItemInput } from "../../../../lib/api/orders";
+import { useRestrictionWarningRetry } from "../../../../lib/use-restriction-warning-retry";
 import { decideTrayPrice, reasonRequiredMessage } from "../../../../lib/staff-price-override";
 import { useTrackedCategories } from "../../../../lib/api/tracked-categories";
 import { saleModeGate } from "../../../../lib/sale-mode";
@@ -1176,6 +1177,7 @@ function InvoiceComposer({
 
   const createMut = useCreateInvoice();
   const createSaleMut = useCreateSale();
+  const rw = useRestrictionWarningRetry(); // row 510: staff warning + override dialog
   // The pending-unit gate in onSave awaits before either request starts; `settling` covers that gap.
   const [settling, setSettling] = useState(false);
   const saving = createMut.isPending || createSaleMut.isPending || settling;
@@ -1354,7 +1356,7 @@ function InvoiceComposer({
         saleItems.push({ name: u.name.trim(), qty: u.qty, unitPrice: u.unitPrice });
       }
       createSaleMut.mutate(
-        {
+        rw.attach({
           customerId,
           items: saleItems,
           deliveredNow,
@@ -1368,7 +1370,7 @@ function InvoiceComposer({
           // default. Sending it would override the tenant's configured
           // `invoice.defaultTerms` with a date nobody chose (and put a free-text
           // field on the wire ahead of this path's ISO_DATE check).
-        },
+        }),
         {
           // POST /orders/sell resolves to the created INVOICE (not the order) —
           // see CreatedSaleInvoice in lib/api/orders.ts.
@@ -1384,6 +1386,7 @@ function InvoiceComposer({
             showToast("Sale recorded — open the invoice from the Invoices tab.");
           },
           onError: (err: any) => {
+            if (rw.handle(err, () => onSave(fromReview))) return; // row 510
             if (unitNotOfferedCode(err)) return void onUnitNotOffered("Couldn't record the sale");
             alertInfo(
               "Couldn't record the sale",
@@ -1435,7 +1438,7 @@ function InvoiceComposer({
       );
     }
     createMut.mutate(
-      {
+      rw.attach({
         customerId,
         items: payload,
         dueDate,
@@ -1447,12 +1450,13 @@ function InvoiceComposer({
         ...(referenceNumber.trim() ? { referenceNumber: referenceNumber.trim() } : {}),
         ...(subject.trim() ? { subject: subject.trim() } : {}),
         ...depositPayload(depositOpen, depositPercent, depositDueDate.trim()),
-      },
+      }),
       {
         onSuccess: (inv) => {
           onSaved(inv.id, inv.invoiceNumber);
         },
         onError: (err: any) => {
+          if (rw.handle(err, () => onSave(fromReview))) return; // row 510
           if (unitNotOfferedCode(err)) return void onUnitNotOffered("Couldn't create invoice");
           alertInfo(
             "Couldn't create invoice",
@@ -1789,6 +1793,7 @@ function InvoiceComposer({
         onClose={() => setCreateCode(null)}
         onCreated={handleInlineCreated}
       />
+      {rw.modal}
     </>
   );
 }
