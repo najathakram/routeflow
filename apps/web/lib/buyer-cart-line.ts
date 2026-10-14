@@ -32,6 +32,11 @@ export interface CartLineShape {
   pieces?: number | null;
   /** The unit the stepper counts in. Absent on a line stored before this field existed. */
   sellBy?: CartUnit;
+  /**
+   * True from the moment a stored line's quantity was REBUILT (its qty and split disagreed, or the catalog's pack
+   * size differs from the one it was stored with) until the buyer acknowledges the cart banner. Never sent.
+   */
+  corrected?: boolean;
 }
 
 /** Whole pack size of a boxed line, else 0. */
@@ -135,31 +140,71 @@ export function setLineUnit<T extends CartLineShape>(l: T, unit: CartUnit): T {
 }
 
 /**
+ * True when a boxed line names BOTH a qty and a split and they disagree: the row-531 shape (qty 2, boxes 1).
+ * A line with no split stored has nothing to contradict, and `pieces >= pack` that still adds up is not one.
+ */
+export function hasContradiction(l: CartLineShape): boolean {
+  const upb = packOf(l);
+  if (upb === 0) return false;
+  if (l.boxes == null && l.pieces == null) return false;
+  return Number(l.boxes ?? 0) * upb + Number(l.pieces ?? 0) !== Number(l.qty);
+}
+
+/**
  * Hydrate a line read back from storage. A mismatched line is rebuilt FROM `qty` (the last edit),
  * read as PIECES: the old rows labelled it "= N each" (cart) and showed the bare qty beside
  * "per each (N/box)" (shop tile), so the number the buyer saw was a piece count. A rebuilt line
  * with whole Cases and no loose pieces reads as CASE (same quantity, same money), else EACH.
+ * A line whose qty and split DISAGREED is flagged `corrected`: its price on screen may have
+ * moved, so the cart says so once (a banner) instead of repricing silently.
  */
 export function hydrateCartLine<T extends CartLineShape>(l: T): T {
   if (!Number.isFinite(Number(l.qty)) || Number(l.qty) <= 0) return l;
-  return normalizeCartLine(l);
+  const fixed = normalizeCartLine(l);
+  return hasContradiction(l) ? { ...fixed, corrected: true } : fixed;
 }
 
 /**
- * Complete a line that was stored without its pack size (an older Add from favorites / dashboard
- * wrote `{ qty: 1 }` with no `unitsPerBox`) once the catalog says the product is boxed. A bare qty
- * on every buyer path counts SELLING UNITS (the server bills `qty x BOX price`), so the old qty is
- * a Case count: `qty` Cases, the amount the order would have billed.
+ * Align a stored line with the CATALOG's pack size (the server enforces and bills the live pack).
+ *
+ *  - no pack stored (an older Add from favorites / dashboard wrote `{ qty: 1 }`): a bare qty on every
+ *    buyer path counts SELLING UNITS (the server bills `qty x BOX price`), so the old qty is a Case
+ *    count: `qty` Cases, the amount the order would have billed. NOT flagged: nothing was corrected.
+ *  - a DIFFERENT pack stored (the product was repacked since): the line is rebuilt in the new pack,
+ *    keeping what the buyer chose to count. A Case line keeps its Case count (2 Cases of 12 become
+ *    2 Cases of 6); an Each line keeps its pieces. Flagged `corrected`: the quantity in pieces moved.
+ *  - the same pack, or a catalog that reports none: returned as-is.
  */
 export function completeLineFromCatalog<T extends CartLineShape>(
   l: T,
   catalogUnitsPerBox: number | null | undefined,
 ): T {
-  if (isBoxedLine(l)) return l;
   const upb = Math.trunc(Number(catalogUnitsPerBox ?? 0));
   if (!(upb > 1)) return l;
-  const cases = Math.max(1, Math.trunc(Number(l.qty) || 0));
-  return normalizeCartLine({ ...l, unitsPerBox: upb, sellBy: "CASE" as const, qty: cases * upb });
+  if (!isBoxedLine(l)) {
+    const cases = Math.max(1, Math.trunc(Number(l.qty) || 0));
+    return normalizeCartLine({ ...l, unitsPerBox: upb, sellBy: "CASE" as const, qty: cases * upb });
+  }
+  if (packOf(l) === upb) return l;
+  const unit = lineUnit(l);
+  const qty = unit === "CASE" ? lineCount(l) * upb : l.qty;
+  return { ...normalizeCartLine({ ...l, unitsPerBox: upb, sellBy: unit, qty }), corrected: true };
+}
+
+/**
+ * Merge a re-added line into the stored one, in PIECES, then re-derive the split. A BARE incoming
+ * qty (no pack: a dashboard Add) on a boxed line is Cases, as everywhere on the buyer paths; a bare
+ * STORED line takes the boxed incoming side's pack; two boxed lines with different packs take the
+ * INCOMING pack (it came from the current catalog) and keep the stored line's Case count.
+ */
+export function mergeCartLines<T extends CartLineShape>(existing: T, incoming: T): T {
+  const ex = packOf(existing);
+  const inc = packOf(incoming);
+  let base = existing;
+  let add = incoming;
+  if (inc > 0 && ex !== inc) base = completeLineFromCatalog(existing, inc);
+  else if (inc === 0 && ex > 0) add = completeLineFromCatalog(incoming, ex);
+  return normalizeCartLine({ ...base, qty: base.qty + add.qty });
 }
 
 /**

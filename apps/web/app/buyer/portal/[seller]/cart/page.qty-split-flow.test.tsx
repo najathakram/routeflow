@@ -41,6 +41,8 @@ const mockProduct = {
 
 const mutateAsync = jest.fn();
 const push = jest.fn();
+/** When true the catalog also offers a second product, so a two-line cart resolves both lines. */
+let mockSecondProduct = false;
 
 jest.mock("next/navigation", () => ({
   useParams: () => ({ seller: "acme" }),
@@ -59,7 +61,9 @@ jest.mock("@/lib/api/buyer-capabilities", () => ({
 }));
 jest.mock("@/lib/api/buyer", () => {
   const page = () => ({
-    data: [mockProduct],
+    data: mockSecondProduct
+      ? [mockProduct, { ...mockProduct, id: "p2", name: "Widget p2" }]
+      : [mockProduct],
     meta: { page: 1, limit: 24, total: 1, totalPages: 1 },
   });
   const none = { data: undefined };
@@ -102,6 +106,8 @@ function typeInto(field: HTMLElement, value: string) {
 }
 
 beforeEach(() => {
+  mockSecondProduct = false;
+  mockProduct.unitsPerBox = 12;
   localStorage.clear();
   mutateAsync.mockReset().mockResolvedValue({ id: "o1", orderNumber: "ORD-1" });
   push.mockReset();
@@ -259,5 +265,135 @@ describe("buyer shop to cart to checkout keeps the quantity honest", () => {
     expect(mutateAsync.mock.calls[0][0].items).toEqual([
       { productId: "p1", qty: 12, boxes: 1, pieces: 0 },
     ]);
+  });
+});
+
+describe("R1: a stored pack that differs from the catalog's (a repack) is rebuilt, never 400'd forever", () => {
+  const line = (over: Record<string, unknown>) => ({
+    productId: "p1",
+    name: "Widget",
+    unit: "each",
+    unitsPerBox: 12,
+    ...over,
+  });
+
+  it("a Case line keeps its CASE COUNT: 2 Cases of 12 meet a 6-pack catalog and read 2 Cases (12 ea) at the Case price", async () => {
+    mockProduct.unitsPerBox = 6;
+    localStorage.setItem(
+      "buyerCart_b1_acme",
+      JSON.stringify({ items: [line({ qty: 24, boxes: 2, pieces: 0, sellBy: "CASE" })] }),
+    );
+    wrap(<BuyerCartPage />);
+    const row = screen.getAllByRole("row")[1];
+    expect(within(row).getByTestId("cart-line-qty-text")).toHaveTextContent("2 Cases (12 ea)");
+    // priced with the CATALOG pack: 2 Cases x $15.60
+    expect(within(row).getByText("$31.20")).toBeInTheDocument();
+    await act(async () => {
+      fireEvent.click(screen.getByRole("button", { name: /place order/i }));
+    });
+    expect(mutateAsync.mock.calls[0][0].items).toEqual([
+      { productId: "p1", qty: 12, boxes: 2, pieces: 0 },
+    ]);
+  });
+
+  it("an Each line keeps its PIECES: 14 each meet a 6-pack catalog and read 2 Cases + 2 ea, payload {14, 2, 2}", async () => {
+    mockProduct.unitsPerBox = 6;
+    localStorage.setItem(
+      "buyerCart_b1_acme",
+      JSON.stringify({ items: [line({ qty: 14, boxes: 1, pieces: 2, sellBy: "EACH" })] }),
+    );
+    wrap(<BuyerCartPage />);
+    const row = screen.getAllByRole("row")[1];
+    expect(within(row).getByTestId("cart-line-qty-text")).toHaveTextContent(
+      "14 Each (2 Cases + 2 ea)",
+    );
+    // 2 boxes + 2 of 6 of a $15.60 box = $36.40
+    expect(within(row).getByText("$36.40")).toBeInTheDocument();
+    await act(async () => {
+      fireEvent.click(screen.getByRole("button", { name: /place order/i }));
+    });
+    expect(mutateAsync.mock.calls[0][0].items).toEqual([
+      { productId: "p1", qty: 14, boxes: 2, pieces: 2 },
+    ]);
+  });
+
+  it("the buyer is told: a repacked line raises the corrected-quantity banner", () => {
+    mockProduct.unitsPerBox = 6;
+    localStorage.setItem(
+      "buyerCart_b1_acme",
+      JSON.stringify({ items: [line({ qty: 24, boxes: 2, pieces: 0, sellBy: "CASE" })] }),
+    );
+    wrap(<BuyerCartPage />);
+    expect(screen.getByTestId("cart-corrected-notice")).toHaveTextContent(
+      "We corrected the quantity on 1 item. Please review.",
+    );
+  });
+});
+
+describe("R2: a silently repriced cart is announced once (qty wins; the buyer reviews)", () => {
+  const stale = (id: string) => ({
+    productId: id,
+    name: `Widget ${id}`,
+    unit: "each",
+    unitsPerBox: 12,
+    qty: 2,
+    boxes: 1,
+    pieces: 0,
+  });
+
+  it("a stored qty 2 / boxes 1 line shows the one-time banner, calm (status, not alert)", () => {
+    localStorage.setItem("buyerCart_b1_acme", JSON.stringify({ items: [stale("p1")] }));
+    wrap(<BuyerCartPage />);
+    const notice = screen.getByTestId("cart-corrected-notice");
+    expect(notice).toHaveTextContent("We corrected the quantity on 1 item. Please review.");
+    expect(notice).toHaveAttribute("role", "status");
+    expect(notice.className).not.toMatch(/danger|red/);
+  });
+
+  it("counts every corrected line, with the plural", () => {
+    mockSecondProduct = true;
+    localStorage.setItem(
+      "buyerCart_b1_acme",
+      JSON.stringify({ items: [stale("p1"), stale("p2")] }),
+    );
+    wrap(<BuyerCartPage />);
+    expect(screen.getByTestId("cart-corrected-notice")).toHaveTextContent(
+      "We corrected the quantity on 2 items. Please review.",
+    );
+  });
+
+  it("OK dismisses it for good: it does not come back when the cart is opened again", () => {
+    localStorage.setItem("buyerCart_b1_acme", JSON.stringify({ items: [stale("p1")] }));
+    const first = wrap(<BuyerCartPage />);
+    fireEvent.click(
+      within(screen.getByTestId("cart-corrected-notice")).getByRole("button", { name: "OK" }),
+    );
+    expect(screen.queryByTestId("cart-corrected-notice")).toBeNull();
+    first.unmount();
+    wrap(<BuyerCartPage />);
+    expect(screen.queryByTestId("cart-corrected-notice")).toBeNull();
+    // the repaired line itself is still there, unchanged
+    expect(screen.getByTestId("cart-line-qty-text")).toHaveTextContent("2 Each");
+  });
+
+  it("a cart that was never contradicted shows no banner", () => {
+    localStorage.setItem(
+      "buyerCart_b1_acme",
+      JSON.stringify({
+        items: [{ ...stale("p1"), qty: 24, boxes: 2, pieces: 0, sellBy: "CASE" }],
+      }),
+    );
+    wrap(<BuyerCartPage />);
+    expect(screen.queryByTestId("cart-corrected-notice")).toBeNull();
+  });
+
+  it("an older dashboard Add completed from the catalog is NOT a correction (no banner)", () => {
+    localStorage.setItem(
+      "buyerCart_b1_acme",
+      JSON.stringify({ items: [{ productId: "p1", name: "Widget", unit: "each", qty: 1 }] }),
+    );
+    wrap(<BuyerCartPage />);
+    expect(screen.queryByTestId("cart-corrected-notice")).toBeNull();
+    expect(screen.getByTestId("cart-line-qty-text")).toHaveTextContent("1 Case (12 ea)");
   });
 });

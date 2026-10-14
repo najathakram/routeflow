@@ -5,6 +5,7 @@ import {
   completeLineFromCatalog,
   hydrateCartLine,
   lineCount,
+  mergeCartLines,
   normalizeCartLine,
   setLineCount,
   setLineUnit,
@@ -26,6 +27,8 @@ export interface CartItem {
   boxes?: number | null;
   pieces?: number | null;
   sellBy?: CartUnit;
+  /** Set when hydration or a repack rebuilt this line; the cart banner counts it. Never sent. */
+  corrected?: boolean;
 }
 
 interface CartState {
@@ -36,15 +39,34 @@ function getCartKey(buyerAccountId: string, sellerSlug: string) {
   return `buyerCart_${buyerAccountId}_${sellerSlug}`;
 }
 
+/** True when two flat stored lines differ in any field (key order never matters). */
+const lineDiffers = (a: CartItem, b: CartItem) =>
+  Object.keys({ ...a, ...b }).some(
+    (k) =>
+      (a as unknown as Record<string, unknown>)[k] !== (b as unknown as Record<string, unknown>)[k],
+  );
+
 function readCart(key: string): CartState {
   if (typeof window === "undefined") return { items: [] };
   try {
     const raw = localStorage.getItem(key);
     if (!raw) return { items: [] };
     const parsed = JSON.parse(raw) as CartState;
+    const stored = Array.isArray(parsed.items) ? parsed.items : [];
     // Hydration: a stored line whose qty and box split disagree (the row-531 shape) is rebuilt
-    // from `qty`, so the row, the subtotal and the checkout payload can never disagree.
-    return { items: (parsed.items ?? []).map((i) => hydrateCartLine(i)) };
+    // from `qty`, so the row, the subtotal and the checkout payload can never disagree, and it is
+    // flagged `corrected` so the cart can say so once.
+    const items = stored.map((i) => hydrateCartLine(i));
+    // Write the repair back, flag included: otherwise the stale split sits in storage until the
+    // next write, and a second read would no longer know the line was ever corrected.
+    if (items.some((it, n) => lineDiffers(it, stored[n]))) {
+      try {
+        localStorage.setItem(key, JSON.stringify({ items }));
+      } catch {
+        // storage full or blocked: the in-memory repair still holds
+      }
+    }
+    return { items };
   } catch {
     return { items: [] };
   }
@@ -100,9 +122,7 @@ export function useBuyerCart(buyerAccountId?: string, sellerSlug?: string) {
           // Merge in PIECES, then re-derive the split: never add a qty onto a stale split.
           next = {
             items: prev.items.map((i) =>
-              i.productId === item.productId
-                ? normalizeCartLine({ ...i, qty: i.qty + incoming.qty })
-                : i,
+              i.productId === item.productId ? mergeCartLines(i, incoming) : i,
             ),
           };
         } else {
@@ -161,9 +181,26 @@ export function useBuyerCart(buyerAccountId?: string, sellerSlug?: string) {
     [key],
   );
 
+  /** The buyer saw the "we corrected N items" banner: drop every `corrected` flag, in state and storage. */
+  const acknowledgeCorrections = React.useCallback(() => {
+    setCart((prev) => {
+      if (!prev.items.some((i) => i.corrected)) return prev;
+      const next = {
+        items: prev.items.map(({ corrected: _c, ...rest }) => {
+          void _c;
+          return rest;
+        }),
+      };
+      if (key) writeCart(key, next);
+      return next;
+    });
+  }, [key]);
+
   /**
-   * Once the catalog is loaded, give a line stored WITHOUT its pack size (an older Add from
-   * favorites / the dashboard) the pack size the catalog reports, as whole Cases.
+   * Once the catalog is loaded, align each line with its pack size (`completeLineFromCatalog`): a line
+   * stored WITHOUT one (an older Add from favorites / the dashboard) gets it as whole Cases; a line
+   * stored with a DIFFERENT one (the product was repacked) is rebuilt, keeping its Case count or its
+   * pieces, and flagged `corrected`.
    */
   const adoptCatalogPacks = React.useCallback(
     (packs: ReadonlyMap<string, number | null | undefined>) => {
@@ -211,6 +248,7 @@ export function useBuyerCart(buyerAccountId?: string, sellerSlug?: string) {
     removeItem,
     updateQty,
     setUnit,
+    acknowledgeCorrections,
     adoptCatalogPacks,
     clearCart,
     getItemQty,

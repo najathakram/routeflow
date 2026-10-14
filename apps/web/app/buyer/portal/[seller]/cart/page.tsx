@@ -15,7 +15,11 @@ import {
 import { Button } from "@routeflow/ui/web";
 import { useBuyerAuth } from "@/lib/buyer-auth-context";
 import { useBuyerCart } from "@/lib/buyer-cart";
-import { BUYER_QTY_SPLIT_MISMATCH_COPY, cartOrderItems } from "@/lib/buyer-cart-line";
+import {
+  BUYER_QTY_SPLIT_MISMATCH_COPY,
+  cartOrderItems,
+  completeLineFromCatalog,
+} from "@/lib/buyer-cart-line";
 import { CartRowQty } from "../_components/CartRowQty";
 import {
   BUYER_ORDER_CONFLICT_COPY,
@@ -146,14 +150,23 @@ export default function BuyerCartPage() {
   // `original` is the pre-promo price for the strikethrough (null = no promo).
   const promoRules = React.useMemo(() => toPromotionRules(promotions), [promotions]);
 
+  // R1: the server enforces and bills the CATALOG's pack, so every line is read in it. A line stored
+  // with a different pack (a repack) or none is rebuilt here before it is priced, shown or sent;
+  // `adoptCatalogPacks` (above) writes the same rebuild back to storage.
+  const lines = React.useMemo(
+    () =>
+      cart.items.map((i) => completeLineFromCatalog(i, productMeta.get(i.productId)?.unitsPerBox)),
+    [cart.items, productMeta],
+  );
+
   const pricedLines = React.useMemo(() => {
-    return cart.items.map((item) => {
+    return lines.map((item) => {
       const meta = productMeta.get(item.productId);
       // No catalog row = the product was removed, deactivated, or is gated by
       // the regulated-category rules. Never quietly price it at 0 — say so.
       const unresolved = meta == null;
       const base = meta?.buyerPrice ?? 0;
-      const unitsPerBox = item.unitsPerBox ?? meta?.unitsPerBox ?? null;
+      const unitsPerBox = meta?.unitsPerBox ?? item.unitsPerBox ?? null;
       const norm = normalizeBoxesPieces({
         boxes: item.boxes ?? null,
         pieces: item.pieces ?? null,
@@ -200,7 +213,7 @@ export default function BuyerCartPage() {
         lineOriginalSubtotal: computeLineSubtotal({ unitPrice: original ?? net, ...lineArgs }),
       };
     });
-  }, [cart.items, productMeta, promoRules]);
+  }, [lines, productMeta, promoRules]);
 
   const lineByProduct = React.useMemo(
     () => new Map(pricedLines.map((l) => [l.item.productId, l])),
@@ -226,7 +239,7 @@ export default function BuyerCartPage() {
     setConflict(null);
     try {
       const result = await createOrder.mutateAsync({
-        items: cartOrderItems(cart.items),
+        items: cartOrderItems(lines),
         notes: notes || undefined,
         urgent,
         requestedDeliveryDate: deliveryDate || undefined,
@@ -354,6 +367,30 @@ export default function BuyerCartPage() {
       </div>
     ) : null;
 
+  // Row 531 R2: a stored line whose quantity was rebuilt (its qty and split disagreed, or its product was
+  // repacked) is announced ONCE, calmly (status, not alert). OK clears the flags in state and storage.
+  const correctedCount = cart.items.filter((i) => i.corrected).length;
+  const correctedNotice =
+    correctedCount > 0 ? (
+      <div
+        role="status"
+        data-testid="cart-corrected-notice"
+        className="mb-4 flex flex-wrap items-center justify-between gap-3 rounded-lg bg-surface-raised px-4 py-3 text-sm text-navy"
+      >
+        <span>
+          We corrected the quantity on {correctedCount} {correctedCount === 1 ? "item" : "items"}.
+          Please review.
+        </span>
+        <button
+          type="button"
+          className="min-h-11 min-w-11 font-medium text-brand-600 hover:underline"
+          onClick={() => cart.acknowledgeCorrections()}
+        >
+          OK
+        </button>
+      </div>
+    ) : null;
+
   if (cart.items.length === 0) {
     return (
       <div className="p-6">
@@ -390,6 +427,7 @@ export default function BuyerCartPage() {
 
       <h1 className="text-2xl font-bold text-navy mb-4">Cart</h1>
       {removedNotice}
+      {correctedNotice}
 
       {/* Active order merge banner */}
       {willMerge && activeOrder && (
@@ -450,7 +488,7 @@ export default function BuyerCartPage() {
                   </tr>
                 </thead>
                 <tbody role="rowgroup" className="divide-y divide-surface-border max-md:block">
-                  {cart.items.map((item) => {
+                  {lines.map((item) => {
                     const priced = lineByProduct.get(item.productId);
                     const price = priced?.net ?? 0;
                     const original = priced?.original ?? null;

@@ -192,3 +192,137 @@ describe("buyer cart: hydration re-derives a stored mismatched line from qty", (
     expect(result.current.items[0]).toMatchObject({ qty: 36, boxes: 3, pieces: 0 });
   });
 });
+
+describe("R1: a stored pack size that differs from the catalog's is rebuilt (a repack)", () => {
+  const packs = (n: number | null) => new Map([["p1", n]]);
+
+  it("a Case line keeps its CASE COUNT: 2 Cases of 12 become 2 Cases of 6 (qty 12)", () => {
+    localStorage.setItem(
+      KEY,
+      JSON.stringify({ items: [caseLine({ qty: 24, boxes: 2, pieces: 0, sellBy: "CASE" })] }),
+    );
+    const { result } = setup();
+    act(() => result.current.adoptCatalogPacks(packs(6)));
+    expect(result.current.items[0]).toMatchObject({
+      unitsPerBox: 6,
+      qty: 12,
+      boxes: 2,
+      pieces: 0,
+      sellBy: "CASE",
+    });
+    expect(stored().items[0]).toMatchObject({ unitsPerBox: 6, qty: 12, boxes: 2, pieces: 0 });
+  });
+
+  it("an Each line keeps its PIECES: 14 each of a 12-pack are 14 each of a 6-pack (2 boxes + 2)", () => {
+    localStorage.setItem(
+      KEY,
+      JSON.stringify({ items: [caseLine({ qty: 14, boxes: 1, pieces: 2, sellBy: "EACH" })] }),
+    );
+    const { result } = setup();
+    act(() => result.current.adoptCatalogPacks(packs(6)));
+    expect(result.current.items[0]).toMatchObject({
+      unitsPerBox: 6,
+      qty: 14,
+      boxes: 2,
+      pieces: 2,
+      sellBy: "EACH",
+    });
+  });
+
+  it("a repack is a correction the buyer is told about; an unchanged pack is not", () => {
+    localStorage.setItem(KEY, JSON.stringify({ items: [caseLine()] }));
+    const { result } = setup();
+    act(() => result.current.adoptCatalogPacks(packs(12)));
+    expect(result.current.items[0].corrected).toBeFalsy();
+    act(() => result.current.adoptCatalogPacks(packs(6)));
+    expect(result.current.items[0].corrected).toBe(true);
+  });
+
+  it("leaves a line alone when the catalog reports no pack at all", () => {
+    localStorage.setItem(KEY, JSON.stringify({ items: [caseLine()] }));
+    const { result } = setup();
+    act(() => result.current.adoptCatalogPacks(packs(null)));
+    expect(result.current.items[0]).toMatchObject({ unitsPerBox: 12, qty: 12, boxes: 1 });
+  });
+});
+
+describe("R2 + S8: hydration flags a contradicted line and writes the normalized line back", () => {
+  it("flags ONLY the lines whose qty and split disagreed, and persists the repair", () => {
+    localStorage.setItem(
+      KEY,
+      JSON.stringify({
+        items: [
+          caseLine({ productId: "a", qty: 2, boxes: 1, pieces: 0 }), // the P0 shape
+          caseLine({ productId: "b", qty: 24, boxes: 2, pieces: 0 }), // consistent
+          { productId: "c", name: "Loose", unit: "kg", qty: 3 }, // plain
+        ],
+      }),
+    );
+    const { result } = setup();
+    const by = (id: string) => result.current.items.find((i) => i.productId === id)!;
+    expect(by("a")).toMatchObject({ qty: 2, boxes: 0, pieces: 2, corrected: true });
+    expect(by("b").corrected).toBeFalsy();
+    expect(by("c").corrected).toBeFalsy();
+    // written back: the stale boxes: 1 no longer sits in storage waiting for the next write
+    const saved = stored().items.find((i) => i.productId === "a")!;
+    expect(saved).toMatchObject({ qty: 2, boxes: 0, pieces: 2, corrected: true });
+  });
+
+  it("a SECOND mount still knows the line was corrected (the flag survives the write-back)", () => {
+    localStorage.setItem(
+      KEY,
+      JSON.stringify({ items: [caseLine({ qty: 2, boxes: 1, pieces: 0 })] }),
+    );
+    setup().unmount();
+    const { result } = setup();
+    expect(result.current.items[0]).toMatchObject({ qty: 2, boxes: 0, pieces: 2, corrected: true });
+  });
+
+  it("a consistent cart is not rewritten and nothing is flagged", () => {
+    const raw = JSON.stringify({ items: [caseLine({ qty: 24, boxes: 2, sellBy: "CASE" })] });
+    localStorage.setItem(KEY, raw);
+    const { result } = setup();
+    expect(result.current.items.some((i) => i.corrected)).toBe(false);
+    expect(localStorage.getItem(KEY)).toBe(raw);
+  });
+
+  it("acknowledgeCorrections() clears every flag in state and in storage", () => {
+    localStorage.setItem(
+      KEY,
+      JSON.stringify({ items: [caseLine({ qty: 2, boxes: 1, pieces: 0 })] }),
+    );
+    const { result } = setup();
+    act(() => result.current.acknowledgeCorrections());
+    expect(result.current.items[0].corrected).toBeFalsy();
+    expect(stored().items[0].corrected).toBeFalsy();
+    expect(stored().items[0]).toMatchObject({ qty: 2, boxes: 0, pieces: 2 });
+  });
+});
+
+describe("S2: re-adding merges by Cases, taking the boxed side's pack", () => {
+  const bare = { productId: "p1", qty: 1, name: "Widget", unit: "each" } as CartItem;
+
+  it("a bare incoming qty (a dashboard Add) on a boxed Case line adds ONE CASE, not one piece", () => {
+    const { result } = setup();
+    act(() => result.current.addItem(caseLine()));
+    act(() => result.current.addItem(bare));
+    expect(result.current.items[0]).toMatchObject({ qty: 24, boxes: 2, pieces: 0 });
+  });
+
+  it("a bare stored line merged with a boxed incoming one takes the incoming pack, in Cases", () => {
+    localStorage.setItem(
+      KEY,
+      JSON.stringify({ items: [{ productId: "p1", name: "Widget", unit: "each", qty: 2 }] }),
+    );
+    const { result } = setup();
+    act(() => result.current.addItem(caseLine({ unitsPerBox: 6, qty: 6, boxes: 1 })));
+    expect(result.current.items[0]).toMatchObject({ unitsPerBox: 6, qty: 18, boxes: 3, pieces: 0 });
+  });
+
+  it("two boxed sides with different packs: the incoming (current catalog) pack wins, Case count kept", () => {
+    const { result } = setup();
+    act(() => result.current.addItem(caseLine({ qty: 24, boxes: 2 })));
+    act(() => result.current.addItem(caseLine({ unitsPerBox: 6, qty: 6, boxes: 1 })));
+    expect(result.current.items[0]).toMatchObject({ unitsPerBox: 6, qty: 18, boxes: 3, pieces: 0 });
+  });
+});

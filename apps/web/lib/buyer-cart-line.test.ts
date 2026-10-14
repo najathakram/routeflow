@@ -8,6 +8,8 @@ import {
   lineCount,
   lineQtyText,
   lineUnit,
+  mergeCartLines,
+  hasContradiction,
   newCartLine,
   normalizeCartLine,
   setLineCount,
@@ -151,9 +153,9 @@ describe("completeLineFromCatalog: a bare older Add is whole Cases", () => {
     });
   });
 
-  it("does nothing for a line that already knows its pack, or a plain product", () => {
+  it("does nothing for a line already in the catalog's pack, or a plain product", () => {
     const l = line();
-    expect(completeLineFromCatalog(l, 6)).toBe(l);
+    expect(completeLineFromCatalog(l, 12)).toBe(l);
     const plain = { qty: 2 } as CartLineShape;
     expect(completeLineFromCatalog(plain, null)).toBe(plain);
     expect(completeLineFromCatalog(plain, 1)).toBe(plain);
@@ -207,5 +209,107 @@ describe("cartOrderItems: the checkout payload always agrees with itself", () =>
       { productId: "b", qty: 4 },
       { productId: "c", qty: 24, boxes: 2, pieces: 0 },
     ]);
+  });
+});
+
+describe("completeLineFromCatalog: a repack (R1)", () => {
+  it("a Case line keeps its Case count under the catalog's new pack", () => {
+    expect(completeLineFromCatalog(line({ qty: 36, boxes: 3, sellBy: "CASE" }), 6)).toMatchObject({
+      unitsPerBox: 6,
+      qty: 18,
+      boxes: 3,
+      pieces: 0,
+      sellBy: "CASE",
+    });
+  });
+
+  it("an Each line keeps its pieces under the catalog's new pack", () => {
+    expect(
+      completeLineFromCatalog(line({ qty: 14, boxes: 1, pieces: 2, sellBy: "EACH" }), 6),
+    ).toMatchObject({ unitsPerBox: 6, qty: 14, boxes: 2, pieces: 2, sellBy: "EACH" });
+  });
+
+  it("an Each line holding whole Cases stays an Each line (the buyer chose pieces)", () => {
+    const r = completeLineFromCatalog(line({ qty: 24, boxes: 2, sellBy: "EACH" }), 8);
+    expect(r).toMatchObject({ unitsPerBox: 8, qty: 24, boxes: 3, pieces: 0, sellBy: "EACH" });
+  });
+
+  it("a repacked line is flagged as corrected; an unchanged pack is returned as-is", () => {
+    expect(completeLineFromCatalog(line(), 6).corrected).toBe(true);
+    const same = line();
+    expect(completeLineFromCatalog(same, 12)).toBe(same);
+  });
+
+  it("every repack leaves qty === boxes*pack + pieces", () => {
+    for (const unit of ["CASE", "EACH"] as const)
+      for (const pack of [2, 5, 6, 8, 10, 24]) {
+        const r = completeLineFromCatalog(
+          line({ qty: 25, boxes: 2, pieces: 1, sellBy: unit }),
+          pack,
+        );
+        expect(r.boxes! * pack + r.pieces!).toBe(r.qty);
+        expect(isLineConsistent(r)).toBe(true);
+      }
+  });
+});
+
+describe("hasContradiction: only a split that disagrees with its own qty counts", () => {
+  it.each([
+    [line({ qty: 2, boxes: 1, pieces: 0 }), true],
+    [line({ qty: 30, boxes: 1, pieces: 0 }), true],
+    [line({ qty: 24, boxes: 2, pieces: 0 }), false],
+    [line({ qty: 12, boxes: undefined, pieces: undefined }), false], // no split stored: nothing to contradict
+    [{ qty: 3, unitsPerBox: null, boxes: 1 } as CartLineShape, false], // not boxed
+  ])("%j -> %s", (l, expected) => {
+    expect(hasContradiction(l)).toBe(expected);
+  });
+});
+
+describe("mergeCartLines (S2)", () => {
+  it("both boxed, same pack: adds in pieces and re-derives the split", () => {
+    expect(mergeCartLines(line({ qty: 12 }), line({ qty: 24, boxes: 2 }))).toMatchObject({
+      qty: 36,
+      boxes: 3,
+      pieces: 0,
+    });
+  });
+
+  it("a bare incoming qty on a boxed line is CASES (the server bills a bare buyer qty in selling units)", () => {
+    const bare = { qty: 2 } as CartLineShape;
+    expect(mergeCartLines(line(), bare)).toMatchObject({ qty: 36, boxes: 3, pieces: 0 });
+  });
+
+  it("a bare stored line takes the boxed incoming side's pack, in Cases", () => {
+    const bare = { qty: 2 } as CartLineShape;
+    expect(mergeCartLines(bare, line({ unitsPerBox: 6, qty: 6, boxes: 1 }))).toMatchObject({
+      unitsPerBox: 6,
+      qty: 18,
+      boxes: 3,
+    });
+  });
+
+  it("two boxed sides with different packs: the incoming pack wins and the stored Case count is kept", () => {
+    expect(
+      mergeCartLines(
+        line({ qty: 24, boxes: 2, sellBy: "CASE" }),
+        line({ unitsPerBox: 6, qty: 6, boxes: 1 }),
+      ),
+    ).toMatchObject({ unitsPerBox: 6, qty: 18, boxes: 3, pieces: 0 });
+  });
+
+  it("an Each stored line stays Each after a merge", () => {
+    const each = line({ qty: 5, boxes: 0, pieces: 5, sellBy: "EACH" });
+    expect(mergeCartLines(each, line())).toMatchObject({
+      qty: 17,
+      boxes: 1,
+      pieces: 5,
+      sellBy: "EACH",
+    });
+  });
+
+  it("two plain lines just add", () => {
+    expect(mergeCartLines({ qty: 2 } as CartLineShape, { qty: 3 } as CartLineShape)).toMatchObject({
+      qty: 5,
+    });
   });
 });
