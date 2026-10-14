@@ -1,5 +1,6 @@
 import { BadRequestException, Injectable, NotFoundException } from "@nestjs/common";
 import type {
+  IMPACT_SCAN_MAX_DOCUMENTS as SHARED_IMPACT_SCAN_MAX_DOCUMENTS,
   RuleEditPreviewResponse,
   RuleRevisionDto,
   SellingRestrictionListItemDto,
@@ -25,7 +26,7 @@ import { tenantBusinessState } from "../selling-restrictions/tenant-business-sta
 import { CommitEditRuleDto, EditRuleDto } from "./dto/edit-rule.dto";
 import { assertMayManageRule, lockEditableRule, readEditableRule } from "./rule-lock";
 import { staffChannelJudged } from "./staff-channel";
-import { ruleEndUseLift, ruleImpactChanged, ruleImpactTooLarge, ruleStale } from "./rule-errors";
+import { ruleEndUseLift, ruleImpactChanged, ruleStale } from "./rule-errors";
 import { ruleEditChanges, type RuleEditChange, type RuleEditSettings } from "./rule-edit-direction";
 import { impactHash, newlyRestricted } from "./rule-edit-impact";
 import { prepareRuleSettings, type PreparedRuleSettings } from "./rule-settings";
@@ -41,11 +42,13 @@ const TX_OPTIONS = { timeout: 30_000, maxWait: 10_000 };
 /** Product / customer ids per `in (...)` read and per label lookup. */
 const CHUNK = 500;
 /**
- * The most open orders + drafts (together) a tightening edit's impact scan will count; past it the edit is a coded
- * 409 RULE_IMPACT_TOO_LARGE, never a slow scan that dies on a transaction timeout.
+ * The API-side copy of the shared `IMPACT_SCAN_MAX_DOCUMENTS` (the API never imports `@routeflow/types` at runtime;
+ * typed as the shared literal so a change to it fails to compile here). The most open orders + drafts (together) a
+ * tightening edit's impact scan considers: past it the preview is `capped` (the counts are lower bounds) and the
+ * SCAN stops. The edit itself is never refused for it.
  */
-export const IMPACT_SCAN_MAX_DOCUMENTS = 2000;
-/** The most distinct products on open lines the scan will label-check before giving up the same way. */
+export const IMPACT_SCAN_MAX_DOCUMENTS: typeof SHARED_IMPACT_SCAN_MAX_DOCUMENTS = 2000;
+/** The most distinct products on open lines the scan will label-check before it stops the same way. */
 const IMPACT_SCAN_MAX_PRODUCTS = 20_000;
 
 const chunks = <T>(xs: readonly T[], n: number): T[][] => {
@@ -93,7 +96,7 @@ export async function ruleRevisions(
 
 interface EditEvaluation {
   changes: RuleEditChange[];
-  impact: { openOrders: number; drafts: number };
+  impact: { openOrders: number; drafts: number; capped?: boolean };
   hash: string;
 }
 
@@ -261,8 +264,10 @@ export class RuleEditService {
     const ids: string[] = [];
     let openOrders = 0;
     let drafts = 0;
+    let capped = false;
     if (changes.some((c) => c.direction === "TIGHTENS")) {
       const reached = await this.reachedDocuments(tx, tenantId, rule, now);
+      capped = reached.capped;
       const governing = await this.governingStates(tx, tenantId, policy.addressPrecedence, [
         ...new Set([...reached.orders, ...reached.invoices].map((d) => d.customerId)),
       ]);
@@ -289,8 +294,14 @@ export class RuleEditService {
     }
     return {
       changes,
-      impact: { openOrders, drafts },
-      hash: impactHash(rule.id, rule.revision, ids, next),
+      impact: { openOrders, drafts, ...(capped ? { capped: true } : {}) },
+      hash: impactHash(
+        rule.id,
+        rule.revision,
+        ids,
+        next,
+        capped ? { capped: true, cap: this.scanCap } : undefined,
+      ),
     };
   }
 
@@ -308,6 +319,8 @@ export class RuleEditService {
   ): Promise<{
     orders: Array<{ id: string; status: string; customerId: string }>;
     invoices: Array<{ id: string; customerId: string }>;
+    /** The scan stopped at its bound: what is returned is a sample and the counts are lower bounds. */
+    capped: boolean;
   }> {
     const targetRows = await tx.sellingRestrictionTarget.findMany({
       where: { tenantId, ruleId: rule.id },
@@ -347,15 +360,14 @@ export class RuleEditService {
       orderBy: { productId: "asc" },
       take: IMPACT_SCAN_MAX_PRODUCTS + 1,
     } as never);
-    const candidates = [
-      ...new Set([...orderProducts, ...invoiceProducts].map((r) => r.productId)),
-    ].filter((id): id is string => typeof id === "string");
-    if (
+    let capped =
       orderProducts.length > IMPACT_SCAN_MAX_PRODUCTS ||
-      invoiceProducts.length > IMPACT_SCAN_MAX_PRODUCTS
-    ) {
-      throw ruleImpactTooLarge(this.scanCap);
-    }
+      invoiceProducts.length > IMPACT_SCAN_MAX_PRODUCTS;
+    // The first IMPACT_SCAN_MAX_PRODUCTS by id: both reads are ordered, so the sample is stable.
+    const candidates = [...new Set([...orderProducts, ...invoiceProducts].map((r) => r.productId))]
+      .filter((id): id is string => typeof id === "string")
+      .sort()
+      .slice(0, IMPACT_SCAN_MAX_PRODUCTS);
 
     const matched = new Set<string>();
     for (const part of chunks(candidates, CHUNK)) {
@@ -371,15 +383,13 @@ export class RuleEditService {
         if (ruleMatchesProduct(facts, product)) matched.add(id);
       }
     }
-    if (matched.size === 0) return { orders: [], invoices: [] };
+    if (matched.size === 0) return { orders: [], invoices: [], capped };
 
-    // Documents are collected by id (one holding lines in two chunks counts once) and the read stops the moment
-    // the cap is passed, so the scan is bounded in rows read as well as in time.
+    // Documents are collected by id (one holding lines in two chunks counts once). The read stops the moment the cap
+    // is passed: what was gathered is a sample (`capped`), the SCAN is bounded and the edit is not refused for it.
     const orders = new Map<string, { id: string; status: string; customerId: string }>();
     const invoices = new Map<string, { id: string; customerId: string }>();
-    const guard = () => {
-      if (orders.size + invoices.size > this.scanCap) throw ruleImpactTooLarge(this.scanCap);
-    };
+    const over = () => orders.size + invoices.size > this.scanCap;
     for (const part of chunks([...matched], CHUNK)) {
       const o: Array<{ id: string; status: string; customerId: string }> = await tx.order.findMany({
         where: {
@@ -391,7 +401,7 @@ export class RuleEditService {
         take: this.scanCap + 1,
       });
       for (const row of o) orders.set(row.id, row);
-      guard();
+      if (over()) break;
       const i: Array<{ id: string; customerId: string }> = await tx.invoice.findMany({
         where: { tenantId, status: "DRAFT", items: { some: { productId: { in: part } } } },
         select: { id: true, customerId: true },
@@ -399,9 +409,18 @@ export class RuleEditService {
         take: this.scanCap + 1,
       });
       for (const row of i) invoices.set(row.id, row);
-      guard();
+      if (over()) break;
     }
-    return { orders: [...orders.values()], invoices: [...invoices.values()] };
+    if (over()) {
+      capped = true;
+      // keep exactly `scanCap` documents: orders first, then draft invoices (each by id)
+      const keptOrders = [...orders.values()].sort((a, b) => (a.id < b.id ? -1 : 1));
+      const keptInvoices = [...invoices.values()].sort((a, b) => (a.id < b.id ? -1 : 1));
+      const o = keptOrders.slice(0, this.scanCap);
+      const i = keptInvoices.slice(0, this.scanCap - o.length);
+      return { orders: o, invoices: i, capped };
+    }
+    return { orders: [...orders.values()], invoices: [...invoices.values()], capped };
   }
 
   /** Each customer's governing state, by the engine's own resolver (walk-in: the tenant's business state). */
