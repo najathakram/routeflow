@@ -69,6 +69,7 @@ import { summarizeOpenInvoices } from "../invoices/invoice-balance-classify";
 import { OPEN_INVOICE_STATUSES } from "../invoices/invoice-status-sets";
 import { CONFIRMED_PAYMENT } from "../invoices/payment-predicates";
 import { resolveOversellAllowed } from "../orders/oversell-policy";
+import { assertBuyerQtySplit } from "./buyer-qty-split";
 import { PolicyOversellReader } from "../orders/policy-oversell-reader";
 import {
   LOCK_UNAVAILABLE,
@@ -584,6 +585,13 @@ export class BuyerController {
     @CurrentBuyerCustomer() ctx: any,
     @Headers("Idempotency-Key") rawIdempotencyKey?: string,
   ) {
+    // Row 531 F2: a contradictory qty / box split is refused before the key, the lock or any write.
+    await assertBuyerQtySplit(
+      this.prisma.forTenant(),
+      dto.items,
+      "buyer.createOrder",
+      ctx.tenantId,
+    );
     // B1094: a client-minted key makes a double submit (two concurrent POSTs of one cart) apply ONCE.
     const idempotencyKey = normalizeBuyerIdempotencyKey(rawIdempotencyKey);
     const requestHash = idempotencyKey ? buyerSubmitHash(ctx.customerId, dto.items) : undefined;
@@ -880,6 +888,12 @@ export class BuyerController {
     @Body() dto: UpdateOrderItemsDto,
     @CurrentBuyerCustomer() ctx: any,
   ) {
+    await assertBuyerQtySplit(
+      this.prisma.forTenant(),
+      dto.items,
+      "buyer.updateOrderItems",
+      ctx.tenantId,
+    ); // row 531 F2
     // B297 row 352: the entries name their lines (`orderItemId`), so a line keeps the rate it was sold at.
     return toCustomerOrder(
       await this.ordersService.updateOrderItems(id, dto, makePseudoUser(ctx), {

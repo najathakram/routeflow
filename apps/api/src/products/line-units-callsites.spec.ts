@@ -141,6 +141,10 @@ const NON_WRITERS = new Set([
   // (incl. unitsPerBox) through to the order builder, which prices every added line through its own add-line
   // path; a past line's own snapshot (unitsPerBox/unitLabel) is returned as ordered. Writes no line.
   "customers/customer-order-suggestions.service.ts",
+  // Row 531: the buyer qty / box-split consistency check reads the live pack of the products the buyer's OWN
+  // payload names, ONLY to compare it with that payload's qty and split (a coded 400 on a disagreement). It
+  // derives no line factor, quantity or price, writes nothing and returns no pack size.
+  "buyer/buyer-qty-split.ts",
 ]);
 
 const strip = (s: string) => s.replace(/\/\*[\s\S]*?\*\//g, "").replace(/(^|[^:])\/\/.*$/gm, "$1");

@@ -66,6 +66,7 @@ import {
 } from "./at-stop-conflicts";
 import { sourceLineFor } from "./source-line";
 import { assertCustomerMayNotDraft, type CreateOrderOptions } from "./order-create-options";
+import { warnQtySplit, type QtySplitLine } from "./qty-split-consistency";
 import {
   oldestFirst,
   resolveSaleDelivery,
@@ -266,6 +267,10 @@ import { sumInlineReturnCredit } from "../returns/inline-return-credit.util";
 @Injectable()
 export class OrdersService implements OnApplicationBootstrap {
   private readonly logger = new Logger(OrdersService.name);
+  /** Row 531 F2 (WARN only, behaviour unchanged): log a line whose qty and box split disagree. */
+  private warnSplit(path: string, l: QtySplitLine, upb?: number | null) {
+    warnQtySplit(this.logger, this.prisma?.getTenantId?.(), path, l, upb);
+  }
 
   constructor(
     // Not `private`: order-lifecycle.ts's verbatim-extracted methods AND unit-line-edit.ts (units_v1
@@ -1752,6 +1757,7 @@ export class OrdersService implements OnApplicationBootstrap {
       // qty instead of falling into normalizeBoxesPieces' non-boxed branch with no
       // qty at all, which derives 0 and trips the invariant below.
       if ((item.boxes ?? 0) > 0 || (item.pieces ?? 0) > 0) {
+        this.warnSplit(options.counterSale ? "counter.sale" : "orders.create", item, upb);
         const split = normalizeBoxesPieces({
           boxes: item.boxes,
           pieces: item.pieces,
@@ -3723,6 +3729,7 @@ export class OrdersService implements OnApplicationBootstrap {
                 // qty there, and normalize otherwise so a split sized to a different
                 // case can't persist with pieces >= the substitute's unitsPerBox.
                 const upb = Number(product.unitsPerBox ?? 0);
+                this.warnSplit("orders.update.substitute", { ...item, productId: product.id }, upb);
                 const split =
                   (item.boxes != null || item.pieces != null) && upb > 1
                     ? normalizeBoxesPieces({
@@ -3903,6 +3910,7 @@ export class OrdersService implements OnApplicationBootstrap {
                 let boxes: number | null;
                 let pieces: number | null;
                 if (editHasSplit) {
+                  this.warnSplit("orders.update", { ...item, productId: li.productId }, upb);
                   const split = normalizeBoxesPieces({
                     boxes: item.boxes,
                     pieces: item.pieces,
@@ -5011,6 +5019,11 @@ export class OrdersService implements OnApplicationBootstrap {
               where: { customerId: order.customerId, productId: product.id },
             });
             const hasSplit = payload.boxes != null || payload.pieces != null;
+            this.warnSplit(
+              "orders.cr.add",
+              { ...payload, productId: product.id, qty: addQty },
+              upb,
+            );
             const split = hasSplit
               ? normalizeBoxesPieces({
                   boxes: payload.boxes,
