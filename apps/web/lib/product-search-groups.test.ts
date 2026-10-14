@@ -1,4 +1,6 @@
 import {
+  groupOffered,
+  groupRowPick,
   groupSearchRows,
   isFamilyProduct,
   isGroupExpanded,
@@ -134,5 +136,39 @@ describe("sellableFlat (typeahead lists, C7)", () => {
   it("de-duplicates a variant that is both nested and its own row", () => {
     const v1 = variant("v1", "f1", "Sample Pod", "Mint");
     expect(sellableFlat([family("f1", "Sample Pod", [v1]), v1]).map((r) => r.id)).toEqual(["v1"]);
+  });
+});
+
+describe("row 503 groupRowPick / groupOffered", () => {
+  const fam = {
+    id: "f",
+    name: "Pod",
+    kind: "FAMILY",
+    parentProductId: null,
+    variants: [
+      { id: "v1", name: "Mint", kind: "VARIANT", parentProductId: "f" },
+      { id: "v2", name: "Lime", kind: "VARIANT", parentProductId: "f" },
+    ],
+  };
+  const parent = { ...fam, id: "p", name: "Bar", kind: "STANDARD" };
+  const plain = { id: "s", name: "Water", parentProductId: null };
+
+  it("a FAMILY row stands for its first variant, named under it; any other row for itself", () => {
+    expect(groupRowPick<any>(fam)).toMatchObject({ id: "v1", parent: { id: "f", name: "Pod" } });
+    expect(groupRowPick<any>(parent)!.id).toBe("p");
+    expect(groupRowPick<any>(plain)!.id).toBe("s");
+    expect(groupRowPick<any>({ ...fam, variants: [] })).toBeUndefined();
+    expect(groupRowPick<any>(undefined)).toBeUndefined();
+  });
+
+  it("offers every sellable row and its variants in display order, never a FAMILY", () => {
+    expect(groupOffered<any>([fam, parent, plain]).map((p) => p.id)).toEqual([
+      "v1",
+      "v2",
+      "p",
+      "v1",
+      "v2",
+      "s",
+    ]);
   });
 });

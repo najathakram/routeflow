@@ -139,3 +139,25 @@ export function sellableFlat<T extends PickerRow>(rows: readonly T[]): T[] {
   }
   return out;
 }
+
+/**
+ * Row 503 (the M3 rule for a GROUPED picker): what a shown row stands for when it is picked with Enter
+ * instead of a click. A FAMILY row stands for its first variant (named under it); any other row, a
+ * non-family parent included, is itself sellable.
+ */
+export function groupRowPick<T extends PickerRow>(row: T | undefined): T | undefined {
+  if (!row) return undefined;
+  if (!isFamilyProduct(row)) return row;
+  const first = row.variants?.[0] as T | undefined;
+  return first ? attachParent(first, row) : undefined;
+}
+
+/** Every product a grouped list offers, in display order (each sellable row, then its variants). */
+export function groupOffered<T extends PickerRow>(rows: readonly T[]): T[] {
+  const out: T[] = [];
+  for (const r of rows) {
+    if (!isFamilyProduct(r)) out.push(r);
+    for (const v of r.variants ?? []) out.push(attachParent(v as T, r));
+  }
+  return out;
+}

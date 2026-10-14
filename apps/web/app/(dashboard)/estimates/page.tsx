@@ -29,11 +29,12 @@ import { useProducts } from "@/lib/api/products";
 import { displayProductName } from "@/lib/product-display";
 import {
   attachParent,
+  groupOffered,
+  groupRowPick,
   groupSearchRows,
   isFamilyProduct,
   isGroupExpanded,
   pickerProductName,
-  sellableOnly,
 } from "@/lib/product-search-groups";
 import {
   isSpecialTier,
@@ -300,7 +301,10 @@ function CreateEstimateModal({
   };
 
   // Barcode / Enter handler
-  const handleProductSearchEnter = async () => {
+  const handleProductSearchEnter = async (
+    /** Row 503: the grouped rows on screen, when they were built from this exact text. */
+    shownRows?: any[],
+  ) => {
     const code = productSearch.trim();
     if (!code) return;
     try {
@@ -313,12 +317,21 @@ function CreateEstimateModal({
       /* not found by barcode */
     }
     try {
-      const res = await apiClient
-        .get("/products", { params: { search: code, limit: 10, isActive: true } })
-        .then((r) => r.data);
-      const matches: any[] = sellableOnly<any>(res?.data ?? []);
-      const skuMatch = matches.find((p: any) => (p.sku ?? "").toLowerCase() === code.toLowerCase());
-      const toAdd = skuMatch ?? matches[0];
+      // Row 503: the rows the dropdown shows (or, before it caught up, the search grouped the same way).
+      const rows: any[] =
+        shownRows ??
+        groupSearchRows<any>(
+          (
+            await apiClient
+              .get("/products", {
+                params: { search: code, limit: 10, isActive: true, includeVariants: true },
+              })
+              .then((r) => r.data)
+          )?.data ?? [],
+        ).rows;
+      const offered = groupOffered<any>(rows);
+      const skuMatch = offered.find((p: any) => (p.sku ?? "").toLowerCase() === code.toLowerCase());
+      const toAdd = skuMatch ?? groupRowPick<any>(rows[0]);
       if (toAdd) {
         addLineItem(toAdd);
         return;
@@ -552,7 +565,10 @@ function CreateEstimateModal({
                 onKeyDown={(e) => {
                   if (e.key === "Enter") {
                     e.preventDefault();
-                    handleProductSearchEnter();
+                    // Trust the shown rows only once they were built from this exact text (row 503).
+                    const settled =
+                      filteredProducts.length > 0 && debouncedProductSearch === productSearch;
+                    void handleProductSearchEnter(settled ? filteredProducts : undefined);
                   }
                 }}
                 className="h-10 w-full rounded-lg border border-surface-border bg-white pl-9 pr-3 text-sm text-navy placeholder:text-navy/30 focus:border-transparent focus:outline-none focus:ring-2 focus:ring-brand-500"
