@@ -3,6 +3,7 @@ import {
   ArrayMinSize,
   IsArray,
   IsInt,
+  IsISO8601,
   IsOptional,
   IsUUID,
   Min,
@@ -45,4 +46,13 @@ export class UpdateInvoiceDto extends PartialType(OmitType(CreateInvoiceDto, ["i
   @ValidateNested({ each: true })
   @Type(() => UpdateInvoiceItemDto)
   items?: UpdateInvoiceItemDto[];
+
+  /**
+   * H4: the invoice's `updatedAt` as the editor loaded it (GET /invoices/:id). When another save landed
+   * since, the PATCH is 409 INVOICE_STALE before any write. Optional for one release: a client that omits
+   * it keeps the old last-writer behaviour and the server logs a warning (then it becomes required).
+   */
+  @IsOptional()
+  @IsISO8601()
+  expectedUpdatedAt?: string;
 }

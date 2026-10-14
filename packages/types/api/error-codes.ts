@@ -18,6 +18,8 @@
 //                    qty/price/tax/pack changed mid-create; nothing billed, retriable).
 //   ORDER_REVISION_STALE — `body.code` of the 409 on PATCH /orders/:id/items when the client's
 //                    `expectedRevisionNumber` is behind the order's latest revision (nothing written; reload).
+//   INVOICE_STALE — `body.code` of the 409 on PATCH /invoices/:id when the client's `expectedUpdatedAt`
+//                    is not the invoice's current updatedAt (another save landed; nothing written; reload).
 //   ORDER_INVOICE_SETTLE_FAILED — `body.code` of the 409 raised AFTER a ship/deliver status committed when its
 //                    invoice could not be created, updated or checked (the status stays; open the order).
 //   ORDER_INVOICES_NEED_REVIEW — `body.code` of the 409 when more would be billed on an order whose
@@ -204,6 +206,7 @@ export const API_ERROR_CODES = {
   CLEANUP_IMPORTED_DISABLED: "CLEANUP_IMPORTED_DISABLED",
   ORDER_LINE_CHANGED: "ORDER_LINE_CHANGED",
   ORDER_REVISION_STALE: "ORDER_REVISION_STALE",
+  INVOICE_STALE: "INVOICE_STALE",
   ORDER_INVOICES_NEED_REVIEW: "ORDER_INVOICES_NEED_REVIEW",
   ORDER_INVOICE_SETTLE_FAILED: "ORDER_INVOICE_SETTLE_FAILED",
   NSF_LINE_UNTAXED: "NSF_LINE_UNTAXED",

@@ -20,6 +20,7 @@ jest.mock("../storage/compress.util", () => ({
   compressDocument: jest.fn(),
 }));
 
+import { Logger } from "@nestjs/common";
 import { Test, TestingModule } from "@nestjs/testing";
 import { randomUUID } from "crypto";
 import { InvoicesService } from "./invoices.service";
@@ -1625,7 +1626,7 @@ describeDb(
 
       it("H4-D a client that sends no token is still accepted for one release, with a warn log", async () => {
         const s = await seed("h4d");
-        const warn = jest.spyOn((invoicesService as any).logger, "warn");
+        const warn = jest.spyOn(Logger.prototype, "warn").mockImplementation(() => undefined);
         await run(s, s.payload());
         expect(warn).toHaveBeenCalledWith(expect.stringContaining("expectedUpdatedAt"));
         warn.mockRestore();
