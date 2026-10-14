@@ -17,6 +17,7 @@ import {
   emptyToNull,
   emptyToUndefined,
   toOptionalDecimalString,
+  nullClearsEmptyAbsent,
 } from "../../common/dto-transforms";
 
 /**
@@ -81,7 +82,8 @@ export class UpdateProductDto {
   @IsOptional() @Transform(toOptionalDecimalString) @IsDecimal() priceTier3?: string;
   @IsOptional() @Transform(toOptionalDecimalString) @IsDecimal() priceTier4?: string;
   @IsOptional() @Transform(toOptionalDecimalString) @IsDecimal() priceTier5?: string;
-  @IsOptional() @Transform(emptyToUndefined) @IsUUID() parentProductId?: string;
+  // null = unlink (becomes standalone); "" = absent (no change). Audit 2026-10-14.
+  @IsOptional() @Transform(nullClearsEmptyAbsent) @IsUUID() parentProductId?: string | null;
   @IsOptional() @IsString() variantName?: string;
   // Phase 4 (subcategories): emptyToNull so clearing the select removes the tag.
   @IsOptional() @Transform(emptyToNull) @IsUUID() trackedCategoryId?: string | null;
