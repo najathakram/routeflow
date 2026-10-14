@@ -1,5 +1,6 @@
 import { API_ERROR_CODES } from "../common/api-error-codes";
 import { productCodeInUse } from "./product-code-in-use";
+import { bareVariantNames } from "./product-variant-name";
 import {
   assertSafeProductCategory,
   assertSafeProductNames,
@@ -1042,6 +1043,13 @@ export class ProductsService {
         "deactivateHolderIds only applies when reactivating an inactive product",
       );
     }
+    // B1: a variant stores its BARE label; a composed "<parent> - <label>" from a client is stripped first (so the
+    // change-only name guard and the uniqueness check below judge the label that will actually be stored).
+    await bareVariantNames(
+      this.prisma.forTenant(),
+      dto,
+      dto.parentProductId !== undefined ? dto.parentProductId : existing.parentProductId,
+    );
     assertSafeProductNames(dto, existing); // B964-2: change-only against the one read already made
     // B990: change-only for the free-text category, BEFORE resolveOrCreateTobaccoCategory below, so a refusal never leaves an orphan Tobacco type
     if (dto.category !== undefined)
