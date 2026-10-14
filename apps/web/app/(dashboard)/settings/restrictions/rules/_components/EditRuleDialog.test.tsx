@@ -262,4 +262,16 @@ describe("EditRuleDialog", () => {
     expect(onClose).toHaveBeenCalled();
     expect(put).not.toHaveBeenCalled();
   });
+
+  it("a capped scan says 2,000+ and still offers Confirm (the scan is bounded, never the edit)", async () => {
+    post.mockResolvedValueOnce({
+      data: preview({ impact: { openOrders: 1500, drafts: 500, capped: true } }),
+    });
+    open();
+    addCA();
+    save();
+    expect(await screen.findByRole("button", { name: "Confirm change" })).toBeEnabled();
+    expect(screen.getByText(ruleEditImpactCopy(2000, true))).toBeInTheDocument();
+    expect(ruleEditImpactCopy(2000, true)).toMatch(/^2,000\+ open orders and drafts/);
+  });
 });

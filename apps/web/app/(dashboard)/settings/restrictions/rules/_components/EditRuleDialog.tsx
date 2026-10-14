@@ -154,6 +154,8 @@ export function EditRuleDialog({
   };
 
   const impactCount = review ? review.preview.impact.openOrders + review.preview.impact.drafts : 0;
+  // SA: the scan is bounded, never the edit. Capped = counting stopped at the cap (a lower bound).
+  const impactCapped = review?.preview.impact.capped === true;
 
   return (
     <Modal
@@ -208,9 +210,13 @@ export function EditRuleDialog({
           {review.preview.changes.length > 0 && (
             <div className="space-y-1">
               <p className="text-sm text-navy/80">
-                {impactCount > 0 ? ruleEditImpactCopy(impactCount) : "No open orders are affected."}
+                {impactCapped
+                  ? ruleEditImpactCopy(impactCount, true)
+                  : impactCount > 0
+                    ? ruleEditImpactCopy(impactCount)
+                    : "No open orders are affected."}
               </p>
-              {impactCount > 0 && (
+              {(impactCount > 0 || impactCapped) && (
                 <NextLink href="/orders" className="text-sm font-medium text-navy underline">
                   View open orders
                 </NextLink>
