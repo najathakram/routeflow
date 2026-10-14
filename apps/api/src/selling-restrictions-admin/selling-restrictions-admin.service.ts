@@ -565,7 +565,7 @@ export class SellingRestrictionsAdminService {
       const written = await this.writeRule(tx, tenantId, p, user, { skipIdentical: false });
       if (!written) throw new NotFoundException("Restriction not found");
       const row: Row | null = await tx.sellingRestriction.findFirst({
-        where: { id: written.ruleId },
+        where: { id: written.ruleId, tenantId },
         include: INCLUDE,
       });
       if (!row) throw new NotFoundException("Restriction not found");
@@ -687,10 +687,13 @@ export class SellingRestrictionsAdminService {
     }
     // Row 509: the SAME row lock target add/remove take (rule-lock.ts), in id order so two batches cannot deadlock:
     // a lift waits for an in-flight target edit, and an edit that starts after it sees the rule lifted.
-    await tx.$queryRaw`
-      SELECT "id" FROM "SellingRestriction"
+    const locked = await tx.$queryRaw<Array<{ id: string; jurisdiction: string }>>`
+      SELECT "id", "jurisdiction"::text AS "jurisdiction" FROM "SellingRestriction"
       WHERE "tenantId" = ${tenantId} AND "id" = ANY(${[...ids]}::text[])
       ORDER BY "id" FOR UPDATE`;
+    // Who may lift: an all-customer rule is TENANT_ADMIN-only, as for every other write to it (rule-lock.ts). One such
+    // rule in a batch refuses the whole call, before anything is written.
+    for (const rule of locked ?? []) assertMayManageRule(user, rule);
     const { count } = await tx.sellingRestriction.updateMany({
       where: { tenantId, id: { in: [...ids] }, liftedAt: null },
       data: {
