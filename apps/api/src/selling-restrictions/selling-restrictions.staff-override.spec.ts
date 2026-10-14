@@ -3,7 +3,10 @@ import { Test } from "@nestjs/testing";
 import { PrismaService } from "../prisma/prisma.service";
 import { ProductLabelsService } from "../product-labels/product-labels.service";
 import { createMockPrisma } from "../testing/prisma-mock";
-import { DRIVER_RESTRICTION_BLOCK_MESSAGE } from "./override-constants";
+import {
+  DRIVER_RESTRICTION_BLOCK_MESSAGE,
+  SUPPORT_SESSION_RESTRICTION_BLOCK_MESSAGE,
+} from "./override-constants";
 import {
   SellingRestrictionsService,
   type SellableLinesParams,
@@ -157,6 +160,24 @@ describe("SellingRestrictionsService: a STAFF write of a restricted product (row
       blockedLines: [expect.objectContaining({ productId: "p1", ruleId: "r-ca" })],
     });
     expect(DRIVER_RESTRICTION_BLOCK_MESSAGE).toBe("Ask the office to approve this sale");
+  });
+
+  it("a support session (a TENANT_ADMIN token carrying impersonatedBy) can't override: the shared 'ask the account admin' block with the per-rule lines", async () => {
+    const principal = { role: "TENANT_ADMIN", sub: "admin-1", impersonatedBy: "support-1" };
+    const hash = ((await reject(args())).getResponse() as any).warningHash;
+    for (const ack of [
+      undefined,
+      { warningHash: hash, restrictionOverrides: [{ lineKey: "n:0", reason: "Licensed buyer" }] },
+    ]) {
+      const e = await reject(args({ principal, ack }));
+      expect(e.getResponse()).toMatchObject({
+        code: "SELLING_RESTRICTED",
+        message: SUPPORT_SESSION_RESTRICTION_BLOCK_MESSAGE,
+        blockedLines: [expect.objectContaining({ productId: "p1", ruleId: "r-ca" })],
+        lines: [expect.objectContaining({ lineKey: "n:0", productId: "p1" })],
+      });
+    }
+    expect(SUPPORT_SESSION_RESTRICTION_BLOCK_MESSAGE).toBe("Ask the account admin");
   });
 
   it("a SUPER_ADMIN and a system caller (no principal) cannot override: the ordinary staff 409", async () => {

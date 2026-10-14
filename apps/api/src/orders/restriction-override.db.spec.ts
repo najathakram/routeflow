@@ -68,7 +68,10 @@ import { CommissionEngineService } from "../sales-agents/commission-engine.servi
 import { EntitlementsService } from "../billing/entitlements.service";
 import { EntitlementAuthority } from "../billing/entitlement-authority.service";
 import { RegulatedLedgerService } from "../regulated/regulated-ledger.service";
-import { DRIVER_RESTRICTION_BLOCK_MESSAGE } from "../selling-restrictions/override-constants";
+import {
+  DRIVER_RESTRICTION_BLOCK_MESSAGE,
+  SUPPORT_SESSION_RESTRICTION_BLOCK_MESSAGE,
+} from "../selling-restrictions/override-constants";
 import {
   purgeOverrideWorld,
   seedOverrideWorld,
@@ -409,6 +412,32 @@ describeDb(
         const e = await errOf(create(dto(), staff("TENANT_ADMIN")));
         const order: any = await create(dto(ackFrom(e)), staff("TENANT_ADMIN"));
         expect((await lineRows(order.id))[0].restrictionOverrideBy).toBe(w.adminId);
+      });
+
+      it("a support session (a TENANT_ADMIN token carrying impersonatedBy) is hard-blocked with 'Ask the account admin': nothing created, nothing stamped, no audit row", async () => {
+        const session = { ...staff("TENANT_ADMIN"), impersonatedBy: randomUUID() };
+        const warned = await errOf(create(dto())); // an ordinary admin's warning, and its hash
+        const before = await orderCount(w.caCustomerId);
+        const auditsBefore = (await audits()).length;
+        for (const body of [dto(), dto(ackFrom(warned))]) {
+          const e = await errOf(create(body, session as never));
+          expect(e.getStatus()).toBe(409);
+          expect(bodyOf(e)).toMatchObject({
+            code: "SELLING_RESTRICTED",
+            message: SUPPORT_SESSION_RESTRICTION_BLOCK_MESSAGE,
+            lines: [
+              {
+                lineKey: "n:0",
+                productId: w.banned,
+                rules: [expect.objectContaining({ id: w.ruleId, legal: true })],
+              },
+            ],
+          });
+          expect(bodyOf(e).warningHash).toBeUndefined();
+        }
+        expect(await orderCount(w.caCustomerId)).toBe(before);
+        expect((await audits()).length).toBe(auditsBefore);
+        expect(SUPPORT_SESSION_RESTRICTION_BLOCK_MESSAGE).toBe("Ask the account admin");
       });
 
       it("a BUYER keeps the hard 409 (never a warning) and nothing is stamped", async () => {

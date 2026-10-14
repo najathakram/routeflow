@@ -79,7 +79,9 @@ export function RestrictionWarningModal({
         <View style={styles.card}>
           <View style={styles.header}>
             <Ionicons name="alert-circle-outline" size={20} color={ios.system.red} />
-            <Text style={styles.title}>{blocked ? COPY.blockedTitle : COPY.title}</Text>
+            <Text style={styles.title}>
+              {blocked ? view.message || COPY.blockedTitle : COPY.title}
+            </Text>
           </View>
           <Text style={styles.message}>{blocked ? COPY.blockedBody : COPY.body}</Text>
           {listChanged && !blocked ? (

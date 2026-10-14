@@ -22,7 +22,10 @@ export async function blockedTemplateLines(
   tenantId: string,
   ri: { customerId: string; items: ReadonlyArray<{ productId?: string | null }> },
   unattended: boolean,
-  run?: { actor?: Pick<JwtPayload, "sub" | "role">; ack?: RestrictionAck | null },
+  run?: {
+    actor?: Pick<JwtPayload, "sub" | "role" | "impersonatedBy">;
+    ack?: RestrictionAck | null;
+  },
 ) {
   if (!unattended) {
     await restrictions.assertLinesSellable({

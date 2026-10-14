@@ -42,7 +42,10 @@ import { describeDb, requireLocalDatabaseUrl } from "../common/testing/db-spec";
 import { ChangeRequestsService } from "./change-requests.service";
 import { PrismaService } from "../prisma/prisma.service";
 import { TenantContextService } from "../tenant/tenant-context.service";
-import { DRIVER_RESTRICTION_BLOCK_MESSAGE } from "../selling-restrictions/override-constants";
+import {
+  DRIVER_RESTRICTION_BLOCK_MESSAGE,
+  SUPPORT_SESSION_RESTRICTION_BLOCK_MESSAGE,
+} from "../selling-restrictions/override-constants";
 import {
   purgeOverrideWorld,
   seedOverrideWorld,
@@ -296,6 +299,29 @@ describeDb(
           basis: "CUSTOMER",
         }),
       });
+    });
+
+    it("a support session can't approve it: the 'Ask the account admin' block, the CR stays PENDING, nothing stamped", async () => {
+      const orderId = await seedDoorOrder();
+      const cr = await fileAddBanned(orderId);
+      const warned = await errOf(resolve(orderId, cr.id, { action: "APPROVE_AT_STOP" }));
+      const session = { ...staff("TENANT_ADMIN"), impersonatedBy: randomUUID() };
+      const e = await errOf(
+        resolve(
+          orderId,
+          cr.id,
+          { action: "APPROVE_AT_STOP", ...ackFrom(warned) },
+          session as never,
+        ),
+      );
+      expect(bodyOf(e)).toMatchObject({
+        code: "SELLING_RESTRICTED",
+        message: SUPPORT_SESSION_RESTRICTION_BLOCK_MESSAGE,
+        lines: [{ lineKey: `cr:${cr.id}`, productId: w.banned }],
+      });
+      expect((await crRow(cr.id)).status).toBe("PENDING");
+      expect(await lineRows(orderId)).toHaveLength(1);
+      expect(await audits(orderId)).toHaveLength(0);
     });
 
     it("a TENANT_ADMIN may approve it the same way", async () => {

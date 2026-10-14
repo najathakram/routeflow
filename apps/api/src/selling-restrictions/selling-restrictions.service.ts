@@ -666,7 +666,12 @@ export class SellingRestrictionsService {
 /** Where `decision.stamp` writes: the document kind, the tenant and the acting user (null for a system caller). */
 function stampTargetOf(params: SellableLinesParams): StampTarget | null {
   return params.document
-    ? { document: params.document, tenantId: params.tenantId, by: params.principal?.sub ?? null }
+    ? {
+        document: params.document,
+        tenantId: params.tenantId,
+        by: params.principal?.sub ?? null,
+        impersonatedBy: params.principal?.impersonatedBy ?? null,
+      }
     : null;
 }
 

@@ -1177,6 +1177,8 @@ export class ImportService {
   async importInvoices(
     buffer: Buffer,
     userId: string,
+    /** Row 510: the support agent's id when the import runs in a support session (the marker's audit rows name it). */
+    impersonatedBy?: string | null,
   ): Promise<{
     imported: number;
     updated: number;
@@ -1782,7 +1784,7 @@ export class ImportService {
         prisma: this.prisma,
         warn: (m) => this.logger.warn(m),
       },
-      { tenantId, userId, candidates: flagCandidates },
+      { tenantId, userId, impersonatedBy, candidates: flagCandidates },
     );
     if (restrictedLines.length > 0) {
       await writeRestrictedLinesAudit(

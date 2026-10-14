@@ -11,6 +11,7 @@ import {
   DRIVER_RESTRICTION_BLOCK_MESSAGE,
   RESTRICTION_OVERRIDE_REASON_MAX,
   RESTRICTION_OVERRIDE_REASON_MIN,
+  SUPPORT_SESSION_RESTRICTION_BLOCK_MESSAGE,
   type BlockedLine,
   type RestrictionAck,
   type RestrictionWarningError,
@@ -48,20 +49,30 @@ export function parseRestrictionWarning(err: unknown): RestrictionWarningError |
   return res.data as unknown as RestrictionWarningError;
 }
 
-/** The hard block a DRIVER gets (409 SELLING_RESTRICTED with the fixed "Ask the office" message): no override exists. */
+/** The two fixed sentences of a hard block that has no override: a DRIVER's, and a support session's. */
+const OVERRIDE_BLOCK_MESSAGES: readonly string[] = [
+  DRIVER_RESTRICTION_BLOCK_MESSAGE,
+  SUPPORT_SESSION_RESTRICTION_BLOCK_MESSAGE,
+];
+
+/**
+ * The hard block a DRIVER gets (409 SELLING_RESTRICTED with the fixed "Ask the office" message) or a support session gets
+ * ("Ask the account admin"): no override exists. `message` echoes the server's sentence, which the modal titles itself with.
+ */
 export function parseDriverRestrictionBlock(
   err: unknown,
 ): { message: string; lines: BlockedLine[]; ruleLines: RestrictionWarningLine[] } | null {
   const res = (err as AxiosLike)?.response;
   if (res?.status !== 409 || res.data?.code !== API_ERROR_CODES.SELLING_RESTRICTED) return null;
-  if (res.data.message !== DRIVER_RESTRICTION_BLOCK_MESSAGE) return null;
+  const message = res.data.message;
+  if (typeof message !== "string" || !OVERRIDE_BLOCK_MESSAGES.includes(message)) return null;
   const lines = Array.isArray(res.data.blockedLines)
     ? (res.data.blockedLines as BlockedLine[])
     : [];
   const ruleLines = Array.isArray(res.data.lines)
     ? (res.data.lines as RestrictionWarningLine[])
     : [];
-  return { message: DRIVER_RESTRICTION_BLOCK_MESSAGE, lines, ruleLines };
+  return { message, lines, ruleLines };
 }
 
 export interface BlockRow {

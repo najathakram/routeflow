@@ -55,7 +55,14 @@ export interface MarkerDeps {
 
 export async function markImportedRestrictedLines(
   deps: MarkerDeps,
-  p: { tenantId: string; userId: string; candidates: readonly ImportedCandidate[]; at?: Date },
+  p: {
+    tenantId: string;
+    userId: string;
+    /** The support agent's id when the import ran in a support session (carried onto each audit row). */
+    impersonatedBy?: string | null;
+    candidates: readonly ImportedCandidate[];
+    at?: Date;
+  },
 ): Promise<ImportRestrictedLine[]> {
   const out: ImportRestrictedLine[] = [];
   const byCustomer = new Map<string, ImportedCandidate[]>();
@@ -117,6 +124,7 @@ export async function markImportedRestrictedLines(
               {
                 tenantId: p.tenantId,
                 by: p.userId,
+                impersonatedBy: p.impersonatedBy ?? null,
                 entityType: "InvoiceItem",
                 documentType: "INVOICE",
                 documentId: e.invoiceId,

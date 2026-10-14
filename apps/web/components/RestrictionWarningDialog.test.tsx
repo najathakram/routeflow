@@ -4,6 +4,7 @@ import userEvent from "@testing-library/user-event";
 import {
   API_ERROR_CODES,
   DRIVER_RESTRICTION_BLOCK_MESSAGE,
+  SUPPORT_SESSION_RESTRICTION_BLOCK_MESSAGE,
   type RestrictionWarningError,
 } from "@routeflow/types";
 import { RestrictionWarningDialog } from "./RestrictionWarningDialog";
@@ -194,6 +195,14 @@ describe("RestrictionWarningDialog (driver hard block)", () => {
     expect(screen.queryByRole("button", { name: "Sell anyway" })).toBeNull();
     fireEvent.click(screen.getByRole("button", { name: "OK" }));
     expect(onCancel).toHaveBeenCalled();
+  });
+  it("a support session's block says 'Ask the account admin' (the title follows the server's message) with the same lines and no override", () => {
+    setup({ view: { ...view, message: SUPPORT_SESSION_RESTRICTION_BLOCK_MESSAGE } });
+    expect(screen.getAllByText("Ask the account admin").length).toBeGreaterThan(0);
+    expect(screen.queryByText("Ask the office to approve this sale")).toBeNull();
+    expect(screen.getByText("Acme Gummies")).toBeInTheDocument();
+    expect(screen.queryByRole("textbox")).toBeNull();
+    expect(screen.queryByRole("button", { name: "Sell anyway" })).toBeNull();
   });
   it("OK is 44px tall below md too", () => {
     setup({ view });

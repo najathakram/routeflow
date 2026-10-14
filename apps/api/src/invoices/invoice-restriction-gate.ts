@@ -23,7 +23,7 @@ import { addedRestrictionLinesWithHeld } from "./invoice-restriction-lines";
 export { stampOverrideNames } from "../common/restriction-override-names";
 export type Decision = StaffWriteDecision;
 export type Ack = SellableLinesParams["ack"];
-type Actor = Pick<JwtPayload, "sub" | "role"> | undefined;
+type Actor = Pick<JwtPayload, "sub" | "role" | "impersonatedBy"> | undefined;
 type Held = Array<Partial<OverrideStamp> & { id?: string | null; productId?: string | null }>;
 
 /** The ambient tenant, or a 403: a tenant-less session cannot be judged (fail closed). */

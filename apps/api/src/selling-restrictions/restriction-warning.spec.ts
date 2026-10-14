@@ -15,6 +15,7 @@ import {
   DRIVER_RESTRICTION_BLOCK_MESSAGE,
   RESTRICTION_OVERRIDE_REASON_MAX,
   RESTRICTION_OVERRIDE_REASON_MIN,
+  SUPPORT_SESSION_RESTRICTION_BLOCK_MESSAGE,
 } from "./override-constants";
 
 /**
@@ -339,6 +340,111 @@ describe("decideStaffWrite: who may override", () => {
     for (const role of ["OPERATOR", "TENANT_ADMIN"]) {
       expect(decideStaffWrite(base({ principal: { role }, ack: ackFor() })).stamps).toHaveLength(1);
     }
+  });
+
+  describe("support sessions can't override", () => {
+    // A support session mints a TENANT_ADMIN token that carries impersonatedBy; the stamp and the audit row would
+    // otherwise credit the account admin with a sale a support agent made.
+    const session = { role: "TENANT_ADMIN", sub: "admin-1", impersonatedBy: "support-1" };
+
+    it("a TENANT_ADMIN token carrying impersonatedBy is hard-blocked with 'Ask the account admin', even with a valid acknowledgement", () => {
+      for (const ack of [undefined, ackFor()]) {
+        blocked.mockClear();
+        const e = thrown(() => decideStaffWrite(base({ principal: session, ack })));
+        expect(e.getResponse()).toMatchObject({
+          code: "SELLING_RESTRICTED",
+          message: SUPPORT_SESSION_RESTRICTION_BLOCK_MESSAGE,
+        });
+        expect(e.getResponse().warningHash).toBeUndefined();
+        expect(blocked).toHaveBeenCalledWith(
+          expect.any(Array),
+          SUPPORT_SESSION_RESTRICTION_BLOCK_MESSAGE,
+          expect.any(Array),
+        );
+      }
+    });
+
+    it("the block carries the same per-rule legal lines a driver's does (the shared modal shows them)", () => {
+      const support = thrown(() => decideStaffWrite(base({ principal: session }))).getResponse();
+      const driver = thrown(() =>
+        decideStaffWrite(base({ principal: { role: "DRIVER", sub: "d" } })),
+      ).getResponse();
+      expect(support.code).toBe("SELLING_RESTRICTED");
+      expect(support.lines).toEqual(driver.lines);
+      expect(support.lines[0].rules[0]).toMatchObject({ legal: true });
+    });
+
+    it("an OPERATOR in a support session is blocked too; null / undefined impersonatedBy is an ordinary session", () => {
+      expect(
+        thrown(() =>
+          decideStaffWrite(
+            base({ principal: { role: "OPERATOR", sub: "op", impersonatedBy: "s" } }),
+          ),
+        ).getResponse().message,
+      ).toBe(SUPPORT_SESSION_RESTRICTION_BLOCK_MESSAGE);
+      for (const impersonatedBy of [null, undefined, ""]) {
+        expect(
+          decideStaffWrite(
+            base({ principal: { role: "TENANT_ADMIN", sub: "a", impersonatedBy }, ack: ackFor() }),
+          ).stamps,
+        ).toHaveLength(1);
+      }
+    });
+
+    it("a covered product in a support session is not blocked (nothing new is sold)", () => {
+      const d = decideStaffWrite(
+        base({
+          principal: session,
+          held: [
+            {
+              id: "li-p1",
+              productId: "p1",
+              status: "PENDING",
+              restrictionOverrideReason: "earlier",
+              restrictionOverrideBy: "someone-else",
+              restrictionOverrideAt: new Date("2026-10-01T00:00:00Z"),
+              restrictionOverrideRuleIds: ["r1:CA"],
+            },
+          ],
+        }),
+      );
+      expect(d.stamps).toEqual([]);
+    });
+  });
+
+  it("the stamp target carries impersonatedBy into the audit row (a stamp that still happens through a support path)", async () => {
+    const created: any[] = [];
+    const tx = {
+      orderItem: {
+        findMany: jest.fn().mockResolvedValue([
+          {
+            id: "li-1",
+            productId: "p1",
+            status: "PENDING",
+            restrictionOverrideReason: null,
+            restrictionOverrideBy: null,
+            restrictionOverrideAt: null,
+            restrictionOverrideRuleIds: [],
+          },
+        ]),
+        updateMany: jest.fn().mockResolvedValue({ count: 1 }),
+      },
+      auditLog: { create: jest.fn(async ({ data }: any) => created.push(data)) },
+    };
+    const d = decideStaffWrite(
+      base({
+        ack: ackFor(),
+        target: {
+          document: "ORDER",
+          tenantId: "t1",
+          by: "user-op",
+          impersonatedBy: "support-1",
+        },
+      }),
+    );
+    await d.stamp(tx as never, "o1");
+    expect(created).toHaveLength(1);
+    expect(created[0]).toMatchObject({ userId: "user-op", impersonatedBy: "support-1" });
   });
 });
 

@@ -130,6 +130,12 @@ export interface ChannelPrincipal {
   role?: string | null;
   /** `"BUYER"` on the buyer-portal principal (`BuyerJwtStrategy`); absent on tenant users. */
   type?: string | null;
+  /**
+   * Row 510: the platform operator's id on a SUPPORT SESSION token (a tenant admin's claims plus this). A support
+   * session can't override a restriction: the stamp and the audit row would credit the account admin with a sale
+   * someone else made, so the protocol hard-blocks it ("Ask the account admin").
+   */
+  impersonatedBy?: string | null;
 }
 
 /** Roles that positively sell as staff. Compared as strings so the core stays free of Prisma. */

@@ -145,6 +145,24 @@ describe("ImportService.importInvoices — historical import is exempt, marked a
     expect(overridden.meta.ruleIds).toEqual(["r1:UNKNOWN", "r2:UNKNOWN"]);
   });
 
+  it("a support session's import names the support agent on the audit row (impersonatedBy), an ordinary one does not", async () => {
+    restrictions.judgeStaffWrite.mockResolvedValue(block);
+    await service.importInvoices(csv("INV-205"), "user-1", "support-1");
+    const overridden = () =>
+      prisma.auditLog.create.mock.calls
+        .map((c: any) => c[0].data)
+        .filter((a: any) => a.action === "selling_restriction.overridden");
+    expect(overridden()).toHaveLength(1);
+    expect(overridden()[0]).toMatchObject({ userId: "user-1", impersonatedBy: "support-1" });
+
+    prisma.auditLog.create.mockClear();
+    prisma.invoice.create.mockImplementationOnce((args: any) =>
+      Promise.resolve({ id: "inv-9", ...args.data }),
+    );
+    await service.importInvoices(csv("INV-206"), "user-1");
+    expect(overridden()[0].impersonatedBy).toBeNull();
+  });
+
   it("ALLOW imports normally: empty restrictedLines, no marker, no audit row", async () => {
     const result = await service.importInvoices(csv("INV-201"), "user-1");
 

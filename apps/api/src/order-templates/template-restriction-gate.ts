@@ -22,7 +22,7 @@ import type { StaffWriteDecision } from "../selling-restrictions/restriction-war
 
 /** Who generated the order and what they acknowledged (absent on the cron and on any internal caller). */
 export interface TemplateStaffRun {
-  actor: Pick<JwtPayload, "sub" | "role">;
+  actor: Pick<JwtPayload, "sub" | "role" | "impersonatedBy">;
   ack?: RestrictionAck | null;
 }
 

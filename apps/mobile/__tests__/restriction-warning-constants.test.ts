@@ -22,6 +22,7 @@ describe("mobile @routeflow/types stub: restriction constants equal the real sou
     "RESTRICTION_OVERRIDE_REASON_MIN",
     "RESTRICTION_OVERRIDE_REASON_MAX",
     "DRIVER_RESTRICTION_BLOCK_MESSAGE",
+    "SUPPORT_SESSION_RESTRICTION_BLOCK_MESSAGE",
     "RESTRICTION_OVERRIDE_LABEL",
   ])("%s", (name) => {
     expect(JSON.stringify(stub[name])).toBe(constOf(name));

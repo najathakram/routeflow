@@ -1,6 +1,7 @@
 import {
   API_ERROR_CODES,
   DRIVER_RESTRICTION_BLOCK_MESSAGE,
+  SUPPORT_SESSION_RESTRICTION_BLOCK_MESSAGE,
   type RestrictionWarningError,
 } from "@routeflow/types";
 import {
@@ -134,6 +135,17 @@ describe("parseDriverRestrictionBlock", () => {
     expect(driverBlockRows([{ ...ruleLines[0], rules: [] }])[0].items).toEqual([
       { text: RESTRICTION_COPY.unchecked, legal: false },
     ]);
+  });
+  it("recognises a support session's hard block ('Ask the account admin') the same way, echoing its own message", () => {
+    const got = parseDriverRestrictionBlock(
+      axiosErr(409, {
+        code: "SELLING_RESTRICTED",
+        message: SUPPORT_SESSION_RESTRICTION_BLOCK_MESSAGE,
+        blockedLines,
+        lines: ruleLines,
+      }),
+    );
+    expect(got).toEqual({ message: "Ask the account admin", lines: blockedLines, ruleLines });
   });
   it("is null for an ordinary SELLING_RESTRICTED (buyer or other staff refusal)", () => {
     expect(

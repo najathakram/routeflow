@@ -21,6 +21,7 @@ import {
   RESTRICTION_OVERRIDE_CODES,
   RESTRICTION_OVERRIDE_REASON_MAX,
   RESTRICTION_OVERRIDE_REASON_MIN,
+  SUPPORT_SESSION_RESTRICTION_BLOCK_MESSAGE,
 } from "./override-constants";
 import { stampRestrictionOverrides, type StampTx } from "./restriction-override-stamps";
 import type { ChannelPrincipal } from "./selling-restrictions.core";
@@ -33,8 +34,10 @@ import { breachKeys, type StaffBreachDetail, type StaffBreachRule } from "./staf
  * (`staffMay(role, "OVERRIDE_SELLING_RESTRICTION")`: OPERATOR, TENANT_ADMIN). It answers 409 RESTRICTION_WARNING with the
  * lines and a `warningHash`; the client collects ONE reason and resubmits the SAME payload plus
  * `{ restrictionOverrides: [{ lineKey, reason }], warningHash }`. A principal who may not override (DRIVER, SUPER_ADMIN, a
- * system caller with none) is still hard-blocked (409 SELLING_RESTRICTED). Buyers never reach this module: their channel
- * keeps the portal's hard 409.
+ * system caller with none) is still hard-blocked (409 SELLING_RESTRICTED). So is a SUPPORT SESSION (a token carrying
+ * `impersonatedBy`) even when its role could: support sessions can't override, or the stamp and the audit row would credit
+ * the account admin with a sale a support agent made. Buyers never reach this module: their channel keeps the portal's
+ * hard 409.
  *
  * PURE (no Prisma). The service builds the engine verdict and passes it in; the transaction half is
  * `restriction-override-stamps.ts`. This file is the ONLY place a RESTRICTION_WARNING body is built (a pin).
@@ -128,6 +131,8 @@ export interface StampTarget {
   tenantId: string;
   /** The overriding User id. */
   by: string | null;
+  /** The support agent's id when the write is made in a support session (the audit row's `impersonatedBy`). */
+  impersonatedBy?: string | null;
 }
 
 /** The decision for a write the protocol has nothing to say about (a buyer channel, nothing judged). */
@@ -347,6 +352,8 @@ interface DecisionInput {
   mayOverride: boolean;
   /** DRIVER: the hard block says to ask the office. */
   driver?: boolean;
+  /** A support session: the hard block says to ask the account admin. */
+  supportSession?: boolean;
   blocked: StaffBlock;
   held: readonly HeldLine[];
   target: StampTarget | null;
@@ -380,6 +387,7 @@ function buildDecision(d: DecisionInput): StaffWriteDecision {
         documentType: d.target.document,
         tenantId: d.target.tenantId,
         by: d.target.by,
+        impersonatedBy: d.target.impersonatedBy ?? null,
       });
     },
   };
@@ -388,17 +396,23 @@ function buildDecision(d: DecisionInput): StaffWriteDecision {
 
 /** The refusal for an uncovered set: the warning to a principal who may override, else the hard block. */
 function raise(
-  d: Pick<DecisionInput, "judgement" | "mayOverride" | "driver" | "blocked">,
+  d: Pick<DecisionInput, "judgement" | "mayOverride" | "driver" | "supportSession" | "blocked">,
   rows: readonly WarningRow[],
   hash: string,
 ): Error {
   if (d.mayOverride) return warningConflict(rows, hash, d.judgement);
   const products = new Set(rows.map((r) => r.breach.productId));
+  // A driver and a support session get the same shared modal: the per-line outcome staff see (legal flag + text), no
+  // hash, no override. Only the sentence differs (who to ask).
+  const shared = d.supportSession || d.driver;
   return d.blocked(
     d.judgement.reasons.filter((r) => products.has(r.productId)),
-    d.driver ? DRIVER_RESTRICTION_BLOCK_MESSAGE : undefined,
-    // The driver modal shows the same per-line outcome staff see (legal flag + text); no hash, no override.
-    d.driver ? rows.map((r) => warningLine(r, d.judgement)) : undefined,
+    d.supportSession
+      ? SUPPORT_SESSION_RESTRICTION_BLOCK_MESSAGE
+      : d.driver
+        ? DRIVER_RESTRICTION_BLOCK_MESSAGE
+        : undefined,
+    shared ? rows.map((r) => warningLine(r, d.judgement)) : undefined,
   );
 }
 
@@ -422,7 +436,10 @@ export interface DecideParams {
 export function decideStaffWrite(p: DecideParams): StaffWriteDecision {
   const held = p.held ?? [];
   const rows = uncoveredRows(p.judgement.breaches, p.lines, held);
-  const mayOverride = staffMay(p.principal?.role, "OVERRIDE_SELLING_RESTRICTION");
+  // A support session can't override whatever its role says (see the header): a token carrying impersonatedBy.
+  const supportSession = !!p.principal?.impersonatedBy;
+  const mayOverride =
+    !supportSession && staffMay(p.principal?.role, "OVERRIDE_SELLING_RESTRICTION");
   const base: DecisionInput = {
     judgement: p.judgement,
     lines: p.lines,
@@ -431,6 +448,7 @@ export function decideStaffWrite(p: DecideParams): StaffWriteDecision {
     customerId: p.customerId,
     mayOverride,
     driver: p.principal?.role === "DRIVER",
+    supportSession,
     blocked: p.blocked,
     held,
     target: p.target ?? null,

@@ -171,6 +171,9 @@ describe("row 510: the repeat-409 notice and the modal's small accessibility fix
     expect(src).toMatch(/<FormTextInput[^>]*\bautoFocus\b/s);
     expect(src).toMatch(/accessibilityState=\{\{ disabled: !check\.ok \}\}/);
   });
+  it("the blocked modal's title follows the server's message (a support session reads 'Ask the account admin')", () => {
+    expect(read("components/RestrictionWarningModal.tsx")).toMatch(/blocked \? view\.message/);
+  });
   it("the blocked modal's OK can resume the caller (the driver's at-stop batch continues behind it)", () => {
     const src = read("lib/use-restriction-warning-retry.tsx");
     expect(src).toMatch(/onDismiss/);

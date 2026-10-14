@@ -13,6 +13,9 @@ export const RESTRICTION_OVERRIDE_REASON_MAX = 200;
 /** The `message` of the 409 SELLING_RESTRICTED a DRIVER (who may not override) gets on a staff write. */
 export const DRIVER_RESTRICTION_BLOCK_MESSAGE = "Ask the office to approve this sale";
 
+/** The `message` of the 409 SELLING_RESTRICTED a support session gets (it can't override): the account admin decides. */
+export const SUPPORT_SESSION_RESTRICTION_BLOCK_MESSAGE = "Ask the account admin";
+
 /** The staff-only line note label. */
 export const RESTRICTION_OVERRIDE_LABEL = "Sold despite restriction";
 

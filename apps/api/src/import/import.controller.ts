@@ -49,7 +49,7 @@ export class ImportController {
   @UseInterceptors(FileInterceptor("file", { limits: uploadLimits(MB(50)) }))
   importInvoices(@UploadedFile() file: Express.Multer.File, @CurrentUser() user: JwtPayload) {
     if (!file) throw new BadRequestException("No file uploaded");
-    return this.importService.importInvoices(file.buffer, user.sub);
+    return this.importService.importInvoices(file.buffer, user.sub, user.impersonatedBy);
   }
 
   @Post("payments")

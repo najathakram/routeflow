@@ -97,7 +97,7 @@ export function RestrictionWarningDialog({
     return (
       <Modal
         {...common}
-        title={COPY.blockedTitle}
+        title={view.message || COPY.blockedTitle}
         description={COPY.blockedBody}
         footer={
           <Button className="max-md:min-h-11" onClick={onCancel}>
