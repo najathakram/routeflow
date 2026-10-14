@@ -90,17 +90,26 @@ export function newlyRestricted(
   );
 }
 
+/** A capped scan: the hash stands for the proposed settings and the cap, since the counts are lower bounds. */
+export interface CappedImpact {
+  capped: true;
+  cap: number;
+}
+
 /**
  * The fingerprint of an edit: sha256 over the rule, its revision, the NORMALISED proposed settings (jurisdiction,
  * sorted USPS states, surface, window, reason) and the sorted ids of the documents it affects (callers prefix the
  * kind: `o:` order, `d:` draft order, `i:` draft invoice). The commit recomputes it from ITS body, so confirming a
  * different edit than the one previewed, or a changed set of documents, is 409 RULE_IMPACT_CHANGED.
+ * When the scan was CAPPED the ids are a partial, order-dependent sample, so the hash covers `{ capped, cap }` instead:
+ * a new matching order cannot invalidate a preview that already said "this many or more".
  */
 export function impactHash(
   ruleId: string,
   revision: number,
   ids: readonly string[],
   proposed: RuleEditSettings,
+  capped?: CappedImpact,
 ): string {
   const states = [
     ...new Set(proposed.states.map((x) => normalizeUsState(x) ?? x.trim().toUpperCase())),
@@ -113,7 +122,8 @@ export function impactHash(
     effectiveTo: proposed.effectiveTo ? proposed.effectiveTo.toISOString() : null,
     reason: proposed.reason.trim(),
   };
+  const scope = capped ? { capped: true, cap: capped.cap } : [...ids].sort();
   return createHash("sha256")
-    .update(JSON.stringify([ruleId, revision, settings, [...ids].sort()]))
+    .update(JSON.stringify([ruleId, revision, settings, scope]))
     .digest("hex");
 }
