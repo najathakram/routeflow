@@ -446,6 +446,18 @@ export const API_ERROR_CODES = {
    */
   TENANT_TRIAL_EXTEND_NOT_ALLOWED: "TENANT_TRIAL_EXTEND_NOT_ALLOWED",
   /**
+   * 409 from POST /platform-admin/tenants/:id/activate-subscription: the prepaid window the activation would
+   * record already ended (windowEnd <= now), so the next invoice period would be left unbilled or re-billed.
+   * Nothing was written; activate for more days or record the newer invoices first.
+   */
+  ACTIVATION_PERIOD_ALREADY_ENDED: "ACTIVATION_PERIOD_ALREADY_ENDED",
+  /**
+   * 409 from the same endpoint: the prepaid window (anchored at the oldest OPEN invoice) would run over a RouteFlow
+   * invoice that is already PAID, so that period would be recorded as paid twice. Body: `invoiceNumber`, `paidFrom`
+   * (ISO date), `maxDays` (the longest activation that stops before it). Nothing was written.
+   */
+  ACTIVATION_OVERLAPS_PAID_PERIOD: "ACTIVATION_OVERLAPS_PAID_PERIOD",
+  /**
    * 403 body `code` when an operator lacks every feature group the endpoint needs; `groups` lists the groups
    * that would have opened it. Nothing was written.
    */
