@@ -2,7 +2,8 @@ import { dayEndToIso, dayToIso } from "./restriction-rule-form";
 import {
   emptyText,
   jurisdictionText,
-  LIFT_ADMIN_ONLY_HINT,
+  ADMIN_ONLY_CHANGE_HINT,
+  ADMIN_ONLY_LIFT_HINT,
   liftState,
   ruleSentence,
   ruleTarget,
@@ -129,9 +130,12 @@ describe("liftState (who may lift which rule, owner L5)", () => {
     expect(liftState(undefined, state)).toBe("none");
   });
 
-  it("the hint line is one fixed sentence", () => {
-    expect(LIFT_ADMIN_ONLY_HINT).toBe(
-      "Only an account admin can lift a rule that applies everywhere.",
+  it("the two admin-only sentences are fixed, one for change and one for lift", () => {
+    expect(ADMIN_ONLY_CHANGE_HINT).toBe(
+      "Only an account admin can change a rule that hides products from every portal customer.",
+    );
+    expect(ADMIN_ONLY_LIFT_HINT).toBe(
+      "Only an account admin can lift a rule that hides products from every portal customer.",
     );
   });
 });

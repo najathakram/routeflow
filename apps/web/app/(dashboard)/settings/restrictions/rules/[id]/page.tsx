@@ -15,7 +15,8 @@ import { ruleErrorCode } from "@/lib/restriction-rule-errors";
 import { fmtDate } from "@/lib/formatting";
 import {
   STATUS_BADGE,
-  LIFT_ADMIN_ONLY_HINT,
+  ADMIN_ONLY_CHANGE_HINT,
+  ADMIN_ONLY_LIFT_HINT,
   jurisdictionText,
   liftState,
   ruleSentence,
@@ -32,7 +33,7 @@ import { RemoveTargetsDialog } from "./_components/RemoveTargetsDialog";
 import { RuleHistory } from "./_components/RuleHistory";
 
 const LIST_HREF = "/settings/restrictions/rules";
-const ROLE_HINT = "Only an account admin can change a rule that applies everywhere.";
+const CHANGE_HINT_ID = "rule-change-hint";
 const UNDO_VISIBLE_MS = 10_000;
 
 /** Targets pages beyond the first: each "Show more" appends the previous page's cursor. */
@@ -200,8 +201,9 @@ export default function RuleDetailPage() {
     );
   };
 
+  // pb-24 below sm: the Undo toast sits over the last controls, which must scroll clear of it.
   return (
-    <div className="mx-auto max-w-4xl space-y-5 p-4 sm:p-6">
+    <div className="mx-auto max-w-4xl space-y-5 p-4 pb-24 sm:p-6">
       <BackLink />
       <ReadOnlyHint />
 
@@ -211,6 +213,11 @@ export default function RuleDetailPage() {
           <Badge variant={badge.variant} label={badge.label} />
         </div>
         <p className="text-sm text-navy/80">{ruleSentence(rule)}</p>
+        {roleBlocked && editable && (
+          <p id={CHANGE_HINT_ID} className="text-xs text-navy/70">
+            {ADMIN_ONLY_CHANGE_HINT}
+          </p>
+        )}
         {lift !== "none" && (
           <div className="space-y-1">
             <Button
@@ -224,7 +231,7 @@ export default function RuleDetailPage() {
             </Button>
             {lift === "admin-only" && (
               <p id="rule-lift-hint" className="text-xs text-navy/70">
-                {LIFT_ADMIN_ONLY_HINT}
+                {ADMIN_ONLY_LIFT_HINT}
               </p>
             )}
           </div>
@@ -246,12 +253,15 @@ export default function RuleDetailPage() {
             Products &amp; labels ({total})
           </h2>
           {editable && (
-            <WriteButton disabled={roleBlocked} onClick={() => setAdding(true)}>
+            <WriteButton
+              disabled={roleBlocked}
+              aria-describedby={roleBlocked ? CHANGE_HINT_ID : undefined}
+              onClick={() => setAdding(true)}
+            >
               Add products
             </WriteButton>
           )}
         </div>
-        {roleBlocked && editable && <p className="text-xs text-navy/70">{ROLE_HINT}</p>}
         {!editable && (
           <p className="text-sm text-navy/70">
             This rule has ended, so its list can&apos;t be changed.
@@ -367,6 +377,7 @@ export default function RuleDetailPage() {
             <WriteButton
               variant="secondary"
               disabled={roleBlocked}
+              aria-describedby={roleBlocked ? CHANGE_HINT_ID : undefined}
               onClick={() => setEditing(true)}
             >
               Edit settings
@@ -413,7 +424,6 @@ export default function RuleDetailPage() {
             <dd className="break-words text-navy/80">{rule.reason}</dd>
           </div>
         </dl>
-        {roleBlocked && editable && <p className="text-xs text-navy/70">{ROLE_HINT}</p>}
       </Card>
 
       <RuleHistory revisions={rule.revisions ?? []} events={rule.targetEvents ?? []} />
@@ -497,6 +507,7 @@ function TargetRow({
             type="checkbox"
             className="mt-0.5 h-5 w-5 sm:h-4 sm:w-4"
             aria-label={`Select ${t.name}`}
+            aria-describedby={mode === "disabled" ? CHANGE_HINT_ID : undefined}
             checked={selected}
             disabled={mode === "disabled"}
             onChange={onToggle}

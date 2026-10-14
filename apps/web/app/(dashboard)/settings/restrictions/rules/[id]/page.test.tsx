@@ -485,10 +485,54 @@ describe("rule detail: roles, ended rules", () => {
     expect(screen.getByRole("button", { name: "Add products" })).toBeDisabled();
     expect(screen.getByRole("button", { name: "Edit settings" })).toBeDisabled();
     expect(screen.getByRole("checkbox", { name: "Select Sample Pod - Flavor 1" })).toBeDisabled();
+  });
+
+  it("the change hint shows ONCE, under the header, and every disabled control points at it", async () => {
+    role = "OPERATOR";
+    current = detail({ jurisdiction: "FEDERAL", states: [] });
+    await open();
+    const hint = screen.getByText(
+      "Only an account admin can change a rule that hides products from every portal customer.",
+    );
     expect(
-      screen.getAllByText("Only an account admin can change a rule that applies everywhere.")
-        .length,
-    ).toBeGreaterThan(0);
+      screen.getAllByText(
+        "Only an account admin can change a rule that hides products from every portal customer.",
+      ),
+    ).toHaveLength(1);
+    expect(hint.id).toBeTruthy();
+    for (const el of [
+      screen.getByRole("button", { name: "Add products" }),
+      screen.getByRole("button", { name: "Edit settings" }),
+      screen.getByRole("checkbox", { name: "Select Sample Pod - Flavor 1" }),
+    ]) {
+      expect(el.getAttribute("aria-describedby")?.split(" ")).toContain(hint.id);
+    }
+    // it sits with the header, above the product list
+    const list = screen.getByRole("heading", { name: /Products & labels/ });
+    expect(hint.compareDocumentPosition(list) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+    // the lift hint is a different sentence, next to Lift
+    expect(
+      screen.getAllByText(
+        "Only an account admin can lift a rule that hides products from every portal customer.",
+      ),
+    ).toHaveLength(1);
+  });
+
+  it("no change hint for a viewer who can change the rule", async () => {
+    current = detail({ jurisdiction: "FEDERAL", states: [] });
+    await open();
+    expect(
+      screen.queryByText(
+        "Only an account admin can change a rule that hides products from every portal customer.",
+      ),
+    ).toBeNull();
+  });
+
+  it("the page leaves room under the last controls for the Undo toast on a phone", async () => {
+    await open();
+    const root = screen.getByRole("heading", { name: /Products & labels/ }).closest("div.mx-auto");
+    expect(root?.className).toMatch(/\bpb-24\b/);
+    expect(root?.className).toMatch(/sm:p-6/);
   });
 
   it("an operator on a state rule can add, remove and edit", async () => {
@@ -510,7 +554,7 @@ describe("rule detail: roles, ended rules", () => {
     expect(btn).not.toHaveAttribute("title");
     const hint = document.getElementById(btn.getAttribute("aria-describedby") as string);
     expect(hint).toHaveTextContent(
-      "Only an account admin can lift a rule that applies everywhere.",
+      "Only an account admin can lift a rule that hides products from every portal customer.",
     );
   });
 
