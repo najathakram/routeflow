@@ -463,7 +463,7 @@ describeDb("row 509 PR3: edit a rule in place, with history — real Postgres", 
     const edits: Array<Record<string, unknown>> = [
       { states: ["TX", "CA"], note: "add California" },
       { states: ["TX", "CA"], reason: "Legal advice 2" },
-      { states: ["CA"], surface: "BUYER_PORTAL" },
+      { states: ["CA"], surface: "BUYER_PORTAL", reason: "Legal advice 2" },
     ];
     let before = await snapshot();
     for (const over of edits) {
