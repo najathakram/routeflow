@@ -15,7 +15,6 @@ import { assertNotWalkIn } from "../customers/walk-in-protected";
 import { assertMayChangeAccount } from "./admin-account-protection";
 import { ConfigService } from "@nestjs/config";
 import { User, UserRole, UserStatus } from "@prisma/client";
-import { API_ERROR_CODES } from "../common/api-error-codes";
 import * as crypto from "crypto";
 import * as bcrypt from "bcrypt";
 import { PrismaService } from "../prisma/prisma.service";

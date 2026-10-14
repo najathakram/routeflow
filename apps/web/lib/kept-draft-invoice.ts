@@ -7,8 +7,12 @@
  * Reads the id from ANY error body, not only EMAIL_SEND_FAILED. It never reads the server's message.
  */
 export function keptDraftInvoiceId(err: unknown): string | null {
-  const id = (err as { response?: { data?: { invoiceId?: unknown } } } | null)?.response?.data
-    ?.invoiceId;
+  const data = (err as { response?: { data?: { invoiceId?: unknown; code?: unknown } } } | null)
+    ?.response?.data;
+  // A request-validation refusal happens BEFORE anything is committed, so an `invoiceId` riding on one is not a
+  // kept draft (row 448's control: only a failure AFTER the draft was created names it).
+  if (data?.code === "VALIDATION_FAILED") return null;
+  const id = data?.invoiceId;
   return typeof id === "string" && id.length > 0 ? id : null;
 }
 
