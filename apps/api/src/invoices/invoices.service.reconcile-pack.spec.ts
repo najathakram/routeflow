@@ -333,13 +333,20 @@ describe("SA-078(b) — reconcile rebuild carries the PRIOR InvoiceItem's unitsP
  * `status` (the recomputeStatus branch). A caller that doesn't preserve status never reads those
  * three, so they are not required there.
  *
- * COUNT-PINNED at 4 (the number found on master at bc7b0ad9). A 5th caller must add its own
+ * COUNT-PINNED at 5 (4 at bc7b0ad9; the fifth is the splitDeps delegate, after the SA-760 / SA-763r
+ * extractions moved two selects into resync-plan.ts / split-draft-reconcile.ts). A 6th caller must add its own
  * correct select AND bump this constant — that is the point: the ratchet only ever grows the
  * safety net, and a caller nobody re-checked here is a caller that fails loudly, not silently.
  */
 describe("B736 — every rebuildSiblingDrafts caller selects the fields the core consumes", () => {
   const SERVICE_PATH = join(__dirname, "invoices.service.ts");
-  const EXPECTED_CALL_COUNT = 4;
+  const EXPECTED_CALL_COUNT = 5;
+  /** Callers whose invoice select lives in an extracted helper file rather than in their own body. */
+  const DELEGATED_SELECT_FILE: Record<string, string> = {
+    projectEditedInvoiceTotals: "resync-plan.ts", // loadResyncInputs
+    resyncOrderInvoicesForEdit: "resync-plan.ts", // loadResyncInputs
+    splitDeps: "split-draft-reconcile.ts", // reconcileSplitOrderDrafts' own select
+  };
 
   function stripComments(s: string): string {
     return s.replace(/\/\*[\s\S]*?\*\//g, "").replace(/(^|[^:])\/\/.*$/gm, "$1");
@@ -455,10 +462,21 @@ describe("B736 — every rebuildSiblingDrafts caller selects the fields the core
       }
       const methodSlice = src.slice(enclosing.index, callStart);
       const callText = callExpressionText(src, callStart);
+      // A caller that does not query invoices itself reads them through an extracted helper (SA-760 /
+      // SA-763r): its select is the one in that helper's file, so check THAT block, not nothing.
+      const inline = /db\.invoice\.find(?:Many|First|Unique)\(/.test(methodSlice);
+      const delegateFile = DELEGATED_SELECT_FILE[enclosing.name];
+      if (!inline && !delegateFile) {
+        throw new Error(
+          `findCallers: ${enclosing.name} calls rebuildSiblingDrafts without an invoice select; map it in DELEGATED_SELECT_FILE`,
+        );
+      }
       return {
         methodName: enclosing.name,
         preservesStatus: /preserveStatus:\s*true/.test(callText),
-        selectBlock: invoiceSelectBlock(methodSlice),
+        selectBlock: invoiceSelectBlock(
+          inline ? methodSlice : stripComments(readFileSync(join(__dirname, delegateFile), "utf8")),
+        ),
       };
     });
   }
