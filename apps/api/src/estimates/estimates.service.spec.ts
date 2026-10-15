@@ -197,7 +197,8 @@ describe("EstimatesService — B8 accept/convert duplicate-invoice race", () => 
     // 10 -> effective rate 0.10) must stamp that real rate onto its converted
     // line, not 0, so a later applyPriceAdjustment recompute doesn't silently
     // zero the tax.
-    it("REG-B294: a converted line stores the estimate's effective tax rate, not 0", async () => {
+    it("REG-B294: a converted line stores the tax rate it was converted at (H5: today's tenant rate), not 0", async () => {
+      (prisma as any).systemConfig.findFirst.mockResolvedValue({ value: "10" }); // today's rate: 10%
       prisma.estimate.updateMany.mockResolvedValue({ count: 1 });
       prisma.estimate.findUnique.mockResolvedValue({
         id: "est-294",

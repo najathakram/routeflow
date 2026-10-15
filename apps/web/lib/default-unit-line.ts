@@ -5,6 +5,7 @@ import {
   pendingResolvePlan,
   pendingTapCount,
   refreshUnitsAnswer as refreshUnitsAnswerShared,
+  type DerivedBaseMarker,
   type PendingBlockReason,
 } from "@routeflow/pricing";
 import {
@@ -45,8 +46,10 @@ export interface DefaultUnitLine extends UnitLine {
  * from the customer's history (DISCOUNTED/MANUAL + discountedPrice at add time) is NOT a shape: a remembered price never
  * decides the unit (owner ruling SA-626d). Every operator price handler consumes the flag, so a still-set flag means untouched.
  */
-export function isShapedLine(line: { unitLabel?: string; priceEdited?: boolean }): boolean {
-  return !!line.unitLabel || !!line.priceEdited;
+export function isShapedLine(
+  line: { unitLabel?: string; priceEdited?: boolean } & DerivedBaseMarker,
+): boolean {
+  return !!line.unitLabel || !!line.derivedBase || !!line.priceEdited;
 }
 
 /** Does this add keep (or start) the default-start flag? A default-start add to a still-pending line only. */
@@ -239,6 +242,7 @@ export async function resolvePendingDefaultUnits<T extends DefaultUnitLine>(
 const UNIT_FIELDS = [
   "pendingTaps",
   "unitLabel",
+  "derivedBase",
   "unit",
   "unitsPerBox",
   "boxes",

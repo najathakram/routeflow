@@ -123,6 +123,7 @@ import { unlistedAffordancePlacement } from "../lib/unlisted-affordance";
 import {
   orderSubmitGate,
   resolveResumeLinePricing,
+  resolveResumeDerivedBase,
   resolveResumeLineBoxes,
   decideResumeHydrationStart,
 } from "../lib/order-draft-logic";
@@ -678,6 +679,8 @@ function ProductPickView({
         if (boxes != null) line.boxes = boxes;
         if (pieces != null) line.pieces = pieces;
         if (li.note) line.note = li.note;
+        const marker = resolveResumeDerivedBase(li, Number(product.unitsPerBox ?? 0)); // units P0b
+        if (marker) line.derivedBase = marker;
         // B747/B755: re-resolve unit/override pricing off LIVE data, never the parked price.
         // R2: the per-product tier (effectiveTierFor), never the bare header customerTier.
         const pricing = resolveResumeLinePricing(
@@ -1440,6 +1443,7 @@ function ProductPickView({
         ...(line.boxes != null ? { boxes: line.boxes } : {}),
         ...(line.pieces != null ? { pieces: line.pieces } : {}),
         ...(line.unitLabel ? { unitLabel: line.unitLabel } : {}),
+        ...(line.derivedBase ? { derivedBase: line.derivedBase } : {}),
         ...(hasOverride && line.priceSource ? { priceSource: line.priceSource } : {}),
         ...(p.averageCost != null
           ? { unitCost: toNumber(p.averageCost) }

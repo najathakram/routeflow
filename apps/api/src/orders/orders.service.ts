@@ -53,7 +53,8 @@ import {
   type PromotionRule,
 } from "@routeflow/pricing";
 import { lockRowsNoWait, withAdvisoryLock, type LockMode } from "../common/db-locks";
-import { retryCreditTx, retryOnTxConflict, txConflictState } from "../common/tx-retry";
+import { retryCreditTx } from "../common/tx-retry";
+import { stockTxBounded } from "../common/stock-tx";
 import { lockOrderRow } from "../credit-notes/credit-note-locks";
 import { judgeEditTail } from "./edit-overpay-judge";
 import { RECONCILE_PARTIALS } from "../invoices/invoice-partition";
@@ -109,11 +110,11 @@ import {
 import * as cancelledLines from "./order-edit-cancelled";
 import * as driverAccess from "./driver-edit-access";
 import { assertRemovalsNameALine, writeLineRemoval, writeLineUpdate } from "./order-line-removal";
-import { ORDER_STATUS_TRANSITIONS, assertOrderStatusTransition } from "./order-status-transitions";
+import { CANCELLABLE_FROM, assertOrderStatusTransition } from "./order-status-transitions";
 import { buildStatusUpdateData } from "./order-status-claim";
 import { AppliedCreditNoteDto, CreateOrderDto } from "./dto/create-order.dto";
 import { assertSaleReplayable, keepOrderOnInvoiceFailure, sendSale } from "./sale-replay-guard";
-import { assertReplaySameCart, isIdempotencyKeyViolation } from "./replay-same-cart";
+import { assertReplayOfCart, isIdempotencyKeyViolation } from "./replay-cart-normalize";
 import { savedCreditsPending, withCreditsPendingHint } from "./create-credit-tail";
 import {
   IDEMPOTENCY_KEY_CONFLICT,
@@ -1533,7 +1534,7 @@ export class OrdersService implements OnApplicationBootstrap {
           throw otherOrderConflict();
         }
         // R4 + BUG-A: a replay must be of the SAME cart and kind (replay-same-cart.ts).
-        assertReplaySameCart(existing, dto);
+        await assertReplayOfCart(this.prisma.forTenant(), customerId, existing, dto);
         options.onReplay?.(existing);
         const replay = await replayAfterCheck(this.prisma.forTenant(), inlineRet, existing);
         return withCreditsPendingHint(this.prisma, replay, appliedCreditNotes);
@@ -1680,7 +1681,14 @@ export class OrdersService implements OnApplicationBootstrap {
     // RF-079 / RF-4: an exempt customer owes $0 of BOTH taxes on the order, as on the invoice.
     const isTaxExempt = await customerIsTaxExempt(this.prisma.forTenant(), customerId);
     let subtotal = 0;
-    const lineItemsData = items.map((item, index) => {
+    const lineItemsData = items.map((rawItem, index) => {
+      const item = unitLines.derivedBaseAsPack(
+        rawItem,
+        productMap,
+        unitsByProduct,
+        cpMap,
+        defaultTier,
+      );
       // Unlisted (ad-hoc) line: no catalog product. The operator supplies a
       // free-text name + unitPrice; we store it as a MANUAL-priced line with no
       // stock impact and no boxed proration.
@@ -2017,7 +2025,8 @@ export class OrdersService implements OnApplicationBootstrap {
     if (twin) return twin;
     for (let attempt = 0; attempt < MAX_RETRIES; attempt++) {
       try {
-        order = await this.prisma.tenantTransaction(
+        order = await this.stockTx(
+          "orders.create",
           async (tx) => {
             await inlineReturn.lockInlineReturnCustomer(tx, inlineRet, customerId); // advisory FIRST
             // RF-014: generate the order number inside the transaction so a P2002 on
@@ -2133,7 +2142,7 @@ export class OrdersService implements OnApplicationBootstrap {
               throw otherOrderConflict();
             }
             if (existing) {
-              assertReplaySameCart(existing, dto); // BUG-A: the race exit compares too
+              await assertReplayOfCart(this.prisma.forTenant(), customerId, existing, dto);
               options.onReplay?.(existing);
               const replay = await replayAfterCheck(this.prisma.forTenant(), inlineRet, existing);
               return withCreditsPendingHint(this.prisma, replay, appliedCreditNotes);
@@ -2143,10 +2152,6 @@ export class OrdersService implements OnApplicationBootstrap {
           // propagate all other errors immediately (including ConflictException
           // for OOS items from RF-017).
           if (attempt < MAX_RETRIES - 1) continue;
-        }
-        if (inlineRet && txConflictState(e) && attempt < MAX_RETRIES - 1) {
-          await inlineReturn.conflictBackoff(attempt);
-          continue;
         }
         throw e;
       }
@@ -2419,7 +2424,8 @@ export class OrdersService implements OnApplicationBootstrap {
           source: "promotion",
           customerId: order.customerId,
         });
-        return this.prisma.tenantTransaction(
+        return this.stockTx(
+          "orders.promoteDraft",
           async (tx) => {
             // B283 (REG-B283) round 2 (F2): claim the row with a compare-and-set
             // BEFORE touching stock — an out-of-transaction read followed by a
@@ -2464,7 +2470,8 @@ export class OrdersService implements OnApplicationBootstrap {
         // (heldItems = the order's current lines, final = none — an empty
         // target credits back the undelivered remainder, same call shape as
         // the cancel branch above).
-        return this.prisma.tenantTransaction(
+        return this.stockTx(
+          "orders.demoteToDraft",
           async (tx) => {
             // B283 round 2 (F2): same compare-and-set claim, mirrored for the
             // reverse transition — see the DRAFT→PENDING branch above.
@@ -2509,24 +2516,18 @@ export class OrdersService implements OnApplicationBootstrap {
         // cancelled-but-not-unwound — and voidInvoiceInTx's claim keeps a re-run from voiding twice.
         // SA-404f F2: compare-and-set on the cancellable set the pre-check used — a retry after
         // a 40001 caused by a concurrent DELIVERED must never cancel a delivered order.
-        const fromStatuses = Object.keys(ORDER_STATUS_TRANSITIONS).filter((k) =>
-          ORDER_STATUS_TRANSITIONS[k].includes("CANCELLED"),
-        ) as OrderStatus[];
-        return retryOnTxConflict(`order cancel void order=${id}`, () =>
-          this.prisma.tenantTransaction(
-            (tx) =>
-              this.cancelOrderInTx(tx, order, {
-                fromStatuses,
-                statusUpdateData,
-                carrier,
-                user,
-                notes: "CANCEL",
-              }),
-            // Headroom over Prisma's 5s default, matching every other
-            // settleStockForEdit call site (:3053, :4755): this transaction now runs
-            // that helper's per-product lock/read/write loop alongside the voids.
-            { isolationLevel: "Serializable", timeout: 15_000 },
-          ),
+        return this.stockTx(
+          `order cancel void order=${id}`, // the retry-warn label the send/void race spec counts
+          (tx) =>
+            this.cancelOrderInTx(tx, order, {
+              fromStatuses: CANCELLABLE_FROM,
+              statusUpdateData,
+              carrier,
+              user,
+              notes: "CANCEL",
+            }),
+          // Headroom over Prisma's 5s default: the settleStockForEdit lock/read/write loop runs here with the voids.
+          { isolationLevel: "Serializable", timeout: 15_000 },
         );
       }
       // SA-434: the DRIVER's PENDING → CONFIRMED is a locked, re-derived compare-and-set.
@@ -2750,7 +2751,8 @@ export class OrdersService implements OnApplicationBootstrap {
       lines: order.lineItems.flatMap((li) => (li.productId ? [{ productId: li.productId }] : [])),
       channel: "STAFF",
     });
-    return this.prisma.tenantTransaction(
+    return this.stockTx(
+      "orders.reopen",
       async (tx) => {
         // B64 (REG-B64): read the item-CANCELLED lines BEFORE they flip below —
         // this is exactly the set an F07 cancel credited stock back for (a
@@ -2867,6 +2869,7 @@ export class OrdersService implements OnApplicationBootstrap {
     // this pre-lock pass is only what a REFUSAL must see before any commit happens.
     const unitCtx = await unitEdit.prepareUnitEditContext(this, order, dto, user);
     const unitRows = new Map<object, ReturnType<typeof resolveLineUnits>>();
+    await unitEdit.normalizeDerivedBaseItems(this.prisma.forTenant(), order, dto, unitCtx, user);
     for (const item of dto.items ?? []) {
       const li = item.id ? unitCtx.existingById.get(item.id) : undefined;
       unitEdit.assertUnitLabelNamed(li, item);
@@ -3018,7 +3021,6 @@ export class OrdersService implements OnApplicationBootstrap {
     // (row 372 MF1); reconcileOrderDraftInvoice stays OUTSIDE (after commit).
     let skipInPlaceResync = false; // SA-763r P-3: set inside the edit tx, from the held lines
     const { subtotal, tax, total, shouldRevert, shippingFee } = await inlineReturn.runEditTx(
-      inlineRet,
       this.prisma,
       async (tx: any) => {
         // WP1/F2: serialize concurrent edits of ONE order, then snapshot its
@@ -3056,6 +3058,7 @@ export class OrdersService implements OnApplicationBootstrap {
         // B709 / row 372: every read of an existing line below is the LOCKED row; a payload id the lock does not
         // hold is 409 before any write (no snapshot fallback), and B720's missing products load here.
         const heldById = await assertLockedEditLines(tx, unitCtx, heldItems, dto.items);
+        await unitEdit.normalizeDerivedBaseItems(tx, order, dto, unitCtx, user, heldById);
         for (const item of dto.items ?? []) {
           const li = item.id ? heldById.get(item.id) : undefined;
           unitEdit.assertUnitLabelNamed(li, item);
@@ -3343,20 +3346,10 @@ export class OrdersService implements OnApplicationBootstrap {
                 ]),
               ] as string[])
             : [];
-          const operatorTierCtx = atCustomerTier
-            ? await tx.customer.findFirst({
-                where: { id: order.customerId },
-                select: { pricingTier: true },
-              })
-            : null;
-          const operatorDefaultTier = operatorTierCtx?.pricingTier ?? 1;
-          const operatorCustomerPrices = operatorProductIds.length
-            ? await tx.customerPrice.findMany({
-                where: { customerId: order.customerId, productId: { in: operatorProductIds } },
-              })
-            : [];
-          const operatorCpMap = new Map<string, number | null>(
-            operatorCustomerPrices.map((cp: any) => [cp.productId, cp.pricingTier]),
+          const { operatorCpMap, operatorDefaultTier } = await unitEdit.loadOperatorTiers(
+            tx,
+            atCustomerTier ? order.customerId : null,
+            operatorProductIds,
           );
           const uctx: unitEdit.UnitWriteContext = {
             tx,
@@ -4494,6 +4487,11 @@ export class OrdersService implements OnApplicationBootstrap {
     return { logger: this.logger, tenantId: this.prisma.getTenantId() };
   }
 
+  /** SA-767 r-note 3 (b): `tenantTransaction(fn, opts)` inside retryStockTx (see its replay-safety rules). */
+  private stockTx<T>(label: string, fn: (tx: any) => Promise<T>, opts?: any): Promise<T> {
+    return stockTxBounded(this.prisma, label, fn, opts);
+  }
+
   private decrementStockForSale(...args: StockArgs<typeof decrementStockForSale>) {
     return decrementStockForSale(this.stockDeps(), ...args);
   }
@@ -4693,7 +4691,8 @@ export class OrdersService implements OnApplicationBootstrap {
     const creditCheckEnabled = await this.isCreditLimitCheckEnabled();
     const carrier = await carrierGuard.carrierEditGuard(this, order); // SA-696, read off the tx's connection
 
-    const { subtotal, tax, total, shippingFee } = await this.prisma.tenantTransaction(
+    const { subtotal, tax, total, shippingFee } = await this.stockTx(
+      "orders.approveChangeRequestAtStop",
       async (tx: any) => {
         // WP1/F2: same in-transaction snapshot as updateOrderItems — lock the
         // order row so a concurrent web PATCH of this order serializes behind
