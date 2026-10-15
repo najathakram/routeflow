@@ -2,7 +2,7 @@
  * SA-767 L-2.4 - the shared mock world of the stock-count unit specs (`stock-count-*.spec.ts`):
  * an `InventoryService` over the mock Prisma, a stock map the product update/read mocks share, an
  * in-memory movement ledger, and a `tenantTransaction` whose tx carries `$queryRaw` (the advisory
- * lock probe: `lockHeld` flips its answer) and `$executeRaw` (the product lock statements).
+ * lock probe: `countLockHeld` flips its answer) and `$executeRaw` (the product lock statements).
  *
  * The spec file owns `jest.mock("../common/db-locks")` (jest hoists it per file) and passes its
  * `withAdvisoryLock` mock in.
@@ -33,7 +33,7 @@ export interface CountUnitWorld {
   /** Every movement the create mock accepted: { id, productId, type }. */
   ledger: Array<{ id: string; productId: string; type: string }>;
   /** Flip to simulate the committer holding the session's exclusive lock. */
-  state: { lockHeld: boolean };
+  state: { countLockHeld: boolean };
   /** Order of interesting calls: "tx", "lock", "session-read", "movement-read", "product-read",
    * "xlock:<family>|<key>" (a blocking tx advisory lock), "overlap-read" (the other-open-count lookup). */
   events: string[];
@@ -49,7 +49,7 @@ export async function buildCountUnitWorld(
   const active = new Map<string, boolean>();
   const gone = new Set<string>();
   const ledger: CountUnitWorld["ledger"] = [];
-  const state = { lockHeld: false };
+  const state = { countLockHeld: false };
   const events: string[] = [];
   const audit = { log: jest.fn().mockResolvedValue(undefined) };
 
@@ -70,7 +70,7 @@ export async function buildCountUnitWorld(
       $queryRaw: jest.fn().mockImplementation((s: TemplateStringsArray) => {
         if (s.join("?").includes("pg_try_advisory_xact_lock_shared")) {
           events.push("lock");
-          return Promise.resolve([{ ok: !state.lockHeld }]);
+          return Promise.resolve([{ ok: !state.countLockHeld }]);
         }
         return Promise.resolve([]);
       }),

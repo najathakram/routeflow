@@ -104,6 +104,9 @@ export interface UnitSnapshotLine {
   unitPrice?: unknown;
   originalPrice?: unknown;
   priceType?: PriceType | null;
+  /** The override stamp the line carries (a DISCOUNTED / MANUAL line), copied when the unit is gone. */
+  overrideReason?: string | null;
+  overriddenBy?: string | null;
 }
 
 /** A Prisma `Decimal` (or number/string) — coerced once by `toLadderProduct`. */
@@ -506,12 +509,18 @@ export function buildUnitLine(input: {
           overrideReason: held.overrideReason ?? null,
           overriddenBy: held.overriddenBy ?? undefined,
         }
-      : input.overriddenBy
-        ? {
-            overrideReason: item.overrideReason?.trim() || null,
-            overriddenBy: input.overriddenBy,
+      : gone && snap && !decision
+        ? // a gone unit with no typed price re-writes the snapshot: its override keeps ITS reason and user
+          {
+            overrideReason: snap.overrideReason ?? null,
+            overriddenBy: snap.overriddenBy ?? undefined,
           }
-        : null;
+        : input.overriddenBy
+          ? {
+              overrideReason: item.overrideReason?.trim() || null,
+              overriddenBy: input.overriddenBy,
+            }
+          : null;
 
   // The real subtotal, now that tier pricing has resolved the actual unitPrice — the split
   // above is already buildLine-validated, so computeLineSubtotalStrict never throws here.
