@@ -8,6 +8,7 @@ import type {
   PriceHistoryRow,
   PriceHistorySummary,
   PriceSummaryResponse,
+  PRICE_SUMMARY_MAX_PRODUCTS as SHARED_PRICE_SUMMARY_MAX_PRODUCTS,
 } from "@routeflow/types";
 import {
   ACCRUAL_REVENUE_STATUSES,
@@ -25,15 +26,22 @@ const ISSUED_STATUSES = { notIn: [...ACCRUAL_REVENUE_STATUSES.notIn] };
 
 export const PRICE_HISTORY_DEFAULT_LIMIT = 25;
 export const PRICE_HISTORY_MAX_LIMIT = 100;
-export const PRICE_SUMMARY_MAX_PRODUCTS = 50;
+/**
+ * The API-side copy of the shared `PRICE_SUMMARY_MAX_PRODUCTS` (the API never imports `@routeflow/types`
+ * at runtime). Typed as the shared constant's literal type, so a change there fails to compile here;
+ * the parity spec pins the values equal.
+ */
+export const PRICE_SUMMARY_MAX_PRODUCTS: typeof SHARED_PRICE_SUMMARY_MAX_PRODUCTS = 50;
 /** `?compare=all` looks back this far over OTHER customers' invoiced sales. */
 export const COMPARE_WINDOW_DAYS = 180;
 /** Fewer distinct other customers than this and the aggregate is withheld (cannot be anonymised). */
 export const COMPARE_MIN_CUSTOMERS = 3;
 const COMPARE_INVOICE_CAP = 2000;
 /**
- * The price-summary scan reads the customer's newest 500 issued invoices, NOT 500 per product, so a
- * rarely-sold product can be hidden behind frequent ones (a per-product cap is a later change).
+ * The price-summary scan reads the customer's newest 500 issued invoices that contain at least one
+ * requested product (honouring `excludeOrderId`), NOT 500 per product, so a rarely-sold product can be
+ * hidden behind frequent ones (a per-product cap is a later change). Each request of <= 50 ids scans
+ * separately: a caller that chunks a longer list gets one independent scan per chunk.
  */
 const SUMMARY_INVOICE_CAP = 500;
 
@@ -634,6 +642,7 @@ export class CustomerPriceHistoryService {
             date: c.row.date,
             unitPrice: c.row.unitPrice,
             unitLabel: c.row.unitLabel,
+            unitsPerBox: c.row.unitsPerBox,
           });
         }
       }

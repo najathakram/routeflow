@@ -239,6 +239,12 @@ describe("CustomerPriceHistoryService v1.1", () => {
   describe("price-summary batch", () => {
     const sum = (ids: string) => service.getPriceSummary("c1", ids, { role: UserRole.OPERATOR });
 
+    it("the API cap equals the shared PRICE_SUMMARY_MAX_PRODUCTS", () => {
+      const shared = (require("@routeflow/types") as { PRICE_SUMMARY_MAX_PRODUCTS: number })
+        .PRICE_SUMMARY_MAX_PRODUCTS;
+      expect(PRICE_SUMMARY_MAX_PRODUCTS).toBe(shared);
+    });
+
     it("rejects empty and >50 distinct ids; dedupes", async () => {
       await expect(sum("")).rejects.toBeInstanceOf(BadRequestException);
       const ids51 = Array.from({ length: PRICE_SUMMARY_MAX_PRODUCTS + 1 }, (_, i) => `p${i}`);
@@ -306,10 +312,13 @@ describe("CustomerPriceHistoryService v1.1", () => {
         date: "2026-06-04T00:00:00.000Z",
         unitPrice: 12,
         unitLabel: "pc",
+        unitsPerBox: null,
       });
       expect([r.p1.low, r.p1.high]).toEqual([9, 12]);
       expect(r.p2).toEqual({
-        last3: [{ date: "2026-06-03T00:00:00.000Z", unitPrice: 5, unitLabel: "pc" }],
+        last3: [
+          { date: "2026-06-03T00:00:00.000Z", unitPrice: 5, unitLabel: "pc", unitsPerBox: null },
+        ],
         low: 5,
         high: 5,
         unitLabel: "pc",
@@ -444,6 +453,32 @@ describe("CustomerPriceHistoryService v1.1", () => {
       ]);
     });
 
+    it("each last3 row carries its OWN pack size (a 24-pack and a 12-pack are not interchangeable)", async () => {
+      const boxLine = (price: number, pack: number | null) =>
+        line({
+          productId: "p1",
+          unitPrice: price,
+          unitLabel: "Box",
+          boxes: 1,
+          pieces: 0,
+          unitsPerBox: pack,
+        });
+      prisma.invoice.findMany.mockResolvedValue([
+        { ...inv("c", "2026-06-03T00:00:00Z", 24), items: [boxLine(24, 24)] },
+        { ...inv("b", "2026-06-02T00:00:00Z", 12), items: [boxLine(12, 12)] },
+        {
+          ...inv("a", "2026-06-01T00:00:00Z", 2),
+          items: [line({ productId: "p1", unitPrice: 2, unitLabel: "Each" })],
+        },
+      ]);
+      const r = await sum("p1");
+      expect(r.p1.last3.map((x) => [x.unitPrice, x.unitLabel, x.unitsPerBox])).toEqual([
+        [24, "Box", 24],
+        [12, "Box", 12],
+        [2, "Each", null],
+      ]);
+    });
+
     it("matches the single endpoint's invoiced rows for the same product", async () => {
       prisma.invoice.findMany.mockResolvedValue([
         inv("c", "2026-06-03T00:00:00Z", 11),
@@ -460,7 +495,12 @@ describe("CustomerPriceHistoryService v1.1", () => {
         single.rows
           .filter((x) => x.source === "INVOICE")
           .slice(0, 3)
-          .map((x) => ({ date: x.date, unitPrice: x.unitPrice, unitLabel: x.unitLabel })),
+          .map((x) => ({
+            date: x.date,
+            unitPrice: x.unitPrice,
+            unitLabel: x.unitLabel,
+            unitsPerBox: x.unitsPerBox,
+          })),
       );
     });
   });

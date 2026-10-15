@@ -16,7 +16,9 @@ jest.mock("@/lib/api-client", () => ({
 
 const summaryFor = (price: number): PriceSummaryResponse => ({
   p1: {
-    last3: [{ date: "2026-09-20T00:00:00.000Z", unitPrice: price, unitLabel: "case" }],
+    last3: [
+      { date: "2026-09-20T00:00:00.000Z", unitPrice: price, unitLabel: "case", unitsPerBox: 24 },
+    ],
     low: price,
     high: price,
     unitLabel: "case",
@@ -56,5 +58,15 @@ describe("PriceChips across a customer change", () => {
 
     rerender(tree(null, qc)); // no customer chosen: disabled
     expect(screen.queryByRole("button", { name: /Use last price/ })).not.toBeInTheDocument();
+  });
+
+  it("a failed batch request renders no chips at all", async () => {
+    mockGet.mockImplementation(() => Promise.reject(new Error("boom")));
+    const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+    render(tree("A", qc));
+    await waitFor(() => expect(mockGet).toHaveBeenCalled());
+    await new Promise((r) => setTimeout(r, 20));
+    expect(screen.queryByRole("button", { name: /Use last price/ })).not.toBeInTheDocument();
+    expect(screen.queryByLabelText("Recent prices")).not.toBeInTheDocument();
   });
 });

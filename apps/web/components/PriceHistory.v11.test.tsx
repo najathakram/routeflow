@@ -3,7 +3,7 @@ import userEvent from "@testing-library/user-event";
 import { QueryClient } from "@tanstack/react-query";
 import { renderWithProviders, screen, waitFor, within, fireEvent } from "@/test-utils/render";
 import { LineItemRow, type LineItemRowItem, type LineItemRowProps } from "./LineItemRow";
-import { PriceHistoryButton } from "./PriceHistory";
+import { PriceChips, PriceHistoryButton } from "./PriceHistory";
 import type {
   PriceHistoryResponse,
   PriceHistoryRow,
@@ -310,9 +310,9 @@ describe("inline last-3 chips (real onTapPrice configuration)", () => {
 
   const sum = (over: Partial<PriceSummaryEntry> = {}): PriceSummaryEntry => ({
     last3: [
-      { date: "2026-09-25T00:00:00.000Z", unitPrice: 13, unitLabel: "case" },
-      { date: "2026-09-20T00:00:00.000Z", unitPrice: 12, unitLabel: "case" },
-      { date: "2026-09-10T00:00:00.000Z", unitPrice: 11, unitLabel: "case" },
+      { date: "2026-09-25T00:00:00.000Z", unitPrice: 13, unitLabel: "case", unitsPerBox: 24 },
+      { date: "2026-09-20T00:00:00.000Z", unitPrice: 12, unitLabel: "case", unitsPerBox: 24 },
+      { date: "2026-09-10T00:00:00.000Z", unitPrice: 11, unitLabel: "case", unitsPerBox: 24 },
     ],
     low: 11,
     high: 13,
@@ -342,23 +342,80 @@ describe("inline last-3 chips (real onTapPrice configuration)", () => {
     expect(mockGet.mock.calls.some((c) => String(c[0]).includes("/price-summary"))).toBe(false);
   });
 
-  it("only offers prices in the line's unit", async () => {
-    const entry = sum({
-      last3: [
-        { date: "2026-09-25T00:00:00.000Z", unitPrice: 1.5, unitLabel: "each" },
-        { date: "2026-09-20T00:00:00.000Z", unitPrice: 12, unitLabel: "box" },
-      ],
-      unitLabel: "each",
-      unitsPerBox: null,
-    });
+  const renderChips = (entry: PriceSummaryEntry) =>
     renderRow(
       props({
         customerPriceHistory: { customerId: "c1", onUsePrice: jest.fn(), summary: { p1: entry } },
       }),
     );
+
+  it("only offers prices in the line's unit and pack (a row's own pack decides)", async () => {
+    renderChips(
+      sum({
+        last3: [
+          {
+            date: "2026-09-25T00:00:00.000Z",
+            unitPrice: 1.5,
+            unitLabel: "each",
+            unitsPerBox: null,
+          },
+          { date: "2026-09-20T00:00:00.000Z", unitPrice: 12, unitLabel: "box", unitsPerBox: 24 },
+        ],
+        unitLabel: "each",
+        unitsPerBox: null,
+      }),
+    );
     const chips = await screen.findAllByRole("button", { name: /^Use last price/ });
     expect(chips).toHaveLength(1);
     expect(chips[0]).toHaveTextContent("$12.00");
+  });
+
+  it("Scenario A: a 12-pack row never offers its price on a 24-pack line (newest sale is a 24-pack)", async () => {
+    renderChips(
+      sum({
+        last3: [
+          { date: "2026-09-25T00:00:00.000Z", unitPrice: 24, unitLabel: "Box", unitsPerBox: 24 },
+          { date: "2026-09-20T00:00:00.000Z", unitPrice: 12, unitLabel: "Box", unitsPerBox: 12 },
+        ],
+        unitLabel: "Box",
+        unitsPerBox: 24,
+      }),
+    );
+    const chips = await screen.findAllByRole("button", { name: /^Use last price/ });
+    expect(chips.map((c) => c.textContent)).toEqual([expect.stringContaining("$24.00")]);
+    expect(screen.queryByRole("button", { name: /Use last price \$12\.00/ })).toBeNull();
+  });
+
+  it("Scenario B: a 12-pack row behind a newer piece sale never offers its price on a 24-pack line", async () => {
+    renderChips(
+      sum({
+        last3: [
+          {
+            date: "2026-09-25T00:00:00.000Z",
+            unitPrice: 1.5,
+            unitLabel: "each",
+            unitsPerBox: null,
+          },
+          { date: "2026-09-20T00:00:00.000Z", unitPrice: 12, unitLabel: "Box", unitsPerBox: 12 },
+          { date: "2026-09-10T00:00:00.000Z", unitPrice: 23, unitLabel: "Box", unitsPerBox: 24 },
+        ],
+        unitLabel: "each",
+        unitsPerBox: null,
+      }),
+    );
+    const chips = await screen.findAllByRole("button", { name: /^Use last price/ });
+    expect(chips).toHaveLength(1);
+    expect(chips[0]).toHaveTextContent("$23.00");
+    expect(screen.queryByRole("button", { name: /Use last price \$12\.00/ })).toBeNull();
+  });
+
+  it("chips themselves make no request (rendered without the popover button)", async () => {
+    renderWithProviders(
+      <PriceChips entry={sum()} unitHint="case" packHint={24} onUsePrice={jest.fn()} />,
+    );
+    expect(await screen.findAllByRole("button", { name: /^Use last price/ })).toHaveLength(3);
+    await new Promise((r) => setTimeout(r, 30));
+    expect(mockGet).not.toHaveBeenCalled();
   });
 
   it("every line gets chips: no mount-time budget (8 lines > AUTO_FETCH_BUDGET)", async () => {

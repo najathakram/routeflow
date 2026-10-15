@@ -10,7 +10,9 @@ jest.mock("@/lib/api-client", () => ({
 }));
 
 const entry = (price: number) => ({
-  last3: [{ date: "2026-09-20T00:00:00.000Z", unitPrice: price, unitLabel: "case" }],
+  last3: [
+    { date: "2026-09-20T00:00:00.000Z", unitPrice: price, unitLabel: "case", unitsPerBox: 24 },
+  ],
   low: price,
   high: price,
   unitLabel: "case",
@@ -101,6 +103,63 @@ describe("usePriceSummary", () => {
     rerender({ c: "c2" });
     expect(result.current.data).toBeUndefined();
     rerender({ c: null });
+    expect(result.current.data).toBeUndefined();
+  });
+
+  it("same customer, a product is added: the old entries stay while the new key loads", async () => {
+    let release: (v: unknown) => void = () => undefined;
+    mockGet.mockImplementation((_u: string, cfg: { params: { productIds: string } }) =>
+      cfg.params.productIds === "a"
+        ? Promise.resolve({ data: { a: entry(18.75) } })
+        : new Promise((r) => {
+            release = r;
+          }),
+    );
+    const { result, rerender } = renderHook(({ ids }) => usePriceSummary("c1", ids), {
+      wrapper: wrap(newQc()),
+      initialProps: { ids: ["a"] },
+    });
+    await waitFor(() => expect(result.current.data?.a?.low).toBe(18.75));
+    rerender({ ids: ["a", "b"] }); // new key, request pending
+    expect(result.current.isFetching).toBe(true);
+    expect(result.current.data?.a?.low).toBe(18.75); // chips do not blank
+    release({ data: { a: entry(18.75), b: entry(5) } });
+    await waitFor(() => expect(result.current.data?.b?.low).toBe(5));
+  });
+
+  it("a customer change after adding a product still shows nothing of the old customer", async () => {
+    mockGet.mockImplementation((url: string) =>
+      url.includes("/c1/")
+        ? Promise.resolve({ data: { a: entry(18.75) } })
+        : new Promise(() => undefined),
+    );
+    const { result, rerender } = renderHook(({ c, ids }) => usePriceSummary(c, ids), {
+      wrapper: wrap(newQc()),
+      initialProps: { c: "c1" as string | null, ids: ["a"] },
+    });
+    await waitFor(() => expect(result.current.data?.a?.low).toBe(18.75));
+    rerender({ c: "c2", ids: ["a", "b"] }); // customer AND ids change together
+    expect(result.current.data).toBeUndefined();
+  });
+
+  it("passes the react-query abort signal to the request", async () => {
+    const { result } = renderHook(() => usePriceSummary("c1", ["a"]), { wrapper: wrap(newQc()) });
+    await waitFor(() => expect(result.current.data).toBeDefined());
+    const cfg = mockGet.mock.calls[0]![1] as { signal?: AbortSignal };
+    expect(cfg.signal).toBeInstanceOf(AbortSignal);
+  });
+
+  it("one chunk rejecting fails the whole batch: no data, an error, never a partial merge", async () => {
+    const ids = Array.from({ length: 120 }, (_, i) => `p${String(i).padStart(3, "0")}`);
+    mockGet.mockImplementation((_u: string, cfg: { params: { productIds: string } }) =>
+      cfg.params.productIds.startsWith("p050")
+        ? Promise.reject(new Error("boom"))
+        : Promise.resolve({
+            data: Object.fromEntries(cfg.params.productIds.split(",").map((id) => [id, entry(10)])),
+          }),
+    );
+    const { result } = renderHook(() => usePriceSummary("c1", ids), { wrapper: wrap(newQc()) });
+    await waitFor(() => expect(result.current.isError).toBe(true));
     expect(result.current.data).toBeUndefined();
   });
 });

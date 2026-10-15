@@ -71,9 +71,16 @@ export interface PriceHistoryAggregate {
   unitLabel: string;
 }
 
+/** `GET /customers/:customerId/price-summary` refuses more than this many distinct product ids. */
+export const PRICE_SUMMARY_MAX_PRODUCTS = 50;
+
 /** One product in `GET /customers/:customerId/price-summary`. */
 export interface PriceSummaryEntry {
-  last3: { date: string; unitPrice: number; unitLabel: string }[];
+  /**
+   * The newest sales, each in ITS OWN unit AND pack size (`unitsPerBox`, null = unknown / sold by the
+   * piece). A chip may only be offered for a line whose pack matches the row's own, never the entry's.
+   */
+  last3: { date: string; unitPrice: number; unitLabel: string; unitsPerBox: number | null }[];
   /** Low / high of the NEWEST sale's unit group only (never units mixed); null with no sales. */
   low: number | null;
   high: number | null;

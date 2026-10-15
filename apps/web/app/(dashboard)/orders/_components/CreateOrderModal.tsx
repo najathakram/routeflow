@@ -401,7 +401,7 @@ export function CreateOrderModal({
   // ONE batched request feeds every line's "Recent prices" chips (no per-line request, no mount budget).
   // This screen creates a new order, so there is no order of its own to exclude.
   const { data: priceSummary } = usePriceSummary(
-    selectedCustomer?.id,
+    isOpen ? selectedCustomer?.id : null,
     lineItems.map((l) => (l.isUnlisted ? null : l.productId)),
   );
 

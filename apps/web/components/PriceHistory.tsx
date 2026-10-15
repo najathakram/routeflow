@@ -659,12 +659,10 @@ export function PriceChips({
   packHint?: number | null;
   onUsePrice: (price: number) => void;
 }) {
-  // The entry carries ONE pack size, the newest sale's unit group's; an older sale in another unit has
-  // an unknown pack (null = unknown, which `canUseHistoryPrice` already treats as "unit match only").
-  const all = (entry?.last3 ?? []).map((r) => ({
-    ...r,
-    unitsPerBox: sameUnit(r.unitLabel, entry?.unitLabel) ? (entry?.unitsPerBox ?? null) : null,
-  }));
+  // Each row carries its OWN pack size (null = unknown / sold by the piece), so `canUseHistoryPrice`
+  // judges a chip exactly as it judges the same sale in the popover. Never borrow the entry's pack:
+  // the server groups by label and pack, and two pack sizes can share a label ("Box").
+  const all = entry?.last3 ?? [];
   const unitCount = new Set(all.map((r) => normUnit(r.unitLabel))).size;
   const rows = all
     .filter((r) => canUseHistoryPrice(r, unitHint, packHint, unitCount))

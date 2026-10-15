@@ -12,6 +12,7 @@ import type {
   PriceSummaryEntry,
   PriceSummaryResponse,
 } from "@routeflow/types";
+import { PRICE_SUMMARY_MAX_PRODUCTS } from "@routeflow/types";
 
 // The contract (rows, summaries, `references`, the `?compare=all` `aggregate`) is `@routeflow/types`
 // (price-history.ts): re-exported here, never redeclared.
@@ -138,10 +139,7 @@ export function usePrefetchPriceHistory(
   }, [qc, customerId, productId, limit, enabled, excludeOrderId]);
 }
 
-/** The endpoint refuses more than this many distinct product ids per request. */
-export const PRICE_SUMMARY_MAX_IDS = 50;
-
-export const priceSummaryKey = (
+const priceSummaryKey = (
   customerId: string | null | undefined,
   sortedIds: readonly string[],
   excludeOrderId?: string | null,
@@ -151,10 +149,11 @@ const fetchPriceSummary = async (
   customerId: string,
   sortedIds: readonly string[],
   excludeOrderId?: string | null,
+  signal?: AbortSignal,
 ): Promise<PriceSummaryResponse> => {
   const chunks: string[][] = [];
-  for (let i = 0; i < sortedIds.length; i += PRICE_SUMMARY_MAX_IDS) {
-    chunks.push(sortedIds.slice(i, i + PRICE_SUMMARY_MAX_IDS));
+  for (let i = 0; i < sortedIds.length; i += PRICE_SUMMARY_MAX_PRODUCTS) {
+    chunks.push(sortedIds.slice(i, i + PRICE_SUMMARY_MAX_PRODUCTS));
   }
   const parts = await Promise.all(
     chunks.map((ids) =>
@@ -164,6 +163,7 @@ const fetchPriceSummary = async (
             productIds: ids.join(","),
             ...(excludeOrderId ? { excludeOrderId } : {}),
           },
+          signal,
         })
         .then((r) => r.data as PriceSummaryResponse),
     ),
@@ -187,11 +187,14 @@ export function usePriceSummary(
   const sortedIds = React.useMemo(() => (idKey ? idKey.split(",") : []), [idKey]);
   return useQuery<PriceSummaryResponse>({
     queryKey: priceSummaryKey(customerId, sortedIds, excludeOrderId),
-    queryFn: () => fetchPriceSummary(customerId!, sortedIds, excludeOrderId),
+    queryFn: ({ signal }) => fetchPriceSummary(customerId!, sortedIds, excludeOrderId, signal),
     enabled: !!customerId && sortedIds.length > 0,
     staleTime: 30_000,
     retry: false,
-    // NO placeholderData (same reason as usePriceHistory): a changed customer must not show the
-    // previous customer's prices or their "use this price" chips.
+    // Adding a product re-keys the query: keep the SAME customer's chips on screen while it loads.
+    // Never across a customer change (placeholderData ignores `enabled`, and a stale chip would put
+    // customer A's price on B's order): the previous query's customer id (key index 1) must match.
+    placeholderData: (prev, prevQuery) =>
+      prevQuery?.queryKey[1] === customerId ? prev : undefined,
   });
 }
