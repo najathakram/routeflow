@@ -860,22 +860,41 @@ export class BillingCronService {
           where: { id: s.tenantId },
           data: { status: "READ_ONLY", readOnlyReason: "subscription_cancelled" },
         });
-        // Deactivate the cancelled subscription's add-ons: the negative delta above already
-        // removed their run-rate, so the rows must follow suit — otherwise a later reactivation
-        // via subscribe() sees them still-active (deltaQty=0) and never re-adds the +add-on delta,
-        // drifting the ledger below the snapshot. (A non-paying tenant holding "active" paid
-        // add-ons is itself incorrect state.)
-        // NOTE for support: this drops admin-granted "ships dark" SKUs too (MSRP, SALES_AGENTS,
-        // REGULATED_ITEMS). They are outside SELF_SERVICE_ADDON_SKUS, so a re-subscribe cannot
-        // bring them back — platform-admin must re-grant them after the tenant reactivates.
+        // SA-787 C1: the lock changes the tenant's STATUS, never its entitlements. Every add-on stays exactly as
+        // it was (`active`, price, `isComp`, quantity), so every reactivation path already has the add-ons the
+        // tenant held (B865 / SA-277 FIX-4: `subscribe()` books a re-picked add-on whenever the tenant was not
+        // paying; the other crossings book the active billable rows), and the regulated record-keeping that SA-776
+        // keeps running for a READ_ONLY tenant keeps its gate. Only the Stripe item pointers clear: the
+        // subscription's items died with it, so a later admin disable never calls Stripe on a dead item.
+        // `addonsKept` records what stayed on (read by the daily add-on invariant); it restores nothing.
+        const addonsKept = (
+          await tx.tenantAddon.findMany({
+            where: { tenantId: s.tenantId, active: true },
+            select: {
+              id: true,
+              addonKey: true,
+              sku: true,
+              quantity: true,
+              priceSnapshot: true,
+              isComp: true,
+            },
+          })
+        ).map((r) => ({
+          id: r.id,
+          addonKey: r.addonKey,
+          sku: r.sku,
+          quantity: r.quantity,
+          priceSnapshot: r.priceSnapshot != null ? Number(r.priceSnapshot) : null,
+          isComp: r.isComp,
+        }));
         await tx.tenantAddon.updateMany({
-          where: { tenantId: s.tenantId, active: true },
-          data: { active: false },
+          where: { tenantId: s.tenantId, active: true, stripeItemId: { not: null } },
+          data: { stripeItemId: null },
         });
         await this.events.emit(
           s.tenantId,
           BILLING_EVENTS.SUBSCRIPTION_CANCELED,
-          { appliedAt: now.toISOString() },
+          { appliedAt: now.toISOString(), addonsKept },
           { amountDelta: contribution ? -contribution : 0, tx },
         );
         return true;

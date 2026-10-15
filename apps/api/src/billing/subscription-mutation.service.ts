@@ -72,8 +72,11 @@ import {
   billLeavingAddonsAfterCommit,
   inclusionOf,
   manualPayContext,
+  NO_STRIPE_PUSH,
   readActiveRows,
   readEnteringInclusion,
+  repriceAddonsLeavingInclusionTx,
+  stopBillingIncludedAddonsTx,
   targetVersionFor,
   usd,
   type AddonSkuDef,
@@ -476,6 +479,9 @@ export class SubscriptionMutationService {
     const removedItemIds = new Set(droppedBilled.map((x: any) => x.row.stripeItemId as string));
 
     const exitBox: { exit: PauseExit | null } = { exit: null };
+    // SA-787 C3: STRIPE rows an inclusion change prices; billed AFTER the commit below.
+    let leavingToBill: LeavingAddon[] = [];
+    let tenantLabelForNotice = tenantId;
     await this.prisma.$transaction(async (tx) => {
       // B865 / SA-277 FIX-2 (house lock order): tenant row lock FIRST, before any
       // subscription/add-on read or write in this tx.
@@ -616,6 +622,46 @@ export class SubscriptionMutationService {
       }
 
       await this.planTransition.onPlanChange(tx, transition, preparedTransition);
+      // SA-787 C3 / SA-786: a plan pick moves what the plan includes - the SAME two helpers every plan writer calls.
+      // BEFORE the plan write, so "paying" is judged from the plan the tenant is leaving (a tenant coming from a
+      // non-paying status books nothing here; the crossing below books each kept row at its adjusted price).
+      const adjustedPrice = new Map<string, number>();
+      tenantLabelForNotice = lockedTenant.name ?? lockedTenant.slug ?? tenantId;
+      const addonMode = this.addonModeOf(lockedSub);
+      for (const r of await stopBillingIncludedAddonsTx(tx, this.events, {
+        tenantId,
+        fromPlanKey: lockedFromKey,
+        toPlanKey: input.planKey,
+        toPlanName: def.name,
+        addonSkus: version.addonSkus,
+        ctx: NO_STRIPE_PUSH,
+        manualPay: addonMode === "MANUAL",
+        tenantLabel: tenantLabelForNotice,
+        actorId,
+      })) {
+        adjustedPrice.set(r.id, 0);
+      }
+      const leaving = await repriceAddonsLeavingInclusionTx(tx, this.events, {
+        tenantId,
+        fromPlanKey: lockedFromKey,
+        fromAddonSkus: version.addonSkus,
+        toPlanKey: input.planKey,
+        toPlanName: def.name,
+        toAddonSkus: version.addonSkus,
+        mode: addonMode,
+        tenantLabel: tenantLabelForNotice,
+        dateLabel:
+          addonMode === "MANUAL"
+            ? formatInZone(now, await dunningZone(tx as never, tenantId), {
+                month: "long",
+                day: "numeric",
+                year: "numeric",
+              })
+            : "",
+        actorId,
+      });
+      for (const r of leaving.repriced) adjustedPrice.set(r.id, r.monthlyPrice);
+      leavingToBill = leaving.toBill;
       // #2223 / SA-444c (ii): a negotiated fee is what the tenant pays — a cycle change or re-subscribe
       // moves the plan/cycle, never the price. Both upsert branches write override ?? catalog.
       const override = priceOverrideOf(lockedSub);
@@ -794,7 +840,7 @@ export class SubscriptionMutationService {
           tenantId,
           kept.map((row) => ({
             sku: addonSkuCode(row)!,
-            priceSnapshot: row.priceSnapshot,
+            priceSnapshot: adjustedPrice.get(row.id) ?? row.priceSnapshot,
             quantity: row.quantity,
           })),
           wasPaying,
@@ -807,6 +853,16 @@ export class SubscriptionMutationService {
     this.entitlements.invalidate(tenantId);
     this.tenantStatus.invalidate(tenantId);
     await this.dunning?.clearPauseAfterCommit(exitBox.exit); // leaving a pause also leaves Stripe's pause_collection
+    // SA-787 C3, STRIPE: an add-on the old plan included is billed after the commit (a throw flags the tenant).
+    await billLeavingAddonsAfterCommit({ prisma: this.prisma, logger: this.logger }, this, {
+      tenantId,
+      tenantLabel: tenantLabelForNotice,
+      fromPlanName: findPlanDefinition(version.definitions, fromKey)?.name ?? fromKey ?? "its plan",
+      rows: leavingToBill,
+      toSkus: version.addonSkus,
+      opts: { prorationBehavior: "always_invoice" },
+      actorId,
+    });
     return { quote, subscription: await this.subscription.getSubscription(tenantId) };
   }
 
@@ -1067,6 +1123,22 @@ export class SubscriptionMutationService {
       seatAckRequired,
       repricedAddons,
       ...(warnings.length ? { warning: warnings.join(" ") } : {}),
+    };
+  }
+
+  /**
+   * SA-787 C3: the published catalog's add-on SKUs and plan names, for the checkout-completed handler's inclusion
+   * step (BillingService holds no catalog of its own).
+   */
+  async inclusionCatalog(): Promise<{
+    addonSkus: readonly AddonSkuDef[];
+    planNameOf(planKey: string): string;
+  }> {
+    const published = await this.catalog.getPublishedCatalog();
+    return {
+      addonSkus: published.addonSkus,
+      planNameOf: (planKey) =>
+        findPlanDefinition(published.definitions ?? [], planKey)?.name ?? planKey,
     };
   }
 

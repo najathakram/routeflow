@@ -8,7 +8,7 @@
  *
  *   INCLUSION  the (file, function) calls an inclusion helper in the same function;
  *   EXEMPT     creates the subscription as STARTER, or only fills a NULL key: no add-on can be included or left;
- *   SA-787     `subscribe()` and the checkout-completed upsert, until SA-787 C3 moves them to INCLUSION.
+ *   SA-787     (none left: SA-787 moved `subscribe()` and the checkout-completed upsert to INCLUSION).
  *
  * Comments are blanked, the detector has a self-test, and an empty scan fails.
  */
@@ -75,13 +75,13 @@ export const PLAN_KEY_WRITERS: readonly {
   },
   {
     id: "billing/subscription-mutation.service.ts#subscribe",
-    kind: "SA-787",
+    kind: "INCLUSION",
     calls: 1,
     reason: "SA-787 C3: the plan pick",
   },
   {
     id: "billing/billing.service.ts#onCheckoutCompleted",
-    kind: "SA-787",
+    kind: "INCLUSION",
     calls: 2,
     reason: "SA-787 C3: checkout-completed upsert (both transaction shapes)",
   },
@@ -150,6 +150,10 @@ describe("SA-786 P2 - every writer of TenantSubscription.planKey is classified",
     const classified = new Map(PLAN_KEY_WRITERS.map((w) => [w.id, w.calls]));
     expect([...found.entries()].filter(([id, n]) => classified.get(id) !== n)).toEqual([]);
     expect([...classified.entries()].filter(([id, n]) => found.get(id) !== n)).toEqual([]);
+  });
+
+  it("SA-787 has no rows left", () => {
+    expect(PLAN_KEY_WRITERS.filter((w) => w.kind === "SA-787")).toEqual([]);
   });
 
   it("every INCLUSION writer calls an inclusion helper inside its own function", () => {

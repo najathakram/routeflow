@@ -88,6 +88,7 @@ import { writeAdminNotice } from "./manual-invoice-notice";
 import { TENANT_PRICE_LOCK_SELF_SERVE_WAIT_MS, underTenantPriceLock } from "./price-lock";
 import { ADMIN_AUDIT_ENTITY, AdminAuditAction } from "../platform-admin/audit-actions.constant";
 import { retryOnTxConflict } from "../common/tx-retry";
+import { NO_STRIPE_PUSH, stopBillingIncludedAddonsTx } from "./addon-inclusion";
 import { withCheckoutPolicy } from "./checkout-session-params";
 import {
   STRIPE_CHECKOUT_APPLIED_ACTION,
@@ -2156,6 +2157,13 @@ export class BillingService {
         : null;
     const preparedTransition = transition ? await this.planTransition.prepare(transition) : null;
 
+    // SA-787 C3: a checkout that MOVES the plan moves what the plan includes. The published catalog is read here,
+    // outside the transaction; the rows are touched inside it (below), BEFORE the plan write. An add-on the NEW plan
+    // includes stops billing and stays on; one it stops including is billed by the adoption step (billUnbilledRow
+    // already bills a $0 row whose SKU the new plan does not include).
+    const inclusion =
+      planKeyForCheckout && !alreadyLinked ? await this.mutations.inclusionCatalog?.() : undefined;
+
     const upsertArgs = {
       where: { tenantId },
       create: {
@@ -2246,6 +2254,13 @@ export class BillingService {
                     );
                   }
                 }
+                await this.stopBillingIncludedAddonsOnCheckoutTx(
+                  tx,
+                  tenantId,
+                  inclusion,
+                  planKeyForCheckout,
+                  existingOverride?.planKey,
+                );
                 const row = await tx.tenantSubscription.upsert(upsertArgs);
                 await this.resetCouponIfSubReplacedTx(tx, tenantId, previousSubId, subscriptionId);
                 // P0 hotfix: only a SETTLED session leaves the marker (an unpaid bank debit is linked, not applied)
@@ -2312,6 +2327,13 @@ export class BillingService {
             await lockTenantForLedger(tx, tenantId);
             await recheckUnderLock(tx);
             const previousSubId = await this.storedStripeSubIdTx(tx, tenantId);
+            await this.stopBillingIncludedAddonsOnCheckoutTx(
+              tx,
+              tenantId,
+              inclusion,
+              planKeyForCheckout,
+              existingOverride?.planKey,
+            );
             const row = await tx.tenantSubscription.upsert(upsertArgs);
             await this.resetCouponIfSubReplacedTx(tx, tenantId, previousSubId, subscriptionId);
             if (session.id && settled) {
@@ -2407,6 +2429,28 @@ export class BillingService {
     await this.resyncPriceAfterCheckout(tenantId, session, subscriptionId);
 
     this.logger.log(`Tenant ${tenantId} activated via checkout (sub: ${subscriptionId})`);
+  }
+
+  /** SA-787 C3: stop billing the add-ons a checkout's plan newly includes (no-op without a plan move). */
+  private async stopBillingIncludedAddonsOnCheckoutTx(
+    tx: Prisma.TransactionClient,
+    tenantId: string,
+    inclusion: Awaited<ReturnType<SubscriptionMutationService["inclusionCatalog"]>> | undefined,
+    toPlanKey: string | null,
+    fromPlanKey: string | null | undefined,
+  ): Promise<void> {
+    if (!inclusion || !toPlanKey) return;
+    await stopBillingIncludedAddonsTx(tx, this.events, {
+      tenantId,
+      fromPlanKey: normalizePlanKey(fromPlanKey),
+      toPlanKey,
+      toPlanName: inclusion.planNameOf(toPlanKey),
+      addonSkus: inclusion.addonSkus,
+      ctx: NO_STRIPE_PUSH,
+      manualPay: false,
+      tenantLabel: "",
+      actorId: null,
+    });
   }
 
   /**

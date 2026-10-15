@@ -34,11 +34,6 @@ export const DEACTIVATION_ALLOWLIST: readonly { file: string; fn: string; reason
     fn: "subscribe",
     reason: "the tenant's own plan pick dropped it (toDisable)",
   },
-  {
-    file: "billing/billing-cron.service.ts",
-    fn: "applyScheduledCancellations",
-    reason: "SA-787 removes this entry: the cancellation lock changes status only",
-  },
 ];
 
 /** True when the call's argument text sets `active: false`. */
