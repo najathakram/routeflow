@@ -35,6 +35,10 @@ function make(
     rereadSubs?: Record<string, Record<string, unknown>>;
     /** SA-733r M7: the StripeService mock (default: not configured, no calls). */
     stripe?: any;
+    /** SA-786: the TenantAddon rows the downgrade transaction reads (the add-ons the old plan may include). */
+    heldAddons?: any[];
+    /** SA-786: the SubscriptionMutationService stand-in that bills a leaving add-on after commit. */
+    mutations?: any;
   } = {},
 ) {
   // #2641: the scanned row IS the committed row unless a test overrides it (a mid-sweep change).
@@ -67,16 +71,32 @@ function make(
         deletedAt: null,
         ...data.lockedTenant,
       }),
+      // emitAddonDelta's paying-set read, after the plan write (SA-786).
+      findUniqueOrThrow: jest.fn().mockResolvedValue({
+        status: "ACTIVE",
+        class: "PRODUCTION",
+        deletedAt: null,
+        ...data.lockedTenant,
+        subscription: { planKey: "GROWTH", couponFull: false },
+      }),
     },
     user: {
       updateMany: jest.fn().mockResolvedValue({ count: 2 }),
       count: jest.fn().mockResolvedValue(data.activeTeam ?? 5),
     },
-    // #2641: the cancellation sweep reads and deactivates add-ons on its locked tx.
+    // #2641: the cancellation sweep reads and deactivates add-ons on its locked tx. SA-786: the downgrade
+    // transaction reads the held rows (its `where` carries no `isComp`, the sweep's billable read does).
     tenantAddon: {
-      findMany: jest.fn().mockResolvedValue(data.cancelAddons ?? []),
-      updateMany: jest.fn().mockResolvedValue({ count: data.cancelAddons?.length ?? 0 }),
+      findMany: jest.fn(async ({ where }: any = {}) =>
+        where?.isComp === false
+          ? (data.cancelAddons ?? [])
+          : (data.heldAddons ?? data.cancelAddons ?? []),
+      ),
+      updateMany: jest.fn(async ({ where }: any = {}) => ({
+        count: where?.id ? 1 : (data.cancelAddons?.length ?? 0),
+      })),
     },
+    auditLog: { create: jest.fn().mockResolvedValue({}) },
   };
   const prisma = {
     tenant: {
@@ -85,6 +105,7 @@ function make(
       // SA-775: expireTrials locks through a compare-and-swap on status TRIAL.
       updateMany: jest.fn().mockResolvedValue({ count: 1 }),
     },
+    auditLog: { create: jest.fn().mockResolvedValue({}) },
     tenantSubscription: {
       findMany: jest.fn(),
       update: jest.fn().mockResolvedValue({}),
@@ -162,7 +183,9 @@ function make(
   } as any;
   const stripe = data.stripe ?? ({ isConfigured: false } as any);
   const scheduledPrice = { applyDue: jest.fn().mockResolvedValue({ pushed: 0, held: 0 }) } as any;
-  const svc = new BillingCronService(
+  // SA-786: the 12th argument is the mutation service that bills a leaving add-on (a cast keeps this builder
+  // compiling against a service that does not take it yet).
+  const svc = new (BillingCronService as unknown as new (...a: unknown[]) => BillingCronService)(
     prisma,
     events,
     entitlements,
@@ -173,6 +196,8 @@ function make(
     planTransition,
     stripe,
     scheduledPrice,
+    undefined,
+    data.mutations,
   );
   return {
     planTransition,
@@ -909,6 +934,189 @@ describe("BillingCronService", () => {
     expect(stripe.updateSubscription).not.toHaveBeenCalled();
   });
 
+  // SA-786 S3 / R6-R8: a scheduled downgrade BELOW the plan that includes an add-on starts to bill it at the TARGET
+  // version's catalog price (owner ruling 2026-10-15, Q-B). The row stays on; MANUAL books it in the flip's own
+  // transaction, STRIPE creates one item AFTER commit, UNBILLED stays at $0.
+  describe("applyScheduledDowngrades - an add-on the old plan included starts to bill (SA-786 R6-R8)", () => {
+    const EFFECTIVE = new Date("2026-11-11T00:00:00.000Z");
+    const regulated = (over: Record<string, unknown> = {}) => ({
+      id: "ta_reg",
+      tenantId: "t1",
+      addonKey: "REGULATED_ITEMS",
+      sku: "REGULATED_ITEMS",
+      quantity: 1,
+      priceSnapshot: 0,
+      stripeItemId: null,
+      isComp: false,
+      active: true,
+      ...over,
+    });
+    const row = (over: Record<string, unknown> = {}) => ({
+      tenantId: "t1",
+      planKey: "SCALE",
+      planVersionId: "v7",
+      downgradeToPlanKey: "GROWTH",
+      downgradeEffectiveAt: EFFECTIVE,
+      retainedUserIds: [],
+      basePriceSnapshot: 499,
+      stripeSubId: null,
+      externalPayment: true,
+      couponFull: false,
+      priceOverrideMonthly: null,
+      priceOverrideAnnual: null,
+      ...over,
+    });
+    const versionWithRegulated = (catalog: any) =>
+      catalog.getVersionForTenant.mockResolvedValue({
+        id: "v7",
+        definitions: [
+          { planKey: "GROWTH", name: "Growth", monthlyPrice: 249, seatsIncluded: 5 },
+          { planKey: "SCALE", name: "Scale", monthlyPrice: 499, seatsIncluded: 15 },
+        ],
+        addonSkus: [
+          {
+            sku: "REGULATED_ITEMS",
+            name: "Regulated items",
+            monthlyPrice: 39,
+            includedAtPlan: "SCALE",
+          },
+        ],
+      });
+    const baseItem = (cents: number) => ({
+      id: "si_base",
+      quantity: 1,
+      price: {
+        unit_amount: cents,
+        currency: "usd",
+        recurring: { interval: "month" },
+        product: "p",
+      },
+    });
+
+    it("R6 MANUAL: the $0 included row is priced at 39 inside the flip, +39 booked once, one DUE notice (kind add); the plan flip is unchanged", async () => {
+      const { svc, tx, events, catalog } = make({
+        downgrades: [row()],
+        heldAddons: [regulated()],
+      });
+      versionWithRegulated(catalog);
+      await svc.applyScheduledDowngrades();
+
+      expect(tx.tenantAddon.updateMany).toHaveBeenCalledWith(
+        expect.objectContaining({
+          where: expect.objectContaining({ id: "ta_reg", isComp: false, stripeItemId: null }),
+          data: { priceSnapshot: 39 },
+        }),
+      );
+      const added = events.emit.mock.calls.filter(
+        (c: any[]) => c[1] === BILLING_EVENTS.ADDON_ENABLED,
+      );
+      expect(added).toHaveLength(1);
+      expect(added[0][3].amountDelta).toBe(39);
+      expect(added[0][2]).toMatchObject({ sku: "REGULATED_ITEMS", reprice: "left_inclusion" });
+      const notices = tx.auditLog.create.mock.calls.map((c: any[]) => c[0].data);
+      expect(notices).toHaveLength(1);
+      expect(notices[0].action).toBe("ADDON_MANUAL_INVOICE_DUE");
+      expect(notices[0].meta).toMatchObject({
+        kind: "add",
+        sku: "REGULATED_ITEMS",
+        monthlyPrice: 39,
+      });
+      expect(notices[0].meta.message).toBe(
+        "Add-on Regulated items is no longer included in Growth for t1: invoice it at $39.00 a month from November 11, 2026",
+      );
+      expect(tx.tenantSubscription.update.mock.calls[0][0].data).toMatchObject({
+        planKey: "GROWTH",
+      });
+    });
+
+    it("R7 STRIPE: nothing is written locally; ONE bill call AFTER commit, plan_change + always_invoice pinned to the new period start", async () => {
+      const mutations = { billAddonsLeavingInclusion: jest.fn() };
+      const stripe = fakeStripeSubscription([baseItem(24900)]);
+      const { svc, tx, prisma, catalog } = make({
+        downgrades: [row({ stripeSubId: "sub_1", externalPayment: false })],
+        heldAddons: [regulated()],
+        stripe,
+        mutations,
+      });
+      versionWithRegulated(catalog);
+      let committed = false;
+      prisma.$transaction.mockImplementation(async (fn: any) => {
+        const out = await fn(tx);
+        committed = true;
+        return out;
+      });
+      mutations.billAddonsLeavingInclusion.mockImplementation(async () => {
+        expect(committed).toBe(true); // billed only after the flip committed
+        return {};
+      });
+      await svc.applyScheduledDowngrades();
+
+      expect(tx.tenantAddon.updateMany).not.toHaveBeenCalled();
+      expect(mutations.billAddonsLeavingInclusion).toHaveBeenCalledTimes(1);
+      const [tenantId, rows, skus, source, opts] =
+        mutations.billAddonsLeavingInclusion.mock.calls[0];
+      expect(tenantId).toBe("t1");
+      expect(rows.map((r: any) => [r.id, r.monthlyPrice])).toEqual([["ta_reg", 39]]);
+      expect(skus.map((k: any) => k.sku)).toEqual(["REGULATED_ITEMS"]);
+      expect(source).toBe("plan_change");
+      expect(opts).toEqual({ prorationBehavior: "always_invoice", prorationDate: EFFECTIVE });
+    });
+
+    it("R7 failure: a throw after commit flags the tenant and writes ONE notice; the plan flip stays committed and the sweep carries on", async () => {
+      const error = jest.spyOn(Logger.prototype, "error").mockImplementation(() => undefined);
+      const mutations = {
+        billAddonsLeavingInclusion: jest.fn().mockRejectedValue(new Error("stripe down")),
+      };
+      const stripe = fakeStripeSubscription([baseItem(24900)]);
+      const { svc, tx, prisma, catalog } = make({
+        downgrades: [row({ stripeSubId: "sub_1", externalPayment: false })],
+        heldAddons: [regulated()],
+        stripe,
+        mutations,
+      });
+      versionWithRegulated(catalog);
+      await expect(svc.applyScheduledDowngrades()).resolves.not.toThrow();
+
+      expect(tx.tenantSubscription.update).toHaveBeenCalledTimes(1); // the flip committed
+      expect(
+        error.mock.calls.map((c) => String(c[0])).filter((m) => m.includes("needs_reconcile")),
+      ).toHaveLength(1);
+      const notices = prisma.auditLog.create.mock.calls.map((c: any[]) => c[0].data);
+      expect(notices).toHaveLength(1);
+      expect(notices[0].meta.message).toBe(
+        "Add-on Regulated items for t1 left Scale and could not be billed: bill it",
+      );
+      error.mockRestore();
+    });
+
+    it("R8 guards: a comp row, a priced row with an item, a quantity > 1 row and an UNBILLED tenant are all left alone", async () => {
+      const manual = make({
+        downgrades: [row()],
+        heldAddons: [
+          regulated({ id: "ta_comp", isComp: true }),
+          regulated({ id: "ta_item", priceSnapshot: 39, stripeItemId: "si_x" }),
+          regulated({ id: "ta_qty", quantity: 3 }),
+        ],
+      });
+      versionWithRegulated(manual.catalog);
+      await manual.svc.applyScheduledDowngrades();
+      expect(manual.tx.tenantAddon.updateMany).not.toHaveBeenCalled();
+      expect(manual.tx.auditLog.create).not.toHaveBeenCalled();
+
+      const unbilled = make({
+        downgrades: [row({ externalPayment: false })],
+        heldAddons: [regulated()],
+      });
+      versionWithRegulated(unbilled.catalog);
+      await unbilled.svc.applyScheduledDowngrades();
+      expect(unbilled.tx.tenantAddon.updateMany).not.toHaveBeenCalled();
+      expect(unbilled.tx.auditLog.create).not.toHaveBeenCalled();
+      expect(
+        unbilled.events.emit.mock.calls.filter((c: any[]) => c[1] === BILLING_EVENTS.ADDON_ENABLED),
+      ).toHaveLength(0);
+    });
+  });
+
   it("N3: applyScheduledDowngrades notifies with the effectiveAt the row carried BEFORE the transaction cleared it", async () => {
     const downgradeEffectiveAt = new Date("2026-09-01T00:00:00.000Z");
     const { svc, billingNotification } = make({
@@ -1198,7 +1406,7 @@ describe("BillingCronService", () => {
     expect(tenantStatus.invalidate).toHaveBeenCalledWith("t1");
   });
 
-  it("applyScheduledCancellations churn delta includes active add-ons + deactivates the add-on rows", async () => {
+  it("SA-787 C1: applyScheduledCancellations churn delta includes active add-ons; the lock changes STATUS only - rows stay active, only dead Stripe pointers clear", async () => {
     const { svc, tx, events } = make({
       cancellations: [
         { tenantId: "t1", planKey: "BUSINESS", basePriceSnapshot: 349, discount: 10 },
@@ -1208,12 +1416,50 @@ describe("BillingCronService", () => {
     await svc.applyScheduledCancellations();
     // −(349 + 12×2 − 10) = −363.
     expect(deltaOf(events, BILLING_EVENTS.SUBSCRIPTION_CANCELED)).toBe(-363);
-    // Rows follow the ledger: the removed add-ons are deactivated so a later reactivation
-    // re-adds their delta symmetrically (no ledger drift).
+    // SA-787 C1: a lock changes the tenant's status, never its entitlements. The subscription's items died with
+    // it, so only the dead pointers clear; `active`, the price, `isComp` and the quantity are never written.
+    expect(tx.tenantAddon.updateMany).toHaveBeenCalledTimes(1);
     expect(tx.tenantAddon.updateMany).toHaveBeenCalledWith({
-      where: { tenantId: "t1", active: true },
-      data: { active: false },
+      where: { tenantId: "t1", active: true, stripeItemId: { not: null } },
+      data: { stripeItemId: null },
     });
+    for (const call of tx.tenantAddon.updateMany.mock.calls) {
+      expect(call[0].data).not.toHaveProperty("active");
+    }
+  });
+
+  it("SA-787 C1: the SUBSCRIPTION_CANCELED event records what stayed on (addonsKept), comps included; it restores nothing", async () => {
+    const kept = [
+      {
+        id: "ta_a",
+        addonKey: "FORECASTING",
+        sku: "FORECASTING",
+        quantity: 1,
+        priceSnapshot: 25,
+        isComp: false,
+      },
+      {
+        id: "ta_c",
+        addonKey: "REGULATED_ITEMS",
+        sku: "REGULATED_ITEMS",
+        quantity: 1,
+        priceSnapshot: 0,
+        isComp: true,
+      },
+    ];
+    const { svc, tx, events } = make({
+      cancellations: [{ tenantId: "t1", planKey: "BUSINESS", basePriceSnapshot: 349, discount: 0 }],
+    });
+    tx.tenantAddon.findMany.mockImplementation(async (a: any) =>
+      a?.where?.isComp === false ? kept.filter((r) => !r.isComp) : kept,
+    );
+    await svc.applyScheduledCancellations();
+
+    const canceled = events.emit.mock.calls.find(
+      (c: any[]) => c[1] === BILLING_EVENTS.SUBSCRIPTION_CANCELED,
+    );
+    expect(canceled[2].addonsKept).toEqual(kept);
+    expect(canceled[3].amountDelta).toBe(-374); // 349 + 25: the comp is never in the run-rate
   });
 
   it("N4: the churn delta never includes a COMP add-on (a platform grant: never billed, never in MRR)", async () => {

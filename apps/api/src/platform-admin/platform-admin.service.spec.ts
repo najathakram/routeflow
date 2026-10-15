@@ -1973,7 +1973,7 @@ describe("PlatformAdminService — audit provenance", () => {
   });
 
   // SA-733 D8 / SA-733r [M7] (B1104 + B1103): the admin plan edit reaches Stripe like the tenant upgrade does —
-  // Stripe-first, one update, the override beating the plan price, the included add-ons retired.
+  // Stripe-first, one update, the override beating the plan price, the included add-ons stop billing and stay on (SA-786).
   describe("updatePlan — Stripe-first plan change (SA-733 D8)", () => {
     const periodStart = new Date("2026-09-01T00:00:00Z");
     const periodEnd = new Date("2026-10-01T00:00:00Z");
@@ -2089,7 +2089,7 @@ describe("PlatformAdminService — audit provenance", () => {
       );
     });
 
-    it("the included add-on's Stripe item is deleted in the same update; the row retires and its MRR books -price once", async () => {
+    it("the included add-on's Stripe item is deleted in the same update; the row stays ACTIVE at $0 and its MRR books -price once (R3)", async () => {
       arrange({ from: "GROWTH", fromKey: "GROWTH", addons: [forecasting] });
       await service.updatePlan(TENANT_ID, { plan: "PROFESSIONAL" } as any, ADMIN_ID);
 
@@ -2100,7 +2100,7 @@ describe("PlatformAdminService — audit provenance", () => {
       });
       expect((prisma as any).tenantAddon.update).toHaveBeenCalledWith({
         where: { id: "ta_fc" },
-        data: { active: false, stripeItemId: null },
+        data: { priceSnapshot: 0, stripeItemId: null },
       });
       const addonDeltas = billingEventService.emit.mock.calls.filter(
         (c: any[]) => c[1] === "addon.disabled",
@@ -2123,7 +2123,7 @@ describe("PlatformAdminService — audit provenance", () => {
       expect(revert.items[0]).toMatchObject({ id: "si_base", price_data: { unit_amount: 24900 } });
     });
 
-    it("review M2: GROWTH -> ENTERPRISE (a custom plan) still retires the add-on the higher plan includes", async () => {
+    it("review M2: GROWTH -> ENTERPRISE (a custom plan) still stops billing the add-on the higher plan includes (R3)", async () => {
       arrange({
         from: "GROWTH",
         fromKey: "GROWTH",
@@ -2138,7 +2138,7 @@ describe("PlatformAdminService — audit provenance", () => {
       expect(params.proration_behavior).toBe("none"); // a custom plan is not a ranked-and-priced upgrade
       expect((prisma as any).tenantAddon.update).toHaveBeenCalledWith({
         where: { id: "ta_fc" },
-        data: { active: false, stripeItemId: null },
+        data: { priceSnapshot: 0, stripeItemId: null },
       });
     });
 
@@ -2275,7 +2275,7 @@ describe("PlatformAdminService — audit provenance", () => {
       expect(stripe.getSubscription).not.toHaveBeenCalled();
     });
 
-    it("a tenant without a Stripe subscription pushes nothing and still retires the included add-on", async () => {
+    it("a tenant without a Stripe subscription pushes nothing and still stops billing the included add-on, which stays ACTIVE at $0 (R3)", async () => {
       arrange({
         from: "GROWTH",
         fromKey: "GROWTH",
@@ -2284,7 +2284,64 @@ describe("PlatformAdminService — audit provenance", () => {
       });
       await service.updatePlan(TENANT_ID, { plan: "PROFESSIONAL" } as any, ADMIN_ID);
       expect(stripe.updateSubscription).not.toHaveBeenCalled();
-      expect((prisma as any).tenantAddon.update).toHaveBeenCalled();
+      expect((prisma as any).tenantAddon.update).toHaveBeenCalledWith({
+        where: { id: "ta_fc" },
+        data: { priceSnapshot: 0, stripeItemId: null },
+      });
+    });
+
+    // SA-786 S2 / R10: the instant DOWN arm (a non-ACTIVE tenant, or a custom plan moving to a ranked one).
+    // A $0 add-on the old plan included starts to bill at the target version's catalog price, per billing mode.
+    describe("instant down-move re-prices an add-on the old plan included (R10)", () => {
+      const included = {
+        ...forecasting,
+        priceSnapshot: 0,
+        stripeItemId: null,
+      };
+      const customToStarter = (sub: Record<string, unknown>, addons: any[] = [included]) =>
+        arrange({ from: "ENTERPRISE", fromKey: "ENTERPRISE", status: "ACTIVE", sub, addons });
+
+      it("MANUAL tenant: priced at the catalog price in the plan-write transaction, +25 booked once, a DUE notice", async () => {
+        customToStarter({ stripeSubId: null, externalPayment: true });
+        await service.updatePlan(TENANT_ID, { plan: "STARTER" } as any, ADMIN_ID);
+
+        expect((prisma as any).tenantAddon.updateMany).toHaveBeenCalledWith(
+          expect.objectContaining({
+            where: expect.objectContaining({ id: "ta_fc", stripeItemId: null, isComp: false }),
+            data: { priceSnapshot: 25 },
+          }),
+        );
+        const enabled = billingEventService.emit.mock.calls.filter(
+          (c: any[]) => c[1] === "addon.enabled",
+        );
+        expect(enabled.map((c: any[]) => c[3].amountDelta)).toEqual([25]);
+        const notices = (prisma as any).auditLog.create.mock.calls.map((c: any[]) => c[0].data);
+        expect(notices.filter((n: any) => n.action === "ADDON_MANUAL_INVOICE_DUE")).toHaveLength(1);
+      });
+
+      it("STRIPE tenant: the row is billed AFTER the plan write through the mutation service (plan_change, always_invoice)", async () => {
+        customToStarter({ stripeSubId: "sub_1" });
+        const billAddonsLeavingInclusion = jest.fn().mockResolvedValue({});
+        (service as any).mutations = { billAddonsLeavingInclusion };
+        await service.updatePlan(TENANT_ID, { plan: "STARTER" } as any, ADMIN_ID);
+
+        expect(billAddonsLeavingInclusion).toHaveBeenCalledTimes(1);
+        const [tenantId, rows, , source, opts] = billAddonsLeavingInclusion.mock.calls[0];
+        expect(tenantId).toBe(TENANT_ID);
+        expect(rows.map((r: any) => r.id)).toEqual(["ta_fc"]);
+        expect(source).toBe("plan_change");
+        expect(opts).toEqual({ prorationBehavior: "always_invoice" });
+        expect((prisma as any).tenantAddon.updateMany).not.toHaveBeenCalled(); // no local re-price for Stripe
+      });
+
+      it("UNBILLED tenant: nothing is written (the row stays at $0 and books nothing)", async () => {
+        customToStarter({ stripeSubId: null, externalPayment: false });
+        await service.updatePlan(TENANT_ID, { plan: "STARTER" } as any, ADMIN_ID);
+        expect((prisma as any).tenantAddon.updateMany).not.toHaveBeenCalled();
+        expect(
+          billingEventService.emit.mock.calls.filter((c: any[]) => c[1] === "addon.enabled"),
+        ).toHaveLength(0);
+      });
     });
   });
 

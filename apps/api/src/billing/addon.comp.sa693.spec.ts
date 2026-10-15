@@ -50,6 +50,9 @@ function make(
     /** A manually-invoiced tenant: externalPayment set, no Stripe subscription. */
     externalPayment?: boolean;
     create?: jest.Mock;
+    /** SA-786: the catalog's `includedAtPlan` for REGULATED_ITEMS and the plan the tenant is on. */
+    includedAtPlan?: string;
+    planKey?: string;
   } = {},
 ) {
   const store = fakeTenantAddonStore(opts.rows as any);
@@ -68,6 +71,7 @@ function make(
           : {
               stripeSubId: opts.stripeSubId ?? null,
               externalPayment: opts.externalPayment ?? false,
+              planKey: opts.planKey ?? null,
             },
       ),
     },
@@ -79,7 +83,15 @@ function make(
   const entitlements = { invalidate: jest.fn() } as any;
   const catalog = {
     getPublishedCatalog: jest.fn().mockResolvedValue({
-      addonSkus: [{ sku: "REGULATED_ITEMS", name: "Regulated", monthlyPrice: 10 }],
+      definitions: [{ planKey: "SCALE", name: "Scale", monthlyPrice: 499 }],
+      addonSkus: [
+        {
+          sku: "REGULATED_ITEMS",
+          name: "Regulated",
+          monthlyPrice: 10,
+          ...(opts.includedAtPlan ? { includedAtPlan: opts.includedAtPlan } : {}),
+        },
+      ],
     }),
   } as any;
   const featureResolver = { invalidate: jest.fn() } as any;
@@ -317,6 +329,53 @@ describe("SA-693 admin uncomp", () => {
     expect(m.create).toHaveBeenCalledTimes(1);
     expect(m.del).toHaveBeenCalledWith("si_new");
     expect(m.store.rows[0]).toMatchObject({ active: false, isComp: true, stripeItemId: null });
+  });
+
+  // SA-786 S8 / R12: at a plan that INCLUDES the SKU, un-comping only drops the comp marker: the add-on stays on
+  // at $0. It is never priced, never announced for manual invoicing and never re-entered into Stripe.
+  it("R12: un-comp at an including plan on a manually-invoiced tenant -> isComp false, $0, no DUE notice, nothing booked", async () => {
+    const { svc, store, audit, events } = make({
+      externalPayment: true,
+      planKey: "SCALE",
+      includedAtPlan: "SCALE",
+      rows: [compRow()],
+    });
+
+    const res = await svc.uncompAddon("t1", "REGULATED_ITEMS");
+
+    expect(store.rows[0]).toMatchObject({ active: true, isComp: false, priceSnapshot: 0 });
+    expect(audit.create).not.toHaveBeenCalled();
+    expect(events.emit).not.toHaveBeenCalled();
+    expect(res.billing).toBe("UNBILLED");
+  });
+
+  it("R12: un-comp at an including plan on a SUBSCRIBED tenant needs no price and makes no Stripe call", async () => {
+    const { svc, store, create, events } = make({
+      stripeSubId: "sub_1",
+      planKey: "SCALE",
+      includedAtPlan: "SCALE",
+      rows: [compRow()],
+    });
+
+    await svc.uncompAddon("t1", "REGULATED_ITEMS");
+
+    expect(create).not.toHaveBeenCalled();
+    expect(store.rows[0]).toMatchObject({ active: true, isComp: false, priceSnapshot: 0 });
+    expect(events.emit).not.toHaveBeenCalled();
+  });
+
+  it("R12 control: below the including plan the manual tenant is still priced and announced", async () => {
+    const { svc, store, audit } = make({
+      externalPayment: true,
+      planKey: "GROWTH",
+      includedAtPlan: "SCALE",
+      rows: [compRow()],
+    });
+
+    await svc.uncompAddon("t1", "REGULATED_ITEMS");
+
+    expect(store.rows[0]).toMatchObject({ isComp: false, priceSnapshot: 10 });
+    expect(audit.create).toHaveBeenCalledTimes(1);
   });
 
   it("M3: a flag-only uncomp leaves the quantity alone", async () => {
