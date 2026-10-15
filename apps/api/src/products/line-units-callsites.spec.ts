@@ -81,7 +81,9 @@ const BASELINE: Record<string, number> = {
   "buyer/buyer.controller.ts": 1,
   "buyer/replenishment.service.ts": 1,
   "buyer/buyer-catalog.service.ts": 3,
-  "inventory/inventory.service.ts": 4,
+  // 3 since the count line's in-tx product read became `live` (SA-767 L-2.4 A): upsertStockCountLine reads
+  // `live.unitsPerBox` to rebuild the boxes/pieces split (a count quantity, not a line factor).
+  "inventory/inventory.service.ts": 3,
   // SA-079: loadProductPackNow's ONE read is classifySaleAxis's boxed-GATE fallback for a
   // box-unaware line with no unitsPerBox snapshot of its own — it derives no line factor,
   // quantity or price. But it is not inert: its output decides whether a return's SALE row is
@@ -141,6 +143,10 @@ const NON_WRITERS = new Set([
   // (incl. unitsPerBox) through to the order builder, which prices every added line through its own add-line
   // path; a past line's own snapshot (unitsPerBox/unitLabel) is returned as ordered. Writes no line.
   "customers/customer-order-suggestions.service.ts",
+  // Row 531: the buyer qty / box-split consistency check reads the live pack of the products the buyer's OWN
+  // payload names, ONLY to compare it with that payload's qty and split (a coded 400 on a disagreement). It
+  // derives no line factor, quantity or price, writes nothing and returns no pack size.
+  "buyer/buyer-qty-split.ts",
 ]);
 
 const strip = (s: string) => s.replace(/\/\*[\s\S]*?\*\//g, "").replace(/(^|[^:])\/\/.*$/gm, "$1");

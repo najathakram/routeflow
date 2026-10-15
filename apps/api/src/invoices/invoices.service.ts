@@ -447,11 +447,11 @@ export class InvoicesService {
       channel: "STAFF",
     });
 
-    // Products (box size + regulated snapshot), the unit ladders and the regulated tax config of every
-    // line: see manual-invoice-context.ts (B659: shared with EstimatesService.convertToInvoice).
+    // Products (box size + regulated snapshot), unit ladders and regulated tax config of every line: manual-invoice-context.ts (B659, shared with estimates); derivedBaseCustomer = units P0b (old-client Piece -> pack pieces at the customer's tier per product)
     const { productMap, categoryMap, unitsByProduct } = await loadManualLineContext(dto.items, {
       prisma: this.prisma,
       entitlements: this.entitlements,
+      derivedBaseCustomer: { id: customer.id, tier: customer.pricingTier ?? 1 },
     });
     const resolved = dto.items.map((it) =>
       resolveLineUnits(

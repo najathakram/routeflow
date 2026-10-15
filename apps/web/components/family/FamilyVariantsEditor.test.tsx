@@ -130,7 +130,10 @@ describe("FamilyVariantsEditor", () => {
     });
     await waitFor(() =>
       expect(toast).toHaveBeenCalledWith(
-        expect.objectContaining({ title: "Variants saved", variant: "success" }),
+        expect.objectContaining({
+          title: "Variants saved (1 added, 1 changed)",
+          variant: "success",
+        }),
       ),
     );
     await waitFor(() => expect(screen.queryByLabelText("Variant 1 price")).toBeNull());

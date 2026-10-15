@@ -25,7 +25,7 @@ import {
 
 /**
  * "Portal limits" on the product page (spec §1, secondary 2; row 509 PR5): the rules this product is in. A chip per
- * rule that binds it ("Not offered in TX", "Hidden from all portal customers"), "via Vapes" when it is inherited from
+ * rule that binds it ("Not offered in TX", "Hidden from all portal customers"; a legal ban reads "Banned in TX" / "Banned everywhere"), "via Vapes" when it is inherited from
  * a category or parent, "· 12 products" when the rule covers many, and a link to the rule. A rule that covers only this
  * product keeps Lift; a MANY-product rule this product is directly in gets "Remove from rule" (it takes out only this
  * product, Undo puts it back), and lifting lives on the rule. Inherited chips keep Lift. "Add to a rule…" puts this

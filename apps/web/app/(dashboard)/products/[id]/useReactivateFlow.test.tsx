@@ -146,6 +146,43 @@ describe("useReactivateFlow", () => {
     await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
   });
 
+  it("a 409 BARCODE_TAKEN naming a barcode the operator did NOT send goes to the holders refusal, not back to the typed SKU (retype loop)", async () => {
+    patch.mockRejectedValueOnce(conflict()).mockRejectedValueOnce({
+      response: {
+        status: 409,
+        data: {
+          code: "BARCODE_TAKEN",
+          message: "RAW",
+          field: "barcode",
+          value: "BC-OLD",
+          productId: "h5",
+          productName: "Barcode Holder",
+          holders: [
+            {
+              code: "BARCODE_TAKEN",
+              field: "barcode",
+              value: "BC-OLD",
+              productId: "h5",
+              productName: "Barcode Holder",
+            },
+          ],
+        },
+      },
+    });
+    renderWithProviders(<Harness />);
+    fireEvent.click(screen.getByText("go"));
+    fireEvent.click(await screen.findByRole("button", { name: "Use a new code instead" }));
+    fireEvent.change(screen.getByLabelText("New SKU"), { target: { value: "NEW-2" } });
+    fireEvent.click(screen.getByRole("button", { name: "Reactivate with new code" }));
+    await waitFor(() => expect(patch).toHaveBeenCalledTimes(2));
+    // only the SKU was sent; the refusal names the ORIGINAL barcode, so the holders refusal shows it
+    expect(patch).toHaveBeenLastCalledWith("/products/p1", { isActive: true, sku: "NEW-2" });
+    expect(await screen.findByText(/The barcode "BC-OLD" is now used by/)).toBeInTheDocument();
+    expect(screen.queryByTestId("reactivate-code-message-sku")).toBeNull();
+    expect(screen.queryByTestId("reactivate-code-message-barcode")).toBeNull();
+    expect(toast).not.toHaveBeenCalled();
+  });
+
   it("a 409 CODE_TAKEN naming unitSku flags the unit code input only; the SKU input stays clean", async () => {
     const two = conflict({
       holders: [
@@ -340,5 +377,14 @@ describe("useReactivateFlow — Deactivate confirm (moved out of the page, #2861
       }),
     );
     expect(JSON.stringify(toast.mock.calls)).not.toMatch(/RAW SERVER TEXT/);
+  });
+});
+
+describe("useReactivateFlow — P-15 Deactivate confirm is not red", () => {
+  it("the Deactivate confirm button has no danger styling", async () => {
+    renderWithProviders(<Harness />);
+    fireEvent.click(screen.getByText("off"));
+    const btn = await screen.findByRole("button", { name: "Deactivate" });
+    expect(btn.className).not.toMatch(/bg-danger/);
   });
 });

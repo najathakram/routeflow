@@ -26,7 +26,8 @@ import { useUrlFilters } from "@/lib/hooks/useUrlFilters";
 import { useUrlSearch } from "@/lib/hooks/useUrlSearch";
 import { useUrlPage, useResetPageOnChange, useClampPage } from "@/lib/hooks/useUrlPage";
 import { useProducts, useUpdateProduct, useBulkDeleteProducts } from "@/lib/api/products";
-import { cascadeTierPrices, unitWords, type TierField } from "@routeflow/pricing";
+import { applyLadderChange, ladderChangeNote, unitWords, type TierField } from "@routeflow/pricing";
+import { tierLabel } from "@/lib/tier-label";
 import { useTierLabels, type TierLabelsConfig } from "@/lib/api/tier-labels";
 import { unitsLabel } from "@/lib/stock-label";
 import { useTrackedCategories, type TrackedCategory } from "@/lib/api/tracked-categories";
@@ -793,47 +794,41 @@ export default function ProductsPage() {
         [field]: newVal || null,
       };
 
-      // Auto-copy pricePerUnit to all tiers if they were all the same as the old price
+      // A list change moves tiers 2-5 by the ONE ladder rule (applyLadderChange("pricePerUnit"), SA ruling
+      // 2026-10-14): equal to the old list moves, 0 stays 0 (it follows the list), a tier above the new list is capped.
+      // The old inline copy here froze 0 tiers at the new price and left equal tiers behind in a mixed ladder.
+      let ladderNote: string | null = null;
       if (field === "pricePerUnit" && newVal) {
-        const newPrice = parseFloat(newVal);
-        const oldPrice = parseFloat(String(product.pricePerUnit)).toFixed(2);
-        const allSameAsOld = [
-          product.priceTier2,
-          product.priceTier3,
-          product.priceTier4,
-          product.priceTier5,
-        ].every(
-          (t) =>
-            !t ||
-            parseFloat(String(t)).toFixed(2) === oldPrice ||
-            parseFloat(String(t)).toFixed(2) === "0.00",
+        const moved = applyLadderChange(
+          "pricePerUnit",
+          product.pricePerUnit,
+          newVal,
+          product as never,
         );
-        if (allSameAsOld) {
-          updates.priceTier2 = newVal;
-          updates.priceTier3 = newVal;
-          updates.priceTier4 = newVal;
-          updates.priceTier5 = newVal;
-        } else {
-          // Cascade cap: higher tiers that are MORE expensive than T1 get capped
-          for (let m = 2; m <= 5; m++) {
-            const key = `priceTier${m}` as keyof ApiProduct;
-            const tierVal = product[key];
-            const tierPrice = tierVal ? parseFloat(String(tierVal)) : 0;
-            if (!tierVal || tierPrice > newPrice) {
-              updates[`priceTier${m}`] = newVal;
-            }
-          }
-        }
+        Object.assign(updates, moved);
+        ladderNote = ladderChangeNote(moved, (n) => tierLabel(tierLabels, n));
       }
 
-      // Committing a tier price copies it down the ladder (T3..T5 when T2 is edited, etc).
-      // The list price (pricePerUnit) deliberately keeps its smarter behavior above.
+      // P0 2026-10-14: a tier commit moves lower tiers only by applyLadderChange (tracking the old value, 0, or above
+      // the new price), never a blind copy-down. The list price keeps its own behaviour above.
       if (field.startsWith("priceTier") && newVal) {
-        Object.assign(updates, cascadeTierPrices(field as TierField, parseFloat(newVal)));
+        const moved = applyLadderChange(
+          field as TierField,
+          (product as unknown as Record<string, unknown>)[field] as string,
+          newVal,
+          product as never,
+        );
+        Object.assign(updates, moved);
+        ladderNote = ladderChangeNote(moved, (n) => tierLabel(tierLabels, n));
       }
 
       await updateProduct.mutateAsync(updates);
-      toast({ title: `${field} updated`, variant: "success" });
+      // A save that moved other tiers names them (SA: never silent).
+      toast({
+        title: `${field} updated`,
+        ...(ladderNote ? { description: ladderNote } : {}),
+        variant: "success",
+      });
 
       // Push an OBJECT PATCH covering every field this save touched — not just the field
       // the operator edited — so a cascade (pricePerUnit or priceTierN) can be undone/redone
@@ -849,7 +844,7 @@ export default function ProductsPage() {
       setUndoStack((prev) => [...prev.slice(-19), { ...record, oldValue, newValue }]);
       setRedoStack([]);
     },
-    [updateProduct, toast],
+    [updateProduct, toast, tierLabels],
   );
 
   // Regulated section + subcategory save from the Section Quick-Edit cell — an
@@ -949,40 +944,20 @@ export default function ProductsPage() {
       // Find the product to check if tiers should auto-copy
       const product = productList.find((p: ApiProduct) => p.id === id);
       const newPriceStr = parseFloat(editPriceValue).toFixed(2);
-      const newPrice = parseFloat(newPriceStr);
       const updates: { id: string; [k: string]: unknown } = { id, pricePerUnit: newPriceStr };
-      if (product) {
-        const oldPrice = parseFloat(String(product.pricePerUnit)).toFixed(2);
-        const allSameAsOld = [
-          product.priceTier2,
-          product.priceTier3,
-          product.priceTier4,
-          product.priceTier5,
-        ].every(
-          (t) =>
-            !t ||
-            parseFloat(String(t)).toFixed(2) === oldPrice ||
-            parseFloat(String(t)).toFixed(2) === "0.00",
-        );
-        if (allSameAsOld) {
-          updates.priceTier2 = newPriceStr;
-          updates.priceTier3 = newPriceStr;
-          updates.priceTier4 = newPriceStr;
-          updates.priceTier5 = newPriceStr;
-        } else {
-          // Cascade cap: any tier that's currently MORE expensive than the new T1 gets capped
-          for (let m = 2; m <= 5; m++) {
-            const key = `priceTier${m}` as keyof ApiProduct;
-            const tierVal = product[key];
-            const tierPrice = tierVal ? parseFloat(String(tierVal)) : 0;
-            if (!tierVal || tierPrice > newPrice) {
-              updates[`priceTier${m}`] = newPriceStr;
-            }
-          }
-        }
-      }
+      // The ONE list → tiers rule (applyLadderChange("pricePerUnit"), SA ruling 2026-10-14). The old inline copy here
+      // left a tier equal to the old list frozen whenever the ladder was mixed (9/10/0/10 → 12 kept the 10s at 10).
+      const moved = product
+        ? applyLadderChange("pricePerUnit", product.pricePerUnit, newPriceStr, product as never)
+        : {};
+      Object.assign(updates, moved);
+      const ladderNote = ladderChangeNote(moved, (n) => tierLabel(tierLabels, n));
       await updateProduct.mutateAsync(updates);
-      toast({ title: "Price updated", variant: "success" });
+      toast({
+        title: "Price updated",
+        ...(ladderNote ? { description: ladderNote } : {}),
+        variant: "success",
+      });
     } catch {
       toast({ title: "Failed to update price", variant: "error" });
     }

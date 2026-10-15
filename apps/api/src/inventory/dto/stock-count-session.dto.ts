@@ -93,6 +93,16 @@ export class CommitStockCountSessionDto {
   @IsOptional()
   @IsDateString()
   effectiveDate?: string;
+
+  /**
+   * "Finish with skips" (SA-767 L-2.4 C): for a PARTLY saved count, skip and record every line whose
+   * product can never be counted (now a family, or deleted) and commit the rest. Same role as the
+   * plain commit (OPERATOR+, the controller's class-level guard); refused on a count with no
+   * movement yet.
+   */
+  @IsOptional()
+  @IsBoolean()
+  finishWithSkips?: boolean;
 }
 
 export class ListStockCountSessionsDto {

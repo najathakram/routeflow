@@ -1,4 +1,10 @@
-import { API_ERROR_CODES, CREDITS_PENDING_COPY, SHIPPED_ORDER_MESSAGE } from "@routeflow/types";
+import {
+  API_ERROR_CODES,
+  CREDITS_PENDING_COPY,
+  SHIPPED_ORDER_MESSAGE,
+  productInOpenCountCopy,
+} from "@routeflow/types";
+import { BUYER_QTY_SPLIT_MISMATCH_COPY } from "./buyer-cart-line";
 import { READ_ONLY_SENTENCE } from "@routeflow/types/read-only-copy";
 import { regulatedAuthCopy } from "@routeflow/types/regulated-auth-copy";
 import {
@@ -50,6 +56,8 @@ const CODE_COPY: Record<string, string> = {
   ORDER_CHANGED_DURING_EDIT: "This order changed while you were editing it. Refresh and try again.",
   // F3: the edit named one line twice; nothing was saved.
   DUPLICATE_LINE_ID: "A line appears twice. Refresh the page and try again.",
+  // Row 531: a buyer cart whose quantity and box split disagree; nothing was saved.
+  QTY_SPLIT_MISMATCH: BUYER_QTY_SPLIT_MISMATCH_COPY,
   ORDER_BILLING_CHANGED:
     "This order's billing changed while you were working on it. Refresh and try again.",
   FULFIL_METHOD_NOT_OFFERED: "This business doesn't offer that way of fulfilling orders.",
@@ -69,6 +77,9 @@ const CODE_COPY: Record<string, string> = {
   CONCURRENT_UPDATE: "Someone else is updating this record. Try again in a moment.",
   MERGE_IN_PROGRESS: "Another change for this customer is in progress. Try again in a moment.",
   LOCK_UNAVAILABLE: "This is busy right now. Try again in a moment.",
+  [API_ERROR_CODES.STOCK_COUNT_COMMITTING]: "This count is being saved. Try again in a moment.",
+  // SA-767 r-note 5 SA-3: the count screens name the other count themselves; this is the fallback.
+  [API_ERROR_CODES.PRODUCT_IN_OPEN_COUNT]: productInOpenCountCopy(),
   [API_ERROR_CODES.ORDER_SAVED_CREDITS_PENDING]: CREDITS_PENDING_COPY,
   [API_ERROR_CODES.BARCODE_TAKEN]: "Another product already uses that barcode.",
   [API_ERROR_CODES.FAMILY_NOT_PRICEABLE]:
@@ -120,6 +131,7 @@ const CODE_COPY: Record<string, string> = {
     "A product label with this name already exists. Use that label or pick another name.",
   [API_ERROR_CODES.LABEL_CHANGE_IN_PROGRESS]:
     "Another product label change is in progress. Try again in a moment.",
+  [API_ERROR_CODES.PRODUCT_CHAIN_UNREADABLE]: "This product's family chain can't be read.",
   [API_ERROR_CODES.INVOICE_TAX_STATE_STALE]:
     "This invoice's tax no longer matches its lines. Re-save the invoice lines, then try again.",
   [API_ERROR_CODES.INVOICE_TOTAL_BELOW_PAID]:

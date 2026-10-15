@@ -97,6 +97,7 @@ import { Prisma } from "@prisma/client";
 import { Pool, type PoolClient } from "pg";
 import { utcPoolConfig } from "./pg-session";
 import { API_ERROR_CODES } from "./api-error-codes";
+import { STOCK_LOCK_TIMEOUT } from "./product-locks";
 
 export type LockMode = "wait" | "try";
 /**
@@ -116,6 +117,8 @@ export const LOCK_FAMILIES = [
   "fulfilment-settings",
   "tenant-price",
   "counter-park",
+  "stock-count",
+  "stock-count-product",
 ] as const;
 export type LockFamily = (typeof LOCK_FAMILIES)[number];
 /**
@@ -218,6 +221,15 @@ const POOL_MAX: Record<string, number | undefined> = {
   // is reserved in the one namespace (a `withAdvisoryLock` caller can never collide with it by accident) and
   // sized small in case a pinned caller is ever added.
   "counter-park": 2,
+  // `stock-count` (SA-767 L-2.2): `InventoryService#commitStockCountSession`, keyed on the count session id,
+  // mode `try`. The single committer of a count holds its slot across ALL of the commit's batch transactions
+  // (minutes for a warehouse-wide count), so the size is the cap on counts committing at the same moment
+  // across every tenant; a committer that finds no slot gets the retryable 503 LOCK_UNAVAILABLE, and a
+  // second commit of the same session loses the try-lock at once (409 STOCK_COUNT_COMMITTING).
+  "stock-count": 4,
+  // `stock-count-product` (SA-767 r-note 5 SA-3) opens no lock pool: it is the one-open-count-per-product lock,
+  // a transaction-scoped `pg_advisory_xact_lock` on the adder's own Prisma connection ({@link advisoryXactLock}),
+  // keyed `<tenantId>:<productId>`. It is listed so the family name is reserved in the one namespace.
 };
 const DEFAULT_POOL_MAX = 8;
 function lockPool(family: string): Pool {
@@ -619,4 +631,58 @@ export async function withAdvisoryLocks<T>(
     if (destroy) client.release(failure instanceof Error ? failure : new Error(String(failure)));
     else client.release();
   }
+}
+
+/**
+ * Take the EXCLUSIVE, transaction-scoped advisory lock on `(family, key)` inside `tx`, WAITING for it
+ * (blocking `pg_advisory_xact_lock`; released by Postgres when `tx` ends). For a check-then-insert that
+ * must serialise concurrent adders - SA-767 r-note 5 SA-3: two sessions adding the same product take
+ * `stock-count-product:<tenantId>:<productId>` one after the other, and the second one sees the first
+ * one's committed line. The wait is bounded (lock_timeout, below). The key pair is derived like {@link withAdvisoryLock}'s (`hashtext` x 2). A caller
+ * that needs several keys takes them in SORTED order, so two such callers can never deadlock.
+ */
+export async function advisoryXactLock(
+  tx: { $executeRaw: (...args: any[]) => unknown },
+  family: LockFamily,
+  key: string,
+): Promise<void> {
+  if (typeof key !== "string" || key.length === 0) {
+    throw new TypeError("advisoryXactLock: key must be a non-empty string");
+  }
+  if (!(LOCK_FAMILIES as readonly string[]).includes(family)) {
+    throw new TypeError(`advisoryXactLock: unknown lock family "${family}"`);
+  }
+  // The wait is bounded like every other stock lock (common/product-locks.ts): a tx with no lock_timeout
+  // yet gets the stock default (SET LOCAL, so the pooled connection never carries it out), and a stuck
+  // holder surfaces as 55P03 - which retryStockTx and the lock filter map - instead of a hung backend.
+  await tx.$executeRaw`SELECT set_config('lock_timeout', ${STOCK_LOCK_TIMEOUT}, true) WHERE current_setting('lock_timeout') = '0'`;
+  await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtext(${family}), hashtext(${key}))`;
+}
+
+/**
+ * Take the SHARED, transaction-scoped advisory lock on `(family, key)` inside `tx`, in try mode (never
+ * waits). The key pair is derived EXACTLY like {@link withAdvisoryLock}'s - `hashtext(family)`,
+ * `hashtext(key)` - so it conflicts with a holder of that lock's exclusive session-level form: the
+ * committer of a durable stock count holds `stock-count:<sessionId>` exclusively across all of its
+ * batch transactions, while a line edit or a discard holds the shared form for its own transaction
+ * (many edits run side by side; none runs beside the committer). Returns `false` when an exclusive
+ * holder has it; the lock is released by Postgres when `tx` ends, so there is nothing to unlock.
+ */
+export async function tryAdvisoryXactLockShared(
+  tx: { $queryRaw: (...args: any[]) => unknown },
+  family: LockFamily,
+  key: string,
+): Promise<boolean> {
+  if (typeof key !== "string" || key.length === 0) {
+    throw new TypeError("tryAdvisoryXactLockShared: key must be a non-empty string");
+  }
+  if (!(LOCK_FAMILIES as readonly string[]).includes(family)) {
+    throw new TypeError(`tryAdvisoryXactLockShared: unknown lock family "${family}"`);
+  }
+  const rows = (await tx.$queryRaw`
+    SELECT pg_try_advisory_xact_lock_shared(hashtext(${family}), hashtext(${key})) AS ok
+  `) as Array<{ ok?: boolean }> | undefined;
+  // Fails CLOSED: only an explicit true is "the shared lock is held". An odd client shape (no row, no
+  // boolean) must read as "not acquired" (the edit is refused, nothing is written), never as a grant.
+  return rows?.[0]?.ok === true;
 }
