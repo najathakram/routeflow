@@ -78,6 +78,14 @@ import { ProductStockCostCard } from "./ProductStockCostCard";
 import { FamilyVariantsEditor } from "@/components/family/FamilyVariantsEditor";
 import { useReactivateFlow } from "./useReactivateFlow";
 import { ProductHeaderControls } from "./ProductHeaderControls";
+import { ProductHeaderLine } from "./ProductHeaderLine";
+import {
+  EditActionButtons,
+  EditButton,
+  StickyEditBar,
+  ThumbImage,
+  scrollCardIntoView,
+} from "./ProductEditActions";
 import { LegacyVariantsActions, variantModalTitle } from "./LegacyVariantsActions";
 import { useDeleteProductFlow } from "./useDeleteProductFlow";
 import { DeleteProductConfirm } from "./DeleteProductConfirm";
@@ -379,6 +387,7 @@ export default function ProductDetailPage() {
   // Audit 2026-10-14: deleting an image removes the file for good, so it is confirmed first (no undo exists).
   const [pendingImageDelete, setPendingImageDelete] = React.useState<string[] | null>(null);
   const fileInputRef = React.useRef<HTMLInputElement>(null);
+  const detailsCardRef = React.useRef<HTMLDivElement>(null);
 
   // ── Variant modal state ──────────────────────────────────────────────────
   const [variantModalOpen, setVariantModalOpen] = React.useState(false);
@@ -628,10 +637,15 @@ export default function ProductDetailPage() {
         // (startEdit re-seeds the draft, so closing early threw the operator's edits away).
         onSuccess: (data: { keptLabels?: string[] }) => {
           const kept = keptLabelsNote(data?.keptLabels);
-          if (kept) toast({ title: "Product moved", description: kept, variant: "success" });
+          toast(
+            kept
+              ? { title: "Product moved", description: kept, variant: "success" }
+              : { title: "Saved", variant: "success" },
+          );
           setEditDraft({});
           setIsEditing(false);
           setLadderNote(null);
+          scrollCardIntoView(detailsCardRef.current);
         },
         onError: (e: any) =>
           toast({
@@ -1138,7 +1152,10 @@ export default function ProductDetailPage() {
         onClose={() => setShowDeleteConfirm(false)}
         flow={deleteFlow}
       />
-      <div className="space-y-5 p-6">
+      <div className={cn("space-y-5 p-6", isEditing && "pb-24 md:pb-6")}>
+        {isEditing && (
+          <StickyEditBar onCancel={cancelEdit} onSave={saveEdit} saving={updateProduct.isPending} />
+        )}
         {/* Back */}
         <Link
           href="/products"
@@ -1167,11 +1184,7 @@ export default function ProductDetailPage() {
               {(product as any).isNew && <Badge variant="info" label="New" />}
               {(product as any).isDeal && <Badge variant="success" label="Deal" />}
             </div>
-            <p className="mt-1.5 text-sm text-navy/70">
-              {product.sku && <span className="font-mono">{product.sku}</span>}
-              {product.sku && (product.category || product.parent) ? " · " : ""}
-              {product.parent ? `Variant of ${product.parent.name}` : product.category}
-            </p>
+            <ProductHeaderLine product={product} currentStock={currentStock} />
           </div>
         </div>
 
@@ -1212,10 +1225,9 @@ export default function ProductDetailPage() {
                   return (
                     <div className="space-y-2">
                       {/* Main image / drop zone — 4:5 portrait viewport matching the
-                    upload ratio. object-cover + object-position uses each
-                    image's stored focal point to keep the right area visible
-                    even when the image is from before the focal-point
-                    feature (those default to centre). */}
+                    upload ratio. Below lg the photo is shown whole (contain, centred);
+                    lg+ crops with object-cover by each image's stored focal point
+                    (older images default to centre). */}
                       <div
                         onDragOver={(e) => {
                           e.preventDefault();
@@ -1228,7 +1240,7 @@ export default function ProductDetailPage() {
                           handleUpload(e.dataTransfer.files);
                         }}
                         className={cn(
-                          "relative aspect-[4/5] w-full overflow-hidden rounded-xl border",
+                          "relative h-44 w-full overflow-hidden rounded-xl border lg:h-auto lg:aspect-[4/5]",
                           isDragging && "ring-2 ring-brand-500",
                           !hasImages && "cursor-pointer",
                           stockStatus === "LOW" && "border-warning/30 bg-warning-bg",
@@ -1243,7 +1255,7 @@ export default function ProductDetailPage() {
                             <img
                               src={images[safeIdx]}
                               alt={`${product.name} — image ${safeIdx + 1}`}
-                              className="absolute inset-0 h-full w-full object-cover cursor-zoom-in"
+                              className="absolute inset-0 h-full w-full cursor-zoom-in object-contain max-lg:![object-position:50%_50%] lg:object-cover"
                               style={{ objectPosition: objectPositionForUrl(images[safeIdx]) }}
                               onClick={(e) => {
                                 e.stopPropagation();
@@ -1342,12 +1354,10 @@ export default function ProductDetailPage() {
                                       : "border-surface-border",
                                 )}
                               >
-                                {/* eslint-disable-next-line @next/next/no-img-element */}
-                                <img
-                                  src={url}
-                                  alt={`thumb ${i + 1}`}
-                                  className="h-full w-full object-cover"
-                                  style={{ objectPosition: objectPositionForUrl(url) }}
+                                <ThumbImage
+                                  url={url}
+                                  alt={`Image ${i + 1} of ${images.length}`}
+                                  objectPosition={objectPositionForUrl(url)}
                                 />
                               </button>
                               {selectMode && (
@@ -1496,46 +1506,29 @@ export default function ProductDetailPage() {
           {/* ── Right: details + chart ── */}
           <div className="space-y-5 lg:col-span-2">
             {/* Product details */}
-            <div className="overflow-hidden rounded-lg border border-surface-border bg-white shadow-card">
+            <div
+              ref={detailsCardRef}
+              className="overflow-hidden rounded-lg border border-surface-border bg-white shadow-card"
+            >
               <div className="flex flex-wrap items-center justify-between gap-3 border-b border-surface-border px-5 py-3.5">
                 <h3 className="text-[11px] font-semibold uppercase tracking-[0.08em] text-navy/70">
                   Details
                 </h3>
-                <div className="flex max-w-full flex-wrap items-center justify-end gap-2">
+                <div className="flex max-w-full flex-wrap items-center justify-end gap-2 max-sm:w-full max-sm:justify-start">
                   {isEditing ? (
                     <>
-                      <button
-                        onClick={cancelEdit}
-                        title="Cancel"
-                        className={cn(
-                          TAP_TARGET,
-                          "rounded p-1.5 text-navy/70 hover:bg-surface-raised hover:text-navy transition-colors",
-                        )}
-                      >
-                        <X className="h-4 w-4" />
-                      </button>
-                      <Button
-                        size="sm"
-                        onClick={saveEdit}
-                        loading={updateProduct.isPending}
-                        disabled={updateProduct.isPending}
-                        leftIcon={<Check className="h-4 w-4" />}
-                      >
-                        Save
-                      </Button>
+                      <EditActionButtons
+                        className="max-md:hidden"
+                        onCancel={cancelEdit}
+                        onSave={saveEdit}
+                        saving={updateProduct.isPending}
+                      />
                     </>
                   ) : (
                     <>
-                      <button
-                        onClick={startEdit}
-                        title="Edit product"
-                        className={cn(
-                          TAP_TARGET,
-                          "rounded p-1.5 text-navy/70 hover:bg-surface-raised hover:text-navy transition-colors",
-                        )}
-                      >
-                        <Pencil className="h-4 w-4" />
-                      </button>
+                      <div className="max-sm:basis-full">
+                        <EditButton onClick={startEdit} />
+                      </div>
                       <ProductHeaderControls
                         product={product}
                         reactivateFlow={reactivateFlow}
@@ -1625,6 +1618,11 @@ export default function ProductDetailPage() {
                       <Star className="h-4 w-4 text-brand-500" />
                       <h3 className="text-sm font-semibold text-navy">Buyer merchandising</h3>
                     </div>
+                    {isEditing && (
+                      <p className="mb-2 text-xs font-medium text-navy/60">
+                        These switches apply immediately, without Save.
+                      </p>
+                    )}
                     <p className="mb-3 text-xs text-navy/60">
                       Highlight this product on the buyer catalogue with badges and smart
                       collections. These are display flags only — they don&apos;t change price.
@@ -1848,41 +1846,30 @@ export default function ProductDetailPage() {
                       )
                     }
                   />
-                  {/* Variant of — always show when editing; in view mode show only if product has a parent */}
-                  {(isEditing || product.parentProductId) && (
+                  {/* Variant of — edit only; view mode shows the parent in the header line and the banner */}
+                  {isEditing && (
                     <InfoRow
                       label="Variant of"
                       value={
-                        isEditing ? (
-                          <select
-                            value={(editDraft.parentProductId as string) ?? ""}
-                            onChange={(e) =>
-                              setEditDraft((d) => ({
-                                ...d,
-                                parentProductId: e.target.value,
-                                variantName: e.target.value ? (d.variantName as string) : "",
-                              }))
-                            }
-                            className="w-full rounded border border-surface-border px-2 py-1 text-sm text-navy focus:outline-none focus:ring-2 focus:ring-brand-500"
-                          >
-                            <option value="">None (standalone product)</option>
-                            {variantOfCandidates.map((p: any) => (
-                              <option key={p.id} value={p.id}>
-                                {p.name}
-                                {p.sku ? ` — ${p.sku}` : ""}
-                              </option>
-                            ))}
-                          </select>
-                        ) : product.parent ? (
-                          <Link
-                            href={`/products/${product.parentProductId}`}
-                            className="text-brand-600 underline text-sm"
-                          >
-                            {product.parent.name}
-                          </Link>
-                        ) : (
-                          "—"
-                        )
+                        <select
+                          value={(editDraft.parentProductId as string) ?? ""}
+                          onChange={(e) =>
+                            setEditDraft((d) => ({
+                              ...d,
+                              parentProductId: e.target.value,
+                              variantName: e.target.value ? (d.variantName as string) : "",
+                            }))
+                          }
+                          className="w-full rounded border border-surface-border px-2 py-1 text-sm text-navy focus:outline-none focus:ring-2 focus:ring-brand-500"
+                        >
+                          <option value="">None (standalone product)</option>
+                          {variantOfCandidates.map((p: any) => (
+                            <option key={p.id} value={p.id}>
+                              {p.name}
+                              {p.sku ? ` — ${p.sku}` : ""}
+                            </option>
+                          ))}
+                        </select>
                       }
                     />
                   )}

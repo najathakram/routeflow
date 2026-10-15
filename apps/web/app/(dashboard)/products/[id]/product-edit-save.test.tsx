@@ -131,15 +131,15 @@ describe("product Details edit: save outcome", () => {
       const user = userEvent.setup();
       fail(status, msg);
       await openAndType(user);
-      await user.click(screen.getByRole("button", { name: /save/i }));
+      await user.click(screen.getAllByRole("button", { name: /save/i })[0]);
       await waitFor(() =>
         expect(toast).toHaveBeenCalledWith(
           expect.objectContaining({ title: "Failed to save product", variant: "error" }),
         ),
       );
       expect(screen.getByDisplayValue("SKU-TYPED")).toBeInTheDocument();
-      expect(screen.getByRole("button", { name: /save/i })).toBeEnabled();
-      expect(screen.getByTitle("Cancel")).toBeInTheDocument();
+      expect(screen.getAllByRole("button", { name: /save/i })[0]).toBeEnabled();
+      expect(screen.getAllByRole("button", { name: /cancel/i })[0]).toBeInTheDocument();
     },
   );
 
@@ -147,10 +147,12 @@ describe("product Details edit: save outcome", () => {
     const user = userEvent.setup();
     patch.mockResolvedValueOnce({ data: { id: "p1" } });
     await openAndType(user);
-    await user.click(screen.getByRole("button", { name: /save/i }));
+    await user.click(screen.getAllByRole("button", { name: /save/i })[0]);
     await waitFor(() => expect(screen.getByTitle("Edit product")).toBeInTheDocument());
     expect(screen.queryByDisplayValue("SKU-TYPED")).toBeNull();
-    expect(toast).not.toHaveBeenCalled();
+    // P-17: a plain save confirms with "Saved"; "Product moved" only when labels were kept.
+    expect(toast).toHaveBeenCalledTimes(1);
+    expect(toast).toHaveBeenCalledWith({ title: "Saved", variant: "success" });
   });
 
   it("Save is disabled while the request is pending, and a second click sends nothing", async () => {
@@ -158,9 +160,9 @@ describe("product Details edit: save outcome", () => {
     let resolve!: (v: unknown) => void;
     patch.mockReturnValueOnce(new Promise((r) => (resolve = r)));
     await openAndType(user);
-    await user.click(screen.getByRole("button", { name: /save/i }));
-    await waitFor(() => expect(screen.getByRole("button", { name: /save/i })).toBeDisabled());
-    await user.click(screen.getByRole("button", { name: /save/i }));
+    await user.click(screen.getAllByRole("button", { name: /save/i })[0]);
+    await waitFor(() => expect(screen.getAllByRole("button", { name: /save/i })[0]).toBeDisabled());
+    await user.click(screen.getAllByRole("button", { name: /save/i })[0]);
     expect(patch).toHaveBeenCalledTimes(1);
     resolve({ data: { id: "p1" } });
     await waitFor(() => expect(screen.getByTitle("Edit product")).toBeInTheDocument());

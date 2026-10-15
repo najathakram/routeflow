@@ -25,12 +25,19 @@ jest.mock("@/lib/export", () => ({
   downloadCsvBlob: (...a: unknown[]) => downloadCsvBlob(...a),
 }));
 
+let mockSales: { data?: { summary: { count: number } }; isLoading: boolean } = {
+  data: { summary: { count: 4 } },
+  isLoading: false,
+};
+jest.mock("@/lib/api/product-sales", () => ({ useProductSales: () => mockSales }));
+
 const click = () => fireEvent.click(screen.getByTestId("product-insights-export-button"));
 
 beforeEach(() => {
   jest.clearAllMocks();
   mockRole = "OPERATOR";
   mockFlag = { enabled: true, resolved: true, failed: false };
+  mockSales = { data: { summary: { count: 4 } }, isLoading: false };
 });
 
 describe("ProductInsightsExport", () => {
@@ -50,6 +57,22 @@ describe("ProductInsightsExport", () => {
     mockFlag = { enabled: true, resolved: false, failed: false };
     render(<ProductInsightsExport productId="p1" sku="SKU-1" />);
     expect(screen.queryByTestId("product-insights-export-button")).toBeNull();
+  });
+
+  it("J10: is hidden when the product has never sold, and while sales are loading", () => {
+    mockSales = { data: { summary: { count: 0 } }, isLoading: false };
+    const { unmount } = render(<ProductInsightsExport productId="p1" sku="SKU-1" />);
+    expect(screen.queryByTestId("product-insights-export")).toBeNull();
+    unmount();
+    mockSales = { data: undefined, isLoading: true };
+    render(<ProductInsightsExport productId="p1" sku="SKU-1" />);
+    expect(screen.queryByTestId("product-insights-export")).toBeNull();
+  });
+
+  it("J10: stays available when the sales lookup failed (no data, not loading)", () => {
+    mockSales = { data: undefined, isLoading: false };
+    render(<ProductInsightsExport productId="p1" sku="SKU-1" />);
+    expect(screen.getByTestId("product-insights-export-button")).toBeInTheDocument();
   });
 
   it("is shown for TENANT_ADMIN when the flag is on", () => {
