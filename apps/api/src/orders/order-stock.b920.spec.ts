@@ -211,7 +211,7 @@ describe("B920 — decrementStockForSale tests the per-product total, not each l
     expect(warn).toHaveBeenCalledTimes(1);
     expect(warn.mock.calls[0][0]).toContain("Mango (available: 5, requested: 6)");
     // The marker sees the same per-product view: 5 on hand fills line A (3) then 2 of line B, so B is 1 short.
-    expect(pending.get(lineA)).toBe(0);
+    expect(pending.has(lineA)).toBe(false); // only non-zero markers are handed back
     expect(pending.get(lineB)).toBe(1);
   });
 });
