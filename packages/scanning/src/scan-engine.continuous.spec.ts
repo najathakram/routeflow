@@ -356,3 +356,119 @@ describe("resetSteadyRead (Hold-to-scan release: a re-grab needs a FRESH steady 
     expect(step2.startResolving).toBeNull(); // streak is only 2 again
   });
 });
+
+describe("fastRepeat (order builder: a repeat of the code just accepted counts after a 0.3 s absence)", () => {
+  /** `n` presentations of `code`, one per second: in view `viewMs` at 10 Hz, then out of view for the rest. */
+  function presentations(
+    n: number,
+    viewMs: number,
+    opts: { fastRepeat?: boolean },
+    code = "REPEAT-1",
+  ) {
+    let s = createContinuousScanState();
+    let accepts = 0;
+    for (let i = 0; i < n; i++) {
+      for (let t = 0; t <= viewMs; t += 100) {
+        const step = continuousFrameScanned(s, code, T0 + i * 1000 + t, {
+          bounds: IN_BOX_BOUNDS,
+          aimBox: IN_BOX,
+          ...opts,
+        });
+        s = step.next;
+        if (step.startResolving) {
+          accepts++;
+          s = scanSettled(s).next;
+        }
+      }
+    }
+    return accepts;
+  }
+
+  it("20 presentations at 1.0 s spacing with ~400 ms out of view give 20 accepts", () => {
+    expect(presentations(20, 600, { fastRepeat: true })).toBe(20);
+  });
+
+  it("a repeat needs no steady hold: one or two frames per presentation still count", () => {
+    // The FIRST sighting earns its steady read; the 19 repeats after it are a single frame (or two) each.
+    const run = (viewMs: number) => {
+      let s = createContinuousScanState();
+      let accepts = 0;
+      const opts = { bounds: IN_BOX_BOUNDS, aimBox: IN_BOX, fastRepeat: true };
+      for (const t of [0, 100, 200]) s = continuousFrameScanned(s, "R", T0 + t, opts).next;
+      accepts++; // the first presentation's accept (asserted by the test below)
+      s = scanSettled(s).next;
+      for (let i = 1; i < 20; i++) {
+        for (let t = 0; t <= viewMs; t += 100) {
+          const step = continuousFrameScanned(s, "R", T0 + i * 1000 + t, opts);
+          s = step.next;
+          if (step.startResolving) {
+            accepts++;
+            s = scanSettled(s).next;
+          }
+        }
+      }
+      return accepts;
+    };
+    expect(run(0)).toBe(20);
+    expect(run(100)).toBe(20);
+  });
+
+  it("other scan screens keep the 09-24 rule: the same presentations without the option count once", () => {
+    expect(presentations(20, 600, {})).toBe(1);
+  });
+
+  it("a continuous hold is still ONE accept with the option on (gaps under 0.3 s are not an absence)", () => {
+    let s = createContinuousScanState();
+    let accepts = 0;
+    let frame = 0;
+    for (let t = 0; t <= 5000; t += 100) {
+      frame++;
+      if (frame % 3 === 0) continue; // a missed decode every third tick: 200 ms gaps
+      const step = continuousFrameScanned(s, "HELD", T0 + t, {
+        bounds: IN_BOX_BOUNDS,
+        aimBox: IN_BOX,
+        fastRepeat: true,
+      });
+      s = step.next;
+      if (step.startResolving) accepts++;
+    }
+    expect(accepts).toBe(1);
+  });
+
+  it("the very first sighting of a code still needs the steady hold (a passing misread is not a scan)", () => {
+    let s = createContinuousScanState();
+    const one = continuousFrameScanned(s, "NEW", T0, { fastRepeat: true });
+    expect(one.startResolving).toBeNull();
+    s = continuousFrameScanned(one.next, "NEW", T0 + 100, { fastRepeat: true }).next;
+    expect(continuousFrameScanned(s, "NEW", T0 + 200, { fastRepeat: true }).startResolving).toBe(
+      "NEW",
+    );
+  });
+});
+
+describe("in-flight scans are never dropped silently", () => {
+  it("4 accepted scans in flight behind a slow resolve are all queued, none dropped", () => {
+    let s = createContinuousScanState();
+    const out: Array<string | null> = [];
+    for (let i = 0; i < 5; i++) {
+      const step = manualScanned(s, `CODE-${i}`);
+      s = step.next;
+      out.push(step.startResolving);
+      expect(step.dropped).toBeFalsy();
+    }
+    expect(out).toEqual(["CODE-0", null, null, null, null]);
+    expect(s.buffer.pending).toEqual(["CODE-1", "CODE-2", "CODE-3", "CODE-4"]);
+  });
+
+  it("an overflow past the cap is REPORTED as dropped, never silent", () => {
+    let s = createContinuousScanState();
+    let dropped = 0;
+    for (let i = 0; i < 40; i++) {
+      const step = manualScanned(s, `CODE-${i}`);
+      s = step.next;
+      if (step.dropped) dropped++;
+    }
+    expect(dropped).toBeGreaterThan(0);
+    expect(s.buffer.pending.length + 1 + dropped).toBe(40);
+  });
+});

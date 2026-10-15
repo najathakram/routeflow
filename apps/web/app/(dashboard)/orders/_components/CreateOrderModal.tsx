@@ -84,6 +84,7 @@ import {
 import { useDefaultUnitResolver } from "@/lib/hooks/useDefaultUnitResolver";
 import type { UnitOption } from "@/lib/unit-options";
 import { useScanCodeHandler } from "./scan/useScanCodeHandler";
+import { createSerialScanQueue } from "./scan/serial-scan-queue";
 import { DidYouMeanPicker } from "@/components/scan/DidYouMeanPicker";
 import { ScanOrderScreen } from "./scan/ScanOrderScreen";
 import { PriceEditor } from "./scan/PriceEditor";
@@ -319,6 +320,9 @@ export function CreateOrderModal({
   const [productSearch, setProductSearch] = React.useState("");
   const [debouncedProductSearch, setDebouncedProductSearch] = React.useState("");
   const [lineItems, setLineItems] = React.useState<LineItem[]>([]);
+  // The scan handler's local fast path reads the order as of the LAST COMMIT (addLineItem flushSyncs).
+  const lineItemsRef = React.useRef(lineItems);
+  lineItemsRef.current = lineItems;
   const [lineItemsError, setLineItemsError] = React.useState("");
   const [expandedParentId, setExpandedParentId] = React.useState<string | null>(null);
 
@@ -486,6 +490,7 @@ export function CreateOrderModal({
     },
     onSuggestion: (matches) => setScanMatches(matches),
     suggestionsSuppressed: () => scanScreenActive,
+    hasLine: (productId) => lineItemsRef.current.some((li) => li.productId === productId),
     onUnknownCode: (code) => {
       setCreateProductInitialName("");
       setCreateProductInitialSku(code);
@@ -494,15 +499,32 @@ export function CreateOrderModal({
     toast,
   });
 
+  // ONE FIFO queue for every code that arrives outside the scan screen (wedge, typed SKU + Enter, the
+  // single-shot camera): each finishes lookup AND line commit before the next starts. `consumedCodeRef`
+  // names the code in flight so addLineItem clears the search field only if it still holds THAT code -
+  // never the partly-typed next scan of a burst.
+  const consumedCodeRef = React.useRef<string | null>(null);
+  const [scanQueue] = React.useState(() =>
+    createSerialScanQueue(async (code: string) => {
+      consumedCodeRef.current = code;
+      try {
+        return await barcodeScanHandlerRef.current(code);
+      } finally {
+        consumedCodeRef.current = null;
+      }
+    }),
+  );
+
   // handleProductSearchEnter — called when Enter is pressed in the product search input.
   // Works for keyboard-emulation scanners AND paste-mode scanners (where no individual
   // keydown events fire for each character, so sequence-accumulation approaches fail).
   const handleProductSearchEnter = () => {
-    const code = productSearch.trim();
+    // The DOM value, not the render's `productSearch`: a burst can outrun the re-render that state needs.
+    const code = (productSearchRef.current?.value ?? productSearch).trim();
     if (!code) return;
     setProductSearch("");
     setDebouncedProductSearch("");
-    barcodeScanHandlerRef.current(code);
+    void scanQueue.enqueue(code);
   };
 
   const { register, handleSubmit, reset, watch, setValue } = useForm<FormValues>({
@@ -875,6 +897,18 @@ export function CreateOrderModal({
     // or a retry that treats the throw as "resolveCode failed" would re-run this whole method and
     // add the line a SECOND time. Logged, not silently swallowed; the commit's own outcome is
     // returned either way.
+    // A picker add clears the search it was made from; a scan clears the field only while it still holds the
+    // code that scan consumed (the wedge take already emptied it - a later clear must not eat the next scan).
+    const consumed = consumedCodeRef.current;
+    const clearSearchAfterAdd = () => {
+      if (consumed === null) {
+        setProductSearch("");
+        setDebouncedProductSearch("");
+      } else {
+        setProductSearch((cur) => (cur.trim() === consumed.trim() ? "" : cur));
+        setDebouncedProductSearch((cur) => (cur.trim() === consumed.trim() ? "" : cur));
+      }
+    };
     try {
       if (result.refused) {
         // The scan screen reports the refusal itself; elsewhere a toast says it.
@@ -891,13 +925,11 @@ export function CreateOrderModal({
           });
         }
         setScrollToId(result.mergedInto!.tempId);
-        setProductSearch("");
-        setDebouncedProductSearch("");
+        clearSearchAfterAdd();
         scheduleScannerRefocus(productSearchRef, 50);
       } else {
         setScrollToId(newTempId);
-        setProductSearch("");
-        setDebouncedProductSearch("");
+        clearSearchAfterAdd();
         setLineItemsError("");
         // Re-focus the product search so the scanner is ready for the next item
         scheduleScannerRefocus(productSearchRef, 50);
@@ -2287,8 +2319,14 @@ export function CreateOrderModal({
                 )}
               <BarcodeScannerButton
                 inputRef={productSearchRef}
-                onScan={(code) => {
-                  barcodeScanHandlerRef.current(code); // a camera scan is +1
+                onScan={(code, source) => {
+                  // A wedge scan is taken from the field AND the field cleared here, in the same task, so
+                  // the next scan of a burst types into an empty field. A camera scan is +1.
+                  if (source === "field") {
+                    setProductSearch("");
+                    setDebouncedProductSearch("");
+                  }
+                  void scanQueue.enqueue(code);
                 }}
                 onError={(message) => toast({ variant: "error", title: message })}
                 onOpenContinuous={scanV2 ? () => setScanScreenOpen(true) : undefined}

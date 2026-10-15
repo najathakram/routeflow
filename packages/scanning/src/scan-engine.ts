@@ -29,7 +29,9 @@
  * tests in the plain node Jest env, the same way `scan-ladder.ts` does.
  */
 import {
+  ABSENCE_GAP_MS,
   gateScan,
+  hasBeenAccepted,
   isAbsentFromGate,
   isTrackedByGate,
   STEADY_ABSENCE_GAP_MS,
@@ -65,6 +67,8 @@ export interface ScanEngineStep {
    * "off" resolving→idle, null when there is no edge.
    */
   indicator: "on" | "off" | null;
+  /** True when this step's accepted scan found the pending buffer full and was NOT queued: surface it. */
+  dropped?: boolean;
 }
 
 /** The empty/idle engine — no code ever tracked, buffer at rest. */
@@ -100,6 +104,7 @@ export function frameScanned(
     next: { gate: gated.state, buffer: result.next },
     startResolving: result.startResolving,
     indicator: indicatorEdge(wasResolving, result.next.isResolving),
+    ...(result.dropped && { dropped: true }),
   };
 }
 
@@ -121,6 +126,7 @@ export function manualScanned<S extends ScanEngineState>(
     next: { ...state, buffer: result.next },
     startResolving: result.startResolving,
     indicator: indicatorEdge(wasResolving, result.next.isResolving),
+    ...(result.dropped && { dropped: true }),
   };
 }
 
@@ -148,7 +154,18 @@ export interface ContinuousFrameOptions {
    */
   aimBox?: AimBoxRect | null;
   candidatesOf?: ScanCandidates;
+  /**
+   * ORDER BUILDER ONLY (owner ruling 2026-10-14): a repeat of a code the gate has already accepted counts
+   * after `FAST_REPEAT_ABSENCE_GAP_MS` out of view with NO steady-hold requirement, so a scan-a-case-a-second
+   * rhythm is not eaten by the 800 ms absence + 3-frame hold. The first sighting of a code still needs the
+   * steady read, and a continuous hold never re-counts (its `lastSeenAt` keeps moving). Default off: every
+   * other scan screen stays on the 09-24 rule.
+   */
+  fastRepeat?: boolean;
 }
+
+/** The absence that makes a repeat of the code just accepted a new scan on the order builder. */
+export const FAST_REPEAT_ABSENCE_GAP_MS = ABSENCE_GAP_MS;
 
 /**
  * A continuous-mode camera frame decoded `code` at `now` — composes the aim box,
@@ -192,12 +209,12 @@ export function continuousFrameScanned(
   }
 
   // SA-384b: one absence gap for both the mark and its honour, on this path only.
-  const absent = isAbsentFromGate(state.gate, code, now, opts.candidatesOf, STEADY_ABSENCE_GAP_MS);
-  const {
-    steady,
-    afterAbsence,
-    next: nextSteady,
-  } = trackSteadyRead(state.steady, code, now, absent);
+  const repeat = opts.fastRepeat === true && hasBeenAccepted(state.gate, code, opts.candidatesOf);
+  const absenceGap = repeat ? FAST_REPEAT_ABSENCE_GAP_MS : STEADY_ABSENCE_GAP_MS;
+  const absent = isAbsentFromGate(state.gate, code, now, opts.candidatesOf, absenceGap);
+  const tracked = trackSteadyRead(state.steady, code, now, absent);
+  const { afterAbsence, next: nextSteady } = tracked;
+  const steady = tracked.steady || (repeat && absent);
 
   if (!steady) {
     const nextGate = touchSeen(state.gate, code, now, opts.candidatesOf);
@@ -215,7 +232,7 @@ export function continuousFrameScanned(
     undefined,
     opts.candidatesOf,
     afterAbsence,
-    STEADY_ABSENCE_GAP_MS,
+    absenceGap,
   );
   if (!gated.accept) {
     return {
@@ -234,6 +251,7 @@ export function continuousFrameScanned(
     },
     startResolving: result.startResolving,
     indicator: indicatorEdge(wasResolving, result.next.isResolving),
+    ...(result.dropped && { dropped: true }),
   };
 }
 
