@@ -29,7 +29,6 @@
  * tests in the plain node Jest env, the same way `scan-ladder.ts` does.
  */
 import {
-  ABSENCE_GAP_MS,
   gateScan,
   hasBeenAccepted,
   isAbsentFromGate,
@@ -159,16 +158,16 @@ export interface ContinuousFrameOptions {
    * after `FAST_REPEAT_ABSENCE_GAP_MS` out of view with NO steady-hold requirement, so a scan-a-case-a-second
    * rhythm is not eaten by the 800 ms absence + 3-frame hold. The first sighting of a code still needs the
    * steady read. A continuous hold does not re-count while decodes stay under that gap apart (its `lastSeenAt`
-   * keeps moving); a decode PAUSE of 0.3 s or more on a held item (blur, glare) reads as a lift-and-re-present and
-   * counts again - the accepted cost of the 0.3 s ruling. Default off: every other scan screen stays on the 09-24 rule.
+   * keeps moving); a decode PAUSE of 0.6 s or more on a held item (blur, glare) reads as a lift-and-re-present and
+   * counts again - the accepted cost of the 0.6 s ruling (owner, 2026-10-15; 0.3 s double-counted holds on slow phones). Default off: every other scan screen stays on the 09-24 rule.
    */
   fastRepeat?: boolean;
 }
 
 /** The absence that makes a repeat of the code just accepted a new scan on the order builder. */
-export const FAST_REPEAT_ABSENCE_GAP_MS = ABSENCE_GAP_MS;
-/** ...and the cooldown for such a repeat equals the absence: a 0.5 s scan rhythm must not lose every other scan. */
-export const FAST_REPEAT_COOLDOWN_MS = ABSENCE_GAP_MS;
+export const FAST_REPEAT_ABSENCE_GAP_MS = 600;
+/** ...and the cooldown for such a repeat equals the absence, so the cooldown never rejects a repeat the absence let in. */
+export const FAST_REPEAT_COOLDOWN_MS = FAST_REPEAT_ABSENCE_GAP_MS;
 
 /**
  * A continuous-mode camera frame decoded `code` at `now` — composes the aim box,

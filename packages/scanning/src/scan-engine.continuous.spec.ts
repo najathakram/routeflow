@@ -357,7 +357,7 @@ describe("resetSteadyRead (Hold-to-scan release: a re-grab needs a FRESH steady 
   });
 });
 
-describe("fastRepeat (order builder: a repeat of the code just accepted counts after a 0.3 s absence)", () => {
+describe("fastRepeat (order builder: a repeat of the code just accepted counts after a 0.6 s absence)", () => {
   /** `n` presentations of `code`, one per second: in view `viewMs` at 10 Hz, then out of view for the rest. */
   function presentations(
     n: number,
@@ -384,8 +384,14 @@ describe("fastRepeat (order builder: a repeat of the code just accepted counts a
     return accepts;
   }
 
-  it("20 presentations at 1.0 s spacing with ~400 ms out of view give 20 accepts", () => {
-    expect(presentations(20, 600, { fastRepeat: true })).toBe(20);
+  it("20 presentations at 1.0 s spacing with ~700 ms out of view give 20 accepts", () => {
+    expect(presentations(20, 300, { fastRepeat: true })).toBe(20);
+  });
+
+  it("deliberate repeats at a 1.0 s rhythm all count, each in view 0.2 to 0.4 s (one-frame repeats are pinned separately)", () => {
+    for (const viewMs of [200, 300, 400]) {
+      expect(presentations(20, viewMs, { fastRepeat: true })).toBe(20);
+    }
   });
 
   it("a repeat needs no steady hold: one or two frames per presentation still count", () => {
@@ -417,7 +423,7 @@ describe("fastRepeat (order builder: a repeat of the code just accepted counts a
     expect(presentations(20, 600, {})).toBe(1);
   });
 
-  it("a continuous hold is still ONE accept with the option on (gaps under 0.3 s are not an absence)", () => {
+  it("a continuous hold is still ONE accept with the option on (gaps under 0.6 s are not an absence)", () => {
     let s = createContinuousScanState();
     let accepts = 0;
     let frame = 0;
@@ -435,30 +441,26 @@ describe("fastRepeat (order builder: a repeat of the code just accepted counts a
     expect(accepts).toBe(1);
   });
 
-  it("a 0.5 s scan rhythm (one or two frames each) counts every presentation, none lost to the cooldown", () => {
+  it("a 9 s hold with a successful decode only every 300 ms counts ONCE (slow phone)", () => {
     let s = createContinuousScanState();
-    const opts = { bounds: IN_BOX_BOUNDS, aimBox: IN_BOX, fastRepeat: true };
-    for (const t of [0, 100, 200]) s = continuousFrameScanned(s, "RHYTHM", T0 + t, opts).next;
-    s = scanSettled(s).next;
-    let accepts = 1;
-    for (let i = 1; i <= 10; i++) {
-      for (const dt of [0, 100]) {
-        const step = continuousFrameScanned(s, "RHYTHM", T0 + 200 + i * 500 + dt, opts);
-        s = step.next;
-        if (step.startResolving) {
-          accepts++;
-          s = scanSettled(s).next;
-        }
-      }
+    let accepts = 0;
+    for (let t = 0; t <= 9000; t += 300) {
+      const step = continuousFrameScanned(s, "SLOW-HOLD", T0 + t, {
+        bounds: IN_BOX_BOUNDS,
+        aimBox: IN_BOX,
+        fastRepeat: true,
+      });
+      s = step.next;
+      if (step.startResolving) accepts++;
     }
-    expect(accepts).toBe(11);
+    expect(accepts).toBe(1);
   });
 
-  it("a held item whose decodes pause under 0.3 s is never re-counted, however often", () => {
+  it("a held item whose decodes pause under 0.6 s is never re-counted, however often", () => {
     let s = createContinuousScanState();
     let accepts = 0;
     for (let t = 0, i = 0; t <= 9000; t += 100, i++) {
-      if (i % 5 === 4) continue; // a missed decode every 5th tick: 200 ms between reads
+      if (i % 5 !== 0 && i % 5 !== 4) continue; // reads cluster, then a 500 ms pause: 100 ms then 500 ms gaps
       const step = continuousFrameScanned(s, "HELD", T0 + t, {
         bounds: IN_BOX_BOUNDS,
         aimBox: IN_BOX,
