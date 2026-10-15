@@ -25,6 +25,11 @@ import {
 } from "@/lib/restriction-rules";
 import { ruleCardTarget } from "@/lib/rule-targets";
 import { WriteButton } from "@/lib/read-only-gate";
+import {
+  ASK_ACCOUNT_ADMIN,
+  hidesFromAllPortalCustomers,
+  mayHideFromAllPortal,
+} from "@/lib/portal-hide-admin";
 import { LiftLimitsDialog } from "@/components/portal-limits/LiftLimitsDialog";
 import { LiftRuleDialog } from "./_components/LiftRuleDialog";
 import { RuleFormDialog } from "./_components/RuleFormDialog";
@@ -34,6 +39,7 @@ function RuleCard({
   lift,
   selected,
   onToggle,
+  toggleLocked,
 }: {
   rule: SellingRestrictionListItemDto;
   /** Present for staff; `state` decides whether Lift is live or disabled with its reason. */
@@ -41,6 +47,8 @@ function RuleCard({
   /** Present only for a rule that can still be lifted by this viewer. */
   selected?: boolean;
   onToggle?: () => void;
+  /** L5: the rule hides products from every portal customer and the viewer is not an account admin. */
+  toggleLocked?: boolean;
 }) {
   const target = ruleCardTarget(rule);
   const detailHref = `/settings/restrictions/rules/${rule.id}`;
@@ -55,6 +63,8 @@ function RuleCard({
               className="mt-1 h-4 w-4"
               checked={!!selected}
               onChange={onToggle}
+              disabled={toggleLocked}
+              aria-describedby={toggleLocked ? `rule-${rule.id}-admin-only` : undefined}
               aria-label={`Select the limit on ${target.name}`}
             />
           )}
@@ -71,6 +81,11 @@ function RuleCard({
             )}
             {(target.kind ?? target.names) && (
               <p className="break-words text-xs text-navy/60">{target.kind ?? target.names}</p>
+            )}
+            {onToggle && toggleLocked && (
+              <p id={`rule-${rule.id}-admin-only`} className="text-xs text-navy/60">
+                {ASK_ACCOUNT_ADMIN}
+              </p>
             )}
           </div>
         </div>
@@ -274,6 +289,7 @@ export default function RestrictionRulesPage() {
                       : undefined
                   }
                   selected={picked.has(r.id)}
+                  toggleLocked={!mayHideFromAllPortal(role) && hidesFromAllPortalCustomers(r)}
                   onToggle={
                     canLiftMany && (r.status === "ACTIVE" || r.status === "SCHEDULED")
                       ? () =>
