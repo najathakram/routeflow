@@ -1,0 +1,7 @@
+# graphify (owner 10-15): every worktree gets its own code graph, so sessions can query it before grep/Read.
+# Builds in the background, only when the graph is missing. AST-only, no API cost. Never blocks or fails a checkout.
+command -v graphify >/dev/null 2>&1 || exit 0
+[ -f graphify-out/graph.json ] && exit 0
+[ -f graphify-out/.rebuild.lock ] && exit 0
+(graphify update . >/dev/null 2>&1 &)
+exit 0

@@ -114,6 +114,23 @@ threshold. See `docs/runbooks/disk-cleanup-janitor.md` for exactly what it never
 - Finance: `invoices`, `credit-notes`, `vendor-bills`, `estimates`, `recurring-invoices`, `bookkeeping`, `billing`.
 - Platform: `uploads`/`storage`, `notifications`/`messages`, `email`, `analytics`, `audit`, `import`, `config`/`system-config`.
 
+## graphify first (owner 2026-10-15)
+
+Every worktree has a code graph at `graphify-out/graph.json` (gitignored). The husky `post-checkout`
+hook builds it in the background when it is missing; `post-commit` refreshes it. Build it by hand with
+`graphify update .` (AST-only, no API cost). The CLI is from github.com/Graphify-Labs/graphify.
+
+- **Orient with the graph before grep/Read**, then the code map, then open only the file it points to.
+  Grep only to confirm or edit specific lines.
+- **Query with identifiers, not prose.** The query matches node labels, so use function, file and
+  constant names:
+  - `graphify query "continuousFrameScanned STEADY_ABSENCE_GAP_MS" --budget 1500`
+  - `graphify explain "<Symbol>"`: one node and its neighbours.
+  - `graphify path "<A>" "<B>"`: how two pieces connect.
+  - `graphify affected "<Symbol>"`: the change and review radius before a fix.
+- **Every agent brief** says "orient with graphify (identifiers, --budget) before grep/Read".
+- If a query comes back noisy, narrow it to symbol names; don't fall back to broad grep.
+
 ## Code map routine
 
 A signature-level **code map** lives at [`.claude/code-map/`](.claude/code-map/) (the `code-map`
