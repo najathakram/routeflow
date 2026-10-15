@@ -31,6 +31,10 @@ export const COMPARE_WINDOW_DAYS = 180;
 /** Fewer distinct other customers than this and the aggregate is withheld (cannot be anonymised). */
 export const COMPARE_MIN_CUSTOMERS = 3;
 const COMPARE_INVOICE_CAP = 2000;
+/**
+ * The price-summary scan reads the customer's newest 500 issued invoices, NOT 500 per product, so a
+ * rarely-sold product can be hidden behind frequent ones (a per-product cap is a later change).
+ */
 const SUMMARY_INVOICE_CAP = 500;
 
 /** `?productIds=a,b,a` -> ["a","b"] (trimmed, de-duplicated, order kept). */

@@ -4,7 +4,11 @@ import { QueryClient } from "@tanstack/react-query";
 import { renderWithProviders, screen, waitFor, within, fireEvent } from "@/test-utils/render";
 import { LineItemRow, type LineItemRowItem, type LineItemRowProps } from "./LineItemRow";
 import { PriceHistoryButton } from "./PriceHistory";
-import type { PriceHistoryResponse, PriceHistoryRow } from "@/lib/api/price-history";
+import type {
+  PriceHistoryResponse,
+  PriceHistoryRow,
+  PriceSummaryEntry,
+} from "@/lib/api/price-history";
 
 /** v1.1: prefetch, placement, keyboard, chips, references, compare, margin, chart markers. */
 
@@ -304,9 +308,28 @@ describe("inline last-3 chips (real onTapPrice configuration)", () => {
       </ul>,
     );
 
-  it("shows the last three prices newest first, a tap uses that price, one shared request", async () => {
+  const sum = (over: Partial<PriceSummaryEntry> = {}): PriceSummaryEntry => ({
+    last3: [
+      { date: "2026-09-25T00:00:00.000Z", unitPrice: 13, unitLabel: "case" },
+      { date: "2026-09-20T00:00:00.000Z", unitPrice: 12, unitLabel: "case" },
+      { date: "2026-09-10T00:00:00.000Z", unitPrice: 11, unitLabel: "case" },
+    ],
+    low: 11,
+    high: 13,
+    unitLabel: "case",
+    unitsPerBox: 24,
+    ...over,
+  });
+  const histCalls = () =>
+    mockGet.mock.calls.filter((c) => String(c[0]).includes("/price-history")).length;
+
+  it("shows the last three prices newest first from the batch, a tap uses that price, chips make no request", async () => {
     const pick = jest.fn();
-    renderRow(props({ customerPriceHistory: { customerId: "c1", onUsePrice: pick } }));
+    renderRow(
+      props({
+        customerPriceHistory: { customerId: "c1", onUsePrice: pick, summary: { p1: sum() } },
+      }),
+    );
     const chips = await screen.findAllByRole("button", { name: /^Use last price/ });
     expect(chips).toHaveLength(3);
     expect(chips[0]).toHaveTextContent("$13.00");
@@ -314,27 +337,78 @@ describe("inline last-3 chips (real onTapPrice configuration)", () => {
     expect(chips[2]).toHaveTextContent("$11.00");
     fireEvent.click(chips[1]!);
     expect(pick).toHaveBeenCalledWith(12);
-    expect(mockGet).toHaveBeenCalledTimes(1);
+    // only the popover button's own prefetch hits the per-product endpoint; chips add nothing
+    await waitFor(() => expect(histCalls()).toBe(1));
+    expect(mockGet.mock.calls.some((c) => String(c[0]).includes("/price-summary"))).toBe(false);
   });
 
-  it("renders no chips when there is no history", async () => {
-    mockGet.mockResolvedValue({ data: base({ rows: [], summaries: [] }) });
-    renderRow(props({ customerPriceHistory: { customerId: "c1", onUsePrice: jest.fn() } }));
-    await waitFor(() => expect(mockGet).toHaveBeenCalled());
-    await new Promise((r) => setTimeout(r, 20));
-    expect(screen.queryByLabelText("Recent prices")).not.toBeInTheDocument();
-  });
-
-  it("renders no chips on error and no request without a customer", async () => {
-    mockGet.mockRejectedValue(new Error("x"));
-    const { unmount } = renderRow(
-      props({ customerPriceHistory: { customerId: "c1", onUsePrice: jest.fn() } }),
+  it("only offers prices in the line's unit", async () => {
+    const entry = sum({
+      last3: [
+        { date: "2026-09-25T00:00:00.000Z", unitPrice: 1.5, unitLabel: "each" },
+        { date: "2026-09-20T00:00:00.000Z", unitPrice: 12, unitLabel: "box" },
+      ],
+      unitLabel: "each",
+      unitsPerBox: null,
+    });
+    renderRow(
+      props({
+        customerPriceHistory: { customerId: "c1", onUsePrice: jest.fn(), summary: { p1: entry } },
+      }),
     );
-    await waitFor(() => expect(mockGet).toHaveBeenCalled());
+    const chips = await screen.findAllByRole("button", { name: /^Use last price/ });
+    expect(chips).toHaveLength(1);
+    expect(chips[0]).toHaveTextContent("$12.00");
+  });
+
+  it("every line gets chips: no mount-time budget (8 lines > AUTO_FETCH_BUDGET)", async () => {
+    const mk = (i: number): LineItemRowProps =>
+      props({
+        item: { ...item, tempId: `t${i}`, productId: `p${i}` },
+        customerPriceHistory: {
+          customerId: "c1",
+          onUsePrice: jest.fn(),
+          summary: Object.fromEntries(Array.from({ length: 8 }, (_, k) => [`p${k}`, sum()])),
+        },
+      });
+    renderWithProviders(
+      <ul>
+        {Array.from({ length: 8 }, (_, i) => (
+          <LineItemRow key={i} {...mk(i)} />
+        ))}
+      </ul>,
+    );
+    expect(await screen.findAllByLabelText("Recent prices")).toHaveLength(8);
+  });
+
+  it("renders no chips when the batch has no entry or no sales for the product", async () => {
+    const { unmount } = renderRow(
+      props({ customerPriceHistory: { customerId: "c1", onUsePrice: jest.fn(), summary: {} } }),
+    );
     expect(screen.queryByLabelText("Recent prices")).not.toBeInTheDocument();
     unmount();
-    mockGet.mockClear();
-    renderRow(props({ customerPriceHistory: { customerId: null, onUsePrice: jest.fn() } }));
-    expect(mockGet).not.toHaveBeenCalled();
+    renderRow(
+      props({
+        customerPriceHistory: {
+          customerId: "c1",
+          onUsePrice: jest.fn(),
+          summary: {
+            p1: sum({ last3: [], low: null, high: null, unitLabel: null, unitsPerBox: null }),
+          },
+        },
+      }),
+    );
+    expect(screen.queryByLabelText("Recent prices")).not.toBeInTheDocument();
+  });
+
+  it("threads excludeOrderId to the popover button's history request", async () => {
+    renderRow(
+      props({
+        customerPriceHistory: { customerId: "c1", onUsePrice: jest.fn(), excludeOrderId: "ord-9" },
+      }),
+    );
+    await waitFor(() => expect(histCalls()).toBe(1));
+    const cfg = mockGet.mock.calls.find((c) => String(c[0]).includes("/price-history"))![1];
+    expect(cfg.params.excludeOrderId).toBe("ord-9");
   });
 });

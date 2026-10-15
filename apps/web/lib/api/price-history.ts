@@ -9,6 +9,8 @@ import type {
   PriceHistoryRow,
   PriceHistorySource,
   PriceHistorySummary,
+  PriceSummaryEntry,
+  PriceSummaryResponse,
 } from "@routeflow/types";
 
 // The contract (rows, summaries, `references`, the `?compare=all` `aggregate`) is `@routeflow/types`
@@ -20,6 +22,8 @@ export type {
   PriceHistoryRow,
   PriceHistorySource,
   PriceHistorySummary,
+  PriceSummaryEntry,
+  PriceSummaryResponse,
 };
 
 export const priceHistoryKey = (
@@ -132,4 +136,62 @@ export function usePrefetchPriceHistory(
       staleTime: 30_000,
     });
   }, [qc, customerId, productId, limit, enabled, excludeOrderId]);
+}
+
+/** The endpoint refuses more than this many distinct product ids per request. */
+export const PRICE_SUMMARY_MAX_IDS = 50;
+
+export const priceSummaryKey = (
+  customerId: string | null | undefined,
+  sortedIds: readonly string[],
+  excludeOrderId?: string | null,
+) => ["customers", customerId, "price-summary", sortedIds, excludeOrderId ?? null] as const;
+
+const fetchPriceSummary = async (
+  customerId: string,
+  sortedIds: readonly string[],
+  excludeOrderId?: string | null,
+): Promise<PriceSummaryResponse> => {
+  const chunks: string[][] = [];
+  for (let i = 0; i < sortedIds.length; i += PRICE_SUMMARY_MAX_IDS) {
+    chunks.push(sortedIds.slice(i, i + PRICE_SUMMARY_MAX_IDS));
+  }
+  const parts = await Promise.all(
+    chunks.map((ids) =>
+      apiClient
+        .get(`/customers/${customerId}/price-summary`, {
+          params: {
+            productIds: ids.join(","),
+            ...(excludeOrderId ? { excludeOrderId } : {}),
+          },
+        })
+        .then((r) => r.data as PriceSummaryResponse),
+    ),
+  );
+  return Object.assign({}, ...parts) as PriceSummaryResponse;
+};
+
+/**
+ * ONE batched request for every line's "Recent prices" chips (replaces a price-history request per
+ * line). Ids are de-duplicated and sorted so the key is stable across line reordering; more than 50
+ * ids are chunked into <= 50-id requests and merged. `excludeOrderId`: the order being edited.
+ */
+export function usePriceSummary(
+  customerId: string | null | undefined,
+  productIds: readonly (string | null | undefined)[],
+  excludeOrderId?: string | null,
+) {
+  const idKey = Array.from(new Set(productIds.filter((id): id is string => !!id)))
+    .sort()
+    .join(",");
+  const sortedIds = React.useMemo(() => (idKey ? idKey.split(",") : []), [idKey]);
+  return useQuery<PriceSummaryResponse>({
+    queryKey: priceSummaryKey(customerId, sortedIds, excludeOrderId),
+    queryFn: () => fetchPriceSummary(customerId!, sortedIds, excludeOrderId),
+    enabled: !!customerId && sortedIds.length > 0,
+    staleTime: 30_000,
+    retry: false,
+    // NO placeholderData (same reason as usePriceHistory): a changed customer must not show the
+    // previous customer's prices or their "use this price" chips.
+  });
 }

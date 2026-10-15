@@ -1,5 +1,5 @@
 import { Controller, Get, Param, ParseUUIDPipe, Query, UseGuards } from "@nestjs/common";
-import { ApiBearerAuth, ApiTags } from "@nestjs/swagger";
+import { ApiBearerAuth, ApiOperation, ApiTags } from "@nestjs/swagger";
 import { UserRole } from "@prisma/client";
 import type { PriceHistoryResponse, PriceSummaryResponse } from "@routeflow/types";
 import { CurrentUser } from "../auth/decorators/current-user.decorator";
@@ -43,6 +43,11 @@ export class CustomerPriceHistoryController {
 
   /** v1.1: last 3 invoiced prices + low/high per product (max 50), one query pass. */
   @Get(":customerId/price-summary")
+  @ApiOperation({
+    summary: "Last 3 invoiced prices and low/high for up to 50 products",
+    description:
+      "Scans the customer's newest 500 issued invoices, not 500 per product, so a rarely-sold product can be hidden behind frequent ones (a per-product cap is a later change).",
+  })
   @Roles(UserRole.OPERATOR)
   getPriceSummary(
     @Param("customerId") customerId: string,

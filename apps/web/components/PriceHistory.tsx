@@ -11,6 +11,7 @@ import {
   type PriceHistoryResponse,
   type PriceHistoryRow,
   type PriceHistorySummary,
+  type PriceSummaryEntry,
 } from "@/lib/api/price-history";
 import { fmt } from "@/lib/formatting";
 
@@ -643,28 +644,28 @@ export function PriceHistoryButton({
 
 /**
  * The customer's last 3 sold prices for the line's unit as small tap-to-use chips ("$18.75 · Sep 26").
- * One cached request per customer + product, shared with the prefetch and the popover. Renders nothing while loading, on error, or
- * when there is no history; a tap is "Use this price" (the line's existing price path).
+ * Pure view over one entry of the order screen's single batched `usePriceSummary` request (no fetch of
+ * its own, so no per-line budget). Renders nothing with no entry / no history; a tap is "Use this price"
+ * (the line's existing price path). Unit and pack rules are `canUseHistoryPrice`'s, unchanged.
  */
 export function PriceChips({
-  customerId,
-  productId,
+  entry,
   unitHint,
   packHint,
   onUsePrice,
-  excludeOrderId,
 }: {
-  customerId?: string | null;
-  productId?: string | null;
+  entry?: PriceSummaryEntry | null;
   unitHint?: string | null;
   packHint?: number | null;
   onUsePrice: (price: number) => void;
-  excludeOrderId?: string | null;
 }) {
-  const slot = useAutoFetchSlot(customerId, productId);
-  const q = usePriceHistory(customerId, productId, slot, 25, excludeOrderId);
-  const all = q.data?.rows ?? [];
-  const unitCount = new Set(all.map((r) => r.unitLabel.trim().toLowerCase())).size;
+  // The entry carries ONE pack size, the newest sale's unit group's; an older sale in another unit has
+  // an unknown pack (null = unknown, which `canUseHistoryPrice` already treats as "unit match only").
+  const all = (entry?.last3 ?? []).map((r) => ({
+    ...r,
+    unitsPerBox: sameUnit(r.unitLabel, entry?.unitLabel) ? (entry?.unitsPerBox ?? null) : null,
+  }));
+  const unitCount = new Set(all.map((r) => normUnit(r.unitLabel))).size;
   const rows = all
     .filter((r) => canUseHistoryPrice(r, unitHint, packHint, unitCount))
     .sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime())
@@ -674,7 +675,7 @@ export function PriceChips({
     <span className="flex flex-wrap items-center gap-1" aria-label="Recent prices">
       {rows.map((r, i) => (
         <button
-          key={`${r.orderId}-${i}`}
+          key={`${r.date}-${i}`}
           type="button"
           aria-label={`Use last price ${fmt(r.unitPrice)} from ${fmtDate(r.date)}`}
           onClick={() => onUsePrice(r.unitPrice)}
