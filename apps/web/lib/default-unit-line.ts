@@ -2,6 +2,7 @@ import type { ProductUnitLevel } from "@routeflow/types";
 import {
   isUnitPending,
   mayMergeResolved,
+  normalizeBoxesPieces,
   pendingResolvePlan,
   pendingTapCount,
   refreshUnitsAnswer as refreshUnitsAnswerShared,
@@ -115,6 +116,16 @@ export function applyUnitToLinesDetailed<T extends DefaultUnitLine>(
       ? { qty: pendingCount(target) }
       : {}),
   };
+  // A DERIVED base unit is a pack-pieces line: the pricing package reads boxes/pieces, not qty, so N pending taps
+  // must land as N pieces (rolled into boxes), or they fold/bill as 1 (row 536, the P0b repeat-tap case).
+  if (option.derived && next.unitsPerBox && isPendingDefaultUnit(target)) {
+    const n = normalizeBoxesPieces({
+      boxes: 0,
+      pieces: pendingCount(target),
+      unitsPerBox: next.unitsPerBox,
+    });
+    Object.assign(next, { boxes: n.boxes ?? 0, pieces: n.pieces ?? 0, qty: n.qty });
+  }
   const twin = prev.find((li) => li.tempId !== tempId && sameProductUnit(li, next));
   if (!twin) return { lines: prev.map((li) => (li.tempId === tempId ? next : li)) };
   return {
