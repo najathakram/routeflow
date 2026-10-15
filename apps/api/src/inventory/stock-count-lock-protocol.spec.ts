@@ -46,7 +46,7 @@ describe("stock-count commit-lock protocol (SA-767 L-2.4 B)", () => {
   it.each(edits)(
     "%s: the committer holds the lock -> 409 STOCK_COUNT_COMMITTING, nothing written",
     async (_n, call) => {
-      w.state.lockHeld = true;
+      w.state.countLockHeld = true;
 
       const err: any = await call().catch((e) => e);
 
