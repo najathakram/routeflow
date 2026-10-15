@@ -4,6 +4,7 @@ import {
   SHIPPED_ORDER_MESSAGE,
   productInOpenCountCopy,
 } from "@routeflow/types";
+import { BUYER_QTY_SPLIT_MISMATCH_COPY } from "./buyer-cart-line";
 import { READ_ONLY_SENTENCE } from "@routeflow/types/read-only-copy";
 import { regulatedAuthCopy } from "@routeflow/types/regulated-auth-copy";
 import {
@@ -55,6 +56,8 @@ const CODE_COPY: Record<string, string> = {
   ORDER_CHANGED_DURING_EDIT: "This order changed while you were editing it. Refresh and try again.",
   // F3: the edit named one line twice; nothing was saved.
   DUPLICATE_LINE_ID: "A line appears twice. Refresh the page and try again.",
+  // Row 531: a buyer cart whose quantity and box split disagree; nothing was saved.
+  QTY_SPLIT_MISMATCH: BUYER_QTY_SPLIT_MISMATCH_COPY,
   ORDER_BILLING_CHANGED:
     "This order's billing changed while you were working on it. Refresh and try again.",
   FULFIL_METHOD_NOT_OFFERED: "This business doesn't offer that way of fulfilling orders.",

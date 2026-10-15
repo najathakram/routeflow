@@ -602,6 +602,12 @@ export const API_ERROR_CODES = {
    */
   DUPLICATE_LINE_ID: "DUPLICATE_LINE_ID",
   /**
+   * 400 from the BUYER order paths (create, the fold into an active order, edit lines): a boxed line (unitsPerBox > 1)
+   * named BOTH a `qty` and a `boxes`/`pieces` split that disagree. Checked on the payload alone before any read or
+   * write, so nothing is saved; the client re-derives the cart from qty and the buyer reviews it (row 531).
+   */
+  QTY_SPLIT_MISMATCH: "QTY_SPLIT_MISMATCH",
+  /**
    * 503 from create(): the order WAS saved but its credit-note sync exhausted its retries. The body carries
    * `orderId`: open that order and apply the credits there; a replay of the key never applies them.
    */

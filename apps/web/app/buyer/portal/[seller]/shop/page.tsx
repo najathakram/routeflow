@@ -33,8 +33,10 @@ import {
 } from "@/lib/api/buyer";
 import { promotionRuleLabel } from "@/lib/api/promotions";
 import { useBuyerCart } from "@/lib/buyer-cart";
+import { lineCount, newCartLine } from "@/lib/buyer-cart-line";
 import { objectPositionForUrl } from "@/lib/image-focal";
 import { QtyStepper } from "./_components/QtyStepper";
+import { CartLineUnit } from "../_components/CartLineUnit";
 import { ProductTile } from "./_components/ProductTile";
 import { CategoryRail, type RailSelection } from "./_components/CategoryRail";
 import { RunningLowStrip } from "./_components/RunningLowStrip";
@@ -257,6 +259,13 @@ export default function BuyerShopPage() {
 
   const products = result?.data ?? [];
   const meta = result?.meta;
+  // An older Add (dashboard / favorites) may have stored a boxed product without its pack size;
+  // give such a line the catalog's pack as whole Cases so the stepper and the cart agree.
+  const { adoptCatalogPacks } = cart;
+  React.useEffect(() => {
+    if (!result?.data?.length) return;
+    adoptCatalogPacks(new Map(result.data.map((p) => [p.id, p.unitsPerBox])));
+  }, [result, adoptCatalogPacks]);
   const lockedCategories = counts?.lockedCategories ?? result?.hiddenCategories ?? [];
   const lockedCategory =
     selection.kind === "locked" ? lockedCategories.find((c) => c.id === selection.id) : undefined;
@@ -548,18 +557,20 @@ export default function BuyerShopPage() {
                         estimate={estimateByProduct.get(p.id)}
                         isFavorite={favoriteIds.has(p.id)}
                         onAdd={() =>
-                          cart.addItem({
-                            productId: p.id,
-                            qty: p.unitsPerBox ? p.unitsPerBox : 1,
-                            name: p.name,
-                            unit: p.unit,
-                            thumbnailUrl: p.thumbnailUrl,
-                            unitsPerBox: p.unitsPerBox,
-                            boxes: p.unitsPerBox ? 1 : undefined,
-                            pieces: p.unitsPerBox ? 0 : undefined,
-                          })
+                          cart.addItem(
+                            newCartLine(
+                              {
+                                productId: p.id,
+                                name: p.name,
+                                unit: p.unit,
+                                thumbnailUrl: p.thumbnailUrl,
+                              },
+                              p.unitsPerBox,
+                            ),
+                          )
                         }
                         onUpdateQty={(qty) => cart.updateQty(p.id, qty)}
+                        onSetUnit={(unit) => cart.setUnit(p.id, unit)}
                         onRestore={(line) => cart.addItem(line)}
                         onToggleFavorite={() => toggleFavorite(p.id)}
                         isAlertSubscribed={alertIds.has(p.id)}
@@ -583,8 +594,8 @@ export default function BuyerShopPage() {
                         </thead>
                         <tbody className="divide-y divide-surface-border">
                           {products.map((p) => {
-                            const qty = cart.getItemQty(p.id);
                             const cartItem = cart.items.find((i) => i.productId === p.id);
+                            const qty = cartItem ? lineCount(cartItem) : 0;
                             const priced = deriveTilePrice(p, promoRules, cartItem);
                             return (
                               <tr
@@ -652,29 +663,39 @@ export default function BuyerShopPage() {
                                       />
                                     </button>
                                     {qty > 0 ? (
-                                      <QtyStepper
-                                        qty={qty}
-                                        name={p.name}
-                                        onUpdate={(n) => cart.updateQty(p.id, n)}
-                                        onRemove={() => cart.updateQty(p.id, 0)}
-                                        onRestore={
-                                          cartItem ? () => cart.addItem(cartItem) : undefined
-                                        }
-                                        size="sm"
-                                      />
+                                      <div className="flex flex-col items-end gap-1.5">
+                                        <QtyStepper
+                                          qty={qty}
+                                          name={p.name}
+                                          onUpdate={(n) => cart.updateQty(p.id, n)}
+                                          onRemove={() => cart.updateQty(p.id, 0)}
+                                          onRestore={
+                                            cartItem ? () => cart.addItem(cartItem) : undefined
+                                          }
+                                          size="sm"
+                                        />
+                                        {cartItem && (
+                                          <CartLineUnit
+                                            item={cartItem}
+                                            name={p.name}
+                                            onUnit={(unit) => cart.setUnit(p.id, unit)}
+                                          />
+                                        )}
+                                      </div>
                                     ) : (
                                       <button
                                         onClick={() =>
-                                          cart.addItem({
-                                            productId: p.id,
-                                            qty: p.unitsPerBox ? p.unitsPerBox : 1,
-                                            name: p.name,
-                                            unit: p.unit,
-                                            thumbnailUrl: p.thumbnailUrl,
-                                            unitsPerBox: p.unitsPerBox,
-                                            boxes: p.unitsPerBox ? 1 : undefined,
-                                            pieces: p.unitsPerBox ? 0 : undefined,
-                                          })
+                                          cart.addItem(
+                                            newCartLine(
+                                              {
+                                                productId: p.id,
+                                                name: p.name,
+                                                unit: p.unit,
+                                                thumbnailUrl: p.thumbnailUrl,
+                                              },
+                                              p.unitsPerBox,
+                                            ),
+                                          )
                                         }
                                         className="flex items-center gap-1 rounded-lg bg-buyer-500 px-3 py-1.5 text-xs font-semibold text-white hover:bg-buyer-600 transition-colors"
                                       >

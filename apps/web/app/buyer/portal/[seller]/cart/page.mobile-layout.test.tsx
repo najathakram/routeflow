@@ -33,6 +33,8 @@ jest.mock("@/lib/buyer-cart", () => ({
     clearCart: jest.fn(),
     addItem: jest.fn(),
     updateQty: jest.fn(),
+    setUnit: jest.fn(),
+    adoptCatalogPacks: jest.fn(),
     removeItem: jest.fn(),
   }),
 }));
@@ -73,11 +75,26 @@ describe("buyer cart table on a narrow screen", () => {
     expect(screen.getAllByText("Price", { selector: "span" })).toHaveLength(2);
     expect(screen.getAllByText("Subtotal", { selector: "span" })).toHaveLength(2);
     expect(screen.getAllByText("Price", { selector: "span" })[0].className).toMatch(/md:hidden/);
-    expect(screen.getAllByRole("spinbutton").length).toBeGreaterThanOrEqual(3);
+    // one stepper field per row (the boxed row's old boxes + pcs pair is ONE count in its unit now)
+    expect(screen.getAllByRole("spinbutton")).toHaveLength(2);
     // one remove button per row (the last button of each row)
     for (const row of screen.getByRole("table").querySelectorAll("tbody tr")) {
       expect(row.querySelectorAll("button").length).toBeGreaterThan(0);
     }
+  });
+
+  it("row 531: the qty control takes its OWN row below md, so it can never overlap the PRICE column", () => {
+    render(<BuyerCartPage />);
+    for (const row of screen.getByRole("table").querySelectorAll("tbody tr")) {
+      const qtyCell = row.querySelectorAll("td")[1] as HTMLElement;
+      // full row + shrinkable: nothing in it can be laid over the Price cell that follows
+      expect(qtyCell.className).toMatch(/max-md:w-full/);
+      expect(qtyCell.className).toMatch(/max-md:min-w-0/);
+      expect(qtyCell.className).not.toMatch(/max-md:flex-1/);
+      expect(qtyCell.querySelector('[data-testid="cart-row-stepper"]')).not.toBeNull();
+    }
+    // the boxed row names its unit and offers the Case / Each toggle
+    expect(screen.getAllByTestId("cart-line-unit")).toHaveLength(1);
   });
 
   it("keeps table semantics under the block layout via explicit ARIA roles", () => {
