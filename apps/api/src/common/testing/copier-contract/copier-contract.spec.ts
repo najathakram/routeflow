@@ -56,6 +56,7 @@ import { COPIERS, Copier, INFRA, Model, NOT_A_COPIER, NOT_SALES_FILES } from "./
 const REGISTRY_ONLY_PINNED = ["C10", "C15", "C16a", "C16b"];
 const SRC = path.resolve(__dirname, "../../..");
 const ROOT = path.resolve(SRC, "../../..");
+const COMPONENT_TARGETS = new Set<Model>(["OrderItem", "InvoiceItem"]);
 const words = (s?: string) => (s ?? "").split(/\s+/).filter(Boolean);
 const isClient = (c: Copier) => c.file.startsWith("apps/");
 
@@ -106,6 +107,17 @@ export function evaluate(w: World): string[] {
           bad.push(`${at}: "${col}" is classified twice (${seen.get(col)} and ${b})`);
         seen.set(col, b);
       }
+    // #2717 M3: the `components` relation is skipped by the column check (it is not a scalar), so a
+    // line copier says separately what happens to the frozen component rows: carried (copied from
+    // the source line's rows), rederived (rebuilt from the recipe or rescaled from the line's own
+    // rows) or na (a line that can never carry components).
+    if (
+      COMPONENT_TARGETS.has(c.target) &&
+      !["carried", "rederived", "na"].includes(c.components ?? "")
+    )
+      bad.push(
+        `${at}: NEW/UNCLASSIFIED components bucket on ${c.target} — set components to carried, rederived or na`,
+      );
     for (const col of cols)
       if (!seen.has(col))
         bad.push(
@@ -256,6 +268,22 @@ describe("copier contract mutation proofs (each must turn the spec red)", () => 
       ).length,
     );
   });
+  it("(#2717 M3) a copier of an order/invoice line with no components bucket -> red", () => {
+    const out = evaluate(
+      realWorld(COPIERS.map((c) => (c.id === "C1" ? { ...c, components: undefined } : c))),
+    );
+    expect(out.join()).toMatch(/C1 .*NEW\/UNCLASSIFIED components bucket on InvoiceItem/);
+  });
+  it("(#2717 M3) every order/invoice line copier declares a components bucket", () => {
+    const missing = COPIERS.filter(
+      (c) =>
+        COMPONENT_TARGETS.has(c.target) &&
+        c.coverage !== "registry-only" &&
+        !isClient(c) &&
+        !c.components,
+    ).map((c) => c.id);
+    expect(missing).toEqual([]);
+  });
   it("(b) an unregistered write site -> red", () =>
     expect(evaluate(world({ sites: () => ["fx.ts::copy", "fx.ts::sneaky"] })).join()).toMatch(
       /fx\.ts::sneaky/,
@@ -388,4 +416,32 @@ describe("copier contract mutation proofs (each must turn the spec red)", () => 
     expect(
       evaluate({ ...world(), copiers: [{ ...entry, coverage: "registry-only" }, entry] }).join(),
     ).toMatch(/needs a "why"[\s\S]*duplicate copier id/));
+});
+
+/**
+ * ROW 373(a) (SA-734r2 r-note 8) — the VALUE-SOURCE class the column check above cannot see (limit 3): every
+ * order -> invoice copier carries the category / subcategory / trio / levy from the SOURCE LINE, never from the
+ * live product. An uncategorised order line stays uncategorised on its invoice, with the same stored levy. The
+ * authorization guards (license checks) read the product LIVE on purpose: they are guards, not copiers, and are
+ * not in this list.
+ */
+describe("order -> invoice copiers read the source line, never the live product (row 373a)", () => {
+  const PRODUCT_CATEGORY_READ = /\bproduct\??\.tracked(?:Sub)?categoryId\b/i;
+  const ORDER_TO_INVOICE: Array<{ file: string; fn: string }> = [
+    { file: "invoices/invoices.service.ts", fn: "buildInvoiceItemData" },
+    { file: "invoices/invoices.service.ts", fn: "groupOrderLinesForInvoicing" },
+  ];
+
+  it.each(ORDER_TO_INVOICE)("$file::$fn never reads the product's category", ({ file, fn }) => {
+    const src = fs.readFileSync(path.join(SRC, file), "utf8");
+    const found = findFunctions(src, fn);
+    expect(found.length).toBeGreaterThan(0);
+    for (const node of found) expect(node.getText()).not.toMatch(PRODUCT_CATEGORY_READ);
+  });
+
+  it("mutation proof: a `?? li.product?.trackedCategoryId` fallback is caught", () => {
+    const bad = `class S { buildInvoiceItemData(li) { return { trackedCategoryId: li.trackedCategoryId ?? li.product?.trackedCategoryId ?? null }; } }`;
+    const [node] = findFunctions(bad, "buildInvoiceItemData");
+    expect(node.getText()).toMatch(PRODUCT_CATEGORY_READ);
+  });
 });

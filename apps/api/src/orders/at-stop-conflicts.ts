@@ -1,4 +1,5 @@
 import { ConflictException } from "@nestjs/common";
+import { API_ERROR_CODES } from "../common/api-error-codes";
 
 /**
  * B796: the human `message` for each at-stop refusal of approveChangeRequestAtStop. The `code` (and
@@ -10,11 +11,16 @@ import { ConflictException } from "@nestjs/common";
  * a completed or skipped stop means the at-door authority window is over, so the request is
  * resolved as next-delivery instead (or declined).
  */
+export const CHANGE_WINDOW_ORDER_STATUS =
+  `${API_ERROR_CODES.CHANGE_WINDOW_CLOSED}:ORDER_STATUS` as const;
+export const CHANGE_WINDOW_RUN_NOT_ACTIVE =
+  `${API_ERROR_CODES.CHANGE_WINDOW_CLOSED}:RUN_NOT_ACTIVE` as const;
+
 export const AT_STOP_CONFLICT_MESSAGES = {
-  "CHANGE_WINDOW_CLOSED:ORDER_STATUS": "This order is no longer open for changes at the stop.",
-  "CHANGE_WINDOW_CLOSED:RUN_NOT_ACTIVE":
+  [CHANGE_WINDOW_ORDER_STATUS]: "This order is no longer open for changes at the stop.",
+  [CHANGE_WINDOW_RUN_NOT_ACTIVE]:
     "This order's delivery run isn't in progress, so the change can't be applied at the stop.",
-  STOP_ALREADY_COMPLETED:
+  [API_ERROR_CODES.STOP_ALREADY_COMPLETED]:
     "This stop is already completed or skipped. Approve the request for the next delivery, or decline it.",
 } as const;
 

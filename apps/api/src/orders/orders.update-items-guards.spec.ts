@@ -56,6 +56,7 @@ jest.mock("../notifications/notifications.service", () => ({
   })),
 }));
 
+import { oversellReaderOffProvider } from "./testing/policy-reader-provider";
 import { Test, TestingModule } from "@nestjs/testing";
 import { ForbiddenException } from "@nestjs/common";
 import { getQueueToken } from "@nestjs/bull";
@@ -105,6 +106,7 @@ const customerPayload = {
   sub: "user-cust",
   username: "customer1",
   role: "CUSTOMER" as const,
+  tenantId: "test-tenant",
   status: "ACTIVE" as const,
   forcePasswordChange: false,
 };
@@ -140,6 +142,7 @@ describe("OrdersService — F06 guards (TP2)", () => {
 
     const module: TestingModule = await Test.createTestingModule({
       providers: [
+        oversellReaderOffProvider,
         OrdersService,
         {
           provide: TenantContextService,
@@ -172,6 +175,8 @@ describe("OrdersService — F06 guards (TP2)", () => {
             findOpenOrderDraft: jest.fn().mockResolvedValue(null),
             reconcileOrderDraftInvoice: jest.fn().mockResolvedValue({ id: "inv-1" }),
             resyncOrderInvoicesForEdit: jest.fn().mockResolvedValue([{ id: "inv-1" }]),
+            followPartialPrices: jest.fn().mockResolvedValue({ issuedPartialsUnchanged: [] }),
+            projectEditedInvoiceTotals: jest.fn().mockResolvedValue([]),
             revertLinkedInvoicesForOrderEdit: jest.fn().mockResolvedValue([]),
             voidInvoice: jest.fn().mockResolvedValue({ id: "inv-1", status: "VOID" }),
             voidInvoiceInTx: jest.fn().mockResolvedValue({ id: "inv-1", status: "VOID" }),
@@ -272,25 +277,25 @@ describe("OrdersService — F06 guards (TP2)", () => {
      * of SELLING UNITS and its `unitPrice` the BOX price. upb 12, box $10.00.
      */
     function primeBoxUnawareLine() {
-      prisma.order.findUnique.mockResolvedValue({
-        ...MOCK_ORDER,
-        status: "PENDING",
-        lineItems: [
-          {
-            id: "li-boxunaware",
-            orderId: "ord-1",
-            productId: "prod-box",
-            qty: 2,
-            unitPrice: 10,
-            subtotal: 20,
-            status: "PENDING",
-            boxes: null,
-            pieces: null,
-            priceType: "STANDARD",
-            originalPrice: null,
-          },
-        ],
-      });
+      const lineItems = [
+        {
+          id: "li-boxunaware",
+          orderId: "ord-1",
+          productId: "prod-box",
+          qty: 2,
+          unitPrice: 10,
+          subtotal: 20,
+          status: "PENDING",
+          boxes: null,
+          pieces: null,
+          priceType: "STANDARD",
+          originalPrice: null,
+        },
+      ];
+      prisma.order.findUnique.mockResolvedValue({ ...MOCK_ORDER, status: "PENDING", lineItems });
+      // The lock-time read sees the same line the pre-lock read did (a buyer's edit is judged by the
+      // portal channel even with the switch off, and its plan is re-checked against this read).
+      prisma.orderItem.findMany.mockResolvedValue(lineItems);
       prisma.customer.findFirst.mockResolvedValue({ id: "cust-1", pricingTier: 1 });
       prisma.product.findMany.mockResolvedValue([
         {
@@ -302,7 +307,6 @@ describe("OrdersService — F06 guards (TP2)", () => {
           trackedSubcategoryId: null,
         },
       ]);
-      prisma.orderItem.findMany.mockResolvedValue([]);
     }
 
     it("REG-B47 (T3): a folded {qty:36,boxes:3,pieces:0} item bills 3 boxes, not 36 raw units", async () => {
@@ -607,9 +611,6 @@ describe("OrdersService — F06 guards (TP2)", () => {
       "REG-B63 (T7): a CUSTOMER items-edit on a %s order is refused before any side effect",
       async (status) => {
         primePostDispatchFixture(status);
-        const revisionSpy = jest
-          .spyOn(service as any, "appendOrderRevision")
-          .mockResolvedValue(undefined);
 
         const attempt = service.updateOrderItems(
           "ord-1",
@@ -627,9 +628,60 @@ describe("OrdersService — F06 guards (TP2)", () => {
         expect(invoicesService.revertLinkedInvoicesForOrderEdit).not.toHaveBeenCalled();
         expect(prisma.orderItem.deleteMany).not.toHaveBeenCalled();
         expect(prisma.orderItem.create).not.toHaveBeenCalled();
-        expect(revisionSpy).not.toHaveBeenCalled();
+        expect(prisma.orderRevision.create).not.toHaveBeenCalled();
       },
     );
+
+    // Typed in full (tenantId / tenantSlug), unlike the older `customerPayload`, so these cases add no spec type errors.
+    const buyer = { ...customerPayload, tenantId: "t1", tenantSlug: "test" };
+
+    // B1135: for an order with the carrier the change-request flow is closed too (a request on it
+    // is refused), so this 403 must not send the buyer there. A route-run order keeps the sentence.
+    it.each(["OUT_FOR_DELIVERY", "PARTIALLY_DELIVERED"] as const)(
+      "B1135: a CUSTOMER items-edit on a %s order WITH THE CARRIER is refused without promising a change request",
+      async (status) => {
+        primePostDispatchFixture(status);
+        prisma.order.findUnique.mockResolvedValue({
+          ...MOCK_ORDER,
+          status,
+          tenantId: "t1",
+          fulfillPath: "SHIP",
+          shippedAt: new Date("2026-10-01T00:00:00Z"),
+          lineItems: [],
+        });
+        (service as any).featureConfig = { getEffectiveMode: jest.fn().mockResolvedValue("ship") };
+
+        const attempt = service.updateOrderItems(
+          "ord-1",
+          { items: [{ productId: "prod-x", qty: 1 }] },
+          buyer,
+        );
+
+        await expect(attempt).rejects.toBeInstanceOf(ForbiddenException);
+        await expect(attempt).rejects.toThrow(
+          "This order has already shipped. Contact the seller for changes.",
+        );
+        await expect(attempt).rejects.not.toThrow(/change request/i);
+        expect(prisma.tenantTransaction).not.toHaveBeenCalled();
+      },
+    );
+
+    it("B1135 control: a SHIP order of a business that does not bill at shipment keeps the change-request sentence", async () => {
+      primePostDispatchFixture("OUT_FOR_DELIVERY");
+      prisma.order.findUnique.mockResolvedValue({
+        ...MOCK_ORDER,
+        status: "OUT_FOR_DELIVERY",
+        tenantId: "t1",
+        fulfillPath: "SHIP",
+        shippedAt: new Date("2026-10-01T00:00:00Z"),
+        lineItems: [],
+      });
+      (service as any).featureConfig = { getEffectiveMode: jest.fn().mockResolvedValue("pickup") };
+
+      await expect(
+        service.updateOrderItems("ord-1", { items: [{ productId: "prod-x", qty: 1 }] }, buyer),
+      ).rejects.toThrow(/change request/i);
+    });
 
     describe("T7 control (pin — green pre-fix)", () => {
       it("the same CUSTOMER edit on a PENDING order is NOT refused — the 403 is status-driven, not fixture-driven", async () => {
@@ -904,16 +956,32 @@ describe("OrdersService — F06 guards (TP2)", () => {
       });
       prisma.order.findUnique.mockResolvedValue(twoLineOrder);
       prisma.product.findMany.mockResolvedValue([promoProduct]);
-      prisma.orderItem.findMany.mockResolvedValue([]);
       promotionsService.activeForCatalog.mockResolvedValue([bogoRule]);
 
-      // A no-op save: both lines echoed at their stored qty and price.
+      // Row 373b: id-less entries cannot be paired with two stored lines of one product. They are refused
+      // (the strict fallback), never guessed and never granted a snapshot.
+      await expect(
+        service.updateOrderItems(
+          "ord-1",
+          {
+            items: [
+              { productId: "prod-promo", qty: 10, unitPrice: 5 },
+              { productId: "prod-promo", qty: 5, unitPrice: 5 },
+            ],
+            replaceAll: true,
+          } as never,
+          operatorPayload as never,
+        ),
+      ).rejects.toMatchObject({ response: { code: "ORDER_EDIT_NEEDS_LINE_IDS" } });
+      expect(prisma.orderItem.create).not.toHaveBeenCalled();
+
+      // A no-op save that NAMES both lines: each is paired with its own stored line; the sibling stays plain.
       await service.updateOrderItems(
         "ord-1",
         {
           items: [
-            { productId: "prod-promo", qty: 10, unitPrice: 5 },
-            { productId: "prod-promo", qty: 5, unitPrice: 5 },
+            { id: "li-promo", productId: "prod-promo", qty: 10, unitPrice: 5 },
+            { id: "li-plain", productId: "prod-promo", qty: 5, unitPrice: 5 },
           ],
           replaceAll: true,
         },

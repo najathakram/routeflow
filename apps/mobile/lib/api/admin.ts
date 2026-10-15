@@ -5,8 +5,16 @@ import {
   useMutation,
   useQueryClient,
 } from "@tanstack/react-query";
+import { statusToggleBody } from "../user-admin";
 import { apiClient } from "../api-client";
-import type { TripEligibilityRow, TripOrigin } from "@routeflow/types";
+import type {
+  InventorySettings,
+  LineComponentView,
+  OrderCancelBlockedReason,
+  UpdateInventorySettingsRequest,
+  TripEligibilityRow,
+  TripOrigin,
+} from "@routeflow/types";
 export type { TripEligibilityRow, TripIneligibleReason, TripOrigin } from "@routeflow/types";
 
 export interface PaginationMeta {
@@ -133,7 +141,11 @@ export interface AdminOrder {
    * carrier-shipped, excluded from every trip/route dispatch sweep. Every
    * order has one — not optional, just like the API's `@default(ROUTE)`.
    */
-  fulfillPath: "ROUTE" | "SHIP";
+  fulfillPath: "ROUTE" | "SHIP" | "PICKUP";
+  /** Walk-in counter sale (PICKUP + counterSale): never a POS-mode order (`isPosOrder`). */
+  counterSale?: boolean | null;
+  /** `GET /orders/:id` only: why the server will not cancel the order (the parcel is with the carrier). */
+  cancelBlockedReason?: OrderCancelBlockedReason | null;
   createdAt: string;
   customer?: {
     id: string;
@@ -143,6 +155,8 @@ export interface AdminOrder {
     /** Mobile number — preferred for WhatsApp/SMS over the landline `phone`. */
     mobile?: string;
     email?: string;
+    /** SA-740: the shared counter walk-in customer (a return from its order must name that sale). */
+    isWalkIn?: boolean | null;
   };
   lineItems: Array<{
     id: string;
@@ -213,6 +227,7 @@ export interface AdminOrder {
     invoiceNumber: string;
     status: string;
     total: number;
+    balanceDue?: number;
     // #2404: `creditNote` is attached by the order read; `autoApplied` is SA-436 PR-1's column.
     payments?: Array<{
       id: string;
@@ -350,8 +365,13 @@ export function useAdminCustomer(id: string) {
 // ─── Invoices (Admin) ─────────────────────────────────────────────────────────
 
 export interface AdminInvoice {
+  /** H4: sent back as `expectedUpdatedAt` on PATCH /invoices/:id (409 INVOICE_STALE when behind). */
+  updatedAt?: string;
   id: string;
   invoiceNumber: string;
+  /** P-4: derived by the API; absent = never revised / not overpaid (nothing shown). */
+  revisedAt?: string | null;
+  overpaidBy?: number | null;
   status: string;
   total: number;
   subtotal: number;
@@ -377,6 +397,11 @@ export interface AdminInvoice {
    *  edit/send (lib/invoices-logic.ts isPendingOrderMirror). Raw scalar,
    *  previously untyped — same situation as orderId. */
   deliveryBatchId?: string | null;
+  /** The server's one answer to "is this a pending order mirror" (invoice detail only). Wins over
+   *  the client derivation: only the server knows a shipped carrier order's invoice is unlocked. */
+  pendingMirror?: boolean;
+  /** The server's default PDF stage (invoice detail only): a shipment invoice is "final" before delivery. */
+  pdfVariant?: "draft" | "final";
   /** Invoice-level fields the mobile builders can now WRITE — all raw scalars
    *  the API already returned, previously untyped (needed to hydrate the edit
    *  screen and render Reference/Subject on the detail). */
@@ -386,7 +411,14 @@ export interface AdminInvoice {
   notes?: string | null;
   /** The linked order's status — drives the draft/final PDF default
    *  (deriveInvoiceVariant). Already returned by findOne's `include`, was untyped. */
-  order?: { status?: string | null; orderNumber?: string | null } | null;
+  order?: {
+    status?: string | null;
+    orderNumber?: string | null;
+    /** Row 401: walk-in counter sale (read by the paid-at-sale rule that hides the due date / terms). */
+    counterSale?: boolean | null;
+  } | null;
+  /** Row 401: the server's one answer to "a counter sale paid at the till" — no due date / terms shown. */
+  paidAtSale?: boolean;
   /** Set when this invoice was created as part of a regulated sale split;
    *  sibling invoices from the same split share this id. Same "already
    *  returned, just untyped" situation as orderId (P10-REG-C). */
@@ -439,6 +471,8 @@ export interface AdminInvoice {
     taxRate?: number | null;
     /** Per-line note carried from the order line (buyer-visible). */
     notes?: string | null;
+    /** #2717 M3: frozen sub-lines of a composed (mixed-pack) line; absent on a plain line. */
+    components?: LineComponentView[];
     /** BUY_N_GET_M snapshot: whole free selling units on this line. MUST be
      *  round-tripped by an items PATCH — the server replaces every line, so
      *  dropping it re-prices an agreed BOGO line to full. */
@@ -793,6 +827,9 @@ export interface AdminReturn {
   status: string;
   reason: string;
   notes?: string;
+  /** How a REFUNDED return was resolved (the list returns the whole row): drives the "Store credit" pill. */
+  refundMethod?: string | null;
+  creditNoteId?: string | null;
   createdAt: string;
   order?: { orderNumber: string };
   customer?: { businessName: string };
@@ -1156,6 +1193,8 @@ export interface BusinessSettings {
   city?: string;
   zip?: string;
   taxRate?: number;
+  /** IANA zone of the business (GET /settings). */
+  timezone?: string | null;
 }
 
 export interface AppUser {
@@ -1165,7 +1204,8 @@ export interface AppUser {
   firstName?: string;
   lastName?: string;
   role: string;
-  isActive: boolean;
+  /** ACTIVE | INACTIVE | SUSPENDED (the API sends status, never isActive). */
+  status: string;
   createdAt: string;
 }
 
@@ -1189,6 +1229,22 @@ export function useUpdateBusinessSettings() {
   });
 }
 
+/** GET/PATCH /settings/inventory — the business-wide out-of-stock ordering setting. */
+export function useInventorySettings() {
+  return useQuery<InventorySettings>({
+    queryKey: ["inventory-settings"],
+    queryFn: () => apiClient.get("/settings/inventory").then((r) => r.data),
+  });
+}
+
+export function useUpdateInventorySettings() {
+  const qc = useQueryClient();
+  return useMutation<InventorySettings, Error, UpdateInventorySettingsRequest>({
+    mutationFn: (data) => apiClient.patch("/settings/inventory", data).then((r) => r.data),
+    onSuccess: (saved) => qc.setQueryData(["inventory-settings"], saved),
+  });
+}
+
 export function useAdminUsers(params?: {
   search?: string;
   status?: string;
@@ -1201,17 +1257,10 @@ export function useAdminUsers(params?: {
       apiClient
         .get("/users", { params: { limit: 100, ...params } })
         .then((r) => {
-          // NEW-vop-5: API returns status: "ACTIVE" | "INACTIVE" | "SUSPENDED" but
-          // the UI + toggle mutation expect a derived isActive boolean. Map here so
-          // every consumer of useAdminUsers gets the boolean shape.
-          const raw = r.data as {
-            data?: Array<AppUser & { status?: string }>;
-            meta?: PaginationMeta;
-          };
-          const list = (raw.data ?? []).map((u) => ({
-            ...u,
-            isActive: u.isActive ?? u.status === "ACTIVE",
-          }));
+          // The API answers status ("ACTIVE" | "INACTIVE" | "SUSPENDED"); consumers read it via isUserActive
+          // (lib/user-admin), and the status toggle sends { status } back (Perms PR1).
+          const raw = r.data as { data?: AppUser[]; meta?: PaginationMeta };
+          const list = raw.data ?? [];
           return {
             data: list,
             meta: raw.meta ?? { total: list.length, page: 1, limit: 100, totalPages: 1 },
@@ -1225,6 +1274,7 @@ export function useAdminUsers(params?: {
   });
 }
 
+/** Admin only (POST /users/operator is TENANT_ADMIN-only). No screen calls it today; gate any caller on isAccountAdmin. */
 export function useCreateAdminUser() {
   const qc = useQueryClient();
   return useMutation<
@@ -1244,11 +1294,15 @@ export function useCreateAdminUser() {
   });
 }
 
+/** Admin only (PATCH /users/:id/status is TENANT_ADMIN-only): flips a team member between ACTIVE and INACTIVE. */
 export function useToggleUserStatus() {
   const qc = useQueryClient();
-  return useMutation<AppUser, Error, { id: string; isActive: boolean }>({
-    mutationFn: ({ id, isActive }) =>
-      apiClient.patch(`/users/${id}/status`, { isActive }).then((r) => r.data),
+  // `currentStatus` is the user's status NOW; statusToggleBody sends the opposite.
+  return useMutation<AppUser, Error, { id: string; currentStatus: string }>({
+    mutationFn: ({ id, currentStatus }) =>
+      apiClient
+        .patch(`/users/${id}/status`, statusToggleBody({ status: currentStatus }))
+        .then((r) => r.data),
     onSuccess: () => qc.invalidateQueries({ queryKey: ["admin", "users"] }),
   });
 }

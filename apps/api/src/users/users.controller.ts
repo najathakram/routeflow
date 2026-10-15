@@ -21,24 +21,30 @@ import { ListUsersDto } from "./dto/list-users.dto";
 import { CreateOperatorDto } from "./dto/create-operator.dto";
 import { UpdateUserDto } from "./dto/update-user.dto";
 import { ChangeUserStatusDto } from "./dto/change-user-status.dto";
+import { PreferencesBodyPipe } from "./dto/update-preferences.dto";
+import { NoImpersonation } from "../auth/decorators/no-impersonation.decorator";
+import { OperatorPermissionsService } from "../auth/permissions/operator-permissions.service";
 
 @ApiTags("users")
 @ApiBearerAuth()
 @UseGuards(JwtAuthGuard)
 @Controller("users")
 export class UsersController {
-  constructor(private readonly usersService: UsersService) {}
+  constructor(
+    private readonly usersService: UsersService,
+    private readonly permissions: OperatorPermissionsService,
+  ) {}
 
   @Get()
   @UseGuards(RolesGuard)
   @Roles(UserRole.OPERATOR, UserRole.TENANT_ADMIN)
-  findAll(@Query() query: ListUsersDto) {
-    return this.usersService.findAll(query);
+  findAll(@Query() query: ListUsersDto, @CurrentUser() user: JwtPayload) {
+    return this.usersService.findAll(query, user.role);
   }
 
   @Post("operator")
   @UseGuards(RolesGuard)
-  @Roles(UserRole.OPERATOR)
+  @Roles(UserRole.TENANT_ADMIN)
   createOperator(@Body() dto: CreateOperatorDto) {
     return this.usersService.createOperator(dto);
   }
@@ -48,13 +54,22 @@ export class UsersController {
     return this.usersService.findById(user.sub);
   }
 
+  /** The caller's feature groups (any authenticated staff role). Declared before `:id` so it is not shadowed. */
+  @Get("me/permissions")
+  getMyPermissions(@CurrentUser() user: JwtPayload) {
+    return this.permissions.mine(user);
+  }
+
   @Get("me/preferences")
   getMyPreferences(@CurrentUser() user: JwtPayload) {
     return this.usersService.getPreferences(user.sub);
   }
 
   @Patch("me/preferences")
-  async updateMyPreferences(@CurrentUser() user: JwtPayload, @Body() dto: Record<string, string>) {
+  async updateMyPreferences(
+    @CurrentUser() user: JwtPayload,
+    @Body(PreferencesBodyPipe) dto: Record<string, string>,
+  ) {
     await this.usersService.setPreferences(user.sub, dto);
     return this.usersService.getPreferences(user.sub);
   }
@@ -68,48 +83,60 @@ export class UsersController {
   }
 
   /**
-   * RF-073: Previously, `UpdateUserDto.role` was passed straight through Prisma
-   * for self-updates, allowing any authenticated user (driver, customer) to
-   * call PATCH /users/{ownId} with `{role: "OPERATOR"}` and self-promote.
-   * The role field is now stripped for any caller who is not an OPERATOR
-   * or TENANT_ADMIN.
+   * Editing another user's record is account administration: TENANT_ADMIN only. Anyone may edit
+   * THEIR OWN record (email / username), and a self edit never carries a role: RF-073 (a driver or
+   * customer could `PATCH /users/{ownId} {role:"OPERATOR"}` and self-promote) stays closed for every
+   * role, an admin included. Only an admin editing someone else can change a role.
    */
   @Patch(":id")
   update(@Param("id") id: string, @Body() dto: UpdateUserDto, @CurrentUser() user: JwtPayload) {
-    if (user.role !== UserRole.OPERATOR && user.role !== UserRole.TENANT_ADMIN && user.sub !== id) {
+    const isSelf = user.sub === id;
+    // SUPER_ADMIN satisfies every role requirement in the roles guard, so it is an admin here too
+    const isAdmin = user.role === UserRole.TENANT_ADMIN || user.role === UserRole.SUPER_ADMIN;
+    if (!isSelf && !isAdmin) {
       throw new ForbiddenException("Access denied");
     }
-    const isPrivileged = user.role === UserRole.OPERATOR || user.role === UserRole.TENANT_ADMIN;
-    const safeDto: UpdateUserDto = isPrivileged ? dto : { ...dto, role: undefined };
-    return this.usersService.updateUser(id, safeDto, user.username);
+    const safeDto: UpdateUserDto = isAdmin && !isSelf ? dto : { ...dto, role: undefined };
+    return this.usersService.updateUser(id, safeDto, user.username, user.role, user.impersonatedBy);
   }
 
   @Patch(":id/status")
   @UseGuards(RolesGuard)
-  @Roles(UserRole.OPERATOR)
-  changeStatus(@Param("id") id: string, @Body() dto: ChangeUserStatusDto) {
-    return this.usersService.changeStatus(id, dto);
+  @Roles(UserRole.TENANT_ADMIN)
+  changeStatus(
+    @Param("id") id: string,
+    @Body() dto: ChangeUserStatusDto,
+    @CurrentUser() user: JwtPayload,
+  ) {
+    return this.usersService.changeStatus(id, dto, user.role, user.sub);
   }
 
+  // SA-778: hands the caller a fresh temporary password. Topmost so the guard lands after JwtAuthGuard/RolesGuard.
+  @NoImpersonation("account")
   @Post(":id/reset-password")
   @UseGuards(RolesGuard)
-  @Roles(UserRole.OPERATOR)
-  resetPassword(@Param("id") id: string) {
-    return this.usersService.resetPassword(id);
+  @Roles(UserRole.TENANT_ADMIN)
+  resetPassword(@Param("id") id: string, @CurrentUser() user: JwtPayload) {
+    return this.usersService.resetPassword(id, user.role);
   }
 
   /** Clear a login lockout early (10 failed attempts → 15-min lock) so the
    *  tenant's admin can self-serve instead of waiting out the window. */
   @Post(":id/unlock")
   @UseGuards(RolesGuard)
-  @Roles(UserRole.OPERATOR, UserRole.TENANT_ADMIN)
-  unlock(@Param("id") id: string) {
-    return this.usersService.unlockUser(id);
+  @Roles(UserRole.TENANT_ADMIN)
+  unlock(@Param("id") id: string, @CurrentUser() user: JwtPayload) {
+    return this.usersService.unlockUser(id, user.role);
   }
 
+  /**
+   * LEGACY display flag, no authority (Perms PR1 SHOULD): flips `User.isAdmin`, which no guard, handler or screen
+   * reads. Who may administer the account is decided by ROLE (TENANT_ADMIN) alone; to make someone an admin, change
+   * their role (PATCH /users/:id, admin only). No client calls this route; kept so an old integration does not 404.
+   */
   @Patch(":id/admin")
   @UseGuards(RolesGuard)
-  @Roles(UserRole.OPERATOR)
+  @Roles(UserRole.TENANT_ADMIN)
   toggleAdmin(@Param("id") id: string, @CurrentUser() user: JwtPayload) {
     const callerIsAdmin = user.isAdmin || user.role === UserRole.TENANT_ADMIN;
     return this.usersService.toggleAdmin(id, callerIsAdmin);
@@ -117,8 +144,8 @@ export class UsersController {
 
   @Patch(":id/driver-permit")
   @UseGuards(RolesGuard)
-  @Roles(UserRole.OPERATOR)
-  toggleDriverPermit(@Param("id") id: string) {
-    return this.usersService.toggleDriverPermit(id);
+  @Roles(UserRole.TENANT_ADMIN)
+  toggleDriverPermit(@Param("id") id: string, @CurrentUser() user: JwtPayload) {
+    return this.usersService.toggleDriverPermit(id, user.role);
   }
 }

@@ -14,6 +14,7 @@ import * as React from "react";
 import { Button, Input, Select, useToast } from "@routeflow/ui/web";
 import { BarcodeScannerButton } from "@/components/BarcodeScannerButton";
 import { useScanCodeHandler } from "../../orders/_components/scan/useScanCodeHandler";
+import { DidYouMeanPicker } from "@/components/scan/DidYouMeanPicker";
 import { useOrder } from "@/lib/api/orders";
 import { useProducts } from "@/lib/api/products";
 import { useInlineReturnQuote } from "@/lib/api/inline-returns";
@@ -44,7 +45,15 @@ import {
   sumChunkTotals,
   type ExcessOption,
   type InlineReturnLineDraft,
+  ALREADY_RETURNED_DRIVER_NOTE,
+  ALREADY_RETURNED_LABEL,
+  ALREADY_RETURNED_NOTE,
+  alreadyReturnedProductIds,
 } from "@routeflow/returns";
+import { unitWords } from "@routeflow/pricing";
+
+// U-3a: returns carry no per-product label yet, so this prints the default words.
+const UW = unitWords();
 
 // See RecordInlineReturnDialog's original SA-108 comment: `lineKey` is a section-local
 // synthetic row identity (never sent on the wire) so two rows of the same product — a Case
@@ -79,6 +88,9 @@ export interface InlineReturnSectionProps {
    *  "opened from an order" hydration) — used by the dialog and the order-edit host. Omit for
    *  a customer with no carrying order yet (CreateOrderModal — the order doesn't exist yet). */
   entryOrderId?: string;
+  /** SA-740: the sale this return is from, sent on the quote and the excess re-quote (REQUIRED for a walk-in; the host
+   *  also sends it on the capture). Omit for a named customer, whose return may spill across orders. */
+  sourceOrderId?: string;
   /** Bumping this value resets every field and re-seeds from `entryOrderId` — mirrors the
    *  original dialog's "fresh attempt every time it opens" effect. */
   resetToken?: string | number;
@@ -88,8 +100,18 @@ export interface InlineReturnSectionProps {
   onStateChange?: (state: InlineReturnSectionState) => void;
   /** Rendered next to "Get quote" on the lines step (e.g. the dialog's own Cancel button). */
   renderLinesActions?: () => React.ReactNode;
+  /** POS-4b: hide "Back" once a capture is saved (its lines can no longer change). */
+  hideBack?: boolean;
   /** Rendered next to "Back" on the quote step (e.g. the dialog's confirm/capture button). */
   renderQuoteActions?: (quote: InlineReturnQuoteResponse) => React.ReactNode;
+  /** POS-4b: rendered above the quote step's action row (the dialog's refund-vs-credit choice). */
+  renderQuoteFooter?: (quote: InlineReturnQuoteResponse) => React.ReactNode;
+  /** POS-4b: a re-fetched quote (REFUND_AMOUNT_CHANGED) that replaces the one on screen. */
+  quoteOverride?: InlineReturnQuoteResponse | null;
+  /** Show only the Total: the host replaced the total with the server's own figure, so the old breakdown would no longer add up. */
+  totalOnly?: boolean;
+  /** W21b: replaces the default "issued as credit note" line under the totals (the dialog sets it when Refund is chosen). */
+  quoteNote?: string;
   /** Called (in addition to the section's own inline error) when the Step-1 quote or the
    *  excess re-quote is refused — the dialog uses this to switch to its full "refused" screen. */
   onQuoteRefused?: (message: string) => void;
@@ -104,11 +126,17 @@ export interface InlineReturnSectionProps {
 export function InlineReturnSection({
   customerId,
   entryOrderId,
+  sourceOrderId,
   resetToken,
   getQuoteEnabled = true,
   onStateChange,
   renderLinesActions,
   renderQuoteActions,
+  renderQuoteFooter,
+  hideBack,
+  quoteOverride,
+  totalOnly = false,
+  quoteNote,
   onQuoteRefused,
   hidden = false,
 }: InlineReturnSectionProps) {
@@ -123,6 +151,9 @@ export function InlineReturnSection({
   const [productSearch, setProductSearch] = React.useState("");
 
   const quoteMutation = useInlineReturnQuote();
+  React.useEffect(() => {
+    if (quoteOverride) setQuote(quoteOverride);
+  }, [quoteOverride]);
   // #2695 (SA-557): staff only — the server refuses the fields from anyone else with a 400.
   const canOverrideCredit = canOverrideReturnCredit(useOptionalAuth()?.user?.role);
 
@@ -207,19 +238,23 @@ export function InlineReturnSection({
   const productSearchRef = React.useRef<HTMLInputElement>(null);
   const linesRef = React.useRef(lines);
   linesRef.current = lines;
+  // B1219: a single fuzzy match is offered here ("Did you mean ...?"), never added unasked.
+  const [scanMatches, setScanMatches] = React.useState<any[]>([]);
+  const addScanned = (product: any) => {
+    const created = !linesRef.current.some((l) => l.productId === product.id);
+    setLines(
+      (prev) =>
+        applyReturnScan<SectionLine>(prev, product, (base) => ({
+          ...base,
+          lineKey: crypto.randomUUID(),
+        })).lines,
+    );
+    setProductSearch("");
+    return { created };
+  };
   const scanHandlerRef = useScanCodeHandler({
-    addLineItem: (product) => {
-      const created = !linesRef.current.some((l) => l.productId === product.id);
-      setLines(
-        (prev) =>
-          applyReturnScan<SectionLine>(prev, product, (base) => ({
-            ...base,
-            lineKey: crypto.randomUUID(),
-          })).lines,
-      );
-      setProductSearch("");
-      return { created };
-    },
+    addLineItem: (product) => addScanned(product),
+    onSuggestion: (matches) => setScanMatches(matches),
     onUnknownCode: (code) => toast({ variant: "error", title: `No product with barcode ${code}` }),
     toast,
   });
@@ -232,7 +267,7 @@ export function InlineReturnSection({
 
   function handleGetQuote() {
     setQuoteError("");
-    quoteMutation.mutate(buildQuoteRequest(customerId, lines), {
+    quoteMutation.mutate(buildQuoteRequest(customerId, lines, undefined, sourceOrderId), {
       onSuccess: (data) => {
         setQuote(data);
         // A new quote from the lines step credits its excess at current price by default —
@@ -258,7 +293,7 @@ export function InlineReturnSection({
     const previousOption = excessOption;
     setExcessOption(option);
     if (option !== "RETURN_ONLY_PURCHASED" || !quote) return;
-    quoteMutation.mutate(dropExcessAndRequote(customerId, quote, undefined, lines), {
+    quoteMutation.mutate(dropExcessAndRequote(customerId, quote, undefined, lines, sourceOrderId), {
       onSuccess: (data) => {
         setQuote(data);
         // Cast is safe: applyCoveredPiecesToLines spreads each input line into its output, so a
@@ -281,6 +316,11 @@ export function InlineReturnSection({
     ? groupQuoteChunks(quote)
     : { covered: [] as InlineReturnQuoteChunk[], excess: [] as InlineReturnQuoteChunk[] };
   const excessTotals = sumChunkTotals(excess);
+  // B961 / SA-071c: an over-return chunk of goods the customer already returned or was credited for is labelled as such (not
+  // "Not on any invoice"); staff must type a reason per product, a driver's capture is held for the office.
+  const flaggedIds = quote ? alreadyReturnedProductIds(quote) : new Set<string>();
+  const anyAlreadyReturned = flaggedIds.size > 0;
+  const allExcessAlreadyReturned = excess.length > 0 && excess.every((c) => c.alreadyReturned);
   const onlyBoughtPossible = quote ? canReturnOnlyPurchased(quote) : false;
   const notBoughtBefore = quote && onlyBoughtPossible ? notBoughtBeforeNames(quote, lines) : [];
   const boxedIds = boxedProductIds(lines);
@@ -327,7 +367,7 @@ export function InlineReturnSection({
                       {boxed ? (
                         <>
                           <Input
-                            label="Boxes"
+                            label={UW.pack.other}
                             type="number"
                             min={0}
                             inputMode="numeric"
@@ -335,7 +375,7 @@ export function InlineReturnSection({
                             onChange={(e) => updateLine(line.lineKey, { boxes: e.target.value })}
                           />
                           <Input
-                            label="Pieces"
+                            label={UW.base.other}
                             type="number"
                             min={0}
                             inputMode="numeric"
@@ -345,7 +385,7 @@ export function InlineReturnSection({
                         </>
                       ) : (
                         <Input
-                          label="Qty (pieces)"
+                          label={UW.base.other}
                           type="number"
                           min={0}
                           inputMode="numeric"
@@ -373,7 +413,9 @@ export function InlineReturnSection({
                       <div className="mt-2 grid grid-cols-1 gap-2 sm:grid-cols-[10rem_1fr]">
                         <Input
                           label={
-                            boxed ? "Credit price per box (optional)" : "Credit price (optional)"
+                            boxed
+                              ? `Credit price per ${UW.pack.lower} (optional)`
+                              : "Credit price (optional)"
                           }
                           type="text"
                           inputMode="decimal"
@@ -427,6 +469,18 @@ export function InlineReturnSection({
                 title="Scan barcode"
               />
             </div>
+            {scanMatches.length > 0 && (
+              <div className="mt-2">
+                <DidYouMeanPicker
+                  matches={scanMatches}
+                  onConfirm={(product) => {
+                    setScanMatches([]);
+                    addScanned(product);
+                  }}
+                  onCancel={() => setScanMatches([])}
+                />
+              </div>
+            )}
             {productSearch.trim().length > 1 && (productResults?.data?.length ?? 0) > 0 && (
               <div className="absolute z-10 mt-1 w-full rounded-lg border border-surface-border bg-white shadow-card">
                 {productResults!.data
@@ -503,10 +557,37 @@ export function InlineReturnSection({
 
           {excess.length > 0 && (
             <div className="rounded-lg border border-amber-300 bg-amber-50 p-3">
-              <p className="text-sm font-medium text-navy">Not on any invoice</p>
+              <p className="text-sm font-medium text-navy">
+                {allExcessAlreadyReturned
+                  ? ALREADY_RETURNED_LABEL
+                  : anyAlreadyReturned
+                    ? `Not on any invoice, or ${ALREADY_RETURNED_LABEL.toLowerCase()}`
+                    : "Not on any invoice"}
+              </p>
+              {anyAlreadyReturned && (
+                <p className="text-xs text-amber-900">
+                  {canOverrideCredit ? ALREADY_RETURNED_NOTE : ALREADY_RETURNED_DRIVER_NOTE}
+                </p>
+              )}
+              {canOverrideCredit &&
+                [...flaggedIds].map((productId) => {
+                  const line = lines.find((l) => l.productId === productId);
+                  if (!line) return null;
+                  return (
+                    <Input
+                      key={`already-returned-reason-${productId}`}
+                      label={`Why credit ${line.productName} again (required)`}
+                      maxLength={CREDIT_OVERRIDE_REASON_MAX}
+                      value={line.alreadyReturnedReason ?? ""}
+                      onChange={(e) =>
+                        updateLine(line.lineKey, { alreadyReturnedReason: e.target.value })
+                      }
+                    />
+                  );
+                })}
               <p className="text-xs text-navy/70">
-                {excess.reduce((s, c) => s + c.pieces, 0)} piece(s) priced at the customer&apos;s
-                current price.
+                {excess.reduce((s, c) => s + c.pieces, 0)} {UW.base.lower}(s) priced at the
+                customer&apos;s current price.
               </p>
               {excess.map((c, i) => (
                 <CreditOverrideNote
@@ -570,15 +651,19 @@ export function InlineReturnSection({
           )}
 
           <div className="rounded-lg bg-surface-raised p-3">
-            <div className="flex justify-between text-sm text-navy">
-              <span>Subtotal</span>
-              <span>{money(quote.subtotal)}</span>
-            </div>
-            <div className="flex justify-between text-sm text-navy">
-              <span>Tax</span>
-              <span>{money(quote.taxAmount)}</span>
-            </div>
-            {quote.categoryTax > 0 && (
+            {!totalOnly && (
+              <div className="flex justify-between text-sm text-navy">
+                <span>Subtotal</span>
+                <span>{money(quote.subtotal)}</span>
+              </div>
+            )}
+            {!totalOnly && (
+              <div className="flex justify-between text-sm text-navy">
+                <span>Tax</span>
+                <span>{money(quote.taxAmount)}</span>
+              </div>
+            )}
+            {!totalOnly && quote.categoryTax > 0 && (
               <div className="flex justify-between text-sm text-navy">
                 <span>Category levy</span>
                 <span>{money(quote.categoryTax)}</span>
@@ -589,7 +674,7 @@ export function InlineReturnSection({
               <span>{money(quote.total)}</span>
             </div>
             <p className="mt-2 text-xs text-navy/70">
-              This will be issued as credit note on the customer&apos;s balance.
+              {quoteNote ?? <>This will be issued as credit note on the customer&apos;s balance.</>}
             </p>
           </div>
 
@@ -600,10 +685,13 @@ export function InlineReturnSection({
             options={[{ value: "", label: "Select a reason…" }, ...REASON_OPTIONS]}
           />
 
-          <div className="flex justify-end gap-2">
-            <Button variant="ghost" onClick={() => setStep("lines")}>
-              Back
-            </Button>
+          {renderQuoteFooter?.(quote)}
+          <div className="flex flex-wrap justify-end gap-2">
+            {!hideBack && (
+              <Button variant="ghost" onClick={() => setStep("lines")}>
+                Back
+              </Button>
+            )}
             {renderQuoteActions?.(quote)}
           </div>
         </div>
@@ -621,7 +709,9 @@ function CoveredChunkRow({ chunk, boxed }: { chunk: InlineReturnQuoteChunk; boxe
           {sourceOrder ? `From order #${sourceOrder.orderNumber}` : "From an earlier order"}
           {sourceOrder?.orderDate && ` · ${new Date(sourceOrder.orderDate).toLocaleDateString()}`}
         </span>
-        <span className="text-navy/70">{chunk.pieces} pc</span>
+        <span className="text-navy/70">
+          {chunk.pieces} {UW.base.short.one}
+        </span>
       </div>
       <div className="mt-1 flex justify-between text-navy/70">
         <span>Net {money(chunk.subtotal)}</span>

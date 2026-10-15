@@ -1,11 +1,12 @@
 import { normalizeBoxesPieces, type LadderProduct } from "@routeflow/pricing";
 import type { ProductUnitLevel } from "@routeflow/types";
 import { buildUnitOptions } from "./unit-options";
+import { isFamilyProduct } from "./sellable-products";
 
 /**
  * Pure gate for the operator order builder's two save paths, mirroring web's
  * CreateOrderModal footer: a normal submit ("Create Order") needs a customer AND
- * ≥1 item; "Save as Draft" needs only a customer (the API allows a zero-item
+ * ≥1 item; "Save as draft" needs only a customer (the API allows a zero-item
  * DRAFT — orders.service `create()` skips the item-count check when
  * `status === "DRAFT"`). Screen-free so __tests__/*.test.ts can lock it.
  */
@@ -54,12 +55,18 @@ export interface ResumeLineDecision<P> {
  *    line scanned into a draft and parked used to come back as "no longer in
  *    your catalog" and vanish. An archived product is still orderable
  *    server-side; the row flags itself instead of deleting the operator's work.
- *  - 404 → DROP: the product is genuinely gone.
+ *  - 404 → DROP: the product is genuinely gone. A FAMILY container also drops (never orderable).
  *  - anything else (timeout, 5xx, offline) → FAILED: abort hydration and keep
  *    the spinner, so autosave can never PATCH a truncated cart over the draft.
  */
 export function decideResumeLine<P>(fetched: ResumeLineFetch<P>): ResumeLineDecision<P> {
-  if (fetched.ok) return { product: fetched.product, failed: false };
+  // A FAMILY container is never orderable (400 FAMILY_NOT_SELLABLE): a restored draft drops it instead of queuing it.
+  if (fetched.ok) {
+    if (isFamilyProduct(fetched.product as { kind?: "FAMILY" } | null)) {
+      return { product: null, failed: false };
+    }
+    return { product: fetched.product, failed: false };
+  }
   return { product: null, failed: fetched.status !== 404 };
 }
 
@@ -275,4 +282,28 @@ export function resolveResumeLineBoxes(
     qty = n.qty;
   }
   return { boxes, pieces, qty };
+}
+
+/** `resolveResumeDerivedBase`'s parked-line input — a structural slice of `DraftCatalogLine`. */
+export interface ResumeDerivedBaseInput {
+  unitLabel?: string | null;
+  derivedBase?: unknown;
+  unitsPerBox?: number;
+}
+
+/**
+ * Units P0b / SA-728 — the client-only `derivedBase` marker a parked line resumes with. The parked boxes/pieces are the
+ * money (a pack-pieces line billed at the pack price); the marker only keeps the picker on "Piece". It is restored ONLY
+ * while it still describes the line: a non-empty string, no unit of its own, and the live pack size unchanged (the shape
+ * was re-split otherwise, `resolveResumeLineBoxes`). In every other case the line resumes as the PACK line its
+ * boxes/pieces describe, never a guessed Piece.
+ */
+export function resolveResumeDerivedBase(
+  li: ResumeDerivedBaseInput,
+  liveUnitsPerBox: number,
+): string | undefined {
+  const marker = li.derivedBase;
+  if (typeof marker !== "string" || marker.trim() === "" || li.unitLabel) return undefined;
+  const live = Number(liveUnitsPerBox ?? 0);
+  return live > 1 && Number(li.unitsPerBox ?? 0) === live ? marker : undefined;
 }

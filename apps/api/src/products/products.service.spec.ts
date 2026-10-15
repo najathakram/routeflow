@@ -98,6 +98,29 @@ describe("ProductsService", () => {
       expect(result.meta).toEqual({ total: 1, page: 1, limit: 20, totalPages: 1 });
     });
 
+    it("the list selects the parent's kind and carries it through to the response", async () => {
+      const tenantId = prisma.getTenantId();
+      prisma.product.findMany.mockResolvedValue([
+        {
+          ...MOCK_PRODUCT,
+          parentProductId: "parent-1",
+          parent: { id: "parent-1", name: "Cola", kind: "STANDARD", portalVisible: true, tenantId },
+        },
+      ]);
+      prisma.product.count.mockResolvedValue(1);
+
+      const result = await service.findAll({ page: 1, limit: 20 });
+
+      expect(prisma.product.findMany).toHaveBeenCalledWith(
+        expect.objectContaining({
+          include: expect.objectContaining({
+            parent: { select: expect.objectContaining({ kind: true }) },
+          }),
+        }),
+      );
+      expect((result.data[0] as any).parent).toMatchObject({ id: "parent-1", kind: "STANDARD" });
+    });
+
     it("should apply search filter", async () => {
       prisma.product.findMany.mockResolvedValue([]);
       prisma.product.count.mockResolvedValue(0);
@@ -124,7 +147,9 @@ describe("ProductsService", () => {
 
       expect(prisma.product.findMany).toHaveBeenCalledWith(
         expect.objectContaining({
-          where: expect.objectContaining({ category: "Produce" }),
+          where: expect.objectContaining({
+            category: { equals: "Produce", mode: "insensitive" },
+          }),
         }),
       );
     });
@@ -489,6 +514,9 @@ describe("ProductsService", () => {
     // Numbers stand in for Prisma Decimals — the service only calls .toString().
     const MOCK_PARENT = {
       id: "parent-1",
+      isActive: true,
+      kind: "STANDARD",
+      parentProductId: null,
       priceTier2: 24,
       priceTier3: 23,
       priceTier4: 22,
@@ -646,7 +674,12 @@ describe("ProductsService", () => {
     });
 
     it("isolates per-item failures — surfaces validation messages, masks raw errors (F8-003)", async () => {
-      prisma.product.findFirst.mockResolvedValue({ id: "parent-1", parentProductId: null });
+      prisma.product.findFirst.mockResolvedValue({
+        id: "parent-1",
+        isActive: true,
+        kind: "FAMILY",
+        parentProductId: null,
+      });
       const update = jest
         .spyOn(service, "update")
         .mockResolvedValueOnce({} as any)
@@ -674,6 +707,7 @@ describe("ProductsService", () => {
           { id: "prod-b", reason: 'A variant named "Grape" already exists for this product' },
           { id: "prod-c", reason: "Update failed" }, // raw Prisma text NOT disclosed
         ],
+        keptLabels: [],
       });
       // Each row goes through the full update() path, variant name doubling as
       // `name` — suppressEmit:true since this loop can reassign N products in
@@ -686,7 +720,7 @@ describe("ProductsService", () => {
           variantName: "Strawberry",
           name: "Strawberry",
         },
-        { suppressEmit: true },
+        { suppressEmit: true, actorId: null, actorName: null },
       );
     });
   });
@@ -1160,6 +1194,9 @@ describe("ProductsService", () => {
       // product.findFirst serves both the name/sku conflict checks (no where.id)
       // and the converted parent load (where.id === parentProductId).
       const PARENT = {
+        isActive: true,
+        kind: "STANDARD",
+        parentProductId: null,
         priceTier2: 1,
         priceTier3: 1,
         priceTier4: 1,
@@ -1339,6 +1376,9 @@ describe("ProductsService", () => {
 
     it("a variant inherits the parent's regulatory trio when the DTO omits the section", async () => {
       const PARENT = {
+        isActive: true,
+        kind: "STANDARD",
+        parentProductId: null,
         priceTier2: 1,
         priceTier3: 1,
         priceTier4: 1,
@@ -1382,6 +1422,9 @@ describe("ProductsService", () => {
 
     it("an explicit DTO value on one field beats inheritance while the others still inherit", async () => {
       const PARENT = {
+        isActive: true,
+        kind: "STANDARD",
+        parentProductId: null,
         priceTier2: 1,
         priceTier3: 1,
         priceTier4: 1,
@@ -1840,6 +1883,9 @@ describe("ProductsService", () => {
 
     it("a variant inheriting the parent's regulated pair also gets the synced category name", async () => {
       const PARENT = {
+        isActive: true,
+        kind: "STANDARD",
+        parentProductId: null,
         priceTier2: 1,
         priceTier3: 1,
         priceTier4: 1,
@@ -2051,7 +2097,13 @@ describe("ProductsService", () => {
 // stake in this scenario, so unlike the tenancy specs this fake does not need
 // to route through the real _wrapTxWithTenant.
 
-type FakeProductRow = { id: string; name: string; isActive: boolean };
+type FakeProductRow = {
+  id: string;
+  name: string;
+  isActive: boolean;
+  tenantId?: string;
+  sku?: string | null;
+};
 type FakeRefRow = {
   id: string;
   productId: string;
@@ -2083,10 +2135,13 @@ function refWhereMatches(row: any, where?: any): boolean {
 }
 
 function makeBulkDeleteReferenceStore() {
+  const advisoryLocks: string[] = [];
   const products: FakeProductRow[] = [
-    { id: "prod-a", name: "Product A", isActive: true },
-    { id: "prod-b", name: "Product B", isActive: true },
-    { id: "prod-c", name: "Product C", isActive: true },
+    { id: "prod-a", name: "Product A", isActive: true, tenantId: "test-tenant" },
+    // B and D carry codes (M1 / A1) so the clearAll lock-set probe below can tell ONE sorted set from per-product locks.
+    { id: "prod-b", name: "Product B", isActive: true, tenantId: "test-tenant", sku: "M1" },
+    { id: "prod-c", name: "Product C", isActive: true, tenantId: "test-tenant" },
+    { id: "prod-d", name: "Product D", isActive: true, tenantId: "test-tenant", sku: "A1" },
   ];
   // A: an in-flight order item — the ACTIVE reference that must SKIP it.
   // B: a SETTLED order item plus a historical invoice line — references, but
@@ -2100,7 +2155,10 @@ function makeBulkDeleteReferenceStore() {
     { id: "oi-1", productId: "prod-a", status: "CONFIRMED", order: { status: "CONFIRMED" } },
     { id: "oi-2", productId: "prod-b", status: "DELIVERED", order: { status: "DELIVERED" } },
   ];
-  const invoiceItems: FakeRefRow[] = [{ id: "ii-1", productId: "prod-b" }];
+  const invoiceItems: FakeRefRow[] = [
+    { id: "ii-1", productId: "prod-b" },
+    { id: "ii-2", productId: "prod-d" },
+  ];
   // C: no rows anywhere — the reference-free, hard-delete case.
 
   // Relation name (as it appears on `Product` in schema.prisma) → the seeded rows behind it.
@@ -2222,6 +2280,8 @@ function makeBulkDeleteReferenceStore() {
     // #2717 M2: bulkDelete also probes the recipe tables for references.
     recipe: noopDeleteManyModel(),
     recipeComponent: noopDeleteManyModel(),
+    // SA-603a: clearAll's soft-delete releases codes (peek + ONE code-lock set) through these.
+    productBarcode: noopDeleteManyModel(),
   };
 
   const prisma = {
@@ -2235,10 +2295,19 @@ function makeBulkDeleteReferenceStore() {
     $transaction: jest.fn((arg: unknown) =>
       Array.isArray(arg) ? Promise.all(arg) : (arg as (tx: unknown) => unknown)(models),
     ),
-    tenantTransaction: jest.fn((fn: (tx: unknown) => unknown) => fn(models)),
+    tenantTransaction: jest.fn((fn: (tx: unknown) => unknown) =>
+      fn({
+        ...models,
+        $executeRaw: jest.fn((_s: TemplateStringsArray, ...v: unknown[]) => {
+          if (v[0] === "product-barcode") advisoryLocks.push(String(v[1]).split(":")[1]);
+          return Promise.resolve(0);
+        }),
+        $queryRaw: jest.fn().mockResolvedValue([]),
+      }),
+    ),
   };
 
-  return { products, orderItems, invoiceItems, prisma };
+  return { products, orderItems, invoiceItems, prisma, advisoryLocks };
 }
 
 async function buildBulkDeleteProductsService(prisma: unknown): Promise<ProductsService> {
@@ -2288,7 +2357,13 @@ describe("bulkDelete — REG-B24 / T-B24a (reference classification guard)", () 
     expect(result).toEqual({
       deleted: 1,
       softDeleted: 1,
-      skipped: [{ id: "prod-a", reason: expect.stringContaining("Product A") }],
+      skipped: [
+        {
+          id: "prod-a",
+          code: "PRODUCT_HAS_ACTIVE_ORDER_ITEMS",
+          reason: expect.stringContaining("Product A"),
+        },
+      ],
     });
 
     // A: skipped means untouched.
@@ -2312,5 +2387,26 @@ describe("bulkDelete — REG-B24 / T-B24a (reference classification guard)", () 
 
     // C: no references anywhere — hard-deleted, the row itself is gone.
     expect(products.find((p) => p.id === "prod-c")).toBeUndefined();
+  });
+});
+
+describe("clearAll soft-delete lock set (Opus #2860 r3 B2): ONE sorted set, never per-product", () => {
+  it("soft-deleting B{M1} and D{A1}: the first ascending batch covers EVERY code and nothing new is locked later", async () => {
+    const { prisma, products, advisoryLocks } = makeBulkDeleteReferenceStore();
+    const service = await buildBulkDeleteProductsService(prisma);
+    await service.bulkDelete(["prod-b", "prod-d"]);
+    expect(
+      products
+        .filter((p) => !p.isActive)
+        .map((p) => p.id)
+        .sort(),
+    ).toEqual(["prod-b", "prod-d"]);
+    // First batch = the maximal ascending prefix (one sorted lockBarcodeCodes call)...
+    let n = 1;
+    while (n < advisoryLocks.length && advisoryLocks[n] > advisoryLocks[n - 1]) n += 1;
+    const first = advisoryLocks.slice(0, n);
+    expect(first).toEqual(expect.arrayContaining(["A1", "M1"]));
+    // ...and every later lock is a re-lock of a code already held. The old per-product order (M1 | A1) fails this.
+    for (const k of advisoryLocks.slice(n)) expect(first).toContain(k);
   });
 });

@@ -1,9 +1,11 @@
 import {
-  PIECE_LABEL,
-  computeLineSubtotal,
-  resolveLadderLevel,
-  resolveUnitPrice,
-  roundMoney,
+  buildLadderOptions,
+  defaultLadderOptionValue,
+  ladderOptionLineTotal,
+  ladderOptionPriceText,
+  normalizeBoxesPieces,
+  type DerivedBaseMarker,
+  type LadderOption,
   type LadderProduct,
   type LadderUnit,
 } from "@routeflow/pricing";
@@ -18,20 +20,7 @@ import type { ProductUnitLevel } from "@routeflow/types";
  * copies into a shared package is filed separately, not done here.
  */
 
-export interface UnitOption {
-  /** What the picker sends as `unitLabel`; `""` = the pack (no unitLabel — today's behaviour). */
-  value: string;
-  label: string;
-  /** Pieces per ONE of this unit. */
-  factorToBase: number;
-  kind: "pack" | "piece" | "level";
-  /** Price per ONE of this unit at the customer's tier (`resolveUnitPrice`, same as the server). */
-  price: number;
-  /** The same unit's TIER-1 price — what a typed one-time price is compared against (server rule). */
-  listPrice: number;
-}
-
-const norm = (s: string) => s.trim().toLowerCase();
+export type UnitOption = LadderOption;
 
 /** The API returns Decimal strings; the pricing ladder takes them as-is. */
 const toLadderUnit = (u: ProductUnitLevel): LadderUnit => ({
@@ -47,9 +36,9 @@ const toLadderUnit = (u: ProductUnitLevel): LadderUnit => ({
 
 /**
  * The ladder a picker offers: the pack first (its `value` is `""`), then each level largest →
- * smallest, then the implicit Piece when nothing else already sells single pieces. Mirrors web's
- * `buildUnitOptions` exactly — see that file for the per-rule rationale (shadowing, factor-1
- * Piece rows, "no levels" collapsing to one pack-only option).
+ * smallest, then the one base option. Web's `buildUnitOptions` and this one are the SAME function
+ * (`buildLadderOptions` in `@routeflow/pricing`, SA-728) — see it for the per-rule rationale
+ * (shadowing, the explicit base row folding into the one base option, "no levels" = one option).
  */
 export function buildUnitOptions(
   product: LadderProduct,
@@ -57,47 +46,31 @@ export function buildUnitOptions(
   tier: number | string = 1,
   packPrice?: number,
 ): UnitOption[] {
-  const ladder = units.map(toLadderUnit);
-  const price = (label: string) => resolveUnitPrice(product, ladder, label, tier);
-  const list = (label: string) => resolveUnitPrice(product, ladder, label, 1);
-  const pack = resolveLadderLevel(product, ladder, "");
-  const options: UnitOption[] = [
-    {
-      value: "",
-      label: pack.label,
-      factorToBase: pack.factorToBase,
-      kind: "pack",
-      price: packPrice ?? price(""),
-      listPrice: list(""),
-    },
-  ];
-  const seen = new Set([norm(pack.label), norm(PIECE_LABEL)]);
-  const rows = ladder
-    .filter((l) => Number.isInteger(l.factorToBase) && l.factorToBase >= 1)
-    .sort((a, b) => b.factorToBase - a.factorToBase);
-  for (const u of rows) {
-    if (seen.has(norm(u.label))) continue;
-    seen.add(norm(u.label));
-    options.push({
-      value: u.label,
-      label: u.label,
-      factorToBase: u.factorToBase,
-      kind: u.factorToBase === 1 ? "piece" : "level",
-      price: price(u.label),
-      listPrice: list(u.label),
-    });
-  }
-  if (rows.length > 0 && !options.some((o) => o.factorToBase === 1)) {
-    options.push({
-      value: PIECE_LABEL,
-      label: PIECE_LABEL,
-      factorToBase: 1,
-      kind: "piece",
-      price: price(PIECE_LABEL),
-      listPrice: list(PIECE_LABEL),
-    });
-  }
-  return options;
+  return buildLadderOptions(product, units.map(toLadderUnit), tier, packPrice);
+}
+
+/**
+ * What a unit picker shows as selected (mobile mirror of web's `unitPickerValueOf`): the held unit, else a derived
+ * base (units P0b / SA-728), else the pack (`""`).
+ */
+export const unitPickerValue = (line: { unitLabel?: string | null } & DerivedBaseMarker): string =>
+  line.unitLabel ?? line.derivedBase ?? "";
+
+/**
+ * The pack-pieces shape of `count` pieces of a DERIVED base option (units P0b / SA-728): `boxes`/`pieces` split on the
+ * pack size (the option's own `derived.n`, rolled over at a full pack), `qty` the total pieces, NO unit label. The line
+ * then bills through `computeLineSubtotal` at the PACK price, the server's own proration, never `count` x a rounded
+ * per-piece price. Null for any option that is not a derived base (a level, an own-priced Piece, the pack): those keep
+ * the unit-line path.
+ */
+export function derivedPackSplit(
+  option: UnitOption,
+  count: number,
+): { qty: number; boxes: number; pieces: number; unitsPerBox: number } | null {
+  if (!option.derived) return null;
+  const unitsPerBox = option.derived.n;
+  const n = normalizeBoxesPieces({ boxes: 0, pieces: count, unitsPerBox });
+  return { qty: n.qty, boxes: n.boxes ?? 0, pieces: n.pieces ?? 0, unitsPerBox };
 }
 
 /**
@@ -152,11 +125,39 @@ function formatQty(value: number): string {
   return Number.isInteger(value) ? String(value) : String(Number(value.toFixed(2)));
 }
 
+/**
+ * The unit a new line starts on (#2784): the level flagged `isDefaultSelling` — only if the picker actually offers it —
+ * else the pack (`""`). Mirrors web's `defaultUnitValue`; both call `@routeflow/pricing`'s `defaultSellingLabel`.
+ */
+export function defaultUnitValue(
+  product: LadderProduct,
+  units: readonly ProductUnitLevel[],
+  tier: number | string = 1,
+): string {
+  return defaultLadderOptionValue(product, units.map(toLadderUnit), tier);
+}
+
+/**
+ * #2784: the picker option a NEW line should be moved onto, or null (stay on the pack). Null when the line already holds
+ * a unit or the operator typed its price, when nothing is flagged, or the flagged level is not offered.
+ */
+export function defaultStartOption(
+  product: LadderProduct,
+  units: readonly ProductUnitLevel[],
+  tier: number | string,
+  line: { hasUnit: boolean; priceEdited?: boolean },
+): UnitOption | null {
+  if (line.hasUnit || line.priceEdited) return null;
+  const value = defaultUnitValue(product, units, tier);
+  if (!value) return null;
+  return buildUnitOptions(product, units, tier).find((o) => o.value === value) ?? null;
+}
+
 /** The picker row's detail line, e.g. "240 pcs · $220.00" — everything `unitOptionText` shows
  *  after the label. A factor-1 unit (Piece) omits the piece count: "$1.75". */
 export function unitOptionDetail(o: UnitOption): string {
   const pcs = o.factorToBase === 1 ? "" : `${formatQty(o.factorToBase)} pcs · `;
-  return `${pcs}${formatMoney(o.price)}`;
+  return `${pcs}${ladderOptionPriceText(o, formatMoney)}`;
 }
 
 /**
@@ -167,18 +168,7 @@ export function unitOptionText(o: UnitOption): string {
   return `${o.label} · ${unitOptionDetail(o)}`;
 }
 
-/** Line total for `count` of a unit at `unitPrice` — the same rounding the server applies. */
+/** Line total for `count` of a unit — a derived Piece prorates off the pack, the rest bill count x price like the server. */
 export function unitLineSubtotal(option: UnitOption, count: number, unitPrice?: number): number {
-  const n = Math.trunc(Number(count));
-  if (!(n > 0)) return 0;
-  const price = unitPrice ?? option.price;
-  return option.factorToBase === 1
-    ? roundMoney(price * n)
-    : computeLineSubtotal({
-        unitPrice: price,
-        qty: n * option.factorToBase,
-        boxes: n,
-        pieces: 0,
-        unitsPerBox: option.factorToBase,
-      });
+  return ladderOptionLineTotal(option, count, unitPrice);
 }

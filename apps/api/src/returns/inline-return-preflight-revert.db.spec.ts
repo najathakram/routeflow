@@ -62,6 +62,7 @@ import { SellingRestrictionsService } from "../selling-restrictions/selling-rest
 import { OrdersService } from "../orders/orders.service";
 import type { JwtPayload } from "../auth/jwt-payload.interface";
 import { entitlementAuthorityFromEntitlements } from "../testing/entitlement-authority-provider";
+import { INVOICE_EDIT_STUBS } from "../orders/testing/invoice-edit-stubs";
 
 // eslint-disable-next-line @typescript-eslint/no-var-requires
 const { assertTestTenant } = require("../../../../scripts/lib/test-tenants.cjs");
@@ -75,6 +76,7 @@ describeDb(
     let tenantCtx: TenantContextService;
     let invoices: InvoicesService;
     let inlineSvc: any;
+    let creditNotesSvc: any;
     let orders: any;
     let reserved: string[] = [];
     const run = randomUUID().slice(0, 8);
@@ -229,6 +231,7 @@ describeDb(
         numbering,
         logger: new Logger(CreditNotesService.name),
       });
+      creditNotesSvc = creditNotes;
       inlineSvc = Object.assign(Object.create(InlineReturnsService.prototype), {
         prisma,
         gateway: { emitCreditNoteCreated: jest.fn() },
@@ -249,6 +252,7 @@ describeDb(
       const invoicesForOrders = Object.assign(Object.create(invoices), {
         reconcileOrderDraftInvoice: async () => undefined,
         resyncOrderInvoicesForEdit: async () => [],
+        ...INVOICE_EDIT_STUBS,
       });
       orders = Object.assign(Object.create(OrdersService.prototype), {
         prisma,
@@ -388,6 +392,53 @@ describeDb(
       expect(preRevert).toBeCloseTo(20, 2);
       expect(postRevert).toBeCloseTo(8, 2);
       expect(postRevert).not.toBeCloseTo(preRevert, 2);
+    }, 60_000);
+
+    it("(c) B948 (B215 class): an inline return over a source line's remaining headroom refuses 409 IN THE PREFLIGHT: the edited order's SENT invoice stays SENT and no credit-note number is burned", async () => {
+      const productId = await product("headroom", null, "10.00");
+      // An OLDER delivered order's SENT invoice: 5 x $10 = $50, of which a credit note item already took $40 (4 pcs).
+      const older = await invoicedOrder({
+        productId,
+        status: "DELIVERED",
+        line: { qty: 5, unitPrice: "10.00", subtotal: "50.00" },
+        issueDate: new Date(Date.now() - 2 * 86_400_000),
+      });
+      const oldLine = await raw.invoiceItem.findFirstOrThrow({
+        where: { invoiceId: older.invoiceId },
+      });
+      await tenantCtx.run(tenantId, () =>
+        creditNotesSvc.create({
+          customerId,
+          invoiceId: older.invoiceId,
+          amount: 40,
+          items: [{ invoiceItemId: oldLine.id, amount: 40, qty: 4 }],
+        }),
+      );
+      const current = await invoicedOrder({
+        productId,
+        status: "PENDING",
+        line: { qty: 5, unitPrice: "10.00", subtotal: "50.00" },
+      });
+
+      // post-revert the return prices from the older line (5 pcs = $50 > the $10 left on it)
+      await expect(
+        tenantCtx.run(tenantId, () =>
+          orders.updateOrderItems(
+            current.orderId,
+            {
+              items: [{ productId, qty: 5 }],
+              inlineReturn: { items: [{ productId, qty: 5 }], returnKey: `k-head-${run}` },
+            },
+            staff(),
+          ),
+        ),
+      ).rejects.toMatchObject({ response: { code: "RETURN_REFUND_OVER_LINE_HEADROOM" } });
+
+      expect(
+        (await raw.invoice.findUniqueOrThrow({ where: { id: current.invoiceId } })).status,
+      ).toBe("SENT"); // never reverted to DRAFT
+      expect(reserved).toHaveLength(0); // no CN number reserved (so none burned)
+      expect(await raw.return.count({ where: { orderId: current.orderId } })).toBe(0);
     }, 60_000);
   },
 );

@@ -48,4 +48,30 @@ describe("recipes: no document join (I11)", () => {
       .map((m) => m.name);
     expect(offenders).toEqual([]);
   });
+
+  // #2717 M3 (case 17): the component models and the line provenance columns are inside that scan.
+  it("the component models are sales / finance models, so the scan above covers them", () => {
+    expect(domains.get("OrderItemComponent")).toBe("sales");
+    expect(domains.get("InvoiceItemComponent")).toBe("finance");
+    const names = Prisma.dmmf.datamodel.models.map((m) => m.name);
+    expect(names).toEqual(expect.arrayContaining(["OrderItemComponent", "InvoiceItemComponent"]));
+  });
+
+  it("recipeId on a line is a plain scalar: no relation to Recipe from OrderItem, InvoiceItem or a component model", () => {
+    for (const name of ["OrderItem", "InvoiceItem", "OrderItemComponent", "InvoiceItemComponent"]) {
+      const model = Prisma.dmmf.datamodel.models.find((m) => m.name === name);
+      expect(model).toBeDefined();
+      expect(model?.fields.filter((f) => f.kind === "object" && RECIPE_TYPES.has(f.type))).toEqual(
+        [],
+      );
+    }
+    for (const name of ["OrderItem", "InvoiceItem"]) {
+      const f = Prisma.dmmf.datamodel.models
+        .find((m) => m.name === name)
+        ?.fields.find((x) => x.name === "recipeId");
+      // the runtime dmmf omits `isRequired` for optional scalars: assert "not required", not "false"
+      expect(f).toMatchObject({ kind: "scalar", type: "String" });
+      expect(f?.isRequired ?? false).toBe(false);
+    }
+  });
 });

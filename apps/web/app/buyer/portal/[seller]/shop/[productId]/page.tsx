@@ -17,7 +17,9 @@ import {
   toPromotionRules,
 } from "@/lib/api/buyer";
 import { useBuyerCart } from "@/lib/buyer-cart";
+import { newCartLine } from "@/lib/buyer-cart-line";
 import { deriveTilePrice } from "../_components/tile-pricing";
+import { canOrderOutOfStock, stockLine } from "@/lib/buyer-backorder";
 import { ProductGallery } from "./_components/ProductGallery";
 import { DetailActions } from "./_components/DetailActions";
 
@@ -25,21 +27,6 @@ import { DetailActions } from "./_components/DetailActions";
 
 function fmt(n: number) {
   return new Intl.NumberFormat("en-US", { style: "currency", currency: "USD" }).format(n);
-}
-
-/** Same copy/colors as the shop tile's stockText — kept in sync deliberately. */
-function stockText(
-  status: "IN_STOCK" | "LOW" | "OUT_OF_STOCK" | undefined,
-  stockLeft: number | null | undefined,
-): { label: string; cls: string } {
-  const s = status ?? "IN_STOCK";
-  if (s === "OUT_OF_STOCK") return { label: "Out of stock", cls: "text-danger" };
-  if (s === "LOW")
-    return {
-      label: stockLeft != null ? `Only ${stockLeft} left` : "Low stock",
-      cls: "text-warning",
-    };
-  return { label: "In stock", cls: "text-success" };
 }
 
 // ─── Page ─────────────────────────────────────────────────────────────────────
@@ -148,7 +135,10 @@ export default function BuyerProductDetailPage() {
     : product.thumbnailUrl
       ? [product.thumbnailUrl]
       : [];
-  const stock = stockText(product.stockStatus, product.stockLeft);
+  const stock = stockLine(product); // the tile uses the same helper, so the two cannot disagree
+  // A backorderable item's "Ships when restocked" is rendered by the actions block (tied to the
+  // backorder state); the page's own line would repeat it.
+  const showStockLine = !canOrderOutOfStock(product);
 
   return (
     <div data-testid="product-detail-page" className="p-6 max-w-5xl">
@@ -164,7 +154,7 @@ export default function BuyerProductDetailPage() {
             </h1>
             <button
               onClick={toggleFavorite}
-              className={`flex h-9 w-9 flex-shrink-0 items-center justify-center rounded-full border transition-colors ${
+              className={`flex min-h-11 min-w-11 h-11 w-11 flex-shrink-0 items-center justify-center rounded-full border transition-colors ${
                 isFavorite
                   ? "border-danger/30 bg-danger/10 text-danger hover:bg-danger hover:text-white"
                   : "border-surface-border bg-white text-navy/30 hover:text-danger"
@@ -183,7 +173,7 @@ export default function BuyerProductDetailPage() {
             </p>
           )}
 
-          <p className={`text-sm font-medium ${stock.cls}`}>{stock.label}</p>
+          {showStockLine && <p className={`text-sm font-medium ${stock.cls}`}>{stock.label}</p>}
 
           <DetailActions
             product={product}
@@ -191,18 +181,21 @@ export default function BuyerProductDetailPage() {
             promoRules={promoRules}
             promotions={promotions}
             onAdd={() =>
-              cart.addItem({
-                productId: product.id,
-                qty: product.unitsPerBox ? product.unitsPerBox : 1,
-                name: product.name,
-                unit: product.unit,
-                thumbnailUrl: product.thumbnailUrl,
-                unitsPerBox: product.unitsPerBox,
-                boxes: product.unitsPerBox ? 1 : undefined,
-                pieces: product.unitsPerBox ? 0 : undefined,
-              })
+              cart.addItem(
+                newCartLine(
+                  {
+                    productId: product.id,
+                    name: product.name,
+                    unit: product.unit,
+                    thumbnailUrl: product.thumbnailUrl,
+                  },
+                  product.unitsPerBox,
+                ),
+              )
             }
             onUpdateQty={(qty) => cart.updateQty(product.id, qty)}
+            onSetUnit={(unit) => cart.setUnit(product.id, unit)}
+            onRestore={cartItem ? () => cart.addItem(cartItem) : undefined}
             isAlertSubscribed={isAlertSubscribed}
             onToggleStockAlert={toggleStockAlert}
           />

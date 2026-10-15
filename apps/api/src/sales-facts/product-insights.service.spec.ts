@@ -407,7 +407,8 @@ describe("ProductInsightsService (#2118)", () => {
       const rows = text.split("\r\n");
 
       expect(filename).toBe("product-sales-SW-12-2026-07-01-to-2026-07-31.csv");
-      expect(rows[0]).toMatch(/^Date,Invoice,Written off,Order,Customer,Qty \(pieces\)/);
+      expect(text.startsWith("\uFEFF")).toBe(true); // UTF-8 BOM on the first chunk
+      expect(rows[0]).toMatch(/^\uFEFFDate,Invoice,Written off,Order,Customer,Qty \(pieces\)/);
       expect(rows[1]).toContain("'=HYPERLINK(1)");
       expect(rows.filter((r) => r.startsWith("2026-07-19,INV-1"))).toHaveLength(2);
       expect(rows[0]).toMatch(/,Qty \(pieces\),Qty as stored,Boxes,/);

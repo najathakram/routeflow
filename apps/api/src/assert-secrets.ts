@@ -2,6 +2,10 @@ import {
   ONBOARDING_TOKEN_SECRET_MIN_LENGTH,
   onboardingTokenSecret,
 } from "./onboarding/onboarding-token-secret";
+import {
+  HANDOFF_TOKEN_SECRET_MIN_LENGTH,
+  handoffTokenSecret,
+} from "./auth/handoff/handoff-code.service";
 
 export interface AssertSecretsIo {
   exit: (code: number) => void;
@@ -51,6 +55,15 @@ export function assertSecrets(
   if (!onboardingSecretOk) {
     io.warn(
       `\n⚠️  ONBOARDING_TOKEN_SECRET is unset or shorter than ${ONBOARDING_TOKEN_SECRET_MIN_LENGTH} chars — onboarding intake links are DISABLED (issuing a link refuses, every link reads 404)\n`,
+    );
+  }
+
+  // #2653 (SA-542a): the in-app sign-in handoff signs its codes with its OWN secret. It is NOT a
+  // boot requirement in any environment: without it the feature is off (mint answers 409
+  // HANDOFF_NOT_CONFIGURED, so the shell falls back to the web login) and the API still boots.
+  if (handoffTokenSecret(env) === null) {
+    io.warn(
+      `\n⚠️  HANDOFF_TOKEN_SECRET is unset or shorter than ${HANDOFF_TOKEN_SECRET_MIN_LENGTH} chars — the in-app sign-in handoff is DISABLED (mint answers 409 HANDOFF_NOT_CONFIGURED)\n`,
     );
   }
 

@@ -1,6 +1,7 @@
 "use client";
 
 import * as React from "react";
+import NextLink from "next/link";
 import { Badge, Button, Card, EmptyState, PageHeader, Skeleton, cn } from "@routeflow/ui/web";
 import { usePageTitle } from "@/lib/page-title-context";
 import { useAuth } from "@/lib/auth-context";
@@ -15,24 +16,78 @@ import {
   STATUS_BADGE,
   STATUS_FILTERS,
   emptyText,
+  ADMIN_ONLY_LIFT_HINT,
   jurisdictionText,
-  ruleTarget,
+  liftState,
   stateName,
   surfaceText,
   windowText,
 } from "@/lib/restriction-rules";
+import { ruleCardTarget } from "@/lib/rule-targets";
+import { WriteButton } from "@/lib/read-only-gate";
+import {
+  ASK_ACCOUNT_ADMIN,
+  hidesFromAllPortalCustomers,
+  mayHideFromAllPortal,
+} from "@/lib/portal-hide-admin";
+import { LiftLimitsDialog } from "@/components/portal-limits/LiftLimitsDialog";
 import { LiftRuleDialog } from "./_components/LiftRuleDialog";
 import { RuleFormDialog } from "./_components/RuleFormDialog";
 
-function RuleCard({ rule, onLift }: { rule: SellingRestrictionListItemDto; onLift?: () => void }) {
-  const target = ruleTarget(rule);
+function RuleCard({
+  rule,
+  lift,
+  selected,
+  onToggle,
+  toggleLocked,
+}: {
+  rule: SellingRestrictionListItemDto;
+  /** Present for staff; `state` decides whether Lift is live or disabled with its reason. */
+  lift?: { state: "enabled" | "admin-only" | "none"; onLift: () => void };
+  /** Present only for a rule that can still be lifted by this viewer. */
+  selected?: boolean;
+  onToggle?: () => void;
+  /** L5: the rule hides products from every portal customer and the viewer is not an account admin. */
+  toggleLocked?: boolean;
+}) {
+  const target = ruleCardTarget(rule);
+  const detailHref = `/settings/restrictions/rules/${rule.id}`;
   const badge = STATUS_BADGE[rule.status];
   return (
     <Card className="space-y-3 p-4" data-testid="rule-card">
       <div className="flex flex-wrap items-start justify-between gap-2">
-        <div className="min-w-0">
-          <p className="break-words font-semibold text-navy">{target.name}</p>
-          <p className="text-xs text-navy/60">{target.kind}</p>
+        <div className="flex min-w-0 items-start gap-3">
+          {onToggle && (
+            <input
+              type="checkbox"
+              className="mt-1 h-4 w-4"
+              checked={!!selected}
+              onChange={onToggle}
+              disabled={toggleLocked}
+              aria-describedby={toggleLocked ? `rule-${rule.id}-admin-only` : undefined}
+              aria-label={`Select the limit on ${target.name}`}
+            />
+          )}
+          <div className="min-w-0">
+            {target.total !== null ? (
+              <NextLink
+                href={detailHref}
+                className="break-words font-semibold text-navy underline-offset-2 hover:underline"
+              >
+                {target.name}
+              </NextLink>
+            ) : (
+              <p className="break-words font-semibold text-navy">{target.name}</p>
+            )}
+            {(target.kind ?? target.names) && (
+              <p className="break-words text-xs text-navy/60">{target.kind ?? target.names}</p>
+            )}
+            {onToggle && toggleLocked && (
+              <p id={`rule-${rule.id}-admin-only`} className="text-xs text-navy/60">
+                {ASK_ACCOUNT_ADMIN}
+              </p>
+            )}
+          </div>
         </div>
         <Badge variant={badge.variant} label={badge.label} />
       </div>
@@ -74,10 +129,35 @@ function RuleCard({ rule, onLift }: { rule: SellingRestrictionListItemDto; onLif
         {rule.createdByName ? ` by ${rule.createdByName}` : ""}
       </p>
 
-      {onLift && (rule.status === "ACTIVE" || rule.status === "SCHEDULED") && (
-        <Button size="sm" variant="secondary" onClick={onLift}>
-          Lift rule
-        </Button>
+      {(target.total !== null || (lift && lift.state !== "none")) && (
+        <div className="flex flex-wrap items-center gap-x-4 gap-y-1">
+          {lift && lift.state !== "none" && (
+            <>
+              <Button
+                size="sm"
+                variant="secondary"
+                disabled={lift.state === "admin-only"}
+                aria-describedby={lift.state === "admin-only" ? `lift-hint-${rule.id}` : undefined}
+                onClick={lift.onLift}
+              >
+                Lift rule
+              </Button>
+              {lift.state === "admin-only" && (
+                <p id={`lift-hint-${rule.id}`} className="text-xs text-navy/70">
+                  {ADMIN_ONLY_LIFT_HINT}
+                </p>
+              )}
+            </>
+          )}
+          {target.total !== null && (
+            <NextLink
+              href={detailHref}
+              className="inline-flex min-h-11 items-center text-sm font-medium text-navy underline sm:min-h-0"
+            >
+              Products ({target.total})
+            </NextLink>
+          )}
+        </div>
       )}
 
       {rule.liftedAt && (
@@ -95,9 +175,14 @@ function RuleCard({ rule, onLift }: { rule: SellingRestrictionListItemDto; onLif
 
 export default function RestrictionRulesPage() {
   const { setTitle } = usePageTitle();
-  React.useEffect(() => setTitle("Selling restrictions"), [setTitle]);
+  React.useEffect(() => setTitle("Portal limits & rules"), [setTitle]);
 
-  const isAdmin = useAuth().user?.role === "TENANT_ADMIN";
+  const role = useAuth().user?.role;
+  const isAdmin = role === "TENANT_ADMIN";
+  // Owner ruling 10-07: operators are near-admins and may lift portal limits (the server decides).
+  const canLiftMany = isAdmin || role === "OPERATOR";
+  const [picked, setPicked] = React.useState<Set<string>>(new Set());
+  const [confirmLift, setConfirmLift] = React.useState(false);
   const [creating, setCreating] = React.useState(false);
   const [lifting, setLifting] = React.useState<SellingRestrictionListItemDto | null>(null);
   const [filter, setFilter] = React.useState<RestrictionStatus | "ALL">("ALL");
@@ -109,12 +194,35 @@ export default function RestrictionRulesPage() {
   return (
     <div className="mx-auto max-w-4xl space-y-5 p-4 sm:p-6">
       <PageHeader
-        title="Restriction rules"
-        subtitle="Rules that stop products being sold where they are banned."
+        title="Portal limits & rules"
+        subtitle="What your portal customers can't see, and the rules that stop products being sold where they are banned."
         action={isAdmin ? <Button onClick={() => setCreating(true)}>New rule</Button> : undefined}
       />
       {isAdmin && creating && <RuleFormDialog open onClose={() => setCreating(false)} />}
-      {isAdmin && <LiftRuleDialog rule={lifting} onClose={() => setLifting(null)} />}
+      {canLiftMany && <LiftRuleDialog rule={lifting} onClose={() => setLifting(null)} />}
+
+      {canLiftMany && picked.size > 0 && (
+        <div className="flex items-center justify-between gap-3 rounded-lg border border-brand-200 bg-brand-50 px-4 py-3">
+          <span className="text-sm font-medium text-navy">{picked.size} selected</span>
+          <div className="flex items-center gap-3">
+            <button
+              type="button"
+              className="text-sm text-navy/70 hover:text-navy"
+              onClick={() => setPicked(new Set())}
+            >
+              Clear
+            </button>
+            <WriteButton onClick={() => setConfirmLift(true)}>Lift {picked.size}</WriteButton>
+          </div>
+        </div>
+      )}
+      {confirmLift && (
+        <LiftLimitsDialog
+          ids={Array.from(picked)}
+          onClose={() => setConfirmLift(false)}
+          onDone={() => setPicked(new Set())}
+        />
+      )}
 
       <div role="group" aria-label="Filter rules by status" className="flex flex-wrap gap-2">
         {STATUS_FILTERS.map((f) => (
@@ -122,7 +230,10 @@ export default function RestrictionRulesPage() {
             key={f.value}
             type="button"
             aria-pressed={filter === f.value}
-            onClick={() => setFilter(f.value)}
+            onClick={() => {
+              setFilter(f.value);
+              setPicked(new Set());
+            }}
             className={cn(
               "rounded-full border px-3 py-1.5 text-sm font-medium transition-colors",
               filter === f.value
@@ -167,10 +278,30 @@ export default function RestrictionRulesPage() {
               Showing the newest {RULES_LIST_CAP} rules. Use a status filter to see the rest.
             </p>
           )}
-          <ul className="space-y-3" aria-label="Restriction rules">
+          <ul className="space-y-3" aria-label="Portal limits and rules">
             {data.map((r) => (
               <li key={r.id}>
-                <RuleCard rule={r} onLift={isAdmin ? () => setLifting(r) : undefined} />
+                <RuleCard
+                  rule={r}
+                  lift={
+                    canLiftMany
+                      ? { state: liftState(role, r), onLift: () => setLifting(r) }
+                      : undefined
+                  }
+                  selected={picked.has(r.id)}
+                  toggleLocked={!mayHideFromAllPortal(role) && hidesFromAllPortalCustomers(r)}
+                  onToggle={
+                    canLiftMany && (r.status === "ACTIVE" || r.status === "SCHEDULED")
+                      ? () =>
+                          setPicked((prev) => {
+                            const next = new Set(prev);
+                            if (next.has(r.id)) next.delete(r.id);
+                            else next.add(r.id);
+                            return next;
+                          })
+                      : undefined
+                  }
+                />
               </li>
             ))}
           </ul>

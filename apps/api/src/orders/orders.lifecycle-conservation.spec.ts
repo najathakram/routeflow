@@ -73,6 +73,7 @@ jest.mock("../notifications/notifications.service", () => ({
   })),
 }));
 
+import { oversellReaderOffProvider } from "./testing/policy-reader-provider";
 import { Test, TestingModule } from "@nestjs/testing";
 import { BadRequestException, ConflictException } from "@nestjs/common";
 import { getQueueToken } from "@nestjs/bull";
@@ -149,6 +150,7 @@ describe("OrdersService — F07 lifecycle-conservation (TP-API)", () => {
 
     const module: TestingModule = await Test.createTestingModule({
       providers: [
+        oversellReaderOffProvider,
         OrdersService,
         {
           provide: TenantContextService,
@@ -181,6 +183,8 @@ describe("OrdersService — F07 lifecycle-conservation (TP-API)", () => {
             findOpenOrderDraft: jest.fn().mockResolvedValue(null),
             reconcileOrderDraftInvoice: jest.fn().mockResolvedValue({ id: "inv-1" }),
             resyncOrderInvoicesForEdit: jest.fn().mockResolvedValue([{ id: "inv-1" }]),
+            followPartialPrices: jest.fn().mockResolvedValue({ issuedPartialsUnchanged: [] }),
+            projectEditedInvoiceTotals: jest.fn().mockResolvedValue([]),
             revertLinkedInvoicesForOrderEdit: jest.fn().mockResolvedValue([]),
             voidInvoice: jest.fn().mockResolvedValue({ id: "inv-1", status: "VOID" }),
             voidInvoiceInTx: jest.fn().mockResolvedValue({ id: "inv-1", status: "VOID" }),
@@ -557,7 +561,7 @@ describe("OrdersService — F07 lifecycle-conservation (TP-API)", () => {
       // order stays DELIVERED and staff retries invoicing from the order page.
       expect(prisma.order.update).toHaveBeenCalledWith(
         expect.objectContaining({
-          where: { id: "ord-1" },
+          where: { id: "ord-1", status: "CONFIRMED" },
           data: expect.objectContaining({ status: "DELIVERED" }),
         }),
       );

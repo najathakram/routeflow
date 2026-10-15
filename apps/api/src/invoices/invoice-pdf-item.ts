@@ -12,7 +12,8 @@
  * `apps/web/app/(dashboard)/invoices/[id]/page.tsx` :2408-2481.
  */
 
-import { invoiceLineQtyText } from "@routeflow/pricing";
+import { componentPriceText, invoiceLineQtyText } from "@routeflow/pricing";
+import type { LineComponentView } from "@routeflow/types";
 
 /** Mirrors `invoice-pdf-template.tsx`'s own `DecimalLike` — a Prisma Decimal, a plain
  *  number, or a numeric string, all seen on the wire depending on the read path. */
@@ -43,22 +44,11 @@ export function promoNote(item: InvoicePdfItemLike): string | null {
 }
 
 /**
- * Whether the struck-through pre-promo `originalPrice` renders beside the charged
- * unit price. False when the tenant hid original prices, when there is no original
- * price to show, and for a MANUAL upsell (unitPrice ABOVE originalPrice) — the web
- * renderer deliberately never shows the lower base price to the buyer there. Mirrors
- * the web renderer's SPECIAL/DISCOUNTED/PROMO/adjusted-MANUAL branches, which all
- * strike the original price whenever one is set and the tenant hasn't hidden it.
+ * Whether the struck-through pre-promo `originalPrice` renders beside the charged unit price: the ONE rule now lives in
+ * `@routeflow/pricing` (`showOriginalPrice`) so the receipts read the same decision; re-exported here for the invoice PDF,
+ * the invoice email and the web renderer's mirror.
  */
-export function showOriginalPrice(item: InvoicePdfItemLike, hideOriginalPrice: boolean): boolean {
-  if (hideOriginalPrice) return false;
-  if (item.originalPrice == null) return false;
-  const original = Number(item.originalPrice);
-  const unitPrice = item.unitPrice != null ? Number(item.unitPrice) : 0;
-  // MANUAL upsell (charged ABOVE the base price): never expose the lower base.
-  if (item.priceType === "MANUAL" && unitPrice > original) return false;
-  return true;
-}
+export { showOriginalPrice } from "@routeflow/pricing";
 
 export type InvoicePdfQtyItemLike = {
   qty: DecimalLike;
@@ -99,5 +89,33 @@ export function invoiceItemQtyFields(item: {
     boxes: item.boxes != null ? Number(item.boxes) : null,
     pieces: item.pieces != null ? Number(item.pieces) : null,
     unitLabel: item.unitLabel ?? null,
+  };
+}
+
+/** One printed sub-line of a composed (mixed-pack) invoice line. */
+export interface PdfSubLine {
+  name: string;
+  unitSku: string | null;
+  barcodeText: string | null;
+  barcodeDataUri: string | null;
+  qtyText: string;
+  /** "$0.63 (included)": the frozen 4-dp price viewed at 2 dp. Display only, never summed (I5). */
+  priceText: string;
+}
+
+/**
+ * #2717 M3 (SA-579 case 21): the sub-line of one frozen component, from its client view. The text
+ * parts come from `@routeflow/pricing` (`componentPriceText`, the same helper `componentSubLineText`
+ * uses), so the PDF, web and mobile read identically. `barcodeDataUri` is rendered by the caller
+ * (bwip-js) because it is I/O.
+ */
+export function pdfSubLine(view: LineComponentView, barcodeDataUri: string | null): PdfSubLine {
+  return {
+    name: view.name,
+    unitSku: view.unitSku,
+    barcodeText: view.unitBarcode,
+    barcodeDataUri,
+    qtyText: `x ${view.qty}`,
+    priceText: componentPriceText(view.displayUnitPrice4),
   };
 }

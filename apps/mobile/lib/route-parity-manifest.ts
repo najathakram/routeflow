@@ -24,12 +24,23 @@ export const ROUTE_PARITY: Readonly<Record<string, ParityRow>> = {
   "(auth)/signup": { webOnly: "tenant signup stays on web (Apple 5.1.1(v))" },
   "change-password": { mobile: ["(auth)/force-change-password"] },
   "verify-email": { webOnly: "email-link flow; the browser handles it" },
+  handoff: {
+    webOnly: "the hybrid shell's sign-in entry (#2653); the WebView loads it, no native screen",
+  },
 
   // ─── Operator dashboard: orders, dispatch, routes (plan §1.3) ───
   "(dashboard)/dashboard": { mobile: ["(operator)/(tabs)/home"] },
   "(dashboard)/getting-started": { mobile: ["(operator)/getting-started"] },
   "(dashboard)/orders/[id]": { mobile: ["(operator)/(tabs)/orders/[id]"] },
   "(dashboard)/orders": { mobile: ["(operator)/(tabs)/orders/index"] },
+  "(dashboard)/orders/new": {
+    webOnly:
+      "a web link target that redirects to the Orders page's builder intent (row 331); mobile opens the builder from its Orders tab",
+  },
+  "(dashboard)/orders/counter-sale": {
+    missing:
+      "walk-in counter sale (POST /orders/counter-sale) is web-first; the mobile operator sale mode is its own flow, so parity is a later owner call",
+  },
   "(dashboard)/returns/[id]": { mobile: ["(operator)/returns/[id]"] },
   "(dashboard)/returns": { mobile: ["(operator)/returns/index"] },
   "(dashboard)/dispatch": { mobile: ["(operator)/(tabs)/dispatch"] },
@@ -60,6 +71,8 @@ export const ROUTE_PARITY: Readonly<Record<string, ParityRow>> = {
   },
   "(dashboard)/inventory/stock-counts": { mobile: ["(operator)/products/stock-counts"] },
   "(dashboard)/inventory": { mobile: ["(operator)/(tabs)/warehouse"] },
+  "(dashboard)/purchase-orders": { mobile: ["(operator)/purchase-orders/index"] },
+  "(dashboard)/purchase-orders/[id]": { mobile: ["(operator)/purchase-orders/[id]"] },
   "(dashboard)/products/[id]": { mobile: ["(operator)/products/[id]"] },
   "(dashboard)/products/create": { mobile: ["(operator)/products/create"] },
   "(dashboard)/products": { mobile: ["(operator)/products/index"] },
@@ -122,6 +135,8 @@ export const ROUTE_PARITY: Readonly<Record<string, ParityRow>> = {
   "(dashboard)/settings/product-categories": { missing: "W>M, owner triage" },
   "(dashboard)/settings/restrictions": { missing: "W>M, owner triage" },
   "(dashboard)/settings/restrictions/rules": { missing: "W>M, owner triage" },
+  // Row 509: the rule detail (products & labels, edit with history). Mobile manages no rules (owner: out of 509).
+  "(dashboard)/settings/restrictions/rules/[id]": { missing: "W>M, owner triage" },
   "(dashboard)/settings/batch-import": { webOnly: "desktop file flows" },
   "(dashboard)/settings/import": { webOnly: "desktop file flows" },
   "(dashboard)/settings/migration": { webOnly: "desktop file flows" },

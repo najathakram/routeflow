@@ -6,7 +6,7 @@ import {
   assertReplayCarriesReturn,
   assertReplayCarriesReturnKey,
   reserveEditReturnNumber,
-  runWithConflictRetry,
+  runEditTx,
   preflightInlineReturn,
   emitInlineReturnCredit,
   lockInlineReturnCustomer,
@@ -278,12 +278,15 @@ describe("assertReplayCarriesReturn (#2094 R1)", () => {
   });
 });
 
-describe("runWithConflictRetry (SA-340)", () => {
+describe("runEditTx (SA-340, SA-767 r-note 3)", () => {
   const adapter40001 = () =>
     Object.assign(new Error("write conflict"), {
       name: "DriverAdapterError",
       cause: { kind: "TransactionWriteConflict", originalCode: "40001" },
     });
+  /** `run` stands in for `prisma.tenantTransaction`: runEditTx calls it once per attempt. */
+  const prismaOf = (run: jest.Mock) => ({ tenantTransaction: run });
+  const body = async () => "unused";
 
   it("an adapter-shaped 40001 retries the whole tx for a request carrying a return, with the number reserved once", async () => {
     const svc = svcStub();
@@ -296,7 +299,7 @@ describe("runWithConflictRetry (SA-340)", () => {
       if (seen.length === 1) throw adapter40001();
       return "ok";
     });
-    await expect(runWithConflictRetry(p, "test", run)).resolves.toBe("ok");
+    await expect(runEditTx(prismaOf(run), body)).resolves.toBe("ok");
     expect(run).toHaveBeenCalledTimes(2);
     expect(seen).toEqual(["CN-2026-0001", "CN-2026-0001"]); // the SAME number on the retry
     expect(svc.reserveCreditNoteNumber).toHaveBeenCalledTimes(1);
@@ -316,23 +319,40 @@ describe("runWithConflictRetry (SA-340)", () => {
       },
     ],
     ["P2010 (raw query) carrying 40P01", { code: "P2010", meta: { code: "40P01" } }],
+    ["a 55P03 lock timeout (SA-767 r-note 2 (c))", { code: "55P03" }],
+    ["a P2028 expired tx budget", { code: "P2028" }],
   ])("%s retries the whole tx (at READ COMMITTED, 40P01 is the real conflict)", async (_n, err) => {
-    const p = await prepareInlineReturn(svcStub() as any, LINES, STAFF);
     const run = jest.fn().mockRejectedValueOnce(err).mockResolvedValue("ok");
-    await expect(runWithConflictRetry(p, "test", run)).resolves.toBe("ok");
+    await expect(runEditTx(prismaOf(run), body)).resolves.toBe("ok");
     expect(run).toHaveBeenCalledTimes(2);
   });
 
-  it("a plain edit (no return) is ONE attempt: the conflict escapes", async () => {
+  it("a plain edit (no return) retries too, and passes the tx options through unchanged", async () => {
+    const run = jest.fn().mockRejectedValueOnce(adapter40001()).mockResolvedValue("ok");
+    const opts = { isolationLevel: "Serializable", timeout: 15_000 };
+    await expect(runEditTx(prismaOf(run), body, opts)).resolves.toBe("ok");
+    expect(run).toHaveBeenCalledTimes(2);
+    // the callback is wrapped (the lock bound is its first statement); the caller's options are kept
+    expect(run).toHaveBeenLastCalledWith(expect.any(Function), opts);
+    const exec = jest.fn().mockResolvedValue(0);
+    const bodySpy = jest.fn().mockResolvedValue("ran");
+    await runEditTx(prismaOf(jest.fn((fn: any) => fn({ $executeRaw: exec }))), bodySpy, opts);
+    expect(exec).toHaveBeenCalledTimes(1); // the bound, before the body
+    expect(exec.mock.invocationCallOrder[0]).toBeLessThan(bodySpy.mock.invocationCallOrder[0]);
+  });
+
+  it("a conflict on every attempt is the coded 503 LOCK_UNAVAILABLE after 3 attempts", async () => {
     const run = jest.fn().mockRejectedValue(adapter40001());
-    await expect(runWithConflictRetry(null, "test", run)).rejects.toThrow("write conflict");
-    expect(run).toHaveBeenCalledTimes(1);
+    await expect(runEditTx(prismaOf(run), body)).rejects.toMatchObject({
+      status: 503,
+      response: { code: "LOCK_UNAVAILABLE" },
+    });
+    expect(run).toHaveBeenCalledTimes(3);
   });
 
   it("a non-conflict error is never retried", async () => {
-    const p = await prepareInlineReturn(svcStub() as any, LINES, STAFF);
     const run = jest.fn().mockRejectedValue(new Error("boom"));
-    await expect(runWithConflictRetry(p, "test", run)).rejects.toThrow("boom");
+    await expect(runEditTx(prismaOf(run), body)).rejects.toThrow("boom");
     expect(run).toHaveBeenCalledTimes(1);
   });
 });

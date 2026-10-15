@@ -13,13 +13,12 @@
  * enables, or pays for anything — "Complete payment"/"See plans" are asserted visible and
  * clicked only as far as the resulting navigation, never completed against Stripe.
  *
- * AUTHOR-ONLY per the lite-L2 dispatch: this spec has not been run (no browser/compose
- * available in that session) — typecheck only.
+ * Authored without a browser (typecheck only); first run against a real stack in row 489,
+ * which brought it up to the shipped UI (feature-named gate, accordion nav).
  */
 import { test, expect } from "@playwright/test";
 import { setTenantCookie, loginAsOperator } from "./helpers/auth";
 
-// eslint-disable-next-line @typescript-eslint/no-var-requires
 const { assertTestTenant } = require("../../../scripts/lib/test-tenants.cjs");
 
 const RAW_LITE_SLUG = process.env.PLAYWRIGHT_LITE_TENANT_SLUG ?? "";
@@ -30,18 +29,27 @@ const SKIP_REASON = "PLAYWRIGHT_LITE_TENANT_SLUG not set — needs a dedicated L
 
 /** Gated-nav labels PLAN_GATED_NAV covers (lib/plan-gated-nav.ts) — a LITE tenant with
  *  none of these flags must see none of these entries. Dispatch/Sales Agents are
- *  deliberately excluded: they're gated by separate addon hooks, not plan flags. */
+ *  deliberately excluded: they're gated by separate addon hooks, not plan flags. Returns is
+ *  excluded too: catalog v13 gave LITE flag.returns, so a LITE tenant keeps it. */
 const GATED_LABELS = [
   "Estimates",
   "Credit Notes",
-  "Returns",
   "Suppliers",
-  "Bills & Purchasing",
+  "Supplier Bills",
   "Reports",
   "Analytics",
 ];
 /** Always-ungated top-level entries every plan (including LITE) keeps. */
-const UNGATED_LABELS = ["Dashboard", "All Orders", "Customers", "Inventory", "Products"];
+const UNGATED_LABELS = [
+  "Dashboard",
+  "All Orders",
+  // Catalog v13 gave LITE flag.returns (owner 2026-09-28, #2700), so Returns is no longer gated.
+  "Returns",
+  "Customers",
+  "Inventory",
+  "Purchase Orders",
+  "Products",
+];
 
 async function loginAsLiteOperator(
   page: import("@playwright/test").Page,
@@ -62,12 +70,32 @@ test.describe("Lite-plan nav/route gating (lite-L2)", () => {
     await loginAsLiteOperator(page, context, baseURL);
 
     const nav = page.getByRole("navigation");
-    for (const label of UNGATED_LABELS) {
-      await expect(nav.getByText(label, { exact: true })).toBeVisible();
+    await expect(nav.getByRole("link", { name: "Dashboard", exact: true })).toBeVisible();
+    // Gated entries hold a skeleton row while their entitlement query resolves; a count taken
+    // before it settles would pass vacuously.
+    await expect(nav.locator(".skeleton")).toHaveCount(0);
+
+    // The sidebar is a single-open accordion (layout.tsx SidebarNav): only one group's children
+    // are in the DOM at a time. Open each group in turn and collect every link label seen, so the
+    // ungated children (All Orders, Inventory ...) and the gated ones are checked against the
+    // whole menu rather than whichever group happens to start open.
+    const seen = new Set<string>();
+    const collect = async () => {
+      for (const t of await nav.getByRole("link").allInnerTexts()) seen.add(t.trim());
+    };
+    await collect();
+    const groups = nav.locator("> ul > li > button[aria-expanded]");
+    const groupCount = await groups.count();
+    for (let i = 0; i < groupCount; i++) {
+      const group = groups.nth(i);
+      if ((await group.getAttribute("aria-expanded")) !== "true") await group.click();
+      await expect(group).toHaveAttribute("aria-expanded", "true");
+      await collect();
     }
-    for (const label of GATED_LABELS) {
-      await expect(nav.getByText(label, { exact: true })).toHaveCount(0);
-    }
+
+    for (const label of UNGATED_LABELS)
+      expect(seen, `${label} should be in the menu`).toContain(label);
+    for (const label of GATED_LABELS) expect(seen, `${label} must be hidden`).not.toContain(label);
   });
 
   test("2. direct navigation to a gated route renders the locked panel, not an error toast", async ({
@@ -79,9 +107,14 @@ test.describe("Lite-plan nav/route gating (lite-L2)", () => {
     await loginAsLiteOperator(page, context, baseURL);
 
     await page.goto("/estimates");
-    await expect(page.getByRole("heading", { name: "Not on your plan" })).toBeVisible();
+    // The gate names the feature (PlanGateBoundary: `${routeLabel} isn't on your plan`, message
+    // `${routeLabel} isn't on the ${planName} plan.`); the generic "Not on your plan" is only the
+    // PlanGates.tsx fallback when no route label resolves.
+    await expect(
+      page.getByRole("heading", { name: /^Estimates isn['\u2019]t on your plan$/ }),
+    ).toBeVisible();
     await expect(page.getByRole("button", { name: /see plans/i })).toBeVisible();
-    await expect(page.getByText(/isn't included in the .* plan/i)).toBeVisible();
+    await expect(page.getByText(/Estimates isn['\u2019]t on the Lite plan\./)).toBeVisible();
     // No error toast — a client-side plan gate must never surface as a toast (that path
     // is reserved for a server-side PLAN_GATE 403 the client didn't already know about).
     await expect(
@@ -115,19 +148,28 @@ test.describe("Lite-plan nav/route gating (lite-L2)", () => {
     // the DOM's visible-text set until expanded) — an explicit committed array, not a
     // snapshot (CP-07: read each row's own text, never a container's concatenated
     // textContent).
+    // An open group's li also carries its children's text, so keep each row's first line only
+    // (the group/link label itself). Poll: gated and regulated entries land after their queries
+    // resolve, so a one-shot read right after goto sees a half-built menu. The seeded tenant has a
+    // licensed tracked category, hence "Regulated Items".
     const topLevel = page.getByRole("navigation").locator("> ul > li");
-    const labels = (await topLevel.allInnerTexts()).map((t) => t.trim()).filter(Boolean);
-
-    expect(labels).toEqual([
-      "Dashboard",
-      "Orders",
-      "Dispatch",
-      "Customers",
-      "Warehouse",
-      "Finance",
-      "Analytics",
-      "Settings",
-    ]);
+    await expect
+      .poll(
+        async () =>
+          (await topLevel.allInnerTexts()).map((t) => t.split("\n")[0].trim()).filter(Boolean),
+        { timeout: 15_000 },
+      )
+      .toEqual([
+        "Dashboard",
+        "Orders",
+        "Dispatch",
+        "Customers",
+        "Warehouse",
+        "Finance",
+        "Analytics",
+        "Regulated Items",
+        "Settings",
+      ]);
   });
 
   test("5. Settings → Billing header follows the LITE tenant's live status", async ({

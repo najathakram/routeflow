@@ -20,9 +20,11 @@ jest.mock("../storage/compress.util", () => ({
   compressDocument: jest.fn(),
 }));
 
+import { Logger } from "@nestjs/common";
 import { Test, TestingModule } from "@nestjs/testing";
 import { randomUUID } from "crypto";
 import { InvoicesService } from "./invoices.service";
+import { clearTenantInvoicePdfPointers, writeInvoicePdfPointer } from "./invoice-pdf-pointer";
 import { InvoicePdfService } from "./invoice-pdf.service";
 import { PrismaService } from "../prisma/prisma.service";
 import { TenantContextService } from "../tenant/tenant-context.service";
@@ -1563,6 +1565,100 @@ describeDb(
       await tenantCtx.run(t.id, () => invoicesService.recomputeOrderFromInvoices(order.id));
       const a = await prisma.orderItem.findUnique({ where: { id: oi.id } });
       expect([Number(a!.qty), a!.boxes, a!.pieces, a!.unitsPerBox]).toEqual([24, 2, 0, 12]);
+    });
+
+    describe("H4: a stale editor cannot overwrite a newer save (expectedUpdatedAt -> 409 INVOICE_STALE)", () => {
+      const stamp = async (s: any): Promise<string> =>
+        (
+          await prisma.invoice.findUniqueOrThrow({ where: { id: s.inv.id } })
+        ).updatedAt.toISOString();
+
+      it("H4-A the INV-2026-0015 replay: two editors open the same draft; the second save is 409 and deletes nothing", async () => {
+        const s = await seed("h4a");
+        const opened = await stamp(s); // both editors loaded the draft at this updatedAt
+        const first = s.payload();
+        first.items = [first.items[0]]; // editor 1 removes the plain line and saves
+        await run(s, { ...first, expectedUpdatedAt: opened });
+        const afterFirst = await rows(s);
+        expect(afterFirst.map((r) => r.id)).toEqual([s.l1.id]);
+        const invAfterFirst = await prisma.invoice.findUniqueOrThrow({ where: { id: s.inv.id } });
+
+        // editor 2 still holds the old two-line form and saves it with the token it opened at
+        await expect(
+          run(s, { ...s.payload({ l1: { notes: "STALE" } }), expectedUpdatedAt: opened }),
+        ).rejects.toMatchObject({ status: 409, response: { code: "INVOICE_STALE" } });
+
+        const afterStale = await rows(s);
+        expect(afterStale.map((r) => r.id)).toEqual([s.l1.id]); // nothing re-added, nothing deleted
+        expect(afterStale[0].notes).toBe(afterFirst[0].notes);
+        const invAfterStale = await prisma.invoice.findUniqueOrThrow({ where: { id: s.inv.id } });
+        expect(invAfterStale.updatedAt.toISOString()).toBe(invAfterFirst.updatedAt.toISOString());
+        expect(Number(invAfterStale.total)).toBe(Number(invAfterFirst.total));
+      });
+
+      it("H4-B the current token saves; the token returned by that save is the next current one", async () => {
+        const s = await seed("h4b");
+        const saved: any = await run(s, { ...s.payload(), expectedUpdatedAt: await stamp(s) });
+        expect(saved.updatedAt.toISOString()).toBe(await stamp(s));
+        await run(s, {
+          ...s.payload({ l2: { qty: 4 } }),
+          expectedUpdatedAt: saved.updatedAt.toISOString(),
+        });
+        expect(Number((await rows(s)).find((r) => r.id === s.l2.id)!.qty)).toBe(4);
+      });
+
+      it("H4-C header-only saves (discount, and notes alone) also refuse a stale token and write nothing", async () => {
+        const s = await seed("h4c");
+        const opened = await stamp(s);
+        await run(s, { notes: "editor 1", expectedUpdatedAt: opened });
+        const mid = await prisma.invoice.findUniqueOrThrow({ where: { id: s.inv.id } });
+        await expect(run(s, { discount: 5, expectedUpdatedAt: opened })).rejects.toMatchObject({
+          status: 409,
+          response: { code: "INVOICE_STALE" },
+        });
+        await expect(
+          run(s, { notes: "editor 2", expectedUpdatedAt: opened }),
+        ).rejects.toMatchObject({ status: 409, response: { code: "INVOICE_STALE" } });
+        const end = await prisma.invoice.findUniqueOrThrow({ where: { id: s.inv.id } });
+        expect(end.notes).toBe("editor 1");
+        expect(Number(end.discount)).toBe(Number(mid.discount));
+        expect(end.updatedAt.toISOString()).toBe(mid.updatedAt.toISOString());
+      });
+
+      it("row 502: a PDF render (pointer write) and a tenant PDF invalidation while the form is open do not stale it", async () => {
+        const s = await seed("r502");
+        const opened = await stamp(s);
+        await writeInvoicePdfPointer(prisma, s.t.id, s.inv.id, `invoice-pdfs/${s.inv.id}.pdf`);
+        const pointed = await prisma.invoice.findUniqueOrThrow({ where: { id: s.inv.id } });
+        expect(pointed.pdfUrl).toBe(`invoice-pdfs/${s.inv.id}.pdf`);
+        expect(pointed.updatedAt.toISOString()).toBe(opened);
+        await clearTenantInvoicePdfPointers(prisma, s.t.id);
+        const cleared = await prisma.invoice.findUniqueOrThrow({ where: { id: s.inv.id } });
+        expect(cleared.pdfUrl).toBeNull();
+        expect(cleared.updatedAt.toISOString()).toBe(opened);
+        // the editor who opened before both writes saves with no 409
+        await run(s, { ...s.payload({ l2: { qty: 4 } }), expectedUpdatedAt: opened });
+        expect(Number((await rows(s)).find((r) => r.id === s.l2.id)!.qty)).toBe(4);
+      });
+
+      it("row 502: the pointer write is tenant-scoped (another tenant's id writes nothing)", async () => {
+        const a = await seed("r502a");
+        const b = await seed("r502b");
+        const n = await writeInvoicePdfPointer(prisma, b.t.id, a.inv.id, "invoice-pdfs/x.pdf");
+        expect(n).toBe(0);
+        expect(
+          (await prisma.invoice.findUniqueOrThrow({ where: { id: a.inv.id } })).pdfUrl,
+        ).toBeNull();
+      });
+
+      it("H4-D a client that sends no token is still accepted for one release, with a warn log", async () => {
+        const s = await seed("h4d");
+        const warn = jest.spyOn(Logger.prototype, "warn").mockImplementation(() => undefined);
+        await run(s, s.payload());
+        expect(warn).toHaveBeenCalledWith(expect.stringContaining("expectedUpdatedAt"));
+        warn.mockRestore();
+        expect((await rows(s)).map((r) => r.id).sort()).toEqual([s.l1.id, s.l2.id].sort());
+      });
     });
   },
 );

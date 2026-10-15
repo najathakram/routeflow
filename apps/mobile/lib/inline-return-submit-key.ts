@@ -28,6 +28,8 @@
  * `returns-logic.ts#submittedReturnKey` for the same split on the standard-return flow).
  */
 
+import { API_ERROR_CODES } from "@routeflow/types";
+
 /** Header/body-safe: every real component is a UUID or a small integer, so this never fires in
  *  practice — here so a surprising id can never produce something the wire can't carry. */
 function safeToken(value: string): string {
@@ -138,6 +140,19 @@ export const INLINE_RETURN_REFUSAL_CODES: readonly string[] = [
   // #2424: the same key with different items is refused, so the nonce settles and the next
   // capture mints a new key (and re-quotes).
   "INLINE_RETURN_KEY_REUSED_WITH_DIFFERENT_ITEMS",
+  // B961: nothing was written; the nonce settles and the next capture (with the reason) mints a new key.
+  "INLINE_RETURN_ALREADY_RETURNED_REASON_REQUIRED",
+];
+
+/**
+ * SA-740: the source-sale refusals of the capture (a counter return names no usable source sale, or asks for more than the sale
+ * had). Nothing was written, so each is as definite as the codes above. Spelled through the shared constants (the codes list
+ * is shrink-only for bare literals); pinned to the server's three by inline-returns-source-sale.spec.ts.
+ */
+export const SOURCE_SALE_REFUSAL_CODES: readonly string[] = [
+  API_ERROR_CODES.SOURCE_SALE_REQUIRED,
+  API_ERROR_CODES.SOURCE_SALE_INVALID,
+  API_ERROR_CODES.RETURN_EXCEEDS_SALE,
 ];
 
 /**
@@ -157,7 +172,10 @@ export function isDefiniteInlineReturnRefusal(
   if (status === undefined || status < 400 || status >= 500) return false;
   if (status === 401 || status === 403 || status === 408 || status === 429) return false;
   if (status === 409 && message?.endsWith("retry")) return false;
-  return code !== undefined && INLINE_RETURN_REFUSAL_CODES.includes(code);
+  return (
+    code !== undefined &&
+    (INLINE_RETURN_REFUSAL_CODES.includes(code) || SOURCE_SALE_REFUSAL_CODES.includes(code))
+  );
 }
 
 /**

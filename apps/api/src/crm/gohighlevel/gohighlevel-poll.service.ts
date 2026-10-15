@@ -13,6 +13,7 @@
 // TENANT SCOPING (L-100): every Prisma `where` below carries an explicit `tenantId` taken
 // from the method argument (or from the connection row loaded by it) — never inferred.
 import { ConflictException, Logger, NotFoundException } from "@nestjs/common";
+import { acceptsAutomatedWrites } from "../../tenant/tenant-automation";
 
 export interface GoHighLevelPollOptions {
   ignoreCutoff?: boolean;
@@ -21,7 +22,7 @@ export interface GoHighLevelPollOptions {
   budgetMs?: number;
 }
 
-export interface ImportPreviewSample {
+interface ImportPreviewSample {
   opportunityName: string;
   contactName?: string;
   email?: string;
@@ -99,7 +100,22 @@ export class GoHighLevelPollService {
       select: { id: true, tenantId: true },
     });
 
-    for (const c of connections ?? []) {
+    // SA-776: the poll IMPORTS opportunities as customers / orders - a TRANSACTIONAL job, so only a TRIAL / ACTIVE
+    // tenant is polled (acceptsAutomatedWrites). A skipped tenant is not an error: its connection is left alone.
+    // A tenant whose row cannot be read is skipped too (this job writes: fail closed).
+    const tenantIds = [
+      ...new Set((connections ?? []).map((c: { tenantId: string }) => c.tenantId)),
+    ];
+    const statuses: Array<{ id: string; status: string }> =
+      tenantIds.length > 0
+        ? await this.prisma.tenant.findMany({
+            where: { id: { in: tenantIds } },
+            select: { id: true, status: true },
+          })
+        : [];
+    const open = new Set(statuses.filter((t) => acceptsAutomatedWrites(t.status)).map((t) => t.id));
+
+    for (const c of (connections ?? []).filter((x: { tenantId: string }) => open.has(x.tenantId))) {
       try {
         if (this.tenantCtx) {
           await this.tenantCtx.run(c.tenantId, () => this.pollTenant(c.tenantId));

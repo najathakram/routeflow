@@ -26,6 +26,8 @@ interface Props {
    * of tearing the camera down. Defaults `true`.
    */
   active?: boolean;
+  /** Native-only opt-in (aim box + steady-read on the expo-camera path); accepted and ignored on web. */
+  aimAssist?: boolean;
 }
 
 /** Full-screen scanning overlay: viewfinder chrome and feedback pill around a
@@ -87,9 +89,21 @@ export function BarcodeScanner({
 
       <View style={styles.overlay} pointerEvents="box-none">
         {feedback ? (
-          <View style={[styles.feedback, feedback.kind === "error" && styles.feedbackError]}>
+          <View
+            style={[
+              styles.feedback,
+              feedback.kind === "error" && styles.feedbackError,
+              feedback.kind === "info" && styles.feedbackInfo,
+            ]}
+          >
             <Ionicons
-              name={feedback.kind === "added" ? "checkmark-circle" : "alert-circle"}
+              name={
+                feedback.kind === "added"
+                  ? "checkmark-circle"
+                  : feedback.kind === "info"
+                    ? "information-circle"
+                    : "alert-circle"
+              }
               size={18}
               color="#fff"
             />
@@ -148,6 +162,9 @@ const styles = StyleSheet.create({
   },
   feedbackError: {
     backgroundColor: "rgba(220,38,38,0.92)",
+  },
+  feedbackInfo: {
+    backgroundColor: "rgba(51,65,85,0.92)",
   },
   feedbackText: {
     color: "#fff",

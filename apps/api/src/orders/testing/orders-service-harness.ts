@@ -27,6 +27,7 @@ jest.mock("../../notifications/notifications.service", () => ({
   })),
 }));
 
+import { oversellReaderOffProvider } from "./policy-reader-provider";
 import { Test, TestingModule } from "@nestjs/testing";
 import { getQueueToken } from "@nestjs/bull";
 import { ConfigService } from "@nestjs/config";
@@ -63,6 +64,8 @@ export const customerPayload = {
   sub: "user-cust",
   username: "customer1",
   role: "CUSTOMER" as const,
+  // B1211: the buyer order gate is tenant-scoped, so a buyer's token carries its tenant (the mock prisma's).
+  tenantId: "test-tenant",
 };
 /** The buyer pseudo-user (`makePseudoUser`): role CUSTOMER, stamped `type: "BUYER"`. */
 export const buyerPseudoUser = { ...customerPayload, type: "BUYER" as const };
@@ -71,6 +74,7 @@ export async function buildOrdersService() {
   const prisma = createMockPrisma();
   const module: TestingModule = await Test.createTestingModule({
     providers: [
+      oversellReaderOffProvider,
       OrdersService,
       {
         provide: TenantContextService,
@@ -103,6 +107,8 @@ export async function buildOrdersService() {
           findOpenOrderDraft: jest.fn().mockResolvedValue(null),
           reconcileOrderDraftInvoice: jest.fn().mockResolvedValue({ id: "inv-1" }),
           resyncOrderInvoicesForEdit: jest.fn().mockResolvedValue([{ id: "inv-1" }]),
+          followPartialPrices: jest.fn().mockResolvedValue({ issuedPartialsUnchanged: [] }),
+          projectEditedInvoiceTotals: jest.fn().mockResolvedValue([]),
           revertLinkedInvoicesForOrderEdit: jest.fn().mockResolvedValue([]),
           voidInvoice: jest.fn().mockResolvedValue({ id: "inv-1", status: "VOID" }),
           voidInvoiceInTx: jest.fn().mockResolvedValue({ id: "inv-1", status: "VOID" }),

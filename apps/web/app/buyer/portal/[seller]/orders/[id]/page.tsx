@@ -30,9 +30,23 @@ import {
   type BuyerOrder,
 } from "@/lib/api/buyer";
 import { computeLineSubtotal, normalizeBoxesPieces } from "@routeflow/pricing";
+import { buyerEditPayloadItems } from "@/lib/buyer-edit-payload";
+import { API_ERROR_CODES, SHIPPED_ORDER_MESSAGE } from "@routeflow/types";
 import { describeChangeRequest, describeResolution } from "@/lib/change-requests";
 import { fmtCalendarDate } from "@/lib/formatting";
+import { ComponentSubLines } from "@/components/ComponentSubLines";
 import { DeliveryTrackingCard } from "./_components/DeliveryTrackingCard";
+import { ShipmentCard } from "./_components/ShipmentCard";
+import { useBuyerSellerCapabilities } from "@/lib/api/buyer-capabilities";
+import {
+  NO_FLEET_STEP_LABELS,
+  SHIP_STEP_LABELS,
+  buyerOrderStatusLabel,
+  noFleetStepIndex,
+  orderTravelView,
+  shipStepIndex,
+  type BuyerOrderTravelView,
+} from "@/lib/buyer-fulfilment";
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 
@@ -45,6 +59,8 @@ const STATUS_STEPS = [
 ];
 
 interface BuyerEditLine {
+  /** B297 row 352: the stored line this row edits (unset on a row added in this session). */
+  orderItemId?: string;
   unitPrice: number;
   qty: number;
   unitsPerBox?: number | null;
@@ -52,6 +68,11 @@ interface BuyerEditLine {
   /** BUY_N_GET_M snapshot on the loaded line + the whole-unit count it was earned at. */
   promoFreeUnits?: number | null;
   promoBaseUnits?: number | null;
+}
+
+/** A row's identity: its stored line, else (a row added in this session) its product. */
+function editRowKey(i: { orderItemId?: string; productId: string }): string {
+  return i.orderItemId ?? i.productId;
 }
 
 /**
@@ -141,20 +162,38 @@ function formatStatus(s: string) {
 
 // ─── Status Timeline ──────────────────────────────────────────────────────────
 
-function OrderTimeline({ status }: { status: string }) {
-  const isCancelled = status === "CANCELLED";
-  const currentIdx = STATUS_STEPS.indexOf(status);
+const ROUTE_TIMELINE = [
+  { icon: Clock, label: "Pending" },
+  { icon: CheckCircle2, label: "Confirmed" },
+  { icon: Truck, label: "Out for Delivery" },
+  { icon: Package, label: "Partial Delivery" },
+  { icon: CheckCircle2, label: "Delivered" },
+];
+// Business profiles 1B: a SHIP order of a configured seller, and any order of a configured seller
+// without a fleet, get a timeline with no route steps (lib/buyer-fulfilment).
+const STEP_ICONS: Record<string, typeof Clock> = {
+  Pending: Clock,
+  Confirmed: CheckCircle2,
+  Shipped: Package,
+  Delivered: CheckCircle2,
+};
+const SHIP_TIMELINE = SHIP_STEP_LABELS.map((label) => ({ icon: STEP_ICONS[label], label }));
+const NO_FLEET_TIMELINE = NO_FLEET_STEP_LABELS.map((label) => ({ icon: STEP_ICONS[label], label }));
 
-  const icons = [
-    { icon: Clock, label: "Pending" },
-    { icon: CheckCircle2, label: "Confirmed" },
-    { icon: Truck, label: "Out for Delivery" },
-    { icon: Package, label: "Partial Delivery" },
-    { icon: CheckCircle2, label: "Delivered" },
-  ];
+function timelineFor(order: BuyerOrder, view: BuyerOrderTravelView) {
+  if (view === "shipment") return { icons: SHIP_TIMELINE, currentIdx: shipStepIndex(order) };
+  if (view === "none") {
+    return { icons: NO_FLEET_TIMELINE, currentIdx: noFleetStepIndex(order.status) };
+  }
+  return { icons: ROUTE_TIMELINE, currentIdx: STATUS_STEPS.indexOf(order.status) };
+}
+
+function OrderTimeline({ order, view }: { order: BuyerOrder; view: BuyerOrderTravelView }) {
+  const isCancelled = order.status === "CANCELLED";
+  const { icons, currentIdx } = timelineFor(order, view);
 
   return (
-    <div className="flex items-center justify-between gap-0">
+    <div data-testid="order-timeline" className="flex items-center justify-between gap-0">
       {icons.map((step, i) => {
         const Icon = step.icon;
         const isComplete = !isCancelled && i <= currentIdx;
@@ -167,7 +206,12 @@ function OrderTimeline({ status }: { status: string }) {
                 className={`flex-1 h-0.5 ${isComplete ? "bg-buyer-500" : "bg-surface-border"}`}
               />
             )}
-            <div className="flex flex-col items-center gap-1">
+            <div
+              data-testid="timeline-step"
+              data-state={isCurrent ? "current" : isComplete ? "complete" : "upcoming"}
+              aria-current={isCurrent ? "step" : undefined}
+              className="flex flex-col items-center gap-1"
+            >
               <div
                 className={`flex h-9 w-9 items-center justify-center rounded-full border-2 transition-colors ${
                   isCurrent
@@ -296,6 +340,8 @@ function RequestChangeModal({
         setFormError(
           "The delivery run for this order has ended — changes can no longer be requested.",
         );
+      } else if (code === API_ERROR_CODES.ORDER_WITH_CARRIER_NO_CHANGE_REQUEST) {
+        setFormError(SHIPPED_ORDER_MESSAGE); // B1135: the order has shipped; there is no request to send
       } else {
         setFormError(err?.response?.data?.message ?? "Failed to send the change request.");
       }
@@ -500,6 +546,10 @@ export default function BuyerOrderDetailPage() {
   const orderId = params.id as string;
 
   const { data: order, isLoading, isError } = useBuyerOrder(orderId);
+  const capabilities = useBuyerSellerCapabilities();
+  // Business profiles 1B: unset seller or unreadable capability = today's route view.
+  const travel = orderTravelView(order?.fulfillPath, capabilities.data, capabilities.isLoading);
+  const timelineView = travel === "loading" && order?.fulfillPath !== "SHIP" ? "route" : travel;
   const cancelOrder = useBuyerCancelOrder();
   const updateItems = useBuyerUpdateOrderItems();
 
@@ -577,6 +627,7 @@ export default function BuyerOrderDetailPage() {
     setActionError(null);
     setEditItems(
       active.map((li) => ({
+        orderItemId: li.id,
         productId: li.productId!,
         qty: Number(li.qty),
         name: li.product!.name,
@@ -601,7 +652,7 @@ export default function BuyerOrderDetailPage() {
     try {
       await updateItems.mutateAsync({
         orderId: order.id,
-        items: editItems.map((i) => ({ productId: i.productId, qty: i.qty })),
+        items: buyerEditPayloadItems(editItems),
       });
       setEditMode(false);
     } catch (err: any) {
@@ -613,6 +664,14 @@ export default function BuyerOrderDetailPage() {
         setActionError(
           `This order includes regulated items${names ? ` (${names})` : ""} that need a verified license. Submit or renew it on the Licenses page, then try again.`,
         );
+        return;
+      }
+      if (
+        err?.response?.status === 409 &&
+        data?.code === API_ERROR_CODES.ORDER_EDIT_NEEDS_LINE_IDS
+      ) {
+        // B297 row 352: the order has more than one line for a product and this page is out of date.
+        setActionError("This order has changed since you opened it. Refresh and try again.");
         return;
       }
       setActionError(data?.message ?? "Failed to update order items.");
@@ -669,16 +728,27 @@ export default function BuyerOrderDetailPage() {
             )}
           </p>
         </div>
-        <Badge variant={getStatusVariant(order.status)}>{formatStatus(order.status)}</Badge>
+        <span data-testid="order-status-badge">
+          <Badge variant={getStatusVariant(order.status)}>
+            {buyerOrderStatusLabel(order, capabilities.data, capabilities.isLoading) ??
+              formatStatus(order.status)}
+          </Badge>
+        </span>
       </div>
 
-      {/* Status timeline */}
-      <div className="mb-8 rounded-xl border border-surface-border bg-white p-6">
-        <OrderTimeline status={order.status} />
-      </div>
+      {/* Status timeline. While the seller's capability loads, a SHIP order's timeline is held
+          back (no route steps flash for a ship seller); any other order shows today's timeline,
+          so an unset seller's page never has a gap. */}
+      {timelineView !== "loading" && (
+        <div className="mb-8 rounded-xl border border-surface-border bg-white p-6">
+          <OrderTimeline order={order} view={timelineView} />
+        </div>
+      )}
 
       {/* #2095: where this delivery stands on its route (driver, stops before you, window) */}
-      <DeliveryTrackingCard order={order} />
+      {travel === "route" && <DeliveryTrackingCard order={order} />}
+      {/* 1B: a SHIP order of a configured seller — carrier + tracking number instead */}
+      {travel === "shipment" && <ShipmentCard order={order} />}
 
       {/* P5-10: change requests filed after dispatch — PENDING (amber) flips to
           Approved (green) / Declined + reason (red) once resolved. */}
@@ -823,13 +893,13 @@ export default function BuyerOrderDetailPage() {
             <tbody className="divide-y divide-surface-border">
               {editMode
                 ? editItems.map((item) => (
-                    <tr key={item.productId} className="hover:bg-surface-raised/50">
+                    <tr key={editRowKey(item)} className="hover:bg-surface-raised/50">
                       <td className="px-4 py-3">
                         <div className="flex items-center gap-2">
                           <button
                             onClick={() =>
                               setEditItems((prev) =>
-                                prev.filter((i) => i.productId !== item.productId),
+                                prev.filter((i) => editRowKey(i) !== editRowKey(item)),
                               )
                             }
                             className="rounded p-1 text-danger/40 hover:bg-danger-bg hover:text-danger transition-colors"
@@ -852,7 +922,7 @@ export default function BuyerOrderDetailPage() {
                             onClick={() =>
                               setEditItems((prev) =>
                                 prev.map((i) =>
-                                  i.productId === item.productId
+                                  editRowKey(i) === editRowKey(item)
                                     ? { ...i, qty: Math.max(1, i.qty - 1) }
                                     : i,
                                 ),
@@ -870,7 +940,7 @@ export default function BuyerOrderDetailPage() {
                               const v = Math.max(1, Number(e.target.value));
                               setEditItems((prev) =>
                                 prev.map((i) =>
-                                  i.productId === item.productId ? { ...i, qty: v } : i,
+                                  editRowKey(i) === editRowKey(item) ? { ...i, qty: v } : i,
                                 ),
                               );
                             }}
@@ -880,7 +950,7 @@ export default function BuyerOrderDetailPage() {
                             onClick={() =>
                               setEditItems((prev) =>
                                 prev.map((i) =>
-                                  i.productId === item.productId ? { ...i, qty: i.qty + 1 } : i,
+                                  editRowKey(i) === editRowKey(item) ? { ...i, qty: i.qty + 1 } : i,
                                 ),
                               )
                             }
@@ -928,6 +998,7 @@ export default function BuyerOrderDetailPage() {
                             {li.notes}
                           </p>
                         )}
+                        <ComponentSubLines components={li.components} />
                       </td>
                       <td className="px-4 py-3 text-right text-sm text-navy">
                         <span>{Number(li.qty)}</span>

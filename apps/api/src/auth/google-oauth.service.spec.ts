@@ -39,7 +39,9 @@ describe("GoogleOAuthService OAuth state signing (REG-B349)", () => {
   function buildService() {
     const config = {
       get: (key: string) =>
-        key === "jwt" ? { secret: "test-jwt-secret-for-oauth-state" } : CONFIG_VALUES[key],
+        key === "jwt"
+          ? { secret: "test-jwt-secret-for-oauth-state-0123456789" }
+          : CONFIG_VALUES[key],
     } as unknown as ConfigService;
     const service = new GoogleOAuthService(
       {} as any, // prisma — not reached by generateLinkUrl/verifyCallback
@@ -201,7 +203,7 @@ describe("GoogleOAuthService OAuth state signing (REG-B349)", () => {
 describe("GoogleOAuthService device info threading (Phase 0 T6)", () => {
   function buildService(prismaOverrides: Record<string, any> = {}) {
     const jwtConfig = {
-      secret: "test-jwt-secret-for-oauth-state",
+      secret: "test-jwt-secret-for-oauth-state-0123456789",
       refreshSecret: "test-jwt-refresh-secret",
       expiresIn: "15m",
       refreshExpiresIn: "30d",
@@ -405,7 +407,7 @@ describe("GoogleOAuthService.linkGoogleAccount (B421 pinning)", () => {
   function buildService() {
     const config = {
       get: (key: string) =>
-        key === "jwt" ? { secret: "test-jwt-secret-for-oauth-state" } : undefined,
+        key === "jwt" ? { secret: "test-jwt-secret-for-oauth-state-0123456789" } : undefined,
     } as unknown as ConfigService;
 
     const emailService = {
@@ -416,6 +418,7 @@ describe("GoogleOAuthService.linkGoogleAccount (B421 pinning)", () => {
         findUnique: jest.fn(),
         findFirst: jest.fn().mockResolvedValue(null),
         update: jest.fn().mockResolvedValue({}),
+        updateMany: jest.fn().mockResolvedValue({ count: 1 }),
       },
     } as any;
 
@@ -454,19 +457,22 @@ describe("GoogleOAuthService.linkGoogleAccount (B421 pinning)", () => {
 });
 
 describe("GoogleOAuthService construction (B349 round 1 — fail closed without a secret)", () => {
-  it("throws instead of deriving the state-signing key from an empty string when JWT_SECRET is missing", () => {
-    const config = {
-      get: (key: string) => (key === "jwt" ? { secret: "" } : undefined),
-    } as unknown as ConfigService;
-    expect(
-      () =>
-        new GoogleOAuthService(
-          {} as any,
-          {} as unknown as JwtService,
-          config,
-          {} as any,
-          { claimsFor: jest.fn() } as any,
-        ),
-    ).toThrow("JWT_SECRET is required to sign OAuth state");
-  });
+  it.each([[""], ["too-short"]])(
+    "throws instead of deriving the state-signing key from a missing or short JWT_SECRET (%p)",
+    (secret) => {
+      const config = {
+        get: (key: string) => (key === "jwt" ? { secret } : undefined),
+      } as unknown as ConfigService;
+      expect(
+        () =>
+          new GoogleOAuthService(
+            {} as any,
+            {} as unknown as JwtService,
+            config,
+            {} as any,
+            { claimsFor: jest.fn() } as any,
+          ),
+      ).toThrow(/JWT_SECRET is required/);
+    },
+  );
 });

@@ -62,6 +62,17 @@ export class QuoteInlineReturnItemDto {
   @IsString()
   @MaxLength(200)
   overrideReason?: string;
+
+  /**
+   * B961 / SA-071c: a staff (OPERATOR/TENANT_ADMIN) confirmation that this line's over-return chunk (goods the customer
+   * already returned or was credited for) really is being returned, WITH a reason (audited with the actor). Required on the
+   * capture when the quote flagged `alreadyReturned`; a DRIVER carrying it is a 400 (a driver's capture is held for the office).
+   */
+  @IsOptional()
+  @Transform(({ value }) => (typeof value === "string" ? value.trim() : value))
+  @IsString()
+  @MaxLength(200)
+  alreadyReturnedReason?: string;
 }
 
 export class QuoteInlineReturnDto {
@@ -81,4 +92,15 @@ export class QuoteInlineReturnDto {
   @IsOptional()
   @IsString()
   routeRunStopId?: string;
+
+  /**
+   * SA-740 (row 190): the sale this return is from. REQUIRED for a walk-in (decided server-side from
+   * `customer.isWalkIn`, never from this body): the quote refuses without it (400 SOURCE_SALE_REQUIRED). A named
+   * customer may send it to pin the matching to that one order; without it their return still spills across orders.
+   * Must be the customer's own counter sale or delivered order in this tenant (400 SOURCE_SALE_INVALID).
+   */
+  @IsOptional()
+  @IsString()
+  @IsNotEmpty()
+  sourceOrderId?: string;
 }

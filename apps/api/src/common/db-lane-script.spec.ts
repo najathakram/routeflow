@@ -18,14 +18,16 @@ const REPO = path.resolve(__dirname, "../../../..");
 const LANE = path.join(REPO, "scripts", "db-lane.mjs");
 const SCOPED = path.join(REPO, "scripts", "verify-scoped.mjs");
 
-function cleanEnv(): NodeJS.ProcessEnv {
-  return Object.fromEntries(Object.entries(process.env).filter(([k]) => !/^GIT_/.test(k)));
-}
+// The ONE GIT_* scrub (scripts/lib/scrubbed-git-env.cjs); fixture-git-env-scrub.spec.ts pins that every
+// git spawn in a fixture-repo spec passes it (a private copy of the filter does not count).
+const { scrubbedGitEnv } = require("../../../../scripts/lib/scrubbed-git-env.cjs") as {
+  scrubbedGitEnv: () => NodeJS.ProcessEnv;
+};
 function git(cwd: string, args: string[]) {
   const r = spawnSync("git", ["-c", "user.name=t", "-c", "user.email=t@example.invalid", ...args], {
     cwd,
     encoding: "utf8",
-    env: cleanEnv(),
+    env: scrubbedGitEnv(),
   });
   if (r.status !== 0) throw new Error(`git ${args.join(" ")}: ${r.stderr}`);
 }
@@ -49,8 +51,10 @@ function fixture(files: Record<string, string>, fillers = 5): string {
 function lane(root: string, args: string[]) {
   const r = spawnSync(process.execPath, [LANE, "--root", root, ...args], {
     encoding: "utf8",
-    env: cleanEnv(),
-    timeout: 60_000,
+    env: scrubbedGitEnv(),
+    // The lane walks ~2.9k files; on a loaded runner a run can pass 60 s, and a killed child leaves the spec list
+    // without its FINAL summary line ("DB-LANE FULL ..."). 180 s keeps case 16 a pin on the picker, not on CI load.
+    timeout: 180_000,
   });
   return { status: r.status, out: r.stdout ?? "", err: r.stderr ?? "" };
 }
@@ -341,7 +345,7 @@ describe("verify-scoped.mjs", () => {
       [SCOPED, "--root", root, "--jest", path.join(root, "fake-jest.mjs"), ...args],
       {
         encoding: "utf8",
-        env: { ...cleanEnv(), LOG: log ?? path.join(root, "run.log") },
+        env: { ...scrubbedGitEnv(), LOG: log ?? path.join(root, "run.log") },
         timeout: 60_000,
       },
     );

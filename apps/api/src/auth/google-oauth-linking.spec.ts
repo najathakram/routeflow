@@ -25,7 +25,12 @@ describe("GoogleOAuthService — lookup order & claims (#2495)", () => {
     const config = {
       get: (key: string) => {
         if (key === "jwt") {
-          return { secret: "s", refreshSecret: "rs", expiresIn: "15m", refreshExpiresIn: "30d" };
+          return {
+            secret: "test-jwt-secret-0123456789-abcdefghijklmnop",
+            refreshSecret: "rs",
+            expiresIn: "15m",
+            refreshExpiresIn: "30d",
+          };
         }
         return undefined;
       },
@@ -310,7 +315,7 @@ describe("GoogleOAuthService — lookup order & claims (#2495)", () => {
       deletedAt: null,
     } as any);
     prisma.user.findFirst.mockResolvedValue(null);
-    prisma.user.update.mockResolvedValue({} as any);
+    prisma.user.updateMany.mockResolvedValue({ count: 1 } as any); // the link is a CAS now
 
     const { service, logger } = buildService(prisma);
     await service.linkGoogleAccount({

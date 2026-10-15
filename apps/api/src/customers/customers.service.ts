@@ -1,5 +1,7 @@
+import { assertNotWalkIn, assertWalkInLoginUntouched, excludeWalkIn } from "./walk-in-protected";
 import { restoredUsernameFor } from "./restore-username";
 import { resumeSchedulesOnRestore } from "../recurring-invoices/recurring-schedule";
+import { buildMyStatement, buildOperatorStatement } from "./customer-statement";
 import {
   BadRequestException,
   ConflictException,
@@ -15,6 +17,7 @@ import { BuyerMergeRequestStatus, MergeInitiator } from "@prisma/client";
 import { ConfigService } from "@nestjs/config";
 import * as bcrypt from "bcrypt";
 import { PrismaService } from "../prisma/prisma.service";
+import { isInternalEmail } from "../common/internal-email";
 import { assertCleanupImportedEnabled } from "./cleanup-imported-disabled";
 import {
   assertNoBlockingInvoices,
@@ -40,25 +43,31 @@ import {
   sumConfirmed,
 } from "../invoices/payment-predicates";
 import { settledDateFilter } from "../invoices/settled-date-filter";
+import { CREDIT_NOT_APPLICABLE } from "../invoices/invoice-status-sets";
+import { RECEIVABLE_INVOICE_SELECT, receivableBalance } from "../invoices/credit-exposure";
 import {
-  CREDIT_NOT_APPLICABLE,
-  KPI_SUMMARY_EXCLUDED,
-  LIFETIME_INVOICED_EXCLUDED,
-} from "../invoices/invoice-status-sets";
-import {
-  loadCreditExposure,
-  OPEN_ORDER_STATUSES,
-  RECEIVABLE_INVOICE_SELECT,
-  receivableBalance,
-} from "../invoices/credit-exposure";
-import { geocodeAddress, GeocodableAddress, GeocodeCoords } from "../common/geocode.util";
+  geocodeAddress,
+  GeocodableAddress,
+  GeocodeCoords,
+  hasBlankStreet,
+} from "../common/geocode.util";
 import { withAdvisoryLock, LockTimeoutError, LockUnavailableError } from "../common/db-locks";
 import { SCHEDULED_ROUTE_KIND_WHERE } from "../routes/route-stop-filters.util";
 import { StorageService } from "../storage/storage.service";
 import { compressDocument } from "../storage/compress.util";
 import { CreateCustomerDto } from "./dto/create-customer.dto";
 import { UpdateCustomerDto } from "./dto/update-customer.dto";
+import { UpdateBuyerProfileDto } from "../buyer/dto/update-buyer-profile.dto";
+import { omitStaffOnlyCustomerFields } from "./self-service-fields";
+import { type SelfServiceWriteArgs, writeSelfServiceProfile } from "./self-service-audit";
+import { toCustomerOrder } from "../common/staff-only-fields";
 import { customerUpdateData } from "./customer-update-data";
+import { assertSafeCustomerNames } from "./customer-name-guard";
+import {
+  assertSafeAddress,
+  assertSafeLicense,
+  assertSafePersonName,
+} from "../common/text-cell-guards";
 import { ChangeCustomerStatusDto } from "./dto/change-customer-status.dto";
 import { CreateAddressDto } from "./dto/create-address.dto";
 import { UpdateAddressDto } from "./dto/update-address.dto";
@@ -72,13 +81,20 @@ import { EntitlementAuthority } from "../billing/entitlement-authority.service";
 import { buildPlanGateBody, PlanGateUpgrade } from "../billing/plan-gate";
 import { EmailService } from "../email/email.service";
 import { addressStateFields } from "./address-state";
+import { defaultAddresses, isBillingType } from "./address-state-writes";
 import * as compliance from "./customer-compliance-input";
 // Same grace window BillingCronService.expireGrace() clears hourly — the create()
 // gate applies it synchronously rather than waiting for the cron to run.
 import { GRACE_DAYS } from "../billing/plan-catalog.constants";
 import { portalInviteEmailHtml } from "./portal-invite-email";
+import { buildCustomersCsv } from "./customers-csv";
+import { API_ERROR_CODES, PLAN_GATE_FLAG_KEYS } from "../common/api-error-codes";
+import { assertProductIdNotFamily } from "../products/sellable-lines";
 
 const MS_PER_DAY = 24 * 60 * 60 * 1000;
+
+/** The address fields that place it on the map: a change to any of them re-geocodes. */
+const LOCATION_FIELDS = ["line1", "line2", "city", "state", "zip"] as const;
 
 @Injectable()
 export class CustomersService {
@@ -128,14 +144,27 @@ export class CustomersService {
     return geocodeAddress(addr, key, this.logger);
   }
 
-  /** Geocode all CustomerAddress records that are missing lat/lng. Returns counts. */
-  async geocodeAllAddresses(): Promise<{ total: number; geocoded: number; failed: number }> {
+  /**
+   * Geocode all CustomerAddress records that are missing lat/lng. Returns counts. A blank-street
+   * address (no street, no city) is skipped and counted as `skipped`, never pinned to a centroid.
+   */
+  async geocodeAllAddresses(): Promise<{
+    total: number;
+    geocoded: number;
+    failed: number;
+    skipped: number;
+  }> {
     const addresses = await this.prisma.forTenant().customerAddress.findMany({
       where: { OR: [{ lat: null }, { lng: null }] },
     });
     let geocoded = 0;
     let failed = 0;
+    let skipped = 0;
     for (const addr of addresses) {
+      if (hasBlankStreet(addr)) {
+        skipped++;
+        continue;
+      }
       const coords = await this.geocodeIfPossible(addr);
       if (coords) {
         await this.prisma.forTenant().customerAddress.update({
@@ -147,7 +176,7 @@ export class CustomersService {
         failed++;
       }
     }
-    return { total: addresses.length, geocoded, failed };
+    return { total: addresses.length, geocoded, failed, skipped };
   }
 
   /**
@@ -197,7 +226,7 @@ export class CustomersService {
     if (query.unassigned === "1") {
       where.routeStops = { none: { route: SCHEDULED_ROUTE_KIND_WHERE } };
     }
-    return where;
+    return excludeWalkIn(where);
   }
 
   async findAll(query: ListCustomersDto) {
@@ -308,201 +337,24 @@ export class CustomersService {
       },
     });
     if (!customer) throw new NotFoundException("Customer profile not found");
-    return customer;
+    return omitStaffOnlyCustomerFields(customer);
   }
 
-  async updateMyProfile(user: JwtPayload, dto: UpdateCustomerDto) {
-    const customer = await this.prisma
-      .forTenant()
-      .customer.findFirst({ where: { userId: user.sub } });
+  async updateMyProfile(user: JwtPayload, dto: UpdateBuyerProfileDto) {
+    const where = { userId: user.sub };
+    const customer = await this.prisma.forTenant().customer.findFirst({ where });
     if (!customer) throw new NotFoundException("Customer profile not found");
-    return this.update(customer.id, dto);
+    const args = { customerId: customer.id, actor: user, source: "customers/me" as const };
+    return this.updateOwnProfile({ ...args, body: dto });
+  }
+
+  /** Self-service write for both routes: allowlisted fields only, audited (self-service-audit.ts). */
+  updateOwnProfile(args: SelfServiceWriteArgs) {
+    return writeSelfServiceProfile(this.prisma, (f) => this.update(args.customerId, f), args);
   }
 
   async getMyStatement(user: JwtPayload) {
-    const customer = await this.prisma
-      .forTenant()
-      .customer.findFirst({ where: { userId: user.sub } });
-    if (!customer) throw new NotFoundException("Customer profile not found");
-
-    const INVOICE_SELECT = {
-      id: true,
-      invoiceNumber: true,
-      total: true,
-      status: true,
-      dueDate: true,
-      createdAt: true,
-      payments: { select: { amount: true, status: true } },
-    } as const;
-    const CREDIT_NOTE_SELECT = {
-      id: true,
-      creditNoteNumber: true,
-      amount: true,
-      status: true,
-      createdAt: true,
-      amountUsed: true,
-      expiresAt: true,
-    } as const;
-    // REG-B110: the LEDGER caps below are for the transactions DISPLAY only —
-    // the money figures (outstanding/overdue/availableCredit) are computed
-    // from the separate, uncapped OPEN-set reads further down, never from a
-    // take-capped page.
-    const LEDGER_INVOICE_CAP = 50;
-    const LEDGER_CREDIT_NOTE_CAP = 50;
-
-    const [
-      openInvoices,
-      ledgerInvoicesRaw,
-      openCreditNotes,
-      ledgerCreditNotesRaw,
-      lifetimeInvoicedAgg,
-      lifetimeReceivedAgg,
-    ] = await Promise.all([
-      this.prisma.forTenant().invoice.findMany({
-        // DRAFT is excluded with the settled/dead/forgiven statuses: a
-        // not-yet-issued invoice is not receivable, so it must not inflate
-        // outstanding/overdue. Same set as the invoices KPI summary (and the
-        // Invoices-tab card's former client-side filter).
-        where: { customerId: customer.id, status: { notIn: KPI_SUMMARY_EXCLUDED } },
-        select: INVOICE_SELECT,
-      }),
-      this.prisma.forTenant().invoice.findMany({
-        where: { customerId: customer.id },
-        orderBy: { createdAt: "desc" },
-        take: LEDGER_INVOICE_CAP + 1,
-        select: INVOICE_SELECT,
-      }),
-      this.prisma.forTenant().creditNote.findMany({
-        where: { customerId: customer.id, status: { not: "VOID" } },
-        select: CREDIT_NOTE_SELECT,
-      }),
-      this.prisma.forTenant().creditNote.findMany({
-        where: { customerId: customer.id },
-        orderBy: { createdAt: "desc" },
-        take: LEDGER_CREDIT_NOTE_CAP + 1,
-        select: CREDIT_NOTE_SELECT,
-      }),
-      // M1 — lifetime "Invoiced Amount" / "Amount Received", summed by the
-      // DATABASE over the buyer's whole history (never a reduce over the
-      // take-capped ledger below, which under-reports past one page).
-      this.prisma.forTenant().invoice.aggregate({
-        _sum: { total: true },
-        // DRAFT was never issued and VOID was cancelled — neither was billed.
-        where: { customerId: customer.id, status: { notIn: LIFETIME_INVOICED_EXCLUDED } },
-      }),
-      this.prisma.forTenant().invoicePayment.aggregate({
-        _sum: { amount: true },
-        // B421: feeds `lifetimeReceived` below — "money genuinely received",
-        // so CREDIT_NOTE is excluded (never cash) but ADVANCE stays (an
-        // advance application is the only place that already-real cash is
-        // ever recorded — see RECEIVED_METHOD_FILTER's own doc).
-        where: {
-          ...CONFIRMED_PAYMENT,
-          method: RECEIVED_METHOD_FILTER,
-          invoice: { customerId: customer.id },
-        },
-      }),
-    ]);
-
-    // Each ledger read asks for one row MORE than its cap; a read that comes
-    // back over the cap is the proof that rows were left behind. The extra row
-    // is sliced off before the ledger is built.
-    const invoicesTruncated = ledgerInvoicesRaw.length > LEDGER_INVOICE_CAP;
-    const creditNotesTruncated = ledgerCreditNotesRaw.length > LEDGER_CREDIT_NOTE_CAP;
-    const ledgerInvoices = ledgerInvoicesRaw.slice(0, LEDGER_INVOICE_CAP);
-    const ledgerCreditNotes = ledgerCreditNotesRaw.slice(0, LEDGER_CREDIT_NOTE_CAP);
-
-    // CONFIRMED (PAID) basis — a DRAFT (unconfirmed) payment must never count
-    // as paid (F03/sumConfirmed); VOID (e.g. a bounced check, P5-12) already
-    // doesn't. B421: `amountPaid` here is NEVER returned to the client — it
-    // only feeds `total - amountPaid` (outstanding/runningBalance below), so
-    // it deliberately stays the FULL confirmed total (sumConfirmed, not
-    // splitConfirmed's cash-only figure): a credit note or advance genuinely
-    // reduces what's outstanding on this invoice, same basis as
-    // invoices.service.ts's own balanceDue.
-    const withPaid = <T extends { payments: { amount: unknown; status: string }[] }>(rows: T[]) =>
-      rows.map((i) => ({ ...i, amountPaid: sumConfirmed(i.payments) }));
-
-    const openInvoicesWithPaid = withPaid(openInvoices);
-    const ledgerInvoicesWithPaid = withPaid(ledgerInvoices);
-
-    // H2: every money figure this statement returns is rounded to cents —
-    // a float reduce over many invoices leaks binary-float dust
-    // (0.1 + 0.2 = 0.30000000000000004) straight into the UI.
-    const outstanding = roundMoney(
-      openInvoicesWithPaid.reduce((sum, i) => sum + (Number(i.total) - i.amountPaid), 0),
-    );
-
-    const overdue = roundMoney(
-      openInvoicesWithPaid
-        .filter((i) => i.dueDate && new Date(i.dueDate) < new Date())
-        .reduce((sum, i) => sum + (Number(i.total) - i.amountPaid), 0),
-    );
-
-    // P5-13: wallet = Σ remaining over OPEN, non-expired credits. amount − amountUsed
-    // (not face amount) prevents the double-count — a partial credit already sits on
-    // the invoice as a CREDIT_NOTE payment, so only its unused remainder appears here.
-    const now = new Date();
-    const availableCredit = roundMoney(
-      openCreditNotes
-        .filter(
-          (c) =>
-            c.status !== "VOID" &&
-            Number(c.amount) - Number(c.amountUsed) > 0.001 &&
-            (!c.expiresAt || new Date(c.expiresAt) > now),
-        )
-        .reduce((sum, c) => sum + roundMoney(Number(c.amount) - Number(c.amountUsed)), 0),
-    );
-
-    // True whenever the transactions ledger below is a partial view of the
-    // customer's full history (the ledger reads ALL statuses, capped) —
-    // derived from the ledger read itself, never from the open-set size.
-    // Read by the customer statement ledgers on web and mobile, which render a
-    // partial-view line above the ledger when it is true and nothing when it is
-    // false (LedgerTruncationNote on web, the mobile statement screen's line).
-    const transactionsTruncated = invoicesTruncated || creditNotesTruncated;
-
-    // Aggregate over an empty set returns a NULL sum — `?? 0` so a brand-new
-    // buyer reads $0.00, never NaN.
-    const lifetimeInvoiced = roundMoney(Number(lifetimeInvoicedAgg?._sum?.total ?? 0));
-    const lifetimeReceived = roundMoney(Number(lifetimeReceivedAgg?._sum?.amount ?? 0));
-
-    const transactions = [
-      ...ledgerInvoicesWithPaid.map((i) => ({
-        type: "INVOICE" as const,
-        id: i.id,
-        description: `Invoice #${i.invoiceNumber}`,
-        date: i.createdAt.toISOString(),
-        amount: Number(i.total),
-        runningBalance: -(Number(i.total) - i.amountPaid),
-        status: i.status,
-      })),
-      ...ledgerCreditNotes.map((c) => {
-        const expired = !!c.expiresAt && new Date(c.expiresAt) <= now;
-        const remaining =
-          c.status === "VOID" || expired ? 0 : roundMoney(Number(c.amount) - Number(c.amountUsed));
-        return {
-          type: "CREDIT_NOTE" as const,
-          id: c.id,
-          description: `Credit Note #${c.creditNoteNumber}`,
-          date: c.createdAt.toISOString(),
-          amount: -Number(c.amount),
-          runningBalance: remaining > 0.001 ? remaining : 0,
-          status: c.status,
-          expiresAt: c.expiresAt ? c.expiresAt.toISOString() : null,
-        };
-      }),
-    ].sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime());
-
-    return {
-      outstandingAmount: outstanding,
-      overdueAmount: overdue,
-      availableCredit,
-      lifetimeInvoiced,
-      lifetimeReceived,
-      transactionsTruncated,
-      transactions,
-    };
+    return buildMyStatement(this.prisma, user);
   }
 
   async findOne(id: string, user: JwtPayload) {
@@ -523,10 +375,15 @@ export class CustomersService {
     ) {
       throw new ForbiddenException();
     }
+    // A customer reading its own record gets the customer-facing shape; staff and drivers keep the full row.
+    if (user.role === UserRole.CUSTOMER) return omitStaffOnlyCustomerFields(customer);
     return customer;
   }
 
   async create(dto: CreateCustomerDto) {
+    assertSafeCustomerNames(dto); // B956: refuse a formula-led name before any read or write
+    assertSafePersonName(dto); // B984: salutation / first / last name, same rule
+    for (const addr of dto.addresses ?? []) assertSafeAddress(addr); // B964: every address row, before any read or write
     // Soft-cap gate: only ever blocks a BRAND-NEW create, and only once a prior
     // over-cap grace window has expired. Never blocks anything else.
     await this.assertCustomerCapNotExceeded();
@@ -703,7 +560,7 @@ export class CustomersService {
 
     // Grace window expired and still over cap — block only this NEW create.
     const upgrade = await this.customerPackUpgrade();
-    throw new ForbiddenException(buildPlanGateBody("meter.customers", upgrade));
+    throw new ForbiddenException(buildPlanGateBody(PLAN_GATE_FLAG_KEYS.METER_CUSTOMERS, upgrade));
   }
 
   /**
@@ -783,11 +640,14 @@ export class CustomersService {
 
   async update(id: string, dto: UpdateCustomerDto, options?: compliance.CustomerUpdateOptions) {
     const existing = await this.findCustomerOrThrow(id);
-    // REG-B170: a removed customer's page still rendered its edit controls; refuse the write
-    // rather than silently editing a customer nobody can see in the list.
+    // REG-B170: refuse writes to a removed customer (its page still rendered edit controls).
     if (existing.deletedAt) {
       throw new ConflictException("Restore the customer first");
     }
+    assertWalkInLoginUntouched(existing, dto); // the walk-in customer's sign-in email stays fixed
+    assertSafeCustomerNames(dto, existing); // B956: only a CHANGED name is checked
+    assertSafePersonName(dto, existing); // B984: same for salutation / first / last name
+    assertSafeLicense(options?.compliance ?? {}, existing); // B964: the importer's tobaccoLicenseNo, change-only
     return this.prisma.forTenant().customer.update({
       where: { id },
       data: compliance.withCompliance(options, customerUpdateData(dto)),
@@ -806,6 +666,7 @@ export class CustomersService {
     if (customer.deletedAt) {
       throw new ConflictException("Restore the customer first");
     }
+    if (dto.status !== "ACTIVE") assertNotWalkIn(customer);
     return this.prisma.forTenant().user.update({
       where: { id: customer.userId },
       data: { status: dto.status },
@@ -866,19 +727,46 @@ export class CustomersService {
       }),
       this.prisma.forTenant().order.count({ where: { customerId: id } }),
     ]);
-    return { data, meta: { total, page: 1, limit: 50, totalPages: Math.ceil(total / 50) } };
+    // Customer-facing fields only for the customer themself (common/staff-only-fields.ts).
+    const rows = user.role === UserRole.CUSTOMER ? data.map((o) => toCustomerOrder(o)) : data;
+    return { data: rows, meta: { total, page: 1, limit: 50, totalPages: Math.ceil(total / 50) } };
   }
 
   async addAddress(id: string, dto: CreateAddressDto) {
     await this.findCustomerOrThrow(id);
+    assertSafeAddress(dto); // B964: before the geocode call and the transaction
     // Geocode before creating so lat/lng are set from the start
     const coords = await this.geocodeIfPossible(dto);
+    const hasUsableState = addressStateFields(dto.state, dto.zip).stateCode !== null;
     return this.prisma.tenantTransaction(async (tx) => {
       if (dto.isDefault) {
         await tx.customerAddress.updateMany({
           where: { customerId: id },
           data: { isDefault: false },
         });
+      }
+      // Addendum D: with no explicit choice, a billing address becomes the default when the customer
+      // has NO default address of any type, or when every default is a blank-street placeholder (a
+      // "minimal", state-only address) and this one is real: the placeholder is demoted in this
+      // transaction, so exactly one default remains. A default with a street or a city is never demoted, and
+      // neither is a placeholder when the new address has no usable state (M1: that would lose the state the
+      // placeholder carries, e.g. a bulk-set TX, and leave the customer unresolved).
+      let becomesDefaultBilling = false;
+      if (dto.isDefault !== true && isBillingType(dto.addressType ?? "BILLING")) {
+        const defaults = await defaultAddresses(tx, id);
+        const placeholders = defaults.filter((a) => hasBlankStreet(a));
+        if (defaults.length === 0) becomesDefaultBilling = true;
+        else if (
+          !hasBlankStreet(dto) &&
+          hasUsableState &&
+          placeholders.length === defaults.length
+        ) {
+          await tx.customerAddress.updateMany({
+            where: { customerId: id, isDefault: true, id: { in: placeholders.map((a) => a.id) } },
+            data: { isDefault: false },
+          });
+          becomesDefaultBilling = true;
+        }
       }
       return tx.customerAddress.create({
         data: {
@@ -890,7 +778,7 @@ export class CustomersService {
           state: dto.state,
           ...addressStateFields(dto.state, dto.zip),
           zip: dto.zip,
-          isDefault: dto.isDefault ?? false,
+          isDefault: dto.isDefault === true || becomesDefaultBilling,
           addressType: dto.addressType ?? "BILLING",
           ...(coords ?? {}),
         },
@@ -900,6 +788,12 @@ export class CustomersService {
 
   async updateAddress(id: string, addrId: string, dto: UpdateAddressDto) {
     await this.findCustomerOrThrow(id);
+    // B964: a formula-led CHANGE is refused before the transaction; the stored row is read once (change-only: a legacy value echoed back passes)
+    const storedAddress = await this.prisma.forTenant().customerAddress.findFirst({
+      where: { id: addrId, customerId: id },
+    });
+    assertSafeAddress(dto, storedAddress);
+    let locationChanged = false;
     const updated = await this.prisma.tenantTransaction(async (tx) => {
       if (dto.isDefault) {
         await tx.customerAddress.updateMany({
@@ -911,26 +805,30 @@ export class CustomersService {
       // on every save) or the code is NULL: a written code must never contradict its zip.
       const current = await tx.customerAddress.findFirst({
         where: { id: addrId, customerId: id },
-        select: { state: true, zip: true, stateCode: true },
+        select: { line1: true, line2: true, city: true, state: true, zip: true, stateCode: true },
       });
       if (!current) throw new NotFoundException("Address not found");
       const stateChanged =
         (dto.state !== undefined && dto.state !== current.state) ||
         (dto.zip !== undefined && dto.zip !== current.zip) ||
         current.stateCode == null;
+      // Only a real change to a location field moves the pin; a default/label/type-only edit (or the
+      // form resending stored values) keeps lat/lng and skips the geocode. A blank resent for a null is no change.
+      locationChanged = LOCATION_FIELDS.some(
+        (f) => dto[f] !== undefined && (dto[f] ?? "") !== (current[f] ?? ""),
+      );
       return tx.customerAddress.update({
         where: { id: addrId, customerId: id },
-        // clear stale coords when the address changes
         data: {
           ...dto,
           ...(stateChanged
             ? addressStateFields(dto.state ?? current.state, dto.zip ?? current.zip)
             : {}),
-          lat: null,
-          lng: null,
+          ...(locationChanged ? { lat: null, lng: null } : {}),
         },
       });
     });
+    if (!locationChanged) return updated;
     // Re-geocode asynchronously (don't block the response)
     this.geocodeIfPossible(updated)
       .then((coords) => {
@@ -1012,252 +910,7 @@ export class CustomersService {
    */
   async getStatementForOperator(customerId: string, opts?: { includeExposure?: boolean }) {
     await this.findCustomerOrThrow(customerId);
-
-    const INVOICE_SELECT = {
-      id: true,
-      invoiceNumber: true,
-      total: true,
-      status: true,
-      dueDate: true,
-      createdAt: true,
-      payments: { select: { amount: true, status: true } },
-    } as const;
-    const CREDIT_NOTE_SELECT = {
-      id: true,
-      creditNoteNumber: true,
-      amount: true,
-      status: true,
-      createdAt: true,
-      amountUsed: true,
-      expiresAt: true,
-    } as const;
-    const ADVANCE_PAYMENT_SELECT = {
-      id: true,
-      amount: true,
-      balance: true,
-      method: true,
-      reference: true,
-      receivedAt: true,
-    } as const;
-    // REG-B110: the LEDGER caps below are for the transactions DISPLAY only —
-    // the money figures (outstanding/overdue/availableCredit/advanceBalance)
-    // are computed from the separate, uncapped OPEN-set reads further down,
-    // never from a take-capped page (a customer with >100 open invoices was
-    // silently under-reported).
-    const LEDGER_INVOICE_CAP = 100;
-    const LEDGER_CREDIT_NOTE_CAP = 50;
-    const LEDGER_ADVANCE_CAP = 50;
-
-    const [
-      openInvoices,
-      ledgerInvoicesRaw,
-      openCreditNotes,
-      ledgerCreditNotesRaw,
-      openAdvancePayments,
-      ledgerAdvancePaymentsRaw,
-      pendingOrders,
-      lifetimeInvoicedAgg,
-      lifetimeReceivedAgg,
-      exposure,
-    ] = await Promise.all([
-      this.prisma.forTenant().invoice.findMany({
-        // DRAFT is excluded with the settled/dead/forgiven statuses: a
-        // not-yet-issued invoice is not receivable, so it must not inflate
-        // outstanding/overdue. Same set as the invoices KPI summary (and the
-        // Invoices-tab card's former client-side filter).
-        where: { customerId, status: { notIn: KPI_SUMMARY_EXCLUDED } },
-        select: INVOICE_SELECT,
-      }),
-      this.prisma.forTenant().invoice.findMany({
-        where: { customerId },
-        orderBy: { createdAt: "desc" },
-        take: LEDGER_INVOICE_CAP + 1,
-        select: INVOICE_SELECT,
-      }),
-      this.prisma.forTenant().creditNote.findMany({
-        where: { customerId, status: { not: "VOID" } },
-        select: CREDIT_NOTE_SELECT,
-      }),
-      this.prisma.forTenant().creditNote.findMany({
-        where: { customerId },
-        orderBy: { createdAt: "desc" },
-        take: LEDGER_CREDIT_NOTE_CAP + 1,
-        select: CREDIT_NOTE_SELECT,
-      }),
-      this.prisma.forTenant().advancePayment.findMany({
-        where: { customerId, balance: { gt: 0 } },
-        select: ADVANCE_PAYMENT_SELECT,
-      }),
-      this.prisma.forTenant().advancePayment.findMany({
-        where: { customerId },
-        orderBy: { receivedAt: "desc" },
-        take: LEDGER_ADVANCE_CAP + 1,
-        select: ADVANCE_PAYMENT_SELECT,
-      }),
-      // Pending / confirmed / out-for-delivery orders not yet invoiced
-      this.prisma.forTenant().order.findMany({
-        where: {
-          customerId,
-          // The same open set `loadCreditExposure` uses (B584): a new open status can't reach the
-          // block but miss this tile.
-          status: { in: OPEN_ORDER_STATUSES },
-        },
-        select: { id: true, total: true, orderNumber: true, status: true, createdAt: true },
-      }),
-      // M1 — the statement header's "Invoiced Amount" / "Amount Received"
-      // tiles are LIFETIME figures over the customer's WHOLE history, so the
-      // DATABASE sums them: a reduce over the take-capped `transactions`
-      // ledger below under-reports every customer with more history than one
-      // capped page holds, right beside the uncapped Outstanding/Overdue.
-      // Aggregates — no rows materialised, no cap to out-grow.
-      this.prisma.forTenant().invoice.aggregate({
-        _sum: { total: true },
-        // DRAFT was never issued and VOID was cancelled — neither was billed.
-        // PAID/OVERDUE/WRITTEN_OFF are real past billings and DO belong here.
-        where: { customerId, status: { notIn: LIFETIME_INVOICED_EXCLUDED } },
-      }),
-      this.prisma.forTenant().invoicePayment.aggregate({
-        _sum: { amount: true },
-        // B421: feeds `lifetimeReceived` below — "money genuinely received",
-        // so CREDIT_NOTE is excluded (never cash) but ADVANCE stays (an
-        // advance application is the only place that already-real cash is
-        // ever recorded — see RECEIVED_METHOD_FILTER's own doc). A DRAFT
-        // (unconfirmed) or VOID (bounced check) payment is not money
-        // received either way, via CONFIRMED_PAYMENT.
-        where: { ...CONFIRMED_PAYMENT, method: RECEIVED_METHOD_FILTER, invoice: { customerId } },
-      }),
-      // D6 / B462: operator-only exposure (the credit block's own derivation); null = not asked.
-      opts?.includeExposure
-        ? loadCreditExposure(this.prisma.forTenant(), customerId)
-        : Promise.resolve(null),
-    ]);
-
-    // Each ledger read asks for one row MORE than its cap; a read that comes
-    // back over the cap is the proof that rows were left behind. The extra row
-    // is sliced off before the ledger is built.
-    const invoicesTruncated = ledgerInvoicesRaw.length > LEDGER_INVOICE_CAP;
-    const creditNotesTruncated = ledgerCreditNotesRaw.length > LEDGER_CREDIT_NOTE_CAP;
-    const advancesTruncated = ledgerAdvancePaymentsRaw.length > LEDGER_ADVANCE_CAP;
-    const ledgerInvoices = ledgerInvoicesRaw.slice(0, LEDGER_INVOICE_CAP);
-    const ledgerCreditNotes = ledgerCreditNotesRaw.slice(0, LEDGER_CREDIT_NOTE_CAP);
-    const ledgerAdvancePayments = ledgerAdvancePaymentsRaw.slice(0, LEDGER_ADVANCE_CAP);
-
-    // CONFIRMED (PAID) basis — a DRAFT (unconfirmed) payment must never count
-    // as paid (F03/sumConfirmed); VOID (e.g. a bounced check, P5-12) already
-    // doesn't. B421: `amountPaid` here is NEVER returned to the client — it
-    // only feeds `total - amountPaid` (outstanding/runningBalance below), so
-    // it deliberately stays the FULL confirmed total (sumConfirmed, not
-    // splitConfirmed's cash-only figure): a credit note or advance genuinely
-    // reduces what's outstanding on this invoice, same basis as
-    // invoices.service.ts's own balanceDue.
-    const withPaid = <T extends { payments: { amount: unknown; status: string }[] }>(rows: T[]) =>
-      rows.map((i) => ({ ...i, amountPaid: sumConfirmed(i.payments) }));
-
-    const openInvoicesWithPaid = withPaid(openInvoices);
-    const ledgerInvoicesWithPaid = withPaid(ledgerInvoices);
-
-    // H2: every money figure this statement returns is rounded to cents —
-    // a float reduce over many invoices leaks binary-float dust
-    // (0.1 + 0.2 = 0.30000000000000004) straight into the UI.
-    const outstanding = roundMoney(
-      openInvoicesWithPaid.reduce((sum, i) => sum + (Number(i.total) - i.amountPaid), 0),
-    );
-
-    const overdue = roundMoney(
-      openInvoicesWithPaid
-        .filter((i) => i.dueDate && new Date(i.dueDate) < new Date())
-        .reduce((sum, i) => sum + (Number(i.total) - i.amountPaid), 0),
-    );
-
-    // P5-13: wallet = Σ remaining over OPEN, non-expired credits. amount − amountUsed
-    // (not face amount) prevents the double-count — a partial credit already sits on
-    // the invoice as a CREDIT_NOTE payment, so only its unused remainder appears here.
-    const now = new Date();
-    const availableCredit = roundMoney(
-      openCreditNotes
-        .filter(
-          (c) =>
-            c.status !== "VOID" &&
-            Number(c.amount) - Number(c.amountUsed) > 0.001 &&
-            (!c.expiresAt || new Date(c.expiresAt) > now),
-        )
-        .reduce((sum, c) => sum + roundMoney(Number(c.amount) - Number(c.amountUsed)), 0),
-    );
-
-    const advanceBalance = roundMoney(
-      openAdvancePayments.reduce((sum, a) => sum + Number(a.balance), 0),
-    );
-
-    const pendingOrdersAmount = roundMoney(
-      pendingOrders.reduce((sum, o) => sum + Number(o.total), 0),
-    );
-
-    // Aggregate over an empty set returns a NULL sum — `?? 0` so an untouched
-    // customer reads $0.00, never NaN.
-    const lifetimeInvoiced = roundMoney(Number(lifetimeInvoicedAgg?._sum?.total ?? 0));
-    const lifetimeReceived = roundMoney(Number(lifetimeReceivedAgg?._sum?.amount ?? 0));
-
-    // True whenever the transactions ledger below is a partial view of the
-    // customer's full history (the ledger reads ALL statuses, capped) —
-    // derived from the ledger read itself, never from the open-set size.
-    // Read by the customer statement ledgers on web and mobile, which render a
-    // partial-view line above the ledger when it is true and nothing when it is
-    // false (LedgerTruncationNote on web, the mobile statement screen's line).
-    const transactionsTruncated = invoicesTruncated || creditNotesTruncated || advancesTruncated;
-
-    const transactions = [
-      ...ledgerInvoicesWithPaid.map((i) => ({
-        type: "INVOICE" as const,
-        id: i.id,
-        description: `Invoice #${i.invoiceNumber}`,
-        date: i.createdAt.toISOString(),
-        amount: Number(i.total),
-        runningBalance: -(Number(i.total) - i.amountPaid),
-        status: i.status,
-      })),
-      ...ledgerCreditNotes.map((c) => {
-        const expired = !!c.expiresAt && new Date(c.expiresAt) <= now;
-        const remaining =
-          c.status === "VOID" || expired ? 0 : roundMoney(Number(c.amount) - Number(c.amountUsed));
-        return {
-          type: "CREDIT_NOTE" as const,
-          id: c.id,
-          description: `Credit Note #${c.creditNoteNumber}`,
-          date: c.createdAt.toISOString(),
-          amount: -Number(c.amount),
-          runningBalance: remaining > 0.001 ? remaining : 0,
-          status: c.status,
-          expiresAt: c.expiresAt ? c.expiresAt.toISOString() : null,
-        };
-      }),
-      ...ledgerAdvancePayments.map((a) => ({
-        type: "ADVANCE_PAYMENT" as const,
-        id: a.id,
-        description: `Advance Payment${a.reference ? ` (${a.reference})` : ""}`,
-        date: a.receivedAt.toISOString(),
-        amount: Number(a.amount),
-        runningBalance: Number(a.balance),
-        status: Number(a.balance) > 0 ? "AVAILABLE" : "USED",
-      })),
-    ].sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime());
-
-    return {
-      outstandingAmount: outstanding,
-      overdueAmount: overdue,
-      availableCredit,
-      advanceBalance,
-      pendingOrdersAmount,
-      lifetimeInvoiced,
-      lifetimeReceived,
-      transactionsTruncated,
-      transactions,
-      ...(exposure
-        ? {
-            creditExposure: roundMoney(exposure.counted),
-            pendingExposure: roundMoney(exposure.pendingExposure),
-          }
-        : {}),
-    };
+    return buildOperatorStatement(this.prisma, customerId, opts);
   }
 
   // ─── Advance payments ──────────────────────────────────────────────────────
@@ -1370,6 +1023,7 @@ export class CustomersService {
       return null;
     }
 
+    await assertProductIdNotFamily(this.prisma, dto.productId, "customer price"); // B1216
     return this.prisma.forTenant().customerPrice.upsert({
       where: {
         customerId_productId: { customerId, productId: dto.productId },
@@ -1443,7 +1097,7 @@ export class CustomersService {
       // never returns `{ acquired: false }`. Narrowed so `lock.value` type-checks.
       if (!lock.acquired) {
         throw new ServiceUnavailableException({
-          code: "LOCK_UNAVAILABLE",
+          code: API_ERROR_CODES.LOCK_UNAVAILABLE,
           message: "Wallet lock unavailable — retry shortly.",
         });
       }
@@ -1451,14 +1105,14 @@ export class CustomersService {
     } catch (e) {
       if (e instanceof LockTimeoutError) {
         throw new ConflictException({
-          code: "WALLET_LOCK_BUSY",
+          code: API_ERROR_CODES.WALLET_LOCK_BUSY,
           message:
             "Another payment against this customer's wallet is in progress. Try again in a moment.",
         });
       }
       if (e instanceof LockUnavailableError) {
         throw new ServiceUnavailableException({
-          code: "LOCK_UNAVAILABLE",
+          code: API_ERROR_CODES.LOCK_UNAVAILABLE,
           message: "Wallet lock unavailable — retry shortly.",
         });
       }
@@ -1584,6 +1238,7 @@ export class CustomersService {
     },
   ) {
     await this.findCustomerOrThrow(customerId);
+    assertSafePersonName(dto); // B984: refuse a formula-led name before any write
     return this.prisma.tenantTransaction(async (tx) => {
       if (dto.isPrimary) {
         await tx.contactPerson.updateMany({
@@ -1624,6 +1279,7 @@ export class CustomersService {
       where: { id: contactId, customerId },
     });
     if (!existing) throw new NotFoundException("Contact person not found");
+    assertSafePersonName(dto, existing); // B984: only a CHANGED name is checked
 
     return this.prisma.tenantTransaction(async (tx) => {
       if (dto.isPrimary) {
@@ -1830,33 +1486,20 @@ export class CustomersService {
       orderBy: { createdAt: "desc" },
     });
 
-    const escCsv = (val: string | null | undefined) => {
-      if (!val) return "";
-      if (val.includes(",") || val.includes('"') || val.includes("\n")) {
-        return `"${val.replace(/"/g, '""')}"`;
-      }
-      return val;
-    };
-
-    const header =
-      "Business Name,Contact Name,Email,Phone,Customer Type,Status,Receivables,Credits";
-    const rows = customers.map((c) => {
-      const receivables = c.invoices.reduce((sum, inv) => sum + receivableBalance(inv), 0);
-      const credits = c.advancePayments.reduce((s, a) => s + Number(a.balance), 0);
-
-      return [
-        escCsv(c.businessName),
-        escCsv(c.contactName),
-        escCsv(c.email),
-        escCsv(c.phone),
-        escCsv(c.customerType),
-        escCsv(c.user?.status),
-        roundMoney(receivables).toFixed(2),
-        credits.toFixed(2),
-      ].join(",");
-    });
-
-    return [header, ...rows].join("\n");
+    // The money sums stay HERE (credit-exposure-coverage.spec: exportCustomers must call
+    // receivableBalance itself); the CSV builder only formats.
+    return buildCustomersCsv(
+      customers.map((c) => ({
+        businessName: c.businessName,
+        contactName: c.contactName,
+        email: c.email,
+        phone: c.phone,
+        customerType: c.customerType,
+        status: c.user?.status,
+        receivables: c.invoices.reduce((sum, inv) => sum + receivableBalance(inv), 0),
+        credits: c.advancePayments.reduce((s, a) => s + Number(a.balance), 0),
+      })),
+    );
   }
 
   // ─── Merge Customers ──────────────────────────────────────────────────────
@@ -1905,6 +1548,8 @@ export class CustomersService {
 
     const primary = await this.findCustomerOrThrow(primaryId);
     const secondary = await this.findCustomerOrThrow(secondaryId);
+    assertNotWalkIn(primary);
+    assertNotWalkIn(secondary);
     // F2: a removed customer on either side must be restored before it can be merged —
     // merging financial records onto (or off of) a tombstoned row leaves them attached to
     // an identity that is mid-removal.
@@ -2240,6 +1885,7 @@ export class CustomersService {
       include: { user: { select: { status: true, username: true } } },
     });
     if (!customer) throw new NotFoundException("Customer not found");
+    assertNotWalkIn(customer);
     // F1: a second delete on an already-tombstoned customer must be a no-op. Without this,
     // the soft-delete branch below re-appends "~removed~<id8>" onto a username that already
     // carries the suffix (restoreCustomer only ever strips ONE), permanently mangling the
@@ -2506,9 +2152,11 @@ export class CustomersService {
       );
     }
 
-    const customers = await this.prisma
-      .forTenant()
-      .customer.findMany({ select: { id: true, userId: true } });
+    const customers = (
+      await this.prisma
+        .forTenant()
+        .customer.findMany({ select: { id: true, userId: true, isWalkIn: true } })
+    ).filter((c) => !c.isWalkIn); // the system walk-in survives a wipe
     if (customers.length === 0) return { deleted: 0 };
 
     const customerIds = customers.map((c) => c.id);
@@ -2862,13 +2510,16 @@ export class CustomersService {
       include: { user: { select: { email: true } } },
     });
     if (!customer) throw new NotFoundException("Customer not found");
+    assertNotWalkIn(customer);
 
     // Use override email first, then customer's own email, then User's login email.
-    // Ignore internal placeholders minted for emailless customers (@placeholder.local).
-    const loginEmail = customer.user?.email?.endsWith("@placeholder.local")
-      ? null
-      : customer.user?.email;
-    const toEmail = dto.overrideEmail ?? customer.email ?? loginEmail ?? null;
+    // Import sentinels (`@imported.local` / `@placeholder.local`) are non-routable —
+    // filter them from ALL three sources (older clients echo the on-file address into
+    // the override), so a sentinel-only customer behaves exactly like "no email on file".
+    const requestedEmail = isInternalEmail(dto.overrideEmail) ? null : dto.overrideEmail;
+    const onFileEmail = isInternalEmail(customer.email) ? null : customer.email;
+    const loginEmail = isInternalEmail(customer.user?.email) ? null : customer.user?.email;
+    const toEmail = requestedEmail ?? onFileEmail ?? loginEmail ?? null;
     if (!toEmail) {
       throw new BadRequestException(
         "Customer has no email address. Add an email or provide an override.",
@@ -3012,15 +2663,18 @@ export class CustomersService {
   }
 
   async approveBuyerRequest(customerId: string, tenantId: string) {
-    const link = await this.prisma.customerLink.findFirst({ where: { customerId, tenantId } });
+    const link = await this.prisma.customerLink.findFirst({
+      where: { customerId, tenantId },
+      include: { customer: true },
+    });
     if (!link) throw new NotFoundException("No pending buyer request found");
     if (link.status !== "PENDING_SELLER_APPROVAL") {
       throw new ConflictException("This request is no longer pending");
     }
+    assertNotWalkIn(link.customer);
     await this.prisma.customerLink.update({
       where: { id: link.id },
-      // Approving consumes the customer's single link slot — any invite token the pending
-      // row inherited from an INVITED invite is spent and must not outlive the approval.
+      // Approving consumes the link slot: an inherited INVITED invite token is spent with it.
       data: { status: "ACTIVE", linkedAt: new Date(), inviteToken: null, inviteExpiresAt: null },
     });
     return { message: "Buyer connection approved" };
@@ -3032,11 +2686,8 @@ export class CustomersService {
     if (link.status !== "PENDING_SELLER_APPROVAL") {
       throw new ConflictException("This request is no longer pending");
     }
-    // A row that still carries a LIVE invite token was an INVITED link a buyer requested
-    // against (the request preserves inviteToken/inviteExpiresAt so the true invitee's
-    // emailed link keeps working). Deleting it would destroy an invite the seller already
-    // sent — revert it to INVITED and drop the requester instead. An expired token is
-    // worthless, so those rows fall through to the delete and free the slot.
+    // A row with a LIVE invite token was an INVITED link a buyer requested against (the request keeps the token
+    // so the invitee's emailed link works): revert it to INVITED and drop the requester. An expired token falls through to the delete.
     const inviteStillLive =
       !!link.inviteToken && (!link.inviteExpiresAt || link.inviteExpiresAt > new Date());
     if (inviteStillLive) {
@@ -3046,11 +2697,8 @@ export class CustomersService {
       });
       return { declined: true };
     }
-    // customerId is @unique on CustomerLink — one link row per customer, ever. A declined
-    // stranger must not permanently occupy that one slot (it would block a future legitimate
-    // invite), so decline DELETES the row rather than marking it DISCONNECTED. DISCONNECTED
-    // stays reserved for severing a previously ACTIVE link. A re-request simply creates a
-    // fresh pending row the seller can decline again.
+    // customerId is @unique on CustomerLink: a declined stranger must not occupy that one slot, so decline DELETES
+    // the row (DISCONNECTED stays reserved for severing an ACTIVE link); a re-request creates a fresh pending row.
     await this.prisma.customerLink.delete({ where: { id: link.id } });
     return { declined: true };
   }

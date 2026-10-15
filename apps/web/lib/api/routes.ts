@@ -733,10 +733,11 @@ export function useAnalyzeRouteRun() {
 
 // ─── Route Settings ───────────────────────────────────────────────────────────
 
-export function useRouteSettings() {
+export function useRouteSettings(options: { enabled?: boolean } = {}) {
   return useQuery<RouteSettings>({
     queryKey: ["route-settings"],
     queryFn: () => apiClient.get("/settings/route").then((r) => r.data),
+    enabled: options.enabled ?? true,
   });
 }
 
@@ -745,7 +746,12 @@ export function useUpdateRouteSettings() {
   return useMutation<
     RouteSettings,
     Error,
-    Partial<Pick<RouteSettings, "averageSpeedKmh" | "serviceTimeMinutes" | "defaultStartTime">>
+    Partial<
+      Pick<
+        RouteSettings,
+        "averageSpeedKmh" | "serviceTimeMinutes" | "defaultStartTime" | "depotLat" | "depotLng"
+      >
+    >
   >({
     mutationFn: (dto) => apiClient.patch("/settings/route", dto).then((r) => r.data),
     onSuccess: () => qc.invalidateQueries({ queryKey: ["route-settings"] }),

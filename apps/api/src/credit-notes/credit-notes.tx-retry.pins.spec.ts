@@ -1,5 +1,5 @@
 /**
- * SA-392 (#2201): applyToInvoice, voidCreditNote and unapplyFromInvoice run their Serializable
+ * SA-392 (#2201): applyToInvoice, voidWithReversal and unapplyFromInvoice run their Serializable
  * transaction UNDER the house `retryOnTxConflict` (common/tx-retry.ts). create() keeps its own
  * MAX_CN_TX_ATTEMPTS loop and is deliberately not pinned here.
  *
@@ -37,7 +37,7 @@ function methodSource(name: string, source = SOURCE): string {
 type Site = [string, (s: CreditNotesService) => Promise<unknown>];
 const SITES: Site[] = [
   ["applyToInvoice", (s) => s.applyToInvoice("cn-1", "inv-1")],
-  ["voidCreditNote", (s) => s.voidCreditNote("cn-1")],
+  ["voidWithReversal", (s) => s.voidWithReversal("cn-1", null)],
   ["unapplyFromInvoice", (s) => s.unapplyFromInvoice("cn-1", "inv-1")],
 ];
 
@@ -78,7 +78,8 @@ describe("credit-note Serializable txs run under retryOnTxConflict (SA-392, #220
 
   it.each(SITES)("%s: retryOnTxConflict( opens before the tenantTransaction(", (name) => {
     const body = methodSource(name);
-    const retry = body.indexOf("retryOnTxConflict(");
+    // SA-706c: the credit-spend sites use `retryCreditTx` (the same retry, a coded 503 on exhaustion).
+    const retry = Math.max(body.indexOf("retryOnTxConflict("), body.indexOf("retryCreditTx("));
     const tx = body.indexOf("this.prisma.tenantTransaction(");
     expect(retry).toBeGreaterThan(-1);
     expect(tx).toBeGreaterThan(retry);
@@ -109,7 +110,7 @@ describe("credit-note Serializable txs run under retryOnTxConflict (SA-392, #220
 
   it.each(SITES)("%s: a P2034 on attempt 1 re-runs the whole tx", async (_name, call) => {
     const p2034 = Object.assign(new Error("write conflict"), { code: "P2034" });
-    const done = { value: "ok" };
+    const done = { value: "ok", creditNote: { id: "cn-1", amount: 0 } }; // creditNote: voidWithReversal reads it for the socket event
     prisma.tenantTransaction
       .mockImplementationOnce(() => Promise.reject(p2034))
       .mockImplementationOnce(() => Promise.resolve(done));

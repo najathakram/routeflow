@@ -8,8 +8,12 @@ import {
   Post,
   Put,
   Query,
+  Req,
+  Res,
   UseGuards,
 } from "@nestjs/common";
+import { Throttle } from "@nestjs/throttler";
+import type { Request, Response } from "express";
 import { UserRole } from "@prisma/client";
 import { JwtAuthGuard } from "../auth/guards/jwt-auth.guard";
 import { RolesGuard } from "../auth/guards/roles.guard";
@@ -18,6 +22,9 @@ import { CurrentUser } from "../auth/decorators/current-user.decorator";
 import { PlanFlagGuard } from "../billing/plan-flag.guard";
 import { RequirePlanFlag } from "../billing/require-plan-flag.decorator";
 import { InventoryService } from "./inventory.service";
+import { InventoryMovementsExportService } from "./inventory-movements-export.service";
+import { streamCsv } from "../products/products-export.stream";
+import { ExportMovementsDto } from "./dto/export-movements.dto";
 import { RecordPurchaseDto } from "./dto/record-purchase.dto";
 import { CreatePurchaseOrderDto, ReceivePurchaseOrderDto } from "./dto/create-purchase-order.dto";
 import { RecordAdjustmentDto } from "./dto/record-adjustment.dto";
@@ -42,7 +49,10 @@ import { VariantAssignDto } from "./dto/variant-assign.dto";
 @UseGuards(JwtAuthGuard, RolesGuard)
 @Roles(UserRole.OPERATOR)
 export class InventoryController {
-  constructor(private readonly inventoryService: InventoryService) {}
+  constructor(
+    private readonly inventoryService: InventoryService,
+    private readonly movementsExporter: InventoryMovementsExportService,
+  ) {}
 
   @Get("overview")
   @Roles(UserRole.OPERATOR, UserRole.DRIVER)
@@ -54,6 +64,24 @@ export class InventoryController {
   @Roles(UserRole.OPERATOR, UserRole.DRIVER)
   listMovements(@Query() query: ListMovementsDto) {
     return this.inventoryService.listMovements(query);
+  }
+
+  // The movements list's own filters as a streamed CSV (never paged, capped, audit-logged). OPERATOR
+  // only: the class-level gate applies (the list above admits DRIVER; this export must not). Declared
+  // before any `movements/:id` route. A refused window is a JSON 400 before the first byte.
+  @Get("movements/export.csv")
+  @Throttle({ default: { ttl: 60_000, limit: 5 } })
+  async exportMovementsCsv(
+    @Query() query: ExportMovementsDto,
+    @CurrentUser() user: { sub?: string; id?: string },
+    @Req() req: Request,
+    @Res() res: Response,
+  ): Promise<void> {
+    const { csv, filename } = await this.movementsExporter.prepare(query, {
+      userId: user?.sub ?? user?.id ?? null,
+      ip: req?.ip ?? null,
+    });
+    await streamCsv(res, filename, csv);
   }
 
   // B168: writes inherit the class-level OPERATOR gate; DRIVER reads below are deliberate.

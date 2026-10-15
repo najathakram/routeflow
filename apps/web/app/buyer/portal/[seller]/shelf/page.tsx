@@ -24,6 +24,13 @@ import {
   type ShelfEstimate,
 } from "@/lib/api/buyer";
 import { objectPositionForUrl } from "@/lib/image-focal";
+import { useBuyerSellerCapabilities } from "@/lib/api/buyer-capabilities";
+import { buyerFulfilmentChoice } from "@/lib/buyer-fulfilment";
+import {
+  BUYER_ORDER_CONFLICT_COPY,
+  BUYER_ORDER_CONFLICT_NO_ID_COPY,
+  buyerOrderConflict,
+} from "@/lib/buyer-order-conflict";
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 
@@ -205,6 +212,8 @@ export default function BuyerShelfPage() {
 
   const [pendingAdd, setPendingAdd] = React.useState<string | null>(null);
   const [pendingSnooze, setPendingSnooze] = React.useState<string | null>(null);
+  // An idempotency refusal means the order already exists: fixed copy, linked when its id is known.
+  const [conflict, setConflict] = React.useState<{ orderId?: string } | null>(null);
 
   React.useEffect(() => {
     if (!authLoading && !activeSeller) router.push("/buyer/portal");
@@ -216,26 +225,36 @@ export default function BuyerShelfPage() {
   const snoozed = estimates.filter((e) => e.snoozed);
   const rest = estimates.filter((e) => e.state === "ok" && !e.snoozed);
 
+  // Order ahead: a quick order carries the seller's default method when it offers one. Loading /
+  // error => no capability => nothing sent (server default).
+  const { data: capability } = useBuyerSellerCapabilities();
+  const quickFulfillPath = buyerFulfilmentChoice(capability).defaultMethod;
+
   const handleAdd = async (e: ShelfEstimate) => {
     if (pendingAdd) return;
     setPendingAdd(e.productId);
+    setConflict(null);
     try {
       // Server-side create/merge at the suggested qty — same path as the cart.
       // For boxed products send a box split so the server prorates by the box:
       // suggestedQty is a whole-box multiple of PIECES, and a box-unaware boxed
       // line is ordered/charged as suggestedQty BOXES (unitsPerBox× too much).
       const upb = e.unitsPerBox;
+      // Row 531: qty is derived FROM the box count, so the pair always agrees (the server refuses a
+      // buyer line whose qty and split differ).
+      const boxes = upb && upb > 1 ? Math.max(1, Math.round(e.suggestedQty / upb)) : 0;
       await createOrder.mutateAsync({
         items: [
-          {
-            productId: e.productId,
-            qty: e.suggestedQty,
-            ...(upb && upb > 1
-              ? { boxes: Math.max(1, Math.round(e.suggestedQty / upb)), pieces: 0 }
-              : {}),
-          },
+          boxes > 0 && upb
+            ? { productId: e.productId, qty: boxes * upb, boxes, pieces: 0 }
+            : { productId: e.productId, qty: e.suggestedQty },
         ],
+        ...(quickFulfillPath ? { fulfillPath: quickFulfillPath } : {}),
       });
+    } catch (err) {
+      const existing = buyerOrderConflict(err);
+      if (!existing) throw err;
+      setConflict(existing);
     } finally {
       setPendingAdd(null);
     }
@@ -272,6 +291,20 @@ export default function BuyerShelfPage() {
 
   return (
     <div className="space-y-6 p-6">
+      {conflict && (
+        <div role="alert" className="rounded-lg bg-danger-bg px-4 py-3 text-sm text-danger">
+          {conflict.orderId ? (
+            <Link
+              href={`/buyer/portal/${sellerSlug}/orders/${conflict.orderId}`}
+              className="underline"
+            >
+              {BUYER_ORDER_CONFLICT_COPY}
+            </Link>
+          ) : (
+            BUYER_ORDER_CONFLICT_NO_ID_COPY
+          )}
+        </div>
+      )}
       {/* Header */}
       <div className="flex flex-wrap items-start justify-between gap-4">
         <div>

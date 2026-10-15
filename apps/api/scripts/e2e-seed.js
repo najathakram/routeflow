@@ -31,10 +31,13 @@
  *     Pool/PrismaClient connection — run this first to confirm where a real reseed would land.)
  */
 
-const { PrismaClient } = require("../../../node_modules/@prisma/client");
-const { PrismaPg } = require("../../../node_modules/@prisma/adapter-pg");
-const { Pool } = require("../../../node_modules/pg");
-const bcrypt = require("../../../node_modules/bcrypt");
+// #2146: these four are loaded LAZILY in bootstrap(), after the --print-target early exit —
+// requiring them here cost ~2.3s of pure module loading per `--print-target` child (three
+// spawns in e2e-seed-script.spec.ts) that never opens a connection or hashes anything.
+let PrismaClient;
+let PrismaPg;
+let Pool;
+let bcrypt;
 const { assertTestTenant } = require("../../../scripts/lib/test-tenants.cjs");
 const { isLocalDbTarget, localConnectionConfig } = require("./lib/local-db-target.cjs");
 const { ensureDriverUser } = require("./lib/driver-fixture.cjs");
@@ -75,6 +78,10 @@ async function bootstrap() {
   if (process.argv.includes("--print-target")) {
     process.exit(0);
   }
+  ({ PrismaClient } = require("../../../node_modules/@prisma/client"));
+  ({ PrismaPg } = require("../../../node_modules/@prisma/adapter-pg"));
+  ({ Pool } = require("../../../node_modules/pg"));
+  bcrypt = require("../../../node_modules/bcrypt");
   // A provably-local target dials the vetted explicit fields (a `?host=` on the raw string could redirect it).
   pool = new Pool(localConnectionConfig(dbUrl) ?? { connectionString: dbUrl });
   adapter = new PrismaPg(pool);
@@ -230,6 +237,21 @@ const UNITS_PRODUCT = {
   pricePerUnit: cents(200),
 };
 const UNITS_CASE = { label: "Case", factorToBase: 12, price: cents(2100) };
+// VU-4 (B1218): a boxed product whose Case is the DEFAULT selling unit, shared by the invoice-picker lane
+// (web) and the mobile Expo-web proof. Box of 24 @ 48.00; Case = 12 pcs @ 24.00; Piece is implicit.
+const CASE_DEFAULT_PRODUCT = {
+  sku: "E2E-FIX-CASEDEFAULT",
+  name: "E2E Fixture Case Default",
+  unit: "Box",
+  unitsPerBox: 24,
+  pricePerUnit: cents(4800),
+};
+const CASE_DEFAULT_LEVEL = {
+  label: "Case",
+  factorToBase: 12,
+  price: cents(2400),
+  isDefaultSelling: true,
+};
 
 const FIXTURE_INVOICE_NUMBER = "E2E-FIX-INV-001";
 // One PENDING order with one line on the first plain fixture product: 06 CP-02/CP-06 read real
@@ -282,6 +304,22 @@ async function ensureFixtureUser(tenantId, c) {
     user = await prisma.user.update({ where: { id: user.id }, data: { deletedAt: null } });
   }
   return user;
+}
+
+// B917: the e2e customer LOGIN (harbor_cafe) must be linked to a Customer row, or GET /orders answers it
+// 403 CUSTOMER_NOT_LINKED and the customer dashboard cannot load. userId is @unique -> a safe upsert;
+// `update` un-deletes a soft-deleted row so a re-seed repairs it. Never overwrites the business name.
+async function ensureCustomerRecordFor(tenantId, userId) {
+  return prisma.customer.upsert({
+    where: { userId },
+    create: {
+      userId,
+      businessName: "E2E Harbor Cafe",
+      contactName: "E2E Customer",
+      tenantId,
+    },
+    update: { deletedAt: null },
+  });
 }
 
 async function ensureCommerceFixtures(tenantId) {
@@ -474,6 +512,16 @@ async function ensureUnitsFixture(tenantId) {
     create: { tenantId, productId: product.id, ...UNITS_CASE },
     update: {},
   });
+  const caseDefault = await prisma.product.upsert({
+    where: { tenantId_sku: { tenantId, sku: CASE_DEFAULT_PRODUCT.sku } },
+    create: { tenantId, currentStock: 500, isActive: true, ...CASE_DEFAULT_PRODUCT },
+    update: { isActive: true },
+  });
+  await prisma.productUnit.upsert({
+    where: { productId_label: { productId: caseDefault.id, label: CASE_DEFAULT_LEVEL.label } },
+    create: { tenantId, productId: caseDefault.id, ...CASE_DEFAULT_LEVEL },
+    update: { isDefaultSelling: true },
+  });
 }
 
 async function ensureBuyerFixtureIfLocal(tenantId) {
@@ -616,6 +664,13 @@ async function main() {
       console.log(`  ✓ Created missing customer: ${CUSTOMER_USERNAME}`);
     } else {
       console.log(`  ✓ Customer "${CUSTOMER_USERNAME}" exists`);
+    }
+    // B917: link the customer login to a Customer record (idempotent).
+    {
+      const loginUser = await prisma.user.findFirst({
+        where: { tenantId: existing.id, username: CUSTOMER_USERNAME },
+      });
+      if (loginUser) await ensureCustomerRecordFor(existing.id, loginUser.id);
     }
 
     // ── TENANT_ADMIN (B138 e2e precondition) ────────────────────────────────────
@@ -789,7 +844,7 @@ async function main() {
   console.log(`  ✓ Operator created: ${OPERATOR_USERNAME} / ${OPERATOR_PASSWORD}`);
 
   // ── Customer user ────────────────────────────────────────────────────────────
-  await prisma.user.create({
+  const customerLogin = await prisma.user.create({
     data: {
       email: "harbor_cafe@e2e-routeflow.test",
       username: CUSTOMER_USERNAME,
@@ -800,6 +855,8 @@ async function main() {
       tenantId: tenant.id,
     },
   });
+  // B917: link the customer login to a Customer record (idempotent).
+  await ensureCustomerRecordFor(tenant.id, customerLogin.id);
   console.log(`  ✓ Customer created: ${CUSTOMER_USERNAME} / ${CUSTOMER_PASSWORD}`);
 
   // ── Tenant admin user (B138 e2e precondition) ────────────────────────────────

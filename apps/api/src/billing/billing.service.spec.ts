@@ -11,8 +11,14 @@ jest.mock("../common/db-locks", () => ({
   LockUnavailableError: class extends Error {},
 }));
 
+jest.mock("./needs-reconcile", () =>
+  require("../testing/needs-reconcile-mock").needsReconcileMock(),
+);
 import { Test, TestingModule } from "@nestjs/testing";
-import { Logger } from "@nestjs/common";
+import { BadRequestException, Logger } from "@nestjs/common";
+import { armNeedsReconcile, clearNeedsReconcile } from "./needs-reconcile";
+import { isPricePushFailure } from "./price-override";
+import { toCents } from "@routeflow/pricing";
 import { PlanTransitionConfigService } from "./plan-transition-config.service";
 import { normalizePlanKey, planKeyFromEnum } from "./plan-catalog.constants";
 import { BillingService } from "./billing.service";
@@ -24,6 +30,33 @@ import { TenantStatusGuard } from "../tenant/tenant-status.guard";
 import { BillingEventService } from "./billing-event.service";
 import { PlatformPricingService } from "./platform-pricing.service";
 import { BillingNotificationService } from "./billing-notification.service";
+import { SubscriptionMutationService } from "./subscription-mutation.service";
+
+/** SA-736r: an upcoming-invoice preview that bills (one recurring subscription line, no discount). */
+const pricedPreview = () => ({
+  lines: {
+    has_more: false,
+    data: [
+      {
+        amount: 34_900,
+        discount_amounts: [],
+        parent: {
+          type: "subscription_item_details",
+          subscription_item_details: { proration: false },
+        },
+      },
+    ],
+  },
+  total_discount_amounts: [],
+});
+
+/** SA-690: the add-on checkout/adoption seam of SubscriptionMutationService — inert by default (no
+ *  add-ons), so every pre-existing assertion in this file measures exactly what it did before. */
+const mutationsStub = () =>
+  ({
+    checkoutAddonLines: jest.fn().mockResolvedValue({ lineItems: [], skus: [] }),
+    adoptCheckoutAddons: jest.fn().mockResolvedValue(undefined),
+  }) as any;
 
 /**
  * MRR-ledger reconciliation for the LEGACY Stripe lifecycle (Plans & Billing P6 follow-up).
@@ -55,6 +88,9 @@ function make(
     basePriceSnapshot: 349,
     discount: 0,
     stripeSubId: null,
+    // SA-690: a checkout completion writes nothing unless the session's customer is the one stored
+    // for the tenant (and the subscription's) — the legitimate case every checkout fixture here is.
+    stripeCustomerId: "cus_1",
   };
   const tx = {
     tenant: {
@@ -72,6 +108,8 @@ function make(
     tenantSubscription: {
       upsert: jest.fn((args: unknown) => prisma.tenantSubscription.upsert(args)),
       updateMany: jest.fn().mockResolvedValue({ count: overrides.casCount ?? 1 }),
+      // X1: the under-the-lock re-check re-reads the stored row — the same mock as the pre-tx read.
+      findUnique: jest.fn((args: unknown) => prisma.tenantSubscription.findUnique(args)),
     },
     auditLog: {
       create: jest.fn().mockResolvedValue({}),
@@ -84,20 +122,31 @@ function make(
     tenant: {
       update: jest.fn().mockResolvedValue({}),
       updateMany: jest.fn().mockResolvedValue({ count: overrides.plainCasCount ?? 0 }),
-      findUnique: jest.fn().mockResolvedValue({ plan: "STARTER", planVersionId: "v1" }),
+      findUnique: jest.fn().mockResolvedValue({
+        id: "t1",
+        class: "PRODUCTION",
+        status: "ACTIVE",
+        plan: "STARTER",
+        planVersionId: "v1",
+      }),
     },
     // #2440 N2: the tenant's add-on subscription items (none by default).
     tenantAddon: { findMany: jest.fn().mockResolvedValue([]) },
     user: {
       findFirst: jest.fn().mockResolvedValue({ email: "admin@example.test", username: "admin" }),
     },
+    // Row 346: the failed-payment e-mail dedupe lookup finds no earlier delivery by default (without this mock every
+    // case would run the fail-open path and its warn).
+    emailDelivery: { findFirst: jest.fn().mockResolvedValue(null) },
     tenantSubscription: {
       findFirst: jest.fn().mockResolvedValue(sub),
-      findMany: jest
-        .fn()
-        .mockResolvedValue([
-          { ...sub, stripeSubId: "sub_1", tenant: { id: sub.tenantId, slug: "acme" } },
-        ]),
+      findMany: jest.fn().mockResolvedValue([
+        {
+          ...sub,
+          stripeSubId: "sub_1",
+          tenant: { id: sub.tenantId, slug: "acme", class: "PRODUCTION" },
+        },
+      ]),
       // Finding 4 (Lite-L2 review): onCheckoutCompleted reads this to check for a negotiated
       // price override before overwriting basePriceSnapshot. `sub` has no
       // priceOverrideMonthly/priceOverrideAnnual fields by default, so they read as `undefined`
@@ -118,6 +167,7 @@ function make(
     isConfigured: true,
     // #2440 N3: dahlia-shaped by default — the period lives on the subscription's items.
     getSubscription: jest.fn().mockResolvedValue({
+      customer: "cus_1",
       status: overrides.stripeStatus ?? "past_due",
       items: {
         data: [
@@ -128,11 +178,19 @@ function make(
     createBillingPortalSession: jest
       .fn()
       .mockResolvedValue({ url: "https://billing.stripe.test/p/session_1" }),
+    // SA-736r: the coupon sync's two Stripe reads. Inert by default - no discount, a priced upcoming
+    // invoice - so a sync leaves `couponFull` false and every pre-existing assertion measures what it did.
+    retrieveSubscriptionWithDiscounts: jest
+      .fn()
+      .mockResolvedValue({ id: "sub_1", status: "active", discounts: [] }),
+    previewNextInvoice: jest.fn().mockResolvedValue(pricedPreview()),
   } as any;
   const email = { send: jest.fn().mockResolvedValue({}) } as any;
   const tenantStatus = { invalidate: jest.fn() } as any;
   const events = { emit: jest.fn().mockResolvedValue({}) } as any;
   const pricing = overrides.pricing ?? {
+    // a tenant price that cannot be resolved is a BUSINESS refusal (HttpException), not an infrastructure error
+    resolveTenantPricing: jest.fn().mockRejectedValue(new BadRequestException("no price")),
     resolveCatalogPricing: jest.fn().mockResolvedValue({
       planKey: "BUSINESS",
       planName: "Business",
@@ -153,6 +211,7 @@ function make(
     onPlanChange: jest.fn().mockResolvedValue({ action: "none" }),
     invalidateCaches: jest.fn(),
   } as any;
+  const mutations = mutationsStub();
   const svc = new BillingService(
     prisma,
     stripe,
@@ -162,9 +221,11 @@ function make(
     pricing,
     billingNotification,
     planTransition,
+    mutations,
   );
   return {
     svc,
+    mutations,
     prisma,
     tx,
     stripe,
@@ -193,6 +254,26 @@ const LIVE_SUB = {
   stripeCustomerId: "cus_1",
 };
 const SUB_EVT = { id: "sub_1", customer: "cus_1" };
+// F1 (a): the handler ignores the payload's state and re-fetches; these tests want "Stripe says what the event says".
+const updated = (svc: any, evt: any) => {
+  svc.stripe.getSubscription.mockResolvedValue({ customer: "cus_1", ...evt });
+  return svc.onSubscriptionUpdated(evt);
+};
+// SA-733r3 N1: the reinstatement needs the invoice's subscription to equal the row's stripeSubId.
+// a Stripe-billed paying row whose own subscription is sub_1 (the default make() sub has no stripeSubId)
+const STRIPE_PAYER = {
+  tenantId: "t1",
+  planKey: "BUSINESS",
+  basePriceSnapshot: 349,
+  discount: 0,
+  stripeSubId: "sub_1",
+  stripeCustomerId: "cus_1",
+  tenant: { status: "SUSPENDED", readOnlyReason: null }, // F4: a lapsed payer is what a payment reinstates
+};
+const OWN_INVOICE = {
+  customer: "cus_1",
+  parent: { subscription_details: { subscription: "sub_1" } },
+};
 
 describe("BillingService — Stripe churn/reactivation MRR ledger", () => {
   describe("onSubscriptionDeleted (→ CANCELLED)", () => {
@@ -205,10 +286,32 @@ describe("BillingService — Stripe churn/reactivation MRR ledger", () => {
       await (svc as any).onSubscriptionDeleted(SUB_EVT);
       // Atomic compare-and-swap on status is the idempotency key.
       expect(tx.tenant.updateMany.mock.calls[0][0]).toMatchObject({
-        where: { id: "t1", status: "ACTIVE" },
+        where: { id: "t1", status: "ACTIVE", class: "PRODUCTION" }, // SA-775 S3: the judged class is part of the CAS
         data: { status: "CANCELLED" },
       });
       // −(349 base + 12×2 add-ons − 0 discount) = −373, emitted inside the same tx.
+      expect(deltaOf(events, BILLING_EVENTS.SUBSCRIPTION_CANCELED)).toBe(-373);
+    });
+
+    it("SHOULD-2: the contribution sums only BILLABLE add-ons — a comp (a platform grant) carrying a stale snapshot is never counted", async () => {
+      const rows = [
+        { priceSnapshot: 12, quantity: 2, isComp: false },
+        { priceSnapshot: 19, quantity: 1, isComp: true }, // a row that was billed, then turned into a comp
+      ];
+      const { svc, tx, events } = make({ transitionCount: 1, sub: LIVE_SUB, addons: rows });
+      // the query is what excludes the comp: evaluate its `isComp` predicate like Postgres would
+      tx.tenantAddon.findMany.mockImplementation(async ({ where }: any) =>
+        rows.filter((r) => where?.isComp === undefined || r.isComp === where.isComp),
+      );
+
+      await (svc as any).onSubscriptionDeleted(SUB_EVT);
+
+      expect(tx.tenantAddon.findMany.mock.calls[0][0].where).toMatchObject({
+        tenantId: "t1",
+        active: true,
+        isComp: false,
+      });
+      // −(349 base + 12×2 billable add-ons) = −373; the comp's 19 is not part of it
       expect(deltaOf(events, BILLING_EVENTS.SUBSCRIPTION_CANCELED)).toBe(-373);
     });
 
@@ -267,7 +370,7 @@ describe("BillingService — Stripe churn/reactivation MRR ledger", () => {
 
     it("clears the downgrade markers when the update ARMS a cancellation", async () => {
       const { svc, prisma } = make({ sub: LIVE_SUB });
-      await (svc as any).onSubscriptionUpdated(evt(true));
+      await updated(svc, evt(true));
       expect(prisma.tenantSubscription.update.mock.calls[0][0].data).toMatchObject({
         cancelAtPeriodEnd: true,
         downgradeToPlanKey: null,
@@ -278,7 +381,7 @@ describe("BillingService — Stripe churn/reactivation MRR ledger", () => {
 
     it("leaves the downgrade markers untouched on an ordinary update", async () => {
       const { svc, prisma } = make({ sub: LIVE_SUB });
-      await (svc as any).onSubscriptionUpdated(evt(false));
+      await updated(svc, evt(false));
       // A cycle roll, a price sync or an add-on item arrives as subscription.updated too —
       // clearing the markers there would silently drop a downgrade the tenant scheduled.
       const data = prisma.tenantSubscription.update.mock.calls[0][0].data;
@@ -290,15 +393,53 @@ describe("BillingService — Stripe churn/reactivation MRR ledger", () => {
   });
 
   describe("suspendOverdueTenants (→ SUSPENDED)", () => {
-    it("emits a NEGATIVE delta via an ACTIVE→SUSPENDED CAS when Stripe confirms past_due", async () => {
+    // SA r-note 5 A2 (N5): payment overdue never SUSPENDS. Dunning owns non-payment (the 7-day grace, then
+    // READ_ONLY + pay); this cron keeps only its `canceled` arm (a subscription the tenant ended).
+    describe("A2: past_due / unpaid never change a status, in EVERY pause mode", () => {
+      const saved = process.env.BILLING_PAUSE_MODE;
+      afterEach(() => {
+        if (saved === undefined) delete process.env.BILLING_PAUSE_MODE;
+        else process.env.BILLING_PAUSE_MODE = saved;
+      });
+      it.each([
+        ["past_due", "off"],
+        ["past_due", "dark"],
+        ["past_due", "enforced"],
+        ["unpaid", "off"],
+        ["unpaid", "dark"],
+        ["unpaid", "enforced"],
+      ])("Stripe %s in %s: no transition, no MRR event, no notification", async (status, m) => {
+        process.env.BILLING_PAUSE_MODE = m;
+        const { svc, prisma, tx, events, billingNotification } = make({
+          stripeStatus: status,
+          transitionCount: 1,
+        });
+        await svc.suspendOverdueTenants();
+        expect(prisma.$transaction).not.toHaveBeenCalled();
+        expect(tx.tenant.updateMany).not.toHaveBeenCalled();
+        expect(events.emit).not.toHaveBeenCalled();
+        expect(billingNotification.notifySuspended).not.toHaveBeenCalled();
+      });
+
+      it("the `canceled` arm is untouched: it still suspends (row 335 follow-up decides its future)", async () => {
+        const { svc, tx } = make({ stripeStatus: "canceled", transitionCount: 1 });
+        await svc.suspendOverdueTenants();
+        expect(tx.tenant.updateMany.mock.calls[0][0]).toMatchObject({
+          where: { id: "t1", status: "ACTIVE", class: "PRODUCTION" }, // SA-775 S3: the judged class is part of the CAS
+          data: { status: "SUSPENDED" },
+        });
+      });
+    });
+
+    it("emits a NEGATIVE delta via an ACTIVE→SUSPENDED CAS when Stripe confirms the subscription is canceled", async () => {
       const { svc, tx, events } = make({
-        stripeStatus: "unpaid",
+        stripeStatus: "canceled",
         transitionCount: 1,
         addons: [{ priceSnapshot: 12, quantity: 2 }],
       });
       await svc.suspendOverdueTenants();
       expect(tx.tenant.updateMany.mock.calls[0][0]).toMatchObject({
-        where: { id: "t1", status: "ACTIVE" },
+        where: { id: "t1", status: "ACTIVE", class: "PRODUCTION" }, // SA-775 S3: the judged class is part of the CAS
         data: { status: "SUSPENDED" },
       });
       expect(deltaOf(events, BILLING_EVENTS.SUBSCRIPTION_SUSPENDED)).toBe(-373);
@@ -312,7 +453,7 @@ describe("BillingService — Stripe churn/reactivation MRR ledger", () => {
       ["a soft-deleted tenant", { deletedAt: new Date("2026-09-01"), class: "PRODUCTION" }],
     ])("#2045: %s — the suspension applies but books no delta", async (_label, row) => {
       const { svc, tx, events } = make({
-        stripeStatus: "unpaid",
+        stripeStatus: "canceled",
         transitionCount: 1,
         addons: [{ priceSnapshot: 12, quantity: 2 }],
       });
@@ -324,20 +465,23 @@ describe("BillingService — Stripe churn/reactivation MRR ledger", () => {
       expect(deltaOf(events, BILLING_EVENTS.SUBSCRIPTION_SUSPENDED) ?? 0).toBe(0);
     });
 
-    it("N3: notifies the tenant admin with reason 'overdue payment' only when the suspension actually applied", async () => {
-      const { svc, billingNotification } = make({ stripeStatus: "unpaid", transitionCount: 1 });
+    it("N3: notifies the tenant admin with reason 'subscription canceled' (the only arm left: A2 removed overdue payment) only when the suspension actually applied", async () => {
+      const { svc, billingNotification } = make({ stripeStatus: "canceled", transitionCount: 1 });
       await svc.suspendOverdueTenants();
-      expect(billingNotification.notifySuspended).toHaveBeenCalledWith("t1", "overdue payment");
+      expect(billingNotification.notifySuspended).toHaveBeenCalledWith(
+        "t1",
+        "subscription canceled",
+      );
     });
 
     it("N3: does NOT notify when the CAS lost the race (already suspended elsewhere)", async () => {
-      const { svc, billingNotification } = make({ stripeStatus: "unpaid", transitionCount: 0 });
+      const { svc, billingNotification } = make({ stripeStatus: "canceled", transitionCount: 0 });
       await svc.suspendOverdueTenants();
       expect(billingNotification.notifySuspended).not.toHaveBeenCalled();
     });
 
     it("N3: a rejected notifySuspended never blocks the cron tick", async () => {
-      const { svc, billingNotification } = make({ stripeStatus: "unpaid", transitionCount: 1 });
+      const { svc, billingNotification } = make({ stripeStatus: "canceled", transitionCount: 1 });
       billingNotification.notifySuspended.mockRejectedValueOnce(new Error("email down"));
       await expect(svc.suspendOverdueTenants()).resolves.toBeUndefined();
     });
@@ -350,10 +494,166 @@ describe("BillingService — Stripe churn/reactivation MRR ledger", () => {
     });
   });
 
+  // SA-733r3 N1 / r7 r-note: the legacy reinstatement needs the invoice's subscription to EQUAL the row's non-null
+  // stripeSubId. A late payment on an old or other subscription (or a one-off invoice) must never reinstate a tenant,
+  // book +MRR, or wipe a live dunning clock - customer-wide matching is what made that possible.
+  describe("N1: payment_succeeded reinstates only for the row's OWN subscription", () => {
+    const sub = (id: string | null) => ({
+      id: "in_paid",
+      amount_paid: 34900,
+      customer: "cus_1",
+      ...(id ? { parent: { subscription_details: { subscription: id } } } : {}),
+    });
+    const row = (tenant: Record<string, unknown>, over: Record<string, unknown> = {}) => ({
+      ...LIVE_SUB,
+      failedPaymentCount: 0,
+      tenant: { status: "SUSPENDED", readOnlyReason: null, ...tenant },
+      ...over,
+    });
+    const writesNothingToTheTenant = (tx: any, events: any) => {
+      expect(tx.tenant.updateMany).not.toHaveBeenCalled();
+      expect(events.emit).not.toHaveBeenCalled();
+      // no clock wipe: the dunning-clear is a tenantSubscription.updateMany
+      expect(tx.tenantSubscription.updateMany).not.toHaveBeenCalled();
+    };
+
+    it("control: the invoice of the row's own subscription reinstates a SUSPENDED tenant (+MRR once)", async () => {
+      const { svc, events } = make({ transitionCount: 1, sub: row({}) });
+      await (svc as any).onPaymentSucceeded(sub("sub_1"));
+      expect(deltaOf(events, BILLING_EVENTS.SUBSCRIPTION_RESUMED)).toBe(349);
+    });
+
+    it("another subscription's invoice paid by a SUSPENDED tenant: no reinstatement, 0 delta, no clock wipe", async () => {
+      const { svc, tx, events } = make({ transitionCount: 1, sub: row({}) });
+      await (svc as any).onPaymentSucceeded(sub("sub_OLD"));
+      writesNothingToTheTenant(tx, events);
+    });
+
+    // F4: a payment reinstates ONLY from TRIAL, READ_ONLY(trial_*) and SUSPENDED. A READ_ONLY an admin set, or a
+    // CANCELLED tenant, is never revived by a renewal landing on the still-live subscription: no change, a warn
+    // and an audit row.
+    describe("F4: a renewal never undoes an admin's READ_ONLY / CANCELLED", () => {
+      const blockedAudit = (prisma: any) =>
+        prisma.auditLog.create.mock.calls.find(
+          (c: any[]) => c[0].data.action === "PAID_WHILE_ADMIN_LOCKED",
+        )?.[0].data;
+
+      it("an alert/audit write that fails is logged and never fails the webhook", async () => {
+        const { svc, prisma } = make({
+          transitionCount: 1,
+          sub: row({ status: "READ_ONLY", readOnlyReason: "admin_set" }),
+        });
+        prisma.auditLog.create.mockRejectedValue(new Error("db down"));
+        const err = jest.spyOn(Logger.prototype, "error").mockImplementation(() => undefined);
+        const warn = jest.spyOn(Logger.prototype, "warn").mockImplementation(() => undefined);
+        await expect((svc as any).onPaymentSucceeded(sub("sub_1"))).resolves.toBeUndefined();
+        expect(err).toHaveBeenCalled();
+        err.mockRestore();
+        warn.mockRestore();
+      });
+
+      it.each([
+        ["READ_ONLY(admin_set)", { status: "READ_ONLY", readOnlyReason: "admin_set" }],
+        [
+          "READ_ONLY(no reason: a legacy admin write)",
+          { status: "READ_ONLY", readOnlyReason: null },
+        ],
+        ["CANCELLED", { status: "CANCELLED", readOnlyReason: null }],
+      ])(
+        "%s + a renewal on its own subscription: stays put, warned and audited",
+        async (_n, tenant) => {
+          const { svc, tx, events, prisma } = make({ transitionCount: 1, sub: row(tenant) });
+          const warn = jest.spyOn(Logger.prototype, "warn").mockImplementation(() => undefined);
+          await (svc as any).onPaymentSucceeded(sub("sub_1"));
+          writesNothingToTheTenant(tx, events);
+          expect(prisma.tenant.update).not.toHaveBeenCalled();
+          expect(warn).toHaveBeenCalledWith(expect.stringContaining("not reinstating"));
+          warn.mockRestore();
+          // ONE row in the platform-admin feed (platformAdmin: true) is both the audit trail and the ops alert
+          expect(blockedAudit(prisma)).toMatchObject({
+            tenantId: "t1",
+            entityType: "tenant",
+            meta: {
+              platformAdmin: true,
+              status: tenant.status,
+              readOnlyReason: tenant.readOnlyReason,
+              invoiceId: "in_paid",
+              amountPaid: 34900,
+            },
+          });
+          expect(blockedAudit(prisma).meta.message).toMatch(/in_paid/);
+        },
+      );
+
+      it.each([
+        ["TRIAL", { status: "TRIAL", readOnlyReason: null }],
+        ["SUSPENDED", { status: "SUSPENDED", readOnlyReason: null }],
+        ["READ_ONLY(trial_expired)", { status: "READ_ONLY", readOnlyReason: "trial_expired" }],
+        ["READ_ONLY(trial_cancelled)", { status: "READ_ONLY", readOnlyReason: "trial_cancelled" }],
+      ])("%s is still reinstated by a payment on its own subscription", async (_n, tenant) => {
+        const { svc, events, prisma } = make({ transitionCount: 1, sub: row(tenant) });
+        await (svc as any).onPaymentSucceeded(sub("sub_1"));
+        expect(deltaOf(events, BILLING_EVENTS.SUBSCRIPTION_RESUMED)).toBe(349);
+        expect(blockedAudit(prisma)).toBeUndefined();
+      });
+
+      it("an ACTIVE tenant's ordinary renewal is untouched (no warn, no audit)", async () => {
+        const { svc, prisma } = make({
+          transitionCount: 0,
+          sub: row({ status: "ACTIVE", readOnlyReason: null }),
+        });
+        await (svc as any).onPaymentSucceeded(sub("sub_1"));
+        expect(blockedAudit(prisma)).toBeUndefined();
+      });
+    });
+
+    it("a late payment on an old subscription by a READ_ONLY(trial_expired) tenant: no reinstatement", async () => {
+      const { svc, tx, events } = make({
+        transitionCount: 1,
+        sub: row({ status: "READ_ONLY", readOnlyReason: "trial_expired" }),
+      });
+      await (svc as any).onPaymentSucceeded(sub("sub_OLD"));
+      writesNothingToTheTenant(tx, events);
+    });
+
+    it("READ_ONLY(trial_cancelled) paying another subscription's invoice: no reinstatement", async () => {
+      const { svc, tx, events } = make({
+        transitionCount: 1,
+        sub: row({ status: "READ_ONLY", readOnlyReason: "trial_cancelled" }),
+      });
+      await (svc as any).onPaymentSucceeded(sub("sub_OLD"));
+      writesNothingToTheTenant(tx, events);
+    });
+
+    it("an invoice with NO subscription (a one-off) reinstates nothing", async () => {
+      const { svc, tx, events } = make({ transitionCount: 1, sub: row({}) });
+      await (svc as any).onPaymentSucceeded(sub(null));
+      writesNothingToTheTenant(tx, events);
+    });
+
+    it("a row with a NULL stripeSubId (released by a cancel) is never reinstated, even by an invoice that names a subscription", async () => {
+      const { svc, tx, events } = make({
+        transitionCount: 1,
+        sub: row({}, { stripeSubId: null }),
+      });
+      await (svc as any).onPaymentSucceeded(sub("sub_1"));
+      writesNothingToTheTenant(tx, events);
+    });
+
+    it("the failed-payment count still resets (a payment did land) even when nothing is reinstated", async () => {
+      const { svc, prisma } = make({ transitionCount: 1, sub: row({}, { failedPaymentCount: 2 }) });
+      await (svc as any).onPaymentSucceeded(sub("sub_OLD"));
+      expect(prisma.tenantSubscription.update).toHaveBeenCalledWith({
+        where: { tenantId: "t1" },
+        data: { failedPaymentCount: 0 },
+      });
+    });
+  });
+
   describe("onPaymentSucceeded (SUSPENDED → ACTIVE)", () => {
     it("re-adds a POSITIVE delta via a non-ACTIVE→ACTIVE CAS on reinstatement", async () => {
-      const { svc, tx, events } = make({ transitionCount: 1 });
-      await (svc as any).onPaymentSucceeded({ customer: "cus_1" });
+      const { svc, tx, events } = make({ transitionCount: 1, sub: STRIPE_PAYER });
+      await (svc as any).onPaymentSucceeded(OWN_INVOICE);
       expect(tx.tenant.updateMany.mock.calls[0][0]).toMatchObject({
         where: { id: "t1", status: { not: "ACTIVE" } },
         data: { status: "ACTIVE" },
@@ -362,8 +662,8 @@ describe("BillingService — Stripe churn/reactivation MRR ledger", () => {
     });
 
     it("R3 an ACTIVE transition's CAS write also clears a stale readOnlyReason", async () => {
-      const { svc, tx } = make({ transitionCount: 1 });
-      await (svc as any).onPaymentSucceeded({ customer: "cus_1" });
+      const { svc, tx } = make({ transitionCount: 1, sub: STRIPE_PAYER });
+      await (svc as any).onPaymentSucceeded(OWN_INVOICE);
       expect(tx.tenant.updateMany.mock.calls[0][0].data).toEqual({
         status: "ACTIVE",
         readOnlyReason: null,
@@ -372,7 +672,7 @@ describe("BillingService — Stripe churn/reactivation MRR ledger", () => {
 
     it("emits no delta on a renewal / lost race (CAS finds the tenant already ACTIVE)", async () => {
       const { svc, events } = make({ transitionCount: 0 });
-      await (svc as any).onPaymentSucceeded({ customer: "cus_1" });
+      await (svc as any).onPaymentSucceeded(OWN_INVOICE);
       expect(emitted(events)).not.toContain(BILLING_EVENTS.SUBSCRIPTION_RESUMED);
     });
 
@@ -396,7 +696,7 @@ describe("BillingService — Stripe churn/reactivation MRR ledger", () => {
           tenant: { status: "READ_ONLY" },
         },
       });
-      await (svc as any).onPaymentSucceeded({ customer: "cus_1" });
+      await (svc as any).onPaymentSucceeded(OWN_INVOICE);
       // The best-effort period-date refresh still runs (it happens before the check).
       expect(prisma.tenantSubscription.update).toHaveBeenCalledWith({
         where: { tenantId: "t1" },
@@ -421,11 +721,12 @@ describe("BillingService — Stripe churn/reactivation MRR ledger", () => {
           planKey: "BUSINESS",
           basePriceSnapshot: 349,
           discount: 0,
-          stripeSubId: null,
+          stripeSubId: "sub_1",
           cancelAtPeriodEnd: false,
+          tenant: { status: "SUSPENDED", readOnlyReason: null },
         },
       });
-      await (svc as any).onPaymentSucceeded({ customer: "cus_1" });
+      await (svc as any).onPaymentSucceeded(OWN_INVOICE);
       expect(tx.tenant.updateMany.mock.calls[0][0]).toMatchObject({
         where: { id: "t1", status: { not: "ACTIVE" } },
         data: { status: "ACTIVE" },
@@ -453,7 +754,7 @@ describe("BillingService — Stripe churn/reactivation MRR ledger", () => {
           tenant: { status: "SUSPENDED" },
         },
       });
-      await (svc as any).onPaymentSucceeded({ customer: "cus_1" });
+      await (svc as any).onPaymentSucceeded(OWN_INVOICE);
       expect(tx.tenant.updateMany.mock.calls[0][0]).toMatchObject({
         where: { id: "t1", status: { not: "ACTIVE" } },
         data: { status: "ACTIVE" },
@@ -479,7 +780,7 @@ describe("BillingService — Stripe churn/reactivation MRR ledger", () => {
           tenant: { status: "CANCELLED" },
         },
       });
-      await (svc as any).onPaymentSucceeded({ customer: "cus_1" });
+      await (svc as any).onPaymentSucceeded(OWN_INVOICE);
       expect(prisma.$transaction).not.toHaveBeenCalled();
       expect(tx.tenant.updateMany).not.toHaveBeenCalled();
       expect(emitted(events)).not.toContain(BILLING_EVENTS.SUBSCRIPTION_RESUMED);
@@ -495,6 +796,7 @@ describe("BillingService — Stripe churn/reactivation MRR ledger", () => {
         metadata: { tenantId: "t1" },
         subscription: "sub_1",
         customer: "cus_1",
+        payment_status: "paid", // P0 hotfix: only a settled session activates
       });
       expect(deltaOf(events, BILLING_EVENTS.SUBSCRIPTION_RESUMED)).toBe(349);
     });
@@ -508,8 +810,105 @@ describe("BillingService — Stripe churn/reactivation MRR ledger", () => {
         metadata: { tenantId: "t1" },
         subscription: "sub_1",
         customer: "cus_1",
+        payment_status: "paid", // P0 hotfix: only a settled session activates
       });
       expect(emitted(events)).not.toContain(BILLING_EVENTS.SUBSCRIPTION_RESUMED);
+    });
+
+    // P0 HOTFIX (live money): an ACH / bank-debit checkout completes UNPAID; activating then flips the tenant ACTIVE
+    // days before the funds clear, and a failed debit would leave them ACTIVE and unpaid.
+    describe("payment_status gate", () => {
+      const sessionOf = (payment_status?: string) => ({
+        id: "cs_ach",
+        metadata: { tenantId: "t1" },
+        subscription: "sub_1",
+        customer: "cus_1",
+        ...(payment_status === undefined ? {} : { payment_status }),
+      });
+
+      it.each(["unpaid", undefined, "weird"])(
+        "payment_status %s: linked, NOT activated, no marker, no MRR delta",
+        async (status) => {
+          const { svc, prisma, tx, events } = make({ transitionCount: 1 });
+          await (svc as any).onCheckoutCompleted(sessionOf(status as string | undefined));
+          expect(prisma.tenantSubscription.upsert).toHaveBeenCalledTimes(1); // the linking writes land
+          expect(emitted(events)).not.toContain(BILLING_EVENTS.SUBSCRIPTION_RESUMED);
+          // the APPLIED marker is written through the apply transaction's client, never for an unpaid session
+          expect(tx.auditLog.create).not.toHaveBeenCalled();
+        },
+      );
+
+      it.each(["paid", "no_payment_required"])("payment_status %s activates", async (status) => {
+        const { svc, events } = make({ transitionCount: 1 });
+        await (svc as any).onCheckoutCompleted(sessionOf(status));
+        expect(deltaOf(events, BILLING_EVENTS.SUBSCRIPTION_RESUMED)).toBe(349);
+      });
+
+      it("the webhook routes async_payment_succeeded to the same handler (the payload is the now-paid session)", async () => {
+        const { svc } = make({ transitionCount: 1 });
+        const spy = jest.spyOn(svc as any, "onCheckoutCompleted").mockResolvedValue(undefined);
+        const object = sessionOf("paid");
+        await svc.handleWebhookEvent({
+          id: "evt_1",
+          type: "checkout.session.async_payment_succeeded",
+          data: { object },
+        });
+        expect(spy).toHaveBeenCalledWith(object);
+      });
+
+      it("a PAID session writes the marker through the apply transaction (the control for the row above)", async () => {
+        const { svc, tx } = make({ transitionCount: 1 });
+        await (svc as any).onCheckoutCompleted(sessionOf("paid"));
+        expect(tx.auditLog.create).toHaveBeenCalledWith(
+          expect.objectContaining({
+            data: expect.objectContaining({
+              action: "STRIPE_CHECKOUT_APPLIED",
+              entityId: "cs_ach",
+            }),
+          }),
+        );
+      });
+
+      it("a failed debit of a session that completed BEFORE the hotfix (marker present) says the tenant is ACTIVE and UNPAID", async () => {
+        const { svc, prisma, tx } = make({ transitionCount: 1 });
+        prisma.auditLog.findFirst.mockImplementation(async ({ where }: any) =>
+          where.action === "STRIPE_CHECKOUT_APPLIED" ? { id: "a1" } : null,
+        );
+        await (svc as any).onCheckoutAsyncPaymentFailed(sessionOf("unpaid"));
+        const rows = tx.auditLog.create.mock.calls.map((c: any[]) => c[0].data);
+        const trail = rows.find((r: any) => r.action === "STRIPE_CHECKOUT_ASYNC_PAYMENT_FAILED");
+        const notice = rows.find((r: any) => r.action === "STRIPE_ASYNC_PAYMENT_FAILED");
+        expect(trail.meta).toMatchObject({ reason: "async_payment_failed", activated: true });
+        expect(notice.meta.activated).toBe(true);
+        expect(notice.meta.message).toMatch(/ACTIVE and UNPAID/);
+        expect(notice.meta.message).not.toMatch(/not activated/);
+      });
+
+      it("a failed debit of a session that never activated says so (no marker)", async () => {
+        const { svc, tx } = make({ transitionCount: 1 });
+        await (svc as any).onCheckoutAsyncPaymentFailed(sessionOf("unpaid"));
+        const notice = tx.auditLog.create.mock.calls
+          .map((c: any[]) => c[0].data)
+          .find((r: any) => r.action === "STRIPE_ASYNC_PAYMENT_FAILED");
+        expect(notice.meta.activated).toBe(false);
+        expect(notice.meta.message).toMatch(/not activated by this checkout/);
+      });
+
+      it("async_payment_failed activates nothing and routes only to the notice handler", async () => {
+        const { svc } = make({ transitionCount: 1 });
+        const done = jest.spyOn(svc as any, "onCheckoutCompleted").mockResolvedValue(undefined);
+        const failed = jest
+          .spyOn(svc as any, "onCheckoutAsyncPaymentFailed")
+          .mockResolvedValue(undefined);
+        const object = sessionOf("unpaid");
+        await svc.handleWebhookEvent({
+          id: "evt_2",
+          type: "checkout.session.async_payment_failed",
+          data: { object },
+        });
+        expect(failed).toHaveBeenCalledWith(object);
+        expect(done).not.toHaveBeenCalled();
+      });
     });
   });
 });
@@ -527,6 +926,7 @@ describe("onCheckoutCompleted — B445 planKey + basePriceSnapshot write", () =>
     metadata: { tenantId: "t1", ...(planKey ? { planKey } : {}) },
     subscription: "sub_1",
     customer: "cus_1",
+    payment_status: "paid", // P0 hotfix: only a settled session activates
   });
 
   it("(1) create branch: writes planKey + basePriceSnapshot (and maps currentPlan via planKeyToEnum) and emits exactly one MRR delta", async () => {
@@ -568,7 +968,13 @@ describe("onCheckoutCompleted — B445 planKey + basePriceSnapshot write", () =>
   it("(4) negative: metadata carries neither planKey nor the legacy plan key — left completely unchanged on the update branch, no emit", async () => {
     const { svc, prisma, events } = make({
       transitionCount: 1,
-      sub: { tenantId: "t1", planKey: null, basePriceSnapshot: null, discount: 0 },
+      sub: {
+        tenantId: "t1",
+        planKey: null,
+        basePriceSnapshot: null,
+        discount: 0,
+        stripeCustomerId: "cus_1",
+      },
     });
     await (svc as any).onCheckoutCompleted(session(null));
 
@@ -582,6 +988,7 @@ describe("onCheckoutCompleted — B445 planKey + basePriceSnapshot write", () =>
   it("(5) resolveCatalogPricing throwing does not crash the handler — planKey still gets written, basePriceSnapshot left unset", async () => {
     const pricing = {
       resolveCatalogPricing: jest.fn().mockRejectedValue(new Error("isCustom plan, no price")),
+      resolveTenantPricing: jest.fn().mockRejectedValue(new BadRequestException("no price")),
     };
     const { svc, prisma, events } = make({ transitionCount: 1, pricing });
 
@@ -604,6 +1011,7 @@ describe("onCheckoutCompleted — B445 planKey + basePriceSnapshot write", () =>
         basePriceSnapshot: 199, // the negotiated figure already on the row
         discount: 0,
         stripeSubId: null,
+        stripeCustomerId: "cus_1",
         priceOverrideMonthly: 199,
       },
     });
@@ -657,7 +1065,13 @@ describe("onCheckoutCompleted — B445 planKey + basePriceSnapshot write", () =>
 
     it("a subscription with no stored planKey is judged from the legacy Tenant.plan", async () => {
       const { svc, prisma, planTransition } = make({
-        sub: { tenantId: "t1", planKey: null, basePriceSnapshot: null, discount: 0 },
+        sub: {
+          tenantId: "t1",
+          planKey: null,
+          basePriceSnapshot: null,
+          discount: 0,
+          stripeCustomerId: "cus_1",
+        },
       });
       prisma.tenant.findUnique.mockResolvedValue({ plan: "PROFESSIONAL", planVersionId: null });
 
@@ -670,7 +1084,13 @@ describe("onCheckoutCompleted — B445 planKey + basePriceSnapshot write", () =>
 
     it("a replay: the stored key equals the checkout's plan, so the hook sees NO rank move (from == to)", async () => {
       const { svc, planTransition } = make({
-        sub: { tenantId: "t1", planKey: "GROWTH", basePriceSnapshot: 349, discount: 0 },
+        sub: {
+          tenantId: "t1",
+          planKey: "GROWTH",
+          basePriceSnapshot: 349,
+          discount: 0,
+          stripeCustomerId: "cus_1",
+        },
       });
 
       await (svc as any).onCheckoutCompleted(session("GROWTH"));
@@ -686,6 +1106,7 @@ describe("onCheckoutCompleted — B445 planKey + basePriceSnapshot write", () =>
         metadata: { tenantId: "t1", plan: "BUSINESS" },
         subscription: "sub_1",
         customer: "cus_1",
+        payment_status: "paid", // P0 hotfix: only a settled session activates
       });
 
       const [, transition] = planTransition.onPlanChange.mock.calls[0];
@@ -699,6 +1120,7 @@ describe("onCheckoutCompleted — B445 planKey + basePriceSnapshot write", () =>
         metadata: { tenantId: "t1", plan: "BUSINESS" }, // a legacy alias resolves to a canonical key
         subscription: "sub_1",
         customer: "cus_1",
+        payment_status: "paid", // P0 hotfix: only a settled session activates
       });
 
       const canonical = normalizePlanKey("BUSINESS")!;
@@ -715,6 +1137,7 @@ describe("onCheckoutCompleted — B445 planKey + basePriceSnapshot write", () =>
         metadata: { tenantId: "t1", plan: "BUSINESS" },
         subscription: "sub_1",
         customer: "cus_1",
+        payment_status: "paid", // P0 hotfix: only a settled session activates
       });
 
       const args = prisma.tenantSubscription.upsert.mock.calls[0][0];
@@ -739,7 +1162,7 @@ describe("onCheckoutCompleted — B445 planKey + basePriceSnapshot write", () =>
       expect(opts.timeout + opts.maxWait).toBeLessThan(10_000); // bounded: a slow restore times out and Stripe retries
     });
 
-    it("flag OFF: no extra tenant read, the hook is never consulted, and the upsert is the PLAIN one (no transaction)", async () => {
+    it("flag OFF: no extra tenant read, the hook is never consulted, and the upsert runs in the tenant-locked transaction (X1)", async () => {
       const { svc, prisma, tx, planTransition } = make({ transitionCount: 1 });
       planTransition.isEnabled.mockResolvedValue(false);
       planTransition.prepare.mockResolvedValue({ enabled: false, planAllows: null });
@@ -749,12 +1172,25 @@ describe("onCheckoutCompleted — B445 planKey + basePriceSnapshot write", () =>
       expect(prisma.tenant.findUnique).not.toHaveBeenCalled();
       expect(planTransition.prepare).not.toHaveBeenCalled();
       expect(planTransition.onPlanChange).not.toHaveBeenCalled();
-      // the write is exactly what it always was: called on the client itself, never through a tx
+      // X1: the SAME write, now inside a transaction whose first statement is the tenant row lock, so the
+      // duplicate-checkout re-check reads the stored subscription under it; still no hook, no CAS on the plan.
       expect(prisma.tenantSubscription.upsert).toHaveBeenCalledTimes(1);
-      expect(tx.tenantSubscription.upsert).not.toHaveBeenCalled();
+      expect(tx.tenantSubscription.upsert).toHaveBeenCalledTimes(1);
+      expect(tx.$queryRaw.mock.invocationCallOrder[0]).toBeLessThan(
+        tx.tenantSubscription.findUnique.mock.invocationCallOrder[0],
+      );
+      expect(tx.tenantSubscription.findUnique.mock.invocationCallOrder[0]).toBeLessThan(
+        tx.tenantSubscription.upsert.mock.invocationCallOrder[0],
+      );
+      // no compare-and-set: the only subscription updateMany is the reinstatement's dunning clear (SA-733r2 N5)
+      expect(
+        tx.tenantSubscription.updateMany.mock.calls.filter(
+          (c: any[]) => !("pausedAt" in c[0].data),
+        ),
+      ).toEqual([]);
     });
 
-    it("the flag flipped OFF between the two reads: still the plain upsert (prepared.enabled is false)", async () => {
+    it("the flag flipped OFF between the two reads: still no hook, the upsert in the locked transaction (prepared.enabled is false)", async () => {
       const { svc, prisma, tx, planTransition } = make({ transitionCount: 1 });
       planTransition.prepare.mockResolvedValue({ enabled: false, planAllows: null });
 
@@ -762,7 +1198,7 @@ describe("onCheckoutCompleted — B445 planKey + basePriceSnapshot write", () =>
 
       expect(planTransition.onPlanChange).not.toHaveBeenCalled();
       expect(prisma.tenantSubscription.upsert).toHaveBeenCalledTimes(1);
-      expect(tx.tenantSubscription.upsert).not.toHaveBeenCalled();
+      expect(tx.tenantSubscription.upsert).toHaveBeenCalledTimes(1);
     });
 
     it("a checkout that names no plan cannot move it: the hook is not consulted at all", async () => {
@@ -789,15 +1225,22 @@ describe("onCheckoutCompleted — B445 planKey + basePriceSnapshot write", () =>
         expect(tx.tenantSubscription.updateMany.mock.calls[0][0].where).toEqual({
           tenantId: "t1",
           planKey: "BUSINESS", // the stored key the transition was judged from
+          stripeSubId: null, // X1: and the subscription id the duplicate question was judged from
         });
         expect(prisma.tenantSubscription.upsert).not.toHaveBeenCalled();
         expect(emitted(events)).not.toContain(BILLING_EVENTS.SUBSCRIPTION_RESUMED);
         expect(prisma.auditLog.create).not.toHaveBeenCalled(); // no alarm row for the retryable conflict
       });
 
-      it("the CAS matches a NULL stored planKey as IS NULL, and a fresh tenant (no row) skips it", async () => {
+      it("the CAS matches a NULL stored planKey as IS NULL; a tenant with no subscription row is refused before any write (SA-690)", async () => {
         const nullKey = make({
-          sub: { tenantId: "t1", planKey: null, basePriceSnapshot: null, discount: 0 },
+          sub: {
+            tenantId: "t1",
+            planKey: null,
+            basePriceSnapshot: null,
+            discount: 0,
+            stripeCustomerId: "cus_1",
+          },
         });
         await (nullKey.svc as any).onCheckoutCompleted(withId());
         expect(nullKey.tx.tenantSubscription.updateMany.mock.calls[0][0].where.planKey).toBeNull();
@@ -810,18 +1253,69 @@ describe("onCheckoutCompleted — B445 planKey + basePriceSnapshot write", () =>
 
       it("MAJOR 2: a redelivery of an already-applied session does NOTHING (no hook, no write)", async () => {
         const { svc, prisma, tx, planTransition, events } = make({ transitionCount: 1 });
-        prisma.auditLog.findFirst.mockResolvedValue({ id: "a1" });
+        // only the APPLIED marker exists (the sticky DUPLICATE lookup finds nothing)
+        prisma.auditLog.findFirst.mockImplementation(async ({ where }: any) =>
+          where.action === "STRIPE_CHECKOUT_APPLIED" ? { id: "a1" } : null,
+        );
 
         await (svc as any).onCheckoutCompleted(withId("cs_done"));
 
-        expect(prisma.auditLog.findFirst.mock.calls[0][0].where).toMatchObject({
-          tenantId: "t1",
-          entityId: "cs_done",
-        });
+        const applied = prisma.auditLog.findFirst.mock.calls.find(
+          (c: any[]) => c[0].where.action === "STRIPE_CHECKOUT_APPLIED",
+        );
+        expect(applied?.[0].where).toMatchObject({ tenantId: "t1", entityId: "cs_done" });
         expect(planTransition.onPlanChange).not.toHaveBeenCalled();
         expect(prisma.tenantSubscription.upsert).not.toHaveBeenCalled();
         expect(emitted(events)).toEqual([]);
         expect(tx.auditLog.create).not.toHaveBeenCalled();
+      });
+
+      // SA-736r F2/M3: the coupon sync rides the checkout completion, LAST - and a redelivery that finds the
+      // session already applied STILL syncs (idempotent), so a sync that threw after the upsert is retried.
+      it("SA-736r F2: a redelivery of an already-applied session re-syncs the coupon (retrieve by id, then the preview)", async () => {
+        const stored = {
+          tenantId: "t1",
+          planKey: "BUSINESS",
+          basePriceSnapshot: 349,
+          discount: 0,
+          stripeSubId: "sub_1",
+          stripeCustomerId: "cus_1",
+        };
+        const { svc, prisma, stripe } = make({ transitionCount: 1, sub: stored });
+        prisma.auditLog.findFirst.mockImplementation(async ({ where }: any) =>
+          where.action === "STRIPE_CHECKOUT_APPLIED" ? { id: "a1" } : null,
+        );
+        await (svc as any).onCheckoutCompleted(withId("cs_done"));
+        expect(stripe.retrieveSubscriptionWithDiscounts).toHaveBeenCalledWith("sub_1");
+        expect(stripe.previewNextInvoice).toHaveBeenCalledWith("sub_1");
+      });
+
+      it("SA-736r M3: a first-time completion syncs LAST (after the activation crossing), and a throwing sync fails the webhook", async () => {
+        const stored = {
+          tenantId: "t1",
+          planKey: "BUSINESS",
+          basePriceSnapshot: 349,
+          discount: 0,
+          stripeSubId: "sub_1",
+          stripeCustomerId: "cus_1",
+        };
+        const { svc, stripe, mutations } = make({ transitionCount: 1, sub: stored });
+        const order: string[] = [];
+        mutations.adoptCheckoutAddons.mockImplementation(async () => {
+          order.push("adopt");
+        });
+        stripe.retrieveSubscriptionWithDiscounts.mockImplementation(async () => {
+          order.push("sync");
+          return { id: "sub_1", status: "active", discounts: [] };
+        });
+        await (svc as any).onCheckoutCompleted(withId("cs_new"));
+        expect(order).toEqual(["adopt", "sync"]);
+
+        const bad = make({ transitionCount: 1, sub: stored });
+        bad.stripe.retrieveSubscriptionWithDiscounts.mockRejectedValue(new Error("Stripe timeout"));
+        await expect((bad.svc as any).onCheckoutCompleted(withId("cs_bad2"))).rejects.toThrow(
+          "Stripe timeout",
+        );
       });
 
       it("drops the feature caches AFTER the transaction commits, and not for a redelivery or a failed tx", async () => {
@@ -843,7 +1337,9 @@ describe("onCheckoutCompleted — B445 planKey + basePriceSnapshot write", () =>
         );
 
         const dup = make({ transitionCount: 1 });
-        dup.prisma.auditLog.findFirst.mockResolvedValue({ id: "a1" });
+        dup.prisma.auditLog.findFirst.mockImplementation(async ({ where }: any) =>
+          where.action === "STRIPE_CHECKOUT_APPLIED" ? { id: "a1" } : null,
+        );
         await (dup.svc as any).onCheckoutCompleted(withId("cs_done"));
         expect(dup.planTransition.invalidateCaches).not.toHaveBeenCalled();
 
@@ -883,6 +1379,35 @@ describe("onCheckoutCompleted — B445 planKey + basePriceSnapshot write", () =>
           action: "STRIPE_CHECKOUT_PLAN_SKIPPED_STALE",
           meta: { requestedPlanKey: "GROWTH" },
         });
+      });
+
+      it("P0: settling a session that ALREADY linked itself never re-judges the plan: no stale query, no false 'plan not changed' email, no plan re-write", async () => {
+        const { svc, prisma, planTransition } = make({ transitionCount: 1 });
+        // an unresolvable price is now alerted (go-live M3): this test is about something else
+        jest
+          .spyOn(svc, "syncStripeSubscriptionPrice")
+          .mockResolvedValue({ synced: true, unchanged: true });
+        prisma.tenantSubscription.findUnique.mockResolvedValue({
+          tenantId: "t1",
+          planKey: "GROWTH",
+          basePriceSnapshot: 349,
+          discount: 0,
+          stripeCustomerId: "cus_1",
+          stripeSubId: "sub_1", // THIS session's own subscription, linked by its unpaid completion
+        });
+        // that unpaid delivery's own downgrade snapshot is "newer than the session was created"
+        prisma.tenantFeatureConfigSnapshot.findFirst.mockResolvedValue({ id: "snap-own" });
+
+        await (svc as any).onCheckoutCompleted(withId("cs_ach", { created: 1_700_000_000 }));
+
+        expect(prisma.tenantFeatureConfigSnapshot.findFirst).not.toHaveBeenCalled();
+        expect(planTransition.onPlanChange).not.toHaveBeenCalled();
+        expect(
+          (svc as any).billingNotification.notifyCheckoutPlanNotApplied,
+        ).not.toHaveBeenCalled();
+        const update = prisma.tenantSubscription.upsert.mock.calls[0][0].update;
+        expect(update).not.toHaveProperty("planKey");
+        expect(prisma.auditLog.create).not.toHaveBeenCalled(); // no STALE row
       });
 
       it("MAJOR 4: an unknown tenant is REFUSED (nothing written), not warned-and-upserted", async () => {
@@ -1108,7 +1633,17 @@ describe("onCheckoutCompleted — B445 planKey + basePriceSnapshot write", () =>
 
         await (svc as any).onCheckoutCompleted(withId("cs_order"));
 
-        expect(order).toEqual(["advisory", "hook", "tenant-lock", "cas", "sub-write", "audit"]);
+        // The checkout tx ends at "audit". The reinstatement that follows it (transitionAndEmit -> the one path to
+        // ACTIVE, SA-733r2 N5) also clears the dunning clock on the subscription row, which this mock records as one
+        // more "cas" AFTER the checkout tx - it is not part of the order this test pins.
+        expect(order.slice(0, 6)).toEqual([
+          "advisory",
+          "hook",
+          "tenant-lock",
+          "cas",
+          "sub-write",
+          "audit",
+        ]);
       });
 
       it("#2560: a single 40P01 on the checkout tx is retried and the checkout applies once, no alarm row", async () => {
@@ -1164,6 +1699,7 @@ describe("onCheckoutCompleted — B445 planKey + basePriceSnapshot write", () =>
           metadata: { tenantId: "t1" },
           subscription: "sub_1",
           customer: "cus_1",
+          payment_status: "paid", // P0 hotfix: only a settled session activates
           id: "cs_np",
         };
 
@@ -1191,17 +1727,37 @@ describe("onCheckoutCompleted — B445 planKey + basePriceSnapshot write", () =>
         });
       });
 
-      it("flag OFF: none of the guards read anything — no audit lookup, no snapshot lookup, no tenant read, plain upsert", async () => {
+      it("flag OFF: none of the flag-ON guards read anything — no snapshot lookup, no tenant read; the only audit reads are the sticky duplicate decision and the session's APPLIED marker (both read for every flag state, S2)", async () => {
         const { svc, prisma, tx, planTransition } = make({ transitionCount: 1 });
+        // an unresolvable price is now alerted (go-live M3): this test is about something else
+        jest
+          .spyOn(svc, "syncStripeSubscriptionPrice")
+          .mockResolvedValue({ synced: true, unchanged: true });
         planTransition.isEnabled.mockResolvedValue(false);
 
         await (svc as any).onCheckoutCompleted(withId("cs_off", { created: 1 }));
 
-        expect(prisma.auditLog.findFirst).not.toHaveBeenCalled();
+        // X1 + S2: the only audit lookups are the session's sticky DUPLICATE decision and its APPLIED marker (a
+        // session that was already applied is never judged a duplicate), read for every flag state
+        expect(
+          prisma.auditLog.findFirst.mock.calls.every((c: any[]) =>
+            ["STRIPE_CHECKOUT_DUPLICATE", "STRIPE_CHECKOUT_APPLIED"].includes(c[0].where.action),
+          ),
+        ).toBe(true);
         expect(prisma.tenantFeatureConfigSnapshot.findFirst).not.toHaveBeenCalled();
         expect(prisma.tenant.findUnique).not.toHaveBeenCalled();
-        expect(tx.tenantSubscription.updateMany).not.toHaveBeenCalled(); // no CAS, no tx write
-        expect(tx.auditLog.create).not.toHaveBeenCalled();
+        // no CAS, no tx write (the reinstatement's dunning clear is the one subscription updateMany, SA-733r2 N5)
+        expect(
+          tx.tenantSubscription.updateMany.mock.calls.filter(
+            (c: any[]) => !("pausedAt" in c[0].data),
+          ),
+        ).toEqual([]);
+        // B1157: the plain apply tx writes the APPLIED marker (and nothing else) — every apply path does
+        expect(tx.auditLog.create).toHaveBeenCalledTimes(1);
+        expect(tx.auditLog.create.mock.calls[0][0].data).toMatchObject({
+          action: "STRIPE_CHECKOUT_APPLIED",
+          entityId: "cs_off",
+        });
         expect(prisma.tenantSubscription.upsert).toHaveBeenCalledTimes(1);
       });
     });
@@ -1232,10 +1788,12 @@ describe("B216 — a Stripe reinstatement LEAVES a downgrade scheduled before th
     planKey: "BUSINESS",
     basePriceSnapshot: 349,
     discount: 0,
-    stripeSubId: null,
+    stripeSubId: "sub_1",
+    stripeCustomerId: "cus_1",
     downgradeToPlanKey: "STARTER",
     downgradeEffectiveAt: new Date("2026-08-01T00:00:00.000Z"),
     retainedUserIds: ["u-keep"],
+    tenant: { status: "SUSPENDED", readOnlyReason: null }, // F4: a lapsed payer is what a payment reinstates
     ...over,
   });
   // The tenantSubscription.update call that touches the downgrade schedule, if any.
@@ -1251,11 +1809,12 @@ describe("B216 — a Stripe reinstatement LEAVES a downgrade scheduled before th
     metadata: { tenantId: "t1" },
     subscription: "sub_1",
     customer: "cus_1",
+    payment_status: "paid", // P0 hotfix: only a settled session activates
   };
 
   it("REG-B216 onPaymentSucceeded reinstatement (CAS won) leaves the armed downgrade ALONE and names it on the resume event", async () => {
     const { svc, prisma, events } = make({ sub: armedSub(), transitionCount: 1 });
-    await (svc as any).onPaymentSucceeded({ customer: "cus_1" });
+    await (svc as any).onPaymentSucceeded(OWN_INVOICE);
     // RED before the ruling: this wrote {downgradeToPlanKey: null, ...}.
     expect(disarmCall(prisma)).toBeUndefined();
     expect(resumedMeta(events)).toMatchObject({
@@ -1278,7 +1837,7 @@ describe("B216 — a Stripe reinstatement LEAVES a downgrade scheduled before th
 
   it("REG-B216 a reinstatement with a live Stripe sub writes ONLY the period update — no schedule write at all", async () => {
     const { svc, prisma } = make({ sub: armedSub({ stripeSubId: "sub_1" }), transitionCount: 1 });
-    await (svc as any).onPaymentSucceeded({ customer: "cus_1" });
+    await (svc as any).onPaymentSucceeded(OWN_INVOICE);
     expect(
       prisma.tenantSubscription.update.mock.calls.map((c: any[]) => Object.keys(c[0].data).sort()),
     ).toEqual([["periodEnd", "periodStart"]]);
@@ -1289,7 +1848,7 @@ describe("B216 — a Stripe reinstatement LEAVES a downgrade scheduled before th
       sub: armedSub({ downgradeToPlanKey: null, downgradeEffectiveAt: null }),
       transitionCount: 1,
     });
-    await (svc as any).onPaymentSucceeded({ customer: "cus_1" });
+    await (svc as any).onPaymentSucceeded(OWN_INVOICE);
     const meta = resumedMeta(events);
     expect(meta).not.toHaveProperty("downgradeLeftArmed");
     expect(meta).not.toHaveProperty("downgradeEffectiveAt");
@@ -1303,14 +1862,14 @@ describe("B216 — a Stripe reinstatement LEAVES a downgrade scheduled before th
       sub: armedSub({ planKey: null, basePriceSnapshot: null }),
       transitionCount: 1,
     });
-    await (svc as any).onPaymentSucceeded({ customer: "cus_1" });
+    await (svc as any).onPaymentSucceeded(OWN_INVOICE);
     expect(emitted(events)).not.toContain(BILLING_EVENTS.SUBSCRIPTION_RESUMED);
     expect(disarmCall(prisma)).toBeUndefined();
   });
 
   it("pin B216: an ordinary renewal (CAS count 0) leaves a scheduled downgrade armed", async () => {
     const { svc, prisma } = make({ sub: armedSub({ stripeSubId: "sub_1" }), transitionCount: 0 });
-    await (svc as any).onPaymentSucceeded({ customer: "cus_1" });
+    await (svc as any).onPaymentSucceeded(OWN_INVOICE);
     expect(disarmCall(prisma)).toBeUndefined();
   });
 
@@ -1322,7 +1881,7 @@ describe("B216 — a Stripe reinstatement LEAVES a downgrade scheduled before th
 
   it("pin B216: a reinstatement emits SUBSCRIPTION_RESUMED exactly once (no resume() double emit)", async () => {
     const { svc, events } = make({ sub: armedSub(), transitionCount: 1 });
-    await (svc as any).onPaymentSucceeded({ customer: "cus_1" });
+    await (svc as any).onPaymentSucceeded(OWN_INVOICE);
     expect(
       emitted(events).filter((t: string) => t === BILLING_EVENTS.SUBSCRIPTION_RESUMED),
     ).toHaveLength(1);
@@ -1335,7 +1894,7 @@ describe("B216 — a Stripe reinstatement LEAVES a downgrade scheduled before th
   it("pin B216: suspending an overdue tenant leaves a scheduled downgrade armed", async () => {
     const { svc, prisma, tx } = make({
       sub: armedSub({ stripeSubId: "sub_1" }),
-      stripeStatus: "unpaid",
+      stripeStatus: "canceled",
       transitionCount: 1,
     });
     await svc.suspendOverdueTenants();
@@ -1418,6 +1977,7 @@ describe("BillingService.syncStripeSubscriptionPrice", () => {
           provide: PlanTransitionConfigService,
           useValue: { prepare: jest.fn(), onPlanChange: jest.fn() },
         },
+        { provide: SubscriptionMutationService, useValue: mutationsStub() },
       ],
     }).compile();
 
@@ -1494,7 +2054,9 @@ describe("BillingService.syncStripeSubscriptionPrice", () => {
   });
 
   it("is a no-op ({ synced: false, reason: 'price_unresolvable' }) when no price resolves, instead of throwing", async () => {
-    pricing.resolveTenantPricing.mockRejectedValue(new Error("No price is resolvable"));
+    pricing.resolveTenantPricing.mockRejectedValue(
+      new BadRequestException("No price is resolvable"),
+    );
 
     const result = await service.syncStripeSubscriptionPrice("t1");
 
@@ -1502,6 +2064,334 @@ describe("BillingService.syncStripeSubscriptionPrice", () => {
     // (or 400) the caller — it reports itself as unsynced.
     expect(result).toEqual({ synced: false, reason: "price_unresolvable" });
     expect(stripe.updateSubscription).not.toHaveBeenCalled();
+  });
+
+  // SA-733 D8 / M7: the push takes an explicit proration mode, carries a deterministic idempotency key, never
+  // skips a live past_due / unpaid subscription, and survives a lost response.
+  describe("SA-733 D8/M7 — effective mode, idempotency key, live statuses", () => {
+    const liveSub = (status: string, priceId = "price_old") => ({
+      status,
+      items: {
+        data: [
+          {
+            id: "si_1",
+            price: {
+              id: priceId,
+              unit_amount: 10000,
+              recurring: { interval: "month" },
+              product: "prod_1",
+            },
+          },
+        ],
+      },
+    });
+    const arrange = (status = "active") => {
+      prisma.tenantSubscription.findUnique.mockResolvedValue({
+        tenantId: "t1",
+        stripeSubId: "sub_1",
+        billingInterval: "month",
+        planKey: "GROWTH",
+        basePriceSnapshot: 150,
+        tenant: { status: "ACTIVE", deletedAt: null, class: "PRODUCTION" },
+      });
+      stripe.getSubscription.mockResolvedValue(liveSub(status));
+      pricing.checkoutPriceData.mockResolvedValue({
+        currency: "usd",
+        product_data: { name: "RouteFlow Growth — monthly" },
+        unit_amount: 15000,
+        recurring: { interval: "month" },
+      });
+    };
+
+    it("now_prorated sends create_prorations; next_cycle and the default send none", async () => {
+      arrange();
+      await service.syncStripeSubscriptionPrice("t1", { effective: "now_prorated" });
+      await service.syncStripeSubscriptionPrice("t1", { effective: "next_cycle" });
+      await service.syncStripeSubscriptionPrice("t1");
+      const modes = stripe.updateSubscription.mock.calls.map((c) => c[1].proration_behavior);
+      expect(modes).toEqual(["create_prorations", "none", "none"]);
+    });
+
+    it("a proposed override prices the push (checkoutPriceData gets it); no proposal leaves the call as before", async () => {
+      arrange();
+      const proposed = { monthly: 150, annual: null };
+      await service.syncStripeSubscriptionPrice("t1", { proposed });
+      expect(pricing.checkoutPriceData).toHaveBeenLastCalledWith("t1", "month", proposed);
+      await service.syncStripeSubscriptionPrice("t1");
+      expect(pricing.checkoutPriceData).toHaveBeenLastCalledWith("t1", "month");
+    });
+
+    it("every Stripe update carries an idempotency key: tenant, price-override, cents, effective, row version, item price", async () => {
+      arrange();
+      const version = new Date("2026-10-01T12:00:00.000Z");
+      await service.syncStripeSubscriptionPrice("t1", { effective: "now_prorated", version });
+      const [, , options] = stripe.updateSubscription.mock.calls[0];
+      // L3: ... plus a per-ATTEMPT nonce (Stripe replays a cached 5xx for 24 h under a repeated key).
+      expect(options.idempotencyKey).toMatch(
+        new RegExp(
+          `^t1:price-override:15000:create_prorations:v${version.getTime()}:price_old:[0-9a-f-]{36}$`,
+        ),
+      );
+    });
+
+    it("L4: the structured push line (tenant, key, prior/new cents, proration) is logged BEFORE the Stripe write", async () => {
+      arrange();
+      const log = jest.spyOn(Logger.prototype, "log").mockImplementation(() => undefined);
+      await service.syncStripeSubscriptionPrice("t1", { effective: "now_prorated" });
+      const idx = log.mock.calls.findIndex((c) =>
+        String(c[0]).startsWith("billing.price_override.push"),
+      );
+      expect(idx).toBeGreaterThanOrEqual(0);
+      const line = String(log.mock.calls[idx][0]);
+      const [, , options] = stripe.updateSubscription.mock.calls[0];
+      expect(JSON.parse(line.slice(line.indexOf("{")))).toMatchObject({
+        tenantId: "t1",
+        idempotencyKey: options.idempotencyKey,
+        proration: "create_prorations",
+      });
+      expect(log.mock.invocationCallOrder[idx]).toBeLessThan(
+        stripe.updateSubscription.mock.invocationCallOrder[0],
+      );
+      log.mockRestore();
+    });
+
+    describe("SA-733r3 N4 — needsReconcile around the Stripe price write", () => {
+      beforeEach(() => {
+        (armNeedsReconcile as jest.Mock).mockClear();
+        (clearNeedsReconcile as jest.Mock).mockClear();
+      });
+
+      it("is armed BEFORE subscriptions.update (key + stripe sub), and cleared once the ledger half has landed", async () => {
+        arrange();
+        const order: string[] = [];
+        (armNeedsReconcile as jest.Mock).mockImplementationOnce(async () => {
+          order.push("arm");
+          return { owned: true };
+        });
+        stripe.updateSubscription.mockImplementationOnce(async () => {
+          order.push("stripe.update");
+          return {};
+        });
+        (clearNeedsReconcile as jest.Mock).mockImplementationOnce(async () => {
+          order.push("clear");
+        });
+
+        const result = await service.syncStripeSubscriptionPrice("t1", { effective: "next_cycle" });
+
+        expect(order).toEqual(["arm", "stripe.update", "clear"]);
+        const [, armArgs] = (armNeedsReconcile as jest.Mock).mock.calls[0];
+        expect(armArgs).toMatchObject({
+          tenantId: "t1",
+          kind: "price_override",
+          stripeSubId: "sub_1",
+        });
+        expect(armArgs.key).toBe(stripe.updateSubscription.mock.calls[0][2].idempotencyKey);
+        expect((clearNeedsReconcile as jest.Mock).mock.calls[0][2]).toEqual(result.reconcile);
+      });
+
+      it("a flag that cannot be written sends NOTHING to Stripe and reads as a push failure (the caller refuses)", async () => {
+        arrange();
+        (armNeedsReconcile as jest.Mock).mockRejectedValueOnce(new Error("db down"));
+        const result = await service.pushResolvedPriceToStripe("t1");
+        expect(result).toEqual({ synced: false, reason: "reconcile_flag_failed" });
+        expect(isPricePushFailure(result)).toBe(true);
+        expect(stripe.updateSubscription).not.toHaveBeenCalled();
+      });
+
+      it("a Stripe write that failed and was NOT applied lowers the attempt's own flag", async () => {
+        arrange();
+        stripe.updateSubscription.mockRejectedValue(new Error("socket hang up"));
+        await service.pushResolvedPriceToStripe("t1");
+        expect(clearNeedsReconcile).toHaveBeenCalledWith(expect.anything(), "t1", { owned: true });
+      });
+
+      it("an unchanged price arms nothing (no Stripe write)", async () => {
+        arrange();
+        pricing.checkoutPriceData.mockResolvedValue({
+          currency: "usd",
+          product_data: { name: "x" },
+          unit_amount: 10000,
+          recurring: { interval: "month" },
+        });
+        await service.pushResolvedPriceToStripe("t1");
+        expect(armNeedsReconcile).not.toHaveBeenCalled();
+      });
+    });
+
+    it("the key differs for a different amount, mode or row version — a later change is never swallowed", async () => {
+      arrange();
+      const keys: string[] = [];
+      const run = async (opts: any, cents = 15000) => {
+        pricing.checkoutPriceData.mockResolvedValue({
+          currency: "usd",
+          product_data: { name: "x" },
+          unit_amount: cents,
+          recurring: { interval: "month" },
+        });
+        await service.syncStripeSubscriptionPrice("t1", opts);
+        keys.push(stripe.updateSubscription.mock.calls.at(-1)![2].idempotencyKey);
+      };
+      await run({ version: new Date(1000) });
+      await run({ version: new Date(1000) }); // an identical retry: same CHANGE, a fresh attempt nonce
+      await run({ version: new Date(2000) });
+      await run({ version: new Date(1000), effective: "now_prorated" });
+      await run({ version: new Date(1000) }, 16000);
+      const change = (k: string) => k.replace(/:[0-9a-f-]{36}$/, "");
+      expect(change(keys[0])).toBe(change(keys[1]));
+      expect(keys[0]).not.toBe(keys[1]); // L3: never replay a cached 5xx
+      expect(new Set(keys.map(change)).size).toBe(4);
+    });
+
+    it("the amount sent is whole cents from the shared helper (19.99 dollars -> 1999)", async () => {
+      arrange();
+      pricing.checkoutPriceData.mockResolvedValue({
+        currency: "usd",
+        product_data: { name: "x" },
+        unit_amount: toCents(19.99),
+        recurring: { interval: "month" },
+      });
+      await service.syncStripeSubscriptionPrice("t1");
+      const item = stripe.updateSubscription.mock.calls[0][1].items[0];
+      expect(item.price_data.unit_amount).toBe(1999);
+    });
+
+    it.each(["past_due", "unpaid"])(
+      "M7: a %s subscription is repriced, and takes the change at the NEXT invoice even for now_prorated",
+      async (status) => {
+        arrange(status);
+        const result = await service.syncStripeSubscriptionPrice("t1", {
+          effective: "now_prorated",
+        });
+        expect(result.synced).toBe(true);
+        expect(stripe.updateSubscription).toHaveBeenCalledTimes(1);
+        expect(stripe.updateSubscription.mock.calls[0][1].proration_behavior).toBe("none");
+        expect(result.proration).toBe("none");
+      },
+    );
+
+    it("M7 / lead R2: a trialing subscription is repriced but takes proration none even when now_prorated is asked (no paid period to prorate)", async () => {
+      arrange("trialing");
+      const result = await service.syncStripeSubscriptionPrice("t1", { effective: "now_prorated" });
+      expect(result.synced).toBe(true);
+      expect(stripe.updateSubscription.mock.calls[0][1].proration_behavior).toBe("none");
+    });
+
+    it.each(["canceled", "incomplete", "incomplete_expired", "paused"])(
+      "M7 pin: a %s subscription is not live — nothing is sent to Stripe",
+      async (status) => {
+        arrange(status);
+        const result = await service.syncStripeSubscriptionPrice("t1");
+        expect(result).toEqual({ synced: false, reason: `subscription_not_active_${status}` });
+        expect(stripe.updateSubscription).not.toHaveBeenCalled();
+      },
+    );
+
+    it("M7 pin: a manual-pay tenant (no stripeSubId) never reaches Stripe", async () => {
+      prisma.tenantSubscription.findUnique.mockResolvedValue({
+        tenantId: "t1",
+        stripeSubId: null,
+        billingInterval: "month",
+      });
+      const result = await service.syncStripeSubscriptionPrice("t1", { effective: "now_prorated" });
+      expect(result).toEqual({ synced: false, reason: "no_active_stripe_subscription" });
+      expect(stripe.getSubscription).not.toHaveBeenCalled();
+      expect(stripe.updateSubscription).not.toHaveBeenCalled();
+    });
+
+    it("a Stripe update failure is reported as stripe_update_failed (the caller refuses the local write)", async () => {
+      arrange();
+      stripe.updateSubscription.mockRejectedValue(new Error("stripe down"));
+      const result = await service.pushResolvedPriceToStripe("t1");
+      expect(result).toEqual({ synced: false, reason: "stripe_update_failed" });
+    });
+
+    // Item 3: a lost RESPONSE. Stripe may have applied the update although the call threw.
+    it("a thrown update whose item already bills the NEW amount is treated as applied", async () => {
+      arrange();
+      stripe.updateSubscription.mockRejectedValue(new Error("socket hang up"));
+      stripe.getSubscription
+        .mockResolvedValueOnce(liveSub("active")) // the read before the update
+        .mockResolvedValueOnce({
+          status: "active",
+          items: {
+            data: [
+              {
+                id: "si_1",
+                price: { id: "price_new", unit_amount: 15000, recurring: { interval: "month" } },
+              },
+            ],
+          },
+        }); // the re-read after the lost response
+      const result = await service.pushResolvedPriceToStripe("t1");
+      expect(result).toMatchObject({ synced: true, newAmount: 150 });
+    });
+
+    it("a thrown update whose item still bills the OLD amount (or cannot be re-read) stays a failure", async () => {
+      arrange();
+      stripe.updateSubscription.mockRejectedValue(new Error("socket hang up"));
+      expect(await service.pushResolvedPriceToStripe("t1")).toEqual({
+        synced: false,
+        reason: "stripe_update_failed",
+      });
+      stripe.getSubscription
+        .mockResolvedValueOnce(liveSub("active"))
+        .mockRejectedValueOnce(new Error("still down"));
+      expect(await service.pushResolvedPriceToStripe("t1")).toEqual({
+        synced: false,
+        reason: "stripe_update_failed",
+      });
+    });
+
+    // Item 9: nothing to change.
+    it("an item that already bills the target cents is not touched, even for now_prorated", async () => {
+      arrange();
+      pricing.checkoutPriceData.mockResolvedValue({
+        currency: "usd",
+        product_data: { name: "x" },
+        unit_amount: 10000, // the item already bills 10000
+        recurring: { interval: "month" },
+      });
+      const result = await service.pushResolvedPriceToStripe("t1", { effective: "now_prorated" });
+      expect(result).toMatchObject({ synced: true, unchanged: true, proration: "none" });
+      expect(stripe.updateSubscription).not.toHaveBeenCalled();
+    });
+
+    // Item 7: the key is on the proration SENT.
+    it("the key follows the proration actually sent: now_prorated on a past_due sub equals next_cycle", async () => {
+      arrange("past_due");
+      await service.pushResolvedPriceToStripe("t1", { effective: "now_prorated" });
+      await service.pushResolvedPriceToStripe("t1", { effective: "next_cycle" });
+      const [a, b] = stripe.updateSubscription.mock.calls.map((c) =>
+        c[2].idempotencyKey.replace(/:[0-9a-f-]{36}$/, ""),
+      );
+      expect(a).toBe(b);
+      expect(a).toContain(":none:");
+    });
+
+    // Item 8: with a live stripeSubId these skips are reported (the caller refuses the local write).
+    it("a live subscription with no base item reports no_base_item", async () => {
+      arrange();
+      stripe.getSubscription.mockResolvedValue({ status: "active", items: { data: [] } });
+      const result = await service.pushResolvedPriceToStripe("t1");
+      expect(result.synced).toBe(false);
+      expect(["no_subscription_item", "no_base_item"]).toContain(result.reason);
+    });
+
+    it("{ pushed } skips the Stripe half: only the ledger reconciles", async () => {
+      arrange();
+      prisma.tenantSubscription.findUnique.mockResolvedValue({
+        tenantId: "t1",
+        planKey: "GROWTH",
+        basePriceSnapshot: 100, // resolved monthly is 150 -> the ledger half moves it
+        tenant: { status: "ACTIVE", deletedAt: null, class: "PRODUCTION" },
+      });
+      await service.syncStripeSubscriptionPrice("t1", {
+        pushed: { synced: true, oldAmount: 100, newAmount: 150 },
+      });
+      expect(stripe.getSubscription).not.toHaveBeenCalled();
+      expect(stripe.updateSubscription).not.toHaveBeenCalled();
+      expect(prisma.tenantSubscription.updateMany).toHaveBeenCalled();
+    });
   });
 
   // #2509: reconcilePriceLedger is ONE transaction — read, compare-and-set on the (planKey, snapshot) it
@@ -1788,6 +2678,7 @@ describe("#2436 Stripe API dahlia — the subscription period lives on items", (
   const END = new Date(1_702_000_000 * 1000);
   const dahlia = (extra: Record<string, unknown> = {}) => ({
     status: "active",
+    customer: "cus_1",
     items: { data: [{ current_period_start: 1_700_000_000, current_period_end: 1_702_000_000 }] },
     ...extra,
   });
@@ -1799,6 +2690,7 @@ describe("#2436 Stripe API dahlia — the subscription period lives on items", (
       metadata: { tenantId: "t1" },
       subscription: "sub_1",
       customer: "cus_1",
+      payment_status: "paid", // P0 hotfix: only a settled session activates
     });
     const args = prisma.tenantSubscription.upsert.mock.calls[0][0];
     expect(args.update.stripeSubId).toBe("sub_1");
@@ -1810,7 +2702,7 @@ describe("#2436 Stripe API dahlia — the subscription period lives on items", (
 
   it("customer.subscription.updated reads a dahlia payload's period from items", async () => {
     const { svc, prisma } = make({ sub: LIVE_SUB });
-    await (svc as any).onSubscriptionUpdated({
+    await updated(svc, {
       ...SUB_EVT,
       cancel_at_period_end: false,
       ...dahlia(),
@@ -1832,7 +2724,7 @@ describe("#2436 Stripe API dahlia — the subscription period lives on items", (
       },
     });
     stripe.getSubscription.mockResolvedValue(dahlia());
-    await (svc as any).onPaymentSucceeded({ customer: "cus_1" });
+    await (svc as any).onPaymentSucceeded(OWN_INVOICE);
     const periodWrite = prisma.tenantSubscription.update.mock.calls.find(
       (c: any[]) => c[0].data?.periodStart !== undefined,
     );
@@ -1841,7 +2733,7 @@ describe("#2436 Stripe API dahlia — the subscription period lives on items", (
 
   it("a subscription with no period anywhere writes NO period fields (never an Invalid Date)", async () => {
     const { svc, prisma } = make({ sub: LIVE_SUB });
-    await (svc as any).onSubscriptionUpdated({ ...SUB_EVT, cancel_at_period_end: false });
+    await updated(svc, { ...SUB_EVT, cancel_at_period_end: false });
     const data = prisma.tenantSubscription.update.mock.calls[0][0].data;
     expect(data).not.toHaveProperty("periodStart");
     expect(data).not.toHaveProperty("periodEnd");
@@ -1849,7 +2741,7 @@ describe("#2436 Stripe API dahlia — the subscription period lives on items", (
 
   it("a pre-dahlia payload (top-level period, older endpoint version) still reads its period", async () => {
     const { svc, prisma } = make({ sub: LIVE_SUB });
-    await (svc as any).onSubscriptionUpdated({
+    await updated(svc, {
       ...SUB_EVT,
       cancel_at_period_end: false,
       current_period_start: 1_700_000_000,
@@ -1925,7 +2817,7 @@ describe("#2440 subscription upkeep — match by subscription id, status mapping
       });
       await (svc as any).onSubscriptionDeleted(SUB_EVT);
       expect(prisma.tenant.updateMany.mock.calls[0][0]).toEqual({
-        where: { id: "t1", status: "SUSPENDED" },
+        where: { id: "t1", status: "SUSPENDED", class: "PRODUCTION" },
         data: { status: "CANCELLED" },
       });
       // Suspension (cron or platform admin) already booked the −MRR; cancelling books nothing.
@@ -1970,7 +2862,7 @@ describe("#2440 subscription upkeep — match by subscription id, status mapping
 
     it("looks the row up by the subscription id", async () => {
       const { svc, prisma } = make({ sub: LIVE_SUB });
-      await (svc as any).onSubscriptionUpdated(upd("active"));
+      await updated(svc, upd("active"));
       expect(prisma.tenantSubscription.findFirst.mock.calls[0][0].where).toEqual({
         stripeSubId: "sub_1",
       });
@@ -1978,9 +2870,9 @@ describe("#2440 subscription upkeep — match by subscription id, status mapping
 
     it("status canceled behaves as deleted: ACTIVE ⇒ CANCELLED with one −MRR delta", async () => {
       const { svc, tx, events } = make({ transitionCount: 1, sub: LIVE_SUB });
-      await (svc as any).onSubscriptionUpdated(upd("canceled"));
+      await updated(svc, upd("canceled"));
       expect(tx.tenant.updateMany.mock.calls[0][0]).toMatchObject({
-        where: { id: "t1", status: "ACTIVE" },
+        where: { id: "t1", status: "ACTIVE", class: "PRODUCTION" }, // SA-775 S3: the judged class is part of the CAS
         data: { status: "CANCELLED" },
       });
       expect(deltaOf(events, BILLING_EVENTS.SUBSCRIPTION_CANCELED)).toBe(-349);
@@ -1994,7 +2886,7 @@ describe("#2440 subscription upkeep — match by subscription id, status mapping
           plainCasCount: 1,
           sub: LIVE_SUB,
         });
-        await (svc as any).onSubscriptionUpdated(upd(status));
+        await updated(svc, upd(status));
         expect(tx.tenant.updateMany).not.toHaveBeenCalled();
         expect(prisma.tenant.updateMany).not.toHaveBeenCalled();
         expect(prisma.tenant.update).not.toHaveBeenCalled();
@@ -2002,18 +2894,106 @@ describe("#2440 subscription upkeep — match by subscription id, status mapping
       },
     );
 
+    // F1 (a): the webhook payload's state is never trusted - a STALE event redelivered after a renewal must not
+    // re-arm a cancel. The handler re-fetches the subscription and writes only the FETCHED object's state.
+    describe("F1(a): re-fetch, never the payload", () => {
+      const fetched = (stripe: any, over: Record<string, unknown>) =>
+        stripe.getSubscription.mockResolvedValue({
+          id: "sub_1",
+          customer: "cus_1",
+          status: "active",
+          cancel_at_period_end: false,
+          items: {
+            data: [
+              {
+                id: "si_base",
+                current_period_start: 1_800_000_000,
+                current_period_end: 1_802_000_000,
+              },
+            ],
+          },
+          ...over,
+        });
+
+      it("a stale cancel=true payload after a renewal: the FETCHED (renewed, un-cancelled) state is written - no re-arm, no rewind", async () => {
+        const { svc, stripe, prisma, tx, events } = make({ transitionCount: 1, sub: LIVE_SUB });
+        fetched(stripe, {});
+        await (svc as any).onSubscriptionUpdated(
+          upd("active", {
+            cancel_at_period_end: true,
+            items: {
+              data: [{ id: "si_base", current_period_start: 1, current_period_end: 2 }],
+            },
+          }),
+        );
+        expect(stripe.getSubscription).toHaveBeenCalledWith("sub_1");
+        const data = prisma.tenantSubscription.update.mock.calls[0][0].data;
+        expect(data.cancelAtPeriodEnd).toBe(false);
+        expect(data.periodEnd).toEqual(new Date(1_802_000_000 * 1000));
+        expect(data.downgradeEffectiveAt).toBeUndefined(); // an un-cancelled sub never disarms a downgrade
+        expect(tx.tenant.updateMany).not.toHaveBeenCalled();
+        expect(events.emit).not.toHaveBeenCalled();
+      });
+
+      it("a stale status=canceled payload while Stripe says active: no cancellation", async () => {
+        const { svc, stripe, tx, events } = make({ transitionCount: 1, sub: LIVE_SUB });
+        fetched(stripe, {});
+        await (svc as any).onSubscriptionUpdated(upd("canceled"));
+        expect(tx.tenant.updateMany).not.toHaveBeenCalled();
+        expect(events.emit).not.toHaveBeenCalled();
+      });
+
+      it("Stripe 404 (resource_missing) is NEVER read as deleted: it throws, alerts ops, changes nothing", async () => {
+        const { svc, stripe, prisma, tx, events } = make({ transitionCount: 1, sub: LIVE_SUB });
+        stripe.getSubscription.mockRejectedValue(
+          Object.assign(new Error("No such subscription"), {
+            code: "resource_missing",
+            statusCode: 404,
+          }),
+        );
+        const err = jest.spyOn(Logger.prototype, "error").mockImplementation(() => undefined);
+        await expect(
+          (svc as any).onSubscriptionUpdated(upd("active"), "evt_404"),
+        ).rejects.toBeDefined();
+        err.mockRestore();
+        expect(tx.tenant.updateMany).not.toHaveBeenCalled();
+        expect(prisma.tenantSubscription.update).not.toHaveBeenCalled();
+        expect(events.emit).not.toHaveBeenCalled();
+        const alert = prisma.auditLog.create.mock.calls.find(
+          (c: any[]) => c[0].data.action === "STRIPE_SUBSCRIPTION_NOT_FOUND",
+        );
+        expect(alert?.[0].data).toMatchObject({
+          tenantId: "t1",
+          entityType: "tenant",
+          meta: { platformAdmin: true, stripeEventId: "evt_404" },
+        });
+        expect(alert?.[0].data.meta.message).toMatch(
+          /evt_404.*subscription not found in this Stripe account\/mode/,
+        );
+      });
+
+      it("any other fetch error THROWS (the webhook ledger retries) and never falls back to the payload", async () => {
+        const { svc, stripe, prisma, tx, events } = make({ transitionCount: 1, sub: LIVE_SUB });
+        stripe.getSubscription.mockRejectedValue(new Error("Stripe timeout"));
+        await expect(
+          (svc as any).onSubscriptionUpdated(upd("canceled", { cancel_at_period_end: true })),
+        ).rejects.toThrow("Stripe timeout");
+        writesNothing(prisma, tx, events);
+      });
+    });
+
     it("another customer's subscription id ⇒ no write at all", async () => {
       const { svc, prisma, tx, events } = make({
         transitionCount: 1,
         sub: { ...LIVE_SUB, stripeCustomerId: "cus_other" },
       });
-      await (svc as any).onSubscriptionUpdated(upd("canceled"));
+      await updated(svc, upd("canceled"));
       writesNothing(prisma, tx, events);
     });
 
     it("a free pilot (no stripeSubId on the row) is untouched", async () => {
       const { svc, prisma, tx, events } = make({ sub: { ...LIVE_SUB, stripeSubId: null } });
-      await (svc as any).onSubscriptionUpdated(upd("canceled", { cancel_at_period_end: true }));
+      await updated(svc, upd("canceled", { cancel_at_period_end: true }));
       writesNothing(prisma, tx, events);
     });
   });
@@ -2049,26 +3029,98 @@ describe("#2440 subscription upkeep — match by subscription id, status mapping
       expect(prisma.tenantSubscription.update).toHaveBeenCalledTimes(1);
     });
 
-    it("the warning email carries the billing-portal link", async () => {
-      const { svc, stripe, email } = make({ sub: FAILING });
-      await (svc as any).onPaymentFailed(failed());
-      // The second argument (#2476's request cap) is pinned by its own test below.
-      expect(stripe.createBillingPortalSession.mock.calls[0][0]).toEqual(
-        expect.objectContaining({ customerId: "cus_1" }),
-      );
-      expect(email.send).toHaveBeenCalledTimes(1);
-      expect(email.send.mock.calls[0][0].html).toContain("https://billing.stripe.test/p/session_1");
-    });
+    // SA r-note 5 A1: dark is SILENT to tenants. In off AND dark a real invoice.payment_failed sends exactly master's
+    // #2440 admin email (once per invoice per week, portal link best-effort); the dunning milestone series replaces it ONLY in
+    // enforced, so a tenant is never told twice and never told by the milestone series in dark.
+    describe("A1: the #2440 failed-payment email (restored) vs the enforced milestone series", () => {
+      const saved = process.env.BILLING_PAUSE_MODE;
+      afterEach(() => {
+        if (saved === undefined) delete process.env.BILLING_PAUSE_MODE;
+        else process.env.BILLING_PAUSE_MODE = saved;
+      });
 
-    // #2476 Opus MED fold: stripe-node's defaults (80 s timeout, network retries) could hold the
-    // webhook claim for minutes; the email's portal link is best-effort, so its call is capped.
-    it("#2476: the payment-failed portal call is capped (10 s, no network retries)", async () => {
-      const { svc, stripe } = make({ sub: FAILING });
-      await (svc as any).onPaymentFailed(failed());
-      expect(stripe.createBillingPortalSession).toHaveBeenCalledWith(
-        expect.objectContaining({ customerId: "cus_1" }),
-        { timeoutMs: 10_000, maxNetworkRetries: 0 },
+      it.each(["dark", "off"])(
+        "%s: a real payment_failed sends exactly ONE admin email carrying the billing-portal link",
+        async (m) => {
+          process.env.BILLING_PAUSE_MODE = m;
+          const { svc, stripe, email } = make({ sub: FAILING });
+          await (svc as any).onPaymentFailed(failed());
+          expect(stripe.createBillingPortalSession.mock.calls[0][0]).toEqual(
+            expect.objectContaining({ customerId: "cus_1" }),
+          );
+          expect(email.send).toHaveBeenCalledTimes(1);
+          const mail = email.send.mock.calls[0][0];
+          expect(mail.subject).toBe("Payment failed — Acme");
+          expect(mail.html).toContain("https://billing.stripe.test/p/session_1");
+          // Lead ruling (Opus delta S1): after A2 nothing interrupts service at 3 days, so master's "within 3 days" is
+          // dropped; the rest of master's copy is unchanged.
+          expect(mail.html).toContain(
+            "<p>Please update your payment method to avoid service interruption.</p>",
+          );
+          expect(mail.html).not.toMatch(/within|3 days/);
+        },
       );
+
+      it("default mode (unset = dark) is the same: the email goes out", async () => {
+        delete process.env.BILLING_PAUSE_MODE;
+        const { svc, email } = make({ sub: FAILING });
+        await (svc as any).onPaymentFailed(failed());
+        expect(email.send).toHaveBeenCalledTimes(1);
+      });
+
+      it("enforced: the direct email is replaced by the milestone series (no direct email, no portal session)", async () => {
+        process.env.BILLING_PAUSE_MODE = "enforced";
+        const { svc, stripe, email } = make({ sub: FAILING });
+        await (svc as any).onPaymentFailed(failed());
+        expect(email.send).not.toHaveBeenCalled();
+        expect(stripe.createBillingPortalSession).not.toHaveBeenCalled();
+      });
+
+      // #2476 Opus MED fold: the portal call runs inside the webhook claim lease - capped.
+      it("#2476: the payment-failed portal call is capped (10 s, no network retries)", async () => {
+        process.env.BILLING_PAUSE_MODE = "dark";
+        const { svc, stripe } = make({ sub: FAILING });
+        await (svc as any).onPaymentFailed(failed());
+        expect(stripe.createBillingPortalSession).toHaveBeenCalledWith(
+          expect.objectContaining({ customerId: "cus_1" }),
+          { timeoutMs: 10_000, maxNetworkRetries: 0 },
+        );
+      });
+
+      it("a portal failure still sends the email, with today's fallback text", async () => {
+        process.env.BILLING_PAUSE_MODE = "dark";
+        const { svc, stripe, email } = make({ sub: FAILING });
+        stripe.createBillingPortalSession.mockRejectedValue(new Error("portal down"));
+        await (svc as any).onPaymentFailed(failed());
+        expect(email.send).toHaveBeenCalledTimes(1);
+        expect(email.send.mock.calls[0][0].html).toContain("contacting support");
+      });
+
+      // #2476 / SA-472: the increment is the event's effect; a later throw must never fail the handler.
+      it("#2476: an admin lookup that throws AFTER the increment never fails the handler (count once)", async () => {
+        process.env.BILLING_PAUSE_MODE = "dark";
+        const { svc, prisma, email } = make({ sub: FAILING });
+        prisma.user.findFirst.mockRejectedValue(new Error("db blip"));
+        const warn = jest.spyOn((svc as any).logger, "warn").mockImplementation(() => undefined);
+        await expect((svc as any).onPaymentFailed(failed())).resolves.toBeUndefined();
+        expect(prisma.tenantSubscription.update).toHaveBeenCalledTimes(1);
+        expect(email.send).not.toHaveBeenCalled();
+        expect(
+          warn.mock.calls.some((c: any[]) =>
+            /payment-failed email for tenant t1 not sent: db blip/.test(String(c[0])),
+          ),
+        ).toBe(true);
+      });
+
+      it("another customer's subscription id, or an invoice with no subscription: no count, no email", async () => {
+        process.env.BILLING_PAUSE_MODE = "dark";
+        const other = make({ sub: { ...FAILING, stripeCustomerId: "cus_other" } });
+        await (other.svc as any).onPaymentFailed(failed());
+        expect(other.email.send).not.toHaveBeenCalled();
+        const none = make({ sub: { ...FAILING, stripeSubId: null } });
+        await (none.svc as any).onPaymentFailed({ customer: "cus_1" });
+        expect(none.email.send).not.toHaveBeenCalled();
+      });
     });
 
     it("#2476: the user-facing portal session keeps Stripe's default request options", async () => {
@@ -2076,14 +3128,6 @@ describe("#2440 subscription upkeep — match by subscription id, status mapping
       await svc.createBillingPortalSession("t1");
       expect(stripe.createBillingPortalSession).toHaveBeenCalledTimes(1);
       expect(stripe.createBillingPortalSession.mock.calls[0][1]).toBeUndefined();
-    });
-
-    it("a portal failure still sends the email, with today's fallback text", async () => {
-      const { svc, stripe, email } = make({ sub: FAILING });
-      stripe.createBillingPortalSession.mockRejectedValue(new Error("portal down"));
-      await (svc as any).onPaymentFailed(failed());
-      expect(email.send).toHaveBeenCalledTimes(1);
-      expect(email.send.mock.calls[0][0].html).toContain("contacting support");
     });
 
     it("changes no tenant status", async () => {
@@ -2102,19 +3146,14 @@ describe("#2440 subscription upkeep — match by subscription id, status mapping
       expect(email.send).not.toHaveBeenCalled();
     });
 
-    // #2476 / SA-472: the increment is the event's effect; everything after it (admin lookup, portal,
-    // email) is non-throwing and logged — a later throw must never mark the event "error:" and make a
-    // redelivery re-run the increment.
-    it("#2476: an admin lookup that throws AFTER the increment never fails the handler (count once)", async () => {
-      const { svc, prisma, email } = make({ sub: FAILING });
-      prisma.user.findFirst.mockRejectedValue(new Error("db blip"));
-      const warn = jest.spyOn((svc as any).logger, "warn").mockImplementation(() => undefined);
-      await expect((svc as any).onPaymentFailed(failed())).resolves.toBeUndefined();
-      expect(prisma.tenantSubscription.update).toHaveBeenCalledTimes(1);
-      expect(email.send).not.toHaveBeenCalled();
-      expect(warn.mock.calls.some((c: any[]) => /payment-failed email/i.test(String(c[0])))).toBe(
-        true,
-      );
+    // SA-733r7 PR-B3: the clock is stamped BEFORE the non-idempotent increment (like the coupon sync), so a
+    // throwing stamp aborts with the count unmoved and the redelivery runs the handler once.
+    it("PR-B3: a throwing dunning stamp aborts before failedPaymentCount moves", async () => {
+      const { svc, prisma } = make({ sub: FAILING });
+      const dunning = { onPaymentFailed: jest.fn().mockRejectedValue(new Error("stripe down")) };
+      (svc as any).dunning = dunning;
+      await expect((svc as any).onPaymentFailed(failed())).rejects.toThrow("stripe down");
+      expect(prisma.tenantSubscription.update).not.toHaveBeenCalled();
     });
 
     it("an invoice with no subscription (free pilot / one-off) is untouched", async () => {
@@ -2135,7 +3174,7 @@ describe("#2440 subscription upkeep — match by subscription id, status mapping
 
     it("resets failedPaymentCount to 0 after a failure", async () => {
       const { svc, prisma } = make({ transitionCount: 0, sub: paying(2) });
-      await (svc as any).onPaymentSucceeded({ customer: "cus_1" });
+      await (svc as any).onPaymentSucceeded(OWN_INVOICE);
       const reset = prisma.tenantSubscription.update.mock.calls.find(
         (c: any[]) => c[0].data?.failedPaymentCount !== undefined,
       );
@@ -2144,7 +3183,7 @@ describe("#2440 subscription upkeep — match by subscription id, status mapping
 
     it("writes no reset when the count is already 0", async () => {
       const { svc, prisma } = make({ transitionCount: 0, sub: paying(0) });
-      await (svc as any).onPaymentSucceeded({ customer: "cus_1" });
+      await (svc as any).onPaymentSucceeded(OWN_INVOICE);
       const reset = prisma.tenantSubscription.update.mock.calls.find(
         (c: any[]) => c[0].data?.failedPaymentCount !== undefined,
       );
@@ -2170,7 +3209,7 @@ describe("#2440 Opus nits on #2446 — period source and null-period warnings", 
   it("N2: subscription.updated reads the base item's period, skipping the tenant's add-on item", async () => {
     const { svc, prisma } = make({ sub: LIVE_SUB });
     prisma.tenantAddon.findMany.mockResolvedValue([{ stripeItemId: "si_addon" }]);
-    await (svc as any).onSubscriptionUpdated({
+    await updated(svc, {
       ...SUB_EVT,
       cancel_at_period_end: false,
       ...twoItems,
@@ -2185,7 +3224,7 @@ describe("#2440 Opus nits on #2446 — period source and null-period warnings", 
     });
     prisma.tenantAddon.findMany.mockResolvedValue([{ stripeItemId: "si_addon" }]);
     stripe.getSubscription.mockResolvedValue(twoItems);
-    await (svc as any).onPaymentSucceeded({ customer: "cus_1" });
+    await (svc as any).onPaymentSucceeded(OWN_INVOICE);
     const periodWrite = prisma.tenantSubscription.update.mock.calls.find(
       (c: any[]) => c[0].data?.periodEnd !== undefined,
     );
@@ -2195,7 +3234,7 @@ describe("#2440 Opus nits on #2446 — period source and null-period warnings", 
   it("N1: subscription.updated with no period logs a warning", async () => {
     const { svc } = make({ sub: LIVE_SUB });
     const warn = jest.spyOn((svc as any).logger, "warn").mockImplementation(() => undefined);
-    await (svc as any).onSubscriptionUpdated({ ...SUB_EVT, cancel_at_period_end: false });
+    await updated(svc, { ...SUB_EVT, cancel_at_period_end: false });
     expect(warn.mock.calls.some((c: any[]) => /no billing period/.test(String(c[0])))).toBe(true);
   });
 
@@ -2206,20 +3245,170 @@ describe("#2440 Opus nits on #2446 — period source and null-period warnings", 
     });
     stripe.getSubscription.mockResolvedValue({ status: "active" });
     const warn = jest.spyOn((svc as any).logger, "warn").mockImplementation(() => undefined);
-    await (svc as any).onPaymentSucceeded({ customer: "cus_1" });
+    await (svc as any).onPaymentSucceeded(OWN_INVOICE);
     expect(warn.mock.calls.some((c: any[]) => /no billing period/.test(String(c[0])))).toBe(true);
   });
 
   it("N1: checkout.session.completed with no period logs a warning and still stores stripeSubId", async () => {
     const { svc, prisma, stripe } = make({ transitionCount: 1 });
-    stripe.getSubscription.mockResolvedValue({ status: "active" });
+    stripe.getSubscription.mockResolvedValue({ status: "active", customer: "cus_1" });
     const warn = jest.spyOn((svc as any).logger, "warn").mockImplementation(() => undefined);
     await (svc as any).onCheckoutCompleted({
       metadata: { tenantId: "t1" },
       subscription: "sub_1",
       customer: "cus_1",
+      payment_status: "paid", // P0 hotfix: only a settled session activates
     });
     expect(prisma.tenantSubscription.upsert.mock.calls[0][0].update.stripeSubId).toBe("sub_1");
     expect(warn.mock.calls.some((c: any[]) => /no billing period/.test(String(c[0])))).toBe(true);
+  });
+});
+
+// F2: an admin price override saved while a Checkout session is open is never pushed - the override flow found no
+// subscription to update, and the session (priced when it was created) then makes one at the OLD price. After the
+// apply transaction the completion pushes the resolved price (next cycle; idempotent), and says so in the audit row.
+describe("F2: onCheckoutCompleted re-syncs an override saved during the open session", () => {
+  const OVERRIDE_SUB = {
+    tenantId: "t1",
+    planKey: "GROWTH",
+    basePriceSnapshot: 150, // the override's figure, written by the override flow
+    priceOverrideMonthly: 150,
+    discount: 0,
+    stripeSubId: "sub_1",
+    stripeCustomerId: "cus_1",
+    billingInterval: "month",
+    tenant: { status: "ACTIVE", deletedAt: null, class: "PRODUCTION" },
+  };
+  const session = {
+    id: "cs_1",
+    metadata: { tenantId: "t1", planKey: "GROWTH", interval: "month" },
+    subscription: "sub_1",
+    customer: "cus_1",
+    payment_status: "paid",
+  };
+  const liveAtOldPrice = {
+    id: "sub_1",
+    customer: "cus_1",
+    status: "active",
+    items: {
+      data: [
+        {
+          id: "si_1",
+          current_period_start: 1_700_000_000,
+          current_period_end: 1_702_000_000,
+          price: {
+            id: "price_stub",
+            unit_amount: 34_900, // the price the session was created with
+            recurring: { interval: "month" },
+            product: "prod_1",
+          },
+        },
+      ],
+    },
+  };
+
+  it("pushes the resolved price (next_cycle) AFTER the apply transaction and records that the paid stub stays at the old price", async () => {
+    const { svc, prisma } = make({ transitionCount: 1, sub: OVERRIDE_SUB });
+    const sync = jest
+      .spyOn(svc, "syncStripeSubscriptionPrice")
+      .mockResolvedValue({ synced: true, oldAmount: 349, newAmount: 150, proration: "none" });
+    await (svc as any).onCheckoutCompleted(session);
+    expect(sync).toHaveBeenCalledTimes(1);
+    expect(sync).toHaveBeenCalledWith("t1", { effective: "next_cycle" });
+    expect(sync.mock.invocationCallOrder[0]).toBeGreaterThan(
+      prisma.$transaction.mock.invocationCallOrder[0],
+    );
+    const audit = prisma.auditLog.create.mock.calls.find(
+      (c: any[]) => c[0].data.action === "STRIPE_CHECKOUT_PRICE_RESYNC",
+    );
+    expect(audit?.[0].data).toMatchObject({ tenantId: "t1", entityId: "cs_1" });
+    expect(JSON.stringify(audit?.[0].data.meta)).toMatch(/stub/i);
+  });
+
+  it("an unchanged price (the session already billed it) writes no audit row", async () => {
+    const { svc, prisma } = make({ transitionCount: 1, sub: OVERRIDE_SUB });
+    jest.spyOn(svc, "syncStripeSubscriptionPrice").mockResolvedValue({
+      synced: true,
+      unchanged: true,
+      oldAmount: 150,
+      newAmount: 150,
+      proration: "none",
+    });
+    await (svc as any).onCheckoutCompleted(session);
+    expect(
+      prisma.auditLog.create.mock.calls.filter(
+        (c: any[]) => c[0].data.action === "STRIPE_CHECKOUT_PRICE_RESYNC",
+      ),
+    ).toHaveLength(0);
+  });
+
+  it("end to end: the subscription item ends at the override price, and the MRR snapshot already equals it", async () => {
+    const pricing = {
+      resolveCatalogPricing: jest.fn().mockResolvedValue({ monthly: 349 }),
+      resolveTenantPricing: jest.fn().mockResolvedValue({ planKey: "GROWTH", monthly: 150 }),
+      checkoutPriceData: jest.fn().mockResolvedValue({
+        currency: "usd",
+        product_data: { name: "RouteFlow Growth - monthly" },
+        unit_amount: 15_000,
+        recurring: { interval: "month" },
+      }),
+    };
+    const { svc, stripe } = make({ transitionCount: 1, sub: OVERRIDE_SUB, pricing });
+    stripe.getSubscription.mockResolvedValue(liveAtOldPrice);
+    stripe.updateSubscription = jest.fn().mockResolvedValue({});
+    await (svc as any).onCheckoutCompleted(session);
+    expect(stripe.updateSubscription).toHaveBeenCalledTimes(1);
+    const [subId, params] = stripe.updateSubscription.mock.calls[0];
+    expect(subId).toBe("sub_1");
+    expect(params.items[0]).toMatchObject({ id: "si_1", price_data: { unit_amount: 15_000 } });
+    expect(params.proration_behavior).toBe("none");
+  });
+
+  it("a failed push is audited and THROWS, so the webhook ledger redelivers it", async () => {
+    const { svc, prisma } = make({ transitionCount: 1, sub: OVERRIDE_SUB });
+    jest
+      .spyOn(svc, "syncStripeSubscriptionPrice")
+      .mockResolvedValue({ synced: false, reason: "stripe_update_failed" });
+    const warn = jest.spyOn(Logger.prototype, "warn").mockImplementation(() => undefined);
+    await expect((svc as any).onCheckoutCompleted(session)).rejects.toThrow(/price re-sync/i);
+    warn.mockRestore();
+    const audit = prisma.auditLog.create.mock.calls.find(
+      (c: any[]) => c[0].data.action === "STRIPE_CHECKOUT_PRICE_RESYNC",
+    );
+    expect(audit?.[0].data.meta).toMatchObject({ synced: false, reason: "stripe_update_failed" });
+    expect(JSON.stringify(audit?.[0].data.meta)).not.toMatch(/price changed/i);
+  });
+
+  it("a replayed (already applied) completion still pushes - a push that threw is retried by the redelivery", async () => {
+    const { svc, tx } = make({ transitionCount: 1, sub: OVERRIDE_SUB });
+    const sync = jest
+      .spyOn(svc, "syncStripeSubscriptionPrice")
+      .mockRejectedValueOnce(new Error("stripe down"))
+      .mockResolvedValue({ synced: true, newAmount: 150, oldAmount: 349, proration: "none" });
+    const err = jest.spyOn(Logger.prototype, "error").mockImplementation(() => undefined);
+    // first delivery: the apply lands, the push throws -> the webhook fails (Stripe will redeliver)
+    await expect((svc as any).onCheckoutCompleted(session)).rejects.toThrow("stripe down");
+    err.mockRestore();
+    // redelivery: the applied marker now exists, the resync re-runs and succeeds
+    tx.auditLog.findFirst.mockResolvedValue({ id: "a1" });
+    await expect((svc as any).onCheckoutCompleted(session)).resolves.toBeUndefined();
+    expect(sync).toHaveBeenCalledTimes(2);
+    expect(sync).toHaveBeenLastCalledWith("t1", { effective: "next_cycle" });
+  });
+
+  it("the RESUMED ledger event is emitted EXACTLY ONCE across the redelivery of a completion whose push threw", async () => {
+    const { svc, tx, events } = make({ transitionCount: 1, sub: OVERRIDE_SUB });
+    jest
+      .spyOn(svc, "syncStripeSubscriptionPrice")
+      .mockRejectedValueOnce(new Error("stripe down"))
+      .mockResolvedValue({ synced: true, unchanged: true });
+    const err = jest.spyOn(Logger.prototype, "error").mockImplementation(() => undefined);
+    await expect((svc as any).onCheckoutCompleted(session)).rejects.toThrow("stripe down");
+    err.mockRestore();
+    tx.auditLog.findFirst.mockResolvedValue({ id: "a1" }); // the applied marker the first delivery wrote
+    await (svc as any).onCheckoutCompleted(session);
+    expect(
+      emitted(events).filter((t: string) => t === BILLING_EVENTS.SUBSCRIPTION_RESUMED),
+    ).toHaveLength(1);
   });
 });

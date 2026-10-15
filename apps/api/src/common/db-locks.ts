@@ -95,6 +95,9 @@
 import { ConflictException, Logger } from "@nestjs/common";
 import { Prisma } from "@prisma/client";
 import { Pool, type PoolClient } from "pg";
+import { utcPoolConfig } from "./pg-session";
+import { API_ERROR_CODES } from "./api-error-codes";
+import { STOCK_LOCK_TIMEOUT } from "./product-locks";
 
 export type LockMode = "wait" | "try";
 /**
@@ -109,13 +112,32 @@ export const LOCK_FAMILIES = [
   "tenant-mirror",
   "demo-booking",
   "mailbox",
+  "policy-write",
+  "counter-tender",
+  "fulfilment-settings",
+  "tenant-price",
+  "counter-park",
+  "stock-count",
+  "stock-count-product",
 ] as const;
 export type LockFamily = (typeof LOCK_FAMILIES)[number];
+/**
+ * Advisory-lock families a caller may take in the SHARED form alongside its first lock (`sharedAlso`). They name no pool
+ * (the shared lock rides the first lock's pinned connection); the list is closed for the same typo reason as `LOCK_FAMILIES`.
+ */
+export const SHARED_LOCK_FAMILIES = ["counter-close"] as const;
 export interface AdvisoryLockOptions {
   family: string;
   key: string;
   mode: LockMode;
   waitMs?: number;
+  /**
+   * SA-750r3: a SHARED advisory lock (`pg_advisory_lock_shared`) taken on the SAME pinned connection right after the first
+   * lock, and released (`pg_advisory_unlock_shared`) BEFORE it, even when `fn` throws. The counter-sale tender uses it for
+   * the end-of-day close lock; a second connection could exhaust the 4-slot `counter-tender` pool. Same `mode` and `waitMs`
+   * as the first lock (a `try` that loses the shared race returns `{ acquired: false }` and unlocks the first lock).
+   */
+  sharedAlso?: { family: (typeof SHARED_LOCK_FAMILIES)[number]; key: string };
 }
 export type LockResult<T> = { acquired: true; value: T } | { acquired: false };
 
@@ -170,6 +192,44 @@ const POOL_MAX: Record<string, number | undefined> = {
   // admin actions. Same size as `billing`/`tenant-mirror` for the same reason: short,
   // request-path, no real hot-path volume.
   mailbox: 4,
+  // `policy-write` (SA-138 policy layer phase 1): `PolicyService#set/#clear`, keyed
+  // `${tenantId}:${key}` — the supersede-then-insert window that keeps ONE active PolicyValue row
+  // per (tenant, key, scope) (Prisma cannot express that partial unique index). A tenant-admin
+  // settings action: request-path, short (one tx), rarer than even `billing`'s add-on toggles —
+  // same size as `billing` for the same reason.
+  "policy-write": 4,
+  // `counter-tender` (SA-672 M1): `CounterSaleService`'s re-read -> "no tender yet" -> recordPayment
+  // window, keyed on the order id. Staff request-path and short (one invoice read + one or two
+  // recordPayment calls), one checkout per counter-sale call; same size as `billing` for the same
+  // reason.
+  "counter-tender": 4,
+  // `fulfilment-settings` (fulfilment toggle PR1, M2): the tenant-admin Settings PATCH and the Feature
+  // Console set()/clear() of the two fulfilment keys, keyed on the tenant id. A rare, short,
+  // request-path settings write: a deliberately small pool.
+  "fulfilment-settings": 2,
+  // `tenant-price` (SA-733 D8): every writer that moves a tenant's Stripe price serialises per tenant on
+  // this one family — the tenant-facing in-app upgrade, the admin plan edit, the price override, the
+  // catalog fan-out and the scheduled-downgrade sweep (which holds ONE slot at a time). A holder pins its
+  // slot across Stripe calls (seconds), and a WAITER pins one too, so the size is a deliberate bound, not
+  // a convenience: admin / cron writers wait up to 20 s, but the tenant-facing upgrade waits only ~2.5 s
+  // (`billing/price-lock.ts`) so a double-click burst or a slow Stripe cannot hold all 4 slots for the
+  // long wait; a caller that cannot get a slot surfaces as a retryable 409 / 503, never a hang.
+  "tenant-price": 4,
+  // `counter-park` (SA-748): the parked-cart cap in `CounterParkService#park`, keyed on the tenant id. That
+  // lock is a transaction-scoped `pg_advisory_xact_lock` taken on the park transaction's own Prisma connection
+  // (the idempotency-service pattern), so this family opens no lock pool today. It is listed so the family name
+  // is reserved in the one namespace (a `withAdvisoryLock` caller can never collide with it by accident) and
+  // sized small in case a pinned caller is ever added.
+  "counter-park": 2,
+  // `stock-count` (SA-767 L-2.2): `InventoryService#commitStockCountSession`, keyed on the count session id,
+  // mode `try`. The single committer of a count holds its slot across ALL of the commit's batch transactions
+  // (minutes for a warehouse-wide count), so the size is the cap on counts committing at the same moment
+  // across every tenant; a committer that finds no slot gets the retryable 503 LOCK_UNAVAILABLE, and a
+  // second commit of the same session loses the try-lock at once (409 STOCK_COUNT_COMMITTING).
+  "stock-count": 4,
+  // `stock-count-product` (SA-767 r-note 5 SA-3) opens no lock pool: it is the one-open-count-per-product lock,
+  // a transaction-scoped `pg_advisory_xact_lock` on the adder's own Prisma connection ({@link advisoryXactLock}),
+  // keyed `<tenantId>:<productId>`. It is listed so the family name is reserved in the one namespace.
 };
 const DEFAULT_POOL_MAX = 8;
 function lockPool(family: string): Pool {
@@ -179,17 +239,19 @@ function lockPool(family: string): Pool {
     // critical section: without it `pool.connect()` queues with NO timer once `max` is reached
     // (pg-pool `connect()`), so an overflowing caller would hang unbounded instead of surfacing
     // as LockUnavailableError → 503.
-    pool = new Pool({
-      connectionString: process.env.DATABASE_URL,
-      max: POOL_MAX[family] ?? DEFAULT_POOL_MAX,
-      connectionTimeoutMillis: 5_000,
-      // A lock connection is idle at the SOCKET for the whole critical section — a cron leader's
-      // tick does its work on the Prisma pool — so an intermediate idle-reap would end the
-      // session and release the advisory lock mid-tick, letting another replica win an election
-      // for a job still running. See the header's "WHY KEEPALIVE".
-      keepAlive: true,
-      keepAliveInitialDelayMillis: 30_000,
-    });
+    pool = new Pool(
+      utcPoolConfig({
+        connectionString: process.env.DATABASE_URL,
+        max: POOL_MAX[family] ?? DEFAULT_POOL_MAX,
+        connectionTimeoutMillis: 5_000,
+        // A lock connection is idle at the SOCKET for the whole critical section — a cron leader's
+        // tick does its work on the Prisma pool — so an intermediate idle-reap would end the
+        // session and release the advisory lock mid-tick, letting another replica win an election
+        // for a job still running. See the header's "WHY KEEPALIVE".
+        keepAlive: true,
+        keepAliveInitialDelayMillis: 30_000,
+      }),
+    );
     // pg-pool re-emits an idle client's socket error on the pool; with no listener an
     // EventEmitter "error" throws as an uncaught exception and takes the API process down.
     // The client is already removed from the pool by the time this runs — log and nothing else.
@@ -212,6 +274,11 @@ const LOCK_SQL = {
   try: "SELECT pg_try_advisory_lock(hashtext($1), hashtext($2)) AS ok",
 } as const;
 const UNLOCK_SQL = "SELECT pg_advisory_unlock(hashtext($1), hashtext($2))";
+const SHARED_LOCK_SQL = {
+  wait: "SELECT pg_advisory_lock_shared(hashtext($1), hashtext($2))",
+  try: "SELECT pg_try_advisory_lock_shared(hashtext($1), hashtext($2)) AS ok",
+} as const;
+const SHARED_UNLOCK_SQL = "SELECT pg_advisory_unlock_shared(hashtext($1), hashtext($2))";
 
 const DEFAULT_WAIT_MS = 20_000;
 
@@ -248,6 +315,18 @@ export async function withAdvisoryLock<T>(
     throw new TypeError(
       `withAdvisoryLock: unknown lock family "${opts.family}" (expected one of ${LOCK_FAMILIES.join(", ")})`,
     );
+  }
+  if (opts.sharedAlso) {
+    const { family, key } = opts.sharedAlso;
+    if (
+      !(SHARED_LOCK_FAMILIES as readonly string[]).includes(family) ||
+      typeof key !== "string" ||
+      key.length === 0
+    ) {
+      throw new TypeError(
+        `withAdvisoryLock: sharedAlso needs a known family (${SHARED_LOCK_FAMILIES.join(", ")}) and a non-empty key`,
+      );
+    }
   }
   // `SET lock_timeout` is a utility statement: it takes no bind parameters, so the value has to
   // be interpolated. Only a validated finite integer ever reaches the string.
@@ -318,7 +397,25 @@ export async function withAdvisoryLock<T>(
     // lock this call does not hold (unlocking someone else's lock would be a no-op plus a
     // warning, but the query would still be wrong).
     if (!acquired) return { acquired: false };
+    const shared = opts.sharedAlso ? [opts.sharedAlso.family, opts.sharedAlso.key] : null;
+    let sharedHeld = false;
     try {
+      if (shared) {
+        // SA-750r3: the SHARED close lock, on THIS connection (lock_timeout above bounds the wait).
+        try {
+          const res = await client.query(SHARED_LOCK_SQL[opts.mode], shared);
+          sharedHeld = opts.mode === "try" ? res.rows[0]?.ok === true : true;
+        } catch (e: any) {
+          if (e?.code === "55P03") {
+            logger.warn(`db-locks: lock timeout after ${waitMs}ms for ${shared[0]}:${shared[1]}`);
+            throw new LockTimeoutError(shared[0], shared[1], waitMs);
+          }
+          recordFailure(e);
+          destroy = true;
+          throw e;
+        }
+        if (!sharedHeld) return { acquired: false };
+      }
       return { acquired: true, value: await fn() };
     } catch (e) {
       // Deliberately NOT `destroy`: the `finally` below unlocks either way, and an unlock that
@@ -329,6 +426,18 @@ export async function withAdvisoryLock<T>(
       recordFailure(e);
       throw e;
     } finally {
+      // The shared lock goes first (reverse of acquisition); its failed unlock must not skip the first unlock.
+      if (sharedHeld && shared) {
+        try {
+          await client.query(SHARED_UNLOCK_SQL, shared);
+        } catch (e: any) {
+          logger.error(
+            `db-locks: shared unlock failed for ${shared[0]}:${shared[1]} — ${e?.message ?? e}; connection will be destroyed`,
+          );
+          recordFailure(e);
+          destroy = true;
+        }
+      }
       try {
         await client.query(UNLOCK_SQL, args);
       } catch (e: any) {
@@ -358,7 +467,7 @@ export async function withAdvisoryLock<T>(
  * bound as a parameter — so the SQL below is written out once PER TABLE instead of interpolating
  * an identifier at all.
  */
-export const NOWAIT_LOCK_TABLES = ["RouteRunStop", "Invoice"] as const;
+export const NOWAIT_LOCK_TABLES = ["RouteRunStop", "Invoice", "Order"] as const;
 export type NoWaitLockTable = (typeof NOWAIT_LOCK_TABLES)[number];
 
 /**
@@ -367,9 +476,11 @@ export type NoWaitLockTable = (typeof NOWAIT_LOCK_TABLES)[number];
  *
  * What NOWAIT buys is exactly this much: the transaction never WAITS on these rows, so it cannot
  * deadlock while ACQUIRING them. It still HOLDS them for the rest of the tx — so this is not a
- * licence to take them out of order. Callers must take them in the same order as every other
- * writer of the same rows (Invoice LAST, after InvoicePayment/CreditNote — see
- * CreditNotesService.voidInvoice), or a later blocking lock can still close a cycle.
+ * licence to take them out of order. The canonical row-lock order across documents is Return →
+ * Order → Invoice → InvoicePayment/CreditNote, each set id-sorted (SA-214 / SA-214b): take any
+ * subset in that order, never the reverse. E.g. `InvoicesService.voidInvoice` locks Order →
+ * Invoice FIRST (SA-404) and only then deletes payments and restores credit notes. A caller that
+ * breaks the order can still close a cycle through a later blocking lock.
  *
  * NO KEY UPDATE, not FOR UPDATE, so a transaction merely holding an FK KEY SHARE on the row does
  * not trip it while a real UPDATE does. The busy path writes nothing — callers take this before
@@ -393,6 +504,10 @@ export async function lockRowsNoWait(
     // hand-written statements it replaced locked a single id (`WHERE id = $1`); it takes a set.
     if (table === "RouteRunStop") {
       await tx.$executeRaw`SELECT id FROM "RouteRunStop" WHERE id IN (${Prisma.join(ids)}) FOR NO KEY UPDATE NOWAIT`;
+    } else if (table === "Order") {
+      // B1053: the order-merge guard. FOR UPDATE (not NO KEY UPDATE) so it also conflicts with the FK
+      // KEY SHARE an invoice insert takes on the order; ORDER BY id so two lockers share one order.
+      await tx.$executeRaw`SELECT id FROM "Order" WHERE id IN (${Prisma.join(ids)}) ORDER BY id FOR UPDATE NOWAIT`;
     } else {
       await tx.$executeRaw`SELECT id FROM "Invoice" WHERE id IN (${Prisma.join(ids)}) FOR NO KEY UPDATE NOWAIT`;
     }
@@ -405,10 +520,169 @@ export async function lockRowsNoWait(
       /55P03|could not obtain lock/i.test(String((err as any)?.message ?? ""));
     if (!lockUnavailable) throw err;
     throw new ConflictException({
-      code: "CONCURRENT_UPDATE",
+      code: API_ERROR_CODES.CONCURRENT_UPDATE,
       reason,
       retryable: true,
       message: "Another update to this record is in progress. Try again in a moment.",
     });
   }
+}
+
+/**
+ * Several advisory locks of ONE family, taken together on ONE pinned connection (#3199 review: a
+ * caller that needs N keys must not pin N pool slots for its whole critical section). Same
+ * mechanism as `withAdvisoryLock` (session-level `pg_advisory_lock`, `wait` mode only):
+ *  - keys are de-duplicated and taken in SORTED order, so two callers over overlapping key sets can
+ *    never deadlock against each other (a single-key holder can only wait, never cycle);
+ *  - a `lock_timeout` (55P03) on any key releases the keys already taken, then rejects with
+ *    `LockTimeoutError` naming that key; a connection/session failure is `LockUnavailableError`;
+ *  - every key taken is unlocked in `finally` whatever `fn` did; an unlock that fails destroys the
+ *    connection (the server then drops whatever it still held), exactly as the single-key helper.
+ * The single-key `withAdvisoryLock` is unchanged.
+ */
+export async function withAdvisoryLocks<T>(
+  opts: { family: string; keys: readonly string[]; waitMs?: number },
+  fn: () => Promise<T>,
+): Promise<T> {
+  if (
+    typeof opts.family !== "string" ||
+    opts.family.length === 0 ||
+    !Array.isArray(opts.keys) ||
+    opts.keys.length === 0 ||
+    opts.keys.some((k) => typeof k !== "string" || k.length === 0)
+  ) {
+    throw new TypeError("withAdvisoryLocks: family and every key must be non-empty strings");
+  }
+  if (!(LOCK_FAMILIES as readonly string[]).includes(opts.family)) {
+    throw new TypeError(
+      `withAdvisoryLocks: unknown lock family "${opts.family}" (expected one of ${LOCK_FAMILIES.join(", ")})`,
+    );
+  }
+  const keys = [...new Set(opts.keys)].sort();
+  const waitMs = Number.isFinite(opts.waitMs)
+    ? Math.max(1, Math.floor(opts.waitMs as number))
+    : DEFAULT_WAIT_MS;
+  let client: PoolClient;
+  try {
+    client = await lockPool(opts.family).connect();
+  } catch (e: any) {
+    logger.error(`db-locks: could not obtain a lock connection — ${e?.message ?? e}`);
+    throw new LockUnavailableError(e);
+  }
+  let failure: unknown;
+  let hasFailure = false;
+  const recordFailure = (e: unknown) => {
+    if (hasFailure) return;
+    failure = e;
+    hasFailure = true;
+  };
+  let destroy = false;
+  const onClientError = (err: Error) => {
+    logger.error(
+      `[db-locks] pinned connection error family=${opts.family} keys=${keys.join(",")}: ${err.message}`,
+    );
+    recordFailure(err);
+    destroy = true;
+  };
+  client.on("error", onClientError);
+  const held: string[] = [];
+  try {
+    try {
+      await client.query(`SET lock_timeout = '${waitMs}ms'`);
+    } catch (e) {
+      recordFailure(e);
+      destroy = true;
+      throw new LockUnavailableError(e);
+    }
+    for (const key of keys) {
+      try {
+        await client.query(LOCK_SQL.wait, [opts.family, key]);
+        held.push(key);
+      } catch (e: any) {
+        if (e?.code === "55P03") {
+          logger.warn(`db-locks: lock timeout after ${waitMs}ms for ${opts.family}:${key}`);
+          throw new LockTimeoutError(opts.family, key, waitMs);
+        }
+        recordFailure(e);
+        destroy = true;
+        throw e;
+      }
+    }
+    try {
+      return await fn();
+    } catch (e) {
+      recordFailure(e);
+      throw e;
+    }
+  } finally {
+    // Unlock every key this call took (in reverse), whatever happened above.
+    for (const key of [...held].reverse()) {
+      try {
+        await client.query(UNLOCK_SQL, [opts.family, key]);
+      } catch (e: any) {
+        logger.error(
+          `db-locks: unlock failed for ${opts.family}:${key} — ${e?.message ?? e}; connection will be destroyed`,
+        );
+        recordFailure(e);
+        destroy = true;
+      }
+    }
+    client.removeListener("error", onClientError);
+    if (destroy) client.release(failure instanceof Error ? failure : new Error(String(failure)));
+    else client.release();
+  }
+}
+
+/**
+ * Take the EXCLUSIVE, transaction-scoped advisory lock on `(family, key)` inside `tx`, WAITING for it
+ * (blocking `pg_advisory_xact_lock`; released by Postgres when `tx` ends). For a check-then-insert that
+ * must serialise concurrent adders - SA-767 r-note 5 SA-3: two sessions adding the same product take
+ * `stock-count-product:<tenantId>:<productId>` one after the other, and the second one sees the first
+ * one's committed line. The wait is bounded (lock_timeout, below). The key pair is derived like {@link withAdvisoryLock}'s (`hashtext` x 2). A caller
+ * that needs several keys takes them in SORTED order, so two such callers can never deadlock.
+ */
+export async function advisoryXactLock(
+  tx: { $executeRaw: (...args: any[]) => unknown },
+  family: LockFamily,
+  key: string,
+): Promise<void> {
+  if (typeof key !== "string" || key.length === 0) {
+    throw new TypeError("advisoryXactLock: key must be a non-empty string");
+  }
+  if (!(LOCK_FAMILIES as readonly string[]).includes(family)) {
+    throw new TypeError(`advisoryXactLock: unknown lock family "${family}"`);
+  }
+  // The wait is bounded like every other stock lock (common/product-locks.ts): a tx with no lock_timeout
+  // yet gets the stock default (SET LOCAL, so the pooled connection never carries it out), and a stuck
+  // holder surfaces as 55P03 - which retryStockTx and the lock filter map - instead of a hung backend.
+  await tx.$executeRaw`SELECT set_config('lock_timeout', ${STOCK_LOCK_TIMEOUT}, true) WHERE current_setting('lock_timeout') = '0'`;
+  await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtext(${family}), hashtext(${key}))`;
+}
+
+/**
+ * Take the SHARED, transaction-scoped advisory lock on `(family, key)` inside `tx`, in try mode (never
+ * waits). The key pair is derived EXACTLY like {@link withAdvisoryLock}'s - `hashtext(family)`,
+ * `hashtext(key)` - so it conflicts with a holder of that lock's exclusive session-level form: the
+ * committer of a durable stock count holds `stock-count:<sessionId>` exclusively across all of its
+ * batch transactions, while a line edit or a discard holds the shared form for its own transaction
+ * (many edits run side by side; none runs beside the committer). Returns `false` when an exclusive
+ * holder has it; the lock is released by Postgres when `tx` ends, so there is nothing to unlock.
+ */
+export async function tryAdvisoryXactLockShared(
+  tx: { $queryRaw: (...args: any[]) => unknown },
+  family: LockFamily,
+  key: string,
+): Promise<boolean> {
+  if (typeof key !== "string" || key.length === 0) {
+    throw new TypeError("tryAdvisoryXactLockShared: key must be a non-empty string");
+  }
+  if (!(LOCK_FAMILIES as readonly string[]).includes(family)) {
+    throw new TypeError(`tryAdvisoryXactLockShared: unknown lock family "${family}"`);
+  }
+  const rows = (await tx.$queryRaw`
+    SELECT pg_try_advisory_xact_lock_shared(hashtext(${family}), hashtext(${key})) AS ok
+  `) as Array<{ ok?: boolean }> | undefined;
+  // Fails CLOSED: only an explicit true is "the shared lock is held". An odd client shape (no row, no
+  // boolean) must read as "not acquired" (the edit is refused, nothing is written), never as a grant.
+  return rows?.[0]?.ok === true;
 }

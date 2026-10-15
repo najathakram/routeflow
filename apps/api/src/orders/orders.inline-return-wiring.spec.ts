@@ -69,11 +69,13 @@ describe("OrdersService.create(): inline-return call order (#2094)", () => {
     expect(body.indexOf("replayAfterCheck(", first + 1)).toBeGreaterThan(at("for (let attempt")); // the winner path
   });
 
-  it("a deadlock or serialization failure on a create carrying a return retries, inside the same loop (the reserved number is reused)", () => {
-    const retry = at("txConflictState(");
+  it("a deadlock, serialization failure or lock timeout on a create (with or without a return) re-runs the whole tx via retryStockTx, inside the P2002 loop (the reserved number is reused)", () => {
+    const retry = at('"orders.create"');
     expect(retry).toBeGreaterThan(at("for (let attempt"));
-    expect(retry).toBeGreaterThan(at("catch (e"));
-    expect(body.slice(retry, retry + 200)).toContain("continue");
+    expect(retry).toBeLessThan(at("lockInlineReturnCustomer(")); // the whole tx is inside the retried callback
+    expect(retry).toBeLessThan(at("catch (e")); // the P2002 handler wraps it
+    expect(body).not.toContain("txConflictState("); // the inline-return-only conflict branch is gone
+    expect(body).not.toContain("conflictBackoff");
   });
 
   it("an order that carries a return is never a candidate for the auto-merge sweep", () => {
@@ -81,9 +83,21 @@ describe("OrdersService.create(): inline-return call order (#2094)", () => {
   });
 
   it("the existing appliedCreditNotes sync keeps its OWN Serializable tx, outside the order tx (SA-221 change 1)", () => {
-    const sync = at("syncOrderCreditSelections(");
-    expect(sync).toBeGreaterThan(commit());
-    expect(body.slice(sync, sync + 500)).toContain('isolationLevel: "Serializable"');
+    // SA-706 MUST 2: create() hands the credit tx to the shared helper (Order lock first, retried).
+    // B1201: via syncCreateCredits. It is called ONLY from the tail: a keyed replay never writes credits.
+    expect(body.split("syncCreateCredits(").length - 1).toBe(1);
+    expect(body.indexOf("syncCreateCredits(")).toBeGreaterThan(commit());
+    const firstReplayExit = body.indexOf("replayAfterCheck(");
+    expect(body.slice(0, body.lastIndexOf("replayAfterCheck(") + 200)).not.toContain(
+      "syncCreateCredits(",
+    );
+    expect(firstReplayExit).toBeGreaterThan(-1);
+    expect(methodBody("syncCreateCredits")).toContain("syncAndSettleOrderCredits(");
+    const helper = methodBody("syncAndSettleOrderCredits");
+    expect(helper).toContain('isolationLevel: "Serializable"');
+    expect(helper.indexOf("lockOrderRow(")).toBeLessThan(
+      helper.indexOf("syncOrderCreditSelections("),
+    );
   });
 
   it("nothing between the customer lock and the commit takes another advisory lock or a tx-less recompute", () => {
@@ -155,11 +169,11 @@ describe("OrdersService.updateOrderItems(): inline-return call order (#2094)", (
     expect(body.split("reserveEditReturnNumber(").length - 1).toBe(1);
   });
 
-  it("the edit tx retries a write conflict via the house helper, only when the request carries a return, with the SAME reserved number (SA-340)", () => {
+  it("the edit tx re-runs on a lock error / write conflict via retryStockTx (every edit, SA-767 r-note 3), with the SAME reserved number (SA-340)", () => {
     const retry = at("runEditTx(");
     expect(at("reserveEditReturnNumber(")).toBeLessThan(retry); // reserved ONCE, ahead of the retried tx
     expect(retry).toBeLessThan(at("lockInlineReturnCustomer(")); // the whole tx is inside the retried callback
-    expect(body.slice(retry, retry + 60)).toContain("inlineRet"); // the p gate travels with the call
+    expect(body.slice(retry, retry + 60)).not.toContain("inlineRet"); // no return gate: plain edits retry too
   });
 
   it("the credit gate is re-read after the credit is applied, in the same tx", () => {

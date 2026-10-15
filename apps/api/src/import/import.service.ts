@@ -9,6 +9,15 @@ import { PrismaService } from "../prisma/prisma.service";
 import { calendarStampFromInput } from "../common/calendar-date";
 import { VendorBillsService } from "../vendor-bills/vendor-bills.service";
 import { CustomersService } from "../customers/customers.service";
+import { customerNameViolation } from "../customers/customer-name-guard";
+import { excludeWalkIn } from "../customers/walk-in-protected";
+import {
+  addressViolation,
+  licenseViolation,
+  productCategoryViolation,
+  personNameViolation,
+  productNameViolation,
+} from "../common/text-cell-guards";
 import { NumberingService } from "./numbering.service";
 import { ExternalRefService } from "./external-ref.service";
 import { ProductsService } from "../products/products.service";
@@ -24,7 +33,13 @@ import { ImportEntityType, InvoiceStatus, MovementType, UserRole } from "@prisma
 import * as bcrypt from "bcrypt";
 import * as crypto from "crypto";
 import { addressStateFields } from "../customers/address-state";
-import { PRODUCT_COLUMNS, CUSTOMER_COLUMNS, resolveColumns, parseRow } from "./import-columns";
+import {
+  PRODUCT_COLUMNS,
+  CUSTOMER_COLUMNS,
+  resolveColumns,
+  parseRow,
+  parseStrictMoneyCell,
+} from "./import-columns";
 import type { CustomerComplianceInput } from "../customers/customer-compliance-input";
 
 /** B858/B859: money fields in PRODUCT_COLUMNS that get rounded-value diff comparison. */
@@ -62,7 +77,7 @@ function isEntitlementDenial(e: unknown): boolean {
   const body = e.getResponse();
   const code =
     typeof body === "object" && body !== null ? (body as { code?: unknown }).code : undefined;
-  return code !== "PLAN_GATE_UNAVAILABLE";
+  return code !== API_ERROR_CODES.PLAN_GATE_UNAVAILABLE;
 }
 
 export interface ImportRowPlan {
@@ -81,10 +96,13 @@ import {
   mapBarcodeUniqueViolation,
   syncProductBarcodesFromLegacy,
 } from "../products/product-catalog-sync";
+import { claimCodes, codeClaims } from "../products/product-code-release";
 import {
   flagRestrictedLines,
   writeRestrictedLinesAudit,
 } from "../selling-restrictions/restricted-lines-flag";
+import { API_ERROR_CODES } from "../common/api-error-codes";
+import { columnEntitlementDenied } from "./import-column-entitlement";
 
 /**
  * F9-008: hard row-count cap on any CSV import. The byte-size caps on the upload
@@ -133,6 +151,62 @@ export function importCalendarDay(
   const parsed = parse(value);
   if (Number.isNaN(parsed.getTime())) return null;
   return new Date(Date.UTC(parsed.getFullYear(), parsed.getMonth(), parsed.getDate()));
+}
+
+type InvoiceMoney =
+  | {
+      ok: true;
+      total: number;
+      subtotal: number;
+      discount: number;
+      shippingFee: number;
+      /** NaN = the Balance Due cell is absent (the status logic relies on that). */
+      balanceDue: number;
+      lines: Map<
+        Record<string, string>,
+        { unitPrice: number; discount: number; itemTotal: number }
+      >;
+    }
+  | { ok: false; reason: string };
+
+/**
+ * #2190: read every money cell of one invoice group with the strict cell check shared with the
+ * products/customers path. A blank cell is absent (today's default: 0, or NaN for Balance Due); a
+ * non-blank cell that is not a number (or overflows Decimal(10,2)) fails the group with a reason
+ * naming the column header as it was read. Negative values are legitimate on an invoice.
+ */
+function readInvoiceMoney(invoiceRows: Record<string, string>[]): InvoiceMoney {
+  let reason: string | null = null;
+  const read = (row: Record<string, string>, headers: string[], absent: number): number => {
+    for (const header of headers) {
+      const raw = row[header];
+      if (raw == null || String(raw).trim() === "") continue;
+      const r = parseStrictMoneyCell(String(raw), { allowNegative: true });
+      if (r.ok) return r.value;
+      reason ??= `${header}: ${r.reason}`;
+      return absent;
+    }
+    return absent;
+  };
+  const first = invoiceRows[0];
+  const total = read(first, ["Total"], 0);
+  const subtotal = read(first, ["SubTotal", "Sub Total"], 0);
+  const discount = read(first, ["Entity Discount Amount", "Discount Amount"], 0);
+  const shippingFee = read(first, ["Shipping Charge"], 0);
+  const balanceDue = read(first, ["Balance Due", "Balance", "Outstanding Amount"], NaN);
+  const lines: Map<
+    Record<string, string>,
+    { unitPrice: number; discount: number; itemTotal: number }
+  > = new Map();
+  for (const row of invoiceRows) {
+    lines.set(row, {
+      unitPrice: read(row, ["Item Price"], 0),
+      discount: read(row, ["Discount Amount"], 0),
+      itemTotal: read(row, ["Item Total"], 0),
+    });
+  }
+  if (reason) return { ok: false, reason };
+  return { ok: true, total, subtotal, discount, shippingFee, balanceDue, lines };
 }
 
 @Injectable()
@@ -308,6 +382,20 @@ export class ImportService {
   }
 
   /**
+   * B964: the readable refusal for a commercial TEXT cell of a contacts row (the tobacco license number), change-only against the
+   * existing customer. A method of its own: importContacts' raw writes must not name a commercial field (SA-284 binding pin).
+   */
+  private commercialTextViolation(
+    values: Record<string, unknown>,
+    existing: Record<string, unknown> | null | undefined,
+  ): string | null {
+    return licenseViolation(
+      { tobaccoLicenseNo: values.tobaccoLicenseNo as string | undefined },
+      existing ? { tobaccoLicenseNo: existing.tobaccoLicenseNo as string | null } : null,
+    );
+  }
+
+  /**
    * B858/B859 FIX4: builds the `Partial<UpdateCustomerDto>` + `CustomerComplianceInput` diff for
    * one contacts row's commercial columns, applies it through `CustomersService.update` (the ONE
    * write path, SA-284 a), and records consent-change audit evidence. Never touches identity or
@@ -474,6 +562,10 @@ export class ImportService {
     // earlier row just created, while the preview — which wrote nothing — planned two creates).
     const claimedZohoIds = new Map<string, number>();
     const claimedNames = new Map<string, { row: number; zohoContactId: string | null }>();
+    // The walk-in customer's name and Customer ID are reserved: a row carrying either is skipped.
+    const walkIn = await this.prisma
+      .forTenant()
+      .customer.findFirst({ where: { isWalkIn: true, deletedAt: null } });
     const claimedCustomerIds = new Map<string, number>();
     let rowNumber = 0;
 
@@ -537,6 +629,14 @@ export class ImportService {
         skipContact(`duplicate of row ${claimedZohoIds.get(zohoContactId)}`);
         continue;
       }
+      if (
+        walkIn?.isWalkIn === true &&
+        ((zohoContactId && zohoContactId === walkIn.zohoContactId) ||
+          normalizeNameKey(name) === normalizeNameKey(walkIn.businessName))
+      ) {
+        skipContact(`Row ${rowNumber} skipped: this name is reserved for walk-in sales.`);
+        continue;
+      }
 
       // Extract all fields from CSV
       const displayName = (row["Display Name"] || "").trim() || null;
@@ -596,12 +696,13 @@ export class ImportService {
       // Find existing customer: prefer Zoho ID match, then fall back to
       // case-insensitive businessName match for customers imported before
       // zohoContactId tracking was wired up.
+      // Both lookups also skip the walk-in customer, so a row naming it is handled like an unmatched row.
       // I2: both lookups exclude soft-deleted customers — a deleted match would otherwise run
       // the raw identity/address writes below, THEN throw "Restore the customer first" out of
       // `applyCustomerCommercialFields`, leaving a partial row (identity written, commercial not).
       let existing = zohoContactId
         ? await this.prisma.forTenant().customer.findFirst({
-            where: { zohoContactId, deletedAt: null },
+            where: excludeWalkIn({ zohoContactId, deletedAt: null }),
             include: { addresses: true, contactPersons: true },
           })
         : null;
@@ -638,7 +739,10 @@ export class ImportService {
         // I2: ambiguity must be decided BEFORE any write — `findMany(take 2)` + skip, the same
         // rule and "same normalization" (case-insensitive exact) as the product name match.
         const byName = await this.prisma.forTenant().customer.findMany({
-          where: { businessName: { equals: name, mode: "insensitive" }, deletedAt: null },
+          where: excludeWalkIn({
+            businessName: { equals: name, mode: "insensitive" as const },
+            deletedAt: null,
+          }),
           include: { addresses: true, contactPersons: true },
           take: 2,
         });
@@ -666,6 +770,55 @@ export class ImportService {
 
       if (existing && claimedCustomerIds.has(existing.id)) {
         skipContact(`duplicate of row ${claimedCustomerIds.get(existing.id)}`);
+        continue;
+      }
+      // B956: a formula-led name rejects THIS row (never the batch, never a half-write); only a
+      // CHANGED name is checked, so a legacy value re-imported unchanged still updates its row.
+      const nameViolation = customerNameViolation(
+        { businessName: name, contactName, displayName },
+        existing,
+      );
+      if (nameViolation) {
+        skipContact(nameViolation);
+        continue;
+      }
+      // B964: the same rule for the row's billing/shipping address text and its tobacco license number (change-only for the
+      // license against an existing customer): reject THIS row before any write; the importer never reads or rewrites stored rows.
+      // Change-only (lead Opus on #3010): an address cell is checked only when the importer WILL write it: always for a new
+      // customer, and for an existing one only when that address type is missing AND the row has that address to write (shipping equal to billing writes no shipping row).
+      const hasStoredBilling = (existing?.addresses ?? []).some((a) => a.addressType === "BILLING");
+      const hasStoredShipping = (existing?.addresses ?? []).some(
+        (a) => a.addressType === "SHIPPING",
+      );
+      const textViolation =
+        (hasStoredBilling || !hasBilling
+          ? null
+          : addressViolation({
+              line1: billingLine1,
+              city: billingCity,
+              state: billingState,
+              zip: billingZip,
+            })) ??
+        (hasStoredShipping || !hasShipping
+          ? null
+          : addressViolation({
+              line1: shippingLine1,
+              city: shippingCity,
+              state: shippingState,
+              zip: shippingZip,
+            })) ??
+        this.commercialTextViolation(parsedCommercial.values, existing) ??
+        // B984: the row's person name (salutation / first / last name). A ContactPerson is created only for a row with a first or last
+        // name, for a new customer or an existing one with none: that write is verbatim, so it is checked WITHOUT a stored row.
+        // Otherwise only a CHANGED value is checked, against the customer's own copy.
+        personNameViolation(
+          { salutation, firstName, lastName },
+          (firstName || lastName) && (!existing || (existing.contactPersons?.length ?? 0) === 0)
+            ? null
+            : (existing as never),
+        );
+      if (textViolation) {
+        skipContact(textViolation);
         continue;
       }
       const claimZohoId = zohoContactId ?? existing?.zohoContactId ?? null;
@@ -1056,6 +1209,7 @@ export class ImportService {
 
     // Group by Invoice ID
     const groups: Record<string, any[]> = {};
+    const groupFirstRow = new Map<any[], number>();
     let rowIndex = 0;
     for (const row of rows) {
       rowIndex++;
@@ -1081,7 +1235,10 @@ export class ImportService {
         errors.push(`Row ${rowIndex}: missing invoice id`);
         continue;
       }
-      if (!groups[id]) groups[id] = [];
+      if (!groups[id]) {
+        groups[id] = [];
+        groupFirstRow.set(groups[id], rowIndex);
+      }
       groups[id].push(row);
     }
 
@@ -1098,6 +1255,12 @@ export class ImportService {
       ...groupEntries.filter(([, rows]) => !hasSourceNumber(rows)),
     ];
 
+    // The walk-in customer's name is reserved: an invoice naming it is skipped, never attached to it.
+    const walkInRow = await this.prisma
+      .forTenant()
+      .customer.findFirst({ where: { isWalkIn: true, deletedAt: null } });
+    const walkInName = walkInRow?.isWalkIn === true ? walkInRow.businessName : null;
+
     for (const [, invoiceRows] of orderedGroups) {
       const first = invoiceRows[0];
       const customerName = (first["Customer Name"] || first["Company Name"] || "").trim();
@@ -1105,14 +1268,56 @@ export class ImportService {
         skipped++;
         continue;
       }
+      if (walkInName && normalizeNameKey(customerName) === normalizeNameKey(walkInName)) {
+        skipped++;
+        errors.push(
+          `Row ${groupFirstRow.get(invoiceRows)} skipped: this name is reserved for walk-in sales.`,
+        );
+        continue;
+      }
+
+      // #2190: a present-but-unparseable money cell skips the WHOLE invoice group before any write
+      // (never a silent $0). Blank/absent cells keep today's defaults.
+      const money = readInvoiceMoney(invoiceRows);
+      if (!money.ok) {
+        skipped++;
+        errors.push(
+          `${(first["Invoice Number"] || "").trim() || (first["Invoice ID"] || "").trim() || customerName}: ${money.reason}`,
+        );
+        continue;
+      }
 
       // Try to find existing customer
       let customer = await this.prisma.forTenant().customer.findFirst({
-        where: { businessName: { contains: customerName, mode: "insensitive" } },
+        where: excludeWalkIn({
+          businessName: { contains: customerName, mode: "insensitive" as const },
+        }),
       });
 
       // Auto-create customer if not found
       if (!customer) {
+        // B956: same rule as the contact importer: reject this invoice group, never half-write.
+        const nameViolation = customerNameViolation({
+          businessName: customerName,
+          contactName: customerName,
+        });
+        if (nameViolation) {
+          skipped++;
+          errors.push(`${customerName}: ${nameViolation}`);
+          continue;
+        }
+        // B964: the auto-created customer's billing address text, same rule, before any user or customer write
+        const addressText = addressViolation({
+          line1: (first["Billing Address"] || first["Billing Street"] || "").trim(),
+          city: (first["Billing City"] || "").trim(),
+          state: (first["Billing State"] || "").trim(),
+          zip: (first["Billing Code"] || "").trim(),
+        });
+        if (addressText) {
+          skipped++;
+          errors.push(`${customerName}: ${addressText}`);
+          continue;
+        }
         const baseUsername = this.slugify(customerName);
         let username = baseUsername;
         let usernameSeq = 1;
@@ -1182,11 +1387,10 @@ export class ImportService {
         continue;
       }
 
-      const total = parseImportMoney(first["Total"] || "0") || 0;
-      const subtotal = parseImportMoney(first["SubTotal"] || first["Sub Total"] || "0") || total;
-      const discount =
-        parseImportMoney(first["Entity Discount Amount"] || first["Discount Amount"] || "0") || 0;
-      const shippingFee = parseImportMoney(first["Shipping Charge"] || "0") || 0;
+      const total = money.total;
+      const subtotal = money.subtotal || total;
+      const discount = money.discount;
+      const shippingFee = money.shippingFee;
       // B268/D4: a row carrying a source number keeps it verbatim (the upsert-by-number
       // branch below repairs status drift on re-import). A row with NO source number is a
       // live mint, not a preserved import — reserved further down, inside the try, via
@@ -1220,9 +1424,7 @@ export class ImportService {
       // Determine status using Zoho's "Balance Due" field, which is more reliable
       // than the status label (Zoho may show "Overdue" for invoices paid in cash outside the system)
       const zohoStatus = this.mapInvoiceStatus(first["Invoice Status"]);
-      const balanceDue = parseImportMoney(
-        first["Balance Due"] || first["Balance"] || first["Outstanding Amount"] || "NaN",
-      );
+      const balanceDue = money.balanceDue;
 
       let status: InvoiceStatus;
       if (zohoStatus === InvoiceStatus.DRAFT) {
@@ -1250,11 +1452,11 @@ export class ImportService {
         const description = (row["Item Name"] || "").replace(/[\n\r]+/g, " ").trim() || "Item";
         const qty = parseImportNumber(row["Quantity"] || "1") || 1;
         if (qty <= 0) continue;
-        const unitPrice = parseImportMoney(row["Item Price"] || "0") || 0;
-        const itemDiscount = parseImportMoney(row["Discount Amount"] || "0") || 0;
-        const sub = roundMoney(
-          parseImportMoney(row["Item Total"] || "0") || qty * unitPrice - itemDiscount,
-        );
+        const line = money.lines.get(row)!;
+        const unitPrice = line.unitPrice;
+        const itemDiscount = line.discount;
+        // scan-ok: money-rederive — an imported CSV line has no case pack: the file's Item Total wins; the plain qty x price fallback is what the row states (unchanged by #2190).
+        const sub = roundMoney(line.itemTotal || qty * unitPrice - itemDiscount);
         const sku = (row["SKU"] || "").trim();
 
         let productId: string | undefined;
@@ -2295,7 +2497,9 @@ export class ImportService {
         await this.productsService.assertMsrpAllowed();
       } catch (e) {
         if (!isEntitlementDenial(e)) throw e;
-        throw new ForbiddenException(
+        throw columnEntitlementDenied(
+          "MSRP",
+          resolved.byField.msrp,
           `Column "${resolved.byField.msrp}" needs the MSRP plan flag; remove the column or enable it`,
         );
       }
@@ -2305,7 +2509,9 @@ export class ImportService {
         await this.productsService.assertCanFlagTobacco(true);
       } catch (e) {
         if (!isEntitlementDenial(e)) throw e;
-        throw new ForbiddenException(
+        throw columnEntitlementDenied(
+          "TOBACCO_DEALER",
+          resolved.byField.isTobacco,
           `Column "${resolved.byField.isTobacco}" needs tobacco_dealer add-on; remove the column or enable it`,
         );
       }
@@ -2316,7 +2522,9 @@ export class ImportService {
         await this.productsService.assertReorderAllowed();
       } catch (e) {
         if (!isEntitlementDenial(e)) throw e;
-        throw new ForbiddenException(
+        throw columnEntitlementDenied(
+          "FORECASTING",
+          reorderColumn,
           `Column "${reorderColumn}" needs the forecasting plan flag; remove the column or enable it`,
         );
       }
@@ -2554,6 +2762,29 @@ export class ImportService {
           continue;
         }
 
+        // B964-2: a RENAME to a formula-led name is a skip in BOTH modes, decided before the dry-run split (update() would refuse
+        // it in a real run). `changes.name` is already a DIFFERING value, so this is change-only against the stored name.
+        if (typeof changes.name === "string" || typeof changes.category === "string") {
+          const renameViolation =
+            (typeof changes.name === "string"
+              ? productNameViolation(
+                  { name: changes.name },
+                  { name: existing.name as string | null },
+                )
+              : null) ??
+            // B990: a changed category cell is a DIFFERING value already; refused change-only against the stored text
+            (typeof changes.category === "string"
+              ? productCategoryViolation(
+                  changes.category,
+                  (existing.category as string | null) ?? null,
+                )
+              : null);
+          if (renameViolation) {
+            skipRow(renameViolation);
+            continue;
+          }
+        }
+
         const plannedChanges: Record<string, { from: unknown; to: unknown }> = {};
         for (const [field, to] of Object.entries(changes)) {
           plannedChanges[field] = { from: (existing as any)[field] ?? null, to };
@@ -2601,6 +2832,15 @@ export class ImportService {
       }
       if (parsed.values.pricePerUnit === undefined) {
         skipRow("Rate is required for a new product");
+        continue;
+      }
+      // B964-2: a formula-led NEW name is a skip in BOTH modes, decided before the dry-run split: create() would refuse it in a
+      // real run, so a preview that says "create" would disagree with what the import then does.
+      const nameViolation =
+        productNameViolation({ name }) ??
+        productCategoryViolation(parsed.values.category as string | undefined); // B990: the category cell too
+      if (nameViolation) {
+        skipRow(nameViolation);
         continue;
       }
       const dto: Record<string, unknown> = {
@@ -2751,6 +2991,14 @@ export class ImportService {
           }
           updated++;
         } else {
+          // B964-2: a NEW product's name is written here; a formula-led one rejects THIS row (a matched existing product
+          // only has its stock updated above, so a legacy name never blocks a sync).
+          const nameViolation = productNameViolation({ name });
+          if (nameViolation) {
+            skipped++;
+            errors.push(`${name}: ${nameViolation}`);
+            continue;
+          }
           // Create new product with this stock level. B562 follow-up: writing
           // the opening balance straight onto currentStock with no
           // StockMovement would permanently "gap" this product's ledger —
@@ -2769,6 +3017,14 @@ export class ImportService {
             // products.service.ts create().
             if (zohoBarcode) {
               await lockBarcodeCodes(tx, tenantIdForZoho, [zohoBarcode]);
+              // SA-603a: lock -> claim -> check -> create. A code an INACTIVE product still holds is released here
+              // (audited); an ACTIVE holder is a 409. (barcode and sku are the same code on this path.)
+              await claimCodes(tx, {
+                tenantId: tenantIdForZoho,
+                productId: null,
+                actorId: null,
+                codes: codeClaims({ barcode: zohoBarcode, sku: zohoBarcode }, null),
+              });
               await assertBarcodeAvailable(tx, {
                 tenantId: tenantIdForZoho,
                 productId: null,

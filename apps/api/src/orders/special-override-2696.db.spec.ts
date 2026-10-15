@@ -21,6 +21,8 @@ jest.mock("../invoices/invoices.service", () => ({
     findAll: jest.fn().mockResolvedValue({ data: [], meta: {} }),
     reconcileOrderDraftInvoice: jest.fn().mockResolvedValue(null),
     resyncOrderInvoicesForEdit: jest.fn().mockResolvedValue([]),
+    followPartialPrices: jest.fn().mockResolvedValue({ issuedPartialsUnchanged: [] }),
+    projectEditedInvoiceTotals: jest.fn().mockResolvedValue([]),
     revertLinkedInvoicesForOrderEdit: jest.fn().mockResolvedValue([]),
     // forceConsolidateCustomer's loser-cleanup loop calls this unconditionally
     // (orders.service.ts:1103) — the unit-test harness's own InvoicesService mock
@@ -38,6 +40,7 @@ jest.mock("../notifications/notifications.service", () => ({
   })),
 }));
 
+import { oversellReaderOffProvider } from "./testing/policy-reader-provider";
 import { randomUUID } from "crypto";
 import { Test, TestingModule } from "@nestjs/testing";
 import { getQueueToken } from "@nestjs/bull";
@@ -97,6 +100,7 @@ describeDb("#2696(c) staff price override — real Postgres", () => {
 
     const module: TestingModule = await Test.createTestingModule({
       providers: [
+        oversellReaderOffProvider,
         OrdersService,
         { provide: TenantContextService, useValue: tenantCtx },
         { provide: PrismaService, useValue: dbPrisma },

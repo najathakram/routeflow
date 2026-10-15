@@ -13,11 +13,14 @@ jest.mock("../common/db-locks", () => ({
  *  - the UNATTENDED run skips the banned line(s), orders the rest, notifies once and suspends THAT template
  *    line (an AuditLog row); an all-banned or all-suspended template orders nothing, still with a notice;
  *  - the run's channel follows the template's snapshotted creator through the live predicate, and unknown
- *    provenance (NULL) is the STRICTER buyer channel, never staff;
+ *    provenance (NULL) is the STRICTER buyer channel, never staff, EXCEPT that a legacy template (a NULL role
+ *    beside known staff) is staff-built, so a portal-only limit never suspends its lines (a legal ban still does);
  *  - an edit keeps a line's suspension unless THAT line's product or qty changed (audited lift); an explicit
  *    lift is its own audited action.
  * The choke point itself is proven in `selling-restrictions.service.spec.ts`.
  */
+import { regulatedGateOpenProvider } from "./testing/regulated-gate-open-provider";
+import { oversellReaderOffProvider } from "../orders/testing/policy-reader-provider";
 import { Test } from "@nestjs/testing";
 import { BadRequestException, ConflictException } from "@nestjs/common";
 import { OrderTemplatesService } from "./order-templates.service";
@@ -91,7 +94,9 @@ describe("OrderTemplatesService — selling restrictions (F-05)", () => {
     ordersService.getCustomerPriceHistory.mockResolvedValue({});
     const mod = await Test.createTestingModule({
       providers: [
+        oversellReaderOffProvider,
         OrderTemplatesService,
+        regulatedGateOpenProvider,
         { provide: PrismaService, useValue: prisma },
         { provide: TenantContextService, useValue: { run: jest.fn((_i, fn) => fn()) } },
         { provide: SystemConfigService, useValue: { get: jest.fn().mockResolvedValue("10") } },
@@ -220,6 +225,25 @@ describe("OrderTemplatesService — selling restrictions (F-05)", () => {
       },
     );
 
+    it.each([
+      // [createdByRole, itemsEditedByRole, a portal-only limit is skipped]: legacy provenance (a NULL role beside
+      // known staff) is a staff-built template, so a portal limit never suspends its lines; a legal ban still binds.
+      ["OPERATOR", null, true],
+      [null, "OPERATOR", true],
+      [null, null, true],
+      ["OPERATOR", "OPERATOR", false], // known staff: judged as STAFF, portal-only rules never bind it anyway
+      ["CUSTOMER", null, false], // a buyer authored it: the full portal rules
+      ["OPERATOR", "CUSTOMER", false],
+      ["CUSTOMER", "CUSTOMER", false],
+    ])(
+      "legacy provenance: created by %s, edited by %s skips portal-only limits = %s",
+      async (c, e, skips) => {
+        await run(template({ createdByRole: c, itemsEditedByRole: e }));
+        const arg = restrictions.checkLinesSellable.mock.calls[0][0];
+        expect(Boolean(arg.skipPortalOnlyRules)).toBe(skips);
+      },
+    );
+
     it("the ban-note reads 'went ahead' only when something was ordered, and once", async () => {
       restrictions.checkLinesSellable.mockResolvedValue(block);
       await run(template());
@@ -331,6 +355,106 @@ describe("OrderTemplatesService — selling restrictions (F-05)", () => {
         template({ items: [line("p-banned", { suspendedAt: new Date() })] }),
       );
       await expect(service.generateOrder("t1")).rejects.toBeInstanceOf(BadRequestException);
+    });
+  });
+
+  describe("buyer reorder: portal limits (lines hidden from this buyer are left out, with `skipped`)", () => {
+    const hidden = {
+      outcome: "BLOCK",
+      reasons: [{ productId: "p-banned", productName: "Banned Cola", ruleId: "rule-1" }],
+    };
+
+    it("(h) drops the restricted line, orders the rest, and returns it in `skipped`", async () => {
+      restrictions.checkLinesSellable.mockResolvedValue(hidden);
+      const outcome = { skipped: [] as Array<{ productId: string; name: string }> };
+
+      await service.generateOrder("t1", false, false, outcome);
+
+      expect(restrictions.checkLinesSellable).toHaveBeenCalledWith(
+        expect.objectContaining({ channel: "BUYER_PORTAL" }),
+      );
+      // the 409 authority is still asked, but only about the lines left in
+      expect(restrictions.assertLinesSellable).toHaveBeenCalledWith(
+        expect.objectContaining({ lines: [{ productId: "p-ok" }], channel: "BUYER_PORTAL" }),
+      );
+      expect(
+        prisma.order.create.mock.calls[0][0].data.lineItems.create.map((l: any) => l.productId),
+      ).toEqual(["p-ok"]);
+      expect(outcome.skipped).toEqual([{ productId: "p-banned", name: "Banned Cola" }]);
+    });
+
+    it("an INDETERMINATE verdict (legal ban, no state on file) drops the line too", async () => {
+      restrictions.checkLinesSellable.mockResolvedValue({ ...hidden, outcome: "INDETERMINATE" });
+      const outcome = { skipped: [] as Array<{ productId: string; name: string }> };
+      await service.generateOrder("t1", false, false, outcome);
+      expect(outcome.skipped.map((l) => l.productId)).toEqual(["p-banned"]);
+    });
+
+    it("when every line is restricted it answers with the calm sentence and places nothing", async () => {
+      prisma.orderTemplate.findUnique.mockResolvedValue(template({ items: [line("p-banned")] }));
+      restrictions.checkLinesSellable.mockResolvedValue(hidden);
+
+      await expect(service.generateOrder("t1", false, false, { skipped: [] })).rejects.toThrow(
+        "None of these items are available to you right now.",
+      );
+      expect(prisma.order.create).not.toHaveBeenCalled();
+    });
+
+    it("nothing restricted: skipped stays empty and the order is whole", async () => {
+      const outcome = { skipped: [] as Array<{ productId: string; name: string }> };
+      await service.generateOrder("t1", false, false, outcome);
+      expect(outcome.skipped).toEqual([]);
+      expect(prisma.order.create.mock.calls[0][0].data.lineItems.create).toHaveLength(2);
+    });
+
+    it("a customer's own /generate (no `skipped` out-param) is NOT trimmed: it keeps the 409 and the lines named", async () => {
+      restrictions.assertLinesSellable.mockRejectedValue(
+        new ConflictException({ code: "SELLING_RESTRICTED", message: "banned", blockedLines: [] }),
+      );
+      restrictions.checkLinesSellable.mockResolvedValue(hidden);
+      await expect(service.generateOrder("t1", false, false)).rejects.toMatchObject({
+        response: { code: "SELLING_RESTRICTED" },
+      });
+      expect(prisma.order.create).not.toHaveBeenCalled();
+    });
+
+    it("a STAFF manual run is NOT trimmed: the operator still gets the 409", async () => {
+      restrictions.assertLinesSellable.mockRejectedValue(
+        new ConflictException({ code: "SELLING_RESTRICTED", message: "banned", blockedLines: [] }),
+      );
+      restrictions.checkLinesSellable.mockResolvedValue(hidden);
+      await expect(service.generateOrder("t1", true)).rejects.toMatchObject({
+        response: { code: "SELLING_RESTRICTED" },
+      });
+      expect(restrictions.checkLinesSellable).not.toHaveBeenCalled();
+      expect(restrictions.assertLinesSellable).toHaveBeenCalledWith(
+        expect.objectContaining({ lines: [{ productId: "p-banned" }, { productId: "p-ok" }] }),
+      );
+    });
+  });
+
+  describe("SA ruling (#3418): every generated line carries its explicit author marker", () => {
+    const markers = () =>
+      prisma.order.create.mock.calls[0][0].data.lineItems.create.map((l: any) => l.authorChannel);
+
+    it("a STAFF manual run writes STAFF on each line", async () => {
+      await service.generateOrder("t1", true);
+      expect(markers()).toEqual(["STAFF", "STAFF"]);
+    });
+
+    it("a buyer's manual run (reorder) writes BUYER on each line", async () => {
+      await service.generateOrder("t1", false);
+      expect(markers()).toEqual(["BUYER", "BUYER"]);
+    });
+
+    it("the unattended run writes the least privileged author: STAFF for a staff-only template", async () => {
+      await run(template({ createdByRole: "OPERATOR", itemsEditedByRole: "OPERATOR" }));
+      expect(markers()).toEqual(["STAFF", "STAFF"]);
+    });
+
+    it("the unattended run writes BUYER once a buyer edited the template (or the author is unknown)", async () => {
+      await run(template({ createdByRole: "OPERATOR", itemsEditedByRole: "CUSTOMER" }));
+      expect(markers()).toEqual(["BUYER", "BUYER"]);
     });
   });
 

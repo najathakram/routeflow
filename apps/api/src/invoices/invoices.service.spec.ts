@@ -399,7 +399,10 @@ describe("InvoicesService", () => {
       // to `this.prisma` would make the `{ tx: txClient }` assertion vacuous, since
       // reserving on the base client would look identical to reserving on the tx.
       const txClient = {
-        order: { findUnique: jest.fn().mockResolvedValue(orderFixture("ord-d7-tx")) },
+        order: {
+          findUnique: jest.fn().mockResolvedValue(orderFixture("ord-d7-tx")),
+          findFirst: jest.fn().mockResolvedValue({ status: "PENDING" }), // F2b re-judge: not a DRAFT
+        },
         invoice: {
           findMany: jest.fn().mockResolvedValue([]),
           create: jest.fn(async (args: any) => ({
@@ -694,12 +697,11 @@ describe("InvoicesService", () => {
       expect(created.categoryTaxAmount).toBe(0.5); // 0.1 x 5, never 0.1 x (5*12)=6
     });
 
-    it("SA-144g: refuses ANY non-blank requested unitLabel up front — this is why the tax derivation below never sees one", async () => {
-      // update()'s pieceQty/categoryTaxAmount derivation (:3401) reads item.unitLabel with no
-      // resolveLineUnits call of its own; its safety rests entirely on this refusal running
-      // BEFORE the item loop, for every item, on ANY non-blank label — including one that
-      // would resolve to the pack itself (e.g. "Case" naming a product's own base unit).
-      prisma.invoice.findUnique.mockResolvedValue(draftInvoice);
+    it("SA-144g (VU-4a, D3): an ORDER-LINKED draft refuses ANY non-blank requested unitLabel up front, before the item loop", async () => {
+      // An order-less DRAFT now resolves a unit through resolveLineUnits (invoices.service.update-units.spec.ts);
+      // an order-linked one stays refused for every item — the back-sync would write the unit onto the order
+      // line — including a label that would resolve to the pack itself (e.g. "Case" naming the base unit).
+      prisma.invoice.findUnique.mockResolvedValue({ ...draftInvoice, orderId: "ord-1" });
 
       await expect(
         service.update("inv-box", {
@@ -1357,13 +1359,13 @@ describe("InvoicesService", () => {
       expect("payments" in data).toBe(false);
     });
 
-    it("flips PAID (balance floors at 0) when the edited total drops to/below what's already paid", async () => {
+    it("B1098: an edited total BELOW what is already paid is held out of PAID (balance floors at 0)", async () => {
       armDepositReconcile({ payments: [{ amount: 60, status: "PAID" }] });
 
       await service.reconcileOrderDraftInvoice("o-dep", { basis: "order" });
 
       const data = prisma.invoice.update.mock.calls[0][0].data;
-      expect(data.status).toBe(InvoiceStatus.PAID);
+      expect(data.status).not.toBe(InvoiceStatus.PAID); // SENT, or OVERDUE past the due day
     });
 
     it("excludes a VOID payment from the recomputed status, same as findAll/findOne", async () => {
@@ -5044,7 +5046,7 @@ describe("InvoicesService", () => {
       expect(upd.data.status).toBe(InvoiceStatus.PARTIAL);
     });
 
-    it("a PAID invoice edited to a lower total stays PAID (over-paid / credit balance)", async () => {
+    it("B1098: a PAID invoice edited to a lower total is no longer shown PAID (overpaidBy carries the excess)", async () => {
       prisma.invoice.findMany.mockResolvedValue([
         inv({ status: InvoiceStatus.PAID, payments: [{ amount: 50, status: "PAID" }] }),
       ] as any);
@@ -5057,8 +5059,8 @@ describe("InvoicesService", () => {
 
       const upd = updOf("inv-1");
       expect(upd.data.subtotal).toBe(30);
-      // paid 50 >= total 30 → PAID (customer over-paid; balance is a credit).
-      expect(upd.data.status).toBe(InvoiceStatus.PAID);
+      // paid 50 > total 30 → held out of PAID (SA-763r P-3): SENT, the balance is zero, overpaidBy 20.
+      expect(upd.data.status).toBe(InvoiceStatus.SENT);
     });
 
     it("VOID payments are excluded when recomputing status", async () => {
@@ -5383,7 +5385,7 @@ describe("InvoicesService", () => {
       expect(updOf("d-only").data.subtotal).toBe(50);
     });
 
-    it("bails to legacy when a finalized invoice already bills part of the order", async () => {
+    it('SA-681: with a finalized invoice already billing part of the order, nothing is rebuilt ("partials")', async () => {
       prisma.invoice.findMany.mockResolvedValue([
         ...splitDrafts(),
         {
@@ -5403,14 +5405,16 @@ describe("InvoicesService", () => {
       prisma.order.findUnique.mockResolvedValue(mockOrder([line(), regLine()]) as any);
       prisma.orderItem.findMany.mockResolvedValue([{ id: "oi-std" }, { id: "oi-reg" }] as any);
 
-      await service.reconcileOrderDraftInvoice("ord-1", { basis: "order", tx: prisma as any });
+      const res = await service.reconcileOrderDraftInvoice("ord-1", {
+        basis: "order",
+        tx: prisma as any,
+      });
 
-      // Legacy single-draft path took over → exactly ONE invoice.update (the base), not
-      // the two-sibling rebuild.
-      expect(prisma.invoice.update).toHaveBeenCalledTimes(1);
-      expect(updOf("d-base")).toBeDefined();
-      // The legacy group-unaware path must NOT touch the ledger (folding the regulated
-      // line onto the base + writing a SALE would double-count vs the live -R1 SALE).
+      // Pre-SA-681 the legacy single-draft path took over and folded EVERY line onto the base while
+      // the SENT invoice and the -R1 sibling still billed theirs (a double bill). Now: no rebuild.
+      expect(res).toBe("partials");
+      expect(prisma.invoice.update).not.toHaveBeenCalled();
+      expect(prisma.orderItem.update).not.toHaveBeenCalled();
       expect((service as any).ledger.writeSaleEntries).not.toHaveBeenCalled();
     });
   });
@@ -5584,6 +5588,7 @@ describe("InvoicesService", () => {
           })),
           findFirst: jest.fn().mockResolvedValue(null),
         },
+        order: { findFirst: jest.fn().mockResolvedValue({ status: "PENDING" }) }, // F2b re-judge
         orderItem: {
           update: jest.fn().mockResolvedValue({}),
           updateMany: jest.fn().mockResolvedValue({ count: 1 }),
@@ -7360,6 +7365,15 @@ describe("InvoicesService", () => {
         }),
       );
     });
+
+    it("row 401: a paid-at-sale counter invoice's e-mail hides the due date and terms", async () => {
+      const at = new Date("2026-01-01T10:00:00Z");
+      const pay = { id: "p1", amount: 500, status: "PAID", method: "CASH", createdAt: at };
+      const inv = { ...invoiceFixture(InvoiceStatus.PAID), createdAt: at, payments: [pay] };
+      prisma.invoice.findUnique.mockResolvedValue({ ...inv, order: { counterSale: true } });
+      await service.sendEmail("inv-b102");
+      expect(mockEmailService.sendInvoice.mock.calls[0][0].hideTerms).toBe(true);
+    });
   });
 
   // F03 (B421) — a CREDIT_NOTE/ADVANCE application must never reach the
@@ -8610,10 +8624,8 @@ describe("InvoicesService", () => {
         },
         // null dueDate: counts toward totalOutstanding, lands in NO bucket
         { id: "inv-no-due", total: 7, dueDate: null, payments: [] },
-        // m5: status OVERDUE with a FUTURE dueDate → OVERDUE, never dueIn30.
-        // The client memo's basis is a DISJUNCT (`status === "OVERDUE" || due <
-        // today`), so an invoice the server already flipped to OVERDUE stays
-        // overdue whatever its dueDate says.
+        // SA-770: the bucket is the staff rule (classifyInvoiceBalance): a status-OVERDUE
+        // invoice with a FUTURE dueDate is NOT overdue - its due day has not ended.
         {
           id: "inv-status-overdue",
           total: 11,
@@ -8626,6 +8638,10 @@ describe("InvoicesService", () => {
         // boundary: today+31 is OUTSIDE every bucket
         { id: "inv-day31", total: 17, dueDate: new Date("2026-09-26T00:00:00.000Z"), payments: [] },
       ]);
+      // Row 318b: the real KPI read selects `status`, and only an OPEN-status invoice can be overdue.
+      const rows = (await prisma.invoice.findMany()) as Array<Record<string, unknown>>;
+      prisma.invoice.findMany.mockResolvedValue(rows.map((r) => ({ status: "SENT", ...r })));
+      prisma.invoice.findMany.mockClear(); // the call above only read the fixture back
       prisma.invoicePayment.count.mockResolvedValue(3);
       prisma.$queryRaw.mockResolvedValue([{ avgDays: 12.5 }]);
 
@@ -8642,11 +8658,10 @@ describe("InvoicesService", () => {
 
       expect(result).toEqual({
         totalOutstanding: 313, // 100 + 50 + 25 + 10 + 80 + 7 + 11 + 13 + 17
-        // 100 + 80 (the PARTIAL row's CONFIRMED-only balance) + 11 (m5: the
-        // status-OVERDUE row, whose dueDate is in the future)
-        overdue: 191,
+        // 100 + 80 (the PARTIAL row's CONFIRMED-only balance)
+        overdue: 180,
         dueToday: 50,
-        dueIn30: 38, // 25 + 13 (day 30) — the status-OVERDUE row is NOT here
+        dueIn30: 49, // 25 + 13 (day 30) + 11 (the status-OVERDUE row, due in the future)
         avgDays: 12.5,
         awaitingConfirmationCount: 3,
       });
@@ -8679,13 +8694,11 @@ describe("InvoicesService", () => {
       expect(sql).toContain('"paidAt" >= "sentAt"');
     });
 
-    // m5 — the `overdue` bucket's basis is the client memo's DISJUNCT, not a
-    // date-only rule: an invoice the server has already flipped to OVERDUE
-    // counts as overdue whatever its dueDate says. A date-only implementation
-    // buckets the future-dated row into dueIn30 and drops the null-dated one
-    // out of every bucket — both under-report the tile the operator collects
-    // against.
-    it("counts a status-OVERDUE invoice as overdue regardless of its dueDate (m5)", async () => {
+    // m5 (superseded by SA-770): the `overdue` bucket used to be the client memo's DISJUNCT
+    // (`status === "OVERDUE" || due < today`). It is now the staff rule: only a balance due
+    // whose due DAY has ended is overdue, so a stale OVERDUE flag on a future-dated row is
+    // dueIn30, and a null-dated one lands in totalOutstanding only.
+    it("a status-OVERDUE invoice is overdue only when its due day has ended (SA-770 supersedes m5)", async () => {
       prisma.invoice.findMany.mockResolvedValue([
         // dueDate 10 days in the FUTURE — a date-only rule buckets this in dueIn30.
         {
@@ -8721,7 +8734,7 @@ describe("InvoicesService", () => {
         dueIn30: result.dueIn30,
         dueToday: result.dueToday,
         totalOutstanding: result.totalOutstanding,
-      }).toEqual({ overdue: 100, dueIn30: 0, dueToday: 0, totalOutstanding: 100 });
+      }).toEqual({ overdue: 0, dueIn30: 40, dueToday: 0, totalOutstanding: 100 });
     });
 
     // m7 (F16 hotfix) — the awaiting-confirmation tile does NOT share the money
@@ -8847,7 +8860,13 @@ describe("InvoicesService", () => {
     it("scopes all three reads to the caller's own customer when the viewer is a CUSTOMER", async () => {
       prisma.customer.findFirst.mockResolvedValue({ id: "cust-9" });
       prisma.invoice.findMany.mockResolvedValue([
-        { id: "inv-mine", total: 100, dueDate: new Date("2026-08-25T00:00:00.000Z"), payments: [] },
+        {
+          id: "inv-mine",
+          status: "SENT", // row 318b: only an open-status invoice can be overdue
+          total: 100,
+          dueDate: new Date("2026-08-25T00:00:00.000Z"),
+          payments: [],
+        },
       ]);
       prisma.invoicePayment.count.mockResolvedValue(1);
       prisma.$queryRaw.mockResolvedValue([{ avgDays: 4 }]);

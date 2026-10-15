@@ -17,7 +17,12 @@ import {
 import { marginFloorPrice } from "../../lib/margin-floor-price";
 import { freeUnitsLabel } from "../../lib/buyer-cart-logic";
 import { setLineUnits } from "../../lib/sale-line";
-import { draftFreeUnits, ladderProductFor, type DraftItem } from "../../lib/edit-items-draft";
+import {
+  draftFreeUnits,
+  ladderProductFor,
+  startsOnDefaultUnit,
+  type DraftItem,
+} from "../../lib/edit-items-draft";
 import { StepperRow } from "../../components/EditItemsStepperRow";
 import { SellByToggle } from "../../components/SellByToggle";
 import { canRemoveLooseUnits, looseUnitsVisible } from "../../lib/loose-units";
@@ -246,9 +251,12 @@ export function DraftItemCard({
           productId: item.productId,
           unitPrice: item.unitPrice,
           unitLabel: item.unitLabel,
+          derivedBase: item.derivedBase,
         }}
         product={ladderProductFor(item)}
         tier={tier}
+        // A line added this session starts on the product's default selling unit (once, never over a held unit).
+        startOnDefaultUnit={startsOnDefaultUnit(item)}
         onChange={onSetUnit}
         style={{ marginBottom: isBoxed ? 2 : 8 }}
       />

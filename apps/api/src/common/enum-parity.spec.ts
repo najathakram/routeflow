@@ -89,6 +89,7 @@ const ENUM_TABLE: Array<[string, keyof typeof PrismaEnums]> = [
   ["CHANGE_REQUEST_STATUS_VALUES", "ChangeRequestStatus"],
   ["ITEM_STATUS_VALUES", "ItemStatus"],
   ["PAYMENT_METHOD_VALUES", "PaymentMethod"],
+  ["FULFILL_PATH_VALUES", "FulfillPath"],
   ["RECURRING_FREQUENCY_VALUES", "RecurringFrequency"],
   ["MOVEMENT_TYPE_VALUES", "MovementType"],
   ["CRM_CONNECTION_STATUS_VALUES", "CrmConnectionStatus"],
@@ -103,6 +104,8 @@ const ENUM_TABLE: Array<[string, keyof typeof PrismaEnums]> = [
   ["RESTRICTION_JURISDICTION_VALUES", "RestrictionJurisdiction"],
   ["RESTRICTION_SURFACE_VALUES", "RestrictionSurface"],
   ["SNAPSHOT_REASON_VALUES", "SnapshotReason"],
+  // SA-138 policy layer phase 1 (folded into the SA-603 bundle): brand-new Prisma enum.
+  ["POLICY_SCOPE_TYPE_VALUES", "PolicyScopeType"],
   // Post-dated check payments PR-1 (2026-09-15): CheckReturnReason is a brand-new Prisma enum
   // (not a value added to an existing one) — see the triage tripwire below.
   ["CHECK_RETURN_REASON_VALUES", "CheckReturnReason"],
@@ -123,6 +126,10 @@ const ENUM_TABLE: Array<[string, keyof typeof PrismaEnums]> = [
   ["ORDER_STATUS_VALUES", "OrderStatus"],
   ["ROUTE_RUN_STATUS_VALUES", "RouteRunStatus"],
   ["ROUTE_RUN_STOP_STATUS_VALUES", "RouteRunStopStatus"],
+  ["HANDOFF_REALM_VALUES", "HandoffRealm"],
+  // M11: the usage meters (a long-standing enum, newly mirrored: the billing page's meter labels are
+  // keyed on it, so a new server meter fails the web type-check instead of printing a raw key).
+  ["METER_KEY_VALUES", "MeterKey"],
   // #2169 (SA-395): brand-new Prisma enum, mirrored immediately as
   // `INVOICE_ITEM_SYSTEM_KIND_VALUES` — see the triage tripwire below.
   ["INVOICE_ITEM_SYSTEM_KIND_VALUES", "InvoiceItemSystemKind"],
@@ -145,6 +152,12 @@ const ENUM_TABLE: Array<[string, keyof typeof PrismaEnums]> = [
   ["BARCODE_ORIGIN_VALUES", "BarcodeOrigin"],
   // #2717 M2 (SA-574): RecipeStatus, mirrored immediately — see the triage tripwire below.
   ["RECIPE_STATUS_VALUES", "RecipeStatus"],
+  // SA-603: EmailDeliveryStatus, mirrored immediately.
+  ["EMAIL_DELIVERY_STATUS_VALUES", "EmailDeliveryStatus"],
+  // #2717 M3 (SA-572): CompositionMode, mirrored immediately — see the triage tripwire below.
+  ["COMPOSITION_MODE_VALUES", "CompositionMode"],
+  // Per-operator feature groups: a brand-new Prisma enum, mirrored immediately — see the triage tripwire below.
+  ["OPERATOR_PERMISSION_GROUP_VALUES", "OperatorPermissionGroup"],
 ];
 
 describe("enum parity: packages/types/api/enums.ts vs @prisma/client", () => {
@@ -233,6 +246,10 @@ describe("enum parity: packages/types/api/enums.ts vs @prisma/client", () => {
 // Triage for IntakeSectionKey + IntakeSectionStatus (#2159 S2, 2026-09-27): two brand-new Prisma
 // enums (migration 20260927070000_onboarding_s2_intake) — mirrored immediately in
 // packages/types/api/onboarding.ts + their `ENUM_TABLE` rows above (102 → 104).
+// Triage for HandoffRealm (#2653, 2026-09-28): one brand-new Prisma enum (migration
+// 20260929190000_2653_auth_handoff_code), mirrored immediately as HANDOFF_REALM_VALUES in
+// packages/types/api/enums.ts + its `ENUM_TABLE` row above (110 → 111, after M1's four, M2's RecipeStatus and M3's CompositionMode).
+
 // Triage for ProductKind + PackagingLevel + BarcodeSymbology + BarcodeOrigin (#2717 M1, SA-572a,
 // #2728 P1, 2026-09-28): four brand-new Prisma enums (migration
 // 20260928230000_2717_m1_catalog_barcodes_images) — mirrored immediately in
@@ -241,7 +258,19 @@ describe("enum parity: packages/types/api/enums.ts vs @prisma/client", () => {
 // Triage for RecipeStatus (#2717 M2, SA-574, 2026-09-29): one brand-new Prisma enum (migration
 // 20260929120000_2717_m2_recipes) — mirrored immediately as `RECIPE_STATUS_VALUES` in
 // packages/types/api/enums.ts + its `ENUM_TABLE` row above (108 → 109).
-const PINNED_PRISMA_ENUM_COUNT = 109;
+// Triage for EmailDeliveryStatus (SA-603): brand-new enum, mirrored as
+// `EMAIL_DELIVERY_STATUS_VALUES` + its `ENUM_TABLE` row (109 → 110).
+// Triage for PolicyScopeType (SA-138 phase 1, folded into the SA-603 bundle): brand-new enum,
+// mirrored as `POLICY_SCOPE_TYPE_VALUES` + its `ENUM_TABLE` row (110 → 111).
+// Triage for CompositionMode (#2717 M3, SA-572): brand-new enum, mirrored as `COMPOSITION_MODE_VALUES` + its
+// `ENUM_TABLE` row (109 → 110); the SA-603 bundle's two (EmailDeliveryStatus, PolicyScopeType) follow (110 → 112).
+// Triage for HandoffRealm (#2653, landed on master): mirrored as `HANDOFF_REALM_VALUES` (112 → 113 once merged with the bundle).
+// Triage for FulfillPath (SA-650): an existing enum gaining PICKUP — a value, not a new enum, so the count stays 113;
+// mirrored as `FULFILL_PATH_VALUES` + its `ENUM_TABLE` row.
+// Triage for OperatorPermissionGroup (per-operator feature groups): a brand-new Prisma enum (migration
+// 20261009120000_operator_permission_groups), mirrored as `OPERATOR_PERMISSION_GROUP_VALUES` + its `ENUM_TABLE`
+// row above; verified via `node apps/api/scripts/split-prisma-schema.mjs --check` (113 → 114).
+const PINNED_PRISMA_ENUM_COUNT = 114;
 
 describe("enum triage tripwire: generated Prisma enum count (L-072)", () => {
   it("pins the number of generated Prisma enums — a new enum must be triaged into ENUM_TABLE or explicitly left unmirrored", () => {
@@ -436,7 +465,11 @@ function readMobileStub(): Record<string, unknown> {
 }
 
 const MOBILE_STUB = readMobileStub();
-const MOBILE_STUB_VALUE_KEYS = Object.keys(MOBILE_STUB).filter((k) => k.endsWith("_VALUES"));
+// Stub arrays that are SUBSETS of a Prisma enum, not enums themselves (pinned elsewhere).
+const MOBILE_STUB_SUBSET_KEYS = new Set(["OPEN_INVOICE_STATUS_VALUES"]);
+const MOBILE_STUB_VALUE_KEYS = Object.keys(MOBILE_STUB).filter(
+  (k) => k.endsWith("_VALUES") && !MOBILE_STUB_SUBSET_KEYS.has(k),
+);
 
 /** `VENDOR_BILL_STATUS_VALUES` → `VendorBillStatus`. */
 function stubKeyToPrismaEnumName(key: string): string {

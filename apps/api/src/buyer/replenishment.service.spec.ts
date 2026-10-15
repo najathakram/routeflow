@@ -1,3 +1,4 @@
+import { noRestrictionsProvider } from "../selling-restrictions/testing/no-restrictions-provider";
 import { Test } from "@nestjs/testing";
 import { ReplenishmentService } from "./replenishment.service";
 import { PrismaService } from "../prisma/prisma.service";
@@ -18,13 +19,21 @@ describe("ReplenishmentService", () => {
     unitsPerBox: null,
     imageKeys: [] as string[],
     isActive: true,
+    // the buyer gate judges these (SA-612): a fixture that omits them is correctly hidden
+    kind: "STANDARD",
+    portalVisible: true,
+    parent: null,
     ...over,
   });
 
   beforeEach(async () => {
     prisma = createMockPrisma();
     const mod = await Test.createTestingModule({
-      providers: [ReplenishmentService, { provide: PrismaService, useValue: prisma }],
+      providers: [
+        ReplenishmentService,
+        { provide: PrismaService, useValue: prisma },
+        noRestrictionsProvider,
+      ],
     }).compile();
     service = mod.get(ReplenishmentService);
   });

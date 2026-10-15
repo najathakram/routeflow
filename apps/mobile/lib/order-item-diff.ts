@@ -126,8 +126,14 @@ export function buildOrderItemDiff(args: {
   // unlisted entry is dropped, never emitted alongside that entry's own
   // UPDATE/CREATE — sending both actions for the same id in one diff is a
   // contradiction the server should never have to resolve.
-  const pendingDeletesLive = pendingDeletes.filter((id) => !surviving.has(id));
-  const pendingCancelsLive = pendingCancels.filter((id) => !surviving.has(id));
+  // F3: one removal per id. The same id queued twice (a restored snapshot, a double tap), or queued as
+  // BOTH a delete and a cancel, would put it in the array twice and the API refuses DUPLICATE_LINE_ID.
+  // A cancel wins over a delete: it is the non-destructive one and the server downgrades a delete anyway.
+  const pendingCancelsLive = [...new Set(pendingCancels)].filter((id) => !surviving.has(id));
+  const cancelling = new Set(pendingCancelsLive);
+  const pendingDeletesLive = [...new Set(pendingDeletes)].filter(
+    (id) => !surviving.has(id) && !cancelling.has(id),
+  );
   const explicit = new Set([...pendingDeletesLive, ...pendingCancelsLive]);
   const droppedDeletes = originals
     .map((o) => o.id)

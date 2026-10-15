@@ -1,7 +1,9 @@
-import type { InvoiceItemSystemKind } from "@routeflow/types";
+import type { InvoiceItemSystemKind, InvoiceStatus } from "@routeflow/types";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { apiClient } from "../api-client";
+import { isDayClosedRefusal } from "../day-closed-copy";
 import { fetchPdfBlob } from "../fetch-pdf-blob";
+import { priceAdjustmentFailure } from "../price-adjustment-failure";
 import type { AnyPaymentMethod, SelectablePaymentMethod } from "../payment-methods";
 import type {
   CreateInvoiceItem,
@@ -17,11 +19,15 @@ import type {
   StandalonePaymentDto,
   UpdateInvoiceItem,
 } from "@routeflow/types";
+import type { LocalErrorToastOption } from "@/lib/local-error-toast";
+import { keptDraftInvoiceId } from "@/lib/kept-draft-invoice";
+import type { HandOverSoldBy } from "@/lib/handover-stamp";
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
-export type InvoiceStatus =
-  "DRAFT" | "SENT" | "VIEWED" | "PARTIAL" | "PAID" | "VOID" | "OVERDUE" | "WRITTEN_OFF";
+// The ONE union, derived from INVOICE_STATUS_VALUES in @routeflow/types (L-072): the API enum's client mirror,
+// pinned set-equal to the Prisma enum by apps/api/src/common/enum-parity.spec.ts. Never hand-type it again.
+export type { InvoiceStatus };
 
 // `PriceType` re-exported from @routeflow/types (wave E / imp-10b R2: was
 // declared identically here AND in `orders.ts` — collapsed to one import).
@@ -72,6 +78,17 @@ export interface InvoiceItem {
   subtotal?: number;
   /** Regulated category snapshot (set at invoice creation) — drives credit-note ledger reversal. */
   trackedCategoryId?: string | null;
+  /** The levy this line billed (a Decimal arrives as a string); 0 for an exempt customer. CQ-03 names it. */
+  categoryTaxAmount?: number | string | null;
+  /** The category's tax type frozen on the line at sale time (B297). Null on a line billed before that migration. */
+  categoryTaxType?: string | null;
+  /** The category row `GET /invoices/:id` includes: its name and type name the levy charge ("CRV deposit"). */
+  trackedCategory?: {
+    id: string;
+    name: string;
+    taxType?: string | null;
+    invoiceTreatment?: string | null;
+  } | null;
   /** Boxed split persisted server-side (unitsPerBox > 1 products). */
   boxes?: number | null;
   pieces?: number | null;
@@ -126,6 +143,10 @@ export interface InvoicePayment {
 export interface Invoice {
   id: string;
   invoiceNumber: string;
+  /** P-4: derived by the API; absent = never revised (no badge). */
+  revisedAt?: string | null;
+  /** P-4: > 0 only when overpaid; absent = nothing shown. */
+  overpaidBy?: number | null;
   customerId: string;
   customer?: {
     id: string;
@@ -172,12 +193,31 @@ export interface Invoice {
   /** Set on per-batch delivery invoices; null/absent on the order-level "pending mirror" draft. */
   deliveryBatchId?: string | null;
   /** Linked order summary (present on the detail endpoint) — used to gate the pending-mirror draft. */
-  order?: { status: string; orderNumber?: string | null };
+  order?: {
+    status: string;
+    orderNumber?: string | null;
+    fulfillPath?: "ROUTE" | "SHIP" | "PICKUP" | null;
+    /** Row 342, STAFF reads only: where and by whom the order was handed over (absent for a buyer / older API). */
+    registerKey?: string | null;
+    handedOverBy?: string | null;
+    /** the hand-over moment (the stamp line's time) */
+    deliveredAt?: string | null;
+    soldBy?: HandOverSoldBy | null;
+    /** True for a counter (till) sale. Lets the invoice page leave out terms / due date on a sale paid at the till. */
+    counterSale?: boolean | null;
+  };
+  /** The server's default PDF stage (detail endpoint): a shipment invoice is "final" before delivery. */
+  pdfVariant?: InvoicePdfVariant;
   recurringInvoiceId?: string;
   items?: InvoiceItem[];
   payments?: InvoicePayment[];
   /** Server-computed balance due — 0 for PAID/VOID/WRITTEN_OFF regardless of payment records */
   balanceDue?: number;
+  /**
+   * Server-computed (SA-770): an open (SENT/VIEWED/PARTIAL/OVERDUE) invoice that still owes AND whose due day
+   * has ended in the tenant's zone. The one overdue rule, so a client never re-derives it from `status`.
+   */
+  isOverdue?: boolean;
   /** Server-computed CASH-ONLY amount paid (B421) — excludes CREDIT_NOTE/ADVANCE
    *  applications, which are surfaced separately below. */
   paidAmount?: number;
@@ -343,6 +383,10 @@ export function useCreateInvoice() {
   return useMutation<Invoice, Error, CreateInvoiceDto>({
     mutationFn: (dto) => apiClient.post("/invoices", dto).then((r) => r.data),
     onSuccess: () => qc.invalidateQueries({ queryKey: ["invoices"] }),
+    // Row 466: a send that failed after the draft committed still created an invoice.
+    onError: (err) => {
+      if (keptDraftInvoiceId(err)) qc.invalidateQueries({ queryKey: ["invoices"] });
+    },
   });
 }
 
@@ -366,7 +410,11 @@ export function useUpdateInvoice() {
   return useMutation<
     Invoice,
     Error,
-    { id: string } & Partial<Omit<CreateInvoiceDto, "items">> & { items?: UpdateInvoiceItem[] }
+    { id: string } & Partial<Omit<CreateInvoiceDto, "items">> & {
+        items?: UpdateInvoiceItem[];
+        /** H4: the invoice's `updatedAt` when the editor opened it; behind the server's it is 409 INVOICE_STALE. */
+        expectedUpdatedAt?: string;
+      }
   >({
     mutationFn: ({ id, ...dto }) => apiClient.patch(`/invoices/${id}`, dto).then((r) => r.data),
     onSuccess: (_, { id }) => {
@@ -422,9 +470,10 @@ export function useUpdateInvoiceShipment() {
   });
 }
 
-export function useSendInvoice() {
+export function useSendInvoice(options?: LocalErrorToastOption) {
   const qc = useQueryClient();
   return useMutation<Invoice, Error, string>({
+    meta: options?.localErrorToast ? { localErrorToast: options.localErrorToast } : undefined,
     mutationFn: (id) => apiClient.post(`/invoices/${id}/send`).then((r) => r.data),
     onSuccess: (_, id) => {
       qc.invalidateQueries({ queryKey: ["invoices"] });
@@ -445,20 +494,25 @@ export type InvoicePdfVariant = "draft" | "final";
  */
 export function deriveInvoiceVariant(inv: {
   status: string;
+  /** The server's own default stage (invoice detail): wins when present. A shipment invoice is FINAL
+   *  before delivery, and only the server knows the tenant's fulfilment mode (F3). */
+  pdfVariant?: InvoicePdfVariant | null;
   order?: { status?: string | null } | null;
 }): InvoicePdfVariant {
+  if (inv.pdfVariant === "draft" || inv.pdfVariant === "final") return inv.pdfVariant;
   if (inv.status !== "DRAFT") return "final";
   if (inv.order?.status === "DELIVERED") return "final";
   return "draft";
 }
 
-export function useSendInvoiceEmail() {
+export function useSendInvoiceEmail(options?: LocalErrorToastOption) {
   const qc = useQueryClient();
   return useMutation<
     SendInvoiceEmailResult,
     Error,
     { id: string; email?: string; variant?: InvoicePdfVariant }
   >({
+    meta: options?.localErrorToast ? { localErrorToast: options.localErrorToast } : undefined,
     mutationFn: ({ id, email, variant }) =>
       apiClient.post(`/invoices/${id}/send-email`, { email, variant }).then((r) => r.data),
     onSuccess: (_, { id }) => {
@@ -601,6 +655,8 @@ export function useRecordInvoicePayment() {
   return useMutation<Invoice & { createdPaymentId?: string }, Error, RecordInvoicePaymentDto>({
     mutationFn: ({ id, ...data }) =>
       apiClient.post(`/invoices/${id}/payments`, data).then((r) => r.data),
+    // SA-750r3: the invoice page answers a closed-day refusal with its own fixed copy (dayClosedCopy): no second toast.
+    meta: { localErrorToast: isDayClosedRefusal },
     onSuccess: (_, { id }) => {
       qc.invalidateQueries({ queryKey: ["invoices"] });
       qc.invalidateQueries({ queryKey: ["invoices", id] });
@@ -627,6 +683,7 @@ export function useUpdateInvoicePayment() {
   return useMutation<Invoice, Error, UpdateInvoicePaymentDto>({
     mutationFn: ({ invoiceId, paymentId, ...data }) =>
       apiClient.patch(`/invoices/${invoiceId}/payments/${paymentId}`, data).then((r) => r.data),
+    meta: { localErrorToast: isDayClosedRefusal },
     onSuccess: (updated) => {
       qc.invalidateQueries({ queryKey: ["invoices"] });
       qc.invalidateQueries({ queryKey: ["invoices", updated.id] });
@@ -639,6 +696,7 @@ export function useDeleteInvoicePayment() {
   return useMutation<Invoice, Error, { invoiceId: string; paymentId: string }>({
     mutationFn: ({ invoiceId, paymentId }) =>
       apiClient.delete(`/invoices/${invoiceId}/payments/${paymentId}`).then((r) => r.data),
+    meta: { localErrorToast: isDayClosedRefusal },
     onSuccess: (updated) => {
       qc.invalidateQueries({ queryKey: ["invoices"] });
       qc.invalidateQueries({ queryKey: ["invoices", updated.id] });
@@ -700,6 +758,9 @@ export function useRecordPaymentStandalone() {
     StandalonePaymentDto<SelectablePaymentMethod>
   >({
     mutationFn: (dto) => apiClient.post("/invoices/payments/record", dto).then((r) => r.data),
+    // Row 348: every caller (finance Payments, the customer Record Payment modal) answers a closed-day refusal in its
+    // own toast; the global one stays quiet for it so the failure is shown ONCE.
+    meta: { localErrorToast: isDayClosedRefusal },
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ["invoices"] });
       qc.invalidateQueries({ queryKey: ["invoices", "payments"] });
@@ -712,6 +773,8 @@ export function useVoidPayment() {
   return useMutation<{ success: boolean }, Error, { invoiceId: string; paymentId: string }>({
     mutationFn: ({ invoiceId, paymentId }) =>
       apiClient.patch(`/invoices/${invoiceId}/payments/${paymentId}/void`).then((r) => r.data),
+    // Row 348: both void surfaces toast a closed-day refusal themselves; the global toast stays quiet for it.
+    meta: { localErrorToast: isDayClosedRefusal },
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ["invoices"] });
       qc.invalidateQueries({ queryKey: ["invoices", "payments"] });
@@ -731,6 +794,7 @@ export function useSetCheckStatus() {
       apiClient
         .patch(`/invoices/${invoiceId}/payments/${paymentId}/check-status`, data)
         .then((r) => r.data),
+    meta: { localErrorToast: isDayClosedRefusal },
     onSuccess: (_, { invoiceId }) => {
       qc.invalidateQueries({ queryKey: ["invoices"] });
       qc.invalidateQueries({ queryKey: ["invoices", invoiceId] });
@@ -885,14 +949,16 @@ export function useUnvoidInvoice() {
 
 // ─── Generate Invoice from Order ──────────────────────────────────────────────
 
-export function useCreateInvoiceFromOrder() {
+export function useCreateInvoiceFromOrder(options?: LocalErrorToastOption) {
   const qc = useQueryClient();
   // W4: a mixed regulated order returns >1 sibling invoice, so this is Invoice[].
   return useMutation<Invoice[], Error, string>({
+    meta: options?.localErrorToast ? { localErrorToast: options.localErrorToast } : undefined,
     mutationFn: (orderId) => apiClient.post(`/invoices/from-order/${orderId}`).then((r) => r.data),
-    onSuccess: () => {
+    onSuccess: (_d, orderId) => {
       qc.invalidateQueries({ queryKey: ["invoices"] });
       qc.invalidateQueries({ queryKey: ["orders"] });
+      qc.invalidateQueries({ queryKey: ["orders", orderId] });
     },
   });
 }
@@ -904,15 +970,23 @@ export function useCreateInvoiceFromOrder() {
  * (and how many of each) to bill on this invoice + a due date. Each call increments
  * OrderItem.invoicedQty server-side so the order can't be over-invoiced.
  */
-export function useCreatePartialInvoiceFromOrder() {
+export function useCreatePartialInvoiceFromOrder(options?: LocalErrorToastOption) {
   const qc = useQueryClient();
   return useMutation<Invoice, Error, CreatePartialInvoiceDto>({
+    meta: options?.localErrorToast ? { localErrorToast: options.localErrorToast } : undefined,
     mutationFn: ({ orderId, ...dto }) =>
       apiClient.post(`/invoices/from-order/${orderId}/partial`, dto).then((r) => r.data),
     onSuccess: (_, { orderId }) => {
       qc.invalidateQueries({ queryKey: ["invoices"] });
       qc.invalidateQueries({ queryKey: ["orders"] });
       qc.invalidateQueries({ queryKey: ["orders", orderId] });
+    },
+    // Row 466: a send that failed after the partial invoice committed still created it.
+    onError: (err, { orderId }) => {
+      if (keptDraftInvoiceId(err)) {
+        qc.invalidateQueries({ queryKey: ["invoices"] });
+        qc.invalidateQueries({ queryKey: ["orders", orderId] });
+      }
     },
   });
 }
@@ -962,11 +1036,21 @@ export function useUpdateInvoiceSettings() {
 export function useAdjustInvoicePrices() {
   const qc = useQueryClient();
   return useMutation<Invoice, Error, { id: string } & PriceAdjustmentDto>({
+    // B1058: the Adjust Prices panel renders the PARTIAL / OVERPAYS refusals itself (fixed copy), so the
+    // app-wide toast skips exactly those two and still handles every other failure.
+    meta: { localErrorToast: (err: unknown) => priceAdjustmentFailure(err) !== null },
     mutationFn: ({ id, ...dto }) =>
       apiClient.post(`/invoices/${id}/price-adjustment`, dto).then((r) => r.data),
     onSuccess: (updated) => {
       qc.invalidateQueries({ queryKey: ["invoices"] });
       qc.invalidateQueries({ queryKey: ["invoices", updated.id] });
+    },
+    // A PARTIAL run committed invoices before it stopped: the cached invoice and the lists are stale.
+    onError: (err, { id }) => {
+      if (priceAdjustmentFailure(err)?.committed) {
+        qc.invalidateQueries({ queryKey: ["invoices"] });
+        qc.invalidateQueries({ queryKey: ["invoices", id] });
+      }
     },
   });
 }

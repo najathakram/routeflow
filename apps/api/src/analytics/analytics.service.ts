@@ -2,6 +2,7 @@ import { Injectable } from "@nestjs/common";
 import { PrismaService } from "../prisma/prisma.service";
 import { roundMoney } from "@routeflow/pricing";
 import { endOfCalendarDay } from "../common/calendar-date";
+import { resolveZone } from "../common/tenant-time-zone";
 import {
   REAL_INVOICE_STATUSES,
   estimateCogs,
@@ -20,14 +21,12 @@ import type {
 } from "../sales-facts/legacy-product-shapes";
 import type { DemandRange } from "./demand-range";
 
-export const TOBACCO_ADDON_KEY = "tobacco_dealer";
+const TOBACCO_ADDON_KEY = "tobacco_dealer";
 export const TOBACCO_EXCLUDE_KEY = "tobacco.excludeFromMainAnalytics";
 
 // #2118: the per-product read shapes moved with their producer (the sales-facts layer).
 export type {
-  ProductDemandBucket,
   ProductDemandSeries,
-  ProductSaleLine,
   ProductSalesHistory,
 } from "../sales-facts/legacy-product-shapes";
 
@@ -299,20 +298,15 @@ export class AnalyticsService {
   }
 
   /**
-   * Resolves the current tenant's configured timezone ONCE per call (not per
-   * row) for the on-time day-end check above. It passes `cfg?.timezone ?? null`
-   * straight through and relies on `endOfCalendarDay`'s own UTC fallback: an
-   * unconfigured tenant (no `TenantConfig` row) must keep today's exact UTC
-   * day-end boundary, never a silently-substituted America/New_York default.
+   * Resolves the current tenant's timezone ONCE per call (not per row) for the on-time day-end
+   * check above, through the one resolver (SA-738): an unconfigured tenant (no `TenantConfig` row)
+   * or an invalid stored zone keeps today's exact UTC day-end boundary, never a
+   * silently-substituted America/New_York default.
    */
   private async resolveCurrentTenantTimezone(): Promise<string | null> {
     const tenantId = this.prisma.getTenantId();
     if (!tenantId) return null;
-    const cfg = await this.prisma.tenantConfig.findUnique({
-      where: { tenantId },
-      select: { timezone: true },
-    });
-    return cfg?.timezone ?? null;
+    return (await resolveZone(this.prisma, { tenantId })).zone;
   }
 
   /** Ratios from the accumulator — null (never 0 or NaN) when a window has no data. */

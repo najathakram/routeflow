@@ -4,67 +4,30 @@ import * as React from "react";
 import { useRouter } from "next/navigation";
 import { QueryClient, QueryClientProvider, MutationCache } from "@tanstack/react-query";
 import { AuthProvider } from "@/lib/auth-context";
+import { getStoredUser } from "@/lib/auth";
 import { BuyerAuthProvider } from "@/lib/buyer-auth-context";
 import { ToastProvider, useToast } from "@routeflow/ui/web";
 import { I18nProvider } from "@/lib/i18n";
 import { ReAuthProvider } from "@/components/ReAuthProvider";
 import { PlanGateNotice } from "@/components/PlanGateNotice";
+import type { SubscriptionView } from "@routeflow/types";
+import { handleMutationError } from "@/lib/mutation-error-toast";
 
 function QueryProviders({ children }: { children: React.ReactNode }) {
   const { toast } = useToast();
   const router = useRouter();
-  const queryClient = React.useRef(
+  const queryClient: QueryClient = React.useRef(
     new QueryClient({
       mutationCache: new MutationCache({
-        onError: (error) => {
-          const data = (error as any)?.response?.data;
-          // These 409s (and READ_ONLY's 403) are turned into guided in-app flows by the
-          // initiating component (merge prompt, license guard, the read-only toast below)
-          // — don't also surface them as a generic error toast.
-          const HANDLED_CODES = [
-            "MERGE_CHOICE_REQUIRED",
-            "REGULATED_AUTH_REQUIRED",
-            // P5-10/11: change-request 409s are turned into guided flows by the
-            // initiating components (friendly buyer banners; operator toast +
-            // refetch on the first-resolution-wins race). Their bodies carry no
-            // user-facing `message`, so the generic toast would show a raw axios
-            // error. CR-specific codes — nothing else throws them.
-            "CHANGE_REQUEST_ALREADY_RESOLVED",
-            "STOP_ALREADY_COMPLETED",
-            "LINE_ALREADY_DELIVERED",
-            "CHANGE_WINDOW_CLOSED",
-            "EDIT_WINDOW_OPEN",
-            // Selling restrictions settings: the page turns these into guided in-app messages
-            // (a fix list / a two-step instruction) and toasts them itself, once.
-            "SELLING_RESTRICTIONS_NOT_READY",
-            "SELLING_RESTRICTIONS_ENABLE_AND_POLICY_TOGETHER",
-            // Selling restrictions: the order UIs show a blocked-lines dialog (the lines and why),
-            // so the generic toast would only say "Request failed with status code 409".
-            "SELLING_RESTRICTED",
-            // Credit limit: the order detail opens a guard dialog (the server's limit / exposure and a
-            // "collect a payment" exit); CreateOrderModal keeps its inline banner. No override exists.
-            "CREDIT_LIMIT_EXCEEDED",
-            // RO-1: a blocked write against a READ_ONLY tenant — handled explicitly
-            // below with its own toast + CTA, never the bare guard message.
-            "READ_ONLY",
-          ];
-          // RO-1: TenantStatusGuard's 403 on a blocked write — replace the raw guard
-          // message with a title the tenant understands plus a way out, instead of
-          // just swallowing the toast like the other HANDLED_CODES above.
-          if (data?.code === "READ_ONLY") {
-            const message = data?.message || "This action is unavailable while read-only.";
-            toast({
-              title: "Your workspace is read-only",
-              description: message,
-              variant: "warning",
-              action: { label: "Choose a plan", onClick: () => router.push("/choose-plan") },
-            });
-            return;
-          }
-          if (data?.code && HANDLED_CODES.includes(data.code)) return;
-          const message = data?.message || (error as Error)?.message || "Something went wrong";
-          toast({ title: message, variant: "error" });
-        },
+        onError: (error, _variables, _context, mutation) =>
+          handleMutationError(error, mutation, toast, router, {
+            // SA-733r6: the read-only line names the admin from the cached subscription read.
+            view: () => queryClient.getQueryData<SubscriptionView>(["billing", "subscription"]),
+            refresh: () =>
+              void queryClient.invalidateQueries({ queryKey: ["billing", "subscription"] }),
+            // SA-776: the admin sees the action in the read-only toast, anyone else the contact line.
+            isAdmin: () => getStoredUser()?.role === "TENANT_ADMIN",
+          }),
       }),
       defaultOptions: {
         queries: {

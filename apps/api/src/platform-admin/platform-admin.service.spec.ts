@@ -1,5 +1,23 @@
+// SA-733 D8: the price-override flow runs under a per-tenant Postgres advisory lock; there is no database
+// here, so the lock is a PASS-THROUGH that still runs the body (error classes stay real).
+jest.mock("../common/db-locks", () => ({
+  ...jest.requireActual("../common/db-locks"),
+  withAdvisoryLock: jest.fn(async (_opts: unknown, fn: () => Promise<unknown>) => ({
+    acquired: true,
+    value: await fn(),
+  })),
+}));
+
+jest.mock("../billing/needs-reconcile", () =>
+  require("../testing/needs-reconcile-mock").needsReconcileMock(),
+);
 import { Prisma } from "@prisma/client";
-import { ConflictException } from "@nestjs/common";
+import {
+  BadGatewayException,
+  BadRequestException,
+  ConflictException,
+  ServiceUnavailableException,
+} from "@nestjs/common";
 import { Test, TestingModule } from "@nestjs/testing";
 import { JwtService } from "@nestjs/jwt";
 import { ConfigService } from "@nestjs/config";
@@ -16,13 +34,18 @@ import { MeterService } from "../billing/meter.service";
 import { MrrService } from "../billing/mrr.service";
 import { FeatureOverrideService } from "../billing/feature-override.service";
 import { PlanTransitionConfigService } from "../billing/plan-transition-config.service";
+import { StripeService } from "../billing/stripe.service";
+import { fakeStripeSubscription } from "../testing/fake-stripe-subscription";
+import { ScheduledPriceChangeService } from "../billing/scheduled-price-change";
 import { TenantStatusGuard } from "../tenant/tenant-status.guard";
 import { AuditService } from "../audit/audit.service";
 import { createMockPrisma } from "../testing/prisma-mock";
 import { TenantMirrorService } from "./tenant-mirror.service";
 import { AdminAuditAction } from "./audit-actions.constant";
 import { roundMoney } from "@routeflow/pricing";
+import * as manualActivationAddons from "../billing/manual-activation-addons";
 import { UserRole } from "@prisma/client";
+import { DunningService } from "../billing/dunning.service";
 
 /**
  * P1 regression: platform-admin lifecycle mutations MUST emit a purpose-built
@@ -49,7 +72,10 @@ describe("PlatformAdminService — audit provenance", () => {
     transactionOptions: jest.Mock;
     invalidateCaches: jest.Mock;
   };
-  let platformPricingService: { resolveTenantPricing: jest.Mock };
+  let platformPricingService: {
+    resolveTenantPricing: jest.Mock;
+    resolveCatalogPricing?: jest.Mock;
+  };
   let mrrService: {
     computeOverview: jest.Mock;
     priceTenant: jest.Mock;
@@ -61,11 +87,21 @@ describe("PlatformAdminService — audit provenance", () => {
   let billingServiceMock: {
     createCheckoutSession: jest.Mock;
     syncStripeSubscriptionPrice: jest.Mock;
+    pushResolvedPriceToStripe: jest.Mock;
   };
   let emailServiceMock: { send: jest.Mock; sendTenantWelcomeEmail: jest.Mock };
   // #2439: named so the WEB_URL tests can point `urls.web` at a public host or localhost.
   let configMock: { get: jest.Mock };
   let tenantMirror: { upsert: jest.Mock };
+  // SA-733r7 PR-B3: every exit from a dunning pause clears Stripe pause_collection after its commit.
+  let dunning: { clearPauseAfterCommit: jest.Mock };
+  // the owed-invoice re-read of the PAYMENT_OVERDUE guard
+  let stripeMock: {
+    isConfigured: boolean;
+    getSubscription: jest.Mock;
+    getCustomer: jest.Mock;
+    getInvoiceFacts: jest.Mock;
+  };
 
   const ADMIN_ID = "super-1";
   const TENANT_ID = "tenant-1";
@@ -89,9 +125,20 @@ describe("PlatformAdminService — audit provenance", () => {
       // B556: createTenant()/register() now create a subscription row alongside the tenant.
       create: jest.fn().mockResolvedValue({}),
     };
+    // PR4a: the activation auto-voids covered OPEN RouteFlow invoices inside its transaction; none by default.
+    (prisma as any).rfInvoice = {
+      // the window anchor: the earliest OPEN invoice with a period (none by default -> the window starts now)
+      findFirst: jest.fn().mockResolvedValue(null),
+      findMany: jest.fn().mockResolvedValue([]),
+      updateMany: jest.fn().mockResolvedValue({ count: 1 }),
+    };
     (prisma as any).auditLog = {
       findMany: jest.fn().mockResolvedValue([]),
       count: jest.fn().mockResolvedValue(0),
+      // S3: activateManualSubscription writes its billing marker row inside the transaction.
+      create: jest.fn().mockResolvedValue({}),
+      // PR4a: the repeat guard looks for the same payment's marker just written (none by default)
+      findFirst: jest.fn().mockResolvedValue(null),
     };
     // createMockPrisma's default $transaction mock builds `tx` from its internal model
     // set, which — like the top level — omits tenantSubscription. updatePlan writes
@@ -120,6 +167,14 @@ describe("PlatformAdminService — audit provenance", () => {
       invalidateCaches: jest.fn(),
     };
     platformPricingService = { resolveTenantPricing: jest.fn() };
+    platformPricingService.resolveTenantPricing.mockResolvedValue({
+      planKey: "ENTERPRISE",
+      planName: "Enterprise",
+      monthly: 800,
+      annual: 8000,
+      source: "override",
+      currency: "usd",
+    });
     // Default: zeroed overview — the getStats-enrichment describe block below overrides
     // per-case to prove getStats() reads MrrService, not a re-derived estimate.
     mrrService = {
@@ -163,9 +218,30 @@ describe("PlatformAdminService — audit provenance", () => {
     billingServiceMock = {
       createCheckoutSession: jest.fn().mockRejectedValue(new Error("no stripe")),
       syncStripeSubscriptionPrice: jest.fn().mockResolvedValue({ synced: false }),
+      // D8: the override flow pushes to Stripe FIRST; no live subscription by default.
+      pushResolvedPriceToStripe: jest
+        .fn()
+        .mockResolvedValue({ synced: false, reason: "no_active_stripe_subscription" }),
     };
     // R18: the mirror call sites are best-effort — tests that care override upsert to reject.
     tenantMirror = { upsert: jest.fn().mockResolvedValue(undefined) };
+    dunning = { clearPauseAfterCommit: jest.fn().mockResolvedValue(undefined) };
+    stripeMock = {
+      isConfigured: false,
+      getSubscription: jest.fn().mockResolvedValue({ status: "active" }),
+      getCustomer: jest.fn().mockResolvedValue({ id: "cus_1" }),
+      getInvoiceFacts: jest.fn().mockResolvedValue({
+        status: "open",
+        amountPaid: 0,
+        amountDue: 4900,
+        amountRemaining: 4900,
+        paymentProcessing: false,
+        nextPaymentAttempt: null,
+        attemptCount: 2,
+        subscriptionId: "sub_1",
+        hostedInvoiceUrl: "https://pay.example.test/i/in_1",
+      }),
+    };
 
     const module: TestingModule = await Test.createTestingModule({
       providers: [
@@ -187,6 +263,8 @@ describe("PlatformAdminService — audit provenance", () => {
         { provide: TenantMirrorService, useValue: tenantMirror },
         { provide: FeatureOverrideService, useValue: featureOverrides },
         { provide: PlanTransitionConfigService, useValue: planTransition },
+        { provide: StripeService, useValue: stripeMock },
+        { provide: DunningService, useValue: dunning },
       ],
     }).compile();
 
@@ -229,6 +307,155 @@ describe("PlatformAdminService — audit provenance", () => {
     );
   });
 
+  // F4: an admin-set READ_ONLY carries the reason `admin_set` (never null) so a later renewal can tell it from a
+  // lapsed trial; and a CANCELLED over a LIVE Stripe subscription is refused - cancel the subscription first.
+  describe("updateStatus - F4 admin_set / cancel-the-subscription-first", () => {
+    const before = (over: Record<string, unknown> = {}) => {
+      // M2: the Stripe gate reads the stored subscription id BEFORE the transaction (a plain read).
+      (prisma as any).tenantSubscription.findUnique.mockResolvedValue({
+        stripeSubId:
+          (over.subscription as { stripeSubId?: string } | undefined)?.stripeSubId ?? null,
+        stripeCustomerId: "cus_1",
+      });
+      return prisma.tenant.findUniqueOrThrow.mockResolvedValue({
+        id: TENANT_ID,
+        slug: "acme",
+        plan: "STARTER",
+        status: "ACTIVE",
+        readOnlyReason: null,
+        class: "PRODUCTION",
+        deletedAt: null,
+        subscription: {
+          planKey: "STARTER",
+          basePriceSnapshot: 99,
+          discount: 0,
+          couponFull: false,
+          stripeSubId: null,
+        },
+        ...over,
+      } as any);
+    };
+
+    it("READ_ONLY is written with readOnlyReason 'admin_set', never null", async () => {
+      before();
+      prisma.tenant.findUnique.mockResolvedValue({ id: TENANT_ID, slug: "acme" } as any);
+      prisma.tenant.update.mockResolvedValue({
+        id: TENANT_ID,
+        slug: "acme",
+        status: "READ_ONLY",
+      } as any);
+      await service.updateStatus(TENANT_ID, { status: "READ_ONLY" } as any, ADMIN_ID);
+      expect(prisma.tenant.update.mock.calls[0][0].data).toEqual({
+        status: "READ_ONLY",
+        readOnlyReason: "admin_set",
+      });
+    });
+
+    it("READ_ONLY over a payment_overdue pause is 'admin_set' too (not nulled)", async () => {
+      before({ status: "READ_ONLY", readOnlyReason: "payment_overdue" });
+      prisma.tenant.findUnique.mockResolvedValue({ id: TENANT_ID, slug: "acme" } as any);
+      prisma.tenant.update.mockResolvedValue({
+        id: TENANT_ID,
+        slug: "acme",
+        status: "READ_ONLY",
+      } as any);
+      await service.updateStatus(TENANT_ID, { status: "READ_ONLY" } as any, ADMIN_ID);
+      expect(prisma.tenant.update.mock.calls[0][0].data.readOnlyReason).toBe("admin_set");
+    });
+
+    it("CANCELLED with a live stripeSubId: 409 TENANT_CANCEL_SUBSCRIPTION_FIRST, nothing written", async () => {
+      before({
+        subscription: {
+          planKey: "STARTER",
+          basePriceSnapshot: 99,
+          discount: 0,
+          couponFull: false,
+          stripeSubId: "sub_live",
+        },
+      });
+      stripeMock.isConfigured = true;
+      stripeMock.getSubscription.mockResolvedValue({ status: "active" });
+      prisma.tenant.findUnique.mockResolvedValue({ id: TENANT_ID, slug: "acme" } as any);
+      const err: any = await service
+        .updateStatus(TENANT_ID, { status: "CANCELLED" } as any, ADMIN_ID)
+        .catch((e) => e);
+      expect(err.getStatus()).toBe(409);
+      expect(err.getResponse()).toMatchObject({ code: "TENANT_CANCEL_SUBSCRIPTION_FIRST" });
+      expect(prisma.tenant.update).not.toHaveBeenCalled();
+    });
+
+    const withSub = () =>
+      before({
+        subscription: {
+          planKey: "STARTER",
+          basePriceSnapshot: 99,
+          discount: 0,
+          couponFull: false,
+          stripeSubId: "sub_ended",
+        },
+      });
+    const cancelOk = async () => {
+      prisma.tenant.findUnique.mockResolvedValue({ id: TENANT_ID, slug: "acme" } as any);
+      prisma.tenant.update.mockResolvedValue({
+        id: TENANT_ID,
+        slug: "acme",
+        status: "CANCELLED",
+      } as any);
+      await service.updateStatus(TENANT_ID, { status: "CANCELLED" } as any, ADMIN_ID);
+      expect(prisma.tenant.update.mock.calls[0][0].data.status).toBe("CANCELLED");
+    };
+
+    it("CANCELLED over an ENDED Stripe subscription (stripeSubId kept) is allowed", async () => {
+      withSub();
+      stripeMock.isConfigured = true;
+      stripeMock.getSubscription.mockResolvedValue({ status: "canceled" });
+      await cancelOk();
+      expect(stripeMock.getSubscription).toHaveBeenCalledWith("sub_ended");
+    });
+
+    it("CANCELLED when Stripe no longer knows the subscription (404) is allowed", async () => {
+      withSub();
+      stripeMock.isConfigured = true;
+      stripeMock.getSubscription.mockRejectedValue({ code: "resource_missing", statusCode: 404 });
+      await cancelOk();
+    });
+
+    it("a Stripe read failure FAILS CLOSED: 409, nothing written", async () => {
+      withSub();
+      stripeMock.isConfigured = true;
+      stripeMock.getSubscription.mockRejectedValue(new Error("network"));
+      prisma.tenant.findUnique.mockResolvedValue({ id: TENANT_ID, slug: "acme" } as any);
+      const err: any = await service
+        .updateStatus(TENANT_ID, { status: "CANCELLED" } as any, ADMIN_ID)
+        .catch((e) => e);
+      expect(err.getStatus()).toBe(409);
+      expect(prisma.tenant.update).not.toHaveBeenCalled();
+    });
+
+    it("Stripe not configured with a stored subscription FAILS CLOSED too", async () => {
+      withSub();
+      stripeMock.isConfigured = false;
+      prisma.tenant.findUnique.mockResolvedValue({ id: TENANT_ID, slug: "acme" } as any);
+      const err: any = await service
+        .updateStatus(TENANT_ID, { status: "CANCELLED" } as any, ADMIN_ID)
+        .catch((e) => e);
+      expect(err.getStatus()).toBe(409);
+      expect(prisma.tenant.update).not.toHaveBeenCalled();
+    });
+
+    it("CANCELLED with no Stripe subscription is allowed", async () => {
+      before();
+      prisma.tenant.findUnique.mockResolvedValue({ id: TENANT_ID, slug: "acme" } as any);
+      prisma.tenant.update.mockResolvedValue({
+        id: TENANT_ID,
+        slug: "acme",
+        status: "CANCELLED",
+      } as any);
+      await service.updateStatus(TENANT_ID, { status: "CANCELLED" } as any, ADMIN_ID);
+      expect(prisma.tenant.update.mock.calls[0][0].data.status).toBe("CANCELLED");
+    });
+  });
+
   // FINDING-4 RULING (2026-09-14, lead): an admin reactivation LEAVES an armed downgrade armed.
   // Only downgrade() (the tenant) and updatePlan()'s scheduled branch ever set
   // downgradeToPlanKey, so the field set is always a CHOSEN schedule and never a dunning threat
@@ -257,8 +484,16 @@ describe("PlatformAdminService — audit provenance", () => {
 
       await service.updateStatus(TENANT_ID, { status: "ACTIVE" } as any, ADMIN_ID);
 
-      // RED against the round-2 build, which cleared the three fields here.
-      expect((prisma as any).tenantSubscription.updateMany).not.toHaveBeenCalled();
+      // RED against the round-2 build, which cleared the three fields here. The ONLY subscription write is the
+      // one path back to ACTIVE clearing the dunning clock + pause (SA-733r7): never the schedule.
+      expect((prisma as any).tenantSubscription.updateMany.mock.calls).toEqual([
+        [
+          {
+            where: { tenantId: TENANT_ID },
+            data: { pastDueSince: null, pastDueInvoiceId: null, pausedAt: null },
+          },
+        ],
+      ]);
       expect(auditLog).toHaveBeenCalledWith(
         expect.objectContaining({
           action: "TENANT_REACTIVATED",
@@ -268,6 +503,34 @@ describe("PlatformAdminService — audit provenance", () => {
           }),
         }),
       );
+    });
+
+    it("PR-B3: reactivating a PAUSED tenant clears the dunning clock and then Stripe's pause_collection (after commit)", async () => {
+      prisma.tenant.findUnique.mockResolvedValue({ id: TENANT_ID, slug: "acme" } as any);
+      prisma.tenant.updateMany.mockResolvedValue({ count: 1 });
+      (prisma as any).tenantSubscription.findUnique.mockResolvedValue({
+        pausedAt: new Date("2026-11-08T09:00:00.000Z"),
+        stripeSubId: "sub_1",
+        downgradeToPlanKey: null,
+        downgradeEffectiveAt: null,
+      });
+
+      await service.updateStatus(TENANT_ID, { status: "ACTIVE" } as any, ADMIN_ID);
+
+      expect(dunning.clearPauseAfterCommit).toHaveBeenCalledWith({
+        tenantId: TENANT_ID,
+        stripeSubId: "sub_1",
+        exitAt: expect.any(Date),
+      });
+      // a non-ACTIVE target never exits a pause
+      dunning.clearPauseAfterCommit.mockClear();
+      prisma.tenant.update.mockResolvedValue({
+        id: TENANT_ID,
+        slug: "acme",
+        status: "SUSPENDED",
+      } as any);
+      await service.updateStatus(TENANT_ID, { status: "SUSPENDED" } as any, ADMIN_ID);
+      expect(dunning.clearPauseAfterCommit).toHaveBeenCalledWith(null);
     });
 
     it("REG-B402 a reactivation with NO armed downgrade audits neither schedule field", async () => {
@@ -290,7 +553,7 @@ describe("PlatformAdminService — audit provenance", () => {
       expect(meta).not.toHaveProperty("downgradeEffectiveAt");
     });
 
-    it("guard: updateStatus NEVER writes to TenantSubscription on any path — the schedule and cancelAtPeriodEnd are both the tenant's to change", async () => {
+    it("guard: updateStatus NEVER writes the schedule or cancelAtPeriodEnd — the tenant's to change; its only subscription write clears the dunning clock (SA-733r7)", async () => {
       prisma.tenant.findUnique.mockResolvedValue({ id: TENANT_ID, slug: "acme" } as any);
       prisma.tenant.updateMany.mockResolvedValue({ count: 1 });
       prisma.tenant.update.mockResolvedValue({
@@ -305,7 +568,14 @@ describe("PlatformAdminService — audit provenance", () => {
 
       await service.updateStatus(TENANT_ID, { status: "ACTIVE" } as any, ADMIN_ID);
 
-      expect((prisma as any).tenantSubscription.updateMany).not.toHaveBeenCalled();
+      expect((prisma as any).tenantSubscription.updateMany.mock.calls).toEqual([
+        [
+          {
+            where: { tenantId: TENANT_ID },
+            data: { pastDueSince: null, pastDueInvoiceId: null, pausedAt: null },
+          },
+        ],
+      ]);
       expect((prisma as any).tenantSubscription.update).not.toHaveBeenCalled();
     });
 
@@ -365,9 +635,10 @@ describe("PlatformAdminService — audit provenance", () => {
 
       // RED against pre-fix updateStatus(), which never wraps any of this in a transaction.
       expect(prisma.$transaction).toHaveBeenCalledTimes(1);
+      // SA-733r2 N5: the ONE path back to ACTIVE also nulls readOnlyReason.
       expect(prisma.tenant.updateMany).toHaveBeenCalledWith({
         where: { id: TENANT_ID, status: { not: "ACTIVE" } },
-        data: { status: "ACTIVE" },
+        data: { status: "ACTIVE", readOnlyReason: null },
       });
     });
   });
@@ -390,6 +661,9 @@ describe("PlatformAdminService — audit provenance", () => {
       } as any);
       // The "before" read this fix adds — no subscription row exists yet.
       prisma.tenant.findUniqueOrThrow.mockResolvedValue({
+        id: TENANT_ID,
+        slug: "acme",
+        plan: "PROFESSIONAL",
         status: "TRIAL",
         class: "PRODUCTION",
         deletedAt: null,
@@ -472,6 +746,164 @@ describe("PlatformAdminService — audit provenance", () => {
     });
   });
 
+  // Back-office P2: an ACTIVE (paying) tenant is never moved to TRIAL, on EITHER server path that
+  // can write TRIAL (extend-trial and the status PATCH): a coded 409 and NO write.
+  describe("ACTIVE -> TRIAL is refused (TENANT_TRIAL_EXTEND_NOT_ALLOWED)", () => {
+    const refusedWith = async (run: () => Promise<unknown>) => {
+      const err = await run().then(
+        () => null,
+        (e) => e,
+      );
+      expect(err).toBeInstanceOf(ConflictException);
+      expect((err as ConflictException).getStatus()).toBe(409);
+      expect((err as ConflictException).getResponse()).toMatchObject({
+        code: "TENANT_TRIAL_EXTEND_NOT_ALLOWED",
+      });
+    };
+
+    describe("extendTrial", () => {
+      beforeEach(() => {
+        prisma.tenant.findUnique.mockResolvedValue({ id: TENANT_ID, slug: "acme" } as any);
+        prisma.tenant.findUniqueOrThrow.mockResolvedValue({
+          id: TENANT_ID,
+          slug: "acme",
+          status: "TRIAL",
+          trialEndsAt: new Date("2026-11-01T00:00:00.000Z"),
+        } as any);
+      });
+
+      it("SA-733r5: a tenant with a catch-up claim held is refused 409 CATCHUP_SUBSCRIPTION before any write", async () => {
+        (prisma as any).tenantSubscription.findUnique.mockResolvedValue({
+          catchupState: "AWAITING_FIRST_PAYMENT",
+        });
+        const err = await service.extendTrial(TENANT_ID, 30, ADMIN_ID).catch((e) => e);
+        expect(err).toBeInstanceOf(ConflictException);
+        expect((err as ConflictException).getResponse()).toMatchObject({
+          code: "CATCHUP_SUBSCRIPTION",
+        });
+        expect(prisma.tenant.updateMany).not.toHaveBeenCalled();
+        expect(auditLog).not.toHaveBeenCalled();
+      });
+
+      it("an ACTIVE tenant: the predicate write matches nothing, so 409 with the code and no audit row", async () => {
+        prisma.tenant.updateMany.mockResolvedValue({ count: 0 });
+
+        await refusedWith(() => service.extendTrial(TENANT_ID, 30, ADMIN_ID));
+
+        // the refusal is part of the write itself (no read-then-write gap)
+        expect(prisma.tenant.updateMany).toHaveBeenCalledWith(
+          expect.objectContaining({ where: { id: TENANT_ID, status: { not: "ACTIVE" } } }),
+        );
+        expect(prisma.tenant.update).not.toHaveBeenCalled();
+        expect(auditLog).not.toHaveBeenCalled();
+      });
+
+      it("PR-B3 (r4 F4 #7): extending the trial of a PAUSED tenant clears the dunning columns itself and queues the unpause", async () => {
+        prisma.tenant.updateMany.mockResolvedValue({ count: 1 });
+        (prisma as any).tenantSubscription.findUnique.mockResolvedValue({
+          catchupState: null,
+          pausedAt: new Date("2026-11-08T09:00:00.000Z"),
+          stripeSubId: "sub_1",
+        });
+
+        await service.extendTrial(TENANT_ID, 14, ADMIN_ID);
+
+        // Tenant FOR UPDATE first, then the subscription clear, in ONE transaction
+        expect(prisma.$transaction).toHaveBeenCalledTimes(1);
+        expect(prisma.$queryRaw as jest.Mock).toHaveBeenCalled();
+        expect((prisma as any).tenantSubscription.updateMany).toHaveBeenCalledWith({
+          where: { tenantId: TENANT_ID },
+          data: { pastDueSince: null, pastDueInvoiceId: null, pausedAt: null },
+        });
+        expect(dunning.clearPauseAfterCommit).toHaveBeenCalledWith({
+          tenantId: TENANT_ID,
+          stripeSubId: "sub_1",
+          exitAt: expect.any(Date),
+        });
+      });
+
+      it("PR-B3: a refused extension (ACTIVE) clears nothing and unpauses nothing", async () => {
+        prisma.tenant.updateMany.mockResolvedValue({ count: 0 });
+        await refusedWith(() => service.extendTrial(TENANT_ID, 30, ADMIN_ID));
+        expect((prisma as any).tenantSubscription.updateMany).not.toHaveBeenCalled();
+        expect(dunning.clearPauseAfterCommit).not.toHaveBeenCalled();
+      });
+
+      it.each(["TRIAL", "SUSPENDED", "READ_ONLY"])(
+        "a %s tenant is extended: status TRIAL, a new end date, audited",
+        async () => {
+          prisma.tenant.updateMany.mockResolvedValue({ count: 1 });
+
+          const out = await service.extendTrial(TENANT_ID, 14, ADMIN_ID);
+
+          const data = prisma.tenant.updateMany.mock.calls[0][0].data as any;
+          expect(data.status).toBe("TRIAL");
+          expect(data.trialEndsAt).toBeInstanceOf(Date);
+          expect(out).toMatchObject({ trialEndsAt: expect.any(Date) });
+          expect(auditLog).toHaveBeenCalledWith(
+            expect.objectContaining({ action: "TENANT_TRIAL_EXTENDED", tenantId: TENANT_ID }),
+          );
+        },
+      );
+    });
+
+    describe("updateStatus (the status PATCH accepts any TenantStatus)", () => {
+      beforeEach(() => {
+        prisma.tenant.findUnique.mockResolvedValue({ id: TENANT_ID, slug: "acme" } as any);
+      });
+
+      const prior = (status: string) =>
+        prisma.tenant.findUniqueOrThrow.mockResolvedValue({
+          status,
+          class: "PRODUCTION",
+          deletedAt: null,
+          subscription: null,
+        } as any);
+
+      it("ACTIVE -> TRIAL: 409 with the code, and nothing is written or audited", async () => {
+        prior("ACTIVE");
+
+        await refusedWith(() =>
+          service.updateStatus(TENANT_ID, { status: "TRIAL" } as any, ADMIN_ID),
+        );
+
+        expect(prisma.tenant.update).not.toHaveBeenCalled();
+        expect(prisma.tenant.updateMany).not.toHaveBeenCalled();
+        expect(auditLog).not.toHaveBeenCalled();
+      });
+
+      it.each(["SUSPENDED", "READ_ONLY", "TRIAL"])("%s -> TRIAL is still allowed", async (from) => {
+        prior(from);
+        prisma.tenant.update.mockResolvedValue({
+          id: TENANT_ID,
+          slug: "acme",
+          status: "TRIAL",
+          plan: "STARTER",
+        } as any);
+
+        await service.updateStatus(TENANT_ID, { status: "TRIAL" } as any, ADMIN_ID);
+
+        expect(prisma.tenant.update).toHaveBeenCalledWith(
+          expect.objectContaining({ data: { status: "TRIAL" } }),
+        );
+      });
+
+      it("ACTIVE -> SUSPENDED is untouched by the refusal", async () => {
+        prior("ACTIVE");
+        prisma.tenant.update.mockResolvedValue({
+          id: TENANT_ID,
+          slug: "acme",
+          status: "SUSPENDED",
+          plan: "STARTER",
+        } as any);
+
+        await service.updateStatus(TENANT_ID, { status: "SUSPENDED" } as any, ADMIN_ID);
+
+        expect(prisma.tenant.update).toHaveBeenCalled();
+      });
+    });
+  });
+
   // B557: computeOverview()'s two queries filter differently — live mrr requires (planKey
   // non-null, status ACTIVE, deletedAt null, class PRODUCTION) but the ledger sum
   // (BillingEvent.amountDelta) requires only tenant.class = PRODUCTION. A tenant billed once
@@ -543,6 +975,87 @@ describe("PlatformAdminService — audit provenance", () => {
       );
       // B556's fill-in must not fire — this tenant already has a resolved planKey.
       expect((prisma as any).tenantSubscription.upsert).not.toHaveBeenCalled();
+    });
+
+    // SA r-note 5 A5 (N4): a comp add-on is a platform grant - never billed, never in MRR. updateStatus must read
+    // the add-ons through billableAddonWhere (isComp: false) like every other MRR reader.
+    describe("N4: comp add-ons are never in the status flip's MRR delta", () => {
+      const addons = [
+        { priceSnapshot: 20, quantity: 1, isComp: true }, // a comp: 0
+        { priceSnapshot: 12, quantity: 2, isComp: false }, // a paid add-on: 24
+      ];
+      const honourWhere = () =>
+        (prisma as any).tenantAddon.findMany.mockImplementation(async (a: any) =>
+          addons.filter((x) => (a?.where?.isComp === false ? !x.isComp : true)),
+        );
+      const payingTenant = (status: string) =>
+        prisma.tenant.findUniqueOrThrow.mockResolvedValue({
+          status,
+          class: "PRODUCTION",
+          deletedAt: null,
+          subscription: { planKey: "SCALE", basePriceSnapshot: 499, discount: 0 },
+        } as any);
+
+      it("suspending an ACTIVE paying tenant: -(499 + 24), the comp's 20 is not in it; the paid add-on still is", async () => {
+        prisma.tenant.findUnique.mockResolvedValue({ id: TENANT_ID, slug: "acme" } as any);
+        prisma.tenant.update.mockResolvedValue({
+          id: TENANT_ID,
+          slug: "acme",
+          status: "SUSPENDED",
+          plan: "PROFESSIONAL",
+        } as any);
+        payingTenant("ACTIVE");
+        honourWhere();
+        await service.updateStatus(TENANT_ID, { status: "SUSPENDED" } as any, ADMIN_ID);
+        expect(billingEventService.emit).toHaveBeenCalledWith(
+          TENANT_ID,
+          "subscription.suspended",
+          expect.anything(),
+          expect.objectContaining({ amountDelta: -523 }),
+        );
+      });
+
+      it("reactivating: +(499 + 24), not +543", async () => {
+        prisma.tenant.findUnique.mockResolvedValue({ id: TENANT_ID, slug: "acme" } as any);
+        prisma.tenant.updateMany.mockResolvedValue({ count: 1 });
+        prisma.tenant.update.mockResolvedValue({
+          id: TENANT_ID,
+          slug: "acme",
+          status: "ACTIVE",
+          plan: "PROFESSIONAL",
+        } as any);
+        payingTenant("SUSPENDED");
+        (prisma as any).tenantSubscription.findUnique.mockResolvedValue({
+          downgradeToPlanKey: null,
+          downgradeEffectiveAt: null,
+        });
+        honourWhere();
+        await service.updateStatus(TENANT_ID, { status: "ACTIVE" } as any, ADMIN_ID);
+        expect(billingEventService.emit).toHaveBeenCalledWith(
+          TENANT_ID,
+          "subscription.resumed",
+          expect.anything(),
+          expect.objectContaining({ amountDelta: 523 }),
+        );
+      });
+
+      it("the add-on read is billableAddonWhere (isComp: false), asserted on the query itself", async () => {
+        prisma.tenant.findUnique.mockResolvedValue({ id: TENANT_ID, slug: "acme" } as any);
+        prisma.tenant.update.mockResolvedValue({
+          id: TENANT_ID,
+          slug: "acme",
+          status: "SUSPENDED",
+          plan: "PROFESSIONAL",
+        } as any);
+        payingTenant("ACTIVE");
+        honourWhere();
+        await service.updateStatus(TENANT_ID, { status: "SUSPENDED" } as any, ADMIN_ID);
+        expect((prisma as any).tenantAddon.findMany.mock.calls[0][0].where).toEqual({
+          tenantId: TENANT_ID,
+          active: true,
+          isComp: false,
+        });
+      });
     });
 
     it("emits nothing when the tenant was never in the paying set (TRIAL → SUSPENDED)", async () => {
@@ -1033,6 +1546,57 @@ describe("PlatformAdminService — audit provenance", () => {
     );
   });
 
+  // SA r-note 5 A5 / Lead follow-up: a comp add-on is a platform grant - never billed, never in MRR. updatePlan's
+  // paying-set crossing reads the add-ons through billableAddonWhere (isComp: false) like updateStatus.
+  it("N4: a plan change that moves a tenant INTO the paying set books only BILLABLE add-ons (the comp's 20 is not in the delta)", async () => {
+    prisma.tenant.findUnique.mockResolvedValue({
+      id: TENANT_ID,
+      slug: "acme",
+      plan: "STARTER",
+      status: "ACTIVE",
+      class: "PRODUCTION",
+      deletedAt: null,
+    } as any);
+    prisma.tenant.update.mockResolvedValue({
+      id: TENANT_ID,
+      slug: "acme",
+      plan: "PROFESSIONAL",
+    } as any);
+    planCatalogService.getPublishedVersion.mockResolvedValue({
+      id: "v-9",
+      definitions: [{ planKey: "SCALE", monthlyPrice: 499 }],
+    });
+    (prisma as any).tenantSubscription.findUnique.mockResolvedValue({
+      planKey: null,
+      basePriceSnapshot: null,
+      priceOverrideMonthly: null,
+      discount: 10,
+    });
+    const rows = [
+      { priceSnapshot: 39, quantity: 1, isComp: false },
+      { priceSnapshot: 15, quantity: 2, isComp: false },
+      { priceSnapshot: 20, quantity: 1, isComp: true },
+    ];
+    prisma.tenantAddon.findMany.mockImplementation(
+      async (a: any) => rows.filter((r) => (a?.where?.isComp === false ? !r.isComp : true)) as any,
+    );
+
+    await service.updatePlan(TENANT_ID, { plan: "PROFESSIONAL" } as any, ADMIN_ID);
+
+    // 499 base + (39 + 30) paid add-ons - 10 discount; NOT +20 for the comp
+    expect(billingEventService.emit).toHaveBeenCalledWith(
+      TENANT_ID,
+      "plan.changed",
+      expect.anything(),
+      expect.objectContaining({ amountDelta: 558 }),
+    );
+    expect(prisma.tenantAddon.findMany.mock.calls[0][0].where).toEqual({
+      tenantId: TENANT_ID,
+      active: true,
+      isComp: false,
+    });
+  });
+
   it("404s updatePlan when no published plan catalog exists, without writing or invalidating", async () => {
     prisma.tenant.findUnique.mockResolvedValue({
       id: TENANT_ID,
@@ -1408,6 +1972,322 @@ describe("PlatformAdminService — audit provenance", () => {
     );
   });
 
+  // SA-733 D8 / SA-733r [M7] (B1104 + B1103): the admin plan edit reaches Stripe like the tenant upgrade does —
+  // Stripe-first, one update, the override beating the plan price, the included add-ons retired.
+  describe("updatePlan — Stripe-first plan change (SA-733 D8)", () => {
+    const periodStart = new Date("2026-09-01T00:00:00Z");
+    const periodEnd = new Date("2026-10-01T00:00:00Z");
+    const ITEM = (id: string, cents: number, product: string, quantity = 1) => ({
+      id,
+      quantity,
+      price: { unit_amount: cents, currency: "usd", recurring: { interval: "month" }, product },
+    });
+    let stripe: any;
+
+    function arrange(opts: {
+      from: string;
+      fromKey: string;
+      status?: string;
+      stripeStatus?: string;
+      stripeItems?: any[];
+      sub?: Record<string, unknown>;
+      addons?: any[];
+    }) {
+      prisma.tenant.findUnique.mockResolvedValue({
+        id: TENANT_ID,
+        slug: "acme",
+        plan: opts.from,
+        status: opts.status ?? "ACTIVE",
+      } as any);
+      prisma.tenant.update.mockResolvedValue({
+        id: TENANT_ID,
+        slug: "acme",
+        plan: "PROFESSIONAL",
+      } as any);
+      planCatalogService.getPublishedVersion.mockResolvedValue({
+        id: "v-9",
+        definitions: [
+          { planKey: "STARTER", name: "Starter", monthlyPrice: 99 },
+          { planKey: "GROWTH", name: "Growth", monthlyPrice: 249 },
+          { planKey: "SCALE", name: "Scale", monthlyPrice: 499 },
+          { planKey: "ENTERPRISE", name: "Enterprise", monthlyPrice: null, isCustom: true },
+        ],
+        addonSkus: [
+          { sku: "FORECASTING", name: "Forecasting", monthlyPrice: 25, includedAtPlan: "SCALE" },
+        ],
+      });
+      (prisma as any).tenantSubscription.findUnique.mockResolvedValue({
+        planKey: opts.fromKey,
+        basePriceSnapshot: 249,
+        priceOverrideMonthly: null,
+        priceOverrideAnnual: null,
+        stripeSubId: "sub_1",
+        externalPayment: false,
+        discount: null,
+        cycle: "MONTHLY",
+        periodStart,
+        periodEnd,
+        cancelAtPeriodEnd: false,
+        ...(opts.sub ?? {}),
+      });
+      (prisma as any).tenantAddon.findMany.mockResolvedValue(opts.addons ?? []);
+      // emitAddonDelta's paying-set read, under the tenant lock, after the plan write.
+      (prisma.tenant as any).findUniqueOrThrow = jest.fn().mockResolvedValue({
+        status: opts.status ?? "ACTIVE",
+        class: "PRODUCTION",
+        deletedAt: null,
+        subscription: { planKey: "SCALE" },
+      });
+      stripe = fakeStripeSubscription(
+        opts.stripeItems ?? [ITEM("si_base", 24900, "prod_growth"), ITEM("si_fc", 2500, "prod_fc")],
+        opts.stripeStatus ?? "active",
+      );
+      (service as any).stripe = stripe;
+    }
+    const forecasting = {
+      id: "ta_fc",
+      addonKey: "FORECASTING",
+      sku: "FORECASTING",
+      quantity: 1,
+      priceSnapshot: 25,
+      stripeItemId: "si_fc",
+      isComp: false,
+      active: true,
+    };
+
+    it("runs under the tenant-price advisory lock (the family the price override takes), keyed on the tenant", async () => {
+      const { withAdvisoryLock } = jest.requireMock("../common/db-locks");
+      withAdvisoryLock.mockClear();
+      arrange({ from: "GROWTH", fromKey: "GROWTH" });
+      await service.updatePlan(TENANT_ID, { plan: "PROFESSIONAL" } as any, ADMIN_ID);
+      expect(withAdvisoryLock).toHaveBeenCalledWith(
+        { family: "tenant-price", key: TENANT_ID, mode: "wait", waitMs: 20_000 },
+        expect.any(Function),
+      );
+    });
+
+    it("an UPGRADE on a Stripe tenant pushes the new plan price with create_prorations, once, before the local write", async () => {
+      arrange({ from: "GROWTH", fromKey: "GROWTH" });
+      await service.updatePlan(TENANT_ID, { plan: "PROFESSIONAL" } as any, ADMIN_ID);
+
+      expect(stripe.updateSubscription).toHaveBeenCalledTimes(1);
+      const [subId, params, opts] = stripe.updateSubscription.mock.calls[0];
+      expect(subId).toBe("sub_1");
+      expect(params.proration_behavior).toBe("create_prorations");
+      expect(params.items[0]).toMatchObject({
+        id: "si_base",
+        price_data: { unit_amount: 49900, product: "prod_scale" },
+      });
+      expect(opts.idempotencyKey).toMatch(/^tenant-1:plan-change:v-9:/);
+    });
+
+    it("the tenant's price override WINS over the plan price", async () => {
+      arrange({ from: "GROWTH", fromKey: "GROWTH", sub: { priceOverrideMonthly: 300 } });
+      await service.updatePlan(TENANT_ID, { plan: "PROFESSIONAL" } as any, ADMIN_ID);
+      expect(stripe.updateSubscription.mock.calls[0][1].items[0].price_data.unit_amount).toBe(
+        30000,
+      );
+    });
+
+    it("the included add-on's Stripe item is deleted in the same update; the row retires and its MRR books -price once", async () => {
+      arrange({ from: "GROWTH", fromKey: "GROWTH", addons: [forecasting] });
+      await service.updatePlan(TENANT_ID, { plan: "PROFESSIONAL" } as any, ADMIN_ID);
+
+      expect(stripe.updateSubscription).toHaveBeenCalledTimes(1);
+      expect(stripe.updateSubscription.mock.calls[0][1].items).toContainEqual({
+        id: "si_fc",
+        deleted: true,
+      });
+      expect((prisma as any).tenantAddon.update).toHaveBeenCalledWith({
+        where: { id: "ta_fc" },
+        data: { active: false, stripeItemId: null },
+      });
+      const addonDeltas = billingEventService.emit.mock.calls.filter(
+        (c: any[]) => c[1] === "addon.disabled",
+      );
+      expect(addonDeltas.map((c: any[]) => c[3].amountDelta)).toEqual([-25]);
+    });
+
+    it("the local compare-and-set losing after Stripe applied puts Stripe back (revert, same key + :revert) and the 409 stands", async () => {
+      arrange({ from: "GROWTH", fromKey: "GROWTH" });
+      (prisma as any).tenantSubscription.updateMany.mockResolvedValue({ count: 0 });
+
+      await expect(
+        service.updatePlan(TENANT_ID, { plan: "PROFESSIONAL" } as any, ADMIN_ID),
+      ).rejects.toBeInstanceOf(ConflictException);
+
+      expect(stripe.updateSubscription).toHaveBeenCalledTimes(2);
+      const [, , fwd] = stripe.updateSubscription.mock.calls[0];
+      const [, revert, rev] = stripe.updateSubscription.mock.calls[1];
+      expect(rev.idempotencyKey).toBe(`${fwd.idempotencyKey}:revert`);
+      expect(revert.items[0]).toMatchObject({ id: "si_base", price_data: { unit_amount: 24900 } });
+    });
+
+    it("review M2: GROWTH -> ENTERPRISE (a custom plan) still retires the add-on the higher plan includes", async () => {
+      arrange({
+        from: "GROWTH",
+        fromKey: "GROWTH",
+        sub: { priceOverrideMonthly: 300 },
+        addons: [forecasting],
+      });
+      await service.updatePlan(TENANT_ID, { plan: "ENTERPRISE" } as any, ADMIN_ID);
+
+      expect(stripe.updateSubscription).toHaveBeenCalledTimes(1);
+      const params = stripe.updateSubscription.mock.calls[0][1];
+      expect(params.items).toContainEqual({ id: "si_fc", deleted: true });
+      expect(params.proration_behavior).toBe("none"); // a custom plan is not a ranked-and-priced upgrade
+      expect((prisma as any).tenantAddon.update).toHaveBeenCalledWith({
+        where: { id: "ta_fc" },
+        data: { active: false, stripeItemId: null },
+      });
+    });
+
+    it("review L2: an upgrade on a past_due Stripe subscription claims no prorated charge in the result", async () => {
+      arrange({ from: "GROWTH", fromKey: "GROWTH", stripeStatus: "past_due" });
+      prorationService.proratedDiff.mockReturnValue(200);
+      const res: any = await service.updatePlan(
+        TENANT_ID,
+        { plan: "PROFESSIONAL" } as any,
+        ADMIN_ID,
+      );
+      expect(stripe.updateSubscription.mock.calls[0][1].proration_behavior).toBe("none");
+      expect(res.proratedNow).toBe(0);
+    });
+
+    it("review L2 control: the same upgrade on an ACTIVE subscription still reports the proration", async () => {
+      arrange({ from: "GROWTH", fromKey: "GROWTH" });
+      prorationService.proratedDiff.mockReturnValue(200);
+      const res: any = await service.updatePlan(
+        TENANT_ID,
+        { plan: "PROFESSIONAL" } as any,
+        ADMIN_ID,
+      );
+      expect(res.proratedNow).toBe(200);
+    });
+
+    it("R1 Option B: an early pre-renewal downgrade push is undone FIRST - Stripe is restored to the current price before the plan edit prorates", async () => {
+      arrange({
+        from: "GROWTH",
+        fromKey: "GROWTH",
+        sub: { downgradeToPlanKey: "STARTER" },
+        stripeItems: [ITEM("si_base", 9900, "prod_low")],
+      });
+      (service as any).scheduledPrice = new ScheduledPriceChangeService(prisma as any, stripe, {
+        getVersionForTenant: jest.fn(async () => await planCatalogService.getPublishedVersion()),
+        getPublishedVersion: jest.fn().mockResolvedValue(null),
+      } as any);
+
+      await service.updatePlan(TENANT_ID, { plan: "PROFESSIONAL" } as any, ADMIN_ID);
+
+      expect(stripe.updateSubscription).toHaveBeenCalledTimes(2);
+      expect(stripe.updateSubscription.mock.calls[0][1].items[0].price_data.unit_amount).toBe(
+        24900,
+      );
+      expect(stripe.updateSubscription.mock.calls[0][1].proration_behavior).toBe("none");
+      expect(stripe.updateSubscription.mock.calls[1][1].items[0].price_data.unit_amount).toBe(
+        49900,
+      );
+      expect(stripe.updateSubscription.mock.calls[1][1].proration_behavior).toBe(
+        "create_prorations",
+      );
+    });
+
+    it("S4: a lost commit acknowledgement is a SUCCESS - the audit row and the cache invalidation still happen, Stripe is not reverted", async () => {
+      arrange({ from: "GROWTH", fromKey: "GROWTH" });
+      const target = { planKey: "SCALE", planVersionId: "v-9" };
+      prisma.$transaction.mockImplementationOnce(async (fn: any) => {
+        await fn({ ...prisma, tenantSubscription: (prisma as any).tenantSubscription });
+        // the write committed; the client is told it failed
+        (prisma as any).tenantSubscription.findUnique.mockResolvedValue(target);
+        throw new Error("connection lost after commit");
+      });
+      (prisma.tenant as any).findUniqueOrThrow.mockResolvedValue({
+        id: TENANT_ID,
+        slug: "acme",
+        plan: "PROFESSIONAL",
+      });
+
+      const res: any = await service.updatePlan(
+        TENANT_ID,
+        { plan: "PROFESSIONAL" } as any,
+        ADMIN_ID,
+      );
+
+      expect(res).toMatchObject({ id: TENANT_ID, plan: "PROFESSIONAL" });
+      expect(stripe.updateSubscription).toHaveBeenCalledTimes(1); // the push only
+      expect(entitlementsService.invalidate).toHaveBeenCalledWith(TENANT_ID);
+      expect(auditLog).toHaveBeenCalledWith(
+        expect.objectContaining({ action: "TENANT_PLAN_CHANGED", userId: ADMIN_ID }),
+      );
+    });
+
+    it("S4: a failed revert is a distinct 502 PLAN_CHANGE_STRIPE_AHEAD (not the ordinary 409), with an audit row naming both prices", async () => {
+      arrange({ from: "GROWTH", fromKey: "GROWTH" });
+      (prisma as any).tenantSubscription.updateMany.mockResolvedValue({ count: 0 });
+      const applyPush = stripe.updateSubscription.getMockImplementation()!;
+      stripe.updateSubscription
+        .mockImplementationOnce(applyPush)
+        .mockRejectedValueOnce(new Error("stripe down"));
+
+      const err: any = await service
+        .updatePlan(TENANT_ID, { plan: "PROFESSIONAL" } as any, ADMIN_ID)
+        .catch((e: unknown) => e);
+
+      expect(err.getStatus()).toBe(502);
+      expect(err.getResponse().code).toBe("PLAN_CHANGE_STRIPE_AHEAD");
+      expect(err.getResponse().message).toContain("Stripe now bills $499");
+      const created = (prisma as any).auditLog.create.mock.calls.map((c: any[]) => c[0].data);
+      expect(created).toContainEqual(
+        expect.objectContaining({
+          tenantId: TENANT_ID,
+          userId: ADMIN_ID,
+          meta: expect.objectContaining({ kind: "plan_change_stripe_ahead" }),
+        }),
+      );
+    });
+
+    it("re-saving the plan the tenant is already on pushes nothing", async () => {
+      arrange({ from: "PROFESSIONAL", fromKey: "SCALE" });
+      await service.updatePlan(TENANT_ID, { plan: "PROFESSIONAL" } as any, ADMIN_ID);
+      expect(stripe.updateSubscription).not.toHaveBeenCalled();
+    });
+
+    it("an instant (non-ACTIVE) downgrade pushes with proration none, never retiring an add-on", async () => {
+      arrange({
+        from: "PROFESSIONAL",
+        fromKey: "SCALE",
+        status: "READ_ONLY",
+        addons: [forecasting],
+      });
+      await service.updatePlan(TENANT_ID, { plan: "STARTER" } as any, ADMIN_ID);
+
+      expect(stripe.updateSubscription).toHaveBeenCalledTimes(1);
+      const params = stripe.updateSubscription.mock.calls[0][1];
+      expect(params.proration_behavior).toBe("none");
+      expect(params.items.some((i: any) => i.deleted)).toBe(false);
+      expect((prisma as any).tenantAddon.update).not.toHaveBeenCalled();
+    });
+
+    it("a SCHEDULED downgrade pushes nothing now (the cron pushes at the period end, none)", async () => {
+      arrange({ from: "PROFESSIONAL", fromKey: "SCALE" });
+      await service.updatePlan(TENANT_ID, { plan: "STARTER" } as any, ADMIN_ID);
+      expect(stripe.updateSubscription).not.toHaveBeenCalled();
+      expect(stripe.getSubscription).not.toHaveBeenCalled();
+    });
+
+    it("a tenant without a Stripe subscription pushes nothing and still retires the included add-on", async () => {
+      arrange({
+        from: "GROWTH",
+        fromKey: "GROWTH",
+        sub: { stripeSubId: null },
+        addons: [{ ...forecasting, stripeItemId: null }],
+      });
+      await service.updatePlan(TENANT_ID, { plan: "PROFESSIONAL" } as any, ADMIN_ID);
+      expect(stripe.updateSubscription).not.toHaveBeenCalled();
+      expect((prisma as any).tenantAddon.update).toHaveBeenCalled();
+    });
+  });
+
   it("activateManualSubscription disarms every pending transition when it rolls the period (round 3, findings 2/9)", async () => {
     prisma.tenant.findUnique.mockResolvedValue({ id: TENANT_ID, slug: "acme" } as any);
     prisma.tenant.update.mockResolvedValue({
@@ -1437,6 +2317,76 @@ describe("PlatformAdminService — audit provenance", () => {
       downgradeToPlanKey: null,
       downgradeEffectiveAt: null,
       retainedUserIds: [],
+    });
+  });
+
+  describe("Opus item 7: activateManualSubscription vs a held catch-up claim", () => {
+    const activate = () =>
+      service.activateManualSubscription(
+        TENANT_ID,
+        { plan: "PROFESSIONAL", billingPeriodDays: 30, paymentMethod: "BANK_TRANSFER" } as any,
+        ADMIN_ID,
+      );
+    const arrange = (catchupState: string | null) => {
+      prisma.tenant.findUnique.mockResolvedValue({ id: TENANT_ID, slug: "acme" } as any);
+      prisma.tenant.update.mockResolvedValue({
+        id: TENANT_ID,
+        slug: "acme",
+        status: "ACTIVE",
+        plan: "PROFESSIONAL",
+      } as any);
+      planCatalogService.getPublishedVersion.mockResolvedValue({
+        id: "v-1",
+        definitions: [{ planKey: "SCALE", monthlyPrice: 349, isCustom: false }],
+      } as any);
+      prisma.tenant.findUniqueOrThrow.mockResolvedValue({
+        name: "Acme",
+        slug: "acme",
+        status: "ACTIVE",
+        readOnlyReason: null,
+        class: "PRODUCTION",
+        deletedAt: null,
+        subscription: {
+          planKey: "SCALE",
+          basePriceSnapshot: 349,
+          discount: 0,
+          priceOverrideMonthly: null,
+          couponFull: false,
+          catchupState,
+        },
+      } as any);
+    };
+
+    it.each(["AWAITING_FIRST_PAYMENT", "RELEASING"])(
+      "%s: 409 CATCHUP_PENDING under the Tenant lock, nothing written",
+      async (state) => {
+        arrange(state);
+        const err = await activate().catch((e) => e);
+        expect(err).toBeInstanceOf(ConflictException);
+        expect((err as ConflictException).getResponse()).toMatchObject({ code: "CATCHUP_PENDING" });
+        expect((prisma as any).tenantSubscription.upsert).not.toHaveBeenCalled();
+      },
+    );
+
+    // SA-733r5 MF3 (Lead review): this used to ALLOW an activation while the session was open ("the stale-checkout
+    // guard covers it"). It does not: the customer can still pay the open session AFTER staff recorded the same
+    // October by activating, which charges them twice. Flipped deliberately: a SESSION_OPEN claim refuses too.
+    it("SESSION_OPEN: 409 ACTIVATION_CATCHUP_SESSION_OPEN under the Tenant lock, nothing written", async () => {
+      arrange("SESSION_OPEN");
+      const err = await activate().catch((e) => e);
+      expect(err).toBeInstanceOf(ConflictException);
+      expect((err as ConflictException).getResponse()).toMatchObject({
+        code: "ACTIVATION_CATCHUP_SESSION_OPEN",
+      });
+      expect(JSON.stringify((err as ConflictException).getResponse())).not.toMatch(
+        /SESSION_OPEN[^"]*SESSION_OPEN/,
+      );
+      expect((prisma as any).tenantSubscription.upsert).not.toHaveBeenCalled();
+    });
+
+    it("no claim is not refused", async () => {
+      arrange(null);
+      await expect(activate()).resolves.toBeTruthy();
     });
   });
 
@@ -1574,6 +2524,12 @@ describe("PlatformAdminService — audit provenance", () => {
 
   it("price-override leaves a grandfathered basePriceSnapshot alone and emits nothing", async () => {
     prisma.tenant.findUnique.mockResolvedValue({ id: TENANT_ID, slug: "acme" } as any);
+    prisma.tenant.findUniqueOrThrow.mockResolvedValue({
+      status: "ACTIVE",
+      class: "PRODUCTION",
+      deletedAt: null,
+      subscription: { planKey: "ENTERPRISE", basePriceSnapshot: 900, priceOverrideMonthly: 800 },
+    } as any);
     (prisma as any).tenantSubscription.findUnique.mockResolvedValue({
       priceOverrideMonthly: 800,
       planKey: "ENTERPRISE",
@@ -1585,6 +2541,624 @@ describe("PlatformAdminService — audit provenance", () => {
     const upsertArg = (prisma as any).tenantSubscription.upsert.mock.calls.at(-1)[0];
     expect(upsertArg.update.basePriceSnapshot).toBeUndefined();
     expect(billingEventService.emit).not.toHaveBeenCalled();
+  });
+
+  // SA-733 D8: the override is STRIPE-FIRST, takes an explicit effective mode, runs under a per-tenant
+  // advisory lock, re-syncs Stripe from the COMMITTED row when the local write fails, and its audit row
+  // records the old price, the new price and the mode.
+  describe("updateTenantPriceOverride — SA-733 D8 Stripe-first, lock, effective mode, audit", () => {
+    const VERSION = new Date("2026-10-01T09:00:00.000Z");
+    const livePush = {
+      synced: true,
+      oldAmount: 100,
+      newAmount: 80,
+      proration: "create_prorations" as const,
+    };
+    const lockMock = () => (require("../common/db-locks") as any).withAdvisoryLock as jest.Mock;
+    const txRow = (override: { monthly: number; annual?: number | null }) =>
+      ({
+        status: "ACTIVE",
+        class: "PRODUCTION",
+        deletedAt: null,
+        subscription: {
+          planKey: "ENTERPRISE",
+          basePriceSnapshot: 100,
+          priceOverrideMonthly: override.monthly,
+          priceOverrideAnnual: override.annual ?? null,
+        },
+      }) as any;
+    const preRow = {
+      priceOverrideMonthly: 100,
+      priceOverrideAnnual: null,
+      planKey: "ENTERPRISE",
+      basePriceSnapshot: 100,
+      updatedAt: VERSION,
+    };
+    const committedRow = (monthly: number | null) => ({
+      priceOverrideMonthly: monthly,
+      priceOverrideAnnual: null,
+      updatedAt: new Date("2026-10-01T09:30:00.000Z"),
+    });
+
+    beforeEach(() => {
+      lockMock().mockClear();
+      prisma.tenant.findUnique.mockResolvedValue({ id: TENANT_ID, slug: "acme" } as any);
+      (prisma as any).tenantSubscription.findUnique.mockResolvedValue({
+        priceOverrideMonthly: 100,
+        priceOverrideAnnual: null,
+        planKey: "ENTERPRISE",
+        basePriceSnapshot: 100,
+        updatedAt: VERSION,
+      });
+      prisma.tenant.findUniqueOrThrow.mockResolvedValue(txRow({ monthly: 100 }));
+      platformPricingService.resolveTenantPricing
+        .mockResolvedValueOnce({
+          planKey: "ENTERPRISE",
+          planName: "Enterprise",
+          monthly: 100,
+          annual: 1000,
+          source: "override",
+          currency: "usd",
+        })
+        .mockResolvedValue({
+          planKey: "ENTERPRISE",
+          planName: "Enterprise",
+          monthly: 80,
+          annual: 800,
+          source: "override",
+          currency: "usd",
+        });
+      billingServiceMock.pushResolvedPriceToStripe.mockResolvedValue(livePush);
+      billingServiceMock.syncStripeSubscriptionPrice.mockResolvedValue(livePush);
+    });
+
+    it("review: an override committed after an EARLY downgrade push restores the current price FIRST, then the override push goes out", async () => {
+      (prisma as any).tenantSubscription.findUnique.mockResolvedValue({
+        ...preRow,
+        stripeSubId: "sub_1",
+        downgradeToPlanKey: "STARTER",
+      });
+      const restore = jest.fn().mockResolvedValue(undefined);
+      (service as any).scheduledPrice = { restoreIfPushedLocked: restore };
+
+      await service.updateTenantPriceOverride(TENANT_ID, { monthly: 80 } as any, ADMIN_ID);
+
+      expect(restore).toHaveBeenCalledWith(TENANT_ID, "STARTER", {
+        mustBeCleared: false,
+        audience: "admin",
+      });
+      expect(restore.mock.invocationCallOrder[0]).toBeLessThan(
+        billingServiceMock.pushResolvedPriceToStripe.mock.invocationCallOrder[0],
+      );
+    });
+
+    it("review: ... and a restore that FAILS stops the override before anything else is sent or saved", async () => {
+      (prisma as any).tenantSubscription.findUnique.mockResolvedValue({
+        ...preRow,
+        stripeSubId: "sub_1",
+        downgradeToPlanKey: "STARTER",
+      });
+      (service as any).scheduledPrice = {
+        restoreIfPushedLocked: jest.fn().mockRejectedValue(new Error("stripe down")),
+      };
+
+      await expect(
+        service.updateTenantPriceOverride(TENANT_ID, { monthly: 80 } as any, ADMIN_ID),
+      ).rejects.toThrow("stripe down");
+      expect(billingServiceMock.pushResolvedPriceToStripe).not.toHaveBeenCalled();
+      expect((prisma as any).tenantSubscription.upsert).not.toHaveBeenCalled();
+    });
+
+    it("review: no schedule (or no Stripe subscription) -> no restore", async () => {
+      const restore = jest.fn();
+      (service as any).scheduledPrice = { restoreIfPushedLocked: restore };
+      await service.updateTenantPriceOverride(TENANT_ID, { monthly: 80 } as any, ADMIN_ID);
+      expect(restore).not.toHaveBeenCalled();
+    });
+
+    it("now_prorated is pushed with the proposed override and the pre-change row version", async () => {
+      await service.updateTenantPriceOverride(
+        TENANT_ID,
+        { monthly: 80, effective: "now_prorated" } as any,
+        ADMIN_ID,
+      );
+      expect(billingServiceMock.pushResolvedPriceToStripe).toHaveBeenCalledWith(TENANT_ID, {
+        effective: "now_prorated",
+        proposed: { monthly: 80, annual: null },
+        version: VERSION,
+      });
+    });
+
+    it("omitting effective means next_cycle", async () => {
+      await service.updateTenantPriceOverride(TENANT_ID, { monthly: 80 } as any, ADMIN_ID);
+      expect(billingServiceMock.pushResolvedPriceToStripe).toHaveBeenCalledWith(
+        TENANT_ID,
+        expect.objectContaining({ effective: "next_cycle" }),
+      );
+    });
+
+    it("a clear (null) is proposed as a clear and keeps the other column", async () => {
+      (prisma as any).tenantSubscription.findUnique.mockResolvedValue({
+        priceOverrideMonthly: 100,
+        priceOverrideAnnual: 900,
+        planKey: "ENTERPRISE",
+        basePriceSnapshot: 100,
+        updatedAt: VERSION,
+      });
+      prisma.tenant.findUniqueOrThrow.mockResolvedValue(txRow({ monthly: 100, annual: 900 }));
+      platformPricingService.resolveCatalogPricing = jest
+        .fn()
+        .mockResolvedValue({ monthly: 249 }) as any;
+      await service.updateTenantPriceOverride(TENANT_ID, { annual: null } as any, ADMIN_ID);
+      expect(billingServiceMock.pushResolvedPriceToStripe).toHaveBeenCalledWith(
+        TENANT_ID,
+        expect.objectContaining({ proposed: { monthly: 100, annual: null } }),
+      );
+    });
+
+    it("Stripe goes FIRST: the push happens before the override row is written", async () => {
+      await service.updateTenantPriceOverride(TENANT_ID, { monthly: 80 } as any, ADMIN_ID);
+      const pushOrder = billingServiceMock.pushResolvedPriceToStripe.mock.invocationCallOrder[0];
+      const writeOrder = (prisma as any).tenantSubscription.upsert.mock.invocationCallOrder[0];
+      expect(pushOrder).toBeLessThan(writeOrder);
+    });
+
+    it("the whole read-push-write sequence runs INSIDE the per-tenant price advisory lock", async () => {
+      let inLock = false;
+      const seen: boolean[] = [];
+      lockMock().mockImplementationOnce(async (_o: unknown, fn: () => Promise<unknown>) => {
+        inLock = true;
+        try {
+          return { acquired: true, value: await fn() };
+        } finally {
+          inLock = false;
+        }
+      });
+      billingServiceMock.pushResolvedPriceToStripe.mockImplementation(async () => {
+        seen.push(inLock);
+        return livePush;
+      });
+      (prisma as any).tenantSubscription.upsert.mockImplementation(async () => {
+        seen.push(inLock);
+        return {};
+      });
+      await service.updateTenantPriceOverride(TENANT_ID, { monthly: 80 } as any, ADMIN_ID);
+      expect(lockMock()).toHaveBeenCalledWith(
+        expect.objectContaining({ family: "tenant-price", key: TENANT_ID, mode: "wait" }),
+        expect.any(Function),
+      );
+      expect(seen).toEqual([true, true]);
+    });
+
+    it("a price-lock timeout is a 409 CONCURRENT_UPDATE and nothing reaches Stripe or the row", async () => {
+      const { LockTimeoutError } = jest.requireActual("../common/db-locks");
+      lockMock().mockRejectedValueOnce(new LockTimeoutError("billing", "k", 20_000));
+      await expect(
+        service.updateTenantPriceOverride(TENANT_ID, { monthly: 80 } as any, ADMIN_ID),
+      ).rejects.toMatchObject({ response: { code: "CONCURRENT_UPDATE" } });
+      expect(billingServiceMock.pushResolvedPriceToStripe).not.toHaveBeenCalled();
+      expect((prisma as any).tenantSubscription.upsert).not.toHaveBeenCalled();
+    });
+
+    it("a Stripe failure refuses the change: 503, no row written, no audit, no ledger sync", async () => {
+      billingServiceMock.pushResolvedPriceToStripe.mockResolvedValue({
+        synced: false,
+        reason: "stripe_update_failed",
+      });
+      const err: any = await service
+        .updateTenantPriceOverride(TENANT_ID, { monthly: 80 } as any, ADMIN_ID)
+        .catch((e) => e);
+      expect(err).toBeInstanceOf(ServiceUnavailableException);
+      // Item 7: no blind "retry shortly" — Stripe may have cached the failure.
+      expect(err.message).toContain("Check the subscription in Stripe");
+      expect(err.message).not.toContain("Retry shortly");
+      expect((prisma as any).tenantSubscription.upsert).not.toHaveBeenCalled();
+      expect(billingServiceMock.syncStripeSubscriptionPrice).not.toHaveBeenCalled();
+      expect(auditLog).not.toHaveBeenCalled();
+    });
+
+    it.each(["no_subscription_item", "no_base_item", "stripe_not_configured"])(
+      "item 8: a live subscription Stripe cannot reprice (%s) REFUSES the change, nothing written",
+      async (reason) => {
+        billingServiceMock.pushResolvedPriceToStripe.mockResolvedValue({ synced: false, reason });
+        await expect(
+          service.updateTenantPriceOverride(TENANT_ID, { monthly: 80 } as any, ADMIN_ID),
+        ).rejects.toThrow(ServiceUnavailableException);
+        expect((prisma as any).tenantSubscription.upsert).not.toHaveBeenCalled();
+      },
+    );
+
+    it.each(["no_active_stripe_subscription", "subscription_not_active_canceled"])(
+      "a non-live subscription (%s) is not a failure: the row is still written",
+      async (reason) => {
+        billingServiceMock.pushResolvedPriceToStripe.mockResolvedValue({ synced: false, reason });
+        await service.updateTenantPriceOverride(TENANT_ID, { monthly: 80 } as any, ADMIN_ID);
+        expect((prisma as any).tenantSubscription.upsert).toHaveBeenCalledTimes(1);
+      },
+    );
+
+    it("a local write failure AFTER Stripe moved re-syncs Stripe from the COMMITTED row (no remembered amount) and rethrows", async () => {
+      (prisma as any).tenantSubscription.upsert.mockRejectedValueOnce(new Error("db down"));
+      (prisma as any).tenantSubscription.findUnique
+        .mockResolvedValueOnce(preRow)
+        .mockResolvedValueOnce(committedRow(100));
+      await expect(
+        service.updateTenantPriceOverride(
+          TENANT_ID,
+          { monthly: 80, effective: "now_prorated" } as any,
+          ADMIN_ID,
+        ),
+      ).rejects.toThrow("db down");
+      expect(billingServiceMock.pushResolvedPriceToStripe).toHaveBeenCalledTimes(2);
+      // The second call prices from the committed row: no `proposed`, the same proration mode.
+      expect(billingServiceMock.pushResolvedPriceToStripe.mock.calls[1]).toEqual([
+        TENANT_ID,
+        { effective: "now_prorated", version: new Date("2026-10-01T09:30:00.000Z") },
+      ]);
+      expect(billingServiceMock.syncStripeSubscriptionPrice).not.toHaveBeenCalled();
+      expect(auditLog).not.toHaveBeenCalled();
+    });
+
+    it("item 6: the re-sync needs no revert handle - a synced push with nothing else to hold still re-syncs", async () => {
+      billingServiceMock.pushResolvedPriceToStripe.mockResolvedValue({ synced: true });
+      (prisma as any).tenantSubscription.upsert.mockRejectedValueOnce(new Error("db down"));
+      (prisma as any).tenantSubscription.findUnique
+        .mockResolvedValueOnce(preRow)
+        .mockResolvedValueOnce(committedRow(100));
+      await expect(
+        service.updateTenantPriceOverride(TENANT_ID, { monthly: 80 } as any, ADMIN_ID),
+      ).rejects.toThrow("db down");
+      expect(billingServiceMock.pushResolvedPriceToStripe).toHaveBeenCalledTimes(2);
+    });
+
+    it("a fee committed by another writer while this request was in flight: 409, and Stripe follows THAT row (never a stale revert)", async () => {
+      prisma.tenant.findUniqueOrThrow.mockResolvedValue(txRow({ monthly: 150 })); // moved from 100
+      (prisma as any).tenantSubscription.findUnique
+        .mockResolvedValueOnce(preRow)
+        .mockResolvedValueOnce(committedRow(150));
+      await expect(
+        service.updateTenantPriceOverride(TENANT_ID, { monthly: 80 } as any, ADMIN_ID),
+      ).rejects.toThrow(ConflictException);
+      expect((prisma as any).tenantSubscription.upsert).not.toHaveBeenCalled();
+      expect(billingServiceMock.pushResolvedPriceToStripe).toHaveBeenCalledTimes(2);
+      expect(billingServiceMock.pushResolvedPriceToStripe.mock.calls[1][1]).not.toHaveProperty(
+        "proposed",
+      );
+    });
+
+    it("when the committed row already holds the proposed fee the request succeeds with NO re-sync", async () => {
+      (prisma as any).tenantSubscription.upsert.mockRejectedValueOnce(new Error("commit ack lost"));
+      (prisma as any).tenantSubscription.findUnique
+        .mockResolvedValueOnce(preRow)
+        .mockResolvedValueOnce(committedRow(80));
+      await expect(
+        service.updateTenantPriceOverride(TENANT_ID, { monthly: 80 } as any, ADMIN_ID),
+      ).resolves.toBeDefined();
+      expect(billingServiceMock.pushResolvedPriceToStripe).toHaveBeenCalledTimes(1);
+      expect(auditLog).toHaveBeenCalledTimes(1);
+    });
+
+    it("an UNCHANGED push (Stripe never moved) that then fails locally is rethrown without any re-sync", async () => {
+      billingServiceMock.pushResolvedPriceToStripe.mockResolvedValue({
+        synced: true,
+        unchanged: true,
+      });
+      (prisma as any).tenantSubscription.upsert.mockRejectedValueOnce(new Error("db down"));
+      (prisma as any).tenantSubscription.findUnique
+        .mockResolvedValueOnce(preRow)
+        .mockResolvedValueOnce(committedRow(100));
+      await expect(
+        service.updateTenantPriceOverride(TENANT_ID, { monthly: 80 } as any, ADMIN_ID),
+      ).rejects.toThrow("db down");
+      expect(billingServiceMock.pushResolvedPriceToStripe).toHaveBeenCalledTimes(1);
+    });
+
+    it("item 2: when Stripe cannot be re-synced the HTTP error says Stripe is ahead, with both amounts - not the original error", async () => {
+      (prisma as any).tenantSubscription.upsert.mockRejectedValueOnce(new Error("db down"));
+      (prisma as any).tenantSubscription.findUnique
+        .mockResolvedValueOnce(preRow)
+        .mockResolvedValueOnce(committedRow(100));
+      billingServiceMock.pushResolvedPriceToStripe
+        .mockResolvedValueOnce(livePush)
+        .mockResolvedValueOnce({ synced: false, reason: "stripe_update_failed" });
+      const err: any = await service
+        .updateTenantPriceOverride(
+          TENANT_ID,
+          { monthly: 80, effective: "now_prorated" } as any,
+          ADMIN_ID,
+        )
+        .catch((e) => e);
+      expect(err).toBeInstanceOf(BadGatewayException);
+      expect(err.getResponse().code).toBe("PRICE_OVERRIDE_STRIPE_AHEAD");
+      expect(err.message).toBe(
+        "Stripe now bills $80, the database still says $100 - reconcile the subscription price before changing it again.",
+      );
+      const entry = auditLog.mock.calls.at(-1)![0];
+      expect(entry.userId).toBe(ADMIN_ID);
+      expect(entry.meta).toMatchObject({
+        platformAdmin: true,
+        kind: "price_override_stripe_ahead",
+        effective: "now_prorated",
+        synced: true,
+      });
+    });
+
+    it("item 2: an unreachable database (cannot read the committed row) is also reported as Stripe-ahead", async () => {
+      (prisma as any).tenantSubscription.upsert.mockRejectedValueOnce(new Error("db down"));
+      (prisma as any).tenantSubscription.findUnique
+        .mockResolvedValueOnce(preRow)
+        .mockRejectedValueOnce(new Error("db down"));
+      await expect(
+        service.updateTenantPriceOverride(TENANT_ID, { monthly: 80 } as any, ADMIN_ID),
+      ).rejects.toBeInstanceOf(BadGatewayException);
+    });
+
+    it("the audit row records actor, OLD price, NEW price and the effective mode", async () => {
+      const res = await service.updateTenantPriceOverride(
+        TENANT_ID,
+        { monthly: 80, effective: "now_prorated" } as any,
+        ADMIN_ID,
+      );
+      expect(auditLog).toHaveBeenCalledTimes(1);
+      const entry = auditLog.mock.calls[0][0];
+      expect(entry.userId).toBe(ADMIN_ID);
+      expect(entry.tenantId).toBe(TENANT_ID);
+      expect(entry.meta).toEqual({
+        platformAdmin: true,
+        kind: "price_override",
+        monthly: 80,
+        annual: null,
+        effective: "now_prorated",
+        oldPrice: { monthly: 100, annual: 1000, source: "override" },
+        newPrice: { monthly: 80, annual: 800, source: "override" },
+        sync: { synced: true, oldAmount: 100, newAmount: 80, proration: "create_prorations" },
+      });
+      expect((res as any).sync).toMatchObject({ synced: true, proration: "create_prorations" });
+    });
+
+    it("item 4: the audit row is written BEFORE the ledger half, and a ledger failure is not a 500", async () => {
+      billingServiceMock.syncStripeSubscriptionPrice.mockRejectedValue(new Error("ledger tx lost"));
+      await expect(
+        service.updateTenantPriceOverride(TENANT_ID, { monthly: 80 } as any, ADMIN_ID),
+      ).resolves.toBeDefined();
+      expect(auditLog).toHaveBeenCalledTimes(1);
+      const auditOrder = auditLog.mock.invocationCallOrder[0];
+      const syncOrder = billingServiceMock.syncStripeSubscriptionPrice.mock.invocationCallOrder[0];
+      expect(auditOrder).toBeLessThan(syncOrder);
+    });
+
+    it("the ledger half reuses the Stripe-first push - Stripe is not called a second time", async () => {
+      await service.updateTenantPriceOverride(TENANT_ID, { monthly: 80 } as any, ADMIN_ID);
+      expect(billingServiceMock.syncStripeSubscriptionPrice).toHaveBeenCalledWith(TENANT_ID, {
+        pushed: livePush,
+      });
+      expect(billingServiceMock.pushResolvedPriceToStripe).toHaveBeenCalledTimes(1);
+    });
+  });
+
+  describe("updatePlanPrices — SA-733 D8 takes the same per-tenant price lock", () => {
+    it("each fan-out sync runs inside the tenant's price lock, so it cannot overwrite an uncommitted override", async () => {
+      const withLock = (require("../common/db-locks") as any).withAdvisoryLock as jest.Mock;
+      withLock.mockClear();
+      planCatalogService.getPublishedVersion.mockResolvedValue({
+        id: "v-9",
+        definitions: [{ id: "def-1", planKey: "GROWTH", monthlyPrice: 150, isCustom: false }],
+      } as any);
+      (prisma as any).planDefinition = {
+        update: jest.fn().mockResolvedValue({ monthlyPrice: 150, annualPrice: 1500 }),
+      };
+      (prisma as any).tenantSubscription.findMany.mockResolvedValue([
+        { tenantId: "tenant-a", planKey: "GROWTH", tenant: { plan: "GROWTH" } },
+        { tenantId: "tenant-b", planKey: "GROWTH", tenant: { plan: "GROWTH" } },
+      ]);
+      let inLock = false;
+      withLock.mockImplementation(async (_o: unknown, fn: () => Promise<unknown>) => {
+        inLock = true;
+        try {
+          return { acquired: true, value: await fn() };
+        } finally {
+          inLock = false;
+        }
+      });
+      const seen: boolean[] = [];
+      billingServiceMock.syncStripeSubscriptionPrice.mockImplementation(async () => {
+        seen.push(inLock);
+        return { synced: true };
+      });
+
+      await service.updatePlanPrices("GROWTH", { monthly: 150 } as any, ADMIN_ID);
+
+      expect(withLock.mock.calls.map((c) => c[0].key)).toEqual(["tenant-a", "tenant-b"]);
+      expect(seen).toEqual([true, true]);
+    });
+  });
+
+  describe("updatePlanPrices - N3: a pushed downgrade price is never reverted by the fan-out", () => {
+    const setup = () => {
+      const withLock = (require("../common/db-locks") as any).withAdvisoryLock as jest.Mock;
+      withLock.mockClear();
+      withLock.mockImplementation(async (_o: unknown, fn: () => Promise<unknown>) => ({
+        acquired: true,
+        value: await fn(),
+      }));
+      planCatalogService.getPublishedVersion.mockResolvedValue({
+        id: "v-9",
+        definitions: [{ id: "def-1", planKey: "GROWTH", monthlyPrice: 150, isCustom: false }],
+      } as any);
+      (prisma as any).planDefinition = {
+        update: jest.fn().mockResolvedValue({ monthlyPrice: 150, annualPrice: 1500 }),
+      };
+      billingServiceMock.syncStripeSubscriptionPrice.mockReset();
+      billingServiceMock.syncStripeSubscriptionPrice.mockResolvedValue({ synced: true });
+    };
+
+    it("skips (and logs) a tenant whose downgrade is scheduled: the pre-renewal push already moved Stripe to the target price", async () => {
+      setup();
+      const warn = jest.spyOn((service as any).logger, "log").mockImplementation(() => undefined);
+      (prisma as any).tenantSubscription.findMany.mockResolvedValue([
+        {
+          tenantId: "tenant-a",
+          planKey: "GROWTH",
+          downgradeToPlanKey: null,
+          tenant: { plan: "GROWTH" },
+        },
+        {
+          tenantId: "tenant-b",
+          planKey: "GROWTH",
+          downgradeToPlanKey: "STARTER",
+          tenant: { plan: "GROWTH" },
+        },
+      ]);
+
+      // The decision is made under each tenant's lock, from a FRESH read of the row.
+      (prisma as any).tenantSubscription.findUnique.mockImplementation(async ({ where }: any) => ({
+        downgradeToPlanKey: where.tenantId === "tenant-b" ? "STARTER" : null,
+      }));
+
+      const out = await service.updatePlanPrices("GROWTH", { monthly: 150 } as any, ADMIN_ID);
+
+      expect(billingServiceMock.syncStripeSubscriptionPrice.mock.calls.map((c) => c[0])).toEqual([
+        "tenant-a",
+      ]);
+      expect(out).toMatchObject({ updated: 1, synced: 1, failed: 0, skippedDowngrade: 1 });
+      expect(warn.mock.calls.map((c) => String(c[0])).join("\n")).toContain("tenant-b");
+      warn.mockRestore();
+    });
+
+    it("a downgrade armed AFTER the scan but before the tenant's lock is caught by the re-read under the lock", async () => {
+      setup();
+      (prisma as any).tenantSubscription.findMany.mockResolvedValue([
+        {
+          tenantId: "tenant-a",
+          planKey: "GROWTH",
+          downgradeToPlanKey: null,
+          tenant: { plan: "GROWTH" },
+        },
+      ]);
+      (prisma as any).tenantSubscription.findUnique.mockResolvedValue({
+        downgradeToPlanKey: "STARTER",
+      });
+
+      const out = await service.updatePlanPrices("GROWTH", { monthly: 150 } as any, ADMIN_ID);
+
+      expect(billingServiceMock.syncStripeSubscriptionPrice).not.toHaveBeenCalled();
+      // A tenant skipped under its lock is not "updated" (review nit 2).
+      expect(out).toMatchObject({ updated: 0, synced: 0, failed: 0, skippedDowngrade: 1 });
+      (prisma as any).tenantSubscription.findUnique.mockReset();
+    });
+
+    // Review: a tenant with a downgrade scheduled but NOT yet pushed must still get the catalog edit, or a
+    // downgrade cancelled later leaves Stripe on the pre-update price.
+    describe("a scheduled downgrade that is not yet pushed", () => {
+      const NEW_CENTS = 29900;
+      const scheduledRow = {
+        planKey: "GROWTH",
+        planVersionId: "v-9",
+        stripeSubId: "sub_1",
+        priceOverrideMonthly: null,
+        priceOverrideAnnual: null,
+        downgradeToPlanKey: "STARTER" as string | null,
+      };
+      const arrange = (stripeCents: number) => {
+        setup();
+        const stripe = fakeStripeSubscription([
+          {
+            id: "si_base",
+            quantity: 1,
+            price: {
+              unit_amount: stripeCents,
+              currency: "usd",
+              recurring: { interval: "month" },
+              product: "prod_growth",
+            },
+          },
+        ]);
+        const row = { ...scheduledRow };
+        (prisma as any).tenantSubscription.findMany.mockResolvedValue([
+          {
+            tenantId: "tenant-b",
+            planKey: "GROWTH",
+            downgradeToPlanKey: "STARTER",
+            tenant: { plan: "GROWTH" },
+          },
+        ]);
+        (prisma as any).tenantSubscription.findUnique.mockImplementation(async () => ({ ...row }));
+        (prisma as any).tenantAddon.findMany.mockResolvedValue([]);
+        const scheduled = new ScheduledPriceChangeService(
+          prisma as any,
+          stripe as any,
+          {
+            // the catalog edit has landed: GROWTH is now 299 (it was 249); STARTER is 59
+            getVersionForTenant: jest.fn().mockResolvedValue({
+              id: "v-9",
+              definitions: [
+                { planKey: "GROWTH", name: "Growth", monthlyPrice: 299, annualPrice: null },
+                { planKey: "STARTER", name: "Starter", monthlyPrice: 59, annualPrice: null },
+              ],
+              addonSkus: [],
+            }),
+            getPublishedVersion: jest.fn().mockResolvedValue(null),
+          } as any,
+        );
+        (service as any).scheduledPrice = scheduled;
+        // The real sync pushes the resolved catalog price onto the Stripe item; model exactly that.
+        billingServiceMock.syncStripeSubscriptionPrice.mockImplementation(async () => {
+          await stripe.updateSubscription(
+            "sub_1",
+            {
+              items: [
+                {
+                  id: "si_base",
+                  price_data: {
+                    currency: "usd",
+                    unit_amount: NEW_CENTS,
+                    recurring: { interval: "month" },
+                    product: "prod_growth",
+                  },
+                },
+              ],
+              proration_behavior: "none",
+            },
+            { idempotencyKey: `fanout-${stripe.updateSubscription.mock.calls.length}` },
+          );
+          return { synced: true };
+        });
+        return { stripe, row, scheduled };
+      };
+
+      it("is synced (Stripe moves to the NEW price), and when the downgrade is then CANCELLED Stripe stays on the new price", async () => {
+        const { stripe, row, scheduled } = arrange(24900); // the OLD price: the early push has not happened
+
+        const out = await service.updatePlanPrices("GROWTH", { monthly: 299 } as any, ADMIN_ID);
+
+        expect(billingServiceMock.syncStripeSubscriptionPrice).toHaveBeenCalledWith("tenant-b");
+        expect(out).toMatchObject({ updated: 1, synced: 1, skippedDowngrade: 0 });
+        expect(stripe.amountOf("si_base")).toBe(NEW_CENTS);
+
+        // The tenant now keeps its plan: the cancel path's restore finds nothing of ours to undo.
+        row.downgradeToPlanKey = null;
+        await scheduled.restoreAfterScheduleCleared("tenant-b", "STARTER");
+        expect(stripe.amountOf("si_base")).toBe(NEW_CENTS); // ends on the NEW price, not the pre-update one
+      });
+
+      it("whose lower price is ALREADY pushed to Stripe is still skipped (the fan-out must not revert it)", async () => {
+        const { stripe } = arrange(5900); // the pre-renewal push put the downgrade target's price here
+
+        const out = await service.updatePlanPrices("GROWTH", { monthly: 299 } as any, ADMIN_ID);
+
+        expect(billingServiceMock.syncStripeSubscriptionPrice).not.toHaveBeenCalled();
+        expect(out).toMatchObject({ updated: 0, synced: 0, skippedDowngrade: 1 });
+        expect(stripe.amountOf("si_base")).toBe(5900);
+      });
+
+      it("an unreadable Stripe leaves it alone (never revert blind)", async () => {
+        const { stripe } = arrange(24900);
+        stripe.getSubscription.mockRejectedValue(new Error("stripe down"));
+        const out = await service.updatePlanPrices("GROWTH", { monthly: 299 } as any, ADMIN_ID);
+        expect(billingServiceMock.syncStripeSubscriptionPrice).not.toHaveBeenCalled();
+        expect(out.skippedDowngrade).toBe(1);
+      });
+    });
   });
 
   it("logs IMPERSONATION_STARTED — the controller's audit-logged claim is now true", async () => {
@@ -1905,6 +3479,46 @@ describe("PlatformAdminService — audit provenance", () => {
     });
   });
 
+  describe("getTenant — readiness product count (SA-3)", () => {
+    it("SA-3 T9 reads the product count for THIS tenant only, via the existing _count select", async () => {
+      prisma.tenant.findUnique.mockResolvedValue({
+        id: TENANT_ID,
+        slug: "acme",
+        status: "ACTIVE",
+        plan: "GROWTH",
+        subscription: { planKey: "GROWTH" },
+        _count: { users: 1, products: 7 },
+      } as any);
+      mrrService.priceTenant.mockResolvedValue(0);
+
+      const tenant = await service.getTenant(TENANT_ID);
+
+      const args = (prisma.tenant.findUnique as jest.Mock).mock.calls[0][0];
+      expect(args.where).toEqual({ id: TENANT_ID });
+      expect(args.include._count.select.products).toEqual({ where: { isActive: true } });
+      expect(tenant.counts?.products).toBe(7);
+    });
+
+    it("SA-3 a tenant whose only products are inactive reports 0 products (not Ready)", async () => {
+      // The filtered relation count is what the DB returns for a tenant with only inactive products.
+      prisma.tenant.findUnique.mockResolvedValue({
+        id: TENANT_ID,
+        slug: "acme",
+        status: "ACTIVE",
+        plan: "GROWTH",
+        subscription: { planKey: "GROWTH" },
+        _count: { users: 1, products: 0 },
+      } as any);
+      mrrService.priceTenant.mockResolvedValue(0);
+
+      const tenant = await service.getTenant(TENANT_ID);
+
+      const args = (prisma.tenant.findUnique as jest.Mock).mock.calls[0][0];
+      expect(args.include._count.select.products.where).toEqual({ isActive: true });
+      expect(tenant.counts?.products).toBe(0);
+    });
+  });
+
   // N4: neither figure had ANY class filter on head — a qa-*/e2e-*/routeflow-demo tenant's
   // subscription/trial/creation-month could move the conversion rate or growth chart the
   // admin dashboard renders next to MrrService's PRODUCTION-only revenue numbers.
@@ -1951,7 +3565,9 @@ describe("PlatformAdminService — audit provenance", () => {
       const args = (prisma.tenant.findMany as jest.Mock).mock.calls.at(-1)![0];
       expect(args.where.deletedAt).toBeNull();
       expect(args.where.status).toBe("ACTIVE");
-      expect(args.where.plan).toBe("STARTER");
+      // SA-1: the plan filter is the REAL billing plan (subscription.planKey), not the legacy enum.
+      expect(args.where.plan).toBeUndefined();
+      expect(JSON.stringify(args.where)).toContain('"planKey":{"in":["STARTER"]}');
       expect(args.where.OR).toEqual(
         expect.arrayContaining([
           expect.objectContaining({ slug: { contains: "acme", mode: "insensitive" } }),
@@ -1960,6 +3576,45 @@ describe("PlatformAdminService — audit provenance", () => {
       expect(args.orderBy).toEqual({ slug: "asc" });
       expect(result.meta.total).toBe(5);
       expect(result.meta.deletedCount).toBe(3);
+    });
+
+    it("SA-1: plan=GROWTH matches a tenant by subscription.planKey, not the legacy Tenant.plan enum", async () => {
+      prisma.tenant.findMany.mockResolvedValue([]);
+      prisma.tenant.count.mockResolvedValue(0);
+      await service.listTenants(1, 20, { plan: "GROWTH", search: "acme" });
+      const args = (prisma.tenant.findMany as jest.Mock).mock.calls.at(-1)![0];
+      expect(args.where.plan).toBeUndefined();
+      expect(args.where.AND).toEqual(
+        expect.arrayContaining([
+          expect.objectContaining({
+            OR: expect.arrayContaining([{ subscription: { planKey: { in: ["GROWTH", "TEAM"] } } }]),
+          }),
+        ]),
+      );
+      // The search OR is untouched (the plan clause must not overwrite it).
+      expect(args.where.OR).toHaveLength(3);
+    });
+
+    it("SA-1: a drifted tenant (no subscription.planKey) is still found under the plan its row displays", async () => {
+      prisma.tenant.findMany.mockResolvedValue([]);
+      prisma.tenant.count.mockResolvedValue(0);
+      await service.listTenants(1, 20, { plan: "SCALE" });
+      const args = (prisma.tenant.findMany as jest.Mock).mock.calls.at(-1)![0];
+      // PROFESSIONAL displays as SCALE through planKeyFromEnum when subscription.planKey is null.
+      expect(JSON.stringify(args.where)).toContain('"plan":{"in":');
+      expect(JSON.stringify(args.where)).toContain("PROFESSIONAL");
+    });
+
+    it("review nit: the filter matches every stored key the row normalizes to the chosen plan", async () => {
+      prisma.tenant.findMany.mockResolvedValue([]);
+      prisma.tenant.count.mockResolvedValue(0);
+      await service.listTenants(1, 20, { plan: "SCALE" });
+      const args = (prisma.tenant.findMany as jest.Mock).mock.calls.at(-1)![0];
+      const first = args.where.AND[0].OR[0];
+      // a subscription still pinned to a legacy key (BUSINESS / PROFESSIONAL) displays as SCALE
+      expect([...first.subscription.planKey.in].sort()).toEqual(
+        ["BUSINESS", "PROFESSIONAL", "SCALE"].sort(),
+      );
     });
 
     it("includes deleted (no deletedAt filter) when requested", async () => {
@@ -2137,6 +3792,67 @@ describe("PlatformAdminService — audit provenance", () => {
     });
   });
 
+  // SA-738 R16-4: the super admin sets the tenant's IANA zone at creation.
+  describe("createTenant — time zone (SA-738)", () => {
+    const dto = {
+      slug: "acme-wholesale",
+      businessName: "Acme Wholesale",
+      adminEmail: "owner@acme.example.com",
+      adminUsername: "acme_owner",
+      timezone: "America/Chicago",
+    } as any;
+
+    beforeEach(() => {
+      prisma.tenant.findUnique.mockResolvedValue(null);
+      prisma.user.findFirst.mockResolvedValue(null);
+      prisma.tenant.create.mockImplementation((args: any) =>
+        Promise.resolve({ id: TENANT_ID, ...args.data }),
+      );
+      prisma.user.create.mockResolvedValue({ id: "admin-1" } as any);
+      planCatalogService.getPublishedVersion.mockResolvedValue({
+        id: "v-1",
+        definitions: [{ planKey: "STARTER" }],
+      } as any);
+    });
+
+    it("writes the supplied zone into the new TenantConfig row", async () => {
+      await service.createTenant(dto);
+      expect(prisma.tenantConfig.create).toHaveBeenCalledWith({
+        data: { tenantId: TENANT_ID, businessName: "Acme Wholesale", timezone: "America/Chicago" },
+      });
+    });
+
+    it("stores the case-corrected name of a valid zone", async () => {
+      await service.createTenant({ ...dto, timezone: "america/chicago" });
+      expect(prisma.tenantConfig.create.mock.calls[0][0].data.timezone).toBe("America/Chicago");
+    });
+
+    it("records the zone in the TENANT_CREATED audit meta", async () => {
+      await service.createTenant(dto);
+      expect(auditLog).toHaveBeenCalledWith(
+        expect.objectContaining({
+          action: AdminAuditAction.TENANT_CREATED,
+          meta: expect.objectContaining({ timezone: "America/Chicago" }),
+        }),
+      );
+    });
+
+    // R16-4 + the SA ruling: no silent New York default. A missing zone, a non-zone, an offset and a
+    // fixed-offset alias are all a 400 INVALID_TIME_ZONE before any write.
+    it.each([undefined, null, "", "Mars/Phobos", "+01:00", "EST", "Etc/GMT+5"])(
+      "refuses %p with a 400 INVALID_TIME_ZONE before any write",
+      async (bad) => {
+        const err = await service.createTenant({ ...dto, timezone: bad }).catch((e: unknown) => e);
+        expect(err).toBeInstanceOf(BadRequestException);
+        expect((err as BadRequestException).getResponse()).toMatchObject({
+          code: "INVALID_TIME_ZONE",
+        });
+        expect(prisma.tenant.create).not.toHaveBeenCalled();
+        expect(prisma.tenantConfig.create).not.toHaveBeenCalled();
+      },
+    );
+  });
+
   // Phase 0 Task 10: the admin Create Tenant path used to hardcode a 7-day trial
   // independent of TRIAL_LENGTH_DAYS (public self-signup's constant); it now defaults to
   // that shared constant and accepts an explicit override.
@@ -2146,6 +3862,7 @@ describe("PlatformAdminService — audit provenance", () => {
       businessName: "Acme Wholesale",
       adminEmail: "owner@acme.example.com",
       adminUsername: "acme_owner",
+      timezone: "America/Chicago",
     } as any;
 
     beforeEach(() => {
@@ -2164,6 +3881,23 @@ describe("PlatformAdminService — audit provenance", () => {
       } as any);
     });
 
+    it("B956: refuses a formula-led businessName before any write (it is mirrored into a Customer)", async () => {
+      await expect(
+        service.createTenant({ ...validCreateDto, businessName: "+SUM(A1)" }),
+      ).rejects.toThrow(/businessName must not start with/);
+      expect(prisma.tenant.create).not.toHaveBeenCalled();
+    });
+
+    it("an email or username already in use is a 400 with the ACCOUNT_IDENTIFIER_IN_USE code (message kept)", async () => {
+      prisma.user.findFirst.mockResolvedValue({ id: "someone" } as any);
+      const err: any = await service.createTenant(validCreateDto).catch((e) => e);
+      expect(err.getStatus()).toBe(400);
+      expect(err.getResponse()).toMatchObject({
+        code: "ACCOUNT_IDENTIFIER_IN_USE",
+        message: "Email or username already in use",
+      });
+    });
+
     it("defaults trial length to TRIAL_LENGTH_DAYS when no override is given", async () => {
       const result = await service.createTenant(validCreateDto);
 
@@ -2178,6 +3912,37 @@ describe("PlatformAdminService — audit provenance", () => {
       const expectedMs = 30 * 24 * 60 * 60 * 1000;
       const actualMs = (result.trialEndsAt as Date).getTime() - Date.now();
       expect(Math.abs(actualMs - expectedMs)).toBeLessThan(5000);
+    });
+
+    // #3334: "Start active" creates then activates, so the TRIAL welcome email (trial line + Pay
+    // now) must not go out: a manually-paid tenant could pay again by card.
+    it("#3334 startMode active: the welcome email carries no pay link and no trial line", async () => {
+      await service.createTenant({ ...validCreateDto, startMode: "active" });
+      const arg = emailServiceMock.sendTenantWelcomeEmail.mock.calls.at(-1)![0];
+      expect(arg.payUrl).toBeNull();
+    });
+
+    it("#3334 startMode trial without trialLengthDays: coded 400, nothing written", async () => {
+      const err: any = await service
+        .createTenant({ ...validCreateDto, startMode: "trial" })
+        .catch((e) => e);
+      expect(err.getStatus()).toBe(400);
+      expect(err.getResponse()).toMatchObject({ code: "TENANT_TRIAL_DAYS_REQUIRED" });
+      expect(prisma.tenant.create).not.toHaveBeenCalled();
+    });
+
+    it("#3334 no startMode: legacy trial behaviour (pay link, default days) is unchanged", async () => {
+      await service.createTenant(validCreateDto);
+      const arg = emailServiceMock.sendTenantWelcomeEmail.mock.calls.at(-1)![0];
+      expect(arg.payUrl).toEqual(expect.stringContaining("/login?redirect="));
+      expect(arg.trialDays).toBe(14);
+    });
+
+    it("#3334 startMode trial with days: sends the trial email with those days", async () => {
+      await service.createTenant({ ...validCreateDto, startMode: "trial", trialLengthDays: 21 });
+      const arg = emailServiceMock.sendTenantWelcomeEmail.mock.calls.at(-1)![0];
+      expect(arg.trialDays).toBe(21);
+      expect(arg.payUrl).not.toBeNull();
     });
 
     // B556: createTenant() used to write ONLY the Tenant row — MrrService gates MRR on
@@ -2205,6 +3970,7 @@ describe("PlatformAdminService — audit provenance", () => {
       businessName: "Acme Wholesale",
       adminEmail: "owner@acme.example.com",
       adminUsername: "acme_owner",
+      timezone: "America/Chicago",
     } as any;
 
     beforeEach(() => {
@@ -2228,6 +3994,18 @@ describe("PlatformAdminService — audit provenance", () => {
       expect(prisma.tenant.create).toHaveBeenCalledWith(
         expect.objectContaining({ data: expect.objectContaining({ class: "TEST" }) }),
       );
+    });
+
+    // Row 195 (lead ruling): platform-admin create KEEPS allowing the test patterns (super-admin
+    // intent) but flags them, so the console can say "this will be a TEST tenant".
+    it("row 195 createTenant flags a test-pattern slug with a TEST-tenant notice", async () => {
+      const r = await service.createTenant({ ...baseDto, slug: "qa-smoke-2" });
+      expect(r.notice).toMatch(/TEST tenant/);
+    });
+
+    it("row 195 createTenant adds no notice for an ordinary slug", async () => {
+      const r = await service.createTenant({ ...baseDto, slug: "acme-wholesale" });
+      expect(r).not.toHaveProperty("notice");
     });
 
     it("REG-743-F7 createTenant writes class PRODUCTION for an ordinary slug", async () => {
@@ -2260,6 +4038,7 @@ describe("PlatformAdminService — audit provenance", () => {
       businessName: "Acme Lite Co",
       adminEmail: "owner@acme-lite.example.com",
       adminUsername: "acme_lite_owner",
+      timezone: "America/Chicago",
     } as any;
 
     beforeEach(() => {
@@ -2327,6 +4106,7 @@ describe("PlatformAdminService — audit provenance", () => {
       businessName: "Acme Welcome Co",
       adminEmail: "owner@acme-welcome.example.com",
       adminUsername: "acme_owner",
+      timezone: "America/Chicago",
     } as any;
 
     beforeEach(() => {
@@ -2428,6 +4208,7 @@ describe("PlatformAdminService — audit provenance", () => {
       businessName: "Acme WebUrl Co",
       adminEmail: "owner@acme-weburl.example.com",
       adminUsername: "acme_weburl",
+      timezone: "America/Chicago",
     } as any;
     const prevEnv = process.env.NODE_ENV;
     let configGet: jest.Mock;
@@ -2738,6 +4519,263 @@ describe("PlatformAdminService — audit provenance", () => {
     });
   });
 
+  describe("activateManualSubscription - auto-void of covered RouteFlow invoices (PR4a)", () => {
+    const activateDto = {
+      plan: "PROFESSIONAL",
+      billingPeriodDays: 30,
+      paymentMethod: "BANK_TRANSFER",
+    } as any;
+
+    beforeEach(() => {
+      prisma.tenant.findUnique.mockResolvedValue({ id: TENANT_ID, slug: "acme" } as any);
+      planCatalogService.getPublishedVersion.mockResolvedValue({
+        id: "v-9",
+        definitions: [{ planKey: "SCALE", monthlyPrice: 499, isCustom: false }],
+      } as any);
+      prisma.tenant.update.mockResolvedValue({ id: TENANT_ID, slug: "acme" } as any);
+    });
+
+    it("voids the OPEN invoices the new window covers, in the activation transaction, tenant-scoped", async () => {
+      const covered = {
+        id: "inv-1",
+        number: "RF-2026-0001",
+        amount: 499,
+        periodKey: "2026-10-10T00:00:00.000Z",
+        periodStart: new Date(Date.now() + 3 * 86_400_000),
+        periodEnd: new Date(Date.now() + 20 * 86_400_000),
+      };
+      (prisma as any).rfInvoice.findMany.mockResolvedValue([covered]);
+
+      await service.activateManualSubscription(TENANT_ID, activateDto, ADMIN_ID);
+
+      const where = (prisma as any).rfInvoice.findMany.mock.calls[0][0].where;
+      expect(where).toMatchObject({ tenantId: TENANT_ID, status: "OPEN" });
+      // the overlap read: the recorded period [now, now+30d) is the window
+      expect(where.periodStart.lt.getTime() - where.periodEnd.gt.getTime()).toBe(30 * 86_400_000);
+      expect((prisma as any).rfInvoice.updateMany.mock.calls[0][0]).toMatchObject({
+        where: { id: "inv-1", tenantId: TENANT_ID, status: "OPEN" },
+        data: {
+          status: "VOID",
+          voidReason: expect.stringMatching(/^Covered by manual activation on \d{4}-\d{2}-\d{2}$/),
+        },
+      });
+      // an activation void KEEPS the periodKey (period consumed; only the admin void renames it)
+      expect((prisma as any).rfInvoice.updateMany.mock.calls[0][0].data).not.toHaveProperty(
+        "periodKey",
+      );
+      const actions = (prisma as any).auditLog.create.mock.calls.map((c: any) => c[0].data.action);
+      expect(actions).toEqual(expect.arrayContaining(["RF_INVOICE_VOIDED"]));
+    });
+
+    it("PIN 1 (service): with an OPEN invoice [P, P+30d) ahead, the period is written from P (not from now) and ends P+30d", async () => {
+      const DAY = 86_400_000;
+      const P = new Date(Date.now() + 3 * DAY);
+      // 1st read = the window anchor (the earliest OPEN invoice); the 2nd = "is a PAID invoice in the way" (none)
+      (prisma as any).rfInvoice.findFirst.mockResolvedValueOnce({ periodStart: P });
+      (prisma as any).rfInvoice.findMany.mockResolvedValue([
+        {
+          id: "inv-1",
+          number: "RF-2026-0001",
+          amount: 499,
+          periodKey: P.toISOString(),
+          periodStart: P,
+          periodEnd: new Date(P.getTime() + 30 * DAY),
+        },
+      ]);
+
+      const out = await service.activateManualSubscription(TENANT_ID, activateDto, ADMIN_ID);
+
+      const anchor = (prisma as any).rfInvoice.findFirst.mock.calls[0][0];
+      expect(anchor.where).toMatchObject({ tenantId: TENANT_ID, status: "OPEN" });
+      expect(anchor.orderBy).toEqual({ periodStart: "asc" });
+      const upsert = (prisma as any).tenantSubscription.upsert.mock.calls[0][0];
+      for (const branch of [upsert.create, upsert.update]) {
+        expect(branch.periodStart).toEqual(P);
+        expect(branch.periodEnd).toEqual(new Date(P.getTime() + 30 * DAY));
+      }
+      // the void sees the SAME window, so the invoice is covered and voided
+      const where = (prisma as any).rfInvoice.findMany.mock.calls[0][0].where;
+      expect(where.periodStart.lt).toEqual(new Date(P.getTime() + 30 * DAY));
+      expect(where.periodEnd.gt).toEqual(P);
+      expect((prisma as any).rfInvoice.updateMany.mock.calls[0][0].data.status).toBe("VOID");
+      expect(out.periodStart).toEqual(P);
+      expect(out.periodEnd).toEqual(new Date(P.getTime() + 30 * DAY));
+      const marker = (prisma as any).auditLog.create.mock.calls
+        .map((c: any) => c[0].data)
+        .find((d: any) => d.action === "TENANT_MANUAL_ACTIVATION_MARKER");
+      expect(marker.meta.periodEnd).toBe(new Date(P.getTime() + 30 * DAY).toISOString());
+      // M1: the marker's start is the ANCHORED start, never the click time
+      expect(marker.meta.periodStart).toBe(P.toISOString());
+      // ...and it carries the repeat guard's key plus what this activation settled
+      expect(marker.meta).toMatchObject({
+        paymentRef: activateDto.paymentRef ?? null,
+        billingPeriodDays: 30,
+        voidedInvoiceIds: ["inv-1"],
+        flaggedInvoiceIds: [],
+      });
+    });
+
+    it("M1 pin: the activation is clicked 10 days BEFORE the open invoice's period P -> marker.periodStart == P, the subscription row agrees", async () => {
+      const DAY = 86_400_000;
+      const P = new Date(Date.now() + 10 * DAY);
+      (prisma as any).rfInvoice.findFirst.mockResolvedValueOnce({
+        number: "RF-2026-0007",
+        periodStart: P,
+        periodEnd: new Date(P.getTime() + 30 * DAY),
+      });
+
+      await service.activateManualSubscription(TENANT_ID, activateDto, ADMIN_ID);
+
+      const marker = (prisma as any).auditLog.create.mock.calls
+        .map((c: any) => c[0].data)
+        .find((d: any) => d.action === "TENANT_MANUAL_ACTIVATION_MARKER");
+      const upsert = (prisma as any).tenantSubscription.upsert.mock.calls[0][0];
+      expect(marker.meta.periodStart).toBe(P.toISOString());
+      expect(marker.meta.periodStart).toBe(upsert.update.periodStart.toISOString());
+    });
+
+    it("M2 pin (service): OPEN Aug, PAID Sep in the way of a 90-day window -> 409 ACTIVATION_OVERLAPS_PAID_PERIOD, nothing written", async () => {
+      const DAY = 86_400_000;
+      const aug = new Date(Date.now() - 2 * DAY);
+      const sepStart = new Date(aug.getTime() + 31 * DAY);
+      (prisma as any).rfInvoice.findFirst
+        .mockResolvedValueOnce({
+          number: "RF-AUG",
+          periodStart: aug,
+          periodEnd: new Date(aug.getTime() + 31 * DAY),
+        })
+        .mockResolvedValueOnce({
+          number: "RF-SEP",
+          periodStart: sepStart,
+          periodEnd: new Date(sepStart.getTime() + 30 * DAY),
+        });
+
+      const err = await service
+        .activateManualSubscription(TENANT_ID, { ...activateDto, billingPeriodDays: 90 }, ADMIN_ID)
+        .then(
+          () => null,
+          (e: unknown) => e,
+        );
+
+      expect(err).toBeInstanceOf(ConflictException);
+      expect((err as ConflictException).getResponse()).toMatchObject({
+        code: "ACTIVATION_OVERLAPS_PAID_PERIOD",
+        invoiceNumber: "RF-SEP",
+        maxDays: 31,
+      });
+      expect((prisma as any).tenantSubscription.upsert).not.toHaveBeenCalled();
+      expect((prisma as any).rfInvoice.updateMany).not.toHaveBeenCalled();
+      expect((prisma as any).auditLog.create).not.toHaveBeenCalled();
+    });
+
+    it("train S2 (money): an identical activation after a LAPSE is not a repeat - it books again", async () => {
+      const DAY = 86_400_000;
+      const start = new Date(Date.now() - 1000);
+      (prisma as any).auditLog.findFirst.mockResolvedValueOnce({
+        meta: {
+          plan: activateDto.plan,
+          paymentMethod: activateDto.paymentMethod,
+          paymentRef: activateDto.paymentRef ?? null,
+          billingPeriodDays: activateDto.billingPeriodDays,
+          periodStart: start.toISOString(),
+          periodEnd: new Date(start.getTime() + 30 * DAY).toISOString(),
+        },
+      });
+      const baseFind = (prisma as any).tenant.findUniqueOrThrow.getMockImplementation();
+      (prisma as any).tenant.findUniqueOrThrow.mockImplementation((args: any) =>
+        args?.select?.status ? Promise.resolve({ status: "SUSPENDED" }) : baseFind?.(args),
+      );
+
+      const out: any = await service.activateManualSubscription(TENANT_ID, activateDto, ADMIN_ID);
+
+      expect(out?.repeated).not.toBe(true);
+      expect((prisma as any).tenantSubscription.upsert).toHaveBeenCalled();
+    });
+
+    it("M3 pin (service): the same payment sent twice records ONE period and ONE marker - the repeat writes nothing", async () => {
+      const DAY = 86_400_000;
+      const start = new Date(Date.now() - 1000);
+      (prisma as any).auditLog.findFirst.mockResolvedValueOnce({
+        meta: {
+          plan: activateDto.plan,
+          paymentMethod: activateDto.paymentMethod,
+          paymentRef: activateDto.paymentRef ?? null,
+          billingPeriodDays: activateDto.billingPeriodDays,
+          periodStart: start.toISOString(),
+          periodEnd: new Date(start.getTime() + 30 * DAY).toISOString(),
+        },
+      });
+      // the first click activated it: the tenant is ACTIVE under the lock (train S2: a repeat needs that)
+      const baseFind = (prisma as any).tenant.findUniqueOrThrow.getMockImplementation();
+      (prisma as any).tenant.findUniqueOrThrow.mockImplementation((args: any) =>
+        args?.select?.status ? Promise.resolve({ status: "ACTIVE" }) : baseFind?.(args),
+      );
+
+      const out: any = await service.activateManualSubscription(TENANT_ID, activateDto, ADMIN_ID);
+
+      expect(out).toMatchObject({ repeated: true, periodStart: start });
+      expect(out.periodEnd).toEqual(new Date(start.getTime() + 30 * DAY));
+      expect((prisma as any).tenantSubscription.upsert).not.toHaveBeenCalled();
+      expect(prisma.tenant.update).not.toHaveBeenCalled();
+      expect((prisma as any).rfInvoice.findMany).not.toHaveBeenCalled();
+      expect((prisma as any).auditLog.create).not.toHaveBeenCalled();
+      expect(auditLog).not.toHaveBeenCalled(); // no second TENANT_SUBSCRIPTION_ACTIVATED trail row
+    });
+
+    it("PIN 3 (service): with no OPEN invoice the period starts now and runs the activation length", async () => {
+      const before = Date.now();
+      const out = await service.activateManualSubscription(TENANT_ID, activateDto, ADMIN_ID);
+      const after = Date.now();
+
+      expect(out.periodStart.getTime()).toBeGreaterThanOrEqual(before);
+      expect(out.periodStart.getTime()).toBeLessThanOrEqual(after);
+      expect(out.periodEnd.getTime() - out.periodStart.getTime()).toBe(30 * 86_400_000);
+      const upsert = (prisma as any).tenantSubscription.upsert.mock.calls[0][0];
+      expect(upsert.update.periodStart).toEqual(out.periodStart);
+      expect(upsert.update.periodEnd).toEqual(out.periodEnd);
+    });
+
+    it("PIN (ended window): an OPEN invoice whose 30-day window already ended -> 409 ACTIVATION_PERIOD_ALREADY_ENDED, nothing written", async () => {
+      const DAY = 86_400_000;
+      const ended = new Date(Date.now() - 40 * DAY);
+      const endedOn = new Date(ended.getTime() + 30 * DAY).toISOString().slice(0, 10);
+      const invoiceEnd = new Date(ended.getTime() + 30 * DAY);
+      (prisma as any).rfInvoice.findFirst.mockResolvedValue({
+        number: "RF-2026-0042",
+        periodStart: ended,
+        periodEnd: invoiceEnd,
+      });
+
+      const err = await service.activateManualSubscription(TENANT_ID, activateDto, ADMIN_ID).then(
+        () => null,
+        (e: unknown) => e,
+      );
+
+      expect(err).toBeInstanceOf(ConflictException);
+      expect((err as ConflictException).getStatus()).toBe(409);
+      expect((err as ConflictException).getResponse()).toEqual({
+        code: "ACTIVATION_PERIOD_ALREADY_ENDED",
+        message: `Invoice RF-2026-0042 (${ended.toISOString().slice(0, 10)} to ${invoiceEnd.toISOString().slice(0, 10)}) is still open and this payment's window ended on ${endedOn}. Mark it paid or void it in RouteFlow invoices, or activate for at least 41 days.`,
+        invoiceNumber: "RF-2026-0042",
+        endedOn,
+        minDays: 41,
+      });
+      // refused before any write of the transaction
+      expect(prisma.tenant.update).not.toHaveBeenCalled();
+      expect((prisma as any).tenantSubscription.upsert).not.toHaveBeenCalled();
+      expect((prisma as any).rfInvoice.findMany).not.toHaveBeenCalled();
+      expect((prisma as any).rfInvoice.updateMany).not.toHaveBeenCalled();
+      expect((prisma as any).auditLog.create).not.toHaveBeenCalled();
+    });
+
+    it("a void failure fails the activation (the transaction rolls back as one)", async () => {
+      (prisma as any).rfInvoice.findMany.mockRejectedValue(new Error("void boom"));
+      await expect(
+        service.activateManualSubscription(TENANT_ID, activateDto, ADMIN_ID),
+      ).rejects.toThrow("void boom");
+    });
+  });
+
   // B557 (B551's mirror-image gap): activateManualSubscription() can move a tenant INTO
   // MrrService's paying set (status→ACTIVE + a resolved planKey) with no compensating
   // BillingEvent — the opposite direction of updateStatus()'s suspend-with-no-event gap, so
@@ -2907,6 +4945,268 @@ describe("PlatformAdminService — audit provenance", () => {
     });
   });
 
+  // SA-668c residual / M-A: the manual activation hands a trial's unbilled self-serve add-ons to the pricing
+  // helper — the wiring (which status/class/cycle it sees, which locks it takes) is what these pin; the helper's
+  // own rules are in billing/manual-activation-addons.spec.ts and, on real Postgres, the override-activation DB spec.
+  describe("activateManualSubscription — wiring to priceUnbilledAddonsOnActivation (SA-668c / M-A)", () => {
+    const activateDto = {
+      plan: "PROFESSIONAL",
+      billingPeriodDays: 30,
+      paymentMethod: "BANK_TRANSFER",
+    } as any;
+    let priceSpy: jest.SpyInstance;
+    let lockSpy: jest.SpyInstance;
+
+    beforeEach(() => {
+      planCatalogService.getPublishedVersion.mockResolvedValue({
+        id: "v-9",
+        definitions: [{ planKey: "SCALE", monthlyPrice: 499, isCustom: false }],
+        addonSkus: [{ sku: "CUSTOMER_PACK_100", name: "Customer pack (+100)", monthlyPrice: 50 }],
+      } as any);
+      prisma.tenant.update.mockResolvedValue({
+        id: TENANT_ID,
+        slug: "acme",
+        status: "ACTIVE",
+        plan: "PROFESSIONAL",
+      } as any);
+      prisma.tenant.findUnique.mockResolvedValue({ id: TENANT_ID, slug: "acme" } as any);
+      (prisma as any).tenantAddon.findMany.mockResolvedValue([
+        {
+          sku: "CUSTOMER_PACK_100",
+          addonKey: "CUSTOMER_PACK_100",
+          quantity: 2,
+          active: true,
+          priceSnapshot: 0,
+          stripeItemId: null,
+          isComp: false,
+        },
+      ]);
+      priceSpy = jest.spyOn(manualActivationAddons, "priceUnbilledAddonsOnActivation");
+      priceSpy.mockResolvedValue([]);
+      lockSpy = jest.spyOn(manualActivationAddons, "withAddonLocks");
+      lockSpy.mockImplementation(async (_t: string, _s: readonly string[], fn: () => unknown) =>
+        fn(),
+      );
+    });
+    afterEach(() => {
+      priceSpy.mockRestore();
+      lockSpy.mockRestore();
+    });
+
+    const tenantBefore = (over: Record<string, unknown> = {}) =>
+      prisma.tenant.findUniqueOrThrow.mockResolvedValue({
+        name: "Acme Foods",
+        slug: "acme",
+        status: "TRIAL",
+        class: "PRODUCTION",
+        deletedAt: null,
+        subscription: null,
+        ...over,
+      } as any);
+
+    it("hands the helper the tx, the ledger, the status/class it read under the tenant lock, the cycle, plan, catalog and actor", async () => {
+      tenantBefore();
+
+      await service.activateManualSubscription(TENANT_ID, activateDto, ADMIN_ID);
+
+      expect(priceSpy).toHaveBeenCalledTimes(1);
+      const [tx, events, args] = priceSpy.mock.calls[0];
+      expect(tx).toBeDefined();
+      expect(events).toBe(billingEventService);
+      expect(args).toMatchObject({
+        tenantId: TENANT_ID,
+        tenantLabel: "Acme Foods",
+        fromStatus: "TRIAL",
+        tenantClass: "PRODUCTION",
+        cycle: "MONTHLY",
+        planKey: "SCALE",
+        actorId: ADMIN_ID,
+        catalogAddons: [expect.objectContaining({ sku: "CUSTOMER_PACK_100" })],
+      });
+    });
+
+    it("MUST-A1: a lapsed trial reaches the helper as READ_ONLY + its readOnlyReason, read in the tx", async () => {
+      tenantBefore({ status: "READ_ONLY", readOnlyReason: "trial_expired" });
+
+      await service.activateManualSubscription(TENANT_ID, activateDto, ADMIN_ID);
+
+      expect(priceSpy.mock.calls[0][2]).toMatchObject({
+        fromStatus: "READ_ONLY",
+        readOnlyReason: "trial_expired",
+      });
+      // the in-tx `before` read selects it (it is read under the tenant row lock, with the status)
+      const select = prisma.tenant.findUniqueOrThrow.mock.calls
+        .map((c: any[]) => c[0]?.select)
+        .find((x: any) => x?.status && x?.name);
+      expect(select).toMatchObject({ status: true, readOnlyReason: true });
+    });
+
+    it("SHOULD: the ACTIVE write clears a stale readOnlyReason (as every other ACTIVE write does)", async () => {
+      tenantBefore({ status: "READ_ONLY", readOnlyReason: "trial_expired" });
+
+      await service.activateManualSubscription(TENANT_ID, activateDto, ADMIN_ID);
+
+      // the first CAS: the row LEAVING a non-ACTIVE state (the second only keeps an already-ACTIVE row's plan current)
+      expect(prisma.tenant.updateMany.mock.calls[0]?.[0]).toMatchObject({
+        where: { id: TENANT_ID, status: { not: "ACTIVE" } },
+        data: { status: "ACTIVE", plan: "PROFESSIONAL", readOnlyReason: null },
+      });
+    });
+
+    // SA-733r7 PR-B3 (r3 F4): activating a tenant that is paused for non-payment is an exit from payment_overdue:
+    // the clock + pause clear in the same tx and Stripe's pause_collection is cleared AFTER the commit.
+    it("PR-B3: activating a PAUSED tenant clears the dunning clock + pause in the tx, then pause_collection after commit", async () => {
+      tenantBefore({ status: "READ_ONLY", readOnlyReason: "payment_overdue" });
+      prisma.tenant.updateMany.mockResolvedValue({ count: 1 }); // the ACTIVE write landed
+      (prisma as any).tenantSubscription.findUnique.mockResolvedValue({
+        pausedAt: new Date("2026-11-08T09:00:00.000Z"),
+        stripeSubId: "sub_1",
+      });
+      const order: string[] = [];
+      (prisma.$transaction as jest.Mock).mockImplementation(async (fn: any) => {
+        const r = await fn({ ...prisma, tenantSubscription: (prisma as any).tenantSubscription });
+        order.push("commit");
+        return r;
+      });
+      dunning.clearPauseAfterCommit.mockImplementation(async () => {
+        order.push("unpause");
+      });
+
+      await service.activateManualSubscription(TENANT_ID, activateDto, ADMIN_ID);
+
+      expect((prisma as any).tenantSubscription.updateMany).toHaveBeenCalledWith({
+        where: { tenantId: TENANT_ID },
+        data: { pastDueSince: null, pastDueInvoiceId: null, pausedAt: null },
+      });
+      expect(dunning.clearPauseAfterCommit).toHaveBeenCalledWith({
+        tenantId: TENANT_ID,
+        stripeSubId: "sub_1",
+        exitAt: expect.any(Date),
+      });
+      expect(order).toEqual(["commit", "unpause"]);
+    });
+
+    it("PR-B3: activating a tenant that was never paused owes Stripe nothing", async () => {
+      tenantBefore({ status: "TRIAL" });
+      (prisma as any).tenantSubscription.findUnique.mockResolvedValue(null);
+      await service.activateManualSubscription(TENANT_ID, activateDto, ADMIN_ID);
+      expect(dunning.clearPauseAfterCommit).toHaveBeenCalledWith(null);
+    });
+
+    it("S4: the activation crossing reads only BILLABLE add-ons (a comp with a stale snapshot is never booked)", async () => {
+      tenantBefore(); // a TRIAL: the crossing runs
+      await service.activateManualSubscription(TENANT_ID, activateDto, ADMIN_ID);
+      const crossingRead = (prisma as any).tenantAddon.findMany.mock.calls.find(
+        (c: any[]) => c[0]?.select?.sku === true && c[0]?.select?.priceSnapshot === true,
+      );
+      expect(crossingRead?.[0].where).toEqual({ tenantId: TENANT_ID, active: true, isComp: false });
+    });
+
+    it("S3: the activation writes its billing MARKER row INSIDE the transaction (not only the best-effort post-commit trail)", async () => {
+      tenantBefore();
+      const order: string[] = [];
+      (prisma.$transaction as jest.Mock).mockImplementation(async (fn: any) => {
+        order.push("tx-open");
+        const r = await fn({ ...prisma, tenantSubscription: (prisma as any).tenantSubscription });
+        order.push("tx-commit");
+        return r;
+      });
+      (prisma as any).auditLog.create.mockImplementation(async () => {
+        order.push("marker");
+        return {};
+      });
+      auditLog.mockImplementation(async () => {
+        order.push("trail");
+      });
+
+      await service.activateManualSubscription(TENANT_ID, activateDto, ADMIN_ID);
+
+      expect(order).toEqual(["tx-open", "marker", "tx-commit", "trail"]);
+      const [{ data }] = (prisma as any).auditLog.create.mock.calls[0];
+      expect(data).toMatchObject({
+        tenantId: TENANT_ID,
+        userId: ADMIN_ID,
+        action: "TENANT_MANUAL_ACTIVATION_MARKER",
+        entityType: "tenant",
+        entityId: TENANT_ID,
+        meta: expect.objectContaining({
+          platformAdmin: true,
+          paymentMethod: "BANK_TRANSFER",
+          cycle: "MONTHLY",
+          // the activation's OWN unsnapped period, for the catch-up's paid-coverage check (SA r-note 10-11)
+          periodStart: expect.stringMatching(/^\d{4}-\d{2}-\d{2}T/),
+          periodEnd: expect.stringMatching(/^\d{4}-\d{2}-\d{2}T/),
+        }),
+      });
+      const m = data.meta as { periodStart: string; periodEnd: string };
+      expect(new Date(m.periodEnd).getTime() - new Date(m.periodStart).getTime()).toBe(
+        activateDto.billingPeriodDays * 24 * 60 * 60 * 1000,
+      );
+      // the post-commit trail row is a different action: it is never the marker
+      expect(auditLog.mock.calls[0][0]).toMatchObject({ action: "TENANT_SUBSCRIPTION_ACTIVATED" });
+    });
+
+    it("S3: a failing marker write rolls the activation back (the marker exists exactly when the activation does)", async () => {
+      tenantBefore();
+      (prisma as any).auditLog.create.mockRejectedValueOnce(new Error("db down"));
+      await expect(
+        service.activateManualSubscription(TENANT_ID, activateDto, ADMIN_ID),
+      ).rejects.toThrow("db down");
+      expect(auditLog).not.toHaveBeenCalled(); // no post-commit trail for an activation that never committed
+    });
+
+    it("an ANNUAL activation (365 days) tells the helper the cycle is ANNUAL", async () => {
+      tenantBefore();
+      await service.activateManualSubscription(
+        TENANT_ID,
+        { ...activateDto, billingPeriodDays: 365 },
+        ADMIN_ID,
+      );
+      expect(priceSpy.mock.calls[0][2]).toMatchObject({ cycle: "ANNUAL" });
+    });
+
+    it("passes the status as it stands in the tx — an ACTIVE tenant's renewal reaches the helper as ACTIVE (which prices nothing)", async () => {
+      tenantBefore({ status: "ACTIVE", subscription: { planKey: "SCALE" } });
+      await service.activateManualSubscription(TENANT_ID, activateDto, ADMIN_ID);
+      expect(priceSpy.mock.calls[0][2]).toMatchObject({ fromStatus: "ACTIVE" });
+    });
+
+    it("a non-PRODUCTION class is passed through (the helper writes no notice for it)", async () => {
+      tenantBefore({ class: "DEMO" });
+      await service.activateManualSubscription(TENANT_ID, activateDto, ADMIN_ID);
+      expect(priceSpy.mock.calls[0][2]).toMatchObject({ tenantClass: "DEMO" });
+    });
+
+    it("takes the add-on billing locks for the unbilled self-serve SKUs BEFORE the transaction, and the tenant row lock inside it", async () => {
+      tenantBefore();
+      const order: string[] = [];
+      lockSpy.mockImplementation(async (t: string, skus: readonly string[], fn: () => unknown) => {
+        order.push(`locks:${t}:${skus.join(",")}`);
+        return fn();
+      });
+      (prisma.$transaction as jest.Mock).mockImplementation((fn: any) => {
+        order.push("tx");
+        return fn({ ...prisma, tenantSubscription: (prisma as any).tenantSubscription });
+      });
+      priceSpy.mockImplementation(async () => {
+        order.push("price");
+        return [];
+      });
+
+      await service.activateManualSubscription(TENANT_ID, activateDto, ADMIN_ID);
+
+      expect(order).toEqual([`locks:${TENANT_ID}:CUSTOMER_PACK_100`, "tx", "price"]);
+    });
+
+    it("no unbilled self-serve add-on: the helper is not called and no lock is taken", async () => {
+      tenantBefore();
+      (prisma as any).tenantAddon.findMany.mockResolvedValue([]);
+      await service.activateManualSubscription(TENANT_ID, activateDto, ADMIN_ID);
+      expect(priceSpy).not.toHaveBeenCalled();
+      expect(lockSpy).toHaveBeenCalledWith(TENANT_ID, [], expect.any(Function));
+    });
+  });
+
   // R18: both admin write paths mirror the tenant into the house tenant's CRM, best-effort —
   // a mirror failure must never fail the admin action (T13-10, T13-11).
   describe("tenant mirror call sites (R18)", () => {
@@ -2931,6 +5231,7 @@ describe("PlatformAdminService — audit provenance", () => {
         businessName: "Acme Wholesale",
         adminEmail: "owner@acme.example.com",
         adminUsername: "acme_owner",
+        timezone: "America/Chicago",
       } as any);
 
       expect(result.id).toBe(TENANT_ID);
@@ -3323,6 +5624,169 @@ describe("PlatformAdminService — audit provenance", () => {
       const call = billingEventService.emit.mock.calls.find((c: any) => c[1] === "plan.changed")!;
       expect(call[3].tx).toBeDefined();
       expect(call[2]).toMatchObject({ fromPlan: "STARTER", toPlan: "GROWTH" });
+    });
+  });
+
+  // ─── SA-733r7 fold: the B1 admin plan change is a plan-mutation entry point too ─────────────────────────────
+  describe("PR-B3 fold: updatePlan (B1 admin plan change) is refused while an invoice is owed", () => {
+    const saved = process.env.BILLING_PAUSE_MODE;
+    afterEach(() => {
+      if (saved === undefined) delete process.env.BILLING_PAUSE_MODE;
+      else process.env.BILLING_PAUSE_MODE = saved;
+    });
+    const owed = () => {
+      prisma.tenant.findUnique.mockResolvedValue({
+        id: TENANT_ID,
+        slug: "acme",
+        plan: "STARTER",
+        status: "READ_ONLY",
+        readOnlyReason: "payment_overdue",
+        class: "PRODUCTION",
+        deletedAt: null,
+      } as any);
+      (prisma as any).tenantSubscription.findUnique.mockResolvedValueOnce({
+        pastDueInvoiceId: "in_1",
+      });
+    };
+
+    it("a READ_ONLY tenant with an owed invoice: 409 PAYMENT_OVERDUE (with the pay link), nothing written, in every mode", async () => {
+      for (const mode of ["dark", "enforced"]) {
+        process.env.BILLING_PAUSE_MODE = mode;
+        owed();
+        const err = await service
+          .updatePlan(TENANT_ID, { plan: "SCALE" } as any, ADMIN_ID)
+          .catch((e) => e);
+        expect(err).toBeInstanceOf(ConflictException);
+        expect((err as ConflictException).getResponse()).toMatchObject({
+          code: "PAYMENT_OVERDUE",
+          hosted_invoice_url: "https://pay.example.test/i/in_1",
+        });
+        expect(prisma.$transaction).not.toHaveBeenCalled();
+        expect(billingEventService.emit).not.toHaveBeenCalled();
+      }
+    });
+
+    it("an ACTIVE tenant in enforced is refused too; in dark it is allowed through with a would-refuse log naming admin_plan_change", async () => {
+      process.env.BILLING_PAUSE_MODE = "enforced";
+      prisma.tenant.findUnique.mockResolvedValue({
+        id: TENANT_ID,
+        slug: "acme",
+        plan: "STARTER",
+        status: "ACTIVE",
+        class: "PRODUCTION",
+        deletedAt: null,
+      } as any);
+      (prisma as any).tenantSubscription.findUnique.mockResolvedValueOnce({
+        pastDueInvoiceId: "in_1",
+      });
+      const err = await service
+        .updatePlan(TENANT_ID, { plan: "SCALE" } as any, ADMIN_ID)
+        .catch((e) => e);
+      expect((err as ConflictException).getResponse()).toMatchObject({ code: "PAYMENT_OVERDUE" });
+
+      process.env.BILLING_PAUSE_MODE = "dark";
+      (prisma as any).tenantSubscription.findUnique.mockResolvedValueOnce({
+        pastDueInvoiceId: "in_1",
+      });
+      const warn = jest.spyOn((service as any).logger, "warn").mockImplementation(() => undefined);
+      const out = await service
+        .updatePlan(TENANT_ID, { plan: "SCALE" } as any, ADMIN_ID)
+        .catch((e) => e);
+      // not refused by the guard (it then trips on this harness's bare catalog stubs, which is the point)
+      expect(out instanceof ConflictException ? (out.getResponse() as any).code : null).not.toBe(
+        "PAYMENT_OVERDUE",
+      );
+      expect(
+        warn.mock.calls.some((c: any[]) =>
+          String(c[0]).startsWith(
+            `billing.dunning.would_refuse code=PAYMENT_OVERDUE tenant=${TENANT_ID} entryPoint=admin_plan_change`,
+          ),
+        ),
+      ).toBe(true);
+    });
+  });
+
+  describe("PR-B3 fold: leaving a pause by any admin route clears payment_overdue and the Stripe pause", () => {
+    it("extendTrial from a pause also nulls readOnlyReason (it writes TRIAL outside the ACTIVE helper)", async () => {
+      prisma.tenant.findUnique.mockResolvedValue({ id: TENANT_ID, slug: "acme" } as any);
+      prisma.tenant.findUniqueOrThrow.mockResolvedValue({
+        id: TENANT_ID,
+        slug: "acme",
+        status: "TRIAL",
+        trialEndsAt: new Date("2026-11-01T00:00:00.000Z"),
+      } as any);
+      prisma.tenant.updateMany.mockResolvedValue({ count: 1 });
+      (prisma as any).tenantSubscription.findUnique.mockResolvedValue({
+        catchupState: null,
+        pausedAt: new Date("2026-11-08T09:00:00.000Z"),
+        stripeSubId: "sub_1",
+      });
+      await service.extendTrial(TENANT_ID, 14, ADMIN_ID);
+      expect(prisma.tenant.updateMany.mock.calls[0][0].data).toMatchObject({
+        status: "TRIAL",
+        readOnlyReason: null,
+      });
+    });
+
+    it("updateStatus to SUSPENDED on a PAUSED tenant clears local pausedAt (and payment_overdue) and unpauses Stripe after commit; the owed marker stays", async () => {
+      prisma.tenant.findUnique.mockResolvedValue({ id: TENANT_ID, slug: "acme" } as any);
+      prisma.tenant.update.mockResolvedValue({
+        id: TENANT_ID,
+        slug: "acme",
+        status: "SUSPENDED",
+      } as any);
+      prisma.tenant.findUniqueOrThrow.mockResolvedValue({
+        id: TENANT_ID,
+        slug: "acme",
+        plan: "STARTER",
+        status: "READ_ONLY",
+        readOnlyReason: "payment_overdue",
+        class: "PRODUCTION",
+        deletedAt: null,
+        subscription: null,
+      } as any);
+      (prisma as any).tenantSubscription.findUnique.mockResolvedValue({
+        pausedAt: new Date("2026-11-08T09:00:00.000Z"),
+        stripeSubId: "sub_1",
+      });
+      await service.updateStatus(TENANT_ID, { status: "SUSPENDED" } as any, ADMIN_ID);
+      expect(prisma.tenant.update).toHaveBeenCalledWith({
+        where: { id: TENANT_ID },
+        data: { status: "SUSPENDED", readOnlyReason: null },
+      });
+      // only pausedAt is cleared: the clock / marker stay (the invoice is still owed)
+      expect((prisma as any).tenantSubscription.updateMany).toHaveBeenCalledWith({
+        where: { tenantId: TENANT_ID },
+        data: { pausedAt: null },
+      });
+      expect(dunning.clearPauseAfterCommit).toHaveBeenCalledWith({
+        tenantId: TENANT_ID,
+        stripeSubId: "sub_1",
+        exitAt: expect.any(Date),
+      });
+    });
+
+    it("updateStatus on a tenant that was NOT paused for payment touches no subscription row and unpauses nothing", async () => {
+      prisma.tenant.findUnique.mockResolvedValue({ id: TENANT_ID, slug: "acme" } as any);
+      prisma.tenant.update.mockResolvedValue({
+        id: TENANT_ID,
+        slug: "acme",
+        status: "SUSPENDED",
+      } as any);
+      prisma.tenant.findUniqueOrThrow.mockResolvedValue({
+        status: "ACTIVE",
+        readOnlyReason: null,
+        class: "PRODUCTION",
+        deletedAt: null,
+        subscription: null,
+      } as any);
+      await service.updateStatus(TENANT_ID, { status: "SUSPENDED" } as any, ADMIN_ID);
+      expect(prisma.tenant.update).toHaveBeenCalledWith({
+        where: { id: TENANT_ID },
+        data: { status: "SUSPENDED" },
+      });
+      expect((prisma as any).tenantSubscription.updateMany).not.toHaveBeenCalled();
+      expect(dunning.clearPauseAfterCommit).toHaveBeenCalledWith(null);
     });
   });
 });

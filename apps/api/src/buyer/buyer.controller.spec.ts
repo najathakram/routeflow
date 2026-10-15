@@ -11,6 +11,7 @@
  * secondary fix here ensures the controller routes bypass the userId lookup
  * entirely by passing customerId directly + OPERATOR role.
  */
+import { oversellReaderOffProvider } from "../orders/testing/policy-reader-provider";
 import { Test, TestingModule } from "@nestjs/testing";
 import { BuyerController } from "./buyer.controller";
 import { BuyerService } from "./buyer.service";
@@ -55,7 +56,7 @@ describe("BuyerController — buyer portal 500 fixes (F1-INFRA-500S)", () => {
   };
   let invoicesService: jest.Mocked<Pick<InvoicesService, "findAll">>;
   let templatesService: jest.Mocked<
-    Pick<OrderTemplatesService, "findAllForUser" | "generateOrder">
+    Pick<OrderTemplatesService, "findAllForBuyer" | "generateOrder">
   >;
   let authorizationsService: jest.Mocked<Pick<AuthorizationsService, "listForBuyer" | "submit">>;
   let stockAlertService: {
@@ -81,7 +82,7 @@ describe("BuyerController — buyer portal 500 fixes (F1-INFRA-500S)", () => {
     };
     invoicesService = { findAll: jest.fn().mockResolvedValue({ data: [], meta: { total: 0 } }) };
     templatesService = {
-      findAllForUser: jest.fn().mockResolvedValue({ data: [], meta: { total: 0 } }),
+      findAllForBuyer: jest.fn().mockResolvedValue({ data: [], meta: { total: 0 } }),
       generateOrder: jest.fn().mockResolvedValue({ id: "o1" }),
     };
     authorizationsService = {
@@ -105,6 +106,7 @@ describe("BuyerController — buyer portal 500 fixes (F1-INFRA-500S)", () => {
     const module: TestingModule = await Test.createTestingModule({
       controllers: [BuyerController],
       providers: [
+        oversellReaderOffProvider,
         { provide: BuyerService, useValue: {} },
         { provide: BuyerCatalogService, useValue: {} },
         { provide: BuyerDashboardService, useValue: {} },
@@ -173,33 +175,26 @@ describe("BuyerController — buyer portal 500 fixes (F1-INFRA-500S)", () => {
     expect(args).toHaveLength(1);
   });
 
-  it("getStandingOrders: passes customerId directly — no userId lookup", async () => {
+  it("getStandingOrders: the buyer-filtered list, by customerId — no userId lookup (row 479)", async () => {
     await controller.getStandingOrders(MOCK_CTX as any);
 
-    expect(templatesService.findAllForUser).toHaveBeenCalledTimes(1);
-    const [user, customerId] = (templatesService.findAllForUser as jest.Mock).mock.calls[0];
-
-    // OPERATOR role so findAllForUser takes the direct-customerId path
-    expect(user.role).toBe(UserRole.OPERATOR);
-    expect(customerId).toBe("cust-abc");
+    expect(templatesService.findAllForBuyer).toHaveBeenCalledTimes(1);
+    expect(templatesService.findAllForBuyer).toHaveBeenCalledWith("cust-abc");
   });
 
-  it("getTemplates: passes customerId directly — no userId lookup", async () => {
+  it("getTemplates: the buyer-filtered list, by customerId — no userId lookup (row 479)", async () => {
     await controller.getTemplates(MOCK_CTX as any);
 
-    expect(templatesService.findAllForUser).toHaveBeenCalledTimes(1);
-    const [user, customerId] = (templatesService.findAllForUser as jest.Mock).mock.calls[0];
-
-    expect(user.role).toBe(UserRole.OPERATOR);
-    expect(customerId).toBe("cust-abc");
+    expect(templatesService.findAllForBuyer).toHaveBeenCalledTimes(1);
+    expect(templatesService.findAllForBuyer).toHaveBeenCalledWith("cust-abc");
   });
 
   // RF-094 / RF-180: GET /buyer/standing-orders returns 200 (empty array OK)
   it("getStandingOrders: returns data without 500 when customerId is set", async () => {
     const result = await controller.getStandingOrders(MOCK_CTX as any);
-    // templatesService.findAllForUser resolves to { data: [], meta: { total: 0 } }
+    // templatesService.findAllForBuyer resolves to { data: [], meta: { total: 0 } }
     expect(result).toBeDefined();
-    expect(templatesService.findAllForUser).toHaveBeenCalledTimes(1);
+    expect(templatesService.findAllForBuyer).toHaveBeenCalledTimes(1);
   });
 
   // #1208 review LOW-MED: this buyer-portal path bypasses generateOrderForUser entirely
@@ -213,8 +208,11 @@ describe("BuyerController — buyer portal 500 fixes (F1-INFRA-500S)", () => {
       const result = await controller.reorderFromTemplate("tpl-1", MOCK_CTX as any);
 
       expect(templatesService.generateOrder).toHaveBeenCalledTimes(1);
-      expect(templatesService.generateOrder).toHaveBeenCalledWith("tpl-1", false);
-      expect(result).toEqual({ id: "o1" });
+      // (id, isStaffRole, allowOversell: policy off, the out-param a restriction-trimmed Reorder fills)
+      expect(templatesService.generateOrder).toHaveBeenCalledWith("tpl-1", false, false, {
+        skipped: [],
+      });
+      expect(result).toEqual({ id: "o1", skipped: [] }); // nothing was left out
     });
 
     it("refuses a template belonging to another customer — never calls generateOrder", async () => {

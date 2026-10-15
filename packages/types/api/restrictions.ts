@@ -3,6 +3,7 @@
 // MASTER-EXECUTION-PLAN.md §6 contracts 7-8.
 
 import type { RestrictionAddressPrecedence } from "./enums";
+import type { API_ERROR_CODES } from "./error-codes";
 
 /**
  * Tenant policy. `addressPrecedence` = which customer address TYPE governs a STATE rule first
@@ -32,7 +33,12 @@ export interface RestrictionsEvaluation {
 
 /** Why a line was blocked — mirrors the engine's three-state result (plan §2.6). */
 export type RestrictionReason =
-  "FEDERAL_BAN" | "STATE_BAN" | "BUYER_PORTAL_ONLY" | "INDETERMINATE_ADDRESS" | "UNKNOWN_PRODUCT";
+  | "FEDERAL_BAN"
+  | "STATE_BAN"
+  | "BUYER_PORTAL_ONLY"
+  | "INDETERMINATE_ADDRESS"
+  | "UNKNOWN_PRODUCT"
+  | "HIDDEN_FROM_PORTAL";
 
 export interface BlockedLine {
   productId: string;
@@ -47,7 +53,7 @@ export interface BlockedLine {
 
 /** Thrown as a 409 by `assertLinesSellable` — mirrors `REGULATED_AUTH_REQUIRED`'s shape. */
 export interface SellingRestrictedError {
-  code: "SELLING_RESTRICTED";
+  code: typeof API_ERROR_CODES.SELLING_RESTRICTED;
   /** One human sentence (a client with no blocked-lines panel toasts it); the detail is `blockedLines`. */
   message: string;
   blockedLines: BlockedLine[];
@@ -57,11 +63,14 @@ export interface SellingRestrictedError {
  * What a BUYER-channel caller gets in `blockedLines` (B612): the product only — no rule id, reason,
  * state, category or rule text. Staff still get the full {@link BlockedLine}.
  */
-export type BuyerBlockedLine = Pick<BlockedLine, "productId" | "productName">;
+export type BuyerBlockedLine = Pick<BlockedLine, "productId" | "productName"> & {
+  /** Present ONLY for a product the tenant hid from the buyer portal (SA-606 WS6); never a ban/state reason. */
+  reason?: "HIDDEN_FROM_PORTAL";
+};
 
 /** The 409 body for a BUYER-channel caller: the same code, a generic sentence, names only. */
 export interface BuyerSellingRestrictedError {
-  code: "SELLING_RESTRICTED";
+  code: typeof API_ERROR_CODES.SELLING_RESTRICTED;
   message: string;
   blockedLines: BuyerBlockedLine[];
 }

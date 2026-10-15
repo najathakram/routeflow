@@ -1,6 +1,6 @@
 import { BadRequestException, ConflictException } from "@nestjs/common";
 import { normalizeBoxesPieces, computeLineSubtotal, type LadderUnit } from "@routeflow/pricing";
-import { lineUnitsPerBoxSnapshot, resolveLineUnits } from "./line-units";
+import { lineUnitsPerBoxSnapshot, normalizeDerivedBaseLine, resolveLineUnits } from "./line-units";
 
 const none = {
   price: null,
@@ -243,5 +243,149 @@ describe("money seam: the relabelled triple prices correctly through the EXISTIN
         unitsPerBox: u.unitsPerBox,
       }),
     ).toBe(52.5);
+  });
+});
+
+describe("resolveLineUnits — honourDefaultSelling (#2784, SA-601 buyer qty-only lines)", () => {
+  const flaggedCase: LadderUnit = { ...caseRow, isDefaultSelling: true };
+  const opts = { honourDefaultSelling: true };
+
+  it("a line with NO requested unit resolves to the flagged default level", () => {
+    expect(resolveLineUnits(boxed, [flaggedCase], undefined, null, opts)).toEqual({
+      unitsPerBox: 288,
+      unitLabel: "Case",
+      kind: "level",
+    });
+  });
+
+  it("an explicit unit ALWAYS wins: a named level, the named Piece, and an explicit null/'' = the pack", () => {
+    expect(
+      resolveLineUnits(boxed, [flaggedCase, pieceRow], { unitLabel: "Piece" }, null, opts),
+    ).toEqual({
+      unitsPerBox: 1,
+      unitLabel: "Piece",
+      kind: "piece",
+    });
+    expect(resolveLineUnits(boxed, [flaggedCase], { unitLabel: null }, null, opts)).toEqual({
+      unitsPerBox: 24,
+      unitLabel: null,
+      kind: "pack",
+    });
+    expect(resolveLineUnits(boxed, [flaggedCase], { unitLabel: "" }, null, opts).kind).toBe("pack");
+  });
+
+  it("a rewrite of a line that already carries a unit keeps ITS snapshot (rule 2), not the default", () => {
+    const held = { unitLabel: "Piece", unitsPerBox: 1 };
+    expect(resolveLineUnits(boxed, [flaggedCase, pieceRow], undefined, held, opts)).toEqual({
+      unitsPerBox: 1,
+      unitLabel: "Piece",
+      kind: "piece",
+    });
+  });
+
+  it("SA-610: a HELD PACK line (an existing line, unitLabel null) stays a pack line — the default never re-units it", () => {
+    const heldPack = { unitLabel: null, unitsPerBox: 24 };
+    expect(resolveLineUnits(boxed, [flaggedCase], undefined, heldPack, opts)).toEqual({
+      unitsPerBox: 24,
+      unitLabel: null,
+      kind: "pack",
+    });
+    expect(resolveLineUnits(boxed, [flaggedCase], undefined, {}, opts).kind).toBe("pack");
+  });
+
+  it("SA-610 B2: an EXPLICIT boxes/pieces split with no unit always wins — never re-united to the default", () => {
+    for (const split of [{ boxes: 0, pieces: 3 }, { boxes: 2 }, { pieces: 5 }, { boxes: 0 }]) {
+      expect(resolveLineUnits(boxed, [flaggedCase], { ...split }, null, opts)).toEqual({
+        unitsPerBox: 24,
+        unitLabel: null,
+        kind: "pack",
+      });
+    }
+    // A qty-only line (boxes/pieces both absent or null) still takes the default.
+    expect(
+      resolveLineUnits(boxed, [flaggedCase], { boxes: null, pieces: null }, null, opts).unitLabel,
+    ).toBe("Case");
+  });
+
+  it("no flagged level -> today's pack line", () => {
+    expect(resolveLineUnits(boxed, [caseRow], undefined, null, opts)).toEqual({
+      unitsPerBox: 24,
+      unitLabel: null,
+      kind: "pack",
+    });
+  });
+
+  it("WITHOUT the option (staff / driver arms, SA-593g) the flag is ignored: byte-identical pack", () => {
+    expect(resolveLineUnits(boxed, [flaggedCase], undefined, null)).toEqual({
+      unitsPerBox: 24,
+      unitLabel: null,
+      kind: "pack",
+    });
+    expect(
+      resolveLineUnits(boxed, [flaggedCase], undefined, null, { honourDefaultSelling: false }).kind,
+    ).toBe("pack");
+  });
+
+  it("a flagged Piece on a product with no pack size stays the plain pack (no unit-aware line)", () => {
+    const each = { unit: "Each", pricePerUnit: 3 };
+    const flaggedPiece: LadderUnit = { ...pieceRow, isDefaultSelling: true };
+    expect(resolveLineUnits(each, [flaggedPiece], undefined, null, opts)).toEqual({
+      unitsPerBox: 0,
+      unitLabel: null,
+      kind: "pack",
+    });
+  });
+});
+
+describe("normalizeDerivedBaseLine — a derived base unit bills as the pack line's pieces (SA-728)", () => {
+  const pack3 = { unit: "Pack", unitsPerBox: 3, pricePerUnit: "10.00" };
+  const ownPiece: LadderUnit = { ...none, label: "Piece", factorToBase: 1, price: "3.00" };
+  const caseOf12: LadderUnit = { ...none, label: "Case", factorToBase: 12 };
+  const norm = (item: object, units: LadderUnit[] = [caseOf12], mode: "drop" | "pack" = "drop") =>
+    normalizeDerivedBaseLine(item as never, pack3, units, 1, { price: mode });
+
+  it("3-pack @10, 2 pcs: unitLabel cleared, boxes/pieces split via normalizeBoxesPieces, no per-piece price kept", () => {
+    const out = norm({ productId: "p", qty: 2, unitLabel: "Piece", unitPrice: 3.33 }) as any;
+    expect(out.unitLabel).toBeNull();
+    expect(out).toMatchObject({ boxes: 0, pieces: 2, qty: 2 });
+    expect(out.unitPrice).toBeUndefined();
+  });
+  it("rolls pieces over at the pack size, and the invoice mode carries the PACK price", () => {
+    const out = norm(
+      { productId: "p", qty: 7, unitLabel: "piece", unitPrice: 3.33 },
+      [],
+      "pack",
+    ) as any;
+    expect(out).toMatchObject({ unitLabel: null, boxes: 2, pieces: 1, qty: 7, unitPrice: 10 });
+  });
+  it("a custom base label is the base too", () => {
+    const out = normalizeDerivedBaseLine(
+      { productId: "p", qty: 2, unitLabel: "Each" } as never,
+      { ...pack3, baseUnitLabel: "Each" },
+      [caseOf12],
+      1,
+    ) as any;
+    expect(out).toMatchObject({ unitLabel: null, pieces: 2 });
+  });
+  it("an OWN-priced base row keeps the unit-line path (item untouched)", () => {
+    const item = { productId: "p", qty: 2, unitLabel: "Piece" };
+    expect(norm(item, [ownPiece])).toBe(item);
+  });
+  it("a deliberately different typed per-piece price, a non-base label, a boxes/pieces split, a held base line and an unboxed product are left alone", () => {
+    const typed = { productId: "p", qty: 2, unitLabel: "Piece", unitPrice: 3.0 };
+    expect(norm(typed)).toBe(typed);
+    const caseItem = { productId: "p", qty: 2, unitLabel: "Case" };
+    expect(norm(caseItem)).toBe(caseItem);
+    const split = { productId: "p", qty: 2, pieces: 2, unitLabel: "Piece" };
+    expect(norm(split)).toBe(split);
+    const plain = { productId: "p", qty: 2 };
+    expect(norm(plain)).toBe(plain);
+    const item = { productId: "p", qty: 2, unitLabel: "Piece" };
+    expect(normalizeDerivedBaseLine(item as never, pack3, [caseOf12], 1, { held: "Piece" })).toBe(
+      item,
+    );
+    expect(
+      normalizeDerivedBaseLine(item as never, { unit: "Each", pricePerUnit: "3.00" }, [], 1),
+    ).toBe(item);
   });
 });

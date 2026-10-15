@@ -1,14 +1,22 @@
 import React from "react";
-import { Injectable, Logger, NotFoundException } from "@nestjs/common";
+import { writeInvoicePdfPointer } from "./invoice-pdf-pointer";
+import { Injectable, Logger, NotFoundException, Optional } from "@nestjs/common";
 import { renderToBuffer } from "@react-pdf/renderer";
 import { PrismaService } from "../prisma/prisma.service";
 import { StorageService } from "../storage/storage.service";
 import { SystemConfigService } from "../system-config/system-config.service";
 import { InvoicePdfTemplate } from "./invoice-pdf-template";
-import { deriveInvoiceVariant, type InvoicePdfVariant } from "./invoice-pdf-variant";
+import type { InvoicePdfVariant } from "./invoice-pdf-variant";
+import { resolveInvoiceVariant } from "./invoice-stage";
 import { invoiceItemCode } from "./invoice-item-code";
 import { roundMoney } from "@routeflow/pricing";
 import { splitConfirmed } from "./payment-predicates";
+import { FeatureConfigService } from "../billing/feature-config.service";
+import { bcidFor } from "../common/barcode-bcid";
+import { toLineComponentViews } from "../orders/component-view";
+import { readFamilyPriceMode } from "../products/family-price";
+import { pdfSubLine } from "./invoice-pdf-item";
+import { orderQrUrl } from "./invoice-qr";
 
 import bwipjs from "bwip-js";
 
@@ -29,6 +37,8 @@ export class InvoicePdfService {
     private readonly prisma: PrismaService,
     private readonly storage: StorageService,
     private readonly systemConfig: SystemConfigService,
+    // #2717 M3: the `mixed_packs` mode read (the order QR is gated on it); absent = off.
+    @Optional() private readonly featureConfig?: FeatureConfigService,
   ) {}
 
   async getOrGenerate(
@@ -59,6 +69,10 @@ export class InvoicePdfService {
         items: {
           include: {
             product: { select: { id: true, name: true, barcode: true, sku: true, unitSku: true } },
+            // CQ-03: the category row names the levy charge ("CRV deposit")
+            trackedCategory: { select: { id: true, name: true, taxType: true } },
+            // #2717 M3: the frozen sub-lines of a composed (FIXED) line; empty on a plain line.
+            components: { orderBy: { position: "asc" } },
           },
         },
         // F03/R1/B97 fix: this is a LISTING read (the Payment History section), so
@@ -75,14 +89,20 @@ export class InvoicePdfService {
           orderBy: { paidAt: "asc" },
           include: { creditNote: { select: { creditNoteNumber: true, reason: true } } },
         },
-        order: { select: { status: true } },
+        order: { select: { status: true, fulfillPath: true, shippedAt: true, counterSale: true } },
       },
     });
     if (!inv) throw new NotFoundException("Invoice not found");
 
+    // F3: the invoice raised at shipment is FINAL (resolveInvoiceVariant), not the pre-delivery proforma.
     const variant =
       variantArg ??
-      deriveInvoiceVariant(inv as { status: string; order?: { status: string } | null });
+      (await resolveInvoiceVariant(
+        this.featureConfig,
+        (inv as { tenantId?: string | null }).tenantId,
+        inv,
+        inv.order,
+      ));
 
     // Load tenant's business info (including logo + primary color) to render
     // a fully branded invoice header.
@@ -171,6 +191,20 @@ export class InvoicePdfService {
         return item;
       }),
     );
+    // #2717 M3 (cases 21, 23): a composed line gains `subLines` (display only: no cents are read
+    // from them, so the document totals are untouched); a plain line gains nothing, not even a key.
+    const itemsWithSubLines = await Promise.all(
+      itemsWithBarcodes.map(async (item) => {
+        const components = (item as { components?: unknown[] }).components;
+        if (!components || components.length === 0) return item;
+        const views = toLineComponentViews(components as never);
+        const subLines = await Promise.all(
+          views.map(async (v) => pdfSubLine(v, await this.subLineBarcode(v))),
+        );
+        return { ...item, subLines };
+      }),
+    );
+    const qrDataUri = await this.orderQr(inv as { orderId?: string | null }, invTenantId);
 
     // Deposit schedule (Tier 1): the dollar amount is derived from the CURRENT
     // total, never stored — same convention as invoices.service's
@@ -195,7 +229,8 @@ export class InvoicePdfService {
 
     const invWithBarcodes = {
       ...inv,
-      items: itemsWithBarcodes,
+      items: itemsWithSubLines,
+      ...(qrDataUri ? { qrDataUri } : {}),
       tenant: tenantInfo,
       variant,
       generatedAt: new Date(),
@@ -221,12 +256,62 @@ export class InvoicePdfService {
     const key = invoicePdfStorageKey(invoiceId);
     await this.storage.upload(key, pdfBuffer, "application/pdf");
 
-    await this.prisma.invoice.update({
-      where: { id: invoiceId },
-      data: { pdfUrl: key },
-    });
+    // The key is deterministic per invoice, so write the pointer only when it changes
+    // (first render, or after an invalidation nulled it). Row 502: the write never moves
+    // updatedAt (the H4 edit token), so a render can't make an open edit form go stale.
+    if (inv.pdfUrl !== key) {
+      if (invTenantId) await writeInvoicePdfPointer(this.prisma, invTenantId, invoiceId, key);
+      // A tenant-less invoice cannot take the tenant-scoped write: say so, never a silent cache miss.
+      else this.logger.warn(`Invoice ${invoiceId} has no tenantId: PDF pointer not written`);
+    }
 
     this.logger.log(`Invoice PDF stored at key: ${key}`);
     return this.storage.presignedUrl(key);
+  }
+
+  /** A sub-line's unit barcode as a PNG data URI (symbology by check digit), or null (never throws). */
+  private async subLineBarcode(v: { unitBarcode: string | null; barcodeSymbology: string | null }) {
+    if (!v.unitBarcode) return null;
+    try {
+      const buf = await bwipjs.toBuffer({
+        bcid: bcidFor(v.barcodeSymbology, v.unitBarcode),
+        text: v.unitBarcode,
+        scale: 2,
+        height: 8,
+        includetext: false,
+      });
+      return "data:image/png;base64," + Buffer.from(buf).toString("base64");
+    } catch {
+      return null;
+    }
+  }
+
+  /**
+   * #2717 M3 (case 22): the QR of an ORDER-linked invoice, only while the tenant's `mixed_packs` mode
+   * is on (a visible PDF change waits for the per-tenant flip). Null for a manual invoice, mode off,
+   * an unusable WEB_URL (warns; never a localhost link) or an encoder failure.
+   */
+  private async orderQr(
+    inv: { orderId?: string | null },
+    tenantId: string | null,
+  ): Promise<string | null> {
+    if (!inv.orderId || !tenantId) return null;
+    if ((await readFamilyPriceMode(this.featureConfig, tenantId)) !== "on") return null;
+    const tenant = await this.prisma.tenant.findUnique({
+      where: { id: tenantId },
+      select: { slug: true },
+    });
+    const url = orderQrUrl(process.env.WEB_URL, tenant?.slug ?? "", inv.orderId);
+    if (!url) {
+      this.logger.warn("Order QR skipped: WEB_URL is unset or not an http(s) URL");
+      return null;
+    }
+    try {
+      const buf = await bwipjs.toBuffer({ bcid: "qrcode", text: url, scale: 3 });
+      return "data:image/png;base64," + Buffer.from(buf).toString("base64");
+    } catch (err) {
+      this.logger.warn(`Order QR failed: ${err instanceof Error ? err.message : err}`);
+      return null;
+    }
   }
 }

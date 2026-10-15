@@ -36,6 +36,19 @@ export const INVOICE_STATUS_VALUES = [
 ] as const;
 export type InvoiceStatus = (typeof INVOICE_STATUS_VALUES)[number];
 
+/**
+ * SA-770: the OPEN invoice statuses - issued and not settled, so they can still be owed and can be overdue
+ * (a reminder is sent for them, the Unpaid chip lists them). A SUBSET of INVOICE_STATUS_VALUES, not a Prisma
+ * enum: the API keeps its own `OPEN_INVOICE_STATUSES` (invoice-status-sets.ts; it never value-imports this
+ * package) and invoices/open-invoice-statuses-pin.spec.ts pins the two set-equal.
+ */
+export const OPEN_INVOICE_STATUS_VALUES = [
+  "SENT",
+  "VIEWED",
+  "PARTIAL",
+  "OVERDUE",
+] as const satisfies readonly InvoiceStatus[];
+
 export const RETURN_STATUS_VALUES = [
   "PENDING",
   "APPROVED",
@@ -69,6 +82,7 @@ export const RETURN_HOLD_REASON_VALUES = [
   "CAPTURE_FAILED",
   "OVER_RETURN",
   "DRIVER_CAP",
+  "ALREADY_RETURNED",
   "UNREFERENCED",
 ] as const;
 export type ReturnHoldReason = (typeof RETURN_HOLD_REASON_VALUES)[number];
@@ -511,3 +525,53 @@ export type BarcodeOrigin = (typeof BARCODE_ORIGIN_VALUES)[number];
 // as one RECIPE product). DRAFT is editable; ACTIVE and RETIRED are immutable (I3).
 export const RECIPE_STATUS_VALUES = ["DRAFT", "ACTIVE", "RETIRED"] as const;
 export type RecipeStatus = (typeof RECIPE_STATUS_VALUES)[number];
+
+// SA-603: lifecycle of one outbound transactional email attempt (EmailDelivery.status).
+export const EMAIL_DELIVERY_STATUS_VALUES = [
+  "QUEUED",
+  "SENT",
+  "FAILED",
+  "BOUNCED",
+  "WOULD_SEND",
+  "OPTED_OUT",
+] as const;
+export type EmailDeliveryStatus = (typeof EMAIL_DELIVERY_STATUS_VALUES)[number];
+
+/** SA-138: the layer a tenant POLICY value applies to (PolicyValue.scopeType). */
+export const POLICY_SCOPE_TYPE_VALUES = ["TENANT", "CATEGORY", "CUSTOMER"] as const;
+export type PolicyScopeTypeValue = (typeof POLICY_SCOPE_TYPE_VALUES)[number];
+
+/** #2653 (SA-542b): which realm minted a sign-in handoff code (Prisma `HandoffRealm`). */
+export const HANDOFF_REALM_VALUES = ["STAFF", "BUYER"] as const;
+export type HandoffRealm = (typeof HANDOFF_REALM_VALUES)[number];
+
+// #2717 M3 (SA-572): how a document line was composed. NULL on the row = a plain single line
+// (SINGLE is never materialised); FIXED = a RECIPE product with frozen component snapshots; FLEX is
+// reserved for M3b.
+export const COMPOSITION_MODE_VALUES = ["SINGLE", "FIXED", "FLEX"] as const;
+export type CompositionMode = (typeof COMPOSITION_MODE_VALUES)[number];
+
+// SA-650 (counter sales): how an order is fulfilled (Prisma `FulfillPath`). PICKUP = counter sale /
+// in-store pickup; the API refuses it on every write DTO until the counter-sale API lands.
+export const FULFILL_PATH_VALUES = ["ROUTE", "SHIP", "PICKUP"] as const;
+export type FulfillPath = (typeof FULFILL_PATH_VALUES)[number];
+
+// Per-operator feature groups (Prisma `OperatorPermissionGroup`, `User.deniedPermissionGroups`). The
+// order here is the display order of the switches (see `PERMISSION_GROUPS` in ./permissions).
+export const OPERATOR_PERMISSION_GROUP_VALUES = [
+  "ORDERS",
+  "DISPATCH",
+  "CUSTOMERS",
+  "CATALOG",
+  "PRICING",
+  "REGULATED",
+  "FINANCE",
+  "NOTIFICATIONS",
+  "REPORTS",
+] as const;
+export type OperatorPermissionGroup = (typeof OPERATOR_PERMISSION_GROUP_VALUES)[number];
+
+// M11: the billing usage meters (Prisma `MeterKey`, returned by `GET /billing/usage`). The web
+// meter labels are keyed on this union, so a new server meter is a type error, not a raw key.
+export const METER_KEY_VALUES = ["SEATS", "ROUTES", "SCANS", "MSGS", "CUSTOMERS"] as const;
+export type MeterKey = (typeof METER_KEY_VALUES)[number];

@@ -20,12 +20,26 @@ export function useUnitsEnabled(opts?: { enabled?: boolean }): boolean {
   return (q.data?.flags ?? []).includes(UNITS_FLAG);
 }
 
+/** U-1's Units screen sits behind its own flag (SA ruling), separate from the line-level units_v1. */
+export const UNITS_SETTINGS_FLAG = "flag.units_settings_v1";
+
+/** Does the subscription serve `flag.units_settings_v1`? Fail-CLOSED, like useUnitsEnabled: unknown = hidden. */
+export function useUnitsSettingsEnabled(opts?: { enabled?: boolean }): boolean {
+  const q = useSubscription({ staleTime: 60_000, ...opts });
+  return (q.data?.flags ?? []).includes(UNITS_SETTINGS_FLAG);
+}
+
 const key = (productId: string) => ["products", productId, "units"] as const;
+export const productUnitsKey = key;
+
+/** The product's ladder (shared by the picker's query and the order's default-unit resolver, SA-626c). */
+export const fetchProductUnits = (productId: string): Promise<ProductUnitLevel[]> =>
+  apiClient.get(`/products/${productId}/units`).then((r) => r.data);
 
 export function useProductUnits(productId: string, enabled: boolean) {
   return useQuery<ProductUnitLevel[]>({
     queryKey: key(productId),
-    queryFn: () => apiClient.get(`/products/${productId}/units`).then((r) => r.data),
+    queryFn: () => fetchProductUnits(productId),
     enabled: enabled && !!productId,
   });
 }

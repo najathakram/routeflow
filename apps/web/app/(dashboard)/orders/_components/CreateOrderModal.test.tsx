@@ -3,6 +3,13 @@ import userEvent from "@testing-library/user-event";
 import { renderWithProviders, screen, waitFor, act, fireEvent, within } from "@/test-utils/render";
 import { CreateOrderModal } from "./CreateOrderModal";
 
+import { unitWords } from "@routeflow/pricing";
+
+// U-3a: the add-extra control is named by the default unit words.
+// WCAG 2.5.3: the accessible name contains the visible "+ pieces" text.
+const ADD_EXTRA = `+ ${unitWords().base.lowerOther}: add extra ${unitWords().base.lowerOther}`;
+const REMOVE_EXTRA = `Remove extra ${unitWords().base.lowerOther}`;
+
 // JSDOM has no scrollIntoView implementation at all (not a stub — genuinely absent), and
 // addLineItem's scroll-to-added-row effect calls it. No prior test in this file exercised
 // that path (only the customer-not-selected submit guard), so this gap was never hit before.
@@ -27,6 +34,7 @@ let mockCreateOrderError: unknown = null;
 // Mutable so a test can put a customer in the picker / give them per-product tier prices.
 let mockCustomers: Array<Record<string, unknown>> = [];
 let mockCustomerPrices: Array<Record<string, unknown>> = [];
+const mockActiveOrderHook = jest.fn((..._args: unknown[]) => ({ data: undefined }));
 jest.mock("@/lib/api/customers", () => ({
   useCustomers: () => ({ data: { data: mockCustomers } }),
   // Like the real hook: nothing until a customer is selected.
@@ -45,7 +53,7 @@ jest.mock("@/lib/api/orders", () => ({
     error: mockCreateOrderError,
     reset: jest.fn(),
   }),
-  useActiveOrderForCustomer: () => ({ data: undefined }),
+  useActiveOrderForCustomer: (...args: unknown[]) => mockActiveOrderHook(...args),
   useCustomerPriceHistory: () => ({ data: undefined }),
 }));
 jest.mock("@/lib/api/drafts", () => ({
@@ -77,12 +85,12 @@ jest.mock("@/lib/api-client", () => ({
 // needs getUserMedia + a dynamic @zxing/browser import, impractical in JSDOM — mock it the
 // same way the sibling pages' own barcode call sites are exercised elsewhere: capture the
 // live onScan/onError props so a test can trigger them directly, same as a real scan would.
-let capturedOnScan: ((code: string) => void) | undefined;
+let capturedOnScan: ((code: string, source?: "field") => void) | undefined;
 let capturedOnError: ((message: string) => void) | undefined;
 let capturedOnOpenContinuous: (() => void) | undefined;
 jest.mock("@/components/BarcodeScannerButton", () => ({
   BarcodeScannerButton: (props: {
-    onScan: (code: string) => void;
+    onScan: (code: string, source?: "field") => void;
     onError?: (message: string) => void;
     onOpenContinuous?: () => void;
     title?: string;
@@ -219,6 +227,86 @@ describe("CreateOrderModal", () => {
       expect(mockResolveProductByCode).toHaveBeenCalledWith("012345678905");
     });
 
+    // Row 536 (P0): 20 repeat scans of one item landed 14-15. A wedge burst outran the lookup + the
+    // post-commit search clear, so a scan was eaten mid-burst.
+    describe("a burst of repeat scans (row 536)", () => {
+      const widget = {
+        notFound: false,
+        archived: false,
+        product: { id: "prod-1", name: "Widget", pricePerUnit: "9.99", unit: "each" },
+      };
+      const searchField = () =>
+        screen.getByPlaceholderText(/search by name, sku or scan barcode/i) as HTMLInputElement;
+
+      it("scan 1 in flight, half of scan 2 typed, scan 1 resolves, scan 2 finishes -> qty 2 and the half-typed scan survives", async () => {
+        let resolveFirst!: (v: unknown) => void;
+        mockResolveProductByCode.mockReturnValueOnce(
+          new Promise((resolve) => {
+            resolveFirst = resolve;
+          }),
+        );
+        renderWithProviders(<CreateOrderModal isOpen onClose={jest.fn()} />);
+
+        // scan 1: the wedge typed it into the field; the detector takes it (field cleared) and queues the lookup.
+        fireEvent.change(searchField(), { target: { value: "012345678905" } });
+        act(() => capturedOnScan!("012345678905", "field"));
+        expect(searchField().value).toBe("");
+
+        // half of scan 2 lands in the (now empty) field while scan 1's lookup is still out.
+        fireEvent.change(searchField(), { target: { value: "01234" } });
+
+        // scan 1 resolves: its post-commit clear must NOT wipe the half-typed scan 2.
+        await act(async () => {
+          resolveFirst(widget);
+        });
+        expect(await screen.findByText("Widget")).toBeInTheDocument();
+        expect(searchField().value).toBe("01234");
+
+        // scan 2 finishes: the same code again.
+        fireEvent.change(searchField(), { target: { value: "012345678905" } });
+        await act(async () => {
+          capturedOnScan!("012345678905", "field");
+        });
+
+        await waitFor(() =>
+          expect((screen.getByLabelText("Quantity") as HTMLInputElement).value).toBe("2"),
+        );
+        expect(searchField().value).toBe("");
+        // The repeat is served from the order itself: no second lookup.
+        expect(mockResolveProductByCode).toHaveBeenCalledTimes(1);
+      });
+
+      it("20 back-to-back scans of one item count 20, serialised in order", async () => {
+        mockResolveProductByCode.mockImplementation(
+          () => new Promise((resolve) => setTimeout(() => resolve(widget), 5)),
+        );
+        renderWithProviders(<CreateOrderModal isOpen onClose={jest.fn()} />);
+        await act(async () => {
+          for (let i = 0; i < 20; i++) capturedOnScan!("012345678905", "field");
+        });
+        await waitFor(() =>
+          expect((screen.getByLabelText("Quantity") as HTMLInputElement).value).toBe("20"),
+        );
+        expect(mockResolveProductByCode).toHaveBeenCalledTimes(1);
+      });
+
+      it("a repeat of a code whose line was deleted looks the product up again", async () => {
+        mockResolveProductByCode.mockResolvedValue(widget);
+        renderWithProviders(<CreateOrderModal isOpen onClose={jest.fn()} />);
+        await act(async () => {
+          capturedOnScan!("012345678905", "field");
+        });
+        await screen.findByText("Widget");
+        fireEvent.click(screen.getByRole("button", { name: "Remove" }));
+        await waitFor(() => expect(screen.queryByText("Widget")).not.toBeInTheDocument());
+        await act(async () => {
+          capturedOnScan!("012345678905", "field");
+        });
+        await screen.findByText("Widget");
+        expect(mockResolveProductByCode).toHaveBeenCalledTimes(2);
+      });
+    });
+
     // Characterization of the scan-resolve ladder, written BEFORE it moved to ./scan/ (LANE-S
     // step 4 prefactor): pins the four outcomes so the extraction provably changed nothing.
     it("an ARCHIVED product is never added and never routes to create-product — it toasts instead", async () => {
@@ -261,7 +349,7 @@ describe("CreateOrderModal", () => {
         expect(mockToast).toHaveBeenCalledWith({
           variant: "error",
           title: "Couldn't look up the code",
-          description: "Network Error",
+          description: "Check the connection and rescan.",
         }),
       );
       expect(capturedInlineCreate?.isOpen).toBe(false);
@@ -317,8 +405,11 @@ describe("CreateOrderModal", () => {
       await screen.findByRole("dialog", { name: "Scan items" });
       return utils;
     };
+    // Steady-read is DEFAULT ON (owner ruling 2026-09-24): one deliberate scan = the same code held for three frames.
     const scanCode = async (code: string) => {
       await act(async () => {
+        cameraDetect!(code);
+        cameraDetect!(code);
         cameraDetect!(code);
       });
     };
@@ -350,6 +441,27 @@ describe("CreateOrderModal", () => {
       expect(await screen.findByText("Widget")).toBeInTheDocument();
       expect(screen.getByText("1 item · $9.99")).toBeInTheDocument();
       expect(mockResolveProductByCode).toHaveBeenCalledWith("012345678905");
+    });
+
+    it("row 536: a repeat of the code just scanned counts after 0.3 s out of view with ONE frame (no steady hold)", async () => {
+      let now = 1_700_000_000_000;
+      const spy = jest.spyOn(Date, "now").mockImplementation(() => now);
+      try {
+        mockResolveProductByCode.mockResolvedValue(widget);
+        await openScreen();
+        await scanCode("111"); // the first sighting earns its steady read
+        await screen.findByText("Widget");
+        for (let i = 0; i < 4; i++) {
+          now += 1000; // lifted away ~1 s, back for a single frame
+          await act(async () => {
+            cameraDetect!("111");
+          });
+        }
+        await waitFor(() => expect(screen.getByText("1 item · $49.95")).toBeInTheDocument());
+        expect(mockResolveProductByCode).toHaveBeenCalledTimes(1); // the repeats never left the order
+      } finally {
+        spy.mockRestore();
+      }
     });
 
     it("a repeat scan of the same product increments its quantity, never duplicates the row", async () => {
@@ -449,7 +561,7 @@ describe("CreateOrderModal", () => {
       await scanCode("111"); // this scan CREATED the line
       await screen.findByText("Case Soda");
       // The operator raises it to 3 cases by hand.
-      fireEvent.change(screen.getByTitle("Number of whole cases"), { target: { value: "3" } });
+      fireEvent.change(screen.getByTitle("Number of whole boxes"), { target: { value: "3" } });
       await waitFor(() => expect(screen.getByText("1 item · $72.00")).toBeInTheDocument());
 
       fireEvent.click(screen.getByRole("button", { name: /undo last scan/i }));
@@ -994,23 +1106,32 @@ describe("CreateOrderModal", () => {
         mockCreateOrderError = { response: { status: 500, data: { message: "Boom happened" } } };
         renderWithProviders(<CreateOrderModal isOpen onClose={jest.fn()} />);
         await pickCustomer("Acme Foods");
+        // an UNCODED refusal keeps today's server sentence (B986-7 Opus: never a vaguer fallback)
         expect(screen.getByText("Boom happened")).toBeInTheDocument();
       });
 
       // CREDIT_LIMIT_EXCEEDED is in providers.tsx's HANDLED_CODES (the order detail opens a guard
       // dialog), which silences the global toast — so the create modal's inline banner is the ONLY
       // place its message can show. This pins that a credit refusal on create is never silent.
-      it("a credit-limit refusal on create still shows the server's message in the banner", async () => {
+      it("a credit-limit refusal on create shows the FIXED sentence built from the structured numbers in the banner (B986)", async () => {
         mockCustomers = [acme];
         mockCreateOrderError = {
           response: {
             status: 409,
-            data: { code: "CREDIT_LIMIT_EXCEEDED", message: "Over their credit limit of 100.00." },
+            data: {
+              code: "CREDIT_LIMIT_EXCEEDED",
+              limit: 100,
+              exposure: 110,
+              message: "Over their credit limit of 100.00.",
+            },
           },
         };
         renderWithProviders(<CreateOrderModal isOpen onClose={jest.fn()} />);
         await pickCustomer("Acme Foods");
-        expect(screen.getByText("Over their credit limit of 100.00.")).toBeInTheDocument();
+        expect(
+          screen.getByText(/over their \$100\.00 credit limit. Collect a payment/),
+        ).toBeInTheDocument();
+        expect(screen.queryByText("Over their credit limit of 100.00.")).not.toBeInTheDocument();
       });
     });
   });
@@ -1138,44 +1259,46 @@ describe("CreateOrderModal", () => {
 
     it("(d) a new case-packed line shows ONLY the cases field and submits pieces = 0", async () => {
       await setup(boxed);
-      expect(await screen.findByTitle("Number of whole cases")).toBeInTheDocument();
-      expect(screen.queryByLabelText("Extra loose units")).not.toBeInTheDocument();
-      expect(screen.getByRole("button", { name: "+ units" })).toBeInTheDocument();
+      expect(await screen.findByTitle("Number of whole boxes")).toBeInTheDocument();
+      expect(screen.queryByLabelText("Extra pieces")).not.toBeInTheDocument();
+      expect(screen.getByRole("button", { name: ADD_EXTRA })).toBeInTheDocument();
       expect(saveDraft()).toEqual([{ productId: "prod-1", qty: 24, boxes: 1, pieces: 0 }]);
     });
 
-    it("(d) “+ units” reveals the loose field; its value rides as pieces on top of the cases", async () => {
+    it("(d) “+ pieces” reveals the loose field; its value rides as pieces on top of the cases", async () => {
       await setup(boxed);
-      fireEvent.click(await screen.findByRole("button", { name: "+ units" }));
-      fireEvent.change(screen.getByLabelText("Extra loose units"), { target: { value: "5" } });
+      fireEvent.click(await screen.findByRole("button", { name: ADD_EXTRA }));
+      fireEvent.change(screen.getByLabelText("Extra pieces"), { target: { value: "5" } });
       expect(saveDraft()).toEqual([{ productId: "prod-1", qty: 29, boxes: 1, pieces: 5 }]);
     });
 
     it("(d) removing the extra units puts pieces back to 0 and hides the field", async () => {
       await setup(boxed);
-      fireEvent.click(await screen.findByRole("button", { name: "+ units" }));
-      fireEvent.change(screen.getByLabelText("Extra loose units"), { target: { value: "5" } });
-      fireEvent.click(screen.getByRole("button", { name: "Remove extra units" }));
-      expect(screen.queryByLabelText("Extra loose units")).not.toBeInTheDocument();
+      fireEvent.click(await screen.findByRole("button", { name: ADD_EXTRA }));
+      fireEvent.change(screen.getByLabelText("Extra pieces"), { target: { value: "5" } });
+      fireEvent.click(screen.getByRole("button", { name: REMOVE_EXTRA }));
+      expect(screen.queryByLabelText("Extra pieces")).not.toBeInTheDocument();
       expect(saveDraft()).toEqual([{ productId: "prod-1", qty: 24, boxes: 1, pieces: 0 }]);
     });
 
     it("(d) Unit mode shows only the total units; back in Case mode a loose remainder is shown, never dropped", async () => {
       await setup(boxed);
-      fireEvent.click(await screen.findByRole("button", { name: "Unit" }));
-      const total = screen.getByTitle("Total units") as HTMLInputElement;
+      fireEvent.click(await screen.findByRole("button", { name: "Piece" }));
+      const total = screen.getByTitle("Total pieces") as HTMLInputElement;
       expect(total.value).toBe("24"); // 1 case → 24 units: the same qty, converted by display
-      expect(screen.queryByTitle("Number of whole cases")).not.toBeInTheDocument();
+      expect(screen.queryByTitle("Number of whole boxes")).not.toBeInTheDocument();
       fireEvent.change(total, { target: { value: "25" } });
-      fireEvent.click(screen.getByRole("button", { name: "Case" }));
-      expect((screen.getByTitle("Number of whole cases") as HTMLInputElement).value).toBe("1");
-      expect((screen.getByLabelText("Extra loose units") as HTMLInputElement).value).toBe("1");
+      fireEvent.click(screen.getByRole("button", { name: "Box" }));
+      expect((screen.getByTitle("Number of whole boxes") as HTMLInputElement).value).toBe("1");
+      expect((screen.getByLabelText("Extra pieces") as HTMLInputElement).value).toBe("1");
       expect(saveDraft()).toEqual([{ productId: "prod-1", qty: 25, boxes: 1, pieces: 1 }]);
     });
 
     it("(b) a plain line's qty is tap-to-type; below 1 clamps to 1", async () => {
       await setup(plain);
       const qty = (await screen.findByLabelText("Quantity")) as HTMLInputElement;
+      // #2865 case c: a freshly added line is PENDING (qty locked) until its default unit resolves.
+      await waitFor(() => expect(qty).toBeEnabled());
       fireEvent.change(qty, { target: { value: "7" } });
       expect(qty.value).toBe("7");
       fireEvent.change(qty, { target: { value: "0" } });
@@ -1281,5 +1404,17 @@ describe("CreateOrderModal", () => {
       expect(screen.queryByLabelText("Reason (required)")).not.toBeInTheDocument();
       expect(saveDraft()).toEqual([{ productId: "prod-2", qty: 1 }]);
     });
+  });
+
+  it("M4: the active-order preview asks for the SAME path create will use (the customer's SHIP default)", async () => {
+    mockCustomers = [
+      { id: "c-ship", businessName: "Shipco Ltd", pricingTier: 1, fulfillPath: "SHIP" },
+    ];
+    renderWithProviders(<CreateOrderModal isOpen onClose={jest.fn()} />);
+    fireEvent.change(screen.getByPlaceholderText("Search by business name…"), {
+      target: { value: "Shi" },
+    });
+    fireEvent.click(await screen.findByText("Shipco Ltd"));
+    await waitFor(() => expect(mockActiveOrderHook).toHaveBeenLastCalledWith("c-ship", "SHIP"));
   });
 });

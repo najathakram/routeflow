@@ -19,7 +19,7 @@ export type { TextareaProps } from "./Textarea";
 export { Select } from "./Select";
 export type { SelectProps, SelectOption } from "./Select";
 
-export { Modal } from "./Modal";
+export { Modal, ModalNoticeContext } from "./Modal";
 export type { ModalProps } from "./Modal";
 
 export { Table } from "./Table";
@@ -34,6 +34,8 @@ export type { AvatarProps, AvatarSize } from "./Avatar";
 export { ToastProvider, useToast } from "./Toast";
 export type { ToastData, ToastVariant, ToastAction } from "./Toast";
 
+export { ScrollShadow } from "./ScrollShadow";
+export type { ScrollShadowProps } from "./ScrollShadow";
 export { Skeleton, SkeletonRows } from "./Skeleton";
 export type { SkeletonProps } from "./Skeleton";
 

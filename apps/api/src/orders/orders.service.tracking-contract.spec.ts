@@ -39,6 +39,7 @@ jest.mock("../notifications/notifications.service", () => ({
   })),
 }));
 
+import { oversellReaderOffProvider } from "./testing/policy-reader-provider";
 import { Test, TestingModule } from "@nestjs/testing";
 import { getQueueToken } from "@nestjs/bull";
 import { ConfigService } from "@nestjs/config";
@@ -86,6 +87,7 @@ const customerPayload = {
   sub: "user-cust",
   username: "customer1",
   role: "CUSTOMER" as const,
+  tenantId: "test-tenant",
   status: "ACTIVE" as const,
   forcePasswordChange: false,
 };
@@ -99,6 +101,7 @@ describe("OrdersService — F11 getOrderTracking contract (TP2)", () => {
 
     const module: TestingModule = await Test.createTestingModule({
       providers: [
+        oversellReaderOffProvider,
         OrdersService,
         {
           provide: TenantContextService,
@@ -134,6 +137,8 @@ describe("OrdersService — F11 getOrderTracking contract (TP2)", () => {
             findOpenOrderDraft: jest.fn().mockResolvedValue(null),
             reconcileOrderDraftInvoice: jest.fn().mockResolvedValue({ id: "inv-1" }),
             resyncOrderInvoicesForEdit: jest.fn().mockResolvedValue([{ id: "inv-1" }]),
+            followPartialPrices: jest.fn().mockResolvedValue({ issuedPartialsUnchanged: [] }),
+            projectEditedInvoiceTotals: jest.fn().mockResolvedValue([]),
             revertLinkedInvoicesForOrderEdit: jest.fn().mockResolvedValue([]),
             voidInvoice: jest.fn().mockResolvedValue({ id: "inv-1", status: "VOID" }),
             voidInvoiceInTx: jest.fn().mockResolvedValue({ id: "inv-1", status: "VOID" }),

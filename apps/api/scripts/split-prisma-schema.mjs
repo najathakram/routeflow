@@ -122,8 +122,10 @@ const MODEL_DOMAIN = {
   PlatformConfig: "tenancy",
   BuyerAccount: "tenancy",
   BuyerRefreshToken: "tenancy",
+  AuthHandoffCode: "tenancy",
   BuyerPasswordResetToken: "tenancy",
   BuyerEmailVerificationToken: "tenancy",
+  UserEmailVerificationToken: "tenancy",
   CustomerLink: "tenancy",
   BuyerMergeRequest: "tenancy",
 
@@ -140,6 +142,7 @@ const MODEL_DOMAIN = {
   PurchaseOrder: "catalog",
   PurchaseOrderItem: "catalog",
   ProductUnit: "catalog",
+  TenantUnit: "catalog",
   ProductBarcode: "catalog",
   ProductImage: "catalog",
   Recipe: "catalog",
@@ -169,6 +172,7 @@ const MODEL_DOMAIN = {
   OrderRevision: "sales",
   ChangeRequest: "sales",
   OrderItem: "sales",
+  OrderItemComponent: "sales",
   DeliveryMutation: "sales",
   DeliveryBatch: "sales",
   OrderTemplate: "sales",
@@ -189,6 +193,8 @@ const MODEL_DOMAIN = {
   CommissionStatement: "sales",
   CommissionStatementLine: "sales",
   CommissionPayout: "sales",
+  CounterDayClose: "sales",
+  CounterParkedCart: "sales",
 
   // ─── finance ───────────────────────────────────────────────────────────────
   Transaction: "finance",
@@ -196,6 +202,7 @@ const MODEL_DOMAIN = {
   Payment: "finance",
   Invoice: "finance",
   InvoiceItem: "finance",
+  InvoiceItemComponent: "finance",
   InvoicePayment: "finance",
   PaymentCounter: "finance",
   ExpenseCategory: "finance",
@@ -237,6 +244,7 @@ const MODEL_DOMAIN = {
   StripeBillingEvent: "platform",
   RfInvoice: "platform",
   SystemConfig: "platform",
+  PolicyValue: "platform",
   Message: "platform",
   MessageThread: "platform",
   MessageTemplate: "platform",
@@ -264,6 +272,7 @@ const MODEL_DOMAIN = {
   IntakeFile: "platform",
   IntakeAccessToken: "platform",
   OrderAcceptance: "platform",
+  EmailDelivery: "platform",
 
   // ─── compliance ────────────────────────────────────────────────────────────
   TobaccoReport: "compliance",
@@ -276,6 +285,8 @@ const MODEL_DOMAIN = {
   ReturnParkedRestock: "compliance",
   RegulatedFiling: "compliance",
   SellingRestriction: "compliance",
+  SellingRestrictionTarget: "compliance",
+  SellingRestrictionRevision: "compliance",
 };
 
 const HEADER_RE =

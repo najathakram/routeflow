@@ -14,13 +14,19 @@ import {
   useRegulatedTemplates,
 } from "../lib/api/tracked-categories";
 import { sectionPickerOptions, subcategoryPickerOptions } from "../lib/regulated-format";
-import { cascadeTierPrices, perUnitPrice, type TierField } from "@routeflow/pricing";
+import {
+  applyLadderChange,
+  ladderChangeNote,
+  perUnitPrice,
+  type TierField,
+} from "@routeflow/pricing";
 import {
   buildProductPayload,
   emptyProductForm,
   productFormFromValues,
   type ProductFormValues,
   type SubmitPayload,
+  listCommitTierPatch,
 } from "../lib/product-form";
 import { useTierLabels } from "../lib/api/tier-labels";
 import { tierLabel } from "../lib/tier-label";
@@ -28,13 +34,7 @@ import { tierLabel } from "../lib/tier-label";
 // Re-export the pure form logic so existing importers keep their import site,
 // while the logic itself lives in a React-Native-free module that mobile Jest
 // can unit-test directly (see __tests__/operator-create-forms.test.ts).
-export {
-  buildProductPayload,
-  emptyProductForm,
-  productFormFromValues,
-  type ProductFormValues,
-  type SubmitPayload,
-};
+export { emptyProductForm, productFormFromValues, type ProductFormValues, type SubmitPayload };
 
 function parseOptionalNumber(v: string): number | undefined {
   const t = v.trim();
@@ -83,16 +83,43 @@ export function ProductForm({
   // doesn't re-cascade. Tier 1 / pricePerUnit deliberately keeps its own
   // behavior and is never wired here.
   const tierFocusRef = React.useRef<Partial<Record<TierField, string>>>({});
+  const [ladderNote, setLadderNote] = React.useState<string | null>(null);
+  // The list price moves tiers 2-5 on COMMIT by the same ladder rule (listCommitTierPatch, audit 2026-10-14). A tier
+  // typed in this session wins; the list's value at focus is the "old" list. The move is named in the same note.
+  const touchedTiersRef = React.useRef<Set<string>>(new Set());
+  const listFocusRef = React.useRef<string>("");
+  // One commit per focus session: native fires onEndEditing AND onBlur, Expo web fires onBlur only (#3470 review),
+  // so both are wired and the first to arrive handles it.
+  const pendingCommitRef = React.useRef<Set<string>>(new Set());
+  const onListEndEditing = (text?: string) => {
+    if (!pendingCommitRef.current.delete("pricePerUnit")) return;
+    const moved = listCommitTierPatch(
+      listFocusRef.current,
+      text ?? form.pricePerUnit,
+      form,
+      touchedTiersRef.current,
+    );
+    if (Object.keys(moved).length > 0) setForm((f) => ({ ...f, ...moved }));
+    setLadderNote(ladderChangeNote(moved, (n) => tierLabel(tierLabels, n)));
+  };
   const onTierFocus = (field: TierField) => {
     tierFocusRef.current[field] = form[field];
+    pendingCommitRef.current.add(field);
   };
-  const onTierEndEditing = (field: TierField, text: string) => {
+  const onTierEndEditing = (field: TierField, text?: string) => {
+    if (!pendingCommitRef.current.delete(field)) return;
     const before = parseOptionalNumber(tierFocusRef.current[field] ?? "");
-    const after = parseOptionalNumber(text);
-    if (after == null) return; // cleared/invalid — nothing to cascade
-    const changed = before == null || Math.abs(after - before) >= 1e-9;
-    if (!changed) return;
-    setForm((f) => ({ ...f, ...cascadeTierPrices(field, after) }));
+    const after = parseOptionalNumber(text ?? form[field]);
+    const changed = after != null && (before == null || Math.abs(after - before) >= 1e-9);
+    if (after == null || !changed) {
+      setLadderNote(null); // a blur with no commit clears a stale note (SA should)
+      return; // cleared/invalid or unchanged — nothing to cascade
+    }
+    // P0 2026-10-14: lower tiers move only by applyLadderChange (tracking the old value, 0, or above the new
+    // price), never a blind copy-down, and the move is named under the tiers.
+    const moved = applyLadderChange(field, tierFocusRef.current[field] ?? "", after, form);
+    if (Object.keys(moved).length > 0) setForm((f) => ({ ...f, ...moved }));
+    setLadderNote(ladderChangeNote(moved, (n) => tierLabel(tierLabels, n)));
   };
 
   const unitsPerBoxNum = parseOptionalNumber(form.unitsPerBox);
@@ -131,7 +158,18 @@ export function ProductForm({
   const showCaseUom = !!productConfig?.caseUomSupported && isBoxed;
 
   const submit = () => {
-    const result = buildProductPayload(form, mode);
+    // Re-apply the list cascade from the list the form opened with: idempotent when a blur already ran it, and the
+    // safety net where no commit event fired at all (#3470 review).
+    const final = {
+      ...form,
+      ...listCommitTierPatch(
+        initial.pricePerUnit,
+        form.pricePerUnit,
+        form,
+        touchedTiersRef.current,
+      ),
+    };
+    const result = buildProductPayload(final, mode);
     if ("error" in result) {
       setError(result.error);
       return;
@@ -409,6 +447,12 @@ export function ProductForm({
           <FormTextInput
             value={form.pricePerUnit}
             onChangeText={(v) => set("pricePerUnit", v)}
+            onFocus={() => {
+              listFocusRef.current = form.pricePerUnit;
+              pendingCommitRef.current.add("pricePerUnit");
+            }}
+            onEndEditing={(e) => onListEndEditing(e.nativeEvent.text)}
+            onBlur={() => onListEndEditing()}
             placeholder="0.00"
             keyboardType="decimal-pad"
           />
@@ -416,9 +460,13 @@ export function ProductForm({
         <FormField label={`${tierLabel(tierLabels, 2)} price`}>
           <FormTextInput
             value={form.priceTier2}
-            onChangeText={(v) => set("priceTier2", v)}
+            onChangeText={(v) => {
+              touchedTiersRef.current.add("priceTier2");
+              set("priceTier2", v);
+            }}
             onFocus={() => onTierFocus("priceTier2")}
             onEndEditing={(e) => onTierEndEditing("priceTier2", e.nativeEvent.text)}
+            onBlur={() => onTierEndEditing("priceTier2")}
             placeholder="0.00"
             keyboardType="decimal-pad"
           />
@@ -426,9 +474,13 @@ export function ProductForm({
         <FormField label={`${tierLabel(tierLabels, 3)} price`}>
           <FormTextInput
             value={form.priceTier3}
-            onChangeText={(v) => set("priceTier3", v)}
+            onChangeText={(v) => {
+              touchedTiersRef.current.add("priceTier3");
+              set("priceTier3", v);
+            }}
             onFocus={() => onTierFocus("priceTier3")}
             onEndEditing={(e) => onTierEndEditing("priceTier3", e.nativeEvent.text)}
+            onBlur={() => onTierEndEditing("priceTier3")}
             placeholder="0.00"
             keyboardType="decimal-pad"
           />
@@ -436,9 +488,13 @@ export function ProductForm({
         <FormField label={`${tierLabel(tierLabels, 4)} price`}>
           <FormTextInput
             value={form.priceTier4}
-            onChangeText={(v) => set("priceTier4", v)}
+            onChangeText={(v) => {
+              touchedTiersRef.current.add("priceTier4");
+              set("priceTier4", v);
+            }}
             onFocus={() => onTierFocus("priceTier4")}
             onEndEditing={(e) => onTierEndEditing("priceTier4", e.nativeEvent.text)}
+            onBlur={() => onTierEndEditing("priceTier4")}
             placeholder="0.00"
             keyboardType="decimal-pad"
           />
@@ -446,13 +502,22 @@ export function ProductForm({
         <FormField label={`${tierLabel(tierLabels, 5)} price`}>
           <FormTextInput
             value={form.priceTier5}
-            onChangeText={(v) => set("priceTier5", v)}
+            onChangeText={(v) => {
+              touchedTiersRef.current.add("priceTier5");
+              set("priceTier5", v);
+            }}
             onFocus={() => onTierFocus("priceTier5")}
             onEndEditing={(e) => onTierEndEditing("priceTier5", e.nativeEvent.text)}
+            onBlur={() => onTierEndEditing("priceTier5")}
             placeholder="0.00"
             keyboardType="decimal-pad"
           />
         </FormField>
+        {ladderNote ? (
+          <Text accessibilityRole="text" testID="ladder-note" style={styles.ladderNote}>
+            {ladderNote}
+          </Text>
+        ) : null}
         <FormField label="Standard cost (optional)">
           <FormTextInput
             value={form.standardCost}
@@ -638,6 +703,7 @@ const styles = StyleSheet.create({
     borderRadius: 10,
   },
   errorText: { fontSize: 13, fontFamily: "Inter_500Medium", color: ios.system.redInk, flex: 1 },
+  ladderNote: { fontSize: 13, fontFamily: "Inter_500Medium", color: ios.label2 },
   scanBtn: {
     width: 44,
     height: 44,

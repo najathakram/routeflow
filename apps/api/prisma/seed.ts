@@ -5,6 +5,7 @@ import * as bcrypt from "bcrypt";
 import { assertTestTenant } from "../../../scripts/lib/test-tenants.cjs";
 import { localConnectionConfig } from "../scripts/lib/local-db-target.cjs";
 import { ensureParityBuyers } from "./seed-parity-buyer";
+import { addressStateFields } from "../src/customers/address-state";
 
 // A provably-local target dials the explicit fields that were vetted (never the raw string, whose ?host= could
 // redirect it); only a deliberate SEED_ALLOW_REMOTE=1 run uses the raw URL (#2204).
@@ -15,6 +16,10 @@ const prisma = new PrismaClient({ adapter });
 
 const SALT_ROUNDS = 10;
 const PASSWORD = "Test@1234";
+// Local throwaway for the additive TENANT_ADMIN test user below (same convention as the
+// `admin` operator's "Admin@123": a committed value for the approved `test` tenant on a local DB).
+const TENANT_ADMIN_USERNAME = "tenant_admin";
+const TENANT_ADMIN_PASSWORD = "TenantAdmin1!";
 const today = new Date();
 today.setHours(0, 0, 0, 0);
 
@@ -31,7 +36,7 @@ const TENANT_SLUG = "test";
  * assertTestTenant() vets the SLUG; nothing vetted the DATABASE. Before the
  * multi-tenant fix this script died on its first query, so a stray prod
  * DATABASE_URL was harmless. Now that it runs, the same slip would write a
- * "test" tenant — 7 users, 15 products, 10 orders — straight into a live
+ * "test" tenant — 8 users, 15 products, 10 orders — straight into a live
  * database. CLAUDE.md already promises seeds are "BLOCKED by production
  * guard"; this is that guard.
  *
@@ -70,9 +75,10 @@ async function main() {
   assertSafeTarget();
 
   // ─── Hash passwords ───────────────────────────────────────────────────────────
-  const [adminHash, devHash] = await Promise.all([
+  const [adminHash, devHash, tenantAdminHash] = await Promise.all([
     bcrypt.hash("Admin@123", SALT_ROUNDS),
     bcrypt.hash(PASSWORD, SALT_ROUNDS),
+    bcrypt.hash(TENANT_ADMIN_PASSWORD, SALT_ROUNDS),
   ]);
 
   // ─── Tenant ───────────────────────────────────────────────────────────────────
@@ -99,6 +105,24 @@ async function main() {
       username: "admin",
       password: adminHash,
       role: "OPERATOR",
+      status: "ACTIVE",
+      forcePasswordChange: false,
+    },
+  });
+
+  // ─── Tenant admin (additive) ──────────────────────────────────────────────────
+  // The `admin` above stays an OPERATOR. Harness callers of admin-only endpoints (account
+  // administration) log in as this TENANT_ADMIN instead. Idempotent upsert keyed on the
+  // tenant-scoped username; behind assertSafeTarget()/assertTestTenant() like every row here.
+  await prisma.user.upsert({
+    where: { tenantId_username: { tenantId, username: TENANT_ADMIN_USERNAME } },
+    update: { password: tenantAdminHash, role: "TENANT_ADMIN", status: "ACTIVE" },
+    create: {
+      tenantId,
+      email: "tenant.admin@routeflow.dev",
+      username: TENANT_ADMIN_USERNAME,
+      password: tenantAdminHash,
+      role: "TENANT_ADMIN",
       status: "ACTIVE",
       forcePasswordChange: false,
     },
@@ -322,6 +346,8 @@ async function main() {
           line1: def.address.line1,
           city: def.address.city,
           state: def.address.state,
+          // Row 434: the engine reads ONLY stateCode; derive it at the write boundary like every writer
+          ...addressStateFields(def.address.state, def.address.zip),
           zip: def.address.zip,
           lat: def.address.lat,
           lng: def.address.lng,
@@ -752,6 +778,7 @@ async function main() {
         status,
         urgent,
         source: "APP",
+        sourceRecorded: true, // F1(i): the seed means APP (a buyer order); not a legacy row
         subtotal: subtotal.toFixed(2),
         tax: tax.toFixed(2),
         total: total.toFixed(2),
@@ -778,6 +805,7 @@ async function main() {
             qty: item.qty.toString(),
             unitPrice: item.unitPrice.toFixed(2),
             subtotal: (item.qty * item.unitPrice).toFixed(2),
+            authorChannel: "BUYER", // F1(i) SA ruling (#3418): the seed order is source APP (a buyer's lines)
           },
         }),
       ),
@@ -915,7 +943,7 @@ async function main() {
   });
 
   console.log(
-    `Seeded tenant "${TENANT_SLUG}" (${tenantId}): 7 users, ${productDefs.length} products, ` +
+    `Seeded tenant "${TENANT_SLUG}" (${tenantId}): 8 users, ${productDefs.length} products, ` +
       `10 orders, transactions for delivered orders`,
   );
 }

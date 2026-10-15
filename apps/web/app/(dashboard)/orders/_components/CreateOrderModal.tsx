@@ -9,7 +9,15 @@ import { X, AlertTriangle, ChevronRight, Plus, Minus } from "lucide-react";
 import { Modal, Textarea, Button, cn, useToast } from "@routeflow/ui/web";
 import { useQuery } from "@tanstack/react-query";
 import { useCustomers, useCustomerPrices, useCustomer } from "@/lib/api/customers";
+import { countNoun } from "@/lib/plural";
 import { useProducts } from "@/lib/api/products";
+import {
+  attachParent,
+  groupSearchRows,
+  isFamilyProduct,
+  isGroupExpanded,
+  pickerProductName,
+} from "@/lib/product-search-groups";
 import { scheduleScannerRefocus } from "@/lib/refocus-scanner";
 import {
   useCreateOrder,
@@ -21,12 +29,20 @@ import { useCreateDraft, useUpdateDraft, useDeleteDraft, useDraft } from "@/lib/
 import { draftDeviceLabel, type OrderDraftPayload } from "@/lib/drafts";
 import { apiClient } from "@/lib/api-client";
 import { orderCreatedToast } from "./order-created-toast";
-import { mergeQtyIntoLine, mergedLineMessage, newLineQty } from "./add-line-merge";
+import {
+  mergePieceIntoLine,
+  mergeQtyIntoLine,
+  mergedLineMessage,
+  newLineQtyForLevel,
+} from "./add-line-merge";
 import {
   isSpecialTier,
   getTierPrice,
   computeLineSubtotal,
-  normalizeBoxesPieces,
+  pendingScanDecision,
+  undoPendingTap,
+  type DerivedBaseMarker,
+  type SellLevel,
 } from "@routeflow/pricing";
 import {
   applyTypedPrice,
@@ -42,31 +58,74 @@ import { LineItemRow } from "@/components/LineItemRow";
 import { OrderLineUnitPicker } from "@/components/OrderLineUnitPicker";
 import {
   applyLineUnit,
-  mergeSameLine,
   sameProductUnit,
   unitLabelPayload,
   type PackBase,
 } from "@/lib/order-line-unit";
+import {
+  applyUnitToLines,
+  isPendingDefaultUnit,
+  pendingCount,
+  isShapedLine,
+  isStaffRole,
+  keepsDefaultStart,
+  mergeResolvedLines,
+  UNITS_LOADING_SCAN_MESSAGE,
+} from "@/lib/default-unit-line";
+import {
+  refusesLineEdit,
+  setBoxesOnLines,
+  setPiecesOnLines,
+  setQtyOnLines,
+  setSellByOnLines,
+  setUnitQtyOnLines,
+  stepQtyOnLines,
+} from "@/lib/line-qty-edit";
+import { useDefaultUnitResolver } from "@/lib/hooks/useDefaultUnitResolver";
 import type { UnitOption } from "@/lib/unit-options";
 import { useScanCodeHandler } from "./scan/useScanCodeHandler";
+import { createSerialScanQueue } from "./scan/serial-scan-queue";
+import { DidYouMeanPicker } from "@/components/scan/DidYouMeanPicker";
 import { ScanOrderScreen } from "./scan/ScanOrderScreen";
 import { PriceEditor } from "./scan/PriceEditor";
 import type { ScanHistoryEntry } from "./scan/scan-summary";
 import { LicenseGuardModal } from "./LicenseGuardModal";
+import { API_ERROR_CODES, staffMay } from "@routeflow/types";
 import { parseRegulatedAuthError, type BlockedCategory } from "@/lib/api/authorizations";
 import { parseSellingRestricted } from "@/lib/api/selling-restricted";
 import { BlockedLinesDialog } from "@/components/BlockedLinesDialog";
 import type { BlockedLine } from "@routeflow/types";
 import { useTrackedCategories } from "@/lib/api/tracked-categories";
 import { CreditNotePicker, type CreditSelection } from "./CreditNotePicker";
+import { CustomerSearchPicker } from "./CustomerSearchPicker";
+import { STALE_CREDIT_COPY, isStaleCreditRefusal } from "./stale-credit-refusal";
+import { useCustomerChangeUndo } from "./use-customer-change-undo";
+import { useListboxNav } from "@/lib/use-listbox-nav";
 import { useAuth } from "@/lib/auth-context";
 import { useHasAddon } from "@/lib/api/tobacco";
 import { SALES_AGENTS_ADDON, useOrderUiV2, useScanV2 } from "@/lib/api/addons";
+import { useFulfilmentCaps, useStaffFulfilment } from "@/lib/fulfilment-caps";
+import { isStoreOnly } from "@/lib/counter-sale";
+import { usePosFinish, usePosMode, PosFinishError } from "@/lib/api/pos-orders";
+import { POS_COPY } from "@/lib/pos-copy";
 import {
   OrderInlineReturnsSection,
   type OrderInlineReturnsSectionHandle,
 } from "./OrderInlineReturnsSection";
 import { RETURN_SAVE_BLOCKED, useOrderInlineReturnSave } from "./use-order-inline-return-save";
+import {
+  CREDITS_PENDING_COPY,
+  creditsPendingOrderId,
+  idempotencyConflictOrderId,
+  isUnknownOutcome,
+  useCreateOrderSubmitKey,
+} from "./use-create-order-submit-key";
+import { codedToastCopy } from "@/lib/generic-toast-copy";
+import { useOrderSuggestions } from "@/lib/api/order-suggestions";
+import { mergeOrderedIntoLine, type OrderedAdd } from "./order-again";
+import { OrderSuggestionsBar } from "./OrderSuggestionsBar";
+import { useOrderSuggestionActions } from "./use-order-suggestion-actions";
+import { ReadOnlyHint, WriteButton } from "@/lib/read-only-gate";
 
 // ─── Schema ───────────────────────────────────────────────────────────────────
 
@@ -102,7 +161,7 @@ interface SelectedCustomer {
   fulfillPath?: "ROUTE" | "SHIP";
 }
 
-interface LineItem {
+interface LineItem extends DerivedBaseMarker {
   tempId: string;
   /** Empty string for unlisted (ad-hoc) lines — `isUnlisted` is the real flag. */
   productId: string;
@@ -134,6 +193,10 @@ interface LineItem {
   sellBy?: "case" | "unit";
   /** units_v1: the non-pack unit this line sells by (`undefined` = the pack); see LineItemRowItem. */
   unitLabel?: string;
+  /** #2784 UI-only: a NEW line from the picker tap / a shared-code scan starts on the default selling unit. */
+  startOnDefaultUnit?: boolean;
+  /** #2865 case c UI-only: the PENDING TAP COUNT (N default-start taps before the ladder loaded = N of the default unit). */
+  pendingTaps?: number;
   /** UI-only: the pack fields a unit switch overwrote (restored when the pack is chosen again). */
   packBase?: PackBase;
   /**
@@ -159,8 +222,25 @@ export interface CreateOrderModalProps {
   resumeDraftId?: string | null;
   /** A barcode to add on open (scan-to-draft / scan-to-new, pos-cost-roles §2). */
   initialScanCode?: string | null;
+  /** B1210: open a FRESH order on "Ship via carrier" (?preselect=SHIP). Ignored when resuming a draft: that keeps its own path. */
+  initialFulfillPath?: "SHIP" | null;
   /** Wired by the orders page to `router.push` — powers the "View Order" toast action. */
   onViewOrder?: (orderId: string) => void;
+}
+
+type SubmitOptions = { mergeChoice?: "merge" | "separate"; asDraft?: boolean };
+
+/** A 4xx the modal resolves with the operator and re-submits itself (merge prompt, license capture): the SAME attempt. */
+function isSameAttemptRefusal(err: any): boolean {
+  const body = err?.response?.data;
+  if (
+    err?.response?.status === 409 &&
+    body?.code === API_ERROR_CODES.MERGE_CHOICE_REQUIRED &&
+    body?.activeOrder
+  ) {
+    return true;
+  }
+  return (parseRegulatedAuthError(err)?.length ?? 0) > 0;
 }
 
 export function CreateOrderModal({
@@ -168,10 +248,36 @@ export function CreateOrderModal({
   onClose,
   resumeDraftId,
   initialScanCode,
+  initialFulfillPath,
   onViewOrder,
 }: CreateOrderModalProps) {
   const { toast } = useToast();
-  const createOrder = useCreateOrder();
+  const createOrder = useCreateOrder({ localErrorToast: true });
+  const pos = usePosMode(); // SA-763r P-2: server-backed preference, never localStorage
+  const { user: posUser } = useAuth();
+  // The switch and PICKUP are for roles with USE_POS_MODE only: a stored preference never applies without it.
+  const posAllowed = staffMay(posUser?.role, "USE_POS_MODE");
+  // A store-only business (capabilities.fulfilment: PICKUP is its only method) has no delivery to switch back to:
+  // the builder is simply POS mode, with no switch and no preference involved (row 331).
+  const storeOnly = isStoreOnly(useFulfilmentCaps());
+  const posMode = posAllowed && (storeOnly || pos.posMode);
+  // POS mode forced by the capability (not an opt-in): the builder talks about invoicing in store, not delivery.
+  const storeOnlyPos = posAllowed && storeOnly;
+  const posFinish = usePosFinish();
+  // Which POS finishing action the operator pressed ("Confirm and invoice" vs "Confirm only"); survives the merge prompt.
+  const posFinishRef = React.useRef<"invoice" | "confirm">("invoice");
+  const submitKey = useCreateOrderSubmitKey(isOpen); // BUG-A: latch + Idempotency-Key per attempt
+  // An unknown outcome (timeout / 5xx) may still have written the order. Closing mints a fresh key on
+  // reopen (accepted residual risk), so tell the operator to check before re-entering it.
+  React.useEffect(() => {
+    if (!isOpen && submitKey.hasUnknown()) {
+      toast({
+        title: "Your last order may have gone through. Check Orders before re-entering it.",
+        variant: "warning",
+      });
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [isOpen]);
   // #2406: an inline return started (lines entered + quoted) before this order is saved.
   const returnsRef = React.useRef<OrderInlineReturnsSectionHandle>(null);
   const returnSave = useOrderInlineReturnSave(returnsRef);
@@ -214,6 +320,10 @@ export function CreateOrderModal({
   const [productSearch, setProductSearch] = React.useState("");
   const [debouncedProductSearch, setDebouncedProductSearch] = React.useState("");
   const [lineItems, setLineItems] = React.useState<LineItem[]>([]);
+  // The scan handler's local fast path reads the order as of the LAST COMMIT (addLineItem flushSyncs).
+  const orderSessionRef = React.useRef(0);
+  const lineItemsRef = React.useRef(lineItems);
+  lineItemsRef.current = lineItems;
   const [lineItemsError, setLineItemsError] = React.useState("");
   const [expandedParentId, setExpandedParentId] = React.useState<string | null>(null);
 
@@ -231,7 +341,11 @@ export function CreateOrderModal({
   // never a value computed before that decision, which a same-tick retry+live-scan race of the
   // same product could make stale (both calls would otherwise decide "new line" from the same
   // pre-commit snapshot and append two rows for one product).
-  const lastAddResultRef = React.useRef<{ created: boolean; mergedInto?: LineItem } | null>(null);
+  const lastAddResultRef = React.useRef<{
+    created: boolean;
+    mergedInto?: LineItem;
+    refused?: boolean;
+  } | null>(null);
   // #2696 (b): the line whose price/qty sheet (the scan screen's PriceEditor) is open, if any.
   const [editingLineId, setEditingLineId] = React.useState<string | null>(null);
   // Scroll the just-scanned line into view so rapid scanning stays visible.
@@ -245,6 +359,8 @@ export function CreateOrderModal({
 
   // Create-product modal state
   const [createProductOpen, setCreateProductOpen] = React.useState(false);
+  // B1219: a scan with no exact code match but ONE fuzzy hit is offered here, never auto-added.
+  const [scanMatches, setScanMatches] = React.useState<any[]>([]);
   const [createProductInitialName, setCreateProductInitialName] = React.useState("");
   const [createProductInitialSku, setCreateProductInitialSku] = React.useState("");
   // scan_v2 (dark, owner-granted per tenant): the accumulating scan screen replaces the
@@ -277,9 +393,6 @@ export function CreateOrderModal({
   const [licenseBlock, setLicenseBlock] = React.useState<BlockedCategory[] | null>(null);
   // Selling restrictions: lines the API refused for this customer (shown instead of a raw toast).
   const [restrictedBlock, setRestrictedBlock] = React.useState<BlockedLine[] | null>(null);
-  // Pre-check: as soon as a customer is selected, look up their active order so we can
-  // surface the prompt the moment "Create Order" is clicked.
-  const { data: activeOrderForCustomer } = useActiveOrderForCustomer(selectedCustomer?.id);
 
   // Per-product last-given price for this customer — fetched once on customer select so
   // scanning is instant (no per-item round trip). Used to pre-fill the discount field.
@@ -352,27 +465,34 @@ export function CreateOrderModal({
     return (customersData?.data ?? []).slice(0, 8);
   }, [customersData, debouncedCustomerSearch]);
 
+  // Top-level rows (parents + standalones) with variants nested. A variant that matched on its own
+  // gets its parent re-attached and opened (B1215 C6); a FAMILY is only ever a group header (C7).
+  const productGroups = React.useMemo(
+    () => groupSearchRows<any>(productsData?.data ?? []),
+    [productsData],
+  );
   const filteredProducts = React.useMemo(() => {
     if (!debouncedProductSearch) return [];
-    // Only return top-level products (parents + standalones); variants are nested inside parents
-    return (productsData?.data ?? [])
-      .filter((p: any) => !p.parentProductId) // exclude variant rows from top-level
-      .slice(0, 10);
-  }, [productsData, debouncedProductSearch]);
+    return productGroups.rows.slice(0, 10);
+  }, [productGroups, debouncedProductSearch]);
 
   // Barcode scan handler — kept in a ref so the keydown listener never goes stale. The
   // resolve ladder (archived / hit / network error / unknown code) lives in
   // ./scan/useScanCodeHandler so the redesigned scan screen can reuse it.
   const barcodeScanHandlerRef = useScanCodeHandler({
     // A thunk: addLineItem is declared further down and is read only when a code is scanned.
-    addLineItem: (product) => {
+    addLineItem: (product, level, opts) => {
       // SA-090/Opus item 1: `created` comes from addLineItem's OWN return value now — it is
       // decided inside the setLineItems updater, against the true latest state, never from a
       // closure-captured `lineItems` read here beforehand (which a same-tick retry-plus-live-scan
       // race of the same product could make stale — see addLineItem's own comment).
-      const { created } = addLineItem(product);
-      return { created };
+      const { created, refused } = addLineItem(product, level, opts);
+      return { created, refused };
     },
+    onSuggestion: (matches) => setScanMatches(matches),
+    suggestionsSuppressed: () => scanScreenActive,
+    hasLine: (productId) => lineItemsRef.current.some((li) => li.productId === productId),
+    sessionKey: () => orderSessionRef.current,
     onUnknownCode: (code) => {
       setCreateProductInitialName("");
       setCreateProductInitialSku(code);
@@ -381,40 +501,76 @@ export function CreateOrderModal({
     toast,
   });
 
+  // ONE FIFO queue for every code that arrives outside the scan screen (wedge, typed SKU + Enter, the
+  // single-shot camera): each finishes lookup AND line commit before the next starts. `consumedCodeRef`
+  // names the code in flight so addLineItem clears the search field only if it still holds THAT code -
+  // never the partly-typed next scan of a burst.
+  const consumedCodeRef = React.useRef<string | null>(null);
+  const [scanQueue] = React.useState(() =>
+    createSerialScanQueue(async (code: string) => {
+      consumedCodeRef.current = code;
+      try {
+        return await barcodeScanHandlerRef.current(code);
+      } finally {
+        consumedCodeRef.current = null;
+      }
+    }),
+  );
+
   // handleProductSearchEnter — called when Enter is pressed in the product search input.
   // Works for keyboard-emulation scanners AND paste-mode scanners (where no individual
   // keydown events fire for each character, so sequence-accumulation approaches fail).
   const handleProductSearchEnter = () => {
-    const code = productSearch.trim();
+    // The DOM value, not the render's `productSearch`: a burst can outrun the re-render that state needs.
+    const code = (productSearchRef.current?.value ?? productSearch).trim();
     if (!code) return;
     setProductSearch("");
     setDebouncedProductSearch("");
-    barcodeScanHandlerRef.current(code);
+    void scanQueue.enqueue(code);
   };
 
   const { register, handleSubmit, reset, watch, setValue } = useForm<FormValues>({
     resolver: zodResolver(schema),
-    defaultValues: { urgent: false, fulfillPath: "ROUTE" },
+    defaultValues: { urgent: false },
   });
 
   const isUrgent = watch("urgent");
   const notesValue = watch("notes");
-  const fulfillPath = watch("fulfillPath");
+  const staffFulfilment = useStaffFulfilment();
+  const fulfillPath = watch("fulfillPath") ?? staffFulfilment.formDefault;
+  // A ship-only account must not submit before /tenants/me/features answers (the path would fall back to
+  // ROUTE) — and a FAILED answer keeps it blocked behind an inline Retry, never a silent ROUTE default.
+  // POS mode sends the explicit PICKUP path, which does not depend on the delivery settings: never blocked by them.
+  const fulfilmentPending = !staffFulfilment.known && !posMode;
+  // Pre-check: as soon as a customer is selected, look up their active order so we can surface the prompt
+  // the moment "Create Order" is clicked. It looks for the SAME merge target create would: same fulfil path.
+  const { data: activeOrderForCustomer } = useActiveOrderForCustomer(
+    selectedCustomer?.id,
+    posMode ? "PICKUP" : fulfillPath,
+  );
 
   // Reset the builder each time it opens (a fresh session). For a resume, the
   // hydration effect below re-fills the state from the draft payload right after.
   React.useEffect(() => {
     if (!isOpen) return;
-    reset({ urgent: false, fulfillPath: "ROUTE" });
+    orderSessionRef.current += 1; // a new order: forget which products earlier scans resolved to
+    reset({
+      urgent: false,
+      fulfillPath: initialFulfillPath === "SHIP" && !resumeDraftId ? "SHIP" : undefined,
+    });
     setCustomerSearch("");
     setDebouncedCustomerSearch("");
     setSelectedCustomer(null);
+    customerUndo.dismiss();
+    setCustomerListOpen(true);
+    setBackdateOpen(false);
     setCustomerError("");
     setProductSearch("");
     setDebouncedProductSearch("");
     setLineItems([]);
     setLineItemsError("");
     setCustomFormOpen(false);
+    setSuggestionsMenuOpen(false);
     setCustomName("");
     setCustomPrice("");
     setCustomQty("1");
@@ -427,6 +583,7 @@ export function CreateOrderModal({
     setAppliedCredits([]);
     setFloorAcked(new Set());
     setCreateProductOpen(false);
+    setScanMatches([]);
     setCreateProductInitialName("");
     setCreateProductInitialSku("");
     createOrder.reset();
@@ -444,9 +601,28 @@ export function CreateOrderModal({
   // draft-persisted (see drafts.ts) — a resumed draft starts with none selected.
   const [appliedCredits, setAppliedCredits] = React.useState<CreditSelection[]>([]);
   // Credit selections are per-customer — reset whenever the operator swaps customers.
+  const customerUndo = useCustomerChangeUndo<SelectedCustomer, CreditSelection>({
+    selectedCustomer,
+    fulfillPath,
+    appliedCredits,
+    setSelectedCustomer,
+    setFulfillPath: (p) => setValue("fulfillPath", p as FormValues["fulfillPath"]),
+  });
+  const takeRestoredCredits = customerUndo.takeRestoredCredits;
   React.useEffect(() => {
-    setAppliedCredits([]);
-  }, [selectedCustomer?.id]);
+    setAppliedCredits(takeRestoredCredits()); // [] unless an Undo is restoring this customer's set
+  }, [selectedCustomer?.id, takeRestoredCredits]);
+  const [customerListOpen, setCustomerListOpen] = React.useState(true);
+  // Seeds the order's fulfilment from the customer's own default here (not in a
+  // selectedCustomer-keyed effect) so hydrating a parked draft's own fulfillPath is never clobbered.
+  const pickCustomer = (c: SelectedCustomer) => {
+    setSelectedCustomer(c);
+    setValue("fulfillPath", staffFulfilment.pickForm(c.fulfillPath));
+    setCustomerSearch("");
+    setDebouncedCustomerSearch("");
+    setCustomerListOpen(true);
+    customerUndo.dismiss();
+  };
 
   // scan_v2 / owner ruling D1: the customer's price applies IMMEDIATELY, including to lines scanned
   // BEFORE the customer was chosen (the classic modal never re-priced them). Only lines whose price
@@ -549,24 +725,55 @@ export function CreateOrderModal({
       const pieces = li.pieces ?? 0;
       // Never step a case-packed line below one case (or its loose pieces) — undo must not zero it.
       const boxes = Math.max(pieces > 0 ? 0 : 1, (li.boxes ?? 0) + dir);
-      return { ...li, boxes, qty: boxes * li.unitsPerBox + pieces };
+      return { ...li, boxes, qty: boxes * li.unitsPerBox + pieces, startOnDefaultUnit: false };
     }
-    return { ...li, qty: Math.max(1, li.qty + dir) };
+    return { ...li, qty: Math.max(1, li.qty + dir), startOnDefaultUnit: false };
   };
 
-  const addLineItem = (product: any): { created: boolean } => {
+  const addLineItem = (
+    product: any,
+    level: SellLevel = "BOX",
+    opts?: {
+      startOnDefaultUnit?: boolean;
+      /** "Order again": add this quantity (in this unit) instead of one; priced today like any add. */
+      ordered?: OrderedAdd;
+    },
+  ): { created: boolean; refused?: boolean } => {
     const n = 1; // #2696: every pick / scan adds one (the quick-add Qty field is gone)
+    // #2717 M4a-1 (SA-580 R1/R4): a UNIT scan on a boxed product adds one loose PIECE, never a
+    // case; a picker click (no level) and every BOX/shared scan keep today's whole-case add. For
+    // upb <= 1 there is no box/unit distinction, so the line shape is unchanged either way.
+    const unitScan = level === "UNIT" && Number(product.unitsPerBox ?? 0) > 1;
     // Already in the list: MERGE (sum) into that line instead of adding a duplicate.
     //  - order_ui_v2: +1 for a scan / plain pick, +N for a typed qty. Box-aware: a case-packed line
     //    gains N cases and its qty is re-derived from boxes/pieces (pricing reads the split).
     //  - scan_v2 alone: one whole case for a case-packed line (a new line starts as one case).
     //  - neither: the classic picker keeps its historical +1 qty so nothing changes with the gates off.
+    // A merge is a qty edit that CONSUMES startOnDefaultUnit, EXCEPT a default-start add to a still-pending line:
+    // two fast adds before the ladder loads stay "2 of the default unit" (SA-626d), never a pack.
     const merge = (li: LineItem): LineItem =>
-      orderUiV2
-        ? mergeQtyIntoLine(li, n)
-        : scanV2
-          ? stepLineUnit(li, 1)
-          : { ...li, qty: li.qty + 1 };
+      // Order again: the ordered quantity lands on the line (same product + unit) as a sum, never a "+1".
+      opts?.ordered
+        ? {
+            ...mergeOrderedIntoLine(li, opts.ordered.qty),
+            startOnDefaultUnit: false,
+            pendingTaps: undefined,
+          }
+        : // #2865 (SA-632 M2): a default-start tap on a still-pending line ONLY records one more tap. The line's own
+          // quantity (boxes/pieces) is never touched, so neither the row nor the totals ever show N cases while pending.
+          keepsDefaultStart(li, opts?.startOnDefaultUnit)
+          ? { ...li, pendingTaps: pendingCount(li) + 1 }
+          : {
+              ...(unitScan
+                ? mergePieceIntoLine(li, n)
+                : orderUiV2
+                  ? mergeQtyIntoLine(li, n)
+                  : scanV2
+                    ? stepLineUnit(li, 1)
+                    : { ...li, qty: li.qty + 1 }),
+              startOnDefaultUnit: false,
+              pendingTaps: undefined,
+            };
     // Built once, outside the updater — none of it depends on `prev`, only on `product`/the
     // customer/pricing context, so there is nothing here a race could make stale.
     const newTempId = product.id + "-" + Date.now();
@@ -588,7 +795,9 @@ export function CreateOrderModal({
     const hasHistUpsell =
       priceType !== "SPECIAL" && histEntry != null && histEntry.lastPrice > listPrice;
     const hasHistOverride = hasHistDiscount || hasHistUpsell;
-    const newLine: LineItem = {
+    const orderedUnit =
+      opts?.ordered?.unit && opts.ordered.unit.kind !== "pack" ? opts.ordered.unit : undefined;
+    const baseLine: LineItem = {
       tempId: newTempId,
       productId: product.id,
       // Show the full "<Parent> - <Variant>" name on the order line so the
@@ -605,8 +814,10 @@ export function CreateOrderModal({
         : hasHistDiscount
           ? ("DISCOUNTED" as const)
           : priceType,
-      ...newLineQty(upb, n),
+      ...(opts?.ordered ? opts.ordered.qty : newLineQtyForLevel(upb, level, n)),
       unitsPerBox: upb,
+      startOnDefaultUnit: opts?.startOnDefaultUnit,
+      pendingTaps: opts?.startOnDefaultUnit ? 1 : undefined,
       unitCost: product.averageCost != null ? Number(product.averageCost) : undefined,
       category: product.category ?? undefined,
       trackedCategoryId: product.trackedCategoryId ?? null,
@@ -618,6 +829,14 @@ export function CreateOrderModal({
         priceTier5: product.priceTier5,
       },
     };
+    // A past line that sold by a unit ("Carton") comes back as that unit: a plain count at the ladder's
+    // price for the customer's tier today (applyLineUnit drops any one-time price, as a manual switch does).
+    const newLine: LineItem = orderedUnit
+      ? {
+          ...applyLineUnit(baseLine, orderedUnit, { tier: effectiveTier }),
+          qty: opts!.ordered!.qty.qty,
+        }
+      : baseLine;
 
     // SA-090/Opus item 1: the add-vs-merge DECISION happens INSIDE the updater, against the true
     // latest `prev` React is about to commit — never against `lineItems` read from the render
@@ -635,10 +854,22 @@ export function CreateOrderModal({
     lastAddResultRef.current = null;
     flushSync(() => {
       setLineItems((prev) => {
-        const idx = prev.findIndex((li) => sameProductUnit(li, { productId: product.id }));
+        const idx = prev.findIndex((li) =>
+          sameProductUnit(li, { productId: product.id, unitLabel: orderedUnit?.value }),
+        );
         if (idx === -1) {
           lastAddResultRef.current = { created: true };
           return [...prev, newLine];
+        }
+        // #2865 (SA-632 H2): a scan landing on a PENDING line is a tap only when it maps to the default unit; a
+        // scan of a different level is REFUSED (not merged, not counted, not "Added"). The shared rule decides.
+        const decision = pendingScanDecision(
+          { startOnDefaultUnit: prev[idx].startOnDefaultUnit, shaped: isShapedLine(prev[idx]) },
+          { mapsToDefault: !!opts?.startOnDefaultUnit },
+        );
+        if (decision === "refuse") {
+          lastAddResultRef.current = { created: false, mergedInto: prev[idx], refused: true };
+          return prev;
         }
         const merged = merge(prev[idx]);
         lastAddResultRef.current = { created: false, mergedInto: merged };
@@ -652,7 +883,11 @@ export function CreateOrderModal({
     // flushSync — an explicit cast to the ref's own declared type restores real narrowing for the
     // runtime check below (the pre-#1271-review code used a bare `!` for the same closure-blindness
     // reason; this keeps the throw instead of silently asserting).
-    const result = lastAddResultRef.current as { created: boolean; mergedInto?: LineItem } | null;
+    const result = lastAddResultRef.current as {
+      created: boolean;
+      mergedInto?: LineItem;
+      refused?: boolean;
+    } | null;
     if (result === null) {
       throw new Error(
         "addLineItem: lastAddResultRef was never set — the setLineItems updater did not run " +
@@ -665,7 +900,24 @@ export function CreateOrderModal({
     // or a retry that treats the throw as "resolveCode failed" would re-run this whole method and
     // add the line a SECOND time. Logged, not silently swallowed; the commit's own outcome is
     // returned either way.
+    // A picker add clears the search it was made from; a scan clears the field only while it still holds the
+    // code that scan consumed (the wedge take already emptied it - a later clear must not eat the next scan).
+    const consumed = consumedCodeRef.current;
+    const clearSearchAfterAdd = () => {
+      if (consumed === null) {
+        setProductSearch("");
+        setDebouncedProductSearch("");
+      } else {
+        setProductSearch((cur) => (cur.trim() === consumed.trim() ? "" : cur));
+        setDebouncedProductSearch((cur) => (cur.trim() === consumed.trim() ? "" : cur));
+      }
+    };
     try {
+      if (result.refused) {
+        // The scan screen reports the refusal itself; elsewhere a toast says it.
+        if (!scanScreenActive) toast({ title: UNITS_LOADING_SCAN_MESSAGE, variant: "info" });
+        return { created: false, refused: true };
+      }
       if (!result.created) {
         // The scan screen shows its own running rows (a toast per repeat scan would bury them).
         if (orderUiV2 && !scanScreenActive) {
@@ -676,13 +928,11 @@ export function CreateOrderModal({
           });
         }
         setScrollToId(result.mergedInto!.tempId);
-        setProductSearch("");
-        setDebouncedProductSearch("");
+        clearSearchAfterAdd();
         scheduleScannerRefocus(productSearchRef, 50);
       } else {
         setScrollToId(newTempId);
-        setProductSearch("");
-        setDebouncedProductSearch("");
+        clearSearchAfterAdd();
         setLineItemsError("");
         // Re-focus the product search so the scanner is ready for the next item
         scheduleScannerRefocus(productSearchRef, 50);
@@ -695,8 +945,74 @@ export function CreateOrderModal({
 
   /** A pick from the search dropdown: +1 (#2696 — no typed quick-add qty). */
   const addPicked = (product: any) => {
-    addLineItem(product);
+    if (isFamilyProduct(product)) return; // a FAMILY is a container, never a line (B1215 C7)
+    // #2784: the picker tap starts a NEW line on the product's default selling unit (OrderLineUnitPicker applies it).
+    addLineItem(product, undefined, { startOnDefaultUnit: true });
   };
+
+  // PKG-4 F09: ArrowUp/Down + Enter on the product results. Nothing is highlighted until an Arrow
+  // key, so a wedge scan + Enter still takes handleProductSearchEnter (barcode path).
+  const productListOpen =
+    !!productSearch && (filteredProducts.length > 0 || debouncedProductSearch.length > 0);
+  // One flat, ordered row list for the listbox: each product, its variants while expanded, then the
+  // trailing "Create new product" row — so every visible option has an id and an Arrow stop.
+  type ProductNavRow =
+    { kind: "product"; p: any } | { kind: "variant"; v: any } | { kind: "create" };
+  const productNavRows: ProductNavRow[] = [];
+  const productRowIndex = new Map<string, number>();
+  const variantRowIndex = new Map<string, number>();
+  for (const p of filteredProducts as any[]) {
+    productRowIndex.set(p.id, productNavRows.length);
+    productNavRows.push({ kind: "product", p });
+    // Same expansion rule as the rendered list (B1215: a variant-only hit opens its family by itself).
+    if (
+      p.variants?.length > 0 &&
+      isGroupExpanded(expandedParentId, productGroups.expandedIds, p.id)
+    ) {
+      for (const v of p.variants) {
+        variantRowIndex.set(v.id, productNavRows.length);
+        // The keyboard pick names the variant under its parent exactly like the click does (attachParent).
+        productNavRows.push({ kind: "variant", v: attachParent(v, p) });
+      }
+    }
+  }
+  const createProductRowIndex = productNavRows.length;
+  productNavRows.push({ kind: "create" });
+  const openCreateProduct = () => {
+    const looksLikeSku = /^\d{6,}$/.test(debouncedProductSearch.trim());
+    setCreateProductInitialName(looksLikeSku ? "" : debouncedProductSearch);
+    setCreateProductInitialSku(looksLikeSku ? debouncedProductSearch.trim() : "");
+    setCreateProductOpen(true);
+    setProductSearch("");
+    setDebouncedProductSearch("");
+  };
+  /** Expanding/collapsing a parent changes the row count (which resets the highlight): put it back. */
+  const keepHighlightOnRow = React.useRef<number | null>(null);
+  const productNav = useListboxNav<ProductNavRow>({
+    items: productNavRows,
+    open: productListOpen,
+    onPick: (row) => {
+      if (row.kind === "variant") return addPicked(row.v);
+      if (row.kind === "create") return openCreateProduct();
+      if (row.p.variants?.length > 0) {
+        keepHighlightOnRow.current = productRowIndex.get(row.p.id) ?? null;
+        // Mirrors the header click: "" closes even an auto-opened family (null would re-open it).
+        const open = isGroupExpanded(expandedParentId, productGroups.expandedIds, row.p.id);
+        setExpandedParentId(open ? "" : row.p.id);
+      } else {
+        addPicked(row.p);
+      }
+    },
+    resetKey: productSearch,
+    idPrefix: "product-search",
+  });
+  const productNavSetHighlight = productNav.setHighlight;
+  React.useEffect(() => {
+    if (keepHighlightOnRow.current !== null) {
+      productNavSetHighlight(keepHighlightOnRow.current);
+      keepHighlightOnRow.current = null;
+    }
+  }, [expandedParentId, productNavSetHighlight]);
 
   const removeLineItem = (tempId: string) => {
     setLineItems((prev) => prev.filter((li) => li.tempId !== tempId));
@@ -769,64 +1085,46 @@ export function CreateOrderModal({
     );
   };
 
+  // #2865 case c (SA-632): every quantity editor refuses a PENDING line (its default unit not yet resolved) in the
+  // logic (lib/line-qty-edit.ts), so a quantity never depends on how fast the units ladder loads.
   /** #2696 (b): a typed qty on a plain (non-case) line — a whole number, at least 1 (like the −). */
-  const setQty = (tempId: string, value: number) => {
-    const qty = Math.max(1, Number.isFinite(value) ? Math.trunc(value) : 1);
-    setLineItems((prev) => prev.map((li) => (li.tempId === tempId ? { ...li, qty } : li)));
-  };
+  const setQty = (tempId: string, value: number) =>
+    setLineItems((prev) => setQtyOnLines(prev, tempId, value));
 
-  const updateQty = (tempId: string, delta: number) => {
-    setLineItems((prev) =>
-      prev.map((li) => {
-        if (li.tempId !== tempId) return li;
-        return { ...li, qty: Math.max(1, li.qty + delta) };
-      }),
-    );
-  };
+  const updateQty = (tempId: string, delta: number) =>
+    setLineItems((prev) => stepQtyOnLines(prev, tempId, delta));
 
-  const setBoxes = (tempId: string, value: number) => {
-    setLineItems((prev) =>
-      prev.map((li) => {
-        if (li.tempId !== tempId) return li;
-        const boxes = Math.max(0, isNaN(value) ? 0 : value);
-        const pieces = li.pieces ?? 0;
-        const qty = boxes * (li.unitsPerBox ?? 1) + pieces;
-        return { ...li, boxes, qty: Math.max(qty, boxes > 0 || pieces > 0 ? qty : 0) };
-      }),
-    );
-  };
+  const setBoxes = (tempId: string, value: number) =>
+    setLineItems((prev) => setBoxesOnLines(prev, tempId, value));
 
-  const setPieces = (tempId: string, value: number) => {
-    setLineItems((prev) =>
-      prev.map((li) => {
-        if (li.tempId !== tempId) return li;
-        const pieces = Math.max(0, isNaN(value) ? 0 : value);
-        const boxes = li.boxes ?? 0;
-        const qty = boxes * (li.unitsPerBox ?? 1) + pieces;
-        return { ...li, pieces, qty };
-      }),
-    );
-  };
+  const setPieces = (tempId: string, value: number) =>
+    setLineItems((prev) => setPiecesOnLines(prev, tempId, value));
 
   /** Unit mode: the operator types a TOTAL unit count; normalize it back into cases + loose.
    *  7 units of a 6-pack -> {boxes:1, pieces:1, qty:7}. Price is unchanged either way because
    *  computeLineSubtotal's proration is linear. */
-  const setUnitQty = (tempId: string, value: number) => {
-    setLineItems((prev) =>
-      prev.map((li) => {
-        if (li.tempId !== tempId) return li;
-        const n = normalizeBoxesPieces({ qty: value, unitsPerBox: li.unitsPerBox });
-        return { ...li, boxes: n.boxes ?? 0, pieces: n.pieces ?? 0, qty: n.qty };
-      }),
-    );
-  };
+  const setUnitQty = (tempId: string, value: number) =>
+    setLineItems((prev) => setUnitQtyOnLines(prev, tempId, value));
 
   const setSellBy = (tempId: string, sellBy: "case" | "unit") =>
-    setLineItems((prev) => prev.map((li) => (li.tempId === tempId ? { ...li, sellBy } : li)));
+    setLineItems((prev) => setSellByOnLines(prev, tempId, sellBy));
 
   /** The effective price tier for a product on this order (per-product override, else the customer's). */
   const tierForProduct = (productId: string) =>
     cpMap.get(productId) ?? selectedCustomer?.pricingTier ?? 1;
+
+  // "Usually buys" chips + "Order again": the customer's top products and last orders. Both add through
+  // addLineItem, so every line is priced today (see use-order-suggestion-actions).
+  const { data: orderSuggestions, isError: orderSuggestionsError } = useOrderSuggestions(
+    selectedCustomer?.id,
+  );
+  const [suggestionsMenuOpen, setSuggestionsMenuOpen] = React.useState(false);
+  const suggestionActions = useOrderSuggestionActions({
+    suggestions: orderSuggestions,
+    addLine: addLineItem,
+    tierFor: tierForProduct,
+    toast,
+  });
 
   /**
    * units_v1: sell a line by another unit (or back by the pack). A line switched to a unit the
@@ -835,22 +1133,34 @@ export function CreateOrderModal({
   const setLineUnit = (tempId: string, option: UnitOption, refresh: boolean) =>
     setLineItems((prev) => {
       const target = prev.find((li) => li.tempId === tempId);
-      if (!target) return prev;
-      const next = applyLineUnit(target, option, {
-        tier: tierForProduct(target.productId),
-        keepQty: refresh,
-      });
-      const twin = prev.find((li) => li.tempId !== tempId && sameProductUnit(li, next));
-      if (!twin) return prev.map((li) => (li.tempId === tempId ? next : li));
-      return prev
-        .filter((li) => li.tempId !== tempId)
-        .map((li) => (li.tempId === twin.tempId ? mergeSameLine(li, next) : li));
+      return target
+        ? applyUnitToLines(prev, tempId, option, refresh, tierForProduct(target.productId))
+        : prev;
     });
+  // SA-626c: a flagged line holds its default unit from the moment it is added, not only once its row mounts.
+  const { user: authUser } = useAuth();
+  const {
+    resolveBeforeSubmit: resolveDefaultUnits,
+    retry: retryUnits,
+    retrying,
+    statusFor: unitStatusFor,
+  } = useDefaultUnitResolver(lineItems, setLineItems, tierForProduct, isStaffRole(authUser?.role));
+  const resolvingRef = React.useRef(false);
+  /** #2865 case c: the row's pending-unit state (locked qty controls, tap count, loading/failed + Retry). */
+  const pendingUnitOf = (li: LineItem) => {
+    const status = unitStatusFor(li);
+    return status
+      ? { status, taps: pendingCount(li), onRetry: () => void retryUnits(), retrying }
+      : undefined;
+  };
 
   const setDiscountedPrice = (tempId: string, value: number | null) => {
     setLineItems((prev) =>
       prev.map((li) => {
         if (li.tempId !== tempId) return li;
+        // #2865 (SA-632 H1): a typed price shapes the line and would settle a PENDING one as cases: refused in the
+        // logic, exactly like a quantity edit (the price controls are disabled while pending as well).
+        if (refusesLineEdit(li, "price")) return li;
         if (value == null) {
           // Clear override — revert to special or list price
           const revertPrice = li.specialPrice ?? li.listPrice;
@@ -860,13 +1170,17 @@ export function CreateOrderModal({
             overrideReason: undefined,
             unitPrice: revertPrice,
             priceType: li.specialPrice != null ? "SPECIAL" : "STANDARD",
+            startOnDefaultUnit: false,
           };
         }
         // #2696(c): the server's own rule A (@routeflow/pricing decideStaffOverride) — within ½¢
         // of the special / list price is no override; below list DISCOUNTED, at/above MANUAL (an
         // upsell: the base is hidden from the customer server-side, shown green to the operator).
         const next = applyTypedPrice(li, value);
-        return next.discountedPrice == null ? { ...next, overrideReason: undefined } : next;
+        const consumed = { ...next, startOnDefaultUnit: false };
+        return consumed.discountedPrice == null
+          ? { ...consumed, overrideReason: undefined }
+          : consumed;
       }),
     );
   };
@@ -881,14 +1195,29 @@ export function CreateOrderModal({
   const [requestedDeliveryDate, setRequestedDeliveryDate] = React.useState("");
   // Business date of the order (blank = today).
   const [orderDate, setOrderDate] = React.useState("");
+  // Row 100: the Order date control sits behind a "Backdate this order" link. `backdateOpen` is the one switch (a resumed
+  // draft with a date sets it at hydrate), so clearing the date from the keyboard never unmounts the focused input.
+  const [backdateOpen, setBackdateOpen] = React.useState(false);
+  const showOrderDate = backdateOpen;
+  const orderDateRef = React.useRef<HTMLInputElement>(null);
+  const backdateLinkRef = React.useRef<HTMLButtonElement>(null);
+  const focusAfterToggle = React.useRef<"date" | "link" | null>(null);
+  React.useEffect(() => {
+    // Focus follows the toggle: the date field when it opens, the link when it folds away (the clicked control unmounts).
+    const target = focusAfterToggle.current;
+    focusAfterToggle.current = null;
+    if (target === "date") orderDateRef.current?.focus();
+    if (target === "link") backdateLinkRef.current?.focus();
+  }, [backdateOpen]);
   // The server's upper bound is the end of the current UTC day (parseOrderDate).
   const maxOrderDate = new Date().toISOString().slice(0, 10);
 
   // Staff-only per-order commission override (0 = exempt; null = agent/customer
   // default). Gated on role + the sales_agents addon — server re-checks both.
   const { user } = useAuth();
-  const isStaff = user?.role === "OPERATOR" || user?.role === "TENANT_ADMIN";
+  const isStaff = isStaffRole(user?.role);
   const hasSalesAgents = useHasAddon(SALES_AGENTS_ADDON);
+  // SHIP fulfilment mode: no fulfilment toggle, every order ships by carrier.
   const [commissionRatePct, setCommissionRatePct] = React.useState<number | null>(null);
 
   // ── Minimize & resume drafts (pos-cost-roles-spec §2) ───────────────────────
@@ -906,7 +1235,7 @@ export function CreateOrderModal({
       urgent: !!isUrgent,
       floorAcked: Array.from(floorAcked),
       commissionRatePct,
-      fulfillPath: fulfillPath ?? "ROUTE",
+      fulfillPath,
     }),
     [
       selectedCustomer,
@@ -977,10 +1306,28 @@ export function CreateOrderModal({
   // Radix's Escape interception (see Modal.onEscapeKeyDown). While mid-add, swallow
   // the Escape and clear just the sub-flow state, keeping the order builder open.
   const handleEscape = (event: KeyboardEvent) => {
+    // The "Order again" menu takes Escape first — it closes the menu, never the order.
+    if (suggestionsMenuOpen) {
+      event.preventDefault();
+      setSuggestionsMenuOpen(false);
+      return;
+    }
     // #2696 (b): an open price sheet takes Escape first — it closes the sheet, never the order.
     if (editingLineId) {
       event.preventDefault();
       setEditingLineId(null);
+      return;
+    }
+    // K3: Escape with the customer list OPEN closes just the list (typed text kept) — never parks a draft.
+    // Same visibility rule as CustomerSearchPicker (`show`), so Escape never swallows a no-op.
+    if (
+      customerListOpen &&
+      !selectedCustomer &&
+      customerSearch &&
+      (filteredCustomers.length > 0 || debouncedCustomerSearch.length > 0)
+    ) {
+      event.preventDefault();
+      setCustomerListOpen(false);
       return;
     }
     if (!addItemFlowActive) return; // fall through → Radix dismiss → handleDismiss
@@ -1030,13 +1377,18 @@ export function CreateOrderModal({
     setShippingFeeInput(p.shippingFee ?? "");
     setRequestedDeliveryDate(p.requestedDeliveryDate ?? "");
     setOrderDate(p.orderDate ?? "");
+    setBackdateOpen(!!p.orderDate);
     setCommissionRatePct(p.commissionRatePct ?? null);
     setFloorAcked(new Set(p.floorAcked ?? []));
     // fulfillPath round-trips from the parked draft itself — NOT re-derived from
     // the customer's own default (that only seeds a FRESH selection; see the
     // picker's onClick). Order matters: this reset() must run after
     // setSelectedCustomer above so a resumed SHIP order stays SHIP.
-    reset({ notes: p.notes ?? "", urgent: !!p.urgent, fulfillPath: p.fulfillPath ?? "ROUTE" });
+    reset({
+      notes: p.notes ?? "",
+      urgent: !!p.urgent,
+      fulfillPath: staffFulfilment.pickForm(p.fulfillPath),
+    });
     setActiveDraftId(loadedDraft.id);
     // Seed the autosave baseline so hydration itself never triggers a write. Key
     // order must match `draftPayload` — the comparison is on the JSON string.
@@ -1051,7 +1403,7 @@ export function CreateOrderModal({
       urgent: !!p.urgent,
       floorAcked: p.floorAcked ?? [],
       commissionRatePct: p.commissionRatePct ?? null,
-      fulfillPath: p.fulfillPath ?? "ROUTE",
+      fulfillPath: staffFulfilment.pickForm(p.fulfillPath),
     });
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [isOpen, resumeDraftId, loadedDraft]);
@@ -1087,7 +1439,7 @@ export function CreateOrderModal({
   }, [isOpen, initialScanCode, resumeDraftId, activeDraftId]);
 
   // Stash form values + intended status across the merge-prompt round-trip so we can
-  // re-submit with the operator's choice. Both "Save as Draft" and "Create Order"
+  // re-submit with the operator's choice. Both "Save as draft" and "Create Order"
   // funnel through here so the prompt fires for either action.
   const pendingFormValuesRef = React.useRef<FormValues | null>(null);
   const pendingAsDraftRef = React.useRef<boolean>(false);
@@ -1095,17 +1447,79 @@ export function CreateOrderModal({
   // operator captures a license or accepts responsibility.
   const licenseRetryRef = React.useRef<{
     data: FormValues;
-    options: { mergeChoice?: "merge" | "separate"; asDraft?: boolean };
+    options: SubmitOptions;
   } | null>(null);
 
   /**
    * Actually fire the create-order request with the operator's chosen mergeChoice
    * (or no choice, if the customer has no active order).
    */
-  const submitOrder = (
-    data: FormValues,
-    options: { mergeChoice?: "merge" | "separate"; asDraft?: boolean } = {},
+  const submitOrder = (data: FormValues, options: SubmitOptions = {}) => {
+    if (fulfilmentPending) return;
+    // SA-626c: any line still waiting for its default unit is resolved FIRST (never sent as the pack/case by default);
+    // nothing pending = the synchronous path, unchanged.
+    if (!lineItems.some(isPendingDefaultUnit)) return doSubmitOrder(data, options, lineItems);
+    if (resolvingRef.current) return; // a double click while the units load must not submit twice
+    resolvingRef.current = true;
+    void resolveDefaultUnits(lineItems)
+      .then(({ lines, blocked, folds }) => {
+        if (blocked.length) {
+          setMergePrompt(null);
+          toast({
+            title: "Couldn't load the selling units. Check your connection and try again.",
+            variant: "error",
+          });
+          return;
+        }
+        setLineItems((cur) => mergeResolvedLines(cur, lineItems, lines, folds)); // keeps edits made while this waited
+        doSubmitOrder(data, options, lines);
+      })
+      .finally(() => {
+        resolvingRef.current = false;
+      });
+  };
+
+  /** POS "Confirm and invoice" / "Confirm only": the order exists (PENDING); confirm it, then invoice it. */
+  const finishPosOrder = (
+    created: { id: string; orderNumber?: string | null; status?: string | null },
+    finish: "invoice" | "confirm",
+    viewOrder?: (orderId: string) => void,
+    merged?: { fromStatus?: string | null },
   ) => {
+    const action = viewOrder
+      ? { label: "View Order", onClick: () => viewOrder(created.id) }
+      : undefined;
+    posFinish
+      .mutateAsync({
+        orderId: created.id,
+        invoice: finish === "invoice",
+        fromStatus: created.status ?? merged?.fromStatus,
+      })
+      .then(() => {
+        toast({
+          title: finish === "invoice" ? POS_COPY.confirmedInvoiced : POS_COPY.confirmedOnly,
+          variant: "success",
+          action,
+        });
+      })
+      .catch((err: unknown) => {
+        const step = err instanceof PosFinishError ? err.step : "confirm";
+        toast({
+          title:
+            step === "invoice"
+              ? POS_COPY.invoiceMissing
+              : merged
+                ? POS_COPY.mergedConfirmMissing
+                : POS_COPY.confirmMissing,
+          variant: "warning",
+          action,
+        });
+      })
+      // POS mode lands on the new order's page (Hand over / Print live there), never back on the list.
+      .finally(() => viewOrder?.(created.id));
+  };
+
+  const doSubmitOrder = (data: FormValues, options: SubmitOptions, lines: LineItem[]) => {
     const { mergeChoice, asDraft } = options;
     // #2406: fold in whatever the operator has typed into the Returns section.
     const inlineReturn = returnSave.build(selectedCustomer!.id, "");
@@ -1117,7 +1531,7 @@ export function CreateOrderModal({
       return;
     }
     // #2696(c): never send what the server refuses — an off-special price needs its reason first.
-    const needsReason = lineItems.find(lineNeedsReason);
+    const needsReason = lines.find(lineNeedsReason);
     if (needsReason) {
       setMergePrompt(null);
       toast({ title: reasonRequiredMessage(needsReason.productName), variant: "error" });
@@ -1126,10 +1540,8 @@ export function CreateOrderModal({
     }
     const itemsForSubmit = (
       asDraft
-        ? lineItems.filter(
-            (li) => (li.isUnlisted ? li.productName.trim() : li.productId) && li.qty > 0,
-          )
-        : lineItems
+        ? lines.filter((li) => (li.isUnlisted ? li.productName.trim() : li.productId) && li.qty > 0)
+        : lines
     ).map((li) => {
       // Optional per-line note (trimmed) — carried onto the invoice line.
       const note = li.note?.trim() ? { notes: li.note.trim() } : {};
@@ -1156,31 +1568,50 @@ export function CreateOrderModal({
             ...note,
           };
     });
+    const payload = {
+      customerId: selectedCustomer!.id,
+      items: itemsForSubmit,
+      notes: data.notes,
+      urgent: posMode ? false : data.urgent,
+      fulfillPath: posMode ? "PICKUP" : staffFulfilment.pickForm(data.fulfillPath),
+      // POS mode: the delivery-only fields step aside (their values are kept, so switching POS off restores them).
+      requestedDeliveryDate: posMode ? undefined : requestedDeliveryDate || undefined,
+      orderDate: orderDate || undefined,
+      ...(discountAmt > 0 ? { discountAmount: discountAmt } : {}),
+      ...(shippingAmt > 0 ? { shippingFee: shippingAmt } : {}),
+      // 0 MUST be sent (it means exempt) — `!= null` preserves it; only a
+      // blank field (null) is omitted so the agent/customer default applies.
+      ...(commissionRatePct != null ? { commissionRatePct } : {}),
+      ...(asDraft ? { status: "DRAFT" as const } : {}),
+      ...(mergeChoice ? { mergeChoice } : {}),
+      // Bill-now (createSale) has no path through this modal today — only
+      // the create-order payload needs threading here.
+      ...(appliedCredits.length ? { appliedCreditNotes: appliedCredits } : {}),
+      // SA-484a: the create's Idempotency-Key HEADER rides with the returnKey (same lifecycle).
+      ...(inlineReturn ? { inlineReturn } : {}),
+    } as any;
+    // BUG-A: ONE request in flight per modal (a synchronous latch — `isPending` is stale for the
+    // second click of a double click) and one Idempotency-Key per attempt. mergeChoice is NOT part
+    // of the cart fingerprint: the merge-prompt round trip re-submits the SAME attempt.
+    const { mergeChoice: _mc, idempotencyKey: _ik, ...cartForKey } = payload;
+    const attemptKey = submitKey.begin(JSON.stringify(cartForKey));
+    if (attemptKey === null) return;
     createOrder.mutate(
-      {
-        customerId: selectedCustomer!.id,
-        items: itemsForSubmit,
-        notes: data.notes,
-        urgent: data.urgent,
-        fulfillPath: data.fulfillPath || "ROUTE",
-        requestedDeliveryDate: requestedDeliveryDate || undefined,
-        orderDate: orderDate || undefined,
-        ...(discountAmt > 0 ? { discountAmount: discountAmt } : {}),
-        ...(shippingAmt > 0 ? { shippingFee: shippingAmt } : {}),
-        // 0 MUST be sent (it means exempt) — `!= null` preserves it; only a
-        // blank field (null) is omitted so the agent/customer default applies.
-        ...(commissionRatePct != null ? { commissionRatePct } : {}),
-        ...(asDraft ? { status: "DRAFT" as const } : {}),
-        ...(mergeChoice ? { mergeChoice } : {}),
-        // Bill-now (createSale) has no path through this modal today — only
-        // the create-order payload needs threading here.
-        ...(appliedCredits.length ? { appliedCreditNotes: appliedCredits } : {}),
-        // SA-484a: the create's Idempotency-Key HEADER rides with the returnKey (same lifecycle).
-        ...(inlineReturn ? { inlineReturn, idempotencyKey: returnSave.idempotencyKey() } : {}),
-      } as any,
+      { ...payload, idempotencyKey: attemptKey },
       {
         onSuccess: (created: any) => {
-          toast(orderCreatedToast({ mergeChoice, asDraft, created, onViewOrder }));
+          submitKey.settle("success");
+          if (posMode && !asDraft && created?.id) {
+            // A merge returns the target order; its status (else the prompt's) says if it is still a DRAFT.
+            finishPosOrder(
+              created,
+              posFinishRef.current,
+              onViewOrder,
+              mergeChoice === "merge" ? { fromStatus: mergePrompt?.status } : undefined,
+            );
+          } else {
+            toast(orderCreatedToast({ mergeChoice, asDraft, created, onViewOrder }));
+          }
           // The parked draft has become a real order — clear it from the dock.
           if (activeDraftId) deleteDraft.mutate(activeDraftId);
           setMergePrompt(null);
@@ -1188,14 +1619,45 @@ export function CreateOrderModal({
           pendingAsDraftRef.current = false;
           returnSave.onSuccess();
           onClose();
+          // B1201: a lost-response replay of a create whose credits were never applied (read-only hint).
+          if (created?.creditsPending && created?.id) {
+            toast({ title: CREDITS_PENDING_COPY, variant: "warning" });
+            onViewOrder?.(created.id);
+          }
         },
         onError: (err: any) => {
+          // SA-715: the key already made an order: open it, never resubmit. Checked FIRST so no
+          // key-conflict code can fall through to the refused / re-mint branch.
+          const pendingOrderId = creditsPendingOrderId(err); // B1201: saved, credits not applied
+          const heldOrderId = idempotencyConflictOrderId(err) ?? pendingOrderId;
+          submitKey.settle(
+            heldOrderId
+              ? "conflict"
+              : isUnknownOutcome(err)
+                ? "unknown"
+                : isSameAttemptRefusal(err)
+                  ? "same-attempt"
+                  : "refused",
+          );
+          if (heldOrderId) {
+            toast(
+              pendingOrderId
+                ? { title: CREDITS_PENDING_COPY, variant: "warning" }
+                : {
+                    title: "Your earlier submit went through. Opening that order.",
+                    variant: "success",
+                  },
+            );
+            onClose();
+            onViewOrder?.(heldOrderId);
+            return;
+          }
           // Belt-and-braces: if our pre-check missed an active order (race) the API
           // returns 409 with code MERGE_CHOICE_REQUIRED. Surface the modal from that.
           const body = err?.response?.data;
           if (
             err?.response?.status === 409 &&
-            body?.code === "MERGE_CHOICE_REQUIRED" &&
+            body?.code === API_ERROR_CODES.MERGE_CHOICE_REQUIRED &&
             body?.activeOrder
           ) {
             pendingFormValuesRef.current = data;
@@ -1286,11 +1748,22 @@ export function CreateOrderModal({
     // A SELLING_RESTRICTED 409 has its own dialog; the banner would repeat it (with the rule's
     // admin-written reason) and outlive the dialog's OK.
     if (parseSellingRestricted(err)) return null;
-    return err.response?.data?.message || err.message || "Something went wrong. Please try again.";
+    // B986-7 (Opus): a RECOGNISED refusal (a coded one, a stock shortfall, a credit limit...) is fixed copy; an UNCODED one keeps
+    // today's server sentence, which says what to fix (B991 / B987-E mint the codes + fields, then this read goes).
+    return (
+      codedToastCopy(err) ||
+      (isStaleCreditRefusal(err) ? STALE_CREDIT_COPY : null) ||
+      err.response?.data?.message ||
+      err.message ||
+      "Something went wrong. Please try again."
+    );
   })();
 
   // The same LineItemRow for the create-order list and the scan screen, so the two can never drift.
-  const renderLine = (li: LineItem, ctx?: { highlighted?: boolean; onTapPrice?: () => void }) => (
+  const renderLine = (
+    li: LineItem,
+    ctx?: { highlighted?: boolean; onTapPrice?: () => void; priceHistory?: boolean },
+  ) => (
     <LineItemRow
       key={li.tempId}
       item={li}
@@ -1300,6 +1773,17 @@ export function CreateOrderModal({
       costRevealed={costRevealed.has(li.tempId)}
       // the remembered price is a PACK price (the server excludes unit lines from it, B606)
       priceHistoryEntry={li.unitLabel ? undefined : priceHistory?.[li.productId]}
+      // Main list only. The scan screen has its own window-level Escape handler that would close
+      // the whole screen with the popover open, so it renders no history button or chips.
+      customerPriceHistory={
+        ctx?.priceHistory
+          ? {
+              customerId: selectedCustomer?.id,
+              customerName: selectedCustomer?.businessName,
+              onUsePrice: (price) => setDiscountedPrice(li.tempId, price),
+            }
+          : undefined
+      }
       highlighted={ctx?.highlighted}
       onTapPrice={ctx?.onTapPrice}
       rowRef={(el) => {
@@ -1321,10 +1805,12 @@ export function CreateOrderModal({
       onUpdateUnlistedName={(name) => updateUnlistedName(li.tempId, name)}
       onUpdateUnlistedPrice={(value) => updateUnlistedPrice(li.tempId, value)}
       onRemove={() => removeLineItem(li.tempId)}
+      pendingUnit={pendingUnitOf(li)}
       unitSlot={
         <OrderLineUnitPicker
           line={li}
           tier={tierForProduct(li.productId)}
+          startOnDefaultUnit={li.startOnDefaultUnit}
           onChange={(option, refresh) => setLineUnit(li.tempId, option, refresh)}
         />
       }
@@ -1340,6 +1826,7 @@ export function CreateOrderModal({
       floorAcked={floorAcked.has(li.tempId)}
       costRevealed={costRevealed.has(li.tempId)}
       priceHistoryEntry={priceHistory?.[li.productId]}
+      pendingUnit={pendingUnitOf(li)}
       onQtyDelta={(delta) => updateQty(li.tempId, delta)}
       onSetBoxes={(value) => setBoxes(li.tempId, value)}
       onSetPieces={(value) => setPieces(li.tempId, value)}
@@ -1361,6 +1848,17 @@ export function CreateOrderModal({
   const undoScan = ({ productId, created }: ScanHistoryEntry) => {
     const line = lineItems.find((li) => sameProductUnit(li, { productId }));
     if (!line) return; // the operator already removed it by hand
+    // #2865 (SA-632 N2): Undo on a PENDING line takes one TAP back (the shared rule); at the creating scan the line is
+    // REMOVED. It never steps a quantity, so it can never settle the line as a case.
+    if (isPendingDefaultUnit(line)) {
+      const undone = undoPendingTap(pendingCount(line));
+      if (undone.remove) removeLineItem(line.tempId);
+      else
+        setLineItems((prev) =>
+          prev.map((li) => (li.tempId === line.tempId ? { ...li, pendingTaps: undone.taps } : li)),
+        );
+      return;
+    }
     const singleUnit = line.unitsPerBox
       ? (line.boxes ?? 0) <= 1 && (line.pieces ?? 0) === 0
       : line.qty <= 1;
@@ -1402,21 +1900,24 @@ export function CreateOrderModal({
       open={isOpen && !scanScreenActive}
       onClose={handleDismiss}
       onEscapeKeyDown={handleEscape}
-      title={resumeDraftId ? "Resume draft" : "Create Order"}
-      description="Create a new order on behalf of a customer."
+      title={resumeDraftId ? "Resume draft" : storeOnlyPos ? POS_COPY.builderTitle : "Create Order"}
+      description={
+        storeOnlyPos ? POS_COPY.builderSubtitle : "Create a new order on behalf of a customer."
+      }
       className="max-w-2xl"
       footer={
         // B564: the Modal footer is a `justify-end` flex row, so four buttons wider than a
         // 390px sheet overflowed off the LEFT edge and clipped Minimize. Under `sm` the save
         // actions get their own row and Minimize sits below them, full-width; from `sm` up
-        // this is the original single row with Minimize pinned left.
+        // this is the original single row with Minimize pinned left. Every footer button is a 44px touch
+        // target under `sm` (max-sm:h-11); from `sm` up the Button's own height is untouched.
         <div className="flex w-full flex-col-reverse gap-2 sm:flex-row sm:items-center sm:justify-end sm:gap-3">
           {/* Minimize parks the whole builder into the bottom-left draft dock
               (pos-cost-roles-spec §2). Left-aligned, away from the save actions. */}
           <Button
             variant="ghost"
             type="button"
-            className="w-full sm:mr-auto sm:w-auto"
+            className="w-full max-sm:h-11 sm:mr-auto sm:w-auto"
             onClick={handleMinimize}
             disabled={!canMinimize || savingDraft}
             loading={savingDraft}
@@ -1428,32 +1929,74 @@ export function CreateOrderModal({
               primary (main action). Save-as-Draft was an amber button that
               competed with the primary blue and misused a warning colour. */}
           <div className="flex flex-wrap items-center justify-end gap-2 sm:gap-3">
-            <Button variant="ghost" type="button" onClick={handleDismiss}>
+            {/* Row 344: the footer actions are 44 px tap targets below sm (they were 34 px at 390). */}
+            <Button variant="ghost" type="button" className="max-sm:h-11" onClick={handleDismiss}>
               Cancel
             </Button>
-            <Button
+            <ReadOnlyHint className="basis-full text-right text-xs text-slate-600" />
+            <WriteButton
               variant="secondary"
               type="button"
+              className="max-sm:h-11"
               loading={createOrder.isPending}
+              disabled={createOrder.isPending || fulfilmentPending}
               onClick={onSaveDraft}
             >
-              Save as Draft
-            </Button>
-            <Button type="submit" form="create-order-form" loading={createOrder.isPending}>
-              Create Order
-            </Button>
+              Save as draft
+            </WriteButton>
+            {posMode && (
+              <WriteButton
+                variant="secondary"
+                type="button"
+                className="max-sm:h-11"
+                loading={createOrder.isPending}
+                disabled={
+                  createOrder.isPending || fulfilmentPending || lineItems.some(isPendingDefaultUnit)
+                }
+                onClick={() => {
+                  posFinishRef.current = "confirm";
+                  void handleSubmit(onSubmit)();
+                }}
+              >
+                {POS_COPY.confirmOnly}
+              </WriteButton>
+            )}
+            <WriteButton
+              type="submit"
+              form="create-order-form"
+              className="max-sm:h-11"
+              onClick={() => {
+                posFinishRef.current = "invoice";
+              }}
+              loading={createOrder.isPending}
+              // #2865 case d (SA-632): no order is created while ANY line is still waiting on its default unit
+              disabled={
+                createOrder.isPending || fulfilmentPending || lineItems.some(isPendingDefaultUnit)
+              }
+              aria-busy={lineItems.some(isPendingDefaultUnit) || undefined}
+            >
+              {posMode ? POS_COPY.confirmAndInvoice : "Create Order"}
+            </WriteButton>
           </div>
         </div>
       }
     >
       <form
         id="create-order-form"
-        onSubmit={handleSubmit(onSubmit)}
+        onSubmit={(e) => {
+          // An implicit submit (no button pressed) follows the primary action; "Confirm only" bypasses this
+          // (it calls handleSubmit itself), and a click on the primary already set the same value.
+          posFinishRef.current = "invoice";
+          return handleSubmit(onSubmit)(e);
+        }}
         noValidate
         onKeyDown={(e) => {
           // A <textarea> (the per-line note) owns Enter for itself — a newline, never a submit.
           // Every other control keeps the no-Enter-submit behavior this form has always had.
-          if (e.key === "Enter" && !(e.target instanceof HTMLTextAreaElement)) {
+          // A result row (button[role=option]) keeps its native Enter-to-pick (PKG-4 F09c).
+          const isOption =
+            e.target instanceof HTMLButtonElement && e.target.getAttribute("role") === "option";
+          if (e.key === "Enter" && !(e.target instanceof HTMLTextAreaElement) && !isOption) {
             e.preventDefault();
           }
         }}
@@ -1464,6 +2007,51 @@ export function CreateOrderModal({
           {resumeDraftId && draftLoading && !activeDraftId && (
             <div className="rounded-md bg-brand-50 px-3 py-2 text-sm text-brand-700 ring-1 ring-brand-200">
               Loading your parked draft…
+            </div>
+          )}
+
+          {posAllowed && !storeOnly && (
+            <label
+              htmlFor="pos-mode-switch"
+              className="flex min-h-11 cursor-pointer items-start justify-between gap-3 rounded-lg border border-surface-border bg-white px-3 py-2.5"
+            >
+              <span className="min-w-0">
+                <span id="pos-mode-label" className="block text-sm font-medium text-navy">
+                  {POS_COPY.switchLabel}
+                </span>
+                <span id="pos-mode-hint" className="block text-[11px] leading-snug text-navy/70">
+                  {POS_COPY.switchHint}
+                </span>
+                {pos.failed && (
+                  <span role="alert" className="block text-[11px] leading-snug text-danger">
+                    {POS_COPY.switchFailed}
+                  </span>
+                )}
+              </span>
+              <input
+                id="pos-mode-switch"
+                type="checkbox"
+                role="switch"
+                aria-checked={posMode}
+                aria-labelledby="pos-mode-label"
+                aria-describedby="pos-mode-hint"
+                checked={posMode}
+                disabled={!pos.known || pos.saving}
+                onChange={(e) => pos.setPosMode(e.target.checked)}
+                className="mt-1 h-4 w-4 shrink-0 accent-brand-500"
+              />
+            </label>
+          )}
+
+          {staffFulfilment.failed && !posMode && (
+            <div
+              role="alert"
+              className="flex items-center justify-between gap-3 rounded-md bg-red-50 px-3 py-2 text-sm text-red-700 ring-1 ring-red-200"
+            >
+              <span>Couldn&apos;t load your delivery settings.</span>
+              <Button type="button" variant="secondary" size="sm" onClick={staffFulfilment.retry}>
+                Retry
+              </Button>
             </div>
           )}
 
@@ -1492,64 +2080,56 @@ export function CreateOrderModal({
                 </div>
                 <button
                   type="button"
-                  onClick={() => setSelectedCustomer(null)}
+                  ref={customerUndo.chipRef}
+                  onClick={customerUndo.change}
                   className="rounded p-1 text-navy/70 hover:text-danger transition-colors"
                   title="Change customer"
+                  aria-label="Change customer"
                 >
                   <X className="h-4 w-4" />
                 </button>
               </div>
             ) : (
-              <div className="relative">
-                <input
-                  type="search"
-                  placeholder="Search by business name…"
+              <>
+                <CustomerSearchPicker
+                  inputRef={customerUndo.searchInputRef}
                   value={customerSearch}
-                  onChange={(e) => {
-                    setCustomerSearch(e.target.value);
+                  onValueChange={(v) => {
+                    setCustomerSearch(v);
                     setCustomerError("");
                   }}
-                  className={cn(
-                    "h-10 w-full rounded border bg-white px-3 text-sm text-navy placeholder:text-navy/70 focus:outline-none focus:ring-2 focus:ring-brand-500",
-                    customerError
-                      ? "border-danger focus:border-transparent"
-                      : "border-surface-border focus:border-transparent",
-                  )}
+                  results={filteredCustomers as SelectedCustomer[]}
+                  searched={debouncedCustomerSearch.length > 0}
+                  listOpen={customerListOpen}
+                  onListOpenChange={setCustomerListOpen}
+                  onPick={pickCustomer}
+                  error={customerError}
                 />
-                {customerError && <p className="mt-1 text-xs text-danger">{customerError}</p>}
-                {customerSearch &&
-                  (filteredCustomers.length > 0 || debouncedCustomerSearch.length > 0) && (
-                    <ul className="absolute left-0 right-0 top-full z-10 mt-1 overflow-hidden rounded-lg border border-surface-border bg-white shadow-dropdown">
-                      {filteredCustomers.length === 0 && debouncedCustomerSearch.length > 0 && (
-                        <li className="px-3 py-2 text-sm text-navy/70">No customers found.</li>
-                      )}
-                      {filteredCustomers.map((c: any) => (
-                        <li key={c.id}>
-                          <button
-                            type="button"
-                            onClick={() => {
-                              setSelectedCustomer(c);
-                              // Seed the order's fulfillment from this customer's own
-                              // default — done here (not a selectedCustomer-keyed
-                              // effect) so hydrating a parked draft's own
-                              // fulfillPath — via the same setSelectedCustomer call
-                              // below — is never clobbered by this default.
-                              setValue("fulfillPath", c.fulfillPath ?? "ROUTE");
-                              setCustomerSearch("");
-                              setDebouncedCustomerSearch("");
-                            }}
-                            className="flex w-full items-center gap-2 px-3 py-2.5 text-left text-sm text-navy hover:bg-surface-raised"
-                          >
-                            <span className="font-medium">{c.businessName}</span>
-                            {c.contactName && (
-                              <span className="text-xs text-navy/70">{c.contactName}</span>
-                            )}
-                          </button>
-                        </li>
-                      ))}
-                    </ul>
-                  )}
-              </div>
+                {customerUndo.previous && (
+                  <p role="status" className="flex items-center gap-2 text-xs text-navy/70">
+                    Customer cleared ({customerUndo.previous.customer.businessName}).
+                    <button
+                      type="button"
+                      onClick={customerUndo.undo}
+                      className="font-medium text-brand-500 hover:underline"
+                    >
+                      Undo
+                    </button>
+                  </p>
+                )}
+              </>
+            )}
+
+            {selectedCustomer && (
+              <OrderSuggestionsBar
+                suggestions={orderSuggestions}
+                hasLines={lineItems.length > 0}
+                onAddProduct={suggestionActions.addProduct}
+                onOrderAgain={(order) => void suggestionActions.orderAgain(order)}
+                error={orderSuggestionsError}
+                menuOpen={suggestionsMenuOpen}
+                onMenuOpenChange={setSuggestionsMenuOpen}
+              />
             )}
           </section>
 
@@ -1576,12 +2156,14 @@ export function CreateOrderModal({
                   // handler from ALSO running. Without this check, a real wedge scan double-adds:
                   // once via the detector (correct, +1) and once here, which (mis)treats it as a
                   // manually-typed SKU and applies whatever is in the Qty field.
+                  if (productNav.onKeyDown(e)) return;
                   if (e.key === "Enter" && !e.defaultPrevented) {
                     e.preventDefault();
                     e.stopPropagation();
                     handleProductSearchEnter();
                   }
                 }}
+                {...productNav.inputProps}
                 className={cn(
                   // B596: at 390 the [search][Qty][scan] row leaves ~200px — the placeholder is one line, so it
                   // steps down a size and ellipsizes instead of being cut mid-word.
@@ -1591,34 +2173,42 @@ export function CreateOrderModal({
                     : "border-surface-border focus:border-transparent",
                 )}
               />
-              <BarcodeScannerButton
-                inputRef={productSearchRef}
-                onScan={(code) => {
-                  barcodeScanHandlerRef.current(code); // a camera scan is +1
-                }}
-                onError={(message) => toast({ variant: "error", title: message })}
-                onOpenContinuous={scanV2 ? () => setScanScreenOpen(true) : undefined}
-                className="h-10 min-h-[44px] w-10 min-w-[44px] shrink-0"
-                title="Scan barcode"
-              />
+              {/* Results render BEFORE the Scan button (absolutely positioned — no visual change) so a
+                  first Tab from the search reaches result 1, like the customer search (PKG-4 F10). */}
               {productSearch &&
                 (filteredProducts.length > 0 || debouncedProductSearch.length > 0) && (
-                  <ul className="absolute left-0 right-0 top-full z-10 mt-1 overflow-hidden rounded-lg border border-surface-border bg-white shadow-dropdown">
+                  <ul
+                    id={productNav.listId}
+                    role="listbox"
+                    aria-label="Products"
+                    className="absolute left-0 right-0 top-full z-10 mt-1 overflow-hidden rounded-lg border border-surface-border bg-white shadow-dropdown"
+                  >
                     {filteredProducts.length === 0 && debouncedProductSearch.length > 0 && (
-                      <li className="px-3 py-2 text-sm text-navy/70">No products found.</li>
+                      <li role="status" className="px-3 py-2 text-sm text-navy/70">
+                        No products found.
+                      </li>
                     )}
                     {filteredProducts.map((p: any) => {
+                      const pi = productRowIndex.get(p.id) ?? -1; // the flat nav index, shared with variant rows
                       const hasVariants = p.variants?.length > 0;
-                      const isExpanded = expandedParentId === p.id;
+                      const isExpanded = isGroupExpanded(
+                        expandedParentId,
+                        productGroups.expandedIds,
+                        p.id,
+                      );
                       const alreadyAdded = lineItems.some((li) => li.productId === p.id);
                       return (
                         <React.Fragment key={p.id}>
-                          <li>
+                          <li role="presentation">
                             <button
                               type="button"
+                              role="option"
+                              id={productNav.optionId(pi)}
+                              aria-selected={pi === productNav.highlight}
+                              onMouseEnter={() => productNav.setHighlight(pi)}
                               onClick={() => {
                                 if (hasVariants) {
-                                  setExpandedParentId(isExpanded ? null : p.id);
+                                  setExpandedParentId(isExpanded ? "" : p.id);
                                 } else {
                                   // Already-added rows increment qty (addLineItem's
                                   // repeat path) — the old no-op left the search
@@ -1631,6 +2221,7 @@ export function CreateOrderModal({
                               }}
                               className={cn(
                                 "flex w-full items-center justify-between px-3 py-2.5 text-left text-sm text-navy hover:bg-surface-raised",
+                                pi === productNav.highlight && "bg-surface-raised",
                                 alreadyAdded && !hasVariants && "opacity-40",
                               )}
                             >
@@ -1649,7 +2240,7 @@ export function CreateOrderModal({
                                 )}
                                 {hasVariants && (
                                   <span className="ml-1 text-[10px] text-navy/70 shrink-0">
-                                    {p.variants.length} variants
+                                    {countNoun(p.variants.length, "variant")}
                                   </span>
                                 )}
                                 {!hasVariants && (
@@ -1669,20 +2260,26 @@ export function CreateOrderModal({
                           {hasVariants &&
                             isExpanded &&
                             p.variants.map((v: any) => {
+                              const vi = variantRowIndex.get(v.id) ?? -1;
                               const variantAdded = lineItems.some((li) => li.productId === v.id);
                               return (
-                                <li key={v.id} className="bg-surface-raised/50">
+                                <li key={v.id} role="presentation" className="bg-surface-raised/50">
                                   <button
                                     type="button"
-                                    onClick={() => addPicked(v)}
+                                    role="option"
+                                    id={productNav.optionId(vi)}
+                                    aria-selected={vi === productNav.highlight}
+                                    onMouseEnter={() => productNav.setHighlight(vi)}
+                                    onClick={() => addPicked(attachParent(v, p))}
                                     className={cn(
                                       "flex w-full items-center justify-between pl-8 pr-3 py-2 text-left text-sm text-navy hover:bg-surface-raised",
+                                      vi === productNav.highlight && "bg-surface-raised",
                                       variantAdded && "opacity-40",
                                     )}
                                   >
                                     <div className="flex items-center gap-1.5 min-w-0">
                                       <span className="font-medium truncate">
-                                        {v.variantName ?? v.name}
+                                        {pickerProductName(v, p)}
                                       </span>
                                       {v.sku && (
                                         <span className="text-xs text-navy/70 shrink-0">
@@ -1703,20 +2300,18 @@ export function CreateOrderModal({
                         </React.Fragment>
                       );
                     })}
-                    <li className="border-t border-surface-border">
+                    <li role="presentation" className="border-t border-surface-border">
                       <button
                         type="button"
-                        className="flex w-full items-center gap-2 px-3 py-2.5 text-sm text-brand-500 hover:bg-surface-raised font-medium"
-                        onClick={() => {
-                          const looksLikeSku = /^\d{6,}$/.test(debouncedProductSearch.trim());
-                          setCreateProductInitialName(looksLikeSku ? "" : debouncedProductSearch);
-                          setCreateProductInitialSku(
-                            looksLikeSku ? debouncedProductSearch.trim() : "",
-                          );
-                          setCreateProductOpen(true);
-                          setProductSearch("");
-                          setDebouncedProductSearch("");
-                        }}
+                        role="option"
+                        id={productNav.optionId(createProductRowIndex)}
+                        aria-selected={createProductRowIndex === productNav.highlight}
+                        onMouseEnter={() => productNav.setHighlight(createProductRowIndex)}
+                        className={cn(
+                          "flex w-full items-center gap-2 px-3 py-2.5 text-sm text-brand-500 hover:bg-surface-raised font-medium",
+                          createProductRowIndex === productNav.highlight && "bg-surface-raised",
+                        )}
+                        onClick={openCreateProduct}
                       >
                         <Plus className="h-3.5 w-3.5" />
                         Create new product
@@ -1725,7 +2320,37 @@ export function CreateOrderModal({
                     </li>
                   </ul>
                 )}
+              <BarcodeScannerButton
+                inputRef={productSearchRef}
+                onScan={(code, source) => {
+                  // A wedge scan is taken from the field AND the field cleared here, in the same task, so
+                  // the next scan of a burst types into an empty field. A camera scan is +1.
+                  if (source === "field") {
+                    setProductSearch("");
+                    setDebouncedProductSearch("");
+                  }
+                  void scanQueue.enqueue(code);
+                }}
+                onError={(message) => toast({ variant: "error", title: message })}
+                onOpenContinuous={scanV2 ? () => setScanScreenOpen(true) : undefined}
+                className="h-10 min-h-[44px] w-10 min-w-[44px] shrink-0"
+                title="Scan barcode"
+              />
             </div>
+
+            {scanMatches.length > 0 && (
+              <DidYouMeanPicker
+                matches={scanMatches}
+                onConfirm={(product) => {
+                  setScanMatches([]);
+                  addPicked(product);
+                }}
+                onCancel={() => {
+                  setScanMatches([]);
+                  scheduleScannerRefocus(productSearchRef, 50);
+                }}
+              />
+            )}
 
             {lineItemsError && lineItems.length === 0 && (
               <p className="text-xs text-danger">{lineItemsError}</p>
@@ -1825,6 +2450,7 @@ export function CreateOrderModal({
                     // #2696 (b)/(c): tap the price → the line's price/qty sheet, a SPECIAL-priced line
                     // too — moving off the special price takes a reason there (SA-558).
                     onTapPrice: () => setEditingLineId(li.tempId),
+                    priceHistory: true,
                   }),
                 )}
               </ul>
@@ -1933,35 +2559,65 @@ export function CreateOrderModal({
 
             {/* Dates */}
             <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
-              <div className="space-y-1">
-                <label className="block text-xs font-medium text-navy/70" htmlFor="delivery-date">
-                  Requested Delivery Date{" "}
-                  <span className="font-normal text-navy/70">(optional)</span>
-                </label>
-                <input
-                  id="delivery-date"
-                  type="date"
-                  value={requestedDeliveryDate}
-                  onChange={(e) => setRequestedDeliveryDate(e.target.value)}
-                  className="h-10 w-full rounded border border-surface-border bg-white px-3 text-sm text-navy focus:outline-none focus:ring-2 focus:ring-brand-500"
-                />
-              </div>
-              <div className="space-y-1">
-                <label className="block text-xs font-medium text-navy/70" htmlFor="order-date">
-                  Order date <span className="font-normal text-navy/70">(optional)</span>
-                </label>
-                <input
-                  id="order-date"
-                  type="date"
-                  max={maxOrderDate}
-                  value={orderDate}
-                  onChange={(e) => setOrderDate(e.target.value)}
-                  className="h-10 w-full rounded border border-surface-border bg-white px-3 text-sm text-navy focus:outline-none focus:ring-2 focus:ring-brand-500"
-                />
-                <p className="text-[11px] leading-snug text-navy/70">
-                  The day the order actually happened. Leave blank for today.
-                </p>
-              </div>
+              {!posMode && (
+                <div className="space-y-1">
+                  <label className="block text-xs font-medium text-navy/70" htmlFor="delivery-date">
+                    Requested Delivery Date{" "}
+                    <span className="font-normal text-navy/70">(optional)</span>
+                  </label>
+                  <input
+                    id="delivery-date"
+                    type="date"
+                    value={requestedDeliveryDate}
+                    onChange={(e) => setRequestedDeliveryDate(e.target.value)}
+                    className="h-10 w-full rounded border border-surface-border bg-white px-3 text-sm text-navy focus:outline-none focus:ring-2 focus:ring-brand-500"
+                  />
+                </div>
+              )}
+              {showOrderDate ? (
+                <div className="space-y-1">
+                  <label className="block text-xs font-medium text-navy/70" htmlFor="order-date">
+                    Order date <span className="font-normal text-navy/70">(optional)</span>
+                  </label>
+                  <input
+                    id="order-date"
+                    ref={orderDateRef}
+                    type="date"
+                    max={maxOrderDate}
+                    value={orderDate}
+                    onChange={(e) => setOrderDate(e.target.value)}
+                    className="h-10 w-full rounded border border-surface-border bg-white px-3 text-sm text-navy focus:outline-none focus:ring-2 focus:ring-brand-500"
+                  />
+                  <p className="text-[11px] leading-snug text-navy/70">
+                    The day the order actually happened. Leave blank for today.{" "}
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setOrderDate("");
+                        focusAfterToggle.current = "link";
+                        setBackdateOpen(false);
+                      }}
+                      className="font-medium text-brand-500 hover:underline"
+                    >
+                      Use today
+                    </button>
+                  </p>
+                </div>
+              ) : (
+                <div className="flex items-end">
+                  <button
+                    type="button"
+                    ref={backdateLinkRef}
+                    onClick={() => {
+                      focusAfterToggle.current = "date";
+                      setBackdateOpen(true);
+                    }}
+                    className="min-h-10 text-sm font-medium text-brand-500 hover:underline"
+                  >
+                    Backdate this order
+                  </button>
+                </div>
+              )}
             </div>
 
             {isStaff && hasSalesAgents && (
@@ -1987,57 +2643,56 @@ export function CreateOrderModal({
               </div>
             )}
 
-            <div className="space-y-1">
-              <label className="block text-xs font-medium text-navy/70">Fulfillment</label>
-              <div className="inline-flex rounded-lg border border-surface-border bg-white p-0.5">
-                <button
-                  type="button"
-                  onClick={() => setValue("fulfillPath", "ROUTE")}
-                  className={cn(
-                    "rounded-md px-3 py-1.5 text-xs font-medium transition-colors",
-                    fulfillPath === "ROUTE" ? "bg-navy text-white" : "text-navy/70 hover:text-navy",
-                  )}
-                >
-                  Delivery route
-                </button>
-                <button
-                  type="button"
-                  onClick={() => setValue("fulfillPath", "SHIP")}
-                  className={cn(
-                    "rounded-md px-3 py-1.5 text-xs font-medium transition-colors",
-                    fulfillPath === "SHIP" ? "bg-navy text-white" : "text-navy/70 hover:text-navy",
-                  )}
-                >
-                  Ship via carrier
-                </button>
+            {staffFulfilment.choice && !posMode && (
+              <div className="space-y-1">
+                <label className="block text-xs font-medium text-navy/70">Fulfillment</label>
+                <div className="inline-flex rounded-lg border border-surface-border bg-white p-0.5">
+                  {staffFulfilment.formMethods.map((m) => (
+                    <button
+                      key={m}
+                      type="button"
+                      onClick={() => setValue("fulfillPath", m)}
+                      className={cn(
+                        "rounded-md px-3 py-1.5 text-xs font-medium transition-colors",
+                        fulfillPath === m ? "bg-navy text-white" : "text-navy/70 hover:text-navy",
+                      )}
+                    >
+                      {m === "ROUTE" ? "Delivery route" : "Ship via carrier"}
+                    </button>
+                  ))}
+                </div>
+                {fulfillPath === "SHIP" && (
+                  <p className="text-[11px] leading-snug text-navy/70">Ships via carrier.</p>
+                )}
               </div>
-              {fulfillPath === "SHIP" && (
-                <p className="text-[11px] leading-snug text-navy/70">
-                  Ships via carrier — won&apos;t appear on delivery routes.
-                </p>
-              )}
-            </div>
+            )}
 
             <Textarea
               label="Notes"
-              placeholder="Special instructions, delivery notes…"
+              placeholder={
+                storeOnlyPos ? "Special instructions…" : "Special instructions, delivery notes…"
+              }
               register={register("notes")}
             />
 
-            <label
-              className={cn(
-                "flex cursor-pointer items-center gap-2.5 rounded-lg border px-3 py-2.5 transition-colors",
-                isUrgent
-                  ? "border-danger/40 bg-danger-bg"
-                  : "border-surface-border bg-white hover:bg-surface-raised",
-              )}
-            >
-              <input type="checkbox" {...register("urgent")} className="h-4 w-4 accent-danger" />
-              <AlertTriangle className={cn("h-4 w-4", isUrgent ? "text-danger" : "text-navy/30")} />
-              <span className={cn("text-sm font-medium", isUrgent ? "text-danger" : "text-navy")}>
-                Mark as Urgent
-              </span>
-            </label>
+            {!posMode && (
+              <label
+                className={cn(
+                  "flex cursor-pointer items-center gap-2.5 rounded-lg border px-3 py-2.5 transition-colors",
+                  isUrgent
+                    ? "border-danger/40 bg-danger-bg"
+                    : "border-surface-border bg-white hover:bg-surface-raised",
+                )}
+              >
+                <input type="checkbox" {...register("urgent")} className="h-4 w-4 accent-danger" />
+                <AlertTriangle
+                  className={cn("h-4 w-4", isUrgent ? "text-danger" : "text-navy/30")}
+                />
+                <span className={cn("text-sm font-medium", isUrgent ? "text-danger" : "text-navy")}>
+                  Mark as Urgent
+                </span>
+              </label>
+            )}
           </section>
         </div>
       </form>
@@ -2059,12 +2714,16 @@ export function CreateOrderModal({
           pendingFormValuesRef.current = null;
           pendingAsDraftRef.current = false;
         }}
-        title="Open order exists"
+        title={posMode ? POS_COPY.mergeTitle : "Open order exists"}
         description={
           mergePrompt
-            ? orderDate
-              ? `This customer already has an open ${mergePrompt.status.toLowerCase()} order. Merging files these items under that order's date, so a backdated order has to be created separately.`
-              : `This customer already has an open ${mergePrompt.status.toLowerCase()} order. Merge these items into it, or create a fully separate order?`
+            ? posMode
+              ? orderDate
+                ? "Adding to it files these items under that order's date, so a backdated order has to be created separately."
+                : POS_COPY.mergeDescription
+              : orderDate
+                ? `This customer already has an open ${mergePrompt.status.toLowerCase()} order. Merging files these items under that order's date, so a backdated order has to be created separately.`
+                : `This customer already has an open ${mergePrompt.status.toLowerCase()} order. Merge these items into it, or create a fully separate order?`
             : undefined
         }
         className="max-w-md"
@@ -2086,7 +2745,9 @@ export function CreateOrderModal({
                     });
                 }}
               >
-                Merge into {mergePrompt.orderNumber ?? "existing order"}
+                {posMode
+                  ? POS_COPY.mergeAdd
+                  : `Merge into ${mergePrompt.orderNumber ?? "existing order"}`}
               </Button>
               <Button
                 type="button"
@@ -2100,7 +2761,9 @@ export function CreateOrderModal({
                     });
                 }}
               >
-                Create as separate {pendingAsDraftRef.current ? "draft" : "order"}
+                {posMode
+                  ? POS_COPY.mergeNew
+                  : `Create as separate ${pendingAsDraftRef.current ? "draft" : "order"}`}
               </Button>
             </div>
           ) : null

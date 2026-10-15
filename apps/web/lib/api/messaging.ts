@@ -1,4 +1,6 @@
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
+import type { ChannelStatusMap, NotificationAudience } from "@routeflow/types";
+import type { DeliveryHealth } from "../reason-copy";
 import { apiClient } from "../api-client";
 
 /**
@@ -34,6 +36,10 @@ export interface MatrixCell {
 export interface MatrixEvent {
   eventKey: string;
   label: string;
+  /** Who receives it (buyer vs staff) — never re-derived client-side. */
+  audience: NotificationAudience;
+  /** False = no firing site; listed under "Coming soon" with no switch. */
+  hasTrigger: boolean;
   channels: MatrixCell[];
 }
 
@@ -53,15 +59,36 @@ export interface MsgsMeter {
 
 export interface MessagingConfig {
   events: MatrixEvent[];
+  /** Per-channel availability; the web never infers it per cell. */
+  channelStatus: ChannelStatusMap;
   settings: MessagingSettings;
   msgsMeter: MsgsMeter | null;
 }
 
-export function useMessagingConfig() {
+export function useMessagingConfig(opts?: { enabled?: boolean }) {
   return useQuery<MessagingConfig>({
     queryKey: ["messaging-config"],
     queryFn: () => apiClient.get("/messaging/config").then((r) => r.data),
     staleTime: 60_000,
+    enabled: opts?.enabled ?? true,
+  });
+}
+
+/** 7-day email delivery health (#1965 / spec 08-C). The endpoint ships with the delivery log; until
+ * then it 404s and this resolves to `null` so the strip simply does not render. */
+export function useDeliveryHealth() {
+  return useQuery<DeliveryHealth | null>({
+    queryKey: ["messaging-delivery-health"],
+    queryFn: async () => {
+      try {
+        return (await apiClient.get("/messaging/delivery-health")).data as DeliveryHealth;
+      } catch (err) {
+        if ((err as { response?: { status?: number } })?.response?.status === 404) return null;
+        throw err;
+      }
+    },
+    staleTime: 60_000,
+    retry: false,
   });
 }
 
@@ -70,6 +97,8 @@ export function useMessagingConfig() {
 export function useToggleRule() {
   const qc = useQueryClient();
   return useMutation({
+    // The page renders its own fixed error sentence; opt out of the global raw-message toast.
+    meta: { localErrorToast: true },
     mutationFn: ({ ruleId, enabled }: { ruleId: string; enabled: boolean }) =>
       apiClient.patch(`/messaging/rules/${ruleId}`, { enabled }).then((r) => r.data),
     onMutate: async ({ ruleId, enabled }) => {
@@ -98,6 +127,7 @@ export function useToggleRule() {
 export function useUpdateTemplate() {
   const qc = useQueryClient();
   return useMutation({
+    meta: { localErrorToast: true },
     mutationFn: ({
       id,
       dto,
@@ -121,6 +151,7 @@ export function usePreviewTemplate() {
 export function useUpdateMessagingSettings() {
   const qc = useQueryClient();
   return useMutation({
+    meta: { localErrorToast: true },
     mutationFn: (dto: Partial<MessagingSettings>) =>
       apiClient.patch("/messaging/settings", dto).then((r) => r.data),
     onSuccess: () => qc.invalidateQueries({ queryKey: ["messaging-config"] }),

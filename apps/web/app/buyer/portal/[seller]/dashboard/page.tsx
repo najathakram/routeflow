@@ -15,6 +15,7 @@ import {
   Store,
 } from "lucide-react";
 import { Badge, Button, cn } from "@routeflow/ui/web";
+import { reorderNoneAvailable, reorderSkippedNote } from "@/lib/buyer-reorder-review";
 import { useBuyerAuth } from "@/lib/buyer-auth-context";
 import {
   useBuyerDashboard,
@@ -24,8 +25,16 @@ import {
   type BuyerOrderTemplate,
 } from "@/lib/api/buyer";
 import { useBuyerCart } from "@/lib/buyer-cart";
+import { isSellerUnavailableRefusal, sellerUnavailableCopy } from "@/lib/seller-unavailable";
+import { useBuyerSellerCapabilities } from "@/lib/api/buyer-capabilities";
+import {
+  SellerUnavailableLine,
+  useSellerAcceptingOrders,
+} from "@/components/SellerUnavailableLine";
+import { buyerOrderStatusLabel } from "@/lib/buyer-fulfilment";
 import { objectPositionForUrl } from "@/lib/image-focal";
 import { PwaInstallPrompt } from "@/components/PwaInstallPrompt";
+import { ReorderReviewSheet, REORDER_FAILED_COPY } from "../_components/ReorderReviewSheet";
 
 function fmt(n: number) {
   return new Intl.NumberFormat("en-US", { style: "currency", currency: "USD" }).format(n);
@@ -72,25 +81,54 @@ function nextDeliveryLabel(daysOfWeek: number[]): string {
   return `This ${DAY_FULL[next]}`;
 }
 
+/** A paused seller: disable an order-creating control and point it at the one quiet line (the cart's Checkout does the same). */
+function sellerGate(accepting: boolean) {
+  return accepting ? {} : { disabled: true, "aria-describedby": "seller-unavailable-line" };
+}
+
 function StandingOrdersPanel({
   sellerSlug,
+  sellerName,
   templates,
   isLoading,
 }: {
   sellerSlug: string;
+  sellerName?: string | null;
   templates: BuyerOrderTemplate[];
   isLoading: boolean;
 }) {
-  const reorder = useBuyerReorder();
-  const [reordering, setReordering] = React.useState<string | null>(null);
+  const reorder = useBuyerReorder({ localErrorToast: true }); // the sheet shows its own sentence
+  const [skippedNote, setSkippedNote] = React.useState<string | null>(null);
+  const accepting = useSellerAcceptingOrders();
+  // A tap on Reorder only OPENS the review sheet (lines + total); the order is placed from its
+  // "Place order" button, never from the tap itself.
+  const [reviewing, setReviewing] = React.useState<BuyerOrderTemplate | null>(null);
+  const [placing, setPlacing] = React.useState(false);
+  const [placeError, setPlaceError] = React.useState<string | null>(null);
 
-  const handleReorder = async (templateId: string) => {
-    if (reordering) return;
-    setReordering(templateId);
+  const closeReview = () => {
+    setReviewing(null);
+    setPlaceError(null);
+  };
+
+  const handlePlace = async () => {
+    if (!reviewing || placing) return;
+    setPlacing(true);
+    setPlaceError(null);
     try {
-      await reorder.mutateAsync(templateId);
+      const res = await reorder.mutateAsync(reviewing.id);
+      setSkippedNote(reorderSkippedNote(res));
+      setReviewing(null);
+    } catch (err) {
+      // Nothing orderable says so; a paused seller says so; every other failure keeps the fixed retry sentence.
+      setPlaceError(
+        reorderNoneAvailable(err) ??
+          (isSellerUnavailableRefusal(err)
+            ? sellerUnavailableCopy(sellerName)
+            : REORDER_FAILED_COPY),
+      );
     } finally {
-      setReordering(null);
+      setPlacing(false);
     }
   };
 
@@ -116,11 +154,19 @@ function StandingOrdersPanel({
           Manage <ArrowRight className="h-3 w-3" />
         </button>
       </div>
+      {skippedNote && (
+        <p
+          role="status"
+          data-testid="reorder-skipped-note"
+          className="border-b border-buyer-100 bg-white px-4 py-2 text-sm text-navy"
+        >
+          {skippedNote}
+        </p>
+      )}
       <div className="divide-y divide-buyer-100">
         {active.map((t) => {
           const nextLabel = nextDeliveryLabel(t.daysOfWeek);
           const dayChips = t.daysOfWeek.sort().map((d) => DAY_NAMES[d]);
-          const isReordering = reordering === t.id;
           return (
             <div key={t.id} className="flex items-center gap-4 px-4 py-3">
               <div className="flex-1 min-w-0">
@@ -152,15 +198,11 @@ function StandingOrdersPanel({
                   {nextLabel}
                 </p>
                 <button
-                  onClick={() => handleReorder(t.id)}
-                  disabled={isReordering}
-                  className="mt-1 flex items-center gap-1 rounded-lg bg-buyer-500 px-2.5 py-1 text-[11px] font-semibold text-white hover:bg-buyer-600 transition-colors disabled:opacity-50"
+                  onClick={() => setReviewing(t)}
+                  {...sellerGate(accepting)}
+                  className="mt-1 flex items-center gap-1 rounded-lg bg-buyer-500 px-2.5 py-1 text-[11px] font-semibold text-white transition-colors hover:bg-buyer-600 disabled:cursor-not-allowed disabled:opacity-50 disabled:hover:bg-buyer-500"
                 >
-                  {isReordering ? (
-                    <span className="h-3 w-3 animate-spin rounded-full border-2 border-white border-t-transparent" />
-                  ) : (
-                    <ShoppingCart className="h-3 w-3" />
-                  )}
+                  <ShoppingCart className="h-3 w-3" />
                   Reorder
                 </button>
               </div>
@@ -168,6 +210,13 @@ function StandingOrdersPanel({
           );
         })}
       </div>
+      <ReorderReviewSheet
+        template={reviewing}
+        placing={placing}
+        error={placeError}
+        onConfirm={handlePlace}
+        onClose={closeReview}
+      />
     </div>
   );
 }
@@ -182,6 +231,8 @@ export default function BuyerDashboardPage() {
   const { data: dashboard, isLoading, isError } = useBuyerDashboard(frequentWindow);
   const { data: templatesData, isLoading: templatesLoading } = useBuyerTemplates();
   const { data: shelf } = useBuyerShelf();
+  // Business profiles 1B: each recent order's badge is the order detail's own label.
+  const { data: capabilities, isLoading: capLoading } = useBuyerSellerCapabilities();
   const cart = useBuyerCart(buyer?.id, sellerSlug);
   const templates: BuyerOrderTemplate[] = templatesData?.data ?? [];
 
@@ -224,6 +275,8 @@ export default function BuyerDashboardPage() {
         </h1>
         <p className="text-sm text-navy/70 mt-1">Your dashboard at {activeSeller?.tenant.name}</p>
       </div>
+
+      <SellerUnavailableLine className="rounded-lg bg-surface-raised px-4 py-3 text-sm text-navy/80" />
 
       {/* P5-07: replenishment chips → Your Shelf */}
       {(lowCount > 0 || dueSoonCount > 0) && (
@@ -295,6 +348,7 @@ export default function BuyerDashboardPage() {
       {/* Standing Orders — front and centre */}
       <StandingOrdersPanel
         sellerSlug={sellerSlug}
+        sellerName={activeSeller?.tenant.name}
         templates={templates}
         isLoading={templatesLoading}
       />
@@ -396,13 +450,15 @@ export default function BuyerDashboardPage() {
                   <div>
                     <p className="text-sm font-medium text-navy">{order.orderNumber}</p>
                     <p className="text-xs text-navy/70">
-                      {formatDate(order.createdAt)} · {order.itemCount} items
+                      {formatDate(order.createdAt)} · {order.itemCount}{" "}
+                      {order.itemCount === 1 ? "item" : "items"}
                     </p>
                   </div>
                 </div>
                 <div className="flex items-center gap-3">
                   <Badge variant={getStatusVariant(order.status)}>
-                    {formatStatus(order.status)}
+                    {buyerOrderStatusLabel(order, capabilities, capLoading) ??
+                      formatStatus(order.status)}
                   </Badge>
                   <span className="text-sm font-semibold text-navy">{fmt(order.total)}</span>
                   <ChevronRight className="h-4 w-4 text-navy/30" />

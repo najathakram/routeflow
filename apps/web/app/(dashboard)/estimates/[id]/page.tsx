@@ -25,6 +25,8 @@ import {
 } from "@/lib/api/estimates";
 import { fmt, fmtCalendarDate, fmtDate } from "@/lib/formatting";
 import { DocumentLetterhead } from "@/components/DocumentLetterhead";
+import { storedOrComputedLineSubtotal } from "@/lib/line-subtotal";
+import { estimateTaxBasisNotice } from "@/lib/estimate-tax-basis";
 
 // ─── Void confirm modal ───────────────────────────────────────────────────────
 
@@ -174,9 +176,11 @@ export default function EstimateDetailPage() {
   const handleConvert = () => {
     convertToInvoice.mutate(estimate.id, {
       onSuccess: (inv) => {
+        // H5: the invoice is taxed at TODAY's rate and exempt flag; say so when that differs from the quote.
+        const taxNotice = estimateTaxBasisNotice(inv?.taxBasis);
         toast({
           title: "Invoice created",
-          description: `${estimate.estimateNumber} has been converted to an invoice.`,
+          description: `${estimate.estimateNumber} has been converted to an invoice.${taxNotice ? ` ${taxNotice}` : ""}`,
           variant: "success",
         });
         // B15-NAV: the server returns the created Invoice keyed `id` (not
@@ -390,7 +394,7 @@ export default function EstimateDetailPage() {
                         {/* Stored line subtotal is authoritative (boxed-aware, rounded via
                             pricing.ts). NEVER re-derive qty*unitPrice — it over-charges boxed
                             lines by unitsPerBox. */}
-                        {fmt(Number(item.subtotal ?? Number(item.qty) * Number(item.unitPrice)))}
+                        {fmt(storedOrComputedLineSubtotal(item))}
                       </td>
                     </tr>
                   ))}

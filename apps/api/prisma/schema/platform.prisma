@@ -65,6 +65,19 @@ model TenantSubscription {
   priceOverrideMonthly  Decimal?     @db.Decimal(10, 2)
   priceOverrideAnnual   Decimal?     @db.Decimal(10, 2)
   billingInterval       String? // "month" | "year", stamped at checkout completion
+  // Dunning + catch-up + coupon seams (sitting 3, SA-741r2). Schema only: nothing reads or writes them yet.
+  pastDueSince          DateTime?
+  pastDueInvoiceId      String?
+  pausedAt              DateTime?
+  // SESSION_OPEN | AWAITING_FIRST_PAYMENT | RELEASING (CHECK "TenantSubscription_catchupState_chk").
+  catchupState          String?
+  catchupSessionId      String?
+  catchupInvoiceId      String?
+  needsReconcile        Boolean      @default(false)
+  couponFull            Boolean      @default(false)
+  couponId              String?
+  couponEndsAt          DateTime?
+  couponSyncedAt        DateTime?
   createdAt             DateTime     @default(now())
   updatedAt             DateTime     @updatedAt
 
@@ -73,6 +86,7 @@ model TenantSubscription {
 
   @@index([planVersionId])
   @@index([downgradeEffectiveAt])
+  @@index([pastDueInvoiceId])
 }
 
 // N3 (2026-09-16): idempotency log for billing-lifecycle emails to the tenant admin
@@ -107,6 +121,9 @@ model TenantAddon {
   stripePriceId String? // Stripe price for this add-on
   stripeItemId  String? // Stripe subscription item ID
   active        Boolean  @default(true)
+  // SA-693: granted free ON PURPOSE by the platform. Never billed, never blocks a checkout, never
+  // booked as revenue. Written only by the admin comp/uncomp paths; self-serve always writes false.
+  isComp        Boolean  @default(false)
   createdAt     DateTime @default(now())
   updatedAt     DateTime @updatedAt
 
@@ -363,14 +380,43 @@ model RfInvoice {
   tenantId String
   number   String       @unique // RF-YYYY-NNNN
   amount   Decimal      @db.Decimal(10, 2)
-  status   String // PAID | OPEN | FAILED
+  status   String // OPEN | PAID | VOID (legacy FAILED is never written; deliberately not a Prisma enum)
   cycle    BillingCycle @default(MONTHLY)
   pdfKey   String?
   issuedAt DateTime     @default(now())
 
+  // Manual-pay lifecycle (manual invoices due, PR1). All nullable/defaulted: the table had no
+  // writer before this, so existing rows (none expected) are untouched.
+  periodStart DateTime?
+  periodEnd   DateTime?
+  /// ISO of periodStart; "<iso>:void:<id>" once voided so a new live invoice can take the period.
+  periodKey   String?
+  /// Net 0: equal to periodStart.
+  dueDate     DateTime?
+  currency    String    @default("USD")
+  /// [{ kind: PLAN | ADDON, code, label, quantity, unitAmount, amount }]
+  lines       Json?
+  issuedById  String?
+  paidAt      DateTime?
+  paidMethod  String?
+  paidRef     String?
+  paidNote    String?
+  paidById    String?
+  lastSentAt  DateTime?
+  sendCount   Int       @default(0)
+  voidedAt    DateTime?
+  voidReason  String?
+  /// The office must look at this invoice before RouteFlow chases it. Set at issue (an add-on line had no price
+  /// snapshot and was written at 0, or the billing window is irregular) or when a manual activation only PARTLY
+  /// covers the period. The automatic emails (issue and d0/d7/d14 reminders) skip a flagged row; a manual
+  /// resend still works. Nothing clears the flag in code: a super-admin resolves the row (void or mark paid).
+  needsReview Boolean   @default(false)
+
   tenant Tenant @relation(fields: [tenantId], references: [id], onDelete: Cascade)
 
+  @@unique([tenantId, periodKey])
   @@index([tenantId, issuedAt])
+  @@index([status, dueDate])
 }
 
 model SystemConfig {
@@ -382,6 +428,40 @@ model SystemConfig {
   updatedAt DateTime @updatedAt
 
   @@unique([tenantId, key])
+  @@index([tenantId])
+}
+
+/// SA-138 phase 1: which layer a tenant POLICY value applies to. Resolution order is
+/// registry default → TENANT → CATEGORY → CUSTOMER (the most specific active row wins).
+/// Mirrored by packages/types/api/enums.ts POLICY_SCOPE_TYPE_VALUES (enum-parity.spec.ts).
+enum PolicyScopeType {
+  TENANT
+  CATEGORY
+  CUSTOMER
+}
+
+/// SA-138 phase 1: a tenant's own policy value for one `apps/api/src/policy/policy-registry.ts`
+/// key at one scope. APPEND-ONLY: a write supersedes the active row (`supersededAt`/`supersededById`)
+/// and inserts the new one in one transaction under the `policy-write` advisory lock (key
+/// `${tenantId}:${key}`), which is what keeps one active row per (tenant, key, scope) — Prisma
+/// cannot express the partial unique index. Nothing is updated except the supersede stamps and
+/// nothing is deleted. `scopeId` is a soft pointer (TrackedCategory / Customer id; null for TENANT).
+model PolicyValue {
+  id             String          @id @default(uuid())
+  tenantId       String
+  tenant         Tenant          @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  key            String
+  scopeType      PolicyScopeType
+  scopeId        String?
+  value          Json
+  reason         String
+  setById        String?
+  setByName      String?
+  createdAt      DateTime        @default(now())
+  supersededAt   DateTime?
+  supersededById String?
+
+  @@index([tenantId, key, scopeType, scopeId, supersededAt])
   @@index([tenantId])
 }
 
@@ -470,6 +550,22 @@ enum NotificationEvent {
   // requires one), and it is NOT added to DEFAULT_ON (default-on-is-wired.spec.ts
   // would fail otherwise).
   CHECK_RETURNED // internal alert
+  // SA-603c (additive-only, appended at the END): salvage's staff/buyer order emails.
+  // The schema bundle never USES these values; only app code after the commit does
+  // (ADD VALUE cannot be used in its own transaction). Urgent orders will REUSE
+  // STAFF_NEW_ORDER with a subject prefix; URGENT_ORDER_PLACED stays untouched.
+  // messaging-config.service.ts gains exhaustiveness-only entries; NOT in DEFAULT_ON.
+  STAFF_NEW_ORDER // internal alert
+  BUYER_ORDER_EDITED // internal alert
+  BUYER_ORDER_CANCELLED // internal alert
+  // Carrier-shipped orders (additive-only, appended at the END): the accurate "your order has
+  // shipped" email (replaces OUT_FOR_DELIVERY for SHIP orders) and the one-time follow-up when
+  // tracking is first added after the order was already marked shipped.
+  ORDER_SHIPPED
+  SHIPMENT_TRACKING_ADDED
+  // Pickup orders (additive-only, appended at the END): "your order is ready for pickup". The pickup
+  // flow (a separate PR) is its firing site; this PR only creates the event, template and seed rows.
+  READY_FOR_PICKUP
 }
 
 // One conversation with a customer across all channels (the inbox row).
@@ -1305,4 +1401,42 @@ model OrderAcceptance {
   supersededAt   DateTime?
 
   @@index([caseId, acceptedAt])
+}
+
+enum EmailDeliveryStatus {
+  QUEUED
+  SENT
+  FAILED
+  BOUNCED
+  // WOULD_SEND = dark-week record (nothing sent), OPTED_OUT = recipient opted out.
+  WOULD_SEND
+  OPTED_OUT
+}
+
+/// One outbound transactional email attempt (SA-603). PII minimal: NO subject/body columns, the
+/// content is re-derivable from `kind` + `entityType`/`entityId`. Retention 90 days (purge in app).
+model EmailDelivery {
+  id                String              @id @default(uuid())
+  tenantId          String
+  // An app allow-list of template keys, no enum churn.
+  kind              String
+  toAddress         String
+  entityType        String?
+  entityId          String?
+  status            EmailDeliveryStatus @default(QUEUED)
+  providerMessageId String?
+  // Provider text, truncated to 500 in the app.
+  error             String?
+  attempts          Int                 @default(0)
+  sentAt            DateTime?
+  createdAt         DateTime            @default(now())
+  // SHA-256 of the rendered subject+body computed in the app, stored as a hash never the content; no index yet.
+  contentFingerprint String?
+
+  tenant Tenant @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+
+  @@index([tenantId, createdAt])
+  @@index([tenantId, kind, createdAt])
+  @@index([entityType, entityId])
+  @@index([providerMessageId])
 }

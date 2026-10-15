@@ -1,7 +1,7 @@
 /**
  * Platform-admin mobile overflow — B559, spec 52.
  *
- * The owner reported the TENANT DETAIL page's "Addons & Features" tab broken at
+ * The owner reported the TENANT DETAIL page's "Setup" tab broken at
  * ~390px: content clipped at the left edge, the page "moves around and won't
  * settle". Root cause: `(platform-admin)/_components/AdminTabs.tsx` rendered its
  * 5 tabs in a plain `flex` row with no wrap, no `overflow-x-auto`, and no
@@ -196,7 +196,7 @@ for (const vp of VIEWPORTS) {
       // holds under the exact interaction that exposed the bug.
       const tabs = [
         { name: "Billing & Subscription", shot: "tenant-detail-billing" },
-        { name: "Addons & Features", shot: "tenant-detail-addons" },
+        { name: "Setup", shot: "tenant-detail-addons" },
         { name: "Configuration", shot: "tenant-detail-config" },
         { name: "Audit Log", shot: "tenant-detail-audit" },
       ];

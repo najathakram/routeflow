@@ -11,7 +11,10 @@ import { EmailService } from "../email/email.service";
 import { ConfigService } from "@nestjs/config";
 import { RouteFlowGateway } from "../gateways/routeflow.gateway";
 import type { RequestSellerDto } from "./dto/request-seller.dto";
+import type { Prisma } from "@prisma/client";
+import { excludeWalkIn } from "../customers/walk-in-protected";
 import { escapeHtml } from "../common/html-escape";
+import { sellerAcceptsBuyerWrite, sellerUnavailableException } from "./seller-status-gate";
 
 @Injectable()
 export class BuyerService {
@@ -123,7 +126,7 @@ export class BuyerService {
         // so acceptInvite can never flip its link back to ACTIVE (no write, no tenantSlug handed
         // back to the client) while the guard refuses every seller-scoped route.
         where: { inviteToken: token, customer: { deletedAt: null } },
-        include: { tenant: { select: { name: true, slug: true } } },
+        include: { tenant: { select: { name: true, slug: true, status: true } } },
       });
 
       if (!link) throw new NotFoundException("Invite not found or already used");
@@ -136,6 +139,16 @@ export class BuyerService {
       if (link.status !== "INVITED" && link.status !== "PENDING_SELLER_APPROVAL") {
         throw new ConflictException("This invite has already been used");
       }
+
+      // SA-776 GAP-2: the acceptance follows the seller's workspace status through the ONE buyer-write rule
+      // (seller-status-gate.ts), before any write - a refusal leaves the invite token on the row.
+      const verdict = sellerAcceptsBuyerWrite({
+        sellerStatus: link.tenant.status,
+        sellerId: link.tenantId,
+        logger: this.logger,
+        context: "POST /api/v1/buyer/invites/:token/accept",
+      });
+      if (!verdict.allowed) throw sellerUnavailableException();
 
       // Check if buyer already has a link to this tenant
       const existing = await tx.customerLink.findFirst({
@@ -180,8 +193,17 @@ export class BuyerService {
     // Resolve tenant
     const tenant = await this.prisma.tenant.findUnique({ where: { slug: dto.sellerSlug } });
     if (!tenant) throw new NotFoundException("Seller not found");
-    if (tenant.status === "SUSPENDED" || tenant.status === "CANCELLED") {
-      throw new NotFoundException("Seller not found");
+    // SA-776 GAP-2: the ONE buyer-write rule (seller-status-gate.ts). A suspended / cancelled seller keeps answering
+    // exactly as before (a seller that does not exist); a READ_ONLY seller follows SELLER_READ_ONLY_BUYER_GATE.
+    const verdict = sellerAcceptsBuyerWrite({
+      sellerStatus: tenant.status,
+      sellerId: tenant.id,
+      logger: this.logger,
+      context: "POST /api/v1/buyer/sellers/request",
+    });
+    if (!verdict.allowed) {
+      if (verdict.reason === "SELLER_BLOCKED") throw new NotFoundException("Seller not found");
+      throw sellerUnavailableException();
     }
 
     // Find customer at that tenant matching the email the buyer TYPED (a claim, not proof).
@@ -191,12 +213,13 @@ export class BuyerService {
     // link read, upsert, seller email or socket emit — is what keeps the answer consistent with
     // getSellers (hides it) and the seller-context guard (403s it): no "already connected" 409 and
     // no "Connected!" for a portal that is refused. Stateless, so restore re-enables it.
+    // The tenant's walk-in customer is a system row: never matched, linked or auto-approved here.
     const customer = await this.prisma.customer.findFirst({
-      where: {
+      where: excludeWalkIn<Prisma.CustomerWhereInput>({
         tenantId: tenant.id,
         deletedAt: null,
         OR: [{ email: claimedEmail }, { user: { email: claimedEmail } }],
-      },
+      }),
       include: { user: { select: { email: true } } },
     });
     if (!customer) {

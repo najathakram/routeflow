@@ -5,7 +5,7 @@
  */
 import { frameScanned as frameScannedShared } from "@routeflow/scanning";
 import type { ScanEngineState, ScanEngineStep } from "@routeflow/scanning";
-import { normalizeScanCode } from "./barcode-normalize";
+import { normalizeScanCode } from "@routeflow/scanning";
 
 export { createScanEngine, manualScanned, scanSettled } from "@routeflow/scanning";
 export type { ScanEngineState, ScanEngineStep } from "@routeflow/scanning";

@@ -11,6 +11,8 @@ import type { OrderAppliedCreditRow } from "@routeflow/types";
 import { formatMoney } from "@/lib/format";
 import { MoneyInput } from "@/components/MoneyInput";
 import { fmtCalendarDate } from "@/lib/formatting";
+import { genericToastCopy } from "@/lib/generic-toast-copy";
+import { creditNoteErrorCopy } from "@/lib/credit-note-error-copy";
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -68,7 +70,7 @@ export function CreditNotePicker({
   }, [data, justCreated, customerId]);
 
   // Inline "+ New credit note" create form state.
-  const createCreditNote = useCreateCreditNote();
+  const createCreditNote = useCreateCreditNote({ localErrorToast: true });
   const [createOpen, setCreateOpen] = React.useState(false);
   const [createAmount, setCreateAmount] = React.useState<number | null>(null);
   const [createReason, setCreateReason] = React.useState("");
@@ -157,13 +159,15 @@ export function CreditNotePicker({
           setCreateExpiresAt("");
         },
         onError: (err) => {
-          // Surface the server's reason — a fixed "try again" hides the actual
-          // problem (bad expiry, amount cap) and the operator retries forever.
-          const msg = (err as { response?: { data?: { message?: string | string[] } } })?.response
-            ?.data?.message;
+          // Coded credit-note refusals (bad expiry, amount over headroom...) are fixed per-code sentences; the rest is generic copy.
           setCreateError(
-            (Array.isArray(msg) ? msg[0] : msg) ||
-              "Could not create the credit note. Please try again.",
+            creditNoteErrorCopy(
+              err,
+              genericToastCopy(
+                err,
+                "The credit note couldn't be created. Check the amount and expiry, then try again.",
+              ),
+            ),
           );
         },
       },

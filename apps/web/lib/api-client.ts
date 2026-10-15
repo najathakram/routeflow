@@ -6,6 +6,8 @@
  */
 
 import axios from "axios";
+import { clearAllLiveCarts } from "./counter-live-cart-keys";
+import { clearAllInvoiceDrafts } from "./invoice-draft-storage";
 import { OP_KEYS, BUYER_KEYS } from "./auth-keys";
 import { setOpPresenceCookie, clearOpPresenceCookie } from "./presence-cookies";
 import { hasReauthHandler, requestReauth } from "./session-expiry";
@@ -277,6 +279,8 @@ apiClient.interceptors.response.use(
       // both), or `/login` otherwise. That is the intermittent "my admin page
       // switches me to the buyer/sign-in page after idling" bug: nothing about
       // the admin session expired, and superAdminClient handles its own 401s.
+      clearAllLiveCarts(); // the operator session is over: an unfinished counter sale must not outlive it
+      clearAllInvoiceDrafts(); // nor an unsaved new invoice (ROW 447)
       if (!isOnMarketingRoute() && !isOnSuperAdminRoute()) {
         window.location.href = buyerToken && !opToken ? "/buyer/login" : "/login";
       }

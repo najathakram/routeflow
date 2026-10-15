@@ -18,7 +18,7 @@ describe("GoogleOAuthService — buyer auto-create passwordSet", () => {
       get: (key: string) => {
         if (key === "jwt")
           return {
-            secret: "s",
+            secret: "test-jwt-secret-0123456789-abcdefghijklmnop",
             refreshSecret: "rs",
             expiresIn: "15m",
             refreshExpiresIn: "30d",
@@ -248,6 +248,45 @@ describe("GoogleOAuthService — buyer auto-create passwordSet", () => {
     expect(call.data.passwordHash).not.toBe(priorHash);
     expect(prisma.buyerRefreshToken.deleteMany).toHaveBeenCalledWith({
       where: { buyerAccountId: "buyer-1" },
+    });
+  });
+
+  // ── B964-1: the provider-supplied name is NEUTRALISED, never a reason to refuse a sign-in ──
+
+  describe("a formula-led Google display name (B964-1)", () => {
+    const create = async (name: string | undefined, email = "new-buyer@example.com") => {
+      const prisma = createMockPrisma();
+      prisma.buyerAccount.findFirst.mockResolvedValue(null);
+      prisma.buyerAccount.create.mockImplementation(({ data }: any) =>
+        Promise.resolve({ id: "buyer-new", ...data }),
+      );
+      prisma.customerLink.count.mockResolvedValue(0);
+      prisma.buyerRefreshToken.upsert.mockResolvedValue({} as any);
+      const { service } = buildService(prisma);
+      const result: any = await service.findOrCreateUser({ ...profile, name, email } as any);
+      return { prisma, result };
+    };
+
+    it("still creates the account and signs in, with the email local-part as the display name", async () => {
+      const { prisma, result } = await create("=HYPERLINK(1)", "pat.lee@example.com");
+      expect(result.kind).toBe("buyer");
+      expect(prisma.buyerAccount.create).toHaveBeenCalledWith({
+        data: expect.objectContaining({ name: "pat.lee" }),
+      });
+    });
+
+    it("if the email local-part is itself formula-led, the display name is 'Customer'", async () => {
+      const { prisma } = await create("+x", "=evil@example.com");
+      expect(prisma.buyerAccount.create).toHaveBeenCalledWith({
+        data: expect.objectContaining({ name: "Customer" }),
+      });
+    });
+
+    it("a normal name is kept as it was", async () => {
+      const { prisma } = await create("Pat Lee");
+      expect(prisma.buyerAccount.create).toHaveBeenCalledWith({
+        data: expect.objectContaining({ name: "Pat Lee" }),
+      });
     });
   });
 });

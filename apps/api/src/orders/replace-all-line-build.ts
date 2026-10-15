@@ -25,6 +25,7 @@ import { rescaleBogoFreeUnits, resolveBuyerLinePrice } from "./buyer-merge-prici
 import { decideTierOverride } from "./staff-override";
 import type { UpdateOrderItemsDto } from "./dto/update-order-items.dto";
 import { decideReplaceAllLinePrice } from "./staff-line-price";
+import { carriedCategory, type CarriedCategorySource } from "./carry-line-category";
 
 interface ExistingLineForReplaceAll {
   unitPrice: number;
@@ -32,6 +33,10 @@ interface ExistingLineForReplaceAll {
   originalPrice: number | null;
   overrideReason: string | null;
   overriddenBy: string | null;
+  /** B297 row 340: the line's own category and rate trio, carried onto a folded re-creation of it. */
+  category: CarriedCategorySource;
+  /** B297 row 355: its createdAt, carried too (the free-unit allocation is oldest first by createdAt). */
+  createdAt?: Date | string | null;
 }
 
 /**
@@ -62,16 +67,19 @@ export function buildBogoCounterpart(li: any) {
  * one incoming line for that product) as the fallback for a caller with no sourceLineId.
  */
 export function buildExistingLineMaps(
-  lineItems: Array<{
-    id?: string | null;
-    productId?: string | null;
-    status?: string | null;
-    unitPrice: unknown;
-    priceType: PriceType;
-    originalPrice: unknown;
-    overrideReason?: string | null;
-    overriddenBy?: string | null;
-  }>,
+  lineItems: Array<
+    {
+      id?: string | null;
+      productId?: string | null;
+      status?: string | null;
+      createdAt?: Date | string | null;
+      unitPrice: unknown;
+      priceType: PriceType;
+      originalPrice: unknown;
+      overrideReason?: string | null;
+      overriddenBy?: string | null;
+    } & CarriedCategorySource
+  >,
   preEditLinesByProduct: Map<string, number>,
   incomingLinesByProduct: Map<string, number>,
 ): {
@@ -83,11 +91,21 @@ export function buildExistingLineMaps(
   for (const li of lineItems ?? []) {
     if (!li.id || li.status === "CANCELLED") continue;
     const entry: ExistingLineForReplaceAll = {
+      ...(li.createdAt ? { createdAt: li.createdAt } : {}),
       unitPrice: Number(li.unitPrice),
       priceType: li.priceType,
       originalPrice: li.originalPrice != null ? Number(li.originalPrice) : null,
       overrideReason: li.overrideReason ?? null,
       overriddenBy: li.overriddenBy ?? null,
+      category: {
+        productId: li.productId,
+        trackedCategoryId: li.trackedCategoryId,
+        trackedSubcategoryId: li.trackedSubcategoryId,
+        categoryTaxType: li.categoryTaxType,
+        categoryTaxRate: li.categoryTaxRate,
+        categoryPriceIncludesTax: li.categoryPriceIncludesTax,
+        categoryTaxAmount: li.categoryTaxAmount,
+      },
     };
     existingLineById.set(li.id, entry);
     if (
@@ -381,5 +399,79 @@ export function buildReplaceAllLineData(
         ? (ctx.operatorReplaceCategoryMap.get(product.trackedCategoryId) ?? null)
         : null,
     ),
+    // B297 row 340: ...EXCEPT a folded line that comes from an existing line (`sourceLineId`), which carries
+    // that line's own category and trio, never the product's current ones (a fold is not a new sale).
+    ...(sourceLineId
+      ? (carriedCategory(ctx.existingLineById.get(sourceLineId)?.category, productId) ?? {})
+      : {}),
+    // B297 row 355 (r-note 7): ...and its createdAt, or a re-created old line sorts AFTER a newer one and
+    // the split's free units (allocated oldest first by createdAt) move onto the wrong line.
+    ...(sourceLineId && ctx.existingLineById.get(sourceLineId)?.createdAt
+      ? { createdAt: ctx.existingLineById.get(sourceLineId)!.createdAt as Date }
+      : {}),
   };
+}
+
+/**
+ * The per-product pairing maps of updateOrderItems' replaceAll rebuild (moved verbatim out of
+ * orders.service.ts, #2717, to keep the size ratchet's ceiling): pre-edit and incoming line counts
+ * per product, and the BUY_N_GET_M counterparts, built once from the PRE-edit lines.
+ */
+export function buildReplaceAllPairing(
+  order: { lineItems?: any[] | null },
+  dto: { items?: Array<{ productId?: string | null }> | null },
+): {
+  preEditLinesByProduct: Map<string, number>;
+  incomingLinesByProduct: Map<string, number>;
+  bogoCounterparts: Map<string, any>;
+} {
+  // B60 (REG-B60): a staff replaceAll at an unchanged/echoed price must
+  // land exactly where a qty edit of the same line lands — reuse the
+  // stored price + priceType and RESCALE (never drop) the line's
+  // BUY_N_GET_M snapshot instead of silently re-creating it at full
+  // price. Built once from the PRE-edit lines, before the delete below
+  // erases them.
+  //
+  // ⚠️ UNAMBIGUOUS PAIRS ONLY. A replaceAll payload carries no line ids,
+  // and an order may legitimately hold SEVERAL lines of one product (the
+  // diff-add branch creates a new row for an id-less item even when a line
+  // for that product exists). Keying a counterpart by productId alone then
+  // hands the snapshot — and its override attribution — to every echoed
+  // line of that product, including a sibling that never earned one: two
+  // lines of prod-X (qty 10 with 2 free units, qty 5 with none) echoed by a
+  // no-op save would bill the second 5.00 x (5-1) = 20.00 instead of 25.00
+  // and stamp it with the first line's overrideReason/overriddenBy. The
+  // qty-edit oracle this arm copies yields 0 free units for that sibling
+  // (storedFreeUnits 0, canEarnNew false), and rescaleBogoFreeUnits' own
+  // contract is that no operator line gains a promo it never had.
+  // There is no sound N-to-N mapping to recover here, so preservation is
+  // registered ONLY when the pairing is unambiguous: exactly one pre-edit
+  // non-cancelled line for that product AND exactly one incoming line for
+  // it. Any other shape falls through to the pre-F06 behavior (re-created
+  // at the resolved price, snapshot dropped) — that shape is not fixed by
+  // F06, but it is never granted a snapshot it did not earn.
+  const preEditLinesByProduct = new Map<string, number>();
+  for (const li of order.lineItems ?? []) {
+    if (!li.productId || li.status === "CANCELLED") continue;
+    preEditLinesByProduct.set(li.productId, (preEditLinesByProduct.get(li.productId) ?? 0) + 1);
+  }
+  const incomingLinesByProduct = new Map<string, number>();
+  for (const it of dto.items ?? []) {
+    if (!it.productId) continue;
+    incomingLinesByProduct.set(it.productId, (incomingLinesByProduct.get(it.productId) ?? 0) + 1);
+  }
+  const bogoCounterparts = new Map<string, any>();
+  for (const li of order.lineItems ?? []) {
+    if (
+      li.productId &&
+      li.status !== "CANCELLED" &&
+      Number((li as any).promoFreeUnits ?? 0) > 0 &&
+      preEditLinesByProduct.get(li.productId) === 1 &&
+      incomingLinesByProduct.get(li.productId) === 1 &&
+      !bogoCounterparts.has(li.productId)
+    ) {
+      bogoCounterparts.set(li.productId, buildBogoCounterpart(li));
+    }
+  }
+  return { preEditLinesByProduct, incomingLinesByProduct, bogoCounterparts };
 }

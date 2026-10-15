@@ -7,6 +7,9 @@
  * `order-line-display.ts`'s helpers do — RN cannot import a web component to assert against.
  */
 
+import type { LineComponentView } from "@routeflow/types";
+import { componentSubLineTexts } from "./line-components";
+
 /**
  * Whether a line routes through the unit-aware display (qty text + unit noun) instead of the
  * plain "qty × price" line. A boxed split routes through it as before; a units_v1 FACTOR-1 line
@@ -25,6 +28,13 @@ export function usesUnitDisplay(item: {
 /** The box-level noun for the "@ price/<noun>" suffix — "Case" for a units_v1 line, "box" default. */
 export function invoiceLineUnitNoun(item: { unitLabel?: string | null }): string {
   return item.unitLabel?.trim() || "box";
+}
+
+/** #2717 M3: the sub-line texts under a composed (mixed-pack) invoice line; none for a legacy line. */
+export function invoiceLineSubLines(item: {
+  components?: ReadonlyArray<LineComponentView> | null;
+}): string[] {
+  return componentSubLineTexts(item.components);
 }
 
 /**

@@ -4,6 +4,7 @@ import { Modal, Pressable, ScrollView, Text, TextInput, View } from "react-nativ
 import { Ionicons } from "@expo/vector-icons";
 import { ios } from "@routeflow/ui/tokens";
 import { type UnitOption } from "../../lib/unit-options";
+import { POS_COPY, posCartSaveLabel } from "../../lib/pos-mode";
 import { type LineState, type Product } from "../../lib/cart-line-state";
 import { CartRow } from "../CartRow";
 import { CartStepperRow } from "../CartStepperRow";
@@ -16,7 +17,7 @@ import { styles } from "./styles";
 import type { UnlistedLine, OrderOptions, CreditPicker } from "./types";
 
 /** Collapsed-by-default disclosure inside the cart sheet. */
-export function CartSection({
+function CartSection({
   icon,
   title,
   summary,
@@ -48,13 +49,14 @@ export function CartSection({
   );
 }
 
-export function OrderOptionsSection({ options: o }: { options: OrderOptions }) {
+function OrderOptionsSection({ options: o }: { options: OrderOptions }) {
   const summary = [
-    o.urgent ? "Urgent" : null,
+    o.posMode ? "POS mode" : null,
+    !o.posMode && o.urgent ? "Urgent" : null,
     // ROUTE is the default majority — only call it out when it isn't.
-    o.fulfillPath === "SHIP" ? "Ship via carrier" : null,
+    !o.posMode && o.fulfillPath === "SHIP" ? "Ship via carrier" : null,
     o.orderDate ? `Dated ${o.orderDate}` : null,
-    o.deliveryDate ? `Deliver ${o.deliveryDate}` : null,
+    !o.posMode && o.deliveryDate ? `Deliver ${o.deliveryDate}` : null,
     parseFloat(o.discountRaw) > 0 ? `-$${parseFloat(o.discountRaw).toFixed(2)}` : null,
     parseFloat(o.shippingFeeRaw) > 0
       ? `+$${parseFloat(o.shippingFeeRaw).toFixed(2)} shipping`
@@ -66,59 +68,63 @@ export function OrderOptionsSection({ options: o }: { options: OrderOptions }) {
 
   return (
     <CartSection icon="options-outline" title="Order options" summary={summary}>
-      <Pressable style={styles.optionRow} onPress={o.onToggleUrgent}>
-        <Ionicons
-          name={o.urgent ? "flame" : "flame-outline"}
-          size={18}
-          color={o.urgent ? ios.system.orange : ios.label2}
-        />
-        <Text style={styles.optionLabel}>Urgent</Text>
-        <View style={[styles.toggle, o.urgent && styles.toggleOn]}>
-          <View style={[styles.toggleDot, o.urgent && styles.toggleDotOn]} />
-        </View>
-      </Pressable>
-      <View style={styles.optionField}>
-        <Text style={styles.optionLabel}>Fulfillment</Text>
-        <View style={styles.fulfillRow}>
-          <Pressable
-            style={[styles.fulfillBtn, o.fulfillPath === "ROUTE" && styles.fulfillBtnActive]}
-            onPress={() => o.onChangeFulfillPath("ROUTE")}
-            accessibilityRole="button"
-            accessibilityLabel="Delivery route"
-            accessibilityState={{ selected: o.fulfillPath === "ROUTE" }}
-          >
-            <Text
-              style={[
-                styles.fulfillBtnText,
-                o.fulfillPath === "ROUTE" && styles.fulfillBtnTextActive,
-              ]}
-            >
-              Delivery route
-            </Text>
+      {o.posMode ? null : (
+        <>
+          <Pressable style={styles.optionRow} onPress={o.onToggleUrgent}>
+            <Ionicons
+              name={o.urgent ? "flame" : "flame-outline"}
+              size={18}
+              color={o.urgent ? ios.system.orange : ios.label2}
+            />
+            <Text style={styles.optionLabel}>Urgent</Text>
+            <View style={[styles.toggle, o.urgent && styles.toggleOn]}>
+              <View style={[styles.toggleDot, o.urgent && styles.toggleDotOn]} />
+            </View>
           </Pressable>
-          <Pressable
-            style={[styles.fulfillBtn, o.fulfillPath === "SHIP" && styles.fulfillBtnActive]}
-            onPress={() => o.onChangeFulfillPath("SHIP")}
-            accessibilityRole="button"
-            accessibilityLabel="Ship via carrier"
-            accessibilityState={{ selected: o.fulfillPath === "SHIP" }}
-          >
-            <Text
-              style={[
-                styles.fulfillBtnText,
-                o.fulfillPath === "SHIP" && styles.fulfillBtnTextActive,
-              ]}
-            >
-              Ship via carrier
-            </Text>
-          </Pressable>
-        </View>
-        {o.fulfillPath === "SHIP" ? (
-          <Text style={styles.optionHelp}>
-            Ships via carrier — won't appear on delivery routes.
-          </Text>
-        ) : null}
-      </View>
+          <View style={styles.optionField}>
+            <Text style={styles.optionLabel}>Fulfillment</Text>
+            <View style={styles.fulfillRow}>
+              <Pressable
+                style={[styles.fulfillBtn, o.fulfillPath === "ROUTE" && styles.fulfillBtnActive]}
+                onPress={() => o.onChangeFulfillPath("ROUTE")}
+                accessibilityRole="button"
+                accessibilityLabel="Delivery route"
+                accessibilityState={{ selected: o.fulfillPath === "ROUTE" }}
+              >
+                <Text
+                  style={[
+                    styles.fulfillBtnText,
+                    o.fulfillPath === "ROUTE" && styles.fulfillBtnTextActive,
+                  ]}
+                >
+                  Delivery route
+                </Text>
+              </Pressable>
+              <Pressable
+                style={[styles.fulfillBtn, o.fulfillPath === "SHIP" && styles.fulfillBtnActive]}
+                onPress={() => o.onChangeFulfillPath("SHIP")}
+                accessibilityRole="button"
+                accessibilityLabel="Ship via carrier"
+                accessibilityState={{ selected: o.fulfillPath === "SHIP" }}
+              >
+                <Text
+                  style={[
+                    styles.fulfillBtnText,
+                    o.fulfillPath === "SHIP" && styles.fulfillBtnTextActive,
+                  ]}
+                >
+                  Ship via carrier
+                </Text>
+              </Pressable>
+            </View>
+            {o.fulfillPath === "SHIP" ? (
+              <Text style={styles.optionHelp}>
+                Ships via carrier — won't appear on delivery routes.
+              </Text>
+            ) : null}
+          </View>
+        </>
+      )}
       {o.canBackdate ? (
         <View style={styles.optionField}>
           <Text style={styles.optionLabel}>Order date (backdate)</Text>
@@ -135,17 +141,19 @@ export function OrderOptionsSection({ options: o }: { options: OrderOptions }) {
           </Text>
         </View>
       ) : null}
-      <View style={styles.optionField}>
-        <Text style={styles.optionLabel}>Delivery date</Text>
-        <TextInput
-          value={o.deliveryDate}
-          onChangeText={o.onChangeDeliveryDate}
-          placeholder="YYYY-MM-DD"
-          placeholderTextColor={ios.label3}
-          keyboardType="numbers-and-punctuation"
-          style={styles.optionInput}
-        />
-      </View>
+      {o.posMode ? null : (
+        <View style={styles.optionField}>
+          <Text style={styles.optionLabel}>Delivery date</Text>
+          <TextInput
+            value={o.deliveryDate}
+            onChangeText={o.onChangeDeliveryDate}
+            placeholder="YYYY-MM-DD"
+            placeholderTextColor={ios.label3}
+            keyboardType="numbers-and-punctuation"
+            style={styles.optionInput}
+          />
+        </View>
+      )}
       <View style={styles.optionField}>
         <Text style={styles.optionLabel}>Order discount ($)</Text>
         <TextInput
@@ -187,7 +195,7 @@ export function OrderOptionsSection({ options: o }: { options: OrderOptions }) {
  * Open credit notes for this customer. Toggle only (no amount input on mobile);
  * a null amount means "up to the credit's remaining balance", resolved server-side.
  */
-export function ApplyCreditSection({ credits: c }: { credits: CreditPicker }) {
+function ApplyCreditSection({ credits: c }: { credits: CreditPicker }) {
   const summary = c.selectedIds.length
     ? `${c.selectedIds.length} selected`
     : c.rows.length
@@ -326,7 +334,7 @@ export function CartModal({
   /** Order-level fields; state stays in the parent so the payload is unchanged. */
   options: OrderOptions;
   credits: CreditPicker;
-  onSave: () => void;
+  onSave: (finish?: "invoice" | "confirm") => void;
 }) {
   // R2: preserve SCAN order. `items` is a UUID-keyed Record whose insertion order
   // is first-scan order (a repeat scan updates the existing key in place, a new
@@ -465,16 +473,29 @@ export function CartModal({
                 <Pressable style={styles.cartContinueBtn} onPress={onClose} hitSlop={6}>
                   <Text style={styles.cartContinueText}>Keep adding</Text>
                 </Pressable>
+                {options.posMode ? (
+                  <Pressable
+                    style={styles.cartContinueBtn}
+                    disabled={totalItems === 0 || saving}
+                    onPress={() => onSave("confirm")}
+                    hitSlop={6}
+                    accessibilityRole="button"
+                  >
+                    <Text style={styles.cartContinueText}>{POS_COPY.confirmOnly}</Text>
+                  </Pressable>
+                ) : null}
                 <Pressable
                   style={[
                     styles.confirmBtn,
                     (totalItems === 0 || saving) && styles.confirmBtnDisabled,
                   ]}
                   disabled={totalItems === 0 || saving}
-                  onPress={onSave}
+                  onPress={() => onSave("invoice")}
                   accessibilityState={{ disabled: totalItems === 0 || saving }}
                 >
-                  <Text style={styles.confirmBtnText}>{saving ? "Saving…" : "Save order"}</Text>
+                  <Text style={styles.confirmBtnText}>
+                    {posCartSaveLabel(!!options.posMode, saving)}
+                  </Text>
                   <Ionicons name="checkmark" size={14} color="#fff" />
                 </Pressable>
               </View>
@@ -487,7 +508,7 @@ export function CartModal({
 }
 
 /** Cart row for an ad-hoc (unlisted) line: editable price + qty, "Custom" tag, no image. */
-export function UnlistedCartRow({
+function UnlistedCartRow({
   line,
   onChangeQty,
   onChangePrice,

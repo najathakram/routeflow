@@ -18,6 +18,7 @@ import type {
   PriceType,
   RouteRunStatusValue,
 } from "./enums";
+import type { LineComponentView } from "./orders";
 import type { DecimalWire } from "./decimal";
 
 export interface LockedCategory {
@@ -239,11 +240,17 @@ export interface BuyerProduct {
   stockStatus: "IN_STOCK" | "LOW" | "OUT_OF_STOCK";
   /** Whole units remaining, exposed ONLY while stockStatus === "LOW"; else null. */
   stockLeft: number | null;
+  /**
+   * OOS PR2: this buyer may order the item even when it is out of stock (the seller's setting,
+   * resolved server-side once per request). Absent/false = an out-of-stock item is not orderable.
+   * Where the seller hides backorders, `inStock` / `stockStatus` already read as in stock.
+   */
+  canBackorder?: boolean;
 }
 
 /** GET /buyer/favorites — NOT a BuyerProduct: `id` is the favorite row's id; the product is
  *  `productId`. `thumbnailUrl` is always null here (thumbnails resolve in the catalog). */
-export interface BuyerFavoriteProduct {
+export interface BuyerFavoriteAvailable {
   id: string;
   productId: string;
   name: string;
@@ -255,7 +262,25 @@ export interface BuyerFavoriteProduct {
   imageKeys: string[];
   unitsPerBox: number | null;
   createdAt: string;
+  unavailable: false;
+  /** OOS PR2: the same stock status the catalog row carries (masked where the seller hides backorders). */
+  stockStatus?: "IN_STOCK" | "LOW" | "OUT_OF_STOCK";
+  /** OOS PR2: this buyer may order the item even when it is out of stock (server-resolved). */
+  canBackorder?: boolean;
 }
+
+/** A favourite the tenant hid from the buyer portal (SA-606 M3): name only, no price, not orderable. */
+export interface BuyerFavoriteUnavailable {
+  id: string;
+  productId: string;
+  name: string;
+  createdAt: string;
+  unavailable: true;
+  /** "No longer available online". */
+  unavailableText: string;
+}
+
+export type BuyerFavoriteProduct = BuyerFavoriteAvailable | BuyerFavoriteUnavailable;
 
 // ─── Orders (#2703, SA-562/562a: server truth, one declaration) ────────────────
 
@@ -322,6 +347,8 @@ export interface BuyerOrderLine {
   unitLabel: string | null;
   /** Per-line note, buyer-visible. */
   notes: string | null;
+  /** #2717 M3: frozen components of a composed line; absent on a plain line. */
+  components?: LineComponentView[];
   product: { id: string; name: string; unit: string; unitsPerBox?: number | null } | null;
 }
 
@@ -358,6 +385,52 @@ export interface BuyerOrder extends BuyerOrderListItem {
   editWindow: BuyerOrderEditWindow;
   /** Run state backing the edit window (null until the order is on a run). */
   routeRun: { status: RouteRunStatusValue; startedAt: string | null } | null;
+  /**
+   * Business profiles 1B: SHIP orders show a shipment (carrier + tracking), never a route. The
+   * server's `FulfillPath` ("ROUTE" | "SHIP"); narrows to the shared `FULFILL_PATH_VALUES` type
+   * once that export lands (feat/fulfil-path-pickup) — no hand-typed mirror here (L-072).
+   */
+  fulfillPath: string;
+  /** Free-text carrier label and tracking number, set when the seller ships the order. */
+  shippingCarrier: string | null;
+  shippingTrackingNumber: string | null;
+  /**
+   * The SHIP transition's stamp (OrdersService.changeStatus), kept through an unmark. Saving
+   * tracking never stamps it, except `updateShipment` backfilling a legacy already-shipped order.
+   */
+  shippedAt: string | null;
+}
+
+// ─── Invoice list rows (B1122) ──────────────────────────────────────────────────
+
+/** GET /buyer/invoices — one row of the paginated list (InvoicesService.findAll). The invoice's
+ *  own money columns keep their column names (`total`, never `totalAmount`/`amount`) and the
+ *  server derives `balanceDue` (never `balance`): a client reading any other name gets nothing
+ *  and renders "N/A" (B1122). */
+export interface BuyerInvoiceListItem {
+  id: string;
+  invoiceNumber: string;
+  /** Row 401: the server's answer to "a counter sale paid at the till" — no due date is shown. */
+  paidAtSale?: boolean;
+  status: InvoiceStatus;
+  issueDate: string;
+  createdAt: string;
+  dueDate: string | null;
+  subtotal: DecimalWire;
+  taxAmount: DecimalWire;
+  total: DecimalWire;
+  /** What the buyer still owes — 0 for a settled invoice (confirmed payments + credits applied). */
+  balanceDue: DecimalWire;
+  /** Cash received only; credit-note and advance applications are the two fields below. */
+  paidAmount: DecimalWire;
+  creditApplied: DecimalWire;
+  advanceApplied: DecimalWire;
+  /** SA-763r P-3: external payments beyond the total (0 when none); an overpaid invoice is never PAID. */
+  overpaidBy?: DecimalWire;
+  /** SA-763r P-3: when the final invoice was last restated by an order edit; null when never revised. */
+  revisedAt?: string | null;
+  isOverdue: boolean;
+  customer: { id: string; businessName: string };
 }
 
 // ─── Invoice detail lines + payments (#2703, SA-562/562a: server truth) ─────────

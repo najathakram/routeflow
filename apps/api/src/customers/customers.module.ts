@@ -2,6 +2,12 @@ import { Module } from "@nestjs/common";
 import { ConfigModule } from "@nestjs/config";
 import { CustomersController } from "./customers.controller";
 import { CustomersService } from "./customers.service";
+import { CustomerAddressStateController } from "./customer-address-state.controller";
+import { CustomerAddressStateService } from "./customer-address-state.service";
+import { CustomerPriceHistoryController } from "./customer-price-history.controller";
+import { CustomerPriceHistoryService } from "./customer-price-history.service";
+import { CustomerOrderSuggestionsController } from "./customer-order-suggestions.controller";
+import { CustomerOrderSuggestionsService } from "./customer-order-suggestions.service";
 import { AuthModule } from "../auth/auth.module";
 import { StorageModule } from "../storage/storage.module";
 // CustomersService reads the CUSTOMERS meter + published catalog for the
@@ -25,6 +31,9 @@ import { RegulatedModule } from "../regulated/regulated.module";
 // email.module.ts), so it cannot be the tail of a cycle back here; a prior
 // comment claiming a circular-module issue was mistaken.
 import { EmailModule } from "../email/email.module";
+// "Usually buys" / "Order again" never suggest a banned product: the same read-only choke-point check
+// the order save runs (the engine behind checkLinesSellable).
+import { SellingRestrictionsModule } from "../selling-restrictions/selling-restrictions.module";
 
 @Module({
   imports: [
@@ -35,9 +44,22 @@ import { EmailModule } from "../email/email.module";
     CommissionsModule,
     RegulatedModule,
     EmailModule,
+    SellingRestrictionsModule,
   ],
-  controllers: [CustomersController],
-  providers: [CustomersService, StatementService, StatementPdfService],
+  controllers: [
+    CustomersController,
+    CustomerPriceHistoryController,
+    CustomerOrderSuggestionsController,
+    CustomerAddressStateController,
+  ],
+  providers: [
+    CustomersService,
+    CustomerPriceHistoryService,
+    CustomerOrderSuggestionsService,
+    StatementService,
+    StatementPdfService,
+    CustomerAddressStateService,
+  ],
   exports: [CustomersService],
 })
 export class CustomersModule {}

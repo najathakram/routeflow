@@ -1,5 +1,6 @@
 "use client";
 
+import { CUSTOMER_NOT_LINKED_COPY, isCustomerNotLinked } from "@/lib/customer-not-linked";
 import * as React from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
@@ -27,6 +28,10 @@ import { fmtCalendarDate } from "@/lib/formatting";
 import { usePageTitle } from "@/lib/page-title-context";
 import { useAuth } from "@/lib/auth-context";
 import { useOrders, type Order } from "@/lib/api/orders";
+import { useShipSlotReserve } from "@/lib/ship-caps-hint";
+import { getTenantCookie } from "@/lib/tenant-cookie";
+import { useTenantFeatures } from "@/lib/tenant-features";
+import { useShippedWeekFrom } from "@/lib/tenant-timezone";
 import { useRouteRuns, type RouteRun } from "@/lib/api/routes";
 import { useDrivers, type Driver } from "@/lib/api/drivers";
 import { useProducts } from "@/lib/api/products";
@@ -34,10 +39,17 @@ import { unitsLabel } from "@/lib/stock-label";
 import { useFinanceDashboard } from "@/lib/api/finance";
 import { useInvoices, type Invoice } from "@/lib/api/invoices";
 import { useRoutesAccess, useDeliveryAccess } from "@/lib/api/addons";
+import { OrderStatusBadge, useOrderStatusLabel } from "@/components/OrderStatusBadge";
+import { isUnsetCapabilities, useFulfilmentCaps } from "@/lib/fulfilment-caps";
+import { useCounterSaleGate } from "@/lib/api/counter-sale";
+import { quickCreateRule } from "@/lib/counter-sale";
+import { staffMay } from "@routeflow/types";
+import { useLastKnownRoutesAccess } from "@/lib/last-known-routes-access";
 import { DRIVER_LANDING } from "@/lib/portal-routing";
 import { DriverAppBanner } from "./DriverAppBanner";
 import { GettingStartedBanner } from "./GettingStartedBanner";
 import { useTenantOnboarding } from "@/lib/api/onboarding";
+import { ReadOnlyHint, WriteButton } from "@/lib/read-only-gate";
 
 // ─── Column definitions (stable refs, defined outside component) ───────────────
 
@@ -132,7 +144,9 @@ const orderColumns: ColumnDef<Order, unknown>[] = [
     accessorKey: "status",
     header: "Status",
     enableSorting: false,
-    cell: ({ row }) => <Badge status={row.original.status} />,
+    cell: ({ row }) => (
+      <OrderStatusBadge status={row.original.status} fulfillPath={row.original.fulfillPath} />
+    ),
   },
   {
     accessorKey: "createdAt",
@@ -173,9 +187,25 @@ function fmtMoney(n: number | null | undefined): string {
   return `$${v.toFixed(0)}`;
 }
 
-function StatSkeleton() {
+/** Shared by StatSkeleton and every loaded StatCard so a swap never changes the grid row height. */
+const STAT_CARD_MIN_H = "min-h-[104px]";
+/** Loading placeholders reserve the loaded (empty-state) height of each list region (PKG-8). */
+const URGENT_MIN_H = "min-h-[86px]";
+const OVERDUE_PANEL_MIN_H = "min-h-[176px]";
+const AR_AGING_MIN_H = "min-h-[226px]";
+const LOW_STOCK_MIN_H = "min-h-[127px]";
+const ROUTE_RUNS_MIN_H = "min-h-[455px]";
+const DRIVER_STATUS_MIN_H = "min-h-[116px]";
+
+function StatSkeleton({ testId = "stat-skeleton" }: { testId?: string }) {
   return (
-    <div className="animate-pulse rounded-xl border border-surface-border bg-white p-5">
+    <div
+      data-testid={testId}
+      className={cn(
+        "animate-pulse rounded-card border border-line bg-paper p-4 shadow-card",
+        STAT_CARD_MIN_H,
+      )}
+    >
       <div className="mb-3 h-4 w-24 rounded bg-navy/10" />
       <div className="h-8 w-16 rounded bg-navy/10" />
     </div>
@@ -228,11 +258,16 @@ function ArAgingWidget({ aging }: { aging: AgingData }) {
   ].filter((b) => b.value > 0);
 
   return (
-    <div className="overflow-hidden rounded-lg border border-surface-border bg-white shadow-card">
+    <div
+      className={cn(
+        "overflow-hidden rounded-lg border border-surface-border bg-white shadow-card",
+        AR_AGING_MIN_H,
+      )}
+    >
       <div className="flex items-center justify-between border-b border-surface-border px-5 py-3.5">
         <h3 className="text-base font-semibold text-navy">AR Aging</h3>
         <Link
-          href="/finance/reports/ar-aging"
+          href="/finance/reports?report=ar-aging"
           className="flex items-center gap-1 text-xs font-medium text-brand-500 hover:underline"
         >
           Full report <ArrowRight className="h-3 w-3" />
@@ -278,34 +313,81 @@ function ArAgingWidget({ aging }: { aging: AgingData }) {
   );
 }
 
+/** An unknown KPI (failed or unanswered request) reads "—", never a zero that looks like data. */
+const UNKNOWN_KPI = "—";
+
+/**
+ * Layout for a KPI tile (CSS only; the shared StatCard is untouched): the label wraps instead of
+ * truncating and the value is a size smaller on phones and may break rather than run under the icon.
+ */
+const KPI_TILE =
+  "min-w-0 [&_p:first-child]:whitespace-normal [&_p:first-child]:overflow-visible [&_p:first-child]:leading-tight [&_p:nth-child(2)]:text-xl sm:[&_p:nth-child(2)]:text-2xl [&_p:nth-child(2)]:break-words";
+
+/** A panel whose OWN request failed: fixed copy and a retry, never the good-news empty state. */
+function PanelLoadError({ message, onRetry }: { message: string; onRetry: () => void }) {
+  return (
+    <div className="flex items-center justify-between gap-3 px-5 py-5" role="alert">
+      <div className="flex items-center gap-3">
+        <AlertTriangle className="h-5 w-5 shrink-0 text-warning" />
+        <p className="text-sm font-semibold text-navy">{message}</p>
+      </div>
+      <Button size="sm" variant="secondary" onClick={onRetry}>
+        Retry
+      </Button>
+    </div>
+  );
+}
+
+/** Exact server total for a count-only list query; null while loading, failed or unknown (never 0). */
+function shipCount(q: { data?: { meta?: { total?: number } } }): number | null {
+  const n = q.data?.meta?.total;
+  return typeof n === "number" && Number.isFinite(n) ? n : null;
+}
+
 // ─── Overdue Invoices Panel ───────────────────────────────────────────────────
 
 function OverdueInvoicesPanel({
   invoices,
   totalCount,
   isLoading,
+  failed = false,
+  onRetry,
 }: {
   invoices: Invoice[];
   totalCount: number;
   isLoading: boolean;
+  /** The request failed and there is no earlier good answer to show. */
+  failed?: boolean;
+  onRetry?: () => void;
 }) {
   if (isLoading) {
     return (
-      <div className="overflow-hidden rounded-lg border border-surface-border bg-white shadow-card">
+      <div
+        key="skeleton"
+        data-testid="list-skeleton"
+        className={cn(
+          "overflow-hidden rounded-lg border border-surface-border bg-white shadow-card",
+          OVERDUE_PANEL_MIN_H,
+        )}
+      >
         <div className="border-b border-surface-border px-5 py-3.5">
           <div className="h-4 w-32 animate-pulse rounded bg-navy/10" />
         </div>
-        <div className="space-y-3 p-5">
-          {[1, 2, 3].map((i) => (
-            <div key={i} className="h-12 animate-pulse rounded bg-navy/10" />
-          ))}
+        <div className="p-5">
+          <div className="h-12 animate-pulse rounded bg-navy/10" />
         </div>
       </div>
     );
   }
 
   return (
-    <div className="overflow-hidden rounded-lg border border-surface-border bg-white shadow-card">
+    <div
+      key="loaded"
+      className={cn(
+        "overflow-hidden rounded-lg border border-surface-border bg-white shadow-card",
+        OVERDUE_PANEL_MIN_H,
+      )}
+    >
       <div className="flex items-center justify-between border-b border-surface-border px-5 py-3.5">
         <div className="flex items-center gap-2">
           <h3 className="text-base font-semibold text-navy">Overdue Invoices</h3>
@@ -319,7 +401,12 @@ function OverdueInvoicesPanel({
         </Link>
       </div>
 
-      {invoices.length === 0 ? (
+      {failed ? (
+        <PanelLoadError
+          message="Couldn't load overdue invoices"
+          onRetry={onRetry ?? (() => undefined)}
+        />
+      ) : invoices.length === 0 ? (
         <div className="flex items-center gap-3 px-5 py-5">
           <CheckCircle2 className="h-5 w-5 shrink-0 text-success" />
           <div>
@@ -378,28 +465,44 @@ function LowStockPanel({
   products,
   total,
   isLoading,
+  failed = false,
+  onRetry,
 }: {
   products: Product[];
   total: number;
   isLoading: boolean;
+  /** The request failed and there is no earlier good answer to show. */
+  failed?: boolean;
+  onRetry?: () => void;
 }) {
   if (isLoading) {
     return (
-      <div className="overflow-hidden rounded-lg border border-surface-border bg-white shadow-card">
+      <div
+        key="skeleton"
+        data-testid="list-skeleton"
+        className={cn(
+          "overflow-hidden rounded-lg border border-surface-border bg-white shadow-card",
+          LOW_STOCK_MIN_H,
+        )}
+      >
         <div className="border-b border-surface-border px-5 py-3.5">
           <div className="h-4 w-32 animate-pulse rounded bg-navy/10" />
         </div>
-        <div className="space-y-3 p-5">
-          {[1, 2, 3].map((i) => (
-            <div key={i} className="h-10 animate-pulse rounded bg-navy/10" />
-          ))}
+        <div className="p-5">
+          <div className="h-10 animate-pulse rounded bg-navy/10" />
         </div>
       </div>
     );
   }
 
   return (
-    <div className="overflow-hidden rounded-lg border border-surface-border bg-white shadow-card">
+    <div
+      key="loaded"
+      className={cn(
+        "overflow-hidden rounded-lg border border-surface-border bg-white shadow-card",
+        LOW_STOCK_MIN_H,
+      )}
+    >
       <div className="flex items-center justify-between border-b border-surface-border px-5 py-3.5">
         <div className="flex items-center gap-2">
           <h3 className="text-base font-semibold text-navy">Low Stock</h3>
@@ -413,7 +516,12 @@ function LowStockPanel({
         </Link>
       </div>
 
-      {products.length === 0 ? (
+      {failed ? (
+        <PanelLoadError
+          message="Couldn't load low stock items"
+          onRetry={onRetry ?? (() => undefined)}
+        />
+      ) : products.length === 0 ? (
         <div className="flex items-center gap-3 px-5 py-5">
           <CheckCircle2 className="h-5 w-5 shrink-0 text-success" />
           <p className="text-sm font-semibold text-success">All stock levels healthy</p>
@@ -508,13 +616,46 @@ export default function DashboardPage() {
   const router = useRouter();
   const { setTitle } = usePageTitle();
   const { user } = useAuth();
+  // The SAME staff-only predicate as the shell (layout.tsx) and the command palette.
+  const counterGate = useCounterSaleGate({
+    enabled: user?.role !== "CUSTOMER" && user?.role !== "DRIVER",
+  });
+  // Row 344 (follows row 331): the SAME store-only header rule as the Orders page, from the same gate.
+  const quickCreate = quickCreateRule(counterGate);
   // Routes/drivers are recurring-routes surfaces, so every gate below (the mode
   // pill AND the route/driver cards it reveals) must use the same condition as
   // the shell's "Drive mode" menu item / exit chip in (dashboard)/layout.tsx —
   // otherwise a recurring_routes tenant can enter drive mode but lands back
   // here with no mode pill and no driver content.
-  const { enabled: routesAccess, resolved: addonsResolved } = useRoutesAccess();
+  const {
+    enabled: routesAccess,
+    resolved: addonsResolved,
+    pending: addonsPending,
+  } = useRoutesAccess();
   const { enabled: deliveryAccess } = useDeliveryAccess();
+  // PKG-8: reserve the Routes/Drivers stat slots while the add-on is unresolved, but only for a
+  // tenant+user that last resolved to routes ON (see lib/last-known-routes-access.ts).
+  const reserveRoutesSlot = useLastKnownRoutesAccess(user, {
+    enabled: routesAccess,
+    resolved: addonsResolved,
+    pending: addonsPending,
+  });
+  // SHIP fulfilment mode: "Out for Delivery" reads "Shipped". (The route / driver cards below are already
+  // keyed on routesAccess, which a tenant with no fleet module never holds, so they stay hidden.)
+  const statusLabel = useOrderStatusLabel();
+  // A SHIPPING account (fulfilment staffDefault SHIP, mode set) gets shipping cards in place of the
+  // route / driver ones. Any other account, including an unset one, is untouched.
+  const fulfilmentCaps = useFulfilmentCaps();
+  // Answer in flight: reserve the three shipping slots only if this tenant LAST resolved to SHIP (ship-caps-hint).
+  const caps = useTenantFeatures();
+  const capsLoading = caps.isLoading === true;
+  const shippingAccount =
+    !isUnsetCapabilities(fulfilmentCaps) && fulfilmentCaps.staffDefault === "SHIP";
+  const reserveShipSlots = useShipSlotReserve(
+    getTenantCookie(),
+    capsLoading,
+    caps.data === undefined ? null : shippingAccount,
+  );
 
   const baseIsOperator =
     !user?.role ||
@@ -575,11 +716,30 @@ export default function DashboardPage() {
 
   // ── Data fetching ──
   const POLL = { refetchInterval: 30_000 };
-  const {
-    data: allOrdersData,
-    isLoading: ordersLoading,
-    isError: ordersError,
-  } = useOrders({ page: 1, limit: 100 }, { ...POLL, enabled: readsBusinessData });
+  // REG-B1015: the order KPIs are the server's own per-status `meta.total` (limit 1), never a count
+  // over the newest 100 rows, which stalled every figure at 100.
+  const pendingQ = useOrders(
+    { page: 1, limit: 1, status: "PENDING" },
+    { ...POLL, enabled: readsBusinessData },
+  );
+  const confirmedQ = useOrders(
+    { page: 1, limit: 1, status: "CONFIRMED" },
+    { ...POLL, enabled: readsBusinessData },
+  );
+  const outForDeliveryQ = useOrders(
+    { page: 1, limit: 1, status: "OUT_FOR_DELIVERY" },
+    { ...POLL, enabled: readsBusinessData },
+  );
+  // All-time terminal totals barely move: fetched once, not polled (every poll was 7 GET /orders).
+  const deliveredQ = useOrders(
+    { page: 1, limit: 1, status: "DELIVERED" },
+    { enabled: readsBusinessData && isOperator },
+  );
+  const cancelledQ = useOrders(
+    { page: 1, limit: 1, status: "CANCELLED" },
+    { enabled: readsBusinessData && isOperator },
+  );
+  const ordersLoading = pendingQ.isLoading || confirmedQ.isLoading || outForDeliveryQ.isLoading;
   const { data: urgentOrdersData, isLoading: urgentLoading } = useOrders(
     { urgent: true, limit: 5 },
     { ...POLL, enabled: readsBusinessData },
@@ -588,7 +748,26 @@ export default function DashboardPage() {
     data: recentOrdersData,
     isLoading: recentLoading,
     isError: recentError,
+    error: recentErrorObj,
   } = useOrders({ page: 1, limit: 5 }, { ...POLL, enabled: readsBusinessData });
+  // Shipping cards (exact server totals via the list's meta.total; "—" while unknown, never 0).
+  const readyToShipQ = useOrders(
+    { status: "CONFIRMED", fulfillPath: "SHIP", page: 1, limit: 1 },
+    { ...POLL, enabled: readsBusinessData && isOperator && shippingAccount },
+  );
+  // Exact server totals via `meta.total` at limit 1 (hasTracking / shippedFrom are server filters), so the
+  // cards and the lists they link to always agree.
+  const noTrackingQ = useOrders(
+    { status: "OUT_FOR_DELIVERY", fulfillPath: "SHIP", hasTracking: false, page: 1, limit: 1 },
+    { ...POLL, enabled: readsBusinessData && isOperator && shippingAccount },
+  );
+  // A week starts Sunday 00:00 in the BUSINESS's own timezone (same helper as the orders week view, so
+  // card count = list total). Until the zone is known the card keeps its loading placeholder.
+  const weekStart = useShippedWeekFrom(readsBusinessData && isOperator && shippingAccount);
+  const shippedWeekQ = useOrders(
+    { fulfillPath: "SHIP", shippedFrom: weekStart, page: 1, limit: 1 },
+    { ...POLL, enabled: readsBusinessData && isOperator && shippingAccount && !!weekStart },
+  );
   // `/route-runs` and `/drivers` are addon-gated server-side (403 without a
   // dispatch addon), so the 30s polls must be skipped for tenants that can't see
   // the cards they feed — same condition as the render gates below.
@@ -600,44 +779,55 @@ export default function DashboardPage() {
     { page: 1, limit: 20 },
     { ...POLL, enabled: routesAccess },
   );
-  const { data: lowStockData, isLoading: lowStockLoading } = useProducts(
-    { isActive: true, stockStatus: "LOW", limit: 5 },
-    POLL,
+  // Exact count of ACTIVE drivers (the list above is one page of 20).
+  const activeDriversQ = useDrivers(
+    { page: 1, limit: 1, status: "ACTIVE" },
+    { ...POLL, enabled: routesAccess },
   );
+  const {
+    data: lowStockData,
+    isLoading: lowStockLoading,
+    isError: lowStockError,
+    refetch: refetchLowStock,
+  } = useProducts({ isActive: true, stockStatus: "LOW", limit: 5 }, POLL);
   const { data: financeData, isLoading: financeLoading } = useFinanceDashboard({
     ...POLL,
     enabled: readsBusinessData,
   });
-  const { data: overdueData, isLoading: overdueLoading } = useInvoices(
+  const {
+    data: overdueData,
+    isLoading: overdueLoading,
+    isError: overdueError,
+    refetch: refetchOverdue,
+  } = useInvoices(
     { isOverdue: true, limit: 5, sortBy: "dueDate", sortOrder: "asc" },
     { ...POLL, enabled: readsBusinessData },
   );
 
   // ── KPI calculations ──
-  const activeOrders = React.useMemo(() => {
-    const activeStatuses = ["PENDING", "CONFIRMED", "OUT_FOR_DELIVERY"];
-    return (allOrdersData?.data ?? []).filter((o) => activeStatuses.includes(o.status)).length;
-  }, [allOrdersData]);
+  // An UNKNOWN figure (request failed or unanswered) is null and renders "—", never a zero.
+  const sumKnown = (parts: Array<number | null>): number | null =>
+    parts.some((n) => n === null) ? null : parts.reduce<number>((a, n) => a + (n as number), 0);
+  const orderPipeline = {
+    PENDING: shipCount(pendingQ),
+    CONFIRMED: shipCount(confirmedQ),
+    OUT_FOR_DELIVERY: shipCount(outForDeliveryQ),
+    DELIVERED: shipCount(deliveredQ),
+    CANCELLED: shipCount(cancelledQ),
+  };
+  const activeOrders = sumKnown([
+    orderPipeline.PENDING,
+    orderPipeline.CONFIRMED,
+    orderPipeline.OUT_FOR_DELIVERY,
+  ]);
 
-  const orderPipeline = React.useMemo(() => {
-    const all = allOrdersData?.data ?? [];
-    return {
-      PENDING: all.filter((o) => o.status === "PENDING").length,
-      CONFIRMED: all.filter((o) => o.status === "CONFIRMED").length,
-      OUT_FOR_DELIVERY: all.filter((o) => o.status === "OUT_FOR_DELIVERY").length,
-      DELIVERED: all.filter((o) => o.status === "DELIVERED").length,
-      CANCELLED: all.filter((o) => o.status === "CANCELLED").length,
-    };
-  }, [allOrdersData]);
-
-  const routesToday = routeRunsData?.meta?.total ?? 0;
-  const driversOnRoad = React.useMemo(
-    () => (driversData?.data ?? []).filter((d: Driver) => d.status === "ACTIVE").length,
-    [driversData],
-  );
-  const lowStockTotal = lowStockData?.meta?.total ?? 0;
-  const todayRevenue = financeData?.summaryTable?.today?.sales ?? 0;
-  const overdueCount = overdueData?.meta?.total ?? 0;
+  const routesToday = shipCount({ data: routeRunsData });
+  const driversOnRoad = shipCount(activeDriversQ);
+  const lowStockTotal = shipCount({ data: lowStockData });
+  const revenueRaw = financeData?.summaryTable?.today?.sales;
+  const todayRevenue =
+    typeof revenueRaw === "number" && Number.isFinite(revenueRaw) ? revenueRaw : null;
+  const overdueCount = shipCount({ data: overdueData });
   const overdueInvoices = overdueData?.data ?? [];
   const lowStockProducts: Product[] = lowStockData?.data ?? [];
 
@@ -706,29 +896,61 @@ export default function DashboardPage() {
               {greeting}
               {ownerName ? `, ${ownerName}` : ""}.
             </h2>
-            {businessName && (
-              <p className="mt-0.5 text-sm text-navy/70">
-                Here&apos;s what&apos;s happening at {businessName} today.
-              </p>
-            )}
+            <p className="mt-0.5 min-h-5 text-sm text-navy/70">
+              {businessName ? (
+                <>Here&apos;s what&apos;s happening at {businessName} today.</>
+              ) : null}
+            </p>
           </div>
           {/* Quick-create shortcuts */}
           <div className="flex items-center gap-2">
-            <Button href="/invoices/new" size="sm" variant="secondary">
+            <WriteButton
+              href="/invoices/new"
+              size="sm"
+              variant="secondary"
+              className={cn(quickCreate.storeOnly && "max-sm:h-11")}
+            >
               <FileMinus className="mr-1.5 h-3.5 w-3.5" />
               New Invoice
-            </Button>
+            </WriteButton>
             {routesAccess && (
               <Button href="/routes/create" size="sm" variant="secondary">
                 <Truck className="mr-1.5 h-3.5 w-3.5" />
                 New Route
               </Button>
             )}
-            <Button href="/orders?action=new" size="sm" variant="primary">
-              <Plus className="mr-1.5 h-3.5 w-3.5" />
-              New Order
-            </Button>
+            {/* Store-only tenant: the SAME rule as the Orders header. New Order would open the counter too, so the
+                header is Invoice a customer (secondary) + Counter sale (primary); `builder=1` opens the builder
+                itself where the counter is the default. */}
+            {quickCreate.storeOnly && staffMay(user?.role, "USE_POS_MODE") ? (
+              <WriteButton
+                href="/orders?action=new&builder=1"
+                size="sm"
+                variant="secondary"
+                className="max-sm:h-11"
+              >
+                Invoice a customer
+              </WriteButton>
+            ) : null}
+            {counterGate.showButton ? (
+              <WriteButton
+                href="/orders/counter-sale"
+                size="sm"
+                // A store-only business has one place to ring a sale: the counter is the filled primary.
+                variant={quickCreate.counterIsPrimary ? "primary" : "secondary"}
+                className={cn(quickCreate.storeOnly && "max-sm:h-11")}
+              >
+                Counter sale
+              </WriteButton>
+            ) : null}
+            {quickCreate.showNewOrder ? (
+              <WriteButton href="/orders?action=new" size="sm" variant="primary">
+                <Plus className="mr-1.5 h-3.5 w-3.5" />
+                New Order
+              </WriteButton>
+            ) : null}
           </div>
+          <ReadOnlyHint />
         </div>
       )}
 
@@ -736,15 +958,24 @@ export default function DashboardPage() {
       {!isDriver && !isOperator && (
         <div className="flex flex-wrap items-center gap-2">
           <span className="mr-1 text-sm font-medium text-navy/70">Quick create:</span>
-          <Button href="/orders?action=new" size="sm" variant="secondary">
+          {counterGate.showButton ? (
+            <WriteButton href="/orders/counter-sale" size="sm" variant="secondary">
+              Counter sale
+            </WriteButton>
+          ) : null}
+          <WriteButton href="/orders?action=new" size="sm" variant="secondary">
             <Plus className="mr-1.5 h-3.5 w-3.5" />
             New Order
-          </Button>
+          </WriteButton>
+          <ReadOnlyHint className="basis-full text-xs text-slate-600" />
         </div>
       )}
 
       {/* ── KPI stat cards ── */}
-      <div className="grid grid-cols-2 gap-4 lg:grid-cols-3 xl:grid-cols-6">
+      <div
+        data-testid="dashboard-stats"
+        className="grid grid-cols-2 gap-4 lg:grid-cols-3 xl:grid-cols-6"
+      >
         {isOperator &&
           (financeLoading ? (
             <StatSkeleton />
@@ -752,9 +983,17 @@ export default function DashboardPage() {
             <Link href="/finance" className="block">
               <StatCard
                 label="Today's Revenue"
-                value={`$${Number(todayRevenue).toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`}
+                value={
+                  todayRevenue === null
+                    ? UNKNOWN_KPI
+                    : `$${todayRevenue.toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`
+                }
                 icon={<DollarSign className="h-5 w-5 text-success" />}
-                className="cursor-pointer transition-shadow hover:shadow-md ring-1 ring-inset ring-success/20"
+                className={cn(
+                  "cursor-pointer transition-shadow hover:shadow-md ring-1 ring-inset ring-success/20",
+                  KPI_TILE,
+                  STAT_CARD_MIN_H,
+                )}
               />
             </Link>
           ))}
@@ -765,13 +1004,17 @@ export default function DashboardPage() {
             <Link href="/invoices?status=OVERDUE" className="block">
               <StatCard
                 label="Overdue Invoices"
-                value={overdueCount}
+                value={overdueCount ?? UNKNOWN_KPI}
                 icon={
-                  <FileMinus className={cn("h-5 w-5", overdueCount > 0 ? "text-danger" : "")} />
+                  <FileMinus
+                    className={cn("h-5 w-5", (overdueCount ?? 0) > 0 ? "text-danger" : "")}
+                  />
                 }
                 className={cn(
                   "cursor-pointer transition-shadow hover:shadow-md",
-                  overdueCount > 0 ? "ring-1 ring-inset ring-danger/20" : "",
+                  KPI_TILE,
+                  STAT_CARD_MIN_H,
+                  (overdueCount ?? 0) > 0 ? "ring-1 ring-inset ring-danger/20" : "",
                 )}
               />
             </Link>
@@ -782,39 +1025,89 @@ export default function DashboardPage() {
           <Link href="/orders" className="block">
             <StatCard
               label="Active Orders"
-              value={activeOrders}
+              value={activeOrders ?? UNKNOWN_KPI}
               icon={<ShoppingCart className="h-5 w-5" />}
-              className="cursor-pointer transition-shadow hover:shadow-md"
+              className={cn(
+                "cursor-pointer transition-shadow hover:shadow-md",
+                KPI_TILE,
+                STAT_CARD_MIN_H,
+              )}
             />
           </Link>
         )}
+        {isOperator && reserveShipSlots && (
+          <>
+            <StatSkeleton testId="ship-stat-skeleton" />
+            <StatSkeleton testId="ship-stat-skeleton" />
+            <StatSkeleton testId="ship-stat-skeleton" />
+          </>
+        )}
+        {isOperator && !capsLoading && shippingAccount && (
+          <>
+            <Link href="/orders?status=CONFIRMED&fulfillPath=SHIP" className="block">
+              <StatCard
+                label="Ready to ship"
+                value={shipCount(readyToShipQ) ?? UNKNOWN_KPI}
+                icon={<Package className="h-5 w-5" />}
+                className={cn("cursor-pointer transition-shadow hover:shadow-md", STAT_CARD_MIN_H)}
+              />
+            </Link>
+            <Link
+              href="/orders?status=OUT_FOR_DELIVERY&fulfillPath=SHIP&shipView=no-tracking"
+              className="block"
+            >
+              <StatCard
+                label="Shipped, no tracking"
+                value={shipCount(noTrackingQ) ?? UNKNOWN_KPI}
+                icon={<AlertTriangle className="h-5 w-5" />}
+                className={cn("cursor-pointer transition-shadow hover:shadow-md", STAT_CARD_MIN_H)}
+              />
+            </Link>
+            <Link href="/orders?fulfillPath=SHIP&shipView=week" className="block">
+              <StatCard
+                label="Shipped this week"
+                value={weekStart ? (shipCount(shippedWeekQ) ?? UNKNOWN_KPI) : UNKNOWN_KPI}
+                icon={<Truck className="h-5 w-5" />}
+                className={cn("cursor-pointer transition-shadow hover:shadow-md", STAT_CARD_MIN_H)}
+              />
+            </Link>
+          </>
+        )}
         {(isOperator || isDriver) &&
-          routesAccess &&
-          (runsLoading ? (
+          (routesAccess || reserveRoutesSlot) &&
+          (!routesAccess || runsLoading ? (
             <StatSkeleton />
           ) : (
             <Link href="/routes" className="block">
               <StatCard
                 label="Scheduled Routes"
-                value={routesToday}
+                value={routesToday ?? UNKNOWN_KPI}
                 icon={<MapPin className="h-5 w-5" />}
-                className="cursor-pointer transition-shadow hover:shadow-md"
+                className={cn(
+                  "cursor-pointer transition-shadow hover:shadow-md",
+                  KPI_TILE,
+                  STAT_CARD_MIN_H,
+                )}
               />
             </Link>
           ))}
         {isOperator &&
-          routesAccess &&
-          (driversLoading ? (
+          (routesAccess || reserveRoutesSlot) &&
+          (!routesAccess || driversLoading ? (
             <StatSkeleton />
           ) : (
             <Link href="/drivers" className="block">
               <StatCard
                 label="Active Drivers"
-                value={driversOnRoad}
-                icon={<Truck className={cn("h-5 w-5", driversOnRoad > 0 && "text-success")} />}
+                value={driversOnRoad ?? UNKNOWN_KPI}
+                icon={
+                  <Truck className={cn("h-5 w-5", (driversOnRoad ?? 0) > 0 && "text-success")} />
+                }
                 className={cn(
                   "cursor-pointer transition-shadow hover:shadow-md",
-                  driversOnRoad > 0 ? "ring-1 ring-inset ring-success/20" : "",
+                  KPI_TILE,
+                  STAT_CARD_MIN_H,
+                  (driversOnRoad ?? 0) > 0 ? "ring-1 ring-inset ring-success/20" : "",
                 )}
               />
             </Link>
@@ -826,15 +1119,17 @@ export default function DashboardPage() {
             <Link href="/products?lowStock=true" className="block">
               <StatCard
                 label="Low Stock Items"
-                value={lowStockTotal}
+                value={lowStockTotal ?? UNKNOWN_KPI}
                 icon={
                   <AlertTriangle
-                    className={cn("h-5 w-5", lowStockTotal > 0 ? "text-warning" : "")}
+                    className={cn("h-5 w-5", (lowStockTotal ?? 0) > 0 ? "text-warning" : "")}
                   />
                 }
                 className={cn(
                   "cursor-pointer transition-shadow hover:shadow-md",
-                  lowStockTotal > 0 ? "ring-1 ring-inset ring-warning/20" : "",
+                  KPI_TILE,
+                  STAT_CARD_MIN_H,
+                  (lowStockTotal ?? 0) > 0 ? "ring-1 ring-inset ring-warning/20" : "",
                 )}
               />
             </Link>
@@ -842,9 +1137,18 @@ export default function DashboardPage() {
       </div>
 
       {/* ── Order pipeline strip (operator only) ── */}
-      {isOperator && !ordersLoading && (
-        <div className="overflow-hidden rounded-lg border border-surface-border bg-white shadow-card">
-          <div className="grid grid-cols-5 divide-x divide-surface-border">
+      {isOperator && (
+        <div
+          key={ordersLoading ? "pipeline-skeleton" : "pipeline-strip"}
+          data-testid={ordersLoading ? "pipeline-skeleton" : "pipeline-strip"}
+          aria-busy={ordersLoading}
+          aria-hidden={ordersLoading ? true : undefined}
+          className={cn(
+            "overflow-x-auto rounded-lg border border-surface-border bg-white shadow-card",
+            ordersLoading && "animate-pulse [&_span]:invisible",
+          )}
+        >
+          <div className="grid min-w-[520px] grid-cols-5 divide-x divide-surface-border">
             {[
               {
                 label: "Pending",
@@ -859,7 +1163,7 @@ export default function DashboardPage() {
                 bg: "bg-brand-50",
               },
               {
-                label: "Out for Delivery",
+                label: statusLabel("OUT_FOR_DELIVERY", "Out for Delivery"),
                 key: "OUT_FOR_DELIVERY" as const,
                 color: "text-blue-600",
                 bg: "bg-blue-50",
@@ -875,20 +1179,24 @@ export default function DashboardPage() {
               <Link
                 key={key}
                 href={`/orders?status=${key}`}
+                tabIndex={ordersLoading ? -1 : undefined}
                 className={cn(
-                  "flex flex-col gap-1 px-[18px] py-[13px] transition-colors hover:bg-surface-raised",
-                  bg && orderPipeline[key] > 0 && bg,
+                  "flex flex-col gap-1 whitespace-nowrap px-[18px] py-[13px] transition-colors hover:bg-surface-raised",
+                  bg && (orderPipeline[key] ?? 0) > 0 && bg,
                 )}
               >
                 <span
                   className={cn(
                     "text-xl font-semibold tabular-nums",
-                    orderPipeline[key] > 0 ? color : "text-navy/20",
+                    (orderPipeline[key] ?? 0) > 0 ? color : "text-navy/20",
                   )}
                 >
-                  {orderPipeline[key]}
+                  {orderPipeline[key] ?? UNKNOWN_KPI}
                 </span>
                 <span className="text-[11.5px] font-semibold text-navy/70">{label}</span>
+                {(key === "DELIVERED" || key === "CANCELLED") && (
+                  <span className="-mt-0.5 text-[10.5px] font-medium text-navy/50">all time</span>
+                )}
               </Link>
             ))}
           </div>
@@ -900,7 +1208,14 @@ export default function DashboardPage() {
         <div className="grid grid-cols-1 gap-6 lg:grid-cols-2">
           {/* AR Aging */}
           {financeLoading ? (
-            <div className="animate-pulse rounded-lg border border-surface-border bg-white p-5">
+            <div
+              key="ar-skeleton"
+              data-testid="list-skeleton"
+              className={cn(
+                "animate-pulse rounded-lg border border-surface-border bg-white p-5",
+                AR_AGING_MIN_H,
+              )}
+            >
               <div className="h-4 w-24 rounded bg-navy/10 mb-4" />
               <div className="h-24 rounded bg-navy/10" />
             </div>
@@ -911,8 +1226,10 @@ export default function DashboardPage() {
           {/* Overdue invoices action list */}
           <OverdueInvoicesPanel
             invoices={overdueInvoices}
-            totalCount={overdueCount}
+            totalCount={overdueCount ?? 0}
             isLoading={overdueLoading}
+            failed={overdueError && !overdueData}
+            onRetry={() => void refetchOverdue()}
           />
         </div>
       )}
@@ -925,11 +1242,21 @@ export default function DashboardPage() {
             {/* Urgent orders alert panel */}
             {isOperator &&
               (urgentLoading ? (
-                <div className="animate-pulse rounded-lg border border-surface-border bg-white p-5">
+                <div
+                  key="urgent-skeleton"
+                  data-testid="list-skeleton"
+                  className={cn(
+                    "animate-pulse rounded-lg border border-surface-border bg-white p-5",
+                    URGENT_MIN_H,
+                  )}
+                >
                   <div className="h-4 w-48 rounded bg-navy/10" />
                 </div>
               ) : urgentOrders.length > 0 ? (
-                <div className="overflow-hidden rounded-lg border border-danger/40 bg-danger-bg/40 shadow-card">
+                <div
+                  key="urgent-list"
+                  className="overflow-hidden rounded-lg border border-danger/40 bg-danger-bg/40 shadow-card"
+                >
                   <div className="flex items-center justify-between border-b border-danger/30 px-5 py-3.5">
                     <h3 className="flex items-center gap-2 text-base font-semibold text-[#B91C1C]">
                       <AlertTriangle className="h-4 w-4 shrink-0" />
@@ -958,7 +1285,13 @@ export default function DashboardPage() {
                   </ul>
                 </div>
               ) : (
-                <div className="flex items-center gap-3 rounded-lg border border-success/30 bg-success-bg px-5 py-5 shadow-card">
+                <div
+                  key="urgent-clear"
+                  className={cn(
+                    "flex items-center gap-3 rounded-lg border border-success/30 bg-success-bg px-5 py-5 shadow-card",
+                    URGENT_MIN_H,
+                  )}
+                >
                   <CheckCircle2 className="h-5 w-5 shrink-0 text-success" />
                   <div>
                     <p className="text-sm font-semibold text-success">All clear</p>
@@ -968,8 +1301,8 @@ export default function DashboardPage() {
               ))}
 
             {/* Scheduled route runs */}
-            {routesAccess && (
-              <Card>
+            {(routesAccess || reserveRoutesSlot) && (
+              <Card className={!routesAccess || runsLoading ? ROUTE_RUNS_MIN_H : undefined}>
                 <div className="mb-4 flex items-center justify-between">
                   <h3 className="text-base font-semibold text-navy">Scheduled Route Runs</h3>
                   <Link
@@ -979,14 +1312,14 @@ export default function DashboardPage() {
                     All routes <ArrowRight className="h-3 w-3" />
                   </Link>
                 </div>
-                {runsLoading ? (
-                  <div className="animate-pulse space-y-3 py-4">
+                {!routesAccess || runsLoading ? (
+                  <div key="runs-skeleton" className="animate-pulse space-y-3 py-4">
                     {[1, 2, 3].map((i) => (
                       <div key={i} className="h-10 rounded bg-navy/10" />
                     ))}
                   </div>
                 ) : (
-                  <div className="-mx-6 -mb-6">
+                  <div key="runs-loaded" className="-mx-6 -mb-6">
                     <Table
                       data={activeRoutes}
                       columns={routeColumns}
@@ -1009,22 +1342,17 @@ export default function DashboardPage() {
           {/* Right 1/3: Driver Status + Low Stock */}
           {isOperator && (
             <div className="flex flex-col gap-6">
-              {routesAccess && (
-                <Card title="Driver Status">
-                  {driversLoading ? (
-                    <div className="animate-pulse space-y-4 py-2">
-                      {[1, 2, 3].map((i) => (
-                        <div key={i} className="flex items-center gap-3">
-                          <div className="h-2 w-2 rounded-full bg-navy/10" />
-                          <div className="flex-1 space-y-1">
-                            <div className="h-3 w-24 rounded bg-navy/10" />
-                            <div className="h-3 w-16 rounded bg-navy/10" />
-                          </div>
-                        </div>
-                      ))}
+              {(routesAccess || reserveRoutesSlot) && (
+                <Card
+                  title="Driver Status"
+                  className={!routesAccess || driversLoading ? DRIVER_STATUS_MIN_H : undefined}
+                >
+                  {!routesAccess || driversLoading ? (
+                    <div key="drivers-skeleton" className="-mx-6 -mb-6 animate-pulse px-6 py-4">
+                      <div className="h-5 w-32 rounded bg-navy/10" />
                     </div>
                   ) : (
-                    <ul className="-mx-6 -mb-6 divide-y divide-surface-border">
+                    <ul key="drivers-loaded" className="-mx-6 -mb-6 divide-y divide-surface-border">
                       {drivers.length === 0 ? (
                         <li className="px-6 py-4 text-sm text-navy/70">No drivers found</li>
                       ) : (
@@ -1057,8 +1385,10 @@ export default function DashboardPage() {
               {/* Low stock items */}
               <LowStockPanel
                 products={lowStockProducts}
-                total={lowStockTotal}
+                total={lowStockTotal ?? 0}
                 isLoading={lowStockLoading}
+                failed={lowStockError && !lowStockData}
+                onRetry={() => void refetchLowStock()}
               />
             </div>
           )}
@@ -1068,7 +1398,7 @@ export default function DashboardPage() {
       {/* ── Recent Orders (not for a DRIVER: /orders is OPERATOR+CUSTOMER only, #2254) ── */}
       {readsBusinessData && (
         <Card>
-          <div className="mb-4 flex items-center justify-between">
+          <div className="mb-4 flex flex-wrap items-center justify-between gap-2">
             <h2 className="text-base font-semibold text-navy">Recent Orders</h2>
             <Link
               href="/orders"
@@ -1079,13 +1409,19 @@ export default function DashboardPage() {
             </Link>
           </div>
           {recentLoading ? (
-            <div className="animate-pulse space-y-3">
+            <div key="recent-skeleton" className="animate-pulse space-y-3">
               {[1, 2, 3, 4, 5].map((i) => (
                 <div key={i} className="h-10 rounded bg-navy/10" />
               ))}
             </div>
           ) : recentError ? (
-            <ErrorBanner message="Could not load recent orders." />
+            <ErrorBanner
+              message={
+                isCustomerNotLinked(recentErrorObj)
+                  ? CUSTOMER_NOT_LINKED_COPY
+                  : "Could not load recent orders."
+              }
+            />
           ) : (
             <div className="-mx-6 -mb-6">
               <Table

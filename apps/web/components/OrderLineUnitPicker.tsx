@@ -3,11 +3,13 @@
 import * as React from "react";
 import { UnitPicker } from "@/components/UnitPicker";
 import { useProductUnits, useUnitsEnabled } from "@/lib/api/product-units";
-import { buildUnitOptions, type UnitOption } from "@/lib/unit-options";
-import { ladderProductOf, type PackBase } from "@/lib/order-line-unit";
+import { buildUnitOptions, defaultUnitValue, type UnitOption } from "@/lib/unit-options";
+import { isShapedLine } from "@/lib/default-unit-line";
+import { ladderProductOf, unitPickerValueOf, type PackBase } from "@/lib/order-line-unit";
+import type { DerivedBaseMarker } from "@routeflow/pricing";
 
 /** The line fields the picker reads (structurally satisfied by the order modal's line). */
-export interface OrderLineUnitPickerLine {
+export interface OrderLineUnitPickerLine extends DerivedBaseMarker {
   productId: string;
   productName: string;
   isUnlisted?: boolean;
@@ -16,6 +18,10 @@ export interface OrderLineUnitPickerLine {
   listPrice: number;
   unitPrice: number;
   priceType: "STANDARD" | "SPECIAL" | "DISCOUNTED" | "MANUAL";
+  /** #2784: the operator's own override fields: the start-on-default rule never touches a shaped line. */
+  discountedPrice?: number;
+  /** Informational only: on a boxed line this is TOTAL PIECES, so the start-on-default rule never guards on it. */
+  qty?: number;
   unitLabel?: string;
   packBase?: PackBase;
   tierPrices?: Parameters<typeof ladderProductOf>[0]["tierPrices"];
@@ -36,8 +42,14 @@ export function OrderLineUnitPicker({
   line,
   tier,
   onChange,
+  startOnDefaultUnit = false,
 }: {
   line: OrderLineUnitPickerLine;
+  /**
+   * #2784: a NEW line (the picker tap / a scan) starts on the level flagged `isDefaultSelling`, else stays on the pack.
+   * Applied once when the ladder first arrives, and never over a unit the line already holds or a price the operator typed.
+   */
+  startOnDefaultUnit?: boolean;
   /** The EFFECTIVE tier for this product (`CustomerPrice.pricingTier ?? customer.pricingTier ?? 1`). */
   tier: number;
   onChange: (option: UnitOption, refresh: boolean) => void;
@@ -59,6 +71,29 @@ export function OrderLineUnitPicker({
       return []; // display-only: a bad tier never unmounts the order form (the server 400s on save)
     }
   }, [enabled, units.data, product, tier, packPrice]);
+
+  const startedRef = React.useRef(false);
+  React.useEffect(() => {
+    if (!startOnDefaultUnit || startedRef.current || options.length === 0) return;
+    startedRef.current = true; // one shot per mount: the operator's later choice is never re-overridden
+    // Only a line whose price the operator has not shaped (Opus #2865 B1/r2). Qty is NOT a guard: on a boxed line it is total
+    // pieces (a fresh 1-box line is 24); the modal clears the flag in every qty/price handler instead.
+    if (isShapedLine(line) || !units.data) return;
+    const value = defaultUnitValue(product, units.data, tier);
+    const option = value ? options.find((o) => o.value === value) : undefined;
+    if (option) onChange(option, false);
+  }, [
+    startOnDefaultUnit,
+    options,
+    units.data,
+    product,
+    tier,
+    line.unitLabel,
+    line.priceEdited,
+    line.discountedPrice,
+    line.priceType,
+    onChange,
+  ]);
 
   const packOption: UnitOption = {
     value: "",
@@ -98,7 +133,7 @@ export function OrderLineUnitPicker({
       tier={tier}
       packPrice={packPrice}
       ariaLabel={`Sell ${line.productName} by`}
-      value={line.unitLabel ?? ""}
+      value={unitPickerValueOf(line)}
       onChange={(label) => {
         // "" = back to the pack, which must work even when the ladder is gone (no options to look in):
         // the held unit would otherwise be unfixable and the save would 400 on it.

@@ -1,8 +1,9 @@
 "use client";
 
 import * as React from "react";
-import { useForm } from "react-hook-form";
+import { useForm, type Resolver } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
+import { API_ERROR_CODES } from "@routeflow/types";
 import { z } from "zod";
 import {
   Upload,
@@ -80,6 +81,8 @@ import {
 } from "@/lib/api/remittance";
 import { useTierLabels, useUpdateTierLabels, type TierLabelsConfig } from "@/lib/api/tier-labels";
 import { useAuth } from "@/lib/auth-context";
+import { isAccountAdmin } from "@/lib/auth";
+import { useFleetAccess } from "@/lib/api/addons";
 import { changePassword, setPassword } from "@/lib/auth";
 import { RegulatedSettingsTab } from "./_components/RegulatedSettingsTab";
 import { NotificationsSettingsTab } from "./_components/NotificationsSettingsTab";
@@ -87,13 +90,26 @@ import { SettingsHub } from "./_components/SettingsHub";
 import { SendingDomainCard } from "./_components/SendingDomainCard";
 import { MailboxCard } from "./_components/MailboxCard";
 import { StripeConnectCard } from "./_components/StripeConnectCard";
+import { InvoiceNumberingCard, INVOICE_TERMS_OPTIONS } from "./_components/InvoiceNumberingCard";
 import GoHighLevelSettingsTab from "./_components/GoHighLevelSettingsTab";
+import { FulfillmentSettingsTab } from "./_components/FulfillmentSettingsTab";
+import { useFulfilmentSettings } from "@/lib/api/fulfilment-settings";
 import NextLink from "next/link";
 import { useSearchParams, useRouter } from "next/navigation";
+import { describeSaveError } from "@/lib/reason-copy";
+import { isInShell } from "@/lib/in-shell";
+import { TimeZoneDatalist } from "@/components/TimeZoneInput";
+import { TIME_ZONE_REQUIRED_COPY, canonicalTimeZone, isValidTimeZone } from "@/lib/timezones";
+import { useInvalidFocus } from "@/lib/form-errors";
+import { ReadOnlyHint, WriteButton } from "@/lib/read-only-gate";
+import { isReadOnlyRefusal, showReadOnlyRefusal } from "@/lib/read-only-refusal";
+import { userStatusRefusalCopy } from "@/lib/user-status-refusal";
 
 // ─── TAB 1: Business Profile ──────────────────────────────────────────────────
 
-const profileSchema = z.object({
+const RECEIPT_FOOTER_MAX_CHARS = 200;
+
+const profileShape = {
   businessName: z.string().min(1, "Required"),
   email: z.string().email("Enter a valid email"),
   ownerName: z.string().min(1, "Required"),
@@ -104,13 +120,30 @@ const profileSchema = z.object({
   state: z.string().optional(),
   zip: z.string().regex(/^\d{5}(-\d{4})?$/, "Enter a valid ZIP code"),
   taxRate: z.coerce.number().min(0).max(100),
-});
-type ProfileFormValues = z.infer<typeof profileSchema>;
+  // Plain text, counted in characters like the API does (SA-762r F6).
+  receiptFooter: z.string().refine((v) => Array.from(v).length <= RECEIPT_FOOTER_MAX_CHARS, {
+    message: `Keep the footer to ${RECEIPT_FOOTER_MAX_CHARS} characters or fewer`,
+  }),
+};
+/** The zone is validated only when the viewer can edit it, so a hidden field can never block a save. */
+const profileSchemaFor = (canEditTimeZone: boolean) =>
+  z.object({
+    ...profileShape,
+    timezone: canEditTimeZone
+      ? z.string().refine((v) => isValidTimeZone(v), TIME_ZONE_REQUIRED_COPY)
+      : z.string().optional(),
+  });
+type ProfileFormValues = z.infer<ReturnType<typeof profileSchemaFor>>;
+
+const INVALID_ZONE_COPY = "That isn't a valid time zone. Pick one from the list.";
+const ZONE_FORBIDDEN_COPY = "Only an account admin can change the time zone.";
 
 function BusinessProfileTab() {
   const { toast } = useToast();
   const qc = useQueryClient();
   const { branding, refresh: refreshBranding } = useTenant();
+  // Only a tenant admin may change the time zone; everyone else sees it read-only.
+  const canEditTimeZone = useAuth().user?.role === "TENANT_ADMIN";
   const [logoPreview, setLogoPreview] = React.useState<string | null>(null);
   const fileInputRef = React.useRef<HTMLInputElement>(null);
 
@@ -120,7 +153,9 @@ function BusinessProfileTab() {
   });
 
   const saveSettings = useMutation({
-    mutationFn: (data: ProfileFormValues) => apiClient.patch("/settings", data).then((r) => r.data),
+    // `timezone` rides along only when an admin actually changed it.
+    mutationFn: (data: Omit<ProfileFormValues, "timezone"> & { timezone?: string }) =>
+      apiClient.patch("/settings", data).then((r) => r.data),
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ["settings"] });
       toast({
@@ -129,7 +164,30 @@ function BusinessProfileTab() {
         variant: "success",
       });
     },
-    onError: () => toast({ title: "Failed to save settings", variant: "error" }),
+    onError: (err: unknown, sent) => {
+      if (isReadOnlyRefusal(err)) return; // F5: the app-wide handler already showed the shared line
+
+      const res = (err as { response?: { status?: number; data?: { code?: string } } })?.response;
+      // The server's own text is never shown: a refused zone and a refused role each get one fixed line.
+      if (res?.data?.code === API_ERROR_CODES.INVALID_TIME_ZONE) {
+        setError("timezone", { message: INVALID_ZONE_COPY });
+        toast({ title: INVALID_ZONE_COPY, variant: "error" });
+        return;
+      }
+      if (res?.status === 403 && sent.timezone) {
+        toast({ title: ZONE_FORBIDDEN_COPY, variant: "error" });
+        return;
+      }
+      toast(
+        res?.status === 400
+          ? {
+              title: "Couldn't save the receipt footer",
+              description: `Use plain text of ${RECEIPT_FOOTER_MAX_CHARS} characters or fewer.`,
+              variant: "error",
+            }
+          : { title: "Failed to save settings", variant: "error" },
+      );
+    },
   });
 
   // Logo upload — POSTs the file to /tenants/me/config/branding/logo as
@@ -155,12 +213,32 @@ function BusinessProfileTab() {
       });
     },
     onError: (err: any) => {
+      // Drop the local preview so the saved logo (if any) shows instead of a stale one (also when read-only).
+      setLogoPreview(null);
+      if (isReadOnlyRefusal(err)) return; // F5: the app-wide handler already showed the shared line
       const msg = err?.response?.data?.message ?? "Try a PNG, JPG, or WEBP under 5 MB.";
       toast({ title: "Logo upload failed", description: msg, variant: "error" });
-      // Drop the local preview so the saved logo (if any) shows instead of a stale one.
-      setLogoPreview(null);
     },
   });
+
+  // Row 327: this is ONE form with one Save button, so validate only the fields the user changed. A counter shop
+  // that never filled in the owner, phone or address (the API stores them as empty strings) can still save its
+  // tax rate; a field the user edits, or clears, is still checked. With nothing edited, the whole form is checked.
+  const dirtyRef = React.useRef<Record<string, unknown>>({});
+  const profileResolver = React.useMemo<Resolver<ProfileFormValues>>(() => {
+    const schema = profileSchemaFor(canEditTimeZone);
+    return async (values, context, options) => {
+      const mask: Record<string, true> = {};
+      for (const key of Object.keys(schema.shape)) if (dirtyRef.current[key]) mask[key] = true;
+      // Nothing changed: Save has nothing to scope to, so check the whole profile and say what is missing.
+      if (Object.keys(mask).length === 0) return zodResolver(schema)(values, context, options);
+      const res = await zodResolver(schema.pick(mask as never))(values, context, options);
+      // The picked schema strips every other key, so hand back the whole form with the parsed fields on top.
+      return Object.keys(res.errors).length === 0
+        ? { values: { ...values, ...res.values }, errors: {} }
+        : res;
+    };
+  }, [canEditTimeZone]);
 
   const {
     register,
@@ -168,9 +246,12 @@ function BusinessProfileTab() {
     reset,
     watch,
     setValue,
-    formState: { errors, isSubmitting },
+    setError,
+    formState: { errors, isSubmitting, dirtyFields },
   } = useForm<ProfileFormValues>({
-    resolver: zodResolver(profileSchema),
+    resolver: profileResolver,
+    // onInvalidFocus (handleSubmit's second argument) is the single focus owner.
+    shouldFocusError: false,
     defaultValues: {
       businessName: "",
       email: "",
@@ -182,8 +263,12 @@ function BusinessProfileTab() {
       state: "",
       zip: "",
       taxRate: 0,
+      timezone: "",
+      receiptFooter: "",
     },
   });
+
+  dirtyRef.current = dirtyFields;
 
   React.useEffect(() => {
     if (savedSettings) {
@@ -198,6 +283,8 @@ function BusinessProfileTab() {
         state: savedSettings.state ?? "",
         zip: savedSettings.zip ?? "",
         taxRate: savedSettings.taxRate ?? 0,
+        ...(canEditTimeZone ? { timezone: savedSettings.timezone ?? "" } : {}),
+        receiptFooter: savedSettings.receiptFooter ?? "",
       });
     }
   }, [savedSettings, reset]);
@@ -214,12 +301,18 @@ function BusinessProfileTab() {
     e.target.value = "";
   };
 
-  const onSubmit = async (data: ProfileFormValues) => {
-    await saveSettings.mutateAsync(data);
+  const onSubmit = async ({ timezone, ...rest }: ProfileFormValues) => {
+    const zone =
+      canEditTimeZone && dirtyFields.timezone && timezone ? canonicalTimeZone(timezone) : null;
+    // onError already told the user (fixed copy); the rejection must not also escape as an unhandled one.
+    await saveSettings
+      .mutateAsync(zone ? { ...rest, timezone: zone } : rest)
+      .catch(() => undefined);
   };
+  const onInvalid = useInvalidFocus();
 
   return (
-    <form onSubmit={handleSubmit(onSubmit)} noValidate className="space-y-6">
+    <form onSubmit={handleSubmit(onSubmit, onInvalid)} noValidate className="space-y-6">
       <Card title="Business Information">
         <div className="grid grid-cols-2 gap-4">
           <Input
@@ -256,6 +349,37 @@ function BusinessProfileTab() {
               Used for invoices, order updates, and customer communications.
             </p>
           </div>
+        </div>
+        <div className="mt-4">
+          {canEditTimeZone ? (
+            <>
+              <Input
+                label="Time zone"
+                list="settings-timezone-zones"
+                autoComplete="off"
+                id="settings-timezone"
+                aria-describedby={`settings-timezone-help${errors.timezone ? " settings-timezone-error" : ""}`}
+                register={register("timezone", {
+                  onBlur: (e) => {
+                    // Tidy the spelling when the admin leaves the field; text that is not a zone stays for the save check.
+                    const zone = canonicalTimeZone(e.target.value);
+                    if (zone && zone !== e.target.value)
+                      setValue("timezone", zone, { shouldDirty: true, shouldValidate: true });
+                  },
+                })}
+                error={errors.timezone?.message}
+              />
+              <TimeZoneDatalist id="settings-timezone-zones" />
+            </>
+          ) : (
+            <dl>
+              <dt className="text-sm font-medium text-navy">Time zone</dt>
+              <dd className="text-sm text-navy">{savedSettings?.timezone ?? "—"}</dd>
+            </dl>
+          )}
+          <p id="settings-timezone-help" className="mt-1 text-xs text-navy/70">
+            Applies to receipts and today&apos;s sales from now on
+          </p>
         </div>
       </Card>
 
@@ -356,11 +480,28 @@ function BusinessProfileTab() {
             />
             <span className="absolute right-3 top-[34px] text-sm text-navy/70">%</span>
           </div>
+          <p className="mt-1 text-xs text-navy/70">Charged on counter sales and invoices</p>
         </div>
       </Card>
 
+      <Card title="Receipt">
+        {/* Plain text only: the footer is never rendered as HTML. */}
+        <Textarea
+          label="Receipt footer"
+          rows={3}
+          register={register("receiptFooter")}
+          error={errors.receiptFooter?.message}
+        />
+        <p className="mt-1 text-xs text-navy/70">
+          Printed at the bottom of counter receipts. Plain text.{" "}
+          <span aria-live="polite">
+            {Array.from(watch("receiptFooter") ?? "").length}/{RECEIPT_FOOTER_MAX_CHARS}
+          </span>
+        </p>
+      </Card>
+
       <div className="flex justify-end">
-        <Button type="submit" loading={isSubmitting} disabled={Object.keys(errors).length > 0}>
+        <Button type="submit" loading={isSubmitting}>
           Save Changes
         </Button>
       </div>
@@ -401,6 +542,8 @@ function AddUserModal({
   onCreated: (tempPassword: string) => void;
 }) {
   const createOperator = useCreateOperator();
+  // Fleet-off (no routes / delivery addon): there are no drivers to add, so no DRIVER role option.
+  const { fleet } = useFleetAccess();
   const [tempPassword, setTempPassword] = React.useState<string | null>(null);
   const [copied, setCopied] = React.useState(false);
 
@@ -415,6 +558,10 @@ function AddUserModal({
     resolver: zodResolver(addUserSchema),
     defaultValues: { role: "DRIVER" },
   });
+
+  React.useEffect(() => {
+    if (!fleet) setValue("role", "OPERATOR");
+  }, [fleet, setValue]);
 
   const nameValue = watch("name") ?? "";
   React.useEffect(() => {
@@ -506,7 +653,7 @@ function AddUserModal({
       ) : (
         <form id="add-user-form" onSubmit={handleSubmit(onSubmit)} noValidate className="space-y-4">
           {createOperator.error && (
-            <p className="text-sm text-danger">{createOperator.error.message}</p>
+            <p className="text-sm text-danger">{describeSaveError(createOperator.error)}</p>
           )}
           <Input
             label="Full Name"
@@ -517,7 +664,7 @@ function AddUserModal({
           <Select
             label="Role"
             options={[
-              { value: "DRIVER", label: "Driver" },
+              ...(fleet ? [{ value: "DRIVER", label: "Driver" }] : []),
               { value: "OPERATOR", label: "Operator" },
             ]}
             register={register("role")}
@@ -565,6 +712,10 @@ function EditUserModal({
 }) {
   const updateUser = useUpdateUser();
   const resetPassword = useResetUserPassword();
+  // Non-admins edit only their own username / email: no role change, no password reset.
+  const isAdmin = isAccountAdmin(useAuth().user);
+  // Fleet-off: no DRIVER option — unless this user already IS a driver (never silently change a role).
+  const { fleet } = useFleetAccess();
   const { toast } = useToast();
   const [tempPassword, setTempPassword] = React.useState<string | null>(null);
   const [copied, setCopied] = React.useState(false);
@@ -597,6 +748,7 @@ function EditUserModal({
           onClose();
         },
         onError: (err) =>
+          isReadOnlyRefusal(err) ||
           toast({ title: "Update failed", description: err.message, variant: "error" }),
       },
     );
@@ -606,7 +758,8 @@ function EditUserModal({
     if (!user) return;
     resetPassword.mutate(user.id, {
       onSuccess: (result) => setTempPassword(result.tempPassword),
-      onError: () => toast({ title: "Failed to reset password", variant: "error" }),
+      onError: (err) =>
+        isReadOnlyRefusal(err) || toast({ title: "Failed to reset password", variant: "error" }),
     });
   };
 
@@ -643,7 +796,9 @@ function EditUserModal({
       }
     >
       <form id="edit-user-form" onSubmit={handleSubmit(onSubmit)} noValidate className="space-y-4">
-        {updateUser.error && <p className="text-sm text-danger">{updateUser.error.message}</p>}
+        {updateUser.error && (
+          <p className="text-sm text-danger">{describeSaveError(updateUser.error)}</p>
+        )}
         {user?.role === "TENANT_ADMIN" ? (
           <div>
             <label className="mb-1 block text-sm font-medium text-navy">Role</label>
@@ -652,11 +807,19 @@ function EditUserModal({
             </div>
             <p className="mt-1 text-xs text-navy/70">Tenant admin role cannot be changed.</p>
           </div>
+        ) : !isAdmin ? (
+          <div>
+            <label className="mb-1 block text-sm font-medium text-navy">Role</label>
+            <div className="flex h-10 items-center rounded-md border border-surface-border bg-surface-secondary px-3 text-sm text-navy/70">
+              {user?.role === "DRIVER" ? "Driver" : "Operator"}
+            </div>
+            <p className="mt-1 text-xs text-navy/70">Only an admin can change this.</p>
+          </div>
         ) : (
           <Select
             label="Role"
             options={[
-              { value: "DRIVER", label: "Driver" },
+              ...(fleet || user?.role === "DRIVER" ? [{ value: "DRIVER", label: "Driver" }] : []),
               { value: "OPERATOR", label: "Operator" },
             ]}
             register={register("role")}
@@ -678,43 +841,52 @@ function EditUserModal({
         />
       </form>
 
-      {/* Password reset section */}
-      <div className="mt-4 border-t border-surface-border pt-4">
-        {tempPassword ? (
-          <div className="space-y-2">
-            <p className="text-xs font-medium text-navy">
-              New temporary password — share with user:
-            </p>
-            <div className="flex items-center gap-2">
-              <code className="flex-1 rounded border border-surface-border bg-surface-raised px-3 py-1.5 font-mono text-sm font-bold tracking-widest text-navy">
-                {tempPassword}
-              </code>
-              <button
-                onClick={copyPw}
-                title="Copy"
-                className="rounded p-1.5 text-navy/70 hover:bg-surface-raised hover:text-navy transition-colors"
-              >
-                {copied ? <Check className="h-4 w-4 text-success" /> : <Copy className="h-4 w-4" />}
-              </button>
+      {/* Password reset section (admin-only on the api) */}
+      {isAdmin && (
+        <div className="mt-4 border-t border-surface-border pt-4">
+          {tempPassword ? (
+            <div className="space-y-2">
+              <p className="text-xs font-medium text-navy">
+                New temporary password — share with user:
+              </p>
+              <div className="flex items-center gap-2">
+                <code className="flex-1 rounded border border-surface-border bg-surface-raised px-3 py-1.5 font-mono text-sm font-bold tracking-widest text-navy">
+                  {tempPassword}
+                </code>
+                <button
+                  onClick={copyPw}
+                  title="Copy"
+                  className="rounded p-1.5 text-navy/70 hover:bg-surface-raised hover:text-navy transition-colors"
+                >
+                  {copied ? (
+                    <Check className="h-4 w-4 text-success" />
+                  ) : (
+                    <Copy className="h-4 w-4" />
+                  )}
+                </button>
+              </div>
             </div>
-          </div>
-        ) : (
-          <Button
-            variant="secondary"
-            size="sm"
-            loading={resetPassword.isPending}
-            onClick={handleResetPassword}
-          >
-            Reset Password
-          </Button>
-        )}
-      </div>
+          ) : (
+            <Button
+              variant="secondary"
+              size="sm"
+              loading={resetPassword.isPending}
+              onClick={handleResetPassword}
+            >
+              Reset Password
+            </Button>
+          )}
+        </div>
+      )}
     </Modal>
   );
 }
 
 function UserManagementTab() {
   const { data, isLoading } = useUsers();
+  // Add / status / reset-password are admin-only on the api; anyone may edit THEIR OWN record.
+  const { user: viewer } = useAuth();
+  const isAdmin = isAccountAdmin(viewer);
   const changeStatus = useChangeUserStatus();
   const [isAddOpen, setIsAddOpen] = React.useState(false);
   const [editingUser, setEditingUser] = React.useState<AppUser | null>(null);
@@ -727,7 +899,12 @@ function UserManagementTab() {
     changeStatus.mutate(
       { id: user.id, status: nextStatus },
       {
-        onError: () => toast({ title: "Failed to update status", variant: "error" }),
+        onError: (err) =>
+          isReadOnlyRefusal(err) ||
+          toast({
+            title: userStatusRefusalCopy(err) ?? "Failed to update status",
+            variant: "error",
+          }),
       },
     );
   };
@@ -742,10 +919,13 @@ function UserManagementTab() {
         <p className="text-sm text-navy/70">
           {isLoading ? "Loading..." : `${data?.meta.total ?? 0} users total`}
         </p>
-        <Button size="sm" onClick={() => setIsAddOpen(true)}>
-          Add User
-        </Button>
+        {isAdmin && (
+          <WriteButton size="sm" onClick={() => setIsAddOpen(true)}>
+            Add User
+          </WriteButton>
+        )}
       </div>
+      <ReadOnlyHint className="text-xs text-slate-600" />
 
       <div className="overflow-hidden rounded-lg border border-surface-border bg-white">
         <table className="w-full text-sm">
@@ -792,30 +972,35 @@ function UserManagementTab() {
                   </td>
                   <td className="px-4 py-3">
                     <div className="flex items-center gap-1 justify-end">
-                      <button
-                        title="Edit user"
-                        onClick={() => setEditingUser(user)}
-                        className="rounded p-1.5 text-navy/70 hover:bg-surface-raised hover:text-navy transition-colors"
-                      >
-                        <Pencil className="h-4 w-4" />
-                      </button>
-                      <button
-                        title={user.status === "ACTIVE" ? "Deactivate" : "Activate"}
-                        onClick={() => toggleStatus(user)}
-                        disabled={changeStatus.isPending}
-                        className={cn(
-                          "rounded p-1.5 transition-colors disabled:opacity-50",
-                          user.status === "ACTIVE"
-                            ? "text-success hover:bg-success-bg"
-                            : "text-navy/30 hover:bg-surface-raised hover:text-navy",
-                        )}
-                      >
-                        {user.status === "ACTIVE" ? (
-                          <ToggleRight className="h-4 w-4" />
-                        ) : (
-                          <ToggleLeft className="h-4 w-4" />
-                        )}
-                      </button>
+                      {(isAdmin || user.id === viewer?.id) && (
+                        <button
+                          title="Edit user"
+                          onClick={() => setEditingUser(user)}
+                          className="rounded p-1.5 text-navy/70 hover:bg-surface-raised hover:text-navy transition-colors"
+                        >
+                          <Pencil className="h-4 w-4" />
+                        </button>
+                      )}
+                      {/* SA #3412: no Deactivate on your own row (the API refuses it too) */}
+                      {isAdmin && user.id !== viewer?.id && (
+                        <button
+                          title={user.status === "ACTIVE" ? "Deactivate" : "Activate"}
+                          onClick={() => toggleStatus(user)}
+                          disabled={changeStatus.isPending}
+                          className={cn(
+                            "rounded p-1.5 transition-colors disabled:opacity-50",
+                            user.status === "ACTIVE"
+                              ? "text-success hover:bg-success-bg"
+                              : "text-navy/30 hover:bg-surface-raised hover:text-navy",
+                          )}
+                        >
+                          {user.status === "ACTIVE" ? (
+                            <ToggleRight className="h-4 w-4" />
+                          ) : (
+                            <ToggleLeft className="h-4 w-4" />
+                          )}
+                        </button>
+                      )}
                     </div>
                   </td>
                 </tr>
@@ -867,7 +1052,8 @@ function AIIntegrationsTab() {
         variant: "success",
       });
     },
-    onError: () => toast({ title: "Failed to save API key", variant: "error" }),
+    onError: (err) =>
+      isReadOnlyRefusal(err) || toast({ title: "Failed to save API key", variant: "error" }),
   });
 
   const removeKey = useMutation({
@@ -876,7 +1062,8 @@ function AIIntegrationsTab() {
       qc.invalidateQueries({ queryKey: ["settings", "anthropic"] });
       toast({ title: "API key removed", variant: "success" });
     },
-    onError: () => toast({ title: "Failed to remove key", variant: "error" }),
+    onError: (err) =>
+      isReadOnlyRefusal(err) || toast({ title: "Failed to remove key", variant: "error" }),
   });
 
   const isConfigured = anthropicStatus?.configured === true;
@@ -1281,7 +1468,8 @@ function EmailSettingsTab() {
       });
       qc.invalidateQueries({ queryKey: ["settings", "email"] });
       toast({ title: "Email settings saved", variant: "success" });
-    } catch {
+    } catch (err) {
+      if (showReadOnlyRefusal(err, toast)) return;
       toast({ title: "Failed to save settings", variant: "error" });
     } finally {
       setIsSaving(false);
@@ -1949,10 +2137,18 @@ function MyAccountTab() {
   });
 
   const googleLinked: boolean = me?.googleLinked ?? false;
-  const canToggleDriver = me?.role === "OPERATOR" || me?.role === "TENANT_ADMIN";
+  // Fleet-off (no routes / delivery addon): nothing to drive, so no "Act as driver" switch, EXCEPT while
+  // it is already ON, so it can still be turned off.
+  const { fleet: hasFleet } = useFleetAccess();
+  const canToggleDriver =
+    (hasFleet || !!me?.canActAsDriver) && (me?.role === "OPERATOR" || me?.role === "TENANT_ADMIN");
+  // PATCH /users/:id/driver-permit is admin-only even for yourself: others get a read-only line.
+  const isAdmin = isAccountAdmin(useAuth().user);
   const toggleDriverPermit = useToggleDriverPermit();
 
   const handleLinkGoogle = async () => {
+    // #2653 / SA-542 Q3: never start Google inside the app shell (the CSS hides it; this guards it).
+    if (isInShell()) return;
     setIsLinking(true);
     try {
       const { data } = await apiClient.get("/auth/google/link");
@@ -1978,14 +2174,20 @@ function MyAccountTab() {
           : "Sign out and back in to access driver features.",
         variant: "success",
       });
-    } catch {
+    } catch (err) {
+      if (isReadOnlyRefusal(err)) return; // the app-wide handler already showed the shared line
       toast({ title: "Failed to update driver access", variant: "error" });
     }
   };
 
   return (
     <div className="space-y-5">
-      {canToggleDriver && (
+      {canToggleDriver && !isAdmin && me?.canActAsDriver && (
+        <Card title="Driver Access">
+          <p className="text-sm text-navy/70">Driver access is on. Ask an admin to change it.</p>
+        </Card>
+      )}
+      {canToggleDriver && isAdmin && (
         <Card title="Driver Access">
           <div className="flex items-center justify-between">
             <div className="flex items-center gap-3">
@@ -2021,72 +2223,75 @@ function MyAccountTab() {
         </Card>
       )}
 
-      <Card title="Google Sign-In">
-        <div className="space-y-4">
-          <p className="text-sm text-navy/70">
-            Connect your Google account to sign in without a password.
-          </p>
+      {/* #2653: Google sign-in isn't offered inside the app shell (app/shell.css). */}
+      <div data-google-signin>
+        <Card title="Google Sign-In">
+          <div className="space-y-4">
+            <p className="text-sm text-navy/70">
+              Connect your Google account to sign in without a password.
+            </p>
 
-          <div className="flex items-center justify-between rounded-lg border border-surface-border bg-surface-raised p-4">
-            <div className="flex items-center gap-3">
-              {/* Google logo */}
-              <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-lg border border-surface-border bg-white p-2">
-                <svg viewBox="0 0 48 48" className="h-5 w-5">
-                  <path
-                    fill="#EA4335"
-                    d="M24 9.5c3.5 0 6.6 1.2 9 3.2l6.7-6.7C35.5 2.2 30 0 24 0 14.6 0 6.6 5.5 2.7 13.5l7.8 6C12.3 13.3 17.7 9.5 24 9.5z"
-                  />
-                  <path
-                    fill="#4285F4"
-                    d="M46.6 24.5c0-1.6-.1-3.1-.4-4.5H24v8.5h12.7c-.6 3-2.3 5.5-4.8 7.2l7.5 5.8C43.8 37.3 46.6 31.4 46.6 24.5z"
-                  />
-                  <path
-                    fill="#FBBC05"
-                    d="M10.5 28.1A14.5 14.5 0 0 1 9.5 24c0-1.4.2-2.8.6-4.1L2.3 14A24 24 0 0 0 0 24c0 3.9.9 7.5 2.5 10.8l8-6.7z"
-                  />
-                  <path
-                    fill="#34A853"
-                    d="M24 48c6.5 0 11.9-2.1 15.9-5.8l-7.5-5.8c-2.2 1.5-5 2.4-8.4 2.4-6.3 0-11.6-4.2-13.5-9.8l-8 6.2C6.5 42.3 14.6 48 24 48z"
-                  />
-                </svg>
+            <div className="flex items-center justify-between rounded-lg border border-surface-border bg-surface-raised p-4">
+              <div className="flex items-center gap-3">
+                {/* Google logo */}
+                <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-lg border border-surface-border bg-white p-2">
+                  <svg viewBox="0 0 48 48" className="h-5 w-5">
+                    <path
+                      fill="#EA4335"
+                      d="M24 9.5c3.5 0 6.6 1.2 9 3.2l6.7-6.7C35.5 2.2 30 0 24 0 14.6 0 6.6 5.5 2.7 13.5l7.8 6C12.3 13.3 17.7 9.5 24 9.5z"
+                    />
+                    <path
+                      fill="#4285F4"
+                      d="M46.6 24.5c0-1.6-.1-3.1-.4-4.5H24v8.5h12.7c-.6 3-2.3 5.5-4.8 7.2l7.5 5.8C43.8 37.3 46.6 31.4 46.6 24.5z"
+                    />
+                    <path
+                      fill="#FBBC05"
+                      d="M10.5 28.1A14.5 14.5 0 0 1 9.5 24c0-1.4.2-2.8.6-4.1L2.3 14A24 24 0 0 0 0 24c0 3.9.9 7.5 2.5 10.8l8-6.7z"
+                    />
+                    <path
+                      fill="#34A853"
+                      d="M24 48c6.5 0 11.9-2.1 15.9-5.8l-7.5-5.8c-2.2 1.5-5 2.4-8.4 2.4-6.3 0-11.6-4.2-13.5-9.8l-8 6.2C6.5 42.3 14.6 48 24 48z"
+                    />
+                  </svg>
+                </div>
+                <div>
+                  <p className="text-sm font-semibold text-navy">Google</p>
+                  <p className="text-xs text-navy/70">
+                    {isLoading
+                      ? "Checking status…"
+                      : googleLinked
+                        ? "Connected — you can sign in with Google"
+                        : "Not connected"}
+                  </p>
+                </div>
               </div>
-              <div>
-                <p className="text-sm font-semibold text-navy">Google</p>
-                <p className="text-xs text-navy/70">
-                  {isLoading
-                    ? "Checking status…"
-                    : googleLinked
-                      ? "Connected — you can sign in with Google"
-                      : "Not connected"}
-                </p>
-              </div>
+              {isLoading ? null : googleLinked ? (
+                <span className="inline-flex items-center gap-1.5 rounded-full bg-success-bg px-3 py-1 text-xs font-medium text-success">
+                  <CheckCircle2 className="h-3.5 w-3.5" />
+                  Connected
+                </span>
+              ) : (
+                <Button
+                  size="sm"
+                  variant="secondary"
+                  leftIcon={<LinkIcon className="h-4 w-4" />}
+                  loading={isLinking}
+                  onClick={handleLinkGoogle}
+                >
+                  Connect Google
+                </Button>
+              )}
             </div>
-            {isLoading ? null : googleLinked ? (
-              <span className="inline-flex items-center gap-1.5 rounded-full bg-success-bg px-3 py-1 text-xs font-medium text-success">
-                <CheckCircle2 className="h-3.5 w-3.5" />
-                Connected
-              </span>
-            ) : (
-              <Button
-                size="sm"
-                variant="secondary"
-                leftIcon={<LinkIcon className="h-4 w-4" />}
-                loading={isLinking}
-                onClick={handleLinkGoogle}
-              >
-                Connect Google
-              </Button>
+
+            {!googleLinked && !isLoading && (
+              <p className="text-xs text-navy/70">
+                After connecting, you can sign in to RouteFlow with your Google account in addition
+                to your username and password.
+              </p>
             )}
           </div>
-
-          {!googleLinked && !isLoading && (
-            <p className="text-xs text-navy/70">
-              After connecting, you can sign in to RouteFlow with your Google account in addition to
-              your username and password.
-            </p>
-          )}
-        </div>
-      </Card>
+        </Card>
+      </div>
 
       <PasswordCard />
 
@@ -2100,7 +2305,7 @@ function MyAccountTab() {
 function CostingTab() {
   const { toast } = useToast();
   const { user } = useAuth();
-  const isAdmin = user?.role === "TENANT_ADMIN";
+  const isAdmin = isAccountAdmin(user);
   const { data: config, isLoading } = useMarginConfig();
   const update = useUpdateMarginConfig();
 
@@ -2122,7 +2327,8 @@ function CostingTab() {
       { costingMethod: method, defaultMarginFloor: floor },
       {
         onSuccess: () => toast({ title: "Costing settings saved", variant: "success" }),
-        onError: () =>
+        onError: (err) =>
+          isReadOnlyRefusal(err) ||
           toast({
             title: "Could not save",
             description: "Only admins can change costing settings.",
@@ -2200,7 +2406,7 @@ function CostingTab() {
 function RemittanceTab() {
   const { toast } = useToast();
   const { user } = useAuth();
-  const isAdmin = user?.role === "TENANT_ADMIN";
+  const isAdmin = isAccountAdmin(user);
   const { data: config, isLoading } = useRemittanceConfig();
   const update = useUpdateRemittanceConfig();
 
@@ -2218,7 +2424,8 @@ function RemittanceTab() {
   const save = () => {
     update.mutate(form, {
       onSuccess: () => toast({ title: "Payment info saved", variant: "success" }),
-      onError: () =>
+      onError: (err) =>
+        isReadOnlyRefusal(err) ||
         toast({
           title: "Could not save",
           description: "Only admins can change how-to-pay settings.",
@@ -2336,7 +2543,7 @@ const TIER_KEYS = ["1", "2", "3", "4", "5"] as const;
 function TierLabelsCard() {
   const { toast } = useToast();
   const { user } = useAuth();
-  const isAdmin = user?.role === "TENANT_ADMIN";
+  const isAdmin = isAccountAdmin(user);
   const { data: labels, isLoading } = useTierLabels();
   const update = useUpdateTierLabels();
 
@@ -2353,6 +2560,7 @@ function TierLabelsCard() {
     update.mutate(form, {
       onSuccess: () => toast({ title: "Tier names saved", variant: "success" }),
       onError: (err: any) =>
+        isReadOnlyRefusal(err) ||
         toast({
           title: "Could not save",
           description: err?.response?.data?.message ?? "Please try again.",
@@ -2398,14 +2606,6 @@ function TierLabelsCard() {
 
 // ─── TAB: Invoicing ──────────────────────────────────────────────────────────
 
-const TERMS_OPTIONS = [
-  { value: "Due on Receipt", label: "Due on Receipt" },
-  { value: "Net 15", label: "Net 15" },
-  { value: "Net 30", label: "Net 30" },
-  { value: "Net 45", label: "Net 45" },
-  { value: "Net 60", label: "Net 60" },
-];
-
 function InvoicingTab() {
   const { toast } = useToast();
   const qc = useQueryClient();
@@ -2419,30 +2619,35 @@ function InvoicingTab() {
 
   const [invoiceNotes, setInvoiceNotes] = React.useState("");
   const [invoiceTerms, setInvoiceTerms] = React.useState("");
-  const [invoicePrefix, setInvoicePrefix] = React.useState("");
-  const [paymentDueDays, setPaymentDueDays] = React.useState("");
   const [savingDefaults, setSavingDefaults] = React.useState(false);
 
   React.useEffect(() => {
     if (savedSettings) {
       setInvoiceNotes(savedSettings.invoiceNotes ?? "");
       setInvoiceTerms(savedSettings.invoiceTerms ?? "");
-      setInvoicePrefix(savedSettings.invoicePrefix ?? "");
-      setPaymentDueDays(savedSettings.paymentDueDays ?? "");
     }
   }, [savedSettings]);
 
+  // ONE value for the "Payment Terms" select and the Invoice Numbering "Payment Due Days" select
+  // (B1188): the draft shows the pick at once in both; it is dropped once the save settles, when
+  // the refetched server value takes over (or the pick reverts on failure).
+  const [termsDraft, setTermsDraft] = React.useState<string | null>(null);
+  const shownTerms = termsDraft ?? invoiceSettings?.defaultTerms ?? "Net 30";
+
   const handleTermsChange = (value: string) => {
+    setTermsDraft(value);
     updateSettings.mutate(
       { defaultTerms: value },
       {
+        onSettled: () => setTermsDraft(null),
         onSuccess: () =>
           toast({
             title: "Invoice settings saved",
             description: "Default terms updated successfully.",
             variant: "success",
           }),
-        onError: () =>
+        onError: (err) =>
+          isReadOnlyRefusal(err) ||
           toast({
             title: "Failed to save",
             description: "Could not update invoice settings.",
@@ -2462,7 +2667,8 @@ function InvoicingTab() {
             description: "Original price display updated successfully.",
             variant: "success",
           }),
-        onError: () =>
+        onError: (err) =>
+          isReadOnlyRefusal(err) ||
           toast({
             title: "Failed to save",
             description: "Could not update invoice settings.",
@@ -2506,7 +2712,9 @@ function InvoicingTab() {
             variant: "success",
           }),
         onError: (err: any) => {
+          // restore the saved value (also when read-only: the typed figure was never saved)
           setDepositPercentInput(serverDepositPercent != null ? String(serverDepositPercent) : "");
+          if (isReadOnlyRefusal(err)) return; // F5: the app-wide handler already showed the shared line
           toast({
             title: "Failed to save",
             description: err?.response?.data?.message ?? "Could not update invoice settings.",
@@ -2527,7 +2735,8 @@ function InvoicingTab() {
             description: "Deposit collection setting updated successfully.",
             variant: "success",
           }),
-        onError: () =>
+        onError: (err) =>
+          isReadOnlyRefusal(err) ||
           toast({
             title: "Failed to save",
             description: "Could not update invoice settings.",
@@ -2543,12 +2752,11 @@ function InvoicingTab() {
       await apiClient.patch("/settings", {
         invoiceNotes,
         invoiceTerms,
-        invoicePrefix,
-        paymentDueDays,
       });
       qc.invalidateQueries({ queryKey: ["settings"] });
       toast({ title: "Invoice defaults saved", variant: "success" });
-    } catch {
+    } catch (err) {
+      if (showReadOnlyRefusal(err, toast)) return;
       toast({ title: "Failed to save", variant: "error" });
     } finally {
       setSavingDefaults(false);
@@ -2571,11 +2779,12 @@ function InvoicingTab() {
               <p className="text-sm font-semibold text-navy">Payment Terms</p>
               <select
                 className="w-full rounded-lg border border-surface-border bg-white px-3 py-2 text-sm text-navy focus:border-brand-500 focus:outline-none focus:ring-1 focus:ring-brand-500"
-                value={invoiceSettings?.defaultTerms ?? "Net 30"}
+                aria-label="Payment Terms"
+                value={shownTerms}
                 onChange={(e) => handleTermsChange(e.target.value)}
                 disabled={isLoading || updateSettings.isPending}
               >
-                {TERMS_OPTIONS.map((opt) => (
+                {INVOICE_TERMS_OPTIONS.map((opt) => (
                   <option key={opt.value} value={opt.value}>
                     {opt.label}
                   </option>
@@ -2670,46 +2879,11 @@ function InvoicingTab() {
         </div>
       </Card>
 
-      <Card title="Invoice Numbering">
-        <div className="grid grid-cols-2 gap-4">
-          <div>
-            <label className="mb-1.5 block text-sm font-medium text-navy">
-              Invoice Number Prefix
-            </label>
-            <input
-              type="text"
-              value={invoicePrefix}
-              onChange={(e) => setInvoicePrefix(e.target.value)}
-              placeholder="INV-"
-              maxLength={10}
-              className="h-10 w-full rounded-lg border border-surface-border bg-white px-3 text-sm text-navy placeholder:text-navy/30 focus:border-transparent focus:outline-none focus:ring-2 focus:ring-brand-500"
-            />
-            <p className="mt-1 text-xs text-navy/70">
-              Prepended to invoice numbers (e.g. INV-, 2026-).
-            </p>
-          </div>
-          <div>
-            <label className="mb-1.5 block text-sm font-medium text-navy">Payment Due Days</label>
-            <input
-              type="number"
-              value={paymentDueDays}
-              onChange={(e) => setPaymentDueDays(e.target.value)}
-              placeholder="30"
-              min="0"
-              max="365"
-              className="h-10 w-full rounded-lg border border-surface-border bg-white px-3 text-sm text-navy placeholder:text-navy/30 focus:border-transparent focus:outline-none focus:ring-2 focus:ring-brand-500"
-            />
-            <p className="mt-1 text-xs text-navy/70">
-              Default days until payment is due (0 = due on receipt).
-            </p>
-          </div>
-        </div>
-        <div className="mt-4 flex justify-end">
-          <Button onClick={handleSaveDefaults} loading={savingDefaults} size="sm">
-            Save Numbering
-          </Button>
-        </div>
-      </Card>
+      <InvoiceNumberingCard
+        terms={shownTerms}
+        onTermsChange={handleTermsChange}
+        termsDisabled={isLoading || updateSettings.isPending}
+      />
 
       <Card title="Invoice Defaults">
         <div className="space-y-4">
@@ -2759,7 +2933,7 @@ function SettingsPageInner() {
   const { setTitle } = usePageTitle();
   const { toast } = useToast();
   const { user } = useAuth();
-  const isAdmin = user?.role === "TENANT_ADMIN";
+  const isAdmin = isAccountAdmin(user);
 
   React.useEffect(() => {
     setTitle("Settings");
@@ -2793,6 +2967,16 @@ function SettingsPageInner() {
     if (activeTab === "import") router.replace("/settings/import");
   }, [activeTab, router]);
 
+  // Settings → Fulfillment is dark behind the API's FULFILMENT_SELF_SERVE: this page asks the endpoint ONLY on
+  // `?tab=fulfilment` (staff roles), and the tab exists only when it says `selfServe`; otherwise the page is
+  // exactly what it was (an unknown tab falls back to the hub). The admin rail / hub (SettingsHub,
+  // useSettingsNav) ask the same read, to list the Fulfillment / Counter sales rows, and nothing else does.
+  const fulfilmentQuery = useFulfilmentSettings({
+    enabled: activeTab === "fulfilment" && user?.role !== "CUSTOMER" && user?.role !== "DRIVER",
+  });
+  // Only a confirmed `selfServe: true` shows the tab: while loading or on an error nothing of it appears.
+  const showFulfilment = activeTab === "fulfilment" && fulfilmentQuery.data?.selfServe === true;
+
   // Full-hub model: no `?tab=` → the grouped-card hub; a tab → that ONE screen with a
   // "← All settings" back link (the old tab strip is retired). Every screen component
   // is reused unchanged, so the individual settings behave exactly as before, and the
@@ -2806,17 +2990,35 @@ function SettingsPageInner() {
       width: "max-w-4xl",
     },
     users: { title: "User management", node: <UserManagementTab /> },
-    email: { title: "Email (SMTP)", node: <EmailSettingsTab />, width: "max-w-3xl" },
+    // Perms PR1: every email (SMTP) and Claude AI endpoint is admin-only, so a deep link shows the notice instead
+    email: {
+      title: "Email (SMTP)",
+      node: isAdmin ? <EmailSettingsTab /> : <AdminOnlyNotice />,
+      width: "max-w-3xl",
+    },
     invoicing: { title: "Invoicing", node: <InvoicingTab />, width: "max-w-3xl" },
     costing: { title: "Costing", node: <CostingTab />, width: "max-w-3xl" },
     remittance: { title: "How to pay", node: <RemittanceTab />, width: "max-w-3xl" },
-    integrations: { title: "Integrations", node: <AIIntegrationsTab />, width: "max-w-3xl" },
+    integrations: {
+      title: "Integrations",
+      node: isAdmin ? <AIIntegrationsTab /> : <AdminOnlyNotice />,
+      width: "max-w-3xl",
+    },
     gohighlevel: {
       title: "GoHighLevel",
       node: <GoHighLevelSettingsTab />,
       width: "max-w-4xl",
     },
     account: { title: "My account", node: <MyAccountTab />, width: "max-w-3xl" },
+    ...(showFulfilment
+      ? {
+          fulfilment: {
+            title: "Fulfillment",
+            node: <FulfillmentSettingsTab />,
+            width: "max-w-3xl",
+          },
+        }
+      : {}),
     ...(isAdmin
       ? {
           regulated: {
@@ -2830,6 +3032,20 @@ function SettingsPageInner() {
 
   const section = activeTab ? SECTIONS[activeTab] : undefined;
 
+  // REG-B1013: a CUSTOMER or DRIVER manages only their own account — never the business hub, a
+  // `?tab=` deep link into it (user management + Add User, invoicing, email ...), the Stripe card
+  // or the tier labels. (The API refuses these roles on the business endpoints too.)
+  if (user?.role === "CUSTOMER" || user?.role === "DRIVER") {
+    return (
+      <div className="mx-auto max-w-5xl p-6">
+        <h2 className="mb-5 text-2xl font-bold text-navy">My account</h2>
+        <div className="max-w-3xl">
+          <MyAccountTab />
+        </div>
+      </div>
+    );
+  }
+
   return (
     // Centred, width-capped column so settings forms don't strand the whole
     // right half of wide screens empty.
@@ -2837,17 +3053,16 @@ function SettingsPageInner() {
       {!section ? (
         <>
           <h2 className="mb-5 text-2xl font-bold text-navy">Settings</h2>
-          <SettingsHub isAdmin={isAdmin} />
-          {/* Stripe Connect lives on the hub itself (not behind a `?tab=`) because the
-              OAuth callback returns the operator to bare `/settings?stripe=...` and the
-              card renders that banner. */}
-          <div className="mt-5 max-w-3xl">
-            <StripeConnectCard />
-          </div>
-          {/* Pricing tier names — a small card, not worth its own `?tab=` screen. */}
-          <div className="mt-5 max-w-3xl">
-            <TierLabelsCard />
-          </div>
+          {/* Stripe Connect lives on the hub itself (not behind a `?tab=`) because the OAuth callback returns the
+              operator to bare `/settings?stripe=...` and the card renders that banner. Pricing tier names is a small
+              card, not worth its own `?tab=` screen. Both follow the hub's search (hidden by a query they don't match). */}
+          <SettingsHub
+            isAdmin={isAdmin}
+            looseCards={[
+              { id: "card-payments", node: <StripeConnectCard /> },
+              { id: "tier-names", node: <TierLabelsCard /> },
+            ]}
+          />
         </>
       ) : (
         <>
@@ -2863,6 +3078,11 @@ function SettingsPageInner() {
       )}
     </div>
   );
+}
+
+/** Perms PR1: a settings screen whose every endpoint is admin-only, opened by a non-admin (e.g. a deep link). */
+function AdminOnlyNotice() {
+  return <p className="text-sm text-navy/70">Only an admin can change this.</p>;
 }
 
 export default function SettingsPage() {

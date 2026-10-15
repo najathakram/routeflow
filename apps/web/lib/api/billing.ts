@@ -1,6 +1,14 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import type { SubscriptionView } from "@routeflow/types";
+import {
+  API_ERROR_CODES,
+  type AddonBillingMode,
+  type EnableAddonResult,
+  type BillingPortalResult,
+  type MeterKey,
+  type SubscriptionView,
+} from "@routeflow/types";
 import { apiClient } from "../api-client";
+import { guardCounterLeave } from "../counter-cart-signal";
 
 export type { SubscriptionView };
 
@@ -42,7 +50,7 @@ export interface PublicCatalog {
   addons: AddonSkuDef[];
 }
 
-export type MeterKey = "SEATS" | "ROUTES" | "SCANS" | "MSGS";
+export type { MeterKey };
 
 export interface MeterReading {
   meter: MeterKey;
@@ -120,11 +128,22 @@ export interface ProrationPreview {
   sku: string;
   name: string;
   monthly: number;
-  proratedToday: number;
+  /** An estimate (Stripe's own figure comes back from the enable call). Null when nothing would
+   *  be charged: an unbilled tenant (`billed` false) or a refused enable (`refusal` set). */
+  proratedToday: number | null;
   daysRemaining: number;
   daysInCycle: number;
   effectiveAt: string;
   nextChargeAt: string;
+  /** How the add-on is billed; "REFUSED" when the enable call would 409 (see `refusal`). */
+  billing?: AddonBillingMode | "REFUSED";
+  billed?: boolean;
+  /** The SAME `{ code, message }` the enable call throws (ADDON_ANNUAL_NOT_SUPPORTED /
+   *  ADDON_INCLUDED_IN_PLAN); null when the enable is allowed. */
+  refusal?: { code: string; message: string } | null;
+  /** SA-690: true while the tenant is still on its TRIAL — the add-on is on at no charge now and is
+   *  billed when the card is added (the confirm sheet's copy), not charged today. */
+  trial?: boolean;
 }
 
 export interface QuoteInput {
@@ -149,7 +168,13 @@ export function usePlans() {
  *  one so it doesn't refetch on every navigation. `enabled` lets a caller that renders for
  *  every role (e.g. the dashboard shell) skip the request for roles the endpoint 403s
  *  (CUSTOMER/DRIVER — `GET /billing/subscription` is `@Roles(OPERATOR)`-gated). */
-export function useSubscription(options?: { staleTime?: number; enabled?: boolean }) {
+export function useSubscription(options?: {
+  staleTime?: number;
+  enabled?: boolean;
+  /** SA-733r6: poll while a billing state is showing so a payment clears the strip <= 60 s (no websocket). */
+  refetchInterval?:
+    number | false | ((query: { state: { data?: SubscriptionView } }) => number | false);
+}) {
   return useQuery<SubscriptionView>({
     queryKey: [...KEY, "subscription"],
     queryFn: () => apiClient.get("/billing/subscription").then((r) => r.data),
@@ -171,10 +196,15 @@ export function useRecommendation() {
   });
 }
 
+/** A MONEY quote the add-on confirm sheet shows before the tenant commits: never served from
+ *  the cache as current. `staleTime: 0` + `refetchOnMount: "always"` override the app-wide 30s
+ *  staleTime, so every open re-checks; callers gate Confirm on `isFetching`, not `isLoading`. */
 export function useProrationPreview(sku: string | null) {
   return useQuery<ProrationPreview>({
     queryKey: [...KEY, "proration-preview", sku],
     enabled: !!sku,
+    staleTime: 0,
+    refetchOnMount: "always",
     queryFn: () =>
       apiClient.get(`/billing/proration-preview`, { params: { sku } }).then((r) => r.data),
   });
@@ -189,13 +219,58 @@ export function useQuote() {
   });
 }
 
-function useBillingMutation<TBody>(fn: (b: TBody) => Promise<unknown>) {
+/** `localErrorToast`: the settings page renders its own error UI for this mutation, so the app-wide
+ *  generic error toast (mutation-error-toast.ts) must not stack on top of it. `true` = the page owns
+ *  every error; a predicate = it owns only the errors it matches (the rest keep the global toast). */
+type LocalErrorToast = boolean | ((error: unknown) => boolean);
+
+function useBillingMutation<TBody, TResult = unknown>(
+  fn: (b: TBody) => Promise<TResult>,
+  localErrorToast?: LocalErrorToast,
+  /** Seeds the cache from the response BEFORE the invalidation refetch (so a page never shows a stale value). */
+  seed?: (qc: ReturnType<typeof useQueryClient>, result: TResult) => void,
+) {
   const qc = useQueryClient();
-  return useMutation<unknown, Error, TBody>({
+  return useMutation<TResult, Error, TBody>({
     mutationFn: fn,
-    onSuccess: () => qc.invalidateQueries({ queryKey: KEY }),
+    onSuccess: (result) => {
+      seed?.(qc, result);
+      return qc.invalidateQueries({ queryKey: KEY });
+    },
+    meta: localErrorToast ? { localErrorToast } : undefined,
   });
 }
+
+/** The `code` of an API error body (`response.data.code`), never the status. */
+export function apiErrorCodeOf(error: unknown): string | undefined {
+  const code = (error as { response?: { data?: { code?: unknown } } } | undefined)?.response?.data
+    ?.code;
+  return typeof code === "string" ? code : undefined;
+}
+
+/**
+ * A refused Complete payment checkout the billing page words itself: ADDON_BILLING_PENDING_CHECKOUT, and
+ * CHECKOUT_ANCHOR_WINDOW (the window before the 1st: fixed copy + the local time of `retryAt`).
+ */
+export const isMappedCheckoutError = (error: unknown): boolean => {
+  const code = apiErrorCodeOf(error);
+  return (
+    code === API_ERROR_CODES.ADDON_BILLING_PENDING_CHECKOUT ||
+    code === API_ERROR_CODES.CHECKOUT_ANCHOR_WINDOW
+  );
+};
+
+/** A refused add-on enable the confirm sheet words itself (annual plan, already in the plan, the quantity moved
+ *  under the page, or an unbilled row that can't be raised). */
+export const isMappedEnableAddonError = (error: unknown): boolean => {
+  const code = apiErrorCodeOf(error);
+  return (
+    code === API_ERROR_CODES.ADDON_ANNUAL_NOT_SUPPORTED ||
+    code === API_ERROR_CODES.ADDON_INCLUDED_IN_PLAN ||
+    code === API_ERROR_CODES.ADDON_QUANTITY_CHANGED ||
+    code === API_ERROR_CODES.ADDON_RAISE_UNBILLED_ROW
+  );
+};
 
 export function useSubscribe() {
   return useBillingMutation<QuoteInput>((body) =>
@@ -215,9 +290,11 @@ export function useDowngrade() {
   );
 }
 
-export function useCancelSubscription() {
-  return useBillingMutation<void>(() =>
-    apiClient.post("/billing/subscription/cancel").then((r) => r.data),
+/** `localErrorToast`: the caller toasts its own fixed failure copy (Cancel, End trial). */
+export function useCancelSubscription(options?: { localErrorToast?: boolean }) {
+  return useBillingMutation<void>(
+    () => apiClient.post("/billing/subscription/cancel").then((r) => r.data),
+    options?.localErrorToast,
   );
 }
 
@@ -232,9 +309,60 @@ export function useResumeSubscription() {
  *  Takes no body (server pins the plan); on success, navigates the browser straight to the
  *  returned Stripe-hosted URL rather than invalidating the billing query — there is nothing to
  *  refetch until the tenant returns from Stripe. */
+/**
+ * SA-733r6 (B4): `POST /billing/portal` (TENANT_ADMIN only - the server refuses an operator). "Update payment"
+ * opens the Stripe billing portal; "Pay $X" opens the owed invoice's hosted page (portal as the fallback).
+ * Leaving to Stripe goes through the counter's leave guard so an open cart is never dropped silently.
+ */
+export function useBillingPortal() {
+  return useMutation<
+    BillingPortalResult,
+    Error,
+    { intent: "update-payment" | "pay" },
+    { win: Window | null }
+  >({
+    mutationFn: () => apiClient.post("/billing/portal").then((r) => r.data),
+    // Stripe opens in a NEW tab, claimed synchronously on the click (before the request, so a popup blocker allows it):
+    // the counter tab - and an open cart in it - is never navigated away. If the browser refuses the tab we fall back
+    // to this tab through the counter's leave guard.
+    onMutate: () => {
+      let win: Window | null = null;
+      try {
+        win = window.open("", "_blank");
+        if (win) win.opener = null;
+      } catch {
+        win = null;
+      }
+      return { win };
+    },
+    onSuccess: (r, { intent }, ctx) => {
+      // Pay prefers the invoice page; Update payment prefers the portal; either falls back to the other.
+      const url =
+        intent === "pay"
+          ? (r.hostedInvoiceUrl ?? r.portalUrl)
+          : (r.portalUrl ?? r.hostedInvoiceUrl);
+      if (!url) {
+        ctx?.win?.close();
+        return;
+      }
+      if (ctx?.win) {
+        ctx.win.location.href = url;
+        return;
+      }
+      if (guardCounterLeave(() => window.location.assign(url))) return;
+      window.location.assign(url);
+    },
+    onError: (_e, _v, ctx) => {
+      ctx?.win?.close();
+    },
+  });
+}
+
 export function useCreateCheckout() {
   return useMutation<{ checkoutUrl: string }, Error, void>({
     mutationFn: () => apiClient.post("/billing/subscription/checkout").then((r) => r.data),
+    // The page words a refused checkout (ADDON_BILLING_PENDING_CHECKOUT) inline; no second toast.
+    meta: { localErrorToast: isMappedCheckoutError },
     onSuccess: (r) => {
       window.location.assign(r.checkoutUrl);
     },
@@ -242,14 +370,29 @@ export function useCreateCheckout() {
 }
 
 export function useEnableAddon() {
-  return useBillingMutation<{ sku: string; quantity?: number }>(({ sku, quantity }) =>
-    apiClient.post(`/billing/addons/${sku}/enable`, { quantity }).then((r) => r.data),
+  // The sheet words the two refusals it maps inline; every other failure keeps the global toast.
+  // `quantity` is the TARGET total; `expectedQuantity` is the owned count the page showed (0 = not on), so the
+  // server refuses (409 ADDON_QUANTITY_CHANGED) instead of cutting a pack that changed under a stale page.
+  return useBillingMutation<
+    { sku: string; quantity?: number; expectedQuantity?: number },
+    EnableAddonResult
+  >(
+    ({ sku, quantity, expectedQuantity }) =>
+      apiClient
+        .post(`/billing/addons/${sku}/enable`, { quantity, expectedQuantity })
+        .then((r) => r.data),
+    isMappedEnableAddonError,
+    (qc, res) => {
+      if (res?.subscription) qc.setQueryData([...KEY, "subscription"], res.subscription);
+    },
   );
 }
 
-export function useDisableAddon() {
-  return useBillingMutation<{ sku: string }>(({ sku }) =>
-    apiClient.post(`/billing/addons/${sku}/disable`).then((r) => r.data),
+/** `localErrorToast`: the caller toasts its own fixed failure copy. */
+export function useDisableAddon(options?: { localErrorToast?: boolean }) {
+  return useBillingMutation<{ sku: string }>(
+    ({ sku }) => apiClient.post(`/billing/addons/${sku}/disable`).then((r) => r.data),
+    options?.localErrorToast,
   );
 }
 

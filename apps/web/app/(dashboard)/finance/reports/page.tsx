@@ -56,10 +56,14 @@ import {
 } from "lucide-react";
 import { Badge, cn, useToast, type ToastVariant } from "@routeflow/ui/web";
 import { depositOverdueLine, groupArAgingByCustomer } from "@/lib/ar-aging-rows";
+import { receivableSummaryBalanceTotal } from "@/lib/receivable-summary-total";
 import Link from "next/link";
 import { useTransactions, useRecordPayment, type Transaction } from "@/lib/api/bookkeeping";
+import { dayClosedCopy, isDayClosedRefusal } from "@/lib/day-closed-copy";
 import { fmt, fmtCalendarDate, fmtDate } from "@/lib/formatting";
 import { useUrlPage, useClampPage } from "@/lib/hooks/useUrlPage";
+import { useFleetAccess } from "@/lib/api/addons";
+import { ReadOnlyHint, WriteButton } from "@/lib/read-only-gate";
 
 const CHART_COLORS = [
   "#3b82f6",
@@ -1264,13 +1268,13 @@ function ReceivableSummaryReport({ from, to }: { from?: string; to?: string }) {
         <tfoot>
           <tr className="border-t-2 border-navy bg-surface-raised">
             <td colSpan={5} className="px-4 py-2.5 font-semibold text-navy">
-              Total
+              Total (overpayments not netted)
             </td>
             <td className="px-4 py-2.5 text-right font-bold text-navy">
               {fmt(rows.reduce((s, r) => s + r.total, 0))}
             </td>
             <td className="px-4 py-2.5 text-right font-bold text-navy">
-              {fmt(rows.reduce((s, r) => s + r.balance, 0))}
+              {fmt(receivableSummaryBalanceTotal(rows))}
             </td>
           </tr>
         </tfoot>
@@ -1964,7 +1968,8 @@ function LedgerReport() {
   const [payAmount, setPayAmount] = React.useState("");
   const [payMethod, setPayMethod] = React.useState<SelectablePaymentMethod>("CASH");
   const [payRef, setPayRef] = React.useState("");
-  const recordPayment = useRecordPayment();
+  // Row 348: this report toasts a closed-day refusal itself, so the global toast stays quiet for it (one toast).
+  const recordPayment = useRecordPayment({ localErrorToast: isDayClosedRefusal });
   const { toast } = React.useContext(ToastContext);
 
   const { data, isLoading } = useTransactions({
@@ -2000,8 +2005,9 @@ function LedgerReport() {
       });
       toast({ title: "Payment recorded", variant: "success" });
       setPaymentModal(null);
-    } catch {
-      toast({ title: "Failed to record payment", variant: "error" });
+    } catch (err: unknown) {
+      // The global toast is quiet for a closed-day refusal (the hook's option): this one says why, once.
+      toast({ title: dayClosedCopy(err) ?? "Failed to record payment", variant: "error" });
     }
   };
 
@@ -2039,6 +2045,7 @@ function LedgerReport() {
         )}
       </div>
 
+      <ReadOnlyHint className="px-4 py-2 text-xs text-slate-600" />
       {/* Table */}
       {isLoading ? (
         <Spinner />
@@ -2100,12 +2107,9 @@ function LedgerReport() {
                   </td>
                   <td className="px-4 py-2.5">
                     {tx.status !== "PAID" && (
-                      <button
-                        onClick={() => openPayment(tx)}
-                        className="rounded-lg border border-brand-200 bg-brand-50 px-2.5 py-1 text-xs font-medium text-brand-600 hover:bg-brand-100 transition-colors"
-                      >
+                      <WriteButton size="sm" variant="secondary" onClick={() => openPayment(tx)}>
                         Record Payment
-                      </button>
+                      </WriteButton>
                     )}
                   </td>
                 </tr>
@@ -2300,9 +2304,28 @@ function FinanceReportsContent() {
     setTitle("Reports");
   }, [setTitle]);
   const { toast } = useToast();
+  // Fleet-off (no routes / delivery addon): there are no drivers, so no "Sales by Driver" report.
+  const { fleet } = useFleetAccess();
+  const reportGroups = React.useMemo(
+    () =>
+      REPORT_GROUPS.map((g) => ({
+        ...g,
+        reports: g.reports.filter((r) => fleet || r.id !== "sales-by-driver"),
+      })),
+    [fleet],
+  );
   const router = useRouter();
   const searchParams = useSearchParams();
-  const activeReport = searchParams.get("report") ?? "sales-by-customer";
+  const requestedReport = searchParams.get("report") ?? "sales-by-customer";
+  // A fleet-off account that opens the Sales by Driver report by direct URL gets the default report.
+  const activeReport =
+    !fleet && requestedReport === "sales-by-driver" ? "sales-by-customer" : requestedReport;
+  React.useEffect(() => {
+    if (activeReport === requestedReport) return;
+    const params = new URLSearchParams(searchParams.toString());
+    params.set("report", activeReport);
+    router.replace(`/finance/reports?${params.toString()}`);
+  }, [activeReport, requestedReport, router, searchParams]);
   const contextCustomerId = searchParams.get("customerId") ?? undefined;
   const contextCategoryId = searchParams.get("categoryId") ?? undefined;
 
@@ -2313,7 +2336,7 @@ function FinanceReportsContent() {
     searchParams.get("to") ?? new Date().toISOString().split("T")[0],
   );
 
-  const activeInfo = REPORT_GROUPS.flatMap((g) => g.reports).find((r) => r.id === activeReport);
+  const activeInfo = reportGroups.flatMap((g) => g.reports).find((r) => r.id === activeReport);
   const needsDates = !["ar-aging", "bad-debts", "customer-balance", "ledger"].includes(
     activeReport,
   );
@@ -2382,7 +2405,7 @@ function FinanceReportsContent() {
             <h2 className="text-sm font-semibold text-navy">All Reports</h2>
           </div>
           <div className="py-2">
-            {REPORT_GROUPS.map((group) => {
+            {reportGroups.map((group) => {
               const Icon = group.icon;
               return (
                 <div key={group.id} className="mb-1">

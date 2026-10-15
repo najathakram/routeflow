@@ -23,8 +23,10 @@ import {
   useUploadProductImages,
   useDeleteProductImage,
 } from "../../../lib/api/products";
+import { getFamilyCascadePrompt } from "../../../lib/product-family-cascade";
 import { productImageFile } from "../../../lib/product-image";
 import { costPerSellingUnit } from "@routeflow/pricing";
+import { deleteProductConfirmText } from "@routeflow/types";
 import { useInventoryMovements } from "../../../lib/api/inventory";
 import { useProductSales, type ProductSaleLine } from "../../../lib/api/product-sales";
 import {
@@ -171,21 +173,38 @@ export default function ProductDetailScreen() {
     );
   };
 
+  const runDelete = (confirmCascade?: boolean) => {
+    if (!id) return;
+    deleteMut.mutate(
+      { id, confirmCascade },
+      {
+        onSuccess: () => {
+          showToast("Product deleted");
+          router.back();
+        },
+        onError: (e: any) => {
+          // A family with active variants: ask once, then resend with confirmCascade (never auto-confirmed).
+          const cascade = getFamilyCascadePrompt(e);
+          if (cascade && !confirmCascade) {
+            confirm(cascade.title, cascade.body, () => runDelete(true), {
+              confirmText: cascade.confirmText,
+              destructive: true,
+            });
+            return;
+          }
+          showToast(e?.response?.data?.message ?? e?.message ?? "Try again.");
+        },
+      },
+    );
+  };
+
   const handleDelete = () => {
     if (!id) return;
-    confirm(
-      "Delete product?",
-      `${product.name} will be removed permanently.`,
-      () =>
-        deleteMut.mutate(id, {
-          onSuccess: () => {
-            showToast("Product deleted");
-            router.back();
-          },
-          onError: (e: any) => showToast(e?.response?.data?.message ?? e?.message ?? "Try again."),
-        }),
-      { confirmText: "Delete", destructive: true },
-    );
+    // Audit 2026-10-14: a delete deactivates (history kept); the same sentence as web.
+    confirm("Delete product?", deleteProductConfirmText(product.name), () => runDelete(), {
+      confirmText: "Delete",
+      destructive: true,
+    });
   };
 
   return (

@@ -1,10 +1,17 @@
 import { useQuery, useMutation, useQueryClient, type QueryClient } from "@tanstack/react-query";
 import { apiClient } from "../api-client";
+import { keptDraftInvoiceId, keptOrderId } from "../kept-draft-invoice";
 import type { ChangeRequest } from "./change-requests";
+import { creditsPendingFromError } from "../order-credits-pending";
 import type {
   ActiveOrderSummary,
+  BatchShipRequest,
+  BatchShipResult,
+  PackingSlipsRequest,
+  PackingSlipsResult,
   CancelImpact,
   CustomerPriceHistory,
+  LineComponentView,
   OrderTrackingResponse,
   UnitAwareLineInput,
 } from "@routeflow/types";
@@ -19,6 +26,8 @@ export type {
 
 export interface OrderItem {
   id: string;
+  /** #2717 M3: frozen sub-lines of a composed (mixed-pack) line; absent on a plain line. */
+  components?: LineComponentView[];
   /** Null for an unlisted (ad-hoc, non-catalog) line — `name` carries the label instead. */
   productId: string | null;
   /** Free-text label for an unlisted line (productId null, priceType "MANUAL"). */
@@ -75,6 +84,8 @@ export interface OrderItem {
    * recompute MUST pass them to `computeLineSubtotal` or it over-charges.
    */
   promoFreeUnits?: number | null;
+  /** SA-714: pieces sold past stock (staff-only, display only). The API serialises a Decimal, so a string. */
+  backorderedPieces?: number | string | null;
   /** Cumulative qty already covered by issued invoices for this item. */
   invoicedQty?: number;
   /** Cumulative qty already delivered — gates at-door adjustability (server: LINE_ALREADY_DELIVERED). */
@@ -225,7 +236,7 @@ export interface CreateOrderAsDriverDto {
    * excludes it from every trip/route sweep. Seeded from the customer's own
    * default in `NewOrderScreen`.
    */
-  fulfillPath?: "ROUTE" | "SHIP";
+  fulfillPath?: "ROUTE" | "SHIP" | "PICKUP";
   routeRunId?: string;
   routeRunStopId?: string;
   immediateDelivery?: boolean;
@@ -364,6 +375,8 @@ export type CreateSaleItemInput =
       qty: number;
       boxes?: number;
       pieces?: number;
+      /** VU-4b: a unit-ladder level ("Case"); the server prices it off the ladder. */
+      unitLabel?: string;
       unitPrice?: number;
       /** #2696(c) SA-558e: required when unitPrice moves off a special (tier) price. */
       overrideReason?: string;
@@ -419,11 +432,26 @@ export interface CreatedSaleInvoice {
  */
 export function useCreateSale() {
   const qc = useQueryClient();
-  return useMutation<CreatedSaleInvoice, Error, CreateSaleDto>({
-    mutationFn: (dto) => apiClient.post("/orders/sell", dto).then((r) => r.data),
+  // Row 485: `idempotencyKey` travels as the Idempotency-Key HEADER, never in the body.
+  return useMutation<CreatedSaleInvoice, Error, CreateSaleDto & { idempotencyKey?: string }>({
+    mutationFn: ({ idempotencyKey, ...dto }) =>
+      apiClient
+        .post(
+          "/orders/sell",
+          dto,
+          idempotencyKey ? { headers: { "idempotency-key": idempotencyKey } } : {},
+        )
+        .then((r) => r.data),
     onSuccess: () => {
       invalidateOrderCaches(qc);
       qc.invalidateQueries({ queryKey: ["invoices"] });
+    },
+    // Row 466: the sale and its invoice exist even when the send step failed.
+    onError: (err) => {
+      if (keptDraftInvoiceId(err) || keptOrderId(err)) {
+        invalidateOrderCaches(qc);
+        qc.invalidateQueries({ queryKey: ["invoices"] });
+      }
     },
   });
 }
@@ -444,6 +472,13 @@ export function useCreateOrderAsDriver() {
         )
         .then((r) => r.data),
     onSuccess: (_, vars) => {
+      if (vars.routeRunId) qc.invalidateQueries({ queryKey: ["route-runs", vars.routeRunId] });
+      invalidateOrderCaches(qc);
+      invalidateOrderMoneySideEffects(qc);
+    },
+    // B1205: 503 ORDER_SAVED_CREDITS_PENDING means the order WAS saved - refresh like a success.
+    onError: (err, vars) => {
+      if (!creditsPendingFromError(err)) return;
       if (vars.routeRunId) qc.invalidateQueries({ queryKey: ["route-runs", vars.routeRunId] });
       invalidateOrderCaches(qc);
       invalidateOrderMoneySideEffects(qc);
@@ -629,10 +664,17 @@ export function useCreateAdminOrder() {
  * Look up the most recent DRAFT/PENDING order for a customer (operator only).
  * Used by the operator's create-order screen to ask whether to merge or keep separate.
  */
-export function useActiveOrderForCustomer(customerId: string | null | undefined) {
+export function useActiveOrderForCustomer(
+  customerId: string | null | undefined,
+  /** The path the order being built is on (POS mode: PICKUP), so the preview finds the same merge target. */
+  fulfillPath?: "ROUTE" | "SHIP" | "PICKUP",
+) {
   return useQuery<ActiveOrderSummary | null>({
-    queryKey: ["orders", "active", customerId],
-    queryFn: () => apiClient.get("/orders/active", { params: { customerId } }).then((r) => r.data),
+    queryKey: ["orders", "active", customerId, fulfillPath],
+    queryFn: () =>
+      apiClient
+        .get("/orders/active", { params: { customerId, ...(fulfillPath ? { fulfillPath } : {}) } })
+        .then((r) => r.data),
     enabled: !!customerId,
   });
 }
@@ -672,5 +714,26 @@ export function useOrderTracking(orderId: string, orderStatus?: string) {
     enabled: !!orderId && orderStatus === "OUT_FOR_DELIVERY",
     refetchInterval: 30_000,
     staleTime: 20_000,
+  });
+}
+
+// ─── Batch ship + packing slips (#3168) — mirrors web's hooks. Online-only (not offline-queued). ───
+
+/** Mark several carrier orders shipped in one request. Always 200 with a per-order outcome. */
+export function useBatchShipOrders() {
+  const qc = useQueryClient();
+  return useMutation<BatchShipResult, Error, BatchShipRequest>({
+    mutationFn: (req) => apiClient.post("/orders/batch-ship", req).then((r) => r.data),
+    onSettled: () => invalidateOrderCaches(qc),
+  });
+}
+
+/** One PDF, a packing slip page per carrier order; `url` is null when nothing was includable. */
+export function usePackingSlips() {
+  return useMutation<PackingSlipsResult, Error, string[]>({
+    mutationFn: (orderIds) =>
+      apiClient
+        .post("/orders/packing-slips", { orderIds } satisfies PackingSlipsRequest)
+        .then((r) => r.data),
   });
 }

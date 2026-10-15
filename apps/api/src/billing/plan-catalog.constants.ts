@@ -169,6 +169,63 @@ export function planRank(planKey: string): number {
 }
 
 /**
+ * Is an add-on bundled free at `planKey`? `includedAtPlan` is the plan at AND ABOVE which the
+ * catalog includes it (AddonSku.includedAtPlan); both keys are normalized (legacy aliases rank as
+ * their current plan). False when the SKU has no bundling plan or either key is unknown.
+ */
+export function isAddonIncludedAtPlan(
+  includedAtPlan: string | null | undefined,
+  planKey: string | null | undefined,
+): boolean {
+  const need = includedAtPlan ? planRank(includedAtPlan) : -1;
+  const have = planKey ? planRank(planKey) : -1;
+  return need >= 0 && have >= need;
+}
+
+/**
+ * B1102: is a catalog `includedAtPlan` a legal value? `null`/`undefined`/`""` mean "never bundled";
+ * anything else must resolve through `normalizePlanKey` (a current key or a legacy alias, since
+ * superseded versions keep their original rows). A misspelled key ranks -1 in
+ * `isAddonIncludedAtPlan`, which reads as "bundled nowhere", so the add-on would bill on every
+ * plan — the free-text column cannot be trusted without this check at every write/publish.
+ */
+export function isValidIncludedAtPlan(includedAtPlan: string | null | undefined): boolean {
+  return resolveIncludedAtPlan(includedAtPlan).ok;
+}
+
+/**
+ * B1102: the ONE parser of a catalog `includedAtPlan` — every reader (write validation, the
+ * choose-plan quote, the enable refusal, plan-change retirement, the background billers) goes
+ * through it, so "is this key legal" is decided in exactly one place. `{ ok: true, plan: null }` =
+ * never bundled; `{ ok: true, plan }` = the CURRENT plan key (legacy aliases normalized);
+ * `{ ok: false }` = a key no plan answers to (a typo) — callers must fail closed, never read it as
+ * "bundled nowhere".
+ */
+export type IncludedAtPlanResolution = { ok: true; plan: PlanKey | null } | { ok: false };
+
+export function resolveIncludedAtPlan(
+  includedAtPlan: string | null | undefined,
+): IncludedAtPlanResolution {
+  // "" and null both keep the LEGACY meaning (never bundled): only a NON-EMPTY unknown value is a typo.
+  if (includedAtPlan == null || includedAtPlan === "") return { ok: true, plan: null };
+  const plan = normalizePlanKey(includedAtPlan);
+  return plan ? { ok: true, plan } : { ok: false };
+}
+
+/** The SKUs whose `includedAtPlan` is not a legal value (see `isValidIncludedAtPlan`). */
+export function findInvalidIncludedAtPlan(
+  skus: readonly { sku: string; includedAtPlan?: string | null }[],
+): { sku: string; includedAtPlan: string }[] {
+  const bad: { sku: string; includedAtPlan: string }[] = [];
+  for (const s of skus) {
+    if (!isValidIncludedAtPlan(s.includedAtPlan)) {
+      bad.push({ sku: s.sku, includedAtPlan: String(s.includedAtPlan) });
+    }
+  }
+  return bad;
+}
+
+/**
  * Find a catalog definition by plan key, NORMALIZING both sides so a stored key and a
  * pinned version that disagree about the rename still resolve to the same row — a v7-pinned
  * tenant carrying SCALE matches the BUSINESS row, a v8 tenant carrying legacy TEAM matches
@@ -275,6 +332,10 @@ export const BILLING_EVENTS = {
   // TS const (it's a plain script, no compile step) — it re-types the same string literal
   // itself; keep the two in sync by hand if this key's string ever changes.
   RECONCILIATION_SNAPSHOT_BACKFILLED: "reconciliation.snapshot_backfilled",
+  // SA-736r: the paying set was entered/left because the Stripe subscription's next recurring invoice became
+  // (or stopped being) $0 by discounts. Emitted ONLY by billing/coupon-state.ts (the single writer).
+  COUPON_UNBILLED: "coupon.unbilled",
+  COUPON_BILLED: "coupon.billed",
 } as const;
 export type BillingEventType = (typeof BILLING_EVENTS)[keyof typeof BILLING_EVENTS];
 
@@ -454,3 +515,9 @@ export const SELF_SERVICE_ADDON_SKUS: readonly AddonSkuCode[] = [
   "CUSTOMER_PACK_100",
   "FORECASTING",
 ] as const;
+
+/** A SKU a TENANT_ADMIN may add or drop themselves. Everything else "ships dark" —
+ *  platform-admin grants it (see SELF_SERVICE_ADDON_SKUS). */
+export function isSelfServiceAddon(sku: string): boolean {
+  return (SELF_SERVICE_ADDON_SKUS as readonly string[]).includes(sku);
+}

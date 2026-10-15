@@ -4,12 +4,14 @@ import {
   ForbiddenException,
   NotFoundException,
 } from "@nestjs/common";
+import { Prisma } from "@prisma/client";
 import {
   deliveredSoFarForLine,
   fetchEvidenceByLine,
   isNotOrdered,
   lineRemaining,
 } from "./delivered-so-far";
+import { API_ERROR_CODES } from "../common/api-error-codes";
 
 /**
  * SA-151 review: `stop.status === "COMPLETED"` is checked BEFORE the caller's transaction in
@@ -64,7 +66,7 @@ export async function claimStopStatusChange(
   });
   if (current?.status === "COMPLETED") {
     throw new ConflictException({
-      code: "STOP_ALREADY_COMPLETED",
+      code: API_ERROR_CODES.STOP_ALREADY_COMPLETED,
       message:
         "This stop was just completed. Reopen it instead — that reverses the delivery correctly.",
     });
@@ -98,11 +100,48 @@ export async function assertRunStillInProgress(tx: any, runId: string): Promise<
 }
 
 /**
- * #2631 / SA-550: a run's move to COMPLETED / CANCELLED takes the house order STOP rows → RouteRun:
- * its CURRENT stop rows FOR UPDATE (by id, a stable order) BEFORE the run row or any order write —
- * so a stop completion in flight is waited for, never overtaken, and the old run→order vs
- * stop→order→run deadlock with completeStop / completeWithPayment is gone. A run with no stop rows
- * locks the run row directly.
+ * SA-706f: the house order is Orders -> STOP rows -> RouteRun, on every path. A run's terminal move
+ * locks every Order `releaseUndeliveredOrders` may write (attached to the run OR to one of its
+ * stops), FOR UPDATE by id, BEFORE the stop rows: completeStop / completeWithPayment lock a stop's
+ * Orders first, so Stop -> Order here was a 40P01 with the driver as the victim. Returns the locked
+ * ids; the release writes ONLY inside that set (an order attached later waits for the next pass).
+ *
+ * The ONE covered-by-retries exception to Orders -> RouteRunStop: the RF-016 auto-complete arm of
+ * completeStop / completeWithPayment (the last stop closes the run) locks its own stop's Orders, claims
+ * the stop, THEN locks the run's OTHER stops' Orders to release them (Order(A) -> Stop(A) -> Order(B)).
+ * Against a run cancel that already holds Order(B) and waits for Stop(A) that is a deadlock; both sides
+ * run under retryRouteTx (a victim re-runs; exhaustion is a coded 503), and a DB pin records the retry.
+ */
+export async function lockRunOrdersForTerminalStatus(
+  tx: any,
+  runId: string,
+  tenantId: string | null,
+): Promise<string[]> {
+  if (!runId) throw new Error("SA-706f: run id missing for the terminal-status order lock");
+  const rows: Array<{ id: string }> = await tx.$queryRaw`
+    SELECT id FROM "Order"
+    WHERE ("routeRunId" = ${runId}
+      OR "routeRunStopId" IN (SELECT id FROM "RouteRunStop" WHERE "routeRunId" = ${runId}))
+      AND (${tenantId}::text IS NULL OR "tenantId" = ${tenantId})
+    ORDER BY id FOR UPDATE`;
+  return rows.map((r) => r.id);
+}
+
+/**
+ * A completion's auto-complete release (RF-016): the Orders attached to the run's OTHER stops,
+ * FOR UPDATE by id, so `releaseUndeliveredOrders` writes only rows it holds (SA-706f).
+ */
+export async function lockStopsOrdersForRelease(tx: any, stopIds: string[]): Promise<string[]> {
+  if (stopIds.length === 0) return [];
+  const rows: Array<{ id: string }> = await tx.$queryRaw`
+    SELECT id FROM "Order" WHERE "routeRunStopId" IN (${Prisma.join(stopIds)}) ORDER BY id FOR UPDATE`;
+  return rows.map((r) => r.id);
+}
+
+/**
+ * The same terminal move's second step (after the Orders, SA-706f): the run's CURRENT stop rows
+ * FOR UPDATE by id BEFORE the run row, so a stop completion in flight is waited for, never
+ * overtaken (#2631 / SA-550). A run with no stop rows locks the run row directly.
  */
 export async function lockRunStopsForTerminalStatus(tx: any, runId: string): Promise<void> {
   // SA-511c: an undefined id would lock nothing and silently skip the serialization.
@@ -155,7 +194,7 @@ export const COMPLETABLE_STOP_STATUSES = ["PENDING", "IN_PROGRESS"];
 export function assertStopNotSkipped(status: string | null | undefined): void {
   if (status === "SKIPPED") {
     throw new ConflictException({
-      code: "STOP_SKIPPED",
+      code: API_ERROR_CODES.STOP_SKIPPED,
       message:
         "This stop was skipped by dispatch, so it can't be completed. Ask dispatch to reopen it.",
     });

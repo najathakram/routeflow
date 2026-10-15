@@ -1,4 +1,5 @@
-import type { DraftLinePriceSource } from "@routeflow/types";
+import type { DerivedBaseMarker } from "@routeflow/pricing";
+import type { DraftLinePriceSource, ProductKind } from "@routeflow/types";
 
 /**
  * Shared by NewOrderScreen.tsx and its CartRow — split out so CartRow can move to its own
@@ -13,6 +14,10 @@ export type Product = {
   /** Retail-unit code — scannable, so the local scan fast path must see it. */
   unitSku?: string | null;
   barcode?: string | null;
+  /** M1 `ProductBarcode` rows (additive on the list/detail payload) — the local scan fast path reads them. */
+  barcodes?: Array<{ code: string; level: "BOX" | "UNIT" }> | null;
+  /** #2717 M4a-1: on a scan-lookup response, which code hit and the levels it has (server-resolved). */
+  scanMatch?: { code: string; levels: Array<"BOX" | "UNIT"> } | null;
   unit?: string;
   pricePerUnit: number | string;
   // Tier price columns (Decimal, serialised as strings; 0 ⇒ inherit list). The
@@ -32,6 +37,10 @@ export type Product = {
   unitsPerBox?: number | null;
   parentProductId?: string | null;
   parent?: { id: string; name: string } | null;
+  /** STANDARD | FAMILY | VARIANT | RECIPE: a FAMILY is a non-sellable container (see lib/sellable-products). */
+  kind?: ProductKind | null;
+  /** Active variants, nested by the list when `includeVariants` is requested. */
+  variants?: Product[] | null;
   /**
    * `GET /products/:id` (draft-resume hydration) and the barcode ladder both
    * return an archived product, unlike the catalog list. Such a line is KEPT
@@ -41,7 +50,11 @@ export type Product = {
   isActive?: boolean | null;
 };
 
-export type LineState = {
+/**
+ * One cart line. `derivedBase` (the shared client-only `DerivedBaseMarker`, units P0b): set while the line sells a DERIVED
+ * base unit as pack pieces (`boxes`/`pieces`, no `unitLabel`); NEVER submitted, parked in drafts.
+ */
+export type LineState = DerivedBaseMarker & {
   qty: number;
   boxes?: number;
   pieces?: number;
@@ -67,6 +80,14 @@ export type LineState = {
    * `submitOrder`'s catalogPayload builder.
    */
   unitLabel?: string | null;
+  /** #2784 UI-only: the qty a NEW picker-tap line was created with. The default unit applies only while `qty` still equals it (any qty edit ends the default-start; a boxed qty is total pieces, so a fixed `qty <= 1` guard would never match) and no operator price is typed. UnitPickerRow applies it once. */
+  startOnDefaultUnit?: number;
+  /** #2865 case c UI-only: how many default-start taps this PENDING line recorded (N taps = N of the default unit on resolve). */
+  pendingTaps?: number;
+  /** #2865 (F3): the scan code that CREATED this pending line; a repeat scan of the same label is a default-unit tap. */
+  pendingCode?: string;
+  /** SA-626d: the remembered PACK price stashed while the line sells by a unit (re-applied on an explicit pack pick). */
+  packUnitPrice?: number;
   /**
    * units_v1: the chosen unit's own resolved tier price — the comparison base `unitPrice`
    * diverging from means a genuine operator override, in place of `catalogPrice` (the PACK's
@@ -104,4 +125,19 @@ export function toNumber(v: number | string | null | undefined): number {
  *  (tier) price. Callers pass the customer's effective tier price as `basePrice`. */
 export function effectiveUnitPrice(line: LineState | undefined, basePrice: number): number {
   return line?.unitPrice != null ? line.unitPrice : basePrice;
+}
+
+/**
+ * Conditional remembered-price pre-fill (mirrors web CreateOrderModal): only a genuine one-time DISCOUNT (below the
+ * tier price) or UPSELL (above list) pre-fills, never over a SPECIAL tier price (already the customer's permanent
+ * price). An equal-to-tier remembered price does not pre-fill (strict < >).
+ */
+export function rememberedPricePrefill(
+  hist: { lastPrice: number } | null | undefined,
+  listPrice: number,
+  tierPrice: number,
+  isSpecial: boolean,
+): number | undefined {
+  if (isSpecial || hist == null) return undefined;
+  return hist.lastPrice < tierPrice || hist.lastPrice > listPrice ? hist.lastPrice : undefined;
 }

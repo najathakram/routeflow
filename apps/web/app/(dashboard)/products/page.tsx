@@ -8,7 +8,6 @@ import {
   LayoutGrid,
   LayoutList,
   Plus,
-  Trash2,
   X as XIcon,
   CheckSquare,
   Pencil,
@@ -20,14 +19,15 @@ import {
   GitBranch,
   Layers,
 } from "lucide-react";
-import { PageHeader, Table, Badge, Button, Select, cn, EmptyState } from "@routeflow/ui/web";
+import { PageHeader, Table, Button, Select, cn, EmptyState } from "@routeflow/ui/web";
 import { usePageTitle } from "@/lib/page-title-context";
 import { useToast } from "@routeflow/ui/web";
 import { useUrlFilters } from "@/lib/hooks/useUrlFilters";
 import { useUrlSearch } from "@/lib/hooks/useUrlSearch";
 import { useUrlPage, useResetPageOnChange, useClampPage } from "@/lib/hooks/useUrlPage";
 import { useProducts, useUpdateProduct, useBulkDeleteProducts } from "@/lib/api/products";
-import { cascadeTierPrices, type TierField } from "@routeflow/pricing";
+import { applyLadderChange, ladderChangeNote, unitWords, type TierField } from "@routeflow/pricing";
+import { tierLabel } from "@/lib/tier-label";
 import { useTierLabels, type TierLabelsConfig } from "@/lib/api/tier-labels";
 import { unitsLabel } from "@/lib/stock-label";
 import { useTrackedCategories, type TrackedCategory } from "@/lib/api/tracked-categories";
@@ -42,10 +42,34 @@ import { RegulatedScopeTabs } from "@/components/RegulatedScopeTabs";
 import { ConfirmDialog } from "@/components/ConfirmDialog";
 import { QuickEditCell, type EditRecord } from "./_components/QuickEditCell";
 import { SectionEditCell } from "./_components/SectionEditCell";
+import {
+  PortalBulkButtons,
+  PortalLimitButtons,
+  PortalHiddenBadge,
+  PortalHiddenFilter,
+} from "./_components/PortalVisibilityControls";
+import { portalBadge, portalVisibleFilterParam } from "@/lib/product-portal-visibility-ui";
+import { NewFamilyButton } from "@/components/family/NewFamilyButton";
+import { deactivateFailureToast, isReadOnlyRefusal } from "@/lib/product-reactivation-refusal";
+import { BulkDeleteSkipReport, type SkippedProduct } from "@/components/BulkDeleteSkipReport";
+import { ReadOnlyHint, WriteButton } from "@/lib/read-only-gate";
+import { ProductsExportButton } from "./_components/ProductsExportButton";
+import { RestrictMenu } from "@/components/restrictions/RestrictMenu";
+import { SelectAllMatching } from "@/components/restrictions/SelectAllMatching";
+import { OFF_PAGE_HINT, OFF_PAGE_HINT_ID } from "@/lib/rule-chooser";
+import { BulkDeleteButton, useOffPageSelection } from "@/components/restrictions/OffPageSelection";
+import {
+  STOCK_FILTER_CHIPS,
+  ProductStatusBadge,
+  getProductStatus,
+  stockFilterParams,
+  type ProductStockFilter,
+} from "./_components/product-status";
+
+// U-3a: this list carries no per-product label yet, so it prints the default words.
+const UW = unitWords();
 
 // ─── Types ────────────────────────────────────────────────────────────────────
-
-type StockStatus = "IN_STOCK" | "LOW" | "OUT_OF_STOCK";
 
 interface ApiProduct {
   id: string;
@@ -73,6 +97,8 @@ interface ApiProduct {
   variantName?: string | null;
   variants?: ApiProduct[];
   parent?: ApiProduct | null;
+  /** Buyer-portal flag (hidden products never reach buyers). */
+  portalVisible?: boolean;
   isFeatured?: boolean;
   isNew?: boolean;
   isDeal?: boolean;
@@ -87,9 +113,11 @@ interface ApiProduct {
 
 // Merchandising badge row (P5-01) — reused by grid card + table cell.
 function MerchBadges({ product }: { product: ApiProduct }) {
-  if (!product.isFeatured && !product.isNew && !product.isDeal) return null;
+  if (!product.isFeatured && !product.isNew && !product.isDeal && !portalBadge(product))
+    return null;
   return (
     <span className="inline-flex flex-wrap items-center gap-1">
+      <PortalHiddenBadge product={product} />
       {product.isFeatured && (
         <span className="inline-flex items-center rounded px-1.5 py-0.5 text-[10px] font-semibold bg-brand-50 text-brand-700 ring-1 ring-brand-200">
           Featured
@@ -111,21 +139,6 @@ function MerchBadges({ product }: { product: ApiProduct }) {
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 
-function getStockStatus(p: ApiProduct): StockStatus {
-  if (!p.isActive) return "OUT_OF_STOCK";
-  if (p.currentStock <= 0) return "OUT_OF_STOCK";
-  if (p.currentStock <= 5) return "LOW";
-  return "IN_STOCK";
-}
-
-// ─── Stock badge ──────────────────────────────────────────────────────────────
-
-function StockBadge({ status }: { status: StockStatus }) {
-  if (status === "OUT_OF_STOCK") return <Badge variant="danger" label="Out of Stock" />;
-  if (status === "LOW") return <Badge variant="warning" label="Low Stock" />;
-  return <Badge variant="success" label="In Stock" />;
-}
-
 // ─── Product grid card ────────────────────────────────────────────────────────
 
 function ProductCard({
@@ -145,14 +158,14 @@ function ProductCard({
   onAddVariant?: (parentId: string) => void;
   sectionNameById: Map<string, string>;
 }) {
-  const status = getStockStatus(product);
+  const status = getProductStatus(product);
   return (
     <div
       className={cn(
         "relative flex flex-col overflow-hidden rounded-lg border bg-white text-left shadow-card transition-shadow hover:shadow-dropdown cursor-pointer",
         status === "LOW" && "border-warning/40",
-        status === "OUT_OF_STOCK" && "border-danger/40",
-        status === "IN_STOCK" && "border-surface-border",
+        status === "OUT_OF_STOCK" && "border-warning/40",
+        (status === "IN_STOCK" || status === "INACTIVE") && "border-surface-border",
         selected && "ring-2 ring-brand-500 border-brand-500",
       )}
       onClick={selectionMode ? onSelect : onClick}
@@ -180,8 +193,8 @@ function ProductCard({
         className={cn(
           "relative flex h-28 w-full items-center justify-center overflow-hidden",
           status === "LOW" && "bg-warning-bg",
-          status === "OUT_OF_STOCK" && "bg-danger-bg",
-          status === "IN_STOCK" && "bg-surface-raised",
+          status === "OUT_OF_STOCK" && "bg-warning-bg",
+          (status === "IN_STOCK" || status === "INACTIVE") && "bg-surface-raised",
         )}
         onClick={selectionMode ? undefined : onClick}
       >
@@ -199,8 +212,8 @@ function ProductCard({
             className={cn(
               "h-10 w-10",
               status === "LOW" && "text-warning/40",
-              status === "OUT_OF_STOCK" && "text-danger/40",
-              status === "IN_STOCK" && "text-navy/20",
+              status === "OUT_OF_STOCK" && "text-warning/40",
+              (status === "IN_STOCK" || status === "INACTIVE") && "text-navy/20",
             )}
           />
         )}
@@ -236,7 +249,7 @@ function ProductCard({
           <p className="text-[10px] text-navy/70 truncate">{product.parent.name}</p>
         )}
         <div className="flex items-center gap-1.5">
-          <StockBadge status={status} />
+          <ProductStatusBadge status={status} currentStock={product.currentStock} />
           <MerchBadges product={product} />
           {product.trackedCategoryId && (
             <span
@@ -373,7 +386,7 @@ function makeTableColumns(
           {p.msrp != null && parseFloat(String(p.msrp)) > 0 ? (
             <>
               ${parseFloat(String(p.msrp)).toFixed(2)}
-              <span className="ml-0.5 text-[10px] text-navy/40">/pc</span>
+              <span className="ml-0.5 text-[10px] text-navy/40">/{UW.base.short.one}</span>
             </>
           ) : (
             <span className="text-navy/30">—</span>
@@ -416,7 +429,7 @@ function makeTableColumns(
       header: "Product",
       cell: ({ row }) => {
         const p = row.original;
-        const status = getStockStatus(p);
+        const status = getProductStatus(p);
         return (
           <div className="flex items-center gap-3">
             <div
@@ -425,7 +438,7 @@ function makeTableColumns(
                 status === "LOW"
                   ? "border-warning/40 bg-warning-bg"
                   : status === "OUT_OF_STOCK"
-                    ? "border-danger/40 bg-danger-bg"
+                    ? "border-warning/40 bg-warning-bg"
                     : "border-surface-border bg-surface-raised",
               )}
             >
@@ -459,7 +472,9 @@ function makeTableColumns(
               </p>
               <p className="text-[11px] text-navy/40">
                 {p.sku ? `${p.sku} · ` : ""}
-                {p.unitsPerBox && p.unitsPerBox > 1 ? "box + piece" : p.unit}
+                {p.unitsPerBox && p.unitsPerBox > 1
+                  ? `${UW.pack.lower} + ${UW.base.lower}`
+                  : p.unit}
               </p>
             </div>
           </div>
@@ -616,7 +631,7 @@ function makeTableColumns(
     },
     {
       accessorKey: "unitsPerBox",
-      header: "Units / case",
+      header: `${UW.base.other} per ${UW.pack.lower}`,
       enableSorting: false,
       cell: ({ row }) => {
         const p = row.original;
@@ -678,10 +693,10 @@ function makeTableColumns(
       accessorKey: "currentStock",
       header: "Stock",
       cell: ({ row }) => {
-        const status = getStockStatus(row.original);
+        const status = getProductStatus(row.original);
         return (
           <div className="flex items-center gap-2">
-            <StockBadge status={status} />
+            <ProductStatusBadge status={status} currentStock={row.original.currentStock} />
             {/* `currentStock` is a PIECE count system-wide, so it must never be printed
                 next to `unit` (the box/case noun) — `unitsLabel` keeps that noun only
                 for unboxed products and shows a box+piece split otherwise. */}
@@ -725,7 +740,7 @@ export default function ProductsPage() {
 
   const [search, setSearch, debouncedSearch] = useUrlSearch();
   const [categoryFilter, setCategoryFilter] = React.useState("");
-  const [stockFilter, setStockFilter] = React.useState("");
+  const [stockFilter, setStockFilter] = React.useState<ProductStockFilter>("");
   // Regulated-section filter is the one deep-linkable filter (?section=) — the
   // Compliance hub's per-section KPI links here.
   const [urlFilters, setUrlFilter] = useUrlFilters({ section: "" });
@@ -739,6 +754,11 @@ export default function ProductsPage() {
   const [showGroupAsVariants, setShowGroupAsVariants] = React.useState(false);
   const [showAssignToSection, setShowAssignToSection] = React.useState(false);
   const [showBulkDeleteConfirm, setShowBulkDeleteConfirm] = React.useState(false);
+  // What the last bulk delete refused and why (#3323): shown in a dialog, not buried in a toast.
+  const [skipReport, setSkipReport] = React.useState<SkippedProduct[]>([]);
+  // Names of the products in the last bulk delete, taken before the selection clears, for the skip report.
+  const [skipNames, setSkipNames] = React.useState<ReadonlyMap<string, string>>(new Map());
+  const [hiddenOnly, setHiddenOnly] = React.useState(false);
   const [page, setPage] = useUrlPage();
   const [pageSize, setPageSize] = React.useState(50);
   const hasMsrpAddon = useHasAddon(MSRP_ADDON);
@@ -774,47 +794,41 @@ export default function ProductsPage() {
         [field]: newVal || null,
       };
 
-      // Auto-copy pricePerUnit to all tiers if they were all the same as the old price
+      // A list change moves tiers 2-5 by the ONE ladder rule (applyLadderChange("pricePerUnit"), SA ruling
+      // 2026-10-14): equal to the old list moves, 0 stays 0 (it follows the list), a tier above the new list is capped.
+      // The old inline copy here froze 0 tiers at the new price and left equal tiers behind in a mixed ladder.
+      let ladderNote: string | null = null;
       if (field === "pricePerUnit" && newVal) {
-        const newPrice = parseFloat(newVal);
-        const oldPrice = parseFloat(String(product.pricePerUnit)).toFixed(2);
-        const allSameAsOld = [
-          product.priceTier2,
-          product.priceTier3,
-          product.priceTier4,
-          product.priceTier5,
-        ].every(
-          (t) =>
-            !t ||
-            parseFloat(String(t)).toFixed(2) === oldPrice ||
-            parseFloat(String(t)).toFixed(2) === "0.00",
+        const moved = applyLadderChange(
+          "pricePerUnit",
+          product.pricePerUnit,
+          newVal,
+          product as never,
         );
-        if (allSameAsOld) {
-          updates.priceTier2 = newVal;
-          updates.priceTier3 = newVal;
-          updates.priceTier4 = newVal;
-          updates.priceTier5 = newVal;
-        } else {
-          // Cascade cap: higher tiers that are MORE expensive than T1 get capped
-          for (let m = 2; m <= 5; m++) {
-            const key = `priceTier${m}` as keyof ApiProduct;
-            const tierVal = product[key];
-            const tierPrice = tierVal ? parseFloat(String(tierVal)) : 0;
-            if (!tierVal || tierPrice > newPrice) {
-              updates[`priceTier${m}`] = newVal;
-            }
-          }
-        }
+        Object.assign(updates, moved);
+        ladderNote = ladderChangeNote(moved, (n) => tierLabel(tierLabels, n));
       }
 
-      // Committing a tier price copies it down the ladder (T3..T5 when T2 is edited, etc).
-      // The list price (pricePerUnit) deliberately keeps its smarter behavior above.
+      // P0 2026-10-14: a tier commit moves lower tiers only by applyLadderChange (tracking the old value, 0, or above
+      // the new price), never a blind copy-down. The list price keeps its own behaviour above.
       if (field.startsWith("priceTier") && newVal) {
-        Object.assign(updates, cascadeTierPrices(field as TierField, parseFloat(newVal)));
+        const moved = applyLadderChange(
+          field as TierField,
+          (product as unknown as Record<string, unknown>)[field] as string,
+          newVal,
+          product as never,
+        );
+        Object.assign(updates, moved);
+        ladderNote = ladderChangeNote(moved, (n) => tierLabel(tierLabels, n));
       }
 
       await updateProduct.mutateAsync(updates);
-      toast({ title: `${field} updated`, variant: "success" });
+      // A save that moved other tiers names them (SA: never silent).
+      toast({
+        title: `${field} updated`,
+        ...(ladderNote ? { description: ladderNote } : {}),
+        variant: "success",
+      });
 
       // Push an OBJECT PATCH covering every field this save touched — not just the field
       // the operator edited — so a cascade (pricePerUnit or priceTierN) can be undone/redone
@@ -830,7 +844,7 @@ export default function ProductsPage() {
       setUndoStack((prev) => [...prev.slice(-19), { ...record, oldValue, newValue }]);
       setRedoStack([]);
     },
-    [updateProduct, toast],
+    [updateProduct, toast, tierLabels],
   );
 
   // Regulated section + subcategory save from the Section Quick-Edit cell — an
@@ -930,40 +944,20 @@ export default function ProductsPage() {
       // Find the product to check if tiers should auto-copy
       const product = productList.find((p: ApiProduct) => p.id === id);
       const newPriceStr = parseFloat(editPriceValue).toFixed(2);
-      const newPrice = parseFloat(newPriceStr);
       const updates: { id: string; [k: string]: unknown } = { id, pricePerUnit: newPriceStr };
-      if (product) {
-        const oldPrice = parseFloat(String(product.pricePerUnit)).toFixed(2);
-        const allSameAsOld = [
-          product.priceTier2,
-          product.priceTier3,
-          product.priceTier4,
-          product.priceTier5,
-        ].every(
-          (t) =>
-            !t ||
-            parseFloat(String(t)).toFixed(2) === oldPrice ||
-            parseFloat(String(t)).toFixed(2) === "0.00",
-        );
-        if (allSameAsOld) {
-          updates.priceTier2 = newPriceStr;
-          updates.priceTier3 = newPriceStr;
-          updates.priceTier4 = newPriceStr;
-          updates.priceTier5 = newPriceStr;
-        } else {
-          // Cascade cap: any tier that's currently MORE expensive than the new T1 gets capped
-          for (let m = 2; m <= 5; m++) {
-            const key = `priceTier${m}` as keyof ApiProduct;
-            const tierVal = product[key];
-            const tierPrice = tierVal ? parseFloat(String(tierVal)) : 0;
-            if (!tierVal || tierPrice > newPrice) {
-              updates[`priceTier${m}`] = newPriceStr;
-            }
-          }
-        }
-      }
+      // The ONE list → tiers rule (applyLadderChange("pricePerUnit"), SA ruling 2026-10-14). The old inline copy here
+      // left a tier equal to the old list frozen whenever the ladder was mixed (9/10/0/10 → 12 kept the 10s at 10).
+      const moved = product
+        ? applyLadderChange("pricePerUnit", product.pricePerUnit, newPriceStr, product as never)
+        : {};
+      Object.assign(updates, moved);
+      const ladderNote = ladderChangeNote(moved, (n) => tierLabel(tierLabels, n));
       await updateProduct.mutateAsync(updates);
-      toast({ title: "Price updated", variant: "success" });
+      toast({
+        title: "Price updated",
+        ...(ladderNote ? { description: ladderNote } : {}),
+        variant: "success",
+      });
     } catch {
       toast({ title: "Failed to update price", variant: "error" });
     }
@@ -1015,6 +1009,7 @@ export default function ProductsPage() {
     stockFilter,
     sectionFilter,
     pageSize,
+    hiddenOnly,
   ]);
 
   // REG-B154: the selection Set used to accumulate across page/search/category/
@@ -1030,20 +1025,27 @@ export default function ProductsPage() {
     setShowBulkDeleteConfirm(false);
     setShowAssignToSection(false);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [page, debouncedSearch, categoryFilter, stockFilter, sectionFilter, pageSize]);
+  }, [page, debouncedSearch, categoryFilter, stockFilter, sectionFilter, pageSize, hiddenOnly]);
+
+  // The filters the list shows. "Select all matching" (row 509) fetches ids with THIS object, so the ids can never
+  // drift from the rows on screen.
+  const listFilters = {
+    search: debouncedSearch,
+    category: categoryFilter || undefined,
+    ...stockFilterParams(stockFilter),
+    section: sectionFilter || undefined,
+    ...portalVisibleFilterParam(hiddenOnly),
+    includeVariants: true,
+  };
 
   const {
     data: result,
     isLoading,
     isError,
   } = useProducts({
-    search: debouncedSearch,
-    category: categoryFilter || undefined,
-    stockStatus: (stockFilter || undefined) as any,
-    section: sectionFilter || undefined,
+    ...listFilters,
     page,
     limit: pageSize, // 0 = all
-    includeVariants: true,
   });
 
   // Separate unfiltered query just to populate the category dropdown — always fetches all
@@ -1078,6 +1080,23 @@ export default function ProductsPage() {
   // silently dropped any id selected on a different page/filter view.
   const productById = React.useMemo(() => new Map(filtered.map((p) => [p.id, p])), [filtered]);
 
+  // Row 509: "Select all matching" puts ids BEYOND this page in the selection. Derived from the ids themselves (not from
+  // the banner's state), so deselecting one visible row cannot turn the other actions back on for ids the operator
+  // cannot see. Only Restrict… may act on such a selection; every other bulk action is off, with a hint.
+  const { offPage: bannerSelected, hint: offPageHint } = useOffPageSelection(selected, (id) =>
+    productById.has(id),
+  );
+
+  // Names of the selected products this page holds (the rule editor labels its chips from them).
+  const selectedNames = React.useMemo(() => {
+    const out: Record<string, string> = {};
+    selected.forEach((id) => {
+      const name = productById.get(id)?.name;
+      if (name) out[id] = name;
+    });
+    return out;
+  }, [selected, productById]);
+
   const toggleOne = (id: string) =>
     setSelected((prev) => {
       const next = new Set(prev);
@@ -1096,11 +1115,13 @@ export default function ProductsPage() {
     });
 
   const handleBulkDelete = async () => {
+    if (bannerSelected) return;
     const ids = Array.from(selected);
     try {
       // R1's server contract is {deleted, softDeleted, skipped[]} (vendor-bills'
       // processed-vs-skipped shape); the hook merges those three across chunks.
       const res = await bulkDelete.mutateAsync(ids);
+      setSkipNames(new Map(ids.map((id) => [id, productById.get(id)?.name ?? ""])));
       setSelected(new Set());
       const { softDeleted, skipped } = res;
       const parts = [`${res.deleted} deleted`];
@@ -1108,11 +1129,11 @@ export default function ProductsPage() {
       if (skipped.length > 0) parts.push(`${skipped.length} skipped`);
       toast({
         title: parts.join(", "),
-        description: skipped.length > 0 ? skipped.map((s) => s.reason).join("; ") : undefined,
         variant: res.deleted > 0 || softDeleted > 0 ? "success" : "error",
       });
-    } catch {
-      toast({ title: "Failed to delete products", variant: "error" });
+      if (skipped.length > 0) setSkipReport(skipped);
+    } catch (err) {
+      if (!isReadOnlyRefusal(err)) toast(deactivateFailureToast(err, "Failed to delete products"));
     }
   };
 
@@ -1198,12 +1219,28 @@ export default function ProductsPage() {
             >
               {quickEditMode ? "Exit Quick Edit" : "Quick Edit"}
             </Button>
-            <Button leftIcon={<Plus className="h-4 w-4" />} onClick={() => setShowCreate(true)}>
+            <ProductsExportButton
+              total={totalItems}
+              loading={isLoading}
+              filters={{
+                search: debouncedSearch,
+                category: categoryFilter,
+                ...stockFilterParams(stockFilter),
+                ...portalVisibleFilterParam(hiddenOnly),
+                section: sectionFilter,
+              }}
+            />
+            <NewFamilyButton />
+            <WriteButton
+              leftIcon={<Plus className="h-4 w-4" />}
+              onClick={() => setShowCreate(true)}
+            >
               New Product
-            </Button>
+            </WriteButton>
           </div>
         }
       />
+      <ReadOnlyHint className="px-1 text-xs text-slate-600" />
 
       {/* Quick Edit mode banner */}
       {quickEditMode && (
@@ -1273,14 +1310,11 @@ export default function ProductsPage() {
         )}
 
         {/* Stock status filter chips */}
-        {[
-          { value: "", label: "All" },
-          { value: "IN_STOCK", label: "In Stock" },
-          { value: "LOW", label: "Low Stock" },
-          { value: "OUT_OF_STOCK", label: "Out of Stock" },
-        ].map((o) => (
+        {STOCK_FILTER_CHIPS.map((o) => (
           <button
             key={o.value || "all"}
+            type="button"
+            aria-pressed={stockFilter === o.value}
             onClick={() => setStockFilter(o.value)}
             className={cn(
               "inline-flex h-7 items-center gap-1.5 rounded-full border px-3 text-xs font-medium whitespace-nowrap transition-colors",
@@ -1311,6 +1345,8 @@ export default function ProductsPage() {
             onChange={(e) => setCategoryFilter(e.target.value)}
           />
         </div>
+
+        <PortalHiddenFilter checked={hiddenOnly} onChange={setHiddenOnly} />
 
         {/* Per-page selector */}
         <div className="w-36">
@@ -1352,16 +1388,41 @@ export default function ProductsPage() {
         </div>
       </div>
 
+      {/* Row 509 (owner Q5): "Select all N matching" - only under the toolbar, only in select mode. */}
+      {selectMode && (
+        <SelectAllMatching
+          filters={listFilters}
+          resetKey={[
+            page,
+            debouncedSearch,
+            categoryFilter,
+            stockFilter,
+            sectionFilter,
+            pageSize,
+            hiddenOnly,
+          ].join("|")}
+          selected={selected}
+          setSelected={setSelected}
+          pageIds={filteredIds}
+          total={totalItems}
+        />
+      )}
+
       {/* Selection action bar */}
       {selectMode && selected.size > 0 && (
-        <div className="flex items-center justify-between rounded-lg border border-brand-200 bg-brand-50 px-4 py-3">
+        <div className="flex flex-wrap items-center justify-between gap-2 rounded-lg border border-brand-200 bg-brand-50 px-4 py-3">
           <span className="text-sm font-medium text-navy">
             {selected.size} item{selected.size !== 1 ? "s" : ""} selected
           </span>
-          <div className="flex items-center gap-2">
+          {bannerSelected && (
+            <p id={OFF_PAGE_HINT_ID} className="basis-full text-xs text-navy/70">
+              {OFF_PAGE_HINT}
+            </p>
+          )}
+          <div className="flex flex-wrap items-center gap-2">
             <button
               onClick={() => setSelected(new Set())}
-              className="text-sm text-navy/70 hover:text-navy transition-colors"
+              className="text-sm font-medium text-brand-600 hover:underline"
             >
               Deselect all
             </button>
@@ -1369,7 +1430,9 @@ export default function ProductsPage() {
               variant="secondary"
               leftIcon={<GitBranch className="h-4 w-4" />}
               onClick={() => setShowGroupAsVariants(true)}
-              disabled={selected.size < 1}
+              disabled={selected.size < 1 || bannerSelected}
+              title={offPageHint}
+              aria-describedby={bannerSelected ? OFF_PAGE_HINT_ID : undefined}
             >
               Group as variants of…
             </Button>
@@ -1378,19 +1441,41 @@ export default function ProductsPage() {
                 variant="secondary"
                 leftIcon={<Layers className="h-4 w-4" />}
                 onClick={() => setShowAssignToSection(true)}
-                disabled={selected.size < 1}
+                disabled={selected.size < 1 || bannerSelected}
+                title={offPageHint}
+                aria-describedby={bannerSelected ? OFF_PAGE_HINT_ID : undefined}
               >
                 Assign to type…
               </Button>
             )}
-            <Button
-              variant="danger"
-              leftIcon={<Trash2 className="h-4 w-4" />}
-              loading={bulkDelete.isPending}
-              onClick={() => setShowBulkDeleteConfirm(true)}
+            <PortalBulkButtons
+              selected={selected}
+              onDone={() => setSelected(new Set())}
+              offPageHint={offPageHint}
+            />
+            <PortalLimitButtons
+              selected={selected}
+              onDone={() => setSelected(new Set())}
+              offPageHint={offPageHint}
+            />
+            <RestrictMenu
+              selected={selected}
+              names={selectedNames}
+              onDone={() => setSelected(new Set())}
+            />
+            {/* The destructive action sits apart, past a divider, never shoulder to shoulder with Limit in portal. */}
+            <div
+              data-testid="bulk-destructive"
+              className="flex items-center sm:ml-2 sm:border-l sm:border-brand-200 sm:pl-4"
             >
-              Delete {selected.size} item{selected.size !== 1 ? "s" : ""}
-            </Button>
+              <BulkDeleteButton
+                count={selected.size}
+                offPage={bannerSelected}
+                hint={offPageHint}
+                loading={bulkDelete.isPending}
+                onClick={() => setShowBulkDeleteConfirm(true)}
+              />
+            </div>
           </div>
         </div>
       )}
@@ -1427,6 +1512,12 @@ export default function ProductsPage() {
           setSelected(new Set());
           setShowAssignToSection(false);
         }}
+      />
+
+      <BulkDeleteSkipReport
+        skipped={skipReport}
+        onClose={() => setSkipReport([])}
+        nameById={skipNames}
       />
 
       {/* Bulk delete confirmation */}
@@ -1473,6 +1564,7 @@ export default function ProductsPage() {
                     setSearch("");
                     setCategoryFilter("");
                     setStockFilter("");
+                    setHiddenOnly(false);
                     setUrlFilter("section", "");
                   }}
                 >
@@ -1486,9 +1578,9 @@ export default function ProductsPage() {
               title="No products yet"
               description="Add your first product to build your catalog and start taking orders."
               action={
-                <Button size="sm" onClick={() => setShowCreate(true)}>
+                <WriteButton size="sm" onClick={() => setShowCreate(true)}>
                   New product
-                </Button>
+                </WriteButton>
               }
             />
           )}

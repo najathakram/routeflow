@@ -1,4 +1,4 @@
-import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
+import { keepPreviousData, useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { apiClient } from "../api-client";
 import { invalidateSupplierLists } from "./suppliers";
 import type { InventoryValuation, RecomputeCostsResult } from "@routeflow/types";
@@ -158,17 +158,22 @@ export function useUpdateSupplier() {
 
 // ─── Purchase Orders ──────────────────────────────────────────────────────────
 
-export function usePurchaseOrders(params?: {
-  status?: string;
-  supplierId?: string;
-  from?: string;
-  to?: string;
-  page?: number;
-  limit?: number;
-}) {
+export function usePurchaseOrders(
+  params?: {
+    status?: string;
+    supplierId?: string;
+    from?: string;
+    to?: string;
+    page?: number;
+    limit?: number;
+  },
+  opts?: { keepPrevious?: boolean },
+) {
   return useQuery({
     queryKey: ["inventory", "purchase-orders", params],
     queryFn: () => apiClient.get("/inventory/purchase-orders", { params }).then((r) => r.data),
+    // a pager keeps the previous page on screen while the next one loads
+    ...(opts?.keepPrevious ? { placeholderData: keepPreviousData } : {}),
   });
 }
 

@@ -1,3 +1,4 @@
+import { clearTenantInvoicePdfPointers } from "../invoices/invoice-pdf-pointer";
 import {
   BadRequestException,
   Body,
@@ -26,6 +27,12 @@ import { UpdateInvoiceSettingsDto } from "./dto/update-invoice-settings.dto";
 import { RemittanceConfigDto } from "./dto/remittance-config.dto";
 import { PricingTierLabelsDto } from "./dto/pricing-tier-labels.dto";
 import { ClearFinancialDataDto } from "./dto/clear-financial-data.dto";
+import { CurrentUser } from "../auth/decorators/current-user.decorator";
+import type { JwtPayload } from "../auth/jwt-payload.interface";
+import { FALLBACK_ZONE, TENANT_ZONE_SELECT, zoneFromConfig } from "../common/tenant-time-zone";
+import { changeTenantTimeZone, prepareTenantTimeZoneChange } from "./tenant-timezone.writer";
+import { QuickKeysSettingsService } from "./quick-keys-settings.service";
+import { sanitizeReceiptFooter } from "./receipt-footer";
 
 // RF-213: serve under both /settings and /tenant/settings so the frontend
 // calling the latter doesn't get a 404 while the operator app uses /settings.
@@ -38,6 +45,7 @@ export class SettingsController {
     private readonly configService: ConfigService,
     private readonly prisma: PrismaService,
     private readonly emailService: EmailService,
+    private readonly quickKeys: QuickKeysSettingsService,
   ) {}
 
   @Get()
@@ -59,6 +67,10 @@ export class SettingsController {
     let state = all["settings.state"] ?? "";
     let zip = all["settings.zip"] ?? "";
     let phone = all["settings.phone"] ?? "";
+    // The business's own IANA zone: the web uses it to place "this week" (Sunday 00:00 local) for the
+    // shipping cards and the orders week view. SA-738: the RESOLVED zone (the one resolver), so it is
+    // always valid and always the same zone the counter windows use; UTC when there is no usable zone.
+    let timezone: string = FALLBACK_ZONE;
 
     if (tenantId) {
       const config = await this.prisma.tenantConfig.findUnique({
@@ -74,8 +86,10 @@ export class SettingsController {
           phone: true,
           invoiceNotes: true,
           invoiceTerms: true,
+          ...TENANT_ZONE_SELECT,
         },
       });
+      timezone = zoneFromConfig(config, { tenantId }).zone;
       if (config?.businessName) businessName = config.businessName;
       if (config?.ownerName) ownerName = config.ownerName;
       if (config?.customerEmail) customerEmail = config.customerEmail;
@@ -112,13 +126,32 @@ export class SettingsController {
       zip,
       taxRate: all["settings.taxRate"] != null ? parseFloat(all["settings.taxRate"]) : 0,
       logoUrl: all["settings.logoUrl"] ?? null,
+      // SA-762r F6: the counter receipt's footer line ("" when the tenant has not set one).
+      receiptFooter: all["settings.receiptFooter"] ?? "",
+      // the invoices' own switch (Settings > Invoices): the live receipt and the reprint follow it like the emailed receipt
+      hideOriginalPrice: (await this.svc.get("invoice.hideOriginalPrice")) === "true",
       invoiceNotes,
       invoiceTerms,
+      timezone,
+      // SA-747: the counter quick keys (pins, hides, window, cap), defaults filled; a corrupt value is the defaults.
+      quickKeys: this.quickKeys.fromAll(all),
     };
   }
 
   @Patch()
-  async updateSettings(@Body() dto: Record<string, unknown>) {
+  async updateSettings(@Body() dto: Record<string, unknown>, @CurrentUser() user?: JwtPayload) {
+    // B1188: these two used to be accepted here and silently dropped (neither is stored by this
+    // endpoint). Refuse them loudly, before ANY write, naming where each really lives.
+    if (dto.invoicePrefix !== undefined) {
+      throw new BadRequestException(
+        "invoicePrefix is not saved by PATCH /settings. Change the invoice prefix in Settings > Invoicing > Invoice Numbering (PUT /import/numbering/INVOICE).",
+      );
+    }
+    if (dto.paymentDueDays !== undefined) {
+      throw new BadRequestException(
+        "paymentDueDays is not saved by PATCH /settings. Payment terms are the invoice default terms: set defaultTerms via PATCH /settings/invoice (Due on Receipt, Net 15, Net 30, Net 45, Net 60).",
+      );
+    }
     // taxRate is stored as a PERCENT (0-100); a direct API call can otherwise
     // bypass the web form's min(0).max(100) and store an out-of-range value
     // that later gets divided by 100 into a fraction (see common/tax-rate.ts).
@@ -129,14 +162,27 @@ export class SettingsController {
       }
     }
 
-    // businessName and email are NOT editable by tenant admin (set by super admin).
-    // taxRate and logoUrl stay in SystemConfig (no dedicated TenantConfig column for them yet).
-    const allowed = ["taxRate", "logoUrl"];
-    await Promise.all(
-      allowed
-        .filter((k) => dto[k] !== undefined)
-        .map((k) => this.svc.set(`settings.${k}`, String(dto[k]))),
-    );
+    // SA-738 R16-4: `timezone` is TENANT_ADMIN only (403) and must be an IANA zone (400), checked
+    // before ANY field is written.
+    const newZone =
+      dto.timezone !== undefined ? prepareTenantTimeZoneChange(user, dto.timezone) : undefined;
+
+    // SA-747: `quickKeys` is validated (shape, caps, and that every id is this tenant's product) BEFORE any
+    // write of this request, so a bad value rejects the whole request and nothing is half-applied.
+    const quickKeys =
+      dto.quickKeys !== undefined ? await this.quickKeys.prepare(dto.quickKeys) : undefined;
+
+    // SA-762r F6: receiptFooter is checked (and stripped) BEFORE any write, like taxRate above, and only ever
+    // lands in the CALLER'S tenant: with no tenant context SystemConfigService.set would write an unscoped row.
+    let receiptFooter: string | undefined;
+    if (dto.receiptFooter !== undefined) {
+      if (!this.prisma.getTenantId()) {
+        throw new ForbiddenException(
+          "receiptFooter is saved per business; no business is selected",
+        );
+      }
+      receiptFooter = sanitizeReceiptFooter(dto.receiptFooter);
+    }
 
     // ownerName, customerEmail, and address fields are stored in TenantConfig
     const tenantId = this.prisma.getTenantId();
@@ -159,12 +205,18 @@ export class SettingsController {
         configUpdate.invoiceNotes = typeof dto.invoiceNotes === "string" ? dto.invoiceNotes : "";
       if (dto.invoiceTerms !== undefined)
         configUpdate.invoiceTerms = typeof dto.invoiceTerms === "string" ? dto.invoiceTerms : "";
+      // SA-738: a zone change commits WITH these fields and its audit row in one transaction, so a
+      // failed save changes no TenantConfig field; without a zone the fields are written as before.
+      if (newZone !== undefined)
+        await changeTenantTimeZone(this.prisma, { tenantId, user, zone: newZone, configUpdate });
       if (Object.keys(configUpdate).length > 0) {
-        await this.prisma.tenantConfig.upsert({
-          where: { tenantId },
-          create: { tenantId, ...configUpdate },
-          update: configUpdate,
-        });
+        if (newZone === undefined) {
+          await this.prisma.tenantConfig.upsert({
+            where: { tenantId },
+            create: { tenantId, ...configUpdate },
+            update: configUpdate,
+          });
+        }
 
         // Anything we just updated shows on the invoice header (address /
         // phone / customer email / business name) or on the body (notes /
@@ -184,13 +236,24 @@ export class SettingsController {
         ];
         const touchesInvoice = invoiceVisibleKeys.some((k) => k in configUpdate);
         if (touchesInvoice) {
-          await this.prisma.invoice.updateMany({
-            where: { tenantId, pdfUrl: { not: null } },
-            data: { pdfUrl: null },
-          });
+          await clearTenantInvoicePdfPointers(this.prisma, tenantId); // row 502: no updatedAt bump
         }
       }
     }
+
+    // businessName and email are NOT editable by tenant admin (set by super admin).
+    // taxRate and logoUrl stay in SystemConfig (no dedicated TenantConfig column for them yet). They
+    // are written LAST (SA-738): a 403/400 or a failed TenantConfig save leaves them untouched.
+    const allowed = ["taxRate", "logoUrl"];
+    await Promise.all(
+      allowed
+        .filter((k) => dto[k] !== undefined)
+        .map((k) => this.svc.set(`settings.${k}`, String(dto[k]))),
+    );
+    // SA-762r F6: the receipt footer (validated above) follows taxRate/logoUrl.
+    if (receiptFooter !== undefined) await this.svc.set("settings.receiptFooter", receiptFooter);
+    // SA-747: the quick keys are settings JSON too, so they follow the TenantConfig save as well.
+    if (quickKeys) await this.quickKeys.save(quickKeys);
 
     return this.getSettings();
   }
@@ -198,6 +261,7 @@ export class SettingsController {
   // ─── Anthropic API Key ───────────────────────────────────────────────────────
 
   @Get("anthropic")
+  @Roles(UserRole.TENANT_ADMIN)
   async getAnthropicSettings() {
     const stored = await this.svc.get("anthropic.apiKey");
     const envKey = this.configService.get<string>("ANTHROPIC_API_KEY");
@@ -212,6 +276,7 @@ export class SettingsController {
   }
 
   @Patch("anthropic")
+  @Roles(UserRole.TENANT_ADMIN)
   async updateAnthropicSettings(@Body() dto: { apiKey?: string }) {
     if (dto.apiKey !== undefined) {
       if (dto.apiKey === "") {
@@ -227,6 +292,7 @@ export class SettingsController {
   // ─── Email Settings ──────────────────────────────────────────────────────────
 
   @Get("email")
+  @Roles(UserRole.TENANT_ADMIN)
   async getEmailSettings() {
     const all = await this.svc.getAll("email.");
     return {
@@ -251,6 +317,7 @@ export class SettingsController {
   }
 
   @Post("email")
+  @Roles(UserRole.TENANT_ADMIN)
   async updateEmailSettings(@Body() dto: Record<string, unknown>) {
     const allowed = [
       "fromName",
@@ -290,6 +357,7 @@ export class SettingsController {
   }
 
   @Post("email/test")
+  @Roles(UserRole.TENANT_ADMIN)
   @HttpCode(HttpStatus.OK)
   async testEmailSettings(@Body() dto: { toEmail: string }) {
     return this.emailService.sendTestEmail(dto.toEmail);
@@ -302,6 +370,7 @@ export class SettingsController {
    * never 500s for a connection problem.
    */
   @Post("email/verify")
+  @Roles(UserRole.TENANT_ADMIN)
   @HttpCode(HttpStatus.OK)
   async verifyEmailConnection(
     @Body()
@@ -325,34 +394,40 @@ export class SettingsController {
   // ─── Sending domain (Resend, per-tenant own-domain verification) ──────────────
 
   @Get("email/domain")
+  @Roles(UserRole.TENANT_ADMIN)
   async getSendingDomain() {
     return this.emailService.getSendingDomainStatus();
   }
 
   @Post("email/domain")
+  @Roles(UserRole.TENANT_ADMIN)
   async addSendingDomain(@Body() dto: { domain: string }) {
     return this.emailService.addSendingDomain(dto.domain);
   }
 
   @Post("email/domain/refresh")
+  @Roles(UserRole.TENANT_ADMIN)
   @HttpCode(HttpStatus.OK)
   async refreshSendingDomain() {
     return this.emailService.refreshSendingDomain();
   }
 
   @Post("email/domain/verify")
+  @Roles(UserRole.TENANT_ADMIN)
   @HttpCode(HttpStatus.OK)
   async verifySendingDomain() {
     return this.emailService.verifySendingDomain();
   }
 
   @Post("email/domain/from")
+  @Roles(UserRole.TENANT_ADMIN)
   @HttpCode(HttpStatus.OK)
   async setSendingFrom(@Body() dto: { address: string }) {
     return this.emailService.setSendingFromAddress(dto.address);
   }
 
   @Delete("email/domain")
+  @Roles(UserRole.TENANT_ADMIN)
   async removeSendingDomain() {
     return this.emailService.removeSendingDomain();
   }
@@ -437,6 +512,12 @@ export class SettingsController {
       // here. NULL-tenant payments are consequently not cleared — a pre-existing
       // limitation of untagged legacy rows, not one introduced by this change.
       await tx.payment.deleteMany({ where: { tenantId } });
+
+      // SA-750r3 ruling C: the day closes (snapshots of the money deleted above) and the parked counter carts go in the same
+      // transaction; both carry tenantId directly, so the scoped where is right. The close's tenant FK is RESTRICT, so a close
+      // left behind would also block the tenant's purge.
+      await tx.counterDayClose.deleteMany({ where: { tenantId } });
+      await tx.counterParkedCart.deleteMany({ where: { tenantId } });
     });
 
     return { success: true, message: "All financial data cleared successfully" };
@@ -488,6 +569,9 @@ export class SettingsController {
   @Patch("route")
   @UsePipes(new ValidationPipe({ whitelist: true }))
   async updateRouteSettings(@Body() dto: UpdateRouteSettingsDto) {
+    if ((dto.depotLat === undefined) !== (dto.depotLng === undefined)) {
+      throw new BadRequestException("depotLat and depotLng must be provided together");
+    }
     if (dto.averageSpeedKmh !== undefined) {
       await this.svc.set("route.averageSpeedKmh", String(dto.averageSpeedKmh));
     }
@@ -496,6 +580,10 @@ export class SettingsController {
     }
     if (dto.defaultStartTime !== undefined) {
       await this.svc.set("route.defaultStartTime", dto.defaultStartTime);
+    }
+    if (dto.depotLat !== undefined && dto.depotLng !== undefined) {
+      await this.svc.set("route.defaultDepotLat", String(dto.depotLat));
+      await this.svc.set("route.defaultDepotLng", String(dto.depotLng));
     }
     return this.getRouteSettings();
   }

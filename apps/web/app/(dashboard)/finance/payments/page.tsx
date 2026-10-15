@@ -15,8 +15,12 @@ import {
   type PaymentListParams,
   type StandalonePaymentDto,
 } from "@/lib/api/invoices";
-import { useInvoices, type InvoiceStatus } from "@/lib/api/invoices";
+import { useInvoices } from "@/lib/api/invoices";
+import { isOpenInvoiceStatus } from "@/lib/open-invoice-status";
 import { waterfallAllocations, allocationTotals } from "@/lib/api/supplier-payments";
+import { clampAllocationInput } from "@/lib/payment-allocation";
+import { genericToastCopy } from "@/lib/generic-toast-copy";
+import { dayClosedCopy } from "@/lib/day-closed-copy";
 import { useCustomers } from "@/lib/api/customers";
 import { useToast, EmptyState, Button, Badge } from "@routeflow/ui/web";
 import Link from "next/link";
@@ -28,6 +32,7 @@ import {
   PAYMENT_METHOD_COLORS as METHOD_COLORS,
   type SelectablePaymentMethod,
 } from "@/lib/payment-methods";
+import { ReadOnlyHint, WriteButton } from "@/lib/read-only-gate";
 
 // ─── Constants ─────────────────────────────────────────────────────────────────
 
@@ -38,10 +43,8 @@ const BANK_DATE_LABEL = "Money received in bank";
 const BANK_DATE_HELP =
   "When the funds actually landed in your account — e.g. a post-dated check's clearing date. Leave blank if unknown.";
 
-/** Statuses a payment can land on. Filtered CLIENT-side: ListInvoicesDto
- *  validates `status` as a single enum value, so a comma-list 400s server-side
- *  (mirrors mobile payments/record). */
-const OPEN_STATUSES: InvoiceStatus[] = ["SENT", "VIEWED", "PARTIAL", "OVERDUE"];
+// A payment can land on the open statuses (isOpenInvoiceStatus). Filtered CLIENT-side: ListInvoicesDto
+// validates `status` as a single enum value, so a comma-list 400s server-side (mirrors mobile payments/record).
 
 // ─── Sort helper ───────────────────────────────────────────────────────────────
 
@@ -85,7 +88,7 @@ function RecordPaymentModal({ onClose }: { onClose: () => void }) {
   const customerInvoices = React.useMemo(() => {
     if (!customerId || !invoicesData?.data) return [];
     return invoicesData.data
-      .filter((inv) => OPEN_STATUSES.includes(inv.status) && (inv.balanceDue ?? 0) > 0.001)
+      .filter((inv) => isOpenInvoiceStatus(inv.status) && (inv.balanceDue ?? 0) > 0.001)
       .sort((a, b) =>
         (a.issueDate ?? a.createdAt ?? "").localeCompare(b.issueDate ?? b.createdAt ?? ""),
       );
@@ -116,15 +119,25 @@ function RecordPaymentModal({ onClose }: { onClose: () => void }) {
   }, [customerId, customerInvoices.length, totalAmount]);
 
   const total = parseFloat(totalAmount) || 0;
-  const { allocated: allocatedTotal, excess } = allocationTotals(
+  const {
+    allocated: allocatedTotal,
+    excess,
+    overAllocated,
+  } = allocationTotals(
     total,
     // `|| null` also swallows a NaN from a half-typed value, as the old
     // `parseFloat(a.amount) || 0` did.
     allocations.map((a) => ({ amount: parseFloat(a.amount) || null })),
   );
 
+  // REG-B1002 / B313: cap each row at its invoice's balance, same helper as
+  // CustomerRecordPaymentModal.
   const updateAlloc = (idx: number, val: string) =>
-    setAllocations((prev) => prev.map((a, i) => (i === idx ? { ...a, amount: val } : a)));
+    setAllocations((prev) =>
+      prev.map((a, i) =>
+        i === idx ? { ...a, amount: clampAllocationInput(val, a.amountDue) } : a,
+      ),
+    );
 
   const customers = customersData?.data ?? [];
 
@@ -135,6 +148,10 @@ function RecordPaymentModal({ onClose }: { onClose: () => void }) {
     }
     if (!total || total <= 0) {
       toast({ title: "Enter a valid amount", variant: "error" });
+      return;
+    }
+    if (overAllocated) {
+      toast({ title: "Allocated more than the amount received", variant: "error" });
       return;
     }
     const validAllocs = allocations.filter((a) => a.amount && parseFloat(a.amount) > 0);
@@ -181,8 +198,11 @@ function RecordPaymentModal({ onClose }: { onClose: () => void }) {
       }
       onClose();
     } catch (err: unknown) {
-      const msg = (err as { response?: { data?: { message?: string } } })?.response?.data?.message;
-      toast({ title: msg ?? "Failed to record payment", variant: "error" });
+      toast({
+        title: "Failed to record payment",
+        description: genericToastCopy(err),
+        variant: "error",
+      });
     }
   };
 
@@ -389,11 +409,18 @@ function RecordPaymentModal({ onClose }: { onClose: () => void }) {
                   <span>Total received:</span>
                   <span>{fmt(total)}</span>
                 </div>
-                {excess > 0.001 && (
-                  <div className="flex justify-between font-medium text-amber-600">
-                    <span>⚠ Unallocated (→ advance):</span>
-                    <span>{fmt(excess)}</span>
+                {overAllocated ? (
+                  <div className="flex justify-between font-medium text-danger">
+                    <span>⚠ Allocated more than received:</span>
+                    <span>{fmt(allocatedTotal - total)}</span>
                   </div>
+                ) : (
+                  excess > 0.001 && (
+                    <div className="flex justify-between font-medium text-amber-600">
+                      <span>⚠ Unallocated (→ advance):</span>
+                      <span>{fmt(excess)}</span>
+                    </div>
+                  )
                 )}
               </div>
             </div>
@@ -409,14 +436,14 @@ function RecordPaymentModal({ onClose }: { onClose: () => void }) {
           </button>
           <button
             onClick={() => handleSave("DRAFT")}
-            disabled={record.isPending}
+            disabled={record.isPending || overAllocated}
             className="rounded-lg border border-surface-border px-4 py-2 text-sm text-navy hover:bg-surface-raised disabled:opacity-50"
           >
-            Save as Draft
+            Save as draft
           </button>
           <button
             onClick={() => handleSave("PAID")}
-            disabled={record.isPending}
+            disabled={record.isPending || overAllocated}
             className="rounded-lg bg-brand-500 px-4 py-2 text-sm font-medium text-white hover:bg-brand-600 disabled:opacity-50"
           >
             {record.isPending ? "Saving..." : "Save as Paid"}
@@ -492,8 +519,13 @@ export default function FinancePaymentsPage() {
       await voidPayment.mutateAsync(voidConfirm);
       toast({ title: "Payment voided", variant: "success" });
       setVoidConfirm(null);
-    } catch {
-      toast({ title: "Failed to void payment", variant: "error" });
+    } catch (err: unknown) {
+      // The global toast is quiet for a closed-day refusal (the hook's meta): this one says why, once.
+      toast({
+        title: "Failed to void payment",
+        description: dayClosedCopy(err) ?? undefined,
+        variant: "error",
+      });
     }
   };
 
@@ -567,12 +599,10 @@ export default function FinancePaymentsPage() {
           <h2 className="text-xl font-semibold text-navy">Payments Received</h2>
           <p className="text-sm text-navy/70">All payments recorded against invoices</p>
         </div>
-        <button
-          onClick={() => setShowModal(true)}
-          className="rounded-lg bg-brand-500 px-4 py-2 text-sm font-medium text-white hover:bg-brand-600 transition-colors"
-        >
-          + Record Payment
-        </button>
+        <div className="flex flex-col items-end">
+          <WriteButton onClick={() => setShowModal(true)}>+ Record Payment</WriteButton>
+          <ReadOnlyHint />
+        </div>
       </div>
 
       {/* Summary cards */}
@@ -774,9 +804,9 @@ export default function FinancePaymentsPage() {
                           title="No payments yet"
                           description="Record a payment to mark invoices as paid and track receipts."
                           action={
-                            <Button size="sm" onClick={() => setShowModal(true)}>
+                            <WriteButton size="sm" onClick={() => setShowModal(true)}>
                               Record payment
-                            </Button>
+                            </WriteButton>
                           }
                         />
                       )}

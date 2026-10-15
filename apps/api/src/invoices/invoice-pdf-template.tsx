@@ -1,9 +1,10 @@
 import React from "react";
 import { Document, Page, Text, View, StyleSheet, Image, Link } from "@react-pdf/renderer";
 import { carrierLabel, getTrackingUrl } from "../common/shipping";
-import { roundMoney } from "@routeflow/pricing";
-import { promoNote, qtyCellText, showOriginalPrice } from "./invoice-pdf-item";
+import { invoiceTaxSplit, roundMoney } from "@routeflow/pricing";
+import { promoNote, qtyCellText, showOriginalPrice, type PdfSubLine } from "./invoice-pdf-item";
 import { CREDIT_NOTE_METHOD, resolveConfirmedAmounts } from "./payment-predicates";
+import { pdfTermsView } from "./invoice-pdf-terms";
 
 type DecimalLike = { toNumber(): number } | number | string;
 
@@ -11,6 +12,9 @@ export interface InvoicePdfData {
   id: string;
   invoiceNumber: string;
   status: string;
+  /** Row 401: the paid-at-sale rule reads the invoice's creation instant, the order's `counterSale` and each payment's. */
+  createdAt?: Date | string | null;
+  order?: { counterSale?: boolean | null } | null;
   /**
    * Document stage: "draft" renders a DRAFT watermark + badge (a pre-delivery
    * proforma the wholesaler can print/send before the order ships); "final"
@@ -110,9 +114,18 @@ export interface InvoicePdfData {
     /** BUY_N_GET_M free units on this line — null/0 renders no note. */
     promoFreeUnits?: number | null;
     product?: { name: string } | null;
+    /** CQ-03: the levy this line billed and its category: the totals show it as its own named charge, not inside Tax. */
+    categoryTaxAmount?: DecimalLike | null;
+    trackedCategoryId?: string | null;
+    categoryTaxType?: string | null;
+    trackedCategory?: { id?: string | null; name?: string | null; taxType?: string | null } | null;
     barcodeDataUri?: string;
     barcodeText?: string;
+    /** #2717 M3: frozen sub-lines of a composed (mixed-pack) line, "(included)": display only, never summed. */
+    subLines?: PdfSubLine[];
   }>;
+  /** #2717 M3: PNG data URI of the order QR (order-linked invoice, mixed_packs on); absent = no QR. */
+  qrDataUri?: string;
   payments: Array<{
     id: string;
     amount: DecimalLike;
@@ -123,6 +136,8 @@ export interface InvoicePdfData {
     reference?: string | null;
     notes?: string | null;
     paidAt: Date | string;
+    /** Row 401: when the row was written (the paid-at-sale rule compares it with the invoice's creation). */
+    createdAt?: Date | string | null;
     /** Present on CREDIT_NOTE payments — read live via the relation so a later
      *  edit of the credit's reason shows up on the next PDF render. */
     creditNote?: { creditNoteNumber: string; reason: string | null } | null;
@@ -403,8 +418,12 @@ function StatusBadge({
 }
 
 export function InvoicePdfTemplate({ invoice }: { invoice: InvoicePdfData }) {
+  // Row 401: a counter sale paid at the till prints no due date / terms (the invoice page's CQ-26 rule).
+  const terms = pdfTermsView(invoice);
   const subtotal = toNum(invoice.subtotal);
-  const taxAmount = toNum(invoice.taxAmount);
+  // CQ-03: the header tax holds the regular tax plus the levy; the document names the levy apart (CRV deposit, excise).
+  const taxSplit = invoiceTaxSplit(invoice.taxAmount, invoice.items);
+  const taxAmount = taxSplit.tax;
   const discount = toNum(invoice.discount);
   const shippingFee = toNum(invoice.shippingFee);
   const total = toNum(invoice.total);
@@ -443,7 +462,9 @@ export function InvoicePdfTemplate({ invoice }: { invoice: InvoicePdfData }) {
   // Deposit schedule (Tier 1): depositAmount arrives pre-computed from the
   // service (roundMoney(total*percent/100)); the remainder is simply what's
   // left of the total after it — independent of payments actually recorded.
-  const hasDeposit = invoice.depositPercent != null && invoice.depositAmount != null;
+  // (its "Remainder due <date>" is a due date, so a paid-at-sale invoice carries no schedule either)
+  const hasDeposit =
+    terms.showDueAndTerms && invoice.depositPercent != null && invoice.depositAmount != null;
   const depositAmount = invoice.depositAmount ?? 0;
   const remainderAmount = total - depositAmount;
   const addr =
@@ -557,10 +578,10 @@ export function InvoicePdfTemplate({ invoice }: { invoice: InvoicePdfData }) {
             <View style={{ flex: 1, alignItems: "flex-end" }}>
               <Text style={styles.billLabel}>Invoice Details</Text>
               <Text style={styles.billSub}>Invoice Date: {fmtDate(invoice.issueDate)}</Text>
-              {invoice.dueDate ? (
+              {terms.showDueAndTerms && invoice.dueDate ? (
                 <Text style={styles.billSub}>Due Date: {fmtDate(invoice.dueDate)}</Text>
               ) : null}
-              {invoice.paymentTermsLabel ? (
+              {terms.showDueAndTerms && invoice.paymentTermsLabel ? (
                 <Text style={styles.billSub}>Terms: {invoice.paymentTermsLabel}</Text>
               ) : null}
               {invoice.paidAt ? (
@@ -615,6 +636,30 @@ export function InvoicePdfTemplate({ invoice }: { invoice: InvoicePdfData }) {
                       </Text>
                     </View>
                   ) : null}
+                  {/* #2717 M3: the pieces inside a mixed pack; the box line above stays authoritative. */}
+                  {item.subLines?.map((sub, subIdx) => (
+                    <View key={`${item.id}-sub-${subIdx}`} style={{ marginTop: 3, marginLeft: 8 }}>
+                      <Text style={{ fontSize: 7, color: "#334155" }}>
+                        {[
+                          sub.name,
+                          sub.qtyText,
+                          sub.unitSku ? `SKU ${sub.unitSku}` : null,
+                          sub.priceText,
+                        ]
+                          .filter(Boolean)
+                          .join("  |  ")}
+                      </Text>
+                      {sub.barcodeDataUri ? (
+                        <Image
+                          src={sub.barcodeDataUri}
+                          style={{ height: 14, width: 70, objectFit: "contain", marginTop: 1 }}
+                        />
+                      ) : null}
+                      {sub.barcodeText ? (
+                        <Text style={{ fontSize: 6, color: "#64748b" }}>{sub.barcodeText}</Text>
+                      ) : null}
+                    </View>
+                  ))}
                 </View>
                 <View style={styles.colQty}>
                   <Text style={styles.cellTextRight}>
@@ -666,6 +711,16 @@ export function InvoicePdfTemplate({ invoice }: { invoice: InvoicePdfData }) {
             );
           })}
 
+          {/* #2717 M3: order QR (opens the order in the buyer portal). */}
+          {invoice.qrDataUri ? (
+            <View style={{ marginTop: 10, alignItems: "flex-end" }}>
+              <Image src={invoice.qrDataUri} style={{ height: 64, width: 64 }} />
+              <Text style={{ fontSize: 6.5, color: "#64748b", marginTop: 2 }}>
+                Scan to view this order
+              </Text>
+            </View>
+          ) : null}
+
           {/* Totals */}
           <View style={styles.totalsWrapper}>
             <View style={styles.totalsBox}>
@@ -679,6 +734,12 @@ export function InvoicePdfTemplate({ invoice }: { invoice: InvoicePdfData }) {
                   <Text style={styles.totalValue}>{fmt(taxAmount)}</Text>
                 </View>
               ) : null}
+              {taxSplit.charges.map((c) => (
+                <View key={c.key} style={styles.totalRow}>
+                  <Text style={styles.totalLabel}>{c.label}</Text>
+                  <Text style={styles.totalValue}>{fmt(c.amount)}</Text>
+                </View>
+              ))}
               {discount > 0 ? (
                 <View style={styles.totalRow}>
                   <Text style={[styles.totalLabel, { color: SUCCESS }]}>Discount</Text>
@@ -834,14 +895,14 @@ export function InvoicePdfTemplate({ invoice }: { invoice: InvoicePdfData }) {
           fill) so it reads as a separate section rather than another row
           of body copy.
         */}
-        {invoice.terms ? (
+        {terms.termsAndConditions ? (
           // The wrapper stays un-wrapped (marginTop:auto pins it to the bottom of
           // the page when short); the inner box wraps so LONG terms flow onto
           // additional pages instead of clipping.
           <View style={styles.termsWrapper}>
             <View style={styles.termsBox} wrap>
               <Text style={styles.termsLabel}>Terms &amp; Conditions</Text>
-              <Text style={styles.termsBody}>{invoice.terms}</Text>
+              <Text style={styles.termsBody}>{terms.termsAndConditions}</Text>
             </View>
           </View>
         ) : null}

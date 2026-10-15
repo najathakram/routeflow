@@ -1,5 +1,6 @@
 "use client";
 
+import { PREF } from "@routeflow/types";
 import * as React from "react";
 import Link from "next/link";
 import { useParams } from "next/navigation";
@@ -55,6 +56,7 @@ import {
   paymentMethodLabel,
   type SelectablePaymentMethod,
 } from "@/lib/payment-methods";
+import { ReadOnlyHint, WriteButton } from "@/lib/read-only-gate";
 
 /**
  * Extra fields the API additively includes on a bill's `findOne` mapped-
@@ -128,7 +130,7 @@ function RecordPaymentModal({
       open={isOpen}
       onClose={onClose}
       title="Record Payment"
-      description="Log a payment made against this vendor bill."
+      description="Log a payment made against this supplier bill."
       footer={
         <>
           <Button variant="secondary" onClick={onClose} disabled={isPending}>
@@ -801,9 +803,9 @@ export default function VendorBillDetailPage() {
   if (isError || !bill) {
     return (
       <div className="flex flex-col items-center gap-4 p-12 text-center">
-        <p className="text-base font-medium text-navy">Vendor bill not found.</p>
+        <p className="text-base font-medium text-navy">Supplier bill not found.</p>
         <Button variant="secondary" href="/vendor-bills">
-          Back to Vendor Bills
+          Back to Supplier Bills
         </Button>
       </div>
     );
@@ -1010,7 +1012,7 @@ export default function VendorBillDetailPage() {
       {
         onSuccess: () => {
           setIsPaymentOpen(false);
-          savePrefs.mutate({ "payment.lastMethod": data.method });
+          savePrefs.mutate({ [PREF.paymentLastMethod]: data.method });
           toast({
             title: "Payment recorded",
             description: `Payment of ${fmt(parseFloat(data.amount))} recorded.`,
@@ -1044,7 +1046,7 @@ export default function VendorBillDetailPage() {
         className="flex items-center gap-1.5 text-sm text-navy/70 hover:text-navy transition-colors"
       >
         <ArrowLeft className="h-4 w-4" />
-        Vendor Bills
+        Supplier Bills
       </Link>
 
       {/* Header */}
@@ -1144,13 +1146,14 @@ export default function VendorBillDetailPage() {
               >
                 Revert to Draft
               </Button>
-              <Button
+              <WriteButton
                 size="sm"
                 leftIcon={<CreditCard className="h-4 w-4" />}
                 onClick={() => setIsPaymentOpen(true)}
               >
                 Record Payment
-              </Button>
+              </WriteButton>
+              <ReadOnlyHint />
             </>
           )}
 
@@ -1508,7 +1511,7 @@ export default function VendorBillDetailPage() {
             )}
             {(status === "RECEIVED" || status === "PARTIAL") && !isEditing && (
               <div className="mt-4">
-                <Button
+                <WriteButton
                   variant="secondary"
                   size="sm"
                   className="w-full"
@@ -1516,7 +1519,7 @@ export default function VendorBillDetailPage() {
                   onClick={() => setIsPaymentOpen(true)}
                 >
                   Record Payment
-                </Button>
+                </WriteButton>
               </div>
             )}
           </Card>
@@ -1573,7 +1576,7 @@ export default function VendorBillDetailPage() {
         onRecord={handleRecordPayment}
         balance={balance}
         isPending={recordPayment.isPending}
-        defaultMethod={(prefs?.["payment.lastMethod"] as PaymentFormState["method"]) ?? "ACH"}
+        defaultMethod={(prefs?.[PREF.paymentLastMethod] as PaymentFormState["method"]) ?? "ACH"}
       />
 
       <VoidConfirmModal

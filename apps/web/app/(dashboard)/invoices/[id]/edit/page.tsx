@@ -3,10 +3,14 @@
 import * as React from "react";
 import Link from "next/link";
 import { useParams, useRouter } from "next/navigation";
+import { useQueryClient } from "@tanstack/react-query";
 import { ArrowLeft, Plus, Trash2, Search, Loader2 } from "lucide-react";
 import { Button, Card, useToast, cn } from "@routeflow/ui/web";
 import { usePageTitle } from "@/lib/page-title-context";
+import { codedToastCopy } from "@/lib/generic-toast-copy";
 import { useInvoice, useUpdateInvoice, type UpdateInvoiceItem } from "@/lib/api/invoices";
+import { isPendingMirrorInvoice } from "@/lib/invoice-pending-mirror";
+import { INVOICE_STALE_COPY, isInvoiceStale } from "@/lib/invoice-stale";
 import { hasUnitLine, unitLabelsOf } from "@/lib/invoice-line-unit";
 import {
   useCustomers,
@@ -18,14 +22,18 @@ import { useProducts } from "@/lib/api/products";
 import { apiClient } from "@/lib/api-client";
 import { InlineCreateProductModal } from "@/components/InlineCreateProductModal";
 import { BarcodeScannerButton } from "@/components/BarcodeScannerButton";
+import { scanRowQty } from "../../invoice-scan-level";
 import { DecimalInput, MoneyInput } from "@/components/MoneyInput";
 import { displayProductName } from "@/lib/product-display";
+import { sellableFlat } from "@/lib/product-search-groups";
+import { safeTextErrorCopy } from "@/lib/safe-text-error-copy";
 import {
   isSpecialTier,
-  computeLineSubtotal,
+  computeInvoiceLineTotal,
+  computeInvoiceTotals,
+  type InvoiceTotalsLine,
   normalizeBoxesPieces,
   packFromOwnSplit,
-  roundMoney,
   getTierPrice,
   isNsfLine,
 } from "@routeflow/pricing";
@@ -99,6 +107,8 @@ function ProductSearchInput({
     productId?: string,
     unitPrice?: number,
     unitsPerBox?: number,
+    /** #2717 M4a-1: the qty a SCAN put on the row (undefined = a tap / shared code: leave it). */
+    scanQty?: number,
   ) => void;
   onCreateProduct?: (searchTerm: string) => void;
   onBarcodeNotFound?: (barcode: string) => void;
@@ -115,14 +125,20 @@ function ProductSearchInput({
   const [open, setOpen] = React.useState(false);
   const ref = React.useRef<HTMLDivElement>(null);
   const inputRef = React.useRef<HTMLInputElement>(null);
+  const listRef = React.useRef<HTMLDivElement>(null);
 
   React.useEffect(() => {
     const t = setTimeout(() => setDebouncedQuery(query), 300);
     return () => clearTimeout(t);
   }, [query]);
 
-  const { data } = useProducts({ search: debouncedQuery || undefined, isActive: true });
-  const products = data?.data ?? [];
+  // includeVariants: a family's own name finds its variants; the family itself is never a line (B1215 C7).
+  const { data } = useProducts({
+    search: debouncedQuery || undefined,
+    isActive: true,
+    includeVariants: true,
+  });
+  const products = sellableFlat<any>(data?.data ?? []);
 
   React.useEffect(() => {
     function handle(e: MouseEvent) {
@@ -146,6 +162,15 @@ function ProductSearchInput({
           setOpen(true);
         }}
         onFocus={() => setOpen(true)}
+        // Row 446: Tab (or any focus move) away from the field closes its popup, so it never sits
+        // over the unit select below; focus moving into the popup's own list keeps it open.
+        onBlur={(e) => {
+          if (!listRef.current?.contains(e.relatedTarget as Node | null)) setOpen(false);
+        }}
+        // Tab leaves the field: close first, so focus moves to the next field, never into the list
+        onKeyDown={(e) => {
+          if (e.key === "Tab") setOpen(false);
+        }}
         className="h-9 w-full rounded border border-surface-border bg-white px-2.5 text-sm text-navy placeholder:text-navy/30 focus:border-transparent focus:outline-none focus:ring-1 focus:ring-brand-500 disabled:cursor-not-allowed disabled:bg-surface-raised"
       />
       {/* Hold every product-selection path until the tier data lands: picking or
@@ -170,7 +195,13 @@ function ProductSearchInput({
                 .then((r) => r.data);
               if (product) {
                 setQuery(product.name);
-                onChange(product.name, product.id, tierPriceFor(product), product.unitsPerBox);
+                onChange(
+                  product.name,
+                  product.id,
+                  tierPriceFor(product),
+                  product.unitsPerBox,
+                  scanRowQty(code, product),
+                );
                 setOpen(false);
                 return;
               }
@@ -185,7 +216,13 @@ function ProductSearchInput({
         open &&
         debouncedQuery.length > 0 &&
         (products.length > 0 || onCreateProduct) && (
-          <div className="absolute z-10 mt-1 w-full rounded-lg border border-surface-border bg-white shadow-lg">
+          <div
+            ref={listRef}
+            // a press inside the list keeps focus on the input (Safari never focuses a clicked
+            // button, so a blur would close the list before the click lands)
+            onMouseDown={(e) => e.preventDefault()}
+            className="absolute z-10 mt-1 w-full rounded-lg border border-surface-border bg-white shadow-lg"
+          >
             <ul className="max-h-36 overflow-y-auto">
               {products.length === 0 && (
                 <li className="px-3 py-2 text-sm text-navy/70">No products found.</li>
@@ -206,14 +243,20 @@ function ProductSearchInput({
                     <button
                       className="flex w-full items-center justify-between px-3 py-2 text-left hover:bg-surface-raised"
                       onClick={() => {
-                        setQuery(p.name);
-                        onChange(p.name, p.id, tierPriceFor(p), p.unitsPerBox ?? undefined);
+                        const label = displayProductName(p as any);
+                        setQuery(label);
+                        onChange(label, p.id, tierPriceFor(p), p.unitsPerBox ?? undefined);
                         setOpen(false);
                       }}
                     >
                       <div>
-                        <span className="text-sm font-medium text-navy">{p.name}</span>
+                        <span className="text-sm font-medium text-navy">
+                          {displayProductName(p as any)}
+                        </span>
                         {p.sku && <span className="ml-2 text-xs text-navy/70">{p.sku}</span>}
+                        {(p as any).unit && (
+                          <span className="ml-2 text-xs text-navy/70">{(p as any).unit}</span>
+                        )}
                       </div>
                       <span className="text-xs text-navy/70">
                         {fmt.format(Number(p.pricePerUnit))}
@@ -279,7 +322,18 @@ interface LineItemState {
   /** Whole selling units the snapshot above was earned at, so a qty edit rescales
    *  it instead of handing over free units the new quantity never earned. */
   promoBaseUnits?: number;
+  /** H3b: the price this line was offered at (the stored price on load, the tier price on a pick). A
+   *  Reason field shows once the price moves off it; the server judges the move against the customer's
+   *  tier price (a special price needs the reason). */
+  offeredPrice?: number;
+  overrideReason?: string;
 }
+
+/** H3b: this product line's price has moved off the price it was offered at (half a cent, pricing's own band). */
+const priceMoved = (it: LineItemState): boolean =>
+  !!it.productId &&
+  it.offeredPrice != null &&
+  Math.abs(Number(it.unitPrice) - it.offeredPrice) >= 0.005;
 
 /**
  * Boxed split for a line, derived from its `qty` (total pieces) + `unitsPerBox`.
@@ -317,10 +371,10 @@ function lineFreeUnits(it: LineItemState): number {
   return Math.min(stored, earned, units - 1);
 }
 
-/** Post-discount line total, boxed-aware, rounded — same basis the server stores. */
-function lineTotal(it: LineItemState): number {
+/** The pricing-helper view of a line: boxed split, BUY_N_GET_M free units, discount, tax rate. */
+function toTotalsLine(it: LineItemState): InvoiceTotalsLine {
   const { boxes, pieces } = lineSplit(it);
-  const beforeDiscount = computeLineSubtotal({
+  return {
     unitPrice: Number(it.unitPrice),
     qty: Number(it.qty),
     boxes,
@@ -328,8 +382,14 @@ function lineTotal(it: LineItemState): number {
     unitsPerBox: it.unitsPerBox ?? null,
     // BUY_N_GET_M: free whole units come off before pricing, exactly like the server.
     freeUnits: lineFreeUnits(it),
-  });
-  return roundMoney(beforeDiscount - Number(it.discount));
+    discount: Number(it.discount),
+    taxRate: Number(it.taxRate),
+  };
+}
+
+/** Post-discount line total, boxed-aware, rounded — same basis the server stores. */
+function lineTotal(it: LineItemState): number {
+  return computeInvoiceLineTotal(toTotalsLine(it));
 }
 
 function createEmptyItem(): LineItemState {
@@ -366,7 +426,29 @@ export default function EditInvoicePage() {
   const { toast } = useToast();
 
   const { data: invoice, isLoading, isError } = useInvoice(id);
+  const queryClient = useQueryClient();
+  // H4: the updatedAt the form was SEEDED from (a background refetch never moves it) and the 409 notice.
+  const openedUpdatedAt = React.useRef<string | undefined>(undefined);
+  const [stale, setStale] = React.useState(false);
   const updateInvoice = useUpdateInvoice();
+
+  // #2791: a pending-mirror draft can't be edited here (the API refuses by design — the order is the
+  // source of truth until delivery). Send the user to the order instead of showing a form that can only fail.
+  const pendingMirrorOrderId =
+    invoice && isPendingMirrorInvoice(invoice) ? (invoice.orderId ?? null) : null;
+  const pendingMirrorOrderNo = invoice?.order?.orderNumber ?? "";
+  React.useEffect(() => {
+    if (!pendingMirrorOrderId) return;
+    // The toast provider lives in the dashboard layout, so it survives the navigation and the order
+    // page shows the reason. Fixed copy only — nothing from the URL is ever echoed.
+    toast({
+      title: `This invoice mirrors order ${pendingMirrorOrderNo}`,
+      description: "It can't be edited until the order is delivered — edit the order instead.",
+      duration: 8000,
+    });
+    router.replace(`/orders/${pendingMirrorOrderId}`);
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- toast identity is unstable; fire once per mirror
+  }, [pendingMirrorOrderId, pendingMirrorOrderNo, router]);
 
   // Customer tier pricing (mirrors invoices/new): every product-selection path
   // below should price at this customer's tier, not the raw catalog price.
@@ -429,6 +511,7 @@ export default function EditInvoicePage() {
 
   React.useEffect(() => {
     if (invoice && !initialized) {
+      openedUpdatedAt.current = invoice.updatedAt;
       setTitle(`Edit ${invoice.invoiceNumber}`);
       setIssueDate(
         invoice.issueDate ? invoice.issueDate.slice(0, 10) : new Date().toISOString().slice(0, 10),
@@ -471,6 +554,7 @@ export default function EditInvoicePage() {
                 systemKind: it.systemKind ?? null,
                 qty: Number(it.qty),
                 unitPrice: Number(it.unitPrice),
+                offeredPrice: Number(it.unitPrice),
                 // #2656: the NSF fee line is never taxed — a legacy stored rate loads (and saves) as 0.
                 taxRate: isNsfLine(it) ? 0 : Number(it.taxRate ?? 0),
                 discount: Number(it.discount ?? 0),
@@ -491,13 +575,16 @@ export default function EditInvoicePage() {
 
   // ── Calculations ─────────────────────────────────────────────────────────────
 
-  // Boxed lines prorate via computeLineSubtotal (unitPrice is the BOX price); a
+  // Boxed lines prorate via the pricing helpers (unitPrice is the BOX price); a
   // plain qty*unitPrice would over-charge by unitsPerBox. Matches server pricing.
-  const subtotal = items.reduce((s, it) => s + lineTotal(it), 0);
-  const taxTotal = items.reduce((s, it) => s + lineTotal(it) * Number(it.taxRate), 0);
   const invDiscount = parseFloat(discount) || 0;
   const shipping = parseFloat(shippingFee) || 0;
-  const total = subtotal - invDiscount + shipping + taxTotal;
+  // One rounded footer, the same arithmetic the server stores (subtotal, tax rounded once, total).
+  const {
+    subtotal,
+    tax: taxTotal,
+    total,
+  } = computeInvoiceTotals(items.map(toTotalsLine), { discount: invDiscount, shipping });
 
   // ── Item helpers ──────────────────────────────────────────────────────────────
 
@@ -536,6 +623,12 @@ export default function EditInvoicePage() {
         errs.items = "All quantities must be greater than 0.";
         break;
       }
+      // The server refuses a negative line; refuse it here, before the footer shows a total the
+      // saved invoice can never have.
+      if (lineTotal(it) < 0) {
+        errs.items = "Line discount cannot exceed the line total.";
+        break;
+      }
     }
     setErrors(errs);
     return Object.keys(errs).length === 0;
@@ -548,6 +641,7 @@ export default function EditInvoicePage() {
 
     const dto = {
       id,
+      expectedUpdatedAt: openedUpdatedAt.current,
       issueDate: issueDate || undefined,
       dueDate: dueDate || undefined,
       discount: invDiscount,
@@ -582,6 +676,10 @@ export default function EditInvoicePage() {
               : {}),
           // SA-189: only an operator-attested pack is ever sent.
           ...(it.attestedPack ? { unitsPerBox: it.attestedPack } : {}),
+          // H3b: why the price moved off the customer's special price (the server decides if it needs one).
+          ...(priceMoved(it) && it.overrideReason?.trim()
+            ? { overrideReason: it.overrideReason.trim() }
+            : {}),
           // Round-trip the BUY_N_GET_M snapshot — the server replaces every line.
           ...(freeUnits > 0 ? { promoFreeUnits: freeUnits } : {}),
           // Round-trip the per-line note — the server recreates all items on update.
@@ -600,6 +698,10 @@ export default function EditInvoicePage() {
         router.push(`/invoices/${id}`);
       },
       onError: (err: any) => {
+        if (isInvoiceStale(err)) {
+          setStale(true); // H4: the notice owns it; no toast
+          return;
+        }
         // A class-validator 400 carries `message` as a string[] when more than
         // one constraint fails at once — join it into one readable sentence
         // instead of handing the array straight to the toast (B788).
@@ -607,11 +709,21 @@ export default function EditInvoicePage() {
         toast({
           title: "Failed to update invoice",
           description:
-            (Array.isArray(message) ? message.join("; ") : message) || "Please try again.",
+            safeTextErrorCopy(err) ??
+            (codedToastCopy(err) ||
+              (Array.isArray(message) ? message.join("; ") : message) ||
+              "Please try again."),
           variant: "error",
         });
       },
     });
+  }
+
+  // H4: Reload refetches the invoice, then re-seeds the form from it (and its updatedAt) for the user to re-apply.
+  async function reloadStale() {
+    await queryClient.invalidateQueries({ queryKey: ["invoices", id] });
+    setStale(false);
+    setInitialized(false);
   }
 
   // ── Guards ────────────────────────────────────────────────────────────────────
@@ -630,6 +742,20 @@ export default function EditInvoicePage() {
         <p className="text-base font-medium text-navy">Invoice not found.</p>
         <Button variant="secondary" href="/invoices">
           Back to Invoices
+        </Button>
+      </div>
+    );
+  }
+
+  if (pendingMirrorOrderId) {
+    const orderNo = pendingMirrorOrderNo;
+    return (
+      <div className="mx-auto flex max-w-xl flex-col items-center gap-4 p-12 text-center">
+        <p className="text-base font-medium text-navy">
+          This invoice mirrors order #{orderNo} until it&apos;s delivered — edit the order instead.
+        </p>
+        <Button variant="secondary" href={`/orders/${pendingMirrorOrderId}`}>
+          Open order #{orderNo}
         </Button>
       </div>
     );
@@ -776,13 +902,17 @@ export default function EditInvoicePage() {
                         setCreateProductTargetIdx(idx);
                         setCreateProductOpen(true);
                       }}
-                      onChange={(description, productId, unitPrice, unitsPerBox) => {
+                      onChange={(description, productId, unitPrice, unitsPerBox, scanQty) => {
                         // Re-picking the SAME product keeps the row's own pack (never the live one); a real swap is a
                         // NEW line (SA-186): no stored id, and the picker's pack.
                         const swapped = productId !== item.productId;
                         updateItem(item.key, {
                           ...(swapped
                             ? { id: undefined, locked: undefined, attestedPack: undefined }
+                            : {}),
+                          // H3b: a picked product is offered at the tier price; a new sale, a new reason
+                          ...(swapped
+                            ? { offeredPrice: unitPrice, overrideReason: undefined }
                             : {}),
                           description,
                           productId,
@@ -792,6 +922,8 @@ export default function EditInvoicePage() {
                               ? unitsPerBox
                               : undefined
                             : item.unitsPerBox,
+                          // A scanned distinct UNIT / BOX code sets the qty (one piece / a case).
+                          ...(swapped && scanQty !== undefined ? { qty: scanQty } : {}),
                         });
                       }}
                     />
@@ -847,6 +979,21 @@ export default function EditInvoicePage() {
                           onChange={(v) => updateItem(item.key, { unitPrice: v ?? 0 })}
                           className="h-9 rounded border border-surface-border bg-white px-2 text-right text-sm text-navy focus:border-transparent focus:outline-none focus:ring-1 focus:ring-brand-500"
                         />
+                        {/* H3b: the same reason field the new-invoice page shows off a special price. The
+                            server decides whether this move needs one and says so in the save error. */}
+                        {priceMoved(item) && (
+                          <input
+                            type="text"
+                            maxLength={200}
+                            value={item.overrideReason ?? ""}
+                            onChange={(e) =>
+                              updateItem(item.key, { overrideReason: e.target.value })
+                            }
+                            aria-label="Reason for the price change"
+                            placeholder="Reason (needed off a special price)"
+                            className="mt-1 h-8 w-full rounded border border-surface-border bg-white px-2 text-xs text-navy placeholder:text-navy/40 focus:outline-none focus:ring-1 focus:ring-brand-500"
+                          />
+                        )}
                       </MobileField>
                       <MobileField label="Disc. $">
                         <MoneyInput
@@ -1017,6 +1164,23 @@ export default function EditInvoicePage() {
             </dl>
 
             <div className="mt-5 space-y-2">
+              {stale && (
+                <div
+                  role="alert"
+                  data-testid="invoice-stale-notice"
+                  className="rounded-lg border border-amber-200 bg-amber-50 p-3 text-sm text-navy"
+                >
+                  <p>{INVOICE_STALE_COPY}</p>
+                  <Button
+                    className="mt-2"
+                    variant="secondary"
+                    size="sm"
+                    onClick={() => void reloadStale()}
+                  >
+                    Reload
+                  </Button>
+                </div>
+              )}
               <Button
                 className="w-full"
                 onClick={handleSubmit}
@@ -1054,6 +1218,7 @@ export default function EditInvoicePage() {
                       description: displayProductName(product),
                       productId: product.id,
                       unitPrice: tierPriceFor(product),
+                      offeredPrice: tierPriceFor(product),
                     }
                   : item,
               ),

@@ -365,10 +365,16 @@ describe("InlineReturnsService in-transaction core (#2094)", () => {
     it("dry-runs the SAME pricing engine on the plain client, never a tx, and writes nothing", async () => {
       await (service as any).preflightCapture(INPUT, OPERATOR, { routeRunId: null });
       expect(quote.priceInlineReturn).toHaveBeenCalledWith(
-        { customerId: "cust-1", items: INPUT.items, routeRunStopId: undefined },
+        {
+          customerId: "cust-1",
+          items: INPUT.items,
+          routeRunStopId: undefined,
+          sourceOrderId: undefined,
+        },
         OPERATOR,
         expect.anything(),
-        { excludeInvoiceIds: [] }, // #2178: no revert follows here, so nothing is excluded
+        // #2178: no revert follows here, so nothing is excluded; SA-740: the carrying order is the walk-in's default source
+        { excludeInvoiceIds: [], defaultSourceOrderId: INPUT.orderId },
       );
       expect(prisma.return.create).not.toHaveBeenCalled();
       expect(prisma.stockMovement.create).not.toHaveBeenCalled();
@@ -398,7 +404,7 @@ describe("InlineReturnsService in-transaction core (#2094)", () => {
     });
 
     it("returns the dry-run total so the caller reserves a number only for a return above $0", async () => {
-      quote.priceInlineReturn.mockResolvedValue({ total: 42 });
+      quote.priceInlineReturn.mockResolvedValue({ total: 42, chunks: [] });
       await expect(
         (service as any).preflightCapture(INPUT, OPERATOR, { routeRunId: null }),
       ).resolves.toBe(42);

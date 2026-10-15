@@ -20,8 +20,11 @@ import {
 } from "lucide-react";
 import { Button, Card, Input, useToast, cn } from "@routeflow/ui/web";
 import { usePageTitle } from "@/lib/page-title-context";
+import { safeTextErrorCopy } from "@/lib/safe-text-error-copy";
+import { countNoun } from "@/lib/plural";
 import { scheduleScannerRefocus } from "@/lib/refocus-scanner";
-import { useQuery } from "@tanstack/react-query";
+import { useListboxNav } from "@/lib/use-listbox-nav";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
 import {
   useCreateInvoice,
   useUpdateInvoice,
@@ -31,6 +34,7 @@ import {
 } from "@/lib/api/invoices";
 import { useCreateSale, useUninvoicedOrders, type CreateSaleDto } from "@/lib/api/orders";
 import { SplitInvoiceModal } from "../../orders/_components/SplitInvoiceModal";
+import { toSplitInvoiceLine, type SplitInvoiceLine } from "@/lib/split-invoice-line";
 import {
   useCustomers,
   useCustomerPrices,
@@ -45,23 +49,85 @@ import {
   type SaleLinePricing,
 } from "@/lib/sale-line-pricing";
 import { reasonRequiredMessage } from "@/lib/staff-price-override";
+import { INVOICE_STALE_COPY, isInvoiceStale } from "@/lib/invoice-stale";
 import { apiClient } from "@/lib/api-client";
+import { useSaleAttemptKey } from "@/lib/use-sale-attempt-key";
+import type { UnknownSale } from "@routeflow/types/sale-attempt";
+import { SaleUnknownPanel } from "./_components/SaleUnknownPanel";
+import { KEPT_DRAFT_TOAST, keptDraftInvoiceId } from "@/lib/kept-draft-invoice";
 import { fetchPdfBlob } from "@/lib/fetch-pdf-blob";
 import { displayProductName } from "@/lib/product-display";
+import {
+  attachParent,
+  groupSearchRows,
+  isFamilyProduct,
+  isGroupExpanded,
+  pickerProductName,
+  sellableFlat,
+} from "@/lib/product-search-groups";
 import { BarcodeScannerButton } from "@/components/BarcodeScannerButton";
+import { bumpInvoiceLine, scanLevelForHit, seedLineQty } from "../invoice-scan-level";
 import { InlineCreateProductModal } from "@/components/InlineCreateProductModal";
 import { fmt, fmtCalendarDate } from "@/lib/formatting";
 import { getDaysForTerms, addDaysIso } from "@/lib/invoice-terms";
 import {
-  isSpecialTier,
-  computeLineSubtotal,
+  computeInvoiceLineTotal,
+  computeInvoiceTotals,
+  type InvoiceTotalsLine,
   getTierPrice,
   normalizeBoxesPieces,
   perUnitPrice,
+  pendingScanDecision,
+  pillLabel,
+  plural,
+  unitWords,
+  type SellLevel,
 } from "@routeflow/pricing";
+import { useAuth } from "@/lib/auth-context";
+import { OrderLineUnitPicker } from "@/components/OrderLineUnitPicker";
+import { PendingUnitStatus } from "@/components/LineItemRow";
+import { useDefaultUnitResolver } from "@/lib/hooks/useDefaultUnitResolver";
+import { productUnitsKey, useProductUnits, useUnitsEnabled } from "@/lib/api/product-units";
+import {
+  UNITS_LOADING_SCAN_MESSAGE,
+  isPendingDefaultUnit,
+  isShapedLine,
+  isStaffRole,
+  pendingCount,
+} from "@/lib/default-unit-line";
+import { scanCodeIsShared } from "../../orders/_components/scan/useScanCodeHandler";
+import {
+  chooseUnit,
+  fromUnitLine,
+  matchesPackLine,
+  mergeIntoPackLine,
+  mergeResolvedInvoiceLines,
+  pickerLineOf,
+  saleUnitPriceField,
+  toUnitLine,
+  unitPayload,
+  unitProductIds,
+  unitRefusalCopy,
+  unitViews,
+  updateViews,
+  withTypedPrice,
+  type InvoiceUnitFields,
+} from "./invoice-line-unit-adapter";
 import { useMarginConfig, floorForCategory } from "@/lib/api/margin";
 import { MarginHint } from "@/components/MarginHint";
 import { DecimalInput, MoneyInput } from "@/components/MoneyInput";
+import { ReadOnlyHint, WriteButton } from "@/lib/read-only-gate";
+import { getTenantCookie } from "@/lib/tenant-cookie";
+import { invoiceDraftKey, isPristineForm } from "@/lib/invoice-draft-storage";
+import { catalogPricing } from "./invoice-catalog-price";
+import { useInvoiceDraft } from "./use-invoice-draft";
+import { checkDraftReferences } from "./invoice-draft-restore";
+import {
+  DRAFT_CANCELLED_COPY,
+  InvoiceDraftBanner,
+  draftNoticeCopy,
+  draftSummary,
+} from "./InvoiceDraftBanner";
 
 // ─── Terms options ─────────────────────────────────────────────────────────────
 
@@ -203,6 +269,8 @@ function ProductSearchInput({
     unitsPerBox?: number,
     /** #2696(c): the picked product itself — its tier ladder prices the line (SA-558e). */
     product?: Record<string, unknown>,
+    /** #2717 M4a-1: the level a SCAN resolved (undefined for a picker tap). */
+    scanLevel?: SellLevel,
   ) => void;
   onCreateProduct?: (searchTerm: string) => void;
   onBarcodeNotFound?: (barcode: string) => void;
@@ -213,6 +281,7 @@ function ProductSearchInput({
   const [expandedParentId, setExpandedParentId] = React.useState<string | null>(null);
   const ref = React.useRef<HTMLDivElement>(null);
   const inputRef = React.useRef<HTMLInputElement>(null);
+  const listRef = React.useRef<HTMLDivElement>(null);
 
   React.useEffect(() => {
     const t = setTimeout(() => setDebouncedQuery(query), 300);
@@ -225,8 +294,10 @@ function ProductSearchInput({
     limit: 20,
     includeVariants: true,
   });
-  // Only top-level products (parents + standalones) shown at root; variants appear as children
-  const products = (data?.data ?? []).filter((p: any) => !p.parentProductId);
+  // Top-level products (parents + standalones) with variants as children. A variant that matched on
+  // its own gets its parent re-attached and opened (B1215 C6); a FAMILY is never a line (C7).
+  const groups = React.useMemo(() => groupSearchRows<any>(data?.data ?? []), [data]);
+  const products = groups.rows;
 
   React.useEffect(() => {
     function handle(e: MouseEvent) {
@@ -238,16 +309,19 @@ function ProductSearchInput({
     return () => document.removeEventListener("mousedown", handle);
   }, []);
 
-  function selectProduct(p: any) {
+  function selectProduct(p: any, scanLevel?: SellLevel) {
+    if (isFamilyProduct(p)) return; // a FAMILY is a container, never a line (B1215 C7)
+    const label = displayProductName(p);
     onChange(
-      p.name,
+      label,
       p.id,
       String(p.pricePerUnit),
       p.averageCost ? parseFloat(String(p.averageCost)) : undefined,
       p.unitsPerBox ? Number(p.unitsPerBox) : undefined,
       p,
+      scanLevel,
     );
-    setQuery(p.name);
+    setQuery(label);
     setOpen(false);
     setExpandedParentId(null);
   }
@@ -266,17 +340,27 @@ function ProductSearchInput({
           setExpandedParentId(null);
         }}
         onFocus={() => setOpen(true)}
-        className="h-9 w-full rounded border border-surface-border bg-white px-2.5 text-sm text-navy placeholder:text-navy/30 focus:border-transparent focus:outline-none focus:ring-1 focus:ring-brand-500"
+        // Row 446: Tab (or any focus move) away from the field closes its popup, so it never sits
+        // over the unit select below; focus moving into the popup's own list keeps it open.
+        onBlur={(e) => {
+          if (!listRef.current?.contains(e.relatedTarget as Node | null)) setOpen(false);
+        }}
+        // Tab leaves the field: close first, so focus moves to the next field, never into the list
+        onKeyDown={(e) => {
+          if (e.key === "Tab") setOpen(false);
+        }}
+        className="h-9 w-full rounded border border-surface-border bg-white px-2.5 text-sm text-navy placeholder:text-navy/30 focus:border-transparent focus:outline-none focus:ring-1 focus:ring-brand-500 max-md:h-11"
       />
       <BarcodeScannerButton
         inputRef={inputRef}
+        className="max-md:h-11 max-md:w-11 max-md:shrink-0"
         onScan={async (code) => {
           try {
             const product = await apiClient
               .get(`/products/barcode/${encodeURIComponent(code)}`)
               .then((r) => r.data);
             if (product) {
-              selectProduct(product);
+              selectProduct(product, scanLevelForHit(code, product));
               return;
             }
           } catch {
@@ -289,14 +373,20 @@ function ProductSearchInput({
         }}
       />
       {open && debouncedQuery.length > 0 && (products.length > 0 || onCreateProduct) && (
-        <div className="absolute left-0 top-full z-10 mt-1 w-full rounded-lg border border-surface-border bg-white shadow-lg">
+        <div
+          ref={listRef}
+          // a press inside the list keeps focus on the input (Safari never focuses a clicked
+          // button, so a blur would close the list before the click lands)
+          onMouseDown={(e) => e.preventDefault()}
+          className="absolute left-0 top-full z-10 mt-1 w-full rounded-lg border border-surface-border bg-white shadow-lg"
+        >
           <ul className="max-h-48 overflow-y-auto">
             {products.length === 0 && (
               <li className="px-3 py-2 text-sm text-navy/70">No products found.</li>
             )}
             {products.map((p: any) => {
               const hasVariants = p.variants?.length > 0;
-              const isExpanded = expandedParentId === p.id;
+              const isExpanded = isGroupExpanded(expandedParentId, groups.expandedIds, p.id);
               return (
                 <React.Fragment key={p.id}>
                   <li>
@@ -304,7 +394,7 @@ function ProductSearchInput({
                       className="flex w-full items-center justify-between px-3 py-2 text-left hover:bg-surface-raised"
                       onClick={() => {
                         if (hasVariants) {
-                          setExpandedParentId(isExpanded ? null : p.id);
+                          setExpandedParentId(isExpanded ? "" : p.id);
                         } else {
                           selectProduct(p);
                         }
@@ -325,7 +415,7 @@ function ProductSearchInput({
                         )}
                         {hasVariants && (
                           <span className="text-[10px] text-navy/70 shrink-0">
-                            {p.variants.length} variants
+                            {countNoun(p.variants.length, "variant")}
                           </span>
                         )}
                       </div>
@@ -342,14 +432,17 @@ function ProductSearchInput({
                       <li key={v.id} className="bg-surface-raised/50">
                         <button
                           className="flex w-full items-center justify-between pl-8 pr-3 py-2 text-left hover:bg-surface-raised"
-                          onClick={() => selectProduct(v)}
+                          onClick={() => selectProduct(attachParent(v, p))}
                         >
                           <div className="flex items-center gap-1.5 min-w-0">
                             <span className="text-sm font-medium text-navy truncate">
-                              {v.variantName ?? v.name}
+                              {pickerProductName(v, p)}
                             </span>
                             {v.sku && (
                               <span className="text-xs text-navy/70 shrink-0">{v.sku}</span>
+                            )}
+                            {v.unit && (
+                              <span className="text-xs text-navy/70 shrink-0">{v.unit}</span>
                             )}
                           </div>
                           <span className="text-xs text-navy/70 shrink-0 ml-2">
@@ -384,29 +477,14 @@ function ProductSearchInput({
 
 // ─── Line item row ────────────────────────────────────────────────────────────
 
-interface LineItemState {
-  key: string;
-  productId?: string;
-  description: string;
-  qty: number;
-  unitPrice: number;
+interface LineItemState extends InvoiceUnitFields {
   discount: number;
   taxable: boolean;
-  regularPrice?: number; // original product price before special pricing
-  isSpecialPrice?: boolean; // true if a customer-specific price was applied
-  avgCost?: number; // average cost of the product (display only, never submitted)
   category?: string; // product category — for the per-category margin floor
-  unitsPerBox?: number; // set when product has box packaging
-  boxes?: number; // whole boxes (only when unitsPerBox is set)
-  pieces?: number; // extra loose pieces (only when unitsPerBox is set)
-  /** UI-only qty entry mode for case-packed lines. NEVER submitted — the payload always
-   *  carries {qty, boxes, pieces} and the per-case unitPrice. */
-  sellBy?: "case" | "unit";
-  /** #2696(c) SA-558e: the one-rule inputs (tier price, list, special?) — see sale-line-pricing. */
-  pricing?: SaleLinePricing;
-  /** Why a New-sale line's price moves off the customer's special price (sent then). */
-  overrideReason?: string;
 }
+
+/** Visible per-field label of the stacked (below md) line card; the table header carries them from md up. */
+const MOBILE_FIELD_LABEL = "mb-1 block text-xs font-medium text-navy/70 md:hidden";
 
 function createEmptyItem(): LineItemState {
   return {
@@ -434,18 +512,24 @@ function boxedUnitsPerBox(value: unknown): number | undefined {
   return Number.isFinite(n) && n > 1 ? n : undefined;
 }
 
-function lineTotal(item: LineItemState): number {
-  // Use the shared boxed-proration helper (same as the backend + order builder).
+function toTotalsLine(item: LineItemState): InvoiceTotalsLine {
+  // Boxed lines go through the shared pricing helper (same as the backend + order builder).
   // A plain qty*unitPrice OVER-charges boxed lines by unitsPerBox, because qty is
   // total pieces while unitPrice is the box price (money-discipline rule).
-  const subtotal = computeLineSubtotal({
+  return {
     unitPrice: Number(item.unitPrice),
     qty: Number(item.qty),
     boxes: item.boxes ?? null,
     pieces: item.pieces ?? null,
     unitsPerBox: item.unitsPerBox ?? null,
-  });
-  return Math.max(0, subtotal - Number(item.discount));
+    discount: Number(item.discount),
+    taxable: item.taxable,
+  };
+}
+
+/** One line's post-discount, boxed-aware, rounded total. */
+function lineTotal(item: LineItemState): number {
+  return computeInvoiceLineTotal(toTotalsLine(item));
 }
 
 // ─── Basis chooser ────────────────────────────────────────────────────────────
@@ -528,14 +612,7 @@ function ExistingOrderInvoiceFlow({ onBack }: { onBack: () => void }) {
   const [splitOrder, setSplitOrder] = React.useState<{
     id: string;
     orderNumber: string | null;
-    items: {
-      id: string;
-      productName: string;
-      qty: number;
-      invoicedQty: number;
-      unitPrice: number;
-      unit?: string;
-    }[];
+    items: SplitInvoiceLine[];
   } | null>(null);
 
   const billWhole = (orderId: string) => {
@@ -608,14 +685,9 @@ function ExistingOrderInvoiceFlow({ onBack }: { onBack: () => void }) {
                         setSplitOrder({
                           id: o.id,
                           orderNumber: o.orderNumber,
-                          items: (o.lineItems ?? []).map((li) => ({
-                            id: li.id,
-                            productName: li.product?.name ?? "Item",
-                            qty: Number(li.qty),
-                            invoicedQty: Number(li.invoicedQty ?? 0),
-                            unitPrice: Number(li.unitPrice),
-                            unit: li.product?.unit,
-                          })),
+                          items: (o.lineItems ?? []).map((li) =>
+                            toSplitInvoiceLine(li, li.product?.name ?? "Item"),
+                          ),
                         })
                       }
                     >
@@ -652,15 +724,101 @@ function ExistingOrderInvoiceFlow({ onBack }: { onBack: () => void }) {
   );
 }
 
+// ─── Selling unit controls (VU-4a, B1218) ────────────────────────────────────────
+
+/**
+ * The "Sell {product} by" picker for one line: the SHARED OrderLineUnitPicker, in the slot the Case | Unit switch
+ * used. It owns the row's hooks so the page's `.map()` never calls one. A line that has no picker (units off, not
+ * staff, no ladder) renders `legacy`: today's switch, untouched.
+ */
+function LineUnitControl({
+  item,
+  enabled,
+  tier,
+  onChoose,
+  legacy,
+}: {
+  item: LineItemState;
+  enabled: boolean;
+  tier: number;
+  onChoose: (key: string, option: Parameters<typeof chooseUnit>[2], refresh: boolean) => void;
+  legacy: React.ReactNode;
+}) {
+  const units = useProductUnits(item.productId ?? "", enabled && !!item.productId);
+  const hasPicker = enabled && !!item.productId && (units.data?.length ?? 0) > 0;
+  if (!hasPicker) return <>{legacy}</>;
+  return (
+    <div className="mt-1 [&_select]:h-8 max-md:[&_select]:h-11">
+      <OrderLineUnitPicker
+        line={pickerLineOf(item)}
+        tier={tier}
+        startOnDefaultUnit={!!item.startOnDefaultUnit}
+        onChange={(option, refresh) => onChoose(item.key, option, refresh)}
+      />
+    </div>
+  );
+}
+
+/** A level line's quantity: a whole count of the unit, with the piece total under it (none at factor 1). */
+function LevelCount({
+  item,
+  enabled,
+  locked,
+  onCount,
+}: {
+  item: LineItemState;
+  enabled: boolean;
+  locked: boolean;
+  onCount: (n: number) => void;
+}) {
+  const units = useProductUnits(item.productId ?? "", enabled && !!item.productId);
+  const factor = units.data?.find((u) => u.label === item.unitLabel)?.factorToBase ?? 0;
+  return (
+    <div className="flex flex-col gap-0.5" data-testid="level-count">
+      <div className="flex items-center gap-1">
+        <DecimalInput
+          decimals={0}
+          min={0}
+          readOnly={locked}
+          aria-disabled={locked || undefined}
+          aria-label={`${item.unitLabel} count`}
+          value={item.qty}
+          onChange={(v) => onCount(Math.max(0, Math.trunc(v ?? 0)))}
+          className="h-9 min-w-0 flex-1 rounded border border-surface-border bg-white px-2 text-right text-sm text-navy focus:border-transparent focus:outline-none focus:ring-1 focus:ring-brand-500 aria-disabled:opacity-60 max-md:h-11"
+        />
+        {/* The unit the count is in, worded by the vocabulary helper (apple-ux 2026-10-13: Qty never said "Case"). */}
+        <span className="shrink-0 text-xs text-navy/70">
+          {plural(item.unitLabel ?? "", item.qty)}
+        </span>
+      </div>
+      {factor > 1 && (
+        <span className="text-right text-[9px] text-navy/30">
+          {item.qty * factor} {unitWords().baseShortFor(item.qty * factor)}
+        </span>
+      )}
+    </div>
+  );
+}
+
 // ─── Page ─────────────────────────────────────────────────────────────────────
 
 export default function NewInvoicePage() {
+  const w = unitWords();
   const router = useRouter();
   const { setTitle } = usePageTitle();
   const { toast } = useToast();
   const createInvoice = useCreateInvoice();
   const updateInvoice = useUpdateInvoice();
   const createSale = useCreateSale();
+  const saleKey = useSaleAttemptKey(); // row 485: one Idempotency-Key per sale attempt
+  // Row 485: set while the outcome of a sale is UNKNOWN; the cart is locked behind it.
+  const [saleUnknown, setSaleUnknown] = React.useState<UnknownSale | null>(null);
+  const saleLocked = saleUnknown !== null;
+  const lastSaleRef = React.useRef<{
+    saleDto: CreateSaleDto & { paymentTermsLabel?: string };
+    saleLines: LineItemState[];
+    send: boolean;
+  } | null>(null);
 
   // Which kind of invoice the operator is creating, chosen on the basis screen.
   const [basis, setBasis] = React.useState<"existing" | "newSale" | "standalone" | null>(null);
@@ -676,6 +834,35 @@ export default function NewInvoicePage() {
   // Track the draft id we've previewed so subsequent "Preview" clicks update
   // the same draft instead of creating a new one each time.
   const [currentDraftId, setCurrentDraftId] = React.useState<string | null>(null);
+  // H4: the composer's own draft token: the updatedAt of the last create / update / read of THAT draft, sent as
+  // expectedUpdatedAt on the next PATCH (a 409 INVOICE_STALE then means someone else changed it).
+  const draftToken = React.useRef<string | undefined>(undefined);
+  /** Creates the preview draft, or saves the dto onto it; returns its id and keeps the token current. */
+  async function upsertDraft(dto: unknown): Promise<string> {
+    if (currentDraftId) {
+      const saved: any = await updateInvoice.mutateAsync({
+        id: currentDraftId,
+        ...(dto as object),
+        expectedUpdatedAt: draftToken.current,
+      } as any);
+      draftToken.current = saved?.updatedAt;
+      return currentDraftId;
+    }
+    const created: any = await createInvoice.mutateAsync(
+      dto as Parameters<typeof createInvoice.mutate>[0],
+    );
+    draftToken.current = created?.updatedAt;
+    setCurrentDraftId(created.id);
+    draft.clear(); // the invoice now exists as a server draft (ROW 447)
+    return created.id;
+  }
+  /** H4: someone else changed this draft since the composer last saw it: fixed copy, never the server's. */
+  const staleCopy = (err: unknown) => (isInvoiceStale(err) ? INVOICE_STALE_COPY : undefined);
+  /** The first PDF render writes the draft's pdfUrl (a new updatedAt): re-read the token after it. */
+  async function refreshDraftToken(id: string) {
+    const fresh = await apiClient.get<{ updatedAt?: string }>(`/invoices/${id}`);
+    draftToken.current = fresh.data?.updatedAt;
+  }
   const [previewUrl, setPreviewUrl] = React.useState<string | null>(null);
   const [previewLoading, setPreviewLoading] = React.useState(false);
 
@@ -816,6 +1003,222 @@ export default function NewInvoicePage() {
     return cp?.pricingTier ?? customer?.pricingTier ?? 1;
   };
 
+  // ── Selling units (VU-4a, B1218) ────────────────────────────────────────────
+  // Staff only, and only under flag.units_v1: everyone else keeps today's row byte for byte.
+  const queryClient = useQueryClient();
+  const { user: authUser } = useAuth();
+  const staff = isStaffRole(authUser?.role);
+  const unitsOn = useUnitsEnabled({ enabled: staff }) && staff;
+  const unitLines = React.useMemo(() => unitViews(items), [items]);
+  const {
+    resolveBeforeSubmit,
+    retry: retryUnits,
+    retrying,
+    statusFor,
+  } = useDefaultUnitResolver(
+    unitLines,
+    (fn) => setItems((prev) => updateViews(prev, fn, tierFor)),
+    tierFor,
+    staff,
+  );
+  const resolvingRef = React.useRef(false);
+  const setLineUnit = (key: string, option: Parameters<typeof chooseUnit>[2], refresh: boolean) =>
+    setItems((prev) => chooseUnit(prev, key, option, refresh, tierFor));
+  /** The row's pending-unit state: qty locked, the tap count, loading / failed + Retry. */
+  const pendingUnitOf = (it: LineItemState) => {
+    const status = statusFor(toUnitLine(it));
+    return status
+      ? {
+          status,
+          taps: pendingCount(toUnitLine(it)),
+          onRetry: () => void retryUnits(),
+          retrying,
+        }
+      : undefined;
+  };
+  /**
+   * Every submit path (Save, Save draft, Preview, Download, Create sale) resolves a line still waiting for its
+   * default unit FIRST. Nothing pending = the synchronous path, unchanged. Blocked = nothing is sent.
+   */
+  function withResolvedItems(run: (lines: LineItemState[]) => unknown) {
+    if (!items.some((i) => isPendingDefaultUnit(toUnitLine(i)))) return void run(items);
+    if (resolvingRef.current) return;
+    resolvingRef.current = true;
+    const before = items;
+    void resolveBeforeSubmit(unitViews(before))
+      .then(({ lines, blocked, folds }) => {
+        if (blocked.length) {
+          toast({
+            title: "Couldn't load the selling units. Check your connection and try again.",
+            variant: "error",
+          });
+          return;
+        }
+        const byKey = new Map(before.map((i) => [i.key, i]));
+        setItems((cur) => mergeResolvedInvoiceLines(cur, before, lines, folds, tierFor));
+        return run(lines.map((v) => fromUnitLine(byKey.get(v.tempId)!, v, tierFor)));
+      })
+      .finally(() => {
+        resolvingRef.current = false;
+      });
+  }
+  /**
+   * A refused unit (UNIT_NOT_OFFERED): the coded copy, and the stale ladder cache is dropped. A
+   * formula-led text refusal (e.g. an override reason starting with "-") gets its fixed copy first.
+   */
+  function unitRefusal(err: unknown, lines: LineItemState[]): string | null {
+    const textCopy = safeTextErrorCopy(err);
+    if (textCopy) return textCopy;
+    const copy = unitRefusalCopy(err);
+    if (copy)
+      for (const id of unitProductIds(lines))
+        void queryClient.invalidateQueries({ queryKey: productUnitsKey(id) });
+    return copy;
+  }
+
+  // ── Unsaved-draft persistence (ROW 447) ─────────────────────────────────────
+  // Inputs only (never a total): the footer totals below are recomputed from the lines on every render, including
+  // right after a restore. Offered, never applied silently; this page has no URL prefill to collide with.
+  const draftKey = invoiceDraftKey(authUser?.tenantSlug ?? getTenantCookie(), authUser?.id);
+  const draftForm = React.useMemo(
+    () =>
+      basis === "newSale" || basis === "standalone"
+        ? {
+            basis,
+            customer: customer && {
+              id: customer.id,
+              businessName: customer.businessName,
+              pricingTier: customer.pricingTier,
+              defaultPaymentTerms: customer.defaultPaymentTerms,
+            },
+            reference,
+            subject,
+            terms,
+            issueDate,
+            dueDate,
+            dueDateEdited: dueDateEditedRef.current,
+            termsText,
+            notes,
+            deliveredNow,
+            deliveredOn,
+            depositOpen,
+            depositPercent,
+            depositDueDate,
+            adjustment,
+            lines: items,
+          }
+        : null,
+    [
+      basis,
+      customer,
+      reference,
+      subject,
+      terms,
+      issueDate,
+      dueDate,
+      termsText,
+      notes,
+      deliveredNow,
+      deliveredOn,
+      depositOpen,
+      depositPercent,
+      depositDueDate,
+      adjustment,
+      items,
+    ],
+  );
+  const draft = useInvoiceDraft(draftKey, draftForm);
+  const [draftBusy, setDraftBusy] = React.useState(false);
+  const [draftNotice, setDraftNotice] = React.useState<string | null>(null);
+  const [draftRestored, setDraftRestored] = React.useState(false);
+  // A ref, not state: two quick clicks must not both start a restore before a re-render shows the busy flag.
+  const draftBusyRef = React.useRef(false);
+  const draftFormRef = React.useRef(draftForm);
+  draftFormRef.current = draftForm;
+  async function restoreDraft() {
+    if (!draft.offer || draftBusyRef.current) return;
+    draftBusyRef.current = true;
+    setDraftBusy(true);
+    const formAtStart = draftFormRef.current;
+    try {
+      const r = await checkDraftReferences(draft.offer.snapshot, (u) => apiClient.get(u));
+      // The form stays usable while the checks run. If it changed meanwhile, applying would overwrite what was typed.
+      if (draftFormRef.current !== formAtStart) {
+        setDraftNotice(DRAFT_CANCELLED_COPY);
+        return;
+      }
+      setDraftNotice(null);
+      const s = r.snapshot;
+      // The seeding effects above must not overwrite what the user had chosen.
+      didPrefillRef.current = true;
+      didSeedTermsRef.current = true;
+      seededCustomerIdRef.current = s.customer?.id ?? null;
+      // Terms that are just the customer's (or tenant's) default stay re-seedable; only a different pick is manual.
+      if (s.terms) {
+        termsSourceRef.current =
+          s.terms === s.customer?.defaultPaymentTerms
+            ? "customer"
+            : s.terms === invoiceSettings?.defaultTerms
+              ? "tenant"
+              : "manual";
+      }
+      dueDateEditedRef.current = s.dueDateEdited;
+      setBasis(s.basis);
+      setCustomer((s.customer as Customer | null) ?? null);
+      setReference(s.reference);
+      setSubject(s.subject);
+      setTerms(s.terms);
+      setIssueDate(s.issueDate || todayIso());
+      setDueDate(s.dueDate || addDaysIso(s.issueDate || todayIso(), 30));
+      setTermsText(s.termsText);
+      setNotes(s.notes);
+      setDeliveredNow(s.deliveredNow);
+      setDeliveredOn(s.deliveredOn || todayIso());
+      setDepositOpen(s.depositOpen);
+      setDepositPercent(s.depositPercent);
+      setDepositDueDate(s.depositDueDate);
+      setAdjustment(s.adjustment);
+      setItems(
+        s.lines.length
+          ? s.lines.map((l) => ({ ...createEmptyItem(), ...l }) as LineItemState)
+          : [createEmptyItem()],
+      );
+      setErrors({});
+      setDraftNotice(
+        draftNoticeCopy(
+          r.droppedLines,
+          r.customerCleared,
+          r.pricesUpdated,
+          r.unitsDropped,
+          r.pricesUnchecked,
+        ),
+      );
+      setDraftRestored(true);
+      draft.resolveOffer();
+    } finally {
+      draftBusyRef.current = false;
+      setDraftBusy(false);
+    }
+  }
+  const draftBanner = (
+    <InvoiceDraftBanner
+      summary={draft.offer ? draftSummary(draft.offer.snapshot, draft.offer.savedAt) : null}
+      notice={draftNotice}
+      restored={draftRestored}
+      warning={!!draft.offer && !isPristineForm(draftForm)}
+      busy={draftBusy}
+      onRestore={() => void restoreDraft()}
+      onDiscard={() => {
+        setDraftNotice(null);
+        draft.discard();
+      }}
+      onDismissNotice={() => {
+        setDraftNotice(null);
+        setDraftRestored(false);
+      }}
+    />
+  );
+
   // ── Auto-update due date when terms change ────────────────────────────────
 
   function handleTermsChange(t: string) {
@@ -855,9 +1258,13 @@ export default function NewInvoicePage() {
 
   // ── Calculations ────────────────────────────────────────────────────────────
 
-  const subtotal = items.reduce((s, it) => s + lineTotal(it), 0);
-  const tax = items.filter((it) => it.taxable).reduce((s, it) => s + lineTotal(it) * taxRate, 0);
-  const total = subtotal + tax + adjustment;
+  // The builder's "Adjustment" is signed: negative is an invoice discount, positive a surcharge
+  // (the same mapping the submit handlers send). All footer money is rounded once, in pricing.
+  const { subtotal, tax, total } = computeInvoiceTotals(items.map(toTotalsLine), {
+    discount: adjustment < 0 ? Math.abs(adjustment) : 0,
+    shipping: adjustment > 0 ? adjustment : 0,
+    taxRate,
+  });
   const totalQty = items.reduce((s, it) => s + Number(it.qty), 0);
 
   // ── Item helpers ────────────────────────────────────────────────────────────
@@ -876,6 +1283,10 @@ export default function NewInvoicePage() {
 
   function setLineSellBy(key: string, sellBy: "case" | "unit") {
     setItems((prev) => prev.map((it) => (it.key === key ? { ...it, sellBy } : it)));
+  }
+
+  function setLinePrice(key: string, unitPrice: number) {
+    setItems((prev) => prev.map((it) => (it.key === key ? withTypedPrice(it, unitPrice) : it)));
   }
 
   /** Unit mode: the operator types a TOTAL unit count; normalize it back into cases + loose.
@@ -898,21 +1309,21 @@ export default function NewInvoicePage() {
    * If the product is already on the invoice, just bump its qty by one box
    * (or 1 unit) — same ergonomics as the order scan flow.
    */
-  function addProductFromCatalog(product: any) {
+  function addProductFromCatalog(
+    product: any,
+    scanLevel?: SellLevel,
+    opts?: { startOnDefaultUnit?: boolean },
+  ) {
+    const dflt = unitsOn && !!opts?.startOnDefaultUnit;
     const upb = boxedUnitsPerBox(product.unitsPerBox);
-    const listPrice = parseFloat(String(product.pricePerUnit ?? 0));
-    // Per-product tier override first, then the customer's own tier ladder —
-    // a Tier-3 customer previously billed at LIST on every catalog add here.
-    const customerTier = customer?.pricingTier ?? 1;
-    const tierLadderPrice = isSpecialTier(customerTier)
-      ? getTierPrice(product, customerTier)
-      : undefined;
-    const specialPrice: number | undefined = priceMap[product.id] ?? tierLadderPrice;
-    const effectivePrice =
-      specialPrice != null && Number.isFinite(specialPrice) && specialPrice !== listPrice
-        ? specialPrice
-        : listPrice;
+    const fresh = catalogPricing(product, {
+      customerTier: customer?.pricingTier ?? 1,
+      customerPrice: priceMap[product.id],
+      lineTier: tierFor(product.id),
+    });
+    const { listPrice, effectivePrice } = fresh;
 
+    const seed = seedLineQty(upb, scanLevel);
     const lineItem: LineItemState = {
       key: Math.random().toString(36).slice(2),
       productId: product.id,
@@ -921,37 +1332,54 @@ export default function NewInvoicePage() {
       // standalone — "Strawberry" by itself doesn't tell the customer
       // which product family it came from.
       description: displayProductName(product),
-      qty: upb ? upb : 1,
+      qty: seed.qty ?? 1,
       unitPrice: effectivePrice,
       discount: 0,
       taxable: false,
       regularPrice: effectivePrice !== listPrice ? listPrice : undefined,
       isSpecialPrice: effectivePrice !== listPrice,
-      pricing: saleLinePricing(product, tierFor(product.id)),
+      pricing: fresh.pricing,
       avgCost: product.averageCost ? parseFloat(String(product.averageCost)) : undefined,
       category: product.category ?? undefined,
       unitsPerBox: upb,
-      boxes: upb ? 1 : undefined,
-      pieces: upb ? 0 : undefined,
+      boxes: seed.boxes,
+      pieces: seed.pieces,
+      unit: product.unit ?? "each",
+      listPrice,
+      priceType: effectivePrice !== listPrice ? "SPECIAL" : "STANDARD",
+      tierPrices: fresh.tierPrices,
+      startOnDefaultUnit: dflt || undefined,
+      pendingTaps: dflt ? 1 : undefined,
     };
 
-    const existing = items.find((it) => it.productId === product.id);
+    // With units on a re-add matches the PACK line of the product (a Case line is a different line); a unit line
+    // the default start resolves to folds into its twin later. Units off: today's match by product.
+    const matches = (it: LineItemState) =>
+      unitsOn ? matchesPackLine(it, product.id) : it.productId === product.id;
+    const existing = items.find(matches);
+    if (
+      existing &&
+      unitsOn &&
+      pendingScanDecision(
+        { startOnDefaultUnit: existing.startOnDefaultUnit, shaped: isShapedLine(existing) },
+        { mapsToDefault: dflt },
+      ) === "refuse"
+    ) {
+      // a scan of a different level while this line's default unit is still loading: refused, not counted
+      toast({ title: UNITS_LOADING_SCAN_MESSAGE, variant: "info" });
+      return;
+    }
     setItems((prev) => {
       // If product is already on the invoice, increment its qty instead of duplicating.
-      const existingIdx = prev.findIndex((it) => it.productId === product.id);
+      const existingIdx = prev.findIndex(matches);
       if (existingIdx >= 0) {
-        return prev.map((it, idx) => {
-          if (idx !== existingIdx) return it;
-          if (it.unitsPerBox) {
-            const nextBoxes = (it.boxes ?? 0) + 1;
-            return {
-              ...it,
-              boxes: nextBoxes,
-              qty: nextBoxes * it.unitsPerBox + (it.pieces ?? 0),
-            };
-          }
-          return { ...it, qty: Number(it.qty) + 1 };
-        });
+        return prev.map((it, idx) =>
+          idx !== existingIdx
+            ? it
+            : unitsOn
+              ? mergeIntoPackLine(it, scanLevel, dflt)
+              : bumpInvoiceLine(it, scanLevel),
+        );
       }
       // Replace the seeded blank row if it's the only one and is empty.
       const onlyBlank =
@@ -984,21 +1412,45 @@ export default function NewInvoicePage() {
     limit: 10,
     includeVariants: true,
   });
-  const scanSuggestions = React.useMemo(() => {
+  // Flat typeahead: variants (named under their parent) and standalones, never a FAMILY (B1215).
+  const scanFlat = React.useMemo(() => {
     if (!debouncedScanQuery.trim()) return [] as any[];
-    return ((scanProductsData?.data as any[]) ?? [])
-      .filter((p: any) => !p.parentProductId)
-      .slice(0, 8);
+    return sellableFlat<any>((scanProductsData?.data as any[]) ?? []);
   }, [scanProductsData, debouncedScanQuery]);
+  // The rows the dropdown shows, in order — the ONE list both the dropdown and Enter read (M3).
+  const scanSuggestions = React.useMemo(() => scanFlat.slice(0, 8), [scanFlat]);
+  const scanListOpen = !!scanQuery.trim() && scanSuggestions.length > 0;
+
+  /** Add a dropdown row (click, or Enter on an arrow-highlighted row). */
+  function pickScanSuggestion(p: any) {
+    addProductFromCatalog(p, undefined, { startOnDefaultUnit: true });
+    setScanQuery("");
+    setDebouncedScanQuery("");
+  }
+
+  // Arrow keys move the highlight (clamped); -1 = untouched, which Enter treats as the first shown
+  // row after the exact barcode/SKU check, so a wedge scanner never lands on a different product.
+  const scanNav = useListboxNav({
+    items: scanSuggestions,
+    open: scanListOpen,
+    onPick: pickScanSuggestion,
+    resetKey: scanQuery,
+    idPrefix: "invoice-scan",
+  });
+  const scanHighlight = scanNav.highlight >= 0 ? scanNav.highlight : 0;
 
   /**
    * Resolve a scanned/typed code to a product and add it to the invoice.
    * Mirrors the order modal's flow: barcode endpoint → product search by
    * SKU/name → create-product modal as last resort.
    */
-  async function handleScanCode(rawCode: string) {
+  async function handleScanCode(
+    rawCode: string,
+    /** The dropdown rows currently shown for this exact text: the search fallback reads these. */
+    shown?: { all: any[]; first: any },
+  ) {
     const code = rawCode.trim();
-    if (!code) return;
+    if (!code || saleLocked) return;
     setScanQuery("");
     setDebouncedScanQuery("");
     // 1) Dedicated barcode field
@@ -1007,24 +1459,35 @@ export default function NewInvoicePage() {
         .get(`/products/barcode/${encodeURIComponent(code)}`)
         .then((r) => r.data);
       if (product?.id) {
-        addProductFromCatalog(product);
+        addProductFromCatalog(product, scanLevelForHit(code, product), {
+          startOnDefaultUnit: scanCodeIsShared(code, product),
+        });
         return;
       }
     } catch {
       // not found by barcode — fall through to SKU/name search
     }
-    // 2) SKU / name search; prefer exact SKU
+    // 2) SKU / name search; prefer exact SKU, else the first row the operator was shown (M3).
+    // Without a shown list (a scan sent before the dropdown rendered) fetch the search instead.
     try {
-      const res = await apiClient
-        .get("/products", {
-          params: { search: code, limit: 10, isActive: true, includeVariants: true },
-        })
-        .then((r) => r.data);
-      const matches: any[] = res?.data ?? [];
+      let matches: any[];
+      if (shown) {
+        matches = shown.all;
+      } else {
+        const res = await apiClient
+          .get("/products", {
+            params: { search: code, limit: 10, isActive: true, includeVariants: true },
+          })
+          .then((r) => r.data);
+        // The same flattening the dropdown uses, so Enter adds what it WILL show first (M3 review).
+        matches = sellableFlat<any>(res?.data ?? []);
+      }
       const skuExact = matches.find((p) => (p.sku ?? "").toLowerCase() === code.toLowerCase());
-      const toAdd = skuExact ?? matches[0];
+      const toAdd = skuExact ?? (shown ? shown.first : matches[0]);
       if (toAdd) {
-        addProductFromCatalog(toAdd);
+        addProductFromCatalog(toAdd, scanLevelForHit(code, toAdd), {
+          startOnDefaultUnit: matches.length > 1 || scanCodeIsShared(code, toAdd),
+        });
         return;
       }
     } catch {
@@ -1052,6 +1515,18 @@ export default function NewInvoicePage() {
       }
       if (Number(it.qty) <= 0) {
         errs.items = "All quantities must be greater than 0.";
+        break;
+      }
+      // The server refuses a negative line; refuse it here, before the footer shows a total the
+      // saved invoice can never have.
+      if (lineTotal(it) < 0) {
+        errs.items = "Line discount cannot exceed the line total.";
+        break;
+      }
+      // H3b: the server judges a typed price on an invoice line exactly as on a sale — a special price
+      // moves only with a reason. Never send what it refuses.
+      if (saleLineNeedsReason(it)) {
+        errs.items = reasonRequiredMessage(it.description);
         break;
       }
     }
@@ -1082,13 +1557,16 @@ export default function NewInvoicePage() {
     if (!customer) errs.customer = "Please select a customer.";
     if (!issueDate) errs.issueDate = "Issue date is required.";
     if (!dueDate) errs.dueDate = "Due date is required.";
+    // H3b: the preview saves a draft through the same server rule (a special price needs its reason).
+    const needsReason = items.find((it) => Number(it.qty) > 0 && saleLineNeedsReason(it));
+    if (needsReason) errs.items = reasonRequiredMessage(needsReason.description);
     setErrors(errs);
     return Object.keys(errs).length === 0;
   }
 
   // ── Submit ──────────────────────────────────────────────────────────────────
 
-  function buildInvoiceDto(sendNow: boolean) {
+  function buildInvoiceDto(sendNow: boolean, lines: LineItemState[] = items) {
     return {
       customerId: customer!.id,
       dueDate: dueDate || undefined,
@@ -1110,7 +1588,7 @@ export default function NewInvoicePage() {
       // Always agrees with the dueDate above: picking a term derives the date,
       // and hand-typing a date clears the term, so the two can never disagree.
       paymentTermsLabel: terms || undefined,
-      items: items.map((it): CreateInvoiceItem => ({
+      items: lines.map((it): CreateInvoiceItem => ({
         productId: it.productId,
         description: it.description,
         qty: Number(it.qty),
@@ -1121,6 +1599,12 @@ export default function NewInvoicePage() {
         // Defense in depth (#1176 review): boxedUnitsPerBox() already keeps unitsPerBox out of
         // item state for upb<=1, but a read site should never trust a single write-side guard.
         ...((it.unitsPerBox ?? 0) > 1 ? { boxes: it.boxes ?? 0, pieces: it.pieces ?? 0 } : {}),
+        // A unit line (Case...) sends its count + per-unit price + label; never boxes/pieces.
+        ...unitPayload(it),
+        // H3b: the reason a special price moved (the same field the sale path sends)
+        ...(saleLineMovedOffSpecial(it) && it.overrideReason?.trim()
+          ? { overrideReason: it.overrideReason.trim() }
+          : {}),
       })),
       notes: notes.trim() || undefined,
       referenceNumber: reference.trim() || undefined,
@@ -1145,8 +1629,10 @@ export default function NewInvoicePage() {
    * operator is still typing. Wraps `buildInvoiceDto` so all the existing
    * field-mapping logic stays in one place.
    */
-  function buildPartialInvoiceDto(): ReturnType<typeof buildInvoiceDto> {
-    const dto = buildInvoiceDto(false) as ReturnType<typeof buildInvoiceDto> & {
+  function buildPartialInvoiceDto(
+    lines: LineItemState[] = items,
+  ): ReturnType<typeof buildInvoiceDto> {
+    const dto = buildInvoiceDto(false, lines) as ReturnType<typeof buildInvoiceDto> & {
       items?: CreateInvoiceItem[];
     };
     return {
@@ -1157,23 +1643,13 @@ export default function NewInvoicePage() {
     };
   }
 
-  async function handlePreview() {
+  async function handlePreview(lines: LineItemState[] = items) {
     // Lenient check — only customer + dates required. Empty rows are dropped.
     if (!validateForPreview()) return;
     setPreviewLoading(true);
     try {
-      const dto = buildPartialInvoiceDto();
-      let invoiceId = currentDraftId;
-      if (invoiceId) {
-        // Update the existing draft so the preview reflects edits
-        await updateInvoice.mutateAsync({ id: invoiceId, ...dto } as any);
-      } else {
-        const created: any = await createInvoice.mutateAsync(
-          dto as Parameters<typeof createInvoice.mutate>[0],
-        );
-        invoiceId = created.id;
-        setCurrentDraftId(invoiceId);
-      }
+      // Create the draft, or update it so the preview reflects edits (H4: with its token).
+      const invoiceId = await upsertDraft(buildPartialInvoiceDto(lines));
       // Two-step: render PDF on the API, then fetch its bytes through the
       // authenticated apiClient. The raw URL points at the storage uploads
       // endpoint which requires a JWT (RF-075); embedding it directly in an
@@ -1182,6 +1658,7 @@ export default function NewInvoicePage() {
       const meta = await apiClient.get<{ url: string }>(`/invoices/${invoiceId}/pdf`, {
         params: { refresh: 1 },
       });
+      await refreshDraftToken(invoiceId);
       if (!meta.data?.url) {
         setPreviewUrl(null);
       } else {
@@ -1195,7 +1672,8 @@ export default function NewInvoicePage() {
     } catch (err) {
       toast({
         title: "Couldn't build preview",
-        description: "Check your inputs and try again.",
+        description:
+          staleCopy(err) ?? unitRefusal(err, lines) ?? "Check your inputs and try again.",
         variant: "error",
       });
     } finally {
@@ -1211,25 +1689,16 @@ export default function NewInvoicePage() {
    * before finalising / emailing.
    */
   const [downloadLoading, setDownloadLoading] = React.useState(false);
-  async function handleDownload() {
+  async function handleDownload(lines: LineItemState[] = items) {
     if (!validateForPreview()) return;
     setDownloadLoading(true);
     try {
-      const dto = buildPartialInvoiceDto();
-      let invoiceId = currentDraftId;
-      if (invoiceId) {
-        await updateInvoice.mutateAsync({ id: invoiceId, ...dto } as any);
-      } else {
-        const created: any = await createInvoice.mutateAsync(
-          dto as Parameters<typeof createInvoice.mutate>[0],
-        );
-        invoiceId = created.id;
-        setCurrentDraftId(invoiceId);
-      }
+      const invoiceId = await upsertDraft(buildPartialInvoiceDto(lines));
       const meta = await apiClient.get<{ url: string; invoiceNumber?: string }>(
         `/invoices/${invoiceId}/pdf`,
         { params: { refresh: 1 } },
       );
+      await refreshDraftToken(invoiceId);
       if (!meta.data?.url) throw new Error("No PDF URL returned");
       const blob = await fetchPdfBlob(meta.data.url, apiClient);
       const blobUrl = URL.createObjectURL(blob);
@@ -1242,10 +1711,10 @@ export default function NewInvoicePage() {
       a.remove();
       setTimeout(() => URL.revokeObjectURL(blobUrl), 60_000);
       toast({ title: "Invoice downloaded", variant: "success" });
-    } catch {
+    } catch (err) {
       toast({
         title: "Couldn't generate PDF",
-        description: "Please try again.",
+        description: staleCopy(err) ?? unitRefusal(err, lines) ?? "Please try again.",
         variant: "error",
       });
     } finally {
@@ -1257,6 +1726,7 @@ export default function NewInvoicePage() {
     if (!currentDraftId) return;
     try {
       await apiClient.post(`/invoices/${currentDraftId}/send`);
+      draft.clear();
       toast({
         title: "Invoice sent",
         description: "The draft has been sent.",
@@ -1277,8 +1747,9 @@ export default function NewInvoicePage() {
    * invoice is always tied to an order. deliveredNow=true issues it immediately (van sale);
    * otherwise a PENDING order + DRAFT invoice is created (sent now only when `send`).
    */
-  function handleSubmitSale(send: boolean) {
-    const saleLines = items.filter((it) => it.productId && Number(it.qty) > 0);
+  function handleSubmitSale(send: boolean, lines: LineItemState[] = items) {
+    if (saleLocked) return;
+    const saleLines = lines.filter((it) => it.productId && Number(it.qty) > 0);
     // #2696(c) SA-558e: never send what the server refuses — a special price needs its reason.
     const needsReason = saleLines.find(saleLineNeedsReason);
     if (needsReason) {
@@ -1289,7 +1760,10 @@ export default function NewInvoicePage() {
     const saleItems = saleLines.map((it) => ({
       productId: it.productId as string,
       qty: Number(it.qty),
-      unitPrice: Number(it.unitPrice),
+      // A unit line omits unitPrice unless the operator moved it off the picked unit's price (the server
+      // prices it from the ladder; a typed price off it is a one-time DISCOUNTED / MANUAL price).
+      ...saleUnitPriceField(it),
+      ...unitPayload(it),
       ...(saleLineMovedOffSpecial(it) && it.overrideReason?.trim()
         ? { overrideReason: it.overrideReason.trim() }
         : {}),
@@ -1314,83 +1788,126 @@ export default function NewInvoicePage() {
     // deliveredAt at the full current timestamp rather than midnight UTC.
     const backdatedTo = issueDate && issueDate !== todayIso() ? issueDate : undefined;
 
+    const saleDto = {
+      customerId: customer!.id,
+      items: saleItems,
+      deliveredNow,
+      // The delivery-date picker: replaces deliveredNow's binary on the server
+      // (deliveredNow above is still sent for backward compat with older callers).
+      deliveredOn,
+      notes: notes.trim() || undefined,
+      ...(adjustment < 0 ? { discountAmount: Math.abs(adjustment) } : {}),
+      ...(backdatedTo ? { orderDate: backdatedTo } : {}),
+      // Only post a due date some term actually produced: the operator's
+      // pick, their hand-typed date, or the tenant default once it seeded.
+      // Otherwise this page's provisional +30 would override the server's
+      // resolveDefaultTerms() with a date nobody chose.
+      ...((terms || dueDateEditedRef.current) && dueDate ? { dueDate } : {}),
+      ...(termsText.trim() ? { terms: termsText.trim() } : {}),
+      // Structured "Net 30"-style label — orders.ts's CreateSaleDto isn't
+      // part of this package's file set, so the API-supported field is sent
+      // via a local cast rather than widening that shared type here.
+      ...(terms ? { paymentTermsLabel: terms } : {}),
+      send,
+    } as CreateSaleDto & { paymentTermsLabel?: string };
+    lastSaleRef.current = { saleDto, saleLines, send };
+    postSale(saleDto, saleLines, send);
+  }
+
+  /**
+   * Posts the sale under its Idempotency-Key (row 485). The same cart retried sends the SAME key, so the
+   * server resumes the stored sale. An UNKNOWN outcome (a 5xx, a dropped connection, an error that names a
+   * committed order or invoice) locks the cart behind SaleUnknownPanel; a success or a definitive refusal
+   * unlocks it.
+   */
+  function postSale(
+    saleDto: CreateSaleDto & { paymentTermsLabel?: string },
+    saleLines: LineItemState[],
+    send: boolean,
+  ) {
+    const idempotencyKey = saleKey.keyFor(JSON.stringify(saleDto));
     createSale.mutate(
-      {
-        customerId: customer!.id,
-        items: saleItems,
-        deliveredNow,
-        // The delivery-date picker: replaces deliveredNow's binary on the server
-        // (deliveredNow above is still sent for backward compat with older callers).
-        deliveredOn,
-        notes: notes.trim() || undefined,
-        ...(adjustment < 0 ? { discountAmount: Math.abs(adjustment) } : {}),
-        ...(backdatedTo ? { orderDate: backdatedTo } : {}),
-        // Only post a due date some term actually produced: the operator's
-        // pick, their hand-typed date, or the tenant default once it seeded.
-        // Otherwise this page's provisional +30 would override the server's
-        // resolveDefaultTerms() with a date nobody chose.
-        ...((terms || dueDateEditedRef.current) && dueDate ? { dueDate } : {}),
-        ...(termsText.trim() ? { terms: termsText.trim() } : {}),
-        // Structured "Net 30"-style label — orders.ts's CreateSaleDto isn't
-        // part of this package's file set, so the API-supported field is sent
-        // via a local cast rather than widening that shared type here.
-        ...(terms ? { paymentTermsLabel: terms } : {}),
-        send,
-      } as CreateSaleDto & { paymentTermsLabel?: string },
+      { ...saleDto, idempotencyKey },
       {
         onSuccess: (inv) => {
+          saleKey.settle({ ok: true });
+          setSaleUnknown(null);
+          draft.clear(); // the sale exists now (ROW 447)
           toast({
             title: deliveredNow ? "Sale recorded" : send ? "Invoice sent" : "Invoice saved",
             variant: "success",
           });
           router.push(`/invoices/${inv.id}`);
         },
-        onError: () =>
+        onError: (err: unknown) => {
+          saleKey.settle({ ok: false, error: err });
+          const unknown = saleKey.unknown();
+          setSaleUnknown(unknown);
+          if (unknown) {
+            // SA ruling (train S2): the outcome is unknown, so the sale may be committed. Drop the local draft:
+            // the in-memory locked cart keeps "Try again" with the held key, while a restore on a fresh page
+            // would mint a new key and could duplicate a committed sale.
+            draft.clear();
+            return; // locked: the panel offers Try again / Open / Start a new sale
+          }
           toast({
             title: "Could not create the sale",
-            description: "Please check your inputs and try again.",
+            description: unitRefusal(err, saleLines) ?? "Please check your inputs and try again.",
             variant: "error",
-          }),
+          });
+        },
       },
     );
   }
 
-  function handleSubmit(sendNow: boolean) {
+  function handleSubmit(sendNow: boolean, lines: LineItemState[] = items) {
     if (!validate()) return;
 
     // If we already have a preview draft, just update it and optionally send.
     if (currentDraftId) {
-      const dto = buildInvoiceDto(false);
-      updateInvoice.mutate({ id: currentDraftId, ...dto } as any, {
-        onSuccess: async () => {
-          if (sendNow) {
-            try {
-              await apiClient.post(`/invoices/${currentDraftId}/send`);
-            } catch {
-              // fall through to toast below
+      const dto = buildInvoiceDto(false, lines);
+      updateInvoice.mutate(
+        { id: currentDraftId, ...dto, expectedUpdatedAt: draftToken.current } as any,
+        {
+          onSuccess: async () => {
+            draft.clear(); // saved to the server draft (ROW 447)
+            let sendFailed = false;
+            if (sendNow) {
+              try {
+                await apiClient.post(`/invoices/${currentDraftId}/send`);
+              } catch {
+                // Row 466: never say "sent" when it was not. The draft is kept; open it.
+                sendFailed = true;
+              }
             }
-          }
-          toast({
-            title: sendNow ? "Invoice sent" : "Draft saved",
-            variant: "success",
-          });
-          router.push(`/invoices/${currentDraftId}`);
+            if (sendFailed) toast({ ...KEPT_DRAFT_TOAST, variant: "warning" });
+            else
+              toast({
+                title: sendNow ? "Invoice sent" : "Draft saved",
+                variant: "success",
+              });
+            router.push(`/invoices/${currentDraftId}`);
+          },
+          onError: (err: unknown) => {
+            toast({
+              title: "Failed to save invoice",
+              description:
+                staleCopy(err) ??
+                unitRefusal(err, lines) ??
+                "Please check your inputs and try again.",
+              variant: "error",
+            });
+          },
         },
-        onError: () => {
-          toast({
-            title: "Failed to save invoice",
-            description: "Please check your inputs and try again.",
-            variant: "error",
-          });
-        },
-      });
+      );
       return;
     }
 
-    const dto = buildInvoiceDto(sendNow);
+    const dto = buildInvoiceDto(sendNow, lines);
 
     createInvoice.mutate(dto as Parameters<typeof createInvoice.mutate>[0], {
       onSuccess: (invoice) => {
+        draft.clear();
         toast({
           title: sendNow ? "Invoice sent" : "Draft saved",
           description: sendNow
@@ -1400,10 +1917,20 @@ export default function NewInvoicePage() {
         });
         router.push(`/invoices/${invoice.id}`);
       },
-      onError: () => {
+      onError: (err: unknown) => {
+        // Row 466: the draft was committed and only the send failed. Open it; never offer a
+        // second create (a retry here would duplicate the invoice).
+        const keptId = keptDraftInvoiceId(err);
+        if (keptId) {
+          // Train S2 (SA): the server holds this invoice now; a restore + submit would create a SECOND one.
+          draft.clear();
+          toast({ ...KEPT_DRAFT_TOAST, variant: "warning" });
+          router.push(`/invoices/${keptId}`);
+          return;
+        }
         toast({
           title: "Failed to create invoice",
-          description: "Please check your inputs and try again.",
+          description: unitRefusal(err, lines) ?? "Please check your inputs and try again.",
           variant: "error",
         });
       },
@@ -1411,7 +1938,13 @@ export default function NewInvoicePage() {
   }
 
   // Pick the basis first so every invoice (except the explicit exception) is tied to an order.
-  if (basis === null) return <InvoiceBasisChooser onPick={setBasis} />;
+  if (basis === null)
+    return (
+      <>
+        <div className="mx-auto max-w-2xl px-6 pt-6">{draftBanner}</div>
+        <InvoiceBasisChooser onPick={setBasis} />
+      </>
+    );
   if (basis === "existing") return <ExistingOrderInvoiceFlow onBack={() => setBasis(null)} />;
 
   // basis === "newSale" | "standalone" — both share the customer + line-item form below.
@@ -1419,7 +1952,32 @@ export default function NewInvoicePage() {
 
   return (
     <div className="pb-24">
-      <div className="space-y-5 p-6">
+      {saleUnknown ? (
+        <SaleUnknownPanel
+          unknown={saleUnknown}
+          busy={createSale.isPending}
+          onTryAgain={() => {
+            const last = lastSaleRef.current;
+            if (last) postSale(last.saleDto, last.saleLines, last.send);
+          }}
+          onStartNew={() => {
+            saleKey.startNew();
+            lastSaleRef.current = null;
+            setSaleUnknown(null);
+          }}
+        />
+      ) : null}
+      {/* Row 485: a sale with an unknown outcome locks every control behind the panel above. */}
+      <fieldset
+        disabled={saleLocked}
+        data-locked={saleLocked ? "true" : undefined}
+        className={cn(
+          "m-0 min-w-0 space-y-5 border-0 p-6",
+          // locked behind the panel: visibly inert (the mobile composer dims to the same 0.45)
+          saleLocked && "cursor-not-allowed opacity-[0.45]",
+        )}
+      >
+        {draftBanner}
         {/* Back to the basis chooser */}
         <button
           onClick={() => setBasis(null)}
@@ -1699,13 +2257,28 @@ export default function NewInvoicePage() {
                     value={scanQuery}
                     onChange={(e) => setScanQuery(e.target.value)}
                     onKeyDown={(e) => {
+                      // ArrowDown from the untouched first-row highlight must land on row 2.
+                      if (e.key === "ArrowDown" && scanListOpen && scanNav.highlight < 0) {
+                        scanNav.setHighlight(0);
+                      }
+                      // An arrow-highlighted row is picked here and the key is consumed.
+                      if (scanNav.onKeyDown(e)) return;
                       if (e.key === "Enter") {
                         e.preventDefault();
-                        // If a suggestion is open and user picked one with mouse, that path
-                        // already handles add. Otherwise treat the typed text as a scan code.
-                        void handleScanCode(scanQuery);
+                        // Treat the typed text as a scan code (exact barcode / SKU wins); with
+                        // nothing exact, add the first row the dropdown shows. The shown list is
+                        // only trusted once it was built from this exact text (debounce settled).
+                        const settled = scanListOpen && debouncedScanQuery === scanQuery;
+                        void handleScanCode(
+                          scanQuery,
+                          settled ? { all: scanFlat, first: scanSuggestions[0] } : undefined,
+                        );
                       }
                     }}
+                    {...scanNav.inputProps}
+                    aria-activedescendant={
+                      scanListOpen ? scanNav.optionId(scanHighlight) : undefined
+                    }
                     placeholder="Scan barcode, or type product name / SKU and press Enter…"
                     className="h-10 w-full rounded-lg border border-surface-border bg-white pl-9 pr-9 text-sm text-navy placeholder:text-navy/30 focus:border-transparent focus:outline-none focus:ring-2 focus:ring-brand-500"
                   />
@@ -1728,20 +2301,29 @@ export default function NewInvoicePage() {
                           (Enter or click to add)
                         </span>
                       </p>
-                      <ul role="listbox" className="py-1">
-                        {scanSuggestions.map((p: any) => {
+                      <ul
+                        id={scanNav.listId}
+                        role="listbox"
+                        aria-label="Product suggestions"
+                        className="py-1"
+                      >
+                        {scanSuggestions.map((p: any, i: number) => {
                           const alreadyAdded = items.some((it) => it.productId === p.id);
                           return (
-                            <li key={p.id}>
+                            <li key={p.id} role="presentation">
                               <button
                                 type="button"
+                                role="option"
+                                id={scanNav.optionId(i)}
+                                aria-selected={i === scanHighlight}
                                 onMouseDown={(e) => {
                                   e.preventDefault();
-                                  addProductFromCatalog(p);
-                                  setScanQuery("");
-                                  setDebouncedScanQuery("");
+                                  pickScanSuggestion(p);
                                 }}
-                                className="flex w-full items-center gap-3 px-3 py-2 text-left text-sm text-navy transition-colors hover:bg-brand-50"
+                                className={cn(
+                                  "flex w-full items-center gap-3 px-3 py-2 text-left text-sm text-navy transition-colors hover:bg-brand-50",
+                                  i === scanHighlight && "bg-brand-50",
+                                )}
                               >
                                 <div className="min-w-0 flex-1">
                                   {(() => {
@@ -1759,7 +2341,10 @@ export default function NewInvoicePage() {
                                       <span className="italic">no SKU</span>
                                     )}
                                     {Number(p.unitsPerBox ?? 0) > 1 ? (
-                                      <span> · {p.unitsPerBox} per box</span>
+                                      <span>
+                                        {" "}
+                                        · {p.unitsPerBox} {w.base.short.other} per {w.pack.lower}
+                                      </span>
                                     ) : null}
                                   </p>
                                 </div>
@@ -1806,10 +2391,11 @@ export default function NewInvoicePage() {
                 {/* Table header */}
                 <div
                   className={cn(
-                    "gap-2 rounded-t bg-gray-50 px-1 py-2 text-xs font-semibold uppercase tracking-wider text-gray-500",
+                    // Below md the labels sit on each field of the stacked card, so the header hides.
+                    "hidden gap-2 rounded-t bg-gray-50 px-1 py-2 text-xs font-semibold uppercase tracking-wider text-gray-500 md:grid",
                     showAvgCost
-                      ? "grid grid-cols-[1fr_70px_100px_90px_72px_44px_32px]"
-                      : "grid grid-cols-[1fr_70px_100px_90px_44px_32px]",
+                      ? "md:grid-cols-[1fr_70px_100px_90px_72px_44px_32px]"
+                      : "md:grid-cols-[1fr_70px_100px_90px_44px_32px]",
                   )}
                 >
                   <span>Item Details</span>
@@ -1829,14 +2415,16 @@ export default function NewInvoicePage() {
                       else rowRefs.current.delete(item.key);
                     }}
                     className={cn(
-                      "items-center gap-2 border-b border-surface-border pb-2",
+                      // Below md: a 4-column stacked card (item + delete / qty + rate / discount + tax
+                      // / total). From md up: the table row it always was.
+                      "grid grid-cols-4 items-start gap-x-2 gap-y-3 border-surface-border max-md:mb-3 max-md:rounded-lg max-md:border max-md:bg-white max-md:p-3 md:items-center md:gap-y-2 md:border-b md:pb-2",
                       showAvgCost
-                        ? "grid grid-cols-[1fr_70px_100px_90px_72px_44px_32px]"
-                        : "grid grid-cols-[1fr_70px_100px_90px_44px_32px]",
+                        ? "md:grid-cols-[1fr_70px_100px_90px_72px_44px_32px]"
+                        : "md:grid-cols-[1fr_70px_100px_90px_44px_32px]",
                     )}
                   >
                     {/* Description / product search */}
-                    <div className="min-w-0">
+                    <div className="min-w-0 max-md:col-span-3 max-md:col-start-1 max-md:row-start-1">
                       <ProductSearchInput
                         value={item.description}
                         onCreateProduct={(searchTerm) => {
@@ -1854,7 +2442,7 @@ export default function NewInvoicePage() {
                           setCreateProductTargetIdx(idx);
                           setCreateProductOpen(true);
                         }}
-                        onChange={(desc, pid, price, avgCost, unitsPerBox, product) => {
+                        onChange={(desc, pid, price, avgCost, unitsPerBox, product, scanLevel) => {
                           // #2696(c) SA-558e: a picked product prices at the customer's TIER (the
                           // server's own baseline) — list for a tier customer would be refused.
                           const pricing =
@@ -1879,116 +2467,173 @@ export default function NewInvoicePage() {
                             isSpecialPrice: specialPrice !== undefined,
                             avgCost,
                             unitsPerBox: upb,
-                            boxes: upb ? 1 : undefined,
-                            pieces: upb ? 0 : undefined,
-                            qty: upb ? upb : item.qty || 1,
+                            // a new product: the unit state of the old one is gone; staff start on the default unit
+                            unit: (product as any)?.unit ?? "each",
+                            listPrice: price ? parseFloat(price) : undefined,
+                            priceType: specialPrice !== undefined ? "SPECIAL" : "STANDARD",
+                            tierPrices: product
+                              ? {
+                                  pricePerUnit: (product as any).pricePerUnit,
+                                  priceTier2: (product as any).priceTier2,
+                                  priceTier3: (product as any).priceTier3,
+                                  priceTier4: (product as any).priceTier4,
+                                  priceTier5: (product as any).priceTier5,
+                                }
+                              : undefined,
+                            unitLabel: undefined,
+                            packBase: undefined,
+                            packDisplay: undefined,
+                            pieceUnit: undefined,
+                            pieceUnitPrice: undefined,
+                            sellBy: undefined,
+                            priceEdited: false,
+                            startOnDefaultUnit: unitsOn && !!pid ? true : undefined,
+                            pendingTaps: unitsOn && !!pid ? 1 : undefined,
+                            ...(upb
+                              ? seedLineQty(upb, scanLevel)
+                              : { boxes: undefined, pieces: undefined, qty: item.qty || 1 }),
                           });
                         }}
                       />
-                      {/* Case | Unit sell-by toggle — UI-only; the payload always
-                          carries {qty, boxes, pieces} regardless of the mode. */}
-                      {item.unitsPerBox && item.unitsPerBox > 1 && (
-                        <div className="mt-1 inline-flex overflow-hidden rounded border border-surface-border text-[10px] font-medium">
-                          <button
-                            type="button"
-                            onClick={() => setLineSellBy(item.key, "case")}
-                            className={cn(
-                              "px-1.5 py-0.5 transition-colors",
-                              (item.sellBy ?? "case") === "case"
-                                ? "bg-brand-500 text-white"
-                                : "bg-white text-navy/70 hover:bg-surface-raised",
+                      {/* Sell-by picker (VU-4a): replaces the Case | Unit switch on a line that has a ladder
+                          (Box = Case mode, Piece = Unit mode). Everyone else keeps the switch. */}
+                      <LineUnitControl
+                        item={item}
+                        enabled={unitsOn}
+                        tier={tierFor(item.productId ?? "")}
+                        onChoose={setLineUnit}
+                        legacy={
+                          <>
+                            {/* {Pack} | {Base} sell-by toggle — UI-only; the payload always
+                                carries {qty, boxes, pieces} regardless of the mode. */}
+                            {item.unitsPerBox && item.unitsPerBox > 1 && (
+                              <div className="mt-1 inline-flex overflow-hidden rounded border border-surface-border text-[10px] font-medium">
+                                <button
+                                  type="button"
+                                  onClick={() => setLineSellBy(item.key, "case")}
+                                  className={cn(
+                                    "max-w-[104px] truncate whitespace-nowrap px-1.5 py-0.5 transition-colors max-md:min-h-11",
+                                    (item.sellBy ?? "case") === "case"
+                                      ? "bg-brand-500 text-white"
+                                      : "bg-white text-navy/70 hover:bg-surface-raised",
+                                  )}
+                                >
+                                  {pillLabel(w.pack.one)}
+                                </button>
+                                <button
+                                  type="button"
+                                  onClick={() => setLineSellBy(item.key, "unit")}
+                                  className={cn(
+                                    "max-w-[104px] truncate whitespace-nowrap border-l border-surface-border px-1.5 py-0.5 transition-colors max-md:min-h-11",
+                                    item.sellBy === "unit"
+                                      ? "bg-brand-500 text-white"
+                                      : "bg-white text-navy/70 hover:bg-surface-raised",
+                                  )}
+                                >
+                                  {pillLabel(w.base.one)}
+                                </button>
+                              </div>
                             )}
-                          >
-                            Case
-                          </button>
-                          <button
-                            type="button"
-                            onClick={() => setLineSellBy(item.key, "unit")}
-                            className={cn(
-                              "border-l border-surface-border px-1.5 py-0.5 transition-colors",
-                              item.sellBy === "unit"
-                                ? "bg-brand-500 text-white"
-                                : "bg-white text-navy/70 hover:bg-surface-raised",
-                            )}
-                          >
-                            Unit
-                          </button>
-                        </div>
-                      )}
+                          </>
+                        }
+                      />
+                      {pendingUnitOf(item) && <PendingUnitStatus pending={pendingUnitOf(item)!} />}
                     </div>
 
                     {/* Qty — box/piece mode if unitsPerBox set, otherwise plain number */}
-                    {(item.unitsPerBox ?? 0) > 1 ? (
-                      item.sellBy === "unit" ? (
-                        <div className="flex flex-col gap-0.5">
-                          <input
-                            type="number"
-                            min={0}
-                            value={item.qty}
-                            onChange={(e) =>
-                              setLineUnitQty(item.key, parseInt(e.target.value, 10) || 0)
-                            }
-                            onFocus={(e) => e.target.select()}
-                            className="w-full rounded border border-surface-border bg-white px-1 py-1 text-center text-xs font-semibold text-navy focus:border-transparent focus:outline-none focus:ring-1 focus:ring-brand-500"
-                            title="Total units"
-                          />
-                          <span className="text-[9px] text-navy/30 text-right">units</span>
-                        </div>
-                      ) : (
-                        <div className="flex flex-col gap-0.5">
-                          <div className="flex items-center gap-0.5">
+                    <div className="min-w-0 max-md:col-span-2 md:contents">
+                      <span className={MOBILE_FIELD_LABEL}>Qty</span>
+                      {item.unitLabel ? (
+                        <LevelCount
+                          item={item}
+                          enabled={unitsOn}
+                          locked={!!pendingUnitOf(item)}
+                          onCount={(n) => updateItem(item.key, { qty: n })}
+                        />
+                      ) : (item.unitsPerBox ?? 0) > 1 ? (
+                        item.sellBy === "unit" ? (
+                          <div className="flex flex-col gap-0.5">
                             <input
                               type="number"
                               min={0}
-                              value={item.boxes ?? 0}
-                              onChange={(e) => {
-                                const boxes = Math.max(0, parseInt(e.target.value, 10) || 0);
-                                const pieces = item.pieces ?? 0;
-                                updateItem(item.key, {
-                                  boxes,
-                                  qty: boxes * item.unitsPerBox! + pieces,
-                                });
-                              }}
+                              value={item.qty}
+                              onChange={(e) =>
+                                setLineUnitQty(item.key, parseInt(e.target.value, 10) || 0)
+                              }
                               onFocus={(e) => e.target.select()}
-                              className="w-8 rounded border border-surface-border bg-white px-1 py-1 text-center text-xs font-semibold text-navy focus:border-transparent focus:outline-none focus:ring-1 focus:ring-brand-500"
-                              title="Cases"
+                              className="aria-disabled:opacity-60 w-full rounded border border-surface-border bg-white px-1 py-1 text-center text-xs font-semibold text-navy focus:border-transparent focus:outline-none focus:ring-1 focus:ring-brand-500 max-md:h-11"
+                              readOnly={!!pendingUnitOf(item)}
+                              aria-disabled={!!pendingUnitOf(item) || undefined}
+                              title={`Total ${w.base.lowerOther}`}
                             />
-                            <span className="text-[10px] text-navy/70">c+</span>
-                            <input
-                              type="number"
-                              min={0}
-                              max={(item.unitsPerBox ?? 0) - 1}
-                              value={item.pieces ?? 0}
-                              onChange={(e) => {
-                                const pieces = Math.max(0, parseInt(e.target.value, 10) || 0);
-                                const boxes = item.boxes ?? 0;
-                                updateItem(item.key, {
-                                  pieces,
-                                  qty: boxes * item.unitsPerBox! + pieces,
-                                });
-                              }}
-                              onFocus={(e) => e.target.select()}
-                              className="w-8 rounded border border-surface-border bg-white px-1 py-1 text-center text-xs font-semibold text-navy focus:border-transparent focus:outline-none focus:ring-1 focus:ring-brand-500"
-                              title="Extra loose units"
-                            />
+                            <span className="text-[9px] text-navy/30 text-right">
+                              {w.base.short.other}
+                            </span>
                           </div>
-                          <span className="text-[9px] text-navy/30 text-right">
-                            {item.qty} units
-                          </span>
-                        </div>
-                      )
-                    ) : (
-                      <DecimalInput
-                        decimals={3}
-                        min={0}
-                        value={item.qty}
-                        onChange={(v) => updateItem(item.key, { qty: v ?? 0 })}
-                        className="h-9 rounded border border-surface-border bg-white px-2 text-right text-sm text-navy focus:border-transparent focus:outline-none focus:ring-1 focus:ring-brand-500"
-                      />
-                    )}
+                        ) : (
+                          <div className="flex flex-col gap-0.5">
+                            <div className="flex items-center gap-0.5 max-md:flex-wrap">
+                              <input
+                                type="number"
+                                min={0}
+                                value={item.boxes ?? 0}
+                                onChange={(e) => {
+                                  const boxes = Math.max(0, parseInt(e.target.value, 10) || 0);
+                                  const pieces = item.pieces ?? 0;
+                                  updateItem(item.key, {
+                                    boxes,
+                                    qty: boxes * item.unitsPerBox! + pieces,
+                                  });
+                                }}
+                                onFocus={(e) => e.target.select()}
+                                className="aria-disabled:opacity-60 w-8 rounded border border-surface-border bg-white px-1 py-1 text-center text-xs font-semibold text-navy focus:border-transparent focus:outline-none focus:ring-1 focus:ring-brand-500 max-md:h-11 max-md:w-11"
+                                readOnly={!!pendingUnitOf(item)}
+                                aria-disabled={!!pendingUnitOf(item) || undefined}
+                                title={w.pack.other}
+                              />
+                              <span className="text-[10px] text-navy/70">{w.pack.lower} +</span>
+                              <input
+                                type="number"
+                                min={0}
+                                max={(item.unitsPerBox ?? 0) - 1}
+                                value={item.pieces ?? 0}
+                                onChange={(e) => {
+                                  const pieces = Math.max(0, parseInt(e.target.value, 10) || 0);
+                                  const boxes = item.boxes ?? 0;
+                                  updateItem(item.key, {
+                                    pieces,
+                                    qty: boxes * item.unitsPerBox! + pieces,
+                                  });
+                                }}
+                                onFocus={(e) => e.target.select()}
+                                className="aria-disabled:opacity-60 w-8 rounded border border-surface-border bg-white px-1 py-1 text-center text-xs font-semibold text-navy focus:border-transparent focus:outline-none focus:ring-1 focus:ring-brand-500 max-md:h-11 max-md:w-11"
+                                readOnly={!!pendingUnitOf(item)}
+                                aria-disabled={!!pendingUnitOf(item) || undefined}
+                                title={`Extra ${w.base.lowerOther}`}
+                              />
+                            </div>
+                            <span className="text-[9px] text-navy/30 text-right">
+                              {item.qty} {w.baseShortFor(item.qty)}
+                            </span>
+                          </div>
+                        )
+                      ) : (
+                        <DecimalInput
+                          decimals={3}
+                          min={0}
+                          readOnly={!!pendingUnitOf(item)}
+                          aria-disabled={!!pendingUnitOf(item) || undefined}
+                          value={item.qty}
+                          onChange={(v) => updateItem(item.key, { qty: v ?? 0 })}
+                          aria-label="Qty"
+                          className="h-9 rounded border border-surface-border bg-white px-2 text-right text-sm text-navy focus:border-transparent focus:outline-none focus:ring-1 focus:ring-brand-500 aria-disabled:opacity-60 max-md:h-11 max-md:w-full"
+                        />
+                      )}
+                    </div>
 
                     {/* Unit price */}
-                    <div>
+                    <div className="max-md:col-span-2">
+                      <span className={MOBILE_FIELD_LABEL}>Rate</span>
                       {item.isSpecialPrice && item.regularPrice !== undefined && (
                         <p className="text-xs line-through text-navy/70 mb-0.5 text-right">
                           ${item.regularPrice.toFixed(2)}
@@ -1997,13 +2642,15 @@ export default function NewInvoicePage() {
                       <MoneyInput
                         min={0}
                         value={item.unitPrice}
-                        onChange={(v) => updateItem(item.key, { unitPrice: v ?? 0 })}
+                        onChange={(v) => setLinePrice(item.key, v ?? 0)}
+                        readOnly={!!pendingUnitOf(item)}
+                        aria-disabled={!!pendingUnitOf(item) || undefined}
                         aria-label="Unit price"
-                        className="h-9 w-full rounded border border-surface-border bg-white px-2 text-right text-sm text-navy focus:border-transparent focus:outline-none focus:ring-1 focus:ring-brand-500"
+                        className="h-9 w-full rounded border border-surface-border bg-white px-2 text-right text-sm text-navy focus:border-transparent focus:outline-none focus:ring-1 focus:ring-brand-500 aria-disabled:opacity-60 max-md:h-11"
                       />
-                      {/* #2696(c) SA-558e: off the customer's special price ⇒ a reason, as the
-                          server requires on a sale (pricing's decideStaffOverride). */}
-                      {isSale && saleLineMovedOffSpecial(item) && (
+                      {/* #2696(c) SA-558e / H3b: off the customer's special price ⇒ a reason, as the
+                          server requires on a sale AND on an invoice (pricing's decideStaffOverride). */}
+                      {saleLineMovedOffSpecial(item) && (
                         <input
                           type="text"
                           maxLength={200}
@@ -2013,19 +2660,20 @@ export default function NewInvoicePage() {
                           aria-invalid={saleLineNeedsReason(item)}
                           placeholder="Reason (required)"
                           className={cn(
-                            "mt-1 h-8 w-full rounded border bg-white px-2 text-xs text-navy placeholder:text-navy/40 focus:outline-none focus:ring-1 focus:ring-brand-500",
+                            "mt-1 h-8 w-full rounded border bg-white px-2 text-xs max-md:h-11 max-md:text-sm text-navy placeholder:text-navy/40 focus:outline-none focus:ring-1 focus:ring-brand-500",
                             saleLineNeedsReason(item) ? "border-danger" : "border-surface-border",
                           )}
                         />
                       )}
                       {item.unitsPerBox && item.unitsPerBox > 1 && item.unitPrice > 0 && (
                         <p className="text-[9px] text-navy/70 text-right mt-0.5">
-                          ${perUnitPrice(item.unitPrice, item.unitsPerBox)?.toFixed(2)}/pc
+                          ${perUnitPrice(item.unitPrice, item.unitsPerBox)?.toFixed(2)}/
+                          {w.base.short.one}
                         </p>
                       )}
                       {/* Live cost & margin — the negotiation floor (shared component) */}
                       {item.productId && (
-                        <div className="mt-0.5">
+                        <div className="mt-0.5 max-md:[&_button]:min-h-11">
                           <MarginHint
                             unitPrice={item.unitPrice}
                             unitCost={item.avgCost}
@@ -2033,7 +2681,7 @@ export default function NewInvoicePage() {
                             productId={item.productId}
                             floor={floorForCategory(marginConfig, item.category)}
                             acked={floorAcked.has(item.key)}
-                            onSetToFloor={(fp) => updateItem(item.key, { unitPrice: fp })}
+                            onSetToFloor={(fp) => setLinePrice(item.key, fp)}
                             onSellAnyway={() =>
                               setFloorAcked((prev) => new Set(prev).add(item.key))
                             }
@@ -2043,40 +2691,57 @@ export default function NewInvoicePage() {
                     </div>
 
                     {/* Discount */}
-                    <MoneyInput
-                      min={0}
-                      placeholder="0.00"
-                      value={item.discount || null}
-                      onChange={(v) => updateItem(item.key, { discount: v ?? 0 })}
-                      className="h-9 rounded border border-surface-border bg-white px-2 text-right text-sm text-navy placeholder:text-navy/30 focus:border-transparent focus:outline-none focus:ring-1 focus:ring-brand-500"
-                    />
+                    <div className="max-md:col-span-2 md:contents">
+                      <span className={MOBILE_FIELD_LABEL}>Discount</span>
+                      <MoneyInput
+                        aria-label="Line discount"
+                        min={0}
+                        placeholder="0.00"
+                        value={item.discount || null}
+                        onChange={(v) => updateItem(item.key, { discount: v ?? 0 })}
+                        className="h-9 rounded border border-surface-border bg-white px-2 text-right text-sm text-navy placeholder:text-navy/30 focus:border-transparent focus:outline-none focus:ring-1 focus:ring-brand-500 max-md:h-11 max-md:w-full"
+                      />
+                    </div>
 
                     {/* Avg cost (optional column) */}
                     {showAvgCost && (
-                      <span className="text-right text-xs text-navy/70">
-                        {item.avgCost ? "$" + item.avgCost.toFixed(2) : "—"}
-                      </span>
+                      <div className="max-md:col-span-2 md:contents">
+                        <span className={MOBILE_FIELD_LABEL}>Avg. cost</span>
+                        <span className="text-right text-xs text-navy/70 max-md:block max-md:text-sm">
+                          {item.avgCost ? "$" + item.avgCost.toFixed(2) : "—"}
+                        </span>
+                      </div>
                     )}
 
                     {/* Taxable checkbox */}
-                    <label className="flex cursor-pointer items-center justify-center">
+                    <label className="flex cursor-pointer items-center justify-center max-md:col-span-2 max-md:min-h-11 max-md:justify-start max-md:gap-2">
                       <input
                         type="checkbox"
                         checked={item.taxable}
                         onChange={(e) => updateItem(item.key, { taxable: e.target.checked })}
-                        className="h-4 w-4 rounded border-surface-border text-brand-500 focus:ring-brand-500"
+                        className="h-4 w-4 rounded border-surface-border text-brand-500 focus:ring-brand-500 max-md:h-5 max-md:w-5"
                       />
+                      <span className="text-sm font-medium text-navy/70 md:hidden">Tax</span>
                     </label>
 
                     {/* Remove */}
                     <button
                       onClick={() => removeItem(item.key)}
                       disabled={items.length === 1}
-                      className="flex items-center justify-center rounded p-1 text-navy/30 hover:text-danger transition-colors disabled:opacity-30 disabled:cursor-not-allowed"
+                      className="flex items-center justify-center rounded p-1 text-navy/30 hover:text-danger transition-colors disabled:opacity-30 disabled:cursor-not-allowed max-md:col-start-4 max-md:row-start-1 max-md:h-11 max-md:w-11 max-md:justify-self-end"
                       title="Remove item"
                     >
                       <Trash2 className="h-4 w-4" />
                     </button>
+
+                    {/* Line total — inside the card below md (the desktop strip below is md-only) */}
+                    <div
+                      data-testid="line-total-mobile"
+                      className="flex items-center justify-end gap-2 text-sm font-semibold text-navy max-md:col-span-2 md:hidden"
+                    >
+                      <span className="text-xs font-medium text-navy/70">Line total</span>
+                      {fmt(lineTotal(item))}
+                    </div>
                   </div>
                 ))}
 
@@ -2085,10 +2750,10 @@ export default function NewInvoicePage() {
                   <div
                     key={item.key + "-total"}
                     className={cn(
-                      "gap-2 px-1",
+                      "hidden gap-2 px-1 md:grid",
                       showAvgCost
-                        ? "grid grid-cols-[1fr_70px_100px_90px_72px_44px_32px]"
-                        : "grid grid-cols-[1fr_70px_100px_90px_44px_32px]",
+                        ? "md:grid-cols-[1fr_70px_100px_90px_72px_44px_32px]"
+                        : "md:grid-cols-[1fr_70px_100px_90px_44px_32px]",
                     )}
                   >
                     <span />
@@ -2218,7 +2883,7 @@ export default function NewInvoicePage() {
             </Card>
           </div>
         </div>
-      </div>
+      </fieldset>
 
       <InlineCreateProductModal
         isOpen={createProductOpen}
@@ -2261,62 +2926,63 @@ export default function NewInvoicePage() {
           <div className="flex items-center gap-2">
             {isSale ? (
               deliveredNow ? (
-                <Button
-                  onClick={() => handleSubmitSale(true)}
+                <WriteButton
+                  onClick={() => withResolvedItems((l) => handleSubmitSale(true, l))}
                   loading={createSale.isPending}
-                  disabled={createSale.isPending}
+                  disabled={createSale.isPending || saleLocked}
                 >
                   Create sale &amp; invoice
-                </Button>
+                </WriteButton>
               ) : (
                 // Deliver later → only create the draft. It mirrors the order and
                 // becomes sendable after the order is delivered (never sent here).
-                <Button
-                  onClick={() => handleSubmitSale(false)}
+                <WriteButton
+                  onClick={() => withResolvedItems((l) => handleSubmitSale(false, l))}
                   loading={createSale.isPending}
-                  disabled={createSale.isPending}
+                  disabled={createSale.isPending || saleLocked}
                 >
                   Save draft invoice
-                </Button>
+                </WriteButton>
               )
             ) : (
               <>
                 <Button
                   variant="secondary"
                   leftIcon={<Eye className="h-4 w-4" />}
-                  onClick={handlePreview}
+                  onClick={() => withResolvedItems((l) => handlePreview(l))}
                   loading={previewLoading}
                   disabled={previewLoading || createInvoice.isPending}
                 >
                   Preview
                 </Button>
-                <Button
+                <WriteButton
                   variant="secondary"
                   leftIcon={<Download className="h-4 w-4" />}
-                  onClick={handleDownload}
+                  onClick={() => withResolvedItems((l) => handleDownload(l))}
                   loading={downloadLoading}
                   disabled={downloadLoading || createInvoice.isPending || updateInvoice.isPending}
                   title="Save as draft and download the PDF without sending"
                 >
                   Download
-                </Button>
-                <Button
+                </WriteButton>
+                <WriteButton
                   variant="secondary"
-                  onClick={() => handleSubmit(false)}
+                  onClick={() => withResolvedItems((l) => handleSubmit(false, l))}
                   loading={createInvoice.isPending || updateInvoice.isPending}
                   disabled={createInvoice.isPending || updateInvoice.isPending}
                 >
-                  Save as Draft
-                </Button>
-                <Button
-                  onClick={() => handleSubmit(true)}
+                  Save as draft
+                </WriteButton>
+                <WriteButton
+                  onClick={() => withResolvedItems((l) => handleSubmit(true, l))}
                   loading={createInvoice.isPending || updateInvoice.isPending}
                   disabled={createInvoice.isPending || updateInvoice.isPending}
                 >
                   Save and Send
-                </Button>
+                </WriteButton>
               </>
             )}
+            <ReadOnlyHint className="ml-2 text-xs text-slate-600" />
             <button
               onClick={() => router.push("/invoices")}
               className="px-3 py-1.5 text-sm text-navy/70 hover:text-navy transition-colors"

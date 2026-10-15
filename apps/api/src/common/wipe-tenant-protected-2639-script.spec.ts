@@ -4,15 +4,16 @@ import path from "node:path";
 import { pathToFileURL } from "node:url";
 
 /**
- * #2639 / SA-547 — wipe-tenant-fresh-start refuses a PROTECTED target (paying, or linked to a Stripe
- * subscription) in every mode unless `--allow-paying-tenant`; with the flag, `--execute` also needs
- * the typed phrase `WIPE PAYING <slug>` after the slug type-back.
+ * #2639 / SA-547 + row 195 — wipe-tenant-fresh-start refuses a PROTECTED target (paying, linked to a
+ * Stripe subscription, or named in PROTECTED_TENANT_SLUGS) in every mode unless
+ * `--allow-protected <tenantId> --backup-taken` AND a typed `ALLOW PROTECTED <tenantId>` at a real
+ * terminal (live-target-guard.cjs confirmProtectedOverride). `--allow-paying-tenant` is retired.
  *
  * Pure half: `checkProtectedTarget` / the parser, evaluated in a child node (the module is ESM).
+ * Process half: the script itself run as a child, up to the point it would dial (nothing dials).
  * Source half: the script reads the target's subscription from the SAME client and runs the guard
- * BEFORE any count or write, and asks the phrase AFTER the slug type-back and BEFORE the wipe.
- * The executed refusal/flag runs against a real database are F2's (qa-* tenants, a fake
- * stripeSubId only).
+ * BEFORE any count or write. The executed refusal against a real database is F2's (qa-* tenants,
+ * a fake stripeSubId only).
  */
 const API_DIR = path.resolve(__dirname, "../..");
 const SCRIPT = path.join(API_DIR, "scripts", "wipe-tenant-fresh-start.js");
@@ -20,19 +21,44 @@ const LIB_HREF = pathToFileURL(path.join(API_DIR, "scripts", "lib", "fresh-start
 
 const CASES = `
 import * as t from "${LIB_HREF}";
-const T = { id: "t-1", slug: "qa-2639", name: "QA 2639", status: "ACTIVE", class: "PRODUCTION", deletedAt: null };
-const check = (tenant, sub, allowPayingTenant) => t.checkProtectedTarget({ tenant, sub, allowPayingTenant });
+const T = { id: "t-1", slug: "acme-2639", name: "Acme 2639", status: "ACTIVE", class: "PRODUCTION", deletedAt: null };
+const LISTED = new Set(["acme-2639"]);
+const check = (tenant, sub, protectedSlugs = new Set()) => t.checkProtectedTarget({ tenant, sub, protectedSlugs });
 console.log(JSON.stringify({
-  paying: check(T, { planKey: "STARTER", stripeSubId: null }, false),
-  stripeOnly: check({ ...T, class: "TEST", status: "READ_ONLY" }, { planKey: null, stripeSubId: "sub_fake_qa" }, false),
-  payingFlag: check(T, { planKey: "STARTER", stripeSubId: null }, true),
-  plain: check({ ...T, class: "TEST" }, { planKey: "STARTER", stripeSubId: null }, false),
-  noSub: check(T, null, false),
-  deletedStripe: check({ ...T, class: "TEST", deletedAt: "2026-01-01" }, { planKey: null, stripeSubId: "sub_fake_qa" }, false),
-  parse: t.parseFreshStartArgs(["qa-2639", "--local", "--allow-paying-tenant"]),
-  parseDefault: t.parseFreshStartArgs(["qa-2639", "--local"]),
+  paying: check(T, { planKey: "STARTER", stripeSubId: null, couponFull: false }),
+  stripeOnly: check({ ...T, class: "TEST", status: "READ_ONLY" }, { planKey: null, stripeSubId: "sub_fake_qa", couponFull: false }),
+  envListed: check({ ...T, status: "TRIAL" }, null, LISTED),
+  envListedDeleted: check({ ...T, status: "TRIAL", deletedAt: "2026-01-01" }, null, LISTED),
+  plain: check({ ...T, class: "TEST" }, { planKey: "STARTER", stripeSubId: null, couponFull: false }),
+  noSub: check(T, null),
+  deletedStripe: check({ ...T, class: "TEST", deletedAt: "2026-01-01" }, { planKey: null, stripeSubId: "sub_fake_qa", couponFull: false }),
+  parse: t.parseFreshStartArgs(["acme-2639", "--local", "--allow-protected", "t-1", "--backup-taken"]),
+  parseDefault: t.parseFreshStartArgs(["acme-2639", "--local"]),
+  parseRetired: t.parseFreshStartArgs(["acme-2639", "--local", "--allow-paying-tenant"]),
+  parseNoValue: t.parseFreshStartArgs(["acme-2639", "--allow-protected"]),
 }));
 `;
+
+// A live-path invocation that stops (exit 1) at the protected-slugs load, before any connection.
+const PROXY_ENV = {
+  POSTGRES_USER: "u",
+  POSTGRES_PASSWORD: "p",
+  POSTGRES_DB: "railway",
+  RAILWAY_TCP_PROXY_DOMAIN: "proxy.example.net",
+  RAILWAY_TCP_PROXY_PORT: "5432",
+};
+const runScript = (args: string[], env: Record<string, string>) => {
+  const clean: Record<string, string> = {};
+  for (const [k, v] of Object.entries(process.env))
+    if (v !== undefined && !k.startsWith("PROTECTED_") && !k.startsWith("DATABASE")) clean[k] = v;
+  return spawnSync(process.execPath, [SCRIPT, ...args], {
+    encoding: "utf8",
+    timeout: 60_000,
+    env: { ...clean, ...env },
+    stdio: ["ignore", "pipe", "pipe"],
+  });
+};
+const LIVE = ["acme-2639", "--live-tenant-override", "--exclude-tenant", "acme-other"];
 
 describe("#2639 wipe-tenant-fresh-start refuses a protected target", () => {
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -46,33 +72,69 @@ describe("#2639 wipe-tenant-fresh-start refuses a protected target", () => {
     r = JSON.parse(res.stdout.trim());
   });
 
-  it("a paying target without the flag is refused, naming the paying arm", () => {
-    expect(r.paying.ok).toBe(false);
+  it("a paying target is refused, naming the paying arm and the new override", () => {
+    expect(r.paying).toMatchObject({ protected: true, arm: "paying" });
     expect(r.paying.reason).toMatch(/PAYING/);
     expect(r.paying.reason).toMatch(/tenant t-1 is protected/);
-    expect(r.paying.reason).toMatch(/--allow-paying-tenant/);
+    expect(r.paying.reason).toMatch(/--allow-protected <tenantId>/);
+    expect(r.paying.reason).not.toMatch(/--allow-paying-tenant/);
   });
 
   it("the Stripe arm ALONE protects (TEST class, READ_ONLY, no planKey), naming Stripe", () => {
-    expect(r.stripeOnly.ok).toBe(false);
+    expect(r.stripeOnly).toMatchObject({ protected: true, arm: "stripe-linked" });
     expect(r.stripeOnly.reason).toMatch(/Stripe/);
   });
 
-  it("with --allow-paying-tenant the guard passes but demands the phrase WIPE PAYING <slug>", () => {
-    expect(r.payingFlag).toMatchObject({ ok: true, phrase: "WIPE PAYING qa-2639" });
-    expect(r.payingFlag.line).toMatch(/PROTECTED \(paying\)/);
+  it("row 195: an env-listed TRIAL tenant (no plan, no Stripe) is protected", () => {
+    expect(r.envListed).toMatchObject({ protected: true, arm: "env-listed" });
+    expect(r.envListed.reason).toMatch(/PROTECTED_TENANT_SLUGS/);
   });
 
-  it("an unprotected target is unchanged: ok, no phrase, no line", () => {
+  it("row 195: a soft-deleted env-listed tenant is STILL protected", () => {
+    expect(r.envListedDeleted).toMatchObject({ protected: true, arm: "env-listed" });
+  });
+
+  it("an unprotected target is unchanged", () => {
     for (const k of ["plain", "noSub", "deletedStripe"])
-      expect(r[k]).toEqual({ ok: true, phrase: null, line: null });
+      expect(r[k]).toEqual({ protected: false, arm: null, reason: null });
   });
 
   it("SA-547a: no refusal names the tenant — id + arm only, never its slug or business name", () => {
-    for (const k of ["paying", "stripeOnly"]) {
-      expect(r[k].reason).not.toMatch(/qa-2639/);
-      expect(r[k].reason).not.toMatch(/QA 2639/);
+    for (const k of ["paying", "stripeOnly", "envListed"]) {
+      expect(r[k].reason).not.toMatch(/acme-2639/);
+      expect(r[k].reason).not.toMatch(/Acme 2639/);
     }
+  });
+
+  it("--allow-paying-tenant is retired: an unknown argument; --allow-protected needs a value", () => {
+    expect(r.parseRetired).toEqual({ error: "unknown argument: --allow-paying-tenant" });
+    expect(r.parseNoValue).toEqual({ error: "--allow-protected needs a tenant id" });
+    expect(r.parse).toMatchObject({ allowProtected: "t-1", backupTaken: true });
+    expect(r.parseDefault.allowProtected).toBeNull();
+  });
+
+  it("the script exits 2 on --allow-paying-tenant before touching anything", () => {
+    const res = runScript(["acme-2639", "--local", "--allow-paying-tenant"], {});
+    expect(res.status).toBe(2);
+    expect(res.stderr).toMatch(/unknown argument: --allow-paying-tenant/);
+  });
+
+  it("row 195: unset PROTECTED_TENANT_SLUGS on a non-local target is refused before any dial", () => {
+    const res = runScript(LIVE, PROXY_ENV);
+    expect(res.status).toBe(1);
+    expect(res.stderr).toMatch(/PROTECTED_TENANT_SLUGS is not set/);
+    expect(res.stdout + res.stderr).not.toMatch(/acme-2639/);
+  });
+
+  it.each([
+    ["an invalid entry", "acme foods"],
+    ["a test-pattern slug", "qa-foods"],
+    ["a duplicate", "acme-foods,acme-foods"],
+  ])("row 195: %s in PROTECTED_TENANT_SLUGS refuses everything, printing no slug", (_l, value) => {
+    const res = runScript(LIVE, { ...PROXY_ENV, PROTECTED_TENANT_SLUGS: value });
+    expect(res.status).toBe(1);
+    expect(res.stderr).toMatch(/PROTECTED_TENANT_SLUGS entry/);
+    expect(res.stdout + res.stderr).not.toMatch(/acme-2639|acme foods|qa-foods|acme-foods/);
   });
 
   it("HIGH-2 source: no output of the wipe script or its target module interpolates a tenant NAME", () => {
@@ -130,29 +192,26 @@ describe("#2639 wipe-tenant-fresh-start refuses a protected target", () => {
     for (const k of keys) expect({ k, exists: sub.has(k) }).toEqual({ k, exists: true });
   });
 
-  it("the parser accepts --allow-paying-tenant and defaults it off", () => {
-    expect(r.parse.allowPayingTenant).toBe(true);
-    expect(r.parseDefault.allowPayingTenant).toBe(false);
-  });
-
-  it("the script guards BEFORE any count/write, on the same client, and asks the phrase after the slug type-back", () => {
-    const src = readFileSync(SCRIPT, "utf8");
+  it("the script guards BEFORE any count/write, on the same client, via a real assertWritableTenant call", () => {
+    const src = readFileSync(SCRIPT, "utf8")
+      .replace(/\/\*[\s\S]*?\*\//g, "")
+      .replace(/\/\/.*$/gm, "");
     const at = (needle: string) => {
       const i = src.indexOf(needle);
       expect({ needle, found: i >= 0 }).toEqual({ needle, found: true });
       return i;
     };
     const subRead = at("prisma.tenantSubscription.findUnique(");
-    const guard = at(
-      "checkProtectedTarget({ tenant, sub, allowPayingTenant: args.allowPayingTenant })",
-    );
+    const guard = at("checkProtectedTarget({");
+    const override = at("confirmProtectedOverride({");
+    const assert = at("assertWritableTenant(tenant, sub, protectedSlugs");
     const counts = at("await countAll(tenant.id)");
     const slugTypeBack = at("await confirm(slug)");
-    const phrase = at("await confirm(guard.phrase");
     const wipe = at("await nuke(tenant.id)");
     expect(subRead).toBeLessThan(guard);
-    expect(guard).toBeLessThan(counts);
-    expect(slugTypeBack).toBeLessThan(phrase);
-    expect(phrase).toBeLessThan(wipe);
+    expect(guard).toBeLessThan(override);
+    expect(override).toBeLessThan(assert);
+    expect(assert).toBeLessThan(counts);
+    expect(slugTypeBack).toBeLessThan(wipe);
   });
 });

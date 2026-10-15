@@ -23,8 +23,10 @@ import { PromotionsModule } from "./promotions/promotions.module";
 import { RoutesModule } from "./routes/routes.module";
 import { TripsModule } from "./trips/trips.module";
 import { OrdersModule } from "./orders/orders.module";
+import { DocumentsModule } from "./documents/documents.module";
 import { BookkeepingModule } from "./bookkeeping/bookkeeping.module";
 import { SystemConfigModule } from "./system-config/system-config.module";
+import { PolicyModule } from "./policy/policy.module";
 import { NotificationsModule } from "./notifications/notifications.module";
 import { RouteOptimizationModule } from "./route-optimization/route-optimization.module";
 import { GatewaysModule } from "./gateways/gateways.module";
@@ -47,6 +49,7 @@ import { EmailModule } from "./email/email.module";
 import { MailboxModule } from "./email/mailbox/mailbox.module";
 import { PlatformAdminModule } from "./platform-admin/platform-admin.module";
 import { AuditModule } from "./audit/audit.module";
+import { RouteHitsModule } from "./route-hits/route-hits.module";
 import { BillingModule } from "./billing/billing.module";
 import { FeatureConfigModule } from "./billing/feature-config.module"; // feature grants v2 brief C (PR-4)
 import { StripeConnectModule } from "./stripe-connect/stripe-connect.module";
@@ -56,6 +59,8 @@ import { TobaccoModule } from "./tobacco/tobacco.module";
 import { DraftsModule } from "./drafts/drafts.module";
 import { TrackedCategoriesModule } from "./tracked-categories/tracked-categories.module";
 import { RestrictionsSettingsModule } from "./restrictions-settings/restrictions-settings.module";
+import { SettingsInventoryModule } from "./settings-inventory/settings-inventory.module";
+import { SettingsFulfilmentModule } from "./settings-fulfilment/settings-fulfilment.module";
 import { ProductCategoriesModule } from "./product-categories/product-categories.module";
 import { SellingRestrictionsAdminModule } from "./selling-restrictions-admin/selling-restrictions-admin.module";
 import { RegulatedModule } from "./regulated/regulated.module";
@@ -137,8 +142,10 @@ import { AppService } from "./app.service";
     RoutesModule,
     TripsModule,
     OrdersModule,
+    DocumentsModule,
     BookkeepingModule,
     SystemConfigModule,
+    PolicyModule,
     NotificationsModule,
     RouteOptimizationModule,
     GatewaysModule,
@@ -163,6 +170,7 @@ import { AppService } from "./app.service";
     // ─── Platform administration + audit (global) ─────────────────────────────
     PlatformAdminModule,
     AuditModule,
+    RouteHitsModule,
     // ─── Billing (Stripe) ──────────────────────────────────────────────────────
     BillingModule,
     FeatureConfigModule,
@@ -178,6 +186,8 @@ import { AppService } from "./app.service";
     // ─── Regulated / tracked categories (Phase 4) ──────────────────────────────
     TrackedCategoriesModule,
     RestrictionsSettingsModule,
+    SettingsInventoryModule,
+    SettingsFulfilmentModule,
     ProductCategoriesModule,
     SellingRestrictionsAdminModule,
     RegulatedModule,

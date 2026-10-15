@@ -35,7 +35,9 @@ function makeService(): EmailService {
   const mailboxSend = {
     trySend: jest.fn().mockResolvedValue({ delivered: false, transport: "mailbox" }),
   } as any;
-  return new EmailService(config, prisma, { decrypt: (v: string) => v } as any, mailboxSend);
+  return new EmailService(config, prisma, { decrypt: (v: string) => v } as any, mailboxSend, {
+    record: jest.fn(),
+  } as any);
 }
 
 /** The HTML of every send() the service makes, with delivery stubbed out. */
@@ -84,6 +86,16 @@ describe("B807 — each tenant/buyer field is HTML-escaped in its email (REG-B80
     ["creditNoteNumbers", { creditNoteNumbers: [XSS] }],
   ])("invoice email: %s", (_field, over) => {
     expectEscaped(buildInvoiceHtml(over));
+  });
+
+  it("invoice email: a business name that ends in a period gets no second one in the footer (CQ-20)", () => {
+    const built = (makeService() as any).buildInvoiceEmail(invoice({}), "Acme Co.") as {
+      html: string;
+      text: string;
+    };
+    expect(built.text).toContain("This is an automated email from Acme Co.");
+    expect(built.text).not.toContain("Acme Co..");
+    expect(built.html).not.toContain("Acme Co..");
   });
 
   it('invoice email: pdfUrl cannot break out of its href (a `"` is escaped)', () => {

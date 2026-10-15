@@ -24,6 +24,7 @@ import { ListRoutesDto } from "./dto/list-routes.dto";
 import { CreateRouteDto } from "./dto/create-route.dto";
 import { UpdateRouteDto } from "./dto/update-route.dto";
 import { AddStopDto } from "./dto/add-stop.dto";
+import { ReorderRouteStopsDto } from "./dto/reorder-route-stops.dto";
 import { CreateRouteRunDto } from "./dto/create-route-run.dto";
 import { UpdateRunStatusDto } from "./dto/update-run-status.dto";
 import { ListRunsDto } from "./dto/list-runs.dto";
@@ -110,10 +111,7 @@ export class RoutesController {
   @Patch(":id/stops/reorder")
   @UseGuards(RolesGuard)
   @Roles(UserRole.OPERATOR)
-  reorderStops(
-    @Param("id") id: string,
-    @Body() body: { order: { id: string; stopNumber: number }[] },
-  ) {
+  reorderStops(@Param("id") id: string, @Body() body: ReorderRouteStopsDto) {
     return this.routesService.reorderStops(id, body.order);
   }
 

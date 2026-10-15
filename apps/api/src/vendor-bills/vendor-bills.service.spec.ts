@@ -84,6 +84,7 @@ const storage = {
 
 const inventory = {
   recomputeProductInTx: jest.fn(),
+  lockProducts: jest.fn(),
   fireStockAlerts: jest.fn(),
   createDraftPurchaseOrderInTx: jest.fn(),
 };
@@ -115,6 +116,11 @@ describe("VendorBillsService", () => {
 
   beforeEach(async () => {
     prisma = createMockPrisma();
+    // receive() re-reads the bill inside its transaction (B285 row lock): repeat the last bill read
+    prisma.vendorBill.findUnique.mockImplementation(
+      () =>
+        prisma.vendorBill.findUnique.mock.results.filter((r) => r.type === "return").at(-1)?.value,
+    );
     invoiceScan = graftInvoiceScan(prisma);
     dupMatch.findVendorBillDuplicate.mockReset();
     dupMatch.findVendorBillDuplicate.mockResolvedValue(null);
@@ -1885,7 +1891,7 @@ describe("VendorBillsService", () => {
             sku: null,
             barcode: null,
             parentProductId: "parent-1",
-            parent: { name: "Big Red Chewing Gum" },
+            parent: { name: "Big Red Chewing Gum", tenantId: "test-tenant" },
           },
         },
       ]);
@@ -1921,6 +1927,63 @@ describe("VendorBillsService", () => {
         confidence: "high",
       });
       expect(result.items[0].candidates).toBeUndefined();
+    });
+
+    it("never composes a name from a parent that belongs to another tenant (B1211)", async () => {
+      prisma.productMapping.findMany.mockResolvedValue([
+        {
+          supplierName: "Acme Foods",
+          rawDescription: "cinnamon",
+          productId: "prod-9",
+          product: {
+            id: "prod-9",
+            name: "Cinnamon",
+            sku: null,
+            barcode: null,
+            parentProductId: "parent-1",
+            parent: { name: "Foreign Family", tenantId: "other-tenant" },
+          },
+        },
+      ]);
+      prisma.product.findMany.mockResolvedValue([
+        {
+          id: "prod-8",
+          name: "Mint",
+          sku: null,
+          barcode: null,
+          parentProductId: "parent-2",
+          parent: { name: "Foreign Family", tenantId: "other-tenant" },
+        },
+      ]);
+      mockAnthropicCreate.mockResolvedValue({
+        content: [
+          {
+            type: "text",
+            text: JSON.stringify({
+              supplier: "Acme Foods",
+              items: [
+                { extractedName: "Cinnamon", qty: 1, unitCost: 3 },
+                { extractedName: "Mint", qty: 1, unitCost: 3 },
+              ],
+            }),
+          },
+        ],
+      });
+
+      const result = await service.scanInvoice([jpegPage]);
+
+      expect(JSON.stringify(result)).not.toContain("Foreign Family");
+      expect(result.items[0]).toMatchObject({
+        matchedProductId: "prod-9",
+        matchedProductName: "Cinnamon",
+      });
+      const selects = [
+        prisma.product.findMany.mock.calls[0][0].select,
+        prisma.productMapping.findMany.mock.calls[0][0].include.product.select,
+      ];
+      for (const sel of selects) {
+        expect(sel.parent).toEqual({ select: { name: true, tenantId: true } });
+      }
     });
 
     // ── matching tiers + supplier resolution (2026-08-18: scanner memory) ────

@@ -1,4 +1,4 @@
-import { Injectable } from "@nestjs/common";
+import { Injectable, Optional } from "@nestjs/common";
 import { MeterKey } from "@prisma/client";
 import { PrismaService } from "../prisma/prisma.service";
 import { PlanCatalogService } from "./plan-catalog.service";
@@ -10,7 +10,24 @@ import {
   INVITE_ONLY_PLAN_SELF_SERVE_CHECKOUT,
 } from "./plan-catalog.constants";
 import { computeServedFlags } from "./plan-flag-policy";
+import { autoLockAllowed } from "./auto-lock-gate";
+import { AutoLockSwitchService } from "./auto-lock-switch.service";
+import { billingPauseMode } from "./dunning-config";
 import { FeatureOverrideService } from "./feature-override.service";
+import {
+  EMPTY_BILLING_VIEW_EXTRAS,
+  SubscriptionBillingExtras,
+  pickStateFacts,
+} from "./subscription-billing-extras";
+import {
+  BILLING_EXPORT_INVOICE_FIELDS,
+  EXPORT_EXCLUDED_EVENT_TYPES,
+  deriveExportActor,
+  projectBillingEventForExport,
+  projectInvoiceForExport,
+  projectSubscriptionForExport,
+  projectUsageForExport,
+} from "./billing-export-fields";
 
 /**
  * Tenant self-service READ surface for settings-billing + choose-plan: the current
@@ -29,7 +46,33 @@ export class SubscriptionService {
     // unchanged rather than adding a 5th arg to every one of its `new SubscriptionService(...)`
     // call sites. Absent (undefined) degrades to "no override", byte-identical to today.
     private readonly featureOverrides?: FeatureOverrideService,
+    // SA-733r6 (B4): billing-contact name, open-invoice amount and the autopay card (Stripe-backed, cached).
+    // Optional for the same reason as above; absent = the four fields read null.
+    private readonly billingExtras?: SubscriptionBillingExtras,
+    // SA-775 rollout: the switch behind `autoLockHeld`. Optional like the two above; absent = never held.
+    @Optional() private readonly autoLocks?: AutoLockSwitchService,
   ) {}
+
+  /**
+   * SA-775 rollout: does the pause hold EVERY automatic lock a banner threatens (the unpaid-invoice pause and the trial
+   * expiry)? Asked of the same gate the writers use, so the banners never promise a lock that will not happen. The web
+   * cannot call the gate; it reads this one boolean. False without a switch (a bare unit spec) and for a TEST / DEMO /
+   * INTERNAL tenant, which still lock.
+   */
+  private async autoLockHeld(tenantId: string): Promise<boolean> {
+    if (!this.autoLocks) return false;
+    // This runs on every billing read: ONE cached switch read answers the common case (not paused = nothing is held)
+    // without touching the tenant row; only a paused switch needs the class.
+    if (!(await this.autoLocks.isPaused())) return false;
+    const tenant = await this.prisma.tenant.findUnique({
+      where: { id: tenantId },
+      select: { class: true },
+    });
+    const t = { id: tenantId, class: tenant?.class };
+    // Held only when EVERY kind a banner threatens is held; the first allowed kind settles it.
+    if (await autoLockAllowed(this.autoLocks, t, "payment_overdue")) return false;
+    return !(await autoLockAllowed(this.autoLocks, t, "trial_expired"));
+  }
 
   /** The tenant's current plan + add-ons + renewal state (settings-billing header). */
   async getSubscription(tenantId: string) {
@@ -43,11 +86,15 @@ export class SubscriptionService {
     const addons = addonRows.map((r) => {
       const code = addonSkuCode(r);
       const sku = code ? skuByCode.get(code) : undefined;
+      // SA-693 / row 350: a COMP row is a platform grant, never billed. It carries `comp: true` and NO price
+      // (`monthly` null), so the tenant is never shown a charge that will not happen.
+      const comp = r.isComp === true;
       return {
         sku: code,
         name: sku?.name ?? code ?? r.addonKey,
         quantity: r.quantity,
-        monthly: sku ? Number(sku.monthlyPrice) * r.quantity : null,
+        comp,
+        monthly: !comp && sku ? Number(sku.monthlyPrice) * r.quantity : null,
       };
     });
 
@@ -72,6 +119,11 @@ export class SubscriptionService {
     const overrides = this.featureOverrides
       ? await this.featureOverrides.allActive(tenantId)
       : new Map();
+
+    // SA-733r6 (B4): who to ask, what is owed, which card autopay will charge. A failed read is null, never a throw.
+    const extras = this.billingExtras
+      ? await this.billingExtras.read(tenantId, sub)
+      : EMPTY_BILLING_VIEW_EXTRAS;
 
     return {
       planKey: ent.planKey,
@@ -114,7 +166,33 @@ export class SubscriptionService {
       downgradeEffectiveAt: sub?.downgradeEffectiveAt ?? null,
       trialEndsAt: ent.trialEndsAt,
       addons,
+      // SA-733r6 (B4): dunning facts + the banner extras. The server decides read-only; the client only renders.
+      pastDueSince: sub?.pastDueSince ?? null,
+      pastDueInvoiceId: sub?.pastDueInvoiceId ?? null,
+      billingContactEmail: extras.billingContactEmail,
+      // SA-777: spread, so a field Stripe could not answer is OMITTED from the JSON (never null/0).
+      ...pickStateFacts(extras),
+      openInvoiceAmount: extras.openInvoiceAmount,
+      paymentMethodSummary: extras.paymentMethodSummary,
+      nextCharge: extras.nextCharge,
+      pastDueMonthLabel: extras.pastDueMonthLabel,
+      graceEndsLabel: extras.graceEndsLabel,
+      // B2: only the SERVER knows whether a pause will really happen (BILLING_PAUSE_MODE=enforced). In dark / off the
+      // banner never threatens a read-only date.
+      pauseEnforced: billingPauseMode() === "enforced",
+      // SA-775 rollout: true when the pause holds the lock a banner would threaten, so it drops that line.
+      autoLockHeld: await this.autoLockHeld(tenantId),
     };
+  }
+
+  /** The hosted-invoice page of the invoice the tenant owes (the admin's Pay link); null when nothing is owed. */
+  async openInvoiceUrl(tenantId: string): Promise<string | null> {
+    const sub = await this.prisma.tenantSubscription.findUnique({
+      where: { tenantId },
+      select: { pastDueInvoiceId: true },
+    });
+    if (!sub?.pastDueInvoiceId || !this.billingExtras) return null;
+    return this.billingExtras.hostedInvoiceUrl(sub.pastDueInvoiceId);
   }
 
   /** The four meters for the settings-billing usage bars. */
@@ -129,17 +207,47 @@ export class SubscriptionService {
       this.getSubscription(tenantId),
       this.getUsage(tenantId),
       this.prisma.billingEvent.findMany({
-        where: { tenantId },
+        where: { tenantId, type: { notIn: [...EXPORT_EXCLUDED_EVENT_TYPES] } },
         orderBy: { createdAt: "desc" },
         take: 500,
       }),
+      // B1187 / SA-718: select exactly the allowlist (ONE list, billing-export-fields.ts); never the whole row.
       this.prisma.rfInvoice.findMany({
         where: { tenantId },
+        select: Object.fromEntries(BILLING_EXPORT_INVOICE_FIELDS.map((f) => [f, true])) as Record<
+          (typeof BILLING_EXPORT_INVOICE_FIELDS)[number],
+          true
+        >,
         orderBy: { issuedAt: "desc" },
         take: 500,
       }),
     ]);
-    return { exportedAt: new Date().toISOString(), subscription, usage, billingEvents, invoices };
+    // B1187 / SA-718: both arrays are PROJECTED through the allowlists in billing-export-fields.ts;
+    // `actorId` becomes a derived label and is never exported.
+    const actorIds = [
+      ...new Set(billingEvents.map((e) => e.actorId).filter((id): id is string => !!id)),
+    ];
+    // Explicitly tenant-scoped: another tenant's (or platform staff's) user row is never read, so
+    // any actor not found here is labelled "RouteFlow support" by deriveExportActor.
+    const actors = actorIds.length
+      ? await this.prisma.user.findMany({
+          where: { tenantId, id: { in: actorIds } },
+          select: { id: true, role: true, tenantId: true },
+        })
+      : [];
+    const actorById = new Map(actors.map((u) => [u.id, u]));
+    return {
+      exportedAt: new Date().toISOString(),
+      subscription: projectSubscriptionForExport(subscription),
+      usage: projectUsageForExport(usage),
+      billingEvents: billingEvents.map((e) =>
+        projectBillingEventForExport(
+          e,
+          deriveExportActor(e.actorId, e.actorId ? actorById.get(e.actorId) : undefined, tenantId),
+        ),
+      ),
+      invoices: invoices.map((i) => projectInvoiceForExport(i)),
+    };
   }
 
   /**

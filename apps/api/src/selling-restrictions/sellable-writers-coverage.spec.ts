@@ -17,8 +17,8 @@ import * as ts from "typescript";
  *             price-only rewrites, copies of goods an already-checked order carries, other models).
  *
  * Scope: `.ts` class methods under `apps/api/src` (not scripts, seeds, `.tsx`). The surface "paths that
- * make goods sellable" is a superset of "line writers" (the DRAFT promotion in `changeStatus` is
- * caught only through its cancel branch). Shared with the units spec, change both or neither: the
+ * make goods sellable" is a superset of "line writers" (the DRAFT promotion in `changeStatus` writes no
+ * line itself: it is inventoried because it CALLS the choke point). Shared with the units spec, change both or neither: the
  * nested-write rule matches the `items` / `lineItems` name, so other models appear as EXEMPT rows.
  *
  * The inventory must EQUAL this table both ways: a NEW line writer fails until it is classified, and
@@ -45,7 +45,8 @@ const TABLE: Record<string, Row> = {
   [ord("create")]: G,
   [ord("updateOrderItems")]: G,
   [ord("approveChangeRequestAtStop")]: G,
-  [ord("changeStatus")]: G,
+  // F1(i): the DRAFT promotion check moved out of changeStatus (size ratchet); it judges each line at its author's channel too.
+  "orders/draft-promotion-judgement.ts::judgeDraftPromotion": G,
   [ord("reopenOrder")]: G,
   [ord("mergeAllPendingForCustomer")]: X(
     "owner ruling 2026-09-25 (#2093) / SA-255: MERGE AND WARN — folds orders each checked when placed, never blocked; warns via merge-restriction-warning.ts (pinned in orders.merge-warn.spec.ts)",
@@ -53,9 +54,20 @@ const TABLE: Record<string, Row> = {
   [ord("forceConsolidateCustomer")]: X(
     "owner ruling 2026-09-25 (#2093) / SA-255: MERGE AND WARN — folds orders each checked when placed, never blocked; warns via merge-restriction-warning.ts (pinned in orders.merge-warn.spec.ts)",
   ),
+  // F1(iii): a buyer's ADD_ITEM filing is judged on BUYER_PORTAL when FILED (called by ChangeRequestsService.create).
+  "orders/change-requests.service.ts::ChangeRequestsService.assertBuyerMayFile": G,
   [tpl("createOrderFromTemplate")]: G,
-  [ord("recomputeLineCategoryTaxes")]: X("categoryTaxAmount only"),
   [ord("deleteOrder")]: X("removes lines"),
+  // SA-762r F1: the cancel's line status flip, moved verbatim out of changeStatus (whose own row stays: it calls the choke point).
+  "orders/order-cancel-tx.ts::cancelOrderInTx": X(
+    "line status flips on a cancel: releases goods, adds none",
+  ),
+  "orders/delivered-stamp.ts::clearUnevidencedDelivered": X(
+    "deliveredQty reset to 0 (the counter-sale void): adds no quantity",
+  ),
+  "orders/delivered-stamp.ts::stampDeliveredInFull": X(
+    "deliveredQty raised on a DELIVERED order's lines (SA-763r): books goods that already left, adds no line or ordered quantity",
+  ),
   // Owner ruling 2026-09-25 (#2093): at-door delivery of an order placed before a ban delivers up to the
   // ordered quantity; any increase, added line or substitution is blocked. That ceiling is
   // `assertDeliveriesFitStop` (pinned in routes/delivery-lines.util.spec.ts), so the path cannot sell more.
@@ -71,8 +83,10 @@ const TABLE: Record<string, Row> = {
   [inv("create")]: G,
   [inv("update")]: G,
   [inv("duplicate")]: G,
+  // F2: the one place a DRAFT order's billing is judged; createSplitInvoices + createPartialFromOrder call it.
+  "invoices/draft-order-restrictions.ts::assertDraftOrderSellable": G,
   [inv("createSplitInvoices")]: X(
-    "owner ruling 2026-09-25 (#2093): SPLIT IS EXEMPT — quantity-neutral (siblings sum to the " +
+    "owner ruling 2026-09-25 (#2093): SPLIT IS EXEMPT for a placed (non-DRAFT) order — quantity-neutral (siblings sum to the " +
       "parent order, already checked when placed); flagged + audited via restricted-lines-flag.ts " +
       "(pinned in invoices.service.spec.ts's F-05 #2093 describe), never blocked",
   ),
@@ -83,9 +97,14 @@ const TABLE: Record<string, Row> = {
       "import-invoices-restrictions.spec.ts), never blocked",
   ),
   [inv("applyPriceAdjustment")]: X("price only"),
-  [inv("reconcileOrderDraftInvoice")]: X("mirrors the order's own goods (checked at the order)"),
+  [inv("reconcileOrderDraftInvoiceLocked")]: X(
+    "mirrors the order's own goods: checked at the order, and a DRAFT order with a live linked invoice is judged " +
+      "at its edit (updateOrderItems); a DRAFT with none is judged when billed or promoted (F2)",
+  ),
   [inv("rebuildSiblingDrafts")]: X("mirrors the order's own goods"),
-  [inv("createPartialFromOrder")]: X("copies lines of an existing, already-checked order"),
+  [inv("createPartialFromOrder")]: X(
+    "copies lines of an existing, already-checked order; a DRAFT order is re-judged first (assertDraftOrderSellable, F2)",
+  ),
   [inv("recomputeOrderFromInvoices")]: X(
     "back-sync; a new order line comes from an invoice line already checked at the invoice",
   ),
@@ -97,7 +116,6 @@ const TABLE: Record<string, Row> = {
   [cust("deleteCustomer")]: X("customer purge"),
   [cust("deleteAllCustomers")]: X("customer purge"),
   [cust("runImportedCustomersCleanup")]: X("customer purge"), // #2629: the kept body
-  "products/products.service.ts::ProductsService.bulkDelete": X("product purge"),
   "system-config/settings.controller.ts::SettingsController.clearFinancialData":
     X("financial reset"),
   // ── other models that also call their relation `items` ─────────────────────────────────────
@@ -116,12 +134,16 @@ const TABLE: Record<string, Row> = {
   [vb("update")]: X("VendorBillItem"),
   [vb("receive")]: X("VendorBillItem"),
   [vb("revertToDraft")]: X("VendorBillItem"),
+  [vb("delete")]: X("AP bill line delete only: no qty/unit/price write, no sellable product added"),
+  [vb("bulkDelete")]: X(
+    "AP bill line delete only: no qty/unit/price write, no sellable product added",
+  ),
 };
 
 /** The RATCHET: how many rows are still PENDING. Lower it in the PR that flips a row to GUARDED. */
 const PENDING_BASELINE = 0; // was 2: createSplitInvoices + importInvoices both EXEMPT with written reasons (F-05 #2093 split/import PR)
 /** GUARDED + PENDING: reclassifying a PENDING row to EXEMPT (an escape, not progress) must change THIS. */
-const ENFORCEMENT_POINTS = 10; // -2 (#2093 split/import EXEMPT, this PR); prior -2 (completeWithPayment/reopenStop) + -2 (merge/consolidate, SA-255)
+const ENFORCEMENT_POINTS = 12; // F2b: rejudgeDraftOrderInTx only COMPARES in the tx (409), it is not an enforcement point; was 13: +1 (F2b); was 12: +1 (F1 iii: assertBuyerMayFile); was 11: +1 (F2: assertDraftOrderSellable); was 10: -2 (#2093 split/import EXEMPT, this PR); prior -2 (completeWithPayment/reopenStop) + -2 (merge/consolidate, SA-255)
 const CHOKE_POINT = ["assertLinesSellable", "checkLinesSellable"];
 
 // ─── scanner (same rules as orders/unit-line-writers.ast.spec.ts; exercised on inline source) ──
@@ -339,17 +361,61 @@ const files = new Map(
   ]),
 );
 
+/**
+ * Exported FUNCTIONS of these files are inventoried like class methods (SA-762r): the cancel's line write moved out of
+ * `changeStatus` into a free function, and a class-method-only scan lost it. Keep in step with FREE_WRITER_FILES in
+ * orders/unit-line-writers.ast.spec.ts.
+ */
+const FREE_WRITER_FILES = [
+  "orders/order-cancel-tx.ts",
+  "orders/delivered-stamp.ts",
+  "orders/draft-promotion-judgement.ts",
+  "invoices/draft-order-restrictions.ts",
+];
+
+type WriterNode = ts.MethodDeclaration | ts.FunctionDeclaration;
+
+function exportedFunctions(sf: ts.SourceFile): Map<string, ts.FunctionDeclaration> {
+  const out = new Map<string, ts.FunctionDeclaration>();
+  for (const st of sf.statements)
+    if (
+      ts.isFunctionDeclaration(st) &&
+      st.name &&
+      st.body &&
+      st.modifiers?.some((m) => m.kind === ts.SyntaxKind.ExportKeyword)
+    )
+      out.set(st.name.text, st);
+  return out;
+}
+
+function scannedUnits(sf: ts.SourceFile, file: string): Map<string, WriterNode> {
+  return new Map<string, WriterNode>([
+    ...classMethods(sf),
+    ...(FREE_WRITER_FILES.includes(file) ? exportedFunctions(sf) : []),
+  ]);
+}
+
+/**
+ * The inventory: every unit that writes an order / invoice line, PLUS every class method that calls the choke point
+ * (an enforcement point does not have to write a line itself: `changeStatus` promotes a DRAFT through a stock helper).
+ * Both come from the tree, so neither kind of row can go stale unnoticed.
+ */
 function writers(): Set<string> {
   const found = new Set<string>();
-  for (const [file, sf] of files)
-    for (const [name, node] of classMethods(sf))
+  for (const [file, sf] of files) {
+    for (const [name, node] of scannedUnits(sf, file))
       if (lineWritePositions(node, sf).length > 0) found.add(`${file}::${name}`);
+    if (file.startsWith("selling-restrictions/")) continue; // the definition itself
+    // class methods AND the exported free functions of FREE_WRITER_FILES (F1 i: the DRAFT promotion check moved out of changeStatus)
+    for (const [name, node] of scannedUnits(sf, file))
+      if (callPositions(node, CHOKE_POINT).length > 0) found.add(`${file}::${name}`);
+  }
   return found;
 }
 const methodOf = (key: string) => {
   const [file, name] = key.split("::");
   const sf = files.get(file)!;
-  return { node: classMethods(sf).get(name)!, sf };
+  return { node: scannedUnits(sf, file).get(name)!, sf };
 };
 
 describe("the scanner and the proof themselves (so a silent no-match cannot pass below)", () => {

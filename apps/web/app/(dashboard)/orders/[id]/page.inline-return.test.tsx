@@ -1,6 +1,7 @@
 import * as React from "react";
 import { render, screen, fireEvent, waitFor } from "@testing-library/react";
 import { Providers } from "@/app/providers";
+import { seedSession } from "@/test-utils/session";
 import OrderDetailPage from "./page";
 
 // #2406 — order-edit host: the edit-mode Returns section folds an inline return into the SAME
@@ -60,6 +61,7 @@ const order = {
 
 beforeEach(() => {
   jest.clearAllMocks();
+  seedSession("OPERATOR"); // B1134: the action bar is staff-only
   get.mockImplementation((url: string) => {
     if (url === "/orders/o1") return Promise.resolve({ data: order });
     if (url === "/tenants/me/addons")
@@ -92,7 +94,7 @@ async function enterEditModeAndOpenReturns({ draft = false } = {}) {
   // also appears in the page's own editable Line Items list above, so wait for TWO matches
   // rather than a single (ambiguous) one.
   await waitFor(() => expect(screen.getAllByText("Widget").length).toBeGreaterThanOrEqual(2));
-  fireEvent.change(screen.getByLabelText(/qty \(pieces\)/i), { target: { value: "3" } });
+  fireEvent.change(screen.getByLabelText(/^pieces$/i), { target: { value: "3" } });
   fireEvent.change(screen.getByLabelText(/^reason$/i), { target: { value: "DAMAGED" } });
 }
 

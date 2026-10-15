@@ -20,6 +20,8 @@ import {
   type ValidationError,
 } from "class-validator";
 import type { IntakeSectionKey } from "@prisma/client";
+import { API_ERROR_CODES } from "../../common/api-error-codes";
+import { IsTenantTimeZone } from "../../common/is-tenant-time-zone.validator";
 
 /**
  * One class-validator DTO per IntakeSectionKey (#2159 S2) — playbook Appendix A, sections B–H.
@@ -80,7 +82,7 @@ export class IntakeAccountDto {
   @IsOptional() @IsEmail() @MaxLength(254) replyToEmail?: string;
   @IsOptional() @IsString() @MaxLength(S) website?: string;
   @IsString()
-  @Matches(/^[A-Za-z]+\/[A-Za-z_+\-/]+$/, { message: "timeZone must be an IANA zone" })
+  @IsTenantTimeZone({ message: "timeZone must be an IANA zone" })
   timeZone!: string;
 }
 
@@ -229,7 +231,7 @@ export async function validateSectionAnswers(
   if (errors.length > 0) {
     throw new BadRequestException({
       statusCode: 400,
-      code: "INTAKE_ANSWERS_INVALID",
+      code: API_ERROR_CODES.INTAKE_ANSWERS_INVALID,
       message: "Some answers need fixing",
       errors: flatten(errors),
     });

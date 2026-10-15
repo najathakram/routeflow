@@ -26,7 +26,9 @@ import { PageHeader, StatCard, Card, Button, Select, cn } from "@routeflow/ui/we
 import { useToast } from "@routeflow/ui/web";
 import { usePageTitle } from "@/lib/page-title-context";
 import { apiClient } from "@/lib/api-client";
+import { useFleetAccess } from "@/lib/api/addons";
 import { formatMoney } from "@/lib/format";
+import { AnalyticsCsvButton as Csv } from "./_components/AnalyticsCsvButton";
 
 // ─── Formatters ───────────────────────────────────────────────────────────────
 
@@ -422,8 +424,20 @@ function RevenueTab({ from, to }: { from: string; to: string }) {
         )}
       </div>
 
+      <div className="flex justify-end gap-1">
+        <Csv slug="aov" data={aov} loading={aovLoading} bare from={from} to={to} />
+        <Csv slug="dso" data={dso} loading={dsoLoading} bare from={from} to={to} />
+      </div>
+
       {/* Revenue trend chart */}
       <Card title="Revenue Trend">
+        <Csv
+          slug="revenue-trend"
+          data={revenueTrend}
+          loading={revenueTrendLoading}
+          from={from}
+          to={to}
+        />
         {revenueTrendLoading ? (
           <ChartSkeleton />
         ) : revenueTrend.length === 0 ? (
@@ -463,6 +477,13 @@ function RevenueTab({ from, to }: { from: string; to: string }) {
       {/* Gross Margin detail + Sales by Category */}
       <div className="grid grid-cols-1 gap-6 lg:grid-cols-2">
         <Card title="Gross Margin Breakdown">
+          <Csv
+            slug="gross-margin"
+            data={grossMargin}
+            loading={grossMarginLoading}
+            from={from}
+            to={to}
+          />
           {grossMarginLoading ? (
             <div className="space-y-3">
               <SkeletonLine />
@@ -499,6 +520,13 @@ function RevenueTab({ from, to }: { from: string; to: string }) {
         </Card>
 
         <Card title="Sales by Category">
+          <Csv
+            slug="sales-by-category"
+            data={salesByCategory}
+            loading={salesByCategoryLoading}
+            from={from}
+            to={to}
+          />
           {salesByCategoryLoading ? (
             <ChartSkeleton />
           ) : salesByCategory.length === 0 ? (
@@ -746,6 +774,13 @@ function ProductsInventoryTab({ from, to }: { from: string; to: string }) {
     <div className="space-y-6">
       {/* Top Products */}
       <Card>
+        <Csv
+          slug="top-products"
+          data={topProducts}
+          loading={topProductsLoading}
+          from={from}
+          to={to}
+        />
         <div className="mb-4 flex items-center justify-between gap-4">
           <SectionTitle>Top Products</SectionTitle>
           <div className="w-40">
@@ -769,6 +804,13 @@ function ProductsInventoryTab({ from, to }: { from: string; to: string }) {
 
       {/* Inventory Turnover */}
       <Card title="Inventory Turnover">
+        <Csv
+          slug="inventory-turnover"
+          data={turnover}
+          loading={turnoverLoading}
+          from={from}
+          to={to}
+        />
         <AnalyticsTable
           columns={turnoverColumns}
           data={turnover}
@@ -779,6 +821,7 @@ function ProductsInventoryTab({ from, to }: { from: string; to: string }) {
 
       {/* Dead Stock */}
       <Card title="Dead Stock">
+        <Csv slug="dead-stock" data={deadStock} loading={deadStockLoading} from={from} to={to} />
         <p className="mb-4 text-xs text-navy/60">
           Products with stock on hand but no sales or stock movements in the selected date range.
         </p>
@@ -792,6 +835,13 @@ function ProductsInventoryTab({ from, to }: { from: string; to: string }) {
 
       {/* Margin Alerts */}
       <Card title="Margin Alerts">
+        <Csv
+          slug="margin-alerts"
+          data={marginAlerts}
+          loading={marginAlertsLoading}
+          from={from}
+          to={to}
+        />
         <p className="mb-4 text-xs text-navy/60">
           Based on current prices and costs — not affected by the date range.
         </p>
@@ -863,6 +913,7 @@ function CustomersTab({ from, to }: { from: string; to: string }) {
   return (
     <div className="space-y-6">
       <Card>
+        <Csv slug="top-customers" data={customers} loading={loading} from={from} to={to} />
         <div className="mb-4 flex items-center justify-between gap-4">
           <SectionTitle>Top Customers</SectionTitle>
           <div className="w-44">
@@ -1070,6 +1121,7 @@ function OperationsTab({ from, to }: { from: string; to: string }) {
   return (
     <div className="space-y-6">
       <Card title="Route Performance">
+        <Csv slug="route-performance" data={routes} loading={routesLoading} from={from} to={to} />
         <AnalyticsTable
           columns={routeColumns}
           data={routes}
@@ -1079,6 +1131,13 @@ function OperationsTab({ from, to }: { from: string; to: string }) {
       </Card>
 
       <Card title="Driver Performance">
+        <Csv
+          slug="driver-performance"
+          data={drivers}
+          loading={driversLoading}
+          from={from}
+          to={to}
+        />
         <AnalyticsTable
           columns={driverColumns}
           data={drivers}
@@ -1155,7 +1214,11 @@ export default function AnalyticsPage() {
 
   const defaults = React.useMemo(() => getDefaultDates(), []);
 
-  const [activeTab, setActiveTab] = React.useState<TabId>("revenue");
+  // Fleet-off (no routes / delivery addon): no Operations tab (route + driver performance).
+  const { fleet } = useFleetAccess();
+  const tabs = TABS.filter((t) => fleet || t.id !== "operations");
+  const [activeTabState, setActiveTab] = React.useState<TabId>("revenue");
+  const activeTab: TabId = tabs.some((t) => t.id === activeTabState) ? activeTabState : "revenue";
   const [fromInput, setFromInput] = React.useState(defaults.from);
   const [toInput, setToInput] = React.useState(defaults.to);
   const [appliedFrom, setAppliedFrom] = React.useState(defaults.from);
@@ -1231,7 +1294,7 @@ export default function AnalyticsPage() {
       {/* Tabs */}
       <div className="border-b border-surface-border">
         <nav className="-mb-px flex gap-1 overflow-x-auto">
-          {TABS.map((tab) => (
+          {tabs.map((tab) => (
             <TabButton
               key={tab.id}
               active={activeTab === tab.id}

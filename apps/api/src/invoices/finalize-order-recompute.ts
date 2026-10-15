@@ -1,11 +1,14 @@
+import { appendInvoiceSyncRevisionInTx } from "../orders/order-revisions";
 import { ServiceUnavailableException } from "@nestjs/common";
 import { holdsValues } from "./order-backsync-lines";
 import { Prisma } from "@prisma/client";
 import { roundMoney } from "@routeflow/pricing";
+import { orderTotalsOfSums } from "../orders/order-totals";
 import { effectiveTaxRateFromTotals } from "../common/tax-rate";
 import { withAdvisoryLock, LockTimeoutError, LockUnavailableError } from "../common/db-locks";
 import { QTY_EPSILON } from "../orders/merge-idempotency";
 import { billableQtyFromBasis, type DeliveredBasis } from "./delivered-basis-by-line";
+import { API_ERROR_CODES } from "../common/api-error-codes";
 
 export interface OrderRecomputeTotals {
   orderId: string;
@@ -95,13 +98,13 @@ export async function withOrderRecomputeLock<T>(
   } catch (e) {
     if (e instanceof LockTimeoutError) {
       throw new ServiceUnavailableException({
-        code: "LOCK_UNAVAILABLE",
+        code: API_ERROR_CODES.LOCK_UNAVAILABLE,
         message: "Another update to this order is in progress. Try again in a moment.",
       });
     }
     if (e instanceof LockUnavailableError) {
       throw new ServiceUnavailableException({
-        code: "LOCK_UNAVAILABLE",
+        code: API_ERROR_CODES.LOCK_UNAVAILABLE,
         message: "Order lock unavailable — retry shortly.",
       });
     }
@@ -109,7 +112,7 @@ export async function withOrderRecomputeLock<T>(
   }
   if (!result.acquired) {
     throw new ServiceUnavailableException({
-      code: "LOCK_UNAVAILABLE",
+      code: API_ERROR_CODES.LOCK_UNAVAILABLE,
       message: "Order lock unavailable — retry shortly.",
     });
   }
@@ -300,6 +303,8 @@ export async function finalizeOrderRecompute(params: {
   subtotal: number;
   categoryTaxSum: number;
   invoices: any[];
+  /** Out-param (row 372 MF2): set when an orphan line was written, so the caller bumps the revision. */
+  touched?: { lines: boolean };
 }): Promise<OrderRecomputeTotals> {
   const { db, orderId, order, deliveredBasis, unbilled, categoryTaxSum, invoices } = params;
 
@@ -327,6 +332,7 @@ export async function finalizeOrderRecompute(params: {
       where: { id: orphan.id },
       data: { status: "CANCELLED", qty: 0, subtotal: 0, boxes: null, pieces: null, invoicedQty: 0 },
     });
+    if (params.touched && !alreadyCancelled) params.touched.lines = true; // stale numbers on a cancelled line are not a sale change
   }
 
   // Preserve the order's effective tax rate (avoids depending on global config drift); mirror
@@ -336,17 +342,18 @@ export async function finalizeOrderRecompute(params: {
   // B294 round 2: same semantics as the inline `prevSubtotal > 0 ? tax/prevSubtotal : 0` this
   // replaced — the shared helper's zero-subtotal guard lands on the same 0.
   const effectiveTaxRate = effectiveTaxRateFromTotals(order.tax, prevSubtotal, false);
-  const tax = roundMoney(subtotal * effectiveTaxRate);
-  // RF-4: fold the billed category tax (Σ per line) back into the order total, so the order
-  // stays in step with what the invoices actually charged.
-  const categoryTax = roundMoney(categoryTaxSum);
   // Shipping back-sync: the order's fee is DEFINED as Σ(non-void invoice fees) — an invoice-side
   // fee edit lands here and updates the order, which is what lets the order-driven reconciles
   // treat the order as source of truth.
   const shippingFeeSum = roundMoney(
     invoices.reduce((s: number, inv: any) => s + Number(inv.shippingFee ?? 0), 0),
   );
-  const total = roundMoney(subtotal + tax + categoryTax + shippingFeeSum);
+  // RF-4: fold the billed category tax (Σ per line) back into the order total, so the order
+  // stays in step with what the invoices actually charged. The ONE formula (`sumInvoiceTotals`).
+  const { regularTax: tax, total } = orderTotalsOfSums(
+    { subtotal, levy: categoryTaxSum },
+    { taxRate: effectiveTaxRate, shipping: shippingFeeSum },
+  );
   // SA-235: the Order row is written only when a column it would write differs (an identical save moves no updatedAt).
   const orderWrites: Array<[string, unknown]> = [
     ["subtotal", subtotal],
@@ -361,4 +368,21 @@ export async function finalizeOrderRecompute(params: {
     });
   }
   return { orderId, subtotal, tax, total, shippingFee: shippingFeeSum };
+}
+
+/**
+ * Row 372 MF2: the invoice back-sync moved what an open order editor sees when a sale field of a line was
+ * written (`touched.lines`) or the order's fee moved (a header fee edit syncs onto it even while the lines stay
+ * gated by coverage): then the order's revision moves in the same tx, so the editor goes stale instead of
+ * silently reverting it. `invoicedQty` / levy-only normalisation never reaches here as `touched`.
+ */
+export async function bumpRevisionIfSaleMoved(
+  db: Prisma.TransactionClient,
+  tenantId: string | null,
+  order: { id: string; shippingFee?: unknown },
+  totals: { shippingFee: number },
+  touched: { lines: boolean },
+): Promise<void> {
+  const feeMoved = totals.shippingFee !== (Number(order.shippingFee ?? 0) || 0);
+  if (touched.lines || feeMoved) await appendInvoiceSyncRevisionInTx(db, tenantId, order.id);
 }

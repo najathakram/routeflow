@@ -5,8 +5,14 @@ import {
   type EditLine,
   type ExistingLine,
 } from "../selling-restrictions/order-edit-lines";
-import { checkableProductIds } from "../selling-restrictions/selling-restrictions.core";
+import {
+  checkableProductIds,
+  restrictionChannelForPrincipal,
+  restrictionsApply,
+  type ChannelPrincipal,
+} from "../selling-restrictions/selling-restrictions.core";
 import type { SellingRestrictionsService } from "../selling-restrictions/selling-restrictions.service";
+import { API_ERROR_CODES } from "../common/api-error-codes";
 
 /**
  * Selling restrictions at `OrdersService.approveChangeRequestAtStop` (lane R 2a-8), the same shape as
@@ -26,9 +32,17 @@ export interface ChangeRequestRestrictionPlan {
 
 export async function planChangeRequestRestrictions(
   deps: { restrictions: Pick<SellingRestrictionsService, "getPolicy"> },
-  p: { tenantId: string; existing: readonly ExistingLine[]; cr: ChangeRequestFacts },
+  p: {
+    tenantId: string;
+    existing: readonly ExistingLine[];
+    cr: ChangeRequestFacts;
+    /** The resolver: the switch gates the STAFF channel only. */
+    principal: ChannelPrincipal | null | undefined;
+  },
 ): Promise<ChangeRequestRestrictionPlan | null> {
-  if (!(await deps.restrictions.getPolicy(p.tenantId)).enabled) return null; // OFF: one read, nothing else
+  // OFF (staff channel, switch off): one read, nothing else. The portal channel always applies its rules.
+  const channel = restrictionChannelForPrincipal(p.principal);
+  if (!restrictionsApply(await deps.restrictions.getPolicy(p.tenantId), channel)) return null;
   const lines = sellableLinesForChangeRequest(p.cr, p.existing);
   const judged = new Set(checkableProductIds(lines));
   return {
@@ -40,7 +54,7 @@ export async function planChangeRequestRestrictions(
         )
       )
         throw new ConflictException({
-          code: "ORDER_CHANGED_DURING_EDIT",
+          code: API_ERROR_CODES.ORDER_CHANGED_DURING_EDIT,
           message:
             "The order changed while the change was being applied — review it and try again.",
         });

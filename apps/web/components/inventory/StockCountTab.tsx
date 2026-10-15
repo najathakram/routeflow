@@ -5,10 +5,21 @@ import Link from "next/link";
 import { useRouter, useSearchParams } from "next/navigation";
 import { Camera, History, RefreshCw, Trash2, Undo2 } from "lucide-react";
 import { Button, Card, Modal, cn, useToast } from "@routeflow/ui/web";
+import {
+  STOCK_COUNT_ENTER_AS_YOU_GO_COPY,
+  STOCK_COUNT_FINISH_WITH_SKIPS_LABEL,
+  STOCK_COUNT_RECOUNT_COPY,
+  stockCountCommitFailure,
+  stockCountCommitPollMs,
+  stockCountProductInOpenCount,
+  stockCountSavingLine,
+  type StockCountCommitFailure,
+} from "@routeflow/types";
 
 import { BarcodeScannerButton } from "@/components/BarcodeScannerButton";
 import { InlineCreateProductModal } from "@/components/InlineCreateProductModal";
 import { archivedMessage, resolveProductByCode } from "@/lib/barcode-resolve";
+import { DidYouMeanPicker } from "@/components/scan/DidYouMeanPicker";
 import { useAuth } from "@/lib/auth-context";
 import { fmtDate } from "@/lib/formatting";
 import { unitsLabel } from "@/lib/stock-label";
@@ -73,7 +84,10 @@ export function StockCountTab() {
   const rowsRef = React.useRef<Row[]>(rows);
   rowsRef.current = rows;
 
-  const { data: sessionDetail } = useStockCountSession(sessionId);
+  // While a commit runs, re-read the session every 2 s: its `commit` is the "Saving count… N of M".
+  const { data: sessionDetail } = useStockCountSession(sessionId, {
+    pollMs: stockCountCommitPollMs(commitSession.isPending),
+  });
   const { data: openSessionsData } = useStockCountSessions({ status: "OPEN", limit: 5 });
   const openSessions = (openSessionsData?.data ?? []).filter((s) => s.id !== sessionId);
 
@@ -84,6 +98,7 @@ export function StockCountTab() {
 
   const [scanInput, setScanInput] = React.useState("");
   const scanInputRef = React.useRef<HTMLInputElement>(null);
+  const [scanMatches, setScanMatches] = React.useState<any[]>([]);
   const scanContainerRef = React.useRef<HTMLDivElement>(null);
   const [resolving, setResolving] = React.useState(false);
 
@@ -94,6 +109,13 @@ export function StockCountTab() {
   const [unknownCode, setUnknownCode] = React.useState<string | null>(null);
   const [reviewOpen, setReviewOpen] = React.useState(false);
   const [commitNotes, setCommitNotes] = React.useState("");
+  /** Why the last commit attempt failed (count-specific copy), shown in the review modal. */
+  const [commitFailure, setCommitFailure] = React.useState<StockCountCommitFailure | null>(null);
+  /** Products "Finish with skips" left out; shown after the count is committed. */
+  const [skippedAfterFinish, setSkippedAfterFinish] = React.useState<Array<{
+    productId: string;
+    name?: string;
+  }> | null>(null);
   const [otherOpenWarning, setOtherOpenWarning] = React.useState<StockCountSessionRef[] | null>(
     null,
   );
@@ -153,7 +175,31 @@ export function StockCountTab() {
       }),
     );
 
-    const anyFailed = results.some((r) => !r.ok);
+    // SA-767 r-note 5 SA-3: a line the server refuses because another open count already has the product
+    // is a permanent refusal, not a sync failure - retrying it every few seconds would never succeed.
+    // Say which count has it (with a link), drop the pending write and take the row off this count.
+    const refusals = results.flatMap((r) => {
+      if (r.ok) return [];
+      const open = stockCountProductInOpenCount(r.err);
+      return open ? [{ productId: r.productId, open }] : [];
+    });
+    const refusedIds = new Set(refusals.map((r) => r.productId));
+    const anyFailed = results.some((r) => !r.ok && !refusedIds.has(r.productId));
+    for (const { open } of refusals) {
+      toast({
+        title: open.copy,
+        variant: "error",
+        action: open.sessionId
+          ? {
+              label: "Open that count",
+              onClick: () => router.push(`/inventory/stock-counts/${open.sessionId}`),
+            }
+          : undefined,
+      });
+    }
+    if (refusedIds.size > 0) {
+      setRows((prev) => prev.filter((r) => !refusedIds.has(r.productId)));
+    }
 
     setRows((prev) =>
       prev.map((r) => {
@@ -178,7 +224,10 @@ export function StockCountTab() {
       // Reference equality: only clear the entry we just sent — if a newer
       // write replaced it while this request was in flight, leave the newer
       // one queued so it flushes next (see `queueIncrement`/`queueAbsolute`).
-      if (res.ok && pendingRef.current.get(res.productId) === res.entry) {
+      if (
+        (res.ok || refusedIds.has(res.productId)) &&
+        pendingRef.current.get(res.productId) === res.entry
+      ) {
         pendingRef.current.delete(res.productId);
       }
     }
@@ -518,6 +567,11 @@ export function StockCountTab() {
         setUnknownCode(code);
         return;
       }
+      if (result.suggestion || result.ambiguous) {
+        // B1219: a fuzzy guess writes a count only after the operator confirms it.
+        setScanMatches(result.matches?.length ? result.matches : [result.product]);
+        return;
+      }
       addOrIncrementProduct(result.product, qtyPerScan);
       if (result.source !== "barcode") {
         toast({
@@ -655,18 +709,23 @@ export function StockCountTab() {
     toast({ title: "Count discarded", variant: "info" });
   };
 
-  const onCommit = async () => {
+  const onCommit = async (finishWithSkips = false) => {
     if (!sessionId) return;
+    setCommitFailure(null);
     try {
       const result = await commitSession.mutateAsync({
         sessionId,
         notes: commitNotes.trim() || undefined,
+        ...(finishWithSkips ? { finishWithSkips: true } : {}),
       });
       setReviewOpen(false);
       const applied = result.applied;
       setSessionId(null);
       resetLocalSession();
       setCommitNotes("");
+      if (result.skippedProducts && result.skippedProducts.length > 0) {
+        setSkippedAfterFinish(result.skippedProducts);
+      }
       toast({
         title: result.alreadyCommitted
           ? "Already committed"
@@ -676,8 +735,14 @@ export function StockCountTab() {
         variant: "success",
       });
     } catch (err: any) {
+      // SA-767 L-2.4 D: a 503 / 409 / permanent refusal has its own copy by state ("Partly saved —
+      // commit again to finish", "Nothing was saved — try again", ...); the numbers are server fields.
+      const failure = stockCountCommitFailure(err);
+      setCommitFailure(failure);
       const missing: string[] | undefined = err?.response?.data?.missingProductIds;
-      if (Array.isArray(missing) && missing.length) {
+      if (failure && !failure.permanent) {
+        toast({ title: failure.copy, variant: "error" });
+      } else if (Array.isArray(missing) && missing.length) {
         toast({
           title: "Some products no longer exist",
           description: `${missing.length} row(s) reference deleted products — remove them and retry.`,
@@ -803,6 +868,26 @@ export function StockCountTab() {
             </div>
             {resolving && <p className="mt-1 text-xs text-navy/70">Looking up product…</p>}
 
+            {scanMatches.length > 0 && (
+              <div className="mt-2">
+                <DidYouMeanPicker
+                  matches={scanMatches}
+                  confirmLabel="Apply"
+                  onConfirm={async (product) => {
+                    setScanMatches([]);
+                    const sid = await ensureSession();
+                    if (!sid) return;
+                    addOrIncrementProduct(product, qtyPerScan);
+                    scanInputRef.current?.focus();
+                  }}
+                  onCancel={() => {
+                    setScanMatches([]);
+                    scanInputRef.current?.focus();
+                  }}
+                />
+              </div>
+            )}
+
             {suggestOpen && suggestions.length > 0 && (
               <ul
                 role="listbox"
@@ -889,6 +974,8 @@ export function StockCountTab() {
             Discard session
           </Button>
         </div>
+
+        <p className="text-[11px] text-navy/70">{STOCK_COUNT_ENTER_AS_YOU_GO_COPY}</p>
 
         {sessionId ? (
           <div className="flex flex-wrap items-center gap-2 text-[11px] text-navy/70">
@@ -1009,8 +1096,24 @@ export function StockCountTab() {
         notes={commitNotes}
         onChangeNotes={setCommitNotes}
         onClose={() => setReviewOpen(false)}
-        onConfirm={onCommit}
+        onConfirm={() => onCommit()}
         isSubmitting={commitSession.isPending}
+        commitStatus={{
+          // "Saving count… N of M": while the commit runs, or while the session says one is unfinished.
+          savingCopy: stockCountSavingLine({
+            pending: commitSession.isPending,
+            commit: sessionDetail?.commit,
+          }),
+          // The permanent sentence points at the button, so it shows only when the button is offered.
+          notice:
+            commitFailure && (!commitFailure.permanent || sessionDetail?.commit)
+              ? commitFailure.copy
+              : null,
+          // Only a partly saved count (the session has `commit`) that hit a permanent refusal.
+          canFinishWithSkips: !!commitFailure?.permanent && !!sessionDetail?.commit,
+          finishWithSkipsLabel: STOCK_COUNT_FINISH_WITH_SKIPS_LABEL,
+          onFinishWithSkips: () => onCommit(true),
+        }}
         unsavedCount={unsavedCount}
         syncError={syncError}
         onRetrySync={() => flushRef.current()}
@@ -1031,6 +1134,20 @@ export function StockCountTab() {
           addOrIncrementProduct({ ...product, currentStock: 0 }, qtyPerScan);
         }}
       />
+
+      <Modal
+        open={!!skippedAfterFinish}
+        onClose={() => setSkippedAfterFinish(null)}
+        title="Count finished with skips"
+        description={STOCK_COUNT_RECOUNT_COPY}
+        footer={<Button onClick={() => setSkippedAfterFinish(null)}>Done</Button>}
+      >
+        <ul className="space-y-1 text-sm text-navy">
+          {(skippedAfterFinish ?? []).map((p) => (
+            <li key={p.productId}>{p.name ?? "A deleted product"}</li>
+          ))}
+        </ul>
+      </Modal>
 
       <Modal
         open={!!otherOpenWarning}

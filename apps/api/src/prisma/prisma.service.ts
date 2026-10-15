@@ -3,6 +3,7 @@ import { Prisma, PrismaClient } from "@prisma/client";
 import { PrismaPg } from "@prisma/adapter-pg";
 import { Pool } from "pg";
 import { TenantContextService } from "../tenant/tenant-context.service";
+import { utcPoolConfig } from "../common/pg-session";
 
 /**
  * The exact error Prisma's own `*OrThrow` operations raise when no row matches
@@ -14,6 +15,104 @@ function tenantNotFound(model: string): Prisma.PrismaClientKnownRequestError {
     code: "P2025",
     clientVersion: Prisma.prismaVersion.client,
   });
+}
+
+/**
+ * Models that carry a scalar `tenantId` column, derived from the generated client
+ * (`Prisma.ModelName` x `Prisma.<Model>ScalarFieldEnum`) — never a hand-written list, so a
+ * model added later is covered the day it lands (pinned by `tenant-unique-lookup.spec.ts`).
+ * The set is keyed BOTH ways: the PascalCase model name the `$extends` handler receives
+ * (`Customer`) and the camelCase delegate key the transaction proxy sees (`customer`).
+ * Built lazily on first use.
+ */
+let tenantModelKeys: ReadonlySet<string> | undefined;
+export function getTenantModelNames(): ReadonlySet<string> {
+  if (!tenantModelKeys) {
+    const keys = new Set<string>();
+    for (const name of Object.keys(Prisma.ModelName)) {
+      const fields = (Prisma as unknown as Record<string, Record<string, string> | undefined>)[
+        `${name}ScalarFieldEnum`
+      ];
+      if (fields && "tenantId" in fields) {
+        keys.add(name);
+        keys.add(name.charAt(0).toLowerCase() + name.slice(1));
+      }
+    }
+    tenantModelKeys = keys;
+  }
+  return tenantModelKeys;
+}
+
+/** `model` is a model name (`Order`, extension layer) or a client delegate key (`order`,
+ *  transaction-proxy layer). */
+export function isTenantModel(model: string): boolean {
+  return !!model && getTenantModelNames().has(model);
+}
+
+/**
+ * Fail closed at boot: if the derived tenant-model set is empty or misses a model that is known
+ * to be tenant-scoped, the guard would silently leave unique lookups unscoped, so refuse to load.
+ */
+const EXPECTED_TENANT_MODELS = ["Customer", "Order", "Invoice"];
+export function assertTenantModelSet(names: ReadonlySet<string>): void {
+  const missing = EXPECTED_TENANT_MODELS.flatMap((m) => [
+    m,
+    m.charAt(0).toLowerCase() + m.slice(1),
+  ]).filter((m) => !names.has(m));
+  if (names.size === 0 || missing.length > 0) {
+    throw new Error(
+      `tenant guard: derived tenant-model set is incomplete (size ${names.size}, missing: ${missing.join(", ") || "-"})`,
+    );
+  }
+}
+assertTenantModelSet(getTenantModelNames());
+
+/**
+ * ONE implementation of the `findUnique` / `findUniqueOrThrow` tenant guard, shared by the
+ * `forTenant()` extension and the `tenantTransaction` proxy so the two layers cannot drift.
+ *
+ * - Non-tenant models pass through untouched.
+ * - For a tenant model the tenant filter travels in the query itself: Prisma accepts
+ *   non-unique filters beside the unique selector in a unique `where`, so the lookup is
+ *   scoped exactly like the other verbs, whatever the caller's `select` returns.
+ * - The result is still checked afterwards as defense in depth, and that check fails CLOSED:
+ *   a row whose `tenantId` is missing or different is treated as not found. So the check
+ *   stays meaningful when a caller's `select` leaves the column out, `tenantId` is added to
+ *   the selection for the query and removed again from what the caller receives.
+ */
+export async function runTenantUniqueLookup(opts: {
+  model: string;
+  operation: "findUnique" | "findUniqueOrThrow";
+  args: any;
+  tenantId: string;
+  run: (args: any) => Promise<any>;
+}): Promise<any> {
+  const { model, operation, tenantId, run } = opts;
+  if (!isTenantModel(model)) return run(opts.args);
+
+  const args: any = { ...(opts.args ?? {}) };
+  args.where = { ...args.where, tenantId };
+
+  let stripTenantId = false;
+  if (args.select && args.select.tenantId !== true) {
+    args.select = { ...args.select, tenantId: true };
+    stripTenantId = true;
+  } else if (args.omit && args.omit.tenantId) {
+    args.omit = { ...args.omit, tenantId: false };
+    stripTenantId = true;
+  }
+
+  const result = await run(args);
+  if (result == null || result.tenantId !== tenantId) {
+    if (operation === "findUniqueOrThrow") throw tenantNotFound(model);
+    return null;
+  }
+  if (stripTenantId) {
+    // eslint-disable-next-line @typescript-eslint/no-unused-vars
+    const { tenantId: _scopeOnly, ...rest } = result;
+    return rest;
+  }
+  return result;
 }
 
 /**
@@ -33,7 +132,8 @@ export function isTxClient(db: unknown): boolean {
 @Injectable()
 export class PrismaService extends PrismaClient implements OnModuleInit, OnModuleDestroy {
   constructor(@Optional() private readonly tenantCtx?: TenantContextService) {
-    const pool = new Pool({ connectionString: process.env.DATABASE_URL });
+    // Row 361: the session time zone is pinned to UTC on every connection (common/pg-session.ts).
+    const pool = new Pool(utcPoolConfig({ connectionString: process.env.DATABASE_URL }));
     const adapter = new PrismaPg(pool);
     super({ adapter });
   }
@@ -104,12 +204,9 @@ export class PrismaService extends PrismaClient implements OnModuleInit, OnModul
       "aggregate",
       "groupBy",
     ]);
-    // findUnique can't have tenantId injected into `where` (only @id/@@unique
-    // fields allowed), so we post-filter the result instead.
-    const POST_FILTER_METHODS = new Set(["findUnique"]);
-    // Same post-filter, but `findUniqueOrThrow` must fail closed: a foreign-tenant
-    // row raises Prisma's own not-found error (P2025) rather than being returned.
-    const THROW_POST_FILTER_METHODS = new Set(["findUniqueOrThrow"]);
+    // findUnique / findUniqueOrThrow carry the tenant filter in `where` for tenant models and
+    // are re-checked on the way out (fail closed) — see runTenantUniqueLookup.
+    const UNIQUE_METHODS = new Set(["findUnique", "findUniqueOrThrow"]);
     // Model verbs deliberately left unscoped. Empty on purpose, and the honest answer
     // rather than a decorative list: the client-level escape hatches ($queryRaw,
     // $executeRaw, $transaction, $connect, …) never reach a model proxy — the outer
@@ -178,24 +275,15 @@ export class PrismaService extends PrismaClient implements OnModuleInit, OnModul
               };
             }
 
-            if (POST_FILTER_METHODS.has(method)) {
-              return async (args: any = {}) => {
-                const result = await fn.call(modelTarget, args);
-                if (result && result.tenantId !== undefined && result.tenantId !== tenantId) {
-                  return null;
-                }
-                return result;
-              };
-            }
-
-            if (THROW_POST_FILTER_METHODS.has(method)) {
-              return async (args: any = {}) => {
-                const result = await fn.call(modelTarget, args);
-                if (result && result.tenantId !== undefined && result.tenantId !== tenantId) {
-                  throw tenantNotFound(modelName);
-                }
-                return result;
-              };
+            if (UNIQUE_METHODS.has(method)) {
+              return (args: any = {}) =>
+                runTenantUniqueLookup({
+                  model: modelName,
+                  operation: method as "findUnique" | "findUniqueOrThrow",
+                  args,
+                  tenantId,
+                  run: (a) => fn.call(modelTarget, a),
+                });
             }
 
             if (PASS_THROUGH_METHODS.has(method)) return fn.bind(modelTarget);
@@ -230,25 +318,17 @@ export class PrismaService extends PrismaClient implements OnModuleInit, OnModul
         $allModels: {
           async $allOperations({ args, query, model, operation }: any) {
             switch (operation) {
-              // findUnique only allows @id/@@unique fields in `where`, so we can't
-              // inject tenantId there. Instead, run the query and then verify the
-              // returned row belongs to this tenant.
-              case "findUnique": {
-                const result = await query(args);
-                if (result && result.tenantId !== undefined && result.tenantId !== tenantId) {
-                  return null; // treat cross-tenant row as not found
-                }
-                return result;
-              }
-              // Same post-filter as findUnique, but fail closed: a cross-tenant row
-              // raises Prisma's own not-found error (P2025) instead of resolving.
-              case "findUniqueOrThrow": {
-                const result = await query(args);
-                if (result && result.tenantId !== undefined && result.tenantId !== tenantId) {
-                  throw tenantNotFound(model);
-                }
-                return result;
-              }
+              // Tenant filter in `where` + fail-closed re-check; one implementation shared
+              // with the tx proxy (runTenantUniqueLookup).
+              case "findUnique":
+              case "findUniqueOrThrow":
+                return runTenantUniqueLookup({
+                  model,
+                  operation,
+                  args,
+                  tenantId,
+                  run: query,
+                });
 
               case "create":
                 args.data = { ...args.data, tenantId };

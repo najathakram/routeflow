@@ -1,3 +1,11 @@
+import { API_ERROR_CODES } from "../common/api-error-codes";
+import { productCodeInUse } from "./product-code-in-use";
+import {
+  assertSafeProductCategory,
+  assertSafeProductNames,
+  productCategoryViolation,
+  productNameViolation,
+} from "../common/text-cell-guards";
 import {
   BadRequestException,
   ConflictException,
@@ -33,11 +41,14 @@ import {
 import { UpdateProductDto } from "./dto/update-product.dto";
 import { BulkAssignParentDto } from "./dto/bulk-assign-parent.dto";
 import { BulkSetMsrpDto } from "./dto/bulk-set-msrp.dto";
-import { ListProductsDto, StockStatusFilter } from "./dto/list-products.dto";
+import { ListProductsDto } from "./dto/list-products.dto";
 import { ImportProductsDto } from "./dto/import-products.dto";
 import { isValidItemType, isValidUom, templateByKey } from "../regulated/template-registry";
-import { normalizeScanCode, pickBestScanMatch } from "../common/barcode-normalize";
-import { buildScanSearchOr } from "./scan-search";
+import { normalizeScanCode } from "@routeflow/scanning";
+import { findScanMatches } from "./scan-match";
+import { buildProductListWhere } from "./product-list-where";
+import type { ProductIdsForFilterResponse } from "@routeflow/types";
+import { RULE_TARGETS_MAX_PER_REQUEST as PRODUCT_IDS_CAP } from "../selling-restrictions-admin/dto/rule-targets.dto";
 import { assertPackKeepsLevelsValid } from "./unit-pack-rules";
 import { isMsrpBelowWholesale, wholesalePerPiece } from "../common/msrp";
 import { TOBACCO_CATEGORY_NAME, isTobaccoCategoryName } from "../common/tobacco-category";
@@ -48,17 +59,67 @@ import {
   syncProductBarcodesFromLegacy,
   syncProductImagesFromLegacy,
 } from "./product-catalog-sync";
-import { recipeReferenceGroupers } from "./recipe-references";
+import {
+  labelIdForText,
+  labelNameKey,
+  LabelLockTimeoutError,
+  lockLabelCategories,
+  syncCategoryLabel,
+} from "../product-categories/label-writer";
+import { txConflictState } from "../common/tx-retry";
+import {
+  keepLabelsOnReparent,
+  planReparentLabels,
+} from "../product-labels/keep-labels-on-reparent";
+import {
+  claimCodes,
+  codeClaims,
+  peekProductCodes,
+  releaseProductCodes,
+  restoreProductCodes,
+} from "./product-code-release";
+import { assertNameFree, mapNameUniqueViolation } from "./product-name-rules";
+import {
+  reactivationLockCodes,
+  resolveReactivationConflicts,
+} from "./product-reactivation-holders";
+import {
+  activeOrderItemWhere,
+  applyProductDelete,
+  mapProductDeleteError,
+  planProductDelete,
+  productHasActiveOrderItems,
+  type BulkDeleteSkip,
+  type ProductDeleteOutcome,
+} from "./product-delete-classify";
+import { stockTxBounded } from "../common/stock-tx";
 import { lockAndAssertRecipeGuards } from "./recipe-update-guard";
 import {
   applyFamilyPriceBeforeUpdate,
   familyPricesForNewVariant,
   hasPriceColumns,
+  lockFamilyRow,
   propagateFamilyPrice,
   readFamilyPriceMode,
 } from "./family-price";
 import {
+  assertValidParent,
+  parentInvalid,
+  PRODUCT_PARENT_REASONS,
+  tenantSafeParent,
+  tenantSafeParentView,
+} from "./product-parent";
+import { scanReadInclude } from "./scan-product-view";
+import {
+  activeVariantIds,
+  assertParentActiveForReactivation,
+  cascadeDeactivate,
+  familyHasActiveVariants,
+  variantCodes,
+} from "./product-family-cascade";
+import {
   barcodeRowsToView,
+  liveBarcodeRows,
   mirrorableImageKeys,
   parseFocalFromKey,
   synthesizeLegacyBarcodes,
@@ -103,6 +164,8 @@ const TENANT_COSTING_TO_PRODUCT: Record<string, CostingMethod> = {
   FIFO: CostingMethod.FIFO,
   LAST_COST: CostingMethod.LAST_COST,
 };
+
+export type { BulkDeleteSkip };
 
 @Injectable()
 export class ProductsService {
@@ -299,10 +362,18 @@ export class ProductsService {
     });
   }
 
+  /** The tenant this request runs in; the catalog is only ever listed inside one. */
+  private requireTenant(): string {
+    const tenantId = this.prisma.getTenantId();
+    if (!tenantId) throw new BadRequestException("A tenant context is required.");
+    return tenantId;
+  }
+
   async findAll(
     query: ListProductsDto,
     opts?: { excludeTrackedCategoryIds?: string[]; andWhere?: Record<string, unknown>[] },
   ) {
+    this.requireTenant();
     const page = Number(query.page ?? 1);
     // limit=0 is the "fetch-all" sentinel used by BuyerCatalogService for
     // price-based sorts (buyer pricing is resolved in-memory so can't use DB ORDER BY).
@@ -314,102 +385,33 @@ export class ProductsService {
     const limit = fetchAll ? 10_000 : limitRaw;
     const skip = (page - 1) * limit;
 
-    const where: any = {};
-    if (query.search) {
-      where.OR = [
-        { name: { contains: query.search, mode: "insensitive" } },
-        { sku: { contains: query.search, mode: "insensitive" } },
-        { barcode: { contains: query.search, mode: "insensitive" } },
-        { unitSku: { contains: query.search, mode: "insensitive" } },
-      ];
-    } else if (query.scanCode) {
-      // Scan-fallback rung: same four columns, but contains-matched against
-      // EVERY normalizeScanCode candidate instead of the raw decode — the raw
-      // string misses whenever this camera's decode differs from the stored
-      // shape (iOS 13-digit vs a 12-digit code kept in the product name).
-      // OR: [] when the code yields no candidates — matches nothing, correctly.
-      where.OR = buildScanSearchOr(query.scanCode);
-    }
-    if (query.category) where.category = query.category;
-    if (query.isActive !== undefined) where.isActive = query.isActive;
-    if (query.isTobacco !== undefined) where.isTobacco = query.isTobacco;
-    // W7 buyer gate: exclude regulated categories the buyer isn't licensed for (set
-    // internally by BuyerCatalogService — never from buyer input). In the query so
-    // pagination counts stay correct.
-    if (opts?.excludeTrackedCategoryIds?.length) {
-      // Hide license-gated categories WITHOUT hiding untracked products.
-      // Prisma's `notIn` never matches NULL rows, so the previous bare filter
-      // (`trackedCategoryId: { notIn: [...] }`) made every product with NO
-      // tracked category vanish the moment a tenant had one requiresLicense
-      // category — on a live tenant that hid 1,757 of 1,823 products from
-      // every unlicensed buyer. NULL must be allowed back in explicitly.
-      // AND-pushed (not where.trackedCategoryId) so it can't collide with the
-      // regulated fold-in below or a search OR.
-      where.AND = [
-        ...((where.AND as Record<string, unknown>[] | undefined) ?? []),
-        {
-          OR: [
-            { trackedCategoryId: null },
-            { trackedCategoryId: { notIn: opts.excludeTrackedCategoryIds } },
-          ],
-        },
-      ];
-    }
-
-    // Regulated-section filter ("any" | "none" | <sectionId>). When the internal
-    // buyer-catalog exclusion already occupies where.trackedCategoryId, fold this
-    // clause into AND so BOTH apply.
-    if (query.section) {
-      const clause =
-        query.section === "any" ? { not: null } : query.section === "none" ? null : query.section;
-      if (where.trackedCategoryId !== undefined) {
-        where.AND = [...(where.AND ?? []), { trackedCategoryId: clause }];
-      } else {
-        where.trackedCategoryId = clause;
-      }
-    }
-
-    // Server-side stock-status filtering so pagination counts are accurate
-    if (query.stockStatus === StockStatusFilter.OUT_OF_STOCK) {
-      // "Out" = inactive OR zero/negative stock. Keep it as its own disjunction
-      // AND-ed with any search OR — reusing `where.OR` would merge the two into a
-      // single OR, so every out-of-stock product would match regardless of the
-      // search text (and every search hit would show even if in stock).
-      const outOfStock = [{ isActive: false }, { currentStock: { lte: 0 } }];
-      if (where.OR) {
-        where.AND = [...(where.AND ?? []), { OR: where.OR }, { OR: outOfStock }];
-        delete where.OR;
-      } else {
-        where.OR = outOfStock;
-      }
-    } else if (query.stockStatus === StockStatusFilter.LOW) {
-      where.isActive = true;
-      // lte:5 covers 0, negatives, and low stock; null check invalid for Decimal in Prisma 7.7
-      where.currentStock = { lte: 5 };
-    } else if (query.stockStatus === StockStatusFilter.IN_STOCK) {
-      where.isActive = true;
-      where.currentStock = { gt: 5 };
-    }
-
-    // Internal-only extra AND clauses (buyer catalog v2 smart collections —
-    // set by BuyerCatalogService, never from client input). Folded via AND so
-    // they compose with the search OR and the stock-status OR.
-    if (opts?.andWhere?.length) {
-      where.AND = [...(where.AND ?? []), ...opts.andWhere];
-    }
+    const where: any = buildProductListWhere(query, opts);
 
     // Always include `parent` so the web can compose "<Parent> - <Variant>"
     // display names for line items. The parent row is small (no nested
     // relations) so this is cheap. variants{} is still gated behind
     // includeVariants since it materially expands the payload.
+    // B1211 (read side): `tenantId` is selected only to drop a parent / variant from another tenant, and
+    // is removed again below, so the response keeps its shape.
+    const readTenantId = this.prisma.getTenantId();
     const includeRelations = {
-      parent: { select: { id: true, name: true } },
+      parent: {
+        // `category`: a family variant has none of its own; the buyer catalog shows the family's (H6).
+        select: {
+          id: true,
+          name: true,
+          kind: true,
+          portalVisible: true,
+          category: true,
+          tenantId: true,
+        },
+      },
       // #2717 M1 (SA-572b Q5): additive barcodes[] on the list too (rows, else synthesized below).
       barcodes: { orderBy: { level: "asc" as const } },
       ...(query.includeVariants
         ? {
             variants: {
-              where: { isActive: true },
+              where: { isActive: true, ...(readTenantId ? { tenantId: readTenantId } : {}) },
               orderBy: { variantName: "asc" as const },
             },
           }
@@ -439,7 +441,12 @@ export class ProductsService {
           pBarcodeRows.length > 0
             ? barcodeRowsToView(pBarcodeRows as Parameters<typeof barcodeRowsToView>[0])
             : synthesizeLegacyBarcodes({ barcode: p.barcode, unitsPerBox: p.unitsPerBox });
-        return { ...p, thumbnailUrl, barcodes };
+        return {
+          ...p,
+          parent: tenantSafeParentView(p.parent, readTenantId),
+          thumbnailUrl,
+          barcodes,
+        };
       }),
     );
 
@@ -452,6 +459,30 @@ export class ProductsService {
         totalPages: fetchAll ? 1 : Math.ceil(total / limit),
       },
     };
+  }
+
+  /**
+   * Row 509: GET /products/ids — the ids of EVERY product the list filters (search, category, stock filter,
+   * portalVisible, section, isActive, isTobacco) match, for the catalog's "Select all N matching" and the rule
+   * pickers. The SAME where-clause as `findAll` (`buildProductListWhere`), in the list's order, ids only; `page` /
+   * `limit` are ignored. At most RULE_TARGETS_MAX_PER_REQUEST ids come back; `total` is every match and `capped`
+   * says some were left out. `includeVariants` only widens each list row's payload, never the matches, so it has
+   * no effect here.
+   */
+  async findIds(query: ListProductsDto): Promise<ProductIdsForFilterResponse> {
+    this.requireTenant();
+    const where: any = buildProductListWhere(query);
+    const db = this.prisma.forTenant();
+    const [rows, total] = await Promise.all([
+      db.product.findMany({
+        where,
+        select: { id: true },
+        orderBy: [{ name: "asc" }, { id: "asc" }],
+        take: PRODUCT_IDS_CAP,
+      }),
+      db.product.count({ where }),
+    ]);
+    return { ids: rows.map((r: { id: string }) => r.id), total, capped: total > PRODUCT_IDS_CAP };
   }
 
   /**
@@ -480,10 +511,16 @@ export class ProductsService {
   }
 
   async findOne(id: string) {
+    // B1211 (read side): a variant / parent link is only followed inside THIS tenant, so a link that
+    // predates the write-time parent check can never hand back another tenant's row.
+    const readTenantId = this.prisma.getTenantId();
     const product = await this.prisma.forTenant().product.findUnique({
       where: { id },
       include: {
-        variants: { orderBy: [{ isActive: "desc" as const }, { variantName: "asc" as const }] },
+        variants: {
+          ...(readTenantId ? { where: { tenantId: readTenantId } } : {}),
+          orderBy: [{ isActive: "desc" as const }, { variantName: "asc" as const }],
+        },
         parent: true,
         // Phase 4: the assigned regulated ("separately handled") section +
         // subcategory, shown on the product detail. Null for standard products.
@@ -508,7 +545,7 @@ export class ProductsService {
     // The presigned-url map below reuses the SAME imageKeys/imageUrls pairing above (never a second
     // presign of the same key).
     const urlByKey = new Map(imageKeys.map((k, i) => [k, imageUrls[i] ?? null]));
-    const barcodeRows = product.barcodes ?? [];
+    const barcodeRows = liveBarcodeRows(product.barcodes);
     const imageRows = product.images ?? [];
     const barcodes =
       barcodeRows.length > 0
@@ -547,7 +584,15 @@ export class ProductsService {
         origin: "LEGACY" as const,
       };
     });
-    return { ...product, imageKeys, imageUrls, stockAlertCount, barcodes, images };
+    return {
+      ...product,
+      parent: tenantSafeParent(product.parent, readTenantId),
+      imageKeys,
+      imageUrls,
+      stockAlertCount,
+      barcodes,
+      images,
+    };
   }
 
   async uploadImage(
@@ -637,44 +682,20 @@ export class ProductsService {
     const candidates = normalizeScanCode(code);
     if (candidates.length === 0) throw new NotFoundException("Product not found");
 
-    const include = { variants: { where: { isActive: true } }, parent: true };
-    const db = this.prisma.forTenant();
-
-    // Tier 1 — exact. Rides @@unique([tenantId, barcode|sku|unitSku]) and the
-    // @@index([barcode]) / @@index([unitSku]) as a BitmapOr of index scans:
-    // at most MAX_SCAN_CANDIDATES probes per column.
-    let matches = await db.product.findMany({
-      where: {
-        OR: [
-          { barcode: { in: candidates } },
-          { sku: { in: candidates } },
-          { unitSku: { in: candidates } },
-        ],
-      },
-      include,
-    });
-
-    // Tier 2 — case-insensitive, MISS ONLY. Prisma emits ILIKE for
-    // `mode: "insensitive"`, which a btree can't serve, so this is a
-    // tenant-scoped seq scan. It runs only on the path that used to 404
-    // outright, and camera-decoded EAN/UPC codes (all digits) never reach it —
-    // it exists for typed or lowercased alpha SKUs.
-    if (matches.length === 0) {
-      matches = await db.product.findMany({
-        where: {
-          OR: candidates.flatMap((c) => [
-            { barcode: { equals: c, mode: "insensitive" as const } },
-            { sku: { equals: c, mode: "insensitive" as const } },
-            { unitSku: { equals: c, mode: "insensitive" as const } },
-          ]),
-        },
-        include,
-        take: 25,
-      });
-    }
-
-    if (matches.length === 0) throw new NotFoundException("Product not found");
-    return pickBestScanMatch(matches, candidates);
+    // B1211 (read side): only this tenant's variants and parent are followed (see findOne).
+    const readTenantId = this.prisma.getTenantId();
+    const hit = await findScanMatches(
+      this.prisma.forTenant(),
+      candidates,
+      {},
+      scanReadInclude(readTenantId),
+    );
+    if (!hit) throw new NotFoundException("Product not found");
+    return {
+      ...hit.product,
+      parent: tenantSafeParent(hit.product.parent, readTenantId),
+      scanMatch: hit.scanMatch,
+    };
   }
 
   /**
@@ -703,6 +724,8 @@ export class ProductsService {
       const nameTaken = await db.findFirst({
         where: {
           name: { equals: p.name, mode: "insensitive" },
+          // SA-603a: an INACTIVE product never holds a name or a code (released in the write tx).
+          isActive: true,
           ...notSelf,
           parentProductId: p.parentProductId ?? null,
         },
@@ -718,33 +741,46 @@ export class ProductsService {
     }
     if (p.sku) {
       const clash = await db.findFirst({
-        where: { OR: [{ sku: p.sku }, { unitSku: p.sku }], ...notSelf },
+        where: { OR: [{ sku: p.sku }, { unitSku: p.sku }], isActive: true, ...notSelf },
       });
-      if (clash) throw new BadRequestException("SKU already exists");
+      if (clash) throw productCodeInUse("sku", "SKU already exists");
     }
     if (p.barcode) {
       const clash = await db.findFirst({
-        where: { OR: [{ barcode: p.barcode }, { unitSku: p.barcode }], ...notSelf },
+        where: {
+          OR: [{ barcode: p.barcode }, { unitSku: p.barcode }],
+          isActive: true,
+          ...notSelf,
+        },
       });
-      if (clash) throw new BadRequestException("Barcode already exists");
+      if (clash) throw productCodeInUse("barcode", "Barcode already exists");
     }
     if (p.unitSku) {
       const clash = await db.findFirst({
         where: {
           OR: [{ unitSku: p.unitSku }, { sku: p.unitSku }, { barcode: p.unitSku }],
+          isActive: true,
           ...notSelf,
         },
         select: { id: true },
       });
       if (clash) {
-        throw new BadRequestException(
+        throw productCodeInUse(
+          "unitSku",
           "Unit code already used by another product's SKU, barcode, or unit code",
         );
       }
     }
   }
 
-  async create(dto: CreateProductDto, options?: { suppressEmit?: boolean }) {
+  async create(
+    dto: CreateProductDto,
+    options?: { suppressEmit?: boolean; actorId?: string | null; actorName?: string | null },
+  ) {
+    assertSafeProductNames(dto); // B964-2: a formula-led name/variantName is refused before any read or write
+    // B990: the typed free-text category too, UNCONDITIONALLY: even with a structured subcategory chosen or a parent without one
+    // the written value can still be the typed text, and checking at the top is before any read or write.
+    if (dto.category !== undefined) assertSafeProductCategory(dto.category);
     await this.assertCanFlagTobacco(dto.isTobacco);
     if (dto.msrp !== undefined) await this.assertMsrpAllowed();
     if (dto.reorderPoint !== undefined || dto.reorderQty !== undefined) {
@@ -797,7 +833,7 @@ export class ProductsService {
         })
       : null;
     if (dto.parentProductId && !parent) {
-      throw new BadRequestException("Parent product not found");
+      throw parentInvalid(PRODUCT_PARENT_REASONS.NOT_FOUND, "Parent product not found");
     }
     // Phase 4: regulated section + subcategory. Explicit DTO wins; when the DTO
     // omits the section entirely, a variant inherits the parent family's pair
@@ -889,9 +925,33 @@ export class ProductsService {
     const created = await this.prisma.tenantTransaction(async (tx: any) => {
       // SA-572b Q4/SA-572c: lock the code BEFORE the create — otherwise a concurrent create of the
       // same code races on the legacy unique index and surfaces a raw P2002 instead of a 409.
+      await claimCodes(tx, {
+        tenantId,
+        productId: null,
+        actorId: options?.actorId ?? null,
+        codes: codeClaims(dto, null),
+      });
+      // SA-603a (a): the active-only name check again, under the name lock (code locks first, house order).
+      await assertNameFree(tx, {
+        tenantId,
+        parentProductId: dto.parentProductId ?? null,
+        name: dto.name,
+        excludeId: null,
+      });
       if (dto.barcode) {
         await lockBarcodeCodes(tx, tenantId, [dto.barcode]);
         await assertBarcodeAvailable(tx, { tenantId, productId: null, code: dto.barcode });
+      }
+      // The parent is judged under its row lock, the same check update() and bulkAssignParent() use: it must
+      // exist in THIS tenant, be active and standalone. A FAMILY parent makes the new row a VARIANT.
+      let parentKind: string | null = null;
+      if (dto.parentProductId) {
+        await lockFamilyRow(tx, tenantId, dto.parentProductId);
+        ({ parentKind } = await assertValidParent(tx, {
+          tenantId,
+          id: null,
+          parentId: dto.parentProductId,
+        }));
       }
       // The family's five columns, read under its row lock (family-price.ts), or today's inheritance.
       const priceColumns =
@@ -939,6 +999,7 @@ export class ProductsService {
             reorderPoint: dto.reorderPoint,
             reorderQty: dto.reorderQty,
             parentProductId: dto.parentProductId ?? null,
+            ...(parentKind === "FAMILY" ? { kind: "VARIANT" as const } : {}),
             variantName: dto.variantName ?? null,
             trackedCategoryId: regulated.trackedCategoryId,
             trackedSubcategoryId: regulated.trackedSubcategoryId,
@@ -949,7 +1010,11 @@ export class ProductsService {
           include: { variants: true, parent: true },
         });
       } catch (e) {
-        mapBarcodeUniqueViolation(e, dto.barcode ?? "");
+        try {
+          mapBarcodeUniqueViolation(e, dto.barcode ?? "");
+        } catch (mapped) {
+          mapNameUniqueViolation(mapped, dto.name, dto.parentProductId != null);
+        }
       }
       await syncProductBarcodesFromLegacy(tx, {
         tenantId,
@@ -957,19 +1022,42 @@ export class ProductsService {
         barcode: row.barcode,
         unitsPerBox: row.unitsPerBox,
       });
+      // Add-only label sync from the category text this INSERT wrote (same tx).
+      await syncCategoryLabel(tx, {
+        tenantId,
+        productId: row.id,
+        text: row.category,
+        actor: { id: options?.actorId ?? null, name: options?.actorName ?? null },
+      });
       return row;
     });
     if (!options?.suppressEmit) this.emitProductChanged(created.id, "created");
     return created;
   }
 
-  async update(id: string, dto: UpdateProductDto, options?: { suppressEmit?: boolean }) {
+  async update(
+    id: string,
+    dto: UpdateProductDto,
+    options?: { suppressEmit?: boolean; actorId?: string | null; actorName?: string | null },
+  ) {
     await this.assertCanFlagTobacco(dto.isTobacco);
     if (dto.msrp !== undefined) await this.assertMsrpAllowed();
     if (dto.reorderPoint !== undefined || dto.reorderQty !== undefined) {
       await this.assertReorderAllowed();
     }
     const existing = await this.findOne(id);
+    if (
+      dto.deactivateHolderIds?.length &&
+      !(existing.isActive === false && dto.isActive === true)
+    ) {
+      throw new BadRequestException(
+        "deactivateHolderIds only applies when reactivating an inactive product",
+      );
+    }
+    assertSafeProductNames(dto, existing); // B964-2: change-only against the one read already made
+    // B990: change-only for the free-text category, BEFORE resolveOrCreateTobaccoCategory below, so a refusal never leaves an orphan Tobacco type
+    if (dto.category !== undefined)
+      assertSafeProductCategory(dto.category, existing.category ?? null);
     // #2533: a PATCH may only reorder/drop this product's own images (400 before any write).
     if (dto.imageKeys !== undefined) assertImageKeysReorder(id, existing.imageKeys, dto.imageKeys);
     // The product's effective parent is the dto value if provided (could be null to promote a
@@ -1096,6 +1184,10 @@ export class ProductsService {
     // `where: any` Prisma clauses elsewhere in this file.
     const data: any =
       dto.name !== undefined && effectiveParentId ? { ...dto, variantName: dto.name } : { ...dto };
+    // Not a column: the one-tx reactivation door reads it from `dto` (see deactivateReactivationHolders).
+    delete data.deactivateHolderIds;
+    // Not a column either: B1213's family-deactivation confirmation, read from `dto` inside the tx.
+    delete data.confirmCascade;
     // Force the (possibly auto-cleared) subcategory into the write when the section
     // was cleared but the client didn't also clear the subcategory.
     if (effectiveCategoryId == null && existing.trackedSubcategoryId != null) {
@@ -1189,9 +1281,126 @@ export class ProductsService {
         ? await readFamilyPriceMode(this.featureConfig, tenantId)
         : "off";
     let propagatedRows = 0;
-    const updated = await this.prisma.tenantTransaction(async (tx: any) => {
-      // Source-order pin: lock [new, old] before the update's own product.findFirst-style reads.
-      await lockBarcodeCodes(tx, tenantId, [effectiveBarcode, existing.barcode]);
+    let doorDeactivated: string[] = [];
+    let cascaded: string[] = [];
+    let keptLabels: string[] | null = null;
+    // A parent CHANGE (an unlink included); an echo of the current parent is not one.
+    const reparenting =
+      dto.parentProductId !== undefined &&
+      dto.parentProductId !== (existing.parentProductId ?? null);
+    const txDone = this.prisma.tenantTransaction(async (tx: any) => {
+      // SA-603a: reactivate restores the retired codes still free; a code this PATCH sets is claimed (an inactive
+      // holder is released + audited, an active one is a 409); deactivate releases BEFORE the isActive write.
+      const claims = codeClaims(dto, existing);
+      const reactivating = existing.isActive === false && data.isActive === true;
+      const deactivating = existing.isActive !== false && data.isActive === false;
+      const effectiveParent =
+        dto.parentProductId !== undefined ? dto.parentProductId : existing.parentProductId;
+      /** The label locks a reparent took before its row locks (see below); the keep may write only these. */
+      let reparentLocks: Set<string> | undefined;
+      // B1213: deactivating a family that still has ACTIVE variants is a coded 409 unless confirmed; a confirmed one
+      // deactivates them in this tx, so their codes join the ONE sorted lock call below.
+      const cascadeIds = deactivating ? await activeVariantIds(tx, tenantId, id) : [];
+      if (cascadeIds.length > 0 && !dto.confirmCascade) {
+        throw familyHasActiveVariants(cascadeIds.length);
+      }
+      // ONE sorted lockBarcodeCodes call for EVERY code this write can touch, taken before the first write or row lock
+      // (SA-572c / Opus #2860 B2): the new and old barcode, this product's own live and retired codes (level rows
+      // too), the claims and, for the one-tx door, the blocking holders' live codes (their codes are released below).
+      // Every later lock in this tx is a subset of it, so it acquires nothing new and cannot invert the order.
+      const lockList = [
+        effectiveBarcode,
+        existing.barcode,
+        ...claims.map((c) => c.value),
+        ...(await peekProductCodes(tx, tenantId, id)),
+        ...(await variantCodes(tx, tenantId, cascadeIds)),
+        ...(reactivating
+          ? await reactivationLockCodes(tx, {
+              tenantId,
+              productId: id,
+              name: dto.name ?? existing.name,
+              parentProductId: effectiveParent,
+              skip: claims.map((c) => c.field),
+              withHolders: !!dto.deactivateHolderIds?.length,
+            })
+          : []),
+      ].filter((c): c is string => typeof c === "string" && c.trim().length > 0);
+      await lockBarcodeCodes(tx, tenantId, lockList);
+      // H2: a parent CHANGE first reads, read-only, which labels the move would lose (an OLD family chain that can't be
+      // read in full is refused here, a coded 409, before any write or row lock), then takes THOSE label locks and the
+      // category text's label lock, sorted, BEFORE the family/product rows FOR UPDATE below. setLabel takes the label
+      // lock and then the product row (FK KEY SHARE); the reverse order here cycled (40P01). The keep re-checks under
+      // the row locks and refuses (retryable 409) a label outside this set instead of locking it late.
+      if (reparenting) {
+        const planned = await planReparentLabels(tx, {
+          tenantId,
+          productId: id,
+          fromParentId: existing.parentProductId ?? null,
+          toParentId: dto.parentProductId ?? null,
+        });
+        // The category text's label, only when this PATCH changes the text's name key: only then does the sync below run.
+        const nextText = data.category !== undefined ? data.category : existing.category;
+        const textLabel =
+          labelNameKey(nextText) !== labelNameKey(existing.category)
+            ? await labelIdForText(tx, tenantId, nextText)
+            : null;
+        reparentLocks = new Set([...planned, ...(textLabel ? [textLabel] : [])]);
+        await lockLabelCategories(tx, tenantId, reparentLocks);
+      }
+      // B1213: a variant is only as live as its family. The family row is locked before anything of this variant is
+      // written (house order F -> V); a CHANGED parent is judged by assertValidParent below, which refuses an
+      // inactive one.
+      if (
+        reactivating &&
+        existing.parentProductId &&
+        (dto.parentProductId === undefined || dto.parentProductId === existing.parentProductId)
+      ) {
+        await assertParentActiveForReactivation(tx, {
+          tenantId,
+          parentId: existing.parentProductId,
+        });
+      }
+      if (reactivating) {
+        // SA-603i: any ACTIVE holder of a retired code / the name is a 409 listing ALL of them; with
+        // `deactivateHolderIds` exactly that set is deactivated in this tx (codes -> name -> rows sorted).
+        const res = await resolveReactivationConflicts(tx, {
+          tenantId,
+          productId: id,
+          name: dto.name ?? existing.name,
+          parentProductId: effectiveParent,
+          skip: claims.map((c) => c.field),
+          holderIds: dto.deactivateHolderIds,
+          actorId: options?.actorId ?? null,
+          lockedCodes: new Set(lockList),
+        });
+        doorDeactivated = res.deactivatedIds;
+      }
+      if (reactivating) {
+        await restoreProductCodes(tx, {
+          tenantId,
+          productId: id,
+          actorId: options?.actorId ?? null,
+          skip: claims.map((c) => c.field),
+        });
+      }
+      await claimCodes(tx, {
+        tenantId,
+        productId: id,
+        actorId: options?.actorId ?? null,
+        codes: claims,
+      });
+      // SA-603a (a): a name or parent change, or a reactivation, re-checks the active-only name under its lock;
+      // reactivating against an ACTIVE same-name holder is a 409 naming it.
+      if (dto.name || dto.parentProductId !== undefined || reactivating) {
+        await assertNameFree(tx, {
+          tenantId,
+          parentProductId:
+            dto.parentProductId !== undefined ? dto.parentProductId : existing.parentProductId,
+          name: dto.name ?? existing.name,
+          excludeId: id,
+          reactivating,
+        });
+      }
       if (effectiveBarcode) {
         await assertBarcodeAvailable(tx, { tenantId, productId: id, code: effectiveBarcode });
       }
@@ -1206,17 +1415,59 @@ export class ProductsService {
           trackedSubcategoryId: effectiveSubcategoryId ?? null,
         },
       });
+      // A CHANGED parent is judged here, after the recipe guards took the family rows and this row (house lock
+      // order): it must exist in this tenant, be active and standalone, not be this product, and this product
+      // must have no variants of its own. A FAMILY parent makes this row a VARIANT. An echo of the current
+      // parent is not re-judged (an archived family must not block editing its existing variants).
+      if (dto.parentProductId && dto.parentProductId !== existing.parentProductId) {
+        const { parentKind } = await assertValidParent(tx, {
+          tenantId,
+          id,
+          parentId: dto.parentProductId,
+        });
+        if (parentKind === "FAMILY" && existing.kind !== "VARIANT") data.kind = "VARIANT";
+        // A VARIANT moved under a STANDARD parent is no variant of a family any more: reset it, as un-parenting does.
+        else if (parentKind !== "FAMILY" && existing.kind === "VARIANT") data.kind = "STANDARD";
+      }
+      // Promoting a variant to standalone (parentProductId: null) must not leave a VARIANT with no parent.
+      if (dto.parentProductId === null && existing.kind === "VARIANT") data.kind = "STANDARD";
       // Family price authority: may refuse (409), rewrite `data`'s price columns, or ask for a
       // propagation to this row's children after the write. Off = nothing runs.
       const family =
         familyMode === "on"
           ? await applyFamilyPriceBeforeUpdate(tx, { tenantId, id, existing, dto, data })
           : { propagate: false };
+      // Codes + row lock BEFORE the isActive write (Opus #2860 B1): the release takes this product's code locks, then
+      // its row lock; the UPDATE below must never be the first thing to lock the row.
+      if (deactivating) {
+        await releaseProductCodes(tx, {
+          tenantId,
+          productId: id,
+          lockedCodes: new Set(lockList),
+        });
+        // The family row is held now: its variants follow in id order (re-read under the lock).
+        cascaded = await cascadeDeactivate(tx, {
+          tenantId,
+          familyId: id,
+          lockedCodes: new Set(lockList),
+          confirmed: !!dto.confirmCascade,
+        });
+      }
+      // The category text this write REPLACES, read inside the tx (the label sync below compares name keys against it,
+      // never the pre-transaction read). A plain read: the UPDATE right after takes the row lock (house lock order).
+      const before = await tx.product.findFirst({
+        where: { id },
+        select: { category: true, parentProductId: true },
+      });
       let row;
       try {
         row = await tx.product.update({ where: { id }, data });
       } catch (e) {
-        mapBarcodeUniqueViolation(e, effectiveBarcode ?? "");
+        try {
+          mapBarcodeUniqueViolation(e, effectiveBarcode ?? "");
+        } catch (mapped) {
+          mapNameUniqueViolation(mapped, dto.name ?? existing.name, !!existing.parentProductId);
+        }
       }
       // Sync from the row the UPDATE returned (the post-write values, under its row lock), not from
       // `existing`: a concurrent image upload between the read and this write would otherwise be
@@ -1233,18 +1484,55 @@ export class ProductsService {
         productId: id,
         imageKeys: row.imageKeys,
       });
+      // Add-only label sync, only when the category NAME KEY changed: re-saving the same text (or a case/space
+      // variant of it) must not resurrect a membership an operator removed.
+      if (labelNameKey(row.category) !== labelNameKey(before?.category ?? existing.category)) {
+        await syncCategoryLabel(tx, {
+          tenantId,
+          productId: id,
+          text: row.category,
+          actor: { id: options?.actorId ?? null, name: options?.actorName ?? null },
+          lockedCategoryIds: reparentLocks,
+        });
+      }
+      // H2: a CHANGED parent (incl. an unlink) never drops a label the variant carried through the old one: what was
+      // effective before and is not after becomes its own INCLUDE, in this tx (rolls the parent write back on failure).
+      const fromParentId = before?.parentProductId ?? null;
+      if (dto.parentProductId !== undefined && dto.parentProductId !== fromParentId) {
+        keptLabels = (
+          await keepLabelsOnReparent(tx, {
+            tenantId,
+            productId: id,
+            fromParentId,
+            toParentId: dto.parentProductId ?? null,
+            actor: { id: options?.actorId ?? null, name: options?.actorName ?? null },
+            // An echo of a parent that moved concurrently took no locks up front: an empty set, so anything to keep is the
+            // retryable 409 rather than a label lock after the row lock.
+            lockedCategoryIds: reparentLocks ?? new Set<string>(),
+          })
+        ).keptLabels;
+      }
       if (family.propagate) {
         const moved = await propagateFamilyPrice(tx, { tenantId, familyId: id });
         propagatedRows = moved.variants + moved.recipes;
       }
       return row;
     });
+    // H2: a reparent's deadlock / write conflict (40P01, 40001, P2034 in any shape: the shared L-221 predicate) is the
+    // retryable coded 409, never a raw 500. Nothing was saved (the transaction rolled back).
+    const updated = await txDone.catch((e: unknown): never => {
+      if (reparenting && txConflictState(e)) throw new LabelLockTimeoutError();
+      throw e;
+    });
     // suppressEmit lets a caller that loops this method (bulkAssignParent) emit
     // ONE coalesced event after the loop instead of one per row.
     if (!options?.suppressEmit) this.emitProductChanged(id, "updated");
+    // The one-tx door deactivated blocking products too: buyer/driver caches must not keep them visible (SA-603j LOW, N4).
+    if (doorDeactivated.length > 0 || cascaded.length > 0) this.emitProductChanged(null, "bulk");
     // The family edit moved its children's prices: ONE coalesced event, after the commit (L-237).
     if (propagatedRows > 0) this.emitProductChanged(null, "bulk");
-    return updated;
+    // A reparent reports the labels it kept (names; [] = nothing was lost); any other write returns the row as before.
+    return keptLabels ? { ...updated, keptLabels } : updated;
   }
 
   /**
@@ -1382,23 +1670,45 @@ export class ProductsService {
    */
   async bulkAssignParent(
     dto: BulkAssignParentDto,
-  ): Promise<{ succeeded: string[]; failed: { id: string; reason: string }[] }> {
-    const parent = await this.prisma.forTenant().product.findFirst({
-      where: { id: dto.parentProductId },
-      select: { id: true, parentProductId: true },
+    actor?: { actorId?: string | null; actorName?: string | null },
+  ): Promise<{
+    succeeded: string[];
+    failed: { id: string; reason: string }[];
+    /** Per child that kept labels it carried through its old parent (children that lost nothing are absent). */
+    keptLabels: { id: string; labels: string[] }[];
+  }> {
+    const bulkTenantId = this.prisma.getTenantId();
+    if (!bulkTenantId) throw new BadRequestException("No tenant context");
+    await assertValidParent(this.prisma.forTenant(), {
+      tenantId: bulkTenantId,
+      id: null,
+      parentId: dto.parentProductId,
     });
-    if (!parent) throw new BadRequestException("Parent product not found");
-    if (parent.parentProductId) {
-      throw new BadRequestException("Parent must be a standalone product, not a variant");
-    }
+    // B964-2: validate EVERY assignment before the first write: one formula-led variant name rejects the WHOLE request with a coded 400
+    // that names the row (index + product id), never a half-applied batch.
+    dto.assignments.forEach((assignment, index) => {
+      const violation = productNameViolation({ variantName: assignment.variantName });
+      if (violation) {
+        throw new BadRequestException({
+          statusCode: 400,
+          code: API_ERROR_CODES.TEXT_CELL_FORMULA_LEAD,
+          field: "variantName",
+          index,
+          productId: assignment.id,
+          message: violation,
+          error: "Bad Request",
+        });
+      }
+    });
     const succeeded: string[] = [];
     const failed: { id: string; reason: string }[] = [];
+    const keptLabels: { id: string; labels: string[] }[] = [];
     for (const assignment of dto.assignments) {
       try {
         // suppressEmit: this loop can reassign N products in one request — emit
         // ONE coalesced event after the loop below, never one per row (the same
         // rule bulkSetMsrp/bulkDelete/importFromZoho already follow).
-        await this.update(
+        const moved = await this.update(
           assignment.id,
           {
             parentProductId: dto.parentProductId,
@@ -1406,9 +1716,15 @@ export class ProductsService {
             // Variants store JUST the variant name in `name` (PR #44).
             name: assignment.variantName,
           } as UpdateProductDto,
-          { suppressEmit: true },
+          {
+            suppressEmit: true,
+            actorId: actor?.actorId ?? null,
+            actorName: actor?.actorName ?? null,
+          },
         );
         succeeded.push(assignment.id);
+        const labels = (moved as { keptLabels?: string[] } | null)?.keptLabels ?? [];
+        if (labels.length > 0) keptLabels.push({ id: assignment.id, labels });
       } catch (err) {
         // F8-003: surface the app's OWN validation messages (HttpException — intentional
         // and user-facing, e.g. "A variant named X already exists"), but genericize any
@@ -1427,28 +1743,52 @@ export class ProductsService {
     // ONE coalesced event for the whole request, never one per reassigned row —
     // each call above ran with suppressEmit so this is the only emit it produces.
     if (succeeded.length > 0) this.emitProductChanged(null, "bulk");
-    return { succeeded, failed };
+    return { succeeded, failed, keptLabels };
   }
 
-  async remove(id: string) {
+  async remove(id: string, options?: { confirmCascade?: boolean }) {
     await this.findOne(id);
-    const activeItems = await this.prisma.forTenant().orderItem.count({
-      where: { productId: id, status: { notIn: ["DELIVERED", "CANCELLED"] } },
-    });
-    if (activeItems > 0) {
-      throw new BadRequestException("Cannot delete product with active order items");
-    }
-    const archived = await this.prisma
+    // M1: "active" is the ORDER's state (an OrderItem.status never advances past PENDING).
+    const activeItems = await this.prisma
       .forTenant()
-      .product.update({ where: { id }, data: { isActive: false } });
+      .orderItem.count({ where: activeOrderItemWhere(id) });
+    if (activeItems > 0) throw productHasActiveOrderItems();
+    const tenantId = this.prisma.getTenantId();
+    if (!tenantId) throw new BadRequestException("No tenant context");
+    let cascaded: string[] = [];
+    const archived = await this.prisma.tenantTransaction(async (tx: any) => {
+      // B1213: archiving a family with ACTIVE variants is a coded 409 unless confirmed; a confirmed one archives them
+      // in this tx, so their codes join the ONE sorted lock call.
+      const cascadeIds = await activeVariantIds(tx, tenantId, id);
+      if (cascadeIds.length > 0 && !options?.confirmCascade) {
+        throw familyHasActiveVariants(cascadeIds.length);
+      }
+      // SA-603a: archiving releases the codes, so a new product can reuse them. Codes + row lock FIRST, the isActive
+      // write after (house order, Opus #2860 B1).
+      // ONE sorted lock call for every code of the product (Opus #2860 R1), then the release, then the write.
+      const codes = [
+        ...(await peekProductCodes(tx, tenantId, id)),
+        ...(await variantCodes(tx, tenantId, cascadeIds)),
+      ].filter((c) => c.trim().length > 0);
+      await lockBarcodeCodes(tx, tenantId, codes);
+      await releaseProductCodes(tx, { tenantId, productId: id, lockedCodes: new Set(codes) });
+      cascaded = await cascadeDeactivate(tx, {
+        tenantId,
+        familyId: id,
+        lockedCodes: new Set(codes),
+        confirmed: !!options?.confirmCascade,
+      });
+      return tx.product.update({ where: { id }, data: { isActive: false } });
+    });
     this.emitProductChanged(id, "archived");
+    if (cascaded.length > 0) this.emitProductChanged(null, "bulk");
     return archived;
   }
 
   async clearAll(): Promise<{
     deleted: number;
     softDeleted: number;
-    skipped: Array<{ id: string; reason: string }>;
+    skipped: BulkDeleteSkip[];
   }> {
     // Tenant-scoped by construction.
     //
@@ -1479,148 +1819,45 @@ export class ProductsService {
   async bulkDelete(ids: string[]): Promise<{
     deleted: number;
     softDeleted: number;
-    skipped: Array<{ id: string; reason: string }>;
+    skipped: BulkDeleteSkip[];
   }> {
     if (ids.length === 0) return { deleted: 0, softDeleted: 0, skipped: [] };
+    const tenantId = this.prisma.getTenantId();
+    if (!tenantId) throw new BadRequestException("No tenant context");
 
-    // R1: per-id classification before any delete — this used to hard-delete
-    // every id unconditionally, which meant a product with real order/invoice
-    // history (or, worse, an in-flight order) lost that history the instant
-    // it was swept up in a bulk selection. Three outcomes, same as remove():
-    //   1. active order items (not DELIVERED/CANCELLED) -> skip, reported by name
-    //   2. any other reference in the dependent tables  -> soft-delete
-    //      (isActive:false, exactly what remove() does), touching NO rows
-    //   3. reference-free                                -> hard delete
-    const products = await this.prisma
-      .forTenant()
-      .product.findMany({ where: { id: { in: ids } }, select: { id: true, name: true } });
-    const nameById = new Map(products.map((p) => [p.id, p.name]));
-
-    // ONE grouped query for the whole batch, never one count per id: the DTO
-    // allows 500 ids and clearAll() passes the entire catalog, so a per-id
-    // `count` would be hundreds of sequential round-trips in a single request.
-    const activeGroups = await this.prisma.forTenant().orderItem.groupBy({
-      by: ["productId"],
-      where: { productId: { in: ids }, status: { notIn: ["DELIVERED", "CANCELLED"] } },
+    // R1: per-id classification (product-delete-classify.ts): a line on a still-open order -> skipped (coded); any
+    // other reference -> soft-delete (isActive:false, exactly what remove() does), no row touched; nothing names
+    // it -> hard delete. HISTORY IS NEVER DELETED. The read here is only a pre-lock peek that chooses which codes
+    // to lock; the decision is re-made inside ONE transaction after the product rows are locked.
+    const db = this.prisma.forTenant();
+    const products = await db.product.findMany({
+      where: { id: { in: ids } },
+      select: { id: true, name: true },
     });
-    const activeIds = new Set(
-      activeGroups.map((g) => g.productId).filter((id): id is string => !!id),
-    );
-
-    const skipped: Array<{ id: string; reason: string }> = [];
-    const remaining: string[] = [];
-    for (const id of ids) {
-      if (activeIds.has(id)) {
-        skipped.push({
-          id,
-          reason: `${nameById.get(id) ?? id} has active order items and cannot be deleted`,
-        });
-        continue;
-      }
-      remaining.push(id);
+    const nameById = new Map(products.map((p) => [p.id, p.name]));
+    const peek = await planProductDelete(db, tenantId, ids, nameById);
+    if (peek.softIds.length === 0 && peek.hardIds.length === 0) {
+      return { deleted: 0, softDeleted: 0, skipped: peek.skipped };
     }
 
-    if (remaining.length === 0) {
-      return { deleted: 0, softDeleted: 0, skipped };
-    }
-
-    // One GROUPED query per dependent table (not per id, and never a row
-    // fetch): `groupBy` collapses to at most one row per referenced product,
-    // so probing a 500-id batch costs eleven bounded queries however much
-    // order/invoice/stock history those products carry — a plain `findMany`
-    // would drag every referencing row into API memory just to build this set.
-    // Each delegate's `groupBy` has an incompatible generic signature from the
-    // next, so the array is typed loosely here — only `productId` is ever read
-    // off the result.
-    const referencedIds = new Set<string>();
-    const dependentModels: Array<{
-      groupBy: (args: unknown) => Promise<Array<{ productId: string | null }>>;
-    }> = [
-      this.prisma.forTenant().orderItem,
-      this.prisma.forTenant().invoiceItem,
-      this.prisma.forTenant().stockMovement,
-      this.prisma.forTenant().vendorBillItem,
-      this.prisma.forTenant().purchaseOrderItem,
-      this.prisma.forTenant().estimateItem,
-      this.prisma.forTenant().returnItem,
-      this.prisma.forTenant().recurringInvoiceItem,
-      this.prisma.forTenant().orderTemplateItem,
-      this.prisma.forTenant().deliveryMutation,
-      this.prisma.forTenant().stockLot,
-      // #2717 M2: a product a recipe names (RESTRICT FKs) is referenced — soft-delete, never P2003.
-      ...recipeReferenceGroupers(this.prisma.forTenant()),
-    ];
-    for (const model of dependentModels) {
-      const groups = await model.groupBy({
-        by: ["productId"],
-        where: { productId: { in: remaining } },
-      });
-      for (const group of groups) if (group.productId) referencedIds.add(group.productId);
-      // Every remaining id is already known to be referenced — the outcome
-      // cannot change, so skip the rest of the tables.
-      if (referencedIds.size === remaining.length) break;
-    }
-
-    const softDeleteIds = remaining.filter((id) => referencedIds.has(id));
-    const hardDeleteIds = remaining.filter((id) => !referencedIds.has(id));
-
-    if (softDeleteIds.length > 0) {
-      await this.prisma
-        .forTenant()
-        .product.updateMany({ where: { id: { in: softDeleteIds } }, data: { isActive: false } });
-    }
-
-    if (hardDeleteIds.length > 0) {
-      // Delete all dependent records first, then the products themselves —
-      // scoped to only the reference-free ids.
-      await this.prisma.$transaction([
-        this.prisma
-          .forTenant()
-          .customerPrice.deleteMany({ where: { productId: { in: hardDeleteIds } } }),
-        this.prisma
-          .forTenant()
-          .recurringInvoiceItem.deleteMany({ where: { productId: { in: hardDeleteIds } } }),
-        this.prisma
-          .forTenant()
-          .productMapping.deleteMany({ where: { productId: { in: hardDeleteIds } } }),
-        this.prisma
-          .forTenant()
-          .vendorBillItem.deleteMany({ where: { productId: { in: hardDeleteIds } } }),
-        this.prisma
-          .forTenant()
-          .estimateItem.deleteMany({ where: { productId: { in: hardDeleteIds } } }),
-        this.prisma
-          .forTenant()
-          .returnItem.deleteMany({ where: { productId: { in: hardDeleteIds } } }),
-        this.prisma
-          .forTenant()
-          .purchaseOrderItem.deleteMany({ where: { productId: { in: hardDeleteIds } } }),
-        this.prisma
-          .forTenant()
-          .invoiceItem.deleteMany({ where: { productId: { in: hardDeleteIds } } }),
-        this.prisma
-          .forTenant()
-          .orderTemplateItem.deleteMany({ where: { productId: { in: hardDeleteIds } } }),
-        this.prisma
-          .forTenant()
-          .deliveryMutation.deleteMany({ where: { productId: { in: hardDeleteIds } } }),
-        this.prisma
-          .forTenant()
-          .orderItem.deleteMany({ where: { productId: { in: hardDeleteIds } } }),
-        this.prisma
-          .forTenant()
-          .stockLot.deleteMany({ where: { productId: { in: hardDeleteIds } } }),
-        this.prisma
-          .forTenant()
-          .stockMovement.deleteMany({ where: { productId: { in: hardDeleteIds } } }),
-        this.prisma.forTenant().product.deleteMany({ where: { id: { in: hardDeleteIds } } }),
-      ]);
+    let outcome: ProductDeleteOutcome;
+    try {
+      // The row locks are bounded (5 s): a lock wait that times out is retried, then the coded 503 (SA-767 R6).
+      outcome = await stockTxBounded(
+        this.prisma,
+        "products.bulkDelete",
+        (tx: any) => applyProductDelete(tx, { tenantId, ids, nameById, preSoftIds: peek.softIds }),
+        { timeout: 60_000 },
+      );
+    } catch (e) {
+      // A unique or foreign-key violation is a coded 409 (nothing was written), never an uncoded 500.
+      throw mapProductDeleteError(e);
     }
 
     // ONE coalesced event for the whole batch (clearAll delegates HERE, so it
-    // must NOT emit as well — that would double-fire for a single request).
-    if (softDeleteIds.length > 0 || hardDeleteIds.length > 0) this.emitProductChanged(null, "bulk");
-    return { deleted: hardDeleteIds.length, softDeleted: softDeleteIds.length, skipped };
+    // must NOT emit as well - that would double-fire for a single request).
+    if (outcome.softDeleted > 0 || outcome.deleted > 0) this.emitProductChanged(null, "bulk");
+    return outcome;
   }
 
   async importFromZoho(dto: ImportProductsDto): Promise<{
@@ -1643,7 +1880,7 @@ export class ProductsService {
       try {
         // Check for duplicate name
         const nameTaken = await this.prisma.forTenant().product.findFirst({
-          where: { name: { equals: item.name, mode: "insensitive" } },
+          where: { name: { equals: item.name, mode: "insensitive" }, isActive: true },
           select: { id: true },
         });
         if (nameTaken) {
@@ -1655,7 +1892,7 @@ export class ProductsService {
         if (item.sku) {
           const existing = await this.prisma
             .forTenant()
-            .product.findFirst({ where: { sku: item.sku } });
+            .product.findFirst({ where: { sku: item.sku, isActive: true } });
           if (existing) {
             skipped++;
             continue;
@@ -1665,13 +1902,22 @@ export class ProductsService {
         // Check for duplicate barcode
         if (item.barcode) {
           const existing = await this.prisma.forTenant().product.findFirst({
-            where: { barcode: item.barcode },
+            where: { barcode: item.barcode, isActive: true },
           });
           if (existing) {
             // If no SKU collision but barcode exists, skip
             skipped++;
             continue;
           }
+        }
+
+        // B964-2: a formula-led NEW name rejects THIS row (readable reason); the rest of the batch still imports. Checked only
+        // once the row would actually be created (change-only): a name that matches a stored product is a plain skip above.
+        const nameViolation =
+          productNameViolation({ name: item.name }) ?? productCategoryViolation(item.category);
+        if (nameViolation) {
+          errors.push({ row: rowNum, name: item.name, reason: nameViolation });
+          continue;
         }
 
         // B562 follow-up: an opening balance written straight onto
@@ -1689,6 +1935,12 @@ export class ProductsService {
         if (!tenantIdForBulk) throw new BadRequestException("No tenant context");
         await this.prisma.tenantTransaction(async (tx: any) => {
           // #2717 M1 (SA-572b Q4/Q6): lock+check BEFORE the create, same as the single-row create().
+          await claimCodes(tx, {
+            tenantId: tenantIdForBulk,
+            productId: null,
+            actorId: null,
+            codes: codeClaims(item, null),
+          });
           if (item.barcode) {
             await lockBarcodeCodes(tx, tenantIdForBulk, [item.barcode]);
             await assertBarcodeAvailable(tx, {
@@ -1739,6 +1991,11 @@ export class ProductsService {
             productId: created.id,
             barcode: item.barcode ?? null,
             unitsPerBox: null,
+          });
+          await syncCategoryLabel(tx, {
+            tenantId: tenantIdForBulk,
+            productId: created.id,
+            text: item.category,
           });
           return created;
         });

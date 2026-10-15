@@ -33,6 +33,7 @@ import { StatementPdfService } from "../buyer/statement-pdf.service";
 import { PortalInviteDto } from "../buyer/dto/portal-invite.dto";
 import { CreateCustomerDto } from "./dto/create-customer.dto";
 import { UpdateCustomerDto } from "./dto/update-customer.dto";
+import { UpdateBuyerProfileDto } from "../buyer/dto/update-buyer-profile.dto";
 import { ChangeCustomerStatusDto } from "./dto/change-customer-status.dto";
 import { CreateAddressDto } from "./dto/create-address.dto";
 import { UpdateAddressDto } from "./dto/update-address.dto";
@@ -128,12 +129,12 @@ export class CustomersController {
 
   @Patch("me")
   @Roles(UserRole.CUSTOMER)
-  updateMyProfile(@CurrentUser() user: JwtPayload, @Body() dto: UpdateCustomerDto) {
+  updateMyProfile(@CurrentUser() user: JwtPayload, @Body() dto: UpdateBuyerProfileDto) {
     return this.customersService.updateMyProfile(user, dto);
   }
 
   @Delete("all")
-  @Roles(UserRole.OPERATOR)
+  @Roles(UserRole.TENANT_ADMIN)
   deleteAll() {
     return this.customersService.deleteAllCustomers();
   }
@@ -146,13 +147,13 @@ export class CustomersController {
   }
 
   @Get("cleanup-preview")
-  @Roles(UserRole.OPERATOR)
+  @Roles(UserRole.TENANT_ADMIN)
   cleanupPreview() {
     return this.customersService.previewImportedCleanup();
   }
 
   @Delete("cleanup-imported")
-  @Roles(UserRole.OPERATOR)
+  @Roles(UserRole.TENANT_ADMIN)
   @HttpCode(200)
   cleanupImported() {
     return this.customersService.deleteImportedCustomers();

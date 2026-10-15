@@ -61,6 +61,7 @@ jest.mock("../notifications/notifications.service", () => ({
   })),
 }));
 
+import { oversellReaderOffProvider } from "./testing/policy-reader-provider";
 import { Test, TestingModule } from "@nestjs/testing";
 import { BadRequestException, ConflictException } from "@nestjs/common";
 import { getQueueToken } from "@nestjs/bull";
@@ -136,6 +137,7 @@ describe("OrdersService — F07 lifecycle-conservation pins (green pre-fix)", ()
 
     const module: TestingModule = await Test.createTestingModule({
       providers: [
+        oversellReaderOffProvider,
         OrdersService,
         {
           provide: TenantContextService,
@@ -168,6 +170,8 @@ describe("OrdersService — F07 lifecycle-conservation pins (green pre-fix)", ()
             findOpenOrderDraft: jest.fn().mockResolvedValue(null),
             reconcileOrderDraftInvoice: jest.fn().mockResolvedValue({ id: "inv-1" }),
             resyncOrderInvoicesForEdit: jest.fn().mockResolvedValue([{ id: "inv-1" }]),
+            followPartialPrices: jest.fn().mockResolvedValue({ issuedPartialsUnchanged: [] }),
+            projectEditedInvoiceTotals: jest.fn().mockResolvedValue([]),
             revertLinkedInvoicesForOrderEdit: jest.fn().mockResolvedValue([]),
             voidInvoice: jest.fn().mockResolvedValue({ id: "inv-1", status: "VOID" }),
             voidInvoiceInTx: jest.fn().mockResolvedValue({ id: "inv-1", status: "VOID" }),
@@ -346,6 +350,7 @@ describe("OrdersService — F07 lifecycle-conservation pins (green pre-fix)", ()
 
     expect(invoicesService.reconcileOrderDraftInvoice).toHaveBeenCalledWith("ord-1", {
       basis: "order",
+      shortDraftIsPartial: true, // SA-681: Mark Delivered only
     });
     expect(invoicesService.createInvoiceFromOrderWithTenant).not.toHaveBeenCalled();
   });

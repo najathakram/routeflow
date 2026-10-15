@@ -96,9 +96,7 @@ describe("ProductPickerSheet — scanned-variant parent resolution survives the 
     // into page rows that are now empty until the operator acts, so a
     // scanned variant would always report "No product for ...".
     expect(pickerSheetSrc).not.toMatch(/products\.find\(\(p\) => p\.id === hit\.parentProductId\)/);
-    expect(pickerSheetSrc).toMatch(
-      /apiClient\.get<AdminProduct>\(\s*`\/products\/\$\{hit\.parentProductId\}`/,
-    );
+    expect(pickerSheetSrc).toMatch(/apiClient\.get<AdminProduct>\(\s*`\/products\/\$\{parentId\}`/);
   });
 });
 
@@ -178,7 +176,9 @@ describe("invoices/new.tsx builder — scan-accept guard, edits 1-4 (REG-picker-
   it("REG-picker-idle-F: the settled effect offers its match to the guard before accepting", () => {
     // TODAY: the effect calls `acceptScannedProduct` unconditionally once
     // shouldAutoAdd passes — no cross-mechanism check with the camera path.
-    expect(invoiceSrc).toMatch(/if \(!scanGuardRef\.current\.offer\(code, match, kind\)\) return;/);
+    expect(invoiceSrc).toMatch(
+      /if \(!scanGuardRef\.current\.offer\(code, match, level\)\) return;/,
+    );
   });
 
   it("REG-picker-idle-F: handleSearchSubmit reads the CURRENT term ref, never the render-scope searchTerm", () => {

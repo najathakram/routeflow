@@ -320,7 +320,9 @@ describe("ImportService — commercial columns (B858/B859)", () => {
 
       await service.importContacts(Buffer.from(csv), "user-1");
 
-      const call = prisma.customer.findFirst.mock.calls[0]?.[0];
+      const call = prisma.customer.findFirst.mock.calls.find(
+        ([a]: any[]) => a?.where?.zohoContactId,
+      )?.[0];
       expect(call?.where).toMatchObject({ zohoContactId: "ZC-1", deletedAt: null });
     });
 
@@ -1036,6 +1038,44 @@ describe("ImportService — commercial columns (B858/B859)", () => {
       expect(productsService.create).not.toHaveBeenCalled();
       expect(productsService.update).not.toHaveBeenCalled();
     });
+
+    // ── B987-E (c): the entitlement 403 carries a CODE and structured fields so the web shows fixed copy. The status and
+    // the message are unchanged; `column` is the user's own header, data only, capped. ──────────────────────────────────
+
+    it.each([
+      ["MSRP", "MSRP", "assertMsrpAllowed", "MSRP", "needs the MSRP plan flag"],
+      [
+        "Tobacco",
+        "Tobacco",
+        "assertCanFlagTobacco",
+        "TOBACCO_DEALER",
+        "needs tobacco_dealer add-on",
+      ],
+      [
+        "Reorder Point",
+        "Reorder Point",
+        "assertReorderAllowed",
+        "FORECASTING",
+        "needs the forecasting plan flag",
+      ],
+    ])(
+      "B987-E: a %s column without its entitlement answers 403 IMPORT_COLUMN_NEEDS_ENTITLEMENT {requires, column}, message unchanged",
+      async (header, column, gate, requires, sentence) => {
+        (productsService as any)[gate].mockRejectedValue(new ForbiddenException("denied"));
+        const csv = `Item Name,SKU,${header}\nWidget,SKU-1,1\n`;
+        const err: any = await service
+          .importProducts(Buffer.from(csv), "user-1", { dryRun: true } as any)
+          .catch((e) => e);
+        expect(err).toBeInstanceOf(ForbiddenException);
+        expect(err.getStatus()).toBe(403);
+        expect(err.getResponse()).toEqual({
+          code: "IMPORT_COLUMN_NEEDS_ENTITLEMENT",
+          message: `Column "${column}" ${sentence}; remove the column or enable it`,
+          requires,
+          column,
+        });
+      },
+    );
 
     // ── Opus #938 fold (B): the file-level gate's catch must never turn an entitlement OUTAGE
     // into "needs the flag" — only a genuine denial gets the friendly message; anything else

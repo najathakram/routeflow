@@ -55,6 +55,7 @@ describe("#2178 — the preflight prices against the post-revert matching set", 
     db.invoice.findMany.mockResolvedValue([]);
     db.return.findMany.mockResolvedValue([]);
     db.returnItem.findMany.mockResolvedValue([]);
+    db.invoiceItem.findMany.mockResolvedValue([]); // B948: the preflight's line-headroom read (no source line: nothing to cap)
   });
 
   const request = {
@@ -75,7 +76,7 @@ describe("#2178 — the preflight prices against the post-revert matching set", 
   it("preflightCapture: with revertOrderId, excludes exactly what the shared revert selector returns", async () => {
     const svc: any = Object.assign(Object.create(InlineReturnsService.prototype), {
       prisma,
-      quoteService: { priceInlineReturn: jest.fn().mockResolvedValue({ total: 12 }) },
+      quoteService: { priceInlineReturn: jest.fn().mockResolvedValue({ total: 12, chunks: [] }) },
     });
     db.invoice.findMany.mockResolvedValue([
       { id: "inv-own", invoiceNumber: "INV-1", internalNotes: null, depositPercent: null },
@@ -92,13 +93,14 @@ describe("#2178 — the preflight prices against the post-revert matching set", 
     });
     expect(svc.quoteService.priceInlineReturn.mock.calls[0][3]).toEqual({
       excludeInvoiceIds: ["inv-own"],
+      defaultSourceOrderId: "ord-1", // SA-740: the carrying order is the walk-in's default source
     });
   });
 
   it("preflightCapture: without revertOrderId, nothing is excluded and the revert set is never read", async () => {
     const svc: any = Object.assign(Object.create(InlineReturnsService.prototype), {
       prisma,
-      quoteService: { priceInlineReturn: jest.fn().mockResolvedValue({ total: 12 }) },
+      quoteService: { priceInlineReturn: jest.fn().mockResolvedValue({ total: 12, chunks: [] }) },
     });
     await svc.preflightCapture(
       { customerId: "cust-1", orderId: "ord-1", items: request.items },
@@ -106,7 +108,10 @@ describe("#2178 — the preflight prices against the post-revert matching set", 
       { routeRunId: null },
     );
     expect(db.invoice.findMany).not.toHaveBeenCalled();
-    expect(svc.quoteService.priceInlineReturn.mock.calls[0][3]).toEqual({ excludeInvoiceIds: [] });
+    expect(svc.quoteService.priceInlineReturn.mock.calls[0][3]).toEqual({
+      excludeInvoiceIds: [],
+      defaultSourceOrderId: "ord-1",
+    });
   });
 
   it("preflightInlineReturn: asks for the post-revert set ONLY when the edit's revert runs next", async () => {

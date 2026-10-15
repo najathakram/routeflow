@@ -84,7 +84,12 @@ async function build(
     recipe: { ...prisma.recipe, ...recipeApi("tx") },
     product: {
       ...prisma.product,
-      findFirst: jest.fn().mockResolvedValue(existing),
+      // The SA-603a active-name probe (`where.name`) finds no other holder; every other read is `existing`.
+      findFirst: jest.fn(async (args: any) => (args?.where?.name ? null : existing)),
+      // H2's read-only label plan walks the family chain: every family here is a standalone row.
+      findMany: jest.fn(async (args: any) =>
+        ((args?.where?.id?.in ?? []) as string[]).map((id) => ({ id, parentProductId: null })),
+      ),
       update: jest.fn(async (args: any) => {
         events.push(`write:product:${args.where.id}`);
         return prisma.product.update(args);
@@ -97,6 +102,7 @@ async function build(
     }),
     $executeRaw: jest.fn().mockResolvedValue(0),
   };
+  tx.productCategoryLabel = { ...prisma.productCategoryLabel, findMany: jest.fn(async () => []) };
   prisma.tenantTransaction.mockImplementation(async (fn: any) => fn(tx));
   const mod: TestingModule = await Test.createTestingModule({
     providers: [

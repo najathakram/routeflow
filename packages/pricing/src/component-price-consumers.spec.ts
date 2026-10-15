@@ -7,7 +7,15 @@
 import * as fs from "fs";
 import * as path from "path";
 
-const ALLOWLIST: string[] = [];
+// M3 consumers (SA-572 I5: display-only, never summed/taxed/credited). Each is a WRITER of the frozen
+// component rows or a spec that pins one; nothing reads the value into a sum.
+const ALLOWLIST: string[] = [
+  "apps/api/src/orders/line-composition.ts", // order component rows at write time
+  "apps/api/src/orders/line-composition.spec.ts", // pins the writer above
+  "apps/api/src/invoices/invoice-line-composition.ts", // invoice component rows at bill time
+  "apps/api/src/invoices/invoice-composed-edit.ts", // re-stamps the rows on a DRAFT edit
+  "apps/api/src/invoices/partial-price-follow.spec.ts", // a fixture row: pins that the price follow keeps components
+];
 const REPO_ROOT = path.resolve(__dirname, "../../..");
 const ROOTS = ["apps/api/src", "apps/web", "apps/mobile"];
 const SKIP_DIRS = new Set(["node_modules", ".next", "dist", ".expo", "coverage", ".turbo"]);
@@ -44,7 +52,7 @@ describe("componentUnitPrice4 / displayComponentUnitPrice have no consumer befor
   it("only allow-listed files reference either helper", () => {
     const offenders = files
       .filter((f) => NEEDLE.test(fs.readFileSync(f, "utf8")))
-      .map((f) => path.relative(REPO_ROOT, f))
+      .map((f) => path.relative(REPO_ROOT, f).split(path.sep).join("/"))
       .filter((f) => !ALLOWLIST.includes(f));
     expect(offenders).toEqual([]);
   });

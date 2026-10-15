@@ -1,0 +1,104 @@
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import type { BulkStateRequest } from "@routeflow/types";
+import { apiClient } from "../api-client";
+import type {
+  BucketKey,
+  BulkStateResult,
+  StateWriteResult,
+  UnknownStateBucket,
+  UnknownStateBuckets,
+} from "../unknown-state";
+import { PAGE } from "../unknown-state";
+
+const BASE = "/settings/restrictions/unknown-state-customers";
+export const UNKNOWN_STATE_KEY = ["restrictions-settings", "unknown-state-customers"] as const;
+
+/** The four buckets, first page of each (the card loads its own data; there is no "Check readiness" gate). */
+export function useUnknownStateBuckets(limit = PAGE, opts: { staleTime?: number } = {}) {
+  return useQuery<UnknownStateBuckets>({
+    queryKey: [...UNKNOWN_STATE_KEY, limit],
+    queryFn: () => apiClient.get(BASE, { params: { limit } }).then((r) => r.data),
+    retry: false,
+    ...(opts.staleTime != null ? { staleTime: opts.staleTime } : {}),
+  });
+}
+
+/** "Show more": one bucket, the page after `cursor`. */
+export async function fetchBucketPage(
+  bucket: BucketKey,
+  cursor: string,
+  limit = PAGE,
+): Promise<UnknownStateBucket> {
+  const { data } = await apiClient.get(BASE, { params: { bucket, cursor, limit } });
+  return (data as UnknownStateBuckets)[bucket];
+}
+
+const refresh = (qc: ReturnType<typeof useQueryClient>) =>
+  qc.invalidateQueries({ queryKey: UNKNOWN_STATE_KEY });
+
+/** The mutations render their own inline error under the field, so they opt out of the global toast. */
+const LOCAL = { localErrorToast: true } as const;
+
+/** Set (or confirm, `confirmReview`) the state of an existing address. */
+export function useSetAddressState() {
+  return useMutation<
+    StateWriteResult,
+    Error,
+    { customerId: string; addressId: string; state: string; confirmReview?: boolean }
+  >({
+    meta: LOCAL,
+    mutationFn: ({ customerId, addressId, ...body }) =>
+      apiClient
+        .patch(`/customers/${customerId}/addresses/${addressId}/state`, body)
+        .then((r) => r.data),
+  });
+}
+
+/** A customer with no address: create the minimal default billing address with this state. */
+export function useCreateMinimalAddress() {
+  return useMutation<StateWriteResult, Error, { customerId: string; state: string; zip?: string }>({
+    meta: LOCAL,
+    mutationFn: ({ customerId, ...body }) =>
+      apiClient.post(`/customers/${customerId}/addresses/minimal`, body).then((r) => r.data),
+  });
+}
+
+/**
+ * needsDefault: make one address the customer's default through the existing address PATCH, which clears every
+ * other default in the same transaction (so exactly one default governs). Sends only `isDefault`: the pin stays.
+ */
+export function useSetDefaultAddress() {
+  return useMutation<unknown, Error, { customerId: string; addressId: string }>({
+    meta: LOCAL,
+    mutationFn: ({ customerId, addressId }) =>
+      apiClient
+        .patch(`/customers/${customerId}/addresses/${addressId}`, { isDefault: true })
+        .then((r) => r.data),
+  });
+}
+
+export function useBulkSetState() {
+  return useMutation<
+    BulkStateResult,
+    Error,
+    { bucket: BulkStateRequest["bucket"]; customerIds: string[]; state: string }
+  >({
+    meta: LOCAL,
+    mutationFn: (body) => apiClient.post(`${BASE}/bulk-state`, body).then((r) => r.data),
+  });
+}
+
+export function useRefreshUnknownState() {
+  const qc = useQueryClient();
+  return () => refresh(qc);
+}
+
+/** The Undo as a plain call: the bucket that raised it may have unmounted by the time it is clicked. */
+export async function undoBulkStateRequest(body: {
+  /** The bulk action's id (BulkStateResponse.actionId): the API undoes exactly that action. */
+  actionId: string;
+  changedAddressIds: string[];
+}): Promise<{ restored: number }> {
+  const { data } = await apiClient.post(`${BASE}/bulk-state/undo`, body);
+  return data;
+}

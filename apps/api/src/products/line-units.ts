@@ -1,12 +1,19 @@
 import { BadRequestException, ConflictException } from "@nestjs/common";
 import {
   PIECE_LABEL,
+  baseLabelOf,
+  describeBaseOption,
+  normalizeBoxesPieces,
+  planBaseBilling,
+  roundMoney,
+  defaultSellingLabel,
   UnknownUnitError,
   resolveLadderLevel,
   type LadderProduct,
   type LadderUnit,
 } from "@routeflow/pricing";
 import { keepsHeldUnit, norm } from "../orders/unit-label-norm";
+import { API_ERROR_CODES } from "../common/api-error-codes";
 
 /**
  * THE one place an order/invoice line's pack factor is decided (units_v1, step 4).
@@ -64,10 +71,23 @@ const packLine = (product: LineUnitsProduct): ResolvedLineUnits => ({
 export function resolveLineUnits(
   product: LineUnitsProduct,
   units: readonly LadderUnit[],
-  requested?: { unitLabel?: string | null } | null,
+  requested?: { unitLabel?: string | null; boxes?: number | null; pieces?: number | null } | null,
   existing?: LineUnitsExisting | null,
+  /**
+   * #2784 / SA-601: a BUYER's plain qty on a NEW line (no unit requested, no existing line) resolves to the level flagged
+   * `isDefaultSelling`, else the pack. Off by default — the staff and driver arms stay exactly as SA-593g pinned.
+   * An explicit unit (incl. an explicit null/"" = the pack) always wins.
+   */
+  opts?: { honourDefaultSelling?: boolean },
 ): ResolvedLineUnits {
-  const explicit = requested?.unitLabel; // undefined = unchanged
+  let explicit = requested?.unitLabel; // undefined = unchanged
+  // SA-610: only a NEW line (no `existing`) takes the default — a held pack line (existing, unitLabel null) stays a pack.
+  // SA-610 B2 / SA-601(2): an explicit boxes/pieces split always wins — only a QTY-ONLY line takes the default.
+  const qtyOnly = requested?.boxes == null && requested?.pieces == null;
+  if (opts?.honourDefaultSelling && explicit === undefined && existing == null && qtyOnly) {
+    const dflt = defaultSellingLabel({ pricePerUnit: 0, ...product }, units);
+    if (dflt) explicit = dflt;
+  }
   const asked = (explicit ?? "").trim();
   const held = (existing?.unitLabel ?? "").trim();
   const ladderProduct: LadderProduct = { pricePerUnit: 0, ...product };
@@ -101,7 +121,7 @@ export function resolveLineUnits(
     if (e instanceof UnknownUnitError) {
       // #2277: the same code as a held unit the product no longer offers (unit-line-build.ts).
       throw new BadRequestException({
-        code: "UNIT_NOT_OFFERED",
+        code: API_ERROR_CODES.UNIT_NOT_OFFERED,
         message: `"${e.unitLabel}" is not a unit of this product.`,
       });
     }
@@ -129,4 +149,84 @@ export function lineUnitsPerBoxSnapshot(
   if (resolved.unitLabel != null) return resolved.unitsPerBox;
   if (packRule === "positive") return resolved.unitsPerBox > 0 ? resolved.unitsPerBox : null;
   return boxes != null && resolved.unitsPerBox > 1 ? resolved.unitsPerBox : null;
+}
+
+// ─── SA-728 / units P0b: a DERIVED base unit bills as the pack line's pieces ──────────────────────
+
+/** A Prisma product row (Decimal prices) as the pricing ladder's product. */
+export function asLadderProduct(p: Record<string, any>): LadderProduct {
+  const str = (v: string | number | { toString(): string } | null | undefined) =>
+    v == null ? null : v.toString();
+  return {
+    unit: p.unit,
+    baseUnitLabel: p.baseUnitLabel,
+    packLabel: p.packLabel,
+    unitsPerBox: p.unitsPerBox,
+    pricePerUnit: (p.pricePerUnit ?? 0).toString(),
+    priceTier2: str(p.priceTier2),
+    priceTier3: str(p.priceTier3),
+    priceTier4: str(p.priceTier4),
+    priceTier5: str(p.priceTier5),
+  };
+}
+
+/**
+ * An OLD client (or a stale picker) sends a derived Piece as `{ unitLabel: "Piece", qty: n }` and prices
+ * it per piece — which, rounded to the cent, bills `n x $3.33` where the pack's proration says $6.67.
+ * The server turns that line into the PACK line's pieces (boxes/pieces via normalizeBoxesPieces, no
+ * unitLabel stored) so `computeLineSubtotal` prorates it. Left untouched (returns the SAME object):
+ * a base with its OWN price (the unit-line path), a non-base label, an explicit boxes/pieces split,
+ * a line already held on the base, an unboxed product, a fractional/zero count, and a typed per-piece
+ * price that is NOT the derived price (a deliberate override).
+ *
+ * `price: "drop"` (orders) removes the echoed per-piece price so the pack branch prices at the tier;
+ * `"pack"` (manual invoices, which take the price as typed) replaces it with the PACK's tier price.
+ */
+export function normalizeDerivedBaseLine<
+  T extends {
+    unitLabel?: string | null;
+    qty?: number | null;
+    boxes?: number | null;
+    pieces?: number | null;
+    unitPrice?: number | null;
+  },
+>(
+  item: T,
+  product: LadderProduct | null | undefined,
+  units: readonly LadderUnit[],
+  tier: number | string,
+  opts?: { price?: "drop" | "pack"; held?: string | null },
+): T {
+  const label = (item.unitLabel ?? "").trim();
+  if (!label || !product) return item;
+  const isBase = (l: string) =>
+    norm(l) === norm(baseLabelOf(product)) || norm(l) === norm(PIECE_LABEL);
+  if (!isBase(label) || ((opts?.held ?? "").trim() !== "" && isBase(opts!.held!))) return item;
+  if (Math.trunc(Number(product.unitsPerBox ?? 0)) <= 1) return item;
+  if ((item.boxes ?? 0) > 0 || (item.pieces ?? 0) > 0) return item;
+  const count = Number(item.qty);
+  if (!Number.isInteger(count) || count <= 0) return item;
+  const billing = planBaseBilling(product, units, tier, count);
+  if (billing.mode !== "pack") return item;
+  if (item.unitPrice != null) {
+    if (roundMoney(Number(item.unitPrice)) !== describeBaseOption(product, units, tier).price) {
+      return item;
+    }
+  }
+  const split = normalizeBoxesPieces({
+    boxes: 0,
+    pieces: count,
+    unitsPerBox: Number(product.unitsPerBox),
+  });
+  const out = {
+    ...item,
+    unitLabel: null,
+    qty: split.qty,
+    boxes: split.boxes,
+    pieces: split.pieces,
+  } as T;
+  if (opts?.price === "pack")
+    (out as { unitPrice?: number | null }).unitPrice = billing.packUnitPrice;
+  else delete (out as { unitPrice?: number | null }).unitPrice;
+  return out;
 }

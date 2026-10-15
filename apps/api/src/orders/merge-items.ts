@@ -1,5 +1,7 @@
 import { ConflictException } from "@nestjs/common";
 import { normalizeBoxesPieces } from "@routeflow/pricing";
+import { API_ERROR_CODES } from "../common/api-error-codes";
+import { foldTarget, type FoldTrio } from "./fold-target";
 
 export interface MergeLineSnapshot {
   // SA-124f: the row's own id — carried through to the fold's output as `sourceLineId`, so a
@@ -32,6 +34,12 @@ export interface MergeLineSnapshot {
   // reason" refusal on every future merge, even though nothing here is
   // actually changing the price.
   overrideReason?: string | null;
+  // B297 row 340: the line's own category and rate trio (a full OrderItem row carries them). They decide, via
+  // `foldTarget`, whether an incoming quantity may be ADDED to this line or must go on a new live-stamped one.
+  trackedCategoryId?: string | null;
+  categoryTaxType?: unknown;
+  categoryTaxRate?: unknown;
+  categoryPriceIncludesTax?: boolean | null;
 }
 
 export interface MergeIncomingItem {
@@ -123,6 +131,11 @@ type FoldAcc = {
   existingPriceType?: string | null;
   notes?: string | null;
   overrideReason?: string | null;
+  /**
+   * B297 row 340: the trio this bucket's line was sold at (`undefined` for a bucket born in this fold: its
+   * units are priced live, so the incoming trio always matches it). Read by `foldTarget`.
+   */
+  trio?: FoldTrio;
 };
 
 export function foldMergeItems(
@@ -133,6 +146,10 @@ export function foldMergeItems(
   // a caller that omits it gets the pre-SA-124e behavior (price re-derives whenever the line
   // wasn't a stored MANUAL override, regardless of pack).
   liveUnitsPerBoxByProductId: Map<string, number> = new Map(),
+  // B297 row 340 (SA MED-3): the trio a NEW sale of each incoming product would be stamped with today.
+  // When an existing line's own trio differs (`foldTarget`), the incoming quantity does NOT fold into it: it
+  // becomes its own new live-stamped line. Omitted => every fold adds, exactly as before.
+  liveTrioByProductId: Map<string, FoldTrio> = new Map(),
 ): FoldMergeItemsResult {
   // SA-124a/SA-124e MED-5: keyed by productId -> a LIST of buckets, one per EXISTING LINE (never
   // collapsed by pack) plus one per genuinely new pack an incoming item introduces. Two existing
@@ -178,6 +195,12 @@ export function foldMergeItems(
       hadExisting: true,
       existingBoxAware: hasBoxData,
       sourceLineId: li.id ?? undefined,
+      trio: {
+        trackedCategoryId: li.trackedCategoryId ?? null,
+        categoryTaxType: li.categoryTaxType,
+        categoryTaxRate: li.categoryTaxRate,
+        categoryPriceIncludesTax: li.categoryPriceIncludesTax,
+      },
       unitPrice: li.unitPrice != null ? Number(li.unitPrice) : undefined,
       existingPriceType: li.priceType ?? null,
       notes: li.notes ?? null,
@@ -220,7 +243,29 @@ export function foldMergeItems(
     // incoming item states its own box size even for a product that isn't on
     // the order yet — no lookup needed.
     const incomingUnitsPerBox = deriveUnitsPerBox(item);
-    const buckets = bucketsByProduct.get(item.productId);
+    // B297 row 340: only the buckets whose own trio equals the trio a new sale of this product would take
+    // today are fold candidates (`foldTarget`); a differing existing line keeps its own units and trio and the
+    // incoming quantity opens a new live-stamped bucket. With no live trio supplied every bucket is a candidate.
+    const live = liveTrioByProductId.get(item.productId);
+    const allBuckets = bucketsByProduct.get(item.productId);
+    let buckets =
+      live && allBuckets
+        ? allBuckets.filter((b) => b.trio === undefined || foldTarget(b.trio, live) === "ADD")
+        : allBuckets;
+    // The pack refusals below see only the candidates. When the trio filter removed a bucket and no candidate
+    // can take this scan's pack (every candidate is boxed at ANOTHER known pack), the scan is not a pack
+    // mismatch with the order: its pack simply belongs to a line that was sold at an older trio. It opens a new
+    // live bucket instead of refusing, or folding into a different-pack line.
+    if (
+      buckets &&
+      allBuckets &&
+      buckets.length > 0 &&
+      buckets.length < allBuckets.length &&
+      incomingUnitsPerBox > 1 &&
+      !buckets.some((b) => b.unitsPerBox === incomingUnitsPerBox || b.unitsPerBox <= 1)
+    ) {
+      buckets = [];
+    }
 
     if (!buckets || buckets.length === 0) {
       // Brand-new line for this merge — no existing accumulator to fold into.
@@ -257,7 +302,7 @@ export function foldMergeItems(
         // re-denominates the other lines in the same payload; the caller (a single
         // interactive request) simply retries.
         throw new ConflictException({
-          code: "MERGE_PACK_MISMATCH",
+          code: API_ERROR_CODES.MERGE_PACK_MISMATCH,
           message: `Product ${item.productId} is on this order at a ${acc.unitsPerBox}-pack and the scanned item is a ${incomingUnitsPerBox}-pack — resolve the mismatch before merging.`,
           productId: item.productId,
           existingPacks: [acc.unitsPerBox],
@@ -292,7 +337,7 @@ export function foldMergeItems(
       );
       if (knownPacks.length >= 1) {
         throw new ConflictException({
-          code: "MERGE_PACK_MISMATCH",
+          code: API_ERROR_CODES.MERGE_PACK_MISMATCH,
           message: `Product ${item.productId} is on this order at packs [${knownPacks.join(", ")}] and the scanned item is a ${incomingUnitsPerBox}-pack — resolve the mismatch before merging.`,
           productId: item.productId,
           existingPacks: knownPacks,

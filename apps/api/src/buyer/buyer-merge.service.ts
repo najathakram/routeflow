@@ -9,13 +9,16 @@ import {
 import * as crypto from "crypto";
 import { PrismaService } from "../prisma/prisma.service";
 import { EmailService } from "../email/email.service";
+import { AppleOAuthService } from "../auth/apple-oauth.service";
 import { BuyerMergeRequestStatus, MergeInitiator } from "@prisma/client";
+import { API_ERROR_CODES } from "../common/api-error-codes";
 
 @Injectable()
 export class BuyerMergeService {
   constructor(
     private readonly prisma: PrismaService,
     private readonly emailService: EmailService,
+    private readonly appleOAuth: AppleOAuthService,
   ) {}
 
   // ─── Buyer: initiate merge ────────────────────────────────────────────────────
@@ -96,7 +99,10 @@ export class BuyerMergeService {
         .delete({ where: { id: mergeRequest.id } })
         .catch(() => {});
       throw new BadRequestException({
-        code: sendResult.transport === "none" ? "EMAIL_NOT_CONFIGURED" : "EMAIL_SEND_FAILED",
+        code:
+          sendResult.transport === "none"
+            ? API_ERROR_CODES.EMAIL_NOT_CONFIGURED
+            : API_ERROR_CODES.EMAIL_SEND_FAILED,
         message:
           sendResult.transport === "none"
             ? "Email isn't set up, so the verification email couldn't be sent. Ask the seller to configure email under Settings → Email, then try again."
@@ -113,7 +119,11 @@ export class BuyerMergeService {
 
   // ─── Buyer: verify merge token ────────────────────────────────────────────────
 
-  async verifyMergeToken(token: string) {
+  /**
+   * The read-only validation in front of the consume: lookup by token, still pending
+   * verification, not expired. Throws the same NotFound / BadRequest / Gone errors.
+   */
+  private async findPendingMergeByToken(token: string) {
     const mergeRequest = await this.prisma.buyerMergeRequest.findUnique({
       where: { verificationToken: token },
     });
@@ -127,9 +137,25 @@ export class BuyerMergeService {
         "Verification token has expired. Please initiate a new merge request.",
       );
     }
+    return mergeRequest;
+  }
 
-    await this.prisma.buyerMergeRequest.update({
-      where: { id: mergeRequest.id },
+  /** The single-use consume, reached only by the explicit `POST verify-merge` confirm click. */
+  async verifyMergeToken(token: string) {
+    const mergeRequest = await this.findPendingMergeByToken(token);
+
+    // Compare-and-set: the lookup above and this write are separate statements, so a concurrent
+    // consume (token cleared) or an admin rejection (status REJECTED, token left in place) could
+    // land in between. Only a row still holding THIS token and still PENDING_VERIFICATION is
+    // consumed; losing the race is the same 404 a replay gets, never an overwrite of REJECTED.
+    const consumed = await this.prisma.buyerMergeRequest.updateMany({
+      where: {
+        id: mergeRequest.id,
+        verificationToken: token,
+        status: BuyerMergeRequestStatus.PENDING_VERIFICATION,
+        // a row that expired after the pre-check read cannot be consumed
+        verificationExpires: { gt: new Date() },
+      },
       data: {
         status: BuyerMergeRequestStatus.PENDING_REVIEW,
         verifiedAt: new Date(),
@@ -137,6 +163,7 @@ export class BuyerMergeService {
         verificationExpires: null,
       },
     });
+    if (consumed.count === 0) throw new NotFoundException("Invalid verification token");
 
     return {
       success: true,
@@ -368,21 +395,30 @@ export class BuyerMergeService {
     if (secondaryAccount.status === "DELETED")
       throw new BadRequestException("Secondary account is already deleted/merged");
 
-    // Get secondary's customer links
-    const secondaryLinks = await this.prisma.customerLink.findMany({
-      where: { buyerAccountId: secondaryAccount.id },
-    });
+    const { linksToTransfer, conflictingLinks } = await this.prisma.$transaction(async (tx) => {
+      // Row 424: DECIDE first, as a compare-and-set on the status. Only one admin action can move a request out of
+      // PENDING_REVIEW; a concurrent execute or reject finds count 0 and refuses with nothing applied. The claim also
+      // row-locks the request, so the reads below see the state this decision applies to.
+      const claimed = await tx.buyerMergeRequest.updateMany({
+        where: { id: mergeRequestId, status: BuyerMergeRequestStatus.PENDING_REVIEW },
+        data: { status: BuyerMergeRequestStatus.COMPLETED, completedAt: new Date() },
+      });
+      if (claimed.count === 0) throw mergeAlreadyDecided();
 
-    // Determine which secondary links conflict (primary already has a link for same tenantId)
-    const primaryLinks = await this.prisma.customerLink.findMany({
-      where: { buyerAccountId: primaryAccount.id },
-    });
-    const primaryTenantIds = new Set(primaryLinks.map((l) => l.tenantId));
+      // Get secondary's customer links (read AFTER the claim, inside the tx)
+      const secondaryLinks = await tx.customerLink.findMany({
+        where: { buyerAccountId: secondaryAccount.id },
+      });
 
-    const linksToTransfer = secondaryLinks.filter((l) => !primaryTenantIds.has(l.tenantId));
-    const conflictingLinks = secondaryLinks.filter((l) => primaryTenantIds.has(l.tenantId));
+      // Determine which secondary links conflict (primary already has a link for same tenantId)
+      const primaryLinks = await tx.customerLink.findMany({
+        where: { buyerAccountId: primaryAccount.id },
+      });
+      const primaryTenantIds = new Set(primaryLinks.map((l) => l.tenantId));
 
-    await this.prisma.$transaction(async (tx) => {
+      const linksToTransfer = secondaryLinks.filter((l) => !primaryTenantIds.has(l.tenantId));
+      const conflictingLinks = secondaryLinks.filter((l) => primaryTenantIds.has(l.tenantId));
+
       // 1. Transfer non-conflicting CustomerLinks
       if (linksToTransfer.length > 0) {
         await tx.customerLink.updateMany({
@@ -415,6 +451,25 @@ export class BuyerMergeService {
         });
       }
 
+      // 3b. Apple identity (BuyerAccount_appleId_key is UNIQUE): free the secondary's appleId FIRST
+      // so the soft-deleted row can never shadow a later Apple sign-in, then let the primary inherit
+      // it (and the encrypted refresh token used for /auth/revoke) only when it has none.
+      if (secondaryAccount.appleId) {
+        await tx.buyerAccount.update({
+          where: { id: secondaryAccount.id },
+          data: { appleId: null, appleRefreshTokenEnc: null },
+        });
+        if (!primaryAccount.appleId) {
+          await tx.buyerAccount.update({
+            where: { id: primaryAccount.id },
+            data: {
+              appleId: secondaryAccount.appleId,
+              appleRefreshTokenEnc: secondaryAccount.appleRefreshTokenEnc,
+            },
+          });
+        }
+      }
+
       // 4. Invalidate all secondary's sessions
       await tx.buyerRefreshToken.deleteMany({
         where: { buyerAccountId: secondaryAccount.id },
@@ -429,13 +484,20 @@ export class BuyerMergeService {
           mergedIntoId: primaryAccount.id,
         },
       });
-
-      // 6. Complete the merge request
-      await tx.buyerMergeRequest.update({
-        where: { id: mergeRequestId },
-        data: { status: BuyerMergeRequestStatus.COMPLETED, completedAt: new Date() },
-      });
+      // 6. The merge request was completed by the claim above (row 424).
+      return { linksToTransfer, conflictingLinks };
     });
+
+    // B944: when the primary KEEPS its own Apple identity, the secondary's stored Apple refresh
+    // token was just discarded by the transaction. Revoke it AT APPLE now, from the value loaded
+    // BEFORE the merge, and only after the merge COMMITTED (a failed merge leaves the secondary's
+    // grant alone). If the primary inherited the grant instead, nothing is revoked. Best-effort:
+    // revokeRefreshToken logs and never throws; the .catch is belt and braces.
+    if (secondaryAccount.appleId && primaryAccount.appleId) {
+      await this.appleOAuth
+        .revokeRefreshToken(secondaryAccount.appleRefreshTokenEnc, secondaryAccount.id)
+        .catch(() => undefined);
+    }
 
     // 7. Send notification emails (outside transaction)
     try {
@@ -468,13 +530,33 @@ export class BuyerMergeService {
       throw new BadRequestException("Merge request is already rejected");
     }
 
-    return this.prisma.buyerMergeRequest.update({
-      where: { id: mergeRequestId },
+    // Row 424: compare-and-set — only a still-pending request is rejected; a concurrent execute or reject that got
+    // there first leaves count 0, refused with nothing written (never a completed-and-rejected request).
+    const { count } = await this.prisma.buyerMergeRequest.updateMany({
+      where: {
+        id: mergeRequestId,
+        status: {
+          in: [
+            BuyerMergeRequestStatus.PENDING_VERIFICATION,
+            BuyerMergeRequestStatus.PENDING_REVIEW,
+          ],
+        },
+      },
       data: {
         status: BuyerMergeRequestStatus.REJECTED,
         rejectedAt: new Date(),
         adminNotes: adminNotes ?? req.adminNotes,
       },
     });
+    if (count === 0) throw mergeAlreadyDecided();
+    return this.prisma.buyerMergeRequest.findUniqueOrThrow({ where: { id: mergeRequestId } });
   }
+}
+
+/** Row 424: the loser of a concurrent execute / reject of one merge request. */
+function mergeAlreadyDecided(): ConflictException {
+  return new ConflictException({
+    code: API_ERROR_CODES.MERGE_ALREADY_DECIDED,
+    message: "This merge request was already decided.",
+  });
 }

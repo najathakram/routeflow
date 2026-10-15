@@ -1,5 +1,7 @@
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { apiClient } from "../api-client";
+import type { ProductKind } from "@routeflow/types";
+import type { LocalErrorToastOption } from "@/lib/local-error-toast";
 
 export function useProducts(
   params?: {
@@ -13,6 +15,8 @@ export function useProducts(
     stockStatus?: "IN_STOCK" | "LOW" | "OUT_OF_STOCK";
     /** Regulated-section filter: "any" (any regulated), "none" (non-regulated), or a section id. */
     section?: string;
+    /** `false` lists only products hidden from the buyer portal. */
+    portalVisible?: boolean;
     page?: number;
     limit?: number;
     includeVariants?: boolean;
@@ -54,7 +58,7 @@ export function useProductCategories() {
 }
 
 /** Invalidate every query whose data depends on the set of products. */
-function invalidateProductSet(qc: ReturnType<typeof useQueryClient>) {
+export function invalidateProductSet(qc: ReturnType<typeof useQueryClient>) {
   qc.invalidateQueries({ queryKey: ["products"] });
   // Inventory overview + valuation are derived from products but keyed
   // separately — refresh them so a newly created/deleted product shows up
@@ -62,13 +66,28 @@ function invalidateProductSet(qc: ReturnType<typeof useQueryClient>) {
   qc.invalidateQueries({ queryKey: ["inventory"] });
 }
 
-export function useCreateProduct() {
+export function useCreateProduct(options?: LocalErrorToastOption) {
   const qc = useQueryClient();
   return useMutation({
+    meta: options?.localErrorToast ? { localErrorToast: options.localErrorToast } : undefined,
     mutationFn: (data: Record<string, unknown>) =>
       apiClient.post("/products", data).then((r) => r.data),
     onSuccess: () => invalidateProductSet(qc),
   });
+}
+
+/**
+ * `invalidateProductSet`, but resolves only once the refetches have LANDED. P0 2026-10-14 (SA): a tier commit reads the
+ * product's stored tiers as the "old" side of applyLadderChange, so a save must not resolve while the cache still
+ * holds the pre-save row (a second commit inside that window would read a stale tier and overwrite it).
+ */
+export function invalidateProductSetAndWait(
+  qc: ReturnType<typeof useQueryClient>,
+): Promise<unknown> {
+  return Promise.all([
+    qc.invalidateQueries({ queryKey: ["products"] }),
+    qc.invalidateQueries({ queryKey: ["inventory"] }),
+  ]);
 }
 
 export function useUpdateProduct() {
@@ -76,17 +95,79 @@ export function useUpdateProduct() {
   return useMutation({
     mutationFn: ({ id, ...data }: { id: string; [k: string]: unknown }) =>
       apiClient.patch(`/products/${id}`, data).then((r) => r.data),
-    onSuccess: (_d, vars) => {
-      qc.invalidateQueries({ queryKey: ["products", vars.id] });
-      qc.invalidateQueries({ queryKey: ["products"] });
+    // Returned, so mutateAsync waits for the refetch (P0 2026-10-14 stale-window MUST).
+    onSuccess: () => invalidateProductSetAndWait(qc),
+  });
+}
+
+/**
+ * Reactivate a product (WS7): `PATCH /products/:id { isActive: true }`. The 409 refusal names the
+ * ACTIVE holders of its codes/name (see `getReactivationRefusal`); resending with `deactivateHolderIds`
+ * = exactly those ids deactivates them and reactivates this product in one transaction.
+ */
+export function useReactivateProduct() {
+  const qc = useQueryClient();
+  return useMutation({
+    // The flow renders its own fixed-sentence error UI (dialog / toast): opt out of the global
+    // handler's raw `data.message` toast (lib/mutation-error-toast.ts).
+    meta: { localErrorToast: true },
+    mutationFn: ({
+      id,
+      deactivateHolderIds,
+      newCodes,
+    }: {
+      id: string;
+      deactivateHolderIds?: string[];
+      /** Reactivate with replacement codes instead of deactivating the holders. */
+      newCodes?: { sku?: string; unitSku?: string; barcode?: string };
+    }) =>
+      apiClient
+        .patch(`/products/${id}`, {
+          isActive: true,
+          ...(deactivateHolderIds?.length ? { deactivateHolderIds } : {}),
+          ...(newCodes ?? {}),
+        })
+        .then((r) => r.data),
+    onSuccess: () => invalidateProductSet(qc),
+  });
+}
+
+/**
+ * Deactivate a product (`PATCH { isActive: false }`). Its 409 CODES_CHANGED gets a fixed sentence from
+ * the caller (`deactivateFailureToast`), so the global raw-message toast is opted out.
+ */
+export function useDeactivateProduct() {
+  const qc = useQueryClient();
+  return useMutation({
+    meta: { localErrorToast: true },
+    // `confirmCascade` is only ever sent after the operator confirmed the 409 FAMILY_HAS_ACTIVE_VARIANTS prompt.
+    mutationFn: (arg: string | { id: string; confirmCascade?: boolean }) => {
+      const { id, confirmCascade } = typeof arg === "string" ? { id: arg } : arg;
+      return apiClient
+        .patch(`/products/${id}`, {
+          isActive: false,
+          ...(confirmCascade ? { confirmCascade } : {}),
+        })
+        .then((r) => r.data);
     },
+    onSuccess: () => invalidateProductSet(qc),
   });
 }
 
 export function useDeleteProduct() {
   const qc = useQueryClient();
   return useMutation({
-    mutationFn: (id: string) => apiClient.delete(`/products/${id}`).then((r) => r.data),
+    // Its only caller toasts a fixed sentence itself (deactivateFailureToast).
+    meta: { localErrorToast: true },
+    mutationFn: (arg: string | { id: string; confirmCascade?: boolean }) => {
+      const { id, confirmCascade } = typeof arg === "string" ? { id: arg } : arg;
+      return apiClient
+        .delete(
+          `/products/${id}`,
+          confirmCascade ? { params: { confirmCascade: "true" } } : undefined,
+        )
+        .then((r) => r.data);
+    },
     onSuccess: () => invalidateProductSet(qc),
   });
 }
@@ -95,6 +176,8 @@ export type CostingMethod = "FIFO" | "LIFO" | "AVCO" | "STANDARD";
 
 export interface ApiProduct {
   id: string;
+  /** STANDARD | FAMILY | VARIANT | RECIPE (WS8): a FAMILY is a non-stocked, non-sellable container. */
+  kind?: ProductKind;
   name: string;
   sku?: string;
   /** Optional retail-unit (inner piece) code; null/absent ⇒ unit shares the case `sku`. */
@@ -167,24 +250,6 @@ export interface ImportResult {
   errors: Array<{ row: number; name: string; reason: string }>;
 }
 
-export function useImportProducts() {
-  const qc = useQueryClient();
-  return useMutation({
-    mutationFn: (items: ZohoImportItem[]): Promise<ImportResult> =>
-      apiClient.post("/products/import", { items }).then((r) => r.data),
-    onSuccess: () => invalidateProductSet(qc),
-  });
-}
-
-export function useClearAllProducts() {
-  const qc = useQueryClient();
-  return useMutation({
-    mutationFn: (): Promise<{ deleted: number }> =>
-      apiClient.delete("/products/clear-all").then((r) => r.data),
-    onSuccess: () => invalidateProductSet(qc),
-  });
-}
-
 /** Matches the server's @ArrayMaxSize on DELETE /products/bulk (F9-009). */
 const BULK_DELETE_CHUNK = 500;
 
@@ -196,12 +261,14 @@ const BULK_DELETE_CHUNK = 500;
 export interface BulkDeleteProductsResult {
   deleted: number;
   softDeleted: number;
-  skipped: Array<{ id: string; reason: string }>;
+  skipped: Array<{ id: string; code?: string; reason?: string }>;
 }
 
 export function useBulkDeleteProducts() {
   const qc = useQueryClient();
   return useMutation({
+    // Its only caller toasts a fixed sentence itself (deactivateFailureToast).
+    meta: { localErrorToast: true },
     // The server caps each request at 500 ids (F9-009 DTO). Chunk large selections
     // ("Show all → Select all → Delete" on a >500-product tenant) into sequential
     // batches so a wholesale delete still succeeds instead of 400-ing on the cap.
@@ -236,9 +303,11 @@ export function useBulkDeleteProducts() {
 export interface BulkAssignParentResult {
   succeeded: string[];
   failed: Array<{ id: string; reason: string }>;
+  /** H2: per product that kept labels it carried through its old parent (absent from older servers). */
+  keptLabels?: Array<{ id: string; labels: string[] }>;
 }
 
-export function useBulkAssignParent() {
+export function useBulkAssignParent(options?: LocalErrorToastOption) {
   const qc = useQueryClient();
   return useMutation<
     BulkAssignParentResult,
@@ -248,11 +317,12 @@ export function useBulkAssignParent() {
       assignments: Array<{ id: string; variantName: string }>;
     }
   >({
+    meta: options?.localErrorToast ? { localErrorToast: options.localErrorToast } : undefined,
     mutationFn: ({ parentProductId, assignments }) =>
       apiClient
         .post("/products/bulk-assign-parent", { parentProductId, assignments })
         .then((r) => r.data),
-    onSuccess: () => qc.invalidateQueries({ queryKey: ["products"] }),
+    onSuccess: () => invalidateProductSet(qc),
   });
 }
 

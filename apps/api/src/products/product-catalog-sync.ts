@@ -1,5 +1,7 @@
+import { uniqueViolationConstraints } from "../common/prisma-unique";
 import { ConflictException } from "@nestjs/common";
 import { BarcodeOrigin, PackagingLevel, Prisma } from "@prisma/client";
+import { gtinEquivalents } from "@routeflow/scanning";
 import { API_ERROR_CODES } from "../common/api-error-codes";
 import { mirrorableImageKeys, parseFocalFromKey, planBarcodeRows } from "./product-barcode-rules";
 
@@ -25,13 +27,27 @@ function throwBarcodeTaken(code: string, holderProductId: string): never {
   });
 }
 
-/** Non-blank, deduped, SORTED codes — the exact order SA-572b/c requires the locks taken in. */
+/**
+ * B1214: every string that denotes the SAME physical label as `code` — the code itself plus its GTIN identity forms
+ * (a 12-digit UPC-A and its 0+12 EAN-13 form, UPC-E expansions, GTIN-14), the one equivalence scan lookup shares
+ * (`gtinEquivalents`, @routeflow/scanning). The claim check (`assertBarcodeAvailable`, `findCodeHolders`) and the
+ * advisory-lock keys (`lockBarcodeCodes`) all use it, so two products can never hold the two spellings of one label.
+ */
+export function barcodeEquivalents(code: string): string[] {
+  return gtinEquivalents(code);
+}
+
+/**
+ * Non-blank, deduped, SORTED lock keys — the exact order SA-572b/c requires the locks taken in. Each code expands to
+ * its equivalence class (B1214), so a UPC-A claimant and an EAN-13 claimant of the same label take the SAME keys; the
+ * expansion is a pure per-code function, so a later call with a subset of the codes takes a subset of these keys.
+ */
 function normalizeCodes(codes: Array<string | null | undefined>): string[] {
   const set = new Set<string>();
   for (const code of codes) {
     if (typeof code !== "string") continue;
     if (code.trim().length === 0) continue;
-    set.add(code);
+    for (const key of barcodeEquivalents(code)) set.add(key);
   }
   return Array.from(set).sort();
 }
@@ -76,6 +92,10 @@ export async function lockBarcodeCodes(
  * propagateFamilyPrice (recipe products before variants), RecipesService
  * create/update/activate (family, recipe product, components), InventoryService.assignToVariants
  * (family before the target loop) and createVariant.
+ *
+ * Stock-side twin: every stock / cost writer locks Product rows through `lockProductsForStock`
+ * (common/product-locks.ts), whose `PRODUCT_LOCK_RANK_SQL` is this same order by ROLE (family role
+ * -> recipe-product role -> the rest, ties by id). Change one, change the other.
  */
 
 /**
@@ -112,11 +132,13 @@ export async function assertBarcodeAvailable(
   input: { tenantId: string; productId: string | null; code: string },
 ): Promise<void> {
   const { tenantId, productId, code } = input;
+  // B1214: any equivalent spelling of the same label is a holder (see `barcodeEquivalents`).
+  const spellings = barcodeEquivalents(code);
 
   const rowHolder = await tx.productBarcode.findFirst({
     where: {
       tenantId,
-      code,
+      code: { in: spellings },
       ...(productId ? { productId: { not: productId } } : {}),
     },
     select: { productId: true },
@@ -126,7 +148,7 @@ export async function assertBarcodeAvailable(
   const legacyHolder = await tx.product.findFirst({
     where: {
       tenantId,
-      barcode: code,
+      barcode: { in: spellings },
       ...(productId ? { id: { not: productId } } : {}),
     },
     select: { id: true },
@@ -168,26 +190,10 @@ function fieldsAreBarcodeConstraint(fields: readonly string[]): boolean {
  */
 export function isBarcodeUniqueViolation(e: unknown): e is Prisma.PrismaClientKnownRequestError {
   if (!(e instanceof Prisma.PrismaClientKnownRequestError) || e.code !== "P2002") return false;
-  const meta = (e.meta ?? {}) as {
-    target?: unknown;
-    driverAdapterError?: { cause?: { constraint?: { index?: unknown; fields?: unknown } } };
-  };
-
-  const target = meta.target;
-  if (typeof target === "string" && BARCODE_CONSTRAINT_NAMES.has(target)) return true;
-  if (Array.isArray(target) && fieldsAreBarcodeConstraint(target.map(String))) return true;
-
-  const constraint = meta.driverAdapterError?.cause?.constraint;
-  if (typeof constraint?.index === "string" && BARCODE_CONSTRAINT_NAMES.has(constraint.index)) {
-    return true;
-  }
-  if (
-    Array.isArray(constraint?.fields) &&
-    fieldsAreBarcodeConstraint(constraint.fields.map(String))
-  ) {
-    return true;
-  }
-  return false;
+  const c = uniqueViolationConstraints(e);
+  if (!c) return false;
+  if (c.names.some((n) => BARCODE_CONSTRAINT_NAMES.has(n))) return true;
+  return c.fields.length > 0 && fieldsAreBarcodeConstraint(c.fields);
 }
 
 export function mapBarcodeUniqueViolation(e: unknown, code: string): never {
@@ -255,7 +261,9 @@ export async function syncProductBarcodesFromLegacy(
   const desired = planBarcodeRows({ barcode: trimmed, unitsPerBox });
 
   const existingRows: Array<{ id: string } & BarcodeRowTuple> = await tx.productBarcode.findMany({
-    where: { tenantId, productId },
+    // SA-603a: a RELEASED row (code NULL, retiredCode holds the old code) is not a live code — the sync must not
+    // delete it, or reactivate could not restore it.
+    where: { tenantId, productId, code: { not: null } },
     select: {
       id: true,
       code: true,
@@ -278,6 +286,8 @@ export async function syncProductBarcodesFromLegacy(
     });
   }
   if (toCreate.length > 0) {
+    // SA-603a: stale RELEASED rows (code NULL) would still hold this product's (productId, primaryFor) unique.
+    await tx.productBarcode.deleteMany({ where: { tenantId, productId, code: null } });
     await tx.productBarcode.createMany({
       data: toCreate.map((r) => ({
         tenantId,

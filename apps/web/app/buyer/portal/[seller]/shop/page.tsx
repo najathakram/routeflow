@@ -33,13 +33,16 @@ import {
 } from "@/lib/api/buyer";
 import { promotionRuleLabel } from "@/lib/api/promotions";
 import { useBuyerCart } from "@/lib/buyer-cart";
+import { lineCount, newCartLine } from "@/lib/buyer-cart-line";
 import { objectPositionForUrl } from "@/lib/image-focal";
 import { QtyStepper } from "./_components/QtyStepper";
+import { CartLineUnit } from "../_components/CartLineUnit";
 import { ProductTile } from "./_components/ProductTile";
 import { CategoryRail, type RailSelection } from "./_components/CategoryRail";
 import { RunningLowStrip } from "./_components/RunningLowStrip";
 import { ShopSearch } from "./_components/ShopSearch";
 import { deriveTilePrice } from "./_components/tile-pricing";
+import { SellerUnavailableLine } from "@/components/SellerUnavailableLine";
 
 // ─── Grid density ─────────────────────────────────────────────────────────────
 // Persisted density control — default "md" is one notch denser than the
@@ -256,6 +259,13 @@ export default function BuyerShopPage() {
 
   const products = result?.data ?? [];
   const meta = result?.meta;
+  // An older Add (dashboard / favorites) may have stored a boxed product without its pack size;
+  // give such a line the catalog's pack as whole Cases so the stepper and the cart agree.
+  const { adoptCatalogPacks } = cart;
+  React.useEffect(() => {
+    if (!result?.data?.length) return;
+    adoptCatalogPacks(new Map(result.data.map((p) => [p.id, p.unitsPerBox])));
+  }, [result, adoptCatalogPacks]);
   const lockedCategories = counts?.lockedCategories ?? result?.hiddenCategories ?? [];
   const lockedCategory =
     selection.kind === "locked" ? lockedCategories.find((c) => c.id === selection.id) : undefined;
@@ -321,6 +331,7 @@ export default function BuyerShopPage() {
   return (
     <div className="flex flex-col min-h-full">
       <div className="flex-1 p-6">
+        <SellerUnavailableLine />
         {/* Header */}
         <div className="mb-4 flex flex-wrap items-center justify-between gap-3">
           <div>
@@ -546,18 +557,21 @@ export default function BuyerShopPage() {
                         estimate={estimateByProduct.get(p.id)}
                         isFavorite={favoriteIds.has(p.id)}
                         onAdd={() =>
-                          cart.addItem({
-                            productId: p.id,
-                            qty: p.unitsPerBox ? p.unitsPerBox : 1,
-                            name: p.name,
-                            unit: p.unit,
-                            thumbnailUrl: p.thumbnailUrl,
-                            unitsPerBox: p.unitsPerBox,
-                            boxes: p.unitsPerBox ? 1 : undefined,
-                            pieces: p.unitsPerBox ? 0 : undefined,
-                          })
+                          cart.addItem(
+                            newCartLine(
+                              {
+                                productId: p.id,
+                                name: p.name,
+                                unit: p.unit,
+                                thumbnailUrl: p.thumbnailUrl,
+                              },
+                              p.unitsPerBox,
+                            ),
+                          )
                         }
                         onUpdateQty={(qty) => cart.updateQty(p.id, qty)}
+                        onSetUnit={(unit) => cart.setUnit(p.id, unit)}
+                        onRestore={(line) => cart.addItem(line)}
                         onToggleFavorite={() => toggleFavorite(p.id)}
                         isAlertSubscribed={alertIds.has(p.id)}
                         onToggleStockAlert={() => toggleStockAlert(p.id)}
@@ -568,119 +582,133 @@ export default function BuyerShopPage() {
                   /* List view */
                   <div className="rounded-xl border border-surface-border bg-white overflow-hidden">
                     <div className="overflow-x-auto">
-                    <table className="w-full min-w-[640px]">
-                      <thead>
-                        <tr className="border-b border-surface-border bg-surface-raised text-xs text-navy/70 uppercase tracking-wider">
-                          <th className="px-4 py-2.5 text-left">Product</th>
-                          <th className="px-4 py-2.5 text-left w-28">Category</th>
-                          <th className="px-4 py-2.5 text-left w-24">SKU</th>
-                          <th className="px-4 py-2.5 text-right w-28">Price</th>
-                          <th className="px-4 py-2.5 text-right w-44">Actions</th>
-                        </tr>
-                      </thead>
-                      <tbody className="divide-y divide-surface-border">
-                        {products.map((p) => {
-                          const qty = cart.getItemQty(p.id);
-                          const cartItem = cart.items.find((i) => i.productId === p.id);
-                          const priced = deriveTilePrice(p, promoRules, cartItem);
-                          return (
-                            <tr
-                              key={p.id}
-                              className="hover:bg-surface-raised/50"
-                              data-testid="product-tile"
-                            >
-                              <td className="px-4 py-3">
-                                <Link
-                                  href={`/buyer/portal/${sellerSlug}/shop/${p.id}`}
-                                  data-testid="product-tile-link"
-                                  className="flex items-center gap-3"
-                                >
-                                  <div className="h-10 w-10 flex-shrink-0 rounded-lg bg-surface-raised flex items-center justify-center overflow-hidden">
-                                    {p.thumbnailUrl ? (
-                                      <img
-                                        src={p.thumbnailUrl}
-                                        alt=""
-                                        className="h-full w-full object-cover"
-                                        style={{
-                                          objectPosition: objectPositionForUrl(p.thumbnailUrl),
-                                        }}
+                      <table className="w-full min-w-[640px]">
+                        <thead>
+                          <tr className="border-b border-surface-border bg-surface-raised text-xs text-navy/70 uppercase tracking-wider">
+                            <th className="px-4 py-2.5 text-left">Product</th>
+                            <th className="px-4 py-2.5 text-left w-28">Category</th>
+                            <th className="px-4 py-2.5 text-left w-24">SKU</th>
+                            <th className="px-4 py-2.5 text-right w-28">Price</th>
+                            <th className="px-4 py-2.5 text-right w-44">Actions</th>
+                          </tr>
+                        </thead>
+                        <tbody className="divide-y divide-surface-border">
+                          {products.map((p) => {
+                            const cartItem = cart.items.find((i) => i.productId === p.id);
+                            const qty = cartItem ? lineCount(cartItem) : 0;
+                            const priced = deriveTilePrice(p, promoRules, cartItem);
+                            return (
+                              <tr
+                                key={p.id}
+                                className="hover:bg-surface-raised/50"
+                                data-testid="product-tile"
+                              >
+                                <td className="px-4 py-3">
+                                  <Link
+                                    href={`/buyer/portal/${sellerSlug}/shop/${p.id}`}
+                                    data-testid="product-tile-link"
+                                    className="flex items-center gap-3"
+                                  >
+                                    <div className="h-10 w-10 flex-shrink-0 rounded-lg bg-surface-raised flex items-center justify-center overflow-hidden">
+                                      {p.thumbnailUrl ? (
+                                        <img
+                                          src={p.thumbnailUrl}
+                                          alt=""
+                                          className="h-full w-full object-cover"
+                                          style={{
+                                            objectPosition: objectPositionForUrl(p.thumbnailUrl),
+                                          }}
+                                        />
+                                      ) : (
+                                        <Package className="h-5 w-5 text-navy/15" />
+                                      )}
+                                    </div>
+                                    <div>
+                                      <p className="text-sm font-medium text-navy">{p.name}</p>
+                                      <p className="text-xs text-navy/70">per {p.unit}</p>
+                                    </div>
+                                  </Link>
+                                </td>
+                                <td className="px-4 py-3 text-xs text-navy/70">
+                                  {p.category ?? "N/A"}
+                                </td>
+                                <td className="px-4 py-3 text-xs text-navy/70">{p.sku ?? "N/A"}</td>
+                                <td className="px-4 py-3 text-right">
+                                  {priced.originalPrice != null && (
+                                    <p className="text-[11px] text-navy/40 line-through">
+                                      {fmt(priced.originalPrice)}
+                                    </p>
+                                  )}
+                                  <p className="text-sm font-semibold text-navy">
+                                    {fmt(priced.unitPrice)}
+                                  </p>
+                                </td>
+                                <td className="px-4 py-3">
+                                  <div className="flex items-center justify-end gap-2">
+                                    <button
+                                      onClick={() => toggleFavorite(p.id)}
+                                      className={`rounded p-1.5 transition-colors ${
+                                        favoriteIds.has(p.id)
+                                          ? "text-danger hover:bg-danger-bg"
+                                          : "text-navy/30 hover:text-danger"
+                                      }`}
+                                      title={
+                                        favoriteIds.has(p.id)
+                                          ? "Remove from favorites"
+                                          : "Add to favorites"
+                                      }
+                                    >
+                                      <Heart
+                                        className={`h-4 w-4 ${favoriteIds.has(p.id) ? "fill-current" : ""}`}
                                       />
+                                    </button>
+                                    {qty > 0 ? (
+                                      <div className="flex flex-col items-end gap-1.5">
+                                        <QtyStepper
+                                          qty={qty}
+                                          name={p.name}
+                                          onUpdate={(n) => cart.updateQty(p.id, n)}
+                                          onRemove={() => cart.updateQty(p.id, 0)}
+                                          onRestore={
+                                            cartItem ? () => cart.addItem(cartItem) : undefined
+                                          }
+                                          size="sm"
+                                        />
+                                        {cartItem && (
+                                          <CartLineUnit
+                                            item={cartItem}
+                                            name={p.name}
+                                            onUnit={(unit) => cart.setUnit(p.id, unit)}
+                                          />
+                                        )}
+                                      </div>
                                     ) : (
-                                      <Package className="h-5 w-5 text-navy/15" />
+                                      <button
+                                        onClick={() =>
+                                          cart.addItem(
+                                            newCartLine(
+                                              {
+                                                productId: p.id,
+                                                name: p.name,
+                                                unit: p.unit,
+                                                thumbnailUrl: p.thumbnailUrl,
+                                              },
+                                              p.unitsPerBox,
+                                            ),
+                                          )
+                                        }
+                                        className="flex items-center gap-1 rounded-lg bg-buyer-500 px-3 py-1.5 text-xs font-semibold text-white hover:bg-buyer-600 transition-colors"
+                                      >
+                                        <Plus className="h-3.5 w-3.5" /> Add
+                                      </button>
                                     )}
                                   </div>
-                                  <div>
-                                    <p className="text-sm font-medium text-navy">{p.name}</p>
-                                    <p className="text-xs text-navy/70">per {p.unit}</p>
-                                  </div>
-                                </Link>
-                              </td>
-                              <td className="px-4 py-3 text-xs text-navy/70">
-                                {p.category ?? "N/A"}
-                              </td>
-                              <td className="px-4 py-3 text-xs text-navy/70">{p.sku ?? "N/A"}</td>
-                              <td className="px-4 py-3 text-right">
-                                {priced.originalPrice != null && (
-                                  <p className="text-[11px] text-navy/40 line-through">
-                                    {fmt(priced.originalPrice)}
-                                  </p>
-                                )}
-                                <p className="text-sm font-semibold text-navy">
-                                  {fmt(priced.unitPrice)}
-                                </p>
-                              </td>
-                              <td className="px-4 py-3">
-                                <div className="flex items-center justify-end gap-2">
-                                  <button
-                                    onClick={() => toggleFavorite(p.id)}
-                                    className={`rounded p-1.5 transition-colors ${
-                                      favoriteIds.has(p.id)
-                                        ? "text-danger hover:bg-danger-bg"
-                                        : "text-navy/30 hover:text-danger"
-                                    }`}
-                                    title={
-                                      favoriteIds.has(p.id)
-                                        ? "Remove from favorites"
-                                        : "Add to favorites"
-                                    }
-                                  >
-                                    <Heart
-                                      className={`h-4 w-4 ${favoriteIds.has(p.id) ? "fill-current" : ""}`}
-                                    />
-                                  </button>
-                                  {qty > 0 ? (
-                                    <QtyStepper
-                                      qty={qty}
-                                      onUpdate={(n) => cart.updateQty(p.id, n)}
-                                      onRemove={() => cart.updateQty(p.id, 0)}
-                                      size="sm"
-                                    />
-                                  ) : (
-                                    <button
-                                      onClick={() =>
-                                        cart.addItem({
-                                          productId: p.id,
-                                          qty: p.unitsPerBox ? p.unitsPerBox : 1,
-                                          name: p.name,
-                                          unit: p.unit,
-                                          thumbnailUrl: p.thumbnailUrl,
-                                          unitsPerBox: p.unitsPerBox,
-                                          boxes: p.unitsPerBox ? 1 : undefined,
-                                          pieces: p.unitsPerBox ? 0 : undefined,
-                                        })
-                                      }
-                                      className="flex items-center gap-1 rounded-lg bg-buyer-500 px-3 py-1.5 text-xs font-semibold text-white hover:bg-buyer-600 transition-colors"
-                                    >
-                                      <Plus className="h-3.5 w-3.5" /> Add
-                                    </button>
-                                  )}
-                                </div>
-                              </td>
-                            </tr>
-                          );
-                        })}
-                      </tbody>
-                    </table>
+                                </td>
+                              </tr>
+                            );
+                          })}
+                        </tbody>
+                      </table>
                     </div>
                   </div>
                 )}

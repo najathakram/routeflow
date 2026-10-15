@@ -17,6 +17,7 @@ import {
 } from "@nestjs/common";
 import { ApiTags, ApiBearerAuth, ApiHeader } from "@nestjs/swagger";
 import { OrdersService } from "./orders.service";
+import { fulfilCaller } from "./fulfil-path-resolver";
 import { ChangeRequestsService } from "./change-requests.service";
 import { JwtAuthGuard } from "../auth/guards/jwt-auth.guard";
 import { RolesGuard } from "../auth/guards/roles.guard";
@@ -43,6 +44,11 @@ import {
   isMergeContention,
   mapLockError,
 } from "./merge-contention";
+import { API_ERROR_CODES } from "../common/api-error-codes";
+import { BatchShipDto, PackingSlipsDto } from "./dto/batch-ship.dto";
+import { OrderBatchShipService } from "./order-batch-ship";
+import { PackingSlipService } from "./packing-slip.service";
+import { toCustomerOrder } from "../common/staff-only-fields";
 
 @ApiTags("orders")
 @ApiBearerAuth()
@@ -52,9 +58,16 @@ export class OrdersController {
   constructor(
     private readonly ordersService: OrdersService,
     private readonly changeRequestsService: ChangeRequestsService,
+    private readonly batchShipService: OrderBatchShipService,
+    private readonly packingSlipService: PackingSlipService,
   ) {}
 
   private readonly logger = new Logger(OrdersController.name);
+
+  /** A CUSTOMER caller gets customer-facing fields only (common/staff-only-fields.ts); staff get `order` itself. */
+  private forCaller<T>(user: JwtPayload, order: T): T {
+    return user.role === UserRole.CUSTOMER ? toCustomerOrder(order) : order;
+  }
 
   // F30/R11 (B199): the staff merge's read-fold-write critical section is
   // serialized by `withAdvisoryLock` (../common/db-locks) — a Postgres
@@ -111,14 +124,17 @@ export class OrdersController {
       dto.mergeChoice ?? (dto.forceNew ? "separate" : undefined);
 
     if (isStaff && dto.customerId) {
+      // A merge target must share the incoming order's fulfil path (merge-candidates.ts).
+      const mergeAs = { explicit: dto.fulfillPath, ...fulfilCaller(user) };
       const activeOrder = await this.ordersService.findActiveOrder(dto.customerId, {
         forMerge: true,
+        mergeAs,
       });
       if (activeOrder) {
         // Operator hasn't told us what to do — make them choose.
         if (!choice) {
           throw new ConflictException({
-            code: "MERGE_CHOICE_REQUIRED",
+            code: API_ERROR_CODES.MERGE_CHOICE_REQUIRED,
             message: "An open draft/pending order exists for this customer.",
             activeOrder: {
               id: activeOrder.id,
@@ -172,6 +188,7 @@ export class OrdersController {
               async () => {
                 const current = await this.ordersService.findActiveOrder(dto.customerId!, {
                   forMerge: true,
+                  mergeAs,
                 });
                 // The in-lock re-read is AUTHORITATIVE. A null here means the pre-lock snapshot
                 // is stale — the request that held this lock before us merged that order away or
@@ -197,6 +214,7 @@ export class OrdersController {
                     dto.customerId!,
                     requestHash,
                     dto.inlineReturn, // #2424: the replay compares its items too
+                    { items: dto.items, status: dto.status }, // BUG-A: a column hit compares the body
                   );
                   if (replayed) {
                     const replayedOrderId = replayed.orderId;
@@ -242,7 +260,16 @@ export class OrdersController {
                   // operator to edit yet. The actual remedy is to not merge at all.
                   'Choose "Create as a separate order" instead.',
                 );
-                const foldResult = foldMergeItems(current.lineItems ?? [], dto.items ?? []);
+                const foldResult = foldMergeItems(
+                  current.lineItems ?? [],
+                  dto.items ?? [],
+                  undefined,
+                  // B297 row 340 (foldTarget): the rate trio a NEW sale of each incoming product takes today —
+                  // an existing line sold at a different trio does not absorb the added quantity.
+                  await this.ordersService.liveTrioByProduct(
+                    (dto.items ?? []).map((i) => i.productId).filter(Boolean) as string[],
+                  ),
+                );
                 if (foldResult.livePackFallbackProductIds.length > 0) {
                   this.logger.warn(
                     `foldMergeItems: order ${current.id} product(s) [${foldResult.livePackFallbackProductIds.join(", ")}] had box data but no resolvable pack of their own — deferred to the live product pack in updateOrderItems (B776/SA-124)`,
@@ -368,14 +395,15 @@ export class OrdersController {
       try {
         // Only the CUSTOMER's own consolidation may earn NEW BUY_N_GET_M free units
         // for the combined quantity — a driver's order is priced like staff's.
+        // focusOrderId: fold only the new order's path, so `merged` is never another path's pair (M2)
         const merged = await this.ordersService.mergeAllPendingForCustomer(
           created.customerId,
-          { buyerInitiated: user.role === UserRole.CUSTOMER },
+          { buyerInitiated: user.role === UserRole.CUSTOMER, focusOrderId: created.id },
           // POST-COMMIT: never wait. A held lock means someone else is consolidating this very
           // customer anyway, so `try` defers to them instead of spending this request's budget.
           { lockMode: "try", actor: user },
         );
-        if (merged) return merged;
+        if (merged) return this.forCaller(user, merged);
       } catch (e) {
         if (!isMergeContention(e)) throw e;
         this.logger.warn(
@@ -383,7 +411,7 @@ export class OrdersController {
         );
       }
     }
-    return created;
+    return this.forCaller(user, created);
   }
 
   /**
@@ -394,8 +422,42 @@ export class OrdersController {
   @Post("sell")
   @UseGuards(RolesGuard)
   @Roles(UserRole.OPERATOR)
-  sell(@Body() dto: CreateSaleDto, @CurrentUser() user: JwtPayload) {
-    return this.ordersService.createSale(dto, user);
+  @ApiHeader({ name: "Idempotency-Key", required: false })
+  sell(
+    @Body() dto: CreateSaleDto,
+    @CurrentUser() user: JwtPayload,
+    @Headers("Idempotency-Key") rawIdempotencyKey?: string,
+  ) {
+    // Row 485: an optional per-attempt key (the body field stays internal and is refused). With it a
+    // retried ring resumes the stored order instead of writing a second one.
+    const idempotencyKey = this.normalizeIdempotencyKey(rawIdempotencyKey);
+    return this.ordersService.createSale(
+      idempotencyKey ? Object.assign(dto, { idempotencyKey }) : dto,
+      user,
+    );
+  }
+
+  /** #3168: mark several carrier orders shipped in one request (per-order outcomes, never all-or-nothing). */
+  @Post("batch-ship")
+  @UseGuards(RolesGuard)
+  @Roles(UserRole.OPERATOR, UserRole.TENANT_ADMIN)
+  batchShip(@Body() dto: BatchShipDto, @CurrentUser() user: JwtPayload) {
+    return this.batchShipService.batchShip(
+      dto.orders.map((o) => ({
+        orderId: o.orderId,
+        carrier: o.carrier,
+        trackingNumber: o.trackingNumber,
+      })),
+      user,
+    );
+  }
+
+  /** #3168: one PDF with a packing slip page per carrier order (no prices). */
+  @Post("packing-slips")
+  @UseGuards(RolesGuard)
+  @Roles(UserRole.OPERATOR, UserRole.TENANT_ADMIN)
+  packingSlips(@Body() dto: PackingSlipsDto) {
+    return this.packingSlipService.generate(dto.orderIds);
   }
 
   /**
@@ -406,9 +468,23 @@ export class OrdersController {
   @Get("active")
   @UseGuards(RolesGuard)
   @Roles(UserRole.OPERATOR)
-  async getActiveOrderForCustomer(@Query("customerId") customerId: string) {
+  async getActiveOrderForCustomer(
+    @Query("customerId") customerId: string,
+    // The path the order being built is on: the preview looks for the SAME merge target create would
+    // (merge-candidates.ts); omitted = the customer's own path.
+    @Query("fulfillPath") fulfillPath: string | undefined,
+    @CurrentUser() user: JwtPayload,
+  ) {
     if (!customerId) return null;
-    const order = await this.ordersService.findActiveOrder(customerId, { forMerge: true });
+    // Staff may ask for PICKUP (POS mode): the preview searches for the same target create would.
+    const explicit =
+      fulfillPath === "SHIP" || fulfillPath === "ROUTE" || fulfillPath === "PICKUP"
+        ? fulfillPath
+        : undefined;
+    const order = await this.ordersService.findActiveOrder(customerId, {
+      forMerge: true,
+      mergeAs: { explicit, ...fulfilCaller(user) },
+    });
     if (!order) return null;
     return {
       id: order.id,
@@ -457,12 +533,12 @@ export class OrdersController {
   @Patch(":id/status")
   @UseGuards(RolesGuard)
   @Roles(UserRole.OPERATOR, UserRole.TENANT_ADMIN, UserRole.CUSTOMER, UserRole.DRIVER)
-  changeStatus(
+  async changeStatus(
     @Param("id") id: string,
     @Body() dto: ChangeOrderStatusDto,
     @CurrentUser() user: JwtPayload,
   ) {
-    return this.ordersService.changeStatus(id, dto, user);
+    return this.forCaller(user, await this.ordersService.changeStatus(id, dto, user));
   }
 
   @Post(":id/reopen")
@@ -475,12 +551,17 @@ export class OrdersController {
   @Patch(":id/items")
   @UseGuards(RolesGuard)
   @Roles(UserRole.OPERATOR, UserRole.CUSTOMER, UserRole.DRIVER)
-  updateOrderItems(
+  async updateOrderItems(
     @Param("id") id: string,
     @Body() dto: UpdateOrderItemsDto,
     @CurrentUser() user: JwtPayload,
   ) {
-    return this.ordersService.updateOrderItems(id, dto, user);
+    // B297 row 352: a CUSTOMER principal on this route names its lines exactly as on the buyer route.
+    const edited =
+      user.role === UserRole.CUSTOMER
+        ? await this.ordersService.updateOrderItems(id, dto, user, { buyerLineIds: true })
+        : await this.ordersService.updateOrderItems(id, dto, user);
+    return this.forCaller(user, edited);
   }
 
   // ─── P5-09: post-dispatch change requests ───────────────────────────────────
@@ -549,12 +630,12 @@ export class OrdersController {
   @Patch(":id/urgent")
   @UseGuards(RolesGuard)
   @Roles(UserRole.OPERATOR, UserRole.CUSTOMER)
-  toggleUrgent(
+  async toggleUrgent(
     @Param("id") id: string,
     @Body() body: { urgent?: boolean },
     @CurrentUser() user: JwtPayload,
   ) {
-    return this.ordersService.toggleUrgent(id, user, body.urgent);
+    return this.forCaller(user, await this.ordersService.toggleUrgent(id, user, body.urgent));
   }
 
   // Sales agents & commissions: staff-only per-order commission-rate override

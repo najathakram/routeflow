@@ -48,7 +48,14 @@ export function useProducts(
  * Key stays under ["products"] so the existing mutation invalidations reach it.
  */
 export function useProductsInfinite(
-  params?: { search?: string; scanCode?: string; category?: string; limit?: number },
+  params?: {
+    search?: string;
+    scanCode?: string;
+    category?: string;
+    limit?: number;
+    /** Nest each family's active variants so the picker can list them instead of the container. */
+    includeVariants?: boolean;
+  },
   options?: { enabled?: boolean },
 ) {
   const limit = params?.limit ?? PRODUCT_PAGE_SIZE;
@@ -186,7 +193,15 @@ export function useCreateProduct() {
 
 export function useUpdateProduct() {
   const qc = useQueryClient();
-  return useMutation<{ id: string }, Error, { id: string } & Partial<CreateProductDto>>({
+  return useMutation<
+    { id: string },
+    Error,
+    {
+      id: string;
+      deactivateHolderIds?: string[];
+      confirmCascade?: boolean;
+    } & Partial<CreateProductDto>
+  >({
     mutationFn: ({ id, ...dto }) => apiClient.patch(`/products/${id}`, dto).then((r) => r.data),
     onSuccess: (_, { id }) => {
       qc.invalidateQueries({ queryKey: ["products"] });
@@ -198,8 +213,16 @@ export function useUpdateProduct() {
 
 export function useDeleteProduct() {
   const qc = useQueryClient();
-  return useMutation<void, Error, string>({
-    mutationFn: (id) => apiClient.delete(`/products/${id}`).then(() => undefined),
+  return useMutation<void, Error, string | { id: string; confirmCascade?: boolean }>({
+    mutationFn: (arg) => {
+      const { id, confirmCascade } = typeof arg === "string" ? { id: arg } : arg;
+      return apiClient
+        .delete(
+          `/products/${id}`,
+          confirmCascade ? { params: { confirmCascade: "true" } } : undefined,
+        )
+        .then(() => undefined);
+    },
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ["products"] });
       qc.invalidateQueries({ queryKey: ["admin", "products"] });

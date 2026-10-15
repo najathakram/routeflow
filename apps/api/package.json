@@ -80,6 +80,7 @@
     "google-auth-library": "^10.9.1",
     "helmet": "^8.3.0",
     "ioredis": "^5.11.1",
+    "jose": "^4.15.9",
     "libphonenumber-js": "^1.13.13",
     "mime-types": "^2.1.35",
     "multer": "^2.4.0",
@@ -97,7 +98,7 @@
     "sharp": "^0.35.4",
     "socket.io": "^4.8.3",
     "stripe": "^22.6.2",
-    "uuid": "^7.0.3"
+    "zod": "^3.25.76"
   },
   "devDependencies": {
     "@eslint/eslintrc": "^3.3.7",
@@ -115,7 +116,6 @@
     "@types/passport-jwt": "^4.0.1",
     "@types/passport-local": "^1.0.38",
     "@types/supertest": "^6.0.2",
-    "@types/uuid": "^10.0.0",
     "eslint": "^9.18.0",
     "eslint-config-prettier": "^10.0.1",
     "eslint-plugin-prettier": "^5.5.6",
@@ -125,10 +125,8 @@
     "prettier": "^3.9.7",
     "prisma": "^7.10.0",
     "socket.io-client": "^4.8.3",
-    "source-map-support": "^0.5.21",
     "supertest": "^7.0.0",
     "ts-jest": "^29.4.12",
-    "ts-loader": "^9.6.2",
     "ts-node": "^10.9.2",
     "tsconfig-paths": "^4.2.0",
     "typescript": "^5.9.3",
@@ -180,6 +178,7 @@
       "^@react-pdf/renderer$": "<rootDir>/../test/__mocks__/react-pdf-renderer.js",
       "^../invoices/invoice-pdf-template$": "<rootDir>/../test/__mocks__/invoice-pdf-template.js",
       "^./invoice-pdf-template$": "<rootDir>/../test/__mocks__/invoice-pdf-template.js",
+      "^./packing-slip-pdf-template$": "<rootDir>/../test/__mocks__/packing-slip-pdf-template.js",
       "^./invoice-template$": "<rootDir>/../test/__mocks__/invoice-template.js",
       "^../tobacco/tobacco-report-pdf$": "<rootDir>/../test/__mocks__/tobacco-report-pdf.js",
       "^./tobacco-report-pdf$": "<rootDir>/../test/__mocks__/tobacco-report-pdf.js",

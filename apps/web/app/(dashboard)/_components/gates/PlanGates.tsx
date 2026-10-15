@@ -4,6 +4,7 @@ import * as React from "react";
 import { Lock, Sparkles, AlertTriangle, Loader2 } from "lucide-react";
 import { Card, Button, Modal, cn } from "@routeflow/ui/web";
 import type { PlanGateBody } from "@/lib/plan-gate";
+import { guardCounterLeave } from "@/lib/counter-cart-signal";
 
 /**
  * The three plan-gate surfaces (plan-gating-wiring.md §1). A gated endpoint returns
@@ -43,7 +44,13 @@ export function LockedPage({
           </div>
           <h3 className="text-lg font-semibold text-slate-900">{title ?? "Not on your plan"}</h3>
           <p className="mt-1 text-sm text-slate-500">{gate.message}</p>
-          <a href="/choose-plan">
+          <a
+            href="/choose-plan"
+            onClick={(e) => {
+              if (guardCounterLeave(() => window.location.assign("/choose-plan")))
+                e.preventDefault(); // POS-7: not mid-sale
+            }}
+          >
             <Button className="mt-4">
               <Sparkles className="mr-1 h-4 w-4" /> {cta}
             </Button>

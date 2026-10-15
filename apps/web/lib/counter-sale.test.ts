@@ -1,0 +1,825 @@
+import type { FulfilmentCapability } from "@routeflow/types";
+import * as keys from "./counter-live-cart-keys";
+import {
+  AUTO_PRINT_KEY,
+  isNotSentOffline,
+  cartTotals,
+  amountDue,
+  changeDue,
+  COUNTER_OUTCOME_UNKNOWN_COPY,
+  counterSaleErrorCopy,
+  COUNTER_SALE_CHANGED_COPY,
+  COUNTER_SALE_VOIDED_COPY,
+  finalCounterSaleCopy,
+  isCounterSaleChanged,
+  isCounterSaleIncomplete,
+  isCounterSaleVoided,
+  isCounterSaleNotFound,
+  isDefinitiveCounterSaleRefusal,
+  counterSaleGate,
+  isStoreOnly,
+  PAYMENT_PROBLEM_COPY,
+  isTenderShortCopy,
+  paymentProblemCopy,
+  paymentMethodOptions,
+  COUNTER_SALE_DAY_CLOSED_TILL_COPY,
+  PICKUP_DAY_CLOSED_COPY,
+  isPickupHandledError,
+  PICKUP_NOT_READY_COPY,
+  PICKUP_ONLY_COPY,
+  PICKUP_KEY_CONFLICT_COPY,
+  PICKUP_INVOICE_MISSING_COPY,
+  PICKUP_WALK_IN_CREDIT_COPY,
+  PICKUP_TENDER_SHORT_COPY,
+  PICKUP_PAYMENT_REQUIRED_COPY,
+  pickupBalanceDue,
+  pickupCompleteErrorCopy,
+  parseScanField,
+  preselectFulfilment,
+  quickTenderOptions,
+  readAutoPrint,
+  heldAttemptKey,
+  clearHeldAttempt,
+  readHeldAttempt,
+  writeHeldAttempt,
+  validatePayment,
+  writeAutoPrint,
+} from "./counter-sale";
+
+const cap = (over: Partial<FulfilmentCapability>): FulfilmentCapability => ({
+  methods: ["ROUTE"],
+  staffDefault: "ROUTE",
+  staffOpensAs: "order",
+  portalMethods: [],
+  portalDefault: null,
+  counter: "off",
+  fleet: true,
+  consistent: true,
+  ...over,
+});
+
+describe("counterSaleGate: reads capabilities.fulfilment only (SA-650)", () => {
+  it("always: the button AND New order opens as the counter sale", () => {
+    expect(counterSaleGate(cap({ counter: "always", methods: ["PICKUP"] }))).toEqual({
+      showButton: true,
+      opensAsCounter: true,
+      offerShipInstead: false,
+      offerInvoiceOrder: true, // PICKUP is the only method: a store-only business (row 331)
+    });
+  });
+  it("always + SHIP in methods: 'Ship this order instead' is offered", () => {
+    expect(counterSaleGate(cap({ counter: "always", methods: ["PICKUP", "SHIP"] }))).toMatchObject({
+      opensAsCounter: true,
+      offerShipInstead: true,
+      offerInvoiceOrder: false, // it can ship, so the normal builder is already reachable
+    });
+  });
+  it("optional: the button only; never opens as the counter, never offers the ship switch", () => {
+    expect(counterSaleGate(cap({ counter: "optional", methods: ["SHIP"] }))).toEqual({
+      showButton: true,
+      opensAsCounter: false,
+      offerShipInstead: false,
+      offerInvoiceOrder: false,
+    });
+  });
+  it("off, missing or still loading: nothing", () => {
+    const none = {
+      showButton: false,
+      opensAsCounter: false,
+      offerShipInstead: false,
+      offerInvoiceOrder: false,
+    };
+    expect(counterSaleGate(cap({ counter: "off" }))).toEqual(none);
+    expect(counterSaleGate(undefined)).toEqual(none);
+    expect(counterSaleGate(null)).toEqual(none);
+    expect(counterSaleGate(cap({ counter: "bogus" as never }))).toEqual(none);
+  });
+});
+
+describe("isStoreOnly: PICKUP is the only fulfilment method (row 331)", () => {
+  it("true only when every method is PICKUP", () => {
+    expect(isStoreOnly({ methods: ["PICKUP"] })).toBe(true);
+    expect(isStoreOnly({ methods: ["PICKUP", "SHIP"] })).toBe(false);
+    expect(isStoreOnly({ methods: ["ROUTE", "SHIP"] })).toBe(false);
+  });
+  it("a missing, empty or partial answer is not store-only", () => {
+    expect(isStoreOnly(undefined)).toBe(false);
+    expect(isStoreOnly(null)).toBe(false);
+    expect(isStoreOnly({ methods: [] })).toBe(false);
+    expect(isStoreOnly({} as never)).toBe(false);
+  });
+});
+
+describe("preselectFulfilment: mirrors the resolver (the customer's stored path only if it is a method here)", () => {
+  const both = {
+    methods: ["ROUTE", "SHIP"] as ("ROUTE" | "SHIP")[],
+    staffDefault: "ROUTE" as const,
+  };
+  const shipOnly = { methods: ["SHIP"] as "SHIP"[], staffDefault: "SHIP" as const };
+  it("a stored path that is one of the methods wins over the staff default", () => {
+    expect(preselectFulfilment("SHIP", both)).toBe("SHIP");
+    expect(preselectFulfilment("ROUTE", { ...both, staffDefault: "SHIP" })).toBe("ROUTE");
+  });
+  it("a stored ROUTE on a ship-only capability falls to SHIP", () => {
+    expect(preselectFulfilment("ROUTE", shipOnly)).toBe("SHIP");
+    expect(preselectFulfilment("PICKUP", shipOnly)).toBe("SHIP");
+  });
+  it("no stored path: the staff default", () => {
+    expect(preselectFulfilment(null, shipOnly)).toBe("SHIP");
+    expect(preselectFulfilment(undefined, both)).toBe("ROUTE");
+  });
+  it("no capability: null", () => {
+    expect(preselectFulfilment("SHIP", null)).toBeNull();
+    expect(preselectFulfilment("SHIP", undefined)).toBeNull();
+  });
+});
+
+describe("cartTotals: money only through @routeflow/pricing", () => {
+  it("a loose line is price x qty, cents rounded once", () => {
+    expect(cartTotals([{ unitPrice: 1.005, qty: 3 }], 0)).toMatchObject({
+      subtotal: 3.02,
+      tax: 0,
+      charges: 0,
+      total: 3.02,
+    });
+  });
+  it("a boxed product with boxes + pieces prices the box, prorating the pieces (never qty x unitPrice)", () => {
+    const t = cartTotals([{ unitPrice: 120, qty: 0, boxes: 1, pieces: 6, unitsPerBox: 12 }], 0);
+    expect(t.subtotal).toBe(180);
+  });
+  it("tax is one roundMoney of the subtotal, total = subtotal + tax", () => {
+    expect(cartTotals([{ unitPrice: 10, qty: 3 }], 0.0825)).toMatchObject({
+      subtotal: 30,
+      tax: 2.48,
+      charges: 0,
+      total: 32.48,
+    });
+  });
+  it("empty cart is zero", () => {
+    expect(cartTotals([], 0.1)).toMatchObject({ subtotal: 0, tax: 0, charges: 0, total: 0 });
+  });
+});
+
+describe("cartTotals: the regulated levy and the exempt customer (CQ-01, CQ-02, CQ-28)", () => {
+  const categories = new Map([
+    ["dep", { taxType: "DEPOSIT_PER_CONTAINER", rate: "0.1000", priceIncludesTax: false }],
+    ["exc", { taxType: "EXCISE_PER_UNIT", rate: "0.5000", priceIncludesTax: false }],
+  ] as const);
+  const cart = [
+    { unitPrice: 10, qty: 4, trackedCategoryId: "dep" },
+    { unitPrice: 10, qty: 4, trackedCategoryId: "exc" },
+  ];
+
+  it("CQ-01: the deposit and the excise are in the total the screen shows, as on the receipt", () => {
+    // 80.00 + 6.60 tax + 0.40 deposit + 2.00 excise
+    expect(cartTotals(cart, 0.0825, { categories })).toMatchObject({
+      subtotal: 80,
+      tax: 6.6,
+      charges: 2.4,
+      total: 89,
+    });
+  });
+
+  it("CQ-01: the change on a $100 tender is the receipt's, not 2.40 too high", () => {
+    const { total } = cartTotals(cart, 0.0825, { categories });
+    expect(changeDue(total, 100)).toBe(11);
+  });
+
+  it("CQ-02: an exempt customer pays $0 tax and $0 levy, so the screen, the order and the invoice agree", () => {
+    expect(cartTotals(cart, 0.0825, { categories, isTaxExempt: true })).toMatchObject({
+      subtotal: 80,
+      tax: 0,
+      charges: 0,
+      total: 80,
+    });
+  });
+
+  it("CQ-28: Exact on a cart holding a deposit item tenders the receipt's total, so a walk-in is not refused", () => {
+    const { total } = cartTotals([cart[0]], 0.0825, { categories });
+    const exact = quickTenderOptions(total).find((q) => q.label === "Exact");
+    expect(total).toBe(43.7);
+    expect(exact?.amount).toBe(43.7);
+    expect(amountDue(total, exact!.amount)).toBe(0);
+  });
+
+  it("a line with no category, or a category the list does not know, is just taxed", () => {
+    expect(
+      cartTotals([{ unitPrice: 10, qty: 1, trackedCategoryId: "gone" }], 0.1, { categories }),
+    ).toMatchObject({ subtotal: 10, tax: 1, charges: 0, total: 11 });
+  });
+});
+
+describe("tender: quick buttons and change", () => {
+  it("Exact / $20 / $50 / $100, the ones under the total disabled", () => {
+    expect(quickTenderOptions(32.48)).toEqual([
+      { label: "Exact", amount: 32.48, disabled: false },
+      { label: "$20", amount: 20, disabled: true },
+      { label: "$50", amount: 50, disabled: false },
+      { label: "$100", amount: 100, disabled: false },
+    ]);
+  });
+  it("change is the tender minus the total in cents, never negative", () => {
+    expect(changeDue(32.48, 50)).toBe(17.52);
+    expect(changeDue(0.1 + 0.2, 1)).toBe(0.7);
+    expect(changeDue(10, 5)).toBe(0);
+  });
+});
+
+describe("payment method chips", () => {
+  it("On account is disabled for a walk-in, enabled for a customer", () => {
+    const walk = paymentMethodOptions(true);
+    expect(walk.map((m) => m.method)).toEqual(["CASH", "CARD", "CHECK", "ON_ACCOUNT"]);
+    expect(walk.find((m) => m.method === "ON_ACCOUNT")?.disabled).toBe(true);
+    expect(paymentMethodOptions(false).every((m) => !m.disabled)).toBe(true);
+  });
+  it("a short cash tender says what to enter, with the total in the shared money format", () => {
+    expect(paymentProblemCopy("TENDER_SHORT", 18.94)).toBe("Enter at least $18.94.");
+    expect(isTenderShortCopy(paymentProblemCopy("TENDER_SHORT", 3))).toBe(true);
+    expect(isTenderShortCopy("Enter the check number.")).toBe(false);
+    expect(paymentProblemCopy("CHECK_NUMBER_REQUIRED", 18.94)).toBe("Enter the check number.");
+  });
+  it("validatePayment: cash must cover the total, a check needs a number, walk-in cannot go on account", () => {
+    expect(validatePayment({ method: "CASH", total: 10, tendered: 5, isWalkIn: true })).toBe(
+      "TENDER_SHORT",
+    );
+    expect(validatePayment({ method: "CASH", total: 10, tendered: 10, isWalkIn: true })).toBeNull();
+    expect(validatePayment({ method: "CHECK", total: 10, reference: " ", isWalkIn: true })).toBe(
+      "CHECK_NUMBER_REQUIRED",
+    );
+    expect(
+      validatePayment({ method: "CHECK", total: 10, reference: "1042", isWalkIn: true }),
+    ).toBeNull();
+    expect(validatePayment({ method: "ON_ACCOUNT", total: 10, isWalkIn: true })).toBe(
+      "WALK_IN_ON_ACCOUNT",
+    );
+    expect(validatePayment({ method: "ON_ACCOUNT", total: 10, isWalkIn: false })).toBeNull();
+    expect(validatePayment({ method: "CARD", total: 10, isWalkIn: true })).toBeNull();
+  });
+});
+
+describe("parseScanField: type a quantity, then scan, to multiply", () => {
+  it("1-3 digits are a quantity", () => {
+    expect(parseScanField("3")).toEqual({ kind: "qty", qty: 3 });
+    expect(parseScanField(" 12 ")).toEqual({ kind: "qty", qty: 12 });
+    expect(parseScanField("999")).toEqual({ kind: "qty", qty: 999 });
+  });
+  it("anything else is a code (a barcode, a SKU, a search)", () => {
+    expect(parseScanField("012345678905")).toEqual({ kind: "code", code: "012345678905" });
+    expect(parseScanField("SKU-7")).toEqual({ kind: "code", code: "SKU-7" });
+    expect(parseScanField("0")).toEqual({ kind: "code", code: "0" });
+  });
+});
+
+describe("counterSaleErrorCopy: FIXED copy, never the server message", () => {
+  it("maps by status/code and ignores response.data.message", () => {
+    const e = (status: number, code?: string) => ({
+      response: { status, data: { code, message: "RAW SERVER TEXT" } },
+    });
+    for (const err of [e(400), e(403), e(409), e(422), e(500), {}, null]) {
+      const copy = counterSaleErrorCopy(err);
+      expect(copy.length).toBeGreaterThan(10);
+      expect(copy).not.toMatch(/RAW SERVER TEXT/);
+    }
+    expect(counterSaleErrorCopy(e(403))).not.toBe(counterSaleErrorCopy(e(500)));
+  });
+  it("a 401 reuses the permission copy and a 429 the as-entered copy (no new text)", () => {
+    expect(counterSaleErrorCopy({ response: { status: 401 } })).toBe(
+      counterSaleErrorCopy({ response: { status: 403 } }),
+    );
+    expect(counterSaleErrorCopy({ response: { status: 429 } })).toBe(
+      counterSaleErrorCopy({ response: { status: 400 } }),
+    );
+    expect(counterSaleErrorCopy({ response: { status: 408 } })).toBe(COUNTER_OUTCOME_UNKNOWN_COPY);
+  });
+  it("a 403 COUNTER_SALES_DISABLED shows the fixed disabled copy, not the generic permission copy", () => {
+    const disabled = counterSaleErrorCopy({
+      response: { status: 403, data: { code: "COUNTER_SALES_DISABLED", message: "RAW" } },
+    });
+    expect(disabled).toBe("Counter sales are not turned on for this business.");
+    expect(disabled).not.toBe(counterSaleErrorCopy({ response: { status: 403 } }));
+  });
+});
+
+describe("counterSaleErrorCopy: a license refusal (CQ-06) is never the generic 'Something changed'", () => {
+  const licenseErr = (reason: "EXPIRED" | "NO_AUTH") => ({
+    response: {
+      status: 409,
+      data: {
+        code: "REGULATED_AUTH_REQUIRED",
+        message: "RAW SERVER TEXT",
+        blockedCategories: [{ trackedCategoryId: "c1", categoryName: "Alcohol", reason }],
+      },
+    },
+  });
+  it("expired: says it expired, where to renew, and that nothing was charged", () => {
+    const copy = counterSaleErrorCopy(licenseErr("EXPIRED"));
+    expect(copy).toBe(
+      "This sale includes regulated items (Alcohol), and the customer's license has expired. Renew it on the customer's Licenses tab, then try again. Nothing was charged.",
+    );
+    expect(copy).not.toMatch(/Something changed|RAW SERVER TEXT/);
+  });
+  it("none on file: says where to add, verify or renew it, or to choose another customer", () => {
+    const copy = counterSaleErrorCopy(licenseErr("NO_AUTH"));
+    expect(copy).toContain("no verified license on file");
+    expect(copy).toContain("Add, verify or renew it on the customer's Licenses tab");
+    expect(copy).toContain("choose a customer who has one");
+    expect(copy).not.toMatch(/Something changed/);
+  });
+  it("a WALK-IN sale has no license tab to fix: only 'choose a customer who has a valid license'", () => {
+    const copy = counterSaleErrorCopy(licenseErr("NO_AUTH"), { walkIn: true });
+    expect(copy).toBe(
+      "This sale includes regulated items (Alcohol), which need a customer with a valid license. Choose a customer who has a valid license, then try again. Nothing was charged.",
+    );
+    expect(copy).not.toContain("Licenses tab");
+  });
+  it("it is a definitive refusal (the sale is retryable after fixing the license)", () => {
+    expect(isDefinitiveCounterSaleRefusal(licenseErr("EXPIRED"))).toBe(true);
+  });
+  it("another 409 keeps the existing sentence", () => {
+    expect(counterSaleErrorCopy({ response: { status: 409, data: { code: "OTHER" } } })).toMatch(
+      /^Something changed while you were checking out/,
+    );
+  });
+});
+
+describe("counterSaleErrorCopy: a credit-limit or selling-restriction refusal says what to fix (CQ-06 review)", () => {
+  const credit = (data: Record<string, unknown> = {}) => ({
+    response: {
+      status: 409,
+      data: { code: "CREDIT_LIMIT_EXCEEDED", message: "RAW SERVER TEXT", ...data },
+    },
+  });
+  const restricted = (reason: string | null) => ({
+    response: {
+      status: 409,
+      data: {
+        code: "SELLING_RESTRICTED",
+        message: "RAW SERVER TEXT",
+        blockedLines: reason ? [{ productId: "p1", productName: "Item", reason, message: "" }] : [],
+      },
+    },
+  });
+  it("credit limit: the structured numbers, the next step, and that nothing was charged", () => {
+    const copy = counterSaleErrorCopy(credit({ limit: 500, exposure: 640.5 }));
+    expect(copy).toBe(
+      "This sale would put the customer's balance at $640.50, over their $500.00 credit limit. Collect a payment on their account, or choose another customer, then try again. Nothing was charged.",
+    );
+  });
+  it("credit limit without numbers still names the cause and the way out", () => {
+    const copy = counterSaleErrorCopy(credit());
+    expect(copy).toContain("exceed the customer's credit limit");
+    expect(copy).toContain("Nothing was charged.");
+    expect(copy).not.toMatch(/Something changed|RAW SERVER TEXT/);
+  });
+  it("selling restricted: names the cause and the next step", () => {
+    const copy = counterSaleErrorCopy(restricted("STATE_BAN"));
+    expect(copy).toBe(
+      "This sale includes an item that can't be sold to this customer under your selling restrictions. Remove the item or change the customer, then try again. Nothing was charged.",
+    );
+    expect(copy).not.toMatch(/Something changed|RAW SERVER TEXT/);
+  });
+  it("selling restricted because the state is unknown: say so and ask for a customer with an address", () => {
+    const copy = counterSaleErrorCopy(restricted("INDETERMINATE_ADDRESS"));
+    expect(copy).toContain("can't tell which state");
+    expect(copy).toContain("Choose a customer with an address on file");
+    expect(copy).toMatch(/Nothing was charged\.$/);
+  });
+  it("selling restricted with no lines in the body still gets the sentence", () => {
+    expect(counterSaleErrorCopy(restricted(null))).toContain("selling restrictions");
+  });
+});
+
+describe("counterSaleErrorCopy: an UNKNOWN outcome never claims nothing was charged", () => {
+  const unknown = [
+    ["a 500", { response: { status: 500, data: { message: "RAW" } } }],
+    ["a 503", { response: { status: 503 } }],
+    ["a network error (no response)", new Error("Network Error")],
+    ["a timeout", { code: "ECONNABORTED", message: "timeout of 10000ms exceeded" }],
+    ["an empty error", {}],
+    ["null", null],
+  ] as const;
+  it.each(unknown)("%s: the exact could-not-confirm copy", (_l, err) => {
+    expect(counterSaleErrorCopy(err)).toBe(COUNTER_OUTCOME_UNKNOWN_COPY);
+    expect(COUNTER_OUTCOME_UNKNOWN_COPY).toBe(
+      "We couldn't confirm the sale. Check recent sales before trying again.",
+    );
+    expect(isDefinitiveCounterSaleRefusal(err)).toBe(false);
+  });
+  it("'Nothing was charged' appears only for a 409 refusal", () => {
+    for (const status of [400, 403, 404, 409, 422, 500, 503]) {
+      const copy = counterSaleErrorCopy({ response: { status } });
+      expect(/nothing was charged/i.test(copy)).toBe(status === 409);
+    }
+    expect(/nothing was charged/i.test(counterSaleErrorCopy(new Error("Network Error")))).toBe(
+      false,
+    );
+  });
+  it("a 409 COUNTER_SALE_ORDER_CHANGED means the sale EXISTS: unknown outcome, never 'nothing was charged'", () => {
+    const err = {
+      response: { status: 409, data: { code: "COUNTER_SALE_ORDER_CHANGED", message: "RAW" } },
+    };
+    expect(isDefinitiveCounterSaleRefusal(err)).toBe(false);
+    expect(counterSaleErrorCopy(err)).toBe(COUNTER_OUTCOME_UNKNOWN_COPY);
+    expect(counterSaleErrorCopy(err)).not.toMatch(/nothing was charged/i);
+  });
+  it.each([
+    "COUNTER_SALE_ORDER_CHANGED",
+    "IDEMPOTENCY_KEY_OTHER_ORDER",
+    "IDEMPOTENCY_KEY_CART_MISMATCH",
+  ])("a 409 %s means the order exists: unknown outcome, never 'nothing was charged'", (code) => {
+    const err = { response: { status: 409, data: { code } } };
+    expect(isDefinitiveCounterSaleRefusal(err)).toBe(false);
+    expect(counterSaleErrorCopy(err)).toBe(COUNTER_OUTCOME_UNKNOWN_COPY);
+  });
+  it("a 409 COUNTER_SALE_DAY_CLOSED: the sale is saved and unpaid (never a fresh key), with its own fixed copy", () => {
+    const err = {
+      response: { status: 409, data: { code: "COUNTER_SALE_DAY_CLOSED", message: "RAW" } },
+    };
+    expect(isDefinitiveCounterSaleRefusal(err)).toBe(false);
+    expect(counterSaleErrorCopy(err)).toBe(COUNTER_SALE_DAY_CLOSED_TILL_COPY);
+    expect(counterSaleErrorCopy(err)).not.toMatch(/nothing was charged|RAW/i);
+  });
+  it("only a 404 COUNTER_SALE_NOT_FOUND from the by-key lookup is 'not found'", () => {
+    expect(
+      isCounterSaleNotFound({
+        response: { status: 404, data: { code: "COUNTER_SALE_NOT_FOUND" } },
+      }),
+    ).toBe(true);
+    for (const err of [
+      { response: { status: 404 } },
+      { response: { status: 404, data: { code: "OTHER" } } },
+      { response: { status: 403, data: { code: "COUNTER_SALE_NOT_FOUND" } } },
+      { response: { status: 500 } },
+      new Error("Network Error"),
+      null,
+    ])
+      expect(isCounterSaleNotFound(err)).toBe(false);
+  });
+  it("only a 409 COUNTER_SALE_INCOMPLETE is 'incomplete' (a half-written sale: re-POST the same key)", () => {
+    expect(
+      isCounterSaleIncomplete({
+        response: { status: 409, data: { code: "COUNTER_SALE_INCOMPLETE" } },
+      }),
+    ).toBe(true);
+    for (const err of [
+      { response: { status: 409 } },
+      { response: { status: 409, data: { code: "COUNTER_SALE_ORDER_CHANGED" } } },
+      { response: { status: 500, data: { code: "COUNTER_SALE_INCOMPLETE" } } },
+      new Error("Network Error"),
+      null,
+    ])
+      expect(isCounterSaleIncomplete(err)).toBe(false);
+  });
+  it("a 409 COUNTER_SALE_VOIDED is FINAL: the exact copy, definitive, and only that code", () => {
+    const voided = {
+      response: { status: 409, data: { code: "COUNTER_SALE_VOIDED", message: "RAW" } },
+    };
+    expect(COUNTER_SALE_VOIDED_COPY).toBe("Voided — start a new sale");
+    expect(isCounterSaleVoided(voided)).toBe(true);
+    expect(counterSaleErrorCopy(voided)).toBe(COUNTER_SALE_VOIDED_COPY);
+    expect(isDefinitiveCounterSaleRefusal(voided)).toBe(true);
+    for (const err of [
+      { response: { status: 409 } },
+      { response: { status: 409, data: { code: "COUNTER_SALE_INCOMPLETE" } } },
+      { response: { status: 500, data: { code: "COUNTER_SALE_VOIDED" } } },
+      null,
+    ])
+      expect(isCounterSaleVoided(err)).toBe(false);
+  });
+  it("a 409 COUNTER_SALE_CHANGED is FINAL: the exact copy, definitive, and only that code", () => {
+    const changed = {
+      response: { status: 409, data: { code: "COUNTER_SALE_CHANGED", message: "RAW" } },
+    };
+    expect(COUNTER_SALE_CHANGED_COPY).toBe(
+      "This sale was changed after it was rung — check with the office.",
+    );
+    expect(isCounterSaleChanged(changed)).toBe(true);
+    expect(counterSaleErrorCopy(changed)).toBe(COUNTER_SALE_CHANGED_COPY);
+    expect(isDefinitiveCounterSaleRefusal(changed)).toBe(true);
+    expect(finalCounterSaleCopy(changed)).toBe(COUNTER_SALE_CHANGED_COPY);
+    for (const err of [
+      { response: { status: 409 } },
+      { response: { status: 409, data: { code: "COUNTER_SALE_VOIDED" } } },
+      { response: { status: 500, data: { code: "COUNTER_SALE_CHANGED" } } },
+      null,
+    ])
+      expect(isCounterSaleChanged(err)).toBe(false);
+  });
+  it("finalCounterSaleCopy: voided and changed only, null for everything else", () => {
+    expect(
+      finalCounterSaleCopy({ response: { status: 409, data: { code: "COUNTER_SALE_VOIDED" } } }),
+    ).toBe(COUNTER_SALE_VOIDED_COPY);
+    for (const err of [{ response: { status: 409 } }, { response: { status: 503 } }, null])
+      expect(finalCounterSaleCopy(err)).toBeNull();
+  });
+  it("any OTHER 409 stays a definitive refusal", () => {
+    for (const data of [undefined, {}, { code: "SOME_OTHER_CODE" }]) {
+      const err = { response: { status: 409, data } };
+      expect(isDefinitiveCounterSaleRefusal(err)).toBe(true);
+      expect(counterSaleErrorCopy(err)).toMatch(/nothing was charged/i);
+    }
+  });
+  it("only 400 / 401 / 403 / 404 / 409 / 422 / 429 prove nothing was written", () => {
+    for (const status of [400, 401, 403, 404, 409, 422, 429])
+      expect(isDefinitiveCounterSaleRefusal({ response: { status } })).toBe(true);
+    for (const status of [408, 500, 502, 503, 504])
+      expect(isDefinitiveCounterSaleRefusal({ response: { status } })).toBe(false);
+  });
+});
+
+describe("auto-print preference: per device, local, never throws", () => {
+  const realLS = Object.getOwnPropertyDescriptor(window, "localStorage");
+  afterEach(() => {
+    if (realLS) Object.defineProperty(window, "localStorage", realLS);
+    window.localStorage.clear();
+  });
+  it("defaults off; round-trips on and off", () => {
+    expect(readAutoPrint()).toBe(false);
+    writeAutoPrint(true);
+    expect(window.localStorage.getItem(AUTO_PRINT_KEY)).toBe("1");
+    expect(readAutoPrint()).toBe(true);
+    writeAutoPrint(false);
+    expect(readAutoPrint()).toBe(false);
+  });
+  it("storage unavailable: reads off and writes without crashing", () => {
+    Object.defineProperty(window, "localStorage", {
+      configurable: true,
+      get() {
+        throw new Error("denied");
+      },
+    });
+    expect(readAutoPrint()).toBe(false);
+    expect(() => writeAutoPrint(true)).not.toThrow();
+  });
+});
+
+/**
+ * A sale recovered through "Check sale status" is judged against what the screen SUBMITTED for that key, because
+ * storage cannot say whether "no tender" means On account or a failed tender, nor whether a partial was intended:
+ * expected = ON_ACCOUNT 0 / CASH min(tendered, total) / CARD, CHECK total.
+ */
+
+describe("pickupBalanceDue (what is left to collect before pickup-complete)", () => {
+  it("no invoice yet: the order total", () => {
+    expect(pickupBalanceDue(42.5, [])).toBe(42.5);
+  });
+  it("sums the server's balanceDue over live invoices; VOID is ignored", () => {
+    expect(
+      pickupBalanceDue(100, [
+        { status: "SENT", total: 60, balanceDue: 10.1 },
+        { status: "PARTIAL", total: 40, balanceDue: 0.2 },
+        { status: "VOID", total: 40, balanceDue: 40 },
+      ]),
+    ).toBe(10.3);
+  });
+  it("WRITTEN_OFF is ignored like VOID", () => {
+    expect(
+      pickupBalanceDue(100, [
+        { status: "SENT", total: 60, balanceDue: 10 },
+        { status: "WRITTEN_OFF", total: 40, balanceDue: 40 },
+      ]),
+    ).toBe(10);
+    expect(pickupBalanceDue(25, [{ status: "WRITTEN_OFF", total: 25, balanceDue: 25 }])).toBe(25);
+  });
+  it("a settled invoice is nothing to collect", () => {
+    expect(pickupBalanceDue(30, [{ status: "PAID", total: 30, balanceDue: 0 }])).toBe(0);
+  });
+  it("an invoice without a balanceDue falls back to its total", () => {
+    expect(pickupBalanceDue(30, [{ status: "DRAFT", total: 30 }])).toBe(30);
+  });
+});
+
+describe("pickupCompleteErrorCopy", () => {
+  const err = (status: number, code: string) => ({ response: { status, data: { code } } });
+  it("maps PICKUP_NOT_READY and PICKUP_ONLY to fixed copy", () => {
+    expect(pickupCompleteErrorCopy(err(409, "PICKUP_NOT_READY"))).toBe(PICKUP_NOT_READY_COPY);
+    expect(pickupCompleteErrorCopy(err(400, "PICKUP_ONLY"))).toBe(PICKUP_ONLY_COPY);
+  });
+  it("maps WALK_IN_NO_ACCOUNT and COUNTER_CHECK_NUMBER_REQUIRED to fixed copy, not the server text", () => {
+    const walk = pickupCompleteErrorCopy({
+      response: { status: 400, data: { code: "WALK_IN_NO_ACCOUNT", message: "raw server text" } },
+    });
+    expect(walk).toBe(PAYMENT_PROBLEM_COPY.WALK_IN_ON_ACCOUNT);
+    const check = pickupCompleteErrorCopy({
+      response: {
+        status: 400,
+        data: { code: "COUNTER_CHECK_NUMBER_REQUIRED", message: "raw server text" },
+      },
+    });
+    expect(check).toBe(PAYMENT_PROBLEM_COPY.CHECK_NUMBER_REQUIRED);
+  });
+  it.each([
+    [409, "PICKUP_KEY_CONFLICT", PICKUP_KEY_CONFLICT_COPY],
+    [409, "PICKUP_INVOICE_MISSING", PICKUP_INVOICE_MISSING_COPY],
+    [409, "WALK_IN_OPEN_CREDIT", PICKUP_WALK_IN_CREDIT_COPY],
+    [400, "COUNTER_TENDER_SHORT", PICKUP_TENDER_SHORT_COPY],
+    [200, "PICKUP_PAYMENT_REQUIRED", PICKUP_PAYMENT_REQUIRED_COPY],
+  ])("%s %s maps to fixed copy, never the server text", (status, code, copy) => {
+    expect(
+      pickupCompleteErrorCopy({ response: { status, data: { code, message: "raw server text" } } }),
+    ).toBe(copy);
+  });
+  it("the copy is the agreed wording", () => {
+    expect(PICKUP_PAYMENT_REQUIRED_COPY).toBe(
+      "A balance is due on this order now. Take payment to finish.",
+    );
+    expect(PICKUP_TENDER_SHORT_COPY).toBe("A walk-in customer must pay the full balance.");
+    expect(PICKUP_KEY_CONFLICT_COPY).toBe("Already picked up. Record any payment on the invoice.");
+    expect(PICKUP_INVOICE_MISSING_COPY).toBe(
+      "The order may be picked up, but its invoice isn't ready yet. Retry to finish.",
+    );
+    expect(PICKUP_WALK_IN_CREDIT_COPY).toBe(
+      "This walk-in has open credit. Resolve it on the customer before handing over.",
+    );
+  });
+  it("409 COUNTER_SALE_DAY_CLOSED: the order IS handed over, the payment is not (fixed copy, never the server text)", () => {
+    expect(PICKUP_DAY_CLOSED_COPY).toBe("Handed over. Payment is still due.");
+    // with the balance known, it says how much
+    expect(
+      pickupCompleteErrorCopy(
+        { response: { status: 409, data: { code: "COUNTER_SALE_DAY_CLOSED" } } },
+        18.94,
+      ),
+    ).toBe("Handed over. $18.94 still due.");
+    expect(
+      pickupCompleteErrorCopy({
+        response: {
+          status: 409,
+          data: { code: "COUNTER_SALE_DAY_CLOSED", message: "raw server text" },
+        },
+      }),
+    ).toBe(PICKUP_DAY_CLOSED_COPY);
+  });
+  it("COUNTER_SALE_DAY_CLOSED is a code the dialog answers itself (no global toast)", () => {
+    expect(
+      isPickupHandledError({
+        response: { status: 409, data: { code: "COUNTER_SALE_DAY_CLOSED" } },
+      }),
+    ).toBe(true);
+  });
+  it("anything else is the generic retry copy, never the server message", () => {
+    expect(
+      pickupCompleteErrorCopy({ response: { status: 500, data: { message: "boom internals" } } }),
+    ).toBe("Couldn't complete the pickup. Check the order and try again.");
+  });
+});
+
+describe("counterSaleErrorCopy: 409 first-attempt codes say what to do", () => {
+  it("WALK_IN_OPEN_CREDIT and COUNTER_SALE_KEY_CONFLICT have their own copy", () => {
+    expect(
+      counterSaleErrorCopy({ response: { status: 409, data: { code: "WALK_IN_OPEN_CREDIT" } } }),
+    ).toBe("This walk-in has open credit. Resolve it on the customer, then ring the sale again.");
+    expect(
+      counterSaleErrorCopy({
+        response: { status: 409, data: { code: "COUNTER_SALE_KEY_CONFLICT" } },
+      }),
+    ).toBe("That sale reference was already used. Ring the sale again.");
+  });
+  it("B1209: 400 COUNTER_TENDER_SHORT is fixed copy and a DEFINITIVE refusal (nothing was written, the key is released)", () => {
+    const err = {
+      response: { status: 400, data: { code: "COUNTER_TENDER_SHORT", message: "raw server text" } },
+    };
+    expect(counterSaleErrorCopy(err)).toBe("A walk-in customer must pay the full balance.");
+    expect(isDefinitiveCounterSaleRefusal(err)).toBe(true);
+  });
+});
+
+describe("held attempt: minimal customer, validated read", () => {
+  const SK = "rf.counterSale.heldAttempt:acme:u-a";
+  const snap = (over: Record<string, unknown> = {}) =>
+    ({
+      key: "k1",
+      dto: { payment: { method: "CASH" } },
+      next: false,
+      estimate: { total: 2.5, change: 0 },
+      lines: [{ tempId: "t", productId: "p1", name: "Cola", unitPrice: 2.5, qty: 1 }],
+      customer: null,
+      method: "CASH",
+      tendered: "",
+      reference: "",
+      ...over,
+    }) as never;
+  beforeEach(() => window.sessionStorage.clear());
+
+  it("stores only id, businessName, pricingTier, fulfillPath of the customer", () => {
+    writeHeldAttempt(
+      SK,
+      snap({
+        customer: {
+          id: "c1",
+          businessName: "Acme",
+          pricingTier: 2,
+          fulfillPath: "PICKUP",
+          email: "a@b.c",
+          phone: "555",
+          address: "1 Main",
+          notes: "x",
+        },
+      }),
+    );
+    const c = JSON.parse(window.sessionStorage.getItem(SK) as string).customer;
+    expect(Object.keys(c).sort()).toEqual(["businessName", "fulfillPath", "id", "pricingTier"]);
+  });
+
+  it("keeps the tax exemption through a held attempt, so a restored cart still prices without tax (CQ-02)", () => {
+    writeHeldAttempt(
+      SK,
+      snap({
+        customer: { id: "c1", businessName: "Acme", isTaxExempt: true, email: "a@b.c" },
+      }),
+    );
+    const c = (readHeldAttempt(SK) as { customer: Record<string, unknown> }).customer;
+    expect(c).toEqual({ id: "c1", businessName: "Acme", isTaxExempt: true });
+  });
+
+  it("reads a valid attempt back", () => {
+    writeHeldAttempt(SK, snap());
+    expect((readHeldAttempt(SK) as { key: string }).key).toBe("k1");
+  });
+
+  it.each([
+    ["corrupt JSON", () => window.sessionStorage.setItem(SK, "{nope")],
+    [
+      "non-numeric quantity",
+      () =>
+        window.sessionStorage.setItem(
+          SK,
+          JSON.stringify(
+            snap({ lines: [{ tempId: "t", productId: "p1", name: "C", unitPrice: 1, qty: "x" }] }),
+          ),
+        ),
+    ],
+    [
+      "missing key",
+      () => window.sessionStorage.setItem(SK, JSON.stringify(snap({ key: undefined }))),
+    ],
+  ])("%s -> corrupt, payload dropped, an unknown marker kept", (_n, seed) => {
+    seed();
+    expect(readHeldAttempt(SK)).toBe("corrupt");
+    expect(JSON.parse(window.sessionStorage.getItem(SK) as string)).toEqual({ state: "unknown" });
+    // a second read still says corrupt (stays locked) until the cashier discards
+    expect(readHeldAttempt(SK)).toBe("corrupt");
+    clearHeldAttempt(SK);
+    expect(readHeldAttempt(SK)).toBeNull();
+  });
+
+  it("a stored invalid attempt stays 'corrupt' (never null) even when writing the marker throws", () => {
+    window.sessionStorage.setItem(SK, "{nope");
+    const spy = jest.spyOn(Storage.prototype, "setItem").mockImplementation(() => {
+      throw new Error("quota");
+    });
+    try {
+      expect(readHeldAttempt(SK)).toBe("corrupt");
+    } finally {
+      spy.mockRestore();
+    }
+    // the bad payload is still stored, so the next read is locked as well
+    expect(readHeldAttempt(SK)).toBe("corrupt");
+  });
+
+  it("heldAttemptKey is unchanged", () => {
+    expect(heldAttemptKey("acme", "u-a")).toBe(SK);
+  });
+});
+
+describe("amountDue", () => {
+  it("is what is still owed, in cents, never negative", () => {
+    expect(amountDue(2.5, 1)).toBe(1.5);
+    expect(amountDue(0.1 + 0.2, 0)).toBe(0.3);
+    expect(amountDue(2.5, 2.5)).toBe(0);
+    expect(amountDue(2.5, 20)).toBe(0);
+  });
+  it("is zero exactly when changeDue takes over", () => {
+    for (const t of [0, 1, 2.49, 2.5, 2.51, 20]) {
+      expect(amountDue(2.5, t) > 0).toBe(changeDue(2.5, t) === 0 && t < 2.5);
+    }
+  });
+});
+
+describe("live cart storage (SA-748 section 1)", () => {
+  it("keys by tenant + user, and by nothing when either is unknown", () => {
+    expect(keys.liveCartKey("acme", "u1")).toBe("rf.counterSale.liveCart:acme:u1");
+    expect(keys.liveCartKey("acme", null)).toBeNull();
+    expect(keys.liveCartKey(undefined, "u1")).toBeNull();
+  });
+
+  it("logout wipes every stored live cart and nothing else", () => {
+    window.localStorage.setItem("rf.counterSale.liveCart:acme:u1", "{}");
+    window.localStorage.setItem("rf.counterSale.liveCart:other:u2", "{}");
+    window.localStorage.setItem("rf.counterSale.autoPrint", "1");
+    keys.clearAllLiveCarts();
+    expect(window.localStorage.getItem("rf.counterSale.liveCart:acme:u1")).toBeNull();
+    expect(window.localStorage.getItem("rf.counterSale.liveCart:other:u2")).toBeNull();
+    expect(window.localStorage.getItem("rf.counterSale.autoPrint")).toBe("1");
+    window.localStorage.clear();
+  });
+});
+
+describe("isNotSentOffline (CQ-29)", () => {
+  it("is true only for a no-answer failure from a browser that was already offline", () => {
+    expect(isNotSentOffline(new Error("Network Error"), true)).toBe(true);
+    expect(isNotSentOffline(new Error("Network Error"), false)).toBe(false);
+    expect(isNotSentOffline({ response: { status: 503 } }, true)).toBe(false);
+    expect(isNotSentOffline(null, true)).toBe(false);
+  });
+});

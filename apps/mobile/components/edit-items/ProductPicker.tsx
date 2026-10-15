@@ -16,9 +16,10 @@ import { ios } from "@routeflow/ui/tokens";
 import { NavBackButton, NavBar, SearchBar } from "@routeflow/ui/mobile/ios";
 import { useProductSearch } from "../../lib/use-product-search";
 import { showToast } from "../../lib/toast";
-import { classifyMargin, computeMarginFraction } from "@routeflow/pricing";
+import { classifyMargin, computeMarginFraction, type SellLevel } from "@routeflow/pricing";
+import { resolveScanSellLevel } from "@routeflow/scanning";
 import { marginFloorPrice } from "../../lib/margin-floor-price";
-import { findExactScanMatch, looksLikeScanCode, scanUnitKind } from "../../lib/wedge-scan";
+import { findExactScanMatch, levelsForScan, looksLikeScanCode } from "../../lib/wedge-scan";
 import { floorForCategory } from "../../lib/api/margin";
 import {
   draftTrayRows,
@@ -31,6 +32,7 @@ import { ScanTray } from "../../components/ScanTray";
 import { createScanAcceptGuard } from "../../lib/scan-accept-guard";
 import { resolveProductByCode } from "../../lib/barcode-resolve";
 import { applyPriceOverride } from "../../lib/price-override";
+import { pickRowPrice } from "../../lib/picker-price";
 import { BarcodeScanner } from "../../components/BarcodeScanner";
 import { BarcodeFab } from "../../components/BarcodeFab";
 import { ProductPickerSheet } from "../../components/ProductPickerSheet";
@@ -72,6 +74,7 @@ export function ProductPicker({
   onSetToFloor,
   canEditPrice = false,
   isSpecialTierFor,
+  priceFor,
   onScanSessionStart,
   onScanSessionEnd,
   trayRows,
@@ -85,14 +88,14 @@ export function ProductPicker({
 }: {
   title?: string;
   /** Single pick — the caller closes the picker (tap rows, substitutions). */
-  onPick: (p: PickedProduct, kind?: "case" | "piece") => void;
+  onPick: (p: PickedProduct, level?: SellLevel) => void;
   /**
    * Add WITHOUT closing — scans and wedge input use this so N items go in
    * with zero taps (closes the long-standing divergence from web's edit
    * screen, which re-focuses its scan input after every add). Absent in
    * substitute mode, where the contract is exactly one pick.
    */
-  onPickAndStay?: (p: PickedProduct, kind: "case" | "piece") => void;
+  onPickAndStay?: (p: PickedProduct, level: SellLevel) => void;
   onClose: () => void;
   /** Staff may create a product from a miss; drivers get a plain "not found". */
   canCreateProducts?: boolean;
@@ -156,6 +159,11 @@ export function ProductPicker({
    * has no tier context; treated as "not special" (never requires a reason).
    */
   isSpecialTierFor?: (productId: string) => boolean;
+  /**
+   * B1007: the pricing function the CALLER bills a picked line with (the order editor's tier pricing), so a row shows the
+   * price the line will bill, not the product's list price. Absent = the list price, as before. Display only.
+   */
+  priceFor?: (p: PickedProduct) => number;
   /** A camera session is opening — the parent clears its "last scan-added" line. */
   onScanSessionStart?: () => void;
   /** A camera session ended. Does NOT clear the last-added line (RULINGS R5). */
@@ -259,21 +267,21 @@ export function ProductPicker({
   const onScanned = makeScanHandler<PickedProduct & { unitsPerBox?: number | null }>({
     products: () => products,
     acceptGuard: scanGuardRef.current,
-    accept: (product, kind) => {
+    accept: (product, level) => {
       if (onPickAndStay) {
-        onPickAndStay(product, kind);
+        onPickAndStay(product, level);
         // The code that produced this add is spent: drop it so the settled
         // effect can't re-fire on it and the next scan starts from an empty
         // box. Gated on `looksLikeScanCode` so a typed product NAME (and the
         // filtered list the operator is reading) survives — the same rule
         // createWedgeSubmitHandler applies at wedge-submit.ts:77.
         if (looksLikeScanCode(searchTermRef.current)) clearSearch();
-        const loose = kind === "piece" && Number(product.unitsPerBox ?? 0) > 1 ? "1 loose · " : "";
+        const loose = level === "UNIT" && Number(product.unitsPerBox ?? 0) > 1 ? "1 loose · " : "";
         return { feedback: { kind: "added", text: `Added ${loose}${product.name}` } };
       }
       // Substitute mode: exactly one pick, so the scanner closes behind it.
       setScanOpen(false);
-      onPick(product, kind);
+      onPick(product, level);
       return { close: true };
     },
     // Forward the ladder's abort signal — without it a lookup that blows the
@@ -338,15 +346,15 @@ export function ProductPicker({
     const { match } = findExactScanMatch(code, products);
     if (!match) return;
     if (!autoAddAttemptRef.current.shouldAutoAdd(code)) return;
-    const kind = scanUnitKind(code, match);
+    const level = resolveScanSellLevel(match, levelsForScan(code, match));
     // Consume the attempt FIRST (above), then offer: a match parked on an open
     // ladder claim must not re-park on a later settle. `offer` returns false
     // when it was parked — the ladder redeems it if and only if it ends
     // unresolved, so this code adds exactly once (lib/scan-accept-guard.ts).
-    if (!scanGuardRef.current.offer(code, match, kind)) return;
-    onPickAndStay(match, kind);
+    if (!scanGuardRef.current.offer(code, match, level)) return;
+    onPickAndStay(match, level);
     clearSearch();
-    const loose = kind === "piece" && Number(match.unitsPerBox ?? 0) > 1 ? "1 loose · " : "";
+    const loose = level === "UNIT" && Number(match.unitsPerBox ?? 0) > 1 ? "1 loose · " : "";
     showToast(`Added ${loose}${match.name}`);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [searchTerm, products, isSearching]);
@@ -449,7 +457,7 @@ export function ProductPicker({
                       {p.name}
                     </Text>
                     <Text style={styles.cardMeta} numberOfLines={2}>
-                      {p.sku ? `SKU ${p.sku} · ` : ""}${toNumber(p.pricePerUnit).toFixed(2)}
+                      {p.sku ? `SKU ${p.sku} · ` : ""}${pickRowPrice(p, priceFor).toFixed(2)}
                       {upb > 1 ? ` / box of ${upb}` : p.unit ? ` / ${p.unit}` : ""}
                     </Text>
                   </View>
@@ -583,10 +591,10 @@ export function ProductPicker({
         onSelect={(prod) => {
           setPickCode(null);
           const picked = prod as unknown as PickedProduct & { unitsPerBox?: number | null };
-          if (onPickAndStay) onPickAndStay(picked, "case");
+          if (onPickAndStay) onPickAndStay(picked, "BOX");
           else {
             setScanOpen(false);
-            onPick(picked, "case");
+            onPick(picked, "BOX");
           }
         }}
       />
@@ -599,10 +607,10 @@ export function ProductPicker({
         onCreated={(prod) => {
           setCreateCode(null);
           const picked = prod as unknown as PickedProduct & { unitsPerBox?: number | null };
-          if (onPickAndStay) onPickAndStay(picked, "case");
+          if (onPickAndStay) onPickAndStay(picked, "BOX");
           else {
             setScanOpen(false);
-            onPick(picked, "case");
+            onPick(picked, "BOX");
           }
         }}
       />

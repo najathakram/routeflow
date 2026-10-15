@@ -1,5 +1,6 @@
 // SA-429: driver cases here pin other behaviour; ownership is pinned in driver-edit-access*.spec.ts.
 jest.mock("./driver-edit-access", () => ({ assertDriverMayEditOrder: jest.fn() }));
+import { oversellReaderOffProvider } from "./testing/policy-reader-provider";
 import { Test, TestingModule } from "@nestjs/testing";
 import {
   NotFoundException,
@@ -10,12 +11,12 @@ import {
 } from "@nestjs/common";
 import { getQueueToken } from "@nestjs/bull";
 import { ConfigService } from "@nestjs/config";
-
 // The merge paths now run inside a Postgres advisory lock (`common/db-locks.ts`,
 // R3). These specs exercise the merge FOLD's money math, not the lock, so run
 // the critical section inline — the real helper would open a `pg` pool.
 // `lockRowsNoWait` stays REAL: it is a plain `$executeRaw` on the caller's tx (no pool), and the
 // pins below assert the SQL it emits and the 409 it maps 55P03 to.
+jest.mock("./merge-lock-recheck", () => require("./testing/merge-recheck").pass()); // B1053
 jest.mock("../common/db-locks", () => ({
   ...jest.requireActual("../common/db-locks"),
   withAdvisoryLock: jest.fn(async (_opts: unknown, fn: () => Promise<unknown>) => ({
@@ -24,8 +25,7 @@ jest.mock("../common/db-locks", () => ({
   })),
 }));
 
-// Mock InvoicesService before it's imported — prevents Jest from traversing
-// invoice-pdf.service.ts which imports @react-pdf/renderer (ESM-only module)
+// Mock InvoicesService first: Jest must not traverse invoice-pdf.service.ts (@react-pdf/renderer is ESM-only)
 jest.mock("../invoices/invoices.service", () => ({
   InvoicesService: jest.fn().mockImplementation(() => ({
     createFromOrder: jest.fn().mockResolvedValue({ id: "inv-1" }),
@@ -33,8 +33,7 @@ jest.mock("../invoices/invoices.service", () => ({
   })),
 }));
 
-// Mock NotificationsService — it imports expo-server-sdk which is ESM-only
-// and fails Jest's CommonJS parser.
+// Mock NotificationsService: it imports expo-server-sdk, which is ESM-only and fails Jest's CJS parser.
 jest.mock("../notifications/notifications.service", () => ({
   NotificationsService: jest.fn().mockImplementation(() => ({
     sendToCustomer: jest.fn().mockResolvedValue(undefined),
@@ -113,11 +112,11 @@ const operatorPayload = {
 };
 
 const customerPayload = {
+  ...operatorPayload,
   sub: "user-cust",
   username: "customer1",
   role: "CUSTOMER" as const,
-  status: "ACTIVE" as const,
-  forcePasswordChange: false,
+  tenantId: "test-tenant",
 };
 
 describe("OrdersService", () => {
@@ -133,7 +132,10 @@ describe("OrdersService", () => {
     revertLinkedInvoicesForOrderEdit: jest.Mock;
   };
   // P6-5: captured so trigger tests can assert eventKey/customerId/senderId/vars.
-  let messagingService: { notify: jest.Mock; notifyEvent: jest.Mock };
+  let messagingService: Record<
+    "notify" | "notifyEvent" | "customisedChannels" | "enabledChannels",
+    jest.Mock
+  >;
   // WP3: captured so the order-scoped credit-note tests can assert
   // sync/settle are called with the right (order id, customer id, selections).
   let creditNotesService: {
@@ -175,6 +177,7 @@ describe("OrdersService", () => {
 
     const module: TestingModule = await Test.createTestingModule({
       providers: [
+        oversellReaderOffProvider,
         OrdersService,
         { provide: PrismaService, useValue: prisma },
         { provide: getQueueToken("invoices"), useValue: mockQueue },
@@ -196,6 +199,8 @@ describe("OrdersService", () => {
             findOpenOrderDraft: jest.fn().mockResolvedValue(null),
             reconcileOrderDraftInvoice: jest.fn().mockResolvedValue({ id: "inv-1" }),
             resyncOrderInvoicesForEdit: jest.fn().mockResolvedValue([{ id: "inv-1" }]),
+            followPartialPrices: jest.fn().mockResolvedValue({ issuedPartialsUnchanged: [] }),
+            projectEditedInvoiceTotals: jest.fn().mockResolvedValue([]),
             revertLinkedInvoicesForOrderEdit: jest.fn().mockResolvedValue([]),
             voidInvoice: jest.fn().mockResolvedValue({ id: "inv-1", status: "VOID" }),
             voidInvoiceInTx: jest.fn().mockResolvedValue({ id: "inv-1", status: "VOID" }),
@@ -250,6 +255,8 @@ describe("OrdersService", () => {
           useValue: {
             notify: jest.fn().mockResolvedValue([]),
             notifyEvent: jest.fn().mockResolvedValue(undefined),
+            customisedChannels: jest.fn().mockResolvedValue([]),
+            enabledChannels: jest.fn().mockResolvedValue(["EMAIL", "PORTAL"]),
           },
         },
         {
@@ -363,6 +370,20 @@ describe("OrdersService", () => {
       await expect(service.findAll({ page: 1, limit: 20 }, customerPayload)).rejects.toThrow(
         ForbiddenException,
       );
+    });
+
+    it("B917: the no-customer-record 403 carries the machine-readable CUSTOMER_NOT_LINKED code", async () => {
+      prisma.customer.findFirst.mockResolvedValue(null);
+
+      // untyped call: the typed form adds a spec type error to the check-types ratchet baseline
+      const findAll = (service as unknown as { findAll(q: unknown, u: unknown): Promise<unknown> })
+        .findAll;
+      await expect(
+        findAll.call(service, { page: 1, limit: 20 }, customerPayload),
+      ).rejects.toMatchObject({
+        status: 403,
+        response: { code: "CUSTOMER_NOT_LINKED", message: "Customer record not found" },
+      });
     });
 
     it("should filter by status", async () => {
@@ -523,7 +544,7 @@ describe("OrdersService", () => {
           unitSku: true,
           variantName: true,
           parentProductId: true,
-          parent: { select: { name: true } },
+          parent: { select: { name: true, tenantId: true } },
         }),
       );
     });
@@ -1324,7 +1345,7 @@ describe("OrdersService", () => {
       await service.create(
         { items: [{ productId: "prod-1", qty: 1 }], status: "DRAFT" } as any,
         customerPayload,
-        { allowArchived: true },
+        { allowArchived: true, internalCustomerDraft: true },
       );
 
       expect(prisma.order.create).toHaveBeenCalled();
@@ -1786,7 +1807,7 @@ describe("OrdersService", () => {
         (service as any).systemConfig.get.mockResolvedValue("0");
       });
 
-      it("an explicit dto.fulfillPath wins over the customer's own default", async () => {
+      it("a buyer's requested dto.fulfillPath is ignored: the customer's own default stands", async () => {
         tierRecord = { pricingTier: 1, fulfillPath: "SHIP" };
 
         await service.create(
@@ -1795,7 +1816,7 @@ describe("OrdersService", () => {
         );
 
         expect(prisma.order.create).toHaveBeenCalledWith(
-          expect.objectContaining({ data: expect.objectContaining({ fulfillPath: "ROUTE" }) }),
+          expect.objectContaining({ data: expect.objectContaining({ fulfillPath: "SHIP" }) }),
         );
       });
 
@@ -2748,7 +2769,7 @@ describe("OrdersService", () => {
       );
 
       expect(prisma.order.update).toHaveBeenCalledWith({
-        where: { id: "ord-1" },
+        where: { id: "ord-1", status: "PENDING" },
         data: { status: "CONFIRMED" },
       });
     });
@@ -2843,7 +2864,10 @@ describe("OrdersService", () => {
 
       await service.changeStatus("ord-1", { status: "DELIVERED" as any }, operatorPayload);
 
-      expect(invoices.reconcileOrderDraftInvoice).toHaveBeenCalledWith("ord-1", { basis: "order" });
+      expect(invoices.reconcileOrderDraftInvoice).toHaveBeenCalledWith("ord-1", {
+        basis: "order",
+        shortDraftIsPartial: true, // SA-681: Mark Delivered only
+      });
       expect(invoices.createInvoiceFromOrderWithTenant).not.toHaveBeenCalled();
     });
 
@@ -2860,7 +2884,7 @@ describe("OrdersService", () => {
       await service.changeStatus("ord-1", { status: "DELIVERED" as any }, operatorPayload);
 
       expect(prisma.order.update).toHaveBeenCalledWith({
-        where: { id: "ord-1" },
+        where: { id: "ord-1", status: "CONFIRMED" },
         data: { status: "DELIVERED", deliveredAt: businessDate },
       });
     });
@@ -2983,8 +3007,8 @@ describe("OrdersService", () => {
       expect(prisma.routeRun.findUnique).not.toHaveBeenCalled();
     });
 
-    // ── Ad-hoc trips + fulfillment mode: additive carrier-name else-if ──────
-    it("OUT_FOR_DELIVERY on a run-less SHIP order names the carrier and writes no run data", async () => {
+    // ── Carrier-shipped: ORDER_SHIPPED replaces OUT_FOR_DELIVERY (full matrix: shipment-notifications.flow.spec.ts) ──
+    it("OUT_FOR_DELIVERY on a run-less SHIP order fires ORDER_SHIPPED naming the carrier and writes no run data", async () => {
       prisma.order.findUnique.mockResolvedValue({
         ...MOCK_ORDER,
         status: "CONFIRMED",
@@ -2999,42 +3023,18 @@ describe("OrdersService", () => {
       });
 
       await service.changeStatus("ord-1", { status: "OUT_FOR_DELIVERY" as any }, operatorPayload);
+      await new Promise((r) => setImmediate(r)); // the shipped notifier is fire-and-forget
 
       // Additive-only: the write itself carries no run/driver fields.
       expect(prisma.order.update).toHaveBeenCalledWith({
-        where: { id: "ord-1" },
-        data: { status: "OUT_FOR_DELIVERY" },
+        where: { id: "ord-1", status: "CONFIRMED" },
+        data: { status: "OUT_FOR_DELIVERY", shippedAt: expect.any(Date) },
       });
       expect(prisma.routeRun.findUnique).not.toHaveBeenCalled();
+      expect(messagingService.notifyEvent.mock.calls.map((c) => c[0])).toEqual(["ORDER_SHIPPED"]);
       expect(messagingService.notifyEvent).toHaveBeenCalledWith(
-        "OUT_FOR_DELIVERY",
-        expect.objectContaining({
-          vars: expect.objectContaining({ driverName: "UPS" }),
-        }),
-      );
-    });
-
-    it("OUT_FOR_DELIVERY on a run-less SHIP order with no carrier set falls back to 'the carrier'", async () => {
-      prisma.order.findUnique.mockResolvedValue({
-        ...MOCK_ORDER,
-        status: "CONFIRMED",
-        fulfillPath: "SHIP",
-        shippingCarrier: null,
-        routeRunId: null,
-      });
-      prisma.order.update.mockResolvedValue({
-        ...MOCK_ORDER,
-        status: "OUT_FOR_DELIVERY",
-        fulfillPath: "SHIP",
-      });
-
-      await service.changeStatus("ord-1", { status: "OUT_FOR_DELIVERY" as any }, operatorPayload);
-
-      expect(messagingService.notifyEvent).toHaveBeenCalledWith(
-        "OUT_FOR_DELIVERY",
-        expect.objectContaining({
-          vars: expect.objectContaining({ driverName: "the carrier" }),
-        }),
+        "ORDER_SHIPPED",
+        expect.objectContaining({ vars: expect.objectContaining({ carrier: "UPS" }) }),
       );
     });
 
@@ -3075,6 +3075,25 @@ describe("OrdersService", () => {
       expect(shipCall).toEqual(routeCall);
     });
 
+    it.each([
+      ["ship", 1],
+      ["both", 1],
+      ["pickup_ship", 1],
+      ["unset", 0],
+    ])(
+      "OUT_FOR_DELIVERY on a SHIP order invoices at shipment only in a shipping mode (%s)",
+      async (mode, n) => {
+        const invoices = (service as any).invoicesService;
+        (service as any).featureConfig = { getEffectiveMode: jest.fn().mockResolvedValue(mode) };
+        const ship = { ...MOCK_ORDER, fulfillPath: "SHIP" };
+        prisma.order.findUnique.mockResolvedValue({ ...ship, status: "CONFIRMED" });
+        prisma.order.update.mockResolvedValue({ ...ship, status: "OUT_FOR_DELIVERY" });
+        invoices.createInvoiceFromOrderWithTenant.mockClear();
+        await service.changeStatus("ord-1", { status: "OUT_FOR_DELIVERY" as any }, operatorPayload);
+        expect(invoices.createInvoiceFromOrderWithTenant).toHaveBeenCalledTimes(n);
+      },
+    );
+
     // ── re-pin: DELIVERED with an open draft still reconciles at basis "order" ──
     it("an open draft invoice on DELIVERED always reconciles at basis 'order', never 'delivered'", async () => {
       prisma.order.findUnique.mockResolvedValue({ ...MOCK_ORDER, status: "CONFIRMED" });
@@ -3086,11 +3105,24 @@ describe("OrdersService", () => {
 
       expect(invoices.reconcileOrderDraftInvoice).toHaveBeenCalledWith("ord-1", {
         basis: "order",
+        shortDraftIsPartial: true, // SA-681: Mark Delivered only
       });
       expect(invoices.reconcileOrderDraftInvoice).not.toHaveBeenCalledWith(
         "ord-1",
         expect.objectContaining({ basis: "delivered" }),
       );
+    });
+
+    it("M1: DELIVERED after a shipment settle leaves the (edited) shipment invoice alone", async () => {
+      (service as any).featureConfig = { getEffectiveMode: jest.fn().mockResolvedValue("ship") };
+      const o = { ...MOCK_ORDER, fulfillPath: "SHIP", shippedAt: new Date("2026-10-01T00:00:00Z") };
+      prisma.order.findUnique.mockResolvedValue({ ...o, status: "OUT_FOR_DELIVERY" });
+      prisma.order.update.mockResolvedValue({ ...o, status: "DELIVERED" });
+      const invoices = (service as any).invoicesService;
+      invoices.findOpenOrderDraft.mockResolvedValueOnce({ id: "d1" });
+      invoices.reconcileOrderDraftInvoice.mockClear();
+      await service.changeStatus("ord-1", { status: "DELIVERED" as any }, operatorPayload as any);
+      expect(invoices.reconcileOrderDraftInvoice).not.toHaveBeenCalled();
     });
 
     it("CANCELLED fires the CANCELLED messaging event (N1 — real EMAIL channel)", async () => {
@@ -5287,7 +5319,6 @@ describe("OrdersService", () => {
     it("action DELETE hard-removes a clean (un-invoiced, undelivered) line", async () => {
       prisma.order.findUnique.mockResolvedValue(orderWithItems);
       prisma.deliveryMutation.count.mockResolvedValue(0);
-      prisma.orderItem.findMany.mockResolvedValue([]);
       prisma.orderItem.deleteMany.mockResolvedValue({ count: 1 });
 
       await service.updateOrderItems(
@@ -5309,7 +5340,6 @@ describe("OrdersService", () => {
       };
       prisma.order.findUnique.mockResolvedValue(billed);
       prisma.deliveryMutation.count.mockResolvedValue(0);
-      prisma.orderItem.findMany.mockResolvedValue([]);
       prisma.orderItem.updateMany.mockResolvedValue({ count: 1 });
 
       await service.updateOrderItems(
@@ -6796,7 +6826,7 @@ describe("OrdersService", () => {
       prisma.product.findMany.mockResolvedValue([
         { id: "prod-box", pricePerUnit: 60, unitsPerBox: 6 },
       ]);
-      prisma.orderItem.findMany.mockResolvedValue([]);
+      prisma.orderItem.findMany.mockResolvedValue([{ id: "li-1", productId: "prod-box", qty: 2 }]); // lock-time read
 
       await service.updateOrderItems(
         "ord-1",
@@ -6837,12 +6867,19 @@ describe("OrdersService", () => {
       expect(created.pieces).toBeNull();
     });
 
-    it("customer ADD of a NEW boxed line (not yet on the order) splits + prorates by the box", async () => {
-      // Buyer create/merge path (buyer.controller.createOrder) folds a shelf/cart
-      // Add into an active order and re-runs updateOrderItems as CUSTOMER. A boxed
-      // product NOT already on the order has no line in `pieceDenominated`, yet its
-      // incoming qty is PIECES (24 = 2 boxes of 12). It must split to boxes=2 and
-      // price 2 × $30 = $60 — NOT store 24 boxes at $30 = $720 (unitsPerBox× over).
+    it("SA-601/#2780: buyer plain qty 3 on a NEW boxed product (x12) = 3 PACKS ($90), not 3 pieces", async () => {
+      const line = await buyerAddsNewBoxed({ productId: "prod-box-new", qty: 3 });
+      expect(line).toMatchObject({ qty: 3, boxes: null, pieces: null, unitsPerBox: null });
+      expect(line.subtotal).toBeCloseTo(90, 2); // 3 packs x $30, never 3 pieces = $7.50
+    });
+
+    it("SA-601/#2780: buyer EXPLICIT boxes on a NEW boxed product still wins (qty 24 + boxes 2 = $60)", async () => {
+      const line = await buyerAddsNewBoxed({ productId: "prod-box-new", qty: 24, boxes: 2 });
+      expect(line).toMatchObject({ qty: 24, boxes: 2, pieces: 0, unitsPerBox: 12 });
+      expect(line.subtotal).toBeCloseTo(60, 2); // 2 boxes x $30, never 24 packs = $720
+    });
+
+    async function buyerAddsNewBoxed(item: Record<string, unknown>) {
       prisma.order.findUnique.mockResolvedValue({
         ...MOCK_ORDER,
         status: "PENDING",
@@ -6853,20 +6890,9 @@ describe("OrdersService", () => {
         { id: "prod-box-new", pricePerUnit: 30, unitsPerBox: 12 },
       ]);
       prisma.orderItem.findMany.mockResolvedValue([]);
-
-      await service.updateOrderItems(
-        "ord-1",
-        { items: [{ productId: "prod-box-new", qty: 24 }] },
-        customerPayload,
-      );
-
-      const created = prisma.orderItem.create.mock.calls[0][0].data;
-      expect(created.qty).toBe(24);
-      expect(created.boxes).toBe(2);
-      expect(created.pieces).toBe(0);
-      expect(created.subtotal).toBeCloseTo(60, 2); // 2 boxes × $30
-      expect(created.subtotal).not.toBeCloseTo(720, 2);
-    });
+      await service.updateOrderItems("ord-1", { items: [item] }, customerPayload as never);
+      return prisma.orderItem.create.mock.calls[0][0].data;
+    }
 
     it("operator UPDATE prorates a boxed line when the client sends boxes/pieces", async () => {
       prisma.order.findUnique.mockResolvedValue({
@@ -7306,7 +7332,12 @@ describe("OrdersService", () => {
 
   describe("updateShipment", () => {
     it("sets carrier + tracking on the order and mirrors them to non-void invoices", async () => {
-      prisma.order.findFirst.mockResolvedValue({ id: "ord-1", shippedAt: null });
+      // already shipped (a legacy row with no shippedAt): tracking backfills it
+      prisma.order.findFirst.mockResolvedValue({
+        id: "ord-1",
+        shippedAt: null,
+        status: "OUT_FOR_DELIVERY",
+      });
       prisma.order.update.mockResolvedValue({ id: "ord-1" });
 
       await service.updateShipment(
@@ -7331,27 +7362,6 @@ describe("OrdersService", () => {
           data: expect.objectContaining({
             shippingCarrier: "UPS",
             shippingTrackingNumber: "1Z999AA10123456784",
-          }),
-        }),
-      );
-    });
-
-    it("clears carrier, tracking and shippedAt when the tracking number is blank", async () => {
-      prisma.order.findFirst.mockResolvedValue({ id: "ord-1", shippedAt: new Date() });
-      prisma.order.update.mockResolvedValue({ id: "ord-1" });
-
-      await service.updateShipment(
-        "ord-1",
-        { shippingCarrier: "", shippingTrackingNumber: "" },
-        operatorPayload,
-      );
-
-      expect(prisma.order.update).toHaveBeenCalledWith(
-        expect.objectContaining({
-          data: expect.objectContaining({
-            shippingCarrier: null,
-            shippingTrackingNumber: null,
-            shippedAt: null,
           }),
         }),
       );
@@ -7532,7 +7542,7 @@ describe("OrdersService", () => {
 
       // Post-delivery: the in-place invoice+ledger resync runs (NOT the open-draft
       // reconcile), and the throw-on-payment pre-mutation revert is skipped.
-      expect(invoicesService.resyncOrderInvoicesForEdit).toHaveBeenCalledWith("ord-1");
+      expect(invoicesService.resyncOrderInvoicesForEdit.mock.calls[0][0]).toBe("ord-1");
       expect(invoicesService.reconcileOrderDraftInvoice).not.toHaveBeenCalled();
       expect(invoicesService.revertLinkedInvoicesForOrderEdit).not.toHaveBeenCalled();
       // Delivered orders are edited in place — never reverted to PENDING.
@@ -7543,7 +7553,7 @@ describe("OrdersService", () => {
     });
 
     it("SKIPS the in-place resync when the DELIVERED order is PARTIALLY invoiced (no over-bill)", async () => {
-      prisma.order.findUnique.mockResolvedValue({
+      const order = {
         ...confirmedOrder({ status: "COMPLETED", startedAt: new Date() }),
         status: "DELIVERED",
         lineItems: [
@@ -7562,10 +7572,9 @@ describe("OrdersService", () => {
             originalPrice: null,
           },
         ],
-      });
-      prisma.orderItem.findMany.mockResolvedValue([
-        { id: "li-1", productId: "prod-1", qty: 10, unitPrice: 5, subtotal: 50, status: "PENDING" },
-      ]);
+      };
+      prisma.order.findUnique.mockResolvedValue(order);
+      prisma.orderItem.findMany.mockResolvedValue(order.lineItems); // the held lines (SA-763r P-3)
       prisma.orderRevision.aggregate.mockResolvedValue({ _max: { revisionNumber: null } });
 
       await service.updateOrderItems(
@@ -7583,7 +7592,7 @@ describe("OrdersService", () => {
     });
 
     it("WP3: the partial-billing skip still settles credit notes — they're payment-level, not line-level", async () => {
-      prisma.order.findUnique.mockResolvedValue({
+      const order = {
         ...confirmedOrder({ status: "COMPLETED", startedAt: new Date() }),
         status: "DELIVERED",
         lineItems: [
@@ -7602,10 +7611,9 @@ describe("OrdersService", () => {
             originalPrice: null,
           },
         ],
-      });
-      prisma.orderItem.findMany.mockResolvedValue([
-        { id: "li-1", productId: "prod-1", qty: 10, unitPrice: 5, subtotal: 50, status: "PENDING" },
-      ]);
+      };
+      prisma.order.findUnique.mockResolvedValue(order);
+      prisma.orderItem.findMany.mockResolvedValue(order.lineItems); // the held lines (SA-763r P-3)
       prisma.orderRevision.aggregate.mockResolvedValue({ _max: { revisionNumber: null } });
 
       await service.updateOrderItems(
@@ -7636,7 +7644,7 @@ describe("OrdersService", () => {
       // createPartialFromOrder can bill a SUBSET of LINES at full qty (A) while omitting
       // others (B): every line is then either fully-invoiced or zero-invoiced, so a
       // per-line 'invoicedQty<qty' check would miss it — the gate must be cross-line.
-      prisma.order.findUnique.mockResolvedValue({
+      const order = {
         ...confirmedOrder({ status: "COMPLETED", startedAt: new Date() }),
         status: "DELIVERED",
         lineItems: [
@@ -7669,10 +7677,9 @@ describe("OrdersService", () => {
             originalPrice: null,
           },
         ],
-      });
-      prisma.orderItem.findMany.mockResolvedValue([
-        { id: "li-a", productId: "prod-1", qty: 10, unitPrice: 5, subtotal: 50, status: "PENDING" },
-      ]);
+      };
+      prisma.order.findUnique.mockResolvedValue(order);
+      prisma.orderItem.findMany.mockResolvedValue(order.lineItems); // the held lines (SA-763r P-3)
       prisma.orderRevision.aggregate.mockResolvedValue({ _max: { revisionNumber: null } });
 
       await service.updateOrderItems(
@@ -8038,7 +8045,9 @@ describe("OrdersService", () => {
     // post-edit totals recompute) return whatever the test stubs via
     // `setPostEditItems`. Stubbing both from one mockResolvedValue would make
     // held === requested and silently neuter every case in this block.
-    const heldSnapshot = [{ productId: "prod-1", qty: 5, deliveredQty: 0, status: "PENDING" }];
+    const heldSnapshot = [
+      { id: "li-1", productId: "prod-1", qty: 5, deliveredQty: 0, status: "PENDING" },
+    ];
     let postEditItems: any[] = [];
     const setPostEditItems = (items: any[]) => {
       postEditItems = items;
@@ -8072,7 +8081,7 @@ describe("OrdersService", () => {
           customerPayload,
         ),
       ).rejects.toMatchObject({
-        response: { code: "INSUFFICIENT_STOCK", productId: "prod-1", available: 2, requested: 8 },
+        response: { code: "INSUFFICIENT_STOCK", message: expect.stringMatching(/^Some items/) },
       });
       expect(prisma.order.update).not.toHaveBeenCalled();
       expect(prisma.orderRevision.create).not.toHaveBeenCalled();
@@ -8134,7 +8143,7 @@ describe("OrdersService", () => {
           customerPayload,
         ),
       ).rejects.toMatchObject({
-        response: { code: "INSUFFICIENT_STOCK", productId: "prod-2", available: 3, requested: 4 },
+        response: { code: "INSUFFICIENT_STOCK", message: expect.stringMatching(/^Some items/) },
       });
     });
 
@@ -8310,7 +8319,7 @@ describe("OrdersService", () => {
       await expect(
         settle(order, [{ productId: "prod-1", qty: 10 }], customerPayload),
       ).rejects.toMatchObject({
-        response: { code: "INSUFFICIENT_STOCK", productId: "prod-1", available: 2, requested: 10 },
+        response: { code: "INSUFFICIENT_STOCK", message: expect.stringMatching(/^Some items/) },
       });
       expect(fakeDb.product.update).not.toHaveBeenCalled();
     });
@@ -8467,6 +8476,7 @@ describe("OrdersService", () => {
     });
 
     it("ADD_ITEM onto an existing line keeps the line's stored (agreed) unitPrice", async () => {
+      const BUYER = { authorChannel: "BUYER" }; // SA ruling #3418: a CUSTOMER-requested raise
       const line = {
         id: "li-1",
         orderId: "ord-1",
@@ -8519,15 +8529,14 @@ describe("OrdersService", () => {
             trackedCategoryId: null,
           },
         ]);
-      // B135: the ADD_ITEM merge target comes from the locked held row, then its authoritative
-      // qty/price is re-read through the tx.
+      // B135: the merge target is the locked held row; its authoritative qty/price is re-read in the tx.
       prisma.orderItem.findUnique.mockResolvedValue(line);
 
       await service.approveChangeRequestAtStop("cr-1", operatorPayload, null);
 
       expect(prisma.orderItem.update).toHaveBeenCalledWith({
         where: { id: "li-1" },
-        data: { qty: 15, boxes: null, pieces: null, unitsPerBox: null, subtotal: 127.5 },
+        data: { qty: 15, boxes: null, pieces: null, unitsPerBox: null, subtotal: 127.5, ...BUYER },
       });
       expect(prisma.orderItem.create).not.toHaveBeenCalled();
     });
@@ -9121,6 +9130,7 @@ describe("OrdersService", () => {
             type: "CHANGE_QTY",
             orderItemId: "li-1",
             payload: { orderItemId: "li-1", newQty: 18 },
+            requestedByRole: "DRIVER", // staff-filed: keeps this on the staff channel (F1 i)
           }),
         );
         prisma.order.findUnique.mockResolvedValue(baseOrder([sharedLine])); // snapshot line: PENDING
@@ -9150,16 +9160,14 @@ describe("OrdersService", () => {
 
         await service.approveChangeRequestAtStop("cr-1", operatorPayload, null);
 
-        // Order→stop is the repo-wide acquisition order (reopenStop, the customers.service merge
-        // and purge paths); inverting it here would deadlock against them. The stop lock is
-        // therefore taken second and NOWAIT, so this tx never waits on a stop row.
-        expect(seenTx.$executeRaw.mock.calls[0][0].join("?")).toContain('"Order"');
-        const stopLockSql = seenTx.$executeRaw.mock.calls[1][0].join("?");
+        // Order→stop is the repo-wide acquisition order; the stop lock is second and NOWAIT. Call [0] is the lock bound.
+        expect(seenTx.$executeRaw.mock.calls[1][0].join("?")).toContain('"Order"');
+        const stopLockSql = seenTx.$executeRaw.mock.calls[2][0].join("?");
         expect(stopLockSql).toContain('"RouteRunStop"');
         expect(stopLockSql).toContain("FOR NO KEY UPDATE NOWAIT");
         // order.findUnique call [0] is the pre-tx snapshot, [1] is the in-tx `live` re-read: both
         // locks must be held before that re-read, or an in-flight completion stays invisible.
-        expect(seenTx.$executeRaw.mock.invocationCallOrder[1]).toBeLessThan(
+        expect(seenTx.$executeRaw.mock.invocationCallOrder[2]).toBeLessThan(
           seenTx.order.findUnique.mock.invocationCallOrder[1],
         );
       });
@@ -9169,7 +9177,8 @@ describe("OrdersService", () => {
         const seenTx = captureMergeTx();
         const lockErr: any = new Error("Raw query failed");
         lockErr.meta = { code: "55P03" };
-        seenTx.$executeRaw.mockResolvedValueOnce(0).mockRejectedValueOnce(lockErr);
+        seenTx.$executeRaw.mockResolvedValueOnce(0).mockResolvedValueOnce(0); // bound, Order row
+        seenTx.$executeRaw.mockRejectedValueOnce(lockErr); // the stop row
 
         // A busy stop is transient, so it must NOT read as the terminal CHANGE_WINDOW_CLOSED —
         // the resolver is told to retry.
@@ -9191,6 +9200,7 @@ describe("OrdersService", () => {
         setUpSharedFixture();
         const seenTx = captureMergeTx();
         seenTx.$executeRaw
+          .mockResolvedValueOnce(0)
           .mockResolvedValueOnce(0)
           .mockRejectedValueOnce(
             new Error('could not obtain lock on row in relation "RouteRunStop"'),

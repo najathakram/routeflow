@@ -83,6 +83,7 @@ const customerPayload = {
   sub: "user-1",
   username: "customer",
   role: "CUSTOMER" as const,
+  tenantId: "test-tenant",
   status: "ACTIVE" as const,
   forcePasswordChange: false,
 };
@@ -3135,4 +3136,7 @@ describe("CustomersService", () => {
       expect(email.send).not.toHaveBeenCalled();
     });
   });
+
+  // sendPortalInvite's sentinel-email coverage lives in
+  // customers.portal-invite.spec.ts (extracted — this file is at its size-ratchet baseline).
 });

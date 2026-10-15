@@ -1,0 +1,431 @@
+{
+  "app/(auth)/admin-login/page.tsx": {
+    "count": 2,
+    "why": "B986-3 settings + auth: per-surface raw message read, pending"
+  },
+  "app/(auth)/login/page.tsx": {
+    "count": 1,
+    "why": "B986-3 settings + auth: per-surface raw message read, pending"
+  },
+  "app/(auth)/reset-password/page.tsx": {
+    "count": 1,
+    "why": "B986-3 settings + auth: per-surface raw message read, pending"
+  },
+  "app/(auth)/signup/page.tsx": {
+    "count": 1,
+    "why": "B986-3 settings + auth: per-surface raw message read, pending"
+  },
+  "app/(dashboard)/_components/gates/PlanGates.tsx": {
+    "count": 2,
+    "why": "B986-8 the rest: renders the plan-gate payload's server message (gate.message); pending"
+  },
+  "app/(dashboard)/choose-plan/page.tsx": {
+    "count": 1,
+    "why": "B986-8 the rest: per-surface raw message read, pending"
+  },
+  "app/(dashboard)/compliance/[categoryId]/_components/CompliancePackPanel.tsx": {
+    "count": 1,
+    "why": "B986-8 the rest: per-surface raw message read, pending"
+  },
+  "app/(dashboard)/credit-notes/[id]/page.tsx": {
+    "count": 1,
+    "why": "B986-6 invoices + bills + finance: per-surface raw message read, pending (found by the AST scan: a read split across lines that the text scanner missed)"
+  },
+  "app/(dashboard)/customers/[id]/page.tsx": {
+    "count": 8,
+    "why": "B986-7 orders + customers: per-surface raw message read, pending"
+  },
+  "app/(dashboard)/customers/_components/AuthorizationsTab.tsx": {
+    "count": 1,
+    "why": "B986-7 orders + customers: per-surface raw message read, pending"
+  },
+  "app/(dashboard)/customers/page.tsx": {
+    "count": 1,
+    "why": "B986-7 orders + customers: per-surface raw message read, pending"
+  },
+  "app/(dashboard)/deliveries/new/page.tsx": {
+    "count": 7,
+    "why": "B986-5 routes + deliveries: per-surface raw message read, pending"
+  },
+  "app/(dashboard)/deliveries/page.tsx": {
+    "count": 1,
+    "why": "B986-5 routes + deliveries: per-surface raw message read, pending"
+  },
+  "app/(dashboard)/drivers/[id]/page.tsx": {
+    "count": 1,
+    "why": "B986-8 the rest: per-surface raw message read, pending (found by the AST scan: a read split across lines that the text scanner missed)"
+  },
+  "app/(dashboard)/drivers/_components/AddDriverModal.tsx": {
+    "count": 2,
+    "why": "B986-8 the rest: per-surface raw message read, pending"
+  },
+  "app/(dashboard)/drivers/_components/EditDriverModal.tsx": {
+    "count": 2,
+    "why": "B986-8 the rest: per-surface raw message read, pending"
+  },
+  "app/(dashboard)/drivers/page.tsx": {
+    "count": 1,
+    "why": "B986-8 the rest: per-surface raw message read, pending (found by the AST scan: a read split across lines that the text scanner missed)"
+  },
+  "app/(dashboard)/estimates/[id]/page.tsx": {
+    "count": 1,
+    "why": "B986-8 the rest: per-surface raw message read, pending"
+  },
+  "app/(dashboard)/finance/commissions/[id]/page.tsx": {
+    "count": 1,
+    "why": "B986-6 invoices + bills + finance: per-surface raw message read, pending"
+  },
+  "app/(dashboard)/finance/expenses/new/page.tsx": {
+    "count": 3,
+    "why": "B986-6 invoices + bills + finance: per-surface raw message read, pending (found by the AST scan: a read split across lines that the text scanner missed)"
+  },
+  "app/(dashboard)/finance/payment-requests/page.tsx": {
+    "count": 1,
+    "why": "B986-6 invoices + bills + finance: per-surface raw message read, pending"
+  },
+  "app/(dashboard)/inventory/_components/purchase-orders-edit.ts": {
+    "count": 3,
+    "why": "B986-8 the rest: per-surface raw message read, pending"
+  },
+  "app/(dashboard)/invoices/[id]/edit/page.tsx": {
+    "count": 1,
+    "why": "B986-6 invoices + bills + finance: per-surface raw message read, pending"
+  },
+  "app/(dashboard)/invoices/[id]/AdjustPricesPanel.tsx": {
+    "count": 1,
+    "why": "B986-6 invoices + bills + finance: per-surface raw message read, pending"
+  },
+  "app/(dashboard)/invoices/[id]/page.tsx": {
+    "count": 15,
+    "why": "B986-6 invoices + bills + finance: per-surface raw message read, pending"
+  },
+  "app/(dashboard)/invoices/page.tsx": {
+    "count": 3,
+    "why": "B986-6 invoices + bills + finance: per-surface raw message read, pending"
+  },
+  "app/(dashboard)/invoices/recurring/[id]/edit/page.tsx": {
+    "count": 1,
+    "why": "B986-6 invoices + bills + finance: per-surface raw message read, pending"
+  },
+  "app/(dashboard)/invoices/recurring/new/page.tsx": {
+    "count": 1,
+    "why": "B986-6 invoices + bills + finance: per-surface raw message read, pending"
+  },
+  "app/(dashboard)/orders/[id]/page.tsx": {
+    "count": 1,
+    "why": "B991 / B987-E (codes + structured fields first): the cancel refusal is UNCODED and today's server sentence says what to fix, so they keep it (coded refusals are mapped first); order delete goes through lib/order-error-text.ts; pending"
+  },
+  "app/(dashboard)/orders/_components/CreateOrderModal.tsx": {
+    "count": 2,
+    "why": "B991 / B987-E (codes + structured fields first): the create-order banner keeps today's server sentence for an UNCODED refusal (coded ones are mapped first); pending"
+  },
+  "app/(dashboard)/orders/_components/OrderFulfilmentRow.tsx": {
+    "count": 1,
+    "why": "B991 / B987-E (codes + structured fields first): the fulfillment refusal is UNCODED and today's server sentence says what to fix, so it keeps it (coded refusals are mapped first); moved here from orders/[id]/page.tsx; pending"
+  },
+  "app/(dashboard)/orders/_components/scan/ScanOrderScreen.tsx": {
+    "count": 2,
+    "why": "B986-7 orders + customers: two reads, both pending a code (B991 / B987-E): one folds an unexpected scan-resolver rejection (a JS Error, not a server body); the other is #2865's `res.message` for a refused scan lookup (a server sentence)"
+  },
+  "app/(dashboard)/orders/_components/scan/useScanCodeHandler.ts": {
+    "count": 2,
+    "permanent": true,
+    "why": "comparison: e.message is matched against 'Network Error' / timeout to classify a transient failure, never rendered"
+  },
+  "app/(dashboard)/products/[id]/page.tsx": {
+    "count": 1,
+    "why": "B986-8 the rest: per-surface raw message read, pending"
+  },
+  "app/(dashboard)/products/page.tsx": {
+    "count": 1,
+    "why": "B986-8 the rest: per-surface raw message read, pending (found by the AST scan: a read split across lines that the text scanner missed)"
+  },
+  "app/(dashboard)/promotions/page.tsx": {
+    "count": 2,
+    "why": "B986-8 the rest: per-surface raw message read, pending"
+  },
+  "app/(dashboard)/returns/[id]/page.tsx": {
+    "count": 1,
+    "why": "B986-8 the rest: per-surface raw message read, pending (found by the AST scan: a read split across lines that the text scanner missed)"
+  },
+  "app/(dashboard)/routes/[id]/dispatch/page.tsx": {
+    "count": 3,
+    "why": "B986-5 routes + deliveries: per-surface raw message read, pending"
+  },
+  "app/(dashboard)/routes/[id]/page.tsx": {
+    "count": 10,
+    "why": "B986-5 routes + deliveries: per-surface raw message read, pending"
+  },
+  "app/(dashboard)/routes/_components/EditRunModal.tsx": {
+    "count": 1,
+    "why": "B986-5 routes + deliveries: per-surface raw message read, pending"
+  },
+  "app/(dashboard)/routes/create/page.tsx": {
+    "count": 1,
+    "why": "B986-5 routes + deliveries: per-surface raw message read, pending"
+  },
+  "app/(dashboard)/routes/page.tsx": {
+    "count": 2,
+    "why": "B986-5 routes + deliveries: per-surface raw message read, pending"
+  },
+  "app/(dashboard)/routes/templates/[id]/page.tsx": {
+    "count": 9,
+    "why": "B986-5 routes + deliveries: per-surface raw message read, pending"
+  },
+  "app/(dashboard)/sales-agents/_components/AgentFormModal.tsx": {
+    "count": 1,
+    "why": "B986-8 the rest: per-surface raw message read, pending"
+  },
+  "app/(dashboard)/settings/_components/MailboxCard.tsx": {
+    "count": 10,
+    "why": "B986-3 settings + auth: per-surface raw message read, pending"
+  },
+  "app/(dashboard)/settings/_components/SendingDomainCard.tsx": {
+    "count": 2,
+    "why": "B986-3 settings + auth: per-surface raw message read, pending"
+  },
+  "app/(dashboard)/settings/_components/StripeConnectCard.tsx": {
+    "count": 2,
+    "why": "B986-3 settings + auth: per-surface raw message read, pending"
+  },
+  "app/(dashboard)/settings/batch-import/page.tsx": {
+    "count": 2,
+    "why": "B986-3 settings + auth: per-surface raw message read, pending"
+  },
+  "app/(dashboard)/settings/billing/page.tsx": {
+    "count": 1,
+    "why": "SA-690: renders the API-authored ADDON_BILLING_PENDING_CHECKOUT message on a failed checkout; pending"
+  },
+  "app/(dashboard)/settings/import/page.tsx": {
+    "count": 8,
+    "why": "B986-3 settings + auth: per-surface raw message read, pending"
+  },
+  "app/(dashboard)/settings/migration/page.tsx": {
+    "count": 8,
+    "why": "B986-3 settings + auth: per-surface raw message read, pending"
+  },
+  "app/(dashboard)/settings/page.tsx": {
+    "count": 11,
+    "why": "B986-3 settings + auth: per-surface raw message read, pending"
+  },
+  "app/(dashboard)/suppliers/[id]/page.tsx": {
+    "count": 1,
+    "why": "B986-8 the rest: per-surface raw message read, pending"
+  },
+  "app/(dashboard)/suppliers/page.tsx": {
+    "count": 2,
+    "why": "B986-8 the rest: per-surface raw message read, pending"
+  },
+  "app/(dashboard)/vendor-bills/[id]/page.tsx": {
+    "count": 4,
+    "why": "B986-6 invoices + bills + finance: per-surface raw message read, pending"
+  },
+  "app/(dashboard)/vendor-bills/page.tsx": {
+    "count": 2,
+    "why": "B986-6 invoices + bills + finance: per-surface raw message read, pending"
+  },
+  "app/(marketing)/components/demo-scheduler.tsx": {
+    "count": 1,
+    "why": "B986-3 settings + auth: per-surface raw message read, pending"
+  },
+  "app/(marketing)/lib/demo-booking.ts": {
+    "count": 1,
+    "why": "B986-3 settings + auth: per-surface raw message read, pending"
+  },
+  "app/(platform-admin)/admin/audit-logs/page.tsx": {
+    "count": 1,
+    "why": "B986-2 platform-admin: per-surface raw message read, pending"
+  },
+  "app/(platform-admin)/admin/billing/page.tsx": {
+    "count": 1,
+    "why": "B986-2 platform-admin: per-surface raw message read, pending"
+  },
+  "app/(platform-admin)/admin/buyers/[id]/page.tsx": {
+    "count": 6,
+    "why": "B986-2 platform-admin: per-surface raw message read, pending"
+  },
+  "app/(platform-admin)/admin/buyers/merge-requests/[id]/page.tsx": {
+    "count": 2,
+    "why": "B986-2 platform-admin: per-surface raw message read, pending"
+  },
+  "app/(platform-admin)/admin/buyers/merge-requests/page.tsx": {
+    "count": 1,
+    "why": "B986-2 platform-admin: per-surface raw message read, pending"
+  },
+  "app/(platform-admin)/admin/buyers/page.tsx": {
+    "count": 3,
+    "why": "B986-2 platform-admin: per-surface raw message read, pending"
+  },
+  "app/(platform-admin)/admin/dashboard/page.tsx": {
+    "count": 1,
+    "why": "B986-2 platform-admin: per-surface raw message read, pending"
+  },
+  "app/(platform-admin)/admin/settings/page.tsx": {
+    "count": 3,
+    "why": "B986-2 platform-admin: per-surface raw message read, pending"
+  },
+  "app/(platform-admin)/admin/tenants/[id]/_features/EnableAddonModal.tsx": {
+    "count": 1,
+    "why": "B986-2 platform-admin: per-surface raw message read, pending"
+  },
+  "app/(platform-admin)/admin/tenants/[id]/page.tsx": {
+    "count": 6,
+    "why": "B986-2 platform-admin: per-surface raw message read, pending"
+  },
+  "app/(platform-admin)/admin/tenants/page.tsx": {
+    "count": 2,
+    "why": "B986-2 platform-admin: per-surface raw message read, pending"
+  },
+  "app/buyer/change-password/page.tsx": {
+    "count": 1,
+    "why": "B986-4 buyer portal: per-surface raw message read, pending"
+  },
+  "app/buyer/invite/[token]/page.tsx": {
+    "count": 2,
+    "why": "B986-4 buyer portal: per-surface raw message read, pending"
+  },
+  "app/buyer/login/page.tsx": {
+    "count": 1,
+    "why": "B986-4 buyer portal: per-surface raw message read, pending"
+  },
+  "app/buyer/portal/[seller]/cart/page.tsx": {
+    "count": 1,
+    "why": "B986-4 buyer portal: per-surface raw message read, pending"
+  },
+  "app/buyer/portal/[seller]/invoices/page.tsx": {
+    "count": 1,
+    "why": "B986-4 buyer portal: per-surface raw message read, pending"
+  },
+  "app/buyer/portal/[seller]/orders/[id]/page.tsx": {
+    "count": 3,
+    "why": "B986-4 buyer portal: per-surface raw message read, pending"
+  },
+  "app/buyer/portal/[seller]/orders/page.tsx": {
+    "count": 1,
+    "why": "B986-4 buyer portal: per-surface raw message read, pending"
+  },
+  "app/buyer/portal/[seller]/payments/_components/MakePaymentPanel.tsx": {
+    "count": 1,
+    "why": "B986-4 buyer portal: per-surface raw message read, pending"
+  },
+  "app/buyer/portal/page.tsx": {
+    "count": 3,
+    "why": "B986-4 buyer portal: per-surface raw message read, pending"
+  },
+  "app/buyer/portal/settings/page.tsx": {
+    "count": 3,
+    "why": "B986-4 buyer portal: per-surface raw message read, pending"
+  },
+  "app/buyer/register/page.tsx": {
+    "count": 2,
+    "why": "B986-4 buyer portal: per-surface raw message read, pending"
+  },
+  "app/buyer/reset-password/page.tsx": {
+    "count": 1,
+    "why": "B986-4 buyer portal: per-surface raw message read, pending"
+  },
+  "app/buyer/verify-email/page.tsx": {
+    "count": 1,
+    "why": "B986-4 buyer portal: per-surface raw message read, pending"
+  },
+  "app/buyer/verify-merge/page.tsx": {
+    "count": 1,
+    "why": "B986-4 buyer portal: per-surface raw message read, pending"
+  },
+  "app/change-password/page.tsx": {
+    "count": 1,
+    "why": "B986-3 settings + auth: per-surface raw message read, pending"
+  },
+  "app/verify-email/page.tsx": {
+    "count": 1,
+    "why": "B986-3 settings + auth: per-surface raw message read, pending"
+  },
+  "components/PackSizeUnknownModal.tsx": {
+    "count": 1,
+    "why": "B986-6 invoices + bills + finance: the modal description reads the 409 payload message (a live read the first scanner missed), pending"
+  },
+  "components/PlanGateNotice.tsx": {
+    "count": 1,
+    "why": "B986-8 the rest: renders the plan-gate payload's server message (gate.message); pending"
+  },
+  "components/RecordSupplierPaymentModal.tsx": {
+    "count": 1,
+    "why": "B991 (codes + structured fields first): reverted to today's behaviour so the surface is not made less actionable; pending"
+  },
+  "components/ScanInvoiceModal.tsx": {
+    "count": 1,
+    "permanent": true,
+    "why": "classification: msg only feeds the api-key regex, the toast copy is fixed"
+  },
+  "components/StatementReviewGrid.tsx": {
+    "count": 3,
+    "why": "B991 (codes + structured fields first): reverted to today's behaviour so the surface is not made less actionable; pending"
+  },
+  "components/import/ImportCsvPanel.tsx": {
+    "count": 1,
+    "why": "B991 (codes + structured fields first): reverted to today's behaviour so the surface is not made less actionable; pending"
+  },
+  "lib/api/platform-pricing.ts": {
+    "count": 1,
+    "why": "B986-2 platform-admin: per-surface raw message read, pending"
+  },
+  "lib/api/supplier-statements.ts": {
+    "count": 1,
+    "why": "B986-6 invoices + bills + finance: per-surface raw message read, pending"
+  },
+  "lib/buyer-auth-context.tsx": {
+    "count": 2,
+    "permanent": true,
+    "why": "log: console.warn of a load failure, never rendered"
+  },
+  "lib/credit-note-error-copy.ts": {
+    "count": 1,
+    "permanent": true,
+    "why": "comparison: e.message === 'Network Error' classifies a no-response failure"
+  },
+  "lib/csv-export-request.ts": {
+    "count": 2,
+    "why": "B991 (codes + structured fields first): reverted to today's behaviour so the surface is not made less actionable; pending"
+  },
+  "lib/customer-form-error-copy.ts": {
+    "count": 1,
+    "permanent": true,
+    "why": "lookup: data.message is only a key into KNOWN_SERVER_SENTENCES, never rendered"
+  },
+  "lib/e2e-setup-guard.ts": {
+    "count": 2,
+    "permanent": true,
+    "why": "internal: e2e setup-guard error text thrown to the test runner (a guard failure), never rendered in the app UI"
+  },
+  "lib/generic-toast-copy.ts": {
+    "count": 1,
+    "permanent": true,
+    "why": "lookup: data.message is only a key into the closed sentence tables, never rendered"
+  },
+  "lib/google-oauth.tsx": {
+    "count": 1,
+    "why": "B986-3 settings + auth: per-surface raw message read, pending"
+  },
+  "lib/hooks/useRealtimeUpdates.ts": {
+    "count": 1,
+    "permanent": true,
+    "why": "log: console.error of a websocket error, never rendered"
+  },
+  "lib/activation-error-copy.ts": {
+    "count": 1,
+    "why": "B986-2 platform-admin: the activation error line (mapped sentence first, else the server message) moved here from admin/tenants/[id]/page.tsx; pending"
+  },
+  "lib/invoice-void-copy.ts": {
+    "count": 1,
+    "why": "B986-6 invoices: the void-failure sentence (payments to reverse first) moved here from invoices/[id]/page.tsx; pending"
+  },
+  "lib/reason-copy.ts": {
+    "count": 1,
+    "permanent": true,
+    "why": "classification: the server text only classifies a duplicate, it is never displayed"
+  },
+  "lib/order-error-text.ts": {
+    "count": 1,
+    "why": "B991 / B987-E (codes + structured fields first): an UNCODED order-delete refusal keeps the server's own sentence (e.g. void the invoice first); coded ones are fixed copy; pending"
+  }
+}

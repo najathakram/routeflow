@@ -3,6 +3,7 @@
 import * as React from "react";
 import { Download, X, Share, Plus, Smartphone, Monitor, CheckCircle2 } from "lucide-react";
 import { BRAND_MARK_SRC } from "./brand";
+import { isInShell } from "@/lib/in-shell";
 
 type Variant = "tenant" | "buyer";
 
@@ -76,13 +77,16 @@ export function InstallAppButton({
     if (outcome === "accepted") setOpen(false);
   };
 
-  if (platform === "installed") return null;
+  // #2653 sim proof F3: inside the app shell the user already has the app — never offer install.
+  if (platform === "installed" || isInShell()) return null;
 
   return (
     <>
       <button
         type="button"
         onClick={() => setOpen(true)}
+        // Server-rendered before isInShell() can run: CSS-hidden in the shell (app/shell.css).
+        data-hide-in-shell
         className={
           className ||
           `inline-flex items-center gap-2 rounded-xl ${styles.accent} px-5 py-2.5 text-sm font-semibold text-white transition-colors`

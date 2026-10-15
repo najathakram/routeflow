@@ -11,11 +11,13 @@ import { OrdersService } from "./orders.service";
 import { NotificationsService } from "../notifications/notifications.service";
 import { AuthorizationGuardService } from "../authorizations/authorization-guard.service";
 import { MessagingService } from "../messaging/messaging.service";
+import { SellingRestrictionsService } from "../selling-restrictions/selling-restrictions.service";
 import { PrismaService } from "../prisma/prisma.service";
 import { createMockPrisma } from "../testing/prisma-mock";
 import { computeLineSubtotal, normalizeBoxesPieces } from "@routeflow/pricing";
 import { ChangeRequestResolveAction } from "./dto/resolve-change-request.dto";
 import { JwtPayload } from "../auth/jwt-payload.interface";
+import { API_ERROR_CODES } from "../common/api-error-codes";
 
 const customerUser: JwtPayload = {
   sub: "user-cust",
@@ -60,6 +62,16 @@ const dispatchedOrder = {
     { id: "item-cancelled", productId: "prod-2", status: "CANCELLED" as const, qty: 3 },
   ],
   routeRun: { status: "IN_PROGRESS" as const },
+};
+
+// F1(iii): a buyer's filing judges the product's portal visibility, so the row carries those facts.
+const VISIBLE_TOMATOES = {
+  id: "prod-1",
+  name: "Tomatoes",
+  isActive: true,
+  kind: "STANDARD",
+  portalVisible: true,
+  parent: null,
 };
 
 const PENDING_CR = {
@@ -135,6 +147,13 @@ describe("ChangeRequestsService", () => {
         { provide: NotificationsService, useValue: notifications },
         { provide: AuthorizationGuardService, useValue: authGuard },
         { provide: MessagingService, useValue: messaging },
+        {
+          provide: SellingRestrictionsService,
+          useValue: {
+            restrictedProductIdsFor: jest.fn().mockResolvedValue(new Set<string>()),
+            assertLinesSellable: jest.fn().mockResolvedValue(undefined),
+          },
+        },
       ],
     }).compile();
 
@@ -149,7 +168,7 @@ describe("ChangeRequestsService", () => {
     it("creates a PENDING ADD_ITEM change request on a dispatched order", async () => {
       prisma.order.findUnique.mockResolvedValue(dispatchedOrder);
       prisma.customer.findFirst.mockResolvedValue({ id: "cust-1" });
-      prisma.product.findFirst.mockResolvedValue({ id: "prod-1", name: "Tomatoes" });
+      prisma.product.findFirst.mockResolvedValue({ ...VISIBLE_TOMATOES });
       prisma.changeRequest.create.mockResolvedValue({ id: "cr-new", status: "PENDING" });
 
       await service.create(
@@ -183,7 +202,7 @@ describe("ChangeRequestsService", () => {
     it("fires ORDER_CHANGED_AT_DOOR via MessagingService on ADD_ITEM creation", async () => {
       prisma.order.findUnique.mockResolvedValue(dispatchedOrder);
       prisma.customer.findFirst.mockResolvedValue({ id: "cust-1" });
-      prisma.product.findFirst.mockResolvedValue({ id: "prod-1", name: "Tomatoes" });
+      prisma.product.findFirst.mockResolvedValue({ ...VISIBLE_TOMATOES });
       prisma.changeRequest.create.mockResolvedValue({ id: "cr-new", status: "PENDING" });
 
       await service.create(
@@ -234,6 +253,107 @@ describe("ChangeRequestsService", () => {
         response: expect.objectContaining({ code: "CHANGE_WINDOW_CLOSED" }),
       });
       expect(prisma.changeRequest.create).not.toHaveBeenCalled();
+    });
+
+    // B1135 / SA-696: a SHIP (carrier) order has no route run, so the G7 inverse gate answered
+    // EDIT_WINDOW_OPEN ("use PATCH /orders/:id/items") while that PATCH sent the buyer back here. A
+    // with-carrier order's lines are frozen, so a change request on it gets its own coded refusal.
+    describe("B1135: an order with the carrier (SHIP, no route run)", () => {
+      const SHIPPED_MESSAGE = "This order has already shipped. Contact the seller for changes.";
+      const withCarrier = {
+        ...dispatchedOrder,
+        tenantId: "test-tenant",
+        fulfillPath: "SHIP" as const,
+        shippedAt: new Date("2026-10-01T00:00:00Z"),
+        routeRunId: null,
+        routeRunStopId: null,
+        routeRun: null,
+      };
+      const shipBillingTenant = (mode: string) => {
+        (ordersService as any).featureConfig = {
+          getEffectiveMode: jest.fn().mockResolvedValue(mode),
+        };
+      };
+
+      it.each(["OUT_FOR_DELIVERY", "PARTIALLY_DELIVERED"] as const)(
+        "a %s order with the carrier: 409 with the new code and message, nothing filed",
+        async (status) => {
+          shipBillingTenant("ship");
+          prisma.order.findUnique.mockResolvedValue({ ...withCarrier, status });
+          prisma.customer.findFirst.mockResolvedValue({ id: "cust-1" });
+
+          const attempt = service.create(
+            "ord-1",
+            { type: "NOTE" as any, note: "add a case please" },
+            customerUser,
+          );
+
+          await expect(attempt).rejects.toBeInstanceOf(ConflictException);
+          await expect(attempt).rejects.toMatchObject({
+            response: {
+              code: API_ERROR_CODES.ORDER_WITH_CARRIER_NO_CHANGE_REQUEST,
+              message: SHIPPED_MESSAGE,
+            },
+          });
+          expect(prisma.changeRequest.create).not.toHaveBeenCalled();
+          expect(messaging.notifyEvent).not.toHaveBeenCalled();
+        },
+      );
+
+      it("the staff caller gets the same answer (the order, not the role, decides)", async () => {
+        shipBillingTenant("both");
+        prisma.order.findUnique.mockResolvedValue(withCarrier);
+
+        await expect(
+          service.create("ord-1", { type: "NOTE" as any, note: "hi" }, operatorUser),
+        ).rejects.toMatchObject({
+          response: { code: API_ERROR_CODES.ORDER_WITH_CARRIER_NO_CHANGE_REQUEST },
+        });
+      });
+
+      it("a CUSTOMER who does not own the order still meets the bare 403, never the shipped message", async () => {
+        shipBillingTenant("ship");
+        prisma.order.findUnique.mockResolvedValue(withCarrier);
+        prisma.customer.findFirst.mockResolvedValue({ id: "cust-OTHER" });
+
+        await expect(
+          service.create("ord-1", { type: "NOTE" as any, note: "hi" }, customerUser),
+        ).rejects.toBeInstanceOf(ForbiddenException);
+      });
+
+      it("a route-run order is unchanged: an IN_PROGRESS run still files the request", async () => {
+        shipBillingTenant("ship");
+        prisma.order.findUnique.mockResolvedValue({ ...dispatchedOrder, fulfillPath: "ROUTE" });
+        prisma.customer.findFirst.mockResolvedValue({ id: "cust-1" });
+        prisma.changeRequest.create.mockResolvedValue({ id: "cr-new", status: "PENDING" });
+
+        await service.create("ord-1", { type: "NOTE" as any, note: "leave at back" }, customerUser);
+
+        expect(prisma.changeRequest.create).toHaveBeenCalledTimes(1);
+      });
+
+      it("a route-run order is unchanged: a SCHEDULED run still answers EDIT_WINDOW_OPEN", async () => {
+        shipBillingTenant("ship");
+        prisma.order.findUnique.mockResolvedValue({
+          ...dispatchedOrder,
+          fulfillPath: "ROUTE",
+          status: "CONFIRMED",
+          routeRun: { status: "SCHEDULED" },
+        });
+
+        await expect(
+          service.create("ord-1", { type: "NOTE" as any, note: "hi" }, operatorUser),
+        ).rejects.toMatchObject({ response: { code: API_ERROR_CODES.EDIT_WINDOW_OPEN } });
+      });
+
+      it("a business that does not bill at shipment keeps today's EDIT_WINDOW_OPEN (the guard is gated on it)", async () => {
+        shipBillingTenant("pickup");
+        prisma.order.findUnique.mockResolvedValue(withCarrier);
+
+        await expect(
+          service.create("ord-1", { type: "NOTE" as any, note: "hi" }, operatorUser),
+        ).rejects.toMatchObject({ response: { code: API_ERROR_CODES.EDIT_WINDOW_OPEN } });
+      });
     });
 
     it("forbids a CUSTOMER filing against an order they do not own", async () => {
@@ -415,7 +535,15 @@ describe("ChangeRequestsService", () => {
         ...dispatchedOrder,
         routeRun: { driverId: "drv-1", status: "IN_PROGRESS" },
       });
-      prisma.product.findFirst.mockResolvedValue({ id: "prod-1", trackedCategoryId: null });
+      prisma.product.findFirst.mockResolvedValue({
+        id: "prod-1",
+        trackedCategoryId: null,
+        // portal-visible: a buyer-requested add is re-judged on the buyer channel at approval (F1 iii)
+        kind: "STANDARD",
+        isActive: true,
+        portalVisible: true,
+        parent: null,
+      });
       prisma.customer.findFirst.mockResolvedValue({ userId: "user-cust" });
       prisma.changeRequest.updateMany.mockResolvedValue({ count: 1 });
       prisma.changeRequest.findUnique.mockResolvedValue({ ...PENDING_CR, status: "APPROVED" });
@@ -444,7 +572,12 @@ describe("ChangeRequestsService", () => {
         expect.objectContaining({ role: "CUSTOMER", sub: "user-cust" }),
         // REG-B142-G: this draft path is the one exempt caller — it must
         // pass allowArchived so a since-archived line can still roll over.
-        { skipAutoMerge: false, allowArchived: true },
+        {
+          skipAutoMerge: false,
+          allowArchived: true,
+          internalCustomerDraft: true,
+          lineAuthor: "BUYER", // SA ruling #3418: PENDING_CR was filed by a CUSTOMER
+        },
       );
       expect(ordersService.assertCreditForProjectedOrder).toHaveBeenCalledWith(
         "cust-1",
@@ -509,7 +642,15 @@ describe("ChangeRequestsService", () => {
         unitLabel: null,
         status: "PENDING",
       });
-      prisma.product.findFirst.mockResolvedValue({ id: "prod-1", trackedCategoryId: null });
+      prisma.product.findFirst.mockResolvedValue({
+        id: "prod-1",
+        trackedCategoryId: null,
+        // portal-visible: a buyer-requested add is re-judged on the buyer channel at approval (F1 iii)
+        kind: "STANDARD",
+        isActive: true,
+        portalVisible: true,
+        parent: null,
+      });
 
       await service.resolve(
         "ord-1",
@@ -549,7 +690,15 @@ describe("ChangeRequestsService", () => {
       });
       // The live product's pack, if it were read, would derive a DIFFERENT (wrong) split —
       // proves the derivation never touches it.
-      prisma.product.findFirst.mockResolvedValue({ id: "prod-1", trackedCategoryId: null });
+      prisma.product.findFirst.mockResolvedValue({
+        id: "prod-1",
+        trackedCategoryId: null,
+        // portal-visible: a buyer-requested add is re-judged on the buyer channel at approval (F1 iii)
+        kind: "STANDARD",
+        isActive: true,
+        portalVisible: true,
+        parent: null,
+      });
 
       await service.resolve(
         "ord-1",
@@ -581,7 +730,15 @@ describe("ChangeRequestsService", () => {
         unitLabel: null,
         status: "PENDING",
       });
-      prisma.product.findFirst.mockResolvedValue({ id: "prod-1", trackedCategoryId: null });
+      prisma.product.findFirst.mockResolvedValue({
+        id: "prod-1",
+        trackedCategoryId: null,
+        // portal-visible: a buyer-requested add is re-judged on the buyer channel at approval (F1 iii)
+        kind: "STANDARD",
+        isActive: true,
+        portalVisible: true,
+        parent: null,
+      });
 
       await expect(
         service.resolve(
@@ -615,7 +772,15 @@ describe("ChangeRequestsService", () => {
         unitLabel: null,
         status: "PENDING",
       });
-      prisma.product.findFirst.mockResolvedValue({ id: "prod-1", trackedCategoryId: null });
+      prisma.product.findFirst.mockResolvedValue({
+        id: "prod-1",
+        trackedCategoryId: null,
+        // portal-visible: a buyer-requested add is re-judged on the buyer channel at approval (F1 iii)
+        kind: "STANDARD",
+        isActive: true,
+        portalVisible: true,
+        parent: null,
+      });
 
       await service.resolve(
         "ord-1",
@@ -650,7 +815,15 @@ describe("ChangeRequestsService", () => {
         unitLabel: null,
         status: "PENDING",
       });
-      prisma.product.findFirst.mockResolvedValue({ id: "prod-1", trackedCategoryId: null });
+      prisma.product.findFirst.mockResolvedValue({
+        id: "prod-1",
+        trackedCategoryId: null,
+        // portal-visible: a buyer-requested add is re-judged on the buyer channel at approval (F1 iii)
+        kind: "STANDARD",
+        isActive: true,
+        portalVisible: true,
+        parent: null,
+      });
 
       await service.resolve(
         "ord-1",
@@ -685,7 +858,15 @@ describe("ChangeRequestsService", () => {
         unitLabel: null,
         status: "PENDING",
       });
-      prisma.product.findFirst.mockResolvedValue({ id: "prod-1", trackedCategoryId: null });
+      prisma.product.findFirst.mockResolvedValue({
+        id: "prod-1",
+        trackedCategoryId: null,
+        // portal-visible: a buyer-requested add is re-judged on the buyer channel at approval (F1 iii)
+        kind: "STANDARD",
+        isActive: true,
+        portalVisible: true,
+        parent: null,
+      });
 
       await service.resolve(
         "ord-1",
@@ -868,6 +1049,11 @@ describe("ChangeRequestsService", () => {
         name: "Sample Cola 12pk",
         trackedCategoryId: null,
         unitsPerBox: livePack,
+        // portal-visible: a buyer-requested add is re-judged on the buyer channel at approval (F1 iii)
+        kind: "STANDARD",
+        isActive: true,
+        portalVisible: true,
+        parent: null,
       }));
       prisma.customer.findFirst.mockResolvedValue({ userId: "user-cust" });
       prisma.changeRequest.updateMany.mockResolvedValue({ count: 1 });

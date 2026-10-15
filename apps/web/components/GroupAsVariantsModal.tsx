@@ -3,8 +3,11 @@
 import * as React from "react";
 import { X, GitBranch, AlertCircle, ArrowRight } from "lucide-react";
 import { Button, useToast } from "@routeflow/ui/web";
+import { keptLabelsNoteForBulk } from "@/lib/kept-labels-copy";
 import { useProducts, useBulkAssignParent, type BulkAssignParentResult } from "@/lib/api/products";
 import { SearchableProductPicker } from "./SearchableProductPicker";
+import { localToastForSafeTextRefusal } from "@/lib/local-error-toast";
+import { groupAssignErrorCopy } from "@/lib/group-assign-error-copy";
 
 interface ProductLite {
   id: string;
@@ -59,7 +62,7 @@ export function GroupAsVariantsModal({
   const { toast } = useToast();
   const { data: allProductsData } = useProducts({ limit: 0 });
   const allProducts: ProductLite[] = allProductsData?.data ?? [];
-  const bulkAssign = useBulkAssignParent();
+  const bulkAssign = useBulkAssignParent({ localErrorToast: localToastForSafeTextRefusal });
 
   const [parentId, setParentId] = React.useState("");
   // Per-row override of the suggested variant name
@@ -103,14 +106,28 @@ export function GroupAsVariantsModal({
       variantName:
         overrides[p.id]?.trim() || suggestVariantName(p.name, parent?.name ?? "") || p.name,
     }));
-    const result = await bulkAssign.mutateAsync({
-      parentProductId: parentId,
-      assignments,
-    });
+    let result: BulkAssignParentResult;
+    try {
+      result = await bulkAssign.mutateAsync({
+        parentProductId: parentId,
+        assignments,
+      });
+    } catch (err: unknown) {
+      // Only the formula-led refusal is ours (it names the product); any other error already reached the global toast.
+      const copy = groupAssignErrorCopy(err, selectedProducts);
+      if (copy)
+        toast({ title: "Couldn't group these products", description: copy, variant: "error" });
+      return;
+    }
     if (result.failed.length === 0) {
       toast({
         title: `Grouped ${result.succeeded.length} product${result.succeeded.length === 1 ? "" : "s"}`,
-        description: `All now appear as variants of "${parent?.name}".`,
+        description: [
+          `All now appear as variants of "${parent?.name}".`,
+          keptLabelsNoteForBulk(result.keptLabels),
+        ]
+          .filter(Boolean)
+          .join(" "),
         variant: "success",
       });
       onSuccess?.(result);
@@ -118,10 +135,15 @@ export function GroupAsVariantsModal({
     } else {
       toast({
         title: `${result.succeeded.length} grouped, ${result.failed.length} failed`,
-        description: result.failed
-          .slice(0, 3)
-          .map((f) => f.reason)
-          .join("; "),
+        description: [
+          result.failed
+            .slice(0, 3)
+            .map((f) => f.reason)
+            .join("; "),
+          keptLabelsNoteForBulk(result.keptLabels),
+        ]
+          .filter(Boolean)
+          .join(" "),
         variant: "error",
       });
       onSuccess?.(result);

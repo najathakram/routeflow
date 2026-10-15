@@ -41,6 +41,7 @@
  * routing it to the `notFound` branch would offer "create new" for a product
  * that plainly exists.
  */
+import type { ScanMatchView } from "@routeflow/types";
 import { apiClient } from "./api-client";
 
 export type BarcodeResolveSource = "barcode" | "sku" | "unitSku" | "search";
@@ -50,6 +51,8 @@ export interface BarcodeResolveHit<T = any> {
   source: BarcodeResolveSource;
   notFound?: false;
   archived?: false;
+  /** #2717 M4a-1: the server's additive scan-lookup verdict (which levels the scanned code has). */
+  scanMatch?: ScanMatchView;
   /**
    * The substring search returned MORE THAN ONE row and none was an exact
    * sku/unitSku hit, so `product` is a guess (the first row by name).
@@ -60,6 +63,11 @@ export interface BarcodeResolveHit<T = any> {
    * substring-matches broadly.
    */
   ambiguous?: boolean;
+  /**
+   * B1220: set (with `ambiguous`) when the substring search returned exactly ONE sellable row
+   * and no code matched exactly. Never auto-add: ask "Did you mean <name>?" first.
+   */
+  suggestion?: boolean;
   /**
    * The SELLABLE rows the substring search returned. Only set when `ambiguous`.
    * Inactive rows are excluded (F30 / R5): the picker offers this list as
@@ -176,9 +184,18 @@ export async function resolveProductByCode<T = any>(
       // archived top to bottom is an `archived` outcome, not a silent guess.
       const sellable = matches.filter((p) => p?.isActive !== false);
       if (sellable.length === 0) return asHit(matches[0], "search");
-      // One substring hit is safe to take. More than one is a guess — flag it
-      // so the caller can offer a choice rather than commit to row #1.
-      if (sellable.length === 1) return asHit(sellable[0], "search");
+      // B1220: a lone FUZZY hit is still a guess (no code matched exactly), so it
+      // is a suggestion the caller must confirm — never an auto-add. Several are
+      // an ambiguity the caller can list.
+      if (sellable.length === 1) {
+        return {
+          product: sellable[0],
+          source: "search",
+          ambiguous: true,
+          suggestion: true,
+          matches: sellable,
+        };
+      }
       return { product: sellable[0], source: "search", ambiguous: true, matches: sellable };
     }
   } catch (err: any) {

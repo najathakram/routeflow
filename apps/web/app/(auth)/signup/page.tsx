@@ -8,6 +8,7 @@ import { useRouter } from "next/navigation";
 import { Eye, EyeOff, CheckCircle2, XCircle, Loader2 } from "lucide-react";
 import { Input, Button } from "@routeflow/ui/web";
 import { AuthShell } from "@/components/auth";
+import { safeTextBodyCopy } from "@/lib/safe-text-error-copy";
 
 // ─── Schema ───────────────────────────────────────────────────────────────────
 
@@ -216,15 +217,18 @@ function SignupInner() {
           adminEmail: data.adminEmail,
           adminUsername: data.adminUsername,
           adminPassword: data.adminPassword,
+          // SA-738: the business starts in the signer's own zone (omitted when unusable; the server then writes UTC).
+          timezone: browserTimeZone(),
         }),
       });
 
       if (!regRes.ok) {
         const body = await regRes.json().catch(() => ({}));
         const msg = (body as { message?: string | string[] }).message;
-        const text = Array.isArray(msg)
-          ? msg.join(". ")
-          : (msg ?? "Signup failed. Please try again.");
+        // B956: a refused business name is FIXED copy with a human label, never the raw message.
+        const text =
+          safeTextBodyCopy(body) ??
+          (Array.isArray(msg) ? msg.join(". ") : (msg ?? "Signup failed. Please try again."));
         setApiError(text);
         setIsLoading(false);
         return;
@@ -443,6 +447,23 @@ function SignupInner() {
 }
 
 // ─── Page (Suspense required for client-side navigation hooks) ────────────────
+
+/**
+ * SA-738: the browser's IANA zone, or undefined when it would not pass the server's writable-zone
+ * check (offset names, fixed-offset Etc/* and EST/MST/HST aliases, anything not Area/Location), so a
+ * signup never fails over the zone. UTC itself is fine.
+ */
+function browserTimeZone(): string | undefined {
+  try {
+    const tz = Intl.DateTimeFormat().resolvedOptions().timeZone;
+    if (!tz) return undefined;
+    if (tz === "UTC") return tz;
+    if (/^Etc\//i.test(tz) || !/^[A-Za-z]+(?:\/[A-Za-z0-9_+-]+)+$/.test(tz)) return undefined;
+    return tz;
+  } catch {
+    return undefined;
+  }
+}
 
 export default function SignupPage() {
   return (

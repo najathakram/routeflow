@@ -10,17 +10,21 @@
  */
 
 import * as React from "react";
+import { genericToastCopy } from "@/lib/generic-toast-copy";
+
+/** A 400 (unreadable / malformed file) or a 413 (too large) says what to fix; anything else is the shared generic copy. */
+const FILE_PROBLEM_COPY =
+  "The file couldn't be read. Check that it is a CSV that follows the template, and split a very large file into smaller ones.";
+function importFailureCopy(err: unknown): string {
+  const status = (err as { response?: { status?: number } } | null)?.response?.status;
+  return status === 400 || status === 413 ? FILE_PROBLEM_COPY : genericToastCopy(err);
+}
 import { Upload, AlertCircle, CheckCircle2, ChevronDown, ChevronUp } from "lucide-react";
 import { cn, useToast } from "@routeflow/ui/web";
+import type { ImportColumnAlias } from "@routeflow/types";
 import { apiClient } from "@/lib/api-client";
 
-export interface ImportColumnAlias {
-  field: string;
-  canonical: string;
-  aliases: string[];
-}
-
-export interface ImportRowPlan {
+interface ImportRowPlan {
   row: number;
   label: string;
   action: "create" | "update" | "skip";
@@ -231,13 +235,14 @@ export function ImportCsvPanel({
       }
     } catch (err: any) {
       if (err?.response?.status === 403) {
+        // Today's behaviour, deliberately: the server names WHICH add-on or flag is needed (and a role 403 reads differently).
+        // Moving this to fixed copy needs codes + structured fields first (B991).
         setGateError(err?.response?.data?.message ?? "This column needs an add-on to import");
         setPreview(null);
       } else {
         toast({
           title: dryRun ? "Preview failed" : "Import failed",
-          description:
-            err?.response?.data?.message ?? "Please check your file format and try again",
+          description: importFailureCopy(err),
           variant: "error",
         });
       }

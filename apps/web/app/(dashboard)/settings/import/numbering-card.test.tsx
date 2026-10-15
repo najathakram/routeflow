@@ -6,6 +6,10 @@ import SettingsImportPage from "./page";
 // This card has no `next/navigation` dependency, unlike other settings pages —
 // no router/search-params mock needed here.
 
+jest.mock("@/lib/auth-context", () => ({
+  ...jest.requireActual("@/lib/auth-context"),
+  useAuth: () => ({ user: { id: "u1", username: "x", role: "TENANT_ADMIN" } }),
+}));
 jest.mock("@/lib/api-client", () => ({
   apiClient: {
     get: jest.fn().mockResolvedValue({ data: {} }),
@@ -124,5 +128,22 @@ describe("SettingsImportPage — NumberingCard (B861)", () => {
     });
 
     expect((screen.getByLabelText("Invoices prefix") as HTMLInputElement).value).toBe("INV-");
+  });
+
+  // B1188: the same shared prefix validator as the Settings card, inline, and Save is blocked.
+  it("B1188 a trailing-digit prefix shows the shared message inline and cannot be saved", async () => {
+    const user = userEvent.setup();
+    renderWithProviders(<SettingsImportPage />);
+
+    const prefixInput = await screen.findByLabelText("Invoices prefix");
+    const row = prefixInput.closest("div") as HTMLElement;
+    await user.clear(prefixInput);
+    await user.type(prefixInput, "INV2");
+
+    expect(within(row).getByRole("alert")).toHaveTextContent(/cannot end with a digit/i);
+    const save = within(row).getByRole("button", { name: "Save" });
+    expect(save).toBeDisabled();
+    await user.click(save);
+    expect(mockUpdateMutate).not.toHaveBeenCalled();
   });
 });

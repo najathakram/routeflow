@@ -5,6 +5,7 @@ import { SettingsController } from "./settings.controller";
 import { SystemConfigService } from "./system-config.service";
 import { PrismaService } from "../prisma/prisma.service";
 import { EmailService } from "../email/email.service";
+import { quickKeysSettingsStubProvider } from "../testing/quick-keys-settings-stub";
 import { createMockPrisma } from "../testing/prisma-mock";
 
 // WP2: settings.taxRate is stored as a PERCENT (0-100, string) — see
@@ -31,6 +32,7 @@ describe("SettingsController — PATCH /settings taxRate validation", () => {
         { provide: ConfigService, useValue: { get: jest.fn() } },
         { provide: PrismaService, useValue: prisma },
         { provide: EmailService, useValue: { send: jest.fn().mockResolvedValue(undefined) } },
+        quickKeysSettingsStubProvider,
       ],
     }).compile();
 
@@ -93,6 +95,7 @@ describe("SettingsController — GET/PATCH /settings/invoice hideOriginalPrice",
         { provide: ConfigService, useValue: { get: jest.fn() } },
         { provide: PrismaService, useValue: prisma },
         { provide: EmailService, useValue: { send: jest.fn().mockResolvedValue(undefined) } },
+        quickKeysSettingsStubProvider,
       ],
     }).compile();
 
@@ -147,6 +150,7 @@ describe("SettingsController — GET/PATCH /settings/invoice deposit policy", ()
         { provide: ConfigService, useValue: { get: jest.fn() } },
         { provide: PrismaService, useValue: prisma },
         { provide: EmailService, useValue: { send: jest.fn().mockResolvedValue(undefined) } },
+        quickKeysSettingsStubProvider,
       ],
     }).compile();
 
@@ -228,5 +232,59 @@ describe("SettingsController — GET/PATCH /settings/invoice deposit policy", ()
   it("PATCH without creditAutoApplyOnSend never writes TenantConfig", async () => {
     await controller.updateInvoiceSettings({ defaultTerms: "Net 15" });
     expect(prisma.tenantConfig.upsert).not.toHaveBeenCalled();
+  });
+});
+
+// B1188: the Settings "Save Numbering" button used to PATCH invoicePrefix / paymentDueDays here,
+// where neither is stored — accepted (200) and silently dropped. They now 400 with a pointer to
+// the real stores (PUT /import/numbering/INVOICE and PATCH /settings/invoice defaultTerms), and
+// NOTHING in the same body is written (no half-applied save).
+describe("SettingsController — PATCH /settings refuses invoicePrefix / paymentDueDays (B1188)", () => {
+  let controller: SettingsController;
+  let svc: { get: jest.Mock; set: jest.Mock; getAll: jest.Mock };
+  let prisma: ReturnType<typeof createMockPrisma>;
+
+  beforeEach(async () => {
+    prisma = createMockPrisma();
+    prisma.tenantConfig.upsert = jest.fn().mockResolvedValue({});
+    svc = {
+      get: jest.fn().mockResolvedValue(null),
+      set: jest.fn().mockResolvedValue(undefined),
+      getAll: jest.fn().mockResolvedValue({}),
+    };
+    const module: TestingModule = await Test.createTestingModule({
+      controllers: [SettingsController],
+      providers: [
+        { provide: SystemConfigService, useValue: svc },
+        { provide: ConfigService, useValue: { get: jest.fn() } },
+        { provide: PrismaService, useValue: prisma },
+        { provide: EmailService, useValue: { send: jest.fn().mockResolvedValue(undefined) } },
+        quickKeysSettingsStubProvider,
+      ],
+    }).compile();
+    controller = module.get<SettingsController>(SettingsController);
+  });
+
+  it.each([
+    ["invoicePrefix", "INV-", /import\/numbering|Invoice Numbering/i],
+    ["paymentDueDays", "30", /settings\/invoice|payment terms/i],
+  ])("400s %s with a message naming the real store", async (key, value, message) => {
+    await expect(controller.updateSettings({ [key]: value })).rejects.toThrow(message);
+    await expect(controller.updateSettings({ [key]: value })).rejects.toBeInstanceOf(
+      BadRequestException,
+    );
+  });
+
+  it("writes nothing from the same body when one of the refused keys is present", async () => {
+    await expect(
+      controller.updateSettings({ taxRate: 8, invoiceNotes: "hi", invoicePrefix: "X-" }),
+    ).rejects.toBeInstanceOf(BadRequestException);
+    expect(svc.set).not.toHaveBeenCalled();
+    expect(prisma.tenantConfig.upsert).not.toHaveBeenCalled();
+  });
+
+  it("still accepts invoiceNotes / invoiceTerms (control)", async () => {
+    await controller.updateSettings({ invoiceNotes: "n", invoiceTerms: "t" });
+    expect(prisma.tenantConfig.upsert).toHaveBeenCalled();
   });
 });

@@ -2,32 +2,8 @@
 
 import * as React from "react";
 import { cn } from "@routeflow/ui/web";
-
-export const COMMON_UNITS = [
-  "each",
-  "unit",
-  "pcs",
-  "case",
-  "box",
-  "bag",
-  "pack",
-  "dozen",
-  "bundle",
-  "tray",
-  "pallet",
-  "kg",
-  "g",
-  "lb",
-  "oz",
-  "L",
-  "ml",
-  "liter",
-  "roll",
-  "sheet",
-  "bottle",
-  "can",
-  "strip",
-];
+import { AnchoredList, isInsideAnchoredList } from "./AnchoredList";
+import { COMMON_UNITS } from "@/lib/common-units";
 
 interface UnitComboboxProps {
   value: string;
@@ -51,6 +27,8 @@ export function UnitCombobox({
 }: UnitComboboxProps) {
   const [open, setOpen] = React.useState(false);
   const containerRef = React.useRef<HTMLDivElement>(null);
+  const listId = React.useId();
+  const [active, setActive] = React.useState(-1);
   const inputRef = React.useRef<HTMLInputElement>(null);
 
   const allUnits = React.useMemo(
@@ -65,7 +43,11 @@ export function UnitCombobox({
   // Close on outside click
   React.useEffect(() => {
     function handle(e: MouseEvent) {
-      if (containerRef.current && !containerRef.current.contains(e.target as Node)) {
+      if (
+        containerRef.current &&
+        !containerRef.current.contains(e.target as Node) &&
+        !isInsideAnchoredList(e.target)
+      ) {
         setOpen(false);
       }
     }
@@ -85,15 +67,27 @@ export function UnitCombobox({
         autoComplete="off"
         onChange={(e) => {
           onChange(e.target.value);
+          setActive(-1);
           setOpen(true);
         }}
         onFocus={() => setOpen(true)}
+        aria-controls={open ? listId : undefined}
+        aria-activedescendant={open && active >= 0 ? `${listId}-${active}` : undefined}
         onKeyDown={(e) => {
+          if (e.key === "ArrowDown" || e.key === "ArrowUp") {
+            e.preventDefault();
+            setOpen(true);
+            const last = filtered.length - 1;
+            setActive((a) => (e.key === "ArrowDown" ? Math.min(a + 1, last) : Math.max(a - 1, 0)));
+            return;
+          }
           if (e.key === "Escape") setOpen(false);
           if (e.key === "Enter" && open) {
-            // If exactly one match, select it; otherwise keep typed value
-            if (filtered.length === 1) {
-              onChange(filtered[0]);
+            // A highlighted option wins; if exactly one match, select it; otherwise keep typed value
+            const pick =
+              active >= 0 ? filtered[active] : filtered.length === 1 ? filtered[0] : null;
+            if (pick != null) {
+              onChange(pick);
               setOpen(false);
               e.preventDefault();
             } else {
@@ -106,11 +100,11 @@ export function UnitCombobox({
           className,
         )}
       />
-      {open && (
-        <ul className="absolute left-0 top-full z-50 mt-0.5 max-h-48 w-full overflow-y-auto rounded-lg border border-surface-border bg-white py-1 shadow-dropdown">
+      <AnchoredList anchorRef={containerRef} open={open} id={listId}>
+        <ul role="listbox" className="py-1">
           {filtered.length > 0 ? (
-            filtered.map((u) => (
-              <li key={u}>
+            filtered.map((u, i) => (
+              <li key={u} role="option" id={`${listId}-${i}`} aria-selected={i === active}>
                 <button
                   type="button"
                   onMouseDown={() => {
@@ -132,7 +126,7 @@ export function UnitCombobox({
             </li>
           )}
         </ul>
-      )}
+      </AnchoredList>
     </div>
   );
 }

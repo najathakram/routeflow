@@ -38,6 +38,8 @@ jest.mock("../invoices/invoices.service", () => ({
     findAll: jest.fn().mockResolvedValue({ data: [], meta: {} }),
     revertLinkedInvoicesForOrderEdit: jest.fn().mockResolvedValue(undefined),
     resyncOrderInvoicesForEdit: jest.fn().mockResolvedValue([{ id: "inv-1" }]),
+    followPartialPrices: jest.fn().mockResolvedValue({ issuedPartialsUnchanged: [] }),
+    projectEditedInvoiceTotals: jest.fn().mockResolvedValue([]),
   })),
 }));
 
@@ -128,7 +130,9 @@ function requireDbLocksMock(): any {
   return require("../common/db-locks");
 }
 
+import { oversellReaderOffProvider } from "./testing/policy-reader-provider";
 import { Test, TestingModule } from "@nestjs/testing";
+import { buyerVisibleProductWhere, noBuyerRestrictions } from "../buyer/buyer-product-visibility";
 import {
   BadRequestException,
   ConflictException,
@@ -194,6 +198,8 @@ const customerPayload = {
   role: "CUSTOMER" as const,
   status: "ACTIVE" as const,
   forcePasswordChange: false,
+  // B1211: the buyer order gate is tenant-scoped, so a buyer's token carries its tenant.
+  tenantId: "tenant-a",
 };
 
 const MOCK_PRODUCT = { id: "prod-1", name: "Tomatoes", pricePerUnit: 4.99, unit: "punnet" };
@@ -219,6 +225,7 @@ async function buildOrdersService(
 ): Promise<OrdersService> {
   const module: TestingModule = await Test.createTestingModule({
     providers: [
+      oversellReaderOffProvider,
       OrdersService,
       { provide: PrismaService, useValue: prisma },
       { provide: getQueueToken("invoices"), useValue: { add: jest.fn() } },
@@ -239,6 +246,8 @@ async function buildOrdersService(
             .mockResolvedValue([{ id: "inv-1", invoiceNumber: "INV-1", total: 0 }]),
           revertLinkedInvoicesForOrderEdit: jest.fn().mockResolvedValue(undefined),
           resyncOrderInvoicesForEdit: jest.fn().mockResolvedValue([{ id: "inv-1" }]),
+          followPartialPrices: jest.fn().mockResolvedValue({ issuedPartialsUnchanged: [] }),
+          projectEditedInvoiceTotals: jest.fn().mockResolvedValue([]),
           reconcileOrderDraftInvoice: jest.fn().mockResolvedValue(undefined),
         },
       },
@@ -474,7 +483,7 @@ describe("OrdersService.create — Idempotency-Key replay (T-B196c / R8 / REG-B1
     );
 
     currentTenantId = "tenant-b";
-    const fromTenantB = await service.create(dto, customerPayload);
+    const fromTenantB = await service.create(dto, { ...customerPayload, tenantId: "tenant-b" });
 
     // The compound (tenantId, idempotencyKey) key means a different tenant
     // reusing the same client-generated uuid is NOT a replay.
@@ -685,7 +694,8 @@ describe("OrdersService.updateOrderItems — replaceAll is explicit-only (T-B198
 // ─── T-B199 (REG-B199 / R11) — denomination-aware atomic merge ─────────────
 
 describe("OrdersController.create — staff merge is denomination-aware (T-B199 / R11 / REG-B199)", () => {
-  const buildController = (ordersService: any) => new OrdersController(ordersService, {} as any);
+  const buildController = (ordersService: any) =>
+    new OrdersController(ordersService, {} as any, {} as any, {} as any);
 
   it("folds boxes+pieces via normalizeBoxesPieces and preserves unitPrice/notes — never a flat qty sum", async () => {
     const ordersService: any = {
@@ -712,6 +722,7 @@ describe("OrdersController.create — staff merge is denomination-aware (T-B199 
           },
         ],
       }),
+      liveTrioByProduct: jest.fn().mockResolvedValue(new Map()),
       updateOrderItems: jest.fn().mockResolvedValue(undefined),
       mergeAllPendingForCustomer: jest.fn().mockResolvedValue(null),
       findOne: jest.fn().mockResolvedValue({ id: "ord-active" }),
@@ -779,6 +790,7 @@ describe("OrdersController.create — staff merge is denomination-aware (T-B199 
           },
         ],
       }),
+      liveTrioByProduct: jest.fn().mockResolvedValue(new Map()),
       updateOrderItems: jest.fn().mockResolvedValue(undefined),
       mergeAllPendingForCustomer: jest.fn().mockResolvedValue(null),
       findOne: jest.fn().mockResolvedValue({ id: "ord-active" }),
@@ -827,6 +839,7 @@ describe("OrdersController.create — staff merge is denomination-aware (T-B199 
         total: storeQty * 5,
         lineItems: [{ id: "li-1", productId: "prod-1", qty: storeQty, unitPrice: 5 }],
       })),
+      liveTrioByProduct: jest.fn().mockResolvedValue(new Map()),
       updateOrderItems: jest.fn(async (_orderId: string, dto: any) => {
         const line = dto.items.find((i: any) => i.productId === "prod-1");
         if (line) storeQty = Number(line.qty);
@@ -921,6 +934,7 @@ describe("OrdersController.create — staff merge is denomination-aware (T-B199 
           },
         ],
       }),
+      liveTrioByProduct: jest.fn().mockResolvedValue(new Map()),
       updateOrderItems: jest.fn(async (orderId: string, dto: any) => {
         capturedOrderId = orderId;
         capturedDto = dto;
@@ -928,7 +942,7 @@ describe("OrdersController.create — staff merge is denomination-aware (T-B199 
       mergeAllPendingForCustomer: jest.fn().mockResolvedValue(null),
       findOne: jest.fn().mockResolvedValue({ id: "ord-active" }),
     };
-    const controller = new OrdersController(ordersService, {} as any);
+    const controller = new OrdersController(ordersService, {} as any, {} as any, {} as any);
 
     await controller.create(
       {
@@ -1030,6 +1044,7 @@ describe("OrdersController.create — staff merge is denomination-aware (T-B199 
         total: storeQty * 5,
         lineItems: [{ id: "li-1", productId: "prod-1", qty: storeQty, unitPrice: 5 }],
       })),
+      liveTrioByProduct: jest.fn().mockResolvedValue(new Map()),
       updateOrderItems: jest.fn(async (_orderId: string, dto: any) => {
         // Marker on the SHARED ledger: the fold's write must land between an
         // `enter:` and its matching `exit:` — i.e. INSIDE the critical section.
@@ -1139,6 +1154,7 @@ describe("OrdersController.create — staff merge is denomination-aware (T-B199 
             },
           ],
         }),
+        liveTrioByProduct: jest.fn().mockResolvedValue(new Map()),
         updateOrderItems: jest.fn().mockResolvedValue(undefined),
         mergeAllPendingForCustomer: jest.fn().mockResolvedValue(null),
         findOne: jest.fn().mockResolvedValue({ id: "ord-active" }),
@@ -1198,6 +1214,7 @@ describe("OrdersController.create — staff merge is denomination-aware (T-B199 
             },
           ],
         }),
+        liveTrioByProduct: jest.fn().mockResolvedValue(new Map()),
         updateOrderItems: jest.fn().mockResolvedValue(undefined),
         mergeAllPendingForCustomer: jest.fn().mockResolvedValue(null),
         findOne: jest.fn().mockResolvedValue({ id: "ord-active" }),
@@ -1266,6 +1283,7 @@ describe("OrdersController.create — staff merge is denomination-aware (T-B199 
   it("T2 new-5: the POST-MERGE sweep hitting contention does not fail the request — create() still resolves with the merged order and warns once", async () => {
     const ordersService: any = {
       findActiveOrder: jest.fn().mockResolvedValue(activeOrderFixture),
+      liveTrioByProduct: jest.fn().mockResolvedValue(new Map()),
       updateOrderItems: jest.fn().mockResolvedValue(undefined),
       // The fold inside the lock has ALREADY committed at this point.
       mergeAllPendingForCustomer: jest.fn().mockRejectedValue(mergeInProgress()),
@@ -1309,8 +1327,9 @@ describe("OrdersController.create — staff merge is denomination-aware (T-B199 
     );
 
     // The row exists. Reporting a failure here would have the buyer place a second
-    // order for the same cart.
-    expect(result).toBe(created);
+    // order for the same cart. A CUSTOMER gets the customer-facing COPY of it
+    // (common/staff-only-fields.ts: id + status survive, customerId is not listed), so the oracle is content.
+    expect(result).toEqual({ id: "ord-new", status: "PENDING" });
     expect(ordersService.mergeAllPendingForCustomer).toHaveBeenCalledTimes(1);
     expect(warn).toHaveBeenCalledTimes(1);
   });
@@ -1318,6 +1337,7 @@ describe("OrdersController.create — staff merge is denomination-aware (T-B199 
   it("T2 new-7: a NON-contention failure from the post-merge sweep still propagates — the swallow is by CODE, not blanket", async () => {
     const ordersService: any = {
       findActiveOrder: jest.fn().mockResolvedValue(activeOrderFixture),
+      liveTrioByProduct: jest.fn().mockResolvedValue(new Map()),
       updateOrderItems: jest.fn().mockResolvedValue(undefined),
       mergeAllPendingForCustomer: jest.fn().mockRejectedValue(new Error("boom")),
       findOne: jest.fn().mockResolvedValue({ id: "ord-active" }),
@@ -1345,6 +1365,7 @@ describe("OrdersController.create — staff merge is denomination-aware (T-B199 
   it("R1: both post-commit consolidations ask for the customer lock with { lockMode: 'try' } — deferrable work never waits out another holder", async () => {
     const ordersService: any = {
       findActiveOrder: jest.fn().mockResolvedValue(activeOrderFixture),
+      liveTrioByProduct: jest.fn().mockResolvedValue(new Map()),
       updateOrderItems: jest.fn().mockResolvedValue(undefined),
       mergeAllPendingForCustomer: jest.fn().mockResolvedValue(null),
       findOne: jest.fn().mockResolvedValue({ id: "ord-active" }),
@@ -1378,7 +1399,7 @@ describe("OrdersController.create — staff merge is denomination-aware (T-B199 
     expect(ordersService.mergeAllPendingForCustomer).toHaveBeenNthCalledWith(
       2,
       "cust-1",
-      { buyerInitiated: true },
+      { buyerInitiated: true, focusOrderId: "ord-new" }, // M2: folds only the new order's path
       { lockMode: "try", actor: expect.objectContaining({ role: "CUSTOMER" }) },
     );
   });
@@ -1393,6 +1414,7 @@ describe("OrdersController.create — staff merge is denomination-aware (T-B199 
         // … but by the time this request's turn in the lock arrives, the holder before us
         // merged it away (or deleted it).
         .mockResolvedValueOnce(null),
+      liveTrioByProduct: jest.fn().mockResolvedValue(new Map()),
       updateOrderItems: jest.fn().mockResolvedValue(undefined),
       mergeAllPendingForCustomer: jest.fn().mockResolvedValue(null),
       findOne: jest.fn().mockResolvedValue({ id: "ord-active" }),
@@ -1426,6 +1448,7 @@ describe("OrdersController.create — staff merge is denomination-aware (T-B199 
     const ordersService: any = {
       findActiveOrder: jest.fn().mockResolvedValue(activeOrderFixture),
       findOrderIdByIdempotencyKey: jest.fn().mockResolvedValue(null),
+      liveTrioByProduct: jest.fn().mockResolvedValue(new Map()),
       updateOrderItems: jest.fn().mockResolvedValue(undefined),
       recordIdempotencyKey: jest.fn().mockRejectedValue(new Error("unique violation")),
       mergeAllPendingForCustomer: jest.fn().mockResolvedValue(null),
@@ -1513,7 +1536,7 @@ describe("buyer barcode scan — reachable and catalog-scoped (T-B200 / R12 / RE
   let controller: BuyerController;
   let prisma: ReturnType<typeof createMockPrisma>;
   let scopedProductFindMany: jest.Mock;
-  let catalogService: { getProductDetail: jest.Mock };
+  let catalogService: { getProductDetail: jest.Mock; scanVisibilityWhere: jest.Mock };
   let stockAlertService: { isSubscribed: jest.Mock };
 
   beforeEach(async () => {
@@ -1534,12 +1557,19 @@ describe("buyer barcode scan — reachable and catalog-scoped (T-B200 / R12 / RE
       throw new Error("unscoped catalog read — the buyer scan rung must go through forTenant()");
     });
 
-    catalogService = { getProductDetail: jest.fn() };
+    catalogService = {
+      getProductDetail: jest.fn(),
+      // the buyer scope builder with no restriction-hidden ids (hidden ids are proven in the portal db spec)
+      scanVisibilityWhere: jest.fn(async (_c: string, tenantId: string) =>
+        buyerVisibleProductWhere(noBuyerRestrictions(tenantId)),
+      ),
+    };
     stockAlertService = { isSubscribed: jest.fn().mockResolvedValue(false) };
 
     const module: TestingModule = await Test.createTestingModule({
       controllers: [BuyerController],
       providers: [
+        oversellReaderOffProvider,
         { provide: BuyerService, useValue: {} },
         { provide: BuyerCatalogService, useValue: catalogService },
         { provide: BuyerDashboardService, useValue: {} },
@@ -1619,7 +1649,10 @@ describe("buyer barcode scan — reachable and catalog-scoped (T-B200 / R12 / RE
     // normalizeScanCode instead of matching the raw string.
     const candidates = normalizeScanCode(SCANNED);
     expect(candidates).toContain("012345678905");
-    expect(scopedProductFindMany.mock.calls[0][0].where.OR).toEqual(
+    // M4a-1: the shared findScanMatches ANDs the caller's scope (the ONE buyer visibility builder) with the code OR.
+    const where = scopedProductFindMany.mock.calls[0][0].where;
+    expect(where.AND[0]).toEqual(buyerVisibleProductWhere(noBuyerRestrictions(BUYER_CTX.tenantId)));
+    expect(where.AND[1].OR).toEqual(
       expect.arrayContaining([
         { barcode: { in: candidates } },
         { sku: { in: candidates } },

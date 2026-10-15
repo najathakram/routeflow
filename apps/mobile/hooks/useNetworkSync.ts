@@ -1,14 +1,17 @@
+import { countLegacyNonAllowlisted } from "../lib/offline-allowlist";
 import { useEffect, useRef } from "react";
 import NetInfo from "@react-native-community/netinfo";
 import { onlineManager } from "@tanstack/react-query";
 import { useOfflineQueue, selectFailedActionCount, type QueuedAction } from "../store/offlineQueue";
 import { apiClient } from "../lib/api-client";
 import { showToast } from "../lib/toast";
-import { alertInfo } from "../lib/confirm";
+import { alertInfo, chooseAction } from "../lib/confirm";
+import { useAuthStore } from "../lib/auth-store";
 import {
   drainQueue,
   buildReplayRequestConfig,
   describeFailedDrain,
+  describeCreditsPendingDrain,
   nextDrainDelayMs,
   queriesToRefreshAfterDrain,
 } from "../lib/queue-drain";
@@ -17,6 +20,10 @@ import { isLiveOnline } from "../lib/live-online";
 import { resolveQueueIdentity, settleQueueOwnership } from "../lib/queue-identity";
 import { inlineReturnDrainSettleRecords } from "../lib/inline-return-submit-key";
 import { useInlineReturnSubmissionStore } from "../store/inlineReturnSubmissionStore";
+import { isStaffRole } from "../lib/default-unit-line";
+
+/** B923: the legacy-replay count is logged once per app session. */
+let legacyReplayLogged = false;
 
 // RF-170: matches /route-runs/{runId}/stops/{stopId}/complete
 const STOP_COMPLETE_RE = /\/route-runs\/([^/]+)\/stops\/[^/]+\/complete/;
@@ -106,8 +113,21 @@ export function useNetworkSync() {
       // Shared, pure classification (lib/queue-drain.ts) — the ONLY place that
       // decides delivered vs retry vs never-silent-failure, so this hook and
       // its jest specs can never drift out of sync.
+      // B923 ruling 5: entries persisted under the OLD "queue everything" default still replay. Count the
+      // ones the allow-list no longer admits, once per app session, so we can see when it reaches zero.
+      // Counts only (method + normalized path): never an id or a body.
+      if (!legacyReplayLogged && remaining.length > 0) {
+        legacyReplayLogged = true;
+        const legacy = countLegacyNonAllowlisted(remaining);
+        console.info(
+          `[offline-queue] legacy non-allow-listed entries replayed this session: ${legacy.total}`,
+          legacy.byEndpoint,
+        );
+      }
+
       const result = await drainQueue(remaining, {
-        request: (action) => apiClient.request(buildReplayRequestConfig(action)),
+        request: async (action) =>
+          (await apiClient.request(buildReplayRequestConfig(action)))?.data,
         // REG-B143 / REG-B111: a 4xx or a retry-exhausted entry must never just
         // vanish — persist it (badge count) as it is classified, instead of a
         // bare dequeue.
@@ -151,6 +171,28 @@ export function useNetworkSync() {
           attempted: remaining,
         }),
       );
+
+      // B1205: a delivered order whose credit notes are still unapplied - say so (fixed copy) and,
+      // for staff, offer to open the saved order. Drivers have no operator order route.
+      if (result.creditsPending.length > 0) {
+        const first = describeCreditsPendingDrain(result.creditsPending);
+        const staff = isStaffRole(useAuthStore.getState().user?.role);
+        if (staff) {
+          chooseAction(first.title, first.message, [
+            { label: "Dismiss", style: "cancel" },
+            {
+              label: "Open order",
+              onPress: () =>
+                // Lazy: expo-router is not loadable in the pure-logic jest lane.
+                void import("expo-router").then(({ router }) =>
+                  router.push(`/(operator)/orders/${first.orderId}` as any),
+                ),
+            },
+          ]);
+        } else {
+          alertInfo(first.title, first.message);
+        }
+      }
 
       // ONE alert for the whole drain, naming the work that was lost. Alerting
       // per record stacked a modal per stale entry on reconnect, each captioned

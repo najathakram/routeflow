@@ -51,7 +51,7 @@ describe("NewOrderScreen scan accept guard (REG-NEWORDER-GUARD)", () => {
     // Order matters: the REG-B201 nonce is consumed FIRST so a parked attempt
     // cannot re-park on a later settle of the same attempt.
     expect(screen).toMatch(
-      /shouldAutoAdd\(code\)\)\s*return;[\s\S]{0,400}?if\s*\(!scanGuardRef\.current\.offer\(code,\s*match,\s*kind\)\)\s*return;/,
+      /shouldAutoAdd\(code\)\)\s*return;[\s\S]{0,400}?if\s*\(!scanGuardRef\.current\.offer\(code,\s*match,\s*level\)\)\s*return;/,
     );
     // The nonce itself must survive — a guard is not a reason to "simplify" it
     // away, and neither may a time window come back in its place.
@@ -250,17 +250,21 @@ describe("NewOrderScreen catalog row prices/labels a unit-sold line correctly (S
  */
 describe("NewOrderScreen piece-scan-on-a-unit-line confirm (SA-085h LOW)", () => {
   it("gates a piece-kind accept on the line's unitLabel before calling addOne, via the confirm dialog", () => {
-    const fn = (screen.match(/const acceptScannedProduct = \([\s\S]*?\n  \};/) ?? [""])[0];
+    const fn = (screen.match(/const acceptScannedProduct\b[\s\S]*?\n  \};/) ?? [""])[0];
     expect(fn).toBeTruthy();
-    expect(fn).toMatch(/unitKind !== "piece" \|\| !label\) return finishAccept/);
+    // The gate is now the shared predicate (piece kind + the line's unitLabel + a real case size).
+    expect(fn).toMatch(/!needsUnitLabelConfirm\(level, product, label\)\) return finishAccept/);
+    expect(screen).toMatch(
+      /import \{ needsUnitLabelConfirm \} from "\.\.\/lib\/scan-unit-confirm";/,
+    );
     expect(fn).toMatch(/confirm\(/);
     // Declining does nothing: addOne only happens inside finishAccept, called from onYes.
     expect(fn).not.toMatch(/^\s*addOne\(/m);
   });
 
   it("a non-unit line's piece scan is unaffected — no confirm, straight to finishAccept", () => {
-    const fn = (screen.match(/const acceptScannedProduct = \([\s\S]*?\n  \};/) ?? [""])[0];
-    expect(fn).toMatch(/return finishAccept\(product, unitKind\);/);
+    const fn = (screen.match(/const acceptScannedProduct\b[\s\S]*?\n  \};/) ?? [""])[0];
+    expect(fn).toMatch(/return finishAccept\(product, level, ao\);/);
   });
 });
 

@@ -1,4 +1,5 @@
 import {
+  ArrayMaxSize,
   IsArray,
   IsBoolean,
   IsDecimal,
@@ -32,6 +33,21 @@ const toOptionalMsrp = ({ value }: { value: unknown }) =>
 
 export class UpdateProductDto {
   @IsOptional() @IsString() name?: string;
+  /**
+   * Reuse API (one-tx reactivation): with `isActive: true`, the ids of the ACTIVE products blocking the reactivation
+   * (a retired code's holder, the same-name product). The server re-derives that set under its locks and refuses unless
+   * these are EXACTLY it (else a 409 with the current `holders[]`; HOLDERS_CHANGED only when nothing blocks any more); it then deactivates each in the same transaction.
+   */
+  @IsOptional()
+  @IsArray()
+  @ArrayMaxSize(20)
+  @IsString({ each: true })
+  deactivateHolderIds?: string[];
+  /**
+   * Deactivating a FAMILY that still has ACTIVE variants answers a 409 FAMILY_HAS_ACTIVE_VARIANTS with their count.
+   * Resend with `confirmCascade: true` to deactivate the family and those variants in one transaction.
+   */
+  @IsOptional() @IsBoolean() confirmCascade?: boolean;
   @IsOptional() @IsString() sku?: string;
   @IsOptional() @IsString() barcode?: string;
   // "" clears it back to "same as case code" (emptyToNull ⇒ an explicit null write).
@@ -65,7 +81,8 @@ export class UpdateProductDto {
   @IsOptional() @Transform(toOptionalDecimalString) @IsDecimal() priceTier3?: string;
   @IsOptional() @Transform(toOptionalDecimalString) @IsDecimal() priceTier4?: string;
   @IsOptional() @Transform(toOptionalDecimalString) @IsDecimal() priceTier5?: string;
-  @IsOptional() @Transform(emptyToUndefined) @IsUUID() parentProductId?: string;
+  // M2: "" / null = UNLINK (a standalone product), never "unchanged": a form that clears the select must reach update() as null.
+  @IsOptional() @Transform(emptyToNull) @IsUUID() parentProductId?: string | null;
   @IsOptional() @IsString() variantName?: string;
   // Phase 4 (subcategories): emptyToNull so clearing the select removes the tag.
   @IsOptional() @Transform(emptyToNull) @IsUUID() trackedCategoryId?: string | null;

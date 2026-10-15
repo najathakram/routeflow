@@ -10,6 +10,9 @@ type Grouper = { groupBy: (args: unknown) => Promise<Array<{ productId: string |
 interface RecipeReferenceDb {
   recipe: { groupBy: (args: unknown) => Promise<unknown[]> };
   recipeComponent: { groupBy: (args: unknown) => Promise<unknown[]> };
+  /** #2717 M3 (SA-579 S3): frozen document component rows (RESTRICT FK on componentProductId). */
+  orderItemComponent?: { groupBy: (args: unknown) => Promise<unknown[]> };
+  invoiceItemComponent?: { groupBy: (args: unknown) => Promise<unknown[]> };
 }
 
 function idsOf(args: unknown): string[] {
@@ -35,7 +38,23 @@ function adapter(
 }
 
 export function recipeReferenceGroupers(db: RecipeReferenceDb): Grouper[] {
+  const component = (model: { groupBy: (args: unknown) => Promise<unknown[]> } | undefined) =>
+    model
+      ? [
+          adapter(
+            (ids) =>
+              model.groupBy({
+                by: ["componentProductId"],
+                where: { componentProductId: { in: ids } },
+              }),
+            "componentProductId",
+          ),
+        ]
+      : [];
   return [
+    // A document component row is a record: the product is soft-deleted, the row never deleted.
+    ...component(db.orderItemComponent),
+    ...component(db.invoiceItemComponent),
     adapter(
       (ids) => db.recipe.groupBy({ by: ["productId"], where: { productId: { in: ids } } }),
       "productId",

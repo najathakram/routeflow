@@ -6,15 +6,19 @@ import { AlertTriangle, Keyboard, Undo2, X, Zap, ZapOff } from "lucide-react";
 import { Button, cn } from "@routeflow/ui/web";
 import {
   cueForOutcome,
-  createScanEngine,
-  frameScanned,
+  continuousFrameScanned,
+  createContinuousScanState,
   manualScanned,
+  resetSteadyRead,
   scanSettled,
-  type ScanEngineState,
+  shouldDecode,
+  type ContinuousScanState,
+  type ScanMode,
   type ScanEngineStep,
   type ScanOutcome,
 } from "@routeflow/scanning";
 import { playScanCue, unlockScanCue } from "@/lib/scan-cue";
+import { readScanMode, writeScanMode } from "@/lib/scan-mode-store";
 import {
   dueScans,
   enqueue,
@@ -25,7 +29,7 @@ import {
   type PendingScan,
 } from "./pending-scan-queue";
 import type { ScanResolution } from "./useScanCodeHandler";
-import { useContinuousScanCamera } from "./useContinuousScanCamera";
+import { useContinuousScanCamera, type ScanFrame } from "./useContinuousScanCamera";
 import {
   distinctSkuCount,
   popHistory,
@@ -97,12 +101,49 @@ export function ScanOrderScreen<T extends SummaryLine & { tempId: string; priceT
 }: ScanOrderScreenProps<T>) {
   const live = open && !paused;
 
-  const engineRef = React.useRef<ScanEngineState>(createScanEngine());
+  const engineRef = React.useRef<ContinuousScanState>(createContinuousScanState());
+  // Hold to scan (owner ruling 2026-09-24): OPTIONAL per-device mode, default Continuous. In Hold mode the camera stays live
+  // but a decoded frame is ignored unless the round button is held (a ref too, so a frame never races a state update).
+  const [scanMode, setScanModeState] = React.useState<ScanMode>(() => readScanMode());
+  const [holding, setHolding] = React.useState(false);
+  const holdingRef = React.useRef(false);
+  const releaseHold = React.useCallback(() => {
+    const wasHolding = holdingRef.current;
+    holdingRef.current = false;
+    setHolding(false);
+    // a re-grab must earn a FRESH steady read, not inherit a stale streak from before the release. Only a REAL release
+    // resets it: a window blur in Continuous mode must not restart a streak (the default path stays unchanged).
+    if (wasHolding) engineRef.current = resetSteadyRead(engineRef.current);
+  }, []);
+  const startHold = React.useCallback(() => {
+    holdingRef.current = true;
+    setHolding(true);
+  }, []);
+  const setScanMode = (mode: ScanMode) => {
+    releaseHold();
+    setScanModeState(mode);
+    writeScanMode(mode);
+  };
+  const scanModeRef = React.useRef<ScanMode>(scanMode);
+  scanModeRef.current = scanMode;
+  // The hold ends whenever the operator can no longer be pressing it: window blur or the tab going to the background.
+  React.useEffect(() => {
+    const onBlur = () => releaseHold();
+    const onVisibility = () => {
+      if (document.visibilityState === "hidden") releaseHold();
+    };
+    window.addEventListener("blur", onBlur);
+    document.addEventListener("visibilitychange", onVisibility);
+    return () => {
+      window.removeEventListener("blur", onBlur);
+      document.removeEventListener("visibilitychange", onVisibility);
+    };
+  }, [releaseHold]);
   const [resolving, setResolving] = React.useState(false);
   const [history, setHistory] = React.useState<ScanHistoryEntry[]>([]);
   const [highlightId, setHighlightId] = React.useState<string | null>(null);
   const [feedback, setFeedback] = React.useState<{
-    kind: "added" | "error" | "queued";
+    kind: "added" | "error" | "queued" | "info";
     text: string;
   } | null>(null);
   // Scans waiting for signal (poor-signal queue). The ref is the source of truth (timers read it);
@@ -133,7 +174,7 @@ export function ScanOrderScreen<T extends SummaryLine & { tempId: string; priceT
   // A new session starts clean: fresh gate/buffer clocks, no stale undo stack.
   React.useEffect(() => {
     if (!open) return;
-    engineRef.current = createScanEngine();
+    engineRef.current = createContinuousScanState();
     setResolving(false);
     setHistory([]);
     setHighlightId(null);
@@ -157,11 +198,14 @@ export function ScanOrderScreen<T extends SummaryLine & { tempId: string; priceT
     [],
   );
 
-  const showFeedback = React.useCallback((kind: "added" | "error" | "queued", text: string) => {
-    setFeedback({ kind, text });
-    if (feedbackTimer.current) clearTimeout(feedbackTimer.current);
-    feedbackTimer.current = setTimeout(() => setFeedback(null), FEEDBACK_MS);
-  }, []);
+  const showFeedback = React.useCallback(
+    (kind: "added" | "error" | "queued" | "info", text: string) => {
+      setFeedback({ kind, text });
+      if (feedbackTimer.current) clearTimeout(feedbackTimer.current);
+      feedbackTimer.current = setTimeout(() => setFeedback(null), FEEDBACK_MS);
+    },
+    [],
+  );
 
   /**
    * Shows the outcome of one resolved code: the cue, the status pill and - for an accepted scan -
@@ -185,9 +229,13 @@ export function ScanOrderScreen<T extends SummaryLine & { tempId: string; priceT
         const text =
           res.kind === "archived"
             ? `${res.name} is archived`
-            : res.kind === "unknown"
-              ? `Not in the catalog: ${code}`
-              : "Couldn't look up that code";
+            : res.kind === "refused"
+              ? res.message
+              : res.kind === "unknown"
+                ? `Not in the catalog: ${code}`
+                : res.kind === "suggested"
+                  ? `No exact match for ${code} - search for ${String(res.product?.name ?? "it")}`
+                  : "Couldn't look up that code";
         outcome = { feedback: { kind: "error", text } };
       }
       // The cue comes straight from the shared decision (`cueForOutcome`) and BEFORE any
@@ -259,18 +307,36 @@ export function ScanOrderScreen<T extends SummaryLine & { tempId: string; priceT
   );
 
   const applyStep = React.useCallback(
-    (step: ScanEngineStep) => {
+    (step: ScanEngineStep & { next: ContinuousScanState }) => {
       engineRef.current = step.next;
       if (step.indicator) setResolving(step.indicator === "on");
+      // A counted scan the queue had no room for is never silent: the rejected cue + a line to rescan.
+      if (step.dropped) {
+        playScanCue("rejected");
+        showFeedback("error", "Too many scans waiting - that one wasn't counted, scan it again");
+      }
       if (step.startResolving) void resolveOne(step.startResolving);
     },
-    [resolveOne],
+    [resolveOne, showFeedback],
   );
 
   // A camera frame decoded `code`. The gate drops per-frame repeats; only a genuine new item (or
   // a deliberate re-present) reaches the resolver.
+  // Aim box (only a code centred in the DRAWN box counts) and steady-read (the same value held over several frames) run
+  // ahead of the gate, DEFAULT ON (owner ruling 2026-09-24): they cut accidental off-centre / passing-glance reads.
   const handleFrame = React.useCallback(
-    (code: string) => applyStep(frameScanned(engineRef.current, code, Date.now())),
+    (code: string, frame?: ScanFrame) => {
+      if (!shouldDecode(scanModeRef.current, holdingRef.current)) return;
+      applyStep(
+        continuousFrameScanned(engineRef.current, code, Date.now(), {
+          bounds: frame?.bounds,
+          aimBox: frame?.aimBox,
+          // Order builder only (owner ruling 2026-10-14): a repeat of the code just accepted counts after a
+          // 0.3 s absence, no steady hold. Every other scan screen stays on the 09-24 rule.
+          fastRepeat: true,
+        }),
+      );
+    },
     [applyStep],
   );
 
@@ -366,6 +432,12 @@ export function ScanOrderScreen<T extends SummaryLine & { tempId: string; priceT
   // would increment the very line being edited (the focused field jumping under the operator's
   // cursor) with its cue and feedback hidden. Scanning resumes when the sheet closes.
   const camera = useContinuousScanCamera({ enabled: live && !editorOpen, onDetect: handleFrame });
+
+  // A hold never outlives what can still deliver its release: closing / pausing the screen, a camera error (the button
+  // unmounts, so its pointerup never arrives) or leaving Hold mode all end it, so the next session starts released.
+  React.useEffect(() => {
+    if (!live || camera.error || scanMode !== "hold") releaseHold();
+  }, [live, camera.error, scanMode, releaseHold]);
 
   // Retry due scans every tick while the screen is live. Nothing retries under the price sheet (a
   // line landing under the operator's cursor) or under the create-product dialog, and nothing while
@@ -536,7 +608,7 @@ export function ScanOrderScreen<T extends SummaryLine & { tempId: string; priceT
 
       {/* Camera strip: wide and short (a barcode is held that way); object-cover crops the frame
           for display only — zxing still reads all of it. */}
-      <div className="relative h-36 shrink-0 bg-black sm:h-44">
+      <div className={cn("relative h-36 shrink-0 bg-black sm:h-44", scanMode === "hold" && "mb-7")}>
         {camera.error ? (
           <div className="flex h-full items-center justify-center px-4 text-center text-sm text-white/80">
             {camera.error}
@@ -554,11 +626,74 @@ export function ScanOrderScreen<T extends SummaryLine & { tempId: string; priceT
             <div className="pointer-events-none absolute inset-0 flex items-center justify-center">
               <div className="h-3/5 w-5/6 rounded border-2 border-brand-400 opacity-80" />
             </div>
+            {scanMode === "hold" && (
+              <button
+                type="button"
+                aria-label="Hold to scan"
+                aria-describedby="scan-hold-hint"
+                aria-pressed={holding}
+                onPointerDown={(e) => {
+                  e.currentTarget.setPointerCapture?.(e.pointerId);
+                  startHold();
+                }}
+                onPointerUp={releaseHold}
+                onPointerCancel={releaseHold}
+                onPointerLeave={releaseHold}
+                onKeyDown={(e) => {
+                  if ((e.key === " " || e.key === "Enter") && !e.repeat) {
+                    e.preventDefault();
+                    startHold();
+                  }
+                }}
+                onKeyUp={(e) => {
+                  if (e.key === " " || e.key === "Enter") releaseHold();
+                }}
+                // focus leaving mid keyboard-hold: the keyup would land elsewhere and the hold would stick
+                onBlur={releaseHold}
+                onContextMenu={(e) => e.preventDefault()}
+                className={cn(
+                  // straddles the strip's bottom edge (half inside the free 20% under the aim box, half in the margin below),
+                  // so the thumb never covers the barcode
+                  "absolute -bottom-7 left-1/2 z-10 h-14 w-14 -translate-x-1/2 touch-none select-none rounded-full border-4 border-white/90 shadow-lg [-webkit-touch-callout:none]",
+                  holding ? "scale-95 bg-brand-500" : "bg-brand-500/70",
+                )}
+              />
+            )}
           </>
         )}
       </div>
 
       <div className="shrink-0 border-b border-surface-border px-3 py-2">
+        {/* Scan mode: OPTIONAL per device (owner ruling 2026-09-24), default Continuous. */}
+        <div
+          className="mb-1 flex flex-wrap items-center gap-2 text-xs text-navy/60"
+          role="group"
+          aria-label="Scan mode"
+        >
+          <span>Scan mode</span>
+          {(["continuous", "hold"] as const).map((m) => (
+            <button
+              key={m}
+              type="button"
+              aria-label={m === "hold" ? "Hold to scan mode" : "Continuous mode"}
+              aria-pressed={scanMode === m}
+              onClick={() => setScanMode(m)}
+              className={cn(
+                "min-h-[44px] rounded-full border px-3 font-medium",
+                scanMode === m
+                  ? "border-brand-500 bg-brand-50 text-brand-600"
+                  : "border-surface-border text-navy/60 hover:text-navy",
+              )}
+            >
+              {m === "hold" ? "Hold to scan" : "Continuous"}
+            </button>
+          ))}
+          {scanMode === "hold" && (
+            <span id="scan-hold-hint" className="text-xs text-navy/70">
+              Hold the button while the barcode is in the box
+            </span>
+          )}
+        </div>
         <div className="flex min-h-[28px] flex-wrap items-center justify-between gap-2 text-sm">
           {feedback ? (
             <p
@@ -571,7 +706,9 @@ export function ScanOrderScreen<T extends SummaryLine & { tempId: string; priceT
                   ? "bg-emerald-50 text-emerald-800"
                   : feedback.kind === "queued"
                     ? "bg-amber-50 text-amber-800"
-                    : "bg-red-50 text-red-700",
+                    : feedback.kind === "info"
+                      ? "bg-slate-100 text-slate-700"
+                      : "bg-red-50 text-red-700",
               )}
             >
               {feedback.text}

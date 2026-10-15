@@ -36,3 +36,25 @@ describe("ListOrdersDto.limit", () => {
     expect(validateQuery({ page: "1" })).toEqual([]);
   });
 });
+
+// SA-711 nit: `hasTracking` mapped EVERY value that was not "true" to false, so ?hasTracking=1 (or
+// =yes, or an empty value) silently became "only orders with NO tracking". Only the two literals
+// filter; anything else means no filter at all.
+describe("ListOrdersDto.hasTracking", () => {
+  const parsed = (query: Record<string, string>) => plainToInstance(ListOrdersDto, query);
+
+  it('"true" and "false" are the only values that filter', () => {
+    expect(parsed({ hasTracking: "true" }).hasTracking).toBe(true);
+    expect(parsed({ hasTracking: "false" }).hasTracking).toBe(false);
+  });
+
+  it.each(["1", "0", "yes", "TRUE", ""])("%j is no filter (undefined), never false", (value) => {
+    const dto = parsed({ hasTracking: value });
+    expect(dto.hasTracking).toBeUndefined();
+    expect(validateQuery({ hasTracking: value })).toEqual([]);
+  });
+
+  it("an absent param is no filter", () => {
+    expect(parsed({}).hasTracking).toBeUndefined();
+  });
+});

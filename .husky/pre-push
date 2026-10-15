@@ -34,6 +34,17 @@
 # post-dep-bump run by narrowing globalDependencies; that is the false-green
 # mechanism #495 shipped and 6c8f1401 closed.
 #
+# FAST LOCAL CHECK, FULL IN CI (owner ruling 2026-10-10): a feature-branch push runs check-types + lint
+# for the affected workspaces and ONLY the Jest tests related to the diff (--changedSince=<merge-base
+# with origin/master>), typically a few minutes. The FULL suite still runs in CI on every train/PR and
+# CI is the authority; the accepted cost is that a broken unrelated test can surface at train time
+# instead of at push. The two always-run tripwires (@routeflow/pricing tests, api test:repo-truth) stay
+# full. FULL_VERIFY=1 runs everything locally (do that for money/security branches when convenient).
+# `node scripts/verify-mode.mjs` decides (not CI, not FULL_VERIFY=1, not master/detached, merge-base
+# computable); this hook exports RF_VERIFY_MODE=fast on its answer and the verified-tree marker below
+# carries the mode ("<tree>:fast"), so a fast pass never satisfies a FULL_VERIFY=1 push or vice versa.
+# campaign-check defers only its report-coverage enforcement under that explicit variable.
+#
 # Emergency escape hatch:  SKIP_VERIFY=1 SKIP_VERIFY_REASON="why" git push ...
 # It is loud, and it deliberately does NOT record a verification marker. It DOES record an
 # audit line (branch, head, docs-only?, reason) to .git/skip-verify.log via
@@ -54,6 +65,12 @@ fi
 # once here; nothing else in this hook reads stdin. Override (audited): PUSH_GUARD_OVERRIDE_REASON.
 refs="$(cat)"
 printf '%s\n' "$refs" | node scripts/push-guard.mjs || exit 1
+
+# #2865: the size ratchet (apps/api size-ratchet.spec.ts, CI's test:repo-truth lane) runs on EVERY
+# push, ahead of the SKIP_VERIFY hatch and the verified-tree fast path, so skipping verify can no
+# longer carry an over-cap file into a public CI window. Only that one spec, a few seconds. There is
+# no override: a red here means extract the new code into its own module, never raise the baseline.
+node scripts/size-ratchet-gate.mjs || exit 1
 
 if [ "$SKIP_VERIFY" = "1" ]; then
   upstream="$(git rev-parse --abbrev-ref --symbolic-full-name @{u} 2>/dev/null || echo origin/master)"
@@ -85,9 +102,17 @@ fi
 # is precisely the residual risk CI's single Linux job exists to cover.
 marker="$(git rev-parse --git-dir)/rf-verified"
 tree="$(git rev-parse HEAD^{tree} 2>/dev/null || echo none)"
-# A scoped pass proves less than a full one — keep the two markers distinct so a FULL_VERIFY=1
-# landing run never skips on the strength of an affected-scope pass.
-if [ "$FULL_VERIFY" != "1" ] && [ "$tree" != "none" ]; then tree_key="$tree:affected"; else tree_key="$tree"; fi
+# Fast local check (owner 2026-10-10): decide the mode once. RF_VERIFY_MODE=fast is the single explicit
+# switch the verify chain reads; any other answer (or a failed call) is FULL-plan behaviour and unsets it,
+# so a stray inherited value can never narrow a FULL_VERIFY=1 / CI-shaped run.
+verify_mode="$(node scripts/verify-mode.mjs --branch "$branch" 2>/dev/null)" || verify_mode=full
+if [ "$verify_mode" = "fast" ]; then export RF_VERIFY_MODE=fast; else unset RF_VERIFY_MODE; fi
+# A scoped pass proves less than a full one — keep the markers distinct so a FULL_VERIFY=1
+# landing run never skips on the strength of an affected-scope pass, and a fast (related-tests-only)
+# pass never satisfies a later FULL_VERIFY=1 push (nor the reverse): the key carries the mode.
+if [ "$verify_mode" = "fast" ] && [ "$tree" != "none" ]; then
+  tree_key="$tree:fast"
+elif [ "$FULL_VERIFY" != "1" ] && [ "$tree" != "none" ]; then tree_key="$tree:affected"; else tree_key="$tree"; fi
 dirty="$(git status --porcelain 2>/dev/null | head -1)"
 
 if [ -z "$dirty" ] && [ -f "$marker" ] && [ "$(cat "$marker" 2>/dev/null)" = "$tree_key" ]; then
@@ -97,9 +122,10 @@ fi
 
 # Affected-scope verify (owner ruling 2026-09-19) is the DEFAULT on a feature branch: only the
 # workspaces the diff reaches (plus dependents and the always-run pricing/repo-truth tripwires) are
-# type-checked, linted and tested — scripts/verify-turbo.mjs prints "AFFECTED SCOPE: ...".
+# type-checked, linted and tested — scripts/verify-turbo.mjs prints "AFFECTED SCOPE: ...". Since
+# 2026-10-10 the tests are further narrowed to the ones RELATED to the diff (FAST VERIFY, above).
 # FULL_VERIFY=1 (the coordinator's landing run) is the ONLY override and runs the whole chain, as
-# does CI. No environment variable narrows the run.
+# does CI. No other environment variable narrows the run (RF_VERIFY_MODE is set here, from the policy).
 npm run verify || exit 1
 
 if [ -z "$dirty" ] && [ "$tree" != "none" ]; then

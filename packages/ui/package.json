@@ -14,7 +14,8 @@
     "./ledger": "./src/tokens/ledger.ts",
     "./accent": "./src/tokens/accent.ts",
     "./native": "./src/native/index.ts",
-    "./shell-bridge": "./src/shell-bridge.ts"
+    "./shell-bridge": "./src/shell-bridge.ts",
+    "./shell-handoff": "./src/shell-handoff.ts"
   },
   "scripts": {
     "lint": "eslint . --max-warnings 0",

@@ -75,17 +75,17 @@ describe("EstimatesService.create — unvalidated discount/tax (B451 gap 4)", ()
     expect(prisma.estimate.create).not.toHaveBeenCalled();
   });
 
-  it("FIXED: a negative taxAmount (an internal caller bypassing the DTO) is now caught by the shared guard, not persisted", async () => {
+  it("FIXED (H5): a taxAmount sent by an internal caller bypassing the DTO is IGNORED - the tax is computed server-side, never taken from the request", async () => {
     prisma.customer.findUnique.mockResolvedValue({ id: "cust-1", pricingTier: 1 });
     prisma.estimate.create.mockImplementation((args: any) =>
       Promise.resolve({ id: "est-1", ...args.data }),
     );
 
-    await expect(
-      service.create({ customerId: "cust-1", items: [], taxAmount: -1000 } as any),
-    ).rejects.toMatchObject({ status: 400, response: { code: "MONEY_INVARIANT" } });
+    await service.create({ customerId: "cust-1", items: [], taxAmount: -1000 } as any);
 
-    expect(prisma.estimate.create).not.toHaveBeenCalled();
+    const data = prisma.estimate.create.mock.calls[0][0].data;
+    expect(data.taxAmount).toBe(0); // computed from the (empty) lines, not the -1000 sent
+    expect(data.total).toBe(0);
   });
 
   it("REFUTED (mass assignment): tenantId and status are server-derived, never read from dto", async () => {

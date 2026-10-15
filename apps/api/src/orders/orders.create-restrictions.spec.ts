@@ -23,6 +23,7 @@ jest.mock("../notifications/notifications.service", () => ({
   })),
 }));
 
+import { oversellReaderOffProvider } from "./testing/policy-reader-provider";
 import { Test, TestingModule } from "@nestjs/testing";
 import { ConflictException, ForbiddenException } from "@nestjs/common";
 import { getQueueToken } from "@nestjs/bull";
@@ -51,6 +52,7 @@ const customerPayload = {
   sub: "user-cust",
   username: "customer1",
   role: "CUSTOMER" as const,
+  tenantId: "test-tenant",
   status: "ACTIVE" as const,
   forcePasswordChange: false,
 };
@@ -72,6 +74,7 @@ describe("OrdersService.create — selling restrictions call site (lane R 2a-5)"
 
     const module: TestingModule = await Test.createTestingModule({
       providers: [
+        oversellReaderOffProvider,
         OrdersService,
         {
           provide: TenantContextService,
@@ -104,6 +107,8 @@ describe("OrdersService.create — selling restrictions call site (lane R 2a-5)"
             findOpenOrderDraft: jest.fn().mockResolvedValue(null),
             reconcileOrderDraftInvoice: jest.fn().mockResolvedValue({ id: "inv-1" }),
             resyncOrderInvoicesForEdit: jest.fn().mockResolvedValue([{ id: "inv-1" }]),
+            followPartialPrices: jest.fn().mockResolvedValue({ issuedPartialsUnchanged: [] }),
+            projectEditedInvoiceTotals: jest.fn().mockResolvedValue([]),
             revertLinkedInvoicesForOrderEdit: jest.fn().mockResolvedValue([]),
             voidInvoice: jest.fn().mockResolvedValue({ id: "inv-1", status: "VOID" }),
             voidInvoiceInTx: jest.fn().mockResolvedValue({ id: "inv-1", status: "VOID" }),
@@ -201,6 +206,10 @@ describe("OrdersService.create — selling restrictions call site (lane R 2a-5)"
     trackedCategoryId: null,
     trackedSubcategoryId: null,
     isActive: true,
+    // a real Product row always carries these; the buyer gate (WS6) judges them, never defaults
+    kind: "STANDARD",
+    portalVisible: true,
+    parent: null,
   };
   const NEW_ORDER = {
     id: "ord-new",
@@ -342,8 +351,15 @@ describe("OrdersService.create — selling restrictions call site (lane R 2a-5)"
   });
 
   it("a DRAFT is not a sale yet: never checked here (its promotion is the enforcement point)", async () => {
-    await service.create(input({ status: "DRAFT" }), {
-      ...customerPayload,
+    // F1(ii): a buyer can no longer start a draft at all; a staff draft is the case that skips the check.
+    prisma.customer.findUnique.mockResolvedValue({
+      id: "cust-1",
+      pricingTier: 1,
+      user: { status: "ACTIVE" },
+      deletedAt: null,
+    });
+    await service.create(input({ status: "DRAFT", customerId: "cust-1" }), {
+      ...operatorPayload,
       tenantId: "t-1",
     } as never);
     expect(restrictions.assertLinesSellable).not.toHaveBeenCalled();
@@ -353,7 +369,7 @@ describe("OrdersService.create — selling restrictions call site (lane R 2a-5)"
   // cannot name one is refused rather than assumed OFF (fail closed; the price of a check that can
   // never be skipped by omitting the tenant). Staff and buyer alike.
   it.each([
-    ["a buyer", customerPayload],
+    ["a buyer", { ...customerPayload, tenantId: null }],
     ["a staff principal", operatorPayload],
   ])(
     "%s with no tenant on the caller and none ambient: refused (403) rather than skipped",

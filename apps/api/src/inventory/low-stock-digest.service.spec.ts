@@ -145,18 +145,50 @@ describe("LowStockDigestService (N4)", () => {
       expect(email.sendLowStockDigest).not.toHaveBeenCalled();
     });
 
-    it("REG-N4: a tenant with no TenantConfig row falls back to America/New_York and 'RouteFlow' business name, never crashes", async () => {
+    it("REG-N4 + SA-738: a tenant with no TenantConfig row falls back to UTC and 'RouteFlow' business name, never crashes", async () => {
       const { svc, email } = make({
         tenants: [{ id: "t1", config: null }],
         products: [product({ currentStock: 1, reorderPoint: 10 })],
         admins: [makeAdmin("u1", "admin@acme.example")],
       });
 
-      await svc.sendLowStockDigest(AT_SEVEN_LOCAL);
+      // 07:30 UTC is the 07:00 hour on the UTC fallback clock (every other server path is on UTC).
+      await svc.sendLowStockDigest(new Date("2026-09-16T07:30:00.000Z"));
 
       expect(email.sendLowStockDigest).toHaveBeenCalledWith(
         expect.objectContaining({ businessName: "RouteFlow" }),
       );
+    });
+
+    it("SA-738: a no-row tenant is NOT on New York time (07:30 New York is not its 07:00)", async () => {
+      const { svc, email } = make({
+        tenants: [{ id: "t1", config: null }],
+        products: [product({ currentStock: 1, reorderPoint: 10 })],
+        admins: [makeAdmin("u1", "admin@acme.example")],
+      });
+
+      await svc.sendLowStockDigest(AT_SEVEN_LOCAL); // 11:30Z = 07:30 America/New_York
+
+      expect(email.sendLowStockDigest).not.toHaveBeenCalled();
+    });
+
+    it("SA-738: an invalid stored zone is on UTC too (07:30 UTC fires, 07:30 New York does not)", async () => {
+      const bad = () => ({ tenants: [tenant({ timezone: "Mars/Phobos" })] });
+      const fires = make({
+        ...bad(),
+        products: [product({ currentStock: 1, reorderPoint: 10 })],
+        admins: [makeAdmin("u1", "admin@acme.example")],
+      });
+      await fires.svc.sendLowStockDigest(new Date("2026-09-16T07:30:00.000Z"));
+      expect(fires.email.sendLowStockDigest).toHaveBeenCalledTimes(1);
+
+      const quiet = make({
+        ...bad(),
+        products: [product({ currentStock: 1, reorderPoint: 10 })],
+        admins: [makeAdmin("u1", "admin@acme.example")],
+      });
+      await quiet.svc.sendLowStockDigest(AT_SEVEN_LOCAL);
+      expect(quiet.email.sendLowStockDigest).not.toHaveBeenCalled();
     });
   });
 
