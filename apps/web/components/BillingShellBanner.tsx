@@ -5,10 +5,13 @@ import { usePathname } from "next/navigation";
 import type { SubscriptionView } from "@routeflow/types";
 import { ReadOnlyBanner } from "@/components/ReadOnlyBanner";
 import { SubscriptionStrip } from "@/components/SubscriptionStrip";
+import { PaymentDueBanner } from "@/components/PaymentDueBanner";
+import { usePaymentDue } from "@/lib/api/payment-due";
 import { usePaidTransition } from "@/lib/billing-paid-notice";
 import {
   bannerRoleOf,
   ownsBillingBanner,
+  paymentDueSlot,
   subscriptionBannerState,
 } from "@/lib/subscription-banner-state";
 
@@ -67,13 +70,37 @@ export function BillingShellBanner({
   usePaidTransition(view, scope);
   const onBillingPage = usePathname()?.startsWith("/settings/billing") ?? false;
   const role = bannerRoleOf(userRole);
+  // Row 542: the server's "payment due" read; staff only (the endpoint's own role gate).
+  const { data: paymentDue } = usePaymentDue({ enabled: role !== null });
   const state =
     role && (ownsBillingBanner(view) || view.status === "ACTIVE")
       ? subscriptionBannerState(view, role)
       : null;
-  const showing = !!state?.inShell;
+  const showing =
+    !!state?.inShell || (!!state && paymentDueSlot(state, paymentDue) === "payment-due");
   React.useEffect(() => rememberStrip(scope, showing), [scope, showing]);
   if (role && state) {
+    const slot = paymentDueSlot(state, paymentDue);
+    if (slot === "payment-due") {
+      return (
+        <PaymentDueBanner
+          mode="payment-due"
+          due={paymentDue}
+          role={role}
+          hideBillingLink={onBillingPage}
+        />
+      );
+    }
+    if (slot === "failed-renewal") {
+      return (
+        <PaymentDueBanner
+          mode="failed-renewal"
+          role={role}
+          dismiss={state.dismiss}
+          hideBillingLink={onBillingPage}
+        />
+      );
+    }
     return state.inShell ? (
       <SubscriptionStrip view={view} role={role} state={state} hideBillingLink={onBillingPage} />
     ) : null;

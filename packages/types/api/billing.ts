@@ -169,3 +169,24 @@ export interface EnableAddonResult {
   billing: AddonBillingMode;
   subscription: SubscriptionView;
 }
+
+/**
+ * `GET /billing/payment-due` (OPERATOR and up): the dashboard's "payment due" banner read. The amount, the period
+ * and the eligibility are decided by the API's catch-up planner; the web only prints them. `amountCents` is whole
+ * cents (print it through `fromCents` + the money formatter, never `/ 100` by hand).
+ */
+export interface PaymentDueView {
+  due: boolean;
+  /** The period started before today (the tenant's zone): the banner says "past due". */
+  pastDue: boolean;
+  amountCents: number;
+  /** "October 2026"; null when nothing is due. */
+  periodLabel: string | null;
+  /** ISO start of the period the payment covers; null when nothing is due. */
+  periodStart: string | null;
+}
+
+/** `POST /billing/payment-due/pay` (TENANT_ADMIN): the Stripe Checkout to send the admin to. */
+export interface PaymentDuePayResult {
+  checkoutUrl: string;
+}
