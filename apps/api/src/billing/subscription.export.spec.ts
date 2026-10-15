@@ -163,6 +163,23 @@ describe("SubscriptionService.getExport (B1187)", () => {
     ]);
   });
 
+  it("row 350: a comp add-on exports comp:true with a null monthly (never a price)", async () => {
+    const { svc } = build([], []);
+    jest.spyOn(svc, "getSubscription").mockResolvedValue({
+      planKey: "GROWTH",
+      flags: [],
+      addons: [
+        { sku: "A", name: "Addon", quantity: 1, comp: true, monthly: null, isComp: true },
+        { sku: "B", name: "Paid", quantity: 2, comp: false, monthly: 10 },
+      ],
+    } as never);
+    const out = await svc.getExport(TENANT);
+    expect(out.subscription.addons).toEqual([
+      { sku: "A", name: "Addon", quantity: 1, comp: true, monthly: null },
+      { sku: "B", name: "Paid", quantity: 2, comp: false, monthly: 10 },
+    ]);
+  });
+
   it("absent addons/flags fail closed to [] (absent => [])", async () => {
     const { svc } = build([], []);
     jest.spyOn(svc, "getSubscription").mockResolvedValue({
@@ -189,7 +206,14 @@ describe("SubscriptionService.getExport (B1187)", () => {
     await svc.getExport(TENANT);
     expect(prisma.billingEvent.findMany.mock.calls[0][0].where).toEqual({
       tenantId: TENANT,
-      type: { notIn: ["tenant.class_changed", "reconciliation.snapshot_backfilled"] },
+      type: {
+        notIn: [
+          "tenant.class_changed",
+          "reconciliation.snapshot_backfilled",
+          "coupon.unbilled",
+          "coupon.billed",
+        ],
+      },
     });
     expect(prisma.rfInvoice.findMany.mock.calls[0][0].where).toEqual({ tenantId: TENANT });
   });

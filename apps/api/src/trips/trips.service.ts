@@ -19,6 +19,7 @@ import {
 import { PrismaService } from "../prisma/prisma.service";
 import { SystemConfigService } from "../system-config/system-config.service";
 import { geocodeAddress } from "../common/geocode.util";
+import { DISPATCH_PATH_WHERE, isPickupFulfilment } from "../orders/dispatch-path-where";
 // Local mirror of packages/types/trip-grouping.ts — @routeflow/types must NEVER
 // be imported at runtime from the API (raw-TS entry point, see that file's header).
 import { groupOrdersForTrip } from "../common/trip-grouping";
@@ -109,7 +110,7 @@ function checkEligibility(
       detail: "Shipped by supplier/carrier, not routed",
     };
   // SA-650/SA-655: a counter-sale order is handed over at the till; it never rides a trip.
-  if (order.fulfillPath === FulfillPath.PICKUP)
+  if (isPickupFulfilment(order))
     return {
       ok: false,
       reason: "PICKUP_FULFILLMENT",
@@ -189,7 +190,7 @@ export class TripsService {
     const where: Prisma.OrderWhereInput = {
       tenantId,
       status: { in: TRIP_ELIGIBLE_STATUSES },
-      fulfillPath: { notIn: [FulfillPath.SHIP, FulfillPath.PICKUP] },
+      fulfillPath: DISPATCH_PATH_WHERE.trips,
       // checkEligibility rejects EVERY row with a non-null routeRunStopId
       // (ON_ACTIVE_RUN or PREVIOUSLY_DISPATCHED, stale link included), so
       // admitting stale-run rows here just to filter them back out in-memory

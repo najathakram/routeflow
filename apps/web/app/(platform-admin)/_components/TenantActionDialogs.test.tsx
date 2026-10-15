@@ -238,6 +238,13 @@ describe("SuspendDialog", () => {
     expect(screen.getByRole("button", { name: "Cancel" })).toHaveFocus();
   });
 
+  it("tells the admin a suspended tenant is reinstated automatically when it pays", () => {
+    setup();
+    expect(
+      screen.getByText("Suspended tenants are reinstated automatically when they pay."),
+    ).toBeInTheDocument();
+  });
+
   it("Cancel and Escape never confirm; Suspend confirms once", () => {
     const { onClose, onConfirm } = setup();
     fireEvent.click(screen.getByRole("button", { name: "Cancel" }));

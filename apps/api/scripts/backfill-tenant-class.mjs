@@ -122,7 +122,7 @@ async function main() {
       (
         await prisma.tenantSubscription.findMany({
           where: { tenantId: { in: changes.map((c) => c.id) } },
-          select: { tenantId: true, planKey: true, stripeSubId: true },
+          select: { tenantId: true, planKey: true, stripeSubId: true, couponFull: true },
         })
       ).map((x) => [x.tenantId, x]),
     );

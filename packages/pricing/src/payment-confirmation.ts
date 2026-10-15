@@ -307,3 +307,12 @@ export function remainingCapacity(
 ): number {
   return roundMoney(Number(total) - sumNotVoid(payments));
 }
+
+/**
+ * SA-763r P-3 (B1098): half a cent. Confirmed payments beyond an invoice's total by MORE than this are an
+ * OVERPAYMENT: `statusFromPayments` holds such an invoice out of PAID, the `overpaidBy` read and the audit
+ * rows report the excess, and the order-edit overpay judge refuses an edit that would create one. ONE
+ * named constant for all of them (a raw band literal in apps/api/src/orders is pinned out by
+ * no-override-band-tokens.spec.ts), so the status rule and the judge can never disagree by a rounding cent.
+ */
+export const OVERPAID_EPSILON = 0.005;

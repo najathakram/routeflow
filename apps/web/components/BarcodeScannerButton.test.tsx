@@ -1,5 +1,5 @@
 import * as React from "react";
-import { render, screen, fireEvent, waitFor, act } from "@testing-library/react";
+import { render, screen, fireEvent, createEvent, waitFor, act } from "@testing-library/react";
 import { BarcodeScannerButton } from "./BarcodeScannerButton";
 
 // The webcam path: @zxing/browser is mocked so a decode can be fired on demand, and
@@ -85,6 +85,18 @@ describe("BarcodeScannerButton", () => {
       await waitFor(() => expect(decodeFromStream).toHaveBeenCalled());
       return utils;
     };
+
+    it("portals the camera overlay to document.body, outside any transformed dialog", async () => {
+      await openScanner(
+        <div role="dialog">
+          <BarcodeScannerButton onScan={jest.fn()} title="Scan barcode" />
+        </div>,
+      );
+      const overlay = screen.getByText("Align barcode within the box").closest(".fixed");
+      expect(overlay).not.toBeNull();
+      expect(overlay!.parentElement).toBe(document.body);
+      expect(screen.getByRole("dialog").contains(overlay)).toBe(false);
+    });
 
     it("acquires the rear camera via getUserMedia and hands that stream to zxing", async () => {
       await openScanner(<BarcodeScannerButton onScan={jest.fn()} title="Scan barcode" />);
@@ -243,7 +255,11 @@ describe("USB / physical scanner survives a parent that re-renders on every keys
   /** A parent that behaves like every real caller: a controlled input whose onChange re-renders
    *  it, so `onScan` (and every other inline prop) is a fresh closure on each keystroke — exactly
    *  what CreateOrderModal, invoices/new, vendor-bills etc. all do. */
-  function ParentWithControlledInput({ onScan }: { onScan: (code: string) => void }) {
+  function ParentWithControlledInput({
+    onScan,
+  }: {
+    onScan: (code: string, source?: "field") => void;
+  }) {
     const inputRef = React.useRef<HTMLInputElement>(null);
     const [value, setValue] = React.useState("");
     return (
@@ -260,49 +276,72 @@ describe("USB / physical scanner survives a parent that re-renders on every keys
             bug — the parent must actually recreate the closure on each of its own re-renders. */}
         <BarcodeScannerButton
           inputRef={inputRef}
-          onScan={(code) => onScan(code)}
+          onScan={(code, source) => (source ? onScan(code, source) : onScan(code))}
           title="Scan barcode"
         />
       </>
     );
   }
 
-  let dateNowSpy: jest.SpyInstance<number, []>;
-  beforeEach(() => {
-    let t = 1_700_000_000_000;
-    dateNowSpy = jest.spyOn(Date, "now").mockImplementation(() => (t += 10));
-  });
-  afterEach(() => {
-    dateNowSpy.mockRestore();
-  });
+  /** A keydown stamped with the browser's own event time (what the detector now reads), not the handler's clock. */
+  const keyAt = (input: HTMLElement, key: string, timeStamp: number) => {
+    const ev = createEvent.keyDown(input, { key });
+    Object.defineProperty(ev, "timeStamp", { value: timeStamp });
+    fireEvent(input, ev);
+  };
+  const typeBurst = (input: HTMLElement, code: string, startTs: number, stepMs: number) => {
+    let ts = startTs;
+    for (const ch of code) {
+      keyAt(input, ch, (ts += stepMs));
+      fireEvent.change(input, { target: { value: (input as HTMLInputElement).value + ch } });
+    }
+    return ts;
+  };
 
   it("delivers a 6+ char wedge sequence to onScan exactly once, even though every keystroke re-renders the parent", () => {
     const onScan = jest.fn();
     render(<ParentWithControlledInput onScan={onScan} />);
     const input = screen.getByLabelText("search");
-
     const code = "100200300";
-    for (const ch of code) {
-      fireEvent.keyDown(input, { key: ch });
-      // A real controlled input updates its value (and re-renders the parent) on every
-      // keystroke — this is what tears the pre-fix listener down mid-sequence.
-      fireEvent.change(input, { target: { value: (input as HTMLInputElement).value + ch } });
-    }
-    fireEvent.keyDown(input, { key: "Enter" });
-
+    const ts = typeBurst(input, code, 1000, 10);
+    keyAt(input, "Enter", ts + 10);
     expect(onScan).toHaveBeenCalledTimes(1);
-    expect(onScan).toHaveBeenCalledWith(code);
+    expect(onScan).toHaveBeenCalledWith(code, "field");
+  });
+
+  it("a long task that delays HANDLING of a fast burst does not cut the scan short (event time, not Date.now())", () => {
+    const onScan = jest.fn();
+    let wall = 1_700_000_000_000;
+    const spy = jest.spyOn(Date, "now").mockImplementation(() => (wall += 400)); // handler clock: 400 ms per key
+    try {
+      render(<ParentWithControlledInput onScan={onScan} />);
+      const input = screen.getByLabelText("search");
+      const ts = typeBurst(input, "100200300", 1000, 10); // the scanner itself typed 10 ms apart
+      keyAt(input, "Enter", ts + 10);
+      expect(onScan).toHaveBeenCalledTimes(1);
+      expect(onScan).toHaveBeenCalledWith("100200300", "field");
+    } finally {
+      spy.mockRestore();
+    }
+  });
+
+  it("two scans back to back each deliver their own full code (the sequence is emptied on take)", () => {
+    const onScan = jest.fn();
+    render(<ParentWithControlledInput onScan={onScan} />);
+    const input = screen.getByLabelText("search");
+    let ts = typeBurst(input, "111222333", 1000, 10);
+    keyAt(input, "Enter", (ts += 10));
+    ts = typeBurst(input, "111222333", ts + 30, 10);
+    keyAt(input, "Enter", ts + 10);
+    expect(onScan.mock.calls.map((c) => c[0])).toEqual(["111222333", "111222333"]);
   });
 
   it("a short (<6 char) sequence is still ignored — the fix must not loosen the length gate", () => {
     const onScan = jest.fn();
     render(<ParentWithControlledInput onScan={onScan} />);
     const input = screen.getByLabelText("search");
-    for (const ch of "12345") {
-      fireEvent.keyDown(input, { key: ch });
-      fireEvent.change(input, { target: { value: (input as HTMLInputElement).value + ch } });
-    }
-    fireEvent.keyDown(input, { key: "Enter" });
+    const ts = typeBurst(input, "12345", 1000, 10);
+    keyAt(input, "Enter", ts + 10);
     expect(onScan).not.toHaveBeenCalled();
   });
 
@@ -310,14 +349,8 @@ describe("USB / physical scanner survives a parent that re-renders on every keys
     const onScan = jest.fn();
     render(<ParentWithControlledInput onScan={onScan} />);
     const input = screen.getByLabelText("search");
-    dateNowSpy.mockRestore();
-    let t = 1_700_000_000_000;
-    dateNowSpy = jest.spyOn(Date, "now").mockImplementation(() => (t += 250)); // > the 200ms gap reset
-    for (const ch of "abcdef") {
-      fireEvent.keyDown(input, { key: ch });
-      fireEvent.change(input, { target: { value: (input as HTMLInputElement).value + ch } });
-    }
-    fireEvent.keyDown(input, { key: "Enter" });
+    const ts = typeBurst(input, "abcdef", 1000, 250); // > the 200ms gap reset
+    keyAt(input, "Enter", ts + 250);
     expect(onScan).not.toHaveBeenCalled();
   });
 });

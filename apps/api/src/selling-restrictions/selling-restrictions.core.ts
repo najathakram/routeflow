@@ -19,6 +19,7 @@ import type {
   RestrictionAddressPrecedence,
   RestrictionChannel,
   RestrictionsEvaluation,
+  RestrictionsPolicy,
 } from "@routeflow/types";
 import { normalizeUsState } from "../common/us-states";
 
@@ -34,6 +35,56 @@ export interface RestrictionRuleFacts {
   effectiveTo: Date | null;
   liftedAt: Date | null;
   reason: string;
+  /**
+   * Row 509: what the rule covers, from its ACTIVE `SellingRestrictionTarget` rows at the evaluation time. `null` /
+   * absent = the rule has NO target rows at all (written before the targets table, or by old code during a deploy):
+   * it is matched by its legacy `categoryId` / `productId` (SA condition 1, fail closed). A rule WITH target rows is
+   * matched by them only, so an empty set (every target removed) matches nothing.
+   */
+  targets?: RuleTargetSets | null;
+}
+
+/** Row 509: a rule's active targets, split by kind (product targets bind lineage, label targets effective labels). */
+export interface RuleTargetSets {
+  productIds: ReadonlySet<string>;
+  categoryIds: ReadonlySet<string>;
+}
+
+/** A `SellingRestrictionTarget` row, reduced to what the decision reads. */
+export interface RuleTargetRow {
+  productId: string | null;
+  categoryId: string | null;
+  addedAt: Date;
+  removedAt: Date | null;
+}
+
+/** A target row is active at `at`: added on/before it and not yet removed (the same half-open window as a rule). */
+export function targetIsActive(t: Pick<RuleTargetRow, "addedAt" | "removedAt">, at: Date): boolean {
+  return (
+    t.addedAt.getTime() <= at.getTime() &&
+    (t.removedAt === null || t.removedAt.getTime() > at.getTime())
+  );
+}
+
+/**
+ * Row 509: the target sets a rule is matched by at `at`, or `null` when the rule has no target rows at all
+ * (`totalRows === 0`: the legacy-column fallback, SA condition 1). `rows` may be a filtered subset of the rule's
+ * rows (a loader that only fetched the ones touching its products); `totalRows` must be the rule's full count.
+ */
+export function ruleTargetSets(
+  rows: readonly RuleTargetRow[],
+  totalRows: number,
+  at: Date,
+): RuleTargetSets | null {
+  if (totalRows === 0) return null;
+  const productIds = new Set<string>();
+  const categoryIds = new Set<string>();
+  for (const t of rows) {
+    if (!targetIsActive(t, at)) continue;
+    if (t.productId) productIds.add(t.productId);
+    else if (t.categoryId) categoryIds.add(t.categoryId);
+  }
+  return { productIds, categoryIds };
 }
 
 export interface CustomerAddressFacts {
@@ -105,6 +156,20 @@ export function restrictionChannelForPrincipal(
 ): RestrictionChannel {
   if (!principal || principal.type === "BUYER") return "BUYER_PORTAL";
   return principal.role != null && STAFF_ROLES.has(principal.role) ? "STAFF" : "BUYER_PORTAL";
+}
+
+/**
+ * The ONE gate of the tenant switch (`selling_restrictions.enabled`): it adds STAFF enforcement only. The buyer-portal
+ * channel ALWAYS applies its rules, so a portal limit works the moment the admin sets it; staff-channel blocking touches
+ * orders, invoices, recurring jobs and imports, so it stays opt-in. Any channel that is not exactly "STAFF" is judged as
+ * the portal (fail closed, like `restrictionChannelForPrincipal`). Every short-circuit on the switch calls this, never
+ * `policy.enabled` directly (`portal-limits-pins.spec.ts`).
+ */
+export function restrictionsApply(
+  policy: Pick<RestrictionsPolicy, "enabled">,
+  channel: RestrictionChannel,
+): boolean {
+  return (channel as string) !== "STAFF" || policy.enabled;
 }
 
 /** The OFF outcome: a first-class result, produced without reading anything else. */
@@ -188,9 +253,19 @@ export function ruleBindsChannel(
   return (rule.surface as string) !== "BUYER_PORTAL" || channel === "BUYER_PORTAL";
 }
 
-/** Rule matches a product directly (`productId`) or through any effective label (`categoryId`). */
+/**
+ * Rule matches a product directly (a product target, through lineage: a parent's rule binds its variants) or
+ * through any effective label (a label target). Row 509: a rule with target rows is matched by its ACTIVE targets
+ * only; a rule with none falls back to its legacy `productId` / `categoryId` (SA condition 1).
+ */
 export function ruleMatchesProduct(rule: RestrictionRuleFacts, product: ProductFacts): boolean {
-  if (rule.productId) return (product.lineageIds ?? new Set([product.id])).has(rule.productId);
+  const lineage = product.lineageIds ?? new Set([product.id]);
+  if (rule.targets) {
+    for (const id of lineage) if (rule.targets.productIds.has(id)) return true;
+    for (const c of rule.targets.categoryIds) if (product.effectiveCategoryIds.has(c)) return true;
+    return false;
+  }
+  if (rule.productId) return lineage.has(rule.productId);
   if (rule.categoryId) return product.effectiveCategoryIds.has(rule.categoryId);
   return false; // XOR CHECK in the DB makes this unreachable; never match on a malformed row.
 }
@@ -239,9 +314,26 @@ export function ruleStates(rule: RestrictionRuleFacts): string[] {
   return codes.some((c) => c === null) ? [] : (codes as string[]);
 }
 
-/** True when a decision could need the customer's state (so the adapter must load addresses). */
-export function anyRuleNeedsState(matched: readonly RestrictionRuleFacts[]): boolean {
-  return matched.some((r) => r.jurisdiction === "STATE" && ruleStates(r).length > 0);
+/**
+ * The ONE answer to "is a state needed?": some rule that is ACTIVE at `at`, binds `channel`, and is a STATE rule with at
+ * least one readable state. A FEDERAL rule, a lifted / expired / not-yet-effective rule, a rule for another channel and a
+ * malformed (blocks-everywhere) STATE rule never need one. `evaluate()` asks it of the rules that match the lines (so the
+ * adapter loads addresses, or the tenant's business state for the walk-in) and the readiness probe asks it of every
+ * active STATE rule of the tenant (so the business state is required ONLY when such a rule exists): one function, so the
+ * two can never disagree about what "needs a state" means.
+ */
+export function stateRuleInPlay(
+  rules: readonly RestrictionRuleFacts[],
+  channel: RestrictionChannel,
+  at: Date,
+): boolean {
+  return rules.some(
+    (r) =>
+      r.jurisdiction === "STATE" &&
+      ruleIsActive(r, at) &&
+      ruleBindsChannel(r, channel) &&
+      ruleStates(r).length > 0,
+  );
 }
 
 type AddressKind = "BILLING" | "SHIPPING" | "UNKNOWN";
@@ -251,6 +343,24 @@ function addressKind(a: CustomerAddressFacts): AddressKind {
   if (t === "BILLING") return "BILLING";
   if (t === "SHIPPING" || t === "DELIVERY") return "SHIPPING";
   return "UNKNOWN";
+}
+
+/**
+ * The address group `resolveGoverningState` reads (the selection half of D4, below): the preferred
+ * type's defaults, else the other defaults, else the only address; empty when none can be chosen
+ * (no address, several and no default, or an UNKNOWN-typed default among several). Exported so the
+ * "customers without a state" buckets name the SAME addresses the engine reads, never a second rule.
+ */
+export function governingAddresses<A extends CustomerAddressFacts>(
+  addresses: readonly A[],
+  precedence: RestrictionAddressPrecedence,
+): readonly A[] {
+  const preferred: AddressKind = precedence === "SHIPPING_FIRST" ? "SHIPPING" : "BILLING";
+  const defaults = addresses.filter((a) => a.isDefault);
+  if (defaults.length === 0) return addresses.length === 1 ? addresses : [];
+  if (defaults.length > 1 && defaults.some((a) => addressKind(a) === "UNKNOWN")) return [];
+  const preferredDefaults = defaults.filter((a) => addressKind(a) === preferred);
+  return preferredDefaults.length > 0 ? preferredDefaults : defaults;
 }
 
 /**
@@ -268,18 +378,7 @@ export function resolveGoverningState(
   addresses: readonly CustomerAddressFacts[],
   precedence: RestrictionAddressPrecedence,
 ): GoverningState {
-  const preferred: AddressKind = precedence === "SHIPPING_FIRST" ? "SHIPPING" : "BILLING";
-  const defaults = addresses.filter((a) => a.isDefault);
-
-  let group: readonly CustomerAddressFacts[];
-  if (defaults.length === 0) {
-    group = addresses.length === 1 ? addresses : [];
-  } else if (defaults.length > 1 && defaults.some((a) => addressKind(a) === "UNKNOWN")) {
-    group = [];
-  } else {
-    const preferredDefaults = defaults.filter((a) => addressKind(a) === preferred);
-    group = preferredDefaults.length > 0 ? preferredDefaults : defaults;
-  }
+  const group = governingAddresses(addresses, precedence);
   if (group.length === 0) return UNRESOLVED_STATE;
 
   const codes = new Set<string>();
@@ -289,6 +388,25 @@ export function resolveGoverningState(
     codes.add(code);
   }
   return codes.size === 1 ? { resolved: true, state: [...codes][0] } : UNRESOLVED_STATE;
+}
+
+/**
+ * Does this rule HIDE its products from a portal buyer in `governingState`? One predicate for the visibility engine
+ * (`restrictedProductIdsFor`), matching `evaluateRestrictions` rule by rule: a federal, unrecognised or malformed
+ * (no readable states) rule hides everywhere; a STATE rule hides when the buyer's state is named; and with the state
+ * unresolved a legal ban (surface ALL, INDETERMINATE) hides while a portal-only limit does not (ALLOW). BLOCK and
+ * INDETERMINATE both hide, so a legal-ban product is never shown and then refused at checkout. The caller loads only
+ * rules ACTIVE at `at`; every active rule binds the portal channel.
+ */
+export function ruleHidesFromBuyer(
+  rule: RestrictionRuleFacts,
+  governingState: GoverningState,
+): boolean {
+  if ((rule.jurisdiction as string) !== "STATE") return true;
+  const states = ruleStates(rule);
+  if (states.length === 0) return true;
+  if (!governingState.resolved) return (rule.surface as string) !== "BUYER_PORTAL";
+  return states.includes(governingState.state);
 }
 
 export interface EvaluateInput {
@@ -400,6 +518,9 @@ export function evaluateRestrictions(input: EvaluateInput): RestrictionsEvaluati
     }
 
     if (!input.governingState.resolved) {
+      // Owner ruling 2: a customer with no state on file is ALLOWED where every matched STATE rule is a portal-only limit
+      // (a commercial choice, not law). A legal ban (surface ALL) among them keeps the fail-closed INDETERMINATE.
+      if (stateRules.every((r) => (r.surface as string) === "BUYER_PORTAL")) continue;
       indeterminate = true;
       reasons.push(
         line(

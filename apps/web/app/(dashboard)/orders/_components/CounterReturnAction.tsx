@@ -10,6 +10,7 @@ import { useHasAddon } from "@/lib/api/tobacco";
 import { ORDERS_INLINE_RETURNS_ADDON } from "@/lib/api/addons";
 import { useOrder } from "@/lib/api/orders";
 import { useOptionalAuth } from "@/lib/auth-context";
+import { useReadOnlyGate } from "@/lib/read-only-gate";
 import {
   RecordInlineReturnDialog,
   type RecordedInfo,
@@ -49,6 +50,9 @@ export function CounterReturnAction({
   const role = useOptionalAuth()?.user?.role;
   const staff = orderActionAccess(role, "", false).staff;
   const { data: order } = useOrder(orderId);
+  // A return is a new transaction: in a READ-ONLY workspace the control is disabled up front with the one shared
+  // read-only line (as Complete and Void sale are), so the clerk is not walked through the dialog before a refusal.
+  const gate = useReadOnlyGate();
   if (!hasInlineReturns || !staff || !order) return null;
 
   const showButton = canReturn || open;
@@ -60,7 +64,12 @@ export function CounterReturnAction({
           variant="secondary"
           className="min-h-11 w-full sm:w-auto"
           leftIcon={<RotateCcw className="h-3.5 w-3.5" />}
-          onClick={() => setOpen(true)}
+          disabled={gate.readOnly}
+          aria-describedby={gate.readOnly ? gate.hintId : undefined}
+          title={gate.readOnly ? (gate.line ?? undefined) : undefined}
+          onClick={() => {
+            if (!gate.readOnly) setOpen(true);
+          }}
         >
           Return items
         </Button>
@@ -74,6 +83,8 @@ export function CounterReturnAction({
         customerId={order.customerId}
         customerName={order.customer?.businessName}
         orderId={order.id}
+        // SA-740: a counter return is from THIS sale; the walk-in is one shared customer, so the server pins the match to it
+        sourceOrderId={order.id}
         allowRefund
         onCloseAutoFocus={(e) => {
           // no Radix trigger opened the dialog: put focus back on the button that did

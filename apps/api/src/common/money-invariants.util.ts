@@ -3,7 +3,10 @@ import {
   assertMoneyInvariants,
   MoneyInvariantError,
   roundMoney,
+  sumInvoiceTotals,
   type MoneyInvariantInput,
+  type SummedInvoiceLine,
+  type SumInvoiceTotalsOptions,
 } from "@routeflow/pricing";
 import { API_ERROR_CODES } from "./api-error-codes";
 
@@ -83,6 +86,13 @@ export function assertInvoiceTotalsSane(
       after.discount - after.subtotal > before.discount - before.subtotal + EPS;
     if (!worse) return;
   }
+  // B1047: lines that net NEGATIVE make "discount ($0.00) cannot exceed subtotal (-$35.00)" read like nonsense;
+  // the thing to fix is the lines.
+  if (after.subtotal < 0) {
+    throw new BadRequestException(
+      `Invoice subtotal cannot be negative (${formatMoney(after.subtotal)}). Check the line discounts.`,
+    );
+  }
   if (after.discount > after.subtotal) {
     throw new BadRequestException(
       `Invoice discount (${formatMoney(after.discount)}) cannot exceed subtotal (${formatMoney(after.subtotal)}).`,
@@ -111,4 +121,54 @@ export function storedInvoiceTotals(
   return Number.isFinite(t.discount) && Number.isFinite(t.subtotal) && Number.isFinite(t.total)
     ? t
     : undefined;
+}
+
+/**
+ * N4: the server's `sumInvoiceTotals`. A non-finite line subtotal, rate, levy, discount or shipping is a 400
+ * MONEY_INVARIANT, never a silent $0 written to an invoice. (Display callers keep the lenient default.)
+ */
+export function sumInvoiceTotalsStrict(
+  lines: readonly SummedInvoiceLine[],
+  opts: SumInvoiceTotalsOptions = {},
+): ReturnType<typeof sumInvoiceTotals> {
+  try {
+    return sumInvoiceTotals(lines, { ...opts, strict: true });
+  } catch (err) {
+    if (err instanceof MoneyInvariantError) {
+      throw new BadRequestException({
+        code: API_ERROR_CODES.MONEY_INVARIANT,
+        message: err.message,
+      });
+    }
+    throw err;
+  }
+}
+
+/**
+ * N4: `roundMoney` and `computeLineSubtotal` read NaN as 0, so a non-finite amount in a request would be
+ * laundered into a $0 line or discount BEFORE the totals builder ever saw it. Refuse it at the door instead
+ * (400 MONEY_INVARIANT): the header discount / shipping fee and every line's qty, price, discount, rate and
+ * pack counts. An absent amount (null / undefined) is fine.
+ */
+export function assertFiniteInvoiceInput(input: {
+  discount?: unknown;
+  shippingFee?: unknown;
+  items?: ReadonlyArray<object> | null;
+}): void {
+  const bad = (label: string): never => {
+    throw new BadRequestException({
+      code: API_ERROR_CODES.MONEY_INVARIANT,
+      message: `${label} is not a valid number.`,
+    });
+  };
+  const check = (label: string, v: unknown) => {
+    if (v != null && !Number.isFinite(Number(v))) bad(label);
+  };
+  check("The invoice discount", input.discount);
+  check("The shipping fee", input.shippingFee);
+  (input.items ?? []).forEach((it, i) => {
+    for (const k of ["qty", "unitPrice", "discount", "taxRate", "boxes", "pieces", "unitsPerBox"]) {
+      check(`Line ${i + 1} ${k}`, (it as Record<string, unknown>)[k]);
+    }
+  });
 }

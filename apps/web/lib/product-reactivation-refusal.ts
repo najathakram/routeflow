@@ -19,6 +19,10 @@ export interface ReactivationHolderView {
   line: string;
   /** The server refuses to deactivate this holder in the one call (a family / has active variants). */
   blocked: boolean;
+  /** Which code (or the name) this holder clashes on. */
+  field: ProductReactivationHolder["field"];
+  /** The clashing value. */
+  value: string;
 }
 
 export type ReactivationRefusal =
@@ -32,18 +36,31 @@ export type ReactivationRefusal =
     }
   | { kind: "RETRY" };
 
-const WHAT: Record<"sku" | "unitSku" | "barcode", { noun: string; fix: string }> = {
-  sku: { noun: "the SKU", fix: "a new SKU" },
-  unitSku: { noun: "the unit code", fix: "a new unit code" },
-  barcode: { noun: "the barcode", fix: "a new barcode" },
+export type ReplaceableCodeField = "sku" | "unitSku" | "barcode";
+
+/** Field order for the new-code step. */
+const CODE_FIELD_ORDER: ReplaceableCodeField[] = ["sku", "unitSku", "barcode"];
+
+/** The plain-language noun for a code field ("The {noun} "X" is now used by …"). */
+export const CODE_NOUN: Record<ReplaceableCodeField, string> = {
+  sku: "SKU",
+  unitSku: "unit code",
+  barcode: "barcode",
 };
+
+/** The tail of the blocked sentence, after "Blocked: {Holder}". */
+export const BLOCKED_TAIL =
+  "has active variants, so it can't be deactivated from here. Open it to change the code.";
 
 function holderLine(h: ProductReactivationHolder): string {
   if (h.code === API_ERROR_CODES.NAME_TAKEN || h.field === "name") {
     return `Can't reactivate: an active product is already named "${h.value || h.productName}". Rename one of them first.`;
   }
-  const w = WHAT[h.field as "sku" | "unitSku" | "barcode"] ?? WHAT.sku;
-  return `Can't reactivate: ${w.noun} "${h.value}" is now used by ${h.productName}. Change it on that product, or give this one ${w.fix}.`;
+  const noun = CODE_NOUN[h.field as ReplaceableCodeField] ?? CODE_NOUN.sku;
+  const base = `The ${noun} "${h.value}" is now used by ${h.productName}.`;
+  return h.blocked === "HAS_ACTIVE_VARIANTS"
+    ? `${base} Blocked: ${h.productName} ${BLOCKED_TAIL}`
+    : base;
 }
 
 const isHolder = (h: unknown): h is ProductReactivationHolder => {
@@ -88,6 +105,8 @@ export function getReactivationRefusal(err: unknown): ReactivationRefusal | null
           productName: "",
           line: holderLine({ ...(data as ProductReactivationHolder), field: "name" }),
           blocked: false,
+          field: "name" as const,
+          value: data.value as string,
         },
       ],
       holderIds: [],
@@ -99,6 +118,8 @@ export function getReactivationRefusal(err: unknown): ReactivationRefusal | null
     productName: h.productName,
     line: holderLine(h),
     blocked: h.blocked === "HAS_ACTIVE_VARIANTS",
+    field: h.field,
+    value: h.value,
   }));
   return {
     kind: "HOLDERS",
@@ -106,6 +127,49 @@ export function getReactivationRefusal(err: unknown): ReactivationRefusal | null
     holderIds: [...new Set(holders.map((h) => h.productId))],
     canResolve: holders.every((h) => !h.blocked) && holders.length > 0,
   };
+}
+
+/**
+ * The codes the operator can replace to get past this refusal, in field order and deduped, or null
+ * when a new code cannot help (a name clash anywhere, a stale-holder retry, nothing to name).
+ */
+export function newCodeFields(refusal: ReactivationRefusal | null): ReplaceableCodeField[] | null {
+  if (!refusal || refusal.kind !== "HOLDERS" || refusal.holders.length === 0) return null;
+  if (refusal.holders.some((h) => !CODE_FIELD_ORDER.includes(h.field as ReplaceableCodeField))) {
+    return null;
+  }
+  const fields = CODE_FIELD_ORDER.filter((f) => refusal.holders.some((h) => h.field === f));
+  return fields.length ? fields : null;
+}
+
+/**
+ * The write refused a replacement code that was free at the availability check: a 400 `PRODUCT_CODE_IN_USE`
+ * (field named in `data.field`), or a 409 `CODE_TAKEN` (field sku | unitSku in `data.field`) / `BARCODE_TAKEN`
+ * (always the barcode) from the write transaction. Returns the sent code field it names; a 400 that names none
+ * falls back to the first sent field; a 409 that names a field that was NOT sent is null (see below); null for any
+ * other error. Call it only for a request that carried replacement codes: the pre-write
+ * holders refusal for the ORIGINAL codes is the same 409 code. Only the code, status and field are read; no
+ * server text is.
+ */
+export function codeTakenOnSubmit(
+  err: unknown,
+  sent: Partial<Record<ReplaceableCodeField, string>>,
+): ReplaceableCodeField | null {
+  const res = (
+    err as { response?: { status?: unknown; data?: { code?: unknown; field?: unknown } } } | null
+  )?.response;
+  const code = res?.data?.code;
+  let named: unknown;
+  if (res?.status === 400 && code === API_ERROR_CODES.PRODUCT_CODE_IN_USE) named = res.data?.field;
+  else if (res?.status === 409 && code === API_ERROR_CODES.CODE_TAKEN) named = res.data?.field;
+  else if (res?.status === 409 && code === API_ERROR_CODES.BARCODE_TAKEN) named = "barcode";
+  else return null;
+  const field = CODE_FIELD_ORDER.find((f) => f === named);
+  if (field && sent[field]) return field;
+  // A 409 that NAMES a code field the operator did not send is about the ORIGINAL code, not a typed one: return null so
+  // the caller shows the holders refusal (which names the taken code) instead of looping on the first sent field.
+  if (field && res?.status === 409) return null;
+  return CODE_FIELD_ORDER.find((f) => sent[f]) ?? null;
 }
 
 /** The one-call button text: "Deactivate <holder> and reactivate this". */
@@ -124,6 +188,8 @@ const DEACTIVATE_CONFLICT_LINES: Record<string, string> = {
     "Turn the family back on first, then reactivate this variant.",
   [API_ERROR_CODES.PRODUCT_DELETE_CONFLICT]:
     "Nothing was deleted because something changed at the same time. Reload and try again.",
+  [API_ERROR_CODES.PRODUCT_HAS_ACTIVE_ORDER_ITEMS]:
+    "This product is on an order that is still open. Finish or cancel the order first.",
   [API_ERROR_CODES.FAMILY_NOT_PRICEABLE]:
     "A product family can't be priced or promoted. Use its variants instead.",
 };

@@ -4,6 +4,7 @@ import * as React from "react";
 import { useRouter } from "next/navigation";
 import { useForm } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
+import { useInvalidFocus } from "@/lib/form-errors";
 import { z } from "zod";
 import { FULFILL_PATH_VALUES } from "@routeflow/types";
 import { useQueryClient } from "@tanstack/react-query";
@@ -172,7 +173,8 @@ function buildDefaultValues(
     // the stored sentinel — the update payload sends "" which the API clears to null.)
     email: [initialData.email, initialData.user?.email].find((e) => e && !isInternalEmail(e)) ?? "",
     currency: initialData.currency ?? "USD",
-    creditLimit: initialData.creditLimit ? String(initialData.creditLimit) : "",
+    // `!= null`, not truthiness: a real $0 limit (B1032) must show as 0, not as an empty "no limit" field.
+    creditLimit: initialData.creditLimit != null ? String(initialData.creditLimit) : "",
     taxId: initialData.taxId ?? "",
     isTaxExempt: initialData.isTaxExempt ?? false,
     notes: initialData.notes ?? "",
@@ -222,8 +224,12 @@ export function CustomerFormModal({ isOpen, onClose, mode, initialData }: Custom
     formState: { errors },
   } = useForm<CustomerFormValues>({
     resolver: zodResolver(customerSchema),
+    // onInvalid (handleSubmit's second argument) is the single focus owner: it announces "Fix N field(s)" and
+    // scrolls to the first invalid control, so a failed submit never looks like a dead button (row 328).
+    shouldFocusError: false,
     defaultValues: buildDefaultValues(initialData, newCustomerPath),
   });
+  const onInvalid = useInvalidFocus();
 
   const customerType = watch("customerType");
   const isBusiness = customerType === "BUSINESS";
@@ -360,8 +366,11 @@ export function CustomerFormModal({ isOpen, onClose, mode, initialData }: Custom
           email: data.email ?? "",
           businessName: resolvedBusinessName,
           contactName: resolvedContactName,
-          phone: data.phone || undefined,
-          mobile: data.mobile || undefined,
+          // B1033: an emptied optional field is an explicit null (the API stores null); `|| undefined`
+          // made it a silent no-op and the old value stayed. Only a value the form actually loaded can be
+          // cleared — an already-empty field is left out, so an edit can never wipe a column it never saw.
+          phone: clearableField(data.phone, initialData.phone),
+          mobile: clearableField(data.mobile, initialData.mobile),
           customerType: data.customerType,
           displayName: resolvedDisplayName,
           // #3206 follow-up: an emptied name field the form loaded is an explicit null (cleared); one
@@ -369,9 +378,13 @@ export function CustomerFormModal({ isOpen, onClose, mode, initialData }: Custom
           salutation: clearableField(data.salutation, initialData.salutation),
           firstName: clearableField(data.firstName, initialData.firstName),
           lastName: clearableField(data.lastName, initialData.lastName),
-          taxId: data.taxId || undefined,
+          taxId: clearableField(data.taxId, initialData.taxId),
           isTaxExempt: data.isTaxExempt || false,
-          creditLimit: data.creditLimit ? parseFloat(data.creditLimit) : undefined,
+          creditLimit: data.creditLimit
+            ? parseFloat(data.creditLimit)
+            : initialData.creditLimit != null
+              ? null
+              : undefined,
           currency: data.currency || "USD",
           fulfillPath: payloadFulfillPath(data.fulfillPath, staffFulfilment.pickForm),
           notes: data.notes,
@@ -410,7 +423,7 @@ export function CustomerFormModal({ isOpen, onClose, mode, initialData }: Custom
     >
       <form
         id="customer-form"
-        onSubmit={handleSubmit(onSubmit)}
+        onSubmit={handleSubmit(onSubmit, onInvalid)}
         noValidate
         className="max-h-[60vh] overflow-y-auto pr-1"
       >

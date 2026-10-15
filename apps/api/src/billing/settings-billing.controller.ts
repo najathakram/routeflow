@@ -1,4 +1,5 @@
 import {
+  BadRequestException,
   Body,
   Controller,
   ForbiddenException,
@@ -8,6 +9,7 @@ import {
   Param,
   Post,
   Query,
+  ServiceUnavailableException,
   UseGuards,
 } from "@nestjs/common";
 import { UserRole } from "@prisma/client";
@@ -15,8 +17,11 @@ import { ApiTags, ApiOperation, ApiBearerAuth } from "@nestjs/swagger";
 import { JwtAuthGuard } from "../auth/guards/jwt-auth.guard";
 import { RolesGuard } from "../auth/guards/roles.guard";
 import { Roles } from "../auth/decorators/roles.decorator";
+import { NoImpersonation } from "../auth/decorators/no-impersonation.decorator";
 import { CurrentUser } from "../auth/decorators/current-user.decorator";
 import { SubscriptionService } from "./subscription.service";
+import { INTERACTIVE_STRIPE_REQUEST, trimBillingViewForRole } from "./subscription-billing-extras";
+import { API_ERROR_CODES } from "../common/api-error-codes";
 import { ProrationService } from "./proration.service";
 import { SubscriptionMutationService } from "./subscription-mutation.service";
 import { BillingService } from "./billing.service";
@@ -36,6 +41,10 @@ interface AuthUser {
  * Tenant self-service billing (settings-billing + choose-plan). Authenticated
  * operators/admins only. Reads + quotes + the subscribe/upgrade/downgrade/cancel and
  * add-on enable/disable mutations. (Public pricing lives on GET /billing/plans.)
+ *
+ * SA-778: every mutating route except `quote` (read-like, no state change) carries
+ * `@NoImpersonation("billing")`, so a support session can see these pages but not act on them.
+ * billing-support-session.pin.spec.ts fails the build when a new mutation lacks it.
  */
 @ApiTags("billing")
 @ApiBearerAuth()
@@ -64,8 +73,10 @@ export class SettingsBillingController {
 
   @Get("subscription")
   @ApiOperation({ summary: "The tenant's current plan, add-ons and renewal state" })
-  getSubscription(@CurrentUser() user: AuthUser) {
-    return this.subscription.getSubscription(this.tenantIdOf(user));
+  async getSubscription(@CurrentUser() user: AuthUser & { role?: string }) {
+    // S3: the card, the next charge and the amount are a workspace admin's; an operator keeps the contact's e-mail (who to ask) and the owed marker only.
+    const view = await this.subscription.getSubscription(this.tenantIdOf(user));
+    return trimBillingViewForRole(view, user.role);
   }
 
   @Get("usage")
@@ -136,6 +147,7 @@ export class SettingsBillingController {
   }
 
   @Get("export")
+  @Roles(UserRole.TENANT_ADMIN)
   @ApiOperation({ summary: "Export billing data (works while READ_ONLY)" })
   export(@CurrentUser() user: AuthUser) {
     return this.subscription.getExport(this.tenantIdOf(user));
@@ -146,6 +158,7 @@ export class SettingsBillingController {
   @Post("subscribe")
   @HttpCode(HttpStatus.OK)
   @Roles(UserRole.TENANT_ADMIN)
+  @NoImpersonation("billing")
   @ApiOperation({ summary: "Commit a subscription / convert a trial by picking a plan" })
   subscribe(@CurrentUser() user: AuthUser, @Body() dto: SubscribeDto) {
     return this.mutations.subscribe(this.tenantIdOf(user), dto, user.sub);
@@ -154,6 +167,7 @@ export class SettingsBillingController {
   @Post("subscription")
   @HttpCode(HttpStatus.OK)
   @Roles(UserRole.TENANT_ADMIN)
+  @NoImpersonation("billing")
   @ApiOperation({ summary: "Upgrade to a higher plan (instant + prorated)" })
   upgrade(@CurrentUser() user: AuthUser, @Body() dto: UpgradeDto) {
     return this.mutations.upgrade(this.tenantIdOf(user), dto.planKey, user.sub);
@@ -162,6 +176,7 @@ export class SettingsBillingController {
   @Post("subscription/downgrade")
   @HttpCode(HttpStatus.OK)
   @Roles(UserRole.TENANT_ADMIN)
+  @NoImpersonation("billing")
   @ApiOperation({ summary: "Schedule a downgrade at period end (nothing deleted)" })
   downgrade(@CurrentUser() user: AuthUser, @Body() dto: DowngradeDto) {
     return this.mutations.downgrade(
@@ -175,6 +190,7 @@ export class SettingsBillingController {
   @Post("subscription/cancel")
   @HttpCode(HttpStatus.OK)
   @Roles(UserRole.TENANT_ADMIN)
+  @NoImpersonation("billing")
   @ApiOperation({ summary: "Schedule cancellation at period end" })
   cancel(@CurrentUser() user: AuthUser) {
     return this.mutations.cancel(this.tenantIdOf(user), user.sub);
@@ -183,6 +199,7 @@ export class SettingsBillingController {
   @Post("subscription/resume")
   @HttpCode(HttpStatus.OK)
   @Roles(UserRole.TENANT_ADMIN)
+  @NoImpersonation("billing")
   @ApiOperation({ summary: "Undo a scheduled cancellation" })
   resume(@CurrentUser() user: AuthUser) {
     return this.mutations.resume(this.tenantIdOf(user), user.sub);
@@ -198,6 +215,7 @@ export class SettingsBillingController {
   @Post("subscription/checkout")
   @HttpCode(HttpStatus.OK)
   @Roles(UserRole.TENANT_ADMIN)
+  @NoImpersonation("billing")
   @ApiOperation({ summary: "Start a Stripe Checkout session for the tenant's own pinned plan" })
   async createCheckout(@CurrentUser() user: AuthUser) {
     const tenantId = this.tenantIdOf(user);
@@ -214,21 +232,64 @@ export class SettingsBillingController {
     });
   }
 
+  /**
+   * SA-733r6 (B4): the Stripe billing portal (update the card) plus, while an invoice is owed, its hosted page (pay it).
+   * TENANT_ADMIN only - an operator is told who to ask and gets no action. The read-only guard allow-lists this exact
+   * route so an admin can always reach Stripe from a paused workspace.
+   */
+  @Post("portal")
+  @HttpCode(HttpStatus.OK)
+  @Roles(UserRole.TENANT_ADMIN)
+  @NoImpersonation("billing")
+  @ApiOperation({ summary: "Stripe billing portal + the owed invoice's hosted page (admin only)" })
+  async createPortal(@CurrentUser() user: AuthUser) {
+    const tenantId = this.tenantIdOf(user);
+    // allSettled: a failure of one Stripe call must not lose the other (the pay link survives a portal outage and
+    // vice versa). Both are capped (#2476) so the route never hangs on Stripe.
+    const [portal, pay] = await Promise.allSettled([
+      this.billing.createBillingPortalSession(tenantId, undefined, INTERACTIVE_STRIPE_REQUEST),
+      this.subscription.openInvoiceUrl(tenantId),
+    ]);
+    const portalUrl = portal.status === "fulfilled" ? portal.value.portalUrl : null;
+    const hostedInvoiceUrl = pay.status === "fulfilled" ? pay.value : null;
+    if (portalUrl || hostedInvoiceUrl) return { portalUrl, hostedInvoiceUrl };
+    // Neither is available. A workspace with no Stripe customer (manual / external payment) is a clean 400; a Stripe
+    // outage is a retryable 503. Both coded, never a bare 500.
+    if (portal.status === "rejected" && portal.reason instanceof BadRequestException) {
+      throw new BadRequestException({
+        code: API_ERROR_CODES.BILLING_PORTAL_UNAVAILABLE,
+        message: "Billing isn't set up online for this workspace.",
+      });
+    }
+    throw new ServiceUnavailableException({
+      code: API_ERROR_CODES.BILLING_PORTAL_UNAVAILABLE,
+      message: "We couldn't open billing just now. Please try again in a moment.",
+    });
+  }
+
   @Post("addons/:sku/enable")
   @HttpCode(HttpStatus.OK)
   @Roles(UserRole.TENANT_ADMIN)
+  @NoImpersonation("billing")
   @ApiOperation({ summary: "Enable an add-on (prorated for the current cycle)" })
   enableAddon(
     @CurrentUser() user: AuthUser,
     @Param("sku") sku: string,
     @Body() dto: EnableAddonDto,
   ) {
-    return this.mutations.enableAddon(this.tenantIdOf(user), sku, dto.quantity, user.sub);
+    return this.mutations.enableAddon(
+      this.tenantIdOf(user),
+      sku,
+      dto.quantity,
+      user.sub,
+      dto.expectedQuantity,
+    );
   }
 
   @Post("addons/:sku/disable")
   @HttpCode(HttpStatus.OK)
   @Roles(UserRole.TENANT_ADMIN)
+  @NoImpersonation("billing")
   @ApiOperation({ summary: "Disable an add-on (history kept read-only)" })
   disableAddon(@CurrentUser() user: AuthUser, @Param("sku") sku: string) {
     return this.mutations.disableAddon(this.tenantIdOf(user), sku, user.sub);

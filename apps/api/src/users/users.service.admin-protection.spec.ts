@@ -8,6 +8,7 @@ import { ConfigService } from "@nestjs/config";
 import { UsersService } from "./users.service";
 import { UsersController } from "./users.controller";
 import { PrismaService } from "../prisma/prisma.service";
+import { AuditService } from "../audit/audit.service";
 import { EmailService } from "../email/email.service";
 import { createMockPrisma } from "../testing/prisma-mock";
 
@@ -92,6 +93,13 @@ describe("UsersService: admin account protection", () => {
     it("a TENANT_ADMIN can change a TENANT_ADMIN's status", async () => {
       prisma.user.findUnique.mockResolvedValue(ADMIN_TARGET as any);
       prisma.user.update.mockResolvedValue({ id: "t1" } as any);
+      // another active admin remains (M2: the last active admin can't be deactivated)
+      (prisma.tenantTransaction as jest.Mock).mockImplementation((fn: any) =>
+        fn({
+          ...prisma.forTenant(),
+          $queryRaw: jest.fn().mockResolvedValue([{ id: "t1" }, { id: "t2" }]),
+        }),
+      );
       await expect(
         service.changeStatus("t1", { status: "SUSPENDED" } as any, "TENANT_ADMIN" as any),
       ).resolves.toBeDefined();
@@ -127,6 +135,63 @@ describe("UsersService: admin account protection", () => {
           { email: "new@acme.example" } as any,
           "owner",
           "TENANT_ADMIN" as any,
+        ),
+      ).resolves.toBeDefined();
+    });
+    it("a support session cannot change an email (403 IMPERSONATION_NOT_ALLOWED) and nothing is written", async () => {
+      prisma.user.findUnique.mockResolvedValue(ADMIN_TARGET as any);
+      await expect(
+        service.updateUser(
+          "t1",
+          { email: "mine@support.example" } as any,
+          "owner",
+          "TENANT_ADMIN" as any,
+          "sa-1",
+        ),
+      ).rejects.toMatchObject({
+        response: expect.objectContaining({ code: "IMPERSONATION_NOT_ALLOWED" }),
+      });
+      expect(prisma.user.update).not.toHaveBeenCalled();
+    });
+    it("a support session cannot change a username either, and the refusal is audited", async () => {
+      const audit = { log: jest.fn().mockResolvedValue(undefined) };
+      const withAudit = await Test.createTestingModule({
+        providers: [
+          UsersService,
+          { provide: PrismaService, useValue: prisma },
+          { provide: EmailService, useValue: email },
+          { provide: ConfigService, useValue: { get: () => ({}) } },
+          { provide: AuditService, useValue: audit },
+        ],
+      }).compile();
+      prisma.user.findUnique.mockResolvedValue({ ...OPERATOR_TARGET, tenantId: "t-1" } as any);
+      await expect(
+        withAudit
+          .get(UsersService)
+          .updateUser("o1", { username: "renamed" } as any, "owner", "TENANT_ADMIN" as any, "sa-1"),
+      ).rejects.toMatchObject({
+        response: expect.objectContaining({ code: "IMPERSONATION_NOT_ALLOWED" }),
+      });
+      expect(prisma.user.update).not.toHaveBeenCalled();
+      expect(audit.log).toHaveBeenCalledTimes(1);
+      expect(audit.log.mock.calls[0][0]).toMatchObject({
+        action: "impersonation.action-refused",
+        entityType: "account",
+        tenantId: "t-1",
+        impersonatedBy: "sa-1",
+        meta: { superAdminId: "sa-1", method: "PATCH", route: "/users/:id" },
+      });
+    });
+    it("a support session can still save an unchanged email with other fields", async () => {
+      prisma.user.findUnique.mockResolvedValue(OPERATOR_TARGET as any);
+      prisma.user.update.mockResolvedValue({ id: "o1", username: "op", role: "OPERATOR" } as any);
+      await expect(
+        service.updateUser(
+          "o1",
+          { email: "OP@acme.example", firstName: "Op" } as any,
+          "owner",
+          "TENANT_ADMIN" as any,
+          "sa-1",
         ),
       ).resolves.toBeDefined();
     });

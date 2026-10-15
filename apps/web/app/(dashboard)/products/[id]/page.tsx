@@ -1,5 +1,6 @@
 "use client";
 
+import { priceRowLabel } from "@/lib/product-unit-label";
 import { safeTextErrorCopy } from "@/lib/safe-text-error-copy";
 import * as React from "react";
 import Link from "next/link";
@@ -16,7 +17,6 @@ import {
   ChevronRight,
   Star,
   Scissors,
-  Plus,
   Power,
   ShieldCheck,
 } from "lucide-react";
@@ -49,10 +49,19 @@ import {
   type ReportTemplateDef,
 } from "@/lib/api/tracked-categories";
 import { sectionPickerOptions } from "@/lib/regulated-format";
-import { getTierPrice, cascadeTierPrices, perUnitPrice, type TierField } from "@routeflow/pricing";
+import {
+  getTierPrice,
+  applyLadderChange,
+  ladderChangeNote,
+  perUnitPrice,
+  unitWords,
+  type TierField,
+} from "@routeflow/pricing";
 import { useTierLabels } from "@/lib/api/tier-labels";
 import { tierLabel } from "@/lib/tier-label";
 import { unitsLabel } from "@/lib/stock-label";
+import { stockCountLabel } from "../_components/product-status";
+import { PiecesPerBoxValue } from "./PiecesPerBoxValue";
 import { apiClient } from "@/lib/api-client";
 import { BarcodeScannerButton } from "@/components/BarcodeScannerButton";
 import { DecimalInput } from "@/components/MoneyInput";
@@ -68,6 +77,16 @@ import { CropModal } from "./CropModal";
 import { ProductStockCostCard } from "./ProductStockCostCard";
 import { FamilyVariantsEditor } from "@/components/family/FamilyVariantsEditor";
 import { useReactivateFlow } from "./useReactivateFlow";
+import { ProductHeaderControls } from "./ProductHeaderControls";
+import { ProductHeaderLine } from "./ProductHeaderLine";
+import {
+  EditActionButtons,
+  EditButton,
+  StickyEditBar,
+  ThumbImage,
+  scrollCardIntoView,
+} from "./ProductEditActions";
+import { LegacyVariantsActions, variantModalTitle } from "./LegacyVariantsActions";
 import { useDeleteProductFlow } from "./useDeleteProductFlow";
 import { DeleteProductConfirm } from "./DeleteProductConfirm";
 import { DemandCard } from "./DemandCard";
@@ -79,6 +98,16 @@ import { ProductUnitsCard } from "./ProductUnitsCard";
 import { ImageLightbox } from "./ImageLightbox";
 import { objectPositionForUrl, type FocalPoint } from "@/lib/image-focal";
 import { COMMON_UNITS } from "@/lib/common-units";
+import { editTierPatch, editTierPatchMoves } from "@/lib/product-tier-patch";
+import { keptLabelsNote } from "@/lib/kept-labels-copy";
+import { isStaffRole } from "@/lib/default-unit-line";
+import { ConfirmDialog } from "@/components/ConfirmDialog";
+
+/** The edit form's Flavor / variety input ("assign name" focuses it). */
+const VARIANT_NAME_INPUT_ID = "edit-variant-name";
+
+// U-3a: no per-product label is read yet, so this page prints the default words.
+const UW = unitWords();
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 
@@ -205,7 +234,7 @@ function EditableNumber({
 }: {
   value: number;
   onChange: (v: number) => void;
-  onCommit?: (v: number) => void;
+  onCommit?: (v: number, valueAtFocus: number | null) => void;
 }) {
   return (
     <DecimalInput
@@ -308,6 +337,9 @@ export default function ProductDetailPage() {
   const reactivateFlow = useReactivateFlow();
   const createProduct = useCreateProduct();
   const deleteFlow = useDeleteProductFlow({ onDeleted: () => router.push("/products") });
+  // The header's Delete button opens DeleteProductConfirm: it stays open until the DELETE settles and hands
+  // off to the family cascade prompt.
+  const [showDeleteConfirm, setShowDeleteConfirm] = React.useState(false);
   const uploadImages = useUploadProductImages(id);
   const deleteImage = useDeleteProductImage(id);
 
@@ -350,7 +382,12 @@ export default function ProductDetailPage() {
   const [isDragging, setIsDragging] = React.useState(false);
   const [selectedImages, setSelectedImages] = React.useState<Set<number>>(new Set());
   const [selectMode, setSelectMode] = React.useState(false);
+  // P0 2026-10-14: the note shown after a tier commit moved other tiers.
+  const [ladderNote, setLadderNote] = React.useState<string | null>(null);
+  // Audit 2026-10-14: deleting an image removes the file for good, so it is confirmed first (no undo exists).
+  const [pendingImageDelete, setPendingImageDelete] = React.useState<string[] | null>(null);
   const fileInputRef = React.useRef<HTMLInputElement>(null);
+  const detailsCardRef = React.useRef<HTMLDivElement>(null);
 
   // ── Variant modal state ──────────────────────────────────────────────────
   const [variantModalOpen, setVariantModalOpen] = React.useState(false);
@@ -385,7 +422,8 @@ export default function ProductDetailPage() {
 
   // ── Auth ──────────────────────────────────────────────────────────────────
   const { user } = useAuth();
-  const isOperator = user?.role === "OPERATOR";
+  // Owner ruling 2026-10-14: every product control is for STAFF (an operator or an account admin).
+  const isStaff = isStaffRole(user?.role);
   const hasTobaccoAddon = useHasAddon(TOBACCO_ADDON);
   const hasMsrpAddon = useHasAddon(MSRP_ADDON);
 
@@ -398,9 +436,6 @@ export default function ProductDetailPage() {
 
   // ── Variant-split modal state (PR-D) ──────────────────────────────────────
   const [showVariantSplit, setShowVariantSplit] = React.useState(false);
-
-  // ── Delete confirmation (R2 — was declared, never wired) ──────────────────
-  const [showDeleteConfirm, setShowDeleteConfirm] = React.useState(false);
 
   // ── Crop-existing state ───────────────────────────────────────────────────
   // When set, the next crop completion replaces this key instead of adding a new image
@@ -477,6 +512,7 @@ export default function ProductDetailPage() {
     setEditDraft({
       name: product.name,
       sku: product.sku ?? "",
+      barcode: product.barcode ?? "",
       unitSku: product.unitSku ?? "",
       unit: product.unit,
       pricePerUnit: String(priceNumber),
@@ -496,10 +532,42 @@ export default function ProductDetailPage() {
       regUomUnit: product.regUomUnit ?? "",
       unitsPerBox: product.unitsPerBox != null ? String(product.unitsPerBox) : "",
     });
+    setLadderNote(null);
     setIsEditing(true);
   };
 
+  // "assign name" (audit 2026-10-14): open the edit form AND land on the field that names this product's own row.
+  const assignOwnName = () => {
+    startEdit();
+    requestAnimationFrame(() => document.getElementById(VARIANT_NAME_INPUT_ID)?.focus());
+  };
+
+  const confirmImageDelete = async () => {
+    const keys = pendingImageDelete ?? [];
+    if (keys.length === 0 || deleteImage.isPending) return;
+    try {
+      // Delete sequentially — concurrent Prisma array-pull calls race
+      // against each other and only some keys end up removed.
+      for (const k of keys) {
+        await deleteImage.mutateAsync(k);
+      }
+      setSelectedImages(new Set());
+      setSelectMode(false);
+      setActiveImageIdx(0);
+      toast({
+        title: keys.length === 1 ? "Image deleted" : `${keys.length} images deleted`,
+        variant: "success",
+      });
+    } catch {
+      toast({ title: "Delete failed", variant: "error" });
+    } finally {
+      setPendingImageDelete(null);
+    }
+  };
+
   const saveEdit = () => {
+    // No double submit: the Save button is disabled while pending, this covers Enter / a fast second tap.
+    if (updateProduct.isPending) return;
     const draft = editDraft as Record<string, string>;
     const selectedParent = draft.parentProductId
       ? allProducts.find((p: any) => p.id === draft.parentProductId)
@@ -523,6 +591,7 @@ export default function ProductDetailPage() {
         name: composedName,
         unit: draft.unit || undefined,
         sku: draft.sku?.trim() || null,
+        barcode: draft.barcode?.trim() || null,
         unitSku: draft.unitSku?.trim() || null,
         // One category axis: a regulated type's structured Category picker
         // drives `category` server-side — never send the free-text value
@@ -531,10 +600,8 @@ export default function ProductDetailPage() {
         category: draft.trackedCategoryId ? undefined : draft.category?.trim() || null,
         description: draft.description?.trim() || null,
         pricePerUnit: asDecimal(draft.pricePerUnit),
-        priceTier2: asDecimal(draft.priceTier2),
-        priceTier3: asDecimal(draft.priceTier3),
-        priceTier4: asDecimal(draft.priceTier4),
-        priceTier5: asDecimal(draft.priceTier5),
+        // Untouched tiers move with a list change exactly like the products list (applyLadderChange, audit 2026-10-14).
+        ...editTierPatch(product, draft),
         unitsPerBox: draft.unitsPerBox?.trim() ? parseInt(draft.unitsPerBox, 10) : null,
         // Regulated tags: value to set, null to clear (server auto-nulls the
         // category when the type is cleared).
@@ -557,9 +624,29 @@ export default function ProductDetailPage() {
               parentProductId: draft.parentProductId,
               variantName: draft.variantName?.trim() || undefined,
             }
-          : {}),
+          : product.parentProductId
+            ? // "Variant of: None" on a linked product unlinks it: the same write as the Unlink button (audit 2026-10-14).
+              { parentProductId: null }
+            : (product.variants?.length ?? 0) > 0
+              ? // A product with variants names its own row ("assign name", audit 2026-10-14); its name is unchanged.
+                { variantName: draft.variantName?.trim() || null }
+              : {}),
       },
       {
+        // Close edit mode ONLY once the PATCH lands. A 409/500 keeps the form open with the typed draft
+        // (startEdit re-seeds the draft, so closing early threw the operator's edits away).
+        onSuccess: (data: { keptLabels?: string[] }) => {
+          const kept = keptLabelsNote(data?.keptLabels);
+          toast(
+            kept
+              ? { title: "Product moved", description: kept, variant: "success" }
+              : { title: "Saved", variant: "success" },
+          );
+          setEditDraft({});
+          setIsEditing(false);
+          setLadderNote(null);
+          scrollCardIntoView(detailsCardRef.current);
+        },
         onError: (e: any) =>
           toast({
             title: "Failed to save product",
@@ -571,12 +658,12 @@ export default function ProductDetailPage() {
           }),
       },
     );
-    setIsEditing(false);
   };
 
   const cancelEdit = () => {
     setEditDraft({});
     setIsEditing(false);
+    setLadderNote(null);
   };
 
   // ── Delete (mirrors the mobile app's confirm → toast → navigate-back flow) ─
@@ -715,23 +802,36 @@ export default function ProductDetailPage() {
       return;
     }
     if (editingVariant) {
+      // ONE list value for the PATCH and the tier rule (#3470 review): a blank price keeps the variant's own list,
+      // never the parent's.
+      const vList = variantForm.price || String(editingVariant.pricePerUnit);
+      const vDraft = {
+        pricePerUnit: vList,
+        priceTier2: variantForm.priceTier2 || variantForm.price,
+        priceTier3: variantForm.priceTier3 || variantForm.price,
+        priceTier4: variantForm.priceTier4 || variantForm.price,
+        priceTier5: variantForm.priceTier5 || variantForm.price,
+      };
+      const vMoved = ladderChangeNote(editTierPatchMoves(editingVariant as any, vDraft), (n) =>
+        tierLabel(tierLabels, n),
+      );
       updateProduct.mutate(
         {
           id: editingVariant.id,
           variantName: variantForm.variantName,
           sku: variantForm.sku || undefined,
           unitSku: variantForm.unitSku || undefined,
-          // Cleared fields fall back like the create branch — never send ""
-          // (rejected by @IsDecimal).
-          pricePerUnit: variantForm.price || String(product.pricePerUnit),
-          priceTier2: variantForm.priceTier2 || variantForm.price || undefined,
-          priceTier3: variantForm.priceTier3 || variantForm.price || undefined,
-          priceTier4: variantForm.priceTier4 || variantForm.price || undefined,
-          priceTier5: variantForm.priceTier5 || variantForm.price || undefined,
+          pricePerUnit: vList,
+          // Untouched tiers move with the variant's list change, the same rule as the products list (audit 2026-10-14).
+          ...editTierPatch(editingVariant as any, vDraft),
         },
         {
           onSuccess: () => {
-            toast({ title: "Variant updated", variant: "success" });
+            toast({
+              title: "Variant updated",
+              ...(vMoved ? { description: vMoved } : {}),
+              variant: "success",
+            });
             closeVariantModal();
           },
           onError: () => toast({ title: "Failed to update variant", variant: "error" }),
@@ -770,7 +870,7 @@ export default function ProductDetailPage() {
     if (variant.isActive) {
       reactivateFlow.askDeactivate(variant.id, variant.variantName ?? variant.name, "variant");
     } else {
-      reactivateFlow.start(variant.id, "variant");
+      reactivateFlow.start(variant.id, "variant", variant.variantName ?? variant.name);
     }
   };
 
@@ -829,8 +929,12 @@ export default function ProductDetailPage() {
           name: newName,
         },
         {
-          onSuccess: () => {
-            toast({ title: "Product linked as variant", variant: "success" });
+          onSuccess: (data: { keptLabels?: string[] }) => {
+            toast({
+              title: "Product linked as variant",
+              description: keptLabelsNote(data?.keptLabels) ?? undefined,
+              variant: "success",
+            });
             setMakeVariantOpen(false);
           },
           onError: () => toast({ title: "Failed to link as variant", variant: "error" }),
@@ -903,8 +1007,12 @@ export default function ProductDetailPage() {
           name: composedName,
         },
         {
-          onSuccess: () => {
-            toast({ title: "Product linked as variant", variant: "success" });
+          onSuccess: (data: { keptLabels?: string[] }) => {
+            toast({
+              title: "Product linked as variant",
+              description: keptLabelsNote(data?.keptLabels) ?? undefined,
+              variant: "success",
+            });
             setLinkExistingOpen(false);
           },
           onError: () => toast({ title: "Failed to link product", variant: "error" }),
@@ -937,9 +1045,15 @@ export default function ProductDetailPage() {
     )
       return;
     updateProduct.mutate(
-      { id: id, parentProductId: null, variantName: null },
+      // H2: the name and variantName stay (never sent as null); the labels it carried are kept by the API.
+      { id: id, parentProductId: null },
       {
-        onSuccess: () => toast({ title: "Product unlinked — now standalone", variant: "success" }),
+        onSuccess: (data: { keptLabels?: string[] }) =>
+          toast({
+            title: "Product unlinked — now standalone",
+            description: keptLabelsNote(data?.keptLabels) ?? undefined,
+            variant: "success",
+          }),
         onError: () => toast({ title: "Failed to unlink", variant: "error" }),
       },
     );
@@ -954,7 +1068,9 @@ export default function ProductDetailPage() {
     if (!(activeUnitsPerBox > 1)) return null;
     const pu = perUnitPrice(v, activeUnitsPerBox);
     return pu != null ? (
-      <p className="mt-0.5 text-[11px] text-navy/50">≈ ${pu.toFixed(2)} / unit</p>
+      <p className="mt-0.5 text-[11px] text-navy/50">
+        ≈ ${pu.toFixed(2)} / {UW.base.short.one}
+      </p>
     ) : null;
   };
 
@@ -1013,6 +1129,22 @@ export default function ProductDetailPage() {
       )}
       {reactivateFlow.dialog}
       {deleteFlow.dialog}
+      <ConfirmDialog
+        open={pendingImageDelete !== null}
+        onClose={() => {
+          if (!deleteImage.isPending) setPendingImageDelete(null);
+        }}
+        onConfirm={confirmImageDelete}
+        title={
+          (pendingImageDelete?.length ?? 0) > 1
+            ? `Delete ${pendingImageDelete?.length} images?`
+            : "Delete this image?"
+        }
+        description="The image is removed from this product and deleted for good. This can't be undone."
+        confirmLabel="Yes, delete"
+        variant="danger"
+        loading={deleteImage.isPending}
+      />
       <DeleteProductConfirm
         id={id}
         name={product.name}
@@ -1020,7 +1152,10 @@ export default function ProductDetailPage() {
         onClose={() => setShowDeleteConfirm(false)}
         flow={deleteFlow}
       />
-      <div className="space-y-5 p-6">
+      <div className={cn("space-y-5 p-6", isEditing && "pb-24 md:pb-6")}>
+        {isEditing && (
+          <StickyEditBar onCancel={cancelEdit} onSave={saveEdit} saving={updateProduct.isPending} />
+        )}
         {/* Back */}
         <Link
           href="/products"
@@ -1040,7 +1175,7 @@ export default function ProductDetailPage() {
                 label={product.isActive ? "Active" : "Inactive"}
               />
               {stockStatus === "OUT_OF_STOCK" ? (
-                <Badge variant="danger" label="Out of Stock" />
+                <Badge variant="warning" label={stockCountLabel(currentStock)} />
               ) : stockStatus === "LOW" ? (
                 <Badge variant="warning" label="Low Stock" />
               ) : null}
@@ -1049,11 +1184,7 @@ export default function ProductDetailPage() {
               {(product as any).isNew && <Badge variant="info" label="New" />}
               {(product as any).isDeal && <Badge variant="success" label="Deal" />}
             </div>
-            <p className="mt-1.5 text-sm text-navy/70">
-              {product.sku && <span className="font-mono">{product.sku}</span>}
-              {product.sku && (product.category || product.parent) ? " · " : ""}
-              {product.parent ? `Variant of ${product.parent.name}` : product.category}
-            </p>
+            <ProductHeaderLine product={product} currentStock={currentStock} />
           </div>
         </div>
 
@@ -1083,36 +1214,20 @@ export default function ProductDetailPage() {
                     });
                   };
 
-                  const deleteSelected = async () => {
+                  const deleteSelected = () => {
                     const keys = (product as any).imageKeys ?? [];
                     const toDelete = Array.from(selectedImages)
                       .map((i) => keys[i])
                       .filter(Boolean);
-                    try {
-                      // Delete sequentially — concurrent Prisma array-pull calls race
-                      // against each other and only some keys end up removed.
-                      for (const k of toDelete) {
-                        await deleteImage.mutateAsync(k);
-                      }
-                      setSelectedImages(new Set());
-                      setSelectMode(false);
-                      setActiveImageIdx(0);
-                      toast({
-                        title: `${toDelete.length} image${toDelete.length !== 1 ? "s" : ""} deleted`,
-                        variant: "success",
-                      });
-                    } catch {
-                      toast({ title: "Delete failed", variant: "error" });
-                    }
+                    if (toDelete.length > 0) setPendingImageDelete(toDelete);
                   };
 
                   return (
                     <div className="space-y-2">
                       {/* Main image / drop zone — 4:5 portrait viewport matching the
-                    upload ratio. object-cover + object-position uses each
-                    image's stored focal point to keep the right area visible
-                    even when the image is from before the focal-point
-                    feature (those default to centre). */}
+                    upload ratio. Below lg the photo is shown whole (contain, centred);
+                    lg+ crops with object-cover by each image's stored focal point
+                    (older images default to centre). */}
                       <div
                         onDragOver={(e) => {
                           e.preventDefault();
@@ -1125,11 +1240,11 @@ export default function ProductDetailPage() {
                           handleUpload(e.dataTransfer.files);
                         }}
                         className={cn(
-                          "relative aspect-[4/5] w-full overflow-hidden rounded-xl border",
+                          "relative h-44 w-full overflow-hidden rounded-xl border lg:h-auto lg:aspect-[4/5]",
                           isDragging && "ring-2 ring-brand-500",
                           !hasImages && "cursor-pointer",
                           stockStatus === "LOW" && "border-warning/30 bg-warning-bg",
-                          stockStatus === "OUT_OF_STOCK" && "border-danger/30 bg-danger-bg",
+                          stockStatus === "OUT_OF_STOCK" && "border-warning/30 bg-warning-bg",
                           stockStatus === "IN_STOCK" && "border-surface-border bg-surface-raised",
                         )}
                         onClick={!hasImages ? () => fileInputRef.current?.click() : undefined}
@@ -1140,7 +1255,7 @@ export default function ProductDetailPage() {
                             <img
                               src={images[safeIdx]}
                               alt={`${product.name} — image ${safeIdx + 1}`}
-                              className="absolute inset-0 h-full w-full object-cover cursor-zoom-in"
+                              className="absolute inset-0 h-full w-full cursor-zoom-in object-contain max-lg:![object-position:50%_50%] lg:object-cover"
                               style={{ objectPosition: objectPositionForUrl(images[safeIdx]) }}
                               onClick={(e) => {
                                 e.stopPropagation();
@@ -1151,17 +1266,10 @@ export default function ProductDetailPage() {
                             {/* Delete current image (single) */}
                             {!selectMode && (
                               <button
-                                onClick={async (e) => {
+                                onClick={(e) => {
                                   e.stopPropagation();
                                   const key = (product as any).imageKeys?.[safeIdx];
-                                  if (!key) return;
-                                  try {
-                                    await deleteImage.mutateAsync(key);
-                                    setActiveImageIdx(0);
-                                    toast({ title: "Image deleted", variant: "success" });
-                                  } catch {
-                                    toast({ title: "Delete failed", variant: "error" });
-                                  }
+                                  if (key) setPendingImageDelete([key]);
                                 }}
                                 className={cn(
                                   TAP_TARGET,
@@ -1216,7 +1324,7 @@ export default function ProductDetailPage() {
                               className={cn(
                                 "h-14 w-14",
                                 stockStatus === "LOW" && "text-warning/30",
-                                stockStatus === "OUT_OF_STOCK" && "text-danger/30",
+                                stockStatus === "OUT_OF_STOCK" && "text-warning/30",
                                 stockStatus === "IN_STOCK" && "text-navy/15",
                               )}
                             />
@@ -1246,12 +1354,10 @@ export default function ProductDetailPage() {
                                       : "border-surface-border",
                                 )}
                               >
-                                {/* eslint-disable-next-line @next/next/no-img-element */}
-                                <img
-                                  src={url}
-                                  alt={`thumb ${i + 1}`}
-                                  className="h-full w-full object-cover"
-                                  style={{ objectPosition: objectPositionForUrl(url) }}
+                                <ThumbImage
+                                  url={url}
+                                  alt={`Image ${i + 1} of ${images.length}`}
+                                  objectPosition={objectPositionForUrl(url)}
                                 />
                               </button>
                               {selectMode && (
@@ -1268,7 +1374,7 @@ export default function ProductDetailPage() {
                       )}
 
                       {/* Operator-only controls for the active image */}
-                      {isOperator && !selectMode && hasImages && (
+                      {isStaff && !selectMode && hasImages && (
                         <div className="flex flex-wrap items-center gap-1.5 border-t border-surface-border pt-2">
                           {/* Move left / right */}
                           <button
@@ -1400,93 +1506,44 @@ export default function ProductDetailPage() {
           {/* ── Right: details + chart ── */}
           <div className="space-y-5 lg:col-span-2">
             {/* Product details */}
-            <div className="overflow-hidden rounded-lg border border-surface-border bg-white shadow-card">
+            <div
+              ref={detailsCardRef}
+              className="overflow-hidden rounded-lg border border-surface-border bg-white shadow-card"
+            >
               <div className="flex flex-wrap items-center justify-between gap-3 border-b border-surface-border px-5 py-3.5">
                 <h3 className="text-[11px] font-semibold uppercase tracking-[0.08em] text-navy/70">
                   Details
                 </h3>
-                <div className="flex shrink-0 items-center gap-2">
+                <div className="flex max-w-full flex-wrap items-center justify-end gap-2 max-sm:w-full max-sm:justify-start">
                   {isEditing ? (
                     <>
-                      <button
-                        onClick={cancelEdit}
-                        title="Cancel"
-                        className={cn(
-                          TAP_TARGET,
-                          "rounded p-1.5 text-navy/70 hover:bg-surface-raised hover:text-navy transition-colors",
-                        )}
-                      >
-                        <X className="h-4 w-4" />
-                      </button>
-                      <Button
-                        size="sm"
-                        onClick={saveEdit}
-                        loading={updateProduct.isPending}
-                        leftIcon={<Check className="h-4 w-4" />}
-                      >
-                        Save
-                      </Button>
+                      <EditActionButtons
+                        className="max-md:hidden"
+                        onCancel={cancelEdit}
+                        onSave={saveEdit}
+                        saving={updateProduct.isPending}
+                      />
                     </>
                   ) : (
                     <>
-                      <button
-                        onClick={startEdit}
-                        title="Edit product"
-                        className={cn(
-                          TAP_TARGET,
-                          "rounded p-1.5 text-navy/70 hover:bg-surface-raised hover:text-navy transition-colors",
-                        )}
-                      >
-                        <Pencil className="h-4 w-4" />
-                      </button>
-                      {isOperator && !product.parentProductId && product.kind !== "FAMILY" && (
-                        <Button
-                          size="sm"
-                          variant="secondary"
-                          onClick={openMakeVariantModal}
-                          title="Link this product as a variant of another product"
-                        >
-                          Make variant of…
-                        </Button>
-                      )}
-                      <Button
-                        size="sm"
-                        variant="secondary"
-                        onClick={() =>
-                          product.isActive
-                            ? reactivateFlow.askDeactivate(id, product.name)
-                            : reactivateFlow.start(id)
+                      <div className="max-sm:basis-full">
+                        <EditButton onClick={startEdit} />
+                      </div>
+                      <ProductHeaderControls
+                        product={product}
+                        reactivateFlow={reactivateFlow}
+                        hasTobaccoAddon={hasTobaccoAddon}
+                        isTobacco={!!(product as any).isTobacco}
+                        tobaccoLoading={updateProduct.isPending}
+                        onToggleTobacco={() =>
+                          updateProduct.mutate({
+                            id: id,
+                            isTobacco: !(product as any).isTobacco,
+                          } as any)
                         }
-                        loading={reactivateFlow.isPending}
-                      >
-                        {product.isActive ? "Deactivate" : "Activate"}
-                      </Button>
-                      {hasTobaccoAddon && (
-                        <Button
-                          size="sm"
-                          variant="secondary"
-                          onClick={() =>
-                            updateProduct.mutate({
-                              id: id,
-                              isTobacco: !(product as any).isTobacco,
-                            } as any)
-                          }
-                          loading={updateProduct.isPending}
-                          title="Tobacco products are tracked separately for monthly tax reports"
-                        >
-                          {(product as any).isTobacco ? "Unmark tobacco" : "Mark as tobacco"}
-                        </Button>
-                      )}
-                      {isOperator && (
-                        <Button
-                          size="sm"
-                          variant="danger"
-                          leftIcon={<Trash2 className="h-4 w-4" />}
-                          onClick={() => setShowDeleteConfirm(true)}
-                        >
-                          Delete
-                        </Button>
-                      )}
+                        onMakeVariant={openMakeVariantModal}
+                        onRequestDelete={() => setShowDeleteConfirm(true)}
+                      />
                     </>
                   )}
                 </div>
@@ -1555,12 +1612,17 @@ export default function ProductDetailPage() {
                 )}
 
                 {/* Buyer merchandising flags (P5-01) */}
-                {isOperator && (
+                {isStaff && (
                   <div className="mb-4 rounded-lg border border-surface-border bg-white p-4">
                     <div className="mb-2.5 flex items-center gap-2">
                       <Star className="h-4 w-4 text-brand-500" />
                       <h3 className="text-sm font-semibold text-navy">Buyer merchandising</h3>
                     </div>
+                    {isEditing && (
+                      <p className="mb-2 text-xs font-medium text-navy/60">
+                        These switches apply immediately, without Save.
+                      </p>
+                    )}
                     <p className="mb-3 text-xs text-navy/60">
                       Highlight this product on the buyer catalogue with badges and smart
                       collections. These are display flags only — they don&apos;t change price.
@@ -1627,7 +1689,7 @@ export default function ProductDetailPage() {
                         {product.parent.name}
                       </Link>
                     </p>
-                    {isOperator && (
+                    {isStaff && (
                       <button
                         onClick={handleUnlinkFromParent}
                         className="text-xs font-medium text-blue-600 hover:text-blue-800 hover:underline"
@@ -1640,7 +1702,7 @@ export default function ProductDetailPage() {
 
                 <div className="grid grid-cols-2 gap-x-6 gap-y-4 sm:grid-cols-3">
                   <InfoRow
-                    label="SKU / Barcode"
+                    label={`SKU (${UW.pack.lower} code)`}
                     value={
                       isEditing ? (
                         <input
@@ -1654,18 +1716,32 @@ export default function ProductDetailPage() {
                     }
                   />
                   <InfoRow
+                    label="Barcode"
+                    value={
+                      isEditing ? (
+                        <input
+                          value={(editDraft.barcode as string) ?? ""}
+                          onChange={(e) => setEditDraft((d) => ({ ...d, barcode: e.target.value }))}
+                          className="w-full rounded border border-surface-border px-2 py-1 text-sm text-navy focus:outline-none focus:ring-2 focus:ring-brand-500"
+                        />
+                      ) : (
+                        (product.barcode ?? <span className="text-navy/30">—</span>)
+                      )
+                    }
+                  />
+                  <InfoRow
                     label="Unit code"
                     value={
                       isEditing ? (
                         <input
                           value={(editDraft.unitSku as string) ?? ""}
                           onChange={(e) => setEditDraft((d) => ({ ...d, unitSku: e.target.value }))}
-                          placeholder="Same as case code"
+                          placeholder={`Same as ${UW.pack.lower} code`}
                           className="w-full rounded border border-surface-border px-2 py-1 text-sm text-navy focus:outline-none focus:ring-2 focus:ring-brand-500"
                         />
                       ) : (
                         (product.unitSku ?? (
-                          <span className="text-navy/30">— (same as case code)</span>
+                          <span className="text-navy/30">— (same as {UW.pack.lower} code)</span>
                         ))
                       )
                     }
@@ -1725,7 +1801,7 @@ export default function ProductDetailPage() {
                     }
                   />
                   <InfoRow
-                    label="Units per case"
+                    label={`${UW.base.other} per ${UW.pack.lower}`}
                     value={
                       isEditing ? (
                         <DecimalInput
@@ -1741,15 +1817,16 @@ export default function ProductDetailPage() {
                           }
                           className="w-full rounded border border-surface-border px-2 py-1 text-sm text-navy focus:outline-none focus:ring-2 focus:ring-brand-500"
                         />
-                      ) : Number(product.unitsPerBox) > 1 ? (
-                        `${product.unitsPerBox} units`
                       ) : (
-                        "Sold individually"
+                        <PiecesPerBoxValue unitsPerBox={product.unitsPerBox} />
                       )
                     }
                   />
                   <InfoRow
-                    label={`${tierLabel(tierLabels, 1)} Price (List)`}
+                    label={priceRowLabel(
+                      isEditing ? (editDraft.unit as string) : product.unit,
+                      tierLabel(tierLabels, 1),
+                    )}
                     value={
                       isEditing ? (
                         <>
@@ -1769,74 +1846,67 @@ export default function ProductDetailPage() {
                       )
                     }
                   />
-                  {/* Variant of — always show when editing; in view mode show only if product has a parent */}
-                  {(isEditing || product.parentProductId) && (
+                  {/* Variant of — edit only; view mode shows the parent in the header line and the banner */}
+                  {isEditing && (
                     <InfoRow
                       label="Variant of"
                       value={
-                        isEditing ? (
-                          <select
-                            value={(editDraft.parentProductId as string) ?? ""}
-                            onChange={(e) =>
-                              setEditDraft((d) => ({
-                                ...d,
-                                parentProductId: e.target.value,
-                                variantName: e.target.value ? (d.variantName as string) : "",
-                              }))
-                            }
-                            className="w-full rounded border border-surface-border px-2 py-1 text-sm text-navy focus:outline-none focus:ring-2 focus:ring-brand-500"
-                          >
-                            <option value="">None (standalone product)</option>
-                            {variantOfCandidates.map((p: any) => (
-                              <option key={p.id} value={p.id}>
-                                {p.name}
-                                {p.sku ? ` — ${p.sku}` : ""}
-                              </option>
-                            ))}
-                          </select>
-                        ) : product.parent ? (
-                          <Link
-                            href={`/products/${product.parentProductId}`}
-                            className="text-brand-600 underline text-sm"
-                          >
-                            {product.parent.name}
-                          </Link>
-                        ) : (
-                          "—"
-                        )
+                        <select
+                          value={(editDraft.parentProductId as string) ?? ""}
+                          onChange={(e) =>
+                            setEditDraft((d) => ({
+                              ...d,
+                              parentProductId: e.target.value,
+                              variantName: e.target.value ? (d.variantName as string) : "",
+                            }))
+                          }
+                          className="w-full rounded border border-surface-border px-2 py-1 text-sm text-navy focus:outline-none focus:ring-2 focus:ring-brand-500"
+                        >
+                          <option value="">None (standalone product)</option>
+                          {variantOfCandidates.map((p: any) => (
+                            <option key={p.id} value={p.id}>
+                              {p.name}
+                              {p.sku ? ` — ${p.sku}` : ""}
+                            </option>
+                          ))}
+                        </select>
                       }
                     />
                   )}
-                  {/* Flavor / variety — only when a parent is selected */}
-                  {isEditing && (editDraft.parentProductId as string) && (
-                    <InfoRow
-                      label="Flavor / variety"
-                      value={
-                        <div>
-                          <input
-                            value={(editDraft.variantName as string) ?? ""}
-                            onChange={(e) =>
-                              setEditDraft((d) => ({ ...d, variantName: e.target.value }))
-                            }
-                            placeholder="e.g. Large, Strawberry, Red…"
-                            className="w-full rounded border border-surface-border px-2 py-1 text-sm text-navy focus:outline-none focus:ring-2 focus:ring-brand-500"
-                          />
-                          {(editDraft.variantName as string)?.trim() &&
-                            (() => {
-                              const p = allProducts.find(
-                                (x: any) => x.id === editDraft.parentProductId,
-                              ) as any;
-                              return p ? (
-                                <p className="mt-1 text-xs text-navy/70 italic">
-                                  Name will be: &ldquo;{p.name} -{" "}
-                                  {(editDraft.variantName as string).trim()}&rdquo;
-                                </p>
-                              ) : null;
-                            })()}
-                        </div>
-                      }
-                    />
-                  )}
+                  {/* Flavor / variety: a variant's own name, or the label of a product that has variants */}
+                  {isEditing &&
+                    ((editDraft.parentProductId as string) ||
+                      (!product.parentProductId && (product.variants?.length ?? 0) > 0)) && (
+                      <InfoRow
+                        label="Flavor / variety"
+                        value={
+                          <div>
+                            <input
+                              id={VARIANT_NAME_INPUT_ID}
+                              aria-label="Flavor / variety"
+                              value={(editDraft.variantName as string) ?? ""}
+                              onChange={(e) =>
+                                setEditDraft((d) => ({ ...d, variantName: e.target.value }))
+                              }
+                              placeholder="e.g. Large, Strawberry, Red…"
+                              className="w-full rounded border border-surface-border px-2 py-1 text-sm text-navy focus:outline-none focus:ring-2 focus:ring-brand-500"
+                            />
+                            {(editDraft.variantName as string)?.trim() &&
+                              (() => {
+                                const p = allProducts.find(
+                                  (x: any) => x.id === editDraft.parentProductId,
+                                ) as any;
+                                return p ? (
+                                  <p className="mt-1 text-xs text-navy/70 italic">
+                                    Name will be: &ldquo;{p.name} -{" "}
+                                    {(editDraft.variantName as string).trim()}&rdquo;
+                                  </p>
+                                ) : null;
+                              })()}
+                          </div>
+                        }
+                      />
+                    )}
                 </div>
 
                 {/* Pack-size prompt — suggested from the name/unit while the
@@ -1906,6 +1976,19 @@ export default function ProductDetailPage() {
                       </button>
                     )}
                   </div>
+                  {isEditing &&
+                    (() => {
+                      // Names the tiers a save would move with the list (#3470 review: never a fixed string).
+                      const note = ladderChangeNote(
+                        editTierPatchMoves(product, editDraft as Record<string, string>),
+                        (n) => tierLabel(tierLabels, n),
+                      );
+                      return note ? (
+                        <p className="mb-2 text-xs text-navy/70" data-testid="tiers-move-note">
+                          {note.replace(/\.$/, "")} when you save.
+                        </p>
+                      ) : null;
+                    })()}
                   <div className="grid grid-cols-1 gap-2 sm:grid-cols-4">
                     {(
                       [
@@ -1953,12 +2036,21 @@ export default function ProductDetailPage() {
                                 onChange={(v) =>
                                   setEditDraft((d) => ({ ...d, [field]: String(v) }))
                                 }
-                                onCommit={(v) =>
-                                  setEditDraft((d) => ({
-                                    ...d,
-                                    ...cascadeTierPrices(field as TierField, v),
-                                  }))
-                                }
+                                onCommit={(v, atFocus) => {
+                                  // P0 2026-10-14: lower tiers move only by applyLadderChange (tracking, 0 or above
+                                  // the new price), never a blind copy-down, and the move is named on screen. The
+                                  // OLD side is the field's own focus-time value (SA MUST: no staleable copy).
+                                  const moved = applyLadderChange(
+                                    field as TierField,
+                                    atFocus ?? productVal,
+                                    v,
+                                    editDraft as Record<string, string>,
+                                  );
+                                  setEditDraft((d) => ({ ...d, ...moved }));
+                                  setLadderNote(
+                                    ladderChangeNote(moved, (n) => tierLabel(tierLabels, n)),
+                                  );
+                                }}
                               />
                               {perUnitHint(curVal)}
                             </>
@@ -1979,6 +2071,15 @@ export default function ProductDetailPage() {
                       );
                     })}
                   </div>
+                  {isEditing && ladderNote && (
+                    <p
+                      role="status"
+                      data-testid="ladder-note"
+                      className="mt-2 text-xs text-navy/70"
+                    >
+                      {ladderNote}
+                    </p>
+                  )}
                   {isEditing &&
                     (() => {
                       const t1 = parseFloat(String(editDraft.pricePerUnit ?? priceNumber));
@@ -2032,7 +2133,7 @@ export default function ProductDetailPage() {
                           className="w-32 rounded border border-surface-border px-2 py-1 text-sm text-navy focus:outline-none focus:ring-2 focus:ring-brand-500"
                         />
                         <p className="mt-1 text-xs text-navy/50">
-                          per piece — even for boxed products
+                          per {UW.base.lower} — even for boxed products
                         </p>
                         {!(editDraft.msrp as string)?.trim() && (
                           <p className="mt-1 text-xs text-navy/50">
@@ -2042,7 +2143,8 @@ export default function ProductDetailPage() {
                         )}
                         {msrpBelowWholesale && (
                           <p className="mt-1 text-xs text-warning">
-                            Below wholesale price (${wholesalePerPiece.toFixed(2)}/pc)
+                            Below wholesale price (${wholesalePerPiece.toFixed(2)}/
+                            {UW.base.short.one})
                           </p>
                         )}
                       </>
@@ -2053,11 +2155,12 @@ export default function ProductDetailPage() {
                     <>
                       <p className="font-mono text-sm font-medium tabular-nums text-navy">
                         ${msrpNumber.toFixed(2)}
-                        <span className="ml-1 text-[10px] text-navy/50">/pc</span>
+                        <span className="ml-1 text-[10px] text-navy/50">/{UW.base.short.one}</span>
                       </p>
                       {msrpBelowWholesale && (
                         <p className="mt-1 text-xs text-warning">
-                          Below wholesale price (${wholesalePerPiece.toFixed(2)}/pc)
+                          Below wholesale price (${wholesalePerPiece.toFixed(2)}/{UW.base.short.one}
+                          )
                         </p>
                       )}
                     </>
@@ -2206,7 +2309,7 @@ export default function ProductDetailPage() {
                     )}
                     {activeProductConfig && (
                       <InfoRow
-                        label="Unit of measure (per piece)"
+                        label={`Unit of measure (per ${UW.base.lower})`}
                         value={
                           isEditing ? (
                             <select
@@ -2267,7 +2370,7 @@ export default function ProductDetailPage() {
                               </select>
                               <p className="mt-0.5 text-xs text-navy/70">
                                 Used when this product is sold by the case. Leave blank to report
-                                every quantity in pieces.
+                                every quantity in {UW.base.lowerOther}.
                               </p>
                             </>
                           ) : (
@@ -2318,28 +2421,13 @@ export default function ProductDetailPage() {
                   <h3 className="text-[11px] font-semibold uppercase tracking-[0.08em] text-navy/70">
                     Variants
                   </h3>
-                  {isOperator && (
-                    <div className="flex items-center gap-2">
-                      <Button
-                        size="sm"
-                        variant="secondary"
-                        leftIcon={<Scissors className="h-3.5 w-3.5" />}
-                        onClick={() => setShowVariantSplit(true)}
-                      >
-                        Assign to variants
-                      </Button>
-                      <Button size="sm" variant="secondary" onClick={openLinkExistingModal}>
-                        Link existing
-                      </Button>
-                      <Button
-                        size="sm"
-                        leftIcon={<Plus className="h-3.5 w-3.5" />}
-                        onClick={() => openVariantModal()}
-                      >
-                        Add Variant
-                      </Button>
-                    </div>
-                  )}
+                  <LegacyVariantsActions
+                    product={product}
+                    isOperator={isStaff}
+                    onSplit={() => setShowVariantSplit(true)}
+                    onLinkExisting={openLinkExistingModal}
+                    onAddVariant={() => openVariantModal()}
+                  />
                 </div>
 
                 {(!product.variants || product.variants.length === 0) && !product.variantName ? (
@@ -2366,7 +2454,7 @@ export default function ProductDetailPage() {
                           <th className="border-b-2 border-navy px-3 py-2.5 text-[11px] font-semibold uppercase tracking-[0.07em] text-navy/70">
                             Status
                           </th>
-                          {isOperator && (
+                          {isStaff && (
                             <th className="border-b-2 border-navy px-5 py-2.5 text-right text-[11px] font-semibold uppercase tracking-[0.07em] text-navy/70">
                               Actions
                             </th>
@@ -2382,9 +2470,9 @@ export default function ProductDetailPage() {
                                 <span className="italic text-navy/70">this product</span>
                               )}
                             </span>
-                            {!product.variantName && isOperator && (
+                            {!product.variantName && isStaff && (
                               <button
-                                onClick={startEdit}
+                                onClick={assignOwnName}
                                 className="ml-2 text-xs text-brand-500 hover:underline"
                               >
                                 assign name
@@ -2406,7 +2494,7 @@ export default function ProductDetailPage() {
                               label={product.isActive ? "Active" : "Inactive"}
                             />
                           </td>
-                          {isOperator && (
+                          {isStaff && (
                             <td className="px-5 py-2.5 text-right">
                               <button
                                 onClick={startEdit}
@@ -2449,7 +2537,7 @@ export default function ProductDetailPage() {
                                 label={variant.isActive ? "Active" : "Inactive"}
                               />
                             </td>
-                            {isOperator && (
+                            {isStaff && (
                               <td className="px-5 py-2.5">
                                 <div className="flex items-center justify-end gap-1.5">
                                   <button
@@ -2493,7 +2581,7 @@ export default function ProductDetailPage() {
       <Modal
         open={variantModalOpen}
         onClose={closeVariantModal}
-        title={editingVariant ? "Edit Variant" : "Add Variant"}
+        title={variantModalTitle(!!editingVariant)}
         footer={
           <>
             <Button variant="secondary" onClick={closeVariantModal}>
@@ -2545,7 +2633,7 @@ export default function ProductDetailPage() {
                 ref={variantUnitSkuRef}
                 value={variantForm.unitSku}
                 onChange={(e) => setVariantForm((f) => ({ ...f, unitSku: e.target.value }))}
-                placeholder="Leave blank if it matches the case code"
+                placeholder={`Leave blank if it matches the ${UW.pack.lower} code`}
                 className="flex-1 rounded border border-surface-border px-3 py-2 text-sm text-navy focus:outline-none focus:ring-2 focus:ring-brand-500"
               />
               <BarcodeScannerButton

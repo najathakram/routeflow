@@ -50,6 +50,7 @@ import {
 } from "../../../../lib/credit-limit-error";
 import { parseSellingRestricted } from "../../../../lib/selling-restricted";
 import { postDeliveryInvoicePrompt, type BlockedLine } from "@routeflow/types";
+import { shipmentSaveDecision } from "@routeflow/types/shipment-save";
 import { lineBackorderPieces } from "@routeflow/types/order-line-backorder";
 import { useOfflineQueue } from "../../../../store/offlineQueue";
 import { alertInfo, confirm } from "../../../../lib/confirm";
@@ -67,11 +68,45 @@ import {
   sharePdf,
 } from "../../../../lib/share-pdf";
 import { ShipmentSection, ShipmentEditModal } from "../../../../components/ShipmentSection";
-import { shipmentForDisplay } from "../../../../lib/shipment-display";
+import {
+  shipmentCardPlacement,
+  shipmentForDisplay,
+  shipmentNotShippedNote,
+} from "../../../../lib/shipment-display";
 import { SendInvoiceSheet } from "../../../../components/SendInvoiceSheet";
 import { ReasonSheet } from "../../../../components/ReasonSheet";
-import { canDeleteOrder, demotionRequiresReason } from "../../../../lib/order-status-flow";
+import {
+  canDeleteOrder,
+  demotionRequiresReason,
+  isPosOrder,
+} from "../../../../lib/order-status-flow";
+import {
+  POS_COPY,
+  POS_READY_FAILED,
+  pickupCompleteErrorCopy,
+  decidePickupResponse,
+  posHandOverBalance,
+  posLiveInvoices,
+  posMoveConfirm,
+  posMoveFailedCopy,
+  posMoveOptions,
+  posMoveSuccessCopy,
+  posSwitchToDeliveryHint,
+  posCutNote,
+  posOrderActions,
+  posProgressSteps,
+  type PosAction,
+} from "../../../../lib/pos-mode";
+import { PosHandOverSheet } from "../../../../components/PosHandOverSheet";
+import { useCustomer } from "../../../../lib/api/customers";
+import {
+  releasePickupKey,
+  usePickupComplete,
+  usePickupInvoiceBalances,
+  useMoveOrderOffPickup,
+} from "../../../../lib/api/pos-orders";
 import { statusActions, type StatusAction } from "../../../../lib/order-actions";
+import { useStaffFulfilment } from "../../../../lib/tenant-features";
 import { useRecordReturn } from "../../../../hooks/useRecordReturn";
 
 function formatCurrency(n: number | string | undefined): string {
@@ -121,6 +156,14 @@ export default function OrderDetailScreen() {
   const urgentMut = useToggleOrderUrgent();
   const shipmentMut = useUpdateOrderShipment();
   const createInvoiceMut = useCreateInvoiceFromOrder();
+  const pickupMut = usePickupComplete(id ?? "");
+  // GET /orders/:id does not carry customer.isWalkIn: read it from the customer record (same as web).
+  const { data: walkInCustomer } = useCustomer(
+    isPosOrder(order) ? (order?.customer?.id ?? order?.customerId ?? "") : "",
+  );
+  const moveOffPickupMut = useMoveOrderOffPickup();
+  // Row 505: which "move off pickup" buttons the account offers (same capability answer as web).
+  const staffFulfilment = useStaffFulfilment();
   const sendMut = useSendInvoice();
   const pdfMut = useInvoicePdf();
   const [shipmentModal, setShipmentModal] = useState(false);
@@ -158,6 +201,16 @@ export default function OrderDetailScreen() {
   // The demotion awaiting a reason. The server rejects a blank one, so the sheet
   // holds the action until the operator supplies it.
   const [reasonFor, setReasonFor] = useState<StatusAction | null>(null);
+  // POS hand-over tender sheet (open flag + the last failure, as fixed copy).
+  const [handOverOpen, setHandOverOpen] = useState(false);
+  const [handOverError, setHandOverError] = useState<string | null>(null);
+  // Balance the server says is still owed after a 200 whose payment was not recorded (same key retry).
+  const [handOverOwed, setHandOverOwed] = useState<number | null>(null);
+  // The order payload's invoices carry no balance: read each live invoice for its server balanceDue.
+  const balances = usePickupInvoiceBalances(
+    posLiveInvoices(order).map((i) => i.id),
+    handOverOpen && isPosOrder(order),
+  );
 
   if (isLoading) {
     return (
@@ -189,7 +242,20 @@ export default function OrderDetailScreen() {
   // pins its signature to the narrower `OrderStatus` union so a typo'd status
   // string is caught at the call site instead of silently falling through to
   // the switch's `default: []`.
-  const actions = statusActions(order.status as OrderStatus, order.fulfillPath);
+  const actions = statusActions(
+    order.status as OrderStatus,
+    order.fulfillPath,
+    order.cancelBlockedReason,
+    order.counterSale,
+  );
+  // SA-763r P-2: a POS-mode order = PICKUP and not a counter sale. One primary per state.
+  const isPos = isPosOrder(order);
+  const moveOptions = posMoveOptions(staffFulfilment.formMethods, staffFulfilment.formDefault);
+  const posActions = isPos ? posOrderActions(order, order.status, moveOptions) : [];
+  const posSteps =
+    isPos && order.status !== "DRAFT" && order.status !== "CANCELLED"
+      ? posProgressSteps(order, order.status)
+      : null;
   // R1: trust the server edit-window — items are now editable at every live stage
   // (incl. OUT_FOR_DELIVERY / DELIVERED); only CANCELLED closes it. Fall back to a
   // non-cancelled check for older API responses that don't send editWindow.
@@ -278,6 +344,74 @@ export default function OrderDetailScreen() {
       },
       onError: (e) => toastError(e, "Couldn't prepare the invoice. Open it from Invoices."),
     });
+  };
+
+  /** Credit-limit / selling-restriction 409s keep their guard modals; everything else is fixed copy. */
+  const toastPosError = (e: unknown, fallback: string) => {
+    const credit = parseCreditLimitError(e);
+    if (credit) return setCreditBlock(credit);
+    const restricted = parseSellingRestricted(e);
+    if (restricted) return setRestrictedBlock(restricted);
+    showToast(fallback);
+  };
+
+  /** POS-mode actions: Create invoice / Hand over / Ready for pickup / Switch to delivery / pay or print. */
+  const runPosAction = (a: PosAction) => {
+    switch (a.key) {
+      case "createInvoice":
+        createInvoiceMut.mutate(order.id, {
+          onSuccess: () => {
+            showToast(POS_COPY.invoiceCreated);
+            refetch();
+          },
+          onError: () => showToast(POS_COPY.invoiceFailed),
+        });
+        return;
+      case "handOver":
+        setHandOverError(null);
+        setHandOverOwed(null);
+        setHandOverOpen(true);
+        return;
+      case "readyForPickup":
+        changeMut.mutate(
+          { id: order.id, status: "OUT_FOR_DELIVERY" },
+          {
+            onSuccess: () => {
+              showToast("Customer notified: ready for pickup");
+              refetch();
+            },
+            onError: (e) => toastPosError(e, POS_READY_FAILED),
+          },
+        );
+        return;
+      case "switchToDelivery":
+      case "shipByCarrier": {
+        // ONE handler for both moves: the action carries its own path (Ship by carrier… is always SHIP).
+        const path = a.path ?? (a.key === "shipByCarrier" ? "SHIP" : "ROUTE");
+        const copy = posMoveConfirm(path);
+        confirm(
+          copy.title,
+          copy.message,
+          () =>
+            moveOffPickupMut.mutate(
+              { id: order.id, fulfillPath: path },
+              {
+                onSuccess: () => {
+                  showToast(posMoveSuccessCopy(path));
+                  refetch();
+                },
+                onError: (e) => toastPosError(e, posMoveFailedCopy(path)),
+              },
+            ),
+          { confirmText: copy.confirmText },
+        );
+        return;
+      }
+      case "recordPayment":
+      case "printInvoice":
+        if (a.invoiceId) router.push(`/(operator)/invoices/${a.invoiceId}` as any);
+        return;
+    }
   };
 
   /**
@@ -610,11 +744,17 @@ export default function OrderDetailScreen() {
   };
 
   const handleSaveShipment = (carrier: string, trackingNumber: string) => {
+    const { outcome, payload } = shipmentSaveDecision(order, carrier, trackingNumber);
+    if (!payload) {
+      // Nothing stored and nothing typed: not a change, so no request and no "cleared" toast.
+      setShipmentModal(false);
+      return;
+    }
     shipmentMut.mutate(
-      { id: order.id, shippingCarrier: carrier, shippingTrackingNumber: trackingNumber },
+      { id: order.id, ...payload },
       {
         onSuccess: () => {
-          showToast(carrier || trackingNumber ? "Shipment saved" : "Shipment cleared");
+          showToast(outcome === "saved" ? "Shipment saved" : "Shipment cleared");
           setShipmentModal(false);
           refetch();
         },
@@ -625,6 +765,23 @@ export default function OrderDetailScreen() {
       },
     );
   };
+
+  // Carrier shipment: only for carrier-shipped orders, or rows that already carry tracking data recorded
+  // before this gate existed.
+  const shipFirst = shipmentCardPlacement(order.fulfillPath) === "aboveItems";
+  const shipmentCard =
+    order.fulfillPath === "SHIP" || order.shippingCarrier || order.shippingTrackingNumber ? (
+      <ShipmentSection
+        shipment={shipmentForDisplay(order, order.status)}
+        note={shipmentNotShippedNote(
+          order.fulfillPath,
+          order.status,
+          order.shippingTrackingNumber,
+          order.shippingCarrier,
+        )}
+        onEdit={() => setShipmentModal(true)}
+      />
+    ) : null;
 
   return (
     <SafeAreaView style={styles.safe} edges={["top", "left", "right"]}>
@@ -683,6 +840,10 @@ export default function OrderDetailScreen() {
             {order.notes ? <Text style={styles.notes}>"{order.notes}"</Text> : null}
           </View>
 
+          {/* M8 (row 505): a carrier (SHIP) order shows its Shipment card above the Items card with the totals,
+              where the ship step is found. Any other order keeps it after the Invoice card. */}
+          {shipFirst && shipmentCard}
+
           {/* Items */}
           <View style={styles.card}>
             <View style={styles.cardHeader}>
@@ -694,7 +855,7 @@ export default function OrderDetailScreen() {
                   style={styles.editItemsBtn}
                 >
                   <Ionicons name="create-outline" size={16} color={ios.brand} />
-                  <Text style={styles.linkText}>Edit items</Text>
+                  <Text style={styles.linkText}>{isPos ? "Edit order" : "Edit items"}</Text>
                 </Pressable>
               ) : null}
             </View>
@@ -892,13 +1053,58 @@ export default function OrderDetailScreen() {
             </View>
           ) : null}
 
-          {/* Carrier shipment — only for carrier-shipped orders, or rows that
-              already carry tracking data recorded before this gate existed. */}
-          {order.fulfillPath === "SHIP" || order.shippingCarrier || order.shippingTrackingNumber ? (
-            <ShipmentSection
-              shipment={shipmentForDisplay(order, order.status)}
-              onEdit={() => setShipmentModal(true)}
-            />
+          {!shipFirst && shipmentCard}
+
+          {/* POS mode: Confirmed -> Invoice (draft) -> Handed over, one primary per state. */}
+          {isPos && (posSteps || posActions.length > 0) ? (
+            <View style={styles.card}>
+              {posSteps ? (
+                <View style={{ flexDirection: "row", flexWrap: "wrap", gap: 6 }}>
+                  {posSteps.map((step) => (
+                    <Pill key={step.key} variant={step.done ? "green" : "gray"} small>
+                      {step.done ? `${step.label} ✓` : step.label}
+                    </Pill>
+                  ))}
+                </View>
+              ) : null}
+              {posActions.length > 0 ? (
+                <View style={[styles.actionsCol, posSteps ? { marginTop: 10 } : null]}>
+                  {posActions.map((a) => {
+                    // posOrderActions already leaves Switch to delivery out once it can't succeed (M6).
+                    const busy =
+                      pickupMut.isPending ||
+                      createInvoiceMut.isPending ||
+                      changeMut.isPending ||
+                      moveOffPickupMut.isPending;
+                    return (
+                      <Pressable
+                        key={a.key}
+                        style={[
+                          styles.actionBtn,
+                          a.tier === "primary" ? styles.primaryAction : styles.secondaryAction,
+                          busy && styles.actionDisabled,
+                        ]}
+                        onPress={() => runPosAction(a)}
+                        disabled={busy}
+                        accessibilityRole="button"
+                      >
+                        <Text
+                          style={[styles.actionBtnText, a.tier === "primary" && { color: "#fff" }]}
+                        >
+                          {a.label}
+                        </Text>
+                      </Pressable>
+                    );
+                  })}
+                </View>
+              ) : null}
+              {posSwitchToDeliveryHint(order.status) ? (
+                <Text style={styles.shipHint}>{posSwitchToDeliveryHint(order.status)}</Text>
+              ) : null}
+              {posCutNote(order, order.status) ? (
+                <Text style={styles.shipHint}>{posCutNote(order, order.status)}</Text>
+              ) : null}
+            </View>
           ) : null}
 
           {/* Status transitions */}
@@ -1077,6 +1283,42 @@ export default function OrderDetailScreen() {
         issuePrompt={sendSheet?.issuePrompt}
       />
 
+      <PosHandOverSheet
+        visible={handOverOpen}
+        isWalkIn={walkInCustomer?.isWalkIn}
+        balance={posHandOverBalance({
+          orderTotal: Number(order.total),
+          orderInvoices: order.invoices ?? [],
+          owedOverride: handOverOwed,
+          isFetching: balances.isFetching,
+          isError: balances.isError,
+          details: balances.data,
+        })}
+        onRetry={() => void balances.refetch()}
+        submitting={pickupMut.isPending}
+        error={handOverError}
+        onCancel={() => setHandOverOpen(false)}
+        onSubmit={(body) =>
+          pickupMut.mutate(body, {
+            onSuccess: (res) => {
+              const d = decidePickupResponse(res);
+              if (d.kind === "retry-tender") {
+                // Committed but unpaid: back to the tender step, same Idempotency-Key.
+                setHandOverOwed(d.owed);
+                setHandOverError(d.message);
+                refetch();
+                return;
+              }
+              releasePickupKey(order.id);
+              setHandOverOwed(null);
+              setHandOverOpen(false);
+              showToast(d.message);
+              refetch();
+            },
+            onError: (e) => setHandOverError(pickupCompleteErrorCopy(e)),
+          })
+        }
+      />
       <ReasonSheet
         visible={reasonFor !== null}
         title={reasonFor?.label ?? "Reason"}
@@ -1183,6 +1425,7 @@ const styles = StyleSheet.create({
     flexDirection: "row",
     alignItems: "center",
     gap: 10,
+    minHeight: 44,
     paddingVertical: 13,
     paddingHorizontal: 14,
     borderRadius: 12,

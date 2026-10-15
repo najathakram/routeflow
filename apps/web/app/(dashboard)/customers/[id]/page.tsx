@@ -162,6 +162,8 @@ import { ConfirmDialog } from "@/components/ConfirmDialog";
 import { CustomerRecordPaymentModal } from "@/components/CustomerRecordPaymentModal";
 import { AddressAutocomplete } from "@/components/AddressAutocomplete";
 import { focusRefusedContactField } from "@/lib/refused-text-field";
+import { isOpenInvoiceStatus } from "@/lib/open-invoice-status";
+import { ReadOnlyHint, WriteButton, WriteLink } from "@/lib/read-only-gate";
 
 // ── Types ─────────────────────────────────────────────────────────────────────
 
@@ -1899,9 +1901,8 @@ function DocumentsTab({ customerId }: { customerId: string }) {
 
 // ── Page ──────────────────────────────────────────────────────────────────────
 
-/** "Outstanding" spans four statuses, but ListInvoicesDto validates `status` as a
- *  single enum value (a comma-list 400s) — so it's filtered client-side. */
-const OUTSTANDING_STATUSES = ["SENT", "VIEWED", "PARTIAL", "OVERDUE"];
+// "Outstanding" spans the four open statuses (isOpenInvoiceStatus), but ListInvoicesDto validates
+// `status` as a single enum value (a comma-list 400s) — so it is filtered client-side.
 
 function CustomerDetailPageInner({ id }: { id: string }) {
   const { setTitle } = usePageTitle();
@@ -1969,7 +1970,7 @@ function CustomerDetailPageInner({ id }: { id: string }) {
   const customerInvoices = React.useMemo(() => {
     const rows = invoicesData?.data ?? [];
     return invoiceFilter === "outstanding"
-      ? rows.filter((inv) => OUTSTANDING_STATUSES.includes(inv.status))
+      ? rows.filter((inv) => isOpenInvoiceStatus(inv.status))
       : rows;
   }, [invoicesData, invoiceFilter]);
 
@@ -2361,14 +2362,15 @@ function CustomerDetailPageInner({ id }: { id: string }) {
               Edit
             </Button>
           )}
-          <Button
+          <WriteButton
             variant="secondary"
             size="sm"
             leftIcon={<FileText className="h-3.5 w-3.5" />}
             href={`/invoices/new?customerId=${id}`}
           >
             New Invoice
-          </Button>
+          </WriteButton>
+          <ReadOnlyHint className="basis-full text-xs text-slate-600" />
           <RecordReturnAction customerId={id} customerName={customer.businessName} />
         </div>
       </div>
@@ -3616,13 +3618,13 @@ function CustomerDetailPageInner({ id }: { id: string }) {
                   </button>
                 ))}
               </div>
-              <Link
+              <WriteLink
                 href={`/invoices/new?customerId=${id}`}
                 className="inline-flex items-center gap-1.5 rounded-lg bg-brand px-3 py-1.5 text-xs font-semibold text-white hover:bg-brand/90"
               >
                 <Plus className="h-3.5 w-3.5" />
                 New Invoice
-              </Link>
+              </WriteLink>
             </div>
 
             {/* Invoice table */}
@@ -3632,13 +3634,13 @@ function CustomerDetailPageInner({ id }: { id: string }) {
               <div className="py-10 text-center">
                 <FileText className="mx-auto mb-3 h-8 w-8 text-navy/20" />
                 <p className="text-sm font-medium text-navy/70">No invoices found</p>
-                <Link
+                <WriteLink
                   href={`/invoices/new?customerId=${id}`}
                   className="mt-3 inline-flex items-center gap-1.5 rounded-lg bg-brand px-3 py-1.5 text-xs font-semibold text-white hover:bg-brand/90"
                 >
                   <Plus className="h-3.5 w-3.5" />
                   Create Invoice
-                </Link>
+                </WriteLink>
               </div>
             ) : (
               <div className="-mx-6 -mb-6 overflow-x-auto">
@@ -3655,7 +3657,7 @@ function CustomerDetailPageInner({ id }: { id: string }) {
                   </thead>
                   <tbody className="divide-y divide-surface-border">
                     {customerInvoices.map((inv) => {
-                      const isOverdue = inv.status === "OVERDUE";
+                      const isOverdue = inv.isOverdue === true; // the server's one rule (row 318c), not status
                       const balanceDue = inv.balanceDue ?? 0;
                       return (
                         <tr
@@ -3715,14 +3717,15 @@ function CustomerDetailPageInner({ id }: { id: string }) {
                     {statementMoney(statement, statementFailed, (x) => x.outstandingAmount, fmt)}
                   </p>
                   <p className="text-xs text-navy/70">Amount currently owed on invoices</p>
-                  <Button
+                  <WriteButton
                     size="sm"
                     className="w-full"
                     leftIcon={<Wallet className="h-4 w-4" />}
                     onClick={() => setIsRecordPaymentOpen(true)}
                   >
                     Record Payment
-                  </Button>
+                  </WriteButton>
+                  <ReadOnlyHint />
                 </div>
               </Card>
               <Card>

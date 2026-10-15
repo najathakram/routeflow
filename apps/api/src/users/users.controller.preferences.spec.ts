@@ -1,3 +1,4 @@
+import { AuditService } from "../audit/audit.service";
 import { listenOnLoopback } from "../common/testing/listen-loopback";
 import "reflect-metadata";
 import { INestApplication, ValidationPipe } from "@nestjs/common";
@@ -41,6 +42,7 @@ describe("PATCH/GET users/me/preferences — typed lowStockDigestEnabled", () =>
         { provide: PrismaService, useValue: prisma },
         { provide: EmailService, useValue: {} },
         { provide: OperatorPermissionsService, useValue: {} },
+        { provide: AuditService, useValue: { log: jest.fn() } }, // NoImpersonationGuard (SA-778)
         { provide: ConfigService, useValue: { get: () => ({}) } },
       ],
     })
@@ -100,6 +102,7 @@ describe("PATCH/GET users/me/preferences — typed lowStockDigestEnabled", () =>
     locale: "es",
     "bill.lastSupplierId": "sup-123",
     "payment.lastMethod": "ACH",
+    "orders.posMode": "true",
   };
 
   it("the api allow-list is the shared client key list", () => {
@@ -150,6 +153,10 @@ describe("PATCH/GET users/me/preferences — typed lowStockDigestEnabled", () =>
     ["bill.lastSupplierId", null],
     ["payment.lastMethod", "BITCOIN"],
     ["payment.lastMethod", null],
+    ["orders.posMode", "yes"],
+    ["orders.posMode", true],
+    ["orders.posMode", null],
+    ["orders.posMode", "TRUE"],
   ])("rejects %s=%p with 400 and writes nothing", async (k, v) => {
     await request(app.getHttpServer())
       .patch("/users/me/preferences")
@@ -191,6 +198,26 @@ describe("PATCH/GET users/me/preferences — typed lowStockDigestEnabled", () =>
       .patch("/users/me/preferences")
       .send({ [LOW_STOCK_DIGEST_PREF_KEY]: "false" })
       .expect(200);
+    expect([...store.keys()].every((k) => k.startsWith("caller-1|"))).toBe(true);
+  });
+
+  // SA-763r P-1a red row (3): the POS mode preference is a sticky per-user switch.
+  it("orders.posMode: PATCH true -> 200, GET reads it back; unset reads as absent (= off)", async () => {
+    const before = await request(app.getHttpServer()).get("/users/me/preferences").expect(200);
+    expect(before.body).not.toHaveProperty("orders.posMode");
+    const res = await request(app.getHttpServer())
+      .patch("/users/me/preferences")
+      .send({ "orders.posMode": "true" })
+      .expect(200);
+    expect(res.body["orders.posMode"]).toBe("true");
+    const got = await request(app.getHttpServer()).get("/users/me/preferences").expect(200);
+    expect(got.body["orders.posMode"]).toBe("true");
+    await request(app.getHttpServer())
+      .patch("/users/me/preferences")
+      .send({ "orders.posMode": "false" })
+      .expect(200);
+    const off = await request(app.getHttpServer()).get("/users/me/preferences").expect(200);
+    expect(off.body["orders.posMode"]).toBe("false");
     expect([...store.keys()].every((k) => k.startsWith("caller-1|"))).toBe(true);
   });
 });

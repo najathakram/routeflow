@@ -130,7 +130,10 @@ describe("FamilyVariantsEditor", () => {
     });
     await waitFor(() =>
       expect(toast).toHaveBeenCalledWith(
-        expect.objectContaining({ title: "Variants saved", variant: "success" }),
+        expect.objectContaining({
+          title: "Variants saved (1 added, 1 changed)",
+          variant: "success",
+        }),
       ),
     );
     await waitFor(() => expect(screen.queryByLabelText("Variant 1 price")).toBeNull());
@@ -291,7 +294,7 @@ describe("FamilyVariantsEditor", () => {
     mount();
     edit();
     type("Variant 1 cost", "");
-    type("Variant 1 units per case", "");
+    type("Variant 1 pieces per box", "");
     save();
     expect(screen.getAllByText("Can't be cleared once set. Enter a new value.")).toHaveLength(2);
     expect(patch).not.toHaveBeenCalled();

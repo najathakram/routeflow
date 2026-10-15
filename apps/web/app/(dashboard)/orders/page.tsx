@@ -22,6 +22,8 @@ import {
 } from "lucide-react";
 import { PageHeader, Badge, Select, Button, cn, useToast, EmptyState } from "@routeflow/ui/web";
 import { useAuth } from "@/lib/auth-context";
+import { staffMay } from "@routeflow/types";
+import { OrdersMoreMenu } from "./_components/OrdersMoreMenu";
 import { usePageTitle } from "@/lib/page-title-context";
 import { humanizeEnum } from "@/lib/format";
 import { useOrders, useUpdateOrderStatus, useBulkDeleteOrders, type Order } from "@/lib/api/orders";
@@ -42,7 +44,9 @@ import { ConfirmDialog } from "@/components/ConfirmDialog";
 import { CreateOrderModal } from "./_components/CreateOrderModal";
 import { BatchShipActions } from "./_components/BatchShipActions";
 import { useCounterSaleGate } from "@/lib/api/counter-sale";
+import { quickCreateRule } from "@/lib/counter-sale";
 import { genericToastCopy } from "@/lib/generic-toast-copy";
+import { ReadOnlyHint, WriteButton } from "@/lib/read-only-gate";
 
 // ─── Saved view definitions ───────────────────────────────────────────────────
 
@@ -309,7 +313,9 @@ export default function OrdersPage() {
       !resume &&
       action === "new" &&
       counterGate.opensAsCounter &&
-      searchParams.get("ship") !== "1"
+      searchParams.get("ship") !== "1" &&
+      // ?builder=1 (the /orders/new target and the "Invoice order" link) asks for the builder itself.
+      searchParams.get("builder") !== "1"
     ) {
       router.replace("/orders/counter-sale");
       return;
@@ -330,6 +336,7 @@ export default function OrdersPage() {
     params.delete("resumeDraft");
     params.delete("scan");
     params.delete("ship");
+    params.delete("builder");
     params.delete("preselect");
     const qs = params.toString();
     router.replace(qs ? `/orders?${qs}` : "/orders", { scroll: false });
@@ -650,6 +657,10 @@ export default function OrdersPage() {
     }
   };
 
+  // A store-only tenant (capabilities.fulfilment: PICKUP only): "New Order" went to the same place as "Counter sale",
+  // so the header has Counter sale (primary) and Invoice a customer (secondary) and nothing else duplicated.
+  const storeOnlyHeader = quickCreateRule(counterGate).storeOnly;
+
   const headerSubtitle = meta
     ? `${meta.total.toLocaleString("en-US")} order${meta.total !== 1 ? "s" : ""}${
         urgentCount > 0 ? ` · ${urgentCount} urgent` : ""
@@ -678,12 +689,16 @@ export default function OrdersPage() {
               onClick={handleExport}
               disabled={isExporting}
               title="Export filtered orders as CSV"
+              className={cn(storeOnlyHeader && "max-sm:hidden")}
             >
               {isExporting ? "Exporting…" : "Export"}
             </Button>
             <Button
               variant="secondary"
-              className={cn(selectMode && "border-brand-600 bg-brand-50 text-brand-700")}
+              className={cn(
+                selectMode && "border-brand-600 bg-brand-50 text-brand-700",
+                storeOnlyHeader && "max-sm:hidden",
+              )}
               leftIcon={
                 selectMode ? <X className="h-4 w-4" /> : <CheckSquare className="h-4 w-4" />
               }
@@ -691,20 +706,53 @@ export default function OrdersPage() {
             >
               {selectMode ? "Cancel" : "Select"}
             </Button>
-            {counterGate.showButton ? (
-              <Button variant="secondary" onClick={() => router.push("/orders/counter-sale")}>
-                Counter sale
+            {storeOnlyHeader ? (
+              <OrdersMoreMenu
+                className="sm:hidden"
+                items={[
+                  {
+                    label: isExporting ? "Exporting…" : "Export",
+                    onSelect: handleExport,
+                    disabled: isExporting,
+                  },
+                  {
+                    label: selectMode ? "Cancel selection" : "Select",
+                    onSelect: () => (selectMode ? exitSelectMode() : setSelectMode(true)),
+                  },
+                ]}
+              />
+            ) : null}
+            {storeOnlyHeader && staffMay(user?.role, "USE_POS_MODE") ? (
+              <Button
+                variant="secondary"
+                className="max-sm:h-11"
+                onClick={() => setIsCreateOpen(true)}
+              >
+                Invoice a customer
               </Button>
             ) : null}
-            <Button
-              onClick={() =>
-                counterGate.opensAsCounter
-                  ? router.push("/orders/counter-sale")
-                  : setIsCreateOpen(true)
-              }
-            >
-              New Order
-            </Button>
+            {counterGate.showButton ? (
+              <WriteButton
+                // A store-only tenant has one place to ring a sale: the counter is the filled primary (UX G7).
+                variant={storeOnlyHeader ? undefined : "secondary"}
+                className={cn(storeOnlyHeader && "max-sm:h-11")}
+                onClick={() => router.push("/orders/counter-sale")}
+              >
+                Counter sale
+              </WriteButton>
+            ) : null}
+            {storeOnlyHeader ? null : (
+              <WriteButton
+                onClick={() =>
+                  counterGate.opensAsCounter
+                    ? router.push("/orders/counter-sale")
+                    : setIsCreateOpen(true)
+                }
+              >
+                New Order
+              </WriteButton>
+            )}
+            <ReadOnlyHint className="basis-full text-right text-xs text-slate-600" />
           </div>
         }
       />
@@ -1075,9 +1123,9 @@ export default function OrdersPage() {
               title="No orders yet"
               description="Create an order on behalf of a customer to get started."
               action={
-                <Button size="sm" onClick={() => setIsCreateOpen(true)}>
+                <WriteButton size="sm" onClick={() => setIsCreateOpen(true)}>
                   Create order
-                </Button>
+                </WriteButton>
               }
             />
           )}

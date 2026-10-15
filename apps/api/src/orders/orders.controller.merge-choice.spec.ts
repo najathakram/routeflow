@@ -41,6 +41,7 @@ describe("OrdersController — merge choice vs orderDate", () => {
   let ordersService: {
     findActiveOrder: jest.Mock;
     updateOrderItems: jest.Mock;
+    liveTrioByProduct: jest.Mock;
     mergeAllPendingForCustomer: jest.Mock;
     findOne: jest.Mock;
     create: jest.Mock;
@@ -61,6 +62,7 @@ describe("OrdersController — merge choice vs orderDate", () => {
   beforeEach(async () => {
     ordersService = {
       findActiveOrder: jest.fn().mockResolvedValue(activeOrder),
+      liveTrioByProduct: jest.fn().mockResolvedValue(new Map()),
       updateOrderItems: jest.fn().mockResolvedValue(undefined),
       mergeAllPendingForCustomer: jest.fn().mockResolvedValue(null),
       findOne: jest.fn().mockResolvedValue(activeOrder),
@@ -156,7 +158,10 @@ describe("OrdersController — merge choice vs orderDate", () => {
     const calls = ordersService.findActiveOrder.mock.calls;
     expect(calls.length).toBeGreaterThanOrEqual(2);
     for (const [, opts] of calls)
-      expect(opts).toEqual({ forMerge: true, mergeAs: { explicit: "SHIP" } });
+      expect(opts).toEqual({
+        forMerge: true,
+        mergeAs: { explicit: "SHIP", audience: "staff", role: "OPERATOR" },
+      });
   });
 
   it("M2: a driver's post-create sweep folds only the NEW order's path (focusOrderId)", async () => {
@@ -172,20 +177,49 @@ describe("OrdersController — merge choice vs orderDate", () => {
   });
 
   it("GET /orders/active takes the order's path and searches as create would (omitted = the customer's own)", async () => {
-    await controller.getActiveOrderForCustomer("cust-1", "SHIP");
+    await controller.getActiveOrderForCustomer("cust-1", "SHIP", operatorPayload);
     expect(ordersService.findActiveOrder).toHaveBeenLastCalledWith("cust-1", {
       forMerge: true,
-      mergeAs: { explicit: "SHIP" },
+      mergeAs: { explicit: "SHIP", audience: "staff", role: "OPERATOR" },
     });
-    await controller.getActiveOrderForCustomer("cust-1");
+    await controller.getActiveOrderForCustomer("cust-1", undefined, operatorPayload);
     expect(ordersService.findActiveOrder).toHaveBeenLastCalledWith("cust-1", {
       forMerge: true,
-      mergeAs: { explicit: undefined },
+      mergeAs: { explicit: undefined, audience: "staff", role: "OPERATOR" },
     });
-    await controller.getActiveOrderForCustomer("cust-1", "garbage");
+    await controller.getActiveOrderForCustomer("cust-1", "garbage", operatorPayload);
     expect(ordersService.findActiveOrder).toHaveBeenLastCalledWith("cust-1", {
       forMerge: true,
-      mergeAs: { explicit: undefined },
+      mergeAs: { explicit: undefined, audience: "staff", role: "OPERATOR" },
+    });
+  });
+  it("POS mode: the pre-resolve and the in-lock re-read carry an explicit PICKUP with the caller's role", async () => {
+    for (const role of ["OPERATOR", "TENANT_ADMIN"] as const) {
+      ordersService.findActiveOrder.mockClear();
+      await controller.create(
+        {
+          customerId: "cust-1",
+          items: [{ productId: "prod-1", qty: 1 }],
+          mergeChoice: "merge",
+          fulfillPath: "PICKUP",
+        } as any,
+        { ...operatorPayload, role } as JwtPayload,
+      );
+      const calls = ordersService.findActiveOrder.mock.calls;
+      expect(calls.length).toBeGreaterThanOrEqual(2);
+      for (const [, opts] of calls)
+        expect(opts).toEqual({
+          forMerge: true,
+          mergeAs: { explicit: "PICKUP", audience: "staff", role },
+        });
+    }
+  });
+
+  it("POS mode: GET /orders/active accepts PICKUP for staff, so the preview and the create pick one target", async () => {
+    await controller.getActiveOrderForCustomer("cust-1", "PICKUP", operatorPayload);
+    expect(ordersService.findActiveOrder).toHaveBeenLastCalledWith("cust-1", {
+      forMerge: true,
+      mergeAs: { explicit: "PICKUP", audience: "staff", role: "OPERATOR" },
     });
   });
 });

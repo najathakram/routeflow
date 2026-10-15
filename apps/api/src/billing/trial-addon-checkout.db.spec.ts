@@ -10,7 +10,7 @@
  * and notifications are stubbed. Tenants are throwaway `qa-*` slugs.
  */
 import { randomUUID } from "crypto";
-import { ConflictException } from "@nestjs/common";
+import { ConflictException, NotFoundException } from "@nestjs/common";
 import { PrismaClient, TenantClass, TenantStatus } from "@prisma/client";
 import { PrismaPg } from "@prisma/adapter-pg";
 import { Pool } from "pg";
@@ -262,6 +262,13 @@ describeDb("SA-690 — trial add-ons are adopted at checkout completion (real Po
           items: { object: "list", data: sub.items.map((i) => ({ ...i })) },
         };
       }),
+      // SA-736r: the coupon sync's two Stripe reads - inert (no discount; no upcoming invoice -> nothing written).
+      retrieveSubscriptionWithDiscounts: jest.fn(async (id: string) => ({
+        id,
+        status: "active",
+        discounts: [],
+      })),
+      previewNextInvoice: jest.fn(async () => null),
       getSubscriptionPaymentState: jest.fn(async (id: string) => {
         const sub = subs[id];
         if (!sub) return { status: null, paymentProcessing: false };
@@ -304,7 +311,14 @@ describeDb("SA-690 — trial add-ons are adopted at checkout completion (real Po
       stub(),
       { invalidate: jest.fn() } as any,
       events,
-      { resolveCatalogPricing: jest.fn().mockResolvedValue({ monthly: 99 }) } as any,
+      {
+        resolveCatalogPricing: jest.fn().mockResolvedValue({ monthly: 99 }),
+        // #3407: a lookup that is not an HttpException is TRANSIENT and fails the webhook; this harness has no
+        // priced tenant, so it answers the business outcome (no price) the way the real service does.
+        resolveTenantPricing: jest
+          .fn()
+          .mockRejectedValue(new NotFoundException("no price in this harness")),
+      } as any,
       stub(),
       planTransitionStub(opts.flagOn ?? false),
       mutations,
@@ -781,6 +795,7 @@ describeDb("SA-690 — trial add-ons are adopted at checkout completion (real Po
         {} as any,
         {} as any,
         planTransitionStub(flagOn),
+        {} as any, // stripe — no stripeSubId, so no plan-change push
       );
     const activateManually = (flagOn: boolean, tenantId: string) =>
       platformAdmin(flagOn).activateManualSubscription(
@@ -1343,6 +1358,8 @@ describeDb("SA-690 — trial add-ons are adopted at checkout completion (real Po
         stub(),
         stub(),
         planTransitionStub(false),
+        stub(), // stripe — rollCycles never downgrades
+        stub(), // scheduledPrice
       ).rollCycles();
     };
 
@@ -2200,6 +2217,7 @@ describeDb("SA-690 — trial add-ons are adopted at checkout completion (real Po
       await expect(r.mutations.checkoutAddonLines(r.tenantId, "year")).resolves.toEqual({
         lineItems: [],
         skus: [],
+        invalid: [],
       });
     });
 
@@ -2391,6 +2409,154 @@ describeDb("SA-690 — trial add-ons are adopted at checkout completion (real Po
       ).toBe("sub_qa");
       expect(r.stripe.cancelSubscription).not.toHaveBeenCalled();
       expect(await decisionRows(r.tenantId)).toHaveLength(0);
+    });
+  });
+  // ── P0 HOTFIX: an ACH / bank-debit Checkout completes UNPAID and settles days later ─────────────────────────────
+  // The tenant must NOT be activated (nor its APPLIED marker written, nor MRR booked) until the payment settles:
+  // `checkout.session.async_payment_succeeded` re-delivers the now-paid session through the same handler, exactly once.
+  describe("P0: an unpaid (bank debit) checkout is linked, never activated, until the payment settles", () => {
+    const sessionEvent = (
+      r: Rig,
+      type: string,
+      over: Record<string, unknown> = {},
+      id = `evt_${type}_${r.sessionId}`,
+    ) =>
+      r.billing.handleWebhookEvent({
+        id,
+        type,
+        data: {
+          object: {
+            id: r.sessionId,
+            object: "checkout.session",
+            customer: "cus_qa",
+            subscription: "sub_qa",
+            created: 1791172800,
+            payment_status: "paid",
+            metadata: { tenantId: r.tenantId, planKey: "STARTER", interval: "month" },
+            ...over,
+          },
+        },
+      });
+    const markers = (r: Rig) =>
+      prisma.auditLog.count({
+        where: {
+          entityType: "stripe_checkout_session",
+          entityId: r.sessionId,
+          action: "STRIPE_CHECKOUT_APPLIED",
+        },
+      });
+    const auditCount = (r: Rig, action: string) =>
+      prisma.auditLog.count({
+        where: { tenantId: r.tenantId, action },
+      });
+    const resumed = async (r: Rig) =>
+      (await r.ledger()).filter((e) => e.type === BILLING_EVENTS.SUBSCRIPTION_RESUMED);
+    const plainRig = () => rig({ rows: [], items: [base()] });
+
+    it.each([false, true])(
+      "completed UNPAID (flag %s): the subscription is LINKED but the tenant stays TRIAL, no marker, no MRR",
+      async (flagOn) => {
+        const r = await rig({ rows: [], items: [base()], flagOn });
+        await sessionEvent(r, "checkout.session.completed", { payment_status: "unpaid" });
+
+        expect(await tenantStatusOf(r.tenantId)).toBe(TenantStatus.TRIAL);
+        const sub = await prisma.tenantSubscription.findUniqueOrThrow({
+          where: { tenantId: r.tenantId },
+        });
+        expect(sub.stripeSubId).toBe("sub_qa"); // the linking writes landed
+        expect(sub.planKey).toBe("STARTER");
+        expect(await markers(r)).toBe(0);
+        expect(await r.ledger()).toEqual([]);
+      },
+    );
+
+    it.each([false, true])(
+      "async_payment_succeeded after an unpaid completion (flag %s): ACTIVE once, one marker, one resume delta; a replay of either changes nothing",
+      async (flagOn) => {
+        const r = await rig({ rows: [], items: [base()], flagOn });
+        await sessionEvent(r, "checkout.session.completed", { payment_status: "unpaid" });
+        await sessionEvent(r, "checkout.session.async_payment_succeeded", {
+          payment_status: "paid",
+        });
+
+        expect(await tenantStatusOf(r.tenantId)).toBe(TenantStatus.ACTIVE);
+        expect(await markers(r)).toBe(1);
+        expect(await resumed(r)).toHaveLength(1);
+        const ledgerAfter = await r.ledger();
+
+        // replays: Stripe redelivers both events
+        await sessionEvent(r, "checkout.session.async_payment_succeeded", {
+          payment_status: "paid",
+        });
+        await sessionEvent(r, "checkout.session.completed", { payment_status: "unpaid" });
+
+        expect(await tenantStatusOf(r.tenantId)).toBe(TenantStatus.ACTIVE);
+        expect(await markers(r)).toBe(1);
+        expect(await r.ledger()).toEqual(ledgerAfter);
+        // settling never re-wrote the plan the unpaid delivery linked
+        expect(
+          (await prisma.tenantSubscription.findUniqueOrThrow({ where: { tenantId: r.tenantId } }))
+            .planKey,
+        ).toBe("STARTER");
+      },
+    );
+
+    it("two simultaneous async_payment_succeeded deliveries apply once (a loser may be a retryable conflict, never a second activation)", async () => {
+      const r = await plainRig();
+      await sessionEvent(r, "checkout.session.completed", { payment_status: "unpaid" });
+      const results = await Promise.allSettled([
+        sessionEvent(r, "checkout.session.async_payment_succeeded", {}, "evt_a"),
+        sessionEvent(r, "checkout.session.async_payment_succeeded", {}, "evt_b"),
+      ]);
+      const rejected = results.filter((x) => x.status === "rejected") as PromiseRejectedResult[];
+      expect(rejected.length).toBeLessThanOrEqual(1);
+      for (const x of rejected) expect(x.reason).toBeInstanceOf(ConflictException);
+
+      expect(await tenantStatusOf(r.tenantId)).toBe(TenantStatus.ACTIVE);
+      expect(await markers(r)).toBe(1);
+      expect(await resumed(r)).toHaveLength(1);
+    });
+
+    it("a card checkout (paid at completion) is unchanged: ACTIVE at once, one marker, one resume delta", async () => {
+      const r = await plainRig();
+      await r.completed(); // the rig's own session is payment_status "paid"
+
+      expect(await tenantStatusOf(r.tenantId)).toBe(TenantStatus.ACTIVE);
+      expect(await markers(r)).toBe(1);
+      expect(await resumed(r)).toHaveLength(1);
+    });
+
+    it("no_payment_required (a 100%-off or free-trial checkout) activates at completion", async () => {
+      const r = await plainRig();
+      await sessionEvent(r, "checkout.session.completed", {
+        payment_status: "no_payment_required",
+      });
+
+      expect(await tenantStatusOf(r.tenantId)).toBe(TenantStatus.ACTIVE);
+      expect(await markers(r)).toBe(1);
+    });
+
+    it("async_payment_failed: one notice row (and one platform notice) per session, nothing activated, a redelivery adds none", async () => {
+      const r = await plainRig();
+      await sessionEvent(r, "checkout.session.completed", { payment_status: "unpaid" });
+      await sessionEvent(r, "checkout.session.async_payment_failed", { payment_status: "unpaid" });
+
+      expect(await tenantStatusOf(r.tenantId)).toBe(TenantStatus.TRIAL);
+      expect(await markers(r)).toBe(0);
+      expect(
+        await prisma.auditLog.count({
+          where: {
+            entityType: "stripe_checkout_session",
+            entityId: r.sessionId,
+            action: "STRIPE_CHECKOUT_ASYNC_PAYMENT_FAILED",
+          },
+        }),
+      ).toBe(1);
+      expect(await auditCount(r, "STRIPE_ASYNC_PAYMENT_FAILED")).toBe(1);
+
+      await sessionEvent(r, "checkout.session.async_payment_failed", { payment_status: "unpaid" });
+      expect(await auditCount(r, "STRIPE_ASYNC_PAYMENT_FAILED")).toBe(1);
+      expect(await r.ledger()).toEqual([]);
     });
   });
 });

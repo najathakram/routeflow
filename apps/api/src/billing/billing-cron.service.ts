@@ -1,10 +1,10 @@
-import { priceOverrideOf } from "./price-override";
-import { Injectable, Logger } from "@nestjs/common";
+import { priceOverrideOf, sameOverride } from "./price-override";
+import { Injectable, Logger, Optional } from "@nestjs/common";
 import { CronExpression } from "@nestjs/schedule";
 import { LeaderCron } from "../common/cron-lock";
 import { PrismaService } from "../prisma/prisma.service";
 import { TenantStatusGuard } from "../tenant/tenant-status.guard";
-import { roundMoney } from "@routeflow/pricing";
+import { roundMoney, toCents } from "@routeflow/pricing";
 import { EntitlementsService } from "./entitlements.service";
 import { BillingEventService } from "./billing-event.service";
 import { PlanCatalogService, PlanVersionWithCatalog } from "./plan-catalog.service";
@@ -20,10 +20,22 @@ import {
   UnknownPlanKeyError,
 } from "./plan-catalog.constants";
 import { addCycle } from "./billing-math";
+import { billableAddonWhere } from "./addon-row";
+import { effectiveCycle, nextBillingWindow } from "./rf-invoice/calendar-windows";
 import { lockTenantForLedger } from "./addon-ledger";
 import { isPayingRow } from "./mrr.service";
 import { BillingNotificationService } from "./billing-notification.service";
 import { PlanTransitionConfigService, SnapshotFailedError } from "./plan-transition-config.service";
+import { StripeService } from "./stripe.service";
+import { ScheduledPriceChangeService } from "./scheduled-price-change";
+import { AutoLockSwitchService } from "./auto-lock-switch.service";
+import { autoLockAllowed, recordAutoLockSkip } from "./auto-lock-gate";
+import { expiredTrialWhere, scheduledCancellationWhere } from "./auto-lock-candidates";
+import { markNeedsReconcile } from "./needs-reconcile";
+import { resolvePlanPrice } from "./plan-price";
+import { CHECKOUT_ADDON_EXPAND, stripeAddonItemIds } from "./stripe-addon-items";
+import { stripeBaseItem, stripeSubscriptionPeriod } from "./stripe-period";
+import { lockTenantPrice } from "./price-lock";
 
 /** A run of this many snapshot failures in one sweep is systemic — the sweep aborts loudly. */
 const MAX_CONSECUTIVE_SNAPSHOT_FAILURES = 3;
@@ -55,6 +67,13 @@ export class BillingCronService {
     private readonly billingNotification: BillingNotificationService,
     // Lane B A2b: a scheduled downgrade snapshots the tenant's feature config in the same tx.
     private readonly planTransition: PlanTransitionConfigService,
+    // READ-ONLY (lead R1): verifies the price Stripe bills after a downgrade flips. This sweep never pushes one.
+    private readonly stripe: StripeService,
+    // R1 option B: the backup sweep for a downgrade price whose `invoice.upcoming` webhook was missed.
+    private readonly scheduledPrice: ScheduledPriceChangeService,
+    // SA-775: the rollout pause on AUTOMATIC locks (trial expiry, scheduled cancellation). @Optional only so a
+    // unit spec can build the sweep bare; billing.module-wiring.spec.ts pins that production injects it.
+    @Optional() private readonly autoLocks?: AutoLockSwitchService,
   ) {}
 
   private planMonthly(version: PlanVersionWithCatalog | null, planKey: string | null): number {
@@ -83,14 +102,38 @@ export class BillingCronService {
   async expireTrials(): Promise<void> {
     const now = new Date();
     const expired = await this.prisma.tenant.findMany({
-      where: { status: "TRIAL", trialEndsAt: { lt: now }, deletedAt: null },
-      select: { id: true, trialEndsAt: true },
+      where: expiredTrialWhere(now),
+      select: { id: true, trialEndsAt: true, class: true },
     });
+    let locked = 0;
+    let held = 0;
     for (const t of expired) {
-      await this.prisma.tenant.update({
-        where: { id: t.id },
+      // SA-775 (row 381): the rollout pause. While the switch is paused a PRODUCTION trial is NOT locked: no
+      // status write, no notice. ONE durable skip record per trialEndsAt; the hourly pass meeting it again writes
+      // nothing, and the pass after an unpause finds the case again (it is still TRIAL and past its end).
+      if (!(await autoLockAllowed(this.autoLocks, t, "trial_expired"))) {
+        await recordAutoLockSkip(
+          this.prisma,
+          {
+            tenantId: t.id,
+            kind: "trial_expired",
+            key: (t.trialEndsAt as Date).toISOString(),
+            wouldHaveSet: { status: "READ_ONLY", readOnlyReason: "trial_expired" },
+          },
+          this.logger,
+        );
+        held++;
+        continue;
+      }
+      // Compare-and-swap (SA-774r5 MF9): only a tenant that is STILL on TRIAL is locked and announced, so a
+      // concurrent activation or a repeated pass writes nothing and emits nothing. The class the gate judged is part of
+      // the CAS (SA-775 S3): a TEST->PRODUCTION reclassification between the scan and this write cannot lock.
+      const { count } = await this.prisma.tenant.updateMany({
+        where: { id: t.id, status: "TRIAL", class: t.class },
         data: { status: "READ_ONLY", readOnlyReason: "trial_expired" },
       });
+      if (count !== 1) continue;
+      locked++;
       await this.events.emit(t.id, BILLING_EVENTS.TRIAL_EXPIRED, { at: now.toISOString() });
       this.entitlements.invalidate(t.id);
       this.tenantStatus.invalidate(t.id);
@@ -108,7 +151,8 @@ export class BillingCronService {
         );
       }
     }
-    if (expired.length) this.logger.log(`Expired ${expired.length} trials → READ_ONLY`);
+    if (locked) this.logger.log(`Expired ${locked} trials → READ_ONLY`);
+    if (held) this.logger.log(`Held ${held} expired trials: automatic locks are paused`);
   }
 
   /**
@@ -232,6 +276,8 @@ export class BillingCronService {
         planVersionId: true,
         // #2223 / SA-444c: the negotiated fee a downgrade keeps.
         priceOverrideMonthly: true,
+        priceOverrideAnnual: true,
+        stripeSubId: true,
         // #2460 / SA-464 (2): the ledger nets against the stored snapshot, never the catalog.
         basePriceSnapshot: true,
         downgradeToPlanKey: true,
@@ -258,7 +304,46 @@ export class BillingCronService {
         continue;
       }
 
+      // SA-733 D8: the same per-tenant lock the upgrade and the price override take, so this push and its
+      // possible revert cannot interleave with another price writer. Held until the finally below.
+      let unlock: () => Promise<void>;
       try {
+        unlock = await lockTenantPrice(s.tenantId);
+      } catch (lockErr) {
+        this.logger.error(
+          `Scheduled downgrade held back for tenant=${s.tenantId} — ${(lockErr as Error).message}; still armed, next sweep retries`,
+        );
+        continue;
+      }
+      try {
+        // SA-733 D8: everything below is built from THIS read, taken UNDER the lock. The scan above ran before
+        // the lock, so a fee an admin committed in between would otherwise be overwritten by the stale one in
+        // Stripe AND on the MRR snapshot. The schedule and the tenant are re-proved here too.
+        const cur = await this.prisma.tenantSubscription.findUnique({
+          where: { tenantId: s.tenantId },
+          select: {
+            planKey: true,
+            priceOverrideMonthly: true,
+            priceOverrideAnnual: true,
+            stripeSubId: true,
+            basePriceSnapshot: true,
+            downgradeToPlanKey: true,
+            downgradeEffectiveAt: true,
+            retainedUserIds: true,
+            tenant: { select: { status: true, deletedAt: true } },
+          },
+        });
+        if (
+          !cur ||
+          cur.tenant?.status !== "ACTIVE" ||
+          cur.tenant.deletedAt != null ||
+          cur.planKey !== s.planKey ||
+          cur.downgradeToPlanKey !== target ||
+          cur.downgradeEffectiveAt == null ||
+          cur.downgradeEffectiveAt > now
+        ) {
+          throw new DowngradeOvertakenError();
+        }
         let targetVersion = fromVersion;
         let targetDef = findPlanDefinition(fromVersion.definitions, target);
         if (!targetDef) {
@@ -279,7 +364,7 @@ export class BillingCronService {
         // the new snapshot is the negotiated fee, else the target's price; the ledger books it minus
         // what the MRR snapshot counted (the stored snapshot, NULL ⇒ 0) — never a catalog price for
         // the plan being left. A consistent override row therefore books Δ0.
-        const override = priceOverrideOf(s);
+        const override = priceOverrideOf(cur);
         const newBase = override ?? this.planMonthly(targetVersion, target);
         const seatCap = targetDef.seatsIncluded ?? null;
 
@@ -297,7 +382,11 @@ export class BillingCronService {
           ? await this.planTransition.prepare(transition)
           : null;
 
-        await this.prisma.$transaction(async (tx) => {
+        // This 02:00 flip NEVER pushes a price to Stripe (lead ruling R1): it is date-driven and can run AFTER
+        // Stripe cut the renewal invoice at the old price. The price reaches Stripe BEFORE the renewal, from
+        // scheduled-price-change.ts, before the renewal invoice (R1 Option B: the `invoice.upcoming` webhook + the hourly backup below). Here the local
+        // row flips, and Stripe is only VERIFIED (read-only) once the flip has committed.
+        const written = this.prisma.$transaction(async (tx) => {
           // Snapshot first, in the same transaction: a failure here throws into the per-row catch
           // below, so THIS tenant's downgrade is not applied (fail closed) and retries next tick.
           if (transition && preparedTransition) {
@@ -319,8 +408,12 @@ export class BillingCronService {
             select: {
               planKey: true,
               basePriceSnapshot: true,
+              priceOverrideMonthly: true,
+              priceOverrideAnnual: true,
+              stripeSubId: true,
               downgradeToPlanKey: true,
               downgradeEffectiveAt: true,
+              couponFull: true,
             },
           });
           if (
@@ -329,6 +422,9 @@ export class BillingCronService {
             lockedTenant.deletedAt != null ||
             !lockedSub ||
             lockedSub.planKey !== s.planKey ||
+            // The fee and the Stripe subscription Stripe was priced from must still be the committed ones.
+            !sameOverride(lockedSub, cur) ||
+            lockedSub.stripeSubId !== cur.stripeSubId ||
             lockedSub.downgradeToPlanKey !== target ||
             lockedSub.downgradeEffectiveAt == null ||
             lockedSub.downgradeEffectiveAt > now
@@ -336,8 +432,8 @@ export class BillingCronService {
             throw new DowngradeOvertakenError();
           }
           const amountDelta = roundMoney(
-            (isPayingRow(lockedTenant, target) ? newBase : 0) -
-              (isPayingRow(lockedTenant, lockedSub.planKey)
+            (isPayingRow(lockedTenant, target, lockedSub.couponFull) ? newBase : 0) -
+              (isPayingRow(lockedTenant, lockedSub.planKey, lockedSub.couponFull)
                 ? Number(lockedSub.basePriceSnapshot ?? 0)
                 : 0),
           );
@@ -380,7 +476,7 @@ export class BillingCronService {
                   role: { in: ["OPERATOR", "DRIVER"] },
                   status: "ACTIVE",
                   deletedAt: null,
-                  id: { notIn: s.retainedUserIds },
+                  id: { notIn: cur.retainedUserIds },
                 },
                 data: { status: "INACTIVE" },
               });
@@ -401,7 +497,15 @@ export class BillingCronService {
             { amountDelta, tx },
           );
         }, this.planTransition.transactionOptions(preparedTransition));
+        await written;
         this.planTransition.invalidateCaches(s.tenantId, preparedTransition);
+        await this.verifyStripeBillsDowngrade(
+          s.tenantId,
+          cur.stripeSubId,
+          targetDef,
+          { monthly: cur.priceOverrideMonthly, annual: cur.priceOverrideAnnual },
+          target,
+        );
 
         // N3: best-effort admin notification, never blocks the transaction above. `key` is
         // the effective date this tenant's row carried before the transaction cleared it —
@@ -451,6 +555,8 @@ export class BillingCronService {
           }`,
         );
         continue;
+      } finally {
+        await unlock();
       }
       this.entitlements.invalidate(s.tenantId);
       this.tenantStatus.invalidate(s.tenantId);
@@ -463,21 +569,157 @@ export class BillingCronService {
     }
   }
 
+  /**
+   * Backup for the `invoice.upcoming` webhook (lead R1, option B): push the scheduled downgrade's price to Stripe
+   * for every tenant whose period ends within 48 h and whose price Stripe does not already bill. NEVER after the
+   * period end (those tenants are not candidates), idempotent, one tenant at a time under the tenant-price lock.
+   * The 02:00 flip above stays date-driven and local; THIS is what makes the renewal invoice use the new price.
+   */
+  @LeaderCron(CronExpression.EVERY_HOUR, "billing-cron.pushUpcomingDowngradePrices")
+  async pushUpcomingDowngradePrices(): Promise<void> {
+    const { pushed, held } = await this.scheduledPrice.applyDue();
+    if (pushed || held) {
+      this.logger.log(`Scheduled downgrade prices: pushed ${pushed}, held back ${held}`);
+    }
+  }
+
+  /**
+   * READ-ONLY check, after a downgrade's local flip committed: does Stripe's base item bill the downgraded
+   * monthly price? A mismatch means the tenant is still billed the old plan (the pre-renewal push from
+   * scheduled-price-change.ts that should have prevented it did not happen), so it is ALERTED (`markNeedsReconcile`), never fixed here. Best-effort:
+   * a Stripe read failure is logged and never fails the sweep; annual items are not compared.
+   *
+   * L-167, one rule: the expected price is `resolvePlanPrice` and the add-on item set is
+   * `stripeAddonItemIds` - the very two the push (`ScheduledPriceChangeService.apply`) uses - so the push and its
+   * verification can never disagree about what Stripe should bill or which item is the base.
+   */
+  private async verifyStripeBillsDowngrade(
+    tenantId: string,
+    stripeSubId: string | null | undefined,
+    targetDef: { monthlyPrice?: unknown; annualPrice?: unknown } | null | undefined,
+    override: { monthly?: unknown; annual?: unknown },
+    target: string,
+  ): Promise<void> {
+    if (!stripeSubId || !this.stripe?.isConfigured) return;
+    const price = resolvePlanPrice(targetDef, override);
+    if (!price.ok) return;
+    const expectedMonthly = price.monthly;
+    try {
+      const sub = await this.stripe.getSubscription(stripeSubId, {
+        expand: CHECKOUT_ADDON_EXPAND,
+      });
+      const ids = await stripeAddonItemIds(this.prisma, tenantId, sub);
+      const base = stripeBaseItem(sub, ids);
+      if (!base || ids.has(base.id) || base.price?.recurring?.interval !== "month") return;
+      const expectedCents = toCents(expectedMonthly);
+      if (base.price?.unit_amount === expectedCents) return;
+      await markNeedsReconcile(
+        { prisma: this.prisma, logger: this.logger },
+        {
+          tenantId,
+          stripeSubId,
+          local: { planKey: target, monthly: Number(expectedMonthly) },
+          stripe: { billedCents: base.price?.unit_amount ?? null, expectedCents },
+          error: "the downgrade flipped locally but Stripe still bills a different price",
+        },
+      );
+    } catch (e) {
+      this.logger.warn(
+        `Could not verify Stripe's price after the downgrade of tenant=${tenantId}: ${(e as Error).message}`,
+      );
+    }
+  }
+
+  /**
+   * F1 (b): does Stripe itself say this subscription ended? True only for `canceled`, or `cancel_at_period_end`
+   * with the base item's period over. Any read failure is a "no" for this hour, logged, never a lock.
+   */
+  private async stripeConfirmsCancellation(
+    tenantId: string,
+    stripeSubId: string,
+    now: Date,
+    scannedAt: Date,
+  ): Promise<boolean> {
+    try {
+      if (!this.stripe?.isConfigured) return false;
+      const stripeSub = await this.stripe.getSubscription(stripeSubId, {
+        expand: CHECKOUT_ADDON_EXPAND,
+      });
+      if (stripeSub?.status === "canceled") return true;
+      if (stripeSub?.cancel_at_period_end !== true) {
+        // F1b: Stripe says the cancel was resumed, so the local flag is a stale webhook's. Warning about it every
+        // hour for ever helps nobody: the flag is cleared ONCE (compare-and-set on the old value), with one log line.
+        // A `cancel_at` timestamp is another way to schedule a cancel - that is NOT a resume, so it is left alone.
+        if (stripeSub?.cancel_at == null)
+          await this.clearStaleCancelFlag(tenantId, stripeSubId, scannedAt);
+        else {
+          this.logger.warn(
+            `F1: tenant=${tenantId} has a local cancellation and Stripe holds cancel_at, not cancel_at_period_end - not locked`,
+          );
+        }
+        return false;
+      }
+      const ids = await stripeAddonItemIds(this.prisma, tenantId, stripeSub);
+      const period = stripeSubscriptionPeriod(stripeSub, ids);
+      return period != null && period.periodEnd.getTime() <= now.getTime();
+    } catch (e) {
+      this.logger.warn(
+        `F1: could not read Stripe for tenant=${tenantId}'s scheduled cancellation - skipped this hour: ${(e as Error).message}`,
+      );
+      return false;
+    }
+  }
+
+  /** F1b: clear a local `cancelAtPeriodEnd` Stripe no longer has - only while the row still holds that value. */
+  private async clearStaleCancelFlag(
+    tenantId: string,
+    stripeSubId: string,
+    scannedAt: Date,
+  ): Promise<void> {
+    try {
+      const { count } = await this.prisma.tenantSubscription.updateMany({
+        // updatedAt is the row's value from the scan, taken BEFORE the Stripe read: a re-cancel that landed since then
+        // moves it, the CAS misses, and the flag (now a real one) stays armed.
+        where: {
+          tenantId,
+          stripeSubId,
+          cancelAtPeriodEnd: true,
+          updatedAt: scannedAt,
+        },
+        data: { cancelAtPeriodEnd: false },
+      });
+      if (count === 1) {
+        this.logger.log(
+          `F1b: tenant=${tenantId}'s local cancellation was stale (Stripe has the cancel resumed) - flag cleared, not locked`,
+        );
+      }
+    } catch (e) {
+      this.logger.warn(
+        `F1b: could not clear tenant=${tenantId}'s stale cancellation flag - skipped this hour: ${(e as Error).message}`,
+      );
+    }
+  }
+
   /** End access for self-cancelled subscriptions whose period has ended → READ_ONLY
    *  (data intact, exports + sign-in + re-subscribe still work). */
   @LeaderCron(CronExpression.EVERY_HOUR, "billing-cron.applyScheduledCancellations")
   async applyScheduledCancellations(): Promise<void> {
     const now = new Date();
     const subs = await this.prisma.tenantSubscription.findMany({
-      where: {
-        cancelAtPeriodEnd: true,
-        periodEnd: { not: null, lt: now },
-        tenant: { status: "ACTIVE", deletedAt: null },
-      },
-      select: { tenantId: true },
+      where: scheduledCancellationWhere(now),
+      select: { tenantId: true, stripeSubId: true, updatedAt: true },
     });
     let applied = 0;
+    let held = 0;
     for (const s of subs) {
+      // F1 (b): the local cancel flag can be a stale webhook's. Stripe is re-read BEFORE any lock or add-on
+      // deactivation; a read failure skips the tenant this hour (the next pass retries) - it never locks.
+      if (
+        s.stripeSubId &&
+        !(await this.stripeConfirmsCancellation(s.tenantId, s.stripeSubId, now, s.updatedAt))
+      ) {
+        continue;
+      }
       // #2641 / SA-544: ONE transaction per tenant, Tenant row lock FIRST; the scan's filter is
       // re-proved on the rows read under it (suspended/deleted, cancellation resumed, or period
       // moved since the scan ⇒ no-op). Everything below is priced from those LOCKED rows.
@@ -495,6 +737,7 @@ export class BillingCronService {
             discount: true,
             cancelAtPeriodEnd: true,
             periodEnd: true,
+            couponFull: true,
           },
         });
         if (
@@ -507,19 +750,32 @@ export class BillingCronService {
         ) {
           return false;
         }
+        // SA-775 (row 381): the rollout pause. A PRODUCTION tenant is NOT locked while the switch is paused: no
+        // READ_ONLY, its add-ons stay active, no churn event, and cancelAtPeriodEnd stays armed so the pass after
+        // an unpause finds it again. The skip record is written after this transaction (one per periodEnd).
+        if (
+          !(await autoLockAllowed(
+            this.autoLocks,
+            { id: s.tenantId, class: tenant.class },
+            "subscription_cancelled",
+          ))
+        ) {
+          return { heldPeriodEnd: sub.periodEnd };
+        }
         // The run-rate this tenant stops contributing once access ends → emit it as a NEGATIVE
         // MRR delta (base + active add-ons − discount) so the append-only ledger nets down with
         // churn instead of over-counting the tenant's last plan forever. Booked only for a row in
         // the shared paying set (isPayingRow) — any other class was never counted, so Δ0.
+        // N4: only BILLABLE add-ons were ever in the run-rate (a comp is a platform grant, never booked).
         const addons = await tx.tenantAddon.findMany({
-          where: { tenantId: s.tenantId, active: true },
+          where: billableAddonWhere({ tenantId: s.tenantId, active: true }),
           select: { priceSnapshot: true, quantity: true },
         });
         const addonMrr = addons.reduce(
           (sum, a) => sum + (a.priceSnapshot != null ? Number(a.priceSnapshot) : 0) * a.quantity,
           0,
         );
-        const contribution = isPayingRow(tenant, sub.planKey ?? null)
+        const contribution = isPayingRow(tenant, sub.planKey ?? null, sub.couponFull)
           ? roundMoney(
               (sub.basePriceSnapshot != null ? Number(sub.basePriceSnapshot) : 0) +
                 addonMrr -
@@ -550,6 +806,20 @@ export class BillingCronService {
         );
         return true;
       });
+      if (done && typeof done === "object") {
+        await recordAutoLockSkip(
+          this.prisma,
+          {
+            tenantId: s.tenantId,
+            kind: "subscription_cancelled",
+            key: done.heldPeriodEnd.toISOString(),
+            wouldHaveSet: { status: "READ_ONLY", readOnlyReason: "subscription_cancelled" },
+          },
+          this.logger,
+        );
+        held++;
+        continue;
+      }
       if (!done) continue;
       // After commit: caches never observe a rolled-back transition.
       this.entitlements.invalidate(s.tenantId);
@@ -557,9 +827,10 @@ export class BillingCronService {
       applied++;
     }
     if (applied) this.logger.log(`Applied ${applied} scheduled cancellations → READ_ONLY`);
-    if (subs.length > applied) {
+    if (held) this.logger.log(`Held ${held} scheduled cancellations: automatic locks are paused`);
+    if (subs.length > applied + held) {
       this.logger.log(
-        `Skipped ${subs.length - applied} scheduled cancellations changed since the scan`,
+        `Skipped ${subs.length - applied - held} scheduled cancellations changed since the scan`,
       );
     }
   }
@@ -605,16 +876,19 @@ export class BillingCronService {
     });
     for (const s of subs) {
       const start = s.periodEnd as Date;
-      // B863 / SA-277: an external (prepaid) row rolls by its OWN prior length (start := old end, end := start + prior
-      // length); Stripe/catalog rows keep addCycle's calendar clamping (B329 note above).
-      const priorMs = s.periodStart ? start.getTime() - s.periodStart.getTime() : 0;
-      const periodEnd =
-        s.externalPayment && priorMs > 0
-          ? new Date(start.getTime() + priorMs)
-          : addCycle(start, s.cycle);
+      // SA-744r2: an external (manual-pay) row rolls onto the owner's CALENDAR - the same helper the RF
+      // invoice issuer uses for "the next window" (L-167), so the two always agree - and BOTH ends are
+      // written (the snapped start, never the raw old end). Stripe/catalog rows keep addCycle's calendar
+      // clamping (B329 note above).
+      let next: { periodStart: Date; periodEnd: Date };
+      if (s.externalPayment) {
+        next = nextBillingWindow(start, effectiveCycle(s.cycle, s.periodStart, start));
+      } else {
+        next = { periodStart: start, periodEnd: addCycle(start, s.cycle) };
+      }
       await this.prisma.tenantSubscription.update({
         where: { tenantId: s.tenantId },
-        data: { periodStart: start, periodEnd },
+        data: { periodStart: next.periodStart, periodEnd: next.periodEnd },
       });
     }
     if (subs.length) this.logger.log(`Rolled ${subs.length} billing cycles`);

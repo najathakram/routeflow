@@ -6,6 +6,8 @@ import { Modal, Button, useToast } from "@routeflow/ui/web";
 import { previewSplitLineTotal, type SplitInvoiceLine } from "@/lib/split-invoice-line";
 import { useCreatePartialInvoiceFromOrder } from "@/lib/api/invoices";
 import { genericToastCopy } from "@/lib/generic-toast-copy";
+import { KEPT_DRAFT_TOAST, keptDraftInvoiceId } from "@/lib/kept-draft-invoice";
+import { WriteButton } from "@/lib/read-only-gate";
 
 interface SplitInvoiceModalProps {
   isOpen: boolean;
@@ -104,6 +106,14 @@ export function SplitInvoiceModal({
           onClose();
         },
         onError: (err: any) => {
+          // Row 466: the split invoice was created and only the send failed. Open it, don't retry.
+          const keptId = keptDraftInvoiceId(err);
+          if (keptId) {
+            toast({ ...KEPT_DRAFT_TOAST, variant: "warning" });
+            onCreated?.(keptId);
+            onClose();
+            return;
+          }
           toast({
             title: "Could not create invoice",
             description: genericToastCopy(
@@ -129,14 +139,14 @@ export function SplitInvoiceModal({
           <Button variant="secondary" type="button" onClick={onClose}>
             Cancel
           </Button>
-          <Button
+          <WriteButton
             type="button"
             loading={createPartial.isPending}
             disabled={billable.length === 0}
             onClick={submit}
           >
             Create invoice
-          </Button>
+          </WriteButton>
         </>
       }
     >

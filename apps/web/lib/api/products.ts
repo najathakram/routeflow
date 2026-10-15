@@ -76,12 +76,27 @@ export function useCreateProduct(options?: LocalErrorToastOption) {
   });
 }
 
+/**
+ * `invalidateProductSet`, but resolves only once the refetches have LANDED. P0 2026-10-14 (SA): a tier commit reads the
+ * product's stored tiers as the "old" side of applyLadderChange, so a save must not resolve while the cache still
+ * holds the pre-save row (a second commit inside that window would read a stale tier and overwrite it).
+ */
+export function invalidateProductSetAndWait(
+  qc: ReturnType<typeof useQueryClient>,
+): Promise<unknown> {
+  return Promise.all([
+    qc.invalidateQueries({ queryKey: ["products"] }),
+    qc.invalidateQueries({ queryKey: ["inventory"] }),
+  ]);
+}
+
 export function useUpdateProduct() {
   const qc = useQueryClient();
   return useMutation({
     mutationFn: ({ id, ...data }: { id: string; [k: string]: unknown }) =>
       apiClient.patch(`/products/${id}`, data).then((r) => r.data),
-    onSuccess: () => invalidateProductSet(qc),
+    // Returned, so mutateAsync waits for the refetch (P0 2026-10-14 stale-window MUST).
+    onSuccess: () => invalidateProductSetAndWait(qc),
   });
 }
 
@@ -96,11 +111,21 @@ export function useReactivateProduct() {
     // The flow renders its own fixed-sentence error UI (dialog / toast): opt out of the global
     // handler's raw `data.message` toast (lib/mutation-error-toast.ts).
     meta: { localErrorToast: true },
-    mutationFn: ({ id, deactivateHolderIds }: { id: string; deactivateHolderIds?: string[] }) =>
+    mutationFn: ({
+      id,
+      deactivateHolderIds,
+      newCodes,
+    }: {
+      id: string;
+      deactivateHolderIds?: string[];
+      /** Reactivate with replacement codes instead of deactivating the holders. */
+      newCodes?: { sku?: string; unitSku?: string; barcode?: string };
+    }) =>
       apiClient
         .patch(`/products/${id}`, {
           isActive: true,
           ...(deactivateHolderIds?.length ? { deactivateHolderIds } : {}),
+          ...(newCodes ?? {}),
         })
         .then((r) => r.data),
     onSuccess: () => invalidateProductSet(qc),
@@ -225,24 +250,6 @@ export interface ImportResult {
   errors: Array<{ row: number; name: string; reason: string }>;
 }
 
-export function useImportProducts() {
-  const qc = useQueryClient();
-  return useMutation({
-    mutationFn: (items: ZohoImportItem[]): Promise<ImportResult> =>
-      apiClient.post("/products/import", { items }).then((r) => r.data),
-    onSuccess: () => invalidateProductSet(qc),
-  });
-}
-
-export function useClearAllProducts() {
-  const qc = useQueryClient();
-  return useMutation({
-    mutationFn: (): Promise<{ deleted: number }> =>
-      apiClient.delete("/products/clear-all").then((r) => r.data),
-    onSuccess: () => invalidateProductSet(qc),
-  });
-}
-
 /** Matches the server's @ArrayMaxSize on DELETE /products/bulk (F9-009). */
 const BULK_DELETE_CHUNK = 500;
 
@@ -296,6 +303,8 @@ export function useBulkDeleteProducts() {
 export interface BulkAssignParentResult {
   succeeded: string[];
   failed: Array<{ id: string; reason: string }>;
+  /** H2: per product that kept labels it carried through its old parent (absent from older servers). */
+  keptLabels?: Array<{ id: string; labels: string[] }>;
 }
 
 export function useBulkAssignParent(options?: LocalErrorToastOption) {

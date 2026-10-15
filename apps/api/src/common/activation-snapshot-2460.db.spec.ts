@@ -145,7 +145,7 @@ describeDb(
         { notifyCancelled: jest.fn(), notifySuspended: jest.fn() } as any, // billingNotification
         planTransitionStub,
         {
-          checkoutAddonLines: async () => ({ lineItems: [], skus: [] }),
+          checkoutAddonLines: async () => ({ lineItems: [], skus: [], invalid: [] }),
           adoptCheckoutAddons: async () => undefined,
         } as any, // mutations (SA-690)
       );
@@ -168,6 +168,7 @@ describeDb(
         noop, // tenantMirror
         noop, // featureOverrides
         planTransitionStub,
+        noop, // stripe
       );
       mutation = new SubscriptionMutationService(
         prisma as any,
@@ -241,10 +242,14 @@ describeDb(
           status: true,
           class: true,
           deletedAt: true,
-          subscription: { select: { planKey: true, basePriceSnapshot: true, discount: true } },
+          subscription: {
+            select: { planKey: true, basePriceSnapshot: true, discount: true, couponFull: true },
+          },
         },
       });
-      if (!t.subscription || !isPayingRow(t, t.subscription.planKey)) return 0;
+      if (!t.subscription || !isPayingRow(t, t.subscription.planKey, t.subscription.couponFull)) {
+        return 0;
+      }
       return mrr.priceSubscription(
         { basePriceSnapshot: t.subscription.basePriceSnapshot, discount: t.subscription.discount },
         [],
@@ -308,6 +313,45 @@ describeDb(
       expect(sub.basePriceSnapshot).not.toBeNull();
       expect(Number(sub.basePriceSnapshot)).toBe(0);
       expect(await figures(id)).toEqual({ snapshot: 0, ledger: 0 });
+    });
+
+    // SA-736r M5: a manual payer is billed by RF invoices, so activating a former coupon tenant resets the
+    // coupon columns and books the crossing ONCE through its own wasPaying -> isPaying transition.
+    it("SA-736r M5: manual activation of a former couponFull tenant resets the columns and books +X exactly once", async () => {
+      const id = await makeTenant("coupon", TenantStatus.ACTIVE, {
+        planKey: "STARTER",
+        basePriceSnapshot: 99,
+      });
+      await prisma.tenantSubscription.update({
+        where: { tenantId: id },
+        data: {
+          couponFull: true,
+          couponId: "cp_qa_pilot",
+          couponEndsAt: new Date("2027-01-01T00:00:00Z"),
+          stripeSubId: `sub_qa_coupon_${run}`,
+        },
+      });
+      expect(await figures(id)).toEqual({ snapshot: 0, ledger: 0 }); // unbilled: not in the paying set
+
+      await activate(id);
+
+      const sub = await prisma.tenantSubscription.findUniqueOrThrow({ where: { tenantId: id } });
+      expect(sub).toMatchObject({ couponFull: false, couponId: null, couponEndsAt: null });
+      expect(sub.couponSyncedAt).not.toBeNull();
+      expect(await figures(id)).toEqual({ snapshot: price.STARTER, ledger: price.STARTER });
+      expect(await prisma.billingEvent.count({ where: { tenantId: id } })).toBe(1);
+    });
+
+    // SA-736r M5 (review): the reset is UNCONDITIONAL - its "now" stamp makes a Stripe read that started before
+    // the activation stale, even for a tenant that was not couponFull when the admin clicked.
+    it("SA-736r M5: manual activation of a NON-coupon tenant still stamps couponSyncedAt, so an in-flight older sync cannot write", async () => {
+      const id = await makeTenant("stamp", TenantStatus.TRIAL);
+      const inFlight = new Date(Date.now() - 2000); // a sync whose Stripe read began before the activation
+      await activate(id);
+      const sub = await prisma.tenantSubscription.findUniqueOrThrow({ where: { tenantId: id } });
+      expect(sub.couponSyncedAt).not.toBeNull();
+      expect(sub.couponSyncedAt!.getTime()).toBeGreaterThan(inFlight.getTime());
+      expect(sub.externalPayment).toBe(true);
     });
 
     it("renewing an already-ACTIVE legacy row (NULL snapshot) writes no snapshot and books nothing", async () => {

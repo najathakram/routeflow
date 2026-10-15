@@ -1,5 +1,9 @@
 import { parseCreditLimitError, type CreditLimitExceededInfo } from "./credit-limit-error";
-import { parseRegulatedAuthError, type BlockedCategory } from "./authorizations-logic";
+import {
+  parseRegulatedAuthError,
+  regulatedAuthErrorCopy,
+  type BlockedCategory,
+} from "./authorizations-logic";
 
 /**
  * B790 — the at-door adjust screen's submitEntry() creates a change request, then
@@ -51,7 +55,11 @@ export function classifyAtStopResolveError(e: unknown): AtStopResolveOutcome {
   }
   // LINE_ALREADY_DELIVERED / STOP_ALREADY_COMPLETED / CHANGE_WINDOW_CLOSED / any other or
   // future code (e.g. B753's) — decline so a retry can never leave this CR orphaned.
+  // CQ-06: a license refusal with no categories (no guard to open) says what to fix, not the server's text.
   const reason =
-    data?.message ?? (e as { message?: string } | null)?.message ?? "Couldn't save that change.";
+    regulatedAuthErrorCopy(e) ??
+    data?.message ??
+    (e as { message?: string } | null)?.message ??
+    "Couldn't save that change.";
   return { action: "decline", reason };
 }

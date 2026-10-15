@@ -1,14 +1,27 @@
 import { ConflictException, ForbiddenException } from "@nestjs/common";
-import type { LadderUnit, TrackedCategoryRow } from "@routeflow/pricing";
+import {
+  PIECE_LABEL,
+  baseLabelOf,
+  type LadderUnit,
+  type TrackedCategoryRow,
+} from "@routeflow/pricing";
 import {
   assertMayUseUnits,
   buildUnitLine,
+  type StoredUnitLine,
+  type UnitSnapshotLine,
   categoryTaxForLine,
   loadUnitLadders,
   requestsUnit,
   type UnitLineProduct,
 } from "./unit-line-build";
-import type { ResolvedLineUnits } from "../products/line-units";
+import {
+  asLadderProduct,
+  normalizeDerivedBaseLine,
+  type ResolvedLineUnits,
+} from "../products/line-units";
+import { raisedBy, type LineAuthorLookup } from "./line-author-channel";
+import { norm } from "./unit-label-norm";
 import { liveLines } from "./order-edit-cancelled";
 import { writeLineUpdate } from "./order-line-removal";
 import type { UpdateOrderItemsDto } from "./dto/update-order-items.dto";
@@ -96,6 +109,101 @@ export async function prepareUnitEditContext(
 }
 
 /**
+ * The edit's customer tier for a staff write: the customer's default tier plus their per-product
+ * rows for `productIds`. A null `customerId` (a non-staff edit) reads nothing and prices at tier 1.
+ */
+export async function loadOperatorTiers(
+  tx: {
+    customer: { findFirst(a: any): Promise<any> };
+    customerPrice: { findMany(a: any): Promise<any[]> };
+  },
+  customerId: string | null | undefined,
+  productIds: string[],
+): Promise<{ operatorCpMap: Map<string, number | null>; operatorDefaultTier: number }> {
+  const customer = customerId
+    ? await tx.customer.findFirst({ where: { id: customerId }, select: { pricingTier: true } })
+    : null;
+  const rows =
+    customerId && productIds.length
+      ? await tx.customerPrice.findMany({ where: { customerId, productId: { in: productIds } } })
+      : [];
+  return {
+    operatorCpMap: new Map<string, number | null>(
+      rows.map((cp: any) => [cp.productId, cp.pricingTier]),
+    ),
+    operatorDefaultTier: customer?.pricingTier ?? 1,
+  };
+}
+
+/**
+ * SA-728 / units P0b: an OLD client names the base ("Piece" / the tenant's base label) for a DERIVED
+ * base unit. Rewrites that dto item IN PLACE into the pack line's pieces (no unitLabel, boxes/pieces
+ * via normalizeBoxesPieces, no echoed per-piece price) so computeLineSubtotal prorates it. Reads the
+ * customer's tier ONLY when an item actually names the base; otherwise nothing is read.
+ */
+export async function normalizeDerivedBaseItems(
+  db: {
+    customer: { findFirst(a: any): Promise<any> };
+    customerPrice: { findMany(a: any): Promise<any[]> };
+  },
+  order: { customerId?: string | null },
+  dto: { items?: ReadonlyArray<any> },
+  ctx: UnitEditContext,
+  user: { role?: string } | undefined,
+  /**
+   * The LOCKED lines (the in-tx call): the held label and product are read off them, never the pre-lock snapshot. A line
+   * the pre-lock pass already rewrote is not named any more and stays rewritten; one the pre-lock pass left alone
+   * (held as a Piece unit line then, a pack line under the lock) is rewritten here. The reverse (rewritten, then held
+   * as a Piece) fails closed in `assertNoPackRedenomination`.
+   */
+  heldById?: ReadonlyMap<string, any>,
+): Promise<void> {
+  const existing = heldById ?? ctx.existingById;
+  const productOf = (i: any): any => {
+    const pid = i.substituteProductId ?? i.productId ?? existing.get(i.id)?.productId;
+    return pid ? ctx.products.get(pid) : undefined;
+  };
+  const named = (i: any) => {
+    const p = productOf(i);
+    const l = norm(i.unitLabel ?? "");
+    return !!p && l !== "" && (l === norm(baseLabelOf(p)) || l === norm(PIECE_LABEL));
+  };
+  const candidates = (dto.items ?? []).filter(named);
+  if (candidates.length === 0) return;
+  const atCustomerTier = user?.role === "OPERATOR" || user?.role === "TENANT_ADMIN";
+  let defaultTier = 1;
+  const overrides = new Map<string, number | null>();
+  if (atCustomerTier && order.customerId) {
+    const c = await db.customer.findFirst({
+      where: { id: order.customerId },
+      select: { pricingTier: true },
+    });
+    defaultTier = c?.pricingTier ?? 1;
+    const rows = await db.customerPrice.findMany({
+      where: {
+        customerId: order.customerId,
+        productId: { in: candidates.map((i) => productOf(i).id) },
+      },
+    });
+    for (const r of rows) overrides.set(r.productId, r.pricingTier);
+  }
+  for (const item of candidates) {
+    const p = productOf(item);
+    const out = normalizeDerivedBaseLine(
+      item,
+      asLadderProduct(p),
+      ctx.ladders.get(p.id) ?? [],
+      atCustomerTier ? (overrides.get(p.id) ?? defaultTier) : 1,
+      // A substitute is a different product: the held label belongs to the line's OLD product, so it holds nothing here.
+      { held: item.id && !item.substituteProductId ? existing.get(item.id)?.unitLabel : null },
+    );
+    if (out === item) continue;
+    Object.assign(item, out);
+    if (!("unitPrice" in out)) delete item.unitPrice;
+  }
+}
+
+/**
  * The money seam: an edit that targets an existing unit-aware line (qty, price, or substitute —
  * never a bare CANCEL/DELETE/reason-only touch, which changes no money) MUST name that line's
  * unit; an item with no unitLabel aimed at one is REFUSED here, never silently interpreted against
@@ -157,8 +265,46 @@ export interface UnitWriteContext {
   ladders: Map<string, LadderUnit[]>;
   tenantId: string | null | undefined;
   tier: (productId: string) => number;
+  /** H3: the acting staff user, stamped on a unit line whose typed price overrides the customer's price. */
+  overriddenBy?: string | null;
+  /** H3: the order's lines as held under the edit's row lock, by id: the stored side of a re-sent price. */
+  held?: ReadonlyMap<string, unknown>;
+  /** H3: the buyer's count diff re-prices a tier line at the current tier on a qty-only edit (SA-507b). */
+  repriceTierOnQtyOnly?: boolean;
   /** trackedCategoryId -> TrackedCategory row, for the products this edit touches (B297). */
   categoryMap: Map<string, TrackedCategoryRow>;
+  /** SA ruling (#3418): each re-created line's author marker, and `.editor` (the acting principal's). */
+  authorOf: LineAuthorLookup;
+}
+
+/**
+ * H3: the stored line a replace-all entry re-writes, per the ONE pairing helper (`sourceLineId`: by id, or
+ * the strict same-product, same-unit fallback). The builder re-checks the unit; none = a new sale.
+ */
+export function pairedStoredLine(
+  ctx: Pick<UnitWriteContext, "held">,
+  item: { sourceLineId?: string },
+  productId: string,
+): StoredUnitLine | null {
+  const line = item.sourceLineId ? ctx.held?.get(item.sourceLineId) : undefined;
+  return line && (line as { productId?: string | null }).productId === productId
+    ? (line as StoredUnitLine)
+    : null;
+}
+
+/**
+ * units P0b: the held line's own snapshot (unit, price, type, override stamp), for a rewrite that must re-resolve a unit
+ * the ladder lost. Same-product only, like {@link pairedStoredLine}: another product has no claim on that line's price.
+ */
+function snapshotOfHeldLine(
+  ctx: Pick<UnitWriteContext, "held">,
+  lineId: string | undefined,
+  productId: string,
+): UnitSnapshotLine | undefined {
+  const line = lineId ? ctx.held?.get(lineId) : undefined;
+  return line && (line as { productId?: string | null }).productId === productId
+    ? (line as UnitSnapshotLine)
+    : undefined;
 }
 
 /**
@@ -176,6 +322,9 @@ export async function createUnitLine(
   resolved: ResolvedLineUnits,
   item: any,
   position: number,
+  // SA ruling (#3418): replace-all re-creates a line, so it keeps the product's carried marker (true); a diff-add
+  // (false) is the editor's own line.
+  carried = false,
 ): Promise<void> {
   // B297: price + stamp the trio at WRITE, like every other writer — a NULL/zero placeholder here
   // would become a PERMANENT $0 levy once PR 3's "keep the stored amount" rule reads it back.
@@ -191,8 +340,22 @@ export async function createUnitLine(
     taxFor: (qty, sub) => categoryTaxForLine(category, qty, sub),
     position,
     tenantId: ctx.tenantId,
+    overriddenBy: ctx.overriddenBy,
+    stored: pairedStoredLine(ctx, item, product.id),
+    // units P0b: the line's own snapshot, so a rewrite re-resolves a unit the ladder lost; ONLY for the same product
+    // (a replace-all entry naming another product under a held line's id must not be billed at that line's price)
+    existing: snapshotOfHeldLine(ctx, item.id, product.id),
   });
-  await ctx.tx.orderItem.create({ data: { orderId, ...built } });
+  // Row 373b: a line paired with a stored line (the ONE pairing helper sets `carriedLine`) keeps that line's
+  // category, trio and createdAt: a re-created unit line is not a new sale.
+  await ctx.tx.orderItem.create({
+    data: {
+      orderId,
+      ...built,
+      ...((item.carriedLine as Record<string, unknown> | undefined) ?? {}),
+      authorChannel: carried ? ctx.authorOf(product.id) : ctx.authorOf.editor, // after the carry: it wins
+    },
+  });
 }
 
 /**
@@ -203,12 +366,17 @@ export async function createUnitLine(
  * re-stamps from the NEW product's category, same as `createUnitLine`. A same-product qty/price
  * edit is NOT a new sale, so the trio must never move — the 3 trio keys are stripped out of
  * `buildUnitLine`'s return before the Prisma call, so `data` never names them and the existing
- * columns are left untouched (Prisma only writes fields present in `data`). The amount still
- * prices from `product`'s own category either way (the unchanged product on a same-product edit,
- * the new one on a substitute) — harmless even for the same-product case, since
- * `recomputeLineCategoryTaxes` unconditionally overwrites every active line's amount from the
- * live category right after this transaction, same as it always has. Only the TRIO is the thing
- * this function must not touch on a same-product edit.
+ * columns are left untouched (Prisma only writes fields present in `data`). A SUBSTITUTE's amount prices
+ * from the new product's category; on a same-product edit the amount is not written at all (row 338,
+ * below): `recomputeLineCategoryTaxes` re-derives every active line's amount from the line's OWN rate
+ * snapshot right after this transaction (B297 PR3; it was the live category before). Only the TRIO is the
+ * thing this function must not touch on a same-product edit.
+ * B297 row 338: a same-product edit also leaves `trackedCategoryId` / `trackedSubcategoryId` /
+ * `categoryTaxAmount` untouched. They used to be written from the product's CURRENT category, so a product
+ * that had left (or changed) its category re-filed the line and the recompute then priced it from a trio that
+ * no longer matched, or dropped its sale-time excise. The line keeps the category it was sold under; its
+ * amount is re-derived from its own snapshot by `recomputeLineCategoryTaxes` (a no-category line keeps its
+ * stored levy, L1).
  */
 export async function updateUnitLine(
   ctx: UnitWriteContext,
@@ -217,6 +385,8 @@ export async function updateUnitLine(
   resolved: ResolvedLineUnits,
   item: any,
   isSubstitute: boolean,
+  // SA ruling (#3418): the line's quantity before a same-product edit; a BUYER raise stamps it BUYER.
+  beforeQty?: unknown,
 ): Promise<void> {
   const category = product.trackedCategoryId
     ? ctx.categoryMap.get(product.trackedCategoryId)
@@ -226,6 +396,11 @@ export async function updateUnitLine(
     categoryTaxType,
     categoryTaxRate,
     categoryPriceIncludesTax,
+    // B297 row 338: the category the line was SOLD under (and its levy) belong to the line, not to the
+    // product's CURRENT category; only a substitute (a new sale) takes the new product's.
+    trackedCategoryId,
+    trackedSubcategoryId,
+    categoryTaxAmount,
     ...rest
   } = buildUnitLine({
     product,
@@ -236,11 +411,29 @@ export async function updateUnitLine(
     taxFor: (qty, sub) => categoryTaxForLine(category, qty, sub),
     position: 0,
     tenantId: ctx.tenantId,
+    overriddenBy: ctx.overriddenBy,
+    // a substitute is a new sale: judged against the tier price, never against the line it replaces
+    stored: isSubstitute ? null : (ctx.held?.get(lineId) as StoredUnitLine | undefined),
+    repriceTierOnQtyOnly: ctx.repriceTierOnQtyOnly,
+    // units P0b: a SUBSTITUTE is a different product: the old line's snapshot says nothing about it
+    existing: isSubstitute ? undefined : (ctx.held?.get(lineId) as UnitSnapshotLine | undefined),
   });
   const data = isSubstitute
-    ? { ...rest, categoryTaxType, categoryTaxRate, categoryPriceIncludesTax }
+    ? {
+        ...rest,
+        trackedCategoryId,
+        trackedSubcategoryId,
+        categoryTaxAmount,
+        categoryTaxType,
+        categoryTaxRate,
+        categoryPriceIncludesTax,
+      }
     : rest;
-  await writeLineUpdate(ctx.tx, ctx.orderId, lineId, data); // #2577: { id, orderId }, never bare
+  const stamp =
+    beforeQty !== undefined && !isSubstitute
+      ? raisedBy(ctx.authorOf.editor, beforeQty, rest.qty)
+      : {};
+  await writeLineUpdate(ctx.tx, ctx.orderId, lineId, { ...data, ...stamp }); // #2577: { id, orderId }, never bare
 }
 
 /**

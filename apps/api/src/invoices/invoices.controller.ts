@@ -50,8 +50,8 @@ export class InvoicesController {
   ) {}
 
   @Post()
-  create(@Body() dto: CreateInvoiceDto) {
-    return this.invoicesService.create(dto);
+  create(@Body() dto: CreateInvoiceDto, @CurrentUser() user: JwtPayload) {
+    return this.invoicesService.create(dto, user.sub);
   }
 
   @Post("from-order/:orderId")
@@ -102,8 +102,8 @@ export class InvoicesController {
 
   @Post("payments/record")
   @Roles(UserRole.OPERATOR)
-  recordStandalonePayment(@Body() dto: StandalonePaymentDto) {
-    return this.invoicesService.recordStandalonePayment(dto);
+  recordStandalonePayment(@Body() dto: StandalonePaymentDto, @CurrentUser() user: JwtPayload) {
+    return this.invoicesService.recordStandalonePayment(dto, { actor: user?.sub ?? null });
   }
 
   @Get("payments/:paymentId")
@@ -170,8 +170,12 @@ export class InvoicesController {
     return this.invoicesService.findOne(id, user);
   }
 
-  @Patch(":id") update(@Param("id") id: string, @Body() dto: UpdateInvoiceDto) {
-    return this.invoicesService.update(id, dto);
+  @Patch(":id") update(
+    @Param("id") id: string,
+    @Body() dto: UpdateInvoiceDto,
+    @CurrentUser() user: JwtPayload,
+  ) {
+    return this.invoicesService.update(id, dto, user.sub);
   }
 
   /**

@@ -1,6 +1,7 @@
 "use client";
 
 import * as React from "react";
+import { deleteProductConfirmText } from "@routeflow/types";
 import { ConfirmDialog } from "@/components/ConfirmDialog";
 import type { useDeleteProductFlow } from "./useDeleteProductFlow";
 
@@ -37,7 +38,7 @@ export function DeleteProductConfirm({
         });
       }}
       title="Delete product?"
-      description={`${name} will be deactivated and hidden from the catalog. Existing order and invoice history is preserved. Products with an in-flight (undelivered) order cannot be deleted.`}
+      description={deleteProductConfirmText(name)}
       confirmLabel="Yes, delete"
       variant="danger"
       loading={flow.isPending}

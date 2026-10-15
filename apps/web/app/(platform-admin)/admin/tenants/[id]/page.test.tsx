@@ -174,6 +174,37 @@ beforeEach(() => {
   mockFetchPlanCatalog.mockResolvedValue(v11Catalog());
 });
 
+describe("Tenant detail page — Setup tab groups the Feature Console and Overrides under Advanced", () => {
+  it("both controls live inside the one Advanced section and survive a collapse/expand", async () => {
+    await gotoSetupTab();
+
+    const advanced = screen.getByTestId("setup-advanced");
+    expect(within(advanced).getByRole("button", { name: /^Advanced/ })).toHaveAttribute(
+      "aria-expanded",
+      "true",
+    );
+    // Feature Console: its per-feature rows and "Set override" action; Overrides: its heading + New Override.
+    const tobaccoRow = advanced.querySelector('[data-feature-key="tobacco_dealer"]') as HTMLElement;
+    expect(within(tobaccoRow).getByRole("button", { name: /^Set override/ })).toBeInTheDocument();
+    expect(within(advanced).getByRole("heading", { name: "Overrides" })).toBeInTheDocument();
+    expect(within(advanced).getByRole("button", { name: "+ New Override" })).toBeInTheDocument();
+
+    // Collapsing hides the body but keeps it mounted (the Customise ref stays valid).
+    fireEvent.click(within(advanced).getByRole("button", { name: /^Advanced/ }));
+    expect(document.getElementById("setup-advanced-body")).not.toBeVisible();
+    expect(advanced.querySelector('[data-feature-key="tobacco_dealer"]')).not.toBeNull();
+
+    // "Set override" from a collapsed section reopens it and opens the drawer for that feature.
+    fireEvent.click(
+      within(tobaccoRow).getByRole("button", { name: /^Set override/, hidden: true }),
+    );
+    expect(document.getElementById("setup-advanced-body")).toBeVisible();
+    expect(((await screen.findByLabelText("Feature Key")) as HTMLSelectElement).value).toBe(
+      "tobacco_dealer",
+    );
+  });
+});
+
 describe("Tenant detail page — Feature Console 'Set override' action (brief D test 4)", () => {
   it("opens #795's drawer prefilled for the clicked feature; submit previews, then Confirm creates — in that order", async () => {
     mockPreview.mockResolvedValueOnce(
@@ -291,6 +322,32 @@ describe("REG-B857: tenant plan controls offer the published catalog, not a hard
         expect.objectContaining({ plan: "GROWTH" }),
       ),
     );
+  });
+
+  it("an ended-window activation refusal shows the mapped sentence naming the open invoice, not the raw message", async () => {
+    tenantOverrides = { plan: "STARTER", planKey: "STARTER" };
+    await gotoBillingTab();
+    await screen.findByRole("combobox", { name: "Plan" });
+    const { superAdminClient } = jest.requireMock("@/lib/admin-api");
+    superAdminClient.post.mockRejectedValueOnce({
+      response: {
+        status: 409,
+        data: {
+          code: "ACTIVATION_PERIOD_ALREADY_ENDED",
+          message: "raw server text that must not be shown",
+          invoiceNumber: "RF-2026-0042",
+          endedOn: "2026-10-01",
+          minDays: 41,
+        },
+      },
+    });
+    fireEvent.click(screen.getByRole("button", { name: "Activate Subscription" }));
+    expect(
+      await screen.findByText(
+        "Invoice RF-2026-0042 is still open and this payment's window ended on 2026-10-01. Mark it paid or void it in RouteFlow invoices, or activate for at least 41 days.",
+      ),
+    ).toBeInTheDocument();
+    expect(screen.queryByText(/raw server text/)).not.toBeInTheDocument();
   });
 
   it("REG-B857 T3: Change Plan offers the catalog plans with the tenant's resolved plan selected", async () => {

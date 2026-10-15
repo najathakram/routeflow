@@ -10,6 +10,10 @@ import CustomersPage from "./page";
  * CreateOrderModal's footer row and B770's invoices toolbar).
  */
 
+jest.mock("@/lib/auth-context", () => ({
+  ...jest.requireActual("@/lib/auth-context"),
+  useAuth: () => ({ user: { id: "u1", username: "x", role: "TENANT_ADMIN" } }),
+}));
 jest.mock("next/navigation", () => ({
   useRouter: () => ({ push: jest.fn(), replace: jest.fn() }),
   usePathname: () => "/customers",

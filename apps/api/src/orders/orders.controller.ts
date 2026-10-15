@@ -17,6 +17,7 @@ import {
 } from "@nestjs/common";
 import { ApiTags, ApiBearerAuth, ApiHeader } from "@nestjs/swagger";
 import { OrdersService } from "./orders.service";
+import { fulfilCaller } from "./fulfil-path-resolver";
 import { ChangeRequestsService } from "./change-requests.service";
 import { JwtAuthGuard } from "../auth/guards/jwt-auth.guard";
 import { RolesGuard } from "../auth/guards/roles.guard";
@@ -124,7 +125,7 @@ export class OrdersController {
 
     if (isStaff && dto.customerId) {
       // A merge target must share the incoming order's fulfil path (merge-candidates.ts).
-      const mergeAs = { explicit: dto.fulfillPath };
+      const mergeAs = { explicit: dto.fulfillPath, ...fulfilCaller(user) };
       const activeOrder = await this.ordersService.findActiveOrder(dto.customerId, {
         forMerge: true,
         mergeAs,
@@ -259,7 +260,16 @@ export class OrdersController {
                   // operator to edit yet. The actual remedy is to not merge at all.
                   'Choose "Create as a separate order" instead.',
                 );
-                const foldResult = foldMergeItems(current.lineItems ?? [], dto.items ?? []);
+                const foldResult = foldMergeItems(
+                  current.lineItems ?? [],
+                  dto.items ?? [],
+                  undefined,
+                  // B297 row 340 (foldTarget): the rate trio a NEW sale of each incoming product takes today —
+                  // an existing line sold at a different trio does not absorb the added quantity.
+                  await this.ordersService.liveTrioByProduct(
+                    (dto.items ?? []).map((i) => i.productId).filter(Boolean) as string[],
+                  ),
+                );
                 if (foldResult.livePackFallbackProductIds.length > 0) {
                   this.logger.warn(
                     `foldMergeItems: order ${current.id} product(s) [${foldResult.livePackFallbackProductIds.join(", ")}] had box data but no resolvable pack of their own — deferred to the live product pack in updateOrderItems (B776/SA-124)`,
@@ -412,8 +422,19 @@ export class OrdersController {
   @Post("sell")
   @UseGuards(RolesGuard)
   @Roles(UserRole.OPERATOR)
-  sell(@Body() dto: CreateSaleDto, @CurrentUser() user: JwtPayload) {
-    return this.ordersService.createSale(dto, user);
+  @ApiHeader({ name: "Idempotency-Key", required: false })
+  sell(
+    @Body() dto: CreateSaleDto,
+    @CurrentUser() user: JwtPayload,
+    @Headers("Idempotency-Key") rawIdempotencyKey?: string,
+  ) {
+    // Row 485: an optional per-attempt key (the body field stays internal and is refused). With it a
+    // retried ring resumes the stored order instead of writing a second one.
+    const idempotencyKey = this.normalizeIdempotencyKey(rawIdempotencyKey);
+    return this.ordersService.createSale(
+      idempotencyKey ? Object.assign(dto, { idempotencyKey }) : dto,
+      user,
+    );
   }
 
   /** #3168: mark several carrier orders shipped in one request (per-order outcomes, never all-or-nothing). */
@@ -451,13 +472,18 @@ export class OrdersController {
     @Query("customerId") customerId: string,
     // The path the order being built is on: the preview looks for the SAME merge target create would
     // (merge-candidates.ts); omitted = the customer's own path.
-    @Query("fulfillPath") fulfillPath?: string,
+    @Query("fulfillPath") fulfillPath: string | undefined,
+    @CurrentUser() user: JwtPayload,
   ) {
     if (!customerId) return null;
-    const explicit = fulfillPath === "SHIP" || fulfillPath === "ROUTE" ? fulfillPath : undefined;
+    // Staff may ask for PICKUP (POS mode): the preview searches for the same target create would.
+    const explicit =
+      fulfillPath === "SHIP" || fulfillPath === "ROUTE" || fulfillPath === "PICKUP"
+        ? fulfillPath
+        : undefined;
     const order = await this.ordersService.findActiveOrder(customerId, {
       forMerge: true,
-      mergeAs: { explicit },
+      mergeAs: { explicit, ...fulfilCaller(user) },
     });
     if (!order) return null;
     return {
@@ -530,7 +556,12 @@ export class OrdersController {
     @Body() dto: UpdateOrderItemsDto,
     @CurrentUser() user: JwtPayload,
   ) {
-    return this.forCaller(user, await this.ordersService.updateOrderItems(id, dto, user));
+    // B297 row 352: a CUSTOMER principal on this route names its lines exactly as on the buyer route.
+    const edited =
+      user.role === UserRole.CUSTOMER
+        ? await this.ordersService.updateOrderItems(id, dto, user, { buyerLineIds: true })
+        : await this.ordersService.updateOrderItems(id, dto, user);
+    return this.forCaller(user, edited);
   }
 
   // ─── P5-09: post-dispatch change requests ───────────────────────────────────

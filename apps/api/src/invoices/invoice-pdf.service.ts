@@ -1,4 +1,5 @@
 import React from "react";
+import { writeInvoicePdfPointer } from "./invoice-pdf-pointer";
 import { Injectable, Logger, NotFoundException, Optional } from "@nestjs/common";
 import { renderToBuffer } from "@react-pdf/renderer";
 import { PrismaService } from "../prisma/prisma.service";
@@ -68,6 +69,8 @@ export class InvoicePdfService {
         items: {
           include: {
             product: { select: { id: true, name: true, barcode: true, sku: true, unitSku: true } },
+            // CQ-03: the category row names the levy charge ("CRV deposit")
+            trackedCategory: { select: { id: true, name: true, taxType: true } },
             // #2717 M3: the frozen sub-lines of a composed (FIXED) line; empty on a plain line.
             components: { orderBy: { position: "asc" } },
           },
@@ -86,7 +89,7 @@ export class InvoicePdfService {
           orderBy: { paidAt: "asc" },
           include: { creditNote: { select: { creditNoteNumber: true, reason: true } } },
         },
-        order: { select: { status: true, fulfillPath: true, shippedAt: true } },
+        order: { select: { status: true, fulfillPath: true, shippedAt: true, counterSale: true } },
       },
     });
     if (!inv) throw new NotFoundException("Invoice not found");
@@ -253,10 +256,14 @@ export class InvoicePdfService {
     const key = invoicePdfStorageKey(invoiceId);
     await this.storage.upload(key, pdfBuffer, "application/pdf");
 
-    await this.prisma.invoice.update({
-      where: { id: invoiceId },
-      data: { pdfUrl: key },
-    });
+    // The key is deterministic per invoice, so write the pointer only when it changes
+    // (first render, or after an invalidation nulled it). Row 502: the write never moves
+    // updatedAt (the H4 edit token), so a render can't make an open edit form go stale.
+    if (inv.pdfUrl !== key) {
+      if (invTenantId) await writeInvoicePdfPointer(this.prisma, invTenantId, invoiceId, key);
+      // A tenant-less invoice cannot take the tenant-scoped write: say so, never a silent cache miss.
+      else this.logger.warn(`Invoice ${invoiceId} has no tenantId: PDF pointer not written`);
+    }
 
     this.logger.log(`Invoice PDF stored at key: ${key}`);
     return this.storage.presignedUrl(key);

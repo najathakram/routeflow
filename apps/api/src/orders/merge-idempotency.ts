@@ -3,6 +3,7 @@ import { API_ERROR_CODES } from "../common/api-error-codes";
 import { createHash } from "crypto";
 import { assertReplayCarriesReturnKey } from "./order-inline-return";
 import { assertReplaySameCart } from "./replay-same-cart";
+import { replayCartOf } from "./replay-cart-normalize";
 import type { InlineReturnReplayLines } from "../returns/inline-return-fingerprint";
 
 // Canonical JSON: object keys sorted, undefined-valued keys dropped (an absent field and a
@@ -234,7 +235,9 @@ export async function findOrderIdByKeyCheckingReturn(
       where: { id: hit.orderId },
       select: { id: true, status: true, lineItems: true },
     });
-    if (held) assertReplaySameCart(held, cart);
+    // The held order stores an old client's derived Piece as the pack's pieces: compare the body the same way.
+    if (held)
+      assertReplaySameCart(held, await replayCartOf(deps.prisma.forTenant(), customerId, cart));
   }
   if (hit) await assertReplayCarriesReturnKey(deps.prisma.forTenant(), inlineReturn, hit.orderId);
   return hit;

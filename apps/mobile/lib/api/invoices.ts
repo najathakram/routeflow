@@ -1,5 +1,6 @@
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { apiClient } from "../api-client";
+import { keptDraftInvoiceId } from "../kept-draft-invoice";
 import type { InvoicePdfVariant } from "../invoice-pdf-variant";
 import type { PaymentMethod } from "@routeflow/types";
 import type {
@@ -178,6 +179,13 @@ export function useCreateInvoice() {
       qc.invalidateQueries({ queryKey: ["invoices"] });
       qc.invalidateQueries({ queryKey: ["admin", "invoices"] });
     },
+    // Row 466: a send that failed after the draft committed still created an invoice.
+    onError: (err) => {
+      if (keptDraftInvoiceId(err)) {
+        qc.invalidateQueries({ queryKey: ["invoices"] });
+        qc.invalidateQueries({ queryKey: ["admin", "invoices"] });
+      }
+    },
   });
 }
 
@@ -274,7 +282,14 @@ export function useDeleteInvoice() {
  */
 export function useUpdateInvoice() {
   const qc = useQueryClient();
-  return useMutation<Invoice, Error, { id: string } & Partial<CreateInvoiceDto>>({
+  return useMutation<
+    Invoice,
+    Error,
+    { id: string } & Partial<CreateInvoiceDto> & {
+        /** H4: the invoice's updatedAt when the editor opened it; behind the server's it is 409 INVOICE_STALE. */
+        expectedUpdatedAt?: string;
+      }
+  >({
     mutationFn: ({ id, ...body }) => apiClient.patch(`/invoices/${id}`, body).then((r) => r.data),
     onSuccess: (_, { id }) => {
       qc.invalidateQueries({ queryKey: ["invoices"] });

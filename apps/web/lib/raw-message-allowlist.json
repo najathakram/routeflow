@@ -269,7 +269,7 @@
     "why": "B986-2 platform-admin: per-surface raw message read, pending"
   },
   "app/(platform-admin)/admin/tenants/[id]/page.tsx": {
-    "count": 7,
+    "count": 6,
     "why": "B986-2 platform-admin: per-surface raw message read, pending"
   },
   "app/(platform-admin)/admin/tenants/page.tsx": {
@@ -329,7 +329,7 @@
     "why": "B986-4 buyer portal: per-surface raw message read, pending"
   },
   "app/buyer/verify-merge/page.tsx": {
-    "count": 3,
+    "count": 1,
     "why": "B986-4 buyer portal: per-surface raw message read, pending"
   },
   "app/change-password/page.tsx": {
@@ -410,6 +410,10 @@
     "count": 1,
     "permanent": true,
     "why": "log: console.error of a websocket error, never rendered"
+  },
+  "lib/activation-error-copy.ts": {
+    "count": 1,
+    "why": "B986-2 platform-admin: the activation error line (mapped sentence first, else the server message) moved here from admin/tenants/[id]/page.tsx; pending"
   },
   "lib/invoice-void-copy.ts": {
     "count": 1,

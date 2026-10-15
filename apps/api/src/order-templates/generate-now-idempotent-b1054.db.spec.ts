@@ -28,8 +28,10 @@ import { _resetLockPoolForTests } from "../common/db-locks";
 import { PrismaService } from "../prisma/prisma.service";
 import { TenantContextService } from "../tenant/tenant-context.service";
 import { OrdersService } from "../orders/orders.service";
+import { RegulatedVisibilityService } from "../buyer/regulated-visibility.service";
 import { OrderTemplatesService } from "./order-templates.service";
 import type { JwtPayload } from "../auth/jwt-payload.interface";
+import { INVOICE_EDIT_STUBS } from "../orders/testing/invoice-edit-stubs";
 
 // eslint-disable-next-line @typescript-eslint/no-var-requires
 const { assertTestTenant } = require("../../../../scripts/lib/test-tenants.cjs");
@@ -131,6 +133,7 @@ describeDb("generate order now is idempotent (B1054)", () => {
         findOpenOrderDraft: async () => null,
         revertLinkedInvoicesForOrderEdit: async () => undefined,
         resyncOrderInvoicesForEdit: async () => [],
+        ...INVOICE_EDIT_STUBS,
         reconcileOrderDraftInvoice: async () => undefined,
       },
       creditNotes: { settleOrderCreditsInTx: async () => ({ applied: 0, unapplied: 0 }) },
@@ -150,6 +153,7 @@ describeDb("generate order now is idempotent (B1054)", () => {
         checkLinesSellable: jest.fn().mockResolvedValue({ outcome: "ALLOW", reasons: [] }),
       } as any,
       { read: async () => "off" } as any,
+      new RegulatedVisibilityService(prisma),
     );
 
     tenantId = (await raw.tenant.create({ data: { slug, name: `B1054 ${slug}` } })).id;

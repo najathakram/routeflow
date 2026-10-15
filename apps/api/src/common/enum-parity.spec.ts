@@ -127,6 +127,9 @@ const ENUM_TABLE: Array<[string, keyof typeof PrismaEnums]> = [
   ["ROUTE_RUN_STATUS_VALUES", "RouteRunStatus"],
   ["ROUTE_RUN_STOP_STATUS_VALUES", "RouteRunStopStatus"],
   ["HANDOFF_REALM_VALUES", "HandoffRealm"],
+  // M11: the usage meters (a long-standing enum, newly mirrored: the billing page's meter labels are
+  // keyed on it, so a new server meter fails the web type-check instead of printing a raw key).
+  ["METER_KEY_VALUES", "MeterKey"],
   // #2169 (SA-395): brand-new Prisma enum, mirrored immediately as
   // `INVOICE_ITEM_SYSTEM_KIND_VALUES` — see the triage tripwire below.
   ["INVOICE_ITEM_SYSTEM_KIND_VALUES", "InvoiceItemSystemKind"],
@@ -462,7 +465,11 @@ function readMobileStub(): Record<string, unknown> {
 }
 
 const MOBILE_STUB = readMobileStub();
-const MOBILE_STUB_VALUE_KEYS = Object.keys(MOBILE_STUB).filter((k) => k.endsWith("_VALUES"));
+// Stub arrays that are SUBSETS of a Prisma enum, not enums themselves (pinned elsewhere).
+const MOBILE_STUB_SUBSET_KEYS = new Set(["OPEN_INVOICE_STATUS_VALUES"]);
+const MOBILE_STUB_VALUE_KEYS = Object.keys(MOBILE_STUB).filter(
+  (k) => k.endsWith("_VALUES") && !MOBILE_STUB_SUBSET_KEYS.has(k),
+);
 
 /** `VENDOR_BILL_STATUS_VALUES` → `VendorBillStatus`. */
 function stubKeyToPrismaEnumName(key: string): string {

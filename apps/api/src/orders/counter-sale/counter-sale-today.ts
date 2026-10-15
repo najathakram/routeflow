@@ -1,12 +1,21 @@
 import {
+  FulfillPath,
   InvoiceStatus,
   OrderStatus,
   PaymentStatus,
   ReturnStatus,
   type Prisma,
 } from "@prisma/client";
-import { roundMoney, sumConfirmed } from "@routeflow/pricing";
+import {
+  COUNTER_DEFAULT_REGISTER,
+  billedChargeLines,
+  cashierNameOf,
+  roundMoney,
+  storedTaxRatePercent,
+  sumConfirmed,
+} from "@routeflow/pricing";
 import type {
+  TodaysHandOverRow,
   TodaysSaleMethod,
   TodaysSalePaymentState,
   TodaysSaleReturn,
@@ -16,7 +25,10 @@ import type {
   TodaysSalesSummary,
 } from "@routeflow/types";
 import { ACCRUAL_CREDIT_NOTE_FILTER } from "../../common/invoiced-sales";
-import { counterMethodOf } from "./counter-sale-readback";
+import { counterMethodOf, servedChange } from "./counter-sale-readback";
+import { DEAD_RETURN_STATUSES } from "../../returns/return-statuses";
+import { refundTenderOfColumn } from "../../returns/refund-tender";
+import { isCounterTenderRow } from "./counter-tender-row";
 
 /**
  * Today's sales (GET /orders/counter-sale/today): the PURE half. Everything that decides a figure lives here
@@ -34,13 +46,6 @@ export const TODAYS_SALES_MAX_LIMIT = 100;
 export const REFUND_METHOD_EXTERNAL = "EXTERNAL_REFUND";
 export const REFUND_METHOD_CREDIT_NOTE = "CREDIT_NOTE";
 
-/**
- * Is the TENDER of an external refund stored in a column? Not yet: it lives only in the audit row's meta. While
- * false the summary reports every refund by AMOUNT only (in `refunds.other`) and `cashExpectedInDrawer` does not
- * subtract it. Flip together with a `Return.refundTender` column (its own migration), then split the fold below.
- */
-export const REFUND_TENDER_KNOWN = false;
-
 export interface DayWindow {
   /** inclusive */
   start: Date;
@@ -50,7 +55,7 @@ export interface DayWindow {
 
 const DEAD_INVOICE_STATUSES = [InvoiceStatus.VOID, InvoiceStatus.WRITTEN_OFF];
 /** Returns that moved no money and never will; shared with the invoice void guard (`CASH_REFUNDED_RETURN_WHERE`). */
-export const DEAD_RETURN_STATUSES = [ReturnStatus.REJECTED, ReturnStatus.CANCELLED];
+export { DEAD_RETURN_STATUSES };
 
 const isDeadInvoice = (status: string) =>
   (DEAD_INVOICE_STATUSES as readonly string[]).includes(status);
@@ -95,10 +100,212 @@ export function salePaymentsWhere(tenantId: string, w: DayWindow) {
     paidAt: { gte: w.start, lt: w.end },
     invoice: {
       tenantId,
-      status: { notIn: DEAD_INVOICE_STATUSES },
+      // ONE rule with the day close (row 374): cash that was taken stays in the day when the office later WRITES the invoice
+      // off; only a VOID invoice drops its payments. (The day's SALES count still treats a written-off sale as dead.)
+      status: { not: InvoiceStatus.VOID },
       order: liveCounterOrderAnyDayWhere(tenantId),
     },
   };
+}
+
+/**
+ * HAND-OVERS (SA-763r R7): the PAID payments that CAME IN in the window on the tender of a POS-mode pickup
+ * hand-over: invoices of a PICKUP order that is NOT a counter sale (a counter sale is `salePaymentsWhere`'s,
+ * so the two sets are disjoint and nothing is counted twice). This is only the CANDIDATE query: whether a
+ * payment is the hand-over's own tender (not a deposit or a later payment on the same invoice) is the v5
+ * group id, which no SQL predicate can express, so `handOverPayments` filters in code. Bounded by the day's
+ * PICKUP payments.
+ */
+export function handOverCandidatesWhere(tenantId: string, w: DayWindow) {
+  return {
+    tenantId,
+    status: PaymentStatus.PAID,
+    paidAt: { gte: w.start, lt: w.end },
+    paymentGroupId: { not: null },
+    invoice: {
+      tenantId,
+      // the day close's own rules (row 374 b): cash taken stays in the day when the office later WRITES the invoice off (only
+      // a VOID invoice drops its payments), and a CANCELLED order's money is not the day's
+      status: { not: InvoiceStatus.VOID },
+      order: {
+        tenantId,
+        fulfillPath: FulfillPath.PICKUP,
+        counterSale: false,
+        status: { not: OrderStatus.CANCELLED },
+      },
+    },
+  };
+}
+
+/**
+ * The fields the shared classification (`groupWindowPayments`) reads off a counter sale's payment row: the same predicate
+ * the Z report folds with, so Today's money in and the Z cannot disagree about what is till money (row 374 a).
+ */
+export const salePaymentSelect = {
+  amount: true,
+  method: true,
+  status: true,
+  paymentGroupId: true,
+  checkStatus: true,
+  invoice: { select: { orderId: true } },
+} as const;
+
+/**
+ * What a hand-over ROW needs on top of the summary's method / amount / group id: when the tender came in and the
+ * order's number, register, cashier (the username only: row 317's rule, never an email) and customer name. ONE
+ * read for both the summary and the rows (row 342): no extra query.
+ */
+export const handOverCandidateSelect = {
+  method: true,
+  amount: true,
+  paidAt: true,
+  paymentGroupId: true,
+  status: true,
+  checkStatus: true,
+  invoice: {
+    select: {
+      orderId: true,
+      order: {
+        select: {
+          orderNumber: true,
+          registerKey: true,
+          soldBy: { select: { username: true } },
+          customer: { select: { businessName: true } },
+        },
+      },
+    },
+  },
+} satisfies Prisma.InvoicePaymentSelect;
+
+/** The order a hand-over tender sits on, as the candidate select reads it (all optional: a hand-built record may omit it). */
+export interface HandOverOrder {
+  orderNumber?: string | null;
+  registerKey?: string | null;
+  soldBy?: { username?: string | null } | null;
+  customer?: { businessName?: string | null } | null;
+}
+
+/** One payment that is a hand-over's own tender. */
+export interface HandOverPayment {
+  method: string;
+  amount: unknown;
+  orderId: string;
+  /** when the tender was recorded (absent on a hand-built record) */
+  paidAt?: Date;
+  order?: HandOverOrder | null;
+}
+
+/**
+ * The candidates that ARE a hand-over's own tender: the ONE tender predicate the day close folds with (`isCounterTenderRow`,
+ * told the order is a POS pickup, not a counter sale), never a second group-id rule. A deposited / cleared check or a method
+ * the till does not take reads as foreign here exactly as it does in the Z report.
+ */
+export function handOverPayments(
+  rows: ReadonlyArray<{
+    method: string;
+    amount: unknown;
+    paymentGroupId: string | null;
+    /** absent on a hand-built record: the candidate query is PAID-only, so absent reads PAID */
+    status?: string;
+    checkStatus?: string | null;
+    paidAt?: Date;
+    invoice: { orderId: string | null; order?: HandOverOrder | null } | null;
+  }>,
+): HandOverPayment[] {
+  return rows.flatMap((r) => {
+    const orderId = r.invoice?.orderId;
+    return orderId &&
+      isCounterTenderRow(
+        orderId,
+        {
+          method: r.method,
+          status: r.status ?? "PAID",
+          paymentGroupId: r.paymentGroupId,
+          checkStatus: r.checkStatus ?? null,
+        },
+        { counterSale: false },
+      )
+      ? [
+          {
+            method: r.method,
+            amount: r.amount,
+            orderId,
+            ...(r.paidAt ? { paidAt: r.paidAt } : {}),
+            ...(r.invoice?.order ? { order: r.invoice.order } : {}),
+          },
+        ]
+      : [];
+  });
+}
+
+/** The most hand-over rows one response carries (a day's few hand-overs; `summary.handOvers` is the whole-day figure). */
+export const HAND_OVER_ROWS_MAX = 200;
+
+/**
+ * The day's hand-overs as ROWS (row 342): one per order, folded from the SAME filtered tenders `foldSummary` totals
+ * (`handOverPayments`' output), so the rows' order count is `summary.handOvers.count` and their amounts sum to
+ * `summary.handOvers.total` (until the 200-row bound). The method split uses the till's own mapping
+ * (`todaysMethodOf`); `paidAt` is the latest tender in the window; an unstamped register reads as "main"; an
+ * unstamped or email-like cashier is null (`cashierNameOf`). Newest first, then order id (a stable tie-break).
+ */
+export function toHandOverRows(handOvers: readonly HandOverPayment[]): TodaysHandOverRow[] {
+  const byOrder = new Map<
+    string,
+    {
+      order: HandOverOrder | null | undefined;
+      amount: number;
+      paidAt: number;
+      methods: Map<TodaysSaleMethod, number>;
+    }
+  >();
+  for (const h of handOvers) {
+    const g = byOrder.get(h.orderId) ?? {
+      order: h.order,
+      amount: 0,
+      paidAt: Number.NEGATIVE_INFINITY,
+      methods: new Map<TodaysSaleMethod, number>(),
+    };
+    const amount = num(h.amount);
+    g.amount = roundMoney(g.amount + amount);
+    const m = todaysMethodOf(h.method);
+    g.methods.set(m, roundMoney((g.methods.get(m) ?? 0) + amount));
+    if (h.paidAt && h.paidAt.getTime() > g.paidAt) g.paidAt = h.paidAt.getTime();
+    g.order ??= h.order;
+    byOrder.set(h.orderId, g);
+  }
+  return (
+    [...byOrder.entries()]
+      // a tender with no recorded time is no row (never an invented 1970 one); the query's own window filter means a real one has it
+      .filter(([, g]) => Number.isFinite(g.paidAt))
+      .map(([orderId, g]): TodaysHandOverRow => {
+        const registerKey = (g.order?.registerKey ?? "").trim();
+        return {
+          orderId,
+          orderNumber: g.order?.orderNumber ?? "",
+          customerName: g.order?.customer?.businessName ?? "",
+          paidAt: new Date(g.paidAt).toISOString(),
+          amount: g.amount,
+          methods: METHOD_ORDER.flatMap((method) => {
+            const a = g.methods.get(method) ?? 0;
+            return a > 0 ? [{ method, amount: a }] : [];
+          }),
+          registerKey: registerKey || COUNTER_DEFAULT_REGISTER,
+          handedOverBy: cashierNameOf(g.order?.soldBy),
+        };
+      })
+      .sort((a, b) =>
+        a.paidAt === b.paidAt
+          ? a.orderId < b.orderId
+            ? -1
+            : a.orderId > b.orderId
+              ? 1
+              : 0
+          : a.paidAt < b.paidAt
+            ? 1
+            : -1,
+      )
+      .slice(0, HAND_OVER_ROWS_MAX)
+  );
 }
 
 /**
@@ -173,14 +380,31 @@ export function pageQuery(tenantId: string, w: DayWindow, page: number, limit: n
       total: true,
       createdAt: true,
       customerId: true,
+      counterCashTendered: true,
       customer: { select: { businessName: true, isWalkIn: true } },
+      // row 317: the cashier's username only (their display name); never the email or any other user column
+      soldBy: { select: { username: true } },
       invoices: {
         orderBy: { createdAt: "asc" },
         select: {
           id: true,
           invoiceNumber: true,
           status: true,
-          payments: { select: { method: true, amount: true, status: true } },
+          payments: {
+            orderBy: { createdAt: "asc" },
+            select: { method: true, amount: true, status: true },
+          },
+          // the stored line rates the sale's tax rate is read from (pricing's storedTaxRatePercent), and the
+          // levy each line billed with its category (CQ-03: named charges on the reprint)
+          items: {
+            select: {
+              taxRate: true,
+              categoryTaxAmount: true,
+              trackedCategoryId: true,
+              categoryTaxType: true,
+              trackedCategory: { select: { id: true, name: true, taxType: true } },
+            },
+          },
         },
       },
       returns: {
@@ -213,12 +437,28 @@ export interface TodayOrderRecord {
   total: unknown;
   createdAt: Date;
   customerId: string;
+  /** SA-764: the cash handed over (null = not a cash sale / rung before it was stored) */
+  counterCashTendered?: unknown;
   customer: { businessName: string | null; isWalkIn: boolean | null } | null;
+  /** row 317: the staff user who rang the sale (`Order.soldBy`); null/absent on a sale rung before it was stamped */
+  soldBy?: { username: string | null } | null;
   invoices: Array<{
     id: string;
     invoiceNumber: string | null;
     status: string;
     payments: Array<{ method: string; amount: unknown; status: string }>;
+    /** SA-764: each line's stored tax rate (a fraction, 0.0825); CQ-03: its billed levy and category */
+    items?: Array<{
+      taxRate: unknown;
+      categoryTaxAmount?: unknown;
+      trackedCategoryId?: string | null;
+      categoryTaxType?: string | null;
+      trackedCategory?: {
+        id?: string | null;
+        name?: string | null;
+        taxType?: string | null;
+      } | null;
+    }>;
   }>;
   returns: Array<{
     id: string;
@@ -274,7 +514,11 @@ export function returnAmount(r: ReturnMoney): number {
   return credit > 0 ? credit : roundMoney(num(r.refundAmount));
 }
 
-export function toTodaysSaleRow(o: TodayOrderRecord): TodaysSaleRow {
+export function toTodaysSaleRow(
+  o: TodayOrderRecord,
+  /** the tenant's configured rate in percent (`settings.taxRate`): a stored line rate is named only when it equals this */
+  configuredTaxPercent: number | null = null,
+): TodaysSaleRow {
   const live = o.invoices.filter((i) => !isDeadInvoice(i.status));
   const voided = o.status === OrderStatus.CANCELLED || (o.invoices.length > 0 && live.length === 0);
   const payments = live.flatMap((i) => i.payments);
@@ -323,12 +567,22 @@ export function toTodaysSaleRow(o: TodayOrderRecord): TodaysSaleRow {
     customerId: o.customerId,
     customerName: o.customer?.businessName ?? "",
     isWalkIn,
+    cashierName: cashierNameOf(o.soldBy),
     status: o.status,
     total,
     paid,
     balanceDue,
     methods,
     paymentState,
+    cashTendered: o.counterCashTendered == null ? null : roundMoney(num(o.counterCashTendered)),
+    change: servedChange(o.counterCashTendered, payments, balanceDue),
+    // ONE home for the rate (pricing): a STORED line rate, corroborated by the configured rate; never inferred
+    taxRatePercent: storedTaxRatePercent(
+      live.map((i) => ({ lines: i.items ?? [] })),
+      configuredTaxPercent,
+    ),
+    // CQ-03: the deposit / excise the live invoices billed, each its own named charge
+    charges: billedChargeLines(live.flatMap((i) => i.items ?? [])),
     returned: { amount: returnedAmount, state: returnState, returns },
     voided,
   };
@@ -356,6 +610,8 @@ export interface PaidAggregate {
  */
 export interface WindowReturn extends ReturnMoney {
   refundMethod: string | null;
+  /** SA-740r2: `Return.refundTender` (PaymentMethod) of a recorded refund; null = no tender recorded. The ONLY tender source. */
+  refundTender?: string | null;
 }
 
 const countOf = (c: { _all?: number } | number | null | undefined): number =>
@@ -369,6 +625,8 @@ export function foldSummary(input: {
   /** everything paid (any date) on the day's own sales: the `onAccount` measure */
   paidOnSales: PaidAggregate;
   returns: readonly WindowReturn[];
+  /** the hand-over tenders that came in in the window (already filtered by `handOverPayments`) */
+  handOvers?: readonly HandOverPayment[];
 }): TodaysSalesSummary {
   const by: Record<TodaysSaleMethod, number> = {
     CASH: 0,
@@ -381,6 +639,14 @@ export function foldSummary(input: {
     const m = todaysMethodOf(g.method);
     by[m] = roundMoney(by[m] + num(g._sum?.amount));
   }
+  // SA-763r R7: a POS-mode hand-over's tender is money in and cash in the drawer, like a counter sale's.
+  const handOvers = input.handOvers ?? [];
+  let handOverTotal = 0;
+  for (const h of handOvers) {
+    const m = todaysMethodOf(h.method);
+    by[m] = roundMoney(by[m] + num(h.amount));
+    handOverTotal = roundMoney(handOverTotal + num(h.amount));
+  }
   const moneyIn = {
     cash: by.CASH,
     card: by.CARD,
@@ -390,34 +656,33 @@ export function foldSummary(input: {
   };
   const salesTotal = roundMoney(num(input.sales._sum?.total));
 
-  let refundCount = 0;
-  let refundTotal = 0;
+  // SA-740r2: a refund's tender is READ ONLY from `Return.refundTender` (no audit-meta read). A null / unknown tender is
+  // `other`, never guessed to be cash; `tenderKnown` is computed per window: no refund in it lacks a tender.
+  const refunds = { count: 0, cash: 0, card: 0, check: 0, other: 0, total: 0, tenderKnown: true };
   let creditCount = 0;
   let creditAmount = 0;
   for (const r of input.returns) {
     if (r.refundMethod === REFUND_METHOD_EXTERNAL) {
-      refundCount += 1;
-      refundTotal = roundMoney(refundTotal + num(r.refundAmount));
+      const amount = num(r.refundAmount);
+      const tender = refundTenderOfColumn(r.refundTender);
+      refunds.count += 1;
+      refunds.total = roundMoney(refunds.total + amount);
+      if (tender === "CASH") refunds.cash = roundMoney(refunds.cash + amount);
+      else if (tender === "CARD") refunds.card = roundMoney(refunds.card + amount);
+      else if (tender === "CHECK") refunds.check = roundMoney(refunds.check + amount);
+      else {
+        refunds.other = roundMoney(refunds.other + amount);
+        refunds.tenderKnown = false;
+      }
     } else if (r.refundMethod === REFUND_METHOD_CREDIT_NOTE) {
       creditCount += 1;
       creditAmount = roundMoney(creditAmount + returnAmount(r));
     }
   }
-  // Tender not stored (REFUND_TENDER_KNOWN): the whole refund is untendered, so `other`; the drawer figure
-  // below cannot subtract it and says so through `tenderKnown`.
-  const refunds = {
-    count: refundCount,
-    cash: 0,
-    card: 0,
-    check: 0,
-    other: refundTotal,
-    total: refundTotal,
-    tenderKnown: REFUND_TENDER_KNOWN,
-  };
-
   return {
     sales: { count: countOf(input.sales._count), total: salesTotal },
     moneyIn,
+    handOvers: { count: new Set(handOvers.map((h) => h.orderId)).size, total: handOverTotal },
     storeCreditUsed: by.STORE_CREDIT,
     onAccount: Math.max(
       0,

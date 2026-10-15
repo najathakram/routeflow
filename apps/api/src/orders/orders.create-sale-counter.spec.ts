@@ -85,7 +85,7 @@ describe("OrdersService.createSale — counter-sale options and resume", () => {
     expect(invoices.send).toHaveBeenCalledWith("inv-1", { suppressNotify: true });
   });
 
-  it("marks DELIVERED with status + deliveredAt ONLY (no deliveredQty stamp: B1050 — corrections go via return/credit)", async () => {
+  it("the order row gets status + deliveredAt ONLY (the deliveredQty stamp is a line write in the same tx, SA-763r)", async () => {
     const { h } = await setup();
     await h.service.createSale(dto, operatorPayload as never, { fulfillPath: "PICKUP" as never });
     const data = h.prisma.order.update.mock.calls[0][0].data;
@@ -225,9 +225,13 @@ describe("OrdersService.createSale — counter-sale options and resume", () => {
     it("a failed invoice step leaves DELIVERED + no invoice; the retry with the same key finishes it, one DELIVERED write, one send", async () => {
       const { h, invoices, setReplayed } = await setup("PENDING");
       invoices.createInvoiceFromOrder.mockRejectedValueOnce(new Error("invoice step failed"));
-      await expect(h.service.createSale(keyed, operatorPayload as never)).rejects.toThrow(
-        "invoice step failed",
-      );
+      // Row 466: the order committed, so the failure is a coded 500 carrying orderId (cause kept).
+      const failed = await errorOf(h.service.createSale(keyed, operatorPayload as never));
+      expect(failed.getResponse()).toMatchObject({
+        code: "SALE_INVOICE_CREATE_FAILED",
+        orderId: "ord-1",
+      });
+      expect((failed.cause as Error).message).toBe("invoice step failed");
       expect(h.prisma.order.update).toHaveBeenCalledTimes(1);
       expect(invoices.send).not.toHaveBeenCalled();
 

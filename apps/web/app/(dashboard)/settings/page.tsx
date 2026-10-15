@@ -1,8 +1,9 @@
 "use client";
 
 import * as React from "react";
-import { useForm } from "react-hook-form";
+import { useForm, type Resolver } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
+import { API_ERROR_CODES } from "@routeflow/types";
 import { z } from "zod";
 import {
   Upload,
@@ -80,6 +81,7 @@ import {
 } from "@/lib/api/remittance";
 import { useTierLabels, useUpdateTierLabels, type TierLabelsConfig } from "@/lib/api/tier-labels";
 import { useAuth } from "@/lib/auth-context";
+import { isAccountAdmin } from "@/lib/auth";
 import { useFleetAccess } from "@/lib/api/addons";
 import { changePassword, setPassword } from "@/lib/auth";
 import { RegulatedSettingsTab } from "./_components/RegulatedSettingsTab";
@@ -96,10 +98,18 @@ import NextLink from "next/link";
 import { useSearchParams, useRouter } from "next/navigation";
 import { describeSaveError } from "@/lib/reason-copy";
 import { isInShell } from "@/lib/in-shell";
+import { TimeZoneDatalist } from "@/components/TimeZoneInput";
+import { TIME_ZONE_REQUIRED_COPY, canonicalTimeZone, isValidTimeZone } from "@/lib/timezones";
+import { useInvalidFocus } from "@/lib/form-errors";
+import { ReadOnlyHint, WriteButton } from "@/lib/read-only-gate";
+import { isReadOnlyRefusal, showReadOnlyRefusal } from "@/lib/read-only-refusal";
+import { userStatusRefusalCopy } from "@/lib/user-status-refusal";
 
 // ─── TAB 1: Business Profile ──────────────────────────────────────────────────
 
-const profileSchema = z.object({
+const RECEIPT_FOOTER_MAX_CHARS = 200;
+
+const profileShape = {
   businessName: z.string().min(1, "Required"),
   email: z.string().email("Enter a valid email"),
   ownerName: z.string().min(1, "Required"),
@@ -110,13 +120,30 @@ const profileSchema = z.object({
   state: z.string().optional(),
   zip: z.string().regex(/^\d{5}(-\d{4})?$/, "Enter a valid ZIP code"),
   taxRate: z.coerce.number().min(0).max(100),
-});
-type ProfileFormValues = z.infer<typeof profileSchema>;
+  // Plain text, counted in characters like the API does (SA-762r F6).
+  receiptFooter: z.string().refine((v) => Array.from(v).length <= RECEIPT_FOOTER_MAX_CHARS, {
+    message: `Keep the footer to ${RECEIPT_FOOTER_MAX_CHARS} characters or fewer`,
+  }),
+};
+/** The zone is validated only when the viewer can edit it, so a hidden field can never block a save. */
+const profileSchemaFor = (canEditTimeZone: boolean) =>
+  z.object({
+    ...profileShape,
+    timezone: canEditTimeZone
+      ? z.string().refine((v) => isValidTimeZone(v), TIME_ZONE_REQUIRED_COPY)
+      : z.string().optional(),
+  });
+type ProfileFormValues = z.infer<ReturnType<typeof profileSchemaFor>>;
+
+const INVALID_ZONE_COPY = "That isn't a valid time zone. Pick one from the list.";
+const ZONE_FORBIDDEN_COPY = "Only an account admin can change the time zone.";
 
 function BusinessProfileTab() {
   const { toast } = useToast();
   const qc = useQueryClient();
   const { branding, refresh: refreshBranding } = useTenant();
+  // Only a tenant admin may change the time zone; everyone else sees it read-only.
+  const canEditTimeZone = useAuth().user?.role === "TENANT_ADMIN";
   const [logoPreview, setLogoPreview] = React.useState<string | null>(null);
   const fileInputRef = React.useRef<HTMLInputElement>(null);
 
@@ -126,7 +153,9 @@ function BusinessProfileTab() {
   });
 
   const saveSettings = useMutation({
-    mutationFn: (data: ProfileFormValues) => apiClient.patch("/settings", data).then((r) => r.data),
+    // `timezone` rides along only when an admin actually changed it.
+    mutationFn: (data: Omit<ProfileFormValues, "timezone"> & { timezone?: string }) =>
+      apiClient.patch("/settings", data).then((r) => r.data),
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ["settings"] });
       toast({
@@ -135,7 +164,30 @@ function BusinessProfileTab() {
         variant: "success",
       });
     },
-    onError: () => toast({ title: "Failed to save settings", variant: "error" }),
+    onError: (err: unknown, sent) => {
+      if (isReadOnlyRefusal(err)) return; // F5: the app-wide handler already showed the shared line
+
+      const res = (err as { response?: { status?: number; data?: { code?: string } } })?.response;
+      // The server's own text is never shown: a refused zone and a refused role each get one fixed line.
+      if (res?.data?.code === API_ERROR_CODES.INVALID_TIME_ZONE) {
+        setError("timezone", { message: INVALID_ZONE_COPY });
+        toast({ title: INVALID_ZONE_COPY, variant: "error" });
+        return;
+      }
+      if (res?.status === 403 && sent.timezone) {
+        toast({ title: ZONE_FORBIDDEN_COPY, variant: "error" });
+        return;
+      }
+      toast(
+        res?.status === 400
+          ? {
+              title: "Couldn't save the receipt footer",
+              description: `Use plain text of ${RECEIPT_FOOTER_MAX_CHARS} characters or fewer.`,
+              variant: "error",
+            }
+          : { title: "Failed to save settings", variant: "error" },
+      );
+    },
   });
 
   // Logo upload — POSTs the file to /tenants/me/config/branding/logo as
@@ -161,12 +213,32 @@ function BusinessProfileTab() {
       });
     },
     onError: (err: any) => {
+      // Drop the local preview so the saved logo (if any) shows instead of a stale one (also when read-only).
+      setLogoPreview(null);
+      if (isReadOnlyRefusal(err)) return; // F5: the app-wide handler already showed the shared line
       const msg = err?.response?.data?.message ?? "Try a PNG, JPG, or WEBP under 5 MB.";
       toast({ title: "Logo upload failed", description: msg, variant: "error" });
-      // Drop the local preview so the saved logo (if any) shows instead of a stale one.
-      setLogoPreview(null);
     },
   });
+
+  // Row 327: this is ONE form with one Save button, so validate only the fields the user changed. A counter shop
+  // that never filled in the owner, phone or address (the API stores them as empty strings) can still save its
+  // tax rate; a field the user edits, or clears, is still checked. With nothing edited, the whole form is checked.
+  const dirtyRef = React.useRef<Record<string, unknown>>({});
+  const profileResolver = React.useMemo<Resolver<ProfileFormValues>>(() => {
+    const schema = profileSchemaFor(canEditTimeZone);
+    return async (values, context, options) => {
+      const mask: Record<string, true> = {};
+      for (const key of Object.keys(schema.shape)) if (dirtyRef.current[key]) mask[key] = true;
+      // Nothing changed: Save has nothing to scope to, so check the whole profile and say what is missing.
+      if (Object.keys(mask).length === 0) return zodResolver(schema)(values, context, options);
+      const res = await zodResolver(schema.pick(mask as never))(values, context, options);
+      // The picked schema strips every other key, so hand back the whole form with the parsed fields on top.
+      return Object.keys(res.errors).length === 0
+        ? { values: { ...values, ...res.values }, errors: {} }
+        : res;
+    };
+  }, [canEditTimeZone]);
 
   const {
     register,
@@ -174,9 +246,12 @@ function BusinessProfileTab() {
     reset,
     watch,
     setValue,
-    formState: { errors, isSubmitting },
+    setError,
+    formState: { errors, isSubmitting, dirtyFields },
   } = useForm<ProfileFormValues>({
-    resolver: zodResolver(profileSchema),
+    resolver: profileResolver,
+    // onInvalidFocus (handleSubmit's second argument) is the single focus owner.
+    shouldFocusError: false,
     defaultValues: {
       businessName: "",
       email: "",
@@ -188,8 +263,12 @@ function BusinessProfileTab() {
       state: "",
       zip: "",
       taxRate: 0,
+      timezone: "",
+      receiptFooter: "",
     },
   });
+
+  dirtyRef.current = dirtyFields;
 
   React.useEffect(() => {
     if (savedSettings) {
@@ -204,6 +283,8 @@ function BusinessProfileTab() {
         state: savedSettings.state ?? "",
         zip: savedSettings.zip ?? "",
         taxRate: savedSettings.taxRate ?? 0,
+        ...(canEditTimeZone ? { timezone: savedSettings.timezone ?? "" } : {}),
+        receiptFooter: savedSettings.receiptFooter ?? "",
       });
     }
   }, [savedSettings, reset]);
@@ -220,12 +301,18 @@ function BusinessProfileTab() {
     e.target.value = "";
   };
 
-  const onSubmit = async (data: ProfileFormValues) => {
-    await saveSettings.mutateAsync(data);
+  const onSubmit = async ({ timezone, ...rest }: ProfileFormValues) => {
+    const zone =
+      canEditTimeZone && dirtyFields.timezone && timezone ? canonicalTimeZone(timezone) : null;
+    // onError already told the user (fixed copy); the rejection must not also escape as an unhandled one.
+    await saveSettings
+      .mutateAsync(zone ? { ...rest, timezone: zone } : rest)
+      .catch(() => undefined);
   };
+  const onInvalid = useInvalidFocus();
 
   return (
-    <form onSubmit={handleSubmit(onSubmit)} noValidate className="space-y-6">
+    <form onSubmit={handleSubmit(onSubmit, onInvalid)} noValidate className="space-y-6">
       <Card title="Business Information">
         <div className="grid grid-cols-2 gap-4">
           <Input
@@ -262,6 +349,37 @@ function BusinessProfileTab() {
               Used for invoices, order updates, and customer communications.
             </p>
           </div>
+        </div>
+        <div className="mt-4">
+          {canEditTimeZone ? (
+            <>
+              <Input
+                label="Time zone"
+                list="settings-timezone-zones"
+                autoComplete="off"
+                id="settings-timezone"
+                aria-describedby={`settings-timezone-help${errors.timezone ? " settings-timezone-error" : ""}`}
+                register={register("timezone", {
+                  onBlur: (e) => {
+                    // Tidy the spelling when the admin leaves the field; text that is not a zone stays for the save check.
+                    const zone = canonicalTimeZone(e.target.value);
+                    if (zone && zone !== e.target.value)
+                      setValue("timezone", zone, { shouldDirty: true, shouldValidate: true });
+                  },
+                })}
+                error={errors.timezone?.message}
+              />
+              <TimeZoneDatalist id="settings-timezone-zones" />
+            </>
+          ) : (
+            <dl>
+              <dt className="text-sm font-medium text-navy">Time zone</dt>
+              <dd className="text-sm text-navy">{savedSettings?.timezone ?? "—"}</dd>
+            </dl>
+          )}
+          <p id="settings-timezone-help" className="mt-1 text-xs text-navy/70">
+            Applies to receipts and today&apos;s sales from now on
+          </p>
         </div>
       </Card>
 
@@ -362,11 +480,28 @@ function BusinessProfileTab() {
             />
             <span className="absolute right-3 top-[34px] text-sm text-navy/70">%</span>
           </div>
+          <p className="mt-1 text-xs text-navy/70">Charged on counter sales and invoices</p>
         </div>
       </Card>
 
+      <Card title="Receipt">
+        {/* Plain text only: the footer is never rendered as HTML. */}
+        <Textarea
+          label="Receipt footer"
+          rows={3}
+          register={register("receiptFooter")}
+          error={errors.receiptFooter?.message}
+        />
+        <p className="mt-1 text-xs text-navy/70">
+          Printed at the bottom of counter receipts. Plain text.{" "}
+          <span aria-live="polite">
+            {Array.from(watch("receiptFooter") ?? "").length}/{RECEIPT_FOOTER_MAX_CHARS}
+          </span>
+        </p>
+      </Card>
+
       <div className="flex justify-end">
-        <Button type="submit" loading={isSubmitting} disabled={Object.keys(errors).length > 0}>
+        <Button type="submit" loading={isSubmitting}>
           Save Changes
         </Button>
       </div>
@@ -577,6 +712,8 @@ function EditUserModal({
 }) {
   const updateUser = useUpdateUser();
   const resetPassword = useResetUserPassword();
+  // Non-admins edit only their own username / email: no role change, no password reset.
+  const isAdmin = isAccountAdmin(useAuth().user);
   // Fleet-off: no DRIVER option — unless this user already IS a driver (never silently change a role).
   const { fleet } = useFleetAccess();
   const { toast } = useToast();
@@ -611,6 +748,7 @@ function EditUserModal({
           onClose();
         },
         onError: (err) =>
+          isReadOnlyRefusal(err) ||
           toast({ title: "Update failed", description: err.message, variant: "error" }),
       },
     );
@@ -620,7 +758,8 @@ function EditUserModal({
     if (!user) return;
     resetPassword.mutate(user.id, {
       onSuccess: (result) => setTempPassword(result.tempPassword),
-      onError: () => toast({ title: "Failed to reset password", variant: "error" }),
+      onError: (err) =>
+        isReadOnlyRefusal(err) || toast({ title: "Failed to reset password", variant: "error" }),
     });
   };
 
@@ -668,6 +807,14 @@ function EditUserModal({
             </div>
             <p className="mt-1 text-xs text-navy/70">Tenant admin role cannot be changed.</p>
           </div>
+        ) : !isAdmin ? (
+          <div>
+            <label className="mb-1 block text-sm font-medium text-navy">Role</label>
+            <div className="flex h-10 items-center rounded-md border border-surface-border bg-surface-secondary px-3 text-sm text-navy/70">
+              {user?.role === "DRIVER" ? "Driver" : "Operator"}
+            </div>
+            <p className="mt-1 text-xs text-navy/70">Only an admin can change this.</p>
+          </div>
         ) : (
           <Select
             label="Role"
@@ -694,43 +841,52 @@ function EditUserModal({
         />
       </form>
 
-      {/* Password reset section */}
-      <div className="mt-4 border-t border-surface-border pt-4">
-        {tempPassword ? (
-          <div className="space-y-2">
-            <p className="text-xs font-medium text-navy">
-              New temporary password — share with user:
-            </p>
-            <div className="flex items-center gap-2">
-              <code className="flex-1 rounded border border-surface-border bg-surface-raised px-3 py-1.5 font-mono text-sm font-bold tracking-widest text-navy">
-                {tempPassword}
-              </code>
-              <button
-                onClick={copyPw}
-                title="Copy"
-                className="rounded p-1.5 text-navy/70 hover:bg-surface-raised hover:text-navy transition-colors"
-              >
-                {copied ? <Check className="h-4 w-4 text-success" /> : <Copy className="h-4 w-4" />}
-              </button>
+      {/* Password reset section (admin-only on the api) */}
+      {isAdmin && (
+        <div className="mt-4 border-t border-surface-border pt-4">
+          {tempPassword ? (
+            <div className="space-y-2">
+              <p className="text-xs font-medium text-navy">
+                New temporary password — share with user:
+              </p>
+              <div className="flex items-center gap-2">
+                <code className="flex-1 rounded border border-surface-border bg-surface-raised px-3 py-1.5 font-mono text-sm font-bold tracking-widest text-navy">
+                  {tempPassword}
+                </code>
+                <button
+                  onClick={copyPw}
+                  title="Copy"
+                  className="rounded p-1.5 text-navy/70 hover:bg-surface-raised hover:text-navy transition-colors"
+                >
+                  {copied ? (
+                    <Check className="h-4 w-4 text-success" />
+                  ) : (
+                    <Copy className="h-4 w-4" />
+                  )}
+                </button>
+              </div>
             </div>
-          </div>
-        ) : (
-          <Button
-            variant="secondary"
-            size="sm"
-            loading={resetPassword.isPending}
-            onClick={handleResetPassword}
-          >
-            Reset Password
-          </Button>
-        )}
-      </div>
+          ) : (
+            <Button
+              variant="secondary"
+              size="sm"
+              loading={resetPassword.isPending}
+              onClick={handleResetPassword}
+            >
+              Reset Password
+            </Button>
+          )}
+        </div>
+      )}
     </Modal>
   );
 }
 
 function UserManagementTab() {
   const { data, isLoading } = useUsers();
+  // Add / status / reset-password are admin-only on the api; anyone may edit THEIR OWN record.
+  const { user: viewer } = useAuth();
+  const isAdmin = isAccountAdmin(viewer);
   const changeStatus = useChangeUserStatus();
   const [isAddOpen, setIsAddOpen] = React.useState(false);
   const [editingUser, setEditingUser] = React.useState<AppUser | null>(null);
@@ -743,7 +899,12 @@ function UserManagementTab() {
     changeStatus.mutate(
       { id: user.id, status: nextStatus },
       {
-        onError: () => toast({ title: "Failed to update status", variant: "error" }),
+        onError: (err) =>
+          isReadOnlyRefusal(err) ||
+          toast({
+            title: userStatusRefusalCopy(err) ?? "Failed to update status",
+            variant: "error",
+          }),
       },
     );
   };
@@ -758,10 +919,13 @@ function UserManagementTab() {
         <p className="text-sm text-navy/70">
           {isLoading ? "Loading..." : `${data?.meta.total ?? 0} users total`}
         </p>
-        <Button size="sm" onClick={() => setIsAddOpen(true)}>
-          Add User
-        </Button>
+        {isAdmin && (
+          <WriteButton size="sm" onClick={() => setIsAddOpen(true)}>
+            Add User
+          </WriteButton>
+        )}
       </div>
+      <ReadOnlyHint className="text-xs text-slate-600" />
 
       <div className="overflow-hidden rounded-lg border border-surface-border bg-white">
         <table className="w-full text-sm">
@@ -808,30 +972,35 @@ function UserManagementTab() {
                   </td>
                   <td className="px-4 py-3">
                     <div className="flex items-center gap-1 justify-end">
-                      <button
-                        title="Edit user"
-                        onClick={() => setEditingUser(user)}
-                        className="rounded p-1.5 text-navy/70 hover:bg-surface-raised hover:text-navy transition-colors"
-                      >
-                        <Pencil className="h-4 w-4" />
-                      </button>
-                      <button
-                        title={user.status === "ACTIVE" ? "Deactivate" : "Activate"}
-                        onClick={() => toggleStatus(user)}
-                        disabled={changeStatus.isPending}
-                        className={cn(
-                          "rounded p-1.5 transition-colors disabled:opacity-50",
-                          user.status === "ACTIVE"
-                            ? "text-success hover:bg-success-bg"
-                            : "text-navy/30 hover:bg-surface-raised hover:text-navy",
-                        )}
-                      >
-                        {user.status === "ACTIVE" ? (
-                          <ToggleRight className="h-4 w-4" />
-                        ) : (
-                          <ToggleLeft className="h-4 w-4" />
-                        )}
-                      </button>
+                      {(isAdmin || user.id === viewer?.id) && (
+                        <button
+                          title="Edit user"
+                          onClick={() => setEditingUser(user)}
+                          className="rounded p-1.5 text-navy/70 hover:bg-surface-raised hover:text-navy transition-colors"
+                        >
+                          <Pencil className="h-4 w-4" />
+                        </button>
+                      )}
+                      {/* SA #3412: no Deactivate on your own row (the API refuses it too) */}
+                      {isAdmin && user.id !== viewer?.id && (
+                        <button
+                          title={user.status === "ACTIVE" ? "Deactivate" : "Activate"}
+                          onClick={() => toggleStatus(user)}
+                          disabled={changeStatus.isPending}
+                          className={cn(
+                            "rounded p-1.5 transition-colors disabled:opacity-50",
+                            user.status === "ACTIVE"
+                              ? "text-success hover:bg-success-bg"
+                              : "text-navy/30 hover:bg-surface-raised hover:text-navy",
+                          )}
+                        >
+                          {user.status === "ACTIVE" ? (
+                            <ToggleRight className="h-4 w-4" />
+                          ) : (
+                            <ToggleLeft className="h-4 w-4" />
+                          )}
+                        </button>
+                      )}
                     </div>
                   </td>
                 </tr>
@@ -883,7 +1052,8 @@ function AIIntegrationsTab() {
         variant: "success",
       });
     },
-    onError: () => toast({ title: "Failed to save API key", variant: "error" }),
+    onError: (err) =>
+      isReadOnlyRefusal(err) || toast({ title: "Failed to save API key", variant: "error" }),
   });
 
   const removeKey = useMutation({
@@ -892,7 +1062,8 @@ function AIIntegrationsTab() {
       qc.invalidateQueries({ queryKey: ["settings", "anthropic"] });
       toast({ title: "API key removed", variant: "success" });
     },
-    onError: () => toast({ title: "Failed to remove key", variant: "error" }),
+    onError: (err) =>
+      isReadOnlyRefusal(err) || toast({ title: "Failed to remove key", variant: "error" }),
   });
 
   const isConfigured = anthropicStatus?.configured === true;
@@ -1297,7 +1468,8 @@ function EmailSettingsTab() {
       });
       qc.invalidateQueries({ queryKey: ["settings", "email"] });
       toast({ title: "Email settings saved", variant: "success" });
-    } catch {
+    } catch (err) {
+      if (showReadOnlyRefusal(err, toast)) return;
       toast({ title: "Failed to save settings", variant: "error" });
     } finally {
       setIsSaving(false);
@@ -1970,6 +2142,8 @@ function MyAccountTab() {
   const { fleet: hasFleet } = useFleetAccess();
   const canToggleDriver =
     (hasFleet || !!me?.canActAsDriver) && (me?.role === "OPERATOR" || me?.role === "TENANT_ADMIN");
+  // PATCH /users/:id/driver-permit is admin-only even for yourself: others get a read-only line.
+  const isAdmin = isAccountAdmin(useAuth().user);
   const toggleDriverPermit = useToggleDriverPermit();
 
   const handleLinkGoogle = async () => {
@@ -2000,14 +2174,20 @@ function MyAccountTab() {
           : "Sign out and back in to access driver features.",
         variant: "success",
       });
-    } catch {
+    } catch (err) {
+      if (isReadOnlyRefusal(err)) return; // the app-wide handler already showed the shared line
       toast({ title: "Failed to update driver access", variant: "error" });
     }
   };
 
   return (
     <div className="space-y-5">
-      {canToggleDriver && (
+      {canToggleDriver && !isAdmin && me?.canActAsDriver && (
+        <Card title="Driver Access">
+          <p className="text-sm text-navy/70">Driver access is on. Ask an admin to change it.</p>
+        </Card>
+      )}
+      {canToggleDriver && isAdmin && (
         <Card title="Driver Access">
           <div className="flex items-center justify-between">
             <div className="flex items-center gap-3">
@@ -2125,7 +2305,7 @@ function MyAccountTab() {
 function CostingTab() {
   const { toast } = useToast();
   const { user } = useAuth();
-  const isAdmin = user?.role === "TENANT_ADMIN";
+  const isAdmin = isAccountAdmin(user);
   const { data: config, isLoading } = useMarginConfig();
   const update = useUpdateMarginConfig();
 
@@ -2147,7 +2327,8 @@ function CostingTab() {
       { costingMethod: method, defaultMarginFloor: floor },
       {
         onSuccess: () => toast({ title: "Costing settings saved", variant: "success" }),
-        onError: () =>
+        onError: (err) =>
+          isReadOnlyRefusal(err) ||
           toast({
             title: "Could not save",
             description: "Only admins can change costing settings.",
@@ -2225,7 +2406,7 @@ function CostingTab() {
 function RemittanceTab() {
   const { toast } = useToast();
   const { user } = useAuth();
-  const isAdmin = user?.role === "TENANT_ADMIN";
+  const isAdmin = isAccountAdmin(user);
   const { data: config, isLoading } = useRemittanceConfig();
   const update = useUpdateRemittanceConfig();
 
@@ -2243,7 +2424,8 @@ function RemittanceTab() {
   const save = () => {
     update.mutate(form, {
       onSuccess: () => toast({ title: "Payment info saved", variant: "success" }),
-      onError: () =>
+      onError: (err) =>
+        isReadOnlyRefusal(err) ||
         toast({
           title: "Could not save",
           description: "Only admins can change how-to-pay settings.",
@@ -2361,7 +2543,7 @@ const TIER_KEYS = ["1", "2", "3", "4", "5"] as const;
 function TierLabelsCard() {
   const { toast } = useToast();
   const { user } = useAuth();
-  const isAdmin = user?.role === "TENANT_ADMIN";
+  const isAdmin = isAccountAdmin(user);
   const { data: labels, isLoading } = useTierLabels();
   const update = useUpdateTierLabels();
 
@@ -2378,6 +2560,7 @@ function TierLabelsCard() {
     update.mutate(form, {
       onSuccess: () => toast({ title: "Tier names saved", variant: "success" }),
       onError: (err: any) =>
+        isReadOnlyRefusal(err) ||
         toast({
           title: "Could not save",
           description: err?.response?.data?.message ?? "Please try again.",
@@ -2463,7 +2646,8 @@ function InvoicingTab() {
             description: "Default terms updated successfully.",
             variant: "success",
           }),
-        onError: () =>
+        onError: (err) =>
+          isReadOnlyRefusal(err) ||
           toast({
             title: "Failed to save",
             description: "Could not update invoice settings.",
@@ -2483,7 +2667,8 @@ function InvoicingTab() {
             description: "Original price display updated successfully.",
             variant: "success",
           }),
-        onError: () =>
+        onError: (err) =>
+          isReadOnlyRefusal(err) ||
           toast({
             title: "Failed to save",
             description: "Could not update invoice settings.",
@@ -2527,7 +2712,9 @@ function InvoicingTab() {
             variant: "success",
           }),
         onError: (err: any) => {
+          // restore the saved value (also when read-only: the typed figure was never saved)
           setDepositPercentInput(serverDepositPercent != null ? String(serverDepositPercent) : "");
+          if (isReadOnlyRefusal(err)) return; // F5: the app-wide handler already showed the shared line
           toast({
             title: "Failed to save",
             description: err?.response?.data?.message ?? "Could not update invoice settings.",
@@ -2548,7 +2735,8 @@ function InvoicingTab() {
             description: "Deposit collection setting updated successfully.",
             variant: "success",
           }),
-        onError: () =>
+        onError: (err) =>
+          isReadOnlyRefusal(err) ||
           toast({
             title: "Failed to save",
             description: "Could not update invoice settings.",
@@ -2567,7 +2755,8 @@ function InvoicingTab() {
       });
       qc.invalidateQueries({ queryKey: ["settings"] });
       toast({ title: "Invoice defaults saved", variant: "success" });
-    } catch {
+    } catch (err) {
+      if (showReadOnlyRefusal(err, toast)) return;
       toast({ title: "Failed to save", variant: "error" });
     } finally {
       setSavingDefaults(false);
@@ -2744,7 +2933,7 @@ function SettingsPageInner() {
   const { setTitle } = usePageTitle();
   const { toast } = useToast();
   const { user } = useAuth();
-  const isAdmin = user?.role === "TENANT_ADMIN";
+  const isAdmin = isAccountAdmin(user);
 
   React.useEffect(() => {
     setTitle("Settings");
@@ -2778,9 +2967,10 @@ function SettingsPageInner() {
     if (activeTab === "import") router.replace("/settings/import");
   }, [activeTab, router]);
 
-  // Settings → Fulfillment is dark behind the API's FULFILMENT_SELF_SERVE: the endpoint is asked ONLY on
+  // Settings → Fulfillment is dark behind the API's FULFILMENT_SELF_SERVE: this page asks the endpoint ONLY on
   // `?tab=fulfilment` (staff roles), and the tab exists only when it says `selfServe`; otherwise the page is
-  // exactly what it was (an unknown tab falls back to the hub). No hub entry points at it.
+  // exactly what it was (an unknown tab falls back to the hub). The admin rail / hub (SettingsHub,
+  // useSettingsNav) ask the same read, to list the Fulfillment / Counter sales rows, and nothing else does.
   const fulfilmentQuery = useFulfilmentSettings({
     enabled: activeTab === "fulfilment" && user?.role !== "CUSTOMER" && user?.role !== "DRIVER",
   });
@@ -2800,11 +2990,20 @@ function SettingsPageInner() {
       width: "max-w-4xl",
     },
     users: { title: "User management", node: <UserManagementTab /> },
-    email: { title: "Email (SMTP)", node: <EmailSettingsTab />, width: "max-w-3xl" },
+    // Perms PR1: every email (SMTP) and Claude AI endpoint is admin-only, so a deep link shows the notice instead
+    email: {
+      title: "Email (SMTP)",
+      node: isAdmin ? <EmailSettingsTab /> : <AdminOnlyNotice />,
+      width: "max-w-3xl",
+    },
     invoicing: { title: "Invoicing", node: <InvoicingTab />, width: "max-w-3xl" },
     costing: { title: "Costing", node: <CostingTab />, width: "max-w-3xl" },
     remittance: { title: "How to pay", node: <RemittanceTab />, width: "max-w-3xl" },
-    integrations: { title: "Integrations", node: <AIIntegrationsTab />, width: "max-w-3xl" },
+    integrations: {
+      title: "Integrations",
+      node: isAdmin ? <AIIntegrationsTab /> : <AdminOnlyNotice />,
+      width: "max-w-3xl",
+    },
     gohighlevel: {
       title: "GoHighLevel",
       node: <GoHighLevelSettingsTab />,
@@ -2854,17 +3053,16 @@ function SettingsPageInner() {
       {!section ? (
         <>
           <h2 className="mb-5 text-2xl font-bold text-navy">Settings</h2>
-          <SettingsHub isAdmin={isAdmin} />
-          {/* Stripe Connect lives on the hub itself (not behind a `?tab=`) because the
-              OAuth callback returns the operator to bare `/settings?stripe=...` and the
-              card renders that banner. */}
-          <div className="mt-5 max-w-3xl">
-            <StripeConnectCard />
-          </div>
-          {/* Pricing tier names — a small card, not worth its own `?tab=` screen. */}
-          <div className="mt-5 max-w-3xl">
-            <TierLabelsCard />
-          </div>
+          {/* Stripe Connect lives on the hub itself (not behind a `?tab=`) because the OAuth callback returns the
+              operator to bare `/settings?stripe=...` and the card renders that banner. Pricing tier names is a small
+              card, not worth its own `?tab=` screen. Both follow the hub's search (hidden by a query they don't match). */}
+          <SettingsHub
+            isAdmin={isAdmin}
+            looseCards={[
+              { id: "card-payments", node: <StripeConnectCard /> },
+              { id: "tier-names", node: <TierLabelsCard /> },
+            ]}
+          />
         </>
       ) : (
         <>
@@ -2880,6 +3078,11 @@ function SettingsPageInner() {
       )}
     </div>
   );
+}
+
+/** Perms PR1: a settings screen whose every endpoint is admin-only, opened by a non-admin (e.g. a deep link). */
+function AdminOnlyNotice() {
+  return <p className="text-sm text-navy/70">Only an admin can change this.</p>;
 }
 
 export default function SettingsPage() {

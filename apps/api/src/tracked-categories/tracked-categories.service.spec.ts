@@ -212,7 +212,10 @@ describe("TrackedCategoriesService", () => {
       const res = await service.assignProducts("c1", ["p1", "p2"]);
 
       expect(prisma.product.updateMany).toHaveBeenCalledWith({
-        where: { id: { in: ["p1", "p2"] }, NOT: { trackedCategoryId: "c1" } },
+        where: {
+          id: { in: ["p1", "p2"] },
+          OR: [{ trackedCategoryId: null }, { trackedCategoryId: { not: "c1" } }],
+        },
         data: { trackedCategoryId: "c1", trackedSubcategoryId: null },
       });
       expect(res).toEqual({ assigned: 2, processed: 2 });
@@ -225,7 +228,7 @@ describe("TrackedCategoriesService", () => {
         active: true,
         _count: { products: 0 },
       });
-      // Of the 3 requested ids, only the movers matched the NOT-in-section where
+      // Of the 3 requested ids, only the movers matched the not-in-section where
       // clause and got updated — the row already in "c1" is excluded by Prisma.
       // The isTobacco sync that follows spans the full id set, so its count is
       // every row the tenant can see: 1 mover + 2 already in "c1".
@@ -236,7 +239,10 @@ describe("TrackedCategoriesService", () => {
       const res = await service.assignProducts("c1", ["p1", "p2", "p3"]);
 
       expect(prisma.product.updateMany).toHaveBeenCalledWith({
-        where: { id: { in: ["p1", "p2", "p3"] }, NOT: { trackedCategoryId: "c1" } },
+        where: {
+          id: { in: ["p1", "p2", "p3"] },
+          OR: [{ trackedCategoryId: null }, { trackedCategoryId: { not: "c1" } }],
+        },
         data: { trackedCategoryId: "c1", trackedSubcategoryId: null },
       });
       // `processed` must NOT drop the two rows already in the section — the
@@ -281,7 +287,10 @@ describe("TrackedCategoriesService", () => {
       await service.assignProducts("c1", ["p1", "p2", "p3"]);
 
       expect(prisma.product.findMany).toHaveBeenCalledWith({
-        where: { id: { in: ["p1", "p2", "p3"] }, NOT: { trackedCategoryId: "c1" } },
+        where: {
+          id: { in: ["p1", "p2", "p3"] },
+          OR: [{ trackedCategoryId: null }, { trackedCategoryId: { not: "c1" } }],
+        },
         select: { id: true, category: true, trackedSubcategory: { select: { name: true } } },
       });
       // The synced-only clear runs BEFORE the main reassignment.
@@ -290,7 +299,10 @@ describe("TrackedCategoriesService", () => {
         data: { category: null },
       });
       expect(prisma.product.updateMany).toHaveBeenNthCalledWith(2, {
-        where: { id: { in: ["p1", "p2", "p3"] }, NOT: { trackedCategoryId: "c1" } },
+        where: {
+          id: { in: ["p1", "p2", "p3"] },
+          OR: [{ trackedCategoryId: null }, { trackedCategoryId: { not: "c1" } }],
+        },
         data: { trackedCategoryId: "c1", trackedSubcategoryId: null },
       });
     });
@@ -313,7 +325,10 @@ describe("TrackedCategoriesService", () => {
       // the synced-category clear is skipped since nothing was synced.
       expect(prisma.product.updateMany).toHaveBeenCalledTimes(2);
       expect(prisma.product.updateMany).toHaveBeenNthCalledWith(1, {
-        where: { id: { in: ["p1"] }, NOT: { trackedCategoryId: "c1" } },
+        where: {
+          id: { in: ["p1"] },
+          OR: [{ trackedCategoryId: null }, { trackedCategoryId: { not: "c1" } }],
+        },
         data: { trackedCategoryId: "c1", trackedSubcategoryId: null },
       });
       expect(prisma.product.updateMany).toHaveBeenNthCalledWith(2, {
@@ -713,16 +728,19 @@ describe("TrackedCategoriesService", () => {
           active: true,
           _count: { products: 0 },
         });
-        prisma.product.updateMany.mockResolvedValue({ count: 4 });
+        prisma.product.updateManyAndReturn.mockResolvedValue([{ id: "p1" }, { id: "p2" }]);
 
         await service.updateSubcategory("c1", "s1", { name: "Zyn Pouches" });
 
-        expect(prisma.product.updateMany).toHaveBeenCalledWith({
+        // ONE guarded write (still mirroring the old name, or blank) that returns exactly the rows it renamed,
+        // so the label sync never touches a product whose text changed meanwhile.
+        expect(prisma.product.updateManyAndReturn).toHaveBeenCalledWith({
           where: {
             trackedSubcategoryId: "s1",
             OR: [{ category: "Zyn" }, { category: null }],
           },
           data: { category: "Zyn Pouches" },
+          select: { id: true },
         });
       });
 

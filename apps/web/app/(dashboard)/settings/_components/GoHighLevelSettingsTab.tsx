@@ -1,6 +1,8 @@
 "use client";
 
 import * as React from "react";
+import { useAuth } from "@/lib/auth-context";
+import { isAccountAdmin } from "@/lib/auth";
 import {
   Card,
   Badge,
@@ -79,6 +81,8 @@ export interface CrmImportPreviewView {
 }
 
 export interface GoHighLevelSettingsTabProps {
+  /** Perms PR1: connecting / re-keying / disconnecting and the lead rules are admin-only; sync and import stay open. */
+  canManage?: boolean;
   status: "CONNECTED" | "NEEDS_ATTENTION" | "DISCONNECTED" | null;
   locationName?: string | null;
   dryRun?: boolean;
@@ -256,6 +260,7 @@ export function GoHighLevelSettingsTab(props: GoHighLevelSettingsTabProps): Reac
     onPreviewImport,
     importing,
     onImportExisting,
+    canManage = true,
   } = props;
 
   const [tokenInput, setTokenInput] = React.useState("");
@@ -331,14 +336,16 @@ export function GoHighLevelSettingsTab(props: GoHighLevelSettingsTabProps): Reac
       {status === "NEEDS_ATTENTION" && (
         <div className="flex flex-wrap items-center justify-between gap-2 rounded-ctl bg-warning-bg px-4 py-3 text-sm text-warning">
           <span>RouteFlow lost access to GoHighLevel. Paste a new connection key below.</span>
-          <Button
-            variant="secondary"
-            size="sm"
-            loading={testingAgain}
-            onClick={() => onTestAgain?.()}
-          >
-            Test again
-          </Button>
+          {canManage && (
+            <Button
+              variant="secondary"
+              size="sm"
+              loading={testingAgain}
+              onClick={() => onTestAgain?.()}
+            >
+              Test again
+            </Button>
+          )}
         </div>
       )}
 
@@ -349,7 +356,9 @@ export function GoHighLevelSettingsTab(props: GoHighLevelSettingsTabProps): Reac
           <Badge variant={badge.variant} label={badge.label} />
         </div>
 
-        {editingConnection ? (
+        {!canManage && status !== "CONNECTED" ? (
+          <p className="text-sm text-navy/70">Only an admin can connect GoHighLevel.</p>
+        ) : editingConnection ? (
           <div className="flex flex-col gap-3">
             <PasswordInput
               label="Connection key"
@@ -396,14 +405,16 @@ export function GoHighLevelSettingsTab(props: GoHighLevelSettingsTabProps): Reac
               Connected to {locationName ?? "—"}
               {tokenLast4 ? <> · key ending in ····{tokenLast4}</> : null}
             </p>
-            <div className="flex items-center gap-2">
-              <Button variant="secondary" size="sm" onClick={() => setEditingConnection(true)}>
-                Replace key
-              </Button>
-              <Button variant="ghost" size="sm" onClick={() => setConfirmDisconnect(true)}>
-                Disconnect
-              </Button>
-            </div>
+            {canManage && (
+              <div className="flex items-center gap-2">
+                <Button variant="secondary" size="sm" onClick={() => setEditingConnection(true)}>
+                  Replace key
+                </Button>
+                <Button variant="ghost" size="sm" onClick={() => setConfirmDisconnect(true)}>
+                  Disconnect
+                </Button>
+              </div>
+            )}
           </div>
         )}
 
@@ -422,227 +433,235 @@ export function GoHighLevelSettingsTab(props: GoHighLevelSettingsTabProps): Reac
         />
       </Card>
 
-      {/* Card 2 — When does a lead become a customer? */}
-      {status === "CONNECTED" && config && (
-        <Card className="flex flex-col gap-4">
-          <h3 className="text-base font-semibold text-navy">When does a lead become a customer?</h3>
-
-          <div className="flex flex-col gap-2">
-            <label className="flex items-center gap-2 text-sm text-navy">
-              <input
-                type="radio"
-                name="crm-trigger-mode"
-                checked={triggerMode === "STAGE"}
-                onChange={() => setTriggerMode("STAGE")}
-              />
-              When a lead reaches a stage
-            </label>
-            <label className="flex items-center gap-2 text-sm text-navy">
-              <input
-                type="radio"
-                name="crm-trigger-mode"
-                checked={triggerMode === "WON"}
-                onChange={() => setTriggerMode("WON")}
-              />
-              When a lead is marked Won
-            </label>
-          </div>
-
-          {triggerMode === "STAGE" &&
-            (pipelinesError ? (
-              <div className="flex items-center gap-2 text-sm text-danger">
-                <span>Couldn&apos;t load pipelines.</span>
-                <button
-                  type="button"
-                  className="font-medium underline"
-                  onClick={() => onRetryPipelines?.()}
-                >
-                  Retry
-                </button>
-              </div>
-            ) : !pipelinesLoading && pipelines.length === 0 ? (
-              <p className="text-sm text-navy/50">
-                No pipelines found in this GoHighLevel account.
-              </p>
-            ) : (
-              <div className="flex flex-col gap-3 sm:flex-row">
-                <div className="flex-1">
-                  <Select
-                    label="Pipeline"
-                    value={pipelineId ?? ""}
-                    disabled={pipelinesLoading}
-                    options={[
-                      { value: "", label: "Select a pipeline", disabled: true },
-                      ...pipelines.map((p) => ({ value: p.id, label: p.name })),
-                    ]}
-                    onChange={(e) => {
-                      const next = e.target.value || null;
-                      setPipelineId(next);
-                      setStageId(null);
-                      setStageName(null);
-                    }}
-                  />
-                </div>
-                <div className="flex-1">
-                  <Select
-                    label="Stage"
-                    value={stageId ?? ""}
-                    disabled={!pipelineId}
-                    options={[
-                      { value: "", label: "Select a stage", disabled: true },
-                      ...(selectedPipeline?.stages ?? []).map((s) => ({
-                        value: s.id,
-                        label: s.name,
-                      })),
-                    ]}
-                    onChange={(e) => {
-                      const next = e.target.value || null;
-                      setStageId(next);
-                      setStageName(
-                        selectedPipeline?.stages.find((s) => s.id === next)?.name ?? null,
-                      );
-                    }}
-                  />
-                </div>
-              </div>
-            ))}
-
-          <p className="text-xs text-navy/50">
-            Only leads that reach this point after{" "}
-            {startFrom ? new Date(startFrom).toLocaleDateString() : "—"} are added. Older ones can
-            be imported below.
-          </p>
-
-          <Input
-            type="date"
-            label="Start from"
-            value={startFrom ? startFrom.slice(0, 10) : ""}
-            onChange={(e) => setStartFrom(e.target.value)}
-          />
-
-          <div>
-            <Button
-              size="sm"
-              disabled={!triggerChanged}
-              loading={savingConfig}
-              onClick={() =>
-                onUpdateConfig?.({
-                  triggerMode,
-                  pipelineId: pipelineId ?? undefined,
-                  stageId: stageId ?? undefined,
-                  stageName: stageName ?? undefined,
-                  startFrom,
-                })
-              }
-            >
-              Save
-            </Button>
-          </div>
-        </Card>
+      {/* Cards 2 and 3 (the lead rules) save through PATCH /crm/config, admin-only: operators read them, disabled. */}
+      {!canManage && status === "CONNECTED" && (
+        <p className="text-sm text-navy/70">Only an admin can change these settings.</p>
       )}
+      <fieldset disabled={!canManage} className="contents">
+        {/* Card 2 — When does a lead become a customer? */}
+        {status === "CONNECTED" && config && (
+          <Card className="flex flex-col gap-4">
+            <h3 className="text-base font-semibold text-navy">
+              When does a lead become a customer?
+            </h3>
 
-      {/* Card 3 — Options */}
-      {status === "CONNECTED" && config && (
-        <Card className="flex flex-col gap-4">
-          <h3 className="text-base font-semibold text-navy">Options</h3>
-
-          <div className="flex items-center justify-between gap-3">
-            <div>
-              <p className="text-sm font-medium text-navy">Preview mode</p>
-              <p className="text-xs text-navy/40">
-                Nothing is created yet. Review the list below, then turn this off.
-              </p>
+            <div className="flex flex-col gap-2">
+              <label className="flex items-center gap-2 text-sm text-navy">
+                <input
+                  type="radio"
+                  name="crm-trigger-mode"
+                  checked={triggerMode === "STAGE"}
+                  onChange={() => setTriggerMode("STAGE")}
+                />
+                When a lead reaches a stage
+              </label>
+              <label className="flex items-center gap-2 text-sm text-navy">
+                <input
+                  type="radio"
+                  name="crm-trigger-mode"
+                  checked={triggerMode === "WON"}
+                  onChange={() => setTriggerMode("WON")}
+                />
+                When a lead is marked Won
+              </label>
             </div>
-            <MiniSwitch
-              ariaLabel="Preview mode"
-              checked={previewMode}
-              onToggle={() => {
-                const next = !previewMode;
-                setPreviewMode(next);
-                onUpdateConfig?.({ dryRun: next });
-              }}
+
+            {triggerMode === "STAGE" &&
+              (pipelinesError ? (
+                <div className="flex items-center gap-2 text-sm text-danger">
+                  <span>Couldn&apos;t load pipelines.</span>
+                  <button
+                    type="button"
+                    className="font-medium underline"
+                    onClick={() => onRetryPipelines?.()}
+                  >
+                    Retry
+                  </button>
+                </div>
+              ) : !pipelinesLoading && pipelines.length === 0 ? (
+                <p className="text-sm text-navy/50">
+                  No pipelines found in this GoHighLevel account.
+                </p>
+              ) : (
+                <div className="flex flex-col gap-3 sm:flex-row">
+                  <div className="flex-1">
+                    <Select
+                      label="Pipeline"
+                      value={pipelineId ?? ""}
+                      disabled={pipelinesLoading}
+                      options={[
+                        { value: "", label: "Select a pipeline", disabled: true },
+                        ...pipelines.map((p) => ({ value: p.id, label: p.name })),
+                      ]}
+                      onChange={(e) => {
+                        const next = e.target.value || null;
+                        setPipelineId(next);
+                        setStageId(null);
+                        setStageName(null);
+                      }}
+                    />
+                  </div>
+                  <div className="flex-1">
+                    <Select
+                      label="Stage"
+                      value={stageId ?? ""}
+                      disabled={!pipelineId}
+                      options={[
+                        { value: "", label: "Select a stage", disabled: true },
+                        ...(selectedPipeline?.stages ?? []).map((s) => ({
+                          value: s.id,
+                          label: s.name,
+                        })),
+                      ]}
+                      onChange={(e) => {
+                        const next = e.target.value || null;
+                        setStageId(next);
+                        setStageName(
+                          selectedPipeline?.stages.find((s) => s.id === next)?.name ?? null,
+                        );
+                      }}
+                    />
+                  </div>
+                </div>
+              ))}
+
+            <p className="text-xs text-navy/50">
+              Only leads that reach this point after{" "}
+              {startFrom ? new Date(startFrom).toLocaleDateString() : "—"} are added. Older ones can
+              be imported below.
+            </p>
+
+            <Input
+              type="date"
+              label="Start from"
+              value={startFrom ? startFrom.slice(0, 10) : ""}
+              onChange={(e) => setStartFrom(e.target.value)}
             />
-          </div>
 
-          <div className="flex flex-col gap-3 border-t border-surface-border pt-3">
-            <p className="text-sm font-medium text-navy">Write back to GoHighLevel</p>
-            <div className="flex items-center justify-between gap-3">
-              <span className="text-sm text-navy/70">Add tag routeflow-customer</span>
-              <MiniSwitch
-                ariaLabel="Add tag routeflow-customer"
-                checked={writeBackTag}
-                onToggle={() => {
-                  const next = !writeBackTag;
-                  setWriteBackTag(next);
-                  onUpdateConfig?.({ writeBackTag: next });
-                }}
-              />
+            <div>
+              <Button
+                size="sm"
+                disabled={!triggerChanged}
+                loading={savingConfig}
+                onClick={() =>
+                  onUpdateConfig?.({
+                    triggerMode,
+                    pipelineId: pipelineId ?? undefined,
+                    stageId: stageId ?? undefined,
+                    stageName: stageName ?? undefined,
+                    startFrom,
+                  })
+                }
+              >
+                Save
+              </Button>
             </div>
-            <div className="flex items-center justify-between gap-3">
-              <span className="text-sm text-navy/70">Fill RouteFlow fields on the contact</span>
-              <MiniSwitch
-                ariaLabel="Fill RouteFlow fields on the contact"
-                checked={writeBackFields}
-                onToggle={() => {
-                  const next = !writeBackFields;
-                  setWriteBackFields(next);
-                  onUpdateConfig?.({ writeBackFields: next });
-                }}
-              />
-            </div>
-            <div className="flex items-center justify-between gap-3">
-              <span className="text-sm text-navy/70">Add a note with the customer link</span>
-              <MiniSwitch
-                ariaLabel="Add a note with the customer link"
-                checked={writeBackNote}
-                onToggle={() => {
-                  const next = !writeBackNote;
-                  setWriteBackNote(next);
-                  onUpdateConfig?.({ writeBackNote: next });
-                }}
-              />
-            </div>
+          </Card>
+        )}
+
+        {/* Card 3 — Options */}
+        {status === "CONNECTED" && config && (
+          <Card className="flex flex-col gap-4">
+            <h3 className="text-base font-semibold text-navy">Options</h3>
+
             <div className="flex items-center justify-between gap-3">
               <div>
-                <span className="text-sm text-navy/70">Mark the lead as Won</span>
+                <p className="text-sm font-medium text-navy">Preview mode</p>
                 <p className="text-xs text-navy/40">
-                  Requires the Opportunities write permission on the key
+                  Nothing is created yet. Review the list below, then turn this off.
                 </p>
               </div>
               <MiniSwitch
-                ariaLabel="Mark the lead as Won"
-                checked={markWon}
+                ariaLabel="Preview mode"
+                checked={previewMode}
                 onToggle={() => {
-                  const next = !markWon;
-                  setMarkWon(next);
-                  onUpdateConfig?.({ markWon: next });
+                  const next = !previewMode;
+                  setPreviewMode(next);
+                  onUpdateConfig?.({ dryRun: next });
                 }}
               />
             </div>
-          </div>
 
-          <div className="flex items-center justify-between gap-3 border-t border-surface-border pt-3">
-            <div>
-              <span className="text-sm font-medium text-navy">Enabled</span>
-              <p className="text-xs text-navy/40">Create customers automatically</p>
+            <div className="flex flex-col gap-3 border-t border-surface-border pt-3">
+              <p className="text-sm font-medium text-navy">Write back to GoHighLevel</p>
+              <div className="flex items-center justify-between gap-3">
+                <span className="text-sm text-navy/70">Add tag routeflow-customer</span>
+                <MiniSwitch
+                  ariaLabel="Add tag routeflow-customer"
+                  checked={writeBackTag}
+                  onToggle={() => {
+                    const next = !writeBackTag;
+                    setWriteBackTag(next);
+                    onUpdateConfig?.({ writeBackTag: next });
+                  }}
+                />
+              </div>
+              <div className="flex items-center justify-between gap-3">
+                <span className="text-sm text-navy/70">Fill RouteFlow fields on the contact</span>
+                <MiniSwitch
+                  ariaLabel="Fill RouteFlow fields on the contact"
+                  checked={writeBackFields}
+                  onToggle={() => {
+                    const next = !writeBackFields;
+                    setWriteBackFields(next);
+                    onUpdateConfig?.({ writeBackFields: next });
+                  }}
+                />
+              </div>
+              <div className="flex items-center justify-between gap-3">
+                <span className="text-sm text-navy/70">Add a note with the customer link</span>
+                <MiniSwitch
+                  ariaLabel="Add a note with the customer link"
+                  checked={writeBackNote}
+                  onToggle={() => {
+                    const next = !writeBackNote;
+                    setWriteBackNote(next);
+                    onUpdateConfig?.({ writeBackNote: next });
+                  }}
+                />
+              </div>
+              <div className="flex items-center justify-between gap-3">
+                <div>
+                  <span className="text-sm text-navy/70">Mark the lead as Won</span>
+                  <p className="text-xs text-navy/40">
+                    Requires the Opportunities write permission on the key
+                  </p>
+                </div>
+                <MiniSwitch
+                  ariaLabel="Mark the lead as Won"
+                  checked={markWon}
+                  onToggle={() => {
+                    const next = !markWon;
+                    setMarkWon(next);
+                    onUpdateConfig?.({ markWon: next });
+                  }}
+                />
+              </div>
             </div>
-            <MiniSwitch
-              ariaLabel="Enabled"
-              checked={enabled}
-              disabled={config.triggerMode === "STAGE" && !config.stageId}
-              onToggle={() => {
-                const next = !enabled;
-                setEnabled(next);
-                onUpdateConfig?.({ enabled: next });
-              }}
-            />
-          </div>
-          {config.triggerMode === "STAGE" && !config.stageId && (
-            <p className="text-xs text-navy/40">Choose a stage first</p>
-          )}
-          {savingConfig && <p className="text-xs text-navy/40">Saving…</p>}
-        </Card>
-      )}
+
+            <div className="flex items-center justify-between gap-3 border-t border-surface-border pt-3">
+              <div>
+                <span className="text-sm font-medium text-navy">Enabled</span>
+                <p className="text-xs text-navy/40">Create customers automatically</p>
+              </div>
+              <MiniSwitch
+                ariaLabel="Enabled"
+                checked={enabled}
+                disabled={config.triggerMode === "STAGE" && !config.stageId}
+                onToggle={() => {
+                  const next = !enabled;
+                  setEnabled(next);
+                  onUpdateConfig?.({ enabled: next });
+                }}
+              />
+            </div>
+            {config.triggerMode === "STAGE" && !config.stageId && (
+              <p className="text-xs text-navy/40">Choose a stage first</p>
+            )}
+            {savingConfig && <p className="text-xs text-navy/40">Saving…</p>}
+          </Card>
+        )}
+      </fieldset>
 
       {/* Card 4 — Activity */}
       <Card className="flex flex-col gap-4">
@@ -884,6 +903,7 @@ function toActivityRow(h: CrmHandoffRow): CrmActivityRow {
 const HANDOFFS_PAGE_LIMIT = 25;
 
 export default function GoHighLevelSettingsTabConnected(): React.ReactElement {
+  const canManage = isAccountAdmin(useAuth().user);
   const { toast } = useToast();
   const { data } = useCrmStatus();
   const connection = data?.connection ?? null;
@@ -923,6 +943,7 @@ export default function GoHighLevelSettingsTabConnected(): React.ReactElement {
 
   return (
     <GoHighLevelSettingsTab
+      canManage={canManage}
       status={connection?.status ?? null}
       locationName={connection?.locationName ?? null}
       dryRun={connection?.dryRun ?? true}

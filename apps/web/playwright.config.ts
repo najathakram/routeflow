@@ -200,6 +200,16 @@ export default defineConfig({
         storageState: path.join(AUTH_DIR, "operator.json"),
       },
     },
+    // ── Rows 342 + 345: hand-over stamp, close form, Z report, counter copy (mocked reads, 1440 / 390) ──
+    {
+      name: "day-close-ux",
+      testMatch: /74-day-close-ux\.spec\.ts/,
+      dependencies: ["setup"],
+      use: {
+        ...devices["Desktop Chrome"],
+        storageState: path.join(AUTH_DIR, "operator.json"),
+      },
+    },
     // ── Dashboard CLS (PKG-8) ──────────────────────────────────────────────────
     // /dashboard layout shift with every read delayed 2 s; read-only.
     {
@@ -458,6 +468,14 @@ export default defineConfig({
       use: { ...devices["Desktop Chrome"], storageState: path.join(AUTH_DIR, "operator.json") },
     },
 
+    // VU-4a (B1218): the invoice unit picker. Needs the Case-default fixture (e2e-seed.js) and flag.units_v1.
+    {
+      name: "units-invoice-lane",
+      testMatch: /54-units-invoice-lane\.spec\.ts/,
+      dependencies: ["setup"],
+      use: { ...devices["Desktop Chrome"], storageState: path.join(AUTH_DIR, "operator.json") },
+    },
+
     // ── B465 fix round 2: SPECIAL-tier reason required (spec 48) ─────────────
     // Same posture as order-edit-pricing above — a client-side requirement
     // with no web unit runner behind it, so this runs only against a live app
@@ -506,6 +524,23 @@ export default defineConfig({
       testMatch: /70-scan-did-you-mean\.spec\.ts/,
       dependencies: ["setup"],
       use: { ...devices["Desktop Chrome"], storageState: path.join(AUTH_DIR, "operator.json") },
+    },
+
+    // ── PKG-4: Create Order customer keyboard (ArrowDown+Enter, Tab parity, Escape closes the list) + Change customer Undo (spec 68).
+    {
+      name: "create-order-customer-keyboard",
+      testMatch: /68-create-order-customer-keyboard\.spec\.ts/,
+      dependencies: ["setup"],
+      use: { ...devices["Desktop Chrome"], storageState: path.join(AUTH_DIR, "operator.json") },
+    },
+
+    // ── Settings search (settings-search.spec.ts): carrier / low stock / clear at 1440 and 390. READ-ONLY.
+    {
+      name: "settings-search",
+      testMatch: /settings-search\.spec\.ts/,
+      dependencies: ["setup"],
+      // tenant admin: the spec opens the Low-stock digest, an admin-only setting (an OPERATOR never sees it)
+      use: { ...devices["Desktop Chrome"], storageState: path.join(AUTH_DIR, "tenant-admin.json") },
     },
 
     // ── #2791: /invoices/[id]/edit redirects a pending-mirror draft to its order (spec 64).

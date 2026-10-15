@@ -9,6 +9,14 @@
  * that does not offer pickup cannot take one), and a BUYER's requested path is ignored where the portal
  * offers no choice (`portalMethods` empty = unset: the buyer gets exactly `stored ?? ROUTE`).
  *
+ * Customer pickup is not staff hand-over (SA-763r): the rules above are what a BUYER may choose and what
+ * a staff order falls back to. A staff member who may use POS mode (`staffMay(role, "USE_POS_MODE")`, an
+ * OPERATOR or TENANT_ADMIN) who asks for PICKUP explicitly always gets PICKUP, whatever the tenant offers
+ * its customers: the order is handed over at the till, so the portal's list of methods does not apply.
+ * Buyers are unchanged, a DRIVER keeps the refusal, and a system caller (`role: null`, the standing-order
+ * templates) never gets POS mode. The server never infers PICKUP from the user's preference: the client
+ * sends the explicit path.
+ *
  * Active rules, ship-only business:
  *  - staff: an explicit path in `methods` is used. An explicit path EQUAL to the customer's stored path
  *    but not in `methods` is treated as omitted (the web and mobile always send the stored path), with a
@@ -30,9 +38,10 @@
  * offers it).
  */
 import { BadRequestException } from "@nestjs/common";
-import { FulfillPath } from "@prisma/client";
+import { FulfillPath, UserRole } from "@prisma/client";
 import type { FulfilmentCapability } from "@routeflow/types";
 import { capabilityForMode } from "../billing/fulfilment-capability";
+import { staffMay } from "../auth/permissions/staff-capabilities";
 import { API_ERROR_CODES } from "../common/api-error-codes";
 import { FULFILMENT_MODEL_KEY } from "./order-status-invoicing";
 
@@ -48,9 +57,29 @@ export interface FulfilPathInput {
   /** The customer's stored default path. */
   stored?: FulfillPath | null;
   audience: "staff" | "buyer";
+  /**
+   * The caller's role. `null` = a system caller (the standing-order templates): it never gets POS mode.
+   * Required, so the compiler lists every caller that has to decide (SA-763r M1).
+   */
+  role: UserRole | null;
+}
+
+/** Who is asking, for the resolver and the merge search: the audience plus the role (SA-763r M1). */
+export interface FulfilCaller {
+  audience: "staff" | "buyer";
+  role: UserRole | null;
+}
+
+/** A request principal as the resolver sees it: a CUSTOMER is the buyer audience, every other role is staff. */
+export function fulfilCaller(user: { role: UserRole }): FulfilCaller {
+  return { audience: user.role === UserRole.CUSTOMER ? "buyer" : "staff", role: user.role };
 }
 
 const { ROUTE, SHIP, PICKUP } = FulfillPath;
+
+/** Staff POS mode: a staff caller whose role may use it. A system caller (`role: null`) and a buyer never may. */
+const staffPosMode = (input: FulfilPathInput): boolean =>
+  input.audience === "staff" && input.role !== null && staffMay(input.role, "USE_POS_MODE");
 
 const asFulfillPaths = (methods: readonly string[]): FulfillPath[] =>
   methods.filter((m): m is FulfillPath => m === ROUTE || m === SHIP || m === PICKUP);
@@ -140,6 +169,7 @@ export async function activeFulfilPath(
   deps: FulfilPathDeps,
   input: FulfilPathInput,
 ): Promise<FulfillPath | undefined> {
+  if (input.explicit === PICKUP && staffPosMode(input)) return PICKUP;
   const cap = await readCapability(deps);
   return cap ? activePath(deps, cap, input) : undefined;
 }
@@ -149,6 +179,8 @@ export async function resolveFulfilPath(
   deps: FulfilPathDeps,
   input: FulfilPathInput,
 ): Promise<FulfillPath> {
+  // POS mode: an explicit PICKUP from a staff member who may use it, whatever the tenant offers.
+  if (input.explicit === PICKUP && staffPosMode(input)) return PICKUP;
   const cap = await readCapability(deps);
   const active = cap ? activePath(deps, cap, input) : undefined;
   if (active) return active;
@@ -157,4 +189,29 @@ export async function resolveFulfilPath(
   if (input.audience === "buyer" && (cap?.portalMethods.length ?? 0) === 0) explicit = undefined;
   if (explicit === PICKUP) throw notOffered();
   return explicit ?? input.stored ?? ROUTE;
+}
+
+/**
+ * The order SWITCH (`PATCH /orders/:id/fulfill-path`, row 506): the requested path must be one the account's
+ * stored fulfilment mode offers (`capability.methods`, the list the web's Fulfillment select shows), else the
+ * coded 400 FULFIL_METHOD_NOT_OFFERED with nothing written. A move to PICKUP by a staff member who may use
+ * POS mode is a hand-over at the till and is not limited by the offer (SA-763r), exactly as in
+ * `resolveFulfilPath`. Fail-open like the resolver: an unknown capability (no config service, no tenant, a
+ * read blip) refuses nothing, and logs ONE warning with the tenant id (and the error, for a failed read).
+ */
+export async function assertFulfilPathOffered(
+  deps: FulfilPathDeps,
+  requested: FulfillPath,
+  role: UserRole | null,
+): Promise<void> {
+  if (requested === PICKUP && staffPosMode({ audience: "staff", role })) return;
+  if (!deps.featureConfig || !deps.tenantId) {
+    // Fail-open must be VISIBLE (a read that throws is logged by `readCapability`; this is the other case).
+    deps.logger?.warn(
+      `fulfil path: no config service or tenant, switch to "${requested}" not checked tenant=${deps.tenantId}`,
+    );
+    return;
+  }
+  const cap = await readCapability(deps);
+  if (cap && !asFulfillPaths(cap.methods).includes(requested)) throw notOffered();
 }

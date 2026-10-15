@@ -9,10 +9,37 @@ import type { LabelCategoryDto } from "@routeflow/types";
 import { PrismaService } from "../prisma/prisma.service";
 import { AuditService } from "../audit/audit.service";
 import { activeRuleWhere } from "../selling-restrictions/selling-restrictions.core";
+import { activeTargetsWhere } from "../selling-restrictions-admin/rule-target-read";
 import type { JwtPayload } from "../auth/jwt-payload.interface";
 import { CreateProductCategoryDto } from "./dto/create-product-category.dto";
 import { UpdateProductCategoryDto } from "./dto/update-product-category.dto";
 import { assertSafeCategoryName } from "../common/text-cell-guards";
+import { API_ERROR_CODES } from "../common/api-error-codes";
+import { findLabelNameCollision, lockTenantLabelNames } from "./label-writer";
+
+/**
+ * Row 509: an ACTIVE target row (of a label) whose rule is in force. The engine's own `activeRuleWhere` and the
+ * target-window predicate, never a local copy.
+ */
+const heldByRuleInForce = (now: Date) =>
+  ({
+    AND: [activeTargetsWhere(now), { rule: activeRuleWhere(now) }],
+  }) satisfies Prisma.SellingRestrictionTargetWhereInput;
+
+/** A pre-509 rule in force with ZERO target rows: read by its legacy `categoryId`, as the engine does. */
+const legacyRuleInForce = (now: Date) =>
+  ({
+    AND: [activeRuleWhere(now), { targets: { none: {} } }],
+  }) satisfies Prisma.SellingRestrictionWhereInput;
+
+/** 409 LABEL_NAME_TAKEN naming the existing label (the web shows fixed copy; the body carries the name). */
+function labelNameTaken(existing: { id: string; name: string }): ConflictException {
+  return new ConflictException({
+    code: API_ERROR_CODES.LABEL_NAME_TAKEN,
+    message: `A label named "${existing.name}" already exists.`,
+    existingLabel: { id: existing.id, name: existing.name },
+  });
+}
 
 /**
  * Tenant-defined restriction categories ("Alcohol", "THC") — the label vocabulary the selling-
@@ -43,7 +70,11 @@ export class ProductCategoriesService {
       _count: {
         select: {
           labels: { where: { mode: "INCLUDE" as const } },
-          sellingRestrictions: { where: activeRuleWhere(now) },
+          // Row 509: the rules in force that hold this label as an ACTIVE target, plus the pre-509 rules with
+          // ZERO target rows that name it by the legacy column (a rule has at most one active row per label and a
+          // zero-row rule has none, so the two counts never double-count a rule).
+          sellingRestrictionTargets: { where: heldByRuleInForce(now) },
+          sellingRestrictions: { where: legacyRuleInForce(now) },
         },
       },
     } satisfies Prisma.ProductCategorySelect;
@@ -60,7 +91,7 @@ export class ProductCategoriesService {
       archivedAt: row.archivedAt ? row.archivedAt.toISOString() : null,
       createdAt: row.createdAt.toISOString(),
       productCount: row._count.labels,
-      activeRestrictionCount: row._count.sellingRestrictions,
+      activeRestrictionCount: row._count.sellingRestrictionTargets + row._count.sellingRestrictions,
     };
   }
 
@@ -78,9 +109,16 @@ export class ProductCategoriesService {
     const tenantId = this.requireTenant();
     assertSafeCategoryName(dto.name); // B983: refuse a formula-led name before any write or audit
     try {
-      const row = await this.prisma.forTenant().productCategory.create({
-        data: { name: dto.name, tenantId },
-        select: this.select(new Date()),
+      // One NAME per key (labelNameKey: case/space-insensitive), checked under the per-tenant names lock the
+      // backfill script also takes, so two creates (or a create during a backfill) cannot both pass.
+      const row = await this.prisma.tenantTransaction(async (tx) => {
+        await this.lockNames(tx, tenantId);
+        const clash = await findLabelNameCollision(tx, tenantId, dto.name);
+        if (clash) throw labelNameTaken(clash);
+        return tx.productCategory.create({
+          data: { name: dto.name, tenantId },
+          select: this.select(new Date()),
+        });
       });
       await this.audit.log({
         tenantId,
@@ -93,10 +131,15 @@ export class ProductCategoriesService {
       return this.toDto(row);
     } catch (e) {
       if (e instanceof Prisma.PrismaClientKnownRequestError && e.code === "P2002") {
-        throw new ConflictException(`A category named "${dto.name}" already exists.`);
+        throw labelNameTaken({ id: "", name: dto.name });
       }
       throw e;
     }
+  }
+
+  /** The per-tenant label-names lock; a busy lock (e.g. a backfill run) is a clear 409, not a hang. */
+  private async lockNames(tx: Prisma.TransactionClient, tenantId: string): Promise<void> {
+    await lockTenantLabelNames(tx, tenantId); // busy: LabelLockTimeoutError, a coded 409 (LABEL_CHANGE_IN_PROGRESS)
   }
 
   async update(
@@ -128,14 +171,31 @@ export class ProductCategoriesService {
     // rule created between a pre-read and the write cannot slip past it.
     const where: Prisma.ProductCategoryWhereInput = {
       id,
-      ...(archiving ? { sellingRestrictions: { none: activeRuleWhere(now) } } : {}),
+      ...(archiving
+        ? {
+            sellingRestrictionTargets: { none: heldByRuleInForce(now) },
+            sellingRestrictions: { none: legacyRuleInForce(now) },
+          }
+        : {}),
     };
     let count: number;
     try {
-      ({ count } = await db.productCategory.updateMany({ where, data }));
+      if (dto.name !== undefined) {
+        // A rename: the key check (itself excluded, so a case-only change is fine) and the write under the
+        // per-tenant names lock.
+        const name = dto.name;
+        ({ count } = await this.prisma.tenantTransaction(async (tx) => {
+          await this.lockNames(tx, tenantId);
+          const clash = await findLabelNameCollision(tx, tenantId, name, id);
+          if (clash) throw labelNameTaken(clash);
+          return tx.productCategory.updateMany({ where, data });
+        }));
+      } else {
+        ({ count } = await db.productCategory.updateMany({ where, data }));
+      }
     } catch (e) {
       if (e instanceof Prisma.PrismaClientKnownRequestError && e.code === "P2002") {
-        throw new ConflictException(`A category named "${dto.name}" already exists.`);
+        throw labelNameTaken({ id: "", name: dto.name ?? "" });
       }
       throw e;
     }

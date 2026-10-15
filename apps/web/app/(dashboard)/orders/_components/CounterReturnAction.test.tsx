@@ -65,6 +65,12 @@ describe("CounterReturnAction", () => {
       expect.objectContaining({ open: true, orderId: "o1", customerId: "c1" }),
     );
   });
+  it("SA-740: pins the return to THIS sale (sourceOrderId = the sale's order) so a walk-in never matches another receipt", () => {
+    render(<CounterReturnAction orderId="o1" />);
+    expect(dialogProps).toHaveBeenLastCalledWith(
+      expect.objectContaining({ orderId: "o1", sourceOrderId: "o1" }),
+    );
+  });
   it("passes allowRefund to the dialog and styles the button full-width on a phone", () => {
     render(<CounterReturnAction orderId="o1" />);
     expect(dialogProps).toHaveBeenLastCalledWith(expect.objectContaining({ allowRefund: true }));
@@ -163,5 +169,36 @@ describe("CounterReturnAction", () => {
     React.act(() => onCloseAutoFocus(evt));
     expect(evt.defaultPrevented).toBe(true);
     expect(document.activeElement).toBe(btn);
+  });
+});
+
+describe("CounterReturnAction in a read-only workspace", () => {
+  it("is disabled up front with the shared read-only line and a click does not open the dialog", () => {
+    const { ReadOnlyGateProvider } = jest.requireActual("@/lib/read-only-gate");
+    render(
+      <ReadOnlyGateProvider view={{ status: "READ_ONLY" } as never}>
+        <CounterReturnAction orderId="o1" />
+      </ReadOnlyGateProvider>,
+    );
+    const btn = screen.getByRole("button", { name: "Return items" });
+    expect(btn).toBeDisabled();
+    expect(btn.getAttribute("title")?.length).toBeGreaterThan(0);
+    expect(btn).toHaveAttribute("aria-describedby");
+    fireEvent.click(btn);
+    expect(screen.queryByTestId("dialog-open")).toBeNull();
+  });
+
+  it("an ACTIVE workspace is unchanged: enabled, undescribed, and it opens the dialog", () => {
+    const { ReadOnlyGateProvider } = jest.requireActual("@/lib/read-only-gate");
+    render(
+      <ReadOnlyGateProvider view={{ status: "ACTIVE" } as never}>
+        <CounterReturnAction orderId="o1" />
+      </ReadOnlyGateProvider>,
+    );
+    const btn = screen.getByRole("button", { name: "Return items" });
+    expect(btn).toBeEnabled();
+    expect(btn).not.toHaveAttribute("aria-describedby");
+    fireEvent.click(btn);
+    expect(screen.getByTestId("dialog-open")).toBeInTheDocument();
   });
 });

@@ -81,7 +81,8 @@ export class UpdateProductDto {
   @IsOptional() @Transform(toOptionalDecimalString) @IsDecimal() priceTier3?: string;
   @IsOptional() @Transform(toOptionalDecimalString) @IsDecimal() priceTier4?: string;
   @IsOptional() @Transform(toOptionalDecimalString) @IsDecimal() priceTier5?: string;
-  @IsOptional() @Transform(emptyToUndefined) @IsUUID() parentProductId?: string;
+  // M2: "" / null = UNLINK (a standalone product), never "unchanged": a form that clears the select must reach update() as null.
+  @IsOptional() @Transform(emptyToNull) @IsUUID() parentProductId?: string | null;
   @IsOptional() @IsString() variantName?: string;
   // Phase 4 (subcategories): emptyToNull so clearing the select removes the tag.
   @IsOptional() @Transform(emptyToNull) @IsUUID() trackedCategoryId?: string | null;

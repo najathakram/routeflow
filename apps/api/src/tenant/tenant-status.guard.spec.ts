@@ -1,16 +1,24 @@
 import { ExecutionContext, ForbiddenException } from "@nestjs/common";
 import { TenantStatusGuard } from "./tenant-status.guard";
+import { READ_ONLY_ALLOWED_MUTATIONS } from "./read-only-registry";
 import { PrismaService } from "../prisma/prisma.service";
 
 const token = `h.${Buffer.from(JSON.stringify({ tenantId: "t1" })).toString("base64url")}.s`;
 
-function ctx(method: string, path: string): ExecutionContext {
-  const req = { headers: { authorization: `Bearer ${token}` }, method, path };
+const roleToken = (role: string) =>
+  `h.${Buffer.from(JSON.stringify({ tenantId: "t1", role })).toString("base64url")}.s`;
+
+const buyerToken = `h.${Buffer.from(JSON.stringify({ tenantId: "t1", role: "CUSTOMER" })).toString("base64url")}.s`;
+
+function ctx(method: string, path: string, bearer: string = token): ExecutionContext {
+  const req = { headers: { authorization: `Bearer ${bearer}` }, method, path };
   return { switchToHttp: () => ({ getRequest: () => req }) } as unknown as ExecutionContext;
 }
 
-function guardFor(status: string) {
-  const prisma = { tenant: { findUnique: jest.fn().mockResolvedValue({ status }) } };
+function guardFor(status: string, readOnlyReason: string | null = null) {
+  const prisma = {
+    tenant: { findUnique: jest.fn().mockResolvedValue({ status, readOnlyReason }) },
+  };
   return new TenantStatusGuard(prisma as unknown as PrismaService);
 }
 
@@ -32,6 +40,60 @@ describe("TenantStatusGuard — READ_ONLY enforcement", () => {
     expect((err.getResponse() as { code: string }).code).toBe("READ_ONLY");
   });
 
+  it("the READ_ONLY 403 body carries the tenant's readOnlyReason (SA-776), null when none", async () => {
+    const withReason = await guardFor("READ_ONLY", "trial_expired")
+      .canActivate(ctx("POST", "/api/v1/orders"))
+      .catch((e) => e);
+    expect(withReason).toBeInstanceOf(ForbiddenException);
+    expect(withReason.getResponse()).toEqual(
+      expect.objectContaining({ code: "READ_ONLY", reason: "trial_expired" }),
+    );
+    const none = await guardFor("READ_ONLY")
+      .canActivate(ctx("POST", "/api/v1/orders"))
+      .catch((e) => e);
+    expect(none.getResponse()).toEqual(
+      expect.objectContaining({ code: "READ_ONLY", reason: null }),
+    );
+  });
+
+  it("F6: 'Subscribe to restore full access' is for an admin; an operator or a driver is told to ask their admin", async () => {
+    const msg = async (role: string) => {
+      const err = await guardFor("READ_ONLY", "trial_expired")
+        .canActivate(ctx("POST", "/api/v1/orders", roleToken(role)))
+        .catch((e) => e);
+      expect(err).toBeInstanceOf(ForbiddenException);
+      return (err.getResponse() as { message: string }).message;
+    };
+    expect(await msg("TENANT_ADMIN")).toContain("Subscribe to restore full access");
+    for (const role of ["OPERATOR", "DRIVER"]) {
+      const m = await msg(role);
+      expect(m).not.toMatch(/subscribe/i);
+      expect(m).toContain("admin");
+    }
+  });
+
+  it("the reason survives the cache and a DB blip (the stale status keeps its reason)", async () => {
+    const findUnique = jest
+      .fn()
+      .mockResolvedValueOnce({ status: "READ_ONLY", readOnlyReason: "payment_overdue" })
+      .mockRejectedValue(new Error("db down"));
+    const guard = new TenantStatusGuard({ tenant: { findUnique } } as unknown as PrismaService);
+    const first = await guard.canActivate(ctx("POST", "/api/v1/orders")).catch((e) => e);
+    expect(first.getResponse().reason).toBe("payment_overdue");
+    const cached = await guard.canActivate(ctx("POST", "/api/v1/orders")).catch((e) => e);
+    expect(cached.getResponse().reason).toBe("payment_overdue");
+    expect(findUnique).toHaveBeenCalledTimes(1);
+  });
+
+  it("allows an allow-listed mutation (POST /billing/portal) and refuses SUSPENDED on a GET (SA-776 pins)", async () => {
+    await expect(
+      guardFor("READ_ONLY", "trial_expired").canActivate(ctx("POST", "/api/v1/billing/portal")),
+    ).resolves.toBe(true);
+    await expect(
+      guardFor("SUSPENDED").canActivate(ctx("GET", "/api/v1/orders")),
+    ).rejects.toBeInstanceOf(ForbiddenException);
+  });
+
   it("allows subscribe/upgrade + auth mutations while READ_ONLY (so the tenant can restore access)", async () => {
     await expect(
       guardFor("READ_ONLY").canActivate(ctx("POST", "/api/v1/billing/subscribe")),
@@ -42,6 +104,61 @@ describe("TenantStatusGuard — READ_ONLY enforcement", () => {
     await expect(
       guardFor("READ_ONLY").canActivate(ctx("POST", "/api/v1/auth/login")),
     ).resolves.toBe(true);
+  });
+
+  it("allows closing the day while READ_ONLY, and ONLY the anchored day-close endpoints (owner ruling 2026-10-10)", async () => {
+    await expect(
+      guardFor("READ_ONLY").canActivate(ctx("POST", "/api/v1/orders/counter-sale/day-close")),
+    ).resolves.toBe(true);
+    for (const blocked of [
+      "/api/v1/orders/counter-sale", // a sale stays blocked
+      "/api/v1/orders/counter-sale/day-close/x/reopen", // not a uuid
+      "/api/v1/orders/counter-sale/day-close/11111111-1111-1111-1111-111111111111/report/", // anchored: no trailing slash
+      "/api/v1/orders/counter-sale/day-close/11111111-1111-1111-1111-111111111111/reopen/",
+      "/api/v1/orders/counter-sale/day-close/11111111-1111-1111-1111-111111111111/reopen/x",
+      "/api/v1/orders/counter-sale/day-close/",
+      "/api/v1/orders/counter-sale/day-closed",
+    ]) {
+      const err = await guardFor("READ_ONLY")
+        .canActivate(ctx("POST", blocked))
+        .catch((e) => e);
+      expect(err).toBeInstanceOf(ForbiddenException);
+      expect((err.getResponse() as { code: string }).code).toBe("READ_ONLY");
+    }
+  });
+
+  it("the reopen is allowed, the Z-report re-send is allowed (SA r-note 10-10), a sale is still refused (SA-750r3 O1)", async () => {
+    await expect(
+      guardFor("READ_ONLY").canActivate(
+        ctx(
+          "POST",
+          "/api/v1/orders/counter-sale/day-close/11111111-1111-1111-1111-111111111111/reopen",
+        ),
+      ),
+    ).resolves.toBe(true);
+    await expect(
+      guardFor("READ_ONLY").canActivate(
+        ctx(
+          "POST",
+          "/api/v1/orders/counter-sale/day-close/11111111-1111-1111-1111-111111111111/report",
+        ),
+      ),
+    ).resolves.toBe(true);
+    // a read-only tenant's sale is still refused
+    const err = await guardFor("READ_ONLY")
+      .canActivate(ctx("POST", "/api/v1/orders/counter-sale"))
+      .catch((e) => e);
+    expect((err.getResponse() as { code: string }).code).toBe("READ_ONLY");
+  });
+
+  it("the day-close exemption is POST only: DELETE, PUT and PATCH on that exact path stay blocked", async () => {
+    for (const method of ["DELETE", "PUT", "PATCH"]) {
+      const err = await guardFor("READ_ONLY")
+        .canActivate(ctx(method, "/api/v1/orders/counter-sale/day-close"))
+        .catch((e) => e);
+      expect(err).toBeInstanceOf(ForbiddenException);
+      expect((err.getResponse() as { code: string }).code).toBe("READ_ONLY");
+    }
   });
 
   it("allows /billing/quote while READ_ONLY (the plan-change classifier /choose-plan fires before subscribe)", async () => {
@@ -77,4 +194,183 @@ describe("TenantStatusGuard — READ_ONLY enforcement", () => {
   it("allows everything for ACTIVE tenants", async () => {
     await expect(guardFor("ACTIVE").canActivate(ctx("POST", "/api/v1/orders"))).resolves.toBe(true);
   });
+});
+
+// SA-733r6 (B4) + SA-750r3 O1: the read-only allow-list is ONE data constant, pinned entry by entry.
+// A read-only tenant keeps housekeeping on cash already taken (the day close, a receipt e-mail) and the admin's
+// billing portal; it never gets sales, orders, invoices or payments.
+describe("TenantStatusGuard - READ_ONLY allow-list (B4 pin)", () => {
+  const ALLOWED: Array<[string, string]> = [
+    ["POST", "/api/v1/billing/portal"],
+    ["POST", "/api/v1/billing/subscription"],
+    ["POST", "/api/v1/billing/subscription/downgrade"],
+    ["POST", "/api/v1/billing/subscription/cancel"],
+    ["POST", "/api/v1/billing/subscription/resume"],
+    ["POST", "/api/v1/billing/subscription/checkout"],
+    ["POST", "/api/v1/orders/counter-sale/day-close"],
+    ["POST", "/api/v1/orders/counter-sale/day-close/0b1f2c3d-aaaa-bbbb-cccc-1234567890ab/reopen"],
+    ["POST", "/api/v1/orders/counter-sale/day-close/0b1f2c3d-aaaa-bbbb-cccc-1234567890ab/report"],
+    ["POST", "/api/v1/orders/0b1f2c3d-aaaa-bbbb-cccc-1234567890ab/receipt"],
+  ];
+  const BLOCKED: Array<[string, string]> = [
+    ["POST", "/api/v1/invoices/inv1/payments"],
+    // SA ruling: staff approving a buyer's cash request is a staff PAYMENT write - still READ_ONLY (the buyer's own
+    // declaration is exempt at the buyer seller-context guard, a different guard)
+    ["POST", "/api/v1/payment-requests/pr1/approve"],
+    ["POST", "/api/v1/orders"],
+    ["POST", "/api/v1/orders/counter-sale"],
+    ["POST", "/api/v1/orders/counter-sale/o1/void"],
+    ["POST", "/api/v1/orders/counter-sale/tender"],
+    ["POST", "/api/v1/estimates"],
+    ["POST", "/api/v1/invoices"],
+    ["PATCH", "/api/v1/invoices/inv1/payments/p1"],
+    // anchored, not substring: neighbours of the allowed routes stay blocked
+    ["POST", "/api/v1/billing/portal-evil"],
+    ["POST", "/api/v1/orders/counter-sale/day-close-evil"],
+    ["POST", "/api/v1/orders/o1/receipt/extra"],
+    ["POST", "/api/v1/orders/o1/receipts"],
+    ["DELETE", "/api/v1/orders/counter-sale/day-close"],
+    // SA ruling: there is NO /reclose (the re-close is the same POST); the id is a UUID, nothing looser
+    ["POST", "/api/v1/orders/counter-sale/day-close/0b1f2c3d-aaaa-bbbb-cccc-1234567890ab/reclose"],
+    ["POST", "/api/v1/orders/counter-sale/day-close/not-a-uuid/reopen"],
+    ["POST", "/api/v1/orders/counter-sale/day-close/0b1f2c3d-aaaa-bbbb-cccc-1234567890ab"],
+    // the plan-restore paths are POST-only (a read passes anyway); nothing else rides on the prefix
+    ["DELETE", "/api/v1/billing/subscription"],
+    ["POST", "/api/v1/billing/subscription/anything-else"],
+    ["POST", "/api/v1/billing/subscription/cancel/extra"],
+    // the receipt id is a UUID, nothing looser
+    ["POST", "/api/v1/orders/o1/receipt"],
+    ["PUT", "/api/v1/billing/subscription/cancel"],
+  ];
+
+  it.each(ALLOWED)("allows %s %s while READ_ONLY", async (method, path) => {
+    await expect(guardFor("READ_ONLY").canActivate(ctx(method, path))).resolves.toBe(true);
+  });
+
+  it.each(BLOCKED)("blocks %s %s while READ_ONLY with the READ_ONLY code", async (method, path) => {
+    const err = await guardFor("READ_ONLY")
+      .canActivate(ctx(method, path))
+      .catch((e) => e);
+    expect(err).toBeInstanceOf(ForbiddenException);
+    expect((err.getResponse() as { code: string }).code).toBe("READ_ONLY");
+  });
+
+  it("pins the allow-list entries EXACTLY (anchored patterns, each with a reason)", () => {
+    expect(READ_ONLY_ALLOWED_MUTATIONS.map((e) => [e.method, e.pattern])).toEqual([
+      ["ANY", /^\/api\/v1\/auth\//],
+      ["POST", /^\/api\/v1\/billing\/subscribe$/],
+      ["POST", /^\/api\/v1\/billing\/quote$/],
+      ["POST", /^\/api\/v1\/billing\/subscription$/],
+      ["POST", /^\/api\/v1\/billing\/subscription\/(downgrade|cancel|resume|checkout)$/],
+      ["POST", /^\/api\/v1\/billing\/portal$/],
+      ["POST", /^\/api\/v1\/orders\/counter-sale\/day-close$/],
+      ["POST", /^\/api\/v1\/orders\/counter-sale\/day-close\/[0-9a-fA-F-]{36}\/reopen$/],
+      ["POST", /^\/api\/v1\/orders\/counter-sale\/day-close\/[0-9a-fA-F-]{36}\/report$/],
+      ["POST", /^\/api\/v1\/orders\/[0-9a-fA-F-]{36}\/receipt$/],
+    ]);
+  });
+});
+
+// SA-733r6 (B4) / SA-733 D11: a buyer's write to a read-only (paused) seller is 403 SELLER_UNAVAILABLE, a coded,
+// seller-neutral refusal - never the staff-facing READ_ONLY text that talks about subscribing.
+describe("TenantStatusGuard - buyer writes to a read-only seller (B4)", () => {
+  it("refuses a buyer's POST with SELLER_UNAVAILABLE and no billing wording", async () => {
+    const err = await guardFor("READ_ONLY")
+      .canActivate(ctx("POST", "/api/v1/buyer/orders", buyerToken))
+      .catch((e) => e);
+    expect(err).toBeInstanceOf(ForbiddenException);
+    const body = err.getResponse() as { code: string; message: string };
+    expect(body.code).toBe("SELLER_UNAVAILABLE");
+    expect(body.message).not.toMatch(/payment|billing|subscribe|plan/i);
+  });
+
+  it("still lets a buyer read and sign in while the seller is read-only", async () => {
+    await expect(
+      guardFor("READ_ONLY").canActivate(ctx("GET", "/api/v1/buyer/products", buyerToken)),
+    ).resolves.toBe(true);
+    await expect(
+      guardFor("READ_ONLY").canActivate(ctx("POST", "/api/v1/auth/refresh", buyerToken)),
+    ).resolves.toBe(true);
+  });
+
+  it("a staff user's blocked write keeps the READ_ONLY code", async () => {
+    const err = await guardFor("READ_ONLY")
+      .canActivate(ctx("POST", "/api/v1/orders"))
+      .catch((e) => e);
+    expect((err.getResponse() as { code: string }).code).toBe("READ_ONLY");
+  });
+});
+
+// SA-776 GAP-7 (accepted, stated in the guard's header): a DB error with NO cached status fails OPEN for
+// availability; once a status has been seen, a DB blip keeps enforcing it from the stale cache.
+describe("TenantStatusGuard - status lookup failure (GAP-7)", () => {
+  it("no cached status and the lookup throws: the request passes (fail open, logged)", async () => {
+    const prisma = { tenant: { findUnique: jest.fn().mockRejectedValue(new Error("db down")) } };
+    const guard = new TenantStatusGuard(prisma as unknown as PrismaService);
+    jest
+      .spyOn((guard as unknown as { logger: { error: () => void } }).logger, "error")
+      .mockImplementation();
+    await expect(guard.canActivate(ctx("POST", "/api/v1/orders"))).resolves.toBe(true);
+  });
+
+  it("a status seen before the blip keeps being enforced from the stale cache (past its TTL)", async () => {
+    const findUnique = jest
+      .fn()
+      .mockResolvedValueOnce({ status: "READ_ONLY", readOnlyReason: null })
+      .mockRejectedValue(new Error("db down"));
+    const guard = new TenantStatusGuard({ tenant: { findUnique } } as unknown as PrismaService);
+    await guard.canActivate(ctx("GET", "/api/v1/orders")); // seeds the cache
+    const real = Date.now();
+    const spy = jest.spyOn(Date, "now").mockReturnValue(real + 5 * 60_000); // TTL long gone
+    try {
+      const err = await guard.canActivate(ctx("POST", "/api/v1/orders")).catch((e) => e);
+      expect(err).toBeInstanceOf(ForbiddenException);
+      expect((err.getResponse() as { code: string }).code).toBe("READ_ONLY");
+    } finally {
+      spy.mockRestore();
+    }
+  });
+});
+
+// The guard reads the Authorization scheme like the JWT strategy (passport-jwt: the scheme is case-insensitive and any
+// run of whitespace separates it from the token), so both agree on which requests carry a token.
+describe("TenantStatusGuard - Authorization header parsing matches the JWT strategy", () => {
+  const withHeader = (header: string): ExecutionContext => {
+    const req = { headers: { authorization: header }, method: "POST", path: "/api/v1/orders" };
+    return { switchToHttp: () => ({ getRequest: () => req }) } as unknown as ExecutionContext;
+  };
+  const getWith = (header: string): ExecutionContext => {
+    const req = { headers: { authorization: header }, method: "GET", path: "/api/v1/orders" };
+    return { switchToHttp: () => ({ getRequest: () => req }) } as unknown as ExecutionContext;
+  };
+  const VARIANTS = [
+    `Bearer ${token}`,
+    `bearer ${token}`,
+    `BEARER ${token}`,
+    `BeArEr ${token}`,
+    `Bearer  ${token}`,
+    `Bearer\t${token}`,
+    `  Bearer ${token}`,
+  ];
+
+  it.each(VARIANTS)("a READ_ONLY tenant's POST is refused for %j", async (header) => {
+    const err = await guardFor("READ_ONLY", "trial_expired")
+      .canActivate(withHeader(header))
+      .catch((e) => e);
+    expect(err).toBeInstanceOf(ForbiddenException);
+    expect((err.getResponse() as { code: string }).code).toBe("READ_ONLY");
+  });
+
+  it.each(VARIANTS)("a SUSPENDED tenant's GET is refused for %j", async (header) => {
+    await expect(guardFor("SUSPENDED").canActivate(getWith(header))).rejects.toBeInstanceOf(
+      ForbiddenException,
+    );
+  });
+
+  it.each(["", "Bearer", "Bearer ", `Basic ${token}`, `Token ${token}`, token])(
+    "a header the strategy would not take as a bearer token passes through (%j)",
+    async (header) => {
+      await expect(guardFor("SUSPENDED").canActivate(getWith(header))).resolves.toBe(true);
+    },
+  );
 });

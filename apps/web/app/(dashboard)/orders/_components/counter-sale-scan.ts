@@ -34,6 +34,8 @@ export interface SaleLine {
   unit?: string;
   priceType?: "STANDARD" | "SPECIAL";
   category?: string;
+  /** The product's regulated category when the line was added: the estimate adds its levy (excise / deposit). */
+  trackedCategoryId?: string | null;
   /** POS-2: the product's tier columns when the line was added, so a customer pick can re-price it (display only). */
   tierPrices?: {
     pricePerUnit?: unknown;
@@ -87,6 +89,9 @@ export function addScannedProduct(
       unit: product.unit ?? "each",
       priceType: isSpecialTier(tier) ? "SPECIAL" : "STANDARD",
       ...(product.category ? { category: String(product.category) } : {}),
+      ...(product.trackedCategoryId
+        ? { trackedCategoryId: String(product.trackedCategoryId) }
+        : {}),
       tierPrices: {
         pricePerUnit: product.pricePerUnit,
         priceTier2: product.priceTier2,

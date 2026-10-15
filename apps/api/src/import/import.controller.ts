@@ -25,7 +25,7 @@ import type { JwtPayload } from "../auth/jwt-payload.interface";
 
 @Controller("import")
 @UseGuards(JwtAuthGuard, RolesGuard)
-@Roles(UserRole.OPERATOR)
+@Roles(UserRole.TENANT_ADMIN)
 export class ImportController {
   constructor(private readonly importService: ImportService) {}
 

@@ -87,6 +87,15 @@ describe("db-locks — withAdvisoryLock (T1, R1)", () => {
       // -> recordPayment window, keyed on the order id.
       // "fulfilment-settings" (2026-10-07, fulfilment toggle PR1, M2) backs the tenant Settings PATCH
       // and the Feature Console set()/clear() of the two fulfilment keys, keyed on the tenant id.
+      // "tenant-price" (2026-10-09, SA-733 D8) is the per-tenant lock every writer of a tenant's Stripe
+      // price takes across its Stripe calls: the price override, plan changes, the downgrade cron.
+      // "counter-park" (2026-10-10, SA-748) names the parked-cart cap's transaction-scoped
+      // `pg_advisory_xact_lock(hashtext('counter-park'), hashtext(tenantId))`; it opens no lock pool.
+      // "stock-count" (2026-10-11, SA-767 L-2.2) is the one-committer lock of a durable stock count:
+      // `commitStockCountSession` holds it across ALL of its batch transactions, keyed on the session id.
+      // "stock-count-product" (2026-10-11, SA-767 r-note 5 SA-3) names the one-open-count-per-product
+      // lock: a transaction-scoped `pg_advisory_xact_lock(hashtext(family), hashtext(tenantId:productId))`
+      // taken by whoever adds a product to a count session; it opens no lock pool.
       expect(mod.LOCK_FAMILIES).toEqual([
         "order-merge",
         "cron",
@@ -97,6 +106,10 @@ describe("db-locks — withAdvisoryLock (T1, R1)", () => {
         "policy-write",
         "counter-tender",
         "fulfilment-settings",
+        "tenant-price",
+        "counter-park",
+        "stock-count",
+        "stock-count-product",
       ]);
     });
   });

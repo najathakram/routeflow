@@ -1,5 +1,6 @@
 import { Injectable, Logger } from "@nestjs/common";
 import { PrismaService } from "../prisma/prisma.service";
+import { resolveZone } from "../common/tenant-time-zone";
 import { EmailService } from "../email/email.service";
 import {
   trialEndingTemplate,
@@ -10,6 +11,8 @@ import {
   suspendedTemplate,
   checkoutPlanNotAppliedTemplate,
   rfInvoiceEmail,
+  dunningTemplate,
+  DunningEmailKind,
   TrialEndingMilestone,
   BillingEmailTemplate,
   RfInvoiceEmailInput,
@@ -26,7 +29,7 @@ const isUniqueViolation = (e: unknown): boolean =>
   !!e && typeof e === "object" && (e as { code?: string }).code === "P2002";
 
 /** What one RF-invoice email attempt came to; `skipped` = an auto kind already claimed. */
-export interface RfInvoiceSendResult {
+export interface RfInvoiceDeliveryResult {
   status: "sent" | "no_recipients" | "failed" | "skipped";
   /** Admins who accepted the mail: a COUNT, never an address. */
   recipients: number;
@@ -113,15 +116,12 @@ export class BillingNotificationService {
     return tenant?.name ?? tenant?.slug ?? "your account";
   }
 
-  /** Fix round (finding 9): display in the tenant's own timezone when TenantConfig has one,
-   *  else UTC, explicitly labelled — display-only, never affects the underlying Date value or
-   *  any idempotency key. */
+  /** Fix round (finding 9): display in the tenant's own timezone when it has a valid one (the one
+   *  resolver, SA-738), else null so the date is UTC, explicitly labelled — display-only, never
+   *  affects the underlying Date value or any idempotency key. */
   private async tenantTimezone(tenantId: string): Promise<string | null> {
-    const cfg = await this.prisma.tenantConfig.findFirst({
-      where: { tenantId },
-      select: { timezone: true },
-    });
-    return cfg?.timezone ?? null;
+    const { zone, fallback } = await resolveZone(this.prisma, { tenantId });
+    return fallback ? null : zone;
   }
 
   private formatDate(d: Date, timezone: string | null): string {
@@ -181,7 +181,7 @@ export class BillingNotificationService {
       businessName: string,
       dateFor: (d: Date) => string,
     ) => BillingEmailTemplate,
-  ): Promise<RfInvoiceSendResult> {
+  ): Promise<RfInvoiceDeliveryResult> {
     try {
       const won = await this.claim(tenantId, milestone, key);
       if (!won) return { status: "skipped", recipients: 0 };
@@ -211,7 +211,7 @@ export class BillingNotificationService {
   async sendRfInvoice(
     invoice: RfInvoiceEmailInput & { id: string; tenantId: string },
     kind: RfInvoiceEmailKind,
-  ): Promise<RfInvoiceSendResult> {
+  ): Promise<RfInvoiceDeliveryResult> {
     const build = (_admin: AdminContact, businessName: string) =>
       rfInvoiceEmail(kind, invoice, businessName);
     if (kind === "manual") {
@@ -324,6 +324,56 @@ export class BillingNotificationService {
     await this.sendIfClaimed(tenantId, "SUSPENDED", key, (admin, businessName) =>
       suspendedTemplate({ businessName, adminName: admin.name, reason }),
     );
+  }
+
+  /**
+   * SA-733r7 PR-B3: one dunning email to the tenant's admins, claimed per (tenant, milestone, invoiceId) so an
+   * hourly sweep (or a redelivered webhook) sends each milestone once per invoice. `skipped` = already claimed;
+   * a send nobody accepted releases the claim so the next sweep retries. Never throws.
+   */
+  async notifyDunning(
+    tenantId: string,
+    milestone: string,
+    key: string,
+    kind: DunningEmailKind,
+    extra: {
+      payUrl: string | null;
+      readOnlyOn?: string;
+      omitLockWarning?: boolean;
+      byDate?: string;
+      invoiceNumber?: string | null;
+      amountCents?: number | null;
+      currency?: string | null;
+      attempted?: boolean;
+      periodLabel?: string | null;
+    },
+  ): Promise<RfInvoiceDeliveryResult> {
+    return this.sendIfClaimed(tenantId, milestone, key, (admin, businessName) =>
+      dunningTemplate({
+        kind,
+        businessName,
+        adminName: admin.name,
+        payUrl: extra.payUrl,
+        readOnlyOn: extra.readOnlyOn,
+        omitLockWarning: extra.omitLockWarning,
+        byDate: extra.byDate,
+        invoiceNumber: extra.invoiceNumber,
+        amountCents: extra.amountCents,
+        currency: extra.currency,
+        attempted: extra.attempted,
+        periodLabel: extra.periodLabel,
+      }),
+    );
+  }
+
+  /** The claim alone (no email): records that a milestone's notice went out inside another milestone's email. */
+  recordDunningMilestone(tenantId: string, milestone: string, key: string): Promise<boolean> {
+    return this.claim(tenantId, milestone, key);
+  }
+
+  /** The tenant-local date (and zone label) for a notice's calendar date. */
+  async localDateLabel(tenantId: string, at: Date): Promise<string> {
+    return this.formatDate(at, await this.tenantTimezone(tenantId));
   }
 
   /**

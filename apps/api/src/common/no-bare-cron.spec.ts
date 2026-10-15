@@ -21,6 +21,7 @@ const EXPECTED_NAMES = [
   "billing-cron.expireTrials",
   "billing-cron.expireGrace",
   "billing-cron.applyScheduledDowngrades",
+  "billing-cron.pushUpcomingDowngradePrices",
   "billing-cron.applyScheduledCancellations",
   "billing-cron.rollCycles",
   "billing-cron.warnTrialsEnding",
@@ -28,6 +29,11 @@ const EXPECTED_NAMES = [
   "billing-invoice.remind",
   "billing.suspendOverdueTenants",
   "billing.reconcileParkedCheckouts",
+  "billing.catchupSweep",
+  "billing.dunningSweep",
+  "billing.dunningDiscovery",
+  "billing.pauseReconcile",
+  "billing.pauseReconcileFirst",
   "order-templates.generateDailyOrders",
   "orders.cronSweepPendingOrders",
   "recurring-invoices.generateDueRecurringInvoices",
@@ -45,6 +51,7 @@ const EXPECTED_NAMES = [
   "onboarding.purgeIntakeFiles",
   "mailbox-alert.sweepPending",
   "email.pruneDeliveries",
+  "counter.parkSweep",
 ].sort();
 
 function collectSourceFiles(dir: string, out: string[] = [], includeSpecs = false): string[] {
@@ -122,7 +129,7 @@ describe("no bare @Cron in apps/api/src (T2, R2)", () => {
     expect(offenders).toEqual([]);
   });
 
-  it("has exactly 28 `@LeaderCron(` sites, every one of them well-formed", () => {
+  it("has exactly 35 `@LeaderCron(` sites, every one of them well-formed", () => {
     const declared = sources.reduce((n, s) => n + countMatches(s.text, LEADER_CRON), 0);
     const wellFormed = sources.reduce((n, s) => n + countMatches(s.text, LEADER_CRON_SITE), 0);
 
@@ -137,7 +144,12 @@ describe("no bare @Cron in apps/api/src (T2, R2)", () => {
     // Manual invoices due PR1 added billing-invoice.issueDue (dark: RF_INVOICING_MODE=off), 25 -> 26.
     // Manual invoices due PR3 added billing-invoice.remind (d0/d7/d14 reminders, live mode only), 26 -> 27.
     // B1158 added billing.reconcileParkedCheckouts (parked ACH/SEPA checkouts), 27 -> 28.
-    expect(declared).toBe(28);
+    // R1 option B added billing-cron.pushUpcomingDowngradePrices (the pre-renewal downgrade price push), 28 -> 29.
+    // SA-748 added counter.parkSweep (hourly parked-cart cleanup), 29 -> 30.
+    // SA-733r3 N2 added billing.catchupSweep (the October catch-up claim sweep), 30 -> 31.
+    // SA-733r7 PR-B3 added billing.dunningSweep, billing.pauseReconcile, billing.pauseReconcileFirst and the daily
+    // billing.dunningDiscovery (SA-733r M2), 31 -> 35.
+    expect(declared).toBe(35);
     // A site that does not match the full `(expr, "name")` shape would be invisible to the name
     // assertions below, so pin the two counts together.
     expect(wellFormed).toBe(declared);
@@ -171,7 +183,7 @@ describe("no bare @Cron in apps/api/src (T2, R2)", () => {
     });
   });
 
-  it("registers the 28 expected job names, all unique", () => {
+  it("registers the 35 expected job names, all unique", () => {
     const names: string[] = [];
     for (const s of sources) {
       const re = new RegExp(LEADER_CRON_SITE.source, "g");

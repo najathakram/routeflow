@@ -10,6 +10,7 @@ import {
   type FeatureRegistryRow,
 } from "@routeflow/types";
 import { superAdminClient } from "@/lib/admin-api";
+import { activationErrorText } from "@/lib/activation-error-copy";
 import { setTenantCookie } from "@/lib/tenant-cookie";
 import { setImpersonation } from "@/lib/impersonation";
 import { AdminTabs } from "../../../_components/AdminTabs";
@@ -26,6 +27,7 @@ import {
   TENANT_ACTION_COPY,
   deleteFailureCopy,
   extendFailureCopy,
+  statusFailureCopy,
   longDate,
   tenantLabel,
 } from "../../../_components/TenantActionDialogs";
@@ -919,12 +921,7 @@ function BillingTab({
       });
       onRefreshTenant();
     } catch (err: unknown) {
-      setMsg({
-        type: "error",
-        text:
-          (err as { response?: { data?: { message?: string } } })?.response?.data?.message ??
-          "Activation failed",
-      });
+      setMsg({ type: "error", text: activationErrorText(err) });
     } finally {
       setActivating(false);
     }
@@ -1164,7 +1161,7 @@ function BillingTab({
 
 // ─── Setup Tab ─────────────────────────────────────────────────────────────────
 // The tab key is "setup" (the legacy ?tab=addons still resolves to it); the label is "Setup": the tenant's current setup in plain English,
-// the business-profile picker, then the feature console and the per-feature overrides.
+// the business-profile picker, then an Advanced section with the feature console and the per-feature overrides.
 
 function SetupTab({
   tenant,
@@ -1178,6 +1175,8 @@ function SetupTab({
   const overridesRef = React.useRef<FeatureOverridesSectionHandle>(null);
   // Bumped when a business profile changed this tenant's setup: the console and the overrides list remount and reload.
   const [setupVersion, setSetupVersion] = React.useState(0);
+  // Open by default: nothing a super admin used to see is hidden until they choose to fold it.
+  const [advancedOpen, setAdvancedOpen] = React.useState(true);
 
   return (
     <>
@@ -1187,22 +1186,50 @@ function SetupTab({
         onApplied={() => setSetupVersion((v) => v + 1)}
       />
 
-      <div id="features">
-        <FeatureConsole
-          key={`console-${setupVersion}`}
-          tenant={tenant}
-          tenantLabel={tenant.businessName ?? tenant.slug}
-          onChangePlan={(plan) => onAction("change-plan", { plan })}
-          changePlanLoading={actionLoading === "change-plan"}
-          onCustomise={(featureKey) => overridesRef.current?.openFor(featureKey)}
-        />
-      </div>
+      {/* One "Advanced" section holds the two power-user controls; both stay mounted when collapsed so
+          the console's "Customise" ref and any in-flight drawer keep working, and Customise reopens it. */}
+      <section
+        aria-labelledby="setup-advanced-heading"
+        className="mt-6"
+        data-testid="setup-advanced"
+      >
+        <h2 id="setup-advanced-heading" className="text-sm font-semibold text-slate-300">
+          <button
+            type="button"
+            aria-expanded={advancedOpen}
+            aria-controls="setup-advanced-body"
+            onClick={() => setAdvancedOpen((o) => !o)}
+            className="flex w-full items-center gap-2 text-left"
+          >
+            <span aria-hidden="true">{advancedOpen ? "▾" : "▸"}</span>
+            Advanced
+            <span className="text-xs font-normal text-slate-400">
+              Feature console and overrides
+            </span>
+          </button>
+        </h2>
+        <div id="setup-advanced-body" hidden={!advancedOpen}>
+          <div id="features">
+            <FeatureConsole
+              key={`console-${setupVersion}`}
+              tenant={tenant}
+              tenantLabel={tenant.businessName ?? tenant.slug}
+              onChangePlan={(plan) => onAction("change-plan", { plan })}
+              changePlanLoading={actionLoading === "change-plan"}
+              onCustomise={(featureKey) => {
+                setAdvancedOpen(true);
+                overridesRef.current?.openFor(featureKey);
+              }}
+            />
+          </div>
 
-      <FeatureOverridesSection
-        key={`overrides-${setupVersion}`}
-        ref={overridesRef}
-        tenant={tenant}
-      />
+          <FeatureOverridesSection
+            key={`overrides-${setupVersion}`}
+            ref={overridesRef}
+            tenant={tenant}
+          />
+        </div>
+      </section>
     </>
   );
 }
@@ -2026,7 +2053,7 @@ export default function AdminTenantDetailPage() {
             : action === "change-plan"
               ? TENANT_ACTION_COPY.planFailed
               : action === "toggle-status"
-                ? TENANT_ACTION_COPY.statusFailed
+                ? statusFailureCopy(err)
                 : TENANT_ACTION_COPY.actionFailed,
         );
       }

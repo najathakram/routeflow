@@ -35,6 +35,8 @@ import {
   type BadgeStatus,
 } from "@routeflow/ui/web";
 import { useToast } from "@routeflow/ui/web";
+import { useAuth } from "@/lib/auth-context";
+import { isAccountAdmin } from "@/lib/auth";
 import { usePageTitle } from "@/lib/page-title-context";
 import { ConfirmDialog } from "@/components/ConfirmDialog";
 import { CustomerFormModal } from "./_components/CustomerFormModal";
@@ -57,6 +59,7 @@ import { useUrlSearch } from "@/lib/hooks/useUrlSearch";
 import { useUrlPage, useResetPageOnChange, useClampPage } from "@/lib/hooks/useUrlPage";
 import { fmt, displayEmail, NO_EMAIL_COPY } from "@/lib/formatting";
 import { ImportCsvPanel } from "@/components/import/ImportCsvPanel";
+import { ReadOnlyHint, WriteButton } from "@/lib/read-only-gate";
 import { CUSTOMER_IMPORT_COLUMNS } from "@routeflow/types";
 import { WALK_IN_PROTECTED_COPY } from "./_components/walk-in-protection";
 
@@ -207,6 +210,8 @@ export default function CustomersPage() {
   }, [searchParams]);
   const [isAddOpen, setIsAddOpen] = React.useState(false);
   const [isImportOpen, setIsImportOpen] = React.useState(false);
+  // POST /import/contacts is admin-only on the api.
+  const canImport = isAccountAdmin(useAuth().user);
   const [editingCustomer, setEditingCustomer] = React.useState<any>(null);
   const [selectMode, setSelectMode] = React.useState(false);
   const [selected, setSelected] = React.useState<Set<string>>(new Set());
@@ -755,13 +760,15 @@ export default function CustomersPage() {
           // the PageHeader level too (packages/ui/src/web/PageHeader.tsx), this row's own
           // wrap is still needed so the content itself has somewhere to go once it can.
           <div className="flex flex-wrap items-center justify-end gap-2">
-            <Button
-              variant="secondary"
-              leftIcon={<Upload className="h-4 w-4" />}
-              onClick={() => setIsImportOpen(true)}
-            >
-              Import
-            </Button>
+            {canImport && (
+              <Button
+                variant="secondary"
+                leftIcon={<Upload className="h-4 w-4" />}
+                onClick={() => setIsImportOpen(true)}
+              >
+                Import
+              </Button>
+            )}
             <Button
               variant="secondary"
               leftIcon={<Download className="h-4 w-4" />}
@@ -781,10 +788,12 @@ export default function CustomersPage() {
                 {selectMode ? "Cancel" : "Select"}
               </Button>
             )}
-            <Button onClick={() => setIsAddOpen(true)}>New Customer</Button>
+            <WriteButton onClick={() => setIsAddOpen(true)}>New Customer</WriteButton>
           </div>
         }
       />
+
+      <ReadOnlyHint className="px-1 text-xs text-slate-600" />
 
       {/* Selection action bar — never shown in the trash view (F3): the operator can only
           View + inline Restore a removed row, never bulk-act on it. */}
@@ -1112,9 +1121,9 @@ export default function CustomersPage() {
                   title="No customers yet"
                   description="Add your first customer to start taking orders and sending invoices."
                   action={
-                    <Button size="sm" onClick={() => setIsAddOpen(true)}>
+                    <WriteButton size="sm" onClick={() => setIsAddOpen(true)}>
                       Add customer
-                    </Button>
+                    </WriteButton>
                   }
                 />
               )

@@ -3,8 +3,14 @@ import { PrismaService } from "../prisma/prisma.service";
 import { StorageService } from "../storage/storage.service";
 import { RegulatedVisibilityService } from "./regulated-visibility.service";
 import { getTierPrice } from "@routeflow/pricing";
-import { buyerVisibleProductWhere, noBuyerRestrictions } from "./buyer-product-visibility";
+import { SellingRestrictionsService } from "../selling-restrictions/selling-restrictions.service";
+import { buyerVisibilityFor, buyerVisibleProductWhere } from "./buyer-product-visibility";
 import { firstSignableImageKey } from "../products/product-image-keys";
+import { overdueCutoff } from "../common/calendar-date";
+import { tenantTimeZone } from "../common/tenant-time-zone";
+import { summarizeOpenInvoices } from "../invoices/invoice-balance-classify";
+import { OPEN_INVOICE_STATUSES } from "../invoices/invoice-status-sets";
+import { CONFIRMED_PAYMENT } from "../invoices/payment-predicates";
 
 @Injectable()
 export class BuyerDashboardService {
@@ -12,11 +18,12 @@ export class BuyerDashboardService {
     private readonly prisma: PrismaService,
     private readonly storage: StorageService,
     private readonly visibility: RegulatedVisibilityService,
+    private readonly restrictions: SellingRestrictionsService,
   ) {}
 
-  /** The tenant-scoped "no blocked ids" visibility context (B1211): no tenant on the request throws, never unscoped. */
-  private buyerVisibility() {
-    return noBuyerRestrictions(this.prisma.getTenantId());
+  /** The tenant-scoped buyer visibility context (hidden ids included): no tenant on the request throws, never unscoped (B1211). */
+  private buyerVisibility(customerId: string) {
+    return buyerVisibilityFor(this.restrictions, this.prisma.getTenantId(), customerId);
   }
 
   /**
@@ -39,6 +46,8 @@ export class BuyerDashboardService {
     // visibility service the catalog uses — so the dashboard can't drift and re-expose
     // a product the buyer would be blocked from buying at checkout.
     const { hiddenIds } = await this.visibility.computeGate(customerId, now);
+    // One restriction read per request; every product query below applies the same hidden-id set.
+    const buyerVis = await this.buyerVisibility(customerId);
     // NULL-safe form: `notIn` never matches NULL, so the old shape hid every
     // UNTRACKED product from the dashboard rails once a license-gated
     // category existed (see products.service.findAll for the full account).
@@ -59,7 +68,8 @@ export class BuyerDashboardService {
       spend30d,
       spend90d,
       spendAllTime,
-      unpaidAgg,
+      openInvoices,
+      sellerZone,
     ] = await Promise.all([
       // Recent orders (last 5)
       this.prisma.forTenant().order.findMany({
@@ -125,7 +135,7 @@ export class BuyerDashboardService {
 
       // New products (last 30 days)
       this.prisma.forTenant().product.findMany({
-        where: buyerVisibleProductWhere(this.buyerVisibility(), {
+        where: buyerVisibleProductWhere(buyerVis, {
           createdAt: { gte: thirtyDaysAgo },
           ...gateWhere,
         }),
@@ -135,7 +145,7 @@ export class BuyerDashboardService {
 
       // Featured products
       this.prisma.forTenant().product.findMany({
-        where: buyerVisibleProductWhere(this.buyerVisibility(), { isFeatured: true, ...gateWhere }),
+        where: buyerVisibleProductWhere(buyerVis, { isFeatured: true, ...gateWhere }),
         orderBy: { name: "asc" },
         take: 10,
       }),
@@ -169,15 +179,25 @@ export class BuyerDashboardService {
         _sum: { total: true },
       }),
 
-      // Unpaid invoices — count + total over the open statuses, matching
-      // getAnalytics' summary (unpaidCount + overdueCount / unpaidTotal) so the
-      // dashboard strip and the Finances screen never diverge.
-      this.prisma.forTenant().invoice.aggregate({
-        where: { customerId, status: { in: ["SENT", "VIEWED", "PARTIAL", "OVERDUE"] } },
-        _count: { _all: true },
-        _sum: { total: true },
+      // Unpaid invoices over the open statuses (SA-770 r-note): the strip counts what is still OWED, via the
+      // same classifier as getAnalytics' summary, so the dashboard strip and the Finances screen never
+      // diverge and an overpaid or part-paid invoice shows its balance, never the gross.
+      this.prisma.forTenant().invoice.findMany({
+        where: { customerId, status: { in: [...OPEN_INVOICE_STATUSES] } },
+        select: {
+          status: true,
+          total: true,
+          dueDate: true,
+          payments: {
+            where: CONFIRMED_PAYMENT,
+            select: { amount: true, status: true, method: true },
+          },
+        },
       }),
+      // The seller's own due day (SA-488): an invoice is overdue once ITS tenant's day has ended.
+      tenantTimeZone(this.prisma),
     ]);
+    const unpaid = summarizeOpenInvoices(openInvoices, overdueCutoff(now, sellerZone));
 
     // Enrich frequently ordered products with product details + buyer pricing.
     // Unlisted (catalog-free) lines have no productId and can't be reordered.
@@ -187,7 +207,7 @@ export class BuyerDashboardService {
     const freqProducts =
       freqProductIds.length > 0
         ? await this.prisma.forTenant().product.findMany({
-            where: buyerVisibleProductWhere(this.buyerVisibility(), {
+            where: buyerVisibleProductWhere(buyerVis, {
               id: { in: freqProductIds },
               ...gateWhere,
             }),
@@ -313,7 +333,7 @@ export class BuyerDashboardService {
     const suggestedProducts =
       orderedCategories.length > 0
         ? await this.prisma.forTenant().product.findMany({
-            where: buyerVisibleProductWhere(this.buyerVisibility(), {
+            where: buyerVisibleProductWhere(buyerVis, {
               category: { in: orderedCategories },
               id: { notIn: orderedProductIds },
               ...gateWhere,
@@ -369,8 +389,8 @@ export class BuyerDashboardService {
         spend30d: Number(spend30d._sum.total ?? 0),
         spend90d: Number(spend90d._sum.total ?? 0),
         spendAllTime: Number(spendAllTime._sum.total ?? 0),
-        unpaidInvoiceCount: unpaidAgg._count._all,
-        unpaidInvoiceTotal: Number(unpaidAgg._sum.total ?? 0),
+        unpaidInvoiceCount: unpaid.unpaidCount + unpaid.overdueCount,
+        unpaidInvoiceTotal: unpaid.unpaidTotal,
       },
       frequentlyOrdered,
       newFromSeller,

@@ -13,6 +13,7 @@ import {
 import { ApiProperty, ApiPropertyOptional } from "@nestjs/swagger";
 import { PLAN_KEYS } from "../../billing/plan-catalog.constants";
 import { TENANT_CLASS_VALUES } from "../../tenant/tenant-class";
+import { IsTenantTimeZone } from "../../common/is-tenant-time-zone.validator";
 
 export class CreateTenantDto {
   @ApiProperty()
@@ -89,4 +90,15 @@ export class CreateTenantDto {
   @IsOptional()
   @IsIn(TENANT_CLASS_VALUES)
   class?: (typeof TENANT_CLASS_VALUES)[number];
+
+  // SA-738 rule 4 / R16-4: REQUIRED, no silent default. The super-admin create form must send it
+  // (the web time-zone select lands with the MacBook UI PR); a missing or invalid zone is a 400.
+  @ApiProperty({
+    description:
+      "The business's IANA time zone (e.g. America/Chicago), written into the new TenantConfig " +
+      "row. It sets the tenant's day boundary for sales, invoices and reports.",
+  })
+  @IsString()
+  @IsTenantTimeZone()
+  timezone: string;
 }

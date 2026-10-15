@@ -141,7 +141,10 @@ export function FamilyVariantsEditor({
     const sentRows = rows;
     update.mutate(sent, {
       onSuccess: () => {
-        toast({ title: "Variants saved", variant: "success" });
+        toast({
+          title: `Variants saved (${sent.add?.length ?? 0} added, ${sent.update?.length ?? 0} changed)`,
+          variant: "success",
+        });
         setEditing(false);
         setServerCells({});
       },

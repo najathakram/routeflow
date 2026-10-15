@@ -199,6 +199,8 @@ describe("OrdersService", () => {
             findOpenOrderDraft: jest.fn().mockResolvedValue(null),
             reconcileOrderDraftInvoice: jest.fn().mockResolvedValue({ id: "inv-1" }),
             resyncOrderInvoicesForEdit: jest.fn().mockResolvedValue([{ id: "inv-1" }]),
+            followPartialPrices: jest.fn().mockResolvedValue({ issuedPartialsUnchanged: [] }),
+            projectEditedInvoiceTotals: jest.fn().mockResolvedValue([]),
             revertLinkedInvoicesForOrderEdit: jest.fn().mockResolvedValue([]),
             voidInvoice: jest.fn().mockResolvedValue({ id: "inv-1", status: "VOID" }),
             voidInvoiceInTx: jest.fn().mockResolvedValue({ id: "inv-1", status: "VOID" }),
@@ -1343,7 +1345,7 @@ describe("OrdersService", () => {
       await service.create(
         { items: [{ productId: "prod-1", qty: 1 }], status: "DRAFT" } as any,
         customerPayload,
-        { allowArchived: true },
+        { allowArchived: true, internalCustomerDraft: true },
       );
 
       expect(prisma.order.create).toHaveBeenCalled();
@@ -5317,7 +5319,6 @@ describe("OrdersService", () => {
     it("action DELETE hard-removes a clean (un-invoiced, undelivered) line", async () => {
       prisma.order.findUnique.mockResolvedValue(orderWithItems);
       prisma.deliveryMutation.count.mockResolvedValue(0);
-      prisma.orderItem.findMany.mockResolvedValue([]);
       prisma.orderItem.deleteMany.mockResolvedValue({ count: 1 });
 
       await service.updateOrderItems(
@@ -5339,7 +5340,6 @@ describe("OrdersService", () => {
       };
       prisma.order.findUnique.mockResolvedValue(billed);
       prisma.deliveryMutation.count.mockResolvedValue(0);
-      prisma.orderItem.findMany.mockResolvedValue([]);
       prisma.orderItem.updateMany.mockResolvedValue({ count: 1 });
 
       await service.updateOrderItems(
@@ -6826,7 +6826,7 @@ describe("OrdersService", () => {
       prisma.product.findMany.mockResolvedValue([
         { id: "prod-box", pricePerUnit: 60, unitsPerBox: 6 },
       ]);
-      prisma.orderItem.findMany.mockResolvedValue([]);
+      prisma.orderItem.findMany.mockResolvedValue([{ id: "li-1", productId: "prod-box", qty: 2 }]); // lock-time read
 
       await service.updateOrderItems(
         "ord-1",
@@ -7542,7 +7542,7 @@ describe("OrdersService", () => {
 
       // Post-delivery: the in-place invoice+ledger resync runs (NOT the open-draft
       // reconcile), and the throw-on-payment pre-mutation revert is skipped.
-      expect(invoicesService.resyncOrderInvoicesForEdit).toHaveBeenCalledWith("ord-1");
+      expect(invoicesService.resyncOrderInvoicesForEdit.mock.calls[0][0]).toBe("ord-1");
       expect(invoicesService.reconcileOrderDraftInvoice).not.toHaveBeenCalled();
       expect(invoicesService.revertLinkedInvoicesForOrderEdit).not.toHaveBeenCalled();
       // Delivered orders are edited in place — never reverted to PENDING.
@@ -7553,7 +7553,7 @@ describe("OrdersService", () => {
     });
 
     it("SKIPS the in-place resync when the DELIVERED order is PARTIALLY invoiced (no over-bill)", async () => {
-      prisma.order.findUnique.mockResolvedValue({
+      const order = {
         ...confirmedOrder({ status: "COMPLETED", startedAt: new Date() }),
         status: "DELIVERED",
         lineItems: [
@@ -7572,10 +7572,9 @@ describe("OrdersService", () => {
             originalPrice: null,
           },
         ],
-      });
-      prisma.orderItem.findMany.mockResolvedValue([
-        { id: "li-1", productId: "prod-1", qty: 10, unitPrice: 5, subtotal: 50, status: "PENDING" },
-      ]);
+      };
+      prisma.order.findUnique.mockResolvedValue(order);
+      prisma.orderItem.findMany.mockResolvedValue(order.lineItems); // the held lines (SA-763r P-3)
       prisma.orderRevision.aggregate.mockResolvedValue({ _max: { revisionNumber: null } });
 
       await service.updateOrderItems(
@@ -7593,7 +7592,7 @@ describe("OrdersService", () => {
     });
 
     it("WP3: the partial-billing skip still settles credit notes — they're payment-level, not line-level", async () => {
-      prisma.order.findUnique.mockResolvedValue({
+      const order = {
         ...confirmedOrder({ status: "COMPLETED", startedAt: new Date() }),
         status: "DELIVERED",
         lineItems: [
@@ -7612,10 +7611,9 @@ describe("OrdersService", () => {
             originalPrice: null,
           },
         ],
-      });
-      prisma.orderItem.findMany.mockResolvedValue([
-        { id: "li-1", productId: "prod-1", qty: 10, unitPrice: 5, subtotal: 50, status: "PENDING" },
-      ]);
+      };
+      prisma.order.findUnique.mockResolvedValue(order);
+      prisma.orderItem.findMany.mockResolvedValue(order.lineItems); // the held lines (SA-763r P-3)
       prisma.orderRevision.aggregate.mockResolvedValue({ _max: { revisionNumber: null } });
 
       await service.updateOrderItems(
@@ -7646,7 +7644,7 @@ describe("OrdersService", () => {
       // createPartialFromOrder can bill a SUBSET of LINES at full qty (A) while omitting
       // others (B): every line is then either fully-invoiced or zero-invoiced, so a
       // per-line 'invoicedQty<qty' check would miss it — the gate must be cross-line.
-      prisma.order.findUnique.mockResolvedValue({
+      const order = {
         ...confirmedOrder({ status: "COMPLETED", startedAt: new Date() }),
         status: "DELIVERED",
         lineItems: [
@@ -7679,10 +7677,9 @@ describe("OrdersService", () => {
             originalPrice: null,
           },
         ],
-      });
-      prisma.orderItem.findMany.mockResolvedValue([
-        { id: "li-a", productId: "prod-1", qty: 10, unitPrice: 5, subtotal: 50, status: "PENDING" },
-      ]);
+      };
+      prisma.order.findUnique.mockResolvedValue(order);
+      prisma.orderItem.findMany.mockResolvedValue(order.lineItems); // the held lines (SA-763r P-3)
       prisma.orderRevision.aggregate.mockResolvedValue({ _max: { revisionNumber: null } });
 
       await service.updateOrderItems(
@@ -8048,7 +8045,9 @@ describe("OrdersService", () => {
     // post-edit totals recompute) return whatever the test stubs via
     // `setPostEditItems`. Stubbing both from one mockResolvedValue would make
     // held === requested and silently neuter every case in this block.
-    const heldSnapshot = [{ productId: "prod-1", qty: 5, deliveredQty: 0, status: "PENDING" }];
+    const heldSnapshot = [
+      { id: "li-1", productId: "prod-1", qty: 5, deliveredQty: 0, status: "PENDING" },
+    ];
     let postEditItems: any[] = [];
     const setPostEditItems = (items: any[]) => {
       postEditItems = items;
@@ -8477,6 +8476,7 @@ describe("OrdersService", () => {
     });
 
     it("ADD_ITEM onto an existing line keeps the line's stored (agreed) unitPrice", async () => {
+      const BUYER = { authorChannel: "BUYER" }; // SA ruling #3418: a CUSTOMER-requested raise
       const line = {
         id: "li-1",
         orderId: "ord-1",
@@ -8529,15 +8529,14 @@ describe("OrdersService", () => {
             trackedCategoryId: null,
           },
         ]);
-      // B135: the ADD_ITEM merge target comes from the locked held row, then its authoritative
-      // qty/price is re-read through the tx.
+      // B135: the merge target is the locked held row; its authoritative qty/price is re-read in the tx.
       prisma.orderItem.findUnique.mockResolvedValue(line);
 
       await service.approveChangeRequestAtStop("cr-1", operatorPayload, null);
 
       expect(prisma.orderItem.update).toHaveBeenCalledWith({
         where: { id: "li-1" },
-        data: { qty: 15, boxes: null, pieces: null, unitsPerBox: null, subtotal: 127.5 },
+        data: { qty: 15, boxes: null, pieces: null, unitsPerBox: null, subtotal: 127.5, ...BUYER },
       });
       expect(prisma.orderItem.create).not.toHaveBeenCalled();
     });
@@ -9131,6 +9130,7 @@ describe("OrdersService", () => {
             type: "CHANGE_QTY",
             orderItemId: "li-1",
             payload: { orderItemId: "li-1", newQty: 18 },
+            requestedByRole: "DRIVER", // staff-filed: keeps this on the staff channel (F1 i)
           }),
         );
         prisma.order.findUnique.mockResolvedValue(baseOrder([sharedLine])); // snapshot line: PENDING
@@ -9160,16 +9160,14 @@ describe("OrdersService", () => {
 
         await service.approveChangeRequestAtStop("cr-1", operatorPayload, null);
 
-        // Order→stop is the repo-wide acquisition order (reopenStop, the customers.service merge
-        // and purge paths); inverting it here would deadlock against them. The stop lock is
-        // therefore taken second and NOWAIT, so this tx never waits on a stop row.
-        expect(seenTx.$executeRaw.mock.calls[0][0].join("?")).toContain('"Order"');
-        const stopLockSql = seenTx.$executeRaw.mock.calls[1][0].join("?");
+        // Order→stop is the repo-wide acquisition order; the stop lock is second and NOWAIT. Call [0] is the lock bound.
+        expect(seenTx.$executeRaw.mock.calls[1][0].join("?")).toContain('"Order"');
+        const stopLockSql = seenTx.$executeRaw.mock.calls[2][0].join("?");
         expect(stopLockSql).toContain('"RouteRunStop"');
         expect(stopLockSql).toContain("FOR NO KEY UPDATE NOWAIT");
         // order.findUnique call [0] is the pre-tx snapshot, [1] is the in-tx `live` re-read: both
         // locks must be held before that re-read, or an in-flight completion stays invisible.
-        expect(seenTx.$executeRaw.mock.invocationCallOrder[1]).toBeLessThan(
+        expect(seenTx.$executeRaw.mock.invocationCallOrder[2]).toBeLessThan(
           seenTx.order.findUnique.mock.invocationCallOrder[1],
         );
       });
@@ -9179,7 +9177,8 @@ describe("OrdersService", () => {
         const seenTx = captureMergeTx();
         const lockErr: any = new Error("Raw query failed");
         lockErr.meta = { code: "55P03" };
-        seenTx.$executeRaw.mockResolvedValueOnce(0).mockRejectedValueOnce(lockErr);
+        seenTx.$executeRaw.mockResolvedValueOnce(0).mockResolvedValueOnce(0); // bound, Order row
+        seenTx.$executeRaw.mockRejectedValueOnce(lockErr); // the stop row
 
         // A busy stop is transient, so it must NOT read as the terminal CHANGE_WINDOW_CLOSED —
         // the resolver is told to retry.
@@ -9201,6 +9200,7 @@ describe("OrdersService", () => {
         setUpSharedFixture();
         const seenTx = captureMergeTx();
         seenTx.$executeRaw
+          .mockResolvedValueOnce(0)
           .mockResolvedValueOnce(0)
           .mockRejectedValueOnce(
             new Error('could not obtain lock on row in relation "RouteRunStop"'),

@@ -111,7 +111,7 @@ function catalog() {
       { sku: "BUYER_PORTAL", name: "Buyer portal", monthlyPrice: 49 },
       { sku: "REGULATED_ITEMS", name: "Regulated", monthlyPrice: 39 },
       // Self-service SKUs (SELF_SERVICE_ADDON_SKUS) — the only two enableAddon may grant.
-      { sku: "CUSTOMER_PACK_100", name: "Customer pack", monthlyPrice: 12 },
+      { sku: "CUSTOMER_PACK_100", name: "Customer pack", monthlyPrice: 12, stackable: true },
       { sku: "FORECASTING", name: "Forecasting", monthlyPrice: 25 },
       // Admin-only SKUs — enableAddon must 403 a self-service request for these.
       { sku: "MSRP", name: "MSRP", monthlyPrice: 20 },
@@ -408,6 +408,8 @@ function make(opts: Opts = {}) {
     transactionOptions: jest.fn().mockReturnValue(undefined),
     invalidateCaches: jest.fn(),
   } as any;
+  // R1 option B: resume() asks it to undo a pre-renewal downgrade price push.
+  const scheduledPrice = { restoreAfterScheduleCleared: jest.fn().mockResolvedValue(undefined) };
   const svc = new SubscriptionMutationService(
     prisma,
     cat,
@@ -419,6 +421,7 @@ function make(opts: Opts = {}) {
     stripe,
     billingNotification,
     planTransition,
+    scheduledPrice as any,
   );
   return {
     svc,
@@ -431,6 +434,7 @@ function make(opts: Opts = {}) {
     stripe,
     billingNotification,
     planTransition,
+    scheduledPrice,
   };
 }
 
@@ -458,7 +462,8 @@ describe("SubscriptionMutationService.subscribe (MRR = signed change)", () => {
         BILLING_EVENTS.ADDON_ENABLED,
       ]),
     );
-    expect(tx.tenant.update.mock.calls[0][0].data).toMatchObject({
+    // SA-733r2 N5: subscribe() reaches ACTIVE through transitionToActiveTx (a CAS updateMany)
+    expect(tx.tenant.updateMany.mock.calls[0][0].data).toMatchObject({
       status: "ACTIVE",
       plan: "TEAM",
     });
@@ -932,7 +937,7 @@ describe("SubscriptionMutationService.subscribe (MRR = signed change)", () => {
       sub: { planKey: "BUSINESS" },
     });
     await svc.subscribe("t1", { planKey: "BUSINESS", cycle: "MONTHLY" }, "admin");
-    expect(tx.tenant.update).toHaveBeenCalledWith(
+    expect(tx.tenant.updateMany).toHaveBeenCalledWith(
       expect.objectContaining({
         data: expect.objectContaining({ status: "ACTIVE", readOnlyReason: null }),
       }),
@@ -974,7 +979,7 @@ describe("SubscriptionMutationService.subscribe (MRR = signed change)", () => {
       planKey: "GROWTH",
       currentPlan: "TEAM",
     });
-    expect(tx.tenant.update.mock.calls[0][0].data).toMatchObject({ plan: "TEAM" });
+    expect(tx.tenant.updateMany.mock.calls[0][0].data).toMatchObject({ plan: "TEAM" });
   });
 
   /**
@@ -3058,6 +3063,54 @@ describe("STRIPE-CANCEL-1 — self-serve cancel/resume propagate to Stripe", () 
     expect(stripe.updateSubscription).not.toHaveBeenCalled();
   });
 
+  it("R1 option B: resume() of a SCHEDULED DOWNGRADE on a Stripe tenant asks for the pushed lower price to be put back (after the local write)", async () => {
+    const { svc, tx, scheduledPrice } = make({
+      tenantStatus: "ACTIVE",
+      sub: activeSub({ stripeSubId: "sub_x", downgradeToPlanKey: "STARTER" }),
+    });
+    await svc.resume("t1", "admin");
+    expect(scheduledPrice.restoreAfterScheduleCleared).toHaveBeenCalledWith("t1", "STARTER");
+    expect(tx.tenantSubscription.update.mock.invocationCallOrder[0]).toBeLessThan(
+      scheduledPrice.restoreAfterScheduleCleared.mock.invocationCallOrder[0],
+    );
+  });
+
+  it("review: cancel() of a SCHEDULED DOWNGRADE on a Stripe tenant asks for the pushed lower price to be put back (after the local write)", async () => {
+    const { svc, tx, scheduledPrice } = make({
+      tenantStatus: "ACTIVE",
+      sub: activeSub({ stripeSubId: "sub_x", downgradeToPlanKey: "STARTER" }),
+    });
+    await svc.cancel("t1", "admin");
+    expect(scheduledPrice.restoreAfterScheduleCleared).toHaveBeenCalledWith("t1", "STARTER");
+    expect(tx.tenantSubscription.update.mock.invocationCallOrder[0]).toBeLessThan(
+      scheduledPrice.restoreAfterScheduleCleared.mock.invocationCallOrder[0],
+    );
+  });
+
+  it("review: cancel() with no downgrade, or no Stripe subscription, restores nothing", async () => {
+    const a = make({ tenantStatus: "ACTIVE", sub: activeSub({ stripeSubId: "sub_x" }) });
+    await a.svc.cancel("t1", "admin");
+    const b = make({
+      tenantStatus: "ACTIVE",
+      sub: activeSub({ stripeSubId: null, downgradeToPlanKey: "STARTER" }),
+    });
+    await b.svc.cancel("t1", "admin");
+    expect(a.scheduledPrice.restoreAfterScheduleCleared).not.toHaveBeenCalled();
+    expect(b.scheduledPrice.restoreAfterScheduleCleared).not.toHaveBeenCalled();
+  });
+
+  it("R1 option B: resume() with no downgrade, or no Stripe subscription, restores nothing", async () => {
+    const a = make({ tenantStatus: "ACTIVE", sub: activeSub({ stripeSubId: "sub_x" }) });
+    await a.svc.resume("t1", "admin");
+    const b = make({
+      tenantStatus: "ACTIVE",
+      sub: activeSub({ stripeSubId: null, downgradeToPlanKey: "STARTER" }),
+    });
+    await b.svc.resume("t1", "admin");
+    expect(a.scheduledPrice.restoreAfterScheduleCleared).not.toHaveBeenCalled();
+    expect(b.scheduledPrice.restoreAfterScheduleCleared).not.toHaveBeenCalled();
+  });
+
   it("resume() with a stripeSubId un-schedules the Stripe cancellation BEFORE the local write, then writes + emits", async () => {
     const { svc, tx, events, stripe } = make({
       // R4 (13): ACTIVE is a precondition of the R1 fix — spelled out, never relied on as a
@@ -3285,7 +3338,7 @@ describe("STRIPE-CANCEL-2 — cancel() propagates to Stripe for a READ_ONLY tena
     expect(stripe.updateSubscription).not.toHaveBeenCalled();
     // FINDING-2: the ONE local write this branch makes, scoped to the same pointer so a
     // concurrent re-subscribe is never clobbered. No status change, no ledger emit.
-    expect(prisma.tenantSubscription.updateMany).toHaveBeenCalledWith({
+    expect(tx.tenantSubscription.updateMany).toHaveBeenCalledWith({
       where: { tenantId: "t1", stripeSubId: "sub_x" },
       data: { stripeSubId: null },
     });
@@ -3298,7 +3351,7 @@ describe("STRIPE-CANCEL-2 — cancel() propagates to Stripe for a READ_ONLY tena
   // fell to the generic branch and threw 503 on every retry while the pointer was never
   // cleared, so a tenant in this state could never get out.
   it("REG-B399 cancel() READ_ONLY + a Stripe sub already cancelled → treated as success, pointer dropped, no 503", async () => {
-    const { svc, prisma, events, stripe } = make({
+    const { svc, tx, events, stripe } = make({
       tenantStatus: "READ_ONLY",
       sub: activeSub({ stripeSubId: "sub_x" }),
     });
@@ -3314,7 +3367,7 @@ describe("STRIPE-CANCEL-2 — cancel() propagates to Stripe for a READ_ONLY tena
     // Status is re-read rather than the message being matched — B218's lesson about brittle
     // message discriminators applies here too.
     expect(stripe.getSubscription).toHaveBeenCalledWith("sub_x");
-    expect(prisma.tenantSubscription.updateMany).toHaveBeenCalledWith({
+    expect(tx.tenantSubscription.updateMany).toHaveBeenCalledWith({
       where: { tenantId: "t1", stripeSubId: "sub_x" },
       data: { stripeSubId: null },
     });
@@ -3326,7 +3379,7 @@ describe("STRIPE-CANCEL-2 — cancel() propagates to Stripe for a READ_ONLY tena
   // stripeSubId intact — the same permanent lockout it existed to remove. The membership test is
   // the SET now, and these cases pin both halves of it.
   it("REG-B408 cancel() READ_ONLY + an incomplete_expired Stripe sub → treated as success, pointer dropped, no 503", async () => {
-    const { svc, prisma, events, stripe } = make({
+    const { svc, tx, events, stripe } = make({
       tenantStatus: "READ_ONLY",
       sub: activeSub({ stripeSubId: "sub_x" }),
     });
@@ -3340,7 +3393,7 @@ describe("STRIPE-CANCEL-2 — cancel() propagates to Stripe for a READ_ONLY tena
     stripe.getSubscription.mockResolvedValue({ status: "incomplete_expired" });
 
     await expect(svc.cancel("t1", "admin")).resolves.toEqual({ cancelled: "already_read_only" });
-    expect(prisma.tenantSubscription.updateMany).toHaveBeenCalledWith({
+    expect(tx.tenantSubscription.updateMany).toHaveBeenCalledWith({
       where: { tenantId: "t1", stripeSubId: "sub_x" },
       data: { stripeSubId: null },
     });
@@ -3350,7 +3403,7 @@ describe("STRIPE-CANCEL-2 — cancel() propagates to Stripe for a READ_ONLY tena
   it.each(["active", "trialing", "past_due", "unpaid", "paused", "incomplete"])(
     "REG-B408 guard: %s is NOT terminal — the 503 still surfaces and the pointer survives",
     async (status) => {
-      const { svc, prisma, events, stripe } = make({
+      const { svc, prisma, tx, events, stripe } = make({
         tenantStatus: "READ_ONLY",
         sub: activeSub({ stripeSubId: "sub_x" }),
       });
@@ -3361,13 +3414,13 @@ describe("STRIPE-CANCEL-2 — cancel() propagates to Stripe for a READ_ONLY tena
       // opposite defect to B408, and the worse one. `unpaid` in particular LOOKS dead (retries
       // exhausted) but still bills on repair, and `incomplete`'s first payment can still land.
       await expect(svc.cancel("t1", "admin")).rejects.toBeInstanceOf(ServiceUnavailableException);
-      expect(prisma.tenantSubscription.updateMany).not.toHaveBeenCalled();
+      expect(tx.tenantSubscription.updateMany).not.toHaveBeenCalled();
       expect(events.emit).not.toHaveBeenCalled();
     },
   );
 
   it("REG-B408 guard: an unrecognised future status is NOT assumed terminal", async () => {
-    const { svc, prisma, stripe } = make({
+    const { svc, prisma, tx, stripe } = make({
       tenantStatus: "READ_ONLY",
       sub: activeSub({ stripeSubId: "sub_x" }),
     });
@@ -3377,11 +3430,11 @@ describe("STRIPE-CANCEL-2 — cancel() propagates to Stripe for a READ_ONLY tena
     stripe.getSubscription.mockResolvedValue({ status: "some_future_status" });
 
     await expect(svc.cancel("t1", "admin")).rejects.toBeInstanceOf(ServiceUnavailableException);
-    expect(prisma.tenantSubscription.updateMany).not.toHaveBeenCalled();
+    expect(tx.tenantSubscription.updateMany).not.toHaveBeenCalled();
   });
 
   it("REG-B399 a SECOND cancel() on the same READ_ONLY tenant is a no-op success — the cleared pointer means Stripe is never called again", async () => {
-    const { svc, prisma, events, stripe } = make({
+    const { svc, prisma, tx, events, stripe } = make({
       tenantStatus: "READ_ONLY",
       // The state the first cancel() leaves behind: row intact, pointer gone.
       sub: activeSub(), // stripeSubId: null
@@ -3389,7 +3442,7 @@ describe("STRIPE-CANCEL-2 — cancel() propagates to Stripe for a READ_ONLY tena
     await expect(svc.cancel("t1", "admin")).resolves.toEqual({ cancelled: "already_read_only" });
     expect(stripe.cancelSubscription).not.toHaveBeenCalled();
     expect(stripe.getSubscription).not.toHaveBeenCalled();
-    expect(prisma.tenantSubscription.updateMany).not.toHaveBeenCalled();
+    expect(tx.tenantSubscription.updateMany).not.toHaveBeenCalled();
     expect(events.emit).not.toHaveBeenCalled();
   });
 
@@ -3415,12 +3468,12 @@ describe("STRIPE-CANCEL-2 — cancel() propagates to Stripe for a READ_ONLY tena
     await expect(svc.cancel("t1", "admin")).rejects.toBeInstanceOf(ServiceUnavailableException);
     expect(tx.tenantSubscription.update).not.toHaveBeenCalled();
     // FINDING-2: the pointer survives an unconfirmed outcome — the 503 still writes NOTHING.
-    expect(prisma.tenantSubscription.updateMany).not.toHaveBeenCalled();
+    expect(tx.tenantSubscription.updateMany).not.toHaveBeenCalled();
     expect(events.emit).not.toHaveBeenCalled();
   });
 
   it("REG-B399 an inconclusive re-read after a generic failure still throws 503 and writes nothing", async () => {
-    const { svc, prisma, events, stripe } = make({
+    const { svc, prisma, tx, events, stripe } = make({
       tenantStatus: "READ_ONLY",
       sub: activeSub({ stripeSubId: "sub_x" }),
     });
@@ -3428,7 +3481,7 @@ describe("STRIPE-CANCEL-2 — cancel() propagates to Stripe for a READ_ONLY tena
     // The re-read fails too (not a 404): nothing is confirmed, so it must NOT be read as success.
     stripe.getSubscription.mockRejectedValue(new Error("still boom"));
     await expect(svc.cancel("t1", "admin")).rejects.toBeInstanceOf(ServiceUnavailableException);
-    expect(prisma.tenantSubscription.updateMany).not.toHaveBeenCalled();
+    expect(tx.tenantSubscription.updateMany).not.toHaveBeenCalled();
     expect(events.emit).not.toHaveBeenCalled();
   });
 
@@ -3442,11 +3495,37 @@ describe("STRIPE-CANCEL-2 — cancel() propagates to Stripe for a READ_ONLY tena
     expect(stripe.cancelSubscription).toHaveBeenCalledTimes(1);
     expect(tx.tenantSubscription.update).not.toHaveBeenCalled();
     // FINDING-2: gone is also a confirmed end state, so the dead pointer goes too.
-    expect(prisma.tenantSubscription.updateMany).toHaveBeenCalledWith({
+    expect(tx.tenantSubscription.updateMany).toHaveBeenCalledWith({
       where: { tenantId: "t1", stripeSubId: "sub_x" },
       data: { stripeSubId: null },
     });
     expect(events.emit).not.toHaveBeenCalled();
+  });
+
+  // SA-736r M5 (review nit): the pointer release and the coupon reset commit in ONE tx, Tenant lock first.
+  it("SA-736r: the READ_ONLY pointer release and the coupon reset share one transaction (lock first, release, reset)", async () => {
+    const { svc, prisma, tx, events, stripe } = make({
+      tenantStatus: "READ_ONLY",
+      sub: activeSub({
+        stripeSubId: "sub_x",
+        couponFull: true,
+        tenant: { status: "READ_ONLY", class: "PRODUCTION", deletedAt: null },
+      }),
+    });
+    const order: string[] = [];
+    tx.$queryRaw.mockImplementation(async (strings: TemplateStringsArray) => {
+      if (strings.join("").includes("FOR UPDATE")) order.push("lock");
+      return [];
+    });
+    tx.tenantSubscription.updateMany.mockImplementation(async ({ data }: any) => {
+      order.push("data" in { data } && "stripeSubId" in data ? "release" : "coupon-reset");
+      return { count: 1 };
+    });
+    stripe.cancelSubscription.mockResolvedValue({});
+    await expect(svc.cancel("t1", "admin")).resolves.toEqual({ cancelled: "already_read_only" });
+    expect(order.slice(-3)).toEqual(["lock", "release", "coupon-reset"]);
+    expect(prisma.$transaction).toHaveBeenCalled();
+    expect(events.emit).not.toHaveBeenCalled(); // READ_ONLY is not paying: the reset books 0
   });
 });
 

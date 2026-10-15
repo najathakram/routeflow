@@ -28,6 +28,18 @@ describe("LiftRuleDialog", () => {
     expect(post).not.toHaveBeenCalled();
   });
 
+  it("a rule that covers many products says so instead of naming one", () => {
+    const many = {
+      ...rule,
+      categoryName: null,
+      targetSummary: { products: 12, categories: 1, preview: [] },
+    } as SellingRestrictionListItemDto;
+    renderWithProviders(<LiftRuleDialog rule={many} onClose={jest.fn()} />);
+    expect(
+      screen.getByText(/The 13 products and labels in this rule will stop being restricted/),
+    ).toBeInTheDocument();
+  });
+
   it("posts the trimmed reason to the lift endpoint, then closes", async () => {
     post.mockResolvedValueOnce({ data: { id: "r1" } });
     const onClose = open();

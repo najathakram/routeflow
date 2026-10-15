@@ -2,6 +2,8 @@ import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { apiClient } from "../api-client";
 import type { ChangeRequest, ChangeRequestResolveAction } from "@/lib/change-requests";
 import { fetchPdfBlob } from "../fetch-pdf-blob";
+import { keptDraftInvoiceId, keptOrderId } from "../kept-draft-invoice";
+import { isDefinitiveSaleRefusal } from "@routeflow/types/sale-attempt";
 import type {
   ActiveOrderSummary,
   BatchShipRequest,
@@ -17,6 +19,7 @@ import type {
   OrderCancelBlockedReason,
 } from "@routeflow/types";
 import type { LocalErrorToastOption } from "@/lib/local-error-toast";
+import type { HandOverSoldBy } from "@/lib/handover-stamp";
 
 export type { ChangeRequest } from "@/lib/change-requests";
 
@@ -32,6 +35,8 @@ export type {
 export interface Order {
   id: string;
   orderNumber: string;
+  /** Row 372: the latest edit revision (GET /orders/:id); the edit save sends it back as `expectedRevisionNumber`. */
+  revisionNumber?: number;
   customerId: string;
   customer?: {
     id: string;
@@ -46,6 +51,16 @@ export interface Order {
   status: "DRAFT" | "PENDING" | "CONFIRMED" | "OUT_FOR_DELIVERY" | "DELIVERED" | "CANCELLED";
   /** ROUTE = dispatched on a delivery route (default); SHIP = supplier/carrier-shipped, excluded from trip/route dispatch; PICKUP = order ahead, picked up at the store. */
   fulfillPath: "ROUTE" | "SHIP" | "PICKUP";
+  /** Walk-in counter sale (PICKUP + counterSale). Never a POS-mode order: see `isPosOrder` (pos-orders.ts). */
+  counterSale?: boolean | null;
+  /** Row 342, STAFF reads only (absent on a buyer read / older API): the register the order was handed over at. */
+  registerKey?: string | null;
+  /** Row 342, staff reads only: the cashier's display name the API built once; null = none stamped. */
+  handedOverBy?: string | null;
+  /** Row 342: the moment the hand-over moved the order to DELIVERED (the stamp line's time). */
+  deliveredAt?: string | null;
+  /** Row 342, staff reads only: the cashier relation (the API selects the username). */
+  soldBy?: HandOverSoldBy | null;
   urgent: boolean;
   subtotal: number;
   tax: number;
@@ -68,6 +83,8 @@ export interface Order {
     total: number;
     /** The server's default PDF stage for this invoice: "final" once issued or settled at shipment. */
     pdfVariant?: "draft" | "final";
+    /** Each line's STORED tax rate (a fraction) and nothing else of the line: the edit panel names a rate only from these. */
+    items?: Array<{ taxRate?: number | string | null }>;
     /** CREDIT_NOTE payments only (server-scoped include), listed by the order's
      *  "Applied credits" panel (#2404). `creditNote` is attached by the order read
      *  (InvoicePayment has no relation); `autoApplied` is SA-436 PR-1's column. */
@@ -390,11 +407,33 @@ export interface CreateSaleDto {
  */
 export function useCreateSale() {
   const qc = useQueryClient();
-  return useMutation<{ id: string; invoiceNumber?: string }, Error, CreateSaleDto>({
-    mutationFn: (dto) => apiClient.post("/orders/sell", dto).then((r) => r.data),
+  // Row 485: `idempotencyKey` travels as the Idempotency-Key HEADER (like the counter sale), never in the body.
+  return useMutation<
+    { id: string; invoiceNumber?: string },
+    Error,
+    CreateSaleDto & { idempotencyKey?: string }
+  >({
+    // Row 485: an UNKNOWN outcome (a 5xx, a dropped connection, a body naming a committed sale) is rendered by the
+    // page's lock panel alone; the global toast would contradict it. A definitive refusal still reaches the toast.
+    meta: { localErrorToast: (err: unknown) => !isDefinitiveSaleRefusal(err) },
+    mutationFn: ({ idempotencyKey, ...dto }) =>
+      apiClient
+        .post(
+          "/orders/sell",
+          dto,
+          idempotencyKey ? { headers: { "Idempotency-Key": idempotencyKey } } : undefined,
+        )
+        .then((r) => r.data),
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ["orders"] });
       qc.invalidateQueries({ queryKey: ["invoices"] });
+    },
+    // Row 466: the sale and its invoice exist even when the send step failed.
+    onError: (err) => {
+      if (keptDraftInvoiceId(err) || keptOrderId(err)) {
+        qc.invalidateQueries({ queryKey: ["orders"] });
+        qc.invalidateQueries({ queryKey: ["invoices"] });
+      }
     },
   });
 }
@@ -421,7 +460,7 @@ export function useUninvoicedOrders(customerId: string | null | undefined) {
 export function useActiveOrderForCustomer(
   customerId: string | null | undefined,
   /** The path the order being built is on: the merge preview must look for the same target create would. */
-  fulfillPath?: "ROUTE" | "SHIP",
+  fulfillPath?: "ROUTE" | "SHIP" | "PICKUP",
 ) {
   return useQuery<ActiveOrderSummary | null>({
     queryKey: ["orders", "active", customerId, fulfillPath],
@@ -491,7 +530,7 @@ export interface ItemUpdate {
   overrideReason?: string; // optional note explaining the override
 }
 
-export function useUpdateOrderItems() {
+export function useUpdateOrderItems(options?: LocalErrorToastOption) {
   const qc = useQueryClient();
   return useMutation<
     Order,
@@ -512,8 +551,11 @@ export function useUpdateOrderItems() {
        *  `orderId` are DERIVED server-side from the order being edited, never sent here (see
        *  UpdateOrderItemsDto.inlineReturn). */
       inlineReturn?: InlineReturnLinesRequest;
+      /** Row 372: the `revisionNumber` the editor loaded; behind the server's latest it is 409 ORDER_REVISION_STALE. */
+      expectedRevisionNumber?: number;
     }
   >({
+    meta: options?.localErrorToast ? { localErrorToast: options.localErrorToast } : undefined,
     mutationFn: ({
       id,
       items,
@@ -522,6 +564,7 @@ export function useUpdateOrderItems() {
       shippingFee,
       appliedCreditNotes,
       inlineReturn,
+      expectedRevisionNumber,
     }) =>
       apiClient
         .patch<Order>(`/orders/${id}/items`, {
@@ -531,6 +574,7 @@ export function useUpdateOrderItems() {
           shippingFee,
           appliedCreditNotes,
           inlineReturn,
+          expectedRevisionNumber,
         })
         .then((r) => r.data),
     onSuccess: (data, variables) => {
@@ -646,7 +690,7 @@ export function usePatchOrderCommissionRate() {
 
 export function usePatchOrderFulfillPath(options?: LocalErrorToastOption) {
   const qc = useQueryClient();
-  return useMutation<Order, Error, { id: string; fulfillPath: "ROUTE" | "SHIP" }>({
+  return useMutation<Order, Error, { id: string; fulfillPath: "ROUTE" | "SHIP" | "PICKUP" }>({
     meta: options?.localErrorToast ? { localErrorToast: options.localErrorToast } : undefined,
     mutationFn: ({ id, fulfillPath }) =>
       apiClient.patch(`/orders/${id}/fulfill-path`, { fulfillPath }).then((r) => r.data),

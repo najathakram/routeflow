@@ -3,10 +3,18 @@ import { Pressable, ScrollView, StyleSheet, Text, TextInput, View } from "react-
 import { SafeAreaView } from "react-native-safe-area-context";
 import { Ionicons } from "@expo/vector-icons";
 import { useRouter } from "expo-router";
+import { useQueryClient } from "@tanstack/react-query";
 import { ios } from "@routeflow/ui/tokens";
 import { NavBackButton, NavBar } from "@routeflow/ui/mobile/ios";
 import { useCartStore } from "../../../store/cartStore";
+import { BUYER_QTY_SPLIT_MISMATCH_COPY, isQtySplitMismatch } from "../../../lib/buyer-qty-split";
 import { useBuyerCreateOrder, useBuyerPromotions } from "../../../lib/api/buyer";
+import {
+  BUYER_CAPABILITIES_KEY,
+  useSellerAcceptingOrders,
+} from "../../../lib/api/buyer-capabilities";
+import { useBuyerSessionStore } from "../../../lib/buyer-session-store";
+import { sellerUnavailableCopy, submitErrorCopy } from "../../../lib/seller-unavailable";
 import { showToast } from "../../../lib/toast";
 import { confirm } from "../../../lib/confirm";
 import {
@@ -54,6 +62,11 @@ export default function CartScreen() {
   const { items, step, setUnits, clear } = useCartStore();
   const createMut = useBuyerCreateOrder();
   const { data: promotions } = useBuyerPromotions();
+  const qc = useQueryClient();
+  // SA-733r6: a paused seller takes no online orders; one quiet line says so and Place Order is disabled.
+  const sellerAccepting = useSellerAcceptingOrders();
+  const sellerName = useBuyerSessionStore((s) => s.activeSeller?.tenant.name);
+  const unavailableCopy = sellerUnavailableCopy(sellerName);
   const [notes, setNotes] = useState("");
   const [deliveryDate, setDeliveryDate] = useState("");
 
@@ -67,6 +80,7 @@ export default function CartScreen() {
   );
 
   const onPlaceOrder = () => {
+    if (!sellerAccepting) return;
     if (items.length === 0) {
       showToast("Add items from the catalog before placing an order.");
       return;
@@ -89,6 +103,18 @@ export default function CartScreen() {
           router.replace(`/(customer)/orders/${order.id}`);
         },
         onError: (e: any) => {
+          // SA-733r6: the seller was paused after the capability read: same copy, and re-read it so the line shows.
+          const unavailable = submitErrorCopy(e, sellerName);
+          if (unavailable) {
+            showToast(unavailable);
+            qc.invalidateQueries({ queryKey: BUYER_CAPABILITIES_KEY });
+            return;
+          }
+          // Row 531: the quantity and the box split disagreed; the server saved nothing.
+          if (isQtySplitMismatch(e)) {
+            showToast(BUYER_QTY_SPLIT_MISMATCH_COPY);
+            return;
+          }
           // The key already made an order: fixed copy, with an "Open order" action when its id is known.
           const existing = buyerOrderConflict(e);
           if (existing?.orderId) {
@@ -137,6 +163,18 @@ export default function CartScreen() {
         contentContainerStyle={{ paddingBottom: 120 }}
         keyboardShouldPersistTaps="handled"
       >
+        {!sellerAccepting ? (
+          <View style={styles.section}>
+            <Text
+              role="status"
+              accessibilityLiveRegion="polite"
+              testID="seller-unavailable-line"
+              style={styles.unavailableLine}
+            >
+              {unavailableCopy}
+            </Text>
+          </View>
+        ) : null}
         {items.length === 0 ? (
           <View style={styles.empty}>
             <Ionicons name="cart-outline" size={48} color={ios.label3} />
@@ -322,9 +360,11 @@ export default function CartScreen() {
       {items.length > 0 ? (
         <View style={styles.footer}>
           <Pressable
-            style={[styles.placeBtn, createMut.isPending && { opacity: 0.6 }]}
+            style={[styles.placeBtn, (createMut.isPending || !sellerAccepting) && { opacity: 0.6 }]}
             onPress={onPlaceOrder}
-            disabled={createMut.isPending}
+            disabled={createMut.isPending || !sellerAccepting}
+            accessibilityState={{ disabled: createMut.isPending || !sellerAccepting }}
+            accessibilityHint={sellerAccepting ? undefined : unavailableCopy}
           >
             <Text style={styles.placeBtnText}>
               {createMut.isPending
@@ -341,6 +381,16 @@ export default function CartScreen() {
 const styles = StyleSheet.create({
   safe: { flex: 1, backgroundColor: ios.bg },
   clearText: { fontSize: 15, fontFamily: "Inter_500Medium", color: ios.system.redInk },
+  unavailableLine: {
+    fontSize: 13,
+    fontFamily: "Inter_400Regular",
+    color: ios.label2,
+    backgroundColor: ios.bgElev,
+    borderRadius: 12,
+    paddingHorizontal: 14,
+    paddingVertical: 12,
+    marginTop: 12,
+  },
   empty: { padding: 60, alignItems: "center", gap: 12 },
   emptyText: { fontSize: 15, fontFamily: "Inter_500Medium", color: ios.label2 },
   browseBtn: {
