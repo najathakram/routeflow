@@ -52,6 +52,12 @@ const yes = () => screen.getByRole("button", { name: /Yes, delete/ });
 beforeEach(() => jest.clearAllMocks());
 
 describe("DeleteProductConfirm", () => {
+  it("P-15: stays red and opens with focus on Cancel", () => {
+    mount();
+    expect(yes().className).toMatch(/bg-danger/);
+    expect(screen.getByRole("button", { name: "Cancel" })).toHaveFocus();
+  });
+
   it("keeps its title and 'Yes, delete', with the vu-2 body (codes are freed)", () => {
     mount();
     expect(screen.getByText("Delete product?")).toBeInTheDocument();

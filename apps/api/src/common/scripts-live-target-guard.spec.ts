@@ -115,6 +115,7 @@ const EXEMPT: Record<string, Reason> = {
   "apps/api/scripts/report-b861-numbering-config.mjs": "read-only",
   "apps/api/scripts/report-b894-prorate-counts.mjs": "read-only",
   "apps/api/scripts/report-b949-source-deleted-applications.mjs": "read-only",
+  "apps/api/scripts/report-buyer-split-mismatch.mjs": "read-only",
   "apps/api/scripts/report-b961-already-returned-inline.mjs": "read-only",
   "apps/api/scripts/report-b965-mixed-unit-returns.mjs": "read-only",
   "apps/api/scripts/report-escaped-entities.mjs": "read-only",

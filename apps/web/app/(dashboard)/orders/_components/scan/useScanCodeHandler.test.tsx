@@ -231,3 +231,38 @@ describe("useScanCodeHandler - connectivity + quiet", () => {
     );
   });
 });
+
+describe("useScanCodeHandler local fast path (row 536)", () => {
+  beforeEach(() => jest.clearAllMocks());
+
+  it("a code already on the order is added again with NO lookup; a removed line looks it up again", async () => {
+    mockResolve.mockResolvedValue({ notFound: false, archived: false, product });
+    let onOrder = false;
+    const d = deps({ hasLine: () => onOrder, sessionKey: () => 1 });
+    const { result } = renderHook(() => useScanCodeHandler(d));
+
+    await result.current.current("012345678905");
+    onOrder = true;
+    await result.current.current("012345678905");
+    await result.current.current("012345678905");
+    expect(mockResolve).toHaveBeenCalledTimes(1);
+    expect(d.addLineItem).toHaveBeenCalledTimes(3);
+
+    onOrder = false; // the line was deleted
+    await result.current.current("012345678905");
+    expect(mockResolve).toHaveBeenCalledTimes(2);
+  });
+
+  it("the remembered product never outlives its order: a new session key forces a fresh lookup", async () => {
+    mockResolve.mockResolvedValue({ notFound: false, archived: false, product });
+    let session = 1;
+    const d = deps({ hasLine: () => true, sessionKey: () => session });
+    const { result } = renderHook(() => useScanCodeHandler(d));
+    await result.current.current("012345678905");
+    await result.current.current("012345678905");
+    expect(mockResolve).toHaveBeenCalledTimes(1);
+    session = 2; // a new order opened
+    await result.current.current("012345678905");
+    expect(mockResolve).toHaveBeenCalledTimes(2);
+  });
+});

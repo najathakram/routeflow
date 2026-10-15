@@ -5,10 +5,11 @@ import { UnitPicker } from "@/components/UnitPicker";
 import { useProductUnits, useUnitsEnabled } from "@/lib/api/product-units";
 import { buildUnitOptions, defaultUnitValue, type UnitOption } from "@/lib/unit-options";
 import { isShapedLine } from "@/lib/default-unit-line";
-import { ladderProductOf, type PackBase } from "@/lib/order-line-unit";
+import { ladderProductOf, unitPickerValueOf, type PackBase } from "@/lib/order-line-unit";
+import type { DerivedBaseMarker } from "@routeflow/pricing";
 
 /** The line fields the picker reads (structurally satisfied by the order modal's line). */
-export interface OrderLineUnitPickerLine {
+export interface OrderLineUnitPickerLine extends DerivedBaseMarker {
   productId: string;
   productName: string;
   isUnlisted?: boolean;
@@ -132,7 +133,7 @@ export function OrderLineUnitPicker({
       tier={tier}
       packPrice={packPrice}
       ariaLabel={`Sell ${line.productName} by`}
-      value={line.unitLabel ?? ""}
+      value={unitPickerValueOf(line)}
       onChange={(label) => {
         // "" = back to the pack, which must work even when the ladder is gone (no options to look in):
         // the held unit would otherwise be unfixable and the save would 400 on it.

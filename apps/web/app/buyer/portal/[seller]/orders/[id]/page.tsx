@@ -30,6 +30,7 @@ import {
   type BuyerOrder,
 } from "@/lib/api/buyer";
 import { computeLineSubtotal, normalizeBoxesPieces } from "@routeflow/pricing";
+import { buyerEditPayloadItems } from "@/lib/buyer-edit-payload";
 import { API_ERROR_CODES, SHIPPED_ORDER_MESSAGE } from "@routeflow/types";
 import { describeChangeRequest, describeResolution } from "@/lib/change-requests";
 import { fmtCalendarDate } from "@/lib/formatting";
@@ -651,11 +652,7 @@ export default function BuyerOrderDetailPage() {
     try {
       await updateItems.mutateAsync({
         orderId: order.id,
-        items: editItems.map((i) => ({
-          productId: i.productId,
-          qty: i.qty,
-          ...(i.orderItemId ? { orderItemId: i.orderItemId } : {}),
-        })),
+        items: buyerEditPayloadItems(editItems),
       });
       setEditMode(false);
     } catch (err: any) {

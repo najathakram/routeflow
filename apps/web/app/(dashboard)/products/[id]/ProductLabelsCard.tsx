@@ -2,8 +2,11 @@
 
 import * as React from "react";
 import { Loader2, Tag, X } from "lucide-react";
-import { Button, useToast } from "@routeflow/ui/web";
+import { Button, cn, TAP_TARGET, useToast } from "@routeflow/ui/web";
 import { useAuth } from "@/lib/auth-context";
+import { isStaffRole } from "@/lib/default-unit-line";
+import { isRuleAdmin } from "@/lib/rule-chooser";
+import { ADMIN_ONLY_CHANGE_HINT } from "@/lib/restriction-rules";
 import { PortalLimitsRow } from "./PortalLimitsRow";
 import {
   useProductCategories,
@@ -13,6 +16,7 @@ import {
 } from "@/lib/api/product-labels";
 
 // No error toasts here: the global MutationCache handler shows the server message once (B594).
+const FEDERAL_HINT_ID = "labels-federal-hint";
 const chip =
   "inline-flex items-center gap-1 rounded-full border border-surface-border bg-surface-raised px-2.5 py-1 text-xs font-medium text-navy";
 
@@ -20,10 +24,14 @@ const chip =
  * Restriction labels on one product. A variant also shows what it inherits (the parent's EFFECTIVE
  * set) and can opt out with a recorded reason. An opt-out lifts only the inherited LABEL: a rule on
  * the parent product itself still applies, and moving the variant makes its opt-out inactive.
- * Writes are TENANT_ADMIN-only (server-enforced).
+ * Staff (an operator or an account admin) add and remove labels (owner ruling 2026-10-14). A label an ACTIVE
+ * federal rule covers is account-admin-only (server-enforced): an operator sees its controls disabled, pointing at
+ * the one visible hint.
  */
 export function ProductLabelsCard({ productId }: { productId: string }) {
-  const isAdmin = useAuth().user?.role === "TENANT_ADMIN";
+  const role = useAuth().user?.role;
+  const isAdmin = isRuleAdmin(role);
+  const canWrite = isAdmin || isStaffRole(role);
   const { toast } = useToast();
   const { data, isLoading, isError } = useProductLabels(productId);
   const { data: categories = [], isError: categoriesFailed } = useProductCategories();
@@ -51,6 +59,18 @@ export function ProductLabelsCard({ productId }: { productId: string }) {
   const addable = categories.filter((c) => !taken.has(c.id));
   const busy = setLabel.isPending || removeLabel.isPending;
   const optOutName = data.inherited.find((l) => l.categoryId === optOutId)?.categoryName;
+  const federal = new Set(data.federalCategoryIds ?? []);
+  /** An operator may not write a label an active federal rule covers (the server refuses it too). */
+  const locked = (categoryId: string) => !isAdmin && federal.has(categoryId);
+  const showsLockedControl =
+    canWrite &&
+    !isAdmin &&
+    [
+      ...own.map((l) => l.categoryId),
+      ...data.inherited.map((l) => l.categoryId),
+      ...addable.map((c) => c.id),
+    ].some((id) => federal.has(id));
+  const hintFor = (categoryId: string) => (locked(categoryId) ? FEDERAL_HINT_ID : undefined);
 
   // `undoOptOut`: deleting an opt-out row RE-APPLIES the inherited restriction, so the message must
   // not say "removed" (that reads as the restriction being lifted, the opposite of what happened).
@@ -94,11 +114,14 @@ export function ProductLabelsCard({ productId }: { productId: string }) {
           {own.map((l) => (
             <li key={l.id} className={chip}>
               {l.categoryName}
-              {isAdmin && (
+              {canWrite && (
                 <button
                   type="button"
+                  // 44px hit area: now operator-visible on phones (SA should, #3467).
+                  className={cn(TAP_TARGET, "disabled:opacity-50")}
                   aria-label={`Remove ${l.categoryName}`}
-                  disabled={busy}
+                  disabled={busy || locked(l.categoryId)}
+                  aria-describedby={hintFor(l.categoryId)}
                   onClick={() => remove(l.categoryId, l.categoryName)}
                 >
                   <X className="h-3 w-3 text-navy/50 hover:text-danger" />
@@ -118,11 +141,15 @@ export function ProductLabelsCard({ productId }: { productId: string }) {
                 <span className="text-[11px] font-normal text-navy/50">
                   {active ? "opted out" : out ? "opt-out inactive: parent changed" : "from parent"}
                 </span>
-                {isAdmin && (
+                {canWrite && (
                   <button
                     type="button"
-                    className="text-[11px] font-medium text-brand-600 hover:underline disabled:opacity-50"
-                    disabled={busy}
+                    className={cn(
+                      TAP_TARGET,
+                      "text-[11px] font-medium text-brand-600 hover:underline disabled:opacity-50",
+                    )}
+                    disabled={busy || locked(l.categoryId)}
+                    aria-describedby={hintFor(l.categoryId)}
                     onClick={() =>
                       active
                         ? remove(l.categoryId, l.categoryName, true)
@@ -175,11 +202,12 @@ export function ProductLabelsCard({ productId }: { productId: string }) {
         </div>
       )}
 
-      {isAdmin && (
+      {canWrite && (
         <div className="mt-3 flex items-center gap-2">
           <select
             aria-label="Add a label"
             disabled={categoriesFailed}
+            aria-describedby={showsLockedControl ? FEDERAL_HINT_ID : undefined}
             value={pickId}
             onChange={(e) => setPickId(e.target.value)}
             className="h-9 min-w-0 flex-1 rounded border border-surface-border bg-white px-2 text-sm text-navy focus:outline-none focus:ring-2 focus:ring-brand-500"
@@ -192,8 +220,8 @@ export function ProductLabelsCard({ productId }: { productId: string }) {
                   : "Add a label…"}
             </option>
             {addable.map((c) => (
-              <option key={c.id} value={c.id}>
-                {c.name}
+              <option key={c.id} value={c.id} disabled={locked(c.id)}>
+                {locked(c.id) ? `${c.name} (account admin only)` : c.name}
               </option>
             ))}
           </select>
@@ -211,6 +239,11 @@ export function ProductLabelsCard({ productId }: { productId: string }) {
             Add
           </Button>
         </div>
+      )}
+      {showsLockedControl && (
+        <p id={FEDERAL_HINT_ID} className="mt-2 text-xs text-navy/70">
+          {ADMIN_ONLY_CHANGE_HINT}
+        </p>
       )}
       <PortalLimitsRow productId={productId} />
     </div>

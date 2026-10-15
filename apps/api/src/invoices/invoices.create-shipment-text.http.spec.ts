@@ -39,7 +39,13 @@ describe("POST /invoices: carrier / tracking text (controller level)", () => {
       ],
     })
       .overrideGuard(JwtAuthGuard)
-      .useValue({ canActivate: () => true })
+      // H3b (#3435): the controller passes the caller's id as the override actor, so the stub signs a user in
+      .useValue({
+        canActivate: (ctx: any) => {
+          ctx.switchToHttp().getRequest().user = { sub: "u-test", role: "TENANT_ADMIN" };
+          return true;
+        },
+      })
       .overrideGuard(RolesGuard)
       .useValue({ canActivate: () => true })
       .compile();

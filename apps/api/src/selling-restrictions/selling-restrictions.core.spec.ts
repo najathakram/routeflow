@@ -13,6 +13,9 @@ import {
   ruleBindsChannel,
   ruleHidesFromBuyer,
   ruleIsActive,
+  ruleMatchesProduct,
+  ruleTargetSets,
+  targetIsActive,
   UNKNOWN_PRODUCT_NAME,
   UNRESOLVED_STATE,
   type CustomerAddressFacts,
@@ -1005,5 +1008,74 @@ describe("portal limits: ruleHidesFromBuyer matches the decision rule by rule", 
   it("with no state on file: a portal-only limit shows, a legal ban hides", () => {
     expect(hides({ surface: "BUYER_PORTAL" }, UNRESOLVED_STATE)).toBe(false);
     expect(hides({ surface: "ALL" }, UNRESOLVED_STATE)).toBe(true);
+  });
+});
+
+describe("row 509: rule targets", () => {
+  const t = (
+    over: Partial<{
+      productId: string | null;
+      categoryId: string | null;
+      addedAt: Date;
+      removedAt: Date | null;
+    }>,
+  ) => ({
+    productId: null,
+    categoryId: null,
+    addedAt: day(-10),
+    removedAt: null,
+    ...over,
+  });
+
+  it("targetIsActive: added on/before at, removed strictly after (half-open, like a rule)", () => {
+    expect(targetIsActive(t({ addedAt: AT }), AT)).toBe(true);
+    expect(targetIsActive(t({ addedAt: day(1) }), AT)).toBe(false);
+    expect(targetIsActive(t({ removedAt: AT }), AT)).toBe(false);
+    expect(targetIsActive(t({ removedAt: day(1) }), AT)).toBe(true);
+  });
+
+  it("ruleTargetSets: null only with ZERO rows (legacy fallback); otherwise the active rows split by kind", () => {
+    expect(ruleTargetSets([], 0, AT)).toBeNull();
+    expect(ruleTargetSets([], 3, AT)).toEqual({ productIds: new Set(), categoryIds: new Set() });
+    const sets = ruleTargetSets(
+      [t({ productId: "a" }), t({ categoryId: "c" }), t({ productId: "gone", removedAt: day(-1) })],
+      3,
+      AT,
+    )!;
+    expect([...sets.productIds]).toEqual(["a"]);
+    expect([...sets.categoryIds]).toEqual(["c"]);
+  });
+
+  it("ruleMatchesProduct: targets win over the legacy column; product targets bind lineage, label targets labels", () => {
+    const sets = { productIds: new Set(["parent"]), categoryIds: new Set(["cat-vape"]) };
+    const r = rule({ categoryId: null, productId: "stale", targets: sets });
+    expect(ruleMatchesProduct(r, product({ id: "v", lineageIds: new Set(["v", "parent"]) }))).toBe(
+      true,
+    );
+    expect(ruleMatchesProduct(r, product({ effectiveCategoryIds: new Set(["cat-vape"]) }))).toBe(
+      true,
+    );
+    // the legacy column no longer matches once the rule has targets
+    expect(ruleMatchesProduct(r, product({ id: "stale", effectiveCategoryIds: new Set() }))).toBe(
+      false,
+    );
+    // an empty target set (every target removed) matches nothing
+    const empty = rule({ targets: { productIds: new Set(), categoryIds: new Set() } });
+    expect(ruleMatchesProduct(empty, product())).toBe(false);
+    // no targets at all: the legacy column decides (SA condition 1)
+    expect(ruleMatchesProduct(rule({ targets: null }), product())).toBe(true);
+  });
+});
+
+describe("multi-label ruling (owner): a product carries several labels and a rule on ANY one binds it", () => {
+  it("ruleMatchesProduct({A, B}, a rule on B) is true, legacy column or target row", () => {
+    const p = product({ effectiveCategoryIds: new Set(["cat-a", "cat-b"]) });
+    expect(ruleMatchesProduct(rule({ categoryId: "cat-b" }), p)).toBe(true);
+    const targeted = rule({
+      categoryId: "cat-c",
+      targets: { productIds: new Set(), categoryIds: new Set(["cat-b"]) },
+    });
+    expect(ruleMatchesProduct(targeted, p)).toBe(true);
+    expect(ruleMatchesProduct(rule({ categoryId: "cat-c" }), p)).toBe(false);
   });
 });

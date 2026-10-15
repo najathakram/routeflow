@@ -18,6 +18,7 @@ import {
 } from "../selling-restrictions/selling-restrictions.core";
 import type { SellingRestrictionsService } from "../selling-restrictions/selling-restrictions.service";
 import { API_ERROR_CODES } from "../common/api-error-codes";
+import { STORED_UNIT_LINE_SELECT } from "./unit-line-build";
 
 /**
  * Selling restrictions at `OrdersService.updateOrderItems` (lane R 2a-7). The service keeps the
@@ -52,6 +53,22 @@ export const EXISTING_LINE_SELECT = {
   // units_v1 (A1): the post-lock unit-resolution recompute needs the line's own snapshot.
   unitLabel: true,
 } as const;
+
+/** `updateOrderItems`' LOCKED read (B709): plus every column the diff branch reads off an existing line. */
+export const HELD_LINE_SELECT = {
+  ...EXISTING_LINE_SELECT,
+  ...STORED_UNIT_LINE_SELECT, // the stored unit snapshot the diff branch reads (master, units_v1)
+  deliveredQty: true,
+  invoicedQty: true,
+  unitPrice: true,
+  promoFreeUnits: true,
+  overrideReason: true,
+  authorChannel: true, // SA ruling #3418: carried onto a re-created line (editedLineAuthors)
+} as const;
+
+/** The `findMany` args of that LOCKED read, for one order. */
+export const heldLinesOf = (orderId: string) =>
+  ({ where: { orderId }, select: HELD_LINE_SELECT }) as const;
 
 /** How `updateOrderItems` applies this payload for this principal (mirrors its branches). */
 export type OrderEditMode = { kind: "merge" } | { kind: "replace"; actor: ReplaceActor };
@@ -126,4 +143,30 @@ export async function planOrderEditRestrictions(
         });
     },
   };
+}
+
+/**
+ * A DRAFT edit skips the restriction plan only while the order has no live (non-VOID) linked invoice; the reconcile
+ * after the edit copies the order's lines onto a SENT deposit mirror. That answer is read BEFORE the Order row lock, so
+ * re-ask it under the lock: if a mirror appeared meanwhile (a concurrent bill with a deposit), the edit was never
+ * judged, so refuse with the retryable 409 (the retry re-runs the pre-check and judges). Read-only.
+ */
+export async function assertNoMirrorAppearedUnderLock(
+  tx: { invoice: { findFirst(args: any): Promise<any> } },
+  orderId: string,
+  // The PRE-lock answer: true when the pre-check already saw a live mirror (or the order is not a DRAFT), i.e. the
+  // edit was judged (or the switch is off) on that basis. Only a mirror the pre-check did NOT see refuses here.
+  precheckJudged: boolean,
+  status: string | null | undefined,
+): Promise<void> {
+  if (precheckJudged || status !== "DRAFT") return;
+  const live = await tx.invoice.findFirst({
+    where: { orderId, status: { not: "VOID" } },
+    select: { id: true },
+  });
+  if (live)
+    throw new ConflictException({
+      code: API_ERROR_CODES.ORDER_CHANGED_DURING_EDIT,
+      message: "The order was billed while you were editing it — review it and try again.",
+    });
 }

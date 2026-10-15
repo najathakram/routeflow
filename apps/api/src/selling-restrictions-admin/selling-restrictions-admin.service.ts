@@ -12,6 +12,7 @@ import type {
   ProductLimitDto,
   ProductLimitsResponse,
   RestrictionStatus,
+  RuleTargetSummary,
   SellingRestrictionListItemDto,
 } from "@routeflow/types";
 import { PrismaService } from "../prisma/prisma.service";
@@ -22,6 +23,16 @@ import { activeRuleWhere, ruleIsActive } from "../selling-restrictions/selling-r
 import { CreateRestrictionDto } from "./dto/create-restriction.dto";
 import { LiftRestrictionDto } from "./dto/lift-restriction.dto";
 import { BULK_RESTRICTION_MAX, BulkRestrictionDto } from "./dto/bulk-restriction.dto";
+import { assertMayManageRule } from "./rule-lock";
+import {
+  activeTargetsWhere,
+  decodeCursor,
+  encodeCursor,
+  EMPTY_TARGET_SUMMARY,
+  normalizeTargetIds,
+  resolveTargetIds,
+  targetSummaries,
+} from "./rule-target-read";
 
 const INCLUDE = {
   category: { select: { name: true } },
@@ -41,22 +52,6 @@ export const DEFAULT_LIFT_REASON = "Limit lifted";
 /** Chips per page of GET /selling-restrictions?productId= (a product carries a handful in practice). */
 export const PRODUCT_LIMITS_PAGE_SIZE = 50;
 
-/** The opaque keyset cursor of the chips list: the last id of the page, base64url-wrapped. */
-function encodeCursor(id: string): string {
-  return Buffer.from(JSON.stringify({ id }), "utf8").toString("base64url");
-}
-
-function decodeCursor(cursor: string): string {
-  try {
-    const parsed: unknown = JSON.parse(Buffer.from(cursor, "base64url").toString("utf8"));
-    const id = (parsed as { id?: unknown } | null)?.id;
-    if (typeof id === "string" && id.length > 0 && id.length <= 64) return id;
-  } catch {
-    /* fall through to the 400 */
-  }
-  throw new BadRequestException("That page cursor is not valid. Reload the list.");
-}
-
 /** The 409 of a batch lift: nothing was changed; names what blocked it. */
 function liftConflict(notFoundIds: string[], alreadyLiftedIds: string[]): ConflictException {
   return new ConflictException({
@@ -71,10 +66,15 @@ function liftConflict(notFoundIds: string[], alreadyLiftedIds: string[]): Confli
   });
 }
 
+/** The (already normalised) ids a create covers: products first when any, then labels. */
+interface TargetIds {
+  productIds: string[];
+  categoryIds: string[];
+}
+
 /** What single and bulk create hand the shared validation path. */
 interface RuleInput {
-  categoryId?: string;
-  productIds?: string[];
+  target: TargetIds;
   jurisdiction: RestrictionJurisdiction;
   states?: string[];
   surface: RestrictionSurface;
@@ -83,9 +83,9 @@ interface RuleInput {
   reason: string;
 }
 
-/** A validated create: one target scope, normalised states, a checked window. */
+/** A validated create: the target ids, normalised states, a checked window. */
 interface PreparedRules {
-  target: { categoryId: string } | { productIds: string[] };
+  target: TargetIds;
   jurisdiction: RestrictionJurisdiction;
   states: string[];
   surface: RestrictionSurface;
@@ -196,9 +196,52 @@ export function restrictionStatus(row: Row, now: Date): RestrictionStatus {
   return "SCHEDULED";
 }
 
-/** One chip: how the rule reaches `productId` (its own, an ancestor's, or a category's), and through what. */
-function toProductLimit(row: Row, productId: string): ProductLimitDto {
-  const via = row.categoryId ? "CATEGORY" : row.productId === productId ? "PRODUCT" : "PARENT";
+/** A chip row: the rule, its active targets that touch the product, and its FULL target-row count. */
+type ChipRow = Row & {
+  targets: Array<{
+    productId: string | null;
+    categoryId: string | null;
+    product: { name: string } | null;
+    category: { name: string } | null;
+  }>;
+  _count: { targets: number };
+};
+
+/**
+ * How a rule reaches `productId` (row 509): a direct product target (PRODUCT, "Remove from rule" applies), an
+ * ancestor's product target (PARENT), or a label target (CATEGORY). A rule with ZERO target rows is read by its
+ * legacy column, exactly as the engine does (SA condition 1).
+ */
+function chipReach(
+  row: ChipRow,
+  productId: string,
+  lineage: ReadonlySet<string>,
+): { via: ProductLimitDto["via"]; viaLabel: string | null; direct: boolean } {
+  if (row._count.targets === 0) {
+    if (row.productId && lineage.has(row.productId)) {
+      return row.productId === productId
+        ? { via: "PRODUCT", viaLabel: null, direct: true }
+        : { via: "PARENT", viaLabel: row.product?.name ?? null, direct: false };
+    }
+    return { via: "CATEGORY", viaLabel: row.category?.name ?? null, direct: false };
+  }
+  if (row.targets.some((t) => t.productId === productId)) {
+    return { via: "PRODUCT", viaLabel: null, direct: true };
+  }
+  const parent = row.targets.find((t) => t.productId !== null);
+  if (parent) return { via: "PARENT", viaLabel: parent.product?.name ?? null, direct: false };
+  const label = row.targets.find((t) => t.categoryId !== null);
+  return { via: "CATEGORY", viaLabel: label?.category?.name ?? null, direct: false };
+}
+
+/** One chip: how the rule reaches `productId` (its own, an ancestor's, or a label's), and through what. */
+function toProductLimit(
+  row: ChipRow,
+  productId: string,
+  lineage: ReadonlySet<string>,
+  summary: RuleTargetSummary | undefined,
+): ProductLimitDto {
+  const { via, viaLabel, direct } = chipReach(row, productId, lineage);
   return {
     id: row.id,
     jurisdiction: row.jurisdiction,
@@ -208,17 +251,18 @@ function toProductLimit(row: Row, productId: string): ProductLimitDto {
     effectiveFrom: row.effectiveFrom.toISOString(),
     effectiveTo: row.effectiveTo ? row.effectiveTo.toISOString() : null,
     via,
-    viaLabel:
-      via === "CATEGORY"
-        ? (row.category?.name ?? null)
-        : via === "PARENT"
-          ? (row.product?.name ?? null)
-          : null,
+    viaLabel,
     liftedAt: row.liftedAt ? row.liftedAt.toISOString() : null,
+    directTarget: direct,
+    targetSummary: summary ?? EMPTY_TARGET_SUMMARY,
   };
 }
 
-function toDto(row: Row, now: Date): SellingRestrictionListItemDto {
+export function toDto(
+  row: Row,
+  now: Date,
+  summary?: RuleTargetSummary,
+): SellingRestrictionListItemDto {
   return {
     id: row.id,
     tenantId: row.tenantId,
@@ -240,8 +284,16 @@ function toDto(row: Row, now: Date): SellingRestrictionListItemDto {
     status: restrictionStatus(row, now),
     categoryName: row.category?.name ?? null,
     productName: row.product?.name ?? null,
+    ...(summary ? { targetSummary: summary } : {}),
+    // Row 509 PR3: the current settings revision (an edit sends it back as expectedRevision).
+    ...(typeof (row as { revision?: number }).revision === "number"
+      ? { revision: (row as { revision: number }).revision }
+      : {}),
   };
 }
+
+export { INCLUDE as RULE_INCLUDE };
+export type { Row as RuleRow };
 
 /**
  * Rule ADMIN (Lane R step 5a; portal limits Branch B): list / create (single and bulk) / lift
@@ -273,7 +325,12 @@ export class SellingRestrictionsAdminService {
       orderBy: [{ createdAt: "desc" }, { id: "asc" }],
       take: LIST_CAP,
     });
-    return rows.map((r) => toDto(r, now));
+    const summaries = await targetSummaries(
+      this.prisma.forTenant(),
+      this.requireTenant(),
+      rows.map((r) => r.id),
+    );
+    return rows.map((r) => toDto(r, now, summaries.get(r.id) ?? EMPTY_TARGET_SUMMARY));
   }
 
   /**
@@ -303,19 +360,10 @@ export class SellingRestrictionsAdminService {
   }
 
   /**
-   * The ONE validation path for single and bulk create (pure; no reads): exactly one target
-   * (a category, or 1..BULK_RESTRICTION_MAX products), the states rules, the date window.
+   * The ONE validation path for single and bulk create (pure; no reads): the states rules and the date window.
+   * The target ids arrive already normalised (`createTargets` / `bulkTargets`).
    */
   private prepare(input: RuleInput): PreparedRules {
-    const productIds = [...new Set(input.productIds ?? [])];
-    if (!input.categoryId === (productIds.length === 0)) {
-      throw new BadRequestException("Target exactly one of a category or a product.");
-    }
-    if (productIds.length > BULK_RESTRICTION_MAX) {
-      throw new BadRequestException(
-        `Send at most ${BULK_RESTRICTION_MAX} products at once, or limit a whole category instead.`,
-      );
-    }
     const states = this.normalizeStates(input.jurisdiction, input.states);
     const now = new Date();
     const effectiveFrom = input.effectiveFrom ? new Date(input.effectiveFrom) : now;
@@ -324,7 +372,7 @@ export class SellingRestrictionsAdminService {
       throw new BadRequestException("The end date must be after the start date.");
     }
     return {
-      target: input.categoryId ? { categoryId: input.categoryId } : { productIds },
+      target: input.target,
       jurisdiction: input.jurisdiction,
       states,
       surface: input.surface,
@@ -336,89 +384,123 @@ export class SellingRestrictionsAdminService {
   }
 
   /**
-   * Inside the caller's transaction: the target must be this tenant's (a category that is not
-   * archived; every product), identical live rules are skipped when asked, then ONE createMany.
-   * Ids are minted here so the audit row and the response can name them.
+   * Single create's targets: the legacy single `productId` / `categoryId`, OR row 509 `targets` (products and/or
+   * labels, mixed, 1..RULE_TARGETS_MAX_PER_REQUEST in all); exactly one form.
    */
-  private async writeRules(
+  private createTargets(dto: CreateRestrictionDto): TargetIds {
+    const legacy = (dto.productId ? 1 : 0) + (dto.categoryId ? 1 : 0);
+    if (dto.targets) {
+      if (legacy > 0) {
+        throw new BadRequestException(
+          "Send either targets, or a single product or category, not both.",
+        );
+      }
+      return normalizeTargetIds(dto.targets);
+    }
+    if (legacy !== 1)
+      throw new BadRequestException("Target exactly one of a category or a product.");
+    return dto.productId
+      ? { productIds: [dto.productId], categoryIds: [] }
+      : { productIds: [], categoryIds: [dto.categoryId as string] };
+  }
+
+  /** Bulk create's targets: 1..BULK_RESTRICTION_MAX products XOR one label (the pre-509 request shape). */
+  private bulkTargets(dto: BulkRestrictionDto): TargetIds {
+    const productIds = [...new Set(dto.productIds ?? [])];
+    if (!dto.categoryId === (productIds.length === 0)) {
+      throw new BadRequestException("Target exactly one of a category or a product.");
+    }
+    if (productIds.length > BULK_RESTRICTION_MAX) {
+      throw new BadRequestException(
+        `Send at most ${BULK_RESTRICTION_MAX} products at once, or limit a whole category instead.`,
+      );
+    }
+    return dto.categoryId
+      ? { productIds: [], categoryIds: [dto.categoryId] }
+      : { productIds, categoryIds: [] };
+  }
+
+  /**
+   * Inside the caller's transaction, writes ONE rule that covers every target (row 509). Order: who may write it
+   * (an all-customer rule is admin-only), every id resolves in THIS tenant (else the coded 409, nothing written),
+   * the optional identical-rule skip, then the rule row (its legacy column mirrors the FIRST target, product first:
+   * SA condition 2) and one target row per id. `addedAt` is the rule's effectiveFrom when that is earlier than now
+   * (a backdated rule covers its products from then), else now. Returns null when an identical live rule skipped it.
+   */
+  private async writeRule(
     tx: Prisma.TransactionClient,
     tenantId: string,
     p: PreparedRules,
     user: JwtPayload,
     opts: { skipIdentical: boolean },
-  ): Promise<{ createdIds: string[]; skippedProductIds: string[]; skippedCategory: boolean }> {
-    if ("categoryId" in p.target) {
-      const cat = await tx.productCategory.findFirst({
-        where: { tenantId, id: p.target.categoryId },
-      });
-      if (!cat) throw new NotFoundException("Category not found");
-      if (cat.archivedAt)
-        throw new ConflictException("That category is archived. Restore it first.");
-    } else {
-      const wanted = p.target.productIds;
-      const found: Array<{ id: string }> = await tx.product.findMany({
-        where: { tenantId, id: { in: wanted } },
-        select: { id: true },
-      });
-      const have = new Set(found.map((r) => r.id));
-      const missing = wanted.filter((id) => !have.has(id));
-      if (missing.length > 0) {
-        throw new NotFoundException(
-          wanted.length === 1
-            ? "Product not found"
-            : `${missing.length} of the products were not found.`,
-        );
-      }
-    }
+  ): Promise<{ ruleId: string } | null> {
+    assertMayManageRule(user, null, { jurisdiction: p.jurisdiction });
+    await resolveTargetIds(tx, tenantId, p.target);
+    if (opts.skipIdentical && (await this.identicalRuleHoldsAll(tx, tenantId, p))) return null;
 
-    const identical = opts.skipIdentical ? await this.identicalTargets(tx, tenantId, p) : new Set();
-    const targets: Array<{ categoryId: string | null; productId: string | null }> =
-      "categoryId" in p.target
-        ? identical.has(p.target.categoryId)
-          ? []
-          : [{ categoryId: p.target.categoryId, productId: null }]
-        : p.target.productIds
-            .filter((id) => !identical.has(id))
-            .map((id) => ({ categoryId: null, productId: id }));
-    const skippedProductIds =
-      "productIds" in p.target ? p.target.productIds.filter((id) => identical.has(id)) : [];
-
-    const data = targets.map((t) => ({
-      id: randomUUID(),
-      tenantId,
-      categoryId: t.categoryId,
-      productId: t.productId,
-      jurisdiction: p.jurisdiction,
-      states: p.states,
-      surface: p.surface,
-      effectiveFrom: p.effectiveFrom,
-      effectiveTo: p.effectiveTo,
-      reason: p.reason,
-      createdById: user.sub,
-      createdByName: user.username,
-    }));
-    if (data.length > 0) await tx.sellingRestriction.createMany({ data });
-    return {
-      createdIds: data.map((d) => d.id),
-      skippedProductIds,
-      skippedCategory: "categoryId" in p.target && targets.length === 0,
-    };
+    const ruleId = randomUUID();
+    const first =
+      p.target.productIds.length > 0
+        ? { productId: p.target.productIds[0], categoryId: null }
+        : { productId: null, categoryId: p.target.categoryIds[0] };
+    await tx.sellingRestriction.create({
+      data: {
+        id: ruleId,
+        tenantId,
+        ...first,
+        jurisdiction: p.jurisdiction,
+        states: p.states,
+        surface: p.surface,
+        effectiveFrom: p.effectiveFrom,
+        effectiveTo: p.effectiveTo,
+        reason: p.reason,
+        createdById: user.sub,
+        createdByName: user.username,
+      },
+    });
+    // Row 509 PR3: revision 1 = the rule "as created", so its first in-place edit keeps the original settings in
+    // the history (append-only; an edit adds revision n+1, nothing ever rewrites this row).
+    await tx.sellingRestrictionRevision.create({
+      data: {
+        tenantId,
+        ruleId,
+        revision: 1,
+        jurisdiction: p.jurisdiction,
+        states: p.states,
+        surface: p.surface,
+        effectiveFrom: p.effectiveFrom,
+        effectiveTo: p.effectiveTo,
+        reason: p.reason,
+        editedById: user.sub,
+        editedByName: user.username,
+        editedAt: p.now,
+      },
+    });
+    const addedAt = p.effectiveFrom.getTime() < p.now.getTime() ? p.effectiveFrom : p.now;
+    const stamp = { tenantId, ruleId, addedAt, addedById: user.sub, addedByName: user.username };
+    await tx.sellingRestrictionTarget.createMany({
+      data: [
+        ...p.target.productIds.map((productId) => ({ ...stamp, productId, categoryId: null })),
+        ...p.target.categoryIds.map((categoryId) => ({ ...stamp, productId: null, categoryId })),
+      ],
+    });
+    return { ruleId };
   }
 
   /**
-   * The targets (product ids, or the category id) that already carry an IDENTICAL live rule:
-   * same target, same jurisdiction, same set of states (order and spelling ignored), same surface,
-   * not lifted and not expired at `now`, AND a window that COVERS the requested one (starts no
-   * later; ends no earlier, or never when the request is open-ended — a future lift is an end).
-   * A rule that expires sooner or starts later is not identical: skipping it would leave the
-   * target sellable in the gap, so a new rule is written.
+   * Does ONE live rule with the same jurisdiction, states set (order and spelling ignored) and surface, whose window
+   * COVERS the requested one, already hold ALL of the requested targets (as active target rows, or, for a rule with
+   * zero target rows, as its legacy column)? Then a new rule would only duplicate it. A rule that expires sooner or
+   * starts later does not cover the window (skipping would leave the products sellable in the gap), and a rule that
+   * holds only SOME of the targets is not identical: the new rule is written.
    */
-  private async identicalTargets(
+  private async identicalRuleHoldsAll(
     tx: Prisma.TransactionClient,
     tenantId: string,
     p: PreparedRules,
-  ): Promise<Set<string>> {
+  ): Promise<boolean> {
     const rows: Array<{
+      id: string;
       productId: string | null;
       categoryId: string | null;
       jurisdiction: string;
@@ -427,17 +509,16 @@ export class SellingRestrictionsAdminService {
       effectiveFrom: Date;
       effectiveTo: Date | null;
       liftedAt: Date | null;
+      _count: { targets: number };
     }> = await tx.sellingRestriction.findMany({
       where: {
         tenantId,
-        ...("categoryId" in p.target
-          ? { categoryId: p.target.categoryId }
-          : { productId: { in: p.target.productIds } }),
         jurisdiction: p.jurisdiction,
         surface: p.surface,
         AND: [...liveRuleWhere(p.now), ...coveringWindowWhere(p)],
       },
       select: {
+        id: true,
         productId: true,
         categoryId: true,
         jurisdiction: true,
@@ -446,29 +527,55 @@ export class SellingRestrictionsAdminService {
         effectiveFrom: true,
         effectiveTo: true,
         liftedAt: true,
+        _count: { select: { targets: true } },
       },
     });
     const key = sortedStatesKey(p.states);
-    const out = new Set<string>();
-    for (const r of rows) {
-      if (r.jurisdiction !== p.jurisdiction || r.surface !== p.surface) continue;
-      if (sortedStatesKey(r.states) !== key) continue;
-      if (!windowCovers(r, p)) continue;
-      const target = r.productId ?? r.categoryId;
-      if (target) out.add(target);
+    // The SQL already matched jurisdiction + surface; the JS twin keeps a wrong row from ever skipping a create.
+    const same = rows.filter(
+      (r) =>
+        r.jurisdiction === p.jurisdiction &&
+        r.surface === p.surface &&
+        sortedStatesKey(r.states) === key &&
+        windowCovers(r, p),
+    );
+    const wanted = p.target.productIds.length + p.target.categoryIds.length;
+    // A legacy rule (zero target rows) holds exactly its one column.
+    for (const r of same) {
+      if (r._count.targets !== 0 || wanted !== 1) continue;
+      if (r.productId && r.productId === p.target.productIds[0]) return true;
+      if (r.categoryId && r.categoryId === p.target.categoryIds[0]) return true;
     }
-    return out;
+    const withRows = same.filter((r) => r._count.targets > 0).map((r) => r.id);
+    if (withRows.length === 0) return false;
+    const held: Array<{ ruleId: string }> = await tx.sellingRestrictionTarget.findMany({
+      where: {
+        tenantId,
+        ruleId: { in: withRows },
+        removedAt: null,
+        OR: [
+          ...(p.target.productIds.length > 0 ? [{ productId: { in: p.target.productIds } }] : []),
+          ...(p.target.categoryIds.length > 0
+            ? [{ categoryId: { in: p.target.categoryIds } }]
+            : []),
+        ],
+      },
+      select: { ruleId: true },
+    });
+    const perRule = new Map<string, number>();
+    for (const t of held) perRule.set(t.ruleId, (perRule.get(t.ruleId) ?? 0) + 1);
+    return [...perRule.values()].some((n) => n >= wanted);
   }
 
-  /** Single create: a bulk of one (same validation and write path); never skips, keeps its response. */
+  /** Single create: one rule that covers the legacy single target, or `targets` (row 509); never skips. */
   async create(
     dto: CreateRestrictionDto,
     user: JwtPayload,
   ): Promise<SellingRestrictionListItemDto> {
     const tenantId = this.requireTenant();
+    const target = this.createTargets(dto);
     const p = this.prepare({
-      categoryId: dto.categoryId,
-      productIds: dto.productId ? [dto.productId] : undefined,
+      target,
       jurisdiction: dto.jurisdiction,
       states: dto.states,
       surface: dto.surface ?? "ALL",
@@ -477,11 +584,10 @@ export class SellingRestrictionsAdminService {
       reason: dto.reason,
     });
     return this.prisma.tenantTransaction(async (tx: Prisma.TransactionClient) => {
-      const { createdIds } = await this.writeRules(tx, tenantId, p, user, {
-        skipIdentical: false,
-      });
+      const written = await this.writeRule(tx, tenantId, p, user, { skipIdentical: false });
+      if (!written) throw new NotFoundException("Restriction not found");
       const row: Row | null = await tx.sellingRestriction.findFirst({
-        where: { id: createdIds[0] },
+        where: { id: written.ruleId, tenantId },
         include: INCLUDE,
       });
       if (!row) throw new NotFoundException("Restriction not found");
@@ -493,8 +599,18 @@ export class SellingRestrictionsAdminService {
           action: "selling_restriction.created",
           entityType: "SellingRestriction",
           entityId: row.id,
+          // Counts plus ids; never names. `scope` stays for the legacy single-target form.
           meta: {
-            scope: dto.categoryId ? { categoryId: dto.categoryId } : { productId: dto.productId },
+            ...(dto.targets
+              ? {}
+              : {
+                  scope: dto.categoryId
+                    ? { categoryId: dto.categoryId }
+                    : { productId: dto.productId },
+                }),
+            targets: { productIds: target.productIds, categoryIds: target.categoryIds },
+            productCount: target.productIds.length,
+            categoryCount: target.categoryIds.length,
             jurisdiction: dto.jurisdiction,
             states: p.states,
             surface: row.surface,
@@ -504,20 +620,22 @@ export class SellingRestrictionsAdminService {
           },
         },
       });
-      return toDto(row, p.now);
+      const summaries = await targetSummaries(tx, tenantId, [row.id]);
+      return toDto(row, p.now, summaries.get(row.id) ?? EMPTY_TARGET_SUMMARY);
     });
   }
 
   /**
-   * POST /selling-restrictions/bulk: products (1..BULK_RESTRICTION_MAX) or one category, in ONE
-   * transaction — one createMany and one audit row, or nothing at all. A target that already has
-   * an identical live rule is skipped and reported, never duplicated.
+   * POST /selling-restrictions/bulk (owner Q6): products (1..BULK_RESTRICTION_MAX) or one label become the targets of
+   * ONE rule, in ONE transaction with one audit row, or nothing at all. When an identical live rule already holds ALL
+   * of them nothing is written and every product is reported skipped. `createdIds` is `[ruleId]` (the web's Undo
+   * lifts that one rule).
    */
   async bulkCreate(dto: BulkRestrictionDto, user: JwtPayload): Promise<BulkRestrictionResponse> {
     const tenantId = this.requireTenant();
+    const target = this.bulkTargets(dto);
     const p = this.prepare({
-      categoryId: dto.categoryId,
-      productIds: dto.productIds,
+      target,
       jurisdiction: dto.jurisdiction,
       states: dto.states,
       surface: dto.surface ?? "BUYER_PORTAL",
@@ -526,21 +644,16 @@ export class SellingRestrictionsAdminService {
       reason: dto.reason ?? DEFAULT_BULK_REASON,
     });
     return this.prisma.tenantTransaction(async (tx: Prisma.TransactionClient) => {
-      const { createdIds, skippedProductIds, skippedCategory } = await this.writeRules(
-        tx,
-        tenantId,
-        p,
-        user,
-        { skipIdentical: true },
-      );
-      const skipped = skippedProductIds.length + (skippedCategory ? 1 : 0);
-      const base: BulkRestrictionResponse = {
-        created: createdIds.length,
-        skipped,
-        createdIds,
-        ...("productIds" in p.target ? { skippedProductIds } : {}),
-      };
-      if (createdIds.length === 0) return base;
+      const written = await this.writeRule(tx, tenantId, p, user, { skipIdentical: true });
+      const byCategory = target.categoryIds.length > 0;
+      if (!written) {
+        return {
+          created: 0,
+          skipped: byCategory ? 1 : target.productIds.length,
+          createdIds: [],
+          ...(byCategory ? {} : { skippedProductIds: target.productIds }),
+        };
+      }
       const audit: { id: string } = await tx.auditLog.create({
         data: {
           tenantId,
@@ -548,21 +661,32 @@ export class SellingRestrictionsAdminService {
           impersonatedBy: user.impersonatedBy ?? null,
           action: "selling_restriction.bulk_created",
           entityType: "SellingRestriction",
-          entityId: null,
+          entityId: written.ruleId,
           meta: {
-            ids: createdIds,
-            scope: p.target,
+            ids: [written.ruleId],
+            scope: byCategory
+              ? { categoryId: target.categoryIds[0] }
+              : { productIds: target.productIds },
+            productCount: target.productIds.length,
+            categoryCount: target.categoryIds.length,
             states: p.states,
             jurisdiction: p.jurisdiction,
             surface: p.surface,
             effectiveFrom: p.effectiveFrom.toISOString(),
             effectiveTo: p.effectiveTo?.toISOString() ?? null,
             reason: p.reason,
-            skippedProductIds,
+            skippedProductIds: [],
           },
         },
       });
-      return { ...base, auditId: audit.id };
+      return {
+        created: 1,
+        skipped: 0,
+        createdIds: [written.ruleId],
+        ...(byCategory ? {} : { skippedProductIds: [] }),
+        auditId: audit.id,
+        ruleId: written.ruleId,
+      };
     });
   }
 
@@ -583,6 +707,15 @@ export class SellingRestrictionsAdminService {
     if (!tenantId || ids.length === 0 || ids.some((id) => !id)) {
       throw new BadRequestException("Name at least one restriction to lift.");
     }
+    // Row 509: the SAME row lock target add/remove take (rule-lock.ts), in id order so two batches cannot deadlock:
+    // a lift waits for an in-flight target edit, and an edit that starts after it sees the rule lifted.
+    const locked = await tx.$queryRaw<Array<{ id: string; jurisdiction: string }>>`
+      SELECT "id", "jurisdiction"::text AS "jurisdiction" FROM "SellingRestriction"
+      WHERE "tenantId" = ${tenantId} AND "id" = ANY(${[...ids]}::text[])
+      ORDER BY "id" FOR UPDATE`;
+    // Who may lift: an all-customer rule is TENANT_ADMIN-only, as for every other write to it (rule-lock.ts). One such
+    // rule in a batch refuses the whole call, before anything is written.
+    for (const rule of locked ?? []) assertMayManageRule(user, rule);
     const { count } = await tx.sellingRestriction.updateMany({
       where: { tenantId, id: { in: [...ids] }, liftedAt: null },
       data: {
@@ -673,10 +806,11 @@ export class SellingRestrictionsAdminService {
   }
 
   /**
-   * GET /selling-restrictions?productId=: every ACTIVE rule binding the product, for the product-page
-   * chips — its own (PRODUCT), an ancestor's (PARENT), and a category it is EFFECTIVELY labelled
-   * with (CATEGORY; `effectiveLabels` applies EXCLUDE opt-outs, so an opted-out category never
-   * shows). The same reach as the engine's `evaluate()`. Keyset-paged by id with an opaque cursor.
+   * GET /selling-restrictions?productId=: every ACTIVE rule binding the product, for the product-page chips — via
+   * a direct product target (PRODUCT), an ancestor's (PARENT), or a label target (CATEGORY) the product is
+   * EFFECTIVELY labelled with (`effectiveLabels` applies EXCLUDE opt-outs, so an opted-out label never shows). A rule
+   * with zero target rows is read by its legacy column. The same reach as the engine's `evaluate()`. Keyset-paged by
+   * id with an opaque cursor; each chip carries the rule's `targetSummary` and whether the product is a direct target.
    */
   async productLimits(productId: string, cursor?: string): Promise<ProductLimitsResponse> {
     const tenantId = this.requireTenant();
@@ -686,22 +820,44 @@ export class SellingRestrictionsAdminService {
     const lineage = [...labels.lineageIds];
     const categoryIds = [...labels.effectiveCategoryIds];
     const now = new Date();
-    const rows = await this.prisma.forTenant().sellingRestriction.findMany({
+    const touches = [
+      { productId: { in: lineage } },
+      ...(categoryIds.length > 0 ? [{ categoryId: { in: categoryIds } }] : []),
+    ];
+    const rows = (await this.prisma.forTenant().sellingRestriction.findMany({
       where: {
         tenantId,
         OR: [
-          { productId: { in: lineage } },
-          ...(categoryIds.length > 0 ? [{ categoryId: { in: categoryIds } }] : []),
+          { targets: { some: { AND: [activeTargetsWhere(now), { OR: touches }] } } },
+          { AND: [{ targets: { none: {} } }, { OR: touches }] },
         ],
         AND: [activeRuleWhere(now), ...(after ? [{ id: { gt: after } }] : [])],
       },
-      include: INCLUDE,
+      include: {
+        ...INCLUDE,
+        targets: {
+          where: { AND: [activeTargetsWhere(now), { OR: touches }] },
+          select: {
+            productId: true,
+            categoryId: true,
+            product: { select: { name: true } },
+            category: { select: { name: true } },
+          },
+        },
+        _count: { select: { targets: true } },
+      },
       orderBy: { id: "asc" },
       take: PRODUCT_LIMITS_PAGE_SIZE + 1,
-    });
+    })) as ChipRow[];
     const page = rows.slice(0, PRODUCT_LIMITS_PAGE_SIZE);
+    const summaries = await targetSummaries(
+      this.prisma.forTenant(),
+      tenantId,
+      page.map((r) => r.id),
+    );
+    const lineageSet = new Set(lineage);
     return {
-      items: page.map((r) => toProductLimit(r, productId)),
+      items: page.map((r) => toProductLimit(r, productId, lineageSet, summaries.get(r.id))),
       nextCursor:
         rows.length > PRODUCT_LIMITS_PAGE_SIZE ? encodeCursor(page[page.length - 1].id) : null,
     };

@@ -399,7 +399,10 @@ describe("InvoicesService", () => {
       // to `this.prisma` would make the `{ tx: txClient }` assertion vacuous, since
       // reserving on the base client would look identical to reserving on the tx.
       const txClient = {
-        order: { findUnique: jest.fn().mockResolvedValue(orderFixture("ord-d7-tx")) },
+        order: {
+          findUnique: jest.fn().mockResolvedValue(orderFixture("ord-d7-tx")),
+          findFirst: jest.fn().mockResolvedValue({ status: "PENDING" }), // F2b re-judge: not a DRAFT
+        },
         invoice: {
           findMany: jest.fn().mockResolvedValue([]),
           create: jest.fn(async (args: any) => ({
@@ -5585,6 +5588,7 @@ describe("InvoicesService", () => {
           })),
           findFirst: jest.fn().mockResolvedValue(null),
         },
+        order: { findFirst: jest.fn().mockResolvedValue({ status: "PENDING" }) }, // F2b re-judge
         orderItem: {
           update: jest.fn().mockResolvedValue({}),
           updateMany: jest.fn().mockResolvedValue({ count: 1 }),

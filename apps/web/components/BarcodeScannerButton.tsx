@@ -14,7 +14,8 @@ import {
 import { playScanCue, unlockScanCue } from "@/lib/scan-cue";
 
 interface BarcodeScannerButtonProps {
-  onScan: (code: string) => void;
+  /** `source` is "field" when a wedge/USB scanner typed the code into `inputRef` (the caller clears the field). */
+  onScan: (code: string, source?: "field") => void;
   /** Pass the ref of an associated text input to enable USB/physical-scanner auto-submit */
   inputRef?: React.RefObject<HTMLInputElement | null>;
   className?: string;
@@ -85,14 +86,20 @@ export function BarcodeScannerButton({
     let sequence = "";
 
     const handleKeyDown = (e: KeyboardEvent) => {
-      const now = Date.now();
+      // The browser's own event time, not Date.now() at handling time: a long task (a render, a lookup
+      // landing) delays HANDLING of queued keys, which made a fast burst look like slow typing and cut
+      // the sequence short.
+      const now = e.timeStamp;
 
       if (e.key === "Enter") {
-        // If we have a barcode-length sequence that arrived fast, treat as scan
+        // If we have a barcode-length sequence that arrived fast, treat as scan. The code is taken and the
+        // sequence emptied in ONE step, before anything else can run.
         if (sequence.length >= 6 && now - lastKeyTime < 150) {
-          e.preventDefault();
-          onScanRef.current(sequence);
+          const code = sequence;
           sequence = "";
+          lastKeyTime = 0;
+          e.preventDefault();
+          onScanRef.current(code, "field");
         }
         return;
       }

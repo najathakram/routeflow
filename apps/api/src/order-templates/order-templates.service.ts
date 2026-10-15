@@ -48,8 +48,11 @@ import {
   toBuyerView,
 } from "./buyer-template-view";
 import { assertPositiveTemplateQty } from "./template-qty";
+import { authorMarkerOf, withAuthor } from "../orders/line-author-channel";
 import { assertMoneyInvariantsOrThrow } from "../common/money-invariants.util";
 import { isoWeekdayUtc, startOfUtcDay } from "../common/utc-day";
+import { retryStockTx } from "../common/tx-retry";
+import { STOCK_TX_OPTIONS } from "../common/product-locks";
 import {
   GENERATED_ORDER_INCLUDE,
   findReplayOrder,
@@ -1062,67 +1065,88 @@ export class OrderTemplatesService {
       // role null: a system caller never gets POS mode (SA-763r M1).
       { stored: storedPath, audience: "staff", role: null },
     );
-    const created = await this.prisma.tenantTransaction(async (tx) => {
-      if (replaySince) {
-        // B1054: first statement. A concurrent twin that committed while we waited is returned as is.
-        const prior = await lockTemplateThenFindReplay(
-          tx,
-          template.id,
-          restrictionTenantId,
-          replaySince,
-        );
-        if (prior) {
-          replayed = true;
-          if (ctx) ctx.replayed = true;
-          return prior;
+    // SA-767 r-note 3 (b): the generation tx (order write + locked decrement) inside retryStockTx: a lock
+    // wait that gave up, a deadlock or an expired budget re-runs the WHOLE body (3 attempts, then the coded
+    // 503; the 06:00 cron logs it per template like any other failure). Replay-safe: the order id is
+    // minted by the insert, the number/total are computed before the tx, the only state it sets outside
+    // (`replayed`, `ctx.replayed`) is reset below, and every notice / the merge run after the commit.
+    const created = await retryStockTx("orderTemplates.generate", () =>
+      this.prisma.tenantTransaction(async (tx) => {
+        replayed = false;
+        if (ctx?.replayed) ctx.replayed = false;
+        if (replaySince) {
+          // B1054: first statement. A concurrent twin that committed while we waited is returned as is.
+          const prior = await lockTemplateThenFindReplay(
+            tx,
+            template.id,
+            restrictionTenantId,
+            replaySince,
+          );
+          if (prior) {
+            replayed = true;
+            if (ctx) ctx.replayed = true;
+            return prior;
+          }
         }
-      }
-      const order = await tx.order.create({
-        data: {
-          customerId: template.customerId,
-          templateId: template.id,
-          fulfillPath,
-          orderNumber,
-          subtotal,
-          tax,
-          total,
-          notes: `Auto-generated from standing order: ${template.name}${skipNote}`,
-          requestedDeliveryDate: today,
-          // Denormalized flag — true when any (allowed) line is regulated.
-          hasRegulated: lineItemsData.some((li) => li.trackedCategoryId != null),
-          lineItems: { create: lineItemsData },
-        },
-        include: GENERATED_ORDER_INCLUDE,
-      });
-      await syncOrderLineCompositions(tx, order.id, this.prisma.getTenantId(), this.featureConfig);
-      // SA-714 R1: each stock line is paired with its created row (product + qty, consumed once) so the
-      // decrement can SET that row's backorder marker; `position` is the template's own line order.
-      const unmatched = [...(Array.isArray(order.lineItems) ? order.lineItems : [])];
-      const stockLines = lineItemsData.map((li, position) => {
-        const at = unmatched.findIndex(
-          (r) => r.productId === li.productId && Number(r.qty) === Number(li.qty),
+        const authorChannel = authorMarkerOf(channel); // SA ruling (#3418): the run's judged channel
+        const order = await tx.order.create({
+          data: {
+            customerId: template.customerId,
+            templateId: template.id,
+            fulfillPath,
+            orderNumber,
+            // Unattended run: no principal creates it, and the template's author is judged per line
+            // (leastPrivilegedAuthor), so the recorded source is the stricter, buyer side (the column default, explicit).
+            source: "APP",
+            sourceRecorded: true, // F1(i): the source above is deliberate, not the column default
+            subtotal,
+            tax,
+            total,
+            notes: `Auto-generated from standing order: ${template.name}${skipNote}`,
+            requestedDeliveryDate: today,
+            // Denormalized flag — true when any (allowed) line is regulated.
+            hasRegulated: lineItemsData.some((li) => li.trackedCategoryId != null),
+            // SA ruling (#3418): each line's explicit author marker: the channel this run is judged on (the least
+            // privileged of the template's creator and last editor when unattended; the caller's role otherwise).
+            lineItems: { create: withAuthor(lineItemsData, authorChannel) },
+          },
+          include: GENERATED_ORDER_INCLUDE,
+        });
+        await syncOrderLineCompositions(
+          tx,
+          order.id,
+          this.prisma.getTenantId(),
+          this.featureConfig,
         );
-        const id = at >= 0 ? unmatched.splice(at, 1)[0].id : undefined;
-        return { id, position, productId: li.productId, qty: li.qty };
-      });
-      // WS9: `allowOversell` is the resolved boolean (cron: template_cron = true; staff manual run
-      // = true; a buyer's Reorder = their checkout's policy). Never a policy read in this section.
-      await decrementStockForSale(
-        { logger: this.logger, tenantId: this.prisma.getTenantId() },
-        tx,
-        stockLines,
-        allowOversell,
-        // B562 PR-2: the standing order's SALE rows; the cron run has no acting user.
-        // OOS PR2 (R4): a buyer's Reorder is customer-facing: a refusal carries the fixed copy, no numbers.
-        {
-          orderId: order.id,
-          notes: `TEMPLATE:${template.id}`,
-          performedById: null,
-          customerFacing: !unattended && !isStaffRole,
-        },
-      );
-      return order;
-    });
+        // SA-714 R1: each stock line is paired with its created row (product + qty, consumed once) so the
+        // decrement can SET that row's backorder marker; `position` is the template's own line order.
+        const unmatched = [...(Array.isArray(order.lineItems) ? order.lineItems : [])];
+        const stockLines = lineItemsData.map((li, position) => {
+          const at = unmatched.findIndex(
+            (r) => r.productId === li.productId && Number(r.qty) === Number(li.qty),
+          );
+          const id = at >= 0 ? unmatched.splice(at, 1)[0].id : undefined;
+          return { id, position, productId: li.productId, qty: li.qty };
+        });
+        // WS9: `allowOversell` is the resolved boolean (cron: template_cron = true; staff manual run
+        // = true; a buyer's Reorder = their checkout's policy). Never a policy read in this section.
+        await decrementStockForSale(
+          { logger: this.logger, tenantId: this.prisma.getTenantId() },
+          tx,
+          stockLines,
+          allowOversell,
+          // B562 PR-2: the standing order's SALE rows; the cron run has no acting user.
+          // OOS PR2 (R4): a buyer's Reorder is customer-facing: a refusal carries the fixed copy, no numbers.
+          {
+            orderId: order.id,
+            notes: `TEMPLATE:${template.id}`,
+            performedById: null,
+            customerFacing: !unattended && !isStaffRole,
+          },
+        );
+        return order;
+      }, STOCK_TX_OPTIONS),
+    );
 
     if (replayed) return created; // B1054: nothing was placed by THIS call: no notice, no merge
     if (ctx) ctx.placed = true; // the order tx committed: whatever happens next, the order EXISTS

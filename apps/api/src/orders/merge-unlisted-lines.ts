@@ -1,4 +1,5 @@
 import type { PriceType } from "@prisma/client";
+import { resolvedLineAuthor, type OrderItemAuthorChannel } from "./line-author-channel";
 
 /** A catalog-free loser line, ready to be appended to the merge winner as its own new line. */
 export interface UnlistedMergeItem {
@@ -10,6 +11,8 @@ export interface UnlistedMergeItem {
   overrideReason: string | null;
   overriddenBy: string | null;
   notes: string | null;
+  /** SA ruling (#3418): the moved line's own author (its marker, else its loser order's rule). */
+  authorChannel: OrderItemAuthorChannel;
 }
 
 /**
@@ -19,7 +22,10 @@ export interface UnlistedMergeItem {
  */
 export function collectUnlistedLoserItems(
   losers: ReadonlyArray<{
+    source?: string | null;
+    sourceRecorded?: boolean | null;
     lineItems: ReadonlyArray<{
+      authorChannel?: string | null;
       productId: string | null;
       name: string | null;
       qty: unknown;
@@ -45,6 +51,7 @@ export function collectUnlistedLoserItems(
         overrideReason: li.overrideReason,
         overriddenBy: li.overriddenBy,
         notes: li.notes,
+        authorChannel: resolvedLineAuthor(li, loser),
       });
     }
   }
