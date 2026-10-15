@@ -152,7 +152,7 @@ export class PlatformPricingService {
     return {
       currency: pricing.currency,
       product_data: {
-        name: `RouteFlow ${pricing.planName} — ${interval === "year" ? "annual" : "monthly"}`,
+        name: `RouteFlow ${pricing.planName}`,
       },
       unit_amount: toCents(amount),
       recurring: { interval },

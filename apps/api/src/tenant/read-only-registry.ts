@@ -57,6 +57,12 @@ export const READ_ONLY_ALLOWED_MUTATIONS: ReadonlyArray<ReadOnlyAllowedMutation>
   },
   {
     method: "POST",
+    pattern: /^\/api\/v1\/billing\/payment-due\/pay$/,
+    reason:
+      "the admin's Pay now for the catch-up amount due: paying the bill is how read-only ends",
+  },
+  {
+    method: "POST",
     pattern: /^\/api\/v1\/billing\/portal$/,
     reason: "the admin's card / invoice portal: paying the bill is how read-only ends",
   },

@@ -105,7 +105,7 @@ describe("the stub (r M5): price x unpaid days / days in month, add-ons included
     const p = plan({ monthly: 310 });
     expect(p.paidThrough.toISOString()).toBe("2026-10-01T12:00:00.000Z");
     expect(p.anchorAt.toISOString()).toBe("2026-11-01T12:00:00.000Z");
-    expect(p.stub.label).toBe("Subscription — October 2026");
+    expect(p.stub.label).toBe("October 2026 subscription");
     expect(p.stub.lines).toEqual([{ kind: "PLAN", code: "PLAN", cents: 31000 }]);
     expect(p.stub.totalCents).toBe(31000);
   });
@@ -126,7 +126,7 @@ describe("the stub (r M5): price x unpaid days / days in month, add-ons included
       { kind: "PLAN", code: "PLAN", cents: 17000 }, // 310 x 17/31
       { kind: "ADDON", code: "FORECASTING", cents: 1700 }, // 31 x 17/31
     ]);
-    expect(p.stub.label).toBe("Subscription — Oct 15 to Oct 31, 2026");
+    expect(p.stub.label).toBe("Oct 15 to Oct 31, 2026 subscription");
   });
 
   it("add-on quantity multiplies the unit price; a zero-priced or zero-quantity row adds no line", () => {
@@ -150,7 +150,7 @@ describe("the stub (r M5): price x unpaid days / days in month, add-ons included
     const p = plan({ now: d("2026-11-05T10:00:00Z"), monthly: 100 });
     expect(p.anchorAt.toISOString()).toBe("2026-12-01T12:00:00.000Z");
     expect(p.stub.totalCents).toBe(20000);
-    expect(p.stub.label).toBe("Subscription — October 2026 to November 2026");
+    expect(p.stub.label).toBe("October 2026 to November 2026 subscription");
   });
 
   it("different month lengths: Nov is 30 days (paid through Nov 14 12:00 -> 17/30 of December's hand-over)", () => {
@@ -318,7 +318,7 @@ describe("SA-733r5 selector rows", () => {
     expect(p.shape).toBe("trial_one_time");
     expect(p.trialEndAt.toISOString()).toBe("2026-12-01T12:00:00.000Z");
     expect(p.stub.totalCents).toBe(20000);
-    expect(p.stub.label).toBe("Subscription — October 2026 to November 2026");
+    expect(p.stub.label).toBe("October 2026 to November 2026 subscription");
   });
 
   it("R5-2: the last 72 h before a 1st move A to the FOLLOWING 1st (that month is paid 1-3 days early), and say so", () => {

@@ -2,7 +2,7 @@
 // SA-733 D7 — the October CATCH-UP tool for manually invoiced tenants.
 //
 // DRY-RUN IS THE DEFAULT. It reads, prints, and writes nothing: per tenant the resolved monthly price (override
-// beats catalog), the catch-up line ("Subscription — October 2026" and what it comes to, add-ons included), the
+// beats catalog), the catch-up line ("October 2026 subscription" and what it comes to, add-ons included), the
 // RfInvoice state (open / paid counts), the subscription census (a Stripe subscription already stored? manual
 // invoicing? a held claim?) and the Checkout shape. Output is tenant ids, counts and amounts: never a name or a
 // slug.

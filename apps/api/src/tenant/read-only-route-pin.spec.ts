@@ -55,6 +55,7 @@ const EXPECTED_ALLOWED: string[] = [
   "POST /api/v1/auth/reset-password",
   "POST /api/v1/auth/set-password",
   "POST /api/v1/auth/verify-email",
+  "POST /api/v1/billing/payment-due/pay",
   "POST /api/v1/billing/portal",
   "POST /api/v1/billing/quote",
   "POST /api/v1/billing/subscribe",

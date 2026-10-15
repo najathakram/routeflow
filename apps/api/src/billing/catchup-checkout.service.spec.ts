@@ -88,7 +88,7 @@ function make(
       currency: "usd",
       unit_amount: 31000,
       recurring: { interval: "month" },
-      product_data: { name: "RouteFlow Growth — monthly" },
+      product_data: { name: "RouteFlow Growth" },
     })),
   };
   const mutations: any = {
@@ -125,7 +125,7 @@ describe("plan() is a read-only dry-run", () => {
     expect(r.plan).toMatchObject({ ok: true, shape: "trial_one_time" });
     expect(r.plan.ok && r.plan.stub).toMatchObject({
       totalCents: 31000,
-      label: "Subscription — October 2026",
+      label: "October 2026 subscription",
     });
     expect(r.plan.ok && r.plan.trialEndAt.toISOString()).toBe("2026-11-01T12:00:00.000Z");
     expect(r.eligible).toBe(true);

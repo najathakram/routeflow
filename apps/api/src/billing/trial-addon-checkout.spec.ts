@@ -64,7 +64,7 @@ const CATALOG = {
 
 const PLAN_PRICE_DATA = {
   currency: "usd",
-  product_data: { name: "RouteFlow Starter — monthly" },
+  product_data: { name: "RouteFlow Starter" },
   unit_amount: 9900,
   recurring: { interval: "month" },
 };
@@ -111,7 +111,7 @@ const baseItem = () => ({
       id: "prod_base",
       object: "product",
       metadata: {},
-      name: "RouteFlow Starter — monthly",
+      name: "RouteFlow Starter",
     },
     recurring: {
       interval: "month",

@@ -50,7 +50,7 @@ describeDb("BillingService — #2440 subscription upkeep, real Postgres (SA-450/
   const pricing = {
     checkoutPriceData: jest.fn().mockResolvedValue({
       currency: "usd",
-      product_data: { name: "RouteFlow Starter — monthly" },
+      product_data: { name: "RouteFlow Starter" },
       unit_amount: 34900,
       recurring: { interval: "month" },
     }),
