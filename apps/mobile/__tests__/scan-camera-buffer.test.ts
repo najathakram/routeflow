@@ -22,6 +22,7 @@ import { join } from "path";
 import {
   completeResolve,
   createPendingBuffer,
+  PENDING_BUFFER_DEPTH,
   pushScan,
   type PendingBufferState,
 } from "../lib/scan-pending-buffer";
@@ -77,17 +78,13 @@ describe("scan-pending-buffer (REG-B192)", () => {
     });
   });
 
-  it("REG-B192: holds the depth-2 cap once three scans are already in flight", () => {
-    const withBC: PendingBufferState = {
+  it("REG-B192: holds the cap once the buffer is full and REPORTS the overflow as dropped", () => {
+    const full: PendingBufferState = {
       isResolving: true,
       current: "AAA",
-      pending: ["BBB", "CCC"],
+      pending: Array.from({ length: PENDING_BUFFER_DEPTH }, (_, i) => `Q${i}`),
     };
-    const afterFourth = pushScan(withBC, "BBB");
-    expect(afterFourth).toEqual({
-      startResolving: null,
-      next: { isResolving: true, current: "AAA", pending: ["BBB", "CCC"] },
-    });
+    expect(pushScan(full, "BBB")).toEqual({ startResolving: null, next: full, dropped: true });
   });
 
   it("REG-B192: drains the buffer in FIFO order as each resolve completes, then clears isResolving", () => {
