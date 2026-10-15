@@ -1019,6 +1019,29 @@ export function buildPlan(repoRoot, mainCheckoutPath, worktreesRoot) {
     const dirNames = readdirSync(worktreesRoot);
     for (const orphan of findOrphanWorktreeDirs(listedPaths, dirNames, worktreesRoot)) {
       const target = join(worktreesRoot, orphan);
+      // Orphan detection is directories only. A stray FILE (a .log, a .patch, a jest summary
+      // json) is not a worktree candidate at all — it gets its own action kind, never
+      // "orphan-dir", so the executor never runs a directory rmdir on a plain file. lstat, never
+      // follow: a symlink/junction entry is reported only, and is never auto-classified as a
+      // "stray file" either — it could be someone's checkout linked in from elsewhere.
+      let st;
+      try {
+        st = lstatSync(target);
+      } catch {
+        continue; // vanished between the readdir above and this lstat
+      }
+      if (st.isSymbolicLink()) {
+        skipped.push({
+          worktree: orphan,
+          branch: null,
+          reason: "orphan entry is a symlink/junction — reported only, never touched",
+        });
+        continue;
+      }
+      if (!st.isDirectory()) {
+        actions.push({ step: 3, kind: "stray-file", target });
+        continue;
+      }
       const facts = orphanFacts(target);
       if (orphanEligible({ ...facts, nowMs })) {
         actions.push({ step: 3, kind: "orphan-dir", target });
@@ -1151,6 +1174,8 @@ function describeAction(a) {
       return `[2] remove whole worktree — ${a.target} (merged, clean, idle, pushed)`;
     case "orphan-dir":
       return `[3] remove orphan worktree dir — ${a.target} (not listed by git worktree)`;
+    case "stray-file":
+      return `[3] remove stray file — ${a.target} (not a directory; found under .claude/worktrees)`;
     case "docker-build-cache":
       return `[4] docker builder prune -a -f (build cache only, never volumes/system)`;
     case "npm-cache":
@@ -1182,6 +1207,7 @@ const EXECUTE_DEPS = {
     });
   },
   run: (cmd, args) => trySh(cmd, args),
+  removeFile: (t) => unlinkSync(t),
   log: (m) => console.log(m),
 };
 
@@ -1190,7 +1216,9 @@ const EXECUTE_DEPS = {
  * skips the action, loudly. A whole worktree goes through removeWorktreeSafely (B817: links first).
  */
 export function execute(a, deps = EXECUTE_DEPS) {
-  if (["node_modules", "orphan-dir", "stale-proof-dir", "worktree"].includes(a.kind)) {
+  if (
+    ["node_modules", "orphan-dir", "stale-proof-dir", "worktree", "stray-file"].includes(a.kind)
+  ) {
     const why = deps.refuseDelete(a.target, { kind: a.kind, worktreePath: a.worktreePath });
     if (why) {
       deps.log(`   REFUSED, skipped: ${a.target} (${why})`);
@@ -1220,6 +1248,9 @@ export function execute(a, deps = EXECUTE_DEPS) {
     case "stale-proof-dir":
       deps.removeTree(a.target);
       return "done";
+    case "stray-file":
+      deps.removeFile(a.target);
+      return "done";
     case "worktree":
       deps.removeWorktree(a.target);
       return "done";
@@ -1232,6 +1263,44 @@ export function execute(a, deps = EXECUTE_DEPS) {
     default:
       throw new Error(`unknown janitor action kind: ${a.kind}`);
   }
+}
+
+/**
+ * Run every planned action in apply mode. Each action is isolated: a thrown error (an OS-level
+ * failure like a directory rmdir on a plain file, or a fail-closed refusal that throws instead of
+ * returning) is caught, logged as `FAILED <kind> <target>: <message>`, and recorded — the loop
+ * always continues to the next action. One bad action must never stop the docker/npm/proof
+ * cleanup that follows it. Stops early once the free-space target is met. Returns
+ * { ran, failed: [{ action, message }] }; deps are injectable so the self-test never touches real
+ * disk/OS.
+ */
+export function applyActions(actions, target, deps = {}) {
+  const {
+    getFreeSpaceGb: freeSpace = getFreeSpaceGb,
+    execute: doExecute = execute,
+    log = (m) => console.log(m),
+  } = deps;
+  const failed = [];
+  let ran = 0;
+  for (const a of actions) {
+    const free = freeSpace();
+    if (meetsThreshold(free, target)) {
+      log(`\nTarget reached (${free.toFixed(1)} GB >= ${target} GB) — stopping early.`);
+      break;
+    }
+    log(`→ ${describeAction(a)}`);
+    ran++;
+    try {
+      doExecute(a);
+    } catch (err) {
+      log(`   FAILED ${a.kind} ${a.target ?? ""}: ${err.message}`);
+      failed.push({ action: a, message: err.message });
+    }
+  }
+  if (failed.length) {
+    log(`\n${failed.length} of ${ran} action(s) failed.`);
+  }
+  return { ran, failed };
 }
 
 /** Remove a whole worktree, with its OS/git calls injected (testable anywhere). */
@@ -1340,23 +1409,11 @@ function main() {
   }
 
   console.log("\nApplying...");
-  for (const a of actions) {
-    let free = getFreeSpaceGb();
-    if (meetsThreshold(free, target)) {
-      console.log(`\nTarget reached (${free.toFixed(1)} GB >= ${target} GB) — stopping early.`);
-      break;
-    }
-    console.log(`→ ${describeAction(a)}`);
-    try {
-      execute(a);
-    } catch (err) {
-      // A fail-closed refusal (B817/B818) or an OS error skips THIS action only.
-      console.log(`   REFUSED, skipped: ${a.target ?? a.kind} (${err.message})`);
-    }
-  }
+  const { failed } = applyActions(actions, target);
 
   const after = getFreeSpaceGb();
   console.log(`\nfree space after: ${after.toFixed(1)} GB (was ${before.toFixed(1)} GB)`);
+  if (failed.length) process.exit(1);
 }
 
 // Guarded: when imported from an inline script there is no argv[1] to compare against.

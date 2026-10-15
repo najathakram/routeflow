@@ -58,6 +58,7 @@ import {
   pathPresent,
   unlinkLinksWindows,
   WINDOWS_DEPS,
+  applyActions,
 } from "./janitor.mjs";
 
 // Run inside a git hook, GIT_DIR / GIT_INDEX_FILE / GIT_WORK_TREE would point every `git -C <tmp>`
@@ -1738,6 +1739,95 @@ const DIR_LINK_TYPE = process.platform === "win32" ? "junction" : "dir";
     rmSync(sandbox, { recursive: true, force: true });
   }
 }
+
+// Bug: a stray FILE under .claude/worktrees/ (a .log, a .patch, a jest summary json) is not a
+// worktree candidate at all — findOrphanWorktreeDirs only diffs names against `git worktree
+// list`, so buildPlan's orphan step used to push it as kind "orphan-dir" like a real directory,
+// and the apply-mode executor then ran a directory `rmdir` on a plain file and threw. A stray
+// file must come out of buildPlan as its own "stray-file" kind, never "orphan-dir".
+{
+  const root = mkdtempSync(join(tmpdir(), "janitor-strayfile-"));
+  const main = join(root, "main");
+  const worktreesRoot = join(root, "worktrees");
+  try {
+    execFileSync("git", ["init", "-q", "-b", "master", main]);
+    writeFileSync(join(main, "a.txt"), "a");
+    execFileSync("git", ["-C", main, "add", "a.txt"]);
+    execFileSync("git", [
+      "-C",
+      main,
+      "-c",
+      "user.name=t",
+      "-c",
+      "user.email=t@example.com",
+      "commit",
+      "-q",
+      "-m",
+      "base",
+    ]);
+
+    mkdirSync(worktreesRoot, { recursive: true });
+    const strayFile = join(worktreesRoot, "bugs-selftest.log");
+    writeFileSync(strayFile, "log output");
+    const orphanDir = join(worktreesRoot, "old-orphan");
+    mkdirSync(orphanDir);
+    writeFileSync(join(orphanDir, "note.txt"), "stuff");
+
+    // Both old enough to clear the orphanEligible recent-activity check.
+    const old = new Date(Date.now() - 3 * 24 * 60 * 60 * 1000);
+    utimesSync(strayFile, old, old);
+    utimesSync(orphanDir, old, old);
+    utimesSync(join(orphanDir, "note.txt"), old, old);
+
+    t("buildPlan: a stray file under worktrees/ is kind stray-file, never orphan-dir", () => {
+      const { actions } = buildPlan(main, main, worktreesRoot);
+      const forFile = actions.find((a) => a.target === strayFile);
+      const forDir = actions.find((a) => a.target === orphanDir);
+      assert.ok(forFile, `expected an action for the stray file: ${JSON.stringify(actions)}`);
+      assert.equal(forFile.kind, "stray-file");
+      assert.ok(forDir, `expected an action for the orphan dir: ${JSON.stringify(actions)}`);
+      assert.equal(forDir.kind, "orphan-dir");
+    });
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+}
+
+// Bug (cont'd): the apply loop used to let one action's thrown error kill the whole run, so a
+// stray-file rmdir failure on action 1 meant docker prune / npm cache clean / stale-proof cleanup
+// (later actions) never ran at all. applyActions must isolate each action: a throw is caught,
+// logged, and recorded, and the loop still reaches every later action.
+t("applyActions: a throwing action does not stop the loop; the failure is recorded", () => {
+  const calls = [];
+  const logs = [];
+  const actions = [
+    { kind: "orphan-dir", target: "/w/bugs-selftest.log" },
+    { kind: "docker-build-cache" },
+    { kind: "npm-cache" },
+  ];
+  const result = applyActions(actions, 10, {
+    getFreeSpaceGb: () => 0, // always below target: never stop early
+    execute: (a) => {
+      calls.push(a.kind);
+      if (a.kind === "orphan-dir") {
+        throw new Error("Command failed: cmd /c rmdir /s /q C:\\wt\\bugs-selftest.log");
+      }
+      return "done";
+    },
+    log: (m) => logs.push(m),
+  });
+  assert.deepEqual(
+    calls,
+    ["orphan-dir", "docker-build-cache", "npm-cache"],
+    "every action must be attempted even though the first one threw",
+  );
+  assert.equal(result.failed.length, 1);
+  assert.equal(result.failed[0].action.kind, "orphan-dir");
+  assert.ok(
+    logs.some((l) => l.includes("FAILED orphan-dir") && l.includes("/w/bugs-selftest.log")),
+    `expected a FAILED log line: ${JSON.stringify(logs)}`,
+  );
+});
 
 console.log(`janitor self-test: ${pass} passed, ${failures.length} failed`);
 if (failures.length) {
