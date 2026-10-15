@@ -20,7 +20,8 @@ export async function defaultSaleFulfilmentKind(
 ): Promise<SaleFulfilmentKind> {
   const customer = customerId
     ? await prisma.forTenant().customer.findFirst({
-        where: { id: customerId },
+        // tenantId explicitly (L-124): recurring runs and imports are off-request, with no tenant context.
+        where: { id: customerId, tenantId },
         select: { fulfillPath: true },
       })
     : null;
