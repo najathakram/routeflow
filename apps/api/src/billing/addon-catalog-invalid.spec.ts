@@ -20,7 +20,7 @@ import { ConflictException, Logger } from "@nestjs/common";
 import { API_ERROR_CODES } from "../common/api-error-codes";
 import { AdminAuditAction } from "../platform-admin/audit-actions.constant";
 import { addonCatalogInvalid } from "./addon-catalog-invalid";
-import { addonsIncludedAtPlan } from "./addon-retirement";
+import { addonsEnteringInclusion } from "./addon-inclusion";
 import { priceUnbilledAddonsOnActivation } from "./manual-activation-addons";
 import { beginStripeFirstPlanChange } from "./plan-change-flow";
 import { resolveIncludedAtPlan } from "./plan-catalog.constants";
@@ -121,6 +121,13 @@ describe("B1102 one parser: resolveIncludedAtPlan", () => {
     expect(resolveIncludedAtPlan("BUSINESS")).toEqual({ ok: true, plan: "SCALE" });
     expect(resolveIncludedAtPlan(TYPO)).toEqual({ ok: false });
   });
+
+  it("SA-786 S10 (row 474): a whitespace-only value is the legacy 'never bundled', like the empty string (not a typo)", () => {
+    expect(resolveIncludedAtPlan("")).toEqual({ ok: true, plan: null });
+    expect(resolveIncludedAtPlan("   ")).toEqual({ ok: true, plan: null });
+    expect(resolveIncludedAtPlan(" \t ")).toEqual({ ok: true, plan: null });
+    expect(resolveIncludedAtPlan(" SCALE ")).toEqual({ ok: true, plan: "SCALE" });
+  });
 });
 
 describe("B1102 user-initiated readers answer 409 ADDON_CATALOG_INVALID", () => {
@@ -164,18 +171,18 @@ describe("B1102 user-initiated readers answer 409 ADDON_CATALOG_INVALID", () => 
     expect(err.getResponse()).toEqual(BAD);
   });
 
-  it("plan-change retirement throws it for an add-on the tenant holds, not for one it does not", () => {
+  it("plan-change inclusion throws it for an add-on the tenant holds, not for one it does not", () => {
     const skus = [{ sku: "FORECASTING", name: "Forecasting", includedAtPlan: TYPO }];
     const held = { id: "a1", addonKey: "FORECASTING", sku: "FORECASTING", quantity: 1 };
     let err: any;
     try {
-      addonsIncludedAtPlan([held], skus, "SCALE");
+      addonsEnteringInclusion([held], skus, "GROWTH", skus, "SCALE");
     } catch (e) {
       err = e;
     }
     expect(err).toBeInstanceOf(ConflictException);
     expect(err.getResponse()).toEqual(BAD);
-    expect(addonsIncludedAtPlan([], skus, "SCALE")).toEqual([]);
+    expect(addonsEnteringInclusion([], skus, "GROWTH", skus, "SCALE")).toEqual([]);
   });
 });
 
@@ -289,11 +296,13 @@ describe("B1102 a valid key is unchanged", () => {
     });
   });
 
-  it("retirement: a held add-on bundled at the new plan is retired", () => {
+  it("inclusion: a held add-on bundled at the new plan is picked up (and one already included at the old plan is not)", () => {
     const skus = [{ sku: "FORECASTING", name: "Forecasting", includedAtPlan: "SCALE" }];
     const held = { id: "a1", addonKey: "FORECASTING", sku: "FORECASTING", quantity: 1 };
-    expect(addonsIncludedAtPlan([held], skus, "SCALE").map((r) => r.code)).toEqual(["FORECASTING"]);
-    expect(addonsIncludedAtPlan([held], skus, "GROWTH")).toEqual([]);
+    expect(
+      addonsEnteringInclusion([held], skus, "GROWTH", skus, "SCALE").map((r) => r.code),
+    ).toEqual(["FORECASTING"]);
+    expect(addonsEnteringInclusion([held], skus, "GROWTH", skus, "GROWTH")).toEqual([]);
   });
 
   it("adoption: bundled at the plan -> skipped as before, and NO catalog-invalid audit", async () => {
@@ -355,7 +364,7 @@ describe("B1102 a Stripe-first plan change refuses a held invalid add-on before 
           stripeSubId: "sub_1",
           targetPlanKey: "SCALE",
           targetPlanName: "Scale",
-          retireAddons: true,
+          stopBillingAddons: true,
           addonSkus: [{ sku: "FORECASTING", name: "Forecasting", includedAtPlan: TYPO }],
         } as any,
       ),

@@ -74,6 +74,13 @@ describe("BillingModule wiring: the @Optional collaborators are really provided"
       // the banners read `autoLockHeld` from this service: an undefined switch would silently report "never held"
       expect((moduleRef.get(SubscriptionService, { strict: false }) as any).autoLocks).toBe(sw);
       expect((moduleRef.get(BillingCronService, { strict: false }) as any).autoLocks).toBe(sw);
+      // SA-786: the sweep bills an add-on the old plan included through the REAL mutation service, and the admin
+      // plan edit does the same after an instant down-move - an @Optional that came back undefined would leave a
+      // STRIPE tenant's add-on unbilled after the downgrade (and only a notice would say so).
+      expect((moduleRef.get(BillingCronService, { strict: false }) as any).mutations).toBe(
+        mutations,
+      );
+      expect(Reflect.getMetadata("exports", BillingModule)).toContain(SubscriptionMutationService);
     } finally {
       await moduleRef.close();
     }

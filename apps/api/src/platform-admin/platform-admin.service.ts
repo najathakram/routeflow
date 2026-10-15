@@ -81,7 +81,18 @@ import {
   PLAN_CHANGE_LANDED,
   planChangeArgs,
 } from "../billing/plan-change-flow";
-import { manualPayContext } from "../billing/addon-retirement";
+import {
+  addonBillingModeOf,
+  billLeavingAddonsAfterCommit,
+  manualPayContext,
+  NO_STRIPE_PUSH,
+  repriceAddonsLeavingInclusionTx,
+  stopBillingIncludedAddonsTx,
+  type LeavingAddon,
+} from "../billing/addon-inclusion";
+import { dunningZone } from "../billing/dunning-zone";
+import { formatInZone } from "../billing/subscription-billing-extras";
+import { SubscriptionMutationService } from "../billing/subscription-mutation.service";
 import { TenantStatusGuard } from "../tenant/tenant-status.guard";
 import { API_ERROR_CODES } from "../common/api-error-codes";
 import { AppConfig } from "../config/configuration";
@@ -204,6 +215,8 @@ export class PlatformAdminService {
     @Optional() private readonly scheduledPrice?: ScheduledPriceChangeService,
     // SA-733r7 PR-B3: leaving a dunning pause (admin activation, extendTrial) also clears Stripe's pause_collection.
     @Optional() private readonly dunning?: DunningService,
+    // SA-786 S2: bills an add-on the old plan included after an instant down-move committed (STRIPE mode).
+    @Optional() private readonly mutations?: SubscriptionMutationService,
   ) {}
 
   /**
@@ -991,7 +1004,15 @@ export class PlatformAdminService {
     // `mrr` never counted).
     const before = await this.prisma.tenant.findUnique({
       where: { id },
-      select: { id: true, slug: true, plan: true, status: true, class: true, deletedAt: true },
+      select: {
+        id: true,
+        slug: true,
+        name: true,
+        plan: true,
+        status: true,
+        class: true,
+        deletedAt: true,
+      },
     });
     if (!before) throw new NotFoundException(`Tenant ${id} not found`);
 
@@ -1187,9 +1208,16 @@ export class PlatformAdminService {
     // SA-733r M7: Stripe FIRST (price + retired add-on items in one update); `flow.settle` puts it back if the
     // write below throws. A re-save of the tenant's own plan pushes nothing.
     const isUpgrade = isRankedPlanChange && rankTo > rankFrom;
-    // A move to a HIGHER plan retires the add-ons the target includes even when the target is a custom plan
-    // (GROWTH -> ENTERPRISE); only the proration rule keeps the ranked-and-priced test.
-    const retiresAddons = rankFrom >= 0 && rankTo > rankFrom;
+    // A move to a HIGHER plan stops billing the add-ons the target includes even when the target is a custom plan
+    // (GROWTH -> ENTERPRISE); only the proration rule keeps the ranked-and-priced test. SA-786: a move DOWN on this
+    // instant path (a non-ACTIVE tenant, or a custom plan moving to a ranked one) starts to bill what the old plan
+    // included, at the target version's catalog price.
+    const stopsBilling = rankFrom >= 0 && rankTo > rankFrom;
+    const leavesInclusion = rankFrom >= 0 && rankTo >= 0 && rankTo < rankFrom;
+    const addonMode = addonBillingModeOf(this.stripe.isConfigured, priorSub);
+    const repriceZone =
+      leavesInclusion && addonMode === "MANUAL" ? await dunningZone(this.prisma, id) : "UTC";
+    let leavingToBill: LeavingAddon[] = [];
     // R1 Option B: undo an early pre-renewal downgrade push BEFORE this change prorates from Stripe's price.
     if (priorSub?.stripeSubId && priorSub.downgradeToPlanKey && fromKey !== targetPlanKey) {
       await this.scheduledPrice?.restoreIfPushedLocked(id, priorSub.downgradeToPlanKey, {
@@ -1203,7 +1231,8 @@ export class PlatformAdminService {
       version,
       def: definition,
       proration: isUpgrade ? "create_prorations" : "none",
-      retireAddons: retiresAddons,
+      stopBillingAddons: stopsBilling,
+      fromPlanKey: fromKey,
       actorId: adminId,
       audience: "admin",
     });
@@ -1313,10 +1342,53 @@ export class PlatformAdminService {
         },
         { amountDelta: roundMoney(nextContribution - priorContribution), actorId: adminId, tx },
       );
-      await flow.retireAddons(tx, this.billingEventService, { ...manual, actorId: adminId });
+      await flow.stopBillingIncludedAddons(tx, this.billingEventService, {
+        ...manual,
+        actorId: adminId,
+      });
+      if (leavesInclusion) {
+        const reprice = await repriceAddonsLeavingInclusionTx(tx, this.billingEventService, {
+          tenantId: id,
+          fromPlanKey: fromKey,
+          fromAddonSkus: version.addonSkus,
+          toPlanKey: definition.planKey,
+          toPlanName: definition.name,
+          toAddonSkus: version.addonSkus,
+          mode: addonMode,
+          tenantLabel: before.name ?? before.slug ?? id,
+          dateLabel: formatInZone(new Date(), repriceZone, {
+            month: "long",
+            day: "numeric",
+            year: "numeric",
+          }),
+          actorId: adminId,
+        });
+        leavingToBill = reprice.toBill;
+      }
       return updated;
     }, this.planTransition.transactionOptions(preparedTransition));
     const settled = await flow.settle(written);
+    // SA-786 S2, STRIPE: the add-ons the old plan included are billed now, after the plan write committed
+    // (`always_invoice`, prorated from this instant); a throw flags the tenant and writes a notice.
+    if (leavingToBill.length > 0) {
+      await billLeavingAddonsAfterCommit(
+        { prisma: this.prisma, logger: this.logger },
+        this.mutations ?? {
+          billAddonsLeavingInclusion: () =>
+            Promise.reject(new Error("SubscriptionMutationService is not wired")),
+        },
+        {
+          tenantId: id,
+          tenantLabel: before.name ?? before.slug ?? id,
+          fromPlanName: fromDefinition?.name ?? fromKey,
+          stripeSubId: priorSub?.stripeSubId,
+          rows: leavingToBill,
+          toSkus: version.addonSkus,
+          opts: { prorationBehavior: "always_invoice" },
+          actorId: adminId,
+        },
+      );
+    }
     // A lost commit acknowledgement: the write LANDED, so carry on exactly as a success (audit row, caches) and
     // re-read the row the transaction would have returned.
     const tenant =
@@ -1659,6 +1731,45 @@ export class PlatformAdminService {
               tx,
             },
           );
+        }
+
+        // SA-786 S4: a plan switch on an already-paying manual tenant moves what the plan includes. UP: the
+        // newly included add-ons stop billing and stay ON; DOWN: the add-ons the old plan included are priced at
+        // the target catalog price with a DUE notice. Rows the activation prices below are untouched by these.
+        if (planSwitch) {
+          const fromKey = normalizePlanKey(before.subscription?.planKey);
+          const label = before.name ?? before.slug ?? id;
+          const fromRank = fromKey ? planRank(fromKey) : -1;
+          if (fromRank >= 0 && planRank(definition.planKey) > fromRank) {
+            await stopBillingIncludedAddonsTx(tx, this.billingEventService, {
+              tenantId: id,
+              fromPlanKey: fromKey,
+              toPlanKey: definition.planKey,
+              toPlanName: definition.name,
+              addonSkus: version.addonSkus,
+              ctx: NO_STRIPE_PUSH,
+              manualPay: true,
+              tenantLabel: label,
+              actorId: adminId,
+            });
+          } else if (fromRank >= 0 && planRank(definition.planKey) < fromRank) {
+            await repriceAddonsLeavingInclusionTx(tx, this.billingEventService, {
+              tenantId: id,
+              fromPlanKey: fromKey,
+              fromAddonSkus: version.addonSkus,
+              toPlanKey: definition.planKey,
+              toPlanName: definition.name,
+              toAddonSkus: version.addonSkus,
+              mode: "MANUAL",
+              tenantLabel: label,
+              dateLabel: formatInZone(periodStart, await dunningZone(tx as never, id), {
+                month: "long",
+                day: "numeric",
+                year: "numeric",
+              }),
+              actorId: adminId,
+            });
+          }
         }
 
         // SA-668c residual ("price them + notify"): after the crossing above (which saw the trial's

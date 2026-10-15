@@ -12,17 +12,7 @@ import {
   Cycle,
 } from "./billing-math";
 import { addonCatalogInvalidException } from "./addon-catalog-invalid";
-import { planRank, resolveIncludedAtPlan } from "./plan-catalog.constants";
-
-/**
- * Plan ordering for "included at plan and above" checks. Goes through `planRank`
- * so historical keys stored on superseded catalog versions (TEAM/BUSINESS) rank
- * alongside their current equivalents instead of falling off the ladder.
- */
-function rankOrDefault(planKey: string, fallback: number): number {
-  const rank = planRank(planKey);
-  return rank < 0 ? fallback : rank;
-}
+import { isAddonIncludedAtPlan, resolveIncludedAtPlan } from "./plan-catalog.constants";
 
 export interface QuoteRequest {
   planKey: string;
@@ -109,8 +99,9 @@ export class ProrationService {
       // B1102: one parser; a key no plan answers to fails closed (409) instead of billing the add-on everywhere.
       const included = resolveIncludedAtPlan(sku.includedAtPlan);
       if (!included.ok) throw addonCatalogInvalidException(sku.sku, sku.includedAtPlan);
-      const includedFree =
-        included.plan !== null && rankOrDefault(req.planKey, 0) >= planRank(included.plan);
+      // SA-786 S10: the SAME rule as every plan move (`isAddonIncludedAtPlan`), never a second rank read with a
+      // fallback: a plan key the ladder does not know is bundled nowhere.
+      const includedFree = isAddonIncludedAtPlan(included.plan, req.planKey);
       const unitMonthly = Number(sku.monthlyPrice);
       const lineMonthly = unitMonthly * qty;
       lines.push({

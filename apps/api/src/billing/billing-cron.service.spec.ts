@@ -58,6 +58,8 @@ function make(
     $queryRaw: jest.fn().mockResolvedValue([]),
     tenantSubscription: {
       update: jest.fn().mockResolvedValue({}),
+      // markNeedsReconcile's flag write (SA-786: a failed post-commit bill flags the tenant).
+      updateMany: jest.fn().mockResolvedValue({ count: 1 }),
       findUnique: jest.fn(async ({ where }: any) => {
         const row = scanned.get(where.tenantId);
         return row ? { ...row, ...(data.lockedSubs?.[where.tenantId] ?? {}) } : null;
@@ -938,7 +940,7 @@ describe("BillingCronService", () => {
   // version's catalog price (owner ruling 2026-10-15, Q-B). The row stays on; MANUAL books it in the flip's own
   // transaction, STRIPE creates one item AFTER commit, UNBILLED stays at $0.
   describe("applyScheduledDowngrades - an add-on the old plan included starts to bill (SA-786 R6-R8)", () => {
-    const EFFECTIVE = new Date("2026-11-11T00:00:00.000Z");
+    const EFFECTIVE = new Date("2026-10-11T00:00:00.000Z");
     const regulated = (over: Record<string, unknown> = {}) => ({
       id: "ta_reg",
       tenantId: "t1",
@@ -1022,7 +1024,7 @@ describe("BillingCronService", () => {
         monthlyPrice: 39,
       });
       expect(notices[0].meta.message).toBe(
-        "Add-on Regulated items is no longer included in Growth for t1: invoice it at $39.00 a month from November 11, 2026",
+        "Add-on Regulated items is no longer included in Growth for t1: invoice it at $39.00 a month from October 11, 2026",
       );
       expect(tx.tenantSubscription.update.mock.calls[0][0].data).toMatchObject({
         planKey: "GROWTH",

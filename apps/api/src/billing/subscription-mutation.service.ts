@@ -66,8 +66,24 @@ import type { AddonBillingMode } from "@routeflow/types";
 import { API_ERROR_CODES } from "../common/api-error-codes";
 import { ADMIN_AUDIT_ENTITY, AdminAuditAction } from "../platform-admin/audit-actions.constant";
 import { randomUUID } from "crypto";
-import { manualPayContext, readRetiredAddons } from "./addon-retirement";
-import { addonCatalogInvalid, includedAtPlanVerdict } from "./addon-catalog-invalid";
+import {
+  addonBillingModeOf,
+  addonsLeavingInclusion,
+  billLeavingAddonsAfterCommit,
+  inclusionOf,
+  manualPayContext,
+  readActiveRows,
+  readEnteringInclusion,
+  targetVersionFor,
+  usd,
+  type AddonSkuDef,
+  type LeavingAddon,
+  type LeavingBillOpts,
+} from "./addon-inclusion";
+import { addonCatalogInvalid } from "./addon-catalog-invalid";
+import { dunningZone } from "./dunning-zone";
+import { formatInZone } from "./subscription-billing-extras";
+import { stripeSubscriptionPeriod } from "./stripe-period";
 import { ScheduledPriceChangeService } from "./scheduled-price-change";
 import { TENANT_PRICE_LOCK_SELF_SERVE_WAIT_MS, underTenantPriceLock } from "./price-lock";
 import { beginStripeFirstPlanChange, planChangeArgs } from "./plan-change-flow";
@@ -119,8 +135,10 @@ export interface PlanChangePreview {
    *  cancellation, a cycle switch), and inferring the seat consequence from its mere presence
    *  made the UI demand consent to a deactivation that would never happen. */
   seatAckRequired: boolean;
-  /** UPGRADE only (B1103): the add-ons the target plan already includes — switched off at commit. */
-  retiredAddons?: { sku: string; name: string }[];
+  /** UPGRADE only (SA-786): the add-ons the target plan newly includes - free from commit, still ON. */
+  includedAddons?: { sku: string; name: string }[];
+  /** DOWNGRADE only (SA-786): the add-ons the target plan stops including - billed at the catalog price. */
+  repricedAddons?: { sku: string; name: string; monthlyPrice: number }[];
 }
 
 /**
@@ -825,6 +843,8 @@ export class SubscriptionMutationService {
           cancelAtPeriodEnd: true,
           priceOverrideMonthly: true, // #2223: an override row's upgrade quotes 0
           stripeSubId: true, // R2: a trialing / past_due / unpaid subscription quotes 0
+          externalPayment: true, // SA-786 S6: the add-on billing mode (the sentence names the charge per mode)
+          couponFull: true,
         },
       }),
     ]);
@@ -956,18 +976,25 @@ export class SubscriptionMutationService {
               },
               newMonthly - oldMonthly,
             );
-      // B1103: the add-ons the new plan includes are switched off (and stop billing) at commit.
-      const retiredAddons = (
-        await readRetiredAddons(this.prisma, tenantId, version.addonSkus, toKey)
+      // SA-786: the add-ons the new plan newly includes stop billing at commit and stay ON (free, still opt-in).
+      const includedAddons = (
+        await readEnteringInclusion(
+          this.prisma,
+          tenantId,
+          (await this.pinnedVersionOf(priorSub.planVersionId, version)).addonSkus,
+          fromKey,
+          version.addonSkus,
+          toKey,
+        )
       ).map((a) => ({ sku: a.code, name: a.name }));
       // upgrade() writes `cancelAtPeriodEnd: false` — say so before the tenant commits.
       const notes = [
         ...(override != null ? [CUSTOM_FEE_UNCHANGED] : []),
         ...(priorSub.cancelAtPeriodEnd ? [CANCELLATION_REVOKED_WARNING] : []),
-        ...(retiredAddons.length
+        ...(includedAddons.length
           ? [
-              `Now included in ${publishedTargetDef?.name ?? toKey}, so switched off: ` +
-                `${retiredAddons.map((a) => a.name).join(", ")}.`,
+              `Now included in ${publishedTargetDef?.name ?? toKey} at no extra cost: ` +
+                `${includedAddons.map((a) => a.name).join(", ")}.`,
             ]
           : []),
       ];
@@ -978,7 +1005,7 @@ export class SubscriptionMutationService {
         keepsRenewalAt: priorSub.periodEnd,
         fromPlanKey: fromKey,
         seatAckRequired: false,
-        retiredAddons,
+        includedAddons,
         ...(notes.length ? { warning: notes.join(" ") } : {}),
       };
     }
@@ -1021,6 +1048,16 @@ export class SubscriptionMutationService {
         );
       }
     }
+    // SA-786 S6: the add-ons the target plan stops including start to bill at the TARGET version's catalog price,
+    // named at the decision point. Priced from the same version the 02:00 sweep re-pins to (`targetVersionFor`).
+    const repricedAddons = await this.previewRepricedAddons({
+      tenantId,
+      priorSub,
+      fromKey,
+      toKey,
+      pinned: downgradeVersion,
+      warnings,
+    });
     return {
       action: "DOWNGRADE",
       proratedNow: null,
@@ -1028,8 +1065,66 @@ export class SubscriptionMutationService {
       keepsRenewalAt: null,
       fromPlanKey: fromKey,
       seatAckRequired,
+      repricedAddons,
       ...(warnings.length ? { warning: warnings.join(" ") } : {}),
     };
+  }
+
+  /** The version a tenant is pinned to, or `published` when it is the same (no extra read). */
+  private async pinnedVersionOf(
+    planVersionId: string | null | undefined,
+    published: PlanVersionWithCatalog,
+  ): Promise<PlanVersionWithCatalog> {
+    if (!planVersionId || planVersionId === published.id) return published;
+    return this.catalog.getVersionForTenant(planVersionId);
+  }
+
+  /**
+   * SA-786 S6: the downgrade preview's add-on list and sentences (appended to `warnings`). One sentence per
+   * add-on, by billing mode; UNBILLED has none because nothing is billed. A held add-on whose catalog
+   * `includedAtPlan` names no plan fails the preview closed (409, B1102).
+   */
+  private async previewRepricedAddons(a: {
+    tenantId: string;
+    priorSub: {
+      periodEnd: Date | null;
+      stripeSubId?: string | null;
+      externalPayment?: boolean | null;
+      couponFull?: boolean | null;
+    };
+    fromKey: string;
+    toKey: string;
+    pinned: PlanVersionWithCatalog;
+    warnings: string[];
+  }): Promise<{ sku: string; name: string; monthlyPrice: number }[]> {
+    const mode = addonBillingModeOf(this.stripe.isConfigured, a.priorSub);
+    if (mode === "UNBILLED") return [];
+    const { version: target, def: targetDef } = await targetVersionFor(
+      this.catalog,
+      a.pinned,
+      a.toKey,
+    );
+    const leaving = addonsLeavingInclusion(
+      await readActiveRows(this.prisma, a.tenantId),
+      a.pinned.addonSkus,
+      a.fromKey,
+      target.addonSkus,
+      a.toKey,
+    ).filter((r) => !r.stripeItemId && Number(r.priceSnapshot ?? 0) === 0 && r.monthlyPrice > 0);
+    if (leaving.length === 0) return [];
+    const zone = await dunningZone(this.prisma, a.tenantId);
+    const when = a.priorSub.periodEnd
+      ? formatInZone(a.priorSub.periodEnd, zone, { month: "long", day: "numeric", year: "numeric" })
+      : "the end of this period";
+    for (const r of leaving) {
+      a.warnings.push(
+        `${r.name} isn't included in ${targetDef.name}. From ${when}, it's billed at ${usd(r.monthlyPrice)} a month` +
+          (mode === "STRIPE"
+            ? ", starting with a separate charge when the change takes effect."
+            : "."),
+      );
+    }
+    return leaving.map((r) => ({ sku: r.code, name: r.name, monthlyPrice: r.monthlyPrice }));
   }
 
   /**
@@ -1142,7 +1237,7 @@ export class SubscriptionMutationService {
       this.stripe.isConfigured,
       sub,
     );
-    // SA-733r M7: Stripe FIRST (one update: new price + retired add-on items); `flow.settle` puts it back if
+    // SA-733r M7: Stripe FIRST (one update: new price + the included add-on items deleted); `flow.settle` puts it back if
     // the write below throws.
     const flow = await beginStripeFirstPlanChange(
       { prisma: this.prisma, stripe: this.stripe, logger: this.logger },
@@ -1152,7 +1247,9 @@ export class SubscriptionMutationService {
         version,
         def,
         proration: "create_prorations",
-        retireAddons: true,
+        stopBillingAddons: true,
+        fromPlanKey: fromKey,
+        fromVersion: await this.pinnedVersionOf(sub.planVersionId, version),
         actorId,
       }),
     );
@@ -1189,10 +1286,11 @@ export class SubscriptionMutationService {
       const amountDelta = roundMoney(
         (isPaying ? newBase : 0) - (wasPaying ? Number(sub.basePriceSnapshot ?? 0) : 0),
       );
-      // B1103: the add-ons the new plan includes stop billing — rows off, MRR to 0 once, STOP notice. BEFORE the
-      // plan write on purpose: "paying" is judged from the plan the tenant is leaving, so a planKey-NULL
-      // (manual-activation) row, whose add-on never reached the ledger, books nothing for it.
-      await flow.retireAddons(tx, this.events, { manualPay, tenantLabel, actorId });
+      // B1103 / SA-786: the add-ons the new plan includes stop billing - price 0, item gone, MRR to 0 once, STOP
+      // notice - and STAY ON (the row is the entitlement). BEFORE the plan write on purpose: "paying" is judged from
+      // the plan the tenant is leaving, so a planKey-NULL (manual-activation) row, whose add-on never reached the
+      // ledger, books nothing for it.
+      await flow.stopBillingIncludedAddons(tx, this.events, { manualPay, tenantLabel, actorId });
       // Optimistic guard: only apply if still on the expected plan (blocks a concurrent
       // double-upgrade from re-emitting the delta). Matches the STORED key (null matches
       // IS NULL), never the resolved one. #2470: and the negotiated fee it read (null matches
@@ -2483,7 +2581,7 @@ export class SubscriptionMutationService {
     rowQuantity: number,
     expectedItemId: string | null,
     subId: string,
-    ctx: { sessionId?: string | null },
+    ctx: { sessionId?: string | null; source?: "checkout" | "plan_change" },
   ): Promise<boolean> {
     return this.prisma.$transaction(async (tx) => {
       await lockTenantForLedger(tx, tenantId);
@@ -2516,7 +2614,7 @@ export class SubscriptionMutationService {
       if (count !== 1) return false;
       const payload = {
         billed: true,
-        source: "checkout",
+        source: ctx.source ?? "checkout",
         ...(ctx.sessionId ? { sessionId: ctx.sessionId } : {}),
       };
       await emitAddonDelta(tx, this.events, {
@@ -2540,6 +2638,86 @@ export class SubscriptionMutationService {
   }
 
   /**
+   * SA-786: a plan move below the including plan, STRIPE mode, AFTER the plan change committed. For each row that
+   * is STILL an active, non-comp, quantity-1 row at $0 with no item (re-read now, so a replay makes ZERO Stripe
+   * calls), creates ONE monthly item at the catalog price of the TARGET version and claims it onto the row
+   * (`billUnbilledRow`: adopt-or-create plus the guarded claim, the annual skip, strict orphan deletion).
+   *
+   * `prorationDate` (a scheduled downgrade) is the new period's start: Stripe's live `current_period_start` must
+   * equal it to the second, else Stripe has not renewed yet or has drifted and this THROWS before any item is
+   * created (never prorated from a guessed date). The caller turns a throw into `markNeedsReconcile` plus a notice.
+   */
+  async billAddonsLeavingInclusion(
+    tenantId: string,
+    rows: readonly { id: string; code: string; quantity: number }[],
+    toSkus: readonly AddonSkuDef[],
+    source: "plan_change",
+    opts: LeavingBillOpts,
+  ): Promise<{ billed: string[]; skipped: string[] }> {
+    const out = { billed: [] as string[], skipped: [] as string[] };
+    const due: { id: string; code: string; quantity: number }[] = [];
+    for (const r of rows) {
+      const cur = await this.prisma.tenantAddon.findUnique({ where: { id: r.id } });
+      const eligible =
+        cur &&
+        cur.tenantId === tenantId &&
+        cur.active &&
+        !cur.isComp &&
+        cur.stripeItemId == null &&
+        Number(cur.priceSnapshot ?? 0) === 0 &&
+        cur.quantity === 1;
+      if (eligible) due.push(r);
+      else out.skipped.push(r.code);
+    }
+    if (due.length === 0) return out;
+    const sub = await this.prisma.tenantSubscription.findUnique({
+      where: { tenantId },
+      select: {
+        stripeSubId: true,
+        externalPayment: true,
+        couponFull: true,
+        billingInterval: true,
+        cycle: true,
+      },
+    });
+    const subId = sub?.stripeSubId;
+    // Only a live, monthly, non-coupon Stripe subscription is billed through an item; every other mode was
+    // handled at the plan write (MANUAL re-priced, UNBILLED stays at $0) or stays unbilled by policy (annual).
+    const mode = addonBillingModeOf(this.stripe.isConfigured, sub);
+    if (!subId || mode !== "STRIPE" || isAnnualStripeBilled(mode, sub)) {
+      out.skipped.push(...due.map((r) => r.code));
+      return out;
+    }
+    if (opts.prorationDate) {
+      const live = stripeSubscriptionPeriod(await this.stripe.getSubscription(subId));
+      const want = Math.floor(opts.prorationDate.getTime() / 1000);
+      if (!live || Math.floor(live.periodStart.getTime() / 1000) !== want) {
+        throw new ConflictException(
+          `Stripe's current period start is not ${opts.prorationDate.toISOString()}: not renewed yet or drifted; add-on not billed`,
+        );
+      }
+    }
+    for (const r of due) {
+      const skuDef = toSkus.find((s) => s.sku === r.code);
+      if (!skuDef) {
+        out.skipped.push(r.code);
+        continue;
+      }
+      const billed = await this.billUnbilledRow(
+        tenantId,
+        r.code,
+        { id: r.id, quantity: r.quantity },
+        subId,
+        null,
+        { source },
+        { skuDef, prorationBehavior: opts.prorationBehavior, prorationDate: opts.prorationDate },
+      );
+      (billed ? out.billed : out.skipped).push(r.code);
+    }
+    return out;
+  }
+
+  /**
    * (c) An ACTIVE row with no Stripe item and no checkout line (enabled after the session was
    * created): bill it through the enable path — adopt an unreferenced matching item, else create one
    * (catalog price, the row's quantity) — then adopt it onto the row. Skipped, with a log, when the
@@ -2554,9 +2732,17 @@ export class SubscriptionMutationService {
     row: { id: string; quantity: number },
     subId: string,
     expectedItemId: string | null,
-    ctx: { sessionId?: string | null },
+    ctx: { sessionId?: string | null; source?: "checkout" | "plan_change" },
+    o: {
+      /** SA-786: priced from the TARGET version's SKU instead of the published one. */
+      skuDef?: AddonSkuDef;
+      prorationBehavior?: LeavingBillOpts["prorationBehavior"];
+      prorationDate?: Date;
+    } = {},
   ): Promise<boolean> {
-    const skuDef = (await this.catalog.getPublishedCatalog()).addonSkus.find((s) => s.sku === sku);
+    const skuDef =
+      (o.skuDef as PlanVersionWithCatalog["addonSkus"][number] | undefined) ??
+      (await this.catalog.getPublishedCatalog()).addonSkus.find((s) => s.sku === sku);
     if (!skuDef) return false;
     const included = await this.planIncludedRefusal(tenantId, skuDef);
     if (included) {
@@ -2568,7 +2754,17 @@ export class SubscriptionMutationService {
     }
     // B1079: the ONE mode decision (`addonModeOf`), like enable/disable. A couponFull tenant is UNBILLED:
     // the row stays as it is (price 0, no item) - this is the only place a checkout completion CREATES an item.
-    const mode = await this.checkoutAddonMode(tenantId, subId);
+    // A plan change decides the mode from the stored row (the caller already did); a checkout reads Stripe.
+    const mode =
+      ctx.source === "plan_change"
+        ? addonBillingModeOf(
+            this.stripe.isConfigured,
+            await this.prisma.tenantSubscription.findUnique({
+              where: { tenantId },
+              select: { stripeSubId: true, externalPayment: true, couponFull: true },
+            }),
+          )
+        : await this.checkoutAddonMode(tenantId, subId);
     if (mode !== "STRIPE") {
       this.logger.warn(
         `Checkout add-on "${sku}" tenant ${tenantId}: add-on billing mode ${mode} (a 100% coupon, or no live Stripe billing) — no Stripe item, the add-on stays unbilled`,
@@ -2587,7 +2783,10 @@ export class SubscriptionMutationService {
     }
     if (!(row.quantity >= 1)) return false; // a row always carries at least one unit
     const quantity = row.quantity;
-    const billed = await this.adoptOrCreateAddonItem(tenantId, sku, skuDef, subId, quantity);
+    const billed = await this.adoptOrCreateAddonItem(tenantId, sku, skuDef, subId, quantity, {
+      prorationBehavior: o.prorationBehavior,
+      prorationDate: o.prorationDate,
+    });
     let adopted: boolean;
     try {
       adopted = await this.claimAddonItem(
@@ -2641,7 +2840,7 @@ export class SubscriptionMutationService {
     ]);
     const planKey = this.resolveFromPlanKey(sub?.planKey, tenant?.plan);
     // B1102: one parser. A key no plan answers to FAILS CLOSED (reason CATALOG_INVALID), never "not included".
-    const verdict = includedAtPlanVerdict(skuDef, planKey);
+    const verdict = inclusionOf(skuDef, planKey);
     if (verdict.kind === "CATALOG_INVALID") return addonCatalogInvalid(verdict.sku, verdict.value);
     return verdict.kind === "INCLUDED" ? addonIncludedRefusal(skuDef.name) : null;
   }
@@ -2688,16 +2887,9 @@ export class SubscriptionMutationService {
       | null
       | undefined,
   ): AddonBilling {
-    if (this.stripe.isConfigured && sub?.stripeSubId) {
-      // B1079 (owner ruling: a pilot on a 100% coupon is UNBILLED): `couponFull` (the SA-736r flag, the
-      // same one `isPayingRow` reads) means the subscription's recurring invoice is $0 because of
-      // discounts. Such a tenant is not billed for add-ons either: the add-on is granted at price 0 and
-      // NO Stripe item is created. Checked inside the live-Stripe branch only: `couponFull` never
-      // outlives its Stripe subscription (M5), so without one the mode below is unchanged.
-      return sub.couponFull === true ? "UNBILLED" : "STRIPE";
-    }
-    if (sub?.externalPayment) return "MANUAL";
-    return "UNBILLED";
+    // ONE rule, shared with the plan-move helpers (addon-inclusion.ts): B1079 - a live Stripe subscription with
+    // `couponFull` (a 100% coupon) is UNBILLED; STRIPE is checked before `externalPayment`.
+    return addonBillingModeOf(this.stripe.isConfigured, sub);
   }
 
   /** Display name of the tenant for platform notices (never throws; falls back to the id). */
@@ -2896,6 +3088,11 @@ export class SubscriptionMutationService {
     skuDef: PlanVersionWithCatalog["addonSkus"][number],
     subId: string,
     qty: number,
+    opts: {
+      prorationBehavior?: LeavingBillOpts["prorationBehavior"];
+      /** Pinned proration instant (a plan change bills one full period from the new period start). */
+      prorationDate?: Date;
+    } = {},
   ): Promise<{ itemId: string; createdItemId: string | null }> {
     const adopted = await this.adoptOrphanItem(tenantId, sku, subId, qty);
     if (adopted) return { itemId: adopted, createdItemId: null };
@@ -2908,7 +3105,10 @@ export class SubscriptionMutationService {
         {
           subscription: subId,
           quantity: qty,
-          proration_behavior: "create_prorations",
+          proration_behavior: opts.prorationBehavior ?? "create_prorations",
+          ...(opts.prorationDate
+            ? { proration_date: Math.floor(opts.prorationDate.getTime() / 1000) }
+            : {}),
           price_data: {
             currency: "usd",
             unit_amount: toCents(Number(skuDef.monthlyPrice)),

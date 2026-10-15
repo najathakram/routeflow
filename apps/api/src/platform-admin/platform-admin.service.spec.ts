@@ -2303,6 +2303,7 @@ describe("PlatformAdminService — audit provenance", () => {
 
       it("MANUAL tenant: priced at the catalog price in the plan-write transaction, +25 booked once, a DUE notice", async () => {
         customToStarter({ stripeSubId: null, externalPayment: true });
+        (prisma as any).tenantAddon.updateMany.mockResolvedValue({ count: 1 });
         await service.updatePlan(TENANT_ID, { plan: "STARTER" } as any, ADMIN_ID);
 
         expect((prisma as any).tenantAddon.updateMany).toHaveBeenCalledWith(

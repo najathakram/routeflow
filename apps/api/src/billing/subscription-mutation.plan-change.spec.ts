@@ -842,7 +842,7 @@ describe("upgrade(): MRR ledger and flat-SKU guards", () => {
     });
     await svc.upgrade("t1", "SCALE", "admin");
 
-    expect(db.addons[0].active).toBe(false);
+    expect(db.addons[0]).toMatchObject({ active: true, priceSnapshot: 0 }); // SA-786: stays ON
     expect(typesOf(events, BILLING_EVENTS.ADDON_DISABLED)).toHaveLength(0);
     expect(typesOf(events, BILLING_EVENTS.PLAN_CHANGED)[0][3].amountDelta).toBe(499);
   });

@@ -10,13 +10,13 @@ import { stripeRefId } from "./stripe-period";
 import { resolvePlanPrice } from "./plan-price";
 import type { BillingEventService } from "./billing-event.service";
 import {
-  addonsIncludedAtPlan,
-  retireIncludedAddonsTx,
+  addonsEnteringInclusion,
+  stopBillingIncludedAddonsTx,
   NO_STRIPE_PUSH,
   type AddonRowLike,
   type AddonSkuDef,
   type PlanChangeCtx,
-} from "./addon-retirement";
+} from "./addon-inclusion";
 import { clearNeedsReconcile, markNeedsReconcile } from "./needs-reconcile";
 import {
   PLAN_CHANGE_NEEDS_SUPPORT,
@@ -35,8 +35,8 @@ import {
  * scheduled-price-change.ts, never from the 02:00 sweep.)
  *
  *   1. `beginStripeFirstPlanChange` pushes the RESOLVED price (override beats the plan price) to Stripe, with
- *      the retired add-on items deleted in the same update (plan-change-stripe.ts);
- *   2. the caller starts its own local write (a transaction reading `flow.ctx`, calling `flow.retireAddons`);
+ *      the included add-on items deleted in the same update (plan-change-stripe.ts);
+ *   2. the caller starts its own local write (a transaction reading `flow.ctx`, calling `flow.stopBillingIncludedAddons`);
  *   3. `flow.settle(write)`: if that write throws for ANY reason, Stripe is put back (one compensating
  *      update), the add-on pointers a re-created item changed are rewritten, and the original error is
  *      rethrown. If the compensation fails, `markNeedsReconcile` raises the alert — Stripe is never left
@@ -62,9 +62,16 @@ export interface PlanChangeFlowArgs {
   /** The RESOLVED price; null when the target has no catalog price and the row no override. */
   price: { monthly: number; annual: number } | null;
   proration: PlanChangeProration;
-  /** An upgrade retires the add-ons the new plan includes (B1103); a downgrade/same-rank change does not. */
-  retireAddons: boolean;
+  /**
+   * An upgrade stops billing the add-ons the new plan includes (B1103 / SA-786: the rows stay ON at $0); a
+   * downgrade or same-rank change does not.
+   */
+  stopBillingAddons: boolean;
+  /** The target plan's catalog version SKUs. */
   addonSkus: readonly AddonSkuDef[];
+  /** The plan being left and the version it is judged by: a row it already included is not touched again. */
+  fromPlanKey?: string | null;
+  fromAddonSkus?: readonly AddonSkuDef[];
   localState?: Record<string, unknown>;
   /** N4: who reads an error from this change (default: the tenant). An admin's own edit says "admin". */
   audience?: PlanChangeAudience;
@@ -78,10 +85,10 @@ export interface StripeFirstPlanChange {
   /** What Stripe settled — the ledger event records its idempotency key. */
   ctx: PlanChangeCtx;
   /**
-   * B1103, INSIDE the local write's transaction: retire the add-ons the new plan includes (a no-op unless the
-   * flow was begun with `retireAddons`).
+   * B1103 / SA-786, INSIDE the local write's transaction: stop billing the add-ons the new plan newly includes
+   * (a no-op unless the flow was begun with `stopBillingAddons`). The rows stay active at $0.
    */
-  retireAddons(
+  stopBillingIncludedAddons(
     tx: Prisma.TransactionClient,
     events: BillingEventService,
     o: { manualPay: boolean; tenantLabel: string; actorId?: string | null },
@@ -100,12 +107,14 @@ export async function beginStripeFirstPlanChange(
   a: PlanChangeFlowArgs,
 ): Promise<StripeFirstPlanChange> {
   const { prisma, logger } = deps;
-  const retireWith =
-    (ctx: PlanChangeCtx): StripeFirstPlanChange["retireAddons"] =>
+  const stopWith =
+    (ctx: PlanChangeCtx): StripeFirstPlanChange["stopBillingIncludedAddons"] =>
     (tx, events, o) =>
-      a.retireAddons
-        ? retireIncludedAddonsTx(tx, events, {
+      a.stopBillingAddons
+        ? stopBillingIncludedAddonsTx(tx, events, {
             tenantId: a.tenantId,
+            fromPlanKey: a.fromPlanKey,
+            fromAddonSkus: a.fromAddonSkus,
             toPlanKey: a.targetPlanKey,
             toPlanName: a.targetPlanName,
             addonSkus: a.addonSkus,
@@ -116,7 +125,7 @@ export async function beginStripeFirstPlanChange(
   if (!a.stripeSubId || !deps.stripe) {
     return {
       ctx: NO_STRIPE_PUSH,
-      retireAddons: retireWith(NO_STRIPE_PUSH),
+      stopBillingIncludedAddons: stopWith(NO_STRIPE_PUSH),
       settle: (write) => write,
     };
   }
@@ -129,8 +138,14 @@ export async function beginStripeFirstPlanChange(
   const knownAddonItemIds = new Set(
     rows.map((r) => r.stripeItemId).filter((id): id is string => !!id),
   );
-  const deleteItems: DeletableAddonItem[] = a.retireAddons
-    ? addonsIncludedAtPlan(rows, a.addonSkus, a.targetPlanKey)
+  const deleteItems: DeletableAddonItem[] = a.stopBillingAddons
+    ? addonsEnteringInclusion(
+        rows,
+        a.fromAddonSkus ?? a.addonSkus,
+        a.fromPlanKey,
+        a.addonSkus,
+        a.targetPlanKey,
+      )
         .filter((r) => !r.isComp && r.stripeItemId) // a comp row owns no billed item: no Stripe call
         .map((r) => ({ itemId: r.stripeItemId as string, rowId: r.id }))
     : [];
@@ -161,7 +176,7 @@ export async function beginStripeFirstPlanChange(
   };
   return {
     ctx,
-    retireAddons: retireWith(ctx),
+    stopBillingIncludedAddons: stopWith(ctx),
     settle: async (write) => {
       try {
         const out = await write;
@@ -369,9 +384,12 @@ export function planChangeArgs(p: {
     basePriceSnapshot?: unknown;
   } | null;
   version: { id: string; addonSkus: readonly AddonSkuDef[] };
+  /** The plan being left (resolved, never null for a loaded tenant) and the version it is judged by. */
+  fromPlanKey?: string | null;
+  fromVersion?: { addonSkus: readonly AddonSkuDef[] } | null;
   def: { planKey: string; name: string; monthlyPrice?: unknown; annualPrice?: unknown };
   proration: PlanChangeProration;
-  retireAddons: boolean;
+  stopBillingAddons: boolean;
   actorId?: string | null;
   audience?: PlanChangeAudience;
 }): PlanChangeFlowArgs {
@@ -389,8 +407,10 @@ export function planChangeArgs(p: {
     targetPlanName: p.def.name,
     price: price.ok ? { monthly: price.monthly, annual: price.annual } : null,
     proration: p.proration,
-    retireAddons: p.retireAddons,
+    stopBillingAddons: p.stopBillingAddons,
     addonSkus: p.version.addonSkus ?? [],
+    fromPlanKey: p.fromPlanKey ?? p.sub?.planKey ?? null,
+    fromAddonSkus: p.fromVersion?.addonSkus ?? p.version.addonSkus ?? [],
     localState: {
       fromPlanKey: p.sub?.planKey ?? null,
       toPlanKey: p.def.planKey,

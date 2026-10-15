@@ -110,6 +110,8 @@ import { AutoLockAdminService } from "./auto-lock-admin.service";
     AddonService,
     AddonGuard,
     AddonAccessService,
+    // SA-786: platform-admin bills an add-on the old plan included after an instant down-move.
+    SubscriptionMutationService,
     // Platform-admin plan changes move the snapshot MRR run-rate, so they must emit the
     // matching signed BillingEvent delta (see PlatformAdminService.updatePlan).
     BillingEventService,

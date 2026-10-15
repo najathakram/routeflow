@@ -36,6 +36,23 @@ import { resolvePlanPrice } from "./plan-price";
 import { CHECKOUT_ADDON_EXPAND, stripeAddonItemIds } from "./stripe-addon-items";
 import { stripeBaseItem, stripeSubscriptionPeriod } from "./stripe-period";
 import { lockTenantPrice } from "./price-lock";
+import {
+  addonBillingModeOf,
+  billLeavingAddonsAfterCommit,
+  repriceAddonsLeavingInclusionTx,
+  targetVersionFor,
+  type LeavingAddon,
+  type LeavingBiller,
+} from "./addon-inclusion";
+import { dunningZone } from "./dunning-zone";
+import { formatInZone } from "./subscription-billing-extras";
+import { SubscriptionMutationService } from "./subscription-mutation.service";
+
+/** No mutation service wired (a bare unit build): billing a leaving add-on fails loudly into the notice path. */
+const MISSING_BILLER: LeavingBiller = {
+  billAddonsLeavingInclusion: () =>
+    Promise.reject(new Error("SubscriptionMutationService is not wired into BillingCronService")),
+};
 
 /** A run of this many snapshot failures in one sweep is systemic — the sweep aborts loudly. */
 const MAX_CONSECUTIVE_SNAPSHOT_FAILURES = 3;
@@ -74,6 +91,9 @@ export class BillingCronService {
     // SA-775: the rollout pause on AUTOMATIC locks (trial expiry, scheduled cancellation). @Optional only so a
     // unit spec can build the sweep bare; billing.module-wiring.spec.ts pins that production injects it.
     @Optional() private readonly autoLocks?: AutoLockSwitchService,
+    // SA-786: bills an add-on the old plan included, after a scheduled downgrade committed. @Optional only so a unit
+    // spec can build the sweep bare; billing.module-wiring.spec.ts pins that production injects it.
+    @Optional() private readonly mutations?: SubscriptionMutationService,
   ) {}
 
   private planMonthly(version: PlanVersionWithCatalog | null, planKey: string | null): number {
@@ -326,6 +346,8 @@ export class BillingCronService {
             priceOverrideMonthly: true,
             priceOverrideAnnual: true,
             stripeSubId: true,
+            externalPayment: true,
+            couponFull: true,
             basePriceSnapshot: true,
             downgradeToPlanKey: true,
             downgradeEffectiveAt: true,
@@ -344,22 +366,14 @@ export class BillingCronService {
         ) {
           throw new DowngradeOvertakenError();
         }
-        let targetVersion = fromVersion;
-        let targetDef = findPlanDefinition(fromVersion.definitions, target);
-        if (!targetDef) {
-          // The tenant's pinned (grandfathered) version predates this plan (e.g. LITE shipped
-          // in v12) — resolve the target against the currently published catalog instead of
-          // silently pricing it as $0 and falling back to STARTER entitlements.
-          const published = await this.catalog.getPublishedVersion();
-          targetDef = published ? findPlanDefinition(published.definitions, target) : undefined;
-          if (!published || !targetDef) {
-            throw new PlanNotInCatalogError(
-              target,
-              [fromVersion.id, published?.id].filter((x): x is string => Boolean(x)),
-            );
-          }
-          targetVersion = published;
-        }
+        // The tenant's pinned (grandfathered) version, else - when it predates this plan (e.g. LITE shipped in
+        // v12) - the currently published catalog, instead of silently pricing it as $0 and falling back to
+        // STARTER entitlements. The same resolution the downgrade preview prices add-ons from (SA-786).
+        const { version: targetVersion, def: targetDef } = await targetVersionFor(
+          this.catalog,
+          fromVersion,
+          target,
+        );
         // #2223 / SA-444c (i) + #2460 / SA-464 (2), one invariant (snapshot = what the tenant pays):
         // the new snapshot is the negotiated fee, else the target's price; the ledger books it minus
         // what the MRR snapshot counted (the stored snapshot, NULL ⇒ 0) — never a catalog price for
@@ -367,6 +381,22 @@ export class BillingCronService {
         const override = priceOverrideOf(cur);
         const newBase = override ?? this.planMonthly(targetVersion, target);
         const seatCap = targetDef.seatsIncluded ?? null;
+
+        // SA-786: the date a MANUAL tenant's DUE notice names, in the tenant's zone (read outside the transaction).
+        const dateLabel =
+          addonBillingModeOf(this.stripe.isConfigured, cur) === "MANUAL"
+            ? formatInZone(
+                s.downgradeEffectiveAt as Date,
+                await dunningZone(this.prisma, s.tenantId),
+                {
+                  month: "long",
+                  day: "numeric",
+                  year: "numeric",
+                },
+              )
+            : "";
+        let leavingToBill: LeavingAddon[] = [];
+        let tenantLabel = s.tenantId;
 
         const tenantPlan = (s as { tenant?: { plan?: string } }).tenant?.plan;
         const transition = snapshotOn
@@ -401,7 +431,7 @@ export class BillingCronService {
           // against the LOCKED snapshot; a non-PRODUCTION class still applies, booking Δ0.
           const lockedTenant = await tx.tenant.findUnique({
             where: { id: s.tenantId },
-            select: { status: true, class: true, deletedAt: true },
+            select: { status: true, class: true, deletedAt: true, name: true, slug: true },
           });
           const lockedSub = await tx.tenantSubscription.findUnique({
             where: { tenantId: s.tenantId },
@@ -410,6 +440,7 @@ export class BillingCronService {
               basePriceSnapshot: true,
               priceOverrideMonthly: true,
               priceOverrideAnnual: true,
+              externalPayment: true,
               stripeSubId: true,
               downgradeToPlanKey: true,
               downgradeEffectiveAt: true,
@@ -458,6 +489,29 @@ export class BillingCronService {
             where: { id: s.tenantId },
             data: { plan: planKeyToEnum(target) },
           });
+          // SA-786 S3 (owner ruling Q-B): an add-on the old plan included starts to bill at the TARGET version's
+          // catalog price. AFTER the plan write, so the ledger judges "paying" on the new plan. MANUAL: priced
+          // here + a DUE notice; UNBILLED: nothing; STRIPE: collected and billed after the commit below.
+          tenantLabel = lockedTenant.name ?? lockedTenant.slug ?? s.tenantId;
+          const fromKey = normalizePlanKey(s.planKey);
+          if (fromKey) {
+            const leaving = await repriceAddonsLeavingInclusionTx(tx, this.events, {
+              tenantId: s.tenantId,
+              fromPlanKey: fromKey,
+              fromAddonSkus: fromVersion.addonSkus,
+              toPlanKey: target,
+              toPlanName: targetDef.name,
+              toAddonSkus: targetVersion.addonSkus,
+              mode: addonBillingModeOf(this.stripe.isConfigured, lockedSub),
+              tenantLabel,
+              dateLabel,
+              onInvalid: (sku, value) =>
+                this.logger.error(
+                  `Scheduled downgrade tenant=${s.tenantId}: add-on "${sku}" catalog includedAtPlan "${value}" names no plan - left unpriced`,
+                ),
+            });
+            leavingToBill = leaving.toBill;
+          }
           // Free seats ONLY when over the new cap (deactivate non-retained OPERATOR/DRIVER;
           // TENANT_ADMIN is never deactivated). An empty retained list = keep only admins.
           if (seatCap != null) {
@@ -505,6 +559,26 @@ export class BillingCronService {
           targetDef,
           { monthly: cur.priceOverrideMonthly, annual: cur.priceOverrideAnnual },
           target,
+        );
+        // SA-786 S3, STRIPE: ONE item per add-on that stopped being included, after the flip committed, with
+        // `always_invoice` pinned to the new period's start (the lead's R1 note: one full period on its own
+        // invoice). A throw flags the tenant and writes a notice; the committed flip is never rolled back.
+        await billLeavingAddonsAfterCommit(
+          { prisma: this.prisma, logger: this.logger },
+          this.mutations ?? MISSING_BILLER,
+          {
+            tenantId: s.tenantId,
+            tenantLabel,
+            fromPlanName:
+              findPlanDefinition(fromVersion.definitions, s.planKey)?.name ?? "its previous plan",
+            stripeSubId: cur.stripeSubId,
+            rows: leavingToBill,
+            toSkus: targetVersion.addonSkus,
+            opts: {
+              prorationBehavior: "always_invoice",
+              prorationDate: s.downgradeEffectiveAt as Date,
+            },
+          },
         );
 
         // N3: best-effort admin notification, never blocks the transaction above. `key` is

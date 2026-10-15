@@ -104,7 +104,10 @@ function make(
       findUnique: jest.fn(async () => ({ stripeSubId: db.sub.stripeSubId })),
     },
     tenantAddon: {
-      findUnique: jest.fn(async ({ where }: any) => db.addons.find((r) => r.id === where.id)),
+      findUnique: jest.fn(async ({ where }: any) => {
+        const hit = db.addons.find((r) => r.id === where.id);
+        return hit ? { ...hit } : undefined; // a row read, not the live object
+      }),
       updateMany: jest.fn(async ({ where, data }: any) => {
         const hit = db.addons.filter((r) => matches(r, where));
         for (const r of hit) Object.assign(r, data);
@@ -124,7 +127,10 @@ function make(
     tenantSubscription: { findUnique: jest.fn(async () => ({ ...db.sub })) },
     tenant: { findUnique: jest.fn().mockResolvedValue({ plan: "TEAM" }) },
     tenantAddon: {
-      findUnique: jest.fn(async ({ where }: any) => db.addons.find((r) => r.id === where.id)),
+      findUnique: jest.fn(async ({ where }: any) => {
+        const hit = db.addons.find((r) => r.id === where.id);
+        return hit ? { ...hit } : undefined; // a row read, not the live object
+      }),
       findMany: jest.fn(async () => []),
     },
     $transaction: jest.fn(async (fn: any) => fn(tx)),
