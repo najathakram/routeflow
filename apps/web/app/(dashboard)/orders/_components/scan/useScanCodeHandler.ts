@@ -10,7 +10,6 @@ import {
   type ScanBarcodeRow,
 } from "@routeflow/scanning";
 import type { SellLevel } from "@routeflow/pricing";
-import { UNITS_LOADING_SCAN_MESSAGE } from "@/lib/default-unit-line";
 import { resolveProductByCode, type BarcodeResolveResult } from "@/lib/barcode-resolve";
 import { genericToastCopy } from "@/lib/generic-toast-copy";
 
@@ -20,7 +19,7 @@ type ToastFn = ReturnType<typeof useToast>["toast"];
 export type ScanResolution =
   | { kind: "added"; product: any; created: boolean }
   /** #2865 (SA-632 H2): a scan of a different level landed on a line still waiting for its default unit. */
-  | { kind: "refused"; message: string }
+  | { kind: "refused" }
   | { kind: "archived"; name: string }
   /** B1219: one fuzzy match, no exact code - NOT added; the caller offers "Did you mean ...?". */
   | { kind: "suggested"; product: any }
@@ -207,10 +206,12 @@ export function useScanCodeHandler(deps: ScanCodeHandlerDeps) {
       // bug, never a connectivity failure, and must never be silently queued/re-added.
       const level = scanLevelForHit(code, result.product);
       // #2784: only a SHARED code may start on the default selling unit (box-only / unit-only: the code decides).
-      const added = scanCodeIsShared(code, result.product)
-        ? deps.addLineItem(result.product, level, { startOnDefaultUnit: true })
-        : deps.addLineItem(result.product, level);
-      if (added?.refused) return { kind: "refused", message: UNITS_LOADING_SCAN_MESSAGE };
+      // SA-626a: a multi-match (first row wins) is a picker-style pick, so it starts on the default unit too.
+      const added =
+        result.ambiguous || scanCodeIsShared(code, result.product)
+          ? deps.addLineItem(result.product, level, { startOnDefaultUnit: true })
+          : deps.addLineItem(result.product, level);
+      if (added?.refused) return { kind: "refused" };
       return { kind: "added", product: result.product, created: added?.created ?? true };
     }
     // Nothing found — let the caller open create-product with the scanned barcode as SKU. Not for a
