@@ -435,6 +435,41 @@ describe("fastRepeat (order builder: a repeat of the code just accepted counts a
     expect(accepts).toBe(1);
   });
 
+  it("a 0.5 s scan rhythm (one or two frames each) counts every presentation, none lost to the cooldown", () => {
+    let s = createContinuousScanState();
+    const opts = { bounds: IN_BOX_BOUNDS, aimBox: IN_BOX, fastRepeat: true };
+    for (const t of [0, 100, 200]) s = continuousFrameScanned(s, "RHYTHM", T0 + t, opts).next;
+    s = scanSettled(s).next;
+    let accepts = 1;
+    for (let i = 1; i <= 10; i++) {
+      for (const dt of [0, 100]) {
+        const step = continuousFrameScanned(s, "RHYTHM", T0 + 200 + i * 500 + dt, opts);
+        s = step.next;
+        if (step.startResolving) {
+          accepts++;
+          s = scanSettled(s).next;
+        }
+      }
+    }
+    expect(accepts).toBe(11);
+  });
+
+  it("a held item whose decodes pause under 0.3 s is never re-counted, however often", () => {
+    let s = createContinuousScanState();
+    let accepts = 0;
+    for (let t = 0, i = 0; t <= 9000; t += 100, i++) {
+      if (i % 5 === 4) continue; // a missed decode every 5th tick: 200 ms between reads
+      const step = continuousFrameScanned(s, "HELD", T0 + t, {
+        bounds: IN_BOX_BOUNDS,
+        aimBox: IN_BOX,
+        fastRepeat: true,
+      });
+      s = step.next;
+      if (step.startResolving) accepts++;
+    }
+    expect(accepts).toBe(1);
+  });
+
   it("the very first sighting of a code still needs the steady hold (a passing misread is not a scan)", () => {
     let s = createContinuousScanState();
     const one = continuousFrameScanned(s, "NEW", T0, { fastRepeat: true });

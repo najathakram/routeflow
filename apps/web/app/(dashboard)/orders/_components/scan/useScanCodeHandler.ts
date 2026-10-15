@@ -108,6 +108,8 @@ export interface ScanCodeHandlerDeps {
    * repeat scan costs nothing and cannot be lost behind a slow request.
    */
   hasLine?: (productId: string) => boolean;
+  /** Changes whenever a NEW order starts: the remembered code -> product map never outlives its order. */
+  sessionKey?: () => number | string;
   toast: ToastFn;
 }
 
@@ -134,12 +136,18 @@ export function useScanCodeHandler(deps: ScanCodeHandlerDeps) {
   >(async () => ({ kind: "unknown" }));
   // code -> the product it resolved to (only a plain hit; never a suggestion/archived/unknown).
   const seenRef = React.useRef(new Map<string, any>());
+  const seenSessionRef = React.useRef<number | string | undefined>(undefined);
   // `quiet` suppresses ONLY the lookup-failure toast: the scan screen shows its own status and
   // retries a queued scan every few seconds, which must not toast on every failed retry.
   handlerRef.current = async (
     code: string,
     opts?: { quiet?: boolean; background?: boolean },
   ): Promise<ScanResolution> => {
+    const session = deps.sessionKey?.();
+    if (seenSessionRef.current !== session) {
+      seenRef.current.clear();
+      seenSessionRef.current = session;
+    }
     // Local fast path: a code already resolved to a product still on the order needs no lookup.
     const seen = deps.hasLine ? seenRef.current.get(code.trim()) : undefined;
     let result: BarcodeResolveResult | null =

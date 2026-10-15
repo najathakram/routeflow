@@ -321,6 +321,7 @@ export function CreateOrderModal({
   const [debouncedProductSearch, setDebouncedProductSearch] = React.useState("");
   const [lineItems, setLineItems] = React.useState<LineItem[]>([]);
   // The scan handler's local fast path reads the order as of the LAST COMMIT (addLineItem flushSyncs).
+  const orderSessionRef = React.useRef(0);
   const lineItemsRef = React.useRef(lineItems);
   lineItemsRef.current = lineItems;
   const [lineItemsError, setLineItemsError] = React.useState("");
@@ -491,6 +492,7 @@ export function CreateOrderModal({
     onSuggestion: (matches) => setScanMatches(matches),
     suggestionsSuppressed: () => scanScreenActive,
     hasLine: (productId) => lineItemsRef.current.some((li) => li.productId === productId),
+    sessionKey: () => orderSessionRef.current,
     onUnknownCode: (code) => {
       setCreateProductInitialName("");
       setCreateProductInitialSku(code);
@@ -551,6 +553,7 @@ export function CreateOrderModal({
   // hydration effect below re-fills the state from the draft payload right after.
   React.useEffect(() => {
     if (!isOpen) return;
+    orderSessionRef.current += 1; // a new order: forget which products earlier scans resolved to
     reset({
       urgent: false,
       fulfillPath: initialFulfillPath === "SHIP" && !resumeDraftId ? "SHIP" : undefined,
