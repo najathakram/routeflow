@@ -106,7 +106,7 @@ describeDb("B920 — buyer oversell is per product — real Postgres", () => {
       err = e as ConflictException;
     }
     expect(err).toBeInstanceOf(ConflictException);
-    expect((err!.getResponse() as any).message).toMatch(/(available: 5, requested: 6)/);
+    expect((err!.getResponse() as any).message).toContain("(available: 5, requested: 6)");
     expect(await stockNow()).toBe(5);
   });
 

@@ -174,6 +174,45 @@ describe("B920 — decrementStockForSale tests the per-product total, not each l
     expect(products[0].currentStock).toBe(20);
   });
 
+  it("mixed shapes: a box-split line (1 box of 12) + a 6-piece line of the same product vs 15 is refused (18 > 15)", async () => {
+    const products = [water(15)];
+    const { tx } = fakeTx(products);
+
+    const err = await refusal(() =>
+      decrementStockForSale(
+        deps,
+        tx,
+        [
+          { productId: "water", qty: 12, boxes: 1, pieces: 0, unitsPerBox: 12 },
+          { productId: "water", qty: 6, boxes: 0, pieces: 6, unitsPerBox: 12 },
+        ] as any,
+        false,
+        { ...event, customerFacing: true },
+      ),
+    );
+
+    expect(err.getResponse()).toMatchObject({ code: "INSUFFICIENT_STOCK" });
+    expect(products[0].currentStock).toBe(15);
+  });
+
+  it("mixed shapes twin: 1 box + 3 pieces (15) against 15 resolves and empties the stock", async () => {
+    const products = [water(15)];
+    const { tx } = fakeTx(products);
+
+    await decrementStockForSale(
+      deps,
+      tx,
+      [
+        { productId: "water", qty: 12, boxes: 1, pieces: 0, unitsPerBox: 12 },
+        { productId: "water", qty: 3, boxes: 0, pieces: 3, unitsPerBox: 12 },
+      ] as any,
+      false,
+      { ...event, customerFacing: true },
+    );
+
+    expect(products[0].currentStock).toBe(0);
+  });
+
   it("names only the product that is short in total; an adequately stocked product is not listed", async () => {
     const products = [mango(5), water(100)];
     const { tx } = fakeTx(products);
