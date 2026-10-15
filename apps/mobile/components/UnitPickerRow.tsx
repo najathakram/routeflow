@@ -2,18 +2,19 @@ import * as React from "react";
 import { Pressable, StyleSheet, Text, View, type StyleProp, type ViewStyle } from "react-native";
 import { Ionicons } from "@expo/vector-icons";
 import { ios } from "@routeflow/ui/tokens";
-import type { LadderProduct } from "@routeflow/pricing";
+import type { DerivedBaseMarker, LadderProduct } from "@routeflow/pricing";
 import { useProductUnits, useUnitsEnabled } from "../lib/api/product-units";
 import {
   buildUnitOptions,
   defaultStartOption,
   unitOptionDetail,
+  unitPickerValue,
   type UnitOption,
 } from "../lib/unit-options";
 import { OptionPickerSheet, type PickerOption } from "./OptionPickerSheet";
 
 /** The line fields this control reads (structurally satisfied by CartRow's/DraftItemCard's own line). */
-export interface UnitPickerLine {
+export interface UnitPickerLine extends DerivedBaseMarker {
   productId: string;
   isUnlisted?: boolean;
   /**
@@ -90,14 +91,24 @@ export function UnitPickerRow({
   React.useEffect(() => {
     if (!startOnDefaultUnit || startedRef.current || options.length <= 1 || !units) return;
     startedRef.current = true; // one shot per mount: a later choice is never re-overridden
-    const start = defaultStartOption(product, units, tier, { hasUnit: !!line.unitLabel });
+    const start = defaultStartOption(product, units, tier, { hasUnit: !!unitPickerValue(line) });
     if (start) onChange(start);
-  }, [startOnDefaultUnit, options, units, product, tier, line.unitLabel, onChange]);
+  }, [
+    startOnDefaultUnit,
+    options,
+    units,
+    product,
+    tier,
+    line.unitLabel,
+    line.derivedBase,
+    onChange,
+  ]);
 
   // Mirrors web's UnitPicker: a product with no ladder (or only the pack) shows no control at all.
   if (options.length <= 1) return null;
 
-  const selected = options.find((o) => o.value === (line.unitLabel ?? "")) ?? options[0]!;
+  // Units P0b: the held unit, else a DERIVED Piece (the marker), else the pack. A pack-pieces line without it is the pack.
+  const selected = options.find((o) => o.value === unitPickerValue(line)) ?? options[0]!;
   const pickerOptions: PickerOption[] = options.map((o) => ({
     id: o.value,
     label: o.label,

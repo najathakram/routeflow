@@ -28,7 +28,14 @@ jest.mock("@/lib/buyer-auth-context", () => ({
   }),
 }));
 jest.mock("@/lib/buyer-cart", () => ({
-  useBuyerCart: () => ({ getItemQty: () => 0, addItem, updateQty: jest.fn() }),
+  useBuyerCart: () => ({
+    items: [],
+    getItemQty: () => 0,
+    getItemCount: () => 0,
+    addItem,
+    updateQty: jest.fn(),
+    setUnit: jest.fn(),
+  }),
 }));
 jest.mock("@/lib/api/buyer", () => ({
   useBuyerFavorites: () => ({ data: favorites, isLoading: false, isError: false }),

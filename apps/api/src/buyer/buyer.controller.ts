@@ -69,6 +69,7 @@ import { summarizeOpenInvoices } from "../invoices/invoice-balance-classify";
 import { OPEN_INVOICE_STATUSES } from "../invoices/invoice-status-sets";
 import { CONFIRMED_PAYMENT } from "../invoices/payment-predicates";
 import { resolveOversellAllowed } from "../orders/oversell-policy";
+import { assertBuyerQtySplit } from "./buyer-qty-split";
 import { PolicyOversellReader } from "../orders/policy-oversell-reader";
 import {
   LOCK_UNAVAILABLE,
@@ -584,6 +585,13 @@ export class BuyerController {
     @CurrentBuyerCustomer() ctx: any,
     @Headers("Idempotency-Key") rawIdempotencyKey?: string,
   ) {
+    // Row 531 F2: a contradictory qty / box split is refused before the key, the lock or any write.
+    await assertBuyerQtySplit(
+      this.prisma.forTenant(),
+      dto.items,
+      "buyer.createOrder",
+      ctx.tenantId,
+    );
     // B1094: a client-minted key makes a double submit (two concurrent POSTs of one cart) apply ONCE.
     const idempotencyKey = normalizeBuyerIdempotencyKey(rawIdempotencyKey);
     const requestHash = idempotencyKey ? buyerSubmitHash(ctx.customerId, dto.items) : undefined;
@@ -880,6 +888,14 @@ export class BuyerController {
     @Body() dto: UpdateOrderItemsDto,
     @CurrentBuyerCustomer() ctx: any,
   ) {
+    // Row 531 F2 + S3: each entry that names a stored line is checked in THAT line's own pack.
+    await assertBuyerQtySplit(
+      this.prisma.forTenant(),
+      dto.items,
+      "buyer.updateOrderItems",
+      ctx.tenantId,
+      { orderId: id, customerId: ctx.customerId },
+    );
     // B297 row 352: the entries name their lines (`orderItemId`), so a line keeps the rate it was sold at.
     return toCustomerOrder(
       await this.ordersService.updateOrderItems(id, dto, makePseudoUser(ctx), {
@@ -1094,6 +1110,10 @@ export class BuyerController {
   @ApiHeader({ name: "X-Tenant-Slug", required: true })
   @ApiOperation({ summary: "Generate a new order from a standing order template" })
   async reorderFromTemplate(@Param("id") id: string, @CurrentBuyerCustomer() ctx: any) {
+    // Row 531 S4 (intentional): this path is NOT enforced by assertBuyerQtySplit. Its lines come from the stored
+    // template rows, not from a client cart, so a disagreeing qty / split here is stored-data drift for the
+    // WARN-mode log inside OrdersService.create() (path "orders.create.lines") to surface, not a buyer payload to refuse.
+    // Enforcement on template-generated orders waits for its own ruling, like every staff / shared path.
     // Ownership check: verify the template belongs to this buyer's customer
     const template = await this.prisma
       .forTenant()

@@ -205,6 +205,26 @@ describe("stock-count-autosave", () => {
       expect(engine.pendingCount).toBe(0);
     });
 
+    it("a PERMANENT refusal (isPermanent) is reported once and never queued again", async () => {
+      const refused = Object.assign(new Error("409"), { response: { status: 409 } });
+      const upsertLine = jest.fn().mockRejectedValue(refused);
+      const onError = jest.fn();
+      const engine = createStockCountAutosave({
+        upsertLine,
+        removeLine: jest.fn(),
+        onError,
+        isPermanent: (e) => (e as { response?: { status?: number } }).response?.status === 409,
+      });
+
+      engine.queueEdit("p1", { countedQty: 9 }, "REPLACE");
+      await engine.flush();
+
+      expect(onError).toHaveBeenCalledTimes(1);
+      expect(engine.pendingCount).toBe(0);
+      await engine.flush(); // nothing left to resend
+      expect(upsertLine).toHaveBeenCalledTimes(1);
+    });
+
     it("a failed edit stays pending and is resent unchanged on the next flush", async () => {
       const upsertLine = jest
         .fn()

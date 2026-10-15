@@ -26,6 +26,7 @@ jest.mock("@/lib/buyer-cart", () => ({
     totalQty: 4,
     clearCart: jest.fn(),
     removeItem,
+    adoptCatalogPacks: jest.fn(),
   }),
 }));
 jest.mock("@/lib/api/buyer-capabilities", () => ({
