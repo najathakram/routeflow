@@ -11,7 +11,14 @@ import { StripeService } from "./stripe.service";
 import { EntitlementsService } from "./entitlements.service";
 import { FeatureResolverService } from "./feature-resolver.service";
 import { PlanCatalogService, PlanVersionWithCatalog } from "./plan-catalog.service";
-import { LEGACY_ADDON_KEY_TO_SKU, addonSkuCode } from "./plan-catalog.constants";
+import {
+  LEGACY_ADDON_KEY_TO_SKU,
+  addonSkuCode,
+  normalizePlanKey,
+  planKeyFromEnum,
+} from "./plan-catalog.constants";
+import { inclusionOf } from "./addon-inclusion";
+import { addonCatalogInvalidException } from "./addon-catalog-invalid";
 import { withAdvisoryLock, LockTimeoutError, LockUnavailableError } from "../common/db-locks";
 import {
   ADDON_KEY_TO_REGISTRY_KEY,
@@ -268,7 +275,7 @@ export class AddonService {
     // outside the lock.
     const tenant = await this.prisma.tenant.findUnique({
       where: { id: tenantId },
-      select: { id: true, slug: true },
+      select: { id: true, slug: true, plan: true },
     });
     if (!tenant) throw new NotFoundException(`Tenant ${tenantId} not found`);
 
@@ -345,6 +352,25 @@ export class AddonService {
               throw new BadRequestException(
                 `Add-on "${addonKey}" has no catalog SKU to price — publish a catalog version defining "${sku}" before billing it`,
               );
+            }
+
+            // SA-786 S7 (owner ruling 2026-10-15): at a plan that INCLUDES the SKU the add-on is free once enabled, so a
+            // Stripe item on top would book a charge the plan already covers. Refused BEFORE any Stripe call or row
+            // write; without a price the enable proceeds below at $0. An unparseable includedAtPlan fails closed.
+            if (stripePriceId && skuDef?.includedAtPlan != null) {
+              const planKey = await this.currentPlanKeyOf(tenantId, tenant.plan);
+              const verdict = inclusionOf(skuDef, planKey);
+              if (verdict.kind === "CATALOG_INVALID") {
+                throw addonCatalogInvalidException(verdict.sku, verdict.value);
+              }
+              if (verdict.kind === "INCLUDED") {
+                const planName =
+                  published.definitions.find((d) => d.planKey === planKey)?.name ?? planKey;
+                throw new ConflictException({
+                  code: API_ERROR_CODES.ADDON_INCLUDED_IN_PLAN,
+                  message: `This add-on is included in ${planName}. Enable it without a price.`,
+                });
+              }
             }
           }
 
@@ -533,6 +559,27 @@ export class AddonService {
   }
 
   /**
+   * The plan the tenant is on, resolved as everywhere in billing: the subscription's `planKey`, else the legacy
+   * `Tenant.plan` enum. Null when neither is known (then no add-on is "included").
+   */
+  private async currentPlanKeyOf(
+    tenantId: string,
+    tenantPlan?: string | null,
+  ): Promise<string | null> {
+    const sub = await this.prisma.tenantSubscription.findUnique({
+      where: { tenantId },
+      select: { planKey: true },
+    });
+    const fromSub = normalizePlanKey(sub?.planKey);
+    if (fromSub) return fromSub;
+    const plan =
+      tenantPlan ??
+      (await this.prisma.tenant.findUnique({ where: { id: tenantId }, select: { plan: true } }))
+        ?.plan;
+    return plan ? planKeyFromEnum(plan) : null;
+  }
+
+  /**
    * SA-693: turn an ACTIVE comp row back into a normal (non-comp) one. It NEVER silently starts billing:
    *  - tenant WITHOUT a Stripe subscription: only the flag flips (the row stays unbilled, price 0, as it
    *    was); the SA-690 checkout gate then treats it like any other unbilled self-serve row.
@@ -560,15 +607,28 @@ export class AddonService {
     }
 
     const sub = await this.prisma.tenantSubscription.findUnique({ where: { tenantId } });
+    // SA-786 S8: at a plan that INCLUDES the SKU the add-on is free, so un-comping only drops the comp marker: no
+    // price, no DUE notice, no Stripe re-entry (and no stripePriceId needed). An unparseable includedAtPlan fails
+    // closed (409, B1102).
+    const published = await this.catalog.getPublishedCatalog();
+    const catalogSku = published.addonSkus.find((k) => k.sku === lockSku) ?? null;
+    let includedHere = false;
+    if (catalogSku?.includedAtPlan != null) {
+      const verdict = inclusionOf(
+        catalogSku,
+        normalizePlanKey(sub?.planKey) ?? (await this.currentPlanKeyOf(tenantId)),
+      );
+      if (verdict.kind === "CATALOG_INVALID") {
+        throw addonCatalogInvalidException(verdict.sku, verdict.value);
+      }
+      includedHere = verdict.kind === "INCLUDED";
+    }
     // A manually-invoiced tenant (externalPayment, no Stripe subscription): turning the comp off means
     // the owner now invoices it by hand, exactly like a self-serve enable there. Priced at the catalog
     // price and booked, with the same ADDON_MANUAL_INVOICE_DUE notice; without a catalog SKU it stays flag-only.
-    const manual = !sub?.stripeSubId && sub?.externalPayment === true;
-    const manualSkuDef = manual
-      ? ((await this.catalog.getPublishedCatalog()).addonSkus.find((k) => k.sku === lockSku) ??
-        null)
-      : null;
-    if (sub?.stripeSubId) {
+    const manual = !includedHere && !sub?.stripeSubId && sub?.externalPayment === true;
+    const manualSkuDef = manual ? catalogSku : null;
+    if (!includedHere && sub?.stripeSubId) {
       // Without a configured Stripe the billed enable would write an ACTIVE, unbilled, non-comp row at 0
       // on a tenant that has a subscription: the exact silent state this method must never create.
       if (!this.stripe.isConfigured) {
