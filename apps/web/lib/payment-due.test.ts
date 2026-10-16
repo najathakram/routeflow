@@ -4,6 +4,7 @@ import {
   cardReminderDismiss,
   failedRenewalCopy,
   paymentDueCopy,
+  shownTermsOf,
 } from "./payment-due";
 import { paymentDueSlot, type BannerState } from "./subscription-banner-state";
 
@@ -74,6 +75,41 @@ describe("paymentDueCopy", () => {
         expect(JSON.stringify(c)).not.toMatch(NO_DASH);
       }
     }
+  });
+});
+
+describe("shownTermsOf (row 542c): the terms the pay click sends back", () => {
+  it("a bill: the amount and period it displayed, no card deadline", () => {
+    expect(shownTermsOf(due())).toEqual({
+      amountCents: 10_000,
+      periodStart: "2026-10-01T00:00:00.000Z",
+      cardBy: null,
+    });
+  });
+
+  it("an Add card banner: $0, no period, the card deadline it displayed", () => {
+    expect(
+      shownTermsOf(
+        due({
+          due: false,
+          pastDue: false,
+          amountCents: 0,
+          periodLabel: null,
+          periodStart: null,
+          cardNeeded: true,
+          chargeStartsOn: "2026-11-01T12:00:00.000Z",
+          cardBy: "2026-10-29T12:00:00.000Z",
+        }),
+      ),
+    ).toEqual({ amountCents: 0, periodStart: null, cardBy: "2026-10-29T12:00:00.000Z" });
+  });
+
+  it("carries only the three terms (nothing else rides along to the server)", () => {
+    expect(Object.keys(shownTermsOf(due())).sort()).toEqual([
+      "amountCents",
+      "cardBy",
+      "periodStart",
+    ]);
   });
 });
 
@@ -222,7 +258,58 @@ describe("cardReminderCopy", () => {
     // 00:00 NZDT = Oct 29 11:00Z, one hour before D: never later than D.
     const nz = cardReminderCopy(reminder(), "admin", "Pacific/Auckland")!;
     expect(nz.title).toContain("October 30, 2026");
-    expect(Date.UTC(2026, 9, 29, 11, 0, 0)).toBeLessThanOrEqual(D_MS);
+    // The same fact as a PROPERTY (derived, not a constant): the instant the printed day STARTS in the zone is
+    // never later than D, for every zone and several D. Fails if the printer used a zone east of the tenant's.
+    const MONTHS = [
+      "January",
+      "February",
+      "March",
+      "April",
+      "May",
+      "June",
+      "July",
+      "August",
+      "September",
+      "October",
+      "November",
+      "December",
+    ];
+    const dayKey = (ms: number, zone: string) =>
+      Number(
+        new Intl.DateTimeFormat("en-CA", {
+          timeZone: zone,
+          year: "numeric",
+          month: "2-digit",
+          day: "2-digit",
+        })
+          .format(new Date(ms))
+          .replace(/-/g, ""),
+      );
+    /** The first instant whose calendar day in `zone` is the printed day (binary search on the monotonic day key). */
+    const startOfPrintedDay = (printed: string, zone: string): number => {
+      const m = /^([A-Za-z]+) (\d+), (\d{4})$/.exec(printed)!;
+      const target = Number(m[3]) * 10000 + (MONTHS.indexOf(m[1]) + 1) * 100 + Number(m[2]);
+      const mid = Date.UTC(Number(m[3]), MONTHS.indexOf(m[1]), Number(m[2]));
+      let lo = mid - 36 * 3600_000; // before the day starts anywhere on earth
+      let hi = mid + 36 * 3600_000; // after it has started everywhere
+      while (hi - lo > 1) {
+        const m2 = Math.floor((lo + hi) / 2);
+        if (dayKey(m2, zone) >= target) hi = m2;
+        else lo = m2;
+      }
+      return hi;
+    };
+    for (const zone of zones) {
+      for (const d of [D_MS, D_MS - 11 * 3600_000, D_MS + 13 * 3600_000]) {
+        const title = cardReminderCopy(
+          reminder({ cardBy: new Date(d).toISOString() }),
+          "admin",
+          zone,
+        )!.title;
+        const printed = /^Add your card before (.+) to keep RouteFlow running\.$/.exec(title)![1];
+        expect(startOfPrintedDay(printed, zone)).toBeLessThanOrEqual(d);
+      }
+    }
     // A is not the deadline: the Auckland body prints A's own day
     expect(nz.body).toBe("You won't be charged until November 2, 2026.");
   });

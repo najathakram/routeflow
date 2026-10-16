@@ -12,6 +12,7 @@ import {
   cardReminderDismiss,
   failedRenewalCopy,
   paymentDueCopy,
+  shownTermsOf,
 } from "@/lib/payment-due";
 import type { BannerDismiss, BannerRole } from "@/lib/subscription-banner-state";
 import { useTenantTimeZoneQuery } from "@/lib/tenant-timezone";
@@ -99,7 +100,9 @@ export function PaymentDueBanner({
             className={cn(HIT, "min-w-0 flex-1 sm:flex-none")}
             loading={primary.intent === "pay" ? pay.isPending : portal.isPending}
             onClick={() =>
-              primary.intent === "pay" ? pay.mutate() : portal.mutate({ intent: "update-payment" })
+              primary.intent === "pay"
+                ? pay.mutate(due ? shownTermsOf(due) : undefined)
+                : portal.mutate({ intent: "update-payment" })
             }
           >
             {primary.label}

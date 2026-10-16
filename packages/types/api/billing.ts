@@ -199,6 +199,23 @@ export interface PaymentDueView {
   cardBy: string | null;
 }
 
+/**
+ * Row 542c: the terms the banner showed, sent with the pay click. The API only COMPARES them with its fresh plan and
+ * refuses a mismatch with 409 `PAYMENT_TERMS_CHANGED` (nothing created); they never price a session. Copy them
+ * straight from the `PaymentDueView` on screen: an Add card banner is `{0, null, cardBy}`, a bill `{amountCents,
+ * periodStart, null}`.
+ */
+export interface PaymentDueShown {
+  amountCents: number;
+  periodStart: string | null;
+  cardBy: string | null;
+}
+
+/** `POST /billing/payment-due/pay` body. `shown` is optional for one release (absent = no precondition). */
+export interface PaymentDuePayRequest {
+  shown?: PaymentDueShown;
+}
+
 /** `POST /billing/payment-due/pay` (TENANT_ADMIN): the Stripe Checkout to send the admin to. */
 export interface PaymentDuePayResult {
   checkoutUrl: string;

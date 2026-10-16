@@ -1,4 +1,4 @@
-import type { PaymentDueView } from "@routeflow/types";
+import type { PaymentDueShown, PaymentDueView } from "@routeflow/types";
 import { fromCents } from "@routeflow/pricing";
 import { formatMoney } from "./format";
 import { hasCardReminder, type BannerDismiss, type BannerRole } from "./subscription-banner-state";
@@ -11,6 +11,19 @@ import { hasCardReminder, type BannerDismiss, type BannerRole } from "./subscrip
  */
 
 export const BILLING_HREF = "/settings/billing";
+
+/**
+ * Row 542c: the terms this banner displayed, sent with the pay click so the server can refuse a stale quote (409
+ * PAYMENT_TERMS_CHANGED). A straight copy of three fields of the view on screen; the server only compares them and
+ * never charges them. An Add card banner is `{0, null, cardBy}`, a bill `{amountCents, periodStart, null}`.
+ */
+export function shownTermsOf(view: PaymentDueView): PaymentDueShown {
+  return {
+    amountCents: view.amountCents,
+    periodStart: view.periodStart,
+    cardBy: view.cardBy,
+  };
+}
 
 export type PaymentDueKind = "past-due" | "due" | "failed-renewal" | "card-reminder";
 

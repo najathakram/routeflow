@@ -57,6 +57,12 @@ describe("PaymentDueBanner", () => {
     ).toBeInTheDocument();
     await userEvent.click(within(box).getByRole("button", { name: "Pay now" }));
     expect(mockPay).toHaveBeenCalledTimes(1);
+    // 542c: the click sends the terms this banner displayed (the server only compares them)
+    expect(mockPay).toHaveBeenCalledWith({
+      amountCents: 10_000,
+      periodStart: "2026-10-01T00:00:00.000Z",
+      cardBy: null,
+    });
     expect(within(box).getByRole("link", { name: "View billing" })).toHaveAttribute(
       "href",
       "/settings/billing",
@@ -197,6 +203,11 @@ describe("PaymentDueBanner - card reminder", () => {
     await userEvent.click(within(box).getByRole("button", { name: "Add card" }));
     expect(mockPay).toHaveBeenCalledTimes(1);
     expect(mockPortal).not.toHaveBeenCalled();
+    expect(mockPay).toHaveBeenCalledWith({
+      amountCents: 0,
+      periodStart: null,
+      cardBy: "2026-10-29T12:00:00.000Z",
+    });
     expect(within(box).getByRole("link", { name: "View billing" })).toHaveAttribute(
       "href",
       "/settings/billing",
