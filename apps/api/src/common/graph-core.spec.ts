@@ -4,9 +4,11 @@
  * files the graph host re-applies. The graph itself is never loaded: these are set operations on arrays.
  * Design: specs/graphify/DESIGN.md section 2 (items 4-12) and section 3 (item 4).
  */
-import { execFileSync } from "child_process";
+import { execFileSync, spawn } from "child_process";
 import * as fs from "fs";
+import * as os from "os";
 import * as path from "path";
+import { pathToFileURL } from "url";
 
 // eslint-disable-next-line @typescript-eslint/no-require-imports
 const core = require("../../../../scripts/lib/graph-core.cjs");
@@ -339,5 +341,66 @@ describe("GRAPHIFY_OFF", () => {
       },
     );
     expect(out.trim()).toBe("graph off");
+  });
+});
+
+describe("graph-refresh safety", () => {
+  const refreshUrl = pathToFileURL(path.join(REPO, "scripts/graph-refresh.mjs")).href;
+  const runModule = (code: string): string =>
+    execFileSync(process.execPath, ["--input-type=module", "-e", code], {
+      encoding: "utf8",
+      env: { ...process.env, GRAPHIFY_HOST: "" },
+    });
+
+  it("deletes a stale serve.pid and kills nothing when the PID is not our server", () => {
+    const host = fs.mkdtempSync(path.join(os.tmpdir(), "graph-refresh-spec-"));
+    const bystander = spawn(process.execPath, ["-e", "setInterval(() => {}, 1000)"], {
+      stdio: "ignore",
+    });
+    try {
+      fs.mkdirSync(path.join(host, "graphify-out"));
+      const pidFile = path.join(host, "graphify-out", "serve.pid");
+      fs.writeFileSync(pidFile, String(bystander.pid));
+      const out = runModule(
+        `import { stopServer } from ${JSON.stringify(refreshUrl)};
+         console.log(JSON.stringify(stopServer(${JSON.stringify(host)})));`,
+      );
+      expect(out.trim()).toBe("false");
+      expect(fs.existsSync(pidFile)).toBe(false);
+      expect(() => process.kill(bystander.pid as number, 0)).not.toThrow(); // still alive
+    } finally {
+      bystander.kill();
+      fs.rmSync(host, { recursive: true, force: true });
+    }
+  });
+
+  it("recognises only a graphify serve command line as ours", () => {
+    const out = runModule(
+      `import { isOurServer } from ${JSON.stringify(refreshUrl)};
+       console.log(JSON.stringify([isOurServer("python -m graphify.serve g.json"), isOurServer("node app.js"), isOurServer(null)]));`,
+    );
+    expect(JSON.parse(out)).toEqual([true, false, false]);
+  });
+
+  it("refuses to default the host to a checkout that has no BUILT_AT marker", () => {
+    const out = runModule(
+      `import { parseCli } from ${JSON.stringify(refreshUrl)};
+       let r; try { r = parseCli(["--dry-run"], {}); } catch (e) { r = String(e.message); }
+       console.log(JSON.stringify(r));`,
+    );
+    const r = JSON.parse(out);
+    // either an explicit refusal, or this checkout really is a host (marker present)
+    if (typeof r === "string") expect(r).toMatch(/no graph host/);
+    else expect(fs.existsSync(path.join(REPO, "graphify-out", "BUILT_AT"))).toBe(true);
+  });
+
+  it("accepts --host and GRAPHIFY_HOST, plus --dry-run and --pull", () => {
+    const out = runModule(
+      `import { parseCli } from ${JSON.stringify(refreshUrl)};
+       const a = parseCli(["--host", "/x", "--dry-run"], {});
+       const b = parseCli(["--pull", "mini"], { GRAPHIFY_HOST: "/y" });
+       console.log(JSON.stringify([a.dryRun, b.pull, a.host.endsWith("x"), b.host.endsWith("y")]));`,
+    );
+    expect(JSON.parse(out)).toEqual([true, "mini", true, true]);
   });
 });

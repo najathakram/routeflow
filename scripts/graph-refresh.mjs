@@ -34,14 +34,15 @@ export const USAGE = `graph-refresh.mjs: refresh the machine's graph host
   node scripts/graph-refresh.mjs [--host <dir>] [--dry-run] [--force] [--min-behind N]
   node scripts/graph-refresh.mjs --pull <ssh-host> [--remote-host <dir>] [--host <dir>] [--dry-run]
 
-host defaults to GRAPHIFY_HOST, else the checkout this script sits in. --dry-run prints the plan and
+host must be given: --host <dir>, else GRAPHIFY_HOST, else a directory that already holds
+graphify-out/BUILT_AT (the script's own checkout counts only when it does). --dry-run prints the plan and
 changes nothing (no fetch, no checkout, no write, no kill).
 `;
 
 /** argv -> options; throws on bad usage. */
 export function parseCli(argv, env = process.env) {
   const o = {
-    host: env.GRAPHIFY_HOST || REPO_ROOT,
+    host: env.GRAPHIFY_HOST || null,
     dryRun: false,
     force: false,
     minBehind: core.REFRESH_MIN_BEHIND,
@@ -69,7 +70,13 @@ export function parseCli(argv, env = process.env) {
         throw new Error("--min-behind must be a non-negative integer");
     } else throw new Error(`unknown flag ${JSON.stringify(a)}`);
   }
-  o.host = path.resolve(o.host);
+  if (!o.host && fs.existsSync(path.join(REPO_ROOT, "graphify-out", "BUILT_AT")))
+    o.host = REPO_ROOT;
+  if (!o.help && !o.host)
+    throw new Error(
+      "no graph host: pass --host <dir> or set GRAPHIFY_HOST (this checkout has no graphify-out/BUILT_AT, so it is not assumed to be the host)",
+    );
+  if (o.host) o.host = path.resolve(o.host);
   return o;
 }
 
@@ -83,7 +90,6 @@ function git(host, ...args) {
         encoding: "utf8",
         stdio: ["ignore", "pipe", "pipe"],
         timeout: 600_000,
-        env: { ...process.env, GUARD_ALLOW: "1" },
       }),
     };
   } catch (e) {
@@ -169,7 +175,37 @@ export function pruneBackups(host, { dryRun = false } = {}) {
   return doomed;
 }
 
-function stopServer(host) {
+/** Command line of a live process, or null when it is gone / unreadable. */
+export function processCmdline(pid) {
+  try {
+    if (process.platform === "win32") {
+      const r = spawnSync(
+        "powershell",
+        [
+          "-NoProfile",
+          "-NonInteractive",
+          "-Command",
+          `(Get-CimInstance Win32_Process -Filter "ProcessId=${pid}").CommandLine`,
+        ],
+        { encoding: "utf8", timeout: 30_000 },
+      );
+      return r.status === 0 && r.stdout.trim() ? r.stdout.trim() : null;
+    }
+    const r = spawnSync("ps", ["-o", "args=", "-p", String(pid)], {
+      encoding: "utf8",
+      timeout: 30_000,
+    });
+    return r.status === 0 && r.stdout.trim() ? r.stdout.trim() : null;
+  } catch {
+    return null;
+  }
+}
+
+/** True when the command line is our MCP server (graphify ... serve). */
+export const isOurServer = (cmd) => !!cmd && /graphify/i.test(cmd) && /serve/i.test(cmd);
+
+/** Stops the server named by serve.pid, but only when that PID really is ours; a stale file kills nothing. */
+export function stopServer(host, { cmdlineOf = processCmdline } = {}) {
   const pidFile = path.join(host, "graphify-out", "serve.pid");
   let pid = null;
   try {
@@ -177,7 +213,10 @@ function stopServer(host) {
   } catch {
     return false;
   }
-  if (!Number.isInteger(pid) || pid <= 0) return false;
+  if (!Number.isInteger(pid) || pid <= 0 || !isOurServer(cmdlineOf(pid))) {
+    fs.rmSync(pidFile, { force: true }); // stale: the PID is gone or was reused by something else
+    return false;
+  }
   try {
     if (process.platform === "win32")
       spawnSync("taskkill", ["/PID", String(pid), "/T", "/F"], { stdio: "ignore" });
@@ -342,7 +381,7 @@ async function refreshBuild(o) {
   const { host, graph, target } = a;
   const py = findPython();
   const steps = [
-    `GUARD_ALLOW=1 git -C ${host} checkout -f --detach ${target.slice(0, 9)}`,
+    `git -C ${host} checkout -f --detach ${target.slice(0, 9)}`,
     "re-apply the overlay (.graphifyignore code-only list + source export condition)",
     `${py || "<graphify python NOT FOUND>"} -m graphify update ${host}   (timeout ${BUILD_TIMEOUT_MS / 1000} s, no --force)`,
     "canary: graph.mjs canary (getTierPrice RequireAddon decrementStockForSale >= 80% of grep's non-test files)",
