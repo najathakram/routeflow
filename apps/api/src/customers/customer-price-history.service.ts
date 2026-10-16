@@ -1,6 +1,6 @@
 import { BadRequestException, Injectable, NotFoundException } from "@nestjs/common";
 import { UserRole } from "@prisma/client";
-import { getTierPrice, roundMoney } from "@routeflow/pricing";
+import { getTierPrice, roundMoney, unitNameKey } from "@routeflow/pricing";
 import type {
   PriceHistoryAggregate,
   PriceHistoryReferences,
@@ -632,7 +632,7 @@ export class CustomerPriceHistoryService {
           },
         );
         sold.get(it.productId)!.push({
-          key: `${c.row.unitLabel.trim().toLowerCase()}|${c.row.unitsPerBox ?? ""}`,
+          key: `${unitNameKey(c.row.unitLabel)}|${c.row.unitsPerBox ?? ""}`,
           price: c.row.unitPrice,
           label: c.row.unitLabel,
           pack: c.row.unitsPerBox,

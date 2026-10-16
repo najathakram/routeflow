@@ -1,4 +1,4 @@
-import { getTierPrice, normalizeBoxesPieces } from "@routeflow/pricing";
+import { getTierPrice, normalizeBoxesPieces, unitNameKey } from "@routeflow/pricing";
 import type { ProductUnitLevel } from "@routeflow/types";
 import { buildUnitOptions } from "@/lib/unit-options";
 import type { InvoiceDraftLine, InvoiceDraftSnapshot } from "@/lib/invoice-draft-storage";
@@ -89,9 +89,10 @@ export function repriceLine(
       return { line: stored, updated: false, unchecked: !typed };
     }
     if (ladder.kind === "gone") return { line: null, updated: false, unitDropped: true };
-    const want = stored.unitLabel.trim().toLowerCase();
+    // The options are keyed by unitNameKey (NFC, trim, case-fold): an NFD line finds its NFC level.
+    const want = unitNameKey(stored.unitLabel);
     const opt = buildUnitOptions(product, ladder.levels, o.lineTier).find(
-      (x) => x.value.trim().toLowerCase() === want,
+      (x) => unitNameKey(x.value) === want,
     );
     if (!opt) return { line: null, updated: false, unitDropped: true };
     const line: InvoiceDraftLine = { ...stored, ...common, listPrice: opt.listPrice };

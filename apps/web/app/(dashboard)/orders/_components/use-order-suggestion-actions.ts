@@ -1,6 +1,6 @@
 import * as React from "react";
 import { useQueryClient } from "@tanstack/react-query";
-import type { LadderProduct } from "@routeflow/pricing";
+import { unitNameKey, type LadderProduct } from "@routeflow/pricing";
 import type {
   OrderSuggestionProduct,
   OrderSuggestionsResponse,
@@ -71,11 +71,9 @@ export function useOrderSuggestionActions({ suggestions, addLine, tierFor, toast
         queryKey: productUnitsKey(product.id),
         queryFn: () => fetchProductUnits(product.id),
       });
-      const wanted = label.trim().toLowerCase();
+      const wanted = unitNameKey(label); // the options' own key (NFC, trim, case-fold)
       const options = buildUnitOptions(ladderProductOf(product), units, tierFor(product.id));
-      return (
-        options.find((o) => o.kind !== "pack" && o.value.trim().toLowerCase() === wanted) ?? null
-      );
+      return options.find((o) => o.kind !== "pack" && unitNameKey(o.value) === wanted) ?? null;
     } catch {
       return null;
     }

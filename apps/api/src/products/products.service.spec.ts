@@ -958,7 +958,16 @@ describe("ProductsService", () => {
           const exec = jest.fn().mockResolvedValue(0);
           lockingTx(exec);
           await service.update("prod-1", { unit: "Crate", ...expected } as any);
-          expect(lockCalls(exec).calls).toHaveLength(2);
+          const locks = lockCalls(exec);
+          expect(locks.calls).toHaveLength(2);
+          // ORDER (N3): both lockProductPack locks (tenant units shared, then the product) are taken
+          // BEFORE the locked findUnique, which is the row the compare reads.
+          const lockedRead = prisma.product.findUnique.mock.invocationCallOrder[1];
+          expect(locks.order[0]).toBeLessThan(locks.order[1]);
+          expect(locks.order[1]).toBeLessThan(lockedRead);
+          expect(prisma.product.findUnique.mock.invocationCallOrder[0]).toBeLessThan(
+            locks.order[0],
+          );
           expect(prisma.product.update).toHaveBeenCalledTimes(1);
         });
 
