@@ -97,6 +97,65 @@ function scan(): string[] {
     .sort();
 }
 
+// ─── F1 (SA-796 R-4): who may call the engine's switch and materialize functions ─────────────────
+
+/** Files outside packages/pricing that may name `materializePack` or `planOrderUnitSwitch`. Empty until S9 lands the write path. */
+const USE_ALLOW: readonly string[] = [];
+const USE_ROOTS = [
+  "apps/api/src",
+  "apps/api/scripts",
+  "apps/web/app",
+  "apps/web/components",
+  "apps/web/lib",
+  "apps/mobile/app",
+  "apps/mobile/components",
+  "apps/mobile/lib",
+];
+const USE_NAMES = /\b(?:materializePack|planOrderUnitSwitch)\b/;
+const GUARD_NAMES = /\b(?:assertOrderUnitSwitchAllowed|PACK_WRITE_PATH_COMPLETE)\b/;
+const PASSES_FLAG = /\bwritePathComplete\b/;
+
+function walkSources(dir: string, out: string[]): void {
+  for (const e of fs.readdirSync(dir, { withFileTypes: true })) {
+    const p = path.join(dir, e.name);
+    if (e.isDirectory()) {
+      if (!["node_modules", "dist", ".next", ".expo"].includes(e.name)) walkSources(p, out);
+    } else if (/\.(ts|tsx|js|mjs|cjs)$/.test(e.name) && !/\.(spec|test)\./.test(e.name)) {
+      out.push(p);
+    }
+  }
+}
+
+describe("SA-796 R-4 (F1): the engine's switch and materialize functions have no caller outside the write path", () => {
+  const files: string[] = [];
+  for (const r of USE_ROOTS) {
+    if (fs.existsSync(path.join(REPO, r))) walkSources(path.join(REPO, r), files);
+  }
+  const rel = files.map((f) => path.relative(REPO, f).split(path.sep).join("/"));
+  const code = (f: string) => stripComments(fs.readFileSync(path.join(REPO, f), "utf8"));
+  const users = rel.filter((f) => USE_NAMES.test(code(f)));
+
+  it("scans a real set of files, and the detectors are not vacuous", () => {
+    expect(rel).toEqual(expect.arrayContaining(["apps/api/src/products/products.service.ts"]));
+    expect(USE_NAMES.test("planOrderUnitSwitch(view, scope, to)")).toBe(true);
+    expect(USE_NAMES.test("const x = materializePack(view);")).toBe(true);
+    expect(USE_NAMES.test(stripComments("// materializePack"))).toBe(false);
+    expect(PASSES_FLAG.test("materializePack(v, r, { writePathComplete: true })")).toBe(true);
+  });
+
+  it("a non-spec file that names them must be listed in USE_ALLOW", () => {
+    expect(users.filter((f) => !USE_ALLOW.includes(f))).toEqual([]);
+  });
+
+  it("a listed file must also name the guard (assertOrderUnitSwitchAllowed or PACK_WRITE_PATH_COMPLETE)", () => {
+    expect(USE_ALLOW.filter((f) => !GUARD_NAMES.test(code(f)))).toEqual([]);
+  });
+
+  it("no non-spec file passes writePathComplete (only specs may open the gate)", () => {
+    expect(rel.filter((f) => PASSES_FLAG.test(code(f)))).toEqual([]);
+  });
+});
+
 describe("SA-795 (h): writers of the pack price columns", () => {
   const found = scan();
   const outside = found.filter((f) => !WRITE_PATH_FILES.includes(f));

@@ -15,7 +15,11 @@ import {
   planOrderUnitSwitch,
   type CustomerPricing,
 } from "./price-anchor";
-import { PACK_WRITE_PATH_COMPLETE, tierRulesAboveZero } from "./pack-write-path";
+import {
+  PACK_WRITE_PATH_COMPLETE,
+  PricingRulesNotReadyError,
+  tierRulesAboveZero,
+} from "./pack-write-path";
 import type { LadderProduct } from "./unit-levels";
 
 const lvl = (
@@ -184,7 +188,7 @@ describe("tier and customer scopes (owner Q2b)", () => {
     expect(priceOf(plan.view, box12, units, "Box", 3)).toBe(9.6);
     expect(priceOf(plan.view, box12, units, "Box", 1)).toBe(12); // other columns untouched
     // The pack's Auto Tier 3 is materialized as $9.60 (a number, since it differs from the list price).
-    const m = materializePack(plan.view, DEFAULT_TIER_RULES);
+    const m = materializePack(plan.view, DEFAULT_TIER_RULES, { writePathComplete: true });
     expect(m.priceTier3).toBe(9.6);
     expect(m.packAuto & 0b00100).toBe(0b00100);
   });
@@ -269,7 +273,7 @@ describe("T7e / P8 / A2: materializePack", () => {
     const stored = { ...box12, pricePerUnit: "12.00" };
     const view = buildLadderView(stored, units, { orderUnit: "piece-1", packAuto: 0b00001 });
     expect(ladderPrice(view, "pack", 1)).toBe(14.4);
-    const m = materializePack(view, DEFAULT_TIER_RULES);
+    const m = materializePack(view, DEFAULT_TIER_RULES, { writePathComplete: true });
     expect(m.pricePerUnit).toBe(14.4);
     expect(m.packAuto & 1).toBe(1);
     expect(getTierPrice({ pricePerUnit: m.pricePerUnit, priceTier2: m.priceTier2 }, 1)).toBe(14.4);
@@ -337,7 +341,7 @@ describe("T7e / P8 / A2: materializePack", () => {
 
   it("a tier rule above 0% stores the number (it differs from the list price) with its bit", () => {
     const view = buildLadderView(box12, []);
-    const m = materializePack(view, { 2: 8, 3: 0 });
+    const m = materializePack(view, { 2: 8, 3: 0 }, { writePathComplete: true });
     expect(m.priceTier2).toBe(11.04);
     expect(m.priceTier3).toBe(0);
     expect(m.packAuto).toBe(0b11110);
@@ -351,5 +355,27 @@ describe("(h): rules above 0% and switches stay off until the write path is comp
     expect(tierRulesAboveZero({ 2: 0, 3: "0" })).toBe(false);
     expect(tierRulesAboveZero({ 2: 0, 3: 8 })).toBe(true);
     expect(tierRulesAboveZero(null)).toBe(false);
+  });
+
+  it("PF-3 / F1: materializePack throws PRICING_RULES_NOT_READY for a Piece anchor with the default flag (it used to return $14.40)", () => {
+    const units = [lvl("Piece", 1, "1.20", { id: "piece-1" })];
+    const view = buildLadderView(box12, units, { orderUnit: "piece-1", packAuto: 0b00001 });
+    expect(() => materializePack(view, DEFAULT_TIER_RULES)).toThrow(PricingRulesNotReadyError);
+    expect(() => materializePack(view)).toThrow(
+      expect.objectContaining({ code: "PRICING_RULES_NOT_READY" }),
+    );
+    const open = { writePathComplete: true };
+    expect(materializePack(view, DEFAULT_TIER_RULES, open).pricePerUnit).toBe(14.4);
+  });
+
+  it("PF-3 / F1: a tier anchor or a tier rule above 0% throws too; the pack anchor at 0% never does", () => {
+    const units = [lvl("Case", 72), lvl("Piece", 1, null, { priceTier3: "0.80", id: "piece-1" })];
+    const plain = buildLadderView(box12, units);
+    const tierScope = { kind: "tier", tier: 3 } as const;
+    const tierAnchored = planOrderUnitSwitch(plain, tierScope, "piece-1");
+    expect(() => materializePack(tierAnchored.view)).toThrow(PricingRulesNotReadyError);
+    expect(() => materializePack(plain, { 2: 8 })).toThrow(PricingRulesNotReadyError);
+    expect(() => materializePack(plain, { 2: 0 })).not.toThrow();
+    expect(() => materializePack(plain)).not.toThrow();
   });
 });

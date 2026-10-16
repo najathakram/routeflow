@@ -1,5 +1,10 @@
 import { roundMoney } from "./pricing";
 import {
+  PACK_WRITE_PATH_COMPLETE,
+  PricingRulesNotReadyError,
+  tierRulesAboveZero,
+} from "./pack-write-path";
+import {
   DEFAULT_TIER_RULES,
   PRICE_TIERS,
   ladderPrice,
@@ -216,7 +221,14 @@ export interface MaterializedPack {
 export function materializePack(
   view: LadderView,
   rules: TierRules = DEFAULT_TIER_RULES,
+  opts: { writePathComplete?: boolean } = {},
 ): MaterializedPack {
+  // SA-795 (h), fold F1: until every legacy writer goes through the write path, only the pack anchor at 0% may be stored.
+  const needsWritePath =
+    view.anchor !== "pack" || Object.keys(view.tierAnchors).length > 0 || tierRulesAboveZero(rules);
+  if (needsWritePath && !(opts.writePathComplete ?? PACK_WRITE_PATH_COMPLETE)) {
+    throw new PricingRulesNotReadyError();
+  }
   const pack: LadderRow = rowOf(view, "pack");
   let packAuto = 0;
   let retail = pack.set[0];
@@ -229,7 +241,7 @@ export function materializePack(
     if (typed != null) return typed;
     packAuto |= 1 << (tier - 1);
     const value = ladderPrice(view, "pack", tier, rules);
-    return value === roundMoney(retail) ? 0 : value;
+    return roundMoney(value) === roundMoney(retail) ? 0 : value;
   });
   return {
     pricePerUnit: retail,

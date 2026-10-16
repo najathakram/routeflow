@@ -17,3 +17,12 @@ export function tierRulesAboveZero(
 ): boolean {
   return Object.values(rules ?? {}).some((v) => Number(v) > 0);
 }
+
+/** Thrown by `materializePack` while the write path is incomplete and the ladder needs what the guard refuses. */
+export class PricingRulesNotReadyError extends Error {
+  readonly code = "PRICING_RULES_NOT_READY";
+  constructor() {
+    super(PRICING_RULES_NOT_READY_MESSAGE);
+    this.name = "PricingRulesNotReadyError";
+  }
+}
