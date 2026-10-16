@@ -64,6 +64,9 @@ export async function buildOrderStockWorld(label: string, specFile: string) {
     revertLinkedInvoicesForOrderEdit: async () => undefined,
     resyncOrderInvoicesForEdit: async () => [],
     reconcileOrderDraftInvoice: async () => undefined,
+    // Delivery settles an invoice (order-status-invoicing.ts); these specs are about stock, so none is made.
+    findOpenOrderDraft: async () => null,
+    createInvoiceFromOrderWithTenant: async () => [],
   });
   const orders: any = Object.assign(Object.create(OrdersService.prototype), {
     prisma,
