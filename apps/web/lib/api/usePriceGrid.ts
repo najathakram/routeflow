@@ -10,5 +10,7 @@ export function usePriceGrid(productId: string, enabled = true) {
     queryKey: priceGridKey(productId),
     queryFn: () => apiClient.get(`/products/${productId}/price-grid`).then((r) => r.data),
     enabled: enabled && !!productId,
+    retry: (n, e) =>
+      (e as { response?: { status?: number } } | null)?.response?.status !== 404 && n < 2,
   });
 }
