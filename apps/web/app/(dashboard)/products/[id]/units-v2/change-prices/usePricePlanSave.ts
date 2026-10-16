@@ -1,17 +1,12 @@
-import * as React from "react";
 import type { PricePlanWrite } from "./selection";
 
-/**
- * STUB until the lead's SPRINT-CONTRACT names the real save hook. It rejects, so the Change prices panel
- * shows its error line instead of pretending a price was saved.
- */
+/** STUB until SPRINT-CONTRACT names the real save hook: it rejects, so the panel shows an error, never a fake save. */
 export function usePricePlanSave(): {
   save: (write: PricePlanWrite) => Promise<void>;
   isPending: boolean;
 } {
-  const save = React.useCallback((write: PricePlanWrite) => {
-    void write;
-    return Promise.reject(new Error("Saving prices is not available yet."));
-  }, []);
-  return { save, isPending: false };
+  return {
+    save: () => Promise.reject(new Error("Saving prices is not available yet.")),
+    isPending: false,
+  };
 }

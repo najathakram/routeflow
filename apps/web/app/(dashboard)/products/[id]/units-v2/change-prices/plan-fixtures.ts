@@ -96,9 +96,9 @@ export const longPlan = (n: number): PricePlan =>
   emptyPlan({
     patches: [{ ref: "case", tier: 1, to: 14.6 }],
     changes: Array.from({ length: n }, (_, i) => ({
-      ref: i % 2 ? "can" : "case",
+      ref: `u${i}`,
       label: `Unit ${i}`,
-      tier: ((i % 5) + 1) as 1 | 2 | 3 | 4 | 5,
+      tier: 1 as const,
       from: 10 + i,
       to: 20 + i,
     })),
