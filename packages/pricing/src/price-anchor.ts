@@ -33,6 +33,11 @@ export interface CustomerPricing {
   set?: Readonly<Record<UnitRef, number>>;
 }
 
+/** A customer's pricing plus the id the planners echo back (S2b, SA-798 customerChanges). The loader (S20) owns who is passed. */
+export interface CustomerPricingWithId extends CustomerPricing {
+  customerId: string;
+}
+
 /** The one rule for "a typed price" (shared with the source label in resolveCustomerUnitPrice). */
 const positive = (v: number | undefined): number | null => explicitPrice(v);
 

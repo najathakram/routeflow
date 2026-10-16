@@ -13,6 +13,8 @@ import {
   planPriceChange,
   scalePrice,
   type CellPatch,
+  type InversionOffer,
+  type PricePlan,
 } from "./price-change";
 import { applyLadderChange } from "./tier-pricing";
 import type { LadderProduct } from "./unit-levels";
@@ -42,6 +44,8 @@ const units = [lvl("Pallet", 5760, "2600.00"), lvl("Case", 72, "66.00")];
 const R = (label: string) => refForLabel(box, units, label);
 const setOf = (view: ReturnType<typeof buildLadderView>, ref: string, tier: PriceTier) =>
   view.rows.find((r) => r.ref === ref)!.set[tier - 1];
+const tierOffers = (plan: PricePlan): InversionOffer[] =>
+  plan.offers.filter((o): o is InversionOffer => o.kind === "tier");
 const at = (patches: CellPatch[], ref: string, tier: PriceTier) =>
   patches.find((p) => p.ref === ref && p.tier === tier)?.to;
 
@@ -204,9 +208,9 @@ describe("T10: typing a cell sets that cell only", () => {
       value: 18,
       title: "Set Tier 4 and Tier 5 to $18.00 too",
     });
-    expect(plan.offers[0].warning).toBe("Tier 4 and Tier 5 are higher than Tier 3 ($18.00).");
+    expect(tierOffers(plan)[0].warning).toBe("Tier 4 and Tier 5 are higher than Tier 3 ($18.00).");
     // One click applies the offer; it is its own undoable patch.
-    const after = applyCellPatches(plan.view, plan.offers[0].patches).view;
+    const after = applyCellPatches(plan.view, tierOffers(plan)[0].patches).view;
     expect(setOf(after, "pack", 4)).toBe(18);
     expect(setOf(after, "pack", 5)).toBe(18);
   });
