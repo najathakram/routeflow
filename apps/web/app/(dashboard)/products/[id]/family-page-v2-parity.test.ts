@@ -46,7 +46,7 @@ describe("family page with units v2 on: parity", () => {
     );
   });
 
-  it("pins every bare v2 reference in page.tsx to the known four", () => {
+  it("pins every bare v2 reference in page.tsx to the known five", () => {
     const refs = src
       .split("\n")
       .filter((l) => /(?<![-\w/"])v2(?![\w-])/.test(l))
@@ -55,6 +55,7 @@ describe("family page with units v2 on: parity", () => {
     expect(refs).toEqual([
       '{v2 ? null : stockStatus === "OUT_OF_STOCK" ? (',
       "<ProductHeaderLine product={product} currentStock={currentStock} pricesV2={v2} />",
+      '{v2 && product.kind !== "FAMILY" ? <ProductJumpLinks /> : null}',
       "pricesV2={v2}",
       '{v2 && product.kind !== "FAMILY" ? <ProductPricingV2 product={product} /> : null}',
     ]);

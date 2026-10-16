@@ -97,6 +97,7 @@ import { ProductLabelsCard } from "./ProductLabelsCard";
 import { ProductPortalVisibilityCard } from "./ProductPortalVisibilityCard";
 import { ProductUnitsCard } from "./ProductUnitsCard";
 import { ProductPricingV2 } from "./ProductPricingV2";
+import { ProductJumpLinks } from "./units-v2/nav/ProductJumpLinks";
 import { ImageLightbox } from "./ImageLightbox";
 import { objectPositionForUrl, type FocalPoint } from "@/lib/image-focal";
 import { COMMON_UNITS } from "@/lib/common-units";
@@ -1191,6 +1192,8 @@ export default function ProductDetailPage() {
             <ProductHeaderLine product={product} currentStock={currentStock} pricesV2={v2} />
           </div>
         </div>
+
+        {v2 && product.kind !== "FAMILY" ? <ProductJumpLinks /> : null}
 
         <div className="grid grid-cols-1 gap-6 lg:grid-cols-3">
           {/* ── Left: image gallery + stock card ── */}
