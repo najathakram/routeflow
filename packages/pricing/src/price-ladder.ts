@@ -72,8 +72,18 @@ export interface LadderRow {
 export interface LadderView {
   /** Largest unit first. */
   rows: readonly LadderRow[];
-  /** The unit whose Retail anchors every Auto price. Always the pack until S1b. */
+  /** The product's order unit: its Retail anchors every Auto Retail (P1, P3). The pack unless chosen. */
   anchor: UnitRef;
+  /** Tier N's own order unit for this product (owner Q2b). A tier without an entry follows `anchor`. */
+  tierAnchors: Readonly<Partial<Record<2 | 3 | 4 | 5, UnitRef>>>;
+}
+
+export interface LadderViewOptions {
+  /** The product's order unit (a ref). A ref the ladder does not have is skipped: the pack anchors. */
+  orderUnit?: UnitRef | null;
+  tierOrderUnits?: Partial<Record<2 | 3 | 4 | 5, UnitRef | null>>;
+  /** `Product.packAuto`: bit i set = the pack's cell i (0 = Retail, 1..4 = tiers 2..5) is Auto. Missing = 0. */
+  packAuto?: number | null;
 }
 
 const unitRef = (u: LadderViewUnit): UnitRef => u.id ?? `label:${u.label}`;
@@ -86,8 +96,14 @@ const unitRef = (u: LadderViewUnit): UnitRef => u.id ?? `label:${u.label}`;
 export function buildLadderView(
   product: LadderProduct,
   units: readonly LadderViewUnit[],
+  opts: LadderViewOptions = {},
 ): LadderView {
   const packFactor = packFactorOf(product);
+  const auto = Math.trunc(Number(opts.packAuto)) || 0;
+  const bit = (i: number) => ((auto >> i) & 1) === 1;
+  // A materialized pack cell (its bit is set) is Auto even though it holds a number (SA-795 P8).
+  const packTier = (v: LadderProduct["priceTier2"], i: number) =>
+    bit(i) ? null : explicitPrice(v);
   const rows: LadderRow[] = [
     {
       ref: "pack",
@@ -95,11 +111,11 @@ export function buildLadderView(
       factor: packFactor,
       kind: "pack",
       set: [
-        Number(product.pricePerUnit) || 0, // P1: the anchor's Retail is always set
-        explicitPrice(product.priceTier2),
-        explicitPrice(product.priceTier3),
-        explicitPrice(product.priceTier4),
-        explicitPrice(product.priceTier5),
+        Number(product.pricePerUnit) || 0, // P1: the anchor's Retail is always set (see below if it is not the pack)
+        packTier(product.priceTier2, 1),
+        packTier(product.priceTier3, 2),
+        packTier(product.priceTier4, 3),
+        packTier(product.priceTier5, 4),
       ],
     },
   ];
@@ -129,7 +145,18 @@ export function buildLadderView(
       set: [null, null, null, null, null],
     });
   }
-  return { rows: rows.sort((a, b) => b.factor - a.factor), anchor: "pack" };
+  const has = (r?: UnitRef | null): r is UnitRef => !!r && rows.some((x) => x.ref === r);
+  const anchor = has(opts.orderUnit) ? opts.orderUnit : "pack";
+  if (anchor !== "pack" && bit(0)) {
+    // The pack's Retail is a materialized number, not a typed price: Auto, worked out from the anchor.
+    rows[0] = { ...rows[0], set: [null, ...rows[0].set.slice(1)] };
+  }
+  const tierAnchors: Partial<Record<2 | 3 | 4 | 5, UnitRef>> = {};
+  for (const t of [2, 3, 4, 5] as const) {
+    const r = opts.tierOrderUnits?.[t];
+    if (has(r) && r !== anchor) tierAnchors[t] = r;
+  }
+  return { rows: rows.sort((a, b) => b.factor - a.factor), anchor, tierAnchors };
 }
 
 /** The ref a unit label resolves to on this product (what `resolveUnitPrice` would price). Throws like it for an unknown label. */
@@ -149,39 +176,50 @@ export function priceSource(row: Pick<LadderRow, "set">, tier: PriceTier): "set"
   return row.set[tier - 1] == null ? "auto" : "set";
 }
 
-const rowOf = (view: LadderView, ref: UnitRef): LadderRow => {
+export const rowOf = (view: LadderView, ref: UnitRef): LadderRow => {
   const row = view.rows.find((r) => r.ref === ref);
   if (!row) throw new Error(`Unknown unit "${ref}" in this ladder`);
   return row;
 };
 
-/** The anchor's price at `tier`, unrounded (P1, P2). */
-function anchorTier(anchor: LadderRow, tier: PriceTier, rules: TierRules): number {
-  const retail = anchor.set[0] ?? 0;
-  if (tier === 1) return retail;
-  return anchor.set[tier - 1] ?? retail * (1 - rule(rules, tier));
+/** The anchor's Retail, unrounded. P1: set. A ladder whose anchor has no typed Retail yet is read from the pack by size. */
+function anchorRetail(view: LadderView): number {
+  const a = rowOf(view, view.anchor);
+  if (a.set[0] != null) return a.set[0];
+  const pack = rowOf(view, "pack");
+  return ((pack.set[0] ?? 0) * a.factor) / pack.factor;
 }
 
-/** One cell's price, UNROUNDED. Written in master's closed forms so rules at 0% change no bit of any result. */
+/**
+ * One cell's price, UNROUNDED. Retail cells follow the product's order unit A (P1, P3); tier N cells follow tier N's
+ * anchor K (its own order unit, else A; P2, P4). `tierAnchor` overrides K for one call (a customer's own order unit,
+ * P4c). Written in master's closed forms where K = A, so rules at 0% change no bit of any result.
+ */
 export function ladderPriceExact(
   view: LadderView,
   ref: UnitRef,
   tier: PriceTier,
   rules: TierRules = DEFAULT_TIER_RULES,
+  tierAnchor?: UnitRef,
 ): number {
-  const anchor = rowOf(view, view.anchor);
+  const a = rowOf(view, view.anchor);
   const u = rowOf(view, ref);
   const own = u.set[tier - 1];
   if (own != null) return own; // a set price is never moved
-  const aRetail = anchor.set[0] ?? 0;
-  if (u === anchor) return anchorTier(anchor, tier, rules); // P2
-  const aTier = anchorTier(anchor, tier, rules);
-  const ownRetail = u.set[0];
-  if (ownRetail != null) {
-    // P4 with a set Retail: the anchor's tier discount applied to this unit's own Retail.
-    return aRetail > 0 ? (ownRetail * aTier) / aRetail : ownRetail;
+  const aRetail = anchorRetail(view);
+  const retailOf = (r: LadderRow): number =>
+    r.set[0] ?? (r === a ? aRetail : (aRetail * r.factor) / a.factor);
+  if (tier === 1) return retailOf(u); // P3
+  const k = rowOf(view, tierAnchor ?? view.tierAnchors[tier] ?? view.anchor);
+  const kRetail = retailOf(k);
+  const kTier = k.set[tier - 1] ?? kRetail * (1 - rule(rules, tier)); // P2
+  if (u === k) return kTier;
+  if (u.set[0] != null || (k !== a && k.set[0] != null)) {
+    // P4: this unit's Retail carries the anchor's tier discount.
+    const uRetail = retailOf(u);
+    return kRetail > 0 ? (uRetail * kTier) / kRetail : uRetail;
   }
-  return (aTier * u.factor) / anchor.factor; // P3 (tier 1) and P4 (tiers 2-5) with an Auto Retail
+  return (kTier * u.factor) / k.factor; // P4, both Retails Auto: the same ratio in master's closed form
 }
 
 /** One cell's price in cents: `roundMoney` once, at the end. */
@@ -190,8 +228,9 @@ export function ladderPrice(
   ref: UnitRef,
   tier: PriceTier,
   rules: TierRules = DEFAULT_TIER_RULES,
+  tierAnchor?: UnitRef,
 ): number {
-  return roundMoney(ladderPriceExact(view, ref, tier, rules));
+  return roundMoney(ladderPriceExact(view, ref, tier, rules, tierAnchor));
 }
 
 export interface GridCell {
