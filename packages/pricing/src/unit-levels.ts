@@ -143,7 +143,7 @@ export function packLabelOf(product: Pick<LadderProduct, "packLabel" | "unit">):
 }
 
 /** Does `label` name the pack? By `packLabel` OR the legacy unit text (either spelling sells the pack). */
-function namesPack(product: LadderProduct, label: string): boolean {
+export function namesPack(product: LadderProduct, label: string): boolean {
   const l = norm(label);
   return (
     l === norm(packLabelOf(product)) || (!!(product.unit ?? "").trim() && l === norm(product.unit!))
@@ -151,7 +151,7 @@ function namesPack(product: LadderProduct, label: string): boolean {
 }
 
 /** Does `label` name the base? The tenant's base label OR legacy "Piece". */
-function namesBase(product: LadderProduct, label: string): boolean {
+export function namesBase(product: LadderProduct, label: string): boolean {
   const l = norm(label);
   return l === norm(baseLabelOf(product)) || l === norm(PIECE_LABEL);
 }

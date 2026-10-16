@@ -25,6 +25,7 @@ describe("InlineReturnsQuoteService: an unreferenced return reads the customer l
   let service: InlineReturnsQuoteService;
   let db: any;
   let v2On = true;
+  const hasFlag = jest.fn(async (_t: string, k: string) => k === V2 && v2On);
 
   beforeEach(async () => {
     const prisma = createMockPrisma();
@@ -33,10 +34,7 @@ describe("InlineReturnsQuoteService: an unreferenced return reads the customer l
         InlineReturnsQuoteService,
         { provide: PrismaService, useValue: prisma },
         { provide: SystemConfigService, useValue: { get: jest.fn().mockResolvedValue(null) } },
-        {
-          provide: EntitlementsService,
-          useValue: { hasFlag: jest.fn(async (_t: string, k: string) => k === V2 && v2On) },
-        },
+        { provide: EntitlementsService, useValue: { hasFlag } },
       ],
     }).compile();
     service = mod.get(InlineReturnsQuoteService);
@@ -78,5 +76,6 @@ describe("InlineReturnsQuoteService: an unreferenced return reads the customer l
   it("flag OFF with a typed row present: master's $24", async () => {
     v2On = false;
     expect((await quote()).total).toBe(24);
+    expect(hasFlag).toHaveBeenCalledWith(expect.anything(), V2);
   });
 });

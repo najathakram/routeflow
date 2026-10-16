@@ -72,5 +72,6 @@ describe("EstimatesService.create: the customer layer (S19)", () => {
     v2On = false;
     typed(33);
     expect(await quote()).toMatchObject({ unitPrice: 42, priceType: "STANDARD" });
+    expect(hasFlag).toHaveBeenCalledWith(expect.anything(), V2);
   });
 });

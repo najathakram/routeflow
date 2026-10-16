@@ -284,6 +284,7 @@ export function buildReplaceAllLineData(
           hasReason: replaceAllHasOverrideReason,
           skipReasonGuard: skipAsCreateMergeNewLine,
           productName: product.name,
+          aboveList: layer?.aboveList,
         })
       : null;
   const isManualOverride = createMergeDecision

@@ -312,5 +312,6 @@ describe("S19: a door ADD_ITEM change request prices the new line from the custo
       "prod-a": { lastPrice: 15, listPriceAtTime: 12 },
     });
     expect(await approve()).toMatchObject({ unitPrice: 15, priceType: "MANUAL" });
+    expect(hasFlagMock).toHaveBeenCalledWith(expect.anything(), V2);
   });
 });

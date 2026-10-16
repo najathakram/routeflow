@@ -12,7 +12,7 @@ import * as path from "path";
  */
 const SRC = path.resolve(__dirname, "..");
 const CHAIN =
-  /pricingTier\s*\?\?|\?\?\s*[\w.?]*pricingTier\b|\[\s*[\w.]+\.productId\s*,\s*[\w.]+\.pricingTier(?:\s+as\s+number)?\s*\]/g;
+  /pricingTier\s*\?\?|\?\?\s*[\w.?]*pricingTier\b|\[\s*[\w.]+\.productId\s*,\s*[\w.]+\.pricingTier(?:\s+as\s+number)?\s*\]|\.set\(\s*[\w.]+\s*,\s*[\w.?]+\.pricingTier\s*\)|Number\(\s*[\w.?]*\.pricingTier\s*\)/g;
 const RESOLVER = "orders/units-prices-v2.ts";
 
 /** Files that must call the one resolver (the wired readers). */
@@ -42,11 +42,11 @@ const REMAINING: Record<string, { count: number; why: string }> = {
   },
   "invoices/invoices.service.ts": {
     count: 1,
-    why: "derived-base normalization tier (old-client Piece), master chain",
+    why: 'the old-client Piece path (price: "pack") reads master\'s tier; S19b A-7 proves the charged line or wires it',
   },
   "invoices/manual-invoice-context.ts": {
     count: 1,
-    why: "derived-base normalization tier map (old-client Piece), master chain",
+    why: 'the old-client Piece path (price: "pack") reads master\'s tier map; S19b A-7 proves the charged line or wires it',
   },
   "orders/counter-sale/counter-sale-tier-price.ts": {
     count: 2,
@@ -54,11 +54,11 @@ const REMAINING: Record<string, { count: number; why: string }> = {
   },
   "orders/replay-cart-normalize.ts": {
     count: 2,
-    why: "replay cart compare, derived-base normalization; master chain",
+    why: "replay cart compare, old-client Piece normalization; S19b A-7 proves the charged line or wires it",
   },
   "orders/unit-line-edit.ts": {
-    count: 1,
-    why: "normalizeDerivedBaseItems tier for the old-client Piece; master chain",
+    count: 2,
+    why: "normalizeDerivedBaseItems: the old-client Piece path reads master's tier; S19b A-7 proves the charged line or wires it",
   },
   "returns/inline-returns-quote.service.ts": {
     count: 2,
@@ -108,6 +108,8 @@ describe("S19a: one tier resolver for the customer-to-tier readers", () => {
     expect(hit("const t = cp?.pricingTier ?? customer.pricingTier ?? 1;")).toBeGreaterThan(0);
     expect(hit("const t = tierOf.get(id) ?? customer.pricingTier;")).toBeGreaterThan(0);
     expect(hit("new Map(rows.map((cp) => [cp.productId, cp.pricingTier]))")).toBeGreaterThan(0);
+    expect(hit("tierOf.set(r.productId, r.pricingTier);")).toBeGreaterThan(0);
+    expect(hit("const t = Number(cp.pricingTier);")).toBeGreaterThan(0);
     expect(hit("customerPricing(svc, id, ids, customer, rows)")).toBe(0);
   });
 });

@@ -96,6 +96,15 @@ describe("loadUnitsPricesV2", () => {
     });
     expect(v2).not.toBeNull();
     expect(h.db.productUnit.findMany).toHaveBeenCalledTimes(1);
+    // nit 1: both ladder reads carry an explicit tenantId
+    expect(h.db.productUnit.findMany.mock.calls[0][0].where).toEqual({
+      tenantId: "t1",
+      productId: { in: ["p1"] },
+    });
+    expect(h.db.productTierUnit.findMany.mock.calls[0][0].where).toEqual({
+      tenantId: "t1",
+      productId: { in: ["p1"] },
+    });
   });
 
   it("flag off: null, even with typed rows (a revoked tenant bills as master)", async () => {
@@ -367,6 +376,27 @@ describe("R3 / R3a: the pre-fill is the resolver's price, never last-given", () 
   });
   it("S19-b: a typed Case price only leaves the pack's last-given in place", async () => {
     expect(await run([["u-case", 450]])).toEqual(history);
+  });
+  it("nit 1: omitCustomerLayerHistory's own reads carry the tenantId", async () => {
+    const seen: any[] = [];
+    const h = deps({ rows: [["pack", 33]] });
+    const svc = {
+      prisma: {
+        forTenant: () => ({
+          ...h.db,
+          customer: {
+            findFirst: jest.fn(async (a: any) => (seen.push(a.where), { pricingTier: 1 })),
+          },
+          customerPrice: { findMany: jest.fn(async (a: any) => (seen.push(a.where), [])) },
+          product: { findMany: jest.fn(async (a: any) => (seen.push(a.where), [product])) },
+        }),
+        getTenantId: () => "t1",
+      },
+      entitlements: { hasFlag: h.hasFlag },
+    } as never;
+    await omitCustomerLayerHistory(svc, "c1", { p1: { lastPrice: 36, listPriceAtTime: 42 } });
+    expect(seen).toHaveLength(3);
+    for (const w of seen) expect(w.tenantId).toBe("t1");
   });
   it("flag off, or no typed price: the history as it is", async () => {
     expect(await run([["pack", 33]], false)).toEqual(history);

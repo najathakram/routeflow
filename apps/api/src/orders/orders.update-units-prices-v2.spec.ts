@@ -392,6 +392,7 @@ describe("OrdersService.updateOrderItems — billing reads typed customer unit p
       operatorPayload as never,
     );
     expect(written()[0]).toMatchObject({ unitLabel: "Case", unitPrice: 100 });
+    expect(entitlements.hasFlag).toHaveBeenCalledWith(expect.anything(), V2);
   });
 
   it("flag on but NO typed row for the customer: master's price, and the new flag is never asked", async () => {
@@ -460,6 +461,61 @@ describe("OrdersService.updateOrderItems — billing reads typed customer unit p
         unitPrice: 7,
         priceType: "DISCOUNTED",
       });
+      expect(entitlements.hasFlag).toHaveBeenCalledWith(expect.anything(), V2);
+    });
+  });
+
+  describe("MUST-1 (R2 on the staff paths): a customer-layer price ABOVE the unit's list echoed by staff is MANUAL, never SPECIAL", () => {
+    // caseProduct list $10; the customer's typed pack price is $12 (above list)
+    beforeEach(() => {
+      flagV2(true);
+      typed(["pack", 12]);
+    });
+    it("add: staff echoes $12 on a new line: MANUAL, original = list, no staff attribution", async () => {
+      await service.updateOrderItems(
+        "ord-1",
+        { replaceAll: false, items: [{ productId: "prod-case", qty: 2, unitPrice: 12 }] } as never,
+        operatorPayload as never,
+      );
+      const d = written()[0];
+      expect(d).toMatchObject({ unitPrice: 12, priceType: "MANUAL", originalPrice: 10 });
+      expect(d.overriddenBy ?? null).toBeNull();
+    });
+    it("edit-restore: typing the layer price back on an existing line restores MANUAL (list original), not an override", async () => {
+      const line = {
+        ...existingPackLine,
+        id: "li-up",
+        productId: "prod-case",
+        unitPrice: 14,
+        priceType: "MANUAL",
+        originalPrice: 10,
+        overrideReason: "upsell",
+        overriddenBy: "user-old",
+      };
+      prisma.order.findUnique.mockResolvedValue({ ...MOCK_ORDER, lineItems: [line] });
+      prisma.product.findFirst.mockResolvedValue(caseProduct);
+      await service.updateOrderItems(
+        "ord-1",
+        { replaceAll: false, items: [{ id: "li-up", qty: 5, unitPrice: 12 }] } as never,
+        operatorPayload as never,
+      );
+      expect(prisma.orderItem.update.mock.calls.at(-1)![0].data).toMatchObject({
+        unitPrice: 12,
+        priceType: "MANUAL",
+        originalPrice: 10,
+        overrideReason: null,
+        overriddenBy: null,
+      });
+    });
+    it("replace-all: staff echoes $12 with no stored counterpart: MANUAL, no attribution", async () => {
+      await service.updateOrderItems(
+        "ord-1",
+        { replaceAll: true, items: [{ productId: "prod-case", qty: 2, unitPrice: 12 }] } as never,
+        operatorPayload as never,
+      );
+      const d = written()[0];
+      expect(d).toMatchObject({ unitPrice: 12, priceType: "MANUAL", originalPrice: 10 });
+      expect(d.overriddenBy ?? null).toBeNull();
     });
   });
 });

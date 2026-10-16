@@ -151,10 +151,10 @@ export async function loadUnitsPricesV2(
     typedIds.length > 0
       ? await Promise.all([
           rowsOf(db.productUnit, {
-            where: { productId: { in: typedIds } },
+            where: { tenantId, productId: { in: typedIds } },
             orderBy: { sortOrder: "asc" },
           }),
-          rowsOf(db.productTierUnit, { where: { productId: { in: typedIds } } }),
+          rowsOf(db.productTierUnit, { where: { tenantId, productId: { in: typedIds } } }),
         ])
       : [[], []];
   const unitsBy = new Map<string, LadderViewUnit[]>();
@@ -278,16 +278,20 @@ export async function omitCustomerLayerHistory<T>(
   const ids = Object.keys(history);
   if (ids.length === 0) return history;
   const db = svc.prisma.forTenant();
+  const tenantId = svc.prisma.getTenantId?.();
   const [customer, rows] = await Promise.all([
     typeof db.customer?.findFirst === "function"
-      ? db.customer.findFirst({ where: { id: customerId }, select: { pricingTier: true } })
+      ? db.customer.findFirst({
+          where: { id: customerId, tenantId },
+          select: { pricingTier: true },
+        })
       : null,
-    rowsOf(db.customerPrice, { where: { customerId, productId: { in: ids } } }),
+    rowsOf(db.customerPrice, { where: { customerId, tenantId, productId: { in: ids } } }),
   ]);
   const pc = await customerPricing(svc, customerId, ids, customer, rows, db);
   if (!pc.layered) return history;
   const kept = { ...history };
-  for (const p of await rowsOf(db.product, { where: { id: { in: ids } } })) {
+  for (const p of await rowsOf(db.product, { where: { id: { in: ids }, tenantId } })) {
     if (pc.layer(p, null)) delete kept[p.id];
   }
   return kept;

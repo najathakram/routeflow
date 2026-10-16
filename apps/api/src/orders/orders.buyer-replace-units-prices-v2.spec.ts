@@ -297,5 +297,6 @@ describe("S19: a BUYER replace-all prices a pack line from the customer layer (p
     });
     await replace();
     expect(created()[0]).toMatchObject({ unitPrice: 15, priceType: "MANUAL" });
+    expect(hasFlagMock).toHaveBeenCalledWith(expect.anything(), V2);
   });
 });

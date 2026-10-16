@@ -105,5 +105,6 @@ describe("BuyerCatalogService — the tile shows the customer-layer price the ca
     v2On = false;
     expect(await tile(7, 12)).toBe(12);
     expect(await tile(7)).toBe(10);
+    expect((ordersService.entitlements as any).hasFlag).toHaveBeenCalledWith(expect.anything(), V2);
   });
 });

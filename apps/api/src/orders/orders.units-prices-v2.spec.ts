@@ -208,6 +208,7 @@ describe("OrdersService.create: billing reads typed customer unit prices (S19)",
     const [pack, unit] = orderData().lineItems.create;
     expect(pack).toMatchObject({ unitPrice: 42, priceType: "STANDARD", subtotal: 84 });
     expect(unit).toMatchObject({ unitPrice: 480 });
+    expect(hasFlag).toHaveBeenCalledWith(expect.anything(), V2); // the flag WAS asked (rows exist) and said no
   });
 
   it("no typed rows and ordinary tiers: the new flag is never asked (a pack-only create reads nothing new)", async () => {

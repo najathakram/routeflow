@@ -87,13 +87,15 @@ describe("loadOverride + priceInvoiceLine: the typed price is the baseline", () 
   });
 
   it("flag OFF with typed rows (revoked): master's baseline - 33 on a tier-1 customer is a DISCOUNTED override", async () => {
-    const ctx = (await harness({ flag: false, typed: [["pack", 33]] }).load())!;
+    const h = harness({ flag: false, typed: [["pack", 33]] });
+    const ctx = (await h.load())!;
     expect(() =>
       priceInvoiceLine({ ctx, item: { unitPrice: 33 }, product, unitLabel: null }),
     ).not.toThrow();
     expect(
       priceInvoiceLine({ ctx, item: { unitPrice: 33 }, product, unitLabel: null }).stamp.priceType,
     ).toBe("DISCOUNTED");
+    expect(h.hasFlag).toHaveBeenCalledWith("t1", "flag.units_prices_v2");
   });
 
   it("no typed rows: the flag is never asked", async () => {

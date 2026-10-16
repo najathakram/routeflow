@@ -3601,7 +3601,7 @@ export class OrdersService implements OnApplicationBootstrap {
                     ? decideAddedLinePrice({
                         overridePrice,
                         tierPrice: layer?.price ?? Number(getTierPrice(product, tierForProduct)),
-                        listPrice: catalogPrice,
+                        listPrice: layer?.listPrice ?? catalogPrice,
                         isSpecialTier: isSpecialPrice(
                           tierForProduct,
                           layer?.listPrice ?? catalogPrice,
@@ -3609,6 +3609,7 @@ export class OrdersService implements OnApplicationBootstrap {
                         ),
                         hasReason: !!(item.overrideReason && item.overrideReason.trim()),
                         productName: product.name,
+                        aboveList: layer?.aboveList,
                       })
                     : null;
                 const isManualOverride = !!addDecision && isOverride(addDecision);
@@ -3959,13 +3960,16 @@ export class OrdersService implements OnApplicationBootstrap {
                   tierPrice: editProduct
                     ? (layerEdit?.price ?? getTierPrice(editProduct, tierForProduct))
                     : 0,
-                  listPrice: editProduct ? Number(editProduct.pricePerUnit) : existingUnitPrice,
+                  listPrice:
+                    layerEdit?.listPrice ??
+                    (editProduct ? Number(editProduct.pricePerUnit) : existingUnitPrice),
                   isSpecialTier: isSpecialPrice(
                     tierForProduct,
                     layerEdit?.listPrice ??
                       (editProduct ? Number(editProduct.pricePerUnit) : existingUnitPrice),
                     layerEdit?.price,
                   ),
+                  aboveList: layerEdit?.aboveList,
                   hasReason: !!(
                     (item.overrideReason && item.overrideReason.trim()) ||
                     (storedOverrideReason && String(storedOverrideReason).trim())

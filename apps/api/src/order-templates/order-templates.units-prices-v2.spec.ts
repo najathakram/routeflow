@@ -143,5 +143,6 @@ describe("S19: a standing order prices from the customer layer (flag.units_price
     await service.generateOrder("t1");
     expect(line()).toMatchObject({ unitPrice: 10, priceType: "STANDARD" });
     expect(ordersService.resolveBuyerLinePrice.mock.calls[0]).toHaveLength(7);
+    expect(ordersService.entitlements.hasFlag).toHaveBeenCalledWith(expect.anything(), V2);
   });
 });
