@@ -129,6 +129,24 @@ describe("units-legacy-parent-census.mjs", () => {
       expect(JSON.stringify(r)).not.toContain("secret-key-1");
     });
 
+    it("counts parents whose children are all inactive as noActiveChildren", () => {
+      const rows = [
+        row({ children: 2, active_children: 0 }),
+        row({ children: 1, active_children: 1 }),
+        row({ tenant_key: "z", children: 3, active_children: 0 }),
+      ];
+      const r = evalExports(`m.summarize(${JSON.stringify(rows)})`);
+      expect(r.total).toMatchObject({ parents: 3, noActiveChildren: 2 });
+      expect(r.tenants[0]).toMatchObject({ noActiveChildren: 1 });
+    });
+
+    it("reports tenants scanned: the count passed in, else the tenants that had parents", () => {
+      const rows = JSON.stringify([row({})]);
+      expect(evalExports(`m.summarize(${rows}, 7)`).tenantsScanned).toBe(7);
+      expect(evalExports(`m.summarize(${rows})`).tenantsScanned).toBe(1);
+      expect(evalExports("m.summarize([], 4)")).toMatchObject({ tenants: [], tenantsScanned: 4 });
+    });
+
     it("returns zeros and no tenants for no rows", () => {
       const r = evalExports("m.summarize([])");
       expect(r.tenants).toEqual([]);
@@ -143,6 +161,8 @@ describe("units-legacy-parent-census.mjs", () => {
       );
       expect(out).toMatch(/tenant-1/);
       expect(out).toMatch(/TOTAL/);
+      expect(out).toMatch(/tenants scanned: 1/);
+      expect(out).toMatch(/no-active/);
       expect(out.split("\n").length).toBeGreaterThanOrEqual(3);
     });
   });
@@ -217,6 +237,13 @@ describe("units-legacy-parent-census.mjs", () => {
         expect(sql).toMatch(new RegExp(`\\b${alias}\\."tenantId"`));
       }
       expect(sql).toMatch(/\$1/);
+    });
+
+    it("--all covers PRODUCTION tenants only; a named --tenant is not class-filtered", () => {
+      for (const name of ["CENSUS_SQL", "TENANT_COUNT_SQL"]) {
+        const sql: string = evalExports(`m.${name}`);
+        expect(sql).toContain(`($1::text IS NOT NULL OR t.class = 'PRODUCTION')`);
+      }
     });
 
     it("selects no slug, business name or email (counts out, scope in)", () => {
