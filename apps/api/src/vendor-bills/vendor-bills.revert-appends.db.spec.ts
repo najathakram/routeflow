@@ -378,4 +378,27 @@ describeDb("B846 bill revert appends — real Postgres", () => {
     const reversal = (await ledger(w)).find((r) => r.q === -10) as { effectiveAt: Date };
     expect(inBillMonth(reversal.effectiveAt)).toBe(true); // open: dated at the original
   });
+
+  it("a FAILED earlier month is closed once a later month is filed: dated now", async () => {
+    const w = await seedWorld("failed-before", "tobacco");
+    const id = await receiveBill(w, 10, "B-846-9", EARLIER_DATE);
+    const earlierStart = new Date(Date.UTC(BILL_Y, BILL_M - 2, 1));
+    await prisma.tobaccoReport.create({
+      data: {
+        tenantId: w.tenantId,
+        periodYear: earlierStart.getUTCFullYear(),
+        periodMonth: earlierStart.getUTCMonth() + 1,
+        periodStart: earlierStart,
+        periodEnd: new Date(MONTH_START.getTime() - 1),
+        status: "FAILED",
+        rows: [],
+      },
+    });
+    await fileTobaccoMonth(w); // the later month is GENERATED
+
+    await revert(w, id);
+
+    const reversal = (await ledger(w)).find((r) => r.q === -10) as { effectiveAt: Date };
+    expect(reversal.effectiveAt >= MONTH_END_EXCL).toBe(true);
+  });
 });

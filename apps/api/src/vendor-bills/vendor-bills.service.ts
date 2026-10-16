@@ -1640,7 +1640,8 @@ export class VendorBillsService {
       }
 
       // Reverse the lots this bill created (one per received line)
-      if (movesStock) await this.reverseBillLots(tx, bill.billNumber, reversedReceipts);
+      if (movesStock)
+        await this.reverseBillLots(tx, bill.billNumber, reversedReceipts, bill.billDate);
 
       // Revert bill status to DRAFT and clear per-line receipt progress — the
       // bill is back to never-received. Nested updateMany, not a direct
@@ -1685,35 +1686,46 @@ export class VendorBillsService {
     tx: Prisma.TransactionClient,
     billNumber: string,
     receipts?: (LiveBillReceipt & { productId: string; name: string })[],
+    billDate?: Date | null,
   ) {
     let lots: Awaited<ReturnType<typeof tx.stockLot.findMany>> = [];
     if (!receipts) {
       lots = await tx.stockLot.findMany({ where: { reference: billNumber } });
     } else {
+      const shape = (r: (typeof receipts)[number]) => ({
+        productId: r.productId,
+        reference: billNumber,
+        qty: r.quantity,
+        ...(r.unitCost != null ? { unitCost: r.unitCost } : {}),
+      });
+      const free = async (r: (typeof receipts)[number], extra: object) =>
+        ((await tx.stockLot.findMany({ where: { ...shape(r), ...extra } })) ?? []).filter(
+          (l) => !(l.notes ?? "").includes("(bill reversed;") && !lots.some((x) => x.id === l.id),
+        );
+      // Pass 1: every receipt's EXACT tuple first, so a legacy receipt never sees an exact one's lot.
+      const unmatched: typeof receipts = [];
       for (const r of receipts) {
-        const base = {
-          productId: r.productId,
-          reference: billNumber,
-          qty: r.quantity,
-          ...(r.unitCost != null ? { unitCost: r.unitCost } : {}),
-        };
-        const free = async (extra: object) =>
-          ((await tx.stockLot.findMany({ where: { ...base, ...extra } })) ?? []).filter(
-            (l) => !(l.notes ?? "").includes("(bill reversed;") && !lots.some((x) => x.id === l.id),
+        const exact = await free(r, { purchaseDate: r.effectiveAt });
+        if (exact.length > 0) lots.push(exact[0]);
+        else unmatched.push(r);
+      }
+      // Pass 2 (legacy lots were stamped with the bill date): receipts that share a shape share
+      // their candidates, so accept when there are no more candidates than receipts of that shape.
+      const groups = new Map<string, typeof receipts>();
+      for (const r of unmatched) {
+        const key = `${r.productId}|${String(r.quantity)}|${String(r.unitCost)}`;
+        groups.set(key, [...(groups.get(key) ?? []), r]);
+      }
+      for (const group of groups.values()) {
+        const found = await free(group[0], billDate ? { purchaseDate: billDate } : {});
+        if (found.length > group.length) {
+          throw ledgerGap(
+            group[0].productId,
+            group[0].name,
+            `its stock lot for bill ${billNumber} cannot be identified.`,
           );
-        let found = await free({ purchaseDate: r.effectiveAt });
-        if (found.length === 0) {
-          found = await free({});
-          if (found.length > 1) {
-            throw ledgerGap(
-              r.productId,
-              r.name,
-              `its stock lot for bill ${billNumber} cannot be identified.`,
-            );
-          }
         }
-        if (found.length === 0) continue; // no lot was ever made for this receipt: nothing to reverse
-        lots.push(found[0]);
+        lots.push(...found); // none ⇒ no lot was ever made for these receipts: nothing to reverse
       }
     }
     for (const lot of lots) {

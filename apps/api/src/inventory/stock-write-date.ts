@@ -43,16 +43,16 @@ export interface FiledThrough {
  * SA-808a: "filed" means filed THROUGH, not filed AT. A month's ending stock is `currentStock −
  * Σ(movements after periodEnd)`, so a movement dated `t` changes the ending stock of every month
  * ending at or after `t`: a row backdated into an unfiled August still moves a filed September.
- * Returns the close of the LATEST filed period covering any of the products, or null. A FAILED month
+ * Returns the close of the LATEST filed period covering the product, or null. A FAILED month
  * after the latest filed one stays open; a FAILED month before it is closed.
  */
 async function filedThroughOf(
   db: StockDateDb,
   tenantId: string,
-  products: StockDateProduct[],
+  product: StockDateProduct,
 ): Promise<FiledThrough | null> {
   let best: FiledThrough | null = null;
-  if (products.some((p) => p.isTobacco)) {
+  if (product.isTobacco) {
     const report = await db.tobaccoReport.findFirst({
       where: { tenantId, status: { not: "FAILED" } },
       orderBy: { periodEnd: "desc" },
@@ -65,14 +65,11 @@ async function filedThroughOf(
       };
     }
   }
-  const categoryIds = [
-    ...new Set(products.flatMap((p) => (p.trackedCategoryId ? [p.trackedCategoryId] : []))),
-  ];
-  if (categoryIds.length > 0) {
+  if (product.trackedCategoryId) {
     const filing = await db.regulatedFiling.findFirst({
       where: {
         tenantId,
-        trackedCategoryId: { in: categoryIds },
+        trackedCategoryId: product.trackedCategoryId,
         status: { in: ["GENERATED", "LOCKED"] },
       },
       orderBy: { periodEnd: "desc" },
@@ -100,14 +97,6 @@ const loadProducts = async (db: StockDateDb, ids: string[]): Promise<StockDatePr
     select: { id: true, isTobacco: true, trackedCategoryId: true },
   })) ?? [];
 
-/** The close of the latest filed period covering any of `productIds`, or null when none is filed. */
-export async function filedThrough(
-  db: StockDateDb,
-  args: { tenantId: string; productIds: string[] },
-): Promise<FiledThrough | null> {
-  return filedThroughOf(db, args.tenantId, await loadProducts(db, [...new Set(args.productIds)]));
-}
-
 export interface DocumentStockDate {
   /** The instant to write on the row (and its lot). */
   effectiveAt: Date;
@@ -131,7 +120,7 @@ export async function documentStockDate(
   const byId = new Map((await loadProducts(db, ids)).map((p) => [p.id, p]));
   for (const id of ids) {
     const product = byId.get(id);
-    const filed = product ? await filedThroughOf(db, tenantId, [product]) : null;
+    const filed = product ? await filedThroughOf(db, tenantId, product) : null;
     if (!filed || documentDate >= filed.through) {
       out.set(id, { effectiveAt: documentDate, movedFromPeriod: null });
       continue;

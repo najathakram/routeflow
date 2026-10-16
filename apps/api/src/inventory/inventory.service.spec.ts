@@ -749,7 +749,7 @@ describe("InventoryService", () => {
       // master asked for "the newest PURCHASE" and got the reversing row's cost (9).
       prisma.stockMovement.findFirst.mockResolvedValue({ unitCost: D(4) });
       prisma.stockMovement.findMany.mockResolvedValue([
-        { notes: "BILL_REVERTED — reverses m2 (original period September 2026 filed)" },
+        { notes: "BILL_REVERTED — reverses m2 (filed through September 2026)" },
       ]);
 
       const result = await service.recordSale("prod-1", D(2), null, null, tx());

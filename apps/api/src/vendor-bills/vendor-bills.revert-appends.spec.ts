@@ -146,15 +146,21 @@ async function harness(): Promise<Harness> {
   prisma.product.findMany.mockImplementation(async () => [{ id: "prod-1", ...flags }]);
   const latest = (xs: Row[]) =>
     [...xs].sort((x, y) => y.periodEnd.getTime() - x.periodEnd.getTime())[0] ?? null;
-  prisma.tobaccoReport.findFirst.mockImplementation(async () =>
-    latest(tobaccoReports.filter((r) => r.status !== "FAILED")),
+  // A query that passes a period window (the pre-SA-808a predicate did) is answered through it.
+  const inWindow = (r: Row, where: Row) =>
+    (!where.periodStart?.lte || r.periodStart <= where.periodStart.lte) &&
+    (!where.periodEnd?.gte || r.periodEnd >= where.periodEnd.gte) &&
+    (!where.periodEnd?.gt || r.periodEnd > where.periodEnd.gt);
+  prisma.tobaccoReport.findFirst.mockImplementation(async ({ where }: any) =>
+    latest(tobaccoReports.filter((r) => r.status !== "FAILED" && inWindow(r, where))),
   );
   prisma.regulatedFiling.findFirst.mockImplementation(async ({ where }: any) =>
     latest(
       regulatedFilings.filter(
         (r) =>
-          where.trackedCategoryId.in.includes(r.trackedCategoryId) &&
-          where.status.in.includes(r.status),
+          r.trackedCategoryId === where.trackedCategoryId &&
+          where.status.in.includes(r.status) &&
+          inWindow(r, where),
       ),
     ),
   );
@@ -570,7 +576,8 @@ describe("B846 / SA-808 — revertToDraft appends reversal rows and never delete
   it("lots: a pre-2026-08-12 lot whose purchaseDate differs from the movement is reversed by the single-candidate fallback", async () => {
     const h = await harness();
     await receive(h, 10);
-    h.lots[0].purchaseDate = new Date("2026-09-14T09:30:00.000Z"); // legacy: lot date != movement.effectiveAt
+    // legacy: the lot was stamped with the bill date, the movement with the DB insert instant
+    h.rows[0].effectiveAt = new Date("2026-09-16T08:00:00.000Z");
 
     await revert(h, 10);
 
@@ -589,10 +596,71 @@ describe("B846 / SA-808 — revertToDraft appends reversal rows and never delete
     expect(h.prisma.stockLot.update).not.toHaveBeenCalled();
   });
 
+  /** Two legacy receipt rows of 5 @ 2 on one bill (partial top-ups), each with its own bill-dated lot. */
+  const legacyReceipt = (h: Harness, n: number, lot = true) => {
+    h.rows.push({
+      id: `mv-legacy-${n}`,
+      productId: "prod-1",
+      type: "PURCHASE",
+      quantity: D(5),
+      unitCost: D(2),
+      supplierId: "sup-1",
+      reference: "B-1",
+      notes: billReceiptNote("B-1"),
+      effectiveAt: new Date(`2026-09-1${5 + n}T08:00:00.000Z`),
+      createdAt: new Date(`2026-09-1${5 + n}T08:00:00.000Z`),
+    });
+    if (lot) {
+      h.lots.push({
+        id: `lot-legacy-${n}`,
+        productId: "prod-1",
+        reference: "B-1",
+        purchaseDate: BILL_DATE,
+        qty: D(5),
+        remainingQty: D(5),
+        unitCost: D(2),
+      });
+    }
+  };
+
+  it("lots: two equal legacy receipts on one bill reverse BOTH lots — no false 409", async () => {
+    const h = await harness();
+    legacyReceipt(h, 1);
+    legacyReceipt(h, 2);
+    h.product.currentStock = D(10);
+    h.product.averageCost = D(2);
+
+    await revert(h, 10);
+
+    expect(h.lots).toHaveLength(0);
+    expect(h.rows.map((r) => Number(r.quantity))).toEqual([5, 5, -5, -5]);
+  });
+
+  it("lots: a legacy receipt that never made a lot leaves a same-shaped MANUAL lot alone", async () => {
+    const h = await harness();
+    legacyReceipt(h, 1, false);
+    h.rows[0].quantity = D(10);
+    h.product.currentStock = D(10);
+    h.product.averageCost = D(2);
+    h.lots.push({
+      id: "lot-manual",
+      productId: "prod-1",
+      reference: "B-1", // a manual purchase that happens to share the bill number
+      purchaseDate: new Date("2026-05-20T00:00:00.000Z"),
+      qty: D(10),
+      remainingQty: D(10),
+      unitCost: D(2),
+    });
+
+    await revert(h, 10);
+
+    expect(h.lots.map((l) => l.id)).toEqual(["lot-manual"]);
+  });
+
   it("lots: two fallback candidates are ambiguous — 409 and nothing written", async () => {
     const h = await harness();
     await receive(h, 10);
-    h.lots[0].purchaseDate = new Date("2026-09-14T09:30:00.000Z");
+    h.rows[0].effectiveAt = new Date("2026-09-16T08:00:00.000Z");
     h.lots.push({ ...h.lots[0], id: "lot-twin" });
 
     await expect(revert(h, 10)).rejects.toMatchObject({
