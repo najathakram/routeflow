@@ -1,6 +1,6 @@
 import * as React from "react";
 import { render, screen, fireEvent } from "@testing-library/react";
-import { useEscapeCloses } from "./useEscapeCloses";
+import { useEscapeCloses, hasOpenEscapePanel } from "./useEscapeCloses";
 
 function Panel({ name }: { name: string }) {
   const [open, setOpen] = React.useState(false);
@@ -44,5 +44,21 @@ describe("useEscapeCloses (V17)", () => {
     render(<Panel name="only" />);
     esc();
     expect(screen.queryByRole("dialog")).toBeNull();
+  });
+
+  it("ignores Escape pressed while composing text (IME)", () => {
+    render(<Panel name="ime" />);
+    fireEvent.click(screen.getByText("open ime"));
+    fireEvent.keyDown(document, { key: "Escape", isComposing: true });
+    expect(screen.getByRole("dialog", { name: "ime" })).toBeInTheDocument();
+  });
+
+  it("hasOpenEscapePanel tells a host when a panel is open", () => {
+    render(<Panel name="host" />);
+    expect(hasOpenEscapePanel()).toBe(false);
+    fireEvent.click(screen.getByText("open host"));
+    expect(hasOpenEscapePanel()).toBe(true);
+    esc();
+    expect(hasOpenEscapePanel()).toBe(false);
   });
 });

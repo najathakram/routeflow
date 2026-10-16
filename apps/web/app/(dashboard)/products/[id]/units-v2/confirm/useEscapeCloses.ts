@@ -40,3 +40,6 @@ export function useEscapeCloses(
     };
   }, [open, openerRef]);
 }
+
+/** RED SKELETON. */
+export const hasOpenEscapePanel = (): boolean => false;
