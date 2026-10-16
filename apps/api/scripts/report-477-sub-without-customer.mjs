@@ -3,6 +3,8 @@
  * The admin CANCELLED / delete gate confirms a subscription 404 is not a wrong-key/mode artefact by reading the
  * tenant's Stripe customer; with no customer id stored that check cannot run, so a subscription Stripe does
  * not return can never be told apart from a key/mode mismatch and the gate refuses (STRIPE_ACCOUNT_MISMATCH).
+ * A subscription Stripe DOES return is refused too (STRIPE_SUBSCRIPTION_OWNER_MISMATCH): with no stored customer
+ * its owner cannot be confirmed, and the subscription's own customer is never adopted as the tenant's.
  * This counts the population the ops path (#477b) applies to, so the owner can see how many tenants it affects.
  *
  * OWNER-ONLY. Never run from an implementation session or by a lead: the owner runs it via

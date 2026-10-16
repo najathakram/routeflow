@@ -74,7 +74,7 @@ function make(
     }),
     getSubscription: jest.fn(async () => {
       stripeCalls.push(inTx);
-      return { status: "canceled" };
+      return { status: "canceled", customer: "cus_1" };
     }),
   };
   prisma.$transaction.mockImplementation(async (fn: any) => {
@@ -199,22 +199,28 @@ describe.each(OPS)("%s - the shared Stripe gate", (_name, run) => {
     });
 
     it.each(["active", "past_due", "paused", "incomplete"])(
-      "sub returned LIVE (%s): TENANT_CANCEL_SUBSCRIPTION_FIRST, nothing written",
+      "sub returned LIVE (%s): refused STRIPE_SUBSCRIPTION_OWNER_MISMATCH (ownership is judged first), nothing written",
       async (status) => {
         const { svc, prisma, stripe } = make({ pre: "sub_1" }, { customer: null });
         stripe.getSubscription.mockResolvedValue({ status, customer: "cus_x" });
         const err: any = await run(svc).catch((e) => e);
-        expect(code(err)).toBe("TENANT_CANCEL_SUBSCRIPTION_FIRST");
+        expect(code(err)).toBe("STRIPE_SUBSCRIPTION_OWNER_MISMATCH");
         expect(written(prisma)).toBe(false);
       },
     );
 
-    it("sub returned TERMINAL: allowed (Stripe answered, so it is not a blind allow); no mismatch notice", async () => {
+    it("sub returned TERMINAL: REFUSED (never adopt the subscription's customer as the tenant's), nothing written, no audit row", async () => {
       const { svc, prisma, stripe, auditLog } = make({ pre: "sub_1" }, { customer: null });
       stripe.getSubscription.mockResolvedValue({ status: "canceled", customer: "cus_x" });
-      await run(svc);
-      expect(written(prisma)).toBe(true);
-      expect(rows(auditLog, "STRIPE_KEY_MODE_MISMATCH")).toHaveLength(0);
+      const err: any = await run(svc).catch((e) => e);
+      expect(err.getStatus()).toBe(409);
+      expect(code(err)).toBe("STRIPE_SUBSCRIPTION_OWNER_MISMATCH");
+      expect(err.getResponse().message).toMatch(/no Stripe customer on file/);
+      expect(written(prisma)).toBe(false);
+      expect(auditLog).not.toHaveBeenCalled();
+      expect(prisma.tenantSubscription.update).not.toHaveBeenCalled();
+      expect(prisma.tenantSubscription.upsert).not.toHaveBeenCalled();
+      expect(prisma.tenantSubscription.updateMany).not.toHaveBeenCalled();
     });
 
     it("sub read fails twice: 409 CONCURRENT_UPDATE (Stripe unconfirmed), nothing written", async () => {
@@ -229,15 +235,116 @@ describe.each(OPS)("%s - the shared Stripe gate", (_name, run) => {
 
     it("every Stripe read is outside the transaction", async () => {
       const { svc, stripeCalls } = make({ pre: "sub_1" }, { customer: null });
-      await run(svc); // the harness's default sub is terminal; it records whether a transaction was open
+      await run(svc).catch(() => undefined); // refused (no stored customer); the harness still records each Stripe read
       expect(stripeCalls.length).toBeGreaterThan(0);
       expect(stripeCalls.every((inside) => inside === false)).toBe(true);
     });
   });
 
+  describe("the subscription must BELONG to this tenant (owner check)", () => {
+    const OWNER = "STRIPE_SUBSCRIPTION_OWNER_MISMATCH";
+    const noWrites = (prisma: any, auditLog: jest.Mock) => {
+      expect(written(prisma)).toBe(false);
+      expect(auditLog).not.toHaveBeenCalled();
+      expect(prisma.tenantSubscription.update).not.toHaveBeenCalled();
+      expect(prisma.tenantSubscription.upsert).not.toHaveBeenCalled();
+      expect(prisma.tenantSubscription.updateMany).not.toHaveBeenCalled();
+    };
+    const warned = () => (Logger.prototype.warn as jest.Mock).mock.calls.map((c) => String(c[0]));
+
+    it("terminal sub whose customer (string) is another customer: refused, no write, no audit, warn names BOTH ids", async () => {
+      const { svc, prisma, stripe, auditLog } = make({ pre: "sub_1" });
+      stripe.getSubscription.mockResolvedValue({ status: "canceled", customer: "cus_other" });
+      const err: any = await run(svc).catch((e) => e);
+      expect(err.getStatus()).toBe(409);
+      expect(code(err)).toBe(OWNER);
+      expect(err.getResponse().message).toBe(
+        "This subscription belongs to a different Stripe customer. Check the tenant's billing record before cancelling.",
+      );
+      noWrites(prisma, auditLog);
+      const w = warned().filter((m) => m.includes("cus_other"));
+      expect(w).toHaveLength(1);
+      expect(w[0]).toContain("cus_1");
+      expect(w[0]).toContain(TENANT_ID);
+    });
+
+    it("an EXPANDED customer object is read by .id: a different id is refused", async () => {
+      const { svc, prisma, stripe, auditLog } = make({ pre: "sub_1" });
+      stripe.getSubscription.mockResolvedValue({
+        status: "canceled",
+        customer: { id: "cus_other", object: "customer" },
+      });
+      const err: any = await run(svc).catch((e) => e);
+      expect(code(err)).toBe(OWNER);
+      noWrites(prisma, auditLog);
+      const w = warned().find((m) => m.includes("cus_other"));
+      expect(w).toContain("cus_1");
+    });
+
+    it("an expanded customer object with the SAME id is allowed", async () => {
+      const { svc, prisma, stripe } = make({ pre: "sub_1" });
+      stripe.getSubscription.mockResolvedValue({
+        status: "canceled",
+        customer: { id: "cus_1", object: "customer" },
+      });
+      await run(svc);
+      expect(written(prisma)).toBe(true);
+    });
+
+    it("metadata.tenantId present and different (customer matches): refused, the warn names the metadata tenant too", async () => {
+      const { svc, prisma, stripe, auditLog } = make({ pre: "sub_1" });
+      stripe.getSubscription.mockResolvedValue({
+        status: "canceled",
+        customer: "cus_1",
+        metadata: { tenantId: "tenant-OTHER" },
+      });
+      const err: any = await run(svc).catch((e) => e);
+      expect(code(err)).toBe(OWNER);
+      noWrites(prisma, auditLog);
+      const w = warned().find((m) => m.includes("tenant-OTHER"));
+      expect(w).toContain("cus_1");
+    });
+
+    it("metadata.tenantId matching the tenant, or absent, with a matching customer: allowed as today", async () => {
+      for (const metadata of [undefined, {}, { tenantId: TENANT_ID }]) {
+        const { svc, prisma, stripe } = make({ pre: "sub_1" });
+        stripe.getSubscription.mockResolvedValue({
+          status: "canceled",
+          customer: "cus_1",
+          metadata,
+        });
+        await run(svc);
+        expect(written(prisma)).toBe(true);
+      }
+    });
+
+    it("a found subscription with NO customer field at all fails closed (never allowed)", async () => {
+      const { svc, prisma, stripe, auditLog } = make({ pre: "sub_1" });
+      stripe.getSubscription.mockResolvedValue({ status: "canceled" });
+      const err: any = await run(svc).catch((e) => e);
+      expect(code(err)).toBe(OWNER);
+      noWrites(prisma, auditLog);
+    });
+
+    it("a LIVE subscription owned by another customer reports the owner mismatch, NOT cancel-first (ownership is judged before status)", async () => {
+      const { svc, prisma, stripe, auditLog } = make({ pre: "sub_1" });
+      stripe.getSubscription.mockResolvedValue({ status: "active", customer: "cus_other" });
+      const err: any = await run(svc).catch((e) => e);
+      expect(code(err)).toBe(OWNER);
+      noWrites(prisma, auditLog);
+    });
+
+    it("a LIVE subscription owned by THIS tenant is still cancel-first", async () => {
+      const { svc, stripe } = make({ pre: "sub_1" });
+      stripe.getSubscription.mockResolvedValue({ status: "active", customer: "cus_1" });
+      const err: any = await run(svc).catch((e) => e);
+      expect(code(err)).toBe("TENANT_CANCEL_SUBSCRIPTION_FIRST");
+    });
+  });
+
   it("a terminal status needs no customer read and writes no not-found row", async () => {
     const { svc, stripe, auditLog } = make({ pre: "sub_1" });
-    stripe.getSubscription.mockResolvedValue({ status: "canceled" });
+    stripe.getSubscription.mockResolvedValue({ status: "canceled", customer: "cus_1" });
     await run(svc);
     expect(stripe.getCustomer).not.toHaveBeenCalled();
     expect(rows(auditLog, "STRIPE_SUB_NOT_FOUND_TERMINATED")).toHaveLength(0);
@@ -245,7 +352,7 @@ describe.each(OPS)("%s - the shared Stripe gate", (_name, run) => {
 
   it.each(["canceled", "incomplete_expired"])("terminal status %s: allowed", async (status) => {
     const { svc, prisma, stripe } = make({ pre: "sub_1" });
-    stripe.getSubscription.mockResolvedValue({ status });
+    stripe.getSubscription.mockResolvedValue({ status, customer: "cus_1" });
     await run(svc);
     expect(written(prisma)).toBe(true);
   });
@@ -254,7 +361,7 @@ describe.each(OPS)("%s - the shared Stripe gate", (_name, run) => {
     "non-terminal status %s counts as LIVE: 409 TENANT_CANCEL_SUBSCRIPTION_FIRST, nothing written",
     async (status) => {
       const { svc, prisma, stripe } = make({ pre: "sub_1" });
-      stripe.getSubscription.mockResolvedValue({ status });
+      stripe.getSubscription.mockResolvedValue({ status, customer: "cus_1" });
       const err: any = await run(svc).catch((e) => e);
       expect(err.getStatus()).toBe(409);
       expect(code(err)).toBe("TENANT_CANCEL_SUBSCRIPTION_FIRST");
@@ -277,7 +384,7 @@ describe.each(OPS)("%s - the shared Stripe gate", (_name, run) => {
     const { svc, prisma, stripe } = make({ pre: "sub_1" });
     stripe.getSubscription
       .mockRejectedValueOnce(new Error("blip"))
-      .mockResolvedValueOnce({ status: "canceled" });
+      .mockResolvedValueOnce({ status: "canceled", customer: "cus_1" });
     await run(svc);
     expect(written(prisma)).toBe(true);
   });
@@ -327,7 +434,7 @@ describe.each(OPS)("%s - the shared Stripe gate", (_name, run) => {
 
   it("the stripeSubId CHANGED between the read and the lock: 409 CONCURRENT_UPDATE, nothing written", async () => {
     const { svc, prisma, stripe } = make({ pre: "sub_old", inTx: "sub_new" });
-    stripe.getSubscription.mockResolvedValue({ status: "canceled" });
+    stripe.getSubscription.mockResolvedValue({ status: "canceled", customer: "cus_1" });
     const err: any = await run(svc).catch((e) => e);
     expect(err.getStatus()).toBe(409);
     expect(code(err)).toBe("CONCURRENT_UPDATE");
@@ -375,7 +482,7 @@ describe("updateStatus - other targets never read Stripe", () => {
 describe("deleteTenant - the SUSPENDED check is re-proved under the row lock", () => {
   it("status moved to ACTIVE after the pre-read: the SAME 'suspend it first' 400 as the pre-check, nothing deleted", async () => {
     const { svc, prisma, stripe } = make({ pre: null });
-    stripe.getSubscription.mockResolvedValue({ status: "canceled" });
+    stripe.getSubscription.mockResolvedValue({ status: "canceled", customer: "cus_1" });
     prisma.tenant.updateMany.mockResolvedValue({ count: 0 }); // the guarded write finds an ACTIVE row
     const err: any = await svc.deleteTenant(TENANT_ID, "a1").catch((e) => e);
     // not CONCURRENT_UPDATE: the admin web words that as a Stripe-confirm retry, which would mislead here. A 400

@@ -22,6 +22,21 @@ export function stripeAccountMismatchRefusal(): ConflictException {
   });
 }
 
+/**
+ * 409 STRIPE_SUBSCRIPTION_OWNER_MISMATCH: the subscription Stripe returned for the stored id is not provably this
+ * tenant's (another customer, another tenant's metadata, or no stored customer to compare against).
+ */
+export function stripeSubscriptionOwnerMismatchRefusal(
+  noStoredCustomer = false,
+): ConflictException {
+  return new ConflictException({
+    code: API_ERROR_CODES.STRIPE_SUBSCRIPTION_OWNER_MISMATCH,
+    message: noStoredCustomer
+      ? "This tenant has a Stripe subscription but no Stripe customer on file, so the subscription's owner can't be confirmed. Check the tenant's billing record before cancelling."
+      : "This subscription belongs to a different Stripe customer. Check the tenant's billing record before cancelling.",
+  });
+}
+
 /** 409 STRIPE_NOT_CONFIGURED: no Stripe key in this environment (or Stripe rejected it), so nothing can be checked. */
 export function stripeNotConfiguredRefusal(): ConflictException {
   return new ConflictException({
@@ -113,10 +128,47 @@ async function readStripeOrMissing<T>(
 }
 
 /**
+ * The subscription Stripe returned for the stored id must be THIS tenant's, judged BEFORE its status: a foreign
+ * subscription's status says nothing about this tenant (a foreign LIVE one would otherwise send the admin to cancel
+ * someone else's billing, a foreign terminal one would be a false all-clear). `sub.customer` is an id string or an
+ * expanded object; it must equal the tenant's STORED customer id (no stored id = refused, the subscription's
+ * customer is never adopted), and `sub.metadata.tenantId`, when present, must equal the tenant id. A missing
+ * `sub.customer` fails closed. Nothing is written; one warn names every id involved.
+ */
+function assertSubscriptionBelongsToTenant(
+  deps: StripeGateDeps,
+  tenantId: string,
+  stripeSubId: string,
+  sub: { customer?: unknown; metadata?: { tenantId?: unknown } | null },
+  storedCustomerId: string | null,
+): void {
+  const c = sub.customer;
+  const subCustomerId =
+    typeof c === "string"
+      ? c
+      : c && typeof (c as { id?: unknown }).id === "string"
+        ? (c as { id: string }).id
+        : null;
+  const metaTenantId = sub.metadata?.tenantId;
+  const metaPresent = typeof metaTenantId === "string" && metaTenantId.length > 0;
+  const customerOk = !!storedCustomerId && !!subCustomerId && subCustomerId === storedCustomerId;
+  const metaOk = !metaPresent || metaTenantId === tenantId;
+  if (customerOk && metaOk) return;
+  deps.logger.warn(
+    `Tenant ${tenantId}: Stripe subscription ${stripeSubId} owner mismatch; refusing (subscription customer ` +
+      `${subCustomerId ?? "none"}, stored customer ${storedCustomerId ?? "none"}` +
+      `${metaPresent ? `, subscription metadata tenantId ${String(metaTenantId)}` : ""})`,
+  );
+  throw stripeSubscriptionOwnerMismatchRefusal(!storedCustomerId);
+}
+
+/**
  * M2/M4, the ONE Stripe gate for status -> CANCELLED and tenant delete. Runs BEFORE any transaction (Stripe is
  * never called under the tenant row lock): a plain read of the stored subscription id, then a Stripe read with a
  * short timeout and ONE retry. Returns the id it judged (null = none stored) for the in-transaction compare.
  *  - no stored id: allowed, no Stripe call. A TERMINAL status (`canceled`, `incomplete_expired`): allowed.
+ *  - a FOUND subscription must belong to this tenant (customer + metadata.tenantId, see
+ *    assertSubscriptionBelongsToTenant) or it is refused STRIPE_SUBSCRIPTION_OWNER_MISMATCH before its status counts.
  *  - a live status is refused (TENANT_CANCEL_SUBSCRIPTION_FIRST) - `paused` and `incomplete` can still come
  *    back, so they are not "ended".
  *  - Stripe unconfigured with a stored id, or a Stripe 401, fails closed as STRIPE_NOT_CONFIGURED.
@@ -142,6 +194,7 @@ export async function stripeGateBeforeTermination(
     deps.stripe.getSubscription(stripeSubId),
   );
   if (sub) {
+    assertSubscriptionBelongsToTenant(deps, id, stripeSubId, sub, row?.stripeCustomerId ?? null);
     if (!isTerminalStripeSubscriptionStatus(sub.status)) throw cancelSubscriptionFirstRefusal();
     return { stripeSubId, notFound: false };
   }

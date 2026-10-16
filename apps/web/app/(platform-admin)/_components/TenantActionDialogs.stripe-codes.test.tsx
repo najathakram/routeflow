@@ -51,6 +51,18 @@ describe("tenant status / delete failures from the Stripe gate (fixed copy, neve
     );
   });
 
+  it("STRIPE_SUBSCRIPTION_OWNER_MISMATCH says the subscription belongs to another Stripe customer, on a status change and a delete", () => {
+    const e = coded(409, API_ERROR_CODES.STRIPE_SUBSCRIPTION_OWNER_MISMATCH);
+    expect(statusFailureCopy(e)).toBe(TENANT_ACTION_COPY.stripeSubscriptionOwnerMismatch);
+    expect(deleteFailureCopy(e)).toBe(TENANT_ACTION_COPY.stripeSubscriptionOwnerMismatch);
+    expect(TENANT_ACTION_COPY.stripeSubscriptionOwnerMismatch).toBe(
+      "This subscription belongs to a different Stripe customer. Check the tenant's billing record before cancelling.",
+    );
+    expect(TENANT_ACTION_COPY.stripeSubscriptionOwnerMismatch).not.toBe(
+      TENANT_ACTION_COPY.stripeAccountMismatch,
+    );
+  });
+
   it("any other failure keeps the plain status copy", () => {
     expect(statusFailureCopy(coded(409, "SOMETHING_ELSE"))).toBe(TENANT_ACTION_COPY.statusFailed);
     expect(statusFailureCopy(new Error("boom"))).toBe(TENANT_ACTION_COPY.statusFailed);
