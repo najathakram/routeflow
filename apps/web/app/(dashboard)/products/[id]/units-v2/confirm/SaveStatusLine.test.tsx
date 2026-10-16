@@ -134,6 +134,14 @@ describe("PriceSaveStatusLine (V07)", () => {
     expect(undo).toHaveBeenCalledTimes(1);
   });
 
+  it("K8: the preview says how many customer prices the Undo also writes", async () => {
+    undo.mockResolvedValueOnce({ ...CHANGED, customerMoves: 2 });
+    render(<Section />);
+    saveIt();
+    fireEvent.click(undoBtn());
+    expect(await screen.findByText("and 2 customer prices")).toBeTruthy();
+  });
+
   it("the confirmed Undo re-sends the preview's revision and price state", async () => {
     await openPreview();
     undo.mockResolvedValueOnce({ status: "undone" });

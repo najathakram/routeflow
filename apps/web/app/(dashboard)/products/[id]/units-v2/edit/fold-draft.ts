@@ -45,7 +45,20 @@ export interface FoldResult {
   plans: Map<string, PricePlan>;
   open: PricePlan | null;
   customerMoves: CustomerPriceMove[];
+  /** Draft-wide refusals that belong to no cell (two ticked offers moving the same customer price). */
+  conflicts: string[];
+  /** Titles of the ticked offers baked into the draft, for the save bar. */
+  bakedTitles: string[];
 }
+
+export const CUSTOMER_MOVE_CONFLICT =
+  "These customer prices are already changing in this draft. Save first.";
+
+/** The identity of an offer inside its plan, so a tick does not depend on the offer's index. */
+export const offerId = (
+  planKey: string,
+  o: { kind: "tier"; ref: string; tier: number } | { kind: "customer" },
+): string => `${planKey}#${o.kind === "tier" ? `tier:${o.ref}|${o.tier}` : "customer"}`;
 
 export const cellKey = (ref: string, tier: number) => `${ref}|${tier}`;
 export const parseKey = (k: string) => {
@@ -67,6 +80,9 @@ export function foldDraft(
   const problems: CellProblem[] = [];
   const plans = new Map<string, PricePlan>();
   const customerMoves: CustomerPriceMove[] = [];
+  const offerMoveCells = new Set<string>();
+  const conflicts = new Set<string>();
+  const bakedTitles: string[] = [];
   const fold = (patches: readonly CellPatch[]) => {
     view = applyCellPatches(view, patches).view;
     for (const p of patches) patchByCell.set(cellKey(p.ref, p.tier), p);
@@ -79,7 +95,14 @@ export function foldDraft(
     }
     if (e.kind === "offer") {
       fold(e.patches);
-      customerMoves.push(...e.moves);
+      bakedTitles.push(e.title);
+      for (const m of e.moves) {
+        // The server's per-cell check passes both moves (they share `from`), so the last would win silently.
+        const k = `${m.customerId}|${m.ref}`;
+        if (offerMoveCells.has(k)) conflicts.add(CUSTOMER_MOVE_CONFLICT);
+        offerMoveCells.add(k);
+        customerMoves.push(m);
+      }
       continue;
     }
     const { ref, tier } = parseKey(e.key);
@@ -98,7 +121,17 @@ export function foldDraft(
   ).view;
   const was = (p: CellPatch) => from.rows.find((r) => r.ref === p.ref)?.set[p.tier - 1] ?? null;
   const patches = [...patchByCell.values()].filter((p) => was(p) !== p.to);
-  return { base, view, patches, problems, plans, open, customerMoves };
+  return {
+    base,
+    view,
+    patches,
+    problems,
+    plans,
+    open,
+    customerMoves,
+    conflicts: [...conflicts],
+    bakedTitles,
+  };
 }
 
 /** Every price that differs once `patches` are applied to `view`: what an undo would change. */

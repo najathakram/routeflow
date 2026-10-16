@@ -48,8 +48,8 @@ export interface CustomerPriceMove {
 }
 
 /**
- * POST /products/:productId/prices: everything one Save commits, in ONE transaction (SA-799 b). Aligned to K3's draft
- * payload `{ productId, patches, orderUnit, keeps }`.
+ * POST /products/:productId/prices: everything one Save commits, in ONE transaction (SA-799 b). The product id is in the URL, not
+ * the body; the body is exactly this interface.
  */
 export interface SavePricesRequest {
   /** The product's priceRevision the draft was built on (ProductPriceGridDto.revision). R-1 CAS -> 409 LADDER_REVISION_STALE. */

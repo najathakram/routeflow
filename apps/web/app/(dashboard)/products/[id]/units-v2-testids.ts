@@ -23,6 +23,8 @@ export const UNITS_V2_TESTIDS = {
   ebKeep: "units-v2-eb-keep",
   ebError: "units-v2-eb-error",
   ebNotice: "units-v2-eb-notice",
+  ebConflicts: "units-v2-eb-conflicts",
+  ebBaked: "units-v2-eb-baked",
   ebProblems: "units-v2-eb-problems",
   skipSave: "units-v2-skip-save",
   unitsTable: "units-v2-units-table",

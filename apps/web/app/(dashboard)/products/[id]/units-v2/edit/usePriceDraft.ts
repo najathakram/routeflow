@@ -34,6 +34,7 @@ import {
   cellKey,
   changesFrom,
   foldDraft,
+  offerId,
   parseKey,
   type CellProblem,
   type DraftEntry,
@@ -53,10 +54,10 @@ export interface OpenPlan {
   customerKeeps: readonly CustomerPriceMove[];
 }
 
-const clearedNotice = (offers: readonly DraftEntry[]) =>
+const clearedNotice = (offers: readonly DraftEntry[], why = "you changed that price again") =>
   `Your earlier choice to ${offers
     .flatMap((e) => (e.kind === "offer" ? [`"${e.title}"`] : []))
-    .join(", ")} was cleared because you changed that price again.`;
+    .join(", ")} was cleared because ${why}.`;
 const asCellPatches = (ps: readonly { ref: string; tier: number; to: number | null }[]) =>
   ps.map((p): CellPatch => ({ ref: p.ref, tier: p.tier as PriceTier, to: p.to }));
 
@@ -107,9 +108,15 @@ export interface PriceDraft {
     revision: number;
     priceState: string;
     rows: UndoPreviewRow[];
+    /** How many customer prices the inverse also writes (SA-799: never hidden). */
+    customerMoves: number;
   }>;
   // K3 extras for the edit grid, order unit and save bar
   problems: CellProblem[];
+  /** Draft-wide refusals with no cell (duplicate customer moves); Save is unavailable while any. */
+  conflicts: string[];
+  /** Titles of the ticked offers (customer moves among them) already baked into the draft. */
+  bakedTitles: string[];
   count: number;
   orderUnit: string | null;
   setOrderUnit: (to: string | null) => void;
@@ -177,10 +184,12 @@ export function useCreatePriceDraft(productId: string, hooks: PriceDraftHooks = 
   const patches = fold?.patches ?? [];
   const customerMoves = [...(fold?.customerMoves ?? []), ...moves];
   const problems = fold?.problems ?? [];
+  const conflicts = fold?.conflicts ?? [];
+  const bakedTitles = fold?.bakedTitles ?? [];
   const patched = new Set(patches.map((p) => cellKey(p.ref, p.tier)));
   const sendKeeps = keeps.filter((k) => !patched.has(cellKey(k.ref, k.tier)));
   const count = patches.length + sendKeeps.length + customerMoves.length + (sw ? 1 : 0);
-  const dirty = count > 0 || problems.length > 0;
+  const dirty = count > 0 || problems.length > 0 || conflicts.length > 0;
 
   const reset = React.useCallback(() => {
     setEditing(false);
@@ -194,8 +203,8 @@ export function useCreatePriceDraft(productId: string, hooks: PriceDraftHooks = 
   }, []);
 
   // Ticked offers live in the draft (kind "offer" entries), so they outlive the open plan; the open plan's ticks are read back.
-  const ticks = (fold?.open?.offers ?? []).map((_, i) =>
-    entries.some((e) => e.kind === "offer" && e.id === `${openKey}#${i}`),
+  const ticks = (fold?.open?.offers ?? []).map((o) =>
+    entries.some((e) => e.kind === "offer" && e.id === offerId(openKey ?? "", o)),
   );
   // setOfferTicked may be called in the same batch as applyPlan, before the plan has rendered: applyPlan sets this too.
   const openRef = React.useRef<{ key: string; plan: PricePlan } | null>(null);
@@ -221,7 +230,7 @@ export function useCreatePriceDraft(productId: string, hooks: PriceDraftHooks = 
 
   // Revision AND priceState are both required (lead final ruling): without them there is nothing to send.
   const toRequest = (): SavePricesRequest | null =>
-    grid?.revision == null || !grid.priceState
+    grid?.revision == null || !grid.priceState || conflicts.length > 0
       ? null
       : {
           expectedRevision: grid.revision,
@@ -237,8 +246,21 @@ export function useCreatePriceDraft(productId: string, hooks: PriceDraftHooks = 
     !save.isPending &&
     count > 0 &&
     problems.length === 0 &&
+    conflicts.length === 0 &&
     grid?.revision != null &&
     !!grid.priceState;
+
+  // A stale-write notice describes the grid revision it was raised on: once the grid moves on (Reload prices, a
+  // refetch) it no longer applies, so it goes. Other save errors stay until the next save.
+  const errSeen = React.useRef<{ error: unknown; revision: number | undefined }>({
+    error: null,
+    revision: undefined,
+  });
+  if (save.error !== errSeen.current.error)
+    errSeen.current = { error: save.error, revision: grid?.revision };
+  const rawError = priceWriteError(save.error);
+  const saveError =
+    rawError?.code === "stale" && grid?.revision !== errSeen.current.revision ? null : rawError;
 
   const doSave = () => {
     const req = toRequest();
@@ -315,10 +337,11 @@ export function useCreatePriceDraft(productId: string, hooks: PriceDraftHooks = 
     return {
       revision: fresh.revision,
       priceState: fresh.priceState,
+      customerMoves: lastSave?.undo?.customerMoves.length ?? 0,
       // `ref` is the row's unique id (cell key); K5 renders `label`, `current` and `restoreTo`.
       rows: changes.map((c) => ({
         ref: `${c.ref}|${c.tier}`,
-        label: `${c.label} ${tierName(c.tier)}`,
+        label: `${tierName(c.tier)} ${c.label}`,
         current: formatMoney(c.from),
         restoreTo: formatMoney(c.to),
       })),
@@ -385,7 +408,7 @@ export function useCreatePriceDraft(productId: string, hooks: PriceDraftHooks = 
       const o = openRef.current;
       const offer = o?.plan.offers[i];
       if (!o || !offer) return;
-      const id = `${o.key}#${i}`;
+      const id = offerId(o.key, offer);
       setEntries((es) => {
         const rest = es.filter((e) => !(e.kind === "offer" && e.id === id));
         if (!on) return rest;
@@ -427,16 +450,16 @@ export function useCreatePriceDraft(productId: string, hooks: PriceDraftHooks = 
         for (const t of [1, 2, 3, 4, 5] as const)
           if (r.set[t - 1] != null && !(r.ref === served.anchor && t === 1))
             next.push({ kind: "cell", key: cellKey(r.ref, t), text: "" });
-      // Reset clears every set PRICE; ticked customer moves are not product prices and stay.
-      for (const e of entries)
-        if (e.kind === "offer" && e.moves.length > 0) next.push({ ...e, patches: [] });
+      // Ticked offers (and the customer moves in them) were worked out against the plan this undoes: say so.
+      const gone = entries.filter((e) => e.kind === "offer");
+      if (gone.length > 0) setNotice(clearedNotice(gone, "you reset every price to Auto"));
       setEntries(next);
       setOpenKey(null);
     },
     toRequest,
     save: doSave,
     saving: save.isPending,
-    saveError: priceWriteError(save.error),
+    saveError,
     canSave,
     lastSave,
     undo,
@@ -448,6 +471,8 @@ export function useCreatePriceDraft(productId: string, hooks: PriceDraftHooks = 
     undoPreview,
     loadUndoPreview,
     problems,
+    conflicts,
+    bakedTitles,
     count,
     orderUnit,
     setOrderUnit: (to) => {

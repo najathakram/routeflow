@@ -41,7 +41,7 @@ export function PriceEditBar() {
             <ul data-testid={T.ebProblems} className="space-y-0.5 text-red-600">
               {d.problems.map((p) => (
                 <li key={`${p.ref}|${p.tier}`}>
-                  {label(p.ref)} {d.tierName(p.tier)}: {p.message}
+                  {d.tierName(p.tier)} {label(p.ref)}: {p.message}
                 </li>
               ))}
             </ul>
@@ -52,6 +52,20 @@ export function PriceEditBar() {
             <span data-testid={T.ebHint} className="ml-2 text-xs text-navy/60">
               {isMac() ? "⌘S saves" : "Ctrl+S saves"}
             </span>
+          )}
+          {d.conflicts.length > 0 && !confirm && (
+            <ul data-testid={T.ebConflicts} className="space-y-0.5 text-red-600">
+              {d.conflicts.map((c) => (
+                <li key={c}>{c}</li>
+              ))}
+            </ul>
+          )}
+          {d.bakedTitles.length > 0 && !confirm && (
+            <ul data-testid={T.ebBaked} className="mt-1 space-y-0.5 text-xs text-navy/70">
+              {d.bakedTitles.map((t, i) => (
+                <li key={`${i}-${t}`}>Includes: {t}</li>
+              ))}
+            </ul>
           )}
           {d.notice && !confirm && (
             <p role="status" data-testid={T.ebNotice} className="mt-1 text-amber-800">

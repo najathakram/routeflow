@@ -12,6 +12,8 @@ interface State {
   auditId: string | null;
   summary: string;
   rows: UndoPreviewRow[];
+  /** Customer prices the inverse also writes. */
+  customerMoves: number;
   /** The preview's precondition, kept for the confirmed write. */
   revision?: number;
   priceState?: string;
@@ -24,11 +26,24 @@ type Action =
   | { type: "busy" }
   | { type: "undone" }
   | { type: "unavailable" }
-  | { type: "preview"; rows: UndoPreviewRow[]; revision: number; priceState: string }
+  | {
+      type: "preview";
+      rows: UndoPreviewRow[];
+      revision: number;
+      priceState: string;
+      customerMoves: number;
+    }
   | { type: "dismiss" }
   | { type: "failed" };
 
-const IDLE: State = { phase: "idle", auditId: null, summary: "", rows: [], busy: false };
+const IDLE: State = {
+  phase: "idle",
+  auditId: null,
+  summary: "",
+  rows: [],
+  customerMoves: 0,
+  busy: false,
+};
 
 function reduce(s: State, a: Action): State {
   switch (a.type) {
@@ -50,6 +65,7 @@ function reduce(s: State, a: Action): State {
         ...s,
         phase: "preview",
         rows: a.rows,
+        customerMoves: a.customerMoves,
         revision: a.revision,
         priceState: a.priceState,
         busy: false,
@@ -143,6 +159,7 @@ export function PriceSaveStatusLine({
           rows: out.rows,
           revision: out.revision,
           priceState: out.priceState,
+          customerMoves: out.customerMoves ?? 0,
         });
       } else {
         dispatch({ type: out.status });
@@ -217,6 +234,11 @@ export function PriceSaveStatusLine({
               </li>
             ))}
           </ul>
+          {state.customerMoves > 0 ? (
+            <p className="mb-2 text-navy">
+              and {plural(state.customerMoves, "customer price", "customer prices")}
+            </p>
+          ) : null}
           <div className="flex gap-2">
             <Button type="button" size="sm" disabled={busy} onClick={() => run(true)}>
               Undo these prices

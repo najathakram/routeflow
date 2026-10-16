@@ -241,7 +241,7 @@ describe("units v2 edit grid (S12a)", () => {
     expect(input.getAttribute("aria-invalid")).toBe("true");
     const msg = document.getElementById(input.getAttribute("aria-describedby")!);
     expect(msg?.textContent).toMatch(/above \$0\.00/);
-    expect(screen.getByTestId(T.ebProblems).textContent).toContain("Case Wholesale");
+    expect(screen.getByTestId(T.ebProblems).textContent).toContain("Wholesale Case");
     expect(screen.getByTestId(T.ebSave).getAttribute("aria-disabled")).toBe("true");
     await user.click(screen.getByTestId(T.ebSave));
     expect(mockSave).not.toHaveBeenCalled();
@@ -326,7 +326,7 @@ describe("units v2 edit grid (S12a)", () => {
     expect(preview.priceState).toBe("ps-2");
     expect(preview.rows).toContainEqual({
       ref: "case|2",
-      label: "Case Wholesale",
+      label: "Wholesale Case",
       current: "$14.50",
       restoreTo: "$13.91",
     });

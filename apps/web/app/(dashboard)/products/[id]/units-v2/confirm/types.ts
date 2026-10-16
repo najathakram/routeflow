@@ -24,7 +24,14 @@ export interface UndoPrecondition {
 export type UndoOutcome =
   | { status: "undone" }
   /** Prices moved since the save: nothing was written. `revision`/`priceState` are the FRESH grid's. */
-  | { status: "changed"; revision: number; priceState: string; rows: UndoPreviewRow[] }
+  | {
+      status: "changed";
+      revision: number;
+      priceState: string;
+      rows: UndoPreviewRow[];
+      /** Customer prices the inverse also writes; the preview says so (SA-799: never hidden). */
+      customerMoves?: number;
+    }
   /** 409 PRICE_UNDO_UNAVAILABLE: this audit row was already undone. */
   | { status: "unavailable" };
 

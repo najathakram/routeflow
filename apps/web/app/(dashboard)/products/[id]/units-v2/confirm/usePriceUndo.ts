@@ -14,7 +14,12 @@ export interface PriceUndoDeps {
     expectedPriceState: string;
   }) => Promise<unknown>;
   /** Refetch the grid and build the rows the inverse would make on it (K3's `loadUndoPreview`). */
-  loadPreview: () => Promise<{ revision: number; priceState: string; rows: UndoPreviewRow[] }>;
+  loadPreview: () => Promise<{
+    revision: number;
+    priceState: string;
+    rows: UndoPreviewRow[];
+    customerMoves?: number;
+  }>;
 }
 
 const codeOf = (e: unknown) =>

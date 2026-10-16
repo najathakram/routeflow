@@ -4,7 +4,7 @@ import type { SavePricesRequest, SavePricesResponse, UndoPricesRequest } from "@
 import { apiClient } from "../api-client";
 import { priceGridKey } from "./usePriceGrid";
 
-/** The HTTP method of both price writes (SPRINT-CONTRACT §1 says POST; the lead may rule PATCH: change it here). */
+/** The HTTP method of both price writes (lead final ruling 2026-10-16: POST; the method is one constant, change it here). */
 export const PRICE_WRITE_METHOD = "post" as const;
 
 /** Why a price write failed, in words the edit bar can show. */

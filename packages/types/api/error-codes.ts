@@ -737,12 +737,12 @@ export const API_ERROR_CODES = {
    */
   PRICING_RULES_NOT_READY: "PRICING_RULES_NOT_READY",
   /**
-   * 409 from PATCH /products/:productId/prices and POST /prices/undo (units v2): the product's priceRevision, its price state
+   * 409 from POST /products/:productId/prices and POST /prices/undo (units v2): the product's priceRevision, its price state
    * (SA-796 R-1 value compare-and-set) or a customer cell's expected price changed since the grid was read. Body carries
    * `revision`. Nothing was written; reload the grid.
    */
   LADDER_REVISION_STALE: "LADDER_REVISION_STALE",
-  /** 400 from PATCH /products/:productId/prices: the pricing core refused a value (zero/junk, the anchor's Retail cleared); body carries `problems`. */
+  /** 400 from POST /products/:productId/prices: the pricing core refused a value (zero/junk, the anchor's Retail cleared); body carries `problems`. */
   PRICE_EDIT_INVALID: "PRICE_EDIT_INVALID",
   /** 409 from POST /products/:productId/prices/undo: that audit row is not a price save of this product, or it was already undone. */
   PRICE_UNDO_UNAVAILABLE: "PRICE_UNDO_UNAVAILABLE",

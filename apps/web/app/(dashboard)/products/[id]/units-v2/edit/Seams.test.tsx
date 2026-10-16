@@ -294,6 +294,97 @@ describe("K8 seams", () => {
     });
   });
 
+  describe("MUST-2 and review nits", () => {
+    const mount = () =>
+      rtlRender(
+        <QueryClientProvider client={new QueryClient()}>
+          <PriceDraftProvider productId="p1">
+            <Probe />
+            <EditablePricesGrid product={product} />
+            <PriceEditBar />
+          </PriceDraftProvider>
+        </QueryClientProvider>,
+      );
+    const mv = { customerId: "c1", ref: "case", tier: 2 as const, from: 13.5, to: 14 };
+    const offer = (to: number, customerId = "c1"): CustomerMoveOffer => ({
+      kind: "customer",
+      ticked: false,
+      title: "Also raise prices set for 1 customer",
+      moves: [{ ...mv, customerId, to }],
+    });
+    const apply = (to: number) => {
+      act(() =>
+        draft.applyPlan(
+          emptyPlan({ patches: [{ ref: "case", tier: 2, to }], offers: [offer(to)] }),
+        ),
+      );
+      act(() => draft.setOfferTicked(0, true));
+    };
+
+    it("two Applies that each tick the customer offer move the same customer cell: Save is blocked", () => {
+      mount();
+      apply(14);
+      expect(draft.conflicts).toEqual([]);
+      expect(draft.canSave).toBe(true);
+      apply(15);
+      expect(draft.conflicts).toEqual([
+        "These customer prices are already changing in this draft. Save first.",
+      ]);
+      expect(draft.canSave).toBe(false);
+      expect(draft.toRequest()).toBeNull();
+      expect(screen.getByTestId(T.ebConflicts).textContent).toContain("Save first.");
+      expect(screen.getByTestId(T.ebSave).getAttribute("aria-disabled")).toBe("true");
+      // the save bar names what is already baked in
+      expect(screen.getByTestId(T.ebBaked).textContent).toContain(
+        "Includes: Also raise prices set for 1 customer",
+      );
+    });
+
+    it("different customer cells do not conflict", () => {
+      mount();
+      apply(14);
+      act(() =>
+        draft.applyPlan(
+          emptyPlan({
+            patches: [{ ref: "case", tier: 3, to: 12 }],
+            offers: [offer(9, "c2")],
+          }),
+        ),
+      );
+      act(() => draft.setOfferTicked(0, true));
+      expect(draft.conflicts).toEqual([]);
+      expect(draft.toRequest()?.customerMoves).toHaveLength(2);
+    });
+
+    it("Reset all to Auto drops ticked customer moves with a visible notice", () => {
+      mount();
+      apply(14);
+      expect(draft.toRequest()?.customerMoves).toHaveLength(1);
+      act(() => draft.resetAllToAuto());
+      expect(draft.toRequest()?.customerMoves ?? []).toEqual([]);
+      expect(draft.notice).toMatch(/was cleared because you reset every price to Auto/);
+    });
+
+    it("the stale-write notice goes when the grid revision changes", async () => {
+      mockError = { response: { status: 409, data: { code: "LADDER_REVISION_STALE" } } };
+      const user = userEvent.setup();
+      const { rerender } = render();
+      await edit(user);
+      expect(screen.getByRole("button", { name: "Reload prices" })).toBeTruthy();
+      mockGrid = {
+        data: { ...grid, revision: 9, priceState: "ps-9" },
+        isLoading: false,
+        isError: false,
+      };
+      rerender(
+        <QueryClientProvider client={new QueryClient()}>
+          <ProductPricingV2 product={product} />
+        </QueryClientProvider>,
+      );
+      expect(screen.queryByRole("button", { name: "Reload prices" })).toBeNull();
+    });
+  });
+
   it("one Change prices button, in the Edit row (before Edit), and none above the grid", async () => {
     render();
     const buttons = screen.getAllByRole("button", { name: "Change prices" });
