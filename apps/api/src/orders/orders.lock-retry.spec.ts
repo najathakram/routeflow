@@ -398,6 +398,7 @@ describe("reopen: the re-decrement tx inside retryStockTx", () => {
     });
     h.prisma.invoice.findFirst.mockResolvedValue(null);
     h.prisma.orderItem.findMany.mockResolvedValue([]);
+    h.prisma.order.updateMany.mockResolvedValue({ count: 1 }); // B695: the reopen's CANCELLED -> PENDING claim
     h.prisma.order.update
       .mockRejectedValueOnce(lockTimeout())
       .mockResolvedValue({ id: "ord-1", status: "PENDING" });

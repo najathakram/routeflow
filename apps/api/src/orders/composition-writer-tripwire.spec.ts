@@ -139,6 +139,11 @@ const REGISTRY: Record<string, Entry> = {
   "returns/inline-returns.service.ts::captureInTx": { kind: "exempt", reason: "credit note items" },
   "routes/routes.service.ts::completeWithPayment": { kind: "exempt", reason: "deliveredQty only" },
   "routes/routes.service.ts::reopenStop": { kind: "exempt", reason: "deliveredQty/status only" },
+  "inventory/testing/order-stock-world.ts::buildOrderStockWorld": {
+    kind: "exempt",
+    reason:
+      "DB-spec fixture: seeds test orders and lines for the stock race specs, never product code",
+  },
   "common/testing/copier-contract/copier-ast.ts::?": {
     kind: "exempt",
     reason: "a comment in the copier AST helper",

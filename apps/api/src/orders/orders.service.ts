@@ -131,6 +131,7 @@ import {
 import { BUYER_EDIT_CLOSED_STATUSES, computeEditWindow } from "./edit-window";
 import { cancelBlockedMessage, cancelImpact } from "./order-cancel-impact";
 import { cancelOrderInTx, type CancelOrderTxOptions } from "./order-cancel-tx";
+import { claimReopenInTx } from "./order-reopen-claim";
 import { assertNoCashRefundOnOrder } from "../invoices/invoice-cash-refund-guard";
 import { assertBuyerDiffShape, classifyEditPayload } from "./order-edit-payload";
 import {
@@ -2760,10 +2761,9 @@ export class OrdersService implements OnApplicationBootstrap {
     return this.stockTx(
       "orders.reopen",
       async (tx) => {
-        // B64 (REG-B64): read the item-CANCELLED lines BEFORE they flip below —
-        // this is exactly the set an F07 cancel credited stock back for (a
-        // pre-F07 cancel left lines untouched, so this reads empty and
-        // re-decrements nothing — era consistency, not a regression).
+        await claimReopenInTx(tx, id); // B695: Order lock + CANCELLED -> PENDING CAS; the loser gets the 409
+        // B64: the item-CANCELLED lines, read BEFORE they flip below — exactly what an F07 cancel credited
+        // back (a pre-F07 cancel left lines untouched: empty, nothing re-decremented).
         const cancelledLines = await tx.orderItem.findMany({
           where: { orderId: id, status: ItemStatus.CANCELLED },
           select: STOCK_SALE_LINE_SELECT,

@@ -57,6 +57,7 @@ function collectSourceFiles(dir: string, out: string[] = []): string[] {
       continue;
     }
     if (!entry.name.endsWith(".ts") || entry.name.endsWith(".spec.ts")) continue;
+    if (entry.name === "order-stock-world.ts") continue; // B695: a DB-spec fixture seeding test rows, not a writer
     out.push(full);
   }
   return out;
