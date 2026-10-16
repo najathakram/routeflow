@@ -241,20 +241,22 @@ export function planCellEdit(
   const patches: CellPatch[] = [{ ref, tier, to: checked.value }];
   const applied = applyCellPatches(view, patches);
   const changes = cellChanges(view, applied.view, rules);
+  const customers = opts.customers ?? [];
+  // The edit's own direction is the cell's move (no rounding step here).
+  const dir =
+    ladderPrice(applied.view, ref, tier, rules) >= ladderPrice(view, ref, tier, rules) ? 1 : -1;
+  // F20 / SA-799: one pattern for any changed price, so a cell edit offers the same unticked customer opt-in.
+  const customerOffer = customerMoveOffer(view, applied.view, customers, rules, dir);
   return {
     patches,
     undo: applied.undo,
     followers: followersOf(changes, patches),
-    offers: inversionOffers(applied.view, [{ ref, tier }], rules, tierName),
-    // SA-799: customer changes are never hidden. The edit's own direction is the cell's move (no rounding step here).
-    customerChanges: planCustomerChanges(
-      view,
-      applied.view,
-      applied.view,
-      opts.customers ?? [],
-      rules,
-      ladderPrice(applied.view, ref, tier, rules) >= ladderPrice(view, ref, tier, rules) ? 1 : -1,
-    ),
+    offers: [
+      ...inversionOffers(applied.view, [{ ref, tier }], rules, tierName),
+      ...(customerOffer ? [customerOffer] : []),
+    ],
+    // SA-799: customer changes are never hidden.
+    customerChanges: planCustomerChanges(view, applied.view, applied.view, customers, rules, dir),
     changes,
     problems: [],
     view: applied.view,

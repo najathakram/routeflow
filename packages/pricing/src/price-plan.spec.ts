@@ -194,6 +194,28 @@ describe("S2b-2 SA-799: a plain cell edit shows customer changes too", () => {
   });
 });
 
+describe("S2b-3 F20: a cell edit offers the customer opt-in too", () => {
+  const dana: CustomerPricingWithId = { customerId: "dana", tier: 2, set: { [can]: 1.1 } };
+  it("a Tier-2 retype of the Can offers dana's set Can price, unticked, with the SA-798a title", () => {
+    const p = planCellEdit(view, can, 2, "1.30", rules, undefined, { customers: [dana] });
+    const offer = p.offers.find((o) => o.kind === "customer");
+    if (offer?.kind !== "customer") throw new Error("customer offer expected");
+    expect(offer.ticked).toBe(false);
+    expect(offer.title).toBe(
+      "Also raise prices set for these customers, in step with their tier (1 price).",
+    );
+    expect(offer.moves).toEqual([
+      expect.objectContaining({ customerId: "dana", ref: can, tier: 2, from: 1.1, against: false }),
+    ]);
+    expect(offer.moves[0].to).toBeGreaterThan(1.1);
+  });
+
+  it("no customers = no offer", () => {
+    const p = planCellEdit(view, can, 2, "1.30", rules);
+    expect(p.offers.filter((o) => o.kind === "customer")).toEqual([]);
+  });
+});
+
 describe("S2b SA-799: one PricePlan from both planners", () => {
   it("offers are never ticked; tier offers carry kind tier", () => {
     const edit = planCellEdit(
