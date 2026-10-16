@@ -413,14 +413,13 @@ export interface ProductPriceGridDto {
   anchor: string;
   rows: ProductPriceGridRowDto[];
   /**
-   * Units v2 sprint contract (K1 fills these in the grid service and then makes them required; until then a client
-   * treats a missing revision/priceState as "Save unavailable"). `revision` = Product.priceRevision.
+   * Units v2 sprint contract (K1 fills these in the grid service). `revision` = Product.priceRevision.
    */
-  revision?: number;
+  revision: number;
   /** Opaque fingerprint of the R-1 price-bearing state (5 pack columns, packAuto, each unit's id/factor/prices). Echo it back. */
-  priceState?: string;
+  priceState: string;
   /** LadderView.tierAnchors: tier N's own order unit. A missing tier follows `anchor`. */
-  tierAnchors?: Partial<Record<2 | 3 | 4 | 5, string>>;
+  tierAnchors: Partial<Record<2 | 3 | 4 | 5, string>>;
   /** The tenant's normalized TierRules (pricing.tierRules), so client previews plan with the server's rules. */
-  tierRules?: Partial<Record<2 | 3 | 4 | 5, number>>;
+  tierRules: Partial<Record<2 | 3 | 4 | 5, number>>;
 }

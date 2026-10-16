@@ -55,9 +55,9 @@ export interface SavePricesRequest {
   /** The product's priceRevision the draft was built on (ProductPriceGridDto.revision). R-1 CAS -> 409 LADDER_REVISION_STALE. */
   expectedRevision: number;
   /**
-   * REQUIRED (lead final ruling 2026-10-16, SA-796 R-1): ProductPriceGridDto.priceState the draft was built on, the value
-   * compare-and-set over the price-bearing state (~20 legacy writers skip the revision bump, so revision alone is not a
-   * value check). A client whose grid has no priceState cannot save.
+   * REQUIRED (lead ruling 2026-10-16). ProductPriceGridDto.priceState the draft was built on: R-1's value
+   * compare-and-set over the price-bearing state (legacy writers skip the revision bump, so the revision alone is not
+   * enough). A mismatch is 409 LADDER_REVISION_STALE.
    */
   expectedPriceState: string;
   /** At least one of patches / keeps / customerMoves is non-empty. A (ref, tier) appears at most once across patches+keeps. */
@@ -105,6 +105,8 @@ export interface LadderRevisionStaleBody {
   message: string;
   /** The product's priceRevision now. */
   revision: number;
+  /** The current grid, so the client can reload or preview the undo on it without a second request. */
+  grid?: ProductPriceGridDto;
 }
 
 /** The 400 body of PRICE_EDIT_INVALID (POST prices): the pricing core's refusals (validateSetPrice, the anchor's Retail). */
