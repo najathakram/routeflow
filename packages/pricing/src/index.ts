@@ -37,3 +37,4 @@ export * from "./counter-park";
 export * from "./recompute-category-tax";
 export * from "./product-promotion-qty";
 export * from "./invoice-sale-terms";
+export * from "./price-ladder";
