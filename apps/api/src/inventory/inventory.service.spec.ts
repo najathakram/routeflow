@@ -634,37 +634,29 @@ describe("InventoryService", () => {
       expect(result.stockAfter.toString()).toBe("6");
     });
 
-    it("blends consumed lot costs for FIFO products and draws the lots down", async () => {
-      prisma.product.findFirst.mockResolvedValue(product({ costingMethod: "FIFO" }));
-      prisma.stockLot.findMany.mockResolvedValue([
-        { id: "lot-1", remainingQty: D(5), unitCost: D(1) },
-        { id: "lot-2", remainingQty: D(10), unitCost: D(2) },
-      ]);
+    // SA-804 (1) / B1233: FIFO and LIFO are retired. A STORED one is costed as AVCO: the SALE unitCost is the
+    // average cost (matching valuation and reports), and a sale no longer reads or draws down lots.
+    it.each(["FIFO", "LIFO"])(
+      "costs a stored-%s product at the AVERAGE cost, not the lot cost, and leaves the lots alone",
+      async (method) => {
+        prisma.product.findFirst.mockResolvedValue(product({ costingMethod: method }));
+        // Lots that WOULD blend to 1.375 under the old FIFO plan; the average (2) must win.
+        prisma.stockLot.findMany.mockResolvedValue([
+          { id: "lot-1", remainingQty: D(5), unitCost: D(1) },
+          { id: "lot-2", remainingQty: D(10), unitCost: D(2) },
+        ]);
+        counterAfter(2);
 
-      const result = await service.recordSale("prod-1", D(8), null, null, tx());
+        const result = await service.recordSale("prod-1", D(8), null, null, tx());
 
-      // (5×1 + 3×2) / 8 = 1.375
-      expect(result.unitCost.toString()).toBe("1.375");
-      expect(prisma.stockLot.update).toHaveBeenCalledTimes(2);
-      expect(prisma.stockLot.update.mock.calls[0][0]).toEqual({
-        where: { id: "lot-1" },
-        data: { remainingQty: { decrement: D(5) } },
-      });
-      expect(prisma.stockLot.update.mock.calls[1][0]).toEqual({
-        where: { id: "lot-2" },
-        data: { remainingQty: { decrement: D(3) } },
-      });
-    });
-
-    it("falls back to the average cost when FIFO lots are missing (pre-fix data)", async () => {
-      prisma.product.findFirst.mockResolvedValue(product({ costingMethod: "FIFO" }));
-      prisma.stockLot.findMany.mockResolvedValue([]);
-
-      const result = await service.recordSale("prod-1", D(4), null, null, tx());
-
-      expect(result.unitCost.toString()).toBe("2");
-      expect(prisma.stockLot.update).not.toHaveBeenCalled();
-    });
+        expect(result.unitCost.toString()).toBe("2");
+        const movementArgs = prisma.stockMovement.create.mock.calls[0][0].data;
+        expect(movementArgs.unitCost.toString()).toBe("2");
+        expect(movementArgs.avgCostAfter.toString()).toBe("2");
+        expect(prisma.stockLot.findMany).not.toHaveBeenCalled();
+        expect(prisma.stockLot.update).not.toHaveBeenCalled();
+      },
+    );
 
     it("uses standardCost for STANDARD products", async () => {
       prisma.product.findFirst.mockResolvedValue(
@@ -1142,6 +1134,16 @@ describe("InventoryService", () => {
       expect(result.totalValue).toBe(20);
       expect(result.missingCostCount).toBe(0);
       expect(prisma.stockLot.findMany).not.toHaveBeenCalled();
+    });
+
+    it("values a LIFO-labelled product at the weighted average too (B1233 guard: valuation = sale cost)", async () => {
+      prisma.product.findMany.mockResolvedValue([
+        product({ costingMethod: "LIFO", currentStock: D(10), averageCost: D(2) }),
+      ]);
+
+      const result = await service.getValuation();
+
+      expect(result.totalValue).toBe(20);
     });
 
     it("values a product with zero stock at zero however many lots survive", async () => {

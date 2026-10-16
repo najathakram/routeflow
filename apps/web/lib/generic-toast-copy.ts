@@ -43,6 +43,9 @@ const CODE_COPY: Record<string, string> = {
   // a buyer write toward a paused seller: the seller-unavailable sentence, never "You don't have permission"
   [API_ERROR_CODES.SELLER_UNAVAILABLE]: sellerUnavailableCopy(null),
   [API_ERROR_CODES.RETURN_REFUND_OVER_LINE_HEADROOM]: RETURN_REFUND_OVER_LINE_HEADROOM_COPY,
+  // SA-804 (1): FIFO and LIFO costing are retired; the picker no longer offers them, so this is an old client or a direct API call.
+  [API_ERROR_CODES.COSTING_METHOD_RETIRED]:
+    "FIFO and LIFO costing are retired. Pick average cost, standard cost or last cost.",
   INLINE_RETURN_ALREADY_RETURNED_REASON_REQUIRED:
     "This item was already returned. Add a reason to confirm another return.",
   INLINE_RETURN_KEY_CONFLICT: "This return was already submitted. Refresh to see it.",

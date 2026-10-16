@@ -172,7 +172,11 @@ export function useDeleteProduct() {
   });
 }
 
-export type CostingMethod = "FIFO" | "LIFO" | "AVCO" | "STANDARD";
+/**
+ * FIFO and LIFO are retired (SA-804 (1)): a product may still STORE one (it is costed as AVCO), but no picker offers
+ * them and no write may set them. See `SELECTABLE_COSTING_METHODS` in @routeflow/types.
+ */
+export type CostingMethod = "FIFO" | "LIFO" | "AVCO" | "STANDARD" | "LAST_COST";
 
 export interface ApiProduct {
   id: string;

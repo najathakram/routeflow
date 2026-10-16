@@ -184,6 +184,8 @@ describe("genericToastCopy: codes users rely on", () => {
     ["CREDIT_NOTE_VOID_NOT_EDITABLE", /is void/],
     ["CREDIT_NOTE_OVER_HEADROOM", /more than the source invoice still allows/],
     ["UNIT_AWARE_LINE", /sold by a unit/],
+    // SA-804 (1) / B1232: FIFO and LIFO costing are retired.
+    ["COSTING_METHOD_RETIRED", /^FIFO and LIFO costing are retired. Pick average cost/],
     ["ORDER_CHANGED_DURING_EDIT", /changed while you were editing/],
     ["DUPLICATE_LINE_ID", /^A line appears twice\. Refresh the page and try again\.$/],
     ["ORDER_BILLING_CHANGED", /billing changed/],

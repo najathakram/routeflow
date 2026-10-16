@@ -34,6 +34,7 @@ import {
 import { linePack, normalizeBoxesPieces, roundMoney } from "@routeflow/pricing";
 import { fetchInvoicedSaleLines, roundQty } from "../common/invoiced-sales";
 import { poLineFromInput } from "./po-line-input";
+import { effectiveCostingMethod } from "./costing-method-policy";
 import { costDecimal, nextAverageCost, planLotConsumption, reverseAverageCost } from "./costing";
 import { recordSaleMovement, resolveSaleCost } from "./sale-movement";
 import { RecordPurchaseDto } from "./dto/record-purchase.dto";
@@ -565,7 +566,8 @@ export class InventoryService {
         ...priceColumns,
         category: parent.category ?? undefined,
         isTobacco: parent.isTobacco ?? false,
-        costingMethod: parent.costingMethod,
+        // SA-804 (1): a variant never inherits a retired method; it takes the AVCO a stored FIFO/LIFO is costed as.
+        costingMethod: effectiveCostingMethod(parent.costingMethod),
         standardCost: parent.standardCost ?? undefined,
         unitsPerBox: parent.unitsPerBox ?? undefined,
         trackedCategoryId: parent.trackedCategoryId ?? null,
@@ -1162,8 +1164,8 @@ export class InventoryService {
   /**
    * Internal — the single sale-costing path, called from the orders service
    * inside an existing transaction. Writes the SALE movement WITH its unit
-   * cost (COGS), stamps snapshots, decrements stock, and consumes lots per
-   * the product's costing method.
+   * cost (COGS), stamps snapshots and decrements stock. Lots are not
+   * consumed on a sale (SA-804 (1): FIFO/LIFO are retired and costed as AVCO).
    * Stock can go negative; never throws for insufficient stock.
    */
   async recordSale(
@@ -1181,7 +1183,7 @@ export class InventoryService {
     // SA-136b: the row is written AFTER the counter moves, with `stockAfter` read off the update's
     // own returned row — never a pre-read (a concurrent writer between the two would falsify it).
     const cost = await resolveSaleCost(tx, productId, quantity);
-    const { unitCost, lotConsumptions } = cost;
+    const { unitCost } = cost;
 
     const updated = await tx.product.update({
       where: { id: productId },
@@ -1198,13 +1200,6 @@ export class InventoryService {
       performedById,
       cost,
     });
-
-    for (const consumption of lotConsumptions) {
-      await tx.stockLot.update({
-        where: { id: consumption.id },
-        data: { remainingQty: { decrement: consumption.take } },
-      });
-    }
 
     return { unitCost, stockAfter };
   }
@@ -1839,8 +1834,8 @@ export class InventoryService {
       throw new ConflictException({
         code: API_ERROR_CODES.PO_LOT_PARTIALLY_CONSUMED,
         message:
-          `Part of what was received on ${po.poNumber} has already been sold or used (FIFO/LIFO lot ` +
-          "partially consumed), so its inventory can't be re-applied — that would invent stock. " +
+          `Part of what was received on ${po.poNumber} has already been used (a lot is partially ` +
+          "consumed), so its inventory can't be re-applied — that would invent stock. " +
           "Save the edit as document-only (keep stock as is), or record a return.",
         lotIds: consumedLots.map((l) => l.id),
       });
