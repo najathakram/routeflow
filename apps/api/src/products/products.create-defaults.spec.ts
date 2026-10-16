@@ -130,6 +130,40 @@ describe("products.create-defaults — ProductsService", () => {
       for (const c of TIERS) expect(dataOfCreate()[c]).toBe("0");
     });
 
+    it("a variant of a parent with REAL tiers inherits exactly those, not 0", async () => {
+      const parent = {
+        id: "parent-2",
+        isActive: true,
+        kind: "STANDARD",
+        parentProductId: null,
+        priceTier2: 9,
+        priceTier3: 8,
+        priceTier4: 7,
+        priceTier5: 6,
+        category: null,
+        unitsPerBox: null,
+        costingMethod: "AVCO",
+        standardCost: null,
+        isTobacco: false,
+      };
+      prisma.product.findFirst.mockImplementation(({ where }: any) =>
+        Promise.resolve(where?.id === "parent-2" ? parent : null),
+      );
+      await service.create({
+        name: "Kid",
+        unit: "each",
+        pricePerUnit: "10",
+        parentProductId: "parent-2",
+      } as any);
+      const data = dataOfCreate();
+      expect([data.priceTier2, data.priceTier3, data.priceTier4, data.priceTier5]).toEqual([
+        "9",
+        "8",
+        "7",
+        "6",
+      ]);
+    });
+
     it("reads the flag once, BEFORE the transaction opens, and caches it for the next create", async () => {
       await service.create({ name: "A", unit: "each", pricePerUnit: "1" } as any);
       await service.create({ name: "B", unit: "each", pricePerUnit: "1" } as any);
@@ -231,6 +265,22 @@ describe("products.create-defaults — ProductFamiliesService", () => {
     const out = await service.createFamily(dto(), ACTOR);
     const [kid] = kidsOf(tx, out.family.id);
     for (const c of TIERS) expect(kid[c]).toBe("2.50");
+  });
+
+  it("createFamily flag ON + copyFamilyPrice: the variant gets the family Retail and 0 in the tiers", async () => {
+    const { service, tx } = build(true);
+    const out = await service.createFamily(dto({ copyFamilyPrice: true }), ACTOR);
+    const [kid] = kidsOf(tx, out.family.id);
+    expect(Number(kid.pricePerUnit)).toBe(1);
+    for (const c of TIERS) expect(kid[c]).toBe("0");
+  });
+
+  it("createFamily flag OFF + copyFamilyPrice: master copies the family Retail into the tiers", async () => {
+    const { service, tx } = build(false);
+    const out = await service.createFamily(dto({ copyFamilyPrice: true }), ACTOR);
+    const [kid] = kidsOf(tx, out.family.id);
+    expect(Number(kid.pricePerUnit)).toBe(1);
+    for (const c of TIERS) expect(Number(kid[c])).toBe(1);
   });
 
   it("updateVariants flag ON: an added variant gets 0 tiers; flag OFF copies", async () => {
