@@ -97,9 +97,10 @@ export function printedInvoiceCode(
   choice: InvoiceCodeChoice,
   codes: ProductCodes,
   view: LadderView,
-  legacyCodes?: Pick<ProductCodes, "unitSku" | "barcode" | "sku"> | null,
-  soldUnit?: UnitRef | null,
-  lineMode?: InvoiceLineDisplay["mode"],
+  legacyCodes: Pick<ProductCodes, "unitSku" | "barcode" | "sku"> | null | undefined,
+  soldUnit: UnitRef | null | undefined,
+  /** How the line reads (`invoiceLineDisplay(...).mode`). Required: a caller that forgets it would print the wrong code. */
+  lineMode: InvoiceLineDisplay["mode"],
 ): string | null {
   if (choice.mode === "legacy") return legacyInvoiceCode(legacyCodes ?? codes);
   // A line that reads in the unit sold (T18: not a whole number of the invoice unit) prints the sold unit's code.

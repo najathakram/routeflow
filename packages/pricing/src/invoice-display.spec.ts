@@ -68,7 +68,9 @@ describe("T17: invoice unit Piece, 3 Boxes of 24 at $18.90", () => {
   });
 });
 
-describe("G1 / T17b: credits compute in the unit sold, never from the display price", () => {
+// T17b is a GUARD, not a red: it pins the arithmetic (`creditedThrough` from the line amount, not from the rounded display
+// price) and passes today. The credit-note path that must use it is not built yet; its real red row moves to S23.
+describe("G1 / T17b (guard): credits compute in the unit sold, never from the display price", () => {
   it("credit 10 of 72 invoiced Pieces (3 Boxes of 24 at $18.90) is computed once from the line amount", () => {
     const fromLine = creditedThrough(56.7, 10, 72);
     expect(fromLine).toBe(7.88); // roundMoney(56.70 x 10 / 72), through @routeflow/pricing
@@ -126,7 +128,9 @@ describe("unit codes (one code per unit) and the printed code", () => {
       };
       const want = p.unitSku ?? p.barcode ?? p.sku ?? null;
       expect(legacyInvoiceCode(p)).toBe(want);
-      expect(printedInvoiceCode({ mode: "legacy" }, codes, view, p)).toBe(want);
+      expect(
+        printedInvoiceCode({ mode: "legacy" }, codes, view, p, undefined, "invoice-unit"),
+      ).toBe(want);
     }
     expect(legacyInvoiceCode(null)).toBeNull();
   });
@@ -146,15 +150,31 @@ describe("unit codes (one code per unit) and the printed code", () => {
   });
 
   it("a unit invoice unit prints that unit's code; ordered prints the unit sold's code", () => {
-    expect(printedInvoiceCode({ mode: "unit", unit: "base", label: "Piece" }, codes, view)).toBe(
-      "PC-1",
-    );
-    expect(printedInvoiceCode({ mode: "unit", unit: "u-case", label: "Case" }, codes, view)).toBe(
-      "CASE-1",
-    );
-    expect(printedInvoiceCode({ mode: "ordered" }, codes, view, undefined, "u-case")).toBe(
-      "CASE-1",
-    );
-    expect(printedInvoiceCode({ mode: "ordered" }, codes, view)).toBe("BAR-1"); // no sold unit known: the pack
+    expect(
+      printedInvoiceCode(
+        { mode: "unit", unit: "base", label: "Piece" },
+        codes,
+        view,
+        undefined,
+        undefined,
+        "invoice-unit",
+      ),
+    ).toBe("PC-1");
+    expect(
+      printedInvoiceCode(
+        { mode: "unit", unit: "u-case", label: "Case" },
+        codes,
+        view,
+        undefined,
+        undefined,
+        "invoice-unit",
+      ),
+    ).toBe("CASE-1");
+    expect(
+      printedInvoiceCode({ mode: "ordered" }, codes, view, undefined, "u-case", "unit-sold"),
+    ).toBe("CASE-1");
+    expect(
+      printedInvoiceCode({ mode: "ordered" }, codes, view, undefined, undefined, "unit-sold"),
+    ).toBe("BAR-1"); // no sold unit known: the pack
   });
 });
