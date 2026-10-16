@@ -36,14 +36,8 @@ export function useUnitsEnabled(opts?: { enabled?: boolean }): boolean {
   return useUnitsFlag(opts).enabled;
 }
 
-/** U-1's Units screen sits behind its own flag (SA ruling), separate from the line-level units_v1. */
-export const UNITS_SETTINGS_FLAG = "flag.units_settings_v1";
-
-/** Does the subscription serve `flag.units_settings_v1`? Fail-CLOSED, like useUnitsEnabled: unknown = hidden. */
-export function useUnitsSettingsEnabled(opts?: { enabled?: boolean }): boolean {
-  const q = useSubscription({ staleTime: 60_000, ...opts });
-  return (q.data?.flags ?? []).includes(UNITS_SETTINGS_FLAG);
-}
+/** U-1's Units screen sits behind its own flag (SA ruling): ONE declaration, in units-settings-flag. */
+export { UNITS_SETTINGS_FLAG, useUnitsSettingsEnabled } from "./units-settings-flag";
 
 const key = (productId: string) => ["products", productId, "units"] as const;
 export const productUnitsKey = key;
