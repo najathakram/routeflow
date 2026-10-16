@@ -31,6 +31,8 @@ export type UndoOutcome =
       rows: UndoPreviewRow[];
       /** Customer prices the inverse also writes; the preview says so (SA-799: never hidden). */
       customerMoves?: number;
+      /** Customer cells that changed since the save (strict undo, 409 `conflicts`), as the server formatted them. */
+      conflicts?: UndoPreviewRow[];
     }
   /** 409 PRICE_UNDO_UNAVAILABLE: this audit row was already undone. */
   | { status: "unavailable" };

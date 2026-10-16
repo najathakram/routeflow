@@ -18,6 +18,11 @@ export interface GridEditApi {
   changed: (ref: string, tier: number) => boolean;
   /** The pricing package's refusal for this cell's typed text, if any. */
   problem: (ref: string, tier: number) => string | null;
+  /**
+   * The server's refusal of this cell's first price when its unit does not exist yet ("Add the Piece unit first").
+   * Shown only while the typed text is the one the server refused.
+   */
+  addUnitProblem: (ref: string, tier: number) => string | null;
   /** The draft as grid rows once something changed (Auto placeholders show draft values); else null. */
   rows: ProductPriceGridRowDto[] | null;
   /** A pending focus request; the matching input takes it and calls `focused`. */

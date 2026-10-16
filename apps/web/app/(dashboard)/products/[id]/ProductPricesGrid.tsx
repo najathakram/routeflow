@@ -93,6 +93,39 @@ function CellDisplay({ view, dim }: { view: CellView; dim?: boolean }) {
   );
 }
 
+/** The "Add unit" control on this page (the units card form), if there is one. */
+const addUnitInput = () =>
+  typeof document === "undefined" ? null : document.getElementById("new-unit-name");
+
+/** A pointer from a refused first price to the Add unit control: a button when the control exists, else nothing. */
+function AddUnitPointer({ unit }: { unit: string }) {
+  if (!addUnitInput()) return null;
+  return (
+    <button
+      type="button"
+      data-testid={T.addUnitPointer}
+      className="mt-0.5 block underline"
+      onClick={() => {
+        const el = addUnitInput();
+        el?.scrollIntoView?.({ block: "center" });
+        el?.focus();
+      }}
+    >
+      Add a {unit} unit
+    </button>
+  );
+}
+
+/** A family-governed row is read-only: say why, quietly. */
+function NotEditable({ row }: { row: ProductPriceGridRowDto }) {
+  if (row.editable !== false || !row.notEditableReason) return null;
+  return (
+    <p data-testid={T.notEditable(row.ref)} className="mt-0.5 text-[11px] font-normal text-navy/55">
+      {row.notEditableReason}
+    </p>
+  );
+}
+
 function CellInput({ t, tier, view }: { t: EditTarget; tier: number; view: CellView }) {
   const el = React.useRef<HTMLInputElement>(null);
   const { edit } = t;
@@ -103,7 +136,8 @@ function CellInput({ t, tier, view }: { t: EditTarget; tier: number; view: CellV
       edit.focused();
     }
   });
-  const problem = edit.problem(t.ref, tier);
+  const addUnit = edit.addUnitProblem(t.ref, tier);
+  const problem = edit.problem(t.ref, tier) ?? addUnit;
   const pid = T.problem(t.layout, t.ref, tier);
   return (
     <>
@@ -125,6 +159,7 @@ function CellInput({ t, tier, view }: { t: EditTarget; tier: number; view: CellV
       {problem && (
         <p id={pid} className="mt-1 max-w-[12rem] text-[11px] text-red-600">
           {problem}
+          {addUnit && <AddUnitPointer unit={t.unit} />}
         </p>
       )}
     </>
@@ -201,8 +236,9 @@ export function ProductPricesGrid({
     row: ProductPriceGridRowDto,
     i: number,
     layout: "table" | "card",
-  ): EditTarget | undefined =>
-    edit && {
+  ): EditTarget | undefined => {
+    if (!edit || row.editable === false) return undefined;
+    return {
       edit,
       ref: row.ref,
       name: names[i],
@@ -212,6 +248,7 @@ export function ProductPricesGrid({
         served.find((r) => r.ref === row.ref)?.cells.find((c) => c.tier === TIERS[i]),
       ),
     };
+  };
 
   return (
     <div
@@ -266,6 +303,7 @@ export function ProductPricesGrid({
                   className="sticky left-0 z-10 bg-white px-2 py-3 text-left font-medium text-navy"
                 >
                   {row.label}
+                  <NotEditable row={row} />
                 </th>
                 <td className="px-2 py-3 text-navy/80">
                   {containsLines(row, ascending).map((l) => (
@@ -303,6 +341,7 @@ export function ProductPricesGrid({
             className={`rounded-md border p-3 ${GRID_BORDER}`}
           >
             <div className="font-medium text-navy">{row.label}</div>
+            <NotEditable row={row} />
             <div className="text-xs text-navy/70">
               {containsLines(row, ascending).map((l) => (
                 <div key={l}>{l}</div>

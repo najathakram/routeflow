@@ -427,6 +427,101 @@ describe("K8 seams", () => {
     expect(draft.toRequest()?.customerMoves).toEqual([]);
   });
 
+  it("a first price on the implicit base row shows the server's 'Add the Piece unit first' inline, with a pointer", async () => {
+    const packRow = {
+      ref: "pack",
+      label: "Case",
+      factor: 24,
+      kind: "pack" as const,
+      code: null,
+      cells: cells([12, 11, 10, 9, 8], ["set"]),
+    };
+    const baseRow = {
+      ref: "base",
+      label: "Piece",
+      factor: 1,
+      kind: "base" as const,
+      code: null,
+      cells: cells([0, 0, 0, 0, 0]),
+    };
+    mockGrid = {
+      data: { ...grid, anchor: "pack", rows: [packRow, baseRow] },
+      isLoading: false,
+      isError: false,
+    };
+    const field = document.body.appendChild(document.createElement("input"));
+    field.id = "new-unit-name";
+    const user = userEvent.setup();
+    const qc = new QueryClient();
+    const ui = () => (
+      <QueryClientProvider client={qc}>
+        <ProductPricingV2 product={product} />
+      </QueryClientProvider>
+    );
+    const { rerender } = rtlRender(ui());
+    await user.click(screen.getByTestId(T.btnEdit));
+    const input = within(screen.getByTestId(T.row("base"))).getByTestId(T.input("base", 2));
+    await user.type(input, "0.9");
+    mockError = {
+      response: { data: { code: "PRICE_EDIT_INVALID", problems: ["Add the Piece unit first"] } },
+    };
+    rerender(ui());
+    const inRow = within(screen.getByTestId(T.row("base")));
+    expect(inRow.getByText(/Add the Piece unit first/)).toBeTruthy();
+    const describedBy = inRow.getByTestId(T.input("base", 2)).getAttribute("aria-describedby");
+    expect(describedBy).toBe(T.problem("table", "base", 2));
+    expect(document.getElementById(describedBy!)?.textContent).toContain(
+      "Add the Piece unit first",
+    );
+    await user.click(inRow.getByTestId(T.addUnitPointer));
+    expect(document.activeElement).toBe(field);
+    // typing something else is a different attempt: the old refusal no longer sticks to the cell
+    await user.type(input, "1");
+    expect(inRow.queryByTestId(T.addUnitPointer)).toBeNull();
+    field.remove();
+  });
+
+  it("a family-governed row is read-only with its reason; the other rows stay editable", async () => {
+    const reason = "Its price is set on the family.";
+    mockGrid = {
+      data: {
+        ...grid,
+        rows: [{ ...grid.rows[0], editable: false, notEditableReason: reason }, grid.rows[1]],
+      },
+      isLoading: false,
+      isError: false,
+    };
+    const user = userEvent.setup();
+    render();
+    const caseRow = within(screen.getByTestId(T.row("case")));
+    expect(caseRow.queryByRole("button", { name: /^Edit / })).toBeNull();
+    expect(caseRow.getByTestId(T.notEditable("case")).textContent).toBe(reason);
+    expect(caseRow.getByText("$13.91")).toBeTruthy();
+    const pieceRow = within(screen.getByTestId(T.row("piece")));
+    expect(pieceRow.getAllByRole("button", { name: /^Edit / }).length).toBeGreaterThan(0);
+    await user.click(screen.getByTestId(T.btnEdit));
+    expect(caseRow.queryByTestId(T.input("case", 2))).toBeNull();
+    expect(pieceRow.getByTestId(T.input("piece", 2))).toBeTruthy();
+  });
+
+  it("with every row family-governed there is nothing to edit: no Edit, no Change prices", () => {
+    mockGrid = {
+      data: {
+        ...grid,
+        rows: grid.rows.map((r) => ({
+          ...r,
+          editable: false as const,
+          notEditableReason: "On the family.",
+        })),
+      },
+      isLoading: false,
+      isError: false,
+    };
+    render();
+    expect(screen.queryByTestId(T.btnEdit)).toBeNull();
+    expect(screen.queryByRole("button", { name: "Change prices" })).toBeNull();
+  });
+
   it("one Change prices button, in the Edit row (before Edit), and none above the grid", async () => {
     render();
     const buttons = screen.getAllByRole("button", { name: "Change prices" });

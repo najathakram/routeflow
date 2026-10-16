@@ -345,6 +345,7 @@ describe("units v2 edit grid (S12a)", () => {
       setText: jest.fn(),
       changed: () => false,
       problem: () => null,
+      addUnitProblem: () => null,
       rows,
       focus: null,
       focused: jest.fn(),

@@ -56,6 +56,7 @@ export interface OpenPlan {
   customerKeeps: readonly CustomerPriceMove[];
 }
 
+const ADD_UNIT_FIRST = (p: string) => /\badd\b.*\bunit\b.*\bfirst\b/i.test(p);
 const clearedNotice = (offers: readonly DraftEntry[], why = "you changed that price again") =>
   `Your earlier choice to ${offers
     .flatMap((e) => (e.kind === "offer" ? [`"${e.title}"`] : []))
@@ -259,14 +260,18 @@ export function useCreatePriceDraft(productId: string, hooks: PriceDraftHooks = 
     conflicts.length === 0 &&
     !!grid;
 
+  const texts: Record<string, string> = {};
+  for (const e of entries) if (e.kind === "cell") texts[e.key] = e.text;
+
   // A stale-write notice describes the grid revision it was raised on: once the grid moves on (Reload prices, a
   // refetch) it no longer applies, so it goes. Other save errors stay until the next save.
-  const errSeen = React.useRef<{ error: unknown; revision: number | undefined }>({
-    error: null,
-    revision: undefined,
-  });
+  const errSeen = React.useRef<{
+    error: unknown;
+    revision: number | undefined;
+    texts: Record<string, string>;
+  }>({ error: null, revision: undefined, texts: {} });
   if (save.error !== errSeen.current.error)
-    errSeen.current = { error: save.error, revision: grid?.revision };
+    errSeen.current = { error: save.error, revision: grid?.revision, texts: { ...texts } };
   const rawError = priceWriteError(save.error);
   const saveError =
     rawError?.code === "stale" && grid?.revision !== errSeen.current.revision ? null : rawError;
@@ -360,9 +365,6 @@ export function useCreatePriceDraft(productId: string, hooks: PriceDraftHooks = 
     hooksRef.current.onEdit?.();
   };
 
-  const texts: Record<string, string> = {};
-  for (const e of entries) if (e.kind === "cell") texts[e.key] = e.text;
-
   const api: GridEditApi = {
     editing,
     begin: (cell) => {
@@ -384,6 +386,18 @@ export function useCreatePriceDraft(productId: string, hooks: PriceDraftHooks = 
       } else editCell(ref, tier as PriceTier, text);
     },
     changed: (ref, tier) => cellKey(ref, tier) in texts,
+    // The first price on the implicit base row: the server says the unit must exist first (400 PRICE_EDIT_INVALID).
+    addUnitProblem: (ref, tier) => {
+      const key = cellKey(ref, tier);
+      const said =
+        rawError?.code === "invalid" ? rawError.problems.find(ADD_UNIT_FIRST) : undefined;
+      return said &&
+        ref === "base" &&
+        texts[key] !== undefined &&
+        texts[key] === errSeen.current.texts[key]
+        ? said
+        : null;
+    },
     problem: (ref, tier) => problems.find((p) => p.ref === ref && p.tier === tier)?.message ?? null,
     rows: dirty && grid && view ? previewRows(view, rules, grid) : null,
     focus,

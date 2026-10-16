@@ -51,11 +51,17 @@ function SourceCaption({
 }) {
   if (source === "customer") return <span>Set for this customer</span>;
   const why =
-    source === "customer-shape" ? `From their ${orderUnitLabel} price` : source === "tier" ? tierName : "Retail";
+    source === "customer-shape"
+      ? `From their ${orderUnitLabel} price`
+      : source === "tier"
+        ? tierName
+        : "Retail";
   // P06: one "Auto" pill and a caption; the word is never repeated in the caption.
   return (
     <span className="flex flex-wrap items-center gap-1.5">
-      <span className="rounded-full bg-navy/10 px-1.5 py-0.5 text-[11px] font-medium text-navy">Auto</span>
+      <span className="rounded-full bg-navy/10 px-1.5 py-0.5 text-[11px] font-medium text-navy">
+        Auto
+      </span>
       <span>{why}</span>
     </span>
   );
@@ -159,11 +165,7 @@ function ProductBlock({
   );
 }
 
-function CustomerPicker({
-  onPick,
-}: {
-  onPick: (c: { id: string; name: string }) => void;
-}) {
+function CustomerPicker({ onPick }: { onPick: (c: { id: string; name: string }) => void }) {
   const [text, setText] = React.useState("");
   const [debounced, setDebounced] = React.useState("");
   React.useEffect(() => {
@@ -188,13 +190,19 @@ function CustomerPicker({
         className="h-10 rounded-md border border-surface-border bg-white px-3 text-sm text-navy"
       />
       {hits.length > 0 ? (
-        <ul role="listbox" aria-label="Customers" className="max-h-56 overflow-auto rounded-md border border-surface-border">
+        <ul
+          role="listbox"
+          aria-label="Customers"
+          className="max-h-56 overflow-auto rounded-md border border-surface-border"
+        >
           {hits.map((c) => (
             <li key={c.id} role="option" aria-selected={false}>
               <button
                 type="button"
                 data-testid={T.result(c.id)}
-                onClick={() => onPick({ id: c.id, name: c.businessName ?? c.contactName ?? "Customer" })}
+                onClick={() =>
+                  onPick({ id: c.id, name: c.businessName ?? c.contactName ?? "Customer" })
+                }
                 className="block w-full px-3 py-2 text-left text-sm text-navy hover:bg-surface-muted"
               >
                 {c.businessName ?? c.contactName}
@@ -238,7 +246,11 @@ export function CustomerPriceView({ customerId, productId }: CustomerPriceViewPr
 
   return (
     <section data-testid={T.section} aria-labelledby="units-v2-h-cust" className="space-y-3">
-      <h2 id="units-v2-h-cust" data-testid={T.heading} className="text-base font-semibold text-navy">
+      <h2
+        id="units-v2-h-cust"
+        data-testid={T.heading}
+        className="text-base font-semibold text-navy"
+      >
         {fixed ? "Unit prices" : "Customer view"}
       </h2>
 
@@ -280,7 +292,8 @@ export function CustomerPriceView({ customerId, productId }: CustomerPriceViewPr
             </p>
             {res.products.length === 0 ? (
               <p className="text-sm text-navy/70">
-                {customerName} has no prices of their own yet. They pay {tierName} prices on every product.
+                {customerName} has no prices of their own yet. They pay {tierName} prices on every
+                product.
               </p>
             ) : (
               <div className="grid gap-4 lg:grid-cols-2">

@@ -11,6 +11,8 @@ export const UNITS_V2_TESTIDS = {
   input: (ref: string, tier: number) => `units-v2-input-${ref}-${tier}`,
   problem: (layout: string, ref: string, tier: number) =>
     `units-v2-problem-${layout}-${ref}-${tier}`,
+  addUnitPointer: "units-v2-add-unit-pointer",
+  notEditable: (ref: string) => `units-v2-not-editable-${ref}`,
   btnEdit: "units-v2-btn-edit",
   btnChange: "units-v2-btn-change-open",
   editingPill: "units-v2-editing-pill",

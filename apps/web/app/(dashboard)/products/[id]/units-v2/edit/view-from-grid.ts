@@ -34,5 +34,13 @@ export function previewRows(
     kind: r.kind,
     code: g.rows.find((x) => x.ref === r.ref)?.code ?? null,
     cells: r.cells.map((c) => ({ tier: c.tier, source: c.source, value: c.value })),
+    // a family-governed row stays read-only in the preview too
+    ...pickGoverned(g.rows.find((x) => x.ref === r.ref)),
   }));
+}
+
+function pickGoverned(row: ProductPriceGridRowDto | undefined) {
+  return row?.editable === false
+    ? { editable: false as const, notEditableReason: row.notEditableReason }
+    : {};
 }

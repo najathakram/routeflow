@@ -24,6 +24,36 @@ export interface PriceUndoDeps {
 }
 
 /**
+ * The 409's `conflicts` (customer cells changed since the save; strict undo) as preview rows. The server formats them;
+ * this only reads what it sent, whatever its exact shape: text, or { label, current, restoreTo }. No math.
+ */
+export function conflictRows(err: unknown): UndoPreviewRow[] {
+  const raw = (err as { response?: { data?: { conflicts?: unknown } } } | null)?.response?.data
+    ?.conflicts;
+  if (!Array.isArray(raw)) return [];
+  return raw.flatMap((c, i): UndoPreviewRow[] => {
+    if (typeof c === "string")
+      return [{ ref: `conflict-${i}`, label: c, current: "", restoreTo: "" }];
+    if (c && typeof c === "object") {
+      const o = c as Record<string, unknown>;
+      const text = (v: unknown) =>
+        typeof v === "string" || typeof v === "number" ? String(v) : "";
+      const label = text(o.label) || text(o.message) || text(o.name);
+      if (!label) return [];
+      return [
+        {
+          ref: text(o.ref) || `conflict-${i}`,
+          label,
+          current: text(o.current) || text(o.now),
+          restoreTo: text(o.restoreTo) || text(o.to),
+        },
+      ];
+    }
+    return [];
+  });
+}
+
+/**
  * The `undo` the status line takes (UX-V5 section 5 item 2): ONE inverse write, previewed first when
  * anything changed since the save. A confirmed call re-sends the PREVIEW's revision and price state, so
  * it can never overwrite a newer change; a stale answer to it just re-previews.
@@ -34,9 +64,10 @@ export function usePriceUndo(deps: PriceUndoDeps): UndoFn {
   return React.useCallback(async (req): Promise<UndoOutcome> => {
     const { lastSave, current, mutate, loadPreview } = ref.current;
     if (!lastSave) throw new Error("Nothing to undo");
-    const changed = async (): Promise<UndoOutcome> => ({
+    const changed = async (conflicts: UndoPreviewRow[] = []): Promise<UndoOutcome> => ({
       status: "changed",
       ...(await loadPreview()),
+      ...(conflicts.length > 0 ? { conflicts } : {}),
     });
     const revision = req.confirmed ? req.expectedRevision : current?.revision;
     if (revision === undefined) return changed();
@@ -53,7 +84,7 @@ export function usePriceUndo(deps: PriceUndoDeps): UndoFn {
       });
       return { status: "undone" };
     } catch (e) {
-      if (isLadderRevisionStale(e)) return changed();
+      if (isLadderRevisionStale(e)) return changed(conflictRows(e));
       if (priceWriteError(e)?.code === "unavailable") return { status: "unavailable" };
       throw e;
     }

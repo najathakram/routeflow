@@ -142,6 +142,29 @@ describe("PriceSaveStatusLine (V07)", () => {
     expect(await screen.findByText("and 2 customer prices")).toBeTruthy();
   });
 
+  it("K8: a strict-undo conflict lists the customer cells that changed, and Undo still needs the fresh tokens", async () => {
+    undo.mockResolvedValueOnce({
+      ...CHANGED,
+      conflicts: [{ ref: "c0", label: "Acme, Can", current: "$1.20", restoreTo: "$1.13" }],
+    });
+    render(<Section />);
+    saveIt();
+    fireEvent.click(undoBtn());
+    const list = await screen.findByTestId("units-v2-undo-conflicts");
+    expect(list.textContent).toContain("Customer prices changed since you saved");
+    expect(list.textContent).toContain("Acme, Can");
+    expect(list.textContent).toContain("$1.20");
+    undo.mockResolvedValueOnce({ status: "undone" });
+    fireEvent.click(screen.getByRole("button", { name: "Undo these prices" }));
+    await waitFor(() =>
+      expect(undo).toHaveBeenLastCalledWith({
+        confirmed: true,
+        expectedRevision: 8,
+        expectedPriceState: "state-8",
+      }),
+    );
+  });
+
   it("the confirmed Undo re-sends the preview's revision and price state", async () => {
     await openPreview();
     undo.mockResolvedValueOnce({ status: "undone" });

@@ -10,7 +10,9 @@ const mockCustomers = jest.fn();
 jest.mock("@/lib/api/useCustomerUnitPrices", () => ({
   useCustomerUnitPrices: (...a: unknown[]) => mockPrices(...a),
 }));
-jest.mock("@/lib/api/customers", () => ({ useCustomers: (...a: unknown[]) => mockCustomers(...a) }));
+jest.mock("@/lib/api/customers", () => ({
+  useCustomers: (...a: unknown[]) => mockCustomers(...a),
+}));
 jest.mock("@/lib/api/tier-labels", () => ({
   useTierLabels: () => ({ data: { "1": "Retail", "2": "Wholesale" } }),
 }));
@@ -191,7 +193,11 @@ describe("CustomerPriceView on the customer page", () => {
     expect(screen.getByText("Page 1 of 3")).toBeInTheDocument();
     expect(screen.getByTestId(T.prev)).toBeDisabled();
     fireEvent.click(screen.getByTestId(T.next));
-    expect(mockPrices).toHaveBeenLastCalledWith("c1", undefined, expect.objectContaining({ page: 2 }));
+    expect(mockPrices).toHaveBeenLastCalledWith(
+      "c1",
+      undefined,
+      expect.objectContaining({ page: 2 }),
+    );
   });
 
   it("shows an error line, not a blank, when the prices cannot load", () => {

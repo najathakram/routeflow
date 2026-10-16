@@ -2,6 +2,7 @@
 export const UNITS_V2_CONFIRM_TESTIDS = {
   saveStatus: "units-v2-save-status",
   saveUndo: "units-v2-save-undo",
+  undoConflicts: "units-v2-undo-conflicts",
   undoPreview: "units-v2-undo-preview",
   staleNotice: "units-v2-stale-notice",
 } as const;

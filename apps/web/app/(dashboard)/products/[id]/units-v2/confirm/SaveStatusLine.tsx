@@ -14,6 +14,8 @@ interface State {
   rows: UndoPreviewRow[];
   /** Customer prices the inverse also writes. */
   customerMoves: number;
+  /** Customer cells that changed since the save. */
+  conflicts: UndoPreviewRow[];
   /** The preview's precondition, kept for the confirmed write. */
   revision?: number;
   priceState?: string;
@@ -32,6 +34,7 @@ type Action =
       revision: number;
       priceState: string;
       customerMoves: number;
+      conflicts: UndoPreviewRow[];
     }
   | { type: "dismiss" }
   | { type: "failed" };
@@ -42,6 +45,7 @@ const IDLE: State = {
   summary: "",
   rows: [],
   customerMoves: 0,
+  conflicts: [],
   busy: false,
 };
 
@@ -66,6 +70,7 @@ function reduce(s: State, a: Action): State {
         phase: "preview",
         rows: a.rows,
         customerMoves: a.customerMoves,
+        conflicts: a.conflicts,
         revision: a.revision,
         priceState: a.priceState,
         busy: false,
@@ -160,6 +165,7 @@ export function PriceSaveStatusLine({
           revision: out.revision,
           priceState: out.priceState,
           customerMoves: out.customerMoves ?? 0,
+          conflicts: out.conflicts ?? [],
         });
       } else {
         dispatch({ type: out.status });
@@ -234,6 +240,30 @@ export function PriceSaveStatusLine({
               </li>
             ))}
           </ul>
+          {state.conflicts.length > 0 ? (
+            <div data-testid={IDS.undoConflicts} className="mb-2">
+              <p className="text-navy">Customer prices changed since you saved:</p>
+              <ul className="mt-0.5 space-y-0.5">
+                {state.conflicts.map((r) => (
+                  <li key={r.ref} className="flex flex-wrap gap-x-2">
+                    <span>{r.label}</span>
+                    {r.current || r.restoreTo ? (
+                      <>
+                        <span className="text-ink-500">{r.current}</span>
+                        {r.restoreTo ? (
+                          <>
+                            <span aria-hidden="true">→</span>
+                            <span className="sr-only">would become</span>
+                            <span>{r.restoreTo}</span>
+                          </>
+                        ) : null}
+                      </>
+                    ) : null}
+                  </li>
+                ))}
+              </ul>
+            </div>
+          ) : null}
           {state.customerMoves > 0 ? (
             <p className="mb-2 text-navy">
               and {plural(state.customerMoves, "customer price", "customer prices")}

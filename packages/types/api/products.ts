@@ -407,6 +407,10 @@ export interface ProductPriceGridRowDto {
   kind: "pack" | "base" | "unit";
   code: string | null;
   cells: ProductPriceGridCellDto[];
+  /** `false` on a row a family governs: its prices are set on the family. Absent = editable. */
+  editable?: false;
+  /** Why the row is not editable (shown as a muted line). */
+  notEditableReason?: string;
 }
 export interface ProductPriceGridDto {
   productId: string;

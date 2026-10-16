@@ -68,3 +68,32 @@ describe("usePriceUndo", () => {
     await expect(t.undo({ confirmed: false })).rejects.toThrow("network");
   });
 });
+
+describe("usePriceUndo: strict undo conflicts", () => {
+  it("a 409 with `conflicts` previews them next to the fresh tokens", async () => {
+    const t = setup();
+    t.mutate.mockRejectedValue(
+      Object.assign(new Error("409"), {
+        response: {
+          status: 409,
+          data: {
+            code: "LADDER_REVISION_STALE",
+            conflicts: [
+              { label: "Acme, Can", current: "$1.20", restoreTo: "$1.13" },
+              "Beta Foods, Case",
+            ],
+          },
+        },
+      }),
+    );
+    const out = await t.undo({ confirmed: false });
+    expect(out).toEqual({
+      status: "changed",
+      ...PREVIEW,
+      conflicts: [
+        { ref: "conflict-0", label: "Acme, Can", current: "$1.20", restoreTo: "$1.13" },
+        { ref: "conflict-1", label: "Beta Foods, Case", current: "", restoreTo: "" },
+      ],
+    });
+  });
+});

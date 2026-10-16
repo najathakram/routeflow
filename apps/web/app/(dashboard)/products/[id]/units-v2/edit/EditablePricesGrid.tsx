@@ -35,6 +35,8 @@ export function EditablePricesGrid({
   const editBtn = React.useRef<HTMLButtonElement>(null);
   const was = React.useRef(false);
   const { editing } = d;
+  // Every row family-governed (each says `editable: false`): nothing to edit or change here.
+  const anyEditable = d.grid?.rows.some((r) => r.editable !== false) ?? true;
   const pendingFocus = d.api.focus;
   React.useEffect(() => {
     if (editing && !was.current && !pendingFocus) {
@@ -67,7 +69,7 @@ export function EditablePricesGrid({
             Editing
           </span>
         )}
-        {onOpenChangePrices && (
+        {onOpenChangePrices && anyEditable && (
           <button
             ref={changePricesRef}
             type="button"
@@ -81,7 +83,7 @@ export function EditablePricesGrid({
             Change prices
           </button>
         )}
-        {!editing && (
+        {!editing && anyEditable && (
           <button
             ref={editBtn}
             type="button"
