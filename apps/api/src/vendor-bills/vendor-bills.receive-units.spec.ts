@@ -171,9 +171,7 @@ async function revertLine(
     }),
   );
   prisma.product.findFirst.mockResolvedValue(postReceiveProduct);
-  prisma.stockLot.findMany.mockResolvedValue([
-    { id: "lot-1", qty: D(1), remainingQty: D(1), notes: null },
-  ]);
+  prisma.stockLot.findMany.mockResolvedValue([]);
   // B846: revert reads back the receipt row(s) receive() wrote — 24 pieces @ $1.25 either way.
   prisma.stockMovement.findMany.mockImplementation(async ({ where }: any) =>
     where.notes && typeof where.notes === "object"

@@ -402,9 +402,6 @@ describe("VendorBillsService — PO-linked bills (units/PO step 7)", () => {
       );
       prisma.product.findFirst.mockResolvedValue({ currentStock: D(24), averageCost: D(1.25) });
       prisma.vendorBill.update.mockResolvedValue({ id: "bill-1", status: "DRAFT" });
-      prisma.stockLot.findMany.mockResolvedValue([
-        { id: "lot-1", qty: D(24), remainingQty: D(24), notes: null },
-      ]);
       prisma.stockMovement.findMany.mockImplementation(async ({ where }: any) =>
         where.notes && typeof where.notes === "object"
           ? []

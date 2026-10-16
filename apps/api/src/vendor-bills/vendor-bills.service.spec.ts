@@ -769,9 +769,7 @@ describe("VendorBillsService", () => {
         bill({ status: "RECEIVED", receivedDate: new Date("2026-06-02") }),
       );
       prisma.product.findFirst.mockResolvedValue({ currentStock: D(15), averageCost: D(2.5) });
-      prisma.stockLot.findMany.mockResolvedValue([
-        { id: "lot-1", qty: D(1), remainingQty: D(1), notes: null },
-      ]); // B846: revert must find the bill's lot
+      prisma.stockLot.findMany.mockResolvedValue([]);
       receiptRows(prisma, [{ qty: D(5) }]);
 
       await service.revertToDraft("bill-1");
@@ -786,9 +784,7 @@ describe("VendorBillsService", () => {
         bill({ status: "RECEIVED", receivedDate: new Date("2026-06-02") }),
       );
       prisma.product.findFirst.mockResolvedValue({ currentStock: D(5), averageCost: D(3.5) });
-      prisma.stockLot.findMany.mockResolvedValue([
-        { id: "lot-1", qty: D(1), remainingQty: D(1), notes: null },
-      ]); // B846: revert must find the bill's lot
+      prisma.stockLot.findMany.mockResolvedValue([]);
       receiptRows(prisma, [{ qty: D(5) }]);
 
       await service.revertToDraft("bill-1");
@@ -835,9 +831,7 @@ describe("VendorBillsService", () => {
         bill({ status: "RECEIVED", receivedDate: new Date("2026-06-02") }),
       );
       prisma.product.findFirst.mockResolvedValue({ currentStock: D(15), averageCost: D(2.5) });
-      prisma.stockLot.findMany.mockResolvedValue([
-        { id: "lot-1", qty: D(1), remainingQty: D(1), notes: null },
-      ]); // B846: revert must find the bill's lot
+      prisma.stockLot.findMany.mockResolvedValue([]);
       receiptRows(prisma, [{ qty: D(5) }]);
 
       await service.revertToDraft("bill-1", "user-9");
@@ -865,9 +859,7 @@ describe("VendorBillsService", () => {
         }),
       );
       prisma.product.findFirst.mockResolvedValue({ currentStock: D(12), averageCost: D(2) });
-      prisma.stockLot.findMany.mockResolvedValue([
-        { id: "lot-1", qty: D(1), remainingQty: D(1), notes: null },
-      ]); // B846: revert must find the bill's lot
+      prisma.stockLot.findMany.mockResolvedValue([]);
       receiptRows(prisma, [{ qty: D(12), unitCost: D(2) }]);
 
       await service.revertToDraft("bill-1");
@@ -886,9 +878,7 @@ describe("VendorBillsService", () => {
         }),
       );
       prisma.product.findFirst.mockResolvedValue({ currentStock: D(14), averageCost: D(2.5) });
-      prisma.stockLot.findMany.mockResolvedValue([
-        { id: "lot-1", qty: D(1), remainingQty: D(1), notes: null },
-      ]); // B846: revert must find the bill's lot
+      prisma.stockLot.findMany.mockResolvedValue([]);
       receiptRows(prisma, [{ qty: D(4) }]);
 
       await service.revertToDraft("bill-1");

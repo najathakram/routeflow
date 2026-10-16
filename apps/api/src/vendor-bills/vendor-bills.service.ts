@@ -1678,8 +1678,8 @@ export class VendorBillsService {
    * SA-808, revertToDraft) each paired receipt row's lot is matched by its FULL tuple (product,
    * purchaseDate = effectiveAt, qty, unit cost, reference), never by reference alone. Bills received
    * before 2026-08-12 stamped the lot and the movement at different instants, so a tuple miss falls
-   * back to (product, reference, qty, unit cost) and reverses ONLY a single candidate; none or
-   * several is refused (INVENTORY_LEDGER_GAP) rather than leave a phantom FIFO lot or guess.
+   * back to (product, reference, qty, unit cost) and reverses ONLY a single candidate; several are
+   * refused (INVENTORY_LEDGER_GAP) rather than guess, and none means no lot was ever made.
    */
   private async reverseBillLots(
     tx: Prisma.TransactionClient,
@@ -1704,7 +1704,7 @@ export class VendorBillsService {
         let found = await free({ purchaseDate: r.effectiveAt });
         if (found.length === 0) {
           found = await free({});
-          if (found.length !== 1) {
+          if (found.length > 1) {
             throw ledgerGap(
               r.productId,
               r.name,
@@ -1712,6 +1712,7 @@ export class VendorBillsService {
             );
           }
         }
+        if (found.length === 0) continue; // no lot was ever made for this receipt: nothing to reverse
         lots.push(found[0]);
       }
     }

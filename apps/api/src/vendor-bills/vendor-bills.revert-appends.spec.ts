@@ -577,6 +577,18 @@ describe("B846 / SA-808 — revertToDraft appends reversal rows and never delete
     expect(h.lots).toHaveLength(0); // not left behind as a phantom FIFO lot
   });
 
+  it("lots: a bill that never made a lot reverts fine — movement reversed, no lot touched", async () => {
+    const h = await harness();
+    await receive(h, 10);
+    h.lots.length = 0; // no lot was ever made for this receipt
+
+    await revert(h, 10);
+
+    expect(h.rows.map((r) => Number(r.quantity))).toEqual([10, -10]);
+    expect(h.prisma.stockLot.delete).not.toHaveBeenCalled();
+    expect(h.prisma.stockLot.update).not.toHaveBeenCalled();
+  });
+
   it("lots: two fallback candidates are ambiguous — 409 and nothing written", async () => {
     const h = await harness();
     await receive(h, 10);
