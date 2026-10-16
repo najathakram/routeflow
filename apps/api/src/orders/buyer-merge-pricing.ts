@@ -11,13 +11,13 @@ import {
   applyBestPromotion,
   computeLineSubtotal,
   getTierPrice,
-  isSpecialTier,
   normalizeBoxesPieces,
   promotionMatchesProduct,
   roundMoney,
   type PromoContext,
   type PromotionRule,
 } from "@routeflow/pricing";
+import { isSpecialPrice } from "./units-prices-v2";
 
 /**
  * BUY_N_GET_M free units for a line whose QUANTITY changed while its stored
@@ -252,6 +252,11 @@ export function resolveBuyerLinePrice(
     pieces: number | null;
     unitsPerBox: number | null;
   },
+  /**
+   * S19, flag.units_prices_v2 only: the customer's TYPED pack price. It replaces the tier price as the base (and wins
+   * over the sticky upsell); promotions still apply on top. Undefined = master's path, untouched.
+   */
+  typedPrice?: number | null,
 ): {
   unitPrice: number;
   originalPrice: number | null;
@@ -260,8 +265,9 @@ export function resolveBuyerLinePrice(
   freeUnits: number;
 } {
   const listPrice = Number(product.pricePerUnit);
-  const tierBase = getTierPrice(product, tierForProduct);
-  const remembered = rememberedPrice ?? null;
+  const typed = typedPrice ?? null;
+  const tierBase = typed != null ? roundMoney(typed) : getTierPrice(product, tierForProduct);
+  const remembered = typed != null ? null : (rememberedPrice ?? null);
   // Sticky upsell: ONLY a remembered ABOVE-LIST price becomes a MANUAL upsell.
   // It overrides the tier AND takes precedence over promotions (a deliberate
   // above-market price is never auto-discounted). Stored as MANUAL with the list
@@ -294,7 +300,7 @@ export function resolveBuyerLinePrice(
       freeUnits: promo.freeUnits,
     };
   }
-  if (isSpecialTier(tierForProduct)) {
+  if (isSpecialPrice(tierForProduct, listPrice, typed)) {
     return {
       unitPrice: base,
       originalPrice: listPrice,

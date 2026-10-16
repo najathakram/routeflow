@@ -1,6 +1,7 @@
 import { BadRequestException, ForbiddenException } from "@nestjs/common";
-import { decideStaffOverride, getTierPrice, isSpecialTier } from "@routeflow/pricing";
+import { decideStaffOverride, getTierPrice } from "@routeflow/pricing";
 import { API_ERROR_CODES } from "../common/api-error-codes";
+import { isSpecialPrice } from "./units-prices-v2";
 
 /** The api's one refusal text for a special-price change with no reason (B465 / B466 / #2696). */
 export const specialPriceReasonRequired = (name: string | null | undefined) =>
@@ -22,12 +23,14 @@ export function decideTierOverride(
   tier: number,
   overridePrice: number,
   reason: string | null | undefined,
+  /** S19, flag.units_prices_v2 only: the customer's typed pack price, the baseline in place of the tier price. */
+  typedPrice?: number | null,
 ) {
   const decision = decideStaffOverride({
     overridePrice,
-    baselinePrice: Number(getTierPrice(product, tier)),
+    baselinePrice: typedPrice ?? Number(getTierPrice(product, tier)),
     listPrice: Number(product.pricePerUnit),
-    isSpecialTier: isSpecialTier(tier),
+    isSpecialTier: isSpecialPrice(tier, Number(product.pricePerUnit), typedPrice),
     hasReason: !!reason?.trim(),
   });
   if ("refused" in decision) throw specialPriceReasonRequired(product.name);

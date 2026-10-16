@@ -156,6 +156,8 @@ export function priceReplacedLine(a: {
   isBuyerEdit: boolean;
   group: SplitPromoGroup | undefined;
   tier: number;
+  /** S19, flag.units_prices_v2 only: the customer's typed pack price (above sticky history and the tier price). */
+  typedPack?: number | null;
   buyerPromos: PromotionRule[];
   qtyPieces: number;
   qtyUnits: number;
@@ -177,6 +179,7 @@ export function priceReplacedLine(a: {
         a.lastPrice,
         // REG-B109: the exact denomination this line bills with.
         a.group?.denomination ?? a.denomination,
+        a.typedPack,
       )
     : {
         unitPrice: Number(a.product.pricePerUnit),

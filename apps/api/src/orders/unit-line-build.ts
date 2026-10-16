@@ -1,7 +1,6 @@
 import { BadRequestException, ForbiddenException } from "@nestjs/common";
 import { PriceType } from "@prisma/client";
 import {
-  isSpecialTier,
   decideStaffOverride,
   withinStaffOverrideTolerance,
   AmbiguousLineError,
@@ -31,6 +30,7 @@ import {
 import { API_ERROR_CODES } from "../common/api-error-codes";
 import { specialPriceReasonRequired } from "./staff-override";
 import { norm } from "./unit-label-norm";
+import { isSpecialPrice, typedPriceFor, type TypedUnitPrices } from "./units-prices-v2";
 
 /**
  * units_v1, step 4b-2 — building ONE order line that is sold by a non-pack unit (a Case, a Pallet,
@@ -341,6 +341,11 @@ export function buildUnitLine(input: {
   /** The customer's pricing tier for this product (1..5). */
   tier: number;
   /**
+   * S19, flag.units_prices_v2 only: the customer's typed prices for this product by level ref. A typed price for this
+   * line's unit replaces the ladder's tier price as the base. Undefined = master's path, untouched.
+   */
+  customerUnitPrices?: TypedUnitPrices;
+  /**
    * Regulated per-category tax for a line of `qtyPieces` base pieces worth `subtotal`, PLUS
    * (B297) the rate trio it was priced under — see `categoryTaxForLine`. A caller that defers
    * the amount to a later recompute pass (unit-line-edit.ts's `taxFor: () => 0`) defers the
@@ -417,6 +422,7 @@ export function buildUnitLine(input: {
     !ladderNames(ladderProduct, units, label);
   let listPrice: number;
   let tierPrice: number;
+  let typed: number | null = null;
   try {
     if (gone) {
       tierPrice = roundMoney(Number(snap.unitPrice));
@@ -424,6 +430,8 @@ export function buildUnitLine(input: {
     } else {
       listPrice = resolveUnitPrice(ladderProduct, units, label, 1);
       tierPrice = resolveUnitPrice(ladderProduct, units, label, tier);
+      typed = typedPriceFor(input.customerUnitPrices, ladderProduct, units, label);
+      if (typed != null) tierPrice = typed;
     }
   } catch (e) {
     if (e instanceof InvalidTierError) {
@@ -442,6 +450,7 @@ export function buildUnitLine(input: {
     }
     throw e;
   }
+  const special = isSpecialPrice(tier, listPrice, typed);
   // H3: ONE rule for a staff-typed price — judged against the customer's TIER unit price, never the list.
   const held =
     input.stored && norm(input.stored.unitLabel ?? "") === norm(label) ? input.stored : null;
@@ -465,7 +474,7 @@ export function buildUnitLine(input: {
           overridePrice: Number(item.unitPrice),
           baselinePrice: tierPrice,
           listPrice,
-          isSpecialTier: isSpecialTier(tier),
+          isSpecialTier: special,
           hasReason: !!item.overrideReason?.trim(),
         })
       : null;
@@ -474,7 +483,7 @@ export function buildUnitLine(input: {
   // ladder that lost the level); otherwise the tier decides.
   const ladderType: PriceType = gone
     ? (snap?.priceType ?? PriceType.STANDARD)
-    : isSpecialTier(tier)
+    : special
       ? PriceType.SPECIAL
       : PriceType.STANDARD;
   const unitPrice = echoesHeld
@@ -497,7 +506,7 @@ export function buildUnitLine(input: {
         ? snap?.originalPrice == null
           ? null
           : roundMoney(Number(snap.originalPrice))
-        : isSpecialTier(tier)
+        : special
           ? listPrice
           : null;
   const overridden = priceType === PriceType.DISCOUNTED || priceType === PriceType.MANUAL;

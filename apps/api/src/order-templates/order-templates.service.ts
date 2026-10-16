@@ -12,6 +12,7 @@ import { LeaderCron } from "../common/cron-lock";
 import { PrismaService } from "../prisma/prisma.service";
 import { TenantContextService } from "../tenant/tenant-context.service";
 import { OrdersService } from "../orders/orders.service";
+import { customerPricing } from "../orders/units-prices-v2";
 import { resolveFulfilPath } from "../orders/fulfil-path-resolver";
 import { syncOrderLineCompositions } from "../orders/order-composition";
 import { orderTotalsOf } from "../orders/order-totals";
@@ -936,14 +937,22 @@ export class OrderTemplatesService {
       where: { id: template.customerId },
       select: { pricingTier: true, isTaxExempt: true },
     });
-    const defaultTier = customerRecord?.pricingTier ?? 1;
     // RF-079 / RF-4: an exempt customer owes $0 of BOTH taxes on the standing order, as on its invoice.
     const isTaxExempt = customerRecord?.isTaxExempt === true;
     const customerPrices = await this.prisma.forTenant().customerPrice.findMany({
       where: { customerId: template.customerId, productId: { in: productIds } },
     });
     // An MSRP-only CustomerPrice row has pricingTier null — `??` below falls through it.
-    const cpTier = new Map(customerPrices.map((cp) => [cp.productId, cp.pricingTier]));
+    // S19: tier maps + (flag.units_prices_v2 only) the customer's typed pack prices; flag off = master's values.
+    const svc = { prisma: this.prisma, entitlements: this.ordersService.entitlements };
+    const pc = await customerPricing(
+      svc,
+      template.customerId,
+      productIds,
+      customerRecord,
+      customerPrices,
+    );
+    const { defaultTier, cpMap: cpTier } = pc;
     const activePromos = await this.ordersService.loadActivePromotions(UserRole.CUSTOMER);
     const priceHistory = await this.ordersService.getCustomerPriceHistory(template.customerId);
 
@@ -962,6 +971,7 @@ export class OrderTemplatesService {
       // B661-sweep: a line-tax (not ledger) box-unaware multiply — follow-up PR converts this to
       // @routeflow/pricing's regulatedUnitBasis; see no-second-legacy-line-pieces.spec.ts's allowlist.
       const qtyPieces = upb > 1 ? item.qty * upb : item.qty;
+      const typedPack = pc.typedPack(item.productId);
       const resolved = this.ordersService.resolveBuyerLinePrice(
         product,
         tierForProduct,
@@ -970,6 +980,8 @@ export class OrderTemplatesService {
         qtyUnits,
         priceHistory[item.productId]?.lastPrice ?? null,
         { boxes: null, pieces: null, unitsPerBox: upb },
+        // S19: the 8th argument exists only when the customer has a typed pack price (flag off: master's 7 arguments).
+        ...((typedPack != null ? [typedPack] : []) as [number] | []),
       );
       // BUY_N_GET_M subtracts whole free selling units BEFORE pricing (exact, never a
       // rounded net unit price); every other line reduces to unitPrice × qty, rounded.

@@ -5,6 +5,7 @@ import { StorageService } from "../storage/storage.service";
 import { RegulatedVisibilityService } from "./regulated-visibility.service";
 import { effectiveBuyerPrice, getTierPrice } from "@routeflow/pricing";
 import { OrdersService } from "../orders/orders.service";
+import { customerPricing } from "../orders/units-prices-v2";
 import {
   BuyerBackorderViewResolver,
   NO_BACKORDER_VIEW,
@@ -52,6 +53,17 @@ export class BuyerCatalogService {
     private readonly backorderView: BuyerBackorderViewResolver,
     private readonly restrictions: SellingRestrictionsService,
   ) {}
+
+  /** S19: the customer's tier maps and (flag.units_prices_v2 only) typed pack prices, as the order create reads them. */
+  private pricing(
+    customerId: string,
+    productIds: string[],
+    customer: Parameters<typeof customerPricing>[3],
+    rows: Parameters<typeof customerPricing>[4],
+  ) {
+    const svc = { prisma: this.prisma, entitlements: this.ordersService.entitlements };
+    return customerPricing(svc, customerId, productIds, customer, rows);
+  }
 
   /**
    * Where-fragment matching every product that would surface as a deal: the
@@ -221,7 +233,6 @@ export class BuyerCatalogService {
     const customer = await this.prisma
       .forTenant()
       .customer.findFirst({ where: { id: customerId }, select: { pricingTier: true } });
-    const defaultTier = customer?.pricingTier ?? 1;
 
     // Load per-product tier overrides for all products in this page
     const productIds = result.data.map((p: any) => p.id);
@@ -231,7 +242,9 @@ export class BuyerCatalogService {
             where: { customerId, productId: { in: productIds } },
           })
         : [];
-    const cpMap = new Map(customerPrices.map((cp) => [cp.productId, cp.pricingTier]));
+    // S19: tier maps + (flag.units_prices_v2 only) the customer's typed pack prices; flag off = master's values.
+    const pc = await this.pricing(customerId, productIds, customer, customerPrices);
+    const { defaultTier, cpMap } = pc;
 
     // Sticky upsell: a remembered above-list price becomes the effective catalog
     // price (hides the base; matches what self-serve checkout charges).
@@ -241,11 +254,13 @@ export class BuyerCatalogService {
     let products: BuyerProduct[] = await Promise.all(
       result.data.map(async (p: any) => {
         const effectiveTier = cpMap.get(p.id) ?? defaultTier;
-        const buyerPrice = effectiveBuyerPrice(
-          getTierPrice(p, effectiveTier),
-          Number(p.pricePerUnit),
-          priceHist[p.id]?.lastPrice ?? null,
-        );
+        const buyerPrice =
+          pc.typedPack(p.id) ??
+          effectiveBuyerPrice(
+            getTierPrice(p, effectiveTier),
+            Number(p.pricePerUnit),
+            priceHist[p.id]?.lastPrice ?? null,
+          );
 
         // Dot pager: presign up to the first 4 images (HMAC-local, no network).
         // First entry corresponds to thumbnailUrl (same key, first image).
@@ -412,7 +427,6 @@ export class BuyerCatalogService {
     const customer = await this.prisma
       .forTenant()
       .customer.findFirst({ where: { id: customerId }, select: { pricingTier: true } });
-    const defaultTier = customer?.pricingTier ?? 1;
 
     // Deactivated variants must never reach a buyer: findOne includes them (it
     // only sorts isActive desc), every other buyer surface lists active products
@@ -433,14 +447,17 @@ export class BuyerCatalogService {
     const cpOverrides = await this.prisma.forTenant().customerPrice.findMany({
       where: { customerId, productId: { in: [product.id, ...variantIds] } },
     });
-    const cpMap = new Map(cpOverrides.map((cp) => [cp.productId, cp.pricingTier]));
+    const pc = await this.pricing(customerId, [product.id, ...variantIds], customer, cpOverrides);
+    const { defaultTier, cpMap } = pc;
     const effectiveTier = cpMap.get(product.id) ?? defaultTier;
     const priceHist = await this.getRememberedPrices(customerId);
-    const buyerPrice = effectiveBuyerPrice(
-      getTierPrice(product, effectiveTier),
-      Number(product.pricePerUnit),
-      priceHist[product.id]?.lastPrice ?? null,
-    );
+    const buyerPrice =
+      pc.typedPack(product.id) ??
+      effectiveBuyerPrice(
+        getTierPrice(product, effectiveTier),
+        Number(product.pricePerUnit),
+        priceHist[product.id]?.lastPrice ?? null,
+      );
 
     // First entry corresponds to thumbnailUrl (same key, first image) — findOne
     // presigns every image, the listing only the first MAX_TILE_IMAGES.
@@ -471,11 +488,13 @@ export class BuyerCatalogService {
         id: v.id,
         name: v.variantName,
         sku: v.sku,
-        buyerPrice: effectiveBuyerPrice(
-          getTierPrice(v, cpMap.get(v.id) ?? defaultTier),
-          Number(v.pricePerUnit),
-          priceHist[v.id]?.lastPrice ?? null,
-        ),
+        buyerPrice:
+          pc.typedPack(v.id) ??
+          effectiveBuyerPrice(
+            getTierPrice(v, cpMap.get(v.id) ?? defaultTier),
+            Number(v.pricePerUnit),
+            priceHist[v.id]?.lastPrice ?? null,
+          ),
         unit: v.unit,
         // Promo inputs — a variant row's price must go through the same
         // deriveTilePrice the variant's own tile/detail page uses.
@@ -553,7 +572,6 @@ export class BuyerCatalogService {
     const customer = await this.prisma
       .forTenant()
       .customer.findFirst({ where: { id: customerId }, select: { pricingTier: true } });
-    const defaultTier = customer?.pricingTier ?? 1;
 
     const productIds = activeFavorites.map((f) => f.productId);
     const cpOverrides =
@@ -562,7 +580,8 @@ export class BuyerCatalogService {
             where: { customerId, productId: { in: productIds } },
           })
         : [];
-    const cpMap = new Map(cpOverrides.map((cp) => [cp.productId, cp.pricingTier]));
+    const pc = await this.pricing(customerId, productIds, customer, cpOverrides);
+    const { defaultTier, cpMap } = pc;
     const priceHist = await this.getRememberedPrices(customerId);
 
     const stubs = unavailableFavorites.map((f) => ({
@@ -583,11 +602,13 @@ export class BuyerCatalogService {
         sku: f.product.sku,
         unit: f.product.unit,
         category: displayCategory(f.product, f.product.parent),
-        buyerPrice: effectiveBuyerPrice(
-          getTierPrice(f.product, effectiveTier),
-          Number(f.product.pricePerUnit),
-          priceHist[f.productId]?.lastPrice ?? null,
-        ),
+        buyerPrice:
+          pc.typedPack(f.productId) ??
+          effectiveBuyerPrice(
+            getTierPrice(f.product, effectiveTier),
+            Number(f.product.pricePerUnit),
+            priceHist[f.productId]?.lastPrice ?? null,
+          ),
         thumbnailUrl: null as string | null, // thumbnails resolved in catalog listing
         imageKeys: signableImageKeys(f.productId, f.product.imageKeys),
         // Needed so add-to-cart from the mobile favorites screen orders a boxed

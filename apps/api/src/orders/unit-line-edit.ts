@@ -22,6 +22,7 @@ import {
 } from "../products/line-units";
 import { raisedBy, type LineAuthorLookup } from "./line-author-channel";
 import { norm } from "./unit-label-norm";
+import { customerPricing, type CustomerPricing, type TypedUnitPrices } from "./units-prices-v2";
 import { liveLines } from "./order-edit-cancelled";
 import { writeLineUpdate } from "./order-line-removal";
 import type { UpdateOrderItemsDto } from "./dto/update-order-items.dto";
@@ -119,7 +120,13 @@ export async function loadOperatorTiers(
   },
   customerId: string | null | undefined,
   productIds: string[],
-): Promise<{ operatorCpMap: Map<string, number | null>; operatorDefaultTier: number }> {
+  /** The service: tier maps and S19's typed unit prices (flag.units_prices_v2) are built by `customerPricing`. */
+  svc: Parameters<typeof customerPricing>[0],
+): Promise<{
+  operatorCpMap: Map<string, number | null>;
+  operatorDefaultTier: number;
+  operatorPc: CustomerPricing;
+}> {
   const customer = customerId
     ? await tx.customer.findFirst({ where: { id: customerId }, select: { pricingTier: true } })
     : null;
@@ -127,12 +134,8 @@ export async function loadOperatorTiers(
     customerId && productIds.length
       ? await tx.customerPrice.findMany({ where: { customerId, productId: { in: productIds } } })
       : [];
-  return {
-    operatorCpMap: new Map<string, number | null>(
-      rows.map((cp: any) => [cp.productId, cp.pricingTier]),
-    ),
-    operatorDefaultTier: customer?.pricingTier ?? 1,
-  };
+  const pc = await customerPricing(svc, customerId, productIds, customer, rows, tx as never);
+  return { operatorCpMap: pc.cpMap, operatorDefaultTier: pc.defaultTier, operatorPc: pc };
 }
 
 /**
@@ -265,6 +268,8 @@ export interface UnitWriteContext {
   ladders: Map<string, LadderUnit[]>;
   tenantId: string | null | undefined;
   tier: (productId: string) => number;
+  /** S19, flag.units_prices_v2 only: the customer's typed unit prices per product (undefined = master's tier price). */
+  typedFor?: (productId: string) => TypedUnitPrices | undefined;
   /** H3: the acting staff user, stamped on a unit line whose typed price overrides the customer's price. */
   overriddenBy?: string | null;
   /** H3: the order's lines as held under the edit's row lock, by id: the stored side of a re-sent price. */
@@ -337,6 +342,7 @@ export async function createUnitLine(
     resolved,
     item: { ...item, productId: product.id },
     tier: ctx.tier(product.id),
+    customerUnitPrices: ctx.typedFor?.(product.id),
     taxFor: (qty, sub) => categoryTaxForLine(category, qty, sub),
     position,
     tenantId: ctx.tenantId,
@@ -408,6 +414,7 @@ export async function updateUnitLine(
     resolved,
     item: { ...item, productId: product.id },
     tier: ctx.tier(product.id),
+    customerUnitPrices: ctx.typedFor?.(product.id),
     taxFor: (qty, sub) => categoryTaxForLine(category, qty, sub),
     position: 0,
     tenantId: ctx.tenantId,

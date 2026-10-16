@@ -3,7 +3,6 @@ import {
   InvalidTierError,
   UnknownUnitError,
   decideStaffOverride,
-  isSpecialTier,
   resolveUnitPrice,
   roundMoney,
   withinStaffOverrideTolerance,
@@ -14,6 +13,12 @@ import { assertSafeTextCell } from "../common/safe-text-cell";
 import { API_ERROR_CODES } from "../common/api-error-codes";
 import { decideTierOverride, specialPriceReasonRequired } from "../orders/staff-override";
 import { norm } from "../orders/unit-label-norm";
+import {
+  customerPricing,
+  isSpecialPrice,
+  typedPriceFor,
+  type TypedUnitPrices,
+} from "../orders/units-prices-v2";
 import type { CreateInvoiceDto } from "./dto/create-invoice.dto";
 import type { ManualLineItem } from "./manual-invoice-lines";
 
@@ -53,6 +58,8 @@ export interface LineOverrideCtx {
   tierOf: (productId: string) => number;
   /** The server ladder (ProductUnit rows) of the products a line sells by a unit. */
   ladders: ReadonlyMap<string, readonly LadderUnit[]>;
+  /** S19, flag.units_prices_v2 only: the customer's typed unit prices per product; the baseline in place of the tier price. */
+  typedFor?: (productId: string) => TypedUnitPrices | undefined;
 }
 
 /** The product columns the decision reads. */
@@ -114,6 +121,7 @@ export async function loadOverride(
   }: { customerId: string; items: ReadonlyArray<{ productId?: string | null }> },
   ladders: ReadonlyMap<string, readonly LadderUnit[]>,
   actorId: string | undefined,
+  entitlements?: Parameters<typeof customerPricing>[0]["entitlements"],
 ): Promise<LineOverrideCtx | undefined> {
   if (!actorId) return undefined;
   const db = prisma.forTenant();
@@ -125,9 +133,14 @@ export async function loadOverride(
   const rows: Array<{ productId: string; pricingTier: number | null }> = ids.length
     ? await db.customerPrice.findMany({ where: { customerId, productId: { in: ids } } })
     : [];
-  const perProduct = new Map(rows.map((r) => [r.productId, r.pricingTier]));
-  const dflt = customer?.pricingTier ?? 1;
-  return { actorId, ladders, tierOf: (pid) => perProduct.get(pid) ?? dflt };
+  // S19: master's `cp.pricingTier ?? customer.pricingTier ?? 1` flag off; customerTierFor + typed prices flag on.
+  const pc = await customerPricing({ prisma, entitlements }, customerId, ids, customer, rows);
+  return {
+    actorId,
+    ladders,
+    tierOf: (pid) => pc.cpMap.get(pid) ?? pc.defaultTier,
+    typedFor: pc.typedFor,
+  };
 }
 
 /**
@@ -168,7 +181,13 @@ export function priceInvoiceLine(args: {
   const tier = ctx.tierOf(String(product.id));
   const decision =
     unitLabel == null
-      ? decideTierOverride({ ...product, pricePerUnit: product.pricePerUnit }, tier, typed, reason)
+      ? decideTierOverride(
+          { ...product, pricePerUnit: product.pricePerUnit },
+          tier,
+          typed,
+          reason,
+          ctx.typedFor?.(String(product.id))?.pack ?? null,
+        )
       : decideUnit(ctx, product, unitLabel, tier, typed, reason);
   const overridden = decision.priceType === "DISCOUNTED" || decision.priceType === "MANUAL";
   return {
@@ -195,9 +214,12 @@ function decideUnit(
   const units = ctx.ladders.get(String(product.id)) ?? [];
   let listPrice: number;
   let tierPrice: number;
+  let typedUnit: number | null = null;
   try {
     listPrice = resolveUnitPrice(lp, units, label, 1);
     tierPrice = resolveUnitPrice(lp, units, label, tier);
+    typedUnit = typedPriceFor(ctx.typedFor?.(String(product.id)), lp, units, label);
+    if (typedUnit != null) tierPrice = typedUnit;
   } catch (e) {
     if (e instanceof InvalidTierError) {
       throw new BadRequestException(
@@ -216,7 +238,7 @@ function decideUnit(
     overridePrice: typed,
     baselinePrice: tierPrice,
     listPrice,
-    isSpecialTier: isSpecialTier(tier),
+    isSpecialTier: isSpecialPrice(tier, listPrice, typedUnit),
     hasReason: reason != null,
   });
   if ("refused" in d) throw specialPriceReasonRequired(product.name);
