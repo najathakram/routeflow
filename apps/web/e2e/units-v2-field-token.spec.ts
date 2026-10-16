@@ -122,7 +122,9 @@ for (const vp of SIZES) {
       await page.getByTestId("units-v2-btn-edit").click();
       const input = grid.locator('[data-testid^="units-v2-input-"]:visible').first();
       await expect(input).toBeVisible();
-      expect(await border(input)).toBe(field);
+      // Edit mode focuses the first input and a focused input draws the brand border: blur it to read the resting border.
+      await input.evaluate((el) => (el as HTMLInputElement).blur());
+      await expect.poll(() => border(input)).toBe(field);
       // still the frame, not a control, in edit mode
       expect(await border(grid)).not.toBe(field);
     });
