@@ -244,6 +244,10 @@ describe("classifySaleAxis", () => {
       });
     });
 
+    it("pins B661_CUTOFF to the verified deploy instant (SA-791)", () => {
+      expect(B661_CUTOFF.toISOString()).toBe("2026-09-23T06:43:26.000Z");
+    });
+
     it("a createdAt string on the cutoff instant counts as AFTER (boundary: < cutoff parks)", () => {
       expect(classifySaleAxis(sale(3, 3, B661_CUTOFF.toISOString()), boxUnaware, [], 1).state).toBe(
         "piece-axis",
