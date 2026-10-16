@@ -581,6 +581,11 @@ describe("K8 seams", () => {
     expect(screen.queryByRole("button", { name: "Change prices" })).toBeNull();
   });
 
+  it("the product page mounts the customer price view exactly once", () => {
+    render();
+    expect(screen.getAllByTestId("units-v2-sec-customers")).toHaveLength(1);
+  });
+
   it("one Change prices button, in the Edit row (before Edit), and none above the grid", async () => {
     render();
     const buttons = screen.getAllByRole("button", { name: "Change prices" });
