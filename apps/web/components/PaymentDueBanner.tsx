@@ -14,8 +14,8 @@ import { useGuardedRouter } from "@/lib/use-guarded-router";
 /**
  * Row 542: the "payment due" banner, and its failed-renewal variant, in the dashboard shell's one billing slot
  * (where the SubscriptionStrip sits). Copy comes from `lib/payment-due.ts`; whether it shows comes from
- * `paymentDueSlot`. Amber, never red; in the normal flow (never over the counter's cart); a payment due is not
- * dismissible, the failed-renewal variant keeps the strip's own dismiss rule (`dismiss`).
+ * `paymentDueSlot`. Amber, never red; in the normal flow (never over the counter's cart); a payment due is dismissible
+ * for the day by an operator only (an admin cannot until it is paid), the failed-renewal variant keeps the strip's own dismiss rule (`dismiss`).
  */
 export function PaymentDueBanner({
   mode,
@@ -37,16 +37,24 @@ export function PaymentDueBanner({
   const portal = useBillingPortal();
   const router = useGuardedRouter();
   const [tick, setTick] = React.useState(0);
-  const dismissKey = dismiss?.key;
+  // Failed renewal: the strip's own rule. Payment due: an operator may hide it for the day (it is not theirs to
+  // pay); an admin cannot until it is paid. The key carries the period so a new month's invoice shows again.
+  const effectiveDismiss: BannerDismiss | null =
+    mode === "failed-renewal"
+      ? (dismiss ?? null)
+      : role !== "admin" && due
+        ? { scope: "day", key: `payment-due:${due.periodStart ?? "now"}` }
+        : null;
+  const dismissKey = effectiveDismiss?.key;
   const dismissed = React.useMemo(
-    () => (dismiss ? isBannerDismissed(dismiss) : false),
+    () => (effectiveDismiss ? isBannerDismissed(effectiveDismiss) : false),
     // eslint-disable-next-line react-hooks/exhaustive-deps -- keyed on the dismissal's identity + our own tick
     [dismissKey, tick],
   );
 
   const copy = mode === "failed-renewal" ? failedRenewalCopy(role) : paymentDueCopy(due, role);
   if (!copy || dismissed) return null;
-  const canDismiss = mode === "failed-renewal" && !!dismiss;
+  const canDismiss = !!effectiveDismiss;
 
   const HIT = "min-h-[44px] min-w-[44px]";
   const primary = copy.primary;
@@ -101,7 +109,7 @@ export function PaymentDueBanner({
               "inline-flex shrink-0 items-center justify-center rounded hover:bg-black/5",
             )}
             onClick={() => {
-              dismissBanner(dismiss!);
+              dismissBanner(effectiveDismiss!);
               setTick((n) => n + 1);
             }}
           >

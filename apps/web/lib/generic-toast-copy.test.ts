@@ -134,6 +134,13 @@ describe("genericToastCopy: codes users rely on", () => {
     );
   });
 
+  it("PAYMENT_NOT_DUE (row 542: pay refused, nothing is due) is fixed copy", () => {
+    const copy = genericToastCopy(
+      err(409, { code: API_ERROR_CODES.PAYMENT_NOT_DUE, message: "raw server text" }),
+    );
+    expect(copy).toBe("Nothing is due right now.");
+  });
+
   it("PRODUCT_CHAIN_UNREADABLE (H2: a reparent refused on an unreadable family chain) is fixed copy", () => {
     const copy = genericToastCopy(err(409, { code: API_ERROR_CODES.PRODUCT_CHAIN_UNREADABLE }));
     expect(copy).toBe("This product's family chain can't be read.");

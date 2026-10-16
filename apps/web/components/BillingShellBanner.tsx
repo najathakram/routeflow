@@ -1,7 +1,7 @@
 "use client";
 
 import * as React from "react";
-import { usePathname } from "next/navigation";
+import { usePathname, useSearchParams } from "next/navigation";
 import type { SubscriptionView } from "@routeflow/types";
 import { ReadOnlyBanner } from "@/components/ReadOnlyBanner";
 import { SubscriptionStrip } from "@/components/SubscriptionStrip";
@@ -71,7 +71,11 @@ export function BillingShellBanner({
   const onBillingPage = usePathname()?.startsWith("/settings/billing") ?? false;
   const role = bannerRoleOf(userRole);
   // Row 542: the server's "payment due" read; staff only (the endpoint's own role gate).
-  const { data: paymentDue } = usePaymentDue({ enabled: role !== null });
+  const { data: serverDue } = usePaymentDue({ enabled: role !== null });
+  // Back from Stripe (`?paid=1`): an ACH payment is "processing" and the server can still say due for a while, so
+  // the banner stays out of the way until the param is gone.
+  const justPaid = useSearchParams()?.get("paid") === "1";
+  const paymentDue = justPaid ? undefined : serverDue;
   const state =
     role && (ownsBillingBanner(view) || view.status === "ACTIVE")
       ? subscriptionBannerState(view, role)

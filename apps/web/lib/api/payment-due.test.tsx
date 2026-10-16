@@ -70,6 +70,25 @@ describe("usePayPaymentDue", () => {
   });
 });
 
+describe("usePayPaymentDue error path", () => {
+  beforeEach(() => jest.clearAllMocks());
+
+  it("a refused pay (409) still invalidates the payment-due read so a stale banner re-reads", async () => {
+    const client = new QueryClient({
+      defaultOptions: { queries: { retry: false }, mutations: { retry: false } },
+    });
+    const spy = jest.spyOn(client, "invalidateQueries");
+    const wrap = ({ children }: { children: React.ReactNode }) => (
+      <QueryClientProvider client={client}>{children}</QueryClientProvider>
+    );
+    mockPost.mockRejectedValue(new Error("409"));
+    const { result } = renderHook(() => usePayPaymentDue(), { wrapper: wrap });
+    act(() => result.current.mutate());
+    await waitFor(() => expect(result.current.isError).toBe(true));
+    expect(spy).toHaveBeenCalledWith({ queryKey: ["billing", "payment-due"] });
+  });
+});
+
 describe("safeCheckoutUrl", () => {
   it("passes https only", () => {
     expect(safeCheckoutUrl("https://checkout.stripe.test/c/1")).toBe(

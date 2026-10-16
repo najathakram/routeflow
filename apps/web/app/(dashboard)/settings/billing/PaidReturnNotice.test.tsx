@@ -10,17 +10,21 @@ jest.mock("next/navigation", () => ({
 }));
 
 describe("PaidReturnNotice", () => {
-  it("?paid=1 shows 'Payment received. Thank you.'", () => {
+  it("?paid=1 says the payment can take a few minutes to confirm", () => {
     mockQuery = "paid=1";
     renderWithProviders(<PaidReturnNotice />);
-    expect(screen.getByRole("status")).toHaveTextContent("Payment received. Thank you.");
+    expect(screen.getByRole("status")).toHaveTextContent(
+      "Payment received. It can take a few minutes to confirm.",
+    );
   });
 
   it("can be dismissed", async () => {
     mockQuery = "paid=1";
     renderWithProviders(<PaidReturnNotice />);
     await userEvent.click(screen.getByRole("button", { name: "OK" }));
-    expect(screen.queryByText("Payment received. Thank you.")).toBeNull();
+    expect(
+      screen.queryByText("Payment received. It can take a few minutes to confirm."),
+    ).toBeNull();
   });
 
   it("no param, or any other value: nothing", () => {

@@ -4,6 +4,7 @@ import { renderWithProviders, screen } from "@/test-utils/render";
 import { BillingShellBanner } from "./BillingShellBanner";
 
 let mockDue: PaymentDueView | undefined;
+let mockQuery = "";
 jest.mock("@/lib/api/payment-due", () => ({
   usePaymentDue: () => ({ data: mockDue }),
   usePayPaymentDue: () => ({ mutate: jest.fn(), isPending: false }),
@@ -15,6 +16,7 @@ jest.mock("next/navigation", () => ({
   ...jest.requireActual("next/navigation"),
   useRouter: () => ({ push: jest.fn(), replace: jest.fn() }),
   usePathname: () => "/orders",
+  useSearchParams: () => new URLSearchParams(mockQuery),
 }));
 jest.mock("@/lib/counter-cart-signal", () => ({ guardCounterLeave: () => false }));
 
@@ -53,6 +55,7 @@ const DUE: PaymentDueView = {
 
 beforeEach(() => {
   mockDue = undefined;
+  mockQuery = "";
   window.localStorage.clear();
   window.sessionStorage.clear();
 });
@@ -65,6 +68,24 @@ describe("BillingShellBanner - payment due slot", () => {
     );
     expect(screen.getByTestId("payment-due-banner")).toHaveAttribute("data-state", "past-due");
     expect(screen.queryByTestId("subscription-strip")).toBeNull();
+  });
+
+  it("?paid=1 suppresses the payment-due banner while the payment confirms", () => {
+    mockDue = DUE;
+    mockQuery = "paid=1";
+    renderWithProviders(
+      <BillingShellBanner scope="acme" view={healthy()} userRole="TENANT_ADMIN" />,
+    );
+    expect(screen.queryByTestId("payment-due-banner")).toBeNull();
+  });
+
+  it("without ?paid=1 the same read shows the banner", () => {
+    mockDue = DUE;
+    mockQuery = "other=1";
+    renderWithProviders(
+      <BillingShellBanner scope="acme" view={healthy()} userRole="TENANT_ADMIN" />,
+    );
+    expect(screen.getByTestId("payment-due-banner")).toBeInTheDocument();
   });
 
   it("operator sees it too, without a pay control", () => {

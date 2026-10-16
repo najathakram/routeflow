@@ -101,6 +101,22 @@ describe("PaymentDueBanner", () => {
     expect(screen.getByText("Ask your account admin to update the card.")).toBeInTheDocument();
   });
 
+  it("operator can dismiss a payment due for the day, and it stays gone", async () => {
+    const { unmount } = renderWithProviders(
+      <PaymentDueBanner mode="payment-due" due={due()} role="staff" />,
+    );
+    await userEvent.click(screen.getByRole("button", { name: "Dismiss" }));
+    expect(screen.queryByTestId("payment-due-banner")).toBeNull();
+    unmount();
+    renderWithProviders(<PaymentDueBanner mode="payment-due" due={due()} role="staff" />);
+    expect(screen.queryByTestId("payment-due-banner")).toBeNull();
+  });
+
+  it("admin has no dismiss control on a payment due", () => {
+    renderWithProviders(<PaymentDueBanner mode="payment-due" due={due()} role="admin" />);
+    expect(screen.queryByRole("button", { name: "Dismiss" })).toBeNull();
+  });
+
   it("failed renewal keeps the strip's dismiss rule", async () => {
     renderWithProviders(
       <PaymentDueBanner

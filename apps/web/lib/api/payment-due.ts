@@ -1,4 +1,4 @@
-import { useMutation, useQuery } from "@tanstack/react-query";
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import type { PaymentDuePayResult, PaymentDueView } from "@routeflow/types";
 import { apiClient } from "../api-client";
 import { guardCounterLeave } from "../counter-cart-signal";
@@ -31,8 +31,13 @@ export function safeCheckoutUrl(url: unknown): string | null {
  * is followed.
  */
 export function usePayPaymentDue() {
+  const qc = useQueryClient();
   return useMutation<PaymentDuePayResult, Error, void>({
     mutationFn: () => apiClient.post("/billing/payment-due/pay").then((r) => r.data),
+    // A refused pay (409 PAYMENT_NOT_DUE) means the banner is stale: re-read it on error too.
+    onError: () => {
+      void qc.invalidateQueries({ queryKey: ["billing", "payment-due"] });
+    },
     onSuccess: (r) => {
       const url = safeCheckoutUrl(r.checkoutUrl);
       if (!url) return;
