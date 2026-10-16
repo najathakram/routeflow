@@ -1,4 +1,4 @@
-import type { SubscriptionView } from "@routeflow/types";
+import type { PaymentDueView, SubscriptionView } from "@routeflow/types";
 import { readOnlyCopyForView } from "./read-only-copy";
 
 /**
@@ -16,6 +16,27 @@ import { readOnlyCopyForView } from "./read-only-copy";
  */
 
 export type BannerRole = "admin" | "staff";
+
+/**
+ * Row 542: which banner owns the shell's one billing slot. A payable "payment due" (the server's read) wins over a
+ * quiet or grace strip; the failed-renewal variant replaces the strip's grace / overdue kinds only; the last day and
+ * read-only keep the strip (they carry the lock escalation and their own Pay control).
+ */
+export type PaymentDueSlot = "payment-due" | "failed-renewal" | "strip";
+
+export function paymentDueSlot(
+  strip: Pick<BannerState, "kind" | "inShell">,
+  due: PaymentDueView | null | undefined,
+): PaymentDueSlot {
+  if (strip.kind === "final-day" || strip.kind === "read-only") return "strip";
+  if (due?.due === true && Number.isInteger(due.amountCents) && due.amountCents > 0) {
+    return "payment-due";
+  }
+  if (strip.inShell && (strip.kind === "grace" || strip.kind === "overdue")) {
+    return "failed-renewal";
+  }
+  return "strip";
+}
 
 /** Who sees billing state. Buyers (CUSTOMER) and drivers get none - the caller renders nothing for `null`. */
 export function bannerRoleOf(userRole: string | null | undefined): BannerRole | null {

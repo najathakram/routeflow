@@ -226,6 +226,8 @@ describe("TenantStatusGuard - READ_ONLY allow-list (B4 pin)", () => {
     ["PATCH", "/api/v1/invoices/inv1/payments/p1"],
     // anchored, not substring: neighbours of the allowed routes stay blocked
     ["POST", "/api/v1/billing/portal-evil"],
+    // the payment-due Pay now is NOT allow-listed: making billing read-only payable is a separate row
+    ["POST", "/api/v1/billing/payment-due/pay"],
     ["POST", "/api/v1/orders/counter-sale/day-close-evil"],
     ["POST", "/api/v1/orders/o1/receipt/extra"],
     ["POST", "/api/v1/orders/o1/receipts"],

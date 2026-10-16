@@ -342,12 +342,11 @@ const MONTHS = [
 const MON = MONTHS.map((m) => m.slice(0, 3));
 
 /**
- * "Subscription — October 2026" for whole months from a 1st; a mid-month start is labelled with its start and its last
- * billed day: "Subscription — Nov 11 to Nov 30, 2026" (never a bare month name - SA-733r10 nit 2).
+ * The period a stub covers, as words: "October 2026" for whole months from a 1st, "October 2026 to November 2026"
+ * across several, and a mid-month start is labelled with its start and its last billed day: "Nov 11 to Nov 30, 2026"
+ * (never a bare month name - SA-733r10 nit 2). The tenant-facing "payment due" banner prints this verbatim.
  */
-export function describeStub(from: Date, to: Date): string {
-  // S === A: there is no line to describe (never "December 2026 to November 2026")
-  if (snapToBoundary(from).getTime() >= snapToBoundary(to).getTime()) return "No catch-up line";
+export function describeStubPeriod(from: Date, to: Date): string {
   const monthOf = (d: Date) => `${MONTHS[d.getUTCMonth()]} ${d.getUTCFullYear()}`;
   const snapped = snapToBoundary(from);
   const startsOnBoundary =
@@ -357,15 +356,25 @@ export function describeStub(from: Date, to: Date): string {
   if (startsOnBoundary) {
     return snapped.getUTCFullYear() === last.getUTCFullYear() &&
       snapped.getUTCMonth() === last.getUTCMonth()
-      ? `Subscription — ${monthOf(snapped)}`
-      : `Subscription — ${monthOf(snapped)} to ${monthOf(last)}`;
+      ? monthOf(snapped)
+      : `${monthOf(snapped)} to ${monthOf(last)}`;
   }
   const day = (d: Date) => `${MON[d.getUTCMonth()]} ${d.getUTCDate()}`;
   const startLabel =
     from.getUTCFullYear() === last.getUTCFullYear()
       ? day(from)
       : `${day(from)}, ${from.getUTCFullYear()}`;
-  return `Subscription — ${startLabel} to ${day(last)}, ${last.getUTCFullYear()}`;
+  return `${startLabel} to ${day(last)}, ${last.getUTCFullYear()}`;
+}
+
+/**
+ * The Checkout line / invoice item label: "October 2026 subscription", "Nov 11 to Nov 30, 2026 subscription". Plain
+ * words, no dash (what the customer reads on the Stripe page and the receipt).
+ */
+export function describeStub(from: Date, to: Date): string {
+  // S === A: there is no line to describe (never "December 2026 to November 2026")
+  if (snapToBoundary(from).getTime() >= snapToBoundary(to).getTime()) return "No catch-up line";
+  return `${describeStubPeriod(from, to)} subscription`;
 }
 
 /**

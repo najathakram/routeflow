@@ -185,6 +185,8 @@ const CODE_COPY: Record<string, string> = {
   // SA-733r7 PR-B3 (dunning): a plan change is refused while an invoice is overdue; paying it restores everything.
   [API_ERROR_CODES.PAYMENT_OVERDUE]:
     "An invoice on this account is overdue. Pay it to continue; plan changes are available again right after.",
+  // Row 542: paying an amount due was refused because nothing is due (already paid); the banner re-reads.
+  [API_ERROR_CODES.PAYMENT_NOT_DUE]: "Nothing is due right now.",
   [API_ERROR_CODES.PAYMENT_STATE_UNKNOWN]:
     "We couldn't confirm your open invoice just now. Please try again in a moment.",
   // B1102: a catalog add-on whose plan setting is invalid is refused instead of billed; fixed sentence, no ids.
