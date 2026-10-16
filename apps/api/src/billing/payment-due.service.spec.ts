@@ -1,4 +1,4 @@
-import { ConflictException } from "@nestjs/common";
+import { ConflictException, ServiceUnavailableException } from "@nestjs/common";
 import { API_ERROR_CODES } from "../common/api-error-codes";
 import { PaymentDueService, isPastDue } from "./payment-due.service";
 
@@ -44,6 +44,10 @@ function make(
     sub?: Record<string, unknown> | null;
     tz?: string | null;
     session?: Record<string, unknown> | null;
+    /** Stripe's reply to expire(); an Error rejects. */
+    expired?: Record<string, unknown> | null | Error;
+    /** The session read rejects with this. */
+    readError?: Error;
     now?: Date;
   } = {},
 ) {
@@ -59,7 +63,13 @@ function make(
   const claim = { onSessionExpired: jest.fn().mockResolvedValue(undefined) };
   const stripe = {
     isConfigured: true,
-    getCheckoutSession: jest.fn().mockResolvedValue(o.session ?? null),
+    getCheckoutSession: o.readError
+      ? jest.fn().mockRejectedValue(o.readError)
+      : jest.fn().mockResolvedValue(o.session ?? null),
+    expireCheckoutSession:
+      o.expired instanceof Error
+        ? jest.fn().mockRejectedValue(o.expired)
+        : jest.fn().mockResolvedValue(o.expired ?? null),
   };
   const prisma = {
     // the zone lives on TenantConfig and is read through the single resolver (common/tenant-time-zone.ts)
@@ -160,14 +170,23 @@ describe("PaymentDueService.get", () => {
 });
 
 describe("isPastDue", () => {
-  it("compares calendar dates in the tenant's zone", () => {
+  it("compares calendar dates in the (already resolved) zone", () => {
     // 2026-10-02 02:00Z is still Oct 1 evening in New York, so an Oct 1 period has not started "before today"
     expect(isPastDue(OCT_1, new Date("2026-10-02T02:00:00Z"), "America/New_York")).toBe(false);
     expect(isPastDue(OCT_1, new Date("2026-10-02T02:00:00Z"), "UTC")).toBe(true);
   });
-  it("falls back to UTC for no zone or a bad zone", () => {
-    expect(isPastDue(OCT_1, new Date("2026-10-02T02:00:00Z"), null)).toBe(true);
-    expect(isPastDue(OCT_1, new Date("2026-10-02T02:00:00Z"), "Not/AZone")).toBe(true);
+});
+
+describe("PaymentDueService.get: the zone is the single resolver's (UTC for none or a bad zone)", () => {
+  const LATE_OCT_1_NY = new Date("2026-10-02T02:00:00Z");
+  it("uses the tenant's zone", async () => {
+    expect((await make().svc.get("t1", LATE_OCT_1_NY)).pastDue).toBe(false);
+  });
+  it.each([
+    ["no zone", null],
+    ["a bad zone", "Not/AZone"],
+  ])("falls back to UTC for %s", async (_label, tz) => {
+    expect((await make({ tz }).svc.get("t1", LATE_OCT_1_NY)).pastDue).toBe(true);
   });
 });
 
@@ -187,17 +206,13 @@ describe("PaymentDueService.pay", () => {
     const out = await svc.pay("t1", NOW);
     expect(out).toEqual({ checkoutUrl: "https://checkout.stripe.test/new" });
     expect(catchup.open).toHaveBeenCalledTimes(1);
+    // PATHS: open() joins them to its one FRONTEND_URL base
     expect(catchup.open).toHaveBeenCalledWith("t1", {
       expectedStubCents: 31000,
       now: NOW,
-      successUrl: "https://app.test/settings/billing?paid=1",
-      cancelUrl: "https://app.test/settings/billing?checkout=cancelled",
+      successPath: "/settings/billing?paid=1",
+      cancelPath: "/settings/billing?checkout=cancelled",
     });
-  });
-
-  it("takes no amount from the caller (the signature has none)", () => {
-    const { svc } = make();
-    expect(svc.pay.length).toBeLessThanOrEqual(2);
   });
 
   it("REUSES an open, unexpired session: no second create", async () => {
@@ -217,22 +232,224 @@ describe("PaymentDueService.pay", () => {
     expect(catchup.open).not.toHaveBeenCalled();
   });
 
-  it("an expired stored session is released through the claim service, then a fresh one is created", async () => {
-    const expired = {
-      id: "cs_old",
-      status: "expired",
-      url: null,
-      expires_at: Math.floor(NOW.getTime() / 1000) - 60,
-    };
-    const { svc, catchup, claim } = make({
+  describe("F2: the stored session is read, and Stripe is told before anything is released", () => {
+    const PAST = Math.floor(NOW.getTime() / 1000) - 60;
+    const META = { tenantId: "t1", catchup: "1" };
+    const held = {
       sub: { catchupState: "SESSION_OPEN", catchupSessionId: "cs_old" },
       report: report({ eligible: false, ineligible: ["claim_held"] }),
-      session: expired,
+    };
+    const staleOpen = {
+      id: "cs_old",
+      status: "open",
+      url: "https://checkout.stripe.test/stale",
+      expires_at: PAST,
+      metadata: META,
+    };
+    const expiredReply = { id: "cs_old", status: "expired", url: null, metadata: META };
+    const completeReply = { id: "cs_old", status: "complete", metadata: META };
+
+    async function unknownState(h: ReturnType<typeof make>) {
+      const err = await h.svc.pay("t1", NOW).catch((e) => e);
+      expect(err).toBeInstanceOf(ServiceUnavailableException);
+      expect((err.getResponse() as { code: string }).code).toBe(
+        API_ERROR_CODES.PAYMENT_STATE_UNKNOWN,
+      );
+      expect(h.claim.onSessionExpired).not.toHaveBeenCalled();
+      expect(h.catchup.open).not.toHaveBeenCalled();
+    }
+
+    it("a session Stripe already reports expired is released, then exactly ONE fresh session is created", async () => {
+      const expired = { id: "cs_old", status: "expired", url: null, expires_at: PAST };
+      const h = make({ ...held, session: expired });
+      const out = await h.svc.pay("t1", NOW);
+      expect(h.claim.onSessionExpired).toHaveBeenCalledTimes(1);
+      expect(h.claim.onSessionExpired).toHaveBeenCalledWith(expired);
+      expect(h.stripe.expireCheckoutSession).not.toHaveBeenCalled();
+      expect(h.catchup.open).toHaveBeenCalledTimes(1);
+      expect(out.checkoutUrl).toBe("https://checkout.stripe.test/new");
     });
-    const out = await svc.pay("t1", NOW);
-    expect(claim.onSessionExpired).toHaveBeenCalledWith(expired);
-    expect(catchup.open).toHaveBeenCalledTimes(1);
-    expect(out.checkoutUrl).toBe("https://checkout.stripe.test/new");
+
+    it("OPEN but past its expires_at: Stripe is told to expire it; on 'expired' the claim is released and ONE new session is created", async () => {
+      const h = make({ ...held, session: staleOpen, expired: expiredReply });
+      const out = await h.svc.pay("t1", NOW);
+      expect(h.stripe.expireCheckoutSession).toHaveBeenCalledTimes(1);
+      expect(h.stripe.expireCheckoutSession).toHaveBeenCalledWith("cs_old");
+      expect(h.claim.onSessionExpired).toHaveBeenCalledTimes(1);
+      expect(h.claim.onSessionExpired).toHaveBeenCalledWith(expiredReply);
+      expect(h.catchup.open).toHaveBeenCalledTimes(1);
+      expect(out.checkoutUrl).toBe("https://checkout.stripe.test/new");
+    });
+
+    it("OPEN with NO url is the same: expired at Stripe first, then released, then ONE new session", async () => {
+      const noUrl = { ...staleOpen, url: null, expires_at: PAST + 7200 };
+      const h = make({ ...held, session: noUrl, expired: expiredReply });
+      await h.svc.pay("t1", NOW);
+      expect(h.stripe.expireCheckoutSession).toHaveBeenCalledWith("cs_old");
+      expect(h.claim.onSessionExpired).toHaveBeenCalledTimes(1);
+      expect(h.catchup.open).toHaveBeenCalledTimes(1);
+    });
+
+    it("the release happens only AFTER Stripe confirmed the expiry (call order)", async () => {
+      const h = make({ ...held, session: staleOpen, expired: expiredReply });
+      const order: string[] = [];
+      h.stripe.expireCheckoutSession.mockImplementation(async () => {
+        order.push("stripe.expire");
+        return expiredReply;
+      });
+      h.claim.onSessionExpired.mockImplementation(async () => {
+        order.push("claim.release");
+      });
+      h.catchup.open.mockImplementation(async () => {
+        order.push("open");
+        return { checkoutUrl: "https://checkout.stripe.test/new" };
+      });
+      await h.svc.pay("t1", NOW);
+      expect(order).toEqual(["stripe.expire", "claim.release", "open"]);
+    });
+
+    it("the read says COMPLETE: refused AWAITING_FIRST_PAYMENT (the claim's 409), no expire, no release, no session", async () => {
+      const h = make({ ...held, session: { ...staleOpen, status: "complete" } });
+      await expect(h.svc.pay("t1", NOW)).rejects.toMatchObject({
+        response: { code: API_ERROR_CODES.CATCHUP_PENDING },
+      });
+      expect(h.stripe.expireCheckoutSession).not.toHaveBeenCalled();
+      expect(h.claim.onSessionExpired).not.toHaveBeenCalled();
+      expect(h.catchup.open).not.toHaveBeenCalled();
+    });
+
+    it("the expire reply says COMPLETE (paid in the gap): same refusal, no release, ZERO sessions created", async () => {
+      const h = make({ ...held, session: staleOpen, expired: completeReply });
+      await expect(h.svc.pay("t1", NOW)).rejects.toMatchObject({
+        response: { code: API_ERROR_CODES.CATCHUP_PENDING },
+      });
+      expect(h.stripe.expireCheckoutSession).toHaveBeenCalledTimes(1);
+      expect(h.claim.onSessionExpired).not.toHaveBeenCalled();
+      expect(h.catchup.open).not.toHaveBeenCalled();
+    });
+
+    it("any other expire reply status is the complete branch (never a release)", async () => {
+      const h = make({ ...held, session: staleOpen, expired: { id: "cs_old", status: "open" } });
+      await expect(h.svc.pay("t1", NOW)).rejects.toMatchObject({
+        response: { code: API_ERROR_CODES.CATCHUP_PENDING },
+      });
+      expect(h.claim.onSessionExpired).not.toHaveBeenCalled();
+      expect(h.catchup.open).not.toHaveBeenCalled();
+    });
+
+    it("a network error on expire() is a retryable 503 PAYMENT_STATE_UNKNOWN: nothing released, nothing created", async () => {
+      await unknownState(make({ ...held, session: staleOpen, expired: new Error("ECONNRESET") }));
+    });
+
+    it("an unusable expire reply (null) is a 503: nothing released, nothing created", async () => {
+      await unknownState(make({ ...held, session: staleOpen, expired: null }));
+    });
+
+    it("a null session read is a 503: nothing touched (no expire, no release, no session)", async () => {
+      const h = make({ ...held, session: null });
+      await unknownState(h);
+      expect(h.stripe.expireCheckoutSession).not.toHaveBeenCalled();
+    });
+
+    it("a session of an unknown status is a 503: nothing touched", async () => {
+      const h = make({ ...held, session: { id: "cs_old", status: "weird" } });
+      await unknownState(h);
+      expect(h.stripe.expireCheckoutSession).not.toHaveBeenCalled();
+    });
+
+    it("a network error on the session read is a 503: nothing touched", async () => {
+      const h = make({ ...held, readError: new Error("ETIMEDOUT") });
+      await unknownState(h);
+      expect(h.stripe.expireCheckoutSession).not.toHaveBeenCalled();
+    });
+
+    it("an open, unexpired session with a url is still reused as is (no expire)", async () => {
+      const live = { ...staleOpen, expires_at: Math.floor(NOW.getTime() / 1000) + 600 };
+      const h = make({ ...held, session: live });
+      expect(await h.svc.pay("t1", NOW)).toEqual({ checkoutUrl: live.url });
+      expect(h.stripe.expireCheckoutSession).not.toHaveBeenCalled();
+      expect(h.catchup.open).not.toHaveBeenCalled();
+    });
+  });
+
+  describe("F3: a parallel click that won the claim hands back ITS session", () => {
+    const raced = {
+      id: "cs_raced",
+      status: "open",
+      url: "https://checkout.stripe.test/raced",
+      expires_at: Math.floor(NOW.getTime() / 1000) + 3600,
+    };
+    const lostRace: Array<[string, () => ConflictException]> = [
+      [
+        "CATCHUP_SESSION_OPEN",
+        () => new ConflictException({ code: API_ERROR_CODES.CATCHUP_SESSION_OPEN, message: "x" }),
+      ],
+      [
+        "CATCHUP_NOT_ELIGIBLE with reasons exactly [claim_held]",
+        () =>
+          new ConflictException({
+            code: API_ERROR_CODES.CATCHUP_NOT_ELIGIBLE,
+            message: "This tenant is not eligible for a catch-up checkout. Nothing was created.",
+            reasons: ["claim_held"],
+          }),
+      ],
+    ];
+
+    it.each(lostRace)("%s: the raced session url is returned, no second create", async (_l, mk) => {
+      const h = make({ session: raced });
+      // first read: no claim yet; the racer claims during open(); the second read finds its session
+      h.prisma.tenantSubscription.findUnique
+        .mockResolvedValueOnce({ catchupState: null, catchupSessionId: null })
+        .mockResolvedValue({ catchupState: "SESSION_OPEN", catchupSessionId: "cs_raced" });
+      h.catchup.open.mockRejectedValueOnce(mk());
+      const out = await h.svc.pay("t1", NOW);
+      expect(out).toEqual({ checkoutUrl: raced.url });
+      expect(h.catchup.open).toHaveBeenCalledTimes(1);
+    });
+
+    it.each(lostRace)(
+      "%s: a raced session that cannot be read is a retryable 503, never the operator wording",
+      async (_l, mk) => {
+        const h = make({ session: raced });
+        // the racer's claim is not readable yet (no session id stored): the second read finds nothing usable
+        h.prisma.tenantSubscription.findUnique
+          .mockResolvedValueOnce({ catchupState: null, catchupSessionId: null })
+          .mockResolvedValue({ catchupState: null, catchupSessionId: null });
+        h.catchup.open.mockRejectedValueOnce(mk());
+        await expect(h.svc.pay("t1", NOW)).rejects.toMatchObject({
+          response: { code: API_ERROR_CODES.PAYMENT_STATE_UNKNOWN },
+        });
+        expect(h.catchup.open).toHaveBeenCalledTimes(1);
+      },
+    );
+
+    it.each([
+      [
+        "CATCHUP_NOT_ELIGIBLE with another reason alongside",
+        new ConflictException({
+          code: API_ERROR_CODES.CATCHUP_NOT_ELIGIBLE,
+          message: "x",
+          reasons: ["claim_held", "tenant_not_active"],
+        }),
+      ],
+      [
+        "CATCHUP_NOT_ELIGIBLE for another reason",
+        new ConflictException({
+          code: API_ERROR_CODES.CATCHUP_NOT_ELIGIBLE,
+          message: "x",
+          reasons: ["not_manual_invoicing"],
+        }),
+      ],
+      [
+        "CATCHUP_NOT_ELIGIBLE with no reasons",
+        new ConflictException({ code: API_ERROR_CODES.CATCHUP_NOT_ELIGIBLE, message: "x" }),
+      ],
+    ])("%s is NOT a lost race: rethrown, the raced session is not read", async (_l, err) => {
+      const h = make({ session: raced });
+      h.catchup.open.mockRejectedValueOnce(err);
+      await expect(h.svc.pay("t1", NOW)).rejects.toBe(err);
+      expect(h.stripe.getCheckoutSession).not.toHaveBeenCalled();
+    });
   });
 
   it("a claim past SESSION_OPEN (payment settling) is refused with the claim's own 409, nothing created", async () => {

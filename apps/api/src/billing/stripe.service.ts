@@ -186,6 +186,14 @@ export class StripeService implements OnModuleInit {
     return this.client.checkout.sessions.retrieve(sessionId);
   }
 
+  /**
+   * Expire an OPEN Checkout session at Stripe (it can no longer be paid). Resolves with Stripe's reply (status
+   * "expired"); rejects when Stripe refuses (e.g. the session is already complete) or cannot be reached.
+   */
+  async expireCheckoutSession(sessionId: string): Promise<any> {
+    return this.client.checkout.sessions.expire(sessionId);
+  }
+
   /** `options.idempotencyKey` makes a retried update a replay, never a second application. */
   async updateSubscription(
     subId: string,

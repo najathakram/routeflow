@@ -342,7 +342,7 @@ export class CatchupCheckoutService {
    */
   async open(
     tenantId: string,
-    opts: { expectedStubCents: number; now?: Date; successUrl?: string; cancelUrl?: string },
+    opts: { expectedStubCents: number; now?: Date; successPath?: string; cancelPath?: string },
   ): Promise<{ checkoutUrl: string; sessionId: string; stubCents: number; shape: string }> {
     const now = opts.now ?? new Date();
     if (!this.stripe.isConfigured) {
@@ -409,8 +409,9 @@ export class CatchupCheckoutService {
         addonSkus: fresh._inputs!.addonSkus,
         plan: fresh.plan,
         now,
-        successUrl: opts.successUrl ?? `${base}/settings/billing?checkout=success`,
-        cancelUrl: opts.cancelUrl ?? `${base}/settings/billing?checkout=cancelled`,
+        // PATHS ("/settings/billing?..."), joined to the one FRONTEND_URL base here
+        successUrl: `${base}${opts.successPath ?? "/settings/billing?checkout=success"}`,
+        cancelUrl: `${base}${opts.cancelPath ?? "/settings/billing?checkout=cancelled"}`,
       });
       session = await this.stripe.client.checkout.sessions.create(withCheckoutPolicy(params), {
         idempotencyKey: `${tenantId}:catchup-session:${plan.paidThrough.getTime()}:${now.getTime()}`,

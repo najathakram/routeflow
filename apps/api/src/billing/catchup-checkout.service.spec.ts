@@ -339,6 +339,37 @@ describe("MF2 -> SA-733r9: paid coverage is one walk over every paid source (act
     expect(params.automatic_tax?.enabled).not.toBe(true);
   });
 
+  describe("F6: the return paths are joined to the one FRONTEND_URL base inside open()", () => {
+    const saved = process.env.FRONTEND_URL;
+    afterEach(() => {
+      if (saved === undefined) delete process.env.FRONTEND_URL;
+      else process.env.FRONTEND_URL = saved;
+    });
+
+    it("successPath / cancelPath become base + path in the Stripe session", async () => {
+      process.env.FRONTEND_URL = "https://app.test";
+      const h = make({ invoices: [OCT_OPEN], sub: sub() });
+      await h.svc.open("t1", {
+        now: NOW,
+        expectedStubCents: 31000,
+        successPath: "/settings/billing?paid=1",
+        cancelPath: "/settings/billing?checkout=cancelled",
+      });
+      const params = h.stripe.client.checkout.sessions.create.mock.calls[0][0];
+      expect(params.success_url).toBe("https://app.test/settings/billing?paid=1");
+      expect(params.cancel_url).toBe("https://app.test/settings/billing?checkout=cancelled");
+    });
+
+    it("with no paths the defaults are unchanged (the super-admin route)", async () => {
+      process.env.FRONTEND_URL = "https://app.test";
+      const h = make({ invoices: [OCT_OPEN], sub: sub() });
+      await h.svc.open("t1", { now: NOW, expectedStubCents: 31000 });
+      const params = h.stripe.client.checkout.sessions.create.mock.calls[0][0];
+      expect(params.success_url).toBe("https://app.test/settings/billing?checkout=success");
+      expect(params.cancel_url).toBe("https://app.test/settings/billing?checkout=cancelled");
+    });
+  });
+
   it("activated Sep 26 ([Sep 26, Oct 26)): eligible before AND after the next window is issued (S = Oct 26)", async () => {
     const nextWindow = {
       ...OCT_OPEN,

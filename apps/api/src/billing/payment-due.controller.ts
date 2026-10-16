@@ -22,8 +22,9 @@ interface AuthUser {
 
 /**
  * The signed-in tenant's own "payment due" read and self-serve pay. The tenant id is ALWAYS the JWT's: no route here
- * takes an id, an amount or a plan from the request. The pay route is a workspace admin's, and the read-only guard
- * lets it through (paying is how read-only ends: see read-only-registry.ts).
+ * takes an id, an amount or a plan from the request. The pay route is a workspace admin's. It is NOT on the read-only
+ * allow-list (read-only-registry.ts): a read-only tenant has no payment due here (the planner refuses a tenant that is
+ * not ACTIVE) and the guard refuses the POST; making billing read-only payable is a separate row.
  */
 @ApiTags("billing")
 @ApiBearerAuth()

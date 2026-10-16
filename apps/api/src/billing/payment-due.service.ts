@@ -1,4 +1,4 @@
-import { ConflictException, Injectable, Logger } from "@nestjs/common";
+import { ConflictException, Injectable, Logger, ServiceUnavailableException } from "@nestjs/common";
 import { API_ERROR_CODES } from "../common/api-error-codes";
 import { resolveZone } from "../common/tenant-time-zone";
 import { PrismaService } from "../prisma/prisma.service";
@@ -49,15 +49,25 @@ function dateKeyIn(d: Date, timeZone: string): string {
   }).format(d);
 }
 
-/** Did `periodStart` fall on a calendar day before today's, in `timeZone` (UTC for none or an unknown zone)? */
-export function isPastDue(periodStart: Date, now: Date, timeZone: string | null): boolean {
-  let zone = timeZone || "UTC";
-  try {
-    dateKeyIn(now, zone);
-  } catch {
-    zone = "UTC";
-  }
-  return dateKeyIn(periodStart, zone) < dateKeyIn(now, zone);
+/**
+ * Did `periodStart` fall on a calendar day before today's, in `timeZone`? The zone is the one `resolveZone` returned
+ * (always valid, UTC when the tenant has none): this does not second-guess it.
+ */
+export function isPastDue(periodStart: Date, now: Date, timeZone: string): boolean {
+  return dateKeyIn(periodStart, timeZone) < dateKeyIn(now, timeZone);
+}
+
+/** The pay race: another click claimed the catch-up between our read and our create (open() refused for that reason alone). */
+function lostTheClaimRace(err: unknown): boolean {
+  if (!(err instanceof ConflictException)) return false;
+  const body = err.getResponse() as { code?: string; reasons?: unknown };
+  if (body?.code === API_ERROR_CODES.CATCHUP_SESSION_OPEN) return true;
+  return (
+    body?.code === API_ERROR_CODES.CATCHUP_NOT_ELIGIBLE &&
+    Array.isArray(body.reasons) &&
+    body.reasons.length === 1 &&
+    body.reasons[0] === "claim_held"
+  );
 }
 
 @Injectable()
@@ -78,8 +88,7 @@ export class PaymentDueService {
     const plan = report.plan;
     // below the Stripe minimum the line is forgiven (the session carries none): there is nothing to pay
     if (!plan.ok || plan.stub.totalCents <= 0 || plan.stub.belowStripeMinimum) return NOT_DUE;
-    const zonePrisma = this.prisma as unknown as Parameters<typeof resolveZone>[0];
-    const zone = await resolveZone(zonePrisma, { tenantId });
+    const zone = await resolveZone(this.prisma, { tenantId });
     return {
       due: true,
       pastDue: isPastDue(plan.stub.from, now, zone.zone),
@@ -104,32 +113,38 @@ export class PaymentDueService {
     const open = await this.openSessionUrl(tenantId, now);
     if (open) return { checkoutUrl: open };
 
-    const base = process.env.FRONTEND_URL ?? "http://localhost:3001";
     try {
       const out = await this.catchup.open(tenantId, {
         expectedStubCents: view.amountCents,
         now,
-        successUrl: `${base}/settings/billing?paid=1`,
-        cancelUrl: `${base}/settings/billing?checkout=cancelled`,
+        // paths: open() joins them to its one FRONTEND_URL base
+        successPath: "/settings/billing?paid=1",
+        cancelPath: "/settings/billing?checkout=cancelled",
       });
       return { checkoutUrl: out.checkoutUrl };
     } catch (err) {
-      // A parallel click won the claim between our read and our create: hand back its session, never a second one.
-      if (
-        err instanceof ConflictException &&
-        (err.getResponse() as { code?: string })?.code === API_ERROR_CODES.CATCHUP_SESSION_OPEN
-      ) {
-        const raced = await this.openSessionUrl(tenantId, now).catch(() => null);
+      // A parallel click won the claim between our read and our create: hand back its session, never a second one
+      // (and never the operator-facing "not eligible" wording).
+      if (lostTheClaimRace(err)) {
+        // the racer's own coded refusals/503 from this read propagate as they are (all tenant-safe wording);
+        // a claim we cannot see yet is "try again", never open()'s operator-facing "not eligible" text
+        const raced = await this.openSessionUrl(tenantId, now);
         if (raced) return { checkoutUrl: raced };
+        throw this.stateUnknown(tenantId, "read");
       }
       throw err;
     }
   }
 
   /**
-   * The stored claim's session URL while it is still payable. Null when there is no claim (or its expired session
-   * has just been released, exactly as the `checkout.session.expired` webhook would). Any other held state is the
-   * claim's own coded 409: a payment already settling must not be paid twice.
+   * The stored claim's session URL while it is still payable. Null when there is no claim, or its session is
+   * confirmed EXPIRED at Stripe and the claim has just been released (exactly as the `checkout.session.expired`
+   * webhook would). Any other held state is the claim's own coded 409: a payment already settling must not be paid
+   * twice. Stripe is the authority, and nothing is released or created on a guess:
+   *  - open and still live, with a url: that url;
+   *  - open but past its time (or with no url): Stripe is told to expire it, and only its reply "expired" releases;
+   *  - complete (on the read or on the expire reply): the claim's AWAITING_FIRST_PAYMENT 409, nothing released;
+   *  - unreadable, an unknown status, or Stripe unreachable on either call: a retryable 503, nothing touched.
    */
   private async openSessionUrl(tenantId: string, now: Date): Promise<string | null> {
     const row = (await this.prisma.tenantSubscription.findUnique({
@@ -139,16 +154,52 @@ export class PaymentDueService {
     const state = row?.catchupState ?? null;
     if (!state) return null;
     if (state !== "SESSION_OPEN" || !row?.catchupSessionId) throw claimRefusal(state)!;
+    const sessionId = row.catchupSessionId;
 
-    const session = await this.stripe.getCheckoutSession(row.catchupSessionId);
-    const expiresMs = Number(session?.expires_at ?? 0) * 1000;
-    if (session?.status === "open" && session.url && expiresMs > now.getTime()) {
-      return session.url as string;
+    let session: { status?: string; url?: string | null; expires_at?: number | null } | null;
+    try {
+      session = await this.stripe.getCheckoutSession(sessionId);
+    } catch (err) {
+      throw this.stateUnknown(tenantId, "read", err);
     }
     if (session?.status === "complete") throw claimRefusal("AWAITING_FIRST_PAYMENT")!;
-    // expired (or gone past its time): release the claim by the same CAS the webhook uses, then create afresh
+    if (session?.status === "expired") {
+      await this.release(tenantId, session);
+      return null;
+    }
+    if (session?.status !== "open") throw this.stateUnknown(tenantId, "read");
+
+    const expiresMs = Number(session.expires_at ?? 0) * 1000;
+    if (session.url && expiresMs > now.getTime()) return session.url;
+
+    // open, but past its time or without a url: tell Stripe it is dead before releasing anything
+    let reply: { status?: string } | null;
+    try {
+      reply = await this.stripe.expireCheckoutSession(sessionId);
+    } catch (err) {
+      throw this.stateUnknown(tenantId, "expire", err);
+    }
+    if (reply?.status === "expired") {
+      await this.release(tenantId, reply);
+      return null;
+    }
+    if (!reply || typeof reply.status !== "string") throw this.stateUnknown(tenantId, "expire");
+    throw claimRefusal("AWAITING_FIRST_PAYMENT")!; // complete (or anything but expired): never release, never recreate
+  }
+
+  /** Release the claim by the same CAS the `checkout.session.expired` webhook uses. */
+  private async release(tenantId: string, expired: unknown): Promise<void> {
     this.logger.log(`payment-due: releasing the expired catch-up session of tenant ${tenantId}`);
-    await this.claim.onSessionExpired(session);
-    return null;
+    await this.claim.onSessionExpired(expired);
+  }
+
+  private stateUnknown(tenantId: string, step: "read" | "expire", err?: unknown) {
+    this.logger.warn(
+      `payment-due: could not confirm the catch-up session of tenant ${tenantId} (${step})${err ? `: ${(err as Error).message}` : ""}`,
+    );
+    return new ServiceUnavailableException({
+      code: API_ERROR_CODES.PAYMENT_STATE_UNKNOWN,
+      message: "We couldn't confirm the status of your payment just now. Try again in a moment.",
+    });
   }
 }
