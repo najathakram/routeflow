@@ -25,13 +25,38 @@ function wrapper() {
 beforeEach(() => jest.clearAllMocks());
 
 describe("tenant-units hooks", () => {
-  it("lists with includeArchived=1 in ONE request", async () => {
-    get.mockResolvedValue({ data: [] });
+  it("lists the ACTIVE units in one request and the ARCHIVED ones by page (SA-810)", async () => {
+    get.mockImplementation(async (_url: string, opts?: { params?: Record<string, unknown> }) => {
+      if (!opts?.params?.archived)
+        return { data: [{ id: "a", name: "Case", archivedAt: null, productCount: 0 }] };
+      if (!opts.params.cursor) {
+        return {
+          data: {
+            items: [{ id: "o1", name: "Old", archivedAt: "2026-10-01T00:00:00Z", productCount: 0 }],
+            nextCursor: "c1",
+          },
+        };
+      }
+      return {
+        data: {
+          items: [{ id: "o2", name: "Older", archivedAt: "2026-10-01T00:00:00Z", productCount: 0 }],
+          nextCursor: null,
+        },
+      };
+    });
     const { Wrapper } = wrapper();
     const { result } = renderHook(() => useTenantUnits(), { wrapper: Wrapper });
     await waitFor(() => expect(result.current.isSuccess).toBe(true));
-    expect(get).toHaveBeenCalledTimes(1);
-    expect(get).toHaveBeenCalledWith("/units", { params: { includeArchived: 1 } });
+    expect(get).toHaveBeenCalledWith("/units");
+    expect(get).toHaveBeenCalledWith("/units", { params: { archived: 1 } });
+    expect(result.current.data?.map((u) => u.id)).toEqual(["a", "o1"]);
+    expect(result.current.hasMoreArchived).toBe(true);
+    await act(async () => {
+      await result.current.fetchMoreArchived();
+    });
+    await waitFor(() => expect(result.current.data?.map((u) => u.id)).toEqual(["a", "o1", "o2"]));
+    expect(get).toHaveBeenCalledWith("/units", { params: { archived: 1, cursor: "c1" } });
+    expect(result.current.hasMoreArchived).toBe(false);
   });
 
   it("create posts {name}; rename and archive patch separately; all refresh the list", async () => {

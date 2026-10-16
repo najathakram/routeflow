@@ -85,7 +85,8 @@ function UnitsScreen() {
   }, [setTitle]);
   const { toast } = useToast();
   const online = useOnline();
-  const { data, isLoading, isError, refetch } = useTenantUnits();
+  const { data, isLoading, isError, refetch, hasMoreArchived, fetchMoreArchived } =
+    useTenantUnits();
   const create = useCreateTenantUnit();
   const update = useUpdateTenantUnit();
 
@@ -465,7 +466,8 @@ function UnitsScreen() {
                 ) : (
                   <ChevronRight className="mr-1 h-4 w-4" />
                 )}
-                Archived ({archived.length})
+                Archived ({archived.length}
+                {hasMoreArchived ? "+" : ""})
               </button>
               {showArchived && (
                 <ul
@@ -498,6 +500,15 @@ function UnitsScreen() {
                     </li>
                   ))}
                 </ul>
+              )}
+              {showArchived && hasMoreArchived && (
+                <button
+                  type="button"
+                  className={`${textBtn} mt-1 min-h-[44px] sm:min-h-[32px]`}
+                  onClick={() => fetchMoreArchived()}
+                >
+                  Show more archived
+                </button>
               )}
             </div>
           )}

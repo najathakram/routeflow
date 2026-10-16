@@ -1,4 +1,7 @@
 /**
+ * SA-810 pins (Mac mini lane): G6d equivalence of the grouped count with the retired correlated one,
+ * the sqlKeyOf == unitNameKey collation pin, the archived paging and the 200-unit cap on a real DB.
+ *
  * Units U-1 — DB lane for the pieces a mocked prisma cannot prove: the single productCount query
  * (DISTINCT across ProductUnit.label via tenantUnitId and the three Product text columns, matched by
  * nameKey) and the rename transaction through the REAL tenant-wrapped `tenantTransaction` proxy,
@@ -9,7 +12,7 @@
  */
 import { randomUUID } from "crypto";
 import { ConflictException, NotFoundException } from "@nestjs/common";
-import { PrismaClient } from "@prisma/client";
+import { Prisma, PrismaClient } from "@prisma/client";
 import { PrismaPg } from "@prisma/adapter-pg";
 import { Pool } from "pg";
 import { describeDb, requireLocalDatabaseUrl } from "../common/testing/db-spec";
@@ -18,6 +21,8 @@ import { TenantContextService } from "../tenant/tenant-context.service";
 import { AuditService } from "../audit/audit.service";
 import { UnitsService } from "./units.service";
 import { unitNameKey } from "./piece-words";
+import { sqlKeyOf } from "./unit-name-sql";
+import { MAX_ACTIVE_TENANT_UNITS } from "./unit-room";
 import type { JwtPayload } from "../auth/jwt-payload.interface";
 
 // eslint-disable-next-line @typescript-eslint/no-var-requires
@@ -191,7 +196,7 @@ describeDb("tenant units against real Postgres", () => {
     await product(B, "Other tenant", { unit: "Case" }); // another tenant's text never counts
     void p1;
     void p2;
-    const [row] = (await asA(() => service.list(false))).filter((u) => u.id === caseUnit.id);
+    const [row] = (await asA(() => service.list())).filter((u) => u.id === caseUnit.id);
     expect(row.productCount).toBe(3);
   });
 
@@ -200,7 +205,7 @@ describeDb("tenant units against real Postgres", () => {
     const p1 = await product(A, "P1", { unit: "Div" });
     const p2 = await product(A, "P2", { packLabel: " div " });
     await product(A, "P3", { unit: "Di" }); // what a v-eating trim would match
-    const [row] = (await asA(() => service.list(false))).filter((u) => u.id === div.id);
+    const [row] = (await asA(() => service.list())).filter((u) => u.id === div.id);
     expect(row.productCount).toBe(2);
     const out = await asA(() => service.update(div.id, { name: "Dive" }, user));
     expect(out.productsUpdated).toBe(2);
@@ -212,7 +217,7 @@ describeDb("tenant units against real Postgres", () => {
     const u = await asA(() => service.create({ name: "Case" }, user));
     const p1 = await product(A, "P1", { unit: "Case\u3000" });
     const p2 = await product(A, "P2", { packLabel: "\ufeff\u2003Case\u202f" });
-    const [row] = (await asA(() => service.list(false))).filter((x) => x.id === u.id);
+    const [row] = (await asA(() => service.list())).filter((x) => x.id === u.id);
     expect(row.productCount).toBe(2);
     const out = await asA(() => service.update(u.id, { name: "Carton" }, user));
     expect(out.productsUpdated).toBe(2);
@@ -229,7 +234,7 @@ describeDb("tenant units against real Postgres", () => {
     expect(await raw.tenantUnit.count({ where: { tenantId: A } })).toBe(1);
     const p1 = await product(A, "P1", { unit: nfd }); // stored NFD, unit stored NFC
     const p2 = await product(A, "P2", { packLabel: ` ${nfc} ` });
-    const [row] = (await asA(() => service.list(false))).filter((u) => u.id === unit.id);
+    const [row] = (await asA(() => service.list())).filter((u) => u.id === unit.id);
     expect(row.productCount).toBe(2);
     const out = await asA(() => service.update(unit.id, { name: "Carton" }, user));
     expect(out.productsUpdated).toBe(2);
@@ -292,7 +297,7 @@ describeDb("tenant units against real Postgres", () => {
     const before = await raw.product.findUnique({ where: { id: p.id } });
     await asA(() => service.update(u.id, { archived: true }, user));
     expect(await raw.product.findUnique({ where: { id: p.id } })).toEqual(before);
-    expect(await asA(() => service.list(false))).toEqual([]);
+    expect(await asA(() => service.list())).toEqual([]);
     const again = await asA(() => service.create({ name: "pallet" }, user));
     expect(again.id).toBe(u.id);
     expect(again.archivedAt).toBeNull();
@@ -317,7 +322,8 @@ describeDb("tenant units against real Postgres", () => {
       asA(() => service.update(mine.id, { archived: true }, user)),
     ).rejects.toBeInstanceOf(NotFoundException);
     expect((await raw.tenantUnit.findUnique({ where: { id: mine.id } }))?.archivedAt).toBeNull();
-    expect(await asA(() => service.list(true))).toEqual([]);
+    expect(await asA(() => service.list())).toEqual([]);
+    expect(await asA(() => service.listArchived())).toEqual({ items: [], nextCursor: null });
   });
   describe("rename vs sold lines (LINES_AT_OTHER_SIZE), through the parent order / invoice", () => {
     const caseAt12 = async () => {
@@ -423,7 +429,7 @@ describeDb("tenant units against real Postgres", () => {
     it("a product holding ÉTUI in capitals is counted and renamed under the unit Étui", async () => {
       const unit = await asA(() => service.create({ name: "\u00c9tui" }, user));
       const p = await product(A, "P1", { unit: "\u00c9TUI", packLabel: "E\u0301TUI" });
-      const [row] = (await asA(() => service.list(false))).filter((u) => u.id === unit.id);
+      const [row] = (await asA(() => service.list())).filter((u) => u.id === unit.id);
       expect(row.productCount).toBe(1);
       const out = await asA(() => service.update(unit.id, { name: "Carton" }, user));
       expect(out.productsUpdated).toBe(1);
@@ -431,6 +437,104 @@ describeDb("tenant units against real Postgres", () => {
         unit: "Carton",
         packLabel: "Carton",
       });
+    });
+  });
+  describe("SA-810: one grouped usage count, the collation pin, archived paging and the cap", () => {
+    const k = (col: string) => sqlKeyOf(Prisma.sql`p.${Prisma.raw(`"${col}"`)}`);
+    /** The RETIRED correlated per-unit count (units.service.ts before SA-810), kept as the oracle. */
+    const correlatedCounts = async (tenantId: string) => {
+      const rows = await raw.$queryRaw<Array<{ id: string; productCount: number }>>(Prisma.sql`
+        SELECT u."id",
+          (SELECT COUNT(*)::int FROM (
+            SELECT pu."productId" AS pid FROM "ProductUnit" pu WHERE pu."tenantUnitId" = u."id"
+            UNION
+            SELECT p."id" FROM "Product" p
+            WHERE p."tenantId" = u."tenantId"
+              AND (${k("baseUnitLabel")} = u."nameKey"
+                OR ${k("packLabel")} = u."nameKey"
+                OR ${k("unit")} = u."nameKey")
+          ) used) AS "productCount"
+        FROM "TenantUnit" u
+        WHERE u."tenantId" = ${tenantId}
+        ORDER BY lower(u."name"), u."id"`);
+      return Object.fromEntries(rows.map((r) => [r.id, Number(r.productCount)]));
+    };
+
+    it("G6d: the grouped query returns the same counts as the correlated one (FK rows, all 3 columns, a product in two places, NFD Café)", async () => {
+      const caseU = await asA(() => service.create({ name: "Case" }, user));
+      const cafe = await asA(() => service.create({ name: "Caf\u00e9" }, user));
+      const box = await asA(() => service.create({ name: "Box" }, user));
+      const old = await asA(() => service.create({ name: "Pallet" }, user));
+      await asA(() => service.update(old.id, { archived: true }, user));
+      const p1 = await product(A, "P1", { packLabel: " CASE ", unit: "case" }); // two places, one product
+      await product(A, "P2", { baseUnitLabel: "Case" });
+      const p3 = await product(A, "P3"); // only via a linked level
+      await level(A, p3.id, "Case", 12, caseU.id);
+      await level(A, p1.id, "Case", 24, caseU.id); // FK row AND text match on one product
+      await product(A, "P4", { unit: "Cafe\u0301" }); // NFD
+      await product(A, "P5", { baseUnitLabel: "\u00a0caf\u00e9\u00a0" }); // NBSP-padded NFC
+      await product(A, "P6", { unit: "Pallet" }); // archived unit still counts
+      await product(A, "P7", { packLabel: "Box", unit: "Box" });
+      await product(B, "Other tenant", { unit: "Case" });
+      const oracle = await correlatedCounts(A);
+      const grouped = [
+        ...(await asA(() => service.list())),
+        ...(await asA(() => service.listArchived())).items,
+      ];
+      expect(Object.fromEntries(grouped.map((u) => [u.id, u.productCount]))).toEqual(oracle);
+      expect(oracle).toEqual({ [caseU.id]: 3, [cafe.id]: 2, [box.id]: 1, [old.id]: 1 });
+    });
+
+    it.each([
+      ["NFC Caf\u00e9", "Caf\u00e9"],
+      ["NFD Cafe\u0301", "Cafe\u0301"],
+      ["\u00c9TUI", "\u00c9TUI"],
+      ["NBSP-padded", "\u00a0Case\u00a0"],
+      ["Stra\u00dfe", "Stra\u00dfe"],
+      ["STRASSE", "STRASSE"],
+    ])("collation pin: sqlKeyOf(x) equals unitNameKey(x) for %s", async (_label, word) => {
+      const rows = await raw.$queryRaw<Array<{ k: string }>>(
+        Prisma.sql`SELECT ${sqlKeyOf(Prisma.sql`${word}::text`)} AS k`,
+      );
+      expect(rows[0].k).toBe(unitNameKey(word));
+    });
+
+    it("the archived list pages 100 at a time in (lower(name), id) order and every archived unit appears once", async () => {
+      const names = Array.from({ length: 105 }, (_, i) => `Old ${String(i).padStart(3, "0")}`);
+      await raw.tenantUnit.createMany({
+        data: names.map((name) => ({
+          tenantId: A,
+          name,
+          nameKey: unitNameKey(name),
+          archivedAt: new Date(),
+        })),
+      });
+      const first = await asA(() => service.listArchived());
+      expect(first.items).toHaveLength(100);
+      expect(first.nextCursor).not.toBeNull();
+      const second = await asA(() => service.listArchived(first.nextCursor!));
+      expect(second.items).toHaveLength(5);
+      expect(second.nextCursor).toBeNull();
+      expect([...first.items, ...second.items].map((u) => u.name)).toEqual(names);
+    });
+
+    it("at 200 active units a person add is 409 TENANT_UNIT_LIMIT; archive one and the add succeeds", async () => {
+      await raw.tenantUnit.createMany({
+        data: Array.from({ length: MAX_ACTIVE_TENANT_UNITS }, (_, i) => ({
+          tenantId: A,
+          name: `U${i}`,
+          nameKey: `u${i}`,
+        })),
+      });
+      await expect(asA(() => service.create({ name: "Crate" }, user))).rejects.toBeInstanceOf(
+        ConflictException,
+      );
+      const one = await raw.tenantUnit.findFirst({ where: { tenantId: A, nameKey: "u0" } });
+      await asA(() => service.update(one!.id, { archived: true }, user));
+      await expect(asA(() => service.create({ name: "Crate" }, user))).resolves.toMatchObject({
+        name: "Crate",
+      });
+      expect(await raw.tenantUnit.count({ where: { tenantId: A, archivedAt: null } })).toBe(200);
     });
   });
 });

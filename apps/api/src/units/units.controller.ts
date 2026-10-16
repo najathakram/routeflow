@@ -27,10 +27,16 @@ import { UpdateUnitDto } from "./dto/update-unit.dto";
 export class UnitsController {
   constructor(private readonly units: UnitsService) {}
 
+  /**
+   * `GET /units` is the ACTIVE units (an array, at most about 200). `GET /units?archived=1[&cursor=]`
+   * is one page of the ARCHIVED units, `{ items, nextCursor }`, 100 per page (SA-810).
+   */
   @Get()
   @Roles(UserRole.OPERATOR)
-  list(@Query("includeArchived") includeArchived?: string) {
-    return this.units.list(includeArchived === "1" || includeArchived === "true");
+  list(@Query("archived") archived?: string, @Query("cursor") cursor?: string) {
+    if (archived === "1" || archived === "true")
+      return this.units.listArchived(cursor || undefined);
+    return this.units.list();
   }
 
   @Post()

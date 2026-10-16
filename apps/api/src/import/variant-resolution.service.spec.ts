@@ -216,6 +216,28 @@ describe("VariantResolutionService", () => {
         );
       });
 
+      it("SA-810 G6c: at the 200-unit cap an import confirmation of a NEW pack word saves and never touches the unit list", async () => {
+        // completeSetup writes Product.unit TEXT only (a names list is never a math source): it adds no
+        // TenantUnit, so the cap can neither refuse it nor be exceeded by it. Each row saves on its own.
+        prisma.tenantUnit.count.mockResolvedValue(200);
+        prisma.product.findUnique.mockResolvedValue({ id: "n1", unit: "Each", unitsPerBox: 24 });
+        prisma.product.update.mockResolvedValue({ id: "n1", unit: "12ct" });
+        prisma.productUnit.findMany.mockResolvedValue([]);
+        lockingTx(jest.fn().mockResolvedValue(0));
+        await expect(service.completeSetup("n1", { unit: "12ct" })).resolves.toMatchObject({
+          unit: "12ct",
+        });
+        prisma.product.findUnique.mockResolvedValue({ id: "n2", unit: "Each", unitsPerBox: 24 });
+        prisma.product.update.mockResolvedValue({ id: "n2", unit: "24pk" });
+        lockingTx(jest.fn().mockResolvedValue(0));
+        await expect(service.completeSetup("n2", { unit: "24pk" })).resolves.toMatchObject({
+          unit: "24pk",
+        });
+        for (const m of ["create", "createMany", "update", "updateMany", "upsert"] as const) {
+          expect(prisma.tenantUnit[m]).not.toHaveBeenCalled();
+        }
+      });
+
       it("a price or category confirmation takes no units lock and reads no levels", async () => {
         prisma.product.findUnique.mockResolvedValue({ id: "n1" });
         prisma.product.update.mockResolvedValue({ id: "n1" });

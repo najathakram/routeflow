@@ -17,6 +17,8 @@ function stubs() {
       create: jest.fn(),
       update: jest.fn(),
       updateMany: jest.fn().mockResolvedValue({ count: 1 }),
+      // Active units of the tenant (SA-810 cap): well under the 200 cap unless a test says otherwise.
+      count: jest.fn().mockResolvedValue(3),
     },
     product: {
       findMany: jest.fn().mockResolvedValue([]),
@@ -81,7 +83,8 @@ describe("UnitsService", () => {
     it("refuses without a tenant context (the JWT is the only source)", async () => {
       const { service, prisma } = make();
       prisma.getTenantId.mockReturnValue(null);
-      await expect(service.list(false)).rejects.toBeInstanceOf(BadRequestException);
+      await expect(service.list()).rejects.toBeInstanceOf(BadRequestException);
+      await expect(service.listArchived()).rejects.toBeInstanceOf(BadRequestException);
       await expect(service.create({ name: "Case" }, user)).rejects.toBeInstanceOf(
         BadRequestException,
       );
@@ -116,31 +119,33 @@ describe("UnitsService", () => {
   });
 
   describe("list", () => {
-    it("hides archived by default; includeArchived returns them (one raw query, not per row)", async () => {
+    it("list() is the ACTIVE units (one raw query, not per row); listArchived() pages the archived ones", async () => {
       const { service, prisma } = make();
       prisma.$queryRaw.mockResolvedValue([
-        { id: "u1", name: "Case", archivedAt: null, productCount: 12 },
+        { id: "u1", name: "Case", archivedAt: null, productCount: 12, sortKey: "case" },
       ]);
-      const out = await service.list(false);
+      const out = await service.list();
       expect(prisma.$queryRaw).toHaveBeenCalledTimes(1);
       const sql = (prisma.$queryRaw.mock.calls[0][0] as Prisma.Sql).sql;
       expect(sql).toContain('"archivedAt" IS NULL');
+      expect(sql).not.toContain("LIMIT");
       expect(out).toEqual([dtoRow({ productCount: 12 })]);
 
       prisma.$queryRaw.mockClear();
       prisma.$queryRaw.mockResolvedValue([
         { id: "u2", name: "Pallet", archivedAt: new Date("2026-10-01T00:00:00Z"), productCount: 0 },
       ]);
-      const all = await service.list(true);
-      expect((prisma.$queryRaw.mock.calls[0][0] as Prisma.Sql).sql).not.toContain(
-        '"archivedAt" IS NULL',
+      const page = await service.listArchived();
+      expect((prisma.$queryRaw.mock.calls[0][0] as Prisma.Sql).sql).toContain(
+        '"archivedAt" IS NOT NULL',
       );
-      expect(all[0].archivedAt).toBe("2026-10-01T00:00:00.000Z");
+      expect(page.items[0].archivedAt).toBe("2026-10-01T00:00:00.000Z");
+      expect(page.nextCursor).toBeNull();
     });
 
     it("counts DISTINCT products across ProductUnit.label (via tenantUnitId), baseUnitLabel, packLabel and unit by nameKey", async () => {
       const { service, prisma } = make();
-      await service.list(true);
+      await service.list();
       const sql = (prisma.$queryRaw.mock.calls[0][0] as Prisma.Sql).sql;
       expect(sql).toContain("UNION");
       expect(sql).toContain('"tenantUnitId"');
@@ -150,7 +155,7 @@ describe("UnitsService", () => {
 
     it("the SQL trim set uses only escapes PostgreSQL E-strings define (there is NO \\v: it reads as a literal v)", async () => {
       const { service, prisma } = make();
-      await service.list(true);
+      await service.list();
       const sql = (prisma.$queryRaw.mock.calls[0][0] as Prisma.Sql).sql;
       const trimSets = sql.match(/E'[^']*'/g) ?? [];
       expect(trimSets).toHaveLength(3);
@@ -163,9 +168,193 @@ describe("UnitsService", () => {
 
     it("compares the text columns to nameKey through the same NFC normalisation", async () => {
       const { service, prisma } = make();
-      await service.list(true);
+      await service.list();
       const sql = (prisma.$queryRaw.mock.calls[0][0] as Prisma.Sql).sql;
       expect(sql.match(/normalize\(/g)).toHaveLength(3);
+    });
+  });
+
+  describe("SA-810 G6e: ONE grouped usage query (not a correlated subquery per unit)", () => {
+    const unitRows = (n: number) =>
+      Array.from({ length: n }, (_, i) => ({
+        id: `u${i}`,
+        name: `Unit ${i}`,
+        archivedAt: null,
+        productCount: i,
+        sortKey: `unit ${i}`,
+      }));
+
+    it.each([1, 200])("list() makes exactly one $queryRaw for %i unit(s)", async (n) => {
+      const { service, prisma, db } = make();
+      prisma.$queryRaw.mockResolvedValue(unitRows(n));
+      const out = await service.list();
+      expect(out).toHaveLength(n);
+      expect(prisma.$queryRaw).toHaveBeenCalledTimes(1);
+      expect(db.$queryRaw).not.toHaveBeenCalled();
+    });
+
+    it("the query is the grouped shape: FK rows UNION text matches via LATERAL VALUES of the 3 keys, joined on nameKey, GROUP BY u.id", async () => {
+      const { service, prisma } = make();
+      await service.list();
+      const sql = (prisma.$queryRaw.mock.calls[0][0] as Prisma.Sql).sql.replace(/\s+/g, " ");
+      // No per-unit correlation: the ProductUnit branch is filtered by tenant, not by the outer unit.
+      expect(sql).not.toContain('pu."tenantUnitId" = u."id"');
+      expect(sql).toContain('pu."tenantId" = ?');
+      expect(sql).toContain('pu."tenantUnitId" IS NOT NULL');
+      expect(sql).toContain("UNION");
+      expect(sql).toContain("CROSS JOIN LATERAL (VALUES (");
+      expect(sql).toMatch(
+        /JOIN "TenantUnit" \w+ ON \w+\."tenantId" = p\."tenantId" AND \w+\."nameKey" = k\.key/,
+      );
+      expect(sql).toContain('LEFT JOIN used ON used.uid = u."id"');
+      expect(sql).toContain('COUNT(used.pid)::int AS "productCount"');
+      expect(sql).toContain('GROUP BY u."id"');
+      expect(sql).toContain('ORDER BY lower(u."name"), u."id"');
+    });
+
+    it("oneRow (create / archive results) uses the same grouped query with the id filter", async () => {
+      const { service, prisma, db } = make();
+      db.tenantUnit.create.mockResolvedValue(row());
+      prisma.$queryRaw.mockResolvedValue([dtoRow()]);
+      await service.create({ name: "Case" }, user);
+      const q = prisma.$queryRaw.mock.calls[0][0] as Prisma.Sql;
+      expect(q.sql).toContain('GROUP BY u."id"');
+      expect(q.sql).toContain('u."id" = ?');
+      expect(q.values).toContain("u1");
+    });
+  });
+
+  describe("SA-810: the archived list pages (cursor on (lower(name), id), 100 per page)", () => {
+    const archivedRows = (n: number) =>
+      Array.from({ length: n }, (_, i) => ({
+        id: `a${String(i).padStart(3, "0")}`,
+        name: `Old ${String(i).padStart(3, "0")}`,
+        archivedAt: new Date("2026-10-01T00:00:00Z"),
+        productCount: 0,
+        sortKey: `old ${String(i).padStart(3, "0")}`,
+      }));
+
+    it("asks for 101 rows and returns 100 plus a cursor when there are more", async () => {
+      const { service, prisma } = make();
+      prisma.$queryRaw.mockResolvedValue(archivedRows(101));
+      const page = await service.listArchived();
+      expect(prisma.$queryRaw).toHaveBeenCalledTimes(1);
+      const q = prisma.$queryRaw.mock.calls[0][0] as Prisma.Sql;
+      expect(q.sql).toContain("LIMIT");
+      expect(q.values).toContain(101);
+      expect(page.items).toHaveLength(100);
+      expect(page.items[99].id).toBe("a099");
+      expect(page.nextCursor).toEqual(expect.any(String));
+      // The cursor resumes AFTER the last row shown, keyed by the database's own lower(name).
+      prisma.$queryRaw.mockClear();
+      prisma.$queryRaw.mockResolvedValue(archivedRows(3));
+      const next = await service.listArchived(page.nextCursor!);
+      const q2 = prisma.$queryRaw.mock.calls[0][0] as Prisma.Sql;
+      expect(q2.sql.replace(/\s+/g, " ")).toContain('(lower(u."name"), u."id") > (?, ?)');
+      expect(q2.values).toEqual(expect.arrayContaining(["old 099", "a099"]));
+      expect(next.nextCursor).toBeNull();
+    });
+
+    it("exactly 100 archived rows is one page with no cursor", async () => {
+      const { service, prisma } = make();
+      prisma.$queryRaw.mockResolvedValue(archivedRows(100));
+      const page = await service.listArchived();
+      expect(page.items).toHaveLength(100);
+      expect(page.nextCursor).toBeNull();
+    });
+
+    it.each(["not-a-cursor", Buffer.from('{"x":1}').toString("base64url")])(
+      "a malformed cursor %j is a 400, never a query",
+      async (cursor) => {
+        const { service, prisma } = make();
+        await expect(service.listArchived(cursor)).rejects.toBeInstanceOf(BadRequestException);
+        expect(prisma.$queryRaw).not.toHaveBeenCalled();
+      },
+    );
+  });
+
+  describe("SA-810 G6a: at most 200 ACTIVE units; a person at the cap gets 409 TENANT_UNIT_LIMIT", () => {
+    const limitBody = (active: number) =>
+      expect.objectContaining({
+        code: "TENANT_UNIT_LIMIT",
+        message: `You have ${active} units. Archive one you no longer use to add another.`,
+        limit: 200,
+      });
+    const rejectsLimit = async (p: Promise<unknown>, active = 200) => {
+      const err = await p.then(
+        () => null,
+        (e) => e,
+      );
+      expect(err).toBeInstanceOf(ConflictException);
+      expect((err as ConflictException).getResponse()).toEqual(limitBody(active));
+    };
+
+    it("adding unit #201 is a 409 and writes nothing", async () => {
+      const h = make();
+      h.db.tenantUnit.count.mockResolvedValue(200);
+      await rejectsLimit(h.service.create({ name: "Crate" }, user));
+      expect(h.db.tenantUnit.create).not.toHaveBeenCalled();
+      expect(h.audit.log).not.toHaveBeenCalled();
+      expect(h.db.tenantUnit.count).toHaveBeenCalledWith({
+        where: { tenantId: T, archivedAt: null },
+      });
+    });
+
+    it("unit #200 is still allowed", async () => {
+      const h = make();
+      h.db.tenantUnit.count.mockResolvedValue(199);
+      h.db.tenantUnit.create.mockResolvedValue(row({ name: "Crate", nameKey: "crate" }));
+      h.prisma.$queryRaw.mockResolvedValue([dtoRow({ name: "Crate" })]);
+      await h.service.create({ name: "Crate" }, user);
+      expect(h.db.tenantUnit.create).toHaveBeenCalledTimes(1);
+    });
+
+    it("adding a name that is already ACTIVE at the cap is not an add: it returns the unit (idempotent)", async () => {
+      const h = make();
+      h.db.tenantUnit.count.mockResolvedValue(200);
+      h.db.tenantUnit.findFirst.mockResolvedValue(row());
+      h.prisma.$queryRaw.mockResolvedValue([dtoRow()]);
+      await expect(h.service.create({ name: "case" }, user)).resolves.toEqual(dtoRow());
+      expect(h.db.tenantUnit.create).not.toHaveBeenCalled();
+    });
+
+    it("restore at the cap is an add: 409 through Restore and through adding the archived name", async () => {
+      const h = make();
+      h.db.tenantUnit.count.mockResolvedValue(200);
+      h.db.tenantUnit.findFirst.mockResolvedValue(row({ archivedAt: new Date() }));
+      await rejectsLimit(h.service.update("u1", { archived: false }, user));
+      await rejectsLimit(h.service.create({ name: "Case" }, user));
+      expect(h.db.tenantUnit.updateMany).not.toHaveBeenCalled();
+      expect(h.audit.log).not.toHaveBeenCalled();
+    });
+
+    it("archive one, then the add succeeds (archive frees a slot and is never capped)", async () => {
+      const h = make();
+      h.db.tenantUnit.count.mockResolvedValue(200);
+      h.db.tenantUnit.findFirst.mockResolvedValueOnce(row({ id: "u7", name: "Tray" }));
+      h.prisma.$queryRaw.mockResolvedValue([dtoRow({ id: "u7", archivedAt: new Date() })]);
+      await h.service.update("u7", { archived: true }, user);
+      expect(h.db.tenantUnit.updateMany).toHaveBeenCalledTimes(1);
+      h.db.tenantUnit.count.mockResolvedValue(199);
+      h.db.tenantUnit.findFirst.mockResolvedValue(null);
+      h.db.tenantUnit.create.mockResolvedValue(row({ id: "u8", name: "Crate" }));
+      h.prisma.$queryRaw.mockResolvedValue([dtoRow({ id: "u8", name: "Crate" })]);
+      await expect(h.service.create({ name: "Crate" }, user)).resolves.toMatchObject({
+        id: "u8",
+      });
+    });
+
+    it("a grandfathered tenant at 230 keeps its rows: it can archive, but cannot add or restore", async () => {
+      const h = make();
+      h.db.tenantUnit.count.mockResolvedValue(230);
+      h.db.tenantUnit.findFirst.mockResolvedValueOnce(row());
+      h.prisma.$queryRaw.mockResolvedValue([dtoRow({ archivedAt: new Date() })]);
+      await h.service.update("u1", { archived: true }, user);
+      expect(h.db.tenantUnit.updateMany).toHaveBeenCalledTimes(1);
+      h.db.tenantUnit.count.mockResolvedValue(229);
+      h.db.tenantUnit.findFirst.mockResolvedValue(null);
+      await rejectsLimit(h.service.create({ name: "Crate" }, user), 229);
+      expect(h.db.tenantUnit.create).not.toHaveBeenCalled();
     });
   });
 

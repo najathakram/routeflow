@@ -18,6 +18,7 @@ import { API_ERROR_CODES } from "../common/api-error-codes";
 import { PrismaService } from "../prisma/prisma.service";
 import { isPieceSynonym, unitNameKey } from "../units/piece-words";
 import { sqlKeyOf } from "../units/unit-name-sql";
+import { unitRoom } from "../units/unit-room";
 import { lockProductPack } from "../units/tenant-units-lock";
 import { MAX_UNIT_NAME_LENGTH } from "../units/units.service";
 import { CreateProductUnitDto, UpdateProductUnitDto } from "./dto/product-unit.dto";
@@ -44,6 +45,19 @@ type Sibling = LevelKey & {
 };
 
 const norm = unitNameKey;
+
+/** A level's link to its tenant unit; `unitNotListed` = the name was not added because the list is full. */
+interface UnitLink {
+  tenantUnitId: string | null;
+  unitNotListed?: string;
+}
+
+/** A saved level, plus `unitNotListed: [name]` when its name was not added to the full unit list (SA-810). */
+const withNotListed = <T extends object>(
+  row: T,
+  link: UnitLink,
+): T & { unitNotListed?: string[] } =>
+  link.unitNotListed ? { ...row, unitNotListed: [link.unitNotListed] } : row;
 
 /** What the API returns for a level — never `tenantId` or audit columns. */
 const UNIT_SELECT = {
@@ -102,7 +116,8 @@ export class ProductUnitsService {
       await this.assertNoLineDisagrees(tx, productId, label, dto.factorToBase);
       const makeDefault = dto.isDefaultSelling === true;
       if (makeDefault) await this.clearDefaults(tx, productId);
-      return tx.productUnit.create({
+      const link = await this.tenantUnitIdFor(tx, productId, label, actorId);
+      const created = await tx.productUnit.create({
         data: {
           productId,
           label,
@@ -116,10 +131,11 @@ export class ProductUnitsService {
           priceTier5: dto.priceTier5 ?? null,
           isDefaultSelling: makeDefault,
           sortOrder: dto.sortOrder ?? 0,
-          tenantUnitId: await this.tenantUnitIdFor(tx, productId, label, actorId),
+          tenantUnitId: link.tenantUnitId,
         },
         select: UNIT_SELECT,
       });
+      return withNotListed(created, link);
     });
   }
 
@@ -164,20 +180,21 @@ export class ProductUnitsService {
           data: { factorToBase: d.factorToBase },
         });
       }
-      return tx.productUnit.update({
+      // The link follows the NAME: a retyped label must leave the old unit's rename behind.
+      const link =
+        dto.label !== undefined ? await this.tenantUnitIdFor(tx, productId, label, actorId) : null;
+      const updated = await tx.productUnit.update({
         where: { id: unitId },
         data: {
           ...rest,
           label,
           factorToBase,
           ...(isDefaultSelling !== undefined ? { isDefaultSelling } : {}),
-          // The link follows the NAME: a retyped label must leave the old unit's rename behind.
-          ...(dto.label !== undefined
-            ? { tenantUnitId: await this.tenantUnitIdFor(tx, productId, label, actorId) }
-            : {}),
+          ...(link ? { tenantUnitId: link.tenantUnitId } : {}),
         },
         select: UNIT_SELECT,
       });
+      return link ? withNotListed(updated, link) : updated;
     });
   }
 
@@ -236,16 +253,24 @@ export class ProductUnitsService {
    * An ARCHIVED unit is refused (UNIT_ARCHIVED) unless this product already uses it: a level that
    * already carries the name keeps its meaning, but archiving means "stop offering it", so no new
    * level may pick it up. This is the ONE place that rule lives (create and update both come here).
+   *
+   * At the active-unit cap (SA-810, `unitRoom`) a NEW name is not added and not refused: the level saves
+   * unlinked with its label (a names list is never a math source) and the result reports
+   * `unitNotListed`. Refusing would block a catalog save over a names list (L-207); adding would make the
+   * cap meaningless. The count is read under the SHARED tenant-units lock this write already holds.
    */
   private async tenantUnitIdFor(
     tx: any,
     productId: string,
     label: string,
     actorId: string | null,
-  ): Promise<string | null> {
+  ): Promise<UnitLink> {
     const name = label.normalize("NFC").trim();
-    if (!name || name.length > MAX_UNIT_NAME_LENGTH || isPieceSynonym(name)) return null;
-    const tenantId = this.prisma.getTenantId();
+    if (!name || name.length > MAX_UNIT_NAME_LENGTH || isPieceSynonym(name)) {
+      return { tenantUnitId: null };
+    }
+    // Every caller runs inside locked(), which refused a call with no tenant.
+    const tenantId = this.prisma.getTenantId() as string;
     const nameKey = unitNameKey(name);
     const find = () =>
       tx.tenantUnit.findFirst({
@@ -254,6 +279,7 @@ export class ProductUnitsService {
       });
     let unit = await find();
     if (!unit) {
+      if ((await unitRoom(tx, tenantId)) <= 0) return { tenantUnitId: null, unitNotListed: name };
       const { count } = await tx.tenantUnit.createMany({
         data: [{ tenantId, name, nameKey }],
         skipDuplicates: true,
@@ -285,7 +311,7 @@ export class ProductUnitsService {
         });
       }
     }
-    return unit?.id ?? null;
+    return { tenantUnitId: unit?.id ?? null };
   }
 
   /** `findFirst` (not `findUnique`) so the tenant filter is ANDed into the WHERE — a foreign

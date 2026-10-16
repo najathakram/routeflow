@@ -120,4 +120,19 @@ describe("UnitsController", () => {
       },
     );
   });
+
+  it("GET /units is the active array; ?archived=1 is one archived page with the cursor passed through (SA-810)", async () => {
+    const units = {
+      list: jest.fn().mockResolvedValue([]),
+      listArchived: jest.fn().mockResolvedValue({ items: [], nextCursor: null }),
+    };
+    const c = new UnitsController(units as never);
+    await c.list();
+    expect(units.list).toHaveBeenCalledWith();
+    await c.list("1", "abc");
+    expect(units.listArchived).toHaveBeenCalledWith("abc");
+    await c.list("true", "");
+    expect(units.listArchived).toHaveBeenLastCalledWith(undefined);
+    expect(units.list).toHaveBeenCalledTimes(1);
+  });
 });

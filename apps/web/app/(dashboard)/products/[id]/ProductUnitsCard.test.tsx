@@ -200,6 +200,21 @@ describe("ProductUnitsCard", () => {
     expect(removeMutate).toHaveBeenCalledWith("u-case", expect.any(Object));
   });
 
+  it("SA-810: a level saved while the unit list is full says its name wasn't added (the level still saved)", async () => {
+    createMutate.mockImplementation((_b, opts) =>
+      opts?.onSuccess?.({ ...caseUnit, label: "Crate", unitNotListed: ["Crate"] }),
+    );
+    renderCard();
+    fireEvent.change(screen.getByLabelText("New unit"), { target: { value: "Crate" } });
+    fireEvent.change(screen.getByLabelText("Pieces per new unit"), { target: { value: "48" } });
+    fireEvent.click(screen.getByRole("button", { name: "Add unit" }));
+    expect(
+      await screen.findByText(
+        "Saved. 'Crate' wasn't added to your unit list because the list is full (200).",
+      ),
+    ).toBeInTheDocument();
+  });
+
   it("B594: a failed write raises NO toast of its own — the global MutationCache handler already shows the server's message once", async () => {
     mockUnits = [caseUnit];
     const err = { response: { data: { message: "size cannot change" } } };

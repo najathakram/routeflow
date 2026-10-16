@@ -38,6 +38,8 @@ function build(opts: {
     tenantUnit: {
       findFirst: jest.fn().mockResolvedValue({ id: "tu-1" }),
       createMany: jest.fn().mockResolvedValue({ count: 1 }),
+      // Active units of the tenant (SA-810 cap of 200): well under it unless a test says otherwise.
+      count: jest.fn().mockResolvedValue(3),
     },
     auditLog: { create: jest.fn().mockResolvedValue({}) },
     product: { findFirst: jest.fn().mockResolvedValue(product) },
@@ -321,6 +323,64 @@ describe("ProductUnitsService: levels are linked to the tenant's unit by name (t
     await service.update("p1", "u-case", { price: 5 });
     expect(db.tenantUnit.findFirst).not.toHaveBeenCalled();
     expect(tx.productUnit.update.mock.calls[0][0].data).not.toHaveProperty("tenantUnitId");
+  });
+});
+
+describe("SA-810 G6b: a level write at the 200-unit cap skips the list link (never refuses, never adds #201)", () => {
+  it("a NEW name at the cap: no unit is added, the level saves unlinked, and the result says unitNotListed", async () => {
+    const { service, db, tx } = build({});
+    db.tenantUnit.count.mockResolvedValue(200);
+    db.tenantUnit.findFirst.mockResolvedValue(null);
+    const out = await service.create("p1", { label: "Crate", factorToBase: 48 }, "user-7");
+    expect(db.tenantUnit.count).toHaveBeenCalledWith({
+      where: { tenantId: "t1", archivedAt: null },
+    });
+    expect(db.tenantUnit.createMany).not.toHaveBeenCalled();
+    expect(db.auditLog.create).not.toHaveBeenCalled();
+    expect(tx.productUnit.create).toHaveBeenCalledTimes(1);
+    expect(tx.productUnit.create.mock.calls[0][0].data).toMatchObject({
+      label: "Crate",
+      tenantUnitId: null,
+    });
+    expect(out).toMatchObject({ label: "Crate", unitNotListed: ["Crate"] });
+  });
+
+  it("a grandfathered tenant over the cap (230) skips the add the same way", async () => {
+    const { service, db } = build({});
+    db.tenantUnit.count.mockResolvedValue(230);
+    db.tenantUnit.findFirst.mockResolvedValue(null);
+    const out = await service.create("p1", { label: "Crate", factorToBase: 48 });
+    expect(db.tenantUnit.createMany).not.toHaveBeenCalled();
+    expect(out).toMatchObject({ unitNotListed: ["Crate"] });
+  });
+
+  it("an EXISTING name at the cap links normally (guard): no count, no unitNotListed", async () => {
+    const { service, db, tx } = build({});
+    db.tenantUnit.count.mockResolvedValue(200);
+    db.tenantUnit.findFirst.mockResolvedValue({ id: "tu-1", archivedAt: null });
+    const out = await service.create("p1", { label: "Case", factorToBase: 288 });
+    expect(tx.productUnit.create.mock.calls[0][0].data.tenantUnitId).toBe("tu-1");
+    expect(db.tenantUnit.createMany).not.toHaveBeenCalled();
+    expect(out).not.toHaveProperty("unitNotListed");
+  });
+
+  it("below the cap a new name is added as today, with no unitNotListed", async () => {
+    const { service, db } = build({});
+    db.tenantUnit.count.mockResolvedValue(199);
+    db.tenantUnit.findFirst.mockResolvedValueOnce(null).mockResolvedValueOnce({ id: "tu-new" });
+    const out = await service.create("p1", { label: "Crate", factorToBase: 48 });
+    expect(db.tenantUnit.createMany).toHaveBeenCalledTimes(1);
+    expect(out).not.toHaveProperty("unitNotListed");
+  });
+
+  it("a relabel to a new name at the cap saves unlinked with unitNotListed too", async () => {
+    const { service, db, tx } = build({ rows: [caseRow] });
+    db.tenantUnit.count.mockResolvedValue(200);
+    db.tenantUnit.findFirst.mockResolvedValue(null);
+    const out = await service.update("p1", "u-case", { label: "Crate" });
+    expect(db.tenantUnit.createMany).not.toHaveBeenCalled();
+    expect(tx.productUnit.update.mock.calls[0][0].data.tenantUnitId).toBeNull();
+    expect(out).toMatchObject({ unitNotListed: ["Crate"] });
   });
 });
 

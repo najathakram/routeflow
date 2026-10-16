@@ -2,6 +2,7 @@ import {
   checkUnitName,
   normalizeUnitName,
   unitErrorMessage,
+  unitNotListedNotice,
   type TenantUnitDto,
 } from "./tenant-units";
 
@@ -121,5 +122,28 @@ describe("unitErrorMessage", () => {
     expect(unitErrorMessage(http(500), "Case")).toBe(fixed);
     expect(unitErrorMessage(http(400, { message: "raw server text" }), "Case")).toBe(fixed);
     expect(unitErrorMessage(new Error("boom"), "Case")).toBe(fixed);
+  });
+});
+
+describe("SA-810: the 200-unit cap", () => {
+  it("a 409 TENANT_UNIT_LIMIT is the fixed sentence with the active count from the body", () => {
+    expect(
+      unitErrorMessage(http(409, { code: "TENANT_UNIT_LIMIT", limit: 200, active: 200 }), "Crate"),
+    ).toBe("You have 200 units. Archive one you no longer use to add another.");
+    expect(
+      unitErrorMessage(http(409, { code: "TENANT_UNIT_LIMIT", limit: 200, active: 230 }), "Crate"),
+    ).toBe("You have 230 units. Archive one you no longer use to add another.");
+    // A body without the counts still reads as a sentence (the cap).
+    expect(unitErrorMessage(http(409, { code: "TENANT_UNIT_LIMIT" }), "Crate")).toBe(
+      "You have 200 units. Archive one you no longer use to add another.",
+    );
+  });
+
+  it("a level saved with unitNotListed says so; a normal save says nothing", () => {
+    expect(unitNotListedNotice({ id: "l1", unitNotListed: ["Crate"] })).toBe(
+      "Saved. 'Crate' wasn't added to your unit list because the list is full (200).",
+    );
+    expect(unitNotListedNotice({ id: "l1" })).toBeNull();
+    expect(unitNotListedNotice(undefined)).toBeNull();
   });
 });

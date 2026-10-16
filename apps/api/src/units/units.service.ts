@@ -14,6 +14,7 @@ import { UNIT_NAME_EMPTY, UNIT_NAME_IS_PIECE, UNIT_NAME_TOO_LONG } from "./dto/c
 import { isPieceSynonym, unitNameKey } from "./piece-words";
 import { lockTenantUnits } from "./tenant-units-lock";
 import { sqlKeyOf } from "./unit-name-sql";
+import { MAX_ACTIVE_TENANT_UNITS, unitRoom } from "./unit-room";
 
 export interface UnitDto {
   id: string;
@@ -27,11 +28,47 @@ export interface UnitUpdateResult {
   productsUpdated: number;
 }
 
+/** One page of the archived units; `nextCursor` null = the last page. */
+export interface UnitsPage {
+  items: UnitDto[];
+  nextCursor: string | null;
+}
+
 interface RawUnitRow {
   id: string;
   name: string;
   archivedAt: Date | null;
   productCount: number;
+  /** The database's own lower(name): the cursor key, so a page boundary never depends on JS case-folding. */
+  sortKey: string;
+}
+
+/** The archived list can grow without bound (archive is the only delete), so it pages. */
+export const ARCHIVED_PAGE_SIZE = 100;
+
+interface UnitsCursor {
+  sortKey: string;
+  id: string;
+}
+
+const encodeCursor = (c: UnitsCursor): string =>
+  Buffer.from(JSON.stringify([c.sortKey, c.id]), "utf8").toString("base64url");
+
+function decodeCursor(raw: string): UnitsCursor {
+  try {
+    const v: unknown = JSON.parse(Buffer.from(raw, "base64url").toString("utf8"));
+    if (
+      Array.isArray(v) &&
+      v.length === 2 &&
+      typeof v[0] === "string" &&
+      typeof v[1] === "string"
+    ) {
+      return { sortKey: v[0], id: v[1] };
+    }
+  } catch {
+    // fall through: a cursor the API did not issue
+  }
+  throw new BadRequestException("That page link is no longer valid. Reload the list.");
 }
 
 export const MAX_UNIT_NAME_LENGTH = 30;
@@ -99,42 +136,86 @@ export class UnitsService {
   }
 
   /**
-   * ONE query: each unit with the DISTINCT products that use its name, across ProductUnit.label (via
-   * tenantUnitId) and Product.baseUnitLabel / packLabel / unit (matched by nameKey). UNION dedups a
-   * product that uses the name in several places.
+   * ONE grouped query (SA-810): each unit with the DISTINCT products that use its name, across
+   * ProductUnit.label (via tenantUnitId) and Product.baseUnitLabel / packLabel / unit (matched by
+   * nameKey). The tenant's products are read ONCE, each with its three keys, and hash-joined to
+   * TenantUnit (tenantId, nameKey); UNION dedups a (unit, product) pair, so a product using the name in
+   * several places counts once. Replaces a correlated subquery per unit (O(units x products)).
    */
   private async rows(
     tenantId: string,
-    opts: { includeArchived: boolean; id?: string },
-  ): Promise<UnitDto[]> {
-    const archivedFilter = opts.includeArchived
-      ? Prisma.empty
-      : Prisma.sql`AND u."archivedAt" IS NULL`;
+    opts: { archived?: boolean; id?: string; after?: UnitsCursor; limit?: number },
+  ): Promise<RawUnitRow[]> {
+    const archivedFilter =
+      opts.archived === undefined
+        ? Prisma.empty
+        : opts.archived
+          ? Prisma.sql`AND u."archivedAt" IS NOT NULL`
+          : Prisma.sql`AND u."archivedAt" IS NULL`;
     const idFilter = opts.id ? Prisma.sql`AND u."id" = ${opts.id}` : Prisma.empty;
-    const raw = await this.prisma.$queryRaw<RawUnitRow[]>(Prisma.sql`
-      SELECT u."id", u."name", u."archivedAt",
-        (SELECT COUNT(*)::int FROM (
-          SELECT pu."productId" AS pid FROM "ProductUnit" pu WHERE pu."tenantUnitId" = u."id"
-          UNION
-          SELECT p."id" FROM "Product" p
-          WHERE p."tenantId" = u."tenantId"
-            AND (${sqlKey("baseUnitLabel")} = u."nameKey"
-              OR ${sqlKey("packLabel")} = u."nameKey"
-              OR ${sqlKey("unit")} = u."nameKey")
-        ) used) AS "productCount"
-      FROM "TenantUnit" u
-      WHERE u."tenantId" = ${tenantId} ${archivedFilter} ${idFilter}
-      ORDER BY lower(u."name"), u."id"`);
-    return raw.map((r) => this.toDto(r));
+    const cursorFilter = opts.after
+      ? Prisma.sql`AND (lower(u."name"), u."id") > (${opts.after.sortKey}, ${opts.after.id})`
+      : Prisma.empty;
+    const limit = opts.limit ? Prisma.sql`LIMIT ${opts.limit}` : Prisma.empty;
+    return this.prisma.$queryRaw<RawUnitRow[]>(Prisma.sql`
+      WITH used AS (
+        SELECT pu."tenantUnitId" AS uid, pu."productId" AS pid
+        FROM "ProductUnit" pu
+        WHERE pu."tenantId" = ${tenantId} AND pu."tenantUnitId" IS NOT NULL
+        UNION
+        SELECT tu."id", p."id"
+        FROM "Product" p
+        CROSS JOIN LATERAL (VALUES (${sqlKey("baseUnitLabel")}), (${sqlKey("packLabel")}), (${sqlKey("unit")})) k(key)
+        JOIN "TenantUnit" tu ON tu."tenantId" = p."tenantId" AND tu."nameKey" = k.key
+        WHERE p."tenantId" = ${tenantId}
+      )
+      SELECT u."id", u."name", u."archivedAt", lower(u."name") AS "sortKey",
+        COUNT(used.pid)::int AS "productCount"
+      FROM "TenantUnit" u LEFT JOIN used ON used.uid = u."id"
+      WHERE u."tenantId" = ${tenantId} ${archivedFilter} ${idFilter} ${cursorFilter}
+      GROUP BY u."id"
+      ORDER BY lower(u."name"), u."id"
+      ${limit}`);
   }
 
-  async list(includeArchived: boolean): Promise<UnitDto[]> {
+  /** The ACTIVE units (at most 200 plus any soft-cap overshoot, so not paged). */
+  async list(): Promise<UnitDto[]> {
     const tenantId = this.requireTenant();
-    return this.rows(tenantId, { includeArchived });
+    return (await this.rows(tenantId, { archived: false })).map((r) => this.toDto(r));
+  }
+
+  /** The ARCHIVED units, 100 per page, by (lower(name), id); pass the previous page's `nextCursor`. */
+  async listArchived(cursor?: string): Promise<UnitsPage> {
+    const tenantId = this.requireTenant();
+    const after = cursor === undefined ? undefined : decodeCursor(cursor);
+    const raw = await this.rows(tenantId, { archived: true, after, limit: ARCHIVED_PAGE_SIZE + 1 });
+    const page = raw.slice(0, ARCHIVED_PAGE_SIZE);
+    const last = page[page.length - 1];
+    const nextCursor =
+      raw.length > ARCHIVED_PAGE_SIZE && last
+        ? encodeCursor({ sortKey: last.sortKey, id: last.id })
+        : null;
+    return { items: page.map((r) => this.toDto(r)), nextCursor };
+  }
+
+  /**
+   * A person's add (create or restore) at the cap: 409 TENANT_UNIT_LIMIT, nothing written. A tenant
+   * already above the cap keeps its rows; only the add is refused.
+   */
+  private async assertUnitRoom(db: Parameters<typeof unitRoom>[0], tenantId: string) {
+    const room = await unitRoom(db, tenantId);
+    if (room > 0) return;
+    const active = MAX_ACTIVE_TENANT_UNITS - room;
+    throw new ConflictException({
+      code: API_ERROR_CODES.TENANT_UNIT_LIMIT,
+      message: `You have ${active} units. Archive one you no longer use to add another.`,
+      limit: MAX_ACTIVE_TENANT_UNITS,
+      active,
+    });
   }
 
   private async oneRow(tenantId: string, id: string): Promise<UnitDto> {
-    const [row] = await this.rows(tenantId, { includeArchived: true, id });
+    const [row] = (await this.rows(tenantId, { id })).map((r) => this.toDto(r));
     if (!row) throw new NotFoundException("Unit not found");
     return row;
   }
@@ -151,6 +232,7 @@ export class UnitsService {
 
     let existing = await db.tenantUnit.findFirst({ where: { tenantId, nameKey } });
     if (!existing) {
+      await this.assertUnitRoom(db, tenantId);
       try {
         const created = await db.tenantUnit.create({ data: { tenantId, name, nameKey } });
         await this.audit.log({
@@ -169,6 +251,7 @@ export class UnitsService {
       }
     }
     if (existing.archivedAt) {
+      await this.assertUnitRoom(db, tenantId); // a restore is an add
       // Conditional on still being archived: of two concurrent restores only one matches a row, and
       // only that one audits.
       const { count } = await db.tenantUnit.updateMany({
@@ -219,6 +302,8 @@ export class UnitsService {
     if (archived === (existing.archivedAt != null)) {
       return { unit: await this.oneRow(tenantId, id), productsUpdated: 0 };
     }
+    // Restoring is an add (capped); archiving frees a slot and is never capped.
+    if (!archived) await this.assertUnitRoom(db, tenantId);
     // Conditional on the state still being the one read: of two concurrent requests only one matches a
     // row (count 1) and only that one audits; the other found it already done.
     const { count } = await db.tenantUnit.updateMany({

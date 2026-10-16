@@ -7,7 +7,13 @@ const toast = jest.fn();
 const createMutate = jest.fn();
 const updateMutate = jest.fn();
 const refetch = jest.fn();
-let state: { data?: unknown[]; isLoading: boolean; isError: boolean } = {
+const fetchMoreArchived = jest.fn();
+let state: {
+  data?: unknown[];
+  isLoading: boolean;
+  isError: boolean;
+  hasMoreArchived?: boolean;
+} = {
   data: [],
   isLoading: false,
   isError: false,
@@ -23,7 +29,7 @@ let flag = { enabled: true, isLoading: false, isError: false, refetch: flagRefet
 jest.mock("@/lib/api/units-settings-flag", () => ({ useUnitsSettingsFlag: () => flag }));
 jest.mock("@/lib/api/tenant-units", () => ({
   ...jest.requireActual("@/lib/api/tenant-units"),
-  useTenantUnits: () => ({ ...state, refetch }),
+  useTenantUnits: () => ({ ...state, refetch, fetchMoreArchived }),
   useCreateTenantUnit: () => ({ mutate: createMutate, isPending: false }),
   useUpdateTenantUnit: () => ({ mutate: updateMutate, isPending: false }),
 }));
@@ -387,6 +393,41 @@ describe("Units page: rename", () => {
 });
 
 describe("Units page: archive and restore", () => {
+  it("SA-810: the archived list pages: 'Show more archived' asks for the next page, and is absent on the last", () => {
+    state = {
+      data: [u("Case"), u("Old", 0, "2026-10-01T00:00:00Z")],
+      isLoading: false,
+      isError: false,
+      hasMoreArchived: true,
+    };
+    render();
+    fireEvent.click(screen.getByRole("button", { name: /Archived \(1\+\)/ }));
+    fireEvent.click(screen.getByRole("button", { name: "Show more archived" }));
+    expect(fetchMoreArchived).toHaveBeenCalledTimes(1);
+  });
+
+  it("SA-810: with every archived unit loaded there is no 'Show more archived' and the count is exact", () => {
+    setUnits(u("Case"), u("Old", 0, "2026-10-01T00:00:00Z"));
+    render();
+    fireEvent.click(screen.getByRole("button", { name: "Archived (1)" }));
+    expect(screen.queryByRole("button", { name: "Show more archived" })).toBeNull();
+  });
+
+  it("SA-810: an add at the 200-unit cap shows the fixed limit sentence inline", () => {
+    setUnits(u("Case"));
+    createMutate.mockImplementation((_v, o) =>
+      o.onError({
+        response: { status: 409, data: { code: "TENANT_UNIT_LIMIT", limit: 200, active: 200 } },
+      }),
+    );
+    render();
+    fireEvent.change(addField(), { target: { value: "Crate" } });
+    fireEvent.submit(addField().closest("form")!);
+    expect(
+      screen.getByText("You have 200 units. Archive one you no longer use to add another."),
+    ).toBeInTheDocument();
+  });
+
   it("an unused unit archives at once, toasts 'Archived X.' with an Undo that restores it", () => {
     setUnits(u("Pallet", 0));
     updateMutate.mockImplementation((_v, o) =>

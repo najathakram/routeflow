@@ -64,6 +64,10 @@
 //                    The user-facing copy is neutral ("Another change is in progress"): the blocker is not always a rename. Nothing was changed; retry.
 //   UNIT_ARCHIVED — `body.code` of the 409 when a product level is given a unit name that is ARCHIVED in Settings > Units
 //                    and the product does not already use it (restore the unit first). Nothing was written.
+//   TENANT_UNIT_LIMIT — `body.code` of the 409 when a person adds or restores a unit in Settings > Units while the tenant
+//                    already has 200 ACTIVE units (SA-810); `body.limit` is the cap and `body.active` the active count.
+//                    Archive one to free a slot. Nothing was written. A level write at the cap is never refused: it saves
+//                    the level unlinked and its response carries `unitNotListed: [name]`.
 //   UNIT_SIZE_IN_USE — `body.code` of the 409 when a product level's size would change (or a label move onto a size) while
 //                    orders or invoices already carry that label at a different size. Nothing was written.
 //   PRODUCT_PACK_STALE — `body.code` of the 409 from PATCH /products/:id when the pack the form read (expectedUnit,
@@ -242,6 +246,7 @@ export const API_ERROR_CODES = {
   UNIT_RENAME_COLLISION: "UNIT_RENAME_COLLISION",
   UNITS_RENAME_IN_PROGRESS: "UNITS_RENAME_IN_PROGRESS",
   UNIT_ARCHIVED: "UNIT_ARCHIVED",
+  TENANT_UNIT_LIMIT: "TENANT_UNIT_LIMIT",
   UNIT_SIZE_IN_USE: "UNIT_SIZE_IN_USE",
   PRODUCT_PACK_STALE: "PRODUCT_PACK_STALE",
   HOLDERS_CHANGED: "HOLDERS_CHANGED",
