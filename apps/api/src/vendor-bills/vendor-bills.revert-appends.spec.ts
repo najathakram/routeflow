@@ -731,8 +731,15 @@ describe("B846 / SA-808 — revertToDraft appends reversal rows and never delete
         }
         expect(h.sum({ productId: "prod-1" }).toNumber()).toBe(0);
         expect(h.product.currentStock.toNumber()).toBe(0);
-        // The snapshots walk the counter down to where the product ended.
-        expect(D(reversals.at(-1)?.stockAfter).toNumber()).toBe(0);
+        // The snapshots walk the counter down to where the product ended (8 on hand at the start).
+        let walk = 8;
+        for (const rev of reversals) {
+          walk += Number(rev.quantity);
+          expect(D(rev.stockAfter).toNumber()).toBe(walk);
+        }
+        expect(walk).toBe(0);
+        // Both receipt lots (5 @ $2 and 3 @ $3) are reversed or gone, none left as a phantom.
+        expect(h.lots.filter((l) => D(l.remainingQty).gt(0))).toHaveLength(0);
       });
     },
   );

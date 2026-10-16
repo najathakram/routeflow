@@ -1607,6 +1607,8 @@ export class VendorBillsService {
               type: MovementType.PURCHASE,
               quantity: new Prisma.Decimal(original.quantity).negated(),
               unitCost: original.unitCost,
+              // One instant: every row of a multi-line product carries the LAST line's average here;
+              // the replay recomputes the later rows.
               avgCostAfter: reversedAvg ?? product.averageCost ?? null,
               stockAfter,
               supplierId: original.supplierId,
