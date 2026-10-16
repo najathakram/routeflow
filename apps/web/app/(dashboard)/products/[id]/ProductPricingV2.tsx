@@ -4,6 +4,7 @@ import * as React from "react";
 import { usePriceGrid } from "@/lib/api/usePriceGrid";
 import { useUndoPrices } from "@/lib/api/usePriceWrites";
 import type { UnitsCardProduct } from "./ProductUnitsCard";
+import { CustomerPriceView } from "./units-v2/customer/CustomerPriceView";
 import { ChangePrices, useChangePrices } from "./units-v2/change-prices/ChangePrices";
 import { PriceSaveStatusLine } from "./units-v2/confirm/SaveStatusLine";
 import { usePriceUndo } from "./units-v2/confirm/usePriceUndo";
@@ -34,6 +35,7 @@ export function ProductPricingV2({
         panel={<ChangePrices open={cp.open} onClose={cp.close} openerRef={cp.opener} />}
       />
       <SaveStatus productId={product.id} />
+      <CustomerPriceView productId={product.id} />
       <PriceEditBar />
     </PriceDraftProvider>
   );

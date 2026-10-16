@@ -1,4 +1,5 @@
 import * as React from "react";
+import { priceWriteError } from "@/lib/api/usePriceWrites";
 import { isLadderRevisionStale } from "./StaleRevisionNotice";
 import type { UndoFn, UndoOutcome, UndoPreviewRow } from "./types";
 
@@ -21,9 +22,6 @@ export interface PriceUndoDeps {
     customerMoves?: number;
   }>;
 }
-
-const codeOf = (e: unknown) =>
-  (e as { response?: { data?: { code?: unknown } } } | null)?.response?.data?.code;
 
 /**
  * The `undo` the status line takes (UX-V5 section 5 item 2): ONE inverse write, previewed first when
@@ -56,7 +54,7 @@ export function usePriceUndo(deps: PriceUndoDeps): UndoFn {
       return { status: "undone" };
     } catch (e) {
       if (isLadderRevisionStale(e)) return changed();
-      if (codeOf(e) === "PRICE_UNDO_UNAVAILABLE") return { status: "unavailable" };
+      if (priceWriteError(e)?.code === "unavailable") return { status: "unavailable" };
       throw e;
     }
   }, []);
