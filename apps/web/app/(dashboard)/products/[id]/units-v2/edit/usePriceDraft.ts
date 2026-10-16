@@ -5,6 +5,7 @@ import {
   planOrderUnitSwitch,
   type CellChange,
   type CellPatch,
+  type CustomerPricingWithId,
   type LadderView,
   type Pin,
   type PricePlan,
@@ -18,6 +19,7 @@ import type {
   SavePricesResponse,
 } from "@routeflow/types";
 import { useTierLabels } from "@/lib/api/tier-labels";
+import { useProductCustomerPrices } from "@/lib/api/useProductCustomerPrices";
 import { useQueryClient } from "@tanstack/react-query";
 import { fetchPriceGrid, priceGridKey, usePriceGrid } from "@/lib/api/usePriceGrid";
 import { formatMoney } from "@/lib/format";
@@ -167,12 +169,20 @@ export function useCreatePriceDraft(productId: string, hooks: PriceDraftHooks = 
   const [undoStale, setUndoStale] = React.useState(false);
   const [notice, setNotice] = React.useState<string | null>(null);
 
+  // SA-799: a plain cell edit shows customer changes too. Same query (and cache entry) as Change prices' names; only
+  // fetched while editing, so the product page costs nothing extra when nobody edits.
+  const customerRows = useProductCustomerPrices(productId, editing).data?.customers;
+  const customers = React.useMemo(
+    () => (customerRows ?? []) as CustomerPricingWithId[],
+    [customerRows],
+  );
+
   const served = React.useMemo(() => (grid ? viewFromGrid(grid) : null), [grid]);
   const rules = React.useMemo(() => (grid ? rulesFromGrid(grid) : {}), [grid]);
 
   const fold = React.useMemo(
-    () => (served ? foldDraft(served, rules, entries, openKey, keeps, tierName) : null),
-    [served, rules, entries, openKey, keeps, tierName],
+    () => (served ? foldDraft(served, rules, entries, openKey, keeps, tierName, customers) : null),
+    [served, rules, entries, openKey, keeps, tierName, customers],
   );
   const sw = React.useMemo(() => {
     if (!fold || !orderUnit || orderUnit === fold.base.anchor) return null;
@@ -224,7 +234,7 @@ export function useCreatePriceDraft(productId: string, hooks: PriceDraftHooks = 
     setEntries(next);
     setOpenKey(key);
     if (stale.length > 0) setNotice(clearedNotice(stale));
-    const r = foldDraft(served!, rules, next, key, keeps, tierName);
+    const r = foldDraft(served!, rules, next, key, keeps, tierName, customers);
     return r.plans.get(key)!;
   };
 
@@ -418,7 +428,17 @@ export function useCreatePriceDraft(productId: string, hooks: PriceDraftHooks = 
           planKey: o.key,
           title: offer.title,
           patches: offer.kind === "tier" ? offer.patches : [],
-          moves: offer.kind === "customer" ? offer.moves : [],
+          // Only the wire fields: `against` / `cause` are display facts and must not reach the server.
+          moves:
+            offer.kind === "customer"
+              ? offer.moves.map(({ customerId, ref, tier, from, to }) => ({
+                  customerId,
+                  ref,
+                  tier,
+                  from,
+                  to,
+                }))
+              : [],
         };
         return [...rest, baked];
       });

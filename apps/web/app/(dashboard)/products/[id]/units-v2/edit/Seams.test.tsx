@@ -41,8 +41,13 @@ jest.mock("@/lib/api/tier-labels", () => ({
 }));
 jest.mock("@/lib/api/tobacco", () => ({ useHasAddon: () => false }));
 jest.mock("@/lib/api/units-v2", () => ({ usePricesV2Enabled: () => true }));
+let mockCustomers: unknown[] = [];
+const mockCustomerFetch = jest.fn();
 jest.mock("@/lib/api/useProductCustomerPrices", () => ({
-  useProductCustomerPrices: () => ({ data: { customers: [] } }),
+  useProductCustomerPrices: (_id: string, enabled: boolean) => {
+    mockCustomerFetch(enabled);
+    return { data: { customers: mockCustomers } };
+  },
 }));
 
 const cells = (v: number[], src: Array<"auto" | "set"> = []) =>
@@ -98,6 +103,8 @@ const edit = async (user: ReturnType<typeof userEvent.setup>, text = "14.5") => 
 
 beforeEach(() => {
   mockError = null;
+  mockCustomers = [];
+  mockCustomerFetch.mockReset();
   mockSave.mockReset();
   mockUndo.mockReset();
   mockGrid = { data: grid, isLoading: false, isError: false };
@@ -161,7 +168,7 @@ describe("K8 seams", () => {
           kind: "customer",
           ticked: false,
           title: "Also raise prices set for 1 customer",
-          moves: customerMoves,
+          moves: customerMoves.map((m) => ({ ...m, against: false })),
         },
       ],
       changes: [{ ref: "case", label: "Case", tier: 2, from: 13.91, to: 14 }],
@@ -236,7 +243,7 @@ describe("K8 seams", () => {
       mount();
       const plan = emptyPlan({
         patches: [{ ref: "case", tier: 2, to: 14 }],
-        offers: [customerOffer([move])],
+        offers: [customerOffer([{ ...move, against: true, cause: "shape" }])],
         changes: [{ ref: "case", label: "Case", tier: 2, from: 13.91, to: 14 }],
       });
       act(() => draft.applyPlan(plan));
@@ -310,7 +317,7 @@ describe("K8 seams", () => {
       kind: "customer",
       ticked: false,
       title: "Also raise prices set for 1 customer",
-      moves: [{ ...mv, customerId, to }],
+      moves: [{ ...mv, customerId, to, against: false }],
     });
     const apply = (to: number) => {
       act(() =>
@@ -383,6 +390,20 @@ describe("K8 seams", () => {
       );
       expect(screen.queryByRole("button", { name: "Reload prices" })).toBeNull();
     });
+  });
+
+  it("a plain cell edit plans with the product's customers: their changes show, fetched only while editing", async () => {
+    mockCustomers = [{ customerId: "c1", name: "Northside", tier: 2, orderUnit: null, set: {} }];
+    const user = userEvent.setup();
+    render();
+    expect(mockCustomerFetch.mock.calls.every(([enabled]) => enabled === false)).toBe(true);
+    await edit(user);
+    expect(mockCustomerFetch).toHaveBeenCalledWith(true);
+    const panel = screen.getByTestId(PLAN_TESTIDS.cellPlan);
+    expect(within(panel).getByTestId(PLAN_TESTIDS.alsoChanges)).toBeTruthy();
+    const rows = within(panel).getAllByTestId(PLAN_TESTIDS.customerRow);
+    expect(rows.length).toBeGreaterThan(0);
+    expect(rows[0].textContent).toContain("Northside");
   });
 
   it("one Change prices button, in the Edit row (before Edit), and none above the grid", async () => {

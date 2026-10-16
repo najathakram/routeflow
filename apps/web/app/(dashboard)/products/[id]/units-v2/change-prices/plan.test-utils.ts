@@ -74,8 +74,8 @@ export const richPlan = (): PricePlan =>
         ticked: false,
         title: "Also raise prices set for these customers, in step with their tier (2 prices).",
         moves: [
-          { customerId: "c1", ref: "can", tier: 1, from: 1.13, to: 1.2 },
-          { customerId: "c2", ref: "case", tier: 1, from: 54, to: 56.7 },
+          { customerId: "c1", ref: "can", tier: 1, from: 1.13, to: 1.2, against: false },
+          { customerId: "c2", ref: "case", tier: 1, from: 54, to: 56.7, against: false },
         ],
       },
     ],

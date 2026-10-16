@@ -209,13 +209,18 @@ export function PlanView({
                         {o.moves.map((m) => (
                           <li
                             key={`${m.customerId}|${m.ref}|${m.tier}`}
-                            className="flex gap-3 py-0.5"
+                            data-testid={T.offerMove}
+                            data-against={m.against ? "true" : "false"}
+                            className={`py-0.5 ${m.against ? AGAINST : ""}`}
                           >
-                            <span className="flex-1">
-                              {customerName(m.customerId)}, {unitLabel(m.ref)}
-                              {m.tier === 1 ? "" : `, ${tierName(m.tier)}`}
-                            </span>
-                            <Diff from={m.from} to={m.to} />
+                            <div className="flex gap-3">
+                              <span className="flex-1">
+                                {customerName(m.customerId)}, {unitLabel(m.ref)}
+                                {m.tier === 1 ? "" : `, ${tierName(m.tier)}`}
+                              </span>
+                              <Diff from={m.from} to={m.to} />
+                            </div>
+                            {m.against && <p>{WHY[m.cause ?? "shape"]}</p>}
                           </li>
                         ))}
                       </ul>

@@ -7,6 +7,7 @@ import {
   type LadderView,
   type Pin,
   type PriceTier,
+  type PriceChangeOptions,
   type PricePlan,
   type TierRules,
 } from "@routeflow/pricing";
@@ -74,6 +75,7 @@ export function foldDraft(
   openKey: string | null,
   keeps: readonly Pin[],
   tierName?: (t: PriceTier) => string,
+  customers: PriceChangeOptions["customers"] = [],
 ): FoldResult {
   let view = from;
   const patchByCell = new Map<string, CellPatch>();
@@ -106,7 +108,7 @@ export function foldDraft(
       continue;
     }
     const { ref, tier } = parseKey(e.key);
-    const p = planCellEdit(view, ref, tier, e.text, rules, tierName);
+    const p = planCellEdit(view, ref, tier, e.text, rules, tierName, { customers });
     plans.set(e.key, p);
     if (p.problems.length > 0)
       problems.push(...p.problems.map((message) => ({ ref, tier, message })));
