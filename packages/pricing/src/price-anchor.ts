@@ -30,6 +30,13 @@ export interface CustomerPricing {
 const positive = (v: number | undefined): number | null =>
   typeof v === "number" && Number.isFinite(v) && v > 0 ? v : null;
 
+/** K_C: the customer's own order unit when the ladder has it, else the anchor of the customer's tier column. */
+export function customerAnchor(view: LadderView, customer: CustomerPricing): UnitRef {
+  const own = customer.orderUnit;
+  if (own && view.rows.some((x) => x.ref === own)) return own;
+  return customer.tier === 1 ? view.anchor : (view.tierAnchors[customer.tier] ?? view.anchor);
+}
+
 /**
  * The price customer C pays for unit U, unrounded. Order: C's typed price for U; else, when C has a typed price on
  * C's order unit K, U keeps the shape of the price C would otherwise pay (D3 proportional, fold A1: the CUSTOMER'S TIER
@@ -44,9 +51,8 @@ export function customerPriceExact(
   const typed = positive(customer.set?.[ref]);
   if (typed != null) return typed;
   const tier = customer.tier;
-  const has = (r?: UnitRef | null): r is UnitRef => !!r && view.rows.some((x) => x.ref === r);
   const tierAnchor = tier === 1 ? view.anchor : (view.tierAnchors[tier] ?? view.anchor);
-  const k = has(customer.orderUnit) ? customer.orderUnit : tierAnchor;
+  const k = customerAnchor(view, customer);
   const kTyped = positive(customer.set?.[k]);
   if (kTyped != null) {
     const kPrice = ladderPriceExact(view, k, tier, rules);
