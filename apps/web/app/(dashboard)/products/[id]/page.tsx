@@ -2105,7 +2105,7 @@ export default function ProductDetailPage() {
                     })()}
                   {isEditing && (
                     <p className="mt-1.5 text-xs text-navy/50">
-                      Tiers left at 0 inherit the list price at checkout.
+                      A tier left blank or at 0 follows the list price.
                     </p>
                   )}
                 </div>

@@ -1088,8 +1088,7 @@ function SpecialPricesTab({ customerId }: { customerId: string }) {
           <div>
             <h3 className="text-base font-semibold text-navy">Default Pricing Tier</h3>
             <p className="mt-0.5 text-xs text-navy/70">
-              Applies to every product for this customer. Per-product overrides below take
-              precedence.
+              Applies to every product for this customer. Tier overrides below take precedence.
             </p>
           </div>
           {isOperator ? (
@@ -1115,8 +1114,8 @@ function SpecialPricesTab({ customerId }: { customerId: string }) {
         </div>
         {priceList.length > 0 && (
           <p className="mt-3 text-xs text-navy/70">
-            {priceList.length} product{priceList.length === 1 ? " has" : "s have"} a per-product
-            override and will keep {priceList.length === 1 ? "its" : "their"} own tier.
+            {priceList.length} product{priceList.length === 1 ? " has" : "s have"} a tier override
+            and will keep {priceList.length === 1 ? "its" : "their"} own tier.
           </p>
         )}
       </Card>
@@ -1196,15 +1195,15 @@ function SpecialPricesTab({ customerId }: { customerId: string }) {
       <Card>
         <div className="mb-4 flex items-center justify-between">
           <div>
-            <h3 className="text-base font-semibold text-navy">Product Overrides</h3>
+            <h3 className="text-base font-semibold text-navy">Tier overrides</h3>
             <p className="mt-0.5 text-xs text-navy/70">
               {hasMsrpAddon
-                ? "Override the pricing tier and/or MSRP for specific products. These override the customer's default tier and the product's default MSRP."
-                : "Override the pricing tier for specific products. These override the customer's default tier."}
+                ? "Pick a different pricing tier, and optionally an MSRP, for specific products. These beat the customer's default tier and the product's default MSRP."
+                : "Pick a different pricing tier for specific products. These beat the customer's default tier."}
             </p>
           </div>
           <Button size="sm" leftIcon={<Plus className="h-4 w-4" />} onClick={openAdd}>
-            Add Override
+            Add tier override
           </Button>
         </div>
 
@@ -1212,7 +1211,7 @@ function SpecialPricesTab({ customerId }: { customerId: string }) {
           <p className="text-sm text-navy/70">Loading…</p>
         ) : priceList.length === 0 ? (
           <div className="rounded-lg border border-dashed border-surface-border bg-surface-raised py-10 text-center">
-            <p className="text-sm text-navy/70">No product overrides set.</p>
+            <p className="text-sm text-navy/70">No tier overrides set.</p>
             <button className="mt-2 text-sm text-brand-500 hover:underline" onClick={openAdd}>
               Add the first one &rarr;
             </button>
@@ -1354,7 +1353,7 @@ function SpecialPricesTab({ customerId }: { customerId: string }) {
       <Modal
         open={isModalOpen}
         onClose={() => setIsModalOpen(false)}
-        title={editingPrice ? "Edit Price Override" : "Add Price Override"}
+        title={editingPrice ? "Edit tier override" : "Add tier override"}
         footer={
           <>
             <Button

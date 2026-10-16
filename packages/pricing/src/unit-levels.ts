@@ -25,7 +25,7 @@ export interface ResolveUnitPriceLevel {
  * again"). NULL, 0, NaN and negatives are all "derive". Coerces Decimal/string so an operator's
  * typed price can never silently round to 0.00.
  */
-function explicitPrice(v: Numeric | null | undefined): number | null {
+export function explicitPrice(v: Numeric | null | undefined): number | null {
   if (v == null) return null;
   const n = Number(v);
   return Number.isFinite(n) && n > 0 ? n : null;
@@ -127,7 +127,7 @@ const noLevel = {
   priceTier5: null,
 };
 
-function packFactorOf(product: LadderProduct): number {
+export function packFactorOf(product: LadderProduct): number {
   const upb = Math.trunc(Number(product.unitsPerBox ?? 0));
   return upb > 1 ? upb : 1;
 }
