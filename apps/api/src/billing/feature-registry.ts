@@ -645,6 +645,9 @@ export const FEATURE_REGISTRY: readonly FeatureDef[] = [
       added: "2026-10-16",
       routes: [
         "GET /products/:productId/price-grid (product-pricing.controller.ts, class-level)",
+        "POST /products/:productId/prices (product-pricing.controller.ts, class-level)",
+        "POST /products/:productId/prices/undo (product-pricing.controller.ts, class-level)",
+        "GET /customers/:customerId/unit-prices (customer-unit-prices.controller.ts, class-level)",
         "products.service.ts create and importFromZoho, product-families.service.ts createFamily and updateVariants (hasFlag, S4)",
         "S19 billing readers (customerPricing, orders/units-prices-v2.ts): orders.service.ts create, updateOrderItems (add, substitute, edit, replace-all, change-request add), getCustomerPriceHistory (pre-fill); unit-line-edit.ts; replace-all-line-build.ts; buyer-replace-keep.ts; invoice-line-override.ts (manual invoice lines); order-templates.service.ts; estimates.service.ts; buyer-catalog.service.ts (tile, detail, favorites); inline-returns-quote.service.ts",
       ],

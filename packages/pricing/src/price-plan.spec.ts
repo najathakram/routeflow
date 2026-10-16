@@ -104,7 +104,9 @@ describe("S2b G4 red row (c): the opt-in customer move", () => {
     expect(offer).toBeDefined();
     if (offer?.kind !== "customer") throw new Error("customer offer expected");
     expect(offer.ticked).toBe(false);
-    expect(offer.moves).toEqual([{ customerId: "acme", ref: "pack", tier: 2, from: 54, to: 56.7 }]);
+    expect(offer.moves).toEqual([
+      { customerId: "acme", ref: "pack", tier: 2, from: 54, to: 56.7, against: false },
+    ]);
     const moved: CustomerPricingWithId = { ...acme, set: { pack: offer.moves[0].to } };
     expect(customerPrice(p.view, "pack", moved, rules)).toBe(56.7);
     expect(customerPrice(p.view, can, moved, rules)).toBe(1.13);
@@ -123,6 +125,94 @@ describe("S2b G4 red row (c): the opt-in customer move", () => {
     if (offer?.kind !== "customer") throw new Error("customer offer expected");
     expect(offer.moves.map((m) => m.customerId)).toEqual(["acme"]);
     expect(plan(rollPlus5, [tiny, same]).offers.filter((o) => o.kind === "customer")).toEqual([]);
+  });
+});
+
+describe("S2b-2 SA-798a: the opt-in verb follows the rows", () => {
+  const customerOffer = (p: ReturnType<typeof plan>) => {
+    const o = p.offers.find((x) => x.kind === "customer");
+    if (o?.kind !== "customer") throw new Error("customer offer expected");
+    return o;
+  };
+
+  it("all moves with the change keep the owner's sentence and are not against", () => {
+    const o = customerOffer(plan(rollPlus5));
+    expect(o.title).toBe(
+      "Also raise prices set for these customers, in step with their tier (1 price).",
+    );
+    expect(o.moves.every((m) => m.against === false && m.cause === undefined)).toBe(true);
+    const lower: PriceChange = { unit: roll, direction: "lower", mode: "percent", value: 5 };
+    const lo = customerOffer(plan(lower, [{ ...acme, set: { pack: 54 } }]));
+    expect(lo.title.startsWith("Also lower prices set for these customers")).toBe(true);
+  });
+
+  it("the review scenario: a move against the change reads 'Also update' and is flagged shape", () => {
+    // Case Wholesale set at $55, Can Retail $1.25; a Wholesale customer orders by the Case with the Can set at $1.10.
+    const v = buildLadderView({ ...product, priceTier2: "55.00" }, units, {
+      orderUnit: roll,
+      packAuto: 1,
+    });
+    const cust: CustomerPricingWithId = {
+      customerId: "acme",
+      tier: 2,
+      orderUnit: "pack",
+      set: { [can]: 1.1 },
+    };
+    const p = planPriceChange(v, rollPlus5, rules, undefined, { customers: [cust] });
+    const o = customerOffer(p);
+    expect(o.title).toBe(
+      "Also update prices set for these customers, in step with their tier (1 price).",
+    );
+    expect(o.moves).toEqual([
+      { customerId: "acme", ref: can, tier: 2, from: 1.1, to: 1.05, against: true, cause: "shape" },
+    ]);
+  });
+});
+
+describe("S2b-2 SA-799: a plain cell edit shows customer changes too", () => {
+  it("a Tier-2 retype of the Can moves acme's Can $1.13 -> $1.27, one row, not against", () => {
+    const p = planCellEdit(view, can, 2, "1.30", rules, undefined, { customers: [acme] });
+    expect(p.customerChanges).toEqual([
+      {
+        customerId: "acme",
+        ref: can,
+        tier: 2,
+        from: 1.13,
+        to: 1.27,
+        against: false,
+        cause: "shape",
+      },
+    ]);
+  });
+
+  it("a lowering retype moves the customer down with it; no customers = today", () => {
+    const p = planCellEdit(view, can, 2, "1.00", rules, undefined, { customers: [acme] });
+    expect(p.customerChanges).toEqual([
+      expect.objectContaining({ ref: can, from: 1.13, to: 0.98, against: false }),
+    ]);
+    expect(planCellEdit(view, can, 2, "1.30", rules).customerChanges).toEqual([]);
+  });
+});
+
+describe("S2b-3 F20: a cell edit offers the customer opt-in too", () => {
+  const dana: CustomerPricingWithId = { customerId: "dana", tier: 2, set: { [can]: 1.1 } };
+  it("a Tier-2 retype of the Can offers dana's set Can price, unticked, with the SA-798a title", () => {
+    const p = planCellEdit(view, can, 2, "1.30", rules, undefined, { customers: [dana] });
+    const offer = p.offers.find((o) => o.kind === "customer");
+    if (offer?.kind !== "customer") throw new Error("customer offer expected");
+    expect(offer.ticked).toBe(false);
+    expect(offer.title).toBe(
+      "Also raise prices set for these customers, in step with their tier (1 price).",
+    );
+    expect(offer.moves).toEqual([
+      expect.objectContaining({ customerId: "dana", ref: can, tier: 2, from: 1.1, against: false }),
+    ]);
+    expect(offer.moves[0].to).toBeGreaterThan(1.1);
+  });
+
+  it("no customers = no offer", () => {
+    const p = planCellEdit(view, can, 2, "1.30", rules);
+    expect(p.offers.filter((o) => o.kind === "customer")).toEqual([]);
   });
 });
 

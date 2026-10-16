@@ -52,6 +52,7 @@ import {
   type CategoryTaxType,
   type PromotionRule,
 } from "@routeflow/pricing";
+import { loadCustomerPriceHistory } from "./customer-price-history-query";
 import { lockRowsNoWait, withAdvisoryLock, type LockMode } from "../common/db-locks";
 import { retryCreditTx } from "../common/tx-retry";
 import { stockTxBounded } from "../common/stock-tx";
@@ -610,37 +611,7 @@ export class OrdersService implements OnApplicationBootstrap {
   async getCustomerPriceHistory(
     customerId: string,
   ): Promise<Record<string, { lastPrice: number; listPriceAtTime: number }>> {
-    const items = await this.prisma.forTenant().orderItem.findMany({
-      where: {
-        order: {
-          customerId,
-          status: { notIn: [OrderStatus.CANCELLED] },
-        },
-        originalPrice: { not: null },
-        priceType: { not: PriceType.PROMO },
-        unitLabel: null,
-      },
-      // Order by updatedAt so the MOST RECENTLY SAVED override wins — editing a
-      // line's price on any order and saving makes it the customer's remembered
-      // price for future orders (and re-editing later supersedes it).
-      orderBy: { updatedAt: "desc" },
-      distinct: ["productId"],
-      select: {
-        productId: true,
-        unitPrice: true,
-        originalPrice: true,
-      },
-    });
-
-    const history = Object.fromEntries(
-      items.map((item) => [
-        item.productId,
-        {
-          lastPrice: roundMoney(Number(item.unitPrice)),
-          listPriceAtTime: roundMoney(Number(item.originalPrice)),
-        },
-      ]),
-    );
+    const history = await loadCustomerPriceHistory(this.prisma.forTenant(), customerId);
     // S19 R3 (SA-811a): a pack in the customer layer pre-fills the resolver's price, never the last-given one.
     return omitCustomerLayerHistory(this, customerId, history);
   }

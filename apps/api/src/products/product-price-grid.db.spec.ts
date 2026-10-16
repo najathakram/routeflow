@@ -12,7 +12,6 @@ import { NotFoundException } from "@nestjs/common";
 import { Test, TestingModule } from "@nestjs/testing";
 import { randomUUID } from "crypto";
 import { ProductPriceGridService } from "./product-price-grid.service";
-import { ProductUnitsService } from "./product-units.service";
 import { PrismaService } from "../prisma/prisma.service";
 import { TenantContextService } from "../tenant/tenant-context.service";
 import { describeDb, requireLocalDatabaseUrl } from "../common/testing/db-spec";
@@ -41,11 +40,7 @@ describeDb("units v2 price grid - real Postgres", () => {
     prisma = new PrismaService(tenantCtx);
     await prisma.$connect();
     const module: TestingModule = await Test.createTestingModule({
-      providers: [
-        ProductPriceGridService,
-        ProductUnitsService,
-        { provide: PrismaService, useValue: prisma },
-      ],
+      providers: [ProductPriceGridService, { provide: PrismaService, useValue: prisma }],
     }).compile();
     service = module.get(ProductPriceGridService);
   });
