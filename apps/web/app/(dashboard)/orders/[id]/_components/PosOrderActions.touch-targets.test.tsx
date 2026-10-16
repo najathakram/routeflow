@@ -11,7 +11,7 @@ jest.mock("@routeflow/ui/web", () => {
   return { ...actual, useToast: () => ({ toast: jest.fn() }) };
 });
 
-import { PosOrderActions } from "./PosOrderActions";
+import { PosOrderActions, posMoveOptions } from "./PosOrderActions";
 import { PickupHandOverButton } from "./PickupHandOver";
 
 const noop = () => undefined;
@@ -29,7 +29,8 @@ function renderActions(status: string, invoices: unknown[] = []) {
         status={status}
         onHandOver={noop}
         onReadyForPickup={noop}
-        onSwitchToDelivery={noop}
+        moveOptions={{ delivery: "ROUTE", ship: true }}
+        onMove={noop}
       />
     </QueryClientProvider>,
   );
@@ -50,5 +51,20 @@ describe("POS order action buttons are touch-sized (>= 44 px)", () => {
   it("the Picked up button is 44 px too", () => {
     render(<PickupHandOverButton onOpen={noop} />);
     expect(screen.getByRole("button", { name: "Picked up" }).className).toMatch(/\bh-11\b/);
+  });
+});
+
+describe("posMoveOptions (M8)", () => {
+  it("both paths: two buttons, delivery is the route", () => {
+    expect(posMoveOptions(["ROUTE", "SHIP"], "SHIP")).toEqual({ delivery: "ROUTE", ship: true });
+  });
+  it("ship only: one button, Ship by carrier", () => {
+    expect(posMoveOptions(["SHIP"], "SHIP")).toEqual({ delivery: null, ship: true });
+  });
+  it("route only: the old single Switch to delivery", () => {
+    expect(posMoveOptions(["ROUTE"], "ROUTE")).toEqual({ delivery: "ROUTE", ship: false });
+  });
+  it("neither (pickup-only account): today's lone button, to the account default", () => {
+    expect(posMoveOptions([], "SHIP")).toEqual({ delivery: "SHIP", ship: false });
   });
 });

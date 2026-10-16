@@ -80,9 +80,18 @@ describe("InvoicesService.create — selling restrictions (F-05)", () => {
       // the freeform fee line has no product: nothing to check
       lines: [{ productId: "p-banned" }, { productId: "p-ok" }],
       channel: "STAFF",
+      fulfilmentKind: "DELIVERY",
     });
     expect(restrictions.assertLinesSellable.mock.invocationCallOrder[0]).toBeLessThan(
       prisma.product.findMany.mock.invocationCallOrder[0],
+    );
+  });
+
+  it("L8: at a PICKUP-ONLY tenant this sale is judged as PICKUP (the store's state), not DELIVERY", async () => {
+    prisma.tenantFeatureConfig.findFirst.mockResolvedValue({ mode: "pickup" });
+    await expect(create()).rejects.toBeDefined();
+    expect(restrictions.assertLinesSellable).toHaveBeenCalledWith(
+      expect.objectContaining({ fulfilmentKind: "PICKUP" }),
     );
   });
 

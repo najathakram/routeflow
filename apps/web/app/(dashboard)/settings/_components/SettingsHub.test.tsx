@@ -4,6 +4,13 @@ import { renderWithProviders } from "@/test-utils/render";
 import { OFF_HUB_SCREENS, SETTINGS_REGISTRY, type SettingRow } from "@routeflow/types";
 import { SettingsHub } from "./SettingsHub";
 
+// U-1 Units entry: off unless a test turns it on (the flag-gated hub row, specs/u1-hub-index-entry-note.md)
+let mockUnitsSettings = false;
+jest.mock("@/lib/api/product-units", () => ({
+  ...jest.requireActual("@/lib/api/product-units"),
+  useUnitsSettingsEnabled: () => mockUnitsSettings,
+}));
+
 const restrictions = jest.fn();
 let unitsEnabled = true;
 jest.mock("@/lib/api/units-settings-flag", () => ({
@@ -22,13 +29,13 @@ jest.mock("./BuyerOversellCard", () => ({
 }));
 
 const TITLES = [
+  "How you sell",
   "Business & team",
-  "Selling & catalog",
-  "Orders & stock",
+  "Invoicing & payments",
+  "Selling & pricing",
   "Notifications",
   "Compliance",
-  "Integrations",
-  "Billing",
+  "Integrations & import",
 ];
 
 beforeEach(() => {
@@ -37,7 +44,7 @@ beforeEach(() => {
 });
 
 const SECTION_IDS: Record<string, string> = {
-  "Selling & catalog": "selling",
+  "Selling & pricing": "selling",
   Compliance: "compliance",
 };
 
@@ -60,9 +67,9 @@ describe("SettingsHub regroup", () => {
     expect(screen.getAllByText("Invoicing").length).toBeGreaterThan(0);
   });
 
-  it("lists Selling restrictions under both Selling & catalog and Compliance", () => {
+  it("lists Selling restrictions under both Selling & pricing and Compliance", () => {
     renderWithProviders(<SettingsHub isAdmin />);
-    for (const t of ["Selling & catalog", "Compliance"]) {
+    for (const t of ["Selling & pricing", "Compliance"]) {
       const link = within(section(t)).getByRole("link", { name: /selling restrictions/i });
       expect(link).toHaveAttribute("href", "/settings/restrictions");
     }
@@ -70,7 +77,7 @@ describe("SettingsHub regroup", () => {
 
   it("(C h) links the rules page as Portal limits & rules from both groups", () => {
     renderWithProviders(<SettingsHub isAdmin />);
-    for (const t of ["Selling & catalog", "Compliance"]) {
+    for (const t of ["Selling & pricing", "Compliance"]) {
       const link = within(section(t)).getByRole("link", { name: /portal limits & rules/i });
       expect(link).toHaveAttribute("href", "/settings/restrictions/rules");
     }
@@ -78,8 +85,7 @@ describe("SettingsHub regroup", () => {
 
   it("operators see Selling restrictions in both groups (read-only page)", () => {
     renderWithProviders(<SettingsHub isAdmin={false} />);
-    for (const t of ["Selling & catalog", "Compliance"]) {
-      // Compliance collapses to a single card for operators (other items are admin-only).
+    for (const t of ["Selling & pricing", "Compliance"]) {
       const hrefs = within(section(t))
         .getAllByRole("link")
         .map((l) => l.getAttribute("href"));
@@ -95,7 +101,7 @@ describe("SettingsHub regroup", () => {
     const hrefs = screen
       .getAllByRole("link")
       .filter((l) => l.getAttribute("href") === "/settings/restrictions");
-    expect(hrefs).toHaveLength(2);
+    expect(hrefs).toHaveLength(1); // OK-2: one answer per destination
   });
 
   it("search 'receipt' finds the Business profile screen that holds the receipt footer", () => {
@@ -111,7 +117,7 @@ describe("SettingsHub regroup", () => {
     });
   });
 
-  it("search 'restrictions' finds it in both groups", () => {
+  it("search 'restrictions' finds it once (it lives in two groups; OK-2)", () => {
     renderWithProviders(<SettingsHub isAdmin />);
     fireEvent.change(screen.getByLabelText("Search settings"), {
       target: { value: "restrictions" },
@@ -120,9 +126,9 @@ describe("SettingsHub regroup", () => {
     const hrefs = screen
       .getAllByRole("link")
       .filter((l) => l.getAttribute("href") === "/settings/restrictions");
-    expect(hrefs).toHaveLength(2);
-    expect(screen.getByText("Selling & catalog")).toBeInTheDocument();
-    expect(screen.getByText("Compliance")).toBeInTheDocument();
+    expect(hrefs).toHaveLength(1); // OK-2: one answer per destination
+    expect(screen.getByText("Selling & pricing › Selling restrictions")).toBeInTheDocument();
+    expect(screen.queryByText("Compliance › Selling restrictions")).toBeNull();
   });
 
   describe("Units (U-1)", () => {
@@ -217,7 +223,7 @@ describe("SettingsHub regroup", () => {
     expect(screen.getByText("route-defaults-card")).toBeInTheDocument();
   });
 
-  it("lists Out-of-stock ordering under Orders & stock and mounts its card at the anchor", () => {
+  it("lists Out-of-stock ordering under How you sell and mounts its card at the anchor", () => {
     renderWithProviders(<SettingsHub isAdmin />);
     const link = screen
       .getAllByRole("link")
@@ -242,7 +248,7 @@ describe("SettingsHub regroup", () => {
     expect(screen.queryByText("oversell-card-edit")).not.toBeInTheDocument();
   });
 
-  it.each(["speed & depot", "service time, start time", "orders & stock"])(
+  it.each(["speed & depot", "service time, start time"])(
     "a search that lists the Route defaults result ('%s') also shows its card",
     (q) => {
       renderWithProviders(<SettingsHub isAdmin />);
@@ -255,15 +261,15 @@ describe("SettingsHub regroup", () => {
     },
   );
 
-  it("a query spanning two fields ('defaults service') lists nothing, so the card stays hidden", () => {
+  it("a query spanning two fields ('defaults service') lists Route defaults and shows its card", () => {
     renderWithProviders(<SettingsHub isAdmin />);
     fireEvent.change(screen.getByLabelText("Search settings"), {
       target: { value: "defaults service" },
     });
     expect(
-      screen.queryAllByRole("link").some((l) => l.getAttribute("href") === "#route-defaults"),
-    ).toBe(false);
-    expect(screen.queryByText("route-defaults-card")).not.toBeInTheDocument();
+      screen.getAllByRole("link").some((l) => l.getAttribute("href") === "#route-defaults"),
+    ).toBe(true);
+    expect(screen.getByText("route-defaults-card")).toBeInTheDocument();
   });
 
   it("hides the route defaults card when the search matches nothing", () => {
@@ -283,6 +289,118 @@ describe("SettingsHub regroup", () => {
     expect(screen.getByText("route-defaults-card")).toBeInTheDocument();
     expect(document.getElementById("route-defaults")).toContainElement(
       screen.getByText("route-defaults-card"),
+    );
+  });
+});
+
+describe("SettingsHub search speaks the user's words", () => {
+  const search = (q: string) =>
+    fireEvent.change(screen.getByLabelText("Search settings"), { target: { value: q } });
+  const results = () => screen.getByRole("list", { name: "Search results" });
+  // A result row's accessible name is "label, effect, breadcrumb": match on the label.
+  const hrefOf = (label: string) =>
+    within(results())
+      .getAllByRole("link")
+      .find((l) => l.textContent?.startsWith(label))
+      ?.getAttribute("href");
+
+  it("1: 'low stock' finds the Low-stock digest card", () => {
+    renderWithProviders(<SettingsHub isAdmin />);
+    search("low stock");
+    expect(hrefOf("Low-stock digest")).toBe("/settings?tab=notifications#low-stock-digest");
+  });
+
+  it("2: 'stock' lists Out-of-stock ordering, not Route defaults or Batch invoice import", () => {
+    renderWithProviders(<SettingsHub isAdmin />);
+    search("stock");
+    expect(
+      within(results()).getByRole("link", { name: /^Out-of-\s*stock ordering/ }),
+    ).toBeInTheDocument();
+    expect(within(results()).queryByText("Route defaults")).not.toBeInTheDocument();
+    expect(within(results()).queryByText("Batch invoice import")).not.toBeInTheDocument();
+  });
+
+  it("3: 'carrier' shows the answer as plain text, not a link", () => {
+    renderWithProviders(<SettingsHub isAdmin />);
+    search("carrier");
+    const answer = within(results()).getByText(
+      "You choose the carrier on each order when you mark it shipped.",
+    );
+    expect(answer.closest("a")).toBeNull();
+    expect(within(results()).queryAllByRole("link")).toHaveLength(0);
+  });
+
+  it.each([true, false])("4: stripe and tier find their cards (admin=%s)", (isAdmin) => {
+    renderWithProviders(<SettingsHub isAdmin={isAdmin} />);
+    search("stripe");
+    expect(hrefOf("Card payments")).toBe("/settings#card-payments");
+    search("tier");
+    expect(hrefOf("Pricing tier names")).toBe("/settings#tier-names");
+  });
+
+  it("5: 'defaults service' lists Route defaults and mounts its card", () => {
+    renderWithProviders(<SettingsHub isAdmin />);
+    search("defaults service");
+    expect(hrefOf("Route defaults")).toBe("#route-defaults");
+    expect(screen.getByText("route-defaults-card")).toBeInTheDocument();
+  });
+
+  it("6: 'invoice terms' lists Payment terms under Invoicing & payments > Invoicing", () => {
+    renderWithProviders(<SettingsHub isAdmin />);
+    search("invoice terms");
+    const row = within(results()).getByRole("link", { name: /Payment terms/ });
+    expect(within(row).getByText("Invoicing & payments › Invoicing")).toBeInTheDocument();
+  });
+
+  it("7: 'restrictions' gives exactly one link to the restrictions page (OK-2)", () => {
+    renderWithProviders(<SettingsHub isAdmin />);
+    search("restrictions");
+    const hrefs = within(results())
+      .getAllByRole("link")
+      .filter((l) => l.getAttribute("href") === "/settings/restrictions");
+    expect(hrefs).toHaveLength(1); // OK-2: one answer per destination
+  });
+
+  it("8: an operator searching 'regulated' gets no link and the no-results text", () => {
+    renderWithProviders(<SettingsHub isAdmin={false} />);
+    search("regulated");
+    expect(screen.getByText("No settings match “regulated”.")).toBeInTheDocument();
+    expect(
+      screen.queryAllByRole("link").some((l) => l.getAttribute("href")?.includes("regulated")),
+    ).toBe(false);
+  });
+
+  it("9: a miss says so, and Clear Search restores the hub and focuses the input", () => {
+    renderWithProviders(<SettingsHub isAdmin />);
+    search("zzzzqq");
+    expect(screen.getByText("No settings match “zzzzqq”.")).toBeInTheDocument();
+    expect(screen.getByText("Try another word, or browse all settings.")).toBeInTheDocument();
+    expect(screen.queryByText("route-defaults-card")).not.toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "Clear Search" }));
+    const input = screen.getByLabelText("Search settings") as HTMLInputElement;
+    expect(input.value).toBe("");
+    expect(input).toHaveFocus();
+    expect(screen.getAllByTestId(/^settings-group-/)).toHaveLength(7);
+  });
+
+  it("10: 'walk-in' finds the counter-sales answer", () => {
+    renderWithProviders(<SettingsHub isAdmin />);
+    search("walk-in");
+    expect(within(results()).getByText(/Ring up walk-in customers/)).toBeInTheDocument();
+  });
+
+  it("11: an empty query renders the hub exactly as before", () => {
+    renderWithProviders(<SettingsHub isAdmin />);
+    expect(screen.getAllByTestId(/^settings-group-/)).toHaveLength(7);
+    expect(screen.queryByRole("list", { name: "Search results" })).not.toBeInTheDocument();
+    for (const c of ["Invoicing", "User management", "Import", "Notifications"]) {
+      expect(screen.getAllByRole("link", { name: c }).length).toBeGreaterThan(0);
+    }
+    expect(screen.getByText("Frequently used:")).toBeInTheDocument();
+    expect(screen.getByText("route-defaults-card")).toBeInTheDocument();
+    expect(screen.getByRole("link", { name: /My account/ })).toHaveAttribute(
+      "href",
+      "/settings?tab=account",
     );
   });
 });
@@ -399,5 +517,86 @@ describe("settings registry — every configurable setting has a screen (WS5)", 
       (id) => !!document.getElementById(id),
     );
     expect(missing).toEqual([]);
+  });
+});
+
+describe("apple-ux U1: page cards under the hub follow the search", () => {
+  const loose = [
+    { id: "card-payments", node: <p>Stripe card body</p> },
+    { id: "tier-names", node: <p>Tier names body</p> },
+  ];
+  const type = (q: string) =>
+    fireEvent.change(screen.getByLabelText("Search settings"), { target: { value: q } });
+
+  it("no query: every loose card shows, each at its own anchor", () => {
+    renderWithProviders(<SettingsHub isAdmin looseCards={loose} />);
+    expect(screen.getByText("Stripe card body").closest("#card-payments")).not.toBeNull();
+    expect(screen.getByText("Tier names body").closest("#tier-names")).not.toBeNull();
+  });
+
+  it("a query hides the cards it does not match, and keeps the one it does", () => {
+    renderWithProviders(<SettingsHub isAdmin looseCards={loose} />);
+    type("state");
+    expect(screen.queryByText("Stripe card body")).toBeNull();
+    expect(screen.queryByText("Tier names body")).toBeNull();
+    type("stripe");
+    expect(screen.getByText("Stripe card body")).toBeInTheDocument();
+    expect(screen.queryByText("Tier names body")).toBeNull();
+  });
+});
+
+describe("apple-ux U1: the search survives Back, and only Back (SA M2)", () => {
+  afterEach(() => window.history.replaceState(null, ""));
+
+  it("back/forward to the hub (its history entry carries the query) restores it", () => {
+    const first = renderWithProviders(<SettingsHub isAdmin />);
+    fireEvent.change(screen.getByLabelText("Search settings"), { target: { value: "plan" } });
+    expect(window.history.state?.rfSettingsQuery).toBe("plan"); // stored on this entry
+    first.unmount();
+    // Back lands on the same history entry, so its state comes back with it
+    renderWithProviders(<SettingsHub isAdmin />);
+    expect(screen.getByLabelText("Search settings")).toHaveValue("plan");
+  });
+
+  it("a fresh visit (sidebar, cmd-K, a back link: a NEW history entry) starts empty", () => {
+    window.history.replaceState({ rfSettingsQuery: "plan" }, "");
+    window.history.pushState({}, "", "/settings"); // a new entry without the key
+    renderWithProviders(<SettingsHub isAdmin />);
+    expect(screen.getByLabelText("Search settings")).toHaveValue("");
+  });
+
+  it("other history state is kept when the query is stored", () => {
+    window.history.replaceState({ __keep: 1 }, "");
+    renderWithProviders(<SettingsHub isAdmin />);
+    fireEvent.change(screen.getByLabelText("Search settings"), { target: { value: "tax" } });
+    expect(window.history.state).toMatchObject({ __keep: 1, rfSettingsQuery: "tax" });
+  });
+});
+
+describe("Units (U-1), gated on flag.units_settings_v1", () => {
+  afterEach(() => {
+    mockUnitsSettings = false;
+  });
+  const unitLinks = () =>
+    screen.queryAllByRole("link").filter((l) => l.getAttribute("href") === "/settings/units");
+
+  it("flag on: one Units link, and operators see it", () => {
+    mockUnitsSettings = true;
+    renderWithProviders(<SettingsHub isAdmin={false} />);
+    expect(unitLinks()).toHaveLength(1);
+  });
+
+  it("flag off: no Units link, and searching 'unit' finds none", () => {
+    renderWithProviders(<SettingsHub isAdmin />);
+    expect(unitLinks()).toHaveLength(0);
+    fireEvent.change(screen.getByLabelText("Search settings"), { target: { value: "unit" } });
+    expect(unitLinks()).toHaveLength(0);
+  });
+
+  it.each(["unit", "case", "bottle", "pieces per box", "pack"])("flag on: '%s' finds it", (q) => {
+    mockUnitsSettings = true;
+    renderWithProviders(<SettingsHub isAdmin />);
+    fireEvent.change(screen.getByLabelText("Search settings"), { target: { value: q } });
+    expect(unitLinks().length).toBeGreaterThan(0);
   });
 });

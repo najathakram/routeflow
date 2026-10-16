@@ -4,6 +4,7 @@
  * Mirrors apps/web/components/ShipmentCard.tsx (`orderStatus`).
  */
 import { isShippedOrderStatus } from "@routeflow/types";
+import { notShippedNote } from "@routeflow/types/shipment-save";
 
 /** The shipment with `shippedAt` dropped when the order is no longer shipped. No order status
  *  (a standalone invoice) leaves it untouched. */
@@ -13,4 +14,33 @@ export function shipmentForDisplay<T extends { shippedAt?: string | null }>(
 ): T {
   if (!orderStatus || isShippedOrderStatus(orderStatus)) return shipment;
   return { ...shipment, shippedAt: null };
+}
+
+/**
+ * A saved shipment (carrier and/or tracking) on a carrier (SHIP) order that has not shipped: saving tracking never ships the
+ * order, "Mark shipped" does. Null once shipped or cancelled, off a SHIP order, or with nothing recorded.
+ * The wording is shared with web (`notShippedNote`); mobile has no notification setting to read, so it
+ * never claims the customer is told.
+ */
+export function shipmentNotShippedNote(
+  fulfillPath: string | null | undefined,
+  orderStatus: string | null | undefined,
+  trackingNumber: string | null | undefined,
+  carrier?: string | null,
+): string | null {
+  if (fulfillPath !== "SHIP" || !orderStatus) return null;
+  if (!trackingNumber?.trim() && !carrier?.trim()) return null;
+  if (isShippedOrderStatus(orderStatus) || orderStatus === "CANCELLED") return null;
+  return notShippedNote(false);
+}
+
+/**
+ * Where the Shipment card sits on the order screen (row 505, web M8): a carrier (SHIP) order shows it ABOVE the
+ * Items card with its totals (web: above Summary), where the ship step is found; any other order keeps the card
+ * after the Invoice card, as before.
+ */
+export function shipmentCardPlacement(
+  fulfillPath: string | null | undefined,
+): "aboveItems" | "afterInvoice" {
+  return fulfillPath === "SHIP" ? "aboveItems" : "afterInvoice";
 }

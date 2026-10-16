@@ -34,5 +34,6 @@ export const POS_COPY = {
   printInvoice: "Print invoice",
   invoiceCreated: "Invoice created",
   switchToDelivery: "Switch to delivery",
+  shipByCarrier: "Ship by carrier…",
   invoiceFailed: "Couldn't create the invoice. Try again.",
 } as const;

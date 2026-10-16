@@ -406,7 +406,7 @@ describeDb("#2476 webhook ledger exclusive claim on redelivery (real Postgres, S
       { notifyCancelled: async () => undefined, notifySuspended: async () => undefined } as any,
       planTransition as any,
       {
-        checkoutAddonLines: async () => ({ lineItems: [], skus: [] }),
+        checkoutAddonLines: async () => ({ lineItems: [], skus: [], invalid: [] }),
         adoptCheckoutAddons: async () => undefined,
       } as any, // mutations (SA-690)
     );

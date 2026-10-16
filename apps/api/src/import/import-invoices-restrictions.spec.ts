@@ -80,6 +80,14 @@ describe("ImportService.importInvoices — restricted-lines flag (F-05 #2093)", 
     });
   });
 
+  it("L8: at a PICKUP-ONLY tenant this sale is judged as PICKUP (the store's state), not DELIVERY", async () => {
+    prisma.tenantFeatureConfig.findFirst.mockResolvedValue({ mode: "pickup" });
+    await service.importInvoices(csv("INV-900"), "user-1");
+    expect(restrictions.checkLinesSellable).toHaveBeenCalledWith(
+      expect.objectContaining({ fulfilmentKind: "PICKUP" }),
+    );
+  });
+
   it("ALLOW imports normally with an empty restrictedLines and no audit row", async () => {
     const result = await service.importInvoices(csv("INV-201"), "user-1");
 

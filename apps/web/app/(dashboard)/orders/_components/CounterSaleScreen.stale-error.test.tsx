@@ -79,21 +79,21 @@ describe("CounterSaleScreen: a refusal goes when the cart changes (CQ-18)", () =
     renderWithProviders(<CounterSaleScreen />);
     await refused();
     await scan("WATER", "Water");
-    expect(screen.queryByText(CHANGED)).toBeNull();
+    await waitFor(() => expect(screen.queryByText(CHANGED)).toBeNull());
   });
 
   it("stepping a quantity clears it", async () => {
     renderWithProviders(<CounterSaleScreen />);
     await refused();
     fireEvent.click(screen.getByRole("button", { name: "Add one Cola" }));
-    expect(screen.queryByText(CHANGED)).toBeNull();
+    await waitFor(() => expect(screen.queryByText(CHANGED)).toBeNull());
   });
 
   it("removing the line clears it", async () => {
     renderWithProviders(<CounterSaleScreen />);
     await refused();
     fireEvent.click(screen.getByRole("button", { name: "Remove Cola" }));
-    expect(screen.queryByText(CHANGED)).toBeNull();
+    await waitFor(() => expect(screen.queryByText(CHANGED)).toBeNull());
   });
 
   it("a FINAL message (the sale was voided) stays when the cart is edited", async () => {

@@ -10,7 +10,7 @@
  * and notifications are stubbed. Tenants are throwaway `qa-*` slugs.
  */
 import { randomUUID } from "crypto";
-import { ConflictException } from "@nestjs/common";
+import { ConflictException, NotFoundException } from "@nestjs/common";
 import { PrismaClient, TenantClass, TenantStatus } from "@prisma/client";
 import { PrismaPg } from "@prisma/adapter-pg";
 import { Pool } from "pg";
@@ -311,7 +311,14 @@ describeDb("SA-690 — trial add-ons are adopted at checkout completion (real Po
       stub(),
       { invalidate: jest.fn() } as any,
       events,
-      { resolveCatalogPricing: jest.fn().mockResolvedValue({ monthly: 99 }) } as any,
+      {
+        resolveCatalogPricing: jest.fn().mockResolvedValue({ monthly: 99 }),
+        // #3407: a lookup that is not an HttpException is TRANSIENT and fails the webhook; this harness has no
+        // priced tenant, so it answers the business outcome (no price) the way the real service does.
+        resolveTenantPricing: jest
+          .fn()
+          .mockRejectedValue(new NotFoundException("no price in this harness")),
+      } as any,
       stub(),
       planTransitionStub(opts.flagOn ?? false),
       mutations,
@@ -2210,6 +2217,7 @@ describeDb("SA-690 — trial add-ons are adopted at checkout completion (real Po
       await expect(r.mutations.checkoutAddonLines(r.tenantId, "year")).resolves.toEqual({
         lineItems: [],
         skus: [],
+        invalid: [],
       });
     });
 

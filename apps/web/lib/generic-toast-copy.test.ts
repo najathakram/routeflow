@@ -155,6 +155,12 @@ describe("genericToastCopy: codes users rely on", () => {
     );
   });
 
+  it("PRODUCT_CHAIN_UNREADABLE (H2: a reparent refused on an unreadable family chain) is fixed copy", () => {
+    const copy = genericToastCopy(err(409, { code: API_ERROR_CODES.PRODUCT_CHAIN_UNREADABLE }));
+    expect(copy).toBe("This product's family chain can't be read.");
+    expect(copy).not.toContain(RAW);
+  });
+
   it("ORDER_LINE_CHANGED is mapped through the shared constant", () => {
     expect(genericToastCopy(err(409, { code: API_ERROR_CODES.ORDER_LINE_CHANGED }))).toMatch(
       /changed while it was being billed/,
@@ -185,6 +191,7 @@ describe("genericToastCopy: codes users rely on", () => {
     ["CREDIT_NOTE_OVER_HEADROOM", /more than the source invoice still allows/],
     ["UNIT_AWARE_LINE", /sold by a unit/],
     ["ORDER_CHANGED_DURING_EDIT", /changed while you were editing/],
+    ["DUPLICATE_LINE_ID", /^A line appears twice\. Refresh the page and try again\.$/],
     ["ORDER_BILLING_CHANGED", /billing changed/],
     ["ORDER_EDIT_WOULD_OVERPAY", /overpaid on the invoice/],
     ["ORDER_WITH_CARRIER_NO_CANCEL", /already with the carrier/],
@@ -196,8 +203,17 @@ describe("genericToastCopy: codes users rely on", () => {
     ["ORDER_WITH_CARRIER_NO_REDUCE", /Record a return instead of reducing/],
     ["ORDER_WITH_CARRIER_NO_ADD", /Create a new order for the extra items/],
     ["CONCURRENT_UPDATE", /Someone else is updating/],
+    // SA-767 L-2.2: a second commit / an edit of a count that is being saved.
+    ["STOCK_COUNT_COMMITTING", /^This count is being saved. Try again in a moment.$/],
+    // SA-767 r-note 5 SA-3: the fallback toast (the count screens show the session name themselves).
+    ["PRODUCT_IN_OPEN_COUNT", /^Already being counted in another count$/],
     ["BARCODE_TAKEN", /barcode/],
     ["ADDON_GATE", /isn't included in your current plan/],
+    // M11: the stackable add-on quantity refusals
+    ["ADDON_QUANTITY_CHANGED", /^Your add-on changed since this page loaded\. Check the new total/],
+    ["ADDON_QUANTITY_NOT_INCREASED", /would not add any more/],
+    ["ADDON_NOT_STACKABLE", /only be turned on once per workspace/],
+    ["ADDON_RAISE_UNBILLED_ROW", /isn't billed on your subscription yet/],
   ])("%s", (code, re) => {
     const copy = genericToastCopy(err(409, { code }));
     expect(copy).toMatch(re);
@@ -580,6 +596,29 @@ describe("SELLER_UNAVAILABLE (a buyer write toward a paused seller)", () => {
     expect(genericToastCopy(err(403, { message: "Forbidden" }))).toBe(
       "You don't have permission to do that.",
     );
+  });
+});
+
+describe("SA-778: a billing action refused in a support session", () => {
+  const SUPPORT_COPY =
+    "This action isn't available in a support session. Ask the account admin to do it.";
+  const body = {
+    code: API_ERROR_CODES.IMPERSONATION_NOT_ALLOWED,
+    message: "This action isn't available in a support session. Ask the account admin to do it.",
+  };
+
+  it("is fixed copy, not the generic permission line and not the raw server message", () => {
+    expect(genericToastCopy(err(403, body))).toBe(SUPPORT_COPY);
+    expect(codedToastCopy(err(403, body))).toBe(SUPPORT_COPY);
+    expect(genericToastCopy(err(403, { ...body, message: RAW }))).toBe(SUPPORT_COPY);
+    expect(genericToastCopy(err(403, body))).not.toMatch(/permission/i);
+  });
+
+  it("the app-wide handler toasts it once with that copy", () => {
+    const toast = jest.fn();
+    handleMutationError(err(403, body), { meta: undefined }, toast, { push: jest.fn() });
+    expect(toast).toHaveBeenCalledTimes(1);
+    expect(toast).toHaveBeenCalledWith({ title: SUPPORT_COPY, variant: "error" });
   });
 });
 

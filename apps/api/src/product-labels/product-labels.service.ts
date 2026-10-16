@@ -1,4 +1,5 @@
 import { Injectable } from "@nestjs/common";
+import { productDisplayName } from "../products/product-display-name";
 import { Prisma } from "@prisma/client";
 import { PrismaService } from "../prisma/prisma.service";
 import { assertAmbientTenant } from "../common/ambient-tenant";
@@ -80,6 +81,7 @@ export class ProductLabelsService {
     type Row = {
       id: string;
       name: string;
+      variantName: string | null;
       parentProductId: string | null;
       categoryLabels: LabelAssignment[];
     };
@@ -91,6 +93,7 @@ export class ProductLabelsService {
         select: {
           id: true,
           name: true,
+          variantName: true,
           parentProductId: true,
           categoryLabels: { select: LABEL_SELECT },
         },
@@ -125,9 +128,16 @@ export class ProductLabelsService {
         }
         cursor = parent;
       }
+      const own = byId.get(id);
       out.set(id, {
         productId: id,
-        name: byId.get(id)?.name ?? id,
+        // H6: a variant is named "<Family> - <Variant>" in every restriction message (its own name is a bare label).
+        name: own
+          ? productDisplayName(
+              own,
+              own.parentProductId ? byId.get(own.parentProductId)?.name : null,
+            )
+          : id,
         nameKnown: byId.has(id),
         effectiveCategoryIds: computeEffectiveCategoryIds(chain),
         lineageIds: lineage,

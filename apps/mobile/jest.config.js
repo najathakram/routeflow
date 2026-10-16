@@ -54,11 +54,22 @@ module.exports = {
     // SA-714: the pure staff "Backorder" tag rule, same subpath trick (the package root is stubbed).
     "^@routeflow/types/order-line-backorder$":
       "<rootDir>/../../packages/types/order-line-backorder.ts",
+    // SA-767 L-2.4 D: the stock-count commit copy, same subpath trick (the package root is stubbed).
+    "^@routeflow/types/stock-count-commit-copy$":
+      "<rootDir>/../../packages/types/stock-count-commit-copy.ts",
     // SA-776: the shared read-only copy composer, same subpath trick (the package root is stubbed).
     "^@routeflow/types/read-only-copy$": "<rootDir>/../../packages/types/read-only-copy.ts",
     // CQ-06: the shared license-refusal sentence (it imports only the pure error-code constants), same subpath trick.
     "^@routeflow/types/regulated-auth-copy$":
       "<rootDir>/../../packages/types/regulated-auth-copy.ts",
+    // H5: the shared estimate tax-basis notice (pure), same subpath trick.
+    "^@routeflow/types/estimate-tax-basis$": "<rootDir>/../../packages/types/estimate-tax-basis.ts",
+    // Row 485: the pure sale-retry rule (definitive refusal, per-attempt key), same subpath trick.
+    "^@routeflow/types/sale-attempt$": "<rootDir>/../../packages/types/sale-attempt.ts",
+    // M8: the shared shipment save rule + not-shipped line (pure, no imports), same subpath trick.
+    "^@routeflow/types/shipment-save$": "<rootDir>/../../packages/types/shipment-save.ts",
+    // Row 505: the fulfilment capability shape + UNSET fallback (pure, no imports), same subpath trick.
+    "^@routeflow/types/api/fulfilment$": "<rootDir>/../../packages/types/api/fulfilment.ts",
     "^expo-secure-store$": "<rootDir>/__tests__/__mocks__/expo-secure-store.js",
     // #2653: the shell bridge is pure TS (zod only) — resolve it to SOURCE, ahead of the ui stub.
     "^@routeflow/ui/shell-bridge$": "<rootDir>/../../packages/ui/src/shell-bridge.ts",

@@ -16,6 +16,7 @@ import { EntitlementsService } from "../billing/entitlements.service";
 import { SellingRestrictionsService } from "../selling-restrictions/selling-restrictions.service";
 import { createMockPrisma } from "../testing/prisma-mock";
 import {
+  addedRestrictionLines,
   assertEditStillJudged,
   catalogRestrictionLines,
   netEditRestrictionLines,
@@ -80,7 +81,35 @@ describe("invoice edit / copy — selling restrictions (F-05)", () => {
         customerId: "cust-1",
         lines: [{ productId: "p-held", qtyDelta: 45 }, { productId: "p-new" }],
         channel: "STAFF",
+        fulfilmentKind: "DELIVERY",
       });
+    });
+
+    it.each([
+      [{ counterSale: false, fulfillPath: "PICKUP" }, "PICKUP"],
+      [{ counterSale: true, fulfillPath: "PICKUP" }, "COUNTER"],
+      [{ counterSale: false, fulfillPath: "ROUTE" }, "DELIVERY"],
+    ])("L8: an order-linked draft whose order is %j is judged as %s", async (facts, kind) => {
+      prisma.invoice.findUnique.mockResolvedValue({
+        ...draft,
+        orderId: "ord-1",
+        deliveryBatchId: "batch-1",
+      });
+      prisma.order.findFirst.mockResolvedValue(facts);
+      restrictions.assertLinesSellable.mockRejectedValue(banned());
+      await expect(edit([line("p-new", 1)])).rejects.toBeDefined();
+      expect(restrictions.assertLinesSellable).toHaveBeenCalledWith(
+        expect.objectContaining({ fulfilmentKind: kind }),
+      );
+    });
+
+    it("L8: an order-less draft is judged as DELIVERY (the customer-address rule), stated not omitted", async () => {
+      restrictions.assertLinesSellable.mockRejectedValue(banned());
+      await expect(edit([line("p-new", 1)])).rejects.toBeDefined();
+      expect(restrictions.assertLinesSellable.mock.calls[0][0]).toHaveProperty(
+        "fulfilmentKind",
+        "DELIVERY",
+      );
     });
 
     it("an increase on a banned line already on the draft is REFUSED, writing nothing", async () => {
@@ -129,8 +158,24 @@ describe("invoice edit / copy — selling restrictions (F-05)", () => {
         customerId: "cust-1",
         lines: [{ productId: "p-banned" }],
         channel: "STAFF",
+        fulfilmentKind: "DELIVERY",
       });
       expect(prisma.invoice.create).not.toHaveBeenCalled();
+    });
+
+    it("L8: at a PICKUP-ONLY tenant a copy is judged as PICKUP (the store's state)", async () => {
+      prisma.tenantFeatureConfig.findFirst.mockResolvedValue({ mode: "pickup" });
+      prisma.invoice.findUnique.mockResolvedValue({
+        id: "inv-1",
+        customerId: "cust-1",
+        orderId: null,
+        items: [{ productId: "p-banned", description: "B" }],
+      });
+      restrictions.assertLinesSellable.mockRejectedValue(banned());
+      await expect(service.duplicate("inv-1")).rejects.toBeDefined();
+      expect(restrictions.assertLinesSellable).toHaveBeenCalledWith(
+        expect.objectContaining({ fulfilmentKind: "PICKUP" }),
+      );
     });
   });
 
@@ -274,6 +319,131 @@ describe("invoice edit / copy — selling restrictions (F-05)", () => {
       expect(catalogRestrictionLines([{ productId: "a" }, { productId: null }])).toEqual([
         { productId: "a" },
       ]);
+    });
+  });
+
+  describe("VU-4a M1: unit lines net in pieces at the unit's factor (Pallet 480 > Box-24)", () => {
+    // P sells a Box of 24; its ladder has a Pallet (480) and a Piece (1). A Pallet line is STORED like a split
+    // whose box is the unit: boxes = count, qty = count x 480 pieces, unitsPerBox = 480.
+    const live = new Map<string, number | null>([["p", 24]]);
+    const ladders = new Map([
+      [
+        "p",
+        {
+          product: { unit: "Box", unitsPerBox: 24, pricePerUnit: 48 },
+          units: [
+            { label: "Pallet", factorToBase: 480 },
+            { label: "Piece", factorToBase: 1 },
+          ] as any[],
+        },
+      ],
+    ]);
+    const pallets = {
+      id: "row-u",
+      productId: "p",
+      qty: 960,
+      boxes: 2,
+      pieces: 0,
+      unitsPerBox: 480,
+      unitLabel: "Pallet",
+    };
+
+    it("raising 2 -> 10 Pallets (label re-sent) is judged on 4800 pieces: asks for 3840", () => {
+      const items = [{ id: "row-u", productId: "p", qty: 10, unitLabel: "Pallet" }];
+      expect(netEditRestrictionLines([pallets], items, live, ladders)).toEqual([
+        { productId: "p", qtyDelta: 3840 },
+      ]);
+    });
+
+    it("the same raise with the label ABSENT keeps the held Pallet (SA-070): asks for 3840", () => {
+      const items = [{ id: "row-u", productId: "p", qty: 10 }];
+      expect(netEditRestrictionLines([pallets], items, live, ladders)).toEqual([
+        { productId: "p", qtyDelta: 3840 },
+      ]);
+    });
+
+    it("2 -> 1 Pallet is a decrease and an unchanged re-send nets 0: asks nothing", () => {
+      for (const qty of [1, 2]) {
+        const items = [{ id: "row-u", productId: "p", qty, unitLabel: "Pallet" }];
+        expect(netEditRestrictionLines([pallets], items, live, ladders)).toEqual([]);
+      }
+    });
+
+    it("a NEW Pallet line on a draft holding 2 Boxes counts at the in-lock ladder's 480", () => {
+      const boxes = [
+        { id: "row-b", productId: "p", qty: 48, boxes: 2, pieces: 0, unitsPerBox: 24 },
+      ];
+      const items = [
+        { id: "row-b", productId: "p", qty: 48, boxes: 2, pieces: 0 },
+        { productId: "p", qty: 10, unitLabel: "Pallet" },
+      ];
+      expect(netEditRestrictionLines(boxes, items, live, ladders)).toEqual([
+        { productId: "p", qtyDelta: 4800 },
+      ]);
+    });
+
+    it("fails CLOSED: a label the ladder cannot size is always judged (no delta)", () => {
+      const items = [{ id: "row-u", productId: "p", qty: 1, unitLabel: "Crate" }];
+      expect(netEditRestrictionLines([pallets], items, live, ladders)).toEqual([
+        { productId: "p" },
+      ]);
+      // no ladder read at all: a NEW unit line cannot be sized either
+      expect(
+        netEditRestrictionLines([pallets], [{ productId: "p", qty: 1, unitLabel: "Pallet" }], live),
+      ).toEqual([{ productId: "p" }]);
+    });
+
+    it("fails CLOSED: a held unit row with no usable snapshot factor and no ladder row is judged", () => {
+      const broken = { ...pallets, unitsPerBox: null, unitLabel: "Skid" };
+      const items = [{ id: "row-u", productId: "p", qty: 1 }];
+      expect(netEditRestrictionLines([broken], items, live, ladders)).toEqual([{ productId: "p" }]);
+    });
+
+    it("leaving a Pallet for the pack with a bare count counts Boxes at the LIVE pack (as the write does)", () => {
+      const items = [{ id: "row-u", productId: "p", qty: 50, unitLabel: null }];
+      expect(netEditRestrictionLines([pallets], items, live, ladders)).toEqual([
+        { productId: "p", qtyDelta: 50 * 24 - 960 },
+      ]);
+    });
+
+    it("leaving a factor-1 Piece row with a bare count counts PIECES, never boxes", () => {
+      const piece = {
+        id: "row-p",
+        productId: "p",
+        qty: 5,
+        boxes: 5,
+        pieces: 0,
+        unitsPerBox: 1,
+        unitLabel: "Piece",
+      };
+      const items = [{ id: "row-p", productId: "p", qty: 30, unitLabel: null }];
+      expect(netEditRestrictionLines([piece], items, live, ladders)).toEqual([
+        { productId: "p", qtyDelta: 25 },
+      ]);
+    });
+
+    it("addedRestrictionLines reads the ladder through the SAME reader (in-lock: the tx)", async () => {
+      const db = {
+        invoiceItem: { findMany: jest.fn().mockResolvedValue([pallets]) },
+        product: {
+          findMany: jest
+            .fn()
+            .mockResolvedValue([{ id: "p", unitsPerBox: 24, unit: "Box", pricePerUnit: 48 }]),
+        },
+        productUnit: {
+          findMany: jest.fn().mockResolvedValue([
+            { productId: "p", label: "Pallet", factorToBase: 480 },
+            { productId: "p", label: "Piece", factorToBase: 1 },
+          ]),
+        },
+      };
+      const out = await addedRestrictionLines(db as any, "inv-1", [
+        { id: "row-u", productId: "p", qty: 10, unitLabel: "Pallet" },
+      ]);
+      expect(out).toEqual([{ productId: "p", qtyDelta: 3840 }]);
+      expect(db.productUnit.findMany).toHaveBeenCalledWith(
+        expect.objectContaining({ where: { productId: { in: ["p"] } } }),
+      );
     });
   });
 });

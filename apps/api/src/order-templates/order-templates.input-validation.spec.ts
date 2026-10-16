@@ -4,6 +4,7 @@
  * non-positive line quantity itself on create, update and every run, so a quantity that bypasses the pipe
  * (an older client, a stored row, a direct caller) can never reach stock or an order.
  */
+import { regulatedGateOpenProvider } from "./testing/regulated-gate-open-provider";
 import "reflect-metadata";
 import { oversellReaderOffProvider } from "../orders/testing/policy-reader-provider";
 import { Test } from "@nestjs/testing";
@@ -66,6 +67,7 @@ describe("order template input validation", () => {
       providers: [
         oversellReaderOffProvider,
         OrderTemplatesService,
+        regulatedGateOpenProvider,
         { provide: PrismaService, useValue: prisma },
         { provide: TenantContextService, useValue: { run: jest.fn((_id, fn) => fn()) } },
         { provide: SystemConfigService, useValue: { get: jest.fn().mockResolvedValue("10") } },

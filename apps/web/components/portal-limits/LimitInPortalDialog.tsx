@@ -12,6 +12,8 @@ import { totalWithoutState } from "@/lib/unknown-state";
 import { useRestrictionsSettings } from "@/lib/api/restrictions-settings";
 import { useProductCategories } from "@/lib/api/product-labels";
 import { WriteButton } from "@/lib/read-only-gate";
+import { useAuth } from "@/lib/auth-context";
+import { ASK_ACCOUNT_ADMIN, mayHideFromAllPortal } from "@/lib/portal-hide-admin";
 import {
   LIMIT_MAX,
   LIMIT_SAVE_FAILED,
@@ -30,6 +32,7 @@ import {
 
 const REVIEW_HREF = "/settings/restrictions#customers-without-state";
 const LIMITS_HREF = "/settings/restrictions/rules";
+const ruleHref = (id: string) => `${LIMITS_HREF}/${id}`;
 const FORM_ID = "limit-in-portal-form";
 
 /**
@@ -62,6 +65,7 @@ export function LimitInPortalDialog({
   const [note, setNote] = React.useState("");
   const [legalBan, setLegalBan] = React.useState(false);
   const [failed, setFailed] = React.useState(false);
+  const mayHideAll = mayHideFromAllPortal(useAuth().user?.role);
   const [picked, setPicked] = React.useState<{
     id: string;
     name: string;
@@ -92,7 +96,9 @@ export function LimitInPortalDialog({
   const tooMany = scope.kind === "products" && count > LIMIT_MAX;
   const needsCategory = scope.kind === "products" && pickCategory && !picked && count === 0;
   const showPicker = pickCategory && (tooMany || needsCategory || !!picked);
-  const ready = !tooMany && !needsCategory && (everyone || states.length > 0);
+  // L5: an all-portal hide is account-admin only; the server refuses it too.
+  const needsAdmin = !mayHideAll && everyone;
+  const ready = !tooMany && !needsCategory && !needsAdmin && (everyone || states.length > 0);
   const noState = totalWithoutState(unknown.data);
   const line = liveLine(scope, chosen, legalBan);
   const enforcementOff = settings.data ? settings.data.enabled === false : false;
@@ -104,13 +110,25 @@ export function LimitInPortalDialog({
     const request = buildBulkRequest({ scope, states: chosen, legalBan, note });
     bulk.mutate(request, {
       onSuccess: (res) => {
-        const createdIds = res.createdIds ?? [];
+        // Row 509 (owner Q6): the products went into ONE rule, named by `ruleId` (also createdIds[0]); Undo lifts it.
+        const ruleId = res.ruleId;
+        const createdIds = ruleId ? [ruleId] : (res.createdIds ?? []);
         const changed = res.created > 0 && createdIds.length > 0;
+        // `created` counts RULES (1 or 0). Every PRODUCT count comes from the request: ids sent minus the ones the
+        // server skipped. A category scope keeps its copy, which only asks whether a rule was created.
+        const sent = scope.kind === "products" ? scope.productIds.length : 0;
+        const hidden =
+          res.created > 0 ? Math.max(0, sent - (res.skippedProductIds?.length ?? 0)) : 0;
         toast({
-          title: doneTitle(scope, chosen, res.created, res.skipped),
+          title:
+            scope.kind === "products"
+              ? doneTitle(scope, chosen, hidden, sent - hidden)
+              : doneTitle(scope, chosen, res.created, res.skipped),
           variant: "success",
           duration: UNDO_VISIBLE_MS,
-          secondaryAction: { label: "View limits", onClick: () => router.push(LIMITS_HREF) },
+          secondaryAction: ruleId
+            ? { label: "View rule", onClick: () => router.push(ruleHref(ruleId)) }
+            : { label: "View limits", onClick: () => router.push(LIMITS_HREF) },
           // Undo is a plain call: this component is usually gone (selection cleared) by the time it is clicked.
           ...(changed
             ? {
@@ -121,7 +139,12 @@ export function LimitInPortalDialog({
                       .then((r) => {
                         qc.invalidateQueries({ queryKey: ["selling-restrictions"] });
                         toast({
-                          title: undoneTitle(chosen, r.lifted ?? createdIds.length, scope),
+                          // One rule lifted un-hides `hidden` products; the old N-rows path lifted N rules.
+                          title: undoneTitle(
+                            chosen,
+                            ruleId ? hidden : (r.lifted ?? createdIds.length),
+                            scope,
+                          ),
                           variant: "success",
                         });
                       })
@@ -194,9 +217,18 @@ export function LimitInPortalDialog({
               type="radio"
               name="limit-who"
               checked={everyone}
+              disabled={!mayHideAll}
+              aria-describedby={!mayHideAll ? "limit-all-portal-admin-only" : undefined}
               onChange={() => setEveryone(true)}
             />
-            <span>Hide from all portal customers</span>
+            <span>
+              Hide from all portal customers
+              {!mayHideAll && (
+                <span id="limit-all-portal-admin-only" className="block text-xs text-navy/60">
+                  {ASK_ACCOUNT_ADMIN}
+                </span>
+              )}
+            </span>
           </label>
         </fieldset>
 

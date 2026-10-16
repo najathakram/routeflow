@@ -134,7 +134,7 @@ export class CustomersController {
   }
 
   @Delete("all")
-  @Roles(UserRole.OPERATOR)
+  @Roles(UserRole.TENANT_ADMIN)
   deleteAll() {
     return this.customersService.deleteAllCustomers();
   }
@@ -147,13 +147,13 @@ export class CustomersController {
   }
 
   @Get("cleanup-preview")
-  @Roles(UserRole.OPERATOR)
+  @Roles(UserRole.TENANT_ADMIN)
   cleanupPreview() {
     return this.customersService.previewImportedCleanup();
   }
 
   @Delete("cleanup-imported")
-  @Roles(UserRole.OPERATOR)
+  @Roles(UserRole.TENANT_ADMIN)
   @HttpCode(200)
   cleanupImported() {
     return this.customersService.deleteImportedCustomers();

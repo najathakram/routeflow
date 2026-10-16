@@ -1,5 +1,6 @@
 import { useQuery, useMutation, useQueryClient, type QueryClient } from "@tanstack/react-query";
 import { apiClient } from "../api-client";
+import { keptDraftInvoiceId, keptOrderId } from "../kept-draft-invoice";
 import type { ChangeRequest } from "./change-requests";
 import { creditsPendingFromError } from "../order-credits-pending";
 import type {
@@ -374,6 +375,8 @@ export type CreateSaleItemInput =
       qty: number;
       boxes?: number;
       pieces?: number;
+      /** VU-4b: a unit-ladder level ("Case"); the server prices it off the ladder. */
+      unitLabel?: string;
       unitPrice?: number;
       /** #2696(c) SA-558e: required when unitPrice moves off a special (tier) price. */
       overrideReason?: string;
@@ -429,11 +432,26 @@ export interface CreatedSaleInvoice {
  */
 export function useCreateSale() {
   const qc = useQueryClient();
-  return useMutation<CreatedSaleInvoice, Error, CreateSaleDto>({
-    mutationFn: (dto) => apiClient.post("/orders/sell", dto).then((r) => r.data),
+  // Row 485: `idempotencyKey` travels as the Idempotency-Key HEADER, never in the body.
+  return useMutation<CreatedSaleInvoice, Error, CreateSaleDto & { idempotencyKey?: string }>({
+    mutationFn: ({ idempotencyKey, ...dto }) =>
+      apiClient
+        .post(
+          "/orders/sell",
+          dto,
+          idempotencyKey ? { headers: { "idempotency-key": idempotencyKey } } : {},
+        )
+        .then((r) => r.data),
     onSuccess: () => {
       invalidateOrderCaches(qc);
       qc.invalidateQueries({ queryKey: ["invoices"] });
+    },
+    // Row 466: the sale and its invoice exist even when the send step failed.
+    onError: (err) => {
+      if (keptDraftInvoiceId(err) || keptOrderId(err)) {
+        invalidateOrderCaches(qc);
+        qc.invalidateQueries({ queryKey: ["invoices"] });
+      }
     },
   });
 }

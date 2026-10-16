@@ -16,9 +16,12 @@ import {
   Min,
   ValidateNested,
 } from "class-validator";
-import { Type } from "class-transformer";
+import { Transform, Type } from "class-transformer";
 import { CheckStatus, PaymentMethod } from "@prisma/client";
 import { StripHtml } from "../../common/transforms/strip-html.transform";
+import { Trim } from "../../common/transforms/trim.transform";
+import { SafeTextCell } from "../../common/transforms/safe-text-cell.transform";
+import { MAX_SHIPPING_CARRIER, MAX_SHIPPING_TRACKING } from "../../orders/shipment-text";
 
 export class CreateInvoiceItemDto {
   @IsString() description: string;
@@ -48,6 +51,15 @@ export class CreateInvoiceItemDto {
   @IsOptional() @IsInt() @Min(0) promoFreeUnits?: number;
   /** Per-line note (buyer-visible; prints under the description on the PDF). */
   @IsOptional() @StripHtml() @IsString() @MaxLength(2000) notes?: string;
+  /**
+   * H3b: why a staff price moves off this customer's tier price (required when it moves off a SPECIAL one).
+   * Trimmed, then judged by `decideStaffOverride`; stored on the line with the acting user.
+   */
+  @IsOptional()
+  @Transform(({ value }) => (typeof value === "string" ? value.trim() : value))
+  @IsString()
+  @MaxLength(200)
+  overrideReason?: string;
 }
 
 export class CreateInvoiceDto {
@@ -65,9 +77,20 @@ export class CreateInvoiceDto {
   @IsOptional() @IsString() terms?: string;
   @IsOptional() @IsString() referenceNumber?: string;
   @IsOptional() @IsString() subject?: string;
-  /** Carrier shipment tracking — set when goods ship via a carrier, not our route. */
-  @IsOptional() @IsString() @MaxLength(64) shippingCarrier?: string;
-  @IsOptional() @IsString() @MaxLength(128) shippingTrackingNumber?: string;
+  /** Carrier shipment tracking — set when goods ship via a carrier, not our route. Row 507: trimmed,
+   *  capped, and a formula-led value is the coded 400 TEXT_CELL_FORMULA_LEAD (same as the shipment PATCH). */
+  @IsOptional()
+  @IsString()
+  @MaxLength(MAX_SHIPPING_CARRIER)
+  @Trim()
+  @SafeTextCell()
+  shippingCarrier?: string;
+  @IsOptional()
+  @IsString()
+  @MaxLength(MAX_SHIPPING_TRACKING)
+  @Trim()
+  @SafeTextCell()
+  shippingTrackingNumber?: string;
   /** If true, immediately send the invoice after creation (DRAFT → SENT). */
   @IsOptional() @IsBoolean() send?: boolean;
   /**

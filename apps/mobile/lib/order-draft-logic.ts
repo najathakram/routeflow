@@ -283,3 +283,27 @@ export function resolveResumeLineBoxes(
   }
   return { boxes, pieces, qty };
 }
+
+/** `resolveResumeDerivedBase`'s parked-line input — a structural slice of `DraftCatalogLine`. */
+export interface ResumeDerivedBaseInput {
+  unitLabel?: string | null;
+  derivedBase?: unknown;
+  unitsPerBox?: number;
+}
+
+/**
+ * Units P0b / SA-728 — the client-only `derivedBase` marker a parked line resumes with. The parked boxes/pieces are the
+ * money (a pack-pieces line billed at the pack price); the marker only keeps the picker on "Piece". It is restored ONLY
+ * while it still describes the line: a non-empty string, no unit of its own, and the live pack size unchanged (the shape
+ * was re-split otherwise, `resolveResumeLineBoxes`). In every other case the line resumes as the PACK line its
+ * boxes/pieces describe, never a guessed Piece.
+ */
+export function resolveResumeDerivedBase(
+  li: ResumeDerivedBaseInput,
+  liveUnitsPerBox: number,
+): string | undefined {
+  const marker = li.derivedBase;
+  if (typeof marker !== "string" || marker.trim() === "" || li.unitLabel) return undefined;
+  const live = Number(liveUnitsPerBox ?? 0);
+  return live > 1 && Number(li.unitsPerBox ?? 0) === live ? marker : undefined;
+}

@@ -12,7 +12,7 @@
  */
 import { randomUUID } from "crypto";
 import { ConflictException, NotFoundException } from "@nestjs/common";
-import { PrismaClient } from "@prisma/client";
+import { PrismaClient, UserRole } from "@prisma/client";
 import { PrismaPg } from "@prisma/adapter-pg";
 import { Pool } from "pg";
 import { describeDb, requireLocalDatabaseUrl } from "../common/testing/db-spec";
@@ -26,7 +26,12 @@ import type { JwtPayload } from "../auth/jwt-payload.interface";
 // eslint-disable-next-line @typescript-eslint/no-var-requires
 const { assertTestTenant } = require("../../../../scripts/lib/test-tenants.cjs");
 
-const admin = { sub: "u-lift-admin", username: "lift-admin" } as JwtPayload;
+// TENANT_ADMIN: the seeded rules are all-customer (FEDERAL), which only an admin may lift (row 509).
+const admin = {
+  sub: "u-lift-admin",
+  username: "lift-admin",
+  role: UserRole.TENANT_ADMIN,
+} as JwtPayload;
 
 describeDb("selling-restriction lift against real Postgres", () => {
   let pool: Pool;
@@ -125,7 +130,11 @@ describeDb("selling-restriction lift against real Postgres", () => {
 
     await expect(
       asA(() =>
-        service.lift(rule.id, { reason: "second" }, { sub: "u2", username: "two" } as JwtPayload),
+        service.lift(rule.id, { reason: "second" }, {
+          sub: "u2",
+          username: "two",
+          role: UserRole.TENANT_ADMIN,
+        } as JwtPayload),
       ),
     ).rejects.toBeInstanceOf(ConflictException);
 
@@ -142,7 +151,11 @@ describeDb("selling-restriction lift against real Postgres", () => {
       const results = await Promise.allSettled([
         asA(() => service.lift(rule.id, { reason: "left" }, admin)),
         asA(() =>
-          service.lift(rule.id, { reason: "right" }, { sub: "u2", username: "two" } as JwtPayload),
+          service.lift(rule.id, { reason: "right" }, {
+            sub: "u2",
+            username: "two",
+            role: UserRole.TENANT_ADMIN,
+          } as JwtPayload),
         ),
       ]);
       const won = results.filter((r) => r.status === "fulfilled");

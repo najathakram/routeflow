@@ -159,7 +159,7 @@ const INVENTORY: Record<string, Row> = {
   "invoices/invoices.service.ts::InvoicesService.update": {
     kind: "GUARDED",
     needs: "assertInvoiceRewriteAllowed",
-    why: "delete-and-recreate re-split at the live pack",
+    why: "delete-and-recreate re-split at the live pack; VU-4a (D3): an order-less DRAFT edit also resolves a unit line via resolveLineUnits in update() itself, and still calls the back-sync only behind this guard",
     trioVia: ["buildEditedLines"],
   },
   "invoices/invoices.service.ts::InvoicesService.duplicate": {
@@ -249,10 +249,6 @@ const INVENTORY: Record<string, Row> = {
   "customers/customers.service.ts::CustomersService.runImportedCustomersCleanup": {
     kind: "DELETE_ONLY",
     why: "customer purge",
-  },
-  "products/products.service.ts::ProductsService.bulkDelete": {
-    kind: "DELETE_ONLY",
-    why: "product purge",
   },
   "system-config/settings.controller.ts::SettingsController.clearFinancialData": {
     kind: "DELETE_ONLY",
@@ -1034,10 +1030,6 @@ const REVISIONS: Record<string, RevisionRow> = {
   "customers/customers.service.ts::CustomersService.runImportedCustomersCleanup": {
     kind: "ORDER_GONE",
     why: "deletes imported customers' orders with their lines",
-  },
-  "products/products.service.ts::ProductsService.bulkDelete": {
-    kind: "ORDER_GONE",
-    why: "hard-deletes a product with no live history; its lines are removed with it (no editable order depends on it)",
   },
   "bookkeeping/bookkeeping.service.ts::BookkeepingService.createExpense": {
     kind: "NOT_AN_ORDER",

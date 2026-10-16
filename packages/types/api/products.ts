@@ -99,6 +99,9 @@ export interface CommitStockCountSessionResponse {
   movementIds: string[];
   costMovementIds?: string[];
   alreadyCommitted?: boolean;
+  /** "Finish with skips" (SA-767 L-2.4 C): lines left out because the product can never be counted
+   *  (a product family now, or deleted). Empty on a normal commit. */
+  skippedProducts?: Array<{ productId: string; name?: string; reason: string }>;
 }
 
 /** Near-identical: web's `variantName` is required, mobile's is optional/nullable —
@@ -382,4 +385,12 @@ export interface UpdateFamilyVariantsRequest {
   add?: FamilyVariantInput[];
   update?: Array<Partial<FamilyVariantInput> & { id: string }>;
   deactivate?: string[];
+}
+
+/**
+ * The "Delete product?" confirm's body, shared by web and mobile (audit 2026-10-14: mobile said "removed
+ * permanently", but a delete deactivates the product and keeps its history).
+ */
+export function deleteProductConfirmText(name: string): string {
+  return `${name} will be deactivated and hidden from the catalog. Its SKU and barcode are freed, so another product can use them. Order and invoice history is kept. A product on an undelivered order can't be deleted.`;
 }

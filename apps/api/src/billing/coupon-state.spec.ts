@@ -26,7 +26,13 @@ interface Row {
 function harness(
   over: Partial<Row> = {},
   tenant: Record<string, unknown> = {},
-  addons: Array<{ priceSnapshot: number | null; quantity: number }> = [],
+  addons: Array<{
+    priceSnapshot: number | null;
+    quantity: number;
+    sku?: string;
+    addonKey?: string;
+    stripeItemId?: string | null;
+  }> = [],
 ) {
   const row: Row = {
     couponFull: false,
@@ -43,6 +49,7 @@ function harness(
   const t = { status: "ACTIVE", class: "PRODUCTION", deletedAt: null, ...tenant };
   const ledger: Array<{ type: string; amountDelta: number }> = [];
   const order: string[] = [];
+  const notices: any[] = [];
   const matches = (where: any): boolean => {
     if ("couponFull" in where && where.couponFull !== row.couponFull) return false;
     if (where.OR) {
@@ -71,6 +78,12 @@ function harness(
       }),
     },
     tenantAddon: { findMany: jest.fn(async () => addons) },
+    auditLog: {
+      create: jest.fn(async ({ data }: any) => {
+        notices.push(data);
+        return {};
+      }),
+    },
     $queryRaw: jest.fn(async () => {
       order.push("tenant.lock");
       return [];
@@ -93,7 +106,7 @@ function harness(
       ledger.push({ type, amountDelta: opts.amountDelta });
     }),
   };
-  return { row, tx, prisma, events, ledger, order };
+  return { row, tx, prisma, events, ledger, order, notices };
 }
 
 const sum = (ledger: Array<{ amountDelta: number }>) =>
@@ -185,6 +198,53 @@ describe("applyCouponState: the ledger crossing (M1)", () => {
     await applyCouponState(h, "t1", NO_COUPON, { reason: "manual_activation", bookDelta: false });
     expect(h.row.couponFull).toBe(false);
     expect(h.events.emit).not.toHaveBeenCalled();
+  });
+});
+
+describe("applyCouponState: a coupon that ENDS never auto-bills the add-ons that rode it (B1079)", () => {
+  const FULL = { full: true, couponId: "cp", endsAt: null };
+  const rows = [
+    { priceSnapshot: 0, quantity: 2, sku: "PACK_A", stripeItemId: null },
+    { priceSnapshot: 0, quantity: 1, sku: "PACK_B", stripeItemId: null },
+    { priceSnapshot: 20, quantity: 1, sku: "PACK_C", stripeItemId: "si_c" },
+  ];
+
+  it("the exit writes ONE platform notice naming the unbilled rows (counts and skus), and bills nothing", async () => {
+    const h = harness({ couponFull: true }, {}, rows);
+    await applyCouponState(h, "t1", NO_COUPON, { reason: "sync", syncedAt: new Date(2000) });
+    expect(h.notices).toHaveLength(1);
+    expect(h.notices[0]).toMatchObject({
+      tenantId: "t1",
+      action: "ADDON_COUPON_ENDED_UNBILLED",
+      meta: { unbilledRows: 2, skus: ["PACK_A", "PACK_B"], reason: "sync" },
+    });
+    expect(String(h.notices[0].meta.message)).toMatch(/NOT billed automatically/);
+  });
+
+  it("no notice when every add-on row already has a Stripe item, or on the way IN", async () => {
+    const billed = harness({ couponFull: true }, {}, [rows[2]]);
+    await applyCouponState(billed, "t1", NO_COUPON, { reason: "sync", syncedAt: new Date(2000) });
+    expect(billed.notices).toHaveLength(0);
+
+    const entering = harness({ couponFull: false }, {}, rows);
+    await applyCouponState(entering, "t1", FULL, { reason: "sync", syncedAt: new Date(1000) });
+    expect(entering.notices).toHaveLength(0);
+  });
+
+  it("a replay of the exit (no flip) writes no second notice", async () => {
+    const h = harness({ couponFull: true }, {}, rows);
+    await applyCouponState(h, "t1", NO_COUPON, { reason: "sync", syncedAt: new Date(2000) });
+    await applyCouponState(h, "t1", NO_COUPON, { reason: "sync", syncedAt: new Date(3000) });
+    expect(h.notices).toHaveLength(1);
+  });
+
+  it("a manual payer or a row with no Stripe subscription is never noticed", async () => {
+    const manual = harness({ couponFull: true, externalPayment: true }, {}, rows);
+    await applyCouponState(manual, "t1", NO_COUPON, { reason: "sync", syncedAt: new Date(2000) });
+    expect(manual.notices).toHaveLength(0);
+    const noSub = harness({ couponFull: true, stripeSubId: null }, {}, rows);
+    await applyCouponState(noSub, "t1", NO_COUPON, { reason: "sync", syncedAt: new Date(2000) });
+    expect(noSub.notices).toHaveLength(0);
   });
 });
 
@@ -537,11 +597,13 @@ describe("structural pin: ONE writer of the coupon columns (L-223)", () => {
   // mention and raw SQL writes still fail for these files like any other (the raw-SQL test below has no waiver).
   const SNAPSHOT_READERS = new Set([
     "/scripts/backfill-b294-order-line-taxrate.mjs",
+    "/scripts/backfill-b297-rate-snapshot.mjs",
     "/scripts/backfill-refund-tender.mjs",
     "/scripts/billing-correct-activation.mjs",
     "/scripts/lib/billing-catchup-core.cjs",
     "/scripts/lib/billing-correct-activation-core.cjs",
     "/scripts/lib/live-target-guard.cjs",
+    "/scripts/labels-from-categories.mjs", // the protected-tenant classifier input (subOf)
   ]);
 
   it("src, scripts and prisma (migrations excluded) hold no coupon-column write outside the writer", () => {

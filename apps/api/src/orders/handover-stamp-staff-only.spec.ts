@@ -43,7 +43,7 @@ const customerCopies = (): string[] => {
 
 describe("hand-over stamp stays off customer copies (row 342)", () => {
   const files = customerCopies();
-  const rel = (p: string) => relative(SRC, p);
+  const rel = (p: string) => relative(SRC, p).split("\\").join("/"); // posix separators on every OS
 
   it("the scan reaches the .tsx document templates, documents/, messaging/ and email/", () => {
     const names = files.map(rel);

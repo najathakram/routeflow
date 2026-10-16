@@ -1345,7 +1345,7 @@ describe("OrdersService", () => {
       await service.create(
         { items: [{ productId: "prod-1", qty: 1 }], status: "DRAFT" } as any,
         customerPayload,
-        { allowArchived: true },
+        { allowArchived: true, internalCustomerDraft: true },
       );
 
       expect(prisma.order.create).toHaveBeenCalled();
@@ -8476,6 +8476,7 @@ describe("OrdersService", () => {
     });
 
     it("ADD_ITEM onto an existing line keeps the line's stored (agreed) unitPrice", async () => {
+      const BUYER = { authorChannel: "BUYER" }; // SA ruling #3418: a CUSTOMER-requested raise
       const line = {
         id: "li-1",
         orderId: "ord-1",
@@ -8528,15 +8529,14 @@ describe("OrdersService", () => {
             trackedCategoryId: null,
           },
         ]);
-      // B135: the ADD_ITEM merge target comes from the locked held row, then its authoritative
-      // qty/price is re-read through the tx.
+      // B135: the merge target is the locked held row; its authoritative qty/price is re-read in the tx.
       prisma.orderItem.findUnique.mockResolvedValue(line);
 
       await service.approveChangeRequestAtStop("cr-1", operatorPayload, null);
 
       expect(prisma.orderItem.update).toHaveBeenCalledWith({
         where: { id: "li-1" },
-        data: { qty: 15, boxes: null, pieces: null, unitsPerBox: null, subtotal: 127.5 },
+        data: { qty: 15, boxes: null, pieces: null, unitsPerBox: null, subtotal: 127.5, ...BUYER },
       });
       expect(prisma.orderItem.create).not.toHaveBeenCalled();
     });
@@ -9130,6 +9130,7 @@ describe("OrdersService", () => {
             type: "CHANGE_QTY",
             orderItemId: "li-1",
             payload: { orderItemId: "li-1", newQty: 18 },
+            requestedByRole: "DRIVER", // staff-filed: keeps this on the staff channel (F1 i)
           }),
         );
         prisma.order.findUnique.mockResolvedValue(baseOrder([sharedLine])); // snapshot line: PENDING
@@ -9159,16 +9160,14 @@ describe("OrdersService", () => {
 
         await service.approveChangeRequestAtStop("cr-1", operatorPayload, null);
 
-        // Order→stop is the repo-wide acquisition order (reopenStop, the customers.service merge
-        // and purge paths); inverting it here would deadlock against them. The stop lock is
-        // therefore taken second and NOWAIT, so this tx never waits on a stop row.
-        expect(seenTx.$executeRaw.mock.calls[0][0].join("?")).toContain('"Order"');
-        const stopLockSql = seenTx.$executeRaw.mock.calls[1][0].join("?");
+        // Order→stop is the repo-wide acquisition order; the stop lock is second and NOWAIT. Call [0] is the lock bound.
+        expect(seenTx.$executeRaw.mock.calls[1][0].join("?")).toContain('"Order"');
+        const stopLockSql = seenTx.$executeRaw.mock.calls[2][0].join("?");
         expect(stopLockSql).toContain('"RouteRunStop"');
         expect(stopLockSql).toContain("FOR NO KEY UPDATE NOWAIT");
         // order.findUnique call [0] is the pre-tx snapshot, [1] is the in-tx `live` re-read: both
         // locks must be held before that re-read, or an in-flight completion stays invisible.
-        expect(seenTx.$executeRaw.mock.invocationCallOrder[1]).toBeLessThan(
+        expect(seenTx.$executeRaw.mock.invocationCallOrder[2]).toBeLessThan(
           seenTx.order.findUnique.mock.invocationCallOrder[1],
         );
       });
@@ -9178,7 +9177,8 @@ describe("OrdersService", () => {
         const seenTx = captureMergeTx();
         const lockErr: any = new Error("Raw query failed");
         lockErr.meta = { code: "55P03" };
-        seenTx.$executeRaw.mockResolvedValueOnce(0).mockRejectedValueOnce(lockErr);
+        seenTx.$executeRaw.mockResolvedValueOnce(0).mockResolvedValueOnce(0); // bound, Order row
+        seenTx.$executeRaw.mockRejectedValueOnce(lockErr); // the stop row
 
         // A busy stop is transient, so it must NOT read as the terminal CHANGE_WINDOW_CLOSED —
         // the resolver is told to retry.
@@ -9200,6 +9200,7 @@ describe("OrdersService", () => {
         setUpSharedFixture();
         const seenTx = captureMergeTx();
         seenTx.$executeRaw
+          .mockResolvedValueOnce(0)
           .mockResolvedValueOnce(0)
           .mockRejectedValueOnce(
             new Error('could not obtain lock on row in relation "RouteRunStop"'),

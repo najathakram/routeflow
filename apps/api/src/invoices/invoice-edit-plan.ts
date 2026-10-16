@@ -32,6 +32,11 @@
 
 import { BadRequestException } from "@nestjs/common";
 import { assertSellableLines } from "../products/sellable-lines";
+import type { ResolvedLineUnits } from "../products/line-units";
+import { isUnitAware, prepareUnitLadders, requestsUnit } from "../orders/unit-line-build";
+import { keepsHeldUnit, norm } from "../orders/unit-label-norm";
+import { buildInvoiceUnitLine } from "./invoice-unit-line";
+import { priceLineItem, type LineOverrideCtx } from "./invoice-line-override";
 import {
   categoryTaxSnapshotOf,
   computeCategoryTax,
@@ -61,6 +66,8 @@ export interface EditPayloadLine {
   unitsPerBox?: number | null;
   promoFreeUnits?: number | null;
   notes?: string | null;
+  /** H3b: why this line's price moves off the customer's tier price (a changed price only). */
+  overrideReason?: string | null;
 }
 
 /** A stored InvoiceItem row, as this module reads it (Prisma Decimals arrive as objects). */
@@ -71,16 +78,31 @@ export interface LineMatch {
   untouched: boolean;
   /** The payload names another product than the matched row: the row's own pack is not its pack. */
   productChanged: boolean;
+  /** VU-4a: the payload names ANOTHER unit than the row's (an explicit null / "" / pack label leaves it). */
+  leftUnit?: boolean;
 }
 
 const same = (a: unknown, b: unknown): boolean =>
   a == null || b == null ? a == null && b == null : Math.abs(Number(a) - Number(b)) < 1e-9;
 
-/** qty, boxes, pieces, unitPrice, discount, taxRate — the tuple SA-184 calls "untouched". */
+/**
+ * The stored count of a unit line: `boxes` holds the unit count. A factor-1 unit row (its `unitsPerBox`
+ * snapshot is the unit's factor, <= 1) stores no boxes, and there the base-piece `qty` IS the unit count
+ * (row 457). A larger unit never falls back to `qty` (base pieces), so a stale row cannot read as
+ * untouched.
+ */
+const storedUnitCount = (row: StoredEditRow): unknown =>
+  Number(row.unitsPerBox ?? 1) <= 1 ? (row.boxes ?? row.qty) : row.boxes;
+
+/**
+ * qty, boxes, pieces, unitPrice, discount, taxRate — the tuple SA-184 calls "untouched" — plus the unit
+ * (VU-4a). A unit line's payload qty counts the UNIT (stored as `boxes`; its `qty` column is base pieces).
+ */
 const sameMoneyTuple = (item: EditPayloadLine, row: StoredEditRow): boolean =>
-  same(item.qty, row.qty) &&
-  same(item.boxes, row.boxes) &&
-  same(item.pieces, row.pieces) &&
+  norm(item.unitLabel ?? "") === norm(row.unitLabel ?? "") &&
+  (requestsUnit(item)
+    ? same(item.qty, storedUnitCount(row))
+    : same(item.qty, row.qty) && same(item.boxes, row.boxes) && same(item.pieces, row.pieces)) &&
   same(item.unitPrice, row.unitPrice) &&
   same(item.discount ?? 0, row.discount ?? 0) &&
   same(item.taxRate ?? 0, row.taxRate ?? 0);
@@ -99,8 +121,18 @@ export function matchEditLines(items: EditPayloadLine[], stored: StoredEditRow[]
     if (!row) throw new BadRequestException("unknown line id");
     if (used.has(row.id)) throw new BadRequestException("duplicate line id");
     used.add(row.id);
-    const productChanged = (item.productId ?? null) !== (row.productId ?? null);
-    out[i] = { row, untouched: !productChanged && sameMoneyTuple(item, row), productChanged };
+    // SA-070 / VU-4a: an ABSENT unitLabel keeps the row's unit; only an explicit other label (null, "", the
+    // pack's, another unit) LEAVES it, and then the old factor is not the line's pack (Case -> Box).
+    const leftUnit =
+      norm(row.unitLabel ?? "") !== "" && !keepsHeldUnit(item.unitLabel, row.unitLabel);
+    const productChanged = (item.productId ?? null) !== (row.productId ?? null) || leftUnit;
+    const held = item.unitLabel === undefined ? { ...item, unitLabel: row.unitLabel } : item;
+    out[i] = {
+      row,
+      untouched: !productChanged && sameMoneyTuple(held, row),
+      productChanged,
+      leftUnit,
+    };
   });
   items.forEach((item, i) => {
     if (item.id != null) return;
@@ -115,6 +147,16 @@ export function matchEditLines(items: EditPayloadLine[], stored: StoredEditRow[]
     out[i] = { row, untouched: true, productChanged: false };
   });
   return out;
+}
+
+/** The payload with an absent `unitLabel` filled from the matched row's unit (SA-070: absent = unchanged). */
+export function inheritHeldUnit(items: EditPayloadLine[], matches: LineMatch[]): EditPayloadLine[] {
+  return items.map((it, i) => {
+    const m = matches[i];
+    return it.unitLabel === undefined && m.row?.unitLabel && !m.productChanged
+      ? { ...it, unitLabel: m.row.unitLabel }
+      : it;
+  });
 }
 
 export interface EditedLine {
@@ -135,7 +177,15 @@ interface PlanCtx {
   productMap: ReadonlyMap<
     string,
     {
+      id?: string;
+      name?: string | null;
+      unit?: string | null;
       unitsPerBox?: number | null;
+      pricePerUnit?: unknown;
+      priceTier2?: unknown;
+      priceTier3?: unknown;
+      priceTier4?: unknown;
+      priceTier5?: unknown;
       trackedCategoryId?: string | null;
       trackedSubcategoryId?: string | null;
     }
@@ -143,6 +193,10 @@ interface PlanCtx {
   categoryMap: ReadonlyMap<string, any>;
   clampFreeUnits: (free: number | undefined, boxes: number | null, qty: number) => number;
   warn: (message: string) => void;
+  /** VU-4a: `resolveLineUnits` per item (index-aligned; undefined = no unit requested). The CALLER resolves. */
+  resolved?: ReadonlyArray<ResolvedLineUnits | undefined>;
+  /** H3b: set by PATCH /invoices/:id — a CHANGED price is judged against the customer's tier price; an unchanged one is kept. */
+  override?: LineOverrideCtx;
 }
 
 const lineLabel = (item: EditPayloadLine) =>
@@ -239,8 +293,8 @@ function isEditOfUnmatchedLegacyRow(ctx: PlanCtx, item: EditPayloadLine): boolea
 }
 
 export function buildEditedLines(ctx: PlanCtx): EditedLine[] {
-  return ctx.items.map((item, i): EditedLine => {
-    const { row, untouched, productChanged } = ctx.matches[i];
+  return ctx.items.map((sentItem, i): EditedLine => {
+    const { row, untouched, productChanged, leftUnit } = ctx.matches[i];
     if (row && untouched) {
       // Verbatim: stored money, split, pack, levy and snapshots. Only cosmetic fields follow the payload.
       return {
@@ -254,21 +308,80 @@ export function buildEditedLines(ctx: PlanCtx): EditedLine[] {
           taxRate: Number(row.taxRate ?? 0),
           subtotal: Number(row.subtotal),
           categoryTaxAmount: Number(row.categoryTaxAmount ?? 0),
-          description: item.description ?? row.description,
-          notes: item.notes ?? null,
-          orderItemId: item.orderItemId ?? row.orderItemId ?? null,
+          description: sentItem.description ?? row.description,
+          notes: sentItem.notes ?? null,
+          orderItemId: sentItem.orderItemId ?? row.orderItemId ?? null,
         },
       };
     }
-    const product = item.productId ? ctx.productMap.get(item.productId) : undefined;
+    const product = sentItem.productId ? ctx.productMap.get(sentItem.productId) : undefined;
+    const unitRes = ctx.resolved?.[i];
+    // H3b: a re-sent stored price keeps its stored type/reason/author; a changed one is decided afresh.
+    const { item: rawItem, stamp } = priceLineItem(
+      ctx.override,
+      sentItem,
+      product,
+      unitRes?.unitLabel ?? null,
+      productChanged ? null : row,
+    );
+    if (product && unitRes && isUnitAware(unitRes)) {
+      // VU-4a (D3): the SAME builder create() uses for a unit line; a changed line writes its whole data.
+      const category = product.trackedCategoryId
+        ? ctx.categoryMap.get(product.trackedCategoryId)
+        : null;
+      const { tenantId: _t, ...built } = buildInvoiceUnitLine({
+        item: rawItem as any,
+        product,
+        resolved: unitRes,
+        category,
+        tenantId: undefined,
+      });
+      // M2: the levy follows the SAME R3 rule as a pack row — a kept row (same product, same unit or a
+      // re-denomination of it) keeps its category, subcategory and rate snapshot; the basis is base pieces.
+      const keepsRow = row != null && !productChanged;
+      const levy = rowLevy(ctx, {
+        row,
+        keepsRow,
+        product,
+        pieceQty: Number(built.qty),
+        lineSub: Number(built.subtotal),
+      });
+      const data = {
+        ...built,
+        ...stamp,
+        trackedCategoryId: levy.lineCategoryId,
+        trackedSubcategoryId: keepsRow
+          ? (row.trackedSubcategoryId ?? null)
+          : (product.trackedSubcategoryId ?? null),
+        categoryTaxAmount: levy.amount,
+        ...levy.categoryTrio,
+      };
+      return { rowId: row?.id ?? null, untouched: false, data };
+    }
     const livePack = product?.unitsPerBox ?? null;
+    // A unit row re-sent as a pack line with a bare count: the count is boxes at the LIVE pack (as the unit count was);
+    // a factor-1 (Piece) row's count was pieces, so it stays pieces (the pack split rolls it over).
+    const bareLeave =
+      leftUnit && rawItem.boxes == null && rawItem.pieces == null && Number(livePack) > 1;
+    const pieceLeave = bareLeave && Math.trunc(Number(row?.unitsPerBox ?? 0)) <= 1;
+    const item: EditPayloadLine =
+      bareLeave && !pieceLeave
+        ? { ...rawItem, boxes: rawItem.qty, pieces: 0, qty: rawItem.qty * Number(livePack) }
+        : rawItem;
     const qty = item.qty;
     let boxes: number | null = null;
     let pieces: number | null = null;
     let unitsPerBox: number | undefined;
     let ownPack: number | null = null;
     let attestedPack: number | undefined;
-    if (row) {
+    if (row && pieceLeave) {
+      // The count is pieces, split at the LIVE pack (what the box path stores too); a count below one box has no
+      // split a pack could be recovered from, and the line was never attested, so the pack is set, not audited.
+      const split = normalizeBoxesPieces({ qty, unitsPerBox: Number(livePack) });
+      boxes = split.boxes;
+      pieces = split.pieces;
+      unitsPerBox = Number(livePack);
+    } else if (row) {
       const r = recoverChangedPack(item, row, productChanged);
       if (r.attested && r.pack != null) attestedPack = r.pack;
       boxes = r.boxes;
@@ -306,64 +419,21 @@ export function buildEditedLines(ctx: PlanCtx): EditedLine[] {
     }
     const freeUnits = ctx.clampFreeUnits(item.promoFreeUnits ?? undefined, boxes, qty);
     const lineSub = priceReplacedLine(item as any, { qty, boxes, pieces, unitsPerBox, freeUnits });
-    // B297 PR3 (R3): a CHANGED row that keeps its product re-prices from its OWN rate snapshot (a rate edited
-    // since the sale must not move it); only a new row or a product substitute stamps the live category.
     const keepsRow = row != null && !productChanged;
-    const ownCategoryId =
-      keepsRow && row.trackedCategoryId && !hasNullTrio(row as any)
-        ? (row.trackedCategoryId as string)
-        : null;
-    // A kept row with a NULL trio is the row's OWN category's line (C), whatever its product's category is now:
-    // pricing it at the product's current category D would move the line to D. A kept row with NO category is a line
-    // SOLD uncategorised (B297 row 338, L1): it stays category-less at its stored amount, 0 included, instead of
-    // being filed under its product's current category and re-priced at the live rate.
-    const keepsStoredLevy = keepsRow && !row.trackedCategoryId;
-    const lineCategoryId =
-      ownCategoryId ??
-      (keepsRow && row.trackedCategoryId
-        ? (row.trackedCategoryId as string)
-        : keepsStoredLevy
-          ? null
-          : (product?.trackedCategoryId ?? null));
-    const category = lineCategoryId ? ctx.categoryMap.get(lineCategoryId) : null;
     // The levy basis reads the SAME resolved pack the money used (SA-180): never the live pack for a stored line.
     const basisPack = Number(unitsPerBox ?? ownPack ?? (row ? 0 : livePack) ?? 0);
     const pieceQty = regulatedUnitBasis(
-      { qty, boxes, pieces, unitLabel: item.unitLabel ?? null },
+      // A label that resolved to the pack (the only way one reaches this branch) is a pack line.
+      { qty, boxes, pieces, unitLabel: null },
       basisPack,
     ).unitBasisQty;
-    let categoryTaxAmount: number;
-    let categoryTrio: ReturnType<typeof categoryTaxSnapshotOf>;
-    if (keepsRow) {
-      const r = recomputeCategoryTax(
-        {
-          trackedCategoryId: lineCategoryId,
-          categoryTaxType: ownCategoryId ? row.categoryTaxType : null,
-          categoryTaxRate: ownCategoryId ? row.categoryTaxRate : null,
-          categoryPriceIncludesTax: ownCategoryId ? row.categoryPriceIncludesTax : null,
-          storedAmount: row.categoryTaxAmount,
-          unitBasisQty: pieceQty,
-          lineSubtotal: lineSub,
-        },
-        category,
-      );
-      if (r.warn) ctx.warn(`line ${row.id}: ${r.warn}`);
-      categoryTaxAmount = r.amount;
-      categoryTrio =
-        r.stamp ??
-        (ownCategoryId ? copyCategoryTaxSnapshot(row as any) : categoryTaxSnapshotOf(null));
-    } else {
-      categoryTaxAmount = category
-        ? computeCategoryTax({
-            taxType: category.taxType as CategoryTaxType,
-            rate: Number(category.rate),
-            unitBasisQty: pieceQty,
-            lineSubtotal: lineSub,
-            priceIncludesTax: category.priceIncludesTax,
-          })
-        : 0;
-      categoryTrio = categoryTaxSnapshotOf(category ?? null);
-    }
+    const levy = rowLevy(ctx, {
+      row,
+      keepsRow,
+      product,
+      pieceQty,
+      lineSub,
+    });
     return {
       rowId: row?.id ?? null,
       untouched: false,
@@ -380,22 +450,89 @@ export function buildEditedLines(ctx: PlanCtx): EditedLine[] {
         subtotal: lineSub,
         boxes,
         pieces,
+        // A unit row re-sent as a pack line clears its label (the key is absent on every other pack line).
+        ...(row?.unitLabel ? { unitLabel: null } : {}),
         // Never CLEAR a pack the line carried (B717); a stored line keeps its own, never a sibling's.
         unitsPerBox: unitsPerBox ?? ownPack ?? null,
         promoFreeUnits: freeUnits > 0 ? freeUnits : null,
-        trackedCategoryId: lineCategoryId,
+        trackedCategoryId: levy.lineCategoryId,
         // Row 338: a kept row keeps the subcategory it was sold under (as it keeps its category and trio); only a
         // new row or a product substitute (a new sale) takes the product's CURRENT subcategory.
         trackedSubcategoryId: keepsRow
           ? (row.trackedSubcategoryId ?? null)
           : (product?.trackedSubcategoryId ?? null),
-        categoryTaxAmount,
-        ...categoryTrio,
+        categoryTaxAmount: levy.amount,
+        ...levy.categoryTrio,
         notes: item.notes ?? null,
         msrp: null as number | null,
+        ...stamp,
       },
     };
   });
+}
+
+/**
+ * B297 PR3 (R3), shared by the pack AND unit branches (VU-4a M2): a CHANGED row that keeps its product re-prices
+ * its levy from its OWN rate snapshot (a rate edited since the sale must not move it); only a new row or a product
+ * substitute (keepsRow false) stamps the live category. `pieceQty` is the levy basis in base pieces.
+ */
+function rowLevy(
+  ctx: Pick<PlanCtx, "categoryMap" | "warn">,
+  args: { row: any; keepsRow: boolean; product: any; pieceQty: number; lineSub: number },
+) {
+  const { row, keepsRow, product, pieceQty, lineSub } = args;
+  // B297 PR3 (R3): a CHANGED row that keeps its product re-prices from its OWN rate snapshot (a rate edited
+  // since the sale must not move it); only a new row or a product substitute stamps the live category.
+  const ownCategoryId =
+    keepsRow && row.trackedCategoryId && !hasNullTrio(row as any)
+      ? (row.trackedCategoryId as string)
+      : null;
+  // A kept row with a NULL trio is the row's OWN category's line (C), whatever its product's category is now:
+  // pricing it at the product's current category D would move the line to D. A kept row with NO category is a line
+  // SOLD uncategorised (B297 row 338, L1): it stays category-less at its stored amount, 0 included, instead of
+  // being filed under its product's current category and re-priced at the live rate.
+  const keepsStoredLevy = keepsRow && !row.trackedCategoryId;
+  const lineCategoryId =
+    ownCategoryId ??
+    (keepsRow && row.trackedCategoryId
+      ? (row.trackedCategoryId as string)
+      : keepsStoredLevy
+        ? null
+        : (product?.trackedCategoryId ?? null));
+  const category = lineCategoryId ? ctx.categoryMap.get(lineCategoryId) : null;
+  let levyAmount: number;
+  let categoryTrio: ReturnType<typeof categoryTaxSnapshotOf>;
+  if (keepsRow) {
+    const r = recomputeCategoryTax(
+      {
+        trackedCategoryId: lineCategoryId,
+        categoryTaxType: ownCategoryId ? row.categoryTaxType : null,
+        categoryTaxRate: ownCategoryId ? row.categoryTaxRate : null,
+        categoryPriceIncludesTax: ownCategoryId ? row.categoryPriceIncludesTax : null,
+        storedAmount: row.categoryTaxAmount,
+        unitBasisQty: pieceQty,
+        lineSubtotal: lineSub,
+      },
+      category,
+    );
+    if (r.warn) ctx.warn(`line ${row.id}: ${r.warn}`);
+    levyAmount = r.amount;
+    categoryTrio =
+      r.stamp ??
+      (ownCategoryId ? copyCategoryTaxSnapshot(row as any) : categoryTaxSnapshotOf(null));
+  } else {
+    levyAmount = category
+      ? computeCategoryTax({
+          taxType: category.taxType as CategoryTaxType,
+          rate: Number(category.rate),
+          unitBasisQty: pieceQty,
+          lineSubtotal: lineSub,
+          priceIncludesTax: category.priceIncludesTax,
+        })
+      : 0;
+    categoryTrio = categoryTaxSnapshotOf(category ?? null);
+  }
+  return { lineCategoryId, amount: levyAmount, categoryTrio };
 }
 
 /** What to write in place for a line that already has a stored row (null = nothing changed). */
@@ -447,8 +584,14 @@ export function orderSyncLines(
 /** Reads the products (pack + regulated snapshot) and regulated-section tax config the edited lines reference. */
 export async function loadEditCatalog(
   db: any,
-  items: Array<{ productId?: string | null }>,
-): Promise<{ productMap: Map<string, any>; categoryMap: Map<string, any> }> {
+  items: Array<{ productId?: string | null; unitLabel?: string | null }>,
+  /** VU-4a: with the caller's prisma + entitlements, the unit ladders of the lines that ask for a unit. */
+  units?: Parameters<typeof prepareUnitLadders>[1],
+): Promise<{
+  productMap: Map<string, any>;
+  categoryMap: Map<string, any>;
+  unitsByProduct: Map<string, any[]>;
+}> {
   const productIds = [...new Set(items.filter((i) => i.productId).map((i) => i.productId!))];
   const products: any[] =
     productIds.length > 0
@@ -458,7 +601,13 @@ export async function loadEditCatalog(
             id: true,
             name: true,
             kind: true,
+            unit: true,
             unitsPerBox: true,
+            pricePerUnit: true,
+            priceTier2: true,
+            priceTier3: true,
+            priceTier4: true,
+            priceTier5: true,
             trackedCategoryId: true,
             trackedSubcategoryId: true,
           },
@@ -471,7 +620,31 @@ export async function loadEditCatalog(
   return {
     productMap: new Map(products.map((p) => [p.id, p])),
     categoryMap: new Map(cats.map((c) => [c.id, c])),
+    // staff only, behind flag.units_v1; reads nothing when no line asks for a unit (create()'s own gate).
+    unitsByProduct: units ? await prepareUnitLadders(items, units) : new Map(),
   };
+}
+
+/** SA-189: history must tell an attested pack (the operator's explicit unitsPerBox) from a recovered one. */
+export async function auditAttestedPacks(
+  tx: any,
+  tenantId: string | null | undefined,
+  invoiceId: string,
+  editLines: EditedLine[],
+): Promise<void> {
+  const attested = editLines.flatMap((l) =>
+    l.attestedPack ? [{ rowId: l.rowId, unitsPerBox: l.attestedPack }] : [],
+  );
+  if (attested.length === 0) return;
+  await tx.auditLog.create({
+    data: {
+      tenantId,
+      action: "INVOICE_LINE_PACK_ATTESTED",
+      entityType: "invoice",
+      entityId: invoiceId,
+      meta: { attested },
+    },
+  });
 }
 
 /**

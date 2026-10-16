@@ -708,6 +708,7 @@ describe("ProductsService", () => {
           { id: "prod-b", reason: 'A variant named "Grape" already exists for this product' },
           { id: "prod-c", reason: "Update failed" }, // raw Prisma text NOT disclosed
         ],
+        keptLabels: [],
       });
       // Each row goes through the full update() path, variant name doubling as
       // `name` — suppressEmit:true since this loop can reassign N products in
@@ -720,7 +721,7 @@ describe("ProductsService", () => {
           variantName: "Strawberry",
           name: "Strawberry",
         },
-        { suppressEmit: true },
+        { suppressEmit: true, actorId: null, actorName: null },
       );
     });
   });

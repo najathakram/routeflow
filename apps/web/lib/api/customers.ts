@@ -522,16 +522,6 @@ export function useBatchDeleteCustomers() {
   });
 }
 
-export function useDeleteAllCustomers() {
-  const qc = useQueryClient();
-  return useMutation({
-    mutationFn: () => apiClient.delete("/customers/all").then((r) => r.data),
-    onSuccess: () => {
-      qc.invalidateQueries({ queryKey: ["customers"] });
-    },
-  });
-}
-
 // ─── Tags ────────────────────────────────────────────────────────────────────
 
 export function useCustomerTags() {

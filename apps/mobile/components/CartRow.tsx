@@ -236,6 +236,7 @@ export function CartRow({
           productId: product.id,
           unitPrice: effUnit,
           unitLabel: line.unitLabel,
+          derivedBase: line.derivedBase,
         }}
         product={product}
         tier={tier}

@@ -125,6 +125,8 @@ const NUKE_MODELS = [
   // #2717 M2 (SA-594): Recipe/RecipeComponent hold RESTRICT FKs into Product — children first.
   "recipeComponent",
   "recipe",
+  // Row 509: SellingRestrictionTarget holds RESTRICT FKs into Product (and ProductCategory) — children first.
+  "sellingRestrictionTarget",
   "product",
   "supplier",
   "expenseCategory",

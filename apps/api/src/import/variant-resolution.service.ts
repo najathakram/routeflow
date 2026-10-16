@@ -8,6 +8,7 @@ import { isFormulaLedText } from "../common/safe-text-cell";
 import { assertPackKeepsLevelsValid } from "../products/unit-pack-rules";
 import { lockProductPack } from "../units/tenant-units-lock";
 import { lockBarcodeCodes, syncProductBarcodesFromLegacy } from "../products/product-catalog-sync";
+import { labelNameKey, syncCategoryLabel } from "../product-categories/label-writer";
 
 /** Default gross margin for a brand-new product's list price: cost × (1 + margin). */
 const DEFAULT_MARGIN = 0.3;
@@ -185,6 +186,10 @@ export class VariantResolutionService {
         barcode: row.barcode,
         unitsPerBox: row.unitsPerBox,
       });
+      // Add-only label sync when the confirmed category's NAME KEY changed (read in this tx; same tx write).
+      if (labelNameKey(row.category) !== labelNameKey(product.category)) {
+        await syncCategoryLabel(tx, { tenantId, productId: row.id, text: row.category });
+      }
       return row;
     });
   }

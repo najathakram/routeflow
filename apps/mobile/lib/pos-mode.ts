@@ -61,6 +61,8 @@ export const POS_COPY = {
   printInvoice: "Print invoice",
   invoiceCreated: "Invoice created",
   switchToDelivery: "Switch to delivery",
+  shipByCarrier: "Ship by carrier…",
+  switchToDeliveryLocked: "Ready for pickup: move it back to Confirmed to switch to delivery.",
   invoiceFailed: "Couldn't create the invoice. Try again.",
 } as const;
 
@@ -108,6 +110,7 @@ export type PosActionKey =
   | "handOver"
   | "readyForPickup"
   | "switchToDelivery"
+  | "shipByCarrier"
   | "recordPayment"
   | "printInvoice";
 
@@ -117,27 +120,103 @@ export interface PosAction {
   tier: "primary" | "secondary";
   /** Set for the two invoice-opening actions of a handed-over order. */
   invoiceId?: string;
+  /** Set for the two "move off pickup" actions: the fulfil path the move PATCHes (ROUTE / SHIP). */
+  path?: "ROUTE" | "SHIP";
+}
+
+/** Which "move off pickup" buttons a POS order offers (web `PosMoveOptions`). */
+export interface PosMoveOptions {
+  /** The "Switch to delivery" button's target path, or null when it is not offered (a ship-only account). */
+  delivery: "ROUTE" | "SHIP" | null;
+  /** The "Ship by carrier…" button (always moves to SHIP). */
+  ship: boolean;
 }
 
 /**
- * ONE primary per state. PENDING: only "Switch to delivery" (the primary is the status bar's Confirm).
+ * Same rule as web `posMoveOptions`. Both paths: the two buttons ("Switch to delivery" is the route, "Ship by
+ * carrier…" the carrier). One path: its own single button. Neither (a pickup-only account): today's lone
+ * "Switch to delivery" to the account default.
+ */
+export function posMoveOptions(
+  methods: readonly string[],
+  formDefault: "ROUTE" | "SHIP",
+): PosMoveOptions {
+  const route = methods.includes("ROUTE");
+  const ship = methods.includes("SHIP");
+  if (route) return { delivery: "ROUTE", ship };
+  if (ship) return { delivery: null, ship: true };
+  return { delivery: formDefault, ship: false };
+}
+
+const DEFAULT_MOVE_OPTIONS: PosMoveOptions = { delivery: "ROUTE", ship: false };
+
+/** The confirm asked before an order leaves pickup; SHIP names the carrier and tracking (web `FulfillPathMoveConfirm`). */
+export function posMoveConfirm(path: "ROUTE" | "SHIP"): {
+  title: string;
+  message: string;
+  confirmText: string;
+} {
+  return path === "SHIP"
+    ? {
+        title: "Move this order off in-store pickup?",
+        message:
+          "It will no longer be a pickup order. It will ship by carrier: add the carrier and tracking number in the Shipment card, then mark it shipped.",
+        confirmText: "Move order",
+      }
+    : {
+        title: POS_COPY.switchToDelivery,
+        message: "Move this order onto the delivery route instead of pickup?",
+        confirmText: POS_COPY.switchToDelivery,
+      };
+}
+
+export function posMoveFailedCopy(path: "ROUTE" | "SHIP"): string {
+  return path === "SHIP" ? POS_SHIP_FAILED : POS_SWITCH_FAILED;
+}
+
+export function posMoveSuccessCopy(path: "ROUTE" | "SHIP"): string {
+  return path === "SHIP" ? "Switched to carrier shipping" : "Switched to delivery";
+}
+
+/**
+ * ONE primary per state. PENDING: only the path moves (the primary is the status bar's Confirm).
  * CONFIRMED: Create invoice (primary) then Hand over, or Hand over (primary) once invoiced; "Ready for
  * pickup" stays secondary on every open order until handed over. DELIVERED: Record payment / Print.
  * An order already "Ready for pickup" (OUT_FOR_DELIVERY) keeps Hand over / Create invoice but does
- * not offer the notification again.
+ * not offer the notification again, nor Switch to delivery (the server locks the fulfil path).
  */
 export function posOrderActions(
   order: { invoices?: PosInvoiceLike[] | null },
   status: string,
+  moveOptions: PosMoveOptions = DEFAULT_MOVE_OPTIONS,
 ): PosAction[] {
   const invoices = posLiveInvoices(order);
   const first = invoices[0];
-  const switchToDelivery: PosAction = {
-    key: "switchToDelivery",
-    label: POS_COPY.switchToDelivery,
-    tier: "secondary",
-  };
-  if (status === "PENDING") return [switchToDelivery];
+  // The path moves sit together as ONE group (Switch to delivery, then Ship by carrier…), after every other
+  // open-order action, mirroring web's single wrap unit.
+  const moves: PosAction[] = [
+    ...(moveOptions.delivery
+      ? [
+          {
+            key: "switchToDelivery" as const,
+            label: POS_COPY.switchToDelivery,
+            tier: "secondary" as const,
+            path: moveOptions.delivery,
+          },
+        ]
+      : []),
+    ...(moveOptions.ship
+      ? [
+          {
+            key: "shipByCarrier" as const,
+            label: POS_COPY.shipByCarrier,
+            tier: "secondary" as const,
+            path: "SHIP" as const,
+          },
+        ]
+      : []),
+  ];
+  if (status === "PENDING") return moves;
   if (status === "CONFIRMED" || status === "OUT_FOR_DELIVERY") {
     const out: PosAction[] = first
       ? [{ key: "handOver", label: POS_COPY.handOver, tier: "primary" }]
@@ -148,7 +227,7 @@ export function posOrderActions(
     if (status === "CONFIRMED") {
       out.push({ key: "readyForPickup", label: POS_COPY.readyForPickup, tier: "secondary" });
     }
-    out.push(switchToDelivery);
+    if (posCanSwitchToDelivery(status)) out.push(...moves);
     return out;
   }
   // A written-off invoice is never a payment or print target.
@@ -169,9 +248,22 @@ export function posOrderActions(
   return [];
 }
 
-/** "Switch to delivery" is offered until the order is delivered (open states only). */
+/**
+ * "Switch to delivery" is offered only while the order is open. The server refuses a fulfil-path
+ * change at OUT_FOR_DELIVERY, DELIVERED and CANCELLED (order-lifecycle.ts), so a "Ready for pickup"
+ * order can no longer switch.
+ */
 export function posCanSwitchToDelivery(status: string): boolean {
-  return status === "PENDING" || status === "CONFIRMED" || status === "OUT_FOR_DELIVERY";
+  return status === "PENDING" || status === "CONFIRMED";
+}
+
+/**
+ * M6 review: why "Switch to delivery" is gone on a "Ready for pickup" order and how to get it back (web shows
+ * the same lock on its fulfilment control). Only OUT_FOR_DELIVERY can walk back; a delivered or cancelled
+ * order has nothing to switch, so no hint.
+ */
+export function posSwitchToDeliveryHint(status: string): string | null {
+  return status === "OUT_FOR_DELIVERY" ? POS_COPY.switchToDeliveryLocked : null;
 }
 
 /** The note shown while editing a handed-over POS order: a cut never restocks. */
@@ -277,6 +369,7 @@ export function pickupCompleteErrorCopy(err: unknown): string {
 
 export const POS_READY_FAILED = "Couldn't mark the order ready for pickup. Try again.";
 export const POS_SWITCH_FAILED = "Couldn't switch to delivery. Check the order and try again.";
+export const POS_SHIP_FAILED = "Couldn't ship by carrier. Check the order and try again.";
 
 // ─── Hand-over tender ───────────────────────────────────────────────────────────────────────────
 

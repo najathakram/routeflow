@@ -399,7 +399,10 @@ describe("InvoicesService", () => {
       // to `this.prisma` would make the `{ tx: txClient }` assertion vacuous, since
       // reserving on the base client would look identical to reserving on the tx.
       const txClient = {
-        order: { findUnique: jest.fn().mockResolvedValue(orderFixture("ord-d7-tx")) },
+        order: {
+          findUnique: jest.fn().mockResolvedValue(orderFixture("ord-d7-tx")),
+          findFirst: jest.fn().mockResolvedValue({ status: "PENDING" }), // F2b re-judge: not a DRAFT
+        },
         invoice: {
           findMany: jest.fn().mockResolvedValue([]),
           create: jest.fn(async (args: any) => ({
@@ -694,12 +697,11 @@ describe("InvoicesService", () => {
       expect(created.categoryTaxAmount).toBe(0.5); // 0.1 x 5, never 0.1 x (5*12)=6
     });
 
-    it("SA-144g: refuses ANY non-blank requested unitLabel up front — this is why the tax derivation below never sees one", async () => {
-      // update()'s pieceQty/categoryTaxAmount derivation (:3401) reads item.unitLabel with no
-      // resolveLineUnits call of its own; its safety rests entirely on this refusal running
-      // BEFORE the item loop, for every item, on ANY non-blank label — including one that
-      // would resolve to the pack itself (e.g. "Case" naming a product's own base unit).
-      prisma.invoice.findUnique.mockResolvedValue(draftInvoice);
+    it("SA-144g (VU-4a, D3): an ORDER-LINKED draft refuses ANY non-blank requested unitLabel up front, before the item loop", async () => {
+      // An order-less DRAFT now resolves a unit through resolveLineUnits (invoices.service.update-units.spec.ts);
+      // an order-linked one stays refused for every item — the back-sync would write the unit onto the order
+      // line — including a label that would resolve to the pack itself (e.g. "Case" naming the base unit).
+      prisma.invoice.findUnique.mockResolvedValue({ ...draftInvoice, orderId: "ord-1" });
 
       await expect(
         service.update("inv-box", {
@@ -5586,6 +5588,7 @@ describe("InvoicesService", () => {
           })),
           findFirst: jest.fn().mockResolvedValue(null),
         },
+        order: { findFirst: jest.fn().mockResolvedValue({ status: "PENDING" }) }, // F2b re-judge
         orderItem: {
           update: jest.fn().mockResolvedValue({}),
           updateMany: jest.fn().mockResolvedValue({ count: 1 }),

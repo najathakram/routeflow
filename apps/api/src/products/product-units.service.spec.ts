@@ -11,7 +11,13 @@ import { REQUIRE_PLAN_FLAG_KEY } from "../billing/require-plan-flag.decorator";
 import { ROLES_KEY } from "../auth/decorators/roles.decorator";
 import { FEATURE_REGISTRY } from "../billing/feature-registry";
 
-type Row = { id: string; label: string; factorToBase: number };
+type Row = {
+  id: string;
+  label: string;
+  factorToBase: number;
+  parentUnitId?: string | null;
+  perParent?: number | null;
+};
 
 function build(opts: {
   product?: Record<string, unknown> | null;
@@ -622,5 +628,139 @@ describe("no-tenant callers and factor-1 aliases (fleet-lead carry items)", () =
     await expect(service.create("p1", { label: "Piece", factorToBase: 1 })).rejects.toThrow(
       BadRequestException,
     );
+  });
+});
+
+describe("units P0b: tenant labels (baseLabelOf / packLabelOf)", () => {
+  const eachProduct = {
+    unit: "Case",
+    baseUnitLabel: "Each",
+    packLabel: "Carton",
+    unitsPerBox: 24,
+    trackedCategoryId: null,
+  };
+  it("a factor-1 row on a product with base label Each is stored as Each; legacy Piece is accepted and canonicalised", async () => {
+    const a = build({ product: eachProduct });
+    await a.service.create("p1", { label: "Each", factorToBase: 1, price: 2.5 });
+    expect(a.tx.productUnit.create).toHaveBeenCalledWith(
+      expect.objectContaining({
+        data: expect.objectContaining({ label: "Each", factorToBase: 1 }),
+      }),
+    );
+    const b = build({ product: eachProduct });
+    await b.service.create("p1", { label: "piece", factorToBase: 1 });
+    expect(b.tx.productUnit.create).toHaveBeenCalledWith(
+      expect.objectContaining({ data: expect.objectContaining({ label: "Each" }) }),
+    );
+  });
+  it("the base label (or Piece) is never a larger level, and factor 1 can't take another name", async () => {
+    const { service } = build({ product: eachProduct });
+    await expect(service.create("p1", { label: "Each", factorToBase: 12 })).rejects.toThrow(
+      BadRequestException,
+    );
+    await expect(service.create("p1", { label: "Piece", factorToBase: 12 })).rejects.toThrow(
+      BadRequestException,
+    );
+    await expect(service.create("p1", { label: "Unit", factorToBase: 1 })).rejects.toThrow(
+      BadRequestException,
+    );
+  });
+  it("a label equal to the packLabel OR the legacy unit text is the pack's name", async () => {
+    const { service } = build({ product: eachProduct });
+    await expect(service.create("p1", { label: "carton", factorToBase: 48 })).rejects.toThrow(
+      BadRequestException,
+    );
+    await expect(service.create("p1", { label: "Case", factorToBase: 48 })).rejects.toThrow(
+      BadRequestException,
+    );
+  });
+});
+
+describe("units P0b: chain validator on every write", () => {
+  const rowB: Row = { id: "u-b", label: "Inner", factorToBase: 5 };
+  const rowC: Row = {
+    id: "u-c",
+    label: "Tray",
+    factorToBase: 50,
+    parentUnitId: "u-b",
+    perParent: 10,
+  };
+
+  it("accepts a child whose factor is perParent x parent factor and stores perParent + parent", async () => {
+    const { service, tx } = build({ rows: [rowB] });
+    await service.create("p1", {
+      label: "Tray",
+      factorToBase: 50,
+      parentUnitId: "u-b",
+      perParent: 10,
+    } as never);
+    expect(tx.productUnit.create).toHaveBeenCalledWith(
+      expect.objectContaining({
+        data: expect.objectContaining({ parentUnitId: "u-b", perParent: 10, factorToBase: 50 }),
+      }),
+    );
+  });
+  it("refuses a factor that is not perParent x parent (400), perParent 1 (400), an unknown parent (400)", async () => {
+    const { service, tx } = build({ rows: [rowB] });
+    for (const bad of [
+      { factorToBase: 49, parentUnitId: "u-b", perParent: 10 },
+      { factorToBase: 7, parentUnitId: "u-b", perParent: 1 },
+      { factorToBase: 50, parentUnitId: "u-zzz", perParent: 10 },
+    ]) {
+      await expect(service.create("p1", { label: "Tray", ...bad } as never)).rejects.toThrow(
+        BadRequestException,
+      );
+    }
+    expect(tx.productUnit.create).not.toHaveBeenCalled();
+  });
+  it("editing a parent's factor recomputes its descendants in the same transaction", async () => {
+    const { service, tx, prisma } = build({ rows: [rowB, rowC] });
+    await service.update("p1", "u-b", { factorToBase: 6 });
+    expect(prisma.tenantTransaction).toHaveBeenCalledTimes(1);
+    expect(tx.productUnit.update).toHaveBeenCalledWith(
+      expect.objectContaining({ where: { id: "u-c" }, data: { factorToBase: 60 } }),
+    );
+  });
+  it("a recompute that pushes a descendant over 1,000,000 is a 409 and writes nothing", async () => {
+    const big: Row = { id: "u-big", label: "Big", factorToBase: 5, parentUnitId: null };
+    const kid: Row = {
+      id: "u-kid",
+      label: "Kid",
+      factorToBase: 500_000,
+      parentUnitId: "u-big",
+      perParent: 100_000,
+    };
+    const { service, tx } = build({ rows: [big, kid] });
+    await expect(service.update("p1", "u-big", { factorToBase: 50 })).rejects.toThrow(
+      ConflictException,
+    );
+    expect(tx.productUnit.update).not.toHaveBeenCalled();
+  });
+  it("a recomputed descendant that an order line already carries blocks the edit (409)", async () => {
+    const { service, tx } = build({ rows: [rowB, rowC], orderLineHit: true });
+    await expect(service.update("p1", "u-b", { factorToBase: 6 })).rejects.toThrow(
+      ConflictException,
+    );
+    expect(tx.productUnit.update).not.toHaveBeenCalled();
+  });
+  it("a unit that still has sub-units cannot be deleted (409)", async () => {
+    const { service, tx } = build({ rows: [rowB, rowC] });
+    await expect(service.remove("p1", "u-b")).rejects.toThrow(ConflictException);
+    expect(tx.productUnit.delete).not.toHaveBeenCalled();
+  });
+  it("the DTOs accept perParent >= 2 and reject 1", async () => {
+    const ok = await validate(
+      plainToInstance(CreateProductUnitDto, {
+        label: "Tray",
+        factorToBase: 50,
+        perParent: 10,
+        parentUnitId: "u-b",
+      }),
+    );
+    expect(ok).toHaveLength(0);
+    const bad = await validate(
+      plainToInstance(CreateProductUnitDto, { label: "Tray", factorToBase: 50, perParent: 1 }),
+    );
+    expect(bad.length).toBeGreaterThan(0);
   });
 });

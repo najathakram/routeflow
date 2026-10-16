@@ -236,6 +236,7 @@ describe("coupon-unbilled: customer.subscription.updated (M3: retrieve + preview
 describe("coupon-unbilled: cancellation (M1, M5, F5) - C is value-red on master", () => {
   it("C: subscription.updated 'canceled' on a coupon tenant books 0 (master: -X) and resets all columns; no sync runs", async () => {
     const h = build({ sub: { couponFull: true, couponId: "cp_pilot", couponEndsAt: new Date(1) } });
+    h.stripe.getSubscription.mockResolvedValue(SUB_EVT({ status: "canceled" })); // F1(a): Stripe, not the payload
     await h.svc.onSubscriptionUpdated(SUB_EVT({ status: "canceled" }));
     expect(h.w.tenant.status).toBe("CANCELLED");
     expect(h.sum()).toBe(0);
