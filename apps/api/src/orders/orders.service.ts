@@ -130,7 +130,7 @@ import {
 } from "./merge-idempotency";
 import { BUYER_EDIT_CLOSED_STATUSES, computeEditWindow } from "./edit-window";
 import { cancelBlockedMessage, cancelImpact } from "./order-cancel-impact";
-import { cancelOrderInTx, type CancelOrderTxOptions } from "./order-cancel-tx";
+import { cancelOrderInTx, lockDeleteLines, type CancelOrderTxOptions } from "./order-cancel-tx";
 import { assertNoCashRefundOnOrder } from "../invoices/invoice-cash-refund-guard";
 import { assertBuyerDiffShape, classifyEditPayload } from "./order-edit-payload";
 import {
@@ -5274,6 +5274,7 @@ export class OrdersService implements OnApplicationBootstrap {
     }
 
     await this.prisma.tenantTransaction(async (tx) => {
+      const held = await lockDeleteLines(tx, id); // B284: Order lock first (the cancel's lock order)
       await assertNoCashRefundOnOrder(tx, id); // 409 on a cash refund, before any write
       // B214 (REG-B214): this loop deletes invoices WITHOUT InvoicesService.deleteInvoice (ledger
       // reversal duplicated below), so it refuses on its own, before any write (L-072, L-081).
@@ -5320,6 +5321,9 @@ export class OrdersService implements OnApplicationBootstrap {
         await tx.transaction.delete({ where: { id: order.transaction.id } });
       }
       await tx.deliveryMutation.deleteMany({ where: { orderId: id } });
+      // B284: the cancel's own stock unwind (SALE movement, notes DELETE); product rows locked last.
+      if (held)
+        await this.settleStockForEdit(tx, held.order, held.lines, [], user, { notes: "DELETE" });
       await tx.orderItem.deleteMany({ where: { orderId: id } });
       await tx.order.delete({ where: { id } });
     });

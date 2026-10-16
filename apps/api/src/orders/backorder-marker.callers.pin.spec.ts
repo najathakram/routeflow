@@ -41,6 +41,7 @@ describe("every caller of the stock helpers is classified for the backorder mark
       "restoreStockForReopen", // reopenOrder                      SETS (markerMode "set")
       "settleStockForEdit", //    updateOrderItems                 ADJUSTS (NONE when recreated)
       "settleStockForEdit", //    at-door CR approval              ADJUSTS
+      "settleStockForEdit", //    deleteOrder (B284)               NONE (final = [], the cancel's unwind)
     ]);
   });
   it("the template cron is the only other decrement caller (SETS)", () => {
