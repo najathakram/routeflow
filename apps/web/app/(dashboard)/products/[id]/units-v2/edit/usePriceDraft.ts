@@ -40,7 +40,8 @@ import {
   foldDraft,
   offerId,
   parseKey,
-  sameMoves,
+  staleKeepMoves,
+  staleOfferEntries,
   type CellProblem,
   type DraftEntry,
 } from "./fold-draft";
@@ -65,15 +66,16 @@ const clearedNotice = (offers: readonly DraftEntry[], why = "you changed that pr
     .join(", ")} was cleared because ${why}.`;
 // A ticked customer offer or a customer Keep froze what the customers looked like; these say it was cleared because
 // they changed (never silently). The offer one says how to get the fresh offer back.
-const staleNotice = (offers: boolean, keeps: boolean) =>
-  [
-    offers &&
-      "Your earlier choice to update customer prices was cleared because those customers' prices changed. Tick it again to use the new prices.",
-    keeps &&
-      "Your earlier choice to keep a customer price was cleared because that customer's prices changed.",
-  ]
-    .filter(Boolean)
-    .join(" ");
+const OFFER_CLEARED =
+  "Your earlier choice to update customer prices was cleared because those customers' prices changed. Tick it again to use the new prices.";
+const KEEP_CLEARED =
+  "Your earlier choice to keep a customer price was cleared because that customer's prices changed.";
+// A tick that was never made (the plan it came from is older than the customers), so nothing was "cleared".
+const TICK_REFUSED =
+  "Those customers' prices changed, so this choice can't be used. Review the new prices.";
+// Adds a line to the notice (once), so a notice an edit just raised is never replaced by one found at render.
+const withLine = (notice: string | null, line: string) =>
+  notice == null ? line : notice.includes(line) ? notice : `${notice} ${line}`;
 const asCellPatches = (ps: readonly { ref: string; tier: number; to: number | null }[]) =>
   ps.map((p): CellPatch => ({ ref: p.ref, tier: p.tier as PriceTier, to: p.to }));
 
@@ -103,11 +105,11 @@ export interface PriceDraft {
    * Change prices Apply folds its plan into the draft (and opens edit mode); Save is the only commit. The plan
    * becomes the open plan, so a customer offer left at index 0 can still be ticked with `setOfferTicked(0, true)`.
    * `replan` works the same change out for the customers as they are now, so the customer offer keeps showing
-   * their current prices (K3b); without it the plan's customer offer stays as it was made.
+   * their current prices (K3b).
    */
   applyPlan: (
     plan: PricePlan,
-    replan?: (customers: readonly CustomerPricingWithId[]) => PricePlan,
+    replan: (customers: readonly CustomerPricingWithId[]) => PricePlan,
   ) => void;
   resetAllToAuto: () => void;
   /** The save body, or null while the grid has not loaded or the draft has a conflict (Save is then unavailable). */
@@ -241,25 +243,20 @@ export function useCreatePriceDraft(productId: string, hooks: PriceDraftHooks = 
   const priceOf = (customerId: string, ref: string) =>
     customerRows?.find((c) => c.customerId === customerId)?.set?.[ref] ?? null;
   const staleOffers = React.useMemo(
-    () =>
-      !fold || !customerRows
-        ? []
-        : entries.filter((e) => {
-            if (e.kind !== "offer" || e.moves.length === 0) return false;
-            const plan = fold.plans.get(e.planKey);
-            if (!plan) return false;
-            const fresh = plan.offers.find((o) => o.kind === "customer");
-            return !sameMoves(e.moves, fresh?.kind === "customer" ? fresh.moves : []);
-          }),
+    () => (fold && customerRows ? staleOfferEntries(entries, fold.plans) : []),
     [entries, fold, customerRows],
   );
-  const staleKeeps = customerRows
-    ? moves.filter((m) => priceOf(m.customerId, m.ref) !== m.from)
-    : [];
+  const staleKeeps = React.useMemo(
+    () => (fold && customerRows ? staleKeepMoves(moves, fold.plans, customers) : []),
+    [moves, fold, customerRows, customers],
+  );
   if (staleOffers.length > 0 || staleKeeps.length > 0) {
     setEntries((es) => es.filter((e) => !staleOffers.includes(e)));
     setMoves((ms) => ms.filter((m) => !staleKeeps.includes(m)));
-    setNotice(staleNotice(staleOffers.length > 0, staleKeeps.length > 0));
+    setNotice((n) => {
+      const said = staleOffers.length > 0 ? withLine(n, OFFER_CLEARED) : n;
+      return staleKeeps.length > 0 ? withLine(said, KEEP_CLEARED) : said;
+    });
   }
 
   const editCell = (ref: string, tier: PriceTier, typed: string): PricePlan => {
@@ -483,7 +480,7 @@ export function useCreatePriceDraft(productId: string, hooks: PriceDraftHooks = 
       // The moves froze `from` when the plan was made; refuse a tick that no longer matches the customers' prices.
       if (on && customerRows && offer.kind === "customer") {
         if (offer.moves.some((m) => priceOf(m.customerId, m.ref) !== m.from)) {
-          setNotice(staleNotice(true, false));
+          setNotice((n) => withLine(n, TICK_REFUSED));
           return;
         }
       }

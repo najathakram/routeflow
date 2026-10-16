@@ -18,14 +18,13 @@ export type DraftEntry =
   | { kind: "cell"; key: string; text: string }
   /**
    * A Change prices plan folded in; `key` ("plan:n") lets it be the open plan. `replan` works the same change out again
-   * for the customers as they are now (Change prices passes it): only the customer half of the plan is taken from it,
-   * the applied patches stay. Without it the plan, customer offer included, stays as it was made.
+   * for the customers as they are now: only the customer half of the plan is taken from it, the applied patches stay.
    */
   | {
       kind: "plan";
       key: string;
       plan: PricePlan;
-      replan?: (customers: readonly CustomerPricingWithId[]) => PricePlan;
+      replan: (customers: readonly CustomerPricingWithId[]) => PricePlan;
     }
   /**
    * A TICKED offer, baked into the draft at tick time (`id` = "<plan key>#<offer index>"), so a later edit that
@@ -72,14 +71,53 @@ const withFreshCustomers = (applied: PricePlan, fresh: PricePlan): PricePlan => 
   customerChanges: fresh.customerChanges,
 });
 
-/** One customer move for comparing: the wire fields, plus the order unit when a move carries it. */
-const moveKey = (m: CustomerPriceMove & { orderUnit?: string | null }) =>
-  [m.customerId, m.ref, m.tier, m.from, m.to, m.orderUnit ?? ""].join("|");
+/**
+ * One customer move for comparing. A move carries no order unit: a customer whose order unit changed shows up in
+ * `to` (the move is worked out from the unit it is anchored on) or in which moves exist at all.
+ */
+const moveKey = (m: CustomerPriceMove) => [m.customerId, m.ref, m.tier, m.from, m.to].join("|");
 
 /** True when both lists hold exactly the same moves (customer, unit, tier, from, to), in any order. */
 export const sameMoves = (a: readonly CustomerPriceMove[], b: readonly CustomerPriceMove[]) =>
   a.length === b.length &&
   [...a].map(moveKey).sort().join(";") === [...b].map(moveKey).sort().join(";");
+
+/**
+ * The ticked customer offers that are no longer what a fresh plan of the same offer offers. Compares the FULL move
+ * set; a plan that is not there (or has no customer offer left) cannot vouch for the offer, so it is stale too.
+ */
+export function staleOfferEntries(
+  entries: readonly DraftEntry[],
+  plans: ReadonlyMap<string, PricePlan>,
+): DraftEntry[] {
+  return entries.filter((e) => {
+    if (e.kind !== "offer" || e.moves.length === 0) return false;
+    const fresh = plans.get(e.planKey)?.offers.find((o) => o.kind === "customer");
+    return !sameMoves(e.moves, fresh?.kind === "customer" ? fresh.moves : []);
+  });
+}
+
+/**
+ * The customer Keeps the panel no longer shows. A Keep pins a derived customer price (a row of a plan's
+ * `customerChanges`) as a set price from nothing, so it holds only while that customer still has no price of their
+ * own on the unit AND some plan in the draft still lists that same row (customer, unit, tier) starting from the
+ * pinned price. A customer who was deleted or changed tier, or whose derived price moved, fails that.
+ */
+export function staleKeepMoves(
+  moves: readonly CustomerPriceMove[],
+  plans: ReadonlyMap<string, PricePlan>,
+  customers: readonly CustomerPricingWithId[],
+): CustomerPriceMove[] {
+  const rows = [...plans.values()].flatMap((p) => p.customerChanges);
+  return moves.filter((m) => {
+    const own = customers.find((c) => c.customerId === m.customerId)?.set?.[m.ref] ?? null;
+    if (own !== m.from) return true;
+    return !rows.some(
+      (r) =>
+        r.customerId === m.customerId && r.ref === m.ref && r.tier === m.tier && r.from === m.to,
+    );
+  });
+}
 
 export const CUSTOMER_MOVE_CONFLICT =
   "These customer prices are already changing in this draft. Save first.";
@@ -121,7 +159,7 @@ export function foldDraft(
   for (const e of entries) {
     if (e.kind === "plan") {
       fold(e.plan.patches);
-      plans.set(e.key, e.replan ? withFreshCustomers(e.plan, e.replan(customers)) : e.plan);
+      plans.set(e.key, withFreshCustomers(e.plan, e.replan(customers)));
       continue;
     }
     if (e.kind === "offer") {

@@ -19,7 +19,7 @@ interface World {
   tierUnits: Record<string, any>[];
   cups: { id: string; customerId: string; productId: string; unitRef: string; price: number }[];
   customers: string[];
-  /** What the customer lookup returns as names; a customer missing here gets "Business <id>". */
+  /** What the customer lookup returns as names; a customer missing here gets the business name "Unnamed business". */
   customerNames: Record<string, { display?: string | null; business: string }>;
   deletedCustomers: string[];
   audits: Record<string, any>[];
@@ -119,7 +119,7 @@ function makeTx(w: World) {
           .map((id) => ({
             id,
             displayName: w.customerNames[id]?.display ?? null,
-            businessName: w.customerNames[id]?.business ?? `Business ${id}`,
+            businessName: w.customerNames[id]?.business ?? "Unnamed business",
           })),
       ),
     },
@@ -394,8 +394,29 @@ describe("ProductPriceWriteService.save", () => {
       });
       const err = await rejection(service.save(PRODUCT_ID, r, null));
       expect(err.getResponse().problems).toEqual([
-        "The customer price for Business c2 on Box is listed twice in this change.",
+        "The customer price for Unnamed business on Box is listed twice in this change.",
       ]);
+    });
+
+    it('a duplicate pair for a customer the lookup does not find says "a customer", never the id or the internal ref', async () => {
+      const { world, service, grid } = build();
+      const r = await req(grid, {
+        customerMoves: [
+          { customerId: "c3", ref: "pack", tier: 1, from: null, to: 13 },
+          { customerId: "c3", ref: "pack", tier: 2, from: null, to: 14 },
+        ],
+      });
+      const err = await rejection(service.save(PRODUCT_ID, r, null));
+      expect(err.getResponse().code).toBe(API_ERROR_CODES.PRICE_EDIT_INVALID);
+      const problems: string[] = err.getResponse().problems;
+      expect(problems).toContain(
+        "The customer price for a customer on Box is listed twice in this change.",
+      );
+      for (const line of problems) {
+        expect(line).not.toMatch(/\bc3\b/);
+        expect(line).not.toMatch(/\bpack\b/);
+      }
+      expect(world.writes).toEqual([]);
     });
 
     it("a soft-deleted customer is refused as a move target (400), nothing written", async () => {

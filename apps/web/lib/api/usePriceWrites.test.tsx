@@ -8,6 +8,7 @@ import {
   useUndoPrices,
 } from "./usePriceWrites";
 import { priceGridKey } from "./usePriceGrid";
+import { productCustomerPricesKey } from "./useProductCustomerPrices";
 import { queryClientWithGlobalErrorToast, refusal } from "@/test-utils/global-error-toast";
 
 const mockPost = jest.fn();
@@ -56,6 +57,49 @@ describe("usePriceWrites", () => {
     await waitFor(() => expect(result.current.isError).toBe(true));
     expect(mockPost.mock.calls[0][0]).toBe("/products/p1/prices/undo");
     expect(spy).toHaveBeenCalledWith({ queryKey: priceGridKey("p1") });
+  });
+
+  describe("customer prices go stale with a write", () => {
+    const ok = {
+      data: { revision: 8, auditId: "a1", undo: { patches: [], customerMoves: [] }, grid: {} },
+    };
+    const saveWith = async (extra: Record<string, unknown>) => {
+      mockPost.mockResolvedValue(ok);
+      const qc = new QueryClient();
+      const spy = jest.spyOn(qc, "invalidateQueries");
+      const { result } = renderHook(() => useSavePrices("p1"), { wrapper: wrap(qc) });
+      result.current.mutate({
+        expectedRevision: 7,
+        expectedPriceState: "ps",
+        patches: [],
+        ...extra,
+      });
+      await waitFor(() => expect(result.current.isSuccess).toBe(true));
+      return spy;
+    };
+
+    it("a save that wrote customer moves or Keeps refetches the product's customer prices", async () => {
+      const spy = await saveWith({
+        customerMoves: [{ customerId: "c1", ref: "case", tier: 1, from: null, to: 9 }],
+      });
+      expect(spy).toHaveBeenCalledWith({ queryKey: productCustomerPricesKey("p1") });
+    });
+
+    it("a save with no customer moves leaves them alone", async () => {
+      expect(await saveWith({ customerMoves: [] })).not.toHaveBeenCalled();
+      expect(await saveWith({})).not.toHaveBeenCalled();
+    });
+
+    it("a stale undo reloads the customers along with the grid", async () => {
+      mockPost.mockRejectedValue({ response: { data: { code: "LADDER_REVISION_STALE" } } });
+      const qc = new QueryClient();
+      const spy = jest.spyOn(qc, "invalidateQueries");
+      const { result } = renderHook(() => useUndoPrices("p1"), { wrapper: wrap(qc) });
+      result.current.mutate({ auditId: "a1", expectedRevision: 8, expectedPriceState: "ps" });
+      await waitFor(() => expect(result.current.isError).toBe(true));
+      expect(spy).toHaveBeenCalledWith({ queryKey: priceGridKey("p1") });
+      expect(spy).toHaveBeenCalledWith({ queryKey: productCustomerPricesKey("p1") });
+    });
   });
 
   it("a stale save does not refetch the grid", async () => {

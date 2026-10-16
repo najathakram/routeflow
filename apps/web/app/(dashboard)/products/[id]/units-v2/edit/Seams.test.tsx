@@ -10,8 +10,8 @@ import type { ProductPriceGridDto } from "@routeflow/types";
 import { ProductPricingV2 } from "../../ProductPricingV2";
 import { UNITS_V2_TESTIDS as T } from "../../units-v2-testids";
 import { UNITS_V2_CONFIRM_TESTIDS as C } from "../confirm/confirm-testids";
-import { emptyPlan } from "../change-prices/plan.test-utils";
-import { EMPTY_SELECTION, foldPlan } from "../change-prices/selection";
+import { customerChange, emptyPlan } from "../change-prices/plan.test-utils";
+import { EMPTY_SELECTION, foldPlan, keepMove } from "../change-prices/selection";
 import { EditablePricesGrid } from "./EditablePricesGrid";
 import { PriceEditBar } from "./PriceEditBar";
 import { PLAN_TESTIDS } from "../change-prices/plan-testids";
@@ -216,8 +216,11 @@ describe("K8 seams", () => {
           moves: customerMoves.map((m) => ({ ...m, against: false })),
         },
       ],
+      // c2 has no price of its own: the plan shows its derived Case price (9 now), which a Keep can pin
+      customerChanges: [customerChange(2, { ref: "case", tier: 1, from: 9, to: 9.5 })],
       changes: [{ ref: "case", label: "Case", tier: 2, from: 13.91, to: 14 }],
     });
+    mockCustomers = [...holders("c1"), { ...holders("c2")[0], tier: 1, set: {} }];
     rtlRender(
       <QueryClientProvider client={new QueryClient()}>
         <PriceDraftProvider productId="p1">
@@ -227,7 +230,7 @@ describe("K8 seams", () => {
       </QueryClientProvider>,
     );
     expect(draft.editing).toBe(false);
-    act(() => draft.applyPlan(plan));
+    act(() => draft.applyPlan(plan, () => plan));
     act(() => draft.setOfferTicked(0, true));
     expect(draft.editing).toBe(true);
     expect(draft.plan?.cell).toBeNull();
@@ -294,7 +297,7 @@ describe("K8 seams", () => {
         offers: [customerOffer([{ ...move, against: true, cause: "shape" }])],
         changes: [{ ref: "case", label: "Case", tier: 2, from: 13.91, to: 14 }],
       });
-      act(() => draft.applyPlan(plan));
+      act(() => draft.applyPlan(plan, () => plan));
       act(() => draft.setOfferTicked(0, true));
       act(() => void draft.editCell("piece", 2, "0.8"));
       expect(draft.plan?.cell).toEqual({ ref: "piece", tier: 2 });
@@ -307,7 +310,7 @@ describe("K8 seams", () => {
       );
       // untick, on a fresh plan: removes exactly what the tick added
       act(() => draft.discard());
-      act(() => draft.applyPlan(plan));
+      act(() => draft.applyPlan(plan, () => plan));
       act(() => draft.setOfferTicked(0, true));
       expect(draft.toRequest()?.customerMoves).toEqual([move]);
       act(() => draft.setOfferTicked(0, false));
@@ -371,11 +374,8 @@ describe("K8 seams", () => {
       moves: [{ ...mv, customerId, to, against: false }],
     });
     const apply = (to: number) => {
-      act(() =>
-        draft.applyPlan(
-          emptyPlan({ patches: [{ ref: "case", tier: 2, to }], offers: [offer(to)] }),
-        ),
-      );
+      const plan = emptyPlan({ patches: [{ ref: "case", tier: 2, to }], offers: [offer(to)] });
+      act(() => draft.applyPlan(plan, () => plan));
       act(() => draft.setOfferTicked(0, true));
     };
 
@@ -401,14 +401,11 @@ describe("K8 seams", () => {
     it("different customer cells do not conflict", () => {
       mount();
       apply(14);
-      act(() =>
-        draft.applyPlan(
-          emptyPlan({
-            patches: [{ ref: "case", tier: 3, to: 12 }],
-            offers: [offer(9, "c2")],
-          }),
-        ),
-      );
+      const other = emptyPlan({
+        patches: [{ ref: "case", tier: 3, to: 12 }],
+        offers: [offer(9, "c2")],
+      });
+      act(() => draft.applyPlan(other, () => other));
       act(() => draft.setOfferTicked(0, true));
       expect(draft.conflicts).toEqual([]);
       expect(draft.toRequest()?.customerMoves).toHaveLength(2);
@@ -813,6 +810,8 @@ describe("K8 seams", () => {
 describe("K3b: customer offers go stale", () => {
   const NOTICE =
     "Your earlier choice to update customer prices was cleared because those customers' prices changed. Tick it again to use the new prices.";
+  const REFUSED =
+    "Those customers' prices changed, so this choice can't be used. Review the new prices.";
   const KEEP_NOTICE =
     "Your earlier choice to keep a customer price was cleared because that customer's prices changed.";
   const c1 = {
@@ -931,11 +930,8 @@ describe("K3b: customer offers go stale", () => {
         customers: cs,
       });
     // What ChangePricesPanel.apply does: fold the (unticked) tier offers, hand over the re-planner.
-    const apply = (cs: any[], withReplan = true) => {
-      act(() =>
-        draft.applyPlan(foldPlan(plan(cs), EMPTY_SELECTION).plan, withReplan ? plan : undefined),
-      );
-    };
+    const applied = (cs: any[]) => foldPlan(plan(cs), EMPTY_SELECTION).plan;
+    const apply = (cs: any[]) => act(() => draft.applyPlan(applied(cs), plan));
     const move = (from: number, to: number) => ({
       customerId: "c1",
       ref: "case",
@@ -1015,57 +1011,159 @@ describe("K3b: customer offers go stale", () => {
       }
     });
 
-    it("M2: a tick whose from no longer matches the fresh customer price stays off, with a notice", () => {
-      // a plan applied without a re-planner keeps the offer it was made with (13.5); the customer is at 14 now
+    it("M2: a tick whose from no longer matches the fresh customer price is refused, with its own notice", () => {
+      // Apply from a plan worked out when the customer was at 13.5; the draft already holds the customer at 14
       mockCustomers = [cust(14)];
       mount();
-      apply([cust(13.5)], false);
-      act(() => draft.setOfferTicked(0, true));
+      act(() => {
+        draft.applyPlan(applied([cust(13.5)]), plan);
+        draft.setOfferTicked(0, true);
+      });
       expect(draft.plan!.ticked).toEqual([false]);
       expect(customerMoves()).toEqual([]);
-      expect(draft.notice).toBe(NOTICE);
+      expect(draft.notice).toBe(REFUSED);
+      expect(draft.notice).not.toMatch(/was cleared/);
+      // the open plan is the fresh one, so ticking it now is fine
+      act(() => draft.setOfferTicked(0, true));
+      expect(customerMoves()).toEqual([expect.objectContaining({ customerId: "c1", from: 14 })]);
     });
 
     it("M2: the same tick on a customer price that did not move is kept", () => {
       mockCustomers = [cust(13.5)];
       mount();
-      apply([cust(13.5)], false);
-      act(() => draft.setOfferTicked(0, true));
+      act(() => {
+        draft.applyPlan(applied([cust(13.5)]), plan);
+        draft.setOfferTicked(0, true);
+      });
       expect(draft.plan!.ticked).toEqual([true]);
       expect(draft.notice).toBeNull();
     });
   });
 
-  describe("M3: customer Keeps are re-checked", () => {
-    const keep = { customerId: "c2", ref: "case", tier: 1, from: null, to: 9 };
-
-    it("a Keep stays while that customer still has no price on the unit", () => {
-      mockCustomers = [{ ...c2, set: {} }];
-      const { again } = mount();
+  describe("M3: customer Keeps are re-checked against what the panel shows", () => {
+    // c1 pays a set Piece price, so its Case price is derived from it: a Keep on that Case row pins the derived price.
+    const base = {
+      customerId: "c1",
+      name: "Northside",
+      tier: 2,
+      orderUnit: "piece",
+      set: { piece: 0.5 },
+    };
+    const caseRow = () =>
+      draft.plan!.plan.customerChanges.find((c) => c.customerId === "c1" && c.ref === "case")!;
+    const start = () => {
+      mockCustomers = [base];
+      const view = mount();
       act(() => draft.startEditing());
+      act(() => void draft.editCell("case", 2, "14.5"));
+      const keep = keepMove(caseRow());
       act(() => draft.keepCustomer(keep));
+      return { ...view, keep };
+    };
+
+    it("a Keep on a derived price the panel still shows stays, and the panel shows it kept", () => {
+      const { again, keep } = start();
       again();
+      expect(draft.plan).not.toBeNull();
+      expect(draft.plan!.customerKeeps).toEqual([keep]);
       expect(customerMoves()).toEqual([keep]);
-      expect(draft.plan?.customerKeeps ?? [keep]).toEqual([keep]);
       expect(draft.notice).toBeNull();
     });
 
-    it("a Keep is dropped, with a notice, once that customer has a price on the unit; it never stays in the request", () => {
-      mockCustomers = [{ ...c2, set: {} }];
-      const { again } = mount();
-      act(() => draft.startEditing());
-      act(() => draft.keepCustomer(keep));
-      expect(customerMoves()).toEqual([keep]);
-      mockCustomers = [{ ...c2, set: { case: 9.5 } }];
+    it("scenario A: another user changes the Piece price, so the derived Case price the Keep pinned moved: the Keep is dropped", () => {
+      const { again, keep } = start();
+      mockCustomers = [{ ...base, set: { piece: 0.6 } }];
+      again();
+      // the panel's Case row now starts from a different price; a Keep must not write the old one as a set price
+      expect(caseRow().from).not.toBe(keep.to);
+      expect(draft.plan!.customerKeeps).toEqual([]);
+      expect(customerMoves()).toEqual([]);
+      expect(draft.notice).toBe(KEEP_NOTICE);
+    });
+
+    it.each([
+      ["the customer is deleted", () => []],
+      ["the customer changes tier", () => [{ ...base, tier: 3 }]],
+    ])(
+      "scenario B: %s, so the row leaves the panel and the Keep leaves the request",
+      (_n, after) => {
+        const { again } = start();
+        mockCustomers = after();
+        again();
+        expect(draft.plan!.customerKeeps).toEqual([]);
+        expect(customerMoves()).toEqual([]);
+        expect(draft.notice).toBe(KEEP_NOTICE);
+        expect(draft.canSave).toBe(true);
+      },
+    );
+
+    it("a customer who now has a price of their own on the unit loses the Keep", () => {
+      const { again } = start();
+      mockCustomers = [{ ...base, set: { piece: 0.5, case: 14 } }];
       again();
       expect(customerMoves()).toEqual([]);
       expect(draft.notice).toBe(KEEP_NOTICE);
-      expect(screen.getByTestId(T.ebNotice).textContent).toBe(KEEP_NOTICE);
-      // the customer going back to no price does not bring the Keep back
-      mockCustomers = [{ ...c2, set: {} }];
+    });
+
+    it("the customer coming back does not bring the Keep back", () => {
+      const { again } = start();
+      mockCustomers = [];
+      again();
+      mockCustomers = [base];
       again();
       expect(customerMoves()).toEqual([]);
     });
+
+    it("an offer and a Keep on the same customer both go when its order unit changes, and both are said", () => {
+      // an offer (its Piece price follows the Case) and a Keep (its derived Case price) on one customer
+      mockCustomers = [{ ...base, orderUnit: "case" }];
+      const { again } = mount();
+      act(() => draft.startEditing());
+      act(() => void draft.editCell("case", 2, "14.5"));
+      act(() => draft.setOfferTicked(customerIdx(), true));
+      act(() => draft.keepCustomer(keepMove(caseRow())));
+      expect(customerMoves()).toHaveLength(2);
+      mockCustomers = [base];
+      again();
+      expect(customerMoves()).toEqual([]);
+      expect(draft.notice).toBe(`${NOTICE} ${KEEP_NOTICE}`);
+    });
+  });
+
+  it("MUST-2: a stale customer offer found at render adds to the notice an edit just raised, never replaces it", () => {
+    // c3 is a tier 3 customer with two set prices: which of them B's tier offer already covers decides A's offer
+    mockCustomers = [
+      {
+        customerId: "c3",
+        name: "Eastside",
+        tier: 3,
+        orderUnit: "case",
+        set: { piece: 0.5, case: 13 },
+      },
+    ];
+    mount();
+    act(() => draft.startEditing());
+    // B: a tier offer ticked
+    act(() => void draft.editCell("case", 2, "5"));
+    act(() =>
+      draft.setOfferTicked(
+        draft.plan!.plan.offers.findIndex((o) => o.kind === "tier"),
+        true,
+      ),
+    );
+    // A: its customer offer ticked (worked out on a ladder that holds B and B's tier offer)
+    act(() => void draft.editCell("case", 1, "20"));
+    act(() => draft.setOfferTicked(customerIdx(), true));
+    expect(customerMoves()!.length).toBeGreaterThan(0);
+    expect(draft.notice).toBeNull();
+    // re-typing B clears B's ticked tier offer (its own notice) and changes the ladder A's moves were worked out on
+    act(() => void draft.editCell("case", 2, "6"));
+    expect(customerMoves()).toEqual([]);
+    expect(draft.notice).toContain("was cleared because you changed that price again.");
+    expect(draft.notice).toContain(NOTICE);
+    const shown = screen.getByTestId(T.ebNotice).textContent;
+    expect(shown).toContain("you changed that price again");
+    expect(shown).toContain("Tick it again to use the new prices.");
   });
 
   it("canSave also waits for the customers query: off while it fetches, on again after", () => {
