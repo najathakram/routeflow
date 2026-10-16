@@ -397,6 +397,36 @@ describe("K8 seams", () => {
     expect(rows[0].textContent).toContain("Northside");
   });
 
+  it("a plain cell edit with customers offers their moves, unticked; ticking carries them in the save", async () => {
+    mockCustomers = [
+      { customerId: "c1", name: "Northside", tier: 2, orderUnit: "case", set: { piece: 0.5 } },
+    ];
+    const user = userEvent.setup();
+    rtlRender(
+      <QueryClientProvider client={new QueryClient()}>
+        <PriceDraftProvider productId="p1">
+          <Probe />
+          <EditablePricesGrid product={product} />
+          <PriceEditBar />
+        </PriceDraftProvider>
+      </QueryClientProvider>,
+    );
+    await edit(user);
+    const title = "Also raise prices set for these customers, in step with their tier (1 price).";
+    const box = screen.getByRole("checkbox", { name: new RegExp(title.slice(0, 40)) });
+    expect(box).not.toBeChecked();
+    expect(screen.getByText(title)).toBeTruthy();
+    expect(screen.getByTestId(PLAN_TESTIDS.offerMove).getAttribute("data-against")).toBe("false");
+    expect(draft.toRequest()?.customerMoves).toEqual([]);
+    await user.click(box);
+    expect(box).toBeChecked();
+    expect(draft.toRequest()?.customerMoves).toEqual([
+      { customerId: "c1", ref: "piece", tier: 2, from: 0.5, to: 0.52 },
+    ]);
+    await user.click(box);
+    expect(draft.toRequest()?.customerMoves).toEqual([]);
+  });
+
   it("one Change prices button, in the Edit row (before Edit), and none above the grid", async () => {
     render();
     const buttons = screen.getAllByRole("button", { name: "Change prices" });
