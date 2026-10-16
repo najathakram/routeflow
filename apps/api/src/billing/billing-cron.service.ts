@@ -44,6 +44,7 @@ import {
   type LeavingAddon,
   type LeavingBiller,
 } from "./addon-inclusion";
+import { updateAddonRowsTx } from "./tenant-addon-writer";
 import { dunningZone } from "./dunning-zone";
 import { formatInZone } from "./subscription-billing-extras";
 import { SubscriptionMutationService } from "./subscription-mutation.service";
@@ -505,6 +506,7 @@ export class BillingCronService {
               mode: addonBillingModeOf(this.stripe.isConfigured, lockedSub),
               tenantLabel,
               dateLabel,
+              actorKind: "SYSTEM",
               onInvalid: (sku, value) =>
                 this.logger.error(
                   `Scheduled downgrade tenant=${s.tenantId}: add-on "${sku}" catalog includedAtPlan "${value}" names no plan - left unpriced`,
@@ -887,9 +889,10 @@ export class BillingCronService {
           priceSnapshot: r.priceSnapshot != null ? Number(r.priceSnapshot) : null,
           isComp: r.isComp,
         }));
-        await tx.tenantAddon.updateMany({
+        await updateAddonRowsTx(tx, this.events, {
           where: { tenantId: s.tenantId, active: true, stripeItemId: { not: null } },
           data: { stripeItemId: null },
+          actor: { kind: "SYSTEM", id: null, source: "lock.cancel_clear_item" },
         });
         await this.events.emit(
           s.tenantId,

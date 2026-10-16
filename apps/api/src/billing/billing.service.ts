@@ -2450,6 +2450,7 @@ export class BillingService {
       manualPay: false,
       tenantLabel: "",
       actorId: null,
+      actorKind: "SYSTEM",
     });
   }
 

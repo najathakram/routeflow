@@ -90,7 +90,7 @@ function make(
     // transaction reads the held rows (its `where` carries no `isComp`, the sweep's billable read does).
     tenantAddon: {
       findMany: jest.fn(async ({ where }: any = {}) =>
-        where?.isComp === false
+        where?.isComp === false && !where?.id
           ? (data.cancelAddons ?? [])
           : (data.heldAddons ?? data.cancelAddons ?? []),
       ),

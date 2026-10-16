@@ -8,7 +8,8 @@ import { writeAdminNotice } from "./manual-invoice-notice";
 import { normalizePlanKey } from "./plan-catalog.constants";
 import { stripeRefId } from "./stripe-period";
 import { resolvePlanPrice } from "./plan-price";
-import type { BillingEventService } from "./billing-event.service";
+import { BillingEventService } from "./billing-event.service";
+import { updateAddonRowsTx } from "./tenant-addon-writer";
 import {
   addonsEnteringInclusion,
   stopBillingIncludedAddonsTx,
@@ -49,6 +50,8 @@ export interface PlanChangeFlowDeps extends Omit<PlanChangeDeps, "stripe"> {
   prisma: PrismaService;
   /** Absent in an environment without Stripe wired (a spec, a script): the push is skipped. */
   stripe?: PlanChangeDeps["stripe"] | null;
+  /** SA-788: the writer's event emitter for the revert pointer (default: one over `prisma`). */
+  events?: BillingEventService;
 }
 
 export interface PlanChangeFlowArgs {
@@ -119,6 +122,7 @@ export async function beginStripeFirstPlanChange(
             toPlanName: a.targetPlanName,
             addonSkus: a.addonSkus,
             ctx,
+            actorKind: a.audience === "admin" ? "PLATFORM_ADMIN" : "TENANT_USER",
             ...o,
           })
         : Promise.resolve([]);
@@ -303,10 +307,16 @@ async function compensate(
     for (const r of restored) {
       if (!r.newItemId)
         throw new Error(`restored item for row ${r.rowId} not found in Stripe's reply`);
-      await prisma.tenantAddon.updateMany({
-        where: { id: r.rowId, tenantId: a.tenantId },
-        data: { stripeItemId: r.newItemId },
-      });
+      // SA-788: through the one writer (the revert pointer is the one pointer-only change that is recorded).
+      await updateAddonRowsTx(
+        prisma as unknown as Prisma.TransactionClient,
+        deps.events ?? new BillingEventService(prisma),
+        {
+          where: { id: r.rowId, tenantId: a.tenantId },
+          data: { stripeItemId: r.newItemId },
+          actor: { kind: "SYSTEM", id: null, source: "plan_change.revert" },
+        },
+      );
     }
   } catch (pointerErr) {
     // The add-on pointers still name a deleted item: that IS an inconsistency, so the flag stays up.

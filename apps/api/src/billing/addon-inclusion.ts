@@ -16,6 +16,7 @@ import {
 import { PlanNotInCatalogError, addonSkuCode, findPlanDefinition } from "./plan-catalog.constants";
 import type { PlanVersionWithCatalog } from "./plan-catalog.service";
 import { planChangeAddonsChanged, type PlanChangeProration } from "./plan-change-stripe";
+import { updateAddonRowTx, updateAddonRowsTx, type AddonActorKind } from "./tenant-addon-writer";
 
 /**
  * SA-786 (owner ruling 2026-10-15, decisions/D-2026-10-15-included-addon-meaning): when the plan includes an
@@ -279,6 +280,8 @@ export interface StopBillingArgs {
   manualPay: boolean;
   tenantLabel: string;
   actorId?: string | null;
+  /** Who is acting, for the add-on change record (SA-788): the tenant, a platform admin, or the system. */
+  actorKind: AddonActorKind;
 }
 
 /**
@@ -308,9 +311,10 @@ export async function stopBillingIncludedAddonsTx(
     if (billedItem && (a.ctx.pushed || a.ctx.live) && !a.ctx.settledItemIds.has(billedItem)) {
       throw planChangeAddonsChanged();
     }
-    await tx.tenantAddon.update({
-      where: { id: row.id },
+    await updateAddonRowTx(tx, events, {
+      id: row.id,
       data: { priceSnapshot: 0, stripeItemId: null },
+      actor: { kind: a.actorKind, id: a.actorId ?? null, source: "plan.stop_billing" },
     });
     if (row.isComp) continue; // a platform grant: never billed, never booked
     await emitAddonDelta(tx, events, {
@@ -358,6 +362,8 @@ export interface RepriceArgs {
   actorId?: string | null;
   /** Background callers (the cron) log an unparseable includedAtPlan and carry on; users get the 409. */
   onInvalid?: (sku: string, value: string) => void;
+  /** Who is acting, for the add-on change record (SA-788). */
+  actorKind: AddonActorKind;
 }
 
 /**
@@ -389,7 +395,7 @@ export async function repriceAddonsLeavingInclusionTx(
 
   const repriced: LeavingAddon[] = [];
   for (const row of leaving) {
-    const { count } = await tx.tenantAddon.updateMany({
+    const { count } = await updateAddonRowsTx(tx, events, {
       where: {
         id: row.id,
         tenantId: a.tenantId,
@@ -399,6 +405,7 @@ export async function repriceAddonsLeavingInclusionTx(
         OR: [{ priceSnapshot: null }, { priceSnapshot: 0 }],
       },
       data: { priceSnapshot: row.monthlyPrice },
+      actor: { kind: a.actorKind, id: a.actorId ?? null, source: "plan.reprice" },
     });
     if (count !== 1) continue;
     repriced.push(row);

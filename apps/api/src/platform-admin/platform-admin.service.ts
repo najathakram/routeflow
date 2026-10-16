@@ -69,10 +69,13 @@ import {
 import { bookAddonsOnCrossing, lockTenantForLedger } from "../billing/addon-ledger";
 import { billableAddonWhere } from "../billing/addon-row";
 import {
+  diffActivationAddons,
   priceUnbilledAddonsOnActivation,
+  readActivationAddons,
   unbilledSelfServeSkus,
   withAddonLocks,
 } from "../billing/manual-activation-addons";
+import type { ManualActivationAddons } from "@routeflow/types";
 import { roundMoney } from "@routeflow/pricing";
 import { StripeService } from "../billing/stripe.service";
 import { ScheduledPriceChangeService } from "../billing/scheduled-price-change";
@@ -1362,6 +1365,7 @@ export class PlatformAdminService {
             year: "numeric",
           }),
           actorId: adminId,
+          actorKind: "PLATFORM_ADMIN",
         });
         leavingToBill = reprice.toBill;
       }
@@ -1470,6 +1474,8 @@ export class PlatformAdminService {
 
     const exitBox: { exit: PauseExit | null } = { exit: null };
     const duplicateBox: { hit: RecentActivation | null } = { hit: null };
+    // SA-788 (c): the tenant's add-ons before and after, read under the tenant lock (also on the repeat path).
+    const addonsBox: { value: ManualActivationAddons | null } = { value: null };
     const tenant = await withAddonLocks(id, addonSkusToPrice, () =>
       this.prisma.$transaction(async (tx) => {
         // B864 / SA-277 (D2): same tenant row lock as updateStatus/updateTenantClass/
@@ -1492,8 +1498,10 @@ export class PlatformAdminService {
           repeated &&
           (await tx.tenant.findUniqueOrThrow({ where: { id }, select: { status: true } }))
             .status === TenantStatus.ACTIVE;
+        const addonsBefore = await readActivationAddons(tx, id, version.addonSkus);
         if (repeated && stillActive) {
           duplicateBox.hit = repeated;
+          addonsBox.value = { before: addonsBefore, after: addonsBefore, changed: [] };
           return tx.tenant.findUniqueOrThrow({ where: { id } });
         }
         const activationWindow = await resolveActivationWindow(tx, {
@@ -1751,6 +1759,7 @@ export class PlatformAdminService {
               manualPay: true,
               tenantLabel: label,
               actorId: adminId,
+              actorKind: "PLATFORM_ADMIN",
             });
           } else if (fromRank >= 0 && planRank(definition.planKey) < fromRank) {
             await repriceAddonsLeavingInclusionTx(tx, this.billingEventService, {
@@ -1768,6 +1777,7 @@ export class PlatformAdminService {
                 year: "numeric",
               }),
               actorId: adminId,
+              actorKind: "PLATFORM_ADMIN",
             });
           }
         }
@@ -1822,9 +1832,17 @@ export class PlatformAdminService {
           },
         });
 
+        // SA-788 (c): just before commit, so the list includes what this activation itself priced.
+        const addonsAfter = await readActivationAddons(tx, id, version.addonSkus);
+        addonsBox.value = {
+          before: addonsBefore,
+          after: addonsAfter,
+          changed: diffActivationAddons(addonsBefore, addonsAfter),
+        };
         return updated;
       }, this.planTransition.transactionOptions(preparedTransition)),
     );
+    const addons = addonsBox.value ?? { before: [], after: [], changed: [] };
 
     if (duplicateBox.hit) {
       // The repeat of a payment already recorded: nothing was written, so no cache, no pause, no trail row.
@@ -1838,6 +1856,7 @@ export class PlatformAdminService {
         paymentMethod: dto.paymentMethod,
         paymentRef: dto.paymentRef ?? null,
         repeated: true,
+        addons,
       };
     }
 
@@ -1862,6 +1881,7 @@ export class PlatformAdminService {
       periodEnd,
       paymentMethod: dto.paymentMethod,
       paymentRef: dto.paymentRef ?? null,
+      addons,
     };
   }
 
