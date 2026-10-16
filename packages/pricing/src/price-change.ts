@@ -138,7 +138,10 @@ export interface CustomerChange {
   from: number;
   to: number;
   against: boolean;
-  /** "rounding" = only the rounded price went against (the exact one did not); otherwise "shape". */
+  /**
+   * Meaningful only when `against` is true (a row that follows the change is always "shape"). "rounding" = only the
+   * rounded price went against (the exact one did not); otherwise "shape".
+   */
   cause: "shape" | "rounding";
 }
 

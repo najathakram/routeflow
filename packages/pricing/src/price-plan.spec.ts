@@ -86,6 +86,7 @@ describe("S2b G4 red rows: customerChanges", () => {
     const plain = planPriceChange(view, rollPlus5, rules, undefined, {
       customers: [{ customerId: "list", tier: 1 }],
     });
+    expect(plain.customerChanges.length).toBeGreaterThan(0);
     expect(plain.customerChanges.every((r) => r.against === false)).toBe(true);
   });
 
@@ -109,15 +110,19 @@ describe("S2b G4 red row (c): the opt-in customer move", () => {
     expect(customerPrice(p.view, can, moved, rules)).toBe(1.13);
   });
 
-  it("a move that would not stay above $0.00, or does not change the price, is not offered", () => {
+  it("a move that rounds to $0.00, or leaves the price as it is, is not offered; a normal customer in the same call still is", () => {
     const tiny: CustomerPricingWithId = {
-      customerId: "t",
+      customerId: "tiny",
       tier: 2,
       orderUnit: "pack",
-      set: { pack: 0.004 },
+      set: { pack: 0.004 }, // 0.004 x 57.96 / 55.20 rounds to $0.00
     };
-    const p = plan(rollPlus5, [tiny]);
-    expect(p.offers.filter((o) => o.kind === "customer")).toEqual([]);
+    // The Can Retail is set and does not move, so this Retail customer's Can ratio is 1: the price would not change.
+    const same: CustomerPricingWithId = { customerId: "same", tier: 1, set: { [can]: 2 } };
+    const offer = plan(rollPlus5, [tiny, same, acme]).offers.find((o) => o.kind === "customer");
+    if (offer?.kind !== "customer") throw new Error("customer offer expected");
+    expect(offer.moves.map((m) => m.customerId)).toEqual(["acme"]);
+    expect(plan(rollPlus5, [tiny, same]).offers.filter((o) => o.kind === "customer")).toEqual([]);
   });
 });
 
