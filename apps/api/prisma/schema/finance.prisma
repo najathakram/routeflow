@@ -359,6 +359,11 @@ model InvoiceItem {
   baseLabel String?
   packLabel String?
   lineCode  String?
+
+  // Units program S6 (SA-795 (g), G1): the invoice unit snapshot taken at issue (unit word + pieces per
+  // that unit). DISPLAY ONLY: never read by totals, tax, payments, credits or the ledger. Null = legacy.
+  invoiceUnitLabel  String?
+  invoiceUnitFactor Int?
 }
 
 // #2717 M3: the invoice-side twin of OrderItemComponent, frozen at bill time. qty is an INTEGER
@@ -651,6 +656,11 @@ model CreditNoteItem {
   baseLabel String?
   packLabel String?
   lineCode  String?
+
+  // Units program S6 (SA-795 (g), G1): the invoice unit snapshot taken at issue (unit word + pieces per
+  // that unit). DISPLAY ONLY: never read by totals, tax, payments, credits or the ledger. Null = legacy.
+  invoiceUnitLabel  String?
+  invoiceUnitFactor Int?
 }
 
 /// Order↔credit-note INTENT: "apply this credit (up to `amount`, or its remaining
@@ -971,6 +981,14 @@ model VendorBillItem {
   @@index([tenantId])
   // Units rebuild P0a: sale-time unit-name snapshots (null = legacy line).
   baseLabel String?
+
+  // Units program S6 (PLAN §1.8): the family purchase split (PurchaseOrderItem's twins; SetNull: provenance only).
+  unitLabel       String?
+  familyProductId String?
+  familyGroupId   String?
+  familyProduct   Product? @relation("VendorBillItemFamily", fields: [familyProductId], references: [id], onDelete: SetNull)
+
+  @@index([familyGroupId])
 }
 
 model BillPayment {
