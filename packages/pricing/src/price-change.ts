@@ -150,7 +150,16 @@ export interface CustomerMoveOffer {
   kind: "customer";
   ticked: false;
   title: string;
-  moves: { customerId: string; ref: UnitRef; tier: PriceTier; from: number; to: number }[];
+  moves: {
+    customerId: string;
+    ref: UnitRef;
+    tier: PriceTier;
+    from: number;
+    to: number;
+    /** SA-798a: the move goes the other way from the change; then `cause` is "shape" (a tier-ratio move, never rounding). */
+    against: boolean;
+    cause?: "shape";
+  }[];
 }
 
 export type PriceOffer = InversionOffer | CustomerMoveOffer;
@@ -217,6 +226,7 @@ export function planCellEdit(
   typed: unknown,
   rules: TierRules = DEFAULT_TIER_RULES,
   tierName?: (t: PriceTier) => string,
+  opts: PriceChangeOptions = {},
 ): PricePlan {
   const refuse = (message: string): PricePlan => emptyPlan(view, [message]);
   const row = view.rows.find((r) => r.ref === ref);
@@ -236,7 +246,15 @@ export function planCellEdit(
     undo: applied.undo,
     followers: followersOf(changes, patches),
     offers: inversionOffers(applied.view, [{ ref, tier }], rules, tierName),
-    customerChanges: [],
+    // SA-799: customer changes are never hidden. The edit's own direction is the cell's move (no rounding step here).
+    customerChanges: planCustomerChanges(
+      view,
+      applied.view,
+      applied.view,
+      opts.customers ?? [],
+      rules,
+      ladderPrice(applied.view, ref, tier, rules) >= ladderPrice(view, ref, tier, rules) ? 1 : -1,
+    ),
     changes,
     problems: [],
     view: applied.view,
@@ -309,16 +327,28 @@ function customerMoveOffer(
       const den = ladderPriceExact(before, ref, c.tier, rules, k);
       if (!(den > 0)) continue;
       const to = scalePrice(from, ladderPriceExact(after, ref, c.tier, rules, k), den);
-      if (to > 0 && to !== from)
-        moves.push({ customerId: c.customerId, ref, tier: c.tier, from, to });
+      if (to > 0 && to !== from) {
+        const against = Math.sign(to - from) !== dir;
+        moves.push({
+          customerId: c.customerId,
+          ref,
+          tier: c.tier,
+          from,
+          to,
+          against,
+          ...(against ? { cause: "shape" as const } : {}),
+        });
+      }
     }
   }
   if (moves.length === 0) return null;
   const n = moves.length;
+  // SA-798a: the owner's verb only while every move goes with the change; otherwise the neutral one.
+  const verb = moves.some((m) => m.against) ? "update" : dir > 0 ? "raise" : "lower";
   return {
     kind: "customer",
     ticked: false,
-    title: `Also ${dir > 0 ? "raise" : "lower"} prices set for these customers, in step with their tier (${n} price${n === 1 ? "" : "s"}).`,
+    title: `Also ${verb} prices set for these customers, in step with their tier (${n} price${n === 1 ? "" : "s"}).`,
     moves,
   };
 }
