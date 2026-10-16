@@ -17,6 +17,7 @@ export function ProductStockCostCard({
   stockStatus: "IN_STOCK" | "LOW" | "OUT_OF_STOCK";
   currentStock: number;
   onSetCost: () => void;
+  pricesV2?: boolean;
 }) {
   // J9: on a generic with variants, On hand IS its own not-yet-split stock (no second row).
   const isSplitParent = !product.parentProductId && (product.variants?.length ?? 0) > 0;
