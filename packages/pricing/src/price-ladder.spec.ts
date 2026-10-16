@@ -131,7 +131,7 @@ describe("T3 property: generated ladders equal resolveUnitPrice at 0%", () => {
         priceTier2: maybe(0.5, () => money().toFixed(2)),
         priceTier3: maybe(0.4, () => money().toFixed(2)),
         priceTier4: maybe(0.3, () => (rnd() < 0.3 ? "0" : money().toFixed(2))),
-        priceTier5: maybe(0.2, () => money().toFixed(2)),
+        priceTier5: maybe(0.2, () => (rnd() < 0.3 ? `-${money().toFixed(2)}` : money().toFixed(2))), // PF-13: a negative is Auto
       };
       const units: LadderUnit[] = [];
       const labels = ["Piece", "Inner", "Case", "Pallet", "Layer"].filter(() => rnd() < 0.6);
@@ -298,6 +298,20 @@ describe("buildLadderView", () => {
     ]);
     expect(view.rows.map((r) => r.ref)).toEqual(["label:Pallet", "u1", "pack", "base"]);
     expect(view.anchor).toBe("pack");
+  });
+});
+
+describe("PF-13: a negative stored tier is Auto (the one named exception to 'byte-identical at 0%')", () => {
+  it("the ladder and resolveUnitPrice read it as Auto; getTierPrice, the legacy reader, would return the negative number", () => {
+    const product: LadderProduct = {
+      unit: "Box",
+      unitsPerBox: 12,
+      pricePerUnit: "12.00",
+      priceTier2: "-5.00",
+    };
+    expect(priceAt(product, [], "Box", 2)).toBe(12);
+    expect(resolveUnitPrice(product, [], "Box", 2)).toBe(12);
+    expect(getTierPrice(product, 2)).toBe(-5); // the named exception: master's raw reader is not clamped
   });
 });
 
