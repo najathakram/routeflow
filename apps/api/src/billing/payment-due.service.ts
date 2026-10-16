@@ -1,5 +1,6 @@
 import { ConflictException, Injectable, Logger } from "@nestjs/common";
 import { API_ERROR_CODES } from "../common/api-error-codes";
+import { resolveZone } from "../common/tenant-time-zone";
 import { PrismaService } from "../prisma/prisma.service";
 import { CatchupCheckoutService } from "./catchup-checkout.service";
 import { claimRefusal } from "./catchup-claim";
@@ -77,13 +78,11 @@ export class PaymentDueService {
     const plan = report.plan;
     // below the Stripe minimum the line is forgiven (the session carries none): there is nothing to pay
     if (!plan.ok || plan.stub.totalCents <= 0 || plan.stub.belowStripeMinimum) return NOT_DUE;
-    const tenant = (await this.prisma.tenant.findUnique({
-      where: { id: tenantId },
-      select: { timezone: true },
-    })) as { timezone: string | null } | null;
+    const zonePrisma = this.prisma as unknown as Parameters<typeof resolveZone>[0];
+    const zone = await resolveZone(zonePrisma, { tenantId });
     return {
       due: true,
-      pastDue: isPastDue(plan.stub.from, now, tenant?.timezone ?? null),
+      pastDue: isPastDue(plan.stub.from, now, zone.zone),
       amountCents: plan.stub.totalCents,
       periodLabel: describeStubPeriod(plan.stub.from, plan.stub.to),
       periodStart: plan.stub.from.toISOString(),

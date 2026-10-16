@@ -62,7 +62,8 @@ function make(
     getCheckoutSession: jest.fn().mockResolvedValue(o.session ?? null),
   };
   const prisma = {
-    tenant: {
+    // the zone lives on TenantConfig and is read through the single resolver (common/tenant-time-zone.ts)
+    tenantConfig: {
       findUnique: jest
         .fn()
         .mockResolvedValue({ timezone: o.tz === undefined ? "America/New_York" : o.tz }),
@@ -98,7 +99,7 @@ describe("PaymentDueService.get", () => {
     await svc.get("t-mine", NOW);
     expect(catchup.plan).toHaveBeenCalledTimes(1);
     expect(catchup.plan.mock.calls[0][0]).toBe("t-mine");
-    expect(prisma.tenant.findUnique.mock.calls[0][0].where).toEqual({ id: "t-mine" });
+    expect(prisma.tenantConfig.findUnique.mock.calls[0][0].where).toEqual({ tenantId: "t-mine" });
   });
 
   it("is not due when the planner refuses (a blocker other than a held claim)", async () => {
