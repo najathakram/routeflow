@@ -1750,21 +1750,25 @@ const DIR_LINK_TYPE = process.platform === "win32" ? "junction" : "dir";
   const main = join(root, "main");
   const worktreesRoot = join(root, "worktrees");
   try {
-    execFileSync("git", ["init", "-q", "-b", "master", main]);
+    execFileSync("git", ["init", "-q", "-b", "master", main], { env: fixtureGitEnv() });
     writeFileSync(join(main, "a.txt"), "a");
-    execFileSync("git", ["-C", main, "add", "a.txt"]);
-    execFileSync("git", [
-      "-C",
-      main,
-      "-c",
-      "user.name=t",
-      "-c",
-      "user.email=t@example.com",
-      "commit",
-      "-q",
-      "-m",
-      "base",
-    ]);
+    execFileSync("git", ["-C", main, "add", "a.txt"], { env: fixtureGitEnv() });
+    execFileSync(
+      "git",
+      [
+        "-C",
+        main,
+        "-c",
+        "user.name=t",
+        "-c",
+        "user.email=t@example.com",
+        "commit",
+        "-q",
+        "-m",
+        "base",
+      ],
+      { env: fixtureGitEnv() },
+    );
 
     mkdirSync(worktreesRoot, { recursive: true });
     const strayFile = join(worktreesRoot, "bugs-selftest.log");
