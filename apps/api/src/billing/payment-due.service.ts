@@ -5,7 +5,7 @@ import { PrismaService } from "../prisma/prisma.service";
 import { CatchupCheckoutService } from "./catchup-checkout.service";
 import { claimRefusal } from "./catchup-claim";
 import { CatchupClaimService } from "./catchup-claim.service";
-import { describeStubPeriod } from "./catchup-plan";
+import { chargeNowCents, describeStubPeriod } from "./catchup-plan";
 import { StripeService } from "./stripe.service";
 
 /**
@@ -27,12 +27,18 @@ export interface PaymentDueView {
   /** ISO start of the period the stub covers. Null when nothing is due. */
   periodStart: string | null;
   /**
-   * SA-801: nothing is owed now, but the card must be added before `chargeStartsOn` (the planner's stub-free `trial`
-   * shape: S === A, a $0 stub). `due` stays false for it. Mutually exclusive with `due`.
+   * SA-801 / SA-806: nothing is charged now (the planner's `chargeNowCents` is 0: the stub-free `trial` shape or a
+   * forgiven line), but the card must be added by `cardBy` or the first charge `chargeStartsOn` is lost to the next
+   * month's terms. `due` stays false for it. Mutually exclusive with `due`.
    */
   cardNeeded: boolean;
   /** ISO instant A, the first charge (the client prints it in the tenant's zone). Null unless `cardNeeded`. */
   chargeStartsOn: string | null;
+  /**
+   * ISO instant D = A - 72 h (the planner's `termsHoldUntil`): the last instant the quoted terms hold. The card
+   * deadline the tenant sees. Null unless `cardNeeded`.
+   */
+  cardBy: string | null;
 }
 
 const NOT_DUE: PaymentDueView = {
@@ -43,7 +49,12 @@ const NOT_DUE: PaymentDueView = {
   periodStart: null,
   cardNeeded: false,
   chargeStartsOn: null,
+  cardBy: null,
 };
+
+/** Where Stripe sends the admin back: a real payment, or a card add (nothing was charged: never "Payment received"). */
+const PAID_RETURN_PATH = "/settings/billing?paid=1";
+const CARD_RETURN_PATH = "/settings/billing?paid=1&card=1";
 
 /** A held claim is the very state "a payment session is open"; it is not a reason to hide the bill. */
 const HIDES_THE_BILL = (reason: string) => reason !== "claim_held";
@@ -91,39 +102,63 @@ export class PaymentDueService {
   ) {}
 
   async get(tenantId: string, now: Date = new Date()): Promise<PaymentDueView> {
+    return (await this.read(tenantId, now)).view;
+  }
+
+  /**
+   * The view AND the planner's own stub total from ONE planner read, so `pay` prices the session from the very read
+   * that decided eligibility (never the view's display amount, never a client value).
+   */
+  private async read(
+    tenantId: string,
+    now: Date,
+  ): Promise<{ view: PaymentDueView; stubCents: number }> {
+    const none = { view: NOT_DUE, stubCents: 0 };
     const report = await this.catchup.plan(tenantId, now);
-    if (report.tenantClass !== "PRODUCTION") return NOT_DUE;
-    if (report.ineligible.some(HIDES_THE_BILL)) return NOT_DUE;
+    if (report.tenantClass !== "PRODUCTION") return none;
+    if (report.ineligible.some(HIDES_THE_BILL)) return none;
     const plan = report.plan;
-    // SA-801: a stub-free catch-up (the `trial` shape, S === A) owes nothing now; the card is still needed by A.
-    // Same eligibility as a bill (PRODUCTION, ACTIVE, manual invoicing, no hiding ineligibility): an app-trial
-    // (TRIAL status) or read-only tenant is refused above by `tenant_not_active`.
-    if (plan.ok && plan.shape === "trial" && plan.stub.totalCents === 0) {
-      return { ...NOT_DUE, cardNeeded: true, chargeStartsOn: plan.trialEndAt.toISOString() };
+    if (!plan.ok) return none;
+    // SA-801 / SA-806: nothing is charged now (the stub-free `trial` shape, or a line forgiven under the Stripe
+    // minimum): the card is still needed, by D. Same eligibility as a bill (PRODUCTION, ACTIVE, manual invoicing, no
+    // hiding ineligibility): an app-trial (TRIAL status) or read-only tenant is refused above by `tenant_not_active`.
+    if (chargeNowCents(plan) === 0) {
+      return {
+        view: {
+          ...NOT_DUE,
+          cardNeeded: true,
+          chargeStartsOn: plan.trialEndAt.toISOString(),
+          cardBy: plan.termsHoldUntil.toISOString(),
+        },
+        stubCents: plan.stub.totalCents,
+      };
     }
-    // below the Stripe minimum the line is forgiven (the session carries none): there is nothing to pay
-    if (!plan.ok || plan.stub.totalCents <= 0 || plan.stub.belowStripeMinimum) return NOT_DUE;
     const zone = await resolveZone(this.prisma, { tenantId });
     return {
-      due: true,
-      pastDue: isPastDue(plan.stub.from, now, zone.zone),
-      amountCents: plan.stub.totalCents,
-      periodLabel: describeStubPeriod(plan.stub.from, plan.stub.to),
-      periodStart: plan.stub.from.toISOString(),
-      cardNeeded: false,
-      chargeStartsOn: null,
+      view: {
+        due: true,
+        pastDue: isPastDue(plan.stub.from, now, zone.zone),
+        amountCents: plan.stub.totalCents,
+        periodLabel: describeStubPeriod(plan.stub.from, plan.stub.to),
+        periodStart: plan.stub.from.toISOString(),
+        cardNeeded: false,
+        chargeStartsOn: null,
+        cardBy: null,
+      },
+      stubCents: plan.stub.totalCents,
     };
   }
 
   /**
    * The Checkout URL of THIS tenant's catch-up. Reuses the open, unexpired session when one exists; otherwise
    * creates exactly one through `CatchupCheckoutService.open`, priced by the planner right now. No client amount.
-   * Works for a payable bill and for a card-needed tenant (SA-801, a $0 session).
+   * Works for a payable bill and for a card-needed tenant (SA-801 / SA-806, a $0-now session).
    */
   async pay(tenantId: string, now: Date = new Date()): Promise<{ checkoutUrl: string }> {
-    const view = await this.get(tenantId, now);
-    // SA-801: a card-needed tenant (nothing owed now) opens the very same catch-up session, priced `$0` now
-    // (`expectedStubCents` 0 is the planner's own figure for the `trial` shape; open() re-checks it).
+    const { view, stubCents } = await this.read(tenantId, now);
+    // SA-801 / SA-806: a card-needed tenant (nothing charged now) opens the very same catch-up session. The expected
+    // stub is the planner's own `stub.totalCents` from the read above: 0 for the `trial` shape, the forgiven amount
+    // for a forgiven line (open() compares it with its own fresh plan and refuses a mismatch).
     if (!view.due && !view.cardNeeded) {
       throw new ConflictException({
         code: API_ERROR_CODES.PAYMENT_NOT_DUE,
@@ -135,10 +170,10 @@ export class PaymentDueService {
 
     try {
       const out = await this.catchup.open(tenantId, {
-        expectedStubCents: view.amountCents,
+        expectedStubCents: stubCents,
         now,
         // paths: open() joins them to its one FRONTEND_URL base
-        successPath: "/settings/billing?paid=1",
+        successPath: view.cardNeeded ? CARD_RETURN_PATH : PAID_RETURN_PATH,
         cancelPath: "/settings/billing?checkout=cancelled",
       });
       return { checkoutUrl: out.checkoutUrl };

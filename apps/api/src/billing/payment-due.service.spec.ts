@@ -10,6 +10,8 @@ import { PaymentDueService, isPastDue } from "./payment-due.service";
 const NOW = new Date("2026-10-09T10:00:00Z");
 const OCT_1 = new Date("2026-10-01T12:00:00Z");
 const NOV_1 = new Date("2026-11-01T12:00:00Z");
+/** SA-806: D = A - 72 h, the planner's own `termsHoldUntil` (a mock plan carries it, the service never derives it). */
+const OCT_29 = new Date("2026-10-29T12:00:00Z");
 
 function report(over: Record<string, unknown> = {}, stub: Record<string, unknown> = {}) {
   return {
@@ -24,6 +26,7 @@ function report(over: Record<string, unknown> = {}, stub: Record<string, unknown
       shape: "trial_one_time",
       anchorAt: NOV_1,
       trialEndAt: NOV_1,
+      termsHoldUntil: OCT_29,
       stub: {
         from: OCT_1,
         to: NOV_1,
@@ -115,6 +118,7 @@ describe("PaymentDueService.get", () => {
       periodStart: OCT_1.toISOString(),
       cardNeeded: false,
       chargeStartsOn: null,
+      cardBy: null,
     });
   });
 
@@ -206,7 +210,7 @@ describe("PaymentDueService.get: the zone is the single resolver's (UTC for none
 
 describe("PaymentDueService.pay", () => {
   it("refuses with 409 PAYMENT_NOT_DUE when nothing is due and creates nothing", async () => {
-    const { svc, catchup } = make({ report: report({}, { totalCents: 0 }) });
+    const { svc, catchup } = make({ report: report({ ineligible: ["has_stripe_subscription"] }) });
     await expect(svc.pay("t1", NOW)).rejects.toMatchObject({
       response: { code: API_ERROR_CODES.PAYMENT_NOT_DUE },
     });
@@ -543,25 +547,35 @@ describe("SA-801: PaymentDueService.get, the card reminder for a stub-free catch
       periodStart: null,
       cardNeeded: true,
       chargeStartsOn: NOV_1.toISOString(),
+      cardBy: OCT_29.toISOString(),
     });
   });
 
   it("the money tenant (trial_one_time, a stub) is due and does NOT need the reminder", async () => {
     const v = await make().svc.get("t1", NOW);
-    expect(v).toMatchObject({ due: true, cardNeeded: false, chargeStartsOn: null });
+    expect(v).toMatchObject({ due: true, cardNeeded: false, chargeStartsOn: null, cardBy: null });
   });
 
-  it("every other not-due read carries cardNeeded:false and chargeStartsOn:null", async () => {
+  it("SA-806 R4: a forgiven stub (under $0.50) is nothing charged now: cardNeeded true, due false, with A and D", async () => {
     const forgiven = make({ report: report({}, { totalCents: 30, belowStripeMinimum: true }) });
-    expect(await forgiven.svc.get("t1", NOW)).toMatchObject({
+    expect(await forgiven.svc.get("t1", NOW)).toEqual({
       due: false,
-      cardNeeded: false,
-      chargeStartsOn: null,
+      pastDue: false,
+      amountCents: 0,
+      periodLabel: null,
+      periodStart: null,
+      cardNeeded: true,
+      chargeStartsOn: NOV_1.toISOString(),
+      cardBy: OCT_29.toISOString(),
     });
+  });
+
+  it("every other not-due read carries cardNeeded:false, chargeStartsOn:null and cardBy:null", async () => {
     const noPlan = make({ report: report({ plan: { ok: false, reason: "paid_after_gap" } }) });
     expect(await noPlan.svc.get("t1", NOW)).toMatchObject({
       cardNeeded: false,
       chargeStartsOn: null,
+      cardBy: null,
     });
   });
 
@@ -579,7 +593,7 @@ describe("SA-801: PaymentDueService.get, the card reminder for a stub-free catch
     ["a TEST tenant", { tenantClass: "TEST" }],
   ])("%s gets no reminder", async (_name, over) => {
     const v = await make({ report: trialReport(over) }).svc.get("t1", NOW);
-    expect(v).toMatchObject({ due: false, cardNeeded: false, chargeStartsOn: null });
+    expect(v).toMatchObject({ due: false, cardNeeded: false, chargeStartsOn: null, cardBy: null });
   });
 
   it("a plan that cannot be made gets no reminder", async () => {
@@ -592,6 +606,7 @@ describe("SA-801: PaymentDueService.get, the card reminder for a stub-free catch
     expect(await make({ report: r }).svc.get("t1", NOW)).toMatchObject({
       cardNeeded: true,
       chargeStartsOn: NOV_1.toISOString(),
+      cardBy: OCT_29.toISOString(),
     });
   });
 });
@@ -605,8 +620,31 @@ describe("SA-801: PaymentDueService.pay for a card-needed tenant", () => {
     expect(catchup.open).toHaveBeenCalledWith("t1", {
       expectedStubCents: 0,
       now: NOW,
-      successPath: "/settings/billing?paid=1",
+      successPath: "/settings/billing?paid=1&card=1",
       cancelPath: "/settings/billing?checkout=cancelled",
+    });
+  });
+
+  it("SA-806 R4: a forgiven stub passes the PLANNER's own stub total (30), never the view's 0 and never a client value", async () => {
+    const { svc, catchup } = make({
+      report: report({}, { totalCents: 30, belowStripeMinimum: true }),
+    });
+    await svc.pay("t1", NOW);
+    expect(catchup.plan).toHaveBeenCalledTimes(1); // one read decides eligibility AND the expected amount
+    expect(catchup.open).toHaveBeenCalledWith("t1", {
+      expectedStubCents: 30,
+      now: NOW,
+      successPath: "/settings/billing?paid=1&card=1",
+      cancelPath: "/settings/billing?checkout=cancelled",
+    });
+  });
+
+  it("a real payment keeps the payment return path (paid=1 alone)", async () => {
+    const { svc, catchup } = make();
+    await svc.pay("t1", NOW);
+    expect(catchup.open.mock.calls[0][1]).toMatchObject({
+      expectedStubCents: 31000,
+      successPath: "/settings/billing?paid=1",
     });
   });
 

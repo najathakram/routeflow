@@ -18,6 +18,14 @@ describe("PaidReturnNotice", () => {
     );
   });
 
+  it("?paid=1&card=1 (a card add, nothing charged) never says 'Payment received'", () => {
+    mockQuery = "paid=1&card=1";
+    renderWithProviders(<PaidReturnNotice />);
+    const note = screen.getByRole("status");
+    expect(note).toHaveTextContent("Card added. It can take a few minutes to confirm.");
+    expect(note).not.toHaveTextContent("Payment received");
+  });
+
   it("can be dismissed", async () => {
     mockQuery = "paid=1";
     renderWithProviders(<PaidReturnNotice />);

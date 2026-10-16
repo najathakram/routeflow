@@ -34,6 +34,7 @@ const due = (over: Partial<PaymentDueView> = {}): PaymentDueView => ({
   periodStart: "2026-10-01T00:00:00.000Z",
   cardNeeded: false,
   chargeStartsOn: null,
+  cardBy: null,
   ...over,
 });
 
@@ -162,7 +163,8 @@ describe("PaymentDueBanner", () => {
   });
 });
 
-// SA-801: the card reminder (a mode of this banner)
+// SA-801 + SA-806: the card reminder (a mode of this banner). `cardBy` is the card deadline D, `chargeStartsOn` is A
+// (D + 72 h). reminderIn(days) puts D `days` from now.
 const DAY = 86_400_000;
 const reminderIn = (days: number): PaymentDueView =>
   due({
@@ -172,20 +174,22 @@ const reminderIn = (days: number): PaymentDueView =>
     periodLabel: null,
     periodStart: null,
     cardNeeded: true,
-    chargeStartsOn: new Date(Date.now() + days * DAY).toISOString(),
+    cardBy: new Date(Date.now() + days * DAY).toISOString(),
+    chargeStartsOn: new Date(Date.now() + days * DAY + 3 * DAY).toISOString(),
   });
 const FIXED: PaymentDueView = {
   ...reminderIn(0),
   chargeStartsOn: "2026-11-01T12:00:00.000Z",
+  cardBy: "2026-10-29T12:00:00.000Z",
 };
 
 describe("PaymentDueBanner - card reminder", () => {
-  it("admin: the owner's wording with A's date, Add card starts the checkout, View billing links", async () => {
+  it("admin: the owner's wording with the card deadline D and A, Add card starts the checkout, View billing links", async () => {
     renderWithProviders(<PaymentDueBanner mode="card-reminder" due={FIXED} role="admin" />);
     const box = screen.getByTestId("card-reminder-banner");
     expect(box).toHaveAttribute("data-state", "card-reminder");
     expect(
-      within(box).getByText("Add your card before November 1, 2026 to keep RouteFlow running."),
+      within(box).getByText("Add your card before October 29, 2026 to keep RouteFlow running."),
     ).toBeInTheDocument();
     expect(
       within(box).getByText("You won't be charged until November 1, 2026."),
@@ -206,7 +210,7 @@ describe("PaymentDueBanner - card reminder", () => {
     const box = screen.getByTestId("card-reminder-banner");
     expect(within(box).queryByRole("button", { name: "Add card" })).toBeNull();
     expect(
-      within(box).getByText("Ask your account admin to add a card before November 1, 2026."),
+      within(box).getByText("Ask your account admin to add a card before October 29, 2026."),
     ).toBeInTheDocument();
   });
 
@@ -231,8 +235,8 @@ describe("PaymentDueBanner - card reminder", () => {
     expect(screen.getByTestId("card-reminder-banner")).toBeInTheDocument();
   });
 
-  it("A more than 7 days out: admin and operator can each dismiss it for the day, and it stays gone", async () => {
-    const far = reminderIn(20); // one fixed A: the dismissal is keyed on it
+  it("cardBy more than 7 days out: admin and operator can each dismiss it for the day, and it stays gone", async () => {
+    const far = reminderIn(20); // one fixed cardBy: the dismissal is keyed on it
     for (const role of ["admin", "staff"] as const) {
       window.localStorage.clear();
       const { unmount } = renderWithProviders(
@@ -246,7 +250,7 @@ describe("PaymentDueBanner - card reminder", () => {
     }
   });
 
-  it("within 7 days of A: the admin has no dismiss; the operator still does", () => {
+  it("within 7 days of cardBy: the admin has no dismiss; the operator still does", () => {
     const { unmount } = renderWithProviders(
       <PaymentDueBanner mode="card-reminder" due={reminderIn(3)} role="admin" />,
     );
@@ -260,7 +264,7 @@ describe("PaymentDueBanner - card reminder", () => {
   it("an admin's earlier dismissal does not hide it once the 7-day window opens", () => {
     const due3 = reminderIn(3);
     window.localStorage.setItem(
-      `rf.banner.dismissed.card-reminder:${due3.chargeStartsOn}`,
+      `rf.banner.dismissed.card-reminder:${due3.cardBy}`,
       String(Date.now() + DAY),
     );
     renderWithProviders(<PaymentDueBanner mode="card-reminder" due={due3} role="admin" />);

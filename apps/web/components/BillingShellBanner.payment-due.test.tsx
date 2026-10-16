@@ -56,6 +56,7 @@ const DUE: PaymentDueView = {
   periodStart: "2026-10-01T00:00:00.000Z",
   cardNeeded: false,
   chargeStartsOn: null,
+  cardBy: null,
 };
 
 beforeEach(() => {
@@ -177,12 +178,13 @@ const REMINDER: PaymentDueView = {
   periodLabel: null,
   periodStart: null,
   cardNeeded: true,
-  chargeStartsOn: new Date(Date.now() + 20 * DAY).toISOString(),
+  chargeStartsOn: new Date(Date.now() + 23 * DAY).toISOString(),
+  cardBy: new Date(Date.now() + 20 * DAY).toISOString(),
 };
 
 describe("BillingShellBanner - card reminder slot", () => {
   it("today (no reminder in the read) nothing shows; with it, the banner shows for an admin", () => {
-    mockDue = { ...REMINDER, cardNeeded: false, chargeStartsOn: null };
+    mockDue = { ...REMINDER, cardNeeded: false, chargeStartsOn: null, cardBy: null };
     const { unmount } = renderWithProviders(
       <BillingShellBanner scope="acme" view={healthy()} userRole="TENANT_ADMIN" />,
     );

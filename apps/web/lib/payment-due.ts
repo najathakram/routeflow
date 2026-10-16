@@ -53,10 +53,10 @@ export function paymentDueCopy(
   };
 }
 
-/** SA-801: an admin can no longer dismiss the card reminder inside this window before the first charge. */
+/** SA-801 / SA-806: an admin can no longer dismiss the card reminder inside this window before the card deadline. */
 const CARD_REMINDER_LOCK_MS = 7 * 86_400_000;
 
-/** A's calendar day in the tenant's zone, long form ("November 1, 2026"); null for an unusable instant or zone. */
+/** An instant's calendar day in the tenant's zone, long form ("November 1, 2026"); null for an unusable instant or zone. */
 export function formatChargeDate(iso: string, zone: string): string | null {
   const t = Date.parse(iso);
   if (!Number.isFinite(t)) return null;
@@ -73,8 +73,10 @@ export function formatChargeDate(iso: string, zone: string): string | null {
 }
 
 /**
- * SA-801: the card reminder's copy (owner wording). The server decides `cardNeeded` and the date (the planner's first
- * charge A); this only prints A in the tenant's zone. Null when nothing is asked of the tenant.
+ * SA-801 / SA-806: the card reminder's copy (owner wording). The server decides `cardNeeded` and both dates; this only
+ * prints them in the tenant's zone: the title and the operator note print the card deadline D (`cardBy`, A - 72 h, the
+ * last instant the quoted terms hold), the body prints the first charge A. D's own calendar day is never later than D
+ * in any zone, so "before {that day}" always ends at or before D.
  */
 export function cardReminderCopy(
   due: PaymentDueView | null | undefined,
@@ -82,22 +84,24 @@ export function cardReminderCopy(
   zone: string,
 ): PaymentDueCopy | null {
   if (!hasCardReminder(due)) return null;
-  const date = formatChargeDate(due.chargeStartsOn as string, zone);
-  if (!date) return null;
+  const cardBy = formatChargeDate(due.cardBy as string, zone);
+  const chargeOn = formatChargeDate(due.chargeStartsOn as string, zone);
+  if (!cardBy || !chargeOn) return null;
   const admin = role === "admin";
   return {
     kind: "card-reminder",
-    title: `Add your card before ${date} to keep RouteFlow running.`,
-    body: `You won't be charged until ${date}.`,
+    title: `Add your card before ${cardBy} to keep RouteFlow running.`,
+    body: `You won't be charged until ${chargeOn}.`,
     primary: admin ? { label: "Add card", intent: "pay" } : null,
     secondary: VIEW_BILLING,
-    note: admin ? null : `Ask your account admin to add a card before ${date}.`,
+    note: admin ? null : `Ask your account admin to add a card before ${cardBy}.`,
   };
 }
 
 /**
- * SA-801: dismissible for the day for everyone until 7 days before A. From then on an admin cannot dismiss it (it
- * stays until a card is added) while an operator, who cannot act on it, still can, daily. The key carries A.
+ * SA-801 / SA-806: dismissible for the day for everyone until 7 days before the card deadline `cardBy`. From then on
+ * an admin cannot dismiss it (it stays until a card is added) while an operator, who cannot act on it, still can,
+ * daily. The key carries `cardBy`.
  */
 export function cardReminderDismiss(
   due: PaymentDueView | null | undefined,
@@ -105,9 +109,9 @@ export function cardReminderDismiss(
   now: number = Date.now(),
 ): BannerDismiss | null {
   if (!hasCardReminder(due)) return null;
-  const a = Date.parse(due.chargeStartsOn as string);
-  if (role === "admin" && now >= a - CARD_REMINDER_LOCK_MS) return null;
-  return { scope: "day", key: `card-reminder:${due.chargeStartsOn}` };
+  const d = Date.parse(due.cardBy as string);
+  if (role === "admin" && now >= d - CARD_REMINDER_LOCK_MS) return null;
+  return { scope: "day", key: `card-reminder:${due.cardBy}` };
 }
 
 /** The failed-renewal variant (replaces the strip's grace / overdue kinds). */

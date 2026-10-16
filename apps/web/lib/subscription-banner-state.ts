@@ -26,14 +26,16 @@ export type BannerRole = "admin" | "staff";
  */
 export type PaymentDueSlot = "payment-due" | "failed-renewal" | "card-reminder" | "strip";
 
-/** SA-801: the server says the card is needed (nothing is due) and gave a usable first-charge date. */
+/** SA-801 / SA-806: the server says the card is needed (nothing is due) and gave a usable first-charge date and card deadline. */
 export function hasCardReminder(due: PaymentDueView | null | undefined): due is PaymentDueView {
   return (
     !!due &&
     due.due !== true &&
     due.cardNeeded === true &&
     typeof due.chargeStartsOn === "string" &&
-    Number.isFinite(Date.parse(due.chargeStartsOn))
+    Number.isFinite(Date.parse(due.chargeStartsOn)) &&
+    typeof due.cardBy === "string" &&
+    Number.isFinite(Date.parse(due.cardBy))
   );
 }
 

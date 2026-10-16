@@ -1,10 +1,6 @@
 import { CATCHUP_META } from "./catchup-claim";
 import { CHECKOUT_MAX_LIFETIME_MS } from "./checkout-anchor";
-import {
-  CATCHUP_TRIAL_MIN_LEAD_MS,
-  STRIPE_MIN_CHARGE_CENTS,
-  type CatchupPlan,
-} from "./catchup-plan";
+import { CATCHUP_TRIAL_MIN_LEAD_MS, chargeNowCents, type CatchupPlan } from "./catchup-plan";
 
 /**
  * The Stripe Checkout parameters of a catch-up session - a PURE function of the plan, ONE builder per shape. Only
@@ -88,7 +84,7 @@ function common(i: CatchupSessionInput) {
 function buildTrialOneTime(i: CatchupSessionInput): Record<string, any> {
   const { plan } = i;
   const c = common(i);
-  const stubCents = plan.stub.totalCents >= STRIPE_MIN_CHARGE_CENTS ? plan.stub.totalCents : 0;
+  const stubCents = chargeNowCents(plan);
   const oneTime = stubCents
     ? [
         {

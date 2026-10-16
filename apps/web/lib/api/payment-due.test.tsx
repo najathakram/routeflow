@@ -1,7 +1,7 @@
 import * as React from "react";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { act, renderHook, waitFor } from "@testing-library/react";
-import { safeCheckoutUrl, usePaymentDue, usePayPaymentDue } from "./payment-due";
+import { paymentDuePollMs, safeCheckoutUrl, usePaymentDue, usePayPaymentDue } from "./payment-due";
 
 const mockGet = jest.fn();
 const mockPost = jest.fn();
@@ -99,5 +99,22 @@ describe("safeCheckoutUrl", () => {
     expect(safeCheckoutUrl("http://x.test")).toBeNull();
     expect(safeCheckoutUrl("javascript:alert(1)")).toBeNull();
     expect(safeCheckoutUrl(undefined)).toBeNull();
+  });
+});
+
+describe("paymentDuePollMs", () => {
+  const view = (o: Record<string, unknown>) => ({ due: false, cardNeeded: false, ...o }) as never;
+  it("a payment that is due polls every 30 s (another tab may pay it)", () => {
+    expect(paymentDuePollMs(view({ due: true }), "")).toBe(30_000);
+  });
+  it("a card reminder does NOT poll every 30 s for weeks: 5 min by default", () => {
+    expect(paymentDuePollMs(view({ cardNeeded: true }), "")).toBe(300_000);
+  });
+  it("a card reminder polls fast only while ?paid=1 is present (the card is being confirmed)", () => {
+    expect(paymentDuePollMs(view({ cardNeeded: true }), "?paid=1&card=1")).toBe(30_000);
+  });
+  it("nothing due and no card needed: no polling; no data yet: none", () => {
+    expect(paymentDuePollMs(view({}), "")).toBe(false);
+    expect(paymentDuePollMs(undefined, "")).toBe(false);
   });
 });

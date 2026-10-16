@@ -15,6 +15,7 @@ const due = (over: Partial<PaymentDueView> = {}): PaymentDueView => ({
   periodStart: "2026-10-01T00:00:00.000Z",
   cardNeeded: false,
   chargeStartsOn: null,
+  cardBy: null,
   ...over,
 });
 
@@ -138,9 +139,11 @@ describe("paymentDueSlot", () => {
   });
 });
 
-// SA-801: the card reminder for a stub-free catch-up (nothing owed now, the card is needed before A).
+// SA-801 + SA-806: the card reminder for a catch-up with nothing charged now. A is the first charge; D = cardBy is
+// the card deadline (A - 72 h, the last instant the quoted terms hold). The title prints D, the body prints A.
 const A = "2026-11-01T12:00:00.000Z";
-const A_MS = Date.parse(A);
+const CARD_BY = "2026-10-29T12:00:00.000Z";
+const D_MS = Date.parse(CARD_BY);
 const DAY = 86_400_000;
 const reminder = (over: Partial<PaymentDueView> = {}): PaymentDueView =>
   due({
@@ -151,39 +154,85 @@ const reminder = (over: Partial<PaymentDueView> = {}): PaymentDueView =>
     periodStart: null,
     cardNeeded: true,
     chargeStartsOn: A,
+    cardBy: CARD_BY,
     ...over,
   });
 
 describe("cardReminderCopy", () => {
-  it("admin: the owner's title, the no-charge body, Add card + View billing", () => {
+  it("admin: the owner's title with the card deadline D, the no-charge body with A, Add card + View billing", () => {
     const c = cardReminderCopy(reminder(), "admin", "America/New_York")!;
     expect(c.kind).toBe("card-reminder");
-    expect(c.title).toBe("Add your card before November 1, 2026 to keep RouteFlow running.");
+    expect(c.title).toBe("Add your card before October 29, 2026 to keep RouteFlow running.");
     expect(c.body).toBe("You won't be charged until November 1, 2026.");
     expect(c.primary).toEqual({ label: "Add card", intent: "pay" });
     expect(c.secondary).toEqual({ label: "View billing", href: "/settings/billing" });
     expect(c.note).toBeNull();
   });
 
-  it("operator: no control, asks the account admin with the same date", () => {
+  it("operator: no control, asks the account admin to add a card before D", () => {
     const c = cardReminderCopy(reminder(), "staff", "America/New_York")!;
     expect(c.primary).toBeNull();
-    expect(c.note).toBe("Ask your account admin to add a card before November 1, 2026.");
-    expect(c.title).toBe("Add your card before November 1, 2026 to keep RouteFlow running.");
+    expect(c.note).toBe("Ask your account admin to add a card before October 29, 2026.");
+    expect(c.title).toBe("Add your card before October 29, 2026 to keep RouteFlow running.");
+    expect(c.body).toBe("You won't be charged until November 1, 2026.");
   });
 
-  it("prints A's calendar day in the tenant's zone (the same instant is a different day elsewhere)", () => {
-    const late = reminder({ chargeStartsOn: "2026-11-01T03:00:00.000Z" });
-    expect(cardReminderCopy(late, "admin", "America/Los_Angeles")!.title).toContain(
-      "October 31, 2026",
-    );
-    expect(cardReminderCopy(late, "admin", "UTC")!.title).toContain("November 1, 2026");
+  it("prints each date's calendar day in the tenant's zone (the same instant is a different day elsewhere)", () => {
+    const late = reminder({
+      cardBy: "2026-10-29T03:00:00.000Z",
+      chargeStartsOn: "2026-11-01T03:00:00.000Z",
+    });
+    const la = cardReminderCopy(late, "admin", "America/Los_Angeles")!;
+    expect(la.title).toContain("October 28, 2026");
+    expect(la.body).toContain("October 31, 2026");
+    const utc = cardReminderCopy(late, "admin", "UTC")!;
+    expect(utc.title).toContain("October 29, 2026");
+    expect(utc.body).toContain("November 1, 2026");
   });
 
-  it("null unless the server asked for it, or when the date is unusable", () => {
+  it("R5 (guard): the printed deadline is D's own day in the zone, never a later one (east of UTC or west)", () => {
+    const longDay = (ms: number, zone: string) =>
+      new Intl.DateTimeFormat("en-US", {
+        timeZone: zone,
+        year: "numeric",
+        month: "long",
+        day: "numeric",
+      }).format(new Date(ms));
+    const zones = [
+      "UTC",
+      "America/Los_Angeles",
+      "Pacific/Pago_Pago",
+      "Asia/Kolkata",
+      "Pacific/Auckland",
+      "Pacific/Kiritimati",
+    ];
+    for (const zone of zones) {
+      for (const d of [D_MS, D_MS - 11 * 3600_000, D_MS + 13 * 3600_000]) {
+        const copy = cardReminderCopy(
+          reminder({ cardBy: new Date(d).toISOString() }),
+          "admin",
+          zone,
+        )!;
+        expect(copy.title).toBe(
+          `Add your card before ${longDay(d, zone)} to keep RouteFlow running.`,
+        );
+      }
+    }
+    // Auckland (UTC+13 in October): D = Oct 29 12:00Z is already Oct 30 there. "Before October 30" ends at
+    // 00:00 NZDT = Oct 29 11:00Z, one hour before D: never later than D.
+    const nz = cardReminderCopy(reminder(), "admin", "Pacific/Auckland")!;
+    expect(nz.title).toContain("October 30, 2026");
+    expect(Date.UTC(2026, 9, 29, 11, 0, 0)).toBeLessThanOrEqual(D_MS);
+    // A is not the deadline: the Auckland body prints A's own day
+    expect(nz.body).toBe("You won't be charged until November 2, 2026.");
+  });
+
+  it("null unless the server asked for it, or when either date is unusable", () => {
     expect(cardReminderCopy(reminder({ cardNeeded: false }), "admin", "UTC")).toBeNull();
     expect(cardReminderCopy(reminder({ chargeStartsOn: null }), "admin", "UTC")).toBeNull();
     expect(cardReminderCopy(reminder({ chargeStartsOn: "not a date" }), "admin", "UTC")).toBeNull();
+    expect(cardReminderCopy(reminder({ cardBy: null }), "admin", "UTC")).toBeNull();
+    expect(cardReminderCopy(reminder({ cardBy: "not a date" }), "admin", "UTC")).toBeNull();
     expect(cardReminderCopy(null, "admin", "UTC")).toBeNull();
     expect(cardReminderCopy(undefined, "admin", "UTC")).toBeNull();
     // a bill that is due is the payment-due banner's, never this one
@@ -197,34 +246,44 @@ describe("cardReminderCopy", () => {
   });
 });
 
-describe("cardReminderDismiss: dismissible for the day until 7 days before A", () => {
-  it("both roles can dismiss it for the day when A is more than 7 days out", () => {
-    const now = A_MS - 8 * DAY;
+describe("cardReminderDismiss: dismissible for the day until 7 days before cardBy (SA-806)", () => {
+  it("both roles can dismiss it for the day when cardBy is more than 7 days out", () => {
+    const now = D_MS - 8 * DAY;
     for (const role of ["admin", "staff"] as const) {
       expect(cardReminderDismiss(reminder(), role, now)).toEqual({
         scope: "day",
-        key: `card-reminder:${A}`,
+        key: `card-reminder:${CARD_BY}`,
       });
     }
   });
 
-  it("the admin cannot dismiss from exactly 7 days before A, nor after; the operator still can, daily", () => {
-    for (const now of [A_MS - 7 * DAY, A_MS - 3 * DAY, A_MS - 1000, A_MS + DAY]) {
+  it("the admin cannot dismiss from exactly 7 days before cardBy, nor after; the operator still can, daily", () => {
+    for (const now of [D_MS - 7 * DAY, D_MS - 3 * DAY, D_MS - 1000, D_MS + 3600_000]) {
       expect(cardReminderDismiss(reminder(), "admin", now)).toBeNull();
       expect(cardReminderDismiss(reminder(), "staff", now)).toEqual({
         scope: "day",
-        key: `card-reminder:${A}`,
+        key: `card-reminder:${CARD_BY}`,
       });
     }
   });
 
-  it("one second before the 7-day mark the admin still can", () => {
-    expect(cardReminderDismiss(reminder(), "admin", A_MS - 7 * DAY - 1000)).not.toBeNull();
+  it("R3: an admin at cardBy - 7 days + 1 minute cannot dismiss (master: the lock began 3 days later); an operator can", () => {
+    const now = D_MS - 7 * DAY + 60_000;
+    expect(cardReminderDismiss(reminder(), "admin", now)).toBeNull();
+    expect(cardReminderDismiss(reminder(), "staff", now)).toEqual({
+      scope: "day",
+      key: `card-reminder:${CARD_BY}`,
+    });
   });
 
-  it("no card-needed read, nothing to dismiss", () => {
-    expect(cardReminderDismiss(reminder({ cardNeeded: false }), "staff", A_MS)).toBeNull();
-    expect(cardReminderDismiss(null, "staff", A_MS)).toBeNull();
+  it("one second before the 7-day mark the admin still can", () => {
+    expect(cardReminderDismiss(reminder(), "admin", D_MS - 7 * DAY - 1000)).not.toBeNull();
+  });
+
+  it("no card-needed read (or no cardBy), nothing to dismiss", () => {
+    expect(cardReminderDismiss(reminder({ cardNeeded: false }), "staff", D_MS)).toBeNull();
+    expect(cardReminderDismiss(reminder({ cardBy: null }), "staff", D_MS)).toBeNull();
+    expect(cardReminderDismiss(null, "staff", D_MS)).toBeNull();
   });
 });
 
@@ -254,9 +313,12 @@ describe("paymentDueSlot: the card reminder", () => {
   });
 
   it("a payable payment due still wins (the two cannot coexist, but the order is fixed)", () => {
-    expect(paymentDueSlot(strip("none", false), due({ cardNeeded: true, chargeStartsOn: A }))).toBe(
-      "payment-due",
-    );
+    expect(
+      paymentDueSlot(
+        strip("none", false),
+        due({ cardNeeded: true, chargeStartsOn: A, cardBy: CARD_BY }),
+      ),
+    ).toBe("payment-due");
   });
 
   it("a failed renewal (grace, overdue) keeps its own banner", () => {
@@ -264,7 +326,9 @@ describe("paymentDueSlot: the card reminder", () => {
     expect(paymentDueSlot(strip("overdue"), reminder())).toBe("failed-renewal");
   });
 
-  it("an unusable date or no cardNeeded: the strip slot", () => {
+  it("an unusable date (A or cardBy) or no cardNeeded: the strip slot", () => {
+    expect(paymentDueSlot(strip("none", false), reminder({ cardBy: null }))).toBe("strip");
+    expect(paymentDueSlot(strip("none", false), reminder({ cardBy: "nope" }))).toBe("strip");
     expect(paymentDueSlot(strip("none", false), reminder({ chargeStartsOn: null }))).toBe("strip");
     expect(paymentDueSlot(strip("none", false), reminder({ chargeStartsOn: "nope" }))).toBe(
       "strip",

@@ -15,6 +15,9 @@ import { PaymentDueService } from "./payment-due.service";
  */
 const NOW = new Date("2026-10-09T10:00:00Z");
 const NOV_1 = "2026-11-01T12:00:00.000Z";
+/** SA-806: D = A - 72 h, the last instant the quoted terms hold. */
+const OCT_29 = "2026-10-29T12:00:00.000Z";
+const HOUR = 3600_000;
 const OCT_PAID = {
   id: "inv_oct",
   tenantId: "t1",
@@ -26,7 +29,11 @@ const OCT_PAID = {
 };
 const OCT_OPEN = { ...OCT_PAID, id: "inv_oct_open", status: "OPEN", periodKey: "k2" };
 
-function make(tenantStatus = "ACTIVE", invoices: Record<string, unknown>[] = [OCT_PAID]) {
+function make(
+  tenantStatus = "ACTIVE",
+  invoices: Record<string, unknown>[] = [OCT_PAID],
+  monthly = 310,
+) {
   const db = fakeCatchupDb({ subs: [{ tenantId: "t1", planKey: "GROWTH" }], invoices });
   const prisma: any = {
     ...db.prisma,
@@ -46,13 +53,13 @@ function make(tenantStatus = "ACTIVE", invoices: Record<string, unknown>[] = [OC
   const pricing: any = {
     resolveTenantPricing: jest.fn(async () => ({
       planKey: "GROWTH",
-      monthly: 310,
+      monthly,
       source: "catalog",
       currency: "usd",
     })),
     checkoutPriceData: jest.fn(async () => ({
       currency: "usd",
-      unit_amount: 31000,
+      unit_amount: Math.round(monthly * 100),
       recurring: { interval: "month" },
       product_data: { name: "RouteFlow Growth" },
     })),
@@ -86,6 +93,7 @@ describe("SA-801: a trial-shape tenant (October already paid)", () => {
       periodStart: null,
       cardNeeded: true,
       chargeStartsOn: NOV_1,
+      cardBy: OCT_29,
     });
   });
 
@@ -95,6 +103,7 @@ describe("SA-801: a trial-shape tenant (October already paid)", () => {
       due: true,
       cardNeeded: false,
       chargeStartsOn: null,
+      cardBy: null,
     });
   });
 
@@ -122,6 +131,13 @@ describe("SA-801: a trial-shape tenant (October already paid)", () => {
     expect(create).toHaveBeenCalledTimes(1);
   });
 
+  it("Add card returns to ?paid=1&card=1 (never the payment wording: nothing is charged)", async () => {
+    const { svc, stripe } = make();
+    await svc.pay("t1", NOW);
+    const params = (stripe.client.checkout.sessions.create as jest.Mock).mock.calls[0][0];
+    expect(params.success_url).toMatch(/\/settings\/billing\?paid=1&card=1$/);
+  });
+
   it("the reminder stays on while the session is open (a held claim does not hide it)", async () => {
     const { svc } = make();
     await svc.pay("t1", NOW);
@@ -138,6 +154,7 @@ describe("SA-801: who gets no reminder, and what pay does for them", () => {
         due: false,
         cardNeeded: false,
         chargeStartsOn: null,
+        cardBy: null,
       });
       await expect(svc.pay("t1", NOW)).rejects.toMatchObject({
         response: { code: API_ERROR_CODES.PAYMENT_NOT_DUE },
@@ -163,5 +180,81 @@ describe("SA-801: who gets no reminder, and what pay does for them", () => {
     await expect(guard.canActivate(ctx)).rejects.toMatchObject({
       response: expect.objectContaining({ code: API_ERROR_CODES.READ_ONLY }),
     });
+  });
+});
+
+describe("SA-806 R1/R2: the quoted terms hold until D = A - 72 h", () => {
+  it("R1: at A - 73 h the reminder is on, with A as the charge date and D as the card deadline", async () => {
+    const { svc } = make();
+    const at = new Date(Date.parse(NOV_1) - 73 * HOUR);
+    expect(await svc.get("t1", at)).toMatchObject({
+      due: false,
+      cardNeeded: true,
+      chargeStartsOn: NOV_1,
+      cardBy: OCT_29,
+    });
+  });
+
+  it("R2 (guard): at A - 71 h there is no card reminder; the next month is simply due (not past due)", async () => {
+    const { svc } = make();
+    const at = new Date(Date.parse(NOV_1) - 71 * HOUR);
+    expect(await svc.get("t1", at)).toEqual({
+      due: true,
+      pastDue: false,
+      amountCents: 31000,
+      periodLabel: "November 2026",
+      periodStart: NOV_1,
+      cardNeeded: false,
+      chargeStartsOn: null,
+      cardBy: null,
+    });
+  });
+
+  it("the exact edge: at D the reminder still shows, one second later it is the next month's bill", async () => {
+    const { svc } = make();
+    expect(await svc.get("t1", new Date(OCT_29))).toMatchObject({ cardNeeded: true, due: false });
+    expect(await svc.get("t1", new Date(Date.parse(OCT_29) + 1000))).toMatchObject({
+      cardNeeded: false,
+      due: true,
+    });
+  });
+});
+
+describe("SA-806 R4: a forgiven stub (a line under $0.50) gets the reminder and a $0 Add card", () => {
+  // $0.10 a month and October unpaid: the planner's stub is 10 cents, forgiven, so the session carries no one-time line
+  const forgiven = () => make("ACTIVE", [], 0.1);
+
+  it("the reminder shows A and D (master: no banner and pay() was a 409 PAYMENT_NOT_DUE)", async () => {
+    const { svc } = forgiven();
+    expect(await svc.get("t1", NOW)).toEqual({
+      due: false,
+      pastDue: false,
+      amountCents: 0,
+      periodLabel: null,
+      periodStart: null,
+      cardNeeded: true,
+      chargeStartsOn: NOV_1,
+      cardBy: OCT_29,
+    });
+  });
+
+  it("Add card opens ONE session with no one-time line and $0 due now; a second click reuses it", async () => {
+    const { svc, db, stripe } = forgiven();
+    const first = await svc.pay("t1", NOW);
+    const create = stripe.client.checkout.sessions.create as jest.Mock;
+    expect(create).toHaveBeenCalledTimes(1);
+    const params = create.mock.calls[0][0];
+    expect(params.line_items.filter((l: any) => !l.price_data.recurring)).toHaveLength(0);
+    expect(params.subscription_data.trial_end).toBe(Date.UTC(2026, 10, 1, 12) / 1000);
+    expect(params.metadata.catchup_stub_cents).toBe("0");
+    expect(params.success_url).toMatch(/\/settings\/billing\?paid=1&card=1$/);
+    expect(db.subs[0].catchupState).toBe("SESSION_OPEN");
+
+    const id = String(db.subs[0].catchupSessionId);
+    const live = (stripe as any).sessions[id];
+    live.url = first.checkoutUrl;
+    live.expires_at = Math.floor(NOW.getTime() / 1000) + 3600;
+    expect(await svc.pay("t1", NOW)).toEqual(first);
+    expect(create).toHaveBeenCalledTimes(1);
   });
 });
