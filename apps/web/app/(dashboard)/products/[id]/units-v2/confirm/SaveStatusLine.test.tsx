@@ -34,7 +34,13 @@ function Section({ save = SAVE }: { save?: LastSave }) {
         do save
       </button>
       <button onClick={() => setDirty(true)}>do edit</button>
-      <PriceSaveStatusLine lastSave={lastSave} dirty={dirty} undo={undo} />
+      <button onClick={() => setLastSave(null)}>do forget</button>
+      <PriceSaveStatusLine
+        lastSave={lastSave}
+        dirty={dirty}
+        undo={undo}
+        onUndone={() => setLastSave(null)}
+      />
     </section>
   );
 }
@@ -90,6 +96,26 @@ describe("PriceSaveStatusLine (V07)", () => {
     expect(screen.queryByRole("button", { name: "Undo" })).toBeNull();
     expect(document.activeElement).toBe(screen.getByRole("status"));
     expect(toast).not.toHaveBeenCalled();
+  });
+
+  it("K8: once the draft forgets the undone save, 'Save undone.' stays and Undo is gone", async () => {
+    undo.mockResolvedValueOnce({ status: "undone" });
+    render(<Section />);
+    saveIt();
+    fireEvent.click(undoBtn());
+    expect(await screen.findByText("Save undone.")).toBeTruthy();
+    expect(screen.queryByRole("button", { name: "Undo" })).toBeNull();
+    // the Undo-able line, by contrast, goes when the draft forgets its save without an undo
+    fireEvent.click(screen.getByText("do edit"));
+    expect(screen.queryByText("Save undone.")).toBeNull();
+  });
+
+  it("K8: an Undo-able line goes when the draft forgets its save (nothing left to undo)", () => {
+    render(<Section />);
+    saveIt();
+    expect(undoBtn()).toBeTruthy();
+    fireEvent.click(screen.getByText("do forget"));
+    expect(screen.queryByRole("button", { name: "Undo" })).toBeNull();
   });
 
   it("a second edit clears the Undo", () => {

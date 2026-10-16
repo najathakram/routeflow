@@ -13,11 +13,10 @@ describe("StaleRevisionNotice", () => {
     expect(onReload).toHaveBeenCalledTimes(1);
   });
 
-  it("recognises a 409 LADDER_REVISION_STALE and nothing else", () => {
+  it("recognises LADDER_REVISION_STALE and nothing else", () => {
     const err = (status: number, code: string) => ({ response: { status, data: { code } } });
     expect(isLadderRevisionStale(err(409, "LADDER_REVISION_STALE"))).toBe(true);
     expect(isLadderRevisionStale(err(409, "OTHER"))).toBe(false);
-    expect(isLadderRevisionStale(err(400, "LADDER_REVISION_STALE"))).toBe(false);
     expect(isLadderRevisionStale(null)).toBe(false);
   });
 });

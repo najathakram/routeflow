@@ -3,6 +3,7 @@
 import * as React from "react";
 import { createPortal } from "react-dom";
 import { GRID_BORDER } from "../../ProductPricesGrid";
+import { StaleRevisionNotice } from "../confirm/StaleRevisionNotice";
 import { UNITS_V2_TESTIDS as T } from "../../units-v2-testids";
 import { usePriceDraft } from "./usePriceDraft";
 
@@ -52,15 +53,19 @@ export function PriceEditBar() {
               {isMac() ? "⌘S saves" : "Ctrl+S saves"}
             </span>
           )}
-          {d.saveError && (
-            <p role="alert" data-testid={T.ebError} className="mt-1 text-red-600">
-              {d.saveError.message}
-              {d.saveError.problems.map((p) => (
-                <span key={p} className="block">
-                  {p}
-                </span>
-              ))}
-            </p>
+          {d.saveError?.code === "stale" ? (
+            <StaleRevisionNotice onReload={d.reload} />
+          ) : (
+            d.saveError && (
+              <p role="alert" data-testid={T.ebError} className="mt-1 text-red-600">
+                {d.saveError.message}
+                {d.saveError.problems.map((p) => (
+                  <span key={p} className="block">
+                    {p}
+                  </span>
+                ))}
+              </p>
+            )
           )}
         </div>
         {confirm ? (

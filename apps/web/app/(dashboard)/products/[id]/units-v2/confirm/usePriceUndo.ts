@@ -11,10 +11,10 @@ export interface PriceUndoDeps {
   mutate: (req: {
     auditId: string;
     expectedRevision: number;
-    expectedPriceState?: string;
+    expectedPriceState: string;
   }) => Promise<unknown>;
-  /** Refetch the grid and build the rows the inverse would make on it (K3's `undoPreview`). */
-  loadPreview: () => Promise<{ revision: number; priceState?: string; rows: UndoPreviewRow[] }>;
+  /** Refetch the grid and build the rows the inverse would make on it (K3's `loadUndoPreview`). */
+  loadPreview: () => Promise<{ revision: number; priceState: string; rows: UndoPreviewRow[] }>;
 }
 
 const codeOf = (e: unknown) =>
@@ -39,11 +39,14 @@ export function usePriceUndo(deps: PriceUndoDeps): UndoFn {
     if (revision === undefined) return changed();
     // Unconfirmed and the grid already moved past the save: preview, write nothing.
     if (!req.confirmed && revision !== lastSave.revision) return changed();
+    // expectedPriceState is required: without one there is no valid precondition, so no request is made.
+    const priceState = req.confirmed ? req.expectedPriceState : current?.priceState;
+    if (!priceState) throw new Error("Prices are not ready to undo");
     try {
       await mutate({
         auditId: lastSave.auditId,
         expectedRevision: revision,
-        expectedPriceState: req.confirmed ? req.expectedPriceState : current?.priceState,
+        expectedPriceState: priceState,
       });
       return { status: "undone" };
     } catch (e) {

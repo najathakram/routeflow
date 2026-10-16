@@ -15,18 +15,20 @@ export interface UndoPreviewRow {
   restoreTo: string;
 }
 
-/** The precondition the preview was built on; a confirmed Undo re-sends it, never the stale one. */
+/** The precondition the preview was built on; a confirmed Undo re-sends it, never the stale one. Both are required. */
 export interface UndoPrecondition {
-  expectedRevision?: number;
-  expectedPriceState?: string;
+  expectedRevision: number;
+  expectedPriceState: string;
 }
 
 export type UndoOutcome =
   | { status: "undone" }
   /** Prices moved since the save: nothing was written. `revision`/`priceState` are the FRESH grid's. */
-  | { status: "changed"; revision: number; priceState?: string; rows: UndoPreviewRow[] }
+  | { status: "changed"; revision: number; priceState: string; rows: UndoPreviewRow[] }
   /** 409 PRICE_UNDO_UNAVAILABLE: this audit row was already undone. */
   | { status: "unavailable" };
 
 /** The shell-supplied inverse write. ONE call per click; `confirmed` only after the preview. */
-export type UndoFn = (req: { confirmed: boolean } & UndoPrecondition) => Promise<UndoOutcome>;
+export type UndoFn = (
+  req: { confirmed: false } | ({ confirmed: true } & UndoPrecondition),
+) => Promise<UndoOutcome>;

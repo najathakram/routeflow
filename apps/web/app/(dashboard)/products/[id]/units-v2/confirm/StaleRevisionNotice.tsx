@@ -2,12 +2,11 @@
 
 import * as React from "react";
 import { Button } from "@routeflow/ui/web";
+import { priceWriteError } from "@/lib/api/usePriceWrites";
 
-/** Did the save fail because the ladder moved on (409 LADDER_REVISION_STALE)? */
+/** Did the write fail because the ladder moved on (LADDER_REVISION_STALE)? One source of codes: K3's `priceWriteError`. */
 export function isLadderRevisionStale(err: unknown): boolean {
-  const res = (err as { response?: { status?: unknown; data?: { code?: unknown } } } | null)
-    ?.response;
-  return res?.status === 409 && res.data?.code === "LADDER_REVISION_STALE";
+  return priceWriteError(err)?.code === "stale";
 }
 
 /** The save bar mounts this when `isLadderRevisionStale(err)`; `onReload` refetches the ladder. */

@@ -68,3 +68,11 @@ describe("usePriceUndo", () => {
     await expect(t.undo({ confirmed: false })).rejects.toThrow("network");
   });
 });
+
+describe("usePriceUndo: expectedPriceState is required", () => {
+  it("makes no request when the served grid has no priceState", async () => {
+    const t = setup({ current: { revision: 7 } });
+    await expect(t.undo({ confirmed: false })).rejects.toThrow("not ready");
+    expect(t.mutate).not.toHaveBeenCalled();
+  });
+});

@@ -20,10 +20,11 @@ interface State {
 type Action =
   | { type: "saved"; auditId: string; summary: string }
   | { type: "edit" }
+  | { type: "cleared" }
   | { type: "busy" }
   | { type: "undone" }
   | { type: "unavailable" }
-  | { type: "preview"; rows: UndoPreviewRow[]; revision: number; priceState?: string }
+  | { type: "preview"; rows: UndoPreviewRow[]; revision: number; priceState: string }
   | { type: "dismiss" }
   | { type: "failed" };
 
@@ -35,6 +36,9 @@ function reduce(s: State, a: Action): State {
       return { ...IDLE, phase: "saved", auditId: a.auditId, summary: a.summary };
     case "edit":
       return s.phase === "idle" ? s : IDLE;
+    case "cleared":
+      // The draft forgot its save: an Undo-able line goes, but a finished Undo's answer stays on screen.
+      return s.phase === "saved" || s.phase === "preview" || s.phase === "error" ? IDLE : s;
     case "busy":
       return { ...s, busy: true };
     case "undone":
@@ -73,16 +77,20 @@ export function savedDetail(undo: LastSave["undo"]): string {
 /**
  * "Saved 3 prices. Undo" where the change happened: the pricing section status line, never a toast (V07).
  * `lastSave` and `dirty` come from K3's draft; the line shows for each new save and clears on the next edit.
+ * "Save undone." / "can't be undone any more" survive the draft forgetting its save (`onUndone`) and clear only on `dirty`.
  */
 export function PriceSaveStatusLine({
   lastSave,
   dirty = false,
   undo,
+  onUndone,
   id = "units-msg",
 }: {
   lastSave: LastSave | null;
   dirty?: boolean;
   undo: UndoFn;
+  /** Called once an Undo succeeded, so the draft can forget its `lastSave` (K3's `markUndone`). */
+  onUndone?: () => void;
   id?: string;
 }) {
   const [state, dispatch] = React.useReducer(reduce, IDLE);
@@ -96,7 +104,7 @@ export function PriceSaveStatusLine({
   const detail = savedDetail(lastSave?.undo);
   React.useEffect(() => {
     if (auditId) dispatch({ type: "saved", auditId, summary: detail });
-    else dispatch({ type: "edit" });
+    else dispatch({ type: "cleared" });
   }, [auditId, detail]);
   React.useEffect(() => {
     if (dirty) dispatch({ type: "edit" });
@@ -120,12 +128,13 @@ export function PriceSaveStatusLine({
   const run = async (confirmed: boolean) => {
     const mine = state.auditId;
     if (!mine || busy) return;
+    if (confirmed && (state.revision === undefined || !state.priceState)) return;
     dispatch({ type: "busy" });
     try {
       const out = await undo(
-        confirmed
+        confirmed && state.revision !== undefined && state.priceState
           ? { confirmed, expectedRevision: state.revision, expectedPriceState: state.priceState }
-          : { confirmed },
+          : { confirmed: false },
       );
       if (live.current !== mine) return; // an edit or a newer save superseded this Undo
       if (out.status === "changed") {
@@ -135,7 +144,10 @@ export function PriceSaveStatusLine({
           revision: out.revision,
           priceState: out.priceState,
         });
-      } else dispatch({ type: out.status });
+      } else {
+        dispatch({ type: out.status });
+        if (out.status === "undone") onUndone?.();
+      }
     } catch {
       if (live.current !== mine) return;
       refocusUndo.current = true;
