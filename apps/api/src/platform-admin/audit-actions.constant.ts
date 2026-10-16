@@ -76,6 +76,8 @@ export const AdminAuditAction = {
   ADDON_MANUAL_INVOICE_STOP: "ADDON_MANUAL_INVOICE_STOP",
   /** B1102: a catalog add-on's includedAtPlan names no plan; a background path skipped billing it (meta: sku, value). */
   ADDON_CATALOG_INVALID: "ADDON_NOT_BILLED_CATALOG_INVALID",
+  /** SA-788 (b): the daily add-on invariant found a row that should not be in that state (meta: invariant, rowId, sku). */
+  ADDON_INVARIANT_BROKEN: "ADDON_INVARIANT_BROKEN",
   IMPERSONATION_STARTED: "IMPERSONATION_STARTED",
   TENANT_CLASS_CHANGED: "TENANT_CLASS_CHANGED",
   FEATURE_OVERRIDE_SET: "FEATURE_OVERRIDE_SET",
@@ -154,6 +156,7 @@ export const ADMIN_AUDIT_ACTION_LABELS: Record<AdminAuditActionCode, string> = {
   ADDON_MANUAL_INVOICE_DUE: "Add-on to invoice manually",
   ADDON_MANUAL_INVOICE_STOP: "Add-on to stop invoicing manually",
   ADDON_NOT_BILLED_CATALOG_INVALID: "Add-on not billed (catalog setting invalid)",
+  ADDON_INVARIANT_BROKEN: "Add-on invariant broken (check the tenant's add-ons)",
   IMPERSONATION_STARTED: "Impersonation started",
   TENANT_CLASS_CHANGED: "Class changed",
   FEATURE_OVERRIDE_SET: "Feature override set",
