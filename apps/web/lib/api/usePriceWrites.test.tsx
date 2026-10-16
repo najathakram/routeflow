@@ -71,7 +71,7 @@ describe("usePriceWrites", () => {
   it("maps the contract's errors to words", () => {
     const e = (code: string, problems?: string[]) =>
       priceWriteError({ response: { data: { code, problems } } });
-    expect(e("LADDER_REVISION_STALE")?.message).toBe(
+    expect(e("LADDER_REVISION_STALE")?.copy).toBe(
       "Prices changed since you opened this; review and save again",
     );
     expect(e("PRICE_EDIT_INVALID", ["x"])?.problems).toEqual(["x"]);
@@ -79,9 +79,22 @@ describe("usePriceWrites", () => {
     expect(e("PRICE_UNDO_UNAVAILABLE")?.code).toBe("unavailable");
     expect(e("FAMILY_PRICE_AUTHORITY")).toMatchObject({
       code: "family",
-      message: expect.stringContaining("set on its family"),
+      copy: expect.stringContaining("set on its family"),
     });
     expect(priceWriteError(new Error("boom"))?.code).toBe("other");
     expect(priceWriteError(null)).toBeNull();
+  });
+
+  it("B986: an unknown code (or no code) maps to the generic copy; a raw server message never becomes copy", () => {
+    const GENERIC = "Couldn't save prices. Try again.";
+    const raw = "SQL boom secret";
+    const unknown = priceWriteError({
+      response: { data: { code: "SOMETHING_NEW", message: raw, problems: [raw] } },
+    });
+    expect(unknown).toEqual({ code: "other", copy: GENERIC, problems: [] });
+    expect(JSON.stringify(unknown)).not.toContain(raw);
+    expect(priceWriteError({ response: { data: { message: raw } } })?.copy).toBe(GENERIC);
+    expect(priceWriteError(new Error(raw))?.copy).toBe(GENERIC);
+    expect(JSON.stringify(priceWriteError(new Error(raw)))).not.toContain(raw);
   });
 });

@@ -77,7 +77,7 @@ export function PriceEditBar() {
           ) : (
             d.saveError && (
               <p role="alert" data-testid={T.ebError} className="mt-1 text-red-600">
-                {d.saveError.message}
+                {d.saveError.copy}
                 {d.saveError.problems.map((p) => (
                   <span key={p} className="block">
                     {p}

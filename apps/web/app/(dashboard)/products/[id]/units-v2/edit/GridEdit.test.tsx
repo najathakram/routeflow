@@ -269,6 +269,19 @@ describe("units v2 edit grid (S12a)", () => {
     },
   );
 
+  it("B986: a save refused with an unknown code shows the generic copy and never the raw server message", async () => {
+    mockError = {
+      message: "SQL boom secret",
+      response: { data: { code: "SOMETHING_NEW", message: "SQL boom secret" } },
+    };
+    const user = userEvent.setup();
+    render(<ProductPricingV2 product={product} />);
+    await enterEdit(user);
+    await type(user, 2, "14.5");
+    expect(screen.getByRole("alert").textContent).toBe("Couldn't save prices. Try again.");
+    expect(document.body.textContent).not.toContain("SQL boom secret");
+  });
+
   it("an edited cell hands its plan to the also-update slot only", async () => {
     const user = userEvent.setup();
     render(<ProductPricingV2 product={product} />);
