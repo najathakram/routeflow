@@ -54,17 +54,25 @@ const unitRow = (over: Partial<UnitRow> & Pick<UnitRow, "id" | "label" | "factor
 
 function build(product: Record<string, unknown> | null, rows: UnitRow[]) {
   const db = {
-    product: { findFirst: jest.fn().mockResolvedValue(product) },
-    productUnit: {
-      findMany: jest.fn().mockResolvedValue(rows.map((r) => ({ id: r.id, sku: r.sku ?? null }))),
+    product: {
+      findFirst: jest
+        .fn()
+        .mockResolvedValue(
+          product && {
+            id: PRODUCT_ID,
+            packAuto: 0,
+            priceRevision: 0,
+            orderUnitRef: "pack",
+            ...product,
+          },
+        ),
     },
+    productUnit: { findMany: jest.fn().mockResolvedValue(rows) },
+    productTierUnit: { findMany: jest.fn().mockResolvedValue([]) },
   };
   const prisma = { forTenant: () => db };
-  const units = {
-    list: jest.fn().mockResolvedValue(rows.map(({ sku: _sku, ...rest }) => rest)),
-  };
-  const service = new ProductPriceGridService(prisma as never, units as never);
-  return { service, db, units };
+  const service = new ProductPriceGridService(prisma as never);
+  return { service, db };
 }
 
 /** What the pricing package alone says the grid is, for the same rows and the same codes. */
@@ -83,6 +91,10 @@ function expected(product: ReturnType<typeof baseProduct>, rows: UnitRow[]): Pro
     productId: PRODUCT_ID,
     anchor: view.anchor,
     rows: priceGrid(view).map((g) => ({ ...g, code: unitCodeOf(codes, g.ref) })),
+    revision: 0,
+    priceState: expect.stringMatching(/^[0-9a-f]{64}$/),
+    tierAnchors: {},
+    tierRules: {},
   };
 }
 
@@ -159,13 +171,35 @@ describe("ProductPriceGridService (units v2)", () => {
     expect(code("Case")).toBe("CASE-1");
   });
 
-  it("reads the product and its units for the one tenant, through ProductUnitsService.list", async () => {
-    const { service, db, units } = build(baseProduct({}), []);
+  it("reads the product, its units and tier units for the one tenant client", async () => {
+    const { service, db } = build(baseProduct({}), []);
     await service.get(PRODUCT_ID);
     expect(db.product.findFirst).toHaveBeenCalledWith(
       expect.objectContaining({ where: { id: PRODUCT_ID } }),
     );
-    expect(units.list).toHaveBeenCalledWith(PRODUCT_ID);
+    expect(db.productUnit.findMany).toHaveBeenCalledWith(
+      expect.objectContaining({ where: { productId: PRODUCT_ID } }),
+    );
+    expect(db.productTierUnit.findMany).toHaveBeenCalledWith(
+      expect.objectContaining({ where: { productId: PRODUCT_ID } }),
+    );
+  });
+
+  it("serves the revision and a price-state token that moves when a price column moves", async () => {
+    const a = await build(baseProduct({}), []).service.get(PRODUCT_ID);
+    const b = await build(baseProduct({ priceTier2: "11.00" }), []).service.get(PRODUCT_ID);
+    const c = await build(baseProduct({}), []).service.get(PRODUCT_ID);
+    expect(a.revision).toBe(0);
+    expect(a.priceState).toBe(c.priceState);
+    expect(a.priceState).not.toBe(b.priceState);
+  });
+
+  it("the order unit and the pack's Auto flags join the view", async () => {
+    const rows = [unitRow({ id: "u-piece", label: "Piece", factorToBase: 1, price: "1.00" })];
+    const { service } = build(baseProduct({ orderUnitRef: "u-piece", packAuto: 1 }), rows);
+    const dto = await service.get(PRODUCT_ID);
+    expect(dto.anchor).toBe("u-piece");
+    expect(cell(dto, "Box", 1)?.source).toBe("auto");
   });
 
   it("a product the tenant does not have is a 404", async () => {

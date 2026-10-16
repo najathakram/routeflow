@@ -24,6 +24,10 @@ const cells = (v: number[], src: Array<"auto" | "set"> = []) =>
 const grid: ProductPriceGridDto = {
   productId: "p1",
   anchor: "piece",
+  revision: 0,
+  priceState: "state-0",
+  tierAnchors: {},
+  tierRules: {},
   rows: [
     {
       ref: "case",
