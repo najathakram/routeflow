@@ -58,8 +58,8 @@ const GUARDED: Record<string, { calls: number; sites: number; why: string }> = {
   },
   "vendor-bills/vendor-bills.service.ts": {
     calls: 1,
-    sites: 5,
-    why: "receiving a bill line writes a StockLot + PURCHASE movement: a FAMILY is refused there (the 5th site is revertToDraft's reversal row: it mirrors a receipt row found by the receive() note, so it assumes that row was written by receive() under this guard — a receipt that predates the guard could name a FAMILY, and the reversal then just undoes it)",
+    sites: 4,
+    why: "receiving a bill line writes a StockLot + PURCHASE movement: a FAMILY is refused there (the 4th site is the ONE reversal row revertToDraft and voidBill share (appendBillReversals): it mirrors a receipt row found by the receive() note, so it assumes that row was written by receive() under this guard — a receipt that predates the guard could name a FAMILY, and the reversal then just undoes it; voidBill's own ADJUSTMENT writer is gone, which is why this was 5)",
   },
 };
 

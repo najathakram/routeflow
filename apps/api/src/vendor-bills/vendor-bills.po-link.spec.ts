@@ -448,8 +448,23 @@ describe("VendorBillsService — PO-linked bills (units/PO step 7)", () => {
       );
       prisma.product.findFirst.mockResolvedValue({ currentStock: D(24), averageCost: D(1.25) });
       prisma.vendorBill.update.mockResolvedValue({ id: "bill-1", status: "VOID" });
+      prisma.stockMovement.findMany.mockImplementation(async ({ where }: any) =>
+        where.notes && typeof where.notes === "object"
+          ? []
+          : [
+              {
+                id: "mv-1",
+                quantity: D(24),
+                unitCost: D(1.25),
+                effectiveAt: new Date("2026-06-01"),
+              },
+            ],
+      );
       await service.voidBill("bill-1", "user-1");
+      // B846 sibling: reversed by one appended PURCHASE row, never an ADJUSTMENT or a delete.
+      expect(prisma.stockMovement.deleteMany).not.toHaveBeenCalled();
       expect(prisma.stockMovement.create).toHaveBeenCalledTimes(1);
+      expect(prisma.stockMovement.create.mock.calls[0][0].data.type).toBe("PURCHASE");
     });
   });
 

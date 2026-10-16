@@ -401,4 +401,99 @@ describeDb("B846 bill revert appends — real Postgres", () => {
     const reversal = (await ledger(w)).find((r) => r.q === -10) as { effectiveAt: Date };
     expect(reversal.effectiveAt >= MONTH_END_EXCL).toBe(true);
   });
+
+  // ─── B846 sibling: voidBill appends the same PURCHASE reversal (V1-V3; V4-V5 are unit guards) ───
+  const voidIt = (w: World, id: string) =>
+    inTenant(w, () => bills.voidBill(id, w.userId) as Promise<unknown>);
+  const purchaseSumOfBillMonth = async (w: World) =>
+    (
+      await prisma.stockMovement.findMany({
+        where: { productId: w.productId, type: "PURCHASE" },
+      })
+    )
+      .filter((m) => inBillMonth(m.effectiveAt))
+      .reduce((t, m) => t + Number(m.quantity), 0);
+
+  it("V1: void of an unfiled bill month's bill — one -Q PURCHASE at the original date, the month's purchases 0, no ADJUSTMENT", async () => {
+    const w = await seedWorld("v1", "tobacco");
+    const id = await receiveBill(w, 10);
+    expect(await purchaseSumOfBillMonth(w)).toBe(10);
+
+    await voidIt(w, id);
+
+    const rows = await prisma.stockMovement.findMany({ where: { productId: w.productId } });
+    expect(rows.filter((r) => r.type === "ADJUSTMENT")).toHaveLength(0);
+    expect(rows.map((r) => Number(r.quantity)).sort((a, b) => a - b)).toEqual([-10, 10]);
+    const receipt = rows.find((r) => Number(r.quantity) === 10) as (typeof rows)[number];
+    const reversal = rows.find((r) => Number(r.quantity) === -10) as (typeof rows)[number];
+    expect(reversal.type).toBe("PURCHASE");
+    expect(reversal.notes).toBe(`${BILL_REVERTED_NOTE}${receipt.id}`);
+    expect(reversal.effectiveAt).toEqual(receipt.effectiveAt);
+    expect(await purchaseSumOfBillMonth(w)).toBe(0);
+    expect(await counter(w)).toBe(0);
+    expect((await prisma.vendorBill.findUniqueOrThrow({ where: { id } })).status).toBe("VOID");
+  });
+
+  it("V2: a GENERATED tobacco report for the bill month — the void is dated now, the filed month is unchanged", async () => {
+    const w = await seedWorld("v2", "tobacco");
+    const id = await receiveBill(w, 10);
+    await fileTobaccoMonth(w);
+
+    await voidIt(w, id);
+
+    expect(await purchaseSumOfBillMonth(w)).toBe(10); // live == what was filed
+    const reversal = (await prisma.stockMovement.findFirstOrThrow({
+      where: { productId: w.productId, quantity: -10 },
+    })) as { type: string; effectiveAt: Date; notes: string | null };
+    expect(reversal.type).toBe("PURCHASE");
+    expect(inBillMonth(reversal.effectiveAt)).toBe(false);
+    expect(reversal.notes).toContain("(filed through ");
+    expect(await counter(w)).toBe(0);
+  });
+
+  it("V3: a manual PURCHASE sharing the bill number (row and lot) survives the void", async () => {
+    const w = await seedWorld("v3", "tobacco");
+    await inTenant(w, () =>
+      prisma.stockMovement.create({
+        data: {
+          productId: w.productId,
+          type: "PURCHASE",
+          quantity: 5,
+          unitCost: 1,
+          stockAfter: 5,
+          supplierId: w.supplierId,
+          reference: "B-846-1",
+          notes: "manual purchase",
+        },
+      }),
+    );
+    await inTenant(w, () =>
+      prisma.stockLot.create({
+        data: {
+          tenantId: w.tenantId,
+          productId: w.productId,
+          reference: "B-846-1",
+          qty: 5,
+          remainingQty: 5,
+          unitCost: 1,
+          purchaseDate: new Date(),
+        },
+      }),
+    );
+    await prisma.product.update({
+      where: { id: w.productId },
+      data: { currentStock: 5, averageCost: 1 },
+    });
+    const id = await receiveBill(w, 10);
+
+    await voidIt(w, id);
+
+    const rows = await ledger(w);
+    expect(rows.find((r) => r.notes === "manual purchase")).toBeDefined();
+    expect(rows.map((r) => r.q).sort((a, b) => a - b)).toEqual([-10, 5, 10]);
+    expect(await purchaseSumOfBillMonth(w)).toBe(0); // only the bill's pair left the month
+    expect(rows.reduce((t, r) => t + r.q, 0)).toBe(await counter(w)); // Σq == the counter
+    expect(await counter(w)).toBe(5);
+    expect(await prisma.stockLot.count({ where: { productId: w.productId } })).toBe(1);
+  });
 });
