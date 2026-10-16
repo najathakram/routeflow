@@ -17,6 +17,7 @@ import { PrismaService } from "../prisma/prisma.service";
 import { TenantContextService } from "../tenant/tenant-context.service";
 import { StockAlertService } from "../stock-alerts/stock-alert.service";
 import { describeDb, requireLocalDatabaseUrl } from "../common/testing/db-spec";
+import { poReversalOf } from "./bill-revert";
 
 // eslint-disable-next-line @typescript-eslint/no-var-requires
 const { assertTestTenant } = require("../../../../scripts/lib/test-tenants.cjs");
@@ -324,6 +325,8 @@ describeDb("PO edit reversal is a PURCHASE row (SA-808 §5) — real Postgres", 
   it("two-month PO edited today: early month 5, last month 5, open months 0, and the early month's ending stock is right", async () => {
     const w = await seedWorld("m1");
     const po = await twoMonthPo(w);
+    const originals = new Set((await ledger(w, po.poNumber)).map((r) => r.id));
+    expect(originals.size).toBe(2);
     await edit(w, po, 3);
 
     const rows = await ledger(w, po.poNumber);
@@ -331,7 +334,18 @@ describeDb("PO edit reversal is a PURCHASE row (SA-808 §5) — real Postgres", 
     expect(purchasesIn(rows, inEarlyMonth)).toBe(5);
     expect(purchasesIn(rows, inReceiptMonth)).toBe(5);
     expect(purchasesIn(rows, inOpenMonths)).toBe(0);
-    expect(rows.filter((r) => r.q > 0 && r.notes == null)).toHaveLength(2); // one re-post per receipt
+    // One re-post per receipt, each in its receipt's month. The ledger also holds the two ORIGINAL
+    // receipts (positive, no note, like a re-post), so the re-posts are the positive rows this edit wrote.
+    const reposts = rows.filter((r) => r.type === "PURCHASE" && r.q > 0 && !originals.has(r.id));
+    expect(reposts.map((r) => [r.q, r.effectiveAt.getTime()])).toEqual([
+      [5, EARLY_AT.getTime()],
+      [5, RECEIPT_AT.getTime()],
+    ]);
+    // ...and each original receipt is reversed exactly once.
+    const reversed = rows
+      .map((r) => poReversalOf({ type: r.type, quantity: r.q, notes: r.notes }))
+      .filter((x): x is string => x != null);
+    expect(reversed.sort()).toEqual([...originals].sort());
     expect(await endingStock(w, MONTH_START)).toBe(5);
     expect(await stock(w)).toBe(10);
     const lots = await prisma.stockLot.findMany({
