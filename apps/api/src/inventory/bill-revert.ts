@@ -5,7 +5,7 @@
  * and one parser below — interim text signature until B846-F adds the foreign keys.
  *
  * Every reader that wants "the last real purchase" (LAST_COST, the cost-history chart) skips BOTH
- * halves of a reversed pair through {@link dropBillRevertedPairs}: one rule, not one per reader.
+ * halves of a reversed pair through {@link pairedReceiptIds}: one rule, not one per reader.
  */
 
 /** Note prefix on the reversing row; the id of the receipt row it reverses follows. */
@@ -17,10 +17,10 @@ export const billReceiptNote = (billNumber: string): string =>
 
 /**
  * The note on the reversing row. When the original period is filed the row is dated now instead
- * (SA-808 §3) and the note says which period: `… (original period September 2026 filed)`.
+ * (SA-808 §3, SA-808a) and the note names the filing: `… (filed through September 2026)`.
  */
-export const billReversalNote = (originalId: string, filedPeriod?: string | null): string =>
-  `${BILL_REVERTED_NOTE}${originalId}${filedPeriod ? ` (original period ${filedPeriod} filed)` : ""}`;
+export const billReversalNote = (originalId: string, filedThroughLabel?: string | null): string =>
+  `${BILL_REVERTED_NOTE}${originalId}${filedThroughLabel ? ` (filed through ${filedThroughLabel})` : ""}`;
 
 /** The receipt-row id a reversing row points at, or null when `notes` is not a bill-revert note. */
 export function billReversalTargetId(notes: string | null | undefined): string | null {
@@ -30,21 +30,18 @@ export function billReversalTargetId(notes: string | null | undefined): string |
 }
 
 /**
- * Rows minus every reversal (a PURCHASE with quantity <= 0, or a bill-revert note) and the receipt
- * rows those point at. Order-agnostic: the ids come from the rows given.
+ * Ids of the receipt rows a bill-revert has already paired for this product. Readers that want "a
+ * real purchase" (LAST_COST, the cost-history chart) exclude these ids and every non-positive row in
+ * their own SQL `where`, so reversal pairs can never fill a read window.
  */
-export function dropBillRevertedPairs<
-  T extends { id?: string; notes?: string | null; quantity?: unknown; type?: string },
->(rows: T[]): T[] {
-  const reversed = new Set<string>();
-  for (const r of rows) {
-    const target = billReversalTargetId(r.notes);
-    if (target) reversed.add(target);
-  }
-  return rows.filter((r) => {
-    if (billReversalTargetId(r.notes) != null) return false;
-    if (r.id && reversed.has(r.id)) return false;
-    const isPurchase = r.type == null || r.type === "PURCHASE";
-    return !(isPurchase && r.quantity != null && Number(r.quantity) <= 0);
-  });
+export async function pairedReceiptIds(
+  db: { stockMovement: { findMany(args: any): Promise<any> } },
+  productId: string,
+): Promise<string[]> {
+  const reversals: { notes: string | null }[] =
+    (await db.stockMovement.findMany({
+      where: { productId, type: "PURCHASE", notes: { startsWith: BILL_REVERTED_NOTE } },
+      select: { notes: true },
+    })) ?? [];
+  return reversals.map((r) => billReversalTargetId(r.notes)).filter((x): x is string => x != null);
 }

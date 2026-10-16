@@ -11,8 +11,9 @@ import { API_ERROR_CODES } from "../common/api-error-codes";
  *   instead, so the filed period never moves and the bill can still be fixed.
  * - If `now` is itself filed, fail closed with 409 STOCK_DATE_IN_FILED_PERIOD naming the period.
  *
- * Filed (SA-802): a non-FAILED TobaccoReport for a tobacco product; a GENERATED or LOCKED
- * RegulatedFiling for the product's tracked category. Non-regulated products never move.
+ * Filed (SA-802 / SA-808a): a non-FAILED TobaccoReport for a tobacco product; a GENERATED or LOCKED
+ * RegulatedFiling for the product's tracked category; closed THROUGH the latest such period.
+ * Non-regulated products never move.
  */
 
 export interface StockDateProduct {
@@ -28,64 +29,89 @@ export interface StockDateDb {
   regulatedFiling: { findFirst(args: any): Promise<any> };
 }
 
-const MONTHS = [
-  "January",
-  "February",
-  "March",
-  "April",
-  "May",
-  "June",
-  "July",
-  "August",
-  "September",
-  "October",
-  "November",
-  "December",
-];
-const monthLabel = (d: Date): string => `${MONTHS[d.getUTCMonth()]} ${d.getUTCFullYear()}`;
+const monthLabel = (d: Date): string =>
+  `${d.toLocaleString("en-US", { month: "long", timeZone: "UTC" })} ${d.getUTCFullYear()}`;
 
-/** The label of the filed period holding `at` for this product, or null when that instant is open. */
-export async function filedPeriodOf(
+export interface FiledThrough {
+  /** EXCLUSIVE close of the latest filed period: an instant `t` is closed when `t < through`. */
+  through: Date;
+  /** That period's label ("September 2026"), for the note and the 409 message. */
+  label: string;
+}
+
+/**
+ * SA-808a: "filed" means filed THROUGH, not filed AT. A month's ending stock is `currentStock −
+ * Σ(movements after periodEnd)`, so a movement dated `t` changes the ending stock of every month
+ * ending at or after `t`: a row backdated into an unfiled August still moves a filed September.
+ * Returns the close of the LATEST filed period covering any of the products, or null. A FAILED month
+ * after the latest filed one stays open; a FAILED month before it is closed.
+ */
+async function filedThroughOf(
   db: StockDateDb,
-  args: { tenantId: string; product: StockDateProduct; at: Date },
-): Promise<string | null> {
-  const { tenantId, product, at } = args;
-  if (product.isTobacco) {
+  tenantId: string,
+  products: StockDateProduct[],
+): Promise<FiledThrough | null> {
+  let best: FiledThrough | null = null;
+  if (products.some((p) => p.isTobacco)) {
     const report = await db.tobaccoReport.findFirst({
-      where: {
-        tenantId,
-        status: { not: "FAILED" },
-        periodStart: { lte: at },
-        periodEnd: { gte: at },
-      },
-      select: { periodStart: true },
+      where: { tenantId, status: { not: "FAILED" } },
+      orderBy: { periodEnd: "desc" },
+      select: { periodStart: true, periodEnd: true },
     });
-    if (report) return monthLabel(report.periodStart);
+    if (report) {
+      best = {
+        through: new Date(new Date(report.periodEnd).getTime() + 1),
+        label: monthLabel(report.periodStart),
+      };
+    }
   }
-  if (product.trackedCategoryId) {
+  const categoryIds = [
+    ...new Set(products.flatMap((p) => (p.trackedCategoryId ? [p.trackedCategoryId] : []))),
+  ];
+  if (categoryIds.length > 0) {
     const filing = await db.regulatedFiling.findFirst({
       where: {
         tenantId,
-        trackedCategoryId: product.trackedCategoryId,
+        trackedCategoryId: { in: categoryIds },
         status: { in: ["GENERATED", "LOCKED"] },
-        periodStart: { lte: at },
-        periodEnd: { gt: at },
       },
-      select: { periodStart: true, periodKey: true, cadence: true },
+      orderBy: { periodEnd: "desc" },
+      select: { periodStart: true, periodEnd: true, periodKey: true, cadence: true },
     });
     if (filing) {
-      return filing.cadence === "MONTHLY" || filing.cadence == null
-        ? monthLabel(filing.periodStart)
-        : String(filing.periodKey);
+      const through = new Date(filing.periodEnd); // already exclusive
+      if (!best || through > best.through) {
+        best = {
+          through,
+          label:
+            filing.cadence === "MONTHLY" || filing.cadence == null
+              ? monthLabel(filing.periodStart)
+              : String(filing.periodKey),
+        };
+      }
     }
   }
-  return null;
+  return best;
+}
+
+const loadProducts = async (db: StockDateDb, ids: string[]): Promise<StockDateProduct[]> =>
+  (await db.product.findMany({
+    where: { id: { in: ids } },
+    select: { id: true, isTobacco: true, trackedCategoryId: true },
+  })) ?? [];
+
+/** The close of the latest filed period covering any of `productIds`, or null when none is filed. */
+export async function filedThrough(
+  db: StockDateDb,
+  args: { tenantId: string; productIds: string[] },
+): Promise<FiledThrough | null> {
+  return filedThroughOf(db, args.tenantId, await loadProducts(db, [...new Set(args.productIds)]));
 }
 
 export interface DocumentStockDate {
   /** The instant to write on the row (and its lot). */
   effectiveAt: Date;
-  /** The filed period the document date was in, when the row moved forward to `now`; else null. */
+  /** The label of the filing that closed the document date, when the row moved forward; else null. */
   movedFromPeriod: string | null;
 }
 
@@ -102,31 +128,25 @@ export async function documentStockDate(
   const ids = [...new Set(args.productIds)];
   const out = new Map<string, DocumentStockDate>();
   if (ids.length === 0) return out;
-  const found: StockDateProduct[] =
-    (await db.product.findMany({
-      where: { id: { in: ids } },
-      select: { id: true, isTobacco: true, trackedCategoryId: true },
-    })) ?? [];
-  const byId = new Map(found.map((p) => [p.id, p]));
+  const byId = new Map((await loadProducts(db, ids)).map((p) => [p.id, p]));
   for (const id of ids) {
     const product = byId.get(id);
-    const filed = product ? await filedPeriodOf(db, { tenantId, product, at: documentDate }) : null;
-    if (!product || filed == null) {
+    const filed = product ? await filedThroughOf(db, tenantId, [product]) : null;
+    if (!filed || documentDate >= filed.through) {
       out.set(id, { effectiveAt: documentDate, movedFromPeriod: null });
       continue;
     }
-    const filedNow = await filedPeriodOf(db, { tenantId, product, at: now });
-    if (filedNow != null) {
+    if (now < filed.through) {
       throw new ConflictException({
         code: API_ERROR_CODES.STOCK_DATE_IN_FILED_PERIOD,
         message:
-          `This stock movement can't be dated today: ${filedNow} is already filed for this product. ` +
+          `This stock movement can't be dated today: ${filed.label} is already filed for this product. ` +
           "Ask an admin before changing it.",
         productId: id,
-        period: filedNow,
+        period: filed.label,
       });
     }
-    out.set(id, { effectiveAt: now, movedFromPeriod: filed });
+    out.set(id, { effectiveAt: now, movedFromPeriod: filed.label });
   }
   return out;
 }

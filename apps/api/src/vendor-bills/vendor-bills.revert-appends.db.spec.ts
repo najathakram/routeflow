@@ -37,6 +37,8 @@ const BILL_M = today.getUTCMonth() === 0 ? 12 : today.getUTCMonth(); // 1-12
 const BILL_DATE = `${BILL_Y}-${String(BILL_M).padStart(2, "0")}-15`;
 const MONTH_START = new Date(Date.UTC(BILL_Y, BILL_M - 1, 1));
 const MONTH_END_EXCL = new Date(Date.UTC(BILL_Y, BILL_M, 1));
+/** The month BEFORE the bill month: unfiled in R7 while the bill month is filed. */
+const EARLIER_DATE = new Date(Date.UTC(BILL_Y, BILL_M - 2, 15)).toISOString().slice(0, 10);
 const inBillMonth = (d: Date) => d >= MONTH_START && d < MONTH_END_EXCL;
 
 describeDb("B846 bill revert appends — real Postgres", () => {
@@ -166,12 +168,12 @@ describeDb("B846 bill revert appends — real Postgres", () => {
 
   const inTenant = <T>(w: World, fn: () => Promise<T>) => tenantCtx.run(w.tenantId, fn);
 
-  async function receiveBill(w: World, qty: number, billNumber = "B-846-1") {
+  async function receiveBill(w: World, qty: number, billNumber = "B-846-1", date = BILL_DATE) {
     const bill: any = await inTenant(w, () =>
       bills.create({
         supplierId: w.supplierId,
         billNumber,
-        billDate: BILL_DATE,
+        billDate: date,
         items: [{ productId: w.productId, description: "Widget", qty, unitCost: 2 }],
       } as never),
     );
@@ -290,11 +292,13 @@ describeDb("B846 bill revert appends — real Postgres", () => {
     expect(await billMonthSum(w)).toBe(10); // live == what was filed
     const reversal = rows.find((r) => r.q === -10) as (typeof rows)[number];
     expect(inBillMonth(reversal.effectiveAt)).toBe(false);
-    expect(reversal.notes).toContain("filed)");
+    expect(reversal.notes).toContain("(filed through ");
     await rereceive(w, id, 8);
     expect(await billMonthSum(w)).toBe(10);
-    expect(rows.length).toBe(2);
-    expect((await ledger(w)).reduce((t, r) => t + r.q, 0)).toBe(await counter(w));
+    const fresh = await ledger(w);
+    expect(fresh.map((r) => r.q)).toEqual(expect.arrayContaining([10, -10, 8]));
+    expect(fresh).toHaveLength(3);
+    expect(fresh.reduce((t, r) => t + r.q, 0)).toBe(await counter(w));
   });
 
   it("R5: a LOCKED RegulatedFiling for the tracked category behaves as R3", async () => {
@@ -320,5 +324,58 @@ describeDb("B846 bill revert appends — real Postgres", () => {
     expect(await billMonthSum(w)).toBe(10);
     const reversal = (await ledger(w)).find((r) => r.q === -10) as { effectiveAt: Date };
     expect(inBillMonth(reversal.effectiveAt)).toBe(false);
+  });
+
+  it("R7: an earlier UNFILED month's bill, bill month FILED — the revert is dated now and the filed month's ending stock holds", async () => {
+    const w = await seedWorld("r7", "tobacco");
+    const id = await receiveBill(w, 10, "B-846-7", EARLIER_DATE);
+    await fileTobaccoMonth(w);
+    const endingStock = async () =>
+      (await counter(w)) -
+      (await ledger(w)).filter((r) => r.effectiveAt >= MONTH_END_EXCL).reduce((t, r) => t + r.q, 0);
+    const filedEnding = await endingStock();
+
+    await revert(w, id);
+
+    const reversal = (await ledger(w)).find((r) => r.q === -10) as {
+      effectiveAt: Date;
+      notes: string | null;
+    };
+    expect(reversal.effectiveAt >= MONTH_END_EXCL).toBe(true);
+    expect(reversal.notes).toContain("(filed through ");
+    expect(await endingStock()).toBe(filedEnding);
+  });
+
+  it("a FAILED month before the latest filed one is closed; a FAILED month after it stays open", async () => {
+    const w = await seedWorld("failed", "tobacco");
+    const id = await receiveBill(w, 10, "B-846-8");
+    // bill month: FAILED, earlier month GENERATED => the bill month is after the latest filed one
+    await prisma.tobaccoReport.create({
+      data: {
+        tenantId: w.tenantId,
+        periodYear: BILL_Y,
+        periodMonth: BILL_M,
+        periodStart: MONTH_START,
+        periodEnd: new Date(MONTH_END_EXCL.getTime() - 1),
+        status: "FAILED",
+        rows: [],
+      },
+    });
+    await prisma.tobaccoReport.create({
+      data: {
+        tenantId: w.tenantId,
+        periodYear: new Date(Date.UTC(BILL_Y, BILL_M - 2, 1)).getUTCFullYear(),
+        periodMonth: new Date(Date.UTC(BILL_Y, BILL_M - 2, 1)).getUTCMonth() + 1,
+        periodStart: new Date(Date.UTC(BILL_Y, BILL_M - 2, 1)),
+        periodEnd: new Date(MONTH_START.getTime() - 1),
+        status: "GENERATED",
+        rows: [],
+      },
+    });
+
+    await revert(w, id);
+
+    const reversal = (await ledger(w)).find((r) => r.q === -10) as { effectiveAt: Date };
+    expect(inBillMonth(reversal.effectiveAt)).toBe(true); // open: dated at the original
   });
 });

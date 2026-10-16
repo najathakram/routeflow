@@ -35,6 +35,8 @@ jest.mock("sharp", () => ({
 const D = (n: number | string) => new Prisma.Decimal(n);
 const BILL_DATE = new Date("2026-09-15T00:00:00.000Z");
 const NOW = new Date("2026-10-16T12:00:00.000Z");
+/** The bill date of the scenario under test; reset to September 15 before every test. */
+let billDate = BILL_DATE;
 
 type Row = Record<string, any>;
 
@@ -142,24 +144,19 @@ async function harness(): Promise<Harness> {
   const tobaccoReports: Row[] = [];
   const regulatedFilings: Row[] = [];
   prisma.product.findMany.mockImplementation(async () => [{ id: "prod-1", ...flags }]);
-  prisma.tobaccoReport.findFirst.mockImplementation(
-    async ({ where }: any) =>
-      tobaccoReports.find(
-        (r) =>
-          r.status !== "FAILED" &&
-          r.periodStart <= where.periodStart.lte &&
-          r.periodEnd >= where.periodEnd.gte,
-      ) ?? null,
+  const latest = (xs: Row[]) =>
+    [...xs].sort((x, y) => y.periodEnd.getTime() - x.periodEnd.getTime())[0] ?? null;
+  prisma.tobaccoReport.findFirst.mockImplementation(async () =>
+    latest(tobaccoReports.filter((r) => r.status !== "FAILED")),
   );
-  prisma.regulatedFiling.findFirst.mockImplementation(
-    async ({ where }: any) =>
-      regulatedFilings.find(
+  prisma.regulatedFiling.findFirst.mockImplementation(async ({ where }: any) =>
+    latest(
+      regulatedFilings.filter(
         (r) =>
-          r.trackedCategoryId === where.trackedCategoryId &&
-          where.status.in.includes(r.status) &&
-          r.periodStart <= where.periodStart.lte &&
-          r.periodEnd > where.periodEnd.gt,
-      ) ?? null,
+          where.trackedCategoryId.in.includes(r.trackedCategoryId) &&
+          where.status.in.includes(r.status),
+      ),
+    ),
   );
   prisma.stockLot.update.mockImplementation(async ({ where, data }: any) => {
     Object.assign(lots.find((l) => l.id === where.id) as Row, data);
@@ -237,7 +234,7 @@ const draftBill = (qty: number) => ({
   billNumber: "B-1",
   supplierId: "sup-1",
   status: "DRAFT",
-  billDate: BILL_DATE,
+  billDate,
   receivedDate: null as Date | null,
   purchaseOrderId: null,
   items: [item(qty)],
@@ -247,7 +244,7 @@ const draftBill = (qty: number) => ({
 const receivedBill = (qty: number) => ({
   ...draftBill(qty),
   status: "RECEIVED",
-  receivedDate: BILL_DATE,
+  receivedDate: billDate,
   items: [item(qty, 2, { qtyReceived: D(qty) })],
 });
 
@@ -298,6 +295,7 @@ const SEPT_FILED = {
 
 describe("B846 / SA-808 — revertToDraft appends reversal rows and never deletes", () => {
   beforeEach(() => {
+    billDate = BILL_DATE;
     jest.useFakeTimers({
       now: NOW,
       doNotFake: [
@@ -403,7 +401,7 @@ describe("B846 / SA-808 — revertToDraft appends reversal rows and never delete
     const [receipt, reversal] = h.rows;
     expect(reversal.effectiveAt).toEqual(NOW);
     expect(reversal.notes).toBe(
-      `${BILL_REVERTED_NOTE}${receipt.id} (original period September 2026 filed)`,
+      `${BILL_REVERTED_NOTE}${receipt.id} (filed through September 2026)`,
     );
     expect(monthSum(h, 2026, 9)).toBe(10); // live September == what was filed
     expect(monthSum(h, 2026, 10)).toBe(-10);
@@ -438,7 +436,7 @@ describe("B846 / SA-808 — revertToDraft appends reversal rows and never delete
     await revert(h, 10);
 
     expect(h.rows[1].effectiveAt).toEqual(NOW);
-    expect(h.rows[1].notes).toContain("(original period September 2026 filed)");
+    expect(h.rows[1].notes).toContain("(filed through September 2026)");
     expect(monthSum(h, 2026, 9)).toBe(10);
     expect(monthSum(h, 2026, 10)).toBe(-10);
   });
@@ -460,6 +458,67 @@ describe("B846 / SA-808 — revertToDraft appends reversal rows and never delete
     expect(h.rows[1].effectiveAt).toEqual(h.rows[0].effectiveAt);
     expect(h.rows[1].notes).toBe(`${BILL_REVERTED_NOTE}${h.rows[0].id}`);
     expect(monthSum(h, 2026, 9)).toBe(0);
+  });
+
+  /** A month's live ending stock (tobacco report): the counter minus every movement after it. */
+  const endingStockAfter = (h: Harness, y: number, m: number) =>
+    h.product.currentStock
+      .sub(
+        h.rows
+          .filter((r) => r.effectiveAt >= new Date(Date.UTC(y, m, 1)))
+          .reduce((t, r) => t.add(r.quantity), D(0)),
+      )
+      .toNumber();
+  const AUG_BILL = new Date("2026-08-15T00:00:00.000Z");
+  const failed = (start: string, end: string) => ({
+    status: "FAILED",
+    periodStart: new Date(`${start}T00:00:00.000Z`),
+    periodEnd: new Date(`${end}T23:59:59.999Z`),
+  });
+
+  it("R7: August unfiled, September filed — an August bill's revert is dated now, September's live ending stock equals what was filed", async () => {
+    const h = await harness();
+    h.flags.isTobacco = true;
+    billDate = AUG_BILL;
+    await receive(h, 10);
+    h.tobaccoReports.push(SEPT_FILED);
+    const filedEnding = endingStockAfter(h, 2026, 9); // 10, as September's report read it
+
+    await revert(h, 10);
+
+    expect(h.rows[1].effectiveAt).toEqual(NOW);
+    expect(h.rows[1].notes).toContain("(filed through September 2026)");
+    expect(monthSum(h, 2026, 8)).toBe(10);
+    expect(endingStockAfter(h, 2026, 9)).toBe(filedEnding);
+  });
+
+  it("a FAILED month AFTER the latest filed one stays open: dated at the original", async () => {
+    const h = await harness();
+    h.flags.isTobacco = true;
+    await receive(h, 10); // September 15
+    h.tobaccoReports.push(failed("2026-09-01", "2026-09-30"));
+    h.tobaccoReports.push({
+      status: "GENERATED",
+      periodStart: new Date("2026-08-01T00:00:00.000Z"),
+      periodEnd: new Date("2026-08-31T23:59:59.999Z"),
+    });
+
+    await revert(h, 10);
+
+    expect(h.rows[1].effectiveAt).toEqual(h.rows[0].effectiveAt);
+    expect(h.rows[1].notes).not.toContain("filed through");
+  });
+
+  it("a FAILED month BEFORE the latest filed one is closed: dated now", async () => {
+    const h = await harness();
+    h.flags.isTobacco = true;
+    billDate = AUG_BILL;
+    await receive(h, 10);
+    h.tobaccoReports.push(failed("2026-08-01", "2026-08-31"), SEPT_FILED);
+
+    await revert(h, 10);
+
+    expect(h.rows[1].effectiveAt).toEqual(NOW);
   });
 
   it("refuses 409 STOCK_DATE_IN_FILED_PERIOD when today is itself filed for the product", async () => {
@@ -506,6 +565,48 @@ describe("B846 / SA-808 — revertToDraft appends reversal rows and never delete
       "prod-1",
       expect.objectContaining({ throwOnGap: false }),
     );
+  });
+
+  it("lots: a pre-2026-08-12 lot whose purchaseDate differs from the movement is reversed by the single-candidate fallback", async () => {
+    const h = await harness();
+    await receive(h, 10);
+    h.lots[0].purchaseDate = new Date("2026-09-14T09:30:00.000Z"); // legacy: lot date != movement.effectiveAt
+
+    await revert(h, 10);
+
+    expect(h.lots).toHaveLength(0); // not left behind as a phantom FIFO lot
+  });
+
+  it("lots: two fallback candidates are ambiguous — 409 and nothing written", async () => {
+    const h = await harness();
+    await receive(h, 10);
+    h.lots[0].purchaseDate = new Date("2026-09-14T09:30:00.000Z");
+    h.lots.push({ ...h.lots[0], id: "lot-twin" });
+
+    await expect(revert(h, 10)).rejects.toMatchObject({
+      response: { code: API_ERROR_CODES.INVENTORY_LEDGER_GAP },
+    });
+    expect(h.lots).toHaveLength(2);
+  });
+
+  it("surfaces the replay's gap the way receive does (gapsDetected), without aborting the revert", async () => {
+    const h = await harness();
+    await receive(h, 10);
+    h.rows.push({
+      id: "mv-sale",
+      productId: "prod-1",
+      type: "SALE",
+      quantity: D(-2),
+      effectiveAt: new Date("2026-09-20T00:00:00.000Z"),
+      createdAt: new Date("2026-09-20T00:00:00.000Z"),
+    });
+    h.product.currentStock = D(8);
+    h.inventory.recomputeProductInTx.mockResolvedValue({ gapDetected: true, stockDrift: 3 });
+    h.setBill(receivedBill(10));
+
+    const out: any = await h.service.revertToDraft("bill-1", "user-2");
+
+    expect(out.gapsDetected).toEqual([{ productId: "prod-1", name: "Widget", stockDrift: 3 }]);
   });
 
   it("L-207: refuses with a coded error when the receipt rows do not add up to the received qty", async () => {

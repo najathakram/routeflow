@@ -728,37 +728,42 @@ describe("InventoryService", () => {
     it("uses the most recent PURCHASE movement's cost for LAST_COST products", async () => {
       prisma.product.findFirst.mockResolvedValue(product({ costingMethod: "LAST_COST" }));
       // A newest bill @ 3.5; a later positive stock-count lot @ avg cost must NOT win.
-      prisma.stockMovement.findMany.mockResolvedValue([
-        { id: "m9", unitCost: D(3.5), notes: null },
-      ]);
+      prisma.stockMovement.findFirst.mockResolvedValue({ unitCost: D(3.5) });
 
       const result = await service.recordSale("prod-1", D(2), null, null, tx());
 
-      // Purchase-only + deterministic ordering (effectiveAt, then createdAt, then id — B562).
-      expect(prisma.stockMovement.findMany).toHaveBeenCalledWith({
-        where: { productId: "prod-1", type: "PURCHASE" },
+      // Purchase-only, positive rows only (B846: a bill-revert row is negative) + deterministic
+      // ordering (effectiveAt, then createdAt, then id — B562).
+      expect(prisma.stockMovement.findFirst).toHaveBeenCalledWith({
+        where: { productId: "prod-1", type: "PURCHASE", quantity: { gt: 0 } },
         orderBy: [{ effectiveAt: "desc" }, { createdAt: "desc" }, { id: "desc" }],
-        select: { id: true, unitCost: true, quantity: true, notes: true },
-        take: 200,
+        select: { unitCost: true },
       });
       expect(result.unitCost.toString()).toBe("3.5");
       // Last cost is not lot-consuming.
       expect(prisma.stockLot.update).not.toHaveBeenCalled();
     });
 
-    it("B846: LAST_COST skips a bill-revert pair — the reversing row AND the receipt it reverses", async () => {
+    it("B846: LAST_COST excludes the receipt a bill-revert row has paired (and the reversal itself)", async () => {
       prisma.product.findFirst.mockResolvedValue(product({ costingMethod: "LAST_COST" }));
-      // Newest first (the query's order): the -10 reversal, the +10 @9 it reverses, then the real last buy @4.
-      // (master asked findFirst for "the newest PURCHASE" and got the reversing row's cost.)
-      prisma.stockMovement.findFirst.mockResolvedValue({ unitCost: D(9) });
+      // master asked for "the newest PURCHASE" and got the reversing row's cost (9).
+      prisma.stockMovement.findFirst.mockResolvedValue({ unitCost: D(4) });
       prisma.stockMovement.findMany.mockResolvedValue([
-        { id: "m3", unitCost: D(9), quantity: D(-10), notes: "BILL_REVERTED — reverses m2" },
-        { id: "m2", unitCost: D(9), quantity: D(10), notes: "Auto-synced from vendor bill B-1" },
-        { id: "m1", unitCost: D(4), quantity: D(5), notes: null },
+        { notes: "BILL_REVERTED — reverses m2 (original period September 2026 filed)" },
       ]);
 
       const result = await service.recordSale("prod-1", D(2), null, null, tx());
 
+      expect(prisma.stockMovement.findFirst).toHaveBeenCalledWith(
+        expect.objectContaining({
+          where: {
+            productId: "prod-1",
+            type: "PURCHASE",
+            quantity: { gt: 0 },
+            id: { notIn: ["m2"] },
+          },
+        }),
+      );
       expect(result.unitCost.toString()).toBe("4");
     });
 

@@ -73,7 +73,9 @@ describe("vendor-bill stock txs retry on a conflict (SA-767 L-1)", () => {
       kind: "STANDARD",
       name: "Flour 25lb",
     });
-    prisma.stockLot.findMany.mockResolvedValue([]);
+    prisma.stockLot.findMany.mockResolvedValue([
+      { id: "lot-1", qty: D(1), remainingQty: D(1), notes: null },
+    ]);
     // B846: revert reads back the receipt row it appends a reversal for (5 @ 3.5).
     prisma.stockMovement.findMany.mockImplementation(async ({ where }: any) =>
       where.notes && typeof where.notes === "object"
