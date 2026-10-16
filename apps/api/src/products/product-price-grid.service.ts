@@ -34,6 +34,23 @@ export const PRODUCT_SELECT = {
   unitSku: true,
 } as const;
 
+/** The refusal for the implicit base row: the unit must exist before it can carry a price (K7 adds it). */
+export const addUnitFirst = (label: string): string => `Add the ${label} unit first.`;
+
+/**
+ * Why the price write refuses this product, or null when it is a standalone product. One source for the grid's
+ * `notEditableReason` and the write's refusal, so the UI never offers an edit the server would turn down.
+ */
+export function governedReason(p: {
+  parentProductId?: string | null;
+  kind?: string | null;
+}): string | null {
+  if (p.parentProductId) return "Priced by the family.";
+  if (p.kind === "FAMILY") return "Family prices are edited on the family page.";
+  if (p.kind === "RECIPE") return "Priced by its recipe.";
+  return null;
+}
+
 /** The unit columns the ladder, the codes and the price state read. */
 export const UNIT_PRICE_SELECT = {
   id: true,
@@ -129,7 +146,17 @@ export class ProductPriceGridService {
     const grid: ProductPriceGridDto = {
       productId,
       anchor: view.anchor,
-      rows: priceGrid(view, rules).map((row) => ({ ...row, code: unitCodeOf(codes, row.ref) })),
+      rows: priceGrid(view, rules).map((row) => {
+        // The implicit piece row (no ProductUnit yet) cannot be priced: the write never mints a unit.
+        const reason =
+          governedReason(product) ?? (row.ref === "base" ? addUnitFirst(row.label) : null);
+        return {
+          ...row,
+          code: unitCodeOf(codes, row.ref),
+          editable: reason == null,
+          ...(reason ? { notEditableReason: reason } : {}),
+        };
+      }),
       revision,
       priceState,
       tierAnchors: { ...view.tierAnchors },

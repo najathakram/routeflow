@@ -88,7 +88,13 @@ function expected(product: ReturnType<typeof baseProduct>, rows: UnitRow[]): Pro
   return {
     productId: PRODUCT_ID,
     anchor: view.anchor,
-    rows: priceGrid(view).map((g) => ({ ...g, code: unitCodeOf(codes, g.ref) })),
+    rows: priceGrid(view).map((g) => ({
+      ...g,
+      code: unitCodeOf(codes, g.ref),
+      ...(g.ref === "base"
+        ? { editable: false, notEditableReason: "Add the Piece unit first." }
+        : { editable: true }),
+    })),
     revision: 0,
     priceState: expect.stringMatching(/^[0-9a-f]{64}$/),
     tierAnchors: {},
@@ -198,6 +204,27 @@ describe("ProductPriceGridService (units v2)", () => {
     const dto = await service.get(PRODUCT_ID);
     expect(dto.anchor).toBe("u-piece");
     expect(cell(dto, "Box", 1)?.source).toBe("auto");
+  });
+
+  it("rows the write would refuse say so: a variant, a family, a recipe, and the implicit base row", async () => {
+    const reasons = async (over: Record<string, unknown>) => {
+      const dto = await build(baseProduct(over), []).service.get(PRODUCT_ID);
+      return dto.rows.map((r) => [r.label, r.editable, r.notEditableReason]);
+    };
+    expect(await reasons({ parentProductId: "fam-1" })).toEqual([
+      ["Box", false, "Priced by the family."],
+      ["Piece", false, "Priced by the family."],
+    ]);
+    expect((await reasons({ kind: "FAMILY" }))[0]).toEqual([
+      "Box",
+      false,
+      "Family prices are edited on the family page.",
+    ]);
+    expect((await reasons({ kind: "RECIPE" }))[0]).toEqual(["Box", false, "Priced by its recipe."]);
+    expect(await reasons({})).toEqual([
+      ["Box", true, undefined],
+      ["Piece", false, "Add the Piece unit first."],
+    ]);
   });
 
   it("a product the tenant does not have is a 404", async () => {

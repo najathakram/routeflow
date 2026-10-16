@@ -110,6 +110,22 @@ export class SavePricesDto {
   orderUnit?: string;
 }
 
+/** One customer cell an Undo leaves alone; `seen` is the value the 409 preview showed (null = no row). */
+export class UndoSkipCellDto {
+  @IsString()
+  @IsNotEmpty()
+  customerId: string;
+
+  @IsString()
+  @IsNotEmpty()
+  @MaxLength(64)
+  ref: string;
+
+  @ValidateIf((_o, v) => v !== null)
+  @IsNumber({ allowNaN: false, allowInfinity: false })
+  seen: number | null;
+}
+
 /** POST /products/:productId/prices/undo (UndoPricesRequest). */
 export class UndoPricesDto {
   @IsString()
@@ -125,4 +141,10 @@ export class UndoPricesDto {
   @IsNotEmpty()
   @MaxLength(128)
   expectedPriceState: string;
+  @IsOptional()
+  @IsArray()
+  @ArrayMaxSize(500)
+  @ValidateNested({ each: true })
+  @Type(() => UndoSkipCellDto)
+  skip?: UndoSkipCellDto[];
 }

@@ -15,11 +15,17 @@ export interface PriceStateProduct {
   priceTier5: unknown;
   packAuto?: number | null;
   orderUnitRef?: string | null;
+  /** The pack's size and the unit / pack / base names: they decide the ladder's rows and factors. */
+  unitsPerBox?: unknown;
+  unit?: string | null;
+  packLabel?: string | null;
+  baseUnitLabel?: string | null;
 }
 
 export interface PriceStateUnit {
   id: string;
   factorToBase: number;
+  label?: string | null;
   price?: unknown;
   priceTier2?: unknown;
   priceTier3?: unknown;
@@ -35,7 +41,8 @@ export interface PriceStateTierUnit {
 /**
  * SA-796 R-1 value compare-and-set: the opaque token a client echoes back. sha256 hex of the canonical JSON of every
  * price-bearing column the grid reads: the 5 pack columns, `packAuto`, the order unit and the tier order units (they
- * decide which cell is Auto), and each ProductUnit's id, factor and 5 prices. Legacy writers do not bump
+ * decide which cell is Auto), the pack's size and the unit / pack / base labels, and each ProductUnit's id, factor,
+ * label and 5 prices. A concurrent unit edit or delete therefore changes the token. Legacy writers do not bump
  * `Product.priceRevision`, so the revision alone cannot see their writes; this does.
  *
  * Canonical = fixed key order, units sorted by id, money as two-decimal strings, so the token depends on the values and
@@ -55,6 +62,12 @@ export function computePriceState(
       cents(product.priceTier5),
     ],
     packAuto: Number(product.packAuto) || 0,
+    shape: [
+      product.unitsPerBox == null ? null : Number(product.unitsPerBox),
+      product.unit ?? null,
+      product.packLabel ?? null,
+      product.baseUnitLabel ?? null,
+    ],
     orderUnit: product.orderUnitRef ?? "pack",
     tierUnits: [...tierUnits]
       .filter((t) => t.orderUnitRef != null)
@@ -65,6 +78,7 @@ export function computePriceState(
       .map((u) => [
         u.id,
         u.factorToBase,
+        u.label ?? null,
         cents(u.price),
         cents(u.priceTier2),
         cents(u.priceTier3),

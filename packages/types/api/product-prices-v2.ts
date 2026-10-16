@@ -89,6 +89,23 @@ export interface SavePricesResponse {
   undo?: SavePricesUndo;
   /** The fresh grid (same read model as GET price-grid), so the client never refetches after a save. */
   grid: ProductPriceGridDto;
+  /** Undo only: the customer cells the request's `skip` list left as they are (they keep `current`). */
+  skipped?: SkippedCustomerCell[];
+}
+
+/** One customer cell an Undo was told to skip (SA-809 section 2). `seen` = the value the 409 preview showed. */
+export interface UndoSkipCell {
+  customerId: string;
+  ref: string;
+  seen: number | null;
+}
+
+/** A skipped cell in the response: left as it is, never restored later. */
+export interface SkippedCustomerCell {
+  customerId: string;
+  ref: string;
+  tier: number;
+  current: number | null;
 }
 
 /** POST /products/:productId/prices/undo. Precondition = the CURRENT grid's revision and priceState, as a save. */
@@ -97,6 +114,12 @@ export interface UndoPricesRequest {
   expectedRevision: number;
   /** REQUIRED, as on a save. */
   expectedPriceState: string;
+  /**
+   * Customer cells to leave as they are (SA-809 section 2). Only cells the previous 409 listed in `conflicts` can be
+   * skipped (else 400 PRICE_EDIT_INVALID), never product cells, and a cell is skipped only while its current value
+   * still equals `seen` (else 409 again with the new conflicts). Everything else is restored in ONE write.
+   */
+  skip?: UndoSkipCell[];
 }
 
 /** The 409 body of LADDER_REVISION_STALE (save and undo). Nothing was written; reload the grid. */
@@ -107,6 +130,20 @@ export interface LadderRevisionStaleBody {
   revision: number;
   /** The current grid, so the client can reload or preview the undo on it without a second request. */
   grid?: ProductPriceGridDto;
+  /**
+   * The customer cells whose row no longer holds the `from` the write expected (for an Undo: what the save left).
+   * This is the preview. Nothing was written; the whole call is refused.
+   */
+  conflicts?: CustomerPriceConflict[];
+}
+
+/** One customer cell that no longer holds what the save left (`expected`), but `current` (null = no row). */
+export interface CustomerPriceConflict {
+  customerId: string;
+  ref: string;
+  tier: number;
+  expected: number | null;
+  current: number | null;
 }
 
 /** The 400 body of PRICE_EDIT_INVALID (POST prices): the pricing core's refusals (validateSetPrice, the anchor's Retail). */

@@ -250,6 +250,192 @@ describeDb("units v2 price write - real Postgres", () => {
     await expect(seedCustomerPrice(t, "0.00")).rejects.toThrow();
   });
 
+  it("a unit edited between the client read and the save is 409 and nothing is written", async () => {
+    const t = await seed("unit-edit");
+    const g = await readGrid(t);
+    await prisma.productUnit.update({ where: { id: t.unitId }, data: { price: "70.00" } });
+    const err = await inTenant(t.tenantId, () =>
+      writes.save(
+        t.productId,
+        { ...stateOf(g), patches: [{ ref: "pack", tier: 3, to: 10.5 }] },
+        null,
+      ),
+    ).catch((e) => e);
+    expect(err.getResponse().code).toBe(API_ERROR_CODES.LADDER_REVISION_STALE);
+    const row = await prisma.product.findUniqueOrThrow({ where: { id: t.productId } });
+    expect(Number(row.priceTier3)).toBe(0);
+    expect(row.priceRevision).toBe(g.revision);
+    expect(await auditRows(t)).toHaveLength(0);
+  });
+
+  it("a unit deleted between the client read and the save is 409, never a 500", async () => {
+    const t = await seed("unit-del");
+    const g = await readGrid(t);
+    await prisma.productUnit.delete({ where: { id: t.unitId } });
+    const err = await inTenant(t.tenantId, () =>
+      writes.save(
+        t.productId,
+        { ...stateOf(g), patches: [{ ref: t.unitId, tier: 1, to: 66 }] },
+        null,
+      ),
+    ).catch((e) => e);
+    expect(err).toBeInstanceOf(ConflictException);
+    expect(err.getResponse().code).toBe(API_ERROR_CODES.LADDER_REVISION_STALE);
+    expect(await auditRows(t)).toHaveLength(0);
+  });
+
+  it("a save waits for a concurrent unit write that holds the product-units advisory lock", async () => {
+    const t = await seed("adv-lock");
+    const g = await readGrid(t);
+    let release!: () => void;
+    const held = new Promise<void>((r) => (release = r));
+    let locked!: () => void;
+    const lockTaken = new Promise<void>((r) => (locked = r));
+    // The same lock ProductUnitsService.locked takes, held while it edits the unit.
+    const unitWriter = prisma.$transaction(async (tx) => {
+      await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtext('product-units'), hashtext(${t.productId}))`;
+      locked();
+      await held;
+      await tx.productUnit.update({ where: { id: t.unitId }, data: { price: "70.00" } });
+    });
+    await lockTaken;
+    const save = inTenant(t.tenantId, () =>
+      writes.save(
+        t.productId,
+        { ...stateOf(g), patches: [{ ref: "pack", tier: 3, to: 10.5 }] },
+        null,
+      ),
+    ).catch((e) => e);
+    const early = await Promise.race([
+      save.then(() => "done"),
+      new Promise((r) => setTimeout(() => r("waiting"), 800)),
+    ]);
+    expect(early).toBe("waiting");
+    release();
+    await unitWriter;
+    const err = await save;
+    expect(err.getResponse().code).toBe(API_ERROR_CODES.LADDER_REVISION_STALE);
+    const row = await prisma.product.findUniqueOrThrow({ where: { id: t.productId } });
+    expect(Number(row.priceTier3)).toBe(0);
+  });
+
+  it("a failure AFTER a partial write rolls everything back (P2002 after product.update)", async () => {
+    const t = await seed("rollback");
+    const g = await readGrid(t);
+    const real = prisma.tenantTransaction.bind(prisma);
+    const spy = jest.spyOn(prisma, "tenantTransaction").mockImplementationOnce(((
+      fn: (tx: any) => Promise<unknown>,
+      opts?: unknown,
+    ) =>
+      real(
+        (tx: any) =>
+          fn(
+            new Proxy(tx, {
+              get(target, key) {
+                if (key === "customerUnitPrice") {
+                  return {
+                    findMany: target.customerUnitPrice.findMany.bind(target.customerUnitPrice),
+                    create: async () => {
+                      throw Object.assign(new Error("unique"), { code: "P2002" });
+                    },
+                  };
+                }
+                const v = target[key];
+                return typeof v === "function" ? v.bind(target) : v;
+              },
+            }),
+          ),
+        opts as never,
+      )) as never);
+    const err = await inTenant(t.tenantId, () =>
+      writes.save(
+        t.productId,
+        {
+          ...stateOf(g),
+          patches: [{ ref: "pack", tier: 3, to: 10.5 }],
+          customerMoves: [{ customerId: t.customerId, ref: "pack", tier: 1, from: null, to: 13 }],
+        },
+        null,
+      ),
+    ).catch((e) => e);
+    spy.mockRestore();
+    expect(err.getResponse().code).toBe(API_ERROR_CODES.LADDER_REVISION_STALE);
+    const row = await prisma.product.findUniqueOrThrow({ where: { id: t.productId } });
+    expect(Number(row.priceTier3)).toBe(0);
+    expect(row.priceRevision).toBe(g.revision);
+    expect(await auditRows(t)).toHaveLength(0);
+    expect(await prisma.customerUnitPrice.count({ where: { customerId: t.customerId } })).toBe(0);
+  });
+
+  it("an undo refused for a changed customer cell lists the conflict and writes nothing", async () => {
+    const t = await seed("undo-conflict");
+    await seedCustomerPrice(t, "12.00");
+    const g = await readGrid(t);
+    const saved = await inTenant(t.tenantId, () =>
+      writes.save(
+        t.productId,
+        {
+          ...stateOf(g),
+          patches: [{ ref: "pack", tier: 3, to: 10.5 }],
+          customerMoves: [{ customerId: t.customerId, ref: "pack", tier: 1, from: 12, to: 13 }],
+        },
+        null,
+      ),
+    );
+    await prisma.customerUnitPrice.updateMany({
+      where: { customerId: t.customerId },
+      data: { price: "15.00" },
+    });
+    const g2 = await readGrid(t);
+    const err = await inTenant(t.tenantId, () =>
+      writes.undo(t.productId, { auditId: saved.auditId, ...stateOf(g2) }, null),
+    ).catch((e) => e);
+    expect(err.getResponse().code).toBe(API_ERROR_CODES.LADDER_REVISION_STALE);
+    expect(err.getResponse().conflicts).toEqual([
+      { customerId: t.customerId, ref: "pack", tier: 1, expected: 13, current: 15 },
+    ]);
+    const row = await prisma.product.findUniqueOrThrow({ where: { id: t.productId } });
+    expect(Number(row.priceTier3)).toBe(10.5);
+    expect(await auditRows(t)).toHaveLength(1);
+
+    // SA-809 U1/U2/U3: the confirm skips the reported cell by value and restores the rest in one write.
+    const skip = [{ customerId: t.customerId, ref: "pack", seen: 15 }];
+    const bad = await inTenant(t.tenantId, () =>
+      writes.undo(
+        t.productId,
+        { auditId: saved.auditId, ...stateOf(g2), skip: [{ ...skip[0], ref: "u-nope" }] },
+        null,
+      ),
+    ).catch((e) => e);
+    expect(bad.getResponse().code).toBe(API_ERROR_CODES.PRICE_EDIT_INVALID);
+    const done = await inTenant(t.tenantId, () =>
+      writes.undo(t.productId, { auditId: saved.auditId, ...stateOf(g2), skip }, null),
+    );
+    expect(done.skipped).toEqual([{ customerId: t.customerId, ref: "pack", tier: 1, current: 15 }]);
+    const after = await prisma.product.findUniqueOrThrow({ where: { id: t.productId } });
+    expect(Number(after.priceTier3)).toBe(0);
+    const cup = await prisma.customerUnitPrice.findFirstOrThrow({
+      where: { customerId: t.customerId },
+    });
+    expect(Number(cup.price)).toBe(15);
+  });
+
+  it("a price on the implicit base row is 400 and mints no unit", async () => {
+    const t = await seed("base");
+    await prisma.productUnit.delete({ where: { id: t.unitId } });
+    const g = await readGrid(t);
+    const err = await inTenant(t.tenantId, () =>
+      writes.save(
+        t.productId,
+        { ...stateOf(g), patches: [{ ref: "base", tier: 1, to: 1.2 }] },
+        null,
+      ),
+    ).catch((e) => e);
+    expect(err.getResponse().code).toBe(API_ERROR_CODES.PRICE_EDIT_INVALID);
+    expect(await prisma.productUnit.count({ where: { productId: t.productId } })).toBe(0);
+    expect(await auditRows(t)).toHaveLength(0);
+  });
+
   it("a product of another tenant is a 404 and nothing is written", async () => {
     const a = await seed("iso-a");
     const b = await seed("iso-b");

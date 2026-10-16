@@ -407,9 +407,12 @@ export interface ProductPriceGridRowDto {
   kind: "pack" | "base" | "unit";
   code: string | null;
   cells: ProductPriceGridCellDto[];
-  /** `false` on a row a family governs: its prices are set on the family. Absent = editable. */
-  editable?: false;
-  /** Why the row is not editable (shown as a muted line). */
+  /**
+   * False when the price write would refuse this row (a variant, family or recipe product is priced elsewhere; the
+   * implicit piece row has no unit yet). The UI hides Edit there.
+   */
+  editable: boolean;
+  /** Plain words for why, set only when `editable` is false. */
   notEditableReason?: string;
 }
 export interface ProductPriceGridDto {
