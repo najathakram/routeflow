@@ -30,6 +30,8 @@ const ROUTED: Record<string, string[]> = {
 const EXEMPT: Record<string, string> = {
   "inventory/testing/count-db-harness.ts":
     "Test-only seeding helper of the SA-767 count DB specs (inventory/testing, collected only by *.db.spec.ts): it createMany's throwaway Product rows (name, pricePerUnit, a variable data array) into `qa-sa767-*` tenants, never a governed variant or recipe row and never a live tenant.",
+  "inventory/testing/order-stock-world.ts":
+    "Test-only seeding helper of the order-stock DB specs (inventory/testing, collected only by *.db.spec.ts): it creates throwaway STANDALONE Product rows with a literal pricePerUnit in a unique-slug test tenant, never a governed variant or recipe row and never a live tenant.",
   "products/product-families.service.ts":
     "WS8 families: createFamily mints brand-new rows and, by plan, ignores the mixed_packs mode (the variant price is the " +
     "caller's unless copyFamilyPrice is set); updateVariants refuses a price EDIT 409 FAMILY_PRICE_AUTHORITY while mixed_packs is on, " +
