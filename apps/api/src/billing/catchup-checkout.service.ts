@@ -135,6 +135,16 @@ export function catchupReportJson(r: CatchupReport) {
   };
 }
 
+/**
+ * Defence in depth for the Checkout return paths: a same-origin PATH only ("/x"), never "//host", "/\host" or
+ * "@host" (which would turn `${base}${path}` into another origin). Callers pass constants today.
+ */
+function safePath(path: string | undefined, fallback: string): string {
+  if (path === undefined) return fallback;
+  if (!/^\/(?![/\\])/.test(path)) throw new Error(`unsafe Checkout return path: ${path}`);
+  return path;
+}
+
 @Injectable()
 export class CatchupCheckoutService {
   private readonly logger = new Logger(CatchupCheckoutService.name);
@@ -345,6 +355,9 @@ export class CatchupCheckoutService {
     opts: { expectedStubCents: number; now?: Date; successPath?: string; cancelPath?: string },
   ): Promise<{ checkoutUrl: string; sessionId: string; stubCents: number; shape: string }> {
     const now = opts.now ?? new Date();
+    // validated before anything is claimed or created
+    const successPath = safePath(opts.successPath, "/settings/billing?checkout=success");
+    const cancelPath = safePath(opts.cancelPath, "/settings/billing?checkout=cancelled");
     if (!this.stripe.isConfigured) {
       throw new ServiceUnavailableException("Stripe is not configured.");
     }
@@ -410,8 +423,8 @@ export class CatchupCheckoutService {
         plan: fresh.plan,
         now,
         // PATHS ("/settings/billing?..."), joined to the one FRONTEND_URL base here
-        successUrl: `${base}${opts.successPath ?? "/settings/billing?checkout=success"}`,
-        cancelUrl: `${base}${opts.cancelPath ?? "/settings/billing?checkout=cancelled"}`,
+        successUrl: `${base}${successPath}`,
+        cancelUrl: `${base}${cancelPath}`,
       });
       session = await this.stripe.client.checkout.sessions.create(withCheckoutPolicy(params), {
         idempotencyKey: `${tenantId}:catchup-session:${plan.paidThrough.getTime()}:${now.getTime()}`,

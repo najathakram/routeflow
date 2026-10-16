@@ -360,6 +360,20 @@ describe("MF2 -> SA-733r9: paid coverage is one walk over every paid source (act
       expect(params.cancel_url).toBe("https://app.test/settings/billing?checkout=cancelled");
     });
 
+    it.each(["//evil.example", "/\\evil.example", "@evil.com", "https://evil.example", "settings"])(
+      "a return path that is not a same-origin path (%s) is refused before anything is claimed or created",
+      async (bad) => {
+        const h = make({ invoices: [OCT_OPEN], sub: sub() });
+        await expect(
+          h.svc.open("t1", { now: NOW, expectedStubCents: 31000, successPath: bad }),
+        ).rejects.toThrow(/unsafe Checkout return path/);
+        await expect(
+          h.svc.open("t1", { now: NOW, expectedStubCents: 31000, cancelPath: bad }),
+        ).rejects.toThrow(/unsafe Checkout return path/);
+        expect(h.stripe.client.checkout.sessions.create).not.toHaveBeenCalled();
+      },
+    );
+
     it("with no paths the defaults are unchanged (the super-admin route)", async () => {
       process.env.FRONTEND_URL = "https://app.test";
       const h = make({ invoices: [OCT_OPEN], sub: sub() });

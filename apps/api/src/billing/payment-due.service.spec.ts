@@ -355,6 +355,49 @@ describe("PaymentDueService.pay", () => {
       await unknownState(make({ ...held, session: staleOpen, expired: new Error("ECONNRESET") }));
     });
 
+    // Stripe REJECTS expire() on a session that is no longer open (paid in the gap): re-read once and decide.
+    describe("expire() REJECTED: the session is re-read once", () => {
+      const rejected = () => new Error("This Checkout Session is not in an open state.");
+      const twoReads = (second: unknown) => {
+        const h = make({ ...held, session: staleOpen, expired: rejected() });
+        h.stripe.getCheckoutSession
+          .mockReset()
+          .mockResolvedValueOnce(staleOpen)
+          .mockImplementationOnce(async () => {
+            if (second instanceof Error) throw second;
+            return second;
+          });
+        return h;
+      };
+
+      it("re-read says COMPLETE (paid in the gap): the claim's AWAITING_FIRST_PAYMENT 409, no release, no session", async () => {
+        const h = twoReads({ ...staleOpen, status: "complete" });
+        await expect(h.svc.pay("t1", NOW)).rejects.toMatchObject({
+          response: { code: API_ERROR_CODES.CATCHUP_PENDING },
+        });
+        expect(h.stripe.getCheckoutSession).toHaveBeenCalledTimes(2);
+        expect(h.claim.onSessionExpired).not.toHaveBeenCalled();
+        expect(h.catchup.open).not.toHaveBeenCalled();
+      });
+
+      it("re-read says EXPIRED: released with the re-read session, then exactly ONE fresh session", async () => {
+        const expired = { id: "cs_old", status: "expired", url: null, metadata: META };
+        const h = twoReads(expired);
+        const out = await h.svc.pay("t1", NOW);
+        expect(out).toEqual({ checkoutUrl: "https://checkout.stripe.test/new" });
+        expect(h.claim.onSessionExpired).toHaveBeenCalledWith(expired);
+        expect(h.catchup.open).toHaveBeenCalledTimes(1);
+      });
+
+      it("re-read still OPEN: a 503, nothing released, nothing created", async () => {
+        await unknownState(twoReads(staleOpen));
+      });
+
+      it("the re-read itself fails: a 503, nothing released, nothing created", async () => {
+        await unknownState(twoReads(new Error("ETIMEDOUT")));
+      });
+    });
+
     it("an unusable expire reply (null) is a 503: nothing released, nothing created", async () => {
       await unknownState(make({ ...held, session: staleOpen, expired: null }));
     });
