@@ -852,7 +852,18 @@ export class BuyerController {
     const created = await this.ordersService.create(
       (idempotencyKey ? { ...createDto, idempotencyKey } : createDto) as any, // B1094: replays by key
       makePseudoUser(ctx),
+      // B1239: forceNew is the buyer's explicit "create new order instead" — the new order is kept
+      // apart exactly like a staff "separate" choice (skipAutoMerge), so the sweep below and the hourly
+      // one never fold it back into the pending order they chose to leave alone.
+      ...(dto.forceNew ? [{ skipAutoMerge: true }] : []),
     );
+    if (dto.forceNew) {
+      // B1239: no consolidation. It is what folded this order into the pending one (deleting it and burning
+      // its number), and it stranded the Idempotency-Key on the survivor, so a duplicate submit then 409ed or
+      // re-applied the cart. A kept-apart order has nothing to consolidate; the key stays on it, so a
+      // duplicate submit replays THIS order (create()'s key replay).
+      return toCustomerOrder(created);
+    }
     // Newly-created order may share a customer with pre-existing PENDINGs —
     // consolidate them so the customer ends up with a single PENDING (buyer-driven,
     // so the merged quantity earns its own BUY_N_GET_M free units).
