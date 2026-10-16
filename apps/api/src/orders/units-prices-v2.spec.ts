@@ -1,97 +1,124 @@
 /**
- * Units S19 (SA-796 / SA-799, flag.units_prices_v2): billing reads the customer's TYPED unit prices
- * (CustomerUnitPrice) and the one tier resolver. Precedence, flag on: typed > sticky history > tier > list.
- * Flag off, or no typed row: master's code path, untouched. Pure seams only; the wiring is pinned in
- * orders.units-prices-v2.spec.ts and the invoice specs.
+ * Units S19 (SA-796 / SA-799 / SA-811 / SA-811a, flag.units_prices_v2): billing prices through ONE resolver, the customer
+ * layer of the ladder (customerLayerPrice over resolveCustomerUnitPrice): a typed price, or one worked out from the typed
+ * price on the customer's order unit. Precedence flag on: customer layer > sticky above-list > tier > list; above the unit's
+ * Retail ladder price the layer is priced like the sticky upsell (MANUAL, no promo). Flag off, or the unit not in the layer:
+ * master's code path, untouched. Pure seams only; the wiring is pinned in orders.units-prices-v2.spec.ts and the others.
  */
 import { PriceType } from "@prisma/client";
 import { resolveBuyerLinePrice } from "./buyer-merge-pricing";
 import { decideTierOverride } from "./staff-override";
 import { buildUnitLine } from "./unit-line-build";
-import { loadUnitsPricesV2, typedPriceFor, UNITS_PRICES_V2_FLAG } from "./units-prices-v2";
+import {
+  customerPricing,
+  loadUnitsPricesV2,
+  omitCustomerLayerHistory,
+  UNITS_PRICES_V2_FLAG,
+} from "./units-prices-v2";
 
+// Fixture (SA-811a): pack list $42 (a 24-piece Box), Case of 288 at $480, Piece (1) at $1.75.
 const product = {
   id: "p1",
   name: "Widget",
   category: null,
   unit: "Box",
-  unitsPerBox: 12,
-  pricePerUnit: 120,
-  priceTier2: 100,
+  unitsPerBox: 24,
+  pricePerUnit: 42,
+  priceTier2: 40,
   priceTier3: null,
   priceTier4: null,
   priceTier5: null,
+  orderUnitRef: "pack",
+  packAuto: 0,
   trackedCategoryId: null,
   trackedSubcategoryId: null,
 };
+const noTiers = { priceTier2: null, priceTier3: null, priceTier4: null, priceTier5: null };
 const piece = {
   id: "u-piece",
+  productId: "p1",
   label: "Piece",
   factorToBase: 1,
-  price: "11.00",
-  priceTier2: null,
-  priceTier3: null,
-  priceTier4: null,
-  priceTier5: null,
+  price: "1.75",
+  ...noTiers,
 };
-const case24 = { ...piece, id: "u-case", label: "Case", factorToBase: 24, price: "200.00" };
+const case288 = {
+  id: "u-case",
+  productId: "p1",
+  label: "Case",
+  factorToBase: 288,
+  price: "480.00",
+  ...noTiers,
+};
+
+type Rows = Array<[string, number]>;
+const deps = (opts: { rows?: Rows; flag?: boolean | Error; units?: unknown[] }) => {
+  const hasFlag = jest.fn(async () => {
+    if (opts.flag instanceof Error) throw opts.flag;
+    return opts.flag ?? true;
+  });
+  const db = {
+    customerUnitPrice: {
+      findMany: jest.fn().mockResolvedValue(
+        (opts.rows ?? []).map(([unitRef, price]) => ({
+          productId: "p1",
+          unitRef,
+          price: String(price),
+        })),
+      ),
+    },
+    productUnit: { findMany: jest.fn().mockResolvedValue(opts.units ?? [piece, case288]) },
+    productTierUnit: { findMany: jest.fn().mockResolvedValue([]) },
+  };
+  return { hasFlag, db, d: { entitlements: { hasFlag }, db, tenantId: "t1" } as never };
+};
+const svcOf = (h: ReturnType<typeof deps>) =>
+  ({
+    prisma: {
+      forTenant: () => ({
+        ...h.db,
+        customerPrice: { findMany: jest.fn().mockResolvedValue([]) },
+      }),
+      getTenantId: () => "t1",
+    },
+    entitlements: { hasFlag: h.hasFlag },
+  }) as never;
 
 describe("loadUnitsPricesV2", () => {
-  const rows = [
-    { productId: "p1", unitRef: "pack", price: "99.50" },
-    { productId: "p1", unitRef: "base", price: "9.25" },
-  ];
-  const deps = (hasFlag: unknown, findMany: unknown) =>
-    ({
-      entitlements: { hasFlag },
-      db: { customerUnitPrice: { findMany } },
-      tenantId: "t1",
-    }) as never;
-
-  it("flag on + typed rows: reads them by (customer, products) and keys them by level ref", async () => {
-    const hasFlag = jest.fn().mockResolvedValue(true);
-    const findMany = jest.fn().mockResolvedValue(rows);
-    const v2 = await loadUnitsPricesV2(deps(hasFlag, findMany), "c1", ["p1", "p1", null]);
-    expect(hasFlag).toHaveBeenCalledWith("t1", UNITS_PRICES_V2_FLAG);
-    expect(findMany.mock.calls[0][0].where).toEqual({
+  it("flag on + typed rows: reads them by (customer, products), the ladder of those products, and asks the flag", async () => {
+    const h = deps({ rows: [["pack", 33]] });
+    const v2 = await loadUnitsPricesV2(h.d, "c1", ["p1", "p1", null]);
+    expect(h.hasFlag).toHaveBeenCalledWith("t1", UNITS_PRICES_V2_FLAG);
+    expect(h.db.customerUnitPrice.findMany.mock.calls[0][0].where).toEqual({
       tenantId: "t1",
       customerId: "c1",
       productId: { in: ["p1"] },
     });
-    expect(v2?.typedFor("p1")).toEqual({ pack: 99.5, base: 9.25 });
-    expect(v2?.typedFor("other")).toBeUndefined();
+    expect(v2).not.toBeNull();
+    expect(h.db.productUnit.findMany).toHaveBeenCalledTimes(1);
   });
 
   it("flag off: null, even with typed rows (a revoked tenant bills as master)", async () => {
-    const v2 = await loadUnitsPricesV2(
-      deps(jest.fn().mockResolvedValue(false), jest.fn().mockResolvedValue(rows)),
-      "c1",
-      ["p1"],
-    );
-    expect(v2).toBeNull();
+    expect(
+      await loadUnitsPricesV2(deps({ rows: [["pack", 33]], flag: false }).d, "c1", ["p1"]),
+    ).toBeNull();
+  });
+
+  it("item 3: a failed entitlement read prices as master (null), it never fails the order", async () => {
+    const h = deps({ rows: [["pack", 33]], flag: new Error("entitlements down") });
+    await expect(loadUnitsPricesV2(h.d, "c1", ["p1"])).resolves.toBeNull();
   });
 
   it("no typed row and ordinary tiers: the flag is never consulted (nothing could differ)", async () => {
-    const hasFlag = jest.fn().mockResolvedValue(true);
-    const v2 = await loadUnitsPricesV2(
-      deps(hasFlag, jest.fn().mockResolvedValue([])),
-      "c1",
-      ["p1"],
-      [1, null, 3],
-    );
-    expect(v2).toBeNull();
-    expect(hasFlag).not.toHaveBeenCalled();
+    const h = deps({});
+    expect(await loadUnitsPricesV2(h.d, "c1", ["p1"], [1, null, 3])).toBeNull();
+    expect(h.hasFlag).not.toHaveBeenCalled();
   });
 
   it("a junk tier is the one named difference (PF-14): the flag is asked, and customerTierFor decides", async () => {
-    const hasFlag = jest.fn().mockResolvedValue(true);
-    const v2 = await loadUnitsPricesV2(
-      deps(hasFlag, jest.fn().mockResolvedValue([])),
-      "c1",
-      ["p1"],
-      [9, 2],
-    );
-    expect(hasFlag).toHaveBeenCalledTimes(1);
+    const h = deps({});
+    const v2 = await loadUnitsPricesV2(h.d, "c1", ["p1"], [9, 2]);
+    expect(h.hasFlag).toHaveBeenCalledTimes(1);
     expect(v2?.tierOf(9, 2)).toBe(2);
     expect(v2?.tierOf(null, undefined)).toBe(1);
   });
@@ -100,89 +127,176 @@ describe("loadUnitsPricesV2", () => {
     const hasFlag = jest.fn().mockResolvedValue(true);
     expect(
       await loadUnitsPricesV2(
-        { entitlements: { hasFlag }, db: {}, tenantId: "t1" } as never,
+        { entitlements: { hasFlag }, db: {}, tenantId: "t1" },
         "c1",
         ["p1"],
         [7],
       ),
     ).not.toBeNull();
-    expect(await loadUnitsPricesV2(deps(hasFlag, jest.fn()), null, ["p1"])).toBeNull();
+    expect(await loadUnitsPricesV2(deps({}).d, null, ["p1"])).toBeNull();
     expect(
-      await loadUnitsPricesV2(
-        { ...(deps(hasFlag, jest.fn()) as object), tenantId: null } as never,
-        "c1",
-        ["p1"],
-      ),
+      await loadUnitsPricesV2({ entitlements: { hasFlag }, db: {}, tenantId: null }, "c1", ["p1"]),
     ).toBeNull();
   });
 });
 
-describe("typedPriceFor: the level ref of the line's unit (SA-809)", () => {
-  const typed = { pack: 99.5, base: 9.25, "u-case": 190 };
-  it("no unit label = the pack", () => {
-    expect(typedPriceFor(typed, product, [piece, case24], null)).toBe(99.5);
+describe("customerPricing.layer: ONE resolver (SA-811a R1)", () => {
+  const layerOf = async (
+    rows: Rows,
+    label: string | null,
+    extra: { orderUnitRef?: string; tier?: number } = {},
+  ) => {
+    const h = deps({ rows });
+    const pc = await customerPricing(
+      svcOf(h),
+      "c1",
+      ["p1"],
+      { pricingTier: extra.tier ?? 1 },
+      [{ productId: "p1", pricingTier: null, orderUnitRef: extra.orderUnitRef }],
+      h.db,
+    );
+    return pc.layer(product, label);
+  };
+
+  it("R1a: typed pack $33 puts the Case in the customer's shape: 480 x 33/42 = $377.14 (customer-shape)", async () => {
+    expect(await layerOf([["pack", 33]], "Case")).toMatchObject({
+      price: 377.14,
+      source: "customer-shape",
+      listPrice: 480,
+    });
   });
-  it("the 1-piece row's ref is the level ref base, never its ProductUnit id", () => {
-    expect(typedPriceFor(typed, product, [piece, case24], "Piece")).toBe(9.25);
-    expect(typedPriceFor({ "u-piece": 1 }, product, [piece, case24], "Piece")).toBeNull();
+  it("R1b: typed Case $450 on the customer's order unit gives the pack 42 x 450/480 = $39.38", async () => {
+    expect(await layerOf([["u-case", 450]], null, { orderUnitRef: "u-case" })).toMatchObject({
+      price: 39.38,
+      source: "customer-shape",
+    });
   });
-  it("SA-809: a customer with BOTH a base row and a legacy factor-1 id row bills the exact base row, never a sum or the id row", () => {
-    const both = { base: 9.25, "u-piece": 7.5 };
-    expect(typedPriceFor(both, product, [piece, case24], "Piece")).toBe(9.25);
-    // and with only the legacy id row there is no base price (the write path canonicalizes ids to base)
-    expect(typedPriceFor({ "u-piece": 7.5 }, product, [piece, case24], "Piece")).toBeNull();
+  it("typed pack: the pack itself is the typed price (customer)", async () => {
+    expect(await layerOf([["pack", 33]], null)).toMatchObject({
+      price: 33,
+      source: "customer",
+      listPrice: 42,
+    });
   });
-  it("another unit is its own ProductUnit id", () => {
-    expect(typedPriceFor(typed, product, [piece, case24], "Case")).toBe(190);
+  it("the 1-piece row's typed price is the level ref base, never its ProductUnit id (SA-809: the exact base row wins)", async () => {
+    expect(
+      await layerOf(
+        [
+          ["base", 1.5],
+          ["u-piece", 1.2],
+        ],
+        "Piece",
+      ),
+    ).toMatchObject({ price: 1.5, source: "customer" });
+    // only the legacy id row: no base price; the pack has no typed price either, so not in the layer
+    expect(await layerOf([["u-piece", 1.2]], "Piece")).toBeNull();
   });
-  it("no typed map, no row for that unit, or a unit the product lacks: null", () => {
-    expect(typedPriceFor(undefined, product, [piece], null)).toBeNull();
-    expect(typedPriceFor({ pack: 5 }, product, [piece, case24], "Case")).toBeNull();
-    expect(typedPriceFor(typed, product, [piece], "Pallet")).toBeNull();
+  it("S19-b: a typed Case price only leaves the PACK out of the layer (sticky still runs), the Case is in it", async () => {
+    expect(await layerOf([["u-case", 450]], null)).toBeNull();
+    expect(await layerOf([["u-case", 450]], "Case")).toMatchObject({
+      price: 450,
+      source: "customer",
+    });
+  });
+  it("flag off: never a layer", async () => {
+    const h = deps({ rows: [["pack", 33]], flag: false });
+    const pc = await customerPricing(svcOf(h), "c1", ["p1"], { pricingTier: 1 }, [], h.db);
+    expect(pc.layer(product, null)).toBeNull();
+    expect(pc.layered).toBe(false);
   });
 });
 
-describe("resolveBuyerLinePrice: typed pack price (precedence typed > history > tier > list)", () => {
-  const args = (tier: number, remembered: number | null, typed?: number | null) =>
-    resolveBuyerLinePrice(product, tier, [], 12, 1, remembered, undefined, typed);
+describe("resolveBuyerLinePrice: the pack's customer layer (layer > sticky > tier > list; R2 above-list is MANUAL)", () => {
+  const layer = (price: number, listPrice = 42) => ({
+    unit: "pack",
+    price,
+    listPrice,
+    source: "customer" as const,
+    aboveList: price > listPrice,
+  });
+  const percent10 = {
+    id: "pr",
+    type: "PERCENT" as const,
+    value: 10,
+    minQty: null,
+    scope: "ALL" as const,
+    category: null,
+    productIds: [],
+  };
+  const args = (
+    tier: number,
+    remembered: number | null,
+    l?: ReturnType<typeof layer> | null,
+    promos: any[] = [],
+  ) => resolveBuyerLinePrice(product, tier, promos, 24, 1, remembered, undefined, l);
 
-  it("flag off / no typed price: byte-identical to master (tier, sticky upsell)", () => {
-    expect(args(2, null)).toMatchObject({ unitPrice: 100, priceType: PriceType.SPECIAL });
-    expect(args(1, 150)).toMatchObject({ unitPrice: 150, priceType: PriceType.MANUAL });
+  it("flag off / no layer: byte-identical to master (tier, sticky upsell)", () => {
+    expect(args(2, null)).toMatchObject({ unitPrice: 40, priceType: PriceType.SPECIAL });
+    expect(args(1, 50)).toMatchObject({ unitPrice: 50, priceType: PriceType.MANUAL });
     expect(args(1, null, null)).toEqual(args(1, null));
   });
-  it("a typed price beats the tier price and is the customer's SPECIAL price against list", () => {
-    expect(args(2, null, 90)).toMatchObject({
-      unitPrice: 90,
-      originalPrice: 120,
+  it("S19-a: typed $33 beats a remembered above-list $50: $33 SPECIAL; flag off it is the $50 MANUAL (guard)", () => {
+    expect(args(1, 50, layer(33))).toMatchObject({
+      unitPrice: 33,
+      originalPrice: 42,
       priceType: PriceType.SPECIAL,
     });
+    expect(args(1, 50)).toMatchObject({ unitPrice: 50, priceType: PriceType.MANUAL });
   });
-  it("a typed price beats sticky history, above-list history included", () => {
-    expect(args(1, 150, 90)).toMatchObject({ unitPrice: 90, priceType: PriceType.SPECIAL });
+  it("S19-c: a 10% promo on a typed $33: $29.70 PROMO with $33 struck through; the layer price is never edited", () => {
+    const l = layer(33);
+    expect(args(1, null, l, [percent10])).toMatchObject({
+      unitPrice: 29.7,
+      originalPrice: 33,
+      priceType: PriceType.PROMO,
+    });
+    expect(l.price).toBe(33);
   });
-  it("a typed price equal to list at tier 1 is a plain STANDARD line", () => {
-    expect(args(1, null, 120)).toMatchObject({
-      unitPrice: 120,
+  it("R2a: a layer price above the unit's Retail ladder price ($45 over $42) is MANUAL with no promo, original = list", () => {
+    expect(args(1, null, layer(45), [percent10])).toMatchObject({
+      unitPrice: 45,
+      originalPrice: 42,
+      priceType: PriceType.MANUAL,
+      freeUnits: 0,
+    });
+  });
+  it("at list on tier 1 a layer price is a plain STANDARD line (promo-eligible)", () => {
+    expect(args(1, null, layer(42))).toMatchObject({
+      unitPrice: 42,
       originalPrice: null,
       priceType: PriceType.STANDARD,
     });
   });
 });
 
-describe("decideTierOverride: a typed price is the baseline a staff-typed price is judged against", () => {
-  it("master: judged against the tier price (unchanged without a typed price)", () => {
-    expect(decideTierOverride(product, 2, 100, null)).toMatchObject({ overridden: false });
-    expect(() => decideTierOverride(product, 2, 95, null)).toThrow(/reason is required/);
+describe("decideTierOverride: the layer price is the baseline a staff-typed price is judged against", () => {
+  const layer = {
+    unit: "pack",
+    price: 33,
+    listPrice: 42,
+    source: "customer" as const,
+    aboveList: false,
+  };
+  it("master: judged against the tier price (unchanged without a layer)", () => {
+    expect(decideTierOverride(product, 2, 40, null)).toMatchObject({ overridden: false });
+    expect(() => decideTierOverride(product, 2, 38, null)).toThrow(/reason is required/);
   });
-  it("typed 90: 90 is no override; 85 on a special price needs a reason", () => {
-    expect(decideTierOverride(product, 1, 90, null, 90)).toMatchObject({ overridden: false });
-    expect(() => decideTierOverride(product, 1, 85, null, 90)).toThrow(/reason is required/);
-    expect(decideTierOverride(product, 1, 85, "promo", 90)).toMatchObject({ overridden: true });
+  it("layer 33: 33 is no override; 30 on a special price needs a reason", () => {
+    expect(decideTierOverride(product, 1, 33, null, layer)).toMatchObject({
+      overridden: false,
+      priceType: "SPECIAL",
+    });
+    expect(() => decideTierOverride(product, 1, 30, null, layer)).toThrow(/reason is required/);
+    expect(decideTierOverride(product, 1, 30, "volume", layer)).toMatchObject({ overridden: true });
+  });
+  it("R2: an above-list layer echoed back is MANUAL but not a staff override", () => {
+    expect(
+      decideTierOverride(product, 1, 45, null, { ...layer, price: 45, aboveList: true }),
+    ).toMatchObject({ priceType: "MANUAL", originalPrice: 42, overridden: false });
   });
 });
 
-describe("buildUnitLine: a typed price for the line's unit wins over the tier price", () => {
+describe("buildUnitLine: a unit in the customer layer wins over the ladder's tier price", () => {
   const taxFor = () => ({
     amount: 0,
     snapshot: { categoryTaxType: null, categoryTaxRate: null, categoryPriceIncludesTax: null },
@@ -190,33 +304,72 @@ describe("buildUnitLine: a typed price for the line's unit wins over the tier pr
   const build = (label: string, extra: Record<string, unknown> = {}) =>
     buildUnitLine({
       product,
-      units: [piece, case24],
-      resolved: { unitLabel: label, unitsPerBox: label === "Piece" ? 1 : 24 },
+      units: [piece, case288],
+      resolved: { unitLabel: label, unitsPerBox: label === "Piece" ? 1 : 288 },
       item: { productId: "p1", qty: 2, unitLabel: label },
-      tier: 2,
+      tier: 1,
       taxFor,
       position: 0,
       tenantId: "t1",
+      overriddenBy: "staff-1",
       ...extra,
     } as never);
-
-  it("flag off: the ladder price at the tier (identical to master)", () => {
-    expect(build("Case")).toMatchObject({ unitPrice: 166.67, priceType: PriceType.SPECIAL });
-    expect(build("Case", { customerUnitPrices: undefined })).toEqual(build("Case"));
+  const layer = (price: number, listPrice: number) => ({
+    unit: "u-case",
+    price,
+    listPrice,
+    source: "customer-shape" as const,
+    aboveList: price > listPrice,
   });
-  it("typed Piece (base) and typed Case (ProductUnit id) each price their own unit", () => {
-    const typed = { base: 9.25, "u-case": 190 };
-    expect(build("Piece", { customerUnitPrices: typed })).toMatchObject({
-      unitPrice: 9.25,
-      subtotal: 18.5,
+
+  it("flag off: the ladder price (identical to master)", () => {
+    expect(build("Case")).toMatchObject({ unitPrice: 480, priceType: PriceType.STANDARD });
+    expect(build("Case", { customerLayer: null })).toEqual(build("Case"));
+  });
+  it("R1a: a Case in the customer's shape bills $377.14 SPECIAL against the $480 list", () => {
+    expect(build("Case", { customerLayer: layer(377.14, 480) })).toMatchObject({
+      unitPrice: 377.14,
+      originalPrice: 480,
       priceType: PriceType.SPECIAL,
     });
-    expect(build("Case", { customerUnitPrices: typed })).toMatchObject({
-      unitPrice: 190,
-      subtotal: 380,
-    });
   });
-  it("a typed price for another unit does not touch this one", () => {
-    expect(build("Case", { customerUnitPrices: { base: 9.25 } })).toMatchObject({ unitPrice: 166.67 });
+  it("R2: above the unit's list the line is MANUAL with original = list and NO staff attribution", () => {
+    const line = build("Case", { customerLayer: layer(500, 480) });
+    expect(line).toMatchObject({ unitPrice: 500, originalPrice: 480, priceType: PriceType.MANUAL });
+    expect(line.overriddenBy).toBeUndefined();
+  });
+});
+
+describe("R3 / R3a: the pre-fill is the resolver's price, never last-given", () => {
+  const history = {
+    p1: { lastPrice: 36, listPriceAtTime: 42 },
+    p2: { lastPrice: 9, listPriceAtTime: 10 },
+  };
+  const run = async (rows: Rows, flag = true) => {
+    const h = deps({ rows, flag });
+    const svc = {
+      prisma: {
+        forTenant: () => ({
+          ...h.db,
+          customer: { findFirst: jest.fn().mockResolvedValue({ pricingTier: 1 }) },
+          customerPrice: { findMany: jest.fn().mockResolvedValue([]) },
+          product: { findMany: jest.fn().mockResolvedValue([product, { ...product, id: "p2" }]) },
+        }),
+        getTenantId: () => "t1",
+      },
+      entitlements: { hasFlag: h.hasFlag },
+    } as never;
+    return omitCustomerLayerHistory(svc, "c1", history);
+  };
+
+  it("R3a: typed pack $33 with last-given $36: the last-given entry is dropped (pre-fill = the resolver's $33)", async () => {
+    expect(await run([["pack", 33]])).toEqual({ p2: history.p2 });
+  });
+  it("S19-b: a typed Case price only leaves the pack's last-given in place", async () => {
+    expect(await run([["u-case", 450]])).toEqual(history);
+  });
+  it("flag off, or no typed price: the history as it is", async () => {
+    expect(await run([["pack", 33]], false)).toEqual(history);
+    expect(await run([])).toEqual(history);
   });
 });

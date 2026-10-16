@@ -14,8 +14,8 @@ export function assertBuyerCartPricesCurrent(args: {
   cpMap: ReadonlyMap<string, number | null>;
   defaultTier: number;
   priceHistory: Record<string, { lastPrice?: number | null } | undefined>;
-  /** S19, flag.units_prices_v2 only: the customer's typed pack price; it is their current price, above sticky history. */
-  typedPack?: (productId: string) => number | null;
+  /** S19, flag.units_prices_v2 only: the pack's customer-layer price; it is their current price, above sticky history. */
+  layerOf?: (productId: string) => { price: number } | null;
 }): void {
   const { role, items, productMap, cpMap, defaultTier, priceHistory } = args;
   // RF-198: price-race check — buyer cart may have been built with a stale price.
@@ -36,7 +36,7 @@ export function assertBuyerCartPricesCurrent(args: {
       // Compare against the customer's EFFECTIVE price (tier or sticky upsell) so
       // a legitimately-upsold cart doesn't 409 at checkout.
       const currentPrice =
-        args.typedPack?.(item.productId) ??
+        args.layerOf?.(item.productId)?.price ??
         effectiveBuyerPrice(
           Number(getTierPrice(product, tierForProduct)),
           Number(product.pricePerUnit),

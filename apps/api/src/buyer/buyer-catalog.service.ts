@@ -255,7 +255,7 @@ export class BuyerCatalogService {
       result.data.map(async (p: any) => {
         const effectiveTier = cpMap.get(p.id) ?? defaultTier;
         const buyerPrice =
-          pc.typedPack(p.id) ??
+          pc.layer(p)?.price ??
           effectiveBuyerPrice(
             getTierPrice(p, effectiveTier),
             Number(p.pricePerUnit),
@@ -452,7 +452,7 @@ export class BuyerCatalogService {
     const effectiveTier = cpMap.get(product.id) ?? defaultTier;
     const priceHist = await this.getRememberedPrices(customerId);
     const buyerPrice =
-      pc.typedPack(product.id) ??
+      pc.layer(product)?.price ??
       effectiveBuyerPrice(
         getTierPrice(product, effectiveTier),
         Number(product.pricePerUnit),
@@ -489,7 +489,7 @@ export class BuyerCatalogService {
         name: v.variantName,
         sku: v.sku,
         buyerPrice:
-          pc.typedPack(v.id) ??
+          pc.layer(v)?.price ??
           effectiveBuyerPrice(
             getTierPrice(v, cpMap.get(v.id) ?? defaultTier),
             Number(v.pricePerUnit),
@@ -603,7 +603,7 @@ export class BuyerCatalogService {
         unit: f.product.unit,
         category: displayCategory(f.product, f.product.parent),
         buyerPrice:
-          pc.typedPack(f.productId) ??
+          pc.layer(f.product)?.price ??
           effectiveBuyerPrice(
             getTierPrice(f.product, effectiveTier),
             Number(f.product.pricePerUnit),

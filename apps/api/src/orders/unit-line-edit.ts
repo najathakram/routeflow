@@ -2,6 +2,7 @@ import { ConflictException, ForbiddenException } from "@nestjs/common";
 import {
   PIECE_LABEL,
   baseLabelOf,
+  type CustomerLayerPrice,
   type LadderUnit,
   type TrackedCategoryRow,
 } from "@routeflow/pricing";
@@ -22,7 +23,7 @@ import {
 } from "../products/line-units";
 import { raisedBy, type LineAuthorLookup } from "./line-author-channel";
 import { norm } from "./unit-label-norm";
-import { customerPricing, type CustomerPricing, type TypedUnitPrices } from "./units-prices-v2";
+import { customerPricing, type CustomerPricing } from "./units-prices-v2";
 import { liveLines } from "./order-edit-cancelled";
 import { writeLineUpdate } from "./order-line-removal";
 import type { UpdateOrderItemsDto } from "./dto/update-order-items.dto";
@@ -268,8 +269,8 @@ export interface UnitWriteContext {
   ladders: Map<string, LadderUnit[]>;
   tenantId: string | null | undefined;
   tier: (productId: string) => number;
-  /** S19, flag.units_prices_v2 only: the customer's typed unit prices per product (undefined = master's tier price). */
-  typedFor?: (productId: string) => TypedUnitPrices | undefined;
+  /** S19, flag.units_prices_v2 only: a product's unit in the customer layer (null = master's tier price). */
+  layerOf?: (product: any, label: string) => CustomerLayerPrice | null;
   /** H3: the acting staff user, stamped on a unit line whose typed price overrides the customer's price. */
   overriddenBy?: string | null;
   /** H3: the order's lines as held under the edit's row lock, by id: the stored side of a re-sent price. */
@@ -342,7 +343,7 @@ export async function createUnitLine(
     resolved,
     item: { ...item, productId: product.id },
     tier: ctx.tier(product.id),
-    customerUnitPrices: ctx.typedFor?.(product.id),
+    customerLayer: ctx.layerOf?.(product, resolved.unitLabel as string),
     taxFor: (qty, sub) => categoryTaxForLine(category, qty, sub),
     position,
     tenantId: ctx.tenantId,
@@ -414,7 +415,7 @@ export async function updateUnitLine(
     resolved,
     item: { ...item, productId: product.id },
     tier: ctx.tier(product.id),
-    customerUnitPrices: ctx.typedFor?.(product.id),
+    customerLayer: ctx.layerOf?.(product, resolved.unitLabel as string),
     taxFor: (qty, sub) => categoryTaxForLine(category, qty, sub),
     position: 0,
     tenantId: ctx.tenantId,

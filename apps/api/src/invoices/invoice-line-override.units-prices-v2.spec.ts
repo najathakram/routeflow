@@ -32,6 +32,7 @@ function harness(opts: { flag: boolean; typed: Array<[string, number]>; tier?: n
   const db = {
     customer: { findFirst: jest.fn().mockResolvedValue({ pricingTier: opts.tier ?? 1 }) },
     customerPrice: { findMany: jest.fn().mockResolvedValue([]) },
+    productUnit: { findMany: jest.fn().mockResolvedValue([caseRow]) },
     customerUnitPrice: {
       findMany: jest
         .fn()
@@ -112,5 +113,19 @@ describe("loadOverride + priceInvoiceLine: the typed price is the baseline", () 
     expect(
       priceInvoiceLine({ ctx, item: { unitPrice: 40 }, product, unitLabel: null }).unitPrice,
     ).toBe(40);
+  });
+});
+
+describe("SA-811a on manual invoice lines (R1a / R2)", () => {
+  it("R1a: typed pack $33: a Case line typed at the customer-shape $377.14 is no override (480 x 33/42)", async () => {
+    const ctx = (await harness({ flag: true, typed: [["pack", 33]] }).load())!;
+    const r = priceInvoiceLine({ ctx, item: { unitPrice: 377.14 }, product, unitLabel: "Case" });
+    expect(r.unitPrice).toBe(377.14);
+    expect(r.stamp).toMatchObject({ priceType: "SPECIAL", overriddenBy: null });
+  });
+  it("R2: typed $45 above the $42 list: echoed back it is MANUAL with original = list and no staff override", async () => {
+    const ctx = (await harness({ flag: true, typed: [["pack", 45]] }).load())!;
+    const r = priceInvoiceLine({ ctx, item: { unitPrice: 45 }, product, unitLabel: null });
+    expect(r.stamp).toMatchObject({ priceType: "MANUAL", originalPrice: 42, overriddenBy: null });
   });
 });

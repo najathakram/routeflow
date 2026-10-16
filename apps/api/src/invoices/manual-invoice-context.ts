@@ -57,6 +57,8 @@ export async function loadManualLineContext(
             priceTier3: true,
             priceTier4: true,
             priceTier5: true,
+            orderUnitRef: true, // S19: the customer layer reads the product's anchor
+            packAuto: true,
             trackedCategoryId: true,
             trackedSubcategoryId: true,
           },

@@ -3,9 +3,11 @@ import {
   InvalidTierError,
   UnknownUnitError,
   decideStaffOverride,
+  isSpecialPrice,
   resolveUnitPrice,
   roundMoney,
   withinStaffOverrideTolerance,
+  type CustomerLayerPrice,
   type LadderProduct,
   type LadderUnit,
 } from "@routeflow/pricing";
@@ -13,12 +15,7 @@ import { assertSafeTextCell } from "../common/safe-text-cell";
 import { API_ERROR_CODES } from "../common/api-error-codes";
 import { decideTierOverride, specialPriceReasonRequired } from "../orders/staff-override";
 import { norm } from "../orders/unit-label-norm";
-import {
-  customerPricing,
-  isSpecialPrice,
-  typedPriceFor,
-  type TypedUnitPrices,
-} from "../orders/units-prices-v2";
+import { customerPricing } from "../orders/units-prices-v2";
 import type { CreateInvoiceDto } from "./dto/create-invoice.dto";
 import type { ManualLineItem } from "./manual-invoice-lines";
 
@@ -58,8 +55,11 @@ export interface LineOverrideCtx {
   tierOf: (productId: string) => number;
   /** The server ladder (ProductUnit rows) of the products a line sells by a unit. */
   ladders: ReadonlyMap<string, readonly LadderUnit[]>;
-  /** S19, flag.units_prices_v2 only: the customer's typed unit prices per product; the baseline in place of the tier price. */
-  typedFor?: (productId: string) => TypedUnitPrices | undefined;
+  /** S19, flag.units_prices_v2 only: a product's unit in the customer layer (null = master's tier baseline). */
+  layerOf?: (
+    product: PricedProduct & { id: string },
+    label: string | null,
+  ) => CustomerLayerPrice | null;
 }
 
 /** The product columns the decision reads. */
@@ -130,7 +130,11 @@ export async function loadOverride(
     where: { id: customerId },
     select: { pricingTier: true },
   });
-  const rows: Array<{ productId: string; pricingTier: number | null }> = ids.length
+  const rows: Array<{
+    productId: string;
+    pricingTier: number | null;
+    orderUnitRef?: string | null;
+  }> = ids.length
     ? await db.customerPrice.findMany({ where: { customerId, productId: { in: ids } } })
     : [];
   // S19: master's `cp.pricingTier ?? customer.pricingTier ?? 1` flag off; customerTierFor + typed prices flag on.
@@ -139,7 +143,7 @@ export async function loadOverride(
     actorId,
     ladders,
     tierOf: (pid) => pc.cpMap.get(pid) ?? pc.defaultTier,
-    typedFor: pc.typedFor,
+    layerOf: pc.layer,
   };
 }
 
@@ -186,10 +190,14 @@ export function priceInvoiceLine(args: {
           tier,
           typed,
           reason,
-          ctx.typedFor?.(String(product.id))?.pack ?? null,
+          ctx.layerOf?.({ ...product, id: String(product.id) }, null),
         )
       : decideUnit(ctx, product, unitLabel, tier, typed, reason);
-  const overridden = decision.priceType === "DISCOUNTED" || decision.priceType === "MANUAL";
+  // A layer-MANUAL echo (SA-811a R2) carries `overridden: false`: the ladder priced it, not a staff override.
+  const overridden =
+    "overridden" in decision
+      ? decision.overridden
+      : decision.priceType === "DISCOUNTED" || decision.priceType === "MANUAL";
   return {
     unitPrice: decision.unitPrice,
     stamp: {
@@ -214,12 +222,10 @@ function decideUnit(
   const units = ctx.ladders.get(String(product.id)) ?? [];
   let listPrice: number;
   let tierPrice: number;
-  let typedUnit: number | null = null;
+  const layer = ctx.layerOf?.({ ...product, id: String(product.id) }, label) ?? null;
   try {
     listPrice = resolveUnitPrice(lp, units, label, 1);
-    tierPrice = resolveUnitPrice(lp, units, label, tier);
-    typedUnit = typedPriceFor(ctx.typedFor?.(String(product.id)), lp, units, label);
-    if (typedUnit != null) tierPrice = typedUnit;
+    tierPrice = layer ? layer.price : resolveUnitPrice(lp, units, label, tier);
   } catch (e) {
     if (e instanceof InvalidTierError) {
       throw new BadRequestException(
@@ -238,11 +244,14 @@ function decideUnit(
     overridePrice: typed,
     baselinePrice: tierPrice,
     listPrice,
-    isSpecialTier: isSpecialPrice(tier, listPrice, typedUnit),
+    isSpecialTier: isSpecialPrice(tier, listPrice, layer?.price),
     hasReason: reason != null,
   });
   if ("refused" in d) throw specialPriceReasonRequired(product.name);
-  return d;
+  // SA-811a R2: the customer's own price above the unit's Retail ladder price is the sticky upsell's twin (MANUAL).
+  return layer?.aboveList && d.priceType === "SPECIAL"
+    ? { ...d, priceType: "MANUAL" as const, overridden: false }
+    : d;
 }
 
 /**

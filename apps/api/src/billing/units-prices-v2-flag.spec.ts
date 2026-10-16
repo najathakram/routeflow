@@ -35,9 +35,12 @@ describe("flag.units_prices_v2 (SA-796 R-5: enforced-but-ungranted, not dark)", 
           routes: [
             "GET /products/:productId/price-grid (product-pricing.controller.ts, class-level)",
             "products.service.ts create and importFromZoho, product-families.service.ts createFamily and updateVariants (hasFlag, S4)",
+            expect.stringContaining("S19 billing readers (customerPricing"),
           ],
-          grantPath:
-            "Owner override GRANT per tenant after the 95/95 live check (S28); the local test tenant for proofs",
+          // SA-811: no grant until every customer-price reader is on the S19 helper (S19b)
+          grantPath: expect.stringMatching(
+            /^No grant until S19b: .*\(SA-811\)\. Then: owner override GRANT/,
+          ),
           backfill: "New key: no tenant has used it, so there is nothing to backfill.",
         },
       }),

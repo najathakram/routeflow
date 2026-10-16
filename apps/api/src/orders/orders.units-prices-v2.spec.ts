@@ -63,6 +63,7 @@ describe("OrdersService.create: billing reads typed customer unit prices (S19)",
   let service: OrdersService;
   let prisma: ReturnType<typeof createMockPrisma>;
   const typedRows = jest.fn();
+  let promos: unknown[] = [];
   const flags = new Set<string>();
   const hasFlag = jest.fn(async (_t: string, k: string) => flags.has(k));
   const orderData = () => prisma.order.create.mock.calls[0][0].data;
@@ -74,13 +75,14 @@ describe("OrdersService.create: billing reads typed customer unit prices (S19)",
     flags.add("flag.units_v1");
     hasFlag.mockClear();
     typedRows.mockReset().mockResolvedValue([]);
+    promos = [];
     prisma = createMockPrisma();
     const module = await Test.createTestingModule({ providers: [OrdersService] })
       .useMocker((token) => {
         if (token === PrismaService) return prisma;
         if (token === ConfigService) return { get: jest.fn().mockReturnValue(0.1) };
         if (token === EntitlementsService) return { hasFlag };
-        if (token === PromotionsService) return { activeForCatalog: jest.fn().mockResolvedValue([]) };
+        if (token === PromotionsService) return { activeForCatalog: jest.fn(async () => promos) };
         return autoMock();
       })
       .compile();
@@ -149,11 +151,52 @@ describe("OrdersService.create: billing reads typed customer unit prices (S19)",
     });
   });
 
-  it("flag on, no typed row for THIS unit: the ladder price, as master", async () => {
+  it("R1a (SA-811a): typed pack $33 puts the Case in the customer's shape: 480 x 33/42 = $377.14 SPECIAL (at 1320178da it billed $480)", async () => {
     flags.add(V2);
     typed(["pack", 33]);
     await create([{ productId: "prod-1", qty: 1, unitLabel: "Case" }]);
-    expect(orderData().lineItems.create[0]).toMatchObject({ unitPrice: 480 });
+    expect(orderData().lineItems.create[0]).toMatchObject({
+      unitLabel: "Case",
+      unitPrice: 377.14,
+      originalPrice: 480,
+      priceType: "SPECIAL",
+    });
+  });
+
+  it("R1b (SA-811a): typed Case $450 on the customer's order unit bills the PACK line $39.38 (at 1320178da it billed $42)", async () => {
+    flags.add(V2);
+    typed(["u-case", 450]);
+    (prisma.forTenant() as any).customerPrice.findMany.mockResolvedValue([
+      { productId: "prod-1", pricingTier: null, orderUnitRef: "u-case" },
+    ]);
+    await create([{ productId: "prod-1", qty: 1, boxes: 1, pieces: 0 }]);
+    expect(orderData().lineItems.create[0]).toMatchObject({
+      unitPrice: 39.38,
+      priceType: "SPECIAL",
+    });
+  });
+
+  it("S19-b: a typed Case price only leaves a pack line at tier/list, the sticky above-list price still runs", async () => {
+    flags.add(V2);
+    typed(["u-case", 450]);
+    jest.spyOn(service, "getCustomerPriceHistory").mockResolvedValue({
+      "prod-1": { lastPrice: 50, listPriceAtTime: 42 },
+    });
+    await create([{ productId: "prod-1", qty: 1, boxes: 1, pieces: 0 }]);
+    expect(orderData().lineItems.create[0]).toMatchObject({ unitPrice: 50, priceType: "MANUAL" });
+  });
+
+  it("S19-a: typed pack $33 beats a remembered above-list $50 (flag on); flag off the $50 sticky MANUAL holds (guard)", async () => {
+    typed(["pack", 33]);
+    jest.spyOn(service, "getCustomerPriceHistory").mockResolvedValue({
+      "prod-1": { lastPrice: 50, listPriceAtTime: 42 },
+    });
+    await create([{ productId: "prod-1", qty: 1, boxes: 1, pieces: 0 }]);
+    expect(orderData().lineItems.create[0]).toMatchObject({ unitPrice: 50, priceType: "MANUAL" });
+    prisma.order.create.mockClear();
+    flags.add(V2);
+    await create([{ productId: "prod-1", qty: 1, boxes: 1, pieces: 0 }]);
+    expect(orderData().lineItems.create[0]).toMatchObject({ unitPrice: 33, priceType: "SPECIAL" });
   });
 
   it("flag OFF with typed rows present (a revoked tenant): master's price, the rows are ignored", async () => {
@@ -184,7 +227,10 @@ describe("OrdersService.create: billing reads typed customer unit prices (S19)",
     it("flag on: a junk customer-product tier falls through to the customer's own tier (2 => $40)", async () => {
       flags.add(V2);
       await create([{ productId: "prod-1", qty: 1 }]);
-      expect(orderData().lineItems.create[0]).toMatchObject({ unitPrice: 40, priceType: "SPECIAL" });
+      expect(orderData().lineItems.create[0]).toMatchObject({
+        unitPrice: 40,
+        priceType: "SPECIAL",
+      });
     });
     it("flag off: master reads tier 0 as the list price", async () => {
       await create([{ productId: "prod-1", qty: 1 }]);
@@ -200,6 +246,45 @@ describe("OrdersService.create: billing reads typed customer unit prices (S19)",
     it("a cart at the typed price passes and bills the typed price", async () => {
       await create([{ productId: "prod-1", qty: 1, unitPrice: 33 }], buyer);
       expect(orderData().lineItems.create[0]).toMatchObject({ unitPrice: 33 });
+    });
+    it("S19-c: a 10% promo on the typed $33 bills $29.70 PROMO, the typed row untouched", async () => {
+      promos = [
+        {
+          id: "pr",
+          type: "PERCENT",
+          value: 10,
+          minQty: null,
+          scope: "ALL",
+          category: null,
+          productIds: [],
+        },
+      ];
+      await create([{ productId: "prod-1", qty: 1 }], buyer);
+      expect(orderData().lineItems.create[0]).toMatchObject({
+        unitPrice: 29.7,
+        originalPrice: 33,
+        priceType: "PROMO",
+      });
+    });
+    it("R2a: typed $45 above the $42 list with a 10% promo bills $45 MANUAL, no promo (at 1320178da it billed $40.50)", async () => {
+      typed(["pack", 45]);
+      promos = [
+        {
+          id: "pr",
+          type: "PERCENT",
+          value: 10,
+          minQty: null,
+          scope: "ALL",
+          category: null,
+          productIds: [],
+        },
+      ];
+      await create([{ productId: "prod-1", qty: 1 }], buyer);
+      expect(orderData().lineItems.create[0]).toMatchObject({
+        unitPrice: 45,
+        originalPrice: 42,
+        priceType: "MANUAL",
+      });
     });
     it("a cart still at the old tier price is a 409 naming the typed price", async () => {
       await expect(create([{ productId: "prod-1", qty: 1, unitPrice: 42 }], buyer)).rejects.toThrow(

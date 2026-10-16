@@ -34,7 +34,7 @@ import {
   computeLineSubtotal,
   roundMoney,
 } from "@routeflow/pricing";
-import type { CategoryTaxType } from "@routeflow/pricing";
+import type { CategoryTaxType, CustomerLayerPrice } from "@routeflow/pricing";
 import type { BuyerReorderSkippedLine } from "@routeflow/types";
 import { taxRateFractionFrom } from "../common/tax-rate";
 import { decrementStockForSale } from "../orders/order-stock";
@@ -971,7 +971,7 @@ export class OrderTemplatesService {
       // B661-sweep: a line-tax (not ledger) box-unaware multiply — follow-up PR converts this to
       // @routeflow/pricing's regulatedUnitBasis; see no-second-legacy-line-pieces.spec.ts's allowlist.
       const qtyPieces = upb > 1 ? item.qty * upb : item.qty;
-      const typedPack = pc.typedPack(item.productId);
+      const layer = pc.layer(product);
       const resolved = this.ordersService.resolveBuyerLinePrice(
         product,
         tierForProduct,
@@ -980,8 +980,8 @@ export class OrderTemplatesService {
         qtyUnits,
         priceHistory[item.productId]?.lastPrice ?? null,
         { boxes: null, pieces: null, unitsPerBox: upb },
-        // S19: the 8th argument exists only when the customer has a typed pack price (flag off: master's 7 arguments).
-        ...((typedPack != null ? [typedPack] : []) as [number] | []),
+        // S19: the 8th argument exists only when the pack is in the customer layer (flag off: master's 7 arguments).
+        ...((layer ? [layer] : []) as [CustomerLayerPrice] | []),
       );
       // BUY_N_GET_M subtracts whole free selling units BEFORE pricing (exact, never a
       // rounded net unit price); every other line reduces to unitPrice × qty, rounded.

@@ -401,4 +401,65 @@ describe("OrdersService.updateOrderItems — billing reads typed customer unit p
     expect(written()[0]).toMatchObject({ unitPrice: 10 });
     expect(entitlements.hasFlag).not.toHaveBeenCalledWith(expect.anything(), V2);
   });
+
+  it("flag on: a SUBSTITUTE line takes the substitute product's typed pack price (SPECIAL), flag off master's", async () => {
+    flagV2(true);
+    typed(["pack", 8]);
+    const sub = () =>
+      service.updateOrderItems(
+        "ord-1",
+        {
+          replaceAll: false,
+          items: [{ id: "li-pack", substituteProductId: "prod-case", qty: 2 }],
+        } as never,
+        operatorPayload as never,
+      );
+    await sub();
+    expect(prisma.orderItem.update.mock.calls.at(-1)![0].data).toMatchObject({
+      productId: "prod-case",
+      unitPrice: 8,
+      priceType: "SPECIAL",
+    });
+    flagV2(false);
+    await sub();
+    expect(prisma.orderItem.update.mock.calls.at(-1)![0].data).toMatchObject({
+      unitPrice: 10,
+      priceType: "STANDARD",
+    });
+  });
+
+  describe("an EXISTING pack line's price edit is judged against the customer layer", () => {
+    const packLine = {
+      ...existingPackLine,
+      id: "li-pk2",
+      productId: "prod-case",
+      unitPrice: 8,
+      priceType: "SPECIAL",
+      originalPrice: 10,
+    };
+    const edit = (unitPrice: number) =>
+      service.updateOrderItems(
+        "ord-1",
+        { replaceAll: false, items: [{ id: "li-pk2", qty: 5, unitPrice }] } as never,
+        operatorPayload as never,
+      );
+    beforeEach(() => {
+      prisma.order.findUnique.mockResolvedValue({ ...MOCK_ORDER, lineItems: [packLine] });
+      prisma.product.findFirst.mockResolvedValue(caseProduct);
+    });
+    it("flag on: moving a customer-layer price needs a reason", async () => {
+      flagV2(true);
+      typed(["pack", 8]);
+      await expect(edit(7)).rejects.toThrow(/reason/i);
+    });
+    it("flag OFF with typed rows: master's tier-1 line takes a below-list price with no reason (DISCOUNTED)", async () => {
+      flagV2(false);
+      typed(["pack", 8]);
+      await edit(7);
+      expect(prisma.orderItem.update.mock.calls.at(-1)![0].data).toMatchObject({
+        unitPrice: 7,
+        priceType: "DISCOUNTED",
+      });
+    });
+  });
 });

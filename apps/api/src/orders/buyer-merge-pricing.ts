@@ -13,11 +13,12 @@ import {
   getTierPrice,
   normalizeBoxesPieces,
   promotionMatchesProduct,
+  isSpecialPrice,
   roundMoney,
+  type CustomerLayerPrice,
   type PromoContext,
   type PromotionRule,
 } from "@routeflow/pricing";
-import { isSpecialPrice } from "./units-prices-v2";
 
 /**
  * BUY_N_GET_M free units for a line whose QUANTITY changed while its stored
@@ -253,10 +254,11 @@ export function resolveBuyerLinePrice(
     unitsPerBox: number | null;
   },
   /**
-   * S19, flag.units_prices_v2 only: the customer's TYPED pack price. It replaces the tier price as the base (and wins
-   * over the sticky upsell); promotions still apply on top. Undefined = master's path, untouched.
+   * S19, flag.units_prices_v2 only: the pack's CUSTOMER-LAYER price (SA-811a). It replaces the tier price as the base and
+   * beats the sticky price; promotions apply on top, EXCEPT above the unit's Retail ladder price, which is priced like the
+   * sticky upsell (MANUAL, no promo). Null/undefined = master's path, untouched.
    */
-  typedPrice?: number | null,
+  layer?: CustomerLayerPrice | null,
 ): {
   unitPrice: number;
   originalPrice: number | null;
@@ -265,9 +267,16 @@ export function resolveBuyerLinePrice(
   freeUnits: number;
 } {
   const listPrice = Number(product.pricePerUnit);
-  const typed = typedPrice ?? null;
-  const tierBase = typed != null ? roundMoney(typed) : getTierPrice(product, tierForProduct);
-  const remembered = typed != null ? null : (rememberedPrice ?? null);
+  const tierBase = layer ? layer.price : getTierPrice(product, tierForProduct);
+  const remembered = layer ? null : (rememberedPrice ?? null);
+  if (layer?.aboveList) {
+    return {
+      unitPrice: roundMoney(layer.price),
+      originalPrice: layer.listPrice,
+      priceType: PriceType.MANUAL,
+      freeUnits: 0,
+    };
+  }
   // Sticky upsell: ONLY a remembered ABOVE-LIST price becomes a MANUAL upsell.
   // It overrides the tier AND takes precedence over promotions (a deliberate
   // above-market price is never auto-discounted). Stored as MANUAL with the list
@@ -300,10 +309,10 @@ export function resolveBuyerLinePrice(
       freeUnits: promo.freeUnits,
     };
   }
-  if (isSpecialPrice(tierForProduct, listPrice, typed)) {
+  if (isSpecialPrice(tierForProduct, layer ? layer.listPrice : listPrice, layer?.price)) {
     return {
       unitPrice: base,
-      originalPrice: listPrice,
+      originalPrice: layer ? layer.listPrice : listPrice,
       priceType: PriceType.SPECIAL,
       freeUnits: 0,
     };

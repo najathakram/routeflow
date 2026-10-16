@@ -44,6 +44,7 @@ import {
   computeCategoryTax,
   computeLineSubtotal,
   getTierPrice,
+  isSpecialPrice,
   normalizeBoxesPieces,
   regulatedUnitBasis,
   roundMoney,
@@ -213,7 +214,7 @@ import { AuthorizationGuardService } from "../authorizations/authorization-guard
 import { resolveLineUnits } from "../products/line-units";
 import * as unitLines from "./unit-line-build";
 import * as unitEdit from "./unit-line-edit";
-import { customerPricing, isSpecialPrice } from "./units-prices-v2";
+import { customerPricing, omitCustomerLayerHistory } from "./units-prices-v2";
 import { loadCategoryMapForProducts } from "./category-map";
 import { assertBuyerCartPricesCurrent } from "./buyer-cart-price-check";
 import { compositionStampOf, syncOrderLineCompositions } from "./order-composition";
@@ -631,7 +632,7 @@ export class OrdersService implements OnApplicationBootstrap {
       },
     });
 
-    return Object.fromEntries(
+    const history = Object.fromEntries(
       items.map((item) => [
         item.productId,
         {
@@ -640,6 +641,8 @@ export class OrdersService implements OnApplicationBootstrap {
         },
       ]),
     );
+    // S19 R3 (SA-811a): a pack in the customer layer pre-fills the resolver's price, never the last-given one.
+    return omitCustomerLayerHistory(this, customerId, history);
   }
 
   private fulfilDeps() {
@@ -1682,7 +1685,7 @@ export class OrdersService implements OnApplicationBootstrap {
       cpMap,
       defaultTier,
       priceHistory,
-      typedPack: pc.typedPack,
+      layerOf: (id) => pc.layer(productMap.get(id)),
     });
 
     // RF-079 / RF-4: an exempt customer owes $0 of BOTH taxes on the order, as on the invoice.
@@ -1741,7 +1744,7 @@ export class OrdersService implements OnApplicationBootstrap {
           resolved: resolvedUnits,
           item: { ...item, productId: product.id },
           tier: cpMap.get(product.id) ?? defaultTier,
-          customerUnitPrices: pc.typedFor(product.id),
+          customerLayer: pc.layer(product, resolvedUnits.unitLabel),
           taxFor: (qty, sub) => unitLines.categoryTaxForLine(category, qty, sub),
           position: index,
           tenantId: this.prisma.getTenantId(),
@@ -1792,7 +1795,7 @@ export class OrdersService implements OnApplicationBootstrap {
 
       // Resolve tier: per-product override > customer default tier
       const tierForProduct = cpMap.get(item.productId) ?? defaultTier;
-      const typedPack = pc.typedPack(item.productId);
+      const layer = pc.layer(product);
       // B13: non-staff never set prices. POST /orders is reachable by DRIVER and
       // CUSTOMER as well as staff, and this DISCOUNTED-branch price had no role
       // gate — a hand-crafted driver request could bill any below-list price.
@@ -1844,7 +1847,7 @@ export class OrdersService implements OnApplicationBootstrap {
               tierForProduct,
               Number(overridePrice),
               item.overrideReason,
-              typedPack,
+              layer,
             )
           : null;
       if (staff?.overridden) {
@@ -1873,7 +1876,7 @@ export class OrdersService implements OnApplicationBootstrap {
           rememberedForLine,
           // REG-B109: the exact denomination this line bills with below.
           { boxes, pieces, unitsPerBox: upb },
-          typedPack,
+          layer,
         );
         unitPrice = resolved.unitPrice;
         priceType = resolved.priceType;
@@ -3246,7 +3249,7 @@ export class OrdersService implements OnApplicationBootstrap {
               isBuyerEdit,
               group: splitPromos.get(item.productId),
               tier: buyerCpMap.get(item.productId) ?? buyerDefaultTier,
-              typedPack: buyerPc.typedPack(item.productId),
+              layer: buyerPc.layer(product),
               buyerPromos,
               qtyPieces,
               qtyUnits,
@@ -3382,7 +3385,7 @@ export class OrdersService implements OnApplicationBootstrap {
             ladders: unitCtx.ladders,
             tenantId: this.prisma.getTenantId(),
             tier: (pid) => (atCustomerTier ? (operatorCpMap.get(pid) ?? operatorDefaultTier) : 1),
-            typedFor: atCustomerTier ? operatorPc.typedFor : undefined,
+            layerOf: atCustomerTier ? operatorPc.layer : undefined,
             overriddenBy: user?.sub ?? null,
             held: heldById,
             repriceTierOnQtyOnly: user?.role === UserRole.CUSTOMER,
@@ -3428,7 +3431,7 @@ export class OrdersService implements OnApplicationBootstrap {
               isStaffEdit,
               operatorCpMap,
               operatorDefaultTier,
-              typedPack: isStaffEdit ? operatorPc.typedPack : undefined,
+              layerOf: isStaffEdit ? operatorPc.layer : undefined,
               isCreateMerge: opts?.isCreateMerge,
               buyerPromos,
               userId: user?.sub ?? null,
@@ -3615,7 +3618,7 @@ export class OrdersService implements OnApplicationBootstrap {
                 const tierForProduct = isStaffEdit
                   ? (operatorCpMap.get(item.productId) ?? operatorDefaultTier)
                   : 1;
-                const typedPack = isStaffEdit ? operatorPc.typedPack(item.productId) : null;
+                const layer = isStaffEdit ? operatorPc.layer(product) : null;
                 // #2716c: ONE rule (staff-line-price.ts -> decideStaffOverride). A special-tier
                 // line (B465) refuses a changed price with no reason; a price within half a cent
                 // of the customer's tier price is no override; otherwise below list is DISCOUNTED,
@@ -3626,9 +3629,13 @@ export class OrdersService implements OnApplicationBootstrap {
                   overridePrice !== null
                     ? decideAddedLinePrice({
                         overridePrice,
-                        tierPrice: typedPack ?? Number(getTierPrice(product, tierForProduct)),
+                        tierPrice: layer?.price ?? Number(getTierPrice(product, tierForProduct)),
                         listPrice: catalogPrice,
-                        isSpecialTier: isSpecialPrice(tierForProduct, catalogPrice, typedPack),
+                        isSpecialTier: isSpecialPrice(
+                          tierForProduct,
+                          layer?.listPrice ?? catalogPrice,
+                          layer?.price,
+                        ),
                         hasReason: !!(item.overrideReason && item.overrideReason.trim()),
                         productName: product.name,
                       })
@@ -3650,7 +3657,7 @@ export class OrdersService implements OnApplicationBootstrap {
                           pieces: piecesForLine,
                           unitsPerBox: unitsPerBoxNum,
                         },
-                        typedPack,
+                        layer,
                       )
                     : {
                         // Non-staff caller (driver diff add): legacy list pricing.
@@ -3784,15 +3791,13 @@ export class OrdersService implements OnApplicationBootstrap {
                 // decideStaffOverride, rounded) — pinned byte-identical to this branch's B466 shape.
                 const overridePrice =
                   isStaffCaller && item.unitPrice != null ? Number(item.unitPrice) : null;
-                const typedSub = isStaffCaller
-                  ? operatorPc.typedPack(item.substituteProductId)
-                  : null;
+                const layerSub = isStaffCaller ? operatorPc.layer(product) : null;
                 const decided = decideTierOverride(
                   product,
                   tierForProduct,
-                  overridePrice ?? typedSub ?? Number(getTierPrice(product, tierForProduct)),
+                  overridePrice ?? layerSub?.price ?? Number(getTierPrice(product, tierForProduct)),
                   item.overrideReason,
-                  typedSub,
+                  layerSub,
                 );
                 const { unitPrice, originalPrice, overridden: isOverridden } = decided;
                 const priceType: PriceType = PriceType[decided.priceType];
@@ -3961,7 +3966,6 @@ export class OrdersService implements OnApplicationBootstrap {
                   isStaffEdit && li.productId
                     ? (operatorCpMap.get(li.productId) ?? operatorDefaultTier)
                     : 1;
-                const typedEdit = isStaffEdit ? operatorPc.typedPack(li.productId) : null;
                 const storedOverrideReason = (li as any).overrideReason ?? null;
                 // #2716c: ONE rule (staff-line-price.ts -> decideStaffOverride); reason baseline =
                 // STORED price (echo = untouched, no re-stamp); the TIER price typed back restores
@@ -3977,17 +3981,19 @@ export class OrdersService implements OnApplicationBootstrap {
                     where: { id: li.productId },
                   });
                 }
+                const layerEdit = editProduct && isStaffEdit ? operatorPc.layer(editProduct) : null;
                 const repriced = decideEditedLinePrice({
                   overridePrice,
                   storedPrice: existingUnitPrice,
                   tierPrice: editProduct
-                    ? (typedEdit ?? getTierPrice(editProduct, tierForProduct))
+                    ? (layerEdit?.price ?? getTierPrice(editProduct, tierForProduct))
                     : 0,
                   listPrice: editProduct ? Number(editProduct.pricePerUnit) : existingUnitPrice,
                   isSpecialTier: isSpecialPrice(
                     tierForProduct,
-                    editProduct ? Number(editProduct.pricePerUnit) : existingUnitPrice,
-                    typedEdit,
+                    layerEdit?.listPrice ??
+                      (editProduct ? Number(editProduct.pricePerUnit) : existingUnitPrice),
+                    layerEdit?.price,
                   ),
                   hasReason: !!(
                     (item.overrideReason && item.overrideReason.trim()) ||
@@ -5027,7 +5033,7 @@ export class OrdersService implements OnApplicationBootstrap {
               priceHistory[product.id]?.lastPrice ?? null,
               // REG-B109: the exact denomination this line bills with below.
               { boxes: split.boxes, pieces: split.pieces, unitsPerBox: upb },
-              crPc.typedPack(product.id),
+              crPc.layer(product),
             );
             const created = await tx.orderItem.create({
               data: {

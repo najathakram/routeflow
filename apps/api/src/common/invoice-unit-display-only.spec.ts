@@ -45,7 +45,6 @@ const DISPLAY_API_FILES = [
   "invoice-pdf-variant.ts",
   "invoice-pdf.service.ts",
   "invoice-detail-read.ts",
-  "invoice-line-code.ts",
 ].map((n) => `apps/api/src/invoices/${n}`);
 const isDisplay = (f: string): boolean => DISPLAY_FILES.has(f) || DISPLAY_API_FILES.includes(f);
 

@@ -10,11 +10,13 @@ import {
   categoryTaxSnapshotOf,
   computeCategoryTax,
   computeLineSubtotalStrict,
+  isSpecialPrice,
   normalizeBoxesPieces,
   resolveLadderLevel,
   resolveUnitPrice,
   type CategoryTaxSnapshot,
   type CategoryTaxType,
+  type CustomerLayerPrice,
   type LadderProduct,
   type LadderUnit,
   type TrackedCategoryRow,
@@ -30,7 +32,6 @@ import {
 import { API_ERROR_CODES } from "../common/api-error-codes";
 import { specialPriceReasonRequired } from "./staff-override";
 import { norm } from "./unit-label-norm";
-import { isSpecialPrice, typedPriceFor, type TypedUnitPrices } from "./units-prices-v2";
 
 /**
  * units_v1, step 4b-2 — building ONE order line that is sold by a non-pack unit (a Case, a Pallet,
@@ -341,10 +342,11 @@ export function buildUnitLine(input: {
   /** The customer's pricing tier for this product (1..5). */
   tier: number;
   /**
-   * S19, flag.units_prices_v2 only: the customer's typed prices for this product by level ref. A typed price for this
-   * line's unit replaces the ladder's tier price as the base. Undefined = master's path, untouched.
+   * S19, flag.units_prices_v2 only: this line's unit in the CUSTOMER LAYER (SA-811a): a typed price, or one worked out from
+   * their typed price on their order unit. It replaces the ladder's tier price as the base; above the unit's Retail ladder
+   * price it is priced as the sticky upsell (MANUAL). Null/undefined = master's path, untouched.
    */
-  customerUnitPrices?: TypedUnitPrices;
+  customerLayer?: CustomerLayerPrice | null;
   /**
    * Regulated per-category tax for a line of `qtyPieces` base pieces worth `subtotal`, PLUS
    * (B297) the rate trio it was priced under — see `categoryTaxForLine`. A caller that defers
@@ -422,7 +424,7 @@ export function buildUnitLine(input: {
     !ladderNames(ladderProduct, units, label);
   let listPrice: number;
   let tierPrice: number;
-  let typed: number | null = null;
+  const layer = input.customerLayer ?? null;
   try {
     if (gone) {
       tierPrice = roundMoney(Number(snap.unitPrice));
@@ -430,8 +432,7 @@ export function buildUnitLine(input: {
     } else {
       listPrice = resolveUnitPrice(ladderProduct, units, label, 1);
       tierPrice = resolveUnitPrice(ladderProduct, units, label, tier);
-      typed = typedPriceFor(input.customerUnitPrices, ladderProduct, units, label);
-      if (typed != null) tierPrice = typed;
+      if (layer) tierPrice = layer.price;
     }
   } catch (e) {
     if (e instanceof InvalidTierError) {
@@ -450,7 +451,7 @@ export function buildUnitLine(input: {
     }
     throw e;
   }
-  const special = isSpecialPrice(tier, listPrice, typed);
+  const special = isSpecialPrice(tier, listPrice, layer?.price);
   // H3: ONE rule for a staff-typed price — judged against the customer's TIER unit price, never the list.
   const held =
     input.stored && norm(input.stored.unitLabel ?? "") === norm(label) ? input.stored : null;
@@ -491,11 +492,20 @@ export function buildUnitLine(input: {
     : decision
       ? decision.unitPrice
       : tierPrice;
+  // SA-811a R2: the customer's own price above the unit's Retail ladder price is the sticky upsell's twin: MANUAL (never a
+  // staff override, so no attribution) unless a staff-typed price really changed it.
+  const layerManual =
+    !!layer?.aboveList &&
+    !gone &&
+    !echoesHeld &&
+    (decision == null || ("priceType" in decision && decision.priceType === "SPECIAL"));
   const priceType: PriceType = echoesHeld
     ? (held.priceType as PriceType)
-    : decision
-      ? PriceType[decision.priceType]
-      : ladderType;
+    : layerManual
+      ? PriceType.MANUAL
+      : decision
+        ? PriceType[decision.priceType]
+        : ladderType;
   const originalPrice: number | null = echoesHeld
     ? held.originalPrice == null
       ? null
@@ -509,7 +519,8 @@ export function buildUnitLine(input: {
         : special
           ? listPrice
           : null;
-  const overridden = priceType === PriceType.DISCOUNTED || priceType === PriceType.MANUAL;
+  const overridden =
+    !layerManual && (priceType === PriceType.DISCOUNTED || priceType === PriceType.MANUAL);
   // the stamp: a held override keeps ITS reason and user; a new one is this edit's
   const stamp = !overridden
     ? null

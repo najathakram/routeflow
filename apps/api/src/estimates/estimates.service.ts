@@ -8,7 +8,13 @@ import {
 import { assertSellableLines } from "../products/sellable-lines";
 import { EstimateStatus, PriceType } from "@prisma/client";
 import { PrismaService } from "../prisma/prisma.service";
-import { computeLineSubtotal, getTierPrice, round4, roundMoney } from "@routeflow/pricing";
+import {
+  computeLineSubtotal,
+  getTierPrice,
+  isSpecialPrice,
+  round4,
+  roundMoney,
+} from "@routeflow/pricing";
 import { loadMsrpMap } from "../common/msrp";
 import { configuredTaxRateFraction } from "../common/tax-rate";
 import { assertNsfLinesUntaxed } from "../invoices/nsf-line-tax-guard";
@@ -30,7 +36,7 @@ import {
   assertNoNegativeLineSubtotal,
 } from "../common/money-invariants.util";
 import { assertNoUnitAwareLines } from "../orders/unit-aware-guard";
-import { customerPricing, isSpecialPrice } from "../orders/units-prices-v2";
+import { customerPricing } from "../orders/units-prices-v2";
 import { CreateEstimateDto } from "./dto/create-estimate.dto";
 import { describeUniqueViolation, uniqueViolationOn } from "../common/prisma-unique";
 
@@ -194,9 +200,9 @@ export class EstimatesService {
       if (product) {
         // Resolve tier: per-product override > customer default tier
         const tierForProduct = cpMap.get(i.productId) ?? defaultTier;
-        const typedPack = pc.typedPack(i.productId);
-        const tierPrice = typedPack ?? getTierPrice(product, tierForProduct);
-        const listPrice = Number(product.pricePerUnit);
+        const layer = pc.layer(product);
+        const tierPrice = layer?.price ?? getTierPrice(product, tierForProduct);
+        const listPrice = layer?.listPrice ?? Number(product.pricePerUnit);
         // H5: a typed override is money - cents, like every other written price
         const overridePrice = i.unitPrice != null ? roundMoney(Number(i.unitPrice)) : null;
 
@@ -204,9 +210,10 @@ export class EstimatesService {
           unitPrice = overridePrice;
           priceType = PriceType.DISCOUNTED;
           originalPrice = listPrice;
-        } else if (isSpecialPrice(tierForProduct, listPrice, typedPack)) {
+        } else if (isSpecialPrice(tierForProduct, listPrice, layer?.price)) {
           unitPrice = tierPrice;
-          priceType = PriceType.SPECIAL;
+          // S19 R2: the customer's own price above the unit's list is the sticky upsell's twin
+          priceType = layer?.aboveList ? PriceType.MANUAL : PriceType.SPECIAL;
           originalPrice = listPrice;
         } else {
           unitPrice = tierPrice;
