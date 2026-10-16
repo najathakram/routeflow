@@ -132,6 +132,7 @@ import { useUndo } from "@/lib/undo";
 import { useProduct } from "@/lib/api/products";
 import { displayProductName } from "@/lib/product-display";
 import { CustomerPriceProductSearch } from "./customer-price-product-search";
+import { UnitPricesTabContent, UnitPricesTabTrigger } from "./units-v2/CustomerUnitPricesTab";
 import { useHasAddon } from "@/lib/api/tobacco";
 import { MSRP_ADDON, SALES_AGENTS_ADDON, useFleetAccess, useRoutesAccess } from "@/lib/api/addons";
 import { OrderStatusBadge, useOrderStatusLabel } from "@/components/OrderStatusBadge";
@@ -2393,6 +2394,7 @@ function CustomerDetailPageInner({ id }: { id: string }) {
           </TabTrigger>
           <TabTrigger value="billing">Billing</TabTrigger>
           <TabTrigger value="special-prices">Special Prices</TabTrigger>
+          <UnitPricesTabTrigger />
           <TabTrigger value="comments">
             <span className="flex items-center gap-1.5">
               <MessageSquare className="h-3.5 w-3.5" />
@@ -3920,6 +3922,7 @@ function CustomerDetailPageInner({ id }: { id: string }) {
 
         {/* ── Special Prices tab ─────────────────────────────────── */}
         <SpecialPricesTab customerId={id} />
+        <UnitPricesTabContent customerId={id} />
 
         {/* ── Comments tab ───────────────────────────────────────── */}
         <CommentsTab customerId={id} />

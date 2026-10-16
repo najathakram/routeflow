@@ -162,8 +162,12 @@ export interface CustomerUnitPriceRowDto {
 export interface CustomerProductUnitPricesDto {
   productId: string;
   productName: string;
+  /** customerTierFor(customer-product tier, customer tier): the tier this customer pays at for this product. */
+  tier: PriceTierNumber;
   /** The customer's own order unit for this product, or null (the tier's anchor applies). */
   orderUnit: string | null;
+  /** Label of the unit the customer actually orders in: their own order unit, else their tier's anchor (customerAnchor). */
+  orderUnitLabel: string;
   revision: number;
   rows: CustomerUnitPriceRowDto[];
 }
@@ -177,4 +181,8 @@ export interface CustomerUnitPricesResponse {
   customerName: string;
   tier: PriceTierNumber;
   products: CustomerProductUnitPricesDto[];
+  /** Products matched (before paging), the 1-based page and the page size used. */
+  total: number;
+  page: number;
+  limit: number;
 }
