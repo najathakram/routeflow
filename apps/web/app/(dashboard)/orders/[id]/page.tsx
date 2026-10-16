@@ -1414,9 +1414,7 @@ export function EditableLineItems({
 
             {/* O1 (F06): a classic boxed line gets the SAME cases + loose-pieces control as Create. */}
             {isCasesPiecesLine(item) && (
-              <EditCasesPieces item={item} onChange={(patch) => update(item.id, patch)}>
-                <scan.SplitLineHint item={item} />
-              </EditCasesPieces>
+              <EditCasesPieces item={item} onChange={(patch) => update(item.id, patch)} />
             )}
 
             {/* Qty input */}

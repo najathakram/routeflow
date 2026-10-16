@@ -14,13 +14,10 @@ import { applyCasesPieces, casesPiecesOf } from "../edit-cases-pieces";
 export function EditCasesPieces({
   item,
   onChange,
-  children,
 }: {
   item: { qty: number; unitsPerBox?: number | null; boxSplit?: boolean };
   /** The line patch to merge (qty + boxSplit + startOnDefaultUnit). */
   onChange: (patch: NonNullable<ReturnType<typeof applyCasesPieces>>) => void;
-  /** Rendered after the control (the scan split hint). */
-  children?: React.ReactNode;
 }) {
   const current = casesPiecesOf(item);
   const set = (next: { boxes: number; pieces: number }) => {
@@ -37,7 +34,6 @@ export function EditCasesPieces({
         onSetBoxes={(n) => set({ boxes: n, pieces: current.pieces })}
         onSetPieces={(n) => set({ boxes: current.boxes, pieces: n })}
       />
-      {children}
     </div>
   );
 }

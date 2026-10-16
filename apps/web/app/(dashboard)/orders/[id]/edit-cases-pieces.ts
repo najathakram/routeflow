@@ -11,6 +11,8 @@ interface CasesPiecesLine {
   unitsPerBox?: number | null;
   boxSplit?: boolean;
   unitLabel?: string;
+  /** units_v1 derived Piece pick: unitLabel stays undefined but the picker owns the unit. */
+  derivedBase?: string;
   countLocked?: boolean;
   cancelled?: boolean;
   isUnlisted?: boolean;
@@ -22,6 +24,7 @@ export function isCasesPiecesLine(it: CasesPiecesLine): boolean {
   return (
     Number(it.unitsPerBox ?? 0) > 1 &&
     !it.unitLabel &&
+    !it.derivedBase &&
     !it.countLocked &&
     !it.cancelled &&
     !it.isUnlisted &&
@@ -54,5 +57,9 @@ export function applyCasesPieces(
     unitsPerBox: Number(it.unitsPerBox ?? 0),
   });
   if (split.qty <= 0) return null;
+  // Same cases + loose as shown: a no-op, so a line saved without a split is not converted (and
+  // no UPDATE is sent) just because the operator re-typed its own value.
+  const shown = casesPiecesOf(it);
+  if (split.boxes === shown.boxes && split.pieces === shown.pieces) return null;
   return { qty: split.qty, boxSplit: true, startOnDefaultUnit: false };
 }

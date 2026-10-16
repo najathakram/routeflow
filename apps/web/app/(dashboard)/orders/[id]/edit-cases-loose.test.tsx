@@ -8,6 +8,7 @@
 import * as React from "react";
 import { computeLineSubtotal } from "@routeflow/pricing";
 import { fireEvent, renderWithProviders, screen, within } from "@/test-utils/render";
+import { applyCasesPieces } from "./edit-cases-pieces";
 import { EditableLineItems, buildItemUpdates, type EditItemState } from "./page";
 
 jest.mock("@/lib/api/product-units", () => ({
@@ -167,5 +168,32 @@ describe("Edit Items: shared cases + loose-pieces control (O1 / F06)", () => {
     expect(screen.queryByTitle(/number of whole/i)).toBeNull();
     const row = screen.getByText("Sample Chips").closest("div[class*='rounded-lg']") as HTMLElement;
     expect(within(row).queryByRole("spinbutton", { name: /qty/i })).toBeNull();
+  });
+
+  it("a units_v1 derived-Piece line (derivedBase set, unitLabel undefined) shows no cases input", () => {
+    renderWithProviders(
+      <Harness
+        initial={[
+          boxedLine({ derivedBase: "Piece", unitLabel: undefined, boxSplit: true, qty: 2 }),
+        ]}
+      />,
+    );
+    expect(screen.queryByTitle(/number of whole/i)).toBeNull();
+    expect(screen.getByRole("spinbutton", { name: /qty/i })).toHaveValue(2);
+  });
+
+  it("applyCasesPieces is a no-op for the value already shown (a non-split line is not converted)", () => {
+    const unsplit = { qty: 3, unitsPerBox: UPB, boxSplit: false };
+    expect(applyCasesPieces(unsplit, { boxes: 3, pieces: 0 })).toBeNull();
+    expect(applyCasesPieces(unsplit, { boxes: 3, pieces: 4 })).toEqual(
+      expect.objectContaining({ qty: 3 * UPB + 4, boxSplit: true }),
+    );
+    const split = { qty: 29, unitsPerBox: UPB, boxSplit: true };
+    expect(applyCasesPieces(split, { boxes: 2, pieces: 5 })).toBeNull();
+  });
+
+  it("the scan split hint is not repeated beside the cases control", () => {
+    renderWithProviders(<Harness initial={[boxedLine()]} />);
+    expect(screen.queryByTestId("edit-line-split")).toBeNull();
   });
 });
