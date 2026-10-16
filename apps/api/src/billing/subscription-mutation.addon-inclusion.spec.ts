@@ -108,6 +108,10 @@ function make(
         const hit = db.addons.find((r) => r.id === where.id);
         return hit ? { ...hit } : undefined; // a row read, not the live object
       }),
+      // SA-788: the writer reads the rows a guarded write matches (their `before`) and re-reads them afterwards.
+      findMany: jest.fn(async ({ where }: any) =>
+        db.addons.filter((r) => matches(r, where)).map((r) => ({ ...r })),
+      ),
       updateMany: jest.fn(async ({ where, data }: any) => {
         const hit = db.addons.filter((r) => matches(r, where));
         for (const r of hit) Object.assign(r, data);

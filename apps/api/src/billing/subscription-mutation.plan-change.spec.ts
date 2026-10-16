@@ -183,12 +183,15 @@ function make(o: Opts = {}) {
     },
     tenantAddon: {
       findMany: jest.fn(async ({ where }: any = {}) => matching(db.addons, where)),
+      // SA-788: the writer reads the row it is about to change (a copy: the live object is mutated below).
+      findUnique: jest.fn(async ({ where }: any) => {
+        const hit = db.addons.find((r) => r.id === where.id);
+        return hit ? { ...hit } : null;
+      }),
       update: jest.fn(async ({ where, data }: any) => {
-        Object.assign(
-          db.addons.find((r) => r.id === where.id),
-          data,
-        );
-        return {};
+        const hit = db.addons.find((r) => r.id === where.id);
+        Object.assign(hit, data);
+        return { ...hit };
       }),
     },
     auditLog: { create: jest.fn().mockResolvedValue({}) },
@@ -215,6 +218,7 @@ function make(o: Opts = {}) {
     },
     user: { count: jest.fn().mockResolvedValue(0) },
     auditLog: { create: jest.fn().mockResolvedValue({}) },
+    $queryRaw: jest.fn().mockResolvedValue([]),
     $transaction: jest.fn(async (fn: any) => {
       const saved = JSON.parse(JSON.stringify({ sub: db.sub, addons: db.addons }));
       try {

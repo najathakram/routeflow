@@ -69,6 +69,7 @@ import { SubscriptionMutationService } from "./subscription-mutation.service";
 import { ProrationService } from "./proration.service";
 import { BILLING_EVENTS, SELF_SERVICE_ADDON_SKUS } from "./plan-catalog.constants";
 import { fakeTenantAddonStore } from "../testing/fake-tenant-addon-store";
+import { mrrEmits } from "../testing/mrr-emits";
 
 beforeEach(() => {
   lockQueues.clear();
@@ -841,7 +842,7 @@ describe("SubscriptionMutationService.subscribe (MRR = signed change)", () => {
       expect(err).toBeInstanceOf(ServiceUnavailableException);
       expect(String(err.message)).not.toMatch(/api_connection|si_1/);
       expect(prisma.$transaction).not.toHaveBeenCalled();
-      expect(events.emit).not.toHaveBeenCalled();
+      expect(mrrEmits(events)).toHaveLength(0);
     });
 
     it("SA F1: a dropped billed add-on while Stripe is NOT configured refuses the whole subscribe (handle kept, nothing written)", async () => {
@@ -856,7 +857,7 @@ describe("SubscriptionMutationService.subscribe (MRR = signed change)", () => {
         .catch((e) => e);
       expect(err).toBeInstanceOf(ServiceUnavailableException);
       expect(prisma.$transaction).not.toHaveBeenCalled();
-      expect(events.emit).not.toHaveBeenCalled();
+      expect(mrrEmits(events)).toHaveLength(0);
     });
 
     it("(b) if the tx fails AFTER the Stripe deletes, a retry heals it (the second delete is resource_missing)", async () => {
@@ -907,7 +908,7 @@ describe("SubscriptionMutationService.subscribe (MRR = signed change)", () => {
       await expect(
         svc.subscribe("t1", { planKey: "STARTER", cycle: "MONTHLY" }, "admin"),
       ).rejects.toBeInstanceOf(ConflictException);
-      expect(events.emit).not.toHaveBeenCalled();
+      expect(mrrEmits(events)).toHaveLength(0);
     });
   });
 
@@ -1034,7 +1035,7 @@ describe("SubscriptionMutationService.subscribe (MRR = signed change)", () => {
     expect(tx.tenantSubscription.upsert).not.toHaveBeenCalled();
     expect(tx.tenant.update).not.toHaveBeenCalled();
     expect(tx.tenantAddon.upsert).not.toHaveBeenCalled();
-    expect(events.emit).not.toHaveBeenCalled();
+    expect(mrrEmits(events)).toHaveLength(0);
 
     // ...and the caller's retry re-reads (the committed activation is now the pre-tx state too)
     // and nets against the locked TEAM (149), never the stale TRIAL/no-plan baseline (349).
@@ -1576,7 +1577,7 @@ describe("SubscriptionMutationService — plan-less rows are not subscriptions (
     await expect(svc.upgrade("t1", "SCALE", "admin")).rejects.toBeInstanceOf(BadRequestException);
     // Nothing stamped, nothing booked: no plan, no trialConvertedAt, no PLAN_CHANGED.
     expect(tx.tenantSubscription.updateMany).not.toHaveBeenCalled();
-    expect(events.emit).not.toHaveBeenCalled();
+    expect(mrrEmits(events)).toHaveLength(0);
   });
 
   it("REG-B58 downgrade() refuses the same planKey-NULL TRIAL row", async () => {
@@ -1641,7 +1642,7 @@ describe("SubscriptionMutationService — plan-less rows are not subscriptions (
       svc.subscribe("t1", { planKey: "BUSINESS", cycle: "MONTHLY" }, "admin"),
     ).rejects.toThrow(/already on this plan/);
     expect(tx.tenantSubscription.upsert).not.toHaveBeenCalled();
-    expect(events.emit).not.toHaveBeenCalled();
+    expect(mrrEmits(events)).toHaveLength(0);
     warn.mockRestore();
   });
 });
@@ -1752,7 +1753,7 @@ describe("SubscriptionMutationService.enableAddon/disableAddon — B865 ledger g
         update: expect.objectContaining({ priceSnapshot: 12 }),
       }),
     );
-    const deltas = events.emit.mock.calls.map((c: any[]) => c[3]?.amountDelta);
+    const deltas = mrrEmits(events).map((c: any[]) => c[3]?.amountDelta);
     expect(deltas).toEqual([]);
   });
 
@@ -1786,7 +1787,7 @@ describe("SubscriptionMutationService — invite-only plans are never self-servi
     await expect(attempt).rejects.toBeInstanceOf(BadRequestException);
     await expect(attempt).rejects.toThrow(/invitation only/);
     expect(tx.tenantSubscription.upsert).not.toHaveBeenCalled();
-    expect(events.emit).not.toHaveBeenCalled();
+    expect(mrrEmits(events)).toHaveLength(0);
   });
 
   it("upgrade() refuses a LITE target", async () => {
@@ -2038,7 +2039,7 @@ describe("SubscriptionMutationService.subscribe ACTIVE plan-change guard (REG-B5
     await expect(attempt).rejects.toThrow(/use upgrade or downgrade/);
     await expect(attempt).rejects.toBeInstanceOf(ConflictException);
     expect(tx.tenantSubscription.upsert).not.toHaveBeenCalled();
-    expect(events.emit).not.toHaveBeenCalled();
+    expect(mrrEmits(events)).toHaveLength(0);
   });
 });
 
@@ -2063,7 +2064,7 @@ describe("SubscriptionMutationService.subscribe — legacy alias re-pick pins", 
     await expect(attempt).rejects.toBeInstanceOf(ConflictException);
     // The harm the old pin missed: the upsert's update branch writes periodStart/periodEnd.
     expect(tx.tenantSubscription.upsert).not.toHaveBeenCalled();
-    expect(events.emit).not.toHaveBeenCalled();
+    expect(mrrEmits(events)).toHaveLength(0);
     warn.mockRestore();
   });
 
@@ -2616,7 +2617,7 @@ describe("SubscriptionMutationService.cancel — trial/read-only tenants with no
     await expect(svc.cancel("t-1", "u-1")).resolves.toEqual({ cancelled: "already_read_only" });
     expect(tx.tenant.update).not.toHaveBeenCalled();
     expect(tx.tenant.updateMany).not.toHaveBeenCalled();
-    expect(events.emit).not.toHaveBeenCalled();
+    expect(mrrEmits(events)).toHaveLength(0);
   });
 
   // (4) READ_ONLY, WITH a row. RED against 51daea36: READ_ONLY is only checked inside the
@@ -2664,7 +2665,7 @@ describe("SubscriptionMutationService.cancel — trial/read-only tenants with no
     tx.tenant.updateMany.mockResolvedValue({ count: 0 });
     tx.tenant.findUnique.mockResolvedValue({ status: "READ_ONLY" });
     await expect(svc.cancel("t-1", "u-1")).resolves.toEqual({ cancelled: "already_read_only" });
-    expect(events.emit).not.toHaveBeenCalled();
+    expect(mrrEmits(events)).toHaveLength(0);
   });
 
   it("TRIAL-1 (8) CAS lost, re-read ACTIVE: a concurrent subscribe/webhook won — refuses instead of overwriting a paying tenant", async () => {
@@ -2675,7 +2676,7 @@ describe("SubscriptionMutationService.cancel — trial/read-only tenants with no
     tx.tenant.updateMany.mockResolvedValue({ count: 0 });
     tx.tenant.findUnique.mockResolvedValue({ status: "ACTIVE" });
     await expect(svc.cancel("t-1", "u-1")).rejects.toBeInstanceOf(ConflictException);
-    expect(events.emit).not.toHaveBeenCalled();
+    expect(mrrEmits(events)).toHaveLength(0);
     expect(entitlements.invalidate).not.toHaveBeenCalled();
     expect(tenantStatus.invalidate).not.toHaveBeenCalled();
   });
@@ -2694,7 +2695,7 @@ describe("SubscriptionMutationService — legacy rows and null periods (REG-B58 
       svc.subscribe("t1", { planKey: "STARTER", cycle: "MONTHLY" }),
     ).rejects.toBeInstanceOf(ConflictException);
     expect(tx.tenantSubscription.upsert).not.toHaveBeenCalled();
-    expect(events.emit).not.toHaveBeenCalled();
+    expect(mrrEmits(events)).toHaveLength(0);
     // A handled 4xx is invisible otherwise (Sentry captures >= 500 only, no access log).
     expect(warn).toHaveBeenCalledTimes(1);
     warn.mockRestore();
@@ -3037,7 +3038,7 @@ describe("STRIPE-CANCEL-1 — self-serve cancel/resume propagate to Stripe", () 
       "The payment provider did not confirm the change — it may still apply. Check your subscription in a moment before retrying, or contact support.",
     );
     expect(tx.tenantSubscription.update).not.toHaveBeenCalled();
-    expect(events.emit).not.toHaveBeenCalled();
+    expect(mrrEmits(events)).toHaveLength(0);
   });
 
   it("cancel() proceeds locally when Stripe reports resource_missing (subscription already gone)", async () => {
@@ -3145,7 +3146,7 @@ describe("STRIPE-CANCEL-1 — self-serve cancel/resume propagate to Stripe", () 
       "The payment provider did not confirm the change — it may still apply. Check your subscription in a moment before retrying, or contact support.",
     );
     expect(tx.tenantSubscription.update).not.toHaveBeenCalled();
-    expect(events.emit).not.toHaveBeenCalled();
+    expect(mrrEmits(events)).toHaveLength(0);
   });
 
   it("resume() rejects ConflictException when Stripe reports resource_missing — no write, no emit", async () => {
@@ -3156,7 +3157,7 @@ describe("STRIPE-CANCEL-1 — self-serve cancel/resume propagate to Stripe", () 
     stripe.updateSubscription.mockRejectedValue({ code: "resource_missing", statusCode: 404 });
     await expect(svc.resume("t1", "admin")).rejects.toBeInstanceOf(ConflictException);
     expect(tx.tenantSubscription.update).not.toHaveBeenCalled();
-    expect(events.emit).not.toHaveBeenCalled();
+    expect(mrrEmits(events)).toHaveLength(0);
   });
 
   it("resume() with stripeSubId: null never calls Stripe — existing path unchanged", async () => {
@@ -3184,7 +3185,7 @@ describe("STRIPE-CANCEL-1 — self-serve cancel/resume propagate to Stripe", () 
     stripe.updateSubscription.mockRejectedValue({ statusCode: 500, code: "api_error" });
     await expect(svc.cancel("t1", "admin")).rejects.toBeInstanceOf(ServiceUnavailableException);
     expect(tx.tenantSubscription.update).not.toHaveBeenCalled();
-    expect(events.emit).not.toHaveBeenCalled();
+    expect(mrrEmits(events)).toHaveLength(0);
   });
 
   // (11) R4/R1(F2) — undoing a scheduled DOWNGRADE (cancelAtPeriodEnd already false) must never
@@ -3225,7 +3226,7 @@ describe("STRIPE-CANCEL-1 — self-serve cancel/resume propagate to Stripe", () 
     );
     expect(stripe.updateSubscription).not.toHaveBeenCalled();
     expect(tx.tenantSubscription.update).not.toHaveBeenCalled();
-    expect(events.emit).not.toHaveBeenCalled();
+    expect(mrrEmits(events)).toHaveLength(0);
   });
 
   // (14) R4 — documents that a SUSPENDED tenant's cancel() still propagates to Stripe: R1 only
@@ -3305,7 +3306,7 @@ describe("STRIPE-CANCEL-1 — self-serve cancel/resume propagate to Stripe", () 
     stripe.updateSubscription.mockRejectedValue({ statusCode: 500, code: "api_error" });
     await expect(svc.resume("t1", "admin")).rejects.toBeInstanceOf(ServiceUnavailableException);
     expect(tx.tenantSubscription.update).not.toHaveBeenCalled();
-    expect(events.emit).not.toHaveBeenCalled();
+    expect(mrrEmits(events)).toHaveLength(0);
   });
 });
 
@@ -3343,7 +3344,7 @@ describe("STRIPE-CANCEL-2 — cancel() propagates to Stripe for a READ_ONLY tena
       data: { stripeSubId: null },
     });
     expect(tx.tenantSubscription.update).not.toHaveBeenCalled();
-    expect(events.emit).not.toHaveBeenCalled();
+    expect(mrrEmits(events)).toHaveLength(0);
   });
 
   // FINDING-2 (round 3 review): cancelling an ALREADY-cancelled Stripe subscription is a 400
@@ -3371,7 +3372,7 @@ describe("STRIPE-CANCEL-2 — cancel() propagates to Stripe for a READ_ONLY tena
       where: { tenantId: "t1", stripeSubId: "sub_x" },
       data: { stripeSubId: null },
     });
-    expect(events.emit).not.toHaveBeenCalled();
+    expect(mrrEmits(events)).toHaveLength(0);
   });
 
   // B408: the fix above was written against the ONE status its repro produced (`canceled`), so
@@ -3397,7 +3398,7 @@ describe("STRIPE-CANCEL-2 — cancel() propagates to Stripe for a READ_ONLY tena
       where: { tenantId: "t1", stripeSubId: "sub_x" },
       data: { stripeSubId: null },
     });
-    expect(events.emit).not.toHaveBeenCalled();
+    expect(mrrEmits(events)).toHaveLength(0);
   });
 
   it.each(["active", "trialing", "past_due", "unpaid", "paused", "incomplete"])(
@@ -3415,7 +3416,7 @@ describe("STRIPE-CANCEL-2 — cancel() propagates to Stripe for a READ_ONLY tena
       // exhausted) but still bills on repair, and `incomplete`'s first payment can still land.
       await expect(svc.cancel("t1", "admin")).rejects.toBeInstanceOf(ServiceUnavailableException);
       expect(tx.tenantSubscription.updateMany).not.toHaveBeenCalled();
-      expect(events.emit).not.toHaveBeenCalled();
+      expect(mrrEmits(events)).toHaveLength(0);
     },
   );
 
@@ -3443,7 +3444,7 @@ describe("STRIPE-CANCEL-2 — cancel() propagates to Stripe for a READ_ONLY tena
     expect(stripe.cancelSubscription).not.toHaveBeenCalled();
     expect(stripe.getSubscription).not.toHaveBeenCalled();
     expect(tx.tenantSubscription.updateMany).not.toHaveBeenCalled();
-    expect(events.emit).not.toHaveBeenCalled();
+    expect(mrrEmits(events)).toHaveLength(0);
   });
 
   it("REG-B399 cancel() READ_ONLY + stripeSubId: null never calls Stripe — immediate short-circuit, no write", async () => {
@@ -3455,7 +3456,7 @@ describe("STRIPE-CANCEL-2 — cancel() propagates to Stripe for a READ_ONLY tena
     expect(stripe.cancelSubscription).not.toHaveBeenCalled();
     expect(stripe.updateSubscription).not.toHaveBeenCalled();
     expect(tx.tenantSubscription.update).not.toHaveBeenCalled();
-    expect(events.emit).not.toHaveBeenCalled();
+    expect(mrrEmits(events)).toHaveLength(0);
   });
 
   it("REG-B399 cancel() READ_ONLY + live sub, Stripe generic failure → ServiceUnavailableException, nothing written (B107 semantics preserved)", async () => {
@@ -3469,7 +3470,7 @@ describe("STRIPE-CANCEL-2 — cancel() propagates to Stripe for a READ_ONLY tena
     expect(tx.tenantSubscription.update).not.toHaveBeenCalled();
     // FINDING-2: the pointer survives an unconfirmed outcome — the 503 still writes NOTHING.
     expect(tx.tenantSubscription.updateMany).not.toHaveBeenCalled();
-    expect(events.emit).not.toHaveBeenCalled();
+    expect(mrrEmits(events)).toHaveLength(0);
   });
 
   it("REG-B399 an inconclusive re-read after a generic failure still throws 503 and writes nothing", async () => {
@@ -3482,7 +3483,7 @@ describe("STRIPE-CANCEL-2 — cancel() propagates to Stripe for a READ_ONLY tena
     stripe.getSubscription.mockRejectedValue(new Error("still boom"));
     await expect(svc.cancel("t1", "admin")).rejects.toBeInstanceOf(ServiceUnavailableException);
     expect(tx.tenantSubscription.updateMany).not.toHaveBeenCalled();
-    expect(events.emit).not.toHaveBeenCalled();
+    expect(mrrEmits(events)).toHaveLength(0);
   });
 
   it("REG-B399 cancel() READ_ONLY + live sub, Stripe resource_missing → proceeds to the short-circuit result (B107 semantics preserved)", async () => {
@@ -3499,7 +3500,7 @@ describe("STRIPE-CANCEL-2 — cancel() propagates to Stripe for a READ_ONLY tena
       where: { tenantId: "t1", stripeSubId: "sub_x" },
       data: { stripeSubId: null },
     });
-    expect(events.emit).not.toHaveBeenCalled();
+    expect(mrrEmits(events)).toHaveLength(0);
   });
 
   // SA-736r M5 (review nit): the pointer release and the coupon reset commit in ONE tx, Tenant lock first.
@@ -3525,7 +3526,7 @@ describe("STRIPE-CANCEL-2 — cancel() propagates to Stripe for a READ_ONLY tena
     await expect(svc.cancel("t1", "admin")).resolves.toEqual({ cancelled: "already_read_only" });
     expect(order.slice(-3)).toEqual(["lock", "release", "coupon-reset"]);
     expect(prisma.$transaction).toHaveBeenCalled();
-    expect(events.emit).not.toHaveBeenCalled(); // READ_ONLY is not paying: the reset books 0
+    expect(mrrEmits(events)).toHaveLength(0); // READ_ONLY is not paying: the reset books 0
   });
 });
 
@@ -3582,7 +3583,7 @@ describe("#2189 subscribe() re-checks under the lock (SA-389)", () => {
     expect(tx.tenantSubscription.upsert).not.toHaveBeenCalled();
     expect(tx.tenant.update).not.toHaveBeenCalled();
     expect(planTransition.onPlanChange).not.toHaveBeenCalled();
-    expect(events.emit).not.toHaveBeenCalled();
+    expect(mrrEmits(events)).toHaveLength(0);
   });
 
   it("the locked row can make the B58 guard refuse even when the pre-read allowed it (no write)", async () => {
@@ -3602,7 +3603,7 @@ describe("#2189 subscribe() re-checks under the lock (SA-389)", () => {
       svc.subscribe("t1", { planKey: "TEAM", cycle: "MONTHLY" }, "admin"),
     ).rejects.toThrow("You are already on this plan — nothing to change");
     expect(tx.tenantSubscription.upsert).not.toHaveBeenCalled();
-    expect(events.emit).not.toHaveBeenCalled();
+    expect(mrrEmits(events)).toHaveLength(0);
   });
 
   it("wasTrial comes from the LOCKED tenant: converted in between ⇒ no trialConvertedAt, no TRIAL_CONVERTED", async () => {

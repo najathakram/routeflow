@@ -84,6 +84,7 @@ import {
   type LeavingBillOpts,
 } from "./addon-inclusion";
 import { addonCatalogInvalid } from "./addon-catalog-invalid";
+import { updateAddonRowTx, updateAddonRowsTx, upsertAddonRowTx } from "./tenant-addon-writer";
 import { dunningZone } from "./dunning-zone";
 import { formatInZone } from "./subscription-billing-extras";
 import { stripeSubscriptionPeriod } from "./stripe-period";
@@ -638,6 +639,7 @@ export class SubscriptionMutationService {
         manualPay: addonMode === "MANUAL",
         tenantLabel: tenantLabelForNotice,
         actorId,
+        actorKind: "TENANT_USER",
       })) {
         adjustedPrice.set(r.id, 0);
       }
@@ -650,6 +652,7 @@ export class SubscriptionMutationService {
         toAddonSkus: version.addonSkus,
         mode: addonMode,
         tenantLabel: tenantLabelForNotice,
+        actorKind: "TENANT_USER",
         dateLabel:
           addonMode === "MANUAL"
             ? formatInZone(now, await dunningZone(tx as never, tenantId), {
@@ -704,8 +707,9 @@ export class SubscriptionMutationService {
         // #2188 / SA-385: re-activate the tenant's row for this SKU IN PLACE — including one
         // the admin path keyed on a legacy addonKey, active or not — else create it.
         const row = await findAddonRow(tx, tenantId, code);
-        await tx.tenantAddon.upsert({
-          where: { tenantId_addonKey: { tenantId, addonKey: row?.addonKey ?? code } },
+        await upsertAddonRowTx(tx, this.events, {
+          tenantId,
+          addonKey: row?.addonKey ?? code,
           create: {
             tenantId,
             addonKey: code,
@@ -723,12 +727,14 @@ export class SubscriptionMutationService {
             // SA-693: self-serve is billable; an INACTIVE comp row re-activated here stops being one.
             isComp: false,
           },
+          actor: { kind: "TENANT_USER", id: actorId ?? null, source: "subscribe.pick" },
         });
       }
       for (const code of toDisable) {
-        await tx.tenantAddon.update({
-          where: { id: priorByCode.get(code)!.id },
+        await updateAddonRowTx(tx, this.events, {
+          id: priorByCode.get(code)!.id,
           data: { active: false, stripeItemId: null },
+          actor: { kind: "TENANT_USER", id: actorId ?? null, source: "subscribe.drop" },
         });
       }
 
@@ -2674,7 +2680,7 @@ export class SubscriptionMutationService {
       ) {
         return false;
       }
-      const { count } = await tx.tenantAddon.updateMany({
+      const { count } = await updateAddonRowsTx(tx, this.events, {
         where: billableAddonWhere({
           id: rowId,
           active: true,
@@ -2682,6 +2688,7 @@ export class SubscriptionMutationService {
           quantity: rowQuantity,
         }),
         data: { stripeItemId: itemId, priceSnapshot: price },
+        actor: { kind: "SYSTEM", id: null, source: "checkout.adopt" },
       });
       if (count !== 1) return false;
       const payload = {
@@ -3363,8 +3370,9 @@ export class SubscriptionMutationService {
           : { priceSnapshot: 0, quantity: 0 };
 
         // Re-activate an existing row IN PLACE (whichever key it carries); else create.
-        await tx.tenantAddon.upsert({
-          where: { tenantId_addonKey: { tenantId, addonKey: current?.addonKey ?? sku } },
+        await upsertAddonRowTx(tx, this.events, {
+          tenantId,
+          addonKey: current?.addonKey ?? sku,
           create: {
             tenantId,
             addonKey: sku,
@@ -3384,6 +3392,7 @@ export class SubscriptionMutationService {
             isComp: false,
             ...(stripeItemId ? { stripeItemId } : {}),
           },
+          actor: { kind: "TENANT_USER", id: actorId ?? null, source: "tenant.enable" },
         });
         await emitAddonDelta(tx, this.events, {
           tenantId,
@@ -3537,9 +3546,10 @@ export class SubscriptionMutationService {
       await tx.$queryRaw`SELECT id FROM "TenantAddon" WHERE id = ${addon.id} FOR UPDATE`;
       const current = await tx.tenantAddon.findUnique({ where: { id: addon.id } });
       if (!current?.active) return; // already disabled by a concurrent call that won the race
-      await tx.tenantAddon.update({
-        where: { id: addon.id },
+      await updateAddonRowTx(tx, this.events, {
+        id: addon.id,
         data: { active: false, stripeItemId: null },
+        actor: { kind: "TENANT_USER", id: actorId ?? null, source: "tenant.disable" },
       });
       await emitAddonDelta(tx, this.events, {
         tenantId,

@@ -604,12 +604,15 @@ function make(opts: Opts = {}) {
       type: "checkout.session.completed",
       data: { object: s },
     });
+  // the MRR ledger only: the per-change audit record (addon.state_changed, amountDelta null) is asserted elsewhere.
   const ledger = () =>
-    events.emit.mock.calls.map((c: any[]) => ({
-      type: c[1],
-      delta: c[3]?.amountDelta,
-      sku: c[2]?.sku,
-    }));
+    events.emit.mock.calls
+      .filter((c: any[]) => c[1] !== "addon.state_changed")
+      .map((c: any[]) => ({
+        type: c[1],
+        delta: c[3]?.amountDelta,
+        sku: c[2]?.sku,
+      }));
   const ledgerSum = () => ledger().reduce((s: number, e: any) => s + Number(e.delta ?? 0), 0);
   return {
     billing,
