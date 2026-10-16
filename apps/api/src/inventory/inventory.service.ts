@@ -1767,9 +1767,10 @@ export class InventoryService {
    * reverse the re-apply leg of {@link updatePurchaseOrder} starts from.
    *
    * The ledger is never edited: each live PURCHASE movement (`reference = poNumber`)
-   * is compensated by a costed NEGATIVE ADJUSTMENT — the same shape
-   * `VendorBillsService.voidBill` writes, which the cost-recompute replay already
-   * understands as the exact inverse of a purchase — so the original receipt stays
+   * is compensated by a costed NEGATIVE ADJUSTMENT — which the
+   * cost-recompute replay already understands as the exact inverse of a purchase
+   * (a bill's voidBill/revertToDraft now append a negative PURCHASE instead, SA-808 §5; this
+   * PO path is the remaining ADJUSTMENT writer) — so the original receipt stays
    * in its own period and there is an audit trail of the correction. The average is
    * reversed newest-first through {@link reverseAverageCost}.
    *

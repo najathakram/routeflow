@@ -292,6 +292,41 @@ export interface VendorBillReceiveGap {
   stockDrift: number;
 }
 
+/** The warning toast for a stock write whose product cost history could not be recomputed. */
+export function costHistoryGapToast(
+  gaps: VendorBillReceiveGap[] | undefined,
+  action: "received" | "voided",
+): { title: string; description: string; variant: "warning" } | null {
+  if (!gaps || gaps.length === 0) return null;
+  const names = [...new Set(gaps.map((g) => g.name))];
+  const isPlural = names.length > 1;
+  const its = isPlural ? "their" : "its";
+  return {
+    title: `${action === "received" ? "Received" : "Voided"} — cost history not recomputed`,
+    description: `${names.join(", ")} — ${
+      action === "received" ? "received and costed normally" : "voided and reversed normally"
+    }, but ${its} stock records don't fully explain the quantity on hand (this usually happens after past sales), so ${its} historical cost snapshots weren't recalculated. Ask an admin to look into ${
+      isPlural ? "these products" : "this product"
+    }.`,
+    variant: "warning",
+  };
+}
+
+/** The error toast for a refused void: the server's 409 says what to do (e.g. a ledger gap). */
+export function voidFailureToast(err: unknown): {
+  title: string;
+  description: string;
+  variant: "error";
+} {
+  const message = (err as { response?: { data?: { message?: unknown } } } | null)?.response?.data
+    ?.message;
+  return {
+    title: "Failed to void bill",
+    description: typeof message === "string" && message ? message : "Please try again.",
+    variant: "error",
+  };
+}
+
 export function useReceiveVendorBill() {
   const qc = useQueryClient();
   return useMutation<
@@ -338,7 +373,8 @@ export function useRevertVendorBillToDraft() {
 
 export function useVoidVendorBill() {
   const qc = useQueryClient();
-  return useMutation<VendorBill, Error, string>({
+  // gapsDetected is additive (B846 sibling): products whose cost history the void could not replay.
+  return useMutation<VendorBill & { gapsDetected?: VendorBillReceiveGap[] }, Error, string>({
     mutationFn: (id) => apiClient.post(`/vendor-bills/${id}/void`).then((r) => r.data),
     onSuccess: (_, id) => {
       qc.invalidateQueries({ queryKey: ["vendor-bills"] });

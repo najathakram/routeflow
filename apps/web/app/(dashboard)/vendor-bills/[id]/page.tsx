@@ -33,6 +33,8 @@ import {
   type UnlinkedItemsError,
   getPackSizeUnknownError,
   type PackSizeUnknownError,
+  costHistoryGapToast,
+  voidFailureToast,
   type VendorBill,
   type VendorBillItem,
   type VendorBillStatus,
@@ -877,21 +879,8 @@ export default function VendorBillDetailPage() {
           // Same advice as the API's INVENTORY_LEDGER_GAP conflict ("Ask an admin to
           // look into this product") — the two used to disagree (this toast said
           // "No action needed"): it is one ledger gap, told one way.
-          if (updated?.gapsDetected && updated.gapsDetected.length > 0) {
-            const names = [...new Set(updated.gapsDetected.map((g) => g.name))];
-            const isPlural = names.length > 1;
-            toast({
-              title: "Received — cost history not recomputed",
-              description: `${names.join(", ")} — received and costed normally, but ${
-                isPlural ? "their" : "its"
-              } stock records don't fully explain the quantity on hand (this usually happens after past sales), so ${
-                isPlural ? "their" : "its"
-              } historical cost snapshots weren't recalculated. Ask an admin to look into ${
-                isPlural ? "these products" : "this product"
-              }.`,
-              variant: "warning",
-            });
-          }
+          const gapsToast = costHistoryGapToast(updated?.gapsDetected, "received");
+          if (gapsToast) toast(gapsToast);
         },
         onError: (err: any) => {
           // B743: lines of a case-sold product with no units per case → an explicit choice.
@@ -919,16 +908,21 @@ export default function VendorBillDetailPage() {
 
   const handleVoid = () => {
     voidBill.mutate(bill.id, {
-      onSuccess: () => {
+      onSuccess: (updated) => {
         setIsVoidOpen(false);
         toast({
           title: "Bill voided",
           description: `Bill ${bill.billNumber} has been voided.`,
           variant: "info",
         });
+        // B846 sibling: a void's backdated reversal replays the product like receive does.
+        const gapsToast = costHistoryGapToast(updated?.gapsDetected, "voided");
+        if (gapsToast) toast(gapsToast);
       },
-      onError: () => {
-        toast({ title: "Failed to void bill", description: "Please try again.", variant: "error" });
+      onError: (err: any) => {
+        // The 409 (e.g. INVENTORY_LEDGER_GAP) says what to do next; "try again" would not help.
+        setIsVoidOpen(false);
+        toast(voidFailureToast(err));
       },
     });
   };
