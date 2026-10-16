@@ -225,12 +225,12 @@
 
 ## tooling
 
-### L-303 · 2026-10-12 · tooling · a rule the API, web and mobile must all run belongs in @routeflow/pricing, never @routeflow/types
+### L-309 · 2026-10-16 · tooling · a worktree git calls clean can still hold gitignored valuables; check `git status --ignored` before removing it
 
-- **Symptom:** a shared display rule (the paid-at-sale predicate) was first written into `packages/types`; the api-runtime-imports guard went red because the compiled API cannot value-import that package.
-- **Root cause:** `@routeflow/types` is source-only (TS the API never builds), and web and mobile import it freely, so a rule written there looks shared until the API's runtime import audit runs. The same trap archived as L-261 earlier.
-- **Lesson:** **Before placing shared runtime logic, ask who executes it. If the API does, it goes in `@routeflow/pricing` (the one compiled workspace package the API may value-import, with scanning); types keeps only constants and types.** Web/mobile re-export a thin wrapper to keep their import paths.
-- **Guard:** `api-runtime-imports` spec ("never value-imports @routeflow/types from a compiled source file") and the exact-package list spec; the pricing package's own spec pins the rule (row 401).
+- **Symptom:** a worktree reported clean by `git status` was about to be removed while it held ignored files that exist nowhere else: database backups, `*.sql` dumps, `.env*` files and `graphify-out/`.
+- **Root cause:** `git status` hides ignored files by design, so "clean" says nothing about untracked-and-ignored data; removal tooling that trusts it deletes them with the tree.
+- **Lesson:** **Before removing a worktree, run `git status --ignored --short` and list what is ignored; copy out anything not regenerable (backups, dumps, env files, built graphs) or stop and report. "Clean" is a statement about tracked files only.** Cf. [[L-180]].
+- **Guard:** none automatic; the worktree-removal step of the cleanup routine lists ignored files first.
 
 ### L-291 · 2026-10-10 · tooling · never feed python a heredoc on Windows (`python3 -`): it hangs; write the script to a file or use node
 
@@ -380,13 +380,12 @@
 
 ## testing
 
-### L-296 · 2026-10-11 · testing · a pin that hard-codes a ruling's literal text or list goes stale, and fails only on the merge with a moved master
+### L-308 · 2026-10-16 · testing · a bounded input buffer reports what it drops, and a repeat rule is proved with the real inter-scan timing of each source
 
-- **Symptom:** a spec asserting "only these 2 routes", "the report re-send is blocked" or "exactly these N files write tenant status" was green on its own branch and red after the merge with a master that held a later ruling or a new legitimate writer.
-- **Root cause:** the pin copied the wording of the ruling it was written under instead of encoding the invariant, so every later ruling or writer made it lie. A branch's own green cannot see master's changes.
-- **Lesson:** **Pin the invariant structurally: one named constant, assertions derived from it, and an allow-list that carries a reason per entry plus a stale-entry guard (an entry that no longer matches fails). When a ruling changes, change the constant and its pin in the same diff, and replay the merged tip before landing. Cf. [[L-264]].**
-- **Guard:** `SNAPSHOT_READERS` in `coupon-state.spec.ts` and `PACKAGE_ALLOWLIST` in `api-error-codes-parity.spec.ts` (reason per entry, stale-entry check, total pinned); the replay of the merged tip.
-- **Recurrence (2026-10-12, R5.2 train):** the read-only copy rewrite (SA-776) on one train member staled the returns, counter-sale, park and save-error specs and a 390 px counter selector that sibling members had written against the old per-name line; each member was green on its own branch and the collisions only appeared when the MERGED tree's web and api suites ran (a train-only collision). Run the merged tree's full unit suites before the train PR, never each member's own green (cf. [[L-271]], [[L-297]]).
+- **Symptom:** 20 repeat scans of one item added only 14 or 15 on the New order screen, on both the phone camera and a desktop wedge scanner (row 536).
+- **Root cause:** repeat suppression waited for a steady hold tuned for camera jitter, a two-deep pending buffer discarded overflow silently, and wedge reads interleaved with async lookups; tests used instant, evenly spaced scans that never showed the loss.
+- **Lesson:** **A bounded queue returns a `dropped` signal the screen must show, never a silent discard. Tune repeat rules per screen (opt-in, absence-based for a deliberate-repeat screen), run per-item async work through one serial FIFO, and take-and-clear the input atomically. Prove it with a deferred-resolve test: scan 1 in flight, half of scan 2, resolve, finish.**
+- **Guard:** `scan-pending-buffer.spec.ts`, `scan-engine.continuous.spec.ts`, the `useScanCodeHandler` and `CreateOrderModal` deferred-resolve tests.
 
 ### L-205 · 2026-09-18 · testing · regression tests pinned literal source text, not behavior
 
@@ -454,6 +453,13 @@
 
 ## domain
 
+### L-307 · 2026-10-16 · domain · two fields that describe one quantity are stored as one and derived; the customer-facing server path refuses a contradictory pair
+
+- **Symptom:** the buyer cart's quantity and its case/piece split drifted apart, so the cart showed one price while the server billed another (row 531).
+- **Root cause:** quantity and split were both client state, each edited by its own control, and the server accepted whatever pair arrived; saved carts and pack-size changes re-created the drift.
+- **Lesson:** **Keep ONE source (quantity in pieces), derive the split through the shared pricing helper on every change, rebuild saved state quantity-first and flag what was rebuilt, and have the server refuse a contradictory pair on the customer-facing path with a coded 400 before any key, lock or write. Staff paths only warn until a census of existing rows says enforcing is safe.** Cf. [[L-222]].
+- **Guard:** `qty-split-consistency.spec.ts` and its DB spec, `buyer-cart-line.test.ts`, the read-only `report-buyer-split-mismatch.mjs` census.
+
 ### L-306 · 2026-10-12 · domain · a switch that must stop a family of automatic writers is enforced by a writer census and a fail-closed read, never by the callers you remember
 
 - **Symptom:** the automatic-lock pause (row 381) landed as a switch plus a gate, and a follow-up had to be added to hold EVERY automatic tenant lock while it is on; a later one made an unknown tenant class fail closed and pinned the class inside the write.
@@ -474,13 +480,6 @@
 - **Root cause:** the diff of "what changed" was computed against the live query data, so a refetch silently moved the baseline under the user's edits.
 - **Lesson:** **Snapshot the server state when editing starts and diff only against that snapshot; send just the fields the user touched. A refetch while editing never re-bases the draft: offer an explicit reload, and let the server reject a stale revision.**
 - **Guard:** none automatic; review checks that a save payload is built from the frozen baseline. Cf. [[L-167]].
-
-### L-302 · 2026-10-12 · domain · a negative Prisma filter on a nullable column never matches NULL: write the NULL arm and prove it with a NULL row
-
-- **Symptom:** "everything except category X" (the tracked-category bulk assign, and the product list's `product-list-where.ts` where-builder) silently dropped every product with no category; a second instance of the class after the first fix.
-- **Root cause:** `{ col: { not: X } }`, `{ notIn: [...] }` and `NOT: {...}` compile to `col <> X` / `NOT IN`, which SQL's three-valued logic evaluates to UNKNOWN for a NULL column, so NULL rows are excluded. The author's mental model of "all but X" includes the rows that have no value at all.
-- **Lesson:** **A negative filter (`not`, `notIn`, `NOT`) on a nullable column never matches NULL. Spell the NULL arm (`OR: [{ col: null }, { col: { not: X } }]`) and prove the filter with a fixture row whose column is NULL, in a real-database spec when the where-builder is shared.** Cf. [[L-238]].
-- **Guard:** each fix carries a spec with a NULL-column row (the product list where-builder, the bulk assign). No repo-wide scan yet: propose an AST scan that flags `not` / `notIn` / `NOT` on a nullable Prisma column without an adjacent `null` arm.
 
 ### L-301 · 2026-10-12 · domain · a revision or guard value is written in the same transaction and lock as the check that reads it
 

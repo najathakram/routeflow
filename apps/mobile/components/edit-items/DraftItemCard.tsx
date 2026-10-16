@@ -251,6 +251,7 @@ export function DraftItemCard({
           productId: item.productId,
           unitPrice: item.unitPrice,
           unitLabel: item.unitLabel,
+          derivedBase: item.derivedBase,
         }}
         product={ladderProductFor(item)}
         tier={tier}

@@ -86,6 +86,8 @@ describeDb("label write side against real Postgres", () => {
   afterAll(async () => {
     for (const t of [A?.tenantId, B?.tenantId].filter(Boolean) as string[]) {
       await raw.auditLog.deleteMany({ where: { tenantId: t } });
+      await raw.sellingRestrictionTarget.deleteMany({ where: { tenantId: t } });
+      await raw.sellingRestriction.deleteMany({ where: { tenantId: t } });
       await raw.productCategoryLabel.deleteMany({ where: { tenantId: t } });
       await raw.product.deleteMany({ where: { tenantId: t, parentProductId: { not: null } } });
       await raw.product.deleteMany({ where: { tenantId: t } });
@@ -194,5 +196,94 @@ describeDb("label write side against real Postgres", () => {
       NotFoundException,
     );
     expect(await labelsOf(B.prod)).toHaveLength(1);
+  });
+  it("owner ruling 2026-10-14: an operator is refused only on a label an ACTIVE federal rule covers (real SQL)", async () => {
+    const operator = { sub: "op", username: "op", role: "OPERATOR" } as never;
+    const FROM = new Date("2026-01-01T00:00:00Z");
+    const mkRule = (data: Record<string, unknown>) =>
+      raw.sellingRestriction.create({
+        data: {
+          tenantId: A.tenantId,
+          states: [],
+          surface: "ALL",
+          reason: `lbl ${run}`,
+          effectiveFrom: FROM,
+          ...data,
+        } as never,
+      });
+    const setGp = () => asA(() => service.setLabel(A.gp, A.cat, { mode: "INCLUDE" }, operator));
+    const clear = async () => {
+      await raw.sellingRestrictionTarget.deleteMany({ where: { tenantId: A.tenantId } });
+      await raw.sellingRestriction.deleteMany({ where: { tenantId: A.tenantId } });
+      await raw.productCategoryLabel.deleteMany({ where: { tenantId: A.tenantId } });
+    };
+    try {
+      // a STATE rule on the label: allowed
+      await mkRule({ categoryId: A.cat, jurisdiction: "STATE", states: ["TX"] });
+      await setGp();
+      expect(await labelsOf(A.gp)).toHaveLength(1);
+      await clear();
+
+      // a legacy FEDERAL rule on the label: 403, nothing written
+      await mkRule({ categoryId: A.cat, jurisdiction: "FEDERAL" });
+      await expect(setGp()).rejects.toThrow(
+        "Only an account admin can change (or lift) a federal rule.",
+      );
+      expect(await labelsOf(A.gp)).toHaveLength(0);
+      await clear();
+
+      // a FEDERAL rule covering the label by an active TARGET row (legacy column elsewhere): 403
+      const r = await mkRule({ categoryId: A.other, jurisdiction: "FEDERAL" });
+      await raw.sellingRestrictionTarget.create({
+        data: { tenantId: A.tenantId, ruleId: r.id, categoryId: A.cat, addedAt: FROM },
+      });
+      await expect(setGp()).rejects.toThrow("federal rule");
+      // the same rule once that target row is removed: allowed (its other target does not cover the label)
+      await raw.sellingRestrictionTarget.updateMany({
+        where: { ruleId: r.id, categoryId: A.cat },
+        data: { removedAt: FROM },
+      });
+      await raw.sellingRestrictionTarget.create({
+        data: { tenantId: A.tenantId, ruleId: r.id, categoryId: A.other, addedAt: FROM },
+      });
+      await setGp();
+      expect(await labelsOf(A.gp)).toHaveLength(1);
+      await clear();
+
+      // legacy categoryId = the label, but the rule HAS target rows and every one is removed: it must NOT fall back
+      // to the legacy column (row 509 SA condition 1), so the label is not protected
+      const legacyGone = await mkRule({ categoryId: A.cat, jurisdiction: "FEDERAL" });
+      await raw.sellingRestrictionTarget.create({
+        data: {
+          tenantId: A.tenantId,
+          ruleId: legacyGone.id,
+          categoryId: A.cat,
+          addedAt: FROM,
+          removedAt: FROM,
+        },
+      });
+      await setGp();
+      expect(await labelsOf(A.gp)).toHaveLength(1);
+      await clear();
+
+      // an operator REMOVING a federal-covered label: 403 RULE_ADMIN_ONLY, the row stays
+      await raw.productCategoryLabel.create({
+        data: { tenantId: A.tenantId, productId: A.gp, categoryId: A.cat, mode: "INCLUDE" },
+      });
+      await mkRule({ categoryId: A.cat, jurisdiction: "FEDERAL" });
+      const removal = await asA(() => service.removeLabel(A.gp, A.cat, operator)).catch(
+        (e: { getResponse(): unknown }) => e.getResponse(),
+      );
+      expect(removal).toMatchObject({ code: "RULE_ADMIN_ONLY" });
+      expect(await labelsOf(A.gp)).toHaveLength(1);
+      await clear();
+
+      // a LIFTED federal rule no longer protects the label
+      await mkRule({ categoryId: A.cat, jurisdiction: "FEDERAL", liftedAt: FROM });
+      await setGp();
+      expect(await labelsOf(A.gp)).toHaveLength(1);
+    } finally {
+      await clear();
+    }
   });
 });

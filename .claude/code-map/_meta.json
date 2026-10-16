@@ -1,6 +1,6 @@
 {
-  "mappedSha": "96fc7351fb78f50296579936e88c3369627265cf",
-  "generatedAt": "2026-10-12T17:00:00.000Z",
+  "mappedSha": "b6ed040dc3dbfc3918b5ac661cbb05abe340f394",
+  "generatedAt": "2026-10-16T12:00:00.000Z",
   "layout": "split-2026-09-13",
   "areas": [
     "api",
@@ -15,5 +15,5 @@
     "packages": 0
   },
   "fileCount": 1141,
-  "notes": "- **2026-10-12 — R5.2 tail bookkeeping (`7f9dfb180..96fc7351f`, row 381 and four small hotfix members; docs-only, Option B follow-up).** New `api/` and `web/landing-2026-10-12-r52-tail.md` (TOC row in each area file; 28 non-test source files, 26 test files counted only; no migration). Row 381: the automatic-lock pause switch (`platform.autoLocksPaused`, fail-closed class gate before each writer's first write, class inside the compare-and-swap, held-case claim and audit rows), the platform-admin switch API with preview, the super-admin card, and the writer-census pin; platform/tenant auth callbacks turn the wrong state type away first; the Connect callback refuses a workspace not accepting changes with status-specific copy; the invoice PDF pointer is written only when it changes. Lesson L-306. `mappedSha` = master `96fc7351f`."
+  "notes": "**2026-10-16 — Bookkeeping for #3473 #3471 #3472 #3460 #3474 (`96fc7351f..b6ed040dc`; docs-only, Option B follow-up).** New `api/`, `web/`, `mobile/landing-2026-10-16-bk.md` (TOC row in each area file) and a packages.md section. Train S3 (#3473, 11 members): ranked product row locks and `stockTxBounded`, `LockConflictFilter` (retryable 503), batched count commit with skips, replay-cart normalize, unit chain and ladder options in `@routeflow/pricing`, labels kept on reparent, estimate tax basis. #3471 buyer qty/split guard (`QTY_SPLIT_MISMATCH`), #3472 product detail Batch A, #3460 portal hide admin-only, #3474 fastRepeat scan engine and serial queue. Lessons L-307 to L-309. `mappedSha` = master `b6ed040dc`. Full history: CHANGELOG.md."
 }

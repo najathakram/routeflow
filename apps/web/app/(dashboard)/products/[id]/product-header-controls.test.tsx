@@ -74,16 +74,48 @@ describe("ProductHeaderControls (VU-2)", () => {
     expect(del.className).not.toContain("bg-danger ");
   });
 
-  it.each(["TENANT_ADMIN", "DRIVER", "CUSTOMER", "STAFF"])("Delete is absent for %s", (r) => {
+  it.each(["DRIVER", "CUSTOMER", "STAFF"])("Delete and Make variant of… are absent for %s", (r) => {
     role = r;
     setup();
     expect(screen.queryByRole("button", { name: "Delete" })).toBeNull();
+    expect(screen.queryByRole("button", { name: "Make variant of…" })).toBeNull();
   });
+
+  it.each(["OPERATOR", "TENANT_ADMIN"])(
+    "owner ruling 2026-10-14: %s gets Delete and Make variant of…",
+    (r) => {
+      role = r;
+      setup();
+      expect(screen.getByRole("button", { name: "Delete" })).toBeEnabled();
+      expect(screen.getByRole("button", { name: "Make variant of…" })).toBeEnabled();
+    },
+  );
 
   it("Delete asks the page to open its DeleteProductConfirm (no second dialog here)", () => {
     const { onRequestDelete } = setup();
     fireEvent.click(screen.getByRole("button", { name: "Delete" }));
     expect(onRequestDelete).toHaveBeenCalledTimes(1);
     expect(screen.queryByRole("dialog")).toBeNull();
+  });
+
+  it("P-14: secondary actions are ghost; Delete sits apart behind a divider wrapper", () => {
+    setup();
+    const deactivate = screen.getByRole("button", { name: "Deactivate" });
+    expect(deactivate.className).not.toMatch(/border-line-strong/); // not the secondary look
+    expect(deactivate.className).toMatch(/text-ink-500/); // ghost
+    const del = screen.getByRole("button", { name: "Delete" });
+    const wrap = del.parentElement as HTMLElement;
+    expect(wrap.className).toMatch(/sm:border-l/);
+    expect(wrap.className).toMatch(/sm:ml-2/);
+    expect(wrap.className).toMatch(/max-sm:basis-full/);
+  });
+
+  it("D1: below sm the Delete row starts at the leading edge, set apart by a hairline above", () => {
+    setup();
+    const wrap = screen.getByRole("button", { name: "Delete" }).parentElement as HTMLElement;
+    expect(wrap.className).toMatch(/max-sm:justify-start/);
+    expect(wrap.className).toMatch(/max-sm:border-t/);
+    expect(wrap.className).toMatch(/max-sm:basis-full/);
+    expect(wrap.className).not.toMatch(/max-sm:justify-end/);
   });
 });

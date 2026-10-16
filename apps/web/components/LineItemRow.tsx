@@ -15,6 +15,7 @@ import { MoneyInput } from "@/components/MoneyInput";
 import { PriceChips, PriceHistoryButton } from "@/components/PriceHistory";
 import type { PackBase } from "@/lib/order-line-unit";
 import type { TrackedCategory } from "@/lib/api/tracked-categories";
+import type { PriceSummaryResponse } from "@routeflow/types";
 
 /**
  * A single order line item, as built by `CreateOrderModal` (and, in future, the
@@ -80,6 +81,11 @@ export interface LineItemRowProps {
     customerId?: string | null;
     customerName?: string | null;
     onUsePrice: (price: number) => void;
+    /** The order screen's ONE batched `usePriceSummary` result; the "Recent prices" chips read their
+     *  line's entry from it (no per-line request). Absent = no chips. */
+    summary?: PriceSummaryResponse;
+    /** The order being edited/copied: its own price is never shown as history (hunt2 F6). */
+    excludeOrderId?: string | null;
   };
   /** Last-scanned highlight ring (scanner-redesign-spec.md §4.1/§5.1) — unused by
    *  `CreateOrderModal`, which never passes it; reserved for the scan screen. */
@@ -217,6 +223,7 @@ export function LineItemRow({
       unitHint={li.unitLabel ?? (li.unitsPerBox && li.unitsPerBox > 1 ? "case" : li.unit)}
       packHint={li.unitsPerBox ?? null}
       onUsePrice={customerPriceHistory.onUsePrice}
+      excludeOrderId={customerPriceHistory.excludeOrderId}
       focusSelector="[data-line-price-input]"
     />
   );
@@ -339,8 +346,7 @@ export function LineItemRow({
               {historyButton}
               <span className="hidden whitespace-nowrap sm:inline">Price history</span>
               <PriceChips
-                customerId={customerPriceHistory?.customerId}
-                productId={li.productId || null}
+                entry={customerPriceHistory?.summary?.[li.productId]}
                 unitHint={li.unitLabel ?? (li.unitsPerBox && li.unitsPerBox > 1 ? "case" : li.unit)}
                 packHint={li.unitsPerBox ?? null}
                 onUsePrice={customerPriceHistory!.onUsePrice}

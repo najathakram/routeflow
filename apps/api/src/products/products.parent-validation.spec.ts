@@ -238,8 +238,18 @@ describe("ProductsService: every parent write goes through it (B1211)", () => {
     prisma.recipe.findMany.mockResolvedValue([]);
   }
 
+  /** H2's read-only label plan walks the family chain: every family asked for is a standalone, unlabelled row. */
+  function standaloneChains() {
+    prisma.product.findMany.mockImplementation(
+      async (args: { where?: { id?: { in?: string[] } } }) =>
+        (args?.where?.id?.in ?? []).map((id) => ({ id, parentProductId: null })),
+    );
+    prisma.productCategoryLabel.findMany.mockResolvedValue([]);
+  }
+
   beforeEach(async () => {
     prisma = createMockPrisma();
+    standaloneChains();
     const module: TestingModule = await Test.createTestingModule({
       providers: [
         ProductsService,

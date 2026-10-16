@@ -134,6 +134,12 @@ describe("genericToastCopy: codes users rely on", () => {
     );
   });
 
+  it("PRODUCT_CHAIN_UNREADABLE (H2: a reparent refused on an unreadable family chain) is fixed copy", () => {
+    const copy = genericToastCopy(err(409, { code: API_ERROR_CODES.PRODUCT_CHAIN_UNREADABLE }));
+    expect(copy).toBe("This product's family chain can't be read.");
+    expect(copy).not.toContain(RAW);
+  });
+
   it("ORDER_LINE_CHANGED is mapped through the shared constant", () => {
     expect(genericToastCopy(err(409, { code: API_ERROR_CODES.ORDER_LINE_CHANGED }))).toMatch(
       /changed while it was being billed/,
@@ -176,6 +182,10 @@ describe("genericToastCopy: codes users rely on", () => {
     ["ORDER_WITH_CARRIER_NO_REDUCE", /Record a return instead of reducing/],
     ["ORDER_WITH_CARRIER_NO_ADD", /Create a new order for the extra items/],
     ["CONCURRENT_UPDATE", /Someone else is updating/],
+    // SA-767 L-2.2: a second commit / an edit of a count that is being saved.
+    ["STOCK_COUNT_COMMITTING", /^This count is being saved. Try again in a moment.$/],
+    // SA-767 r-note 5 SA-3: the fallback toast (the count screens show the session name themselves).
+    ["PRODUCT_IN_OPEN_COUNT", /^Already being counted in another count$/],
     ["BARCODE_TAKEN", /barcode/],
     ["ADDON_GATE", /isn't included in your current plan/],
     // M11: the stackable add-on quantity refusals

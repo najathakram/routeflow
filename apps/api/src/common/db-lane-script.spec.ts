@@ -52,7 +52,9 @@ function lane(root: string, args: string[]) {
   const r = spawnSync(process.execPath, [LANE, "--root", root, ...args], {
     encoding: "utf8",
     env: scrubbedGitEnv(),
-    timeout: 60_000,
+    // The lane walks ~2.9k files; on a loaded runner a run can pass 60 s, and a killed child leaves the spec list
+    // without its FINAL summary line ("DB-LANE FULL ..."). 180 s keeps case 16 a pin on the picker, not on CI load.
+    timeout: 180_000,
   });
   return { status: r.status, out: r.stdout ?? "", err: r.stderr ?? "" };
 }

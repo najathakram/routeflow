@@ -47,6 +47,50 @@ export interface PriceHistorySummary {
   currentAvgCost: number | null;
 }
 
+/** v1.1: reference prices in the NEWEST row's unit. Any member is null when it cannot be known. */
+export interface PriceHistoryReferences {
+  /** The product's list price (tier 1) in the row unit. */
+  listPrice: number | null;
+  /** The customer's current tier / special price in the row unit (the order-create resolver). */
+  tierPrice: number | null;
+  /** (last - previous) / previous for the same unit, 4 decimal places; null with < 2 rows or a 0 previous. */
+  changeSinceLast: number | null;
+}
+
+/**
+ * v1.1 `?compare=all`: anonymous aggregate of OTHER customers' invoiced sales of the product in the
+ * last 180 days, in the most common unit. Never carries a customer name or id; null (on the
+ * response) when fewer than 3 other customers bought it.
+ */
+export interface PriceHistoryAggregate {
+  low: number;
+  median: number;
+  high: number;
+  /** Count of distinct other customers behind the figures (always >= 3). */
+  customers: number;
+  unitLabel: string;
+}
+
+/** `GET /customers/:customerId/price-summary` refuses more than this many distinct product ids. */
+export const PRICE_SUMMARY_MAX_PRODUCTS = 50;
+
+/** One product in `GET /customers/:customerId/price-summary`. */
+export interface PriceSummaryEntry {
+  /**
+   * The newest sales, each in ITS OWN unit AND pack size (`unitsPerBox`, null = unknown / sold by the
+   * piece). A chip may only be offered for a line whose pack matches the row's own, never the entry's.
+   */
+  last3: { date: string; unitPrice: number; unitLabel: string; unitsPerBox: number | null }[];
+  /** Low / high of the NEWEST sale's unit group only (never units mixed); null with no sales. */
+  low: number | null;
+  high: number | null;
+  /** The unit `low` / `high` are in (the newest sale's), so the figures carry their unit. */
+  unitLabel: string | null;
+  unitsPerBox: number | null;
+}
+
+export type PriceSummaryResponse = Record<string, PriceSummaryEntry>;
+
 export interface PriceHistoryResponse {
   customerId: string;
   customerName: string;
@@ -56,4 +100,8 @@ export interface PriceHistoryResponse {
   costVisible: boolean;
   rows: PriceHistoryRow[];
   summaries: PriceHistorySummary[];
+  /** v1.1 */
+  references: PriceHistoryReferences;
+  /** v1.1: present only with `?compare=all` (null = too few other customers). */
+  aggregate?: PriceHistoryAggregate | null;
 }

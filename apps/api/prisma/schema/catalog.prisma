@@ -768,10 +768,13 @@ model StockCountLine {
   /// The denomination they entered it in, purely for faithful re-display.
   boxes            Int?
   pieces           Int?
-  /// On-hand snapshotted when this line was FIRST counted — the "expected" the
-  /// review screen compares against. Snapshotting (rather than reading live
-  /// stock at commit) is what makes the variance mean "what changed since you
-  /// started counting" instead of silently moving under the counter.
+  /// The on-hand baseline the REPLACE delta is measured from (delta = countedQty -
+  /// expectedQty). Stamped from the live stock when the line is created and on every
+  /// ABSOLUTE write that changes the count (a typed / set total or a recount); an
+  /// increment scan, a cost-only edit, a mode toggle and a same-value resend keep it.
+  /// Snapshotting (rather than reading live stock at commit) is what makes the
+  /// variance mean "what changed since you started counting", so a sale that lands
+  /// after the baseline is kept instead of being counted away.
   expectedQty      Decimal            @db.Decimal(10, 3)
   /// Optional per-line cost correction, 4dp (COST_DP). Set ⇒ commit ALSO writes
   /// the audited COST_BASIS path for this product, not just the quantity.
