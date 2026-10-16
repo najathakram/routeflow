@@ -2,6 +2,7 @@ import { BadRequestException, ConflictException, Injectable } from "@nestjs/comm
 import {
   PricingRulesNotReadyError,
   applyCellPatches,
+  canonicalUnitRef,
   ladderPrice,
   materializePack,
   planCellEdit,
@@ -35,6 +36,7 @@ import { PrismaService } from "../prisma/prisma.service";
 import {
   ProductPriceGridService,
   addUnitFirst,
+  baseBackingUnit,
   governedReason,
   type PriceModel,
 } from "./product-price-grid.service";
@@ -82,10 +84,12 @@ export class ProductPriceWriteService {
       const moves = await this.checkMoves(tx, m, productId, tenantId, dto.customerMoves ?? []);
       const { inverse } = await this.apply(tx, m, productId, cells, moves);
 
+      // The stored request names levels, not rows (SA-809), like every ref this write stores.
+      const lv = (ref: string) => canonicalUnitRef(m.units, ref);
       const request = {
-        patches: dto.patches,
-        keeps: dto.keeps ?? [],
-        customerMoves: dto.customerMoves ?? [],
+        patches: dto.patches.map((p) => ({ ...p, ref: lv(p.ref) })),
+        keeps: (dto.keeps ?? []).map((k) => ({ ...k, ref: lv(k.ref) })),
+        customerMoves: (dto.customerMoves ?? []).map((mv) => ({ ...mv, ref: lv(mv.ref) })),
         ...(dto.orderUnit != null ? { orderUnit: dto.orderUnit } : {}),
       };
       const undo = { patches: inverse.patches, customerMoves: moves.inverse };
@@ -147,7 +151,7 @@ export class ProductPriceWriteService {
       this.assertFresh(m, dto.expectedRevision, dto.expectedPriceState);
 
       const patches = (stored.patches ?? []).map((p) => ({
-        ref: p.ref,
+        ref: canonicalUnitRef(m.units, p.ref),
         tier: p.tier as PriceTier,
         to: p.to == null ? null : roundMoney(p.to),
       }));
@@ -197,29 +201,35 @@ export class ProductPriceWriteService {
 
   /** Patches then keeps, re-planned on the fresh view by the core. Throws 400 PRICE_EDIT_INVALID with every refusal. */
   private planCells(m: PriceModel, dto: SavePricesRequest): CellPatch[] {
-    const keeps = dto.keeps ?? [];
+    // SA-809: every ref is the level's ref before anything reads it (a client may still send the factor-1 row's id).
+    const level = (ref: string) => canonicalUnitRef(m.units, ref);
+    const keeps = (dto.keeps ?? []).map((k) => ({ ...k, ref: level(k.ref) }));
+    const patches = dto.patches.map((p) => ({ ...p, ref: level(p.ref) }));
     const customerMoves = dto.customerMoves ?? [];
-    if (dto.patches.length === 0 && keeps.length === 0 && customerMoves.length === 0) {
+    if (patches.length === 0 && keeps.length === 0 && customerMoves.length === 0) {
       throw this.invalid(["There is nothing to save."]);
     }
     const problems: string[] = [];
     const seen = new Set<string>();
-    for (const c of [...dto.patches, ...keeps]) {
+    for (const c of [...patches, ...keeps]) {
       if (seen.has(cellKey(c))) problems.push("A price is listed twice in this change.");
       seen.add(cellKey(c));
     }
 
-    // The implicit base row has no ProductUnit: the price write never mints one (Add unit does, through
-    // ProductUnitsService), so a price on it is refused before anything is planned.
-    const baseRow = m.view.rows.find((r) => r.ref === "base");
-    if (baseRow && [...dto.patches, ...keeps].some((c) => c.ref === "base")) {
-      problems.push(addUnitFirst(baseRow.label));
+    // A piece level that no ProductUnit backs has nothing to write to: the price write never mints one (Add unit does,
+    // through ProductUnitsService), so a price on it is refused before anything is planned. When a factor-1 row backs
+    // the level, "base" is that row's cell and plans like any other.
+    const unbackedBase = m.view.rows.find(
+      (r) => r.ref === "base" && !baseBackingUnit(m.units, m.view),
+    );
+    if (unbackedBase && [...patches, ...keeps].some((c) => c.ref === "base")) {
+      problems.push(addUnitFirst(unbackedBase.label));
     }
 
     let view = m.view;
     const out: CellPatch[] = [];
-    for (const p of dto.patches) {
-      if (p.ref === "base" && baseRow) continue;
+    for (const p of patches) {
+      if (p.ref === "base" && unbackedBase) continue;
       const plan = planCellEdit(view, p.ref, p.tier as PriceTier, p.to, m.rules);
       if (plan.problems.length > 0) {
         problems.push(...plan.problems);
@@ -229,7 +239,7 @@ export class ProductPriceWriteService {
       out.push(...plan.patches);
     }
     for (const k of keeps) {
-      if (k.ref === "base" && baseRow) continue;
+      if (k.ref === "base" && unbackedBase) continue;
       const row = m.view.rows.find((r) => r.ref === k.ref);
       if (!row) {
         problems.push("That unit is not on this product.");
@@ -269,9 +279,13 @@ export class ProductPriceWriteService {
   ) {
     const problems: string[] = [];
     const seen = new Set<string>();
+    const level = (ref: string) => canonicalUnitRef(m.units, ref);
+    const unbackedBase = m.view.rows.find(
+      (r) => r.ref === "base" && !baseBackingUnit(m.units, m.view),
+    );
     const wanted = raw.map((mv) => ({
       customerId: mv.customerId,
-      ref: mv.ref,
+      ref: level(mv.ref),
       tier: mv.tier,
       from: mv.from == null ? null : roundMoney(mv.from),
       to: mv.to == null ? null : roundMoney(mv.to),
@@ -286,7 +300,7 @@ export class ProductPriceWriteService {
       seen.add(key);
       const unitRow = m.view.rows.find((r) => r.ref === mv.ref);
       if (!unitRow) problems.push("That unit is not on this product.");
-      else if (mv.ref === "base") problems.push(addUnitFirst(unitRow.label));
+      else if (mv.ref === "base" && unbackedBase) problems.push(addUnitFirst(unitRow.label));
       if (mv.from == null && mv.to == null)
         problems.push("A customer price change needs a new price.");
       if ((mv.from != null && mv.from <= 0) || (mv.to != null && !validateSetPrice(mv.to).ok)) {
@@ -320,7 +334,12 @@ export class ProductPriceWriteService {
         where: { productId, customerId: { in: ids } },
         select: { id: true, customerId: true, unitRef: true, price: true },
       });
-    const byKey = new Map(rows.map((r) => [`${r.customerId}|${r.unitRef}`, r]));
+    // A cell stored before SA-809 may carry the factor-1 row's id: it is the level's "base" cell (an exact "base" row wins).
+    const byKey = new Map<string, (typeof rows)[number]>();
+    for (const r of rows) {
+      const key = `${r.customerId}|${level(r.unitRef)}`;
+      if (!byKey.has(key) || r.unitRef === level(r.unitRef)) byKey.set(key, r);
+    }
 
     const writes: WriteMove[] = [];
     const inverse: CustomerPriceMove[] = [];
@@ -328,9 +347,9 @@ export class ProductPriceWriteService {
     const skipped: SkippedCustomerCell[] = [];
     const skipByKey = new Map<string, UndoSkipCell>();
     for (const k of skip) {
-      const key = `${k.customerId}|${k.ref}`;
+      const key = `${k.customerId}|${level(k.ref)}`;
       if (skipByKey.has(key)) throw this.invalid(["A skipped customer price is listed twice."]);
-      skipByKey.set(key, k);
+      skipByKey.set(key, { ...k, ref: level(k.ref) });
     }
     const reported = new Set<string>();
     for (const mv of wanted) {
@@ -364,11 +383,13 @@ export class ProductPriceWriteService {
         to: mv.from,
       });
     }
-    // Only a customer cell that is in conflict can be skipped; anything else (a product cell, a cell that was never
-    // reported) is a malformed request, whatever else is stale.
-    if ([...skipByKey.keys()].some((key) => !reported.has(key))) {
-      throw this.invalid([SKIP_NOT_REPORTED]);
-    }
+    // Only a customer cell that is in conflict can be skipped. A skip for a cell this undo does not restore at all is a
+    // malformed request (400), whatever else is stale. A skip for a restored cell that is NOT in conflict now (it changed
+    // back to the expected value after the preview) is stale, not malformed: 409, re-preview.
+    const restored = new Set(wanted.map((mv) => `${mv.customerId}|${mv.ref}`));
+    const absent = [...skipByKey.keys()].filter((key) => !restored.has(key));
+    if (absent.length > 0) throw this.invalid([SKIP_NOT_REPORTED]);
+    if ([...skipByKey.keys()].some((key) => !reported.has(key))) throw this.stale(m);
     if (conflicts.length > 0) throw this.stale(m, conflicts);
     return { writes, inverse, skipped };
   }
@@ -415,15 +436,24 @@ export class ProductPriceWriteService {
         priceTier4: money(row.set[3]),
         priceTier5: money(row.set[4]),
       };
-      // Never a unit mint: a price on the implicit base row was refused in planning (Add unit creates it).
-      if (row.ref === "base") throw this.invalid([addUnitFirst(row.label)]);
-      await tx.productUnit.update({ where: { id: row.ref }, data });
+      // Never a unit mint: a price on a piece level no ProductUnit backs was refused in planning (Add unit creates it).
+      // "base" is a level ref; the row it prices is the factor-1 ProductUnit that backs it.
+      let unitId = row.ref;
+      if (row.ref === "base") {
+        const backing = baseBackingUnit(m.units, m.view);
+        if (!backing) throw this.invalid([addUnitFirst(row.label)]);
+        unitId = backing.id;
+      }
+      await tx.productUnit.update({ where: { id: unitId }, data });
     }
 
     for (const w of moves.writes) {
       if (w.to == null) await tx.customerUnitPrice.deleteMany({ where: { id: w.rowId } });
       else if (w.rowId)
-        await tx.customerUnitPrice.update({ where: { id: w.rowId }, data: { price: w.to } });
+        await tx.customerUnitPrice.update({
+          where: { id: w.rowId },
+          data: { price: w.to, unitRef: w.ref },
+        });
       else {
         await tx.customerUnitPrice.create({
           data: { customerId: w.customerId, productId, unitRef: w.ref, price: w.to },

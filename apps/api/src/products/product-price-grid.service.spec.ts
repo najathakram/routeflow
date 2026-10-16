@@ -1,5 +1,11 @@
 import { NotFoundException } from "@nestjs/common";
-import { buildLadderView, priceGrid, unitCodeOf, type ProductCodes } from "@routeflow/pricing";
+import {
+  buildLadderView,
+  canonicalUnitRef,
+  priceGrid,
+  unitCodeOf,
+  type ProductCodes,
+} from "@routeflow/pricing";
 import type { ProductPriceGridDto } from "@routeflow/types";
 import { ProductPriceGridService } from "./product-price-grid.service";
 
@@ -83,15 +89,19 @@ function expected(product: ReturnType<typeof baseProduct>, rows: UnitRow[]): Pro
     sku: product.sku,
     barcode: product.barcode,
     unitSku: product.unitSku,
-    unitCodes: Object.fromEntries(rows.map((r) => [r.id, r.sku ?? null])),
+    unitCodes: Object.fromEntries(
+      rows.map((r) => [canonicalUnitRef(rows as never, r.id), r.sku ?? null]),
+    ),
   };
+  // SA-809: "base" is writable exactly when a factor-1 ProductUnit backs the piece level.
+  const baseBacked = rows.some((r) => r.factorToBase === 1);
   return {
     productId: PRODUCT_ID,
     anchor: view.anchor,
     rows: priceGrid(view).map((g) => ({
       ...g,
       code: unitCodeOf(codes, g.ref),
-      ...(g.ref === "base"
+      ...(g.ref === "base" && !baseBacked
         ? { editable: false, notEditableReason: "Add the Piece unit first." }
         : { editable: true }),
     })),
@@ -156,6 +166,24 @@ describe("ProductPriceGridService (units v2)", () => {
     expect(cell(dto, "Piece", 1)).toEqual({ tier: 1, source: "set", value: 1.2 });
   });
 
+  it('SA-809: the factor-1 row\'s code lands under "base" and its cell is editable', async () => {
+    const rows = [
+      unitRow({ id: "u-piece", label: "Piece", factorToBase: 1, price: "1.20", sku: "PIECE-1" }),
+    ];
+    const { service } = build(baseProduct({ unitSku: null, barcode: "BC-1" }), rows);
+    const dto = await service.get(PRODUCT_ID);
+    const piece = dto.rows.find((r) => r.ref === "base")!;
+    expect(piece.code).toBe("PIECE-1");
+    expect(piece.editable).toBe(true);
+    expect(piece.notEditableReason).toBeUndefined();
+    // No Piece row: the implicit level stays refused.
+    const bare = (await build(baseProduct({}), []).service.get(PRODUCT_ID)).rows.find(
+      (r) => r.ref === "base",
+    )!;
+    expect(bare.editable).toBe(false);
+    expect(bare.notEditableReason).toBe("Add the Piece unit first.");
+  });
+
   it("Box $10 of 12 -> Piece Auto $0.83", async () => {
     const product = baseProduct({ pricePerUnit: "10.00" });
     const { service } = build(product, []);
@@ -202,7 +230,8 @@ describe("ProductPriceGridService (units v2)", () => {
     const rows = [unitRow({ id: "u-piece", label: "Piece", factorToBase: 1, price: "1.00" })];
     const { service } = build(baseProduct({ orderUnitRef: "u-piece", packAuto: 1 }), rows);
     const dto = await service.get(PRODUCT_ID);
-    expect(dto.anchor).toBe("u-piece");
+    // SA-809: a stored order unit that names the factor-1 row's id reads as the level's ref.
+    expect(dto.anchor).toBe("base");
     expect(cell(dto, "Box", 1)?.source).toBe("auto");
   });
 
