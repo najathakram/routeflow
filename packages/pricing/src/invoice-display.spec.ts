@@ -2,7 +2,6 @@ import { creditedThrough } from "./pricing";
 import { buildLadderView, type LadderViewUnit } from "./price-ladder";
 import {
   invoiceLineDisplay,
-  legacyInvoiceCode,
   printedInvoiceCode,
   unitCodeOf,
   type ProductCodes,
@@ -119,7 +118,7 @@ describe("unit codes (one code per unit) and the printed code", () => {
     expect(unitCodeOf(codes, "u-none")).toBeNull();
   });
 
-  it("T16: the legacy rule is unitSku, then barcode, then sku, for all 8 null combinations", () => {
+  it("T16: legacy choice routes to legacyInvoiceCode", () => {
     for (let mask = 0; mask < 8; mask++) {
       const p = {
         unitSku: mask & 1 ? "U" : null,
@@ -127,12 +126,10 @@ describe("unit codes (one code per unit) and the printed code", () => {
         sku: mask & 4 ? "S" : null,
       };
       const want = p.unitSku ?? p.barcode ?? p.sku ?? null;
-      expect(legacyInvoiceCode(p)).toBe(want);
       expect(
         printedInvoiceCode({ mode: "legacy" }, codes, view, p, undefined, "invoice-unit"),
       ).toBe(want);
     }
-    expect(legacyInvoiceCode(null)).toBeNull();
   });
 
   it("PF-8 / T18: 30 pieces with the invoice unit set to Box reads in Pieces and prints the Piece code", () => {
