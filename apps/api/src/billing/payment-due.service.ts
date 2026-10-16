@@ -177,7 +177,9 @@ export class PaymentDueService {
     try {
       reply = await this.stripe.expireCheckoutSession(sessionId);
     } catch (err) {
-      throw this.stateUnknown(tenantId, "expire", err);
+      // Stripe REJECTS expire() on a session that is no longer open (it was paid in the gap): look once more
+      // before deciding. complete -> the claim's own refusal; expired -> release; anything else -> try again later.
+      return this.afterExpireRejected(tenantId, sessionId, err);
     }
     if (reply?.status === "expired") {
       await this.release(tenantId, reply);
@@ -185,6 +187,25 @@ export class PaymentDueService {
     }
     if (!reply || typeof reply.status !== "string") throw this.stateUnknown(tenantId, "expire");
     throw claimRefusal("AWAITING_FIRST_PAYMENT")!; // complete (or anything but expired): never release, never recreate
+  }
+
+  private async afterExpireRejected(
+    tenantId: string,
+    sessionId: string,
+    expireErr: unknown,
+  ): Promise<null> {
+    let again: { status?: string } | null;
+    try {
+      again = await this.stripe.getCheckoutSession(sessionId);
+    } catch {
+      throw this.stateUnknown(tenantId, "expire", expireErr);
+    }
+    if (again?.status === "complete") throw claimRefusal("AWAITING_FIRST_PAYMENT")!;
+    if (again?.status === "expired") {
+      await this.release(tenantId, again);
+      return null;
+    }
+    throw this.stateUnknown(tenantId, "expire", expireErr);
   }
 
   /** Release the claim by the same CAS the `checkout.session.expired` webhook uses. */
