@@ -402,6 +402,16 @@ export function catchupShape(i: { paidThrough: Date; now: Date }): CheckoutShape
     : "trial_one_time";
 }
 
+/**
+ * SA-806: what the Checkout charges AT COMPLETION. 0 for the stub-free `trial` shape and for a forgiven line (a stub
+ * under {@link STRIPE_MIN_CHARGE_CENTS} carries no one-time line), the stub total otherwise. The one rule behind
+ * "nothing is charged now" (the card reminder) and behind the one-time line the session builder emits.
+ */
+export function chargeNowCents(plan: Pick<CatchupPlan, "shape" | "stub">): number {
+  if (plan.shape === "trial") return 0;
+  return plan.stub.totalCents >= STRIPE_MIN_CHARGE_CENTS ? plan.stub.totalCents : 0;
+}
+
 export interface CatchupPlan {
   ok: true;
   now: Date;
@@ -416,6 +426,12 @@ export interface CatchupPlan {
   anchorAt: Date;
   /** The trial end the session sends: A. */
   trialEndAt: Date;
+  /**
+   * SA-806: D = A - {@link CATCHUP_TRIAL_MIN_LEAD_MS}, the last instant the quoted terms (A, the shape, the stub) hold:
+   * from D on, {@link trialEndFor} moves A to the next 1st. THE one place the 72 h lives; the tenant-facing card
+   * deadline is this instant and nothing else re-derives it.
+   */
+  termsHoldUntil: Date;
   shape: CheckoutShape;
   /** The unpaid span the stub covers and what it comes to. */
   stub: {
@@ -552,6 +568,7 @@ export function planCatchup(i: {
     paidFromInvoices: cov.reached,
     anchorAt: a,
     trialEndAt: a,
+    termsHoldUntil: new Date(a.getTime() - CATCHUP_TRIAL_MIN_LEAD_MS),
     shape,
     stub: {
       from: s,

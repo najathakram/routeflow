@@ -184,6 +184,19 @@ export interface PaymentDueView {
   periodLabel: string | null;
   /** ISO start of the period the payment covers; null when nothing is due. */
   periodStart: string | null;
+  /**
+   * SA-801 / SA-806: nothing is charged now but the card must be added by `cardBy`. `due` stays false. The banner
+   * reads "Add your card before {cardBy} to keep RouteFlow running." / "You won't be charged until {chargeStartsOn}."
+   * and the admin's Add card is the same `POST /billing/payment-due/pay`.
+   */
+  cardNeeded: boolean;
+  /** ISO instant of the first charge (A; print it in the tenant's zone); null unless `cardNeeded`. */
+  chargeStartsOn: string | null;
+  /**
+   * ISO instant of the card deadline D = A - 72 h (the planner's `termsHoldUntil`): the last instant the quoted terms
+   * hold. Print its calendar day in the tenant's zone; null unless `cardNeeded`.
+   */
+  cardBy: string | null;
 }
 
 /** `POST /billing/payment-due/pay` (TENANT_ADMIN): the Stripe Checkout to send the admin to. */

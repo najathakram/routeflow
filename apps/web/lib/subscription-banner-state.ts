@@ -20,9 +20,24 @@ export type BannerRole = "admin" | "staff";
 /**
  * Row 542: which banner owns the shell's one billing slot. A payable "payment due" (the server's read) wins over a
  * quiet or grace strip; the failed-renewal variant replaces the strip's grace / overdue kinds only; the last day and
- * read-only keep the strip (they carry the lock escalation and their own Pay control).
+ * read-only keep the strip (they carry the lock escalation and their own Pay control). SA-801: the card reminder (a
+ * stub-free catch-up: nothing owed now, the card is needed before the first charge) sits below a payable payment due
+ * (the two cannot coexist) and a failed renewal, and above the quiet strip.
  */
-export type PaymentDueSlot = "payment-due" | "failed-renewal" | "strip";
+export type PaymentDueSlot = "payment-due" | "failed-renewal" | "card-reminder" | "strip";
+
+/** SA-801 / SA-806: the server says the card is needed (nothing is due) and gave a usable first-charge date and card deadline. */
+export function hasCardReminder(due: PaymentDueView | null | undefined): due is PaymentDueView {
+  return (
+    !!due &&
+    due.due !== true &&
+    due.cardNeeded === true &&
+    typeof due.chargeStartsOn === "string" &&
+    Number.isFinite(Date.parse(due.chargeStartsOn)) &&
+    typeof due.cardBy === "string" &&
+    Number.isFinite(Date.parse(due.cardBy))
+  );
+}
 
 export function paymentDueSlot(
   strip: Pick<BannerState, "kind" | "inShell">,
@@ -35,6 +50,7 @@ export function paymentDueSlot(
   if (strip.inShell && (strip.kind === "grace" || strip.kind === "overdue")) {
     return "failed-renewal";
   }
+  if (hasCardReminder(due)) return "card-reminder";
   return "strip";
 }
 

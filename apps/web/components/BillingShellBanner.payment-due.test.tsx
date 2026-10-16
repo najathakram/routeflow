@@ -18,6 +18,9 @@ jest.mock("next/navigation", () => ({
   usePathname: () => "/orders",
   useSearchParams: () => new URLSearchParams(mockQuery),
 }));
+jest.mock("@/lib/tenant-timezone", () => ({
+  useTenantTimeZoneQuery: () => ({ zone: "America/New_York", isError: false, retry: jest.fn() }),
+}));
 jest.mock("@/lib/counter-cart-signal", () => ({ guardCounterLeave: () => false }));
 
 const DAY = 86_400_000;
@@ -51,6 +54,9 @@ const DUE: PaymentDueView = {
   amountCents: 10_000,
   periodLabel: "October 2026",
   periodStart: "2026-10-01T00:00:00.000Z",
+  cardNeeded: false,
+  chargeStartsOn: null,
+  cardBy: null,
 };
 
 beforeEach(() => {
@@ -161,5 +167,85 @@ describe("BillingShellBanner - payment due slot", () => {
     );
     expect(screen.queryByTestId("payment-due-banner")).toBeNull();
     expect(container.textContent ?? "").not.toMatch(/payment/i);
+  });
+});
+
+// SA-801: the card reminder takes the slot below a payable payment due and above the quiet strip.
+const REMINDER: PaymentDueView = {
+  due: false,
+  pastDue: false,
+  amountCents: 0,
+  periodLabel: null,
+  periodStart: null,
+  cardNeeded: true,
+  chargeStartsOn: new Date(Date.now() + 23 * DAY).toISOString(),
+  cardBy: new Date(Date.now() + 20 * DAY).toISOString(),
+};
+
+describe("BillingShellBanner - card reminder slot", () => {
+  it("today (no reminder in the read) nothing shows; with it, the banner shows for an admin", () => {
+    mockDue = { ...REMINDER, cardNeeded: false, chargeStartsOn: null, cardBy: null };
+    const { unmount } = renderWithProviders(
+      <BillingShellBanner scope="acme" view={healthy()} userRole="TENANT_ADMIN" />,
+    );
+    expect(screen.queryByTestId("card-reminder-banner")).toBeNull();
+    unmount();
+    mockDue = REMINDER;
+    renderWithProviders(
+      <BillingShellBanner scope="acme" view={healthy()} userRole="TENANT_ADMIN" />,
+    );
+    expect(screen.getByTestId("card-reminder-banner")).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Add card" })).toBeInTheDocument();
+    expect(screen.queryByTestId("payment-due-banner")).toBeNull();
+    expect(screen.queryByTestId("subscription-strip")).toBeNull();
+  });
+
+  it("an operator sees it without Add card", () => {
+    mockDue = REMINDER;
+    renderWithProviders(<BillingShellBanner scope="acme" view={healthy()} userRole="OPERATOR" />);
+    expect(screen.getByTestId("card-reminder-banner")).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Add card" })).toBeNull();
+    expect(screen.getByText(/^Ask your account admin to add a card before /)).toBeInTheDocument();
+  });
+
+  it("?paid=1 suppresses it while the session confirms", () => {
+    mockDue = REMINDER;
+    mockQuery = "paid=1";
+    renderWithProviders(
+      <BillingShellBanner scope="acme" view={healthy()} userRole="TENANT_ADMIN" />,
+    );
+    expect(screen.queryByTestId("card-reminder-banner")).toBeNull();
+  });
+
+  it("the final day keeps the strip", async () => {
+    mockDue = REMINDER;
+    renderWithProviders(<BillingShellBanner scope="acme" view={view(6)} userRole="TENANT_ADMIN" />);
+    expect(await screen.findByTestId("subscription-strip")).toHaveAttribute(
+      "data-state",
+      "final-day",
+    );
+    expect(screen.queryByTestId("card-reminder-banner")).toBeNull();
+  });
+
+  it("read-only keeps the strip", async () => {
+    mockDue = REMINDER;
+    renderWithProviders(
+      <BillingShellBanner
+        scope="acme"
+        view={view(8, { status: "READ_ONLY", readOnlyReason: "payment_overdue" })}
+        userRole="TENANT_ADMIN"
+      />,
+    );
+    expect(await screen.findByTestId("subscription-strip")).toHaveAttribute(
+      "data-state",
+      "read-only",
+    );
+    expect(screen.queryByTestId("card-reminder-banner")).toBeNull();
+  });
+
+  it("buyers never see it", () => {
+    mockDue = REMINDER;
+    renderWithProviders(<BillingShellBanner scope="acme" view={healthy()} userRole="CUSTOMER" />);
+    expect(screen.queryByTestId("card-reminder-banner")).toBeNull();
   });
 });

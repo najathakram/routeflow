@@ -51,7 +51,10 @@ export class PaymentDueController {
   @HttpCode(HttpStatus.OK)
   @Roles(UserRole.TENANT_ADMIN)
   @NoImpersonation("billing")
-  @ApiOperation({ summary: "Open (or reuse) the Stripe Checkout for the amount due (admin only)" })
+  @ApiOperation({
+    summary:
+      "Open (or reuse) the Stripe Checkout for the amount due, or to add the card (admin only)",
+  })
   pay(@CurrentUser() user: AuthUser) {
     return this.paymentDue.pay(this.tenantIdOf(user));
   }

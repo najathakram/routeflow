@@ -7,8 +7,14 @@ import { Button, cn } from "@routeflow/ui/web";
 import { useBillingPortal } from "@/lib/api/billing";
 import { usePayPaymentDue } from "@/lib/api/payment-due";
 import { dismissBanner, isBannerDismissed } from "@/lib/banner-dismiss";
-import { failedRenewalCopy, paymentDueCopy } from "@/lib/payment-due";
+import {
+  cardReminderCopy,
+  cardReminderDismiss,
+  failedRenewalCopy,
+  paymentDueCopy,
+} from "@/lib/payment-due";
 import type { BannerDismiss, BannerRole } from "@/lib/subscription-banner-state";
+import { useTenantTimeZoneQuery } from "@/lib/tenant-timezone";
 import { useGuardedRouter } from "@/lib/use-guarded-router";
 
 /**
@@ -16,6 +22,8 @@ import { useGuardedRouter } from "@/lib/use-guarded-router";
  * (where the SubscriptionStrip sits). Copy comes from `lib/payment-due.ts`; whether it shows comes from
  * `paymentDueSlot`. Amber, never red; in the normal flow (never over the counter's cart); a payment due is dismissible
  * for the day by an operator only (an admin cannot until it is paid), the failed-renewal variant keeps the strip's own dismiss rule (`dismiss`).
+ * SA-801: mode "card-reminder" is the same banner for a stub-free catch-up (nothing owed, add the card before the first
+ * charge); its Add card is the same pay mutation, and its dismiss rule is `cardReminderDismiss`.
  */
 export function PaymentDueBanner({
   mode,
@@ -24,7 +32,7 @@ export function PaymentDueBanner({
   dismiss = null,
   hideBillingLink = false,
 }: {
-  mode: "payment-due" | "failed-renewal";
+  mode: "payment-due" | "failed-renewal" | "card-reminder";
   /** The server's payment-due read (mode "payment-due"). */
   due?: PaymentDueView | null;
   role: BannerRole;
@@ -37,14 +45,18 @@ export function PaymentDueBanner({
   const portal = useBillingPortal();
   const router = useGuardedRouter();
   const [tick, setTick] = React.useState(0);
+  // the card reminder prints a date: in the business's own zone, never the browser's (UTC if the zone cannot be read)
+  const tz = useTenantTimeZoneQuery(mode === "card-reminder");
   // Failed renewal: the strip's own rule. Payment due: an operator may hide it for the day (it is not theirs to
   // pay); an admin cannot until it is paid. The key carries the period so a new month's invoice shows again.
   const effectiveDismiss: BannerDismiss | null =
     mode === "failed-renewal"
       ? (dismiss ?? null)
-      : role !== "admin" && due
-        ? { scope: "day", key: `payment-due:${due.periodStart ?? "now"}` }
-        : null;
+      : mode === "card-reminder"
+        ? cardReminderDismiss(due, role)
+        : role !== "admin" && due
+          ? { scope: "day", key: `payment-due:${due.periodStart ?? "now"}` }
+          : null;
   const dismissKey = effectiveDismiss?.key;
   const dismissed = React.useMemo(
     () => (effectiveDismiss ? isBannerDismissed(effectiveDismiss) : false),
@@ -52,7 +64,15 @@ export function PaymentDueBanner({
     [dismissKey, tick],
   );
 
-  const copy = mode === "failed-renewal" ? failedRenewalCopy(role) : paymentDueCopy(due, role);
+  const zone = tz.zone ?? (tz.isError ? "UTC" : null);
+  const copy =
+    mode === "failed-renewal"
+      ? failedRenewalCopy(role)
+      : mode === "card-reminder"
+        ? zone
+          ? cardReminderCopy(due, role, zone)
+          : null
+        : paymentDueCopy(due, role);
   if (!copy || dismissed) return null;
   const canDismiss = !!effectiveDismiss;
 
@@ -60,7 +80,7 @@ export function PaymentDueBanner({
   const primary = copy.primary;
   return (
     <div
-      data-testid="payment-due-banner"
+      data-testid={mode === "card-reminder" ? "card-reminder-banner" : "payment-due-banner"}
       data-state={copy.kind}
       role="status"
       className="flex min-h-8 shrink-0 flex-wrap items-center gap-x-2 gap-y-1 bg-amber-50 px-3 py-1.5 text-[13px] text-amber-900 ring-1 ring-amber-200 md:min-h-9 md:px-4 md:text-sm"

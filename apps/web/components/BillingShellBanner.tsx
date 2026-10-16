@@ -81,7 +81,8 @@ export function BillingShellBanner({
       ? subscriptionBannerState(view, role)
       : null;
   const showing =
-    !!state?.inShell || (!!state && paymentDueSlot(state, paymentDue) === "payment-due");
+    !!state?.inShell ||
+    (!!state && ["payment-due", "card-reminder"].includes(paymentDueSlot(state, paymentDue)));
   React.useEffect(() => rememberStrip(scope, showing), [scope, showing]);
   if (role && state) {
     const slot = paymentDueSlot(state, paymentDue);
@@ -89,6 +90,16 @@ export function BillingShellBanner({
       return (
         <PaymentDueBanner
           mode="payment-due"
+          due={paymentDue}
+          role={role}
+          hideBillingLink={onBillingPage}
+        />
+      );
+    }
+    if (slot === "card-reminder") {
+      return (
+        <PaymentDueBanner
+          mode="card-reminder"
           due={paymentDue}
           role={role}
           hideBillingLink={onBillingPage}

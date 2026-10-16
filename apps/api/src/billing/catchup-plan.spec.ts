@@ -5,7 +5,9 @@ import {
   activationClusters,
   type ActivationRecord,
   addonCardRefusal,
+  CATCHUP_TRIAL_MIN_LEAD_MS,
   catchupShape,
+  chargeNowCents,
   firstBoundaryNotBefore,
   paidThroughOf,
   planCatchup,
@@ -736,5 +738,50 @@ describe("MF2 -> SA-733r9: paid coverage is ONE walk over every paid source, sna
       const p = okPlan(run(rows, [OPEN_OCT]));
       expect(p.stub.from.toISOString()).toBe("2026-10-12T04:08:24.000Z");
     });
+  });
+});
+
+describe("SA-806: termsHoldUntil (D = A - 72 h) and chargeNowCents, the two single sources", () => {
+  const HOUR = 3600_000;
+
+  it("termsHoldUntil is A minus the 72 h lead, on every shape (the ONE place the 72 h lives)", () => {
+    const trial = plan({ invoices: [OCT("PAID")] }); // S === A === Nov 1
+    expect(trial.shape).toBe("trial");
+    expect(trial.termsHoldUntil.toISOString()).toBe("2026-10-29T12:00:00.000Z");
+    expect(trial.termsHoldUntil.getTime()).toBe(
+      trial.trialEndAt.getTime() - CATCHUP_TRIAL_MIN_LEAD_MS,
+    );
+
+    const oneTime = plan(); // nothing paid: stub [Oct 1, Nov 1), A = Nov 1
+    expect(oneTime.shape).toBe("trial_one_time");
+    expect(oneTime.termsHoldUntil.getTime()).toBe(oneTime.trialEndAt.getTime() - 72 * HOUR);
+  });
+
+  it("the terms really do hold until D and move to the next 1st right after it", () => {
+    const base = { invoices: [OCT("PAID")] };
+    const atD = plan({ ...base, now: new Date("2026-10-29T12:00:00Z") });
+    expect(atD.shape).toBe("trial");
+    expect(atD.trialEndAt.toISOString()).toBe("2026-11-01T12:00:00.000Z");
+    const afterD = plan({ ...base, now: new Date("2026-10-29T12:00:01Z") });
+    expect(afterD.shape).toBe("trial_one_time");
+    expect(afterD.trialEndAt.toISOString()).toBe("2026-12-01T12:00:00.000Z");
+  });
+
+  it("chargeNowCents: 0 for the trial shape", () => {
+    expect(chargeNowCents(plan({ invoices: [OCT("PAID")] }))).toBe(0);
+  });
+
+  it("chargeNowCents: 0 for a forgiven line (stub under the Stripe minimum), though the stub total is not 0", () => {
+    const p = plan({ monthly: 0.1 }); // $0.10 for October: forgiven
+    expect(p.shape).toBe("trial_one_time");
+    expect(p.stub.belowStripeMinimum).toBe(true);
+    expect(p.stub.totalCents).toBe(10);
+    expect(chargeNowCents(p)).toBe(0);
+  });
+
+  it("chargeNowCents: the stub total otherwise", () => {
+    const p = plan(); // $310 for October
+    expect(p.stub.totalCents).toBe(31000);
+    expect(chargeNowCents(p)).toBe(31000);
   });
 });

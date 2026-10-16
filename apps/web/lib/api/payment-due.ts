@@ -5,6 +5,19 @@ import { guardCounterLeave } from "../counter-cart-signal";
 
 /** While a payment is due, re-read at least this often so a payment (made in another tab) clears the banner. */
 const POLL_MS = 30_000;
+/** A card reminder can stand for weeks: re-read it every 5 minutes, and fast only while a card add is being confirmed. */
+const CARD_POLL_MS = 300_000;
+
+/**
+ * How often to re-read `GET /billing/payment-due`: 30 s while a payment is due; for a card reminder 5 min, or 30 s
+ * while the return from Stripe (`?paid=1`) is present (the card is being confirmed); otherwise not at all.
+ */
+export function paymentDuePollMs(view: PaymentDueView | undefined, search: string): number | false {
+  if (view?.due) return POLL_MS;
+  if (view?.cardNeeded)
+    return new URLSearchParams(search).get("paid") === "1" ? POLL_MS : CARD_POLL_MS;
+  return false;
+}
 
 /**
  * Row 542: `GET /billing/payment-due` (OPERATOR and up). The server decides eligibility, the amount and the period;
@@ -15,7 +28,8 @@ export function usePaymentDue(options?: { enabled?: boolean }) {
     queryKey: ["billing", "payment-due"],
     queryFn: () => apiClient.get("/billing/payment-due").then((r) => r.data),
     staleTime: 60_000,
-    refetchInterval: (q) => (q.state.data?.due ? POLL_MS : false),
+    refetchInterval: (q) =>
+      paymentDuePollMs(q.state.data, typeof window === "undefined" ? "" : window.location.search),
     ...options,
   });
 }
