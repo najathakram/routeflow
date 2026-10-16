@@ -549,6 +549,43 @@ describe("AnalyticsService — invoiced-sales readers", () => {
     });
   });
 
+  describe("getCostHistory — B846 bill-revert pairs", () => {
+    it("drops the reversing row and the receipt it reverses", async () => {
+      const day1 = new Date("2026-06-01");
+      const day2 = new Date("2026-06-15");
+      prisma.stockMovement.findMany.mockResolvedValue([
+        {
+          id: "m1",
+          effectiveAt: day1,
+          unitCost: D(4),
+          avgCostAfter: D(4),
+          type: "PURCHASE",
+          notes: null,
+        },
+        {
+          id: "m2",
+          effectiveAt: day2,
+          unitCost: D(9),
+          avgCostAfter: D(6),
+          type: "PURCHASE",
+          notes: "Auto-synced from vendor bill B-1",
+        },
+        {
+          id: "m3",
+          effectiveAt: day2,
+          unitCost: D(9),
+          avgCostAfter: D(4),
+          type: "PURCHASE",
+          notes: "BILL_REVERTED — reverses m2",
+        },
+      ]);
+
+      const result = await service.getCostHistory("p1");
+
+      expect(result).toEqual([{ date: day1, unitCost: 4, avgCostAfter: 4, type: "PURCHASE" }]);
+    });
+  });
+
   // ─── PR-B: per-buyer sales history behind the product Sales tab ───────────
   describe("getProductSales", () => {
     const inv = (over: Record<string, any> = {}) => ({

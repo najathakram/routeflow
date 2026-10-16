@@ -20,6 +20,7 @@ import type {
   ProductSalesHistory,
 } from "../sales-facts/legacy-product-shapes";
 import type { DemandRange } from "./demand-range";
+import { dropBillRevertedPairs } from "../inventory/bill-revert";
 
 const TOBACCO_ADDON_KEY = "tobacco_dealer";
 export const TOBACCO_EXCLUDE_KEY = "tobacco.excludeFromMainAnalytics";
@@ -610,7 +611,8 @@ export class AnalyticsService {
       orderBy: [{ effectiveAt: "asc" }, { createdAt: "asc" }, { id: "asc" }],
       take: 100,
     });
-    return movements.map((m) => ({
+    // B846: a reversed vendor-bill receipt is not a cost point — drop both halves of the pair.
+    return dropBillRevertedPairs(movements).map((m) => ({
       date: m.effectiveAt,
       unitCost: Number(m.unitCost ?? 0),
       avgCostAfter: m.avgCostAfter != null ? Number(m.avgCostAfter) : null,

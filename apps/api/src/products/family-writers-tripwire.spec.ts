@@ -58,8 +58,8 @@ const GUARDED: Record<string, { calls: number; sites: number; why: string }> = {
   },
   "vendor-bills/vendor-bills.service.ts": {
     calls: 1,
-    sites: 4,
-    why: "receiving a bill line writes a StockLot + PURCHASE movement: a FAMILY is refused there",
+    sites: 5,
+    why: "receiving a bill line writes a StockLot + PURCHASE movement: a FAMILY is refused there (the 5th site is revertToDraft's reversal row: it undoes an existing receipt row, so it can only name a product that already passed the guard)",
   },
 };
 

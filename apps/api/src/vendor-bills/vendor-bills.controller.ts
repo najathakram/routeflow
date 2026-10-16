@@ -179,8 +179,11 @@ export class VendorBillsController {
     return this.vendorBillsService.receive(id, dto, user.id);
   }
 
-  @Post(":id/revert-to-draft") revertToDraft(@Param("id") id: string) {
-    return this.vendorBillsService.revertToDraft(id);
+  @Post(":id/revert-to-draft") revertToDraft(
+    @Param("id") id: string,
+    @CurrentUser() user: { id: string },
+  ) {
+    return this.vendorBillsService.revertToDraft(id, user.id);
   }
 
   @Post(":id/void") voidBill(@Param("id") id: string, @CurrentUser() user: { id: string }) {

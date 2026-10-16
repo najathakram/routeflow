@@ -3537,8 +3537,18 @@ export class InventoryService {
             break;
           case MovementType.PURCHASE:
             if (unitCost != null) {
-              avg = nextAverageCost(stock, avg, qty, unitCost);
-              hasCostfulHistory = true;
+              if (qty.lt(0)) {
+                // B846: a bill-revert row is the exact inverse of its receipt — reverse the average
+                // (kept when the reversal empties stock), never feed a negative qty to nextAverageCost
+                // (stock + qty = 0 divides by zero).
+                if (avg != null) {
+                  avg = reverseAverageCost(stock, avg, qty.neg(), unitCost) ?? avg;
+                  hasCostfulHistory = true;
+                }
+              } else {
+                avg = nextAverageCost(stock, avg, qty, unitCost);
+                hasCostfulHistory = true;
+              }
             }
             break;
           case MovementType.ADJUSTMENT:

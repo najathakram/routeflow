@@ -56,6 +56,19 @@ const bill = (overrides: Record<string, unknown> = {}) => ({
   ...overrides,
 });
 
+/** B846: revert reads back the PURCHASE row(s) receive() wrote, then appends one reversal per row. */
+const receiptRows = (prisma: any, rows: { qty: Prisma.Decimal; unitCost?: Prisma.Decimal }[]) =>
+  prisma.stockMovement.findMany.mockImplementation(async ({ where }: any) =>
+    where.notes && typeof where.notes === "object"
+      ? []
+      : rows.map((r, i) => ({
+          id: `mv-${i + 1}`,
+          quantity: r.qty,
+          unitCost: r.unitCost ?? D(3.5),
+          effectiveAt: new Date("2026-06-01"),
+        })),
+  );
+
 /** An existing bill as the matcher reports it. */
 const duplicateMatch = (overrides: Record<string, unknown> = {}) => ({
   id: "vb-9",
@@ -757,6 +770,7 @@ describe("VendorBillsService", () => {
       );
       prisma.product.findFirst.mockResolvedValue({ currentStock: D(15), averageCost: D(2.5) });
       prisma.stockLot.findMany.mockResolvedValue([]);
+      receiptRows(prisma, [{ qty: D(5) }]);
 
       await service.revertToDraft("bill-1");
 
@@ -771,6 +785,7 @@ describe("VendorBillsService", () => {
       );
       prisma.product.findFirst.mockResolvedValue({ currentStock: D(5), averageCost: D(3.5) });
       prisma.stockLot.findMany.mockResolvedValue([]);
+      receiptRows(prisma, [{ qty: D(5) }]);
 
       await service.revertToDraft("bill-1");
 
@@ -784,10 +799,11 @@ describe("VendorBillsService", () => {
         bill({ status: "RECEIVED", receivedDate: new Date("2026-06-02") }),
       );
       prisma.product.findFirst.mockResolvedValue({ currentStock: D(15), averageCost: D(2.5) });
-      prisma.stockLot.findMany.mockResolvedValue([
-        { id: "lot-1", qty: D(5), remainingQty: D(5), notes: null },
-        { id: "lot-2", qty: D(5), remainingQty: D(2), notes: null },
-      ]);
+      // Two receipt rows (a top-up), each with its own lot matched by the row's full tuple.
+      receiptRows(prisma, [{ qty: D(2) }, { qty: D(3) }]);
+      prisma.stockLot.findMany
+        .mockResolvedValueOnce([{ id: "lot-1", qty: D(2), remainingQty: D(2), notes: null }])
+        .mockResolvedValueOnce([{ id: "lot-2", qty: D(3), remainingQty: D(1), notes: null }]);
 
       await service.revertToDraft("bill-1");
 
@@ -810,6 +826,29 @@ describe("VendorBillsService", () => {
       expect(prisma.stockMovement.deleteMany).not.toHaveBeenCalled();
     });
 
+    it("B846: never deletes a StockMovement — it appends one signed reversal row per receipt row", async () => {
+      prisma.vendorBill.findUnique.mockResolvedValue(
+        bill({ status: "RECEIVED", receivedDate: new Date("2026-06-02") }),
+      );
+      prisma.product.findFirst.mockResolvedValue({ currentStock: D(15), averageCost: D(2.5) });
+      prisma.stockLot.findMany.mockResolvedValue([]);
+      receiptRows(prisma, [{ qty: D(5) }]);
+
+      await service.revertToDraft("bill-1", "user-9");
+
+      expect(prisma.stockMovement.deleteMany).not.toHaveBeenCalled();
+      expect(prisma.stockMovement.create).toHaveBeenCalledTimes(1);
+      expect(prisma.stockMovement.create.mock.calls[0][0].data).toMatchObject({
+        type: "PURCHASE",
+        quantity: D(-5),
+        unitCost: D(3.5),
+        reference: "BILL-2026-0001",
+        notes: "BILL_REVERTED — reverses mv-1",
+        performedById: "user-9",
+        effectiveAt: new Date("2026-06-01"),
+      });
+    });
+
     it("G2: reverses a case-priced line in the SAME converted denomination", async () => {
       // Received as 12 pieces (2 cases × 6); revert must decrement 12, not 2.
       prisma.vendorBill.findUnique.mockResolvedValue(
@@ -821,6 +860,7 @@ describe("VendorBillsService", () => {
       );
       prisma.product.findFirst.mockResolvedValue({ currentStock: D(12), averageCost: D(2) });
       prisma.stockLot.findMany.mockResolvedValue([]);
+      receiptRows(prisma, [{ qty: D(12), unitCost: D(2) }]);
 
       await service.revertToDraft("bill-1");
 
@@ -839,6 +879,7 @@ describe("VendorBillsService", () => {
       );
       prisma.product.findFirst.mockResolvedValue({ currentStock: D(14), averageCost: D(2.5) });
       prisma.stockLot.findMany.mockResolvedValue([]);
+      receiptRows(prisma, [{ qty: D(4) }]);
 
       await service.revertToDraft("bill-1");
 
