@@ -15,15 +15,17 @@ export function packWordToSend(
 }
 
 /**
- * SA-797 (row 218): the expected pack a save that carries `unit` sends back — the values the form READ when it
- * opened, never the latest refetch, so a rename committed while the form was open is a 409 instead of being
- * written over. Nothing when the save does not carry `unit`. The tenant unit only when the word was linked.
+ * SA-797 (row 218) / SA-797a: the expected pack a save that carries `unit` OR `unitsPerBox` sends back — the
+ * values the form READ when it opened, never the latest refetch, so a rename or a size change committed while
+ * the form was open is a 409 instead of being written over. The server refuses a client pack field sent
+ * without its expected twin when it differs from the stored value. Nothing when the save carries neither.
+ * The tenant unit only when the word was linked.
  */
 export function expectedPackFor(
-  sentUnit: string | undefined,
+  sent: { unit?: string; unitsPerBox?: number | null },
   opened: ProductPackAtOpen | undefined,
 ): ExpectedPackPayload | Record<string, never> {
-  if (sentUnit === undefined || !opened) return {};
+  if ((sent.unit === undefined && sent.unitsPerBox === undefined) || !opened) return {};
   return {
     expectedUnit: opened.unit,
     expectedUnitsPerBox: opened.unitsPerBox ?? null,

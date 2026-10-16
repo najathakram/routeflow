@@ -53,9 +53,12 @@ import { assertPackKeepsLevelsValid } from "./unit-pack-rules";
 import { lockProductPack } from "../units/tenant-units-lock";
 import {
   EXPECTED_PACK_FIELDS,
+  PRODUCT_PACK_PRECONDITION_REQUIRED_MESSAGE,
   assertPackUnchanged,
   packTenantUnitIdOf,
   sendsExpectedPack,
+  unguardedPackChanges,
+  type PackPrecondition,
 } from "./pack-precondition";
 import { isMsrpBelowWholesale, wholesalePerPiece } from "../common/msrp";
 import { TOBACCO_CATEGORY_NAME, isTobaccoCategoryName } from "../common/tobacco-category";
@@ -1050,7 +1053,15 @@ export class ProductsService {
   async update(
     id: string,
     dto: UpdateProductDto,
-    options?: { suppressEmit?: boolean; actorId?: string | null; actorName?: string | null },
+    options: {
+      /** SA-797a: REQUIRED so every caller is found. Only the PATCH controller is "client". */
+      packPrecondition: PackPrecondition;
+      /** The client's User-Agent, logged with a PRODUCT_PACK_PRECONDITION_REQUIRED refusal. */
+      clientAgent?: string | null;
+      suppressEmit?: boolean;
+      actorId?: string | null;
+      actorName?: string | null;
+    },
   ) {
     await this.assertCanFlagTobacco(dto.isTobacco);
     if (dto.msrp !== undefined) await this.assertMsrpAllowed();
@@ -1305,6 +1316,21 @@ export class ProductsService {
         });
         if (!locked) throw new NotFoundException("Product not found");
         await assertPackUnchanged(tx, tenantId, locked, dto);
+        if (options.packPrecondition === "client") {
+          const fields = unguardedPackChanges(locked, dto);
+          if (fields.length > 0) {
+            // TODO(2026-10-23): SA-797a measure — remove this log line 7 days after it ships. No client sends
+            // an app-version header today, so appVersion is "unknown" and the User-Agent (an iOS build
+            // carries its CFBundleVersion there) is logged beside it.
+            this.logger.warn(
+              `PRODUCT_PACK_PRECONDITION_REQUIRED product=${id} tenant=${tenantId} fields=${fields.join(",")} appVersion=unknown userAgent=${JSON.stringify(options.clientAgent ?? null)}`,
+            );
+            throw new ConflictException({
+              code: API_ERROR_CODES.PRODUCT_PACK_PRECONDITION_REQUIRED,
+              message: PRODUCT_PACK_PRECONDITION_REQUIRED_MESSAGE,
+            });
+          }
+        }
         const nextUnit = dto.unit !== undefined ? dto.unit : locked.unit;
         const nextUnitsPerBox =
           dto.unitsPerBox !== undefined ? dto.unitsPerBox : locked.unitsPerBox;
@@ -1752,6 +1778,7 @@ export class ProductsService {
             name: assignment.variantName,
           } as UpdateProductDto,
           {
+            packPrecondition: "internal", // a family assignment writes no pack field
             suppressEmit: true,
             actorId: actor?.actorId ?? null,
             actorName: actor?.actorName ?? null,

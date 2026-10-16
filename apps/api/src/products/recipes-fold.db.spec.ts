@@ -214,7 +214,9 @@ describeDb("#2717 M2 fold: recipe invariants are kept — real Postgres", () => 
       const [activated, reparented] = await Promise.allSettled([
         inTenant(tenantId, () => recipes.activate(c.draft.id)),
         inTenant(tenantId, () =>
-          products.update(c.variants[0].id, { parentProductId: null } as any),
+          products.update(c.variants[0].id, { parentProductId: null } as any, {
+            packPrecondition: "internal",
+          }),
         ),
       ]);
       for (const r of [activated, reparented]) {
@@ -241,7 +243,11 @@ describeDb("#2717 M2 fold: recipe invariants are kept — real Postgres", () => 
       // eslint-disable-next-line no-await-in-loop
       const [activated, deactivated] = await Promise.allSettled([
         inTenant(tenantId, () => recipes.activate(c.draft.id)),
-        inTenant(tenantId, () => products.update(c.variants[1].id, { isActive: false } as any)),
+        inTenant(tenantId, () =>
+          products.update(c.variants[1].id, { isActive: false } as any, {
+            packPrecondition: "internal",
+          }),
+        ),
       ]);
       for (const r of [activated, deactivated]) {
         if (r.status === "rejected") expect(stateOf(r.reason)).not.toBe("40P01");
@@ -286,7 +292,11 @@ describeDb("#2717 M2 fold: recipe invariants are kept — real Postgres", () => 
             components: [{ componentProductId: variant.id, qty: 12 }],
           } as any),
         ),
-        inTenant(tenantId, () => products.update(r.id, { parentProductId: adopter.id } as any)),
+        inTenant(tenantId, () =>
+          products.update(r.id, { parentProductId: adopter.id } as any, {
+            packPrecondition: "internal",
+          }),
+        ),
       ]);
       for (const x of [created, adopted]) {
         if (x.status === "rejected") expect(stateOf(x.reason)).not.toBe("40P01");
@@ -359,18 +369,20 @@ describeDb("#2717 M2 fold: recipe invariants are kept — real Postgres", () => 
     const c = await seedDraft(tenantId);
     // DRAFT recipe: open
     let err: any = await inTenant(tenantId, () =>
-      products.update(c.family.id, { unitsPerBox: 24 } as any),
+      products.update(c.family.id, { unitsPerBox: 24 } as any, { packPrecondition: "internal" }),
     ).catch((e) => e);
     expect(err.getResponse()).toMatchObject({ code: "RECIPE_FAMILY_LOCKED" });
     // ACTIVE recipe: open
     await inTenant(tenantId, () => recipes.activate(c.draft.id));
     err = await inTenant(tenantId, () =>
-      products.update(c.family.id, { unitsPerBox: 24 } as any),
+      products.update(c.family.id, { unitsPerBox: 24 } as any, { packPrecondition: "internal" }),
     ).catch((e) => e);
     expect(err.getResponse()).toMatchObject({ code: "RECIPE_FAMILY_LOCKED" });
     // the recipe product's own box size is locked too
     err = await inTenant(tenantId, () =>
-      products.update(c.recipeProduct.id, { unitsPerBox: 6 } as any),
+      products.update(c.recipeProduct.id, { unitsPerBox: 6 } as any, {
+        packPrecondition: "internal",
+      }),
     ).catch((e) => e);
     expect(err.getResponse()).toMatchObject({ code: "RECIPE_FAMILY_LOCKED" });
     const family = await prisma.product.findUniqueOrThrow({ where: { id: c.family.id } });
@@ -380,7 +392,9 @@ describeDb("#2717 M2 fold: recipe invariants are kept — real Postgres", () => 
       where: { tenantId, id: c.draft.id },
       data: { status: "RETIRED", activeFor: null, retiredAt: new Date() },
     });
-    await inTenant(tenantId, () => products.update(c.family.id, { unitsPerBox: 24 } as any));
+    await inTenant(tenantId, () =>
+      products.update(c.family.id, { unitsPerBox: 24 } as any, { packPrecondition: "internal" }),
+    );
     const changed = await prisma.product.findUniqueOrThrow({ where: { id: c.family.id } });
     expect(changed.unitsPerBox).toBe(24);
   }, 60_000);
@@ -390,15 +404,21 @@ describeDb("#2717 M2 fold: recipe invariants are kept — real Postgres", () => 
     const c = await seedDraft(tenantId);
     const other = await product(tenantId, "Other family");
     let err: any = await inTenant(tenantId, () =>
-      products.update(c.variants[0].id, { parentProductId: other.id } as any),
+      products.update(c.variants[0].id, { parentProductId: other.id } as any, {
+        packPrecondition: "internal",
+      }),
     ).catch((e) => e);
     expect(err.getResponse()).toMatchObject({ code: "RECIPE_FAMILY_LOCKED" });
     err = await inTenant(tenantId, () =>
-      products.update(c.recipeProduct.id, { parentProductId: other.id } as any),
+      products.update(c.recipeProduct.id, { parentProductId: other.id } as any, {
+        packPrecondition: "internal",
+      }),
     ).catch((e) => e);
     expect(err.getResponse()).toMatchObject({ code: "RECIPE_INVALID" });
     err = await inTenant(tenantId, () =>
-      products.update(c.family.id, { parentProductId: other.id } as any),
+      products.update(c.family.id, { parentProductId: other.id } as any, {
+        packPrecondition: "internal",
+      }),
     ).catch((e) => e);
     expect(err.getResponse()).toMatchObject({
       code: "RECIPE_INVALID",

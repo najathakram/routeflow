@@ -73,6 +73,10 @@
 //   PRODUCT_PACK_STALE — `body.code` of the 409 from PATCH /products/:id when the pack the form read (expectedUnit,
 //                    expectedUnitsPerBox, expectedTenantUnitId) no longer matches the product under its pack lock, e.g. a
 //                    Settings > Units rename committed while the form was open (SA-797). Nothing was written; reload.
+//   PRODUCT_PACK_PRECONDITION_REQUIRED — `body.code` of the 409 from PATCH /products/:id when a client sends `unit` or
+//                    `unitsPerBox` WITHOUT its expected twin and the value differs from the stored one (SA-797a): an
+//                    older app build that never sends the expected pack. An equal value (an echo) is accepted. Nothing
+//                    was written; reloading cannot fix it, updating the app does.
 //   RECIPE_IMMUTABLE — `body.code` of the 409 when a recipe that is ACTIVE or RETIRED is edited
 //                    in place (#2717 M2, I3); clone it with POST /recipes/:id/versions instead.
 //   RECIPE_CATEGORY_LOCKED — `body.code` of the 409 when a product that sits in a non-RETIRED
@@ -249,6 +253,7 @@ export const API_ERROR_CODES = {
   TENANT_UNIT_LIMIT: "TENANT_UNIT_LIMIT",
   UNIT_SIZE_IN_USE: "UNIT_SIZE_IN_USE",
   PRODUCT_PACK_STALE: "PRODUCT_PACK_STALE",
+  PRODUCT_PACK_PRECONDITION_REQUIRED: "PRODUCT_PACK_PRECONDITION_REQUIRED",
   HOLDERS_CHANGED: "HOLDERS_CHANGED",
   FAMILY_NOT_SELLABLE: "FAMILY_NOT_SELLABLE",
   /** 400 from PUT customer price overrides and POST/PATCH promotions: a FAMILY container is never priced or promoted; `productIds` names them. Use its variants. */

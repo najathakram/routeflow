@@ -287,7 +287,9 @@ describe("ProductsService: every parent write goes through it (B1211)", () => {
     it("a parent id that is not in this tenant is refused and NOTHING is written", async () => {
       seed({}); // the lookup (tenant-scoped) finds nothing
       const body = await refusal(
-        service.update("prod-1", { parentProductId: "other-tenant-product" } as never),
+        service.update("prod-1", { parentProductId: "other-tenant-product" } as never, {
+          packPrecondition: "internal",
+        }),
       );
       expect(body).toMatchObject({
         code: API_ERROR_CODES.PRODUCT_PARENT_INVALID,
@@ -298,35 +300,53 @@ describe("ProductsService: every parent write goes through it (B1211)", () => {
 
     it("itself as parent: 400, nothing written", async () => {
       seed({ "prod-1": { ...FAMILY, id: "prod-1" } });
-      const body = await refusal(service.update("prod-1", { parentProductId: "prod-1" } as never));
+      const body = await refusal(
+        service.update("prod-1", { parentProductId: "prod-1" } as never, {
+          packPrecondition: "internal",
+        }),
+      );
       expect(body.reason).toBe(PRODUCT_PARENT_REASONS.SELF);
       expect(prisma.product.update).not.toHaveBeenCalled();
     });
 
     it("a parent that is a variant: 400, nothing written", async () => {
       seed({ child: { ...FAMILY, id: "child", kind: "VARIANT", parentProductId: "fam" } });
-      const body = await refusal(service.update("prod-1", { parentProductId: "child" } as never));
+      const body = await refusal(
+        service.update("prod-1", { parentProductId: "child" } as never, {
+          packPrecondition: "internal",
+        }),
+      );
       expect(body.reason).toBe(PRODUCT_PARENT_REASONS.VARIANT_PARENT);
       expect(prisma.product.update).not.toHaveBeenCalled();
     });
 
     it("an inactive parent: 400, nothing written", async () => {
       seed({ fam: { ...FAMILY, isActive: false } });
-      const body = await refusal(service.update("prod-1", { parentProductId: "fam" } as never));
+      const body = await refusal(
+        service.update("prod-1", { parentProductId: "fam" } as never, {
+          packPrecondition: "internal",
+        }),
+      );
       expect(body.reason).toBe(PRODUCT_PARENT_REASONS.INACTIVE);
       expect(prisma.product.update).not.toHaveBeenCalled();
     });
 
     it("a product that has variants of its own cannot become a variant", async () => {
       seed({ fam: FAMILY }, 3);
-      const body = await refusal(service.update("prod-1", { parentProductId: "fam" } as never));
+      const body = await refusal(
+        service.update("prod-1", { parentProductId: "fam" } as never, {
+          packPrecondition: "internal",
+        }),
+      );
       expect(body.reason).toBe(PRODUCT_PARENT_REASONS.HAS_VARIANTS);
       expect(prisma.product.update).not.toHaveBeenCalled();
     });
 
     it("a FAMILY parent makes the row a VARIANT; a standalone parent leaves the kind alone", async () => {
       seed({ fam: FAMILY });
-      await service.update("prod-1", { parentProductId: "fam" } as never);
+      await service.update("prod-1", { parentProductId: "fam" } as never, {
+        packPrecondition: "internal",
+      });
       expect(prisma.product.update.mock.calls[0][0].data).toMatchObject({
         parentProductId: "fam",
         kind: "VARIANT",
@@ -334,7 +354,9 @@ describe("ProductsService: every parent write goes through it (B1211)", () => {
 
       prisma.product.update.mockClear();
       seed({ std: { ...FAMILY, id: "std", kind: "STANDARD" } });
-      await service.update("prod-1", { parentProductId: "std" } as never);
+      await service.update("prod-1", { parentProductId: "std" } as never, {
+        packPrecondition: "internal",
+      });
       const data = prisma.product.update.mock.calls[0][0].data as Record<string, unknown>;
       expect(data.parentProductId).toBe("std");
       expect(data).not.toHaveProperty("kind");
@@ -350,7 +372,9 @@ describe("ProductsService: every parent write goes through it (B1211)", () => {
         args?.where?.id === "prod-1" ? { parentProductId: "fam", unitsPerBox: null } : null,
       );
       prisma.product.update.mockResolvedValue({ ...PRODUCT });
-      await service.update("prod-1", { parentProductId: null } as never);
+      await service.update("prod-1", { parentProductId: null } as never, {
+        packPrecondition: "internal",
+      });
       expect(prisma.product.update.mock.calls[0][0].data).toMatchObject({
         parentProductId: null,
         kind: "STANDARD",
@@ -358,7 +382,9 @@ describe("ProductsService: every parent write goes through it (B1211)", () => {
 
       prisma.product.update.mockClear();
       seed({});
-      await service.update("prod-1", { description: "x" } as never);
+      await service.update("prod-1", { description: "x" } as never, {
+        packPrecondition: "internal",
+      });
       expect(prisma.product.update.mock.calls[0][0].data).not.toHaveProperty("kind");
     });
 
@@ -373,7 +399,9 @@ describe("ProductsService: every parent write goes through it (B1211)", () => {
       prisma.product.findFirst.mockImplementation(async (args: { where?: { id?: string } }) =>
         args?.where?.id === "prod-1" ? { parentProductId: "fam", unitsPerBox: null } : lookup(args),
       );
-      await service.update("prod-1", { parentProductId: "std" } as never);
+      await service.update("prod-1", { parentProductId: "std" } as never, {
+        packPrecondition: "internal",
+      });
       expect(prisma.product.update.mock.calls[0][0].data).toMatchObject({
         parentProductId: "std",
         kind: "STANDARD",
@@ -390,7 +418,9 @@ describe("ProductsService: every parent write goes through it (B1211)", () => {
         args?.where?.id === "fam" ? { ...FAMILY, isActive: false } : null,
       );
       prisma.product.update.mockResolvedValue({ ...PRODUCT });
-      await service.update("prod-1", { parentProductId: "fam", description: "x" } as never);
+      await service.update("prod-1", { parentProductId: "fam", description: "x" } as never, {
+        packPrecondition: "internal",
+      });
       expect(prisma.product.update).toHaveBeenCalled();
     });
   });

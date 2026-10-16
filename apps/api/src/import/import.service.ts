@@ -2818,7 +2818,10 @@ export class ImportService {
               existing.id,
             );
           } else {
-            await this.productsService.update(existing.id, changes as any, { suppressEmit: true });
+            await this.productsService.update(existing.id, changes as any, {
+              packPrecondition: "internal",
+              suppressEmit: true,
+            });
             anyWrite = true;
           }
           updated++;

@@ -16,17 +16,25 @@ describe("packWordToSend: a stale form must not overwrite a unit rename", () => 
 describe("expectedPackFor: SA-797, the pack the form read rides with a save that carries unit", () => {
   const opened = { unit: "Case", unitsPerBox: 24, packTenantUnitId: "tu-case" };
   it("sends the word, size and tenant unit the form OPENED with", () => {
-    expect(expectedPackFor("Crate", opened)).toEqual({
+    expect(expectedPackFor({ unit: "Crate" }, opened)).toEqual({
       expectedUnit: "Case",
       expectedUnitsPerBox: 24,
       expectedTenantUnitId: "tu-case",
     });
   });
-  it("sends nothing when the save does not carry unit", () => {
-    expect(expectedPackFor(undefined, opened)).toEqual({});
+  it("SA-797a: a save that carries only unitsPerBox sends the expected pack too", () => {
+    expect(expectedPackFor({ unitsPerBox: 12 }, opened)).toEqual({
+      expectedUnit: "Case",
+      expectedUnitsPerBox: 24,
+      expectedTenantUnitId: "tu-case",
+    });
+    expect(expectedPackFor({ unitsPerBox: null }, opened)).toMatchObject({ expectedUnit: "Case" });
+  });
+  it("sends nothing when the save carries neither unit nor unitsPerBox", () => {
+    expect(expectedPackFor({}, opened)).toEqual({});
   });
   it("an unlinked word sends no tenant unit; an unset size is null", () => {
-    expect(expectedPackFor("Crate", { unit: "Case", packTenantUnitId: null })).toEqual({
+    expect(expectedPackFor({ unit: "Crate" }, { unit: "Case", packTenantUnitId: null })).toEqual({
       expectedUnit: "Case",
       expectedUnitsPerBox: null,
     });

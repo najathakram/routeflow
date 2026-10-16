@@ -135,7 +135,9 @@ describeDb("families and variants: delete, sellability, barcodes — real Postgr
         parentProductId: parent.id,
         variantName: "Red",
       });
-      await inTenant(tenantId, () => service.update(child.id, unlinkBody() as never));
+      await inTenant(tenantId, () =>
+        service.update(child.id, unlinkBody() as never, { packPrecondition: "internal" }),
+      );
       const after = await prisma.product.findUnique({
         where: { id: child.id },
         select: { parentProductId: true },
@@ -228,14 +230,16 @@ describeDb("families and variants: delete, sellability, barcodes — real Postgr
         sku: `CH-${RUN_SUFFIX}`,
       });
       const err = await inTenant(tenantId, () =>
-        service.update(fam.id, { isActive: false } as never),
+        service.update(fam.id, { isActive: false } as never, { packPrecondition: "internal" }),
       ).catch((e: unknown) => e);
       expect((err as { getResponse(): unknown }).getResponse()).toMatchObject({
         code: "FAMILY_HAS_ACTIVE_VARIANTS",
         variantCount: 1,
       });
       await inTenant(tenantId, () =>
-        service.update(fam.id, { isActive: false, confirmCascade: true } as never),
+        service.update(fam.id, { isActive: false, confirmCascade: true } as never, {
+          packPrecondition: "internal",
+        }),
       );
       const after = await prisma.product.findUniqueOrThrow({
         where: { id: v1.id },
@@ -253,7 +257,7 @@ describeDb("families and variants: delete, sellability, barcodes — real Postgr
         isActive: false,
       });
       const err = await inTenant(tenantId, () =>
-        service.update(v1.id, { isActive: true } as never),
+        service.update(v1.id, { isActive: true } as never, { packPrecondition: "internal" }),
       ).catch((e: unknown) => e);
       expect((err as { getResponse(): unknown }).getResponse()).toMatchObject({
         code: "VARIANT_PARENT_INACTIVE",

@@ -26,6 +26,40 @@ export const EXPECTED_PACK_FIELDS = [
 export const PRODUCT_PACK_STALE_MESSAGE =
   "This product changed since you opened it. Reload to see the latest.";
 
+export const PRODUCT_PACK_PRECONDITION_REQUIRED_MESSAGE =
+  "Update the app to change this product's pack size.";
+
+/**
+ * Who is writing the pack (SA-797a). REQUIRED on `ProductsService.update`, so the compiler finds every
+ * caller: only the PATCH controller is a "client"; import, family writers and scripts are "internal" (they
+ * read the locked row themselves).
+ */
+export type PackPrecondition = "client" | "internal";
+
+/**
+ * SA-797a, client saves only: the pack fields sent WITHOUT their expected twin whose value differs from the
+ * row read under the pack lock. An equal value is an echo (an older build re-sending what it read) and is
+ * accepted. A non-empty result is a 409 PRODUCT_PACK_PRECONDITION_REQUIRED, nothing written: the build never
+ * sends the expected pack, so a reload cannot fix it.
+ */
+export function unguardedPackChanges(
+  locked: { unit: string; unitsPerBox: number | null },
+  dto: { unit?: string; unitsPerBox?: number | null } & ExpectedPack,
+): Array<"unit" | "unitsPerBox"> {
+  const out: Array<"unit" | "unitsPerBox"> = [];
+  if (dto.unit !== undefined && dto.expectedUnit === undefined && dto.unit !== locked.unit) {
+    out.push("unit");
+  }
+  if (
+    dto.unitsPerBox !== undefined &&
+    dto.expectedUnitsPerBox === undefined &&
+    (dto.unitsPerBox ?? null) !== (locked.unitsPerBox ?? null)
+  ) {
+    out.push("unitsPerBox");
+  }
+  return out;
+}
+
 export const sendsExpectedPack = (dto: ExpectedPack): boolean =>
   EXPECTED_PACK_FIELDS.some((k) => dto[k] !== undefined);
 

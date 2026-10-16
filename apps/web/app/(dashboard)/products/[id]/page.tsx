@@ -596,12 +596,17 @@ export default function ProductDetailPage() {
       return Number.isFinite(n) && n >= 0 ? String(n) : undefined;
     };
     const unitToSend = packWordToSend(draft.unit, packWhenEditStartedRef.current?.unit);
+    const unitsPerBoxToSend = draft.unitsPerBox?.trim() ? parseInt(draft.unitsPerBox, 10) : null;
     updateProduct.mutate(
       {
         id: id,
         name: composedName,
         unit: unitToSend,
-        ...expectedPackFor(unitToSend, packWhenEditStartedRef.current),
+        // SA-797a: every save carries unitsPerBox, so every save sends the pack the form opened with.
+        ...expectedPackFor(
+          { unit: unitToSend, unitsPerBox: unitsPerBoxToSend },
+          packWhenEditStartedRef.current,
+        ),
         sku: draft.sku?.trim() || null,
         barcode: draft.barcode?.trim() || null,
         unitSku: draft.unitSku?.trim() || null,
@@ -614,7 +619,7 @@ export default function ProductDetailPage() {
         pricePerUnit: asDecimal(draft.pricePerUnit),
         // Untouched tiers move with a list change exactly like the products list (applyLadderChange, audit 2026-10-14).
         ...editTierPatch(product, draft),
-        unitsPerBox: draft.unitsPerBox?.trim() ? parseInt(draft.unitsPerBox, 10) : null,
+        unitsPerBox: unitsPerBoxToSend,
         // Regulated tags: value to set, null to clear (server auto-nulls the
         // category when the type is cleared).
         trackedCategoryId: draft.trackedCategoryId || null,

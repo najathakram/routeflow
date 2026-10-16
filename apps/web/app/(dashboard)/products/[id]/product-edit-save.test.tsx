@@ -189,7 +189,7 @@ describe("SA-797: a save that changes the pack word sends the pack the form OPEN
     });
   });
 
-  it("a save that leaves the pack word alone sends neither unit nor the expected values", async () => {
+  it("SA-797a N1a: a save that leaves the pack word alone still carries unitsPerBox, so it sends the pack the form OPENED with", async () => {
     const user = userEvent.setup();
     patch.mockResolvedValueOnce({ data: { id: "p1" } });
     await openAndType(user);
@@ -197,7 +197,11 @@ describe("SA-797: a save that changes the pack word sends the pack the form OPEN
     await waitFor(() => expect(patch).toHaveBeenCalledTimes(1));
     const body = patch.mock.calls[0][1];
     expect(body.unit).toBeUndefined();
-    expect(body).not.toHaveProperty("expectedUnit");
-    expect(body).not.toHaveProperty("expectedTenantUnitId");
+    expect(body).toHaveProperty("unitsPerBox");
+    expect(body).toMatchObject({
+      expectedUnit: "EACH",
+      expectedUnitsPerBox: null,
+      expectedTenantUnitId: "tu-each",
+    });
   });
 });

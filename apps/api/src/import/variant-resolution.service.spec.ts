@@ -216,6 +216,17 @@ describe("VariantResolutionService", () => {
         );
       });
 
+      it("SA-797a N1d (guard): an import completeSetup changing the size is an INTERNAL write, never PRECONDITION_REQUIRED", async () => {
+        prisma.product.findUnique.mockResolvedValue({ id: "n1", unit: "Box", unitsPerBox: 12 });
+        prisma.product.update.mockResolvedValue({ id: "n1", unitsPerBox: 6 });
+        prisma.productUnit.findMany.mockResolvedValue([]);
+        lockingTx(jest.fn().mockResolvedValue(0));
+        await expect(service.completeSetup("n1", { unitsPerBox: 6 })).resolves.toMatchObject({
+          unitsPerBox: 6,
+        });
+        expect(prisma.product.update.mock.calls[0][0].data.unitsPerBox).toBe(6);
+      });
+
       it("SA-810 G6c: at the 200-unit cap an import confirmation of a NEW pack word saves and never touches the unit list", async () => {
         // completeSetup writes Product.unit TEXT only (a names list is never a math source): it adds no
         // TenantUnit, so the cap can neither refuse it nor be exceeded by it. Each row saves on its own.
