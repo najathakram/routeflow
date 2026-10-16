@@ -61,13 +61,6 @@
 - **Lesson:** **Lanes report EVENTS only (pushed <sha> / blocked <why> / done / needs ruling), never status or load pings. Review depth follows risk: Opus for money, tenant security, concurrency and migrations; Sonnet for UI and docs; non-money nits go to a follow-up row, not a re-review loop. A bug found in a file you are already changing rides along in its OWN commit on the same branch, with a red-first test.**
 - **Guard:** the lane rules and the `pre-merge-review` skill.
 
-### L-283 · 2026-10-08 · process · cap work in flight per machine, and run the 2-minute fail-fast guards before the 7-minute verify push
-
-- **Symptom:** recorded by the 2026-10-08 operating review as an operating-model rule; the incident detail is in the lead's notes.
-- **Root cause:** work in flight beyond what one machine can finish competes with new work, and one deterministic failure found only inside the ~7 minute verify push costs a full verify.
-- **Lesson:** **Cap work in flight per machine: at most 2 PRs in review and at most 1 local-only branch; finish and push in-flight work before starting new feature work. Before a verify push run the ~2 minute fail-fast guards: size ratchets, pins, campaign-check freshness after any master merge, bare-cron, and check-types on the changed workspaces.**
-- **Guard:** the lane rules; the pre-push gates themselves.
-
 ### L-281 · 2026-10-08 · process · on a shared host never `git stash` in a lane session and never kill processes by name
 
 - **Symptom:** recorded by the 2026-10-08 operating review as a standing hazard of several sessions sharing one machine; the incident detail is in the lead's notes.
@@ -380,13 +373,6 @@
 
 ## testing
 
-### L-308 · 2026-10-16 · testing · a bounded input buffer reports what it drops, and a repeat rule is proved with the real inter-scan timing of each source
-
-- **Symptom:** 20 repeat scans of one item added only 14 or 15 on the New order screen, on both the phone camera and a desktop wedge scanner (row 536).
-- **Root cause:** repeat suppression waited for a steady hold tuned for camera jitter, a two-deep pending buffer discarded overflow silently, and wedge reads interleaved with async lookups; tests used instant, evenly spaced scans that never showed the loss.
-- **Lesson:** **A bounded queue returns a `dropped` signal the screen must show, never a silent discard. Tune repeat rules per screen (opt-in, absence-based for a deliberate-repeat screen), run per-item async work through one serial FIFO, and take-and-clear the input atomically. Prove it with a deferred-resolve test: scan 1 in flight, half of scan 2, resolve, finish.**
-- **Guard:** `scan-pending-buffer.spec.ts`, `scan-engine.continuous.spec.ts`, the `useScanCodeHandler` and `CreateOrderModal` deferred-resolve tests.
-
 ### L-205 · 2026-09-18 · testing · regression tests pinned literal source text, not behavior
 
 - **Symptom:** `touch-reveal-b511.test.ts` and `edit-line-item-row-b513.test.ts` both asserted a
@@ -453,12 +439,26 @@
 
 ## domain
 
-### L-307 · 2026-10-16 · domain · two fields that describe one quantity are stored as one and derived; the customer-facing server path refuses a contradictory pair
+### L-310 · 2026-10-16 · domain · every path that destroys a row holding booked stock settles that stock through the cancel's own unwind
 
-- **Symptom:** the buyer cart's quantity and its case/piece split drifted apart, so the cart showed one price while the server billed another (row 531).
-- **Root cause:** quantity and split were both client state, each edited by its own control, and the server accepted whatever pair arrived; saved carts and pack-size changes re-created the drift.
-- **Lesson:** **Keep ONE source (quantity in pieces), derive the split through the shared pricing helper on every change, rebuild saved state quantity-first and flag what was rebuilt, and have the server refuse a contradictory pair on the customer-facing path with a coded 400 before any key, lock or write. Staff paths only warn until a census of existing rows says enforcing is safe.** Cf. [[L-222]].
-- **Guard:** `qty-split-consistency.spec.ts` and its DB spec, `buyer-cart-line.test.ts`, the read-only `report-buyer-split-mismatch.mjs` census.
+- **Symptom:** deleting a live order (pending, confirmed, out for delivery, part delivered), or deleting or purging a customer that owned such orders, left the shelf count down for good; a cancel credited it back, a delete did not.
+- **Root cause:** stock is booked when the order is created and was credited back only by the cancel path. Delete, bulk delete and the customer delete and purge cascade removed the rows without that unwind, and each earlier fix looked only at the one path in front of it.
+- **Lesson:** **Enumerate every destroyer of a stock-holding row (delete, bulk delete, purge, a cascade from a parent) by search and route each through the cancel's own settle path in its own transaction: lock the Order row first, read the status under the lock, settle only the states a cancel would credit (not DRAFT, CANCELLED or DELIVERED), then lock the products once in ranked order. Prove it with a ledger invariant (shelf = opening + movements) after each destroyer, not a per-path count.** Cf. [[L-223]], [[L-301]] (a racing reopen is the same class: claim the row under its lock, then compare-and-set the status before re-booking).
+- **Guard:** `inventory/testing/ledger-consistency.ts` and `order-stock-world.ts`, the `order-stock-o6-delete-live`, `order-stock-o5-reopen-race` and `customer-delete-returns-stock` DB specs, `order-reopen-claim.spec.ts`, `customer-delete-stock.spec.ts`.
+
+### L-311 · 2026-10-16 · domain · an explicit "keep this separate" choice travels to every automatic step that follows the create
+
+- **Symptom:** a buyer who chose "create a new order" instead of adding to the pending one had the new order folded straight back into the pending one: the new order was deleted, its number burned, and the idempotency key left on the survivor, so a duplicate submit either 409ed or re-applied the cart.
+- **Root cause:** the create honoured the choice, but the consolidation sweep that ran right after it did not know about it. The staff path already had a separate-order marker; the buyer path never got one.
+- **Lesson:** **When a user choice opposes an automatic behaviour (auto-merge, consolidation, dedupe), carry the choice as an explicit flag to the create AND to every automatic step after it, and let the sweep read the same flag. Test with the automatic step live (create, then assert the order still exists), never with it mocked, and replay a duplicate submit by key.** Cf. [[L-267]].
+- **Guard:** `buyer-create-new-order-choice.db.spec.ts`, `buyer.merge-lock.spec.ts`.
+
+### L-312 · 2026-10-16 · domain · a write that names ids resolves each against the catalog before it acts
+
+- **Symptom:** bill lines carried product ids no catalog entry matched; a purchase-order receive skipped an item that was not on the order and answered 200; a reorder-point write on an unresolved id surfaced a raw database error (B1236 to B1238).
+- **Root cause:** DTO validation checked the shape of the payload, not whether each id resolves. The services trusted the ids and then wrote, silently skipped or crashed further down.
+- **Lesson:** **Resolve every id in a line array with one catalog read (an in-list) before any row is written. An unknown id is a coded 4xx that names it, never a silent skip, a 200 or a raw database error. Put the unknown-id case in the spec of every writer that takes a line array.**
+- **Guard:** `vendor-bill-line-validation.db.spec.ts`, `inventory-line-validation.db.spec.ts`, `vendor-bills.service.spec.ts`, `inventory.service.spec.ts`.
 
 ### L-306 · 2026-10-12 · domain · a switch that must stop a family of automatic writers is enforced by a writer census and a fail-closed read, never by the callers you remember
 
