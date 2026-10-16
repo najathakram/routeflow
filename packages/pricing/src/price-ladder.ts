@@ -147,8 +147,10 @@ export function buildLadderView(
   }
   const has = (r?: UnitRef | null): r is UnitRef => !!r && rows.some((x) => x.ref === r);
   const anchor = has(opts.orderUnit) ? opts.orderUnit : "pack";
-  if (anchor !== "pack" && bit(0)) {
-    // The pack's Retail is a materialized number, not a typed price: Auto, worked out from the anchor.
+  const anchorHasRetail = rows.some((x) => x.ref === anchor && x.set[0] != null);
+  if (anchor !== "pack" && bit(0) && anchorHasRetail) {
+    // The pack's Retail is a materialized number, not a typed price: Auto, worked out from the anchor. An anchor
+    // with no Retail of its own (P1 broken) keeps it, as the source the other units are priced from by size.
     rows[0] = { ...rows[0], set: [null, ...rows[0].set.slice(1)] };
   }
   const tierAnchors: Partial<Record<2 | 3 | 4 | 5, UnitRef>> = {};
