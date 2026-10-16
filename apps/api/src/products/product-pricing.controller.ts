@@ -1,11 +1,15 @@
-import { Controller, Get, Param, UseGuards } from "@nestjs/common";
+import { Body, Controller, Get, HttpCode, Param, Post, UseGuards } from "@nestjs/common";
 import { UserRole } from "@prisma/client";
 import { JwtAuthGuard } from "../auth/guards/jwt-auth.guard";
 import { RolesGuard } from "../auth/guards/roles.guard";
 import { Roles } from "../auth/decorators/roles.decorator";
+import { CurrentUser } from "../auth/decorators/current-user.decorator";
+import type { JwtPayload } from "../auth/jwt-payload.interface";
 import { PlanFlagGuard } from "../billing/plan-flag.guard";
 import { RequirePlanFlag } from "../billing/require-plan-flag.decorator";
+import { SavePricesDto, UndoPricesDto } from "./dto/save-prices.dto";
 import { ProductPriceGridService } from "./product-price-grid.service";
+import { ProductPriceWriteService } from "./product-price-write.service";
 
 /**
  * Units and prices v2. The whole surface is plan-flag gated: a tenant without
@@ -16,11 +20,38 @@ import { ProductPriceGridService } from "./product-price-grid.service";
 @UseGuards(JwtAuthGuard, RolesGuard, PlanFlagGuard)
 @RequirePlanFlag("flag.units_prices_v2")
 export class ProductPricingController {
-  constructor(private readonly grid: ProductPriceGridService) {}
+  constructor(
+    private readonly grid: ProductPriceGridService,
+    private readonly writes: ProductPriceWriteService,
+  ) {}
 
   @Get("price-grid")
   @Roles(UserRole.OPERATOR)
   priceGrid(@Param("productId") productId: string) {
     return this.grid.get(productId);
+  }
+
+  /** One Save: patches, keeps, customer moves, one audit row, priceRevision + 1 (SA-799 b). */
+  @Post("prices")
+  @HttpCode(200)
+  @Roles(UserRole.OPERATOR)
+  savePrices(
+    @Param("productId") productId: string,
+    @Body() dto: SavePricesDto,
+    @CurrentUser() user: JwtPayload,
+  ) {
+    return this.writes.save(productId, dto, user.sub);
+  }
+
+  /** Undo = the stored inverse of one Save, once, under the same precondition. */
+  @Post("prices/undo")
+  @HttpCode(200)
+  @Roles(UserRole.OPERATOR)
+  undoPrices(
+    @Param("productId") productId: string,
+    @Body() dto: UndoPricesDto,
+    @CurrentUser() user: JwtPayload,
+  ) {
+    return this.writes.undo(productId, dto, user.sub);
   }
 }

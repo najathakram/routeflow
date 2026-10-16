@@ -16,7 +16,11 @@ import { PACK_WRITE_PATH_COMPLETE } from "@routeflow/pricing";
  */
 
 /** Files that ARE the write path (empty until S9 lands it). */
-const WRITE_PATH_FILES: readonly string[] = [];
+const WRITE_PATH_FILES: readonly string[] = [
+  // S9 (K1): the price save/undo write path; it takes the product lock, then the pack columns through `materializePack`.
+  "apps/api/src/products/price-state.ts",
+  "apps/api/src/products/product-price-write.service.ts",
+];
 
 /** Today's writers outside the write path. Only ever shrinks. */
 const OUTSIDE_WRITERS: readonly string[] = [
@@ -101,8 +105,11 @@ function scan(): string[] {
 
 // ─── F1 (SA-796 R-4): who may call the engine's switch and materialize functions ─────────────────
 
-/** Files outside packages/pricing that may name `materializePack` or `planOrderUnitSwitch`. Empty until S9 lands the write path. */
-const USE_ALLOW: readonly string[] = [];
+/** Files outside packages/pricing that may name `materializePack` or `planOrderUnitSwitch`: the S9 write path. */
+const USE_ALLOW: readonly string[] = [
+  // S9 (K1): the write path itself; it names assertOrderUnitSwitchAllowed before any order-unit change.
+  "apps/api/src/products/product-price-write.service.ts",
+];
 const USE_ROOTS = [
   "apps/api/src",
   "apps/api/scripts",
