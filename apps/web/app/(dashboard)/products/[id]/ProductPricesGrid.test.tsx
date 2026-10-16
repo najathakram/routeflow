@@ -24,12 +24,17 @@ const cells = (v: number[], src: Array<"auto" | "set"> = []) =>
 const grid: ProductPriceGridDto = {
   productId: "p1",
   anchor: "piece",
+  revision: 0,
+  priceState: "state-0",
+  tierAnchors: {},
+  tierRules: {},
   rows: [
     {
       ref: "case",
       label: "Case",
       factor: 960,
       kind: "pack",
+      editable: true,
       code: "012345678905",
       cells: cells([0, 13.91, 12.5, 11, 10], ["set", "set", "auto", "auto", "auto"]),
     },
@@ -38,6 +43,7 @@ const grid: ProductPriceGridDto = {
       label: "Box",
       factor: 24,
       kind: "unit",
+      editable: true,
       code: null,
       cells: cells([24.5, 22, 21, 20, 19]),
     },
@@ -46,6 +52,7 @@ const grid: ProductPriceGridDto = {
       label: "Piece",
       factor: 1,
       kind: "base",
+      editable: true,
       code: null,
       cells: cells([0.92, 0.9, 0.88, 0.85, 0.8], ["set", "auto", "auto", "auto", "auto"]),
     },

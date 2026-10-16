@@ -36,6 +36,9 @@ const EXEMPT: Record<string, string> = {
     "WS8 families: createFamily mints brand-new rows and, by plan, ignores the mixed_packs mode (the variant price is the " +
     "caller's unless copyFamilyPrice is set); updateVariants refuses a price EDIT 409 FAMILY_PRICE_AUTHORITY while mixed_packs is on, " +
     "and an added variant takes all five family columns read under the family row lock (familyPricesForNewVariant).",
+  "products/product-price-write.service.ts":
+    "Units v2 price write: assertNotGoverned refuses a variant (409 FAMILY_PRICE_AUTHORITY), a FAMILY and a RECIPE row " +
+    "before any write, so it only ever writes the five columns of a standalone product.",
   "import/import.service.ts":
     "Zoho import creates a brand-new STANDALONE product (no parentProductId): nothing to inherit.",
   "import/variant-resolution.service.ts":

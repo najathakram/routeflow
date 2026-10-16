@@ -89,6 +89,14 @@ export interface LadderViewOptions {
 const unitRef = (u: LadderViewUnit): UnitRef => u.id ?? `label:${u.label}`;
 
 /**
+ * SA-809: the 1-piece level's ref names the LEVEL, not the row: "base" (a row backs it, or the pack holds more than one
+ * piece), "pack" for a one-piece pack with no row. A factor-1 row at a one-piece pack is unreachable through the units
+ * service; master prices its label from the row (golden file), so it stays its own "base" cell. Never a ProductUnit id.
+ */
+const pieceRef = (product: LadderProduct, backed: boolean): UnitRef =>
+  backed || packFactorOf(product) > 1 ? "base" : "pack";
+
+/**
  * The grid for one product. A unit row is included only when its label resolves to it (the pack wins its own
  * label; a duplicate label is not reachable), exactly the rows `resolveUnitPrice` can price. The base unit is
  * implicit (all Auto) when the pack holds more than one piece and no row names it.
@@ -119,6 +127,7 @@ export function buildLadderView(
       ],
     },
   ];
+  let hasPiece = false;
   for (const u of units) {
     let level;
     try {
@@ -127,16 +136,18 @@ export function buildLadderView(
       continue;
     }
     if (level.row !== u) continue;
+    const piece = level.kind === "piece";
+    if (piece && hasPiece) continue; // one row names the base (the units service allows one factor-1 row)
+    hasPiece ||= piece;
     rows.push({
-      ref: unitRef(u),
+      ref: piece ? "base" : unitRef(u),
       label: u.label,
       factor: u.factorToBase,
-      kind: level.kind === "piece" ? "base" : "unit",
+      kind: piece ? "base" : "unit",
       set: [u.price, u.priceTier2, u.priceTier3, u.priceTier4, u.priceTier5].map(explicitPrice),
     });
   }
-  const base = resolveLadderLevel(product, units, baseLabelOf(product));
-  if (base.row === null && packFactor > 1) {
+  if (!hasPiece && packFactor > 1) {
     rows.push({
       ref: "base",
       label: baseLabelOf(product),
@@ -169,8 +180,18 @@ export function refForLabel(
 ): UnitRef {
   const level = resolveLadderLevel(product, units, label);
   if (level.kind === "pack") return "pack";
-  if (level.row) return unitRef(level.row as LadderViewUnit);
-  return packFactorOf(product) > 1 ? "base" : "pack"; // a one-piece pack IS the base
+  return level.kind === "piece"
+    ? pieceRef(product, !!level.row)
+    : unitRef(level.row as LadderViewUnit);
+}
+
+/**
+ * SA-809: the ONE ref-write canonicalizer. A ProductUnit id (or label ref) that names the 1-piece row becomes the level's
+ * ref ("base"); every other ref is returned as given. Every writer of a stored ref (the 7 R-3 columns) calls it.
+ */
+export function canonicalUnitRef(units: readonly LadderViewUnit[], ref: UnitRef): UnitRef {
+  const row = units.find((u) => unitRef(u) === ref);
+  return row && row.factorToBase === 1 ? "base" : ref;
 }
 
 /** "set" when the cell holds a typed price, "auto" when the rules work it out. The only reader of the encoding. */

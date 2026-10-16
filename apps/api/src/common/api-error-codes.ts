@@ -563,6 +563,16 @@ export const API_ERROR_CODES = {
    * nothing was written (SA-804 (1), B1232).
    */
   COSTING_METHOD_RETIRED: "COSTING_METHOD_RETIRED",
+  /**
+   * 409 from POST /products/:productId/prices and POST /prices/undo (units v2): the product's priceRevision, its price state
+   * (SA-796 R-1 value compare-and-set) or a customer cell's expected price changed since the grid was read. Body carries
+   * `revision`. Nothing was written; reload the grid.
+   */
+  LADDER_REVISION_STALE: "LADDER_REVISION_STALE",
+  /** 400 from POST /products/:productId/prices: the pricing core refused a value (zero/junk, the anchor's Retail cleared); body carries `problems`. */
+  PRICE_EDIT_INVALID: "PRICE_EDIT_INVALID",
+  /** 409 from POST /products/:productId/prices/undo: that audit row is not a price save of this product, or it was already undone. */
+  PRICE_UNDO_UNAVAILABLE: "PRICE_UNDO_UNAVAILABLE",
 } as const satisfies Record<string, ApiErrorCode>;
 
 /** The `flag` of a PLAN_GATE body that gates a count (a meter), not a feature flag. Not an error code. */
