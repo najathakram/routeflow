@@ -36,6 +36,8 @@ import { fetchInvoicedSaleLines, roundQty } from "../common/invoiced-sales";
 import { poLineFromInput } from "./po-line-input";
 import { costDecimal, nextAverageCost, planLotConsumption, reverseAverageCost } from "./costing";
 import { recordSaleMovement, resolveSaleCost } from "./sale-movement";
+import { poReversalNote, poReversalOf } from "./bill-revert";
+import { documentStockDate, type DocumentStockDate } from "./stock-write-date";
 import { RecordPurchaseDto } from "./dto/record-purchase.dto";
 import { RecordAdjustmentDto } from "./dto/record-adjustment.dto";
 import { CommitStockCountDto } from "./dto/commit-stock-count.dto";
@@ -1415,9 +1417,9 @@ export class InventoryService {
     // The PO's receipts history. There is no movement -> PO foreign key, only `reference = poNumber`
     // (operator-editable on manual purchases), so the join is narrowed to what can only be this PO's:
     // tenant-scoped (forTenant), the PO's own products, nothing written before the PO existed, and
-    // for receipts the PO's own supplier. A reversal is a re-apply's compensating ADJUSTMENT
-    // ("PO edit reversal — reverses <movementId>"), flagged and pointed at the receipt it undoes.
-    const prefix = InventoryService.PO_REVERSAL_NOTE;
+    // for receipts the PO's own supplier. A reversal is a re-apply's compensating row ("PO edit
+    // reversal — reverses <movementId>": a negative PURCHASE since SA-808 §5, an ADJUSTMENT before),
+    // flagged and pointed at the receipt it undoes (`poReversalOf`: the one pairing rule).
     const names = new Map(po.items.map((i) => [i.productId, i.product?.name ?? null]));
     const movements = await this.prisma.forTenant().stockMovement.findMany({
       where: {
@@ -1440,12 +1442,13 @@ export class InventoryService {
         (qtyReceivedByProduct.get(i.productId) ?? 0) + Number(i.qtyReceived),
       );
     }
-    const purchases = movements.filter((m) => m.type === MovementType.PURCHASE);
+    // A reversing row is PURCHASE-typed too now (negative): it is never a receipt.
+    const purchases = movements.filter(
+      (m) => m.type === MovementType.PURCHASE && poReversalOf(m) == null,
+    );
     // Receipts a re-apply has already compensated no longer count towards what is on hand.
     const reversedIds = new Set(
-      movements
-        .filter((m) => m.type === MovementType.ADJUSTMENT && m.notes?.startsWith(prefix))
-        .map((m) => (m.notes as string).slice(prefix.length).trim()),
+      movements.map((m) => poReversalOf(m)).filter((x): x is string => x != null),
     );
     const ownSupplier = purchases.filter(
       (m) => m.supplierId === po.supplierId && !reversedIds.has(m.id),
@@ -1473,10 +1476,10 @@ export class InventoryService {
           unitCost: m.unitCost == null ? null : Number(m.unitCost),
           at: m.createdAt.toISOString(),
         });
-      } else if (m.type === MovementType.ADJUSTMENT && m.notes?.startsWith(prefix)) {
+      } else if (poReversalOf(m) != null) {
         // Free text is not trusted on its own (B608): a correction shows only when it points at one
         // of this PO's own receipts.
-        const reversesId = m.notes.slice(prefix.length).trim();
+        const reversesId = poReversalOf(m) as string;
         if (!receiptIds.has(reversesId)) continue;
         receipts.push({
           id: m.id,
@@ -1684,9 +1687,7 @@ export class InventoryService {
     /**
      * The purchase date of the LOT — a re-apply passes the original lot's date so
      * the re-created lot keeps its place in FIFO/LIFO order. The movement itself is
-     * always dated now: the original PURCHASE stays in its own period (the reversal
-     * compensates it rather than deleting it), and the correction lands today.
-     * Defaults to now (a fresh receive).
+     * dated by `effectiveAt` (below), now when none is given. Defaults to now (a fresh receive).
      */
     lotPurchaseDate?: Date,
     /**
@@ -1694,9 +1695,15 @@ export class InventoryService {
      * (compensation, then re-post) because the cost replay orders by effectiveAt, then
      * createdAt, then a RANDOM id — two rows of one transaction share `now()`, so without
      * this their replay order (and the average it yields) would be a coin flip. B562: it
-     * stamps BOTH columns (it is today's date, not a backdate).
+     * stamps BOTH columns unless `effectiveAt` says otherwise.
      */
     movementAt?: Date,
+    /**
+     * SA-808 §5 (PO edit sibling): the accounting date of a re-apply's re-post — the original
+     * receipt's date, or `movementAt` (now) when that period is filed — so the re-post lands in the
+     * month its reversal sits in. Only meaningful with `movementAt`; `createdAt` stays `movementAt`.
+     */
+    effectiveAt?: Date,
   ) {
     const qtyReceived = new Prisma.Decimal(qty);
     // The PO line's cost basis is a property of the STORED row, never of the
@@ -1728,7 +1735,7 @@ export class InventoryService {
         supplierId: po.supplierId,
         reference: po.poNumber,
         performedById: userId,
-        ...(movementAt ? { createdAt: movementAt, effectiveAt: movementAt } : {}),
+        ...(movementAt ? { createdAt: movementAt, effectiveAt: effectiveAt ?? movementAt } : {}),
       },
     });
 
@@ -1756,27 +1763,22 @@ export class InventoryService {
   }
 
   /**
-   * Notes prefix on the compensating movement a re-apply writes for each receipt it
-   * reverses — the rest of the note is the id of the PURCHASE movement it reverses,
-   * which is how a LATER re-apply tells reversed receipts from live ones.
-   */
-  private static readonly PO_REVERSAL_NOTE = "PO edit reversal — reverses ";
-
-  /**
    * Undo every stock effect of a purchase order's receipts — the whole-document
    * reverse the re-apply leg of {@link updatePurchaseOrder} starts from.
    *
    * The ledger is never edited: each live PURCHASE movement (`reference = poNumber`)
-   * is compensated by a costed NEGATIVE ADJUSTMENT — the same shape
-   * `VendorBillsService.voidBill` writes, which the cost-recompute replay already
-   * understands as the exact inverse of a purchase — so the original receipt stays
-   * in its own period and there is an audit trail of the correction. The average is
-   * reversed newest-first through {@link reverseAverageCost}.
+   * is compensated by a costed NEGATIVE PURCHASE (SA-808 §5, B846's shape: the tobacco
+   * filing sums signed PURCHASE rows, so the reversal must be one or an edited PO counts
+   * its receipt twice). The replay reads it as the exact inverse of a purchase, and the
+   * pair is found again by {@link poReversalOf} (legacy rows are ADJUSTMENT and pair the
+   * same way). The reversal is dated at the receipt's own `effectiveAt` so every period
+   * nets — unless that instant is in a filed period for the product, then it is dated
+   * now and the note names the filing (`documentStockDate`; 409 if now is filed too).
+   * The average is reversed newest-first through {@link reverseAverageCost}.
    *
    * REFUSES, before anything is written, when:
    *  - a product is regulated (`trackedCategoryId`) — regulated purchase reports sum
-   *    PURCHASE movements, so a compensated-and-reposted receipt would be counted
-   *    twice; edit it document-only;
+   *    PURCHASE movements; edit it document-only;
    *  - any of the PO's lots is partly consumed (FIFO/LIFO) — B583: surrendering only
    *    what remains and then re-creating a full-size lot would INFLATE the lot pool
    *    by what was already sold; the consumed part can't be un-sold, so the caller
@@ -1800,7 +1802,10 @@ export class InventoryService {
    * and stays document-only editable; there is no migration.
    *
    * Returns the original purchase date of each product's lot, so the re-posted lot
-   * keeps its place in FIFO/LIFO order.
+   * keeps its place in FIFO/LIFO order; the date the re-post's MOVEMENT books at (the
+   * earliest reversed receipt's date, moved forward when filed — same rule as the
+   * reversal, so the pair lands in one month); and the earliest instant written per
+   * product, for the caller's replay.
    */
   private async reversePoReceipts(
     tx: Prisma.TransactionClient,
@@ -1811,7 +1816,11 @@ export class InventoryService {
     userId: string,
     /** Strictly increasing timestamps for the compensating movements (see postPoReceipt). */
     nextAt: () => Date,
-  ): Promise<{ lotDates: Map<string, Date> }> {
+  ): Promise<{
+    lotDates: Map<string, Date>;
+    repostDates: Map<string, DocumentStockDate>;
+    earliestAt: Map<string, Date>;
+  }> {
     const productIds = [...new Set(po.items.map((i) => i.productId))];
 
     // ── Refuse first: nothing below runs unless every check passes ──
@@ -1852,16 +1861,17 @@ export class InventoryService {
       // order-sensitive. B562: accounting order first (effectiveAt).
       orderBy: [{ effectiveAt: "desc" }, { createdAt: "desc" }, { id: "desc" }],
     });
-    const prefix = InventoryService.PO_REVERSAL_NOTE;
+    // A previous re-apply's reversing rows — negative PURCHASE (SA-808 §5) or legacy ADJUSTMENT —
+    // name the receipt they undid; `poReversalOf` is the ONE pairing rule (a legacy row pairs too,
+    // so a second edit never reverses a receipt twice).
     const reversedIds = new Set<string>();
     for (const m of movements) {
-      if (m.type === MovementType.ADJUSTMENT && m.notes?.startsWith(prefix)) {
-        reversedIds.add(m.notes.slice(prefix.length).trim());
-      }
+      const target = poReversalOf(m);
+      if (target != null) reversedIds.add(target);
     }
-    // Live receipts: PURCHASE movements a previous re-apply hasn't already compensated.
+    // Live receipts: positive PURCHASE movements a previous re-apply hasn't already compensated.
     const live = movements.filter(
-      (m) => m.type === MovementType.PURCHASE && !reversedIds.has(m.id),
+      (m) => m.type === MovementType.PURCHASE && poReversalOf(m) == null && !reversedIds.has(m.id),
     );
 
     const posted = new Map<string, Prisma.Decimal>();
@@ -1885,6 +1895,47 @@ export class InventoryService {
         );
       }
     }
+
+    // ── Date every row (refuses first: a 409 here writes nothing) ──
+    // SA-808 §3 / §5: the reversal is dated at the receipt's own instant so every period nets,
+    // UNLESS that instant is in a period filed for this product — then it books at the stamp
+    // `nextAt()` hands it (now) and the note names the filing. The re-post uses the SAME rule on
+    // the earliest reversed receipt's date, so reversal and re-post sit in one month.
+    const decideNow = new Date();
+    const whenOf = new Map<string, DocumentStockDate>();
+    const repostDates = new Map<string, DocumentStockDate>();
+    const earliestOriginal = new Map<string, Date>();
+    for (const m of live) {
+      const at = new Date(m.effectiveAt);
+      const prior = earliestOriginal.get(m.productId);
+      if (!prior || at < prior) earliestOriginal.set(m.productId, at);
+    }
+    // one filed-period read per (product, distinct date)
+    const decided = new Map<string, DocumentStockDate>();
+    const decide = async (productId: string, documentDate: Date) => {
+      const key = `${productId}|${documentDate.getTime()}`;
+      let got = decided.get(key);
+      if (!got) {
+        got = (
+          await documentStockDate(tx, {
+            tenantId: this.prisma.getTenantId(),
+            productIds: [productId],
+            documentDate,
+            now: decideNow,
+          })
+        ).get(productId) as DocumentStockDate;
+        decided.set(key, got);
+      }
+      return got;
+    };
+    for (const m of live) whenOf.set(m.id, await decide(m.productId, new Date(m.effectiveAt)));
+    for (const [productId, at] of earliestOriginal)
+      repostDates.set(productId, await decide(productId, at));
+    const earliestAt = new Map<string, Date>();
+    const noteEarliest = (productId: string, at: Date) => {
+      const prior = earliestAt.get(productId);
+      if (!prior || at < prior) earliestAt.set(productId, at);
+    };
 
     // ── Compensate, newest receipt first ──
     const byProduct = new Map<string, typeof live>();
@@ -1915,21 +1966,28 @@ export class InventoryService {
         stock = stock.sub(m.quantity);
         totalQty = totalQty.add(m.quantity);
         const at = nextAt();
+        const when = whenOf.get(m.id) as DocumentStockDate;
+        // Filed period ⇒ books now (this row's own stamp); else the receipt's own instant.
+        const effectiveAt = when.movedFromPeriod ? at : when.effectiveAt;
+        noteEarliest(productId, effectiveAt);
         await tx.stockMovement.create({
           data: {
             productId,
-            type: MovementType.ADJUSTMENT,
+            // SA-808 §5: a negative PURCHASE, not ADJUSTMENT — the tobacco filing sums signed
+            // PURCHASE rows, so an ADJUSTMENT left the original receipt AND its re-post counted.
+            type: MovementType.PURCHASE,
             quantity: new Prisma.Decimal(m.quantity).negated(),
             unitCost: m.unitCost,
             avgCostAfter: tracksAverage ? avg : (product.averageCost ?? null),
             stockAfter: stock,
             supplierId: m.supplierId,
             reference: po.poNumber,
-            notes: `${prefix}${m.id}`,
+            notes: poReversalNote(m.id, when.movedFromPeriod),
             performedById: userId,
-            // B562: one stamp for both columns — the replay orders by effectiveAt first.
+            // B562: createdAt is the strictly increasing stamp (replay tiebreak); effectiveAt is the
+            // accounting date above.
             createdAt: at,
-            effectiveAt: at,
+            effectiveAt,
           },
         });
       }
@@ -1956,7 +2014,7 @@ export class InventoryService {
       const seen = lotDates.get(l.productId);
       if (!seen || l.purchaseDate < seen) lotDates.set(l.productId, l.purchaseDate);
     }
-    return { lotDates };
+    return { lotDates, repostDates, earliestAt };
   }
 
   /**
@@ -1985,9 +2043,12 @@ export class InventoryService {
    *
    * Accepted by the plan (risks 1 and 5), stated here so nobody rediscovers them:
    *  - The reversal COMPENSATES rather than deletes: each live PURCHASE movement gets
-   *    a costed negative ADJUSTMENT (as a bill void does), so the ledger keeps the
-   *    audit trail and the original receipt stays in its own period; the re-post is
-   *    dated now, and the re-created lot keeps its original purchase date.
+   *    a costed negative PURCHASE (SA-808 §5; an ADJUSTMENT before it, still paired),
+   *    so the ledger keeps the audit trail and the tobacco filing nets. Reversal and
+   *    re-post both book at the receipt's own date — or now, with the filing named,
+   *    when that period is filed — and the re-created lot keeps its original purchase
+   *    date. Rows other than the edit's own that sort after a backdated write trigger
+   *    a replay of the product.
    *  - REFUSED (nothing written): a regulated product, a partly-consumed FIFO/LIFO
    *    lot (409 PO_LOT_PARTIALLY_CONSUMED — re-applying would invent the stock that
    *    was already sold, B583), or movements that don't add up to the lines.
@@ -2141,6 +2202,8 @@ export class InventoryService {
 
       // ── Reverse (re-apply only) ──
       let lotDates = new Map<string, Date>();
+      let repostDates = new Map<string, DocumentStockDate>();
+      let earliestAt = new Map<string, Date>();
       // Strictly increasing movement timestamps: compensation(s) first, then the re-post.
       const clockBase = Date.now();
       let tick = 0;
@@ -2150,7 +2213,12 @@ export class InventoryService {
           ...po.items.map((i) => i.productId),
           ...items.map((l) => l.productId),
         ]);
-        ({ lotDates } = await this.reversePoReceipts(tx, po, userId, nextAt));
+        ({ lotDates, repostDates, earliestAt } = await this.reversePoReceipts(
+          tx,
+          po,
+          userId,
+          nextAt,
+        ));
       }
       const tenantId = this.prisma.getTenantId();
 
@@ -2226,6 +2294,14 @@ export class InventoryService {
         for (const l of lineData) {
           if (l.qtyReceived.lte(0)) continue;
           const prod = await tx.product.findUnique({ where: { id: l.line.productId } });
+          // SA-808 §5: the re-post books in the month its reversal sits in (the receipt's own date;
+          // now when that period is filed). The stamp stays strictly after the reversal's.
+          const at = nextAt();
+          const repostDate = repostDates.get(l.line.productId);
+          const effectiveAt =
+            repostDate && !repostDate.movedFromPeriod ? repostDate.effectiveAt : at;
+          const prior = earliestAt.get(l.line.productId);
+          if (!prior || effectiveAt < prior) earliestAt.set(l.line.productId, effectiveAt);
           await this.postPoReceipt(
             tx,
             { poNumber: po.poNumber, supplierId },
@@ -2234,9 +2310,34 @@ export class InventoryService {
             l.qtyReceived,
             userId,
             lotDates.get(l.line.productId),
-            nextAt(),
+            at,
+            effectiveAt,
           );
           restockedProductIds.push(l.line.productId);
+        }
+
+        // Like a bill receive / revert: rows OTHER than this edit's own (they carry stamps from
+        // `clockBase` on) that sort after a backdated write can move the average they imply — replay
+        // the product (a dated COST_BASIS correction, SA-136 §4). A gap never aborts the edit.
+        for (const [productId, from] of earliestAt) {
+          const newer = await tx.stockMovement.count({
+            where: {
+              productId,
+              effectiveAt: { gt: from },
+              createdAt: { lt: new Date(clockBase) },
+            },
+          });
+          if (newer === 0) continue;
+          const replay = await this.recomputeProductInTx(tx, productId, {
+            throwOnGap: false,
+            trigger: `PO:${id}`,
+            performedById: userId,
+          });
+          if (replay?.gapDetected) {
+            this.logger.warn(
+              `PO ${po.poNumber}: product ${productId} not replayed after the edit — ledger drift ${replay.stockDrift}`,
+            );
+          }
         }
       }
 

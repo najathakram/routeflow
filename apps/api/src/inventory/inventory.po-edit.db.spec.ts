@@ -205,8 +205,10 @@ describeDb("PO edit + re-apply — real Postgres (LANE-U step 6)", () => {
       where: { tenantId: w.tenantId, reference: po.poNumber },
       orderBy: { createdAt: "asc" },
     });
-    const purchases = all.filter((m) => m.type === "PURCHASE");
-    const compensations = all.filter((m) => m.type === "ADJUSTMENT");
+    // SA-808 §5: the compensation is a NEGATIVE PURCHASE (the tobacco filing sums signed PURCHASE rows)
+    const purchases = all.filter((m) => m.type === "PURCHASE" && Number(m.quantity) > 0);
+    const compensations = all.filter((m) => m.type === "PURCHASE" && Number(m.quantity) < 0);
+    expect(all.filter((m) => m.type === "ADJUSTMENT")).toHaveLength(0);
     expect(purchases).toHaveLength(2); // the original 20@4 is KEPT, plus the re-post 20@6
     expect(compensations).toHaveLength(1);
     const original = purchases.find((m) => m.unitCost!.toString() === "4")!;
@@ -662,8 +664,10 @@ describeDb("PO edit + re-apply — real Postgres (LANE-U step 6)", () => {
     const all = await prisma.stockMovement.findMany({
       where: { tenantId: w.tenantId, reference: po.poNumber },
     });
-    expect(all.filter((m) => m.type === "PURCHASE")).toHaveLength(3); // 20@4, 20@6, 20@8
-    expect(all.filter((m) => m.type === "ADJUSTMENT")).toHaveLength(2); // reverses 20@4, reverses 20@6
+    expect(all.filter((m) => m.type === "PURCHASE" && Number(m.quantity) > 0)).toHaveLength(3); // 20@4, 20@6, 20@8
+    // reverses 20@4, reverses 20@6 — negative PURCHASE rows (SA-808 §5)
+    expect(all.filter((m) => m.type === "PURCHASE" && Number(m.quantity) < 0)).toHaveLength(2);
+    expect(all.filter((m) => m.type === "ADJUSTMENT")).toHaveLength(0);
     expect(all.reduce((sum, m) => sum + Number(m.quantity), 0)).toBe(20);
     expect(
       await prisma.stockLot.count({ where: { tenantId: w.tenantId, reference: po.poNumber } }),

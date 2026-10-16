@@ -555,9 +555,10 @@ describe("AnalyticsService — invoiced-sales readers", () => {
 
   describe("getCostHistory — B846 bill-revert pairs", () => {
     it("excludes the receipt a reversal has paired, and every non-positive PURCHASE, in SQL", async () => {
+      // the pairing read (inventory/bill-revert.ts) is the one keyed on a reversal-note prefix
       prisma.stockMovement.findMany.mockImplementation(async ({ where }: any) =>
-        where.notes
-          ? [{ notes: "BILL_REVERTED — reverses m2" }]
+        where.notes || where.OR?.some((c: any) => c.notes)
+          ? [{ type: "PURCHASE", quantity: D(-4), notes: "BILL_REVERTED — reverses m2" }]
           : [
               {
                 effectiveAt: new Date("2026-06-01"),
