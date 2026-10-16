@@ -171,11 +171,14 @@ const BLOCKS: Record<string, BlockPin> = {
   },
   "src/inventory/inventory.service.ts": {
     blocks: {
+      "assignToVariants:update+": 1,
       "createVariantRowInTx:create+": 1,
+      "postPoReceipt:update": 1,
       "recordPurchase:update": 1,
+      "reversePoReceipts:update": 1,
       "setCostBasisInTx:update": 1,
     },
-    why: "the stock split's new variant is built from bareVariantLabel; recordPurchase / setCostBasisInTx write a cost-update variable (averageCost / standardCost columns only)",
+    why: "the stock split's new variant is built from bareVariantLabel; recordPurchase / setCostBasisInTx write a cost-update variable (averageCost / standardCost columns only); assignToVariants, postPoReceipt and reversePoReceipts write stock / averageCost patches with a conditional spread (`...(updatesAverage ? { averageCost } : {})`, surfaced by the parenthesised-spread rule); none names a label",
   },
   "src/products/family-price.ts": {
     blocks: { "propagateFamilyPrice:updateMany": 2 },
@@ -193,6 +196,19 @@ const BLOCKS: Record<string, BlockPin> = {
   "src/inventory/testing/count-db-harness.ts": {
     blocks: { "afterAll:createMany": 1 },
     why: "test harness: seeds standalone 'Widget' products for the inventory count db specs",
+    standalone: true,
+  },
+  "src/import/variant-resolution.service.ts": {
+    blocks: { "completeSetup:update": 1 },
+    why: "completes an import-created product's price / unit / unitsPerBox / category with conditional spreads (`...(dto.x !== undefined && { x })`, surfaced by the parenthesised-spread rule); the dto has no name field and the row's label is never touched",
+  },
+  "src/vendor-bills/vendor-bills.service.ts": {
+    blocks: { "receive:update": 1, "revertToDraft:update": 1, "voidBill:update": 1 },
+    why: "bill receive / revert / void move currentStock and averageCost (`...(updatesAverage ? { averageCost } : {})`, surfaced by the parenthesised-spread rule); they write no name",
+  },
+  "prisma/seed.ts": {
+    blocks: { "main:upsert": 1 },
+    why: "the Prisma dev seed upserts its fixed standalone catalogue by id (create-only; update is {})",
     standalone: true,
   },
   "scripts/e2e-seed.js": {
@@ -243,8 +259,11 @@ function walkAll(dir: string, out: string[] = []): string[] {
 }
 
 describe("B1 variant-name write-block census (R1 per block, R2 raw SQL + name-only writers, src + scripts)", () => {
-  const scanned = ["src", "scripts"]
-    .flatMap((d) => walkAll(join(API, d)))
+  // src + scripts, plus the Prisma seed (it runs against real databases and upserts products)
+  const scanned = [
+    ...["src", "scripts"].flatMap((d) => walkAll(join(API, d))),
+    join(API, "prisma", "seed.ts"),
+  ]
     .map((f) => {
       const text = strip(readFileSync(f, "utf8"));
       return { rel: relative(API, f).split("\\").join("/"), text, blocks: nameWrites(text) };
@@ -317,6 +336,76 @@ describe("variant-name-census-scan: detection (fixtures)", () => {
     ]);
   });
 
+  it("M1: finds createManyAndReturn and updateManyAndReturn (Prisma 7)", () => {
+    const src = `
+  async a() {
+    await tx.product.createManyAndReturn({ data: [{ name: "A" }] });
+  }
+  async b() {
+    await tx.product.updateManyAndReturn({ where: {}, data: { name: "B" } });
+  }
+  async c() {
+    await tx.product.updateManyAndReturn({ where: {}, data: { isActive: false } });
+  }`;
+    expect(prisma(src)).toEqual(["a:createManyAndReturn:key", "b:updateManyAndReturn:key"]);
+    expect(WRITE_METHODS).toEqual(
+      expect.arrayContaining(["createManyAndReturn", "updateManyAndReturn"]),
+    );
+  });
+
+  it("M2: a call with NO data key (a built args object) is opaque, like a data variable", () => {
+    const src = `
+  async a(dto: D) {
+    await tx.product.update(buildVariantPatch(dto));
+  }
+  async b(args: A) {
+    await tx.product.create(args);
+  }
+  async c() {
+    await tx.product.updateMany(this.argsFor("x"));
+  }
+  async d() {
+    await tx.product.update({ where: { id }, select: { id: true } });
+  }`;
+    expect(prisma(src)).toEqual([
+      "a:update:opaque",
+      "b:create:opaque",
+      "c:updateMany:opaque",
+      "d:update:opaque",
+    ]);
+  });
+
+  it("M2: an upsert missing its create or its update literal is opaque", () => {
+    const src = `
+  async a() {
+    await tx.product.upsert({ where: { id }, update: { price: 1 } });
+  }
+  async b() {
+    await tx.product.upsert({ where: { id }, create: { price: 1 } });
+  }
+  async c() {
+    await tx.product.upsert(args);
+  }
+  async d() {
+    await tx.product.upsert({ where: { id }, create: { price: 1 }, update: { price: 2 } });
+  }`;
+    expect(prisma(src)).toEqual(["a:upsert:opaque", "b:upsert:opaque", "c:upsert:opaque"]);
+  });
+
+  it("M2: a spread of a parenthesised cast is a spread; a literal without one is not", () => {
+    const src = `
+  async a(dto: D) {
+    await tx.product.update({ where: { id }, data: { ...(dto as Prisma.ProductUpdateInput) } });
+  }
+  async b(dto: D) {
+    await tx.product.create({ data: { price: 1, ...(dto.extra ?? {}) } });
+  }
+  async c() {
+    await tx.product.create({ data: { price: 1 } });
+  }`;
+    expect(prisma(src)).toEqual(["a:update:spread", "b:create:spread"]);
+  });
+
   it("marks a block normalised only when the normaliser is called earlier in the SAME function", () => {
     const src = `
   async a(dto: D) {
@@ -358,5 +447,16 @@ describe("variant-name-census-scan: detection (fixtures)", () => {
       [],
     );
     expect(sql('// UPDATE "Product" SET name = 1\nconst x = 1;')).toEqual([]);
+    // a schema-qualified table is the same table
+    expect(
+      sql('await tx.$executeRaw`UPDATE public."Product" SET name = ${n} WHERE id = ${id}`;'),
+    ).toEqual(["UPDATE"]);
+    expect(
+      sql('await c.query(`UPDATE "public"."Product" AS p SET "variantName" = $1 WHERE id = $2`);'),
+    ).toEqual(["UPDATE"]);
+    expect(
+      sql('await c.query(`INSERT INTO public."Product" (id, name) VALUES ($1, $2)`);'),
+    ).toEqual(["INSERT"]);
+    expect(sql('await c.query(`UPDATE public."ProductPrice" SET name = $1`);')).toEqual([]);
   });
 });

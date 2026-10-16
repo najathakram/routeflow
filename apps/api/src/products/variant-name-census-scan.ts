@@ -1,4 +1,4 @@
-import { balancedGeneric, callBlocks } from "./tripwire-scan";
+import { balancedGeneric, callBlocks, WRITE_METHODS } from "./tripwire-scan";
 
 /**
  * B1 (SA R1 / R2): the block-level scanner behind `variant-name-writers-census.spec.ts`. Pure text functions; no fs.
@@ -28,7 +28,6 @@ export interface NameWriteBlock {
   data: string;
 }
 
-const WRITES = ["create", "update", "upsert", "createMany", "updateMany"];
 const KEY = /(?:^|[{,\s])(?:name|variantName|"name"|"variantName"|'name'|'variantName')\s*[:,}]/;
 const NOT_FN = new Set(["if", "for", "while", "switch", "catch", "return", "else", "await", "do"]);
 
@@ -61,23 +60,21 @@ function dataLiterals(block: string, method: string): string[] | null {
   const out: string[] = [];
   for (const key of keys) {
     const at = block.search(new RegExp(`\\b${key}\\s*:\\s*[\\[{]`));
-    if (at === -1) {
-      // `data: variable`, `data,` shorthand or `data: cond ? {..} : {..}`: opaque, it can carry a name
-      if (new RegExp(`(^|[\\s{,(])${key}\\b\\s*[:,}]`, "m").test(block)) return null;
-      continue;
-    }
+    // No literal for the key: `data: variable`, `data,` shorthand, `data: cond ? {..} : {..}`, or no such key at all
+    // (`update(buildPatch(dto))`, `create(args)`, an upsert missing its create / update): opaque, it can carry a name.
+    if (at === -1) return null;
     const open = block.slice(at).match(/[[{]/)![0];
     out.push(balancedGeneric(block, block.indexOf(open, at), open, open === "{" ? "}" : "]"));
   }
   return out;
 }
 
-// `...dto` / `...rest` carries keys the scan cannot see; `...(cond ? { k: v } : {})` is a literal built in place.
-const SPREAD = /\.\.\.\s*[A-Za-z_$]/;
+// `...dto`, `...rest` and `...(dto as Input)` carry keys the scan cannot see (a parenthesised spread is a spread too).
+const SPREAD = /\.\.\.\s*[(A-Za-z_$]/;
 
 export function prismaNameWrites(text: string): NameWriteBlock[] {
   const out: Array<NameWriteBlock & { at: number }> = [];
-  for (const method of WRITES) {
+  for (const method of WRITE_METHODS) {
     const needle = `.product.${method}(`;
     for (let from = text.indexOf(needle); from !== -1; from = text.indexOf(needle, from + 1)) {
       const block = callBlocks(text.slice(from), "product", [method])[0] ?? "";
@@ -107,7 +104,7 @@ export function prismaNameWrites(text: string): NameWriteBlock[] {
 
 export function rawSqlNameWrites(text: string): NameWriteBlock[] {
   const out: NameWriteBlock[] = [];
-  const upd = /\bUPDATE\s+"?Product"?\s+(?:AS\s+\w+\s+)?SET\b([^`;]*)/gi;
+  const upd = /\bUPDATE\s+(?:"?[A-Za-z_]\w*"?\.)?"?Product"?\s+(?:AS\s+\w+\s+)?SET\b([^`;]*)/gi;
   for (let m = upd.exec(text); m; m = upd.exec(text)) {
     // the SET list runs to WHERE / FROM / RETURNING; a quoted or bare name / variantName column on its left side
     const set = m[1].split(/\bWHERE\b|\bFROM\b|\bRETURNING\b/i)[0];
@@ -121,7 +118,7 @@ export function rawSqlNameWrites(text: string): NameWriteBlock[] {
       });
     }
   }
-  const ins = /\bINSERT\s+INTO\s+"?Product"?\s*\(([^)]*)\)/gi;
+  const ins = /\bINSERT\s+INTO\s+(?:"?[A-Za-z_]\w*"?\.)?"?Product"?\s*\(([^)]*)\)/gi;
   for (let m = ins.exec(text); m; m = ins.exec(text)) {
     if (/(?:^|[,\s])"?(?:name|variantName)"?\s*(?:,|$)/i.test(m[1])) {
       out.push({
