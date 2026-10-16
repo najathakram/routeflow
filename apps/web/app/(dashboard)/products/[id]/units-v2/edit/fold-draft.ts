@@ -4,6 +4,7 @@ import {
   priceGrid,
   type CellChange,
   type CellPatch,
+  type CustomerPricingWithId,
   type LadderView,
   type Pin,
   type PriceTier,
@@ -15,8 +16,17 @@ import type { CustomerPriceMove } from "@routeflow/types";
 
 export type DraftEntry =
   | { kind: "cell"; key: string; text: string }
-  /** A Change prices plan folded in; `key` ("plan:n") lets it be the open plan. */
-  | { kind: "plan"; key: string; plan: PricePlan }
+  /**
+   * A Change prices plan folded in; `key` ("plan:n") lets it be the open plan. `replan` works the same change out again
+   * for the customers as they are now (Change prices passes it): only the customer half of the plan is taken from it,
+   * the applied patches stay. Without it the plan, customer offer included, stays as it was made.
+   */
+  | {
+      kind: "plan";
+      key: string;
+      plan: PricePlan;
+      replan?: (customers: readonly CustomerPricingWithId[]) => PricePlan;
+    }
   /**
    * A TICKED offer, baked into the draft at tick time (`id` = "<plan key>#<offer index>"), so a later edit that
    * opens another plan keeps it. Tier offers carry patches, customer offers carry moves; untick removes the entry.
@@ -51,6 +61,25 @@ export interface FoldResult {
   /** Titles of the ticked offers baked into the draft, for the save bar. */
   bakedTitles: string[];
 }
+
+/** The applied plan with its customer half (the customer offer and the customer changes) from a fresh re-plan. */
+const withFreshCustomers = (applied: PricePlan, fresh: PricePlan): PricePlan => ({
+  ...applied,
+  offers: [
+    ...applied.offers.filter((o) => o.kind !== "customer"),
+    ...fresh.offers.filter((o) => o.kind === "customer"),
+  ],
+  customerChanges: fresh.customerChanges,
+});
+
+/** One customer move for comparing: the wire fields, plus the order unit when a move carries it. */
+const moveKey = (m: CustomerPriceMove & { orderUnit?: string | null }) =>
+  [m.customerId, m.ref, m.tier, m.from, m.to, m.orderUnit ?? ""].join("|");
+
+/** True when both lists hold exactly the same moves (customer, unit, tier, from, to), in any order. */
+export const sameMoves = (a: readonly CustomerPriceMove[], b: readonly CustomerPriceMove[]) =>
+  a.length === b.length &&
+  [...a].map(moveKey).sort().join(";") === [...b].map(moveKey).sort().join(";");
 
 export const CUSTOMER_MOVE_CONFLICT =
   "These customer prices are already changing in this draft. Save first.";
@@ -92,7 +121,7 @@ export function foldDraft(
   for (const e of entries) {
     if (e.kind === "plan") {
       fold(e.plan.patches);
-      plans.set(e.key, e.plan);
+      plans.set(e.key, e.replan ? withFreshCustomers(e.plan, e.replan(customers)) : e.plan);
       continue;
     }
     if (e.kind === "offer") {

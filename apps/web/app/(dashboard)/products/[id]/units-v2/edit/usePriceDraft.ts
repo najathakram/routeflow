@@ -18,7 +18,10 @@ import type {
   SavePricesResponse,
 } from "@routeflow/types";
 import { useTierLabels } from "@/lib/api/tier-labels";
-import { useProductCustomerPrices } from "@/lib/api/useProductCustomerPrices";
+import {
+  productCustomerPricesKey,
+  useProductCustomerPrices,
+} from "@/lib/api/useProductCustomerPrices";
 import { useQueryClient } from "@tanstack/react-query";
 import { fetchPriceGrid, priceGridKey, usePriceGrid } from "@/lib/api/usePriceGrid";
 import { formatMoney } from "@/lib/format";
@@ -37,6 +40,7 @@ import {
   foldDraft,
   offerId,
   parseKey,
+  sameMoves,
   type CellProblem,
   type DraftEntry,
 } from "./fold-draft";
@@ -59,6 +63,17 @@ const clearedNotice = (offers: readonly DraftEntry[], why = "you changed that pr
   `Your earlier choice to ${offers
     .flatMap((e) => (e.kind === "offer" ? [`"${e.title}"`] : []))
     .join(", ")} was cleared because ${why}.`;
+// A ticked customer offer or a customer Keep froze what the customers looked like; these say it was cleared because
+// they changed (never silently). The offer one says how to get the fresh offer back.
+const staleNotice = (offers: boolean, keeps: boolean) =>
+  [
+    offers &&
+      "Your earlier choice to update customer prices was cleared because those customers' prices changed. Tick it again to use the new prices.",
+    keeps &&
+      "Your earlier choice to keep a customer price was cleared because that customer's prices changed.",
+  ]
+    .filter(Boolean)
+    .join(" ");
 const asCellPatches = (ps: readonly { ref: string; tier: number; to: number | null }[]) =>
   ps.map((p): CellPatch => ({ ref: p.ref, tier: p.tier as PriceTier, to: p.to }));
 
@@ -87,8 +102,13 @@ export interface PriceDraft {
   /**
    * Change prices Apply folds its plan into the draft (and opens edit mode); Save is the only commit. The plan
    * becomes the open plan, so a customer offer left at index 0 can still be ticked with `setOfferTicked(0, true)`.
+   * `replan` works the same change out for the customers as they are now, so the customer offer keeps showing
+   * their current prices (K3b); without it the plan's customer offer stays as it was made.
    */
-  applyPlan: (plan: PricePlan) => void;
+  applyPlan: (
+    plan: PricePlan,
+    replan?: (customers: readonly CustomerPricingWithId[]) => PricePlan,
+  ) => void;
   resetAllToAuto: () => void;
   /** The save body, or null while the grid has not loaded or the draft has a conflict (Save is then unavailable). */
   toRequest: () => SavePricesRequest | null;
@@ -170,8 +190,8 @@ export function useCreatePriceDraft(productId: string, hooks: PriceDraftHooks = 
   // SA-799: a plain cell edit shows customer changes too. Same query (and cache entry) as Change prices' names; only
   // fetched while editing, so the product page costs nothing extra when nobody edits.
   // Also after a save: a strict undo names the customers whose prices changed since.
-  const customerRows = useProductCustomerPrices(productId, editing || lastSave != null).data
-    ?.customers;
+  const customersQuery = useProductCustomerPrices(productId, editing || lastSave != null);
+  const customerRows = customersQuery.data?.customers;
   const customers = React.useMemo(
     () => (customerRows ?? []) as CustomerPricingWithId[],
     [customerRows],
@@ -214,6 +234,34 @@ export function useCreatePriceDraft(productId: string, hooks: PriceDraftHooks = 
   const openRef = React.useRef<{ key: string; plan: PricePlan } | null>(null);
   openRef.current = fold?.open && openKey ? { key: openKey, plan: fold.open } : null;
 
+  // K3b: a ticked offer baked its customer moves, and a customer Keep its `from`; the customers can arrive different
+  // (another user, a Reload). Decided here, at render, from the entries, the fold's fresh plans and the customers:
+  // an effect keyed on `customerRows` would never fire for identical data (structural sharing keeps the reference).
+  // A stale choice is removed from the draft itself, so the data coming back never ticks it again.
+  const priceOf = (customerId: string, ref: string) =>
+    customerRows?.find((c) => c.customerId === customerId)?.set?.[ref] ?? null;
+  const staleOffers = React.useMemo(
+    () =>
+      !fold || !customerRows
+        ? []
+        : entries.filter((e) => {
+            if (e.kind !== "offer" || e.moves.length === 0) return false;
+            const plan = fold.plans.get(e.planKey);
+            if (!plan) return false;
+            const fresh = plan.offers.find((o) => o.kind === "customer");
+            return !sameMoves(e.moves, fresh?.kind === "customer" ? fresh.moves : []);
+          }),
+    [entries, fold, customerRows],
+  );
+  const staleKeeps = customerRows
+    ? moves.filter((m) => priceOf(m.customerId, m.ref) !== m.from)
+    : [];
+  if (staleOffers.length > 0 || staleKeeps.length > 0) {
+    setEntries((es) => es.filter((e) => !staleOffers.includes(e)));
+    setMoves((ms) => ms.filter((m) => !staleKeeps.includes(m)));
+    setNotice(staleNotice(staleOffers.length > 0, staleKeeps.length > 0));
+  }
+
   const editCell = (ref: string, tier: PriceTier, typed: string): PricePlan => {
     const key = cellKey(ref, tier);
     // Re-typing THIS cell recomputes its offers, so choices ticked on the old ones are cleared, never silently.
@@ -248,6 +296,7 @@ export function useCreatePriceDraft(productId: string, hooks: PriceDraftHooks = 
     editing &&
     !save.isPending &&
     !gridQuery.isFetching &&
+    !customersQuery.isFetching &&
     count > 0 &&
     problems.length === 0 &&
     conflicts.length === 0 &&
@@ -266,6 +315,12 @@ export function useCreatePriceDraft(productId: string, hooks: PriceDraftHooks = 
   if (save.error !== errSeen.current.error)
     errSeen.current = { error: save.error, texts: { ...texts } };
   const saveError = priceWriteError(save.error);
+
+  // Everything a stale answer can rest on: the grid revision AND the customers' prices a ticked offer froze as `from`.
+  const refetchPrices = () => {
+    void qc.invalidateQueries({ queryKey: priceGridKey(productId) });
+    void qc.invalidateQueries({ queryKey: productCustomerPricesKey(productId) });
+  };
 
   const doSave = () => {
     const req = toRequest();
@@ -403,8 +458,7 @@ export function useCreatePriceDraft(productId: string, hooks: PriceDraftHooks = 
     discard: () => {
       // A refused save must not outlive the draft it refused: the next Edit starts clean on fresh prices.
       if (save.error != null) save.reset();
-      if (saveError?.code === "stale")
-        void qc.invalidateQueries({ queryKey: priceGridKey(productId) });
+      if (saveError?.code === "stale") refetchPrices();
       reset();
     },
     dirty,
@@ -426,6 +480,13 @@ export function useCreatePriceDraft(productId: string, hooks: PriceDraftHooks = 
       const offer = o?.plan.offers[i];
       if (!o || !offer) return;
       const id = offerId(o.key, offer);
+      // The moves froze `from` when the plan was made; refuse a tick that no longer matches the customers' prices.
+      if (on && customerRows && offer.kind === "customer") {
+        if (offer.moves.some((m) => priceOf(m.customerId, m.ref) !== m.from)) {
+          setNotice(staleNotice(true, false));
+          return;
+        }
+      }
       setEntries((es) => {
         const rest = es.filter((e) => !(e.kind === "offer" && e.id === id));
         if (!on) return rest;
@@ -463,10 +524,10 @@ export function useCreatePriceDraft(productId: string, hooks: PriceDraftHooks = 
         );
         return on ? [...rest, move] : rest;
       }),
-    applyPlan: (plan) => {
+    applyPlan: (plan, replan) => {
       beginEditing();
       const key = `plan:${planSeq.current++}`;
-      setEntries([...entries, { kind: "plan", key, plan }]);
+      setEntries([...entries, { kind: "plan", key, plan, replan }]);
       setOpenKey(key);
       openRef.current = { key, plan };
     },
@@ -498,7 +559,7 @@ export function useCreatePriceDraft(productId: string, hooks: PriceDraftHooks = 
     }),
     reload: () => {
       save.reset();
-      void qc.invalidateQueries({ queryKey: priceGridKey(productId) });
+      refetchPrices();
     },
     markUndone: () => {
       setLastSave(null);

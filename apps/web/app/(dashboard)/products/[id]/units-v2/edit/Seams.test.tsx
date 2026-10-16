@@ -3,18 +3,21 @@ import { render as rtlRender, screen, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { priceGridKey } from "@/lib/api/usePriceGrid";
+import { productCustomerPricesKey } from "@/lib/api/useProductCustomerPrices";
 import { act } from "react";
-import type { CustomerMoveOffer } from "@routeflow/pricing";
+import { planPriceChange, type CustomerMoveOffer, type PriceChange } from "@routeflow/pricing";
 import type { ProductPriceGridDto } from "@routeflow/types";
 import { ProductPricingV2 } from "../../ProductPricingV2";
 import { UNITS_V2_TESTIDS as T } from "../../units-v2-testids";
 import { UNITS_V2_CONFIRM_TESTIDS as C } from "../confirm/confirm-testids";
 import { emptyPlan } from "../change-prices/plan.test-utils";
+import { EMPTY_SELECTION, foldPlan } from "../change-prices/selection";
 import { EditablePricesGrid } from "./EditablePricesGrid";
 import { PriceEditBar } from "./PriceEditBar";
 import { PLAN_TESTIDS } from "../change-prices/plan-testids";
 import { PriceDraftProvider } from "./PriceDraftProvider";
 import { usePriceDraft, type PriceDraft } from "./usePriceDraft";
+import { rulesFromGrid, viewFromGrid } from "./view-from-grid";
 
 // K8 integration seams: K3's draft + K4's Change prices + K5's status line, mounted the way the page mounts them.
 
@@ -72,11 +75,13 @@ jest.mock("@/lib/api/tier-labels", () => ({
 jest.mock("@/lib/api/tobacco", () => ({ useHasAddon: () => false }));
 jest.mock("@/lib/api/units-v2", () => ({ usePricesV2Enabled: () => true }));
 let mockCustomers: unknown[] = [];
+let mockCustomersFetching = false;
 const mockCustomerFetch = jest.fn();
 jest.mock("@/lib/api/useProductCustomerPrices", () => ({
+  ...jest.requireActual("@/lib/api/useProductCustomerPrices"),
   useProductCustomerPrices: (_id: string, enabled: boolean) => {
     mockCustomerFetch(enabled);
-    return { data: { customers: mockCustomers } };
+    return { data: { customers: mockCustomers }, isFetching: mockCustomersFetching };
   },
 }));
 
@@ -117,9 +122,21 @@ const grid: ProductPriceGridDto = {
 const saved: ProductPriceGridDto = { ...grid, revision: 8, priceState: "ps-2" };
 const product = { id: "p1", unit: "Piece", unitsPerBox: 24, pricePerUnit: "0.92" };
 
+/** The customers the hand-built offers below move: each holds the case price 13.5 the moves start from. */
+const holders = (...ids: string[]) =>
+  ids.map((customerId) => ({
+    customerId,
+    name: `Customer ${customerId}`,
+    tier: 2,
+    orderUnit: null,
+    set: { case: 13.5 },
+  }));
+
 let draft!: PriceDraft;
+let probeRenders = 0;
 const Probe = () => {
   draft = usePriceDraft();
+  probeRenders++;
   return null;
 };
 const render = () =>
@@ -138,6 +155,7 @@ const edit = async (user: ReturnType<typeof userEvent.setup>, text = "14.5") => 
 beforeEach(() => {
   mockError = null;
   mockCustomers = [];
+  mockCustomersFetching = false;
   mockCustomerFetch.mockReset();
   mockSave.mockReset();
   mockSaveReset.mockReset();
@@ -186,6 +204,7 @@ describe("K8 seams", () => {
   });
 
   it("K4 seam: Apply opens edit mode, leaves the customer offer at index 0, Keeps toggle on and off", async () => {
+    mockCustomers = holders("c1");
     const customerMoves = [{ customerId: "c1", ref: "case", tier: 2 as const, from: 13.5, to: 14 }];
     const plan = emptyPlan({
       patches: [{ ref: "case", tier: 2, to: 14 }],
@@ -264,6 +283,9 @@ describe("K8 seams", () => {
         moves,
       }) as const;
     const move = { customerId: "c1", ref: "case", tier: 2 as const, from: 13.5, to: 14 };
+    beforeEach(() => {
+      mockCustomers = holders("c1");
+    });
 
     it("a ticked Change prices customer offer survives editing another cell; untick removes it", () => {
       mount();
@@ -328,6 +350,9 @@ describe("K8 seams", () => {
   });
 
   describe("MUST-2 and review nits", () => {
+    beforeEach(() => {
+      mockCustomers = holders("c1", "c2");
+    });
     const mount = () =>
       rtlRender(
         <QueryClientProvider client={new QueryClient()}>
@@ -780,5 +805,309 @@ describe("K8 seams", () => {
     await user.keyboard("{Escape}");
     expect(screen.queryByTestId(PLAN_TESTIDS.changePanel)).toBeNull();
     expect(document.activeElement).toBe(opener);
+  });
+});
+
+// K3b: a ticked customer offer froze its moves when it was ticked. Another user can move a customer's price, add a
+// customer or change an order unit; the offer on screen must then be the fresh one, unticked, with a notice.
+describe("K3b: customer offers go stale", () => {
+  const NOTICE =
+    "Your earlier choice to update customer prices was cleared because those customers' prices changed. Tick it again to use the new prices.";
+  const KEEP_NOTICE =
+    "Your earlier choice to keep a customer price was cleared because that customer's prices changed.";
+  const c1 = {
+    customerId: "c1",
+    name: "Northside",
+    tier: 2,
+    orderUnit: "case",
+    set: { piece: 0.5 },
+  };
+  const c2 = {
+    customerId: "c2",
+    name: "Southside",
+    tier: 2,
+    orderUnit: "case",
+    set: { piece: 0.8 },
+  };
+  // Two typed prices: the order unit decides which of them follow a Case edit.
+  const twoPrices = { ...c1, set: { piece: 0.5, case: 13 } };
+  const copy = (cs: unknown[]) => cs.map((c) => ({ ...(c as object), set: { ...(c as any).set } }));
+  const STALE = { response: { status: 409, data: { code: "LADDER_REVISION_STALE" } } };
+
+  const tree = () => (
+    <QueryClientProvider client={mockQc}>
+      <PriceDraftProvider productId="p1">
+        <Probe />
+        <EditablePricesGrid product={product} />
+        <PriceEditBar />
+      </PriceDraftProvider>
+    </QueryClientProvider>
+  );
+  // `again` re-renders with a fresh element, so the provider runs again on whatever `mockCustomers` now is.
+  const mount = () => {
+    const r = rtlRender(tree());
+    return { ...r, again: () => r.rerender(tree()) };
+  };
+  const customerIdx = () => draft.plan!.plan.offers.findIndex((o) => o.kind === "customer");
+  const customerTicked = () => draft.plan!.ticked[customerIdx()];
+  const customerMoves = () => draft.toRequest()?.customerMoves;
+  const editAndTick = () => {
+    act(() => draft.startEditing());
+    act(() => void draft.editCell("case", 2, "14.5"));
+    act(() => draft.setOfferTicked(customerIdx(), true));
+  };
+
+  it.each([
+    ["a customer is added", [c1], [c1, c2]],
+    ["a customer's price (the move's from) changes", [c1], [{ ...c1, set: { piece: 0.6 } }]],
+    ["a customer's tier moves", [c1], [{ ...c1, tier: 3 }]],
+    ["a customer's order unit moves", [twoPrices], [{ ...twoPrices, orderUnit: "piece" }]],
+  ])(
+    "M1: %s, so the ticked offer is unticked with a notice, never re-ticked",
+    (_n, before, after) => {
+      mockCustomers = before;
+      const { again } = mount();
+      editAndTick();
+      expect(customerTicked()).toBe(true);
+      expect(customerMoves()!.length).toBeGreaterThan(0);
+
+      mockCustomers = after;
+      again();
+      expect(customerMoves()).toEqual([]);
+      expect(draft.notice).toBe(NOTICE);
+      expect(screen.getByTestId(T.ebNotice).textContent).toBe(NOTICE);
+      // the open plan is the fresh one, unticked (a tier move or order-unit move may leave nothing to offer)
+      if (customerIdx() >= 0) expect(customerTicked()).toBe(false);
+
+      // the customers coming back to what was ticked does not tick it again
+      mockCustomers = before;
+      again();
+      expect(customerMoves()).toEqual([]);
+      if (customerIdx() >= 0) expect(customerTicked()).toBe(false);
+    },
+  );
+
+  it("M1: the open plan shows the new from and to once the price moved", () => {
+    mockCustomers = [c1];
+    const { again } = mount();
+    editAndTick();
+    mockCustomers = [{ ...c1, set: { piece: 0.6 } }];
+    again();
+    const offer = draft.plan!.plan.offers[customerIdx()];
+    expect(offer.kind === "customer" && offer.moves).toEqual([
+      expect.objectContaining({ customerId: "c1", ref: "piece", tier: 2, from: 0.6, to: 0.63 }),
+    ]);
+    act(() => draft.setOfferTicked(customerIdx(), true));
+    expect(customerMoves()).toEqual([
+      { customerId: "c1", ref: "piece", tier: 2, from: 0.6, to: 0.63 },
+    ]);
+  });
+
+  it("M1: customers that arrive unchanged (same reference, or equal copies) leave the offer ticked, no notice", () => {
+    mockCustomers = [c1];
+    const { again } = mount();
+    editAndTick();
+    again();
+    expect(customerTicked()).toBe(true);
+    mockCustomers = copy(mockCustomers);
+    again();
+    expect(customerTicked()).toBe(true);
+    expect(customerMoves()).toHaveLength(1);
+    expect(draft.notice).toBeNull();
+  });
+
+  describe("an applied Change prices plan", () => {
+    const change: PriceChange = {
+      unit: "case",
+      direction: "raise",
+      mode: "percent",
+      value: 10,
+      also: true,
+    };
+    const holder = { id: "c1", name: "Northside", tier: 2, orderUnit: null };
+    const cust = (price: number) => ({ customerId: holder.id, ...holder, set: { case: price } });
+    const plan = (cs: readonly any[]) =>
+      planPriceChange(viewFromGrid(grid), change, rulesFromGrid(grid), undefined, {
+        customers: cs,
+      });
+    // What ChangePricesPanel.apply does: fold the (unticked) tier offers, hand over the re-planner.
+    const apply = (cs: any[], withReplan = true) => {
+      act(() =>
+        draft.applyPlan(foldPlan(plan(cs), EMPTY_SELECTION).plan, withReplan ? plan : undefined),
+      );
+    };
+    const move = (from: number, to: number) => ({
+      customerId: "c1",
+      ref: "case",
+      tier: 2,
+      from,
+      to,
+    });
+
+    it("M2: after another user moves the price, Save 409 and Reload, the offer is fresh and unticked; ticking it saves the fresh from", async () => {
+      mockCustomers = [cust(13.5)];
+      const spy = jest.spyOn(mockQc, "invalidateQueries");
+      const user = userEvent.setup();
+      const { again } = mount();
+      const offered = plan([cust(13.5)]).offers[0];
+      expect(offered.kind === "customer" && offered.moves[0]).toMatchObject({ from: 13.5 });
+      apply([cust(13.5)]);
+      act(() => draft.setOfferTicked(0, true));
+      const first = customerMoves()!;
+      expect(first).toEqual([expect.objectContaining({ customerId: "c1", from: 13.5 })]);
+
+      mockSaveOutcome = STALE;
+      await user.click(screen.getByTestId(T.ebSave));
+      expect(mockSave.mock.calls[0][0].customerMoves).toEqual(first);
+      expect(screen.getByRole("button", { name: "Reload prices" })).toBeTruthy();
+
+      // another user changed the customer's price to 14; Reload refetches both queries
+      mockCustomers = [cust(14)];
+      mockSaveOutcome = null;
+      await user.click(screen.getByRole("button", { name: "Reload prices" }));
+      expect(spy).toHaveBeenCalledWith({ queryKey: productCustomerPricesKey("p1") });
+      again();
+      expect(draft.plan!.ticked).toEqual([false]);
+      expect(customerMoves()).toEqual([]);
+      expect(draft.notice).toBe(NOTICE);
+      const fresh = plan([cust(14)]).offers[0];
+      expect(draft.plan!.plan.offers[0]).toMatchObject({
+        kind: "customer",
+        moves: [
+          expect.objectContaining({
+            from: 14,
+            to: fresh.kind === "customer" ? fresh.moves[0].to : 0,
+          }),
+        ],
+      });
+
+      // tick it: Save carries the fresh from and goes through
+      act(() => draft.setOfferTicked(0, true));
+      const to = fresh.kind === "customer" ? fresh.moves[0].to : 0;
+      expect(customerMoves()).toEqual([move(14, to)]);
+      await user.click(screen.getByTestId(T.ebSave));
+      expect(mockSave.mock.calls[1][0].customerMoves).toEqual([move(14, to)]);
+      expect(screen.queryByRole("button", { name: "Reload prices" })).toBeNull();
+    });
+
+    it("M2: a second Reload that returns identical data changes nothing and does not loop", async () => {
+      mockCustomers = [cust(14)];
+      const user = userEvent.setup();
+      const { again } = mount();
+      apply([cust(14)]);
+      act(() => draft.setOfferTicked(0, true));
+      const moves = customerMoves();
+      mockSaveOutcome = STALE;
+      await user.click(screen.getByTestId(T.ebSave));
+      mockSaveOutcome = null;
+      for (const same of [mockCustomers, copy(mockCustomers)]) {
+        mockCustomers = same;
+        await user.click(screen.getByRole("button", { name: "Reload prices" }));
+        const before = probeRenders;
+        again();
+        expect(draft.plan!.ticked).toEqual([true]);
+        expect(customerMoves()).toEqual(moves);
+        expect(draft.notice).toBeNull();
+        expect(probeRenders - before).toBeLessThan(3);
+        mockSaveOutcome = STALE;
+        await user.click(screen.getByTestId(T.ebSave));
+        mockSaveOutcome = null;
+      }
+    });
+
+    it("M2: a tick whose from no longer matches the fresh customer price stays off, with a notice", () => {
+      // a plan applied without a re-planner keeps the offer it was made with (13.5); the customer is at 14 now
+      mockCustomers = [cust(14)];
+      mount();
+      apply([cust(13.5)], false);
+      act(() => draft.setOfferTicked(0, true));
+      expect(draft.plan!.ticked).toEqual([false]);
+      expect(customerMoves()).toEqual([]);
+      expect(draft.notice).toBe(NOTICE);
+    });
+
+    it("M2: the same tick on a customer price that did not move is kept", () => {
+      mockCustomers = [cust(13.5)];
+      mount();
+      apply([cust(13.5)], false);
+      act(() => draft.setOfferTicked(0, true));
+      expect(draft.plan!.ticked).toEqual([true]);
+      expect(draft.notice).toBeNull();
+    });
+  });
+
+  describe("M3: customer Keeps are re-checked", () => {
+    const keep = { customerId: "c2", ref: "case", tier: 1, from: null, to: 9 };
+
+    it("a Keep stays while that customer still has no price on the unit", () => {
+      mockCustomers = [{ ...c2, set: {} }];
+      const { again } = mount();
+      act(() => draft.startEditing());
+      act(() => draft.keepCustomer(keep));
+      again();
+      expect(customerMoves()).toEqual([keep]);
+      expect(draft.plan?.customerKeeps ?? [keep]).toEqual([keep]);
+      expect(draft.notice).toBeNull();
+    });
+
+    it("a Keep is dropped, with a notice, once that customer has a price on the unit; it never stays in the request", () => {
+      mockCustomers = [{ ...c2, set: {} }];
+      const { again } = mount();
+      act(() => draft.startEditing());
+      act(() => draft.keepCustomer(keep));
+      expect(customerMoves()).toEqual([keep]);
+      mockCustomers = [{ ...c2, set: { case: 9.5 } }];
+      again();
+      expect(customerMoves()).toEqual([]);
+      expect(draft.notice).toBe(KEEP_NOTICE);
+      expect(screen.getByTestId(T.ebNotice).textContent).toBe(KEEP_NOTICE);
+      // the customer going back to no price does not bring the Keep back
+      mockCustomers = [{ ...c2, set: {} }];
+      again();
+      expect(customerMoves()).toEqual([]);
+    });
+  });
+
+  it("canSave also waits for the customers query: off while it fetches, on again after", () => {
+    mockCustomers = [];
+    const { again } = mount();
+    act(() => draft.startEditing());
+    act(() => void draft.editCell("case", 2, "14.5"));
+    expect(draft.canSave).toBe(true);
+    mockCustomersFetching = true;
+    again();
+    expect(draft.canSave).toBe(false);
+    expect(screen.getByTestId(T.ebSave).getAttribute("aria-disabled")).toBe("true");
+    mockCustomersFetching = false;
+    again();
+    expect(draft.canSave).toBe(true);
+    expect(screen.getByTestId(T.ebSave).getAttribute("aria-disabled")).not.toBe("true");
+  });
+
+  describe("Reload and Discard refetch the customers too", () => {
+    it("Reload prices invalidates the customer prices key, the one Change prices and cell edits read", async () => {
+      mockError = STALE;
+      const spy = jest.spyOn(mockQc, "invalidateQueries");
+      const user = userEvent.setup();
+      mount();
+      act(() => draft.startEditing());
+      act(() => void draft.editCell("case", 2, "14.5"));
+      await user.click(screen.getByRole("button", { name: "Reload prices" }));
+      expect(spy).toHaveBeenCalledWith({ queryKey: priceGridKey("p1") });
+      expect(spy).toHaveBeenCalledWith({ queryKey: productCustomerPricesKey("p1") });
+    });
+
+    it("Discard after a stale save invalidates it as well; a plain Discard touches neither", async () => {
+      mockError = STALE;
+      const spy = jest.spyOn(mockQc, "invalidateQueries");
+      const user = userEvent.setup();
+      mount();
+      act(() => draft.startEditing());
+      act(() => void draft.editCell("case", 2, "14.5"));
+      await user.click(screen.getByTestId(T.ebCancel));
+      await user.click(screen.getByTestId(T.ebDiscard));
+      expect(spy).toHaveBeenCalledWith({ queryKey: priceGridKey("p1") });
+      expect(spy).toHaveBeenCalledWith({ queryKey: productCustomerPricesKey("p1") });
+    });
   });
 });
