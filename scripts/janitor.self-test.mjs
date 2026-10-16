@@ -1788,6 +1788,37 @@ const DIR_LINK_TYPE = process.platform === "win32" ? "junction" : "dir";
       assert.ok(forDir, `expected an action for the orphan dir: ${JSON.stringify(actions)}`);
       assert.equal(forDir.kind, "orphan-dir");
     });
+
+    t("buildPlan: a RECENT stray file is skipped, not planned for deletion", () => {
+      const recent = join(worktreesRoot, "fresh.log");
+      writeFileSync(recent, "being written");
+      const { actions, skipped } = buildPlan(main, main, worktreesRoot);
+      assert.ok(
+        !actions.some((x) => x.target === recent),
+        "recent stray file must not be an action",
+      );
+      assert.ok(
+        skipped.some((x) => x.worktree === "fresh.log"),
+        "recent stray file is reported",
+      );
+    });
+
+    t("execute: a failing unlink of a stray file is a reported skip, not a throw", () => {
+      const logs = [];
+      const res = execute(
+        { kind: "stray-file", target: strayFile },
+        {
+          refuseDelete: () => null,
+          isDirty: () => false,
+          removeFile: () => {
+            throw new Error("EBUSY");
+          },
+          log: (m) => logs.push(m),
+        },
+      );
+      assert.equal(res, "skipped");
+      assert.ok(logs.some((m) => m.includes("SKIPPED") && m.includes("EBUSY")));
+    });
   } finally {
     rmSync(root, { recursive: true, force: true });
   }

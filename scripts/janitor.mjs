@@ -1039,7 +1039,16 @@ export function buildPlan(repoRoot, mainCheckoutPath, worktreesRoot) {
         continue;
       }
       if (!st.isDirectory()) {
-        actions.push({ step: 3, kind: "stray-file", target });
+        // Same recent-activity guard as an orphan dir: a log/patch someone is still writing stays.
+        if (orphanEligible({ ...orphanFacts(target), nowMs })) {
+          actions.push({ step: 3, kind: "stray-file", target });
+        } else {
+          skipped.push({
+            worktree: orphan,
+            branch: null,
+            reason: `stray file touched in the last ${RECENT_ACTIVITY_HOURS}h (or unreadable) — never touched`,
+          });
+        }
         continue;
       }
       const facts = orphanFacts(target);
@@ -1249,7 +1258,13 @@ export function execute(a, deps = EXECUTE_DEPS) {
       deps.removeTree(a.target);
       return "done";
     case "stray-file":
-      deps.removeFile(a.target);
+      try {
+        deps.removeFile(a.target);
+      } catch (err) {
+        // A locked/in-use stray file is a reported skip, never a failed run (exit 1).
+        deps.log(`   SKIPPED stray file ${a.target}: ${err.message}`);
+        return "skipped";
+      }
       return "done";
     case "worktree":
       deps.removeWorktree(a.target);
