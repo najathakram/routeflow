@@ -72,6 +72,7 @@ import { VariantSplitModal } from "@/components/VariantSplitModal";
 import { PackSizePrompt } from "@/components/PackSizePrompt";
 import { useAuth } from "@/lib/auth-context";
 import { useHasAddon, TOBACCO_ADDON } from "@/lib/api/tobacco";
+import { usePricesV2Enabled } from "@/lib/api/units-v2";
 import { MSRP_ADDON } from "@/lib/api/addons";
 import { CropModal } from "./CropModal";
 import { ProductStockCostCard } from "./ProductStockCostCard";
@@ -95,6 +96,7 @@ import { ProductInsightsExport } from "./ProductInsightsExport";
 import { ProductLabelsCard } from "./ProductLabelsCard";
 import { ProductPortalVisibilityCard } from "./ProductPortalVisibilityCard";
 import { ProductUnitsCard } from "./ProductUnitsCard";
+import { ProductPricingV2 } from "./ProductPricingV2";
 import { ImageLightbox } from "./ImageLightbox";
 import { objectPositionForUrl, type FocalPoint } from "@/lib/image-focal";
 import { COMMON_UNITS } from "@/lib/common-units";
@@ -426,6 +428,7 @@ export default function ProductDetailPage() {
   const isStaff = isStaffRole(user?.role);
   const hasTobaccoAddon = useHasAddon(TOBACCO_ADDON);
   const hasMsrpAddon = useHasAddon(MSRP_ADDON);
+  const v2 = usePricesV2Enabled({ enabled: isStaff }) && isStaff;
 
   // ── Lightbox state ────────────────────────────────────────────────────────
   const [lightboxOpen, setLightboxOpen] = React.useState(false);
@@ -486,6 +489,7 @@ export default function ProductDetailPage() {
   const priceNumber = parseFloat(String(product.pricePerUnit));
   const currentStock = Number(product.currentStock ?? 0);
   const stockStatus = getStockStatus(currentStock, product.isActive, product.kind);
+  const v2Family = v2 && product.kind === "FAMILY";
 
   // MSRP — display-only, never money math. Warn (non-blocking) when it undercuts
   // the wholesale price expressed per PIECE (pricePerUnit / unitsPerBox), which is
@@ -1174,7 +1178,7 @@ export default function ProductDetailPage() {
                 variant={product.isActive ? "success" : "neutral"}
                 label={product.isActive ? "Active" : "Inactive"}
               />
-              {stockStatus === "OUT_OF_STOCK" ? (
+              {v2 ? null : stockStatus === "OUT_OF_STOCK" ? (
                 <Badge variant="warning" label={stockCountLabel(currentStock)} />
               ) : stockStatus === "LOW" ? (
                 <Badge variant="warning" label="Low Stock" />
@@ -1184,7 +1188,7 @@ export default function ProductDetailPage() {
               {(product as any).isNew && <Badge variant="info" label="New" />}
               {(product as any).isDeal && <Badge variant="success" label="Deal" />}
             </div>
-            <ProductHeaderLine product={product} currentStock={currentStock} />
+            <ProductHeaderLine product={product} currentStock={currentStock} pricesV2={v2} />
           </div>
         </div>
 
@@ -1499,6 +1503,7 @@ export default function ProductDetailPage() {
                 stockStatus={stockStatus}
                 currentStock={currentStock}
                 onSetCost={() => setShowCostModal(true)}
+                pricesV2={v2}
               />
             )}
           </div>
@@ -2395,7 +2400,8 @@ export default function ProductDetailPage() {
 
             <ProductLabelsCard productId={product.id} />
             <ProductPortalVisibilityCard product={product} />
-            <ProductUnitsCard product={product} />
+            {v2 && product.kind !== "FAMILY" ? <ProductPricingV2 product={product} /> : null}
+            {!v2Family && <ProductUnitsCard product={product} />}
 
             {/* Sales demand — real data from invoiced sales. In its own file (unlike
                 CostHistoryCard below) because it owns range/metric state and five
@@ -2404,7 +2410,7 @@ export default function ProductDetailPage() {
 
             {/* Sales — per-buyer invoiced-sale history (PR-B): who bought this,
                 when, and at what price, with min/avg/max price summary chips. */}
-            <SalesHistoryCard productId={product.id} />
+            <SalesHistoryCard productId={product.id} hideCreateOrder={v2Family} />
             <ProductInsightsExport productId={product.id} sku={product.sku ?? product.id} />
 
             {/* Purchase cost history — real data from PURCHASE / COST_BASIS movements */}

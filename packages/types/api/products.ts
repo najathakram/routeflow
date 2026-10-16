@@ -394,3 +394,22 @@ export interface UpdateFamilyVariantsRequest {
 export function deleteProductConfirmText(name: string): string {
   return `${name} will be deactivated and hidden from the catalog. Its SKU and barcode are freed, so another product can use them. Order and invoice history is kept. A product on an undelivered order can't be deleted.`;
 }
+
+export interface ProductPriceGridCellDto {
+  tier: 1 | 2 | 3 | 4 | 5;
+  source: "set" | "auto";
+  value: number;
+}
+export interface ProductPriceGridRowDto {
+  ref: string;
+  label: string;
+  factor: number;
+  kind: "pack" | "base" | "unit";
+  code: string | null;
+  cells: ProductPriceGridCellDto[];
+}
+export interface ProductPriceGridDto {
+  productId: string;
+  anchor: string;
+  rows: ProductPriceGridRowDto[];
+}

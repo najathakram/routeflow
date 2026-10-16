@@ -13,6 +13,7 @@ export function ProductHeaderLine({
     kind?: string | null;
   };
   currentStock: number;
+  pricesV2?: boolean;
 }) {
   const origin = product.parent ? `Variant of ${product.parent.name}` : product.category;
   const parts: React.ReactNode[] = [];

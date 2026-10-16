@@ -34,7 +34,7 @@ function SummaryChip({ label, value, hint }: { label: string; value: string; hin
   );
 }
 
-export function SalesHistoryCard({ productId }: { productId: string }) {
+export function SalesHistoryCard({ productId }: { productId: string; hideCreateOrder?: boolean }) {
   const { data, isLoading, isError, refetch } = useProductSales(productId);
   const lines = data?.lines ?? [];
 
