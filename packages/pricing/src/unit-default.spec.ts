@@ -21,16 +21,16 @@ const scopeNames = ["customer", "tier", "product", "business"] as const;
 describe("T21: precedence is customer > tier > product > business, and the anchor comes back with the order unit", () => {
   // 16 combinations of which scopes hold a value. Each scope's value is a different unit.
   const value: Record<(typeof scopeNames)[number], string> = {
-    customer: "u-piece",
+    customer: "base",
     tier: "u-case",
     product: "pack",
     business: "smallest",
   };
   const unitOf: Record<(typeof scopeNames)[number], string> = {
-    customer: "u-piece",
+    customer: "base",
     tier: "u-case",
     product: "pack",
-    business: "u-piece",
+    business: "base",
   };
   for (let mask = 0; mask < 16; mask++) {
     const present = scopeNames.filter((_, i) => (mask >> i) & 1);
@@ -65,7 +65,7 @@ describe("T22: a unit ref that is gone is skipped, the next scope wins", () => {
   });
 
   it("words: pack, smallest, a unit by id or by name (any case)", () => {
-    expect(resolveUnitDefault(view, { product: "smallest" }).orderUnit).toBe("u-piece");
+    expect(resolveUnitDefault(view, { product: "smallest" }).orderUnit).toBe("base");
     expect(resolveUnitDefault(view, { product: "case" }).orderUnit).toBe("u-case");
     expect(resolveUnitDefault(view, { product: "BOX" }).orderUnit).toBe("pack");
     expect(resolveUnitDefault(view, { product: "" }).orderUnit).toBe("pack");
@@ -76,7 +76,7 @@ describe("T23: a shared scan code under a customer whose order unit is the Piece
   it("master picks the Box (defaultSellLevel); the resolver picks the customer's Piece", () => {
     expect(defaultSellLevel(product)).toBe("BOX"); // observed on master
     const r = resolveUnitDefault(view, { customer: refForLabel(product, units, "Piece") });
-    expect(r.orderUnit).toBe("u-piece");
+    expect(r.orderUnit).toBe("base");
     expect(r.label).toBe("Piece");
   });
 });
@@ -87,12 +87,12 @@ describe("the invoice unit (owner requirement 12)", () => {
     expect(resolveInvoiceUnit(view, { product: "ordered" })).toMatchObject({ mode: "ordered" });
     expect(resolveInvoiceUnit(view, { business: "smallest" })).toMatchObject({
       mode: "unit",
-      unit: "u-piece",
+      unit: "base",
       label: "Piece",
     });
     expect(resolveInvoiceUnit(view, { business: "Pallet" })).toMatchObject({
       mode: "unit",
-      unit: "u-piece",
+      unit: "base",
     });
     expect(resolveInvoiceUnit(view, {})).toMatchObject({ mode: "legacy" }); // nothing set: today's behaviour
   });
