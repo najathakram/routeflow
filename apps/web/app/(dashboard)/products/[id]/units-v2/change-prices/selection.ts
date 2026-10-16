@@ -1,39 +1,41 @@
 import * as React from "react";
-import type {
-  CellPatch,
-  CustomerChange,
-  CustomerMoveOffer,
-  FollowerRow,
-  PriceOffer,
-  Pin,
-  PricePlan,
-} from "@routeflow/pricing";
+import type { CustomerChange, FollowerRow, PricePlan } from "@routeflow/pricing";
+import type { CustomerPriceMove } from "@routeflow/types";
 
-// What the owner ticked on a PricePlan. Every set starts EMPTY: no offer and no Keep is ever pre-selected
-// (SA-799 a, SA-798 c). No price is worked out here; this only picks which of the plan's patches go in the write.
+// What the owner ticked on a PricePlan. Every set starts EMPTY: nothing is ever pre-selected (SA-799 a, SA-798 c).
+// No price is worked out here; this only picks which of the plan's patches go into the draft.
 
-export interface AlsoUpdateSelection {
-  offers: ReadonlySet<string>;
+export interface PlanSelection {
+  /** By offer index. */
+  ticked: readonly boolean[];
+  /** `followerKey`s: Auto cells pinned as set at their old value (P7 Keep). */
   keeps: ReadonlySet<string>;
+  /** `customerKeepKey`s: customer cells kept at their old price. */
   customerKeeps: ReadonlySet<string>;
 }
 
-export const EMPTY_SELECTION: AlsoUpdateSelection = {
-  offers: new Set(),
+export const EMPTY_SELECTION: PlanSelection = {
+  ticked: [],
   keeps: new Set(),
   customerKeeps: new Set(),
 };
 
-export const offerKey = (o: PriceOffer): string =>
-  o.kind === "tier" ? `tier:${o.ref}:${o.tier}` : "customer";
 export const followerKey = (f: { ref: string; tier: number }): string => `${f.ref}|${f.tier}`;
 export const customerKeepKey = (c: Pick<CustomerChange, "customerId" | "ref" | "tier">): string =>
   `${c.customerId}|${c.ref}|${c.tier}`;
+/** A customer Keep is a customer price row (none before) at the price it shows now. */
+export const keepMove = (c: CustomerChange): CustomerPriceMove => ({
+  customerId: c.customerId,
+  ref: c.ref,
+  tier: c.tier,
+  from: null,
+  to: c.from,
+});
 
-/** The ticks for one panel. `reset` clears everything (a new plan starts unticked). */
-export function useAlsoUpdateSelection() {
-  const [selection, setSelection] = React.useState<AlsoUpdateSelection>(EMPTY_SELECTION);
-  const toggle = (field: keyof AlsoUpdateSelection, key: string, on: boolean) =>
+/** The ticks of the Change prices plan, which is not in the draft until Apply. */
+export function usePlanSelection() {
+  const [selection, setSelection] = React.useState<PlanSelection>(EMPTY_SELECTION);
+  const flip = (field: "keeps" | "customerKeeps", key: string, on: boolean) =>
     setSelection((s) => {
       const next = new Set(s[field]);
       if (on) next.add(key);
@@ -42,59 +44,37 @@ export function useAlsoUpdateSelection() {
     });
   return {
     selection,
-    toggleOffer: (key: string, on: boolean) => toggle("offers", key, on),
-    toggleKeep: (f: FollowerRow, on: boolean) => toggle("keeps", followerKey(f), on),
+    toggleOffer: (i: number, on: boolean) =>
+      setSelection((s) => ({ ...s, ticked: Object.assign([...s.ticked], { [i]: on }) })),
+    toggleKeep: (f: FollowerRow, on: boolean) => flip("keeps", followerKey(f), on),
     toggleCustomerKeep: (c: CustomerChange, on: boolean) =>
-      toggle("customerKeeps", customerKeepKey(c), on),
-    reset: () => setSelection(EMPTY_SELECTION),
+      flip("customerKeeps", customerKeepKey(c), on),
+    reset: React.useCallback(() => setSelection(EMPTY_SELECTION), []),
   };
 }
 
-/** The one write the save hook gets: K3's base payload plus the revision and the customer moves (lead ruling). */
-export interface PricePlanWrite {
-  productId: string;
-  /** plan.patches, then each ticked tier offer's patches. */
-  patches: CellPatch[];
-  orderUnit: string;
-  /** Each ticked Keep: an Auto cell pinned as set at its old value (P7). */
-  keeps: Pin[];
-  expectedRevision: number;
-  /** The ticked customer offer's moves (empty when it was not ticked). */
-  customerMoves: CustomerMoveOffer["moves"];
-  /** Customer cells the owner chose to keep at their old price. */
-  customerKeeps: CustomerChange[];
-  plan: PricePlan;
-}
-
-export const STALE_MESSAGE = "Prices changed since you opened this; review and save again";
-
-/** 409 LADDER_REVISION_STALE, however the http client words it. */
-export const isStaleRevision = (e: unknown): boolean => {
-  const x = e as {
-    code?: string;
-    status?: number;
-    response?: { status?: number; data?: { code?: string } };
-  };
-  return (
-    x?.code === "LADDER_REVISION_STALE" ||
-    x?.response?.data?.code === "LADDER_REVISION_STALE" ||
-    (x?.status ?? x?.response?.status) === 409
-  );
-};
-
-export function buildPricePlanWrite(
-  plan: PricePlan,
-  sel: AlsoUpdateSelection,
-  ctx: { productId: string; expectedRevision: number },
-): PricePlanWrite {
-  const ticked = plan.offers.filter((o) => sel.offers.has(offerKey(o)));
+/**
+ * The plan with the ticked tier offers folded into its patches (the tier offers are consumed), plus what the draft
+ * needs for the ticked customer offer and the customer Keeps.
+ */
+export function foldPlan(plan: PricePlan, sel: PlanSelection) {
+  const tier = plan.offers.flatMap((o, i) => (o.kind === "tier" && sel.ticked[i] ? o.patches : []));
   return {
-    ...ctx,
-    patches: [...plan.patches, ...ticked.flatMap((o) => (o.kind === "tier" ? o.patches : []))],
-    orderUnit: plan.view.anchor,
-    keeps: plan.followers.filter((f) => sel.keeps.has(followerKey(f))).map((f) => f.keep),
-    customerMoves: ticked.flatMap((o) => (o.kind === "customer" ? o.moves : [])),
-    customerKeeps: plan.customerChanges.filter((c) => sel.customerKeeps.has(customerKeepKey(c))),
-    plan,
+    plan: {
+      ...plan,
+      patches: [...plan.patches, ...tier],
+      offers: plan.offers.filter((o) => o.kind === "customer"),
+    },
+    customerTicked: plan.offers.some((o, i) => o.kind === "customer" && sel.ticked[i]),
+    customerKeeps: plan.customerChanges
+      .filter((c) => sel.customerKeeps.has(customerKeepKey(c)))
+      .map(keepMove),
   };
+}
+
+const AMOUNT = /^\d{1,3}(,\d{3})*(\.\d+)?$|^\d+(\.\d+)?$/;
+/** The typed amount: $, % and spaces are ignored; anything that is not a plain number is NaN (the core refuses it). */
+export function parseAmount(text: string): number {
+  const t = text.replace(/[$%\s]/g, "");
+  return AMOUNT.test(t) ? Number(t.replace(/,/g, "")) : NaN;
 }

@@ -1,101 +1,59 @@
-import * as React from "react";
-import { render, screen, within, fireEvent } from "@testing-library/react";
+import { render, screen, fireEvent } from "@testing-library/react";
 import { AlsoUpdatePanel } from "./AlsoUpdatePanel";
-import { EMPTY_SELECTION, offerKey } from "./selection";
-import { emptyPlan, richPlan } from "./plan-fixtures";
+import { richPlan } from "./plan.test-utils";
 
-const noop = () => undefined;
-const mount = (over: Partial<React.ComponentProps<typeof AlsoUpdatePanel>> = {}) =>
-  render(
-    <AlsoUpdatePanel
-      plan={richPlan()}
-      selection={EMPTY_SELECTION}
-      onToggleOffer={noop}
-      onToggleKeep={noop}
-      {...over}
-    />,
-  );
+const draft = {
+  grid: { productId: "p1" },
+  plan: null as null | Record<string, unknown>,
+  setOfferTicked: jest.fn(),
+  keep: jest.fn(),
+  unkeep: jest.fn(),
+  keepCustomer: jest.fn(),
+};
+jest.mock("../edit/usePriceDraft", () => ({ usePriceDraft: () => draft }));
+jest.mock("@/lib/api/tier-labels", () => ({
+  useTierLabels: () => ({ data: { "2": "Wholesale" } }),
+}));
+jest.mock("@/lib/api/useProductCustomerPrices", () => ({
+  useProductCustomerPrices: () => ({
+    data: {
+      customers: [{ customerId: "c1", name: "Northside", tier: 1, orderUnit: null, set: {} }],
+    },
+  }),
+}));
 
-describe("AlsoUpdatePanel (V02, SA-799)", () => {
-  it("renders every offer unticked, the tier offer and the customer offer both", () => {
-    mount();
-    const section = screen.getByTestId("also-update-section");
-    const boxes = within(section).getAllByRole("checkbox");
-    expect(boxes).toHaveLength(2);
-    boxes.forEach((b) => expect(b).not.toBeChecked());
-    expect(within(section).getByText("Set Tier 3 to $14.60 too")).toBeInTheDocument();
-  });
+beforeEach(() => {
+  Object.values(draft).forEach((v) => typeof v === "function" && (v as jest.Mock).mockReset());
+  draft.plan = { cell: { ref: "case", tier: 1 }, ticked: [], keeps: [], customerKeeps: [] };
+});
 
-  it("does not pre-select the customer offer even when a customer price moves the other way", () => {
-    mount();
-    const customer = screen.getByRole("checkbox", { name: /prices set for these customers/i });
-    expect(customer).not.toBeChecked();
+describe("AlsoUpdatePanel (K3 mounts it with the draft's plan)", () => {
+  it("heads the panel with the edited cell, old to new", () => {
+    render(<AlsoUpdatePanel plan={richPlan()} />);
     expect(
-      screen.getAllByTestId("customer-change-row").some((r) => r.dataset.against === "true"),
-    ).toBe(true);
+      screen.getByRole("region", { name: "Retail Case: $13.91 to $14.60" }),
+    ).toBeInTheDocument();
   });
 
-  it("asks the caller to tick an offer by its key", () => {
-    const onToggleOffer = jest.fn();
-    mount({ onToggleOffer });
+  it("shows ticks from the draft and nothing ticked when the draft has none", () => {
+    const { unmount } = render(<AlsoUpdatePanel plan={richPlan()} />);
+    screen.getAllByRole("checkbox").forEach((b) => expect(b).not.toBeChecked());
+    unmount();
+    draft.plan = { ...draft.plan, ticked: [true, false] };
+    render(<AlsoUpdatePanel plan={richPlan()} />);
+    expect(screen.getByRole("checkbox", { name: /Set Tier 3/ })).toBeChecked();
+  });
+
+  it("writes ticks and Keeps into the draft, not anywhere else", () => {
+    render(<AlsoUpdatePanel plan={richPlan()} />);
     fireEvent.click(screen.getByRole("checkbox", { name: /Set Tier 3/ }));
-    expect(onToggleOffer).toHaveBeenCalledWith(offerKey(richPlan().offers[0]), true);
+    expect(draft.setOfferTicked).toHaveBeenCalledWith(0, true);
+    fireEvent.click(screen.getAllByRole("checkbox", { name: /^Keep Retail Can/ })[0]);
+    expect(draft.keep).toHaveBeenCalledWith({ ref: "can", tier: 1, value: 0.58 });
   });
 
-  it("lists every customer move, grouped, and hides none", () => {
-    mount();
-    expect(screen.getAllByTestId("customer-change-row")).toHaveLength(4);
-    expect(screen.getByTestId("against-summary")).toHaveTextContent("3 prices move the other way");
-    const rounding = screen.getByTestId("rounding-group");
-    expect(rounding).toHaveTextContent("2 prices move 1 cent from rounding");
-    expect(within(rounding).getAllByTestId("customer-change-row")).toHaveLength(2);
-  });
-
-  it("gives each follower a Keep that starts off", () => {
-    const onToggleKeep = jest.fn();
-    mount({ onToggleKeep });
-    const keeps = screen.getAllByRole("checkbox", { name: /^Keep /i });
-    expect(keeps).toHaveLength(2);
-    keeps.forEach((k) => expect(k).not.toBeChecked());
-    fireEvent.click(keeps[0]);
-    expect(onToggleKeep).toHaveBeenCalledWith(richPlan().followers[0], true);
-  });
-
-  it("hides the follower rows when the caller lists them itself, never the customer rows", () => {
-    mount({ hideFollowers: true });
-    expect(screen.queryByRole("checkbox", { name: /^Keep .*Can/i })).toBeNull();
-    expect(screen.getAllByTestId("customer-change-row")).toHaveLength(4);
-  });
-
-  it("shows Undo only when asked, and says what Save does", () => {
-    const onUndo = jest.fn();
-    const { rerender } = mount();
-    expect(screen.queryByRole("button", { name: "Undo this change" })).toBeNull();
-    rerender(
-      <AlsoUpdatePanel
-        plan={richPlan()}
-        selection={EMPTY_SELECTION}
-        onToggleOffer={noop}
-        onToggleKeep={noop}
-        onUndo={onUndo}
-      />,
-    );
-    fireEvent.click(screen.getByRole("button", { name: "Undo this change" }));
-    expect(onUndo).toHaveBeenCalled();
-    expect(screen.getByText("Save keeps all of this in one go.")).toBeInTheDocument();
-  });
-
-  it("says so when nothing else changes, and shows a refused plan's problem", () => {
-    const { rerender } = mount({ plan: emptyPlan() });
-    expect(screen.getByText("Nothing else changes.")).toBeInTheDocument();
-    rerender(
-      <AlsoUpdatePanel
-        plan={emptyPlan({ problems: ["Enter an amount above zero."] })}
-        selection={EMPTY_SELECTION}
-        onToggleOffer={noop}
-        onToggleKeep={noop}
-      />,
-    );
-    expect(screen.getByRole("alert")).toHaveTextContent("Enter an amount above zero.");
+  it("names the customer from the customers the planner was given", () => {
+    render(<AlsoUpdatePanel plan={richPlan()} />);
+    expect(screen.getAllByText(/Northside, Can/).length).toBeGreaterThan(0);
   });
 });

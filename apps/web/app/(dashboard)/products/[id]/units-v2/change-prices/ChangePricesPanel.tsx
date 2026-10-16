@@ -1,57 +1,23 @@
 "use client";
 
 import * as React from "react";
-import {
-  PRICE_TIERS,
-  planPriceChange,
-  type CustomerPricingWithId,
-  type LadderView,
-  type PriceChange,
-  type PricePlan,
-  type PriceTier,
-  type TierRules,
-} from "@routeflow/pricing";
+import { PRICE_TIERS, planPriceChange, type PriceChange, type PricePlan } from "@routeflow/pricing";
 import { Button } from "@routeflow/ui/web";
 import { formatMoney } from "@/lib/format";
-import { usePricesV2Enabled } from "@/lib/api/units-v2";
-import { AlsoUpdatePanel } from "./AlsoUpdatePanel";
-import {
-  STALE_MESSAGE,
-  buildPricePlanWrite,
-  isStaleRevision,
-  useAlsoUpdateSelection,
-  type PricePlanWrite,
-} from "./selection";
-import { usePricePlanSave } from "./usePricePlanSave";
+import { usePriceDraft } from "../edit/usePriceDraft";
+import { PLAN_TESTIDS as T } from "./plan-testids";
+import { PlanView } from "./PlanView";
+import { foldPlan, parseAmount, usePlanSelection } from "./selection";
+import { usePlanNames } from "./usePlanNames";
 
-export interface ChangePricesPanelProps {
-  open: boolean;
-  productId: string;
-  /** The product's priceRevision when the grid loaded: the save's compare-and-set. */
-  expectedRevision: number;
-  onOpenChange: (open: boolean) => void;
-  view: LadderView;
-  rules?: TierRules;
-  tierName?: (tier: PriceTier) => string;
-  customers?: readonly CustomerPricingWithId[];
-  customerName?: (customerId: string) => string;
-  /** Edit mode: hand the write to the draft instead of the save hook. */
-  onApply?: (write: PricePlanWrite) => void | Promise<void>;
-  onApplied?: () => void;
-  /** The save came back 409 LADDER_REVISION_STALE: reload the grid. */
-  onStale?: () => void;
-}
+// S12b: "Change prices". Every price shown is planPriceChange's PricePlan. The customer opt-in is an unticked offer
+// (SA-798 c, V03), Apply sits in a sticky footer (V05) and folds the plan into the shared draft: Save is the commit.
 
-// S12b: "Change prices" behind flag.units_prices_v2. Every price shown is planPriceChange's PricePlan; the
-// customer opt-in is an unticked offer (SA-798 c, V03) and Apply sits in a sticky footer (V05).
-
-const defaultTierName = (t: PriceTier): string => (t === 1 ? "Retail" : `Tier ${t}`);
 const FIELD =
   "h-[34px] rounded-ctl border border-line-strong bg-paper px-2.5 text-[13px] text-navy focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent";
 const LBL = "text-[11px] font-semibold uppercase tracking-[0.08em] text-navy/70";
 const SEG =
   "flex-1 basis-0 cursor-pointer select-none px-3 py-1.5 text-center text-[13px] text-navy peer-checked:bg-accent-strong peer-checked:text-white peer-focus-visible:ring-2 peer-focus-visible:ring-accent";
-
 const NO_CHANGES = {
   patches: [],
   undo: [],
@@ -61,30 +27,16 @@ const NO_CHANGES = {
   changes: [],
   problems: [],
 };
-const listAnd = (items: string[]) => new Intl.ListFormat("en").format(items);
 
-type Direction = PriceChange["direction"];
 type Mode = PriceChange["mode"];
 
-export function ChangePricesPanel({
-  open,
-  productId,
-  expectedRevision,
-  onOpenChange,
-  view,
-  rules,
-  tierName,
-  customers,
-  customerName,
-  onApply,
-  onApplied,
-  onStale,
-}: ChangePricesPanelProps) {
-  const enabled = usePricesV2Enabled();
-  const { save, isPending } = usePricePlanSave();
+export function ChangePricesPanel({ onClose }: { onClose: () => void }) {
+  const draft = usePriceDraft();
+  const { view, grid } = draft;
+  const { tierName, customerName, customers, rules } = usePlanNames();
   const ids = React.useId();
-  const { selection, toggleOffer, toggleKeep, toggleCustomerKeep, reset } =
-    useAlsoUpdateSelection();
+  const root = React.useRef<HTMLElement>(null);
+  const { selection, toggleOffer, toggleKeep, toggleCustomerKeep, reset } = usePlanSelection();
   const [form, setForm] = React.useState<PriceChange>({
     unit: view.anchor,
     direction: "raise",
@@ -93,80 +45,51 @@ export function ChangePricesPanel({
     also: false,
   });
   const [typed, setTyped] = React.useState("");
-  const [busy, setBusy] = React.useState(false);
-  const [error, setError] = React.useState<string | null>(null);
-  const name = tierName ?? defaultTierName;
+  const [blurred, setBlurred] = React.useState(false);
   const { unit, direction, mode, also } = form;
+  const value = parseAmount(typed);
 
-  // A new question gets a new plan, so nothing ticked for the old one carries over.
+  // Ticks never carry onto a new plan (a new view, customers or revision is a new plan), nor onto a new question.
+  React.useEffect(() => reset(), [reset, view, customers, rules, grid?.revision]);
+  React.useEffect(() => root.current?.focus(), []);
   const change = (p: Partial<PriceChange>, text?: string) => {
     setForm((f) => ({ ...f, ...p }));
-    if (text !== undefined) setTyped(text);
+    if (text !== undefined) {
+      setTyped(text);
+      setBlurred(false);
+    }
     reset();
-    setError(null);
   };
 
-  const plan: PricePlan | null = React.useMemo(() => {
-    if (!enabled || !open || typed.trim() === "") return null;
-    const value = Number(typed.replace(/[$,%\s]/g, ""));
-    return planPriceChange(view, { ...form, value }, rules, tierName, { customers });
-  }, [enabled, open, view, form, typed, rules, tierName, customers]);
-
-  if (!enabled || !open) return null;
-
-  const verb = direction === "raise" ? "raise" : "lower";
-  const unitRow = view.rows.find((r) => r.ref === unit);
+  // A refusal for "0" is not shown while the owner may still be typing "0.5": it waits for a value above zero or a blur.
+  const plan: PricePlan | null = React.useMemo(
+    () =>
+      typed.trim() === "" || !(value > 0 || blurred)
+        ? null
+        : planPriceChange(view, { ...form, value }, rules, tierName, { customers }),
+    [view, form, typed, value, blurred, rules, tierName, customers],
+  );
+  const canApply = plan != null && plan.problems.length === 0 && plan.changes.length > 0;
   const setCells = view.rows.flatMap((r) =>
     PRICE_TIERS.flatMap((t) =>
       r.set[t - 1] != null && !(r.ref === unit && t === 1)
-        ? [`${r.label} ${name(t)} ${formatMoney(r.set[t - 1])}`]
+        ? [`${r.label} ${tierName(t)} ${formatMoney(r.set[t - 1])}`]
         : [],
     ),
   );
-  const canApply = plan != null && plan.problems.length === 0 && plan.changes.length > 0;
 
-  const apply = async () => {
-    if (!plan || !canApply || busy) return;
-    const write = buildPricePlanWrite(plan, selection, { productId, expectedRevision });
-    setBusy(true);
-    setError(null);
-    try {
-      await (onApply ?? save)(write);
-      onApplied?.();
-      onOpenChange(false);
-    } catch (e) {
-      if (isStaleRevision(e)) {
-        setError(STALE_MESSAGE);
-        onStale?.();
-      } else setError(e instanceof Error ? e.message : "Could not change the prices.");
-    } finally {
-      setBusy(false);
-    }
+  const apply = () => {
+    if (!plan || !canApply) return;
+    const folded = foldPlan(plan, selection);
+    draft.applyPlan(folded.plan);
+    if (folded.customerTicked) draft.setOfferTicked(0, true);
+    folded.customerKeeps.forEach((m) => draft.keepCustomer(m));
+    reset();
+    setTyped("");
+    setForm((f) => ({ ...f, also: false }));
+    onClose();
   };
 
-  const alsoBlock = (
-    <div className="py-1.5">
-      {setCells.length > 0 ? (
-        <label className="flex items-start gap-2 text-sm text-navy">
-          <input
-            type="checkbox"
-            className="mt-0.5"
-            checked={also}
-            onChange={(e) => change({ also: e.target.checked })}
-          />
-          <span>
-            Also {verb} the prices you set
-            <span className="block text-xs text-ink-500">
-              {listAnd(setCells)}
-              {mode === "percent" && typed.trim() !== "" ? `, by ${typed.trim()}%.` : "."}
-            </span>
-          </span>
-        </label>
-      ) : (
-        <p className="text-xs text-ink-500">Every other price is Auto and follows on its own.</p>
-      )}
-    </div>
-  );
   const field = (id: string, label: string, control: React.ReactNode, hint?: string) => (
     <div className="flex flex-col gap-1">
       <label htmlFor={`${ids}-${id}`} className={LBL}>
@@ -185,15 +108,40 @@ export function ChangePricesPanel({
       ))}
     </select>
   );
+  const alsoBlock = (
+    <div className="py-1.5">
+      {setCells.length > 0 ? (
+        <label className="flex items-start gap-2 text-sm text-navy">
+          <input
+            type="checkbox"
+            className="mt-0.5"
+            checked={also}
+            onChange={(e) => change({ also: e.target.checked })}
+          />
+          <span>
+            Also {direction} the prices you set
+            <span className="block text-xs text-ink-500">
+              {new Intl.ListFormat("en").format(setCells)}
+              {mode === "percent" && value > 0 ? `, by ${value}%.` : "."}
+            </span>
+          </span>
+        </label>
+      ) : (
+        <p className="text-xs text-ink-500">Every other price is Auto and follows on its own.</p>
+      )}
+    </div>
+  );
 
   return (
     <section
       id="change-panel"
-      data-testid="change-prices-panel"
+      ref={root}
+      tabIndex={-1}
+      data-testid={T.changePanel}
       role="region"
       aria-labelledby={`${ids}-title`}
-      onKeyDown={(e) => e.key === "Escape" && onOpenChange(false)}
-      className="rounded-lg border border-surface-border bg-white p-4"
+      onKeyDown={(e) => e.key === "Escape" && onClose()}
+      className="rounded-lg border border-surface-border bg-white p-4 focus-visible:outline-none"
     >
       <h3 id={`${ids}-title`} className={LBL}>
         Change prices
@@ -257,14 +205,15 @@ export function ChangePricesPanel({
             className={FIELD}
             value={typed}
             onChange={(e) => change({}, e.target.value)}
+            onBlur={() => setBlurred(true)}
           />,
           mode === "percent"
             ? "Other units that move change by the same percent."
-            : `Per ${unitRow?.label ?? "unit"}. Other units that move change in proportion to what they contain.`,
+            : `Per ${view.rows.find((r) => r.ref === unit)?.label ?? "unit"}. Other units that move change in proportion to what they contain.`,
         )}
       </div>
       <div className="mt-4">
-        <AlsoUpdatePanel
+        <PlanView
           plan={plan ?? { ...NO_CHANGES, view }}
           selection={selection}
           onToggleOffer={toggleOffer}
@@ -276,26 +225,28 @@ export function ChangePricesPanel({
           extraOffers={alsoBlock}
         />
       </div>
-      <div data-testid="change-prices-preview" className="mt-4">
+      <div data-testid={T.changePreview} className="mt-4">
         {plan == null ? (
           <p className="text-sm text-ink-500">Enter an amount above zero to see the new prices.</p>
         ) : (
           plan.changes.length > 0 && (
             <>
-              <table className="w-full min-w-[300px] text-sm">
-                <caption className="sr-only">Old and new prices for every unit and tier</caption>
-                <tbody>
-                  {plan.changes.map((c) => (
-                    <tr key={`${c.ref}|${c.tier}`} className="border-t border-surface-border">
-                      <th scope="row" className="py-1 text-left font-normal text-navy">
-                        {name(c.tier)} {c.label}
-                      </th>
-                      <td className="tabular-nums text-ink-500">{formatMoney(c.from)}</td>
-                      <td className="tabular-nums font-medium text-navy">{formatMoney(c.to)}</td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
+              <div className="overflow-x-auto">
+                <table className="w-full min-w-[300px] text-sm">
+                  <caption className="sr-only">Old and new prices for every unit and tier</caption>
+                  <tbody>
+                    {plan.changes.map((c) => (
+                      <tr key={`${c.ref}|${c.tier}`} className="border-t border-surface-border">
+                        <th scope="row" className="py-1 text-left font-normal text-navy">
+                          {tierName(c.tier)} {c.label}
+                        </th>
+                        <td className="tabular-nums text-ink-500">{formatMoney(c.from)}</td>
+                        <td className="tabular-nums font-medium text-navy">{formatMoney(c.to)}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
               <p className="mt-2 text-xs text-ink-500">
                 {plan.changes.length} price{plan.changes.length === 1 ? "" : "s"} will change.
               </p>
@@ -303,30 +254,15 @@ export function ChangePricesPanel({
           )
         )}
       </div>
-      {error && (
-        <p role="alert" className="mt-2 text-sm text-danger">
-          {error}
-        </p>
-      )}
       <div
-        data-testid="change-prices-footer"
-        className="sticky bottom-0 z-[2] mt-4 flex gap-2 border-t border-surface-border bg-white py-2.5"
+        data-testid={T.changeFooter}
+        className="sticky z-[2] mt-4 flex gap-2 border-t border-surface-border bg-white py-2.5"
         style={{ bottom: "var(--editbar-h, 0px)" }}
       >
-        <Button
-          id="ch-apply"
-          type="button"
-          disabled={!canApply || busy || isPending}
-          onClick={apply}
-        >
+        <Button id="ch-apply" type="button" disabled={!canApply} onClick={apply}>
           Apply
         </Button>
-        <Button
-          id="ch-cancel"
-          variant="secondary"
-          type="button"
-          onClick={() => onOpenChange(false)}
-        >
+        <Button id="ch-cancel" variant="secondary" type="button" onClick={onClose}>
           Cancel
         </Button>
       </div>
