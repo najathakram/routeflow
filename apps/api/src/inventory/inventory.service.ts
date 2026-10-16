@@ -1829,8 +1829,8 @@ export class InventoryService {
       throw new ConflictException({
         code: API_ERROR_CODES.PO_LOT_PARTIALLY_CONSUMED,
         message:
-          `Part of what was received on ${po.poNumber} has already been sold or used (FIFO/LIFO lot ` +
-          "partially consumed), so its inventory can't be re-applied — that would invent stock. " +
+          `Part of what was received on ${po.poNumber} has already been used (a lot is partially ` +
+          "consumed), so its inventory can't be re-applied — that would invent stock. " +
           "Save the edit as document-only (keep stock as is), or record a return.",
         lotIds: consumedLots.map((l) => l.id),
       });
