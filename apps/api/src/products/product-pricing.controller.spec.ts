@@ -46,7 +46,7 @@ describe("ProductPricingController (units v2)", () => {
       save: jest.fn().mockResolvedValue("saved"),
       undo: jest.fn().mockResolvedValue("undone"),
     };
-    const controller = new ProductPricingController({} as never, writes as never);
+    const controller = new ProductPricingController({} as never, writes as never, {} as never);
     const user = { sub: "u1" } as never;
     const dto = { expectedRevision: 1, expectedPriceState: "s", patches: [] };
     await expect(controller.savePrices("p1", dto, user)).resolves.toBe("saved");
