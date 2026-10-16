@@ -18,7 +18,10 @@ import type {
   SavePricesResponse,
 } from "@routeflow/types";
 import { useTierLabels } from "@/lib/api/tier-labels";
-import { useProductCustomerPrices } from "@/lib/api/useProductCustomerPrices";
+import {
+  productCustomerPricesKey,
+  useProductCustomerPrices,
+} from "@/lib/api/useProductCustomerPrices";
 import { useQueryClient } from "@tanstack/react-query";
 import { fetchPriceGrid, priceGridKey, usePriceGrid } from "@/lib/api/usePriceGrid";
 import { formatMoney } from "@/lib/format";
@@ -145,7 +148,8 @@ export interface PriceDraftHooks {
 export function useCreatePriceDraft(productId: string, hooks: PriceDraftHooks = {}): PriceDraft {
   const hooksRef = React.useRef(hooks);
   hooksRef.current = hooks;
-  const grid = usePriceGrid(productId).data;
+  const gridQuery = usePriceGrid(productId);
+  const grid = gridQuery.data;
   const labels = useTierLabels().data;
   const tierName = React.useCallback(
     (t: PriceTier) => (t === 1 ? "Retail" : tierLabel(labels, t)),
@@ -246,6 +250,7 @@ export function useCreatePriceDraft(productId: string, hooks: PriceDraftHooks = 
   const canSave =
     editing &&
     !save.isPending &&
+    !gridQuery.isFetching &&
     count > 0 &&
     problems.length === 0 &&
     conflicts.length === 0 &&
@@ -264,6 +269,30 @@ export function useCreatePriceDraft(productId: string, hooks: PriceDraftHooks = 
   if (save.error !== errSeen.current.error)
     errSeen.current = { error: save.error, texts: { ...texts } };
   const saveError = priceWriteError(save.error);
+
+  // Everything a stale answer can rest on: the grid revision AND the customers' prices a ticked offer froze as `from`.
+  const refetchPrices = () => {
+    void qc.invalidateQueries({ queryKey: priceGridKey(productId) });
+    void qc.invalidateQueries({ queryKey: productCustomerPricesKey(productId) });
+  };
+
+  // A ticked customer offer froze its moves' `from` when it was ticked. When the customers' prices arrive different,
+  // the offer is no longer what the user saw: untick it with a notice (never silently re-tick; SA-799 a). The open
+  // plan is re-planned from the fresh rows on its own, so it shows the new from/to, unticked.
+  const staleOffersRef = React.useRef<() => void>(() => undefined);
+  staleOffersRef.current = () => {
+    const priceOf = (id: string, ref: string) =>
+      customers.find((c) => c.customerId === id)?.set?.[ref] ?? null;
+    const stale = entries.filter(
+      (e) => e.kind === "offer" && e.moves.some((m) => priceOf(m.customerId, m.ref) !== m.from),
+    );
+    if (stale.length === 0) return;
+    setEntries((es) => es.filter((e) => !stale.includes(e)));
+    setNotice(clearedNotice(stale, "those customers' prices changed"));
+  };
+  React.useEffect(() => {
+    if (customerRows) staleOffersRef.current();
+  }, [customerRows]);
 
   const doSave = () => {
     const req = toRequest();
@@ -398,7 +427,12 @@ export function useCreatePriceDraft(productId: string, hooks: PriceDraftHooks = 
     view,
     editing,
     startEditing: api.begin,
-    discard: reset,
+    discard: () => {
+      // A refused save must not outlive the draft it refused: the next Edit starts clean on fresh prices.
+      if (save.error != null) save.reset();
+      if (saveError?.code === "stale") refetchPrices();
+      reset();
+    },
     dirty,
     editCell,
     plan:
@@ -490,7 +524,7 @@ export function useCreatePriceDraft(productId: string, hooks: PriceDraftHooks = 
     }),
     reload: () => {
       save.reset();
-      void qc.invalidateQueries({ queryKey: priceGridKey(productId) });
+      refetchPrices();
     },
     markUndone: () => {
       setLastSave(null);

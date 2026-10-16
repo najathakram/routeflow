@@ -57,7 +57,7 @@ describe("usePriceWrites", () => {
     expect(spy).toHaveBeenCalledWith({ queryKey: priceGridKey("p1") });
   });
 
-  it("a stale save leaves the grid alone: the notice owns the reload, so the draft is saved against the revision it was made on", async () => {
+  it("a stale save does not refetch the grid", async () => {
     mockPost.mockRejectedValue({ response: { data: { code: "LADDER_REVISION_STALE" } } });
     const qc = new QueryClient();
     const spy = jest.spyOn(qc, "invalidateQueries");

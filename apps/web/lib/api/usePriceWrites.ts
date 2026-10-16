@@ -51,7 +51,7 @@ export function priceWriteError(err: unknown): PriceWriteError | null {
 
 /**
  * `refetchOnStale`: a stale answer refetches the grid. Undo wants it (its preview reads the served grid); Save does
- * not: its notice owns the reload, so the draft is never re-based on a revision the user has not seen.
+ * not: its notice owns the reload. Save itself never auto-refetches the grid on a stale answer.
  */
 function usePriceWrite<Req>(productId: string, path: string, refetchOnStale: boolean) {
   const qc = useQueryClient();

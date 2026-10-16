@@ -2,6 +2,8 @@ import * as React from "react";
 import { render as rtlRender, screen, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
+import { priceGridKey } from "@/lib/api/usePriceGrid";
+import { productCustomerPricesKey } from "@/lib/api/useProductCustomerPrices";
 import { act } from "react";
 import type { CustomerMoveOffer } from "@routeflow/pricing";
 import type { ProductPriceGridDto } from "@routeflow/types";
@@ -17,7 +19,14 @@ import { usePriceDraft, type PriceDraft } from "./usePriceDraft";
 
 // K8 integration seams: K3's draft + K4's Change prices + K5's status line, mounted the way the page mounts them.
 
-let mockGrid: { data?: ProductPriceGridDto; isLoading: boolean; isError: boolean };
+let mockGrid: {
+  data?: ProductPriceGridDto;
+  isLoading: boolean;
+  isError: boolean;
+  isFetching?: boolean;
+};
+// One client per test so a test can spy on what the draft invalidates.
+let mockQc = new QueryClient();
 let mockError: unknown = null;
 const mockSave = jest.fn();
 const mockSaveReset = jest.fn();
@@ -66,6 +75,7 @@ jest.mock("@/lib/api/units-v2", () => ({ usePricesV2Enabled: () => true }));
 let mockCustomers: unknown[] = [];
 const mockCustomerFetch = jest.fn();
 jest.mock("@/lib/api/useProductCustomerPrices", () => ({
+  ...jest.requireActual("@/lib/api/useProductCustomerPrices"),
   useProductCustomerPrices: (_id: string, enabled: boolean) => {
     mockCustomerFetch(enabled);
     return { data: { customers: mockCustomers } };
@@ -116,7 +126,7 @@ const Probe = () => {
 };
 const render = () =>
   rtlRender(
-    <QueryClientProvider client={new QueryClient()}>
+    <QueryClientProvider client={mockQc}>
       <ProductPricingV2 product={product} />
     </QueryClientProvider>,
   );
@@ -135,6 +145,7 @@ beforeEach(() => {
   mockSaveReset.mockReset();
   mockSaveOutcome = null;
   mockUndo.mockReset();
+  mockQc = new QueryClient();
   mockGrid = { data: grid, isLoading: false, isError: false };
 });
 
@@ -397,7 +408,7 @@ describe("K8 seams", () => {
         isError: false,
       };
       rerender(
-        <QueryClientProvider client={new QueryClient()}>
+        <QueryClientProvider client={mockQc}>
           <ProductPricingV2 product={product} />
         </QueryClientProvider>,
       );
@@ -420,16 +431,144 @@ describe("K8 seams", () => {
       expect(caseInput()).toBe("14.5");
     });
 
-    it("Reload prices clears the stale-write notice and keeps the draft", async () => {
+    it("Reload prices clears the stale-write notice, reloads the grid and keeps the draft; the next Save carries the fresh revision", async () => {
       mockError = STALE;
+      const spy = jest.spyOn(mockQc, "invalidateQueries");
       const user = userEvent.setup();
       const { rerender } = render();
       await edit(user);
       moveGridOn(rerender);
       await user.click(screen.getByRole("button", { name: "Reload prices" }));
       expect(mockSaveReset).toHaveBeenCalledTimes(1);
+      expect(spy).toHaveBeenCalledWith({ queryKey: priceGridKey("p1") });
+      expect(spy).toHaveBeenCalledWith({ queryKey: productCustomerPricesKey("p1") });
       expect(screen.queryByRole("button", { name: "Reload prices" })).toBeNull();
       expect(caseInput()).toBe("14.5");
+      await user.click(screen.getByTestId(T.ebSave));
+      expect(mockSave.mock.calls[0][0]).toMatchObject({
+        expectedRevision: 9,
+        expectedPriceState: "ps-9",
+        patches: [{ ref: "case", tier: 2, to: 14.5 }],
+      });
+    });
+
+    it("Discard after a stale save clears the notice and reloads the grid, so the next Edit starts clean", async () => {
+      mockError = STALE;
+      const spy = jest.spyOn(mockQc, "invalidateQueries");
+      const user = userEvent.setup();
+      render();
+      await edit(user);
+      expect(screen.getByRole("button", { name: "Reload prices" })).toBeTruthy();
+      await user.click(screen.getByTestId(T.ebCancel));
+      await user.click(screen.getByTestId(T.ebDiscard));
+      expect(mockSaveReset).toHaveBeenCalledTimes(1);
+      expect(spy).toHaveBeenCalledWith({ queryKey: priceGridKey("p1") });
+      expect(spy).toHaveBeenCalledWith({ queryKey: productCustomerPricesKey("p1") });
+      await user.click(screen.getByTestId(T.btnEdit));
+      expect(screen.queryByRole("button", { name: "Reload prices" })).toBeNull();
+      expect(screen.queryByRole("alert")).toBeNull();
+    });
+
+    it("a 409 caused by a customer move's `from`: Reload refetches the customers, the offer comes back UNTICKED with the new values, and the next Save carries the new `from`", async () => {
+      mockCustomers = [
+        { customerId: "c1", name: "Northside", tier: 2, orderUnit: "case", set: { piece: 0.5 } },
+      ];
+      const spy = jest.spyOn(mockQc, "invalidateQueries");
+      spy.mockImplementation((f) => {
+        // the refetch lands: another user changed the customer's price meanwhile
+        if (JSON.stringify(f?.queryKey) === JSON.stringify(productCustomerPricesKey("p1")))
+          mockCustomers = [
+            {
+              customerId: "c1",
+              name: "Northside",
+              tier: 2,
+              orderUnit: "case",
+              set: { piece: 0.55 },
+            },
+          ];
+        return Promise.resolve();
+      });
+      const user = userEvent.setup();
+      rtlRender(
+        <QueryClientProvider client={mockQc}>
+          <PriceDraftProvider productId="p1">
+            <Probe />
+            <EditablePricesGrid product={product} />
+            <PriceEditBar />
+          </PriceDraftProvider>
+        </QueryClientProvider>,
+      );
+      await edit(user);
+      const box = () => screen.getByRole("checkbox", { name: /Also raise prices set for these/ });
+      await user.click(box());
+      expect(draft.toRequest()?.customerMoves[0]).toMatchObject({ from: 0.5 });
+      // the save is refused as stale (the customer's price moved under the frozen `from`)
+      mockSaveOutcome = STALE;
+      await user.click(screen.getByTestId(T.ebSave));
+      expect(mockSave.mock.calls[0][0]).toMatchObject({ customerMoves: [{ from: 0.5 }] });
+      await user.click(screen.getByRole("button", { name: "Reload prices" }));
+      expect(spy).toHaveBeenCalledWith({ queryKey: productCustomerPricesKey("p1") });
+      // the offer is re-planned against the fresh prices and never silently re-ticked
+      expect(box()).not.toBeChecked();
+      expect(draft.toRequest()?.customerMoves).toEqual([]);
+      const o = draft.plan?.plan.offers.find((x) => x.kind === "customer");
+      expect(o?.kind === "customer" && o.moves[0].from).toBe(0.55);
+      expect(draft.notice).toMatch(/was cleared/);
+      mockSaveOutcome = null;
+      await user.click(box());
+      await user.click(screen.getByTestId(T.ebSave));
+      expect(mockSave).toHaveBeenCalledTimes(2);
+      expect(mockSave.mock.calls[1][0]).toMatchObject({ customerMoves: [{ from: 0.55 }] });
+      expect(screen.queryByRole("button", { name: "Reload prices" })).toBeNull();
+    });
+
+    it("a ticked customer offer whose rows did not change stays ticked when the customers refetch", async () => {
+      mockCustomers = [
+        { customerId: "c1", name: "Northside", tier: 2, orderUnit: "case", set: { piece: 0.5 } },
+      ];
+      const user = userEvent.setup();
+      const ui = () => (
+        <QueryClientProvider client={mockQc}>
+          <PriceDraftProvider productId="p1">
+            <Probe />
+            <EditablePricesGrid product={product} />
+            <PriceEditBar />
+          </PriceDraftProvider>
+        </QueryClientProvider>
+      );
+      const { rerender } = rtlRender(ui());
+      await edit(user);
+      const box = () => screen.getByRole("checkbox", { name: /Also raise prices set for these/ });
+      await user.click(box());
+      mockCustomers = mockCustomers.map((c) => ({ ...(c as object) })); // a refetch with equal rows
+      rerender(ui());
+      expect(box()).toBeChecked();
+      expect(draft.toRequest()?.customerMoves).toHaveLength(1);
+    });
+
+    it("Discard with no save error neither resets the save nor reloads the grid", async () => {
+      const spy = jest.spyOn(mockQc, "invalidateQueries");
+      const user = userEvent.setup();
+      render();
+      await edit(user);
+      await user.click(screen.getByTestId(T.ebCancel));
+      await user.click(screen.getByTestId(T.ebDiscard));
+      expect(mockSaveReset).not.toHaveBeenCalled();
+      expect(spy).not.toHaveBeenCalled();
+    });
+
+    it("Save stays off while the grid is refetching, so a draft is never saved against a revision about to change", async () => {
+      const user = userEvent.setup();
+      const { rerender } = render();
+      await edit(user);
+      expect(screen.getByTestId(T.ebSave).getAttribute("aria-disabled")).not.toBe("true");
+      mockGrid = { ...mockGrid, isFetching: true };
+      rerender(
+        <QueryClientProvider client={mockQc}>
+          <ProductPricingV2 product={product} />
+        </QueryClientProvider>,
+      );
+      expect(screen.getByTestId(T.ebSave).getAttribute("aria-disabled")).toBe("true");
     });
 
     it("the next save attempt clears the stale-write notice; a second stale answer raises it again", async () => {
@@ -438,12 +577,19 @@ describe("K8 seams", () => {
       render();
       await edit(user);
       expect(screen.getByRole("button", { name: "Reload prices" })).toBeTruthy();
+      const body = {
+        expectedRevision: 7,
+        expectedPriceState: "ps-1",
+        patches: [{ ref: "case", tier: 2, to: 14.5 }],
+      };
       await user.click(screen.getByTestId(T.ebSave));
       expect(mockSave).toHaveBeenCalledTimes(1);
+      expect(mockSave.mock.calls[0][0]).toMatchObject(body);
       expect(screen.queryByRole("button", { name: "Reload prices" })).toBeNull();
       mockSaveOutcome = { response: { status: 409, data: { code: "LADDER_REVISION_STALE" } } };
       await user.click(screen.getByTestId(T.ebSave));
       expect(mockSave).toHaveBeenCalledTimes(2);
+      expect(mockSave.mock.calls[1][0]).toMatchObject(body);
       expect(screen.getByRole("button", { name: "Reload prices" })).toBeTruthy();
       expect(caseInput()).toBe("14.5");
     });
