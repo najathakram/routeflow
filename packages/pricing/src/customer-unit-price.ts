@@ -36,7 +36,7 @@ export interface CustomerUnitPriceInput {
     tier: PriceTier;
     /** This customer's own order unit for the product (from resolveUnitDefault's customer scope). */
     orderUnit?: UnitRef | null;
-    /** The customer's typed prices by unit ref (CustomerUnitPrice). */
+    /** The customer's typed prices by unit ref (the CustomerUnitPrice table). */
     unitPrices?: Readonly<Record<UnitRef, number>>;
   };
   /** A unit ref or a unit label. */
@@ -44,7 +44,7 @@ export interface CustomerUnitPriceInput {
   rules?: TierRules;
 }
 
-export interface CustomerUnitPrice {
+export interface ResolvedCustomerUnitPrice {
   unit: UnitRef;
   label: string;
   price: number;
@@ -53,7 +53,7 @@ export interface CustomerUnitPrice {
 }
 
 /** The price one customer pays for one unit of a product, in cents. Throws for a unit the product does not have. */
-export function resolveCustomerUnitPrice(input: CustomerUnitPriceInput): CustomerUnitPrice {
+export function resolveCustomerUnitPrice(input: CustomerUnitPriceInput): ResolvedCustomerUnitPrice {
   const { product, units, customer } = input;
   const rules = input.rules ?? DEFAULT_TIER_RULES;
   const view = buildLadderView(product, units, input.viewOptions);
@@ -67,7 +67,7 @@ export function resolveCustomerUnitPrice(input: CustomerUnitPriceInput): Custome
   };
   const price = customerPrice(view, ref, pricing, rules);
   const typed = (r: UnitRef) => explicitPrice(customer.unitPrices?.[r]) != null;
-  const source: CustomerUnitPrice["source"] = typed(ref)
+  const source: ResolvedCustomerUnitPrice["source"] = typed(ref)
     ? "customer"
     : typed(customerAnchor(view, pricing))
       ? "customer-shape"

@@ -1198,8 +1198,8 @@ function SpecialPricesTab({ customerId }: { customerId: string }) {
             <h3 className="text-base font-semibold text-navy">Tier overrides</h3>
             <p className="mt-0.5 text-xs text-navy/70">
               {hasMsrpAddon
-                ? "Pick a different pricing tier, and optionally an MSRP, for specific products. These beat the customer's default tier and the product's default MSRP."
-                : "Pick a different pricing tier for specific products. These beat the customer's default tier."}
+                ? "Pick a different pricing tier, and optionally an MSRP, for specific products. These take precedence over the customer's default tier and the product's default MSRP."
+                : "Pick a different pricing tier for specific products. These take precedence over the customer's default tier."}
             </p>
           </div>
           <Button size="sm" leftIcon={<Plus className="h-4 w-4" />} onClick={openAdd}>
@@ -1402,7 +1402,7 @@ function SpecialPricesTab({ customerId }: { customerId: string }) {
                 <option key={t} value={t}>
                   {tierLabel(tierLabels, t)}
                   {t === 1 ? " (List Price)" : ""}
-                  {selectedProduct ? ` — ${fmt(getTierPrice(selectedProduct, t))}` : ""}
+                  {selectedProduct ? `: ${fmt(getTierPrice(selectedProduct, t))}` : ""}
                   {tierUnset(selectedProduct, t) ? " (list)" : ""}
                 </option>
               ))}

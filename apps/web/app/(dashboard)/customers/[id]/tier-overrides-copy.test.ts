@@ -16,6 +16,7 @@ describe("customer page: per-product tier overrides copy (S5)", () => {
     "Add Price Override",
     "Edit Price Override",
     "Per-product overrides below",
+    "These beat the customer's default tier",
   ])("no longer says %j", (s) => {
     expect(src).not.toContain(s);
   });
@@ -24,17 +25,24 @@ describe("customer page: per-product tier overrides copy (S5)", () => {
     ">Tier overrides<",
     "Add tier override",
     "No tier overrides set.",
-    "Add tier override",
     "Edit tier override",
     "Tier overrides below take",
+    "These take precedence over the customer's default tier",
   ])("says %j", (s) => {
     expect(src).toContain(s);
   });
 
-  it("uses no em dash in the section", () => {
+  it("uses no em dash anywhere in the section's copy (comments are not copy)", () => {
     const start = src.indexOf(">Tier overrides<");
+    const end = src.indexOf("function CommentsTab");
     expect(start).toBeGreaterThan(0);
-    expect(src.slice(start, start + 1500)).not.toContain("\u2014");
+    expect(end).toBeGreaterThan(start);
+    const copy = src
+      .slice(start, end)
+      .replace(/\/\*[\s\S]*?\*\//g, "")
+      .replace(/^\s*\/\/.*$/gm, "");
+    expect(copy.length).toBeGreaterThan(1500); // the whole section, not a slice
+    expect(copy).not.toContain("\u2014");
   });
 });
 

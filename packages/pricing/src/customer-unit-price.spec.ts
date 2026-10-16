@@ -1,3 +1,4 @@
+import { getTierPrice } from "./tier-pricing";
 import { buildLadderView, refForLabel, type LadderViewUnit } from "./price-ladder";
 import { customerTierFor, resolveCustomerUnitPrice } from "./customer-unit-price";
 import type { LadderProduct } from "./unit-levels";
@@ -26,6 +27,23 @@ describe("customerTierFor (the 16 readers' one rule)", () => {
     expect(customerTierFor(undefined, undefined)).toBe(1);
     expect(customerTierFor("4", null)).toBe(4);
     expect(customerTierFor(9, 7)).toBe(1);
+  });
+});
+
+describe("PF-14: customerTierFor against master for tiers outside 1 to 5", () => {
+  const p = { pricePerUnit: "12.00", priceTier2: "11.00" };
+
+  it("master reads a tier of 0 or 9 as the list price; with no valid tier to fall back on, so does the core", () => {
+    expect(getTierPrice(p, 0)).toBe(12);
+    expect(getTierPrice(p, 9)).toBe(12);
+    expect(customerTierFor(0, null)).toBe(1);
+    expect(customerTierFor(9, undefined)).toBe(1);
+  });
+
+  it("the one named difference: a junk customer-product tier falls through to the customer's own valid tier (master reads the list price)", () => {
+    expect(customerTierFor(0, 2)).toBe(2);
+    expect(customerTierFor(9, 2)).toBe(2);
+    expect(getTierPrice(p, customerTierFor(9, 2))).toBe(11);
   });
 });
 

@@ -386,6 +386,19 @@ describe("T7e / P8 / A2: materializePack", () => {
     }
   });
 
+  it("PF-3 / A2: an Auto tier equal to the Retail to the cent is stored as 0, even when the Retail is not whole cents", () => {
+    const view = buildLadderView(box12, []);
+    const unrounded = {
+      ...view,
+      rows: view.rows.map((r) =>
+        r.ref === "pack" ? { ...r, set: [12.004, null, null, null, null] } : r,
+      ),
+    };
+    const m = materializePack(unrounded);
+    expect([m.priceTier2, m.priceTier3, m.priceTier4, m.priceTier5]).toEqual([0, 0, 0, 0]);
+    expect(m.pricePerUnit).toBe(12.004);
+  });
+
   it("a tier rule above 0% stores the number (it differs from the list price) with its bit", () => {
     const view = buildLadderView(box12, []);
     const m = materializePack(view, { 2: 8, 3: 0 }, { writePathComplete: true });
