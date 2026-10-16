@@ -1402,7 +1402,7 @@ function SpecialPricesTab({ customerId }: { customerId: string }) {
                 <option key={t} value={t}>
                   {tierLabel(tierLabels, t)}
                   {t === 1 ? " (List Price)" : ""}
-                  {selectedProduct ? ` — ${fmt(getTierPrice(selectedProduct, t))}` : ""}
+                  {selectedProduct ? `: ${fmt(getTierPrice(selectedProduct, t))}` : ""}
                   {tierUnset(selectedProduct, t) ? " (list)" : ""}
                 </option>
               ))}
