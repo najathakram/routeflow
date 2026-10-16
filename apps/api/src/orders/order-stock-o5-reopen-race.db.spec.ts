@@ -10,8 +10,9 @@
  *
  * RACE HARNESS (held-row, deterministic; traps from reference_db_race_probe_harness_traps):
  *  - A side connection holds FOR NO KEY UPDATE on the Product row (conflicts with the FOR UPDATE reopen
- *    takes, never with the KEY SHARE a child insert takes), so reopen A parks on the product lock AFTER
- *    flipping the order's lines; reopen B then reads the still-CANCELLED lines and parks on A's line locks.
+ *    takes, never with the KEY SHARE a child insert takes), so reopen A, holding the Order row lock and
+ *    having claimed CANCELLED -> PENDING, parks on the product lock; reopen B parks on A's Order row lock.
+ *  - Outcome: exactly one reopen resolves and the other is refused 409 ORDER_CHANGED_DURING_EDIT.
  *  - Entry is ASSERTED before the outcome is trusted: exactly 1 blocked backend (blocked by the holder),
  *    then exactly 2 (one by the holder, one by a non-holder). Count = every blocked backend of this
  *    database (`datname = current_database() AND cardinality(pg_blocking_pids(pid)) > 0`).
@@ -69,6 +70,7 @@ describeDb("O5 / B695: concurrent reopen of one cancelled order re-decrements on
     await holder.connect();
     const holderPid = Number((await holder.query("SELECT pg_backend_pid() AS pid")).rows[0].pid);
     let held = true;
+    let outcomes: Array<{ ok: true; v: unknown } | { ok: false; e: unknown }> = [];
     const release = async () => {
       if (!held) return;
       held = false;
@@ -93,14 +95,20 @@ describeDb("O5 / B695: concurrent reopen of one cancelled order re-decrements on
       const afterSecond = await waitForBlocked(2);
       const byHolder = afterSecond.filter((b) => b.blockers.includes(holderPid));
       const byOther = afterSecond.filter((b) => !b.blockers.includes(holderPid));
-      expect([byHolder.length, byOther.length]).toEqual([1, 1]); // B parks on A's line locks
+      expect([byHolder.length, byOther.length]).toEqual([1, 1]); // B parks on A's Order row lock
 
       await release();
-      await Promise.all([first, second]); // both settle; the stock and the ledger decide
+      outcomes = await Promise.all([first, second]); // both settle; the stock and the ledger decide
     } finally {
       await release().catch(() => undefined);
       await holder.end();
     }
+
+    // One reopen wins; the loser is refused with the coded 409 the cancel and edit paths give a lost race.
+    const lost = outcomes.flatMap((o) => (o.ok ? [] : [o.e as { getResponse?: () => unknown }]));
+    expect(outcomes.filter((o) => o.ok)).toHaveLength(1);
+    expect(lost).toHaveLength(1);
+    expect(lost[0].getResponse?.()).toMatchObject({ code: "ORDER_CHANGED_DURING_EDIT" });
 
     // The bug's own wrong value: the same 3 booked twice (4), not once (7).
     expect(await w.stockOf(p)).toBe(7);

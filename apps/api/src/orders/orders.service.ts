@@ -2781,7 +2781,7 @@ export class OrdersService implements OnApplicationBootstrap {
         const reopened = await tx.order.update({
           where: { id },
           data: {
-            status: OrderStatus.PENDING,
+            status: OrderStatus.PENDING, // already set by the claim; kept so this write names the transition
             notes: order.notes
               ? `${order.notes}\n[Reopened ${new Date().toLocaleDateString()}]`
               : `[Reopened ${new Date().toLocaleDateString()}]`,
