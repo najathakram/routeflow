@@ -3,6 +3,7 @@ import {
   BadRequestException,
   ConflictException,
   Logger,
+  NotFoundException,
   ServiceUnavailableException,
   UnprocessableEntityException,
 } from "@nestjs/common";
@@ -933,6 +934,24 @@ describe("VendorBillsService", () => {
       prisma.vendorBill.create.mockResolvedValue(bill());
     });
 
+    it("B1236: refuses with missingProductIds when the catalog read returns fewer ids than the lines name, and writes nothing", async () => {
+      prisma.product.findMany.mockResolvedValue([{ id: "prod-1" }]);
+      const items = [
+        { productId: "prod-1", description: "ok", qty: 1, unitCost: 1 },
+        { productId: "prod-2", description: "missing", qty: 1, unitCost: 1 },
+        { productId: "prod-2", description: "missing again", qty: 1, unitCost: 1 },
+      ];
+
+      const err: any = await service.create({ requireSupplier: false, items }).then(
+        () => null,
+        (e) => e,
+      );
+
+      expect(err).toBeInstanceOf(NotFoundException);
+      expect(err.getResponse()).toMatchObject({ missingProductIds: ["prod-2"] });
+      expect(prisma.vendorBill.create).not.toHaveBeenCalled();
+    });
+
     it("rounds totalOwed computed from items (no float artifacts)", async () => {
       await service.create({
         requireSupplier: false,
@@ -1125,7 +1144,7 @@ describe("VendorBillsService", () => {
       });
 
       it("repro (dark): raises the PO with the piece-basis unaffected — TODAY's silent wrong value, on purpose while dark", async () => {
-        prisma.product.findMany.mockResolvedValueOnce([
+        prisma.product.findMany.mockResolvedValue([
           { id: "prod-1", name: "Flour 25lb", unitsPerBox: 10, units: [] },
         ]);
 
@@ -1138,7 +1157,7 @@ describe("VendorBillsService", () => {
 
       it("Opus review finding 5: PACK_SIZE_GATE_ENFORCED=on alone never refuses raising the PO — the code constant stays false until PR D", async () => {
         process.env.PACK_SIZE_GATE_ENFORCED = "on";
-        prisma.product.findMany.mockResolvedValueOnce([
+        prisma.product.findMany.mockResolvedValue([
           { id: "prod-1", name: "Flour 25lb", unitsPerBox: 10, units: [] },
         ]);
 
@@ -1174,7 +1193,7 @@ describe("VendorBillsService", () => {
 
       it("enforced + acknowledgePackSizeUnknown: raises the PO through exactly like dark mode", async () => {
         process.env.PACK_SIZE_GATE_ENFORCED = "on";
-        prisma.product.findMany.mockResolvedValueOnce([
+        prisma.product.findMany.mockResolvedValue([
           { id: "prod-1", name: "Flour 25lb", unitsPerBox: 10, units: [] },
         ]);
 
@@ -1185,7 +1204,7 @@ describe("VendorBillsService", () => {
 
       it("enforced: a stated pack never trips the gate", async () => {
         process.env.PACK_SIZE_GATE_ENFORCED = "on";
-        prisma.product.findMany.mockResolvedValueOnce([
+        prisma.product.findMany.mockResolvedValue([
           { id: "prod-1", name: "Flour 25lb", unitsPerBox: 10, units: [] },
         ]);
 
@@ -1198,7 +1217,7 @@ describe("VendorBillsService", () => {
 
       it("enforced: a product with no pack ladder never trips the gate", async () => {
         process.env.PACK_SIZE_GATE_ENFORCED = "on";
-        prisma.product.findMany.mockResolvedValueOnce([
+        prisma.product.findMany.mockResolvedValue([
           { id: "prod-1", name: "Napkins", unitsPerBox: null, units: [] },
         ]);
 

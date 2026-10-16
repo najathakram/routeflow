@@ -345,7 +345,8 @@ export class VendorBillsService {
    * the set of ids; any id it does not return is refused (404 naming them) before a bill row is written.
    */
   private async assertLineProductsInCatalog(items: any[] | undefined | null) {
-    const ids = [...new Set((items ?? []).map((i) => i?.productId).filter(Boolean))] as string[];
+    if (!Array.isArray(items)) return;
+    const ids = [...new Set(items.map((i) => i?.productId).filter(Boolean))] as string[];
     if (ids.length === 0) return;
     const found = await this.prisma.forTenant().product.findMany({
       where: { id: { in: ids } },

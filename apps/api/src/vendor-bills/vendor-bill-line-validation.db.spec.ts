@@ -2,7 +2,7 @@
  * B1236: vendor-bill lines are validated against the caller's own catalog (real Postgres).
  *
  * Two throwaway catalogs, A and B, each own one product. The caller works in catalog A and names catalog B's
- * product id on a bill line, on create and on update. Expected: a 404 or 400 and ZERO rows written (bills and
+ * product id on a bill line, on create and on update. Expected: a 404 and ZERO rows written (bills and
  * billItems snapshotted for both catalogs before and after). A line naming a product of the caller's own
  * catalog still saves, so the check is not a blanket refusal. Receiving a bill never moves the other catalog's
  * stock.
@@ -215,7 +215,7 @@ describeDb("vendor bill lines are validated against the caller's catalog (real P
       () => "RESOLVED",
       (e: any) => {
         const status = typeof e?.getStatus === "function" ? e.getStatus() : undefined;
-        return status === 404 || status === 400
+        return status === 404
           ? "REFUSED"
           : `non-4xx ${status ?? e?.constructor?.name ?? typeof e}: ${String(e?.message ?? e).slice(0, 120)}`;
       },
@@ -253,7 +253,7 @@ describeDb("vendor bill lines are validated against the caller's catalog (real P
   ];
 
   it.each(refusedRoutes)(
-    "%s: 404/400 and 0 rows written in either catalog",
+    "%s: 404 and 0 rows written in either catalog",
     async (_name, call) => {
       const before = await snapshot();
       const verdict = await verdictOf(call);
@@ -287,6 +287,25 @@ describeDb("vendor bill lines are validated against the caller's catalog (real P
       }),
     );
     expect(updated.items.map((i: any) => [i.productId, Number(i.qty)])).toEqual([[f.productA, 4]]);
+  }, 60_000);
+
+  it("fence: free-text lines (no product) and a repeated product id still save on create and update", async () => {
+    const lines = [
+      { productId: null, description: "free text", qty: 1, unitCost: 2 },
+      { productId: "", description: "empty id", qty: 1, unitCost: 2 },
+      { productId: f.productA, description: "first", qty: 1, unitCost: 2 },
+      { productId: f.productA, description: "again", qty: 2, unitCost: 2 },
+    ];
+    const created: any = await asA(() =>
+      bills.create({ supplierId: f.supplierA, billDate: "2026-09-04", items: lines }),
+    );
+    expect(created.items.map((i: any) => i.productId).sort()).toEqual(
+      [null, null, f.productA, f.productA].sort(),
+    );
+
+    const updated: any = await asA(() => bills.update(f.billDraftA, { items: lines }));
+    expect(updated.items).toHaveLength(4);
+    expect(updated.items.filter((i: any) => i.productId === f.productA)).toHaveLength(2);
   }, 60_000);
 
   it("receiving a bill never moves the other catalog's stock", async () => {
