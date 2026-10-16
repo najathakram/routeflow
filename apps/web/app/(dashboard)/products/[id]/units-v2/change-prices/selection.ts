@@ -6,11 +6,8 @@ import type { CustomerPriceMove } from "@routeflow/types";
 // No price is worked out here; this only picks which of the plan's patches go into the draft.
 
 export interface PlanSelection {
-  /** By offer index. */
   ticked: readonly boolean[];
-  /** `followerKey`s: Auto cells pinned as set at their old value (P7 Keep). */
   keeps: ReadonlySet<string>;
-  /** `customerKeepKey`s: customer cells kept at their old price. */
   customerKeeps: ReadonlySet<string>;
 }
 

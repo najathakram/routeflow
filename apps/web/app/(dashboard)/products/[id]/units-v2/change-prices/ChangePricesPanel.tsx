@@ -146,9 +146,7 @@ export function ChangePricesPanel({ onClose }: { onClose: () => void }) {
       <h3 id={`${ids}-title`} className={LBL}>
         Change prices
       </h3>
-      <p className="mt-1 text-sm text-ink-500">
-        Pick one unit and say how much to move it. You see every price before anything changes.
-      </p>
+      <p className="mt-1 text-sm text-ink-500">Pick one unit and say how much to move it.</p>
       <div className="mt-3 grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
         {field(
           "unit",

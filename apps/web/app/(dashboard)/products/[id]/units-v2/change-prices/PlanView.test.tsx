@@ -6,6 +6,7 @@ import { customerChange, emptyPlan, richPlan } from "./plan.test-utils";
 import { EMPTY_SELECTION } from "./selection";
 
 const noop = () => undefined;
+const tierName = (t: number) => (t === 1 ? "Retail" : `Tier ${t}`);
 const mount = (over: Partial<React.ComponentProps<typeof PlanView>> = {}) =>
   render(
     <PlanView
@@ -13,6 +14,8 @@ const mount = (over: Partial<React.ComponentProps<typeof PlanView>> = {}) =>
       selection={EMPTY_SELECTION}
       onToggleOffer={noop}
       onToggleKeep={noop}
+      tierName={tierName}
+      customerName={() => "A customer"}
       {...over}
     />,
   );
@@ -101,6 +104,8 @@ describe("PlanView (V02, SA-799)", () => {
         selection={EMPTY_SELECTION}
         onToggleOffer={noop}
         onToggleKeep={noop}
+        tierName={tierName}
+        customerName={() => "A customer"}
       />,
     );
     expect(screen.getByRole("alert")).toHaveTextContent("Enter an amount above zero.");

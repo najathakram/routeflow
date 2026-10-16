@@ -13,8 +13,8 @@ export interface PlanViewProps {
   onToggleKeep: (follower: FollowerRow, on: boolean) => void;
   onToggleCustomerKeep?: (change: CustomerChange, on: boolean) => void;
   heading?: string;
-  tierName?: (tier: PriceTier) => string;
-  customerName?: (customerId: string) => string;
+  tierName: (tier: PriceTier) => string;
+  customerName: (customerId: string) => string;
   hideFollowers?: boolean;
   extraOffers?: React.ReactNode;
 }
@@ -22,7 +22,6 @@ export interface PlanViewProps {
 // V02 / SA-799: the one "this also changes / also update" panel. It renders a PricePlan and nothing else, so
 // there is no money math here. Offers start unticked, and no row is hidden: rounding moves sit in a <details>.
 
-const defaultTierName = (t: PriceTier): string => (t === 1 ? "Retail" : `Tier ${t}`);
 const SECTION_LABEL = "text-[11px] font-semibold uppercase tracking-[0.08em] text-navy/70";
 const AGAINST = "border-l-4 border-warning bg-warning-bg pl-2";
 
@@ -42,7 +41,6 @@ interface RowProps {
   to: number;
   kept: boolean;
   against?: boolean;
-  keepText?: string;
   onKeep?: (on: boolean) => void;
   why?: string;
 }
@@ -52,7 +50,7 @@ interface Row {
   props: RowProps;
 }
 
-function ChangeRow({ testId, name, from, to, kept, against, keepText, onKeep, why }: RowProps) {
+function ChangeRow({ testId, name, from, to, kept, against, onKeep, why }: RowProps) {
   return (
     <li
       data-testid={testId}
@@ -66,7 +64,7 @@ function ChangeRow({ testId, name, from, to, kept, against, keepText, onKeep, wh
         ) : (
           <Diff from={from} to={to} />
         )}
-        {keepText && onKeep && (
+        {onKeep && (
           <label className="flex items-center gap-1.5 text-xs text-ink-500">
             <input
               type="checkbox"
@@ -74,7 +72,7 @@ function ChangeRow({ testId, name, from, to, kept, against, keepText, onKeep, wh
               onChange={(e) => onKeep(e.target.checked)}
               aria-label={`Keep ${name} at ${formatMoney(from)}`}
             />
-            {keepText}
+            Keep {formatMoney(from)}
           </label>
         )}
       </div>
@@ -95,8 +93,8 @@ export function PlanView({
   onToggleKeep,
   onToggleCustomerKeep,
   heading,
-  tierName = defaultTierName,
-  customerName = () => "A customer",
+  tierName,
+  customerName,
   hideFollowers = false,
   extraOffers,
 }: PlanViewProps) {
@@ -112,7 +110,6 @@ export function PlanView({
         from: f.from,
         to: f.to,
         kept: selection.keeps.has(followerKey(f)),
-        keepText: `Keep ${formatMoney(f.from)}`,
         onKeep: (on: boolean) => onToggleKeep(f, on),
       },
     })),
@@ -126,8 +123,10 @@ export function PlanView({
         to: c.to,
         against: c.against,
         kept: selection.customerKeeps.has(customerKeepKey(c)),
-        keepText: c.against && onToggleCustomerKeep ? `Keep at ${formatMoney(c.from)}` : undefined,
-        onKeep: (on: boolean) => onToggleCustomerKeep?.(c, on),
+        onKeep:
+          c.against && onToggleCustomerKeep
+            ? (on: boolean) => onToggleCustomerKeep(c, on)
+            : undefined,
         why: c.against ? WHY[c.cause] : undefined,
       },
     })),
