@@ -142,7 +142,7 @@ export async function buildOrderStockWorld(label: string, specFile: string) {
       } as any,
     });
     orderIds.push(order.id);
-    const items = [];
+    const items: Array<Awaited<ReturnType<typeof prisma.orderItem.create>>> = [];
     for (const l of opts.lines) {
       items.push(
         await prisma.orderItem.create({
