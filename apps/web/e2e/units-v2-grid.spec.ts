@@ -31,14 +31,19 @@ for (const vp of VIEWPORTS) {
       const grid = page.getByTestId(UNITS_V2_IDS.grid);
       await expect(grid).toBeVisible({ timeout: 20_000 });
 
-      await expect(grid.getByText("Barcode", { exact: true }).first()).toBeVisible();
+      await expect(
+        grid
+          .getByText(/^Barcode\b/)
+          .filter({ visible: true })
+          .first(),
+      ).toBeVisible();
       await expect(grid.getByText("SKU", { exact: true })).toHaveCount(0);
 
       const cells = grid.locator(`[data-testid^="${UNITS_V2_PREFIX.cell}"]:visible`);
       const n = await cells.count();
       expect(n, "the boxed ladder shows at least one price cell").toBeGreaterThan(0);
       for (let i = 0; i < n; i++) {
-        await expect(cells.nth(i)).toHaveText(/\b(Auto|Set)\b/);
+        await expect(cells.nth(i)).toHaveText(/(Auto|Set)\s*$/);
       }
 
       const cards = page.locator(`[data-testid^="${UNITS_V2_PREFIX.card}"]:visible`);

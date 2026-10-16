@@ -31,7 +31,9 @@ for (const vp of VIEWPORTS) {
       await page.goto(`/products/${product.id}`);
       const link = page.getByTestId(UNITS_V2_IDS.headerStockLink);
       await expect(link).toBeVisible({ timeout: 20_000 });
-      await expect(link).toContainText("Stock: see Inventory");
+      await expect(link).toHaveText("see Inventory");
+      await expect(link).toHaveAttribute("aria-label", "Stock: see Inventory");
+      await expect(link).toHaveAttribute("href", "/inventory");
       await expect(page.getByText(/\bin stock\b/i)).toHaveCount(0);
 
       const card = page

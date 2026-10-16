@@ -3,8 +3,8 @@
  *   header "Family. Can't be sold. Choose a variant." -> no v2 grid -> no old units card
  *   -> the Never sold state has no "Create an order with this product" link.
  *
- * LOCAL LANE ONLY (project `units-v2`). Read-only. The family is DISCOVERED over the API (an active product with no parent and
- * at least one variant); a tenant with none is a FAILURE naming what to seed, never a skip. A tenant not served
+ * LOCAL LANE ONLY (project `units-v2`). Discovers an active kind FAMILY product over the API; a tenant with none gets one self-provisioned
+ * (POST /products/families, E2E-FIX-FAM-A/B) - never a skip. A tenant not served
  * `flag.units_prices_v2` FAILS the spec.
  */
 import { test, expect } from "@playwright/test";
@@ -24,19 +24,33 @@ for (const vp of VIEWPORTS) {
     }, info) => {
       await setTenantCookie(context, BASE);
       const ctx = await requireUnitsV2Flag(page);
-      const res = await page.request.get(`${ctx.api}/products`, {
-        headers: ctx.headers,
-        params: { limit: "200" },
-      });
-      expect(res.ok(), `GET /products returned ${res.status()}`).toBe(true);
-      const rows: any[] = ((await res.json()) as any)?.data ?? [];
-      const family = rows.find(
-        (p) => p?.isActive !== false && !p.parentProductId && (p.variants?.length ?? 0) > 0,
-      );
-      expect(
-        family,
-        "No active family product (a parent with variants) on this tenant - seed one on the test tenant and re-run.",
-      ).toBeTruthy();
+      const listFamilies = async () => {
+        const res = await page.request.get(`${ctx.api}/products`, {
+          headers: ctx.headers,
+          params: { limit: "200" },
+        });
+        expect(res.ok(), `GET /products returned ${res.status()}`).toBe(true);
+        const rows: any[] = ((await res.json()) as any)?.data ?? [];
+        // The list rows carry `kind`, not `variants`: a family is kind FAMILY.
+        return rows.find((p) => p?.isActive !== false && p.kind === "FAMILY");
+      };
+      let family = await listFamilies();
+      if (!family) {
+        // The e2e seed has no family: self-provision one on the approved test tenant (idempotent - found next run).
+        const made = await page.request.post(`${ctx.api}/products/families`, {
+          headers: ctx.headers,
+          data: {
+            family: { name: "E2E Fixture Family", pricePerUnit: "5.00" },
+            variants: [
+              { name: "E2E Variant A", sku: "E2E-FIX-FAM-A", pricePerUnit: "5.00" },
+              { name: "E2E Variant B", sku: "E2E-FIX-FAM-B", pricePerUnit: "5.50" },
+            ],
+          },
+        });
+        expect(made.ok(), `POST /products/families returned ${made.status()}`).toBe(true);
+        family = await listFamilies();
+      }
+      expect(family, "no active family product (kind FAMILY) after self-provisioning").toBeTruthy();
 
       await page.goto(`/products/${family.id}`);
       const header = page.getByTestId(UNITS_V2_IDS.familyHeader);
