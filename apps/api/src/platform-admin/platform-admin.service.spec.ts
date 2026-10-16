@@ -2378,6 +2378,67 @@ describe("PlatformAdminService — audit provenance", () => {
     });
   });
 
+  // SA-788 (c) C-R1: the activation result lists the tenant's add-ons before and after (read under the tenant lock at
+  // the start of the transaction and again just before commit), and what changed - including a row this activation
+  // priced. On master the result has no `addons` at all.
+  it("C-R1: activateManualSubscription returns addons { before, after, changed } with the row it priced", async () => {
+    prisma.tenant.findUnique.mockResolvedValue({ id: TENANT_ID, slug: "acme" } as any);
+    prisma.tenant.update.mockResolvedValue({
+      id: TENANT_ID,
+      slug: "acme",
+      status: "ACTIVE",
+      plan: "PROFESSIONAL",
+    } as any);
+    planCatalogService.getPublishedVersion.mockResolvedValue({
+      id: "v-1",
+      definitions: [{ planKey: "SCALE", monthlyPrice: 349, isCustom: false }],
+      addonSkus: [{ sku: "FORECASTING", name: "Forecasting", monthlyPrice: 25 }],
+    } as any);
+    const row = (priceSnapshot: number) => ({
+      addonKey: "FORECASTING",
+      sku: "FORECASTING",
+      active: true,
+      priceSnapshot,
+      isComp: false,
+    });
+    let reads = 0;
+    (prisma as any).tenantAddon.findMany.mockImplementation(async (a: any) =>
+      a?.orderBy && a?.where && Object.keys(a.where).length === 1
+        ? [row(++reads === 1 ? 0 : 25)]
+        : [],
+    );
+
+    const res: any = await service.activateManualSubscription(
+      TENANT_ID,
+      { plan: "PROFESSIONAL", billingPeriodDays: 30, paymentMethod: "BANK_TRANSFER" } as any,
+      ADMIN_ID,
+    );
+
+    expect(res.addons).toEqual({
+      before: [
+        {
+          addonKey: "FORECASTING",
+          sku: "FORECASTING",
+          name: "Forecasting",
+          active: true,
+          priceSnapshot: 0,
+          isComp: false,
+        },
+      ],
+      after: [
+        {
+          addonKey: "FORECASTING",
+          sku: "FORECASTING",
+          name: "Forecasting",
+          active: true,
+          priceSnapshot: 25,
+          isComp: false,
+        },
+      ],
+      changed: [{ addonKey: "FORECASTING", field: "priceSnapshot", before: 0, after: 25 }],
+    });
+  });
+
   describe("Opus item 7: activateManualSubscription vs a held catch-up claim", () => {
     const activate = () =>
       service.activateManualSubscription(
