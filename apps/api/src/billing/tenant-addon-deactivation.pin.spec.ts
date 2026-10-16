@@ -16,6 +16,13 @@
 import { scanSource, findCalls, type CallSite } from "../testing/source-scan";
 
 const TENANT_ADDON_WRITE = /\btenantAddon\s*\.\s*(update|updateMany|upsert|create|createMany)\s*\(/;
+/** SA-788: since the writer module exists, a row is switched off through one of ITS functions. */
+const WRITER_CALL = /\b(updateAddonRowTx|updateAddonRowsTx|upsertAddonRowTx|createAddonRowTx)\s*\(/;
+/** Every call that can write a TenantAddon row: a direct delegate write or a writer-module call. */
+const addonWrites = (file: string, text: string): CallSite[] => [
+  ...findCalls(file, text, TENANT_ADDON_WRITE),
+  ...findCalls(file, text, WRITER_CALL),
+];
 
 /** The (file, function) pairs allowed to switch a row off: explicit human intent only. */
 export const DEACTIVATION_ALLOWLIST: readonly { file: string; fn: string; reason: string }[] = [
@@ -44,7 +51,7 @@ export function writesInactive(site: Pick<CallSite, "args">): boolean {
 const key = (s: Pick<CallSite, "file" | "fn">) => `${s.file}#${s.fn}`;
 
 describe("SA-786 P1 - no code outside the allowlist writes `active: false` on tenantAddon", () => {
-  const sites = scanSource(TENANT_ADDON_WRITE);
+  const sites = [...scanSource(TENANT_ADDON_WRITE), ...scanSource(WRITER_CALL)];
   const deactivating = sites.filter(writesInactive);
 
   it("walks a non-trivial number of tenantAddon writes (an empty scan must not report green)", () => {
@@ -57,27 +64,27 @@ describe("SA-786 P1 - no code outside the allowlist writes `active: false` on te
       class Bad {
         async sneaky(tx: any) {
           await tx.tenantAddon.updateMany({ where: { tenantId }, data: { active: false } });
+          await updateAddonRowsTx(tx, events, { where: {}, data: { active: false }, actor });
         }
         async fine(tx: any) {
           // await tx.tenantAddon.update({ where: { id }, data: { active: false } });
           await tx.tenantAddon.update({ where: { id }, data: { active: true } });
+          await updateAddonRowTx(tx, events, { id, data: { active: true }, actor });
           await tx.tenantAddon.findMany({ where: { active: false } });
         }
       }`;
-    const hits = findCalls(
-      "billing/planted.ts",
-      planted.replace(/^ {6}/gm, ""),
-      TENANT_ADDON_WRITE,
-    );
+    const hits = addonWrites("billing/planted.ts", planted.replace(/^ {6}/gm, ""));
     expect(hits.map((h) => `${h.fn}:${h.method}:${writesInactive(h)}`)).toEqual([
       "sneaky:updateMany:true",
       "fine:update:false",
+      "sneaky:updateAddonRowsTx:true",
+      "fine:updateAddonRowTx:false",
     ]);
     expect(
       hits
         .filter(writesInactive)
         .filter((h) => !DEACTIVATION_ALLOWLIST.some((a) => key(a) === key(h))),
-    ).toHaveLength(1);
+    ).toHaveLength(2);
   });
 
   it("every deactivating write sits inside an allowlisted (file, function)", () => {

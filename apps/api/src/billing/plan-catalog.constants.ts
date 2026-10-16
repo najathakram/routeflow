@@ -311,6 +311,8 @@ export const BILLING_EVENTS = {
   PLAN_DOWNGRADE_SCHEDULED: "plan.downgrade_scheduled",
   ADDON_ENABLED: "addon.enabled",
   ADDON_DISABLED: "addon.disabled",
+  /** SA-788: a TenantAddon row changed (record only; `amountDelta` is always null, never part of MRR). */
+  ADDON_STATE_CHANGED: "addon.state_changed",
   SEAT_ADDED: "seat.added",
   SEAT_FREED: "seat.freed",
   GRACE_STARTED: "grace.started",
