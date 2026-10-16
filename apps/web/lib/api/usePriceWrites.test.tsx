@@ -90,6 +90,16 @@ describe("usePriceWrites", () => {
       expect(await saveWith({})).not.toHaveBeenCalled();
     });
 
+    it("a successful undo refetches the customers too (it reversed customer prices server-side)", async () => {
+      mockPost.mockResolvedValue(ok);
+      const qc = new QueryClient();
+      const spy = jest.spyOn(qc, "invalidateQueries");
+      const { result } = renderHook(() => useUndoPrices("p1"), { wrapper: wrap(qc) });
+      result.current.mutate({ auditId: "a1", expectedRevision: 8, expectedPriceState: "ps" });
+      await waitFor(() => expect(result.current.isSuccess).toBe(true));
+      expect(spy).toHaveBeenCalledWith({ queryKey: productCustomerPricesKey("p1") });
+    });
+
     it("a stale undo reloads the customers along with the grid", async () => {
       mockPost.mockRejectedValue({ response: { data: { code: "LADDER_REVISION_STALE" } } });
       const qc = new QueryClient();

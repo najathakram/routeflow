@@ -30,12 +30,16 @@ function build(rows: Row[], units: { id: string; factorToBase: number; label: st
   const customerFindMany = jest.fn(async (_args: any) => rows);
   const db = { customer: { findMany: customerFindMany } };
   const forTenant = jest.fn(() => db);
+  const getTenantId = jest.fn(() => "t1");
   const read = jest.fn(async (_db: unknown, productId: string) => {
     if (productId !== PRODUCT_ID) throw new NotFoundException("Product not found");
     return { revision: 7, units };
   });
-  const service = new ProductCustomerPricesService({ forTenant } as never, { read } as never);
-  return { service, customerFindMany, forTenant, read, db };
+  const service = new ProductCustomerPricesService(
+    { forTenant, getTenantId } as never,
+    { read } as never,
+  );
+  return { service, customerFindMany, forTenant, getTenantId, read, db };
 }
 
 describe("ProductCustomerPricesService", () => {
@@ -177,16 +181,34 @@ describe("ProductCustomerPricesService", () => {
     expect(r.truncated).toBe(false);
   });
 
-  it("asks for live customers with a typed price on THIS product, and reads only this product's rows (no N+1)", async () => {
+  it("asks for live customers of this tenant with a typed price on THIS product, and reads only this product's rows (no N+1)", async () => {
     const { service, customerFindMany } = build([customer("c1")]);
     await service.get(PRODUCT_ID);
     expect(customerFindMany).toHaveBeenCalledTimes(1);
     const args = customerFindMany.mock.calls[0][0];
     expect(args.where).toEqual({
       deletedAt: null,
-      unitPrices: { some: { productId: PRODUCT_ID } },
+      unitPrices: { some: { productId: PRODUCT_ID, tenantId: "t1" } },
     });
-    expect(args.select.unitPrices.where).toEqual({ productId: PRODUCT_ID });
+    // typed rows in a fixed order, so which of two collapsing cells wins never depends on the database
+    expect(args.select.unitPrices).toEqual({
+      where: { productId: PRODUCT_ID, tenantId: "t1" },
+      select: { unitRef: true, price: true },
+      orderBy: { unitRef: "asc" },
+    });
+    // the customer-product row: this tenant's, or a legacy one with no tenant; one row per customer and product
+    expect(args.select.prices).toEqual({
+      where: { productId: PRODUCT_ID, OR: [{ tenantId: "t1" }, { tenantId: null }] },
+      select: { pricingTier: true, orderUnitRef: true },
+    });
+  });
+
+  it("with no tenant in context (a platform caller) it adds no tenant filter of its own", async () => {
+    const { service, customerFindMany, getTenantId } = build([customer("c1")]);
+    getTenantId.mockReturnValue(null as never);
+    await service.get(PRODUCT_ID);
+    const args = customerFindMany.mock.calls[0][0];
+    expect(args.where.unitPrices).toEqual({ some: { productId: PRODUCT_ID } });
     expect(args.select.prices.where).toEqual({ productId: PRODUCT_ID });
   });
 

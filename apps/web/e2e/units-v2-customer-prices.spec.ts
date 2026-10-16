@@ -113,19 +113,22 @@ for (const vp of VIEWPORTS) {
         await expect(plan.getByText(customerName).first()).toBeVisible();
         await shot(page, info, "customer-prices-plan");
       } finally {
+        // Cleanup must never hide the test's own failure: report a failed retire, do not assert on it.
         if (productId) {
           const r = await page.request.patch(`${api}/products/${productId}`, {
             headers,
             data: { isActive: false },
           });
-          expect(r.ok(), `retire the throwaway product: ${r.status()}`).toBeTruthy();
+          // eslint-disable-next-line no-console
+          if (!r.ok()) console.warn(`could not retire the throwaway product: ${r.status()}`);
         }
         if (customerId) {
           const r = await page.request.patch(`${api}/customers/${customerId}/status`, {
             headers,
             data: { status: "INACTIVE" },
           });
-          expect(r.ok(), `retire the throwaway customer: ${r.status()}`).toBeTruthy();
+          // eslint-disable-next-line no-console
+          if (!r.ok()) console.warn(`could not retire the throwaway customer: ${r.status()}`);
         }
       }
     });

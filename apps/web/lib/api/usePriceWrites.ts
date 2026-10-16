@@ -94,6 +94,6 @@ export const useSavePrices = (productId: string) =>
     (body) => (body.customerMoves?.length ?? 0) > 0,
   );
 
-/** POST /products/:id/prices/undo: reverses one save by its audit id. */
+/** POST /products/:id/prices/undo: reverses one save by its audit id (customer prices included, so they refetch). */
 export const useUndoPrices = (productId: string) =>
-  usePriceWrite<UndoPricesRequest>(productId, "/prices/undo", true, () => false);
+  usePriceWrite<UndoPricesRequest>(productId, "/prices/undo", true, () => true);

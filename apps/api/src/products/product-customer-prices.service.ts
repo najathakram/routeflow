@@ -30,6 +30,9 @@ export class ProductCustomerPricesService {
 
   async get(productId: string): Promise<ProductCustomerPricesResponse> {
     const db = this.prisma.forTenant();
+    // The tenant client already scopes every read; the nested rows say it too (a platform caller has no tenant).
+    const tenantId = this.prisma.getTenantId();
+    const mine = tenantId ? { tenantId } : {};
     const model = await this.grid.read(db, productId);
     const level = (ref: string) => canonicalUnitRef(model.units, ref);
 
@@ -41,7 +44,7 @@ export class ProductCustomerPricesService {
       prices: { pricingTier: number | null; orderUnitRef: string | null }[];
       unitPrices: { unitRef: string; price: unknown }[];
     }[] = await db.customer.findMany({
-      where: { deletedAt: null, unitPrices: { some: { productId } } },
+      where: { deletedAt: null, unitPrices: { some: { productId, ...mine } } },
       orderBy: [{ createdAt: "desc" }, { id: "asc" }],
       take: CUSTOMER_PRICES_CAP + 1,
       select: {
@@ -49,12 +52,18 @@ export class ProductCustomerPricesService {
         businessName: true,
         displayName: true,
         pricingTier: true,
+        // CustomerPrice.tenantId is nullable (legacy rows): this tenant's row, or one with no tenant. One row per
+        // customer and product (unique), so no `take`.
         prices: {
-          where: { productId },
+          where: { productId, ...(tenantId ? { OR: [{ tenantId }, { tenantId: null }] } : {}) },
           select: { pricingTier: true, orderUnitRef: true },
-          take: 1,
         },
-        unitPrices: { where: { productId }, select: { unitRef: true, price: true } },
+        // A fixed order, so which of two cells that collapse to one level wins never depends on the database.
+        unitPrices: {
+          where: { productId, ...mine },
+          select: { unitRef: true, price: true },
+          orderBy: { unitRef: "asc" },
+        },
       },
     });
 
