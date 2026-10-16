@@ -51,4 +51,25 @@ describe("price write DTOs", () => {
       "expectedRevision",
     );
   });
+
+  it("undo accepts a skip list (null seen allowed) and refuses a malformed item", async () => {
+    const base = { auditId: "a", expectedRevision: 1, expectedPriceState: "s" };
+    const good = {
+      ...base,
+      skip: [
+        { customerId: "c1", ref: "pack", seen: null },
+        { customerId: "c2", ref: "u1", seen: 4.5 },
+      ],
+    };
+    expect(await errorsOf(UndoPricesDto, good)).toEqual([]);
+    expect(
+      await errorsOf(UndoPricesDto, {
+        ...base,
+        skip: [{ customerId: "c1", ref: "pack", seen: "x" }],
+      }),
+    ).toContain("skip");
+    expect(await errorsOf(UndoPricesDto, { ...base, skip: [{ ref: "pack", seen: 1 }] })).toContain(
+      "skip",
+    );
+  });
 });

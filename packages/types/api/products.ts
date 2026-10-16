@@ -407,6 +407,13 @@ export interface ProductPriceGridRowDto {
   kind: "pack" | "base" | "unit";
   code: string | null;
   cells: ProductPriceGridCellDto[];
+  /**
+   * False when the price write would refuse this row (a variant, family or recipe product is priced elsewhere; the
+   * implicit piece row has no unit yet). The UI hides Edit there. Absent = editable.
+   */
+  editable?: boolean;
+  /** Plain words for why, set only when `editable` is false. */
+  notEditableReason?: string;
 }
 export interface ProductPriceGridDto {
   productId: string;

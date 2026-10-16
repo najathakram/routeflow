@@ -19,6 +19,7 @@ interface World {
   tierUnits: Record<string, any>[];
   cups: { id: string; customerId: string; productId: string; unitRef: string; price: number }[];
   customers: string[];
+  deletedCustomers: string[];
   audits: Record<string, any>[];
   writes: string[];
 }
@@ -63,6 +64,7 @@ function makeWorld(over: Partial<World> = {}): World {
     tierUnits: [],
     cups: [{ id: "cup-1", customerId: "c1", productId: PRODUCT_ID, unitRef: "pack", price: 12 }],
     customers: ["c1", "c2"],
+    deletedCustomers: ["c3"],
     audits: [],
     writes: [],
     ...over,
@@ -108,7 +110,10 @@ function makeTx(w: World) {
     productTierUnit: { findMany: jest.fn(async () => w.tierUnits) },
     customer: {
       findMany: jest.fn(async ({ where }: any) =>
-        w.customers.filter((c) => where.id.in.includes(c)).map((id) => ({ id })),
+        [...w.customers, ...w.deletedCustomers]
+          .filter((c) => where.id.in.includes(c))
+          .filter((c) => where.deletedAt !== null || !w.deletedCustomers.includes(c))
+          .map((id) => ({ id })),
       ),
     },
     customerUnitPrice: {
@@ -365,6 +370,16 @@ describe("ProductPriceWriteService.save", () => {
       expect(world.writes).toEqual([]);
     });
 
+    it("a soft-deleted customer is refused as a move target (400), nothing written", async () => {
+      const { world, service, grid } = build();
+      const r = await req(grid, {
+        customerMoves: [{ customerId: "c3", ref: "pack", tier: 1, from: null, to: 5 }],
+      });
+      const err = await rejection(service.save(PRODUCT_ID, r, null));
+      expect(err.getResponse().code).toBe(API_ERROR_CODES.PRICE_EDIT_INVALID);
+      expect(world.writes).toEqual([]);
+    });
+
     it("a customer outside the tenant is refused (400) before any write", async () => {
       const { world, service, grid } = build();
       const r = await req(grid, {
@@ -415,6 +430,47 @@ describe("ProductPriceWriteService.save", () => {
     });
   });
 
+  describe("concurrent unit edits", () => {
+    it("takes the product-units advisory lock FIRST, after the lock timeout, then the product row", async () => {
+      const { tx, service, grid } = build();
+      await service.save(PRODUCT_ID, await req(grid), null);
+      const sqls = tx.$executeRaw.mock.calls.map((c: any[]) => (c[0] as string[]).join("?"));
+      const at = (needle: string) => sqls.findIndex((q: string) => q.includes(needle));
+      expect(at("lock_timeout")).toBe(0);
+      expect(at("pg_advisory_xact_lock(hashtext('product-units')")).toBe(1);
+      expect(at('FROM "Product"')).toBeGreaterThan(1);
+    });
+
+    it.each([
+      ["a unit price", (w: World) => (w.units[0].price = "70.00")],
+      ["a unit size", (w: World) => (w.units[0].factorToBase = 60)],
+      ["a unit name", (w: World) => (w.units[0].label = "Carton")],
+      ["the pack size", (w: World) => (w.product!.unitsPerBox = 24)],
+      ["the pack name", (w: World) => (w.product!.packLabel = "Tray")],
+      ["a unit deleted", (w: World) => w.units.splice(0, 1)],
+    ])(
+      "%s between the client read and the save is 409 LADDER_REVISION_STALE",
+      async (_n, change) => {
+        const { world, service, grid } = build();
+        const r = await req(grid);
+        change(world);
+        const err = await rejection(service.save(PRODUCT_ID, r, null));
+        expect(err.getResponse().code).toBe(API_ERROR_CODES.LADDER_REVISION_STALE);
+        expect(world.writes).toEqual([]);
+      },
+    );
+
+    it("a row that vanishes mid-write (P2025) is 409, never a 500", async () => {
+      const { tx, service, grid } = build();
+      const r = await req(grid, { patches: [{ ref: "u-case", tier: 1, to: 66 }] });
+      tx.productUnit.update.mockRejectedValueOnce(
+        Object.assign(new Error("gone"), { code: "P2025" }),
+      );
+      const err = await rejection(service.save(PRODUCT_ID, r, null));
+      expect(err.getResponse().code).toBe(API_ERROR_CODES.LADDER_REVISION_STALE);
+    });
+  });
+
   describe("orderUnit", () => {
     it("a changed order unit is 409 PRICING_RULES_NOT_READY until U-1", async () => {
       const { world, service, grid } = build();
@@ -433,16 +489,45 @@ describe("ProductPriceWriteService.save", () => {
     });
   });
 
-  it("the piece row is created by its first price, and the inverse names the new row", async () => {
-    const { world, service, grid } = build({ units: [] });
-    const res = await service.save(
-      PRODUCT_ID,
-      await req(grid, { patches: [{ ref: "base", tier: 1, to: 1.2 }] }),
-      null,
-    );
-    expect(world.units).toHaveLength(1);
-    expect(world.units[0]).toMatchObject({ label: "Piece", factorToBase: 1, price: 1.2 });
-    expect(res.undo?.patches).toEqual([{ ref: "u-new", tier: 1, to: null }]);
+  describe("the implicit base row (no Piece unit yet)", () => {
+    const refused = async (over: Partial<SavePricesRequest>) => {
+      const ctx = build({ units: [] });
+      const err = await rejection(ctx.service.save(PRODUCT_ID, await req(ctx.grid, over), null));
+      expect(err).toBeInstanceOf(BadRequestException);
+      expect(err.getResponse().code).toBe(API_ERROR_CODES.PRICE_EDIT_INVALID);
+      expect(err.getResponse().problems.join(" ")).toContain("Add the Piece unit first");
+      expect(ctx.world.writes).toEqual([]);
+      expect(ctx.world.units).toHaveLength(0);
+      expect(ctx.world.audits).toHaveLength(0);
+    };
+
+    it("a price on it is 400 and no unit is minted", async () => {
+      await refused({ patches: [{ ref: "base", tier: 1, to: 1.2 }] });
+    });
+
+    it("a customer price on it is 400 and nothing is written", async () => {
+      await refused({
+        customerMoves: [{ customerId: "c1", ref: "base", tier: 1, from: null, to: 1.2 }],
+      });
+    });
+
+    it("the reviewer scenario: Box(12), no Piece, patch base + customer move on base -> 400, nothing written", async () => {
+      await refused({
+        patches: [{ ref: "base", tier: 1, to: 1.2 }],
+        customerMoves: [{ customerId: "c1", ref: "base", tier: 1, from: null, to: 1.1 }],
+      });
+    });
+
+    it("a keep on it is 400 too; the other rows still save", async () => {
+      await refused({
+        patches: [{ ref: "pack", tier: 3, to: 10 }],
+        keeps: [{ ref: "base", tier: 2, value: 0.92 }],
+      });
+      const ok = build({ units: [] });
+      await expect(ok.service.save(PRODUCT_ID, await req(ok.grid), null)).resolves.toMatchObject({
+        revision: 4,
+      });
+    });
   });
 
   it("a variant is 409 FAMILY_PRICE_AUTHORITY and a family or recipe row is 400, nothing written", async () => {
@@ -624,7 +709,7 @@ describe("ProductPriceWriteService.undo", () => {
     expect(world.product!.priceRevision).toBe(10);
   });
 
-  it("a customer cell changed since the save is left alone by the undo", async () => {
+  it("a customer cell changed since the save refuses the WHOLE undo: 409 with conflicts, nothing written", async () => {
     const ctx = build();
     const saveRes = await ctx.service.save(
       PRODUCT_ID,
@@ -635,13 +720,168 @@ describe("ProductPriceWriteService.undo", () => {
     );
     ctx.world.cups[0].price = 15;
     const g = await ctx.grid.get(PRODUCT_ID);
+    const before = ctx.world.writes.length;
+    const err = await rejection(
+      ctx.service.undo(
+        PRODUCT_ID,
+        {
+          auditId: saveRes.auditId,
+          expectedRevision: g.revision,
+          expectedPriceState: g.priceState,
+        },
+        null,
+      ),
+    );
+    expect(err.getResponse().code).toBe(API_ERROR_CODES.LADDER_REVISION_STALE);
+    expect(err.getResponse().conflicts).toEqual([
+      { customerId: "c1", ref: "pack", tier: 1, expected: 13, current: 15 },
+    ]);
+    expect(ctx.world.cups[0].price).toBe(15);
+    expect(ctx.world.writes).toHaveLength(before);
+    expect(ctx.world.audits).toHaveLength(1);
+    expect(JSON.stringify(ctx.world.audits)).not.toContain("skippedCustomerMoves");
+  });
+
+  describe("undo skip list (SA-809 section 2)", () => {
+    /** One save that moved c1 (12 -> 13) and created c2's Case price (70). */
+    async function twoCells() {
+      const ctx = build();
+      const saveRes = await ctx.service.save(
+        PRODUCT_ID,
+        await req(ctx.grid, {
+          customerMoves: [
+            { customerId: "c1", ref: "pack", tier: 1, from: 12, to: 13 },
+            { customerId: "c2", ref: "u-case", tier: 1, from: null, to: 70 },
+          ],
+        }),
+        null,
+      );
+      const undo = async (skip?: { customerId: string; ref: string; seen: number | null }[]) => {
+        const g = await ctx.grid.get(PRODUCT_ID);
+        return ctx.service.undo(
+          PRODUCT_ID,
+          {
+            auditId: saveRes.auditId,
+            expectedRevision: g.revision,
+            expectedPriceState: g.priceState,
+            ...(skip ? { skip } : {}),
+          },
+          null,
+        );
+      };
+      return { ...ctx, undo, auditId: saveRes.auditId };
+    }
+    const c1 = (seen: number | null) => ({ customerId: "c1", ref: "pack", seen });
+
+    it("U1: 409 lists the changed cell; undo with the right seen restores the rest in ONE write and keeps that cell", async () => {
+      const { world, undo } = await twoCells();
+      world.cups.find((c) => c.customerId === "c1")!.price = 15;
+
+      const err = await rejection(undo());
+      expect(err.getResponse().conflicts).toEqual([
+        { customerId: "c1", ref: "pack", tier: 1, expected: 13, current: 15 },
+      ]);
+
+      const res = await undo([c1(15)]);
+      expect(world.cups.find((c) => c.customerId === "c1")!.price).toBe(15);
+      expect(world.cups.find((c) => c.customerId === "c2")).toBeUndefined();
+      expect(world.product!.priceTier3).toBe("0.00");
+      expect(res.skipped).toEqual([{ customerId: "c1", ref: "pack", tier: 1, current: 15 }]);
+      expect(world.writes.filter((x) => x === "product.update")).toHaveLength(2);
+      const undone = world.audits.filter((a) => a.action === AUDIT_ACTIONS.PRODUCT_PRICES_UNDONE);
+      expect(undone).toHaveLength(1);
+      expect(undone[0].meta.skipped).toEqual(res.skipped);
+      expect(res.revision).toBe(5);
+    });
+
+    it("U2: the skipped cell changed again before the confirm -> 409 again with the new value, nothing written", async () => {
+      const { world, undo } = await twoCells();
+      const cell = world.cups.find((c) => c.customerId === "c1")!;
+      cell.price = 15;
+      await rejection(undo());
+      cell.price = 16; // changes again before the confirm
+      const before = world.writes.length;
+      const err = await rejection(undo([c1(15)]));
+      expect(err.getResponse().code).toBe(API_ERROR_CODES.LADDER_REVISION_STALE);
+      expect(err.getResponse().conflicts).toEqual([
+        { customerId: "c1", ref: "pack", tier: 1, expected: 13, current: 16 },
+      ]);
+      expect(world.writes).toHaveLength(before);
+    });
+
+    it("U3: skipping a cell that was not reported, or one that is not a restored customer cell, is 400", async () => {
+      const { world, undo } = await twoCells();
+      world.cups.find((c) => c.customerId === "c1")!.price = 15;
+      const before = world.writes.length;
+      for (const bad of [
+        [c1(15), { customerId: "c2", ref: "u-case", seen: 70 }], // c2 did not change
+        [{ customerId: "c1", ref: "u-case", seen: 15 }], // not a cell this undo restores
+        [{ customerId: "nobody", ref: "pack", seen: null }],
+      ]) {
+        const err = await rejection(undo(bad));
+        expect(err).toBeInstanceOf(BadRequestException);
+        expect(err.getResponse().code).toBe(API_ERROR_CODES.PRICE_EDIT_INVALID);
+      }
+      expect(world.writes).toHaveLength(before);
+    });
+
+    it("a duplicate skip item is 400; a skip with nothing in conflict is 400", async () => {
+      const { world, undo } = await twoCells();
+      world.cups.find((c) => c.customerId === "c1")!.price = 15;
+      const dup = await rejection(undo([c1(15), c1(15)]));
+      expect(dup.getResponse().code).toBe(API_ERROR_CODES.PRICE_EDIT_INVALID);
+      world.cups.find((c) => c.customerId === "c1")!.price = 13; // back to what the save left
+      const none = await rejection(undo([c1(13)]));
+      expect(none.getResponse().code).toBe(API_ERROR_CODES.PRICE_EDIT_INVALID);
+    });
+
+    it("a cell whose row was deleted since is skipped by seen null", async () => {
+      const { world, undo } = await twoCells();
+      world.cups = world.cups.filter((c) => c.customerId !== "c1");
+      const res = await undo([c1(null)]);
+      expect(res.skipped).toEqual([{ customerId: "c1", ref: "pack", tier: 1, current: null }]);
+      expect(world.cups.find((c) => c.customerId === "c1")).toBeUndefined();
+    });
+
+    it("product cells are never skippable: a changed product price is the plain stale 409", async () => {
+      const { world, service, grid, auditId } = await twoCells();
+      const g = await grid.get(PRODUCT_ID);
+      world.product!.priceTier4 = "9.00";
+      const err = await rejection(
+        service.undo(
+          PRODUCT_ID,
+          {
+            auditId,
+            expectedRevision: g.revision,
+            expectedPriceState: g.priceState,
+            skip: [c1(13)],
+          },
+          null,
+        ),
+      );
+      expect(err.getResponse().code).toBe(API_ERROR_CODES.LADDER_REVISION_STALE);
+      expect(err.getResponse().conflicts).toBeUndefined();
+    });
+  });
+
+  it("an undo still works when a customer was soft-deleted and its cell is untouched", async () => {
+    const ctx = build();
+    const saveRes = await ctx.service.save(
+      PRODUCT_ID,
+      await req(ctx.grid, {
+        customerMoves: [{ customerId: "c1", ref: "pack", tier: 1, from: 12, to: 13 }],
+      }),
+      null,
+    );
+    ctx.world.customers = ctx.world.customers.filter((c) => c !== "c1");
+    ctx.world.deletedCustomers.push("c1");
+    const g = await ctx.grid.get(PRODUCT_ID);
     await ctx.service.undo(
       PRODUCT_ID,
       { auditId: saveRes.auditId, expectedRevision: g.revision, expectedPriceState: g.priceState },
       null,
     );
-    expect(ctx.world.cups[0].price).toBe(15);
-    expect(ctx.world.audits[1].meta.skippedCustomerMoves).toBe(1);
+    expect(ctx.world.cups[0].price).toBe(12);
   });
 
   it("an audit row of another product is not undoable here (cross-tenant/product isolation)", async () => {

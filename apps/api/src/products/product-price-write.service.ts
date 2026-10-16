@@ -2,7 +2,6 @@ import { BadRequestException, ConflictException, Injectable } from "@nestjs/comm
 import {
   PricingRulesNotReadyError,
   applyCellPatches,
-  baseLabelOf,
   ladderPrice,
   materializePack,
   planCellEdit,
@@ -14,24 +13,37 @@ import {
   type PriceTier,
 } from "@routeflow/pricing";
 import type {
+  CustomerPriceConflict,
   CustomerPriceMove,
   PriceCellPatch,
   SavePricesRequest,
   SavePricesResponse,
+  SkippedCustomerCell,
   UndoPricesRequest,
+  UndoSkipCell,
 } from "@routeflow/types";
 import { AUDIT_ACTIONS } from "../audit/audit-actions.constant";
 import { API_ERROR_CODES } from "../common/api-error-codes";
-import { STOCK_TX_OPTIONS, lockProductsForStock } from "../common/product-locks";
+import {
+  STOCK_TX_OPTIONS,
+  lockProductsForStock,
+  setStockLockTimeout,
+} from "../common/product-locks";
 import { familyPriceAuthorityError } from "./family-price";
 import { assertOrderUnitSwitchAllowed, pricingRulesNotReady } from "../common/pricing-rules-ready";
 import { PrismaService } from "../prisma/prisma.service";
-import { ProductPriceGridService, type PriceModel } from "./product-price-grid.service";
+import {
+  ProductPriceGridService,
+  addUnitFirst,
+  governedReason,
+  type PriceModel,
+} from "./product-price-grid.service";
 
 type Tx = any;
 
 const STALE_MESSAGE =
   "These prices changed since you opened them. Reload to see the latest, then try again.";
+const SKIP_NOT_REPORTED = "Only a customer price listed as changed can be skipped when undoing.";
 const UNDO_UNAVAILABLE_MESSAGE = "That change can no longer be undone.";
 
 const cellKey = (c: { ref: string; tier: number }) => `${c.ref}|${c.tier}`;
@@ -67,14 +79,7 @@ export class ProductPriceWriteService {
       if (dto.orderUnit != null && dto.orderUnit !== m.view.anchor) assertOrderUnitSwitchAllowed();
 
       const cells = this.planCells(m, dto);
-      const moves = await this.checkMoves(
-        tx,
-        m,
-        productId,
-        tenantId,
-        dto.customerMoves ?? [],
-        false,
-      );
+      const moves = await this.checkMoves(tx, m, productId, tenantId, dto.customerMoves ?? []);
       const { inverse } = await this.apply(tx, m, productId, cells, moves);
 
       const request = {
@@ -149,14 +154,16 @@ export class ProductPriceWriteService {
       // A unit deleted since the save: its cells cannot be put back.
       if (patches.some((p) => !m.view.rows.some((r) => r.ref === p.ref)))
         throw this.undoUnavailable();
-      // Customer cells the inverse would touch that someone changed since are left as they are.
+      // Strict: if ANY customer cell the inverse would restore changed since the save, the whole undo is refused
+      // (409 with `conflicts`), never partly applied.
       const moves = await this.checkMoves(
         tx,
         m,
         productId,
         tenantId,
         stored.customerMoves ?? [],
-        true,
+        false,
+        dto.skip ?? [],
       );
       await this.apply(tx, m, productId, patches, moves);
 
@@ -168,16 +175,21 @@ export class ProductPriceWriteService {
           entityId: productId,
           meta: {
             undoes: dto.auditId,
+            skipped: moves.skipped,
             revisionBefore: m.revision,
             revisionAfter: m.revision + 1,
-            skippedCustomerMoves: moves.skipped,
             actor: actorId,
           },
         },
         select: { id: true },
       });
       const fresh = await this.grid.read(tx, productId);
-      return { revision: fresh.revision, auditId: audit.id, grid: fresh.grid };
+      return {
+        revision: fresh.revision,
+        auditId: audit.id,
+        grid: fresh.grid,
+        ...(moves.skipped.length > 0 ? { skipped: moves.skipped } : {}),
+      };
     });
   }
 
@@ -197,9 +209,17 @@ export class ProductPriceWriteService {
       seen.add(cellKey(c));
     }
 
+    // The implicit base row has no ProductUnit: the price write never mints one (Add unit does, through
+    // ProductUnitsService), so a price on it is refused before anything is planned.
+    const baseRow = m.view.rows.find((r) => r.ref === "base");
+    if (baseRow && [...dto.patches, ...keeps].some((c) => c.ref === "base")) {
+      problems.push(addUnitFirst(baseRow.label));
+    }
+
     let view = m.view;
     const out: CellPatch[] = [];
     for (const p of dto.patches) {
+      if (p.ref === "base" && baseRow) continue;
       const plan = planCellEdit(view, p.ref, p.tier as PriceTier, p.to, m.rules);
       if (plan.problems.length > 0) {
         problems.push(...plan.problems);
@@ -209,6 +229,7 @@ export class ProductPriceWriteService {
       out.push(...plan.patches);
     }
     for (const k of keeps) {
+      if (k.ref === "base" && baseRow) continue;
       const row = m.view.rows.find((r) => r.ref === k.ref);
       if (!row) {
         problems.push("That unit is not on this product.");
@@ -234,8 +255,8 @@ export class ProductPriceWriteService {
   }
 
   /**
-   * Validates the customer cells, locks their rows (ordered) and applies the value compare-and-set. `lenient` (Undo)
-   * drops a cell whose row no longer holds `from`; a save refuses with 409.
+   * Validates the customer cells, locks their rows (ordered) and applies the value compare-and-set: every cell whose
+   * row no longer holds `from` is a conflict, and any conflict is a 409 LADDER_REVISION_STALE listing them all.
    */
   private async checkMoves(
     tx: Tx,
@@ -243,7 +264,8 @@ export class ProductPriceWriteService {
     productId: string,
     tenantId: string,
     raw: readonly CustomerPriceMove[],
-    lenient: boolean,
+    requireLiveCustomers = true,
+    skip: readonly UndoSkipCell[] = [],
   ) {
     const problems: string[] = [];
     const seen = new Set<string>();
@@ -262,8 +284,9 @@ export class ProductPriceWriteService {
         );
       }
       seen.add(key);
-      if (!m.view.rows.some((r) => r.ref === mv.ref))
-        problems.push("That unit is not on this product.");
+      const unitRow = m.view.rows.find((r) => r.ref === mv.ref);
+      if (!unitRow) problems.push("That unit is not on this product.");
+      else if (mv.ref === "base") problems.push(addUnitFirst(unitRow.label));
       if (mv.from == null && mv.to == null)
         problems.push("A customer price change needs a new price.");
       if ((mv.from != null && mv.from <= 0) || (mv.to != null && !validateSetPrice(mv.to).ok)) {
@@ -271,14 +294,24 @@ export class ProductPriceWriteService {
       }
     }
     const ids = [...new Set(wanted.map((mv) => mv.customerId))].sort();
-    if (ids.length === 0)
-      return { writes: [] as WriteMove[], inverse: [] as CustomerPriceMove[], skipped: 0 };
+    if (ids.length === 0) {
+      if (skip.length > 0) throw this.invalid([SKIP_NOT_REPORTED]);
+      return {
+        writes: [] as WriteMove[],
+        inverse: [] as CustomerPriceMove[],
+        skipped: [] as SkippedCustomerCell[],
+      };
+    }
 
-    const found: { id: string }[] = await tx.customer.findMany({
-      where: { id: { in: ids } },
-      select: { id: true },
-    });
-    if (found.length !== ids.length) problems.push("A customer on this change was not found.");
+    // A save may only target a live customer (not outside the tenant, not soft-deleted). An Undo restores cells the
+    // save wrote when the customer was live; a customer gone since shows up as a conflict below instead.
+    if (requireLiveCustomers) {
+      const found: { id: string }[] = await tx.customer.findMany({
+        where: { id: { in: ids }, deletedAt: null },
+        select: { id: true },
+      });
+      if (found.length !== ids.length) problems.push("A customer on this change was not found.");
+    }
     if (problems.length > 0) throw this.invalid([...new Set(problems)]);
 
     await tx.$executeRaw`SELECT id FROM "CustomerUnitPrice" WHERE "productId" = ${productId} AND "tenantId" = ${tenantId} AND "customerId" = ANY(${ids}::text[]) ORDER BY "customerId", "unitRef" FOR UPDATE`;
@@ -291,16 +324,35 @@ export class ProductPriceWriteService {
 
     const writes: WriteMove[] = [];
     const inverse: CustomerPriceMove[] = [];
-    let skipped = 0;
+    const conflicts: CustomerPriceConflict[] = [];
+    const skipped: SkippedCustomerCell[] = [];
+    const skipByKey = new Map<string, UndoSkipCell>();
+    for (const k of skip) {
+      const key = `${k.customerId}|${k.ref}`;
+      if (skipByKey.has(key)) throw this.invalid(["A skipped customer price is listed twice."]);
+      skipByKey.set(key, k);
+    }
+    const reported = new Set<string>();
     for (const mv of wanted) {
       const row = byKey.get(`${mv.customerId}|${mv.ref}`);
       const current = row ? roundMoney(Number(row.price)) : null;
       if (current !== mv.from) {
-        if (lenient) {
-          skipped += 1;
+        const key = `${mv.customerId}|${mv.ref}`;
+        reported.add(key);
+        const asked = skipByKey.get(key);
+        // A skip is a compare-and-set on what the preview showed: still that value -> left as it is.
+        if (asked && (asked.seen == null ? null : roundMoney(asked.seen)) === current) {
+          skipped.push({ customerId: mv.customerId, ref: mv.ref, tier: mv.tier, current });
           continue;
         }
-        throw this.stale(m);
+        conflicts.push({
+          customerId: mv.customerId,
+          ref: mv.ref,
+          tier: mv.tier,
+          expected: mv.from,
+          current,
+        });
+        continue;
       }
       if (mv.from === mv.to) continue; // no change
       writes.push({ ...mv, rowId: row?.id ?? null });
@@ -312,6 +364,12 @@ export class ProductPriceWriteService {
         to: mv.from,
       });
     }
+    // Only a customer cell that is in conflict can be skipped; anything else (a product cell, a cell that was never
+    // reported) is a malformed request, whatever else is stale.
+    if ([...skipByKey.keys()].some((key) => !reported.has(key))) {
+      throw this.invalid([SKIP_NOT_REPORTED]);
+    }
+    if (conflicts.length > 0) throw this.stale(m, conflicts);
     return { writes, inverse, skipped };
   }
 
@@ -346,7 +404,6 @@ export class ProductPriceWriteService {
       },
     });
 
-    const created: Record<string, string> = {};
     for (const row of applied.view.rows) {
       if (row.ref === "pack") continue;
       const before = m.view.rows.find((r) => r.ref === row.ref);
@@ -358,16 +415,9 @@ export class ProductPriceWriteService {
         priceTier4: money(row.set[3]),
         priceTier5: money(row.set[4]),
       };
-      if (row.ref === "base") {
-        // The implicit piece row has no ProductUnit yet; its first price creates it (factor 1, the base unit's name).
-        const unit = await tx.productUnit.create({
-          data: { productId, label: baseLabelOf(m.product), factorToBase: 1, ...data },
-          select: { id: true },
-        });
-        created.base = unit.id;
-      } else {
-        await tx.productUnit.update({ where: { id: row.ref }, data });
-      }
+      // Never a unit mint: a price on the implicit base row was refused in planning (Add unit creates it).
+      if (row.ref === "base") throw this.invalid([addUnitFirst(row.label)]);
+      await tx.productUnit.update({ where: { id: row.ref }, data });
     }
 
     for (const w of moves.writes) {
@@ -382,7 +432,7 @@ export class ProductPriceWriteService {
     }
 
     const inversePatches: PriceCellPatch[] = applied.undo.map((p) => ({
-      ref: created[p.ref] ?? p.ref,
+      ref: p.ref,
       tier: p.tier,
       to: p.to,
     }));
@@ -400,13 +450,19 @@ export class ProductPriceWriteService {
     let current: PriceModel | undefined;
     try {
       return await this.prisma.tenantTransaction(async (tx) => {
+        // Same advisory lock as ProductUnitsService.locked, taken FIRST (house order: advisory, then row), so a unit
+        // add / edit / delete is serialised with this write. The lock timeout is set before any lock wait.
+        await setStockLockTimeout(tx);
+        await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtext('product-units'), hashtext(${productId}))`;
         await lockProductsForStock(tx, tenantId, [productId]);
         current = await this.grid.read(tx, productId);
         return fn(tx, current, tenantId);
       }, STOCK_TX_OPTIONS);
     } catch (e) {
-      // A customer cell inserted by someone else between our lock and our insert: the row we expected absent exists.
-      if ((e as { code?: string } | null)?.code === "P2002" && current) throw this.stale(current);
+      // P2002: a customer cell inserted by someone else between our lock and our insert. P2025: a row we meant to
+      // update is gone (a unit or customer cell deleted by a writer outside the locks). Both mean "changed since".
+      const code = (e as { code?: string } | null)?.code;
+      if ((code === "P2002" || code === "P2025") && current) throw this.stale(current);
       throw e;
     }
   }
@@ -418,22 +474,22 @@ export class ProductPriceWriteService {
   private assertNotGoverned(m: PriceModel): void {
     const p = m.product;
     if (p.parentProductId) throw familyPriceAuthorityError(p.parentProductId);
-    if (p.kind === "FAMILY" || p.kind === "RECIPE") {
-      throw this.invalid(["The price of a family or recipe product is set on the family."]);
-    }
+    const reason = governedReason(p);
+    if (reason) throw this.invalid([reason]);
   }
 
   private assertFresh(m: PriceModel, expectedRevision: number, expectedPriceState: string): void {
     if (m.revision !== expectedRevision || m.priceState !== expectedPriceState) throw this.stale(m);
   }
 
-  private stale(m: PriceModel): ConflictException {
+  private stale(m: PriceModel, conflicts?: CustomerPriceConflict[]): ConflictException {
     return new ConflictException({
       statusCode: 409,
       code: API_ERROR_CODES.LADDER_REVISION_STALE,
       message: STALE_MESSAGE,
       revision: m.revision,
       grid: m.grid,
+      ...(conflicts ? { conflicts } : {}),
     });
   }
 
