@@ -1,7 +1,11 @@
-# graphify: map the source, not local scratch / copies
-.claude/worktrees/
-.claude/handoffs/
-.claude/campaign/
-.claude/pipeline/
+# graphify (shared code graph): map the SOURCE only, not docs, notes or copies
+.claude/
+docs/
+**/*.md
 local-assets/
 graphify-out/
+node_modules/
+**/dist/
+**/.next/
+apps/mobile/ios/
+apps/mobile/android/
