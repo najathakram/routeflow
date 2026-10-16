@@ -1,7 +1,7 @@
 "use client";
 
 import * as React from "react";
-import { GRID_BORDER } from "../../ProductPricesGrid";
+import { FIELD_BORDER } from "../../ProductPricesGrid";
 import { UNITS_V2_TESTIDS as T } from "../../units-v2-testids";
 import { usePriceDraft } from "./usePriceDraft";
 
@@ -33,7 +33,7 @@ export function OrderUnitDraft() {
           onKeyDown={(e) => {
             if (e.key !== "Tab") e.preventDefault();
           }}
-          className={`h-9 cursor-not-allowed rounded-md border bg-white px-2.5 text-sm text-navy opacity-60 ${GRID_BORDER}`}
+          className={`h-9 cursor-not-allowed rounded-md border bg-white px-2.5 text-sm text-navy opacity-60 ${FIELD_BORDER}`}
         >
           {[...grid.rows]
             .sort((a, b) => b.factor - a.factor)

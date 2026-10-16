@@ -22,9 +22,10 @@ import { ADD_UNIT_FIRST } from "./units-v2/edit/view-from-grid";
 
 const TIERS = [1, 2, 3, 4, 5] as const;
 
-// V12: the grid's borders are the shared tokens (PR #3499): --field for inputs, selects and the grid's own frame, and
-// --line-strong for the row dividers. There is no grid-local colour, so a field here and a field anywhere else match.
-export const GRID_BORDER = "border-field";
+// V12: shared tokens only (PR #3499). --field is for CONTROL borders (the price inputs, the order-unit select);
+// the grid frame, its cards and the save bar keep the surface line, and the row dividers --line-strong.
+export const FIELD_BORDER = "border-field";
+export const FRAME_BORDER = "border-surface-border";
 const GRID_DIVIDER = "border-line-strong";
 
 const plural = (label: string, n: number) =>
@@ -158,7 +159,7 @@ function CellInput({ t, tier, view }: { t: EditTarget; tier: number; view: CellV
         value={edit.text(t.ref, tier, t.original)}
         onChange={(e) => edit.setText(t.ref, tier, e.target.value, t.original)}
         className={`h-9 w-24 rounded-md border bg-white px-2 text-sm tabular-nums text-navy focus:border-brand-500 focus:outline-none focus:ring-2 focus:ring-brand-500/20 ${
-          problem ? "border-red-600" : edit.changed(t.ref, tier) ? "border-brand-500" : GRID_BORDER
+          problem ? "border-red-600" : edit.changed(t.ref, tier) ? "border-brand-500" : FIELD_BORDER
         }`}
       />
       {problem && (
@@ -258,7 +259,7 @@ export function ProductPricesGrid({
   return (
     <div
       data-testid={T.grid}
-      className={`rounded-lg border bg-white p-4 ${GRID_BORDER} ${edit?.editing ? "pb-6" : ""}`}
+      className={`rounded-lg border bg-white p-4 ${FRAME_BORDER} ${edit?.editing ? "pb-6" : ""}`}
     >
       <h2
         id="units-v2-grid-title"
@@ -343,7 +344,7 @@ export function ProductPricesGrid({
           <div
             key={row.ref}
             data-testid={T.card(row.ref)}
-            className={`rounded-md border p-3 ${GRID_BORDER}`}
+            className={`rounded-md border p-3 ${FRAME_BORDER}`}
           >
             <div className="font-medium text-navy">{row.label}</div>
             <NotEditable row={row} />

@@ -5,9 +5,18 @@
  * requires the flag, and writes nothing.
  *
  *  - no layout shift: the form's field boxes are the same after load settles;
- *  - an invalid field keeps the danger border (computed border colour = the danger token, not --field).
+ *  - an invalid field keeps the danger border (computed border colour = the danger token, not --field);
+ *  - FLAG-ON LEG ONLY (the last describe: it calls requireUnitsV2Flag and fails, never skips, without the flag): --field is
+ *    for CONTROL borders, so the units-v2 grid frame does NOT use it while the price inputs do. Read-only.
  */
+import path from "node:path";
 import { test, expect, type Page } from "@playwright/test";
+import { setTenantCookie } from "./helpers/auth";
+import { UNITS_V2_IDS } from "./helpers/units-v2-ids";
+import { productBySku, requireUnitsV2Flag } from "./helpers/units-v2-support";
+
+const BASE = process.env.PLAYWRIGHT_BASE_URL ?? "";
+const OPERATOR_STATE = path.join(__dirname, "setup/.auth/operator.json");
 
 const SIZES = [
   { name: "1440", width: 1440, height: 900 },
@@ -77,6 +86,33 @@ for (const vp of SIZES) {
       await expect(username).toHaveAttribute("aria-invalid", "true");
       expect(await border(username)).toBe(danger);
       expect(await border(username)).not.toBe(field);
+    });
+  });
+}
+
+for (const vp of SIZES) {
+  test.describe(`Field token on the units-v2 grid @ ${vp.name} (flag-on leg)`, () => {
+    test.use({ viewport: { width: vp.width, height: vp.height }, storageState: OPERATOR_STATE });
+
+    test("the grid frame is not --field; the price inputs are", async ({ page, context }) => {
+      await setTenantCookie(context, BASE);
+      const ctx = await requireUnitsV2Flag(page);
+      const product = await productBySku(page, ctx, "E2E-FIX-UNITS");
+      await page.goto(`/products/${product.id}`);
+      const grid = page.getByTestId(UNITS_V2_IDS.grid);
+      await expect(grid).toBeVisible({ timeout: 20_000 });
+
+      const field = await tokenColor(page, "border-field");
+      const border = (loc: ReturnType<Page["locator"]>) =>
+        loc.evaluate((el) => getComputedStyle(el).borderTopColor);
+      expect(await border(grid)).not.toBe(field);
+
+      await page.getByTestId("units-v2-btn-edit").click();
+      const input = grid.locator('[data-testid^="units-v2-input-"]:visible').first();
+      await expect(input).toBeVisible();
+      expect(await border(input)).toBe(field);
+      // still the frame, not a control, in edit mode
+      expect(await border(grid)).not.toBe(field);
     });
   });
 }

@@ -2,7 +2,7 @@
 
 import * as React from "react";
 import { createPortal } from "react-dom";
-import { GRID_BORDER } from "../../ProductPricesGrid";
+import { FRAME_BORDER } from "../../ProductPricesGrid";
 import { StaleRevisionNotice } from "../confirm/StaleRevisionNotice";
 import { UNITS_V2_TESTIDS as T } from "../../units-v2-testids";
 import { usePriceDraft } from "./usePriceDraft";
@@ -10,7 +10,7 @@ import { usePriceDraft } from "./usePriceDraft";
 const isMac = () => typeof navigator !== "undefined" && /Mac|iPhone|iPad/.test(navigator.platform);
 export const BTN =
   "h-9 rounded-md border bg-white px-3 text-sm font-medium text-navy hover:bg-surface-muted " +
-  GRID_BORDER;
+  "border-line-strong";
 
 /**
  * V14: the ONE save bar (message left, Cancel then Save right), sticky to the bottom, clear of the draft
@@ -31,7 +31,7 @@ export function PriceEditBar() {
       role="region"
       aria-label="Unsaved changes"
       data-testid={T.editbar}
-      className={`sticky bottom-0 z-30 -mx-4 mt-4 border-t bg-white/95 px-4 py-3 backdrop-blur ${GRID_BORDER}`}
+      className={`sticky bottom-0 z-30 -mx-4 mt-4 border-t bg-white/95 px-4 py-3 backdrop-blur ${FRAME_BORDER}`}
     >
       <div className="flex flex-wrap items-center justify-between gap-x-4 gap-y-2">
         <div data-testid={T.ebText} className="min-w-0 flex-1 text-sm text-navy" aria-live="polite">
