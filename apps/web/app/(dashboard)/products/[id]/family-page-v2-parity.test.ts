@@ -45,4 +45,18 @@ describe("family page with units v2 on: parity", () => {
       /v2 && product\.kind !== "FAMILY" \? <ProductPricingV2 product=\{product\} \/>/,
     );
   });
+
+  it("pins every bare v2 reference in page.tsx to the known four", () => {
+    const refs = src
+      .split("\n")
+      .filter((l) => /(?<![-\w/"])v2(?![\w-])/.test(l))
+      .filter((l) => !/const v2( |Family)/.test(l))
+      .map((l) => l.trim());
+    expect(refs).toEqual([
+      '{v2 ? null : stockStatus === "OUT_OF_STOCK" ? (',
+      "<ProductHeaderLine product={product} currentStock={currentStock} pricesV2={v2} />",
+      "pricesV2={v2}",
+      '{v2 && product.kind !== "FAMILY" ? <ProductPricingV2 product={product} /> : null}',
+    ]);
+  });
 });

@@ -38,6 +38,7 @@ export function ProductHeaderLine({
           Stock:{" "}
           <Link
             href="/inventory"
+            aria-label="Stock: see Inventory"
             data-testid={UNITS_V2_TESTIDS.headerStockLink}
             className="font-medium text-brand-600 hover:underline"
           >

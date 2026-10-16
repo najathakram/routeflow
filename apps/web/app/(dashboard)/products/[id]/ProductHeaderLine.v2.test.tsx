@@ -12,6 +12,7 @@ describe("ProductHeaderLine with pricesV2 (T36)", () => {
     expect(container.textContent).not.toContain("in stock");
     const link = screen.getByTestId(UNITS_V2_TESTIDS.headerStockLink);
     expect(link).toHaveAttribute("href", "/inventory");
+    expect(screen.getByRole("link", { name: "Stock: see Inventory" })).toBe(link);
     expect(container.textContent).toBe("SKU-1 · Snacks · Stock: see Inventory");
   });
 
