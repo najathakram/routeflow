@@ -5,6 +5,10 @@ import {
   type LadderProduct,
   type LadderUnit,
 } from "@routeflow/pricing";
+import { defaultSaleFulfilmentKind } from "../orders/default-sale-fulfilment";
+import { requireRestrictionTenantId } from "../selling-restrictions/restriction-tenant";
+import type { SellingRestrictionsService } from "../selling-restrictions/selling-restrictions.service";
+import type { PrismaService } from "../prisma/prisma.service";
 import { keepsHeldUnit, norm } from "../orders/unit-label-norm";
 import { checkableProductIds } from "../selling-restrictions/selling-restrictions.core";
 import { API_ERROR_CODES } from "../common/api-error-codes";
@@ -252,4 +256,25 @@ export async function assertEditStillJudged(
       code: API_ERROR_CODES.INVOICE_CHANGED_DURING_EDIT,
       message: "The invoice changed while your edit was being applied — review it and try again.",
     });
+}
+
+/**
+ * F-05 / L8: the sell check for an invoice with NO order of its own (a manual invoice, a copy). Judged as STAFF, and
+ * as the customer's NEXT order would be (`defaultSaleFulfilmentKind`: a pickup-only tenant is judged on the store's
+ * state), so the kind is never assumed. Kept out of `invoices.service.ts` (size ratchet).
+ */
+export async function assertOrderlessSellable(
+  prisma: PrismaService,
+  restrictions: Pick<SellingRestrictionsService, "assertLinesSellable">,
+  customerId: string,
+  items: ReadonlyArray<{ productId?: string | null }>,
+): Promise<void> {
+  const tenantId = requireRestrictionTenantId(prisma.getTenantId());
+  await restrictions.assertLinesSellable({
+    tenantId,
+    customerId,
+    lines: catalogRestrictionLines(items),
+    channel: "STAFF",
+    fulfilmentKind: await defaultSaleFulfilmentKind(prisma, tenantId, customerId),
+  });
 }

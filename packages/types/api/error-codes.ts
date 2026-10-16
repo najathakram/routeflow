@@ -418,6 +418,9 @@ export const API_ERROR_CODES = {
   CHECKOUT_ANNUAL_NOT_SUPPORTED: "CHECKOUT_ANNUAL_NOT_SUPPORTED",
   CHECKOUT_ANCHOR_WINDOW: "CHECKOUT_ANCHOR_WINDOW",
   TENANT_CANCEL_SUBSCRIPTION_FIRST: "TENANT_CANCEL_SUBSCRIPTION_FIRST",
+  STRIPE_NOT_CONFIGURED: "STRIPE_NOT_CONFIGURED",
+  STRIPE_ACCOUNT_MISMATCH: "STRIPE_ACCOUNT_MISMATCH",
+  STRIPE_SUBSCRIPTION_OWNER_MISMATCH: "STRIPE_SUBSCRIPTION_OWNER_MISMATCH",
   CATCHUP_SESSION_OPEN: "CATCHUP_SESSION_OPEN",
   CATCHUP_PENDING: "CATCHUP_PENDING",
   CATCHUP_NOT_ELIGIBLE: "CATCHUP_NOT_ELIGIBLE",
@@ -525,6 +528,11 @@ export const API_ERROR_CODES = {
    * the write (a dispatch attached it), so releasing the old link would have cleared a fresh one. Nothing was written.
    */
   ORDER_RUN_LINK_CHANGED: "ORDER_RUN_LINK_CHANGED",
+  /**
+   * 400 from `PATCH /orders/:id/fulfill-path` from PICKUP to ROUTE or SHIP: the customer has no address on file,
+   * so there is nowhere to deliver to and no state to judge selling restrictions on. Nothing was written.
+   */
+  ORDER_DELIVERY_ADDRESS_MISSING: "ORDER_DELIVERY_ADDRESS_MISSING",
   /**
    * 404 from GET /orders/counter-sale/by-key/:key: NO sale exists for this Idempotency-Key in this tenant.
    * A definitive answer (unlike a timeout): the clerk may ring the sale again with a new key.

@@ -118,6 +118,24 @@ describe("OrderTemplatesService — selling restrictions (F-05)", () => {
   });
 
   describe("manual run", () => {
+    it.each([
+      ["PICKUP", "PICKUP"],
+      ["SHIP", "DELIVERY"],
+      ["ROUTE", "DELIVERY"],
+    ])(
+      "L8: a standing order whose resolved path is %s is judged as %s (pickup: the store's state)",
+      async (path, kind) => {
+        prisma.customer.findFirst.mockResolvedValue({ fulfillPath: path });
+        restrictions.assertLinesSellable.mockRejectedValue(
+          new ConflictException({ code: "SELLING_RESTRICTED", blockedLines: [] }),
+        );
+        await expect(service.generateOrder("t1")).rejects.toBeDefined();
+        expect(restrictions.assertLinesSellable).toHaveBeenCalledWith(
+          expect.objectContaining({ fulfilmentKind: kind }),
+        );
+      },
+    );
+
     it("is refused with the 409 as STAFF (BUYER_PORTAL for a buyer), nothing written", async () => {
       restrictions.assertLinesSellable.mockRejectedValue(
         new ConflictException({ code: "SELLING_RESTRICTED", message: "banned", blockedLines: [] }),
@@ -131,6 +149,7 @@ describe("OrderTemplatesService — selling restrictions (F-05)", () => {
         customerId: "c1",
         lines: [{ productId: "p-banned" }, { productId: "p-ok" }],
         channel: "STAFF",
+        fulfilmentKind: "DELIVERY",
       });
       expect(restrictions.assertLinesSellable).toHaveBeenNthCalledWith(
         2,

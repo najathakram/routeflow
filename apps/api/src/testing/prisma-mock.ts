@@ -178,6 +178,7 @@ export function createMockPrisma(): MockPrisma {
     tenantAddon: modelProxy(),
     tobaccoReport: modelProxy(),
     tenantConfig: modelProxy(),
+    tenantFeatureConfig: modelProxy(), // L8: the fulfilment model read (null = unset)
     idempotencyKey: modelProxy(),
     // B215: OrdersController.create's staff merge branch replays a same-key
     // retry through this table first, written inside updateOrderItems' own

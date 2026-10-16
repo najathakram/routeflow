@@ -228,7 +228,7 @@ describe("PlatformAdminService — audit provenance", () => {
     dunning = { clearPauseAfterCommit: jest.fn().mockResolvedValue(undefined) };
     stripeMock = {
       isConfigured: false,
-      getSubscription: jest.fn().mockResolvedValue({ status: "active" }),
+      getSubscription: jest.fn().mockResolvedValue({ status: "active", customer: "cus_1" }),
       getCustomer: jest.fn().mockResolvedValue({ id: "cus_1" }),
       getInvoiceFacts: jest.fn().mockResolvedValue({
         status: "open",
@@ -374,7 +374,7 @@ describe("PlatformAdminService — audit provenance", () => {
         },
       });
       stripeMock.isConfigured = true;
-      stripeMock.getSubscription.mockResolvedValue({ status: "active" });
+      stripeMock.getSubscription.mockResolvedValue({ status: "active", customer: "cus_1" });
       prisma.tenant.findUnique.mockResolvedValue({ id: TENANT_ID, slug: "acme" } as any);
       const err: any = await service
         .updateStatus(TENANT_ID, { status: "CANCELLED" } as any, ADMIN_ID)
@@ -408,7 +408,7 @@ describe("PlatformAdminService — audit provenance", () => {
     it("CANCELLED over an ENDED Stripe subscription (stripeSubId kept) is allowed", async () => {
       withSub();
       stripeMock.isConfigured = true;
-      stripeMock.getSubscription.mockResolvedValue({ status: "canceled" });
+      stripeMock.getSubscription.mockResolvedValue({ status: "canceled", customer: "cus_1" });
       await cancelOk();
       expect(stripeMock.getSubscription).toHaveBeenCalledWith("sub_ended");
     });

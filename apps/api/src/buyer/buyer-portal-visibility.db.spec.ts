@@ -1002,6 +1002,7 @@ describeDb("buyer portal visibility — the one rule, end to end, real Postgres"
     const check = (f: Fx, p: any, channel: "BUYER_PORTAL" | "STAFF" = "BUYER_PORTAL") =>
       inTenant(f, () =>
         restrictions.checkLinesSellable({
+          fulfilmentKind: "DELIVERY",
           tenantId: f.tenantId,
           customerId: f.customerId,
           lines: [{ productId: p.id, qtyDelta: 1 }],
@@ -1082,6 +1083,7 @@ describeDb("buyer portal visibility — the one rule, end to end, real Postgres"
       await expect(
         inTenant(f, () =>
           restrictions.assertLinesSellable({
+            fulfilmentKind: "DELIVERY",
             tenantId: f.tenantId,
             customerId: f.customerId,
             lines: [{ productId: f.S.id, qtyDelta: 1 }],

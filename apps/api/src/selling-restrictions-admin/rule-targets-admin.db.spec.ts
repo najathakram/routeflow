@@ -118,6 +118,7 @@ describeDb("row 509 PR2: rule targets admin API — real Postgres", () => {
       async () =>
         (
           await engine.evaluate(tenantA, customerId, [{ productId: p[key] }], {
+            fulfilmentKind: "DELIVERY",
             channel: "BUYER_PORTAL",
           })
         ).outcome,

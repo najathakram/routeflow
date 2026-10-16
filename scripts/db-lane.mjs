@@ -294,12 +294,14 @@ function main() {
   const modelSet = models(diffLines(diffText));
   if (modelSet.size) {
     for (const s of specs) {
-      if (reasons.has(s)) continue;
       const text = readFileSync(path.join(root, s), "utf8");
       for (const M of modelSet) {
         const camel = M[0].toLowerCase() + M.slice(1);
         if (new RegExp(`\\b${camel}\\.`).test(text) || new RegExp(`\\b${M}\\b`).test(text)) {
-          reasons.set(s, `model:${M}`);
+          // Listed ALONGSIDE an import/self reason (not instead of it): a spec reachable both ways keeps both
+          // reasons, so a new import edge can never hide the model that selected it.
+          const prior = reasons.get(s);
+          reasons.set(s, prior ? `${prior}; model:${M}` : `model:${M}`);
           break;
         }
       }
