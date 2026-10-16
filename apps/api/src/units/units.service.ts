@@ -445,17 +445,9 @@ export class UnitsService {
       });
       return { updated, productsUpdated: distinct.size };
     }, RENAME_TX_OPTIONS);
-    return {
-      unit: {
-        id,
-        name: done.updated.name,
-        archivedAt: done.updated.archivedAt
-          ? new Date(done.updated.archivedAt).toISOString()
-          : null,
-        productCount: done.productsUpdated,
-      },
-      productsUpdated: done.productsUpdated,
-    };
+    // Gate nit 3: the unit's productCount is the REAL count (the list's own query, read after commit), which
+    // also counts a product that already sold by the new word; productsUpdated is only what this rename wrote.
+    return { unit: await this.oneRow(tenantId, id), productsUpdated: done.productsUpdated };
   }
 
   private renameCollision(

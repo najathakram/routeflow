@@ -377,6 +377,10 @@ describe("UnitsService", () => {
       h.db.tenantUnit.update.mockImplementation(async ({ data }: { data: object }) =>
         row(data as Record<string, unknown>),
       );
+      // the post-commit read of the renamed unit (oneRow): the name the tx wrote, its real count
+      h.prisma.$queryRaw.mockImplementation(async () => [
+        dtoRow({ name: h.db.tenantUnit.update.mock.calls.at(-1)?.[0]?.data?.name ?? "Case" }),
+      ]);
       h.db.productUnit.findMany.mockImplementation(
         async ({ where }: { where: Record<string, unknown> }) =>
           where.tenantUnitId ? (opts.linked ?? []) : opts.levels,
@@ -420,6 +424,22 @@ describe("UnitsService", () => {
       for (const [a] of h.db.product.updateMany.mock.calls) expect(a.where.tenantId).toBe(T);
       expect(out.productsUpdated).toBe(3);
       expect(out.unit).toEqual(expect.objectContaining({ id: "u1", name: "Carton" }));
+    });
+
+    it("gate nit 3: the renamed unit's productCount is the REAL count read after commit, not productsUpdated", async () => {
+      const h = make();
+      seedRename(h, {
+        products: [{ id: "p1", name: "Cup", baseUnitLabel: null, packLabel: null, unit: "Case" }],
+        levels: [],
+      });
+      // A product that already sold by the word "Carton" (no unit of that name existed) now counts under it too.
+      h.prisma.$queryRaw.mockResolvedValue([dtoRow({ name: "Carton", productCount: 2 })]);
+      const out = await h.service.update("u1", { name: "Carton" }, user);
+      expect(out.productsUpdated).toBe(1);
+      expect(out.unit).toEqual(dtoRow({ name: "Carton", productCount: 2 }));
+      // read after the transaction committed, scoped to this tenant and unit
+      expect(h.order.indexOf("tx-end")).toBeGreaterThan(-1);
+      expect(h.prisma.$queryRaw).toHaveBeenCalledTimes(1);
     });
 
     it("takes the tenant's EXCLUSIVE units lock before reading anything, so no pack edit or level write interleaves", async () => {
