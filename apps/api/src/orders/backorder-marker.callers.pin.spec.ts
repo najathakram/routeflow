@@ -52,6 +52,12 @@ describe("every caller of the stock helpers is classified for the backorder mark
     expect(calls("orders/order-stock.ts")).toEqual(["settleStockForEdit"]);
     expect(src.match(/markerMode: "set"/g)).toHaveLength(1);
   });
+  it("the customer delete/purge release (B1241) settles once with an empty final set: NONE", () => {
+    expect(calls("customers/customer-delete-stock.ts")).toEqual(["settleStockForEdit"]);
+    expect(read("customers/customer-delete-stock.ts")).toMatch(
+      /settleStockForEdit\(\s*\{ logger, tenantId \},\s*tx,\s*order,[\s\S]*?\[\],\s*undefined,\s*\{ notes: "DELETE" \}/,
+    );
+  });
   it("pickup-complete and batch-ship call no stock helper at all (NONE)", () => {
     for (const f of [
       "orders/counter-sale/pickup-complete.service.ts",
