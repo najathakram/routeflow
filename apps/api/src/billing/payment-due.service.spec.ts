@@ -337,7 +337,7 @@ describe("PaymentDueService.pay", () => {
       expect(h.catchup.open).not.toHaveBeenCalled();
     });
 
-    it("a network error on expire() is a retryable 503 PAYMENT_STATE_UNKNOWN: nothing released, nothing created", async () => {
+    it("expire() rejected (ECONNRESET) and the re-read still says open: a retryable 503 PAYMENT_STATE_UNKNOWN, nothing released, nothing created", async () => {
       await unknownState(make({ ...held, session: staleOpen, expired: new Error("ECONNRESET") }));
     });
 
