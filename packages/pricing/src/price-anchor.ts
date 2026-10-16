@@ -1,4 +1,5 @@
 import { roundMoney } from "./pricing";
+import { explicitPrice } from "./unit-levels";
 import {
   PACK_WRITE_PATH_COMPLETE,
   PricingRulesNotReadyError,
@@ -32,8 +33,8 @@ export interface CustomerPricing {
   set?: Readonly<Record<UnitRef, number>>;
 }
 
-const positive = (v: number | undefined): number | null =>
-  typeof v === "number" && Number.isFinite(v) && v > 0 ? v : null;
+/** The one rule for "a typed price" (shared with the source label in resolveCustomerUnitPrice). */
+const positive = (v: number | undefined): number | null => explicitPrice(v);
 
 /** K_C: the customer's own order unit when the ladder has it, else the anchor of the customer's tier column. */
 export function customerAnchor(view: LadderView, customer: CustomerPricing): UnitRef {

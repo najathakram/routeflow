@@ -96,6 +96,16 @@ describe("resolveCustomerUnitPrice", () => {
     expect(r.price).toBe(11.04);
   });
 
+  it("PF-7: the source label follows the price: a typed value the price ignores is not 'customer'", () => {
+    const r = resolveCustomerUnitPrice({
+      product: box12,
+      units: [],
+      customer: { tier: 1, unitPrices: { pack: Infinity } },
+      unit: "pack",
+    });
+    expect(r).toMatchObject({ price: 12, source: "list" });
+  });
+
   it("an unknown unit is refused like the rest of the ladder", () => {
     expect(() =>
       resolveCustomerUnitPrice({

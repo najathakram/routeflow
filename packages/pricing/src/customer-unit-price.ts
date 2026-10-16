@@ -9,7 +9,7 @@ import {
   type UnitRef,
 } from "./price-ladder";
 import { customerAnchor, customerPrice, type CustomerPricing } from "./price-anchor";
-import type { LadderProduct } from "./unit-levels";
+import { explicitPrice, type LadderProduct } from "./unit-levels";
 
 // Units and prices, pricing core C: the ONE resolver for what a customer pays per unit (P4c, fold A1). It replaces the
 // `pricingTier ??` copies in the readers (S19 wires them) and also covers the driver path.
@@ -66,7 +66,7 @@ export function resolveCustomerUnitPrice(input: CustomerUnitPriceInput): Custome
     set: customer.unitPrices,
   };
   const price = customerPrice(view, ref, pricing, rules);
-  const typed = (r: UnitRef) => Number(customer.unitPrices?.[r]) > 0;
+  const typed = (r: UnitRef) => explicitPrice(customer.unitPrices?.[r]) != null;
   const source: CustomerUnitPrice["source"] = typed(ref)
     ? "customer"
     : typed(customerAnchor(view, pricing))
