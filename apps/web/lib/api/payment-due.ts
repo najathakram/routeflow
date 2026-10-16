@@ -1,5 +1,5 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import type { PaymentDuePayResult, PaymentDueView } from "@routeflow/types";
+import type { PaymentDuePayResult, PaymentDueShown, PaymentDueView } from "@routeflow/types";
 import { apiClient } from "../api-client";
 import { guardCounterLeave } from "../counter-cart-signal";
 
@@ -41,14 +41,20 @@ export function safeCheckoutUrl(url: unknown): string | null {
 
 /**
  * `POST /billing/payment-due/pay` (TENANT_ADMIN): opens the Stripe Checkout for the amount due and sends the browser
- * there. Leaving goes through the counter's leave guard so an open cart is never dropped silently. Only an https URL
- * is followed.
+ * there. Row 542c: the click sends the terms the banner displayed (`shownTermsOf`); the server compares them with its
+ * fresh plan and answers a stale quote with 409 PAYMENT_TERMS_CHANGED, creating nothing. The error toast is the
+ * app-wide one (fixed copy by code) and the banner is re-read on error. Leaving goes through the counter's leave guard
+ * so an open cart is never dropped silently. Only an https URL is followed.
  */
 export function usePayPaymentDue() {
   const qc = useQueryClient();
-  return useMutation<PaymentDuePayResult, Error, void>({
-    mutationFn: () => apiClient.post("/billing/payment-due/pay").then((r) => r.data),
-    // A refused pay (409 PAYMENT_NOT_DUE) means the banner is stale: re-read it on error too.
+  return useMutation<PaymentDuePayResult, Error, PaymentDueShown | undefined>({
+    mutationFn: (shown) =>
+      (shown
+        ? apiClient.post("/billing/payment-due/pay", { shown })
+        : apiClient.post("/billing/payment-due/pay")
+      ).then((r) => r.data),
+    // A refused pay (409 PAYMENT_NOT_DUE, or PAYMENT_TERMS_CHANGED) means the banner is stale: re-read it on error too.
     onError: () => {
       void qc.invalidateQueries({ queryKey: ["billing", "payment-due"] });
     },

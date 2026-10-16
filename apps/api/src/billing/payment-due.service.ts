@@ -41,6 +41,33 @@ export interface PaymentDueView {
   cardBy: string | null;
 }
 
+/**
+ * Row 542c: the terms the banner SHOWED when the admin clicked (the SA-796 precondition pattern). Only compared with
+ * the fresh plan's own view; never used for pricing, never passed to Stripe.
+ */
+export interface PaymentDueShownTerms {
+  amountCents: number;
+  periodStart: string | null;
+  cardBy: string | null;
+}
+
+/** Same instant, whatever the ISO spelling; two nulls match, a null never matches an instant, junk never matches. */
+function sameInstant(a: string | null, b: string | null): boolean {
+  if (a === null || b === null) return a === b;
+  const x = Date.parse(a);
+  const y = Date.parse(b);
+  return Number.isFinite(x) && Number.isFinite(y) && x === y;
+}
+
+/** Do the terms the banner showed equal what the planner quotes right now? */
+function termsHold(shown: PaymentDueShownTerms, fresh: PaymentDueView): boolean {
+  return (
+    shown.amountCents === fresh.amountCents &&
+    sameInstant(shown.periodStart, fresh.periodStart) &&
+    sameInstant(shown.cardBy, fresh.cardBy)
+  );
+}
+
 const NOT_DUE: PaymentDueView = {
   due: false,
   pastDue: false,
@@ -153,8 +180,17 @@ export class PaymentDueService {
    * The Checkout URL of THIS tenant's catch-up. Reuses the open, unexpired session when one exists; otherwise
    * creates exactly one through `CatchupCheckoutService.open`, priced by the planner right now. No client amount.
    * Works for a payable bill and for a card-needed tenant (SA-801 / SA-806, a $0-now session).
+   *
+   * Row 542c: `shown` is what the banner displayed. It is compared with the SAME fresh read that decides eligibility,
+   * before anything is reused, created, released or claimed; a mismatch is 409 PAYMENT_TERMS_CHANGED and nothing else
+   * happens (the client re-reads and shows the new banner). Absent = no precondition (a page cached before this
+   * deploy; optional for one release).
    */
-  async pay(tenantId: string, now: Date = new Date()): Promise<{ checkoutUrl: string }> {
+  async pay(
+    tenantId: string,
+    now: Date = new Date(),
+    shown?: PaymentDueShownTerms,
+  ): Promise<{ checkoutUrl: string }> {
     const { view, stubCents } = await this.read(tenantId, now);
     // SA-801 / SA-806: a card-needed tenant (nothing charged now) opens the very same catch-up session. The expected
     // stub is the planner's own `stub.totalCents` from the read above: 0 for the `trial` shape, the forgiven amount
@@ -163,6 +199,12 @@ export class PaymentDueService {
       throw new ConflictException({
         code: API_ERROR_CODES.PAYMENT_NOT_DUE,
         message: "Nothing is due right now.",
+      });
+    }
+    if (shown && !termsHold(shown, view)) {
+      throw new ConflictException({
+        code: API_ERROR_CODES.PAYMENT_TERMS_CHANGED,
+        message: "The amount changed since this page loaded.",
       });
     }
     const open = await this.openSessionUrl(tenantId, now);

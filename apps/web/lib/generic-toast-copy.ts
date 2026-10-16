@@ -187,6 +187,9 @@ const CODE_COPY: Record<string, string> = {
     "An invoice on this account is overdue. Pay it to continue; plan changes are available again right after.",
   // Row 542: paying an amount due was refused because nothing is due (already paid); the banner re-reads.
   [API_ERROR_CODES.PAYMENT_NOT_DUE]: "Nothing is due right now.",
+  // Row 542c: the terms the banner showed no longer hold; the banner re-reads (the mutation invalidates it on error).
+  [API_ERROR_CODES.PAYMENT_TERMS_CHANGED]:
+    "The amount changed. We've refreshed it, please check and try again.",
   [API_ERROR_CODES.PAYMENT_STATE_UNKNOWN]:
     "We couldn't confirm your open invoice just now. Please try again in a moment.",
   // B1102: a catalog add-on whose plan setting is invalid is refused instead of billed; fixed sentence, no ids.

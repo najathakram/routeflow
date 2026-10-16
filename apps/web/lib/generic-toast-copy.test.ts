@@ -141,6 +141,14 @@ describe("genericToastCopy: codes users rely on", () => {
     expect(copy).toBe("Nothing is due right now.");
   });
 
+  it("PAYMENT_TERMS_CHANGED (row 542c: the banner's terms no longer hold) is one fixed plain sentence", () => {
+    const copy = genericToastCopy(
+      err(409, { code: API_ERROR_CODES.PAYMENT_TERMS_CHANGED, message: "raw server text" }),
+    );
+    expect(copy).toBe("The amount changed. We've refreshed it, please check and try again.");
+    expect(copy).not.toMatch(/[–—]/);
+  });
+
   it("PRODUCT_CHAIN_UNREADABLE (H2: a reparent refused on an unreadable family chain) is fixed copy", () => {
     const copy = genericToastCopy(err(409, { code: API_ERROR_CODES.PRODUCT_CHAIN_UNREADABLE }));
     expect(copy).toBe("This product's family chain can't be read.");

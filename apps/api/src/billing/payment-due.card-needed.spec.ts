@@ -258,3 +258,25 @@ describe("SA-806 R4: a forgiven stub (a line under $0.50) gets the reminder and 
     expect(create).toHaveBeenCalledTimes(1);
   });
 });
+
+describe("SA-806a guard: a $0-priced manual-invoicing tenant has no banner and no pay", () => {
+  it("get() is not due and not cardNeeded; pay() is 409 PAYMENT_NOT_DUE with nothing created", async () => {
+    const { svc, db, stripe } = make("ACTIVE", [], 0);
+    expect(await svc.get("t1", NOW)).toEqual({
+      due: false,
+      pastDue: false,
+      amountCents: 0,
+      periodLabel: null,
+      periodStart: null,
+      cardNeeded: false,
+      chargeStartsOn: null,
+      cardBy: null,
+    });
+    await expect(svc.pay("t1", NOW)).rejects.toMatchObject({
+      response: { code: API_ERROR_CODES.PAYMENT_NOT_DUE },
+    });
+    expect(stripe.client.checkout.sessions.create).not.toHaveBeenCalled();
+    expect(stripe.calls).toEqual([]);
+    expect(db.subs[0].catchupState).toBeNull();
+  });
+});
