@@ -91,7 +91,7 @@ export function unitCodeOf(codes: ProductCodes, ref: UnitRef): string | null {
 
 /**
  * The code printed on an invoice line. `legacy` prints today's chain. `ordered` prints the unit sold's code (the pack when
- * the sold unit is not known). A unit prints its own code.
+ * the sold unit is not known). A unit prints its own code, unless the line reads in the unit sold (`lineMode`).
  */
 export function printedInvoiceCode(
   choice: InvoiceCodeChoice,
@@ -99,9 +99,12 @@ export function printedInvoiceCode(
   view: LadderView,
   legacyCodes?: Pick<ProductCodes, "unitSku" | "barcode" | "sku"> | null,
   soldUnit?: UnitRef | null,
+  lineMode?: InvoiceLineDisplay["mode"],
 ): string | null {
   if (choice.mode === "legacy") return legacyInvoiceCode(legacyCodes ?? codes);
-  const ref = choice.mode === "unit" ? choice.unit : (soldUnit ?? "pack");
+  // A line that reads in the unit sold (T18: not a whole number of the invoice unit) prints the sold unit's code.
+  const ref =
+    choice.mode === "unit" && lineMode !== "unit-sold" ? choice.unit : (soldUnit ?? "pack");
   const row = view.rows.find((r) => r.ref === ref);
   const kind = row?.kind;
   return unitCodeOf(codes, kind === "pack" ? "pack" : kind === "base" ? "base" : ref);

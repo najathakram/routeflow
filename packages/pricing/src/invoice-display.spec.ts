@@ -131,6 +131,20 @@ describe("unit codes (one code per unit) and the printed code", () => {
     expect(legacyInvoiceCode(null)).toBeNull();
   });
 
+  it("PF-8 / T18: 30 pieces with the invoice unit set to Box reads in Pieces and prints the Piece code", () => {
+    const line = invoiceLineDisplay({
+      pieces: 30,
+      amount: 22.5,
+      sold: { label: "Piece", qty: 30, unitPrice: 0.75 },
+      invoiceUnit: { label: "Box", factor: 24 },
+    });
+    expect(line.unitLabel).toBe("Piece");
+    const box = { mode: "unit", unit: "pack", label: "Box" } as const;
+    expect(printedInvoiceCode(box, codes, view, undefined, "base", line.mode)).toBe("PC-1");
+    // Whole boxes keep the invoice unit's own code.
+    expect(printedInvoiceCode(box, codes, view, undefined, "base", "invoice-unit")).toBe("BAR-1");
+  });
+
   it("a unit invoice unit prints that unit's code; ordered prints the unit sold's code", () => {
     expect(printedInvoiceCode({ mode: "unit", unit: "base", label: "Piece" }, codes, view)).toBe(
       "PC-1",
