@@ -20,6 +20,7 @@ const WRITE_PATH_FILES: readonly string[] = [];
 
 /** Today's writers outside the write path. Only ever shrinks. */
 const OUTSIDE_WRITERS: readonly string[] = [
+  "apps/api/prisma/seed.ts",
   "apps/api/scripts/DANGER-fresh-data-WIPES-ALL-DATA.js",
   "apps/api/scripts/demo-seed.js",
   "apps/api/scripts/e2e-seed.js",
@@ -47,7 +48,7 @@ const OUTSIDE_WRITERS: readonly string[] = [
 ];
 
 const REPO = path.resolve(__dirname, "../../../..");
-const ROOTS = ["apps/api/src", "apps/api/scripts"];
+const ROOTS = ["apps/api/src", "apps/api/scripts", "apps/api/prisma"];
 const KEY = "(?:pricePerUnit|priceTier[2-5]|packAuto)";
 
 let nested = "[^{}]*";
@@ -110,6 +111,12 @@ const USE_ROOTS = [
   "apps/mobile/app",
   "apps/mobile/components",
   "apps/mobile/lib",
+  "apps/api/prisma",
+  // every other package (pricing itself is the engine and is not scanned)
+  ...fs
+    .readdirSync(path.join(REPO, "packages"), { withFileTypes: true })
+    .filter((e) => e.isDirectory() && e.name !== "pricing")
+    .map((e) => `packages/${e.name}`),
 ];
 const USE_NAMES = /\b(?:materializePack|planOrderUnitSwitch)\b/;
 const GUARD_NAMES = /\b(?:assertOrderUnitSwitchAllowed|PACK_WRITE_PATH_COMPLETE)\b/;
