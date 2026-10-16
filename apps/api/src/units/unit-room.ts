@@ -20,6 +20,11 @@ interface TenantUnitCounter {
  * writer already holds (SHARED for a level write), so concurrent adds can overshoot by the number of
  * concurrent writers, never without bound. No exclusive lock is taken: that would serialize every
  * level write of the tenant.
+ *
+ * SA-810a: a PERSON's add (Settings > Units create / restore) runs under no lock at all, so concurrent
+ * person adds can overshoot by the number in flight. That overshoot is bounded and accepted. A future
+ * import that adds units must go through the level auto-add (`unitRoom` plus its null / `unitNotListed`
+ * path in product-units.service.ts), never a third TenantUnit insert site.
  */
 export async function unitRoom(db: TenantUnitCounter, tenantId: string): Promise<number> {
   const active = await db.tenantUnit.count({ where: { tenantId, archivedAt: null } });

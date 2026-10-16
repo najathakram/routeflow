@@ -1066,6 +1066,39 @@ describe("ProductsService", () => {
             expect(prisma.product.update).not.toHaveBeenCalled();
           });
 
+          it.each([
+            ["an NFD stored word, sent NFC", "Cafe\u0301", "Caf\u00e9"],
+            ["a stored word with a trailing space, sent trimmed", "Box ", "Box"],
+            ["a case-only echo", "Box", "box"],
+          ])(
+            "NIT1: %s with no expectedUnit is an echo by unitNameKey: no 409, the stored spelling is kept",
+            async (_k, stored, sent) => {
+              underLock({ unit: stored, unitsPerBox: 12 });
+              lockingTx(jest.fn().mockResolvedValue(0));
+              await service.update("prod-1", { unit: sent, unitsPerBox: 12 } as any, CLIENT);
+              expect(prisma.product.update).toHaveBeenCalledTimes(1);
+              const data = prisma.product.update.mock.calls[0][0].data;
+              expect(data.unit ?? stored).toBe(stored);
+            },
+          );
+
+          it("NIT2: the logged User-Agent is capped at 256 characters", async () => {
+            underLock({ unit: "Box", unitsPerBox: 12 });
+            lockingTx(jest.fn().mockResolvedValue(0));
+            const warn = jest
+              .spyOn((service as any).logger, "warn")
+              .mockImplementation(() => undefined);
+            await service
+              .update("prod-1", { unitsPerBox: 6 } as any, {
+                packPrecondition: "client",
+                clientAgent: "A".repeat(5000),
+              })
+              .catch(() => undefined);
+            const line = String(warn.mock.calls[0]?.[0] ?? "");
+            expect(line).toContain("A".repeat(256));
+            expect(line).not.toContain("A".repeat(257));
+          });
+
           it("a client size change WITH its expected twin (read = locked) saves", async () => {
             underLock({ unit: "Box", unitsPerBox: 12 });
             lockingTx(jest.fn().mockResolvedValue(0));

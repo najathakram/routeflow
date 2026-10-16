@@ -41,6 +41,7 @@ import { AssignToSectionModal } from "@/components/AssignToSectionModal";
 import { RegulatedScopeTabs } from "@/components/RegulatedScopeTabs";
 import { ConfirmDialog } from "@/components/ConfirmDialog";
 import { QuickEditCell, type EditRecord } from "./_components/QuickEditCell";
+import { quickPackEdit } from "@/lib/quick-edit-pack";
 import { SectionEditCell } from "./_components/SectionEditCell";
 import {
   PortalBulkButtons,
@@ -789,6 +790,18 @@ export default function ProductsPage() {
 
   const handleQuickSave = React.useCallback(
     async (product: ApiProduct, field: string, newVal: string, record: EditRecord) => {
+      // SA-797a: the size as a number, with the pack the cell read; undo / redo carry their own expected pack.
+      if (field === "unitsPerBox") {
+        const pack = quickPackEdit(product, newVal);
+        await updateProduct.mutateAsync({ id: product.id, ...pack.save });
+        toast({ title: `${field} updated`, variant: "success" });
+        setUndoStack((prev) => [
+          ...prev.slice(-19),
+          { ...record, oldValue: pack.undo, newValue: pack.redo },
+        ]);
+        setRedoStack([]);
+        return;
+      }
       const updates: { id: string; [k: string]: unknown } = {
         id: product.id,
         [field]: newVal || null,

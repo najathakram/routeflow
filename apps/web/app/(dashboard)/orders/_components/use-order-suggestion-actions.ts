@@ -45,6 +45,15 @@ const ladderProductOf = (p: OrderSuggestionProduct): LadderProduct => ({
 });
 
 /**
+ * The non-pack unit option a past line sold by, matched by `unitNameKey` (NFC, trim, case-fold), the
+ * options' own key: an NFD "Café" line finds the NFC "Café" level. Null = no longer offered.
+ */
+export function orderedUnitOption(options: UnitOption[], label: string): UnitOption | null {
+  const wanted = unitNameKey(label);
+  return options.find((o) => o.kind !== "pack" && unitNameKey(o.value) === wanted) ?? null;
+}
+
+/**
  * The two actions of the staff New Order suggestions bar. Both go through the modal's own add-line
  * path, exactly as a manual add does: a line is priced by today's normal pricing (customer tier /
  * special price, plus the same last-given-price pre-fill a manual add applies), never from what the
@@ -71,9 +80,10 @@ export function useOrderSuggestionActions({ suggestions, addLine, tierFor, toast
         queryKey: productUnitsKey(product.id),
         queryFn: () => fetchProductUnits(product.id),
       });
-      const wanted = unitNameKey(label); // the options' own key (NFC, trim, case-fold)
-      const options = buildUnitOptions(ladderProductOf(product), units, tierFor(product.id));
-      return options.find((o) => o.kind !== "pack" && unitNameKey(o.value) === wanted) ?? null;
+      return orderedUnitOption(
+        buildUnitOptions(ladderProductOf(product), units, tierFor(product.id)),
+        label,
+      );
     } catch {
       return null;
     }

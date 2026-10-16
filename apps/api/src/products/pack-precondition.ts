@@ -47,7 +47,13 @@ export function unguardedPackChanges(
   dto: { unit?: string; unitsPerBox?: number | null } & ExpectedPack,
 ): Array<"unit" | "unitsPerBox"> {
   const out: Array<"unit" | "unitsPerBox"> = [];
-  if (dto.unit !== undefined && dto.expectedUnit === undefined && dto.unit !== locked.unit) {
+  // Keyed by unitNameKey (NFC, trim, case-fold): an old build re-sending an imported NFD or padded word is
+  // an echo, not a change. The caller keeps the STORED spelling for such an echo (`packEchoUnit`).
+  if (
+    dto.unit !== undefined &&
+    dto.expectedUnit === undefined &&
+    unitNameKey(dto.unit) !== unitNameKey(locked.unit)
+  ) {
     out.push("unit");
   }
   if (
@@ -59,6 +65,9 @@ export function unguardedPackChanges(
   }
   return out;
 }
+
+/** The longest User-Agent a PRODUCT_PACK_PRECONDITION_REQUIRED log line carries. */
+export const LOGGED_AGENT_MAX = 256;
 
 export const sendsExpectedPack = (dto: ExpectedPack): boolean =>
   EXPECTED_PACK_FIELDS.some((k) => dto[k] !== undefined);

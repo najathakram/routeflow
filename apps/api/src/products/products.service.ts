@@ -53,6 +53,7 @@ import { assertPackKeepsLevelsValid } from "./unit-pack-rules";
 import { lockProductPack } from "../units/tenant-units-lock";
 import {
   EXPECTED_PACK_FIELDS,
+  LOGGED_AGENT_MAX,
   PRODUCT_PACK_PRECONDITION_REQUIRED_MESSAGE,
   assertPackUnchanged,
   packTenantUnitIdOf,
@@ -1323,12 +1324,17 @@ export class ProductsService {
             // an app-version header today, so appVersion is "unknown" and the User-Agent (an iOS build
             // carries its CFBundleVersion there) is logged beside it.
             this.logger.warn(
-              `PRODUCT_PACK_PRECONDITION_REQUIRED product=${id} tenant=${tenantId} fields=${fields.join(",")} appVersion=unknown userAgent=${JSON.stringify(options.clientAgent ?? null)}`,
+              `PRODUCT_PACK_PRECONDITION_REQUIRED product=${id} tenant=${tenantId} fields=${fields.join(",")} appVersion=unknown userAgent=${JSON.stringify(options.clientAgent?.slice(0, LOGGED_AGENT_MAX) ?? null)}`,
             );
             throw new ConflictException({
               code: API_ERROR_CODES.PRODUCT_PACK_PRECONDITION_REQUIRED,
               message: PRODUCT_PACK_PRECONDITION_REQUIRED_MESSAGE,
             });
+          }
+          // An echo of the pack word (same unitNameKey, no expectedUnit) changes nothing: keep the stored spelling.
+          if (dto.unit !== undefined && dto.expectedUnit === undefined) {
+            dto.unit = locked.unit;
+            data.unit = locked.unit;
           }
         }
         const nextUnit = dto.unit !== undefined ? dto.unit : locked.unit;

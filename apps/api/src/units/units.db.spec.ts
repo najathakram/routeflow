@@ -23,6 +23,7 @@ import { UnitsService } from "./units.service";
 import { unitNameKey } from "./piece-words";
 import { sqlKeyOf } from "./unit-name-sql";
 import { MAX_ACTIVE_TENANT_UNITS } from "./unit-room";
+import { VariantResolutionService } from "../import/variant-resolution.service";
 import type { JwtPayload } from "../auth/jwt-payload.interface";
 
 // eslint-disable-next-line @typescript-eslint/no-var-requires
@@ -509,6 +510,15 @@ describeDb("tenant units against real Postgres", () => {
           archivedAt: new Date(),
         })),
       });
+      // Another tenant's archived units (some sorting between A's) never appear on A's pages.
+      await raw.tenantUnit.createMany({
+        data: ["Old 000a", "Old 050b", "Zz other"].map((name) => ({
+          tenantId: B,
+          name,
+          nameKey: unitNameKey(name),
+          archivedAt: new Date(),
+        })),
+      });
       const first = await asA(() => service.listArchived());
       expect(first.items).toHaveLength(100);
       expect(first.nextCursor).not.toBeNull();
@@ -516,6 +526,50 @@ describeDb("tenant units against real Postgres", () => {
       expect(second.items).toHaveLength(5);
       expect(second.nextCursor).toBeNull();
       expect([...first.items, ...second.items].map((u) => u.name)).toEqual(names);
+      expect((await asB(() => service.listArchived())).items.map((u) => u.name)).toEqual([
+        "Old 000a",
+        "Old 050b",
+        "Zz other",
+      ]);
+    });
+
+    it("G6c: at 200 active units an import completeSetup with NEW pack words saves and adds no TenantUnit", async () => {
+      await raw.tenantUnit.createMany({
+        data: Array.from({ length: MAX_ACTIVE_TENANT_UNITS }, (_, i) => ({
+          tenantId: A,
+          name: `U${i}`,
+          nameKey: `u${i}`,
+        })),
+      });
+      const imports = new VariantResolutionService(prisma, {} as never, {} as never);
+      const p1 = await product(A, "Imported 1", { unit: "Each" });
+      const p2 = await product(A, "Imported 2", { unit: "Each" });
+      await raw.product.updateMany({
+        where: { id: { in: [p1.id, p2.id] } },
+        data: { detailsIncomplete: true },
+      });
+      const before = await raw.tenantUnit.findMany({
+        where: { tenantId: A },
+        select: { id: true, nameKey: true, archivedAt: true },
+        orderBy: { id: "asc" },
+      });
+      await asA(() => imports.completeSetup(p1.id, { unit: "12ct", unitsPerBox: 12 }));
+      await asA(() => imports.completeSetup(p2.id, { unit: "Cafe\u0301 24pk", unitsPerBox: 24 }));
+      expect(await raw.product.findUnique({ where: { id: p1.id } })).toMatchObject({
+        unit: "12ct",
+        unitsPerBox: 12,
+        detailsIncomplete: false,
+      });
+      expect((await raw.product.findUnique({ where: { id: p2.id } }))?.unit).toBe(
+        "Cafe\u0301 24pk",
+      );
+      const after = await raw.tenantUnit.findMany({
+        where: { tenantId: A },
+        select: { id: true, nameKey: true, archivedAt: true },
+        orderBy: { id: "asc" },
+      });
+      expect(after).toEqual(before);
+      expect(after).toHaveLength(MAX_ACTIVE_TENANT_UNITS);
     });
 
     it("at 200 active units a person add is 409 TENANT_UNIT_LIMIT; archive one and the add succeeds", async () => {
