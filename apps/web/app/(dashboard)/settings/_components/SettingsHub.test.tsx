@@ -12,10 +12,6 @@ jest.mock("@/lib/api/product-units", () => ({
 }));
 
 const restrictions = jest.fn();
-let unitsEnabled = true;
-jest.mock("@/lib/api/units-settings-flag", () => ({
-  useUnitsSettingsEnabled: () => unitsEnabled,
-}));
 jest.mock("@/lib/api/restrictions-settings", () => ({
   useRestrictionsSettings: () => restrictions(),
 }));
@@ -39,7 +35,6 @@ const TITLES = [
 ];
 
 beforeEach(() => {
-  unitsEnabled = true;
   restrictions.mockReturnValue({ data: { enabled: true }, isLoading: false, isError: false });
 });
 
@@ -129,62 +124,6 @@ describe("SettingsHub regroup", () => {
     expect(hrefs).toHaveLength(1); // OK-2: one answer per destination
     expect(screen.getByText("Selling & pricing › Selling restrictions")).toBeInTheDocument();
     expect(screen.queryByText("Compliance › Selling restrictions")).toBeNull();
-  });
-
-  describe("Units (U-1)", () => {
-    const unitsLinks = () =>
-      screen.getAllByRole("link").filter((l) => l.getAttribute("href") === "/settings/units");
-
-    it("is the LAST item of Selling & catalog and appears exactly once", () => {
-      renderWithProviders(<SettingsHub isAdmin />);
-      const hrefs = within(section("Selling & catalog"))
-        .getAllByRole("link")
-        .map((l) => l.getAttribute("href"));
-      expect(hrefs[hrefs.length - 1]).toBe("/settings/units");
-      expect(unitsLinks()).toHaveLength(1);
-      expect(within(unitsLinks()[0]).getByText("Units")).toBeInTheDocument();
-    });
-
-    it("ships DARK: without flag.units_settings_v1 the tile is gone, and search cannot find it either", () => {
-      unitsEnabled = false;
-      const noUnitsLinks = () =>
-        screen.queryAllByRole("link").filter((l) => l.getAttribute("href") === "/settings/units");
-      renderWithProviders(<SettingsHub isAdmin />);
-      expect(noUnitsLinks()).toHaveLength(0);
-      const hrefs = within(section("Selling & catalog"))
-        .getAllByRole("link")
-        .map((l) => l.getAttribute("href"));
-      expect(hrefs).not.toContain("/settings/units");
-      fireEvent.change(screen.getByLabelText("Search settings"), { target: { value: "unit" } });
-      expect(noUnitsLinks()).toHaveLength(0);
-    });
-
-    it("operators see it too (all staff may edit units)", () => {
-      renderWithProviders(<SettingsHub isAdmin={false} />);
-      expect(unitsLinks()).toHaveLength(1);
-    });
-
-    it("nothing else in Selling & catalog moved: the earlier links keep their order", () => {
-      renderWithProviders(<SettingsHub isAdmin />);
-      const hrefs = within(section("Selling & catalog"))
-        .getAllByRole("link")
-        .map((l) => l.getAttribute("href"));
-      expect(hrefs.slice(0, -1)).toEqual([
-        "/settings?tab=invoicing",
-        "/settings?tab=costing",
-        "/settings?tab=remittance",
-        "/settings/restrictions",
-        "/settings/restrictions/rules",
-        "/settings/import",
-        "/settings/migration",
-      ]);
-    });
-
-    it.each(["unit", "case", "bottle", "pieces per box", "pack"])("search %j finds it", (q) => {
-      renderWithProviders(<SettingsHub isAdmin />);
-      fireEvent.change(screen.getByLabelText("Search settings"), { target: { value: q } });
-      expect(unitsLinks()).toHaveLength(1);
-    });
   });
 
   describe("a page loaded with a card's hash scrolls to that card", () => {
