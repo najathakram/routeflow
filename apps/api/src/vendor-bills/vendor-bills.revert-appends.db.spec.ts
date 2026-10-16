@@ -45,6 +45,7 @@ describeDb("B846 bill revert appends — real Postgres", () => {
   let prisma: PrismaService;
   let tenantCtx: TenantContextService;
   let bills: VendorBillsService;
+  let inventory: InventoryService;
   const createdTenantIds: string[] = [];
 
   beforeAll(async () => {
@@ -85,6 +86,7 @@ describeDb("B846 bill revert appends — real Postgres", () => {
       ],
     }).compile();
     bills = module.get(VendorBillsService);
+    inventory = module.get(InventoryService);
   });
 
   afterAll(async () => {
@@ -223,24 +225,23 @@ describeDb("B846 bill revert appends — real Postgres", () => {
 
   it("R1: a manual PURCHASE sharing the bill number survives the revert; one -Q reversal is appended", async () => {
     const w = await seedWorld("r1");
+    // L-220: the manual purchase goes through the production writer (it stamps tenantId through the
+    // tenant transaction, writes the lot and moves the counter). Dated the month BEFORE the bill so
+    // no later row triggers a cost replay — the ledger stays exactly the three rows asserted below.
     await inTenant(w, () =>
-      prisma.stockMovement.create({
-        data: {
+      inventory.recordPurchase(
+        {
           productId: w.productId,
-          type: "PURCHASE",
           quantity: 5,
           unitCost: 1,
-          stockAfter: 5,
           supplierId: w.supplierId,
           reference: "B-846-1",
           notes: "manual purchase",
-        },
-      }),
+          effectiveDate: EARLIER_DATE,
+        } as never,
+        w.userId,
+      ),
     );
-    await prisma.product.update({
-      where: { id: w.productId },
-      data: { currentStock: 5, averageCost: 1 },
-    });
 
     const id = await receiveBill(w, 10);
     await revert(w, id);
@@ -255,6 +256,11 @@ describeDb("B846 bill revert appends — real Postgres", () => {
     const reversal = rows.find((r) => r.q === -10) as (typeof rows)[number];
     expect(reversal.notes).toBe(`${BILL_REVERTED_NOTE}${receipt.id}`);
     expect(rows.reduce((t, r) => t + r.q, 0)).toBe(await counter(w)); // Σq == the counter
+    // The manual lot shares the bill number; only the bill's own lot is reversed.
+    const lots = await prisma.stockLot.findMany({ where: { productId: w.productId } });
+    expect(lots.map((l) => [Number(l.qty), Number(l.remainingQty), l.notes])).toEqual([
+      [5, 5, "manual purchase"],
+    ]);
   });
 
   it("R2: unfiled bill month — receive Q, revert, re-receive Q': the month sums to Q' and history is kept", async () => {
@@ -426,14 +432,18 @@ describeDb("B846 bill revert appends — real Postgres", () => {
       await inTenant(w, () => bills.receive(bill.id, undefined, w.userId));
       const created = await prisma.stockMovement.findMany({ where: { productId: w.productId } });
       expect(created).toHaveLength(2);
-      // One receive's rows tie on createdAt (CURRENT_TIMESTAMP = transaction start); pin the uuid order.
-      expect(new Set(created.map((r) => r.createdAt.getTime())).size).toBe(1);
+      // The two rows share effectiveAt (the bill date) but NOT necessarily createdAt: Prisma sets
+      // `@default(now())` per create call, so the rows can differ by a millisecond and createdAt,
+      // not the uuid, would decide the order. Force the createdAt tie, then pin the uuid order.
+      expect(new Set(created.map((r) => r.effectiveAt.getTime())).size).toBe(1);
       // Distinct per case (ids are table-global): the last hex digit carries the case, then the rank.
       const fixed = [1, 2].map((rank) => `00000000-0000-4000-8000-0000000000${qtyOrder[0]}${rank}`);
       for (const [i, q] of qtyOrder.entries()) {
         const row = created.find((r) => Number(r.quantity) === q) as (typeof created)[number];
-        await prisma.$executeRaw`UPDATE "StockMovement" SET id = ${fixed[i]} WHERE id = ${row.id}`;
+        await prisma.$executeRaw`UPDATE "StockMovement" SET id = ${fixed[i]}, "createdAt" = (SELECT MIN("createdAt") FROM "StockMovement" WHERE "productId" = ${w.productId}) WHERE id = ${row.id}`;
       }
+      const tied = await prisma.stockMovement.findMany({ where: { productId: w.productId } });
+      expect(new Set(tied.map((r) => r.createdAt.getTime())).size).toBe(1);
       const pinned = await ledger(w);
       expect(pinned.map((r) => r.q)).toEqual([...qtyOrder]);
 
