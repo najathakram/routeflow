@@ -2,9 +2,11 @@ import { Injectable, NotFoundException } from "@nestjs/common";
 import {
   DEFAULT_TIER_RULES,
   buildLadderView,
+  canonicalUnitRef,
   priceGrid,
   unitCodeOf,
   type LadderView,
+  type LadderViewUnit,
   type ProductCodes,
   type TierRules,
 } from "@routeflow/pricing";
@@ -36,6 +38,24 @@ export const PRODUCT_SELECT = {
 
 /** The refusal for the implicit base row: the unit must exist before it can carry a price (K7 adds it). */
 export const addUnitFirst = (label: string): string => `Add the ${label} unit first.`;
+
+/**
+ * SA-809: the ProductUnit that backs the piece level ("base"), or null when none does (the implicit Piece row, or a
+ * one-piece pack). Keyed on the unit being the level's own row, never on the literal ref: a "base" cell is writable
+ * exactly when this finds a row, and it is the row a "base" write lands on.
+ */
+export function baseBackingUnit<U extends LadderViewUnit>(
+  units: readonly U[],
+  view: LadderView,
+): U | null {
+  const baseRow = view.rows.find((r) => r.ref === "base");
+  if (!baseRow) return null;
+  return (
+    units.find(
+      (u) => u.id != null && canonicalUnitRef(units, u.id) === "base" && u.label === baseRow.label,
+    ) ?? null
+  );
+}
 
 /**
  * Why the price write refuses this product, or null when it is a standalone product. One source for the grid's
@@ -118,9 +138,13 @@ export class ProductPriceGridService {
       });
     const rules = DEFAULT_TIER_RULES;
 
+    // Stored refs name the level (SA-809); a legacy row that stored the factor-1 unit's id reads as "base".
+    const asLevel = (ref: string | null): string | null =>
+      ref == null ? null : canonicalUnitRef(units, ref);
     const tierOrderUnits: Partial<Record<2 | 3 | 4 | 5, string | null>> = {};
     for (const t of tierUnits) {
-      if (t.tier >= 2 && t.tier <= 5) tierOrderUnits[t.tier as 2 | 3 | 4 | 5] = t.orderUnitRef;
+      if (t.tier >= 2 && t.tier <= 5)
+        tierOrderUnits[t.tier as 2 | 3 | 4 | 5] = asLevel(t.orderUnitRef);
     }
     // Decimal columns go in as exact strings: the ladder reads them with Number() like every consumer.
     const view = buildLadderView(
@@ -133,23 +157,28 @@ export class ProductPriceGridService {
         priceTier5: product.priceTier5.toString(),
       },
       units,
-      { orderUnit: product.orderUnitRef, tierOrderUnits, packAuto: product.packAuto },
+      { orderUnit: asLevel(product.orderUnitRef), tierOrderUnits, packAuto: product.packAuto },
     );
     const codes: ProductCodes = {
       sku: product.sku,
       barcode: product.barcode,
       unitSku: product.unitSku,
-      unitCodes: Object.fromEntries(units.map((u) => [u.id, u.sku ?? null])),
+      // SA-809: the factor-1 row's code is keyed by the level ref "base", never by its ProductUnit id.
+      unitCodes: Object.fromEntries(
+        units.map((u) => [canonicalUnitRef(units, u.id), u.sku ?? null]),
+      ),
     };
     const revision = Number(product.priceRevision) || 0;
     const priceState = computePriceState(product, units, tierUnits);
+    const baseUnit = baseBackingUnit(units, view);
     const grid: ProductPriceGridDto = {
       productId,
       anchor: view.anchor,
       rows: priceGrid(view, rules).map((row) => {
-        // The implicit piece row (no ProductUnit yet) cannot be priced: the write never mints a unit.
+        // A piece level no ProductUnit backs (the implicit row) cannot be priced: the write never mints a unit.
         const reason =
-          governedReason(product) ?? (row.ref === "base" ? addUnitFirst(row.label) : null);
+          governedReason(product) ??
+          (row.ref === "base" && !baseUnit ? addUnitFirst(row.label) : null);
         return {
           ...row,
           code: unitCodeOf(codes, row.ref),

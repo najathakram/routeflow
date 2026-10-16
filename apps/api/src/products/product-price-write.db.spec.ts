@@ -436,6 +436,46 @@ describeDb("units v2 price write - real Postgres", () => {
     expect(await auditRows(t)).toHaveLength(0);
   });
 
+  it('SA-809: a Piece (factor-1) unit backs base: a patch on "base" prices that row, a customer move stores "base"', async () => {
+    const t = await seed("piece");
+    const piece = await prisma.productUnit.create({
+      data: { tenantId: t.tenantId, productId: t.productId, label: "Piece", factorToBase: 1 },
+    });
+    const g = await readGrid(t);
+    const res = await inTenant(t.tenantId, () =>
+      writes.save(
+        t.productId,
+        {
+          ...stateOf(g),
+          patches: [{ ref: "base", tier: 1, to: 1.25 }],
+          customerMoves: [{ customerId: t.customerId, ref: "base", tier: 1, from: null, to: 1.1 }],
+        },
+        null,
+      ),
+    );
+    expect(res.revision).toBe(g.revision + 1);
+    const row = await prisma.productUnit.findUniqueOrThrow({ where: { id: piece.id } });
+    expect(Number(row.price)).toBe(1.25);
+    const cup = await prisma.customerUnitPrice.findFirstOrThrow({
+      where: { productId: t.productId, customerId: t.customerId },
+    });
+    expect(cup.unitRef).toBe("base");
+    expect(Number(cup.price)).toBe(1.1);
+    // The same patch sent with the row's own id is the same level: canonicalized, one cell.
+    const g2 = await readGrid(t);
+    await inTenant(t.tenantId, () =>
+      writes.save(
+        t.productId,
+        { ...stateOf(g2), patches: [{ ref: piece.id, tier: 1, to: 1.3 }] },
+        null,
+      ),
+    );
+    expect(
+      Number((await prisma.productUnit.findUniqueOrThrow({ where: { id: piece.id } })).price),
+    ).toBe(1.3);
+    expect(await prisma.productUnit.count({ where: { productId: t.productId } })).toBe(2);
+  });
+
   it("a product of another tenant is a 404 and nothing is written", async () => {
     const a = await seed("iso-a");
     const b = await seed("iso-b");

@@ -124,7 +124,10 @@ function makeTx(w: World) {
       ),
       update: jest.fn(async ({ where, data }: any) => {
         w.writes.push("cup.update");
-        w.cups.find((r) => r.id === where.id)!.price = data.price;
+        Object.assign(
+          w.cups.find((r) => r.id === where.id)!,
+          data,
+        );
       }),
       create: jest.fn(async ({ data }: any) => {
         w.writes.push("cup.create");
@@ -530,6 +533,141 @@ describe("ProductPriceWriteService.save", () => {
     });
   });
 
+  describe("a Piece (factor-1) unit backs the base level (SA-809)", () => {
+    const pieceRow = {
+      id: "u-piece",
+      label: "Piece",
+      factorToBase: 1,
+      price: null,
+      priceTier2: null,
+      priceTier3: null,
+      priceTier4: null,
+      priceTier5: null,
+      isDefaultSelling: false,
+      sortOrder: 1,
+      parentUnitId: null,
+      perParent: null,
+      sku: "PIECE-1",
+    };
+    const withPiece = () => build({ units: [{ ...pieceRow }] });
+
+    it('a patch on "base" prices that row (200), and the stored refs are the level', async () => {
+      const { world, service, grid } = withPiece();
+      const res = await service.save(
+        PRODUCT_ID,
+        await req(grid, { patches: [{ ref: "base", tier: 1, to: 1.25 }] }),
+        null,
+      );
+      const piece = world.units.find((u) => u.id === "u-piece")!;
+      expect(Number(piece.price)).toBe(1.25);
+      expect(world.writes).toContain("productUnit.update");
+      expect(world.writes).not.toContain("productUnit.create");
+      expect(res.revision).toBe(4);
+      const row = res.grid.rows.find((r) => r.ref === "base")!;
+      expect(row.code).toBe("PIECE-1");
+      expect(row.cells[0]).toEqual({ tier: 1, source: "set", value: 1.25 });
+      expect(res.undo?.patches).toEqual([{ ref: "base", tier: 1, to: null }]);
+      expect(world.audits[0].meta.request.patches).toEqual([{ ref: "base", tier: 1, to: 1.25 }]);
+    });
+
+    it('the factor-1 row\'s own id is canonicalized to "base" before it is planned or stored', async () => {
+      const { world, service, grid } = withPiece();
+      await service.save(
+        PRODUCT_ID,
+        await req(grid, {
+          patches: [{ ref: "u-piece", tier: 1, to: 1.3 }],
+          customerMoves: [{ customerId: "c2", ref: "u-piece", tier: 1, from: null, to: 1.1 }],
+        }),
+        null,
+      );
+      expect(Number(world.units[0].price)).toBe(1.3);
+      expect(world.cups.find((c) => c.customerId === "c2")!.unitRef).toBe("base");
+      expect(world.audits[0].meta.request.patches[0].ref).toBe("base");
+      expect(world.audits[0].meta.request.customerMoves[0].ref).toBe("base");
+    });
+
+    it('a customer move on "base" stores unitRef "base" (and undo removes it)', async () => {
+      const { world, service, grid } = withPiece();
+      const saved = await service.save(
+        PRODUCT_ID,
+        await req(grid, {
+          patches: [],
+          customerMoves: [{ customerId: "c1", ref: "base", tier: 1, from: null, to: 1.1 }],
+        }),
+        null,
+      );
+      expect(
+        world.cups.filter((c) => c.customerId === "c1").map((c) => [c.unitRef, c.price]),
+      ).toEqual([
+        ["pack", 12],
+        ["base", 1.1],
+      ]);
+      const g = await grid.get(PRODUCT_ID);
+      await service.undo(
+        PRODUCT_ID,
+        { auditId: saved.auditId, expectedRevision: g.revision, expectedPriceState: g.priceState },
+        null,
+      );
+      expect(world.cups.find((c) => c.unitRef === "base")).toBeUndefined();
+    });
+
+    it('a customer cell stored under the factor-1 row\'s id is the "base" cell, and is rewritten as "base"', async () => {
+      const { world, service, grid } = withPiece();
+      world.cups.push({
+        id: "cup-legacy",
+        customerId: "c2",
+        productId: PRODUCT_ID,
+        unitRef: "u-piece",
+        price: 1,
+      });
+      await service.save(
+        PRODUCT_ID,
+        await req(grid, {
+          patches: [],
+          customerMoves: [{ customerId: "c2", ref: "base", tier: 1, from: 1, to: 1.5 }],
+        }),
+        null,
+      );
+      expect(world.cups.find((c) => c.id === "cup-legacy")).toMatchObject({
+        unitRef: "base",
+        price: 1.5,
+      });
+    });
+  });
+
+  describe("undo skip on a cell that changed back (N2)", () => {
+    it("is 409 LADDER_REVISION_STALE (re-preview), nothing written, never 400 SKIP_NOT_REPORTED", async () => {
+      const ctx = build();
+      const saved = await ctx.service.save(
+        PRODUCT_ID,
+        await req(ctx.grid, {
+          customerMoves: [{ customerId: "c1", ref: "pack", tier: 1, from: 12, to: 13 }],
+        }),
+        null,
+      );
+      const cell = ctx.world.cups.find((c) => c.customerId === "c1")!;
+      cell.price = 15;
+      cell.price = 13; // changed again, then back to what the save left
+      const g = await ctx.grid.get(PRODUCT_ID);
+      const before = ctx.world.writes.length;
+      const err = await rejection(
+        ctx.service.undo(
+          PRODUCT_ID,
+          {
+            auditId: saved.auditId,
+            expectedRevision: g.revision,
+            expectedPriceState: g.priceState,
+            skip: [{ customerId: "c1", ref: "pack", seen: 15 }],
+          },
+          null,
+        ),
+      );
+      expect(err).toBeInstanceOf(ConflictException);
+      expect(err.getResponse().code).toBe(API_ERROR_CODES.LADDER_REVISION_STALE);
+      expect(ctx.world.writes).toHaveLength(before);
+    });
+  });
+
   it("a variant is 409 FAMILY_PRICE_AUTHORITY and a family or recipe row is 400, nothing written", async () => {
     const variant = build();
     variant.world.product!.parentProductId = "fam-1";
@@ -813,8 +951,10 @@ describe("ProductPriceWriteService.undo", () => {
       const { world, undo } = await twoCells();
       world.cups.find((c) => c.customerId === "c1")!.price = 15;
       const before = world.writes.length;
+      // A restored cell that is not in conflict now is stale (N2, 409), not malformed.
+      const stale = await rejection(undo([c1(15), { customerId: "c2", ref: "u-case", seen: 70 }]));
+      expect(stale.getResponse().code).toBe(API_ERROR_CODES.LADDER_REVISION_STALE);
       for (const bad of [
-        [c1(15), { customerId: "c2", ref: "u-case", seen: 70 }], // c2 did not change
         [{ customerId: "c1", ref: "u-case", seen: 15 }], // not a cell this undo restores
         [{ customerId: "nobody", ref: "pack", seen: null }],
       ]) {
@@ -825,14 +965,14 @@ describe("ProductPriceWriteService.undo", () => {
       expect(world.writes).toHaveLength(before);
     });
 
-    it("a duplicate skip item is 400; a skip with nothing in conflict is 400", async () => {
+    it("a duplicate skip item is 400; a skip with nothing in conflict is 409 stale", async () => {
       const { world, undo } = await twoCells();
       world.cups.find((c) => c.customerId === "c1")!.price = 15;
       const dup = await rejection(undo([c1(15), c1(15)]));
       expect(dup.getResponse().code).toBe(API_ERROR_CODES.PRICE_EDIT_INVALID);
       world.cups.find((c) => c.customerId === "c1")!.price = 13; // back to what the save left
       const none = await rejection(undo([c1(13)]));
-      expect(none.getResponse().code).toBe(API_ERROR_CODES.PRICE_EDIT_INVALID);
+      expect(none.getResponse().code).toBe(API_ERROR_CODES.LADDER_REVISION_STALE);
     });
 
     it("a cell whose row was deleted since is skipped by seen null", async () => {

@@ -85,7 +85,9 @@ export function legacyInvoiceCode(
  */
 export function unitCodeOf(codes: ProductCodes, ref: UnitRef): string | null {
   if (ref === "pack") return nz(codes.barcode) ?? nz(codes.sku);
-  if (ref === "base") return nz(codes.unitSku) ?? nz(codes.barcode) ?? nz(codes.sku);
+  // SA-809: the 1-piece row's own code is stored under the level ref "base" (never its ProductUnit id).
+  if (ref === "base")
+    return nz(codes.unitCodes?.base) ?? nz(codes.unitSku) ?? nz(codes.barcode) ?? nz(codes.sku);
   return nz(codes.unitCodes?.[ref]);
 }
 

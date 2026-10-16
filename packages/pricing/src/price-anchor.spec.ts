@@ -318,7 +318,7 @@ describe("T7e / P8 / A2: materializePack", () => {
   it("T7e: Piece anchor $1.20, Box cleared to Auto: pricePerUnit is materialized as $14.40 and getTierPrice reads it unchanged", () => {
     const units = [lvl("Piece", 1, "1.20", { id: "piece-1" })];
     const stored = { ...box12, pricePerUnit: "12.00" };
-    const view = buildLadderView(stored, units, { orderUnit: "piece-1", packAuto: 0b00001 });
+    const view = buildLadderView(stored, units, { orderUnit: "base", packAuto: 0b00001 });
     expect(ladderPrice(view, "pack", 1)).toBe(14.4);
     const m = materializePack(view, DEFAULT_TIER_RULES, { writePathComplete: true });
     expect(m.pricePerUnit).toBe(14.4);
@@ -419,7 +419,7 @@ describe("(h): rules above 0% and switches stay off until the write path is comp
 
   it("PF-3 / F1: materializePack throws PRICING_RULES_NOT_READY for a Piece anchor with the default flag (it used to return $14.40)", () => {
     const units = [lvl("Piece", 1, "1.20", { id: "piece-1" })];
-    const view = buildLadderView(box12, units, { orderUnit: "piece-1", packAuto: 0b00001 });
+    const view = buildLadderView(box12, units, { orderUnit: "base", packAuto: 0b00001 });
     expect(() => materializePack(view, DEFAULT_TIER_RULES)).toThrow(PricingRulesNotReadyError);
     expect(() => materializePack(view)).toThrow(
       expect.objectContaining({ code: "PRICING_RULES_NOT_READY" }),
@@ -432,7 +432,7 @@ describe("(h): rules above 0% and switches stay off until the write path is comp
     const units = [lvl("Case", 72), lvl("Piece", 1, null, { priceTier3: "0.80", id: "piece-1" })];
     const plain = buildLadderView(box12, units);
     const tierScope = { kind: "tier", tier: 3 } as const;
-    const tierAnchored = planOrderUnitSwitch(plain, tierScope, "piece-1");
+    const tierAnchored = planOrderUnitSwitch(plain, tierScope, "base");
     expect(() => materializePack(tierAnchored.view)).toThrow(PricingRulesNotReadyError);
     expect(() => materializePack(plain, { 2: 8 })).toThrow(PricingRulesNotReadyError);
     expect(() => materializePack(plain, { 2: 0 })).not.toThrow();
