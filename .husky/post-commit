@@ -1,6 +1,0 @@
-# graphify (owner 10-15): refresh this worktree's code graph after each commit (incremental, background, no API cost).
-command -v graphify >/dev/null 2>&1 || exit 0
-[ -f graphify-out/graph.json ] || exit 0
-[ -f graphify-out/.rebuild.lock ] && exit 0
-(graphify update . >/dev/null 2>&1 &)
-exit 0
