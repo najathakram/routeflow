@@ -30,6 +30,7 @@ const response = (over: Partial<CustomerUnitPricesResponse> = {}): CustomerUnitP
       productName: "Cola",
       tier: 2,
       orderUnit: null,
+      orderUnitScope: "default",
       orderUnitLabel: "Case",
       revision: 1,
       rows: [
@@ -133,20 +134,26 @@ describe("CustomerPriceView on the customer page", () => {
     expect(screen.queryAllByRole("spinbutton")).toHaveLength(0);
   });
 
-  it("says Orders in with the plain wording, and Same as your business setting only when it is", () => {
+  it("says Orders in with the plain wording, and the usual-unit note only when it is not their own", () => {
     const { rerender } = render(<CustomerPriceView customerId="c1" />);
     expect(screen.getByTestId(T.ordersIn("p1"))).toHaveTextContent(
-      "Orders in Case. Same as your business setting.",
+      "Orders in Case. The usual unit for this product.",
     );
     mockPrices.mockImplementation(() => {
       const r = response();
-      r.products[0] = { ...r.products[0], orderUnit: "base", orderUnitLabel: "Piece" };
+      r.products[0] = {
+        ...r.products[0],
+        orderUnit: "base",
+        orderUnitScope: "customer",
+        orderUnitLabel: "Piece",
+      };
       return loaded(r);
     });
     rerender(<CustomerPriceView customerId="c1" />);
     const line = screen.getByTestId(T.ordersIn("p1"));
     expect(line).toHaveTextContent("Orders in Piece.");
-    expect(line).not.toHaveTextContent("business setting");
+    expect(line).not.toHaveTextContent("usual unit");
+    expect(document.body.textContent).not.toContain("business setting");
   });
 
   it("shows one Auto pill with a short caption, never the repeated 'Auto,' text (P06)", () => {
@@ -155,8 +162,22 @@ describe("CustomerPriceView on the customer page", () => {
     const shape = screen.getByTestId(T.row("p1", "base"));
     expect(within(shape).getAllByText("Auto")).toHaveLength(1);
     expect(shape).toHaveTextContent("From their Case price");
-    expect(screen.getByTestId(T.row("p1", "u1"))).toHaveTextContent("Wholesale");
+    expect(screen.getByTestId(T.row("p1", "u1"))).toHaveTextContent("Wholesale tier");
     expect(screen.getByTestId(T.row("p1", "pack"))).toHaveTextContent("Set for this customer");
+  });
+
+  it("shows a remembered upsell as Auto with the tier and History, and says promotions are not included", () => {
+    mockPrices.mockImplementation(() => {
+      const r = response();
+      r.products[0].rows[0] = { ...r.products[0].rows[0], price: 27, source: "history" };
+      return loaded(r);
+    });
+    render(<CustomerPriceView customerId="c1" />);
+    const pack = screen.getByTestId(T.row("p1", "pack"));
+    expect(within(pack).getAllByText("Auto")).toHaveLength(1);
+    expect(pack).toHaveTextContent("Wholesale tier · History");
+    expect(pack).toHaveTextContent("$27.00");
+    expect(screen.getByTestId(T.blurb)).toHaveTextContent("Active promotions are not included");
   });
 
   it("keeps two always-visible columns, Unit then Price, with top-aligned cells (P05, P07)", () => {

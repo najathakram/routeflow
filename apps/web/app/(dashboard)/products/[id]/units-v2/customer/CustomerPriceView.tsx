@@ -50,12 +50,13 @@ function SourceCaption({
   orderUnitLabel: string;
 }) {
   if (source === "customer") return <span>Set for this customer</span>;
+  const tierCaption = `${tierName} tier`;
   const why =
     source === "customer-shape"
       ? `From their ${orderUnitLabel} price`
-      : source === "tier"
-        ? tierName
-        : "Retail";
+      : source === "history"
+        ? `${tierCaption} · History`
+        : tierCaption;
   // P06: one "Auto" pill and a caption; the word is never repeated in the caption.
   return (
     <span className="flex flex-wrap items-center gap-1.5">
@@ -80,7 +81,7 @@ function ProductBlock({
   tierName: string;
   showName: boolean;
 }) {
-  const own = entry.orderUnit != null;
+  const own = entry.orderUnitScope === "customer";
   const rows = entry.rows;
   return (
     <article
@@ -91,7 +92,7 @@ function ProductBlock({
       <p data-testid={T.ordersIn(entry.productId)} className="mt-1 text-sm text-navy/80">
         {own
           ? `Orders in ${entry.orderUnitLabel}.`
-          : `Orders in ${entry.orderUnitLabel}. Same as your business setting.`}
+          : `Orders in ${entry.orderUnitLabel}. The usual unit for this product.`}
       </p>
       <div className="mt-3 overflow-x-auto">
         <table data-testid={T.prices(entry.productId)} className="w-full text-sm">
@@ -152,7 +153,7 @@ function ProductBlock({
             <dt className="inline font-medium">Unit for orders: </dt>
             <dd className="inline">
               {entry.orderUnitLabel}
-              {own ? "" : " (business setting)"}
+              {own ? "" : " (the product's usual unit)"}
             </dd>
           </div>
           <div>
@@ -288,7 +289,8 @@ export function CustomerPriceView({ customerId, productId }: CustomerPriceViewPr
         ) : (
           <div data-testid={T.body} className="space-y-4">
             <p data-testid={T.blurb} className="text-sm text-navy/70">
-              {customerName} pays {tierName} prices unless a price is set for them.
+              {customerName} pays {tierName} prices unless a price is set for them. Active
+              promotions are not included.
             </p>
             {res.products.length === 0 ? (
               <p className="text-sm text-navy/70">

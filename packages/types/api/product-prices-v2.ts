@@ -176,7 +176,7 @@ export interface ProductCustomerPricesResponse {
 }
 
 /** resolveCustomerUnitPrice's `source`. */
-export type CustomerUnitPriceSource = "customer" | "customer-shape" | "tier" | "list";
+export type CustomerUnitPriceSource = "customer" | "customer-shape" | "tier" | "list" | "history";
 
 /** One unit row of the customer view: what this customer pays vs the list (Retail) and their tier's price. */
 export interface CustomerUnitPriceRowDto {
@@ -205,6 +205,8 @@ export interface CustomerProductUnitPricesDto {
   orderUnit: string | null;
   /** Label of the unit the customer actually orders in: their own order unit, else their tier's anchor (customerAnchor). */
   orderUnitLabel: string;
+  /** Where that label comes from: the customer's own order unit, or the product's default (no business-setting scope is read yet). */
+  orderUnitScope: "customer" | "default";
   revision: number;
   rows: CustomerUnitPriceRowDto[];
 }
