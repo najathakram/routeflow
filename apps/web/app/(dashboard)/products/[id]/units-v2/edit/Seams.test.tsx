@@ -501,7 +501,7 @@ describe("K8 seams", () => {
       await edit(user);
       const box = () => screen.getByRole("checkbox", { name: /Also raise prices set for these/ });
       await user.click(box());
-      expect(draft.toRequest()?.customerMoves[0]).toMatchObject({ from: 0.5 });
+      expect(draft.toRequest()?.customerMoves?.[0]).toMatchObject({ from: 0.5 });
       // the save is refused as stale (the customer's price moved under the frozen `from`)
       mockSaveOutcome = STALE;
       await user.click(screen.getByTestId(T.ebSave));
