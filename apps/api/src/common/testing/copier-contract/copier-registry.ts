@@ -55,7 +55,19 @@ export const INFRA: Record<Model, string> = {
  * moment a gap is written).
  */
 const P0A_LABELS: Record<string, GapRef> = { baseLabel: "unfiled", packLabel: "unfiled" };
-const P0A_LABELS_LINECODE: Record<string, GapRef> = { ...P0A_LABELS, lineCode: "unfiled" };
+/**
+ * Units program S6 (SA-795 (g)): the invoice-unit snapshot columns exist (nullable, display-only) but nothing
+ * writes them yet; the invoice-unit slice (S23) snapshots them at issue and moves each out of gaps.
+ */
+const S6_INVOICE_UNIT: Record<string, GapRef> = {
+  invoiceUnitLabel: "unfiled",
+  invoiceUnitFactor: "unfiled",
+};
+const P0A_LABELS_LINECODE: Record<string, GapRef> = {
+  ...P0A_LABELS,
+  lineCode: "unfiled",
+  ...S6_INVOICE_UNIT,
+};
 
 const ORDER_FRESH = "deliveredQty invoicedQty overrideReason overriddenBy status";
 const MERGE = {

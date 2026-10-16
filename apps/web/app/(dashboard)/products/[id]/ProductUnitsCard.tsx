@@ -129,11 +129,11 @@ function UnitRow({
         </div>
         <div>
           <label className={LABEL} htmlFor={`${idp}-factor`}>
-            {w.base.other} per {unit.label.toLowerCase()}
+            {isPiece ? "Smallest unit" : `${w.base.other} per ${unit.label.toLowerCase()}`}
           </label>
           <DecimalInput
             id={`${idp}-factor`}
-            aria-label={`${w.base.other} per ${unit.label}`}
+            aria-label={isPiece ? "Smallest unit size" : `${w.base.other} per ${unit.label}`}
             className={FIELD}
             decimals={0}
             min={1}
@@ -159,7 +159,8 @@ function UnitRow({
         </div>
       </div>
       <p className="mt-1.5 text-[11px] text-navy/50">
-        A grey figure is derived from the {w.pack.lower} price; type a price to override it.
+        A grey figure is worked out automatically from the {w.pack.lower} price. Type a price to set
+        it yourself, or clear it to go back to automatic.
       </p>
       <details className="mt-2">
         <summary className="cursor-pointer text-xs font-medium text-brand-600">Tier prices</summary>
@@ -192,7 +193,7 @@ function UnitRow({
             onChange={() => onMakeDefault(unit)}
             disabled={busy}
           />
-          Pre-selected on staff orders
+          Default order unit
         </label>
         <div className="flex gap-2">
           {dirty && (
@@ -325,7 +326,7 @@ export function ProductUnitsCard({ product }: { product: UnitsCardProduct }) {
                   }
                 }}
               />
-              Pre-selected on staff orders
+              Default order unit
             </label>
           </span>
         </div>

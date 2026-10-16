@@ -217,6 +217,11 @@ const PACKAGE_ALLOWLIST: Record<string, { codes: string[]; reason: string }> = {
     reason:
       "MoneyInvariantError's `code` field; pricing's dist is loaded by the API at runtime (SA-478a, no value import of @routeflow/types)",
   },
+  "packages/pricing/src/pack-write-path.ts": {
+    codes: ["PRICING_RULES_NOT_READY"],
+    reason:
+      "PricingRulesNotReadyError's `code` field (PF-3, SA-796 R-4); pricing's dist is loaded by the API at runtime (SA-478a, no value import of @routeflow/types)",
+  },
   "packages/returns/src/inline-return-state.ts": {
     codes: [
       "ADDON_GATE",
@@ -230,7 +235,7 @@ const PACKAGE_ALLOWLIST: Record<string, { codes: string[]; reason: string }> = {
       "CONVENTION, not a runtime constraint: compiled CJS package (like pricing) that keeps @routeflow/types imports type-only, so its dist never requires the raw-TS package; only pricing is bound by SA-478a",
   },
 };
-const PACKAGE_ALLOWLIST_TOTAL = 7;
+const PACKAGE_ALLOWLIST_TOTAL = 8;
 
 /**
  * `READ_ONLY` is ALSO a tenant STATUS value (`tenant.status === "READ_ONLY"`), which is not an error
