@@ -136,7 +136,9 @@ interface LiveBillReceipt {
 const ledgerGap = (productId: string, name: string, detail: string, stockDrift = 0) =>
   new ConflictException({
     code: API_ERROR_CODES.INVENTORY_LEDGER_GAP,
-    message: `"${name}" can't be reverted to draft — ${detail} Ask an admin to look into this product first.`,
+    // SA-808b item 2: the message names the way out (void), not a non-existent admin path.
+    message: `${name}'s stock records for this bill don't match what was received, so it can't go back to draft. Void the bill and enter it again.`,
+    detail,
     productId,
     name,
     stockDrift,
@@ -1428,11 +1430,11 @@ export class VendorBillsService {
     bill: { billNumber: string },
     lines: { productId: string; name: string; qty: Prisma.Decimal }[],
   ) {
-    const out: LiveBillReceipt[][] = lines.map(() => []);
+    const out = new Map<string, LiveBillReceipt[]>();
     for (const productId of new Set(lines.map((l) => l.productId))) {
-      const idx = lines.flatMap((l, i) => (l.productId === productId ? [i] : []));
-      const name = lines[idx[0]].name;
-      const want = idx.reduce((t, i) => t.add(lines[i].qty), new Prisma.Decimal(0));
+      const mine = lines.filter((l) => l.productId === productId);
+      const name = mine[0].name;
+      const want = mine.reduce((t, l) => t.add(l.qty), new Prisma.Decimal(0));
       const paired = new Set(await pairedReceiptIds(tx, productId));
       const receipts = (await tx.stockMovement.findMany({
         where: {
@@ -1447,6 +1449,10 @@ export class VendorBillsService {
       })) as LiveBillReceipt[];
       const rows = receipts.filter((r) => !paired.has(r.id));
       const posted = rows.reduce((t, r) => t.add(r.quantity), new Prisma.Decimal(0));
+      // SA-808b item 3: only the PRODUCT total is checked. One receive's rows share effectiveAt and
+      // (inside one transaction) createdAt, so which row belongs to which line is decided by the
+      // uuid — a per-line split would refuse a normal two-line bill at random. Each reversal row
+      // mirrors its own original; per-line money uses the line's own qty and cost.
       if (!posted.eq(want)) {
         throw ledgerGap(
           productId,
@@ -1455,22 +1461,7 @@ export class VendorBillsService {
           Number(posted.sub(want)),
         );
       }
-      for (const i of idx) {
-        let taken = new Prisma.Decimal(0);
-        while (taken.lt(lines[i].qty) && rows.length > 0) {
-          const next = rows.shift() as LiveBillReceipt;
-          out[i].push(next);
-          taken = taken.add(next.quantity);
-        }
-        if (!taken.eq(lines[i].qty)) {
-          throw ledgerGap(
-            productId,
-            name,
-            `its stock records for bill ${bill.billNumber} do not line up with the bill's lines.`,
-            Number(taken.sub(lines[i].qty)),
-          );
-        }
-      }
+      out.set(productId, rows);
     }
     return out;
   }
@@ -1538,7 +1529,7 @@ export class VendorBillsService {
           unitCost,
         });
       }
-      const receiptsByLine = await this.loadLiveBillReceipts(
+      const receiptsByProduct = await this.loadLiveBillReceipts(
         tx,
         bill,
         plan.map((p) => ({ productId: p.item.productId as string, name: p.name, qty: p.qty })),
@@ -1564,9 +1555,14 @@ export class VendorBillsService {
         return dateMemo.get(key) as DocumentStockDate;
       };
 
+      // The product's rows are written once, after its LAST line moved the counter (SA-808b item 3).
+      const lastLineOf = new Map<string, number>();
+      for (const [lineNo, p] of plan.entries()) lastLineOf.set(p.item.productId as string, lineNo);
+
       for (const [lineNo, { item, name, qty, unitCost }] of plan.entries()) {
         const productId = item.productId as string;
-        const mine = receiptsByLine[lineNo];
+        const mine =
+          lastLineOf.get(productId) === lineNo ? (receiptsByProduct.get(productId) ?? []) : [];
 
         // Read current product state within the transaction for accurate AVCO reversal
         const product = await tx.product.findFirst({
@@ -1592,8 +1588,11 @@ export class VendorBillsService {
         });
 
         // One reversing row per receipt row, written AFTER the update from the counter it returned
-        // (SA-136 §1). With several rows on one line the counter walks down to `updated` on the last.
-        let stockAfter = new Prisma.Decimal(updated.currentStock).add(qty);
+        // (SA-136 §1). The product's rows sum to the product's total received, so the counter walks
+        // down from (counter + that total) to `updated` on the last row.
+        let stockAfter = new Prisma.Decimal(updated.currentStock).add(
+          mine.reduce((t, r) => t.add(r.quantity), new Prisma.Decimal(0)),
+        );
         for (const original of mine) {
           stockAfter = stockAfter.sub(original.quantity);
           // SA-808 §3 (A): dated at the receipt's own instant so every period nets, UNLESS that
@@ -1608,6 +1607,8 @@ export class VendorBillsService {
               type: MovementType.PURCHASE,
               quantity: new Prisma.Decimal(original.quantity).negated(),
               unitCost: original.unitCost,
+              // One instant: every row of a multi-line product carries the LAST line's average here;
+              // the replay recomputes the later rows.
               avgCostAfter: reversedAvg ?? product.averageCost ?? null,
               stockAfter,
               supplierId: original.supplierId,

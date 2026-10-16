@@ -401,4 +401,49 @@ describeDb("B846 bill revert appends — real Postgres", () => {
     const reversal = (await ledger(w)).find((r) => r.q === -10) as { effectiveAt: Date };
     expect(reversal.effectiveAt >= MONTH_END_EXCL).toBe(true);
   });
+
+  // The DB does not force row order, so the uuid tiebreak on a createdAt tie is pinned here: after
+  // the receive, the two receipt rows get fixed ids in each order, making the old per-line split a
+  // deterministic red. (StockMovement has no inbound FKs; resolvedMovementId is a plain string.)
+  it.each([
+    ["5-row first", [5, 3]],
+    ["3-row first", [3, 5]],
+  ] as const)(
+    "V5 (SA-808b item 3): a two-line, one-product bill reverts — %s on the uuid tiebreak",
+    async (_label, qtyOrder) => {
+      const w = await seedWorld(`v5-${qtyOrder[0]}`);
+      const bill: any = await inTenant(w, () =>
+        bills.create({
+          supplierId: w.supplierId,
+          billNumber: `B-846-V5-${qtyOrder[0]}`,
+          billDate: BILL_DATE,
+          items: [
+            { productId: w.productId, description: "Widget", qty: 5, unitCost: 2 },
+            { productId: w.productId, description: "Widget", qty: 3, unitCost: 3 },
+          ],
+        } as never),
+      );
+      await inTenant(w, () => bills.receive(bill.id, undefined, w.userId));
+      const created = await prisma.stockMovement.findMany({ where: { productId: w.productId } });
+      expect(created).toHaveLength(2);
+      // One receive's rows tie on createdAt (CURRENT_TIMESTAMP = transaction start); pin the uuid order.
+      expect(new Set(created.map((r) => r.createdAt.getTime())).size).toBe(1);
+      // Distinct per case (ids are table-global): the last hex digit carries the case, then the rank.
+      const fixed = [1, 2].map((rank) => `00000000-0000-4000-8000-0000000000${qtyOrder[0]}${rank}`);
+      for (const [i, q] of qtyOrder.entries()) {
+        const row = created.find((r) => Number(r.quantity) === q) as (typeof created)[number];
+        await prisma.$executeRaw`UPDATE "StockMovement" SET id = ${fixed[i]} WHERE id = ${row.id}`;
+      }
+      const pinned = await ledger(w);
+      expect(pinned.map((r) => r.q)).toEqual([...qtyOrder]);
+
+      await revert(w, bill.id);
+
+      const rows = await ledger(w);
+      expect(rows.map((r) => r.q).sort((a, b) => a - b)).toEqual(
+        [-5, -3, 3, 5].sort((a, b) => a - b),
+      );
+      expect(await counter(w)).toBe(0);
+    },
+  );
 });

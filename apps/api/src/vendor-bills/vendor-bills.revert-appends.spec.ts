@@ -690,11 +690,73 @@ describe("B846 / SA-808 — revertToDraft appends reversal rows and never delete
     expect(out.gapsDetected).toEqual([{ productId: "prod-1", name: "Widget", stockDrift: 3 }]);
   });
 
+  describe.each([
+    ["receipt-row order", (rows: Row[]) => rows],
+    ["reversed row order", (rows: Row[]) => [...rows].reverse()],
+  ])(
+    "V5 (SA-808b item 3): a two-line, one-product bill (5 @ $2 + 3 @ $3) — %s",
+    (_label, order) => {
+      const twoLines = (over: Row = {}) => ({
+        ...draftBill(0),
+        items: [
+          item(5, 2, { id: "item-1", ...over }),
+          item(3, 3, { id: "item-2", ...(over.qtyReceived ? { qtyReceived: D(3) } : {}) }),
+        ],
+      });
+      it("reverts without refusing, whichever row comes first (one receive ties effectiveAt and createdAt)", async () => {
+        const h = await harness();
+        h.setBill(twoLines());
+        await h.service.receive("bill-1", undefined, "user-1");
+        expect(h.rows.map((r) => Number(r.quantity))).toEqual([5, 3]);
+        // One receive's rows tie on (effectiveAt, createdAt): the DB falls back to the uuid. The
+        // harness returns rows in array order, so reordering it stands in for either uuid order.
+        const tied = h.rows[0].createdAt;
+        for (const r of h.rows) r.createdAt = tied;
+        h.rows.splice(0, h.rows.length, ...order([...h.rows]));
+        const originals = new Map(h.rows.map((r) => [r.id as string, r]));
+
+        h.setBill({
+          ...twoLines({ qtyReceived: D(5) }),
+          status: "RECEIVED",
+          receivedDate: billDate,
+        });
+        await (h.service as any).revertToDraft("bill-1", "user-2");
+
+        const reversals = h.rows.filter((r) => Number(r.quantity) < 0);
+        expect(reversals).toHaveLength(2);
+        for (const rev of reversals) {
+          const original = originals.get(rev.notes.slice(BILL_REVERTED_NOTE.length)) as Row;
+          expect(original).toBeDefined(); // each reversal names its own original...
+          expect(D(rev.quantity).eq(D(original.quantity).negated())).toBe(true); // ...and mirrors it
+          expect(D(rev.unitCost).eq(original.unitCost)).toBe(true);
+        }
+        expect(h.sum({ productId: "prod-1" }).toNumber()).toBe(0);
+        expect(h.product.currentStock.toNumber()).toBe(0);
+        // The snapshots walk the counter down to where the product ended (8 on hand at the start).
+        let walk = 8;
+        for (const rev of reversals) {
+          walk += Number(rev.quantity);
+          expect(D(rev.stockAfter).toNumber()).toBe(walk);
+        }
+        expect(walk).toBe(0);
+        // Both receipt lots (5 @ $2 and 3 @ $3) are reversed or gone, none left as a phantom.
+        expect(h.lots.filter((l) => D(l.remainingQty).gt(0))).toHaveLength(0);
+      });
+    },
+  );
+
   it("L-207: refuses with a coded error when the receipt rows do not add up to the received qty", async () => {
     const h = await harness();
     await receive(h, 10);
     h.rows[0].quantity = D(7); // history no longer explains the line
 
+    await expect(revert(h, 10)).rejects.toMatchObject({
+      response: {
+        code: API_ERROR_CODES.INVENTORY_LEDGER_GAP,
+        message:
+          "Widget's stock records for this bill don't match what was received, so it can't go back to draft. Void the bill and enter it again.",
+      },
+    });
     await expect(revert(h, 10)).rejects.toBeInstanceOf(ConflictException);
     expect(h.rows).toHaveLength(1); // nothing written
     expect(h.product.currentStock.toNumber()).toBe(10);
