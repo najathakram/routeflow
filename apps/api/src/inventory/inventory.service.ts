@@ -1530,7 +1530,12 @@ export class InventoryService {
         const item = po.items.find(
           (i) => i.id === itemId || (recv.productId && i.productId === recv.productId),
         );
-        if (!item) continue;
+        if (!item) {
+          // B1237: an item that is not on the PO is refused by name, never skipped with a 200.
+          throw new BadRequestException(
+            `Item ${recv.productId ?? itemId ?? "(none given)"} is not on purchase order ${po.poNumber}.`,
+          );
+        }
 
         const prod = await tx.product.findUnique({ where: { id: item.productId } });
 
@@ -2314,6 +2319,11 @@ export class InventoryService {
   }
 
   async setReorderPoint(productId: string, reorderPoint: number, reorderQty: number) {
+    // B1238: an id that does not resolve in the caller's catalog is a 404, not a raw Prisma error.
+    const exists = await this.prisma
+      .forTenant()
+      .product.findUnique({ where: { id: productId }, select: { id: true } });
+    if (!exists) throw new NotFoundException("Product not found");
     return this.prisma.forTenant().product.update({
       where: { id: productId },
       data: { reorderPoint, reorderQty },
