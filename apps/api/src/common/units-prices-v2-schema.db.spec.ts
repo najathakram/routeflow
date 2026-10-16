@@ -2,14 +2,16 @@
  * Units program S6 on REAL Postgres (migration 20261016120000_units_prices_v2_schema; SA-795 (b)):
  *  - "Product_packAuto_range_chk" refuses packAuto 32 and -1 and accepts 0..31          (23514)
  *  - "CustomerUnitPrice_price_positive_chk" refuses a price of 0 (and below)            (23514)
- *  - "ProductTierUnit_tier_range_chk" refuses tier 0 and 6, accepts 1..5                (23514)
+ *  - "ProductTierUnit_tier_range_chk" refuses tier 0, 1 and 6, accepts 2..5 (SA-796 R-2)   (23514)
+ *  - the seven "<Table>_<col>_ref_format_chk" (SA-796 R-3) refuse a view `label:` ref and accept
+ *    'pack', 'base', a ProductUnit uuid and (nullable columns) NULL                    (23514)
  *  - UNIQUE(productId, tier) and UNIQUE(customerId, productId, unitRef)                 (23505 / P2002)
  *  - "<InvoiceItem|CreditNoteItem>_invoiceUnitFactor_positive_chk" (NOT VALID, still enforced on new rows)
  *  - deletes: Product cascades its tier units / customer unit prices and SET NULLs a PO or bill line's
  *    familyProductId; Customer cascades its unit prices
  *  - the orderUnitRef backfill: the migration's OWN Product ADD COLUMN statement, replayed on a temp
- *    table that already holds rows, leaves every pre-existing row at 'pack' / packAuto 0 (no UPDATE);
- *    and a legacy-shaped INSERT that names neither column reads 'pack' / 0.
+ *    table that already holds rows, leaves every pre-existing row at 'pack' / packAuto 0 /
+ *    priceRevision 0 (no UPDATE); and a legacy-shaped INSERT that names none of them reads the same.
  * Raw Prisma and pg writes, so the DATABASE decides. SAFETY: a throwaway `qa-s6units-<run>` tenant
  * (`assertTestTenant`); the replay runs on a session TEMP table (dropped at disconnect, never "Product");
  * afterAll deletes exactly this tenant's rows, in FK order. Collected only by `jest.db.config.js`; run via
@@ -87,6 +89,7 @@ describeDb("units prices v2 schema — real Postgres (S6, SA-795 (b))", () => {
     if (tenantId) {
       await raw.customerUnitPrice.deleteMany({ where: { tenantId } });
       await raw.productTierUnit.deleteMany({ where: { tenantId } });
+      await raw.customerPrice.deleteMany({ where: { tenantId } });
       await raw.invoiceItem.deleteMany({ where: { tenantId } });
       await raw.invoice.deleteMany({ where: { tenantId } });
       await raw.purchaseOrder.deleteMany({ where: { tenantId } }); // cascades its items
@@ -100,6 +103,26 @@ describeDb("units prices v2 schema — real Postgres (S6, SA-795 (b))", () => {
     await raw?.$disconnect();
     await pool?.end();
   }, 120_000);
+
+  const REF_CHECKS = [
+    "CustomerPrice_invoiceUnitRef_ref_format_chk",
+    "CustomerPrice_orderUnitRef_ref_format_chk",
+    "CustomerUnitPrice_unitRef_ref_format_chk",
+    "ProductTierUnit_invoiceUnitRef_ref_format_chk",
+    "ProductTierUnit_orderUnitRef_ref_format_chk",
+    "Product_invoiceUnitRef_ref_format_chk",
+    "Product_orderUnitRef_ref_format_chk",
+  ];
+
+  it("the R-3 ref CHECKs are installed and VALIDATED on all seven columns (SA-796 G5)", async () => {
+    const { rows } = await pool.query(
+      `SELECT conname, convalidated FROM pg_constraint WHERE conname = ANY($1::text[]) ORDER BY conname`,
+      [REF_CHECKS],
+    );
+    expect(rows).toEqual(
+      [...REF_CHECKS].sort().map((conname) => ({ conname, convalidated: true })),
+    );
+  });
 
   it("the five CHECKs are installed; the two item-table ones NOT VALID (enforced for new rows, no scan)", async () => {
     const { rows } = await pool.query(
@@ -123,16 +146,19 @@ describeDb("units prices v2 schema — real Postgres (S6, SA-795 (b))", () => {
     ]);
   });
 
-  it("a product that names neither column reads packAuto 0 and orderUnitRef 'pack' (legacy writers)", async () => {
+  it("a product that names none of the columns reads packAuto 0, priceRevision 0 and orderUnitRef 'pack' (legacy writers)", async () => {
     const { rows } = await pool.query(
       `INSERT INTO "Product" ("id", "name", "unit", "pricePerUnit", "tenantId", "updatedAt")
-       VALUES ($1, $2, 'Box', 10, $3, now()) RETURNING "packAuto", "orderUnitRef", "invoiceUnitRef"`,
+       VALUES ($1, $2, 'Box', 10, $3, now())
+       RETURNING "packAuto", "priceRevision", "orderUnitRef", "invoiceUnitRef"`,
       [randomUUID(), `S6 legacy ${run}`, tenantId],
     );
-    expect(rows).toEqual([{ packAuto: 0, orderUnitRef: "pack", invoiceUnitRef: null }]);
+    expect(rows).toEqual([
+      { packAuto: 0, priceRevision: 0, orderUnitRef: "pack", invoiceUnitRef: null },
+    ]);
   });
 
-  it("the migration's own Product ADD COLUMN backfills PRE-EXISTING rows to 'pack' / 0 with no UPDATE", async () => {
+  it("the migration's own Product ADD COLUMN backfills PRE-EXISTING rows to 'pack' / 0 / 0 with no UPDATE", async () => {
     const sql = readFileSync(MIGRATION, "utf8")
       .split("\n")
       .filter((l) => !l.trim().startsWith("--"))
@@ -156,12 +182,13 @@ describeDb("units prices v2 schema — real Postgres (S6, SA-795 (b))", () => {
       await client.query(onTemp(addCols!));
       await client.query(onTemp(check!));
       const { rows } = await client.query(
-        `SELECT "id", "packAuto", "orderUnitRef", "invoiceUnitRef" FROM pg_temp."s6_product_replay" ORDER BY "id"`,
+        `SELECT "id", "packAuto", "priceRevision", "orderUnitRef", "invoiceUnitRef" FROM pg_temp."s6_product_replay" ORDER BY "id"`,
       );
       expect(rows).toEqual(
         ["a", "b", "c"].map((id) => ({
           id,
           packAuto: 0,
+          priceRevision: 0,
           orderUnitRef: "pack",
           invoiceUnitRef: null,
         })),
@@ -186,7 +213,7 @@ describeDb("units prices v2 schema — real Postgres (S6, SA-795 (b))", () => {
     raw.customerUnitPrice.create({ data: { tenantId, customerId, productId, unitRef, price } });
 
   it.each(["0", "0.00", "-1"])("CustomerUnitPrice refuses price %s (23514)", async (price) => {
-    const err = await rejectionOf(unitPrice(price, `ref-${price}`));
+    const err = await rejectionOf(unitPrice(price, randomUUID()));
     expect(sqlState(err)).toBe("23514");
     expect(String(err?.message ?? err)).toMatch(/CustomerUnitPrice_price_positive_chk/);
   });
@@ -201,17 +228,64 @@ describeDb("units prices v2 schema — real Postgres (S6, SA-795 (b))", () => {
   const tierUnit = (tier: number, orderUnitRef: string | null = "base") =>
     raw.productTierUnit.create({ data: { tenantId, productId, tier, orderUnitRef } });
 
-  it.each([0, 6])("ProductTierUnit refuses tier %i (23514)", async (tier) => {
-    const err = await rejectionOf(tierUnit(tier));
-    expect(sqlState(err)).toBe("23514");
-    expect(String(err?.message ?? err)).toMatch(/ProductTierUnit_tier_range_chk/);
-  });
+  it.each([0, 1, 6])(
+    "ProductTierUnit refuses tier %i (23514; tier 1 is the product scope, R-2)",
+    async (tier) => {
+      const err = await rejectionOf(tierUnit(tier));
+      expect(sqlState(err)).toBe("23514");
+      expect(String(err?.message ?? err)).toMatch(/ProductTierUnit_tier_range_chk/);
+    },
+  );
 
-  it("ProductTierUnit accepts tiers 1..5 once each; a second row for one (product, tier) is refused", async () => {
-    for (const tier of [1, 2, 3, 4, 5])
-      await expect(tierUnit(tier)).resolves.toMatchObject({ tier });
+  it("ProductTierUnit accepts tiers 2..5 once each; a second row for one (product, tier) is refused", async () => {
+    for (const tier of [2, 3, 4, 5]) await expect(tierUnit(tier)).resolves.toMatchObject({ tier });
     const err = await rejectionOf(tierUnit(2, "pack"));
     expect(["P2002", "23505"]).toContain(sqlState(err));
+  });
+
+  // R-3 behaviour, one write per column: a view `label:` ref is refused; keywords, a uuid and NULL are kept.
+  const refWrite: Record<string, (ref: string | null) => Promise<unknown>> = {
+    "Product.orderUnitRef": (ref) => product({ orderUnitRef: ref }),
+    "Product.invoiceUnitRef": (ref) => product({ invoiceUnitRef: ref }),
+    "CustomerPrice.orderUnitRef": (ref) => customerPrice({ orderUnitRef: ref }),
+    "CustomerPrice.invoiceUnitRef": (ref) => customerPrice({ invoiceUnitRef: ref }),
+    "ProductTierUnit.orderUnitRef": (ref) => freshTierUnit({ orderUnitRef: ref }),
+    "ProductTierUnit.invoiceUnitRef": (ref) => freshTierUnit({ invoiceUnitRef: ref }),
+    "CustomerUnitPrice.unitRef": (ref) => freshUnitPrice(ref as string),
+  };
+  const customerPrice = async (extra: Record<string, unknown>) =>
+    raw.customerPrice.create({
+      data: { customerId, productId: (await product()).id, tenantId, ...extra },
+    });
+  const freshTierUnit = async (extra: Record<string, unknown>) =>
+    raw.productTierUnit.create({
+      data: { tenantId, productId: (await product()).id, tier: 2, ...extra },
+    });
+  const freshUnitPrice = async (unitRef: string) =>
+    raw.customerUnitPrice.create({
+      data: { tenantId, customerId, productId: (await product()).id, unitRef, price: "4" },
+    });
+
+  it.each(Object.keys(refWrite))("%s refuses a `label:` ref (23514)", async (col) => {
+    const [table, field] = col.split(".");
+    const err = await rejectionOf(refWrite[col]("label:Case"));
+    expect(sqlState(err)).toBe("23514");
+    expect(String(err?.message ?? err)).toMatch(new RegExp(`${table}_${field}_ref_format_chk`));
+  });
+
+  it.each(Object.keys(refWrite))("%s keeps 'pack', 'base' and a ProductUnit uuid", async (col) => {
+    for (const ref of ["pack", "base", randomUUID()])
+      await expect(refWrite[col](ref)).resolves.toBeDefined();
+  });
+
+  it.each([
+    "Product.invoiceUnitRef",
+    "CustomerPrice.orderUnitRef",
+    "CustomerPrice.invoiceUnitRef",
+    "ProductTierUnit.orderUnitRef",
+    "ProductTierUnit.invoiceUnitRef",
+  ])("%s keeps NULL (nullable column)", async (col) => {
+    await expect(refWrite[col](null)).resolves.toBeDefined();
   });
 
   it("deleting the product cascades its tier units and customer unit prices", async () => {

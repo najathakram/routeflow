@@ -11,14 +11,14 @@
 export const UNIT_REF_PACK = "pack" as const;
 /** The implicit base unit (Piece; Product.baseUnitLabel). */
 export const UNIT_REF_BASE = "base" as const;
-export const UNIT_REF_KEYWORDS = [UNIT_REF_PACK, UNIT_REF_BASE] as const;
-export type UnitRefKeyword = (typeof UNIT_REF_KEYWORDS)[number];
 /**
  * `Product/CustomerPrice/ProductTierUnit.orderUnitRef|invoiceUnitRef`, `CustomerUnitPrice.unitRef`:
- * a keyword, or any other string = a `ProductUnit.id` (TEXT, no FK: a ref to a deleted unit is
- * skipped and the next scope wins, PLAN §1.2).
+ * a keyword, or a `ProductUnit.id` (a uuid; TEXT, no FK: a ref to a deleted unit is skipped and the
+ * next scope wins, PLAN §1.2). Never a view `label:` ref: a DB CHECK refuses it (SA-796 R-3). The
+ * `UnitRef` type itself, `TierRules` and `DEFAULT_TIER_RULES` are the units core's (price-ladder.ts).
  */
-export type UnitRef = UnitRefKeyword | (string & {});
+export const UNIT_REF_KEYWORDS = [UNIT_REF_PACK, UNIT_REF_BASE] as const;
+export type UnitRefKeyword = (typeof UNIT_REF_KEYWORDS)[number];
 
 export function isUnitRefKeyword(ref: string): ref is UnitRefKeyword {
   return (UNIT_REF_KEYWORDS as readonly string[]).includes(ref);
@@ -47,11 +47,6 @@ export const PACK_AUTO_ALL = 31;
 export const TIER_RULES_SETTING_KEY = "pricing.tierRules" as const;
 export const ORDER_UNIT_SETTING_KEY = "units.orderUnit" as const;
 export const INVOICE_UNIT_SETTING_KEY = "units.invoiceUnit" as const;
-
-/** Per tier 2-5: percent below Retail (0 <= p < 100). */
-export type TierRules = Readonly<Record<2 | 3 | 4 | 5, number>>;
-/** 0% everywhere: every Auto tier equals today's "0 = list price" (SA-795 (h)). */
-export const DEFAULT_TIER_RULES: TierRules = Object.freeze({ 2: 0, 3: 0, 4: 0, 5: 0 });
 
 /** Business order unit: a mode, or a named unit (TenantUnit id). Fills NEW products only. */
 export const ORDER_UNIT_BUSINESS_MODES = ["pack", "smallest"] as const;

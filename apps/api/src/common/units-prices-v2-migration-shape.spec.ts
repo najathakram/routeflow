@@ -59,6 +59,11 @@ describe("units prices v2 migration shape (S6)", () => {
     );
   });
 
+  it("Product.priceRevision is INTEGER NOT NULL DEFAULT 0 (SA-796 R-1: metadata-only, every row reads 0)", () => {
+    const product = alterOf("Product").join(";");
+    expect(product).toMatch(/ADD COLUMN "priceRevision" INTEGER NOT NULL DEFAULT 0\b/);
+  });
+
   it("Product.orderUnitRef is backfilled to 'pack' by its constant default (no row rewrite); invoiceUnitRef is nullable", () => {
     const product = alterOf("Product").join(";");
     expect(product).toMatch(/ADD COLUMN "orderUnitRef" TEXT NOT NULL DEFAULT 'pack'/);
@@ -107,10 +112,14 @@ describe("units prices v2 migration shape (S6)", () => {
     },
   );
 
-  it("creates ProductTierUnit with tier CHECK 1..5 and UNIQUE(productId, tier)", () => {
+  it("creates ProductTierUnit with tier CHECK 2..5 (SA-796 R-2) and UNIQUE(productId, tier)", () => {
     expect(sql).toMatch(/CREATE TABLE "ProductTierUnit" \(/);
     expect(sql).toMatch(
-      /ALTER TABLE "ProductTierUnit" ADD CONSTRAINT "ProductTierUnit_tier_range_chk" CHECK \("tier" BETWEEN 1 AND 5\)/,
+      /ALTER TABLE "ProductTierUnit" ADD CONSTRAINT "ProductTierUnit_tier_range_chk" CHECK \("tier" BETWEEN 2 AND 5\);/,
+    );
+    // R-2: tier 1 (Retail) is the product scope itself, not a ProductTierUnit row; the old comment is gone.
+    expect(readFileSync(join(MIGRATIONS_DIR, FOLDER, "migration.sql"), "utf8")).not.toMatch(
+      /Tier 1 = Retail customers/,
     );
     expect(sql).toMatch(
       /CREATE UNIQUE INDEX "ProductTierUnit_productId_tier_key" ON "ProductTierUnit"\("productId", "tier"\)/,
@@ -133,6 +142,32 @@ describe("units prices v2 migration shape (S6)", () => {
     expect(sql).toMatch(
       /"CustomerUnitPrice_customerId_fkey" FOREIGN KEY \("customerId"\) REFERENCES "Customer"\("id"\) ON DELETE CASCADE/,
     );
+  });
+
+  // SA-796 R-3 (fold N5): a stored ref is 'pack' | 'base' | a ProductUnit id (uuid), never a view `label:` ref.
+  // NULL passes on the nullable columns (a CHECK that evaluates to NULL is satisfied). VALIDATED (no NOT VALID,
+  // SA-796 G5/G6): Product and CustomerPrice are small, so one scan each; the two new tables are empty.
+  const REF_COLUMNS: Array<[string, string]> = [
+    ["Product", "orderUnitRef"],
+    ["Product", "invoiceUnitRef"],
+    ["CustomerPrice", "orderUnitRef"],
+    ["CustomerPrice", "invoiceUnitRef"],
+    ["ProductTierUnit", "orderUnitRef"],
+    ["ProductTierUnit", "invoiceUnitRef"],
+    ["CustomerUnitPrice", "unitRef"],
+  ];
+  const UUID_RE = "^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$";
+
+  it.each(REF_COLUMNS)("%s.%s carries the validated R-3 ref-format CHECK", (table, col) => {
+    expect(sql).toContain(
+      `ALTER TABLE "${table}" ADD CONSTRAINT "${table}_${col}_ref_format_chk" CHECK ("${col}" IN ('pack','base') OR "${col}" ~ '${UUID_RE}');`,
+    );
+  });
+
+  it("the R-3 ref CHECKs are exactly the seven columns, none NOT VALID", () => {
+    const refChecks = stmts.filter((s) => /_ref_format_chk"/.test(s));
+    expect(refChecks).toHaveLength(7);
+    for (const s of refChecks) expect(s).not.toMatch(/NOT VALID/);
   });
 
   it("carries no squawk-ignore (every kept Squawk rule passes; excluded rules need no silencing)", () => {

@@ -1,6 +1,6 @@
 /**
  * Units program S6 (PLAN §1.2; SA-795 (b), (g), (h)): the new columns and tables exist on the
- * generated client with the right type, nullability and default, and the dark registry rows are in.
+ * generated client with the right type, nullability and default, and the dark settings rows are in.
  * Prisma 7's runtime DMMF keeps names/types only, so nullability/defaults are read from the schema
  * folder text (the units-p0a-schema.spec pattern). A stale client is red for the wrong reason:
  * run `npx prisma generate` in apps/api first.
@@ -14,7 +14,6 @@ import {
   ORDER_UNIT_SETTING_KEY,
   TIER_RULES_SETTING_KEY,
 } from "@routeflow/pricing";
-import { FEATURE_REGISTRY } from "../billing/feature-registry";
 
 const SCHEMA_DIR = path.resolve(__dirname, "../../prisma/schema");
 const fileOf = (f: string) => fs.readFileSync(path.join(SCHEMA_DIR, f), "utf8");
@@ -67,6 +66,20 @@ describe("units prices v2 schema (S6)", () => {
     );
   });
 
+  it("Product.priceRevision is Int NOT NULL @default(0) (SA-796 R-1)", () => {
+    expect(dmmfType("Product", "priceRevision")).toBe("Int");
+    expect(fieldLine("Product", "priceRevision")).toMatch(
+      /^\s*priceRevision\s+Int\s+@default\(0\)\s*(\/\/.*)?$/,
+    );
+  });
+
+  it("ProductTierUnit documents tiers 2..5 (SA-796 R-2), not a tier-1 Retail row", () => {
+    const doc =
+      /((?:^\/\/\/.*\n)+)model ProductTierUnit \{/m.exec(fileOf("catalog.prisma"))?.[1] ?? "";
+    expect(doc).toMatch(/`tier` 2\.\.5/);
+    expect(doc).not.toMatch(/tier 1 = Retail customers/);
+  });
+
   it('Product.orderUnitRef is String NOT NULL @default("pack") (every product has an order unit)', () => {
     expect(dmmfType("Product", "orderUnitRef")).toBe("String");
     expect(fieldLine("Product", "orderUnitRef")).toMatch(
@@ -114,6 +127,7 @@ describe("units prices v2 schema (S6)", () => {
   );
 });
 
+// The flag.units_prices_v2 feature row is C0's (SA-796 R-5, fold N2), not this slice's.
 describe("units prices v2 dark registry rows (S6, SA-795 (h): nothing turns on)", () => {
   it.each([TIER_RULES_SETTING_KEY, ORDER_UNIT_SETTING_KEY, INVOICE_UNIT_SETTING_KEY])(
     "%s is a pending SystemConfig config row with a planned surface, no screen",
@@ -128,14 +142,5 @@ describe("units prices v2 dark registry rows (S6, SA-795 (h): nothing turns on)"
 
   it("the registry stays valid with the new rows", () => {
     expect(validateSettingsRegistry()).toEqual([]);
-  });
-
-  it("flag.units_prices_v2 is registered, ungranted by default, in no plan, with no gate wired yet", () => {
-    const row = FEATURE_REGISTRY.find((f) => f.key === "flag.units_prices_v2");
-    expect(row).toBeDefined();
-    expect(row?.defaultGranted).toBe(false);
-    expect(row?.area).toBe("catalog");
-    expect(row?.gate.state).not.toBe("dark");
-    expect(row?.billing.skus).toEqual([]);
   });
 });

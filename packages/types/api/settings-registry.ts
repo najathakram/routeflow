@@ -136,7 +136,8 @@ export const SETTINGS_REGISTRY: SettingRow[] = [
   cfg("remittance.config", "/settings?tab=remittance"),
   cfg("pricing.tierLabels", "/settings"),
   // Units program S6 (PLAN §1.2, SA-795 (h)): dark CONFIG rows; nothing reads or writes them yet. Their defaults
-  // (0% tier rules, order unit "pack", invoice unit "legacy" = today) live in @routeflow/pricing units-prices-v2.ts.
+  // (0% tier rules, order unit "pack", invoice unit "legacy" = today) live in @routeflow/pricing: the keys and
+  // unit defaults in units-prices-v2.ts, the tier rules' DEFAULT_TIER_RULES in the units core (price-ladder.ts).
   ...(
     [
       [

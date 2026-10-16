@@ -163,6 +163,9 @@ model Product {
   // bit 0 = Retail (pricePerUnit), bits 1-4 = priceTier2-5 (@routeflow/pricing PACK_AUTO_BITS).
   // 0 = every cell set, today. priceSource() is the only reader.
   packAuto       Int     @default(0)
+  // SA-796 R-1: bumped in the same UPDATE by every units price write (never by stock). S9's precondition is
+  // this PLUS a value compare-and-set of the prices it read (legacy writers do not bump it), else 409.
+  priceRevision  Int     @default(0)
   // S6 (PLAN §1.2/§1.6): the order unit, which is also the price anchor: "pack" | "base" | a ProductUnit.id.
   // Stored on every product; the constant default IS the backfill (every product orders by its pack today).
   orderUnitRef   String  @default("pack")
@@ -457,9 +460,10 @@ model ProductUnit {
 }
 
 /// Units program S6 (PLAN §1.2/§1.6): a pricing tier's own order and invoice unit for one product (the
-/// "product x tier" scope; customer > tier > product > business). Refs: "pack" | "base" | a ProductUnit.id,
-/// null = fall through to the product. `tier` 1..5 (DB CHECK, raw SQL): tier 1 = Retail customers, a real
-/// scope (a customer's tier is `CustomerPrice.pricingTier ?? Customer.pricingTier ?? 1`).
+/// "product x tier" scope; customer > tier > product > business). Refs: "pack" | "base" | a ProductUnit.id
+/// (DB CHECK, SA-796 R-3: never a `label:` ref), null = fall through to the product. `tier` 2..5 (DB CHECK,
+/// raw SQL; SA-796 R-2): Retail customers (tier 1) use the product scope itself, and one retail customer's own
+/// unit is `CustomerPrice.orderUnitRef`.
 /// A row with BOTH refs null means nothing (no CHECK on purpose): S20's writer deletes the row instead.
 model ProductTierUnit {
   id             String   @id @default(uuid())

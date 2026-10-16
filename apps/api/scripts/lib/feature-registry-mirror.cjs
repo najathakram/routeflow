@@ -64,8 +64,7 @@
 //           consulted by computeOldPathEffective/computeNewPathEffective — only by the apply-time
 //           expiry/reporting logic in publish-and-repin.mjs.
 //
-// 36 entries, transcribed 2026-09-19 from FEATURE_REGISTRY at origin/master 27d80c21 (+ flag.units_v1, #947),
-// plus later rows (+ flag.units_prices_v2, units S6).
+// 36 entries, transcribed 2026-09-19 from FEATURE_REGISTRY at origin/master 27d80c21 (+ flag.units_v1, #947).
 const FEATURE_REGISTRY_MIRROR = [
   ["ocr", "RequireAddon", "dark", false, ["OCR_PACK_250"]],
   ["tobacco_dealer", "RequireAddon", "enforced", false, ["REGULATED_ITEMS"]],
@@ -103,7 +102,6 @@ const FEATURE_REGISTRY_MIRROR = [
   ["metered_msgs", "none", "none", false, ["MSG_BUNDLE_500"]],
   ["catalog_varieties", "none", "none", true, []],
   ["mixed_packs", "none", "none", false, []],
-  ["flag.units_prices_v2", "none", "none", false, []],
   ["routes_dispatch", "none", "none", true, []],
   ["fulfilment_model", "none", "none", true, []],
   ["counter_sales", "none", "none", true, []],

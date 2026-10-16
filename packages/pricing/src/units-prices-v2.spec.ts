@@ -7,7 +7,6 @@
 import {
   DEFAULT_INVOICE_UNIT,
   DEFAULT_ORDER_UNIT,
-  DEFAULT_TIER_RULES,
   INVOICE_UNIT_BUSINESS_MODES,
   INVOICE_UNIT_SETTING_KEY,
   NEW_TENANT_INVOICE_UNIT,
@@ -21,6 +20,7 @@ import {
   UNIT_REF_PACK,
   isUnitRefKeyword,
 } from "./units-prices-v2";
+import * as unitsPricesV2 from "./units-prices-v2";
 
 describe("Product.packAuto bit constants (SA-795 (b))", () => {
   it("are five bits, Retail first, then tiers 2-5 in column order", () => {
@@ -54,10 +54,10 @@ describe("unit refs", () => {
 });
 
 describe("dark settings defaults (PLAN §1.2, M4; SA-795 (h): nothing turns on)", () => {
-  it("pricing.tierRules defaults every tier 2-5 to 0% below Retail", () => {
+  it("pricing.tierRules is the setting key; its rules type and 0% default are the core's (SA-796 N1)", () => {
     expect(TIER_RULES_SETTING_KEY).toBe("pricing.tierRules");
-    expect(DEFAULT_TIER_RULES).toEqual({ 2: 0, 3: 0, 4: 0, 5: 0 });
-    expect(Object.isFrozen(DEFAULT_TIER_RULES)).toBe(true);
+    // price-ladder.ts (the units core) owns UnitRef, TierRules and DEFAULT_TIER_RULES: no second copy here.
+    expect(Object.keys(unitsPricesV2)).not.toContain("DEFAULT_TIER_RULES");
   });
 
   it("units.orderUnit defaults to the pack (today's order unit on every product)", () => {

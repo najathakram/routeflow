@@ -1041,30 +1041,6 @@ export const FEATURE_REGISTRY: readonly FeatureDef[] = [
       },
     },
   },
-  // Units program S6 (PLAN M8): the units/prices v2 presentation flag, registered ahead of its first gate.
-  // UNGRANTED: defaultGranted false and in no plan, so no tenant is served it. It has no gated route yet, and a
-  // RequirePlanFlag row must name a live call site (feature-registry.spec), so it ships `none`; the PR that adds
-  // its first @RequirePlanFlag route (S11) flips it to RequirePlanFlag + `enforced` (enforced-but-ungranted, like
-  // flag.units_v1), which is also when an owner override GRANT starts serving it per tenant.
-  {
-    key: "flag.units_prices_v2",
-    kind: "boolean",
-    area: "catalog",
-    label: "Units and prices (v2)",
-    description:
-      "The units-and-prices grid: one ladder per product, Auto/Set prices, order and invoice units.",
-    gate: {
-      via: "none",
-      state: "none",
-      added: "2026-10-16",
-      routes: [],
-      grantPath:
-        "Owner override GRANT per tenant, once the row is RequirePlanFlag (S11); no plan bundles it",
-      backfill: "New key: no tenant has used it, so there is nothing to backfill.",
-    },
-    billing: { skus: [], selfService: false },
-    defaultGranted: false,
-  },
   {
     key: "routes_dispatch",
     kind: "boolean",
