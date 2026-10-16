@@ -1,7 +1,7 @@
 "use client";
 
 import { priceRowLabel } from "@/lib/product-unit-label";
-import { safeTextErrorCopy } from "@/lib/safe-text-error-copy";
+import { codedToastCopy } from "@/lib/generic-toast-copy";
 import * as React from "react";
 import Link from "next/link";
 import { useParams, useRouter } from "next/navigation";
@@ -582,7 +582,7 @@ export default function ProductDetailPage() {
             title: "Failed to save product",
             // B964-2: a refused formula-led product / variant name is fixed copy with its label, never the server text
             description:
-              safeTextErrorCopy(e) ??
+              codedToastCopy(e) ??
               String(e?.response?.data?.message ?? "Check the fields and try again."),
             variant: "error",
           }),
@@ -751,7 +751,13 @@ export default function ProductDetailPage() {
             toast({ title: "Variant updated", variant: "success" });
             closeVariantModal();
           },
-          onError: () => toast({ title: "Failed to update variant", variant: "error" }),
+          // B1 R3: a refused name (only the product's own name) says why; anything else keeps the plain title.
+          onError: (e: unknown) =>
+            toast({
+              title: "Failed to update variant",
+              description: codedToastCopy(e) ?? undefined,
+              variant: "error",
+            }),
         },
       );
     } else {
@@ -777,7 +783,12 @@ export default function ProductDetailPage() {
             toast({ title: "Variant created", variant: "success" });
             closeVariantModal();
           },
-          onError: () => toast({ title: "Failed to create variant", variant: "error" }),
+          onError: (e: unknown) =>
+            toast({
+              title: "Failed to create variant",
+              description: codedToastCopy(e) ?? undefined,
+              variant: "error",
+            }),
         },
       );
     }

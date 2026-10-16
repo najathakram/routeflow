@@ -282,4 +282,129 @@ describeDb("B1 every variant-name writer stores the bare label: real Postgres", 
     expect(await labels(kid)).toEqual({ name: "Kiddo", variantName: "Kiddo" });
     expect(await labels(out.added[0])).toEqual({ name: "Mint", variantName: "Mint" });
   });
+
+  // B1 R3: a name that is only the parent's prefix is a coded 400 on every writer and nothing is stored.
+  const PREFIX_ONLY = { response: { code: "VARIANT_NAME_PREFIX_ONLY" } };
+
+  it("create(): a prefix-only name or variantName is a coded 400; no row is stored", async () => {
+    const t = await seedTenant("pfx-create");
+    const parent = await mk(t, "Acme");
+    await expect(mk(t, "ACME  - ", { parentProductId: parent.id })).rejects.toMatchObject(
+      PREFIX_ONLY,
+    );
+    await expect(
+      mk(t, "Mint", { parentProductId: parent.id, variantName: "Acme -" }),
+    ).rejects.toMatchObject(PREFIX_ONLY);
+    expect(await prisma.product.count({ where: { tenantId: t, parentProductId: parent.id } })).toBe(
+      0,
+    );
+  });
+
+  it("update(): a prefix-only name keeps the stored label (and a bare name is never emptied)", async () => {
+    const t = await seedTenant("pfx-update");
+    const parent = await mk(t, "Acme");
+    const v = await mk(t, "Classic", { parentProductId: parent.id, variantName: "Classic" });
+    await expect(patch(t, v.id, { name: "Acme - " })).rejects.toMatchObject(PREFIX_ONLY);
+    await expect(patch(t, v.id, { variantName: "acme -" })).rejects.toMatchObject(PREFIX_ONLY);
+    expect(await labels(v.id)).toEqual({ name: "Classic", variantName: "Classic" });
+  });
+
+  it("bulkAssignParent: a prefix-only assignment is a failed row, stored nothing", async () => {
+    const t = await seedTenant("pfx-bulk");
+    const parent = await mk(t, "Acme");
+    const x = await mk(t, "Standalone X");
+    const res = await inTenant(t, () =>
+      products.bulkAssignParent({
+        parentProductId: parent.id,
+        assignments: [{ id: x.id, variantName: "Acme - " }],
+      } as never),
+    );
+    expect(res.succeeded).toEqual([]);
+    expect(res.failed.map((f) => f.id)).toEqual([x.id]);
+    expect((await fresh(x.id)).parentProductId).toBeNull();
+  });
+
+  it("family create / grid refuse a prefix-only variant; nothing is written", async () => {
+    const t = await seedTenant("pfx-family");
+    await expect(
+      inTenant(t, () =>
+        families.createFamily(
+          {
+            family: { name: "Acme", pricePerUnit: "1.00" },
+            variants: [{ name: "Acme - ", pricePerUnit: "1.00" }],
+          } as never,
+          null,
+        ),
+      ),
+    ).rejects.toMatchObject(PREFIX_ONLY);
+    expect(await prisma.product.count({ where: { tenantId: t } })).toBe(0);
+
+    const res = await inTenant(t, () =>
+      families.createFamily(
+        {
+          family: { name: "Acme", pricePerUnit: "1.00" },
+          variants: [{ name: "Kid", pricePerUnit: "1.00" }],
+        } as never,
+        null,
+      ),
+    );
+    const kid = res.variants[0].id;
+    await expect(
+      inTenant(t, () =>
+        families.updateVariants(
+          res.family.id,
+          { update: [{ id: kid, name: "ACME -" }] } as never,
+          null,
+        ),
+      ),
+    ).rejects.toMatchObject(PREFIX_ONLY);
+    await expect(
+      inTenant(t, () =>
+        families.updateVariants(
+          res.family.id,
+          { add: [{ name: "acme - ", pricePerUnit: "1.00" }] } as never,
+          null,
+        ),
+      ),
+    ).rejects.toMatchObject(PREFIX_ONLY);
+    expect(await labels(kid)).toEqual({ name: "Kid", variantName: "Kid" });
+    expect(
+      await prisma.product.count({ where: { tenantId: t, parentProductId: res.family.id } }),
+    ).toBe(1);
+  });
+
+  it("stock split: a prefix-only new variant is a coded 400 and no variant is created", async () => {
+    const t = await seedTenant("pfx-split");
+    const user = await prisma.user.create({
+      data: { email: `${t}@example.invalid`, username: `u-${t}`, role: "OPERATOR", tenantId: t },
+    });
+    const parent = await prisma.product.create({
+      data: {
+        tenantId: t,
+        name: "Acme",
+        unit: "each",
+        pricePerUnit: "10.00",
+        priceTier2: "10.00",
+        priceTier3: "10.00",
+        priceTier4: "10.00",
+        priceTier5: "10.00",
+        currentStock: 20,
+        averageCost: 4,
+      },
+    });
+    await expect(
+      inTenant(t, () =>
+        inventory.assignToVariants(
+          {
+            parentProductId: parent.id,
+            assignments: [{ newVariant: { name: "ACME - " }, qty: 5 }],
+          } as never,
+          user.id,
+        ),
+      ),
+    ).rejects.toMatchObject(PREFIX_ONLY);
+    expect(await prisma.product.count({ where: { tenantId: t, parentProductId: parent.id } })).toBe(
+      0,
+    );
+  });
 });

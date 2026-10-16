@@ -28,7 +28,7 @@ import {
 import { linePack, normalizeBoxesPieces, roundMoney } from "@routeflow/pricing";
 import { fetchInvoicedSaleLines, roundQty } from "../common/invoiced-sales";
 import { poLineFromInput } from "./po-line-input";
-import { stripParentPrefix } from "../products/product-variant-name";
+import { bareVariantLabel } from "../products/product-variant-name";
 import { costDecimal, nextAverageCost, planLotConsumption, reverseAverageCost } from "./costing";
 import { recordSaleMovement, resolveSaleCost } from "./sale-movement";
 import { RecordPurchaseDto } from "./dto/record-purchase.dto";
@@ -482,7 +482,7 @@ export class InventoryService {
             priceTier5: parent.priceTier5,
           };
     // B1: the stock split's new variant stores its BARE label in both columns (display composes the parent).
-    const bareName = stripParentPrefix(variantName, parent.name);
+    const bareName = bareVariantLabel(variantName, parent.name);
     const created = await tx.product.create({
       data: {
         name: bareName,
@@ -657,7 +657,7 @@ export class InventoryService {
               // two identically-named siblings.
               // B1: judged on the BARE label (what is stored); a legacy row of this writer stored the composed
               // "<parent> - <label>" in `name`, so that spelling still counts as taken.
-              const bare = stripParentPrefix(input.newVariant.name, parent.name);
+              const bare = bareVariantLabel(input.newVariant.name, parent.name);
               const nameKey = bare.trim().toLowerCase();
               if (seenNewVariantNames.has(nameKey)) {
                 throw new BadRequestException(

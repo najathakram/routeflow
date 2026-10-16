@@ -427,6 +427,25 @@ describe("InventoryService.assignToVariants", () => {
     );
   });
 
+  it("B1 R3: a new variant that is only the parent prefix is a coded 400; nothing is created", async () => {
+    prisma.product.findUnique.mockResolvedValue(parent());
+    prisma.product.findFirst.mockResolvedValue(null);
+
+    const err = await service
+      .assignToVariants(
+        {
+          parentProductId: "parent-1",
+          assignments: [{ newVariant: { name: "COLA 24PK - " }, qty: 1 }],
+        } as any,
+        "user-1",
+      )
+      .catch((e) => e);
+
+    expect(err).toBeInstanceOf(BadRequestException);
+    expect(err.getResponse()).toMatchObject({ code: API_ERROR_CODES.VARIANT_NAME_PREFIX_ONLY });
+    expect(prisma.product.create).not.toHaveBeenCalled();
+  });
+
   it("costs a STANDARD-costed parent from its standardCost, never $0, when averageCost is null", async () => {
     // recordPurchase never writes averageCost for a STANDARD product, so this
     // is the NORMAL state of a STANDARD generic — not an edge case.

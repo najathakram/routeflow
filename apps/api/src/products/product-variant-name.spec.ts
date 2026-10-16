@@ -1,4 +1,32 @@
-import { bareRowNames, bareVariantNames, stripParentPrefix } from "./product-variant-name";
+import { BadRequestException } from "@nestjs/common";
+import { API_ERROR_CODES } from "../common/api-error-codes";
+import {
+  bareRowNames,
+  bareVariantLabel,
+  bareVariantNames,
+  isPrefixOnly,
+  stripParentPrefix,
+} from "./product-variant-name";
+
+/** The coded 400 a prefix-only name is refused with (R3), or null when `fn` did not throw. */
+function prefixOnlyRefusal(fn: () => unknown): Record<string, unknown> | null {
+  try {
+    fn();
+  } catch (e) {
+    expect(e).toBeInstanceOf(BadRequestException);
+    return (e as BadRequestException).getResponse() as Record<string, unknown>;
+  }
+  return null;
+}
+const PREFIX_ONLY_INPUTS = [
+  "Acme - ",
+  "Acme -",
+  "acme - ",
+  "  ACME   -   ",
+  "Acme - Acme - ",
+  "ACME - acme -",
+  "Acme\t-\u00a0",
+];
 
 describe("stripParentPrefix (B1)", () => {
   it("strips one or many leading '<parent> - ' prefixes and nothing else", () => {
@@ -97,5 +125,53 @@ describe("bareRowNames (B1)", () => {
     ];
     bareRowNames(rows, "Acme");
     expect(rows).toEqual([{ name: "Mint" }, { name: "Berry" }, { sku: "x" }]);
+  });
+});
+
+describe("prefix-only names are a coded 400 (B1 R3)", () => {
+  it.each(PREFIX_ONLY_INPUTS)("isPrefixOnly(%j, 'Acme') is true", (v) => {
+    expect(isPrefixOnly(v, "Acme")).toBe(true);
+  });
+
+  it.each(["Classic", "Acme - Classic", "Acmeberry - ", "Acme Berry -", "Cool - ", "", "Acme"])(
+    "isPrefixOnly(%j, 'Acme') is false",
+    (v) => {
+      expect(isPrefixOnly(v, "Acme")).toBe(false);
+    },
+  );
+
+  it("is false with no parent name (a standalone product keeps its full name)", () => {
+    expect(isPrefixOnly("Acme - ", null)).toBe(false);
+    expect(isPrefixOnly("Acme - ", "  ")).toBe(false);
+  });
+
+  it.each(PREFIX_ONLY_INPUTS)("bareVariantLabel(%j) throws VARIANT_NAME_PREFIX_ONLY", (v) => {
+    const body = prefixOnlyRefusal(() => bareVariantLabel(v, "Acme"));
+    expect(body).toMatchObject({ code: API_ERROR_CODES.VARIANT_NAME_PREFIX_ONLY, field: "name" });
+    expect(typeof body?.message).toBe("string");
+  });
+
+  it("bareVariantLabel strips like stripParentPrefix when a label remains", () => {
+    expect(bareVariantLabel("ACME - acme - Classic", "Acme")).toBe("Classic");
+    expect(bareVariantLabel("Classic", "Acme")).toBe("Classic");
+    expect(bareVariantLabel("Acme - ", null)).toBe("Acme - ");
+  });
+
+  it("bareVariantNames refuses a prefix-only name or variantName and writes nothing into the dto", async () => {
+    const lookup = { product: { findFirst: jest.fn().mockResolvedValue({ name: "Acme" }) } };
+    for (const field of ["name", "variantName"] as const) {
+      const dto: { name?: string; variantName?: string | null } = { [field]: "Acme - " };
+      await expect(bareVariantNames(lookup, dto, "p1")).rejects.toMatchObject({
+        response: { code: API_ERROR_CODES.VARIANT_NAME_PREFIX_ONLY },
+      });
+      expect(dto[field]).toBe("Acme - ");
+    }
+  });
+
+  it("bareRowNames refuses a prefix-only row and leaves every row untouched", () => {
+    const rows = [{ name: "Acme - Mint" }, { name: "ACME -" }];
+    const body = prefixOnlyRefusal(() => bareRowNames(rows, "Acme"));
+    expect(body).toMatchObject({ code: API_ERROR_CODES.VARIANT_NAME_PREFIX_ONLY });
+    expect(rows).toEqual([{ name: "Acme - Mint" }, { name: "ACME -" }]);
   });
 });

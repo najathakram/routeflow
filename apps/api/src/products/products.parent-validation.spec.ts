@@ -385,6 +385,50 @@ describe("ProductsService: every parent write goes through it (B1211)", () => {
     });
   });
 
+  describe("a name that is only the parent's prefix (B1 R3)", () => {
+    const NAMED_FAMILY: ParentRow & { name: string } = {
+      ...(FAMILY as object),
+      name: "Acme",
+    } as never;
+
+    it.each(["Acme - ", "ACME -", "  acme  -  ", "Acme - Acme - "])(
+      "update() with name %j under a parent is the coded 400 VARIANT_NAME_PREFIX_ONLY; nothing is written",
+      async (name) => {
+        seed({ fam: NAMED_FAMILY });
+        const body = await refusal(
+          service.update("prod-1", { parentProductId: "fam", name } as never),
+        );
+        expect(body.code).toBe(API_ERROR_CODES.VARIANT_NAME_PREFIX_ONLY);
+        expect(prisma.product.update).not.toHaveBeenCalled();
+      },
+    );
+
+    it("update() refuses a prefix-only variantName on a product that already has the parent", async () => {
+      seed({ fam: NAMED_FAMILY });
+      prisma.product.findUnique.mockResolvedValue({ ...PRODUCT, parentProductId: "fam" });
+      const body = await refusal(service.update("prod-1", { variantName: "Acme - " } as never));
+      expect(body.code).toBe(API_ERROR_CODES.VARIANT_NAME_PREFIX_ONLY);
+      expect(prisma.product.update).not.toHaveBeenCalled();
+    });
+
+    it.each(["Acme - ", "ACME -"])(
+      "create() with name %j under a parent is the coded 400; nothing is written",
+      async (name) => {
+        seed({ fam: NAMED_FAMILY });
+        const body = await refusal(
+          service.create({
+            name,
+            parentProductId: "fam",
+            unit: "each",
+            pricePerUnit: "1.00",
+          } as never),
+        );
+        expect(body.code).toBe(API_ERROR_CODES.VARIANT_NAME_PREFIX_ONLY);
+        expect(prisma.product.create).not.toHaveBeenCalled();
+      },
+    );
+  });
+
   describe("bulkAssignParent()", () => {
     it("a parent from another tenant: 400 before any row moves", async () => {
       seed({});

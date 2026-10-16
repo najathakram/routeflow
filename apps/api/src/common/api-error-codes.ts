@@ -30,6 +30,8 @@ export const API_ERROR_CODES = {
   CODE_TAKEN: "CODE_TAKEN",
   PRODUCT_CODE_IN_USE: "PRODUCT_CODE_IN_USE",
   NAME_TAKEN: "NAME_TAKEN",
+  /** 400 from product create / update, the family grid and the stock split: a variant name that is only its parent's name plus the separator ("Acme - "); there is no label to store. Nothing was written. */
+  VARIANT_NAME_PREFIX_ONLY: "VARIANT_NAME_PREFIX_ONLY",
   HOLDERS_CHANGED: "HOLDERS_CHANGED",
   FAMILY_NOT_SELLABLE: "FAMILY_NOT_SELLABLE",
   /** 400 from PUT customer price overrides and POST/PATCH promotions: a FAMILY container is never priced or promoted; `productIds` names them. Use its variants. */
