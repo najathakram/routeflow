@@ -22,6 +22,11 @@ const SQL_TRIM_SET = JS_TRIM_CODE_UNITS.map((c) => `\\u${c.toString(16).padStart
  * comparison made in the database agrees with the one made in TypeScript. Used wherever SQL compares a
  * unit label: the unit counts and rename candidates and the line-size checks (units.service.ts), and the
  * level-write line-size check (product-units.service.ts).
+ *
+ * Locale: Postgres `lower()` case-folds by the database's LC_CTYPE. Under a UTF-8 ctype (the postgres
+ * image's en_US.utf8 default) it folds non-ASCII letters as JS `toLowerCase()` does (`ÉTUI` -> `étui`);
+ * under ctype "C" it folds ASCII only, so a non-ASCII word would key differently here than in TypeScript.
+ * `units.db.spec.ts` pins the parity (ÉTUI, NFC and NFD) on the database it runs against.
  */
 export const sqlKeyOf = (ref: Prisma.Sql): Prisma.Sql =>
   Prisma.sql`lower(btrim(normalize(${ref}, NFC), E'${Prisma.raw(SQL_TRIM_SET)}'))`;
