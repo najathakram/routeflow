@@ -355,7 +355,7 @@ export class VendorBillsService {
     const missing = ids.filter((id) => !have.has(id));
     if (missing.length > 0) {
       throw new NotFoundException({
-        message: "One or more bill line products could not be found",
+        message: "Product not found",
         missingProductIds: missing,
       });
     }
