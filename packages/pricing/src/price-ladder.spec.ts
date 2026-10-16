@@ -137,10 +137,13 @@ describe("T3 property: generated ladders equal resolveUnitPrice at 0%", () => {
         unit: "Box",
         unitsPerBox: upb,
         pricePerUnit: money().toFixed(2),
-        priceTier2: maybe(0.5, () => money().toFixed(2)),
-        priceTier3: maybe(0.4, () => money().toFixed(2)),
-        priceTier4: maybe(0.3, () => (rnd() < 0.3 ? "0" : money().toFixed(2))),
-        priceTier5: maybe(0.2, () => (rnd() < 0.3 ? `-${money().toFixed(2)}` : money().toFixed(2))), // PF-13: a negative is Auto
+        // PF-13: a negative stored tier is Auto, on tiers 2-5 alike
+        priceTier2: maybe(0.5, () => (rnd() < 0.3 ? `-${money().toFixed(2)}` : money().toFixed(2))),
+        priceTier3: maybe(0.4, () => (rnd() < 0.3 ? `-${money().toFixed(2)}` : money().toFixed(2))),
+        priceTier4: maybe(0.3, () =>
+          rnd() < 0.2 ? "0" : rnd() < 0.3 ? `-${money().toFixed(2)}` : money().toFixed(2),
+        ),
+        priceTier5: maybe(0.2, () => (rnd() < 0.3 ? `-${money().toFixed(2)}` : money().toFixed(2))),
       };
       const units: LadderUnit[] = [];
       const labels = ["Piece", "Inner", "Case", "Pallet", "Layer"].filter(() => rnd() < 0.6);

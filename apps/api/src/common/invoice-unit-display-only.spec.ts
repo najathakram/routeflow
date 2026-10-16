@@ -36,13 +36,17 @@ const DISPLAY_FILES = new Set([
   "packages/pricing/src/invoice-display.ts",
   "packages/pricing/src/index.ts",
 ]);
-/** The API files that render an invoice (display only): the PDF modules and the detail read. */
-const DISPLAY_PATTERNS = [
-  /^apps\/api\/src\/invoices\/invoice-pdf[^/]*$/,
-  /^apps\/api\/src\/invoices\/invoice-detail-read\.ts$/,
-];
-const isDisplay = (f: string): boolean =>
-  DISPLAY_FILES.has(f) || DISPLAY_PATTERNS.some((re) => re.test(f));
+/** The API files that render an invoice (display only), by exact name: the PDF modules and the detail read. A new file must be added here on purpose. */
+const DISPLAY_API_FILES = [
+  "invoice-pdf-item.ts",
+  "invoice-pdf-pointer.ts",
+  "invoice-pdf-template.tsx",
+  "invoice-pdf-terms.ts",
+  "invoice-pdf-variant.ts",
+  "invoice-pdf.service.ts",
+  "invoice-detail-read.ts",
+].map((n) => `apps/api/src/invoices/${n}`);
+const isDisplay = (f: string): boolean => DISPLAY_FILES.has(f) || DISPLAY_API_FILES.includes(f);
 
 const stripComments = (s: string): string =>
   s.replace(/\/\*[\s\S]*?\*\//g, "").replace(/(^|[^:])\/\/[^\n]*/g, "$1");
@@ -89,6 +93,7 @@ describe("G1: the invoice unit never reaches a money writer", () => {
     expect(isDisplay("apps/api/src/invoices/invoice-pdf.service.ts")).toBe(true);
     expect(isDisplay("apps/api/src/invoices/invoice-detail-read.ts")).toBe(true);
     expect(isDisplay("apps/api/src/invoices/invoices.service.ts")).toBe(false);
+    expect(isDisplay("apps/api/src/invoices/invoice-pdf-new-money.ts")).toBe(false);
     expect(isDisplay("apps/api/src/invoices/price-adjustment-ledger.ts")).toBe(false);
   });
 
