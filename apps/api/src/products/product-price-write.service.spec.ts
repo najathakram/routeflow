@@ -19,6 +19,8 @@ interface World {
   tierUnits: Record<string, any>[];
   cups: { id: string; customerId: string; productId: string; unitRef: string; price: number }[];
   customers: string[];
+  /** What the customer lookup returns as names; a customer missing here gets "Business <id>". */
+  customerNames: Record<string, { display?: string | null; business: string }>;
   deletedCustomers: string[];
   audits: Record<string, any>[];
   writes: string[];
@@ -64,6 +66,7 @@ function makeWorld(over: Partial<World> = {}): World {
     tierUnits: [],
     cups: [{ id: "cup-1", customerId: "c1", productId: PRODUCT_ID, unitRef: "pack", price: 12 }],
     customers: ["c1", "c2"],
+    customerNames: { c1: { display: "Northside", business: "Northside Market LLC" } },
     deletedCustomers: ["c3"],
     audits: [],
     writes: [],
@@ -113,7 +116,11 @@ function makeTx(w: World) {
         [...w.customers, ...w.deletedCustomers]
           .filter((c) => where.id.in.includes(c))
           .filter((c) => where.deletedAt !== null || !w.deletedCustomers.includes(c))
-          .map((id) => ({ id })),
+          .map((id) => ({
+            id,
+            displayName: w.customerNames[id]?.display ?? null,
+            businessName: w.customerNames[id]?.business ?? `Business ${id}`,
+          })),
       ),
     },
     customerUnitPrice: {
@@ -358,8 +365,8 @@ describe("ProductPriceWriteService.save", () => {
       expect(err.getResponse().code).toBe(API_ERROR_CODES.LADDER_REVISION_STALE);
     });
 
-    it("a duplicate customerId + ref pair is 400 PRICE_EDIT_INVALID naming the duplicate, nothing written", async () => {
-      const { world, service, grid } = build();
+    it("a duplicate customerId + ref pair is 400 PRICE_EDIT_INVALID naming the customer and unit, nothing written", async () => {
+      const { world, tx, service, grid } = build();
       const r = await req(grid, {
         customerMoves: [
           { customerId: "c1", ref: "pack", tier: 1, from: 12, to: 13 },
@@ -368,9 +375,27 @@ describe("ProductPriceWriteService.save", () => {
       });
       const err = await rejection(service.save(PRODUCT_ID, r, null));
       expect(err.getResponse().code).toBe(API_ERROR_CODES.PRICE_EDIT_INVALID);
-      expect(err.getResponse().problems.join(" ")).toContain("c1");
-      expect(err.getResponse().problems.join(" ")).toContain("pack");
+      // The customer's display name and the unit's label, never the row id or the internal ref.
+      expect(err.getResponse().problems).toEqual([
+        "The customer price for Northside on Box is listed twice in this change.",
+      ]);
+      // The name came from the live-customer lookup that was already running: one customer query, no extra.
+      expect(tx.customer.findMany).toHaveBeenCalledTimes(1);
       expect(world.writes).toEqual([]);
+    });
+
+    it("a duplicate pair for a customer without a display name falls back to the business name", async () => {
+      const { service, grid } = build();
+      const r = await req(grid, {
+        customerMoves: [
+          { customerId: "c2", ref: "pack", tier: 1, from: null, to: 13 },
+          { customerId: "c2", ref: "pack", tier: 2, from: null, to: 14 },
+        ],
+      });
+      const err = await rejection(service.save(PRODUCT_ID, r, null));
+      expect(err.getResponse().problems).toEqual([
+        "The customer price for Business c2 on Box is listed twice in this change.",
+      ]);
     });
 
     it("a soft-deleted customer is refused as a move target (400), nothing written", async () => {
