@@ -13,6 +13,7 @@ import { ProductPricesGrid } from "../../ProductPricesGrid";
 import { ProductPricingV2 } from "../../ProductPricingV2";
 import { UNITS_V2_TESTIDS as T } from "../../units-v2-testids";
 import type { GridEditApi } from "./edit-types";
+import { PLAN_TESTIDS } from "../change-prices/plan-testids";
 
 let mockGrid: { data?: ProductPriceGridDto; isLoading: boolean; isError: boolean };
 let mockError: unknown = null;
@@ -144,13 +145,11 @@ describe("units v2 edit grid (S12a)", () => {
     expect(fireEvent.keyDown(input, { key: "s", metaKey: true })).toBe(false);
     expect(mockSave).toHaveBeenCalledTimes(1);
     expect(mockSave.mock.calls[0][0]).toEqual({
-      productId: "p1",
       expectedRevision: 7,
       expectedPriceState: "ps-1",
       patches: [{ ref: "case", tier: 2, to: 14.5 }],
       keeps: [],
       customerMoves: [],
-      orderUnit: null,
     });
   });
 
@@ -274,9 +273,9 @@ describe("units v2 edit grid (S12a)", () => {
     const user = userEvent.setup();
     render(<ProductPricingV2 product={product} />);
     await enterEdit(user);
-    expect(screen.queryByTestId("units-v2-also-update-placeholder")).toBeNull();
+    expect(screen.queryByTestId(PLAN_TESTIDS.cellPlan)).toBeNull();
     await type(user, 2, "14.5");
-    expect(screen.getByTestId("units-v2-also-update-placeholder")).toBeTruthy();
+    expect(screen.getByTestId(PLAN_TESTIDS.cellPlan)).toBeTruthy();
   });
 
   it("K5 seam: onSaved/onEdit fire, and loadUndoPreview refetches and returns display strings", async () => {
@@ -322,10 +321,10 @@ describe("units v2 edit grid (S12a)", () => {
     expect(preview.revision).toBe(8);
     expect(preview.priceState).toBe("ps-2");
     expect(preview.rows).toContainEqual({
-      key: "case|2",
+      ref: "case|2",
       label: "Case Wholesale",
-      from: "$14.50",
-      to: "$13.91",
+      current: "$14.50",
+      restoreTo: "$13.91",
     });
   });
 

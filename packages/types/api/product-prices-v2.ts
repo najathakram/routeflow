@@ -48,18 +48,18 @@ export interface CustomerPriceMove {
 }
 
 /**
- * PATCH /products/:productId/prices: everything one Save commits, in ONE transaction (SA-799 b). Aligned to K3's draft
+ * POST /products/:productId/prices: everything one Save commits, in ONE transaction (SA-799 b). Aligned to K3's draft
  * payload `{ productId, patches, orderUnit, keeps }`.
  */
 export interface SavePricesRequest {
   /** The product's priceRevision the draft was built on (ProductPriceGridDto.revision). R-1 CAS -> 409 LADDER_REVISION_STALE. */
   expectedRevision: number;
   /**
-   * OPTIONAL (builders' shape has no field for it). ProductPriceGridDto.priceState the draft was built on: R-1's value
-   * compare-and-set over the price-bearing state. Without it the server can only check the revision, which SA-796 R-1
-   * says is not enough while legacy writers skip the bump: open item for the lead (see SPRINT-CONTRACT 9).
+   * REQUIRED (lead final ruling 2026-10-16, SA-796 R-1): ProductPriceGridDto.priceState the draft was built on, the value
+   * compare-and-set over the price-bearing state (~20 legacy writers skip the revision bump, so revision alone is not a
+   * value check). A client whose grid has no priceState cannot save.
    */
-  expectedPriceState?: string;
+  expectedPriceState: string;
   /** At least one of patches / keeps / customerMoves is non-empty. A (ref, tier) appears at most once across patches+keeps. */
   patches: PriceCellPatch[];
   keeps?: PriceCellKeep[];
@@ -91,11 +91,12 @@ export interface SavePricesResponse {
   grid: ProductPriceGridDto;
 }
 
-/** POST /products/:productId/prices/undo. Precondition = the CURRENT grid's revision (+ state when sent), as a save. */
+/** POST /products/:productId/prices/undo. Precondition = the CURRENT grid's revision and priceState, as a save. */
 export interface UndoPricesRequest {
   auditId: string;
   expectedRevision: number;
-  expectedPriceState?: string;
+  /** REQUIRED, as on a save. */
+  expectedPriceState: string;
 }
 
 /** The 409 body of LADDER_REVISION_STALE (save and undo). Nothing was written; reload the grid. */
@@ -106,7 +107,7 @@ export interface LadderRevisionStaleBody {
   revision: number;
 }
 
-/** The 400 body of PRICE_EDIT_INVALID (PATCH prices): the pricing core's refusals (validateSetPrice, the anchor's Retail). */
+/** The 400 body of PRICE_EDIT_INVALID (POST prices): the pricing core's refusals (validateSetPrice, the anchor's Retail). */
 export interface PriceEditInvalidBody {
   code: typeof API_ERROR_CODES.PRICE_EDIT_INVALID;
   message: string;

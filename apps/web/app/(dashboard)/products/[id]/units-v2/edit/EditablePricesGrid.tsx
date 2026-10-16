@@ -4,7 +4,7 @@ import * as React from "react";
 import { ProductPricesGrid } from "../../ProductPricesGrid";
 import type { UnitsCardProduct } from "../../ProductUnitsCard";
 import { UNITS_V2_TESTIDS as T } from "../../units-v2-testids";
-import { AlsoUpdatePanel } from "../plan/AlsoUpdatePanel";
+import { AlsoUpdatePanel } from "../change-prices/AlsoUpdatePanel";
 import { OrderUnitDraft } from "./OrderUnitDraft";
 import { BTN, SkipToSave } from "./PriceEditBar";
 import { usePriceDraft } from "./usePriceDraft";

@@ -24,8 +24,9 @@ export function AlsoUpdatePanel({ plan }: { plan: PricePlan }) {
     }),
     [open],
   );
-  const edited = open
-    ? plan.changes.find((c) => c.ref === open.cell.ref && c.tier === open.cell.tier)
+  const cell = open?.cell;
+  const edited = cell
+    ? plan.changes.find((c) => c.ref === cell.ref && c.tier === cell.tier)
     : undefined;
   return (
     <PlanView

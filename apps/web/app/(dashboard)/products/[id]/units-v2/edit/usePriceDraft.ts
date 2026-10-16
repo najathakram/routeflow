@@ -4,6 +4,7 @@ import * as React from "react";
 import {
   planOrderUnitSwitch,
   type CellChange,
+  type CellPatch,
   type LadderView,
   type Pin,
   type PricePlan,
@@ -27,6 +28,7 @@ import {
   type PriceWriteError,
 } from "@/lib/api/usePriceWrites";
 import { tierLabel } from "@/lib/tier-label";
+import type { UndoPreviewRow } from "../confirm/types";
 import type { CellFocus, GridEditApi } from "./edit-types";
 import {
   cellKey,
@@ -38,10 +40,21 @@ import {
 } from "./fold-draft";
 import { previewRows, rulesFromGrid, viewFromGrid } from "./view-from-grid";
 
+/** The open plan and what the "also update" panel (K4) reads of the draft's choices on it. */
 export interface OpenPlan {
   plan: PricePlan;
-  origin: { ref: string; tier: PriceTier };
+  /** The edited cell; null for a plan folded in by Change prices (no cell was typed). */
+  cell: { ref: string; tier: PriceTier } | null;
+  /** Offer i of `plan.offers` is ticked. Every offer starts unticked (SA-799 a). */
+  ticked: readonly boolean[];
+  /** The follower Keeps in the draft (Auto prices pinned where they are). */
+  keeps: readonly Pin[];
+  /** The customer Keeps in the draft. */
+  customerKeeps: readonly CustomerPriceMove[];
 }
+
+const asCellPatches = (ps: readonly { ref: string; tier: number; to: number | null }[]) =>
+  ps.map((p): CellPatch => ({ ref: p.ref, tier: p.tier as PriceTier, to: p.to }));
 
 /** The shared draft store (SPRINT-CONTRACT §3). K3 may add to it, never rename. */
 export interface PriceDraft {
@@ -60,24 +73,33 @@ export interface PriceDraft {
   setOfferTicked: (i: number, on: boolean) => void;
   keep: (pin: Pin) => void;
   unkeep: (pin: Pin) => void;
-  keepCustomer: (move: CustomerPriceMove) => void;
-  /** Change prices Apply folds its plan into the draft; Save is the only commit. */
+  /** Keep a customer price where it is (`on`, default) or let it follow again (`on` false). */
+  keepCustomer: (move: CustomerPriceMove, on?: boolean) => void;
+  /**
+   * Change prices Apply folds its plan into the draft (and opens edit mode); Save is the only commit. The plan
+   * becomes the open plan, so a customer offer left at index 0 can still be ticked with `setOfferTicked(0, true)`.
+   */
   applyPlan: (plan: PricePlan) => void;
   resetAllToAuto: () => void;
-  toRequest: () => SavePricesRequest;
+  /** The save body, or null while the grid has no revision/priceState (Save is then unavailable). */
+  toRequest: () => SavePricesRequest | null;
   save: () => void;
   saving: boolean;
   saveError: PriceWriteError | null;
   canSave: boolean;
   lastSave: { auditId: string; revision: number; undo: SavePricesResponse["undo"] } | null;
   undo: () => void;
+  /** Refetch the grid (the stale-write notice's "Reload prices"); the draft is kept. */
+  reload: () => void;
+  /** The last save was undone elsewhere (K5's status line): forget it. */
+  markUndone: () => void;
   /** Set on a stale undo: what the inverse would change on the fresh grid. */
   undoPreview: CellChange[] | null;
   /** Refetches the grid and returns the inverse's changes as display strings (K5's undo confirm). */
   loadUndoPreview: () => Promise<{
     revision: number;
     priceState: string;
-    rows: { key: string; label: string; from: string; to: string }[];
+    rows: UndoPreviewRow[];
   }>;
   // K3 extras for the edit grid, order unit and save bar
   problems: CellProblem[];
@@ -119,6 +141,7 @@ export function useCreatePriceDraft(productId: string, hooks: PriceDraftHooks = 
   const save = useSavePrices(productId);
   const undoMut = useUndoPrices(productId);
 
+  const planSeq = React.useRef(0);
   const [editing, setEditing] = React.useState(false);
   const [entries, setEntries] = React.useState<DraftEntry[]>([]);
   const [openKey, setOpenKey] = React.useState<string | null>(null);
@@ -177,15 +200,18 @@ export function useCreatePriceDraft(productId: string, hooks: PriceDraftHooks = 
     return r.plans.get(key)!;
   };
 
-  const toRequest = (): SavePricesRequest => ({
-    productId,
-    expectedRevision: grid?.revision ?? 0,
-    expectedPriceState: grid?.priceState ?? "",
-    patches: patches.map((p) => ({ ref: p.ref, tier: p.tier, to: p.to })),
-    keeps: sendKeeps.map((k) => ({ ref: k.ref, tier: k.tier, value: k.value })),
-    customerMoves,
-    orderUnit: sw ? sw.to : null,
-  });
+  // Revision AND priceState are both required (lead final ruling): without them there is nothing to send.
+  const toRequest = (): SavePricesRequest | null =>
+    grid?.revision == null || !grid.priceState
+      ? null
+      : {
+          expectedRevision: grid.revision,
+          expectedPriceState: grid.priceState,
+          patches: patches.map((p) => ({ ref: p.ref, tier: p.tier, to: p.to })),
+          keeps: sendKeeps.map((k) => ({ ref: k.ref, tier: k.tier, value: k.value })),
+          customerMoves,
+          orderUnit: sw ? sw.to : undefined,
+        };
 
   const canSave =
     editing &&
@@ -193,11 +219,12 @@ export function useCreatePriceDraft(productId: string, hooks: PriceDraftHooks = 
     count > 0 &&
     problems.length === 0 &&
     grid?.revision != null &&
-    grid.priceState != null;
+    !!grid.priceState;
 
   const doSave = () => {
-    if (!canSave) return;
-    save.mutate(toRequest(), {
+    const req = toRequest();
+    if (!canSave || !req) return;
+    save.mutate(req, {
       onSuccess: (res) => {
         const saved = { auditId: res.auditId, revision: res.revision, undo: res.undo };
         setLastSave(saved);
@@ -224,7 +251,7 @@ export function useCreatePriceDraft(productId: string, hooks: PriceDraftHooks = 
   }, [editing]);
 
   const undo = () => {
-    if (!lastSave || grid?.revision == null || grid.priceState == null) return;
+    if (!lastSave || grid?.revision == null || !grid.priceState) return;
     undoMut.mutate(
       {
         auditId: lastSave.auditId,
@@ -244,7 +271,7 @@ export function useCreatePriceDraft(productId: string, hooks: PriceDraftHooks = 
   const undoPreview = React.useMemo(
     () =>
       undoStale && lastSave && served
-        ? changesFrom(served, rules, lastSave.undo?.patches ?? [])
+        ? changesFrom(served, rules, asCellPatches(lastSave.undo?.patches ?? []))
         : null,
     [undoStale, lastSave, served, rules],
   );
@@ -256,19 +283,33 @@ export function useCreatePriceDraft(productId: string, hooks: PriceDraftHooks = 
       queryFn: () => fetchPriceGrid(productId),
       staleTime: 0,
     });
+    // No revision/priceState on the fresh grid means no valid precondition: Undo is unavailable.
+    if (fresh.revision == null || !fresh.priceState)
+      throw new Error("Prices are not ready to undo");
     const changes = lastSave
-      ? changesFrom(viewFromGrid(fresh), rulesFromGrid(fresh), lastSave.undo?.patches ?? [])
+      ? changesFrom(
+          viewFromGrid(fresh),
+          rulesFromGrid(fresh),
+          asCellPatches(lastSave.undo?.patches ?? []),
+        )
       : [];
     return {
-      revision: fresh.revision ?? 0,
-      priceState: fresh.priceState ?? "",
+      revision: fresh.revision,
+      priceState: fresh.priceState,
+      // `ref` is the row's unique id (cell key); K5 renders `label`, `current` and `restoreTo`.
       rows: changes.map((c) => ({
-        key: `${c.ref}|${c.tier}`,
+        ref: `${c.ref}|${c.tier}`,
         label: `${c.label} ${tierName(c.tier)}`,
-        from: formatMoney(c.from),
-        to: formatMoney(c.to),
+        current: formatMoney(c.from),
+        restoreTo: formatMoney(c.to),
       })),
     };
+  };
+
+  const beginEditing = () => {
+    setEditing(true);
+    setLastSave(null);
+    hooksRef.current.onEdit?.();
   };
 
   const texts: Record<string, string> = {};
@@ -277,9 +318,7 @@ export function useCreatePriceDraft(productId: string, hooks: PriceDraftHooks = 
   const api: GridEditApi = {
     editing,
     begin: (cell) => {
-      setEditing(true);
-      setLastSave(null);
-      hooksRef.current.onEdit?.();
+      beginEditing();
       if (cell) setFocus(cell);
     },
     text: (ref, tier, original) => texts[cellKey(ref, tier)] ?? original,
@@ -304,7 +343,16 @@ export function useCreatePriceDraft(productId: string, hooks: PriceDraftHooks = 
     discard: reset,
     dirty,
     editCell,
-    plan: fold?.open && openKey ? { plan: fold.open, origin: parseKey(openKey) } : null,
+    plan:
+      fold?.open && openKey
+        ? {
+            plan: fold.open,
+            cell: openKey.startsWith("plan:") ? null : parseKey(openKey),
+            ticked: ticks,
+            keeps,
+            customerKeeps: moves,
+          }
+        : null,
     ticks,
     setOfferTicked: (i, on) =>
       setTicks((t) => {
@@ -318,8 +366,20 @@ export function useCreatePriceDraft(productId: string, hooks: PriceDraftHooks = 
       ),
     unkeep: (pin) =>
       setKeeps((ks) => ks.filter((k) => !(k.ref === pin.ref && k.tier === pin.tier))),
-    keepCustomer: (move) => setMoves((ms) => [...ms, move]),
-    applyPlan: (plan) => setEntries((es) => [...es, { kind: "plan", plan }]),
+    keepCustomer: (move, on = true) =>
+      setMoves((ms) => {
+        const rest = ms.filter(
+          (m) => !(m.customerId === move.customerId && m.ref === move.ref && m.tier === move.tier),
+        );
+        return on ? [...rest, move] : rest;
+      }),
+    applyPlan: (plan) => {
+      beginEditing();
+      const key = `plan:${planSeq.current++}`;
+      setEntries([...entries, { kind: "plan", key, plan }]);
+      setOpenKey(key);
+      setTicks([]);
+    },
     resetAllToAuto: () => {
       if (!served) return;
       const next: DraftEntry[] = [];
@@ -337,6 +397,11 @@ export function useCreatePriceDraft(productId: string, hooks: PriceDraftHooks = 
     canSave,
     lastSave,
     undo,
+    reload: () => void qc.invalidateQueries({ queryKey: priceGridKey(productId) }),
+    markUndone: () => {
+      setLastSave(null);
+      setUndoStale(false);
+    },
     undoPreview,
     loadUndoPreview,
     problems,

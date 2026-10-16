@@ -183,12 +183,12 @@ describe("ChangePricesPanel (V03, V05, V18)", () => {
     expect(screen.getByRole("checkbox", { name: /Set Tier 3/ })).not.toBeChecked();
   });
 
-  it("closes on Cancel and on Escape", () => {
+  it("closes on Cancel (Escape is the shared stack's, wired by ChangePrices: V17)", () => {
     const onClose = jest.fn();
     mount(onClose);
     fireEvent.click(screen.getByRole("button", { name: "Cancel" }));
     fireEvent.keyDown(screen.getByTestId(T.changePanel), { key: "Escape" });
-    expect(onClose).toHaveBeenCalledTimes(2);
+    expect(onClose).toHaveBeenCalledTimes(1);
   });
 
   it("takes focus when it opens, so Escape works from the keyboard", () => {

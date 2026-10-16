@@ -18,7 +18,7 @@ export const EMPTY_SELECTION: PlanSelection = {
 };
 
 export const followerKey = (f: { ref: string; tier: number }): string => `${f.ref}|${f.tier}`;
-export const customerKeepKey = (c: Pick<CustomerChange, "customerId" | "ref" | "tier">): string =>
+export const customerKeepKey = (c: { customerId: string; ref: string; tier: number }): string =>
   `${c.customerId}|${c.ref}|${c.tier}`;
 /** A customer Keep is a customer price row (none before) at the price it shows now. */
 export const keepMove = (c: CustomerChange): CustomerPriceMove => ({

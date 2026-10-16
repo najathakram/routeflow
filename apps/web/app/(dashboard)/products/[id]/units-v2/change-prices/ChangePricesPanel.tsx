@@ -1,10 +1,16 @@
 "use client";
 
 import * as React from "react";
-import { PRICE_TIERS, planPriceChange, type PriceChange, type PricePlan } from "@routeflow/pricing";
+import {
+  PRICE_TIERS,
+  planPriceChange,
+  type LadderView,
+  type PriceChange,
+  type PricePlan,
+} from "@routeflow/pricing";
 import { Button } from "@routeflow/ui/web";
 import { formatMoney } from "@/lib/format";
-import { usePriceDraft } from "../edit/usePriceDraft";
+import { usePriceDraft, type PriceDraft } from "../edit/usePriceDraft";
 import { PLAN_TESTIDS as T } from "./plan-testids";
 import { PlanView } from "./PlanView";
 import { foldPlan, parseAmount, usePlanSelection } from "./selection";
@@ -30,9 +36,22 @@ const NO_CHANGES = {
 
 type Mode = PriceChange["mode"];
 
+/** Waits for the grid: the draft has no ladder view until it loads. */
 export function ChangePricesPanel({ onClose }: { onClose: () => void }) {
   const draft = usePriceDraft();
-  const { view, grid } = draft;
+  return draft.view ? <ChangePricesForm draft={draft} view={draft.view} onClose={onClose} /> : null;
+}
+
+function ChangePricesForm({
+  draft,
+  view,
+  onClose,
+}: {
+  draft: PriceDraft;
+  view: LadderView;
+  onClose: () => void;
+}) {
+  const { grid } = draft;
   const { tierName, customerName, customers, rules } = usePlanNames();
   const ids = React.useId();
   const root = React.useRef<HTMLElement>(null);
@@ -140,7 +159,6 @@ export function ChangePricesPanel({ onClose }: { onClose: () => void }) {
       data-testid={T.changePanel}
       role="region"
       aria-labelledby={`${ids}-title`}
-      onKeyDown={(e) => e.key === "Escape" && onClose()}
       className="rounded-lg border border-surface-border bg-white p-4 focus-visible:outline-none"
     >
       <h3 id={`${ids}-title`} className={LBL}>

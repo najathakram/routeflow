@@ -13,7 +13,9 @@ import {
 import type { CustomerPriceMove } from "@routeflow/types";
 
 export type DraftEntry =
-  { kind: "cell"; key: string; text: string } | { kind: "plan"; plan: PricePlan };
+  | { kind: "cell"; key: string; text: string }
+  /** A Change prices plan folded in; `key` ("plan:n") lets it be the open plan. */
+  | { kind: "plan"; key: string; plan: PricePlan };
 
 export interface CellProblem {
   ref: string;
@@ -60,6 +62,7 @@ export function foldDraft(
   for (const e of entries) {
     if (e.kind === "plan") {
       fold(e.plan.patches);
+      plans.set(e.key, e.plan);
       continue;
     }
     const { ref, tier } = parseKey(e.key);
