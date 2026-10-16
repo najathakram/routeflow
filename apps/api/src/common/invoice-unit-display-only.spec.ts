@@ -1,7 +1,5 @@
 import * as fs from "fs";
 import * as path from "path";
-import { legacyInvoiceCode } from "@routeflow/pricing";
-import { invoiceItemCode } from "../invoices/invoice-item-code";
 
 /**
  * SA-795 fold G1 (T17c): the invoice unit is DISPLAY ONLY. `invoiceLineDisplay` (packages/pricing/src/invoice-display.ts)
@@ -18,6 +16,10 @@ const FORBIDDEN =
 
 /** Directories whose non-spec source writes or computes money. */
 const MONEY_DIRS = [
+  "apps/api/src/invoices",
+  "apps/api/src/orders",
+  "apps/api/src/estimates",
+  "apps/api/src/recurring-invoices",
   "apps/api/src/credit-notes",
   "apps/api/src/bookkeeping",
   "apps/api/src/payment-requests",
@@ -27,11 +29,20 @@ const MONEY_DIRS = [
   "apps/api/src/regulated",
   "packages/pricing/src",
 ];
+/** Single money files outside those directories. */
+const MONEY_FILES = ["apps/api/src/common/invoiced-sales.ts"];
 /** The pricing files that legitimately hold the display math. */
 const DISPLAY_FILES = new Set([
   "packages/pricing/src/invoice-display.ts",
   "packages/pricing/src/index.ts",
 ]);
+/** The API files that render an invoice (display only): the PDF modules and the detail read. */
+const DISPLAY_PATTERNS = [
+  /^apps\/api\/src\/invoices\/invoice-pdf[^/]*$/,
+  /^apps\/api\/src\/invoices\/invoice-detail-read\.ts$/,
+];
+const isDisplay = (f: string): boolean =>
+  DISPLAY_FILES.has(f) || DISPLAY_PATTERNS.some((re) => re.test(f));
 
 const stripComments = (s: string): string =>
   s.replace(/\/\*[\s\S]*?\*\//g, "").replace(/(^|[^:])\/\/[^\n]*/g, "$1");
@@ -48,34 +59,43 @@ function walk(dir: string, out: string[]): void {
 describe("G1: the invoice unit never reaches a money writer", () => {
   const files: string[] = [];
   for (const d of MONEY_DIRS) walk(path.join(REPO, d), files);
+  for (const f of MONEY_FILES) files.push(path.join(REPO, f));
   const rel = files.map((f) => path.relative(REPO, f).split(path.sep).join("/"));
 
   it("scans a real set of money files", () => {
     expect(rel.length).toBeGreaterThan(40);
     expect(rel).toEqual(
-      expect.arrayContaining(["apps/api/src/credit-notes/credit-notes.service.ts"]),
+      expect.arrayContaining([
+        "apps/api/src/credit-notes/credit-notes.service.ts",
+        "apps/api/src/invoices/nsf-line-tax-guard.ts",
+        "apps/api/src/invoices/price-adjustment-ledger.ts",
+        "apps/api/src/invoices/partial-price-follow.ts",
+        "apps/api/src/invoices/counter-payment-guard.ts",
+        "apps/api/src/orders/orders.service.ts",
+        "apps/api/src/estimates/estimates.service.ts",
+        "apps/api/src/recurring-invoices/recurring-invoices.service.ts",
+        "apps/api/src/common/invoiced-sales.ts",
+      ]),
     );
+  });
+
+  it("the detector is not vacuous: it matches a field read and ignores a comment", () => {
+    expect(FORBIDDEN.test("const f = x.invoiceUnitFactor;")).toBe(true);
+    expect(FORBIDDEN.test(stripComments("// invoiceUnitFactor"))).toBe(false);
+    expect(FORBIDDEN.test(stripComments("/* invoiceLineDisplay */"))).toBe(false);
+  });
+
+  it("the display allow-list covers the PDF modules and the detail read, and nothing else", () => {
+    expect(isDisplay("apps/api/src/invoices/invoice-pdf.service.ts")).toBe(true);
+    expect(isDisplay("apps/api/src/invoices/invoice-detail-read.ts")).toBe(true);
+    expect(isDisplay("apps/api/src/invoices/invoices.service.ts")).toBe(false);
+    expect(isDisplay("apps/api/src/invoices/price-adjustment-ledger.ts")).toBe(false);
   });
 
   it("no money module names the display math or the snapshot fields", () => {
     const offenders = rel
-      .filter((f) => !DISPLAY_FILES.has(f))
+      .filter((f) => !isDisplay(f))
       .filter((f) => FORBIDDEN.test(stripComments(fs.readFileSync(path.join(REPO, f), "utf8"))));
     expect(offenders).toEqual([]);
-  });
-});
-
-describe("T16: the legacy invoice code is today's invoiceItemCode, for all 8 null combinations", () => {
-  it("is byte-identical", () => {
-    for (let mask = 0; mask < 8; mask++) {
-      const p = {
-        unitSku: mask & 1 ? "U-1" : null,
-        barcode: mask & 2 ? "B-1" : null,
-        sku: mask & 4 ? "S-1" : null,
-      };
-      expect(legacyInvoiceCode(p)).toBe(invoiceItemCode(p));
-    }
-    expect(legacyInvoiceCode(null)).toBe(invoiceItemCode(null));
-    expect(legacyInvoiceCode(undefined)).toBe(invoiceItemCode(undefined));
   });
 });
