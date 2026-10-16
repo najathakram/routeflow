@@ -391,7 +391,7 @@ export class PlatformAdminController {
       dto.addonKey,
       dto.stripePriceId,
       dto.acknowledgeUnmetRequires,
-      { comp },
+      { comp, actorId: admin.sub },
     );
     if (comp) {
       // One audit row per action: a comp is ADDON_COMPED (actor = userId, plus the optional reason).
@@ -422,7 +422,12 @@ export class PlatformAdminController {
     @Body() dto: UncompAddonDto,
     @CurrentUser() admin: JwtPayload,
   ) {
-    const result = await this.addonService.uncompAddon(id, dto.addonKey, dto.stripePriceId);
+    const result = await this.addonService.uncompAddon(
+      id,
+      dto.addonKey,
+      dto.stripePriceId,
+      admin.sub,
+    );
     await this.svc.recordAdminAction(id, admin.sub, AdminAuditAction.ADDON_UNCOMPED, {
       addonKey: dto.addonKey,
       // The mode the service ACTUALLY took (STRIPE / MANUAL / UNBILLED), never inferred from the DTO:
@@ -441,7 +446,7 @@ export class PlatformAdminController {
     @Body() dto: DisableAddonDto,
     @CurrentUser() admin: JwtPayload,
   ) {
-    const result = await this.addonService.disableAddon(id, dto.addonKey);
+    const result = await this.addonService.disableAddon(id, dto.addonKey, admin.sub);
     await this.svc.recordAdminAction(id, admin.sub, AdminAuditAction.ADDON_DISABLED, {
       addonKey: dto.addonKey,
     });

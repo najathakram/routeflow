@@ -18,6 +18,7 @@ import {
   planKeyFromEnum,
 } from "./plan-catalog.constants";
 import { inclusionOf } from "./addon-inclusion";
+import { updateAddonRowTx, upsertAddonRowTx, type AddonChangeSource } from "./tenant-addon-writer";
 import { addonCatalogInvalidException } from "./addon-catalog-invalid";
 import { withAdvisoryLock, LockTimeoutError, LockUnavailableError } from "../common/db-locks";
 import {
@@ -302,10 +303,10 @@ export class AddonService {
     const lockKey = `addon:${tenantId}:${lockSku}`;
     // SA-769: a comp enable whose caller already holds this key (business-profile confirm) runs under that
     // lock; everything else - the admin route, a billed enable - takes it here, exactly as before.
-    const underLock: typeof withAdvisoryLock =
-      comp && opts?.lockHeld === true
-        ? async (_lockOpts, fn) => ({ acquired: true as const, value: await fn() })
-        : withAdvisoryLock;
+    const callerHoldsLock = comp && opts?.lockHeld === true;
+    const underLock: typeof withAdvisoryLock = callerHoldsLock
+      ? async (_lockOpts, fn) => ({ acquired: true as const, value: await fn() })
+      : withAdvisoryLock;
     try {
       const result = await underLock(
         { family: "billing", key: lockKey, mode: "wait", waitMs: 10_000 },
@@ -471,8 +472,20 @@ export class AddonService {
             // #2188 / SA-385: an existing row — keyed by this legacy addonKey OR by the SKU a
             // self-serve/subscribe path wrote — is re-activated IN PLACE, by its OWN addonKey;
             // only when there is none is a new row created, under this path's (raw) key.
-            const row = await tx.tenantAddon.upsert({
-              where: { tenantId_addonKey: { tenantId, addonKey: current?.addonKey ?? addonKey } },
+            const row = await upsertAddonRowTx(tx, this.events, {
+              tenantId,
+              addonKey: current?.addonKey ?? addonKey,
+              actor: {
+                kind: "PLATFORM_ADMIN",
+                id: opts?.actorId ?? null,
+                source: (callerHoldsLock
+                  ? "profile.apply"
+                  : comp
+                    ? "admin.comp"
+                    : uncomp
+                      ? "admin.uncomp"
+                      : "admin.enable") satisfies AddonChangeSource,
+              },
               create: {
                 tenantId,
                 addonKey,
@@ -590,7 +603,7 @@ export class AddonService {
    * Takes the SAME advisory key as enableAddon and the self-serve path. Disable is a different path and
    * takes no lock (see `disableAddon`).
    */
-  async uncompAddon(tenantId: string, addonKey: string, stripePriceId?: string) {
+  async uncompAddon(tenantId: string, addonKey: string, stripePriceId?: string, actorId?: string) {
     const tenant = await this.prisma.tenant.findUnique({
       where: { id: tenantId },
       select: { id: true, slug: true, name: true },
@@ -647,6 +660,7 @@ export class AddonService {
       }
       const billedRow = await this.enableAddon(tenantId, addonKey, stripePriceId, true, {
         uncomp: true,
+        actorId,
       });
       return { addon: billedRow, billing: UncompBilling.STRIPE };
     }
@@ -663,13 +677,23 @@ export class AddonService {
                 `Add-on "${addonKey}" is not an active comp for tenant ${tenant.slug}`,
               );
             }
+            const actor = {
+              kind: "PLATFORM_ADMIN" as const,
+              id: actorId ?? null,
+              source: "admin.uncomp" as const,
+            };
             if (!manualSkuDef) {
-              return tx.tenantAddon.update({ where: { id: current.id }, data: { isComp: false } });
+              return updateAddonRowTx(tx, this.events, {
+                id: current.id,
+                data: { isComp: false },
+                actor,
+              });
             }
             const price = Number(manualSkuDef.monthlyPrice);
-            const row = await tx.tenantAddon.update({
-              where: { id: current.id },
+            const row = await updateAddonRowTx(tx, this.events, {
+              id: current.id,
               data: { isComp: false, priceSnapshot: price },
+              actor,
             });
             await emitAddonDelta(tx, this.events, {
               tenantId,
@@ -737,7 +761,7 @@ export class AddonService {
    * other than "already deleted" refuses the call so we never keep billing for
    * an add-on the tenant no longer has.
    */
-  async disableAddon(tenantId: string, addonKey: string) {
+  async disableAddon(tenantId: string, addonKey: string, actorId?: string) {
     // Owner ruling 2026-09-28 / SA-540: a default-granted key is held with NO row, so disabling a
     // row would report success and remove nothing. Only a DENY override removes it — say so.
     if (DEFAULT_GRANTED_ADDON_FEATURES.some((f) => f.key === addonKey)) {
@@ -803,9 +827,10 @@ export class AddonService {
         // Already disabled by a concurrent call that won the race — nothing left to do.
         return current ?? addon;
       }
-      const row = await tx.tenantAddon.update({
-        where: { tenantId_addonKey: { tenantId, addonKey: addon.addonKey } },
+      const row = await updateAddonRowTx(tx, this.events, {
+        id: current.id,
         data: { active: false, stripeItemId: null },
+        actor: { kind: "PLATFORM_ADMIN", id: actorId ?? null, source: "admin.disable" },
       });
       // B865 / SA-277 FIX-6: the event's sku is the CANONICAL code (bridges a legacy addonKey
       // the same way subscription-mutation.service.ts's self-serve disable does), falling back
@@ -815,6 +840,7 @@ export class AddonService {
         sku: addonSkuCode(current) ?? addonCodeOf(addonKey),
         before: { priceSnapshot: current.priceSnapshot, quantity: current.quantity },
         after: { priceSnapshot: 0, quantity: 0 },
+        actorId,
       });
       return row;
     });

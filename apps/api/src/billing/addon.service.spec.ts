@@ -60,6 +60,7 @@ import {
 } from "@nestjs/common";
 import { AddonService } from "./addon.service";
 import { fakeTenantAddonStore } from "../testing/fake-tenant-addon-store";
+import { mrrEmits } from "../testing/mrr-emits";
 
 beforeEach(() => {
   lockQueues.clear();
@@ -209,14 +210,41 @@ describe("AddonService.disableAddon", () => {
 
     await svc.disableAddon("t1", "msrp");
 
+    // SA-788: written by id through the one writer (the row was read and locked under the tenant lock first).
     expect(prisma.tenantAddon.update).toHaveBeenCalledWith(
-      expect.objectContaining({
-        where: { tenantId_addonKey: { tenantId: "t1", addonKey: "msrp" } },
-      }),
+      expect.objectContaining({ where: { id: "addon1" } }),
     );
     expect(entitlements.invalidate).toHaveBeenCalledWith("t1");
     // REG-B509: see the matching note in enableAddon's test above.
     expect(featureResolver.invalidate).toHaveBeenCalledWith("t1");
+  });
+
+  // SA-788 A-R13: the admin who disables is on the ledger event AND on the per-change record. On the G1a head the
+  // disable carried no actor at all (actorId null) and wrote no record.
+  it("A-R13: admin disable records the admin as the actor (ledger event and addon.state_changed)", async () => {
+    const { svc, events } = make({
+      existingAddon: {
+        id: "addon1",
+        tenantId: "t1",
+        addonKey: "msrp",
+        sku: "MSRP",
+        active: true,
+        priceSnapshot: 20,
+        quantity: 1,
+      },
+    });
+
+    await svc.disableAddon("t1", "msrp", "admin-9");
+
+    const disabled = events.emit.mock.calls.find((c: any[]) => c[1] === "addon.disabled");
+    expect(disabled?.[3].actorId).toBe("admin-9");
+    const record = events.emit.mock.calls.find((c: any[]) => c[1] === "addon.state_changed");
+    expect(record?.[2]).toMatchObject({
+      source: "admin.disable",
+      actor: { kind: "PLATFORM_ADMIN", id: "admin-9" },
+      changes: { active: [true, false] },
+    });
+    expect(record?.[3].amountDelta).toBeNull();
   });
 
   it("REG-B107 T7 refuses when the Stripe delete fails (non-missing error)", async () => {
@@ -391,7 +419,7 @@ describe("AddonService.enableAddon - an included add-on is never billed on top (
     });
     expect(create).not.toHaveBeenCalled();
     expect(prisma.tenantAddon.upsert).not.toHaveBeenCalled();
-    expect(events.emit).not.toHaveBeenCalled();
+    expect(mrrEmits(events)).toHaveLength(0);
   });
 
   it("WITHOUT a price at SCALE it proceeds: the row is written at $0 and nothing is booked", async () => {
@@ -409,7 +437,7 @@ describe("AddonService.enableAddon - an included add-on is never billed on top (
     expect(prisma.tenantAddon.upsert).toHaveBeenCalledWith(
       expect.objectContaining({ create: expect.objectContaining({ priceSnapshot: 0 }) }),
     );
-    expect(events.emit).not.toHaveBeenCalled();
+    expect(mrrEmits(events)).toHaveLength(0);
   });
 
   it("below the including plan a priced enable is unchanged (GROWTH bills the item)", async () => {
@@ -616,7 +644,7 @@ describe("AddonService.enableAddon — F2 activation race with the tenant self-s
     // The orphan Stripe item THIS call created is cleaned up best-effort.
     expect(del).toHaveBeenCalledWith("si_orphan");
     // No double-booked ledger event, and no row write from the losing call.
-    expect(events.emit).not.toHaveBeenCalled();
+    expect(mrrEmits(events)).toHaveLength(0);
     expect(prisma.tenantAddon.upsert).not.toHaveBeenCalled();
   });
 });
@@ -771,7 +799,7 @@ describe("AddonService.enableAddon/disableAddon — B865 ledger (SA-277)", () =>
         update: expect.objectContaining({ priceSnapshot: 0 }),
       }),
     );
-    expect(events.emit).not.toHaveBeenCalled();
+    expect(mrrEmits(events)).toHaveLength(0);
   });
 
   it("PIN P6: an unbridged key with no SKU and no price (developer_mode) still resolves, no emit", async () => {
@@ -786,7 +814,7 @@ describe("AddonService.enableAddon/disableAddon — B865 ledger (SA-277)", () =>
 
     await expect(svc.enableAddon("t1", "developer_mode")).resolves.toBeDefined();
     expect(prisma.tenantAddon.upsert).toHaveBeenCalled();
-    expect(events.emit).not.toHaveBeenCalled();
+    expect(mrrEmits(events)).toHaveLength(0);
   });
 });
 

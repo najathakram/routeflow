@@ -30,6 +30,7 @@ jest.mock("../common/db-locks", () => ({
 import { BadRequestException, ConflictException, NotFoundException } from "@nestjs/common";
 import { AddonService } from "./addon.service";
 import { fakeTenantAddonStore } from "../testing/fake-tenant-addon-store";
+import { mrrEmits } from "../testing/mrr-emits";
 
 beforeEach(() => {
   mockWithAdvisoryLock.mockClear();
@@ -219,7 +220,7 @@ describe("SA-693 admin uncomp", () => {
       stripeItemId: null,
       priceSnapshot: 0,
     });
-    expect(events.emit).not.toHaveBeenCalled();
+    expect(mrrEmits(events)).toHaveLength(0);
   });
 
   it("on a SUBSCRIBED tenant it refuses without a price (never a silent unbilled row), leaving the comp untouched", async () => {
@@ -345,7 +346,7 @@ describe("SA-693 admin uncomp", () => {
 
     expect(store.rows[0]).toMatchObject({ active: true, isComp: false, priceSnapshot: 0 });
     expect(audit.create).not.toHaveBeenCalled();
-    expect(events.emit).not.toHaveBeenCalled();
+    expect(mrrEmits(events)).toHaveLength(0);
     expect(res.billing).toBe("UNBILLED");
   });
 
@@ -361,7 +362,7 @@ describe("SA-693 admin uncomp", () => {
 
     expect(create).not.toHaveBeenCalled();
     expect(store.rows[0]).toMatchObject({ active: true, isComp: false, priceSnapshot: 0 });
-    expect(events.emit).not.toHaveBeenCalled();
+    expect(mrrEmits(events)).toHaveLength(0);
   });
 
   it("R12 control: below the including plan the manual tenant is still priced and announced", async () => {
@@ -442,7 +443,7 @@ describe("SA-693 disabling a comp row", () => {
     await svc.disableAddon("t1", "REGULATED_ITEMS");
 
     expect(store.rows[0]).toMatchObject({ active: false });
-    expect(events.emit).not.toHaveBeenCalled();
+    expect(mrrEmits(events)).toHaveLength(0);
   });
 });
 
@@ -496,7 +497,7 @@ describe("SA-769: a comp enable made while the CALLER already holds the add-on l
       priceSnapshot: 0,
       stripeItemId: null,
     });
-    expect(events.emit).not.toHaveBeenCalled();
+    expect(mrrEmits(events)).toHaveLength(0);
   });
 
   it("a comp enable WITHOUT lockHeld still takes the per-SKU key (the admin route is unchanged)", async () => {
@@ -543,7 +544,7 @@ describe("SA-769: switching a profile comp OFF is a plain disable with no Stripe
     await svc.disableAddon("t1", "REGULATED_ITEMS");
 
     expect(del).not.toHaveBeenCalled();
-    expect(events.emit).not.toHaveBeenCalled();
+    expect(mrrEmits(events)).toHaveLength(0);
     expect(store.rows[0]).toMatchObject({ active: false });
   });
 });
