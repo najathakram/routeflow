@@ -10,10 +10,13 @@ import { formatMoney } from "@/lib/format";
 import { tierLabel } from "@/lib/tier-label";
 import type { UnitsCardProduct } from "./ProductUnitsCard";
 import { UNITS_V2_TESTIDS as T } from "./units-v2-testids";
+import { EDIT_TESTIDS as E } from "./units-v2/edit/edit-testids";
+import type { GridEditApi } from "./units-v2/edit/edit-types";
 
 /**
  * The units v2 prices grid, READ ONLY: one row per unit, one column per price tier, values exactly
- * as the API gives them (no money math here, so no pricing package import). Phones get one
+ * as the API gives them (no money math here, so no pricing package import; edit mode's price
+ * consequences live in units-v2/edit). Phones get one
  * card per unit; wider screens get a table that scrolls in its own box with the Unit column pinned.
  */
 
@@ -64,19 +67,90 @@ function cellView(
   return { tier, display, word, aria: `${name} ${row.label} price, ${display}` };
 }
 
-function PriceCell({ view, testId }: { view: CellView; testId?: string }) {
+/** The text an input starts from: a typed (Set) price as the API gave it; Auto and No price start empty. */
+const originalText = (cell: ProductPriceGridCellDto | undefined): string =>
+  cell && cell.source === "set" && Number(cell.value) > 0 ? String(cell.value) : "";
+
+interface EditTarget {
+  edit: GridEditApi;
+  ref: string;
+  name: string;
+  unit: string;
+  layout: "table" | "card";
+  original: string;
+}
+
+function CellInput({ t, tier, view }: { t: EditTarget; tier: number; view: CellView }) {
+  const el = React.useRef<HTMLInputElement>(null);
+  const { edit } = t;
+  const want = edit.focus;
+  React.useEffect(() => {
+    if (want && want.ref === t.ref && want.tier === tier && want.layout === t.layout) {
+      el.current?.focus({ preventScroll: true });
+      edit.focused();
+    }
+  });
+  return (
+    <input
+      ref={el}
+      type="text"
+      inputMode="decimal"
+      data-testid={E.input(t.ref, tier)}
+      aria-label={`${t.name} ${t.unit} price`}
+      placeholder={view.display}
+      value={edit.text(t.ref, tier, t.original)}
+      onChange={(e) => edit.setText(t.ref, tier, e.target.value, t.original)}
+      className={`h-9 w-24 rounded-md border bg-white px-2 text-sm tabular-nums text-navy focus:border-brand-500 focus:outline-none focus:ring-2 focus:ring-brand-500/20 ${
+        edit.changed(t.ref, tier) ? "border-brand-500" : "border-[#758380]/50"
+      }`}
+    />
+  );
+}
+
+function PriceCell({
+  view,
+  testId,
+  target,
+}: {
+  view: CellView;
+  testId?: string;
+  target?: EditTarget;
+}) {
+  const edit = target?.edit;
   return (
     <div data-testid={testId} aria-label={view.aria} role="group" className="leading-tight">
-      <div className="font-medium tabular-nums text-navy">{view.display}</div>
-      {view.word && <div className="text-[11px] text-navy/60">{view.word}</div>}
+      {target && edit?.editing ? (
+        <CellInput t={target} tier={view.tier} view={view} />
+      ) : target && edit ? (
+        <button
+          type="button"
+          aria-label={`Edit ${target.name} ${target.unit} price, ${view.display}`}
+          onClick={() => edit.begin({ ref: target.ref, tier: view.tier, layout: target.layout })}
+          className="-mx-1 cursor-text rounded px-1 text-left hover:bg-surface-muted focus-visible:outline focus-visible:outline-2 focus-visible:outline-brand-500"
+        >
+          <div className="font-medium tabular-nums text-navy">{view.display}</div>
+          {view.word && <div className="text-[11px] text-navy/60">{view.word}</div>}
+        </button>
+      ) : (
+        <>
+          <div className="font-medium tabular-nums text-navy">{view.display}</div>
+          {view.word && <div className="text-[11px] text-navy/60">{view.word}</div>}
+        </>
+      )}
+      {target && edit?.editing && view.word && (
+        <div className="mt-0.5 text-[11px] text-navy/45">{view.word}</div>
+      )}
     </div>
   );
 }
 
 export function ProductPricesGrid({
   product,
+  edit,
 }: {
   product: UnitsCardProduct & { msrp?: number | string | null };
+  /** Edit mode (S12a, behind flag.units_prices_v2). Omitted = today's read-only grid, unchanged. */
+  edit?: GridEditApi;
 }) {
   const grid = usePriceGrid(product.id);
   const labels = useTierLabels().data;
@@ -102,9 +176,25 @@ export function ProductPricesGrid({
   const ascending = [...rows].reverse();
   const baseLabel = grid.data.rows.find((x) => x.kind === "base")?.label;
   const names = TIERS.map((t) => (t === 1 ? "Retail" : tierLabel(labels, t)));
+  const targetFor = (
+    row: ProductPriceGridRowDto,
+    i: number,
+    layout: "table" | "card",
+  ): EditTarget | undefined =>
+    edit && {
+      edit,
+      ref: row.ref,
+      name: names[i],
+      unit: row.label,
+      layout,
+      original: originalText(row.cells.find((c) => c.tier === TIERS[i])),
+    };
 
   return (
-    <div data-testid={T.grid} className={`rounded-lg border bg-white p-4 ${GRID_BORDER}`}>
+    <div
+      data-testid={T.grid}
+      className={`rounded-lg border bg-white p-4 ${GRID_BORDER} ${edit?.editing ? "pb-6" : ""}`}
+    >
       <h2 id="units-v2-grid-title" className="mb-3 text-sm font-semibold text-navy">
         Prices by unit
       </h2>
@@ -161,6 +251,7 @@ export function ProductPricesGrid({
                   <td key={t} className="px-2 py-3">
                     <PriceCell
                       testId={T.cell(row.ref, t)}
+                      target={targetFor(row, i, "table")}
                       view={cellView(
                         row,
                         t,
@@ -204,7 +295,11 @@ export function ProductPricesGrid({
                   <div key={t}>
                     <dt className="text-[11px] uppercase tracking-wide text-navy/60">{names[i]}</dt>
                     <dd>
-                      <PriceCell view={view} testId={T.cell(row.ref, t)} />
+                      <PriceCell
+                        view={view}
+                        testId={T.cell(row.ref, t)}
+                        target={targetFor(row, i, "card")}
+                      />
                     </dd>
                   </div>
                 );

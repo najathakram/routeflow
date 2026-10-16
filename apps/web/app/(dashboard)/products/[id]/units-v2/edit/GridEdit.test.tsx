@@ -170,7 +170,9 @@ describe("units v2 edit grid (S12a)", () => {
     await user.clear(input);
     await user.type(input, "0");
     expect(screen.getByTestId(E.problems).textContent?.length).toBeGreaterThan(0);
-    expect((screen.getByTestId(E.save) as HTMLButtonElement).disabled).toBe(true);
+    expect(screen.getByTestId(E.save).getAttribute("aria-disabled")).toBe("true");
+    await user.click(screen.getByTestId(E.save));
+    expect(mockSave).not.toHaveBeenCalled();
   });
 
   it("an edited cell hands its consequences to the also-update slot only", async () => {
