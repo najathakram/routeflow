@@ -5,6 +5,8 @@ import { ProductsController } from "./products.controller";
 import { ProductPortalVisibilityController } from "./product-portal-visibility.controller";
 import { ProductPortalVisibilityService } from "./product-portal-visibility.service";
 import { ProductsService } from "./products.service";
+import { ProductPriceGridService } from "./product-price-grid.service";
+import { ProductPricingController } from "./product-pricing.controller";
 import { ProductUnitsController } from "./product-units.controller";
 import { ProductUnitsService } from "./product-units.service";
 import { RecipesController } from "./recipes.controller";
@@ -31,6 +33,7 @@ import { GatewaysModule } from "../gateways/gateways.module";
     ProductFamiliesController,
     ProductsController,
     ProductUnitsController,
+    ProductPricingController,
     RecipesController,
   ],
   providers: [
@@ -38,6 +41,7 @@ import { GatewaysModule } from "../gateways/gateways.module";
     ProductPortalVisibilityService,
     ProductFamiliesService,
     ProductUnitsService,
+    ProductPriceGridService,
     RecipesService,
     ProductsExportService,
   ],
