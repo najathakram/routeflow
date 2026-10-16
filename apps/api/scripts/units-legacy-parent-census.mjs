@@ -15,6 +15,8 @@
  *                                         soldAsBoth90 is the overlap
  *   withStock / withPrice                 parents with stock on hand above zero / a price above zero
  *   withOpenLines                         parents on a live order line now (M7 refuses these)
+ *   noActiveChildren                      parents whose children are all inactive
+ *   tenantsScanned                        tenants checked (zero-parent tenants included); --all = PRODUCTION only
  *
  * OUTPUT is COUNTS ONLY under anonymous labels (tenant-1, tenant-2): no slug, name, id or product data. The slug is
  * an input only. Convention mirrored from report-read-only-sellers-with-buyers: the one report-db-url resolution
@@ -50,6 +52,10 @@ const childOf = (a) =>
 const kids = (extra = "") =>
   `(SELECT COUNT(*)::int FROM "Product" c WHERE c."parentProductId" = p.id AND c."tenantId" = p."tenantId"${extra})`;
 
+/** $1 = a tenant slug (any class), or NULL for --all, which covers live PRODUCTION tenants only. */
+const TENANT_SCOPE = `t."deletedAt" IS NULL AND ($1::text IS NULL OR t.slug = $1)
+   AND ($1::text IS NOT NULL OR t.class = 'PRODUCTION')`;
+
 /** One row per legacy parent. $1 = a tenant slug, or NULL for every tenant. */
 export const CENSUS_SQL = `SELECT p."tenantId" AS tenant_key,
        ${kids()} AS children,
@@ -61,11 +67,11 @@ export const CENSUS_SQL = `SELECT p."tenantId" AS tenant_key,
        p."pricePerUnit" > 0 AS has_price
   FROM "Product" p
   JOIN "Tenant" t ON t.id = p."tenantId"
- WHERE t."deletedAt" IS NULL AND ($1::text IS NULL OR t.slug = $1)
+ WHERE ${TENANT_SCOPE}
    AND p.kind = 'STANDARD' AND p."isActive" AND p."parentProductId" IS NULL
    AND ${kids()} > 0`;
 
-const TENANT_COUNT_SQL = `SELECT COUNT(*)::int AS n FROM "Tenant" t WHERE t."deletedAt" IS NULL AND ($1::text IS NULL OR t.slug = $1)`;
+export const TENANT_COUNT_SQL = `SELECT COUNT(*)::int AS n FROM "Tenant" t WHERE ${TENANT_SCOPE}`;
 
 const zero = () => ({
   parents: 0,
@@ -77,10 +83,11 @@ const zero = () => ({
   withStock: 0,
   withPrice: 0,
   withOpenLines: 0,
+  noActiveChildren: 0,
 });
 
 /** Pure: fold per-parent rows into per-tenant counts under anonymous labels. The tenant key never leaves. */
-export function summarize(rows) {
+export function summarize(rows, tenantsScanned = null) {
   const keys = [...new Set(rows.map((r) => r.tenant_key))].sort();
   const label = new Map(keys.map((k, i) => [k, `tenant-${i + 1}`]));
   const per = new Map(keys.map((k) => [k, { label: label.get(k), ...zero() }]));
@@ -90,6 +97,7 @@ export function summarize(rows) {
       b.parents += 1;
       b.children += r.children;
       b.activeChildren += r.active_children;
+      if (r.active_children === 0) b.noActiveChildren += 1;
       if (r.sold_parent) b.soldAsParent90 += 1;
       if (r.sold_child) b.soldAsChild90 += 1;
       if (r.sold_parent && r.sold_child) b.soldAsBoth90 += 1;
@@ -98,7 +106,11 @@ export function summarize(rows) {
       if (r.open_lines) b.withOpenLines += 1;
     }
   }
-  return { tenants: keys.map((k) => per.get(k)), total };
+  return {
+    tenantsScanned: tenantsScanned ?? keys.length,
+    tenants: keys.map((k) => per.get(k)),
+    total,
+  };
 }
 
 const COLS = [
@@ -111,6 +123,7 @@ const COLS = [
   ["withStock", "stock"],
   ["withPrice", "price"],
   ["withOpenLines", "open-lines"],
+  ["noActiveChildren", "no-active"],
 ];
 
 /** Pure: the short text table (one line per tenant plus TOTAL). */
@@ -126,7 +139,13 @@ export function formatTable(report) {
       .map((v, i) => v.padEnd(w[i]))
       .join("  ")
       .trimEnd();
-  return [fmt(head), fmt(w.map((n) => "-".repeat(n))), ...body.map(fmt)].join("\n");
+  return [
+    `tenants scanned: ${report.tenantsScanned}`,
+    "",
+    fmt(head),
+    fmt(w.map((n) => "-".repeat(n))),
+    ...body.map(fmt),
+  ].join("\n");
 }
 
 /** Pure: `--tenant <slug>` xor `--all`, plus `--json` and `--self-test`. Throws a usage message otherwise. */
@@ -208,7 +227,7 @@ async function main() {
       return 2;
     }
     const { rows } = await client.query(CENSUS_SQL, scope);
-    const report = summarize(rows);
+    const report = summarize(rows, n[0].n);
     if (args.json) console.log(JSON.stringify(report, null, 2));
     else {
       console.log("\n=== LEGACY PARENTS WITH VARIANTS (active STANDARD, counts only) ===");
