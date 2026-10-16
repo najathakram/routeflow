@@ -352,7 +352,10 @@ describe("graph-refresh safety", () => {
       env: { ...process.env, GRAPHIFY_HOST: "" },
     });
 
-  it("deletes a stale serve.pid and kills nothing when the PID is not our server", () => {
+  const withBystander = async (
+    cmdlineExpr: string,
+    fn: (ctx: { pidFile: string; pid: number; run: () => unknown }) => void | Promise<void>,
+  ) => {
     const host = fs.mkdtempSync(path.join(os.tmpdir(), "graph-refresh-spec-"));
     const bystander = spawn(process.execPath, ["-e", "setInterval(() => {}, 1000)"], {
       stdio: "ignore",
@@ -361,25 +364,63 @@ describe("graph-refresh safety", () => {
       fs.mkdirSync(path.join(host, "graphify-out"));
       const pidFile = path.join(host, "graphify-out", "serve.pid");
       fs.writeFileSync(pidFile, String(bystander.pid));
-      const out = runModule(
-        `import { stopServer } from ${JSON.stringify(refreshUrl)};
-         console.log(JSON.stringify(stopServer(${JSON.stringify(host)})));`,
-      );
-      expect(out.trim()).toBe("false");
-      expect(fs.existsSync(pidFile)).toBe(false);
-      expect(() => process.kill(bystander.pid as number, 0)).not.toThrow(); // still alive
+      const run = () => {
+        const out = runModule(
+          `import { stopServer } from ${JSON.stringify(refreshUrl)};
+           console.log("RESULT " + JSON.stringify(stopServer(${JSON.stringify(host)}, { cmdlineOf: () => ${cmdlineExpr} })));`,
+        );
+        const line = out.split(/\r?\n/).find((l) => l.startsWith("RESULT "));
+        return JSON.parse((line as string).slice(7));
+      };
+      await fn({ pidFile, pid: bystander.pid as number, run });
     } finally {
       bystander.kill();
       fs.rmSync(host, { recursive: true, force: true });
     }
+  };
+  const alive = (pid: number) => {
+    try {
+      process.kill(pid, 0);
+      return true;
+    } catch {
+      return false;
+    }
+  };
+
+  it("deletes the pid file and kills nothing when the live PID is not our server", async () => {
+    await withBystander(JSON.stringify("node app.js --serve"), ({ pidFile, pid, run }) => {
+      expect(run()).toEqual({ stopped: false, unverified: false });
+      expect(fs.existsSync(pidFile)).toBe(false);
+      expect(alive(pid)).toBe(true);
+    });
+  });
+
+  it("selects a graphify.serve command line for kill and removes the pid file", async () => {
+    await withBystander(
+      JSON.stringify("python -m graphify.serve g.json"),
+      async ({ pidFile, pid, run }) => {
+        expect(run()).toEqual({ stopped: true, unverified: false });
+        expect(fs.existsSync(pidFile)).toBe(false);
+        for (let i = 0; i < 50 && alive(pid); i++) await new Promise((r) => setTimeout(r, 100));
+        expect(alive(pid)).toBe(false);
+      },
+    );
+  });
+
+  it("keeps the pid file and kills nothing when the command line is unreadable", async () => {
+    await withBystander("null", ({ pidFile, pid, run }) => {
+      expect(run()).toEqual({ stopped: false, unverified: true });
+      expect(fs.existsSync(pidFile)).toBe(true);
+      expect(alive(pid)).toBe(true);
+    });
   });
 
   it("recognises only a graphify serve command line as ours", () => {
     const out = runModule(
       `import { isOurServer } from ${JSON.stringify(refreshUrl)};
-       console.log(JSON.stringify([isOurServer("python -m graphify.serve g.json"), isOurServer("node app.js"), isOurServer(null)]));`,
+       console.log(JSON.stringify([isOurServer("python -m graphify.serve g.json"), isOurServer("node app.js"), isOurServer(null), isOurServer("node graphify-notes serve.js")]));`,
     );
-    expect(JSON.parse(out)).toEqual([true, false, false]);
+    expect(JSON.parse(out)).toEqual([true, false, false, false]);
   });
 
   it("refuses to default the host to a checkout that has no BUILT_AT marker", () => {

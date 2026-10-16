@@ -6,7 +6,7 @@
 //   node scripts/graph-refresh.mjs --pull <ssh-host> [--remote-host <dir>] [--host <dir>] [--dry-run]
 //
 // Build path (items 8-11): fetch, skip when < 20 commits behind, then inside the heavy slot:
-//   GUARD_ALLOW=1 git checkout -f --detach origin/master  -> re-apply the overlay (code-only
+//   git checkout -f --detach origin/master  -> re-apply the overlay (code-only
 //   .graphifyignore + "source" export condition) -> `graphify update <host>` (3600 s cap, never --force)
 //   -> canary -> BUILT_AT -> prune old dated backup folders -> restart + warm the MCP server.
 // Pull path (item 12): scp graph.json from another machine's host into graph.json.tmp, check the host
@@ -202,20 +202,45 @@ export function processCmdline(pid) {
 }
 
 /** True when the command line is our MCP server (graphify ... serve). */
-export const isOurServer = (cmd) => !!cmd && /graphify/i.test(cmd) && /serve/i.test(cmd);
+export const isOurServer = (cmd) => !!cmd && /-m\s+graphify\.serve\b|graphify-mcp/.test(cmd);
 
-/** Stops the server named by serve.pid, but only when that PID really is ours; a stale file kills nothing. */
+/** True unless the OS says the PID does not exist (EPERM still means alive). */
+function pidAlive(pid) {
+  try {
+    process.kill(pid, 0);
+    return true;
+  } catch (e) {
+    return e.code !== "ESRCH";
+  }
+}
+
+/**
+ * Stops the server named by serve.pid, but only when that PID really is ours.
+ * Returns { stopped, unverified }: unverified = the PID is alive but its command line could not be
+ * read (transient lookup failure), so the pid file is kept and nothing is killed.
+ */
 export function stopServer(host, { cmdlineOf = processCmdline } = {}) {
   const pidFile = path.join(host, "graphify-out", "serve.pid");
   let pid = null;
   try {
     pid = Number(fs.readFileSync(pidFile, "utf8").trim());
   } catch {
-    return false;
+    return { stopped: false, unverified: false };
   }
-  if (!Number.isInteger(pid) || pid <= 0 || !isOurServer(cmdlineOf(pid))) {
-    fs.rmSync(pidFile, { force: true }); // stale: the PID is gone or was reused by something else
-    return false;
+  if (!Number.isInteger(pid) || pid <= 0 || !pidAlive(pid)) {
+    fs.rmSync(pidFile, { force: true }); // stale: the PID is gone
+    return { stopped: false, unverified: false };
+  }
+  const cmd = cmdlineOf(pid);
+  if (cmd == null || !String(cmd).trim()) {
+    log(
+      `WARNING: PID ${pid} is alive but its command line is unreadable; serve.pid kept, nothing killed`,
+    );
+    return { stopped: false, unverified: true };
+  }
+  if (!isOurServer(cmd)) {
+    fs.rmSync(pidFile, { force: true }); // the PID was reused by something else
+    return { stopped: false, unverified: false };
   }
   try {
     if (process.platform === "win32")
@@ -225,7 +250,7 @@ export function stopServer(host, { cmdlineOf = processCmdline } = {}) {
     /* already gone */
   }
   fs.rmSync(pidFile, { force: true });
-  return true;
+  return { stopped: true, unverified: false };
 }
 
 /** One graph_stats call over streamable HTTP: the first call after a reload stalls 10-20 s. Best effort. */
@@ -270,7 +295,7 @@ async function warmServer(port) {
 }
 
 async function restartServer(host, graph, { port = core.DEFAULT_MCP_PORT } = {}) {
-  const had = stopServer(host);
+  const { stopped: had, unverified } = stopServer(host);
   if (had) await new Promise((r) => setTimeout(r, 3000)); // a KeepAlive supervisor (launchd) respawns it itself
   if (!(await probePort(core.DEFAULT_MCP_HOST, port))) {
     const out = fs.openSync(path.join(host, "graphify-out", "serve.log"), "a");
@@ -292,7 +317,11 @@ async function restartServer(host, graph, { port = core.DEFAULT_MCP_PORT } = {})
   }
   try {
     await warmServer(port);
-    log("MCP server restarted and warmed (graph_stats)");
+    if (unverified)
+      log(
+        "WARNING: the old MCP server could not be verified or stopped; it is still serving the OLD graph",
+      );
+    else log("MCP server restarted and warmed (graph_stats)");
   } catch (e) {
     log(`MCP server is up but the warm-up call failed: ${e.message}`);
   }
