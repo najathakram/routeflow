@@ -175,6 +175,53 @@ describe("T7: switching the order unit", () => {
   });
 });
 
+describe("PF-6: scope edges of the order-unit switch", () => {
+  it("T7c at tier scope: Keep pins only the scope's tier, only Auto cells, and no set price changes", () => {
+    let seed = 11;
+    const rnd = () => {
+      seed = (seed * 1664525 + 1013904223) % 4294967296;
+      return seed / 4294967296;
+    };
+    const money = () => ((Math.floor(rnd() * 90000) + 100) / 100).toFixed(2);
+    for (let i = 0; i < 200; i++) {
+      const upb = [2, 6, 12, 24][Math.floor(rnd() * 4)];
+      const p: LadderProduct = {
+        unit: "Box",
+        unitsPerBox: upb,
+        pricePerUnit: money(),
+        priceTier2: rnd() < 0.5 ? money() : null,
+        priceTier4: rnd() < 0.3 ? money() : null,
+      };
+      const units = [lvl("Piece", 1, rnd() < 0.5 ? money() : null), lvl("Case", upb * 6)];
+      const view = buildLadderView(p, units);
+      const tier = ([2, 3, 4, 5] as const)[Math.floor(rnd() * 4)];
+      const keep = view.rows.flatMap((r) => TIERS.map((t) => ({ ref: r.ref, tier: t })));
+      for (const target of view.rows) {
+        const plan = planOrderUnitSwitch(view, { kind: "tier", tier }, target.ref, { keep });
+        for (const pin of plan.pins) {
+          expect(pin.tier).toBe(tier);
+          const row = view.rows.find((r) => r.ref === pin.ref)!;
+          expect(priceSource(row, pin.tier)).toBe("auto");
+        }
+        for (const row of view.rows) {
+          const after = plan.view.rows.find((r) => r.ref === row.ref)!;
+          row.set.forEach((v, idx) => {
+            if (v != null) expect(after.set[idx]).toBe(v);
+          });
+        }
+      }
+    }
+  });
+
+  it("a customer scope switch starts from the customer's order unit only when the ladder has it", () => {
+    const units = [lvl("Case", 72)];
+    const view = buildLadderView(box12, units);
+    const gone: CustomerPricing = { tier: 2, orderUnit: "gone" };
+    const plan = planOrderUnitSwitch(view, { kind: "customer", customer: gone }, "pack");
+    expect(plan.from).toBe("pack"); // the tier's anchor, as customerAnchor resolves it
+  });
+});
+
 describe("tier and customer scopes (owner Q2b)", () => {
   it("T24b: tier 3 orders by the Piece, Piece Tier 3 set $0.80 (Box $12/12): Case Tier 3 $72.00 -> $57.60, Box Tier 3 $12.00 -> $9.60", () => {
     const units = [lvl("Case", 72), lvl("Piece", 1, null, { priceTier3: "0.80" })];

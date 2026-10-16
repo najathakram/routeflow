@@ -141,8 +141,7 @@ export function planOrderUnitSwitch(
       ? view.anchor
       : scope.kind === "tier"
         ? tierColumn(scope.tier)
-        : (customer!.orderUnit ??
-          (customer!.tier === 1 ? view.anchor : tierColumn(customer!.tier)));
+        : customerAnchor(view, customer!);
 
   const priceNow = (v: LadderView, c: CustomerPricing | undefined, r: UnitRef, t: PriceTier) =>
     c ? customerPrice(v, r, c, rules) : ladderPrice(v, r, t, rules);
@@ -169,7 +168,8 @@ export function planOrderUnitSwitch(
   };
   if (scope.kind === "product") pin(to, 1); // P1: the new anchor's Retail is always set
   for (const k of opts.keep ?? []) {
-    if (view.rows.some((r) => r.ref === k.ref)) pin(k.ref, customer ? customer.tier : k.tier);
+    const tier = customer ? customer.tier : scope.kind === "tier" ? scope.tier : k.tier;
+    if (view.rows.some((r) => r.ref === k.ref)) pin(k.ref, tier);
   }
 
   const tiers: readonly PriceTier[] =
