@@ -26,7 +26,7 @@ jest.mock("@/lib/api/usePriceGrid", () => ({
 }));
 jest.mock("@/lib/api/usePriceWrites", () => ({
   ...jest.requireActual("@/lib/api/usePriceWrites"),
-  useSavePrices: () => ({ mutate: mockSave, isPending: false, error: mockError }),
+  useSavePrices: () => ({ mutate: mockSave, reset: jest.fn(), isPending: false, error: mockError }),
   useUndoPrices: () => ({ mutate: jest.fn(), isPending: false, error: null }),
 }));
 jest.mock("@/lib/api/tier-labels", () => ({

@@ -52,14 +52,18 @@ export function priceWriteError(err: unknown): PriceWriteError | null {
   }
 }
 
-function usePriceWrite<Req>(productId: string, path: string) {
+/**
+ * `refetchOnStale`: a stale answer refetches the grid. Undo wants it (its preview reads the served grid); Save does
+ * not: its notice owns the reload, so the draft is never re-based on a revision the user has not seen.
+ */
+function usePriceWrite<Req>(productId: string, path: string, refetchOnStale: boolean) {
   const qc = useQueryClient();
   return useMutation<SavePricesResponse, unknown, Req>({
     mutationFn: (body) =>
       apiClient[PRICE_WRITE_METHOD](`/products/${productId}${path}`, body).then((r) => r.data),
     onSuccess: (res) => qc.setQueryData(priceGridKey(productId), res.grid),
     onError: (err) => {
-      if (priceWriteError(err)?.code === "stale") {
+      if (refetchOnStale && priceWriteError(err)?.code === "stale") {
         void qc.invalidateQueries({ queryKey: priceGridKey(productId) });
       }
     },
@@ -68,8 +72,8 @@ function usePriceWrite<Req>(productId: string, path: string) {
 
 /** POST /products/:id/prices: everything one Save commits. On success the fresh grid replaces the cache. */
 export const useSavePrices = (productId: string) =>
-  usePriceWrite<SavePricesRequest>(productId, "/prices");
+  usePriceWrite<SavePricesRequest>(productId, "/prices", false);
 
 /** POST /products/:id/prices/undo: reverses one save by its audit id. */
 export const useUndoPrices = (productId: string) =>
-  usePriceWrite<UndoPricesRequest>(productId, "/prices/undo");
+  usePriceWrite<UndoPricesRequest>(productId, "/prices/undo", true);

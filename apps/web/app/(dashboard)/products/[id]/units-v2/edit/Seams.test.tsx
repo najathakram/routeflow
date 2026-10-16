@@ -20,6 +20,9 @@ import { usePriceDraft, type PriceDraft } from "./usePriceDraft";
 let mockGrid: { data?: ProductPriceGridDto; isLoading: boolean; isError: boolean };
 let mockError: unknown = null;
 const mockSave = jest.fn();
+const mockSaveReset = jest.fn();
+// What the next `save.mutate` leaves in `save.error` (react-query clears it while a save runs, then sets the new one).
+let mockSaveOutcome: unknown = null;
 const mockUndo = jest.fn();
 jest.mock("@/lib/api/usePriceGrid", () => ({
   ...jest.requireActual("@/lib/api/usePriceGrid"),
@@ -28,7 +31,26 @@ jest.mock("@/lib/api/usePriceGrid", () => ({
 }));
 jest.mock("@/lib/api/usePriceWrites", () => ({
   ...jest.requireActual("@/lib/api/usePriceWrites"),
-  useSavePrices: () => ({ mutate: mockSave, isPending: false, error: mockError }),
+  // Stateful like the real mutation: `mutate` and `reset` replace `error` (until then it is `mockError`), so a test
+  // sees what the page does after them.
+  useSavePrices: () => {
+    const [after, setAfter] = jest.requireActual("react").useState(null) as [
+      { error: unknown } | null,
+      (a: { error: unknown } | null) => void,
+    ];
+    return {
+      mutate: (req: unknown, o: unknown) => {
+        mockSave(req, o);
+        setAfter({ error: mockSaveOutcome });
+      },
+      reset: () => {
+        mockSaveReset();
+        setAfter({ error: null });
+      },
+      isPending: false,
+      error: after ? after.error : mockError,
+    };
+  },
   useUndoPrices: () => ({
     mutate: jest.fn(),
     mutateAsync: mockUndo,
@@ -110,6 +132,8 @@ beforeEach(() => {
   mockCustomers = [];
   mockCustomerFetch.mockReset();
   mockSave.mockReset();
+  mockSaveReset.mockReset();
+  mockSaveOutcome = null;
   mockUndo.mockReset();
   mockGrid = { data: grid, isLoading: false, isError: false };
 });
@@ -365,12 +389,8 @@ describe("K8 seams", () => {
       expect(draft.notice).toMatch(/was cleared because you reset every price to Auto/);
     });
 
-    it("the stale-write notice goes when the grid revision changes", async () => {
-      mockError = { response: { status: 409, data: { code: "LADDER_REVISION_STALE" } } };
-      const user = userEvent.setup();
-      const { rerender } = render();
-      await edit(user);
-      expect(screen.getByRole("button", { name: "Reload prices" })).toBeTruthy();
+    const STALE = { response: { status: 409, data: { code: "LADDER_REVISION_STALE" } } };
+    const moveGridOn = (rerender: (ui: React.ReactElement) => void) => {
       mockGrid = {
         data: { ...grid, revision: 9, priceState: "ps-9" },
         isLoading: false,
@@ -381,7 +401,51 @@ describe("K8 seams", () => {
           <ProductPricingV2 product={product} />
         </QueryClientProvider>,
       );
+    };
+    const caseInput = () =>
+      (
+        within(screen.getByTestId(T.row("case"))).getByTestId(
+          T.input("case", 2),
+        ) as HTMLInputElement
+      ).value;
+
+    it("the stale-write notice stays when the grid refetches onto a new revision", async () => {
+      mockError = STALE;
+      const user = userEvent.setup();
+      const { rerender } = render();
+      await edit(user);
+      expect(screen.getByRole("button", { name: "Reload prices" })).toBeTruthy();
+      moveGridOn(rerender);
+      expect(screen.getByRole("button", { name: "Reload prices" })).toBeTruthy();
+      expect(caseInput()).toBe("14.5");
+    });
+
+    it("Reload prices clears the stale-write notice and keeps the draft", async () => {
+      mockError = STALE;
+      const user = userEvent.setup();
+      const { rerender } = render();
+      await edit(user);
+      moveGridOn(rerender);
+      await user.click(screen.getByRole("button", { name: "Reload prices" }));
+      expect(mockSaveReset).toHaveBeenCalledTimes(1);
       expect(screen.queryByRole("button", { name: "Reload prices" })).toBeNull();
+      expect(caseInput()).toBe("14.5");
+    });
+
+    it("the next save attempt clears the stale-write notice; a second stale answer raises it again", async () => {
+      mockError = STALE;
+      const user = userEvent.setup();
+      render();
+      await edit(user);
+      expect(screen.getByRole("button", { name: "Reload prices" })).toBeTruthy();
+      await user.click(screen.getByTestId(T.ebSave));
+      expect(mockSave).toHaveBeenCalledTimes(1);
+      expect(screen.queryByRole("button", { name: "Reload prices" })).toBeNull();
+      mockSaveOutcome = { response: { status: 409, data: { code: "LADDER_REVISION_STALE" } } };
+      await user.click(screen.getByTestId(T.ebSave));
+      expect(mockSave).toHaveBeenCalledTimes(2);
+      expect(screen.getByRole("button", { name: "Reload prices" })).toBeTruthy();
+      expect(caseInput()).toBe("14.5");
     });
   });
 

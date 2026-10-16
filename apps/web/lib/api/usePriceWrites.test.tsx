@@ -57,6 +57,17 @@ describe("usePriceWrites", () => {
     expect(spy).toHaveBeenCalledWith({ queryKey: priceGridKey("p1") });
   });
 
+  it("a stale save leaves the grid alone: the notice owns the reload, so the draft is saved against the revision it was made on", async () => {
+    mockPost.mockRejectedValue({ response: { data: { code: "LADDER_REVISION_STALE" } } });
+    const qc = new QueryClient();
+    const spy = jest.spyOn(qc, "invalidateQueries");
+    const { result } = renderHook(() => useSavePrices("p1"), { wrapper: wrap(qc) });
+    result.current.mutate({ expectedRevision: 7, expectedPriceState: "ps", patches: [] });
+    await waitFor(() => expect(result.current.isError).toBe(true));
+    expect(priceWriteError(result.current.error)?.code).toBe("stale");
+    expect(spy).not.toHaveBeenCalled();
+  });
+
   it("maps the contract's errors to words", () => {
     const e = (code: string, problems?: string[]) =>
       priceWriteError({ response: { data: { code, problems } } });

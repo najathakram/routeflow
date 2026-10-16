@@ -254,18 +254,16 @@ export function useCreatePriceDraft(productId: string, hooks: PriceDraftHooks = 
   const texts: Record<string, string> = {};
   for (const e of entries) if (e.kind === "cell") texts[e.key] = e.text;
 
-  // A stale-write notice describes the grid revision it was raised on: once the grid moves on (Reload prices, a
-  // refetch) it no longer applies, so it goes. Other save errors stay until the next save.
-  const errSeen = React.useRef<{
-    error: unknown;
-    revision: number | undefined;
-    texts: Record<string, string>;
-  }>({ error: null, revision: undefined, texts: {} });
+  // A stale-write notice stays until the user acts: Reload prices (which resets the save) or the next Save (which
+  // clears the mutation's error while it runs). A refetch behind their back never takes it away. The texts are the
+  // draft as it was when the error came, so the add-unit hint only sticks to the attempt it was raised on.
+  const errSeen = React.useRef<{ error: unknown; texts: Record<string, string> }>({
+    error: null,
+    texts: {},
+  });
   if (save.error !== errSeen.current.error)
-    errSeen.current = { error: save.error, revision: grid?.revision, texts: { ...texts } };
-  const rawError = priceWriteError(save.error);
-  const saveError =
-    rawError?.code === "stale" && grid?.revision !== errSeen.current.revision ? null : rawError;
+    errSeen.current = { error: save.error, texts: { ...texts } };
+  const saveError = priceWriteError(save.error);
 
   const doSave = () => {
     const req = toRequest();
@@ -381,7 +379,7 @@ export function useCreatePriceDraft(productId: string, hooks: PriceDraftHooks = 
     addUnitProblem: (ref, tier) => {
       const key = cellKey(ref, tier);
       const said =
-        rawError?.code === "invalid" ? rawError.problems.find(ADD_UNIT_FIRST) : undefined;
+        saveError?.code === "invalid" ? saveError.problems.find(ADD_UNIT_FIRST) : undefined;
       return said &&
         ref === "base" &&
         texts[key] !== undefined &&
@@ -490,7 +488,10 @@ export function useCreatePriceDraft(productId: string, hooks: PriceDraftHooks = 
       current: c.current == null ? "No set price" : formatMoney(c.current),
       restoreTo: c.expected == null ? "No set price" : formatMoney(c.expected),
     }),
-    reload: () => void qc.invalidateQueries({ queryKey: priceGridKey(productId) }),
+    reload: () => {
+      save.reset();
+      void qc.invalidateQueries({ queryKey: priceGridKey(productId) });
+    },
     markUndone: () => {
       setLastSave(null);
       setUndoStale(false);
