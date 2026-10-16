@@ -32,6 +32,5 @@ export const UNITS_V2_TESTIDS = {
   unitsTable: "units-v2-units-table",
   hUnits: "units-v2-h-units",
   orderUnit: "units-v2-order-unit",
-  switchReview: "units-v2-switch-review",
-  switchUndo: "units-v2-switch-undo",
+  orderUnitReason: "units-v2-order-unit-reason",
 } as const;

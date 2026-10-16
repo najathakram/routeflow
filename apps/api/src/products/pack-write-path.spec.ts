@@ -110,14 +110,6 @@ const USE_ALLOW: readonly string[] = [
   // S9 (K1): the write path itself; it names assertOrderUnitSwitchAllowed before any order-unit change.
   "apps/api/src/products/product-price-write.service.ts",
 ];
-/**
- * Client previews: files that call only the PURE planner `planOrderUnitSwitch` to show a draft (K3's edit grid), never
- * `materializePack`, and write nothing: the server refuses an order-unit change (PRICING_RULES_NOT_READY) until U-1.
- * Added at integration (K8) for the SA to rule on; remove it if the SA says previews must wait for U-1.
- */
-const PREVIEW_ONLY: readonly string[] = [
-  "apps/web/app/(dashboard)/products/[id]/units-v2/edit/usePriceDraft.ts",
-];
 const USE_ROOTS = [
   "apps/api/src",
   "apps/api/scripts",
@@ -167,12 +159,7 @@ describe("SA-796 R-4 (F1): the engine's switch and materialize functions have no
   });
 
   it("a non-spec file that names them must be listed in USE_ALLOW", () => {
-    expect(users.filter((f) => !USE_ALLOW.includes(f) && !PREVIEW_ONLY.includes(f))).toEqual([]);
-  });
-
-  it("a preview-only file never names materializePack, and still uses the planner (the list only shrinks)", () => {
-    expect(PREVIEW_ONLY.filter((f) => /\bmaterializePack\b/.test(code(f)))).toEqual([]);
-    expect(PREVIEW_ONLY.filter((f) => !users.includes(f))).toEqual([]);
+    expect(users.filter((f) => !USE_ALLOW.includes(f))).toEqual([]);
   });
 
   it("a listed file must also name the guard (assertOrderUnitSwitchAllowed or PACK_WRITE_PATH_COMPLETE)", () => {

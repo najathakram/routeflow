@@ -2,7 +2,6 @@
 
 import * as React from "react";
 import {
-  planOrderUnitSwitch,
   type CellChange,
   type CellPatch,
   type CustomerPricingWithId,
@@ -10,7 +9,6 @@ import {
   type Pin,
   type PricePlan,
   type PriceTier,
-  type SwitchPlan,
 } from "@routeflow/pricing";
 import type {
   CustomerPriceMove,
@@ -121,9 +119,6 @@ export interface PriceDraft {
   /** Titles of the ticked offers (customer moves among them) already baked into the draft. */
   bakedTitles: string[];
   count: number;
-  orderUnit: string | null;
-  setOrderUnit: (to: string | null) => void;
-  sw: SwitchPlan | null;
   keeps: readonly Pin[];
   tierName: (t: PriceTier) => string;
   api: GridEditApi;
@@ -164,7 +159,6 @@ export function useCreatePriceDraft(productId: string, hooks: PriceDraftHooks = 
   const [openKey, setOpenKey] = React.useState<string | null>(null);
   const [keeps, setKeeps] = React.useState<Pin[]>([]);
   const [moves, setMoves] = React.useState<CustomerPriceMove[]>([]);
-  const [orderUnit, setOrderUnitState] = React.useState<string | null>(null);
   const [focus, setFocus] = React.useState<CellFocus | null>(null);
   const [lastSave, setLastSave] = React.useState<PriceDraft["lastSave"]>(null);
   const [undoStale, setUndoStale] = React.useState(false);
@@ -185,12 +179,7 @@ export function useCreatePriceDraft(productId: string, hooks: PriceDraftHooks = 
     () => (served ? foldDraft(served, rules, entries, openKey, keeps, tierName, customers) : null),
     [served, rules, entries, openKey, keeps, tierName, customers],
   );
-  const sw = React.useMemo(() => {
-    if (!fold || !orderUnit || orderUnit === fold.base.anchor) return null;
-    if (!fold.base.rows.some((r) => r.ref === orderUnit)) return null;
-    return planOrderUnitSwitch(fold.base, { kind: "product" }, orderUnit, { keep: keeps });
-  }, [fold, orderUnit, keeps]);
-  const view = sw?.view ?? fold?.view ?? null;
+  const view = fold?.view ?? null;
 
   const patches = fold?.patches ?? [];
   const customerMoves = [...(fold?.customerMoves ?? []), ...moves];
@@ -199,7 +188,7 @@ export function useCreatePriceDraft(productId: string, hooks: PriceDraftHooks = 
   const bakedTitles = fold?.bakedTitles ?? [];
   const patched = new Set(patches.map((p) => cellKey(p.ref, p.tier)));
   const sendKeeps = keeps.filter((k) => !patched.has(cellKey(k.ref, k.tier)));
-  const count = patches.length + sendKeeps.length + customerMoves.length + (sw ? 1 : 0);
+  const count = patches.length + sendKeeps.length + customerMoves.length;
   const dirty = count > 0 || problems.length > 0 || conflicts.length > 0;
 
   const reset = React.useCallback(() => {
@@ -209,7 +198,6 @@ export function useCreatePriceDraft(productId: string, hooks: PriceDraftHooks = 
     setNotice(null);
     setKeeps([]);
     setMoves([]);
-    setOrderUnitState(null);
     setFocus(null);
   }, []);
 
@@ -249,7 +237,6 @@ export function useCreatePriceDraft(productId: string, hooks: PriceDraftHooks = 
           patches: patches.map((p) => ({ ref: p.ref, tier: p.tier, to: p.to })),
           keeps: sendKeeps.map((k) => ({ ref: k.ref, tier: k.tier, value: k.value })),
           customerMoves,
-          orderUnit: sw ? sw.to : undefined,
         };
 
   const canSave =
@@ -504,12 +491,6 @@ export function useCreatePriceDraft(productId: string, hooks: PriceDraftHooks = 
     conflicts,
     bakedTitles,
     count,
-    orderUnit,
-    setOrderUnit: (to) => {
-      setOrderUnitState(to);
-      setKeeps([]);
-    },
-    sw,
     keeps,
     tierName,
     api,

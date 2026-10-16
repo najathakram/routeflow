@@ -207,32 +207,23 @@ describe("units v2 edit grid (S12a)", () => {
     ).toBeTruthy();
   });
 
-  it("V06: an order-unit switch is a draft with an inline review; Save is the one commit", async () => {
+  it("V06: the order-unit switch is disabled in edit mode, with its reason; the current unit still shows", async () => {
     const user = userEvent.setup();
     render(<ProductPricingV2 product={product} />);
     await enterEdit(user);
-    await user.selectOptions(screen.getByTestId(T.orderUnit), "case");
-    expect(mockSave).not.toHaveBeenCalled();
-    const review = screen.getByTestId(T.switchReview);
-    expect(review.textContent).toContain("Orders now use the Case.");
-    expect(review.textContent).toMatch(/Case Retail is now set at \$/);
-    expect(screen.queryByRole("button", { name: /apply/i })).toBeNull();
-    for (const b of within(review).queryAllByRole("button", { name: /^Keep / })) {
-      expect(b.getAttribute("aria-label")).toMatch(/^Keep .+ at \$/);
-    }
+    const select = screen.getByTestId(T.orderUnit) as HTMLSelectElement;
+    expect(select.getAttribute("aria-disabled")).toBe("true");
+    expect(select.title).toBe("Available after units settings update");
+    expect(screen.getByTestId(T.orderUnitReason).textContent).toBe(
+      "Available after units settings update",
+    );
+    expect(select.getAttribute("aria-describedby")).toBe(screen.getByTestId(T.orderUnitReason).id);
+    expect(select.value).toBe("piece");
+    await user.selectOptions(select, "case").catch(() => undefined);
+    expect(select.value).toBe("piece");
+    await type(user, 2, "14.5");
     await user.click(screen.getByTestId(T.ebSave));
-    expect(mockSave).toHaveBeenCalledTimes(1);
-    expect(mockSave.mock.calls[0][0]).toEqual(expect.objectContaining({ orderUnit: "case" }));
-  });
-
-  it("V06: Undo switch removes the draft switch", async () => {
-    const user = userEvent.setup();
-    render(<ProductPricingV2 product={product} />);
-    await enterEdit(user);
-    await user.selectOptions(screen.getByTestId(T.orderUnit), "case");
-    await user.click(screen.getByTestId(T.switchUndo));
-    expect(screen.queryByTestId(T.switchReview)).toBeNull();
-    expect((screen.getByTestId(T.orderUnit) as HTMLSelectElement).value).toBe("piece");
+    expect(mockSave.mock.calls[0][0]).not.toHaveProperty("orderUnit");
   });
 
   it("a refused price (zero) marks its own input, names the cause and blocks Save", async () => {
