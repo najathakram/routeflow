@@ -2,7 +2,7 @@ import * as React from "react";
 import { ActivityIndicator, View } from "react-native";
 import { useLocalSearchParams, useRouter } from "expo-router";
 import { ios } from "@routeflow/ui/tokens";
-import { suggestPackSize } from "@routeflow/types";
+import { suggestPackSize, type ProductPackAtOpen } from "@routeflow/types";
 import {
   ProductForm,
   productFormFromValues,
@@ -17,6 +17,7 @@ import {
 } from "../../../../lib/api/products";
 import { showToast } from "../../../../lib/toast";
 import { productSaveErrorCopy } from "../../../../lib/product-save-error-copy";
+import { expectedPackFor } from "../../../../lib/product-edit-pack";
 import { alertInfo, confirm } from "../../../../lib/confirm";
 import { getFamilyCascadePrompt } from "../../../../lib/product-family-cascade";
 import {
@@ -56,6 +57,18 @@ export default function EditProductScreen() {
   const reorderMut = useUpdateReorderSettings();
   // Held between "Save" and the pack-size decision — never auto-resolved.
   const [pending, setPending] = React.useState<SubmitPayload | null>(null);
+  // SA-797: the pack this form OPENED with (the first loaded product, never a later refetch). The save sends it
+  // back as the expected values, so a Settings > Units rename made meanwhile is a 409, not overwritten.
+  const openedPack = React.useRef<ProductPackAtOpen | null>(null);
+  React.useEffect(() => {
+    if (product && !openedPack.current) {
+      openedPack.current = {
+        unit: product.unit,
+        unitsPerBox: product.unitsPerBox ?? null,
+        packTenantUnitId: product.packTenantUnitId,
+      };
+    }
+  }, [product]);
 
   if (isLoading || !product) {
     return (
@@ -83,6 +96,7 @@ export default function EditProductScreen() {
       {
         id,
         ...productDto,
+        ...expectedPackFor(productDto.unit, openedPack.current),
         ...(deactivateHolderIds?.length ? { deactivateHolderIds } : {}),
         ...(confirmCascade ? { confirmCascade: true } : {}),
       },

@@ -219,6 +219,25 @@ export interface CreateProductUnitPayload {
 /** PATCH /products/:id/units/:unitId — `factorToBase` is refused once a line carries the level. */
 export type UpdateProductUnitPayload = Partial<CreateProductUnitPayload>;
 
+/** The pack fields a product form snapshots when it OPENS (from GET /products/:id). */
+export interface ProductPackAtOpen {
+  unit: string;
+  unitsPerBox?: number | null;
+  /** The tenant unit the pack word names (GET /products/:id `packTenantUnitId`); null = unlinked. */
+  packTenantUnitId?: string | null;
+}
+
+/**
+ * SA-797 (row 218): sent with a PATCH /products/:id that carries `unit` — the pack the form READ when it opened.
+ * The server compares them under the product's pack lock; any difference is a 409 PRODUCT_PACK_STALE.
+ */
+export interface ExpectedPackPayload {
+  expectedUnit: string;
+  expectedUnitsPerBox: number | null;
+  /** Only when the pack word was linked to a tenant unit. */
+  expectedTenantUnitId?: string;
+}
+
 // ─── Multi-category labels (2026-09-19) ─────────────────────────────────────────
 // See local-assets/handoff/2026-09-18/PLAN-categories-jurisdiction-bans.md §1.
 

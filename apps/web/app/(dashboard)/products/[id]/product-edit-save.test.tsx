@@ -34,6 +34,7 @@ const PRODUCT = {
   imageKeys: [],
   unitsPerBox: null,
   parentProductId: null,
+  packTenantUnitId: "tu-each",
 };
 
 jest.mock("next/navigation", () => ({
@@ -166,5 +167,37 @@ describe("product Details edit: save outcome", () => {
     expect(patch).toHaveBeenCalledTimes(1);
     resolve({ data: { id: "p1" } });
     await waitFor(() => expect(screen.getByTitle("Edit product")).toBeInTheDocument());
+  });
+});
+
+describe("SA-797: a save that changes the pack word sends the pack the form OPENED with", () => {
+  it("a changed unit carries expectedUnit / expectedUnitsPerBox / expectedTenantUnitId", async () => {
+    const user = userEvent.setup();
+    patch.mockResolvedValueOnce({ data: { id: "p1" } });
+    renderWithProviders(<ProductDetailPage />);
+    await user.click(await screen.findByTitle("Edit product"));
+    const unit = screen.getByDisplayValue("EACH");
+    await user.clear(unit);
+    await user.type(unit, "BOX");
+    await user.click(screen.getAllByRole("button", { name: /save/i })[0]);
+    await waitFor(() => expect(patch).toHaveBeenCalledTimes(1));
+    expect(patch.mock.calls[0][1]).toMatchObject({
+      unit: "BOX",
+      expectedUnit: "EACH",
+      expectedUnitsPerBox: null,
+      expectedTenantUnitId: "tu-each",
+    });
+  });
+
+  it("a save that leaves the pack word alone sends neither unit nor the expected values", async () => {
+    const user = userEvent.setup();
+    patch.mockResolvedValueOnce({ data: { id: "p1" } });
+    await openAndType(user);
+    await user.click(screen.getAllByRole("button", { name: /save/i })[0]);
+    await waitFor(() => expect(patch).toHaveBeenCalledTimes(1));
+    const body = patch.mock.calls[0][1];
+    expect(body.unit).toBeUndefined();
+    expect(body).not.toHaveProperty("expectedUnit");
+    expect(body).not.toHaveProperty("expectedTenantUnitId");
   });
 });

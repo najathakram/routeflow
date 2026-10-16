@@ -66,6 +66,9 @@
 //                    and the product does not already use it (restore the unit first). Nothing was written.
 //   UNIT_SIZE_IN_USE — `body.code` of the 409 when a product level's size would change (or a label move onto a size) while
 //                    orders or invoices already carry that label at a different size. Nothing was written.
+//   PRODUCT_PACK_STALE — `body.code` of the 409 from PATCH /products/:id when the pack the form read (expectedUnit,
+//                    expectedUnitsPerBox, expectedTenantUnitId) no longer matches the product under its pack lock, e.g. a
+//                    Settings > Units rename committed while the form was open (SA-797). Nothing was written; reload.
 //   RECIPE_IMMUTABLE — `body.code` of the 409 when a recipe that is ACTIVE or RETIRED is edited
 //                    in place (#2717 M2, I3); clone it with POST /recipes/:id/versions instead.
 //   RECIPE_CATEGORY_LOCKED — `body.code` of the 409 when a product that sits in a non-RETIRED
@@ -240,6 +243,7 @@ export const API_ERROR_CODES = {
   UNITS_RENAME_IN_PROGRESS: "UNITS_RENAME_IN_PROGRESS",
   UNIT_ARCHIVED: "UNIT_ARCHIVED",
   UNIT_SIZE_IN_USE: "UNIT_SIZE_IN_USE",
+  PRODUCT_PACK_STALE: "PRODUCT_PACK_STALE",
   HOLDERS_CHANGED: "HOLDERS_CHANGED",
   FAMILY_NOT_SELLABLE: "FAMILY_NOT_SELLABLE",
   /** 400 from PUT customer price overrides and POST/PATCH promotions: a FAMILY container is never priced or promoted; `productIds` names them. Use its variants. */

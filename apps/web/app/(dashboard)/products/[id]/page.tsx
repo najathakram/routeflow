@@ -1,7 +1,8 @@
 "use client";
 
 import { priceRowLabel } from "@/lib/product-unit-label";
-import { packWordToSend } from "@/lib/product-edit-unit";
+import { expectedPackFor, packWordToSend } from "@/lib/product-edit-unit";
+import type { ProductPackAtOpen } from "@routeflow/types";
 import { safeTextErrorCopy } from "@/lib/safe-text-error-copy";
 import * as React from "react";
 import Link from "next/link";
@@ -346,9 +347,9 @@ export default function ProductDetailPage() {
 
   const [isEditing, setIsEditing] = React.useState(false);
   const [editDraft, setEditDraft] = React.useState<Record<string, unknown>>({});
-  // The pack word the form opened with: a save sends `unit` only if the operator changed it, so a form
-  // left open across a Settings > Units rename cannot write the old word back.
-  const unitWhenEditStartedRef = React.useRef<string | undefined>(undefined);
+  // The pack the form opened with: a save sends `unit` only if the operator changed it, and then sends this
+  // pack back as the expected values (SA-797), so a Settings > Units rename made meanwhile is a 409, not lost.
+  const packWhenEditStartedRef = React.useRef<ProductPackAtOpen | undefined>(undefined);
 
   // Regulated type picker (edit mode). The Category field below renders the
   // structured SubcategoryCombobox in place of the free-text combobox once a
@@ -513,7 +514,11 @@ export default function ProductDetailPage() {
     msrpNumber != null && wholesalePerPiece > 0 && msrpNumber < wholesalePerPiece;
 
   const startEdit = () => {
-    unitWhenEditStartedRef.current = product.unit;
+    packWhenEditStartedRef.current = {
+      unit: product.unit,
+      unitsPerBox: product.unitsPerBox ?? null,
+      packTenantUnitId: product.packTenantUnitId,
+    };
     setEditDraft({
       name: product.name,
       sku: product.sku ?? "",
@@ -590,11 +595,13 @@ export default function ProductDetailPage() {
       const n = parseFloat(String(v ?? ""));
       return Number.isFinite(n) && n >= 0 ? String(n) : undefined;
     };
+    const unitToSend = packWordToSend(draft.unit, packWhenEditStartedRef.current?.unit);
     updateProduct.mutate(
       {
         id: id,
         name: composedName,
-        unit: packWordToSend(draft.unit, unitWhenEditStartedRef.current),
+        unit: unitToSend,
+        ...expectedPackFor(unitToSend, packWhenEditStartedRef.current),
         sku: draft.sku?.trim() || null,
         barcode: draft.barcode?.trim() || null,
         unitSku: draft.unitSku?.trim() || null,

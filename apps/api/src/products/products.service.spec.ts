@@ -278,6 +278,17 @@ describe("ProductsService", () => {
       prisma.product.findUnique.mockResolvedValue(null);
       await expect(service.findOne("nonexistent")).rejects.toThrow(NotFoundException);
     });
+
+    it("SA-797: returns the tenant unit the pack word is linked to (the form sends it back as expectedTenantUnitId)", async () => {
+      prisma.product.findUnique.mockResolvedValue({ ...MOCK_PRODUCT, unit: " Box " });
+      prisma.tenantUnit.findFirst.mockResolvedValue({ id: "tu-box" });
+      expect(await service.findOne("prod-1")).toMatchObject({ packTenantUnitId: "tu-box" });
+      expect(prisma.tenantUnit.findFirst).toHaveBeenCalledWith(
+        expect.objectContaining({ where: { tenantId: "test-tenant", nameKey: "box" } }),
+      );
+      prisma.tenantUnit.findFirst.mockResolvedValue(null);
+      expect(await service.findOne("prod-1")).toMatchObject({ packTenantUnitId: null });
+    });
   });
 
   // ─── findByBarcode ────────────────────────────────────────────────────────
@@ -869,6 +880,94 @@ describe("ProductsService", () => {
       it("an unrelated pack resize that collides with nothing still goes through", async () => {
         await service.update("prod-1", { unitsPerBox: 12 } as any);
         expect(prisma.product.update).toHaveBeenCalled();
+      });
+
+      describe("SA-797 row 218: a VALUE precondition on the pack the form read (never updatedAt)", () => {
+        const opened = new Date("2026-10-16T09:00:00Z");
+        const received = new Date("2026-10-16T09:05:00Z");
+        // The form opened on Box x 24, linked to tenant unit tu-box.
+        const expected = {
+          expectedUnit: "Box",
+          expectedUnitsPerBox: 24,
+          expectedTenantUnitId: "tu-box",
+        };
+        const underLock = (row: { unit: string; unitsPerBox: number | null }) =>
+          prisma.product.findUnique
+            .mockResolvedValueOnce({ ...withUnit, updatedAt: received })
+            .mockResolvedValueOnce({ ...row, trackedCategoryId: null, updatedAt: received });
+        const staleCode = (e: unknown) =>
+          (e as { getResponse(): { code?: string } }).getResponse().code;
+
+        it("R1: a purchase received after the form opened (updatedAt moved) does NOT block the unit save", async () => {
+          expect(received.getTime()).toBeGreaterThan(opened.getTime());
+          underLock({ unit: "Box", unitsPerBox: 24 });
+          prisma.tenantUnit.findFirst.mockResolvedValue({ id: "tu-box" });
+          lockingTx(jest.fn().mockResolvedValue(0));
+          await service.update("prod-1", { unit: "Crate", ...expected } as any);
+          expect(prisma.product.update).toHaveBeenCalledTimes(1);
+          const data = prisma.product.update.mock.calls[0][0].data;
+          expect(data.unit).toBe("Crate");
+          // the expected values are a check, never columns
+          for (const k of Object.keys(expected)) expect(data).not.toHaveProperty(k);
+        });
+
+        it("R2: a concurrent rename of the pack word between open and save is a 409 PRODUCT_PACK_STALE, nothing written", async () => {
+          underLock({ unit: "Carton", unitsPerBox: 24 }); // Settings > Units renamed Box -> Carton meanwhile
+          prisma.tenantUnit.findFirst.mockResolvedValue({ id: "tu-box" });
+          lockingTx(jest.fn().mockResolvedValue(0));
+          const err = await service
+            .update("prod-1", { unit: "Crate", ...expected } as any)
+            .catch((e: unknown) => e);
+          expect(err).toBeInstanceOf(ConflictException);
+          expect(staleCode(err)).toBe("PRODUCT_PACK_STALE");
+          expect((err as ConflictException).message).toBe(
+            "This product changed since you opened it. Reload to see the latest.",
+          );
+          expect(prisma.product.update).not.toHaveBeenCalled();
+        });
+
+        it("a changed pack size since the form opened is the same 409", async () => {
+          underLock({ unit: "Box", unitsPerBox: 12 });
+          lockingTx(jest.fn().mockResolvedValue(0));
+          const err = await service
+            .update("prod-1", { unit: "Crate", ...expected } as any)
+            .catch((e: unknown) => e);
+          expect(staleCode(err)).toBe("PRODUCT_PACK_STALE");
+          expect(prisma.product.update).not.toHaveBeenCalled();
+        });
+
+        it("the same word now naming ANOTHER tenant unit (renamed away, then re-added) is the same 409", async () => {
+          underLock({ unit: "Box", unitsPerBox: 24 });
+          prisma.tenantUnit.findFirst.mockResolvedValue({ id: "tu-new-box" });
+          lockingTx(jest.fn().mockResolvedValue(0));
+          const err = await service
+            .update("prod-1", { unit: "Crate", ...expected } as any)
+            .catch((e: unknown) => e);
+          expect(staleCode(err)).toBe("PRODUCT_PACK_STALE");
+          expect(prisma.tenantUnit.findFirst).toHaveBeenCalledWith(
+            expect.objectContaining({ where: { tenantId: "test-tenant", nameKey: "box" } }),
+          );
+        });
+
+        it("the compare reads the row taken UNDER the pack lock, not the pre-transaction read", async () => {
+          // pre-tx read already shows the rename, the locked read shows what the form read: it saves.
+          prisma.product.findUnique
+            .mockResolvedValueOnce({ ...withUnit, unit: "Carton", updatedAt: received })
+            .mockResolvedValueOnce({ unit: "Box", unitsPerBox: 24, trackedCategoryId: null });
+          prisma.tenantUnit.findFirst.mockResolvedValue({ id: "tu-box" });
+          const exec = jest.fn().mockResolvedValue(0);
+          lockingTx(exec);
+          await service.update("prod-1", { unit: "Crate", ...expected } as any);
+          expect(lockCalls(exec).calls).toHaveLength(2);
+          expect(prisma.product.update).toHaveBeenCalledTimes(1);
+        });
+
+        it("a client that sends no expected values keeps today's behaviour (no precondition)", async () => {
+          underLock({ unit: "Carton", unitsPerBox: 24 });
+          lockingTx(jest.fn().mockResolvedValue(0));
+          await service.update("prod-1", { unit: "Crate" } as any);
+          expect(prisma.product.update).toHaveBeenCalledTimes(1);
+        });
       });
     });
 

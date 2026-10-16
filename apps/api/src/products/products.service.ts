@@ -51,6 +51,12 @@ import type { ProductIdsForFilterResponse } from "@routeflow/types";
 import { RULE_TARGETS_MAX_PER_REQUEST as PRODUCT_IDS_CAP } from "../selling-restrictions-admin/dto/rule-targets.dto";
 import { assertPackKeepsLevelsValid } from "./unit-pack-rules";
 import { lockProductPack } from "../units/tenant-units-lock";
+import {
+  EXPECTED_PACK_FIELDS,
+  assertPackUnchanged,
+  packTenantUnitIdOf,
+  sendsExpectedPack,
+} from "./pack-precondition";
 import { isMsrpBelowWholesale, wholesalePerPiece } from "../common/msrp";
 import { TOBACCO_CATEGORY_NAME, isTobaccoCategoryName } from "../common/tobacco-category";
 import {
@@ -585,6 +591,10 @@ export class ProductsService {
         origin: "LEGACY" as const,
       };
     });
+    // SA-797: the tenant unit the pack word names when the form opens; a save carrying `unit` sends it back.
+    const packTenantUnitId = readTenantId
+      ? await packTenantUnitIdOf(this.prisma.forTenant(), readTenantId, product.unit)
+      : null;
     return {
       ...product,
       parent: tenantSafeParent(product.parent, readTenantId),
@@ -593,6 +603,7 @@ export class ProductsService {
       stockAlertCount,
       barcodes,
       images,
+      packTenantUnitId,
     };
   }
 
@@ -1170,6 +1181,8 @@ export class ProductsService {
     delete data.deactivateHolderIds;
     // Not a column either: B1213's family-deactivation confirmation, read from `dto` inside the tx.
     delete data.confirmCascade;
+    // Nor the SA-797 pack precondition: compared inside the tx, never written.
+    for (const k of EXPECTED_PACK_FIELDS) delete data[k];
     // Force the (possibly auto-cleared) subcategory into the write when the section
     // was cleared but the client didn't also clear the subcategory.
     if (effectiveCategoryId == null && existing.trackedSubcategoryId != null) {
@@ -1275,13 +1288,15 @@ export class ProductsService {
       // this product. FIRST in the tx, before any other lock: the tenant units lock (a rename holds it
       // exclusive) and THIS product's lock (the one every level write takes). Whether the pack really
       // moves is judged on the row read UNDER those locks, never on the pre-tx `existing`, so the levels
-      // are checked against the pack as it is NOW. That only RE-VALIDATES: a stale form that re-sends the
-      // old pack word when no level conflicts with it still writes that word back over a rename that
-      // committed meanwhile (an optimistic-concurrency guard on the form would be needed to stop that).
+      // are checked against the pack as it is NOW. SA-797 (row 218): a form that sends the pack it READ
+      // (expectedUnit / expectedUnitsPerBox / expectedTenantUnitId) is refused with a 409 when that pack moved
+      // meanwhile (a rename committed while the form was open), compared on this same locked read. A VALUE
+      // compare, never updatedAt: every stock and cost write moves updatedAt.
       if (
         dto.unit !== undefined ||
         dto.unitsPerBox !== undefined ||
-        dto.trackedCategoryId !== undefined
+        dto.trackedCategoryId !== undefined ||
+        sendsExpectedPack(dto)
       ) {
         await lockProductPack(tx, tenantId, id);
         const locked = await tx.product.findUnique({
@@ -1289,6 +1304,7 @@ export class ProductsService {
           select: { unit: true, unitsPerBox: true, trackedCategoryId: true },
         });
         if (!locked) throw new NotFoundException("Product not found");
+        await assertPackUnchanged(tx, tenantId, locked, dto);
         const nextUnit = dto.unit !== undefined ? dto.unit : locked.unit;
         const nextUnitsPerBox =
           dto.unitsPerBox !== undefined ? dto.unitsPerBox : locked.unitsPerBox;
