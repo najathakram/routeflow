@@ -134,6 +134,7 @@ const EXEMPT: Record<string, Reason> = {
   "apps/api/scripts/report-exempt-orders-taxed.mjs": "read-only",
   "apps/api/scripts/report-order-discounts.mjs": "read-only",
   "apps/api/scripts/report-read-only-sellers-with-buyers.mjs": "read-only",
+  "apps/api/scripts/units-legacy-parent-census.mjs": "read-only",
   "apps/api/scripts/report-rf-invoice-calendar-census.mjs": "read-only",
   "apps/api/scripts/report-rf-invoice-zero-rows.mjs": "read-only",
   "apps/api/scripts/report-tenant-timezone-census.mjs": "read-only",
