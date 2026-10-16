@@ -92,3 +92,15 @@ describe("proposeCascade — every tier, each independently", () => {
     expect(cascadePatch(p)).toEqual({ price: 240, priceTier2: 225 });
   });
 });
+
+describe("T8 (observed on master): the yes/no prompt only reaches the OTHER units in the list", () => {
+  it("raising the Case 5% offers the Pallet and never the Box (the pack is not a unit row); planPriceChange covers the Box", () => {
+    const rows = [
+      unit("case", "Case", ["66.00", N, N, N, N]),
+      unit("pallet", "Pallet", ["2600.00", N, N, N, N]),
+    ];
+    const out = proposeCascade(rows, "case", [66, N, N, N, N], [69.3, N, N, N, N]);
+    expect(out.map((p) => p.label)).toEqual(["Pallet"]);
+    expect(out[0].changes).toEqual([{ field: "price", tier: 1, from: 2600, to: 2730 }]);
+  });
+});
