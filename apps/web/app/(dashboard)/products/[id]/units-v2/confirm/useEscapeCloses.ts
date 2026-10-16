@@ -6,13 +6,16 @@ type Entry = { close: () => void; opener: () => HTMLElement | null };
 const stack: Entry[] = [];
 
 function onKeyDown(e: KeyboardEvent) {
-  if (e.key !== "Escape" || e.defaultPrevented) return;
+  if (e.key !== "Escape" || e.defaultPrevented || e.isComposing) return;
   const top = stack[stack.length - 1];
   if (!top) return;
   e.preventDefault();
   top.close();
   top.opener()?.focus();
 }
+
+/** True while any panel using `useEscapeCloses` is open (a Radix Dialog host can skip its own Escape). */
+export const hasOpenEscapePanel = (): boolean => stack.length > 0;
 
 /**
  * Escape closes the topmost opened panel and returns focus to the control that opened it.
@@ -26,11 +29,16 @@ export function useEscapeCloses(
   openerRef: React.RefObject<HTMLElement | null>,
 ): void {
   const closeRef = React.useRef(onClose);
+  const openerHolder = React.useRef(openerRef);
   closeRef.current = onClose;
+  openerHolder.current = openerRef;
 
   React.useEffect(() => {
     if (!open) return;
-    const entry: Entry = { close: () => closeRef.current(), opener: () => openerRef.current };
+    const entry: Entry = {
+      close: () => closeRef.current(),
+      opener: () => openerHolder.current.current,
+    };
     if (stack.length === 0) document.addEventListener("keydown", onKeyDown);
     stack.push(entry);
     return () => {
@@ -38,8 +46,5 @@ export function useEscapeCloses(
       if (at >= 0) stack.splice(at, 1);
       if (stack.length === 0) document.removeEventListener("keydown", onKeyDown);
     };
-  }, [open, openerRef]);
+  }, [open]);
 }
-
-/** RED SKELETON. */
-export const hasOpenEscapePanel = (): boolean => false;

@@ -43,6 +43,7 @@ const saveIt = () => fireEvent.click(screen.getByText("do save"));
 const undoBtn = () => screen.getByRole("button", { name: "Undo" });
 const openPreview = async () => {
   undo.mockResolvedValueOnce(CHANGED);
+  render(<Section />);
   saveIt();
   fireEvent.click(undoBtn());
   await screen.findByText("Wholesale Case");
