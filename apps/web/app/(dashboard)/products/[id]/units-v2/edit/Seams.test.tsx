@@ -581,6 +581,47 @@ describe("K8 seams", () => {
     expect(screen.queryByRole("button", { name: "Change prices" })).toBeNull();
   });
 
+  it('SA-809: the 1-piece level is keyed "base" everywhere (test ids, conflict rows, customer move keys)', async () => {
+    mockCustomers = [{ customerId: "c1", name: "Northside", tier: 2, orderUnit: "pack", set: {} }];
+    const packRow = { ...grid.rows[0], ref: "pack", label: "Case", factor: 24 };
+    const baseRow = {
+      ...grid.rows[1],
+      ref: "base",
+      label: "Piece",
+      factor: 1,
+      kind: "base" as const,
+    };
+    mockGrid = {
+      data: { ...grid, anchor: "pack", rows: [packRow, baseRow] },
+      isLoading: false,
+      isError: false,
+    };
+    const user = userEvent.setup();
+    rtlRender(
+      <QueryClientProvider client={new QueryClient()}>
+        <PriceDraftProvider productId="p1">
+          <Probe />
+          <EditablePricesGrid product={product} />
+        </PriceDraftProvider>
+      </QueryClientProvider>,
+    );
+    expect(screen.getByTestId(T.row("base"))).toBeTruthy();
+    expect(screen.getAllByTestId(T.cell("base", 2)).length).toBeGreaterThan(0);
+    expect(
+      draft.conflictRow({ customerId: "c1", ref: "base", tier: 2, expected: 0.9, current: 1 }),
+    ).toEqual({
+      ref: "c1|base|2",
+      label: "Northside, Wholesale Piece",
+      current: "$1.00",
+      restoreTo: "$0.90",
+    });
+    await user.click(screen.getByTestId(T.btnEdit));
+    await user.type(within(screen.getByTestId(T.row("base"))).getByTestId(T.input("base", 2)), "1");
+    expect(draft.toRequest()?.patches.every((p) => p.ref === "base" || p.ref === "pack")).toBe(
+      true,
+    );
+  });
+
   it("the product page mounts the customer price view exactly once", () => {
     render();
     expect(screen.getAllByTestId("units-v2-sec-customers")).toHaveLength(1);
