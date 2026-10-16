@@ -428,7 +428,7 @@ export default function ProductDetailPage() {
   const isStaff = isStaffRole(user?.role);
   const hasTobaccoAddon = useHasAddon(TOBACCO_ADDON);
   const hasMsrpAddon = useHasAddon(MSRP_ADDON);
-  const v2 = usePricesV2Enabled({ enabled: isStaff });
+  const v2 = usePricesV2Enabled({ enabled: isStaff }) && isStaff;
 
   // ── Lightbox state ────────────────────────────────────────────────────────
   const [lightboxOpen, setLightboxOpen] = React.useState(false);
