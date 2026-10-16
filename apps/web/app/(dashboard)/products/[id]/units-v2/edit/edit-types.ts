@@ -1,4 +1,6 @@
-/** The edit-mode seam between the draft store (useGridEdit) and the prices grid. Types only. */
+import type { ProductPriceGridRowDto } from "@routeflow/types";
+
+/** The edit-mode seam between the draft store (usePriceDraft) and the prices grid. Types only. */
 export interface CellFocus {
   ref: string;
   tier: number;
@@ -14,6 +16,10 @@ export interface GridEditApi {
   setText: (ref: string, tier: number, text: string, original: string) => void;
   /** True when the user has changed this cell in the draft. */
   changed: (ref: string, tier: number) => boolean;
+  /** The pricing package's refusal for this cell's typed text, if any. */
+  problem: (ref: string, tier: number) => string | null;
+  /** The draft as grid rows once something changed (Auto placeholders show draft values); else null. */
+  rows: ProductPriceGridRowDto[] | null;
   /** A pending focus request; the matching input takes it and calls `focused`. */
   focus: CellFocus | null;
   focused: () => void;

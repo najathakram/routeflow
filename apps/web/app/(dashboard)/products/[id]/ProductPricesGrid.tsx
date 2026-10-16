@@ -10,7 +10,6 @@ import { formatMoney } from "@/lib/format";
 import { tierLabel } from "@/lib/tier-label";
 import type { UnitsCardProduct } from "./ProductUnitsCard";
 import { UNITS_V2_TESTIDS as T } from "./units-v2-testids";
-import { EDIT_TESTIDS as E } from "./units-v2/edit/edit-testids";
 import type { GridEditApi } from "./units-v2/edit/edit-types";
 
 /**
@@ -23,7 +22,7 @@ import type { GridEditApi } from "./units-v2/edit/edit-types";
 const TIERS = [1, 2, 3, 4, 5] as const;
 
 // V12: field-border token, scoped to this grid only (light #758380 / dark #6b7f7c).
-const GRID_BORDER = "border-[#758380] dark:border-[#6b7f7c]";
+export const GRID_BORDER = "border-[#758380] dark:border-[#6b7f7c]";
 const GRID_DIVIDER = "border-[#758380]/40 dark:border-[#6b7f7c]/40";
 
 const plural = (label: string, n: number) =>
@@ -80,6 +79,20 @@ interface EditTarget {
   original: string;
 }
 
+/** The price and its Auto/Set word. `dim` (edit mode, under the input) is the word alone, calmer (V16). */
+function CellDisplay({ view, dim }: { view: CellView; dim?: boolean }) {
+  return (
+    <>
+      {!dim && <div className="font-medium tabular-nums text-navy">{view.display}</div>}
+      {view.word && (
+        <div className={`text-[11px] ${dim ? "mt-0.5 text-navy/45" : "text-navy/60"}`}>
+          {view.word}
+        </div>
+      )}
+    </>
+  );
+}
+
 function CellInput({ t, tier, view }: { t: EditTarget; tier: number; view: CellView }) {
   const el = React.useRef<HTMLInputElement>(null);
   const { edit } = t;
@@ -90,20 +103,31 @@ function CellInput({ t, tier, view }: { t: EditTarget; tier: number; view: CellV
       edit.focused();
     }
   });
+  const problem = edit.problem(t.ref, tier);
+  const pid = T.problem(t.layout, t.ref, tier);
   return (
-    <input
-      ref={el}
-      type="text"
-      inputMode="decimal"
-      data-testid={E.input(t.ref, tier)}
-      aria-label={`${t.name} ${t.unit} price`}
-      placeholder={view.display}
-      value={edit.text(t.ref, tier, t.original)}
-      onChange={(e) => edit.setText(t.ref, tier, e.target.value, t.original)}
-      className={`h-9 w-24 rounded-md border bg-white px-2 text-sm tabular-nums text-navy focus:border-brand-500 focus:outline-none focus:ring-2 focus:ring-brand-500/20 ${
-        edit.changed(t.ref, tier) ? "border-brand-500" : "border-[#758380]/50"
-      }`}
-    />
+    <>
+      <input
+        ref={el}
+        type="text"
+        inputMode="decimal"
+        data-testid={T.input(t.ref, tier)}
+        aria-label={`${t.name} ${t.unit} price`}
+        aria-invalid={problem ? true : undefined}
+        aria-describedby={problem ? pid : undefined}
+        placeholder={view.display}
+        value={edit.text(t.ref, tier, t.original)}
+        onChange={(e) => edit.setText(t.ref, tier, e.target.value, t.original)}
+        className={`h-9 w-24 rounded-md border bg-white px-2 text-sm tabular-nums text-navy focus:border-brand-500 focus:outline-none focus:ring-2 focus:ring-brand-500/20 ${
+          problem ? "border-red-600" : edit.changed(t.ref, tier) ? "border-brand-500" : GRID_BORDER
+        }`}
+      />
+      {problem && (
+        <p id={pid} className="mt-1 max-w-[12rem] text-[11px] text-red-600">
+          {problem}
+        </p>
+      )}
+    </>
   );
 }
 
@@ -120,7 +144,10 @@ function PriceCell({
   return (
     <div data-testid={testId} aria-label={view.aria} role="group" className="leading-tight">
       {target && edit?.editing ? (
-        <CellInput t={target} tier={view.tier} view={view} />
+        <>
+          <CellInput t={target} tier={view.tier} view={view} />
+          <CellDisplay view={view} dim />
+        </>
       ) : target && edit ? (
         <button
           type="button"
@@ -128,17 +155,10 @@ function PriceCell({
           onClick={() => edit.begin({ ref: target.ref, tier: view.tier, layout: target.layout })}
           className="-mx-1 cursor-text rounded px-1 text-left hover:bg-surface-muted focus-visible:outline focus-visible:outline-2 focus-visible:outline-brand-500"
         >
-          <div className="font-medium tabular-nums text-navy">{view.display}</div>
-          {view.word && <div className="text-[11px] text-navy/60">{view.word}</div>}
+          <CellDisplay view={view} />
         </button>
       ) : (
-        <>
-          <div className="font-medium tabular-nums text-navy">{view.display}</div>
-          {view.word && <div className="text-[11px] text-navy/60">{view.word}</div>}
-        </>
-      )}
-      {target && edit?.editing && view.word && (
-        <div className="mt-0.5 text-[11px] text-navy/45">{view.word}</div>
+        <CellDisplay view={view} />
       )}
     </div>
   );
@@ -172,7 +192,8 @@ export function ProductPricesGrid({
     return <p className="text-sm text-navy/60">No units yet</p>;
   }
 
-  const rows = [...grid.data.rows].sort((a, b) => b.factor - a.factor);
+  const served = grid.data.rows;
+  const rows = [...(edit?.rows ?? served)].sort((a, b) => b.factor - a.factor);
   const ascending = [...rows].reverse();
   const baseLabel = grid.data.rows.find((x) => x.kind === "base")?.label;
   const names = TIERS.map((t) => (t === 1 ? "Retail" : tierLabel(labels, t)));
@@ -187,7 +208,9 @@ export function ProductPricesGrid({
       name: names[i],
       unit: row.label,
       layout,
-      original: originalText(row.cells.find((c) => c.tier === TIERS[i])),
+      original: originalText(
+        served.find((r) => r.ref === row.ref)?.cells.find((c) => c.tier === TIERS[i]),
+      ),
     };
 
   return (
@@ -195,12 +218,17 @@ export function ProductPricesGrid({
       data-testid={T.grid}
       className={`rounded-lg border bg-white p-4 ${GRID_BORDER} ${edit?.editing ? "pb-6" : ""}`}
     >
-      <h2 id="units-v2-grid-title" className="mb-3 text-sm font-semibold text-navy">
+      <h2
+        id="units-v2-grid-title"
+        data-testid={T.hUnits}
+        className="mb-3 text-sm font-semibold text-navy"
+      >
         Prices by unit
       </h2>
 
       <div
         role="region"
+        data-testid={T.unitsTable}
         aria-labelledby="units-v2-grid-title"
         tabIndex={0}
         className="hidden overflow-x-auto focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-brand-500 md:block"
