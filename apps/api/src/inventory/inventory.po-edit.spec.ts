@@ -715,18 +715,25 @@ describe("InventoryService.updatePurchaseOrder (LANE-U step 6)", () => {
 
     it("every movement a re-apply writes has its own, strictly increasing createdAt — compensations first, then the re-post", async () => {
       prisma.purchaseOrder.findUnique.mockResolvedValue(po());
-      // two live receipts of one PO (6 + 4) → two compensations, then one re-post
+      // two live receipts of one PO (6 + 4) → two compensations, then one re-post PER receipt (SA-808 §5)
       prisma.stockMovement.findMany.mockResolvedValue([
         movement({ id: "mv-b", quantity: D(4), createdAt: new Date("2026-08-02T00:00:00Z") }),
         movement({ id: "mv-a", quantity: D(6), createdAt: new Date("2026-08-01T00:00:00Z") }),
       ]);
       await edit();
       const times = calls().map((m: any) => m.createdAt.getTime());
-      expect(calls().map((m: any) => m.type)).toEqual(["PURCHASE", "PURCHASE", "PURCHASE"]);
-      expect(times).toHaveLength(3);
+      expect(calls().map((m: any) => m.type)).toEqual([
+        "PURCHASE",
+        "PURCHASE",
+        "PURCHASE",
+        "PURCHASE",
+      ]);
+      expect(calls().map((m: any) => m.quantity.toString())).toEqual(["-4", "-6", "6", "4"]);
+      expect(times).toHaveLength(4);
       // strictly increasing: no two rows tie, so the replay's id tie-break can never decide the order
       expect(times[0]).toBeLessThan(times[1]);
       expect(times[1]).toBeLessThan(times[2]);
+      expect(times[2]).toBeLessThan(times[3]);
     });
 
     // B608: a lot's free-text `notes` is operator input (receiveStock writes `reference` AND `notes`

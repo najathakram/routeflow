@@ -19,6 +19,7 @@ import { StockAlertService } from "../stock-alerts/stock-alert.service";
 
 const D = (n: number | string) => new Prisma.Decimal(n);
 const NOW = new Date("2026-10-16T12:00:00.000Z");
+const AUG_5 = new Date("2026-08-05T10:00:00.000Z");
 const SEPT_5 = new Date("2026-09-05T10:00:00.000Z");
 const PO_NUMBER = "PO-2026-0001";
 
@@ -120,6 +121,8 @@ describe("InventoryService.updatePurchaseOrder — reversal is a PURCHASE row (S
     });
     prisma.stockMovement.findMany.mockResolvedValue([mv()]);
     prisma.stockMovement.count.mockResolvedValue(0);
+    let rowSeq = 0;
+    prisma.stockMovement.create.mockImplementation(async () => ({ id: `row-${++rowSeq}` }));
     prisma.stockLot.findMany.mockResolvedValue([
       { id: "lot-1", productId: "prod-1", qty: D(10), remainingQty: D(10), purchaseDate: SEPT_5 },
     ]);
@@ -325,6 +328,138 @@ describe("InventoryService.updatePurchaseOrder — reversal is a PURCHASE row (S
     });
   });
 
+  // ── one re-post per reversed receipt (Opus MUST) ─────────────────────────
+  describe("a PO received in two months re-posts each receipt in its own month", () => {
+    const AUG_END = "2026-08-31T23:59:59.999Z";
+    const receipts = () => [
+      mv({ id: "mv-2", quantity: D(5), createdAt: SEPT_5, effectiveAt: SEPT_5 }),
+      mv({ id: "mv-1", quantity: D(5), createdAt: AUG_5, effectiveAt: AUG_5 }),
+    ];
+    /** The report's ending stock: the counter minus every movement dated after the period. */
+    const endingStock = (rows: any[], counter: number, periodEndExcl: Date) =>
+      counter -
+      rows
+        .filter((r) => new Date(r.effectiveAt) >= periodEndExcl)
+        .reduce((t, r) => t + Number(r.quantity), 0);
+
+    beforeEach(() => {
+      prisma.stockMovement.findMany.mockResolvedValue(receipts());
+      prisma.stockLot.findMany.mockResolvedValue([
+        { id: "lot-a", productId: "prod-1", qty: D(5), remainingQty: D(5), purchaseDate: AUG_5 },
+        { id: "lot-b", productId: "prod-1", qty: D(5), remainingQty: D(5), purchaseDate: SEPT_5 },
+      ]);
+    });
+
+    it("Aug 5 + Sep 5 edited in October: August 5, September 5, October 0 — and August's ending stock is right", async () => {
+      await edit();
+      const rows = written();
+      expect(rows.filter((r) => Number(r.quantity) > 0).map((r) => r.quantity.toString())).toEqual([
+        "5",
+        "5",
+      ]); // one re-post per reversed receipt, each at its own quantity
+      const ledger = [...receipts(), ...rows];
+      expect(purchases(ledger, "2026-08")).toBe(5);
+      expect(purchases(ledger, "2026-09")).toBe(5);
+      expect(purchases(ledger, "2026-10")).toBe(0);
+      expect(endingStock(ledger, 10, new Date("2026-09-01T00:00:00.000Z"))).toBe(5);
+      // lots stay as today: one lot for the line, the full quantity, at the earliest lot's date
+      expect(prisma.stockLot.create).toHaveBeenCalledTimes(1);
+      expect(prisma.stockLot.create.mock.calls[0][0].data.qty.toString()).toBe("10");
+      expect(prisma.stockLot.create.mock.calls[0][0].data.purchaseDate).toEqual(AUG_5);
+      // the counter moved by the whole line, once each way
+      const incs = prisma.product.update.mock.calls
+        .map((c: any) => c[0].data.currentStock)
+        .map((c: any) => (c.increment ? `+${c.increment}` : `-${c.decrement}`));
+      expect(incs).toEqual(["-10", "+5", "+5"]);
+    });
+
+    it("August filed, September open: August is unchanged, September 5, and the closed receipt's pair lands in October netting 0", async () => {
+      markFiled("2026-08-01T00:00:00.000Z", AUG_END);
+      await edit();
+      const rows = written();
+      const ledger = [...receipts(), ...rows];
+      expect(purchases(ledger, "2026-08")).toBe(5); // what was filed
+      expect(purchases(ledger, "2026-09")).toBe(5);
+      expect(purchases(ledger, "2026-10")).toBe(0); // −5 + 5 for the closed receipt
+      const augReversal = rows.find((r) => r.notes?.startsWith("PO edit reversal — reverses mv-1"));
+      expect(augReversal.notes).toBe(
+        "PO edit reversal — reverses mv-1 (filed through August 2026)",
+      );
+      expect(augReversal.effectiveAt.getTime()).toBeGreaterThanOrEqual(NOW.getTime());
+      const sepReversal = rows.find((r) => r.notes?.startsWith("PO edit reversal — reverses mv-2"));
+      expect(sepReversal.notes).toBe("PO edit reversal — reverses mv-2");
+      expect(sepReversal.effectiveAt).toEqual(SEPT_5);
+      expect(endingStock(ledger, 10, new Date("2026-09-01T00:00:00.000Z"))).toBe(5);
+    });
+
+    it("one receipt split across two lines of the same product is re-posted in slices, each at the receipt's date", async () => {
+      prisma.purchaseOrder.findUnique.mockResolvedValue({
+        id: "po-1",
+        poNumber: PO_NUMBER,
+        supplierId: "sup-1",
+        status: "RECEIVED",
+        items: [
+          {
+            id: "poi-1",
+            productId: "prod-1",
+            qtyOrdered: D(7),
+            qtyReceived: D(7),
+            unitCost: D(2),
+            totalCost: D(14),
+          },
+          {
+            id: "poi-2",
+            productId: "prod-1",
+            qtyOrdered: D(3),
+            qtyReceived: D(3),
+            unitCost: D(2),
+            totalCost: D(6),
+          },
+        ],
+      });
+      await service.updatePurchaseOrder(
+        "po-1",
+        {
+          reapplyInventory: true,
+          items: [
+            { id: "poi-1", productId: "prod-1", qtyOrdered: 7, unitCost: 3 },
+            { id: "poi-2", productId: "prod-1", qtyOrdered: 3, unitCost: 4 },
+          ],
+        },
+        "user-1",
+      );
+      const reposts = written().filter((r) => Number(r.quantity) > 0);
+      expect(
+        reposts.map(
+          (r) => `${r.quantity}@${r.unitCost}:${r.effectiveAt.toISOString().slice(0, 7)}`,
+        ),
+      ).toEqual([
+        "5@3:2026-08", // line 1 takes the August receipt …
+        "2@3:2026-09", // … and 2 of September's
+        "3@4:2026-09", // line 2 takes the rest
+      ]);
+      const ledger = [...receipts(), ...written()];
+      expect(purchases(ledger, "2026-08")).toBe(5);
+      expect(purchases(ledger, "2026-09")).toBe(5);
+    });
+  });
+
+  // ── the replay's gap is reported, like the bill path ──────────────────────
+  describe("gapsDetected", () => {
+    it("returns the replay's gap on the PO response so the caller can flag it", async () => {
+      prisma.stockMovement.count.mockResolvedValue(1);
+      jest
+        .spyOn(service, "recomputeProductInTx")
+        .mockResolvedValue({ gapDetected: true, stockDrift: 3 } as any);
+      const res: any = await edit();
+      expect(res.gapsDetected).toEqual([{ productId: "prod-1", name: "Cigars", stockDrift: 3 }]);
+    });
+    it("is an empty list when nothing was replayed or no gap was found", async () => {
+      const res: any = await edit();
+      expect(res.gapsDetected).toEqual([]);
+    });
+  });
+
   // ── replay ───────────────────────────────────────────────────────────────
   describe("replay after a backdated write", () => {
     it("replays the product when rows other than this edit's own sort after the receipt", async () => {
@@ -341,7 +476,9 @@ describe("InventoryService.updatePurchaseOrder — reversal is a PURCHASE row (S
       const where = prisma.stockMovement.count.mock.calls[0][0].where;
       expect(where.productId).toBe("prod-1");
       expect(where.effectiveAt).toEqual({ gt: SEPT_5 });
-      expect(where.createdAt.lt).toBeInstanceOf(Date); // this edit's own rows never count as "newer"
+      // this edit's OWN rows (by id, not by a clock a concurrent commit can slip under) never count
+      expect(where.id).toEqual({ notIn: ["row-1", "row-2"] });
+      expect(where.createdAt).toBeUndefined();
     });
 
     it("does not replay when nothing else sits after the receipt", async () => {

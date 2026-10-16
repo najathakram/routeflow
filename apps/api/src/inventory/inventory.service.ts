@@ -138,6 +138,15 @@ interface StockCountBatchLine {
   unitCostOverride: Prisma.Decimal | null;
 }
 
+/** A receipt a PO re-apply reversed, as the re-post needs it (SA-808 §5: one re-post per receipt). */
+interface ReversedReceipt {
+  qty: Prisma.Decimal;
+  /** The receipt's own instant — where its re-post books unless that period is filed. */
+  effectiveAt: Date;
+  /** True when that period is filed: the re-post books now (its own stamp), like its reversal. */
+  moved: boolean;
+}
+
 @Injectable()
 export class InventoryService {
   private readonly logger = new Logger(InventoryService.name);
@@ -1704,7 +1713,13 @@ export class InventoryService {
      * month its reversal sits in. Only meaningful with `movementAt`; `createdAt` stays `movementAt`.
      */
     effectiveAt?: Date,
-  ) {
+    /**
+     * The StockLot to create: omitted ⇒ one lot of `qty` (a fresh receive); a Decimal ⇒ one lot of
+     * that quantity (a re-apply posts a line as several per-receipt movements but keeps ONE lot per
+     * line, as before); `false` ⇒ none (the line's lot was already made by an earlier slice).
+     */
+    lotQty?: Prisma.Decimal | false,
+  ): Promise<string | null> {
     const qtyReceived = new Prisma.Decimal(qty);
     // The PO line's cost basis is a property of the STORED row, never of the
     // receive payload: `item.unitCost` is written once at PO creation and is
@@ -1724,7 +1739,8 @@ export class InventoryService {
     // exact bug class; PO receive was missed).
     const updatesAverage = prod ? prod.costingMethod !== CostingMethod.STANDARD : true;
 
-    await tx.stockMovement.create({
+    const posted = await tx.stockMovement.create({
+      select: { id: true },
       data: {
         productId: item.productId,
         type: "PURCHASE",
@@ -1740,16 +1756,19 @@ export class InventoryService {
     });
 
     // Create StockLot for FIFO/LIFO tracking
-    await tx.stockLot.create({
-      data: {
-        productId: item.productId,
-        purchaseDate: lotPurchaseDate ?? new Date(),
-        qty: qtyReceived,
-        remainingQty: qtyReceived,
-        unitCost: itemUnitCost,
-        reference: po.poNumber,
-      },
-    });
+    if (lotQty !== false) {
+      const lot = lotQty ?? qtyReceived;
+      await tx.stockLot.create({
+        data: {
+          productId: item.productId,
+          purchaseDate: lotPurchaseDate ?? new Date(),
+          qty: lot,
+          remainingQty: lot,
+          unitCost: itemUnitCost,
+          reference: po.poNumber,
+        },
+      });
+    }
 
     if (prod) {
       await tx.product.update({
@@ -1760,6 +1779,7 @@ export class InventoryService {
         },
       });
     }
+    return posted?.id ?? null;
   }
 
   /**
@@ -1818,8 +1838,11 @@ export class InventoryService {
     nextAt: () => Date,
   ): Promise<{
     lotDates: Map<string, Date>;
-    repostDates: Map<string, DocumentStockDate>;
+    /** Per product, the reversed receipts OLDEST first, each with its quantity and the date its re-post books at. */
+    receipts: Map<string, ReversedReceipt[]>;
     earliestAt: Map<string, Date>;
+    /** Ids of the reversal rows this call wrote (the caller's replay never counts them as "newer"). */
+    ownRowIds: string[];
   }> {
     const productIds = [...new Set(po.items.map((i) => i.productId))];
 
@@ -1871,7 +1894,11 @@ export class InventoryService {
     }
     // Live receipts: positive PURCHASE movements a previous re-apply hasn't already compensated.
     const live = movements.filter(
-      (m) => m.type === MovementType.PURCHASE && poReversalOf(m) == null && !reversedIds.has(m.id),
+      (m) =>
+        m.type === MovementType.PURCHASE &&
+        new Prisma.Decimal(m.quantity).gt(0) &&
+        poReversalOf(m) == null &&
+        !reversedIds.has(m.id),
     );
 
     const posted = new Map<string, Prisma.Decimal>();
@@ -1900,16 +1927,10 @@ export class InventoryService {
     // SA-808 §3 / §5: the reversal is dated at the receipt's own instant so every period nets,
     // UNLESS that instant is in a period filed for this product — then it books at the stamp
     // `nextAt()` hands it (now) and the note names the filing. The re-post uses the SAME rule on
-    // the earliest reversed receipt's date, so reversal and re-post sit in one month.
+    // that SAME receipt's date (one re-post per reversed receipt), so each reversal/re-post pair
+    // sits in one month and a PO received over several months keeps each month's quantity.
     const decideNow = new Date();
     const whenOf = new Map<string, DocumentStockDate>();
-    const repostDates = new Map<string, DocumentStockDate>();
-    const earliestOriginal = new Map<string, Date>();
-    for (const m of live) {
-      const at = new Date(m.effectiveAt);
-      const prior = earliestOriginal.get(m.productId);
-      if (!prior || at < prior) earliestOriginal.set(m.productId, at);
-    }
     // one filed-period read per (product, distinct date)
     const decided = new Map<string, DocumentStockDate>();
     const decide = async (productId: string, documentDate: Date) => {
@@ -1929,8 +1950,6 @@ export class InventoryService {
       return got;
     };
     for (const m of live) whenOf.set(m.id, await decide(m.productId, new Date(m.effectiveAt)));
-    for (const [productId, at] of earliestOriginal)
-      repostDates.set(productId, await decide(productId, at));
     const earliestAt = new Map<string, Date>();
     const noteEarliest = (productId: string, at: Date) => {
       const prior = earliestAt.get(productId);
@@ -1944,7 +1963,21 @@ export class InventoryService {
       list.push(m);
       byProduct.set(m.productId, list);
     }
+    const receipts = new Map<string, ReversedReceipt[]>();
+    const ownRowIds: string[] = [];
     for (const [productId, list] of byProduct) {
+      // `list` is newest first (the average is reversed newest-first); the re-post walks oldest first.
+      receipts.set(
+        productId,
+        [...list].reverse().map((m) => {
+          const when = whenOf.get(m.id) as DocumentStockDate;
+          return {
+            qty: new Prisma.Decimal(m.quantity),
+            effectiveAt: when.effectiveAt,
+            moved: when.movedFromPeriod != null,
+          };
+        }),
+      );
       const product = await tx.product.findUnique({
         where: { id: productId },
         select: { currentStock: true, averageCost: true, costingMethod: true },
@@ -1970,7 +2003,7 @@ export class InventoryService {
         // Filed period ⇒ books now (this row's own stamp); else the receipt's own instant.
         const effectiveAt = when.movedFromPeriod ? at : when.effectiveAt;
         noteEarliest(productId, effectiveAt);
-        await tx.stockMovement.create({
+        const reversal = await tx.stockMovement.create({
           data: {
             productId,
             // SA-808 §5: a negative PURCHASE, not ADJUSTMENT — the tobacco filing sums signed
@@ -1989,7 +2022,9 @@ export class InventoryService {
             createdAt: at,
             effectiveAt,
           },
+          select: { id: true },
         });
+        if (reversal?.id) ownRowIds.push(reversal.id);
       }
       // Write the average only when the reversal actually moved it — writing the
       // unchanged value back would clobber a concurrent cost update for nothing.
@@ -2014,7 +2049,7 @@ export class InventoryService {
       const seen = lotDates.get(l.productId);
       if (!seen || l.purchaseDate < seen) lotDates.set(l.productId, l.purchaseDate);
     }
-    return { lotDates, repostDates, earliestAt };
+    return { lotDates, receipts, earliestAt, ownRowIds };
   }
 
   /**
@@ -2120,9 +2155,10 @@ export class InventoryService {
       if (dto.notes !== undefined) header.notes = dto.notes;
 
       if (!editsLines) {
-        if (Object.keys(header).length === 0) return this.loadPoForResponse(tx, id);
+        if (Object.keys(header).length === 0)
+          return { po: await this.loadPoForResponse(tx, id), gapsDetected: [] };
         await tx.purchaseOrder.update({ where: { id }, data: header });
-        return this.loadPoForResponse(tx, id);
+        return { po: await this.loadPoForResponse(tx, id), gapsDetected: [] };
       }
 
       // ── Resolve the edited line set ──
@@ -2202,8 +2238,11 @@ export class InventoryService {
 
       // ── Reverse (re-apply only) ──
       let lotDates = new Map<string, Date>();
-      let repostDates = new Map<string, DocumentStockDate>();
+      let reversedReceipts = new Map<string, ReversedReceipt[]>();
       let earliestAt = new Map<string, Date>();
+      // Ids of every movement THIS edit wrote: the replay below never counts them as "newer".
+      const ownRowIds: string[] = [];
+      const gapsDetected: { productId: string; name: string; stockDrift: number }[] = [];
       // Strictly increasing movement timestamps: compensation(s) first, then the re-post.
       const clockBase = Date.now();
       let tick = 0;
@@ -2213,12 +2252,10 @@ export class InventoryService {
           ...po.items.map((i) => i.productId),
           ...items.map((l) => l.productId),
         ]);
-        ({ lotDates, repostDates, earliestAt } = await this.reversePoReceipts(
-          tx,
-          po,
-          userId,
-          nextAt,
-        ));
+        const reversed = await this.reversePoReceipts(tx, po, userId, nextAt);
+        ({ lotDates, earliestAt } = reversed);
+        reversedReceipts = reversed.receipts;
+        ownRowIds.push(...reversed.ownRowIds);
       }
       const tenantId = this.prisma.getTenantId();
 
@@ -2291,40 +2328,61 @@ export class InventoryService {
       // ── Re-post (re-apply only) ──
       if (reapply) {
         const supplierId = supplierChanged ? dto.supplierId! : po.supplierId;
+        // SA-808 §3(A) per receipt: each line is re-posted as one PURCHASE per reversed receipt (oldest
+        // first, a receipt shared by two lines of one product is split), each dated by ITS receipt —
+        // the receipt's own instant, or now when that period is filed — so a PO received over several
+        // months keeps every month's quantity. The line keeps ONE lot, as before.
+        const queues = new Map(
+          [...reversedReceipts].map(([productId, list]) => [
+            productId,
+            list.map((r) => ({ ...r, left: r.qty })),
+          ]),
+        );
         for (const l of lineData) {
           if (l.qtyReceived.lte(0)) continue;
-          const prod = await tx.product.findUnique({ where: { id: l.line.productId } });
-          // SA-808 §5: the re-post books in the month its reversal sits in (the receipt's own date;
-          // now when that period is filed). The stamp stays strictly after the reversal's.
-          const at = nextAt();
-          const repostDate = repostDates.get(l.line.productId);
-          const effectiveAt =
-            repostDate && !repostDate.movedFromPeriod ? repostDate.effectiveAt : at;
-          const prior = earliestAt.get(l.line.productId);
-          if (!prior || effectiveAt < prior) earliestAt.set(l.line.productId, effectiveAt);
-          await this.postPoReceipt(
-            tx,
-            { poNumber: po.poNumber, supplierId },
-            { productId: l.line.productId, unitCost: l.line.unitCost },
-            prod,
-            l.qtyReceived,
-            userId,
-            lotDates.get(l.line.productId),
-            at,
-            effectiveAt,
-          );
-          restockedProductIds.push(l.line.productId);
+          const productId = l.line.productId;
+          const queue = queues.get(productId) ?? [];
+          let need = l.qtyReceived;
+          let firstSlice = true;
+          while (need.gt(0)) {
+            const head = queue.find((r) => r.left.gt(0));
+            const take = head ? Prisma.Decimal.min(need, head.left) : need;
+            if (head) head.left = head.left.sub(take);
+            need = need.sub(take);
+            const at = nextAt(); // strictly after every reversal stamp
+            // No receipt left to date it by (the movements-match guard makes this unreachable): now.
+            const effectiveAt = head && !head.moved ? head.effectiveAt : at;
+            const prior = earliestAt.get(productId);
+            if (!prior || effectiveAt < prior) earliestAt.set(productId, effectiveAt);
+            const prod = await tx.product.findUnique({ where: { id: productId } });
+            const rowId = await this.postPoReceipt(
+              tx,
+              { poNumber: po.poNumber, supplierId },
+              { productId, unitCost: l.line.unitCost },
+              prod,
+              take,
+              userId,
+              lotDates.get(productId),
+              at,
+              effectiveAt,
+              firstSlice ? l.qtyReceived : false,
+            );
+            if (rowId) ownRowIds.push(rowId);
+            firstSlice = false;
+          }
+          restockedProductIds.push(productId);
         }
 
-        // Like a bill receive / revert: rows OTHER than this edit's own (they carry stamps from
-        // `clockBase` on) that sort after a backdated write can move the average they imply — replay
-        // the product (a dated COST_BASIS correction, SA-136 §4). A gap never aborts the edit.
+        // Like a bill receive / revert: rows OTHER than this edit's own (excluded by id) that sort
+        // after a backdated write can move the average they imply — replay the product (a dated
+        // COST_BASIS correction, SA-136 §4). A gap never aborts the edit; it is reported (as the
+        // bill path's `gapsDetected`) so the caller can flag the product.
         for (const [productId, from] of earliestAt) {
           const newer = await tx.stockMovement.count({
             where: {
               productId,
               effectiveAt: { gt: from },
-              createdAt: { lt: new Date(clockBase) },
+              ...(ownRowIds.length > 0 ? { id: { notIn: ownRowIds } } : {}),
             },
           });
           if (newer === 0) continue;
@@ -2334,19 +2392,22 @@ export class InventoryService {
             performedById: userId,
           });
           if (replay?.gapDetected) {
-            this.logger.warn(
-              `PO ${po.poNumber}: product ${productId} not replayed after the edit — ledger drift ${replay.stockDrift}`,
-            );
+            gapsDetected.push({
+              productId,
+              name: products.find((p) => p.id === productId)?.name ?? productId,
+              stockDrift: replay.stockDrift,
+            });
           }
         }
       }
 
-      return this.loadPoForResponse(tx, id);
+      return { po: await this.loadPoForResponse(tx, id), gapsDetected };
     };
     const result = await retryStockTx("inventory.updatePurchaseOrder", () => this.stockTx(runBody));
 
     this.fireStockAlerts([...new Set(restockedProductIds)]);
-    return result;
+    // gapsDetected is additive (as in a bill receive): products whose cost history could not be replayed.
+    return { ...result.po, gapsDetected: result.gapsDetected };
   }
 
   private loadPoForResponse(tx: Prisma.TransactionClient, id: string) {

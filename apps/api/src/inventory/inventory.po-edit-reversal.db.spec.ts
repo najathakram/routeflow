@@ -279,4 +279,82 @@ describeDb("PO edit reversal is a PURCHASE row (SA-808 §5) — real Postgres", 
     expect(rows.reduce((t, r) => t + r.q, 0)).toBe(10); // the ledger nets to exactly one receipt
     expect(await stock(w)).toBe(10);
   });
+
+  // ── one re-post per reversed receipt (SA-808 §3(A) per receipt) ─────────────────────────
+  const EARLY_AT = new Date(Date.UTC(REC_Y, REC_M - 2, 5, 10, 0, 0)); // the month BEFORE the receipt month
+  const EARLY_START = new Date(Date.UTC(REC_Y, REC_M - 2, 1));
+  const inEarlyMonth = (d: Date) => d >= EARLY_START && d < MONTH_START;
+
+  /** createPO of 10 -> two partial receipts of 5 (early month, last month), both backdated. */
+  async function twoMonthPo(w: World) {
+    const created = await inTenant(w, () =>
+      service.createPurchaseOrder(
+        { supplierId: w.supplierId, items: [{ productId: w.productId, qty: 10, unitCost: 2 }] },
+        w.userId,
+      ),
+    );
+    await inTenant(w, () => service.sendPurchaseOrder(created.id));
+    for (const at of [EARLY_AT, RECEIPT_AT]) {
+      // eslint-disable-next-line no-await-in-loop
+      await inTenant(w, () =>
+        service.receivePurchaseOrder(
+          created.id,
+          { items: [{ itemId: created.items[0].id, receivedQty: 5 }] },
+          w.userId,
+        ),
+      );
+      // eslint-disable-next-line no-await-in-loop
+      const newest = await prisma.stockMovement.findFirstOrThrow({
+        where: { tenantId: w.tenantId, reference: created.poNumber, effectiveAt: { gt: at } },
+        orderBy: { createdAt: "desc" },
+      });
+      // eslint-disable-next-line no-await-in-loop
+      await prisma.stockMovement.update({ where: { id: newest.id }, data: { effectiveAt: at } });
+    }
+    return inTenant(w, () => service.getPurchaseOrder(created.id));
+  }
+  /** The report's ending stock for a period: the counter minus every movement dated after it. */
+  const endingStock = async (w: World, periodEndExcl: Date) => {
+    const after = await prisma.stockMovement.findMany({
+      where: { tenantId: w.tenantId, productId: w.productId, effectiveAt: { gte: periodEndExcl } },
+    });
+    return (await stock(w)) - after.reduce((t, m) => t + Number(m.quantity), 0);
+  };
+
+  it("two-month PO edited today: early month 5, last month 5, open months 0, and the early month's ending stock is right", async () => {
+    const w = await seedWorld("m1");
+    const po = await twoMonthPo(w);
+    await edit(w, po, 3);
+
+    const rows = await ledger(w, po.poNumber);
+    expect(rows.filter((r) => r.type === "ADJUSTMENT")).toHaveLength(0);
+    expect(purchasesIn(rows, inEarlyMonth)).toBe(5);
+    expect(purchasesIn(rows, inReceiptMonth)).toBe(5);
+    expect(purchasesIn(rows, inOpenMonths)).toBe(0);
+    expect(rows.filter((r) => r.q > 0 && r.notes == null)).toHaveLength(2); // one re-post per receipt
+    expect(await endingStock(w, MONTH_START)).toBe(5);
+    expect(await stock(w)).toBe(10);
+    const lots = await prisma.stockLot.findMany({
+      where: { tenantId: w.tenantId, reference: po.poNumber },
+    });
+    expect(lots).toHaveLength(1);
+    expect(lots[0].qty.toString()).toBe("10");
+  });
+
+  it("two-month PO, early month filed, last month open: early month unchanged, last month 5, the closed receipt's pair nets 0 now", async () => {
+    const w = await seedWorld("m2");
+    const po = await twoMonthPo(w);
+    await fileMonth(w, EARLY_START, MONTH_START);
+    await edit(w, po, 3);
+
+    const rows = await ledger(w, po.poNumber);
+    expect(purchasesIn(rows, inEarlyMonth)).toBe(5); // what was filed
+    expect(purchasesIn(rows, inReceiptMonth)).toBe(5);
+    expect(purchasesIn(rows, inOpenMonths)).toBe(0); // −5 + 5 for the closed receipt
+    const closedReversal = rows.find(
+      (r) => r.q === -5 && (r.notes ?? "").includes("(filed through "),
+    )!;
+    expect(inOpenMonths(closedReversal.effectiveAt)).toBe(true);
+    expect(await endingStock(w, MONTH_START)).toBe(5);
+  });
 });
