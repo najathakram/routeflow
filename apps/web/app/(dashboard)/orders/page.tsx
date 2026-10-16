@@ -52,9 +52,12 @@ import { ReadOnlyHint, WriteButton } from "@/lib/read-only-gate";
 
 const SAVED_VIEWS = [
   { id: "all", label: "All", filters: {} as Record<string, string | boolean> },
+  // O4 (P04): the status dropdown is gone, so every status it offered is a pill here.
+  { id: "draft", label: "Draft", filters: { status: "DRAFT" } },
   { id: "pending", label: "Pending", filters: { status: "PENDING" } },
   { id: "confirmed", label: "Confirmed", filters: { status: "CONFIRMED" } },
   { id: "delivery", label: "Out for Delivery", filters: { status: "OUT_FOR_DELIVERY" } },
+  { id: "partial", label: "Partly delivered", filters: { status: "PARTIALLY_DELIVERED" } },
   { id: "urgent", label: "Urgent", filters: { urgent: true } },
   { id: "delivered", label: "Delivered", filters: { status: "DELIVERED" } },
   { id: "cancelled", label: "Cancelled", filters: { status: "CANCELLED" } },
@@ -390,10 +393,6 @@ export default function OrdersPage() {
   const savedViews = SAVED_VIEWS.map((v) => ({
     ...v,
     label: statusLabel(String(v.filters.status ?? ""), v.label),
-  }));
-  const statusOptions = STATUS_OPTIONS.map((o) => ({
-    ...o,
-    label: statusLabel(o.value, o.label),
   }));
   // The bulk cancel shows its own single summary toast — no per-order global error toasts.
   const updateStatus = useUpdateOrderStatus({ localErrorToast: true });
@@ -940,13 +939,6 @@ export default function OrdersPage() {
           >
             <SortIcon col={sortCol} />
           </button>
-        </div>
-        <div className="w-48">
-          <Select
-            options={statusOptions}
-            value={statusFilter}
-            onChange={(e) => setFilter("status", e.target.value)}
-          />
         </div>
         <div className="w-44">
           <Select
