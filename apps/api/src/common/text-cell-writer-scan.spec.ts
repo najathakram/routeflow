@@ -88,8 +88,6 @@ const EXEMPT: Record<string, string> = {
     "Test-only seeding fixture of the B284 order-stock DB specs (inventory/testing, imported only by *.db.spec.ts): it creates throwaway Product, Customer and User rows in `qa-*` tenants, never a governed variant or recipe row and never a live tenant.",
   "inventory/testing/count-db-harness.ts":
     "Test-only seeding helper of the SA-767 count DB specs (inventory/testing, collected only by *.db.spec.ts): it createMany's throwaway Product rows (name, pricePerUnit, a variable data array) into `qa-sa767-*` tenants, never a governed variant or recipe row and never a live tenant.",
-  "inventory/testing/order-stock-world.ts":
-    "Test-only seeding helper of the order-stock DB specs (collected only by *.db.spec.ts): it creates a throwaway tenant, customer and Product rows with fixed `o5`-style labels in a unique-slug test tenant, never a governed variant or recipe row and never a live tenant.",
   // (B964-1 closed the tenant-mirror's admin-username path: it falls back to the guarded tenant name, so it calls the guard.)
   // (B983: tracked-categories.service now calls the guard itself, so its old exemption is gone.)
 };
