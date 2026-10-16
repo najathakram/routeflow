@@ -5,6 +5,7 @@ import {
   describeBaseOption,
   resolveLadderLevel,
   resolveUnitPrice,
+  unitNameKey,
   type LadderProduct,
   type LadderUnit,
 } from "./unit-levels";
@@ -42,7 +43,8 @@ export type DerivedBaseMarker = {
   derivedBase?: string;
 };
 
-const norm = (s: string) => s.trim().toLowerCase();
+// The shared label key (NFC, trim, case-fold): the same one the server ladder compares by (SA M2).
+const norm = unitNameKey;
 
 export function buildLadderOptions(
   product: LadderProduct,
