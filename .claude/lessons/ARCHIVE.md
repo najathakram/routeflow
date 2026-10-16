@@ -3975,3 +3975,27 @@ citations, closed-out with its own post-init assertion guard).
 - **Lesson:** **Before a client chains status PATCHes, read the server transition table for each edge. A step the server refuses on repeat is not idempotent: on a 400/409, re-read the resource and continue only if it already sits at the target (or beyond), and skip any patch the re-read makes a no-op.**
 - **Guard:** web `usePosFinish` re-reads through `promotedAlready` and its spec covers refused PENDING and already-CONFIRMED. Cf. [[L-267]].
   (Archived 2026-10-12 whole and verbatim to make room at cap: L-299: guarded by web `usePosFinish`'s `promotedAlready` re-read and its spec; no citation outside the register.)
+
+## Archived 2026-10-16 — least-cited, spec-guarded; headroom for L-307..L-309 (bookkeeping for #3471 #3474 and the worktree lesson)
+
+### L-303 · 2026-10-12 · tooling · a rule the API, web and mobile must all run belongs in @routeflow/pricing, never @routeflow/types
+
+- **Symptom:** a shared display rule (the paid-at-sale predicate) was first written into `packages/types`; the api-runtime-imports guard went red because the compiled API cannot value-import that package.
+- **Root cause:** `@routeflow/types` is source-only (TS the API never builds), and web and mobile import it freely, so a rule written there looks shared until the API's runtime import audit runs. The same trap archived as L-261 earlier.
+- **Lesson:** **Before placing shared runtime logic, ask who executes it. If the API does, it goes in `@routeflow/pricing` (the one compiled workspace package the API may value-import, with scanning); types keeps only constants and types.** Web/mobile re-export a thin wrapper to keep their import paths.
+- **Guard:** `api-runtime-imports` spec ("never value-imports @routeflow/types from a compiled source file") and the exact-package list spec; the pricing package's own spec pins the rule (row 401).
+
+### L-296 · 2026-10-11 · testing · a pin that hard-codes a ruling's literal text or list goes stale, and fails only on the merge with a moved master
+
+- **Symptom:** a spec asserting "only these 2 routes", "the report re-send is blocked" or "exactly these N files write tenant status" was green on its own branch and red after the merge with a master that held a later ruling or a new legitimate writer.
+- **Root cause:** the pin copied the wording of the ruling it was written under instead of encoding the invariant, so every later ruling or writer made it lie. A branch's own green cannot see master's changes.
+- **Lesson:** **Pin the invariant structurally: one named constant, assertions derived from it, and an allow-list that carries a reason per entry plus a stale-entry guard (an entry that no longer matches fails). When a ruling changes, change the constant and its pin in the same diff, and replay the merged tip before landing. Cf. [[L-264]].**
+- **Guard:** `SNAPSHOT_READERS` in `coupon-state.spec.ts` and `PACKAGE_ALLOWLIST` in `api-error-codes-parity.spec.ts` (reason per entry, stale-entry check, total pinned); the replay of the merged tip.
+- **Recurrence (2026-10-12, R5.2 train):** the read-only copy rewrite (SA-776) on one train member staled the returns, counter-sale, park and save-error specs and a 390 px counter selector that sibling members had written against the old per-name line; each member was green on its own branch and the collisions only appeared when the MERGED tree's web and api suites ran (a train-only collision). Run the merged tree's full unit suites before the train PR, never each member's own green (cf. [[L-271]], [[L-297]]).
+
+### L-302 · 2026-10-12 · domain · a negative Prisma filter on a nullable column never matches NULL: write the NULL arm and prove it with a NULL row
+
+- **Symptom:** "everything except category X" (the tracked-category bulk assign, and the product list's `product-list-where.ts` where-builder) silently dropped every product with no category; a second instance of the class after the first fix.
+- **Root cause:** `{ col: { not: X } }`, `{ notIn: [...] }` and `NOT: {...}` compile to `col <> X` / `NOT IN`, which SQL's three-valued logic evaluates to UNKNOWN for a NULL column, so NULL rows are excluded. The author's mental model of "all but X" includes the rows that have no value at all.
+- **Lesson:** **A negative filter (`not`, `notIn`, `NOT`) on a nullable column never matches NULL. Spell the NULL arm (`OR: [{ col: null }, { col: { not: X } }]`) and prove the filter with a fixture row whose column is NULL, in a real-database spec when the where-builder is shared.** Cf. [[L-238]].
+- **Guard:** each fix carries a spec with a NULL-column row (the product list where-builder, the bulk assign). No repo-wide scan yet: propose an AST scan that flags `not` / `notIn` / `NOT` on a nullable Prisma column without an adjacent `null` arm.
