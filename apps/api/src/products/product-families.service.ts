@@ -12,6 +12,7 @@ import { roundMoney, roundUnitCost } from "@routeflow/pricing";
 import { API_ERROR_CODES } from "../common/api-error-codes";
 import { assertSafeProductNames } from "../common/text-cell-guards";
 import { AuditService } from "../audit/audit.service";
+import { EntitlementsService } from "../billing/entitlements.service";
 import { FeatureConfigService } from "../billing/feature-config.service";
 import { RouteFlowGateway } from "../gateways/routeflow.gateway";
 import { PrismaService } from "../prisma/prisma.service";
@@ -42,6 +43,7 @@ import {
   readFamilyPriceMode,
   type FamilyPriceColumn,
 } from "./family-price";
+import { UnitsPricesV2FlagCache, variantTierValue } from "./new-product-tiers";
 import { lockProductName } from "./product-name-rules";
 import { syncCategoryLabel } from "../product-categories/label-writer";
 import type {
@@ -157,7 +159,12 @@ export class ProductFamiliesService {
     private readonly audit: AuditService,
     // #2717 M2 price authority: optional like ProductsService (a missing provider reads as mode "off").
     @Optional() private readonly featureConfig?: FeatureConfigService,
+    // S4: flag.units_prices_v2 (a missing provider reads as OFF = master's behaviour).
+    @Optional() private readonly entitlements?: EntitlementsService,
   ) {}
+
+  /** S4: flag.units_prices_v2, cached 30 s per tenant, read before a transaction opens. */
+  private readonly unitsPricesV2 = new UnitsPricesV2FlagCache();
 
   private tenant(): string {
     const t = this.prisma.getTenantId();
@@ -235,6 +242,8 @@ export class ProductFamiliesService {
       const c = costOf(v.standardCost);
       if (c !== undefined) cost4(c);
     }
+    // S4: one cached flag read, before the transaction opens.
+    const unitsV2 = await this.unitsPricesV2.isOn(this.entitlements, this.prisma.getTenantId());
     const run = () =>
       this.prisma.tenantTransaction(async (tx: CatalogTx) => {
         const codes = this.codeInputs(variantRows);
@@ -302,6 +311,7 @@ export class ProductFamiliesService {
               v,
               dto.copyFamilyPrice ? familyPrice : undefined,
               familyCost,
+              unitsV2,
             ),
           });
           variants.push({ id: created.id, name: created.name });
@@ -335,11 +345,15 @@ export class ProductFamiliesService {
     v: FamilyVariantDto,
     prices?: string | Record<FamilyPriceColumn, Prisma.Decimal>,
     familyCost?: string | null,
+    unitsV2 = false,
   ): Prisma.ProductUncheckedCreateInput {
     const cost = costOf(v.standardCost) ?? familyCost;
     const own = typeof prices === "string" ? prices : money(v.pricePerUnit);
+    const record = prices && typeof prices !== "string" ? prices : undefined;
     const col = (c: FamilyPriceColumn): string =>
-      prices && typeof prices !== "string" ? prices[c].toString() : own;
+      c === "pricePerUnit"
+        ? (record?.[c].toString() ?? own)
+        : variantTierValue(unitsV2, record?.[c].toString(), own);
     return {
       name: v.name.trim(),
       variantName: v.name.trim(),
@@ -454,6 +468,8 @@ export class ProductFamiliesService {
         })),
     ];
 
+    // S4: one cached flag read, before the transaction opens.
+    const unitsV2 = await this.unitsPricesV2.isOn(this.entitlements, tenantId);
     const run = () =>
       this.prisma.tenantTransaction(async (tx: CatalogTx) => {
         // House order (Opus #2881 B4): the family row FIRST (an add must not race propagateFamilyPrice), then every code
@@ -614,6 +630,7 @@ export class ProductFamiliesService {
               v,
               familyPrices,
               family.standardCost == null ? null : family.standardCost.toString(),
+              unitsV2,
             ),
           });
           added.push(created.id);
