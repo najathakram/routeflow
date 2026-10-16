@@ -6,6 +6,12 @@ import { CatchupCheckoutService } from "./catchup-checkout.service";
 import { claimRefusal } from "./catchup-claim";
 import { CatchupClaimService } from "./catchup-claim.service";
 import { chargeNowCents, describeStubPeriod } from "./catchup-plan";
+import {
+  checkSessionTerms,
+  expectedSessionTerms,
+  sameInstant,
+  type ExpectedSessionTerms,
+} from "./catchup-session-terms";
 import { StripeService } from "./stripe.service";
 
 /**
@@ -49,14 +55,6 @@ export interface PaymentDueShownTerms {
   amountCents: number;
   periodStart: string | null;
   cardBy: string | null;
-}
-
-/** Same instant, whatever the ISO spelling; two nulls match, a null never matches an instant, junk never matches. */
-function sameInstant(a: string | null, b: string | null): boolean {
-  if (a === null || b === null) return a === b;
-  const x = Date.parse(a);
-  const y = Date.parse(b);
-  return Number.isFinite(x) && Number.isFinite(y) && x === y;
 }
 
 /** Do the terms the banner showed equal what the planner quotes right now? */
@@ -139,8 +137,8 @@ export class PaymentDueService {
   private async read(
     tenantId: string,
     now: Date,
-  ): Promise<{ view: PaymentDueView; stubCents: number }> {
-    const none = { view: NOT_DUE, stubCents: 0 };
+  ): Promise<{ view: PaymentDueView; stubCents: number; terms: ExpectedSessionTerms | null }> {
+    const none = { view: NOT_DUE, stubCents: 0, terms: null };
     const report = await this.catchup.plan(tenantId, now);
     if (report.tenantClass !== "PRODUCTION") return none;
     if (report.ineligible.some(HIDES_THE_BILL)) return none;
@@ -158,6 +156,7 @@ export class PaymentDueService {
           cardBy: plan.termsHoldUntil.toISOString(),
         },
         stubCents: plan.stub.totalCents,
+        terms: expectedSessionTerms(plan),
       };
     }
     const zone = await resolveZone(this.prisma, { tenantId });
@@ -173,6 +172,7 @@ export class PaymentDueService {
         cardBy: null,
       },
       stubCents: plan.stub.totalCents,
+      terms: expectedSessionTerms(plan),
     };
   }
 
@@ -185,17 +185,20 @@ export class PaymentDueService {
    * before anything is reused, created, released or claimed; a mismatch is 409 PAYMENT_TERMS_CHANGED and nothing else
    * happens (the client re-reads and shows the new banner). Absent = no precondition (a page cached before this
    * deploy; optional for one release).
+   *
+   * Row 542d: the quote check above compares the BANNER with the fresh plan; the stored session is a third party. A
+   * live session is reused only when its own terms equal that same fresh plan (see `openSessionUrl`).
    */
   async pay(
     tenantId: string,
     now: Date = new Date(),
     shown?: PaymentDueShownTerms,
   ): Promise<{ checkoutUrl: string }> {
-    const { view, stubCents } = await this.read(tenantId, now);
+    const { view, stubCents, terms } = await this.read(tenantId, now);
     // SA-801 / SA-806: a card-needed tenant (nothing charged now) opens the very same catch-up session. The expected
     // stub is the planner's own `stub.totalCents` from the read above: 0 for the `trial` shape, the forgiven amount
     // for a forgiven line (open() compares it with its own fresh plan and refuses a mismatch).
-    if (!view.due && !view.cardNeeded) {
+    if ((!view.due && !view.cardNeeded) || !terms) {
       throw new ConflictException({
         code: API_ERROR_CODES.PAYMENT_NOT_DUE,
         message: "Nothing is due right now.",
@@ -207,7 +210,7 @@ export class PaymentDueService {
         message: "The amount changed since this page loaded.",
       });
     }
-    const open = await this.openSessionUrl(tenantId, now);
+    const open = await this.openSessionUrl(tenantId, now, terms);
     if (open) return { checkoutUrl: open };
 
     try {
@@ -225,7 +228,7 @@ export class PaymentDueService {
       if (lostTheClaimRace(err)) {
         // the racer's own coded refusals/503 from this read propagate as they are (all tenant-safe wording);
         // a claim we cannot see yet is "try again", never open()'s operator-facing "not eligible" text
-        const raced = await this.openSessionUrl(tenantId, now);
+        const raced = await this.openSessionUrl(tenantId, now, terms);
         if (raced) return { checkoutUrl: raced };
         throw this.stateUnknown(tenantId, "read");
       }
@@ -238,12 +241,18 @@ export class PaymentDueService {
    * confirmed EXPIRED at Stripe and the claim has just been released (exactly as the `checkout.session.expired`
    * webhook would). Any other held state is the claim's own coded 409: a payment already settling must not be paid
    * twice. Stripe is the authority, and nothing is released or created on a guess:
-   *  - open and still live, with a url: that url;
-   *  - open but past its time (or with no url): Stripe is told to expire it, and only its reply "expired" releases;
+   *  - open and still live, with a url, and built with the fresh plan's terms: that url;
+   *  - open and live but built with OTHER terms (row 542d: a stale card add / a stale "Pay $X"), or open but past its
+   *    time (or with no url): Stripe is told to expire it, and only its reply "expired" releases;
+   *  - open and live but its terms cannot be read (metadata missing or malformed): a retryable 503, never a guess;
    *  - complete (on the read or on the expire reply): the claim's AWAITING_FIRST_PAYMENT 409, nothing released;
    *  - unreadable, an unknown status, or Stripe unreachable on either call: a retryable 503, nothing touched.
    */
-  private async openSessionUrl(tenantId: string, now: Date): Promise<string | null> {
+  private async openSessionUrl(
+    tenantId: string,
+    now: Date,
+    terms: ExpectedSessionTerms,
+  ): Promise<string | null> {
     const row = (await this.prisma.tenantSubscription.findUnique({
       where: { tenantId },
       select: { catchupState: true, catchupSessionId: true },
@@ -253,7 +262,12 @@ export class PaymentDueService {
     if (state !== "SESSION_OPEN" || !row?.catchupSessionId) throw claimRefusal(state)!;
     const sessionId = row.catchupSessionId;
 
-    let session: { status?: string; url?: string | null; expires_at?: number | null } | null;
+    let session: {
+      status?: string;
+      url?: string | null;
+      expires_at?: number | null;
+      metadata?: unknown;
+    } | null;
     try {
       session = await this.stripe.getCheckoutSession(sessionId);
     } catch (err) {
@@ -267,9 +281,16 @@ export class PaymentDueService {
     if (session?.status !== "open") throw this.stateUnknown(tenantId, "read");
 
     const expiresMs = Number(session.expires_at ?? 0) * 1000;
-    if (session.url && expiresMs > now.getTime()) return session.url;
+    if (session.url && expiresMs > now.getTime()) {
+      const verdict = checkSessionTerms(session.metadata, terms);
+      if (verdict === "match") return session.url;
+      if (verdict === "unknown") throw this.stateUnknown(tenantId, "read");
+      this.logger.log(
+        `payment-due: the open catch-up session of tenant ${tenantId} was built with other terms than the current plan; expiring it`,
+      );
+    }
 
-    // open, but past its time or without a url: tell Stripe it is dead before releasing anything
+    // open, but stale (other terms), past its time or without a url: tell Stripe it is dead before releasing anything
     let reply: { status?: string } | null;
     try {
       reply = await this.stripe.expireCheckoutSession(sessionId);

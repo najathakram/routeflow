@@ -13,6 +13,23 @@ const NOV_1 = new Date("2026-11-01T12:00:00Z");
 /** SA-806: D = A - 72 h, the planner's own `termsHoldUntil` (a mock plan carries it, the service never derives it). */
 const OCT_29 = new Date("2026-10-29T12:00:00Z");
 
+/**
+ * Row 542d: the terms metadata `buildCatchupSessionParams` writes on every catch-up session, for the two mock plans
+ * below (`report()` = trial_one_time, a $310.00 October stub, A = Nov 1; `trialReport()` = the stub-free trial).
+ */
+const TERMS_META = {
+  catchup_shape: "trial_one_time",
+  catchup_stub_cents: "31000",
+  catchup_from: OCT_1.toISOString(),
+  catchup_to: NOV_1.toISOString(),
+};
+const TRIAL_TERMS_META = {
+  catchup_shape: "trial",
+  catchup_stub_cents: "0",
+  catchup_from: NOV_1.toISOString(),
+  catchup_to: NOV_1.toISOString(),
+};
+
 function report(over: Record<string, unknown> = {}, stub: Record<string, unknown> = {}) {
   return {
     tenantId: "t1",
@@ -242,6 +259,7 @@ describe("PaymentDueService.pay", () => {
         status: "open",
         url: "https://checkout.stripe.test/open",
         expires_at: Math.floor(NOW.getTime() / 1000) + 3600,
+        metadata: TERMS_META,
       },
     });
     const out = await svc.pay("t1", NOW);
@@ -252,7 +270,7 @@ describe("PaymentDueService.pay", () => {
 
   describe("F2: the stored session is read, and Stripe is told before anything is released", () => {
     const PAST = Math.floor(NOW.getTime() / 1000) - 60;
-    const META = { tenantId: "t1", catchup: "1" };
+    const META = { tenantId: "t1", catchup: "1", ...TERMS_META };
     const held = {
       sub: { catchupState: "SESSION_OPEN", catchupSessionId: "cs_old" },
       report: report({ eligible: false, ineligible: ["claim_held"] }),
@@ -439,6 +457,7 @@ describe("PaymentDueService.pay", () => {
       status: "open",
       url: "https://checkout.stripe.test/raced",
       expires_at: Math.floor(NOW.getTime() / 1000) + 3600,
+      metadata: TERMS_META,
     };
     const lostRace: Array<[string, () => ConflictException]> = [
       [
@@ -657,6 +676,7 @@ describe("SA-801: PaymentDueService.pay for a card-needed tenant", () => {
         status: "open",
         url: "https://checkout.stripe.test/open",
         expires_at: Math.floor(NOW.getTime() / 1000) + 3600,
+        metadata: TRIAL_TERMS_META,
       },
     });
     expect(await svc.pay("t1", NOW)).toEqual({ checkoutUrl: "https://checkout.stripe.test/open" });
@@ -711,5 +731,257 @@ describe("SA-801: PaymentDueService.pay for a card-needed tenant", () => {
       });
       expect(catchup.open).not.toHaveBeenCalled();
     }
+  });
+});
+
+/**
+ * Row 542d: a LIVE open session is reused only when the terms it was built with (stub cents, shape, S = catchup_from,
+ * A = catchup_to) equal the fresh plan's. Otherwise it is stale and takes the SAME expire path as a dead one (SA-800a
+ * MED-2): Stripe confirms `expired` first, only then the claim is released and ONE new session is created; a session
+ * that completed first is the claim's AWAITING_FIRST_PAYMENT, never a second session.
+ */
+describe("542d: a live session whose terms differ from the fresh plan is stale", () => {
+  const LIVE_UNTIL = Math.floor(NOW.getTime() / 1000) + 3600;
+  const held = {
+    sub: { catchupState: "SESSION_OPEN", catchupSessionId: "cs_old" },
+    report: report({ eligible: false, ineligible: ["claim_held"] }),
+  };
+  const live = (metadata: Record<string, unknown> | undefined) => ({
+    id: "cs_old",
+    status: "open",
+    url: "https://checkout.stripe.test/old",
+    expires_at: LIVE_UNTIL,
+    ...(metadata === undefined ? {} : { metadata }),
+  });
+  const T = { tenantId: "t1", catchup: "period" };
+  /** The card-add session of the Oct 29 scenario against the fresh bill plan of `report()`. */
+  const OLD_CARD_ADD = { ...T, ...TRIAL_TERMS_META };
+  const expiredReply = { id: "cs_old", status: "expired", url: null, metadata: { ...T } };
+  const completeReply = { id: "cs_old", status: "complete", metadata: { ...T } };
+  const rejected = () => new Error("This Checkout Session is not in an open state.");
+
+  async function expect503(h: ReturnType<typeof make>) {
+    const err = await h.svc.pay("t1", NOW).catch((e) => e);
+    expect(err).toBeInstanceOf(ServiceUnavailableException);
+    expect((err.getResponse() as { code: string }).code).toBe(
+      API_ERROR_CODES.PAYMENT_STATE_UNKNOWN,
+    );
+    expect(h.claim.onSessionExpired).not.toHaveBeenCalled();
+    expect(h.catchup.open).not.toHaveBeenCalled();
+  }
+
+  describe("row 1/2: a mismatch takes the expire path, then ONE new session", () => {
+    it.each([
+      ["a $0 card-add session against a stub bill (Oct 29)", OLD_CARD_ADD],
+      [
+        "a stale 'Pay $X' whose stub cents differ",
+        { ...T, ...TERMS_META, catchup_stub_cents: "40000" },
+      ],
+      ["the shape differs, the rest equal", { ...T, ...TERMS_META, catchup_shape: "trial" }],
+      ["catchup_to (A) differs", { ...T, ...TERMS_META, catchup_to: "2026-12-01T12:00:00.000Z" }],
+      [
+        "catchup_from (S) differs",
+        { ...T, ...TERMS_META, catchup_from: "2026-09-01T12:00:00.000Z" },
+      ],
+    ])("%s: Stripe expires it, the claim is released AFTER, then open() once", async (_n, meta) => {
+      const h = make({ ...held, session: live(meta), expired: expiredReply });
+      const order: string[] = [];
+      h.stripe.expireCheckoutSession.mockImplementation(async () => {
+        order.push("stripe.expire");
+        return expiredReply;
+      });
+      h.claim.onSessionExpired.mockImplementation(async () => {
+        order.push("claim.release");
+      });
+      h.catchup.open.mockImplementation(async () => {
+        order.push("open");
+        return { checkoutUrl: "https://checkout.stripe.test/new" };
+      });
+      const out = await h.svc.pay("t1", NOW);
+      expect(out).toEqual({ checkoutUrl: "https://checkout.stripe.test/new" });
+      expect(order).toEqual(["stripe.expire", "claim.release", "open"]);
+      expect(h.stripe.expireCheckoutSession).toHaveBeenCalledWith("cs_old");
+      expect(h.claim.onSessionExpired).toHaveBeenCalledWith(expiredReply);
+      // the new session is priced by the planner's own read, exactly as before
+      expect(h.catchup.open).toHaveBeenCalledWith(
+        "t1",
+        expect.objectContaining({ expectedStubCents: 31000 }),
+      );
+    });
+
+    it("the reverse: an old 'Pay $X' session against a fresh card-add plan", async () => {
+      const h = make({
+        sub: held.sub,
+        report: trialReport({ eligible: false, ineligible: ["claim_held"] }),
+        session: live({ ...T, ...TERMS_META }),
+        expired: expiredReply,
+      });
+      const out = await h.svc.pay("t1", NOW);
+      expect(out.checkoutUrl).toBe("https://checkout.stripe.test/new");
+      expect(h.stripe.expireCheckoutSession).toHaveBeenCalledTimes(1);
+      expect(h.claim.onSessionExpired).toHaveBeenCalledTimes(1);
+      expect(h.catchup.open).toHaveBeenCalledTimes(1);
+      expect(h.catchup.open.mock.calls[0][1]).toMatchObject({
+        expectedStubCents: 0,
+        successPath: "/settings/billing?paid=1&card=1",
+      });
+    });
+
+    it("a mismatch whose expire is rejected but the re-read says EXPIRED: released, then ONE new session", async () => {
+      const h = make({ ...held, session: live(OLD_CARD_ADD), expired: rejected() });
+      h.stripe.getCheckoutSession
+        .mockReset()
+        .mockResolvedValueOnce(live(OLD_CARD_ADD))
+        .mockResolvedValueOnce(expiredReply);
+      const out = await h.svc.pay("t1", NOW);
+      expect(out.checkoutUrl).toBe("https://checkout.stripe.test/new");
+      expect(h.stripe.getCheckoutSession).toHaveBeenCalledTimes(2);
+      expect(h.claim.onSessionExpired).toHaveBeenCalledWith(expiredReply);
+      expect(h.catchup.open).toHaveBeenCalledTimes(1);
+    });
+  });
+
+  describe("row 3: matching terms are reused exactly as today (no expire, no release, no create)", () => {
+    it.each([
+      ["a stub bill", report(), TERMS_META],
+      ["a card add", trialReport(), TRIAL_TERMS_META],
+    ])("%s", async (_n, rep, meta) => {
+      const h = make({
+        sub: held.sub,
+        report: { ...rep, eligible: false, ineligible: ["claim_held"] } as any,
+        session: live({ ...T, ...meta }),
+      });
+      expect(await h.svc.pay("t1", NOW)).toEqual({
+        checkoutUrl: "https://checkout.stripe.test/old",
+      });
+      expect(h.stripe.expireCheckoutSession).not.toHaveBeenCalled();
+      expect(h.claim.onSessionExpired).not.toHaveBeenCalled();
+      expect(h.catchup.open).not.toHaveBeenCalled();
+    });
+
+    it("a forgiven stub: the session carries 0, the planner's charge-now is 0 (not its forgiven total)", async () => {
+      const h = make({
+        sub: held.sub,
+        report: report(
+          { eligible: false, ineligible: ["claim_held"] },
+          { totalCents: 30, belowStripeMinimum: true },
+        ),
+        session: live({
+          ...T,
+          ...TERMS_META,
+          catchup_stub_cents: "0",
+          catchup_forgiven_cents: "30",
+        }),
+      });
+      expect(await h.svc.pay("t1", NOW)).toEqual({
+        checkoutUrl: "https://checkout.stripe.test/old",
+      });
+      expect(h.stripe.expireCheckoutSession).not.toHaveBeenCalled();
+    });
+  });
+
+  describe("row 4: the old session completed first -> AWAITING_FIRST_PAYMENT, ZERO new sessions, claim untouched", () => {
+    const pending = { response: { code: API_ERROR_CODES.CATCHUP_PENDING } };
+
+    it("expire rejected, re-read says COMPLETE", async () => {
+      const h = make({ ...held, session: live(OLD_CARD_ADD), expired: rejected() });
+      h.stripe.getCheckoutSession
+        .mockReset()
+        .mockResolvedValueOnce(live(OLD_CARD_ADD))
+        .mockResolvedValueOnce(completeReply);
+      await expect(h.svc.pay("t1", NOW)).rejects.toMatchObject(pending);
+      expect(h.stripe.expireCheckoutSession).toHaveBeenCalledTimes(1);
+      expect(h.claim.onSessionExpired).not.toHaveBeenCalled();
+      expect(h.catchup.open).not.toHaveBeenCalled();
+    });
+
+    it("the expire reply itself says COMPLETE", async () => {
+      const h = make({ ...held, session: live(OLD_CARD_ADD), expired: completeReply });
+      await expect(h.svc.pay("t1", NOW)).rejects.toMatchObject(pending);
+      expect(h.claim.onSessionExpired).not.toHaveBeenCalled();
+      expect(h.catchup.open).not.toHaveBeenCalled();
+    });
+  });
+
+  describe("row 5: a mismatch whose expire cannot be confirmed is a 503, nothing released, nothing created", () => {
+    it("expire network error and the re-read still open", async () => {
+      await expect503(
+        make({ ...held, session: live(OLD_CARD_ADD), expired: new Error("ECONNRESET") }),
+      );
+    });
+
+    it("expire rejected and the re-read is null", async () => {
+      const h = make({ ...held, session: live(OLD_CARD_ADD), expired: rejected() });
+      h.stripe.getCheckoutSession
+        .mockReset()
+        .mockResolvedValueOnce(live(OLD_CARD_ADD))
+        .mockResolvedValueOnce(null);
+      await expect503(h);
+    });
+
+    it("expire rejected and the re-read fails", async () => {
+      const h = make({ ...held, session: live(OLD_CARD_ADD), expired: rejected() });
+      h.stripe.getCheckoutSession
+        .mockReset()
+        .mockResolvedValueOnce(live(OLD_CARD_ADD))
+        .mockRejectedValueOnce(new Error("ETIMEDOUT"));
+      await expect503(h);
+    });
+
+    it("an unusable (null) expire reply", async () => {
+      await expect503(make({ ...held, session: live(OLD_CARD_ADD), expired: null }));
+    });
+  });
+
+  describe("row 6: metadata missing or unreadable is unknown -> 503, Stripe not even told to expire", () => {
+    it.each([
+      ["no metadata", undefined],
+      ["metadata without the terms keys", T],
+      [
+        "a stub-cents value that is not an integer",
+        { ...T, ...TERMS_META, catchup_stub_cents: "x" },
+      ],
+      ["a catchup_to that is not a date", { ...T, ...TERMS_META, catchup_to: "soon" }],
+      ["no catchup_shape", { ...T, ...TERMS_META, catchup_shape: undefined }],
+    ])("%s", async (_n, meta) => {
+      const h = make({ ...held, session: live(meta as any) });
+      await expect503(h);
+      expect(h.stripe.expireCheckoutSession).not.toHaveBeenCalled();
+    });
+  });
+
+  it("a dead session (past its time) never needs its metadata: the old path is unchanged", async () => {
+    const stale = { ...live(undefined), expires_at: Math.floor(NOW.getTime() / 1000) - 60 };
+    const h = make({ ...held, session: stale, expired: expiredReply });
+    expect((await h.svc.pay("t1", NOW)).checkoutUrl).toBe("https://checkout.stripe.test/new");
+    expect(h.stripe.expireCheckoutSession).toHaveBeenCalledTimes(1);
+    expect(h.catchup.open).toHaveBeenCalledTimes(1);
+  });
+
+  it("a raced session with the same terms is handed back; with other terms it is expired and the click retries (503), never a second session", async () => {
+    const racedUrl = "https://checkout.stripe.test/raced";
+    const lost = () =>
+      new ConflictException({ code: API_ERROR_CODES.CATCHUP_SESSION_OPEN, message: "x" });
+    const mk = (meta: Record<string, string>, expired?: unknown) => {
+      const h = make({
+        session: { ...live({ ...T, ...meta }), url: racedUrl },
+        expired: expired as any,
+      });
+      h.prisma.tenantSubscription.findUnique
+        .mockResolvedValueOnce({ catchupState: null, catchupSessionId: null })
+        .mockResolvedValue({ catchupState: "SESSION_OPEN", catchupSessionId: "cs_old" });
+      h.catchup.open.mockRejectedValueOnce(lost());
+      return h;
+    };
+    const same = mk(TERMS_META);
+    expect(await same.svc.pay("t1", NOW)).toEqual({ checkoutUrl: racedUrl });
+    expect(same.catchup.open).toHaveBeenCalledTimes(1);
+
+    const other = mk({ ...TERMS_META, catchup_stub_cents: "40000" }, expiredReply);
+    await expect(other.svc.pay("t1", NOW)).rejects.toMatchObject({
+      response: { code: API_ERROR_CODES.PAYMENT_STATE_UNKNOWN },
+    });
+    expect(other.stripe.expireCheckoutSession).toHaveBeenCalledTimes(1);
+    expect(other.catchup.open).toHaveBeenCalledTimes(1); // the failed create only: no second session
   });
 });

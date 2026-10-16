@@ -242,6 +242,7 @@ describe("542c R4: the body is validated (class-validator, whitelist, no extras)
 
   it.each([
     ["an empty body (older pages)", {}],
+    ["shown absent (undefined)", { shown: undefined }],
     ["a card-add quote", { shown: CARD_QUOTE }],
     [
       "a bill quote",
@@ -260,6 +261,10 @@ describe("542c R4: the body is validated (class-validator, whitelist, no extras)
     ["periodStart a number", { shown: { ...CARD_QUOTE, periodStart: 5 } }],
     ["periodStart omitted", { shown: { amountCents: 0, cardBy: OCT_29 } }],
     ["shown not an object", { shown: "0" }],
+    ["shown a string", { shown: "x" }],
+    ["shown a number", { shown: 5 }],
+    ["shown an array", { shown: [] }],
+    ["shown a boolean", { shown: true }],
     ["an unknown key beside shown", { shown: CARD_QUOTE, price: 1 }],
     ["an unknown key inside shown", { shown: { ...CARD_QUOTE, tenantId: "t2" } }],
   ])("rejects %s with a 400", async (_n, body) => {
