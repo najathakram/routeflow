@@ -25,6 +25,7 @@ import {
   useCustomerPriceHistory,
   type ActiveOrderSummary,
 } from "@/lib/api/orders";
+import { usePriceSummary } from "@/lib/api/price-history";
 import { useCreateDraft, useUpdateDraft, useDeleteDraft, useDraft } from "@/lib/api/drafts";
 import { draftDeviceLabel, type OrderDraftPayload } from "@/lib/drafts";
 import { apiClient } from "@/lib/api-client";
@@ -397,6 +398,12 @@ export function CreateOrderModal({
   // Per-product last-given price for this customer — fetched once on customer select so
   // scanning is instant (no per-item round trip). Used to pre-fill the discount field.
   const { data: priceHistory } = useCustomerPriceHistory(selectedCustomer?.id);
+  // ONE batched request feeds every line's "Recent prices" chips (no per-line request, no mount budget).
+  // This screen creates a new order, so there is no order of its own to exclude.
+  const { data: priceSummary } = usePriceSummary(
+    isOpen ? selectedCustomer?.id : null,
+    lineItems.map((l) => (l.isUnlisted ? null : l.productId)),
+  );
 
   // Regulated tracked-categories (for the per-line "· regulated" tag + the live
   // invoice-split preview). Only staff build orders here; fetch while open.
@@ -1781,6 +1788,7 @@ export function CreateOrderModal({
               customerId: selectedCustomer?.id,
               customerName: selectedCustomer?.businessName,
               onUsePrice: (price) => setDiscountedPrice(li.tempId, price),
+              summary: priceSummary,
             }
           : undefined
       }
