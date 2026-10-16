@@ -116,6 +116,10 @@ describe("VendorBillsService", () => {
 
   beforeEach(async () => {
     prisma = createMockPrisma();
+    // B1236: bill lines are validated against the catalog; by default every named id resolves.
+    prisma.product.findMany.mockImplementation(async (args: any) =>
+      (args?.where?.id?.in ?? []).map((id: string) => ({ id })),
+    );
     // receive() re-reads the bill inside its transaction (B285 row lock): repeat the last bill read
     prisma.vendorBill.findUnique.mockImplementation(
       () =>
@@ -1149,7 +1153,7 @@ describe("VendorBillsService", () => {
       it("Opus review finding 2: the dark would-deny log fires for the raise-PO path (path=raise-po, bill=new before the bill exists)", async () => {
         const warnSpy = jest.spyOn(Logger.prototype, "warn").mockImplementation(() => undefined);
         try {
-          prisma.product.findMany.mockResolvedValueOnce([
+          prisma.product.findMany.mockResolvedValue([
             { id: "prod-1", name: "Flour 25lb", unitsPerBox: 10, units: [] },
           ]);
 
