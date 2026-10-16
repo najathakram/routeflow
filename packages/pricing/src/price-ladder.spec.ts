@@ -120,6 +120,15 @@ describe("T3 property: generated ladders equal resolveUnitPrice at 0%", () => {
   const money = () => (Math.floor(rnd() * 99900) + 1) / 100;
   const maybe = (p: number, v: () => string): string | null => (rnd() < p ? v() : null);
 
+  // PF-13: the one named exception to "byte-identical at 0%": a negative stored pack tier is Auto in the ladder.
+  const withoutNegatives = (p: LadderProduct): LadderProduct => ({
+    ...p,
+    priceTier2: Number(p.priceTier2) < 0 ? null : p.priceTier2,
+    priceTier3: Number(p.priceTier3) < 0 ? null : p.priceTier3,
+    priceTier4: Number(p.priceTier4) < 0 ? null : p.priceTier4,
+    priceTier5: Number(p.priceTier5) < 0 ? null : p.priceTier5,
+  });
+
   it("1500 ladders: pack, set and Auto level cells, all five tiers", () => {
     let checked = 0;
     for (let i = 0; i < 1500; i++) {
@@ -155,7 +164,7 @@ describe("T3 property: generated ladders equal resolveUnitPrice at 0%", () => {
       for (const row of view.rows) {
         for (const tier of TIERS) {
           const got = ladderPrice(view, row.ref, tier, DEFAULT_TIER_RULES);
-          const want = resolveUnitPrice(product, units, row.label, tier);
+          const want = resolveUnitPrice(withoutNegatives(product), units, row.label, tier);
           expect({ label: row.label, tier, got }).toEqual({ label: row.label, tier, got: want });
           checked += 1;
         }
@@ -302,7 +311,7 @@ describe("buildLadderView", () => {
 });
 
 describe("PF-13: a negative stored tier is Auto (the one named exception to 'byte-identical at 0%')", () => {
-  it("the ladder and resolveUnitPrice read it as Auto; getTierPrice, the legacy reader, would return the negative number", () => {
+  it("the ladder reads a negative stored tier as Auto; master's readers return the negative number", () => {
     const product: LadderProduct = {
       unit: "Box",
       unitsPerBox: 12,
@@ -310,8 +319,9 @@ describe("PF-13: a negative stored tier is Auto (the one named exception to 'byt
       priceTier2: "-5.00",
     };
     expect(priceAt(product, [], "Box", 2)).toBe(12);
-    expect(resolveUnitPrice(product, [], "Box", 2)).toBe(12);
-    expect(getTierPrice(product, 2)).toBe(-5); // the named exception: master's raw reader is not clamped
+    // The named exception: master's readers do not clamp a negative stored tier, the ladder treats it as Auto.
+    expect(resolveUnitPrice(product, [], "Box", 2)).toBe(-5);
+    expect(getTierPrice(product, 2)).toBe(-5);
   });
 });
 
