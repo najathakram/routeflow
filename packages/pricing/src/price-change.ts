@@ -153,7 +153,7 @@ export function planCellEdit(
   return {
     patches,
     undo: applied.undo,
-    offers: inversionOffers(applied.view, [{ ref, tier }], rules, tierName, view),
+    offers: inversionOffers(applied.view, [{ ref, tier }], rules, tierName),
     problems: [],
     view: applied.view,
   };

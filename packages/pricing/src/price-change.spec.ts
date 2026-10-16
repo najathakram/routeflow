@@ -198,6 +198,13 @@ describe("T10: typing a cell sets that cell only", () => {
     expect(setOf(after, "pack", 5)).toBe(18);
   });
 
+  it("PF-2: retyping Tier 2 lower still offers the Auto tiers above it, even if they were over its old price", () => {
+    const p: LadderProduct = { ...retail20, pricePerUnit: "12.00", priceTier2: "11.00" };
+    const plan = planCellEdit(buildLadderView(p, []), "pack", 2, "10.50");
+    expect(plan.offers).toHaveLength(1);
+    expect(plan.offers[0]).toMatchObject({ ref: "pack", tiers: [3, 4, 5], value: 10.5 });
+  });
+
   it("no offer when the tiers below are already at or under the typed price, or are set", () => {
     const set: LadderProduct = { ...retail20, priceTier4: "15.00", priceTier5: "14.00" };
     expect(planCellEdit(buildLadderView(set, []), "pack", 3, "18").offers).toEqual([]);
