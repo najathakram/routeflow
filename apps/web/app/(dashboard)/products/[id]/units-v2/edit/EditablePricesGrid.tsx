@@ -18,11 +18,17 @@ export function EditablePricesGrid({
   product,
   onOpenChangePrices,
   changePricesOpen = false,
+  changePricesRef,
+  panel,
 }: {
   product: UnitsCardProduct & { msrp?: number | string | null };
   /** K4's Change prices opener; the button renders only when it is passed. */
   onOpenChangePrices?: () => void;
   changePricesOpen?: boolean;
+  /** The Change prices button's ref, for V17's focus return. */
+  changePricesRef?: React.Ref<HTMLButtonElement>;
+  /** Rendered right under the actions row (K4's Change prices panel). */
+  panel?: React.ReactNode;
 }) {
   const d = usePriceDraft();
   const root = React.useRef<HTMLDivElement>(null);
@@ -63,10 +69,12 @@ export function EditablePricesGrid({
         )}
         {onOpenChangePrices && (
           <button
+            ref={changePricesRef}
             type="button"
+            id="btn-change-open"
             data-testid={T.btnChange}
             aria-expanded={changePricesOpen}
-            aria-controls="units-v2-change-panel"
+            aria-controls="change-panel"
             className={BTN}
             onClick={onOpenChangePrices}
           >
@@ -85,6 +93,7 @@ export function EditablePricesGrid({
           </button>
         )}
       </div>
+      {panel}
       <ProductPricesGrid product={product} edit={d.api} />
       {editing && <OrderUnitDraft />}
       {d.plan && <AlsoUpdatePanel plan={d.plan.plan} />}

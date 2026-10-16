@@ -1,5 +1,5 @@
 import { render, screen, fireEvent } from "@testing-library/react";
-import { ChangePrices } from "./ChangePrices";
+import { ChangePrices, useChangePrices } from "./ChangePrices";
 import { PLAN_TESTIDS as T } from "./plan-testids";
 import { richPlan, VIEW } from "./plan.test-utils";
 
@@ -23,6 +23,21 @@ jest.mock("@/lib/api/useProductCustomerPrices", () => ({
   useProductCustomerPrices: () => ({ data: { customers: [] } }),
 }));
 
+/** Stands in for K3's Edit row: the one opener button, wired the way the shell wires it. */
+function Harness() {
+  const cp = useChangePrices();
+  return (
+    <>
+      {cp.enabled && (
+        <button ref={cp.opener} type="button" aria-expanded={cp.open} onClick={cp.toggle}>
+          Change prices
+        </button>
+      )}
+      <ChangePrices open={cp.open} onClose={cp.close} openerRef={cp.opener} />
+    </>
+  );
+}
+
 beforeEach(() => {
   mockFlag = true;
   draft.applyPlan.mockReset();
@@ -31,12 +46,12 @@ beforeEach(() => {
 describe("ChangePrices (opener + panel)", () => {
   it("renders nothing with the flag off", () => {
     mockFlag = false;
-    const { container } = render(<ChangePrices />);
+    const { container } = render(<Harness />);
     expect(container).toBeEmptyDOMElement();
   });
 
   it("opens the panel from the opener and returns focus to it on Escape (V17)", () => {
-    render(<ChangePrices />);
+    render(<Harness />);
     const opener = screen.getByRole("button", { name: "Change prices" });
     expect(screen.queryByTestId(T.changePanel)).toBeNull();
     fireEvent.click(opener);
@@ -47,7 +62,7 @@ describe("ChangePrices (opener + panel)", () => {
   });
 
   it("reopens empty and unticked after an Apply (no pre-selection)", () => {
-    render(<ChangePrices />);
+    render(<Harness />);
     const open = () => fireEvent.click(screen.getByRole("button", { name: "Change prices" }));
     open();
     fireEvent.change(screen.getByLabelText("Amount"), { target: { value: "5" } });

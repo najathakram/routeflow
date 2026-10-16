@@ -53,6 +53,10 @@ export interface OpenPlan {
   customerKeeps: readonly CustomerPriceMove[];
 }
 
+const clearedNotice = (offers: readonly DraftEntry[]) =>
+  `Your earlier choice to ${offers
+    .flatMap((e) => (e.kind === "offer" ? [`"${e.title}"`] : []))
+    .join(", ")} was cleared because you changed that price again.`;
 const asCellPatches = (ps: readonly { ref: string; tier: number; to: number | null }[]) =>
   ps.map((p): CellPatch => ({ ref: p.ref, tier: p.tier as PriceTier, to: p.to }));
 
@@ -70,6 +74,9 @@ export interface PriceDraft {
   /** The plan of the last edited cell, for the "also update" panel. */
   plan: OpenPlan | null;
   ticks: readonly boolean[];
+  /** Set when an edit had to clear a ticked offer (never silent); cleared with the draft. */
+  notice: string | null;
+  /** Tick bakes the offer into the draft (patches / customer moves); untick removes exactly that. */
   setOfferTicked: (i: number, on: boolean) => void;
   keep: (pin: Pin) => void;
   unkeep: (pin: Pin) => void;
@@ -145,20 +152,20 @@ export function useCreatePriceDraft(productId: string, hooks: PriceDraftHooks = 
   const [editing, setEditing] = React.useState(false);
   const [entries, setEntries] = React.useState<DraftEntry[]>([]);
   const [openKey, setOpenKey] = React.useState<string | null>(null);
-  const [ticks, setTicks] = React.useState<boolean[]>([]);
   const [keeps, setKeeps] = React.useState<Pin[]>([]);
   const [moves, setMoves] = React.useState<CustomerPriceMove[]>([]);
   const [orderUnit, setOrderUnitState] = React.useState<string | null>(null);
   const [focus, setFocus] = React.useState<CellFocus | null>(null);
   const [lastSave, setLastSave] = React.useState<PriceDraft["lastSave"]>(null);
   const [undoStale, setUndoStale] = React.useState(false);
+  const [notice, setNotice] = React.useState<string | null>(null);
 
   const served = React.useMemo(() => (grid ? viewFromGrid(grid) : null), [grid]);
   const rules = React.useMemo(() => (grid ? rulesFromGrid(grid) : {}), [grid]);
 
   const fold = React.useMemo(
-    () => (served ? foldDraft(served, rules, entries, openKey, ticks, keeps, tierName) : null),
-    [served, rules, entries, openKey, ticks, keeps, tierName],
+    () => (served ? foldDraft(served, rules, entries, openKey, keeps, tierName) : null),
+    [served, rules, entries, openKey, keeps, tierName],
   );
   const sw = React.useMemo(() => {
     if (!fold || !orderUnit || orderUnit === fold.base.anchor) return null;
@@ -179,24 +186,36 @@ export function useCreatePriceDraft(productId: string, hooks: PriceDraftHooks = 
     setEditing(false);
     setEntries([]);
     setOpenKey(null);
-    setTicks([]);
+    setNotice(null);
     setKeeps([]);
     setMoves([]);
     setOrderUnitState(null);
     setFocus(null);
   }, []);
 
+  // Ticked offers live in the draft (kind "offer" entries), so they outlive the open plan; the open plan's ticks are read back.
+  const ticks = (fold?.open?.offers ?? []).map((_, i) =>
+    entries.some((e) => e.kind === "offer" && e.id === `${openKey}#${i}`),
+  );
+  // setOfferTicked may be called in the same batch as applyPlan, before the plan has rendered: applyPlan sets this too.
+  const openRef = React.useRef<{ key: string; plan: PricePlan } | null>(null);
+  openRef.current = fold?.open && openKey ? { key: openKey, plan: fold.open } : null;
+
   const editCell = (ref: string, tier: PriceTier, typed: string): PricePlan => {
     const key = cellKey(ref, tier);
+    // Re-typing THIS cell recomputes its offers, so choices ticked on the old ones are cleared, never silently.
+    const stale = entries.filter((e) => e.kind === "offer" && e.planKey === key);
     const next: DraftEntry[] = [
-      ...entries.filter((e) => !(e.kind === "cell" && e.key === key)),
+      ...entries.filter(
+        (e) => !(e.kind === "cell" && e.key === key) && !(e.kind === "offer" && e.planKey === key),
+      ),
       { kind: "cell", key, text: typed },
     ];
     hooksRef.current.onEdit?.();
     setEntries(next);
     setOpenKey(key);
-    setTicks([]);
-    const r = foldDraft(served!, rules, next, key, [], keeps, tierName);
+    if (stale.length > 0) setNotice(clearedNotice(stale));
+    const r = foldDraft(served!, rules, next, key, keeps, tierName);
     return r.plans.get(key)!;
   };
 
@@ -325,7 +344,14 @@ export function useCreatePriceDraft(productId: string, hooks: PriceDraftHooks = 
     setText: (ref, tier, text, original) => {
       if (text === original) {
         const key = cellKey(ref, tier);
-        setEntries((es) => es.filter((e) => !(e.kind === "cell" && e.key === key)));
+        const stale = entries.filter((e) => e.kind === "offer" && e.planKey === key);
+        if (stale.length > 0) setNotice(clearedNotice(stale));
+        setEntries((es) =>
+          es.filter(
+            (e) =>
+              !(e.kind === "cell" && e.key === key) && !(e.kind === "offer" && e.planKey === key),
+          ),
+        );
       } else editCell(ref, tier as PriceTier, text);
     },
     changed: (ref, tier) => cellKey(ref, tier) in texts,
@@ -354,12 +380,26 @@ export function useCreatePriceDraft(productId: string, hooks: PriceDraftHooks = 
           }
         : null,
     ticks,
-    setOfferTicked: (i, on) =>
-      setTicks((t) => {
-        const n = [...t];
-        n[i] = on;
-        return n;
-      }),
+    notice,
+    setOfferTicked: (i, on) => {
+      const o = openRef.current;
+      const offer = o?.plan.offers[i];
+      if (!o || !offer) return;
+      const id = `${o.key}#${i}`;
+      setEntries((es) => {
+        const rest = es.filter((e) => !(e.kind === "offer" && e.id === id));
+        if (!on) return rest;
+        const baked: DraftEntry = {
+          kind: "offer",
+          id,
+          planKey: o.key,
+          title: offer.title,
+          patches: offer.kind === "tier" ? offer.patches : [],
+          moves: offer.kind === "customer" ? offer.moves : [],
+        };
+        return [...rest, baked];
+      });
+    },
     keep: (pin) =>
       setKeeps((ks) =>
         ks.some((k) => k.ref === pin.ref && k.tier === pin.tier) ? ks : [...ks, pin],
@@ -378,7 +418,7 @@ export function useCreatePriceDraft(productId: string, hooks: PriceDraftHooks = 
       const key = `plan:${planSeq.current++}`;
       setEntries([...entries, { kind: "plan", key, plan }]);
       setOpenKey(key);
-      setTicks([]);
+      openRef.current = { key, plan };
     },
     resetAllToAuto: () => {
       if (!served) return;
@@ -387,6 +427,9 @@ export function useCreatePriceDraft(productId: string, hooks: PriceDraftHooks = 
         for (const t of [1, 2, 3, 4, 5] as const)
           if (r.set[t - 1] != null && !(r.ref === served.anchor && t === 1))
             next.push({ kind: "cell", key: cellKey(r.ref, t), text: "" });
+      // Reset clears every set PRICE; ticked customer moves are not product prices and stay.
+      for (const e of entries)
+        if (e.kind === "offer" && e.moves.length > 0) next.push({ ...e, patches: [] });
       setEntries(next);
       setOpenKey(null);
     },

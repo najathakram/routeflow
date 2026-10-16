@@ -53,6 +53,11 @@ export function PriceEditBar() {
               {isMac() ? "⌘S saves" : "Ctrl+S saves"}
             </span>
           )}
+          {d.notice && !confirm && (
+            <p role="status" data-testid={T.ebNotice} className="mt-1 text-amber-800">
+              {d.notice}
+            </p>
+          )}
           {d.saveError?.code === "stale" ? (
             <StaleRevisionNotice onReload={d.reload} />
           ) : (

@@ -15,7 +15,19 @@ import type { CustomerPriceMove } from "@routeflow/types";
 export type DraftEntry =
   | { kind: "cell"; key: string; text: string }
   /** A Change prices plan folded in; `key` ("plan:n") lets it be the open plan. */
-  | { kind: "plan"; key: string; plan: PricePlan };
+  | { kind: "plan"; key: string; plan: PricePlan }
+  /**
+   * A TICKED offer, baked into the draft at tick time (`id` = "<plan key>#<offer index>"), so a later edit that
+   * opens another plan keeps it. Tier offers carry patches, customer offers carry moves; untick removes the entry.
+   */
+  | {
+      kind: "offer";
+      id: string;
+      planKey: string;
+      title: string;
+      patches: readonly CellPatch[];
+      moves: readonly CustomerPriceMove[];
+    };
 
 export interface CellProblem {
   ref: string;
@@ -47,7 +59,6 @@ export function foldDraft(
   rules: TierRules,
   entries: readonly DraftEntry[],
   openKey: string | null,
-  ticks: readonly boolean[],
   keeps: readonly Pin[],
   tierName?: (t: PriceTier) => string,
 ): FoldResult {
@@ -55,6 +66,7 @@ export function foldDraft(
   const patchByCell = new Map<string, CellPatch>();
   const problems: CellProblem[] = [];
   const plans = new Map<string, PricePlan>();
+  const customerMoves: CustomerPriceMove[] = [];
   const fold = (patches: readonly CellPatch[]) => {
     view = applyCellPatches(view, patches).view;
     for (const p of patches) patchByCell.set(cellKey(p.ref, p.tier), p);
@@ -65,6 +77,11 @@ export function foldDraft(
       plans.set(e.key, e.plan);
       continue;
     }
+    if (e.kind === "offer") {
+      fold(e.patches);
+      customerMoves.push(...e.moves);
+      continue;
+    }
     const { ref, tier } = parseKey(e.key);
     const p = planCellEdit(view, ref, tier, e.text, rules, tierName);
     plans.set(e.key, p);
@@ -73,12 +90,6 @@ export function foldDraft(
     else fold(p.patches);
   }
   const open = openKey ? (plans.get(openKey) ?? null) : null;
-  const customerMoves: CustomerPriceMove[] = [];
-  open?.offers.forEach((o, i) => {
-    if (!ticks[i]) return;
-    if (o.kind === "tier") fold(o.patches);
-    else customerMoves.push(...o.moves);
-  });
   const base = view;
   const free = keeps.filter((k) => !patchByCell.has(cellKey(k.ref, k.tier)));
   view = applyCellPatches(

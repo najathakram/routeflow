@@ -4,7 +4,7 @@ import * as React from "react";
 import { usePriceGrid } from "@/lib/api/usePriceGrid";
 import { useUndoPrices } from "@/lib/api/usePriceWrites";
 import type { UnitsCardProduct } from "./ProductUnitsCard";
-import { ChangePrices } from "./units-v2/change-prices/ChangePrices";
+import { ChangePrices, useChangePrices } from "./units-v2/change-prices/ChangePrices";
 import { PriceSaveStatusLine } from "./units-v2/confirm/SaveStatusLine";
 import { usePriceUndo } from "./units-v2/confirm/usePriceUndo";
 import { EditablePricesGrid } from "./units-v2/edit/EditablePricesGrid";
@@ -18,23 +18,20 @@ import { usePriceDraft, type PriceDraftHooks } from "./units-v2/edit/usePriceDra
  */
 export function ProductPricingV2({
   product,
-  onOpenChangePrices,
-  changePricesOpen,
   onSaved,
   onEdit,
 }: {
   product: UnitsCardProduct & { msrp?: number | string | null };
-  /** K4's Change prices opener (the button renders only when passed). */
-  onOpenChangePrices?: () => void;
-  changePricesOpen?: boolean;
 } & PriceDraftHooks) {
+  const cp = useChangePrices();
   return (
     <PriceDraftProvider productId={product.id} onSaved={onSaved} onEdit={onEdit}>
-      <ChangePrices />
       <EditablePricesGrid
         product={product}
-        onOpenChangePrices={onOpenChangePrices}
-        changePricesOpen={changePricesOpen}
+        onOpenChangePrices={cp.enabled ? cp.toggle : undefined}
+        changePricesOpen={cp.open}
+        changePricesRef={cp.opener}
+        panel={<ChangePrices open={cp.open} onClose={cp.close} openerRef={cp.opener} />}
       />
       <SaveStatus productId={product.id} />
       <PriceEditBar />

@@ -3,12 +3,15 @@ import { render as rtlRender, screen, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { act } from "react";
+import type { CustomerMoveOffer } from "@routeflow/pricing";
 import type { ProductPriceGridDto } from "@routeflow/types";
 import { ProductPricingV2 } from "../../ProductPricingV2";
 import { UNITS_V2_TESTIDS as T } from "../../units-v2-testids";
 import { UNITS_V2_CONFIRM_TESTIDS as C } from "../confirm/confirm-testids";
 import { emptyPlan } from "../change-prices/plan.test-utils";
 import { EditablePricesGrid } from "./EditablePricesGrid";
+import { PriceEditBar } from "./PriceEditBar";
+import { PLAN_TESTIDS } from "../change-prices/plan-testids";
 import { PriceDraftProvider } from "./PriceDraftProvider";
 import { usePriceDraft, type PriceDraft } from "./usePriceDraft";
 
@@ -205,7 +208,115 @@ describe("K8 seams", () => {
     );
     await edit(user);
     expect(draft.plan?.cell).toEqual({ ref: "case", tier: 2 });
-    expect(draft.plan?.ticked).toEqual([]);
+    expect(draft.plan?.ticked.some(Boolean)).toBe(false);
     expect(draft.plan?.keeps).toEqual([]);
+  });
+
+  describe("ticked offers are baked into the draft (lead ruling)", () => {
+    const mount = () =>
+      rtlRender(
+        <QueryClientProvider client={new QueryClient()}>
+          <PriceDraftProvider productId="p1">
+            <Probe />
+            <EditablePricesGrid product={product} />
+            <PriceEditBar />
+          </PriceDraftProvider>
+        </QueryClientProvider>,
+      );
+    const customerOffer = (moves: CustomerMoveOffer["moves"]) =>
+      ({
+        kind: "customer",
+        ticked: false,
+        title: "Also raise prices set for 1 customer",
+        moves,
+      }) as const;
+    const move = { customerId: "c1", ref: "case", tier: 2 as const, from: 13.5, to: 14 };
+
+    it("a ticked Change prices customer offer survives editing another cell; untick removes it", () => {
+      mount();
+      const plan = emptyPlan({
+        patches: [{ ref: "case", tier: 2, to: 14 }],
+        offers: [customerOffer([move])],
+        changes: [{ ref: "case", label: "Case", tier: 2, from: 13.91, to: 14 }],
+      });
+      act(() => draft.applyPlan(plan));
+      act(() => draft.setOfferTicked(0, true));
+      act(() => void draft.editCell("piece", 2, "0.8"));
+      expect(draft.plan?.cell).toEqual({ ref: "piece", tier: 2 });
+      expect(draft.toRequest()?.customerMoves).toEqual([move]);
+      expect(draft.toRequest()?.patches).toEqual(
+        expect.arrayContaining([
+          { ref: "case", tier: 2, to: 14 },
+          { ref: "piece", tier: 2, to: 0.8 },
+        ]),
+      );
+      // untick, on a fresh plan: removes exactly what the tick added
+      act(() => draft.discard());
+      act(() => draft.applyPlan(plan));
+      act(() => draft.setOfferTicked(0, true));
+      expect(draft.toRequest()?.customerMoves).toEqual([move]);
+      act(() => draft.setOfferTicked(0, false));
+      expect(draft.toRequest()?.customerMoves).toEqual([]);
+      expect(draft.plan?.ticked).toEqual([false]);
+    });
+
+    it("a ticked tier offer survives editing another cell; untick removes its patches", () => {
+      mount();
+      act(() => void draft.editCell("case", 4, "5"));
+      const offer = draft.plan?.plan.offers[0];
+      expect(offer?.kind).toBe("tier");
+      const tierPatches = offer?.kind === "tier" ? offer.patches : [];
+      expect(tierPatches.length).toBeGreaterThan(0);
+      act(() => draft.setOfferTicked(0, true));
+      expect(draft.plan?.ticked).toEqual([true]);
+      expect(draft.toRequest()?.patches).toEqual(expect.arrayContaining(tierPatches));
+      act(() => void draft.editCell("piece", 2, "0.8"));
+      expect(draft.plan?.cell).toEqual({ ref: "piece", tier: 2 });
+      expect(draft.toRequest()?.patches).toEqual(expect.arrayContaining(tierPatches));
+      expect(draft.notice).toBeNull();
+      // untick on a fresh draft
+      act(() => draft.discard());
+      act(() => void draft.editCell("case", 4, "5"));
+      act(() => draft.setOfferTicked(0, true));
+      act(() => draft.setOfferTicked(0, false));
+      expect(draft.toRequest()?.patches).toEqual([{ ref: "case", tier: 4, to: 5 }]);
+    });
+
+    it("re-typing the same cell clears its ticked offers with a visible notice, never silently", () => {
+      mount();
+      act(() => draft.startEditing());
+      act(() => void draft.editCell("case", 4, "5"));
+      act(() => draft.setOfferTicked(0, true));
+      act(() => void draft.editCell("case", 4, "6"));
+      expect(draft.plan?.ticked).toEqual([false]);
+      expect(draft.notice).toMatch(/Your earlier choice .* was cleared/);
+      expect(screen.getByTestId(T.ebNotice).textContent).toMatch(/was cleared/);
+    });
+  });
+
+  it("one Change prices button, in the Edit row (before Edit), and none above the grid", async () => {
+    render();
+    const buttons = screen.getAllByRole("button", { name: "Change prices" });
+    expect(buttons).toHaveLength(1);
+    const row = buttons[0].parentElement as HTMLElement;
+    expect(within(row).getByTestId(T.btnEdit)).toBeTruthy();
+    expect(buttons[0].compareDocumentPosition(screen.getByTestId(T.btnEdit))).toBe(
+      Node.DOCUMENT_POSITION_FOLLOWING,
+    );
+    expect(buttons[0].compareDocumentPosition(screen.getByTestId(T.grid))).toBe(
+      Node.DOCUMENT_POSITION_FOLLOWING,
+    );
+  });
+
+  it("Escape closes Change prices and returns focus to the one opener (V17)", async () => {
+    const user = userEvent.setup();
+    render();
+    const opener = screen.getByRole("button", { name: "Change prices" });
+    await user.click(opener);
+    expect(opener.getAttribute("aria-expanded")).toBe("true");
+    expect(screen.getByTestId(PLAN_TESTIDS.changePanel)).toBeTruthy();
+    await user.keyboard("{Escape}");
+    expect(screen.queryByTestId(PLAN_TESTIDS.changePanel)).toBeNull();
+    expect(document.activeElement).toBe(opener);
   });
 });

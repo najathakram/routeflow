@@ -125,7 +125,11 @@ describe("units v2 edit grid (S12a)", () => {
     expect(screen.queryByTestId(T.btnChange)).toBeNull();
     unmount();
     const onOpen = jest.fn();
-    render(<ProductPricingV2 product={product} onOpenChangePrices={onOpen} />);
+    render(
+      <PriceDraftProvider productId="p1">
+        <EditablePricesGrid product={product} onOpenChangePrices={onOpen} />
+      </PriceDraftProvider>,
+    );
     await user.click(screen.getByTestId(T.btnChange));
     expect(onOpen).toHaveBeenCalledTimes(1);
     await user.click(screen.getByTestId(T.btnEdit));
