@@ -3,7 +3,7 @@ import type { PaymentDuePayResult, PaymentDueView } from "@routeflow/types";
 import { apiClient } from "../api-client";
 import { guardCounterLeave } from "../counter-cart-signal";
 
-/** While a payment is due, re-read at least this often so a payment (made in another tab) clears the banner. */
+/** While a payment is due (or a card is needed), re-read at least this often so a payment (made in another tab) clears the banner. */
 const POLL_MS = 30_000;
 
 /**
@@ -15,7 +15,7 @@ export function usePaymentDue(options?: { enabled?: boolean }) {
     queryKey: ["billing", "payment-due"],
     queryFn: () => apiClient.get("/billing/payment-due").then((r) => r.data),
     staleTime: 60_000,
-    refetchInterval: (q) => (q.state.data?.due ? POLL_MS : false),
+    refetchInterval: (q) => (q.state.data?.due || q.state.data?.cardNeeded ? POLL_MS : false),
     ...options,
   });
 }

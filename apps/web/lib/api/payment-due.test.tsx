@@ -33,6 +33,8 @@ describe("usePaymentDue", () => {
       amountCents: 10_000,
       periodLabel: "October 2026",
       periodStart: "2026-10-01T00:00:00.000Z",
+      cardNeeded: false,
+      chargeStartsOn: null,
     };
     mockGet.mockResolvedValue({ data: body });
     const { result } = renderHook(() => usePaymentDue(), { wrapper });

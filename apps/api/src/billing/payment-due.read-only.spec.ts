@@ -113,6 +113,8 @@ describe("a tenant that is not ACTIVE has no payment due (the planner's own refu
         amountCents: 0,
         periodLabel: null,
         periodStart: null,
+        cardNeeded: false,
+        chargeStartsOn: null,
       });
       await expect(svc.pay("t1", NOW)).rejects.toMatchObject({
         response: { code: API_ERROR_CODES.PAYMENT_NOT_DUE },
