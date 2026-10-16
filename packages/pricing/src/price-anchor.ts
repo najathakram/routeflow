@@ -55,8 +55,9 @@ export function customerPriceExact(
   const k = customerAnchor(view, customer);
   const kTyped = positive(customer.set?.[k]);
   if (kTyped != null) {
-    const kPrice = ladderPriceExact(view, k, tier, rules);
-    const uPrice = ladderPriceExact(view, ref, tier, rules);
+    const kA = k === tierAnchor ? undefined : k; // the shape is read on C's own anchor (A1)
+    const kPrice = ladderPriceExact(view, k, tier, rules, kA);
+    const uPrice = ladderPriceExact(view, ref, tier, rules, kA);
     return kPrice > 0 ? (uPrice * kTyped) / kPrice : uPrice;
   }
   if (tier === 1 || k === tierAnchor) return ladderPriceExact(view, ref, tier, rules);

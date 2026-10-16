@@ -227,6 +227,15 @@ describe("tier and customer scopes (owner Q2b)", () => {
     expect(customerPrice(view, ref(p, units, "Piece"), tier1)).toBe(1); // for tier 1 A1 equals the plan's formula
   });
 
+  it("T24e (fold A1, PF-1): a tier-2 customer orders by the Case (Tier 2 set $60) and sets their Case at $55: Box $9.17, Piece $0.76, not $11.00 / $0.92", () => {
+    const units = [lvl("Case", 72, null, { priceTier2: "60.00" })];
+    const view = buildLadderView(box12, units);
+    const caseRef = ref(box12, units, "Case");
+    const c: CustomerPricing = { tier: 2, orderUnit: caseRef, set: { [caseRef]: 55 } };
+    expect(customerPrice(view, "pack", c)).toBe(9.17);
+    expect(customerPrice(view, ref(box12, units, "Piece"), c)).toBe(0.76);
+  });
+
   it("a customer's own set price for a unit always wins; a deleted order-unit ref follows the tier's anchor", () => {
     const units = [lvl("Piece", 1, "1.20")];
     const view = buildLadderView(box12, units);
