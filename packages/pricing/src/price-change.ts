@@ -4,6 +4,7 @@ import {
   DEFAULT_TIER_RULES,
   PRICE_TIERS,
   ladderPrice,
+  ladderPriceExact,
   priceSource,
   rowOf,
   validateSetPrice,
@@ -209,7 +210,8 @@ export function planPriceChange(
   >();
   const add = (ref: UnitRef, tier: PriceTier, factor: number, label: string, from: number) =>
     moved.set(`${ref}|${tier}`, { ref, tier, factor, from, label });
-  add(picked.ref, 1, picked.factor, picked.label, ladderPrice(view, picked.ref, 1, rules));
+  // The exact price, so an Auto Retail is rounded once, after the change (a Set one is already in cents).
+  add(picked.ref, 1, picked.factor, picked.label, ladderPriceExact(view, picked.ref, 1, rules));
   if (change.also) {
     for (const row of view.rows) {
       for (const tier of PRICE_TIERS) {

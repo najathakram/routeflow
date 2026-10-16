@@ -97,6 +97,20 @@ describe("T8: raise by a percent", () => {
       ),
     ).toBe("set");
   });
+
+  it("PF-4: an Auto Piece of a $10 Box of 12 raised 3% is rounded once: $0.86, not $0.85", () => {
+    const p: LadderProduct = { unit: "Box", unitsPerBox: 12, pricePerUnit: "10.00" };
+    const view = buildLadderView(p, []);
+    const piece = refForLabel(p, [], "Piece");
+    expect(ladderPrice(view, piece, 1)).toBe(0.83); // the shown price; the exact one is 0.8333
+    const plan = planPriceChange(view, {
+      unit: piece,
+      direction: "raise",
+      mode: "percent",
+      value: 3,
+    });
+    expect(plan.patches).toEqual([{ ref: piece, tier: 1, to: 0.86 }]);
+  });
 });
 
 describe("T9: raise by an amount", () => {
