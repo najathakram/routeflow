@@ -43,7 +43,11 @@ export function priceWriteError(err: unknown): PriceWriteError | null {
   if (err == null) return null;
   const data = (err as { response?: { data?: { code?: string; problems?: string[] } } }).response
     ?.data;
-  const hit = data?.code ? PRICE_WRITE_CODES[data.code] : undefined;
+  // Own keys only: a code like "constructor" must not hit the table's prototype.
+  const hit =
+    data?.code && Object.hasOwn(PRICE_WRITE_CODES, data.code)
+      ? PRICE_WRITE_CODES[data.code]
+      : undefined;
   if (!hit) return { code: "other", copy: PRICE_WRITE_GENERIC_COPY, problems: [] };
   // Only the invalid answer carries the server's per-cell problem lines (contract product text).
   return { ...hit, problems: hit.code === "invalid" ? (data?.problems ?? []) : [] };
@@ -56,6 +60,8 @@ export function priceWriteError(err: unknown): PriceWriteError | null {
 function usePriceWrite<Req>(productId: string, path: string, refetchOnStale: boolean) {
   const qc = useQueryClient();
   return useMutation<SavePricesResponse, unknown, Req>({
+    // The edit bar (Save) and the status line (Undo) say every failure themselves: no second, app-wide toast.
+    meta: { localErrorToast: true },
     mutationFn: (body) =>
       apiClient[PRICE_WRITE_METHOD](`/products/${productId}${path}`, body).then((r) => r.data),
     onSuccess: (res) => qc.setQueryData(priceGridKey(productId), res.grid),
