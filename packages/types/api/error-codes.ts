@@ -722,6 +722,12 @@ export const API_ERROR_CODES = {
    * written (Perms PR1 M2).
    */
   LAST_TENANT_ADMIN: "LAST_TENANT_ADMIN",
+  /**
+   * 409 from the tier-rules setting (any tier discount above 0%) and from every order-unit switch (product, tier,
+   * customer, "Apply to existing products"): they stay off until every writer of the pack price columns uses the one
+   * write path (SA-795 h). Fixed body; nothing was written.
+   */
+  PRICING_RULES_NOT_READY: "PRICING_RULES_NOT_READY",
 } as const;
 
 /** The `flag` of a PLAN_GATE body that gates a count (a meter), not a feature flag. Not an error code. */
