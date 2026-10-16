@@ -50,6 +50,7 @@ function SaveStatus({ productId }: { productId: string }) {
     lastSave: draft.lastSave,
     current: served ?? null,
     mutate: undoPrices.mutateAsync,
+    conflictRow: draft.conflictRow,
     loadPreview: draft.loadUndoPreview,
   });
   return (

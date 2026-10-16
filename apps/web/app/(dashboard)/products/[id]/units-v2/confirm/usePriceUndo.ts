@@ -1,7 +1,8 @@
 import * as React from "react";
 import { priceWriteError } from "@/lib/api/usePriceWrites";
 import { isLadderRevisionStale } from "./StaleRevisionNotice";
-import type { UndoFn, UndoOutcome, UndoPreviewRow } from "./types";
+import type { CustomerPriceConflict, SavePricesResponse, UndoSkipCell } from "@routeflow/types";
+import type { UndoConflict, UndoFn, UndoOutcome, UndoPreviewRow } from "./types";
 
 export interface PriceUndoDeps {
   /** K3's `lastSave` (the audit row to invert and the revision the save produced). */
@@ -13,7 +14,10 @@ export interface PriceUndoDeps {
     auditId: string;
     expectedRevision: number;
     expectedPriceState: string;
-  }) => Promise<unknown>;
+    skip?: UndoSkipCell[];
+  }) => Promise<Pick<SavePricesResponse, "skipped"> | unknown>;
+  /** ONE place where a 409 conflict becomes a preview row (customer name, tier-first unit label, formatted money). */
+  conflictRow: (c: CustomerPriceConflict) => UndoPreviewRow;
   /** Refetch the grid and build the rows the inverse would make on it (K3's `loadUndoPreview`). */
   loadPreview: () => Promise<{
     revision: number;
@@ -21,36 +25,6 @@ export interface PriceUndoDeps {
     rows: UndoPreviewRow[];
     customerMoves?: number;
   }>;
-}
-
-/**
- * The 409's `conflicts` (customer cells changed since the save; strict undo) as preview rows. The server formats them;
- * this only reads what it sent, whatever its exact shape: text, or { label, current, restoreTo }. No math.
- */
-export function conflictRows(err: unknown): UndoPreviewRow[] {
-  const raw = (err as { response?: { data?: { conflicts?: unknown } } } | null)?.response?.data
-    ?.conflicts;
-  if (!Array.isArray(raw)) return [];
-  return raw.flatMap((c, i): UndoPreviewRow[] => {
-    if (typeof c === "string")
-      return [{ ref: `conflict-${i}`, label: c, current: "", restoreTo: "" }];
-    if (c && typeof c === "object") {
-      const o = c as Record<string, unknown>;
-      const text = (v: unknown) =>
-        typeof v === "string" || typeof v === "number" ? String(v) : "";
-      const label = text(o.label) || text(o.message) || text(o.name);
-      if (!label) return [];
-      return [
-        {
-          ref: text(o.ref) || `conflict-${i}`,
-          label,
-          current: text(o.current) || text(o.now),
-          restoreTo: text(o.restoreTo) || text(o.to),
-        },
-      ];
-    }
-    return [];
-  });
 }
 
 /**
@@ -62,9 +36,9 @@ export function usePriceUndo(deps: PriceUndoDeps): UndoFn {
   const ref = React.useRef(deps);
   ref.current = deps;
   return React.useCallback(async (req): Promise<UndoOutcome> => {
-    const { lastSave, current, mutate, loadPreview } = ref.current;
+    const { lastSave, current, mutate, loadPreview, conflictRow } = ref.current;
     if (!lastSave) throw new Error("Nothing to undo");
-    const changed = async (conflicts: UndoPreviewRow[] = []): Promise<UndoOutcome> => ({
+    const changed = async (conflicts: UndoConflict[] = []): Promise<UndoOutcome> => ({
       status: "changed",
       ...(await loadPreview()),
       ...(conflicts.length > 0 ? { conflicts } : {}),
@@ -77,14 +51,25 @@ export function usePriceUndo(deps: PriceUndoDeps): UndoFn {
     const priceState = req.confirmed ? req.expectedPriceState : current?.priceState;
     if (!priceState) throw new Error("Prices are not ready to undo");
     try {
-      await mutate({
+      const res = await mutate({
         auditId: lastSave.auditId,
         expectedRevision: revision,
         expectedPriceState: priceState,
+        ...(req.confirmed && req.skip && req.skip.length > 0 ? { skip: req.skip } : {}),
       });
-      return { status: "undone" };
+      const skipped = (res as Pick<SavePricesResponse, "skipped"> | undefined)?.skipped?.length;
+      return skipped ? { status: "undone", skipped } : { status: "undone" };
     } catch (e) {
-      if (isLadderRevisionStale(e)) return changed(conflictRows(e));
+      if (isLadderRevisionStale(e)) {
+        const raw = (e as { response?: { data?: { conflicts?: CustomerPriceConflict[] } } })
+          .response?.data?.conflicts;
+        return changed(
+          (raw ?? []).map((c) => ({
+            row: conflictRow(c),
+            skip: { customerId: c.customerId, ref: c.ref, seen: c.current },
+          })),
+        );
+      }
       if (priceWriteError(e)?.code === "unavailable") return { status: "unavailable" };
       throw e;
     }

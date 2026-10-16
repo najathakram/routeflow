@@ -20,14 +20,16 @@ const dto = (v: LadderView): ProductPriceGridDto => ({
   priceState: "state-3",
   tierAnchors: v.tierAnchors,
   tierRules: rules,
-  rows: priceGrid(v, rules).map((r) => ({ ...r, code: null })),
+  rows: priceGrid(v, rules).map((r) => ({ ...r, code: null, editable: true })),
 });
 
 describe("viewFromGrid", () => {
   it("round-trips: priceGrid(viewFromGrid(dto)) equals the DTO cells", () => {
     const g = dto(view);
     const back = viewFromGrid(g);
-    expect(priceGrid(back, rulesFromGrid(g))).toEqual(g.rows.map(({ code: _code, ...row }) => row));
+    expect(priceGrid(back, rulesFromGrid(g))).toEqual(
+      g.rows.map(({ code: _code, editable: _editable, ...row }) => row),
+    );
     expect(back.tierAnchors).toEqual({ 3: "u1" });
   });
 

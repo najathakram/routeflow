@@ -3,7 +3,8 @@
 import * as React from "react";
 import { Button } from "@routeflow/ui/web";
 import { UNITS_V2_CONFIRM_TESTIDS as IDS } from "./confirm-testids";
-import type { LastSave, UndoFn, UndoPreviewRow } from "./types";
+import type { UndoSkipCell } from "@routeflow/types";
+import type { LastSave, UndoConflict, UndoFn, UndoPreviewRow } from "./types";
 import { useEscapeCloses } from "./useEscapeCloses";
 
 type Phase = "idle" | "saved" | "preview" | "undone" | "error" | "unavailable";
@@ -15,7 +16,9 @@ interface State {
   /** Customer prices the inverse also writes. */
   customerMoves: number;
   /** Customer cells that changed since the save. */
-  conflicts: UndoPreviewRow[];
+  conflicts: UndoConflict[];
+  /** How many customer cells the finished Undo left as they were. */
+  skipped: number;
   /** The preview's precondition, kept for the confirmed write. */
   revision?: number;
   priceState?: string;
@@ -26,7 +29,7 @@ type Action =
   | { type: "edit" }
   | { type: "cleared" }
   | { type: "busy" }
-  | { type: "undone" }
+  | { type: "undone"; skipped: number }
   | { type: "unavailable" }
   | {
       type: "preview";
@@ -34,7 +37,7 @@ type Action =
       revision: number;
       priceState: string;
       customerMoves: number;
-      conflicts: UndoPreviewRow[];
+      conflicts: UndoConflict[];
     }
   | { type: "dismiss" }
   | { type: "failed" };
@@ -46,6 +49,7 @@ const IDLE: State = {
   rows: [],
   customerMoves: 0,
   conflicts: [],
+  skipped: 0,
   busy: false,
 };
 
@@ -61,7 +65,7 @@ function reduce(s: State, a: Action): State {
     case "busy":
       return { ...s, busy: true };
     case "undone":
-      return { ...IDLE, phase: "undone" };
+      return { ...IDLE, phase: "undone", skipped: a.skipped };
     case "unavailable":
       return { ...IDLE, phase: "unavailable" };
     case "preview":
@@ -146,7 +150,7 @@ export function PriceSaveStatusLine({
     refocusUndo.current = false;
   }, [phase]);
 
-  const run = async (confirmed: boolean) => {
+  const run = async (confirmed: boolean, skip?: UndoSkipCell[]) => {
     const mine = state.auditId;
     if (!mine || busy) return;
     if (confirmed && (state.revision === undefined || !state.priceState)) return;
@@ -154,7 +158,12 @@ export function PriceSaveStatusLine({
     try {
       const out = await undo(
         confirmed && state.revision !== undefined && state.priceState
-          ? { confirmed, expectedRevision: state.revision, expectedPriceState: state.priceState }
+          ? {
+              confirmed,
+              expectedRevision: state.revision,
+              expectedPriceState: state.priceState,
+              ...(skip ? { skip } : {}),
+            }
           : { confirmed: false },
       );
       if (live.current !== mine) return; // an edit or a newer save superseded this Undo
@@ -168,8 +177,10 @@ export function PriceSaveStatusLine({
           conflicts: out.conflicts ?? [],
         });
       } else {
-        dispatch({ type: out.status });
-        if (out.status === "undone") onUndone?.();
+        if (out.status === "undone") {
+          dispatch({ type: "undone", skipped: out.skipped ?? 0 });
+          onUndone?.();
+        } else dispatch({ type: out.status });
       }
     } catch {
       if (live.current !== mine) return;
@@ -217,7 +228,13 @@ export function PriceSaveStatusLine({
             </Button>
           </>
         ) : null}
-        {phase === "undone" ? <span>Save undone.</span> : null}
+        {phase === "undone" ? (
+          <span>
+            {state.skipped > 0
+              ? `Undone. Kept ${plural(state.skipped, "customer price", "customer prices")} that changed since.`
+              : "Save undone."}
+          </span>
+        ) : null}
         {phase === "unavailable" ? <span>This save can&apos;t be undone any more.</span> : null}
       </div>
       {previewing ? (
@@ -244,21 +261,13 @@ export function PriceSaveStatusLine({
             <div data-testid={IDS.undoConflicts} className="mb-2">
               <p className="text-navy">Customer prices changed since you saved:</p>
               <ul className="mt-0.5 space-y-0.5">
-                {state.conflicts.map((r) => (
+                {state.conflicts.map(({ row: r }) => (
                   <li key={r.ref} className="flex flex-wrap gap-x-2">
                     <span>{r.label}</span>
-                    {r.current || r.restoreTo ? (
-                      <>
-                        <span className="text-ink-500">{r.current}</span>
-                        {r.restoreTo ? (
-                          <>
-                            <span aria-hidden="true">→</span>
-                            <span className="sr-only">would become</span>
-                            <span>{r.restoreTo}</span>
-                          </>
-                        ) : null}
-                      </>
-                    ) : null}
+                    <span className="text-ink-500">{r.current}</span>
+                    <span aria-hidden="true">→</span>
+                    <span className="sr-only">Undo would restore</span>
+                    <span>{r.restoreTo}</span>
                   </li>
                 ))}
               </ul>
@@ -270,9 +279,27 @@ export function PriceSaveStatusLine({
             </p>
           ) : null}
           <div className="flex gap-2">
-            <Button type="button" size="sm" disabled={busy} onClick={() => run(true)}>
-              Undo these prices
-            </Button>
+            {state.conflicts.length > 0 ? (
+              // With conflicts the server refuses a plain confirm: the only way forward is to leave those cells be.
+              <Button
+                type="button"
+                size="sm"
+                disabled={busy}
+                data-testid={IDS.undoSkip}
+                onClick={() =>
+                  run(
+                    true,
+                    state.conflicts.map((c) => c.skip),
+                  )
+                }
+              >
+                Skip these customer prices and undo the rest
+              </Button>
+            ) : (
+              <Button type="button" size="sm" disabled={busy} onClick={() => run(true)}>
+                Undo these prices
+              </Button>
+            )}
             <Button type="button" size="sm" variant="secondary" disabled={busy} onClick={close}>
               Keep current prices
             </Button>

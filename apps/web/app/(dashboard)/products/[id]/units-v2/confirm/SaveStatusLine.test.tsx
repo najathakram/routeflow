@@ -142,27 +142,48 @@ describe("PriceSaveStatusLine (V07)", () => {
     expect(await screen.findByText("and 2 customer prices")).toBeTruthy();
   });
 
-  it("K8: a strict-undo conflict lists the customer cells that changed, and Undo still needs the fresh tokens", async () => {
+  it("K8: a strict-undo conflict offers only Skip; skipping sends seen = current with the fresh tokens, then says what was kept", async () => {
     undo.mockResolvedValueOnce({
       ...CHANGED,
-      conflicts: [{ ref: "c0", label: "Acme, Can", current: "$1.20", restoreTo: "$1.13" }],
+      conflicts: [
+        {
+          row: { ref: "c0", label: "Acme, Wholesale Can", current: "$1.20", restoreTo: "$1.13" },
+          skip: { customerId: "c1", ref: "can", seen: 1.2 },
+        },
+        {
+          row: { ref: "c1", label: "Beta, Wholesale Case", current: "$55.00", restoreTo: "$54.00" },
+          skip: { customerId: "c2", ref: "pack", seen: 55 },
+        },
+      ],
     });
     render(<Section />);
     saveIt();
     fireEvent.click(undoBtn());
     const list = await screen.findByTestId("units-v2-undo-conflicts");
     expect(list.textContent).toContain("Customer prices changed since you saved");
-    expect(list.textContent).toContain("Acme, Can");
+    expect(list.textContent).toContain("Acme, Wholesale Can");
     expect(list.textContent).toContain("$1.20");
-    undo.mockResolvedValueOnce({ status: "undone" });
-    fireEvent.click(screen.getByRole("button", { name: "Undo these prices" }));
+    expect(screen.queryByRole("button", { name: "Undo these prices" })).toBeNull();
+    expect(screen.getByRole("button", { name: "Keep current prices" })).toBeTruthy();
+    undo.mockResolvedValueOnce({ status: "undone", skipped: 2 });
+    fireEvent.click(
+      screen.getByRole("button", { name: "Skip these customer prices and undo the rest" }),
+    );
     await waitFor(() =>
       expect(undo).toHaveBeenLastCalledWith({
         confirmed: true,
         expectedRevision: 8,
         expectedPriceState: "state-8",
+        skip: [
+          { customerId: "c1", ref: "can", seen: 1.2 },
+          { customerId: "c2", ref: "pack", seen: 55 },
+        ],
       }),
     );
+    expect(
+      await screen.findByText("Undone. Kept 2 customer prices that changed since."),
+    ).toBeTruthy();
+    expect(screen.queryByRole("button", { name: "Undo" })).toBeNull();
   });
 
   it("the confirmed Undo re-sends the preview's revision and price state", async () => {

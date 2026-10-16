@@ -11,6 +11,7 @@ import { tierLabel } from "@/lib/tier-label";
 import type { UnitsCardProduct } from "./ProductUnitsCard";
 import { UNITS_V2_TESTIDS as T } from "./units-v2-testids";
 import type { GridEditApi } from "./units-v2/edit/edit-types";
+import { ADD_UNIT_FIRST } from "./units-v2/edit/view-from-grid";
 
 /**
  * The units v2 prices grid, READ ONLY: one row per unit, one column per price tier, values exactly
@@ -118,10 +119,13 @@ function AddUnitPointer({ unit }: { unit: string }) {
 
 /** A family-governed row is read-only: say why, quietly. */
 function NotEditable({ row }: { row: ProductPriceGridRowDto }) {
-  if (row.editable !== false || !row.notEditableReason) return null;
+  if (row.editable || !row.notEditableReason) return null;
   return (
     <p data-testid={T.notEditable(row.ref)} className="mt-0.5 text-[11px] font-normal text-navy/55">
       {row.notEditableReason}
+      {row.kind === "base" && ADD_UNIT_FIRST(row.notEditableReason) && (
+        <AddUnitPointer unit={row.label} />
+      )}
     </p>
   );
 }
@@ -237,7 +241,7 @@ export function ProductPricesGrid({
     i: number,
     layout: "table" | "card",
   ): EditTarget | undefined => {
-    if (!edit || row.editable === false) return undefined;
+    if (!edit || !row.editable) return undefined;
     return {
       edit,
       ref: row.ref,

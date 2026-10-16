@@ -1,3 +1,5 @@
+import type { UndoSkipCell } from "@routeflow/types";
+
 /** What the status line needs of K3's `lastSave` (a subset of `SavePricesResponse`). */
 export interface LastSave {
   auditId: string;
@@ -21,8 +23,16 @@ export interface UndoPrecondition {
   expectedPriceState: string;
 }
 
+/** A customer cell the strict undo refused (409 `conflicts`): the display row, and the skip entry that leaves it be. */
+export interface UndoConflict {
+  row: UndoPreviewRow;
+  /** `seen` = the value the preview shows (the conflict's `current`). */
+  skip: UndoSkipCell;
+}
+
 export type UndoOutcome =
-  | { status: "undone" }
+  /** `skipped` = how many customer cells the skip list left as they were. */
+  | { status: "undone"; skipped?: number }
   /** Prices moved since the save: nothing was written. `revision`/`priceState` are the FRESH grid's. */
   | {
       status: "changed";
@@ -31,13 +41,13 @@ export type UndoOutcome =
       rows: UndoPreviewRow[];
       /** Customer prices the inverse also writes; the preview says so (SA-799: never hidden). */
       customerMoves?: number;
-      /** Customer cells that changed since the save (strict undo, 409 `conflicts`), as the server formatted them. */
-      conflicts?: UndoPreviewRow[];
+      /** Customer cells that changed since the save (strict undo, 409 `conflicts`). */
+      conflicts?: UndoConflict[];
     }
   /** 409 PRICE_UNDO_UNAVAILABLE: this audit row was already undone. */
   | { status: "unavailable" };
 
 /** The shell-supplied inverse write. ONE call per click; `confirmed` only after the preview. */
 export type UndoFn = (
-  req: { confirmed: false } | ({ confirmed: true } & UndoPrecondition),
+  req: { confirmed: false } | ({ confirmed: true; skip?: UndoSkipCell[] } & UndoPrecondition),
 ) => Promise<UndoOutcome>;

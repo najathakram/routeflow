@@ -36,7 +36,7 @@ export function EditablePricesGrid({
   const was = React.useRef(false);
   const { editing } = d;
   // Every row family-governed (each says `editable: false`): nothing to edit or change here.
-  const anyEditable = d.grid?.rows.some((r) => r.editable !== false) ?? true;
+  const anyEditable = d.grid?.rows.some((r) => r.editable) ?? true;
   const pendingFocus = d.api.focus;
   React.useEffect(() => {
     if (editing && !was.current && !pendingFocus) {

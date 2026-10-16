@@ -18,6 +18,12 @@ function setup(over: { current?: { revision: number; priceState: string } } = {}
       current: over.current ?? { revision: 7, priceState: "s7" },
       mutate,
       loadPreview,
+      conflictRow: (c) => ({
+        ref: `${c.customerId}|${c.ref}`,
+        label: `${c.customerId}, ${c.ref}`,
+        current: String(c.current),
+        restoreTo: String(c.expected),
+      }),
     }),
   );
   return { undo: result.current, mutate, loadPreview };
@@ -69,31 +75,54 @@ describe("usePriceUndo", () => {
   });
 });
 
-describe("usePriceUndo: strict undo conflicts", () => {
-  it("a 409 with `conflicts` previews them next to the fresh tokens", async () => {
+describe("usePriceUndo: strict undo conflicts and skip", () => {
+  const conflict = {
+    customerId: "c1",
+    ref: "can",
+    tier: 2,
+    expected: 1.13,
+    current: 1.2,
+  };
+  const stale409 = Object.assign(new Error("409"), {
+    response: {
+      status: 409,
+      data: { code: "LADDER_REVISION_STALE", revision: 9, conflicts: [conflict] },
+    },
+  });
+
+  it("a 409 with `conflicts` previews them next to the fresh tokens; each carries its skip entry", async () => {
     const t = setup();
-    t.mutate.mockRejectedValue(
-      Object.assign(new Error("409"), {
-        response: {
-          status: 409,
-          data: {
-            code: "LADDER_REVISION_STALE",
-            conflicts: [
-              { label: "Acme, Can", current: "$1.20", restoreTo: "$1.13" },
-              "Beta Foods, Case",
-            ],
-          },
-        },
-      }),
-    );
+    t.mutate.mockRejectedValue(stale409);
     const out = await t.undo({ confirmed: false });
     expect(out).toEqual({
       status: "changed",
       ...PREVIEW,
       conflicts: [
-        { ref: "conflict-0", label: "Acme, Can", current: "$1.20", restoreTo: "$1.13" },
-        { ref: "conflict-1", label: "Beta Foods, Case", current: "", restoreTo: "" },
+        {
+          row: { ref: "c1|can", label: "c1, can", current: "1.2", restoreTo: "1.13" },
+          skip: { customerId: "c1", ref: "can", seen: 1.2 },
+        },
       ],
     });
+  });
+
+  it("a confirmed skip sends the skip list with the fresh tokens and reports how many were kept", async () => {
+    const t = setup();
+    t.mutate.mockResolvedValue({
+      skipped: [{ customerId: "c1", ref: "can", tier: 2, current: 1.2 }],
+    });
+    const out = await t.undo({
+      confirmed: true,
+      expectedRevision: 9,
+      expectedPriceState: "s9",
+      skip: [{ customerId: "c1", ref: "can", seen: 1.2 }],
+    });
+    expect(t.mutate).toHaveBeenCalledWith({
+      auditId: "a1",
+      expectedRevision: 9,
+      expectedPriceState: "s9",
+      skip: [{ customerId: "c1", ref: "can", seen: 1.2 }],
+    });
+    expect(out).toEqual({ status: "undone", skipped: 1 });
   });
 });

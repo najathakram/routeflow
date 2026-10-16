@@ -69,6 +69,7 @@ const grid: ProductPriceGridDto = {
       label: "Case",
       factor: 960,
       kind: "pack",
+      editable: true,
       code: null,
       cells: cells([0, 13.91, 12.5, 11, 10], ["set", "set", "auto", "auto", "auto"]),
     },
@@ -77,6 +78,7 @@ const grid: ProductPriceGridDto = {
       label: "Piece",
       factor: 1,
       kind: "base",
+      editable: true,
       code: null,
       cells: cells([0.92, 0.9, 0.88, 0.85, 0.8], ["set"]),
     },
@@ -433,6 +435,7 @@ describe("K8 seams", () => {
       label: "Case",
       factor: 24,
       kind: "pack" as const,
+      editable: true,
       code: null,
       cells: cells([12, 11, 10, 9, 8], ["set"]),
     };
@@ -441,6 +444,7 @@ describe("K8 seams", () => {
       label: "Piece",
       factor: 1,
       kind: "base" as const,
+      editable: true,
       code: null,
       cells: cells([0, 0, 0, 0, 0]),
     };
@@ -479,6 +483,61 @@ describe("K8 seams", () => {
     await user.type(input, "1");
     expect(inRow.queryByTestId(T.addUnitPointer)).toBeNull();
     field.remove();
+  });
+
+  it("a base row the grid marks editable:false shows its reason and the add-unit pointer, with no input", async () => {
+    const packRow = { ...grid.rows[0], ref: "pack", label: "Case", factor: 24 };
+    const baseRow = {
+      ref: "base",
+      label: "Piece",
+      factor: 1,
+      kind: "base" as const,
+      editable: false,
+      notEditableReason: "Add the Piece unit first.",
+      code: null,
+      cells: cells([0, 0, 0, 0, 0]),
+    };
+    mockGrid = {
+      data: { ...grid, anchor: "pack", rows: [packRow, baseRow] },
+      isLoading: false,
+      isError: false,
+    };
+    const field = document.body.appendChild(document.createElement("input"));
+    field.id = "new-unit-name";
+    const user = userEvent.setup();
+    render();
+    const row = within(screen.getByTestId(T.row("base")));
+    expect(row.getByTestId(T.notEditable("base")).textContent).toContain(
+      "Add the Piece unit first.",
+    );
+    expect(row.queryByRole("button", { name: /^Edit / })).toBeNull();
+    await user.click(screen.getByTestId(T.btnEdit));
+    expect(row.queryByTestId(T.input("base", 2))).toBeNull();
+    await user.click(row.getByTestId(T.addUnitPointer));
+    expect(document.activeElement).toBe(field);
+    field.remove();
+  });
+
+  it("conflictRow: customer name (or 'A customer'), tier-first unit label, money as shown", () => {
+    mockCustomers = [{ customerId: "c1", name: "Northside", tier: 2, orderUnit: null, set: {} }];
+    rtlRender(
+      <QueryClientProvider client={new QueryClient()}>
+        <PriceDraftProvider productId="p1">
+          <Probe />
+        </PriceDraftProvider>
+      </QueryClientProvider>,
+    );
+    const c = { customerId: "c1", ref: "case", tier: 2, expected: 13.5, current: 14 };
+    expect(draft.conflictRow(c)).toEqual({
+      ref: "c1|case|2",
+      label: "Northside, Wholesale Case",
+      current: "$14.00",
+      restoreTo: "$13.50",
+    });
+    expect(draft.conflictRow({ ...c, customerId: "zz", current: null }).label).toMatch(
+      /^A customer, Wholesale Case$/,
+    );
+    expect(draft.conflictRow({ ...c, current: null }).current).toBe("No set price");
   });
 
   it("a family-governed row is read-only with its reason; the other rows stay editable", async () => {

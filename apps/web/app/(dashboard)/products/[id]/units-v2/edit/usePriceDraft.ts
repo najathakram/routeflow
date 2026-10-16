@@ -11,6 +11,7 @@ import {
   type PriceTier,
 } from "@routeflow/pricing";
 import type {
+  CustomerPriceConflict,
   CustomerPriceMove,
   ProductPriceGridDto,
   SavePricesRequest,
@@ -39,7 +40,7 @@ import {
   type CellProblem,
   type DraftEntry,
 } from "./fold-draft";
-import { previewRows, rulesFromGrid, viewFromGrid } from "./view-from-grid";
+import { ADD_UNIT_FIRST, previewRows, rulesFromGrid, viewFromGrid } from "./view-from-grid";
 
 /** The open plan and what the "also update" panel (K4) reads of the draft's choices on it. */
 export interface OpenPlan {
@@ -54,7 +55,6 @@ export interface OpenPlan {
   customerKeeps: readonly CustomerPriceMove[];
 }
 
-const ADD_UNIT_FIRST = (p: string) => /\badd\b.*\bunit\b.*\bfirst\b/i.test(p);
 const clearedNotice = (offers: readonly DraftEntry[], why = "you changed that price again") =>
   `Your earlier choice to ${offers
     .flatMap((e) => (e.kind === "offer" ? [`"${e.title}"`] : []))
@@ -98,6 +98,8 @@ export interface PriceDraft {
   canSave: boolean;
   lastSave: { auditId: string; revision: number; undo: SavePricesResponse["undo"] } | null;
   undo: () => void;
+  /** A strict-undo conflict as a preview row: customer, tier-first unit label, money as shown. Display only. */
+  conflictRow: (c: CustomerPriceConflict) => UndoPreviewRow;
   /** Refetch the grid (the stale-write notice's "Reload prices"); the draft is kept. */
   reload: () => void;
   /** The last save was undone elsewhere (K5's status line): forget it. */
@@ -166,7 +168,9 @@ export function useCreatePriceDraft(productId: string, hooks: PriceDraftHooks = 
 
   // SA-799: a plain cell edit shows customer changes too. Same query (and cache entry) as Change prices' names; only
   // fetched while editing, so the product page costs nothing extra when nobody edits.
-  const customerRows = useProductCustomerPrices(productId, editing).data?.customers;
+  // Also after a save: a strict undo names the customers whose prices changed since.
+  const customerRows = useProductCustomerPrices(productId, editing || lastSave != null).data
+    ?.customers;
   const customers = React.useMemo(
     () => (customerRows ?? []) as CustomerPricingWithId[],
     [customerRows],
@@ -480,6 +484,12 @@ export function useCreatePriceDraft(productId: string, hooks: PriceDraftHooks = 
     canSave,
     lastSave,
     undo,
+    conflictRow: (c) => ({
+      ref: `${c.customerId}|${c.ref}|${c.tier}`,
+      label: `${customerRows?.find((r) => r.customerId === c.customerId)?.name ?? "A customer"}, ${tierName(c.tier as PriceTier)} ${grid?.rows.find((r) => r.ref === c.ref)?.label ?? c.ref}`,
+      current: c.current == null ? "No set price" : formatMoney(c.current),
+      restoreTo: c.expected == null ? "No set price" : formatMoney(c.expected),
+    }),
     reload: () => void qc.invalidateQueries({ queryKey: priceGridKey(productId) }),
     markUndone: () => {
       setLastSave(null);

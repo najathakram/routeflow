@@ -34,13 +34,18 @@ export function previewRows(
     kind: r.kind,
     code: g.rows.find((x) => x.ref === r.ref)?.code ?? null,
     cells: r.cells.map((c) => ({ tier: c.tier, source: c.source, value: c.value })),
-    // a family-governed row stays read-only in the preview too
-    ...pickGoverned(g.rows.find((x) => x.ref === r.ref)),
+    // the row's editability is the server's; the preview keeps it
+    ...editability(g.rows.find((x) => x.ref === r.ref) as ProductPriceGridRowDto),
   }));
 }
 
-function pickGoverned(row: ProductPriceGridRowDto | undefined) {
-  return row?.editable === false
-    ? { editable: false as const, notEditableReason: row.notEditableReason }
-    : {};
+function editability(row: ProductPriceGridRowDto) {
+  return {
+    editable: row.editable,
+    ...(row.notEditableReason ? { notEditableReason: row.notEditableReason } : {}),
+  };
 }
+
+/** The grid's reason for the implicit base row: its unit has to be added before it can hold a price. */
+export const ADD_UNIT_FIRST = (reason: string | undefined): boolean =>
+  reason != null && /\badd\b.*\bunit\b.*\bfirst\b/i.test(reason);
