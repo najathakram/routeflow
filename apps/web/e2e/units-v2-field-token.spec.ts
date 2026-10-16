@@ -67,25 +67,37 @@ for (const vp of SIZES) {
       expect(await fieldBoxes(page)).toEqual(first);
     });
 
-    test("a valid field uses --field and an invalid one keeps the danger border", async ({
-      page,
-    }) => {
-      await page.goto("/login");
-      await page.waitForLoadState("networkidle");
-      const field = await tokenColor(page, "border-field");
-      const danger = await tokenColor(page, "border-danger");
-      expect(field).not.toBe(danger);
+    // The login form is NOT the probe: the auth shell (.rf-auth, auth-shell.css) deliberately restyles its inputs'
+    // border. The New Customer modal is a plain shared-Input form on the operator session.
+    test.describe("shared Input in a form", () => {
+      test.use({ storageState: OPERATOR_STATE });
 
-      const username = page.getByLabel("Username or email");
-      const border = (loc: ReturnType<Page["locator"]>) =>
-        loc.evaluate((el) => getComputedStyle(el).borderTopColor);
-      expect(await border(username)).toBe(field);
+      test("a valid field uses --field and an invalid one keeps the danger border", async ({
+        page,
+      }) => {
+        await page.goto("/customers");
+        await page.waitForLoadState("networkidle");
+        await page.getByRole("button", { name: "New Customer" }).click();
+        const dialog = page.getByRole("dialog");
+        const field = await tokenColor(page, "border-field");
+        const danger = await tokenColor(page, "border-danger");
+        expect(field).not.toBe(danger);
 
-      // Submit empty: the form's validation marks the fields invalid.
-      await page.getByRole("button", { name: /^sign in$/i }).click();
-      await expect(username).toHaveAttribute("aria-invalid", "true");
-      expect(await border(username)).toBe(danger);
-      expect(await border(username)).not.toBe(field);
+        const business = dialog.locator('input[name="businessName"]');
+        await expect(business).toBeVisible();
+        const border = (loc: ReturnType<Page["locator"]>) =>
+          loc.evaluate((el) => getComputedStyle(el).borderTopColor);
+        expect(await border(business)).toBe(field);
+
+        // Submit empty: the form's validation marks the required field invalid.
+        await dialog.getByRole("button", { name: /^create customer$/i }).click();
+        await expect(business).toHaveAttribute("aria-invalid", "true");
+        // Submit moves focus to the invalid field and focus hides the border (ring instead): blur first, then wait out
+        // the colour transition.
+        await business.blur();
+        await expect.poll(() => border(business)).toBe(danger);
+        expect(await border(business)).not.toBe(field);
+      });
     });
   });
 }
