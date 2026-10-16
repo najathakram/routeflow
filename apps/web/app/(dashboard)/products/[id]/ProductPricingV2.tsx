@@ -46,10 +46,7 @@ function SaveStatus({ productId }: { productId: string }) {
   const undoPrices = useUndoPrices(productId);
   const undo = usePriceUndo({
     lastSave: draft.lastSave,
-    current:
-      served?.revision == null
-        ? null
-        : { revision: served.revision, priceState: served.priceState },
+    current: served ?? null,
     mutate: undoPrices.mutateAsync,
     loadPreview: draft.loadUndoPreview,
   });

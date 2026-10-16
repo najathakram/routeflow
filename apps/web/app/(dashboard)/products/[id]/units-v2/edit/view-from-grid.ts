@@ -15,11 +15,11 @@ export function viewFromGrid(g: ProductPriceGridDto): LadderView {
         return c && c.source === "set" && c.value > 0 ? c.value : null;
       }),
     }));
-  return { rows, anchor: g.anchor, tierAnchors: g.tierAnchors ?? {} };
+  return { rows, anchor: g.anchor, tierAnchors: g.tierAnchors };
 }
 
-/** The tenant's tier rules as the server served them (missing = the default, no rule). */
-export const rulesFromGrid = (g: ProductPriceGridDto): TierRules => g.tierRules ?? {};
+/** The tenant's tier rules as the server served them. */
+export const rulesFromGrid = (g: ProductPriceGridDto): TierRules => g.tierRules;
 
 /** The draft view as grid rows (barcodes kept), so Auto placeholders show the draft values. */
 export function previewRows(

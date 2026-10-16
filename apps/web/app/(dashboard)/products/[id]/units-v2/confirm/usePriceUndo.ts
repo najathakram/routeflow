@@ -6,7 +6,7 @@ export interface PriceUndoDeps {
   /** K3's `lastSave` (the audit row to invert and the revision the save produced). */
   lastSave: { auditId: string; revision: number } | null;
   /** The grid the page holds now (K3's `usePriceGrid` / draft grid): its revision and `priceState`. */
-  current: { revision: number; priceState?: string } | null | undefined;
+  current: { revision: number; priceState: string } | null | undefined;
   /** K3's `useUndoPrices(productId).mutateAsync` (POST /prices/undo). */
   mutate: (req: {
     auditId: string;

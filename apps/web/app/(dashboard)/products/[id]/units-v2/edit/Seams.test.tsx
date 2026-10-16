@@ -61,6 +61,8 @@ const grid: ProductPriceGridDto = {
   anchor: "piece",
   revision: 7,
   priceState: "ps-1",
+  tierAnchors: {},
+  tierRules: {},
   rows: [
     {
       ref: "case",
@@ -137,17 +139,6 @@ describe("K8 seams", () => {
     expect(await screen.findByText("Save undone.")).toBeTruthy();
     expect(screen.queryByTestId(C.saveUndo)).toBeNull();
     expect(screen.queryByRole("button", { name: "Undo" })).toBeNull();
-  });
-
-  it("a grid without priceState cannot save: Save is unavailable and no request is made", async () => {
-    mockGrid = { data: { ...grid, priceState: undefined }, isLoading: false, isError: false };
-    const user = userEvent.setup();
-    render();
-    await edit(user);
-    const save = screen.getByTestId(T.ebSave);
-    expect(save.getAttribute("aria-disabled")).toBe("true");
-    await user.click(save);
-    expect(mockSave).not.toHaveBeenCalled();
   });
 
   it("a stale save shows K5's notice (one alert) with Reload prices", async () => {

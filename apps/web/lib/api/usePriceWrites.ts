@@ -9,7 +9,7 @@ export const PRICE_WRITE_METHOD = "post" as const;
 
 /** Why a price write failed, in words the edit bar can show. */
 export interface PriceWriteError {
-  code: "stale" | "invalid" | "rules" | "unavailable" | "other";
+  code: "stale" | "invalid" | "rules" | "unavailable" | "family" | "other";
   message: string;
   problems: string[];
 }
@@ -35,6 +35,14 @@ export function priceWriteError(err: unknown): PriceWriteError | null {
       return {
         code: "rules",
         message: "Changing the order unit is not available yet. Your other changes were not saved.",
+        problems: [],
+      };
+    case API_ERROR_CODES.FAMILY_PRICE_AUTHORITY:
+      // 409: a variant's price is set on its family. (A family or recipe row is a 400 PRICE_EDIT_INVALID with its own problem text.)
+      return {
+        code: "family",
+        message:
+          "This price is set on its family, so it can't be changed here. Change it on the family.",
         problems: [],
       };
     case API_ERROR_CODES.PRICE_UNDO_UNAVAILABLE:

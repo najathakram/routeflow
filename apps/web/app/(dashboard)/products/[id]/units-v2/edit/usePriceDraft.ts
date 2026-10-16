@@ -91,7 +91,7 @@ export interface PriceDraft {
    */
   applyPlan: (plan: PricePlan) => void;
   resetAllToAuto: () => void;
-  /** The save body, or null while the grid has no revision/priceState (Save is then unavailable). */
+  /** The save body, or null while the grid has not loaded or the draft has a conflict (Save is then unavailable). */
   toRequest: () => SavePricesRequest | null;
   save: () => void;
   saving: boolean;
@@ -238,9 +238,9 @@ export function useCreatePriceDraft(productId: string, hooks: PriceDraftHooks = 
     return r.plans.get(key)!;
   };
 
-  // Revision AND priceState are both required (lead final ruling): without them there is nothing to send.
+  // The grid DTO guarantees revision and priceState (lead final ruling: both required on every write).
   const toRequest = (): SavePricesRequest | null =>
-    grid?.revision == null || !grid.priceState || conflicts.length > 0
+    !grid || conflicts.length > 0
       ? null
       : {
           expectedRevision: grid.revision,
@@ -257,8 +257,7 @@ export function useCreatePriceDraft(productId: string, hooks: PriceDraftHooks = 
     count > 0 &&
     problems.length === 0 &&
     conflicts.length === 0 &&
-    grid?.revision != null &&
-    !!grid.priceState;
+    !!grid;
 
   // A stale-write notice describes the grid revision it was raised on: once the grid moves on (Reload prices, a
   // refetch) it no longer applies, so it goes. Other save errors stay until the next save.
@@ -302,7 +301,7 @@ export function useCreatePriceDraft(productId: string, hooks: PriceDraftHooks = 
   }, [editing]);
 
   const undo = () => {
-    if (!lastSave || grid?.revision == null || !grid.priceState) return;
+    if (!lastSave || !grid) return;
     undoMut.mutate(
       {
         auditId: lastSave.auditId,
@@ -334,9 +333,6 @@ export function useCreatePriceDraft(productId: string, hooks: PriceDraftHooks = 
       queryFn: () => fetchPriceGrid(productId),
       staleTime: 0,
     });
-    // No revision/priceState on the fresh grid means no valid precondition: Undo is unavailable.
-    if (fresh.revision == null || !fresh.priceState)
-      throw new Error("Prices are not ready to undo");
     const changes = lastSave
       ? changesFrom(
           viewFromGrid(fresh),

@@ -66,6 +66,10 @@ describe("usePriceWrites", () => {
     expect(e("PRICE_EDIT_INVALID", ["x"])?.problems).toEqual(["x"]);
     expect(e("PRICING_RULES_NOT_READY")?.code).toBe("rules");
     expect(e("PRICE_UNDO_UNAVAILABLE")?.code).toBe("unavailable");
+    expect(e("FAMILY_PRICE_AUTHORITY")).toMatchObject({
+      code: "family",
+      message: expect.stringContaining("set on its family"),
+    });
     expect(priceWriteError(new Error("boom"))?.code).toBe("other");
     expect(priceWriteError(null)).toBeNull();
   });

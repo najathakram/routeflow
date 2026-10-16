@@ -46,6 +46,8 @@ const grid: ProductPriceGridDto = {
   anchor: "piece",
   revision: 7,
   priceState: "ps-1",
+  tierAnchors: {},
+  tierRules: {},
   rows: [
     {
       ref: "case",

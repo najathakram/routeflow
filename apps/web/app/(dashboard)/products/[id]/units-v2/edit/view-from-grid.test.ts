@@ -16,6 +16,8 @@ const rules = { 2: 5, 3: 10 };
 const dto = (v: LadderView): ProductPriceGridDto => ({
   productId: "p1",
   anchor: v.anchor,
+  revision: 3,
+  priceState: "state-3",
   tierAnchors: v.tierAnchors,
   tierRules: rules,
   rows: priceGrid(v, rules).map((r) => ({ ...r, code: null })),
@@ -29,8 +31,8 @@ describe("viewFromGrid", () => {
     expect(back.tierAnchors).toEqual({ 3: "u1" });
   });
 
-  it("missing tierAnchors / tierRules mean none", () => {
-    const g = { ...dto(view), tierAnchors: undefined, tierRules: undefined };
+  it("a grid with no tier anchors or rules is the plain ladder", () => {
+    const g = { ...dto(view), tierAnchors: {}, tierRules: {} };
     expect(viewFromGrid(g).tierAnchors).toEqual({});
     expect(rulesFromGrid(g)).toEqual({});
   });
