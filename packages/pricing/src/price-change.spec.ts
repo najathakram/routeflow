@@ -32,7 +32,6 @@ const lvl = (
   priceTier5: null,
   ...extra,
 });
-const TIERS: PriceTier[] = [1, 2, 3, 4, 5];
 const box: LadderProduct = {
   unit: "Box",
   unitsPerBox: 12,
@@ -272,6 +271,5 @@ describe("the grid after a change still follows the rules", () => {
       ["Box", 12, 18],
       ["Piece", 1, 1.5],
     ]);
-    expect(TIERS.length).toBe(5);
   });
 });
