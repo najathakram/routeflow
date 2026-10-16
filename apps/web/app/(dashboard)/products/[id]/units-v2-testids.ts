@@ -4,6 +4,7 @@ export const UNITS_V2_TESTIDS = {
   row: (ref: string) => `units-v2-row-${ref}`,
   cell: (ref: string, tier: number) => `units-v2-cell-${ref}-${tier}`,
   code: (ref: string) => `units-v2-code-${ref}`,
+  card: (ref: string) => `units-v2-card-${ref}`,
   headerStockLink: "units-v2-header-stock-link",
   familyHeader: "units-v2-family-header",
 } as const;
