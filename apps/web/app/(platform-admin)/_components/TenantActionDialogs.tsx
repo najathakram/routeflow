@@ -48,8 +48,10 @@ export const TENANT_ACTION_COPY = {
     "Stripe can't find this tenant's subscription or customer. Check the Stripe key and mode before cancelling.",
   stripeSubscriptionOwnerMismatch:
     "This subscription belongs to a different Stripe customer. Check the tenant's billing record before cancelling.",
+  stripeNoStoredCustomer:
+    "This tenant has a subscription on file but no Stripe customer, so it can't be checked. Fix the tenant's billing record first.",
   subscriptionUnconfirmed:
-    "Couldn't confirm the tenant's Stripe subscription just now, or it changed meanwhile. Try again in a moment.",
+    "Couldn't confirm the tenant's Stripe subscription just now. Try again in a moment.",
   tenantChanged: "This tenant changed while you were editing. Reload and try again.",
   actionFailed: "That didn't work. Try again.",
   suspendAutoReinstate: "Suspended tenants are reinstated automatically when they pay.",
@@ -64,6 +66,9 @@ const errorReasonOf = (err: unknown): string | undefined =>
 /** Matches the API's `reason` on a CONCURRENT_UPDATE caused by a failed Stripe read. */
 const STRIPE_UNCONFIRMED_REASON = "STRIPE_UNCONFIRMED";
 
+/** Matches the API's `reason` on a STRIPE_SUBSCRIPTION_OWNER_MISMATCH for a tenant with no stored Stripe customer. */
+const NO_STORED_CUSTOMER_REASON = "NO_STORED_CUSTOMER";
+
 /**
  * The Stripe gate's coded 409s on a tenant status change or delete (a CANCELLED / delete over a subscription that
  * has not ended, or one Stripe could not be read for): fixed copy, never the server's text. null = not one of them.
@@ -77,7 +82,9 @@ function stripeGateCopy(err: unknown): string | null {
     return TENANT_ACTION_COPY.stripeAccountMismatch;
   }
   if (code === API_ERROR_CODES.STRIPE_SUBSCRIPTION_OWNER_MISMATCH) {
-    return TENANT_ACTION_COPY.stripeSubscriptionOwnerMismatch;
+    return errorReasonOf(err) === NO_STORED_CUSTOMER_REASON
+      ? TENANT_ACTION_COPY.stripeNoStoredCustomer
+      : TENANT_ACTION_COPY.stripeSubscriptionOwnerMismatch;
   }
   if (code === API_ERROR_CODES.STRIPE_NOT_CONFIGURED) return TENANT_ACTION_COPY.stripeNotConfigured;
   if (code === API_ERROR_CODES.CONCURRENT_UPDATE) {

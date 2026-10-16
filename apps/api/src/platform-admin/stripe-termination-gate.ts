@@ -22,6 +22,9 @@ export function stripeAccountMismatchRefusal(): ConflictException {
   });
 }
 
+/** `reason` on the no-stored-customer STRIPE_SUBSCRIPTION_OWNER_MISMATCH: the web shows a distinct line for it. */
+export const NO_STORED_CUSTOMER_REASON = "NO_STORED_CUSTOMER";
+
 /**
  * 409 STRIPE_SUBSCRIPTION_OWNER_MISMATCH: the subscription Stripe returned for the stored id is not provably this
  * tenant's (another customer, another tenant's metadata, or no stored customer to compare against).
@@ -31,6 +34,7 @@ export function stripeSubscriptionOwnerMismatchRefusal(
 ): ConflictException {
   return new ConflictException({
     code: API_ERROR_CODES.STRIPE_SUBSCRIPTION_OWNER_MISMATCH,
+    ...(noStoredCustomer ? { reason: NO_STORED_CUSTOMER_REASON } : {}),
     message: noStoredCustomer
       ? "This tenant has a Stripe subscription but no Stripe customer on file, so the subscription's owner can't be confirmed. Check the tenant's billing record before cancelling."
       : "This subscription belongs to a different Stripe customer. Check the tenant's billing record before cancelling.",
@@ -94,9 +98,15 @@ export interface StripeGateDeps {
   ) => Promise<unknown>;
 }
 
-/** Stripe rejected the API key itself (a retry cannot help): the environment is not connected. */
+/**
+ * Stripe rejected the API key itself, or it lacks permission for the read (401 / 403, a retry cannot help): the
+ * environment is not connected for this check.
+ */
 const isBadKey = (e: { type?: string; statusCode?: number } | undefined): boolean =>
-  e?.statusCode === 401 || e?.type === "StripeAuthenticationError";
+  e?.statusCode === 401 ||
+  e?.statusCode === 403 ||
+  e?.type === "StripeAuthenticationError" ||
+  e?.type === "StripePermissionError";
 
 /**
  * One Stripe read with the gate's short timeout and ONE retry. Resolves null when Stripe answers 404 /
@@ -171,11 +181,13 @@ function assertSubscriptionBelongsToTenant(
  *    assertSubscriptionBelongsToTenant) or it is refused STRIPE_SUBSCRIPTION_OWNER_MISMATCH before its status counts.
  *  - a live status is refused (TENANT_CANCEL_SUBSCRIPTION_FIRST) - `paused` and `incomplete` can still come
  *    back, so they are not "ended".
- *  - Stripe unconfigured with a stored id, or a Stripe 401, fails closed as STRIPE_NOT_CONFIGURED.
+ *  - Stripe unconfigured with a stored id, or a Stripe 401 / 403, fails closed as STRIPE_NOT_CONFIGURED.
  *  - a subscription 404 is the same signal as a WRONG Stripe account / mode, so it is only trusted when the
  *    tenant's Stripe CUSTOMER is still there (read the same way): then it is allowed and `notFound` tells the
  *    caller to write the audit row. A customer that is ALSO 404 is refused with STRIPE_ACCOUNT_MISMATCH plus an
- *    ops alert ("key/mode mismatch suspected") and NEVER allowed.
+ *    ops alert ("key/mode mismatch suspected") and NEVER allowed. With NO stored customer (null or "") nothing can
+ *    be checked: refused STRIPE_SUBSCRIPTION_OWNER_MISMATCH (reason NO_STORED_CUSTOMER), no audit row.
+ *  - a Stripe 401 / 403 (bad key, StripeAuthenticationError / StripePermissionError) is never retried.
  *  - any other read that fails or times out twice is a retryable 409 (CONCURRENT_UPDATE, reason STRIPE_UNCONFIRMED).
  */
 export async function stripeGateBeforeTermination(
@@ -188,22 +200,27 @@ export async function stripeGateBeforeTermination(
     select: { stripeSubId: true, stripeCustomerId: true },
   });
   const stripeSubId = row?.stripeSubId ?? null;
+  const customerId = row?.stripeCustomerId || null; // "" is as absent as null
   if (!stripeSubId) return { stripeSubId: null, notFound: false };
   if (!deps.stripe.isConfigured) throw stripeNotConfiguredRefusal();
   const sub = await readStripeOrMissing(deps, id, `subscription ${stripeSubId}`, () =>
     deps.stripe.getSubscription(stripeSubId),
   );
   if (sub) {
-    assertSubscriptionBelongsToTenant(deps, id, stripeSubId, sub, row?.stripeCustomerId ?? null);
+    assertSubscriptionBelongsToTenant(deps, id, stripeSubId, sub, customerId);
     if (!isTerminalStripeSubscriptionStatus(sub.status)) throw cancelSubscriptionFirstRefusal();
     return { stripeSubId, notFound: false };
   }
-  const customerId = row?.stripeCustomerId ?? null;
-  const customer = customerId
-    ? await readStripeOrMissing(deps, id, `customer ${customerId}`, () =>
-        deps.stripe.getCustomer(customerId),
-      )
-    : null;
+  if (!customerId) {
+    // Nothing to compare against: a 404 here says nothing about the Stripe key or mode, so no ops alert either.
+    deps.logger.warn(
+      `Tenant ${id}: Stripe subscription ${stripeSubId} not found and no stored customer to check; refusing`,
+    );
+    throw stripeSubscriptionOwnerMismatchRefusal(true);
+  }
+  const customer = await readStripeOrMissing(deps, id, `customer ${customerId}`, () =>
+    deps.stripe.getCustomer(customerId),
+  );
   if (!customer) {
     await deps.record(id, adminId, AdminAuditAction.STRIPE_KEY_MODE_MISMATCH, {
       message: "Stripe key/mode mismatch suspected",

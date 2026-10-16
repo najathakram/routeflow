@@ -72,7 +72,10 @@ describe("report-477-sub-without-customer.mjs", () => {
   });
 
   it("selects subscription-without-customer only, and --detail returns tenant ids and nothing else", () => {
-    expect(source).toContain('s."stripeSubId" IS NOT NULL AND s."stripeCustomerId" IS NULL');
+    // the gate treats an empty-string customer id as absent, so the count must too
+    expect(source).toContain(
+      `s."stripeSubId" IS NOT NULL AND (s."stripeCustomerId" IS NULL OR s."stripeCustomerId" = '')`,
+    );
     const rows = [{ tenantId: "11111111-aaaa", slug: "acme", status: "ACTIVE" }];
     const r = node(
       [

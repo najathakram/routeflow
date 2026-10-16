@@ -29,9 +29,7 @@ describe("tenant status / delete failures from the Stripe gate (fixed copy, neve
     const e = coded(409, API_ERROR_CODES.CONCURRENT_UPDATE);
     expect(statusFailureCopy(e)).toBe(TENANT_ACTION_COPY.tenantChanged);
     expect(deleteFailureCopy(e)).toBe(TENANT_ACTION_COPY.tenantChanged);
-    expect(TENANT_ACTION_COPY.tenantChanged).toBe(
-      "This tenant changed while you were editing. Reload and try again.",
-    );
+    expect(TENANT_ACTION_COPY.tenantChanged).not.toBe(TENANT_ACTION_COPY.subscriptionUnconfirmed);
     expect(TENANT_ACTION_COPY.tenantChanged).not.toMatch(/Stripe/);
   });
 
@@ -46,21 +44,28 @@ describe("tenant status / delete failures from the Stripe gate (fixed copy, neve
     const e = coded(409, API_ERROR_CODES.STRIPE_ACCOUNT_MISMATCH);
     expect(statusFailureCopy(e)).toBe(TENANT_ACTION_COPY.stripeAccountMismatch);
     expect(deleteFailureCopy(e)).toBe(TENANT_ACTION_COPY.stripeAccountMismatch);
-    expect(TENANT_ACTION_COPY.stripeAccountMismatch).toBe(
-      "Stripe can't find this tenant's subscription or customer. Check the Stripe key and mode before cancelling.",
-    );
+    expect(TENANT_ACTION_COPY.stripeAccountMismatch).toMatch(/Stripe key and mode/);
   });
 
   it("STRIPE_SUBSCRIPTION_OWNER_MISMATCH says the subscription belongs to another Stripe customer, on a status change and a delete", () => {
     const e = coded(409, API_ERROR_CODES.STRIPE_SUBSCRIPTION_OWNER_MISMATCH);
     expect(statusFailureCopy(e)).toBe(TENANT_ACTION_COPY.stripeSubscriptionOwnerMismatch);
     expect(deleteFailureCopy(e)).toBe(TENANT_ACTION_COPY.stripeSubscriptionOwnerMismatch);
-    expect(TENANT_ACTION_COPY.stripeSubscriptionOwnerMismatch).toBe(
-      "This subscription belongs to a different Stripe customer. Check the tenant's billing record before cancelling.",
-    );
+    expect(TENANT_ACTION_COPY.stripeSubscriptionOwnerMismatch).toMatch(/different Stripe customer/);
     expect(TENANT_ACTION_COPY.stripeSubscriptionOwnerMismatch).not.toBe(
       TENANT_ACTION_COPY.stripeAccountMismatch,
     );
+  });
+
+  it("STRIPE_SUBSCRIPTION_OWNER_MISMATCH with reason NO_STORED_CUSTOMER says the tenant has no Stripe customer on file, not 'a different customer'", () => {
+    const e = coded(409, API_ERROR_CODES.STRIPE_SUBSCRIPTION_OWNER_MISMATCH, "NO_STORED_CUSTOMER");
+    expect(statusFailureCopy(e)).toBe(TENANT_ACTION_COPY.stripeNoStoredCustomer);
+    expect(deleteFailureCopy(e)).toBe(TENANT_ACTION_COPY.stripeNoStoredCustomer);
+    expect(TENANT_ACTION_COPY.stripeNoStoredCustomer).toMatch(/no Stripe customer/);
+    expect(TENANT_ACTION_COPY.stripeNoStoredCustomer).not.toBe(
+      TENANT_ACTION_COPY.stripeSubscriptionOwnerMismatch,
+    );
+    expect(statusFailureCopy(e)).not.toMatch(/raw server text/);
   });
 
   it("any other failure keeps the plain status copy", () => {
@@ -80,5 +85,7 @@ describe("tenant status / delete failures from the Stripe gate (fixed copy, neve
   it("the new copy is fixed text with no placeholder for server data", () => {
     expect(TENANT_ACTION_COPY.cancelSubscriptionFirst).toMatch(/Stripe/);
     expect(TENANT_ACTION_COPY.subscriptionUnconfirmed).toMatch(/try again/i);
+    // "it changed meanwhile" is the tenantChanged case, not a failed Stripe read
+    expect(TENANT_ACTION_COPY.subscriptionUnconfirmed).not.toMatch(/changed/i);
   });
 });

@@ -10,6 +10,7 @@
 import { Logger } from "@nestjs/common";
 import { PlatformAdminService } from "./platform-admin.service";
 import { createMockPrisma } from "../testing/prisma-mock";
+import { NO_STORED_CUSTOMER_REASON } from "./stripe-termination-gate";
 
 const TENANT_ID = "tenant-1";
 
@@ -184,19 +185,23 @@ describe.each(OPS)("%s - the shared Stripe gate", (_name, run) => {
   });
 
   describe("a stripeSubId but NO stripeCustomerId (#477b): the customer check cannot run", () => {
-    it("sub 404 + no customer id to check: refused STRIPE_ACCOUNT_MISMATCH + ops notice, NEVER allowed blind", async () => {
-      const { svc, prisma, stripe, auditLog } = make({ pre: "sub_1" }, { customer: null });
-      stripe.getSubscription.mockRejectedValue(missing);
-      const err: any = await run(svc).catch((e) => e);
-      expect(err.getStatus()).toBe(409);
-      expect(code(err)).toBe("STRIPE_ACCOUNT_MISMATCH");
-      expect(stripe.getCustomer).not.toHaveBeenCalled();
-      expect(written(prisma)).toBe(false);
-      const a = rows(auditLog, "STRIPE_KEY_MODE_MISMATCH");
-      expect(a).toHaveLength(1);
-      expect(a[0].meta).toMatchObject({ stripeSubId: "sub_1", stripeCustomerId: null });
-      expect(rows(auditLog, "STRIPE_SUB_NOT_FOUND_TERMINATED")).toHaveLength(0);
-    });
+    it.each([null, ""])(
+      "sub 404 + stored customer %p: refused as the no-stored-customer owner refusal (reason NO_STORED_CUSTOMER), NO key/mode audit row, never allowed blind",
+      async (customer) => {
+        const { svc, prisma, stripe, auditLog } = make({ pre: "sub_1" }, { customer });
+        stripe.getSubscription.mockRejectedValue(missing);
+        const err: any = await run(svc).catch((e) => e);
+        expect(err.getStatus()).toBe(409);
+        expect(code(err)).toBe("STRIPE_SUBSCRIPTION_OWNER_MISMATCH");
+        expect(err.getResponse().reason).toBe(NO_STORED_CUSTOMER_REASON);
+        expect(err.getResponse().message).toMatch(/no Stripe customer on file/);
+        expect(stripe.getCustomer).not.toHaveBeenCalled();
+        expect(written(prisma)).toBe(false);
+        expect(rows(auditLog, "STRIPE_KEY_MODE_MISMATCH")).toHaveLength(0);
+        expect(rows(auditLog, "STRIPE_SUB_NOT_FOUND_TERMINATED")).toHaveLength(0);
+        expect(auditLog).not.toHaveBeenCalled();
+      },
+    );
 
     it.each(["active", "past_due", "paused", "incomplete"])(
       "sub returned LIVE (%s): refused STRIPE_SUBSCRIPTION_OWNER_MISMATCH (ownership is judged first), nothing written",
@@ -205,6 +210,7 @@ describe.each(OPS)("%s - the shared Stripe gate", (_name, run) => {
         stripe.getSubscription.mockResolvedValue({ status, customer: "cus_x" });
         const err: any = await run(svc).catch((e) => e);
         expect(code(err)).toBe("STRIPE_SUBSCRIPTION_OWNER_MISMATCH");
+        expect(err.getResponse().reason).toBe(NO_STORED_CUSTOMER_REASON);
         expect(written(prisma)).toBe(false);
       },
     );
@@ -216,6 +222,7 @@ describe.each(OPS)("%s - the shared Stripe gate", (_name, run) => {
       expect(err.getStatus()).toBe(409);
       expect(code(err)).toBe("STRIPE_SUBSCRIPTION_OWNER_MISMATCH");
       expect(err.getResponse().message).toMatch(/no Stripe customer on file/);
+      expect(err.getResponse().reason).toBe(NO_STORED_CUSTOMER_REASON);
       expect(written(prisma)).toBe(false);
       expect(auditLog).not.toHaveBeenCalled();
       expect(prisma.tenantSubscription.update).not.toHaveBeenCalled();
@@ -233,9 +240,10 @@ describe.each(OPS)("%s - the shared Stripe gate", (_name, run) => {
       expect(written(prisma)).toBe(false);
     });
 
-    it("every Stripe read is outside the transaction", async () => {
-      const { svc, stripeCalls } = make({ pre: "sub_1" }, { customer: null });
+    it("the refusal comes before any transaction, and every Stripe read is outside one", async () => {
+      const { svc, prisma, stripeCalls } = make({ pre: "sub_1" }, { customer: null });
       await run(svc).catch(() => undefined); // refused (no stored customer); the harness still records each Stripe read
+      expect(prisma.$transaction).not.toHaveBeenCalled(); // refused before any transaction opened
       expect(stripeCalls.length).toBeGreaterThan(0);
       expect(stripeCalls.every((inside) => inside === false)).toBe(true);
     });
@@ -261,6 +269,7 @@ describe.each(OPS)("%s - the shared Stripe gate", (_name, run) => {
       expect(err.getResponse().message).toBe(
         "This subscription belongs to a different Stripe customer. Check the tenant's billing record before cancelling.",
       );
+      expect(err.getResponse().reason).toBeUndefined(); // only the no-stored-customer refusal carries a reason
       noWrites(prisma, auditLog);
       const w = warned().filter((m) => m.includes("cus_other"));
       expect(w).toHaveLength(1);
@@ -306,7 +315,7 @@ describe.each(OPS)("%s - the shared Stripe gate", (_name, run) => {
     });
 
     it("metadata.tenantId matching the tenant, or absent, with a matching customer: allowed as today", async () => {
-      for (const metadata of [undefined, {}, { tenantId: TENANT_ID }]) {
+      for (const metadata of [undefined, null, {}, { tenantId: "" }, { tenantId: TENANT_ID }]) {
         const { svc, prisma, stripe } = make({ pre: "sub_1" });
         stripe.getSubscription.mockResolvedValue({
           status: "canceled",
@@ -421,6 +430,21 @@ describe.each(OPS)("%s - the shared Stripe gate", (_name, run) => {
     expect(stripe.getSubscription).toHaveBeenCalledTimes(1);
     expect(written(prisma)).toBe(false);
   });
+
+  it.each([
+    ["statusCode 403", { statusCode: 403 }],
+    ["type StripePermissionError", { type: "StripePermissionError" }],
+  ])(
+    "a Stripe permission error (%s) is the bad-key refusal at once, not retried",
+    async (_n, perm) => {
+      const { svc, prisma, stripe } = make({ pre: "sub_1" });
+      stripe.getSubscription.mockRejectedValue(perm);
+      const err: any = await run(svc).catch((e) => e);
+      expect(code(err)).toBe("STRIPE_NOT_CONFIGURED");
+      expect(stripe.getSubscription).toHaveBeenCalledTimes(1);
+      expect(written(prisma)).toBe(false);
+    },
+  );
 
   it("a Stripe 401 on the customer read (after a sub 404) is the same coded refusal, not retried", async () => {
     const { svc, prisma, stripe } = make({ pre: "sub_1" });

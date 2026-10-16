@@ -1,10 +1,12 @@
 /**
- * READ-ONLY count for #477: tenants that have a stored Stripe SUBSCRIPTION id but NO Stripe CUSTOMER id.
+ * READ-ONLY count for #477: tenants that have a stored Stripe SUBSCRIPTION id but NO Stripe CUSTOMER id
+ * (NULL or an empty string - the gate treats both as absent).
  * The admin CANCELLED / delete gate confirms a subscription 404 is not a wrong-key/mode artefact by reading the
  * tenant's Stripe customer; with no customer id stored that check cannot run, so a subscription Stripe does
- * not return can never be told apart from a key/mode mismatch and the gate refuses (STRIPE_ACCOUNT_MISMATCH).
- * A subscription Stripe DOES return is refused too (STRIPE_SUBSCRIPTION_OWNER_MISMATCH): with no stored customer
- * its owner cannot be confirmed, and the subscription's own customer is never adopted as the tenant's.
+ * not return can never be told apart from a key/mode mismatch, so the gate refuses it
+ * (STRIPE_SUBSCRIPTION_OWNER_MISMATCH, reason NO_STORED_CUSTOMER, no ops alert). A subscription Stripe DOES return
+ * is refused the same way: with no stored customer its owner cannot be confirmed, and the subscription's own
+ * customer is never adopted as the tenant's.
  * This counts the population the ops path (#477b) applies to, so the owner can see how many tenants it affects.
  *
  * OWNER-ONLY. Never run from an implementation session or by a lead: the owner runs it via
@@ -81,7 +83,7 @@ async function main() {
       `SELECT s."tenantId", t.slug, t.status::text AS status
          FROM "TenantSubscription" s
          JOIN "Tenant" t ON t.id = s."tenantId"
-        WHERE s."stripeSubId" IS NOT NULL AND s."stripeCustomerId" IS NULL
+        WHERE s."stripeSubId" IS NOT NULL AND (s."stripeCustomerId" IS NULL OR s."stripeCustomerId" = '')
           AND t."deletedAt" IS NULL`,
     );
     const blocks = {
