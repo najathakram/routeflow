@@ -71,7 +71,7 @@ const STATUS_OPTIONS: { value: string; label: string }[] = [
   { value: "PENDING", label: "Pending" },
   { value: "CONFIRMED", label: "Confirmed" },
   { value: "OUT_FOR_DELIVERY", label: "Out for Delivery" },
-  { value: "PARTIALLY_DELIVERED", label: "Partially Delivered" },
+  { value: "PARTIALLY_DELIVERED", label: "Partly delivered" },
   { value: "DELIVERED", label: "Delivered" },
   { value: "CANCELLED", label: "Cancelled" },
 ];
@@ -529,6 +529,13 @@ export default function OrdersPage() {
   }, [urlFilters, statusFilter, urgentOnly, dateFrom, dateTo, productIdFilter, fulfillPathFilter]);
 
   const applyView = (view: (typeof SAVED_VIEWS)[0]) => {
+    // A status-only pill replaces just the status, like the dropdown it replaced: the date range,
+    // product and fulfilment filters (and ?shipView) stay. Every other view starts clean.
+    const viewKeys = Object.keys(view.filters);
+    if (viewKeys.length === 1 && viewKeys[0] === "status") {
+      setFilter("status", view.filters.status as string);
+      return;
+    }
     clearFilters();
     for (const [k, val] of Object.entries(view.filters)) {
       setFilter(k as never, val as string | boolean);
