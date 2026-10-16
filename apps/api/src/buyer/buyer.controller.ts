@@ -858,10 +858,11 @@ export class BuyerController {
       ...(dto.forceNew ? [{ skipAutoMerge: true }] : []),
     );
     if (dto.forceNew) {
-      // B1239: no consolidation. It is what folded this order into the pending one (deleting it and burning
-      // its number), and it stranded the Idempotency-Key on the survivor, so a duplicate submit then 409ed or
-      // re-applied the cart. A kept-apart order has nothing to consolidate; the key stays on it, so a
-      // duplicate submit replays THIS order (create()'s key replay).
+      // B1239: no consolidation. The sweep's winner is the newest order, so the NEW order won and the
+      // PRE-EXISTING pending order was the loser: deleted, its number burned, its lines moved into the new
+      // order. A duplicate tap then met a changed cart in assertReplayOfCart (409 / cart mismatch). A
+      // kept-apart order has nothing to consolidate; the pending order is untouched and the key stays on
+      // THIS order, so a duplicate submit replays it (create()'s key replay).
       return toCustomerOrder(created);
     }
     // Newly-created order may share a customer with pre-existing PENDINGs —
