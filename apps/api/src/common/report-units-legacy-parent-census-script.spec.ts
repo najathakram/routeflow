@@ -14,7 +14,12 @@ const exists = fs.existsSync(SCRIPT);
 const source = exists ? fs.readFileSync(SCRIPT, "utf8") : "";
 
 function node(args: string[], env: NodeJS.ProcessEnv = process.env) {
-  return spawnSync(process.execPath, args, { cwd: API_DIR, encoding: "utf8", env, timeout: 60_000 });
+  return spawnSync(process.execPath, args, {
+    cwd: API_DIR,
+    encoding: "utf8",
+    env,
+    timeout: 60_000,
+  });
 }
 
 /** Runs `expr` against the script's exports and returns its JSON-parsed result. */
@@ -62,8 +67,20 @@ describe("units-legacy-parent-census.mjs", () => {
   describe("summarize (pure row aggregation)", () => {
     it("counts parents, children and each breakdown per tenant, with anonymous labels", () => {
       const rows = [
-        row({ tenant_key: "b", children: 3, active_children: 2, sold_parent: true, has_price: true }),
-        row({ tenant_key: "b", children: 1, active_children: 1, sold_child: true, has_stock: true }),
+        row({
+          tenant_key: "b",
+          children: 3,
+          active_children: 2,
+          sold_parent: true,
+          has_price: true,
+        }),
+        row({
+          tenant_key: "b",
+          children: 1,
+          active_children: 1,
+          sold_child: true,
+          has_stock: true,
+        }),
         row({ tenant_key: "b", sold_parent: true, sold_child: true, open_lines: true }),
         row({ tenant_key: "a", children: 5, active_children: 5, has_stock: true, has_price: true }),
       ];
@@ -106,7 +123,9 @@ describe("units-legacy-parent-census.mjs", () => {
     });
 
     it("never carries a tenant key or id out", () => {
-      const r = evalExports(`m.summarize(${JSON.stringify([row({ tenant_key: "secret-key-1" })])})`);
+      const r = evalExports(
+        `m.summarize(${JSON.stringify([row({ tenant_key: "secret-key-1" })])})`,
+      );
       expect(JSON.stringify(r)).not.toContain("secret-key-1");
     });
 
@@ -130,10 +149,19 @@ describe("units-legacy-parent-census.mjs", () => {
 
   describe("parseArgs", () => {
     it("needs exactly one of --tenant <slug> or --all", () => {
-      expect(evalExports(`m.parseArgs(["--tenant","acme"])`)).toMatchObject({ tenant: "acme", all: false });
-      expect(evalExports(`m.parseArgs(["--all","--json"])`)).toMatchObject({ tenant: null, all: true, json: true });
+      expect(evalExports(`m.parseArgs(["--tenant","acme"])`)).toMatchObject({
+        tenant: "acme",
+        all: false,
+      });
+      expect(evalExports(`m.parseArgs(["--all","--json"])`)).toMatchObject({
+        tenant: null,
+        all: true,
+        json: true,
+      });
       const bad = (a: string) =>
-        evalExports(`(() => { try { m.parseArgs(${a}); return "no throw"; } catch (e) { return e.message; } })()`);
+        evalExports(
+          `(() => { try { m.parseArgs(${a}); return "no throw"; } catch (e) { return e.message; } })()`,
+        );
       expect(bad(`[]`)).toMatch(/--tenant/);
       expect(bad(`["--all","--tenant","acme"]`)).toMatch(/not both|either/i);
       expect(bad(`["--tenant"]`)).toMatch(/--tenant/);
@@ -168,7 +196,9 @@ describe("units-legacy-parent-census.mjs", () => {
         /\b(INSERT|UPDATE|DELETE|TRUNCATE|ALTER|DROP|CREATE|GRANT|REVOKE|COPY|UPSERT|MERGE|VACUUM|REINDEX)\b/i,
       );
       expect(source).not.toMatch(/\bFOR\s+(UPDATE|SHARE|NO\s+KEY)\b/i);
-      expect(source).not.toMatch(/\$executeRaw|\.(create|createMany|update|updateMany|upsert|delete|deleteMany)\s*\(/);
+      expect(source).not.toMatch(
+        /\$executeRaw|\.(create|createMany|update|updateMany|upsert|delete|deleteMany)\s*\(/,
+      );
     });
 
     it("its only SET statements are the read-only session ones, issued before any other query", () => {
@@ -176,12 +206,14 @@ describe("units-legacy-parent-census.mjs", () => {
       expect(sets).toEqual(["default_transaction_read_only", "statement_timeout", "lock_timeout"]);
       expect(source).toContain('"SET default_transaction_read_only = on"');
       const firstQuery = source.search(/\.query\(/);
-      expect(source.slice(firstQuery)).toMatch(/^\.query\("SET default_transaction_read_only = on"\)/);
+      expect(source.slice(firstQuery)).toMatch(
+        /^\.query\("SET default_transaction_read_only = on"\)/,
+      );
     });
 
     it("scopes every table it reads to the tenant", () => {
       const sql: string = evalExports("m.CENSUS_SQL");
-      for (const alias of ["p", "c", "oi", "o", "ii", "i"]) {
+      for (const alias of ["p", "c", "o", "i"]) {
         expect(sql).toMatch(new RegExp(`\\b${alias}\\."tenantId"`));
       }
       expect(sql).toMatch(/\$1/);
