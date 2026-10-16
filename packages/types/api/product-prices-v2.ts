@@ -17,7 +17,8 @@ export type PriceTierNumber = 1 | 2 | 3 | 4 | 5;
 /** One product cell to write: pricing `CellPatch` exactly. The edited cells and every TICKED tier offer. */
 export interface PriceCellPatch {
   ref: string;
-  tier: PriceTierNumber;
+  /** 1 = Retail, 2..5 = tiers (PriceTier). */
+  tier: number;
   /** A positive price, or null = Auto (clear the set price). */
   to: number | null;
 }
@@ -25,7 +26,7 @@ export interface PriceCellPatch {
 /** A follower's Keep (pricing `Pin`): the Auto cell is pinned as SET at the value it shows now (P7). */
 export interface PriceCellKeep {
   ref: string;
-  tier: PriceTierNumber;
+  tier: number;
   value: number;
 }
 
@@ -41,22 +42,24 @@ export interface PriceCellKeep {
 export interface CustomerPriceMove {
   customerId: string;
   ref: string;
-  tier: PriceTierNumber;
+  tier: number;
   from: number | null;
   to: number | null;
 }
 
 /**
- * POST /products/:productId/prices: everything one Save commits, in ONE transaction (SA-799 b). Aligned to K3's draft
+ * PATCH /products/:productId/prices: everything one Save commits, in ONE transaction (SA-799 b). Aligned to K3's draft
  * payload `{ productId, patches, orderUnit, keeps }`.
  */
 export interface SavePricesRequest {
-  /** Optional echo of the path id; when sent it must equal it (400 otherwise). */
-  productId?: string;
   /** The product's priceRevision the draft was built on (ProductPriceGridDto.revision). R-1 CAS -> 409 LADDER_REVISION_STALE. */
   expectedRevision: number;
-  /** ProductPriceGridDto.priceState the draft was built on: R-1's value compare-and-set over the price-bearing state. */
-  expectedPriceState: string;
+  /**
+   * OPTIONAL (builders' shape has no field for it). ProductPriceGridDto.priceState the draft was built on: R-1's value
+   * compare-and-set over the price-bearing state. Without it the server can only check the revision, which SA-796 R-1
+   * says is not enough while legacy writers skip the bump: open item for the lead (see SPRINT-CONTRACT 9).
+   */
+  expectedPriceState?: string;
   /** At least one of patches / keeps / customerMoves is non-empty. A (ref, tier) appears at most once across patches+keeps. */
   patches: PriceCellPatch[];
   keeps?: PriceCellKeep[];
@@ -67,7 +70,7 @@ export interface SavePricesRequest {
    * Until U-1 lands the server refuses any value that differs from the current one with the existing 409
    * PRICING_RULES_NOT_READY (assertOrderUnitSwitchAllowed), nothing written. Omit or send the current ref otherwise.
    */
-  orderUnit?: string | null;
+  orderUnit?: string;
 }
 
 /** What Undo would write: the inverse of a save (applyCellPatches' `undo`, plus each customer move reversed). */
@@ -82,17 +85,17 @@ export interface SavePricesResponse {
   revision: number;
   /** The one audit row of this write; Undo names it. */
   auditId: string;
-  /** The inverse write, for Undo's preview when anything changed since (SA-799 b). */
-  undo: SavePricesUndo;
+  /** Optional: the inverse write, for Undo's preview when anything changed since (SA-799 b). */
+  undo?: SavePricesUndo;
   /** The fresh grid (same read model as GET price-grid), so the client never refetches after a save. */
   grid: ProductPriceGridDto;
 }
 
-/** POST /products/:productId/prices/undo. Precondition = the CURRENT grid's revision + state, as a save. */
+/** POST /products/:productId/prices/undo. Precondition = the CURRENT grid's revision (+ state when sent), as a save. */
 export interface UndoPricesRequest {
   auditId: string;
   expectedRevision: number;
-  expectedPriceState: string;
+  expectedPriceState?: string;
 }
 
 /** The 409 body of LADDER_REVISION_STALE (save and undo). Nothing was written; reload the grid. */
@@ -103,7 +106,7 @@ export interface LadderRevisionStaleBody {
   revision: number;
 }
 
-/** The 400 body of PRICE_EDIT_INVALID: the pricing core's refusals (validateSetPrice, the anchor's Retail). */
+/** The 400 body of PRICE_EDIT_INVALID (PATCH prices): the pricing core's refusals (validateSetPrice, the anchor's Retail). */
 export interface PriceEditInvalidBody {
   code: typeof API_ERROR_CODES.PRICE_EDIT_INVALID;
   message: string;
@@ -152,14 +155,23 @@ export interface CustomerUnitPriceRowDto {
   source: CustomerUnitPriceSource;
 }
 
-/** GET /products/:productId/customers/:customerId/unit-prices: the product-page Customer view (V10/V11). */
-export interface CustomerUnitPricesResponse {
+/** One product in the customer view: its unit rows priced for this customer. */
+export interface CustomerProductUnitPricesDto {
   productId: string;
-  customerId: string;
-  customerName: string;
-  tier: PriceTierNumber;
+  productName: string;
   /** The customer's own order unit for this product, or null (the tier's anchor applies). */
   orderUnit: string | null;
   revision: number;
   rows: CustomerUnitPriceRowDto[];
+}
+
+/**
+ * GET /customers/:customerId/unit-prices[?productId=] (K6, V10/V11). One entry per product; `?productId=` narrows to
+ * one (the product-page Customer view). Without it: the products this customer has a CustomerUnitPrice row for.
+ */
+export interface CustomerUnitPricesResponse {
+  customerId: string;
+  customerName: string;
+  tier: PriceTierNumber;
+  products: CustomerProductUnitPricesDto[];
 }
