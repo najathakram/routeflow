@@ -39,6 +39,10 @@ import {
   signableImageKeys,
 } from "./product-image-keys";
 import { UpdateProductDto } from "./dto/update-product.dto";
+import {
+  assertCostingMethodAllowed,
+  effectiveCostingMethod,
+} from "../inventory/costing-method-policy";
 import { BulkAssignParentDto } from "./dto/bulk-assign-parent.dto";
 import { BulkSetMsrpDto } from "./dto/bulk-set-msrp.dto";
 import { ListProductsDto } from "./dto/list-products.dto";
@@ -161,7 +165,8 @@ function normalizeMsrpForWrite(v: string | null | undefined): string | null | un
  */
 const TENANT_COSTING_TO_PRODUCT: Record<string, CostingMethod> = {
   WEIGHTED_AVERAGE: CostingMethod.AVCO,
-  FIFO: CostingMethod.FIFO,
+  // SA-804 (1): a tenant whose stored default is the retired FIFO gets AVCO on a NEW product; it never sets FIFO.
+  FIFO: CostingMethod.AVCO,
   LAST_COST: CostingMethod.LAST_COST,
 };
 
@@ -284,7 +289,7 @@ export class ProductsService {
    * never re-costed.
    */
   private async resolveCostingMethod(explicit?: CostingMethod): Promise<CostingMethod | undefined> {
-    if (explicit) return explicit;
+    if (explicit) return explicit; // already refused if retired: create() asserts before this runs
     const tenantMethod = await this.systemConfig.get("costing.method");
     return TENANT_COSTING_TO_PRODUCT[tenantMethod ?? ""] ?? undefined;
   }
@@ -778,6 +783,7 @@ export class ProductsService {
     options?: { suppressEmit?: boolean; actorId?: string | null; actorName?: string | null },
   ) {
     assertSafeProductNames(dto); // B964-2: a formula-led name/variantName is refused before any read or write
+    assertCostingMethodAllowed(dto.costingMethod); // SA-804 (1): FIFO/LIFO are retired: 400 COSTING_METHOD_RETIRED before any read or write
     // B990: the typed free-text category too, UNCONDITIONALLY: even with a structured subcategory chosen or a parent without one
     // the written value can still be the typed text, and checking at the top is before any read or write.
     if (dto.category !== undefined) assertSafeProductCategory(dto.category);
@@ -912,8 +918,10 @@ export class ProductsService {
     // #2717 M1 (SA-572b Q4/Q6): the resolved costingMethod is computed OUTSIDE the transaction
     // below (it may call resolveCostingMethod, which itself reads/writes SystemConfig) so the tx
     // body stays a plain product-create + barcode-row sync.
+    // SA-804 (1): a variant that inherits a parent still stored as FIFO/LIFO takes the AVCO that parent is
+    // costed as, never the retired value (an explicit retired dto value was already refused at the top).
     const resolvedCostingMethod = parent
-      ? (dto.costingMethod ?? parent.costingMethod)
+      ? (dto.costingMethod ?? effectiveCostingMethod(parent.costingMethod))
       : await this.resolveCostingMethod(dto.costingMethod);
     const resolvedUnitsPerBox = dto.unitsPerBox ?? parent?.unitsPerBox ?? undefined;
     const tenantId = this.prisma.getTenantId();
@@ -1046,6 +1054,8 @@ export class ProductsService {
       await this.assertReorderAllowed();
     }
     const existing = await this.findOne(id);
+    // SA-804 (1): FIFO/LIFO are retired: refuse SETTING one (400 COSTING_METHOD_RETIRED) before any write.
+    assertCostingMethodAllowed(dto.costingMethod, existing.costingMethod);
     if (
       dto.deactivateHolderIds?.length &&
       !(existing.isActive === false && dto.isActive === true)
@@ -1184,6 +1194,11 @@ export class ProductsService {
     // `where: any` Prisma clauses elsewhere in this file.
     const data: any =
       dto.name !== undefined && effectiveParentId ? { ...dto, variantName: dto.name } : { ...dto };
+    // SA-804 (1): echoing the product's own stored FIFO/LIFO back is a no-op, so it is dropped from the write
+    // instead of failing a whole-object save (a different retired value was already refused above).
+    if (dto.costingMethod !== undefined && dto.costingMethod === existing.costingMethod) {
+      delete data.costingMethod;
+    }
     // Not a column: the one-tx reactivation door reads it from `dto` (see deactivateReactivationHolders).
     delete data.deactivateHolderIds;
     // Not a column either: B1213's family-deactivation confirmation, read from `dto` inside the tx.

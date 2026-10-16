@@ -730,6 +730,12 @@ export const API_ERROR_CODES = {
    * written (Perms PR1 M2).
    */
   LAST_TENANT_ADMIN: "LAST_TENANT_ADMIN",
+  /**
+   * 400 from POST/PATCH /products and PATCH /settings/margin: the request tried to SET the costing method FIFO or LIFO,
+   * which are retired (a stored FIFO/LIFO is costed as average cost). Use AVCO, STANDARD or LAST_COST. Fixed body;
+   * nothing was written (SA-804 (1), B1232).
+   */
+  COSTING_METHOD_RETIRED: "COSTING_METHOD_RETIRED",
 } as const;
 
 /** The `flag` of a PLAN_GATE body that gates a count (a meter), not a feature flag. Not an error code. */
