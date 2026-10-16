@@ -163,7 +163,8 @@ describeDb("B568 Zoho stock sync is atomic and serialized with sales (real Postg
   }
 
   /** Make the NEXT tenantTransaction's stockMovement.create throw (the update before it is in the same tx). */
-  function breakNextMovementCreate() {
+  function breakNextMovementCreate(): { fired: number } {
+    const state = { fired: 0 };
     const real = prisma.tenantTransaction.bind(prisma);
     jest.spyOn(prisma, "tenantTransaction").mockImplementationOnce(((fn: any, opts: any) =>
       real(
@@ -176,6 +177,7 @@ describeDb("B568 Zoho stock sync is atomic and serialized with sales (real Postg
                       get: (d, m) =>
                         m === "create"
                           ? async () => {
+                              state.fired++;
                               throw new Error("forced stockMovement.create failure");
                             }
                           : typeof d[m] === "function"
@@ -187,19 +189,23 @@ describeDb("B568 Zoho stock sync is atomic and serialized with sales (real Postg
           ),
         opts,
       )) as any);
+    return state;
   }
 
   it("(1) a stockMovement.create that throws leaves currentStock unchanged and writes no row; the re-import then writes the ADJUSTMENT", async () => {
     const { tenantId, userId, productId, sku } = await seed("atomic", 100);
     const csv = `Item Name,SKU,Closing Stock\nAcme Widget ${sku},${sku},80\n`;
 
-    breakNextMovementCreate();
+    const forced = breakNextMovementCreate();
     const failed = await tenantCtx.run(tenantId, () =>
       importService.importInventory(Buffer.from(csv), userId),
     );
+    // the injected failure must be what skipped the row (not some earlier break in the wrapper)
+    expect(forced.fired).toBe(1);
     expect(failed.updated).toBe(0);
     expect(failed.skipped).toBe(1);
-    // pre-fix: the counter already read 80 here with no ADJUSTMENT row (permanent gap)
+    // pre-fix the writes were ambient (no tx), so the injection never reached them: the run ended at
+    // stock 80 with an ADJUSTMENT row; the permanent gap needed a real movement failure after the update
     expect(await drift(productId)).toEqual({ stock: 100, ledger: 100, movements: 1, drift: 0 });
 
     const rerun = await tenantCtx.run(tenantId, () =>
@@ -230,7 +236,8 @@ describeDb("B568 Zoho stock sync is atomic and serialized with sales (real Postg
         importService.importInventory(Buffer.from(csv), userId),
       );
       // ENTRY CONDITION, proven not timed: the import's stock tx is BLOCKED on T2's Product lock (it
-      // pre-read currentStock = 100 by sku before the lock; pre-fix it never blocked at all).
+      // pre-read currentStock = 100 by sku before the lock). Pre-fix the ambient UPDATE also blocked
+      // on T2's lock, but then SET 80 over T2's 90 and wrote −20 from the stale read: drift 10.
       for (let i = 0; i < 400 && !sawBlocked; i++) {
         const { rows } = await t2.query(
           `SELECT count(*)::int AS n FROM pg_stat_activity WHERE $1 = ANY(pg_blocking_pids(pid))`,
