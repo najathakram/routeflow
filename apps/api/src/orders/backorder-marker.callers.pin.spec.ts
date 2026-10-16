@@ -18,7 +18,7 @@ import { join } from "path";
  *                                                 a replace-all: "recreated", see NONE)
  *   - orders.service.ts at-door CR approval       approveChangeRequestAtStop
  *  NONE (writes nothing; the marker is a fact of the sale)
- *   - orders.service.ts demote (PENDING -> DRAFT) and cancel (final = no lines)
+ *   - orders.service.ts demote (PENDING -> DRAFT), cancel and deleteOrder (final = no lines)
  *   - recreate-mode edits (B1167): new line ids, the marker is lost, documented
  *   - pickup-complete / batch-ship: changeStatus to DELIVERED / SHIPPED, no stock helper at all
  *  CARRIES: the merge fold (buildMergeLineWrites) - pinned in backorder-marker-merge.spec.ts.

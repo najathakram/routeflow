@@ -51,4 +51,23 @@ describeDb("O6b / B284: delete releases stock exactly once, real Postgres", () =
     ]);
     await expectLedgerConsistent(w.tenantId, [p]);
   }, 120_000);
+
+  it("deleting an OUT_FOR_DELIVERY order of 5 with 2 already delivered returns only the 3 undelivered", async () => {
+    const p = await w.product("o6b-part", 10);
+    const { order, items } = await w.bookOrder({
+      status: "OUT_FOR_DELIVERY",
+      lines: [{ productId: p, qty: 5 }],
+    });
+    await w.prisma.orderItem.update({ where: { id: items[0].id }, data: { deliveredQty: 2 } });
+    expect(await w.stockOf(p)).toBe(5);
+
+    await w.inTenant(() => w.orders.deleteOrder(order.id, w.jwt));
+
+    expect(await w.stockOf(p)).toBe(8);
+    const back = (await w.movements(p)).filter((m) => m.notes === "DELETE");
+    expect(back.map((m) => [m.type, Number(m.quantity), Number(m.stockAfter)])).toEqual([
+      ["SALE", 3, 8],
+    ]);
+    await expectLedgerConsistent(w.tenantId, [p]);
+  }, 120_000);
 });

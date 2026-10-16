@@ -5282,6 +5282,9 @@ export class OrdersService implements OnApplicationBootstrap {
         tx,
         order.invoices.map((inv) => inv.id),
       );
+      // B284: the cancel's stock unwind (SALE row, notes DELETE) — Order, then Products, then the releases.
+      if (held)
+        await this.settleStockForEdit(tx, held.order, held.lines, [], user, { notes: "DELETE" });
       await this.creditNotes.releaseOrderCreditsInTx(tx, id);
       for (const inv of order.invoices) {
         await this.invoicesService.releaseWalletPaymentsInTx(tx, inv.id);
@@ -5321,9 +5324,6 @@ export class OrdersService implements OnApplicationBootstrap {
         await tx.transaction.delete({ where: { id: order.transaction.id } });
       }
       await tx.deliveryMutation.deleteMany({ where: { orderId: id } });
-      // B284: the cancel's own stock unwind (SALE movement, notes DELETE); product rows locked last.
-      if (held)
-        await this.settleStockForEdit(tx, held.order, held.lines, [], user, { notes: "DELETE" });
       await tx.orderItem.deleteMany({ where: { orderId: id } });
       await tx.order.delete({ where: { id } });
     });

@@ -23,30 +23,19 @@ describeDb("O6 / B284: delete of a live order returns its stock, real Postgres",
   }, 120_000);
 
   for (const status of ["PENDING", "CONFIRMED"] as const) {
-    it(`B284: deleting a ${status} order of 3 from stock 10 puts stock back to 10 (or refuses the delete)`, async () => {
+    it(`B284: deleting a ${status} order of 3 from stock 10 puts stock back to 10 `, async () => {
       const p = await w.product(`o6-${status}`, 10);
       const { order } = await w.bookOrder({ status, lines: [{ productId: p, qty: 3 }] });
       expect(await w.stockOf(p)).toBe(7); // fixture sanity: the order holds 3
 
-      const outcome = await w
-        .inTenant(() => w.orders.deleteOrder(order.id, w.jwt))
-        .then(() => "DELETED" as const)
-        .catch((e: any) =>
-          e?.getStatus?.() >= 400 && e.getStatus() < 500 ? "REFUSED" : Promise.reject(e),
-        );
+      // Ruling A is settled: the delete succeeds and returns the stock. A 4xx must fail this test.
+      await w.inTenant(() => w.orders.deleteOrder(order.id, w.jwt));
 
-      if (outcome === "REFUSED") {
-        // The accepted alternative: refused until cancel, so nothing moved and the order still stands.
-        expect(await w.stockOf(p)).toBe(7);
-        expect(await w.prisma.order.count({ where: { id: order.id } })).toBe(1);
-      } else {
-        // Deleted: the 3 are back, and the ledger says why (a SALE movement noting DELETE).
-        expect(await w.stockOf(p)).toBe(10);
-        const back = (await w.movements(p)).filter((m) => m.notes === "DELETE");
-        expect(back.map((m) => [m.type, Number(m.quantity), Number(m.stockAfter)])).toEqual([
-          ["SALE", 3, 10],
-        ]);
-      }
+      expect(await w.stockOf(p)).toBe(10);
+      const back = (await w.movements(p)).filter((m) => m.notes === "DELETE");
+      expect(back.map((m) => [m.type, Number(m.quantity), Number(m.stockAfter)])).toEqual([
+        ["SALE", 3, 10],
+      ]);
       await expectLedgerConsistent(w.tenantId, [p]);
     }, 120_000);
   }

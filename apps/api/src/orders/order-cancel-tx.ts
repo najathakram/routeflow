@@ -115,8 +115,10 @@ export async function cancelOrderInTx(
  * order: Order, then everything else; never take it after an Invoice row), reads the status UNDER the lock
  * and, for an order that holds stock, the lines still booked. Returns them for the caller to hand to
  * `settleStockForEdit(tx, order, lines, [], user, { notes: "DELETE" })` — the SAME unwind the cancel runs —
- * once its other locks are taken (product rows last). Returns null when nothing is booked: a DRAFT never
- * took a decrement, a CANCELLED order was already credited by its cancel, and a DELIVERED order's goods are gone.
+ * right after the read-only credit pre-check and BEFORE the credit/wallet releases (house order in
+ * common/product-locks.ts: Order, then Products, then everything else; the cancel settles before its
+ * releases too). Returns null when nothing is booked: a DRAFT never took a decrement, a CANCELLED order
+ * was already credited by its cancel, and a DELIVERED order's goods are gone.
  */
 export async function lockDeleteLines(tx: any, id: string) {
   // $queryRaw, not $executeRaw: deleteOrder's lock-order pins count its $executeRaw row locks (the Invoice NOWAIT one).

@@ -18,7 +18,7 @@ import { requireLocalDatabaseUrl } from "../../common/testing/db-spec";
 import { endLedgerHelperPool, seedOpeningRow } from "./ledger-consistency";
 import { Pool } from "pg";
 
-// eslint-disable-next-line @typescript-eslint/no-var-requires
+// eslint-disable-next-line @typescript-eslint/no-require-imports
 const { assertTestTenant } = require("../../../../../scripts/lib/test-tenants.cjs");
 
 /** The event a F07 office cancel records; named here so the fixture is not a second "CANCEL" writer (order-cancel-tx.structure.spec.ts). */
