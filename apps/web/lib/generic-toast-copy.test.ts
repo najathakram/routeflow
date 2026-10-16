@@ -146,6 +146,15 @@ describe("genericToastCopy: codes users rely on", () => {
     );
   });
 
+  it("ORDER_LINE_DELIVERED_LOCKED (B1234) is fixed copy through the shared constant, never the server message, no dash", () => {
+    const copy = genericToastCopy(
+      err(409, { code: API_ERROR_CODES.ORDER_LINE_DELIVERED_LOCKED, message: "raw server text" }),
+    );
+    expect(copy).toMatch(/delivered line can't be changed or removed.*Nothing was saved/);
+    expect(copy).not.toContain("raw server text");
+    expect(copy).not.toMatch(/[–—]/);
+  });
+
   it("ORDER_INVOICES_NEED_REVIEW (SA-687) shows the fixed review copy, never the server message", () => {
     expect(
       genericToastCopy(
@@ -531,6 +540,7 @@ describe("B986-7 fold: codes #3051 registered are spelled through API_ERROR_CODE
     "INVOICE_CHANGED_CONCURRENTLY",
     "INVOICE_TAX_STATE_STALE",
     "INVOICE_TOTAL_BELOW_PAID",
+    "ORDER_LINE_DELIVERED_LOCKED",
   ];
   it.each(REGISTERED)("%s is a computed [API_ERROR_CODES.X] key", (code) => {
     expect(src).toContain(`[API_ERROR_CODES.${code}]:`);

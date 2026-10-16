@@ -111,6 +111,9 @@
 //                    MERGE_IN_PROGRESS, LOCK_UNAVAILABLE (order/customer contention), PO_ALREADY_BILLED,
 //                    BILL_EXCEEDS_PO (vendor bills), INVOICE_HAS_UNSPENT_CREDIT (credit notes),
 //                    HANDOFF_CODE_INVALID (auth handoff).
+//   ORDER_LINE_DELIVERED_LOCKED — `body.code` of the 409 on PATCH /orders/:id/items when the edit would change or remove a
+//                    line that has been delivered (deliveredQty > 0) on a PARTIALLY_DELIVERED order (B1234, owner
+//                    ruling D-O2-a). Nothing is written; undelivered lines of the same order stay editable.
 //   B987-A — orders / routes / products / selling-restrictions refusals, now named here (value == key, byte-identical to what
 //                    was sent): the change-request family (CHANGE_REQUEST_*, CHANGE_WINDOW_CLOSED, EDIT_WINDOW_OPEN, INVALID_*),
 //                    order line and credit guards (LINE_ALREADY_DELIVERED, ORDER_BELOW_RETURN_CREDIT, CREDIT_LIMIT_EXCEEDED,
@@ -343,6 +346,7 @@ export const API_ERROR_CODES = {
   INVALID_RESOLUTION_FOR_TYPE: "INVALID_RESOLUTION_FOR_TYPE",
   LINE_PACK_UNDERIVABLE: "LINE_PACK_UNDERIVABLE",
   LINE_ALREADY_DELIVERED: "LINE_ALREADY_DELIVERED",
+  ORDER_LINE_DELIVERED_LOCKED: "ORDER_LINE_DELIVERED_LOCKED",
   ORDER_BELOW_RETURN_CREDIT: "ORDER_BELOW_RETURN_CREDIT",
   CREDIT_LIMIT_EXCEEDED: "CREDIT_LIMIT_EXCEEDED",
   MERGE_CHOICE_REQUIRED: "MERGE_CHOICE_REQUIRED",

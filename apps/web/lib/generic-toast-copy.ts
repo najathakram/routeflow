@@ -72,6 +72,9 @@ const CODE_COPY: Record<string, string> = {
   INVOICE_WITH_CARRIER_NO_LINE_CHANGE:
     "This order is already with the carrier, so its invoice lines and quantities can't change. Price, discount and notes still can.",
   [API_ERROR_CODES.ORDER_WITH_CARRIER_NO_CHANGE_REQUEST]: SHIPPED_ORDER_MESSAGE,
+  // B1234 (D-O2-a): a delivered line of a partly delivered order is locked; nothing was saved.
+  [API_ERROR_CODES.ORDER_LINE_DELIVERED_LOCKED]:
+    "A delivered line can't be changed or removed. Nothing was saved. Undelivered lines can still be edited.",
   [API_ERROR_CODES.ORDER_LINE_CHANGED]:
     "A line on this order changed while it was being billed. Nothing was billed. Try again.",
   [API_ERROR_CODES.ORDER_INVOICES_NEED_REVIEW]:

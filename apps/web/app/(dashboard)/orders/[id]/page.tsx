@@ -116,6 +116,8 @@ import { InvoicesNeedReviewBadge } from "./_components/InvoicesNeedReviewBadge";
 import { DemoteReasonModal } from "./_components/DemoteReasonModal";
 import { EditTaxLabel } from "./_components/EditTaxLabel";
 import { EditScanBar } from "./_components/EditScanBar";
+import { DeliveredLockedHint, DeliveredLockedQty } from "./_components/DeliveredLineLock";
+import { deliveredLockedLineIds } from "@/lib/order-line-lock";
 import {
   findLockedUnitLineEdit,
   LockedUnitLineBadge,
@@ -1058,6 +1060,7 @@ export function EditableLineItems({
   pricingReady,
   customer,
   orderId,
+  lockedLineIds,
 }: {
   items: EditItemState[];
   onChange: (items: EditItemState[]) => void;
@@ -1086,7 +1089,10 @@ export function EditableLineItems({
   customer?: { id: string; name?: string | null };
   /** The order being edited: its own lines are left out of that history (hunt2 F6). */
   orderId?: string;
+  /** B1234: delivered lines of a PARTIALLY_DELIVERED order; no editing control is rendered for them. */
+  lockedLineIds?: ReadonlySet<string>;
 }) {
+  const isLocked = (id: string) => lockedLineIds?.has(id) === true;
   const { toast } = useToast();
   // Scroll the just-scanned/added row into view so rapid scanning stays visible.
   const rowRefs = React.useRef<Map<string, HTMLDivElement>>(new Map());
@@ -1408,8 +1414,11 @@ export function EditableLineItems({
               <LockedUnitLineBadge display={item.lockedDisplay} />
             )}
 
+            {/* B1234: a delivered line shows its quantity as text, no input */}
+            {!item.cancelled && isLocked(item.id) && <DeliveredLockedQty qty={item.qty} />}
+
             {/* Qty input */}
-            {!item.cancelled && !item.countLocked && (
+            {!item.cancelled && !item.countLocked && !isLocked(item.id) && (
               <label className="flex items-center gap-1.5 text-[11px] font-medium uppercase tracking-[0.06em] text-navy/40">
                 Qty
                 <input
@@ -1434,7 +1443,8 @@ export function EditableLineItems({
             {!item.cancelled &&
               !item.isUnlisted &&
               !item.substituteProductId &&
-              !item.countLocked && (
+              !item.countLocked &&
+              !isLocked(item.id) && (
                 <OrderLineUnitPicker
                   line={{
                     productId: item.productId,
@@ -1504,7 +1514,7 @@ export function EditableLineItems({
                   <RotateCcw className="h-3 w-3" />
                   Undo
                 </button>
-              ) : (
+              ) : isLocked(item.id) ? null : (
                 <>
                   {!item.substituteProductId && !item.isUnlisted && !item.countLocked && (
                     <button
@@ -1560,7 +1570,7 @@ export function EditableLineItems({
 
           {/* Per-line price + discount editor — DRAFT catalog lines, or any unlisted
               line (its price is intrinsic, so always editable in edit mode). */}
-          {(canEditPrice || item.isUnlisted) && !item.cancelled && (
+          {(canEditPrice || item.isUnlisted) && !item.cancelled && !isLocked(item.id) && (
             <PriceEditRow
               basePrice={item.basePrice}
               unitPrice={item.unitPrice}
@@ -1597,6 +1607,8 @@ export function EditableLineItems({
               }
             />
           )}
+
+          {isLocked(item.id) && !item.cancelled && <DeliveredLockedHint />}
 
           {/* Per-line note — carried onto the invoice line (buyer-visible). */}
           {!item.cancelled && (
@@ -2993,6 +3005,7 @@ export default function OrderDetailPage() {
                   pricingReady={pricingReady}
                   customer={{ id: order.customerId, name: order.customer?.businessName }}
                   orderId={order.id}
+                  lockedLineIds={deliveredLockedLineIds(order.status, order.lineItems)}
                 />
 
                 {/* Live total preview */}
