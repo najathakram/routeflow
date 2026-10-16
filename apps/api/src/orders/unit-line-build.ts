@@ -413,7 +413,7 @@ export function buildUnitLine(input: {
   const snap = input.existing;
   const gone =
     snap != null &&
-    (snap.unitLabel ?? "").trim().toLowerCase() === label.trim().toLowerCase() &&
+    unitNameKey(snap.unitLabel ?? "") === unitNameKey(label) &&
     Number(snap.unitPrice) >= 0 &&
     !ladderNames(ladderProduct, units, label);
   let listPrice: number;
