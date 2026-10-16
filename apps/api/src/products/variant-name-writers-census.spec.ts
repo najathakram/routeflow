@@ -190,6 +190,11 @@ const BLOCKS: Record<string, BlockPin> = {
     why: "the Zoho inventory import creates a STANDALONE product (no parentProductId); a later reparent goes through update()",
     standalone: true,
   },
+  "src/inventory/testing/count-db-harness.ts": {
+    blocks: { "afterAll:createMany": 1 },
+    why: "test harness: seeds standalone 'Widget' products for the inventory count db specs",
+    standalone: true,
+  },
   "scripts/e2e-seed.js": {
     blocks: { "ensureCommerceFixtures:upsert": 1, "ensureUnitsFixture:upsert": 2 },
     why: "seeds standalone e2e fixture products",
