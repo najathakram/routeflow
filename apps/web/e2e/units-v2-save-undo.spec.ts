@@ -282,7 +282,7 @@ for (const vp of VIEWPORTS) {
       }
     });
 
-    test("switching the order unit then Save shows the PRICING_RULES_NOT_READY message", async ({
+    test("order unit switch is disabled in edit mode and a Save never sends orderUnit", async ({
       page,
       context,
     }, info) => {
@@ -292,26 +292,24 @@ for (const vp of VIEWPORTS) {
         await expect(page.getByTestId(ID.grid)).toBeVisible({ timeout: 20_000 });
         await page.locator(`[data-testid="${ID.btnEdit}"]:visible`).click();
         const select = page.getByTestId(ID.orderUnit);
-        const other = await select
-          .locator("option")
-          .evaluateAll(
-            (os, anchor) =>
-              (os as HTMLOptionElement[]).map((o) => o.value).find((v) => v !== anchor),
-            ref,
-          );
-        expect(other, "a boxed product offers a second order unit").toBeTruthy();
-        await select.selectOption(other!);
+        await expect(select).toBeVisible();
+        await expect(select).toHaveAttribute("aria-disabled", "true");
+        await expect(page.getByText("Available after units settings update").first()).toBeVisible();
 
-        const res = page.waitForResponse(
-          (r) => isWrite(id, "prices")(r.request()) && r.status() === 409,
-        );
+        // Picking is impossible: the control is not operable, so a forced pick fails or changes nothing.
+        const before = await select.inputValue();
+        await select.selectOption({ index: 1 }, { timeout: 2_000 }).catch(() => undefined);
+        await expect(select).toHaveValue(before);
+        await shot(page, info, "save-undo-order-unit-disabled");
+
+        // Other edits still save, and the body carries no orderUnit.
+        await input(page, ref).fill(String(NEXT));
+        const req = page.waitForRequest(isWrite(id, "prices"));
         await page.locator(`[data-testid="${ID.ebSave}"]:visible`).click();
-        const body = await (await res).json();
-        expect(JSON.stringify(body)).toContain("PRICING_RULES_NOT_READY");
-        await expect(page.getByTestId(ID.ebError)).toContainText(
-          "Changing the order unit is not available yet. Your other changes were not saved.",
-        );
-        await shot(page, info, "save-undo-rules-not-ready");
+        const body = (await req).postDataJSON();
+        expect("orderUnit" in body, "no orderUnit key in the POST body").toBe(false);
+        expect(body.patches.length).toBeGreaterThan(0);
+        await expect(status(page)).toContainText(/Saved/, { timeout: 15_000 });
       } finally {
         await retire(page, ctx, id);
       }
