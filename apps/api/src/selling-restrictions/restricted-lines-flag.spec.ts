@@ -1,4 +1,8 @@
-import { flagRestrictedLines, writeRestrictedLinesAudit } from "./restricted-lines-flag";
+import {
+  flagRestrictedLines,
+  flagSplitRestrictedLines,
+  writeRestrictedLinesAudit,
+} from "./restricted-lines-flag";
 
 /**
  * F-05 (#2093, owner ruling 2026-09-25) — the shared flag-never-block helper split/import lean
@@ -20,11 +24,13 @@ describe("flagRestrictedLines", () => {
 
   it("checks only the deduped catalog product ids (productless lines dropped)", async () => {
     await flagRestrictedLines({ restrictions, warn } as never, {
+      fulfilmentKind: "DELIVERY",
       tenantId: "t1",
       customerId: "c1",
       productIds: ["p-b", "p-b", null, undefined, "p-ok"],
     });
     expect(restrictions.checkLinesSellable).toHaveBeenCalledWith({
+      fulfilmentKind: "DELIVERY",
       tenantId: "t1",
       customerId: "c1",
       lines: [{ productId: "p-b" }, { productId: "p-ok" }],
@@ -32,8 +38,38 @@ describe("flagRestrictedLines", () => {
     });
   });
 
+  it("L8: an explicit fulfilment kind is passed through; an omitted one passes none", async () => {
+    await flagRestrictedLines({ restrictions, warn } as never, {
+      tenantId: "t1",
+      customerId: "c1",
+      productIds: ["p-b"],
+      fulfilmentKind: "PICKUP",
+    });
+    expect(restrictions.checkLinesSellable).toHaveBeenCalledWith(
+      expect.objectContaining({ fulfilmentKind: "PICKUP" }),
+    );
+  });
+
+  it("L8: the split flag judges the order by its own counterSale / fulfillPath", async () => {
+    const prisma = { auditLog: { create: jest.fn().mockResolvedValue({}) } };
+    await flagSplitRestrictedLines(
+      restrictions as never,
+      prisma as never,
+      { warn },
+      {
+        tenantId: "t1",
+        order: { id: "o1", customerId: "c1", counterSale: true, fulfillPath: "PICKUP" },
+        remainingItems: [{ li: { productId: "p-b" } }],
+      },
+    );
+    expect(restrictions.checkLinesSellable).toHaveBeenCalledWith(
+      expect.objectContaining({ fulfilmentKind: "COUNTER" }),
+    );
+  });
+
   it("BLOCK returns the flagged lines", async () => {
     const lines = await flagRestrictedLines({ restrictions, warn } as never, {
+      fulfilmentKind: "DELIVERY",
       tenantId: "t1",
       customerId: "c1",
       productIds: ["p-b"],
@@ -46,6 +82,7 @@ describe("flagRestrictedLines", () => {
   it("INDETERMINATE also flags", async () => {
     restrictions.checkLinesSellable.mockResolvedValue({ ...banned, outcome: "INDETERMINATE" });
     const lines = await flagRestrictedLines({ restrictions, warn } as never, {
+      fulfilmentKind: "DELIVERY",
       tenantId: "t1",
       customerId: "c1",
       productIds: ["p-b"],
@@ -56,6 +93,7 @@ describe("flagRestrictedLines", () => {
   it("ALLOW returns no flags", async () => {
     restrictions.checkLinesSellable.mockResolvedValue({ outcome: "ALLOW", reasons: [] });
     const lines = await flagRestrictedLines({ restrictions, warn } as never, {
+      fulfilmentKind: "DELIVERY",
       tenantId: "t1",
       customerId: "c1",
       productIds: ["p-ok"],
@@ -65,6 +103,7 @@ describe("flagRestrictedLines", () => {
 
   it("no catalog product ids at all short-circuits with no read", async () => {
     const lines = await flagRestrictedLines({ restrictions, warn } as never, {
+      fulfilmentKind: "DELIVERY",
       tenantId: "t1",
       customerId: "c1",
       productIds: [null, undefined],
@@ -77,6 +116,7 @@ describe("flagRestrictedLines", () => {
     restrictions.checkLinesSellable.mockRejectedValue(new Error("db down"));
     await expect(
       flagRestrictedLines({ restrictions, warn } as never, {
+        fulfilmentKind: "DELIVERY",
         tenantId: "t1",
         customerId: "c1",
         productIds: ["p-b"],

@@ -87,6 +87,7 @@ describeDb(
             customerId,
             lines: [{ productId: p[key] }],
             channel,
+            fulfilmentKind: "DELIVERY",
           });
           return null;
         } catch (e) {
@@ -103,6 +104,7 @@ describeDb(
               customerId,
               lines: [{ productId: p[key] }],
               channel: "STAFF",
+              fulfilmentKind: "DELIVERY",
             })
           ).outcome,
       );
@@ -236,7 +238,7 @@ describeDb(
         const flags = await as(() =>
           flagRestrictedLines(
             { restrictions: service, warn },
-            { tenantId, customerId, productIds: [p.P] },
+            { tenantId, customerId, productIds: [p.P], fulfilmentKind: "DELIVERY" },
           ),
         );
         expect(flags.map((f) => f.productId)).toEqual([p.P]);
