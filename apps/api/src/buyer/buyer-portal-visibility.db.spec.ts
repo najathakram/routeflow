@@ -175,7 +175,7 @@ describeDb("buyer portal visibility — the one rule, end to end, real Postgres"
       prisma,
       gateway,
       systemConfig,
-      entitlements: { hasFlag: async () => true },
+      entitlements: { hasFlag: async (_t: string, k: string) => k !== "flag.units_prices_v2" },
       sellingRestrictions: {
         getPolicy: async () => ({ enabled: false, addressPrecedence: "BILLING_FIRST" }),
         assertLinesSellable: async () => undefined,

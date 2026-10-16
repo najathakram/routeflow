@@ -23,6 +23,7 @@ import { compressImage } from "../storage/compress.util";
 import { AddonService } from "../billing/addon.service";
 import { SystemConfigService } from "../system-config/system-config.service";
 import { EntitlementsService } from "../billing/entitlements.service";
+import { UnitsPricesV2FlagCache, mayInventSku, newProductTierFallback } from "./new-product-tiers";
 import { EntitlementAuthority } from "../billing/entitlement-authority.service";
 import { FeatureOverrideService } from "../billing/feature-override.service";
 import { buildPlanFlagDenial } from "../billing/plan-flag-denial";
@@ -170,6 +171,8 @@ export type { BulkDeleteSkip };
 @Injectable()
 export class ProductsService {
   private readonly logger = new Logger(ProductsService.name);
+  /** S4: flag.units_prices_v2, cached 30 s per tenant, read before a transaction opens. */
+  private readonly unitsPricesV2 = new UnitsPricesV2FlagCache();
 
   constructor(
     private readonly prisma: PrismaService,
@@ -794,8 +797,12 @@ export class ProductsService {
       barcode: dto.barcode,
       unitSku: dto.unitSku,
     });
+    // S4: one cached read of flag.units_prices_v2, before the transaction opens.
+    const unitsV2 = await this.unitsPricesV2.isOn(this.entitlements, this.prisma.getTenantId());
     // Auto-generate a SKU if none supplied: first 3 alpha chars of name + 4 hex digits
-    if (!dto.sku) {
+    // (a flagged tenant keeps a blank SKU empty — "" is stored as NULL, which never collides)
+    if (!dto.sku && !mayInventSku(unitsV2)) dto.sku = undefined;
+    else if (!dto.sku) {
       const prefix = dto.name
         .replace(/[^a-zA-Z]/g, "")
         .slice(0, 3)
@@ -922,6 +929,7 @@ export class ProductsService {
     const familyMode = dto.parentProductId
       ? await readFamilyPriceMode(this.featureConfig, tenantId)
       : "off";
+    const tierFallback = newProductTierFallback(unitsV2, dto.pricePerUnit);
     const created = await this.prisma.tenantTransaction(async (tx: any) => {
       // SA-572b Q4/SA-572c: lock the code BEFORE the create — otherwise a concurrent create of the
       // same code races on the legacy unique index and surfaces a raw P2002 instead of a 409.
@@ -963,14 +971,10 @@ export class ProductsService {
             })
           : {
               pricePerUnit: dto.pricePerUnit,
-              priceTier2:
-                dto.priceTier2 ?? (parent ? parent.priceTier2.toString() : dto.pricePerUnit),
-              priceTier3:
-                dto.priceTier3 ?? (parent ? parent.priceTier3.toString() : dto.pricePerUnit),
-              priceTier4:
-                dto.priceTier4 ?? (parent ? parent.priceTier4.toString() : dto.pricePerUnit),
-              priceTier5:
-                dto.priceTier5 ?? (parent ? parent.priceTier5.toString() : dto.pricePerUnit),
+              priceTier2: dto.priceTier2 ?? (parent ? parent.priceTier2.toString() : tierFallback),
+              priceTier3: dto.priceTier3 ?? (parent ? parent.priceTier3.toString() : tierFallback),
+              priceTier4: dto.priceTier4 ?? (parent ? parent.priceTier4.toString() : tierFallback),
+              priceTier5: dto.priceTier5 ?? (parent ? parent.priceTier5.toString() : tierFallback),
             };
       let row;
       try {
@@ -1872,6 +1876,8 @@ export class ProductsService {
     let created = 0;
     let skipped = 0;
     const errors: Array<{ row: number; name: string; reason: string }> = [];
+    // S4: one cached flag read before the loop (and before any transaction).
+    const unitsV2 = await this.unitsPricesV2.isOn(this.entitlements, this.prisma.getTenantId());
 
     for (let i = 0; i < dto.items.length; i++) {
       const item = dto.items[i];
@@ -1958,10 +1964,10 @@ export class ProductsService {
                 barcode: item.barcode ?? null,
                 unit: item.unit,
                 pricePerUnit: item.pricePerUnit,
-                priceTier2: item.pricePerUnit,
-                priceTier3: item.pricePerUnit,
-                priceTier4: item.pricePerUnit,
-                priceTier5: item.pricePerUnit,
+                priceTier2: newProductTierFallback(unitsV2, item.pricePerUnit),
+                priceTier3: newProductTierFallback(unitsV2, item.pricePerUnit),
+                priceTier4: newProductTierFallback(unitsV2, item.pricePerUnit),
+                priceTier5: newProductTierFallback(unitsV2, item.pricePerUnit),
                 category: item.category ?? null,
                 description: item.description ?? null,
                 isActive: item.isActive ?? true,
