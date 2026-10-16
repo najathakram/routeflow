@@ -400,6 +400,7 @@ model PurchaseOrderItem {
   familyProduct   Product? @relation("PurchaseOrderItemFamily", fields: [familyProductId], references: [id], onDelete: SetNull)
 
   @@index([familyGroupId])
+  @@index([familyProductId])
 }
 
 // ─── Multi-level units + purchase-order supplier mapping (2026-09-19) ─────────
@@ -459,6 +460,7 @@ model ProductUnit {
 /// "product x tier" scope; customer > tier > product > business). Refs: "pack" | "base" | a ProductUnit.id,
 /// null = fall through to the product. `tier` 1..5 (DB CHECK, raw SQL): tier 1 = Retail customers, a real
 /// scope (a customer's tier is `CustomerPrice.pricingTier ?? Customer.pricingTier ?? 1`).
+/// A row with BOTH refs null means nothing (no CHECK on purpose): S20's writer deletes the row instead.
 model ProductTierUnit {
   id             String   @id @default(uuid())
   tenantId       String

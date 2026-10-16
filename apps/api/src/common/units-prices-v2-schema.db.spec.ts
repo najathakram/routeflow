@@ -4,6 +4,9 @@
  *  - "CustomerUnitPrice_price_positive_chk" refuses a price of 0 (and below)            (23514)
  *  - "ProductTierUnit_tier_range_chk" refuses tier 0 and 6, accepts 1..5                (23514)
  *  - UNIQUE(productId, tier) and UNIQUE(customerId, productId, unitRef)                 (23505 / P2002)
+ *  - "<InvoiceItem|CreditNoteItem>_invoiceUnitFactor_positive_chk" (NOT VALID, still enforced on new rows)
+ *  - deletes: Product cascades its tier units / customer unit prices and SET NULLs a PO or bill line's
+ *    familyProductId; Customer cascades its unit prices
  *  - the orderUnitRef backfill: the migration's OWN Product ADD COLUMN statement, replayed on a temp
  *    table that already holds rows, leaves every pre-existing row at 'pack' / packAuto 0 (no UPDATE);
  *    and a legacy-shaped INSERT that names neither column reads 'pack' / 0.
@@ -84,6 +87,11 @@ describeDb("units prices v2 schema — real Postgres (S6, SA-795 (b))", () => {
     if (tenantId) {
       await raw.customerUnitPrice.deleteMany({ where: { tenantId } });
       await raw.productTierUnit.deleteMany({ where: { tenantId } });
+      await raw.invoiceItem.deleteMany({ where: { tenantId } });
+      await raw.invoice.deleteMany({ where: { tenantId } });
+      await raw.purchaseOrder.deleteMany({ where: { tenantId } }); // cascades its items
+      await raw.vendorBill.deleteMany({ where: { tenantId } }); // cascades its items
+      await raw.supplier.deleteMany({ where: { tenantId } });
       await raw.product.deleteMany({ where: { tenantId } });
       await raw.customer.deleteMany({ where: { tenantId } });
       await raw.user.deleteMany({ where: { tenantId } });
@@ -93,19 +101,23 @@ describeDb("units prices v2 schema — real Postgres (S6, SA-795 (b))", () => {
     await pool?.end();
   }, 120_000);
 
-  it("the three CHECKs are installed and validated", async () => {
+  it("the five CHECKs are installed; the two item-table ones NOT VALID (enforced for new rows, no scan)", async () => {
     const { rows } = await pool.query(
       `SELECT conname, convalidated FROM pg_constraint WHERE conname = ANY($1::text[]) ORDER BY conname`,
       [
         [
+          "CreditNoteItem_invoiceUnitFactor_positive_chk",
           "CustomerUnitPrice_price_positive_chk",
+          "InvoiceItem_invoiceUnitFactor_positive_chk",
           "ProductTierUnit_tier_range_chk",
           "Product_packAuto_range_chk",
         ],
       ],
     );
     expect(rows).toEqual([
+      { conname: "CreditNoteItem_invoiceUnitFactor_positive_chk", convalidated: false },
       { conname: "CustomerUnitPrice_price_positive_chk", convalidated: true },
+      { conname: "InvoiceItem_invoiceUnitFactor_positive_chk", convalidated: false },
       { conname: "ProductTierUnit_tier_range_chk", convalidated: true },
       { conname: "Product_packAuto_range_chk", convalidated: true },
     ]);
@@ -211,5 +223,101 @@ describeDb("units prices v2 schema — real Postgres (S6, SA-795 (b))", () => {
     await raw.product.delete({ where: { id: p.id } });
     expect(await raw.productTierUnit.count({ where: { productId: p.id } })).toBe(0);
     expect(await raw.customerUnitPrice.count({ where: { productId: p.id } })).toBe(0);
+  });
+  it("InvoiceItem refuses invoiceUnitFactor 0 and -1 (23514); NULL and 24 are written", async () => {
+    const invoice = await raw.invoice.create({
+      data: {
+        invoiceNumber: `INV-S6-${run}`,
+        customerId,
+        status: "DRAFT",
+        subtotal: "0",
+        total: "0",
+        tenantId,
+      },
+    });
+    const line = (invoiceUnitFactor: number | null) =>
+      raw.invoiceItem.create({
+        data: {
+          invoiceId: invoice.id,
+          description: "S6 line",
+          qty: "3",
+          unitPrice: "18.90",
+          subtotal: "56.70",
+          tenantId,
+          invoiceUnitLabel: invoiceUnitFactor == null ? null : "Piece",
+          invoiceUnitFactor,
+        },
+      });
+    await expect(line(null)).resolves.toMatchObject({ invoiceUnitFactor: null });
+    await expect(line(24)).resolves.toMatchObject({ invoiceUnitFactor: 24 });
+    for (const bad of [0, -1]) {
+      const err = await rejectionOf(line(bad));
+      expect(sqlState(err)).toBe("23514");
+      expect(String(err?.message ?? err)).toMatch(/InvoiceItem_invoiceUnitFactor_positive_chk/);
+    }
+  });
+
+  it("deleting a FAMILY product SET NULLs familyProductId on its split PO and bill lines (lines kept)", async () => {
+    const family = await product();
+    const variant = await product();
+    const supplier = await raw.supplier.create({ data: { name: `S6 supplier ${run}`, tenantId } });
+    const po = await raw.purchaseOrder.create({
+      data: { poNumber: `PO-S6-${run}`, supplierId: supplier.id, totalAmount: "50", tenantId },
+    });
+    const poLine = await raw.purchaseOrderItem.create({
+      data: {
+        poId: po.id,
+        productId: variant.id,
+        qtyOrdered: "4",
+        unitCost: "12.5",
+        totalCost: "50",
+        unitLabel: "Case",
+        familyProductId: family.id,
+        familyGroupId: `grp-${run}`,
+        tenantId,
+      },
+    });
+    const bill = await raw.vendorBill.create({
+      data: { billNumber: `BILL-S6-${run}`, totalOwed: "50", tenantId },
+    });
+    const billLine = await raw.vendorBillItem.create({
+      data: {
+        vendorBillId: bill.id,
+        productId: variant.id,
+        description: "S6 split line",
+        qty: "4",
+        unitCost: "12.5",
+        unitLabel: "Case",
+        familyProductId: family.id,
+        familyGroupId: `grp-${run}`,
+        tenantId,
+      },
+    });
+    await raw.product.delete({ where: { id: family.id } });
+    await expect(
+      raw.purchaseOrderItem.findUnique({ where: { id: poLine.id } }),
+    ).resolves.toMatchObject({ familyProductId: null, familyGroupId: `grp-${run}` });
+    await expect(
+      raw.vendorBillItem.findUnique({ where: { id: billLine.id } }),
+    ).resolves.toMatchObject({ familyProductId: null, familyGroupId: `grp-${run}` });
+  });
+
+  it("deleting a customer cascades its unit prices", async () => {
+    const user = await raw.user.create({
+      data: {
+        email: `s6b-${run}@example.test`,
+        username: `s6b-${run}`,
+        role: "CUSTOMER",
+        tenantId,
+      },
+    });
+    const other = await raw.customer.create({
+      data: { userId: user.id, businessName: "S6 B", contactName: "S6 B", tenantId },
+    });
+    await raw.customerUnitPrice.create({
+      data: { tenantId, customerId: other.id, productId, unitRef: "pack", price: "7" },
+    });
+    await raw.customer.delete({ where: { id: other.id } });
+    expect(await raw.customerUnitPrice.count({ where: { customerId: other.id } })).toBe(0);
   });
 });

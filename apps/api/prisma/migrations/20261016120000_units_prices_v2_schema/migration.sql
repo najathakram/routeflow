@@ -7,8 +7,9 @@
 --   ProductTierUnit    NEW (tenantId, productId, tier 1..5, orderUnitRef, invoiceUnitRef), UNIQUE(productId, tier)
 --   CustomerUnitPrice  NEW (tenantId, customerId, productId, unitRef, price DECIMAL(10,2) > 0),
 --                      UNIQUE(customerId, productId, unitRef)
---   InvoiceItem, CreditNoteItem      invoiceUnitLabel TEXT, invoiceUnitFactor INTEGER (display-only snapshot, G1)
---   PurchaseOrderItem, VendorBillItem unitLabel, familyProductId (FK Product, ON DELETE SET NULL), familyGroupId (+ index)
+--   InvoiceItem, CreditNoteItem      invoiceUnitLabel TEXT, invoiceUnitFactor INTEGER > 0 (display-only snapshot, G1)
+--   PurchaseOrderItem, VendorBillItem unitLabel, familyProductId (FK Product, ON DELETE SET NULL; indexed),
+--                                    familyGroupId (indexed)
 -- Unit refs are "pack" | "base" | a ProductUnit.id (TEXT, no FK by design: a ref to a deleted unit is skipped).
 --
 -- BACKFILL: `orderUnitRef = 'pack'` on every existing product IS the constant column default. Since Postgres 11 an
@@ -18,20 +19,21 @@
 --
 -- CHECKs are raw SQL (Prisma does not model them), so the schema and the drift gate are unaffected by them.
 --
--- LOCK PROFILE: one transaction; `SET LOCAL lock_timeout = '5s'` applies PER STATEMENT: a statement that waits longer
--- than 5s for its lock fails and rolls the whole file back (recorded FAILED; recover with
--- `prisma migrate resolve --rolled-back 20261016120000_units_prices_v2_schema` from apps/api, then re-run; NEVER
--- `--applied`).
---   * The six ALTER TABLE ... ADD COLUMN take a brief ACCESS EXCLUSIVE lock each; all are metadata-only.
---   * "Product_packAuto_range_chk" is added VALIDATED: it scans "Product" once while the ADD COLUMN's ACCESS
---     EXCLUSIVE lock is already held (every row is 0, so it cannot fail). NOT VALID + a later VALIDATE buys nothing
---     here: the lock is taken by the ADD COLUMN in the same transaction either way.
---   * The two familyGroupId indexes are built on POPULATED tables ("PurchaseOrderItem", "VendorBillItem"): each
---     build blocks writes to its table while it runs (all-NULL column, one sequential scan). Run off-peak; the PR
---     body carries the prod row counts.
---   * The two familyProductId FKs take SHARE ROW EXCLUSIVE on "Product" and the item table for their validation scan
---     (every value is NULL). The new tables are empty: their CREATE / CHECK / indexes / FKs lock nothing anyone
---     waits on beyond the FK targets' brief SHARE ROW EXCLUSIVE.
+-- LOCK PROFILE: RUN THE WHOLE FILE OFF-PEAK. It is ONE transaction, and every lock it takes is held until COMMIT:
+--   * ACCESS EXCLUSIVE (blocks READS and writes) on "Product", "CustomerPrice", "InvoiceItem", "CreditNoteItem",
+--     "PurchaseOrderItem" and "VendorBillItem" from their ADD COLUMN to COMMIT. The ADD COLUMNs themselves are
+--     metadata-only (constant defaults / nullable), but the validated packAuto CHECK scans "Product"
+--     (the two invoiceUnitFactor CHECKs are NOT VALID: no scan of "InvoiceItem" / "CreditNoteItem"), the four new
+--     indexes scan "PurchaseOrderItem" and "VendorBillItem", and the two familyProductId FKs scan those two
+--     tables (all new values are 0 / 'pack' / NULL, so nothing can fail); the whole file waits on those scans.
+--   * SHARE ROW EXCLUSIVE on "Tenant" and "Customer" for the new tables' FKs (the new tables are empty).
+--   * `SET LOCAL lock_timeout = '5s'` applies PER STATEMENT: with six tables to lock, the worst case is about 6 x 5s
+--     of lock waits (~25-30s) during which queued readers of the tables already locked are blocked too, and a
+--     deadlock with a live transaction is possible. Either way Postgres rolls the WHOLE file back (nothing is half
+--     applied) and it is recorded FAILED: recover with
+--     `prisma migrate resolve --rolled-back 20261016120000_units_prices_v2_schema` from apps/api, then re-run it
+--     off-peak. NEVER `--applied`.
+--
 -- HARD DEPLOY ORDER (L-184): apply to prod (fresh backup, `prod-migrate.mjs`), `schema-drift.mjs` exit 0, and ONLY
 -- THEN merge code that reads or writes these columns (none does yet).
 --
@@ -118,14 +120,16 @@ CREATE INDEX "CustomerUnitPrice_productId_idx" ON "CustomerUnitPrice"("productId
 CREATE UNIQUE INDEX "CustomerUnitPrice_customerId_productId_unitRef_key" ON "CustomerUnitPrice"("customerId", "productId", "unitRef");
 
 -- CreateIndex
--- reason: index on populated "PurchaseOrderItem" (all-NULL column): blocks its writes for the build; run off-peak, the PR body carries the prod row count
--- squawk-ignore require-concurrent-index-creation
 CREATE INDEX "PurchaseOrderItem_familyGroupId_idx" ON "PurchaseOrderItem"("familyGroupId");
 
 -- CreateIndex
--- reason: index on populated "VendorBillItem" (all-NULL column): blocks its writes for the build; run off-peak, the PR body carries the prod row count
--- squawk-ignore require-concurrent-index-creation
+CREATE INDEX "PurchaseOrderItem_familyProductId_idx" ON "PurchaseOrderItem"("familyProductId");
+
+-- CreateIndex
 CREATE INDEX "VendorBillItem_familyGroupId_idx" ON "VendorBillItem"("familyGroupId");
+
+-- CreateIndex
+CREATE INDEX "VendorBillItem_familyProductId_idx" ON "VendorBillItem"("familyProductId");
 
 -- AddForeignKey
 ALTER TABLE "PurchaseOrderItem" ADD CONSTRAINT "PurchaseOrderItem_familyProductId_fkey" FOREIGN KEY ("familyProductId") REFERENCES "Product"("id") ON DELETE SET NULL ON UPDATE CASCADE;
@@ -155,5 +159,10 @@ ALTER TABLE "Product" ADD CONSTRAINT "Product_packAuto_range_chk" CHECK ("packAu
 ALTER TABLE "ProductTierUnit" ADD CONSTRAINT "ProductTierUnit_tier_range_chk" CHECK ("tier" BETWEEN 1 AND 5);
 -- PLAN P6: a set price is above $0.00; clearing a customer's unit price deletes the row (Auto).
 ALTER TABLE "CustomerUnitPrice" ADD CONSTRAINT "CustomerUnitPrice_price_positive_chk" CHECK ("price" > 0);
+-- Pieces per invoice unit: NULL = no snapshot (legacy line), otherwise at least one piece. NOT VALID: enforced for every
+-- new or updated row from COMMIT, with no scan of the two largest tables (every existing value is NULL, so a later
+-- `VALIDATE CONSTRAINT` in a following sitting's folder cannot fail).
+ALTER TABLE "InvoiceItem" ADD CONSTRAINT "InvoiceItem_invoiceUnitFactor_positive_chk" CHECK ("invoiceUnitFactor" IS NULL OR "invoiceUnitFactor" > 0) NOT VALID;
+ALTER TABLE "CreditNoteItem" ADD CONSTRAINT "CreditNoteItem_invoiceUnitFactor_positive_chk" CHECK ("invoiceUnitFactor" IS NULL OR "invoiceUnitFactor" > 0) NOT VALID;
 
 COMMIT;

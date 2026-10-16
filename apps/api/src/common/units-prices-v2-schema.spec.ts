@@ -104,11 +104,12 @@ describe("units prices v2 schema (S6)", () => {
   });
 
   it.each(["PurchaseOrderItem", "VendorBillItem"])(
-    "%s.familyProduct is an optional SetNull FK into Product, indexed by familyGroupId",
+    "%s.familyProduct is an optional, indexed SetNull FK into Product; familyGroupId is indexed",
     (model) => {
       const body = modelBody(model);
       expect(body).toMatch(/fields: \[familyProductId\], references: \[id\], onDelete: SetNull/);
       expect(body).toMatch(/@@index\(\[familyGroupId\]\)/);
+      expect(body).toMatch(/@@index\(\[familyProductId\]\)/);
     },
   );
 });

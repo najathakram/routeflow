@@ -989,6 +989,7 @@ model VendorBillItem {
   familyProduct   Product? @relation("VendorBillItemFamily", fields: [familyProductId], references: [id], onDelete: SetNull)
 
   @@index([familyGroupId])
+  @@index([familyProductId])
 }
 
 model BillPayment {

@@ -77,6 +77,10 @@ describe("units prices v2 migration shape (S6)", () => {
       const t = alterOf(table).join(";");
       expect(t).toMatch(/ADD COLUMN "invoiceUnitLabel" TEXT(,|;|$)/);
       expect(t).toMatch(/ADD COLUMN "invoiceUnitFactor" INTEGER(,|;|$)/);
+      // NOT VALID: enforced for new rows, no scan of a large table (every existing value is NULL).
+      expect(sql).toContain(
+        `ALTER TABLE "${table}" ADD CONSTRAINT "${table}_invoiceUnitFactor_positive_chk" CHECK ("invoiceUnitFactor" IS NULL OR "invoiceUnitFactor" > 0) NOT VALID;`,
+      );
     },
   );
 
@@ -93,6 +97,12 @@ describe("units prices v2 migration shape (S6)", () => {
       );
       expect(sql).toMatch(
         new RegExp(`CREATE INDEX "${table}_familyGroupId_idx" ON "${table}"\\("familyGroupId"\\)`),
+      );
+      // Product hard delete SET NULLs this column: without the index each delete seq-scans the table.
+      expect(sql).toMatch(
+        new RegExp(
+          `CREATE INDEX "${table}_familyProductId_idx" ON "${table}"\\("familyProductId"\\)`,
+        ),
       );
     },
   );
@@ -125,10 +135,9 @@ describe("units prices v2 migration shape (S6)", () => {
     );
   });
 
-  it("every squawk-ignore carries a reason line (the lint rule, checked here too)", () => {
-    const lines = readFileSync(join(MIGRATIONS_DIR, FOLDER, "migration.sql"), "utf8").split("\n");
-    lines.forEach((l, i) => {
-      if (/^--\s*squawk-ignore/.test(l)) expect(lines[i - 1]).toMatch(/^--\s*reason:\s*\S/);
-    });
+  it("carries no squawk-ignore (every kept Squawk rule passes; excluded rules need no silencing)", () => {
+    expect(readFileSync(join(MIGRATIONS_DIR, FOLDER, "migration.sql"), "utf8")).not.toMatch(
+      /squawk-ignore/,
+    );
   });
 });
