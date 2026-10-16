@@ -9,6 +9,9 @@ export function ProductPricingV2({
   product,
 }: {
   product: UnitsCardProduct & { msrp?: number | string | null };
+  /** K4's Change prices panel opener (wired from the contract). */
+  onOpenChangePrices?: () => void;
+  changePricesOpen?: boolean;
 }) {
   return <ProductPricesGrid product={product} />;
 }
