@@ -87,12 +87,20 @@ describe("ProductUnitsCard", () => {
     expect(screen.getByText(/No other units yet/)).toBeInTheDocument();
   });
 
-  it("the default radio says what it does — pre-selected on STAFF orders; the buyer portal sells the pack regardless", () => {
+  it("S5: the default radio is called Default order unit (one on the pack row, one on the Case row)", () => {
     mockUnits = [caseUnit];
     renderCard();
-    // one radio on the pack row + one on the Case row
-    expect(screen.getAllByLabelText("Pre-selected on staff orders")).toHaveLength(2);
+    expect(screen.getAllByLabelText("Default order unit")).toHaveLength(2);
+    expect(screen.queryByLabelText("Pre-selected on staff orders")).toBeNull();
     expect(screen.queryByText(/sells by default/i)).toBeNull();
+  });
+
+  it("S5: the smallest unit's size field never reads 'Pieces per piece'", () => {
+    mockUnits = [{ ...caseUnit, id: "u-piece", label: "Piece", factorToBase: 1, price: null }];
+    renderCard();
+    expect(screen.queryByText(/pieces per piece/i)).toBeNull();
+    expect(screen.queryByLabelText(/pieces per piece/i)).toBeNull();
+    expect(screen.getByLabelText("Smallest unit size")).toBeDisabled();
   });
 
   it("adds a unit through the create mutation (Add stays disabled until name + size); a 0 price is sent as null", () => {
@@ -161,7 +169,9 @@ describe("ProductUnitsCard", () => {
       expect(ph).not.toMatch(/derived/i);
       expect(ph.length).toBeLessThanOrEqual(10);
     }
-    expect(screen.getAllByText(/derived from the box price/i)).toHaveLength(1);
+    expect(screen.getAllByText(/worked out automatically from the box price/i)).toHaveLength(1);
+    expect(screen.queryByText(/derived from the box price/i)).toBeNull();
+    expect(screen.getByText(/clear it to go back to automatic/i)).toBeInTheDocument();
   });
 
   it("an invalid draft (blank name or size) cannot be saved", () => {

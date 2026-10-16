@@ -142,11 +142,12 @@ const FILES: Pin[] = [
       "per unit\n",
       "Pieces per unit",
       "Units per case",
+      "Pre-selected on staff orders",
     ],
     present: [
       // The units-card factor field: visible label and aria-label both name the pieces-per-level.
-      "{w.base.other} per {unit.label.toLowerCase()}",
-      "aria-label={`${w.base.other} per ${unit.label}`}",
+      "`${w.base.other} per ${unit.label.toLowerCase()}`",
+      'aria-label={isPiece ? "Smallest unit size" : `${w.base.other} per ${unit.label}`}',
       "the {w.pack.lower} (edit its price above)",
     ],
   },

@@ -1065,6 +1065,17 @@ export default defineConfig({
               storageState: path.join(AUTH_DIR, "operator.json"),
             },
           },
+          // Units v2 (grid / stock-off / family / blank-tiers money): needs a stack built WITH the feature and `flag.units_prices_v2`
+          // served to the test tenant; each spec fails (never skips) without it. Local lane only, like 71-73.
+          {
+            name: "units-v2",
+            testMatch: /units-v2-.*\.spec\.ts/,
+            dependencies: ["setup"],
+            use: {
+              ...devices["Desktop Chrome"],
+              storageState: path.join(AUTH_DIR, "operator.json"),
+            },
+          },
           {
             name: "counter-register-look",
             testMatch: /73-counter-register-look\.spec\.ts/,
