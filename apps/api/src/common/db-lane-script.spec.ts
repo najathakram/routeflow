@@ -285,14 +285,22 @@ describe("db-lane.mjs — this repo", () => {
     ).toContain("model:Invoice");
   });
 
-  it("16. #2707: the #2700 file list reaches the catalog/entitlement/repin specs and trips FULL at the default cutoff", () => {
+  it("16. #2707: the #2700 file list reaches the catalog/entitlement/repin specs and trips FULL above its own ratio", () => {
     const files = [
       "apps/api/prisma/publish-plan-catalog-v13.ts",
       "apps/api/src/billing/entitlements.service.ts",
       "apps/api/src/billing/plan-catalog.constants.ts",
       "apps/api/scripts/publish-and-repin.mjs",
     ];
-    const r = lane(REPO, ["--files", files.join(",")]);
+    // The scoped set first: its share of all db specs is this list's ratio. A fixed cutoff made the test a repo-size
+    // assertion (every new db spec lowers the ratio), so the FULL trip is checked just under the list's own ratio.
+    const scoped = lane(REPO, ["--files", files.join(","), "--max-ratio", "1", "--json"]);
+    const parsed = JSON.parse(scoped.out);
+    expect(parsed.mode).toBe("scoped");
+    const ratio = parsed.specs.length / parsed.total;
+    expect(ratio).toBeGreaterThan(0.4); // still a hub change
+    const cutoff = Math.max(0, ratio - 0.05).toFixed(2);
+    const r = lane(REPO, ["--files", files.join(","), "--max-ratio", cutoff]);
     expect(r.out).toMatch(/DB-LANE FULL \(ratio 0\.\d\d\)/);
     for (const s of [
       "billing/publish-plan-catalog-v12.db.spec.ts",
@@ -301,11 +309,10 @@ describe("db-lane.mjs — this repo", () => {
       "billing/addon-default-grant.db.spec.ts",
     ])
       expect(listed(r.out, s)).toBe(true);
-    // the scoped set (without the FULL fold) is a strict subset of the 124
-    const scoped = lane(REPO, ["--files", files.join(","), "--max-ratio", "1", "--json"]);
-    const parsed = JSON.parse(scoped.out);
-    expect(parsed.mode).toBe("scoped");
-    const full = JSON.parse(lane(REPO, ["--files", files.join(","), "--json"]).out);
+    // the scoped set (without the FULL fold) is a strict subset of the full run
+    const full = JSON.parse(
+      lane(REPO, ["--files", files.join(","), "--max-ratio", cutoff, "--json"]).out,
+    );
     expect(full.mode).toBe("full");
     expect(parsed.specs.length).toBeLessThan(full.specs.length);
     for (const sp of parsed.specs) expect(full.specs).toContain(sp);
