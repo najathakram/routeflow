@@ -22,9 +22,10 @@ import { ADD_UNIT_FIRST } from "./units-v2/edit/view-from-grid";
 
 const TIERS = [1, 2, 3, 4, 5] as const;
 
-// V12: field-border token, scoped to this grid only (light #758380 / dark #6b7f7c).
-export const GRID_BORDER = "border-[#758380] dark:border-[#6b7f7c]";
-const GRID_DIVIDER = "border-[#758380]/40 dark:border-[#6b7f7c]/40";
+// V12: the grid's borders are the shared tokens (PR #3499): --field for inputs, selects and the grid's own frame, and
+// --line-strong for the row dividers. There is no grid-local colour, so a field here and a field anywhere else match.
+export const GRID_BORDER = "border-field";
+const GRID_DIVIDER = "border-line-strong";
 
 const plural = (label: string, n: number) =>
   n === 1 ? label : /(s|x|ch|sh)$/i.test(label) ? `${label}es` : `${label}s`;
