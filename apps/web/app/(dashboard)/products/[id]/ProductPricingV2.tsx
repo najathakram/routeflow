@@ -5,6 +5,10 @@ import { ProductPricesGrid } from "./ProductPricesGrid";
 import type { UnitsCardProduct } from "./ProductUnitsCard";
 
 /** Shell for the units v2 pricing surface (rendered by the page behind `flag.units_prices_v2`). */
-export function ProductPricingV2({ product }: { product: UnitsCardProduct }) {
+export function ProductPricingV2({
+  product,
+}: {
+  product: UnitsCardProduct & { msrp?: number | string | null };
+}) {
   return <ProductPricesGrid product={product} />;
 }
