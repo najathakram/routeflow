@@ -44,7 +44,13 @@ describeDb("CQ-04 system walk-in: readiness sweep and state resolution — real 
   const lines = () => [{ productId, qtyDelta: 1 }];
   const check = (customerId: string) =>
     as(() =>
-      service.checkLinesSellable({ tenantId, customerId, lines: lines(), channel: "STAFF" }),
+      service.checkLinesSellable({
+        fulfilmentKind: "DELIVERY",
+        tenantId,
+        customerId,
+        lines: lines(),
+        channel: "STAFF",
+      }),
     );
 
   async function mkCustomer(
@@ -192,6 +198,7 @@ describeDb("CQ-04 system walk-in: readiness sweep and state resolution — real 
 
     const err = await as(() =>
       service.assertLinesSellable({
+        fulfilmentKind: "DELIVERY",
         tenantId,
         customerId: ids["walkin"],
         lines: lines(),

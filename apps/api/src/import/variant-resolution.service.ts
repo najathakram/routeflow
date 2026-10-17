@@ -2,6 +2,7 @@ import { BadRequestException, Injectable, NotFoundException } from "@nestjs/comm
 import { PrismaService } from "../prisma/prisma.service";
 import { ProductsService } from "../products/products.service";
 import { ProductAliasService } from "./product-alias.service";
+import { effectiveCostingMethod } from "../inventory/costing-method-policy";
 import { roundMoney } from "@routeflow/pricing";
 import { assertSafeProductCategory } from "../common/text-cell-guards";
 import { isFormulaLedText } from "../common/safe-text-cell";
@@ -52,7 +53,8 @@ export class VariantResolutionService {
       // B990: a legacy formula-led parent category is NEUTRALISED (the variant simply carries none), never copied and never a refusal
       category: parent.category && !isFormulaLedText(parent.category) ? parent.category : undefined,
       unitsPerBox: parent.unitsPerBox ?? undefined,
-      costingMethod: parent.costingMethod,
+      // SA-804 (1): a variant never inherits a retired method (create() would refuse it); it takes the AVCO it is costed as.
+      costingMethod: effectiveCostingMethod(parent.costingMethod),
       standardCost: parent.standardCost != null ? parent.standardCost.toString() : undefined,
       isTobacco: parent.isTobacco,
     });

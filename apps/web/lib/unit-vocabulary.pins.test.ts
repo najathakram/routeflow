@@ -60,6 +60,8 @@ type Pin = {
   allow?: string[];
   /** New literals that must be present. */
   present?: string[];
+  /** The component receives the helper's words as a `w: UnitWords` prop (its caller imports unitWords). */
+  wordsViaProp?: boolean;
 };
 
 const FILES: Pin[] = [
@@ -79,6 +81,21 @@ const FILES: Pin[] = [
       "Remove extra " + "units",
       "+ units\n",
       "1 case = {li.unitsPerBox} units",
+      "aria-label={`Add extra ${w.base.lowerOther}`}", // label-in-name: must contain "+ pieces"
+      'aria-label="Remove extra pieces"',
+    ],
+  },
+  {
+    // #3500 moved the cases + loose pieces inputs out of LineItemRow into CasesPiecesInput: a relocation, the same
+    // literals must stay gone and the helper-driven words must be present in the file that now owns them.
+    file: `${W}components/CasesPiecesInput.tsx`,
+    wordsViaProp: true,
+    gone: [
+      'title="Total ' + 'units"',
+      'title="Number of whole ' + 'cases"',
+      "Extra loose " + "units",
+      "Remove extra " + "units",
+      "+ units\n",
       "aria-label={`Add extra ${w.base.lowerOther}`}", // label-in-name: must contain "+ pieces"
       'aria-label="Remove extra pieces"',
     ],
@@ -142,11 +159,12 @@ const FILES: Pin[] = [
       "per unit\n",
       "Pieces per unit",
       "Units per case",
+      "Pre-selected on staff orders",
     ],
     present: [
       // The units-card factor field: visible label and aria-label both name the pieces-per-level.
-      "{w.base.other} per {unit.label.toLowerCase()}",
-      "aria-label={`${w.base.other} per ${unit.label}`}",
+      "`${w.base.other} per ${unit.label.toLowerCase()}`",
+      'aria-label={isPiece ? "Smallest unit size" : `${w.base.other} per ${unit.label}`}',
       "the {w.pack.lower} (edit its price above)",
     ],
   },
@@ -203,7 +221,7 @@ const FILES: Pin[] = [
 ];
 
 describe("U-3a unit words: operator copy comes from the helper (web)", () => {
-  describe.each(FILES)("$file", ({ file, gone, allow = [], present = [] }) => {
+  describe.each(FILES)("$file", ({ file, gone, allow = [], present = [], wordsViaProp }) => {
     const src = read(file);
     // jest rejects it.each([]), and most files pin only one side.
     if (present.length > 0) {
@@ -217,7 +235,11 @@ describe("U-3a unit words: operator copy comes from the helper (web)", () => {
       });
     }
     it("imports unitWords from @routeflow/pricing", () => {
-      expect(src).toMatch(/import\s*\{[^}]*\bunitWords\b[^}]*\}\s*from\s*"@routeflow\/pricing"/);
+      // A component that only receives the helper's words as a prop must type them with the helper's UnitWords.
+      const re = wordsViaProp
+        ? /import\s+type\s*\{[^}]*\bUnitWords\b[^}]*\}\s*from\s*"@routeflow\/pricing"/
+        : /import\s*\{[^}]*\bunitWords\b[^}]*\}\s*from\s*"@routeflow\/pricing"/;
+      expect(src).toMatch(re);
     });
     it("has no hard-coded Box/Piece/box/pcs display literal", () => {
       const left = displayLiterals(src).filter((s) => !allow.includes(s));
@@ -235,9 +257,12 @@ const KEEP: Array<{ file: string; mustContain: string[] }> = [
       'onSetSellBy("case")',
       'onSetSellBy("unit")',
       '"case" : li.unit)',
-      'data-testid="line-qty-cases-row"',
       'aria-label="Quantity"',
     ],
+  },
+  {
+    file: `${W}components/CasesPiecesInput.tsx`,
+    mustContain: ['data-testid="line-qty-cases-row"'],
   },
   {
     file: `${D}orders/_components/scan/PriceEditor.tsx`,

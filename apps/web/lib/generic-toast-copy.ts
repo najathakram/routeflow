@@ -43,6 +43,9 @@ const CODE_COPY: Record<string, string> = {
   // a buyer write toward a paused seller: the seller-unavailable sentence, never "You don't have permission"
   [API_ERROR_CODES.SELLER_UNAVAILABLE]: sellerUnavailableCopy(null),
   [API_ERROR_CODES.RETURN_REFUND_OVER_LINE_HEADROOM]: RETURN_REFUND_OVER_LINE_HEADROOM_COPY,
+  // SA-804 (1): FIFO and LIFO costing are retired; the picker no longer offers them, so this is an old client or a direct API call.
+  [API_ERROR_CODES.COSTING_METHOD_RETIRED]:
+    "FIFO and LIFO costing are retired. Pick average cost, standard cost or last cost.",
   INLINE_RETURN_ALREADY_RETURNED_REASON_REQUIRED:
     "This item was already returned. Add a reason to confirm another return.",
   INLINE_RETURN_KEY_CONFLICT: "This return was already submitted. Refresh to see it.",
@@ -53,6 +56,8 @@ const CODE_COPY: Record<string, string> = {
     "A line on this order is sold by a unit such as a case, so this action isn't available for it yet.",
   MERGE_PACK_MISMATCH:
     "The pack size on this order no longer matches the product. Refresh and review the line.",
+  ORDER_DELIVERY_ADDRESS_MISSING:
+    "This customer has no delivery address on file. Add one before switching the order to delivery.",
   ORDER_CHANGED_DURING_EDIT: "This order changed while you were editing it. Refresh and try again.",
   // F3: the edit named one line twice; nothing was saved.
   DUPLICATE_LINE_ID: "A line appears twice. Refresh the page and try again.",

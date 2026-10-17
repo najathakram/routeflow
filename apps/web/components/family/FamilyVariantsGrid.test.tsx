@@ -93,3 +93,30 @@ describe("FamilyVariantsGrid", () => {
     expect(screen.getAllByText("V1").length).toBeGreaterThan(0);
   });
 });
+
+describe("FamilyVariantsGrid price column (V20)", () => {
+  it("right-aligns every price cell with tabular numbers, header included", () => {
+    setup();
+    const priceHeader = screen.getByRole("columnheader", { name: "Price" });
+    expect(priceHeader).toHaveClass("text-right");
+    const inputs = [
+      screen.getByLabelText("Variant 1 price"),
+      screen.getByLabelText("Variant 2 price"),
+    ];
+    for (const input of inputs) {
+      expect(input).toHaveClass("text-right", "tabular-nums");
+    }
+    // Other numeric-looking columns keep their existing alignment.
+    expect(screen.getByLabelText("Variant 1 SKU")).not.toHaveClass("text-right");
+    expect(screen.getByRole("columnheader", { name: "SKU" })).not.toHaveClass("text-right");
+  });
+
+  it("read-only prices share the same right-aligned, tabular cell", () => {
+    setup({ readOnly: true });
+    const priceCells = screen.getAllByText("1.00");
+    expect(priceCells.length).toBe(2);
+    for (const cell of priceCells) {
+      expect(cell).toHaveClass("block", "text-right", "tabular-nums");
+    }
+  });
+});

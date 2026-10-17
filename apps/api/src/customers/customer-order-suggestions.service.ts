@@ -9,6 +9,8 @@ import type {
 } from "@routeflow/types";
 import { PrismaService } from "../prisma/prisma.service";
 import { tenantSafeParent } from "../products/product-parent";
+import { defaultSaleFulfilmentKind } from "../orders/default-sale-fulfilment";
+import type { SaleFulfilmentKind } from "../selling-restrictions/sale-fulfilment";
 import { SellingRestrictionsService } from "../selling-restrictions/selling-restrictions.service";
 
 /** "Usually buys" looks back this many days from now. */
@@ -182,7 +184,9 @@ export class CustomerOrderSuggestionsService {
         ...orders.flatMap((o) => o.lineItems.flatMap((l) => (l.productId ? [l.productId] : []))),
       ]),
     ];
-    const banned = await this.bannedAmong(tenantId, customerId, wanted);
+    // L8: judged as the NEXT order would be (the tenant's model + the customer's stored path).
+    const fulfilmentKind = await defaultSaleFulfilmentKind(this.prisma, tenantId, customerId);
+    const banned = await this.bannedAmong(tenantId, customerId, wanted, fulfilmentKind);
 
     const usuallyBuys = candidates
       .filter((c) => !banned.has(c.productId))
@@ -238,13 +242,14 @@ export class CustomerOrderSuggestionsService {
     tenantId: string,
     customerId: string,
     productIds: string[],
+    fulfilmentKind: SaleFulfilmentKind,
   ): Promise<Set<string>> {
     if (productIds.length === 0) return new Set();
     const evaluation = await this.restrictions.evaluate(
       tenantId,
       customerId,
       productIds.map((productId) => ({ productId })),
-      { channel: "STAFF" },
+      { channel: "STAFF", fulfilmentKind },
     );
     if (evaluation.outcome !== "BLOCK" && evaluation.outcome !== "INDETERMINATE") return new Set();
     return new Set(evaluation.reasons.map((r) => r.productId));

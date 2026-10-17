@@ -52,6 +52,7 @@ import {
   type CategoryTaxType,
   type PromotionRule,
 } from "@routeflow/pricing";
+import { loadCustomerPriceHistory } from "./customer-price-history-query";
 import { lockRowsNoWait, withAdvisoryLock, type LockMode } from "../common/db-locks";
 import { retryCreditTx } from "../common/tx-retry";
 import { stockTxBounded } from "../common/stock-tx";
@@ -130,7 +131,8 @@ import {
 } from "./merge-idempotency";
 import { BUYER_EDIT_CLOSED_STATUSES, computeEditWindow } from "./edit-window";
 import { cancelBlockedMessage, cancelImpact } from "./order-cancel-impact";
-import { cancelOrderInTx, type CancelOrderTxOptions } from "./order-cancel-tx";
+import { cancelOrderInTx, lockDeleteLines, type CancelOrderTxOptions } from "./order-cancel-tx";
+import { claimReopenInTx } from "./order-reopen-claim";
 import { assertNoCashRefundOnOrder } from "../invoices/invoice-cash-refund-guard";
 import { assertBuyerDiffShape, classifyEditPayload } from "./order-edit-payload";
 import {
@@ -233,6 +235,7 @@ import {
 } from "./merge-restriction-warning";
 import { collectUnlistedLoserItems } from "./merge-unlisted-lines";
 import { restrictionChannelForPrincipal } from "../selling-restrictions/selling-restrictions.core";
+import { saleFulfilmentKind } from "../selling-restrictions/sale-fulfilment";
 import { SellingRestrictionsService } from "../selling-restrictions/selling-restrictions.service";
 import { PromotionsService } from "../promotions/promotions.service";
 import { MessagingService } from "../messaging/messaging.service";
@@ -609,37 +612,7 @@ export class OrdersService implements OnApplicationBootstrap {
   async getCustomerPriceHistory(
     customerId: string,
   ): Promise<Record<string, { lastPrice: number; listPriceAtTime: number }>> {
-    const items = await this.prisma.forTenant().orderItem.findMany({
-      where: {
-        order: {
-          customerId,
-          status: { notIn: [OrderStatus.CANCELLED] },
-        },
-        originalPrice: { not: null },
-        priceType: { not: PriceType.PROMO },
-        unitLabel: null,
-      },
-      // Order by updatedAt so the MOST RECENTLY SAVED override wins — editing a
-      // line's price on any order and saving makes it the customer's remembered
-      // price for future orders (and re-editing later supersedes it).
-      orderBy: { updatedAt: "desc" },
-      distinct: ["productId"],
-      select: {
-        productId: true,
-        unitPrice: true,
-        originalPrice: true,
-      },
-    });
-
-    return Object.fromEntries(
-      items.map((item) => [
-        item.productId,
-        {
-          lastPrice: roundMoney(Number(item.unitPrice)),
-          listPriceAtTime: roundMoney(Number(item.originalPrice)),
-        },
-      ]),
-    );
+    return loadCustomerPriceHistory(this.prisma.forTenant(), customerId);
   }
 
   private fulfilDeps() {
@@ -1971,9 +1944,7 @@ export class OrdersService implements OnApplicationBootstrap {
       shipping: orderShippingFee,
     });
 
-    // B451 gap 4: reject a bounded-but-oversized discountAmount before it can
-    // drive the persisted total negative. Fails fast, before any stock lock
-    // or transaction opens.
+    // B451 gap 4: reject an oversized discountAmount (negative total) before any stock lock or tx.
     assertMoneyInvariantsOrThrow({
       subtotal,
       discount: orderDiscount,
@@ -1992,13 +1963,13 @@ export class OrdersService implements OnApplicationBootstrap {
         customerId,
         lines: lineItemsData.map((li) => ({ trackedCategoryId: li.trackedCategoryId })),
       });
-      // Lane R: selling restrictions — a banned product refuses (409 SELLING_RESTRICTED) BEFORE the
-      // stock transaction, like the license guard above; a DRAFT is checked at its promotion.
+      // Lane R: a banned product refuses (409) BEFORE the stock tx; a DRAFT is checked at promotion.
       await this.sellingRestrictions.assertLinesSellable({
         tenantId: this.restrictionTenantId(user),
         customerId,
         lines: lineItemsData.flatMap((li) => (li.productId ? [{ productId: li.productId }] : [])),
         channel: restrictionChannelForPrincipal(user), // judged at ENTRY time, like the license guard
+        fulfilmentKind: saleFulfilmentKind({ counterSale: options.counterSale, fulfillPath }),
       });
       // B585: credit check for a NEW order (nothing runs unless the tenant switch is set).
       await this.creditGate({ customerId, projectedTotal: total, principal: user });
@@ -2756,14 +2727,14 @@ export class OrdersService implements OnApplicationBootstrap {
       customerId: order.customerId,
       lines: order.lineItems.flatMap((li) => (li.productId ? [{ productId: li.productId }] : [])),
       channel: "STAFF",
+      fulfilmentKind: saleFulfilmentKind(order),
     });
     return this.stockTx(
       "orders.reopen",
       async (tx) => {
-        // B64 (REG-B64): read the item-CANCELLED lines BEFORE they flip below —
-        // this is exactly the set an F07 cancel credited stock back for (a
-        // pre-F07 cancel left lines untouched, so this reads empty and
-        // re-decrements nothing — era consistency, not a regression).
+        await claimReopenInTx(tx, id); // B695: Order lock + CANCELLED -> PENDING CAS; the loser gets the 409
+        // B64: the item-CANCELLED lines, read BEFORE they flip below — exactly what an F07 cancel credited
+        // back (a pre-F07 cancel left lines untouched: empty, nothing re-decremented).
         const cancelledLines = await tx.orderItem.findMany({
           where: { orderId: id, status: ItemStatus.CANCELLED },
           select: STOCK_SALE_LINE_SELECT,
@@ -2781,7 +2752,7 @@ export class OrdersService implements OnApplicationBootstrap {
         const reopened = await tx.order.update({
           where: { id },
           data: {
-            status: OrderStatus.PENDING,
+            status: OrderStatus.PENDING, // already set by the claim; kept so this write names the transition
             notes: order.notes
               ? `${order.notes}\n[Reopened ${new Date().toLocaleDateString()}]`
               : `[Reopened ${new Date().toLocaleDateString()}]`,
@@ -2932,6 +2903,7 @@ export class OrdersService implements OnApplicationBootstrap {
           customerId: order.customerId,
           lines: restrictionPlan.lines,
           channel: restrictionChannelForPrincipal(user),
+          fulfilmentKind: saleFulfilmentKind(order),
         });
     }
 
@@ -4662,8 +4634,7 @@ export class OrdersService implements OnApplicationBootstrap {
       });
     }
 
-    // Lane R: an at-door add / qty raise of a banned product refuses (409 SELLING_RESTRICTED) BEFORE
-    // the tx; OFF = one policy read. Re-checked under the row lock below (change-request-restrictions.ts).
+    // Lane R: an at-door add / qty raise of a banned product refuses (409) BEFORE the tx; re-checked in-tx.
     const tenantId = this.restrictionTenantId(resolver, order.tenantId);
     // F1(i): the line is judged at the stricter of the resolver's and the REQUESTER's channel (a buyer's add
     // approved by a driver is still a buyer's add); an unknown requester is the buyer.
@@ -4679,6 +4650,7 @@ export class OrdersService implements OnApplicationBootstrap {
         customerId: order.customerId,
         lines: restrictionPlan.lines,
         channel: restrictionChannelForPrincipal(judgedAs),
+        fulfilmentKind: saleFulfilmentKind(order),
       });
 
     // P5-08b posture: reference reads on separate pooled connections are
@@ -5187,7 +5159,7 @@ export class OrdersService implements OnApplicationBootstrap {
 
   /** Extracted verbatim to `order-lifecycle.ts` (size-ratchet headroom move); thin delegator. */
   async updateFulfillPath(orderId: string, dto: UpdateFulfillPathDto, _user?: JwtPayload) {
-    return updateFulfillPathImpl(this, orderId, dto, _user);
+    return updateFulfillPathImpl(this, orderId, dto, _user, this.sellingRestrictions);
   }
 
   /** Extracted verbatim to `order-lifecycle.ts` (size-ratchet headroom move); thin delegator. */
@@ -5274,6 +5246,7 @@ export class OrdersService implements OnApplicationBootstrap {
     }
 
     await this.prisma.tenantTransaction(async (tx) => {
+      const held = await lockDeleteLines(tx, id); // B284: Order lock first (the cancel's lock order)
       await assertNoCashRefundOnOrder(tx, id); // 409 on a cash refund, before any write
       // B214 (REG-B214): this loop deletes invoices WITHOUT InvoicesService.deleteInvoice (ledger
       // reversal duplicated below), so it refuses on its own, before any write (L-072, L-081).
@@ -5281,6 +5254,9 @@ export class OrdersService implements OnApplicationBootstrap {
         tx,
         order.invoices.map((inv) => inv.id),
       );
+      // B284: the cancel's stock unwind (SALE row, notes DELETE) — Order, then Products, then the releases.
+      if (held)
+        await this.settleStockForEdit(tx, held.order, held.lines, [], user, { notes: "DELETE" });
       await this.creditNotes.releaseOrderCreditsInTx(tx, id);
       for (const inv of order.invoices) {
         await this.invoicesService.releaseWalletPaymentsInTx(tx, inv.id);

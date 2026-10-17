@@ -117,6 +117,9 @@ const NON_WRITERS = new Set([
   // H3b (#3435): ladderProduct copies the live unitsPerBox into the price-ladder input the override decision
   // reads (the same base as unit-line-build); it derives no line factor and writes no pack. (Train M1.)
   "invoices/invoice-line-override.ts",
+  // Units v2 K1 fold: computePriceState folds the live pack size into the price-state fingerprint so a concurrent unit
+  // edit changes the token. It hashes the value; it derives no line factor, quantity or price and writes nothing.
+  "products/price-state.ts",
   "regulated/tx-report.ts",
   // B661: packAtSaleByProduct's `p.unitsPerBox` read is a write-time SNAPSHOT for the ledger's
   // regulatedUnitBasis, not a line-factor decision — never re-read later to reclassify an old row.

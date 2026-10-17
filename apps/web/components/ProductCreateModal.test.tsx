@@ -115,3 +115,78 @@ describe("ProductCreateModal (web-2 #5)", () => {
     expect(onClose).toHaveBeenCalled();
   });
 });
+
+describe("ProductCreateModal costing picker (SA-804 (1) / B1232)", () => {
+  it("offers AVCO, Last Cost and Standard Cost only: FIFO and LIFO are retired", () => {
+    open();
+    const select = screen
+      .getAllByRole("combobox")
+      .find((el) => within(el).queryByRole("option", { name: /^AVCO/ })) as HTMLElement;
+    expect(select).toBeTruthy();
+    const values = within(select)
+      .getAllByRole("option")
+      .map((o) => (o as HTMLOptionElement).value);
+    expect(values).toEqual(["AVCO", "LAST_COST", "STANDARD"]);
+    expect(values).not.toContain("FIFO");
+    expect(values).not.toContain("LIFO");
+  });
+});
+
+describe("ProductCreateModal price-as-quantity hint (V09)", () => {
+  async function fill(unit: string, unitsPerBox: string, price: string) {
+    open();
+    await userEvent.type(screen.getByLabelText(/^Unit \*/), unit);
+    if (unitsPerBox) await userEvent.type(screen.getByLabelText("Units per box"), unitsPerBox);
+    await userEvent.type(screen.getByLabelText(/^Price per /), price);
+  }
+
+  it("asks when the price equals the box count", async () => {
+    await fill("box", "12", "12");
+    const hint = document.getElementById("price-qty-hint");
+    expect(hint).not.toBeNull();
+    expect(hint).toHaveAttribute("aria-live", "polite");
+    expect(hint).toHaveTextContent("A box holds 12. Is $12.00 the price for the whole box?");
+    expect(screen.getByLabelText("Price per box *")).toHaveAttribute(
+      "aria-describedby",
+      expect.stringContaining("price-qty-hint"),
+    );
+  });
+
+  it("does not show for 12.50", async () => {
+    await fill("box", "12", "12.50");
+    expect(document.getElementById("price-qty-hint")).toBeEmptyDOMElement();
+    expect(screen.getByLabelText("Price per box *")).not.toHaveAttribute("aria-describedby");
+  });
+
+  it("does not show when units per box is 1", async () => {
+    await fill("box", "1", "1");
+    expect(document.getElementById("price-qty-hint")).toBeEmptyDOMElement();
+  });
+
+  it("keeps the live region mounted but empty until it applies", async () => {
+    await fill("box", "", "12");
+    const hint = document.getElementById("price-qty-hint");
+    expect(hint).not.toBeNull();
+    expect(hint).toBeEmptyDOMElement();
+  });
+
+  it("does not block saving", async () => {
+    await fill("box", "12", "12");
+    await userEvent.type(screen.getByLabelText("Name *"), "Cola");
+    fireEvent.click(screen.getByRole("button", { name: "Create Product" }));
+    await waitFor(() => expect(mutateAsync).toHaveBeenCalled());
+  });
+});
+
+describe("ProductCreateModal unit field fast typing (V01)", () => {
+  it("typing 'Can' quickly lands whole in the unit field and nowhere else", async () => {
+    open();
+    const unit = screen.getByLabelText(/^Unit \*/) as HTMLInputElement;
+    await userEvent.type(unit, "Can");
+    expect(unit).toHaveValue("Can");
+    for (const label of ["Name *", "Barcode", "Unit code", "SKU (box code)"]) {
+      expect(screen.getByLabelText(label)).toHaveValue("");
+    }
+    expect(screen.queryByText(/new unit/i)).toBeNull();
+  });
+});

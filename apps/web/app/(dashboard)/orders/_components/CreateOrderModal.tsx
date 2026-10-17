@@ -25,6 +25,7 @@ import {
   useCustomerPriceHistory,
   type ActiveOrderSummary,
 } from "@/lib/api/orders";
+import { usePriceSummary } from "@/lib/api/price-history";
 import { useCreateDraft, useUpdateDraft, useDeleteDraft, useDraft } from "@/lib/api/drafts";
 import { draftDeviceLabel, type OrderDraftPayload } from "@/lib/drafts";
 import { apiClient } from "@/lib/api-client";
@@ -397,6 +398,12 @@ export function CreateOrderModal({
   // Per-product last-given price for this customer — fetched once on customer select so
   // scanning is instant (no per-item round trip). Used to pre-fill the discount field.
   const { data: priceHistory } = useCustomerPriceHistory(selectedCustomer?.id);
+  // ONE batched request feeds every line's "Recent prices" chips (no per-line request, no mount budget).
+  // This screen creates a new order, so there is no order of its own to exclude.
+  const { data: priceSummary } = usePriceSummary(
+    isOpen ? selectedCustomer?.id : null,
+    lineItems.map((l) => (l.isUnlisted ? null : l.productId)),
+  );
 
   // Regulated tracked-categories (for the per-line "· regulated" tag + the live
   // invoice-split preview). Only staff build orders here; fetch while open.
@@ -1781,6 +1788,7 @@ export function CreateOrderModal({
               customerId: selectedCustomer?.id,
               customerName: selectedCustomer?.businessName,
               onUsePrice: (price) => setDiscountedPrice(li.tempId, price),
+              summary: priceSummary,
             }
           : undefined
       }
@@ -1928,7 +1936,7 @@ export function CreateOrderModal({
           {/* Three-tier hierarchy: ghost (dismiss) < secondary (alt save) <
               primary (main action). Save-as-Draft was an amber button that
               competed with the primary blue and misused a warning colour. */}
-          <div className="flex flex-wrap items-center justify-end gap-2 sm:gap-3">
+          <div className="flex flex-wrap items-center justify-end gap-2 sm:order-2 sm:gap-3">
             {/* Row 344: the footer actions are 44 px tap targets below sm (they were 34 px at 390). */}
             <Button variant="ghost" type="button" className="max-sm:h-11" onClick={handleDismiss}>
               Cancel
@@ -1978,6 +1986,20 @@ export function CreateOrderModal({
               {posMode ? POS_COPY.confirmAndInvoice : "Create Order"}
             </WriteButton>
           </div>
+          {/* O3 (P01/P02): the total used to sit at the foot of the scrolling body, hidden behind
+              this sticky footer at the moment of "Create Order". It is now pinned HERE. DOM-last so
+              the col-reverse stack puts it on top of the buttons under `sm`; `sm:order-1` seats it
+              between Minimize and the actions on the single row. min-w-0 + tabular-nums, no fixed
+              width: a five-figure total wraps instead of clipping. */}
+          {lineItems.length > 0 && (
+            <div
+              data-testid="create-order-footer-total"
+              className="flex min-w-0 items-baseline justify-between gap-2 tabular-nums text-navy sm:order-1 sm:justify-end"
+            >
+              <span className="text-sm text-navy/70">Total</span>
+              <span className="min-w-0 break-all text-base font-semibold">${total.toFixed(2)}</span>
+            </div>
+          )}
         </div>
       }
     >

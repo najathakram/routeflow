@@ -852,7 +852,19 @@ export class BuyerController {
     const created = await this.ordersService.create(
       (idempotencyKey ? { ...createDto, idempotencyKey } : createDto) as any, // B1094: replays by key
       makePseudoUser(ctx),
+      // B1239: forceNew is the buyer's explicit "create new order instead" — the new order is kept
+      // apart exactly like a staff "separate" choice (skipAutoMerge), so the sweep below and the hourly
+      // one never fold it back into the pending order they chose to leave alone.
+      ...(dto.forceNew ? [{ skipAutoMerge: true }] : []),
     );
+    if (dto.forceNew) {
+      // B1239: no consolidation. The sweep's winner is the newest order, so the NEW order won and the
+      // PRE-EXISTING pending order was the loser: deleted, its number burned, its lines moved into the new
+      // order. A duplicate tap then met a changed cart in assertReplayOfCart (409 / cart mismatch). A
+      // kept-apart order has nothing to consolidate; the pending order is untouched and the key stays on
+      // THIS order, so a duplicate submit replays it (create()'s key replay).
+      return toCustomerOrder(created);
+    }
     // Newly-created order may share a customer with pre-existing PENDINGs —
     // consolidate them so the customer ends up with a single PENDING (buyer-driven,
     // so the merged quantity earns its own BUY_N_GET_M free units).
