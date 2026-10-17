@@ -78,16 +78,43 @@ function captionTierName(labels: Record<string, string> | null | undefined, tier
   return tier === 1 ? `${name} tier` : name;
 }
 
+/**
+ * K11-07: what the tier would charge, in the caption of a row whose price is NOT the tier price. This replaces the
+ * old tier column (which repeated the Price figure on every tier-priced row), so no information is lost. Hidden
+ * below sm, where the table shows the price alone.
+ */
+function TierFigure({ tierName, tierPrice }: { tierName: string; tierPrice: number | null }) {
+  if (tierPrice === null) return null;
+  return (
+    <span className="hidden sm:inline">
+      {" "}
+      · {tierName}: <span className="font-normal tabular-nums">{formatMoney(tierPrice)}</span>
+    </span>
+  );
+}
+
 function SourceCaption({
   source,
   tierCaption,
+  tierName,
+  tierPrice,
   orderUnitLabel,
 }: {
   source: CustomerUnitPriceSource;
   tierCaption: string;
+  tierName: string;
+  /** The tier's own price for this unit, only on a row that is not priced by the tier; otherwise null. */
+  tierPrice: number | null;
   orderUnitLabel: string;
 }) {
-  if (source === "customer") return <span>Set for this customer</span>;
+  if (source === "customer") {
+    return (
+      <span>
+        Set for this customer
+        <TierFigure tierName={tierName} tierPrice={tierPrice} />
+      </span>
+    );
+  }
   const why =
     source === "customer-shape"
       ? `From their ${orderUnitLabel} price`
@@ -100,7 +127,10 @@ function SourceCaption({
       <span className="rounded-full bg-navy/10 px-1.5 py-0.5 text-[11px] font-medium text-navy">
         Auto
       </span>
-      <span>{why}</span>
+      <span>
+        {why}
+        <TierFigure tierName={tierName} tierPrice={tierPrice} />
+      </span>
     </span>
   );
 }
@@ -115,6 +145,7 @@ function ProductBlock({
   tierCaption,
   listName,
   showName,
+  single,
 }: {
   entry: CustomerProductUnitPricesDto;
   tierName: string;
@@ -123,15 +154,17 @@ function ProductBlock({
   /** The tenant's name for tier 1 (the list price column). */
   listName: string;
   showName: boolean;
+  /** One product (the product page): the card fills its column instead of sitting in half a row. */
+  single: boolean;
 }) {
-  // A tier 1 customer pays the list price: a second column under the same name would print it twice.
-  const showTierColumn = isSpecialTier(entry.tier);
+  // A tier 1 customer pays the list price, which the Retail column already shows: no tier figure to add.
+  const hasTierFigure = isSpecialTier(entry.tier);
   const own = entry.orderUnitScope === "customer";
   const rows = entry.rows;
   return (
     <article
       data-testid={T.product(entry.productId)}
-      className="min-w-0 self-start rounded-lg border border-surface-border p-4"
+      className={`min-w-0 rounded-lg border border-surface-border p-4 ${single ? "" : "self-start"}`}
     >
       {showName ? <h3 className="text-sm font-semibold text-navy">{entry.productName}</h3> : null}
       <p data-testid={T.ordersIn(entry.productId)} className="mt-1 text-sm text-navy/80">
@@ -152,11 +185,6 @@ function ProductBlock({
               <th scope="col" className="hidden py-1.5 pr-3 align-top font-medium sm:table-cell">
                 {listName}
               </th>
-              {showTierColumn ? (
-                <th scope="col" className="hidden py-1.5 align-top font-medium sm:table-cell">
-                  {tierName}
-                </th>
-              ) : null}
             </tr>
           </thead>
           <tbody>
@@ -176,18 +204,20 @@ function ProductBlock({
                     <SourceCaption
                       source={row.source}
                       tierCaption={tierCaption}
+                      tierName={tierName}
+                      tierPrice={
+                        hasTierFigure &&
+                        (row.source === "customer" || row.source === "customer-shape")
+                          ? row.tierPrice
+                          : null
+                      }
                       orderUnitLabel={entry.orderUnitLabel}
                     />
                   </div>
                 </td>
-                <td className="hidden py-2 pr-3 align-top tabular-nums text-navy/70 sm:table-cell">
+                <td className="hidden py-2 pr-3 align-top font-normal tabular-nums text-navy/70 sm:table-cell">
                   {formatMoney(row.listPrice)}
                 </td>
-                {showTierColumn ? (
-                  <td className="hidden py-2 align-top tabular-nums text-navy/70 sm:table-cell">
-                    {formatMoney(row.tierPrice)}
-                  </td>
-                ) : null}
               </tr>
             ))}
           </tbody>
@@ -311,7 +341,7 @@ export function CustomerPriceView({ customerId, productId }: CustomerPriceViewPr
                 product.
               </p>
             ) : (
-              <div className="grid gap-4 lg:grid-cols-2">
+              <div className={`grid gap-4 ${productId ? "" : "lg:grid-cols-2"}`}>
                 {res.products.map((entry) => (
                   <ProductBlock
                     key={entry.productId}
@@ -320,6 +350,7 @@ export function CustomerPriceView({ customerId, productId }: CustomerPriceViewPr
                     tierCaption={captionTierName(labels, entry.tier)}
                     listName={productTierLabel(labels, 1)}
                     showName={!productId}
+                    single={Boolean(productId)}
                   />
                 ))}
               </div>

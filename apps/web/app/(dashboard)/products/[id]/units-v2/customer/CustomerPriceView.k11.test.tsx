@@ -1,5 +1,5 @@
 import * as React from "react";
-import { act, fireEvent, render, screen } from "@testing-library/react";
+import { act, fireEvent, render, screen, within } from "@testing-library/react";
 import type { CustomerUnitPricesResponse } from "@routeflow/types";
 import { CustomerPriceView, resetCustomerViewMemory } from "./CustomerPriceView";
 import { CUSTOMER_VIEW_TESTIDS as T } from "./customer-testids";
@@ -157,5 +157,90 @@ describe("K11-06: the picked customer survives a refresh", () => {
     expect(mockPrices).toHaveBeenCalledWith("c1", undefined, expect.anything());
     expect(mockPrices).not.toHaveBeenCalledWith("c9", expect.anything(), expect.anything());
     expect(mockReplace).not.toHaveBeenCalled();
+  });
+});
+
+describe("K11-07: nothing repeats in the table, the card fills the column", () => {
+  const heads = (id = "p1") =>
+    within(screen.getByTestId(T.prices(id)))
+      .getAllByRole("columnheader")
+      .map((h) => h.textContent);
+  const show = (source: Source, tier: 1 | 2 | 3 = 3) => {
+    mockPrices.mockImplementation(() => loaded(response({}, tier, source)));
+  };
+
+  it("a tier-priced row has Unit, Price and Retail and no tier column", () => {
+    show("tier");
+    render(<CustomerPriceView customerId="c1" />);
+    expect(heads()).toEqual(["Unit", "Price", "Retail"]);
+    const row = screen.getByTestId(T.row("p1", "pack"));
+    expect(row.querySelectorAll("td")).toHaveLength(3);
+    // The tier price is the price: it is not printed a second time in the caption.
+    expect(row).not.toHaveTextContent("$1.40");
+  });
+
+  it("a customer-set row names the tier price in its caption: no information is lost", () => {
+    show("customer");
+    render(<CustomerPriceView customerId="c1" />);
+    const caption = screen.getByTestId(T.row("p1", "pack")).querySelectorAll("td")[1];
+    expect(caption).toHaveTextContent("Set for this customer");
+    expect(caption).toHaveTextContent("Tier 3: $1.40");
+    expect(heads()).toEqual(["Unit", "Price", "Retail"]);
+  });
+
+  it("a row priced from the customer's other unit also names the tier price", () => {
+    show("customer-shape");
+    render(<CustomerPriceView customerId="c1" />);
+    expect(screen.getByTestId(T.row("p1", "pack"))).toHaveTextContent(
+      "From their Case price · Tier 3: $1.40",
+    );
+  });
+
+  it("uses the tenant's label for the tier", () => {
+    mockLabels = { "1": "Retail", "3": "Wholesale plus" };
+    show("customer");
+    render(<CustomerPriceView customerId="c1" />);
+    expect(screen.getByTestId(T.row("p1", "pack"))).toHaveTextContent("Wholesale plus: $1.40");
+  });
+
+  it("a retail-tier customer's set price adds nothing: the list column already shows it", () => {
+    show("customer", 1);
+    render(<CustomerPriceView customerId="c1" />);
+    expect(screen.getByTestId(T.row("p1", "pack"))).not.toHaveTextContent("$1.40");
+  });
+
+  it("the tier fragment hides below sm so a phone still shows the price only", () => {
+    show("customer");
+    render(<CustomerPriceView customerId="c1" />);
+    const fragment = screen.getByText(/Tier 3:/);
+    expect(fragment.className).toContain("hidden");
+    expect(fragment.className).toContain("sm:inline");
+  });
+
+  it("one product on the product page: a single column, the card is not shrink-wrapped", () => {
+    render(<CustomerPriceView productId="p1" customerId="c1" />);
+    const card = screen.getByTestId(T.product("p1"));
+    expect(card.parentElement?.className).not.toContain("lg:grid-cols-2");
+    expect(card.className).not.toContain("self-start");
+  });
+
+  it("the customer page keeps two columns for many products", () => {
+    render(<CustomerPriceView customerId="c1" />);
+    const card = screen.getByTestId(T.product("p1"));
+    expect(card.parentElement?.className).toContain("lg:grid-cols-2");
+  });
+
+  it("every money figure is tabular; the price is medium and the references are regular", () => {
+    show("customer");
+    render(<CustomerPriceView customerId="c1" />);
+    const cells = screen.getByTestId(T.row("p1", "pack")).querySelectorAll("td");
+    const price = within(cells[1] as HTMLElement).getByText("$30.00");
+    expect(price.className).toContain("tabular-nums");
+    expect(price.className).toContain("font-medium");
+    expect(cells[2].className).toContain("tabular-nums");
+    expect(cells[2].className).toContain("font-normal");
+    const tierFigure = within(cells[1] as HTMLElement).getByText("$1.40");
+    expect(tierFigure.className).toContain("tabular-nums");
+    expect(tierFigure.className).toContain("font-normal");
   });
 });

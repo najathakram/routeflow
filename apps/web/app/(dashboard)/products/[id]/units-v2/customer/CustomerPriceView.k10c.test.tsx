@@ -249,7 +249,7 @@ describe("F26: the customer search is a WAI-ARIA combobox", () => {
 });
 
 describe("P18: tier labels", () => {
-  it("prints an unlabeled tier once: header 'Tier 3', never 'Tier 3 tier'", () => {
+  it("prints an unlabeled tier once: the caption says 'Tier 3', never 'Tier 3 tier'", () => {
     mockLabels = {};
     mockPrices.mockImplementation(() => ({
       data: response(3),
@@ -258,7 +258,8 @@ describe("P18: tier labels", () => {
     }));
     render(<CustomerPriceView customerId="c1" />);
     const heads = within(screen.getByTestId(T.prices("p1"))).getAllByRole("columnheader");
-    expect(heads[3]).toHaveTextContent(/^Tier 3$/);
+    // K11-07: the tier column is gone (its figure moved into the caption), so the tier is named once, there.
+    expect(heads.map((h) => h.textContent)).toEqual(["Unit", "Price", "Retail"]);
     expect(document.body.textContent).not.toMatch(/Tier 3 tier/i);
     // No custom label: the default name, once, with no appended word.
     expect(priceCell()).toBe("AutoTier 3");
@@ -283,7 +284,7 @@ describe("P18: tier labels", () => {
     expect(priceCell()).toBe("AutoWalk-in");
   });
 
-  it("keeps a configured label as the header and the caption", () => {
+  it("keeps a configured label in the caption (K11-07: the tier column is gone)", () => {
     mockPrices.mockImplementation(() => ({
       data: response(2),
       isLoading: false,
@@ -291,7 +292,8 @@ describe("P18: tier labels", () => {
     }));
     render(<CustomerPriceView customerId="c1" />);
     const heads = within(screen.getByTestId(T.prices("p1"))).getAllByRole("columnheader");
-    expect(heads[3]).toHaveTextContent(/^Wholesale$/);
+    // K11-07: no tier column; the configured label names the tier in the caption.
+    expect(heads.map((h) => h.textContent)).toEqual(["Unit", "Price", "Retail"]);
     // A custom label is printed verbatim: " tier" is appended only when there is no custom label.
     expect(priceCell()).toBe("AutoWholesale");
   });
