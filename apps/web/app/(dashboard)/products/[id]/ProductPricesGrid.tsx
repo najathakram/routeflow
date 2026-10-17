@@ -13,6 +13,7 @@ import { UNITS_V2_TESTIDS as T } from "./units-v2-testids";
 import type { GridEditApi } from "./units-v2/edit/edit-types";
 import { useAddUnitIntent, type AddUnitIntent } from "./units-v2/edit/add-unit-intent";
 import { canonicalPriceText } from "./units-v2/edit/price-text";
+import { revealClearOfBar } from "./units-v2/edit/reveal-clear-of-bar";
 import { ADD_UNIT_FIRST } from "./units-v2/edit/view-from-grid";
 
 /**
@@ -193,6 +194,8 @@ function CellInput({ t, tier, view }: { t: EditTarget; tier: number; view: CellV
   React.useEffect(() => {
     if (want && want.ref === t.ref && want.tier === tier && want.layout === t.layout) {
       el.current?.focus({ preventScroll: true });
+      // K11-13: then bring it clear of the save bar, once the bar has measured itself.
+      revealClearOfBar(el.current);
       edit.focused();
     }
   });
