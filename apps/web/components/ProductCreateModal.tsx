@@ -3,9 +3,13 @@
 import * as React from "react";
 import { ImagePlus, X as XIcon } from "lucide-react";
 import { Button, Modal, useToast } from "@routeflow/ui/web";
-import { unitWords } from "@routeflow/pricing";
+import { unitWords, validateSetPrice } from "@routeflow/pricing";
+import type { SavePricesRequest } from "@routeflow/types";
 import { useCreateProduct, useProducts, uploadProductImages } from "@/lib/api/products";
 import { apiClient } from "@/lib/api-client";
+import { fetchPriceGrid } from "@/lib/api/usePriceGrid";
+import { usePricesV2Enabled } from "@/lib/api/units-v2";
+import { useUnitsEnabled } from "@/lib/api/product-units";
 import { PRODUCT_NAME_SEPARATOR } from "@/lib/product-display";
 import { isPackUnit, priceUnitWord } from "@/lib/product-unit-label";
 import { priceQtyHint } from "@/lib/price-qty-hint";
@@ -152,6 +156,7 @@ export function ProductCreateModal({
     costingMethod: "AVCO",
     standardCost: initialCost != null && initialCost > 0 ? String(initialCost) : "",
     unitsPerBox: validUnitsPerBoxPrefill(initialUnitsPerBox) ? String(initialUnitsPerBox) : "",
+    pricePerPiece: "",
     parentProductId: defaultParentId ?? "",
     variantName: "",
     trackedCategoryId: "",
@@ -222,6 +227,16 @@ export function ProductCreateModal({
   }, [form.parentProductId, prefillParent?.id]);
 
   const [priceError, setPriceError] = React.useState("");
+  const [pieceError, setPieceError] = React.useState("");
+  const [isSavingPiece, setIsSavingPiece] = React.useState(false);
+  // K11-28: the piece price needs both units flags (the units POST and the S9 prices write are gated on them).
+  const pricesV2 = usePricesV2Enabled();
+  const unitsV1 = useUnitsEnabled();
+  // Shown only for a pack with a whole Units per box of 2 or more (a factor-1 unit equal to the pack's is refused)
+  // and no parent (a variant is priced by its family). The typed value stays in state while it is hidden.
+  const piecesPerPack = /^\d+$/.test(form.unitsPerBox.trim()) ? Number(form.unitsPerBox) : 0;
+  const showPiecePrice =
+    pricesV2 && unitsV1 && isPackUnit(form.unit) && piecesPerPack >= 2 && !form.parentProductId;
   const [pendingImages, setPendingImages] = React.useState<File[]>([]);
   const [previews, setPreviews] = React.useState<string[]>([]);
   const [isUploading, setIsUploading] = React.useState(false);
@@ -303,6 +318,22 @@ export function ProductCreateModal({
     onRestore: (fields) => setFormProgrammatic((f) => ({ ...f, ...fields })),
   });
 
+  /**
+   * K11-28 (design gate B2): add the 1-piece "Piece" unit WITHOUT a price (the server names every factor-1 unit
+   * "Piece"), read the grid's revision and price state, then set the Piece's Retail price through S9. Each step
+   * throws on failure and nothing follows a failed step.
+   */
+  const savePiecePrice = async (productId: string, to: number) => {
+    await apiClient.post(`/products/${productId}/units`, { label: "Piece", factorToBase: 1 });
+    const grid = await fetchPriceGrid(productId);
+    const body: SavePricesRequest = {
+      expectedRevision: grid.revision,
+      expectedPriceState: grid.priceState,
+      patches: [{ ref: "base", tier: 1, to }],
+    };
+    await apiClient.post(`/products/${productId}/prices`, body);
+  };
+
   // In-flight guard: a double-click posts twice (201 then 409) before isPending re-renders.
   const submittingRef = React.useRef(false);
   const handleSubmit = async (e: React.FormEvent) => {
@@ -322,6 +353,17 @@ export function ProductCreateModal({
       return;
     }
     setPriceError("");
+    // K11-28: a bad piece price blocks Create BEFORE anything is written (validateSetPrice is the one rule).
+    let pieceTo: number | null = null;
+    if (showPiecePrice && form.pricePerPiece.trim() !== "") {
+      const checked = validateSetPrice(form.pricePerPiece);
+      if (!checked.ok) {
+        setPieceError(checked.message);
+        return;
+      }
+      pieceTo = checked.value;
+    }
+    setPieceError("");
     // For variants, store ONLY the variant name in the `name` field.
     // The parent product's name stays unchanged; UI composes the full
     // display name (e.g. "Geek Next 50K - Strawberry") from the parent
@@ -365,8 +407,26 @@ export function ProductCreateModal({
       return;
     }
 
-    // Upload images if any were queued
+    // K11-28: the optional piece price, after the product exists. Three separate writes, the price through S9
+    // (compare-and-set, audit, undo), never on the units POST. Any failure keeps the product and stops the chain.
     let warned = false;
+    if (pieceTo != null && product?.id) {
+      setIsSavingPiece(true);
+      try {
+        await savePiecePrice(product.id, pieceTo);
+      } catch {
+        warned = true;
+        toast({
+          title: "Product created, but its piece price wasn't saved. Set it on the product page.",
+          variant: "warning",
+          duration: CREATED_TOAST_MS,
+        });
+      } finally {
+        setIsSavingPiece(false);
+      }
+    }
+
+    // Upload images if any were queued
     if (pendingImages.length > 0 && product?.id) {
       setIsUploading(true);
       try {
@@ -406,7 +466,7 @@ export function ProductCreateModal({
 
   if (!isOpen) return null;
 
-  const busy = createProduct.isPending || isUploading;
+  const busy = createProduct.isPending || isUploading || isSavingPiece;
   const pristine =
     pendingImages.length === 0 &&
     (Object.keys(EMPTY_DRAFT_FORM) as (keyof DraftFields)[]).every(
@@ -755,6 +815,45 @@ export function ProductCreateModal({
                 )}
               </div>
               {packUnit && unitsPerField}
+              {showPiecePrice && (
+                <div>
+                  <label
+                    htmlFor="product-piece-price"
+                    className="mb-1 block text-sm font-medium text-navy"
+                  >
+                    Price per piece <span className="font-normal text-navy/70">(optional)</span>
+                  </label>
+                  <div className="flex items-center">
+                    <span className="flex h-[38px] items-center rounded-l border border-r-0 border-surface-border bg-surface-raised px-2.5 text-sm text-navy/70">
+                      $
+                    </span>
+                    <input
+                      id="product-piece-price"
+                      type="number"
+                      step="any"
+                      placeholder="0.00"
+                      aria-invalid={pieceError ? "true" : undefined}
+                      aria-describedby={
+                        pieceError ? "piece-price-help piece-price-error" : "piece-price-help"
+                      }
+                      value={form.pricePerPiece}
+                      onChange={(e) => {
+                        set("pricePerPiece", e.target.value);
+                        setPieceError("");
+                      }}
+                      className={`w-full rounded-r border px-3 py-2 text-sm text-navy focus:outline-none focus:ring-2 focus:ring-brand-500 ${pieceError ? "border-danger focus:ring-danger" : "border-surface-border"}`}
+                    />
+                  </div>
+                  {pieceError && (
+                    <p id="piece-price-error" className="mt-1 text-xs text-danger">
+                      {pieceError}
+                    </p>
+                  )}
+                  <p id="piece-price-help" className="mt-1 text-xs text-navy/70">
+                    Leave blank to sell only by the {w.pack.lower}.
+                  </p>
+                </div>
+              )}
             </div>
 
             {/* Category — ONE axis. Free-text for non-regulated products;
