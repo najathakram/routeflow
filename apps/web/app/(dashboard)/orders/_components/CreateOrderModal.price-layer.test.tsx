@@ -15,6 +15,7 @@ type LayerState = {
   data?: { complete: boolean; products: Record<string, unknown[]> } | null;
 };
 let mockScanV2 = true;
+let activeOrder: Record<string, unknown> | undefined;
 let layer: LayerState;
 let history: Record<string, { lastPrice: number }> | undefined;
 const cust = { id: "c1", businessName: "Acme Foods", pricingTier: 3 };
@@ -73,7 +74,7 @@ jest.mock("@/lib/api/orders", () => ({
     error: null,
     reset: jest.fn(),
   }),
-  useActiveOrderForCustomer: () => ({ data: undefined }),
+  useActiveOrderForCustomer: () => ({ data: activeOrder }),
   useCustomerPriceHistory: () => ({ data: history }),
 }));
 jest.mock("@/lib/api/drafts", () => ({
@@ -186,6 +187,7 @@ describe("CreateOrderModal - the customer's price layer (S19b slice B)", () => {
     layer = { enabled: false, isPending: false, isError: false, data: null };
     cust.pricingTier = 3;
     mockScanV2 = true;
+    activeOrder = undefined;
   });
 
   it("flag off: no layer, master's tier price ($38) and nothing sent as an override", async () => {
@@ -242,16 +244,24 @@ describe("CreateOrderModal - the customer's price layer (S19b slice B)", () => {
 
   it("B-5b: a pending layer shows the unconfirmed marker, never a final price, and Create waits", async () => {
     layer = { enabled: true, isPending: true, isError: false, data: null };
-    await addWidgetForCustomer();
+    const view = await addWidgetForCustomer();
     expect(await screen.findByText("Checking this customer's prices…")).toBeInTheDocument();
     expect(screen.getByRole("button", { name: /create order/i })).toBeDisabled();
     expect(screen.getByRole("button", { name: /save as draft/i })).toBeDisabled();
     expect(screen.queryByRole("button", { name: "Retry" })).not.toBeInTheDocument();
-    // never a final price: wherever a line price is on screen, the unconfirmed marker is too (SA-813 M1)
-    expect(screen.queryByRole("status", { name: "" })).toBeDefined();
+    // never a final price: while a line price is on screen the unconfirmed marker is too (SA-813 M1) ...
+    expect(screen.getByText("$38.00 / each")).toBeInTheDocument();
     expect(screen.getByTestId("order-price-layer-pending")).toHaveTextContent(
       "Checking this customer's prices…",
     );
+    // ... and it goes away, with the buttons enabling, only once the layer confirms the prices
+    layer = layerReady([packRow({})]);
+    rerenderModal(view);
+    await waitFor(() =>
+      expect(screen.queryByTestId("order-price-layer-pending")).not.toBeInTheDocument(),
+    );
+    expect(await screen.findByText("$33.00 / each")).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: /create order/i })).toBeEnabled();
   });
   it("flag off, tier 1: master's last-given pre-fill ($36 < $42) is kept and sent", async () => {
     cust.pricingTier = 1;
@@ -290,5 +300,68 @@ describe("CreateOrderModal - the customer's price layer (S19b slice B)", () => {
     layer = layerReady([]);
     rerenderModal(view);
     expect(await screen.findByText("$38.00 / each")).toBeInTheDocument();
+  });
+  it.each([[false], [true]])(
+    "MUST-7: the server drops a vanished typed row (product ABSENT from products): back to master's $38 (scan_v2 %s)",
+    async (scanV2) => {
+      mockScanV2 = scanV2;
+      layer = layerReady([packRow({})]);
+      const view = await addWidgetForCustomer();
+      expect(await screen.findByText("$33.00 / each")).toBeInTheDocument();
+      layer = {
+        enabled: true,
+        isPending: false,
+        isError: false,
+        data: { complete: true, products: {} },
+      };
+      rerenderModal(view);
+      expect(await screen.findByText("$38.00 / each")).toBeInTheDocument();
+    },
+  );
+
+  it("nit 4: a layered MANUAL (above-list) line re-prices when the layer's row goes away (scan_v2 on and off)", async () => {
+    mockScanV2 = false;
+    layer = layerReady([packRow({ price: 45, aboveList: true })]);
+    const view = await addWidgetForCustomer();
+    expect(await screen.findByText("$45.00 / each")).toBeInTheDocument();
+    layer = {
+      enabled: true,
+      isPending: false,
+      isError: false,
+      data: { complete: true, products: {} },
+    };
+    rerenderModal(view);
+    expect(await screen.findByText("$38.00 / each")).toBeInTheDocument();
+  });
+
+  it("merge prompt: a layer that fails after the prompt opened disables both choices and says why", async () => {
+    activeOrder = { id: "o1", orderNumber: "ORD-1", status: "PENDING", itemCount: 1, total: 40 };
+    layer = layerReady([packRow({})]);
+    const view = await addWidgetForCustomer();
+    await waitFor(() =>
+      expect(screen.getByRole("button", { name: /save as draft/i })).toBeEnabled(),
+    );
+    saveDraft();
+    const merge = await screen.findByRole("button", { name: /merge into ORD-1/i });
+    expect(merge).toBeEnabled();
+    layer = { enabled: true, isPending: false, isError: true, data: null };
+    rerenderModal(view);
+    expect(await screen.findByTestId("merge-price-layer-wait")).toHaveTextContent(
+      /Couldn't load this customer's prices\./,
+    );
+    expect(screen.getByRole("button", { name: /merge into ORD-1/i })).toBeDisabled();
+    expect(screen.getByRole("button", { name: /create as separate/i })).toBeDisabled();
+    expect(createOrderMutate).not.toHaveBeenCalled();
+  });
+
+  it("nit 1: flag off, the last-given pre-fill is not marked systemPrefill (draft blobs stay byte-identical)", async () => {
+    cust.pricingTier = 1;
+    await addWidgetForCustomer();
+    expect(await screen.findByText("$36.00 / each")).toBeInTheDocument();
+    await waitFor(() =>
+      expect(screen.getByRole("button", { name: /save as draft/i })).toBeEnabled(),
+    );
+    saveDraft();
+    expect(JSON.stringify(createOrderMutate.mock.calls[0][0])).not.toContain("systemPrefill");
   });
 });

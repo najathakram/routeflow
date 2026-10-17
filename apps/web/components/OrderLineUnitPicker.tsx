@@ -152,7 +152,9 @@ function OrderLineUnitPickerInner({
     // #2381: a remount (or a ladder arriving late) is a first sight, not a ladder move; a price
     // the operator typed stands. A real move afterwards (the tier changed) still re-prices.
     if (firstSight && line.priceEdited) return;
-    if (line.priceType === "DISCOUNTED" || line.priceType === "MANUAL") return;
+    if (line.priceType === "DISCOUNTED") return;
+    // MANUAL with a one-time price is the operator's; without one it is the layer's above-list price and follows the ladder
+    if (line.priceType === "MANUAL" && line.discountedPrice != null) return;
     if (held.price !== line.unitPrice) onChange(held, true);
   }, [line.unitLabel, line.priceType, line.unitPrice, line.priceEdited, held, onChange]);
 

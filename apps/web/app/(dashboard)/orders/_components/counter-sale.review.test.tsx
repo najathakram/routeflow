@@ -58,6 +58,27 @@ describe("review item 4: the till's edit-reason gate reads the layer's isSpecial
   });
 });
 
+describe("nit 3: the till's percent re-apply path judges by the layer's isSpecial", () => {
+  it("a percent edit re-applied for a tier-1 customer with a typed SPECIAL price needs a reason: it keeps its net", () => {
+    const [plain] = addScannedProduct([], product, "CASE" as never, 1, 1);
+    const edited: SaleLine = {
+      ...plain,
+      unitPrice: 37.8,
+      tierPrice: 42,
+      priceEdited: true,
+      override: { mode: "percent", value: 10 } as never,
+    };
+    const r = repriceLines(
+      [edited],
+      () => 1,
+      () => typed33,
+    );
+    // 10% off the layer's $33 would be $29.70, a real change on a SPECIAL line with no reason: not re-applied (kept)
+    expect(r.lines[0].unitPrice).toBe(37.8);
+    expect(r.kept).toBe(1);
+  });
+});
+
 // Items 3 and 5 drive the real hook against a controllable layer state.
 let mockLayer: Record<string, unknown>;
 const mockRefetch = jest.fn();

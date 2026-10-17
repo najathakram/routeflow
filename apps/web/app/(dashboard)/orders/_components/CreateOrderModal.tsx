@@ -659,9 +659,9 @@ export function CreateOrderModal({
       const next = prev.map((li) => {
         // a unit line is re-priced by its own picker from the product's ladder, not the pack's tiers
         if (li.isUnlisted || !li.tierPrices || li.unitLabel) return li;
-        // a layered MANUAL (above-list) line is the system's price, not the operator's: it re-prices (layerFrom marks it)
-        if (li.priceType === "DISCOUNTED" || (li.priceType === "MANUAL" && !li.layerFrom))
-          return li;
+        // an operator's MANUAL / DISCOUNTED price always carries a one-time price; a MANUAL line without one is the layer's
+        // above-list price (the system's), so it re-prices with the customer
+        if (li.priceType === "DISCOUNTED") return li;
         if (li.discountedPrice != null) return li;
         const tier = cpMap.get(li.productId) ?? selectedCustomer?.pricingTier ?? 1;
         const lp = customerLinePrice({
@@ -845,7 +845,7 @@ export function CreateOrderModal({
       specialPrice: customerLineSpecial(linePrice),
       discountedPrice: hasHistOverride ? histEntry!.lastPrice : undefined,
       // a price the system pre-filled from history: the layer replaces it if one turns out to price this line (review 1)
-      systemPrefill: hasHistOverride ? true : undefined,
+      systemPrefill: hasHistOverride && priceLayer.enabled ? true : undefined,
       // the pre-layer (master) values, restored if the layer's row goes away
       layerFrom: linePrice.layered
         ? masterLayerFrom(
@@ -1178,7 +1178,8 @@ export function CreateOrderModal({
         if (li.isUnlisted || !li.productId) return li;
         const r = repriceLineFromLayer(li, {
           tier: tierForProduct(li.productId),
-          layer: priceLayer.layerOf(li.productId),
+          // the server omits a product whose typed row is gone: [] (ready, no row) restores master's number
+          layer: priceLayer.layerOf(li.productId) ?? [],
         });
         if (r !== li) changed = true;
         return r;
@@ -1272,7 +1273,9 @@ export function CreateOrderModal({
 
   const setOverrideReason = (tempId: string, reason: string) =>
     setLineItems((prev) =>
-      prev.map((li) => (li.tempId === tempId ? { ...li, overrideReason: reason } : li)),
+      prev.map((li) =>
+        li.tempId === tempId ? { ...li, overrideReason: reason, systemPrefill: undefined } : li,
+      ),
     );
 
   // ── Submit ────────────────────────────────────────────────────────────────

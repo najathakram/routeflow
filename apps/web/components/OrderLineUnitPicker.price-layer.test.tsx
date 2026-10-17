@@ -155,4 +155,23 @@ describe("OrderLineUnitPicker - the customer's layer (picker add-on)", () => {
     fireEvent.click(screen.getByRole("button", { name: "Retry" }));
     expect(mockRefetch).toHaveBeenCalledTimes(1);
   });
+  it("nit 4: a system MANUAL unit line (no one-time price) re-prices when its ladder price moves; an operator MANUAL stands", () => {
+    const base = {
+      ...line,
+      unitLabel: "Case",
+      packBase: { ...line, qty: 1 } as never,
+      unitPrice: 999,
+      priceType: "MANUAL" as const,
+    };
+    const system = jest.fn();
+    render(<OrderLineUnitPicker line={base} tier={3} onChange={system} />);
+    expect(system).toHaveBeenCalledTimes(1);
+    expect(system.mock.calls[0][0].price).toBe(412.57);
+    expect(system.mock.calls[0][1]).toBe(true);
+    const operator = jest.fn();
+    render(
+      <OrderLineUnitPicker line={{ ...base, discountedPrice: 999 }} tier={3} onChange={operator} />,
+    );
+    expect(operator).not.toHaveBeenCalled();
+  });
 });

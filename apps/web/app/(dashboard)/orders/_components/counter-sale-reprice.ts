@@ -62,6 +62,7 @@ export function repriceLines(
             tierPrice: unitPrice,
             listPrice: l.listPrice ?? unitPrice,
             tier,
+            ...(lp.layered ? { isSpecial: lp.isSpecial } : {}),
             qty: l.qty,
             boxes: l.boxes,
             pieces: l.pieces,
