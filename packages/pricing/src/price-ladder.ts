@@ -180,7 +180,9 @@ export function refForLabel(
 ): UnitRef {
   const level = resolveLadderLevel(product, units, label);
   if (level.kind === "pack") return "pack";
-  return level.kind === "piece" ? pieceRef(product, !!level.row) : unitRef(level.row as LadderViewUnit);
+  return level.kind === "piece"
+    ? pieceRef(product, !!level.row)
+    : unitRef(level.row as LadderViewUnit);
 }
 
 /**

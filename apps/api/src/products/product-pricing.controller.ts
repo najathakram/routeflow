@@ -8,6 +8,7 @@ import type { JwtPayload } from "../auth/jwt-payload.interface";
 import { PlanFlagGuard } from "../billing/plan-flag.guard";
 import { RequirePlanFlag } from "../billing/require-plan-flag.decorator";
 import { SavePricesDto, UndoPricesDto } from "./dto/save-prices.dto";
+import { ProductCustomerPricesService } from "./product-customer-prices.service";
 import { ProductPriceGridService } from "./product-price-grid.service";
 import { ProductPriceWriteService } from "./product-price-write.service";
 
@@ -23,12 +24,20 @@ export class ProductPricingController {
   constructor(
     private readonly grid: ProductPriceGridService,
     private readonly writes: ProductPriceWriteService,
+    private readonly customers: ProductCustomerPricesService,
   ) {}
 
   @Get("price-grid")
   @Roles(UserRole.OPERATOR)
   priceGrid(@Param("productId") productId: string) {
     return this.grid.get(productId);
+  }
+
+  /** The customers holding typed prices on this product, in the shape the planners take (capped at 500). */
+  @Get("customer-prices")
+  @Roles(UserRole.OPERATOR)
+  customerPrices(@Param("productId") productId: string) {
+    return this.customers.get(productId);
   }
 
   /** One Save: patches, keeps, customer moves, one audit row, priceRevision + 1 (SA-799 b). */

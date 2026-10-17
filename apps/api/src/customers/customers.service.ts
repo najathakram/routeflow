@@ -34,6 +34,7 @@ import {
   deleteNonBlockingInvoicesCas,
   readInvoicesAssertingNoneBlocking,
 } from "./customer-delete-preflight";
+import { assertOrdersUnchanged, releaseLiveOrderStockInTx } from "./customer-delete-stock";
 import { CommissionEngineService } from "../sales-agents/commission-engine.service";
 import { RegulatedLedgerService } from "../regulated/regulated-ledger.service";
 import { roundMoney, remainingCapacity } from "@routeflow/pricing";
@@ -2001,6 +2002,13 @@ export class CustomersService {
       await assertRecordFreeInTx(tx, id);
       await assertNoMoneyRecordsInTx(tx, [id]); // #2587/SA-516
       await assertNoDeliveryHistory(tx, [id]); // #2591/SA-516b
+      // B1241: orders that slipped in after the pre-flight booked stock; hand it back before they go.
+      const lockedOrderIds = await releaseLiveOrderStockInTx(
+        tx,
+        this.prisma.getTenantId(),
+        this.logger,
+        [id],
+      );
 
       // #2587/SA-516: credit notes are never destroyed (so no order links to clear either)
       await deleteMoneyRecordCas(tx.creditNote, { customerId: id });
@@ -2015,6 +2023,10 @@ export class CustomersService {
 
       // Orders and their items (must delete referencing records first)
       const orders = await tx.order.findMany({ where: { customerId: id }, select: { id: true } });
+      assertOrdersUnchanged(
+        orders.map((o) => o.id),
+        lockedOrderIds,
+      ); // B1241
       if (orders.length) {
         const orderIds = orders.map((o) => o.id);
         // Delivery mutations reference orders and order items
@@ -2031,7 +2043,7 @@ export class CustomersService {
           await tx.transaction.deleteMany({ where: { id: { in: txIds } } });
         }
         await tx.orderItem.deleteMany({ where: { orderId: { in: orderIds } } });
-        await tx.order.deleteMany({ where: { customerId: id } });
+        await tx.order.deleteMany({ where: { id: { in: orderIds } } });
       }
 
       // Estimates
@@ -2177,6 +2189,13 @@ export class CustomersService {
         const invoices = await readInvoicesAssertingNoneBlocking(tx, customerIds); // SA-510a (1)
         await assertNoMoneyRecordsInTx(tx, customerIds); // #2587/SA-516
         await assertNoDeliveryHistory(tx, customerIds); // #2591/SA-516b: the in-tx twin
+        // B1241: the live orders booked stock; hand it back (Order rows, then Products) before anything is deleted.
+        const lockedOrderIds = await releaseLiveOrderStockInTx(
+          tx,
+          tenantId,
+          this.logger,
+          customerIds,
+        );
         const invoiceIds = invoices.map((i) => i.id);
         if (invoiceIds.length) {
           // Reverse each invoice's regulated-sales ledger rows BEFORE its items
@@ -2213,6 +2232,10 @@ export class CustomersService {
           where: { customerId: { in: customerIds } },
           select: { id: true },
         });
+        assertOrdersUnchanged(
+          orders.map((o) => o.id),
+          lockedOrderIds,
+        ); // B1241
         if (orders.length) {
           const orderIds = orders.map((o) => o.id);
           await tx.deliveryMutation.deleteMany({ where: { orderId: { in: orderIds } } });
@@ -2227,7 +2250,7 @@ export class CustomersService {
             await tx.transaction.deleteMany({ where: { id: { in: txnIds } } });
           }
           await tx.orderItem.deleteMany({ where: { orderId: { in: orderIds } } });
-          await tx.order.deleteMany({ where: { customerId: { in: customerIds } } });
+          await tx.order.deleteMany({ where: { id: { in: orderIds } } });
         }
 
         const estimates = await tx.estimate.findMany({
@@ -2363,6 +2386,13 @@ export class CustomersService {
         const invoices = await readInvoicesAssertingNoneBlocking(tx, ids);
         await assertNoMoneyRecordsInTx(tx, ids); // #2587/SA-516
         await assertNoDeliveryHistory(tx, ids); // #2591/SA-516b: the in-tx twin
+        // B1241: as deleteAllCustomers: live orders hand their booked stock back first.
+        const lockedOrderIds = await releaseLiveOrderStockInTx(
+          tx,
+          this.prisma.getTenantId(),
+          this.logger,
+          ids,
+        );
         const invoiceIds = invoices.map((i) => i.id);
         if (invoiceIds.length) {
           // Reverse each invoice's regulated-sales ledger rows BEFORE its items
@@ -2400,6 +2430,10 @@ export class CustomersService {
           where: { customerId: { in: ids } },
           select: { id: true },
         });
+        assertOrdersUnchanged(
+          orders.map((o) => o.id),
+          lockedOrderIds,
+        ); // B1241
         if (orders.length) {
           const orderIds = orders.map((o) => o.id);
           await tx.deliveryMutation.deleteMany({ where: { orderId: { in: orderIds } } });
@@ -2414,7 +2448,7 @@ export class CustomersService {
             await tx.transaction.deleteMany({ where: { id: { in: txnIds } } });
           }
           await tx.orderItem.deleteMany({ where: { orderId: { in: orderIds } } });
-          await tx.order.deleteMany({ where: { customerId: { in: ids } } });
+          await tx.order.deleteMany({ where: { id: { in: orderIds } } });
         }
 
         // Estimates

@@ -100,7 +100,10 @@ function ChangePricesForm({
   const apply = () => {
     if (!plan || !canApply) return;
     const folded = foldPlan(plan, selection);
-    draft.applyPlan(folded.plan);
+    // The re-planner lets the customer offer follow the customers' prices if they change before Save (K3b).
+    draft.applyPlan(folded.plan, (cs) =>
+      planPriceChange(view, { ...form, value }, rules, tierName, { customers: cs }),
+    );
     if (folded.customerTicked) draft.setOfferTicked(0, true);
     folded.customerKeeps.forEach((m) => draft.keepCustomer(m));
     reset();

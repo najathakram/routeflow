@@ -229,6 +229,8 @@ export const API_ERROR_CODES = {
   STRIPE_NOT_CONFIGURED: "STRIPE_NOT_CONFIGURED",
   STRIPE_ACCOUNT_MISMATCH: "STRIPE_ACCOUNT_MISMATCH",
   STRIPE_SUBSCRIPTION_OWNER_MISMATCH: "STRIPE_SUBSCRIPTION_OWNER_MISMATCH",
+  PAYMENT_NOT_DUE: "PAYMENT_NOT_DUE",
+  PAYMENT_TERMS_CHANGED: "PAYMENT_TERMS_CHANGED",
   CATCHUP_SESSION_OPEN: "CATCHUP_SESSION_OPEN",
   CATCHUP_PENDING: "CATCHUP_PENDING",
   CATCHUP_NOT_ELIGIBLE: "CATCHUP_NOT_ELIGIBLE",
@@ -555,6 +557,12 @@ export const API_ERROR_CODES = {
    * write path (SA-795 h). Fixed body; nothing was written.
    */
   PRICING_RULES_NOT_READY: "PRICING_RULES_NOT_READY",
+  /**
+   * 400 from POST/PATCH /products and PATCH /settings/margin: the request tried to SET the costing method FIFO or LIFO,
+   * which are retired (a stored FIFO/LIFO is costed as average cost). Use AVCO, STANDARD or LAST_COST. Fixed body;
+   * nothing was written (SA-804 (1), B1232).
+   */
+  COSTING_METHOD_RETIRED: "COSTING_METHOD_RETIRED",
   /**
    * 409 from POST /products/:productId/prices and POST /prices/undo (units v2): the product's priceRevision, its price state
    * (SA-796 R-1 value compare-and-set) or a customer cell's expected price changed since the grid was read. Body carries

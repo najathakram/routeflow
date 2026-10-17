@@ -113,6 +113,10 @@ import { DeleteOrderTier } from "./_components/DeleteOrderTier";
 import { isPosOrder } from "@/lib/api/pos-orders";
 import { FulfillPathMoveConfirm } from "./_components/FulfillPathMoveConfirm";
 import { InvoicesNeedReviewBadge } from "./_components/InvoicesNeedReviewBadge";
+import { InvoicedEditNotice } from "./_components/InvoicedEditNotice";
+import { StickyEditBar } from "./_components/StickyEditBar";
+import { EditCasesPieces } from "./_components/EditCasesPieces";
+import { isCasesPiecesLine } from "./edit-cases-pieces";
 import { DemoteReasonModal } from "./_components/DemoteReasonModal";
 import { EditTaxLabel } from "./_components/EditTaxLabel";
 import { EditScanBar } from "./_components/EditScanBar";
@@ -1437,8 +1441,13 @@ export function EditableLineItems({
               <LockedUnitLineBadge display={item.lockedDisplay} />
             )}
 
+            {/* O1 (F06): a classic boxed line gets the SAME cases + loose-pieces control as Create. */}
+            {isCasesPiecesLine(item) && (
+              <EditCasesPieces item={item} onChange={(patch) => update(item.id, patch)} />
+            )}
+
             {/* Qty input */}
-            {!item.cancelled && !item.countLocked && (
+            {!item.cancelled && !item.countLocked && !isCasesPiecesLine(item) && (
               <label className="flex items-center gap-1.5 text-[11px] font-medium uppercase tracking-[0.06em] text-navy/40">
                 Qty
                 <input
@@ -3019,14 +3028,6 @@ export default function OrderDetailPage() {
                   <Badge variant="info" label="Editing" className="normal-case tracking-normal" />
                 )}
               </h3>
-              {isEditing && (
-                <span className="text-xs text-navy/70">
-                  Prices &amp; quantities save on{" "}
-                  <b className="font-semibold text-navy">
-                    {localStatus === "DRAFT" ? "Save Draft" : "Save Changes"}
-                  </b>
-                </span>
-              )}
             </div>
             {isEditing ? (
               <div className="space-y-4">
@@ -3038,6 +3039,7 @@ export default function OrderDetailPage() {
                 </p>
                 {overpay.node}
                 {stale.node}
+                <InvoicedEditNotice invoices={order.invoices} />
                 <EditableLineItems
                   items={editItems}
                   onChange={setEditItems}
@@ -3113,7 +3115,7 @@ export default function OrderDetailPage() {
                   refusalReturn={returnSave.refusalReturn}
                 />
 
-                <div className="flex gap-2 flex-wrap">
+                <StickyEditBar>
                   <PriceLayerNotice
                     layer={priceLayer}
                     unconfirmed={layerBlocked}
@@ -3243,7 +3245,7 @@ export default function OrderDetailPage() {
                       </Button>
                     </>
                   )}
-                </div>
+                </StickyEditBar>
               </div>
             ) : orderUiV2.enabled ? (
               <OrderLineItemCards

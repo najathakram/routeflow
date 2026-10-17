@@ -28,6 +28,8 @@ const ROUTED: Record<string, string[]> = {
 
 /** File -> why a direct column write there can never reach a governed (variant or recipe) row. */
 const EXEMPT: Record<string, string> = {
+  "inventory/testing/order-stock-world.ts":
+    "Test-only seeding fixture of the B284 order-stock DB specs (inventory/testing, imported only by *.db.spec.ts): it creates throwaway Product, Customer and User rows in `qa-*` tenants, never a governed variant or recipe row and never a live tenant.",
   "inventory/testing/count-db-harness.ts":
     "Test-only seeding helper of the SA-767 count DB specs (inventory/testing, collected only by *.db.spec.ts): it createMany's throwaway Product rows (name, pricePerUnit, a variable data array) into `qa-sa767-*` tenants, never a governed variant or recipe row and never a live tenant.",
   "products/product-families.service.ts":

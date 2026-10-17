@@ -129,7 +129,8 @@ import {
 } from "./merge-idempotency";
 import { BUYER_EDIT_CLOSED_STATUSES, computeEditWindow } from "./edit-window";
 import { cancelBlockedMessage, cancelImpact } from "./order-cancel-impact";
-import { cancelOrderInTx, type CancelOrderTxOptions } from "./order-cancel-tx";
+import { cancelOrderInTx, lockDeleteLines, type CancelOrderTxOptions } from "./order-cancel-tx";
+import { claimReopenInTx } from "./order-reopen-claim";
 import { assertNoCashRefundOnOrder } from "../invoices/invoice-cash-refund-guard";
 import { assertBuyerDiffShape, classifyEditPayload } from "./order-edit-payload";
 import {
@@ -2747,10 +2748,9 @@ export class OrdersService implements OnApplicationBootstrap {
     return this.stockTx(
       "orders.reopen",
       async (tx) => {
-        // B64 (REG-B64): read the item-CANCELLED lines BEFORE they flip below —
-        // this is exactly the set an F07 cancel credited stock back for (a
-        // pre-F07 cancel left lines untouched, so this reads empty and
-        // re-decrements nothing — era consistency, not a regression).
+        await claimReopenInTx(tx, id); // B695: Order lock + CANCELLED -> PENDING CAS; the loser gets the 409
+        // B64: the item-CANCELLED lines, read BEFORE they flip below — exactly what an F07 cancel credited
+        // back (a pre-F07 cancel left lines untouched: empty, nothing re-decremented).
         const cancelledLines = await tx.orderItem.findMany({
           where: { orderId: id, status: ItemStatus.CANCELLED },
           select: STOCK_SALE_LINE_SELECT,
@@ -2768,7 +2768,7 @@ export class OrdersService implements OnApplicationBootstrap {
         const reopened = await tx.order.update({
           where: { id },
           data: {
-            status: OrderStatus.PENDING,
+            status: OrderStatus.PENDING, // already set by the claim; kept so this write names the transition
             notes: order.notes
               ? `${order.notes}\n[Reopened ${new Date().toLocaleDateString()}]`
               : `[Reopened ${new Date().toLocaleDateString()}]`,
@@ -5242,6 +5242,7 @@ export class OrdersService implements OnApplicationBootstrap {
     }
 
     await this.prisma.tenantTransaction(async (tx) => {
+      const held = await lockDeleteLines(tx, id); // B284: Order lock first (the cancel's lock order)
       await assertNoCashRefundOnOrder(tx, id); // 409 on a cash refund, before any write
       // B214 (REG-B214): this loop deletes invoices WITHOUT InvoicesService.deleteInvoice (ledger
       // reversal duplicated below), so it refuses on its own, before any write (L-072, L-081).
@@ -5249,6 +5250,9 @@ export class OrdersService implements OnApplicationBootstrap {
         tx,
         order.invoices.map((inv) => inv.id),
       );
+      // B284: the cancel's stock unwind (SALE row, notes DELETE) — Order, then Products, then the releases.
+      if (held)
+        await this.settleStockForEdit(tx, held.order, held.lines, [], user, { notes: "DELETE" });
       await this.creditNotes.releaseOrderCreditsInTx(tx, id);
       for (const inv of order.invoices) {
         await this.invoicesService.releaseWalletPaymentsInTx(tx, inv.id);

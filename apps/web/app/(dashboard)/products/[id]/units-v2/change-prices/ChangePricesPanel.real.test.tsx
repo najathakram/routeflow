@@ -24,3 +24,21 @@ it("raising the Case by 5% writes the Case Retail the core worked out", () => {
   fireEvent.click(screen.getByRole("button", { name: "Apply" }));
   expect(draft.applyPlan.mock.calls[0][0].patches).toEqual([{ ref: "case", tier: 1, to: 14.61 }]);
 });
+
+it("K3b: Apply also hands the draft a re-planner, so the customer offer can follow the customers' prices", () => {
+  render(<ChangePricesPanel onClose={jest.fn()} />);
+  fireEvent.change(screen.getByLabelText("Amount"), { target: { value: "5" } });
+  fireEvent.click(screen.getByRole("button", { name: "Apply" }));
+  const [plan, replan] = draft.applyPlan.mock.calls.at(-1)!;
+  const customer = { customerId: "c1", name: "A", tier: 1, orderUnit: null, set: { case: 13 } };
+  const fresh = replan([customer]);
+  // the same change, worked out again for the customers it is given
+  expect(fresh.patches).toEqual(plan.patches);
+  expect(fresh.offers).toEqual([
+    expect.objectContaining({
+      kind: "customer",
+      moves: [expect.objectContaining({ customerId: "c1", ref: "case", from: 13, to: 13.65 })],
+    }),
+  ]);
+  expect(replan([]).offers).toEqual([]);
+});

@@ -52,9 +52,12 @@ import { ReadOnlyHint, WriteButton } from "@/lib/read-only-gate";
 
 const SAVED_VIEWS = [
   { id: "all", label: "All", filters: {} as Record<string, string | boolean> },
+  // O4 (P04): the status dropdown is gone, so every status it offered is a pill here.
+  { id: "draft", label: "Draft", filters: { status: "DRAFT" } },
   { id: "pending", label: "Pending", filters: { status: "PENDING" } },
   { id: "confirmed", label: "Confirmed", filters: { status: "CONFIRMED" } },
   { id: "delivery", label: "Out for Delivery", filters: { status: "OUT_FOR_DELIVERY" } },
+  { id: "partial", label: "Partly delivered", filters: { status: "PARTIALLY_DELIVERED" } },
   { id: "urgent", label: "Urgent", filters: { urgent: true } },
   { id: "delivered", label: "Delivered", filters: { status: "DELIVERED" } },
   { id: "cancelled", label: "Cancelled", filters: { status: "CANCELLED" } },
@@ -68,7 +71,7 @@ const STATUS_OPTIONS: { value: string; label: string }[] = [
   { value: "PENDING", label: "Pending" },
   { value: "CONFIRMED", label: "Confirmed" },
   { value: "OUT_FOR_DELIVERY", label: "Out for Delivery" },
-  { value: "PARTIALLY_DELIVERED", label: "Partially Delivered" },
+  { value: "PARTIALLY_DELIVERED", label: "Partly delivered" },
   { value: "DELIVERED", label: "Delivered" },
   { value: "CANCELLED", label: "Cancelled" },
 ];
@@ -391,10 +394,6 @@ export default function OrdersPage() {
     ...v,
     label: statusLabel(String(v.filters.status ?? ""), v.label),
   }));
-  const statusOptions = STATUS_OPTIONS.map((o) => ({
-    ...o,
-    label: statusLabel(o.value, o.label),
-  }));
   // The bulk cancel shows its own single summary toast — no per-order global error toasts.
   const updateStatus = useUpdateOrderStatus({ localErrorToast: true });
   const bulkDelete = useBulkDeleteOrders();
@@ -530,6 +529,13 @@ export default function OrdersPage() {
   }, [urlFilters, statusFilter, urgentOnly, dateFrom, dateTo, productIdFilter, fulfillPathFilter]);
 
   const applyView = (view: (typeof SAVED_VIEWS)[0]) => {
+    // A status-only pill replaces just the status, like the dropdown it replaced: the date range,
+    // product and fulfilment filters (and ?shipView) stay. Every other view starts clean.
+    const viewKeys = Object.keys(view.filters);
+    if (viewKeys.length === 1 && viewKeys[0] === "status") {
+      setFilter("status", view.filters.status as string);
+      return;
+    }
     clearFilters();
     for (const [k, val] of Object.entries(view.filters)) {
       setFilter(k as never, val as string | boolean);
@@ -940,13 +946,6 @@ export default function OrdersPage() {
           >
             <SortIcon col={sortCol} />
           </button>
-        </div>
-        <div className="w-48">
-          <Select
-            options={statusOptions}
-            value={statusFilter}
-            onChange={(e) => setFilter("status", e.target.value)}
-          />
         </div>
         <div className="w-44">
           <Select
