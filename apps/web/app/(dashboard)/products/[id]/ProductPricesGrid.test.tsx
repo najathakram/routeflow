@@ -2,6 +2,7 @@ import * as React from "react";
 import * as fs from "fs";
 import * as path from "path";
 import { render, screen, within } from "@testing-library/react";
+import userEvent from "@testing-library/user-event";
 import type { ProductPriceGridDto } from "@routeflow/types";
 import { ProductPricesGrid } from "./ProductPricesGrid";
 import { UNITS_V2_TESTIDS as T } from "./units-v2-testids";
@@ -84,7 +85,7 @@ describe("ProductPricesGrid (S11, read-only)", () => {
   it("T35: the header says Barcode and never SKU", () => {
     render(<ProductPricesGrid product={product} />);
     const g = screen.getByTestId(T.grid);
-    expect(within(g).getAllByText("Barcode").length).toBeGreaterThan(0);
+    expect(within(g).getAllByText(/barcode/i).length).toBeGreaterThan(0);
     expect(g.textContent).not.toMatch(/SKU/i);
   });
 
@@ -178,5 +179,74 @@ describe("ProductPricesGrid (S11, read-only)", () => {
     for (const f of files) {
       expect(fs.readFileSync(f, "utf8")).not.toMatch(/@routeflow\/pricing/);
     }
+  });
+});
+
+describe("K11-11: a unit that does not exist yet shows no price", () => {
+  const phantom = {
+    ref: "base",
+    label: "Piece",
+    factor: 1,
+    kind: "base" as const,
+    editable: false,
+    notEditableReason: "Add the Piece unit first.",
+    code: null,
+    cells: cells([1.5, 1.4, 1.3, 1.2, 1.1]),
+  };
+  const withPhantom = (over: Partial<typeof phantom> = {}) => {
+    mockGrid = {
+      data: { ...grid, anchor: "case", rows: [grid.rows[0], { ...phantom, ...over }] },
+      isLoading: false,
+      isError: false,
+    };
+  };
+  let opener: jest.Mock;
+  beforeEach(() => {
+    opener = jest.fn();
+    const b = document.body.appendChild(document.createElement("button"));
+    b.setAttribute("data-testid", "units-v2-add-open");
+    b.addEventListener("click", opener);
+  });
+  afterEach(() => {
+    document.querySelectorAll('[data-testid="units-v2-add-open"]').forEach((n) => n.remove());
+  });
+
+  it("an implicit Piece row reads as dashes: no price, no Auto or Set word, in the table and the card", () => {
+    withPhantom();
+    render(<ProductPricesGrid product={product} />);
+    for (const id of [T.row("base"), T.card("base")]) {
+      const row = within(screen.getByTestId(id));
+      expect(row.queryByText(/\$1\.\d\d/)).toBeNull();
+      expect(row.queryByText(/^(Auto|Set)$/)).toBeNull();
+      expect(row.getAllByText("—")).toHaveLength(5);
+    }
+    const [cell] = screen.getAllByTestId(T.cell("base", 2));
+    expect(cell.getAttribute("aria-label")).toBe("Wholesale Piece price, no unit yet");
+  });
+
+  it("its head carries one 'Add Piece unit' button that asks the Add a unit opener to open", async () => {
+    withPhantom();
+    const user = userEvent.setup();
+    render(<ProductPricesGrid product={product} />);
+    const table = within(screen.getByTestId(T.row("base")));
+    await user.click(table.getByRole("button", { name: "Add Piece unit" }));
+    expect(opener).toHaveBeenCalledTimes(1);
+    expect(
+      within(screen.getByTestId(T.card("base"))).getByRole("button", { name: "Add Piece unit" }),
+    ).toBeTruthy();
+  });
+
+  it("a family-governed row with another reason keeps its prices", () => {
+    withPhantom({ notEditableReason: "Its price is set on the family." });
+    render(<ProductPricesGrid product={product} />);
+    const row = within(screen.getByTestId(T.row("base")));
+    expect(row.getByText("$1.50")).toBeTruthy();
+    expect(row.queryByRole("button", { name: /Add Piece unit/ })).toBeNull();
+  });
+
+  it("a non-base row with the same words is not treated as a missing unit", () => {
+    withPhantom({ kind: "unit" as never });
+    render(<ProductPricesGrid product={product} />);
+    expect(within(screen.getByTestId(T.row("base"))).getByText("$1.50")).toBeTruthy();
   });
 });

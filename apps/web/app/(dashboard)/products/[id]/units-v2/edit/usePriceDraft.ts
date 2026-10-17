@@ -90,6 +90,11 @@ export interface PriceDraft {
   view: LadderView | null;
   editing: boolean;
   startEditing: (focus?: CellFocus) => void;
+  /**
+   * K11-13: the cell the last `startEditing(cell)` asked to focus, recorded synchronously (a ref, not state) so the
+   * grid's "focus the first box" step can see it in the very render where editing turned on and stand aside.
+   */
+  beginTarget: React.MutableRefObject<CellFocus | null>;
   discard: () => void;
   dirty: boolean;
   /** Type into one cell; returns the pricing package's plan for it (followers, offers, problems). */
@@ -190,6 +195,7 @@ export function useCreatePriceDraft(productId: string, hooks: PriceDraftHooks = 
   const [keeps, setKeeps] = React.useState<Pin[]>([]);
   const [moves, setMoves] = React.useState<CustomerPriceMove[]>([]);
   const [focus, setFocus] = React.useState<CellFocus | null>(null);
+  const beginTarget = React.useRef<CellFocus | null>(null);
   const [lastSave, setLastSave] = React.useState<PriceDraft["lastSave"]>(null);
   const [undoStale, setUndoStale] = React.useState(false);
   const [notice, setNotice] = React.useState<string | null>(null);
@@ -469,6 +475,7 @@ export function useCreatePriceDraft(productId: string, hooks: PriceDraftHooks = 
     editing,
     begin: (cell) => {
       beginEditing();
+      beginTarget.current = cell ?? null;
       if (cell) setFocus(cell);
     },
     text: (ref, tier, original) => {
@@ -517,6 +524,7 @@ export function useCreatePriceDraft(productId: string, hooks: PriceDraftHooks = 
     view,
     editing,
     startEditing: api.begin,
+    beginTarget,
     discard: () => {
       // A refused save must not outlive the draft it refused: the next Edit starts clean on fresh prices.
       if (save.error != null) save.reset();

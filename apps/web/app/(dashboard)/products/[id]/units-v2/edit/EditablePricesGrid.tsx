@@ -6,7 +6,9 @@ import { ProductPricesGrid } from "../../ProductPricesGrid";
 import type { UnitsCardProduct } from "../../ProductUnitsCard";
 import { UNITS_V2_TESTIDS as T } from "../../units-v2-testids";
 import { AlsoUpdatePanel } from "../change-prices/AlsoUpdatePanel";
+import { AddUnitIntentProvider } from "./add-unit-intent";
 import { OrderUnitDraft } from "./OrderUnitDraft";
+import { revealClearOfBar } from "./reveal-clear-of-bar";
 import { BTN, SkipToSave } from "./PriceEditBar";
 import { usePriceDraft } from "./usePriceDraft";
 
@@ -46,13 +48,22 @@ export function EditablePricesGrid({
   const anyEditable = d.grid?.rows.some((r) => r.editable) ?? true;
   const pendingFocus = d.api.focus;
   React.useEffect(() => {
-    if (editing && !was.current && !pendingFocus) {
-      // The Edit button unmounts with focus: land on the first VISIBLE price input (table or phone card).
-      const inputs = [
-        ...(root.current?.querySelectorAll<HTMLElement>('[data-testid^="units-v2-input-"]') ?? []),
-      ];
-      (inputs.find((i) => i.offsetParent !== null) ?? inputs[0])?.focus({ preventScroll: true });
+    if (editing && !was.current) {
+      // K11-13: a price the user opened (Enter or a click on it) is the target, recorded by `begin` before this render.
+      const targeted = d.beginTarget.current !== null || pendingFocus;
+      d.beginTarget.current = null;
+      if (!targeted) {
+        // The Edit button unmounts with focus: land on the first VISIBLE price input (table or phone card).
+        const inputs = [
+          ...(root.current?.querySelectorAll<HTMLElement>('[data-testid^="units-v2-input-"]') ??
+            []),
+        ];
+        const first = inputs.find((i) => i.offsetParent !== null) ?? inputs[0];
+        first?.focus({ preventScroll: true });
+        revealClearOfBar(first ?? null);
+      }
     }
+    if (!editing) d.beginTarget.current = null;
     if (
       !editing &&
       was.current &&
@@ -65,48 +76,50 @@ export function EditablePricesGrid({
   }, [editing]);
 
   return (
-    <div ref={root} className="relative">
-      {editing && <SkipToSave />}
-      <div className="mb-2 flex flex-wrap items-center justify-end gap-2">
-        {editing && (
-          <span
-            data-testid={T.editingPill}
-            className="rounded-full bg-amber-100 px-2.5 py-1 text-xs font-medium text-amber-900"
-          >
-            Editing
-          </span>
-        )}
-        {onOpenChangePrices && anyEditable && (
-          <button
-            ref={changePricesRef}
-            type="button"
-            id="btn-change-open"
-            data-testid={T.btnChange}
-            aria-expanded={changePricesOpen}
-            aria-controls="change-panel"
-            className={BTN}
-            onClick={onOpenChangePrices}
-          >
-            Change prices
-          </button>
-        )}
-        {!editing && anyEditable && (
-          <button
-            ref={editBtn}
-            type="button"
-            data-testid={T.btnEdit}
-            className={BTN}
-            onClick={() => d.startEditing()}
-          >
-            Edit
-          </button>
-        )}
+    <AddUnitIntentProvider>
+      <div ref={root} className="relative">
+        {editing && <SkipToSave />}
+        <div className="mb-2 flex flex-wrap items-center justify-end gap-2">
+          {editing && (
+            <span
+              data-testid={T.editingPill}
+              className="rounded-full bg-amber-100 px-2.5 py-1 text-xs font-medium text-amber-900"
+            >
+              Editing
+            </span>
+          )}
+          {onOpenChangePrices && anyEditable && (
+            <button
+              ref={changePricesRef}
+              type="button"
+              id="btn-change-open"
+              data-testid={T.btnChange}
+              aria-expanded={changePricesOpen}
+              aria-controls="change-panel"
+              className={BTN}
+              onClick={onOpenChangePrices}
+            >
+              Change prices
+            </button>
+          )}
+          {!editing && anyEditable && (
+            <button
+              ref={editBtn}
+              type="button"
+              data-testid={T.btnEdit}
+              className={BTN}
+              onClick={() => d.startEditing()}
+            >
+              Edit
+            </button>
+          )}
+        </div>
+        {panel}
+        {unitControls}
+        <ProductPricesGrid product={product} edit={d.api} rowAction={rowAction} />
+        {editing && <OrderUnitDraft />}
+        {d.plan && <AlsoUpdatePanel plan={d.plan.plan} />}
       </div>
-      {panel}
-      {unitControls}
-      <ProductPricesGrid product={product} edit={d.api} rowAction={rowAction} />
-      {editing && <OrderUnitDraft />}
-      {d.plan && <AlsoUpdatePanel plan={d.plan.plan} />}
-    </div>
+    </AddUnitIntentProvider>
   );
 }
