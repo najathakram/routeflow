@@ -178,10 +178,13 @@ describe("K11-19: the openers share one row", () => {
       .closest("[data-testid='units-v2-structure-row'] > *")!;
     expect(item.parentElement).toBe(row());
     // The row's own variants do the work, keyed on the panel being inside the item (AddUnitPanel stays untouched).
-    expect(row().className).toContain("has-[[data-testid=units-v2-add-panel]]");
-    expect(row().className).toContain("has-[[data-testid=units-v2-reset-panel]]");
-    expect(row().className).toMatch(/order-last/);
-    expect(row().className).toMatch(/basis-full/);
+    // Per item (`:has(panel)`), never `[&>*]`: an item without a panel must keep its place and size.
+    for (const panel of ["add", "reset"]) {
+      const item = `[&>*:has([data-testid=units-v2-${panel}-panel])]`;
+      for (const u of ["order-last", "basis-full", "w-full", "min-w-0"])
+        expect(cls(row())).toContain(`${item}:${u}`);
+    }
+    expect(row().className).not.toContain("[&>*]:");
   });
 
   it("when both are open they stack in the order they were opened", async () => {
@@ -211,14 +214,14 @@ describe("K11-19: the row's variants compile to the selectors the layout needs",
   it("an item holding an open panel goes last and takes the full row; the later-opened one goes after it", async () => {
     const postcss = require("postcss");
     const tailwind = require("tailwindcss");
-    render();
+    // Tailwind builds from the SOURCE text, so a class assembled at runtime (a template string) is never generated and the
+    // panels came out narrower than their row, in the wrong order. Scan the real file, as the app's build does.
+    const source = require("path").join(__dirname, "UnitStructure.tsx");
     const out = await postcss([
-      tailwind({
-        content: [{ raw: `<div class="${row().className}">` }],
-        corePlugins: { preflight: false },
-      }),
+      tailwind({ content: [source], corePlugins: { preflight: false } }),
     ]).process("@tailwind utilities;", { from: undefined });
     const css: string = out.css;
+    expect(css).toMatch(/:has\(\[data-testid=units-v2-add-panel\]\)\s*\{[^}]*width: 100%/);
     expect(css).toContain(">*:has([data-testid=units-v2-add-panel])");
     expect(css).toContain(">*:has([data-testid=units-v2-reset-panel])");
     expect(css).toMatch(/order: 9999/);

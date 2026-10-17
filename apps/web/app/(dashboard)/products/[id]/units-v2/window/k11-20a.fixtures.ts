@@ -46,6 +46,25 @@ export const GRID: ProductPriceGridDto = {
   ],
 };
 
+/** The same ladder with the Piece unit missing (the API serves a read-only implicit base row). */
+export const MISSING_PIECE_GRID: ProductPriceGridDto = {
+  ...GRID,
+  rows: [
+    GRID.rows[0],
+    GRID.rows[1],
+    {
+      ref: "piece",
+      label: "Piece",
+      factor: 1,
+      kind: "base",
+      editable: false,
+      notEditableReason: "Add the Piece unit first.",
+      code: null,
+      cells: cells([0, 0, 0, 0, 0]),
+    },
+  ],
+};
+
 export const SAVED_GRID: ProductPriceGridDto = { ...GRID, revision: 8, priceState: "ps-2" };
 
 export const PRODUCT = {

@@ -126,6 +126,33 @@ describe("FloatingPanel semantics and focus", () => {
     await waitFor(() => expect(screen.getByRole("button", { name: "Return here" })).toHaveFocus());
   });
 
+  it("N1: the element that had focus at open wins over returnFocus, which is only a fallback", async () => {
+    installMatchMedia({});
+    const opener = document.createElement("button");
+    opener.textContent = "figure";
+    document.body.appendChild(opener);
+    opener.focus();
+    const { rerender } = render(<Harness />);
+    await waitFor(() => expect(screen.getByLabelText("Retail price")).toHaveFocus());
+    rerender(<Harness open={false} />);
+    await waitFor(() => expect(opener).toHaveFocus());
+    expect(screen.getByRole("button", { name: "Return here" })).not.toHaveFocus();
+    opener.remove();
+  });
+
+  it("N1: when the opener left the DOM, returnFocus is used", async () => {
+    installMatchMedia({});
+    const opener = document.createElement("button");
+    opener.textContent = "figure";
+    document.body.appendChild(opener);
+    opener.focus();
+    const { rerender } = render(<Harness />);
+    await waitFor(() => expect(screen.getByLabelText("Retail price")).toHaveFocus());
+    opener.remove();
+    rerender(<Harness open={false} />);
+    await waitFor(() => expect(screen.getByRole("button", { name: "Return here" })).toHaveFocus());
+  });
+
   it("falls back to the element focused at open when returnFocus is gone", async () => {
     installMatchMedia({});
     const opener = document.createElement("button");

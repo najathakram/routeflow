@@ -30,15 +30,24 @@ const PRICE_NOT_KEPT = "Unit added. Type its price in the grid.";
  * them: the panel is inside its opener's item, so the ROW keys on `:has(panel)` and AddUnitPanel / ResetToAutoPanel stay
  * untouched. When both are open they stack in the order they were opened: the later one gets a higher `order`, read from
  * `data-last-opened`, which the row sets from the opener clicks.
+ *
+ * Every class below is written out whole, on purpose: Tailwind builds its CSS by scanning this file's TEXT, so a class
+ * assembled from a template string (`has-[${PANEL}]:...`) is never generated and the panels came out narrower than the
+ * row and in DOM order. The selectors are per item (`:has(panel)`), never `[&>*]`, so an opener with no panel is left
+ * alone. `UnitStructure.k11-19.test.tsx` compiles this very file.
  */
-const ADD_PANEL = "[data-testid=units-v2-add-panel]";
-const RESET_PANEL = "[data-testid=units-v2-reset-panel]";
 const OPENER_ROW =
   "mt-3 flex flex-wrap items-start gap-2 " +
-  `has-[${ADD_PANEL}]:[&>*]:order-last has-[${ADD_PANEL}]:[&>*]:basis-full ` +
-  `has-[${RESET_PANEL}]:[&>*]:order-last has-[${RESET_PANEL}]:[&>*]:basis-full ` +
-  `[&[data-last-opened=add]>*:has(${ADD_PANEL})]:order-[10000] ` +
-  `[&[data-last-opened=reset]>*:has(${RESET_PANEL})]:order-[10000]`;
+  "[&>*:has([data-testid=units-v2-add-panel])]:order-last " +
+  "[&>*:has([data-testid=units-v2-add-panel])]:basis-full " +
+  "[&>*:has([data-testid=units-v2-add-panel])]:w-full " +
+  "[&>*:has([data-testid=units-v2-add-panel])]:min-w-0 " +
+  "[&>*:has([data-testid=units-v2-reset-panel])]:order-last " +
+  "[&>*:has([data-testid=units-v2-reset-panel])]:basis-full " +
+  "[&>*:has([data-testid=units-v2-reset-panel])]:w-full " +
+  "[&>*:has([data-testid=units-v2-reset-panel])]:min-w-0 " +
+  "[&[data-last-opened=add]>*:has([data-testid=units-v2-add-panel])]:order-[10000] " +
+  "[&[data-last-opened=reset]>*:has([data-testid=units-v2-reset-panel])]:order-[10000]";
 
 /** Add a unit + Reset all to Auto, above the grid. */
 export function UnitStructureControls({ productId }: { productId: string }) {

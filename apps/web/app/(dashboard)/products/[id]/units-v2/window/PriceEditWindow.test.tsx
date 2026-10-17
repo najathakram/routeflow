@@ -14,7 +14,7 @@ import { PriceSaveStatus, ProductPricingV2 } from "../../ProductPricingV2";
 import { UNITS_V2_TESTIDS as T } from "../../units-v2-testids";
 import { PriceDraftProvider } from "../edit/PriceDraftProvider";
 import { usePriceDraft, type PriceDraft } from "../edit/usePriceDraft";
-import { GRID, PRODUCT, SAVE_RESPONSE, SAVED_GRID } from "./k11-20a.fixtures";
+import { GRID, MISSING_PIECE_GRID, PRODUCT, SAVE_RESPONSE, SAVED_GRID } from "./k11-20a.fixtures";
 import { PriceEditWindow } from "./PriceEditWindow";
 
 // K11-20a: the floating price window, on the shared draft. jsdom lays nothing out, so geometry (placement, the real
@@ -24,6 +24,7 @@ import { PriceEditWindow } from "./PriceEditWindow";
 let mockGrid: { data?: ProductPriceGridDto; isLoading: boolean; isError: boolean };
 const mockSave = jest.fn();
 let mockSaveOutcome: unknown = null;
+let mockPending = false;
 jest.mock("@/lib/api/usePriceGrid", () => ({
   ...jest.requireActual("@/lib/api/usePriceGrid"),
   usePriceGrid: () => mockGrid,
@@ -43,7 +44,7 @@ jest.mock("@/lib/api/usePriceWrites", () => ({
         setAfter({ error: mockSaveOutcome });
       },
       reset: () => setAfter({ error: null }),
-      isPending: false,
+      isPending: mockPending,
       error: after ? after.error : null,
     };
   },
@@ -97,6 +98,10 @@ function Harness({
         <div id="main-content">
           <ProductPricingV2 product={PRODUCT} />
         </div>
+        {/* The page's Add a unit opener: the grid's missing-unit pointer only shows when it exists. */}
+        <button type="button" data-testid="units-v2-add-open">
+          Add a unit
+        </button>
         <button type="button" onClick={() => setOpen(false)}>
           Close from outside
         </button>
@@ -134,6 +139,7 @@ beforeEach(() => {
   mockSave.mockReset();
   onClose.mockReset();
   mockSaveOutcome = null;
+  mockPending = false;
 });
 
 describe("K11-20a window: what it contains", () => {
@@ -209,6 +215,39 @@ describe("K11-20a window: what it contains", () => {
     });
     await waitFor(() => expect(onClose).toHaveBeenCalledWith("cancel"));
     expect(draft.editingIn).toBe("inline");
+  });
+});
+
+describe("K11-20a window: the missing unit's Add pointer", () => {
+  const pointers = () =>
+    [...document.querySelectorAll<HTMLElement>(`[data-testid="${T.addUnitPointer}"]`)].filter(
+      (el) => el.textContent === "Add Piece unit",
+    );
+
+  it("N3: the window's table has no Add Piece unit button (it would click a hidden page control)", async () => {
+    mockGrid = { data: MISSING_PIECE_GRID, isLoading: false, isError: false };
+    render();
+    await screen.findByRole("dialog", { name: "Edit prices" });
+    expect(inDialog().getByTestId(T.unitsTable)).toBeTruthy();
+    expect(inDialog().getByTestId(T.row("piece"))).toBeTruthy();
+    // The inline grid behind it keeps its pointer.
+    await waitFor(() => expect(pointers().length).toBeGreaterThan(0));
+    expect(pointers().filter((el) => dialog().contains(el))).toHaveLength(0);
+  });
+
+  it("N3: the window's phone cards have none either", async () => {
+    const was = window.innerWidth;
+    Object.defineProperty(window, "innerWidth", { configurable: true, value: 500 });
+    try {
+      mockGrid = { data: MISSING_PIECE_GRID, isLoading: false, isError: false };
+      render();
+      await screen.findByRole("dialog", { name: "Edit prices" });
+      expect(inDialog().getByTestId(T.card("piece"))).toBeTruthy();
+      await waitFor(() => expect(pointers().length).toBeGreaterThan(0));
+      expect(pointers().filter((el) => dialog().contains(el))).toHaveLength(0);
+    } finally {
+      Object.defineProperty(window, "innerWidth", { configurable: true, value: was });
+    }
   });
 });
 
@@ -301,11 +340,80 @@ describe("K11-20a window: layout comes from the window's own width", () => {
       within(inDialog().getByTestId(T.row("case"))).getByRole("rowheader").textContent,
     ).toContain("40 Boxes · No barcode");
     await waitFor(() => expect(box("case", 2)).toHaveFocus());
+    // 560 gap: a swap waits while a price box has focus, so let go of it first.
+    act(() => (document.activeElement as HTMLElement).blur());
     widthIs(400);
     expect(inDialog().queryByTestId(T.unitsTable)).toBeNull();
     expect(inDialog().getByTestId(T.card("case"))).toBeTruthy();
-    widthIs(560);
+    // 560 gap: back to the table needs 576 (hysteresis), not 560.
+    widthIs(576);
     expect(inDialog().getByTestId(T.unitsTable)).toBeTruthy();
+  });
+
+  const leaveBox = () => act(() => (document.activeElement as HTMLElement).blur());
+  const openAt = async (w: number) => {
+    render({ focus: { ref: "case", tier: 2 } });
+    await screen.findByRole("dialog", { name: "Edit prices" });
+    widthIs(w);
+    await waitFor(() => expect(box("case", 2)).toHaveFocus());
+    leaveBox();
+  };
+  const shows = (mode: "table" | "cards") => {
+    if (mode === "table") {
+      expect(inDialog().getByTestId(T.unitsTable)).toBeTruthy();
+      expect(inDialog().queryByTestId(T.card("case"))).toBeNull();
+    } else {
+      expect(inDialog().queryByTestId(T.unitsTable)).toBeNull();
+      expect(inDialog().getByTestId(T.card("case"))).toBeTruthy();
+    }
+  };
+
+  it("560gap: crossing 560 while a price box has focus does not swap until focusout", async () => {
+    render({ focus: { ref: "case", tier: 2 } });
+    await screen.findByRole("dialog", { name: "Edit prices" });
+    widthIs(700);
+    await waitFor(() => expect(box("case", 2)).toHaveFocus());
+    widthIs(400);
+    shows("table");
+    expect(box("case", 2)).toHaveFocus();
+    leaveBox();
+    shows("cards");
+  });
+
+  it("560gap: a focus move between price boxes keeps the swap deferred", async () => {
+    const user = userEvent.setup();
+    render({ focus: { ref: "case", tier: 2 } });
+    await screen.findByRole("dialog", { name: "Edit prices" });
+    widthIs(700);
+    await waitFor(() => expect(box("case", 2)).toHaveFocus());
+    widthIs(400);
+    await user.tab();
+    expect(box("case", 3)).toHaveFocus();
+    shows("table");
+    leaveBox();
+    shows("cards");
+  });
+
+  it("560gap: oscillating around 560 does not flip the layout (hysteresis), from the table", async () => {
+    await openAt(700);
+    shows("table");
+    for (const w of [550, 570, 550, 570, 545]) {
+      widthIs(w);
+      shows("table");
+    }
+    widthIs(543);
+    shows("cards");
+  });
+
+  it("560gap: oscillating around 560 does not flip the layout (hysteresis), from cards", async () => {
+    await openAt(400);
+    shows("cards");
+    for (const w of [550, 570, 550, 575, 560]) {
+      widthIs(w);
+      shows("cards");
+    }
+    widthIs(576);
+    shows("table");
   });
 });
 
@@ -322,6 +430,20 @@ describe("K11-20a window: Save", () => {
       expectedRevision: 7,
       patches: [{ ref: "case", tier: 2, to: 14.5 }],
     });
+  });
+
+  it("M1: with the inline Change prices panel open behind it, Ctrl+S in the window still saves once", async () => {
+    const user = userEvent.setup();
+    render({ startOpen: false });
+    // The inline panel is open first (not editing); the page bar is not shown, so it must not eat Ctrl+S.
+    await user.click(screen.getByTestId(T.btnChange));
+    expect(document.getElementById("change-panel")).not.toBeNull();
+    await user.click(screen.getByRole("button", { name: "Open price editor" }));
+    await screen.findByRole("dialog", { name: "Edit prices" });
+    await waitFor(() => expect(box("case", 1)).toHaveFocus());
+    await user.keyboard("14.5");
+    fireEvent.keyDown(box("case", 1), { key: "s", ctrlKey: true });
+    expect(mockSave).toHaveBeenCalledTimes(1);
   });
 
   it("a successful save closes with 'saved'; the line shows in the window's place, not the section's", async () => {
@@ -482,6 +604,19 @@ describe("K11-20a window: closing with the X or the scrim", () => {
     expect(draft.dirty).toBe(true);
   });
 
+  it("N2: Keep editing returns focus to the X when the question came from it (outside the body)", async () => {
+    const user = userEvent.setup();
+    render({ focus: { ref: "case", tier: 2 } });
+    await screen.findByRole("dialog", { name: "Edit prices" });
+    await waitFor(() => expect(box("case", 2)).toHaveFocus());
+    await user.keyboard("28");
+    await user.click(screen.getByRole("button", { name: "Close" }));
+    expect(inDialog().getByTestId(T.ebKeep)).toHaveFocus();
+    await user.click(inDialog().getByTestId(T.ebKeep));
+    expect(screen.getByRole("button", { name: "Close" })).toHaveFocus();
+    expect(draft.dirty).toBe(true);
+  });
+
   it("dirty: a click on the scrim asks too; clean: a scrim click closes at once", async () => {
     const user = userEvent.setup();
     render({ focus: { ref: "case", tier: 2 } });
@@ -500,6 +635,85 @@ describe("K11-20a window: closing with the X or the scrim", () => {
     expect(draft.dirty).toBe(false);
     fireEvent.pointerDown(scrim());
     await waitFor(() => expect(onClose).toHaveBeenCalledWith("cancel"));
+  });
+});
+
+describe("K11-20a window: only a primary press outside dismisses", () => {
+  const press = (button: number) =>
+    act(() => {
+      const scrim = document.querySelector("[data-floating-panel-scrim]") as HTMLElement;
+      // jsdom has no PointerEvent: a plain Event with the button the browser would report.
+      const event = new Event("pointerdown", { bubbles: true });
+      Object.defineProperty(event, "button", { value: button });
+      scrim.dispatchEvent(event);
+    });
+  // A primary press is a press plus its click: Radix settles an outside primary press on the click.
+  const primary = () => {
+    press(0);
+    act(() => {
+      (document.querySelector("[data-floating-panel-scrim]") as HTMLElement).click();
+    });
+  };
+  const open = async () => {
+    render({ focus: { ref: "case", tier: 2 } });
+    await screen.findByRole("dialog", { name: "Edit prices" });
+    await waitFor(() => expect(box("case", 2)).toHaveFocus());
+    await armed();
+  };
+
+  it("N5: a right or a middle press on the scrim does nothing", async () => {
+    await open();
+    press(2);
+    press(1);
+    expect(onClose).not.toHaveBeenCalled();
+    expect(dialog()).toBeInTheDocument();
+  });
+
+  it("N5: a right press does not raise the discard question on a dirty draft", async () => {
+    const user = userEvent.setup();
+    await open();
+    await user.keyboard("28");
+    press(2);
+    expect(inDialog().queryByText("Discard your unsaved changes?")).toBeNull();
+  });
+
+  it("N5: the primary press still closes a clean draft", async () => {
+    await open();
+    primary();
+    await waitFor(() => expect(onClose).toHaveBeenCalledWith("cancel"));
+  });
+
+  it("N5: the primary press still raises the discard question on a dirty draft", async () => {
+    const user = userEvent.setup();
+    await open();
+    await user.keyboard("28");
+    primary();
+    expect(inDialog().getByText("Discard your unsaved changes?")).toBeTruthy();
+  });
+});
+
+describe("K11-20a window: a save in flight", () => {
+  it("N4: the X, Escape and the scrim are ignored until the save answers", async () => {
+    mockSave.mockImplementation(() => {
+      mockPending = true;
+    });
+    const user = userEvent.setup();
+    render({ focus: { ref: "case", tier: 2 } });
+    await screen.findByRole("dialog", { name: "Edit prices" });
+    await waitFor(() => expect(box("case", 2)).toHaveFocus());
+    await armed();
+    await user.keyboard("14.5");
+    await user.click(inDialog().getByTestId(T.ebSave));
+    await waitFor(() => expect(inDialog().getByTestId(T.ebSave)).toHaveTextContent("Saving…"));
+    expect(draft.saving).toBe(true);
+    await user.keyboard("{Escape}");
+    fireEvent.pointerDown(document.querySelector("[data-floating-panel-scrim]") as HTMLElement);
+    await user.click(screen.getByRole("button", { name: "Close" }));
+    expect(inDialog().queryByText("Discard your unsaved changes?")).toBeNull();
+    expect(onClose).not.toHaveBeenCalled();
+    expect(dialog()).toBeInTheDocument();
+    expect(draft.editingIn).toBe("window");
+    expect(draft.count).toBe(1);
   });
 });
 

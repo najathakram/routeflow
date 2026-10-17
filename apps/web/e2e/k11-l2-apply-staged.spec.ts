@@ -37,9 +37,12 @@ for (const vp of VIEWPORTS) {
       await expect(page.getByTestId(ID.grid)).toBeVisible({ timeout: 20_000 });
 
       await visible(page, ID.btnChange).click();
-      await page.getByLabel("Unit").selectOption({ index: 0 });
-      await page.getByLabel("Amount").fill("5");
-      await page.getByRole("button", { name: "Apply" }).click();
+      // Scoped to the Change prices panel: "Unit" also matches the grid's own labelled controls (14 hits page-wide).
+      const panel = page.locator("#change-panel");
+      await expect(panel).toBeVisible();
+      await panel.getByLabel("Unit", { exact: true }).selectOption({ index: 0 });
+      await panel.getByLabel("Amount").fill("5");
+      await panel.locator("#ch-apply").click();
 
       const text = page.getByTestId(ID.ebText);
       await expect(text).toContainText(/raised 5%: \d+ prices? ready\. Save to keep (it|them)\./);

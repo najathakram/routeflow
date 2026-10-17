@@ -4,9 +4,13 @@
  * units-v2/change-prices/AgainstReason.real.test.tsx (+ against-reason.test.ts, and explainMove in pricing.spec.ts).
  * Run on the local compose lane, project `units-v2`, at 1440 / 768 / 390.
  *
- * Role OPERATOR on the approved test tenant; fixture product E2E-FIX-CASEDEFAULT (a Box of 24, implicit Piece). The K9
- * shape is made in the DRAFT only (a Set Tier 2 on the pack and a Set Retail on the Piece, so the Piece's Auto Tier 2 falls
- * when the pack's Retail rises); nothing is saved and the draft is discarded, so the fixture is untouched.
+ * Role OPERATOR on the approved test tenant; fixture product E2E-FIX-UNITS (apps/api/scripts/e2e-seed.js): the product
+ * itself is a REAL 1-piece unit (unit "Piece", no pack) with a real Case x12 unit row above it. E2E-FIX-CASEDEFAULT cannot
+ * be used: its Piece is implicit, and since K11-11 the grid dashes a missing Piece and refuses to price it. The K9 shape
+ * is made in the DRAFT only (a Set Tier 2 on the Case and a Set Retail on the Piece, so the Piece's Auto Tier 2 falls when
+ * the Case's Retail rises); nothing is saved and the draft is discarded, so the fixture is untouched. The unit refs are
+ * server ids the spec does not know, so the Case is the first visible row and the Piece the last (rows are largest unit
+ * first, in the table and in the phone cards alike).
  */
 import { test, expect, type Page } from "@playwright/test";
 import { setTenantCookie } from "./helpers/auth";
@@ -20,7 +24,9 @@ function baseUrl(): string {
   return url;
 }
 
-const SKU = "E2E-FIX-CASEDEFAULT";
+const SKU = "E2E-FIX-UNITS";
+const tierInputs = (page: Page, tier: number) =>
+  page.locator(`[data-testid^="units-v2-input-"][data-testid$="-${tier}"]:visible`);
 const visible = (page: Page, testId: string) => page.locator(`[data-testid="${testId}"]:visible`);
 
 for (const vp of VIEWPORTS) {
@@ -35,12 +41,14 @@ for (const vp of VIEWPORTS) {
       await expect(page.getByTestId(ID.grid)).toBeVisible({ timeout: 20_000 });
 
       await visible(page, ID.btnEdit).click();
-      await visible(page, ID.input("pack", 2)).fill("1000");
-      await visible(page, ID.input("base", 1)).fill("5");
+      await tierInputs(page, 2).first().fill("1000");
+      await tierInputs(page, 1).last().fill("5");
 
       await visible(page, ID.btnChange).click();
-      await page.getByLabel("Unit").selectOption({ index: 0 });
-      await page.getByLabel("Amount").fill("5");
+      // Scoped to the Change prices panel: "Unit" also matches the grid's own labelled controls (14 hits page-wide).
+      const panel = page.locator("#change-panel");
+      await panel.getByLabel("Unit", { exact: true }).selectOption({ index: 0 });
+      await panel.getByLabel("Amount").fill("5");
 
       const preview = page.getByTestId(ID.changePreview);
       const against = preview.locator('tbody[data-against="true"]');
@@ -62,7 +70,7 @@ for (const vp of VIEWPORTS) {
       }
 
       // leave the fixture alone
-      await page.getByRole("button", { name: "Cancel" }).first().click();
+      await panel.locator("#ch-cancel").click();
       await page.getByTestId("units-v2-eb-cancel").click();
       await page.getByTestId("units-v2-eb-discard").click();
     });
