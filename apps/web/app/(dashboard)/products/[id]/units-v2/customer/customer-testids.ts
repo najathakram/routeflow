@@ -3,6 +3,7 @@ export const CUSTOMER_VIEW_TESTIDS = {
   section: "units-v2-sec-customers",
   heading: "units-v2-h-cust",
   search: "units-v2-cust-select",
+  listbox: "units-v2-cust-listbox",
   result: (id: string) => `units-v2-cust-option-${id}`,
   chosen: "units-v2-cust-chosen",
   change: "units-v2-cust-change",
