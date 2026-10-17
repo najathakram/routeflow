@@ -187,12 +187,13 @@ function canonicalJson(v: unknown): string {
 }
 
 /**
- * Row 542d / SA-800c: ONE sha256 over the FULL terms of a session, taken from the params object that is sent to
- * Stripe (so it can never drift from what the session really charges): every top-level param except
- * {@link SIGNATURE_EXCLUDED} (so a param added to the builder later is covered automatically), and
- * `subscription_data` without its own `metadata`. The line items are signed whole: price, amount, interval, currency,
- * product name and quantity of the recurring, add-on and one-time lines. Idempotency keys are not params, and no
- * timestamp or URL is signed.
+ * Row 542d / SA-800c: ONE sha256 over the FULL terms of a session, taken from the params object as
+ * {@link buildCatchupSessionParams} builds it (the object `open()` then passes through `withCheckoutPolicy`, which
+ * adds the constant `managed_payments` AFTER signing; that policy is not a term, so it is not signed). Every
+ * top-level param except {@link SIGNATURE_EXCLUDED} is signed (so a param added to the builder later is covered
+ * automatically), and `subscription_data` without its own `metadata`. The line items are signed whole: price, amount,
+ * interval, currency, product name and quantity of the recurring, add-on and one-time lines. Idempotency keys are not
+ * params, and no timestamp or URL is signed.
  */
 export function catchupTermsSignature(params: Record<string, any>): string {
   const terms: Record<string, unknown> = {};
@@ -203,10 +204,24 @@ export function catchupTermsSignature(params: Record<string, any>): string {
   }
   // a forgiven line has no line item: its amount (metadata only, audit) is still a term of the session
   terms.forgiven_cents = params.metadata?.[CATCHUP_META.forgivenCents] ?? null;
+  // the plan key is metadata only (the line shows just the plan's display name): two plans can share a name and a price
+  terms.plan_key = params.metadata?.planKey ?? null;
   return createHash("sha256").update(canonicalJson(terms)).digest("hex");
 }
 
-export function buildCatchupSessionParams(i: CatchupSessionInput): Record<string, any> {
+/** A catch-up session is built with a sha256 terms signature, always (SA-800d G1). */
+export function assertSignedSession(params: { metadata?: Record<string, unknown> }): void {
+  const sig = params.metadata?.[CATCHUP_META.termsSig];
+  if (typeof sig !== "string" || !/^[0-9a-f]{64}$/.test(sig)) {
+    throw new Error("catch-up session params must carry a 64-hex terms signature");
+  }
+}
+
+export function buildCatchupSessionParams(
+  i: CatchupSessionInput,
+  // injectable only so a spec can prove the assertion below fires; production always signs
+  sign: (params: Record<string, any>) => string = catchupTermsSignature,
+): Record<string, any> {
   const params = i.plan.shape === "trial_one_time" ? buildTrialOneTime(i) : buildTrial(i);
   // the Stripe floor the trial shapes rely on: a trial ends at least 48 h out (we keep 72 h)
   const trialEnd = params.subscription_data?.trial_end;
@@ -214,6 +229,7 @@ export function buildCatchupSessionParams(i: CatchupSessionInput): Record<string
     throw new Error("catch-up trial_end is under 72 h away");
   }
   assertCheckoutAcceptable(params);
-  params.metadata[CATCHUP_META.termsSig] = catchupTermsSignature(params);
+  params.metadata[CATCHUP_META.termsSig] = sign(params);
+  assertSignedSession(params);
   return params;
 }

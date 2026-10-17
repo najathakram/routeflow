@@ -1,6 +1,7 @@
 import { ConflictException, Logger, ServiceUnavailableException } from "@nestjs/common";
 import { API_ERROR_CODES } from "../common/api-error-codes";
 import { buildCatchupSessionParams } from "./catchup-session-params";
+import { SIGNING_SINCE } from "./catchup-session-terms";
 import { PaymentDueService, isPastDue } from "./payment-due.service";
 
 /**
@@ -804,6 +805,10 @@ describe("542d: a live session whose terms differ from the fresh plan is stale",
       ],
       ["the shape differs, the rest equal", { ...T, ...TERMS_META, catchup_shape: "trial" }],
       [
+        "C1: no terms signature at all (created before it existed): never reused",
+        { ...T, ...TERMS_META, catchup_terms_sig: undefined },
+      ],
+      [
         "SA-800c: every metadata term equal but the signed terms differ (the recurring price changed)",
         {
           ...T,
@@ -986,10 +991,6 @@ describe("542d: a live session whose terms differ from the fresh plan is stale",
       ],
       ["a catchup_to that is not a date", { ...T, ...TERMS_META, catchup_to: "soon" }],
       ["no catchup_shape", { ...T, ...TERMS_META, catchup_shape: undefined }],
-      [
-        "no terms signature (created before it existed)",
-        { ...T, ...TERMS_META, catchup_terms_sig: undefined },
-      ],
       ["a malformed terms signature", { ...T, ...TERMS_META, catchup_terms_sig: "abc" }],
     ])("%s", async (_n, meta) => {
       const h = make({ ...held, session: live(meta as any) });
@@ -1101,6 +1102,70 @@ describe("542d: a live session whose terms differ from the fresh plan is stale",
       expect(h.catchup.plan).toHaveBeenCalledTimes(1);
       expect(h.stripe.expireCheckoutSession).not.toHaveBeenCalled();
     });
+
+    describe("the re-plan after a lost race (N1, N2, N3)", () => {
+      let warn: jest.SpyInstance;
+      beforeEach(() => {
+        warn = jest.spyOn(Logger.prototype, "warn").mockImplementation(() => undefined);
+      });
+      afterEach(() => warn.mockRestore());
+      const logged = () => warn.mock.calls.map((c) => String(c[0])).join("\n");
+      const unknown503 = { response: { code: API_ERROR_CODES.PAYMENT_STATE_UNKNOWN } };
+
+      it("N1: the re-plan has NO terms (nothing payable any more): a retryable 503, the winner is NOT expired", async () => {
+        const h = race(
+          heldTrial(),
+          termsMeta(report()),
+          report({ eligible: false, ineligible: ["claim_held"], plan: { ok: false } }),
+          expiredReply,
+        );
+        await expect(h.svc.pay("t1", NOW)).rejects.toMatchObject(unknown503);
+        expect(h.catchup.plan).toHaveBeenCalledTimes(2);
+        expect(h.stripe.expireCheckoutSession).not.toHaveBeenCalled();
+        expect(h.claim.onSessionExpired).not.toHaveBeenCalled();
+        expect(h.catchup.open).toHaveBeenCalledTimes(1);
+        expect(logged()).toContain("reason=replan_unavailable");
+      });
+
+      it("N2: the re-plan read FAILS (a database error): the same retryable 503 with a log reason, not a 500; nothing expired", async () => {
+        const h = race(heldTrial(), termsMeta(report()), heldBill(), expiredReply);
+        h.catchup.plan
+          .mockReset()
+          .mockResolvedValueOnce(heldTrial())
+          .mockRejectedValue(new Error("connection terminated"));
+        const err = await h.svc.pay("t1", NOW).catch((e) => e);
+        expect(err).toBeInstanceOf(ServiceUnavailableException);
+        expect(err).toMatchObject(unknown503);
+        expect(h.stripe.expireCheckoutSession).not.toHaveBeenCalled();
+        expect(h.claim.onSessionExpired).not.toHaveBeenCalled();
+        expect(logged()).toContain("reason=replan_failed");
+        expect(logged()).toContain("connection terminated");
+      });
+
+      it("N3: a stale winner that is expired and released is logged reason=raced_stale, AFTER the release", async () => {
+        const h = race(
+          heldTrial(),
+          { ...termsMeta(report()), catchup_stub_cents: "40000" },
+          heldBill(),
+          expiredReply,
+        );
+        const order: string[] = [];
+        h.claim.onSessionExpired.mockImplementation(async () => {
+          order.push("release");
+        });
+        warn.mockImplementation((m: unknown) => {
+          if (String(m).includes("reason=raced_stale")) order.push("raced_stale");
+        });
+        await expect(h.svc.pay("t1", NOW)).rejects.toMatchObject(unknown503);
+        expect(order).toEqual(["release", "raced_stale"]);
+      });
+
+      it("N3: a matching winner and a non-race stale session log no raced_stale", async () => {
+        const same = race(heldBill(), termsMeta(report()), heldBill());
+        await same.svc.pay("t1", NOW);
+        expect(logged()).not.toContain("raced_stale");
+      });
+    });
   });
 });
 
@@ -1163,5 +1228,62 @@ describe("nit 3: the 503 logs WHY (the body is the same PAYMENT_STATE_UNKNOWN)",
     const stale = { ...live({ ...T }), expires_at: 1 };
     await expectCode503(make({ ...held, session: stale, expired: null }));
     expect(logged()).toContain("reason=unexpected_status");
+  });
+});
+
+describe("G2: an UNSIGNED session created after the signing deploy is a defect, and is logged", () => {
+  const T = { tenantId: "t1", catchup: "period" };
+  const held = {
+    sub: { catchupState: "SESSION_OPEN", catchupSessionId: "cs_old" },
+    report: report({ eligible: false, ineligible: ["claim_held"] }),
+  };
+  const expiredReply = { id: "cs_old", status: "expired", url: null, metadata: { ...T } };
+  const secs = (d: Date) => Math.floor(d.getTime() / 1000);
+  const live = (metadata: Record<string, unknown>, created?: number) => ({
+    id: "cs_old",
+    status: "open",
+    url: "https://checkout.stripe.test/old",
+    expires_at: secs(NOW) + 3600,
+    metadata,
+    ...(created === undefined ? {} : { created }),
+  });
+  const unsigned = { ...T, ...TERMS_META, catchup_terms_sig: undefined };
+  let warn: jest.SpyInstance;
+  beforeEach(() => {
+    warn = jest.spyOn(Logger.prototype, "warn").mockImplementation(() => undefined);
+  });
+  afterEach(() => warn.mockRestore());
+  const logged = () => warn.mock.calls.map((c) => String(c[0])).join("\n");
+
+  async function payOver(session: Record<string, unknown>) {
+    const h = make({ ...held, session, expired: expiredReply });
+    const out = await h.svc.pay("t1", NOW);
+    // the behaviour is the same either way: a MISMATCH -> Stripe-confirmed expire, release, ONE new session
+    expect(out.checkoutUrl).toBe("https://checkout.stripe.test/new");
+    expect(h.stripe.expireCheckoutSession).toHaveBeenCalledTimes(1);
+    expect(h.claim.onSessionExpired).toHaveBeenCalledTimes(1);
+    expect(h.catchup.open).toHaveBeenCalledTimes(1);
+  }
+
+  it("created AFTER SIGNING_SINCE: warns reason=unsigned_after_signing with the session id", async () => {
+    await payOver(live(unsigned, secs(SIGNING_SINCE) + 1));
+    expect(logged()).toContain("reason=unsigned_after_signing");
+    expect(logged()).toContain("cs_old");
+  });
+
+  it.each([
+    ["before SIGNING_SINCE", secs(SIGNING_SINCE) - 3600],
+    ["exactly at SIGNING_SINCE (not later)", secs(SIGNING_SINCE)],
+    ["with no created time at all", undefined],
+  ])("created %s: no warning, same behaviour", async (_n, created) => {
+    await payOver(live(unsigned, created as number | undefined));
+    expect(logged()).not.toContain("unsigned_after_signing");
+  });
+
+  it("a SIGNED session with other terms, created after SIGNING_SINCE: no warning (only unsigned ones)", async () => {
+    await payOver(
+      live({ ...T, ...TERMS_META, catchup_stub_cents: "40000" }, secs(SIGNING_SINCE) + 1),
+    );
+    expect(logged()).not.toContain("unsigned_after_signing");
   });
 });

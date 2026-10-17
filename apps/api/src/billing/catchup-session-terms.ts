@@ -3,6 +3,13 @@ import { chargeNowCents } from "./catchup-plan";
 import { buildCatchupSessionParams, type CatchupSessionInput } from "./catchup-session-params";
 
 /**
+ * SA-800d G2: the deploy date of the fold that started signing every catch-up session. A live session WITHOUT a
+ * signature that Stripe says was created AFTER this instant came from a creation path that does not sign: a defect
+ * (the service logs it). Sessions created before it and still open at the deploy are expected to be unsigned.
+ */
+export const SIGNING_SINCE = new Date("2026-10-17T00:00:00Z");
+
+/**
  * Row 542d: do the terms a STORED Checkout session was built with equal the fresh plan's? One pure answer, so
  * `PaymentDueService` never reuses a live session whose Stripe page shows old terms (a $0 card add after the quote
  * flipped to next month's stub, or an old "Pay $X" whose figure no longer matches).
@@ -14,8 +21,10 @@ import { buildCatchupSessionParams, type CatchupSessionInput } from "./catchup-s
  *  2. The metadata terms the signature does NOT cover (it excludes metadata): `catchup_stub_cents`, `catchup_shape`,
  *     `catchup_from` (= S) and `catchup_to` (= A), which the settlement reads. Kept alongside the signature on
  *     purpose: S and the shape live only in metadata for the stub-free `trial` shape.
- * A session missing the signature (created before it existed) or with any unreadable field is `unknown`: never
- * guessed, never silently reused. Money is never recomputed here and nothing is charged from it.
+ * SA-800d: a session with NO signature (created before signing existed) whose other four fields read fine is a
+ * `mismatch`: it takes the Stripe-confirmed expire, release, recreate path and is never reused. A MALFORMED signature
+ * (present, not 64-hex) or any unreadable field is `unknown`: never guessed. Money is never recomputed here and
+ * nothing is charged from it.
  */
 export interface ExpectedSessionTerms {
   /** sha256 hex of the full session terms (`catchup_terms_sig`) of a session built from the fresh plan. */
@@ -85,10 +94,10 @@ export function checkSessionTerms(
   const shape = m[CATCHUP_META.shape];
   const from = readInstant(m[CATCHUP_META.from]);
   const to = readInstant(m[CATCHUP_META.to]);
-  // a half-read session decides nothing: an unreadable field wins over a readable mismatch
+  const unsigned = sig === undefined || sig === null;
+  // a half-read session decides nothing: an unreadable field (or a malformed signature) wins over a readable mismatch
   if (
-    typeof sig !== "string" ||
-    !/^[0-9a-f]{64}$/.test(sig) ||
+    (!unsigned && (typeof sig !== "string" || !/^[0-9a-f]{64}$/.test(sig))) ||
     cents === null ||
     typeof shape !== "string" ||
     shape.length === 0 ||
@@ -97,6 +106,8 @@ export function checkSessionTerms(
   ) {
     return "unknown";
   }
+  // never reuse an unsigned session (SA-800d); the four metadata terms were readable, so this is a plain mismatch
+  if (unsigned) return "mismatch";
   return sig === expected.sig &&
     cents === expected.stubCents &&
     shape === expected.shape &&

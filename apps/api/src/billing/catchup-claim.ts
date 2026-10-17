@@ -128,8 +128,10 @@ export const CATCHUP_META = {
   forgivenCents: "catchup_forgiven_cents",
   /**
    * Row 542d / SA-800c: sha256 hex of the FULL session terms (everything Stripe charges or bills: the lines, the
-   * trial end, the mode...), computed by `catchupTermsSignature` from the very params sent to Stripe. The reuse check
-   * recomputes it from the fresh plan; a stored session with another value (or none) is not reused blindly.
+   * trial end, the mode, the plan key...), computed by `catchupTermsSignature` over the params exactly as
+   * `buildCatchupSessionParams` builds them (the constant `managed_payments` policy is added AFTER signing, by
+   * `withCheckoutPolicy`). The reuse check recomputes it from the fresh plan; a stored session with another value is
+   * stale, one with none is stale too (SA-800d), and a malformed one is unknown.
    */
   termsSig: "catchup_terms_sig",
 } as const;

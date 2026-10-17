@@ -1,5 +1,10 @@
-import { buildCatchupSessionParams, catchupTermsSignature } from "./catchup-session-params";
 import {
+  assertSignedSession,
+  buildCatchupSessionParams,
+  catchupTermsSignature,
+} from "./catchup-session-params";
+import {
+  SIGNING_SINCE,
   checkSessionTerms,
   expectedSessionTerms,
   sameInstant,
@@ -172,7 +177,6 @@ describe("(f) unknown: never a guess", () => {
   });
 
   it.each([
-    ["catchup_terms_sig", undefined],
     ["catchup_terms_sig", ""],
     ["catchup_terms_sig", "abc"],
     ["catchup_terms_sig", "G".repeat(64)],
@@ -198,9 +202,51 @@ describe("(f) unknown: never a guess", () => {
   it("an unreadable field wins over a readable mismatch (nothing is decided on a half-read session)", () => {
     const meta = { ...metaOf(i), catchup_stub_cents: "0", catchup_to: "??" };
     expect(checkSessionTerms(meta, expected())).toBe("unknown");
-    const noSig = { ...metaOf(i), catchup_stub_cents: "0" };
+    // ... also when the signature is absent: with an unreadable field it stays unknown (C1 below)
+    const noSig = { ...metaOf(i), catchup_to: "??" };
     delete (noSig as any).catchup_terms_sig;
     expect(checkSessionTerms(noSig, expected())).toBe("unknown");
+  });
+
+  describe("C1: an ABSENT signature (created before it existed) is a mismatch, never a reuse", () => {
+    const unsigned = (over: Record<string, unknown> = {}) => {
+      const m: Record<string, unknown> = { ...metaOf(i), ...over };
+      delete m.catchup_terms_sig;
+      return m;
+    };
+
+    it("every other term equal, signature absent: mismatch (not unknown, not match)", () => {
+      expect(checkSessionTerms(unsigned(), expected())).toBe("mismatch");
+    });
+
+    it("a null signature is absent too", () => {
+      expect(checkSessionTerms({ ...unsigned(), catchup_terms_sig: null }, expected())).toBe(
+        "mismatch",
+      );
+    });
+
+    it("absent signature and a readable metadata mismatch: mismatch", () => {
+      expect(checkSessionTerms(unsigned({ catchup_stub_cents: "0" }), expected())).toBe("mismatch");
+    });
+
+    it.each([
+      ["catchup_stub_cents", "12.5"],
+      ["catchup_shape", ""],
+      ["catchup_from", "soon"],
+      ["catchup_to", undefined],
+    ])("absent signature and an unreadable %s: unknown", (key, value) => {
+      const m = unsigned({ [key]: value });
+      if (value === undefined) delete m[key];
+      expect(checkSessionTerms(m, expected())).toBe("unknown");
+    });
+
+    it("a MALFORMED signature (present, not sha256 hex) stays unknown", () => {
+      for (const bad of ["abc", "G".repeat(64), "A".repeat(64), "", 5]) {
+        expect(checkSessionTerms({ ...metaOf(i), catchup_terms_sig: bad }, expected())).toBe(
+          "unknown",
+        );
+      }
+    });
   });
 });
 
@@ -224,10 +270,12 @@ describe("(g) the signature covers the terms and nothing volatile", () => {
 
   it("the params that are sent carry the signature, computed from those same params (its own key and the other metadata are not signed)", () => {
     const params = build(input());
-    expect(catchupTermsSignature({ ...params, metadata: {} })).toBe(
+    // only metadata.planKey and the forgiven cents are signed out of the metadata; the rest (and the sig itself) is not
+    const planKey = params.metadata.planKey;
+    expect(catchupTermsSignature({ ...params, metadata: { planKey } })).toBe(
       params.metadata.catchup_terms_sig,
     );
-    expect(catchupTermsSignature({ ...params, metadata: { anything: "else" } })).toBe(
+    expect(catchupTermsSignature({ ...params, metadata: { planKey, anything: "else" } })).toBe(
       params.metadata.catchup_terms_sig,
     );
     expect(catchupTermsSignature({ ...params, expires_at: 1, success_url: "x" })).toBe(
@@ -254,6 +302,14 @@ describe("(g) the signature covers the terms and nothing volatile", () => {
     ).not.toBe(base);
   });
 
+  it("N5: two plans with the SAME name and price but DIFFERENT plan keys sign differently", () => {
+    expect(sigOf(input({ planKey: "GROWTH" }))).not.toBe(sigOf(input({ planKey: "PRO" })));
+    // ... and the plan key is the only difference between those two sessions' params
+    expect(build(input({ planKey: "GROWTH" })).line_items).toEqual(
+      build(input({ planKey: "PRO" })).line_items,
+    );
+  });
+
   it("is independent of key order and ignores undefined values", () => {
     const params = build(input());
     const shuffled = {
@@ -272,6 +328,7 @@ describe("(g) the signature covers the terms and nothing volatile", () => {
         },
       })),
       payment_method_collection: params.payment_method_collection,
+      metadata: { planKey: params.metadata.planKey },
       mode: params.mode,
     };
     expect(catchupTermsSignature(shuffled)).toBe(params.metadata.catchup_terms_sig);
@@ -295,5 +352,50 @@ describe("expectedSessionTerms", () => {
       expectedSessionTerms(input({ plan: planOf("trial_one_time", 30, S, A, true) })).stubCents,
     ).toBe(0);
     expect(expectedSessionTerms(input({ plan: planOf("trial", 0, A, A) })).stubCents).toBe(0);
+  });
+});
+
+describe("G1: the builder asserts the signature is present on everything it returns", () => {
+  const i = input();
+
+  it("a real build is signed with a 64-character hex signature", () => {
+    expect(build(i).metadata.catchup_terms_sig).toMatch(/^[0-9a-f]{64}$/);
+  });
+
+  it.each([
+    ["omitted", () => undefined],
+    ["empty", () => ""],
+    ["short", () => "abc"],
+    ["upper-case", () => "A".repeat(64)],
+    ["not hex", () => "g".repeat(64)],
+  ])("a builder whose signer returns a signature that is %s THROWS", (_n, signer) => {
+    expect(() =>
+      buildCatchupSessionParams(
+        {
+          customerId: "cus_1",
+          successUrl: "https://app.test/ok",
+          cancelUrl: "https://app.test/no",
+          ...i,
+        } as any,
+        signer as any,
+      ),
+    ).toThrow(/signature/i);
+  });
+
+  it("assertSignedSession accepts a signed result and rejects an unsigned or malformed one", () => {
+    const params = build(i);
+    expect(() => assertSignedSession(params)).not.toThrow();
+    const { catchup_terms_sig: _drop, ...rest } = params.metadata;
+    expect(() => assertSignedSession({ ...params, metadata: rest })).toThrow(/signature/i);
+    expect(() => assertSignedSession({ ...params, metadata: undefined })).toThrow(/signature/i);
+    expect(() =>
+      assertSignedSession({ ...params, metadata: { ...rest, catchup_terms_sig: "x" } }),
+    ).toThrow(/signature/i);
+  });
+});
+
+describe("G2: SIGNING_SINCE is the deploy date of the signing fold", () => {
+  it("is 2026-10-17T00:00:00Z", () => {
+    expect(SIGNING_SINCE.toISOString()).toBe("2026-10-17T00:00:00.000Z");
   });
 });

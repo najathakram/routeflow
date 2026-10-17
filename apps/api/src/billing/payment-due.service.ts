@@ -7,11 +7,14 @@ import { claimRefusal } from "./catchup-claim";
 import { CatchupClaimService } from "./catchup-claim.service";
 import { chargeNowCents, describeStubPeriod } from "./catchup-plan";
 import {
+  SIGNING_SINCE,
   checkSessionTerms,
   expectedSessionTerms,
   sameInstant,
   type ExpectedSessionTerms,
 } from "./catchup-session-terms";
+
+import { StripeService } from "./stripe.service";
 
 /**
  * The terms a session built from the fresh plan would carry, computed LAZILY (only when a live stored session needs
@@ -19,9 +22,16 @@ import {
  */
 type TermsOf = () => ExpectedSessionTerms;
 
-/** Why a pay answered 503 PAYMENT_STATE_UNKNOWN (the body is the same for all; the log says which). */
-type UnknownReason = "terms_unreadable" | "stripe_unreachable" | "unexpected_status";
-import { StripeService } from "./stripe.service";
+/**
+ * Why a pay answered 503 PAYMENT_STATE_UNKNOWN (the body is the same for all; the log says which). The two `replan_*`
+ * reasons are the lost-race re-plan: nothing payable any more, or the planner read itself failed.
+ */
+type UnknownReason =
+  | "terms_unreadable"
+  | "stripe_unreachable"
+  | "unexpected_status"
+  | "replan_unavailable"
+  | "replan_failed";
 
 /**
  * The tenant-side face of the October catch-up (the "payment due" banner and its Pay now). It decides NOTHING about
@@ -265,7 +275,10 @@ export class PaymentDueService {
    *  - open and still live, with a url, and built with the fresh plan's terms: that url;
    *  - open and live but built with OTHER terms (row 542d: a stale card add / a stale "Pay $X"), or open but past its
    *    time (or with no url): Stripe is told to expire it, and only its reply "expired" releases;
-   *  - open and live but its terms cannot be read (metadata missing or malformed): a retryable 503, never a guess;
+   *  - open and live but with NO terms signature (created before signing existed, SA-800d): stale, the same expire
+   *    path; never reused;
+   *  - open and live but its terms cannot be read (a malformed signature or unreadable metadata): a retryable 503,
+   *    never a guess;
    *  - complete (on the read or on the expire reply): the claim's AWAITING_FIRST_PAYMENT 409, nothing released;
    *  - unreadable, an unknown status, or Stripe unreachable on either call: a retryable 503, nothing touched.
    */
@@ -292,6 +305,7 @@ export class PaymentDueService {
       status?: string;
       url?: string | null;
       expires_at?: number | null;
+      created?: number | null;
       metadata?: unknown;
     } | null;
     try {
@@ -306,18 +320,20 @@ export class PaymentDueService {
     }
     if (session?.status !== "open") throw this.stateUnknown(tenantId, "unexpected_status", "read");
 
+    let staleWinner = false; // a raced session that still mismatches the fresh plan, about to be expired
     const expiresMs = Number(session.expires_at ?? 0) * 1000;
     if (session.url && expiresMs > now.getTime()) {
       const verdict = this.termsVerdict(tenantId, session.metadata, terms);
       if (verdict === "match") return session.url;
       if (verdict === "unknown") throw this.stateUnknown(tenantId, "terms_unreadable", "read");
+      this.warnIfUnsignedAfterSigning(tenantId, sessionId, session);
       if (raced) {
         // This request's plan may be the older one (a click planned just before D, the winner just after): re-plan
         // ONCE with a fresh clock. A session that matches that plan is authoritative: never expire a fresh winner.
-        const again = await this.read(tenantId, new Date());
-        if (again.terms && this.termsVerdict(tenantId, session.metadata, again.terms) === "match") {
-          return session.url;
-        }
+        // No plan to compare with (nothing payable any more, or the read failed) decides nothing: retry, expire nothing.
+        const again = await this.replanAfterRace(tenantId);
+        if (this.termsVerdict(tenantId, session.metadata, again) === "match") return session.url;
+        staleWinner = true;
       }
       this.logger.log(
         `payment-due: the open catch-up session of tenant ${tenantId} was built with other terms than the current plan; expiring it`,
@@ -331,10 +347,13 @@ export class PaymentDueService {
     } catch (err) {
       // Stripe REJECTS expire() on a session that is no longer open (it was paid in the gap): look once more
       // before deciding. complete -> the claim's own refusal; expired -> release; anything else -> try again later.
-      return this.afterExpireRejected(tenantId, sessionId, err);
+      const released = await this.afterExpireRejected(tenantId, sessionId, err);
+      if (staleWinner) this.logRacedStale(tenantId, sessionId);
+      return released;
     }
     if (reply?.status === "expired") {
       await this.release(tenantId, reply);
+      if (staleWinner) this.logRacedStale(tenantId, sessionId);
       return null;
     }
     if (!reply || typeof reply.status !== "string") {
@@ -360,6 +379,40 @@ export class PaymentDueService {
       return null;
     }
     throw this.stateUnknown(tenantId, "unexpected_status", "expire", expireErr);
+  }
+
+  /** The lost-race re-plan with a fresh clock. A failed read or no payable plan is a retryable 503: expire nothing. */
+  private async replanAfterRace(tenantId: string): Promise<TermsOf> {
+    let again: Awaited<ReturnType<PaymentDueService["read"]>>;
+    try {
+      again = await this.read(tenantId, new Date());
+    } catch (err) {
+      throw this.stateUnknown(tenantId, "replan_failed", "read", err);
+    }
+    if (!again.terms) throw this.stateUnknown(tenantId, "replan_unavailable", "read");
+    return again.terms;
+  }
+
+  /** SA-800d G2: an unsigned session created after signing began means a creation path is not signing. */
+  private warnIfUnsignedAfterSigning(
+    tenantId: string,
+    sessionId: string,
+    session: { created?: number | null; metadata?: unknown },
+  ): void {
+    const meta = session.metadata as Record<string, unknown> | null | undefined;
+    const sig = meta?.catchup_terms_sig;
+    const createdMs = Number(session.created) * 1000;
+    if (sig != null || !Number.isFinite(createdMs) || createdMs <= SIGNING_SINCE.getTime()) return;
+    this.logger.warn(
+      `payment-due: the open catch-up session ${sessionId} of tenant ${tenantId} has no terms signature although it was created after signing began (reason=unsigned_after_signing): a creation path is not signing`,
+    );
+  }
+
+  /** A raced winner that still disagreed with the fresh plan was expired and released. */
+  private logRacedStale(tenantId: string, sessionId: string): void {
+    this.logger.warn(
+      `payment-due: released the stale raced catch-up session ${sessionId} of tenant ${tenantId} (reason=raced_stale, step=expire)`,
+    );
   }
 
   /** The stored session's terms against a plan's; a builder failure is unreadable terms, never a reuse. */
