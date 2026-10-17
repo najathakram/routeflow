@@ -1069,7 +1069,7 @@ export default defineConfig({
           // served to the test tenant; each spec fails (never skips) without it. Local lane only, like 71-73.
           {
             name: "units-v2",
-            testMatch: /units-v2-.*\.spec\.ts/,
+            testMatch: /(units-v2-|k11-).*\.spec\.ts/,
             dependencies: ["setup"],
             use: {
               ...devices["Desktop Chrome"],

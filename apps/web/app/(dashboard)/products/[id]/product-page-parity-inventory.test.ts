@@ -22,6 +22,7 @@ const MOUNTED: Array<[tag: string, file: string]> = [
   ["ProductInsightsExport", "ProductInsightsExport.tsx"],
   ["LegacyVariantsActions", "LegacyVariantsActions.tsx"],
   ["PiecesPerBoxValue", "PiecesPerBoxValue.tsx"],
+  ["ProductMerchandising", "ProductMerchandising.tsx"],
 ];
 
 describe("product page parity inventory (T38)", () => {
@@ -58,5 +59,36 @@ describe("product page parity inventory (T38)", () => {
     for (const needle of ["} name`", "} price`", "onMakeDefault", "Save", "Remove", "Cancel"]) {
       expect(card).toContain(needle);
     }
+  });
+
+  it("K11-22: every header action is in the sm+ button set AND in the phone More menu", () => {
+    const src = read("ProductHeaderControls.tsx");
+    // one descriptor list feeds both renders, so an action cannot reach one and miss the other
+    expect(src).toMatch(/actions\.map\(\(a\) => \(\s*<Button/);
+    expect(src).toMatch(/actions\.map\(\(a\) => \(\s*<DropdownMenu\.Item/);
+    for (const label of [
+      "Make variant of…",
+      "Deactivate",
+      "Reactivate",
+      "Mark as tobacco",
+      "Unmark tobacco",
+    ]) {
+      expect(src).toContain(label);
+    }
+    // Delete exists twice: the danger-outline button and the red menu item, both calling onRequestDelete
+    expect(src.match(/onRequestDelete/g)?.length).toBeGreaterThanOrEqual(3);
+    expect(src).toContain('aria-label="More actions"');
+  });
+
+  it("K11-22: the Details header is one row on a phone (Edit and the menu share it)", () => {
+    // the two classes that forced Edit and the actions onto their own rows below sm are gone
+    expect(page).not.toMatch(/max-sm:w-full max-sm:justify-start/);
+    expect(page).not.toMatch(/<div className="max-sm:basis-full">\s*<EditButton/);
+    expect(page).toMatch(/<EditButton onClick=\{startEdit\} \/>/);
+  });
+
+  it("K11-22: the Details header is at most 64 px tall on a phone (44 px controls + max-sm:py-2), and the page tells the controls when the delete confirm is open", () => {
+    expect(page).toMatch(/border-b border-surface-border px-5 py-3\.5 max-sm:py-2/);
+    expect(page).toMatch(/deleteOpen=\{showDeleteConfirm\}/);
   });
 });

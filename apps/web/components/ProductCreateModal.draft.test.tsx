@@ -238,7 +238,7 @@ describe("ProductCreateModal draft + restore banner (V13)", () => {
     await userEvent.click(screen.getByTestId("units-v2-restore-yes"));
     // The restore re-arms the debounced save; wait for it so we prove create clears it.
     await waitFor(() => expect(readDraft(draftKey()!)?.fields.name).toBe("Cola"));
-    fireEvent.click(screen.getByRole("button", { name: "Create Product" }));
+    fireEvent.click(screen.getByRole("button", { name: "Create product" }));
     await waitFor(() => expect(mutateAsync).toHaveBeenCalled());
     await waitFor(() => expect(localStorage.getItem(draftKey()!)).toBeNull());
   });

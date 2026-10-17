@@ -34,7 +34,7 @@ describe("ProductCreateModal double submit (B1244)", () => {
     let reject!: (e: unknown) => void;
     mutateAsync.mockReturnValueOnce(new Promise((_r, rej) => (reject = rej)));
     await fill();
-    const create = screen.getByRole("button", { name: "Create Product" });
+    const create = screen.getByRole("button", { name: "Create product" });
     fireEvent.click(create);
     fireEvent.click(create);
     fireEvent.submit(create.closest("form") ?? document.querySelector("form")!);
@@ -46,7 +46,7 @@ describe("ProductCreateModal double submit (B1244)", () => {
     await new Promise((r) => setTimeout(r, 10));
 
     mutateAsync.mockResolvedValueOnce({ id: "p1", name: "Cola" });
-    fireEvent.click(screen.getByRole("button", { name: "Create Product" }));
+    fireEvent.click(screen.getByRole("button", { name: "Create product" }));
     await waitFor(() => expect(mutateAsync).toHaveBeenCalledTimes(2));
   });
 
