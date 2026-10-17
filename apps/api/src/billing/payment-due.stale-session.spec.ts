@@ -35,7 +35,17 @@ function make(invoices: Record<string, unknown>[] = [OCT_PAID], monthly = 310) {
   const db = fakeCatchupDb({ subs: [{ tenantId: "t1", planKey: "GROWTH" }], invoices });
   const prisma: any = {
     ...db.prisma,
-    tenantAddon: { findMany: jest.fn(async () => []) },
+    // the planner checks the billable ROWS against the lines the card will bill (MF1): they mirror each other here
+    tenantAddon: {
+      findMany: jest.fn(async () =>
+        addons.lineItems.map((li: any) => ({
+          sku: li.price_data.product_data.metadata.addonSku,
+          addonKey: null,
+          quantity: li.quantity,
+          priceSnapshot: li.price_data.unit_amount / 100,
+        })),
+      ),
+    },
     tenantConfig: { findUnique: jest.fn(async () => ({ timezone: "America/New_York" })) },
     tenant: {
       findUnique: jest.fn(async () => ({
@@ -63,8 +73,13 @@ function make(invoices: Record<string, unknown>[] = [OCT_PAID], monthly = 310) {
       product_data: { name: "RouteFlow Growth" },
     })),
   };
+  let addons: { lineItems: any[]; skus: string[]; invalid: any[] } = {
+    lineItems: [],
+    skus: [],
+    invalid: [],
+  };
   const mutations: any = {
-    checkoutAddonLines: jest.fn(async () => ({ lineItems: [], skus: [], invalid: [] })),
+    checkoutAddonLines: jest.fn(async () => addons),
     recordInvalidCatalogAddons: jest.fn(async () => undefined),
   };
   const claim = new CatchupClaimService(prisma, stripe as any, { emit: jest.fn() } as any);
@@ -83,6 +98,10 @@ function make(invoices: Record<string, unknown>[] = [OCT_PAID], monthly = 310) {
     db,
     stripe,
     claim,
+    catchup,
+    setAddons: (lineItems: any[], skus: string[]) => {
+      addons = { lineItems, skus, invalid: [] };
+    },
     setPrice: (p: number) => {
       price = p;
     },
@@ -261,5 +280,144 @@ describe("542d R6: a live session with no readable terms is unknown, never guess
     expect(expireCalls(t)).toEqual([]);
     expect(createCalls(t)).toHaveLength(1);
     expect(t.db.subs[0].catchupSessionId).toBe(oldId);
+  });
+});
+
+const ADDON_LINE = {
+  price_data: {
+    currency: "usd",
+    unit_amount: 2500,
+    recurring: { interval: "month" },
+    product_data: { name: "Scan", metadata: { addonSku: "scan" } },
+  },
+  quantity: 1,
+};
+
+describe("542d nit 1 (SA-800c): the session reuse check signs EVERY term (price, add-ons, forgiven line)", () => {
+  it("(a) a $310 card add, then the operator sets $100: the unchanged banner no longer reuses it; ONE new session at the $100 recurring", async () => {
+    const t = make();
+    const first = await t.svc.pay("t1", BEFORE_D, CARD_QUOTE);
+    const oldId = goLive(t, BEFORE_D, first.checkoutUrl);
+    expect(createCalls(t)[0][0].line_items[0].price_data.unit_amount).toBe(31000);
+
+    t.setPrice(100);
+    // the banner is unchanged (still the $0 card add): the quote check passes
+    expect(await t.svc.get("t1", BEFORE_D)).toMatchObject({ cardNeeded: true, cardBy: OCT_29 });
+    const out = await t.svc.pay("t1", BEFORE_D, CARD_QUOTE);
+
+    expect(out.checkoutUrl).not.toBe(first.checkoutUrl);
+    expect(expireCalls(t)).toEqual([`expireCheckoutSession:${oldId}`]);
+    expect(createCalls(t)).toHaveLength(2);
+    const params = createCalls(t)[1][0];
+    expect(params.line_items[0].price_data.unit_amount).toBe(10000);
+    expect(params.metadata.catchup_terms_sig).toMatch(/^[0-9a-f]{64}$/);
+    expect(params.metadata.catchup_terms_sig).not.toBe(
+      createCalls(t)[0][0].metadata.catchup_terms_sig,
+    );
+    expect(t.db.subs[0].catchupSessionId).not.toBe(oldId);
+  });
+
+  it("(b) a forgiven line whose forgiven cents change is replaced too", async () => {
+    const t = make([], 0.1); // October unpaid at 10 cents: forgiven (under $0.50), a $0-now card add
+    const shown = await t.svc.get("t1", NOW);
+    expect(shown).toMatchObject({ due: false, cardNeeded: true });
+    const first = await t.svc.pay("t1", NOW, quoteOf(shown));
+    const oldId = goLive(t, NOW, first.checkoutUrl);
+    expect(createCalls(t)[0][0].metadata.catchup_forgiven_cents).toBe("10");
+
+    t.setPrice(0.2);
+    const out = await t.svc.pay("t1", NOW, quoteOf(await t.svc.get("t1", NOW)));
+    expect(out.checkoutUrl).not.toBe(first.checkoutUrl);
+    expect(expireCalls(t)).toEqual([`expireCheckoutSession:${oldId}`]);
+    expect(createCalls(t)).toHaveLength(2);
+    expect(createCalls(t)[1][0].metadata.catchup_forgiven_cents).toBe("20");
+  });
+
+  it.each([
+    ["an add-on added after the session was opened", false],
+    ["an add-on removed after the session was opened", true],
+  ])("(c) %s", async (_n, startWithAddon) => {
+    const t = make();
+    if (startWithAddon) t.setAddons([ADDON_LINE], ["scan"]);
+    const first = await t.svc.pay("t1", BEFORE_D, CARD_QUOTE);
+    const oldId = goLive(t, BEFORE_D, first.checkoutUrl);
+
+    if (startWithAddon) t.setAddons([], []);
+    else t.setAddons([ADDON_LINE], ["scan"]);
+    const out = await t.svc.pay("t1", BEFORE_D, CARD_QUOTE);
+
+    expect(out.checkoutUrl).not.toBe(first.checkoutUrl);
+    expect(expireCalls(t)).toEqual([`expireCheckoutSession:${oldId}`]);
+    expect(createCalls(t)).toHaveLength(2);
+    const lines = createCalls(t)[1][0].line_items;
+    expect(lines).toHaveLength(startWithAddon ? 1 : 2);
+  });
+
+  it("(f) a live session with NO signature (created before it existed) is unknown: 503, Stripe not told to expire, nothing created", async () => {
+    const t = make();
+    const first = await t.svc.pay("t1", BEFORE_D, CARD_QUOTE);
+    const oldId = goLive(t, BEFORE_D, first.checkoutUrl);
+    delete (t.stripe as any).sessions[oldId].metadata.catchup_terms_sig;
+    await expect(t.svc.pay("t1", BEFORE_D, CARD_QUOTE)).rejects.toMatchObject({
+      response: { code: API_ERROR_CODES.PAYMENT_STATE_UNKNOWN },
+    });
+    expect(expireCalls(t)).toEqual([]);
+    expect(createCalls(t)).toHaveLength(1);
+    expect(t.db.subs[0].catchupSessionId).toBe(oldId);
+  });
+
+  it("(c-guard) nothing changed, add-on included: the session is reused, no expire", async () => {
+    const t = make();
+    t.setAddons([ADDON_LINE], ["scan"]);
+    const first = await t.svc.pay("t1", BEFORE_D, CARD_QUOTE);
+    goLive(t, BEFORE_D, first.checkoutUrl);
+    expect(await t.svc.pay("t1", BEFORE_D, CARD_QUOTE)).toEqual(first);
+    expect(expireCalls(t)).toEqual([]);
+    expect(createCalls(t)).toHaveLength(1);
+  });
+});
+
+describe("542d nit 2: the lost-race path never expires a FRESHER winner", () => {
+  afterEach(() => jest.useRealTimers());
+
+  /** Only Date is faked: promises, timers and the event loop run for real. */
+  const clockAt = (d: Date) =>
+    jest.useFakeTimers({
+      now: d,
+      doNotFake: [
+        "hrtime",
+        "nextTick",
+        "performance",
+        "queueMicrotask",
+        "requestAnimationFrame",
+        "cancelAnimationFrame",
+        "requestIdleCallback",
+        "cancelIdleCallback",
+        "setImmediate",
+        "clearImmediate",
+        "setInterval",
+        "clearInterval",
+        "setTimeout",
+        "clearTimeout",
+      ],
+    });
+
+  it("click A planned before D loses the claim to click B planned after D: A returns B's url, no expire", async () => {
+    const t = make();
+    const realOpen = t.catchup.open.bind(t.catchup);
+    let bUrl = "";
+    jest.spyOn(t.catchup, "open").mockImplementationOnce(async (...args: any[]) => {
+      // click B (after D) wins the claim between A's read and A's create
+      const b = await t.svc.pay("t1", AFTER_D, quoteOf(await t.svc.get("t1", AFTER_D)));
+      bUrl = b.checkoutUrl;
+      goLive(t, AFTER_D, bUrl);
+      return (realOpen as any)(...args); // A's create now loses to the held claim
+    });
+    clockAt(AFTER_D); // the re-plan inside A's race path reads the wall clock
+    const out = await t.svc.pay("t1", BEFORE_D, CARD_QUOTE);
+    expect(out).toEqual({ checkoutUrl: bUrl });
+    expect(createCalls(t)).toHaveLength(1); // B's session only
+    expect(expireCalls(t)).toEqual([]);
+    expect(t.db.subs[0].catchupState).toBe("SESSION_OPEN");
   });
 });

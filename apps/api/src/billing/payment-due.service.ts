@@ -12,6 +12,15 @@ import {
   sameInstant,
   type ExpectedSessionTerms,
 } from "./catchup-session-terms";
+
+/**
+ * The terms a session built from the fresh plan would carry, computed LAZILY (only when a live stored session needs
+ * comparing): it runs the session builder, which the plain banner read never needs.
+ */
+type TermsOf = () => ExpectedSessionTerms;
+
+/** Why a pay answered 503 PAYMENT_STATE_UNKNOWN (the body is the same for all; the log says which). */
+type UnknownReason = "terms_unreadable" | "stripe_unreachable" | "unexpected_status";
 import { StripeService } from "./stripe.service";
 
 /**
@@ -137,13 +146,25 @@ export class PaymentDueService {
   private async read(
     tenantId: string,
     now: Date,
-  ): Promise<{ view: PaymentDueView; stubCents: number; terms: ExpectedSessionTerms | null }> {
+  ): Promise<{ view: PaymentDueView; stubCents: number; terms: TermsOf | null }> {
     const none = { view: NOT_DUE, stubCents: 0, terms: null };
     const report = await this.catchup.plan(tenantId, now);
     if (report.tenantClass !== "PRODUCTION") return none;
     if (report.ineligible.some(HIDES_THE_BILL)) return none;
     const plan = report.plan;
     if (!plan.ok) return none;
+    // Row 542d / SA-800c: the very builder inputs `open()` would use for this read (the planner's own price lines)
+    const terms: TermsOf = () =>
+      expectedSessionTerms({
+        tenantId,
+        slug: report.slug,
+        planKey: report.planKey as string,
+        planPriceData: report._inputs!.planPriceData,
+        addonLines: report._inputs!.addonLines,
+        addonSkus: report._inputs!.addonSkus,
+        plan,
+        now,
+      });
     // SA-801 / SA-806: nothing is charged now (the stub-free `trial` shape, or a line forgiven under the Stripe
     // minimum): the card is still needed, by D. Same eligibility as a bill (PRODUCTION, ACTIVE, manual invoicing, no
     // hiding ineligibility): an app-trial (TRIAL status) or read-only tenant is refused above by `tenant_not_active`.
@@ -156,7 +177,7 @@ export class PaymentDueService {
           cardBy: plan.termsHoldUntil.toISOString(),
         },
         stubCents: plan.stub.totalCents,
-        terms: expectedSessionTerms(plan),
+        terms,
       };
     }
     const zone = await resolveZone(this.prisma, { tenantId });
@@ -172,7 +193,7 @@ export class PaymentDueService {
         cardBy: null,
       },
       stubCents: plan.stub.totalCents,
-      terms: expectedSessionTerms(plan),
+      terms,
     };
   }
 
@@ -228,9 +249,9 @@ export class PaymentDueService {
       if (lostTheClaimRace(err)) {
         // the racer's own coded refusals/503 from this read propagate as they are (all tenant-safe wording);
         // a claim we cannot see yet is "try again", never open()'s operator-facing "not eligible" text
-        const raced = await this.openSessionUrl(tenantId, now, terms);
+        const raced = await this.openSessionUrl(tenantId, now, terms, true);
         if (raced) return { checkoutUrl: raced };
-        throw this.stateUnknown(tenantId, "read");
+        throw this.stateUnknown(tenantId, "unexpected_status", "read");
       }
       throw err;
     }
@@ -251,7 +272,12 @@ export class PaymentDueService {
   private async openSessionUrl(
     tenantId: string,
     now: Date,
-    terms: ExpectedSessionTerms,
+    terms: TermsOf,
+    /**
+     * The lost-race re-read: the session is the PARALLEL click's. A request planned before D must not expire a winner
+     * planned after it, so a mismatch is first re-checked against a fresh plan (see below).
+     */
+    raced = false,
   ): Promise<string | null> {
     const row = (await this.prisma.tenantSubscription.findUnique({
       where: { tenantId },
@@ -271,20 +297,28 @@ export class PaymentDueService {
     try {
       session = await this.stripe.getCheckoutSession(sessionId);
     } catch (err) {
-      throw this.stateUnknown(tenantId, "read", err);
+      throw this.stateUnknown(tenantId, "stripe_unreachable", "read", err);
     }
     if (session?.status === "complete") throw claimRefusal("AWAITING_FIRST_PAYMENT")!;
     if (session?.status === "expired") {
       await this.release(tenantId, session);
       return null;
     }
-    if (session?.status !== "open") throw this.stateUnknown(tenantId, "read");
+    if (session?.status !== "open") throw this.stateUnknown(tenantId, "unexpected_status", "read");
 
     const expiresMs = Number(session.expires_at ?? 0) * 1000;
     if (session.url && expiresMs > now.getTime()) {
-      const verdict = checkSessionTerms(session.metadata, terms);
+      const verdict = this.termsVerdict(tenantId, session.metadata, terms);
       if (verdict === "match") return session.url;
-      if (verdict === "unknown") throw this.stateUnknown(tenantId, "read");
+      if (verdict === "unknown") throw this.stateUnknown(tenantId, "terms_unreadable", "read");
+      if (raced) {
+        // This request's plan may be the older one (a click planned just before D, the winner just after): re-plan
+        // ONCE with a fresh clock. A session that matches that plan is authoritative: never expire a fresh winner.
+        const again = await this.read(tenantId, new Date());
+        if (again.terms && this.termsVerdict(tenantId, session.metadata, again.terms) === "match") {
+          return session.url;
+        }
+      }
       this.logger.log(
         `payment-due: the open catch-up session of tenant ${tenantId} was built with other terms than the current plan; expiring it`,
       );
@@ -303,7 +337,9 @@ export class PaymentDueService {
       await this.release(tenantId, reply);
       return null;
     }
-    if (!reply || typeof reply.status !== "string") throw this.stateUnknown(tenantId, "expire");
+    if (!reply || typeof reply.status !== "string") {
+      throw this.stateUnknown(tenantId, "unexpected_status", "expire");
+    }
     throw claimRefusal("AWAITING_FIRST_PAYMENT")!; // complete (or anything but expired): never release, never recreate
   }
 
@@ -316,14 +352,23 @@ export class PaymentDueService {
     try {
       again = await this.stripe.getCheckoutSession(sessionId);
     } catch {
-      throw this.stateUnknown(tenantId, "expire", expireErr);
+      throw this.stateUnknown(tenantId, "stripe_unreachable", "expire", expireErr);
     }
     if (again?.status === "complete") throw claimRefusal("AWAITING_FIRST_PAYMENT")!;
     if (again?.status === "expired") {
       await this.release(tenantId, again);
       return null;
     }
-    throw this.stateUnknown(tenantId, "expire", expireErr);
+    throw this.stateUnknown(tenantId, "unexpected_status", "expire", expireErr);
+  }
+
+  /** The stored session's terms against a plan's; a builder failure is unreadable terms, never a reuse. */
+  private termsVerdict(tenantId: string, metadata: unknown, terms: TermsOf) {
+    try {
+      return checkSessionTerms(metadata, terms());
+    } catch (err) {
+      throw this.stateUnknown(tenantId, "terms_unreadable", "read", err);
+    }
   }
 
   /** Release the claim by the same CAS the `checkout.session.expired` webhook uses. */
@@ -332,9 +377,14 @@ export class PaymentDueService {
     await this.claim.onSessionExpired(expired);
   }
 
-  private stateUnknown(tenantId: string, step: "read" | "expire", err?: unknown) {
+  private stateUnknown(
+    tenantId: string,
+    reason: UnknownReason,
+    step: "read" | "expire",
+    err?: unknown,
+  ) {
     this.logger.warn(
-      `payment-due: could not confirm the catch-up session of tenant ${tenantId} (${step})${err ? `: ${(err as Error).message}` : ""}`,
+      `payment-due: could not confirm the catch-up session of tenant ${tenantId} (reason=${reason}, step=${step})${err ? `: ${(err as Error).message}` : ""}`,
     );
     return new ServiceUnavailableException({
       code: API_ERROR_CODES.PAYMENT_STATE_UNKNOWN,

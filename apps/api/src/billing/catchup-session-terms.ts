@@ -1,16 +1,25 @@
 import { CATCHUP_META } from "./catchup-claim";
-import { chargeNowCents, type CatchupPlan } from "./catchup-plan";
+import { chargeNowCents } from "./catchup-plan";
+import { buildCatchupSessionParams, type CatchupSessionInput } from "./catchup-session-params";
 
 /**
  * Row 542d: do the terms a STORED Checkout session was built with equal the fresh plan's? One pure answer, so
  * `PaymentDueService` never reuses a live session whose Stripe page shows old terms (a $0 card add after the quote
  * flipped to next month's stub, or an old "Pay $X" whose figure no longer matches).
  *
- * The session side is the metadata `buildCatchupSessionParams` writes on EVERY shape: `catchup_stub_cents` (what the
- * Checkout charges at completion, i.e. {@link chargeNowCents}), `catchup_shape`, `catchup_from` (= S) and
- * `catchup_to` (= A). Money is never recomputed here and nothing is charged from it: it only decides reuse.
+ * Two checks, both read from the metadata `buildCatchupSessionParams` writes on EVERY shape (SA-800c):
+ *  1. `catchup_terms_sig`: sha256 of the FULL params sent to Stripe (every line, the trial end, the mode...). The
+ *     expected one is computed by the SAME builder from the fresh plan, so a changed price, an add-on, a forgiven
+ *     amount or anything the builder learns later is a mismatch with no change here.
+ *  2. The metadata terms the signature does NOT cover (it excludes metadata): `catchup_stub_cents`, `catchup_shape`,
+ *     `catchup_from` (= S) and `catchup_to` (= A), which the settlement reads. Kept alongside the signature on
+ *     purpose: S and the shape live only in metadata for the stub-free `trial` shape.
+ * A session missing the signature (created before it existed) or with any unreadable field is `unknown`: never
+ * guessed, never silently reused. Money is never recomputed here and nothing is charged from it.
  */
 export interface ExpectedSessionTerms {
+  /** sha256 hex of the full session terms (`catchup_terms_sig`) of a session built from the fresh plan. */
+  sig: string;
   /** What the Checkout charges at completion: 0 for the stub-free `trial` shape and for a forgiven line. */
   stubCents: number;
   shape: string;
@@ -23,15 +32,24 @@ export interface ExpectedSessionTerms {
 /** match: reuse; mismatch: the session is stale; unknown: a field is missing or unreadable (never guess). */
 export type SessionTermsCheck = "match" | "mismatch" | "unknown";
 
-/** The terms the session builder would write for this plan (the very values, so the two cannot drift). */
-export function expectedSessionTerms(
-  plan: Pick<CatchupPlan, "shape" | "stub">,
-): ExpectedSessionTerms {
+/** What the builder needs to sign a session for the fresh plan: everything but the Stripe customer and the URLs. */
+export type ExpectedTermsInput = Omit<
+  CatchupSessionInput,
+  "customerId" | "successUrl" | "cancelUrl"
+>;
+
+/**
+ * The terms the session builder would write for this plan: the signature comes from the builder itself (no Stripe
+ * call; the customer and URLs are not signed), the rest from the planner's own values.
+ */
+export function expectedSessionTerms(i: ExpectedTermsInput): ExpectedSessionTerms {
+  const params = buildCatchupSessionParams({ ...i, customerId: "", successUrl: "", cancelUrl: "" });
   return {
-    stubCents: chargeNowCents(plan),
-    shape: plan.shape,
-    from: plan.stub.from,
-    to: plan.stub.to,
+    sig: params.metadata[CATCHUP_META.termsSig],
+    stubCents: chargeNowCents(i.plan),
+    shape: i.plan.shape,
+    from: i.plan.stub.from,
+    to: i.plan.stub.to,
   };
 }
 
@@ -62,12 +80,15 @@ export function checkSessionTerms(
 ): SessionTermsCheck {
   if (!metadata || typeof metadata !== "object" || Array.isArray(metadata)) return "unknown";
   const m = metadata as Record<string, unknown>;
+  const sig = m[CATCHUP_META.termsSig];
   const cents = parseCents(m[CATCHUP_META.stubCents]);
   const shape = m[CATCHUP_META.shape];
   const from = readInstant(m[CATCHUP_META.from]);
   const to = readInstant(m[CATCHUP_META.to]);
   // a half-read session decides nothing: an unreadable field wins over a readable mismatch
   if (
+    typeof sig !== "string" ||
+    !/^[0-9a-f]{64}$/.test(sig) ||
     cents === null ||
     typeof shape !== "string" ||
     shape.length === 0 ||
@@ -76,7 +97,8 @@ export function checkSessionTerms(
   ) {
     return "unknown";
   }
-  return cents === expected.stubCents &&
+  return sig === expected.sig &&
+    cents === expected.stubCents &&
     shape === expected.shape &&
     from === expected.from.getTime() &&
     to === expected.to.getTime()

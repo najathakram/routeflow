@@ -1,5 +1,6 @@
-import { ConflictException, ServiceUnavailableException } from "@nestjs/common";
+import { ConflictException, Logger, ServiceUnavailableException } from "@nestjs/common";
 import { API_ERROR_CODES } from "../common/api-error-codes";
+import { buildCatchupSessionParams } from "./catchup-session-params";
 import { PaymentDueService, isPastDue } from "./payment-due.service";
 
 /**
@@ -14,26 +15,50 @@ const NOV_1 = new Date("2026-11-01T12:00:00Z");
 const OCT_29 = new Date("2026-10-29T12:00:00Z");
 
 /**
- * Row 542d: the terms metadata `buildCatchupSessionParams` writes on every catch-up session, for the two mock plans
- * below (`report()` = trial_one_time, a $310.00 October stub, A = Nov 1; `trialReport()` = the stub-free trial).
+ * Row 542d / SA-800c: the terms metadata the REAL session builder writes for a mock plan (including the full-terms
+ * signature), so a stored session in these specs is exactly what `open()` would have created for that plan.
  */
-const TERMS_META = {
-  catchup_shape: "trial_one_time",
-  catchup_stub_cents: "31000",
-  catchup_from: OCT_1.toISOString(),
-  catchup_to: NOV_1.toISOString(),
-};
-const TRIAL_TERMS_META = {
-  catchup_shape: "trial",
-  catchup_stub_cents: "0",
-  catchup_from: NOV_1.toISOString(),
-  catchup_to: NOV_1.toISOString(),
-};
+function termsMeta(rep: ReturnType<typeof report>) {
+  const m = buildCatchupSessionParams({
+    tenantId: "t1",
+    slug: "acme",
+    planKey: "GROWTH",
+    customerId: "cus_1",
+    planPriceData: rep._inputs.planPriceData,
+    addonLines: rep._inputs.addonLines,
+    addonSkus: rep._inputs.addonSkus,
+    plan: rep.plan as any,
+    now: NOW,
+    successUrl: "https://app.test/ok",
+    cancelUrl: "https://app.test/no",
+  }).metadata;
+  return {
+    catchup_shape: m.catchup_shape,
+    catchup_stub_cents: m.catchup_stub_cents,
+    catchup_from: m.catchup_from,
+    catchup_to: m.catchup_to,
+    catchup_terms_sig: m.catchup_terms_sig,
+  } as Record<string, string>;
+}
+/** `report()` = trial_one_time, a $310.00 October stub, A = Nov 1; `trialReport()` = the stub-free trial. */
+const TERMS_META = termsMeta(report());
+const TRIAL_TERMS_META = termsMeta(trialReport());
 
 function report(over: Record<string, unknown> = {}, stub: Record<string, unknown> = {}) {
   return {
     tenantId: "t1",
     slug: "acme",
+    planKey: "GROWTH",
+    _inputs: {
+      planPriceData: {
+        currency: "usd",
+        unit_amount: 31000,
+        recurring: { interval: "month" },
+        product_data: { name: "RouteFlow Growth" },
+      } as Record<string, any>,
+      addonLines: [] as any[],
+      addonSkus: [] as string[],
+    },
     tenantClass: "PRODUCTION",
     tenantStatus: "ACTIVE",
     eligible: true,
@@ -778,6 +803,25 @@ describe("542d: a live session whose terms differ from the fresh plan is stale",
         { ...T, ...TERMS_META, catchup_stub_cents: "40000" },
       ],
       ["the shape differs, the rest equal", { ...T, ...TERMS_META, catchup_shape: "trial" }],
+      [
+        "SA-800c: every metadata term equal but the signed terms differ (the recurring price changed)",
+        {
+          ...T,
+          ...termsMeta(
+            report({
+              _inputs: {
+                planPriceData: {
+                  currency: "usd",
+                  unit_amount: 10000,
+                  recurring: { interval: "month" },
+                },
+                addonLines: [],
+                addonSkus: [],
+              },
+            }),
+          ),
+        },
+      ],
       ["catchup_to (A) differs", { ...T, ...TERMS_META, catchup_to: "2026-12-01T12:00:00.000Z" }],
       [
         "catchup_from (S) differs",
@@ -868,8 +912,7 @@ describe("542d: a live session whose terms differ from the fresh plan is stale",
         ),
         session: live({
           ...T,
-          ...TERMS_META,
-          catchup_stub_cents: "0",
+          ...termsMeta(report({}, { totalCents: 30, belowStripeMinimum: true })),
           catchup_forgiven_cents: "30",
         }),
       });
@@ -943,6 +986,11 @@ describe("542d: a live session whose terms differ from the fresh plan is stale",
       ],
       ["a catchup_to that is not a date", { ...T, ...TERMS_META, catchup_to: "soon" }],
       ["no catchup_shape", { ...T, ...TERMS_META, catchup_shape: undefined }],
+      [
+        "no terms signature (created before it existed)",
+        { ...T, ...TERMS_META, catchup_terms_sig: undefined },
+      ],
+      ["a malformed terms signature", { ...T, ...TERMS_META, catchup_terms_sig: "abc" }],
     ])("%s", async (_n, meta) => {
       const h = make({ ...held, session: live(meta as any) });
       await expect503(h);
@@ -983,5 +1031,137 @@ describe("542d: a live session whose terms differ from the fresh plan is stale",
     });
     expect(other.stripe.expireCheckoutSession).toHaveBeenCalledTimes(1);
     expect(other.catchup.open).toHaveBeenCalledTimes(1); // the failed create only: no second session
+  });
+  describe("nit 2: the lost-race path never expires a FRESHER winner", () => {
+    const racedUrl = "https://checkout.stripe.test/raced";
+    const lost = () =>
+      new ConflictException({ code: API_ERROR_CODES.CATCHUP_SESSION_OPEN, message: "x" });
+    const heldTrial = (over: Record<string, unknown> = {}) =>
+      trialReport({ eligible: false, ineligible: ["claim_held"], ...over });
+    const heldBill = () => report({ eligible: false, ineligible: ["claim_held"] });
+    /** Click A planned `first`; the winner's session was built for `sessionMeta`; the re-plan reads `second`. */
+    function race(first: any, sessionMeta: Record<string, string>, second: any, expired?: unknown) {
+      const h = make({
+        report: first,
+        session: { ...live({ ...T, ...sessionMeta }), url: racedUrl },
+        expired: expired as any,
+      });
+      h.catchup.plan.mockReset().mockResolvedValueOnce(first).mockResolvedValue(second);
+      h.prisma.tenantSubscription.findUnique
+        .mockResolvedValueOnce({ catchupState: null, catchupSessionId: null })
+        .mockResolvedValue({ catchupState: "SESSION_OPEN", catchupSessionId: "cs_old" });
+      h.catchup.open.mockRejectedValueOnce(lost());
+      return h;
+    }
+
+    it("click A planned the card add (pre-D); the winner's session is the post-D bill: A re-plans, it matches, A returns the winner's url, no expire", async () => {
+      const h = race(heldTrial(), termsMeta(report()), heldBill());
+      expect(await h.svc.pay("t1", NOW)).toEqual({ checkoutUrl: racedUrl });
+      expect(h.catchup.plan).toHaveBeenCalledTimes(2); // the request's read and ONE re-plan
+      expect(h.stripe.expireCheckoutSession).not.toHaveBeenCalled();
+      expect(h.claim.onSessionExpired).not.toHaveBeenCalled();
+      expect(h.catchup.open).toHaveBeenCalledTimes(1);
+    });
+
+    it("the re-plan still disagrees with the winner's session: it is expired (the old rule), A retries with a 503", async () => {
+      const h = race(
+        heldTrial(),
+        { ...termsMeta(report()), catchup_stub_cents: "40000" },
+        heldBill(),
+        expiredReply,
+      );
+      await expect(h.svc.pay("t1", NOW)).rejects.toMatchObject({
+        response: { code: API_ERROR_CODES.PAYMENT_STATE_UNKNOWN },
+      });
+      expect(h.catchup.plan).toHaveBeenCalledTimes(2);
+      expect(h.stripe.expireCheckoutSession).toHaveBeenCalledTimes(1);
+      expect(h.claim.onSessionExpired).toHaveBeenCalledTimes(1);
+      expect(h.catchup.open).toHaveBeenCalledTimes(1); // the lost create only: never a second session
+    });
+
+    it("a matching winner is returned without a re-plan", async () => {
+      const h = race(heldBill(), termsMeta(report()), heldBill());
+      expect(await h.svc.pay("t1", NOW)).toEqual({ checkoutUrl: racedUrl });
+      expect(h.catchup.plan).toHaveBeenCalledTimes(1);
+    });
+
+    it("the re-plan is for the fresh clock, not this request's", async () => {
+      const h = race(heldTrial(), termsMeta(report()), heldBill());
+      await h.svc.pay("t1", NOW);
+      expect(h.catchup.plan.mock.calls[0][1]).toBe(NOW);
+      expect(h.catchup.plan.mock.calls[1][1]).not.toBe(NOW);
+      expect(h.catchup.plan.mock.calls[1][1].getTime()).toBeGreaterThan(NOW.getTime());
+    });
+
+    it("an unreadable winner (no signature) is still a 503: no re-plan, no expire", async () => {
+      const h = race(heldTrial(), { ...termsMeta(report()), catchup_terms_sig: "" }, heldBill());
+      await expect(h.svc.pay("t1", NOW)).rejects.toMatchObject({
+        response: { code: API_ERROR_CODES.PAYMENT_STATE_UNKNOWN },
+      });
+      expect(h.catchup.plan).toHaveBeenCalledTimes(1);
+      expect(h.stripe.expireCheckoutSession).not.toHaveBeenCalled();
+    });
+  });
+});
+
+describe("nit 3: the 503 logs WHY (the body is the same PAYMENT_STATE_UNKNOWN)", () => {
+  const T = { tenantId: "t1", catchup: "period" };
+  const held = {
+    sub: { catchupState: "SESSION_OPEN", catchupSessionId: "cs_old" },
+    report: report({ eligible: false, ineligible: ["claim_held"] }),
+  };
+  const live = (metadata: Record<string, unknown> | undefined) => ({
+    id: "cs_old",
+    status: "open",
+    url: "https://checkout.stripe.test/old",
+    expires_at: Math.floor(NOW.getTime() / 1000) + 3600,
+    ...(metadata === undefined ? {} : { metadata }),
+  });
+  let warn: jest.SpyInstance;
+  beforeEach(() => {
+    warn = jest.spyOn(Logger.prototype, "warn").mockImplementation(() => undefined);
+  });
+  afterEach(() => warn.mockRestore());
+
+  const logged = () => warn.mock.calls.map((c) => String(c[0])).join("\n");
+
+  async function expectCode503(h: ReturnType<typeof make>) {
+    await expect(h.svc.pay("t1", NOW)).rejects.toMatchObject({
+      response: { code: API_ERROR_CODES.PAYMENT_STATE_UNKNOWN },
+    });
+  }
+
+  it("unreadable terms: reason=terms_unreadable", async () => {
+    await expectCode503(make({ ...held, session: live({ ...T }) }));
+    expect(logged()).toContain("reason=terms_unreadable");
+    expect(logged()).not.toContain("reason=stripe_unreachable");
+  });
+
+  it("Stripe unreachable on the read: reason=stripe_unreachable", async () => {
+    await expectCode503(make({ ...held, readError: new Error("ETIMEDOUT") }));
+    expect(logged()).toContain("reason=stripe_unreachable");
+    expect(logged()).not.toContain("reason=terms_unreadable");
+  });
+
+  it("Stripe unreachable on the re-read after a rejected expire: reason=stripe_unreachable", async () => {
+    const stale = { ...live({ ...T }), expires_at: 1 };
+    const h = make({ ...held, session: stale, expired: new Error("not open") });
+    h.stripe.getCheckoutSession
+      .mockReset()
+      .mockResolvedValueOnce(stale)
+      .mockRejectedValueOnce(new Error("ECONNRESET"));
+    await expectCode503(h);
+    expect(logged()).toContain("reason=stripe_unreachable");
+  });
+
+  it("an unexpected session status: reason=unexpected_status", async () => {
+    await expectCode503(make({ ...held, session: { id: "cs_old", status: "weird" } }));
+    expect(logged()).toContain("reason=unexpected_status");
+  });
+
+  it("an unusable expire reply: reason=unexpected_status", async () => {
+    const stale = { ...live({ ...T }), expires_at: 1 };
+    await expectCode503(make({ ...held, session: stale, expired: null }));
+    expect(logged()).toContain("reason=unexpected_status");
   });
 });

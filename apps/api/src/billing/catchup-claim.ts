@@ -126,6 +126,12 @@ export const CATCHUP_META = {
   to: "catchup_to",
   /** A line under Stripe's $0.50 minimum was forgiven (the session carries none): its cents, for the audit row. */
   forgivenCents: "catchup_forgiven_cents",
+  /**
+   * Row 542d / SA-800c: sha256 hex of the FULL session terms (everything Stripe charges or bills: the lines, the
+   * trial end, the mode...), computed by `catchupTermsSignature` from the very params sent to Stripe. The reuse check
+   * recomputes it from the fresh plan; a stored session with another value (or none) is not reused blindly.
+   */
+  termsSig: "catchup_terms_sig",
 } as const;
 
 /**
