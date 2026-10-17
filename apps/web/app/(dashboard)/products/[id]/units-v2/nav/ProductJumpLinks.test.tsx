@@ -342,3 +342,73 @@ describe("ProductJumpLinks: the Customer view entry (K10c, F27)", () => {
     expect(screen.getByRole("heading", { name: "Customer view" })).toHaveFocus();
   });
 });
+
+describe("ProductJumpLinks: short labels and the edge (K11-02, F22, P07)", () => {
+  function FullPage() {
+    return (
+      <div>
+        <ProductJumpLinks />
+        <h1 id="h-product">Cola</h1>
+        <h2 id="units-v2-grid-title">Prices</h2>
+        <h2 id="h-exc">Customers and tiers</h2>
+        <h2 id="h-cust">Customer view</h2>
+        <h2 id="h-sales">Sales</h2>
+      </div>
+    );
+  }
+  const FULL: Record<string, string> = {
+    "h-product": "Product",
+    "h-units": "Units and prices",
+    "h-exc": "Customers and tiers",
+    "h-cust": "Customer view",
+    "h-sales": "Sales",
+  };
+  const SHORT: Record<string, string> = {
+    "h-product": "Product",
+    "h-units": "Prices",
+    "h-exc": "Tiers",
+    "h-cust": "Customer",
+    "h-sales": "Sales",
+  };
+
+  it("every link keeps its full label as its accessible name, whatever the width", () => {
+    render(<FullPage />);
+    for (const [id, label] of Object.entries(FULL)) {
+      expect(link(id)).toHaveAttribute("aria-label", label);
+      expect(screen.getByRole("link", { name: label })).toBe(link(id));
+    }
+  });
+
+  it("shows the short label below sm and the full label from sm up", () => {
+    render(<FullPage />);
+    for (const id of Object.keys(FULL)) {
+      const a = link(id)!;
+      if (FULL[id] === SHORT[id]) {
+        // Same word at every width: one label, never hidden.
+        expect(a.querySelector('[class~="sm:hidden"]')).toBeNull();
+        expect(a).toHaveTextContent(new RegExp(`^${FULL[id]}$`));
+      } else {
+        expect(a.querySelector('[class~="sm:hidden"]')).toHaveTextContent(SHORT[id]);
+        expect(a.querySelector('[class~="hidden"][class~="sm:inline"]')).toHaveTextContent(
+          FULL[id],
+        );
+      }
+    }
+  });
+
+  it("uses the five short labels the card names, in sentence case with no dashes", () => {
+    render(<FullPage />);
+    const shorts = Object.keys(FULL).map(
+      (id) => (link(id)!.querySelector('[class~="sm:hidden"]') ?? link(id)!).textContent,
+    );
+    expect(shorts).toEqual(["Product", "Prices", "Tiers", "Customer", "Sales"]);
+    for (const t of shorts) expect(t).not.toMatch(/[\u2013\u2014]/);
+  });
+
+  it("starts the edge fade at 75% so the cut reads as 'more'", () => {
+    const { container } = render(<FullPage />);
+    const css = container.querySelector("style")?.textContent ?? "";
+    expect(css).toContain("#000 75%");
+    expect(css).not.toContain("#000 85%");
+  });
+});
