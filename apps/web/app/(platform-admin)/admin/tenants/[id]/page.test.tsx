@@ -50,6 +50,7 @@ jest.mock("@/lib/platform-admin/features", () => ({
 let tenantOverrides: Record<string, unknown> = {};
 // The tenant's admin account card (GET .../admin); null = no admin yet.
 let mockAdmin: unknown = null;
+let mockAuditLogs: unknown[] = [];
 
 function tenantFixture() {
   return {
@@ -100,7 +101,7 @@ jest.mock("@/lib/admin-api", () => ({
     get: jest.fn((url: string) => {
       if (/\/admin$/.test(url)) return Promise.resolve({ data: { admin: mockAdmin } });
       if (/\/audit-logs/.test(url))
-        return Promise.resolve({ data: { data: [], meta: { total: 0, pages: 1 } } });
+        return Promise.resolve({ data: { data: mockAuditLogs, meta: { total: 0, pages: 1 } } });
       if (/\/addons$/.test(url)) return Promise.resolve({ data: [] });
       if (/\/feature-overrides$/.test(url)) return Promise.resolve({ data: [] });
       if (/\/features\/registry$/.test(url))
@@ -171,6 +172,7 @@ beforeEach(() => {
   mockSearch = "";
   tenantOverrides = {};
   mockAdmin = null;
+  mockAuditLogs = [];
   mockFetchPlanCatalog.mockResolvedValue(v11Catalog());
 });
 
@@ -884,5 +886,78 @@ describe("SA-3: the Readiness card on Overview", () => {
     await waitFor(async () => expect(within(await rowOf()).queryByText(/Not ready/)).toBeNull());
     expect(within(await rowOf()).getByText(/Ready/)).toBeInTheDocument();
     expect(adminGets()).toHaveLength(1);
+  });
+});
+
+// BO-08: the Overview and Billing grids must be able to shrink to a 390px viewport. jsdom cannot
+// measure layout, so these pin the structure that makes it true: a one-column base track
+// (`grid-cols-1` is minmax(0,1fr); an implicit column is auto and grows to the audit table's
+// min-content, which made main.scrollWidth 559 at 390), two columns from lg, shrinkable items, and
+// the audit table scrolling inside its own box. Playwright: e2e/bo-web-overview-fit.spec.ts.
+describe("BO-08: the Overview and Billing grids fit a narrow screen", () => {
+  const cardOf = (title: string) =>
+    screen.getByRole("heading", { name: title }).closest("div.rounded-xl") as HTMLElement;
+
+  it("Overview: one column by default, two from lg, items can shrink", async () => {
+    mockAuditLogs = [
+      {
+        id: "log-1",
+        action: "BUSINESS_PROFILE_APPLIED",
+        actionLabel: "Business profile applied",
+        entityType: "Tenant",
+        entityId: TENANT_ID,
+        userId: "u-1",
+        ip: null,
+        createdAt: "2026-10-17T10:00:00.000Z",
+        actor: { email: "a-very-long-address-for-a-platform-admin@example.com", isPlatform: true },
+      },
+    ];
+    render(<TenantDetailPage />);
+    const grid = (await screen.findByRole("heading", { name: "Tenant Info" })).closest(
+      "div.grid",
+    ) as HTMLElement;
+    expect(grid).toHaveClass("grid-cols-1", "lg:grid-cols-2");
+    for (const title of ["Tenant Info", "Quick Actions", "Recent Audit Logs"]) {
+      const card = cardOf(title);
+      expect(card.parentElement).toBe(grid);
+      expect(card).toHaveClass("min-w-0");
+    }
+    expect(document.getElementById("admin-account")).toHaveClass("min-w-0");
+    expect(document.getElementById("admin-account")!.parentElement).toBe(grid);
+  });
+
+  it("Overview: the audit table scrolls inside its own box", async () => {
+    mockAuditLogs = [
+      {
+        id: "log-1",
+        action: "BUSINESS_PROFILE_APPLIED",
+        actionLabel: "Business profile applied",
+        entityType: "Tenant",
+        entityId: TENANT_ID,
+        userId: "u-1",
+        ip: null,
+        createdAt: "2026-10-17T10:00:00.000Z",
+        actor: null,
+      },
+    ];
+    render(<TenantDetailPage />);
+    const region = await screen.findByRole("region", { name: "Recent audit log entries" });
+    expect(region).toHaveClass("overflow-x-auto");
+    expect(within(region).getByRole("table")).toBeInTheDocument();
+    expect(cardOf("Recent Audit Logs")).toContainElement(region);
+  });
+
+  it("Billing: one column by default, two from lg, items can shrink", async () => {
+    render(<TenantDetailPage />);
+    fireEvent.click(await screen.findByRole("button", { name: "Billing & Subscription" }));
+    const grid = (await screen.findByRole("heading", { name: "Current Plan" })).closest(
+      "div.grid",
+    ) as HTMLElement;
+    expect(grid).toHaveClass("grid-cols-1", "lg:grid-cols-2");
+    for (const title of ["Current Plan", "Subscription", "Manual Activation", "Stripe Actions"]) {
+      const card = cardOf(title);
+      expect(card.parentElement).toBe(grid);
+      expect(card).toHaveClass("min-w-0");
+    }
   });
 });
