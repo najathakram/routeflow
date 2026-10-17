@@ -1,6 +1,7 @@
 import { Injectable, Logger } from "@nestjs/common";
 import { PrismaService } from "../prisma/prisma.service";
 import { EncryptionService } from "../common/encryption.service";
+import { assertCostingMethodAllowed } from "../inventory/costing-method-policy";
 
 /**
  * Seller remit-to / how-to-pay info shown to buyers (P5-14). Stored as ONE JSON
@@ -122,7 +123,7 @@ export class SystemConfigService {
   // fractions (0.15 = 15%). Writes are TENANT_ADMIN-gated at the controller.
 
   async getMarginConfig(): Promise<{
-    costingMethod: "WEIGHTED_AVERAGE" | "FIFO" | "LAST_COST";
+    costingMethod: "WEIGHTED_AVERAGE" | "LAST_COST";
     defaultMarginFloor: number;
     categoryFloors: Record<string, number>;
   }> {
@@ -136,10 +137,8 @@ export class SystemConfigService {
       if (Number.isFinite(n)) categoryFloors[match[1]] = n;
     }
     const def = Number(all["margin.floor.default"]);
-    const validMethod =
-      method === "FIFO" || method === "LAST_COST" || method === "WEIGHTED_AVERAGE"
-        ? method
-        : "WEIGHTED_AVERAGE";
+    // SA-804 (1): a stored FIFO (retired) reads as WEIGHTED_AVERAGE, the average cost it is costed by.
+    const validMethod = method === "LAST_COST" ? "LAST_COST" : "WEIGHTED_AVERAGE";
     return {
       costingMethod: validMethod,
       defaultMarginFloor: Number.isFinite(def) ? def : 0.15, // 15% default floor
@@ -152,6 +151,11 @@ export class SystemConfigService {
     defaultMarginFloor?: number;
     categoryFloors?: Record<string, number>;
   }): Promise<void> {
+    // SA-804 (1) / B1232: FIFO and LIFO are retired: refuse SETTING one (400 COSTING_METHOD_RETIRED) before ANY key
+    // is written; re-sending the stored value is a no-op, not a set.
+    if (dto.costingMethod !== undefined) {
+      assertCostingMethodAllowed(dto.costingMethod, await this.get("costing.method"));
+    }
     const updates: Promise<void>[] = [];
     if (dto.costingMethod !== undefined)
       updates.push(this.set("costing.method", dto.costingMethod));

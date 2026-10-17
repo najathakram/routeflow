@@ -116,6 +116,22 @@ describe("ProductCreateModal (web-2 #5)", () => {
   });
 });
 
+describe("ProductCreateModal costing picker (SA-804 (1) / B1232)", () => {
+  it("offers AVCO, Last Cost and Standard Cost only: FIFO and LIFO are retired", () => {
+    open();
+    const select = screen
+      .getAllByRole("combobox")
+      .find((el) => within(el).queryByRole("option", { name: /^AVCO/ })) as HTMLElement;
+    expect(select).toBeTruthy();
+    const values = within(select)
+      .getAllByRole("option")
+      .map((o) => (o as HTMLOptionElement).value);
+    expect(values).toEqual(["AVCO", "LAST_COST", "STANDARD"]);
+    expect(values).not.toContain("FIFO");
+    expect(values).not.toContain("LIFO");
+  });
+});
+
 describe("ProductCreateModal price-as-quantity hint (V09)", () => {
   async function fill(unit: string, unitsPerBox: string, price: string) {
     open();

@@ -284,7 +284,7 @@ export class ScheduledPriceChangeService {
     // restore after another push. Replays are made harmless by the amount check above.
     const key = `${sub.stripeSubId}:scheduled-price-restore:${clearedCents}-${keptCents}:${Date.now()}`;
     const product = await this.stripe.client.products.create(
-      { name: `RouteFlow ${keptDef?.name ?? sub.planKey} — monthly` },
+      { name: `RouteFlow ${keptDef?.name ?? sub.planKey}` },
       { idempotencyKey: `${key}:product` },
     );
     await this.stripe.updateSubscription(
@@ -405,7 +405,7 @@ export class ScheduledPriceChangeService {
     const key = `${sub.stripeSubId}:scheduled-price:${sub.downgradeEffectiveAt.toISOString()}:${version.id}:${target}:${priorAmountCents}-${amountCents}:${base.price?.id ?? "-"}:${nonce}`;
     try {
       const product = await this.stripe.client.products.create(
-        { name: `RouteFlow ${targetDef.name} — monthly` },
+        { name: `RouteFlow ${targetDef.name}` },
         { idempotencyKey: `${key}:product` },
       );
       this.logger.log(

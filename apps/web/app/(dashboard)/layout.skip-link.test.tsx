@@ -13,6 +13,7 @@ import DashboardLayout from "./layout";
 
 jest.mock("next/navigation", () => ({
   usePathname: () => "/orders",
+  useSearchParams: () => new URLSearchParams(),
   useRouter: () => ({ push: jest.fn(), replace: jest.fn(), prefetch: jest.fn() }),
 }));
 jest.mock("@/lib/auth-context", () => ({
