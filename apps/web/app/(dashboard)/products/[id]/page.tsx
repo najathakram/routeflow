@@ -62,6 +62,7 @@ import { productTierLabel, tierOneLabel } from "@/lib/tier-one-label";
 import { unitsLabel } from "@/lib/stock-label";
 import { stockCountLabel } from "../_components/product-status";
 import { PiecesPerBoxValue } from "./PiecesPerBoxValue";
+import { MoneyFigure } from "./MoneyFigure";
 import { apiClient } from "@/lib/api-client";
 import { BarcodeScannerButton } from "@/components/BarcodeScannerButton";
 import { DecimalInput } from "@/components/MoneyInput";
@@ -1099,7 +1100,7 @@ export default function ProductDetailPage() {
     const pu = perUnitPrice(v, activeUnitsPerBox);
     return pu != null ? (
       <p className="mt-0.5 text-[11px] text-navy/50">
-        ≈ ${pu.toFixed(2)} / {UW.base.short.one}
+        ≈ <MoneyFigure value={pu} /> / {UW.base.short.one}
       </p>
     ) : null;
   };
@@ -1819,7 +1820,7 @@ export default function ProductDetailPage() {
                         </>
                       ) : (
                         <>
-                          <span className="font-mono tabular-nums">${priceNumber.toFixed(2)}</span>
+                          <MoneyFigure value={priceNumber} className="font-mono" />
                           {perUnitHint(priceNumber)}
                         </>
                       )
@@ -2036,7 +2037,9 @@ export default function ProductDetailPage() {
                           ) : (
                             <>
                               <p className="font-mono text-sm font-medium tabular-nums text-navy">
-                                ${(inheritsList ? priceNumber : Number(productVal)).toFixed(2)}
+                                <MoneyFigure
+                                  value={inheritsList ? priceNumber : Number(productVal)}
+                                />
                                 {inheritsList && (
                                   <span className="ml-1 rounded bg-surface-raised px-1 py-0.5 text-[9px] text-navy/50">
                                     list
@@ -2122,7 +2125,7 @@ export default function ProductDetailPage() {
                         )}
                         {msrpBelowWholesale && (
                           <p className="mt-1 text-xs text-warning">
-                            Below wholesale price (${wholesalePerPiece.toFixed(2)}/
+                            Below wholesale price (<MoneyFigure value={wholesalePerPiece} />/
                             {UW.base.short.one})
                           </p>
                         )}
@@ -2133,13 +2136,13 @@ export default function ProductDetailPage() {
                   ) : msrpNumber != null ? (
                     <>
                       <p className="font-mono text-sm font-medium tabular-nums text-navy">
-                        ${msrpNumber.toFixed(2)}
+                        <MoneyFigure value={msrpNumber} />
                         <span className="ml-1 text-[10px] text-navy/50">/{UW.base.short.one}</span>
                       </p>
                       {msrpBelowWholesale && (
                         <p className="mt-1 text-xs text-warning">
-                          Below wholesale price (${wholesalePerPiece.toFixed(2)}/{UW.base.short.one}
-                          )
+                          Below wholesale price (<MoneyFigure value={wholesalePerPiece} />/
+                          {UW.base.short.one})
                         </p>
                       )}
                     </>
@@ -2463,10 +2466,10 @@ export default function ProductDetailPage() {
                             {product.sku || <span className="text-navy/30">&mdash;</span>}
                           </td>
                           <td className="px-3 py-2.5 text-right font-mono tabular-nums text-navy">
-                            ${priceNumber.toFixed(2)}
+                            <MoneyFigure value={priceNumber} />
                           </td>
                           <td className="px-3 py-2.5 text-right font-mono tabular-nums text-navy">
-                            ${getTierPrice(product, 2).toFixed(2)}
+                            <MoneyFigure value={getTierPrice(product, 2)} />
                           </td>
                           <td className="px-3 py-2.5">
                             <Badge
@@ -2506,10 +2509,10 @@ export default function ProductDetailPage() {
                               {variant.sku || <span className="text-navy/30">&mdash;</span>}
                             </td>
                             <td className="px-3 py-2.5 text-right font-mono tabular-nums text-navy">
-                              ${parseFloat(String(variant.pricePerUnit)).toFixed(2)}
+                              <MoneyFigure value={variant.pricePerUnit} />
                             </td>
                             <td className="px-3 py-2.5 text-right font-mono tabular-nums text-navy">
-                              ${getTierPrice(variant, 2).toFixed(2)}
+                              <MoneyFigure value={getTierPrice(variant, 2)} />
                             </td>
                             <td className="px-3 py-2.5">
                               <Badge
@@ -2861,9 +2864,7 @@ export default function ProductDetailPage() {
                       <span className="font-medium text-navy">{p.name}</span>
                       {p.sku && <span className="ml-2 text-xs text-navy/70">{p.sku}</span>}
                     </div>
-                    <span className="text-xs text-navy/70">
-                      ${parseFloat(String(p.pricePerUnit)).toFixed(2)}
-                    </span>
+                    <MoneyFigure value={p.pricePerUnit} className="text-xs text-navy/70" />
                   </button>
                 ))
               )}
