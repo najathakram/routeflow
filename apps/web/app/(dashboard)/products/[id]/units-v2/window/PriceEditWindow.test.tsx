@@ -569,6 +569,60 @@ describe("K11-20a window: closing with the X or the scrim", () => {
   });
 });
 
+describe("K11-20a window: only a primary press outside dismisses", () => {
+  const press = (button: number) =>
+    act(() => {
+      const scrim = document.querySelector("[data-floating-panel-scrim]") as HTMLElement;
+      // jsdom has no PointerEvent: a plain Event with the button the browser would report.
+      const event = new Event("pointerdown", { bubbles: true });
+      Object.defineProperty(event, "button", { value: button });
+      scrim.dispatchEvent(event);
+    });
+  // A primary press is a press plus its click: Radix settles an outside primary press on the click.
+  const primary = () => {
+    press(0);
+    act(() => {
+      (document.querySelector("[data-floating-panel-scrim]") as HTMLElement).click();
+    });
+  };
+  const open = async () => {
+    render({ focus: { ref: "case", tier: 2 } });
+    await screen.findByRole("dialog", { name: "Edit prices" });
+    await waitFor(() => expect(box("case", 2)).toHaveFocus());
+    await armed();
+  };
+
+  it("N5: a right or a middle press on the scrim does nothing", async () => {
+    await open();
+    press(2);
+    press(1);
+    expect(onClose).not.toHaveBeenCalled();
+    expect(dialog()).toBeInTheDocument();
+  });
+
+  it("N5: a right press does not raise the discard question on a dirty draft", async () => {
+    const user = userEvent.setup();
+    await open();
+    await user.keyboard("28");
+    press(2);
+    expect(inDialog().queryByText("Discard your unsaved changes?")).toBeNull();
+  });
+
+  it("N5: the primary press still closes a clean draft", async () => {
+    await open();
+    primary();
+    await waitFor(() => expect(onClose).toHaveBeenCalledWith("cancel"));
+  });
+
+  it("N5: the primary press still raises the discard question on a dirty draft", async () => {
+    const user = userEvent.setup();
+    await open();
+    await user.keyboard("28");
+    primary();
+    expect(inDialog().getByText("Discard your unsaved changes?")).toBeTruthy();
+  });
+});
+
 describe("K11-20a window: a save in flight", () => {
   it("N4: the X, Escape and the scrim are ignored until the save answers", async () => {
     mockSave.mockImplementation(() => {

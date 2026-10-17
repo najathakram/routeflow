@@ -203,10 +203,14 @@ export function PriceEditWindow({
         }
         requestClose();
       }}
-      // An outside press is never a silent discard: it takes the same road as the X.
+      // An outside press is never a silent discard: it takes the same road as the X. Only a primary press counts; a
+      // right or middle click (a context menu, a paste) outside does nothing.
       onInteractOutside={(event) => {
         event.preventDefault();
-        if (event.type.includes("pointerDownOutside")) requestClose();
+        if (!event.type.includes("pointerDownOutside")) return;
+        const original = (event as CustomEvent<{ originalEvent?: { button?: number } }>).detail
+          ?.originalEvent;
+        if ((original?.button ?? 0) === 0) requestClose();
       }}
       footer={
         d.editingIn === "window" ? (
