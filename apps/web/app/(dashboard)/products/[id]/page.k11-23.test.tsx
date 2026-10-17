@@ -127,6 +127,9 @@ describe("K11-23: Details first, then Image and stock, then the rest", () => {
     const grid = details.closest(".grid") as HTMLElement;
     expect(grid.className).toMatch(/lg:grid-cols-3/);
     expect(grid.className).toMatch(/lg:gap-y-5/);
+    // Row 1 is Details' own height whatever the image column's height: a tall Image + Stock column (3 photos) spans both
+    // rows, and with two auto rows its extra height was spread into row 1, widening the gap under Details.
+    expect(grid.className).toMatch(/lg:grid-rows-\[auto_1fr\]/);
     const items = Array.from(grid.children) as HTMLElement[];
     expect(items).toHaveLength(3);
     expect(items[0]).toContainElement(details as HTMLElement);

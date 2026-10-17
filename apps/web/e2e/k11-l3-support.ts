@@ -3,7 +3,7 @@
  * Same rules as the units-v2 lane: approved test tenant only, `flag.units_prices_v2` served (a tenant
  * without it FAILS the spec, never skips), screenshots under local-assets/proofs/units-v2 (gitignored).
  */
-import { expect, type Page } from "@playwright/test";
+import { expect, type Locator, type Page } from "@playwright/test";
 import { setTenantCookie } from "./helpers/auth";
 import { VIEWPORTS, productBySku, requireUnitsV2Flag, shot } from "./helpers/units-v2-support";
 
@@ -93,4 +93,29 @@ export async function ensureFamily(page: Page, ctx: Ctx) {
 /** The viewport-bottom edge the "first screen" claims are measured against. */
 export function viewportHeight(page: Page): number {
   return page.viewportSize()!.height;
+}
+
+/*
+ * Page coordinates. The dashboard scrolls inside #main-content, so window.scrollY is always 0 and
+ * `rect.top + window.scrollY` DROPS as focus scrolls the page. These measure from the top of the scrolling content:
+ * rect.top - main.rect.top + main.scrollTop. (The bodies are inlined: they run in the browser.)
+ */
+
+/** Page top of the focused element, or null when focus is outside #main-content (the app header band). */
+export async function focusedPageTop(page: Page): Promise<number | null> {
+  return page.evaluate(() => {
+    const el = document.activeElement as HTMLElement | null;
+    const main = document.querySelector("#main-content");
+    if (!el || !main || !main.contains(el)) return null;
+    return el.getBoundingClientRect().top - main.getBoundingClientRect().top + main.scrollTop;
+  });
+}
+
+/** Page top of a locator's element, from the top of the scrolling content. */
+export async function pageTopOf(locator: Locator): Promise<number> {
+  return locator.evaluate((el) => {
+    const main = document.querySelector("#main-content");
+    if (!main) return el.getBoundingClientRect().top + window.scrollY;
+    return el.getBoundingClientRect().top - main.getBoundingClientRect().top + main.scrollTop;
+  });
 }

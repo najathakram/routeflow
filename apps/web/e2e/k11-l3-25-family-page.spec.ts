@@ -9,7 +9,7 @@
  * claim is only asserted when the page shows "Never sold".
  */
 import { test, expect } from "@playwright/test";
-import { VIEWPORTS, ensureFamily, shot, viewportHeight } from "./k11-l3-support";
+import { VIEWPORTS, ensureFamily, pageTopOf, shot, viewportHeight } from "./k11-l3-support";
 import { setTenantCookie } from "./helpers/auth";
 import { requireUnitsV2Flag } from "./helpers/units-v2-support";
 
@@ -37,7 +37,7 @@ for (const vp of VIEWPORTS) {
       // Variants: the very next card after Details, and near the top of the page.
       const variants = page.getByRole("heading", { name: /^Variants/ }).first();
       await expect(variants).toBeVisible();
-      const top = await variants.evaluate((el) => el.getBoundingClientRect().top + window.scrollY);
+      const top = await pageTopOf(variants);
       expect(top, "Variants is within two screens of the top").toBeLessThanOrEqual(
         2 * viewportHeight(page),
       );

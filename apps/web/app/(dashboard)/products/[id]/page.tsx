@@ -1332,7 +1332,7 @@ export default function ProductDetailPage() {
         </div>
 
         {v2 && product.kind !== "FAMILY" ? <ProductJumpLinks /> : null}
-        <div className="grid grid-cols-1 gap-6 lg:grid-cols-3 lg:gap-y-5">
+        <div className="grid grid-cols-1 gap-6 lg:grid-cols-3 lg:grid-rows-[auto_1fr] lg:gap-y-5">
           {/* DOM order is the phone reading order and the tab order: Details, then Image and stock, then the rest.
               The columns are placed at lg with grid lines, not order-* classes (K11-23). */}
           <div className="space-y-5 lg:col-span-2 lg:col-start-2 lg:row-start-1">

@@ -21,6 +21,7 @@ import { requireUnitsV2Flag } from "./helpers/units-v2-support";
 import {
   BASE,
   VIEWPORTS,
+  focusedPageTop,
   openFixtureProduct,
   seedImages,
   shot,
@@ -73,11 +74,7 @@ async function expectPhoneOrder(page: Page) {
   let checked = 0;
   for (let n = 0; n < 14; n++) {
     await page.keyboard.press("Tab");
-    const y = await page.evaluate(() => {
-      const el = document.activeElement as HTMLElement | null;
-      if (!el || !el.closest("#main-content")) return null;
-      return el.getBoundingClientRect().top + window.scrollY;
-    });
+    const y = await focusedPageTop(page);
     if (y == null) continue;
     expect(y, `Tab stop ${n + 1} does not jump back up the page`).toBeGreaterThanOrEqual(last - 8);
     last = Math.max(last, y);
