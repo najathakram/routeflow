@@ -289,3 +289,44 @@ describe("ProductUnitsCard", () => {
     });
   });
 });
+
+describe("ProductUnitsCard on the v2 surface (K10d: one Add a unit)", () => {
+  const renderWith = (props: Record<string, unknown>, p: Record<string, unknown> = product) =>
+    render(
+      <QueryClientProvider client={queryClient}>
+        <ToastProvider>
+          <ProductUnitsCard product={p as typeof product} {...props} />
+        </ToastProvider>
+      </QueryClientProvider>,
+    );
+
+  it("hideAddForm drops the always-open Add unit form, keeps every row control, and points at Add a unit", () => {
+    mockUnits = [caseUnit];
+    renderWith({ hideAddForm: true });
+    expect(screen.queryByRole("button", { name: "Add unit" })).toBeNull();
+    expect(screen.queryByLabelText("New unit")).toBeNull();
+    expect(document.getElementById("new-unit-name")).toBeNull();
+    expect(screen.getByLabelText("Case name")).toBeInTheDocument();
+    expect(screen.getByLabelText("Case price")).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Remove" })).toBeInTheDocument();
+  });
+
+  it("the empty state no longer says 'below' when the form is gone", () => {
+    renderWith({ hideAddForm: true });
+    expect(screen.getByText(/No other units yet/)).toHaveTextContent(/Add a unit/);
+    expect(screen.getByText(/No other units yet/)).not.toHaveTextContent(/below/);
+  });
+
+  it("without the prop the form is there, exactly as before", () => {
+    renderWith({});
+    expect(screen.getByRole("button", { name: "Add unit" })).toBeInTheDocument();
+  });
+
+  it.each([
+    ["a variant", { ...product, parentProductId: "fam-1" }],
+    ["a recipe", { ...product, kind: "RECIPE" }],
+  ])("%s keeps its form: the v2 Add a unit is not mounted there", (_n, p) => {
+    renderWith({ hideAddForm: true }, p);
+    expect(screen.getByRole("button", { name: "Add unit" })).toBeInTheDocument();
+  });
+});

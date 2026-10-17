@@ -46,7 +46,7 @@ describe("family page with units v2 on: parity", () => {
     );
   });
 
-  it("pins every bare v2 reference in page.tsx to the known five", () => {
+  it("pins every bare v2 reference in page.tsx to the known six", () => {
     const refs = src
       .split("\n")
       .filter((l) => /(?<![-\w/"])v2(?![\w-])/.test(l))
@@ -58,6 +58,8 @@ describe("family page with units v2 on: parity", () => {
       '{v2 && product.kind !== "FAMILY" ? <ProductJumpLinks /> : null}',
       "pricesV2={v2}",
       '{v2 && product.kind !== "FAMILY" ? <ProductPricingV2 product={product} /> : null}',
+      // K10d: the v2 flag drops the old Units card's always-open Add form (the shell's Add a unit replaces it)
+      "{!v2Family && <ProductUnitsCard product={product} hideAddForm={v2} />}",
     ]);
   });
 });

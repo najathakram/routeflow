@@ -96,22 +96,34 @@ function CellDisplay({ view, dim }: { view: CellView; dim?: boolean }) {
   );
 }
 
-/** The "Add unit" control on this page (the units card form), if there is one. */
-const addUnitInput = () =>
-  typeof document === "undefined" ? null : document.getElementById("new-unit-name");
+/**
+ * The "Add unit" control on this page, if there is one: the v2 shell's single "Add a unit" opener (K10d), else the old
+ * Units card's name field. Opening the v2 panel puts focus in its name box.
+ */
+const addUnitTarget = (): HTMLElement | null =>
+  typeof document === "undefined"
+    ? null
+    : (document.querySelector<HTMLElement>('[data-testid="units-v2-add-open"]') ??
+      document.getElementById("new-unit-name"));
 
 /** A pointer from a refused first price to the Add unit control: a button when the control exists, else nothing. */
 function AddUnitPointer({ unit }: { unit: string }) {
-  if (!addUnitInput()) return null;
+  // Checked after paint: the v2 opener is a sibling of the grid, so it is not in the DOM yet while this renders.
+  const [has, setHas] = React.useState(false);
+  React.useEffect(() => setHas(addUnitTarget() != null), []);
+  if (!has) return null;
   return (
     <button
       type="button"
       data-testid={T.addUnitPointer}
       className="mt-0.5 block underline"
       onClick={() => {
-        const el = addUnitInput();
+        const el = addUnitTarget();
         el?.scrollIntoView?.({ block: "center" });
-        el?.focus();
+        if (el?.dataset.testid === "units-v2-add-open") {
+          // Waiting on unsaved prices disables it: scroll to it, its hint says why.
+          if (!(el as HTMLButtonElement).disabled) el.click();
+        } else el?.focus();
       }}
     >
       Add a {unit} unit
@@ -208,10 +220,13 @@ function PriceCell({
 export function ProductPricesGrid({
   product,
   edit,
+  rowAction,
 }: {
   product: UnitsCardProduct & { msrp?: number | string | null };
   /** Edit mode (S12a, behind flag.units_prices_v2). Omitted = today's read-only grid, unchanged. */
   edit?: GridEditApi;
+  /** A control under a unit's name (K10d: Remove), or nothing for a row that has none. */
+  rowAction?: (row: ProductPriceGridRowDto) => React.ReactNode;
 }) {
   const grid = usePriceGrid(product.id);
   const labels = useTierLabels().data;
@@ -310,6 +325,7 @@ export function ProductPricesGrid({
                 >
                   {row.label}
                   <NotEditable row={row} />
+                  {rowAction?.(row)}
                 </th>
                 <td className="px-2 py-3 text-navy/80">
                   {containsLines(row, ascending).map((l) => (
@@ -348,6 +364,7 @@ export function ProductPricesGrid({
           >
             <div className="font-medium text-navy">{row.label}</div>
             <NotEditable row={row} />
+            {rowAction?.(row)}
             <div className="text-xs text-navy/70">
               {containsLines(row, ascending).map((l) => (
                 <div key={l}>{l}</div>
