@@ -188,13 +188,17 @@ function AddUnitPointer({ unit, button = false }: { unit: string; button?: boole
   );
 }
 
-/** A family-governed row is read-only: say why, quietly. */
-function NotEditable({ row }: { row: ProductPriceGridRowDto }) {
+/**
+ * A family-governed row is read-only: say why, quietly. `pointer` false leaves the missing unit's Add button out: the
+ * table keeps it OUT of the row header (N7: a button inside the `th` makes it part of the header's name) and puts it in
+ * the row's next cell instead; the phone card keeps it here.
+ */
+function NotEditable({ row, pointer = true }: { row: ProductPriceGridRowDto; pointer?: boolean }) {
   if (row.editable || !row.notEditableReason) return null;
   return (
     <p data-testid={T.notEditable(row.ref)} className="mt-0.5 text-[11px] font-normal text-navy/55">
       {row.notEditableReason}
-      {isMissingUnit(row) && <AddUnitPointer unit={row.label} button />}
+      {pointer && isMissingUnit(row) && <AddUnitPointer unit={row.label} button />}
     </p>
   );
 }
@@ -513,7 +517,7 @@ export function ProductPricesGrid({
                   >
                     {row.code ?? "No barcode"}
                   </div>
-                  <NotEditable row={row} />
+                  <NotEditable row={row} pointer={false} />
                 </th>
                 {rowAction && <td className="px-2 py-3">{rowAction(row, "table")}</td>}
                 <td className="min-w-[7rem] px-2 py-3 text-navy/80">
@@ -527,6 +531,7 @@ export function ProductPricesGrid({
                       {l}
                     </div>
                   ))}
+                  {isMissingUnit(row) && <AddUnitPointer unit={row.label} button />}
                 </td>
                 {TIERS.map((t, i) => (
                   <td key={t} className="px-2 py-3">
