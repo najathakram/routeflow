@@ -823,8 +823,6 @@ export function ProductCreateModal({
                 onChange={(e) => set("costingMethod", e.target.value)}
                 className="w-full rounded border border-surface-border px-3 py-2 text-sm text-navy focus:outline-none focus:ring-2 focus:ring-brand-500"
               >
-                <option value="FIFO">FIFO — First In, First Out</option>
-                <option value="LIFO">LIFO — Last In, First Out</option>
                 <option value="AVCO">AVCO — Weighted Average Cost</option>
                 <option value="LAST_COST">Last Cost — most recent purchase price</option>
                 <option value="STANDARD">Standard Cost</option>

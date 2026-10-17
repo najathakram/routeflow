@@ -6,6 +6,7 @@ import type { CreditNotesService } from "../credit-notes/credit-notes.service";
 import { assertNoCashRefundOnOrder } from "../invoices/invoice-cash-refund-guard";
 import type { InvoicesService } from "../invoices/invoices.service";
 import { lockedOrderStatus, lockOrderForCancel } from "./order-cancel-impact";
+import { CANCELLABLE_FROM } from "./order-status-transitions";
 import { throwIfInTransitUnderLock, type CarrierEditGuard } from "./order-carrier-guard";
 import { STOCK_SETTLE_SELECT, type StockArgs, type settleStockForEdit } from "./order-stock";
 
@@ -107,4 +108,26 @@ export async function cancelOrderInTx(
     });
   }
   return row;
+}
+
+/**
+ * B284: the lock half of a hard DELETE's stock release. Locks the Order row FIRST (the cancel tx's lock
+ * order: Order, then everything else; never take it after an Invoice row), reads the status UNDER the lock
+ * and, for an order that holds stock, the lines still booked. Returns them for the caller to hand to
+ * `settleStockForEdit(tx, order, lines, [], user, { notes: "DELETE" })` — the SAME unwind the cancel runs —
+ * right after the read-only credit pre-check and BEFORE the credit/wallet releases (house order in
+ * common/product-locks.ts: Order, then Products, then everything else; the cancel settles before its
+ * releases too). Returns null when nothing is booked: a DRAFT never took a decrement, a CANCELLED order
+ * was already credited by its cancel, and a DELIVERED order's goods are gone.
+ */
+export async function lockDeleteLines(tx: any, id: string) {
+  // $queryRaw, not $executeRaw: deleteOrder's lock-order pins count its $executeRaw row locks (the Invoice NOWAIT one).
+  await tx.$queryRaw`SELECT id FROM "Order" WHERE id = ${id} FOR UPDATE`;
+  const status = await lockedOrderStatus(tx, id);
+  if (status === OrderStatus.DRAFT || !CANCELLABLE_FROM.includes(status)) return null;
+  const lines = await tx.orderItem.findMany({
+    where: { orderId: id, status: { not: "CANCELLED" } },
+    select: STOCK_SETTLE_SELECT,
+  });
+  return { order: { id, status }, lines };
 }

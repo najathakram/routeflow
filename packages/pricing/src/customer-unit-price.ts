@@ -59,7 +59,9 @@ export function resolveCustomerUnitPrice(input: CustomerUnitPriceInput): Resolve
   const rules = input.rules ?? DEFAULT_TIER_RULES;
   const view = buildLadderView(product, units, input.viewOptions);
   const asRef = canonicalUnitRef(units, input.unit);
-  const ref = view.rows.some((r) => r.ref === asRef) ? asRef : refForLabel(product, units, input.unit);
+  const ref = view.rows.some((r) => r.ref === asRef)
+    ? asRef
+    : refForLabel(product, units, input.unit);
   const pricing: CustomerPricing = {
     tier: customer.tier,
     orderUnit: customer.orderUnit,

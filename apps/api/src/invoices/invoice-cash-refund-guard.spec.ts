@@ -496,7 +496,11 @@ describe("the delete paths ask the same guards (a cash-refunded sale cannot be d
     const tx = body.indexOf("this.prisma.tenantTransaction(async (tx) => {");
     const guard = body.indexOf("await assertNoCashRefundOnOrder(tx, id);");
     expect(tx).toBeGreaterThan(-1);
-    expect(guard - tx).toBeLessThan(120); // adjacent: nothing sits between the transaction opening and the guard
+    // adjacent: only B284's write-free Order lock + status read (lockDeleteLines) sits between the
+    // transaction opening and the guard, so the guard still precedes every write, the stock credit included
+    const between = body.slice(tx, guard).split("\n").slice(1).join("\n").trim();
+    expect(between).toMatch(/^const held = await lockDeleteLines\(tx, id\);[^\n]*$/);
+    expect(guard).toBeLessThan(body.indexOf("this.settleStockForEdit("));
     expect(guard).toBeLessThan(body.indexOf("assertNoUnspentSourcedCredits("));
     expect(guard).toBeLessThan(body.indexOf("releaseOrderCreditsInTx(tx, id)"));
     expect(guard).toBeLessThan(body.indexOf("releaseWalletPaymentsInTx(tx, inv.id)"));

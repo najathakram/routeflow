@@ -290,15 +290,14 @@ export class ProductPriceWriteService {
       from: mv.from == null ? null : roundMoney(mv.from),
       to: mv.to == null ? null : roundMoney(mv.to),
     }));
+    // A duplicate is worded after the live-customer lookup below, so it can name the customer (never the row id).
+    const duplicates: { customerId: string; unit: string }[] = [];
     for (const mv of wanted) {
       const key = `${mv.customerId}|${mv.ref}`;
-      if (seen.has(key)) {
-        problems.push(
-          `The customer price for ${mv.customerId} on ${mv.ref} is listed twice in this change.`,
-        );
-      }
-      seen.add(key);
       const unitRow = m.view.rows.find((r) => r.ref === mv.ref);
+      if (seen.has(key))
+        duplicates.push({ customerId: mv.customerId, unit: unitRow?.label ?? "a unit" });
+      seen.add(key);
       if (!unitRow) problems.push("That unit is not on this product.");
       else if (mv.ref === "base" && unbackedBase) problems.push(addUnitFirst(unitRow.label));
       if (mv.from == null && mv.to == null)
@@ -319,12 +318,20 @@ export class ProductPriceWriteService {
 
     // A save may only target a live customer (not outside the tenant, not soft-deleted). An Undo restores cells the
     // save wrote when the customer was live; a customer gone since shows up as a conflict below instead.
+    const names = new Map<string, string>();
     if (requireLiveCustomers) {
-      const found: { id: string }[] = await tx.customer.findMany({
-        where: { id: { in: ids }, deletedAt: null },
-        select: { id: true },
-      });
+      const found: { id: string; displayName: string | null; businessName: string }[] =
+        await tx.customer.findMany({
+          where: { id: { in: ids }, deletedAt: null },
+          select: { id: true, displayName: true, businessName: true },
+        });
       if (found.length !== ids.length) problems.push("A customer on this change was not found.");
+      for (const c of found) names.set(c.id, c.displayName?.trim() || c.businessName);
+    }
+    for (const d of duplicates) {
+      problems.push(
+        `The customer price for ${names.get(d.customerId) ?? "a customer"} on ${d.unit} is listed twice in this change.`,
+      );
     }
     if (problems.length > 0) throw this.invalid([...new Set(problems)]);
 

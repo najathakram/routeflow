@@ -3,6 +3,7 @@ import { API_ERROR_CODES } from "@routeflow/types";
 import type { SavePricesRequest, SavePricesResponse, UndoPricesRequest } from "@routeflow/types";
 import { apiClient } from "../api-client";
 import { priceGridKey } from "./usePriceGrid";
+import { productCustomerPricesKey } from "./useProductCustomerPrices";
 
 /** The HTTP method of both price writes (lead final ruling 2026-10-16: POST; the method is one constant, change it here). */
 export const PRICE_WRITE_METHOD = "post" as const;
@@ -43,25 +44,42 @@ export function priceWriteError(err: unknown): PriceWriteError | null {
   if (err == null) return null;
   const data = (err as { response?: { data?: { code?: string; problems?: string[] } } }).response
     ?.data;
-  const hit = data?.code ? PRICE_WRITE_CODES[data.code] : undefined;
+  // Own keys only: a code like "constructor" must not hit the table's prototype.
+  const hit =
+    data?.code && Object.hasOwn(PRICE_WRITE_CODES, data.code)
+      ? PRICE_WRITE_CODES[data.code]
+      : undefined;
   if (!hit) return { code: "other", copy: PRICE_WRITE_GENERIC_COPY, problems: [] };
   // Only the invalid answer carries the server's per-cell problem lines (contract product text).
   return { ...hit, problems: hit.code === "invalid" ? (data?.problems ?? []) : [] };
 }
 
 /**
- * `refetchOnStale`: a stale answer refetches the grid. Undo wants it (its preview reads the served grid); Save does
- * not: its notice owns the reload. Save itself never auto-refetches the grid on a stale answer.
+ * `refetchOnStale`: a stale answer refetches the grid and the customers' prices. Undo wants it (its preview reads the
+ * served grid); Save does not: its notice owns the reload. Save itself never auto-refetches on a stale answer.
+ * `writesCustomers`: a write that moved customer prices leaves the customers query behind, so it is refetched.
  */
-function usePriceWrite<Req>(productId: string, path: string, refetchOnStale: boolean) {
+function usePriceWrite<Req>(
+  productId: string,
+  path: string,
+  refetchOnStale: boolean,
+  writesCustomers: (body: Req) => boolean,
+) {
   const qc = useQueryClient();
   return useMutation<SavePricesResponse, unknown, Req>({
+    // The edit bar (Save) and the status line (Undo) say every failure themselves: no second, app-wide toast.
+    meta: { localErrorToast: true },
     mutationFn: (body) =>
       apiClient[PRICE_WRITE_METHOD](`/products/${productId}${path}`, body).then((r) => r.data),
-    onSuccess: (res) => qc.setQueryData(priceGridKey(productId), res.grid),
+    onSuccess: (res, body) => {
+      qc.setQueryData(priceGridKey(productId), res.grid);
+      if (writesCustomers(body))
+        void qc.invalidateQueries({ queryKey: productCustomerPricesKey(productId) });
+    },
     onError: (err) => {
       if (refetchOnStale && priceWriteError(err)?.code === "stale") {
         void qc.invalidateQueries({ queryKey: priceGridKey(productId) });
+        void qc.invalidateQueries({ queryKey: productCustomerPricesKey(productId) });
       }
     },
   });
@@ -69,8 +87,13 @@ function usePriceWrite<Req>(productId: string, path: string, refetchOnStale: boo
 
 /** POST /products/:id/prices: everything one Save commits. On success the fresh grid replaces the cache. */
 export const useSavePrices = (productId: string) =>
-  usePriceWrite<SavePricesRequest>(productId, "/prices", false);
+  usePriceWrite<SavePricesRequest>(
+    productId,
+    "/prices",
+    false,
+    (body) => (body.customerMoves?.length ?? 0) > 0,
+  );
 
-/** POST /products/:id/prices/undo: reverses one save by its audit id. */
+/** POST /products/:id/prices/undo: reverses one save by its audit id (customer prices included, so they refetch). */
 export const useUndoPrices = (productId: string) =>
-  usePriceWrite<UndoPricesRequest>(productId, "/prices/undo", true);
+  usePriceWrite<UndoPricesRequest>(productId, "/prices/undo", true, () => true);
