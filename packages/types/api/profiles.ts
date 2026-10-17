@@ -32,8 +32,9 @@ export interface BusinessProfileSummary {
   /** Module keys the profile turns on / off. */
   grants: string[];
   denies: string[];
-  /** The capability ticks this preset pre-ticks (BO-03): the same tuple `matchedPreset` compares against. */
-  ticks: BusinessCapabilityTicks;
+  /** The capability ticks this preset pre-ticks (BO-03): the same tuple `matchedPreset` compares against.
+   *  Optional so older clients and fixtures keep compiling (additive); the server always sends it. */
+  ticks?: BusinessCapabilityTicks;
 }
 
 /**
