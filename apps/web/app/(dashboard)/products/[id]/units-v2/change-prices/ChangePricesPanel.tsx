@@ -57,7 +57,7 @@ function ChangePricesForm({
   onClose: () => void;
 }) {
   const { grid } = draft;
-  const { tierName, customerName, customers, rules } = usePlanNames();
+  const { tierName, customerName, customers, rules, customersTruncated } = usePlanNames();
   const ids = React.useId();
   const root = React.useRef<HTMLElement>(null);
   const { selection, toggleOffer, toggleKeep, toggleCustomerKeep, reset } = usePlanSelection();
@@ -249,6 +249,7 @@ function ChangePricesForm({
           tierName={tierName}
           customerName={customerName}
           hideFollowers
+          customersTruncated={customersTruncated}
           extraOffers={alsoBlock}
         />
       </div>

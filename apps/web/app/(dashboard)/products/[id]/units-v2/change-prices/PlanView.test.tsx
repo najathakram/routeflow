@@ -111,3 +111,25 @@ describe("PlanView (V02, SA-799)", () => {
     expect(screen.getByRole("alert")).toHaveTextContent("Enter an amount above zero.");
   });
 });
+
+describe("K3b NIT-3: a capped customer list says so", () => {
+  const NOTE = "Showing the first 500 customers with their own prices. Others aren't included.";
+  it("shows one short note in the Also update section when the customers were truncated", () => {
+    mount({ customersTruncated: true });
+    const note = screen.getByTestId(T.customersTruncated);
+    expect(note).toHaveTextContent(NOTE);
+    expect(screen.getByTestId(T.alsoUpdate)).toContainElement(note);
+    expect(screen.getAllByTestId(T.customersTruncated)).toHaveLength(1);
+  });
+
+  it.each([[false], [undefined]])("shows no note when truncated is %p", (customersTruncated) => {
+    mount({ customersTruncated });
+    expect(screen.queryByTestId(T.customersTruncated)).toBeNull();
+    expect(screen.queryByText(/Showing the first/)).toBeNull();
+  });
+
+  it("has no Also update section to put it in when nothing is on offer, so it shows nothing", () => {
+    mount({ plan: emptyPlan(), customersTruncated: true });
+    expect(screen.queryByTestId(T.customersTruncated)).toBeNull();
+  });
+});

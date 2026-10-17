@@ -5,6 +5,7 @@ export const PLAN_TESTIDS = {
   alsoUpdate: "units-v2-cp-also-update",
   followerRow: "units-v2-cp-follower-row",
   customerRow: "units-v2-cp-customer-row",
+  customersTruncated: "units-v2-cp-customers-truncated",
   offerMove: "units-v2-cp-offer-move",
   againstSummary: "units-v2-cust-against-sum",
   roundingGroup: "units-v2-cp-rounding",

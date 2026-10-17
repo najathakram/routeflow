@@ -20,8 +20,9 @@ const draft = {
 jest.mock("../edit/usePriceDraft", () => ({ usePriceDraft: () => draft }));
 jest.mock("@/lib/api/tier-labels", () => ({ useTierLabels: () => ({ data: {} }) }));
 const customers = [{ customerId: "c1", name: "Northside", tier: 1, orderUnit: null, set: {} }];
+let mockTruncated = false;
 jest.mock("@/lib/api/useProductCustomerPrices", () => ({
-  useProductCustomerPrices: () => ({ data: { customers } }),
+  useProductCustomerPrices: () => ({ data: { customers, truncated: mockTruncated } }),
 }));
 
 const plan = planPriceChange as jest.Mock;
@@ -31,6 +32,7 @@ const type = (v: string) =>
 const apply = () => fireEvent.click(screen.getByRole("button", { name: "Apply" }));
 
 beforeEach(() => {
+  mockTruncated = false;
   draft.view = VIEW;
   draft.applyPlan.mockReset();
   draft.setOfferTicked.mockReset();
@@ -168,6 +170,22 @@ describe("ChangePricesPanel (V03, V05, V18)", () => {
     expect(half("Raise").className).not.toContain("bg-accent-strong");
     expect(radio("Lower")).toHaveAttribute("aria-checked", "true");
     expect(radio("Raise")).toHaveAttribute("aria-checked", "false");
+  });
+
+  it("K3b NIT-3: the Also update section says the customer list was capped, only when it was", () => {
+    const { unmount } = mount();
+    type("5");
+    expect(screen.queryByTestId(T.customersTruncated)).toBeNull();
+    unmount();
+    mockTruncated = true;
+    mount();
+    type("5");
+    expect(screen.getByTestId(T.alsoUpdate)).toContainElement(
+      screen.getByTestId(T.customersTruncated),
+    );
+    expect(screen.getByTestId(T.customersTruncated)).toHaveTextContent(
+      "Showing the first 500 customers with their own prices. Others aren't included.",
+    );
   });
 
   it("disables Apply and does not plan until an amount is typed", () => {
