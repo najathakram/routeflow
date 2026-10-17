@@ -65,7 +65,19 @@ const response = (
 });
 
 const loaded = (data: CustomerUnitPricesResponse) => ({ data, isLoading: false, isError: false });
-const failed = { data: undefined, isLoading: false, isError: true };
+const failed = {
+  data: undefined,
+  isLoading: false,
+  isError: true,
+  error: { response: { status: 404 } },
+};
+/** A transient failure (server error, offline): the id may be fine, so it must stay in the URL. */
+const failedTransient = {
+  data: undefined,
+  isLoading: false,
+  isError: true,
+  error: { response: { status: 503 } },
+};
 const idle = { data: undefined, isLoading: false, isError: false };
 
 beforeEach(() => {
@@ -139,6 +151,15 @@ describe("K11-06: the picked customer survives a refresh", () => {
     expect(screen.getByRole("alert")).toHaveTextContent("Could not load this customer's prices.");
     expect(screen.getByTestId(T.search)).toBeInTheDocument();
     expect(mockReplace).toHaveBeenCalledWith("/products/p1?tab=prices", { scroll: false });
+  });
+
+  it("a transient failure (503) keeps the id in the URL and the chosen customer on screen", () => {
+    mockSearch = "customer=c1";
+    mockPrices.mockImplementation((id: string | null) => (id === "c1" ? failedTransient : idle));
+    render(<CustomerPriceView productId="p1" />);
+    expect(screen.getByRole("alert")).toHaveTextContent("Could not load this customer's prices.");
+    expect(screen.getByTestId(T.change)).toBeInTheDocument();
+    expect(mockReplace).not.toHaveBeenCalled();
   });
 
   it("a refused id is not remembered for the next mount", () => {

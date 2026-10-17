@@ -272,7 +272,11 @@ export function CustomerPriceView({ customerId, productId }: CustomerPriceViewPr
 
   // K11-06: an id the server refuses (gone, or not this business's) drops out of the URL and the session memory,
   // so a refresh does not loop on it. The error line and the picker stay on screen.
-  const refused = !fixed && activeId !== null && q.isError;
+  // Only a 4xx that means "not yours / not there" drops it; a transient failure (5xx, offline) keeps it.
+  const failedStatus = (q.error as { response?: { status?: number } } | null | undefined)?.response
+    ?.status;
+  const refused =
+    !fixed && activeId !== null && q.isError && [400, 403, 404].includes(failedStatus ?? 0);
   const dropRefused = React.useRef(url.write);
   dropRefused.current = url.write;
   React.useEffect(() => {
