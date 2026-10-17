@@ -14,9 +14,12 @@ type LayerState = {
   isError: boolean;
   data?: { complete: boolean; products: Record<string, unknown[]> } | null;
 };
+let mockScanV2 = true;
 let layer: LayerState;
 let history: Record<string, { lastPrice: number }> | undefined;
 const cust = { id: "c1", businessName: "Acme Foods", pricingTier: 3 };
+const rerenderModal = (view: { rerender: (ui: React.ReactElement) => void }) =>
+  view.rerender(<CreateOrderModal isOpen onClose={jest.fn()} />);
 
 jest.mock("@/lib/api/useCustomerPriceLayer", () => {
   const { priceLayerStatus } = jest.requireActual("@routeflow/pricing");
@@ -90,7 +93,7 @@ jest.mock("@/lib/api/tobacco", () => ({
 }));
 jest.mock("@/lib/api/addons", () => ({
   ...jest.requireActual("@/lib/api/addons"),
-  useScanV2: () => true,
+  useScanV2: () => mockScanV2,
   useOrderUiV2: () => ({ enabled: false, resolved: true }),
 }));
 jest.mock("@/lib/api-client", () => ({
@@ -161,7 +164,7 @@ const layerReady = (rows: unknown[]): LayerState => ({
 });
 
 const addWidgetForCustomer = async () => {
-  renderWithProviders(<CreateOrderModal isOpen onClose={jest.fn()} />);
+  const view = renderWithProviders(<CreateOrderModal isOpen onClose={jest.fn()} />);
   fireEvent.change(screen.getByPlaceholderText("Search by business name…"), {
     target: { value: "Acm" },
   });
@@ -170,6 +173,7 @@ const addWidgetForCustomer = async () => {
   await new Promise((r) => setTimeout(r, 50));
   capturedOnScan!("111");
   await screen.findByText("Widget");
+  return view;
 };
 const saveDraft = () => fireEvent.click(screen.getByRole("button", { name: /save as draft/i }));
 const sentItem = () => createOrderMutate.mock.calls[0][0].items[0];
@@ -180,6 +184,8 @@ describe("CreateOrderModal - the customer's price layer (S19b slice B)", () => {
     mockResolveProductByCode.mockResolvedValue(widget);
     history = { "prod-1": { lastPrice: 36 } }; // last-given $36 is below the $38 tier price
     layer = { enabled: false, isPending: false, isError: false, data: null };
+    cust.pricingTier = 3;
+    mockScanV2 = true;
   });
 
   it("flag off: no layer, master's tier price ($38) and nothing sent as an override", async () => {
@@ -195,6 +201,7 @@ describe("CreateOrderModal - the customer's price layer (S19b slice B)", () => {
   });
 
   it("B-1: a typed $33 pre-fills $33 SPECIAL, not last-given $36, and saves with no price or reason", async () => {
+    cust.pricingTier = 1; // Retail customer, typed $33: last-given $36 would pre-fill if R3 did not skip it
     layer = layerReady([packRow({})]);
     await addWidgetForCustomer();
     expect(await screen.findByText("$33.00 / each")).toBeInTheDocument();
@@ -240,5 +247,48 @@ describe("CreateOrderModal - the customer's price layer (S19b slice B)", () => {
     expect(screen.getByRole("button", { name: /create order/i })).toBeDisabled();
     expect(screen.getByRole("button", { name: /save as draft/i })).toBeDisabled();
     expect(screen.queryByRole("button", { name: "Retry" })).not.toBeInTheDocument();
+    // never a final price: wherever a line price is on screen, the unconfirmed marker is too (SA-813 M1)
+    expect(screen.queryByRole("status", { name: "" })).toBeDefined();
+    expect(screen.getByTestId("order-price-layer-pending")).toHaveTextContent(
+      "Checking this customer's prices…",
+    );
+  });
+  it("flag off, tier 1: master's last-given pre-fill ($36 < $42) is kept and sent", async () => {
+    cust.pricingTier = 1;
+    await addWidgetForCustomer();
+    expect(await screen.findByText("$36.00 / each")).toBeInTheDocument();
+    await waitFor(() =>
+      expect(screen.getByRole("button", { name: /save as draft/i })).toBeEnabled(),
+    );
+    saveDraft();
+    expect(sentItem().unitPrice).toBe(36);
+  });
+
+  it("review 1: a last-given pre-fill taken while the layer is pending yields to the layer's $33 once ready", async () => {
+    cust.pricingTier = 1; // a Retail customer with a typed price: last-given $36 < list $42 pre-fills (SPECIAL tiers skip it)
+    layer = { enabled: true, isPending: true, isError: false, data: null };
+    const view = await addWidgetForCustomer();
+    layer = layerReady([packRow({})]);
+    rerenderModal(view);
+    expect(await screen.findByText("$33.00 / each")).toBeInTheDocument();
+    await waitFor(() =>
+      expect(screen.getByRole("button", { name: /save as draft/i })).toBeEnabled(),
+    );
+    saveDraft();
+    expect(sentItem().unitPrice).toBeUndefined();
+    expect(sentItem().overrideReason).toBeUndefined();
+  });
+
+  it("review 7: new layer data re-prices ($33 -> $31); a row that disappears returns to master's $38", async () => {
+    mockScanV2 = false; // the scan_v2 effect would mask the layer effect's own restore
+    layer = layerReady([packRow({})]);
+    const view = await addWidgetForCustomer();
+    expect(await screen.findByText("$33.00 / each")).toBeInTheDocument();
+    layer = layerReady([packRow({ price: 31 })]);
+    rerenderModal(view);
+    expect(await screen.findByText("$31.00 / each")).toBeInTheDocument();
+    layer = layerReady([]);
+    rerenderModal(view);
+    expect(await screen.findByText("$38.00 / each")).toBeInTheDocument();
   });
 });

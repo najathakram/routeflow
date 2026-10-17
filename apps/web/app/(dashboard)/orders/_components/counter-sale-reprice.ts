@@ -114,8 +114,23 @@ export function repriceLines(
     changed += 1;
     return { ...l, unitPrice, priceType };
   });
+  // S19b: keep `special` (the layer's isSpecial) in step with the layer; absent when the layer does not price the line.
+  let flagMoved = false;
+  const flagged = next.map((l) => {
+    if (!l.tierPrices) return l;
+    const lp = customerLinePrice({
+      product: l.tierPrices as Record<string, unknown>,
+      tier: tierFor(l.productId),
+      layer: layerOf?.(l.productId),
+    });
+    const want = lp.layered ? lp.isSpecial : undefined;
+    if (l.special === want) return l;
+    flagMoved = true;
+    const { special: _s, ...rest } = l;
+    return want === undefined ? rest : { ...rest, special: want };
+  });
   return {
-    lines: changed || kept || touched ? next : (lines as SaleLine[]),
+    lines: changed || kept || touched || flagMoved ? flagged : (lines as SaleLine[]),
     changed,
     kept,
     dropped,

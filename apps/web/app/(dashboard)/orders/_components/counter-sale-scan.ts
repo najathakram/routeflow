@@ -33,6 +33,11 @@ export interface SaleLine {
   listPrice?: number;
   unit?: string;
   priceType?: "STANDARD" | "SPECIAL";
+  /**
+   * S19b: set ONLY while the customer's price layer prices this line (flag on): the layer's `isSpecial`, which the edit-reason
+   * gate reads in place of the tier. Absent otherwise, so the gate keeps master's tier rule.
+   */
+  special?: boolean;
   category?: string;
   /** The product's regulated category when the line was added: the estimate adds its levy (excise / deposit). */
   trackedCategoryId?: string | null;
@@ -91,6 +96,7 @@ export function addScannedProduct(
       listPrice: Number(product.pricePerUnit ?? 0),
       unit: product.unit ?? "each",
       priceType: lp.isSpecial ? "SPECIAL" : "STANDARD",
+      ...(lp.layered ? { special: lp.isSpecial } : {}),
       ...(product.category ? { category: String(product.category) } : {}),
       ...(product.trackedCategoryId
         ? { trackedCategoryId: String(product.trackedCategoryId) }

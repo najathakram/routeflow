@@ -1,7 +1,7 @@
 import {
   isSpecialTier,
   decideStaffOverride,
-  getTierPrice,
+  customerLinePrice,
   type CustomerLinePrice,
 } from "@routeflow/pricing";
 
@@ -33,7 +33,7 @@ export function saleLinePricing(
     };
   }
   return {
-    tierPrice: Number(getTierPrice(product, tier)),
+    tierPrice: Number(customerLinePrice({ product, tier }).price),
     listPrice: Number(product.pricePerUnit) || 0,
     isSpecialTier: isSpecialTier(tier),
   };

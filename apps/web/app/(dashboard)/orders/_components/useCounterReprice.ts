@@ -102,10 +102,12 @@ export function useCounterReprice<C extends PickedLike>(deps: {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [key, answered, tierFor, locked, layerSig]);
 
-  const failed =
-    priceLayer.failed || (appliedKey !== key && prices.isError && !prices.isFetching);
+  // SA-813 M1: an INCOMPLETE layer (past the row cap) does not confirm a cart product it omits.
+  const incomplete =
+    priceLayer.enabled && priceLayer.ready && lines.some((l) => !priceLayer.lineReady(l.productId));
+  const failed = priceLayer.failed || (appliedKey !== key && prices.isError && !prices.isFetching);
   // SA-813: a pending or failed layer leaves the prices unconfirmed even when the customer key is already applied.
-  const blocked = appliedKey !== key || priceLayer.pending || priceLayer.failed;
+  const blocked = appliedKey !== key || priceLayer.pending || priceLayer.failed || incomplete;
 
   const undo = () => {
     if (!note) return;
@@ -138,12 +140,18 @@ export function useCounterReprice<C extends PickedLike>(deps: {
     dismiss: () => setNote(null),
     retry: () => {
       void prices.refetch();
-      priceLayer.refetch();
+      // refetch() runs even a DISABLED query (TanStack v5): flag off it would hit a gated route (403 + upgrade toast).
+      if (priceLayer.enabled) priceLayer.refetch();
     },
     tierFor,
     layerOf,
     /** SA-813 M1/M3: flag on and the layer read is pending or failed - prices are UNCONFIRMED (null = confirmed). */
-    unconfirmed: (priceLayer.failed ? "failed" : priceLayer.pending ? "pending" : null) as
-      "pending" | "failed" | null,
+    unconfirmed: (priceLayer.failed
+      ? "failed"
+      : priceLayer.pending
+        ? "pending"
+        : incomplete
+          ? "incomplete"
+          : null) as "pending" | "failed" | "incomplete" | null,
   };
 }

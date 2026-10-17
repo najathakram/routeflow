@@ -61,13 +61,11 @@ describe("order-line-unit: the customer's layer (B-4)", () => {
     expect(r.specialPrice).toBe(33);
   });
 
-  it("an operator's one-time price, a derived-base line and a missing layer are left alone", () => {
+  it("an operator's one-time price and a missing layer are left alone", () => {
     const typed = packLine({ discountedPrice: 30, unitPrice: 30, priceType: "DISCOUNTED" });
     expect(repriceLineFromLayer(typed, { tier: 3, layer })).toBe(typed);
     const plain = packLine();
     expect(repriceLineFromLayer(plain, { tier: 3, layer: undefined })).toBe(plain);
-    const derived = packLine({ derivedBase: "base" });
-    expect(repriceLineFromLayer(derived, { tier: 3, layer })).toBe(derived);
   });
 
   it("a Case line with no layer row for it is master's price", () => {

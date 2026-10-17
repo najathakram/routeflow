@@ -83,6 +83,7 @@ import { useCounterLineUndo } from "./useCounterLineUndo";
 import { COUNTER_SCAN_FAILED_COPY } from "./useCounterSaleScan";
 import { useCounterReprice } from "./useCounterReprice";
 import { repriceLines } from "./counter-sale-reprice";
+import { PRICE_LAYER_TOO_MANY_COPY } from "@/components/PriceLayerNotice";
 import { isTextEntryActive } from "@/lib/refocus-scanner";
 import { scrollPageToTop } from "@/lib/scroll-top";
 import { useCounterLiveCart } from "./useCounterLiveCart";
@@ -1425,6 +1426,14 @@ export function CounterSaleScreen() {
               <button type="button" className={cn(TAP_TARGET, "underline")} onClick={reprice.retry}>
                 Retry
               </button>
+            </p>
+          ) : reprice.unconfirmed === "incomplete" ? (
+            <p
+              role="status"
+              className="text-sm text-navy/70"
+              data-testid="counter-price-layer-incomplete"
+            >
+              {PRICE_LAYER_TOO_MANY_COPY}
             </p>
           ) : reprice.unconfirmed === "pending" ? (
             <p

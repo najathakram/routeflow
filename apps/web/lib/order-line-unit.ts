@@ -95,7 +95,9 @@ export function applyLineUnit<T extends UnitLine>(
     // qty x a rounded per-piece price — the same line the server stores for it. It starts from the PACK: a line
     // held on a level (a Case) gets its pack back first, with the level's price and one-time price gone, so the
     // preview and the bill are the pack's tier price prorated (SA: Case $190 -> Piece is $6.67, not $63.33).
-    const pack = restorePack(line, ctx, true, option.derived.packPrice);
+    let pack = restorePack(line, ctx, true, option.derived.packPrice);
+    // S19b: the picker's derived option carries the layer's PACK price (the Piece bills as the pack's proration).
+    if (option.layerLine) pack = withLayerLine(pack, option.layerLine);
     const keep = ctx.keepQty && li.derivedBase === option.value ? li.qty : 1;
     const n = normalizeBoxesPieces({ boxes: 0, pieces: keep, unitsPerBox: option.derived.n });
     return {
@@ -197,32 +199,67 @@ function withLayerLine<T extends PackBase>(line: T, lp: CustomerLinePrice): T {
   };
 }
 
+/** What a line was priced at before the customer's layer took it: restored when the layer's row goes away. */
+export interface LayerFrom {
+  unitPrice: number;
+  listPrice: number;
+  priceType: PackBase["priceType"];
+  specialPrice?: number;
+}
+
 /** The line fields `repriceLineFromLayer` reads and writes. */
 export interface LayerPricedLine extends UnitLine {
   isUnlisted?: boolean;
+  /** A price the SYSTEM pre-filled from last-given history (not the operator): the layer replaces it once known. */
+  systemPrefill?: boolean;
+  overrideReason?: string;
+  /** Set while the layer prices this line; the pre-layer values to restore if the row disappears. */
+  layerFrom?: LayerFrom;
+}
+
+/** The pre-layer (master) pack values of a line, for `layerFrom`. */
+export function masterLayerFrom(
+  tierPrices: NonNullable<UnitLine["tierPrices"]>,
+  tier: number,
+): LayerFrom {
+  const m = customerLinePrice({ product: tierPrices as unknown as Record<string, unknown>, tier });
+  return {
+    unitPrice: m.price,
+    listPrice: Number(m.listPrice),
+    priceType: m.priceType,
+    specialPrice: customerLineSpecial(m),
+  };
 }
 
 /**
  * S19b (SA-811a R1/R3): re-price an AUTO-priced line (no one-time `discountedPrice`) from the customer's price layer.
  * Idempotent, and a no-op when the product has no layer row for the line's unit (flag off, no typed price): master's
  * price stands. A layered row sets the unit price, list, priceType (MANUAL when above list) and the special baseline.
- * Derived-base (Piece) lines are the pack's proration and the server prices them; they are left alone.
+ * A derived-base (Piece) line is the pack's proration, so it takes the layer's PACK price. A price the system pre-filled from
+ * last-given history (`systemPrefill`) yields to the layer; an operator-typed one-time price stands. A row that goes away
+ * (new layer data) puts the line back to the values it had before the layer (`layerFrom`): master's number.
  */
 export function repriceLineFromLayer<T extends LayerPricedLine>(
   li: T,
   ctx: { tier: number; layer?: readonly CustomerLayerUnit[] | null },
 ): T {
-  if (!ctx.layer || li.isUnlisted || li.discountedPrice != null || li.derivedBase) return li;
-  if (!li.tierPrices) return li;
+  if (!ctx.layer || li.isUnlisted || !li.tierPrices) return li;
+  const prefilled = li.discountedPrice != null && !!li.systemPrefill;
+  if (li.discountedPrice != null && !prefilled) return li;
   const lp = customerLinePrice({
     product: ladderProductOf(li) as unknown as Record<string, unknown>,
     tier: ctx.tier,
     layer: ctx.layer,
     unitLabel: li.unitLabel ?? null,
   });
-  if (!lp.layered) return li;
+  if (!lp.layered) {
+    if (!li.layerFrom) return li;
+    const { layerFrom, ...rest } = li;
+    return { ...rest, ...layerFrom } as T;
+  }
   const specialPrice = customerLineSpecial(lp);
   if (
+    !prefilled &&
     li.unitPrice === lp.price &&
     li.listPrice === lp.listPrice &&
     li.priceType === lp.priceType &&
@@ -230,13 +267,25 @@ export function repriceLineFromLayer<T extends LayerPricedLine>(
   ) {
     return li;
   }
+  const { systemPrefill: _s, overrideReason: _r, ...rest } = li;
   return {
-    ...li,
+    ...(prefilled ? rest : li),
+    discountedPrice: undefined,
     unitPrice: lp.price,
     listPrice: lp.listPrice,
     priceType: lp.priceType,
     specialPrice,
-  };
+    layerFrom:
+      li.layerFrom ??
+      (prefilled
+        ? masterLayerFrom(li.tierPrices, ctx.tier)
+        : {
+            unitPrice: li.unitPrice,
+            listPrice: li.listPrice,
+            priceType: li.priceType,
+            specialPrice: li.specialPrice,
+          }),
+  } as T;
 }
 
 /** A derived-base line back on the pack: one whole pack, the case entry mode, the marker gone. */

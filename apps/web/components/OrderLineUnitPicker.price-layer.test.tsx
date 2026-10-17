@@ -1,7 +1,7 @@
 import * as React from "react";
 import { render, screen, fireEvent } from "@testing-library/react";
 import { OrderLineUnitPicker } from "./OrderLineUnitPicker";
-import { applyLineUnit } from "@/lib/order-line-unit";
+import { applyLineUnit, type UnitLine } from "@/lib/order-line-unit";
 
 // S19b slice B add-on (SA-811a R1, SA-813 M3): the unit picker on invoices/new (LineUnitControl) and the order modal offers
 // and applies the customer's LAYER price for the picked unit; flag off it is master's ladder price, with no request.
@@ -102,7 +102,7 @@ describe("OrderLineUnitPicker - the customer's layer (picker add-on)", () => {
     const opt = choose(onChange, "Case");
     expect(opt.price).toBe(377.14);
     expect(opt.listPrice).toBe(480);
-    const applied = applyLineUnit({ ...line, qty: 1 }, opt, { tier: 3 });
+    const applied: UnitLine = applyLineUnit({ ...line, qty: 1 } as UnitLine, opt, { tier: 3 });
     expect(applied.unitPrice).toBe(377.14);
     expect(applied.listPrice).toBe(480);
     expect(applied.priceType).toBe("SPECIAL");

@@ -40,7 +40,24 @@ export function withLayerPrices(
   if (!layer || layer.length === 0) return options as UnitOption[];
   const t = Number(tier);
   return options.map((o) => {
-    if (o.derived) return o;
+    if (o.derived) {
+      // The Piece bills as the pack's proration: the layer's PACK price is what it divides.
+      const pack = customerLinePrice({
+        product: product as unknown as Record<string, unknown>,
+        tier: t,
+        layer,
+        unitLabel: null,
+        tierPrice: o.derived.packPrice,
+      });
+      return pack.layered
+        ? {
+            ...o,
+            price: Math.round((pack.price * 100) / o.derived.n) / 100,
+            derived: { ...o.derived, packPrice: pack.price },
+            layerLine: pack,
+          }
+        : o;
+    }
     const lp = customerLinePrice({
       product: product as unknown as Record<string, unknown>,
       tier: t,
