@@ -4,6 +4,7 @@ import { assertSellableLines } from "../products/sellable-lines";
 import type { CreateInvoiceDto } from "./dto/create-invoice.dto";
 import type { EntitlementsService } from "../billing/entitlements.service";
 import { prepareUnitLadders, requestsUnit } from "../orders/unit-line-build";
+import { customerPricing } from "../orders/units-prices-v2";
 import { asLadderProduct, normalizeDerivedBaseLine } from "../products/line-units";
 
 /**
@@ -80,10 +81,25 @@ export async function loadManualLineContext(
     const tierOf = new Map<string, number | null>(
       overrides.map((r) => [r.productId, r.pricingTier]),
     );
+    // S19b A-7: a typed-price customer's Piece line is stamped at the pack's LAYER price, so it is no override on the edit.
+    const pc = await customerPricing(
+      { prisma, entitlements },
+      customerId,
+      productIds,
+      { pricingTier: tier },
+      overrides,
+    );
     items.splice(
       0,
       items.length,
-      ...derivedBaseAsPackItems(items, productMap, unitsByProduct, tier, tierOf),
+      ...derivedBaseAsPackItems(
+        items,
+        productMap,
+        unitsByProduct,
+        tier,
+        tierOf,
+        (p) => pc.layer(p)?.price,
+      ),
     );
   }
   // RF-4: a regulated line carries + owes category tax, so load the tax config of its category.
@@ -149,6 +165,8 @@ export function derivedBaseAsPackItems<T extends { productId?: string | null }>(
   ladders: ReadonlyMap<string, LadderUnit[]>,
   customerTier?: number | null,
   tierOverrides?: ReadonlyMap<string, number | null>,
+  /** S19b A-7, flag.units_prices_v2 only: the pack's customer-layer price (stamped instead of the tier's pack price). */
+  layerPackPrice?: (product: any) => number | null | undefined,
 ): T[] {
   return items.map((it) => {
     const p = it.productId ? products.get(it.productId) : undefined;
@@ -158,7 +176,7 @@ export function derivedBaseAsPackItems<T extends { productId?: string | null }>(
       asLadderProduct(p),
       ladders.get(p.id) ?? [],
       tierOverrides?.get(p.id) ?? customerTier ?? 1,
-      { price: "pack" },
+      { price: "pack", packPrice: layerPackPrice?.(p) },
     );
   });
 }

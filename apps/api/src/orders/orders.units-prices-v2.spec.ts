@@ -176,6 +176,23 @@ describe("OrdersService.create: billing reads typed customer unit prices (S19)",
     });
   });
 
+  it("A-7: an old client's derived Piece (no price) bills as the pack's pieces at the customer's LAYER pack price", async () => {
+    flags.add(V2);
+    typed(["pack", 33]);
+    await create([{ productId: "prod-1", qty: 3, unitLabel: "Piece" }]);
+    expect(orderData().lineItems.create[0]).toMatchObject({
+      boxes: 0,
+      pieces: 3,
+      unitPrice: 33,
+      priceType: "SPECIAL",
+      subtotal: 4.13,
+    });
+    expect(
+      "unitLabel" in orderData().lineItems.create[0] &&
+        orderData().lineItems.create[0].unitLabel != null,
+    ).toBe(false);
+  });
+
   it("S19-b: a typed Case price only leaves a pack line at tier/list, the sticky above-list price still runs", async () => {
     flags.add(V2);
     typed(["u-case", 450]);

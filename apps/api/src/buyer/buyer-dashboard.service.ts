@@ -1,8 +1,10 @@
-import { Injectable } from "@nestjs/common";
+import { Injectable, Optional } from "@nestjs/common";
 import { PrismaService } from "../prisma/prisma.service";
 import { StorageService } from "../storage/storage.service";
 import { RegulatedVisibilityService } from "./regulated-visibility.service";
 import { getTierPrice } from "@routeflow/pricing";
+import { EntitlementsService } from "../billing/entitlements.service";
+import { customerPricing } from "../orders/units-prices-v2";
 import { SellingRestrictionsService } from "../selling-restrictions/selling-restrictions.service";
 import { buyerVisibilityFor, buyerVisibleProductWhere } from "./buyer-product-visibility";
 import { firstSignableImageKey } from "../products/product-image-keys";
@@ -19,7 +21,23 @@ export class BuyerDashboardService {
     private readonly storage: StorageService,
     private readonly visibility: RegulatedVisibilityService,
     private readonly restrictions: SellingRestrictionsService,
+    // S19b: the customer layer (flag.units_prices_v2) prices a tile like the cart; absent = master's tier price.
+    @Optional() private readonly entitlements?: EntitlementsService,
   ) {}
+
+  /**
+   * S19b: one tile group's tier maps and (flag.units_prices_v2 only) customer layer, as billing reads them. Flag off: master's
+   * `customer.pricingTier ?? 1` and the raw per-product tier map. Tiles keep master's no-sticky behaviour (SA-813 Q2).
+   */
+  private tilePricing(
+    customerId: string,
+    productIds: string[],
+    customer: Parameters<typeof customerPricing>[3],
+    rows: Parameters<typeof customerPricing>[4],
+  ) {
+    const svc = { prisma: this.prisma, entitlements: this.entitlements };
+    return customerPricing(svc, customerId, productIds, customer, rows);
+  }
 
   /** The tenant-scoped buyer visibility context (hidden ids included): no tenant on the request throws, never unscoped (B1211). */
   private buyerVisibility(customerId: string) {
@@ -39,7 +57,6 @@ export class BuyerDashboardService {
     const customer = await this.prisma
       .forTenant()
       .customer.findFirst({ where: { id: customerId }, select: { pricingTier: true } });
-    const defaultTier = customer?.pricingTier ?? 1;
 
     // W7 gate: hide regulated products the buyer isn't licensed for on every product
     // surface (featured / new / suggested / frequently-ordered), via the SAME shared
@@ -222,14 +239,14 @@ export class BuyerDashboardService {
             where: { customerId, productId: { in: freqProductIds } },
           })
         : [];
-    const cpMap = new Map(freqCustomerPrices.map((cp) => [cp.productId, cp.pricingTier]));
+    const freqPc = await this.tilePricing(customerId, freqProductIds, customer, freqCustomerPrices);
 
     const frequentlyOrdered = await Promise.all(
       frequentlyOrderedRaw
         .filter((f) => !!f.productId && freqProductMap.has(f.productId))
         .map(async (f) => {
           const product = freqProductMap.get(f.productId!)!;
-          const effectiveTier = cpMap.get(f.productId!) ?? defaultTier;
+          const effectiveTier = freqPc.cpMap.get(f.productId!) ?? freqPc.defaultTier;
           const thumbKey = firstSignableImageKey(f.productId!, product.imageKeys); // #2533
           const thumbnailUrl = thumbKey ? await this.storage.presignedUrl(thumbKey) : null;
           return {
@@ -238,7 +255,7 @@ export class BuyerDashboardService {
             sku: product.sku,
             unit: product.unit,
             category: product.category,
-            buyerPrice: getTierPrice(product, effectiveTier),
+            buyerPrice: freqPc.layer(product)?.price ?? getTierPrice(product, effectiveTier),
             thumbnailUrl,
             orderCount: f._count.productId,
             totalQty: Number(f._sum.qty ?? 0),
@@ -254,11 +271,11 @@ export class BuyerDashboardService {
             where: { customerId, productId: { in: newProductIds } },
           })
         : [];
-    const newCpMap = new Map(newCpOverrides.map((cp) => [cp.productId, cp.pricingTier]));
+    const newPc = await this.tilePricing(customerId, newProductIds, customer, newCpOverrides);
 
     const newFromSeller = await Promise.all(
       newProducts.map(async (p) => {
-        const effectiveTier = newCpMap.get(p.id) ?? defaultTier;
+        const effectiveTier = newPc.cpMap.get(p.id) ?? newPc.defaultTier;
         const thumbKey = firstSignableImageKey(p.id, p.imageKeys); // #2533
         const thumbnailUrl = thumbKey ? await this.storage.presignedUrl(thumbKey) : null;
         return {
@@ -267,7 +284,7 @@ export class BuyerDashboardService {
           sku: p.sku,
           unit: p.unit,
           category: p.category,
-          buyerPrice: getTierPrice(p, effectiveTier),
+          buyerPrice: newPc.layer(p)?.price ?? getTierPrice(p, effectiveTier),
           thumbnailUrl,
         };
       }),
@@ -281,11 +298,16 @@ export class BuyerDashboardService {
             where: { customerId, productId: { in: featuredProductIds } },
           })
         : [];
-    const featCpMap = new Map(featCpOverrides.map((cp) => [cp.productId, cp.pricingTier]));
+    const featPc = await this.tilePricing(
+      customerId,
+      featuredProductIds,
+      customer,
+      featCpOverrides,
+    );
 
     const featuredItems = await Promise.all(
       featuredProducts.map(async (p) => {
-        const effectiveTier = featCpMap.get(p.id) ?? defaultTier;
+        const effectiveTier = featPc.cpMap.get(p.id) ?? featPc.defaultTier;
         const thumbKey = firstSignableImageKey(p.id, p.imageKeys); // #2533
         const thumbnailUrl = thumbKey ? await this.storage.presignedUrl(thumbKey) : null;
         return {
@@ -294,7 +316,7 @@ export class BuyerDashboardService {
           sku: p.sku,
           unit: p.unit,
           category: p.category,
-          buyerPrice: getTierPrice(p, effectiveTier),
+          buyerPrice: featPc.layer(p)?.price ?? getTierPrice(p, effectiveTier),
           thumbnailUrl,
         };
       }),
@@ -351,11 +373,11 @@ export class BuyerDashboardService {
             where: { customerId, productId: { in: suggestedProductIds } },
           })
         : [];
-    const sugCpMap = new Map(sugCpOverrides.map((cp) => [cp.productId, cp.pricingTier]));
+    const sugPc = await this.tilePricing(customerId, suggestedProductIds, customer, sugCpOverrides);
 
     const suggestedItems = await Promise.all(
       suggestedProducts.map(async (p) => {
-        const effectiveTier = sugCpMap.get(p.id) ?? defaultTier;
+        const effectiveTier = sugPc.cpMap.get(p.id) ?? sugPc.defaultTier;
         const thumbKey = firstSignableImageKey(p.id, p.imageKeys); // #2533
         const thumbnailUrl = thumbKey ? await this.storage.presignedUrl(thumbKey) : null;
         return {
@@ -364,7 +386,7 @@ export class BuyerDashboardService {
           sku: p.sku,
           unit: p.unit,
           category: p.category,
-          buyerPrice: getTierPrice(p, effectiveTier),
+          buyerPrice: sugPc.layer(p)?.price ?? getTierPrice(p, effectiveTier),
           thumbnailUrl,
         };
       }),

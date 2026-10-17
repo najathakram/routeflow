@@ -24,18 +24,14 @@ const WIRED = [
   "estimates/estimates.service.ts",
   "buyer/buyer-catalog.service.ts",
   "returns/inline-returns-quote.service.ts",
+  "buyer/buyer-dashboard.service.ts",
+  "customers/customer-price-history.service.ts",
+  "orders/counter-sale/counter-sale-tier-price.ts",
+  "invoices/manual-invoice-context.ts",
 ];
 
 /** Inline chains that remain, with the count and why they stay (S19b leftovers or not a price read). */
 const REMAINING: Record<string, { count: number; why: string }> = {
-  "buyer/buyer-dashboard.service.ts": {
-    count: 5,
-    why: "display tiles; no entitlements provider injected (S19b, a precondition for any grant)",
-  },
-  "customers/customer-price-history.service.ts": {
-    count: 2,
-    why: "display-only history reference tier (S19b)",
-  },
   "customers/customers.service.ts": {
     count: 1,
     why: "a write of the customer's own tier field, not a price read",
@@ -48,17 +44,13 @@ const REMAINING: Record<string, { count: number; why: string }> = {
     count: 1,
     why: 'the old-client Piece path (price: "pack") reads master\'s tier map; S19b A-7 proves the charged line or wires it',
   },
-  "orders/counter-sale/counter-sale-tier-price.ts": {
-    count: 2,
-    why: "audit-row baseline only; no entitlements (S19b)",
-  },
   "orders/replay-cart-normalize.ts": {
     count: 2,
-    why: "replay cart compare, old-client Piece normalization; S19b A-7 proves the charged line or wires it",
+    why: "replay cart compare only (never prices a line); the charged line is the layer's (orders.units-prices-v2.spec A-7)",
   },
   "orders/unit-line-edit.ts": {
     count: 2,
-    why: "normalizeDerivedBaseItems: the old-client Piece path reads master's tier; S19b A-7 proves the charged line or wires it",
+    why: "normalizeDerivedBaseItems tier for an old-client Piece echo; the charged line is the layer's (orders.update-units-prices-v2.spec A-7)",
   },
   "returns/inline-returns-quote.service.ts": {
     count: 2,

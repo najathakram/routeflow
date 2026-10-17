@@ -11,6 +11,7 @@ import {
   type PriceTier,
   type UnitRef,
 } from "@routeflow/pricing";
+import { asLadderProduct } from "../products/line-units";
 
 /**
  * Units S19 (SA-796 / SA-799 / SA-811 / SA-811a): what billing reads behind `flag.units_prices_v2`, so the price the new
@@ -75,17 +76,8 @@ const isOddTier = (t: unknown): boolean => {
 
 const str = (v: unknown): string | null => (v == null ? null : String(v));
 
-const ladderProductOf = (p: LayerProduct): LadderProduct => ({
-  unit: p.unit,
-  packLabel: p.packLabel,
-  baseUnitLabel: p.baseUnitLabel,
-  unitsPerBox: p.unitsPerBox == null ? null : Number(p.unitsPerBox),
-  pricePerUnit: str(p.pricePerUnit) ?? "0",
-  priceTier2: str(p.priceTier2),
-  priceTier3: str(p.priceTier3),
-  priceTier4: str(p.priceTier4),
-  priceTier5: str(p.priceTier5),
-});
+// the sanctioned Prisma-row -> ladder-product converter (the pack is never read inline: line-units-callsites ratchet)
+const ladderProductOf = (p: LayerProduct): LadderProduct => asLadderProduct(p);
 
 const ladderUnitOf = (u: any): LadderViewUnit => ({
   id: u.id,
@@ -104,6 +96,38 @@ const rowsOf = async (model: { findMany(a: any): Promise<any[]> } | undefined, a
   const out = await model.findMany(args);
   return Array.isArray(out) ? out : [];
 };
+
+/** The product-scope ladder view options: the order unit (the anchor), the per-tier anchors and the pack's Auto bits. */
+export function ladderOptionsOf(
+  product: Pick<LayerProduct, "orderUnitRef" | "packAuto">,
+  tierOrderUnits?: LadderViewOptions["tierOrderUnits"],
+): LadderViewOptions {
+  return {
+    orderUnit: product.orderUnitRef,
+    tierOrderUnits,
+    packAuto: product.packAuto,
+  };
+}
+
+/** Each product's per-tier order units (ProductTierUnit, tiers 2..5), read once for a set of products. */
+export async function loadTierOrderUnits(
+  db: Pick<UnitsPricesV2Deps["db"], "productTierUnit">,
+  tenantId: string | null | undefined,
+  productIds: readonly string[],
+): Promise<Map<string, NonNullable<LadderViewOptions["tierOrderUnits"]>>> {
+  const out = new Map<string, NonNullable<LadderViewOptions["tierOrderUnits"]>>();
+  if (productIds.length === 0) return out;
+  const rows = await rowsOf(db.productTierUnit, {
+    where: { tenantId: tenantId || undefined, productId: { in: [...productIds] } },
+  });
+  for (const t of rows) {
+    if (!t.orderUnitRef || !(t.tier >= 2 && t.tier <= 5)) continue;
+    const own = out.get(t.productId) ?? {};
+    own[t.tier as 2 | 3 | 4 | 5] = t.orderUnitRef;
+    out.set(t.productId, own);
+  }
+  return out;
+}
 
 /**
  * The flag-on pricing context for one customer and the products an operation touches, or null (flag off, nothing that
@@ -147,26 +171,19 @@ export async function loadUnitsPricesV2(
   }
   // The ladder of the products with a typed price (the customer shape needs every unit), read once.
   const typedIds = [...typedBy.keys()];
-  const [unitRows, tierRows] =
+  const [unitRows, tierUnitsBy] =
     typedIds.length > 0
       ? await Promise.all([
           rowsOf(db.productUnit, {
             where: { tenantId, productId: { in: typedIds } },
             orderBy: { sortOrder: "asc" },
           }),
-          rowsOf(db.productTierUnit, { where: { tenantId, productId: { in: typedIds } } }),
+          loadTierOrderUnits(db, tenantId, typedIds),
         ])
-      : [[], []];
+      : [[], new Map<string, NonNullable<LadderViewOptions["tierOrderUnits"]>>()];
   const unitsBy = new Map<string, LadderViewUnit[]>();
   for (const u of unitRows) {
     unitsBy.set(u.productId, [...(unitsBy.get(u.productId) ?? []), ladderUnitOf(u)]);
-  }
-  const tierUnitsBy = new Map<string, NonNullable<LadderViewOptions["tierOrderUnits"]>>();
-  for (const t of tierRows) {
-    if (!t.orderUnitRef || !(t.tier >= 2 && t.tier <= 5)) continue;
-    const own = tierUnitsBy.get(t.productId) ?? {};
-    own[t.tier as 2 | 3 | 4 | 5] = t.orderUnitRef;
-    tierUnitsBy.set(t.productId, own);
   }
   return {
     tierOf: (cp, customer) => customerTierFor(cp, customer),
@@ -175,11 +192,7 @@ export async function loadUnitsPricesV2(
       if (!typed) return null;
       const lp = ladderProductOf(product);
       const units = unitsBy.get(product.id) ?? [];
-      const viewOptions: LadderViewOptions = {
-        orderUnit: product.orderUnitRef,
-        tierOrderUnits: tierUnitsBy.get(product.id),
-        packAuto: product.packAuto,
-      };
+      const viewOptions = ladderOptionsOf(product, tierUnitsBy.get(product.id));
       try {
         const own = orderUnitRef
           ? resolveUnitDefault(buildLadderView(lp, units, viewOptions), { customer: orderUnitRef })

@@ -648,8 +648,9 @@ export const FEATURE_REGISTRY: readonly FeatureDef[] = [
         "POST /products/:productId/prices (product-pricing.controller.ts, class-level)",
         "POST /products/:productId/prices/undo (product-pricing.controller.ts, class-level)",
         "GET /customers/:customerId/unit-prices (customer-unit-prices.controller.ts, class-level)",
+        "GET /customers/:customerId/price-layer (customer-price-layer.controller.ts, class-level)",
         "products.service.ts create and importFromZoho, product-families.service.ts createFamily and updateVariants (hasFlag, S4)",
-        "S19 billing readers (customerPricing, orders/units-prices-v2.ts): orders.service.ts create, updateOrderItems (add, substitute, edit, replace-all, change-request add), getCustomerPriceHistory (pre-fill); unit-line-edit.ts; replace-all-line-build.ts; buyer-replace-keep.ts; invoice-line-override.ts (manual invoice lines); order-templates.service.ts; estimates.service.ts; buyer-catalog.service.ts (tile, detail, favorites); inline-returns-quote.service.ts",
+        "S19 billing readers (customerPricing, orders/units-prices-v2.ts): orders.service.ts create, updateOrderItems (add, substitute, edit, replace-all, change-request add), getCustomerPriceHistory (pre-fill); unit-line-edit.ts; replace-all-line-build.ts; buyer-replace-keep.ts; invoice-line-override.ts (manual invoice lines); order-templates.service.ts; estimates.service.ts; buyer-catalog.service.ts (tile, detail, favorites); inline-returns-quote.service.ts; S19b A1: buyer-dashboard.service.ts (tiles), customer-price-history.service.ts (reference price), counter-sale-tier-price.ts (audit baseline), manual-invoice-context.ts (old-client Piece), customer-unit-prices.service.ts (K6 parity)",
       ],
       grantPath:
         "No grant until S19b: every reader that shows or charges a customer price goes through the S19 helper and the no-direct-customer-tier-price pin is green (SA-811). Then: owner override GRANT per tenant after the 95/95 live check (S28); the local test tenant for proofs",

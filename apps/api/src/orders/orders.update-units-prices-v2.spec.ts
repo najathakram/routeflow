@@ -403,6 +403,26 @@ describe("OrdersService.updateOrderItems — billing reads typed customer unit p
     expect(entitlements.hasFlag).not.toHaveBeenCalledWith(expect.anything(), V2);
   });
 
+  it("A-7: an old client's derived Piece on a staff edit bills as the pack's pieces at the LAYER pack price", async () => {
+    flagV2(true);
+    typed(["pack", 8]);
+    await service.updateOrderItems(
+      "ord-1",
+      {
+        replaceAll: false,
+        items: [{ productId: "prod-case", unitLabel: "Piece", qty: 3 }],
+      } as never,
+      operatorPayload as never,
+    );
+    expect(written()[0]).toMatchObject({
+      boxes: 0,
+      pieces: 3,
+      unitPrice: 8,
+      priceType: "SPECIAL",
+      subtotal: 2,
+    });
+  });
+
   it("flag on: a SUBSTITUTE line takes the substitute product's typed pack price (SPECIAL), flag off master's", async () => {
     flagV2(true);
     typed(["pack", 8]);
