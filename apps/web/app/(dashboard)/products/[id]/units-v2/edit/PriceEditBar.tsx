@@ -5,6 +5,7 @@ import { createPortal } from "react-dom";
 import { FRAME_BORDER } from "../../ProductPricesGrid";
 import { StaleRevisionNotice } from "../confirm/StaleRevisionNotice";
 import { UNITS_V2_TESTIDS as T } from "../../units-v2-testids";
+import { useShellBottom } from "./useClearOfShellPadding";
 import { usePriceDraft } from "./usePriceDraft";
 
 const isMac = () => typeof navigator !== "undefined" && /Mac|iPhone|iPad/.test(navigator.platform);
@@ -13,14 +14,12 @@ export const BTN =
   "border-line-strong";
 
 /**
- * F22: the dashboard's `#main-content` is the scroller and has pb-24, and a sticky bar stops at its scroller's padding,
- * so left alone the bar floated 96px up and covered the Case and Piece rows when Edit first opened. The bar's `bottom`
- * is pulled down through that padding so it rests at the real bottom, and the scroller's scroll-padding-bottom is the
- * bar's measured height, so a price box that takes focus (Tab, a click) scrolls clear of the bar. Let go when the bar goes
- * (the same cure as the counter's checkout bar, #3500).
+ * F22: the dashboard's `#main-content` is the scroller; the scroller's scroll-padding-bottom is the bar's measured
+ * height, so a price box that takes focus (Tab, a click) scrolls clear of the bar. Let go when the bar goes (the same
+ * cure as the counter's checkout bar, #3500). The bar's own `bottom` (through the shell's pb-24) is the shared
+ * `useShellBottom`, the one rule the pinned saved line uses too.
  */
-function useClearOfShellPadding() {
-  const [inset, setInset] = React.useState(0);
+function useBarScrollPadding() {
   const [height, setHeight] = React.useState(0);
   const observer = React.useRef<ResizeObserver | null>(null);
   // A callback ref: the bar mounts only while editing, so the observer follows the element, and its height is 0 when gone.
@@ -39,14 +38,7 @@ function useClearOfShellPadding() {
   }, []);
   React.useEffect(() => {
     const main = document.getElementById("main-content");
-    if (!main) {
-      setInset(0);
-      return;
-    }
-    // The computed padding is always "<n>px" (read with Number(): the edit folder's guard spec keeps float parsers out).
-    const padding = Number(getComputedStyle(main).paddingBottom.replace("px", ""));
-    setInset(Number.isFinite(padding) ? padding : 0);
-    if (height === 0) return;
+    if (!main || height === 0) return;
     const before = main.style.getPropertyValue("scroll-padding-bottom");
     main.style.setProperty("scroll-padding-bottom", `${height}px`);
     return () => {
@@ -54,7 +46,7 @@ function useClearOfShellPadding() {
       else main.style.removeProperty("scroll-padding-bottom");
     };
   }, [height]);
-  return { ref, bottom: inset === 0 ? 0 : -inset };
+  return ref;
 }
 
 const FINISH_FIRST = "Finish Change prices first.";
@@ -78,7 +70,8 @@ export function PriceEditBar({ changePricesOpen = false }: { changePricesOpen?: 
   // that would be a second primary) steps aside, and Ctrl/Cmd+S says so instead of saving.
   const confirm = asking && !changePricesOpen;
   const [told, setTold] = React.useState(false);
-  const clear = useClearOfShellPadding();
+  const barRef = useBarScrollPadding();
+  const bottom = useShellBottom(d.editing);
   React.useEffect(() => {
     if (!d.editing) setConfirm(false);
   }, [d.editing]);
@@ -102,11 +95,11 @@ export function PriceEditBar({ changePricesOpen = false }: { changePricesOpen?: 
   const label = (ref: string) => d.grid?.rows.find((r) => r.ref === ref)?.label ?? ref;
   return (
     <div
-      ref={clear.ref}
+      ref={barRef}
       role="region"
       aria-label="Unsaved changes"
       data-testid={T.editbar}
-      style={{ bottom: `${clear.bottom}px` }}
+      style={{ bottom: `${bottom}px` }}
       className={`sticky z-30 mt-4 rounded-lg border bg-white/95 px-4 py-3 backdrop-blur ${FRAME_BORDER}`}
     >
       <div className="flex flex-wrap items-center justify-between gap-x-4 gap-y-2">
