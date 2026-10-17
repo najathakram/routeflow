@@ -61,6 +61,7 @@ import {
 import type {
   BusinessProfileApplyResponse,
   BusinessProfileBillingFailedAddon,
+  BusinessCapabilities,
   BusinessProfileListResponse,
   BusinessProfilePreviewResponse,
 } from "@routeflow/types";
@@ -775,6 +776,14 @@ export class PlatformAdminController {
   @ApiOperation({ summary: "The business profiles a platform admin can apply to a tenant" })
   listBusinessProfiles(): BusinessProfileListResponse {
     return this.businessProfiles.list();
+  }
+
+  @Get("tenants/:id/business-capabilities")
+  @ApiOperation({
+    summary: "The capability ticks (delivery, shipping, counter, door payments) for one tenant",
+  })
+  getBusinessCapabilities(@Param("id") id: string): Promise<BusinessCapabilities> {
+    return this.businessProfiles.capabilities(id);
   }
 
   @Post("tenants/:id/business-profile/preview")

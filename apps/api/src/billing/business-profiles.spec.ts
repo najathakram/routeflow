@@ -146,6 +146,14 @@ describe("business profile registry", () => {
       modes: { fulfilment_model: "pickup", counter_sales: "on" },
       grants: [],
       denies: FLEET_MODULES,
+      // BO-03: additive - what picking this preset pre-ticks
+      ticks: {
+        delivery: false,
+        doorPayments: false,
+        shipping: false,
+        counter: true,
+        opensAs: "counter",
+      },
     });
   });
 

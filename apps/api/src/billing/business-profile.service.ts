@@ -7,6 +7,7 @@ import {
   ServiceUnavailableException,
 } from "@nestjs/common";
 import type {
+  BusinessCapabilities,
   BusinessProfileListResponse,
   BusinessProfilePlan,
   BusinessProfilePreviewResponse,
@@ -19,7 +20,8 @@ import { AddonService } from "./addon.service";
 import { FeatureOverrideService } from "./feature-override.service";
 import { FeatureConfigService } from "./feature-config.service";
 import { FeaturePreviewService } from "./feature-preview.service";
-import { FLEET_KEYS, heldAddonKeys } from "./fulfilment-capability";
+import { FLEET_KEYS, heldAddonKeys, readFulfilmentInputs } from "./fulfilment-capability";
+import { capabilitiesFromInputs } from "./business-capabilities";
 import { addonCodeOf, findAddonRow } from "./addon-row";
 import {
   BUSINESS_PROFILES,
@@ -88,6 +90,39 @@ export class BusinessProfileService {
 
   list(): BusinessProfileListResponse {
     return { profiles: BUSINESS_PROFILES.map(toBusinessProfileSummary) };
+  }
+
+  /**
+   * BO-03: the ticks for one tenant, read back (read-only). Fulfilment facts come from `readFulfilmentInputs`
+   * and `capabilityFromInputs`; `driver_payments` is held the way `currentState` reads it (an active
+   * override is absolute, else the add-on rows). 404 for a missing tenant.
+   */
+  async capabilities(tenantId: string): Promise<BusinessCapabilities> {
+    const tenant = await this.prisma.tenant.findUnique({
+      where: { id: tenantId },
+      select: { id: true },
+    });
+    if (!tenant) throw new NotFoundException(`Tenant ${tenantId} not found.`);
+    const inputs = await readFulfilmentInputs(
+      {
+        featureConfig: this.featureConfig,
+        addonService: this.addons,
+        featureOverrides: this.featureOverrides,
+      },
+      tenantId,
+    );
+    const now = Date.now();
+    const rows = await this.featureOverrides.list(tenantId);
+    const override = rows.find(
+      (r) =>
+        r.tenantId === tenantId &&
+        r.featureKey === "driver_payments" &&
+        !r.revokedAt &&
+        !(r.expiresAt && r.expiresAt.getTime() <= now),
+    );
+    const held = await heldAddonKeys(this.addons, this.featureOverrides, tenantId);
+    const doorPayments = override ? override.effect === "GRANT" : held.has("driver_payments");
+    return capabilitiesFromInputs(inputs, doorPayments ? ["driver_payments"] : []);
   }
 
   /**

@@ -1,6 +1,7 @@
 import type { BusinessProfilePlan, BusinessProfileSummary } from "@routeflow/types";
 import { FEATURE_REGISTRY } from "./feature-registry";
 import { FLEET_KEYS } from "./fulfilment-capability";
+import { presetTicks } from "./business-capabilities";
 import { API_ERROR_CODES } from "../common/api-error-codes";
 
 /**
@@ -113,6 +114,7 @@ export function toBusinessProfileSummary(def: BusinessProfileDef): BusinessProfi
     modes: { ...def.modes },
     grants: def.fleet ? [...PROFILE_MODULE_KEYS] : [],
     denies: def.fleet ? [] : [...PROFILE_MODULE_KEYS],
+    ticks: presetTicks(def),
   };
 }
 

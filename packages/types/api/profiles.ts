@@ -32,6 +32,36 @@ export interface BusinessProfileSummary {
   /** Module keys the profile turns on / off. */
   grants: string[];
   denies: string[];
+  /** The capability ticks this preset pre-ticks (BO-03): the same tuple `matchedPreset` compares against. */
+  ticks: BusinessCapabilityTicks;
+}
+
+/**
+ * The tuple a preset is matched on (BO-03): what a tenant "does". `doorPayments` is the `driver_payments`
+ * module; `opensAs` is where new staff orders open.
+ */
+export interface BusinessCapabilityTicks {
+  delivery: boolean;
+  doorPayments: boolean;
+  shipping: boolean;
+  counter: boolean;
+  opensAs: "order" | "counter";
+}
+
+/**
+ * `GET /platform-admin/tenants/:id/business-capabilities` (BO-03): the checkboxes, read back from the server.
+ * `configured: false` (a legacy `unset` tenant) means every tick is false: nothing is shown ticked until confirmed.
+ */
+export interface BusinessCapabilities extends BusinessCapabilityTicks {
+  configured: boolean;
+  /** Shipping + Counter without Delivery is the only combination where staff may pick Order or Counter. */
+  opensAsChoosable: boolean;
+  /** The counter capability: always (in-store mode), optional (`counter_sales` on), or off. */
+  counterCapability: "always" | "optional" | "off";
+  /** Either fleet module (routes, order delivery) is held. */
+  fleetHeld: boolean;
+  /** The preset whose ticks match exactly, else null (also null when not configured). */
+  matchedPreset: BusinessProfileKey | null;
 }
 
 export interface BusinessProfileListResponse {

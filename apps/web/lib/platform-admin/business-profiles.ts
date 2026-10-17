@@ -2,6 +2,7 @@
 // like ./features.ts. The contract is packages/types/api/profiles.ts; nothing here redeclares a shape from it.
 import { superAdminClient } from "@/lib/admin-api";
 import type {
+  BusinessCapabilities,
   ConfirmBusinessProfileRequest,
   BusinessProfileApplyResponse,
   BusinessProfileKey,
@@ -17,6 +18,14 @@ export async function fetchBusinessProfiles(): Promise<BusinessProfileSummary[]>
     "/platform-admin/business-profiles",
   );
   return Array.isArray(res.data?.profiles) ? res.data.profiles : [];
+}
+
+/** `GET /platform-admin/tenants/:id/business-capabilities` — the ticks, read back from the server (BO-03). */
+export async function fetchBusinessCapabilities(tenantId: string): Promise<BusinessCapabilities> {
+  const res = await superAdminClient.get<BusinessCapabilities>(
+    `/platform-admin/tenants/${tenantId}/business-capabilities`,
+  );
+  return res.data;
 }
 
 /** `POST /platform-admin/tenants/:id/business-profile/preview` — a dry run: writes nothing. */
