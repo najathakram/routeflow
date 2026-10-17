@@ -8,7 +8,13 @@ import { formatMoney } from "@/lib/format";
 import { UNITS_V2_TESTIDS } from "../../units-v2-testids";
 import { usePriceDraft } from "../edit/usePriceDraft";
 import { rulesFromGrid, viewFromGrid } from "../edit/view-from-grid";
-import { AddUnitPanel, RemoveUnitControl, ResetToAutoPanel, type AddedUnit } from "../units";
+import {
+  AddUnitPanel,
+  DIRTY_HINT,
+  RemoveUnitControl,
+  ResetToAutoPanel,
+  type AddedUnit,
+} from "../units";
 
 /**
  * K10d: K7's unit panels mounted in the v2 shell (V15, V17). Everything here reads the ONE shared price draft:
@@ -19,6 +25,21 @@ import { AddUnitPanel, RemoveUnitControl, ResetToAutoPanel, type AddedUnit } fro
 
 const PRICE_NOT_KEPT = "Unit added. Type its price in the grid.";
 
+/**
+ * K11-19: the two openers share one row (8px gap; wrap on a narrow screen). An opened panel takes the full row below
+ * them: the panel is inside its opener's item, so the ROW keys on `:has(panel)` and AddUnitPanel / ResetToAutoPanel stay
+ * untouched. When both are open they stack in the order they were opened: the later one gets a higher `order`, read from
+ * `data-last-opened`, which the row sets from the opener clicks.
+ */
+const ADD_PANEL = "[data-testid=units-v2-add-panel]";
+const RESET_PANEL = "[data-testid=units-v2-reset-panel]";
+const OPENER_ROW =
+  "mt-3 flex flex-wrap items-start gap-2 " +
+  `has-[${ADD_PANEL}]:[&>*]:order-last has-[${ADD_PANEL}]:[&>*]:basis-full ` +
+  `has-[${RESET_PANEL}]:[&>*]:order-last has-[${RESET_PANEL}]:[&>*]:basis-full ` +
+  `[&[data-last-opened=add]>*:has(${ADD_PANEL})]:order-[10000] ` +
+  `[&[data-last-opened=reset]>*:has(${RESET_PANEL})]:order-[10000]`;
+
 /** Add a unit + Reset all to Auto, above the grid. */
 export function UnitStructureControls({ productId }: { productId: string }) {
   const draft = usePriceDraft();
@@ -27,6 +48,10 @@ export function UnitStructureControls({ productId }: { productId: string }) {
   const [pendingPrice, setPendingPrice] = React.useState<AddedUnit | null>(null);
   const [note, setNote] = React.useState("");
   const [focusBar, setFocusBar] = React.useState(false);
+  // K11-19: which opener was used last, so two open panels stack in opener order (see OPENER_ROW).
+  // K11-19: the one unsaved-changes hint for the opener row; both disabled openers point at it.
+  const hintId = React.useId();
+  const [lastOpened, setLastOpened] = React.useState<"add" | "reset" | null>(null);
 
   // F07: the grid's "Add the Piece unit first" pointer opens this panel by clicking its opener, so the panel cannot tell
   // that path from a plain open. Note the pointer click in the capture phase (it runs before the pointer's own handler),
@@ -94,7 +119,11 @@ export function UnitStructureControls({ productId }: { productId: string }) {
 
   // The note is a live region: mounted before it has anything to say, so a screen reader announces the text.
   const noteRegion = (
-    <p role="status" data-testid="units-v2-add-note" className="text-sm text-navy/80">
+    <p
+      role="status"
+      data-testid="units-v2-add-note"
+      className={note ? "mt-2 text-sm text-navy/80" : "text-sm text-navy/80"}
+    >
       {note}
     </p>
   );
@@ -111,42 +140,62 @@ export function UnitStructureControls({ productId }: { productId: string }) {
   const reset = resetPreview(served);
 
   return (
-    <div data-testid="units-v2-structure" className="mb-3 space-y-3">
-      <AddUnitPanel
-        productId={productId}
-        baseLabel={base?.label ?? "Piece"}
-        ofUnits={ofUnits}
-        dirty={draft.dirty}
-        pieceMissing={pieceMissing}
-        prefillPiece={prefillPiece}
-        validatePrice={cellPriceProblem}
-        onOpen={() => {
-          setNote("");
-          setPrefillPiece(fromPointer.current);
-          fromPointer.current = false;
+    <div data-testid="units-v2-structure" className="mb-3">
+      <div
+        data-testid="units-v2-structure-row"
+        data-last-opened={lastOpened ?? undefined}
+        className={OPENER_ROW}
+        onClickCapture={(e) => {
+          const hit = e.target instanceof Element ? e.target : null;
+          if (hit?.closest('[data-testid="units-v2-add-open"]')) setLastOpened("add");
+          else if (hit?.closest('[data-testid="units-v2-reset-open"]')) setLastOpened("reset");
         }}
-        onAdded={(added) => {
-          setNote("");
-          if (added.price !== "") setPendingPrice(added);
-        }}
-      />
-      {noteRegion}
-      {reset.rows.length > 0 && (
-        <ResetToAutoPanel
-          disabled={draft.dirty}
-          onApply={() => {
-            if (draft.dirty) return;
-            // The draft's reset only fills the draft: open edit mode too, so the save bar is there to Save or Cancel.
-            draft.startEditing();
-            draft.resetAllToAuto();
-            setFocusBar(true);
-          }}
-          changedCount={reset.rows.length}
-          anchorName={anchor?.label}
+      >
+        <AddUnitPanel
+          productId={productId}
+          baseLabel={base?.label ?? "Piece"}
+          ofUnits={ofUnits}
           dirty={draft.dirty}
-          preview={<ResetPreview rows={reset.rows} />}
+          hideHint
+          hintId={hintId}
+          pieceMissing={pieceMissing}
+          prefillPiece={prefillPiece}
+          validatePrice={cellPriceProblem}
+          onOpen={() => {
+            setNote("");
+            setPrefillPiece(fromPointer.current);
+            fromPointer.current = false;
+          }}
+          onAdded={(added) => {
+            setNote("");
+            if (added.price !== "") setPendingPrice(added);
+          }}
         />
+        {reset.rows.length > 0 && (
+          <ResetToAutoPanel
+            disabled={draft.dirty}
+            onApply={() => {
+              if (draft.dirty) return;
+              // The draft's reset only fills the draft: open edit mode too, so the save bar is there to Save or Cancel.
+              draft.startEditing();
+              draft.resetAllToAuto();
+              setFocusBar(true);
+            }}
+            changedCount={reset.rows.length}
+            anchorName={anchor?.label}
+            dirty={draft.dirty}
+            hideHint
+            hintId={hintId}
+            preview={<ResetPreview rows={reset.rows} />}
+          />
+        )}
+      </div>
+      {draft.dirty && (
+        <p id={hintId} className="mt-2 text-xs text-navy/70" data-testid="units-v2-structure-hint">
+          {DIRTY_HINT}
+        </p>
       )}
+      {noteRegion}
     </div>
   );
 }
