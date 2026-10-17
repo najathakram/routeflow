@@ -6,7 +6,6 @@ import { Button } from "@routeflow/ui/web";
 import { UNITS_V2_CONFIRM_TESTIDS as IDS } from "./confirm-testids";
 import type { UndoSkipCell } from "@routeflow/types";
 import type { LastSave, UndoConflict, UndoFn, UndoPreviewRow } from "./types";
-import { useShellBottom } from "../edit/useClearOfShellPadding";
 import { useEscapeCloses } from "./useEscapeCloses";
 
 /** K11-16: how long the saved line holds the Edit bar's slot, and the fade that lets go of it. */
@@ -104,12 +103,65 @@ function reduce(s: State, a: Action): State {
   }
 }
 
-/** The bar's current look (PriceEditBar: sticky, rounded-lg border, bg-white/95 + blur, px-4 py-3, off the content edge). */
+/**
+ * The bar's current look (rounded-lg border, bg-white/95 + blur, px-4 py-3), but `fixed`: a sticky element only sticks
+ * inside its containing block, and this line sits right after the grid, so a sticky line stopped where its section ends.
+ * Fixed docks it at the viewport bottom whatever the page above it is; `usePinnedBox` gives it the content column's
+ * left/width and the gap under the shell's scroller.
+ */
 const PINNED_CLASS =
-  "sticky z-30 mt-4 flex flex-wrap items-center gap-2 rounded-lg border border-surface-border bg-white/95 px-4 py-3 text-[13px] text-navy backdrop-blur focus:outline-none";
+  "fixed z-30 flex flex-wrap items-center gap-2 rounded-lg border border-surface-border bg-white/95 px-4 py-3 text-[13px] text-navy backdrop-blur focus:outline-none";
 const FADING_CLASS = " opacity-0 transition-opacity duration-150 motion-reduce:transition-none";
 const SETTLED_CLASS =
   "mt-2 flex flex-wrap items-center gap-2 rounded-ctl border border-line bg-surface-raised px-3 py-2 text-[13px] text-navy focus:outline-none";
+
+interface PinnedBox {
+  bottom: number;
+  left?: number;
+  width?: number;
+}
+
+const px = (v: string) =>
+  Number.isFinite(Number(v.replace("px", ""))) ? Number(v.replace("px", "")) : 0;
+
+/**
+ * Where the fixed saved line goes: `bottom` is the gap between the shell's scroller (`#main-content`) and the viewport
+ * bottom (0 with no shell), so it rests exactly where the sticky bar does; `left` / `width` are the line's own parent's
+ * content box, so it stays in the page's content column. Re-measured on resize while pinned.
+ */
+function usePinnedBox(active: boolean, line: React.RefObject<HTMLElement>): PinnedBox {
+  const [box, setBox] = React.useState<PinnedBox>({ bottom: 0 });
+  React.useLayoutEffect(() => {
+    if (!active) return undefined;
+    const measure = () => {
+      const main = document.getElementById("main-content");
+      const bottom = main
+        ? Math.max(0, Math.round(window.innerHeight - main.getBoundingClientRect().bottom))
+        : 0;
+      const parent = line.current?.parentElement;
+      const next: PinnedBox = { bottom };
+      if (parent) {
+        const rect = parent.getBoundingClientRect();
+        const cs = getComputedStyle(parent);
+        const left = rect.left + px(cs.paddingLeft);
+        const width = rect.width - px(cs.paddingLeft) - px(cs.paddingRight);
+        if (width > 0) {
+          next.left = Math.round(left);
+          next.width = Math.round(width);
+        }
+      }
+      setBox((prev) =>
+        prev.bottom === next.bottom && prev.left === next.left && prev.width === next.width
+          ? prev
+          : next,
+      );
+    };
+    measure();
+    window.addEventListener("resize", measure);
+    return () => window.removeEventListener("resize", measure);
+  }, [active, line]);
+  return box;
+}
 
 const prefersReducedMotion = () =>
   typeof window !== "undefined" &&
@@ -194,7 +246,7 @@ export function PriceSaveStatusLine({
     const t = setTimeout(() => dispatch({ type: "unpin" }), FADE_MS);
     return () => clearTimeout(t);
   }, [state.pin]);
-  const shellBottom = useShellBottom(pinned);
+  const box = usePinnedBox(pinned, lineRef);
 
   const onUndoClick = () => {
     if (previewing) return close();
@@ -270,7 +322,13 @@ export function PriceSaveStatusLine({
         data-pinned={
           phase === "saved" ? (state.pin === "fading" ? "settling" : String(pinned)) : "false"
         }
-        style={pinned ? { bottom: `${shellBottom}px` } : undefined}
+        style={
+          pinned
+            ? box.width !== undefined
+              ? { bottom: `${box.bottom}px`, left: `${box.left}px`, width: `${box.width}px` }
+              : { bottom: `${box.bottom}px`, left: 0, right: 0 }
+            : undefined
+        }
         onMouseEnter={() => setHover(true)}
         onMouseLeave={() => setHover(false)}
         onFocus={() => setFocusIn(true)}

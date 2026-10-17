@@ -35,7 +35,7 @@ function Section() {
 const savedRegions = () =>
   screen.queryAllByRole("status").filter((n) => /Saved/.test(n.textContent ?? ""));
 const line = () => screen.getByTestId("units-v2-save-status");
-const isPinned = () => line().className.split(/\s+/).includes("sticky");
+const isPinned = () => line().className.split(/\s+/).includes("fixed");
 const save = (id: string) => act(() => setSave(mk(id)));
 const tick = (ms: number) => act(() => void jest.advanceTimersByTime(ms));
 
@@ -70,7 +70,9 @@ describe("K11-16: the saved line takes the bar's slot for 5 s", () => {
     expect(savedRegions()).toHaveLength(1);
     expect(savedRegions()[0]).toBe(line());
     const cls = line().className.split(/\s+/);
-    for (const c of ["sticky", "bg-white/95", "backdrop-blur"]) expect(cls).toContain(c);
+    for (const c of ["fixed", "bg-white/95", "backdrop-blur"]) expect(cls).toContain(c);
+    // A sticky line only sticks inside its own (short) section, so it never reached the viewport bottom.
+    expect(cls).not.toContain("sticky");
   });
 
   it("N1: the pinned line has the bar's CURRENT look: a rounded-lg border, off the content edge (no -mx-4 / border-t)", () => {
@@ -181,7 +183,7 @@ describe("K11-16: the saved line takes the bar's slot for 5 s", () => {
     const order: string[] = [];
     Element.prototype.scrollIntoView = jest.fn(function (this: Element, arg?: unknown) {
       order.push(
-        `scroll:${JSON.stringify(arg)}:pinned=${this.className.split(/\s+/).includes("sticky")}`,
+        `scroll:${JSON.stringify(arg)}:pinned=${this.className.split(/\s+/).includes("fixed")}`,
       );
     });
     undo.mockImplementationOnce(() => {
@@ -210,19 +212,49 @@ describe("K11-16: the saved line takes the bar's slot for 5 s", () => {
     expect(isPinned()).toBe(false);
   });
 
-  it("rests at the real bottom: the pinned line pulls down through the shell's bottom padding (F22)", () => {
-    const main = document.createElement("div");
-    main.id = "main-content";
-    main.style.paddingBottom = "96px";
-    document.body.appendChild(main);
-    render(<Section />);
-    save("a1");
-    expect(line().style.bottom).toBe("-96px");
-  });
+  describe("docked to the viewport bottom (it must not sit where its section ends)", () => {
+    const rectOf = (r: Partial<DOMRect>) =>
+      ({ top: 0, left: 0, right: 0, bottom: 0, width: 0, height: 0, x: 0, y: 0, ...r }) as DOMRect;
+    let spy: jest.SpyInstance;
+    afterEach(() => spy?.mockRestore());
+    const mockRects = (main: Partial<DOMRect> | null, column: Partial<DOMRect>) => {
+      spy = jest.spyOn(Element.prototype, "getBoundingClientRect").mockImplementation(function (
+        this: Element,
+      ) {
+        if (this.id === "main-content" && main) return rectOf(main);
+        if (this.tagName === "SECTION") return rectOf(column);
+        return rectOf({});
+      });
+    };
 
-  it("has no bottom offset when there is no shell padding", () => {
-    render(<Section />);
-    save("a1");
-    expect(line().style.bottom).toBe("0px");
+    it("is position: fixed (one node), bottom = the gap under #main-content, left/width = the content column", () => {
+      const main = document.createElement("div");
+      main.id = "main-content";
+      document.body.appendChild(main);
+      Object.defineProperty(window, "innerHeight", { configurable: true, value: 900 });
+      mockRects({ bottom: 880 }, { left: 280, width: 760 });
+      render(<Section />);
+      save("a1");
+      expect(savedRegions()).toHaveLength(1);
+      const el = line();
+      expect(el.className.split(/\s+/)).toContain("fixed");
+      expect(el.style.bottom).toBe("20px");
+      expect(el.style.left).toBe("280px");
+      expect(el.style.width).toBe("760px");
+      tick(5000);
+      tick(200);
+      // Settled: the same node, back in the flow, with no fixed geometry left over.
+      expect(line()).toBe(el);
+      expect(el.className.split(/\s+/)).not.toContain("fixed");
+      expect(el.style.bottom).toBe("");
+      expect(el.style.left).toBe("");
+    });
+
+    it("sits flush at the viewport bottom when there is no shell", () => {
+      mockRects(null, { left: 0, width: 500 });
+      render(<Section />);
+      save("a1");
+      expect(line().style.bottom).toBe("0px");
+    });
   });
 });
