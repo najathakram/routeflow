@@ -34,8 +34,8 @@ export const FULFILMENT_MODE_LABELS: Record<FulfilmentMode, string> = {
   delivery: "Own delivery: orders go out on the business's own trucks",
   ship: "Ship by carrier: orders are shipped, not delivered",
   both: "Own delivery and carrier shipping",
-  pickup: "In store only: customers collect at the counter",
-  pickup_ship: "In store + shipping: counter sales and carrier shipping",
+  pickup: "Counter only: customers collect at the counter",
+  pickup_ship: "Counter + shipping: counter sales and carrier shipping",
 };
 
 /** A stored mode this build does not know: say so rather than print the raw value. */

@@ -65,6 +65,14 @@ describe("SetupSummary — the tenant's current setup in plain English", () => {
     expect(screen.getByText("Loading this tenant's setup...")).toBeInTheDocument();
   });
 
+  it("BO-11: the fulfilment row reads 'Where orders go', the registry's own label", async () => {
+    setup({ fulfilment: "ship" }, {});
+    render(<SetupSummary tenantId={TENANT_ID} />);
+    await screen.findByText("Ship by carrier: orders are shipped, not delivered");
+    expect(screen.getByText("Where orders go")).toBeInTheDocument();
+    expect(screen.queryByText("Fulfilment model")).not.toBeInTheDocument();
+  });
+
   it("a delivery distributor: own delivery, fleet on, counter off", async () => {
     setup(
       { fulfilment: "delivery" },

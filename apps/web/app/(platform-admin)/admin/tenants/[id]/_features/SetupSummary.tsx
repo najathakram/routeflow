@@ -103,7 +103,7 @@ function SetupBody({ setup }: { setup: Setup }) {
       <dl className="flex flex-col gap-3 text-sm">
         <div className="flex flex-col gap-0.5">
           <dt className="text-xs font-medium uppercase tracking-wider text-slate-400">
-            Fulfilment model
+            Where orders go
           </dt>
           <dd className="text-slate-200">{fulfilmentModeLabel(setup.fulfilmentValue)}</dd>
         </div>

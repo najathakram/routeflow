@@ -221,10 +221,10 @@ describe("SA-2 plain profile choices", () => {
   it("only the SELECTED choice expands its bullets and muted profile id", async () => {
     await renderPage();
     expect(screen.queryByText("Counter in the menu")).toBeNull();
-    fireEvent.click(screen.getByRole("radio", { name: /POS only: counter sales/ }));
+    fireEvent.click(screen.getByRole("radio", { name: /^Counter sales/ }));
     expect(screen.getByText("What this business will see")).toBeInTheDocument();
     expect(screen.getByText("Counter in the menu")).toBeInTheDocument();
-    expect(screen.getByText("Orders are in-store pickup only")).toBeInTheDocument();
+    expect(screen.getByText("Orders are collected at the counter only")).toBeInTheDocument();
     expect(screen.getByText("No routes, delivery or driver payments")).toBeInTheDocument();
     expect(screen.getByText("Profile ID: in_store_retailer")).toBeInTheDocument();
     fireEvent.click(screen.getByRole("radio", { name: /Shipping only/ }));
