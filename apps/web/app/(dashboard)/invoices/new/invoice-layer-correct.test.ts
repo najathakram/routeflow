@@ -16,6 +16,9 @@ const line = (over: Record<string, unknown> = {}) => ({
   unitPrice: 22,
   listPrice: 24,
   priceType: "SPECIAL" as const,
+  packBase: { unit: "Box", unitsPerBox: 24 } as { unit: string; unitsPerBox: number } | undefined,
+  isSpecialPrice: true,
+  regularPrice: 24,
   pricing: { tierPrice: 22, listPrice: 24, isSpecialTier: true },
   ...over,
 });
@@ -56,5 +59,22 @@ describe("correctLayerLevelLines", () => {
       }),
     ];
     expect(correctLayerLevelLines(lines, () => LAYER)).toBe(lines);
+  });
+
+  it("a unit line with no packBase (an old or corrupt draft) gets no correction", () => {
+    const lines = [line({ packBase: undefined })];
+    expect(correctLayerLevelLines(lines, () => LAYER)).toBe(lines);
+  });
+
+  it("stale isSpecialPrice / regularPrice alone make a line 'changed' and are rewritten", () => {
+    const onLayer = {
+      unitPrice: 21,
+      pricing: { tierPrice: 21, listPrice: 24, isSpecialTier: true },
+    };
+    const [out] = correctLayerLevelLines(
+      [line({ ...onLayer, isSpecialPrice: false, regularPrice: undefined })],
+      () => LAYER,
+    );
+    expect(out).toMatchObject({ isSpecialPrice: true, regularPrice: 24 });
   });
 });

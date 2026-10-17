@@ -3,6 +3,7 @@ import type { CustomerLinePrice } from "@routeflow/pricing";
 /** The line fields the layer correction reads and writes (structurally satisfied by the page's line). */
 interface LayerCorrectable {
   unitLabel?: string;
+  packBase?: unknown;
   priceEdited?: boolean;
   unitPrice: number;
   listPrice?: number;
@@ -24,13 +25,16 @@ export function correctLayerLevelLines<T extends LayerCorrectable>(
 ): T[] {
   let changed = false;
   const next = lines.map((it) => {
-    if (!it.unitLabel || it.priceEdited) return it;
+    // No pack snapshot (an old or corrupt draft): the unit cannot be matched to a layer row safely.
+    if (!it.unitLabel || it.priceEdited || !it.packBase) return it;
     const r = lineFor(it);
     if (!r) return it;
     if (
       r.price === it.unitPrice &&
       r.listPrice === it.listPrice &&
       r.priceType === it.priceType &&
+      it.isSpecialPrice === (r.price !== r.listPrice) &&
+      it.regularPrice === (r.price !== r.listPrice ? r.listPrice : undefined) &&
       it.pricing?.tierPrice === r.price &&
       it.pricing?.listPrice === r.listPrice
     )
