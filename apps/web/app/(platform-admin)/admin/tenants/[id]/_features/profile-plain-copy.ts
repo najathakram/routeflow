@@ -19,7 +19,7 @@ const PLAIN_PROFILES: Record<string, PlainProfile> = {
     bullets: [
       "Routes, ad hoc delivery and at-door payments in the menu",
       "Orders go out on the business's own trucks",
-      "Counter sales are left as they are",
+      "No counter sales",
     ],
   },
   shipping_wholesaler: {
@@ -32,25 +32,25 @@ const PLAIN_PROFILES: Record<string, PlainProfile> = {
     ],
   },
   in_store_retailer: {
-    name: "POS only: counter sales",
-    line: "Sells over the counter. Customers pick up in store. No delivery or shipping.",
+    name: "Counter sales only",
+    line: "Sells over the counter. No delivery or shipping.",
     bullets: [
       "Counter in the menu",
-      "Orders are in-store pickup only",
+      "Orders are collected at the counter only",
       "No routes, delivery or driver payments",
     ],
   },
   in_store_shipping_retailer: {
-    name: "POS + shipping",
+    name: "Counter + shipping",
     line: "Sells over the counter and ships by carrier.",
     bullets: [
       "Counter in the menu",
-      "Orders are in-store pickup or carrier shipping",
+      "Orders are collected at the counter or shipped by carrier",
       "No routes, delivery or driver payments",
     ],
   },
   delivery_pos: {
-    name: "Delivery + POS",
+    name: "Delivery + counter",
     line: "Delivers on its own trucks and also sells over the counter.",
     bullets: [
       "Routes, ad hoc delivery and at-door payments in the menu",

@@ -485,11 +485,11 @@ describe("SA-1: plain profile names", () => {
     ).toBeInTheDocument();
     const ship = screen.getByRole("radio", { name: /Shipping wholesaler/ }).closest("label")!;
     expect(within(ship).getByText("Shipping only")).toBeInTheDocument();
-    const pos = screen.getByRole("radio", { name: /^POS only: counter sales/ }).closest("label")!;
+    const pos = screen.getByRole("radio", { name: /^Counter sales/ }).closest("label")!;
     expect(
-      within(pos).getByText(/Sells over the counter\. Customers pick up in store/),
+      within(pos).getByText(/Sells over the counter\. No delivery or shipping/),
     ).toBeInTheDocument();
-    expect(screen.getByRole("radio", { name: /^POS \+ shipping/ })).toBeInTheDocument();
+    expect(screen.getByRole("radio", { name: /^Counter \+ shipping/ })).toBeInTheDocument();
   });
 
   it("an unknown profile key falls back to the server label and description", async () => {
