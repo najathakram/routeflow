@@ -11,6 +11,11 @@
  *     written (M3);
  *   - an edit landing between plan and apply on real PG is skipped and reported, never overwritten (M4
  *     + compare-and-set).
+ *   - SA-810 (the 200-unit cap): a system writer never refuses and never exceeds 200 ACTIVE units. A
+ *     tenant at 195 with 10 new names gets 5 and the other 5 are reported and left unlinked; a tenant
+ *     already at 230 gets none and keeps every row; archived units do not count;
+ *   - the unit-name key is the units service's (NFC, trim, case-fold), and the database's own
+ *     `lower()` agrees with it on the stored keys (ÉTUI, NFD and NFC Café, NBSP, Straße).
  * Runs only under `npm run local:test:db`. Output never names a tenant, slug or row id.
  */
 import { spawnSync } from "node:child_process";
@@ -74,7 +79,7 @@ describeDb("tenant unit backfill (U-6)", () => {
     url = requireLocalDatabaseUrl();
     pool = new Pool({ connectionString: url });
     prisma = new PrismaClient({ adapter: new PrismaPg(pool) });
-    for (const k of ["a", "ctl", "p", "edit", "arch", "pk"]) {
+    for (const k of ["a", "ctl", "p", "edit", "arch", "pk", "cap", "over", "key"]) {
       ids[k] = (await prisma.tenant.create({ data: { slug: slug(k), name: `u6 ${k}` } })).id;
     }
     // Tenant A: casing "Case" wins 2:1, a synonym level, a too-long level, legacy words.
@@ -315,5 +320,98 @@ describeDb("tenant unit backfill (U-6)", () => {
     expect(
       (await prisma.tenantUnit.findUnique({ where: { id: archived.id } }))?.archivedAt,
     ).not.toBeNull();
+  });
+
+  describe("SA-810: the 200-unit cap (a system writer)", () => {
+    const seedUnits = (tenantId: string, active: number, archived = 0) =>
+      prisma.tenantUnit.createMany({
+        data: [
+          ...Array.from({ length: active }, (_, i) => ({
+            tenantId,
+            name: `Have${i}`,
+            nameKey: `have${i}`,
+          })),
+          ...Array.from({ length: archived }, (_, i) => ({
+            tenantId,
+            name: `Old${i}`,
+            nameKey: `old${i}`,
+            archivedAt: new Date(),
+          })),
+        ],
+      });
+    const activeCount = (tenantId: string) =>
+      prisma.tenantUnit.count({ where: { tenantId, archivedAt: null } });
+
+    it("195 active + 10 new names: 5 created, 5 reported by name, those levels left unlinked", async () => {
+      const t = ids.cap;
+      await seedUnits(t, 195, 30); // 30 archived units must not count against the cap
+      for (let i = 0; i < 10; i++) await product(t, `cap${i}`, `Capword${i}`, [[`Capword${i}`, 6]]);
+      const before = await products(t);
+
+      const dry = cli(t);
+      expect(dry.status).toBe(0);
+      expect(dry.stdout).toContain("overflow=5");
+      expect(dry.stdout).toContain("the tenant is at the 200-unit cap");
+      expect(await activeCount(t)).toBe(195);
+
+      const r = cli(t, "--apply");
+      expect(r.status).toBe(0);
+      expect(r.stdout).toContain("tenantUnits created=5 existing=0 overflow=5");
+      expect(r.stdout).not.toMatch(/[0-9a-f]{8}-[0-9a-f]{4}/);
+      expect(await activeCount(t)).toBe(200);
+      expect(await products(t)).toBe(before);
+      const levels = await prisma.productUnit.findMany({ where: { tenantId: t } });
+      expect(levels.filter((l) => l.tenantUnitId !== null)).toHaveLength(5);
+      expect(levels.filter((l) => l.tenantUnitId === null)).toHaveLength(5);
+
+      // a re-run adds nothing: the tenant is full now, and the report names the same 5
+      const again = cli(t, "--apply");
+      expect(again.status).toBe(0);
+      expect(again.stdout).toContain("tenantUnits created=0");
+      expect(again.stdout).toContain("overflow=5");
+      expect(await activeCount(t)).toBe(200);
+    });
+
+    it("a tenant already at 230 is grandfathered: 0 new units, no row removed, existing names still link", async () => {
+      const t = ids.over;
+      await seedUnits(t, 230);
+      await product(t, "o1", "Zed", [["Zed", 6]]);
+      const have = await product(t, "o2", "Have3", [["HAVE3", 12]]);
+      const r = cli(t, "--apply");
+      expect(r.status).toBe(0);
+      expect(r.stdout).toContain("tenantUnits created=0 existing=1 overflow=1");
+      expect(await prisma.tenantUnit.count({ where: { tenantId: t } })).toBe(230);
+      const linked = await prisma.productUnit.findUnique({ where: { id: have.units["HAVE3"] } });
+      expect(linked?.tenantUnitId).not.toBeNull();
+      const zed = await prisma.productUnit.findFirst({ where: { tenantId: t, label: "Zed" } });
+      expect(zed?.tenantUnitId).toBeNull();
+    });
+  });
+
+  it("keys unit names as the units service does: NFC, trim, case-fold, and the database agrees", async () => {
+    const t = ids.key;
+    const labels = [
+      "Caf\u00e9",
+      "Cafe\u0301",
+      "\u00c9TUI",
+      "E\u0301tui",
+      "\u00a0Crate\u00a0",
+      "Stra\u00dfe",
+      "STRASSE",
+    ];
+    for (const [i, label] of labels.entries()) await product(t, `k${i}`, label, [[label, 6]]);
+    const r = cli(t, "--apply");
+    expect(r.status).toBe(0);
+    const units = await prisma.tenantUnit.findMany({ where: { tenantId: t } });
+    // Caf\u00e9 and Cafe+U+0301 are one unit, \u00c9TUI and E+U+0301+tui are one; Stra\u00dfe and STRASSE are two
+    expect(units.map((u) => u.nameKey).sort()).toEqual(
+      ["caf\u00e9", "crate", "strasse", "stra\u00dfe", "\u00e9tui"].sort(),
+    );
+    // the database's lower()/normalize() reproduces every stored key (the collation pin)
+    const rows = await prisma.$queryRaw<Array<{ ok: boolean }>>`
+      SELECT lower(btrim(normalize("name", NFC), E'\u00a0 ')) = "nameKey" AS ok
+      FROM "TenantUnit" WHERE "tenantId" = ${t}`;
+    expect(rows).toHaveLength(5);
+    expect(rows.every((x) => x.ok)).toBe(true);
   });
 });

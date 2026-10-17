@@ -4,9 +4,13 @@
 // INSERTS AND FK LINKS ONLY (SA-729:52): it never writes a Product column, a line snapshot, or any
 // order / invoice table.
 //   (a) distinct words: ProductUnit.label (ladder levels) + Product.unit (legacy pack word);
-//   (b) one TenantUnit per distinct nameKey (= lower(trim(name))), named by the most common
-//       casing; > 30 chars are reported and skipped; Piece synonyms (piece/pieces/each/unit/pcs)
-//       get no TenantUnit;
+//   (b) one TenantUnit per distinct nameKey (= unitNameKey(name): NFC, then trim, then case-fold, the
+//       same key the units service uses), named by the most common casing; > 30 chars are reported
+//       and skipped; Piece synonyms (piece/pieces/each/unit/pcs) get no TenantUnit;
+//       THE CAP (SA-810): a system writer never refuses and never takes a tenant past
+//       MAX_ACTIVE_TENANT_UNITS (200) ACTIVE units. It adds the most-used names that fit, reports the
+//       rest by name and count, and leaves their levels unlinked (they keep their label). A tenant
+//       already over 200 keeps every row and gets none;
 //   (c) ProductUnit.tenantUnitId linked by nameKey where NULL (archived units included: never a
 //       second unit for a key; links to an archived unit are reported so it can be restored);
 //   (d) ProductUnit.parentUnitId / perParent filled where NULL (SA-729a item 3): the parent is the
@@ -56,7 +60,12 @@ const {
   refuseRetiredFlags,
 } = require("./lib/live-target-guard.cjs");
 const { protectedArm } = require("./lib/paying-tenant.cjs");
-const { planTenantUnits, archivedLinkLines } = require("./lib/tenant-units-plan.cjs");
+const {
+  planTenantUnits,
+  archivedLinkLines,
+  overflowLines,
+  MAX_ACTIVE_TENANT_UNITS,
+} = require("./lib/tenant-units-plan.cjs");
 const { applyTenantUnitsPlan, BACKFILL_BATCH_SIZE } = require("./lib/tenant-units-apply.cjs");
 
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
@@ -155,8 +164,10 @@ export async function readSnapshot(prisma, tenantId) {
 }
 
 const fmt = (c) =>
-  `tenantUnits created=${c.tenantUnitsCreated} existing=${c.tenantUnitsExisting}; ` +
-  `productUnits linked=${c.productUnitsLinked} parentFilled=${c.productUnitsParentFilled}; ` +
+  `tenantUnits created=${c.tenantUnitsCreated} existing=${c.tenantUnitsExisting} ` +
+  `overflow=${c.tenantUnitsOverflow}; ` +
+  `productUnits linked=${c.productUnitsLinked} parentFilled=${c.productUnitsParentFilled} ` +
+  `unlinkedOverflow=${c.productUnitsUnlinkedOverflow}; ` +
   `skipped tooLong=${c.skippedTooLong} synonyms=${c.skippedSynonyms} parent=${c.skippedParent}`;
 
 /** The skipped parent fills, counted by reason (never an id). */
@@ -238,17 +249,27 @@ async function main(argv = process.argv.slice(2), env = process.env) {
             `parents=${result.parentsChanged}; re-run to pick them up.`,
         );
       }
-      // What the writes actually did: a unit someone else created since planning counts as existing.
+      if (result.unitsCapped > 0) {
+        console.log(
+          `Left out at apply time: ${result.unitsCapped} unit name(s), the tenant reached the ` +
+            `${MAX_ACTIVE_TENANT_UNITS}-unit cap since planning (SA-810).`,
+        );
+      }
+      // What the writes actually did: a unit someone else created since planning counts as existing;
+      // one the cap left out at apply time is overflow (its levels stay unlinked).
       counts = {
         ...plan.counts,
         tenantUnitsCreated: result.unitsCreated,
         tenantUnitsExisting:
-          plan.counts.tenantUnitsExisting + (plan.toCreate.length - result.unitsCreated),
+          plan.counts.tenantUnitsExisting +
+          (plan.toCreate.length - result.unitsCreated - result.unitsCapped),
+        tenantUnitsOverflow: plan.counts.tenantUnitsOverflow + result.unitsCapped,
         productUnitsLinked: result.linked,
         productUnitsParentFilled: result.parentFilled,
       };
     }
     console.log(`${args.apply ? "Applied" : "Would apply"}: ${fmt(counts)}`);
+    for (const line of overflowLines(plan.overflow)) console.log(line);
     for (const line of archivedLinkLines(plan.archivedLinks)) console.log(line);
     for (const line of parentSkipLines(plan.parentSkips)) console.log(line);
     for (const line of explicitPieceLines(plan.explicitPieceParents)) console.log(line);

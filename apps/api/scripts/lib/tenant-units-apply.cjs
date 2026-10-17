@@ -5,7 +5,10 @@
  * caller, never from the plan. Inserts and FK links only (SA-729:52): no Product column is written.
  *
  * Shape of a run:
- *   1. ONE small transaction upserts the planned TenantUnits (idempotent: upsert by nameKey).
+ *   1. ONE small transaction creates the planned TenantUnits (idempotent: skipDuplicates by nameKey).
+ *      SA-810: it first re-counts the tenant's ACTIVE units and creates only what still fits under
+ *      MAX_ACTIVE_TENANT_UNITS (the plan was made from an earlier read); it never refuses and never
+ *      exceeds the cap. A unit left out is not linked below (the link is reported as changed).
  *   2. The ladder links and parent fills are grouped by PRODUCT and applied in batches of
  *      BACKFILL_BATCH_SIZE products, each batch in its own transaction, so no transaction grows with
  *      the size of the catalog and a crash loses at most the batch in flight.
@@ -24,6 +27,8 @@
  * batch, so a crash never leaves a product half-done.
  */
 "use strict";
+
+const { MAX_ACTIVE_TENANT_UNITS } = require("./tenant-units-plan.cjs");
 
 /**
  * Products per transaction. 200 products is a few hundred single-row statements: comfortably inside
@@ -101,8 +106,8 @@ function requireIds(...ids) {
  *           productIdByUnit: Map<string, string>,
  *           batchSize?: number,
  *           onBatch?: (done: number, total: number) => void }} args
- * @returns {Promise<{ batches: number, unitsCreated: number, linked: number, parentFilled: number,
- *                     linksChanged: number, parentsChanged: number }>}
+ * @returns {Promise<{ batches: number, unitsCreated: number, unitsCapped: number, linked: number,
+ *                     parentFilled: number, linksChanged: number, parentsChanged: number }>}
  *   linked/parentFilled are rows ACTUALLY written; linksChanged/parentsChanged are planned writes that
  *   were skipped because a row changed since planning (left for a re-run, never overwritten).
  */
@@ -123,11 +128,20 @@ async function applyTenantUnitsPlan({
   // Inserted rows, counted by the database: a unit created by someone else since planning is skipped
   // (the unique (tenantId, nameKey) holds), so this is what the run actually created.
   let unitsCreated = 0;
+  // Planned units left out because the room shrank since planning (SA-810).
+  let unitsCapped = 0;
   if (plan.toCreate.length > 0) {
     await prisma.$transaction(async (db) => {
       await setTimeouts(db);
+      // U-1's unitRoom: the cap minus the tenant's active units. A soft cap under concurrency (a
+      // person's add runs under no lock); this transaction is short, so any overshoot stays bounded.
+      const active = await db.tenantUnit.count({ where: { tenantId, archivedAt: null } });
+      const room = Math.max(0, MAX_ACTIVE_TENANT_UNITS - active);
+      const fit = plan.toCreate.slice(0, room);
+      unitsCapped = plan.toCreate.length - fit.length;
+      if (fit.length === 0) return;
       const res = await db.tenantUnit.createMany({
-        data: plan.toCreate.map((c) => ({ tenantId, name: c.name, nameKey: c.nameKey })),
+        data: fit.map((c) => ({ tenantId, name: c.name, nameKey: c.nameKey })),
         skipDuplicates: true,
       });
       unitsCreated = res.count;
@@ -225,7 +239,7 @@ async function applyTenantUnitsPlan({
     done += 1;
     if (onBatch) onBatch(done, batches.length);
   }
-  return { batches: batches.length, unitsCreated, ...totals };
+  return { batches: batches.length, unitsCreated, unitsCapped, ...totals };
 }
 
 module.exports = { applyTenantUnitsPlan, batchWrites, BACKFILL_BATCH_SIZE, WRITE_TIMEOUTS };

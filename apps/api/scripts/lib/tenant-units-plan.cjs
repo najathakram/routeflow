@@ -7,11 +7,26 @@
  * ProductUnit.parentUnitId/perParent (SA-729a item 3). It never writes a Product column. Idempotent
  * by construction: an existing TenantUnit is never planned again, and only NULL fields are filled.
  *
- * nameKey = lower(trim(name)) — identical to the TenantUnit service's rule (units U-1).
+ * nameKey = unitNameKey(name) — NFC, then trim, then case-fold: the TenantUnit service's rule (units
+ * U-1). This file is CommonJS and cannot import the TypeScript original, so `unitNameKey` below is a
+ * byte-identical port, and tenant-units-parity.spec.ts pins it to `unitNameKey` (packages/pricing).
+ * There is no second normaliser in this script.
+ *
+ * SA-810: the backfill is a SYSTEM writer. It never refuses and never takes a tenant past
+ * MAX_ACTIVE_TENANT_UNITS active units. When the names to add exceed the room it adds the most-used
+ * names that fit, reports the rest (`overflow`: name + counts) and leaves their levels unlinked.
  */
 "use strict";
 
 const MAX_NAME_LENGTH = 30;
+/**
+ * The most ACTIVE units (archivedAt null) a tenant may have (SA-810). A copy of
+ * `MAX_ACTIVE_TENANT_UNITS` in apps/api/src/units/unit-room.ts (U-1); tenant-units-parity.spec.ts pins
+ * the two equal.
+ */
+const MAX_ACTIVE_TENANT_UNITS = 200;
+/** The names printed in the overflow report; the rest are a count (never an unbounded wall of text). */
+const OVERFLOW_NAMES_PRINTED = 50;
 // Single typed source will be PIECE_SYNONYMS in packages/types (added by the U-1 branch); a parity
 // spec pinning this copy follows the merge.
 /** Piece synonyms: base words, never a TenantUnit (null baseUnitLabel already means "Piece"). */
@@ -32,17 +47,27 @@ function byCasingPreference(a, b) {
   );
 }
 
-/** NFC first (so "Cafe" + U+0301 and "Caf\u00e9" are one word), then trim (NBSP included). */
+/** The name a person sees: NFC first (so "Cafe" + U+0301 and "Caf\u00e9" are one word), then trim (NBSP included). */
 const cleanName = (name) =>
   String(name ?? "")
     .normalize("NFC")
     .trim();
 
-// A copy of the shared unit-name normaliser (`unitNameKey` in packages/types, added by the U-1
-// branch); a parity spec pinning the two follows the merge. NFC, then trim, then case-fold.
-function nameKeyOf(name) {
-  return cleanName(name).toLowerCase();
-}
+/**
+ * The unit-name comparison key: NFC, then trim, then case-fold. A byte-identical port of
+ * `unitNameKey` (packages/pricing, `s.normalize("NFC").trim().toLowerCase()`), pinned to it by
+ * tenant-units-parity.spec.ts. Do not change one without the other.
+ */
+const unitNameKey = (name) =>
+  String(name ?? "")
+    .normalize("NFC")
+    .trim()
+    .toLowerCase();
+const nameKeyOf = unitNameKey;
+
+/** Active units (archivedAt null) a tenant may still add: U-1's `unitRoom`. Negative = over the cap. */
+const unitRoomOf = (existingUnits) =>
+  MAX_ACTIVE_TENANT_UNITS - existingUnits.filter((u) => !u.archivedAt).length;
 
 /**
  * @param {{
@@ -61,10 +86,14 @@ function planTenantUnits({ productUnits, products, existingUnits }) {
 
   // nameKey -> Map(trimmed original casing -> occurrences)
   const casings = new Map();
+  // nameKey -> how many unlinked ladder levels / products' pack words use it (the overflow report)
+  const levelsByKey = new Map();
+  const productsByKey = new Map();
+  const bump = (m, key) => m.set(key, (m.get(key) ?? 0) + 1);
   const note = (raw) => {
-    const name = cleanName(raw);
-    const key = nameKeyOf(name);
+    const key = unitNameKey(raw);
     if (!key) return null;
+    const name = cleanName(raw);
     let m = casings.get(key);
     if (!m) casings.set(key, (m = new Map()));
     m.set(name, (m.get(name) ?? 0) + 1);
@@ -74,9 +103,15 @@ function planTenantUnits({ productUnits, products, existingUnits }) {
   const labelKeyByUnit = new Map();
   for (const pu of productUnits) {
     const key = note(pu.label);
-    if (key) labelKeyByUnit.set(pu.id, key);
+    if (key) {
+      labelKeyByUnit.set(pu.id, key);
+      if (!pu.tenantUnitId) bump(levelsByKey, key);
+    }
   }
-  for (const p of products) note(p.unit);
+  for (const p of products) {
+    const key = note(p.unit);
+    if (key) bump(productsByKey, key);
+  }
 
   // nameKey -> the most common original casing (see byCasingPreference for the tie rule).
   const bestByKey = new Map();
@@ -95,10 +130,10 @@ function planTenantUnits({ productUnits, products, existingUnits }) {
     else usable.add(key);
   }
 
-  const toCreate = [];
   // nameKey -> the tenant's canonical display name: an existing TenantUnit's own name, else the most
   // common original casing.
   const canonicalByKey = new Map();
+  const candidates = [];
   let existing = 0;
   for (const key of [...usable].sort()) {
     const best = bestByKey.get(key);
@@ -107,7 +142,34 @@ function planTenantUnits({ productUnits, products, existingUnits }) {
       existing += 1;
       continue;
     }
-    toCreate.push({ name: best, nameKey: key });
+    candidates.push({ name: best, nameKey: key });
+  }
+
+  // SA-810: add at most the room the tenant has left (a tenant at or over the cap gets none, and
+  // keeps every row it has). The names kept are the most used; ties break by key, so the plan is
+  // deterministic. The rest are reported, and their levels stay unlinked.
+  const room = Math.max(0, unitRoomOf(existingUnits));
+  const uses = (key) => [...casings.get(key).values()].reduce((a, b) => a + b, 0);
+  let toCreate = candidates;
+  const overflow = [];
+  const overflowKeys = new Set();
+  if (candidates.length > room) {
+    const keep = new Set(
+      [...candidates]
+        .sort((a, b) => uses(b.nameKey) - uses(a.nameKey) || (a.nameKey < b.nameKey ? -1 : 1))
+        .slice(0, room)
+        .map((c) => c.nameKey),
+    );
+    toCreate = candidates.filter((c) => keep.has(c.nameKey));
+    for (const c of candidates) {
+      if (keep.has(c.nameKey)) continue;
+      overflowKeys.add(c.nameKey);
+      overflow.push({
+        name: c.name,
+        levels: levelsByKey.get(c.nameKey) ?? 0,
+        products: productsByKey.get(c.nameKey) ?? 0,
+      });
+    }
   }
 
   const links = [];
@@ -117,7 +179,7 @@ function planTenantUnits({ productUnits, products, existingUnits }) {
   for (const pu of productUnits) {
     if (pu.tenantUnitId) continue;
     const key = labelKeyByUnit.get(pu.id);
-    if (key && usable.has(key)) {
+    if (key && usable.has(key) && !overflowKeys.has(key)) {
       if (archivedKeys.has(key)) {
         const name = canonicalByKey.get(key);
         archivedCounts.set(name, (archivedCounts.get(name) ?? 0) + 1);
@@ -134,6 +196,7 @@ function planTenantUnits({ productUnits, products, existingUnits }) {
 
   return {
     toCreate,
+    overflow,
     links,
     parentFills,
     archivedLinks: [...archivedCounts.entries()]
@@ -142,6 +205,8 @@ function planTenantUnits({ productUnits, products, existingUnits }) {
     counts: {
       tenantUnitsCreated: toCreate.length,
       tenantUnitsExisting: existing,
+      tenantUnitsOverflow: overflow.length,
+      productUnitsUnlinkedOverflow: overflow.reduce((n, o) => n + o.levels, 0),
       productUnitsLinked: links.length,
       productUnitsParentFilled: parentFills.length,
       skippedTooLong: tooLongKeys.size,
@@ -264,11 +329,32 @@ function archivedLinkLines(archivedLinks) {
   );
 }
 
+/**
+ * The names the cap left out, as report lines: names and counts only (never a tenant, slug or id).
+ * @param {Array<{ name: string, levels: number, products: number }>} overflow
+ */
+function overflowLines(overflow) {
+  if (overflow.length === 0) return [];
+  const shown = overflow.slice(0, OVERFLOW_NAMES_PRINTED);
+  const lines = [
+    `not added, the tenant is at the ${MAX_ACTIVE_TENANT_UNITS}-unit cap (SA-810): ` +
+      `${overflow.length} unit name(s); their levels stay unlinked and still sell by label`,
+    ...shown.map((o) => `  ${o.name}: ${o.levels} level(s), ${o.products} pack word(s)`),
+  ];
+  if (overflow.length > shown.length)
+    lines.push(`  ... and ${overflow.length - shown.length} more`);
+  return lines;
+}
+
 module.exports = {
   planTenantUnits,
   planParentFills,
+  unitNameKey,
   nameKeyOf,
+  unitRoomOf,
   archivedLinkLines,
+  overflowLines,
   PIECE_SYNONYMS,
   MAX_NAME_LENGTH,
+  MAX_ACTIVE_TENANT_UNITS,
 };
