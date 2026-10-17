@@ -30,7 +30,11 @@ const WIRED = [
   "invoices/manual-invoice-context.ts",
 ];
 
-/** Inline chains that remain, with the count and why they stay (S19b leftovers or not a price read). */
+/**
+ * Inline chains that remain, with the count and why each stays: none of them prices a line the customer is shown or charged
+ * (a write of the tier field, the old-client Piece echo comparison, a replay compare, the flag-off tier map); the price itself
+ * comes from `customerPricing` (proofs named per entry).
+ */
 const REMAINING: Record<string, { count: number; why: string }> = {
   "customers/customers.service.ts": {
     count: 1,
@@ -38,11 +42,11 @@ const REMAINING: Record<string, { count: number; why: string }> = {
   },
   "invoices/invoices.service.ts": {
     count: 1,
-    why: 'the old-client Piece path (price: "pack") reads master\'s tier; S19b A-7 proves the charged line or wires it',
+    why: "derivedBaseCustomer.tier: the default tier that describes an old-client Piece echo; the CHARGED pack price is the layer's (manual-invoice-context.units-prices-v2.spec A-7)",
   },
   "invoices/manual-invoice-context.ts": {
     count: 1,
-    why: 'the old-client Piece path (price: "pack") reads master\'s tier map; S19b A-7 proves the charged line or wires it',
+    why: "the tier map that describes an old-client Piece echo; the CHARGED pack price is the layer's (manual-invoice-context.units-prices-v2.spec A-7)",
   },
   "orders/replay-cart-normalize.ts": {
     count: 2,

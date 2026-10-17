@@ -1721,7 +1721,8 @@ export class OrdersService implements OnApplicationBootstrap {
           tenantId: this.prisma.getTenantId(),
           overriddenBy: user.sub,
         });
-        if (isOverride(unitLine)) assertPriceEditAllowed(options.priceEditAllowed); // POS-5, as the pack branch
+        // POS-5, as the pack branch. A staff override carries the editor's stamp; a layer-MANUAL line (SA-811a R2) is priced by the ladder and has none.
+        if (unitLine.overriddenBy != null) assertPriceEditAllowed(options.priceEditAllowed);
         subtotal += unitLine.subtotal;
         return unitLine;
       }

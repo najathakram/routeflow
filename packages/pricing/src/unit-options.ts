@@ -101,7 +101,16 @@ export function buildLadderOptions(
     };
     const info = describeBaseOption(product, units, tier);
     if (info.source === "derived" && info.fractionOf && info.fractionOf.n > 1) {
-      base.derived = { ...info.fractionOf, exact: info.exact };
+      const n = info.fractionOf.n;
+      // the parent's pack price (promotion / customer layer / remembered upsell) when it gave one: that is what the line bills
+      const pack = packPrice ?? info.fractionOf.packPrice;
+      const cents = (pack * 100) / n;
+      base.derived = {
+        n,
+        packPrice: pack,
+        exact: packPrice == null ? info.exact : Math.abs(cents - Math.round(cents)) < 1e-9,
+      };
+      if (packPrice != null) base.price = roundMoney(pack / n);
     }
     options.push(base);
   }

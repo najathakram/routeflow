@@ -224,8 +224,11 @@ function decideUnit(
   let tierPrice: number;
   const layer = ctx.layerOf?.({ ...product, id: String(product.id) }, label) ?? null;
   try {
-    listPrice = resolveUnitPrice(lp, units, label, 1);
-    tierPrice = layer ? layer.price : resolveUnitPrice(lp, units, label, tier);
+    // the ladder is still resolved (unknown unit / invalid tier refused as master); the layer row's own list and price win
+    const ladderList = resolveUnitPrice(lp, units, label, 1);
+    const ladderTier = resolveUnitPrice(lp, units, label, tier);
+    listPrice = layer ? layer.listPrice : ladderList;
+    tierPrice = layer ? layer.price : ladderTier;
   } catch (e) {
     if (e instanceof InvalidTierError) {
       throw new BadRequestException(

@@ -50,15 +50,13 @@ function service(opts: {
       findFirst: jest.fn().mockResolvedValue({ id: "c1", businessName: "Acme", pricingTier: 1 }),
     },
     customerUnitPrice: {
-      findMany: jest
-        .fn()
-        .mockResolvedValue(
-          opts.typed.map(([unitRef, price]) => ({
-            productId: PRODUCT.id,
-            unitRef,
-            price: String(price),
-          })),
-        ),
+      findMany: jest.fn().mockResolvedValue(
+        opts.typed.map(([unitRef, price]) => ({
+          productId: PRODUCT.id,
+          unitRef,
+          price: String(price),
+        })),
+      ),
     },
     customerPrice: {
       findMany: jest
@@ -72,19 +70,17 @@ function service(opts: {
     productUnit: { findMany: jest.fn().mockResolvedValue([CASE_UNIT]) },
     productTierUnit: { findMany: jest.fn().mockResolvedValue(opts.tierUnits ?? []) },
     orderItem: {
-      findMany: jest
-        .fn()
-        .mockResolvedValue(
-          opts.remembered
-            ? [
-                {
-                  productId: PRODUCT.id,
-                  unitPrice: String(opts.remembered),
-                  originalPrice: "42.00",
-                },
-              ]
-            : [],
-        ),
+      findMany: jest.fn().mockResolvedValue(
+        opts.remembered
+          ? [
+              {
+                productId: PRODUCT.id,
+                unitPrice: String(opts.remembered),
+                originalPrice: "42.00",
+              },
+            ]
+          : [],
+      ),
     },
   };
   return {
@@ -121,5 +117,22 @@ describe("K6 pack row = billing (S19b A-5)", () => {
       tenantId: "t1",
       productId: { in: [PRODUCT.id] },
     });
+  });
+});
+
+describe("K6 view options change the price (S19b nit 7: the effect, not just the read)", () => {
+  it("a product ordered by the Case with the pack's Retail Auto prices the pack off the Case: $40, not the stored $42", async () => {
+    const withAnchor = service({ typed: [["u-case", 480]] });
+    withAnchor.db.product.findMany.mockResolvedValue([
+      { ...PRODUCT, orderUnitRef: "u-case", packAuto: 1 },
+    ]);
+    const anchored = (await withAnchor.svc.get("c1")).products[0].rows.find(
+      (r) => r.ref === "pack",
+    )!;
+    const plain = service({ typed: [["u-case", 480]] });
+    const unanchored = (await plain.svc.get("c1")).products[0].rows.find((r) => r.ref === "pack")!;
+    expect(anchored.listPrice).toBe(40);
+    expect(unanchored.listPrice).toBe(42);
+    expect(anchored.listPrice).not.toBe(unanchored.listPrice);
   });
 });

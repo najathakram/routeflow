@@ -42,6 +42,7 @@ export function useCustomerPriceLayer(customerId: string | null | undefined): Cu
     enabled,
     isPending: q.isPending,
     isError: q.isError,
+    isFetching: q.isFetching,
     data: q.data,
   });
   return {

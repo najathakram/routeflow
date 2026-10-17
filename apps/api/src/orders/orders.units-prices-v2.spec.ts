@@ -193,6 +193,44 @@ describe("OrdersService.create: billing reads typed customer unit prices (S19)",
     ).toBe(false);
   });
 
+  it("S1: typed Case $500 over the $480 list, sent with NO price by a cashier without EDIT_LINE_PRICE: bills $500 MANUAL, no 403 PRICE_EDIT_NOT_PERMITTED", async () => {
+    flags.add(V2);
+    typed(["u-case", 500]);
+    await service.create(
+      {
+        customerId: "cust-1",
+        items: [{ productId: "prod-1", qty: 1, unitLabel: "Case" }],
+      } as never,
+      staff,
+      { priceEditAllowed: false } as never,
+    );
+    const line = orderData().lineItems.create[0];
+    expect(line).toMatchObject({
+      unitLabel: "Case",
+      unitPrice: 500,
+      priceType: "MANUAL",
+      originalPrice: 480,
+    });
+    expect(line.overriddenBy ?? null).toBeNull();
+  });
+
+  it("S1 control: a cashier WITHOUT the right who really types a different price is still refused", async () => {
+    flags.add(V2);
+    typed(["u-case", 500]);
+    await expect(
+      service.create(
+        {
+          customerId: "cust-1",
+          items: [
+            { productId: "prod-1", qty: 1, unitLabel: "Case", unitPrice: 450, overrideReason: "x" },
+          ],
+        } as never,
+        staff,
+        { priceEditAllowed: false } as never,
+      ),
+    ).rejects.toMatchObject({ response: { code: "PRICE_EDIT_NOT_PERMITTED" } });
+  });
+
   it("S19-b: a typed Case price only leaves a pack line at tier/list, the sticky above-list price still runs", async () => {
     flags.add(V2);
     typed(["u-case", 450]);

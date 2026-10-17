@@ -1,6 +1,6 @@
 import { BadRequestException, Injectable, NotFoundException, Optional } from "@nestjs/common";
 import { UserRole } from "@prisma/client";
-import { baseLabelOf, getTierPrice, roundMoney } from "@routeflow/pricing";
+import { baseLabelOf, getTierPrice, namesPack, roundMoney } from "@routeflow/pricing";
 import type {
   PriceHistoryAggregate,
   PriceHistoryReferences,
@@ -461,6 +461,12 @@ export class CustomerPriceHistoryService {
           : newest.pack === 1 || newest.pack == null
             ? null
             : newest.row.unitLabel;
+      // After a pack-size change the old sale's "Box" label would resolve to the CURRENT pack: that is not its unit, so no layer
+      // (master shows null there too).
+      const layerOfNewest =
+        newestLabel != null && namesPack(product, newestLabel)
+          ? null
+          : pc.layer(product, newestLabel);
       const inUnit = (price: number): number | null => {
         const p = newest.pack;
         if (productPackNow != null && productPackNow > 1) {
@@ -474,8 +480,7 @@ export class CustomerPriceHistoryService {
       const prev = sameUnit[1]?.row.unitPrice;
       references = {
         listPrice: inUnit(Number(product.pricePerUnit) || 0),
-        tierPrice:
-          pc.layer(product, newestLabel)?.price ?? inUnit(Number(getTierPrice(product, tier))),
+        tierPrice: layerOfNewest?.price ?? inUnit(Number(getTierPrice(product, tier))),
         changeSinceLast:
           prev != null && prev > 0 ? round4((newest.row.unitPrice - prev) / prev) : null,
       };

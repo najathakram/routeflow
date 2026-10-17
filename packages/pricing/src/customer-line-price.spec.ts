@@ -102,7 +102,7 @@ describe("customerLinePrice: the SA-811a rows (P-a..P-d)", () => {
       customerLinePrice({ product, tier: 1, tierPrice: 480, unitLabel: "Case" }),
     ).toMatchObject({
       price: 480,
-      listPrice: 42,
+      listPrice: null, // nit 3: a unit line has no list here (never the pack list)
       layered: false,
     });
   });
@@ -220,6 +220,83 @@ describe("priceLayerStatus (SA-813 M1 / M3): pending, failed, complete and per-p
     expect(s).toMatchObject({ ready: true, complete: false });
     expect(s.lineReady("p1")).toBe(true);
     expect(s.lineReady("p-none")).toBe(false);
-    expect(s.lineReady(null)).toBe(false);
+    expect(s.lineReady(null)).toBe(true) // nit 2: an unlisted line has no product to price;
+  });
+});
+
+describe("S19b nit 1: a legacy factor-1 unit not named after the base label, and case-colliding labels", () => {
+  const eachRow = row({ ref: "base", label: "Each", price: 1.4, listPrice: 1.75 });
+  it("a factor-1 row named 'Each' (ref base) matches by its own name, like the server's findUnitRow", () => {
+    const layer = [row({}), eachRow];
+    expect(customerLinePrice({ product, tier: 1, layer, unitLabel: "each" }).price).toBe(1.4);
+    expect(layerRowForLabel(product, layer, "Each")?.ref).toBe("base");
+  });
+  it("'Case' and 'case' both exist: the exact label wins, any other spelling takes the FIRST in ladder order (server order)", () => {
+    const a = row({ ref: "u-1", label: "Case", price: 100, listPrice: 120 });
+    const b = row({ ref: "u-2", label: "case", price: 90, listPrice: 110 });
+    expect(layerRowForLabel(product, [row({}), a, b], "Case")?.ref).toBe("u-1");
+    expect(layerRowForLabel(product, [row({}), a, b], "case")?.ref).toBe("u-2");
+    expect(layerRowForLabel(product, [row({}), a, b], "CASE")?.ref).toBe("u-1");
+    expect(layerRowForLabel(product, [row({}), b, a], "CASE")?.ref).toBe("u-2");
+  });
+});
+
+describe("S19b nit 2: ready means the CURRENT fetch settled; unlisted lines are never blocked", () => {
+  const data = { complete: false, products: { p1: [row({})] } };
+  it("cached data while the mount refetch runs is NOT ready (the old layer must not confirm a price)", () => {
+    const s = priceLayerStatus({
+      enabled: true,
+      isPending: false,
+      isError: false,
+      isFetching: true,
+      data,
+    });
+    expect(s).toMatchObject({ ready: false, pending: true });
+    expect(s.lineReady("p1")).toBe(false);
+  });
+  it("settled: ready", () => {
+    expect(
+      priceLayerStatus({ enabled: true, isPending: false, isError: false, isFetching: false, data })
+        .ready,
+    ).toBe(true);
+  });
+  it("lineReady(null) on an INCOMPLETE response does not block an unlisted line (it has no product to price)", () => {
+    const s = priceLayerStatus({
+      enabled: true,
+      isPending: false,
+      isError: false,
+      isFetching: false,
+      data,
+    });
+    expect(s.lineReady(null)).toBe(true);
+    expect(s.lineReady(undefined)).toBe(true);
+    expect(s.lineReady("p-absent")).toBe(false);
+  });
+  it("an unlisted line while NOT ready is still blocked (nothing is confirmed yet)", () => {
+    expect(
+      priceLayerStatus({
+        enabled: true,
+        isPending: true,
+        isError: false,
+        data: undefined,
+      }).lineReady(null),
+    ).toBe(false);
+  });
+});
+
+describe("S19b nit 3: no layer row for a unit line: no pack strikethrough on a Case", () => {
+  it("the pack's list is the pack's; a Case or Piece line gets null (never the pack's $42)", () => {
+    expect(customerLinePrice({ product, tier: 1, layer: [], unitLabel: null }).listPrice).toBe(42);
+    expect(customerLinePrice({ product, tier: 1, layer: [], unitLabel: "Box" }).listPrice).toBe(42);
+    expect(
+      customerLinePrice({ product, tier: 1, tierPrice: 480, unitLabel: "Case" }).listPrice,
+    ).toBeNull();
+    expect(
+      customerLinePrice({ product, tier: 3, tierPrice: 400, unitLabel: "Case" }),
+    ).toMatchObject({
+      price: 400,
+      listPrice: null,
+      layered: false,
+    });
   });
 });

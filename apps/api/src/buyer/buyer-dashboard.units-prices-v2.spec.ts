@@ -58,6 +58,10 @@ describe("BuyerDashboardService tiles: the customer layer (S19b A-2)", () => {
     prisma.customer.findFirst.mockResolvedValue({ pricingTier: 3 });
     prisma.product.findMany.mockResolvedValue([PRODUCT]);
     prisma.customerPrice.findMany.mockResolvedValue([]);
+    // the frequently-ordered group is driven by the order-item groupBy
+    (prisma.orderItem as any).groupBy = jest
+      .fn()
+      .mockResolvedValue([{ productId: "p1", _count: { productId: 2 }, _sum: { qty: 4 } }]);
   });
 
   const typed = (price: number) => {
@@ -69,11 +73,22 @@ describe("BuyerDashboardService tiles: the customer layer (S19b A-2)", () => {
   };
   const tiles = async () => {
     const res: any = await service.getDashboard("c1");
-    return [res.newFromSeller, res.featuredItems, res.suggestedItems]
-      .flat()
-      .filter(Boolean)
-      .map((t: any) => t.buyerPrice);
+    return tileGroups(res).flatMap((g: any[]) => g.map((t: any) => t.buyerPrice));
   };
+  /** All four tile groups: frequently ordered, new, featured, suggested. */
+  const tileGroups = (res: any): any[][] => [
+    res.frequentlyOrdered,
+    res.newFromSeller,
+    res.featuredItems,
+    res.suggestedItems,
+  ];
+
+  it("every one of the FOUR tile groups is populated, so the prices below are not vacuous", async () => {
+    v2On = true;
+    typed(33);
+    const res: any = await service.getDashboard("c1");
+    for (const g of tileGroups(res)) expect(g.length).toBeGreaterThan(0);
+  });
 
   it("flag on: every tile group shows the typed pack price $33", async () => {
     v2On = true;

@@ -26,8 +26,11 @@ export interface CustomerLayerUnit {
 export interface CustomerLinePrice {
   /** What the line pre-fills / shows / is judged against. */
   price: number;
-  /** `originalPrice` / the strikethrough base. */
-  listPrice: number;
+  /**
+   * `originalPrice` / the strikethrough base: the unit's own list. With no layer row it is known only for the pack (master's
+   * `pricePerUnit`); a unit line has no list here, so null (never the pack's list struck through a Case).
+   */
+  listPrice: number | null;
   /** Feeds `decideStaffOverride.isSpecialTier`. */
   isSpecial: boolean;
   priceType: "STANDARD" | "SPECIAL" | "MANUAL";
@@ -36,6 +39,15 @@ export interface CustomerLinePrice {
 }
 
 const norm = (s: string) => s.trim().toLowerCase();
+
+const isPackLabel = (product: LadderProduct, unitLabel?: string | null): boolean => {
+  const label = (unitLabel ?? "").trim();
+  return (
+    !label ||
+    (!namesBase(product, label) && namesPack(product, label)) ||
+    (namesBase(product, label) && packFactorOf(product) === 1)
+  );
+};
 
 /**
  * The layer row a unit label names, through the core's own label-to-level rules (SA-813 M2), never a raw string compare:
@@ -57,7 +69,8 @@ export function layerRowForLabel(
     );
   }
   if (namesPack(product, label)) return packRow;
-  const named = layer.filter((r) => r.label != null && r.ref !== "base");
+  // every labelled row (a legacy factor-1 unit named "Each" is a "base" row with its own label), in ladder order
+  const named = layer.filter((r) => r.label != null);
   return (
     named.find((r) => r.label === label) ??
     named.find((r) => norm(r.label as string) === norm(label))
@@ -92,7 +105,9 @@ export function customerLinePrice(i: {
   const isSpecial = isSpecialTier(i.tier);
   return {
     price: i.tierPrice ?? getTierPrice(i.product, i.tier),
-    listPrice: Number(i.product.pricePerUnit),
+    listPrice: isPackLabel(i.product as unknown as LadderProduct, i.unitLabel)
+      ? Number(i.product.pricePerUnit)
+      : null,
     isSpecial,
     priceType: isSpecial ? "SPECIAL" : "STANDARD",
     layered: false,
@@ -122,6 +137,8 @@ export function priceLayerStatus(i: {
   enabled: boolean;
   isPending: boolean;
   isError: boolean;
+  /** The query is fetching NOW (a mount refetch over cached data included): cached data must not confirm a price. */
+  isFetching?: boolean;
   data?: { complete: boolean; products: Record<string, readonly CustomerLayerUnit[]> } | null;
 }): PriceLayerStatus {
   if (!i.enabled) {
@@ -135,17 +152,17 @@ export function priceLayerStatus(i: {
     };
   }
   const failed = i.isError;
-  const ready = !failed && !!i.data && !i.isPending;
+  const ready = !failed && !!i.data && !i.isPending && !i.isFetching;
   const complete = !!i.data && i.data.complete;
   return {
     enabled: true,
     ready,
-    pending: !failed && !i.data,
+    pending: !failed && (!i.data || !!i.isFetching),
     failed,
     complete,
     lineReady: (productId) =>
       ready &&
-      (complete ||
-        (!!productId && Object.prototype.hasOwnProperty.call(i.data!.products, productId))),
+      // an unlisted line has no product to price: only a LISTED product absent from an incomplete response is unconfirmed
+      (complete || !productId || Object.prototype.hasOwnProperty.call(i.data!.products, productId)),
   };
 }

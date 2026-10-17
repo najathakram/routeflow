@@ -100,3 +100,49 @@ describe("CustomerPriceHistoryService references: the customer layer (S19b A-3)"
     expect(hasFlag).not.toHaveBeenCalledWith(expect.anything(), V2);
   });
 });
+
+describe("S19b nit 4: after a pack-size change the old 'Box' label shows null as master does", () => {
+  it("a sale of the old 12-pack while the product is a 24-pack now: tierPrice null (flag on and off), not the current pack's $33", async () => {
+    const mk = async (on: boolean) => {
+      const prisma = createMockPrisma();
+      prisma.customer.findFirst.mockResolvedValue({
+        id: "c1",
+        businessName: "Acme",
+        pricingTier: 3,
+      });
+      prisma.product.findFirst.mockResolvedValue({ ...PRODUCT, unit: "Box", unitsPerBox: 24 });
+      prisma.customerPrice.findFirst.mockResolvedValue(null);
+      prisma.invoice.findMany.mockResolvedValue([
+        {
+          id: "a",
+          invoiceNumber: "A",
+          issueDate: new Date("2026-06-10T00:00:00Z"),
+          orderId: "o-a",
+          order: { orderNumber: "ORD-a" },
+          items: [{ ...line, unitsPerBox: 12, product: { unit: "Box", unitsPerBox: 24 } }],
+        },
+      ]);
+      prisma.order.findMany.mockResolvedValue([]);
+      prisma.stockMovement.findMany.mockResolvedValue([]);
+      (prisma.forTenant() as any).customerUnitPrice = {
+        findMany: jest
+          .fn()
+          .mockResolvedValue([{ productId: "p1", unitRef: "pack", price: "33.00" }]),
+      };
+      const mod = await Test.createTestingModule({
+        providers: [
+          CustomerPriceHistoryService,
+          { provide: PrismaService, useValue: prisma },
+          { provide: EntitlementsService, useValue: { hasFlag: jest.fn(async () => on) } },
+        ],
+      }).compile();
+      return (
+        await mod
+          .get(CustomerPriceHistoryService)
+          .getHistory("c1", "p1", { role: UserRole.OPERATOR })
+      ).references.tierPrice;
+    };
+    expect(await mk(false)).toBeNull();
+    expect(await mk(true)).toBeNull();
+  });
+});

@@ -85,4 +85,21 @@ describe("useCustomerPriceLayer", () => {
     result.current.refetch();
     await waitFor(() => expect(result.current.ready).toBe(true));
   });
+
+  it("nit 2: cached data while the mount refetch is in flight is NOT ready; it is ready once that fetch settles", async () => {
+    let release: (v: unknown) => void = () => {};
+    get.mockReturnValue(new Promise((r) => (release = r)));
+    const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+    qc.setQueryData(priceLayerKey("c1"), {
+      customerId: "c1",
+      complete: true,
+      products: { p1: [row] },
+    });
+    const { result } = renderHook(() => useCustomerPriceLayer("c1"), { wrapper: wrapper(qc) });
+    expect(result.current.layerOf("p1")).toEqual([row]); // the old layer is visible...
+    expect(result.current.ready).toBe(false); // ...but it confirms nothing while the fresh read runs
+    expect(result.current.lineReady("p1")).toBe(false);
+    release({ data: { customerId: "c1", complete: true, products: { p1: [row] } } });
+    await waitFor(() => expect(result.current.ready).toBe(true));
+  });
 });

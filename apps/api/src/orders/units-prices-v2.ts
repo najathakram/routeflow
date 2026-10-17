@@ -176,7 +176,7 @@ export async function loadUnitsPricesV2(
       ? await Promise.all([
           rowsOf(db.productUnit, {
             where: { tenantId, productId: { in: typedIds } },
-            orderBy: { sortOrder: "asc" },
+            orderBy: [{ sortOrder: "asc" }, { factorToBase: "asc" }],
           }),
           loadTierOrderUnits(db, tenantId, typedIds),
         ])

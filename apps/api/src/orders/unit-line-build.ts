@@ -430,9 +430,12 @@ export function buildUnitLine(input: {
       tierPrice = roundMoney(Number(snap.unitPrice));
       listPrice = roundMoney(Number(snap.originalPrice ?? snap.unitPrice));
     } else {
-      listPrice = resolveUnitPrice(ladderProduct, units, label, 1);
-      tierPrice = resolveUnitPrice(ladderProduct, units, label, tier);
-      if (layer) tierPrice = layer.price;
+      // the layer row's own list when there is one, so the original and the SPECIAL/MANUAL type agree with the price
+      // (the ladder is still resolved: an unknown unit or an invalid tier is refused exactly as master does)
+      const ladderList = resolveUnitPrice(ladderProduct, units, label, 1);
+      const ladderTier = resolveUnitPrice(ladderProduct, units, label, tier);
+      listPrice = layer ? layer.listPrice : ladderList;
+      tierPrice = layer ? layer.price : ladderTier;
     }
   } catch (e) {
     if (e instanceof InvalidTierError) {

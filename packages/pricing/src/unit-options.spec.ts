@@ -108,3 +108,18 @@ describe("buildLadderOptions — shared by the web and mobile buildUnitOptions",
     ).toBe(23.33);
   });
 });
+
+describe("S19b nit 8: a derived base option uses the pack price the parent shows", () => {
+  const caseRow = row("Case", 72);
+  it("tier price 48 but the parent bills 40 (customer layer): the Piece reads 1/24 of $40.00 and bills from $40", () => {
+    const piece = buildLadderOptions(box24, [caseRow], 1, 40).find((o) => o.kind === "piece")!;
+    expect(piece.derived).toMatchObject({ n: 24, packPrice: 40 });
+    expect(ladderOptionPriceText(piece, money)).toBe("≈$1.67 (1/24 of $40.00)");
+    expect(ladderOptionLineTotal(piece, 12)).toBe(20); // 12 pieces of a $40 24-pack
+  });
+  it("no packPrice given: unchanged (the tier ladder)", () => {
+    const piece = buildLadderOptions(box24, [caseRow], 1).find((o) => o.kind === "piece")!;
+    expect(piece.derived).toMatchObject({ n: 24, packPrice: 48 });
+    expect(piece.price).toBe(2);
+  });
+});

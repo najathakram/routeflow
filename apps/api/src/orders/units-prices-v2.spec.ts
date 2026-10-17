@@ -96,6 +96,11 @@ describe("loadUnitsPricesV2", () => {
     });
     expect(v2).not.toBeNull();
     expect(h.db.productUnit.findMany).toHaveBeenCalledTimes(1);
+    // nit 1: the ladder is read in the endpoint's order (sortOrder, then factor), so a case-colliding label picks the same unit
+    expect(h.db.productUnit.findMany.mock.calls[0][0].orderBy).toEqual([
+      { sortOrder: "asc" },
+      { factorToBase: "asc" },
+    ]);
     // nit 1: both ladder reads carry an explicit tenantId
     expect(h.db.productUnit.findMany.mock.calls[0][0].where).toEqual({
       tenantId: "t1",
@@ -339,6 +344,13 @@ describe("buildUnitLine: a unit in the customer layer wins over the ladder's tie
     expect(build("Case", { customerLayer: layer(377.14, 480) })).toMatchObject({
       unitPrice: 377.14,
       originalPrice: 480,
+      priceType: PriceType.SPECIAL,
+    });
+  });
+  it("nit 6: the original/list is the LAYER row's list when one exists (here $500, the ladder says $480), so type and original agree", () => {
+    expect(build("Case", { customerLayer: layer(377.14, 500) })).toMatchObject({
+      unitPrice: 377.14,
+      originalPrice: 500,
       priceType: PriceType.SPECIAL,
     });
   });
