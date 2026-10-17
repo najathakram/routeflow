@@ -76,3 +76,77 @@ describe("K11-04: the customer list stays shut until asked", () => {
     expect(second.className).not.toContain("bg-surface-muted");
   });
 });
+
+describe("K11-05: the list filters as you type", () => {
+  const optionNames = () =>
+    screen.queryAllByRole("option").map((o) => (o.textContent ?? "").trim());
+  const searches = () =>
+    Array.from(
+      new Set(mockCustomers.mock.calls.map((c) => (c[0] as { search?: string }).search ?? "")),
+    );
+
+  beforeEach(() => jest.useFakeTimers());
+  afterEach(() => jest.useRealTimers());
+
+  it("follows the keys at once, then asks the server once after the 250 ms debounce", () => {
+    render(<CustomerPicker onPick={jest.fn()} />);
+    act(() => input().focus());
+    expect(optionNames()).toEqual(["Corner Cafe", "Acme Deli"]);
+    fireEvent.change(input(), { target: { value: "cor" } });
+    // Before any timer runs: only the loaded row that matches shows.
+    expect(optionNames()).toEqual(["Corner Cafe"]);
+    expect(searches()).toEqual([""]);
+    act(() => {
+      jest.advanceTimersByTime(250);
+    });
+    expect(searches()).toEqual(["", "cor"]);
+  });
+
+  it("matches the contact name too, ignoring case", () => {
+    render(<CustomerPicker onPick={jest.fn()} />);
+    fireEvent.change(input(), { target: { value: "PAT" } });
+    expect(optionNames()).toEqual(["Acme Deli"]);
+  });
+
+  it("sends no request per key: a burst of keys makes one search for the final text", () => {
+    render(<CustomerPicker onPick={jest.fn()} />);
+    for (const v of ["c", "co", "cor"]) {
+      fireEvent.change(input(), { target: { value: v } });
+      act(() => {
+        jest.advanceTimersByTime(100);
+      });
+    }
+    act(() => {
+      jest.advanceTimersByTime(250);
+    });
+    expect(searches()).toEqual(["", "cor"]);
+  });
+
+  it("keeps the rows on screen while the next response is in flight", () => {
+    render(<CustomerPicker onPick={jest.fn()} />);
+    act(() => input().focus());
+    // The hook has no data for the new key yet (no previous-data retention).
+    mockCustomers.mockReturnValue({ data: undefined });
+    fireEvent.change(input(), { target: { value: "cor" } });
+    expect(optionNames()).toEqual(["Corner Cafe"]);
+  });
+
+  it("lets the server result replace the local filter once it lands", () => {
+    render(<CustomerPicker onPick={jest.fn()} />);
+    fireEvent.change(input(), { target: { value: "sam" } });
+    // "sam" matches Corner Cafe by contact name locally.
+    expect(optionNames()).toEqual(["Corner Cafe"]);
+    setHits([{ id: "c3", businessName: "Sampson Grocery", contactName: "Lee" }]);
+    act(() => {
+      jest.advanceTimersByTime(250);
+    });
+    expect(optionNames()).toEqual(["Sampson Grocery"]);
+  });
+
+  it("does not claim 'No customer matches' before the server has answered", () => {
+    render(<CustomerPicker onPick={jest.fn()} />);
+    fireEvent.change(input(), { target: { value: "zzz" } });
+    expect(optionNames()).toEqual([]);
+    expect(screen.queryByText("No customer matches that name.")).toBeNull();
+  });
+});
