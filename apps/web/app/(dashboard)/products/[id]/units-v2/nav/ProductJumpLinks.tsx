@@ -58,6 +58,8 @@ const SCROLL_RUNNING_CAP_MS = 800;
 const SLACK_PX = 4;
 /** Give up waiting for the layout to hold still after this many frames. */
 const MAX_STILL_FRAMES = 60;
+/** How long a hash that names a not-yet-mounted section is waited for before it is dropped. */
+const HASH_WAIT_MS = 8000;
 /** Events that mean the person took over the scroll. NEVER `scroll`: the smooth scroll fires it itself. */
 const USER_TAKEOVER_EVENTS = ["wheel", "touchstart", "pointerdown", "keydown"] as const;
 
@@ -355,12 +357,60 @@ export function ProductJumpLinks() {
 
   React.useEffect(() => () => jumpRef.current?.(), []);
 
+  // K11-03: a refresh comes back to the section the person jumped to. The hash names a section (by its id, or by
+  // the adopted element's own id); it is followed ONCE, as soon as that section exists, with the same settling as a
+  // click. It is dropped when the person scrolls or jumps first, or the section never turns up.
+  const hashDone = React.useRef(false);
+  React.useEffect(() => {
+    if (!window.location.hash) {
+      hashDone.current = true;
+      return;
+    }
+    const scroller: EventTarget = document.getElementById("main-content") ?? document;
+    const stop = () => {
+      hashDone.current = true;
+    };
+    for (const type of USER_TAKEOVER_EVENTS)
+      scroller.addEventListener(type, stop, { passive: true });
+    const t = window.setTimeout(stop, HASH_WAIT_MS);
+    return () => {
+      for (const type of USER_TAKEOVER_EVENTS) scroller.removeEventListener(type, stop);
+      window.clearTimeout(t);
+    };
+  }, []);
+  React.useEffect(() => {
+    if (hashDone.current) return;
+    const raw = window.location.hash.slice(1);
+    let name = raw;
+    try {
+      name = decodeURIComponent(raw);
+    } catch {
+      // a malformed escape: match the raw text
+    }
+    const hit = sections.find((s) => s.id === name || s.hrefId === name);
+    if (!hit) return;
+    hashDone.current = true;
+    startJump(hit.id, hit.hrefId, true);
+  }, [sections, startJump]);
+
   if (!show) return null;
 
   const go = (e: React.MouseEvent, s: Resolved) => {
     if (!document.getElementById(s.hrefId)) return;
     e.preventDefault();
-    startJump(s.id, s.hrefId, true);
+    hashDone.current = true;
+    if (!startJump(s.id, s.hrefId, true)) return;
+    // The hash is the section's own id; replaceState keeps the path, the query (`?customer=`) and the
+    // router's history state, and adds no history entry.
+    try {
+      window.history.replaceState(
+        window.history.state,
+        "",
+        `${window.location.pathname}${window.location.search}#${s.hrefId}`,
+      );
+    } catch {
+      // a sandboxed frame may refuse; the jump itself already happened
+    }
   };
 
   return (

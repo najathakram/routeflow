@@ -463,3 +463,115 @@ describe("K11-01: the settle window (one re-scroll)", () => {
     expect(link("h-cust")).toHaveAttribute("aria-current", "true");
   });
 });
+
+describe("K11-03: a refresh comes back to the section you jumped to", () => {
+  const SHORT_PAGE = (
+    <div>
+      <ProductJumpLinks />
+      <h1 id="h-product">Cola</h1>
+      <h2 id="h-units">Units</h2>
+    </div>
+  );
+  /** A section that arrives after mount, the way the Customer view and Sales do. */
+  const addLate = async (id: string) => {
+    await act(async () => {
+      const h = document.createElement("h2");
+      h.id = id;
+      h.setAttribute("data-shift", "");
+      document.body.appendChild(h);
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+    await frames();
+  };
+
+  it("a jump writes the hash with replaceState: path and query kept, no history entry", () => {
+    window.history.replaceState(null, "", "/products/p1?customer=c9");
+    const length = window.history.length;
+    const push = jest.spyOn(window.history, "pushState");
+    mount();
+    fireEvent.click(link("h-sales"));
+    expect(window.location.pathname + window.location.search).toBe("/products/p1?customer=c9");
+    expect(window.location.hash).toBe("#h-sales");
+    expect(window.history.length).toBe(length);
+    expect(push).not.toHaveBeenCalled();
+    push.mockRestore();
+  });
+
+  it("writes the adopted element's own id for the prices section", () => {
+    mount();
+    fireEvent.click(link("h-units"));
+    expect(window.location.hash).toBe("#units-v2-grid-title");
+  });
+
+  it("hands the router's own history state back unchanged", () => {
+    window.history.replaceState({ __NA: true, tree: [1] }, "", "/products/p1");
+    mount();
+    fireEvent.click(link("h-sales"));
+    expect(window.history.state).toEqual({ __NA: true, tree: [1] });
+  });
+
+  it("on mount, a hash naming a section jumps to it once and focuses its heading", () => {
+    window.history.replaceState(null, "", "/products/p1?customer=c9#h-sales");
+    mount();
+    expect(scrolled.map((s) => s.el.id)).toEqual(["h-sales"]);
+    expect(target("h-sales")).toHaveFocus();
+    fireRO(); // a later render does not jump again
+    expect(scrolled).toHaveLength(1);
+    // the URL keeps both the query and the hash
+    expect(window.location.search + window.location.hash).toBe("?customer=c9#h-sales");
+  });
+
+  it("a hash can name the adopted element's own id", () => {
+    window.history.replaceState(null, "", "/products/p1#units-v2-grid-title");
+    mount();
+    expect(scrolled.map((s) => s.el.id)).toEqual(["units-v2-grid-title"]);
+  });
+
+  it("waits for a section that arrives late, then jumps to it once", async () => {
+    window.history.replaceState(null, "", "/products/p1#h-sales");
+    rectById["h-sales"] = { top: 60 }; // landed where it should: the page growing later does not move it
+    mount(SHORT_PAGE);
+    expect(scrolled).toHaveLength(0);
+    await addLate("h-sales");
+    expect(scrolled.map((s) => s.el.id)).toEqual(["h-sales"]);
+    await addLate("h-cust");
+    expect(scrolled).toHaveLength(1);
+  });
+
+  it("settles like a click: a shift after the hash jump gets one re-scroll", async () => {
+    window.history.replaceState(null, "", "/products/p1#h-sales");
+    mount();
+    rectById["h-sales"] = { top: 300 };
+    await shiftPage();
+    await frames();
+    expect(scrolled.map((s) => s.el.id)).toEqual(["h-sales", "h-sales"]);
+  });
+
+  it("does not jump when the hash names nothing on the page", () => {
+    window.history.replaceState(null, "", "/products/p1#something-else");
+    mount();
+    expect(scrolled).toHaveLength(0);
+  });
+
+  it("does not yank the page to a late section once the person has scrolled", async () => {
+    window.history.replaceState(null, "", "/products/p1#h-sales");
+    mount(SHORT_PAGE);
+    act(() => {
+      main.dispatchEvent(new Event("wheel", { bubbles: true }));
+    });
+    await addLate("h-sales");
+    expect(scrolled).toHaveLength(0);
+  });
+
+  it("does not jump to the old hash after the person has clicked a link themselves", async () => {
+    window.history.replaceState(null, "", "/products/p1#h-sales");
+    rectById["h-units"] = { top: 60 };
+    mount(SHORT_PAGE);
+    fireEvent.click(link("h-units"));
+    expect(scrolled).toHaveLength(1);
+    await addLate("h-sales");
+    expect(scrolled.map((s) => s.el.id)).toEqual(["h-units"]);
+    expect(window.location.hash).toBe("#h-units");
+  });
+});
