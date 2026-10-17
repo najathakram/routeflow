@@ -22,8 +22,8 @@ import {
 } from "../lib/cart-line-state";
 import {
   computeOrderTotal,
-  lineUnitFor,
-  priceEditorPrefill,
+  lineUnitFor as libLineUnitFor,
+  priceEditorPrefill as libPriceEditorPrefill,
   type UnlistedTotalLine,
 } from "../lib/cart-order-total";
 import { decideTrayPrice } from "../lib/staff-price-override";
@@ -73,7 +73,10 @@ import { createScanAcceptGuard } from "../lib/scan-accept-guard";
 import { needsUnitLabelConfirm } from "../lib/scan-unit-confirm";
 // Compose "<Parent> - <Variant>" so scanned variants don't show as "Strawberry" alone.
 import { displayProductName as displayName } from "../lib/product-display";
-import { effectiveQty, getTierPrice, isSpecialTier, roundMoney } from "@routeflow/pricing";
+import { effectiveQty, roundMoney } from "@routeflow/pricing";
+import { useCustomerPriceLayer } from "../lib/api/price-layer";
+import { lineLayerPrice, packLinePrice } from "../lib/cart-order-total";
+import { layerAwareIsSpecial, priceLayerGate } from "../lib/price-layer-gate";
 import { useMarginConfig, floorForCategory } from "../lib/api/margin";
 import { useTrackedCategories } from "../lib/api/tracked-categories";
 import {
@@ -491,9 +494,22 @@ function ProductPickView({
   }, [customerPrices]);
   const effectiveTierFor = (id: string) => cpMap.get(id) ?? customerTier ?? 1;
   /** The customer's effective per-selling-unit (box) price for a product. */
-  const tierPriceFor = (p: Product) => getTierPrice(p, effectiveTierFor(p.id));
+  // S19b slice D (SA-811a/813): billing's own customer price layer. Flag off: no request, `layerOf` is undefined and every
+  // price below is master's number.
+  const priceLayer = useCustomerPriceLayer(customerId);
+  const layerOf = priceLayer.layerOf;
+  const packPriceFor = (p: Product) => packLinePrice(p, effectiveTierFor(p.id), layerOf(p.id));
+  const tierPriceFor = (p: Product) => packPriceFor(p).price;
+  // The lib's pure line price with this customer's layer bound in (the call sites keep their pinned shapes).
+  const lineUnitFor = (line: LineState | undefined, p: Product, tier: number) =>
+    libLineUnitFor(line, p, tier, layerOf(p.id));
+  const priceEditorPrefill = (line: LineState | undefined, p: Product, tier: number) =>
+    libPriceEditorPrefill(line, p, tier, layerOf(p.id));
+  /** The line's comparison base: its OWN unit's resolved price (the layer row, else master's unitPriceBase). */
+  const lineBaseFor = (line: LineState, p: Product) =>
+    lineLayerPrice(line, p, effectiveTierFor(p.id), layerOf(p.id)).price;
   /** SPECIAL (tier≠1) lines are the customer's permanent price — never overridable. */
-  const isSpecialFor = (p: Product) => isSpecialTier(effectiveTierFor(p.id));
+  const isSpecialFor = (p: Product) => packPriceFor(p).isSpecial;
   const [scanOpen, setScanOpen] = useState(false);
   /** Tray line (catalog id or unlisted local id) whose price is being edited. */
   const [priceEditId, setPriceEditId] = useState<string | null>(null);
@@ -790,7 +806,7 @@ function ProductPickView({
       priceHistory?.[id],
       p ? toNumber(p.pricePerUnit) : 0,
       p ? tierPriceFor(p) : 0,
-      isSpecialTier(effectiveTierFor(id)),
+      p ? layerAwareIsSpecial(packPriceFor(p)) : false,
     );
     // #2865: the add decision is the pure `applyAddToItems` (lib/pending-unit-adapter): refused while the line is pending -> false.
     const input = { id, level, dflt, viaRow, code, role: userRole, upb, prefill };
@@ -1139,9 +1155,16 @@ function ProductPickView({
   // items that aren't in the local list still contribute. Subtotal uses the shared
   // box/piece-aware formula so the footer agrees with what the server will compute on submit.
   const { total, totalItems } = useMemo(
-    () => computeOrderTotal(items, productById, unlisted as UnlistedTotalLine[], effectiveTierFor),
+    () =>
+      computeOrderTotal(
+        items,
+        productById,
+        unlisted as UnlistedTotalLine[],
+        effectiveTierFor,
+        layerOf,
+      ),
     // eslint-disable-next-line react-hooks/exhaustive-deps
-    [items, productById, unlisted, cpMap, customerTier],
+    [items, productById, unlisted, cpMap, customerTier, priceLayer.ready, customerId],
   );
 
   // REG-4: live, DISPLAY-ONLY preview of how this cart will split into invoices.
@@ -1172,7 +1195,16 @@ function ProductPickView({
     }
     return groupLinesForInvoiceSplit(splitLines, splitCategoryById);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [items, productById, unlisted, splitCategoryById, cpMap, customerTier]);
+  }, [
+    items,
+    productById,
+    unlisted,
+    splitCategoryById,
+    cpMap,
+    customerTier,
+    priceLayer.ready,
+    customerId,
+  ]);
 
   // Newest-first "order so far" for the scan tray. Same inputs as the total
   // memo, so the tray and the footer cannot disagree.
@@ -1194,7 +1226,7 @@ function ProductPickView({
         },
       }),
     // eslint-disable-next-line react-hooks/exhaustive-deps
-    [items, unlisted, scanOrder, productById, cpMap, customerTier],
+    [items, unlisted, scanOrder, productById, cpMap, customerTier, priceLayer.ready, customerId],
   );
 
   /**
@@ -1311,6 +1343,8 @@ function ProductPickView({
       unlisted: false,
       rule: {
         base: unitPriceBase(line ?? {}, tierPriceFor(p)),
+        // S19b: a unit line whose unit is in the customer layer is judged against that price (later key wins).
+        ...(line?.unitLabel ? { base: lineBaseFor(line, p) } : {}),
         listPrice: toNumber(p.pricePerUnit),
         isSpecial: isSpecialFor(p),
         reason: line?.overrideReason,
@@ -1419,7 +1453,7 @@ function ProductPickView({
       // unitLabel at all), so this screen's own drafts never actually carried the field the old
       // whole-draft resume refusal keyed on — that refusal only ever fired for a draft parked by
       // a different client.
-      const priceBase = unitPriceBase(line, tierPrice);
+      const priceBase = lineBaseFor(line, p);
       // Mobile has no separate "permanent discount" concept — any explicit
       // override the operator set is tagged MANUAL (never DISCOUNTED), which
       // is exactly what the resume-hydration pin rule above checks for.
@@ -1456,7 +1490,7 @@ function ProductPickView({
     }
     return lines;
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [items, productById, cpMap, customerTier]);
+  }, [items, productById, cpMap, customerTier, priceLayer.ready, customerId]);
 
   const draftBuilderState = useMemo<DraftBuilderState>(
     () => ({
@@ -1715,7 +1749,9 @@ function ProductPickView({
     setSubmitting(false);
   };
 
-  const canSave = totalItems > 0 && !createOrder.isPending && !submitting;
+  // D-5 (SA-813 M3): Create stays disabled until every line's price is confirmed by the layer read.
+  const layerGate = priceLayerGate(priceLayer, Object.keys(items));
+  const canSave = totalItems > 0 && !createOrder.isPending && !submitting && !layerGate.blocked;
   // "Save as draft" needs only a customer (a zero-item DRAFT is allowed server-side).
   const canSaveDraft = !!customerId && !createOrder.isPending && !submitting;
 
@@ -1748,7 +1784,7 @@ function ProductPickView({
         // the server applies the SPECIAL/tier price authoritatively.
         // units_v1: see lib/unit-options.ts#unitPriceBase — the comparison base is the ACTIVE
         // unit's own resolved price, never the pack's `tierPriceFor`.
-        const catalog = unitPriceBase(line, p ? tierPriceFor(p) : 0);
+        const catalog = p ? lineBaseFor(line, p) : 0;
         // #2696(c): a SPECIAL line's override is sent only WITH its reason (the server refuses
         // one without); a lingering reasonless one (e.g. an old draft) is dropped, as before.
         const specialOk = p != null && (!isSpecialFor(p) || !!line.overrideReason?.trim());
@@ -2338,6 +2374,19 @@ function ProductPickView({
             <Ionicons name="arrow-forward" size={14} color="#fff" />
           </Pressable>
         </View>
+        {layerGate.message ? (
+          <Pressable
+            onPress={layerGate.canRetry ? priceLayer.refetch : undefined}
+            disabled={!layerGate.canRetry}
+            accessibilityRole={layerGate.canRetry ? "button" : "text"}
+            accessibilityLabel={layerGate.message}
+            hitSlop={6}
+          >
+            <Text style={{ color: ios.system.orangeInk, fontSize: 12, textAlign: "center" }}>
+              {layerGate.message}
+            </Text>
+          </Pressable>
+        ) : null}
         <View style={styles.footerSubRow}>
           {/* A rejected draft write used to be silent everywhere. The order
               itself is never at risk — it is right here on screen — so say

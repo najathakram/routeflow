@@ -29,10 +29,12 @@ import { confirm } from "../../../../../lib/confirm";
 import {
   computeLineSubtotal,
   effectiveQty,
-  getTierPrice,
   isSpecialTier,
   type SellLevel,
 } from "@routeflow/pricing";
+import { useCustomerPriceLayer } from "../../../../../lib/api/price-layer";
+import { packLinePrice } from "../../../../../lib/cart-order-total";
+import { priceLayerGate } from "../../../../../lib/price-layer-gate";
 import { marginFloorPrice } from "../../../../../lib/margin-floor-price";
 import { isUnitLine, setLineUnits } from "../../../../../lib/sale-line";
 import { buildSubstituteLine } from "../../../../../lib/substitute-line";
@@ -157,6 +159,9 @@ export function EditOrderItemsScreen({ orderId }: { orderId?: string } = {}) {
     return m;
   }, [customerPrices]);
   const effectiveTierFor = (productId: string) => cpMap.get(productId) ?? customerTier ?? 1;
+  // S19b slice D (SA-811a/813): billing's own customer price layer. Flag off: no request, every number is master's.
+  const priceLayer = useCustomerPriceLayer(customerId);
+  const layerOf = priceLayer.layerOf;
   /** SPECIAL (a tier other than 1) lines are the customer's permanent price — never overridable
    *  (the create surface's own rule, components/NewOrderScreen.tsx:627). Mobile's
    *  editor contradicted mobile's builder until this landed; the api-side gate is
@@ -292,8 +297,8 @@ export function EditOrderItemsScreen({ orderId }: { orderId?: string } = {}) {
     return Array.from(rows.values());
   }, [openCredits, order, justCreatedCredits]);
 
-  const tierPriceFor = (p: { id: string } & Parameters<typeof getTierPrice>[0]) =>
-    getTierPrice(p, cpMap.get(p.id) ?? customerTier ?? 1);
+  const tierPriceFor = (p: { id: string } & Record<string, unknown>) =>
+    packLinePrice(p as never, cpMap.get(p.id) ?? customerTier ?? 1, layerOf(p.id)).price;
 
   // Latched by a successful save. Read by the hydration guard below (the
   // post-save refetch IS the new truth, so it re-hydrates) and by the snapshot
@@ -435,6 +440,12 @@ export function EditOrderItemsScreen({ orderId }: { orderId?: string } = {}) {
   const itemCount =
     Object.values(draft).filter((it) => effectiveQty(it, it.unitsPerBox) > 0).length +
     unlisted.filter((u) => u.qty > 0).length;
+
+  // D-5 (SA-813 M3): Save stays disabled until every staged product's price is confirmed by the layer read.
+  const layerGate = priceLayerGate(
+    priceLayer,
+    Object.values(draft).map((it) => it.productId),
+  );
 
   // ── The staged edit, as one value ─────────────────────────────────────────
   // `originals` and `staged` are the SAME inputs `save()` builds its payload
@@ -659,7 +670,8 @@ export function EditOrderItemsScreen({ orderId }: { orderId?: string } = {}) {
   ): string => {
     const catalogPrice = tierPriceFor(p);
     const listPrice = toNumber(p.pricePerUnit);
-    const isSpecial = isSpecialTier(cpMap.get(p.id) ?? customerTier ?? 1);
+    const lp = packLinePrice(p as never, cpMap.get(p.id) ?? customerTier ?? 1, layerOf(p.id));
+    const isSpecial = lp.isSpecial || lp.layered; // R3: a layered price is the resolver's, no last-given pre-fill
     const upbRaw = p.unitsPerBox;
     const unitsPerBox = upbRaw == null ? null : Number(upbRaw);
     // Fresh-add starting price — only a genuine discount (below tier) or
@@ -1386,11 +1398,25 @@ export function EditOrderItemsScreen({ orderId }: { orderId?: string } = {}) {
                 {itemCount} ITEM{itemCount === 1 ? "" : "S"}
               </Text>
               <Text style={styles.footerTotal}>${total.toFixed(2)}</Text>
+              {layerGate.message ? (
+                <Pressable
+                  onPress={layerGate.canRetry ? priceLayer.refetch : undefined}
+                  disabled={!layerGate.canRetry}
+                  accessibilityRole={layerGate.canRetry ? "button" : "text"}
+                  accessibilityLabel={layerGate.message}
+                  hitSlop={6}
+                >
+                  <Text style={{ fontSize: 12, textAlign: "center" }}>{layerGate.message}</Text>
+                </Pressable>
+              ) : null}
             </View>
             <Pressable
-              style={[styles.saveBtn, updateMut.isPending && styles.saveBtnDisabled]}
+              style={[
+                styles.saveBtn,
+                (updateMut.isPending || layerGate.blocked) && styles.saveBtnDisabled,
+              ]}
               onPress={save}
-              disabled={updateMut.isPending}
+              disabled={updateMut.isPending || layerGate.blocked}
             >
               <Text style={styles.saveBtnText}>
                 {updateMut.isPending ? "Saving…" : "Save changes"}

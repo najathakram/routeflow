@@ -100,7 +100,10 @@ import { useAuthStore } from "../../../../lib/auth-store";
 import { hasUnsavedInvoiceDraft, shouldConfirmDiscard } from "../../../../lib/discard-guard";
 // Compose "<Parent> - <Variant>" so variants don't show as "Strawberry" alone.
 import { displayProductName as displayName } from "../../../../lib/product-display";
-import { computeLineSubtotal, effectiveQty, getTierPrice, isSpecialTier } from "@routeflow/pricing";
+import { computeLineSubtotal, effectiveQty } from "@routeflow/pricing";
+import { useCustomerPriceLayer } from "../../../../lib/api/price-layer";
+import { packLinePrice, withLayerBase } from "../../../../lib/cart-order-total";
+import { priceLayerGate } from "../../../../lib/price-layer-gate";
 import { useCustomerPrices } from "../../../../lib/api/customers";
 import {
   computeInvoiceTotals,
@@ -510,10 +513,19 @@ function InvoiceComposer({
     for (const cp of customerPrices ?? []) m.set(cp.productId, cp.pricingTier);
     return m;
   }, [customerPrices]);
-  const tierPriceFor = (p: Product) => getTierPrice(p, cpMap.get(p.id) ?? customerTier ?? 1);
+  // S19b slice D (SA-811a/813): billing's own customer price layer. Flag off: no request, every number is master's.
+  const priceLayer = useCustomerPriceLayer(customerId);
+  const layerOf = priceLayer.layerOf;
   const effectiveTierFor = (id: string) => cpMap.get(id) ?? customerTier ?? 1;
+  const packPriceFor = (p: Product) => packLinePrice(p, effectiveTierFor(p.id), layerOf(p.id));
+  const tierPriceFor = (p: Product) => packPriceFor(p).price;
+  /** A unit line whose unit is in the layer carries the layer's price as its base (same line object otherwise). */
+  const lineFor = <L extends { unitLabel?: string | null; unitBasePrice?: number }>(
+    line: L,
+    p: Product,
+  ): L => withLayerBase(line, p, effectiveTierFor(p.id), layerOf(p.id));
   // #2696(c): the server's "special" — the tier it prices this product at is not tier 1.
-  const isSpecialFor = (p: Product) => isSpecialTier(cpMap.get(p.id) ?? customerTier ?? 1);
+  const isSpecialFor = (p: Product) => packPriceFor(p).isSpecial;
   const tenantTaxRate = (Number(settings?.taxRate) || 0) / 100;
   // Rate the row toggles actually offer: hidden entirely for exempt customers.
   const taxRateFraction = isTaxExempt ? 0 : tenantTaxRate;
@@ -919,7 +931,9 @@ function InvoiceComposer({
       if (p.trackedCategoryId && separateInvoiceCategoryIds.has(p.trackedCategoryId)) {
         hasSeparateInvoiceCategoryLine = true;
       }
-      lines.push(invoiceTotalsLine(line, p.unitsPerBox, tierPriceFor(p), taxRateFraction));
+      lines.push(
+        invoiceTotalsLine(lineFor(line, p), p.unitsPerBox, tierPriceFor(p), taxRateFraction),
+      );
     }
     // Unlisted lines: never boxed, simple unitPrice × qty.
     for (const u of unlisted) {
@@ -943,6 +957,8 @@ function InvoiceComposer({
     cpMap,
     customerTier,
     separateInvoiceCategoryIds,
+    priceLayer.ready,
+    customerId,
   ]);
 
   // Full money preview through lib/invoice-totals — the same formula the server
@@ -1056,13 +1072,14 @@ function InvoiceComposer({
         unlisted,
         scanOrder,
         lookup: (id) => productById.get(id),
-        priceFor: (p, line) => {
+        priceFor: (p, rawLine) => {
           const full = productById.get(p.id);
+          const line = full ? lineFor(rawLine, full) : rawLine;
           return full ? unitPriceBase(line, tierPriceFor(full)) : 0;
         },
       }),
     // eslint-disable-next-line react-hooks/exhaustive-deps
-    [items, unlisted, scanOrder, productById, cpMap, customerTier],
+    [items, unlisted, scanOrder, productById, cpMap, customerTier, priceLayer.ready, customerId],
   );
 
   /**
@@ -1174,7 +1191,7 @@ function InvoiceComposer({
       if (isCatalogHeader(p)) return <CatalogSectionLabel label={p.label} />;
       const line = items[p.id];
       const qty = line ? effectiveQty(line, p.unitsPerBox) : 0;
-      const price = line ? unitPriceBase(line, tierPriceFor(p)) : tierPriceFor(p);
+      const price = line ? unitPriceBase(lineFor(line, p), tierPriceFor(p)) : tierPriceFor(p);
       const band =
         line && qty > 0 && Number(p.unitsPerBox ?? 0) > 1 && !line.unitLabel ? (
           <BoxedQtyBand
@@ -1239,7 +1256,15 @@ function InvoiceComposer({
   // missed toast can't become a second order, a second stock deduction and a
   // second issued invoice.
   const [saleRecorded, setSaleRecorded] = useState(false);
-  const canSave = totalItems > 0 && !saving && !anyUnitLoading && !saleRecorded && !saleUnknown;
+  // D-5 (SA-813 M3): Create stays disabled until every line's price is confirmed by the layer read.
+  const layerGate = priceLayerGate(priceLayer, Object.keys(items));
+  const canSave =
+    totalItems > 0 &&
+    !saving &&
+    !anyUnitLoading &&
+    !saleRecorded &&
+    !saleUnknown &&
+    !layerGate.blocked;
 
   // No FormSheet on this screen, so it applies the same choke-point rule as
   // FormSheet.tsx's handleCancel directly: never prompt "Discard invoice?"
@@ -1446,7 +1471,7 @@ function InvoiceComposer({
         if (!p) continue;
         if (effectiveQty(line, p.unitsPerBox) <= 0) continue;
         // #2696(c) SA-558e: the server's rule A — a special price moves only with a reason.
-        const item = saleItemDto(line, p, {
+        const item = saleItemDto(lineFor(line, p), p, {
           catalogPrice: tierPriceFor(p),
           listPrice: toNumber(p.pricePerUnit),
           isSpecial: isSpecialFor(p),
@@ -1503,7 +1528,7 @@ function InvoiceComposer({
       if (!p) continue;
       if (effectiveQty(line, p.unitsPerBox) <= 0) continue;
       // H3b: the server judges an invoice line like a sale line — a special price moves only with a reason.
-      const over = invoiceItemOverride(line, {
+      const over = invoiceItemOverride(lineFor(line, p), {
         catalogPrice: tierPriceFor(p),
         listPrice: toNumber(p.pricePerUnit),
         isSpecial: isSpecialFor(p),
@@ -1514,7 +1539,7 @@ function InvoiceComposer({
       }
       payload.push({
         ...invoiceItemDto(
-          line,
+          lineFor(line, p),
           { id: productId, description: displayName(p) },
           tierPriceFor(p),
           p.unitsPerBox,
@@ -1754,6 +1779,19 @@ function InvoiceComposer({
         />
       </View>
 
+      {layerGate.message ? (
+        <Pressable
+          onPress={layerGate.canRetry ? priceLayer.refetch : undefined}
+          disabled={!layerGate.canRetry}
+          accessibilityRole={layerGate.canRetry ? "button" : "text"}
+          accessibilityLabel={layerGate.message}
+          hitSlop={6}
+        >
+          <Text style={{ color: ios.system.orangeInk, fontSize: 12, textAlign: "center" }}>
+            {layerGate.message}
+          </Text>
+        </Pressable>
+      ) : null}
       <View style={styles.footer}>
         {/* ONE entry point into review: the summary itself is the button —
             see NewOrderScreen's footer for the history. */}

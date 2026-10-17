@@ -58,7 +58,11 @@ export function UnitPickerRow({
    * product's own record, unclobbered by anything a line mutates.
    */
   product: LadderProduct;
-  /** The EFFECTIVE tier for this product (`CustomerPrice.pricingTier ?? customer.pricingTier ?? 1`). */
+  /**
+   * The EFFECTIVE tier for this product (`CustomerPrice.pricingTier ?? customer.pricingTier ?? 1`). This row only builds the
+   * tier's unit LADDER; the price a customer is charged for a unit comes from `customerLinePrice` (@routeflow/pricing, S19b:
+   * the customer's layer row when there is one, else this tier ladder), applied by the screen.
+   */
   tier: number;
   onChange: (option: UnitOption) => void;
   /**
