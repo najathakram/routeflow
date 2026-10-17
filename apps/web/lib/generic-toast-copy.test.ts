@@ -253,6 +253,23 @@ describe("genericToastCopy: codes users rely on", () => {
     ).toBe("Some details aren't valid. Check what you entered and try again.");
   });
 
+  it("O1: the 1-piece naming refusal (uncoded 400) says what to do, with the tenant's piece name, not 'Some details aren't valid'", () => {
+    const one = (label: string) => `A 1-piece unit is always named "${label}".`;
+    expect(genericToastCopy(err(400, { message: one("Piece") }))).toBe(
+      "A 1-piece unit is always called Piece. Rename it to Piece, or give it more than one piece.",
+    );
+    expect(codedToastCopy(err(400, { message: one("Each") }))).toBe(
+      "A 1-piece unit is always called Each. Rename it to Each, or give it more than one piece.",
+    );
+    // a near-miss, or a label that is not a plain short name, is never echoed
+    expect(genericToastCopy(err(400, { message: one("<b>x</b>") }))).toBe(
+      "Some details aren't valid. Check what you entered and try again.",
+    );
+    expect(genericToastCopy(err(400, { message: one("Piece") + " " + RAW }))).toBe(
+      "Some details aren't valid. Check what you entered and try again.",
+    );
+  });
+
   describe("B986: coded refusals that tell the user what to fix (never less actionable than the server sentence)", () => {
     it("ALLOCATIONS_EXCEED_PAYMENT names the two amounts from the STRUCTURED fields, never the message", () => {
       const copy = genericToastCopy(
