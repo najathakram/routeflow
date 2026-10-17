@@ -6,6 +6,7 @@ import type {
 } from "@routeflow/types";
 import { apiClient } from "../api-client";
 import { useSubscription } from "./billing";
+import { priceGridKey } from "./usePriceGrid";
 
 /** The plan flag that gates the whole multi-level-units surface (server registry row). */
 export const UNITS_FLAG = "flag.units_v1";
@@ -46,7 +47,12 @@ export function useProductUnits(productId: string, enabled: boolean) {
 
 function useInvalidate(productId: string) {
   const qc = useQueryClient();
-  return () => qc.invalidateQueries({ queryKey: key(productId) });
+  // The price grid is derived from the unit ladder, so a unit change must refresh both (B1245).
+  return () =>
+    Promise.all([
+      qc.invalidateQueries({ queryKey: key(productId) }),
+      qc.invalidateQueries({ queryKey: priceGridKey(productId) }),
+    ]);
 }
 
 export function useCreateProductUnit(productId: string) {
