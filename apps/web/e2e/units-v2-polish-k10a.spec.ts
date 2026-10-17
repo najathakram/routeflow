@@ -69,9 +69,14 @@ const box = async (page: Page, testId: string) => {
   return b!;
 };
 
-/** The background of one Raise / Lower half, found inside the panel by its label. */
-const bg = (panel: Locator, label: string) =>
-  panel.locator("label", { hasText: label }).evaluate((el) => getComputedStyle(el).backgroundColor);
+/**
+ * One Raise / Lower half's label, found inside the panel by its WHOLE text: hasText is a case-insensitive substring match,
+ * so a bare "Raise" would also find the "Also raise the prices you set" checkbox label.
+ */
+const half = (panel: Locator, name: "Raise" | "Lower") =>
+  panel.locator("label", { hasText: new RegExp(`^${name}$`) });
+const bg = (panel: Locator, name: "Raise" | "Lower") =>
+  half(panel, name).evaluate((el) => getComputedStyle(el).backgroundColor);
 
 for (const vp of VIEWPORTS) {
   test.describe(`Units v2 polish K10a @ ${vp.name}`, () => {
@@ -88,22 +93,22 @@ for (const vp of VIEWPORTS) {
       await expect(panel).toBeVisible();
 
       // P13: Raise is chosen first and filled; Lower is outlined (a different, lighter fill)
-      const raise = panel.getByRole("radio", { name: "Raise" });
-      const lower = panel.getByRole("radio", { name: "Lower" });
+      const raise = panel.getByRole("radio", { name: "Raise", exact: true });
+      const lower = panel.getByRole("radio", { name: "Lower", exact: true });
       await expect(raise).toBeChecked();
       await expect(lower).not.toBeChecked();
       const [raiseOn, lowerOff] = [await bg(panel, "Raise"), await bg(panel, "Lower")];
       expect(raiseOn, "the chosen half is filled").not.toBe(lowerOff);
-      await panel.locator("label", { hasText: "Lower" }).click();
+      await half(panel, "Lower").click();
       await expect(lower).toBeChecked();
       await expect(raise).not.toBeChecked();
       expect(await bg(panel, "Lower"), "the fill moved to Lower").toBe(raiseOn);
       expect(await bg(panel, "Raise")).toBe(lowerOff);
-      await panel.locator("label", { hasText: "Raise" }).click();
+      await half(panel, "Raise").click();
 
       // F02: with an amount typed the preview shows, and Apply/Cancel sit BELOW it, on nothing
-      await panel.getByLabel("Unit").selectOption(unit.ref);
-      await panel.getByLabel("Amount").fill("5");
+      await panel.getByLabel("Unit", { exact: true }).selectOption(unit.ref);
+      await panel.getByLabel("Amount", { exact: true }).fill("5");
       const preview = page.getByTestId(ID.preview);
       await expect(preview.getByRole("row").first()).toBeVisible();
       const rows = preview.getByRole("row");
@@ -161,9 +166,9 @@ for (const vp of VIEWPORTS) {
       const unit = await setRetailUnit(page, { api, headers }, productId);
       await page.getByTestId(ID.change).click();
       const panel = page.getByTestId(ID.panel);
-      await panel.getByLabel("Unit").selectOption(unit.ref);
-      await panel.getByLabel("Amount").fill("10");
-      await panel.getByRole("button", { name: "Apply" }).click();
+      await panel.getByLabel("Unit", { exact: true }).selectOption(unit.ref);
+      await panel.getByLabel("Amount", { exact: true }).fill("10");
+      await panel.getByRole("button", { name: "Apply", exact: true }).click();
       await expect(panel).toHaveCount(0);
       await expect(page.getByTestId(ID.barText)).not.toContainText("Nothing changed yet");
       const input = page.locator(`[data-testid="units-v2-input-${unit.ref}-1"]:visible`).first();
@@ -216,14 +221,17 @@ for (const vp of VIEWPORTS) {
       const amount = async () => {
         await page.getByTestId(ID.change).click();
         const panel = page.getByTestId(ID.panel);
-        await panel.getByLabel("Unit").selectOption(unit.ref);
-        await panel.getByLabel("Amount").fill("5");
+        await panel.getByLabel("Unit", { exact: true }).selectOption(unit.ref);
+        await panel.getByLabel("Amount", { exact: true }).fill("5");
         await expect(page.getByTestId(ID.alsoUpdate)).toBeVisible();
       };
 
       await amount();
       await expect(page.getByTestId(ID.truncated)).toHaveCount(0);
-      await page.getByRole("button", { name: "Cancel" }).first().click();
+      await page
+        .getByTestId(ID.footer)
+        .getByRole("button", { name: "Cancel", exact: true })
+        .click();
 
       // the same page, with the endpoint saying it capped the list
       await page.route(`**/products/${productId}/customer-prices`, async (route) => {

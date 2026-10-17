@@ -5,8 +5,8 @@ import type {
   PriceTier,
 } from "@routeflow/pricing";
 import type { CustomerPriceMove } from "@routeflow/types";
-import { emptyPlan } from "../change-prices/plan.test-utils";
-import { staleKeepMoves, staleOfferEntries, type DraftEntry } from "./fold-draft";
+import { emptyPlan, VIEW } from "../change-prices/plan.test-utils";
+import { foldDraft, staleKeepMoves, staleOfferEntries, type DraftEntry } from "./fold-draft";
 
 const move = (over: Partial<CustomerPriceMove> = {}): CustomerPriceMove => ({
   customerId: "c1",
@@ -125,5 +125,53 @@ describe("staleKeepMoves", () => {
       ["b", emptyPlan({ customerChanges: [row] })],
     ]);
     expect(staleKeepMoves([keep], two, [customer])).toEqual([]);
+  });
+});
+
+describe("foldDraft: a refused cell is refused only until a later entry writes it", () => {
+  const bad: DraftEntry = { kind: "cell", key: "case|1", text: "abc" };
+  const plan = (to: number): DraftEntry => {
+    const p = emptyPlan({ patches: [{ ref: "case", tier: 1, to }] });
+    return { kind: "plan", key: "plan:0", plan: p, replan: () => p };
+  };
+  const offer: DraftEntry = {
+    kind: "offer",
+    id: "k#tier:case|1",
+    planKey: "k",
+    title: "t",
+    patches: [{ ref: "case", tier: 1, to: 33 }],
+    moves: [],
+  };
+
+  it("keeps the problem while nothing later patches the cell", () => {
+    const r = foldDraft(VIEW, {}, [bad], null, []);
+    expect(r.problems).toEqual([expect.objectContaining({ ref: "case", tier: 1 })]);
+    expect(r.patches).toEqual([]);
+  });
+
+  it.each([
+    ["a later plan", plan(33)],
+    ["a later ticked offer", offer],
+  ])("drops it when %s patches the cell, and the later value is the patch", (_n, later) => {
+    const r = foldDraft(VIEW, {}, [bad, later], null, []);
+    expect(r.problems).toEqual([]);
+    expect(r.patches).toEqual([{ ref: "case", tier: 1, to: 33 }]);
+  });
+
+  it("keeps it when the plan patches another cell", () => {
+    const other = emptyPlan({ patches: [{ ref: "case", tier: 2, to: 14 }] });
+    const r = foldDraft(
+      VIEW,
+      {},
+      [bad, { kind: "plan", key: "plan:0", plan: other, replan: () => other }],
+      null,
+      [],
+    );
+    expect(r.problems).toHaveLength(1);
+  });
+
+  it("keeps a refusal typed AFTER the plan", () => {
+    const r = foldDraft(VIEW, {}, [plan(33), bad], null, []);
+    expect(r.problems).toHaveLength(1);
   });
 });

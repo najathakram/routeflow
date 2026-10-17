@@ -18,6 +18,7 @@ import { usePriceDraft, type PriceDraft } from "./usePriceDraft";
 let mockGrid: { data?: ProductPriceGridDto; isLoading: boolean; isError: boolean };
 let mockLabels: Record<string, string> = {};
 let mockCustomers: unknown[] = [];
+const mockSave = jest.fn();
 jest.mock("@/lib/api/usePriceGrid", () => ({
   ...jest.requireActual("@/lib/api/usePriceGrid"),
   usePriceGrid: () => mockGrid,
@@ -25,7 +26,12 @@ jest.mock("@/lib/api/usePriceGrid", () => ({
 }));
 jest.mock("@/lib/api/usePriceWrites", () => ({
   ...jest.requireActual("@/lib/api/usePriceWrites"),
-  useSavePrices: () => ({ mutate: jest.fn(), reset: jest.fn(), isPending: false, error: null }),
+  useSavePrices: () => ({
+    mutate: (req: unknown, o: unknown) => mockSave(req, o),
+    reset: jest.fn(),
+    isPending: false,
+    error: null,
+  }),
   useUndoPrices: () => ({ mutate: jest.fn(), isPending: false, error: null }),
 }));
 jest.mock("@/lib/api/tier-labels", () => ({ useTierLabels: () => ({ data: mockLabels }) }));
@@ -93,6 +99,7 @@ const input = (ref: string, tier: number) =>
   within(screen.getByTestId(T.row(ref))).getByTestId(T.input(ref, tier)) as HTMLInputElement;
 
 beforeEach(() => {
+  mockSave.mockReset();
   mockLabels = {};
   mockCustomers = [];
   mockGrid = { data: grid, isLoading: false, isError: false };
@@ -341,5 +348,166 @@ describe("K3b NIT-1: a Keep the owner's own action clears is not blamed on the c
     act(() => draft.resetAllToAuto());
     expect(draft.notice).toMatch(/was cleared because you reset every price to Auto/);
     expect(draft.notice).not.toContain(BLAMES_PRICES);
+  });
+});
+
+// The order of the draft decides the box, the problems and the request, and all three must agree.
+describe("entry order: the box text equals the request value", () => {
+  const tierOffer = (value: number) =>
+    emptyPlan({
+      patches: [{ ref: "case", tier: 2, to: 14 }],
+      changes: [{ ref: "case", label: "Case", tier: 2, from: 13.91, to: 14 }],
+      offers: [
+        {
+          kind: "tier",
+          ticked: false,
+          ref: "case",
+          tier: 2,
+          tiers: [3],
+          value: 14,
+          warning: "Tier 3 is higher than Wholesale ($14.00).",
+          title: `Set Tier 3 to $${value} too`,
+          patches: [{ ref: "case", tier: 3, to: value }],
+        },
+      ],
+    });
+  const planTo = (ref: string, tier: 1 | 2 | 3, to: number | null) =>
+    emptyPlan({
+      patches: [{ ref, tier, to }],
+      changes: [{ ref, label: "Case", tier, from: 30, to: to ?? 0 }],
+    });
+  const typeInto = async (user: ReturnType<typeof userEvent.setup>, tier: number, text: string) => {
+    const box = input("case", tier);
+    await user.clear(box);
+    if (text) await user.type(box, text);
+  };
+  const sent = (tier: number) =>
+    draft.toRequest()?.patches.find((p) => p.ref === "case" && p.tier === tier);
+
+  it("MUST: a refused text is dropped when a later plan patches the cell: box, problems, canSave and Save agree", async () => {
+    const user = userEvent.setup();
+    mount();
+    await user.click(screen.getByTestId(T.btnEdit));
+    await typeInto(user, 1, "abc");
+    expect(draft.problems).toHaveLength(1);
+    expect(draft.canSave).toBe(false);
+    const plan = planTo("case", 1, 33);
+    act(() => draft.applyPlan(plan, () => plan));
+    expect(input("case", 1).value).toBe("33");
+    expect(draft.problems).toEqual([]);
+    expect(input("case", 1).getAttribute("aria-invalid")).toBeNull();
+    expect(screen.queryByText(/Enter a price like/)).toBeNull();
+    expect(draft.canSave).toBe(true);
+    expect(sent(1)).toEqual({ ref: "case", tier: 1, to: 33 });
+  });
+
+  it("MUST: a refused text comes back, with its problem, when the offer that covered it is unticked", async () => {
+    const user = userEvent.setup();
+    mount();
+    await user.click(screen.getByTestId(T.btnEdit));
+    await typeInto(user, 3, "abc");
+    const plan = tierOffer(13.1);
+    act(() => draft.applyPlan(plan, () => plan));
+    expect(draft.problems).toHaveLength(1);
+    act(() => draft.setOfferTicked(0, true));
+    expect(input("case", 3).value).toBe("13.1");
+    expect(draft.problems).toEqual([]);
+    expect(draft.canSave).toBe(true);
+    expect(sent(3)).toEqual({ ref: "case", tier: 3, to: 13.1 });
+    act(() => draft.setOfferTicked(0, false));
+    expect(input("case", 3).value).toBe("abc");
+    expect(draft.problems).toHaveLength(1);
+    expect(draft.problems[0]).toMatchObject({ ref: "case", tier: 3 });
+    expect(draft.canSave).toBe(false);
+  });
+
+  it("an offer unticked after a typed cell: the typed text comes back and Save sends it", async () => {
+    const user = userEvent.setup();
+    mount();
+    await user.click(screen.getByTestId(T.btnEdit));
+    await typeInto(user, 3, "12");
+    const plan = tierOffer(13.1);
+    act(() => draft.applyPlan(plan, () => plan));
+    act(() => draft.setOfferTicked(0, true));
+    expect(input("case", 3).value).toBe("13.1");
+    expect(sent(3)?.to).toBe(13.1);
+    act(() => draft.setOfferTicked(0, false));
+    expect(input("case", 3).value).toBe("12");
+    expect(sent(3)).toEqual({ ref: "case", tier: 3, to: 12 });
+  });
+
+  it("two plans on one cell: the later plan's value", () => {
+    mount();
+    const first = planTo("case", 1, 31.5);
+    const second = planTo("case", 1, 33);
+    act(() => draft.applyPlan(first, () => first));
+    expect(input("case", 1).value).toBe("31.5");
+    act(() => draft.applyPlan(second, () => second));
+    expect(input("case", 1).value).toBe("33");
+    expect(sent(1)?.to).toBe(33);
+  });
+
+  it("cleared to Auto after a plan: the box is empty and Save sends to: null", async () => {
+    const user = userEvent.setup();
+    mount();
+    const plan = planTo("case", 2, 14.6);
+    act(() => draft.applyPlan(plan, () => plan));
+    expect(input("case", 2).value).toBe("14.6");
+    await typeInto(user, 2, "");
+    expect(input("case", 2).value).toBe("");
+    expect(sent(2)).toEqual({ ref: "case", tier: 2, to: null });
+  });
+
+  it("re-typed after a later plan: the typed value wins in the box and in Save", async () => {
+    const user = userEvent.setup();
+    mount();
+    await user.click(screen.getByTestId(T.btnEdit));
+    await typeInto(user, 1, "32");
+    const plan = planTo("case", 1, 35.2);
+    act(() => draft.applyPlan(plan, () => plan));
+    expect(input("case", 1).value).toBe("35.2");
+    await typeInto(user, 1, "40");
+    expect(input("case", 1).value).toBe("40");
+    expect(sent(1)?.to).toBe(40);
+  });
+
+  it("after a save and an Undo the grid is replaced: the draft is empty and the boxes show the grid", async () => {
+    const user = userEvent.setup();
+    const { again } = mount();
+    const plan = planTo("case", 1, 35.2);
+    act(() => draft.applyPlan(plan, () => plan));
+    expect(input("case", 1).value).toBe("35.2");
+    const saved: ProductPriceGridDto = {
+      ...grid,
+      revision: 8,
+      priceState: "ps-2",
+      rows: grid.rows.map((r) =>
+        r.ref === "case"
+          ? { ...r, cells: r.cells.map((c) => (c.tier === 1 ? { ...c, value: 35.2 } : c)) }
+          : r,
+      ),
+    };
+    mockSave.mockImplementation((_req, o: { onSuccess: (r: unknown) => void }) => {
+      mockGrid = { data: saved, isLoading: false, isError: false };
+      o.onSuccess({
+        auditId: "a1",
+        revision: 8,
+        undo: { patches: [], customerMoves: [] },
+        grid: saved,
+      });
+    });
+    await user.click(screen.getByTestId(T.ebSave));
+    again();
+    expect(draft.editing).toBe(false);
+    expect(draft.count).toBe(0);
+    // the Undo replaces the grid again (setQueryData): the saved prices are back to the original
+    mockGrid = { data: grid, isLoading: false, isError: false };
+    again();
+    await user.click(screen.getByTestId(T.btnEdit));
+    expect(draft.count).toBe(0);
+    expect(draft.toRequest()?.patches).toEqual([]);
+    expect(input("case", 1).value).toBe("30");
+    expect(input("case", 2).value).toBe("13.91");
+    expect(input("piece", 1).value).toBe("0.92");
   });
 });
