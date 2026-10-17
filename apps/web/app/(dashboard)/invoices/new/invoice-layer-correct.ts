@@ -36,7 +36,10 @@ export function correctLayerLevelLines<T extends LayerCorrectable>(
       it.isSpecialPrice === (r.price !== r.listPrice) &&
       it.regularPrice === (r.price !== r.listPrice ? r.listPrice : undefined) &&
       it.pricing?.tierPrice === r.price &&
-      it.pricing?.listPrice === r.listPrice
+      it.pricing?.listPrice === r.listPrice &&
+      // the SPECIAL judgement is the layer row's too: a picker that already offers the layer price lands the line on it with
+      // the TIER's isSpecialTier (fromUnitLine), which is wrong for a customer on tier 1 with a typed price
+      it.pricing?.isSpecialTier === r.isSpecial
     )
       return it;
     changed = true;

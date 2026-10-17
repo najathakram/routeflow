@@ -1,6 +1,7 @@
 import { BadRequestException, Injectable, NotFoundException, Optional } from "@nestjs/common";
 import { UserRole } from "@prisma/client";
 import { baseLabelOf, getTierPrice, namesPack, roundMoney } from "@routeflow/pricing";
+import { asLadderProduct } from "../products/line-units";
 import type {
   PriceHistoryAggregate,
   PriceHistoryReferences,
@@ -456,7 +457,7 @@ export class CustomerPriceHistoryService {
           ? newest.pack === productPackNow
             ? null
             : newest.pack === 1
-              ? baseLabelOf(product)
+              ? baseLabelOf(asLadderProduct(product))
               : newest.row.unitLabel
           : newest.pack === 1 || newest.pack == null
             ? null
@@ -464,7 +465,7 @@ export class CustomerPriceHistoryService {
       // After a pack-size change the old sale's "Box" label would resolve to the CURRENT pack: that is not its unit, so no layer
       // (master shows null there too).
       const layerOfNewest =
-        newestLabel != null && namesPack(product, newestLabel)
+        newestLabel != null && namesPack(asLadderProduct(product), newestLabel)
           ? null
           : pc.layer(product, newestLabel);
       const inUnit = (price: number): number | null => {

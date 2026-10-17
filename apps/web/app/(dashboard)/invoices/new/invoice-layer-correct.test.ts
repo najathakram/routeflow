@@ -78,3 +78,28 @@ describe("correctLayerLevelLines", () => {
     expect(out).toMatchObject({ isSpecialPrice: true, regularPrice: 24 });
   });
 });
+
+describe("integration review: a line that already sits on the layer price still takes the layer row's SPECIAL judgement", () => {
+  it("price, list and priceType equal but pricing.isSpecialTier is the tier's: corrected, then idempotent", () => {
+    const r = {
+      price: 21,
+      listPrice: 24,
+      isSpecial: true,
+      priceType: "SPECIAL",
+      layered: true,
+    } as never;
+    const line = {
+      unitLabel: "Case",
+      packBase: {},
+      unitPrice: 21,
+      listPrice: 24,
+      priceType: "SPECIAL",
+      isSpecialPrice: true,
+      regularPrice: 24,
+      pricing: { tierPrice: 21, listPrice: 24, isSpecialTier: false },
+    };
+    const once = correctLayerLevelLines([line], () => r);
+    expect(once[0]!.pricing!.isSpecialTier).toBe(true);
+    expect(correctLayerLevelLines(once, () => r)).toBe(once);
+  });
+});

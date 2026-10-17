@@ -3,11 +3,8 @@ import { render, screen, fireEvent } from "@testing-library/react";
 import { OrderLineUnitPicker } from "./OrderLineUnitPicker";
 import { applyLineUnit, type UnitLine } from "@/lib/order-line-unit";
 
-// S19b slice B add-on (SA-811a R1, SA-813 M3): the unit picker on invoices/new (LineUnitControl) and the order modal offers
-// and applies the customer's LAYER price for the picked unit; flag off it is master's ladder price, with no request.
-let mockLayerEnabled = false;
-let mockLayerState: "ready" | "pending" | "failed" = "ready";
-const mockRefetch = jest.fn();
+// S19b slice B add-on (SA-811a R1): the unit picker offers and applies the customer's LAYER price for the picked unit when a surface
+// passes `layer`; without it (flag off) it is master's ladder price. The surface owns the unconfirmed-prices notice (M3).
 const caseRow = {
   ref: "u-case",
   label: "Case",
@@ -24,28 +21,7 @@ const packRow = {
   source: "customer",
   aboveList: false,
 };
-jest.mock("@/lib/api/useCustomerPriceLayer", () => {
-  const { priceLayerStatus } = jest.requireActual("@routeflow/pricing");
-  return {
-    useCustomerPriceLayer: (customerId?: string | null) => {
-      const enabled = mockLayerEnabled && !!customerId;
-      const data = { complete: true, products: { "prod-1": [packRow, caseRow] } };
-      const status = priceLayerStatus({
-        enabled,
-        isPending: mockLayerState === "pending",
-        isError: mockLayerState === "failed",
-        data: mockLayerState === "ready" ? data : null,
-      });
-      return {
-        ...status,
-        layerOf: (id?: string | null) =>
-          enabled && mockLayerState === "ready" && id ? data.products[id as "prod-1"] : undefined,
-        error: null,
-        refetch: mockRefetch,
-      };
-    },
-  };
-});
+const LAYER = [packRow, caseRow] as never;
 jest.mock("@/lib/api/product-units", () => ({
   useUnitsEnabled: () => true,
   useProductUnits: () => ({
@@ -82,13 +58,11 @@ const choose = (onChange: jest.Mock, label: string) => {
 describe("OrderLineUnitPicker - the customer's layer (picker add-on)", () => {
   beforeEach(() => {
     jest.clearAllMocks();
-    mockLayerEnabled = false;
-    mockLayerState = "ready";
   });
 
   it("flag off: master's ladder price for Case, no layer line, no notice", () => {
     const onChange = jest.fn();
-    render(<OrderLineUnitPicker line={line} tier={3} customerId="c1" onChange={onChange} />);
+    render(<OrderLineUnitPicker line={line} tier={3} onChange={onChange} />);
     const opt = choose(onChange, "Case");
     expect(opt.price).toBe(412.57); // the tier ladder (not the layer)
     expect(opt.layerLine).toBeUndefined();
@@ -96,9 +70,8 @@ describe("OrderLineUnitPicker - the customer's layer (picker add-on)", () => {
   });
 
   it("invoices/new picker: flag on, picking Case gives the layer's $377.14 (list $480), SPECIAL", () => {
-    mockLayerEnabled = true;
     const onChange = jest.fn();
-    render(<OrderLineUnitPicker line={line} tier={3} customerId="c1" onChange={onChange} />);
+    render(<OrderLineUnitPicker line={line} tier={3} layer={LAYER} onChange={onChange} />);
     const opt = choose(onChange, "Case");
     expect(opt.price).toBe(377.14);
     expect(opt.listPrice).toBe(480);
@@ -123,13 +96,12 @@ describe("OrderLineUnitPicker - the customer's layer (picker add-on)", () => {
   });
 
   it("back to the pack takes the layer's $33", () => {
-    mockLayerEnabled = true;
     const onChange = jest.fn();
     render(
       <OrderLineUnitPicker
         line={{ ...line, unitLabel: "Case", packBase: { ...line, qty: 1 } as never }}
         tier={3}
-        customerId="c1"
+        layer={LAYER}
         onChange={onChange}
       />,
     );
@@ -142,19 +114,6 @@ describe("OrderLineUnitPicker - the customer's layer (picker add-on)", () => {
     expect(back.unitPrice).toBe(33);
   });
 
-  it("pending layer: the unconfirmed notice; failed: the failure copy and Retry refetches", () => {
-    mockLayerEnabled = true;
-    mockLayerState = "pending";
-    const { rerender } = render(
-      <OrderLineUnitPicker line={line} tier={3} customerId="c1" onChange={jest.fn()} />,
-    );
-    expect(screen.getByText("Checking this customer's prices…")).toBeInTheDocument();
-    mockLayerState = "failed";
-    rerender(<OrderLineUnitPicker line={line} tier={3} customerId="c1" onChange={jest.fn()} />);
-    expect(screen.getByText(/Couldn't load this customer's prices\./)).toBeInTheDocument();
-    fireEvent.click(screen.getByRole("button", { name: "Retry" }));
-    expect(mockRefetch).toHaveBeenCalledTimes(1);
-  });
   it("nit 4: a system MANUAL unit line (no one-time price) re-prices when its ladder price moves; an operator MANUAL stands", () => {
     const base = {
       ...line,

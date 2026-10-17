@@ -357,3 +357,18 @@ export function mergeSameLine<
   }
   return { ...into, qty: into.qty + add.qty };
 }
+
+/**
+ * Is THIS line SPECIAL? Judged per line, like mobile's `lineIsSpecial` (S19b integration review): a unit line answers with its
+ * OWN unit's layer row, a derived Piece with the pack's (it bills as the pack's proration), and a unit with no row (or no
+ * layer at all, flag off) with master's `isSpecialTier(tier)`.
+ */
+export function lineIsSpecialAt(i: {
+  tier: number;
+  layer?: readonly CustomerLayerUnit[] | null;
+  line?: { unitLabel?: string | null; derivedBase?: unknown } | null;
+}): boolean {
+  const unitLabel = i.line?.derivedBase ? null : (i.line?.unitLabel ?? null);
+  return customerLinePrice({ product: {}, tier: i.tier, layer: i.layer, unitLabel, tierPrice: 0 })
+    .isSpecial;
+}

@@ -86,6 +86,7 @@ import {
   pillLabel,
   plural,
   unitWords,
+  type CustomerLayerUnit,
   type SellLevel,
 } from "@routeflow/pricing";
 import { useAuth } from "@/lib/auth-context";
@@ -107,6 +108,7 @@ import {
   matchesPackLine,
   mergeIntoPackLine,
   mergeResolvedInvoiceLines,
+  pickerLayerFor,
   pickerLineOf,
   saleUnitPriceField,
   toUnitLine,
@@ -740,12 +742,15 @@ function LineUnitControl({
   item,
   enabled,
   tier,
+  layer,
   onChoose,
   legacy,
 }: {
   item: LineItemState;
   enabled: boolean;
   tier: number;
+  /** S19b: the customer's layer rows for this product (priceLayer.layerOf); undefined = master's ladder. */
+  layer?: readonly CustomerLayerUnit[] | null;
   onChoose: (key: string, option: Parameters<typeof chooseUnit>[2], refresh: boolean) => void;
   legacy: React.ReactNode;
 }) {
@@ -757,6 +762,7 @@ function LineUnitControl({
       <OrderLineUnitPicker
         line={pickerLineOf(item)}
         tier={tier}
+        layer={pickerLayerFor(item, layer)}
         startOnDefaultUnit={!!item.startOnDefaultUnit}
         onChange={(option, refresh) => onChoose(item.key, option, refresh)}
       />
@@ -2597,6 +2603,7 @@ export default function NewInvoicePage() {
                         item={item}
                         enabled={unitsOn}
                         tier={tierFor(item.productId ?? "")}
+                        layer={priceLayer.layerOf(item.productId)}
                         onChoose={setLineUnit}
                         legacy={
                           <>

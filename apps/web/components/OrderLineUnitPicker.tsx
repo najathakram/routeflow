@@ -3,8 +3,6 @@
 import * as React from "react";
 import { UnitPicker } from "@/components/UnitPicker";
 import { useProductUnits, useUnitsEnabled } from "@/lib/api/product-units";
-import { useCustomerPriceLayer, type CustomerPriceLayer } from "@/lib/api/useCustomerPriceLayer";
-import { PriceLayerNotice, pricesUnconfirmed } from "@/components/PriceLayerNotice";
 import {
   buildUnitOptions,
   defaultUnitValue,
@@ -49,7 +47,6 @@ function OrderLineUnitPickerInner({
   line,
   tier,
   layer,
-  priceLayer,
   onChange,
   startOnDefaultUnit = false,
 }: {
@@ -70,13 +67,6 @@ function OrderLineUnitPickerInner({
    * option with a row is offered at the layer price and `onChange` carries it (`option.layerLine`); omitted = master's ladder.
    */
   layer?: readonly CustomerLayerUnit[] | null;
-  /**
-   * The customer on the document: the picker reads their price layer itself (the same cached query the surface uses, so no
-   * second request) when `layer` is not passed. Flag off or no customer: no request, master's ladder prices.
-   */
-  customerId?: string | null;
-  /** The unconfirmed-notice state from the wrapper that read the layer (absent = nothing to show). */
-  priceLayer?: CustomerPriceLayer;
   onChange: (option: UnitOption, refresh: boolean) => void;
 }) {
   const enabled = useUnitsEnabled();
@@ -158,59 +148,31 @@ function OrderLineUnitPickerInner({
     if (held.price !== line.unitPrice) onChange(held, true);
   }, [line.unitLabel, line.priceType, line.unitPrice, line.priceEdited, held, onChange]);
 
-  // SA-813 M3: flag on and this customer's layer unconfirmed: the unit prices below are not final, so say so (Retry on failure).
-  const unconfirmed =
-    !!priceLayer && options.length > 1 && pricesUnconfirmed(priceLayer, [line.productId]);
   return (
-    <>
-      <UnitPicker
-        product={product}
-        units={units.data}
-        tier={tier}
-        packPrice={packPrice}
-        layer={layer}
-        ariaLabel={`Sell ${line.productName} by`}
-        value={unitPickerValueOf(line)}
-        onChange={(label) => {
-          // "" = back to the pack, which must work even when the ladder is gone (no options to look in):
-          // the held unit would otherwise be unfixable and the save would 400 on it.
-          const option =
-            options.find((o) => o.value === label) ??
-            (label === "" ? withLayerPrices([packOption], product, tier, layer)[0] : undefined);
-          if (option) onChange(option, false);
-        }}
-      />
-      {priceLayer ? (
-        <PriceLayerNotice
-          layer={priceLayer}
-          unconfirmed={unconfirmed}
-          className="text-[11px] text-navy/60"
-        />
-      ) : null}
-    </>
-  );
-}
-
-/** Reads the customer's price layer (a hook, so it lives in a child that only mounts with a customer). */
-function WithCustomerLayer(props: React.ComponentProps<typeof OrderLineUnitPickerInner>) {
-  const priceLayer = useCustomerPriceLayer(props.customerId);
-  return (
-    <OrderLineUnitPickerInner
-      {...props}
-      layer={priceLayer.layerOf(props.line.productId)}
-      priceLayer={priceLayer}
+    <UnitPicker
+      product={product}
+      units={units.data}
+      tier={tier}
+      packPrice={packPrice}
+      layer={layer}
+      ariaLabel={`Sell ${line.productName} by`}
+      value={unitPickerValueOf(line)}
+      onChange={(label) => {
+        // "" = back to the pack, which must work even when the ladder is gone (no options to look in):
+        // the held unit would otherwise be unfixable and the save would 400 on it.
+        const option =
+          options.find((o) => o.value === label) ??
+          (label === "" ? withLayerPrices([packOption], product, tier, layer)[0] : undefined);
+        if (option) onChange(option, false);
+      }}
     />
   );
 }
 
 /**
- * The "Sell by" control (see `OrderLineUnitPickerInner`). With a `customerId` and no explicit `layer` it reads the customer's
- * price layer (S19b); otherwise it mounts no query at all, so every existing caller is unchanged.
+ * The "Sell by" control (see `OrderLineUnitPickerInner`). Every surface passes the customer's layer rows as `layer` (a pin
+ * spec, no-direct-customer-tier-price, fails a picker that omits it); the surface owns the unconfirmed-prices notice.
  */
 export function OrderLineUnitPicker(props: React.ComponentProps<typeof OrderLineUnitPickerInner>) {
-  return props.customerId && props.layer === undefined ? (
-    <WithCustomerLayer {...props} />
-  ) : (
-    <OrderLineUnitPickerInner {...props} />
-  );
+  return <OrderLineUnitPickerInner {...props} />;
 }

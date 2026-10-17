@@ -11,6 +11,7 @@ import {
 import { sameProductUnit, type PackBase, type UnitLine } from "@/lib/order-line-unit";
 import type { OrderLineUnitPickerLine } from "@/components/OrderLineUnitPicker";
 import type { UnitOption } from "@/lib/unit-options";
+import type { CustomerLayerUnit } from "@routeflow/pricing";
 import type { SaleLinePricing } from "@/lib/sale-line-pricing";
 import { codedToastCopy } from "@/lib/generic-toast-copy";
 import { bumpInvoiceLine } from "../invoice-scan-level";
@@ -233,6 +234,18 @@ export function pickerLineOf(it: InvoiceUnitFields): OrderLineUnitPickerLine {
     tierPrices: it.tierPrices,
     priceEdited: it.priceEdited,
   };
+}
+
+/**
+ * The layer rows the unit picker may use for this line. A unit line with no pack snapshot (an old or corrupt draft) gets
+ * none: with no snapshot the picker reads the line's own unit as the pack, so its unit would take the PACK's layer price.
+ */
+export function pickerLayerFor(
+  it: InvoiceUnitFields,
+  rows: readonly CustomerLayerUnit[] | null | undefined,
+): readonly CustomerLayerUnit[] | undefined {
+  if (!rows) return undefined;
+  return it.unitLabel && !it.packBase ? undefined : rows;
 }
 
 /** A typed price: shapes the line (consumes the default start, survives a tier refresh: #2381). */

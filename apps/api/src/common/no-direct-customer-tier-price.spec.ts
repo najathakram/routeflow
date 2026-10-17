@@ -31,10 +31,14 @@ const SCOPE = [
 ];
 
 const PATTERNS: Record<string, RegExp> = {
-  getTierPrice: /\bgetTierPrice\(/g,
-  chain: /pricingTier\s*\?\?|\?\?\s*[\w.?]*pricingTier\b/g,
+  // a call, a spaced call (`getTierPrice (`), or an alias import / cast (`getTierPrice as ...`)
+  getTierPrice: /\bgetTierPrice\s*\(|\bgetTierPrice\s+as\b/g,
+  // `pricingTier ?? x`, `x ?? pricingTier`, and the `||` spellings of both
+  chain: /pricingTier\s*(?:\?\?|\|\|)|(?:\?\?|\|\|)\s*[\w.?]*pricingTier\b/g,
   mapEntry: /\[\s*[\w.]+\.productId\s*,\s*[\w.]+\.pricingTier(?:\s+as\s+number)?\s*\]/g,
   mapSet: /\.set\(\s*[\w.]+\s*,\s*[\w.?]+\.pricingTier\s*\)/g,
+  // an index write: `m[id] = r.pricingTier`
+  mapIndex: /\[[^\]\n]+\]\s*=\s*[\w.?]+\.pricingTier\b/g,
   numberOf: /Number\(\s*[\w.?]*\.pricingTier\s*\)/g,
 };
 type Counts = Partial<Record<keyof typeof PATTERNS, number>>;
@@ -165,8 +169,72 @@ const ALLOW: Record<string, Entry> = {
   },
 };
 
-const strip = (s: string) =>
-  s.replace(/\/\*[\s\S]*?\*\//g, "").replace(/(^|[^:])\/\/[^\n]*/g, "$1");
+/**
+ * Drop comments, keep code and strings. A scanner, not a regex: a `//` inside a string ("https://...") must not strip the
+ * rest of its line, which would hide a direct shape written after it.
+ */
+export function strip(src: string): string {
+  let out = "";
+  let i = 0;
+  while (i < src.length) {
+    const c = src[i]!;
+    const n = src[i + 1];
+    if (c === "/" && n === "/") {
+      while (i < src.length && src[i] !== "\n") i++;
+    } else if (c === "/" && n === "*") {
+      const end = src.indexOf("*/", i + 2);
+      i = end < 0 ? src.length : end + 2;
+    } else if (c === '"' || c === "'" || c === "`") {
+      let j = i + 1;
+      while (j < src.length && src[j] !== c && !(c !== "`" && src[j] === "\n")) {
+        j += src[j] === "\\" ? 2 : 1;
+      }
+      out += src.slice(i, j + 1);
+      i = j + 1;
+    } else if (c === "\\") {
+      out += c + (n ?? "");
+      i += 2;
+    } else {
+      out += c;
+      i++;
+    }
+  }
+  return out;
+}
+
+/**
+ * Every `<OrderLineUnitPicker ...>` opening tag in the source (props only, braces balanced). A picker that does not pass
+ * `layer=` is one more place a unit pick can take the ladder price over the customer's (S19b integration review MUST-1).
+ */
+export function pickerTags(source: string): string[] {
+  const text = strip(source);
+  const tags: string[] = [];
+  const re = /<OrderLineUnitPicker\b/g;
+  for (let m = re.exec(text); m; m = re.exec(text)) {
+    let depth = 0;
+    let j = m.index + m[0].length;
+    for (; j < text.length; j++) {
+      const ch = text[j];
+      if (ch === "{") depth++;
+      else if (ch === "}") depth--;
+      else if (depth === 0 && ch === ">") break;
+    }
+    tags.push(text.slice(m.index, j + 1));
+  }
+  return tags;
+}
+
+/** The props the tag passes at its own level (anything inside a `{...}` value is blanked out). */
+const topLevelProps = (tag: string) => {
+  let depth = 0;
+  let out = "";
+  for (const ch of tag) {
+    if (ch === "{") depth++;
+    if (depth === 0) out += ch;
+    if (ch === "}") depth--;
+  }
+  return out;
+};
 
 const SKIP_DIR = new Set(["node_modules", "dist", ".next", "__tests__", "__mocks__", "e2e"]);
 function walk(dir: string, out: string[]): void {
@@ -238,7 +306,51 @@ describe("S19b A-pin: no direct customer tier price outside the one resolver", (
     expect(outside).toEqual([]);
   });
 
+  it("every <OrderLineUnitPicker> in web passes layer= (or is a listed SHOWS-LIST site)", () => {
+    const PICKER_SHOWS_LIST = new Set<string>(); // none: every surface that sells by unit prices through the layer
+    const all = files
+      .filter((f) => rel(f).startsWith("apps/web/"))
+      .flatMap((f) => pickerTags(fs.readFileSync(f, "utf8")).map((tag) => ({ file: rel(f), tag })));
+    expect(all.length).toBeGreaterThanOrEqual(3); // CreateOrderModal, orders/[id], invoices/new
+    const missing = all
+      .filter(
+        ({ file, tag }) => !/\blayer\s*=/.test(topLevelProps(tag)) && !PICKER_SHOWS_LIST.has(file),
+      )
+      .map(({ file }) => file);
+    expect(missing).toEqual([]);
+  });
+
+  it("the picker rule reads the real element: a layer in a handler does not count, a missing layer is caught", () => {
+    const passes = (src: string) => /\blayer\s*=/.test(topLevelProps(pickerTags(src)[0]!));
+    expect(
+      passes("<OrderLineUnitPicker line={l} tier={t} layer={x} onChange={(o) => f(o)} />"),
+    ).toBe(true);
+    expect(
+      passes(
+        "<OrderLineUnitPicker line={l} tier={t} onChange={(o) => { const layer = 1; f(o, layer); }} />",
+      ),
+    ).toBe(false);
+    expect(passes("<OrderLineUnitPicker layer={a ?? b} />")).toBe(true);
+    expect(pickerTags("<OrderLineUnitPickerInner a={1} />")).toEqual([]);
+  });
+
+  it("strip keeps the code after a // inside a string, and still drops real comments", () => {
+    expect(
+      countShapes('const u = "https://x.test"; const p = getTierPrice(a, b);').getTierPrice,
+    ).toBe(1);
+    expect(countShapes("const p = 1; // getTierPrice(a, b)")).toEqual({});
+    expect(countShapes("/* cp.pricingTier ?? 1 */ const q = 2;")).toEqual({});
+  });
+
   it("the pin is live: each shape hits, the resolver call does not", () => {
+    expect(countShapes("const p = getTierPrice (product, tier);").getTierPrice).toBe(1);
+    expect(countShapes("const f = (getTierPrice as Fn)(product, tier);").getTierPrice).toBe(1);
+    expect(
+      countShapes("import { getTierPrice as gtp } from '@routeflow/pricing';").getTierPrice,
+    ).toBe(1);
+    expect(countShapes("const t = cp?.pricingTier || 1;").chain).toBeGreaterThan(0);
+    expect(countShapes("const t = other || customer.pricingTier;").chain).toBeGreaterThan(0);
+    expect(countShapes("m[r.productId] = r.pricingTier;").mapIndex).toBe(1);
     expect(countShapes("const p = getTierPrice(product, tier);").getTierPrice).toBe(1);
     expect(countShapes("const t = cpMap.get(id) ?? customer.pricingTier;").chain).toBeGreaterThan(
       0,

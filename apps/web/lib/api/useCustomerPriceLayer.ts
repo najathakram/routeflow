@@ -1,3 +1,4 @@
+import * as React from "react";
 import { useQuery } from "@tanstack/react-query";
 import type { CustomerPriceLayerResponse } from "@routeflow/types";
 import {
@@ -38,17 +39,20 @@ export function useCustomerPriceLayer(customerId: string | null | undefined): Cu
     refetchOnMount: "always",
     refetchOnWindowFocus: true,
   });
-  const status = priceLayerStatus({
-    enabled,
-    isPending: q.isPending,
-    isError: q.isError,
-    isFetching: q.isFetching,
-    data: q.data,
-  });
-  return {
-    ...status,
-    layerOf: (productId) => (enabled && productId ? q.data?.products[productId] : undefined),
-    error: q.error,
-    refetch: () => void q.refetch(),
-  };
+  // Stable identities (integration review SHOULD 2): a page keeps this object (and `layerOf`) in useCallback / useMemo deps,
+  // so they change only when the read itself changes, never on an unrelated re-render.
+  const { isPending, isError, isFetching, data, error, refetch: queryRefetch } = q;
+  const status = React.useMemo(
+    () => priceLayerStatus({ enabled, isPending, isError, isFetching, data }),
+    [enabled, isPending, isError, isFetching, data],
+  );
+  const layerOf = React.useCallback<CustomerPriceLayer["layerOf"]>(
+    (productId) => (enabled && productId ? data?.products[productId] : undefined),
+    [enabled, data],
+  );
+  const refetch = React.useCallback(() => void queryRefetch(), [queryRefetch]);
+  return React.useMemo(
+    () => ({ ...status, layerOf, error, refetch }),
+    [status, layerOf, error, refetch],
+  );
 }

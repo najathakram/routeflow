@@ -28,7 +28,10 @@ export function saleLinePricing(
   if (linePrice) {
     return {
       tierPrice: Number(linePrice.price),
-      listPrice: Number(linePrice.listPrice) || 0,
+      // a null list (a unit line with no layer row) is NOT zero: 0 would read every price as above list. The line's own
+      // price stands in, so nothing is judged against a list that is not known.
+      listPrice:
+        linePrice.listPrice != null ? Number(linePrice.listPrice) || 0 : Number(linePrice.price),
       isSpecialTier: linePrice.isSpecial,
     };
   }

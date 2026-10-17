@@ -103,3 +103,20 @@ describe("useCustomerPriceLayer", () => {
     await waitFor(() => expect(result.current.ready).toBe(true));
   });
 });
+
+describe("useCustomerPriceLayer: stable callbacks (integration review SHOULD 2)", () => {
+  beforeEach(() => {
+    flagOn = true;
+    get.mockReset();
+  });
+  it("layerOf, refetch and the returned object keep their identity across re-renders with unchanged data", async () => {
+    get.mockResolvedValue({ data: { customerId: "c1", complete: true, products: { p1: [row] } } });
+    const { result, rerender } = mount("c1");
+    await waitFor(() => expect(result.current.ready).toBe(true));
+    const first = result.current;
+    rerender();
+    expect(result.current.layerOf).toBe(first.layerOf);
+    expect(result.current.refetch).toBe(first.refetch);
+    expect(result.current).toBe(first);
+  });
+});

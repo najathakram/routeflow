@@ -135,12 +135,15 @@ import { useProducts } from "@/lib/api/products";
 import {
   computeLineSubtotal,
   customerLinePrice,
+  type CustomerLayerUnit,
   needsOverrideReason,
   normalizeBoxesPieces,
   roundMoney,
 } from "@routeflow/pricing";
 import { useCustomer, useCustomerPrices } from "@/lib/api/customers";
 import { useCustomerPriceLayer } from "@/lib/api/useCustomerPriceLayer";
+import { PriceLayerNotice, pricesUnconfirmed } from "@/components/PriceLayerNotice";
+import { lineIsSpecialAt } from "@/lib/order-line-unit";
 import { useMarginConfig, floorForCategory } from "@/lib/api/margin";
 import { PriceEditRow } from "./price-edit-row";
 import { MoneyInput, DecimalInput } from "@/components/MoneyInput";
@@ -1055,6 +1058,7 @@ export function EditableLineItems({
   tierPriceFor,
   isSpecialTierFor,
   tierForProductId,
+  layerOf,
   pricingReady,
   customer,
   orderId,
@@ -1074,10 +1078,15 @@ export function EditableLineItems({
   tierPriceFor: (product: SubstituteOption) => number;
   /** True when this customer's effective tier for the product is not tier 1 — a
    *  contracted price a stale remembered price must never outrank. */
-  isSpecialTierFor: (product: SubstituteOption) => boolean;
+  isSpecialTierFor: (
+    product: SubstituteOption,
+    line?: { unitLabel?: string | null; derivedBase?: unknown },
+  ) => boolean;
   /** units_v1: the EFFECTIVE numeric tier (1-5) for a product — `OrderLineUnitPicker` resolves
    *  the ladder price at this tier, same source as `isSpecialTierFor`. */
   tierForProductId: (productId: string) => number;
+  /** S19b: the customer's price-layer rows for a product (`useCustomerPriceLayer().layerOf`); omitted = master's ladder. */
+  layerOf?: (productId: string) => readonly CustomerLayerUnit[] | null | undefined;
   /** B62 (REG-B62): false while customer/customer-price queries are in flight —
    *  gates the add-product control and the Substitute trigger so neither can
    *  bake a list price before the customer's contracted tier is known. */
@@ -1456,6 +1465,7 @@ export function EditableLineItems({
                     priceEdited: item.priceEdited,
                   }}
                   tier={tierForProductId(item.productId)}
+                  layer={layerOf?.(item.productId)}
                   startOnDefaultUnit={item.startOnDefaultUnit}
                   onChange={(option, refresh) => setLineUnit(item.id, option, refresh)}
                 />
@@ -1578,7 +1588,7 @@ export function EditableLineItems({
               isSpecial={
                 !item.isUnlisted &&
                 item.productId != null &&
-                isSpecialTierFor({ id: item.productId } as SubstituteOption)
+                isSpecialTierFor({ id: item.productId } as SubstituteOption, item)
               }
               history={
                 item.isUnlisted
@@ -1908,29 +1918,29 @@ export default function OrderDetailPage() {
         tier: cpMap.get(p.id) ?? customerTier ?? 1,
         layer: priceLayer.layerOf(p.id),
       }).price,
-    [cpMap, customerTier, priceLayer],
+    [cpMap, customerTier, priceLayer.layerOf],
   );
+  // Per line (S19b integration review): a unit line answers with its own unit's layer row, like mobile's lineIsSpecial.
   const isSpecialTierFor = React.useCallback(
-    (p: SubstituteOption) =>
-      customerLinePrice({
-        product: p as unknown as Record<string, unknown>,
+    (p: SubstituteOption, line?: { unitLabel?: string | null; derivedBase?: unknown }) =>
+      lineIsSpecialAt({
         tier: cpMap.get(p.id) ?? customerTier ?? 1,
         layer: priceLayer.layerOf(p.id),
-      }).isSpecial,
-    [cpMap, customerTier, priceLayer],
+        line,
+      }),
+    [cpMap, customerTier, priceLayer.layerOf],
   );
   // B465: id-only variant for call sites that only have `productId` (an
   // EditItemState line, not a full SubstituteOption/product row) — same rule,
   // shared so the save-time guard below and the row's own render never drift.
   const isSpecialTierForProductId = React.useCallback(
-    (productId: string) =>
-      customerLinePrice({
-        product: {},
+    (productId: string, line?: { unitLabel?: string | null; derivedBase?: unknown }) =>
+      lineIsSpecialAt({
         tier: cpMap.get(productId) ?? customerTier ?? 1,
         layer: priceLayer.layerOf(productId),
-        tierPrice: 0,
-      }).isSpecial,
-    [cpMap, customerTier, priceLayer],
+        line,
+      }),
+    [cpMap, customerTier, priceLayer.layerOf],
   );
   // units_v1: the EFFECTIVE numeric tier `OrderLineUnitPicker` needs (it resolves the ladder
   // price at this tier, same source as isSpecialTierForProductId above).
@@ -2036,6 +2046,12 @@ export default function OrderDetailPage() {
   });
   const savingItems = updateItems.isPending;
   const [editItems, setEditItems] = React.useState<EditItemState[]>([]);
+  // S19b M3: while this customer's prices are unconfirmed (layer pending / failed / this product missing from an incomplete
+  // layer) the edit cannot be saved or published; flag off nothing is read, so this is false.
+  const layerBlocked = pricesUnconfirmed(
+    priceLayer,
+    editItems.map((it) => it.productId),
+  );
   const [pendingDeletes, setPendingDeletes] = React.useState<string[]>([]);
   const [draftAutoEntered, setDraftAutoEntered] = React.useState(false);
   // Staff-editable shipping fee (operator/tenant-admin only page). Initialized from
@@ -2263,7 +2279,7 @@ export default function OrderDetailPage() {
       (it) =>
         !it.cancelled &&
         it.productId != null &&
-        needsSpecialTierReason(it, isSpecialTierForProductId(it.productId)),
+        needsSpecialTierReason(it, isSpecialTierForProductId(it.productId, it)),
     );
     if (missingReasonLine) {
       toast({
@@ -3009,6 +3025,7 @@ export default function OrderDetailPage() {
                   tierPriceFor={tierPriceFor}
                   isSpecialTierFor={isSpecialTierFor}
                   tierForProductId={tierForProductId}
+                  layerOf={priceLayer.layerOf}
                   pricingReady={pricingReady}
                   customer={{ id: order.customerId, name: order.customer?.businessName }}
                   orderId={order.id}
@@ -3074,12 +3091,18 @@ export default function OrderDetailPage() {
                 />
 
                 <div className="flex gap-2 flex-wrap">
+                  <PriceLayerNotice
+                    layer={priceLayer}
+                    unconfirmed={layerBlocked}
+                    className="w-full text-xs text-navy/60"
+                  />
                   {localStatus === "DRAFT" ? (
                     <>
                       <WriteButton
                         size="sm"
                         className="bg-amber-500 text-white hover:bg-amber-600"
                         onClick={handleSaveItems}
+                        disabled={layerBlocked}
                         loading={updateItems.isPending}
                       >
                         Save Draft
@@ -3162,6 +3185,7 @@ export default function OrderDetailPage() {
                             };
                             saveThenPublish();
                           }}
+                          disabled={layerBlocked}
                           loading={updateItems.isPending || updateStatus.isPending}
                         >
                           Publish Order
@@ -3178,7 +3202,12 @@ export default function OrderDetailPage() {
                     </>
                   ) : (
                     <>
-                      <WriteButton size="sm" onClick={handleSaveItems} loading={savingItems}>
+                      <WriteButton
+                        size="sm"
+                        onClick={handleSaveItems}
+                        disabled={layerBlocked}
+                        loading={savingItems}
+                      >
                         Save Changes
                       </WriteButton>
                       <Button

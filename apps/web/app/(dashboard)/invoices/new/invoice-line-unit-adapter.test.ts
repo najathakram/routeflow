@@ -4,6 +4,7 @@ import type { UnitOption } from "@/lib/unit-options";
 import {
   chooseUnit,
   mergeIntoPackLine,
+  pickerLayerFor,
   pickerLineOf,
   saleUnitPriceField,
   unitPayload,
@@ -211,5 +212,43 @@ describe("unitRefusalCopy", () => {
     );
     expect(unitRefusalCopy(err())).toBeNull();
     expect(unitRefusalCopy(null)).toBeNull();
+  });
+});
+
+describe("pickerLayerFor (integration review SHOULD 4)", () => {
+  const rows = [
+    { ref: "pack", label: null, price: 33, listPrice: 42, source: "customer", aboveList: false },
+  ] as never;
+  it("a pack line and a unit line WITH a pack snapshot get the layer rows", () => {
+    expect(pickerLayerFor({ key: "k", description: "d", qty: 1, unitPrice: 1 }, rows)).toBe(rows);
+    expect(
+      pickerLayerFor(
+        {
+          key: "k",
+          description: "d",
+          qty: 1,
+          unitPrice: 1,
+          unitLabel: "Case",
+          packBase: {
+            unit: "Box",
+            qty: 1,
+            listPrice: 42,
+            unitPrice: 33,
+            priceType: "STANDARD",
+          } as never,
+        },
+        rows,
+      ),
+    ).toBe(rows);
+  });
+  it("a draft unit line WITHOUT a pack snapshot gets none: its own unit would read as the pack and take the pack's layer price", () => {
+    expect(
+      pickerLayerFor({ key: "k", description: "d", qty: 1, unitPrice: 1, unitLabel: "Case" }, rows),
+    ).toBeUndefined();
+  });
+  it("no rows stays no rows (flag off)", () => {
+    expect(
+      pickerLayerFor({ key: "k", description: "d", qty: 1, unitPrice: 1 }, undefined),
+    ).toBeUndefined();
   });
 });
