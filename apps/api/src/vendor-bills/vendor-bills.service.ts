@@ -1449,9 +1449,10 @@ export class VendorBillsService {
       })) as LiveBillReceipt[];
       const rows = receipts.filter((r) => !paired.has(r.id));
       const posted = rows.reduce((t, r) => t.add(r.quantity), new Prisma.Decimal(0));
-      // SA-808b item 3: only the PRODUCT total is checked. One receive's rows share effectiveAt and
-      // (inside one transaction) createdAt, so which row belongs to which line is decided by the
-      // uuid — a per-line split would refuse a normal two-line bill at random. Each reversal row
+      // SA-808b item 3: only the PRODUCT total is checked. One receive's rows share effectiveAt, but
+      // createdAt is `@default(now())` per create call (they can differ by milliseconds, or tie and
+      // fall to the uuid), so row order never names the line — a per-line split would refuse a
+      // normal two-line bill at random. Each reversal row
       // mirrors its own original; per-line money uses the line's own qty and cost.
       if (!posted.eq(want)) {
         throw ledgerGap(

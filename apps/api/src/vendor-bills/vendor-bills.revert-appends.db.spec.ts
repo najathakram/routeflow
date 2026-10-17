@@ -170,17 +170,24 @@ describeDb("B846 bill revert appends — real Postgres", () => {
 
   const inTenant = <T>(w: World, fn: () => Promise<T>) => tenantCtx.run(w.tenantId, fn);
 
-  async function receiveBill(w: World, qty: number, billNumber = "B-846-1", date = BILL_DATE) {
+  // `create()` ignores any caller-supplied bill number and assigns the next `BILL-YYYY-NNNN`
+  // (vendor-bills.service.ts `nextBillNumber`), so a test that needs the number reads it back.
+  async function createBill(w: World, qty: number, date = BILL_DATE) {
     const bill: any = await inTenant(w, () =>
       bills.create({
         supplierId: w.supplierId,
-        billNumber,
         billDate: date,
         items: [{ productId: w.productId, description: "Widget", qty, unitCost: 2 }],
       } as never),
     );
-    await inTenant(w, () => bills.receive(bill.id, undefined, w.userId));
-    return bill.id as string;
+    return { id: bill.id as string, billNumber: bill.billNumber as string };
+  }
+  const receive = (w: World, id: string) =>
+    inTenant(w, () => bills.receive(id, undefined, w.userId) as Promise<unknown>);
+  async function receiveBill(w: World, qty: number, date = BILL_DATE) {
+    const { id } = await createBill(w, qty, date);
+    await receive(w, id);
+    return id;
   }
   const revert = (w: World, id: string) =>
     inTenant(w, () => bills.revertToDraft(id, w.userId) as Promise<unknown>);
@@ -225,6 +232,8 @@ describeDb("B846 bill revert appends — real Postgres", () => {
 
   it("R1: a manual PURCHASE sharing the bill number survives the revert; one -Q reversal is appended", async () => {
     const w = await seedWorld("r1");
+    // The bill exists first so the manual purchase can share its REAL number (create() assigns it).
+    const { id, billNumber } = await createBill(w, 10);
     // L-220: the manual purchase goes through the production writer (it stamps tenantId through the
     // tenant transaction, writes the lot and moves the counter). Dated the month BEFORE the bill so
     // no later row triggers a cost replay — the ledger stays exactly the three rows asserted below.
@@ -235,7 +244,7 @@ describeDb("B846 bill revert appends — real Postgres", () => {
           quantity: 5,
           unitCost: 1,
           supplierId: w.supplierId,
-          reference: "B-846-1",
+          reference: billNumber,
           notes: "manual purchase",
           effectiveDate: EARLIER_DATE,
         } as never,
@@ -243,23 +252,22 @@ describeDb("B846 bill revert appends — real Postgres", () => {
       ),
     );
 
-    const id = await receiveBill(w, 10);
+    await receive(w, id);
     await revert(w, id);
 
     const rows = await ledger(w);
     expect(rows.map((r) => r.q)).toEqual(expect.arrayContaining([5, 10, -10]));
     expect(rows).toHaveLength(3);
     expect(rows.find((r) => r.notes === "manual purchase")).toBeDefined();
-    const receipt = rows.find(
-      (r) => r.notes === billReceiptNote("B-846-1"),
-    ) as (typeof rows)[number];
+    const receipt = rows.find((r) => r.notes === billReceiptNote(billNumber));
+    expect(receipt).toBeDefined();
     const reversal = rows.find((r) => r.q === -10) as (typeof rows)[number];
-    expect(reversal.notes).toBe(`${BILL_REVERTED_NOTE}${receipt.id}`);
+    expect(reversal.notes).toBe(`${BILL_REVERTED_NOTE}${receipt?.id}`);
     expect(rows.reduce((t, r) => t + r.q, 0)).toBe(await counter(w)); // Σq == the counter
     // The manual lot shares the bill number; only the bill's own lot is reversed.
     const lots = await prisma.stockLot.findMany({ where: { productId: w.productId } });
-    expect(lots.map((l) => [Number(l.qty), Number(l.remainingQty), l.notes])).toEqual([
-      [5, 5, "manual purchase"],
+    expect(lots.map((l) => [Number(l.qty), Number(l.remainingQty), l.reference, l.notes])).toEqual([
+      [5, 5, billNumber, "manual purchase"],
     ]);
   });
 
@@ -334,7 +342,7 @@ describeDb("B846 bill revert appends — real Postgres", () => {
 
   it("R7: an earlier UNFILED month's bill, bill month FILED — the revert is dated now and the filed month's ending stock holds", async () => {
     const w = await seedWorld("r7", "tobacco");
-    const id = await receiveBill(w, 10, "B-846-7", EARLIER_DATE);
+    const id = await receiveBill(w, 10, EARLIER_DATE);
     await fileTobaccoMonth(w);
     const endingStock = async () =>
       (await counter(w)) -
@@ -354,7 +362,7 @@ describeDb("B846 bill revert appends — real Postgres", () => {
 
   it("a FAILED month before the latest filed one is closed; a FAILED month after it stays open", async () => {
     const w = await seedWorld("failed", "tobacco");
-    const id = await receiveBill(w, 10, "B-846-8");
+    const id = await receiveBill(w, 10);
     // bill month: FAILED, earlier month GENERATED => the bill month is after the latest filed one
     await prisma.tobaccoReport.create({
       data: {
@@ -387,7 +395,7 @@ describeDb("B846 bill revert appends — real Postgres", () => {
 
   it("a FAILED earlier month is closed once a later month is filed: dated now", async () => {
     const w = await seedWorld("failed-before", "tobacco");
-    const id = await receiveBill(w, 10, "B-846-9", EARLIER_DATE);
+    const id = await receiveBill(w, 10, EARLIER_DATE);
     const earlierStart = new Date(Date.UTC(BILL_Y, BILL_M - 2, 1));
     await prisma.tobaccoReport.create({
       data: {
@@ -421,7 +429,6 @@ describeDb("B846 bill revert appends — real Postgres", () => {
       const bill: any = await inTenant(w, () =>
         bills.create({
           supplierId: w.supplierId,
-          billNumber: `B-846-V5-${qtyOrder[0]}`,
           billDate: BILL_DATE,
           items: [
             { productId: w.productId, description: "Widget", qty: 5, unitCost: 2 },
