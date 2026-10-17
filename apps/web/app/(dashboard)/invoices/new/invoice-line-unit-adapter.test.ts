@@ -4,6 +4,7 @@ import type { UnitOption } from "@/lib/unit-options";
 import {
   chooseUnit,
   mergeIntoPackLine,
+  hasPackSnapshot,
   pickerLayerFor,
   pickerLineOf,
   saleUnitPriceField,
@@ -298,5 +299,14 @@ describe("pickerLineOf layerManual (flag-off money, invoices/new)", () => {
   });
   it("flag on and the unit's layer row is above list: marked", () => {
     expect(pickerLineOf(manual, aboveRow).layerManual).toBe(true);
+  });
+});
+
+describe("hasPackSnapshot (the one guard layerLevelLine, correctLayerLevelLines and the picker share)", () => {
+  it("a pack line needs none; a unit line needs a snapshot of a DIFFERENT unit", () => {
+    expect(hasPackSnapshot({ unitLabel: undefined, packBase: undefined })).toBe(true);
+    expect(hasPackSnapshot({ unitLabel: "Case", packBase: undefined })).toBe(false);
+    expect(hasPackSnapshot({ unitLabel: "Case", packBase: { unit: "Case" } })).toBe(false);
+    expect(hasPackSnapshot({ unitLabel: "Case", packBase: { unit: "Box" } })).toBe(true);
   });
 });

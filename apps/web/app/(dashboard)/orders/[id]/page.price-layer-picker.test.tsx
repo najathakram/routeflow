@@ -156,6 +156,37 @@ describe("order edit: a NEW line that starts on the default unit takes the same 
   });
 });
 
+describe("order edit: after a pick the dropdown still reads the PACK as the pack (review nit 2)", () => {
+  function Stateful() {
+    const [items, setItems] = React.useState<EditItemState[]>([
+      { ...packLine(), packUnit: "Box", packUnitsPerBox: 24 },
+    ]);
+    return (
+      <EditableLineItems
+        items={items}
+        onChange={setItems}
+        onAdd={() => {}}
+        onDelete={() => {}}
+        canEditPrice={false}
+        tierPriceFor={() => 36}
+        isSpecialTierFor={() => true}
+        tierForProductId={() => 2}
+        pricingReady
+      />
+    );
+  }
+  it("the pack option is still labelled Box with 24 pcs, and the Case is not offered twice", () => {
+    renderWithProviders(<Stateful />);
+    fireEvent.change(screen.getByRole("combobox", { name: /Sell Widget by/i }), {
+      target: { value: "Case" },
+    });
+    const picker = screen.getByRole("combobox", { name: /Sell Widget by/i }) as HTMLSelectElement;
+    const labels = Array.from(picker.options).map((o) => o.textContent ?? "");
+    expect(labels.some((t) => t.startsWith("Box") && t.includes("24"))).toBe(true);
+    expect(labels.filter((t) => t.startsWith("Case"))).toHaveLength(1);
+  });
+});
+
 describe("order edit, flag off: a stored MANUAL unit line keeps its price (master)", () => {
   it("a loaded MANUAL Case line at $410 is not re-priced to the ladder's $7200-class price and Save sends nothing", () => {
     const stored: EditItemState = {

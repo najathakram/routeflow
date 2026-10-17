@@ -248,17 +248,26 @@ export function pickerLineOf(
 }
 
 /**
- * The layer rows the unit picker may use for this line. A unit line with no pack snapshot (an old or corrupt draft) gets
- * none: with no snapshot the picker reads the line's own unit as the pack, so its unit would take the PACK's layer price.
+ * Can this line be matched to a layer row safely? A pack line always; a unit line only with a snapshot of a DIFFERENT unit
+ * (its pack). With none, or a corrupt one that is the unit itself, the line's own unit would read as the pack and take the
+ * PACK's layer price. Shared by the picker, `layerLevelLine` and `correctLayerLevelLines`.
  */
+export function hasPackSnapshot(it: {
+  unitLabel?: string | null;
+  packBase?: { unit?: string } | null;
+}): boolean {
+  if (!it.unitLabel) return true; // a pack line has no snapshot to need
+  return !!it.packBase && it.packBase.unit !== it.unitLabel;
+}
+
+/** The layer rows the unit picker may use for this line (none when it cannot be matched safely: `hasPackSnapshot`). */
 export function pickerLayerFor(
   it: InvoiceUnitFields,
   rows: readonly CustomerLayerUnit[] | null | undefined,
 ): readonly CustomerLayerUnit[] | undefined {
   if (!rows) return undefined;
   // no snapshot, or a "snapshot" that is the unit itself (a corrupt draft): the line's own unit would read as the pack
-  if (it.unitLabel && (!it.packBase || it.packBase.unit === it.unitLabel)) return undefined;
-  return rows;
+  return hasPackSnapshot(it) ? rows : undefined;
 }
 
 /** A typed price: shapes the line (consumes the default start, survives a tier refresh: #2381). */

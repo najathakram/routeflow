@@ -103,3 +103,22 @@ describe("integration review: a line that already sits on the layer price still 
     expect(correctLayerLevelLines(once, () => r)).toBe(once);
   });
 });
+
+describe("review nit: a draft unit line with no real pack snapshot is never corrected to the pack's price", () => {
+  const PACK38: CustomerLinePrice = {
+    price: 38,
+    listPrice: 42,
+    isSpecial: true,
+    priceType: "SPECIAL",
+    layered: true,
+  };
+  it("packBase.unit equal to the line's own unitLabel (a corrupt snapshot) stays as it is", () => {
+    const corrupt = line({ packBase: { unit: "Case", unitsPerBox: 12 }, unitPrice: 22 });
+    const out = correctLayerLevelLines([corrupt], () => PACK38);
+    expect(out[0]).toBe(corrupt);
+    expect(out[0]!.unitPrice).toBe(22);
+  });
+  it("a real snapshot (the pack is a different unit) is still corrected", () => {
+    expect(correctLayerLevelLines([line()], () => LAYER)[0]!.unitPrice).toBe(21);
+  });
+});

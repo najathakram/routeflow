@@ -1468,8 +1468,9 @@ export function EditableLineItems({
                   line={{
                     productId: item.productId,
                     productName: item.productName,
-                    unit: item.unit ?? "",
-                    unitsPerBox: item.unitsPerBox ?? undefined,
+                    // the PACK's label and size, not the picked unit's (a pick overwrites item.unit / unitsPerBox)
+                    unit: item.packUnit ?? item.unit ?? "",
+                    unitsPerBox: item.packUnitsPerBox ?? item.unitsPerBox ?? undefined,
                     listPrice: item.basePrice,
                     unitPrice: item.unitPrice,
                     // PROMO (server-only, never client-set) has no picker-relevant meaning —

@@ -108,6 +108,7 @@ import {
   matchesPackLine,
   mergeIntoPackLine,
   mergeResolvedInvoiceLines,
+  hasPackSnapshot,
   pickerLayerFor,
   pickerLineOf,
   saleUnitPriceField,
@@ -1058,7 +1059,7 @@ export default function NewInvoicePage() {
     if (!it.productId) return undefined;
     // A unit line with no pack snapshot (an old or corrupt draft) cannot be matched to a layer row safely: its own
     // unit would read as the pack.
-    if (it.unitLabel && !it.packBase) return undefined;
+    if (!hasPackSnapshot(it)) return undefined;
     const rows = priceLayer.layerOf(it.productId);
     if (!rows) return undefined;
     const r = customerLinePrice({
