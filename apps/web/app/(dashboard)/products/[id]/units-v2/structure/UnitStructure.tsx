@@ -1,13 +1,13 @@
 "use client";
 
 import * as React from "react";
-import { priceGrid } from "@routeflow/pricing";
+import { priceGrid, validateSetPrice } from "@routeflow/pricing";
 import type { ProductPriceGridDto, ProductPriceGridRowDto } from "@routeflow/types";
 import { usePriceGrid } from "@/lib/api/usePriceGrid";
 import { formatMoney } from "@/lib/format";
 import { usePriceDraft } from "../edit/usePriceDraft";
 import { rulesFromGrid, viewFromGrid } from "../edit/view-from-grid";
-import { AddUnitPanel, RemoveUnitControl, ResetToAutoPanel } from "../units";
+import { AddUnitPanel, RemoveUnitControl, ResetToAutoPanel, type AddedUnit } from "../units";
 
 /**
  * K10d: K7's unit panels mounted in the v2 shell (V15, V17). Everything here reads the ONE shared price draft:
@@ -20,6 +20,40 @@ import { AddUnitPanel, RemoveUnitControl, ResetToAutoPanel } from "../units";
 export function UnitStructureControls({ productId }: { productId: string }) {
   const draft = usePriceDraft();
   const served = usePriceGrid(productId).data;
+  const [pendingPrice, setPendingPrice] = React.useState<AddedUnit | null>(null);
+  const [focusBar, setFocusBar] = React.useState(false);
+
+  // A price typed in Add a unit: the unit is created WITHOUT it. Once the grid has refetched and serves the new row, its
+  // Retail box opens as a draft holding that text, and the normal save bar commits it (CAS, audit, undo). No write here.
+  const newRow = pendingPrice
+    ? served?.rows.find((r) => r.ref === pendingPrice.id || r.label === pendingPrice.label)
+    : undefined;
+  const { startEditing } = draft;
+  const setText = draft.api.setText;
+  React.useEffect(() => {
+    if (!pendingPrice || !newRow || !newRow.editable) return;
+    setPendingPrice(null);
+    startEditing({ ref: newRow.ref, tier: 1, layout: visibleLayout() });
+    setText(newRow.ref, 1, pendingPrice.price, "");
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [pendingPrice, newRow]);
+
+  // After Reset's Apply the panel and its opener step aside (the draft is dirty, so the opener is disabled): put focus
+  // on the save bar, which is where the user goes next, once it exists.
+  const editing = draft.editing;
+  React.useEffect(() => {
+    if (!focusBar || !editing) return;
+    const t = setTimeout(() => {
+      const bar = document.querySelector<HTMLElement>('[data-testid="units-v2-editbar"]');
+      const first = bar?.querySelector<HTMLElement>(
+        "button:not([disabled]), [href], input, select",
+      );
+      (first ?? bar)?.focus({ preventScroll: false });
+      setFocusBar(false);
+    }, 0);
+    return () => clearTimeout(t);
+  }, [focusBar, editing]);
+
   if (!served || served.rows.length === 0) return null;
 
   const rows = [...served.rows].sort((a, b) => a.factor - b.factor);
@@ -37,13 +71,20 @@ export function UnitStructureControls({ productId }: { productId: string }) {
         baseLabel={base?.label ?? "Piece"}
         ofUnits={ofUnits}
         dirty={draft.dirty}
+        validatePrice={cellPriceProblem}
+        onAdded={(added) => {
+          if (added.price !== "") setPendingPrice(added);
+        }}
       />
       {reset.rows.length > 0 && (
         <ResetToAutoPanel
+          disabled={draft.dirty}
           onApply={() => {
+            if (draft.dirty) return;
             // The draft's reset only fills the draft: open edit mode too, so the save bar is there to Save or Cancel.
             draft.startEditing();
             draft.resetAllToAuto();
+            setFocusBar(true);
           }}
           changedCount={reset.rows.length}
           anchorName={anchor?.label}
@@ -53,6 +94,25 @@ export function UnitStructureControls({ productId }: { productId: string }) {
       )}
     </div>
   );
+}
+
+/** The grid cell's own rule for a typed price (null = fine, blank included), so the panel refuses with the same words. */
+function cellPriceProblem(text: string): string | null {
+  const checked = validateSetPrice(text);
+  return checked.ok ? null : checked.message;
+}
+
+/** The grid renders a table from 768px and phone cards below; the layout whose input is on screen takes the focus. */
+function visibleLayout(): "table" | "card" {
+  return typeof window !== "undefined" &&
+    window.matchMedia?.("(min-width: 768px)").matches === false
+    ? "card"
+    : "table";
+}
+
+/** After a finished Remove the row is going away: focus the units heading, which stays. */
+function focusUnitsHeading() {
+  document.getElementById("units-v2-grid-title")?.focus();
 }
 
 /** A unit row's Remove button and its confirm. Only the unit rows can be removed, never Case/Piece. */
@@ -66,11 +126,12 @@ export function UnitRowRemove({
   const draft = usePriceDraft();
   if (row.kind !== "unit" || !row.editable) return null;
   return (
-    <div className="mt-1.5 max-w-[16rem] whitespace-normal text-left text-sm font-normal">
+    <div className="max-w-[16rem] whitespace-normal text-left text-sm font-normal">
       <RemoveUnitControl
         productId={productId}
         unit={{ id: row.ref, label: row.label }}
         dirty={draft.dirty}
+        onRemoved={focusUnitsHeading}
       />
     </div>
   );

@@ -21,10 +21,13 @@ export function RemoveUnitConfirm({
   productId,
   unit,
   onClose,
+  onRemoved,
 }: {
   productId: string;
   unit: RemovableUnit;
   onClose: () => void;
+  /** After a finished delete, instead of `onClose` (the row is about to go, so focus must not go back to it). */
+  onRemoved?: () => void;
 }) {
   const remove = useDeleteProductUnit(productId);
   const keepRef = React.useRef<HTMLButtonElement>(null);
@@ -45,14 +48,14 @@ export function RemoveUnitConfirm({
   const confirm = () => {
     setErr("");
     remove.mutate(unit.id, {
-      onSuccess: onClose,
+      onSuccess: onRemoved ?? onClose,
       onError: (error) => setErr(orderErrorText(error)),
     });
   };
 
   return (
     <div
-      id="units-v2-remove-panel"
+      id={`units-v2-remove-panel-${unit.id}`}
       data-testid="units-v2-remove-panel"
       role="group"
       aria-label={`Remove the ${unit.label}`}
@@ -106,11 +109,17 @@ export function RemoveUnitControl({
   unit,
   dirty = false,
   disabled = false,
+  onRemoved,
 }: {
   productId: string;
   unit: RemovableUnit;
   dirty?: boolean;
   disabled?: boolean;
+  /**
+   * Called after a finished delete. The row is gone once the grid refetches, so the control does not refocus its
+   * own button then; the caller moves focus somewhere that stays (K10d: the units heading).
+   */
+  onRemoved?: () => void;
 }) {
   const { open, setOpen, close, openerRef } = usePanelDisclosure();
   const hintId = React.useId();
@@ -129,7 +138,7 @@ export function RemoveUnitControl({
         size="sm"
         data-testid={`units-v2-rm-${unit.id}`}
         aria-expanded={open}
-        aria-controls="units-v2-remove-panel"
+        aria-controls={`units-v2-remove-panel-${unit.id}`}
         aria-describedby={dirty ? hintId : undefined}
         disabled={blocked}
         onClick={() => setOpen(true)}
@@ -141,7 +150,21 @@ export function RemoveUnitControl({
           {DIRTY_HINT}
         </p>
       )}
-      {open && !blocked && <RemoveUnitConfirm productId={productId} unit={unit} onClose={close} />}
+      {open && !blocked && (
+        <RemoveUnitConfirm
+          productId={productId}
+          unit={unit}
+          onClose={close}
+          onRemoved={
+            onRemoved
+              ? () => {
+                  setOpen(false);
+                  onRemoved();
+                }
+              : undefined
+          }
+        />
+      )}
     </div>
   );
 }

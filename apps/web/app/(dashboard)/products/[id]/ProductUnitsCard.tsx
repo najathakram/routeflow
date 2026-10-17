@@ -18,7 +18,12 @@ import {
   useUpdateProductUnit,
 } from "@/lib/api/product-units";
 import { cascadePatch, proposeCascade, type CascadeProposal } from "@/lib/unit-cascade";
-import { unitStructureGoverned } from "./units-v2/structure/unit-structure";
+import { usePriceGrid } from "@/lib/api/usePriceGrid";
+import {
+  shellHasUnitControls,
+  shellRemovesUnit,
+  unitStructureGoverned,
+} from "./units-v2/structure/unit-structure";
 
 /**
  * "Units & prices" (units_v1, ask 1-3): define Case / Pallet / Piece levels on a product, give
@@ -68,6 +73,7 @@ function UnitRow({
   onSave,
   onDelete,
   onMakeDefault,
+  hideRemove,
 }: {
   unit: ProductUnitLevel;
   product: UnitsCardProduct;
@@ -77,6 +83,8 @@ function UnitRow({
   onSave: (unit: ProductUnitLevel, draft: Draft) => void;
   onDelete: (unit: ProductUnitLevel) => void;
   onMakeDefault: (unit: ProductUnitLevel) => void;
+  /** K10d: the v2 shell has its own Remove under this unit's name, so there is one Remove per unit. */
+  hideRemove?: boolean;
 }) {
   const [draft, setDraft] = React.useState<Draft>(() => draftOf(unit));
   const base = draftOf(unit);
@@ -210,9 +218,11 @@ function UnitRow({
               </Button>
             </>
           )}
-          <Button size="sm" variant="secondary" onClick={() => onDelete(unit)} disabled={busy}>
-            Remove
-          </Button>
+          {!hideRemove && (
+            <Button size="sm" variant="secondary" onClick={() => onDelete(unit)} disabled={busy}>
+              Remove
+            </Button>
+          )}
         </div>
       </div>
     </li>
@@ -246,8 +256,11 @@ export function ProductUnitsCard({
   const [proposals, setProposals] = React.useState<CascadeProposal[]>([]);
   const [removing, setRemoving] = React.useState<ProductUnitLevel | null>(null);
 
+  // K10d: the same grid the v2 shell reads. Until it has rows the shell has no Add / Remove, so the old ones stay.
+  const shellOwns = hideAddForm && !unitStructureGoverned(product);
+  const grid = usePriceGrid(product.id, enabled && shellOwns).data;
   if (!enabled) return null;
-  const addInShell = hideAddForm && !unitStructureGoverned(product);
+  const addInShell = shellOwns && shellHasUnitControls(grid);
   const units = list.data ?? [];
   const busy = create.isPending || update.isPending || remove.isPending;
   const tierNames = tiers;
@@ -378,6 +391,7 @@ export function ProductUnitsCard({
                 busy={busy}
                 onSave={save}
                 onDelete={setRemoving}
+                hideRemove={shellOwns && shellRemovesUnit(grid, u.id)}
                 onMakeDefault={(x) => update.mutate({ id: x.id, isDefaultSelling: true })}
               />
             ))}

@@ -4,8 +4,11 @@
  * returns) and V19 (the section headings the jump strip targets), plus the layout rule that an open panel never sits on
  * the Change prices panel or the Edit save bar.
  *
- * LOCAL LANE ONLY (project `units-v2`). READ-ONLY: panels are opened and closed, never confirmed; a price is typed only
- * to prove the controls wait, then discarded. Role: OPERATOR on the approved test tenant; fixture product E2E-FIX-UNITS
+ * LOCAL LANE ONLY (project `units-v2`). Panels are mostly opened and closed, never confirmed. Two cases do write, and
+ * both leave the fixture unchanged: the duplicate-name case submits and the server refuses it (409, nothing created);
+ * the priced-add case creates a throwaway unit, proves its price stays an unsaved draft, then removes the unit again
+ * through K7's Remove (cleanup is in a `finally` and logs instead of asserting). A price is otherwise typed only to
+ * prove the controls wait, then discarded. Role: OPERATOR on the approved test tenant; fixture product E2E-FIX-UNITS
  * (apps/api/scripts/e2e-seed.js), which must carry at least one removable unit row. A tenant not served
  * `flag.units_prices_v2` (or `flag.units_v1`) FAILS the spec.
  */
@@ -202,6 +205,75 @@ for (const vp of VIEWPORTS) {
       await page.getByTestId(ID.discard).click();
       await expect(page.getByTestId(ID.bar)).toHaveCount(0);
       await expect(page.getByTestId(ID.addOpen)).toBeEnabled();
+    });
+
+    test("a price typed in Add a unit lands as an unsaved draft on the new row, never saved", async ({
+      page,
+      context,
+    }, info) => {
+      const { api, headers, productId } = await openProduct(page, context);
+      const name = `K10d tmp ${Date.now()}`;
+      let submitted = false;
+      try {
+        await page.getByTestId(ID.addOpen).click();
+        await page.getByTestId(ID.addName).fill(name);
+        await page.getByTestId("units-v2-add-n").fill("7");
+        await page.getByTestId("units-v2-add-price").fill("1.23");
+        submitted = true;
+        await page.getByTestId("units-v2-add-submit").click();
+        await expect(page.getByTestId(ID.addPanel)).toHaveCount(0);
+
+        const row = page
+          .locator('[data-testid^="units-v2-row-"], [data-testid^="units-v2-card-"]')
+          .filter({ hasText: name })
+          .locator("visible=true")
+          .first();
+        const input = row.locator('[data-testid^="units-v2-input-"][data-testid$="-1"]:visible');
+        await expect(input).toHaveValue("1.23");
+        await expect(page.getByTestId(ID.bar)).toBeVisible();
+        await expect(page.getByTestId("units-v2-eb-text")).toContainText("1 unsaved");
+        await shot(page, info, "k10d-add-with-price");
+
+        await page.getByTestId(ID.cancel).click();
+        await page.getByTestId(ID.discard).click();
+        await expect(page.getByTestId(ID.bar)).toHaveCount(0);
+
+        // never saved: the served grid still has the new unit's Retail on Auto
+        const res = await page.request.get(`${api}/products/${productId}/price-grid`, { headers });
+        const grid: any = await res.json();
+        const made = grid.rows.find((r: any) => r.label === name);
+        expect(made, "the throwaway unit exists").toBeTruthy();
+        expect(made.cells.find((c: any) => c.tier === 1).source).toBe("auto");
+      } finally {
+        if (submitted) {
+          try {
+            await page.goto(`/products/${productId}`);
+            const rm = page.getByRole("button", { name: `Remove ${name}`, exact: true });
+            await rm.locator("visible=true").first().click();
+            await page.getByTestId("units-v2-rm-confirm").click();
+            await expect(page.getByRole("button", { name: `Remove ${name}` })).toHaveCount(0);
+          } catch (e) {
+            console.log(
+              `K10d cleanup: could not remove the throwaway unit "${name}" through the UI: ${e}`,
+            );
+            try {
+              const list = await page.request.get(`${api}/products/${productId}/units`, {
+                headers,
+              });
+              const units: any[] = await list.json();
+              const mine = units.find((u) => u.label === name);
+              if (mine)
+                await page.request.delete(`${api}/products/${productId}/units/${mine.id}`, {
+                  headers,
+                });
+            } catch (e2) {
+              console.log(
+                `K10d cleanup: API removal of "${name}" also failed: ${e2}. Remove it by hand.`,
+              );
+            }
+          }
+        }
+      }
     });
 
     test("V19: the Sales and Customer view headings carry the ids the jump strip targets", async ({

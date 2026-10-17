@@ -279,7 +279,8 @@ export function ProductPricesGrid({
       <h2
         id="units-v2-grid-title"
         data-testid={T.hUnits}
-        className="mb-3 text-sm font-semibold text-navy"
+        tabIndex={-1}
+        className="mb-3 text-sm font-semibold text-navy focus:outline-none"
       >
         Prices by unit
       </h2>
@@ -299,6 +300,11 @@ export function ProductPricesGrid({
               <th scope="col" className="sticky left-0 z-10 bg-white px-2 py-2 font-medium">
                 Unit
               </th>
+              {rowAction && (
+                <th scope="col" className="px-2 py-2 font-medium">
+                  <span className="sr-only">Unit actions</span>
+                </th>
+              )}
               <th scope="col" className="px-2 py-2 font-medium">
                 Contains
               </th>
@@ -325,8 +331,8 @@ export function ProductPricesGrid({
                 >
                   {row.label}
                   <NotEditable row={row} />
-                  {rowAction?.(row)}
                 </th>
+                {rowAction && <td className="px-2 py-3">{rowAction(row)}</td>}
                 <td className="px-2 py-3 text-navy/80">
                   {containsLines(row, ascending).map((l) => (
                     <div key={l}>{l}</div>

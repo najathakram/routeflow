@@ -12,6 +12,13 @@ export interface AddUnitOf {
   factorToBase: number;
 }
 
+/** What the panel reports when a unit was created: the new unit's id, its name, and the price text typed (or ""). */
+export interface AddedUnit {
+  id: string | undefined;
+  label: string;
+  price: string;
+}
+
 const FIELD =
   "h-10 w-full rounded-md border border-surface-border bg-white px-2.5 text-sm text-navy focus:border-brand-500 focus:outline-none focus:ring-2 focus:ring-brand-500/20";
 const LABEL = "mb-1 block text-xs font-medium text-navy/70";
@@ -20,13 +27,15 @@ function AddUnitForm({
   productId,
   baseLabel,
   ofUnits,
+  validatePrice,
   onDone,
   onCancel,
 }: {
   productId: string;
   baseLabel: string;
   ofUnits: AddUnitOf[];
-  onDone: () => void;
+  validatePrice?: (text: string) => string | null;
+  onDone: (added: AddedUnit) => void;
   onCancel: () => void;
 }) {
   const create = useCreateProductUnit(productId);
@@ -36,7 +45,9 @@ function AddUnitForm({
   const [n, setN] = React.useState("");
   const options: AddUnitOf[] = [{ label: baseLabel, factorToBase: 1 }, ...ofUnits];
   const [ofIdx, setOfIdx] = React.useState(0);
+  const [price, setPrice] = React.useState("");
   const [err, setErr] = React.useState("");
+  const headingId = `${uid}-h`;
 
   React.useEffect(() => nameRef.current?.focus(), []);
 
@@ -48,9 +59,21 @@ function AddUnitForm({
     e.preventDefault();
     if (!canSubmit) return;
     setErr("");
+    // A typed price is checked here, with the grid cell's own rule, so a bad one never creates a unit.
+    const priceText = price.trim();
+    const bad = validatePrice && priceText !== "" ? validatePrice(priceText) : null;
+    if (bad) {
+      setErr(bad);
+      return;
+    }
+    const label = name.trim();
     create.mutate(
-      { label: name.trim(), factorToBase: count * options[ofIdx].factorToBase },
-      { onSuccess: onDone, onError: (error) => setErr(orderErrorText(error)) },
+      { label, factorToBase: count * options[ofIdx].factorToBase },
+      {
+        onSuccess: (created: { id?: string } | undefined) =>
+          onDone({ id: created?.id, label, price: priceText }),
+        onError: (error) => setErr(orderErrorText(error)),
+      },
     );
   };
 
@@ -58,12 +81,15 @@ function AddUnitForm({
     <form
       id="units-v2-add-panel"
       data-testid="units-v2-add-panel"
+      aria-labelledby={headingId}
       onSubmit={submit}
       noValidate
       className="space-y-3 rounded-lg border border-surface-border bg-white p-4"
     >
       <div>
-        <h3 className="text-sm font-semibold text-navy">Add a unit</h3>
+        <h3 id={headingId} className="text-sm font-semibold text-navy">
+          Add a unit
+        </h3>
         <p className="text-xs text-navy/70">Say what it contains. Its prices fill in as Auto.</p>
       </div>
       <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
@@ -119,6 +145,23 @@ function AddUnitForm({
           </div>
         </div>
       </div>
+      {validatePrice && (
+        <div className="max-w-[12rem]">
+          <label className={LABEL} htmlFor={`${uid}-price`}>
+            Price (optional)
+          </label>
+          <input
+            id={`${uid}-price`}
+            data-testid="units-v2-add-price"
+            className={FIELD}
+            type="text"
+            inputMode="decimal"
+            placeholder="Auto"
+            value={price}
+            onChange={(e) => setPrice(e.target.value)}
+          />
+        </div>
+      )}
       <p
         id="units-v2-add-err"
         data-testid="units-v2-add-err"
@@ -156,6 +199,7 @@ export function AddUnitPanel({
   ofUnits = [],
   dirty = false,
   disabled = false,
+  validatePrice,
   onAdded,
 }: {
   productId: string;
@@ -166,7 +210,12 @@ export function AddUnitPanel({
   /** The price draft has unsaved changes: Add waits (shown with a hint). */
   dirty?: boolean;
   disabled?: boolean;
-  onAdded?: () => void;
+  /**
+   * Adds an optional "Price (optional)" box. Return the message to refuse a typed price with, or null to accept it
+   * (blank is always fine: Auto). The panel never writes the price: it hands the text to `onAdded`.
+   */
+  validatePrice?: (text: string) => string | null;
+  onAdded?: (added: AddedUnit) => void;
 }) {
   const { open, close, toggle, openerRef } = usePanelDisclosure();
   const hintId = React.useId();
@@ -204,10 +253,11 @@ export function AddUnitPanel({
           productId={productId}
           baseLabel={baseLabel}
           ofUnits={ofUnits}
+          validatePrice={validatePrice}
           onCancel={close}
-          onDone={() => {
+          onDone={(added) => {
             close();
-            onAdded?.();
+            onAdded?.(added);
           }}
         />
       )}

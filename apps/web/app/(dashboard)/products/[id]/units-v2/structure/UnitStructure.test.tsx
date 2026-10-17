@@ -1,9 +1,12 @@
 import * as React from "react";
-import { render as rtlRender, screen, within } from "@testing-library/react";
+import { render as rtlRender, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import type { ProductPriceGridDto } from "@routeflow/types";
+import { ToastProvider } from "@routeflow/ui/web";
+import { apiClient } from "@/lib/api-client";
 import { ProductPricingV2 } from "../../ProductPricingV2";
+import { ProductUnitsCard } from "../../ProductUnitsCard";
 import { UNITS_V2_TESTIDS as T } from "../../units-v2-testids";
 import { DIRTY_HINT } from "../units";
 
@@ -12,6 +15,8 @@ import { DIRTY_HINT } from "../units";
 let mockGrid: { data?: ProductPriceGridDto; isLoading: boolean; isError: boolean };
 let mockRole: string | null = "OPERATOR";
 let mockUnitsOn = true;
+let mockUnits: unknown[] = [];
+const mockSave = jest.fn();
 jest.mock("@/lib/api/usePriceGrid", () => ({
   ...jest.requireActual("@/lib/api/usePriceGrid"),
   usePriceGrid: () => mockGrid,
@@ -19,7 +24,12 @@ jest.mock("@/lib/api/usePriceGrid", () => ({
 }));
 jest.mock("@/lib/api/usePriceWrites", () => ({
   ...jest.requireActual("@/lib/api/usePriceWrites"),
-  useSavePrices: () => ({ mutate: jest.fn(), reset: jest.fn(), isPending: false, error: null }),
+  useSavePrices: () => ({
+    mutate: (req: unknown, o: unknown) => mockSave(req, o),
+    reset: jest.fn(),
+    isPending: false,
+    error: null,
+  }),
   useUndoPrices: () => ({
     mutate: jest.fn(),
     mutateAsync: jest.fn(),
@@ -37,11 +47,18 @@ jest.mock("@/lib/api/useProductCustomerPrices", () => ({
   useProductCustomerPrices: () => ({ data: { customers: [] }, isFetching: false }),
 }));
 jest.mock("@/lib/auth-context", () => ({
+  useAuth: () => ({ user: { role: mockRole } }),
   useOptionalAuth: () => (mockRole ? { user: { role: mockRole } } : null),
 }));
 jest.mock("@/lib/api/product-units", () => ({
   ...jest.requireActual("@/lib/api/product-units"),
   useUnitsEnabled: () => mockUnitsOn,
+  useProductUnits: () => ({
+    data: mockUnits,
+    isLoading: false,
+    isError: false,
+    refetch: jest.fn(),
+  }),
 }));
 jest.mock("@/lib/api-client", () => ({
   apiClient: {
@@ -108,6 +125,10 @@ const resetOpener = () => screen.getByTestId("units-v2-reset-open");
 const removeOpener = () => screen.getAllByTestId("units-v2-rm-u-box")[0];
 
 beforeEach(() => {
+  mockSave.mockReset();
+  mockUnits = [];
+  (apiClient.post as jest.Mock).mockReset();
+  (apiClient.delete as jest.Mock).mockReset();
   mockRole = "OPERATOR";
   mockUnitsOn = true;
   mockGrid = { data: grid, isLoading: false, isError: false };
@@ -275,5 +296,190 @@ describe("K10d: the add-unit pointer", () => {
     await user.click(within(screen.getByTestId(T.row("base"))).getByTestId(T.addUnitPointer));
     expect(screen.getByTestId("units-v2-add-panel")).toBeInTheDocument();
     expect(screen.getByTestId("units-v2-add-name")).toHaveFocus();
+  });
+});
+
+describe("K10d fold: the row header stays clean", () => {
+  it("each unit's row-header name is just the unit label, and Remove sits in its own cell", () => {
+    render();
+    expect(screen.getAllByRole("rowheader").map((h) => h.textContent)).toEqual([
+      "Case",
+      "Box",
+      "Piece",
+    ]);
+    expect(screen.getByRole("rowheader", { name: "Box" })).toBeInTheDocument();
+    const rm = removeOpener();
+    expect(rm.closest("th")).toBeNull();
+    expect(rm.closest("td")).not.toBeNull();
+    expect(rm.closest("tr")).toBe(screen.getByTestId(T.row("u-box")));
+  });
+
+  it("without the controls the table has no extra column", () => {
+    mockUnitsOn = false;
+    render();
+    expect(screen.getAllByRole("columnheader")).toHaveLength(8);
+  });
+});
+
+describe("K10d fold: one Remove per unit row", () => {
+  it("in v2 the unit row has K7's Remove and the old Units card has none for it", () => {
+    mockUnits = [
+      {
+        id: "u-box",
+        label: "Box",
+        factorToBase: 24,
+        price: "4.00",
+        priceTier2: null,
+        priceTier3: null,
+        priceTier4: null,
+        priceTier5: null,
+        isDefaultSelling: false,
+        sortOrder: 0,
+      },
+    ];
+    rtlRender(
+      <QueryClientProvider client={new QueryClient()}>
+        <ToastProvider>
+          <ProductPricingV2 product={product} />
+          <ProductUnitsCard product={product} hideAddForm />
+        </ToastProvider>
+      </QueryClientProvider>,
+    );
+    const gridRow = within(screen.getByTestId(T.row("u-box")));
+    expect(gridRow.getAllByRole("button", { name: /^Remove/ })).toHaveLength(1);
+    expect(screen.getByTestId("unit-row")).toBeInTheDocument();
+    expect(
+      within(screen.getByTestId("unit-row")).queryByRole("button", { name: /^Remove/ }),
+    ).toBeNull();
+    expect(screen.queryByRole("button", { name: "Remove" })).toBeNull();
+    expect(screen.getAllByRole("button", { name: /^Add (a )?unit$/i })).toHaveLength(1);
+  });
+});
+
+describe("K10d fold: Reset to Auto focus", () => {
+  it("after Apply, focus lands inside the save bar, not on the page", async () => {
+    const user = userEvent.setup();
+    render();
+    await user.click(resetOpener());
+    await user.click(screen.getByTestId("units-v2-reset-apply"));
+    await waitFor(() =>
+      expect(screen.getByTestId(T.editbar).contains(document.activeElement)).toBe(true),
+    );
+  });
+});
+
+describe("K10d fold: after a Remove, focus stays on the page", () => {
+  it("a finished delete moves focus to the units heading", async () => {
+    (apiClient.delete as jest.Mock).mockResolvedValue({ data: {} });
+    const user = userEvent.setup();
+    render();
+    await user.click(removeOpener());
+    await user.click(screen.getByTestId("units-v2-rm-confirm"));
+    await waitFor(() => expect(screen.queryByTestId("units-v2-remove-panel")).toBeNull());
+    expect(document.activeElement).toBe(document.getElementById("units-v2-grid-title"));
+  });
+});
+
+describe("K10d fold: a price typed in Add a unit lands as a draft", () => {
+  const added = {
+    ref: "u-pack",
+    label: "Pack",
+    factor: 6,
+    kind: "unit" as const,
+    editable: true,
+    code: null,
+    cells: cells([2, 1.9, 1.8, 1.7, 1.6]),
+  };
+  const createUnit = () =>
+    (apiClient.post as jest.Mock).mockImplementation(async () => {
+      // the server made the unit; the grid refetch (B1245) now serves its row
+      mockGrid = {
+        data: { ...grid, rows: [...grid.rows, added] },
+        isLoading: false,
+        isError: false,
+      };
+      return { data: { id: "u-pack", label: "Pack" } };
+    });
+  const addPack = async (user: ReturnType<typeof userEvent.setup>, price: string) => {
+    await user.click(addOpener());
+    await user.type(screen.getByTestId("units-v2-add-name"), "Pack");
+    await user.type(screen.getByTestId("units-v2-add-n"), "6");
+    if (price) await user.type(screen.getByTestId("units-v2-add-price"), price);
+    await user.click(screen.getByTestId("units-v2-add-submit"));
+  };
+  const box = () =>
+    within(screen.getByTestId(T.row("u-pack"))).getByTestId(
+      T.input("u-pack", 1),
+    ) as HTMLInputElement;
+  const priceWrites = () =>
+    (apiClient.post as jest.Mock).mock.calls.filter(([url]) => /price/.test(String(url)));
+
+  it("(a) shows the price in the new unit's Retail box as an unsaved change, and saves nothing", async () => {
+    createUnit();
+    const user = userEvent.setup();
+    render();
+    await addPack(user, "7.50");
+    await waitFor(() => expect(box().value).toBe("7.50"));
+    expect(screen.getByTestId(T.ebText)).toHaveTextContent("1 unsaved");
+    expect(mockSave).not.toHaveBeenCalled();
+    expect(priceWrites()).toEqual([]);
+    expect((apiClient.post as jest.Mock).mock.calls).toHaveLength(1);
+    expect((apiClient.post as jest.Mock).mock.calls[0][1]).toEqual({
+      label: "Pack",
+      factorToBase: 6,
+    });
+  });
+
+  it("(b) Save sends the normal price write holding that cell", async () => {
+    createUnit();
+    const user = userEvent.setup();
+    render();
+    await addPack(user, "7.50");
+    await waitFor(() => expect(box().value).toBe("7.50"));
+    await user.click(screen.getByTestId(T.ebSave));
+    expect(mockSave).toHaveBeenCalledTimes(1);
+    expect(mockSave.mock.calls[0][0].patches).toEqual([{ ref: "u-pack", tier: 1, to: 7.5 }]);
+  });
+
+  it("(c) Discard leaves the unit on Auto: no price write", async () => {
+    createUnit();
+    const user = userEvent.setup();
+    render();
+    await addPack(user, "7.50");
+    await waitFor(() => expect(box().value).toBe("7.50"));
+    await user.click(screen.getByTestId(T.ebCancel));
+    await user.click(screen.getByTestId(T.ebDiscard));
+    expect(screen.queryByTestId(T.editbar)).toBeNull();
+    expect(mockSave).not.toHaveBeenCalled();
+    expect(priceWrites()).toEqual([]);
+  });
+
+  it("(d) an invalid price is refused in the panel with the grid cell's message; no unit is created", async () => {
+    createUnit();
+    const user = userEvent.setup();
+    render();
+    await addPack(user, "abc");
+    expect(apiClient.post).not.toHaveBeenCalled();
+    expect(screen.getByTestId("units-v2-add-err")).toHaveTextContent(
+      "Enter a price like 12.50, or clear the box to use the automatic price.",
+    );
+    expect(screen.getByTestId("units-v2-add-panel")).toBeInTheDocument();
+    await user.clear(screen.getByTestId("units-v2-add-price"));
+    await user.type(screen.getByTestId("units-v2-add-price"), "0");
+    await user.click(screen.getByTestId("units-v2-add-submit"));
+    expect(apiClient.post).not.toHaveBeenCalled();
+    expect(screen.getByTestId("units-v2-add-err")).toHaveTextContent(
+      "A price must be above $0.00. Clear the box to use the automatic price.",
+    );
+  });
+
+  it("a blank price adds the unit on Auto and starts no draft", async () => {
+    createUnit();
+    const user = userEvent.setup();
+    render();
+    await addPack(user, "");
+    await waitFor(() => expect(screen.queryByTestId("units-v2-add-panel")).toBeNull());
+    expect(screen.queryByTestId(T.editbar)).toBeNull();
+    expect(mockSave).not.toHaveBeenCalled();
   });
 });

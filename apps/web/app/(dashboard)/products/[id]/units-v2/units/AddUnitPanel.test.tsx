@@ -158,3 +158,69 @@ describe("AddUnitPanel (V15, V17)", () => {
     expect(container.textContent).not.toMatch(/[–—]/);
   });
 });
+
+describe("AddUnitPanel a11y (K10d)", () => {
+  it("the form is labelled by its own heading", async () => {
+    setup();
+    await userEvent.click(opener());
+    const form = screen.getByRole("form", { name: "Add a unit" });
+    expect(form).toBe(screen.getByTestId("units-v2-add-panel"));
+    const headingId = form.getAttribute("aria-labelledby");
+    expect(headingId).toBeTruthy();
+    expect(document.getElementById(headingId!)).toHaveTextContent("Add a unit");
+  });
+});
+
+describe("AddUnitPanel optional price (K10d)", () => {
+  const fill = async (name = "Box", n = "12") => {
+    await userEvent.click(opener());
+    await userEvent.type(screen.getByTestId("units-v2-add-name"), name);
+    await userEvent.type(screen.getByTestId("units-v2-add-n"), n);
+  };
+  const validatePrice = (t: string) => (t.trim() === "bad" ? "Enter a price like 12.50." : null);
+
+  it("has no price field unless the caller can validate one", async () => {
+    setup();
+    await userEvent.click(opener());
+    expect(screen.queryByTestId("units-v2-add-price")).toBeNull();
+  });
+
+  it("shows a 'Price (optional)' field when the caller passes a validator", async () => {
+    setup({ validatePrice });
+    await userEvent.click(opener());
+    expect(screen.getByLabelText("Price (optional)")).toBe(
+      screen.getByTestId("units-v2-add-price"),
+    );
+  });
+
+  it("refuses an invalid price in the panel and creates no unit", async () => {
+    setup({ validatePrice });
+    await fill();
+    await userEvent.type(screen.getByTestId("units-v2-add-price"), "bad");
+    await userEvent.click(screen.getByTestId("units-v2-add-submit"));
+    expect(mutate).not.toHaveBeenCalled();
+    expect(screen.getByTestId("units-v2-add-err")).toHaveTextContent("Enter a price like 12.50.");
+    expect(panel()).toBeInTheDocument();
+  });
+
+  it("a blank price creates the unit as today and reports no price", async () => {
+    mutate.mockImplementation((_b, o) => o.onSuccess?.({ id: "u9" }));
+    const onAdded = jest.fn();
+    setup({ validatePrice, onAdded });
+    await fill();
+    await userEvent.click(screen.getByTestId("units-v2-add-submit"));
+    expect(mutate.mock.calls[0][0]).toEqual({ label: "Box", factorToBase: 12 });
+    expect(onAdded).toHaveBeenCalledWith({ id: "u9", label: "Box", price: "" });
+  });
+
+  it("a typed price is never sent to the create call: it goes back to the caller", async () => {
+    mutate.mockImplementation((_b, o) => o.onSuccess?.({ id: "u9" }));
+    const onAdded = jest.fn();
+    setup({ validatePrice, onAdded });
+    await fill();
+    await userEvent.type(screen.getByTestId("units-v2-add-price"), " 7.50 ");
+    await userEvent.click(screen.getByTestId("units-v2-add-submit"));
+    expect(mutate.mock.calls[0][0]).toEqual({ label: "Box", factorToBase: 12 });
+    expect(onAdded).toHaveBeenCalledWith({ id: "u9", label: "Box", price: "7.50" });
+  });
+});

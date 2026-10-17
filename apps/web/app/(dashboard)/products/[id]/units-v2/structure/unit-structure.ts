@@ -22,3 +22,17 @@ export function useUnitStructureAllowed(product: {
   const unitsOn = useUnitsEnabled({ enabled: canManage });
   return canManage && unitsOn && !unitStructureGoverned(product);
 }
+
+/**
+ * Has the v2 shell mounted its Add a unit? It waits for the price grid (the "of" choices and the base unit's name come
+ * from it), so until a grid with rows has loaded the old Units card keeps its own Add form and Remove buttons.
+ */
+export const shellHasUnitControls = (
+  grid: { rows: readonly unknown[] } | null | undefined,
+): boolean => !!grid && grid.rows.length > 0;
+
+/** Does the shell give this unit its own Remove? Only the grid's editable `unit` rows (never Case or Piece). */
+export const shellRemovesUnit = (
+  grid: { rows: readonly { ref: string; kind: string; editable: boolean }[] } | null | undefined,
+  unitId: string,
+): boolean => !!grid && grid.rows.some((r) => r.ref === unitId && r.kind === "unit" && r.editable);
