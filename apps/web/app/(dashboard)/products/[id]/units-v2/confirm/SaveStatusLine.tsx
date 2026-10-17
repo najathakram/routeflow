@@ -129,7 +129,7 @@ const px = (v: string) =>
  * bottom (0 with no shell), so it rests exactly where the sticky bar does; `left` / `width` are the line's own parent's
  * content box, so it stays in the page's content column. Re-measured on resize while pinned.
  */
-function usePinnedBox(active: boolean, line: React.RefObject<HTMLElement>): PinnedBox {
+function usePinnedBox(active: boolean, line: React.RefObject<HTMLElement | null>): PinnedBox {
   const [box, setBox] = React.useState<PinnedBox>({ bottom: 0 });
   React.useLayoutEffect(() => {
     if (!active) return undefined;
