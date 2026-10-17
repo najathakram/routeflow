@@ -6,12 +6,12 @@ import type {
   CustomerUnitPriceRowDto,
   CustomerUnitPriceSource,
 } from "@routeflow/types";
-import { useCustomers } from "@/lib/api/customers";
 import { useTierLabels } from "@/lib/api/tier-labels";
 import { useCustomerUnitPrices } from "@/lib/api/useCustomerUnitPrices";
 import { formatMoney } from "@/lib/format";
-import { tierLabel } from "@/lib/tier-label";
+import { productTierLabel } from "@/lib/tier-one-label";
 import { CUSTOMER_VIEW_TESTIDS as T } from "./customer-testids";
+import { CustomerPicker } from "./CustomerPicker";
 
 /**
  * Units v2 Customer view (K6, S20-read + S22; UX-V5 V10, V11). READ ONLY: what one customer pays for each unit,
@@ -34,23 +34,27 @@ export function resetCustomerViewMemory() {
   lastChoice = null;
 }
 
-interface CustomerHit {
-  id: string;
-  businessName?: string;
-  contactName?: string;
+/**
+ * P18: how the tier reads in a price caption. A tenant's own label is printed verbatim, whatever it says
+ * (even "Tier A"). Only when there is NO custom label do we add " tier" to the app's default name, so a
+ * numbered default ("Tier 3") is never doubled to "Tier 3 tier" and the base price reads "Retail tier".
+ */
+function captionTierName(labels: Record<string, string> | null | undefined, tier: number): string {
+  const name = productTierLabel(labels, tier);
+  if (labels?.[String(tier)]?.trim()) return name;
+  return tier === 1 ? `${name} tier` : name;
 }
 
 function SourceCaption({
   source,
-  tierName,
+  tierCaption,
   orderUnitLabel,
 }: {
   source: CustomerUnitPriceSource;
-  tierName: string;
+  tierCaption: string;
   orderUnitLabel: string;
 }) {
   if (source === "customer") return <span>Set for this customer</span>;
-  const tierCaption = `${tierName} tier`;
   const why =
     source === "customer-shape"
       ? `From their ${orderUnitLabel} price`
@@ -75,12 +79,20 @@ function PriceCell({ row }: { row: CustomerUnitPriceRowDto }) {
 function ProductBlock({
   entry,
   tierName,
+  tierCaption,
+  listName,
   showName,
 }: {
   entry: CustomerProductUnitPricesDto;
   tierName: string;
+  /** The tier as the caption under each price reads (see captionTierName). */
+  tierCaption: string;
+  /** The tenant's name for tier 1 (the list price column). */
+  listName: string;
   showName: boolean;
 }) {
+  // A tier 1 customer pays the list price: a second column under the same name would print it twice.
+  const showTierColumn = entry.tier !== 1;
   const own = entry.orderUnitScope === "customer";
   const rows = entry.rows;
   return (
@@ -105,11 +117,13 @@ function ProductBlock({
                 Price
               </th>
               <th scope="col" className="hidden py-1.5 pr-3 align-top font-medium sm:table-cell">
-                Retail
+                {listName}
               </th>
-              <th scope="col" className="hidden py-1.5 align-top font-medium sm:table-cell">
-                {tierName}
-              </th>
+              {showTierColumn ? (
+                <th scope="col" className="hidden py-1.5 align-top font-medium sm:table-cell">
+                  {tierName}
+                </th>
+              ) : null}
             </tr>
           </thead>
           <tbody>
@@ -128,7 +142,7 @@ function ProductBlock({
                   <div className="mt-0.5 text-xs text-navy/60">
                     <SourceCaption
                       source={row.source}
-                      tierName={tierName}
+                      tierCaption={tierCaption}
                       orderUnitLabel={entry.orderUnitLabel}
                     />
                   </div>
@@ -136,9 +150,11 @@ function ProductBlock({
                 <td className="hidden py-2 pr-3 align-top tabular-nums text-navy/70 sm:table-cell">
                   {formatMoney(row.listPrice)}
                 </td>
-                <td className="hidden py-2 align-top tabular-nums text-navy/70 sm:table-cell">
-                  {formatMoney(row.tierPrice)}
-                </td>
+                {showTierColumn ? (
+                  <td className="hidden py-2 align-top tabular-nums text-navy/70 sm:table-cell">
+                    {formatMoney(row.tierPrice)}
+                  </td>
+                ) : null}
               </tr>
             ))}
           </tbody>
@@ -163,58 +179,6 @@ function ProductBlock({
         </dl>
       </details>
     </article>
-  );
-}
-
-function CustomerPicker({ onPick }: { onPick: (c: { id: string; name: string }) => void }) {
-  const [text, setText] = React.useState("");
-  const [debounced, setDebounced] = React.useState("");
-  React.useEffect(() => {
-    const t = setTimeout(() => setDebounced(text.trim()), 250);
-    return () => clearTimeout(t);
-  }, [text]);
-  const list = useCustomers({ search: debounced || undefined, limit: 8 });
-  const hits = ((list.data as { data?: CustomerHit[] } | undefined)?.data ?? []).slice(0, 8);
-  return (
-    <div className="flex max-w-[420px] flex-col gap-1.5">
-      <label htmlFor="units-v2-cust-search" className="text-sm font-medium text-navy">
-        Customer
-      </label>
-      <input
-        id="units-v2-cust-search"
-        data-testid={T.search}
-        type="search"
-        autoComplete="off"
-        value={text}
-        onChange={(e) => setText(e.target.value)}
-        placeholder="Find a customer by name"
-        className="h-10 rounded-md border border-surface-border bg-white px-3 text-sm text-navy"
-      />
-      {hits.length > 0 ? (
-        <ul
-          role="listbox"
-          aria-label="Customers"
-          className="max-h-56 overflow-auto rounded-md border border-surface-border"
-        >
-          {hits.map((c) => (
-            <li key={c.id} role="option" aria-selected={false}>
-              <button
-                type="button"
-                data-testid={T.result(c.id)}
-                onClick={() =>
-                  onPick({ id: c.id, name: c.businessName ?? c.contactName ?? "Customer" })
-                }
-                className="block w-full px-3 py-2 text-left text-sm text-navy hover:bg-surface-muted"
-              >
-                {c.businessName ?? c.contactName}
-              </button>
-            </li>
-          ))}
-        </ul>
-      ) : debounced ? (
-        <p className="text-xs text-navy/60">No customer matches that name.</p>
-      ) : null}
-    </div>
   );
 }
 
@@ -243,13 +207,14 @@ export function CustomerPriceView({ customerId, productId }: CustomerPriceViewPr
 
   const res = q.data;
   const customerName = res?.customerName ?? picked?.name ?? "";
-  const tierName = res ? tierLabel(labels, res.tier) : "";
+  const tierName = res ? productTierLabel(labels, res.tier) : "";
 
   return (
     <section data-testid={T.section} aria-labelledby="units-v2-h-cust" className="space-y-3">
       <h2
         id="units-v2-h-cust"
         data-testid={T.heading}
+        tabIndex={-1}
         className="text-base font-semibold text-navy"
       >
         {fixed ? "Unit prices" : "Customer view"}
@@ -303,7 +268,9 @@ export function CustomerPriceView({ customerId, productId }: CustomerPriceViewPr
                   <ProductBlock
                     key={entry.productId}
                     entry={entry}
-                    tierName={tierLabel(labels, entry.tier)}
+                    tierName={productTierLabel(labels, entry.tier)}
+                    tierCaption={captionTierName(labels, entry.tier)}
+                    listName={productTierLabel(labels, 1)}
                     showName={!productId}
                   />
                 ))}
