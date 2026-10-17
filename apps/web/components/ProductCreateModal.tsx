@@ -37,6 +37,8 @@ import { localToastForSafeTextRefusal } from "@/lib/local-error-toast";
  * editor and the `displayProductName` label for a just-created product.
  */
 const FORM_ID = "product-create-form";
+/** K11-27: how long the "created" toast stays (the default 4 s is gone before a slow reader looks up). */
+const CREATED_TOAST_MS = 5000;
 
 /**
  * Every row above the Name field that depends on async data is mounted from the first render inside
@@ -200,10 +202,14 @@ export function ProductCreateModal({
     defaultParentId,
   ]);
 
-  // Pre-populate fields from parent when a parent is selected
+  // Pre-populate fields from parent when a parent is selected. Keyed on the parent being FOUND, not only on its id:
+  // the products page's "Add variant" mounts this modal with the parent id already set while the catalog is still
+  // loading, and an id-only key ran once with nothing to read and never again (K11-27: Unit and Price stayed blank,
+  // the browser refused the submit, and no toast could appear).
+  const prefillParent = allProducts.find((p) => p.id === form.parentProductId);
   React.useEffect(() => {
     if (!form.parentProductId) return;
-    const parent = allProducts.find((p) => p.id === form.parentProductId);
+    const parent = prefillParent;
     if (!parent) return;
     setFormProgrammatic((f) => ({
       ...f,
@@ -213,7 +219,7 @@ export function ProductCreateModal({
       unitsPerBox: f.unitsPerBox || String(parent.unitsPerBox ?? ""),
     }));
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [form.parentProductId]);
+  }, [form.parentProductId, prefillParent?.id]);
 
   const [priceError, setPriceError] = React.useState("");
   const [pendingImages, setPendingImages] = React.useState<File[]>([]);
@@ -351,7 +357,6 @@ export function ProductCreateModal({
         regUomCase: form.regUomCase || undefined,
         regUomUnit: form.regUomUnit || undefined,
       });
-      toast({ title: "Product created", variant: "success" });
       draft.clear();
     } catch (err: any) {
       // Only the formula-led refusal is ours; any other error already reached the global toast.
@@ -361,20 +366,37 @@ export function ProductCreateModal({
     }
 
     // Upload images if any were queued
+    let warned = false;
     if (pendingImages.length > 0 && product?.id) {
       setIsUploading(true);
       try {
         await uploadProductImages(product.id, pendingImages);
       } catch {
         // The product EXISTS now: say the photos missed, hand the product back, and close (a retry here would duplicate it).
+        warned = true;
         toast({
           title: "Product created, but its photos didn't upload",
           description: "Add them from the product page.",
           variant: "warning",
+          duration: CREATED_TOAST_MS,
         });
       } finally {
         setIsUploading(false);
       }
+    }
+    // K11-27: exactly one toast per create, held long enough to read. A warning above stands in for it.
+    if (!warned) {
+      const parentName = product?.parent?.name ?? prefillParent?.name;
+      toast({
+        title:
+          form.parentProductId && form.variantName.trim()
+            ? parentName
+              ? `${productName} added to ${parentName}`
+              : `${productName} added`
+            : `${product?.name || productName} created`,
+        variant: "success",
+        duration: CREATED_TOAST_MS,
+      });
     }
 
     onCreated(product);
