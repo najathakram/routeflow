@@ -235,6 +235,15 @@ export class FeatureConfigService {
    * The two fulfilment keys run under the per-tenant `fulfilment-settings` lock (M2), the same one
    * the tenant Settings PATCH takes; its audit stays on `AuditService.log`.
    */
+  /**
+   * Drops this replica's cached modes for one tenant, so the next read comes from the DB. A confirm
+   * re-plans after this, under its lock: its pre-write checks (the in-transit dry run) must see the
+   * same stored mode that set()'s own guard reads, or billing could stop before a refusal.
+   */
+  forgetCachedModes(tenantId: string): void {
+    this.store.invalidateTenant(tenantId);
+  }
+
   async set(
     tenantId: string,
     key: string,

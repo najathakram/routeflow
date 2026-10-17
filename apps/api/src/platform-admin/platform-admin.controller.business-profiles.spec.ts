@@ -59,6 +59,8 @@ function fakeTenant(start: {
   modes?: Record<string, string>;
   /** Open SHIP orders already with the carrier (item 8). */
   inTransit?: number;
+  /** This replica's 30s mode cache is stale: getState answers these until forgetCachedModes(). */
+  staleCache?: Record<string, string>;
 }) {
   let seq = 0;
   const rows: Row[] = Object.entries(start.overrides ?? {}).map(([featureKey, effect]) => ({
@@ -145,10 +147,14 @@ function fakeTenant(start: {
       return { addonKey: key, active: false };
     }),
   };
+  let stale: Record<string, string> = { ...(start.staleCache ?? {}) };
   const featureConfig = {
+    forgetCachedModes: jest.fn(() => {
+      stale = {};
+    }),
     getState: jest.fn(async (_t: string, key: string) => ({
-      value: modes[key],
-      effective: modes[key],
+      value: stale[key] ?? modes[key],
+      effective: stale[key] ?? modes[key],
       // a stored row is TENANT; a key never written reads its registry default (like the real store)
       source: stored.has(key) ? ("TENANT" as const) : ("REGISTRY_DEFAULT" as const),
       allowed: [] as string[],
@@ -1320,6 +1326,22 @@ describe("BO-04 business-capabilities routes", () => {
       expect(t.addonService.disableAddon).not.toHaveBeenCalled();
       expect(t.writes).toEqual([]);
       expect(profileRows(t)).toEqual([]);
+    });
+
+    it("BO-04 review MUST: a stale cached mode never lets billing stop before the in-transit refusal", async () => {
+      // Another replica moved the tenant to ship; this replica still caches unset, and an order shipped.
+      const t = fakeTenant({
+        addons: ["recurring_routes", "order_delivery", "driver_payments"],
+        modes: { fulfilment_model: "ship" },
+        staleCache: { fulfilment_model: "unset" },
+        inTransit: 1,
+      });
+      await expect(confirm(t, { delivery: true, doorPayments: false })).rejects.toMatchObject({
+        status: 409,
+        response: expect.objectContaining({ code: "FULFILMENT_CARRIER_IN_TRANSIT", count: 1 }),
+      });
+      expect(t.addonService.disableAddon).not.toHaveBeenCalled();
+      expect(t.writes).toEqual([]);
     });
 
     it("the refusal comes before the fingerprint check (a blocked plan is never 'changed')", async () => {

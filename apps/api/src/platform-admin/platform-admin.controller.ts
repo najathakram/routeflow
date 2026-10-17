@@ -832,6 +832,8 @@ export class PlatformAdminController {
   ): Promise<BusinessProfileApplyResponse> {
     // Plan-then-apply under the add-on locks the enable path takes (#3199 review): see withConfirmLock.
     return this.businessProfiles.withConfirmLock(id, async () => {
+      // BO-04 review: re-plan from the DB, not this replica's 30s mode cache (see forgetCachedModes).
+      this.featureConfig.forgetCachedModes(id);
       const resolved = await this.businessProfiles.plan(id, dto.profile);
       const done = await this.applyResolvedLocked(id, resolved, dto, admin);
       return { profile: resolved.profile.key as BusinessProfileApplyResponse["profile"], ...done };
@@ -864,6 +866,8 @@ export class PlatformAdminController {
     @CurrentUser() admin: JwtPayload,
   ): Promise<BusinessCapabilitiesApplyResponse> {
     return this.businessProfiles.withConfirmLock(id, async () => {
+      // BO-04 review: re-plan from the DB, not this replica's 30s mode cache (see forgetCachedModes).
+      this.featureConfig.forgetCachedModes(id);
       const resolved = await this.businessProfiles.planCapabilities(id, dto);
       const done = await this.applyResolvedLocked(id, resolved, dto, admin);
       return { capabilities: resolved.capabilities, preset: resolved.preset, ...done };

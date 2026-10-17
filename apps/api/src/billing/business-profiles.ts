@@ -251,7 +251,9 @@ export function planBusinessProfile(
  * `blocked` entry. The apply refuses on it before step 1, exactly like the carrier-in-transit guard.
  *
  * Same predicate as the real check (`checkFeatureRequires` over the registry row, labels from
- * `describeUnmetFeatureRequirement`); the effective set is read from `state.holds` for the profile modules.
+ * `describeUnmetFeatureRequirement`). It APPROXIMATES the effective set from `state.holds` for the profile modules,
+ * not the resolver: exact for every `requires` in the registry today; a future module whose `requires` reaches
+ * outside the profile modules needs a resolver-backed check here.
  */
 export function planCompRefusal(
   plan: BusinessProfilePlan,
