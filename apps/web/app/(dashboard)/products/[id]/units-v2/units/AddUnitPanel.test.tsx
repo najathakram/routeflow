@@ -203,6 +203,34 @@ describe("AddUnitPanel optional price (K10d)", () => {
     expect(panel()).toBeInTheDocument();
   });
 
+  it("a refused price marks the price box invalid and points it at the error; typing clears the mark", async () => {
+    setup({ validatePrice });
+    await fill();
+    const price = screen.getByTestId("units-v2-add-price");
+    expect(price).not.toHaveAttribute("aria-invalid");
+    await userEvent.type(price, "bad");
+    await userEvent.click(screen.getByTestId("units-v2-add-submit"));
+    expect(price).toHaveAttribute("aria-invalid", "true");
+    expect(price).toHaveAttribute("aria-describedby", "units-v2-add-err");
+    expect(document.getElementById("units-v2-add-err")).toHaveTextContent(
+      "Enter a price like 12.50.",
+    );
+    await userEvent.type(price, "x");
+    expect(price).not.toHaveAttribute("aria-invalid");
+    expect(price).not.toHaveAttribute("aria-describedby");
+  });
+
+  it("a server refusal does not mark the price box invalid", async () => {
+    mutate.mockImplementation((_b, o) =>
+      o.onError?.({ response: { status: 409, data: { message: "Used." } } }),
+    );
+    setup({ validatePrice });
+    await fill();
+    await userEvent.type(screen.getByTestId("units-v2-add-price"), "5");
+    await userEvent.click(screen.getByTestId("units-v2-add-submit"));
+    expect(screen.getByTestId("units-v2-add-price")).not.toHaveAttribute("aria-invalid");
+  });
+
   it("a blank price creates the unit as today and reports no price", async () => {
     mutate.mockImplementation((_b, o) => o.onSuccess?.({ id: "u9" }));
     const onAdded = jest.fn();

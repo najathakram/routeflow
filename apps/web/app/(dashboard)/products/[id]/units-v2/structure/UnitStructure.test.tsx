@@ -314,6 +314,19 @@ describe("K10d fold: the row header stays clean", () => {
     expect(rm.closest("tr")).toBe(screen.getByTestId(T.row("u-box")));
   });
 
+  it("the table row's and the phone card's confirm panels get different ids", () => {
+    render();
+    const controls = screen
+      .getAllByTestId("units-v2-rm-u-box")
+      .map((b) => b.getAttribute("aria-controls"));
+    expect(controls).toHaveLength(2);
+    expect(new Set(controls).size).toBe(2);
+    expect(controls.sort()).toEqual([
+      "units-v2-remove-panel-u-box-card",
+      "units-v2-remove-panel-u-box-table",
+    ]);
+  });
+
   it("without the controls the table has no extra column", () => {
     mockUnitsOn = false;
     render();
@@ -365,6 +378,8 @@ describe("K10d fold: Reset to Auto focus", () => {
     await waitFor(() =>
       expect(screen.getByTestId(T.editbar).contains(document.activeElement)).toBe(true),
     );
+    // the Save button itself (it is aria-disabled until saveable, so a "first enabled button" would pick Cancel)
+    expect(document.activeElement).toBe(screen.getByTestId(T.ebSave));
   });
 });
 
@@ -471,6 +486,80 @@ describe("K10d fold: a price typed in Add a unit lands as a draft", () => {
     expect(screen.getByTestId("units-v2-add-err")).toHaveTextContent(
       "A price must be above $0.00. Clear the box to use the automatic price.",
     );
+  });
+
+  const note = () => screen.getByTestId("units-v2-add-note");
+  const NOTE = "Unit added. Type its price in the grid.";
+  const created = (grids: () => typeof mockGrid) =>
+    (apiClient.post as jest.Mock).mockImplementation(async () => {
+      mockGrid = grids();
+      return { data: { id: "u-pack", label: "Pack" } };
+    });
+  const withRow = (isError = false) => ({
+    data: { ...grid, rows: [...grid.rows, added] },
+    isLoading: false,
+    isError,
+  });
+  const noRow = (isError = false) => ({ data: grid, isLoading: false, isError });
+  const noDraft = () => {
+    expect(screen.queryByTestId(T.editbar)).toBeNull();
+    expect(screen.queryByTestId(T.editingPill)).toBeNull();
+    expect(mockSave).not.toHaveBeenCalled();
+  };
+
+  it("the first grid after the add omits the row: the price is dropped, the user is told, no draft", async () => {
+    created(() => noRow());
+    const user = userEvent.setup();
+    render();
+    await addPack(user, "7.50");
+    await waitFor(() => expect(note()).toHaveTextContent(NOTE));
+    noDraft();
+  });
+
+  it("the grid errors after the add and recovers later: nothing is injected late", async () => {
+    created(() => withRow(true));
+    const user = userEvent.setup();
+    render();
+    await addPack(user, "7.50");
+    await waitFor(() => expect(note()).toHaveTextContent(NOTE));
+    noDraft();
+    mockGrid = withRow(false); // the refetch recovers; any re-render now reads the good grid
+    await user.click(screen.getByTestId(T.btnChange));
+    await user.click(screen.getByTestId(T.btnChange));
+    noDraft();
+    expect(screen.queryByTestId(T.input("u-pack", 1))).toBeNull();
+  });
+
+  it("re-adding the same name with a blank price after a lost refetch does not reuse the old price", async () => {
+    created(() => noRow());
+    const user = userEvent.setup();
+    render();
+    await addPack(user, "7.50");
+    await waitFor(() => expect(note()).toHaveTextContent(NOTE));
+    (apiClient.post as jest.Mock).mockImplementation(async () => {
+      mockGrid = {
+        data: { ...grid, rows: [...grid.rows, { ...added, ref: "u-pack-2" }] },
+        isLoading: false,
+        isError: false,
+      };
+      return { data: { id: "u-pack-2", label: "Pack" } };
+    });
+    await addPack(user, "");
+    await waitFor(() => expect(screen.queryByTestId("units-v2-add-panel")).toBeNull());
+    expect(screen.queryByTestId("units-v2-add-note")).toBeNull();
+    noDraft();
+  });
+
+  it("a price whose unit id is not the one served is never matched by its name", async () => {
+    (apiClient.post as jest.Mock).mockImplementation(async () => {
+      mockGrid = withRow();
+      return { data: { id: "some-other-id", label: "Pack" } };
+    });
+    const user = userEvent.setup();
+    render();
+    await addPack(user, "7.50");
+    await waitFor(() => expect(note()).toHaveTextContent(NOTE));
+    noDraft();
   });
 
   it("a blank price adds the unit on Auto and starts no draft", async () => {

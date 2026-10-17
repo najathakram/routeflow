@@ -14,7 +14,7 @@ export interface AddUnitOf {
 
 /** What the panel reports when a unit was created: the new unit's id, its name, and the price text typed (or ""). */
 export interface AddedUnit {
-  id: string | undefined;
+  id: string;
   label: string;
   price: string;
 }
@@ -47,6 +47,7 @@ function AddUnitForm({
   const [ofIdx, setOfIdx] = React.useState(0);
   const [price, setPrice] = React.useState("");
   const [err, setErr] = React.useState("");
+  const [priceRefused, setPriceRefused] = React.useState(false);
   const headingId = `${uid}-h`;
 
   React.useEffect(() => nameRef.current?.focus(), []);
@@ -59,11 +60,13 @@ function AddUnitForm({
     e.preventDefault();
     if (!canSubmit) return;
     setErr("");
+    setPriceRefused(false);
     // A typed price is checked here, with the grid cell's own rule, so a bad one never creates a unit.
     const priceText = price.trim();
     const bad = validatePrice && priceText !== "" ? validatePrice(priceText) : null;
     if (bad) {
       setErr(bad);
+      setPriceRefused(true);
       return;
     }
     const label = name.trim();
@@ -71,7 +74,7 @@ function AddUnitForm({
       { label, factorToBase: count * options[ofIdx].factorToBase },
       {
         onSuccess: (created: { id?: string } | undefined) =>
-          onDone({ id: created?.id, label, price: priceText }),
+          onDone({ id: created?.id ?? "", label, price: priceText }),
         onError: (error) => setErr(orderErrorText(error)),
       },
     );
@@ -157,8 +160,13 @@ function AddUnitForm({
             type="text"
             inputMode="decimal"
             placeholder="Auto"
+            aria-invalid={priceRefused ? true : undefined}
+            aria-describedby={priceRefused ? "units-v2-add-err" : undefined}
             value={price}
-            onChange={(e) => setPrice(e.target.value)}
+            onChange={(e) => {
+              setPrice(e.target.value);
+              setPriceRefused(false);
+            }}
           />
         </div>
       )}

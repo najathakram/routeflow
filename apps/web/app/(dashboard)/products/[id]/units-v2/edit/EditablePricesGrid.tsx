@@ -35,7 +35,7 @@ export function EditablePricesGrid({
   /** K10d: Add a unit and Reset to Auto, rendered under `panel` and above the grid. */
   unitControls?: React.ReactNode;
   /** K10d: a control under each unit's name (Remove). */
-  rowAction?: (row: ProductPriceGridRowDto) => React.ReactNode;
+  rowAction?: (row: ProductPriceGridRowDto, layout: "table" | "card") => React.ReactNode;
 }) {
   const d = usePriceDraft();
   const root = React.useRef<HTMLDivElement>(null);

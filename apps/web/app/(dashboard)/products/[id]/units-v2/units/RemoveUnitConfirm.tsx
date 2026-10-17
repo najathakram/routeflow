@@ -6,6 +6,9 @@ import { useDeleteProductUnit } from "@/lib/api/product-units";
 import { orderErrorText } from "@/lib/order-error-text";
 import { DIRTY_HINT, usePanelDisclosure } from "./usePanelDisclosure";
 
+const panelId = (unit: { id: string }, key?: string) =>
+  `units-v2-remove-panel-${unit.id}${key ? `-${key}` : ""}`;
+
 export interface RemovableUnit {
   id: string;
   label: string;
@@ -20,11 +23,14 @@ export interface RemovableUnit {
 export function RemoveUnitConfirm({
   productId,
   unit,
+  panelKey,
   onClose,
   onRemoved,
 }: {
   productId: string;
   unit: RemovableUnit;
+  /** Added to the panel's id when the same unit is drawn more than once on the page (a table row and a phone card). */
+  panelKey?: string;
   onClose: () => void;
   /** After a finished delete, instead of `onClose` (the row is about to go, so focus must not go back to it). */
   onRemoved?: () => void;
@@ -55,7 +61,7 @@ export function RemoveUnitConfirm({
 
   return (
     <div
-      id={`units-v2-remove-panel-${unit.id}`}
+      id={panelId(unit, panelKey)}
       data-testid="units-v2-remove-panel"
       role="group"
       aria-label={`Remove the ${unit.label}`}
@@ -109,12 +115,15 @@ export function RemoveUnitControl({
   unit,
   dirty = false,
   disabled = false,
+  panelKey,
   onRemoved,
 }: {
   productId: string;
   unit: RemovableUnit;
   dirty?: boolean;
   disabled?: boolean;
+  /** See RemoveUnitConfirm: keeps the confirm's id unique when this unit's row is drawn twice. */
+  panelKey?: string;
   /**
    * Called after a finished delete. The row is gone once the grid refetches, so the control does not refocus its
    * own button then; the caller moves focus somewhere that stays (K10d: the units heading).
@@ -138,7 +147,7 @@ export function RemoveUnitControl({
         size="sm"
         data-testid={`units-v2-rm-${unit.id}`}
         aria-expanded={open}
-        aria-controls={`units-v2-remove-panel-${unit.id}`}
+        aria-controls={panelId(unit, panelKey)}
         aria-describedby={dirty ? hintId : undefined}
         disabled={blocked}
         onClick={() => setOpen(true)}
@@ -154,6 +163,7 @@ export function RemoveUnitControl({
         <RemoveUnitConfirm
           productId={productId}
           unit={unit}
+          panelKey={panelKey}
           onClose={close}
           onRemoved={
             onRemoved

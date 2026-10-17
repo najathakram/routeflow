@@ -117,6 +117,21 @@ describe("RemoveUnitControl a11y and focus (K10d)", () => {
     expect(document.getElementById("units-v2-remove-panel")).toBeNull();
   });
 
+  it("panelKey keeps the id unique when the same unit is drawn twice", async () => {
+    render(
+      <>
+        <RemoveUnitControl productId="p1" unit={UNIT} panelKey="table" />
+        <RemoveUnitControl productId="p1" unit={UNIT} panelKey="card" />
+      </>,
+    );
+    const [a, b] = screen.getAllByTestId("units-v2-rm-u1");
+    expect(a).toHaveAttribute("aria-controls", "units-v2-remove-panel-u1-table");
+    expect(b).toHaveAttribute("aria-controls", "units-v2-remove-panel-u1-card");
+    await userEvent.click(b);
+    expect(document.getElementById("units-v2-remove-panel-u1-card")).not.toBeNull();
+    expect(document.getElementById("units-v2-remove-panel-u1-table")).toBeNull();
+  });
+
   it("after a successful delete it hands off to onRemoved and does not refocus the row's own button", async () => {
     mutate.mockImplementation((_id, opts) => opts.onSuccess?.());
     const onRemoved = jest.fn();

@@ -388,6 +388,17 @@ describe("ProductUnitsCard on the v2 surface (K10d: one Add a unit, one Remove p
     expect(screen.getByRole("button", { name: "Remove" })).toBeInTheDocument();
   });
 
+  it("a grid error with cached rows keeps the old Remove (an errored grid is not a mounted shell)", () => {
+    mockUnits = [caseUnit];
+    mockGrid = {
+      data: { rows: [gridRow("pack", "pack"), gridRow("u-case", "unit")] },
+      isLoading: false,
+      isError: true,
+    };
+    renderWith({ hideAddForm: true });
+    expect(screen.getByRole("button", { name: "Remove" })).toBeInTheDocument();
+  });
+
   it("a unit row the grid marks not editable keeps the old Remove", () => {
     mockUnits = [caseUnit];
     loaded(gridRow("pack", "pack"), gridRow("u-case", "unit", false));

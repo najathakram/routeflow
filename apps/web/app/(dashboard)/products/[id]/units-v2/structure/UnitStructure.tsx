@@ -16,27 +16,38 @@ import { AddUnitPanel, RemoveUnitControl, ResetToAutoPanel, type AddedUnit } fro
  * prices panel and above the grid, and never under the save bar.
  */
 
+const PRICE_NOT_KEPT = "Unit added. Type its price in the grid.";
+
 /** Add a unit + Reset all to Auto, above the grid. */
 export function UnitStructureControls({ productId }: { productId: string }) {
   const draft = usePriceDraft();
-  const served = usePriceGrid(productId).data;
+  const gridQuery = usePriceGrid(productId);
+  const served = gridQuery.data;
   const [pendingPrice, setPendingPrice] = React.useState<AddedUnit | null>(null);
+  const [note, setNote] = React.useState("");
   const [focusBar, setFocusBar] = React.useState(false);
 
-  // A price typed in Add a unit: the unit is created WITHOUT it. Once the grid has refetched and serves the new row, its
-  // Retail box opens as a draft holding that text, and the normal save bar commits it (CAS, audit, undo). No write here.
-  const newRow = pendingPrice
-    ? served?.rows.find((r) => r.ref === pendingPrice.id || r.label === pendingPrice.label)
-    : undefined;
+  // A price typed in Add a unit: the unit is created WITHOUT it. The create call refetches the grid before it reports
+  // back, so the FIRST settled grid after the add decides, once: if it serves the new unit (matched by its id, never by
+  // name) and the draft is clean, that unit's Retail box opens as a draft holding the text and the normal save bar
+  // commits it (CAS, audit, undo). If the refetch failed, the row is missing, or the draft is no longer clean, nothing
+  // is injected, ever: the price is dropped and the user is told to type it. No write happens here.
   const { startEditing } = draft;
   const setText = draft.api.setText;
+  const gridFetching = gridQuery.isFetching === true;
+  const gridFailed = gridQuery.isError === true;
   React.useEffect(() => {
-    if (!pendingPrice || !newRow || !newRow.editable) return;
+    if (!pendingPrice || gridFetching) return;
     setPendingPrice(null);
-    startEditing({ ref: newRow.ref, tier: 1, layout: visibleLayout() });
-    setText(newRow.ref, 1, pendingPrice.price, "");
+    const row = gridFailed ? undefined : served?.rows.find((r) => r.ref === pendingPrice.id);
+    if (!row || !row.editable || draft.dirty) {
+      setNote(PRICE_NOT_KEPT);
+      return;
+    }
+    startEditing({ ref: row.ref, tier: 1, layout: visibleLayout() });
+    setText(row.ref, 1, pendingPrice.price, "");
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [pendingPrice, newRow]);
+  }, [pendingPrice, served, gridFetching, gridFailed]);
 
   // After Reset's Apply the panel and its opener step aside (the draft is dirty, so the opener is disabled): put focus
   // on the save bar, which is where the user goes next, once it exists.
@@ -45,10 +56,9 @@ export function UnitStructureControls({ productId }: { productId: string }) {
     if (!focusBar || !editing) return;
     const t = setTimeout(() => {
       const bar = document.querySelector<HTMLElement>('[data-testid="units-v2-editbar"]');
-      const first = bar?.querySelector<HTMLElement>(
-        "button:not([disabled]), [href], input, select",
-      );
-      (first ?? bar)?.focus({ preventScroll: false });
+      // Save, by id: it is aria-disabled while nothing is saveable, so "first enabled button" would land on Cancel.
+      const save = bar?.querySelector<HTMLElement>('[data-testid="units-v2-eb-save"]');
+      (save ?? bar)?.focus({ preventScroll: false });
       setFocusBar(false);
     }, 0);
     return () => clearTimeout(t);
@@ -73,9 +83,15 @@ export function UnitStructureControls({ productId }: { productId: string }) {
         dirty={draft.dirty}
         validatePrice={cellPriceProblem}
         onAdded={(added) => {
+          setNote("");
           if (added.price !== "") setPendingPrice(added);
         }}
       />
+      {note && (
+        <p role="status" data-testid="units-v2-add-note" className="text-sm text-navy/80">
+          {note}
+        </p>
+      )}
       {reset.rows.length > 0 && (
         <ResetToAutoPanel
           disabled={draft.dirty}
@@ -119,9 +135,12 @@ function focusUnitsHeading() {
 export function UnitRowRemove({
   productId,
   row,
+  layout,
 }: {
   productId: string;
   row: ProductPriceGridRowDto;
+  /** The grid draws each row twice (table and phone card); the panel ids carry the layout so they stay unique. */
+  layout: "table" | "card";
 }) {
   const draft = usePriceDraft();
   if (row.kind !== "unit" || !row.editable) return null;
@@ -131,6 +150,7 @@ export function UnitRowRemove({
         productId={productId}
         unit={{ id: row.ref, label: row.label }}
         dirty={draft.dirty}
+        panelKey={layout}
         onRemoved={focusUnitsHeading}
       />
     </div>

@@ -43,7 +43,9 @@ export function ProductPricingV2({
         panel={<ChangePrices open={cp.open} onClose={cp.close} openerRef={cp.opener} />}
         unitControls={structure ? <UnitStructureControls productId={product.id} /> : undefined}
         rowAction={
-          structure ? (row) => <UnitRowRemove productId={product.id} row={row} /> : undefined
+          structure
+            ? (row, layout) => <UnitRowRemove productId={product.id} row={row} layout={layout} />
+            : undefined
         }
       />
       <SaveStatus productId={product.id} />

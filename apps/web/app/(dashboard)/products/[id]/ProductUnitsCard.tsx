@@ -258,7 +258,8 @@ export function ProductUnitsCard({
 
   // K10d: the same grid the v2 shell reads. Until it has rows the shell has no Add / Remove, so the old ones stay.
   const shellOwns = hideAddForm && !unitStructureGoverned(product);
-  const grid = usePriceGrid(product.id, enabled && shellOwns).data;
+  const gridQuery = usePriceGrid(product.id, enabled && shellOwns);
+  const grid = gridQuery.data;
   if (!enabled) return null;
   const addInShell = shellOwns && shellHasUnitControls(grid);
   const units = list.data ?? [];
@@ -391,7 +392,7 @@ export function ProductUnitsCard({
                 busy={busy}
                 onSave={save}
                 onDelete={setRemoving}
-                hideRemove={shellOwns && shellRemovesUnit(grid, u.id)}
+                hideRemove={shellOwns && !gridQuery.isError && shellRemovesUnit(grid, u.id)}
                 onMakeDefault={(x) => update.mutate({ id: x.id, isDefaultSelling: true })}
               />
             ))}

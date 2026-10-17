@@ -226,7 +226,7 @@ export function ProductPricesGrid({
   /** Edit mode (S12a, behind flag.units_prices_v2). Omitted = today's read-only grid, unchanged. */
   edit?: GridEditApi;
   /** A control under a unit's name (K10d: Remove), or nothing for a row that has none. */
-  rowAction?: (row: ProductPriceGridRowDto) => React.ReactNode;
+  rowAction?: (row: ProductPriceGridRowDto, layout: "table" | "card") => React.ReactNode;
 }) {
   const grid = usePriceGrid(product.id);
   const labels = useTierLabels().data;
@@ -332,7 +332,7 @@ export function ProductPricesGrid({
                   {row.label}
                   <NotEditable row={row} />
                 </th>
-                {rowAction && <td className="px-2 py-3">{rowAction(row)}</td>}
+                {rowAction && <td className="px-2 py-3">{rowAction(row, "table")}</td>}
                 <td className="px-2 py-3 text-navy/80">
                   {containsLines(row, ascending).map((l) => (
                     <div key={l}>{l}</div>
@@ -370,7 +370,7 @@ export function ProductPricesGrid({
           >
             <div className="font-medium text-navy">{row.label}</div>
             <NotEditable row={row} />
-            {rowAction?.(row)}
+            {rowAction?.(row, "card")}
             <div className="text-xs text-navy/70">
               {containsLines(row, ascending).map((l) => (
                 <div key={l}>{l}</div>
