@@ -1,6 +1,6 @@
 {
-  "mappedSha": "486c8b896422c82d74a236cea102ec2cbf1ca45a",
-  "generatedAt": "2026-10-17T00:00:00.000Z",
+  "mappedSha": "127bac4ce2ad2f3121ee9c87ea78bbb13dc6ed66",
+  "generatedAt": "2026-10-17T12:00:00.000Z",
   "layout": "split-2026-09-13",
   "areas": [
     "api",
@@ -9,11 +9,11 @@
     "packages"
   ],
   "partCounts": {
-    "api": 22,
-    "web": 18,
-    "mobile": 12,
+    "api": 23,
+    "web": 19,
+    "mobile": 13,
     "packages": 0
   },
   "fileCount": 1141,
-  "notes": "- **2026-10-17 — Bookkeeping for fixes-3 (#3506; `5caf64725..486c8b896`; docs-only, Option B follow-up).** New `api/landing-2026-10-17-bk3.md` and `web/landing-2026-10-17-bk3.md` (TOC row in each area file) and a packages.md note: B1 bare variant name (`product-variant-name.ts`, `variant-name-census-scan.ts`, `VARIANT_NAME_PREFIX_ONLY`), B846 bill revert and PO edit append a PURCHASE (`bill-revert.ts`, `stock-write-date.ts`, `STOCK_DATE_IN_FILED_PERIOD`), B568 atomic Zoho stock sync, 542d signed checkout-session terms (`catchup-session-terms.ts`, SIGNING_SINCE 10-18), db-lane resolver and the stray-pipeline-state pin. Lessons L-313 to L-315; archived L-284, L-281, L-273. mappedSha 486c8b896. Full history: CHANGELOG.md."
+  "notes": "- **2026-10-17 — Bookkeeping for units-v2-3 (#3507, merge `127bac4ce`; `486c8b896..127bac4ce`; docs-only, Option B follow-up).** New `api/`, `web/`, `mobile/landing-2026-10-17-units-v2-3.md` (TOC row in each area file) and a packages.md section: S19/S19b customer price layer (`customerLinePrice`, `orders/units-prices-v2.ts`, `customers/customer-price-layer.ts`, web `useCustomerPriceLayer`, mobile `price-layer.ts`, the size-ratchet extractions), U-1 tenant units settings (`units/*` module, `flag.units_settings_v1`, settings/units page), K7/K10b-d product page cards, the product image actions extraction, eight new 409 error codes. No new lesson id (L-264 gained a recurrence note: a required parameter re-runs every call site on the merged tree). mappedSha 127bac4ce. Full history: CHANGELOG.md."
 }

@@ -1,0 +1,26 @@
+# Mobile landing 2026-10-17, units-v2-3 (#3507)
+
+Range `486c8b896..127bac4ce`, mobile side. Paths under `apps/mobile/`. Api: `api/` landing for the same train; web: `web/landing-2026-10-17-units-v2-3.md`. Tests not indexed.
+
+## S19b customer price layer (flag.units_prices_v2)
+
+- `lib/api/price-layer.ts` (NEW) `PRICES_V2_FLAG` ("flag.units_prices_v2"), `usePricesV2Enabled()` (subscription flags; unknown = off, fail-closed), `priceLayerKey(customerId)`, `useCustomerPriceLayer(customerId) -> CustomerPriceLayer` (a `PriceLayerStatus` plus `layerOf(productId)`, `data`, `error`, `refetch`). Reads `GET /customers/:id/price-layer`, staleTime 0, refetch on mount and focus, no request when the flag is off.
+- `lib/price-layer-gate.ts` (NEW, pure) `priceLayerGate(status, productIds, nameOf?) -> PriceLayerGate {blocked, message, canRetry}`, `guardLayerSave(gate, asDraft)` (a draft is never gated), `pricingReadyWithLayer(base, status)`, `unitDetailOrUnconfirmed(detail, unconfirmed)` (ellipsis), `layerAwareIsSpecial(clp)` (a layered price skips the last-given pre-fill), `confirmedPrice(status, productId, clp) -> number | null`; messages `LAYER_PENDING_MESSAGE` / `LAYER_FAILED_MESSAGE` / `LAYER_INCOMPLETE_MESSAGE`. Flag off never blocks.
+- `components/PriceLayerGateNotice.tsx` (NEW) `PriceLayerGateNotice({gate, onRetry, textStyle})`: the unconfirmed-prices line under an order footer, tappable as Retry when the read failed; nothing while prices are final.
+- `lib/cart-order-total.ts` now prices through `customerLinePrice` (`@routeflow/pricing`): `lineUnitFor(line, product, tier, layer?)`, NEW `lineLayerPrice`, `packIsSpecial(tier, layer)`, `layerUnitBaseFor`, `withLayerBase(line, product, tier, layer)` (same object when no layer row), `packLinePrice`, `optionWithLayerPrice(option, product, tier, layer)` (pack, derived options and no-row units come back unchanged), `lineIsSpecial`, `PriceProduct`; `priceEditorPrefill` and `computeOrderTotal(..., layerOf?)` take the layer. No layer = master's numbers exactly.
+- Screens wired to the layer (flag off = unchanged): `components/NewOrderScreen.tsx` (Create disabled while `layerGate.blocked`; `guardLayerSave` alert "Prices aren't confirmed"), `components/new-order/CartModal.tsx` (new props `layerOf`, `layerGate`, `onRetryLayer`; Confirm disabled while blocked), `components/CartRow.tsx` (props `layerUnitBase`, `pricesUnconfirmed`; the compare base is `layerUnitBase ?? unitPriceBase`), `components/UnitPickerRow.tsx` (prop `pricesUnconfirmed`: ellipsis details, picker closed, no default unit started), `components/edit-items/DraftItemCard.tsx` and `ProductPicker.tsx` (`pricesUnconfirmed`; picker carries `packLabel` / `baseUnitLabel`).
+- `app/(operator)/(tabs)/orders/[id]/edit-items.tsx`: layer joins `pricingReady` (picker, Substitute, scan and price edits wait); Save disabled while blocked; a pick the layer cannot vouch for is refused with a confirm (Retry); unit picks go through `optionWithLayerPrice`; SPECIAL gating reads `packIsSpecial` / the unit line's own row. `lib/edit-items-draft.ts` draft ladder gains `packLabel`, `baseUnitLabel` (the layer matches unit labels through them).
+- `app/(operator)/(tabs)/invoices/new.tsx`: layer-priced lines (`withLayerBase`, `lineIsSpecial`, `packLinePrice`), Create gated by `layerGate`, inline gate marker; the ladder refresh drops stale unit lines via `offeredByLadder`. `lib/invoice-unit-pick.ts` NEW `offeredByLadder(ladders) -> (productId, unitLabel) => boolean` (compares by `unitNameKey`: NFC, trim, case-fold; a product with no ladder is left alone).
+- `app/(operator)/customers/[id]/catalog.tsx`: the row price is `packLinePrice` through the layer; `confirmedPrice` null shows an ellipsis; the "tier unset" hint hides on a layered row.
+
+## Size-ratchet extractions (verbatim, no behavior change)
+
+- `hooks/useEditItemsTrayHandlers.ts` (NEW) `useEditItemsTrayHandlers(deps)`: edit-items' ScanTray handlers except `onTrayChangeQty`, referentially stable via a latest-deps ref. `lib/edit-items-credit-rows.ts` (NEW) `buildCreditRows(...)`, `EditItemsCreditRow`. `lib/edit-items-total.ts` (NEW) `draftTotal(draft, unlisted)`.
+- `lib/draft-catalog-lines.ts` (NEW) `buildDraftCatalogLines(...)`: parked-draft catalog lines from NewOrderScreen, with the screen's layer-bound price callbacks. `lib/invoice-split-preview.ts` (NEW) `buildInvoiceSplitPreview(...)`: the display-only REG-4 invoice split, never feeds money.
+
+## Product edit pack (SA-797)
+
+- `lib/product-edit-pack.ts` (NEW) `expectedPackFor(unit, openedPack)`: the expected-pack fields a save carrying `unit` sends (the values the form read at open; same rule as web `lib/product-edit-unit.ts`). `app/(operator)/products/[id]/edit.tsx` snapshots `ProductPackAtOpen` once into a ref and spreads `expectedPackFor(...)` into the PATCH.
+- `lib/product-save-error-copy.ts`: `PRODUCT_PACK_STALE` maps to "This product changed since you opened it. Reload to see the latest."
+- `lib/route-parity-manifest.ts`: `"(dashboard)/settings/units"` is `{ missing: "W>M, owner triage" }` (web page has no mobile twin).
+- `__tests__/__mocks__/@routeflow/types.js` gains error codes `UNIT_NAME_TAKEN`, `UNIT_RENAME_COLLISION`, `UNITS_RENAME_IN_PROGRESS`, `UNIT_ARCHIVED`, `TENANT_UNIT_LIMIT`, `UNIT_SIZE_IN_USE`, `PRODUCT_PACK_STALE`, `PRODUCT_PACK_PRECONDITION_REQUIRED`.
