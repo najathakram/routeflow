@@ -5,6 +5,7 @@ import { priceGrid, validateSetPrice } from "@routeflow/pricing";
 import type { ProductPriceGridDto, ProductPriceGridRowDto } from "@routeflow/types";
 import { usePriceGrid } from "@/lib/api/usePriceGrid";
 import { formatMoney } from "@/lib/format";
+import { UNITS_V2_TESTIDS } from "../../units-v2-testids";
 import { usePriceDraft } from "../edit/usePriceDraft";
 import { rulesFromGrid, viewFromGrid } from "../edit/view-from-grid";
 import { AddUnitPanel, RemoveUnitControl, ResetToAutoPanel, type AddedUnit } from "../units";
@@ -26,6 +27,20 @@ export function UnitStructureControls({ productId }: { productId: string }) {
   const [pendingPrice, setPendingPrice] = React.useState<AddedUnit | null>(null);
   const [note, setNote] = React.useState("");
   const [focusBar, setFocusBar] = React.useState(false);
+
+  // F07: the grid's "Add the Piece unit first" pointer opens this panel by clicking its opener, so the panel cannot tell
+  // that path from a plain open. Note the pointer click in the capture phase (it runs before the pointer's own handler),
+  // and let the opener's onOpen read and clear it: only the pointer opens the form already set up as that Piece.
+  const fromPointer = React.useRef(false);
+  const [prefillPiece, setPrefillPiece] = React.useState(false);
+  React.useEffect(() => {
+    const onClick = (e: MouseEvent) => {
+      const hit = e.target instanceof Element && e.target.closest(POINTER_SELECTOR);
+      if (hit) fromPointer.current = true;
+    };
+    document.addEventListener("click", onClick, true);
+    return () => document.removeEventListener("click", onClick, true);
+  }, []);
 
   // A price typed in Add a unit: the unit is created WITHOUT it. The create call refetches the grid before it reports
   // back, so the FIRST settled grid after the add decides, once: if it serves the new unit (matched by its id, never by
@@ -84,6 +99,7 @@ export function UnitStructureControls({ productId }: { productId: string }) {
   const ofUnits = rows
     .filter((r) => r !== base)
     .map((r) => ({ label: r.label, factorToBase: r.factor }));
+  const pieceMissing = pieceIsMissing(base);
   const anchor = served.rows.find((r) => r.ref === served.anchor);
   const reset = resetPreview(served);
 
@@ -94,8 +110,14 @@ export function UnitStructureControls({ productId }: { productId: string }) {
         baseLabel={base?.label ?? "Piece"}
         ofUnits={ofUnits}
         dirty={draft.dirty}
+        pieceMissing={pieceMissing}
+        prefillPiece={prefillPiece}
         validatePrice={cellPriceProblem}
-        onOpen={() => setNote("")}
+        onOpen={() => {
+          setNote("");
+          setPrefillPiece(fromPointer.current);
+          fromPointer.current = false;
+        }}
         onAdded={(added) => {
           setNote("");
           if (added.price !== "") setPendingPrice(added);
@@ -119,6 +141,20 @@ export function UnitStructureControls({ productId }: { productId: string }) {
         />
       )}
     </div>
+  );
+}
+
+const POINTER_SELECTOR = `[data-testid="${UNITS_V2_TESTIDS.addUnitPointer}"]`;
+/** The server's reason for the implicit Piece row (product-price-grid.service `addUnitFirst`): no 1-piece unit backs it. */
+const ADD_UNIT_FIRST = /^Add the .+ unit first\.$/;
+
+/** True when the grid shows a base (Piece) row that no unit backs yet. A row locked for another reason (a family) is not. */
+function pieceIsMissing(base: ProductPriceGridRowDto | undefined): boolean {
+  return (
+    base != null &&
+    base.editable === false &&
+    typeof base.notEditableReason === "string" &&
+    ADD_UNIT_FIRST.test(base.notEditableReason)
   );
 }
 
