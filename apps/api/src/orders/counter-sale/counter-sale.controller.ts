@@ -13,6 +13,7 @@ import { ApiBearerAuth, ApiHeader, ApiTags } from "@nestjs/swagger";
 import { UserRole } from "@prisma/client";
 import { JwtAuthGuard } from "../../auth/guards/jwt-auth.guard";
 import { RolesGuard } from "../../auth/guards/roles.guard";
+import { TillPermissionGuard } from "./till-permission.guard";
 import { Roles } from "../../auth/decorators/roles.decorator";
 import { CurrentUser } from "../../auth/decorators/current-user.decorator";
 import type { JwtPayload } from "../../auth/jwt-payload.interface";
@@ -54,7 +55,7 @@ export class CounterSaleController {
    * `GET orders/:id` can never take it.
    */
   @Get("counter-sale/today")
-  @UseGuards(RolesGuard)
+  @UseGuards(RolesGuard, TillPermissionGuard)
   @Roles(UserRole.OPERATOR)
   async today(@Query() query: CounterSaleTodayDto) {
     return this.todays.today(query);
@@ -66,7 +67,7 @@ export class CounterSaleController {
    * ("main"). Two segments deep and declared before the parameterised by-key route, so no `:id` route can take it.
    */
   @Get("counter-sale/quick-keys")
-  @UseGuards(RolesGuard)
+  @UseGuards(RolesGuard, TillPermissionGuard)
   @Roles(UserRole.OPERATOR)
   async quickKeysGrid(@Query("register") register?: string) {
     return this.quickKeys.get(typeof register === "string" ? register : undefined);
@@ -79,7 +80,7 @@ export class CounterSaleController {
    * method the till rang; with it POST's own `paymentRecorded` rule applies to it.
    */
   @Get("counter-sale/by-key/:key")
-  @UseGuards(RolesGuard)
+  @UseGuards(RolesGuard, TillPermissionGuard)
   @Roles(UserRole.OPERATOR)
   async byKey(@Param("key") rawKey: string, @Query("method") rawMethod?: string) {
     return this.counterSale.byKey(this.normalizeKey(rawKey), this.parseMethod(rawMethod));
@@ -98,7 +99,7 @@ export class CounterSaleController {
   }
 
   @Post("counter-sale")
-  @UseGuards(RolesGuard)
+  @UseGuards(RolesGuard, TillPermissionGuard)
   @Roles(UserRole.OPERATOR)
   @ApiHeader({ name: "Idempotency-Key", required: true })
   async ring(
