@@ -163,6 +163,91 @@ describe("db-lane.mjs — the import graph", () => {
   });
 });
 
+describe("db-lane.mjs — workspace packages and extension-less resolution", () => {
+  it("21. pin 1: `@routeflow/<pkg>` of a package with no src/ (index.ts at its root), a subpath, an exports map and a main entry all resolve", () => {
+    const root = fixture({
+      // no src/: the entry is the package's root index.ts (packages/types)
+      "packages/foo/package.json": '{"main":"./index.ts","types":"./index.ts"}\n',
+      "packages/foo/index.ts": "export const f = 1;\n",
+      "apps/api/src/p/foo.service.ts": 'import { f } from "@routeflow/foo";\nexport const s = f;\n',
+      "apps/api/src/p/foo.db.spec.ts": 'import { s } from "./foo.service";\nvoid s;\n',
+      // a subpath import: @routeflow/bar/api/thing → packages/bar/api/thing.ts
+      "packages/bar/package.json": "{}\n",
+      "packages/bar/api/thing.ts": "export const t = 1;\n",
+      "apps/api/src/p/bar.service.ts":
+        'import { t } from "@routeflow/bar/api/thing";\nexport const s = t;\n',
+      "apps/api/src/p/bar.db.spec.ts": 'import { s } from "./bar.service";\nvoid s;\n',
+      // a package WITH src/ and an exports map (packages/ui): ./web → ./src/web/index.ts
+      "packages/baz/package.json": '{"exports":{"./web":"./src/web/index.ts"}}\n',
+      "packages/baz/src/index.ts": "export const root = 1;\n",
+      "packages/baz/src/web/index.ts": "export const w = 1;\n",
+      "apps/api/src/p/baz.service.ts":
+        'import { w } from "@routeflow/baz/web";\nexport const s = w;\n',
+      "apps/api/src/p/baz.db.spec.ts": 'import { s } from "./baz.service";\nvoid s;\n',
+      // no src/, entry named only by package.json main
+      "packages/qux/package.json": '{"main":"./lib/main.ts"}\n',
+      "packages/qux/lib/main.ts": "export const q = 1;\n",
+      "apps/api/src/p/qux.service.ts": 'import { q } from "@routeflow/qux";\nexport const s = q;\n',
+      "apps/api/src/p/qux.db.spec.ts": 'import { s } from "./qux.service";\nvoid s;\n',
+    });
+    for (const [file, spec] of [
+      ["packages/foo/index.ts", "p/foo.db.spec.ts"],
+      ["packages/bar/api/thing.ts", "p/bar.db.spec.ts"],
+      ["packages/baz/src/web/index.ts", "p/baz.db.spec.ts"],
+      ["packages/qux/lib/main.ts", "p/qux.db.spec.ts"],
+    ]) {
+      const r = lane(root, ["--files", file, "--max-ratio", "1"]);
+      expect(r.status).toBe(0);
+      const l = specLines(r.out).find((s) => s.includes(spec));
+      expect(l).toContain(`import:${file} via 2 hops`);
+      expect(specLines(r.out)).toHaveLength(1);
+    }
+    // a barrel inside a src-less package is followed too
+    const barrel = fixture({
+      "packages/foo/index.ts": 'export * from "./api/inner";\n',
+      "packages/foo/api/inner.ts": "export const i = 1;\n",
+      "apps/api/src/p/foo.db.spec.ts": 'import { i } from "@routeflow/foo";\nvoid i;\n',
+    });
+    expect(
+      listed(lane(barrel, ["--files", "packages/foo/api/inner.ts"]).out, "p/foo.db.spec.ts"),
+    ).toBe(true);
+  });
+
+  it('22. pin 2: `import "./Foo"` against a real foo.ts is unresolved (exit 3) on every OS — resolution is case-exact', () => {
+    const root = fixture({
+      "apps/api/src/k/foo.ts": "export const foo = 1;\n",
+      "apps/api/src/k/user.ts": 'import "./Foo";\n',
+    });
+    const r = lane(root, ["--files", "apps/api/src/k/user.ts"]);
+    expect(r.status).toBe(3);
+    expect(r.err + r.out).toContain("./Foo");
+    // the exact-case spelling resolves
+    const ok = fixture({
+      "apps/api/src/k/foo.ts": "export const foo = 1;\n",
+      "apps/api/src/k/user.ts": 'import "./foo";\n',
+    });
+    expect(lane(ok, ["--files", "apps/api/src/k/user.ts"]).status).toBe(0);
+  });
+
+  it("23. an extension-less `./x-template` import of a .tsx (or x-template/index.ts) source resolves", () => {
+    const root = fixture({
+      "apps/api/src/t/invoice-template.tsx": "export const T = 1;\n",
+      "apps/api/src/t/dir-template/index.ts": "export const D = 1;\n",
+      "apps/api/src/t/svc.ts":
+        'import { T } from "./invoice-template";\nimport { D } from "./dir-template";\nexport const s = [T, D];\n',
+      "apps/api/src/t/t.db.spec.ts": 'import { s } from "./svc";\nvoid s;\n',
+    });
+    // svc.ts is the changed file: an unresolved import in it would be exit 3
+    expect(lane(root, ["--files", "apps/api/src/t/svc.ts"]).status).toBe(0);
+    expect(
+      listed(lane(root, ["--files", "apps/api/src/t/invoice-template.tsx"]).out, "t/t.db.spec.ts"),
+    ).toBe(true);
+    expect(
+      listed(lane(root, ["--files", "apps/api/src/t/dir-template/index.ts"]).out, "t/t.db.spec.ts"),
+    ).toBe(true);
+  });
+});
+
 describe("db-lane.mjs — the Prisma-model channel", () => {
   const diffOf = (body: string) => {
     const f = path.join(mkdtempSync(path.join(os.tmpdir(), "db-lane-diff-")), "d.diff");
@@ -314,6 +399,18 @@ describe("db-lane.mjs — this repo", () => {
       lane(REPO, ["--files", files.join(","), "--max-ratio", cutoff, "--json"]).out,
     );
     expect(full.mode).toBe("full");
+    // FULL folds in EVERY db spec: the exact count of tracked `*.db.spec.ts` files, not a size-dependent ratio
+    const ls = spawnSync("git", ["-C", REPO, "ls-files", "apps/api"], {
+      encoding: "utf8",
+      env: scrubbedGitEnv(),
+      maxBuffer: 64 * 1024 * 1024,
+    });
+    expect(ls.status).toBe(0);
+    const tracked = ls.stdout.split("\n").filter((f) => /\.db\.spec\.ts$/.test(f));
+    expect(tracked.length).toBeGreaterThan(0);
+    expect(full.specs).toHaveLength(tracked.length);
+    expect(full.total).toBe(tracked.length);
+    expect([...full.specs].sort()).toEqual([...tracked].sort());
     expect(parsed.specs.length).toBeLessThan(full.specs.length);
     for (const sp of parsed.specs) expect(full.specs).toContain(sp);
     expect(parsed.specs).toEqual(

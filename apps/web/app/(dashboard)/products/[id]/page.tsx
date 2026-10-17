@@ -1,7 +1,7 @@
 "use client";
 
 import { priceRowLabel } from "@/lib/product-unit-label";
-import { safeTextErrorCopy } from "@/lib/safe-text-error-copy";
+import { codedToastCopy } from "@/lib/generic-toast-copy";
 import * as React from "react";
 import Link from "next/link";
 import { useParams, useRouter } from "next/navigation";
@@ -576,9 +576,11 @@ export default function ProductDetailPage() {
     const selectedParent = draft.parentProductId
       ? allProducts.find((p: any) => p.id === draft.parentProductId)
       : null;
-    const composedName =
+    // B1: a variant stores ONLY its own label (the display name is composed at read time); sending the
+    // "<parent> - <label>" composition made every edit re-prefix it.
+    const bareName =
       selectedParent && draft.variantName?.trim()
-        ? `${(selectedParent as any).name} - ${draft.variantName.trim()}`
+        ? draft.variantName.trim()
         : (draft.name as string);
 
     // Build the PATCH explicitly — spreading the raw draft used to send
@@ -592,7 +594,7 @@ export default function ProductDetailPage() {
     updateProduct.mutate(
       {
         id: id,
-        name: composedName,
+        name: bareName,
         unit: draft.unit || undefined,
         sku: draft.sku?.trim() || null,
         barcode: draft.barcode?.trim() || null,
@@ -656,7 +658,7 @@ export default function ProductDetailPage() {
             title: "Failed to save product",
             // B964-2: a refused formula-led product / variant name is fixed copy with its label, never the server text
             description:
-              safeTextErrorCopy(e) ??
+              codedToastCopy(e) ??
               String(e?.response?.data?.message ?? "Check the fields and try again."),
             variant: "error",
           }),
@@ -838,7 +840,13 @@ export default function ProductDetailPage() {
             });
             closeVariantModal();
           },
-          onError: () => toast({ title: "Failed to update variant", variant: "error" }),
+          // B1 R3: a refused name (only the product's own name) says why; anything else keeps the plain title.
+          onError: (e: unknown) =>
+            toast({
+              title: "Failed to update variant",
+              description: codedToastCopy(e) ?? undefined,
+              variant: "error",
+            }),
         },
       );
     } else {
@@ -864,7 +872,12 @@ export default function ProductDetailPage() {
             toast({ title: "Variant created", variant: "success" });
             closeVariantModal();
           },
-          onError: () => toast({ title: "Failed to create variant", variant: "error" }),
+          onError: (e: unknown) =>
+            toast({
+              title: "Failed to create variant",
+              description: codedToastCopy(e) ?? undefined,
+              variant: "error",
+            }),
         },
       );
     }
@@ -918,8 +931,7 @@ export default function ProductDetailPage() {
       return;
     }
     const parentProduct = allProducts.find((p: any) => p.id === makeVariantParentId) as any;
-    const baseName = parentProduct?.name ?? product.name;
-    const newName = `${baseName} - ${makeVariantName.trim()}`;
+    const newName = makeVariantName.trim(); // B1: bare — never "<parent> - <label>"
 
     // If the parent has no variantName yet, assign it one first
     const parentNeedsName =
@@ -946,12 +958,10 @@ export default function ProductDetailPage() {
       );
 
     if (parentNeedsName) {
-      const parentNewName = `${baseName} - ${makeVariantParentOwnName.trim()}`;
       updateProduct.mutate(
         {
           id: makeVariantParentId,
           variantName: makeVariantParentOwnName.trim(),
-          name: parentNewName,
         },
         {
           onSuccess: doLink,
@@ -998,8 +1008,7 @@ export default function ProductDetailPage() {
       toast({ title: "Flavor / variety name is required", variant: "error" });
       return;
     }
-    const baseName = product.name;
-    const composedName = `${baseName} - ${linkExistingVariantName.trim()}`;
+    const bareName = linkExistingVariantName.trim(); // B1: bare — never "<parent> - <label>"
 
     // Link the selected product as a child variant
     const doLinkChild = () =>
@@ -1008,7 +1017,7 @@ export default function ProductDetailPage() {
           id: linkExistingProductId,
           parentProductId: product.id,
           variantName: linkExistingVariantName.trim(),
-          name: composedName,
+          name: bareName,
         },
         {
           onSuccess: (data: { keptLabels?: string[] }) => {
@@ -1026,9 +1035,8 @@ export default function ProductDetailPage() {
     // If the current (parent) product has no variantName yet, assign it one first
     const parentNeedsName = !product.variantName && linkExistingParentVariantName.trim();
     if (parentNeedsName) {
-      const parentNewName = `${baseName} - ${linkExistingParentVariantName.trim()}`;
       updateProduct.mutate(
-        { id: product.id, variantName: linkExistingParentVariantName.trim(), name: parentNewName },
+        { id: product.id, variantName: linkExistingParentVariantName.trim() },
         {
           onSuccess: doLinkChild,
           onError: () => toast({ title: "Failed to update parent variant name", variant: "error" }),
@@ -2821,9 +2829,9 @@ export default function ProductDetailPage() {
                   </p>
                   {makeVariantParentOwnName.trim() && !parent.variantName && (
                     <p>
-                      {parent.name}:{" "}
+                      {parent.name} variant name:{" "}
                       <span className="font-medium text-navy">
-                        {parent.name} - {makeVariantParentOwnName.trim()}
+                        {makeVariantParentOwnName.trim()}
                       </span>
                     </p>
                   )}
@@ -2940,9 +2948,9 @@ export default function ProductDetailPage() {
               </p>
               {linkExistingParentVariantName.trim() && !product.variantName && (
                 <p>
-                  This product:{" "}
+                  {product.name} variant name:{" "}
                   <span className="font-medium text-navy">
-                    {product.name} - {linkExistingParentVariantName.trim()}
+                    {linkExistingParentVariantName.trim()}
                   </span>
                 </p>
               )}

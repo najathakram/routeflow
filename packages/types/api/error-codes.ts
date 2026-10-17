@@ -51,6 +51,8 @@
 //                    NOT_FOUND | SELF | VARIANT_PARENT | INACTIVE | HAS_VARIANTS. Nothing was written.
 //   NAME_TAKEN     — `body.code` of the 409 when reactivating a product whose name an ACTIVE product of
 //                    the same scope now holds (SA-603a/b); body carries the holder's `productId`/`productName`.
+//   VARIANT_NAME_PREFIX_ONLY — `body.code` of the 400 when a variant name is only its parent's name and the separator ("Acme - ",
+//                    any case / spacing); `body.field` is "name". Nothing was written; type what makes the variant different.
 //   RECIPE_IMMUTABLE — `body.code` of the 409 when a recipe that is ACTIVE or RETIRED is edited
 //                    in place (#2717 M2, I3); clone it with POST /recipes/:id/versions instead.
 //   RECIPE_CATEGORY_LOCKED — `body.code` of the 409 when a product that sits in a non-RETIRED
@@ -220,6 +222,8 @@ export const API_ERROR_CODES = {
   CODE_TAKEN: "CODE_TAKEN",
   PRODUCT_CODE_IN_USE: "PRODUCT_CODE_IN_USE",
   NAME_TAKEN: "NAME_TAKEN",
+  /** 400 from product create / update, the family grid and the stock split: a variant name that is only its parent's name plus the separator ("Acme - "); there is no label to store. Nothing was written. */
+  VARIANT_NAME_PREFIX_ONLY: "VARIANT_NAME_PREFIX_ONLY",
   HOLDERS_CHANGED: "HOLDERS_CHANGED",
   FAMILY_NOT_SELLABLE: "FAMILY_NOT_SELLABLE",
   /** 400 from PUT customer price overrides and POST/PATCH promotions: a FAMILY container is never priced or promoted; `productIds` names them. Use its variants. */
@@ -375,6 +379,7 @@ export const API_ERROR_CODES = {
   PO_LOT_PARTIALLY_CONSUMED: "PO_LOT_PARTIALLY_CONSUMED",
   PO_HAS_LINKED_BILL: "PO_HAS_LINKED_BILL",
   INVENTORY_LEDGER_GAP: "INVENTORY_LEDGER_GAP",
+  STOCK_DATE_IN_FILED_PERIOD: "STOCK_DATE_IN_FILED_PERIOD",
   ALLOCATIONS_EXCEED_PAYMENT: "ALLOCATIONS_EXCEED_PAYMENT",
   INVOICE_CHANGED_DURING_EDIT: "INVOICE_CHANGED_DURING_EDIT",
   EMAIL_NOT_CONFIGURED: "EMAIL_NOT_CONFIGURED",
