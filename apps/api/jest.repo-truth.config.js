@@ -6,6 +6,6 @@ module.exports = {
   // with only this lane's results and turn campaign-check falsely RED.
   reporters: ["default"],
   testRegex:
-    "(docs-truth|no-dead-deps|no-single-schema-path|client-page-params|no-react-skew-hacks|next-version|audit-allowlist-retired|bugs-self-test-script|denied-identifiers|size-ratchet|owner-report-db-url|no-collection-time-clock-fuse|cleanup-imported-no-client|no-hand-typed-open-invoice-statuses|graph-core)\\.spec\\.ts$",
+    "(docs-truth|no-dead-deps|no-single-schema-path|client-page-params|no-react-skew-hacks|next-version|audit-allowlist-retired|bugs-self-test-script|denied-identifiers|size-ratchet|owner-report-db-url|no-collection-time-clock-fuse|cleanup-imported-no-client|no-hand-typed-open-invoice-statuses|graph-core|no-stray-pipeline-state)\\.spec\\.ts$",
   testPathIgnorePatterns: ["/node_modules/"],
 };
