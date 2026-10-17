@@ -73,8 +73,8 @@ function renderModal() {
   );
 }
 
-function resolveAsync(view: ReturnType<typeof renderModal>) {
-  mockAsync.products = PRODUCTS;
+function resolveAsync(view: ReturnType<typeof renderModal>, products: unknown = PRODUCTS) {
+  mockAsync.products = products;
   mockAsync.sections = SECTIONS;
   view.rerender(<ProductCreateModal isOpen onClose={jest.fn()} onCreated={jest.fn()} />);
 }
@@ -117,6 +117,37 @@ describe.each([
     expect(resolved.nodes).toHaveLength(pending.nodes.length);
     resolved.nodes.forEach((node, i) => expect(node).toBe(pending.nodes[i]));
     expect(resolved.name).toBe(pending.name);
+  });
+
+  it("adds nothing before Name when the catalog arrives EMPTY either (the reason lives inside the field)", () => {
+    const view = renderModal();
+    const pending = aboveAndIncludingName();
+
+    resolveAsync(view, { data: [] });
+    const resolved = aboveAndIncludingName();
+
+    const field = screen
+      .getByRole("dialog")
+      .querySelector<HTMLInputElement>('[data-reserved-row="variant-of"] input');
+    expect(field).toBeDisabled();
+    expect(resolved.signature).toEqual(pending.signature);
+    expect(resolved.nodes).toHaveLength(pending.nodes.length);
+    resolved.nodes.forEach((node, i) => expect(node).toBe(pending.nodes[i]));
+  });
+
+  it("has the same structure above Name for loading, loaded-empty and loaded-with-products", () => {
+    const sig = (products: unknown) => {
+      mockAsync.products = products;
+      mockAsync.sections = SECTIONS;
+      const view = renderModal();
+      // React's generated ids differ per mount: compare the structure, not the numbering
+      const { signature } = aboveAndIncludingName();
+      view.unmount();
+      return signature.map((x) => x.replace(/_r_[0-9a-z]+_|:r[0-9a-z]+:/g, "ID"));
+    };
+    const loading = sig(undefined);
+    expect(sig({ data: [] })).toEqual(loading);
+    expect(sig(PRODUCTS)).toEqual(loading);
   });
 
   it("mounts the Variant of row from the first render, in a reserved-size wrapper, before Name", () => {

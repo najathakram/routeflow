@@ -32,7 +32,10 @@ function open() {
     <ProductCreateModal isOpen onClose={jest.fn()} onCreated={jest.fn()} />,
   );
 }
-const picker = () => screen.getByPlaceholderText(/Standalone product/) as HTMLInputElement;
+const picker = () => {
+  const row = document.querySelector('[data-reserved-row="variant-of"]')!;
+  return row.querySelector("input") as HTMLInputElement;
+};
 
 describe("Variant of with no products", () => {
   beforeEach(() => {
@@ -47,9 +50,32 @@ describe("Variant of with no products", () => {
     expect(picker()).toHaveAttribute("aria-describedby", help.id);
   });
 
+  it("shows the reason INSIDE the field's own box: no extra block, no extra line", () => {
+    open();
+    const help = screen.getByText(REASON);
+    const frame = picker().closest("div.rounded-lg")!;
+    // inside the picker's bordered frame, in the row that holds the input, not after it
+    expect(frame.contains(help)).toBe(true);
+    expect(help.closest('[data-reserved-row="variant-of"]')).not.toBeNull();
+    expect(help.tagName).toBe("SPAN");
+    // out of the flow: it overlays the input, so the row height cannot change
+    expect(help.className).toContain("absolute");
+    // the row is still label + field (nothing was appended after the field)
+    const row = help.closest('[data-reserved-row="variant-of"]')!;
+    expect(Array.from(row.children).map((c) => c.tagName)).toEqual(["LABEL", "DIV"]);
+    // muted but legible: a body-muted token, not the pale placeholder grey
+    expect(help.className).toContain("text-navy/70");
+    expect(help.className).not.toContain("text-navy/30");
+  });
+
+  it("keeps the placeholder empty so the reason is not drawn twice", () => {
+    open();
+    expect(picker().placeholder).toBe("");
+  });
+
   it("gives the disabled picker a muted fill from the design tokens", () => {
     open();
-    const frame = picker().parentElement!;
+    const frame = picker().closest("div.rounded-lg")!;
     expect(frame.className).toContain("bg-surface-raised");
     expect(frame.className).not.toMatch(/(^|\s)bg-white(\s|$)/);
   });
@@ -77,7 +103,7 @@ describe("Variant of with products", () => {
     expect(picker()).not.toHaveAttribute("aria-describedby");
     expect(screen.queryByText(REASON)).toBeNull();
     expect(screen.getByRole("button", { name: SCAN_TITLE })).toBeEnabled();
-    expect(picker().parentElement!.className).not.toContain("bg-surface-raised");
+    expect(picker().closest("div.rounded-lg")!.className).not.toContain("bg-surface-raised");
   });
 });
 

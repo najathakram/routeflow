@@ -133,7 +133,6 @@ export function ProductCreateModal({
   const parentCandidates = allProducts.filter((p) => !p.parentProductId);
   // Only once the catalog has loaded: while it is on its way "no products" would be a claim, not a fact.
   const noProductsYet = allProductsData !== undefined && parentCandidates.length === 0;
-  const variantHelpId = React.useId();
 
   const [form, setForm] = React.useState({
     name: initialName ?? "",
@@ -526,7 +525,7 @@ export function ProductCreateModal({
                   onChange={(id) => set("parentProductId", id)}
                   products={parentCandidates}
                   disabled={parentCandidates.length === 0}
-                  describedBy={noProductsYet ? variantHelpId : undefined}
+                  disabledHint={noProductsYet ? "Add a product first to make variants." : ""}
                   emptyHint="No standalone products yet."
                   placeholder="Standalone product (type to search)…"
                   className="flex-1"
@@ -542,11 +541,6 @@ export function ProductCreateModal({
                   }
                 />
               </div>
-              {noProductsYet && (
-                <p id={variantHelpId} className="mt-1 text-xs text-navy/70">
-                  Add a product first to make variants.
-                </p>
-              )}
               {variantOfScanLoading && (
                 <p className="mt-1 text-xs text-navy/70">Looking up product…</p>
               )}
