@@ -134,6 +134,21 @@ describe("genericToastCopy: codes users rely on", () => {
     );
   });
 
+  it("PAYMENT_NOT_DUE (row 542: pay refused, nothing is due) is fixed copy", () => {
+    const copy = genericToastCopy(
+      err(409, { code: API_ERROR_CODES.PAYMENT_NOT_DUE, message: "raw server text" }),
+    );
+    expect(copy).toBe("Nothing is due right now.");
+  });
+
+  it("PAYMENT_TERMS_CHANGED (row 542c: the banner's terms no longer hold) is one fixed plain sentence", () => {
+    const copy = genericToastCopy(
+      err(409, { code: API_ERROR_CODES.PAYMENT_TERMS_CHANGED, message: "raw server text" }),
+    );
+    expect(copy).toBe("The amount changed. We've refreshed it, please check and try again.");
+    expect(copy).not.toMatch(/[–—]/);
+  });
+
   it("PRODUCT_CHAIN_UNREADABLE (H2: a reparent refused on an unreadable family chain) is fixed copy", () => {
     const copy = genericToastCopy(err(409, { code: API_ERROR_CODES.PRODUCT_CHAIN_UNREADABLE }));
     expect(copy).toBe("This product's family chain can't be read.");
@@ -169,6 +184,8 @@ describe("genericToastCopy: codes users rely on", () => {
     ["CREDIT_NOTE_VOID_NOT_EDITABLE", /is void/],
     ["CREDIT_NOTE_OVER_HEADROOM", /more than the source invoice still allows/],
     ["UNIT_AWARE_LINE", /sold by a unit/],
+    // SA-804 (1) / B1232: FIFO and LIFO costing are retired.
+    ["COSTING_METHOD_RETIRED", /^FIFO and LIFO costing are retired. Pick average cost/],
     ["ORDER_CHANGED_DURING_EDIT", /changed while you were editing/],
     ["DUPLICATE_LINE_ID", /^A line appears twice\. Refresh the page and try again\.$/],
     ["ORDER_BILLING_CHANGED", /billing changed/],

@@ -203,6 +203,9 @@ model Tenant {
   // ─── Units/PO minimal + multi-category labels (2026-09-19) ───
   productUnits             ProductUnit[]
   tenantUnits              TenantUnit[]
+  // Units program S6: tier unit settings and per-customer unit prices.
+  productTierUnits         ProductTierUnit[]
+  customerUnitPrices       CustomerUnitPrice[]
   supplierProducts         SupplierProduct[]
   productCategories        ProductCategory[]
   productCategoryLabels    ProductCategoryLabel[]

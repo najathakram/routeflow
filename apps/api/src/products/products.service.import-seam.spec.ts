@@ -44,7 +44,7 @@ describe("ProductsService — importer seam (B858)", () => {
     authority = { can: jest.fn().mockResolvedValue(true) };
     featureOverrides = { get: jest.fn().mockResolvedValue(null) };
     entitlements = {
-      hasFlag: jest.fn().mockResolvedValue(true),
+      hasFlag: jest.fn(async (_t: string, k: string) => k !== "flag.units_prices_v2"),
       resolve: jest.fn().mockResolvedValue({ planKey: "LITE", flags: [] }),
     };
     planCatalog = { upgradeTargetForFlag: jest.fn().mockResolvedValue(UPGRADE) };

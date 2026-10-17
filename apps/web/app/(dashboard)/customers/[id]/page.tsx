@@ -132,6 +132,7 @@ import { useUndo } from "@/lib/undo";
 import { useProduct } from "@/lib/api/products";
 import { displayProductName } from "@/lib/product-display";
 import { CustomerPriceProductSearch } from "./customer-price-product-search";
+import { UnitPricesTabContent, UnitPricesTabTrigger } from "./units-v2/CustomerUnitPricesTab";
 import { useHasAddon } from "@/lib/api/tobacco";
 import { MSRP_ADDON, SALES_AGENTS_ADDON, useFleetAccess, useRoutesAccess } from "@/lib/api/addons";
 import { OrderStatusBadge, useOrderStatusLabel } from "@/components/OrderStatusBadge";
@@ -1088,8 +1089,7 @@ function SpecialPricesTab({ customerId }: { customerId: string }) {
           <div>
             <h3 className="text-base font-semibold text-navy">Default Pricing Tier</h3>
             <p className="mt-0.5 text-xs text-navy/70">
-              Applies to every product for this customer. Per-product overrides below take
-              precedence.
+              Applies to every product for this customer. Tier overrides below take precedence.
             </p>
           </div>
           {isOperator ? (
@@ -1115,8 +1115,8 @@ function SpecialPricesTab({ customerId }: { customerId: string }) {
         </div>
         {priceList.length > 0 && (
           <p className="mt-3 text-xs text-navy/70">
-            {priceList.length} product{priceList.length === 1 ? " has" : "s have"} a per-product
-            override and will keep {priceList.length === 1 ? "its" : "their"} own tier.
+            {priceList.length} product{priceList.length === 1 ? " has" : "s have"} a tier override
+            and will keep {priceList.length === 1 ? "its" : "their"} own tier.
           </p>
         )}
       </Card>
@@ -1196,15 +1196,15 @@ function SpecialPricesTab({ customerId }: { customerId: string }) {
       <Card>
         <div className="mb-4 flex items-center justify-between">
           <div>
-            <h3 className="text-base font-semibold text-navy">Product Overrides</h3>
+            <h3 className="text-base font-semibold text-navy">Tier overrides</h3>
             <p className="mt-0.5 text-xs text-navy/70">
               {hasMsrpAddon
-                ? "Override the pricing tier and/or MSRP for specific products. These override the customer's default tier and the product's default MSRP."
-                : "Override the pricing tier for specific products. These override the customer's default tier."}
+                ? "Pick a different pricing tier, and optionally an MSRP, for specific products. These take precedence over the customer's default tier and the product's default MSRP."
+                : "Pick a different pricing tier for specific products. These take precedence over the customer's default tier."}
             </p>
           </div>
           <Button size="sm" leftIcon={<Plus className="h-4 w-4" />} onClick={openAdd}>
-            Add Override
+            Add tier override
           </Button>
         </div>
 
@@ -1212,7 +1212,7 @@ function SpecialPricesTab({ customerId }: { customerId: string }) {
           <p className="text-sm text-navy/70">Loading…</p>
         ) : priceList.length === 0 ? (
           <div className="rounded-lg border border-dashed border-surface-border bg-surface-raised py-10 text-center">
-            <p className="text-sm text-navy/70">No product overrides set.</p>
+            <p className="text-sm text-navy/70">No tier overrides set.</p>
             <button className="mt-2 text-sm text-brand-500 hover:underline" onClick={openAdd}>
               Add the first one &rarr;
             </button>
@@ -1354,7 +1354,7 @@ function SpecialPricesTab({ customerId }: { customerId: string }) {
       <Modal
         open={isModalOpen}
         onClose={() => setIsModalOpen(false)}
-        title={editingPrice ? "Edit Price Override" : "Add Price Override"}
+        title={editingPrice ? "Edit tier override" : "Add tier override"}
         footer={
           <>
             <Button
@@ -1403,7 +1403,7 @@ function SpecialPricesTab({ customerId }: { customerId: string }) {
                 <option key={t} value={t}>
                   {tierLabel(tierLabels, t)}
                   {t === 1 ? " (List Price)" : ""}
-                  {selectedProduct ? ` — ${fmt(getTierPrice(selectedProduct, t))}` : ""}
+                  {selectedProduct ? `: ${fmt(getTierPrice(selectedProduct, t))}` : ""}
                   {tierUnset(selectedProduct, t) ? " (list)" : ""}
                 </option>
               ))}
@@ -2394,6 +2394,7 @@ function CustomerDetailPageInner({ id }: { id: string }) {
           </TabTrigger>
           <TabTrigger value="billing">Billing</TabTrigger>
           <TabTrigger value="special-prices">Special Prices</TabTrigger>
+          <UnitPricesTabTrigger />
           <TabTrigger value="comments">
             <span className="flex items-center gap-1.5">
               <MessageSquare className="h-3.5 w-3.5" />
@@ -3921,6 +3922,7 @@ function CustomerDetailPageInner({ id }: { id: string }) {
 
         {/* ── Special Prices tab ─────────────────────────────────── */}
         <SpecialPricesTab customerId={id} />
+        <UnitPricesTabContent customerId={id} />
 
         {/* ── Comments tab ───────────────────────────────────────── */}
         <CommentsTab customerId={id} />

@@ -1,0 +1,62 @@
+import * as fs from "fs";
+import * as path from "path";
+
+/**
+ * Units v2 parity: with the flag on, a FAMILY product page loses ONLY "Family page tiers",
+ * "units card" and "Create an order". Every other family-page control keeps its home.
+ * Source pin: the page is too large to mount for a render-gate check.
+ */
+const src = fs.readFileSync(path.join(__dirname, "page.tsx"), "utf8");
+
+// Controls that must render on a family page with the flag on, each unconditioned on v2/v2Family.
+const KEPT: Array<[string, RegExp]> = [
+  ["labels card", /^\s*<ProductLabelsCard productId=\{product\.id\} \/>/m],
+  ["portal visibility card", /^\s*<ProductPortalVisibilityCard product=\{product\} \/>/m],
+  ["demand card", /^\s*<DemandCard productId=\{product\.id\}/m],
+  ["sales history card", /^\s*<SalesHistoryCard productId=\{product\.id\}/m],
+  ["insights export", /^\s*<ProductInsightsExport productId=\{product\.id\}/m],
+  ["cost history card", /^\s*<CostHistoryCard productId=\{product\.id\} \/>/m],
+  ["header controls", /^\s*<ProductHeaderControls/m],
+  ["header line", /^\s*<ProductHeaderLine product=\{product\}/m],
+];
+
+describe("family page with units v2 on: parity", () => {
+  it.each(KEPT)("keeps the %s ungated by v2", (_name, re) => {
+    expect(src).toMatch(re);
+  });
+
+  it("the family variants editor is gated only on kind === FAMILY", () => {
+    expect(src).toMatch(
+      /^\s*\{product\.kind === "FAMILY" && \(\s*<FamilyVariantsEditor familyId=\{product\.id\}/m,
+    );
+  });
+
+  it("v2Family removes exactly the units card and the create-an-order link", () => {
+    const uses = src
+      .split("\n")
+      .filter((l) => l.includes("v2Family") && !l.includes("const v2Family"));
+    expect(uses).toHaveLength(2);
+    expect(uses.some((l) => /!v2Family && <ProductUnitsCard/.test(l))).toBe(true);
+    expect(uses.some((l) => /hideCreateOrder=\{v2Family\}/.test(l))).toBe(true);
+  });
+
+  it("the v2 family tiers grid is the only other family removal", () => {
+    expect(src).toMatch(
+      /v2 && product\.kind !== "FAMILY" \? <ProductPricingV2 product=\{product\} \/>/,
+    );
+  });
+
+  it("pins every bare v2 reference in page.tsx to the known four", () => {
+    const refs = src
+      .split("\n")
+      .filter((l) => /(?<![-\w/"])v2(?![\w-])/.test(l))
+      .filter((l) => !/const v2( |Family)/.test(l))
+      .map((l) => l.trim());
+    expect(refs).toEqual([
+      '{v2 ? null : stockStatus === "OUT_OF_STOCK" ? (',
+      "<ProductHeaderLine product={product} currentStock={currentStock} pricesV2={v2} />",
+      "pricesV2={v2}",
+      '{v2 && product.kind !== "FAMILY" ? <ProductPricingV2 product={product} /> : null}',
+    ]);
+  });
+});

@@ -84,6 +84,7 @@ const FEATURE_REGISTRY_MIRROR = [
   ["flag.returns", "RequirePlanFlag", "dark", false, []],
   ["flag.ap_bills", "RequirePlanFlag", "dark", false, []],
   ["flag.pricing_tiers", "RequirePlanFlag", "dark", false, []],
+  ["flag.units_prices_v2", "RequirePlanFlag", "enforced", false, []],
   ["flag.import_integrations", "RequirePlanFlag", "dark", false, []],
   ["flag.estimates", "RequirePlanFlag", "dark", false, []],
   ["flag.recurring_invoices", "RequirePlanFlag", "dark", false, []],

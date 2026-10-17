@@ -394,3 +394,39 @@ export interface UpdateFamilyVariantsRequest {
 export function deleteProductConfirmText(name: string): string {
   return `${name} will be deactivated and hidden from the catalog. Its SKU and barcode are freed, so another product can use them. Order and invoice history is kept. A product on an undelivered order can't be deleted.`;
 }
+
+export interface ProductPriceGridCellDto {
+  tier: 1 | 2 | 3 | 4 | 5;
+  source: "set" | "auto";
+  value: number;
+}
+export interface ProductPriceGridRowDto {
+  ref: string;
+  label: string;
+  factor: number;
+  kind: "pack" | "base" | "unit";
+  code: string | null;
+  cells: ProductPriceGridCellDto[];
+  /**
+   * False when the price write would refuse this row (a variant, family or recipe product is priced elsewhere; the
+   * implicit piece row has no unit yet). The UI hides Edit there.
+   */
+  editable: boolean;
+  /** Plain words for why, set only when `editable` is false. */
+  notEditableReason?: string;
+}
+export interface ProductPriceGridDto {
+  productId: string;
+  anchor: string;
+  rows: ProductPriceGridRowDto[];
+  /**
+   * Units v2 sprint contract (K1 fills these in the grid service). `revision` = Product.priceRevision.
+   */
+  revision: number;
+  /** Opaque fingerprint of the R-1 price-bearing state (5 pack columns, packAuto, each unit's id/factor/prices). Echo it back. */
+  priceState: string;
+  /** LadderView.tierAnchors: tier N's own order unit. A missing tier follows `anchor`. */
+  tierAnchors: Partial<Record<2 | 3 | 4 | 5, string>>;
+  /** The tenant's normalized TierRules (pricing.tierRules), so client previews plan with the server's rules. */
+  tierRules: Partial<Record<2 | 3 | 4 | 5, number>>;
+}
