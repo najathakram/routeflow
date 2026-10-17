@@ -1,7 +1,6 @@
 import { BadRequestException, ForbiddenException } from "@nestjs/common";
 import { PriceType } from "@prisma/client";
 import {
-  isSpecialTier,
   decideStaffOverride,
   withinStaffOverrideTolerance,
   AmbiguousLineError,
@@ -11,12 +10,14 @@ import {
   categoryTaxSnapshotOf,
   computeCategoryTax,
   computeLineSubtotalStrict,
+  isSpecialPrice,
   normalizeBoxesPieces,
   resolveLadderLevel,
   resolveUnitPrice,
   unitNameKey,
   type CategoryTaxSnapshot,
   type CategoryTaxType,
+  type CustomerLayerPrice,
   type LadderProduct,
   type LadderUnit,
   type TrackedCategoryRow,
@@ -342,6 +343,12 @@ export function buildUnitLine(input: {
   /** The customer's pricing tier for this product (1..5). */
   tier: number;
   /**
+   * S19, flag.units_prices_v2 only: this line's unit in the CUSTOMER LAYER (SA-811a): a typed price, or one worked out from
+   * their typed price on their order unit. It replaces the ladder's tier price as the base; above the unit's Retail ladder
+   * price it is priced as the sticky upsell (MANUAL). Null/undefined = master's path, untouched.
+   */
+  customerLayer?: CustomerLayerPrice | null;
+  /**
    * Regulated per-category tax for a line of `qtyPieces` base pieces worth `subtotal`, PLUS
    * (B297) the rate trio it was priced under — see `categoryTaxForLine`. A caller that defers
    * the amount to a later recompute pass (unit-line-edit.ts's `taxFor: () => 0`) defers the
@@ -418,13 +425,18 @@ export function buildUnitLine(input: {
     !ladderNames(ladderProduct, units, label);
   let listPrice: number;
   let tierPrice: number;
+  const layer = input.customerLayer ?? null;
   try {
     if (gone) {
       tierPrice = roundMoney(Number(snap.unitPrice));
       listPrice = roundMoney(Number(snap.originalPrice ?? snap.unitPrice));
     } else {
-      listPrice = resolveUnitPrice(ladderProduct, units, label, 1);
-      tierPrice = resolveUnitPrice(ladderProduct, units, label, tier);
+      // the layer row's own list when there is one, so the original and the SPECIAL/MANUAL type agree with the price
+      // (the ladder is still resolved: an unknown unit or an invalid tier is refused exactly as master does)
+      const ladderList = resolveUnitPrice(ladderProduct, units, label, 1);
+      const ladderTier = resolveUnitPrice(ladderProduct, units, label, tier);
+      listPrice = layer ? layer.listPrice : ladderList;
+      tierPrice = layer ? layer.price : ladderTier;
     }
   } catch (e) {
     if (e instanceof InvalidTierError) {
@@ -443,6 +455,7 @@ export function buildUnitLine(input: {
     }
     throw e;
   }
+  const special = isSpecialPrice(tier, listPrice, layer?.price);
   // H3: ONE rule for a staff-typed price — judged against the customer's TIER unit price, never the list.
   const held =
     input.stored && norm(input.stored.unitLabel ?? "") === norm(label) ? input.stored : null;
@@ -466,7 +479,7 @@ export function buildUnitLine(input: {
           overridePrice: Number(item.unitPrice),
           baselinePrice: tierPrice,
           listPrice,
-          isSpecialTier: isSpecialTier(tier),
+          isSpecialTier: special,
           hasReason: !!item.overrideReason?.trim(),
         })
       : null;
@@ -475,7 +488,7 @@ export function buildUnitLine(input: {
   // ladder that lost the level); otherwise the tier decides.
   const ladderType: PriceType = gone
     ? (snap?.priceType ?? PriceType.STANDARD)
-    : isSpecialTier(tier)
+    : special
       ? PriceType.SPECIAL
       : PriceType.STANDARD;
   const unitPrice = echoesHeld
@@ -483,11 +496,20 @@ export function buildUnitLine(input: {
     : decision
       ? decision.unitPrice
       : tierPrice;
+  // SA-811a R2: the customer's own price above the unit's Retail ladder price is the sticky upsell's twin: MANUAL (never a
+  // staff override, so no attribution) unless a staff-typed price really changed it.
+  const layerManual =
+    !!layer?.aboveList &&
+    !gone &&
+    !echoesHeld &&
+    (decision == null || ("priceType" in decision && decision.priceType === "SPECIAL"));
   const priceType: PriceType = echoesHeld
     ? (held.priceType as PriceType)
-    : decision
-      ? PriceType[decision.priceType]
-      : ladderType;
+    : layerManual
+      ? PriceType.MANUAL
+      : decision
+        ? PriceType[decision.priceType]
+        : ladderType;
   const originalPrice: number | null = echoesHeld
     ? held.originalPrice == null
       ? null
@@ -498,10 +520,11 @@ export function buildUnitLine(input: {
         ? snap?.originalPrice == null
           ? null
           : roundMoney(Number(snap.originalPrice))
-        : isSpecialTier(tier)
+        : special
           ? listPrice
           : null;
-  const overridden = priceType === PriceType.DISCOUNTED || priceType === PriceType.MANUAL;
+  const overridden =
+    !layerManual && (priceType === PriceType.DISCOUNTED || priceType === PriceType.MANUAL);
   // the stamp: a held override keeps ITS reason and user; a new one is this edit's
   const stamp = !overridden
     ? null

@@ -1,4 +1,5 @@
 import { PriceType } from "@prisma/client";
+import type { CustomerLayerPrice } from "@routeflow/pricing";
 import { assertSafeTextCell } from "../common/safe-text-cell";
 import { resolveBuyerLinePrice } from "./buyer-merge-pricing";
 import type { PromotionRule } from "@routeflow/pricing";
@@ -156,6 +157,8 @@ export function priceReplacedLine(a: {
   isBuyerEdit: boolean;
   group: SplitPromoGroup | undefined;
   tier: number;
+  /** S19, flag.units_prices_v2 only: the pack's customer-layer price (above sticky history and the tier price). */
+  layer?: CustomerLayerPrice | null;
   buyerPromos: PromotionRule[];
   qtyPieces: number;
   qtyUnits: number;
@@ -177,6 +180,7 @@ export function priceReplacedLine(a: {
         a.lastPrice,
         // REG-B109: the exact denomination this line bills with.
         a.group?.denomination ?? a.denomination,
+        a.layer,
       )
     : {
         unitPrice: Number(a.product.pricePerUnit),

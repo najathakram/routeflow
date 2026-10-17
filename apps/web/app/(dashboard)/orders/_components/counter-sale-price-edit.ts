@@ -30,6 +30,8 @@ export function priceEditLineOf(l: SaleLine, tier: number): PriceEditLine {
     tierPrice,
     listPrice: l.listPrice ?? tierPrice,
     tier,
+    // S19b: the layer's special flag when the layer priced the line (flag on); else the dialog reads the tier.
+    ...(l.special !== undefined ? { isSpecial: l.special } : {}),
     qty: l.qty,
     boxes: l.boxes,
     pieces: l.pieces,
@@ -176,7 +178,7 @@ export function lineNeedingReason(
       overridePrice: l.unitPrice,
       baselinePrice: tierPrice,
       listPrice: l.listPrice ?? tierPrice,
-      isSpecialTier: isSpecialTier(tierFor(l.productId)),
+      isSpecialTier: l.special ?? isSpecialTier(tierFor(l.productId)),
       hasReason: !!l.override.reason?.trim(),
     });
     if ("refused" in decision) return l;

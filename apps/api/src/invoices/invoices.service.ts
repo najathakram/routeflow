@@ -190,7 +190,6 @@ import {
   overdueCutoff,
   addCalendarDays,
   startOfCalendarDay,
-  endOfCalendarDay,
 } from "../common/calendar-date";
 import { calendarFieldStamp, dueDateStamps, dueStamp } from "./invoice-due-dates";
 import { lockRowsNoWait } from "../common/db-locks";
@@ -228,7 +227,7 @@ import { resolveLineUnits } from "../products/line-units";
 import { assertUnitLineSplit } from "../orders/unit-line-split";
 import { prepareUnitLadders, requestsUnit } from "../orders/unit-line-build";
 import { standaloneAllocationTotals } from "./standalone-payment-totals";
-import { calendarDayOf } from "./settled-date-filter";
+import { tenantCalendarDayEnd, tenantCalendarDayStart } from "./paid-window-bounds";
 import { retryCreditTx, retryOnTxConflict } from "../common/tx-retry";
 import { AfterCommit, gatewayFor, withAfterCommit } from "../common/after-commit";
 import {
@@ -383,36 +382,6 @@ export class InvoicesService {
     };
   }
 
-  /**
-   * The real tenant-local midnight instant that BEGINS the calendar day
-   * `dateStr` (a `YYYY-MM-DD` value, e.g. a `dateFrom` query param) encodes —
-   * the paidAt/settledAt-window counterpart to `endOfCalendarDay` (B89,
-   * L-047: paidAt is a real instant, so its day bounds must be evaluated in
-   * the TENANT's own timezone, never the host clock's). Composed from the
-   * shared `endOfCalendarDay` helper rather than re-deriving the UTC-offset
-   * math a second time (L-047/L-072): the instant 1ms after the PREVIOUS
-   * calendar day's tenant-local end is exactly this day's tenant-local start.
-   */
-  private tenantCalendarDayStart(dateStr: string, timeZone: string | null): Date {
-    const prevDay = new Date(`${calendarDayOf(dateStr, "dateFrom")}T00:00:00.000Z`);
-    prevDay.setUTCDate(prevDay.getUTCDate() - 1);
-    return new Date(endOfCalendarDay(prevDay, timeZone).getTime() + 1);
-  }
-
-  /**
-   * The real tenant-local instant that ENDS the calendar day `dateStr` encodes
-   * — the `dateTo` counterpart to `tenantCalendarDayStart`. The param is
-   * normalised through `calendarDayOf` FIRST so an unparsable value is
-   * rejected with a 400 instead of reaching Prisma as an `Invalid Date` bound,
-   * and a full ISO datetime resolves to the same window as its date-only form.
-   */
-  private tenantCalendarDayEnd(dateStr: string, timeZone: string | null): Date {
-    return endOfCalendarDay(
-      new Date(`${calendarDayOf(dateStr, "dateTo")}T00:00:00.000Z`),
-      timeZone,
-    );
-  }
-
   // ─── Helpers ──────────────────────────────────────────────────────────────
 
   private async nextInvoiceNumber(): Promise<string> {
@@ -464,7 +433,7 @@ export class InvoicesService {
       tenantId: this.prisma.getTenantId(),
       clampFreeUnits: (free, boxes, qty) => this.clampLineFreeUnits(free, boxes, qty),
       resolved,
-      override: await loadOverride(this.prisma, dto, unitsByProduct, actorId),
+      override: await loadOverride(this.prisma, dto, unitsByProduct, actorId, this.entitlements),
     });
     // A regulated line makes this a filable sale — the SALE ledger rows are written below.
     const hasRegulated = itemsData.some((it: any) => it.trackedCategoryId != null);
@@ -3135,7 +3104,13 @@ export class InvoicesService {
         items,
         { isStaff: true, prisma: this.prisma, entitlements: this.entitlements },
       );
-      const override = await loadOverride(this.prisma, { ...inv, items }, unitsByProduct, actorId);
+      const override = await loadOverride(
+        this.prisma,
+        { ...inv, items },
+        unitsByProduct,
+        actorId,
+        this.entitlements,
+      );
 
       const { updated } = await this.prisma.tenantTransaction(async (tx: any) => {
         // Serialize concurrent saves of this invoice: rows are read AFTER the lock, so a second save
@@ -4468,9 +4443,8 @@ export class InvoicesService {
       // timezone — never the host clock's `setHours`.
       const tenantDefaults = await this.resolveTenantInvoiceDefaults();
       where.paidAt = {};
-      if (dateFrom)
-        where.paidAt.gte = this.tenantCalendarDayStart(dateFrom, tenantDefaults.timezone);
-      if (dateTo) where.paidAt.lte = this.tenantCalendarDayEnd(dateTo, tenantDefaults.timezone);
+      if (dateFrom) where.paidAt.gte = tenantCalendarDayStart(dateFrom, tenantDefaults.timezone);
+      if (dateTo) where.paidAt.lte = tenantCalendarDayEnd(dateTo, tenantDefaults.timezone);
     }
     if (search) {
       where.OR = [
@@ -5722,9 +5696,8 @@ export class InvoicesService {
       // listAllPayments above.
       const tenantDefaults = await this.resolveTenantInvoiceDefaults();
       where.paidAt = {};
-      if (dateFrom)
-        where.paidAt.gte = this.tenantCalendarDayStart(dateFrom, tenantDefaults.timezone);
-      if (dateTo) where.paidAt.lte = this.tenantCalendarDayEnd(dateTo, tenantDefaults.timezone);
+      if (dateFrom) where.paidAt.gte = tenantCalendarDayStart(dateFrom, tenantDefaults.timezone);
+      if (dateTo) where.paidAt.lte = tenantCalendarDayEnd(dateTo, tenantDefaults.timezone);
     }
     if (search) {
       where.OR = [

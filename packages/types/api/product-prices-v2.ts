@@ -226,3 +226,34 @@ export interface CustomerUnitPricesResponse {
   page: number;
   limit: number;
 }
+
+// ─── S19b A0: the customer-price layer (SA-811 §3, SA-811a, SA-813) ──────────────────────────────────────────────────────
+// GET /customers/:customerId/price-layer (flag.units_prices_v2, OPERATOR). The rows are billing's OWN resolved output
+// (`customerPricing().layer`), so a client evaluates no ladder: it picks the row for a line with `customerLinePrice`
+// (@routeflow/pricing; this package never imports it, so `CustomerLayerUnit` there is the structural twin of this DTO).
+
+/** One unit of one product in the customer's layer: a typed price, or one worked out from their typed price on their order unit. */
+export interface CustomerPriceLayerUnitDto {
+  /** A unit ref: "pack" | "base" | a ProductUnit id. */
+  ref: string;
+  /** The unit's label; null = the pack. Matched by the core's own label rules, never a raw string compare (SA-813 M2). */
+  label: string | null;
+  /** Dollars, rounded once. */
+  price: number;
+  /** The unit's Retail ladder price: the strikethrough / `originalPrice` base. */
+  listPrice: number;
+  source: "customer" | "customer-shape";
+  /** SA-811a R2: above the unit's Retail ladder price, so MANUAL and never promoted. */
+  aboveList: boolean;
+}
+
+export interface CustomerPriceLayerResponse {
+  customerId: string;
+  /**
+   * SA-813 M1: false when the customer has more typed rows than the read cap (5000), so the answer is partial. A product
+   * ABSENT from an incomplete response is NOT ready: a client must not treat "absent" as "no layer".
+   */
+  complete: boolean;
+  /** productId -> its layered units. Absent (with `complete: true`) = the product has no layer: master's chain. */
+  products: Record<string, CustomerPriceLayerUnitDto[]>;
+}

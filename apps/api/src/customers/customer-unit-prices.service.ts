@@ -1,4 +1,4 @@
-import { Injectable, NotFoundException } from "@nestjs/common";
+import { Injectable, NotFoundException, Optional } from "@nestjs/common";
 import {
   buildLadderView,
   customerAnchor,
@@ -15,8 +15,11 @@ import type {
   PriceTierNumber,
 } from "@routeflow/types";
 import { PrismaService } from "../prisma/prisma.service";
+import { EntitlementsService } from "../billing/entitlements.service";
+import { buildCustomerPriceLayer } from "./customer-price-layer";
 import { clampLimit } from "../common/pagination";
 import { loadCustomerPriceHistory } from "../orders/customer-price-history-query";
+import { ladderOptionsOf, loadTierOrderUnits } from "../orders/units-prices-v2";
 import { CUSTOMER_UNIT_PRICES_MAX_LIMIT } from "./dto/customer-unit-prices-query.dto";
 
 const DEFAULT_LIMIT = 25;
@@ -41,6 +44,8 @@ const PRODUCT_SELECT = {
   unitSku: true,
   priceRevision: true,
   isActive: true,
+  orderUnitRef: true,
+  packAuto: true,
 } as const;
 
 const UNIT_SELECT = {
@@ -72,12 +77,25 @@ const UNIT_SELECT = {
  *
  * Parity with billing: orders bill a customer's remembered ABOVE-LIST pack price (the sticky upsell, from
  * `loadCustomerPriceHistory`, the same query behind OrdersService.getCustomerPriceHistory) ahead of the tier price, so the
- * pack row shows it with source "history". Active promotions are not included in these prices. A price typed for the
+ * pack row shows it with source "history" - but only when the pack is NOT in the customer layer (SA-811a R1: a typed price,
+ * or one worked out from their typed price on their order unit, beats the sticky price). Active promotions are not included in these prices. A price typed for the
  * customer (CustomerUnitPrice) still shows as theirs.
  */
 @Injectable()
 export class CustomerUnitPricesService {
-  constructor(private readonly prisma: PrismaService) {}
+  constructor(
+    private readonly prisma: PrismaService,
+    // S19b: the customer layer (flag.units_prices_v2) behind /price-layer; billing's own entitlement read.
+    @Optional() private readonly entitlements?: EntitlementsService,
+  ) {}
+
+  /** S19b A1: `GET /customers/:id/price-layer`, billing's own resolved layer rows (see customer-price-layer.ts). */
+  priceLayer(customerId: string) {
+    return buildCustomerPriceLayer(
+      { prisma: this.prisma, entitlements: this.entitlements },
+      customerId,
+    );
+  }
 
   async get(
     customerId: string,
@@ -145,6 +163,8 @@ export class CustomerUnitPricesService {
       : [];
 
     const history = products.length ? await loadCustomerPriceHistory(db, customerId) : {};
+    // S19b A-5: the view carries the product's own anchor options, exactly as billing's loader builds it.
+    const tierUnitsBy = await loadTierOrderUnits(db, this.prisma.getTenantId?.(), ids);
 
     const out: CustomerProductUnitPricesDto[] = products.map((p) => {
       const productUnits = units.filter((u) => u.productId === p.id);
@@ -161,7 +181,8 @@ export class CustomerUnitPricesService {
         priceTier4: p.priceTier4.toString(),
         priceTier5: p.priceTier5.toString(),
       };
-      const view = buildLadderView(product, productUnits);
+      const viewOptions = ladderOptionsOf(p, tierUnitsBy.get(p.id));
+      const view = buildLadderView(product, productUnits, viewOptions);
       const grid = priceGrid(view);
       const codes: ProductCodes = {
         sku: p.sku,
@@ -184,6 +205,7 @@ export class CustomerUnitPricesService {
           const resolved = resolveCustomerUnitPrice({
             product,
             units: productUnits,
+            viewOptions,
             customer: { tier, orderUnit, unitPrices },
             unit: row.ref,
           });
@@ -192,7 +214,7 @@ export class CustomerUnitPricesService {
           const remembered = history[p.id]?.lastPrice;
           const sticky =
             row.kind === "pack" &&
-            resolved.source !== "customer" &&
+            (resolved.source === "tier" || resolved.source === "list") &&
             remembered != null &&
             remembered > Number(p.pricePerUnit);
           return {

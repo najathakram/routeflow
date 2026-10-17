@@ -9,7 +9,9 @@ import { type LineState, type Product } from "../../lib/cart-line-state";
 import { CartRow } from "../CartRow";
 import { CartStepperRow } from "../CartStepperRow";
 import { type CustomerPriceHistory } from "../../lib/api/orders";
-import { computeLineSubtotal } from "@routeflow/pricing";
+import { computeLineSubtotal, type CustomerLayerUnit } from "@routeflow/pricing";
+import { layerUnitBaseFor, lineIsSpecial } from "../../lib/cart-order-total";
+import type { PriceLayerGate } from "../../lib/price-layer-gate";
 import { type InvoiceSplitPreview } from "../../lib/invoice-split";
 import { MoneyTextInput } from "../MoneyTextInput";
 import { fmtCalendarDate } from "../../lib/format-date";
@@ -253,6 +255,9 @@ export function CartModal({
   tierPriceFor,
   isSpecialFor,
   tierForProductId,
+  layerOf,
+  layerGate,
+  onRetryLayer,
   marginFloorFor,
   unlisted,
   total,
@@ -296,6 +301,11 @@ export function CartModal({
   /** units_v1: the EFFECTIVE numeric tier (1-5) for a product — `UnitPickerRow` resolves the
    *  ladder price at this tier, same source as `isSpecialFor`/`tierPriceFor`. */
   tierForProductId: (productId: string) => number;
+  /** S19b: the customer's price layer for a product (undefined flag-off / no typed price): unit lines use its price. */
+  layerOf?: (productId: string) => readonly CustomerLayerUnit[] | null | undefined;
+  /** S19b D-5: while the customer's prices are unconfirmed, Create and Confirm stay disabled and the marker shows. */
+  layerGate?: PriceLayerGate;
+  onRetryLayer?: () => void;
   /** The customer's effective margin floor (fraction) for a product's category. */
   marginFloorFor: (p: Product) => number;
   unlisted: UnlistedLine[];
@@ -382,8 +392,24 @@ export function CartModal({
                     product={product}
                     line={line}
                     catalogPrice={tierPriceFor(product)}
-                    isSpecial={isSpecialFor(product)}
+                    isSpecial={
+                      layerOf
+                        ? lineIsSpecial(
+                            line,
+                            product,
+                            tierForProductId(product.id),
+                            layerOf(product.id),
+                          )
+                        : isSpecialFor(product)
+                    }
+                    pricesUnconfirmed={!!layerGate?.blocked}
                     tier={tierForProductId(product.id)}
+                    layerUnitBase={layerUnitBaseFor(
+                      line,
+                      product,
+                      tierForProductId(product.id),
+                      layerOf?.(product.id),
+                    )}
                     marginFloor={marginFloorFor(product)}
                     historyPrice={priceHistory?.[id]?.lastPrice}
                     onChangeBoxes={(n) => onChangeBoxes(id, n)}
@@ -463,6 +489,19 @@ export function CartModal({
           </ScrollView>
 
           {/* Sticky footer: total + actions */}
+          {layerGate?.message ? (
+            <Pressable
+              onPress={layerGate.canRetry ? onRetryLayer : undefined}
+              disabled={!layerGate.canRetry}
+              accessibilityRole={layerGate.canRetry ? "button" : "text"}
+              accessibilityLabel={layerGate.message}
+              hitSlop={6}
+            >
+              <Text style={{ color: ios.system.orangeInk, fontSize: 12, textAlign: "center" }}>
+                {layerGate.message}
+              </Text>
+            </Pressable>
+          ) : null}
           <View style={styles.cartFooter}>
             <View style={styles.cartFooterRow}>
               <View>
@@ -476,7 +515,7 @@ export function CartModal({
                 {options.posMode ? (
                   <Pressable
                     style={styles.cartContinueBtn}
-                    disabled={totalItems === 0 || saving}
+                    disabled={totalItems === 0 || saving || !!layerGate?.blocked}
                     onPress={() => onSave("confirm")}
                     hitSlop={6}
                     accessibilityRole="button"
@@ -487,11 +526,13 @@ export function CartModal({
                 <Pressable
                   style={[
                     styles.confirmBtn,
-                    (totalItems === 0 || saving) && styles.confirmBtnDisabled,
+                    (totalItems === 0 || saving || layerGate?.blocked) && styles.confirmBtnDisabled,
                   ]}
-                  disabled={totalItems === 0 || saving}
+                  disabled={totalItems === 0 || saving || !!layerGate?.blocked}
                   onPress={() => onSave("invoice")}
-                  accessibilityState={{ disabled: totalItems === 0 || saving }}
+                  accessibilityState={{
+                    disabled: totalItems === 0 || saving || !!layerGate?.blocked,
+                  }}
                 >
                   <Text style={styles.confirmBtnText}>
                     {posCartSaveLabel(!!options.posMode, saving)}
