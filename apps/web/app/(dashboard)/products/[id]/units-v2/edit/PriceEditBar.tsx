@@ -13,6 +13,51 @@ export const BTN =
   "border-line-strong";
 
 /**
+ * F22: the dashboard's `#main-content` is the scroller and has pb-24, and a sticky bar stops at its scroller's padding,
+ * so left alone the bar floated 96px up and covered the Case and Piece rows when Edit first opened. The bar's `bottom`
+ * is pulled down through that padding so it rests at the real bottom, and the scroller's scroll-padding-bottom is the
+ * bar's measured height, so a price box that takes focus (Tab, a click) scrolls clear of the bar. Let go when the bar goes
+ * (the same cure as the counter's checkout bar, #3500).
+ */
+function useClearOfShellPadding() {
+  const [inset, setInset] = React.useState(0);
+  const [height, setHeight] = React.useState(0);
+  const observer = React.useRef<ResizeObserver | null>(null);
+  // A callback ref: the bar mounts only while editing, so the observer follows the element, and its height is 0 when gone.
+  const ref = React.useCallback((el: HTMLDivElement | null) => {
+    observer.current?.disconnect();
+    observer.current = null;
+    if (!el) {
+      setHeight(0);
+      return;
+    }
+    const measure = () => setHeight(el.offsetHeight);
+    measure();
+    if (typeof ResizeObserver === "undefined") return;
+    observer.current = new ResizeObserver(measure);
+    observer.current.observe(el);
+  }, []);
+  React.useEffect(() => {
+    const main = document.getElementById("main-content");
+    if (!main) {
+      setInset(0);
+      return;
+    }
+    // The computed padding is always "<n>px" (read with Number(): the edit folder's guard spec keeps float parsers out).
+    const padding = Number(getComputedStyle(main).paddingBottom.replace("px", ""));
+    setInset(Number.isFinite(padding) ? padding : 0);
+    if (height === 0) return;
+    const before = main.style.getPropertyValue("scroll-padding-bottom");
+    main.style.setProperty("scroll-padding-bottom", `${height}px`);
+    return () => {
+      if (before) main.style.setProperty("scroll-padding-bottom", before);
+      else main.style.removeProperty("scroll-padding-bottom");
+    };
+  }, [height]);
+  return { ref, bottom: inset === 0 ? 0 : -inset };
+}
+
+/**
  * V14: the ONE save bar (message left, Cancel then Save right), sticky to the bottom, clear of the draft
  * dock's band (bottom-24). V04: a labelled region with a "Ctrl+S saves" hint; Save stays focusable
  * (aria-disabled) so the skip link can always reach it. Cancel on a changed draft asks first.
@@ -21,6 +66,7 @@ export const BTN =
 export function PriceEditBar() {
   const d = usePriceDraft();
   const [confirm, setConfirm] = React.useState(false);
+  const clear = useClearOfShellPadding();
   React.useEffect(() => {
     if (!d.editing) setConfirm(false);
   }, [d.editing]);
@@ -28,10 +74,12 @@ export function PriceEditBar() {
   const label = (ref: string) => d.grid?.rows.find((r) => r.ref === ref)?.label ?? ref;
   return (
     <div
+      ref={clear.ref}
       role="region"
       aria-label="Unsaved changes"
       data-testid={T.editbar}
-      className={`sticky bottom-0 z-30 -mx-4 mt-4 border-t bg-white/95 px-4 py-3 backdrop-blur ${FRAME_BORDER}`}
+      style={{ bottom: `${clear.bottom}px` }}
+      className={`sticky z-30 -mx-4 mt-4 border-t bg-white/95 px-4 py-3 backdrop-blur ${FRAME_BORDER}`}
     >
       <div className="flex flex-wrap items-center justify-between gap-x-4 gap-y-2">
         <div data-testid={T.ebText} className="min-w-0 flex-1 text-sm text-navy" aria-live="polite">

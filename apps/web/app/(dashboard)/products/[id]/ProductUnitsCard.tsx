@@ -18,6 +18,12 @@ import {
   useUpdateProductUnit,
 } from "@/lib/api/product-units";
 import { cascadePatch, proposeCascade, type CascadeProposal } from "@/lib/unit-cascade";
+import { usePriceGrid } from "@/lib/api/usePriceGrid";
+import {
+  shellHasUnitControls,
+  shellRemovesUnit,
+  unitStructureGoverned,
+} from "./units-v2/structure/unit-structure";
 
 /**
  * "Units & prices" (units_v1, ask 1-3): define Case / Pallet / Piece levels on a product, give
@@ -31,6 +37,9 @@ export interface UnitsCardProduct extends LadderProduct {
   unit: string;
   unitsPerBox?: number | null;
   pricePerUnit: number | string;
+  /** Read only to tell a product the unit ladder can't be edited on (a family, recipe or variant). */
+  kind?: string | null;
+  parentProductId?: string | null;
 }
 
 const num = (v: string | number | null | undefined): number | null =>
@@ -64,6 +73,7 @@ function UnitRow({
   onSave,
   onDelete,
   onMakeDefault,
+  hideRemove,
 }: {
   unit: ProductUnitLevel;
   product: UnitsCardProduct;
@@ -73,6 +83,8 @@ function UnitRow({
   onSave: (unit: ProductUnitLevel, draft: Draft) => void;
   onDelete: (unit: ProductUnitLevel) => void;
   onMakeDefault: (unit: ProductUnitLevel) => void;
+  /** K10d: the v2 shell has its own Remove under this unit's name, so there is one Remove per unit. */
+  hideRemove?: boolean;
 }) {
   const [draft, setDraft] = React.useState<Draft>(() => draftOf(unit));
   const base = draftOf(unit);
@@ -206,16 +218,28 @@ function UnitRow({
               </Button>
             </>
           )}
-          <Button size="sm" variant="secondary" onClick={() => onDelete(unit)} disabled={busy}>
-            Remove
-          </Button>
+          {!hideRemove && (
+            <Button size="sm" variant="secondary" onClick={() => onDelete(unit)} disabled={busy}>
+              Remove
+            </Button>
+          )}
         </div>
       </div>
     </li>
   );
 }
 
-export function ProductUnitsCard({ product }: { product: UnitsCardProduct }) {
+export function ProductUnitsCard({
+  product,
+  hideAddForm = false,
+}: {
+  product: UnitsCardProduct;
+  /**
+   * K10d: the v2 shell has its own single "Add a unit", so the page passes the v2 flag and the always-open form
+   * goes. A product the shell does not mount it on (family, recipe, variant) keeps this form.
+   */
+  hideAddForm?: boolean;
+}) {
   const { user } = useAuth();
   // GET /billing/subscription is OPERATOR-only — never fire it (and 403) for other roles.
   const canManage = user?.role === "OPERATOR" || user?.role === "TENANT_ADMIN";
@@ -232,7 +256,12 @@ export function ProductUnitsCard({ product }: { product: UnitsCardProduct }) {
   const [proposals, setProposals] = React.useState<CascadeProposal[]>([]);
   const [removing, setRemoving] = React.useState<ProductUnitLevel | null>(null);
 
+  // K10d: the same grid the v2 shell reads. Until it has rows the shell has no Add / Remove, so the old ones stay.
+  const shellOwns = hideAddForm && !unitStructureGoverned(product);
+  const gridQuery = usePriceGrid(product.id, enabled && shellOwns);
+  const grid = gridQuery.data;
   if (!enabled) return null;
+  const addInShell = shellOwns && shellHasUnitControls(grid);
   const units = list.data ?? [];
   const busy = create.isPending || update.isPending || remove.isPending;
   const tierNames = tiers;
@@ -346,8 +375,10 @@ export function ProductUnitsCard({ product }: { product: UnitsCardProduct }) {
           </p>
         ) : units.length === 0 ? (
           <p className="text-sm text-navy/70">
-            No other units yet. Add a Case or Pallet below to sell this product in bigger (or
-            smaller) steps.
+            No other units yet.{" "}
+            {addInShell
+              ? "Use Add a unit above to sell this product in bigger (or smaller) steps."
+              : "Add a Case or Pallet below to sell this product in bigger (or smaller) steps."}
           </p>
         ) : (
           <ul className="space-y-3">
@@ -361,55 +392,63 @@ export function ProductUnitsCard({ product }: { product: UnitsCardProduct }) {
                 busy={busy}
                 onSave={save}
                 onDelete={setRemoving}
+                hideRemove={shellOwns && !gridQuery.isError && shellRemovesUnit(grid, u.id)}
                 onMakeDefault={(x) => update.mutate({ id: x.id, isDefaultSelling: true })}
               />
             ))}
           </ul>
         )}
 
-        <form
-          className="grid grid-cols-2 items-end gap-3 border-t border-surface-border pt-3 sm:grid-cols-4"
-          onSubmit={(e) => {
-            e.preventDefault();
-            add();
-          }}
-        >
-          <div>
-            <label className={LABEL} htmlFor="new-unit-name">
-              New unit
-            </label>
-            <input
-              id="new-unit-name"
-              className={FIELD}
-              placeholder="e.g. Case"
-              maxLength={40}
-              value={name}
-              onChange={(e) => setName(e.target.value)}
-            />
-          </div>
-          <div>
-            <label className={LABEL} htmlFor="new-unit-factor">
-              {w.base.other} per new unit
-            </label>
-            <DecimalInput
-              id="new-unit-factor"
-              className={FIELD}
-              decimals={0}
-              min={1}
-              value={factor}
-              onChange={setFactor}
-            />
-          </div>
-          <div>
-            <label className={LABEL} htmlFor="new-unit-price">
-              Price (optional)
-            </label>
-            <DecimalInput id="new-unit-price" className={FIELD} value={price} onChange={setPrice} />
-          </div>
-          <Button type="submit" disabled={busy || !name.trim() || !factor}>
-            Add unit
-          </Button>
-        </form>
+        {!addInShell && (
+          <form
+            className="grid grid-cols-2 items-end gap-3 border-t border-surface-border pt-3 sm:grid-cols-4"
+            onSubmit={(e) => {
+              e.preventDefault();
+              add();
+            }}
+          >
+            <div>
+              <label className={LABEL} htmlFor="new-unit-name">
+                New unit
+              </label>
+              <input
+                id="new-unit-name"
+                className={FIELD}
+                placeholder="e.g. Case"
+                maxLength={40}
+                value={name}
+                onChange={(e) => setName(e.target.value)}
+              />
+            </div>
+            <div>
+              <label className={LABEL} htmlFor="new-unit-factor">
+                {w.base.other} per new unit
+              </label>
+              <DecimalInput
+                id="new-unit-factor"
+                className={FIELD}
+                decimals={0}
+                min={1}
+                value={factor}
+                onChange={setFactor}
+              />
+            </div>
+            <div>
+              <label className={LABEL} htmlFor="new-unit-price">
+                Price (optional)
+              </label>
+              <DecimalInput
+                id="new-unit-price"
+                className={FIELD}
+                value={price}
+                onChange={setPrice}
+              />
+            </div>
+            <Button type="submit" disabled={busy || !name.trim() || !factor}>
+              Add unit
+            </Button>
+          </form>
+        )}
       </div>
 
       <ConfirmDialog

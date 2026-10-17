@@ -2387,7 +2387,7 @@ export default function ProductDetailPage() {
             <ProductLabelsCard productId={product.id} />
             <ProductPortalVisibilityCard product={product} />
             {v2 && product.kind !== "FAMILY" ? <ProductPricingV2 product={product} /> : null}
-            {!v2Family && <ProductUnitsCard product={product} />}
+            {!v2Family && <ProductUnitsCard product={product} hideAddForm={v2} />}
 
             {/* Sales demand — real data from invoiced sales. In its own file (unlike
                 CostHistoryCard below) because it owns range/metric state and five

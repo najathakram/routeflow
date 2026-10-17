@@ -210,9 +210,9 @@ export function CustomerPriceView({ customerId, productId }: CustomerPriceViewPr
   const tierName = res ? productTierLabel(labels, res.tier) : "";
 
   return (
-    <section data-testid={T.section} aria-labelledby="units-v2-h-cust" className="space-y-3">
+    <section data-testid={T.section} aria-labelledby="h-cust" className="space-y-3">
       <h2
-        id="units-v2-h-cust"
+        id="h-cust"
         data-testid={T.heading}
         tabIndex={-1}
         className="text-base font-semibold text-navy"

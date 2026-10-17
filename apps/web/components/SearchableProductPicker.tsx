@@ -49,6 +49,12 @@ interface SearchableProductPickerProps {
   placeholder?: string;
   className?: string;
   disabled?: boolean;
+  /**
+   * Why the field is disabled, drawn INSIDE the field over the (empty) input: no extra line, so the row keeps its
+   * height. The span is mounted whenever this prop is given (pass "" for no reason) so the DOM does not change when a
+   * reason appears; the input's aria-describedby points at it only while it has text.
+   */
+  disabledHint?: string;
   /** Optional empty-state hint (e.g., "No standalone products yet — create one first") */
   emptyHint?: string;
   /**
@@ -103,6 +109,7 @@ export function SearchableProductPicker({
   placeholder = "Search products…",
   className,
   disabled,
+  disabledHint,
   emptyHint,
   inputRef: externalInputRef,
   async: asyncMode,
@@ -114,6 +121,8 @@ export function SearchableProductPicker({
   const [debouncedSearch, setDebouncedSearch] = React.useState("");
   const containerRef = React.useRef<HTMLDivElement>(null);
   const listId = React.useId();
+  const hintId = React.useId();
+  const showHint = !!disabled && !!disabledHint;
   const inputRef = React.useRef<HTMLInputElement>(null);
 
   const excludeSet = React.useMemo(() => new Set(excludeIds ?? []), [excludeIds]);
@@ -246,34 +255,52 @@ export function SearchableProductPicker({
     if (!nav.onKeyDown(e) && e.key === "Enter") e.preventDefault(); // Enter never submits an enclosing form
   };
 
+  const inputEl = (
+    <input
+      ref={mergeRefs(inputRef, externalInputRef)}
+      type="text"
+      value={open ? search : closedLabel}
+      placeholder={hasSelection || showHint ? "" : placeholder}
+      onChange={(e) => {
+        setSearch(e.target.value);
+        if (!open) setOpen(true);
+      }}
+      onFocus={() => setOpen(true)}
+      onKeyDown={handleKeyDown}
+      aria-controls={open ? listId : undefined}
+      aria-activedescendant={
+        open && visibleProducts[highlight] ? `${listId}-${highlight}` : undefined
+      }
+      disabled={disabled}
+      aria-describedby={showHint ? hintId : undefined}
+      className="flex-1 bg-transparent text-sm text-navy placeholder:text-navy/30 focus:outline-none disabled:cursor-not-allowed disabled:opacity-60"
+    />
+  );
+
   return (
     <div ref={containerRef} className={cn("relative", className)}>
       <div
         className={cn(
           "flex items-center gap-2 rounded-lg border border-surface-border bg-white px-2.5 py-1.5 transition-colors focus-within:border-transparent focus-within:ring-2 focus-within:ring-brand-500",
-          disabled && "cursor-not-allowed opacity-60",
+          disabled && "cursor-not-allowed bg-surface-raised",
           open && "ring-2 ring-brand-500",
         )}
       >
-        <Search className="h-3.5 w-3.5 shrink-0 text-navy/70" />
-        <input
-          ref={mergeRefs(inputRef, externalInputRef)}
-          type="text"
-          value={open ? search : closedLabel}
-          placeholder={hasSelection ? "" : placeholder}
-          onChange={(e) => {
-            setSearch(e.target.value);
-            if (!open) setOpen(true);
-          }}
-          onFocus={() => setOpen(true)}
-          onKeyDown={handleKeyDown}
-          aria-controls={open ? listId : undefined}
-          aria-activedescendant={
-            open && visibleProducts[highlight] ? `${listId}-${highlight}` : undefined
-          }
-          disabled={disabled}
-          className="flex-1 bg-transparent text-sm text-navy placeholder:text-navy/30 focus:outline-none disabled:cursor-not-allowed"
-        />
+        <Search className={cn("h-3.5 w-3.5 shrink-0 text-navy/70", disabled && "opacity-60")} />
+        {disabledHint === undefined ? (
+          inputEl
+        ) : (
+          <div className="relative flex min-w-0 flex-1">
+            {inputEl}
+            <span
+              id={hintId}
+              title={showHint ? disabledHint : undefined}
+              className="pointer-events-none absolute inset-x-0 top-1/2 block -translate-y-1/2 truncate text-xs text-navy/70"
+            >
+              {showHint ? disabledHint : ""}
+            </span>
+          </div>
+        )}
         {hasSelection && !open ? (
           <button
             type="button"
@@ -289,7 +316,11 @@ export function SearchableProductPicker({
           </button>
         ) : (
           <ChevronDown
-            className={cn("h-3.5 w-3.5 text-navy/70 transition-transform", open && "rotate-180")}
+            className={cn(
+              "h-3.5 w-3.5 text-navy/70 transition-transform",
+              open && "rotate-180",
+              disabled && "opacity-60",
+            )}
           />
         )}
       </div>

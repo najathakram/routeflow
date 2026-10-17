@@ -366,7 +366,8 @@ describe("F27 seam: the Customer view heading is a focus target", () => {
     render(<CustomerPriceView productId="p1" />);
     const h = screen.getByTestId(T.heading);
     expect(h.tagName).toBe("H2");
-    expect(h.id).toBe("units-v2-h-cust");
+    // K10d renamed the heading id to the jump-link section id (h-cust); the focus target stays.
+    expect(h.id).toBe("h-cust");
     expect(h).toHaveAttribute("tabindex", "-1");
     h.focus();
     expect(document.activeElement).toBe(h);

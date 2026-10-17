@@ -103,3 +103,72 @@ describe("RemoveUnitControl (the row's Remove button + its confirm)", () => {
     expect(button()).toBeDisabled();
   });
 });
+
+describe("RemoveUnitControl a11y and focus (K10d)", () => {
+  const button = () => screen.getByTestId("units-v2-rm-u1");
+
+  it("gives each row's confirm its own id and points aria-controls at it", async () => {
+    render(<RemoveUnitControl productId="p1" unit={UNIT} />);
+    expect(button()).toHaveAttribute("aria-controls", "units-v2-remove-panel-u1");
+    await userEvent.click(button());
+    expect(document.getElementById("units-v2-remove-panel-u1")).toBe(
+      screen.getByTestId("units-v2-remove-panel"),
+    );
+    expect(document.getElementById("units-v2-remove-panel")).toBeNull();
+  });
+
+  it("panelKey keeps the id unique when the same unit is drawn twice", async () => {
+    render(
+      <>
+        <RemoveUnitControl productId="p1" unit={UNIT} panelKey="table" />
+        <RemoveUnitControl productId="p1" unit={UNIT} panelKey="card" />
+      </>,
+    );
+    const [a, b] = screen.getAllByTestId("units-v2-rm-u1");
+    expect(a).toHaveAttribute("aria-controls", "units-v2-remove-panel-u1-table");
+    expect(b).toHaveAttribute("aria-controls", "units-v2-remove-panel-u1-card");
+    await userEvent.click(b);
+    expect(document.getElementById("units-v2-remove-panel-u1-card")).not.toBeNull();
+    expect(document.getElementById("units-v2-remove-panel-u1-table")).toBeNull();
+  });
+
+  it("after a successful delete it hands off to onRemoved and does not refocus the row's own button", async () => {
+    mutate.mockImplementation((_id, opts) => opts.onSuccess?.());
+    const onRemoved = jest.fn();
+    render(<RemoveUnitControl productId="p1" unit={UNIT} onRemoved={onRemoved} />);
+    await userEvent.click(button());
+    await userEvent.click(screen.getByTestId("units-v2-rm-confirm"));
+    expect(onRemoved).toHaveBeenCalledTimes(1);
+    expect(screen.queryByTestId("units-v2-remove-panel")).toBeNull();
+    expect(button()).not.toHaveFocus();
+  });
+
+  it("without onRemoved a successful delete still returns focus to the button", async () => {
+    mutate.mockImplementation((_id, opts) => opts.onSuccess?.());
+    render(<RemoveUnitControl productId="p1" unit={UNIT} />);
+    await userEvent.click(button());
+    await userEvent.click(screen.getByTestId("units-v2-rm-confirm"));
+    expect(button()).toHaveFocus();
+  });
+});
+
+describe("RemoveUnitControl reveals its confirm when it opens (K10d, under the Edit save bar)", () => {
+  const seen: Element[] = [];
+  beforeEach(() => {
+    seen.length = 0;
+    Element.prototype.scrollIntoView = function (this: Element, opts?: unknown) {
+      expect(opts).toEqual({ block: "nearest" });
+      seen.push(this);
+    };
+  });
+  afterEach(() => {
+    delete (Element.prototype as { scrollIntoView?: unknown }).scrollIntoView;
+  });
+
+  it("scrolls the confirm to the nearest edge", async () => {
+    render(<RemoveUnitControl productId="p1" unit={UNIT} />);
+    expect(seen).toEqual([]);
+    await userEvent.click(screen.getByTestId("units-v2-rm-u1"));
+    expect(seen).toEqual([screen.getByTestId("units-v2-remove-panel")]);
+  });
+});

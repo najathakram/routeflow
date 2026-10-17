@@ -34,6 +34,13 @@ import { localToastForSafeTextRefusal } from "@/lib/local-error-toast";
  */
 const FORM_ID = "product-create-form";
 
+/**
+ * Every row above the Name field that depends on async data is mounted from the first render inside
+ * a wrapper of this minimum height (label 20 + gap 4 + control 34), so the Name field sits where it
+ * will settle before the catalog arrives. Never mount such a row conditionally on its query.
+ */
+const RESERVED_ROW = "min-h-[58px]";
+
 interface CreatedProduct {
   id: string;
   name: string;
@@ -123,6 +130,9 @@ export function ProductCreateModal({
   // callers don't need to load/pass the full catalog themselves.
   const { data: allProductsData } = useProducts({ limit: 0 });
   const allProducts: any[] = allProductsData?.data ?? [];
+  const parentCandidates = allProducts.filter((p) => !p.parentProductId);
+  // Only once the catalog has loaded: while it is on its way "no products" would be a claim, not a fact.
+  const noProductsYet = allProductsData !== undefined && parentCandidates.length === 0;
 
   const [form, setForm] = React.useState({
     name: initialName ?? "",
@@ -292,8 +302,20 @@ export function ProductCreateModal({
     onRestore: (fields) => setForm((f) => ({ ...f, ...fields })),
   });
 
+  // In-flight guard: a double-click posts twice (201 then 409) before isPending re-renders.
+  const submittingRef = React.useRef(false);
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
+    if (submittingRef.current) return;
+    submittingRef.current = true;
+    try {
+      await submitProduct();
+    } finally {
+      submittingRef.current = false;
+    }
+  };
+
+  const submitProduct = async () => {
     if (!form.pricePerUnit || parseFloat(form.pricePerUnit) < 0) {
       setPriceError("Please enter a valid price.");
       return;
@@ -413,6 +435,8 @@ export function ProductCreateModal({
       title="New Product"
       scroll
       className="max-w-lg"
+      // Pinned to the top, fade-in only: rows that change height must not recentre the form.
+      anchor="top"
       // A long form: only the X / Cancel close it, never a stray Escape or outside click.
       onEscapeKeyDown={(e) => e.preventDefault()}
       onInteractOutside={(e) => e.preventDefault()}
@@ -488,35 +512,44 @@ export function ProductCreateModal({
           </div>
 
           <div className="grid grid-cols-2 gap-4">
-            {/* Variant of — optional parent selector */}
-            {allProducts.filter((p) => !p.parentProductId).length > 0 && (
-              <div className="col-span-2">
-                <label className="mb-1 block text-sm font-medium text-navy">
-                  Variant of <span className="font-normal text-navy/70">(optional)</span>
-                </label>
-                <div className="flex items-stretch gap-2">
-                  <SearchableProductPicker
-                    value={form.parentProductId}
-                    onChange={(id) => set("parentProductId", id)}
-                    products={allProducts.filter((p) => !p.parentProductId)}
-                    placeholder="Standalone product (type to search)…"
-                    className="flex-1"
-                  />
-                  <BarcodeScannerButton
-                    onScan={handleVariantOfScan}
-                    title="Scan a variant's barcode to auto-select its parent"
-                  />
-                </div>
-                {variantOfScanLoading && (
-                  <p className="mt-1 text-xs text-navy/70">Looking up product…</p>
-                )}
-                {form.parentProductId && (
-                  <p className="mt-0.5 text-xs text-navy/70">
-                    Fields below have been pre-filled from the parent. Adjust as needed.
-                  </p>
-                )}
+            {/* Variant of — optional parent selector. Always mounted (reserved size): the catalog
+                  behind it loads after the first paint and must not push the Name field down; the
+                  picker is disabled until there is a standalone product to pick. */}
+            <div data-reserved-row="variant-of" className={`col-span-2 ${RESERVED_ROW}`}>
+              <label className="mb-1 block text-sm font-medium text-navy">
+                Variant of <span className="font-normal text-navy/70">(optional)</span>
+              </label>
+              <div className="flex items-stretch gap-2">
+                <SearchableProductPicker
+                  value={form.parentProductId}
+                  onChange={(id) => set("parentProductId", id)}
+                  products={parentCandidates}
+                  disabled={parentCandidates.length === 0}
+                  disabledHint={noProductsYet ? "Add a product first to make variants." : ""}
+                  emptyHint="No standalone products yet."
+                  placeholder="Standalone product (type to search)…"
+                  className="flex-1"
+                />
+                <BarcodeScannerButton
+                  onScan={handleVariantOfScan}
+                  title="Scan a variant's barcode to auto-select its parent"
+                  disabled={noProductsYet}
+                  ariaLabel={
+                    noProductsYet
+                      ? "Scan a variant (add a product first to make variants)"
+                      : undefined
+                  }
+                />
               </div>
-            )}
+              {variantOfScanLoading && (
+                <p className="mt-1 text-xs text-navy/70">Looking up product…</p>
+              )}
+              {form.parentProductId && (
+                <p className="mt-0.5 text-xs text-navy/70">
+                  Fields below have been pre-filled from the parent. Adjust as needed.
+                </p>
+              )}
+            </div>
             {form.parentProductId && (
               <div className="col-span-2">
                 <label className="mb-1 block text-sm font-medium text-navy">
