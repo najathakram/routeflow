@@ -185,7 +185,7 @@ describe("K11-28: where it sits and how it reads", () => {
   it("is labelled 'Price per piece (optional)' with a $ box and the one-line helper", async () => {
     open();
     await fillCase();
-    const label = document.querySelector('label[for="product-piece-price"]') as HTMLElement;
+    const label = document.querySelector('label[for="product-base-price"]') as HTMLElement;
     expect(label.textContent).toBe("Price per piece (optional)");
     expect(label.querySelector("span")?.textContent).toBe("(optional)");
     const cell = pieceField()!.closest("div.flex")!.parentElement as HTMLElement;

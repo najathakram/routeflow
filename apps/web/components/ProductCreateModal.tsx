@@ -417,7 +417,7 @@ export function ProductCreateModal({
       } catch {
         warned = true;
         toast({
-          title: "Product created, but its piece price wasn't saved. Set it on the product page.",
+          title: `Product created, but its ${w.base.lower} price wasn't saved. Set it on the product page.`,
           variant: "warning",
           duration: CREATED_TOAST_MS,
         });
@@ -818,23 +818,24 @@ export function ProductCreateModal({
               {showPiecePrice && (
                 <div>
                   <label
-                    htmlFor="product-piece-price"
+                    htmlFor="product-base-price"
                     className="mb-1 block text-sm font-medium text-navy"
                   >
-                    Price per piece <span className="font-normal text-navy/70">(optional)</span>
+                    Price per {w.base.lower}{" "}
+                    <span className="font-normal text-navy/70">(optional)</span>
                   </label>
                   <div className="flex items-center">
                     <span className="flex h-[38px] items-center rounded-l border border-r-0 border-surface-border bg-surface-raised px-2.5 text-sm text-navy/70">
                       $
                     </span>
                     <input
-                      id="product-piece-price"
+                      id="product-base-price"
                       type="number"
                       step="any"
                       placeholder="0.00"
                       aria-invalid={pieceError ? "true" : undefined}
                       aria-describedby={
-                        pieceError ? "piece-price-help piece-price-error" : "piece-price-help"
+                        pieceError ? "base-price-help base-price-error" : "base-price-help"
                       }
                       value={form.pricePerPiece}
                       onChange={(e) => {
@@ -845,11 +846,11 @@ export function ProductCreateModal({
                     />
                   </div>
                   {pieceError && (
-                    <p id="piece-price-error" className="mt-1 text-xs text-danger">
+                    <p id="base-price-error" className="mt-1 text-xs text-danger">
                       {pieceError}
                     </p>
                   )}
-                  <p id="piece-price-help" className="mt-1 text-xs text-navy/70">
+                  <p id="base-price-help" className="mt-1 text-xs text-navy/70">
                     Leave blank to sell only by the {w.pack.lower}.
                   </p>
                 </div>
