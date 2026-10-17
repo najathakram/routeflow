@@ -166,7 +166,11 @@ export function PriceEditBar({
               ))}
             </ul>
           ) : (
-            <span>{d.count === 0 ? "Nothing changed yet" : countLine(d.count, d.appliedLead)}</span>
+            // K11-18: the wider "Finish Change prices first." link would squeeze this onto two lines at phone width
+            // (+4 px of bar height); beside the open panel it is stale anyway, so below sm it is read, not shown.
+            <span className={changePricesOpen ? "max-sm:sr-only" : undefined}>
+              {d.count === 0 ? "Nothing changed yet" : countLine(d.count, d.appliedLead)}
+            </span>
           )}
           {told && changePricesOpen && <span className="sr-only">{SAVE_PAUSED}</span>}
           {!confirm && !changePricesOpen && (
