@@ -32,6 +32,16 @@ const PRODUCTS = [
     isActive: true,
     currentStock: 4,
   },
+  {
+    id: "p3",
+    name: "Acme Tracked Item",
+    sku: "ACME-3",
+    unit: "Case",
+    pricePerUnit: "8",
+    isActive: true,
+    currentStock: 2,
+    trackedCategoryId: "c-missing",
+  },
 ];
 
 jest.mock("next/navigation", () => ({
@@ -68,7 +78,7 @@ jest.mock("@/lib/auth-context", () => ({
 }));
 jest.mock("@/lib/api/products", () => ({
   useProducts: () => ({
-    data: { data: PRODUCTS, meta: { total: 2, page: 1, limit: 50, totalPages: 1 } },
+    data: { data: PRODUCTS, meta: { total: 3, page: 1, limit: 50, totalPages: 1 } },
     isLoading: false,
     isError: false,
   }),
@@ -185,5 +195,11 @@ describe("F10: grid card keeps click-anywhere for the mouse", () => {
     const link = nameLink("Acme Cola 12oz");
     expect(link.className).toMatch(/after:absolute/);
     expect(link.className).toMatch(/after:inset-0/);
+  });
+
+  it("the tracked-type badge sits above the overlay so its title tooltip still shows", () => {
+    renderWithProviders(<ProductsPage />);
+    const badge = screen.getByTitle("Type");
+    expect(badge).toHaveClass("relative", "z-10");
   });
 });
