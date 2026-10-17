@@ -114,7 +114,9 @@ describeDb("B1 variant name is stored bare: real Postgres", () => {
       }),
     );
   const patch = (tenantId: string, id: string, dto: Record<string, unknown>) =>
-    inTenant(tenantId, () => service.update(id, dto as never, { actorId: null }));
+    inTenant(tenantId, () =>
+      service.update(id, dto as never, { packPrecondition: "internal", actorId: null }),
+    );
   const fresh = (id: string) => prisma.product.findUniqueOrThrow({ where: { id } });
 
   /** The web product page's old save payload: the draft's variantName composed under the parent's name. */

@@ -282,6 +282,7 @@ export class CounterSaleService {
         this.prisma.forTenant(),
         customerId,
         edited.flatMap((l) => (l.productId ? [l.productId] : [])),
+        { prisma: this.prisma, entitlements: this.orders.entitlements },
       );
       await this.audit.log({
         tenantId: this.prisma.getTenantId() ?? null,

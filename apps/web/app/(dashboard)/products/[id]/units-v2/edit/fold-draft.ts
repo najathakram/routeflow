@@ -156,14 +156,22 @@ export function foldDraft(
     view = applyCellPatches(view, patches).view;
     for (const p of patches) patchByCell.set(cellKey(p.ref, p.tier), p);
   };
+  // A refused cell is refused only while nothing later writes that cell: a plan or a ticked offer after it wins, so its
+  // problem goes with the text (the later value shows, saves and is the only word on the cell).
+  const patchOver = (patches: readonly CellPatch[]) => {
+    fold(patches);
+    const over = new Set(patches.map((p) => cellKey(p.ref, p.tier)));
+    for (let i = problems.length - 1; i >= 0; i--)
+      if (over.has(cellKey(problems[i].ref, problems[i].tier))) problems.splice(i, 1);
+  };
   for (const e of entries) {
     if (e.kind === "plan") {
-      fold(e.plan.patches);
+      patchOver(e.plan.patches);
       plans.set(e.key, withFreshCustomers(e.plan, e.replan(customers)));
       continue;
     }
     if (e.kind === "offer") {
-      fold(e.patches);
+      patchOver(e.patches);
       bakedTitles.push(e.title);
       for (const m of e.moves) {
         // The server's per-cell check passes both moves (they share `from`), so the last would win silently.

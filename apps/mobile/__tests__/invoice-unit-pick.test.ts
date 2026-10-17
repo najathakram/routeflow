@@ -24,6 +24,7 @@ import {
   UNIT_NOT_OFFERED_MESSAGE,
   chooseInvoiceUnit,
   dropStaleUnitLines,
+  offeredByLadder,
   invoiceItemDto,
   invoiceLinePrice,
   invoiceTotalsLine,
@@ -757,5 +758,24 @@ describe("SA nits (10-08 Opus, ledger row 17): unitListPrice is wired end to end
     const resolved: InvoiceLineState = { ...caseLine(), unitListPrice: undefined };
     const items = { p1: resolved };
     expect(withUnitListPrices(items, () => undefined)).toBe(items);
+  });
+});
+
+describe("MUST-1: the stale-unit drop matches labels by unitNameKey (the picker options' key)", () => {
+  const lvl = { productId: "p1", qty: 2, unitLabel: "Caf\u00e9", unitFactor: 6 } as never;
+  it.each([
+    ["an NFD line against the NFC ladder label", "Cafe\u0301", ["Caf\u00e9"]],
+    ["an NFC line against an NFD ladder label", "Caf\u00e9", ["Cafe\u0301"]],
+    ["a padded, upper-case line", "  CAF\u00c9 ", ["Caf\u00e9"]],
+  ])("keeps %s (never silently dropped)", (_k, unitLabel, labels) => {
+    const line = { ...(lvl as object), unitLabel } as never;
+    const out = dropStaleUnitLines({ a: line }, offeredByLadder({ a: labels }), () => 24);
+    expect(out.a).toBe(line);
+  });
+
+  it("a unit the ladder no longer offers still moves to the pack (guard); an unread ladder leaves it", () => {
+    const offered = offeredByLadder({ a: ["Case"] });
+    expect(offered("a", "Caf\u00e9")).toBe(false);
+    expect(offered("b", "Caf\u00e9")).toBe(true);
   });
 });

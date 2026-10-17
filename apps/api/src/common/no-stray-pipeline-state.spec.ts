@@ -38,10 +38,10 @@ describe("no stray pipeline runtime state is tracked", () => {
   });
 
   it("flags Windows-style separators too", () => {
-    const win = ["apps", ".claude", "pipeline", "approach-rotation.json"].join(String.fromCharCode(92));
-    expect(strayPipelineState([win])).toEqual([
-      "apps/.claude/pipeline/approach-rotation.json",
-    ]);
+    const win = ["apps", ".claude", "pipeline", "approach-rotation.json"].join(
+      String.fromCharCode(92),
+    );
+    expect(strayPipelineState([win])).toEqual(["apps/.claude/pipeline/approach-rotation.json"]);
   });
 
   it("the root copy alone is allowed", () => {

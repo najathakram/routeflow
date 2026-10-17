@@ -6,6 +6,8 @@ import { effectiveCostingMethod } from "../inventory/costing-method-policy";
 import { roundMoney } from "@routeflow/pricing";
 import { assertSafeProductCategory } from "../common/text-cell-guards";
 import { isFormulaLedText } from "../common/safe-text-cell";
+import { assertPackKeepsLevelsValid } from "../products/unit-pack-rules";
+import { lockProductPack } from "../units/tenant-units-lock";
 import { lockBarcodeCodes, syncProductBarcodesFromLegacy } from "../products/product-catalog-sync";
 import { labelNameKey, syncCategoryLabel } from "../product-categories/label-writer";
 
@@ -138,8 +140,34 @@ export class VariantResolutionService {
     const tenantId = this.prisma.getTenantId();
     if (!tenantId) throw new BadRequestException("No tenant context");
     return this.prisma.tenantTransaction(async (tx: any) => {
+      // units_v1: confirming a pack word / size must not invalidate the product's levels. Same guarded
+      // path as ProductsService.update: tenant units lock (shared) + this product's lock FIRST, then the
+      // product and its levels are read under them.
+      const packWrite = dto.unit !== undefined || dto.unitsPerBox !== undefined;
+      if (packWrite) await lockProductPack(tx, tenantId, id);
       const product = await tx.product.findUnique({ where: { id } });
       if (!product) throw new NotFoundException("Product not found");
+      if (packWrite) {
+        const nextUnit = dto.unit !== undefined ? dto.unit : product.unit;
+        const nextUnitsPerBox =
+          dto.unitsPerBox !== undefined ? dto.unitsPerBox : product.unitsPerBox;
+        if (
+          nextUnit !== product.unit ||
+          (nextUnitsPerBox ?? null) !== (product.unitsPerBox ?? null)
+        ) {
+          assertPackKeepsLevelsValid(
+            await tx.productUnit.findMany({
+              where: { productId: id },
+              select: { label: true, factorToBase: true },
+            }),
+            {
+              unit: nextUnit,
+              unitsPerBox: nextUnitsPerBox,
+              regulated: product.trackedCategoryId != null,
+            },
+          );
+        }
+      }
       // B990: the confirmed free-text category is written verbatim; change-only against the stored text
       if (dto.category !== undefined)
         assertSafeProductCategory(dto.category, product.category ?? null);

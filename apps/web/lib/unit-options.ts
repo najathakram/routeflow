@@ -1,5 +1,8 @@
 import {
   buildLadderOptions,
+  customerLinePrice,
+  type CustomerLayerUnit,
+  type CustomerLinePrice,
   defaultLadderOptionValue,
   ladderOptionLineTotal,
   ladderOptionPriceText,
@@ -15,7 +18,58 @@ import { formatMoney, formatQty } from "@/lib/format";
  * Everything here is DISPLAY: the server re-resolves the factor and price from the ladder by label
  * on every write, so a stale option can never change what is stored.
  */
-export type UnitOption = LadderOption;
+export type UnitOption = LadderOption & {
+  /**
+   * S19b (SA-811a): set by `withLayerPrices` when the customer's price layer has a row for this option (flag on). `price` and
+   * `listPrice` are then the layer's, and `applyLineUnit` takes the line's priceType / special baseline from this.
+   */
+  layerLine?: CustomerLinePrice;
+};
+
+/**
+ * Put the customer's layer prices on the picker's options (S19b): each option with a layer row (the pack included) takes
+ * `customerLinePrice`'s price and list and records it as `layerLine`. No layer (flag off) or no row for an option = the
+ * option unchanged, so master's ladder price stands. Derived-base options are the pack's proration and are left alone.
+ */
+export function withLayerPrices(
+  options: readonly UnitOption[],
+  product: LadderProduct,
+  tier: number | string,
+  layer?: readonly CustomerLayerUnit[] | null,
+): UnitOption[] {
+  if (!layer || layer.length === 0) return options as UnitOption[];
+  const t = Number(tier);
+  return options.map((o) => {
+    if (o.derived) {
+      // The Piece bills as the pack's proration: the layer's PACK price is what it divides.
+      const pack = customerLinePrice({
+        product: product as unknown as Record<string, unknown>,
+        tier: t,
+        layer,
+        unitLabel: null,
+        tierPrice: o.derived.packPrice,
+      });
+      return pack.layered
+        ? {
+            ...o,
+            price: Math.round((pack.price * 100) / o.derived.n) / 100,
+            derived: { ...o.derived, packPrice: pack.price },
+            layerLine: pack,
+          }
+        : o;
+    }
+    const lp = customerLinePrice({
+      product: product as unknown as Record<string, unknown>,
+      tier: t,
+      layer,
+      unitLabel: o.kind === "pack" ? null : o.value,
+      tierPrice: o.price,
+    });
+    return lp.layered
+      ? { ...o, price: lp.price, listPrice: lp.listPrice ?? o.listPrice, layerLine: lp }
+      : o;
+  });
+}
 
 /** The API returns Decimal strings; the pricing ladder takes them as-is. */
 const toLadderUnit = (u: ProductUnitLevel): LadderUnit => ({

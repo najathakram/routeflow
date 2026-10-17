@@ -96,6 +96,27 @@ describe("genericToastCopy: codes users rely on", () => {
     expect(genericToastCopy({ code: "ECONNABORTED", request: {} })).toMatch(/couldn't confirm/);
   });
 
+  it.each([
+    [
+      API_ERROR_CODES.UNIT_ARCHIVED,
+      "That unit is archived. Restore it in Settings > Units, or choose another unit.",
+    ],
+    [
+      API_ERROR_CODES.UNIT_SIZE_IN_USE,
+      "Orders or invoices already use that unit at a different size, so its size can't change. Add a new unit instead.",
+    ],
+  ])("%s shows its fixed sentence, never the raw 409 text", (code, copy) => {
+    expect(genericToastCopy(err(409, { code, message: "raw server text" }))).toBe(copy);
+  });
+
+  it("UNITS_RENAME_IN_PROGRESS is neutral (a product save OR a rename can be the blocker) and says to retry (never the raw 409 text)", () => {
+    expect(
+      genericToastCopy(
+        err(409, { code: API_ERROR_CODES.UNITS_RENAME_IN_PROGRESS, message: "raw" }),
+      ),
+    ).toBe("Another change is in progress. Try again in a moment.");
+  });
+
   it("SA-733r5: the catch-up refusals show fixed copy, never the server message", () => {
     for (const code of [
       API_ERROR_CODES.EXTERNAL_PAYMENT_USE_CATCHUP,

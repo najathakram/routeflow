@@ -17,6 +17,8 @@ export interface PlanViewProps {
   customerName: (customerId: string) => string;
   hideFollowers?: boolean;
   extraOffers?: React.ReactNode;
+  /** The server capped the customers it sent (K3b NIT-3): the Also update section says so. */
+  customersTruncated?: boolean;
 }
 
 // V02 / SA-799: the one "this also changes / also update" panel. It renders a PricePlan and nothing else, so
@@ -81,6 +83,10 @@ function ChangeRow({ testId, name, from, to, kept, against, onKeep, why }: RowPr
   );
 }
 
+// The API sends at most 500 customers with their own prices (CUSTOMER_PRICES_CAP) and says `truncated` past that.
+const TRUNCATED_NOTE =
+  "Showing the first 500 customers with their own prices. Others aren't included.";
+
 const WHY = {
   rounding: "Rounding to the cent moves it the other way from your change.",
   shape: "It is worked out from a price that does not move the same way.",
@@ -97,6 +103,7 @@ export function PlanView({
   customerName,
   hideFollowers = false,
   extraOffers,
+  customersTruncated = false,
 }: PlanViewProps) {
   const headingId = React.useId();
   const unitLabel = (ref: string) => plan.view.rows.find((r) => r.ref === ref)?.label ?? ref;
@@ -181,6 +188,11 @@ export function PlanView({
       {hasAlso && (
         <div data-testid={T.alsoUpdate} className="mt-3">
           <p className={SECTION_LABEL}>Also update:</p>
+          {customersTruncated && (
+            <p data-testid={T.customersTruncated} className="mt-1 text-xs text-ink-500">
+              {TRUNCATED_NOTE}
+            </p>
+          )}
           {extraOffers}
           <ul>
             {plan.offers.map((o, i) => {

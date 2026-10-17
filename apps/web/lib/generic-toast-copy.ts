@@ -75,6 +75,8 @@ const CODE_COPY: Record<string, string> = {
   INVOICE_WITH_CARRIER_NO_LINE_CHANGE:
     "This order is already with the carrier, so its invoice lines and quantities can't change. Price, discount and notes still can.",
   [API_ERROR_CODES.ORDER_WITH_CARRIER_NO_CHANGE_REQUEST]: SHIPPED_ORDER_MESSAGE,
+  [API_ERROR_CODES.UNITS_RENAME_IN_PROGRESS]:
+    "Another change is in progress. Try again in a moment.",
   [API_ERROR_CODES.ORDER_LINE_CHANGED]:
     "A line on this order changed while it was being billed. Nothing was billed. Try again.",
   [API_ERROR_CODES.ORDER_INVOICES_NEED_REVIEW]:
@@ -96,6 +98,10 @@ const CODE_COPY: Record<string, string> = {
   // B987-B (#3053) registers them, then switch to the constants.
   [API_ERROR_CODES.UNIT_NOT_OFFERED]:
     "That unit isn't offered for this product any more. Choose another unit, or ask an admin to add it back.",
+  [API_ERROR_CODES.UNIT_ARCHIVED]:
+    "That unit is archived. Restore it in Settings > Units, or choose another unit.",
+  [API_ERROR_CODES.UNIT_SIZE_IN_USE]:
+    "Orders or invoices already use that unit at a different size, so its size can't change. Add a new unit instead.",
   // SA-770: the overdue list refuses past its id cap. The server's text is never shown.
   [API_ERROR_CODES.OVERDUE_FILTER_TOO_BROAD]:
     "Too many invoices are overdue to list at once. Filter by customer, then try again.",

@@ -162,7 +162,8 @@ describe("CustomerPriceView on the customer page", () => {
     const shape = screen.getByTestId(T.row("p1", "base"));
     expect(within(shape).getAllByText("Auto")).toHaveLength(1);
     expect(shape).toHaveTextContent("From their Case price");
-    expect(screen.getByTestId(T.row("p1", "u1"))).toHaveTextContent("Wholesale tier");
+    expect(screen.getByTestId(T.row("p1", "u1"))).toHaveTextContent("AutoWholesale");
+    expect(screen.getByTestId(T.row("p1", "u1"))).not.toHaveTextContent("Wholesale tier");
     expect(screen.getByTestId(T.row("p1", "pack"))).toHaveTextContent("Set for this customer");
   });
 
@@ -175,7 +176,7 @@ describe("CustomerPriceView on the customer page", () => {
     render(<CustomerPriceView customerId="c1" />);
     const pack = screen.getByTestId(T.row("p1", "pack"));
     expect(within(pack).getAllByText("Auto")).toHaveLength(1);
-    expect(pack).toHaveTextContent("Wholesale tier · History");
+    expect(pack).toHaveTextContent("Wholesale · History");
     expect(pack).toHaveTextContent("$27.00");
     expect(screen.getByTestId(T.blurb)).toHaveTextContent("Active promotions are not included");
   });

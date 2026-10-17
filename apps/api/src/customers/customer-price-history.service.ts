@@ -1,6 +1,7 @@
-import { BadRequestException, Injectable, NotFoundException } from "@nestjs/common";
+import { BadRequestException, Injectable, NotFoundException, Optional } from "@nestjs/common";
 import { UserRole } from "@prisma/client";
-import { getTierPrice, roundMoney } from "@routeflow/pricing";
+import { baseLabelOf, getTierPrice, namesPack, roundMoney, unitNameKey } from "@routeflow/pricing";
+import { asLadderProduct } from "../products/line-units";
 import type {
   PriceHistoryAggregate,
   PriceHistoryReferences,
@@ -19,6 +20,8 @@ import {
 } from "../common/invoiced-sales";
 import { BACKING_ORDER_STATUSES } from "../invoices/credit-exposure";
 import { PrismaService } from "../prisma/prisma.service";
+import { EntitlementsService } from "../billing/entitlements.service";
+import { customerPricing } from "../orders/units-prices-v2";
 import { salePackOf } from "../sales-facts/sales-facts.rules";
 
 /** Invoices that were actually issued: DRAFT/VOID are not sales, a WRITTEN_OFF invoice was billed. */
@@ -156,7 +159,11 @@ function buildCandidate(
 
 @Injectable()
 export class CustomerPriceHistoryService {
-  constructor(private readonly prisma: PrismaService) {}
+  constructor(
+    private readonly prisma: PrismaService,
+    // S19b: the reference price is the customer layer's when flag.units_prices_v2 is on (billing's own resolver).
+    @Optional() private readonly entitlements?: EntitlementsService,
+  ) {}
 
   async getHistory(
     customerId: string,
@@ -197,6 +204,10 @@ export class CustomerPriceHistoryService {
           priceTier3: true,
           priceTier4: true,
           priceTier5: true,
+          packLabel: true,
+          baseUnitLabel: true,
+          orderUnitRef: true,
+          packAuto: true,
         },
       }),
     ]);
@@ -429,9 +440,34 @@ export class CustomerPriceHistoryService {
       const newest = kept[0];
       const cp = await db.customerPrice.findFirst({
         where: { customerId, productId },
-        select: { pricingTier: true },
+        select: { productId: true, pricingTier: true, orderUnitRef: true },
       });
-      const tier = cp?.pricingTier ?? customer.pricingTier ?? 1;
+      const pc = await customerPricing(
+        { prisma: this.prisma, entitlements: this.entitlements },
+        customerId,
+        [productId],
+        customer,
+        cp ? [{ ...cp, productId }] : [],
+        db,
+      );
+      const tier = pc.cpMap.get(productId) ?? pc.defaultTier;
+      // The newest sale's unit as a layer label: the pack (null), the base (its name), or the named unit.
+      const newestLabel =
+        productPackNow != null && productPackNow > 1
+          ? newest.pack === productPackNow
+            ? null
+            : newest.pack === 1
+              ? baseLabelOf(asLadderProduct(product))
+              : newest.row.unitLabel
+          : newest.pack === 1 || newest.pack == null
+            ? null
+            : newest.row.unitLabel;
+      // After a pack-size change the old sale's "Box" label would resolve to the CURRENT pack: that is not its unit, so no layer
+      // (master shows null there too).
+      const layerOfNewest =
+        newestLabel != null && namesPack(asLadderProduct(product), newestLabel)
+          ? null
+          : pc.layer(product, newestLabel);
       const inUnit = (price: number): number | null => {
         const p = newest.pack;
         if (productPackNow != null && productPackNow > 1) {
@@ -445,7 +481,7 @@ export class CustomerPriceHistoryService {
       const prev = sameUnit[1]?.row.unitPrice;
       references = {
         listPrice: inUnit(Number(product.pricePerUnit) || 0),
-        tierPrice: inUnit(Number(getTierPrice(product, tier))),
+        tierPrice: layerOfNewest?.price ?? inUnit(Number(getTierPrice(product, tier))),
         changeSinceLast:
           prev != null && prev > 0 ? round4((newest.row.unitPrice - prev) / prev) : null,
       };
@@ -632,7 +668,7 @@ export class CustomerPriceHistoryService {
           },
         );
         sold.get(it.productId)!.push({
-          key: `${c.row.unitLabel.trim().toLowerCase()}|${c.row.unitsPerBox ?? ""}`,
+          key: `${unitNameKey(c.row.unitLabel)}|${c.row.unitsPerBox ?? ""}`,
           price: c.row.unitPrice,
           label: c.row.unitLabel,
           pack: c.row.unitsPerBox,

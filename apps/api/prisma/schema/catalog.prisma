@@ -482,7 +482,7 @@ model ProductTierUnit {
   @@index([tenantId])
 }
 
-/// Units rebuild P0a: a tenant-wide unit name ("Case", "Pack", ...). `nameKey` = lower(trim(name)), set by the service.
+/// Units rebuild P0a: a tenant-wide unit name ("Case", "Pack", ...). `nameKey` = unitNameKey(name): NFC, then trim, then case-fold (set by the service; `sqlKeyOf` is its SQL twin).
 model TenantUnit {
   id         String    @id @default(uuid())
   tenantId   String

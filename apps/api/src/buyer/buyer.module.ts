@@ -10,6 +10,7 @@ import { EmailModule } from "../email/email.module";
 import { AuthModule } from "../auth/auth.module";
 import { TenantModule } from "../tenant/tenant.module";
 import { OrdersModule } from "../orders/orders.module";
+import { EntitlementsModule } from "../billing/entitlements.module";
 import { InvoicesModule } from "../invoices/invoices.module";
 import { CustomersModule } from "../customers/customers.module";
 import { ProductsModule } from "../products/products.module";
@@ -57,6 +58,7 @@ import { BuyerPaymentsController } from "../payment-requests/buyer-payments.cont
     AuthModule,
     TenantModule,
     OrdersModule,
+    EntitlementsModule,
     InvoicesModule,
     CustomersModule,
     ProductsModule,

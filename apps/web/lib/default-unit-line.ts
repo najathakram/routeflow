@@ -1,5 +1,6 @@
 import type { ProductUnitLevel } from "@routeflow/types";
 import {
+  type CustomerLayerUnit,
   isUnitPending,
   mayMergeResolved,
   normalizeBoxesPieces,
@@ -90,8 +91,10 @@ export function applyUnitToLines<T extends DefaultUnitLine>(
   option: UnitOption,
   refresh: boolean,
   tier: Tier,
+  /** S19b: the customer's layer rows for the target product (flag on); omitted = master's tier restore. */
+  layer?: readonly CustomerLayerUnit[] | null,
 ): T[] {
-  return applyUnitToLinesDetailed(prev, tempId, option, refresh, tier).lines;
+  return applyUnitToLinesDetailed(prev, tempId, option, refresh, tier, layer).lines;
 }
 
 export function applyUnitToLinesDetailed<T extends DefaultUnitLine>(
@@ -100,6 +103,7 @@ export function applyUnitToLinesDetailed<T extends DefaultUnitLine>(
   option: UnitOption,
   refresh: boolean,
   tier: Tier,
+  layer?: readonly CustomerLayerUnit[] | null,
 ): { lines: T[]; fold?: UnitFold<T> } {
   const target = prev.find((li) => li.tempId === tempId);
   if (!target) return { lines: prev };
@@ -108,7 +112,7 @@ export function applyUnitToLinesDetailed<T extends DefaultUnitLine>(
   // Re-applying the unit the line ALREADY holds (a stale picker after the resolver ran) keeps its quantity (N2).
   const sameUnit = option.kind !== "pack" && target.unitLabel === option.value;
   const next = {
-    ...applyLineUnit(target, option, { tier, keepQty: refresh || sameUnit }),
+    ...applyLineUnit(target, option, { tier, keepQty: refresh || sameUnit, layer }),
     startOnDefaultUnit: false,
     pendingTaps: undefined,
     // A still-pending line keeps its count (N fast adds = N of the unit); any other choice resets to 1, as always.
