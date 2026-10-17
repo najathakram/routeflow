@@ -601,6 +601,61 @@ describe("K10e F18: changing the default order unit says so and can be undone (i
     expect(status()).toHaveTextContent("");
   });
 
+  it("Dismiss returns focus to the default order unit radio, not to a hidden message", () => {
+    mockUnits = [caseUnit, palletDefault];
+    renderCard();
+    fireEvent.click(radios()[1]);
+    succeed();
+    fireEvent.click(screen.getByRole("button", { name: /dismiss/i }));
+    expect(radios()[2]).toHaveFocus(); // Pallet is still the checked one in this data
+  });
+
+  it("when the checked radio is disabled (the pack is the default), Dismiss focuses the first enabled radio", () => {
+    mockUnits = [caseUnit];
+    renderCard();
+    fireEvent.click(radios()[1]);
+    succeed();
+    fireEvent.click(screen.getByRole("button", { name: /dismiss/i }));
+    expect(document.activeElement).toBe(radios()[1]);
+  });
+
+  it("after Undo, focus is on the default order unit radio, not on the message", () => {
+    mockUnits = [caseUnit, palletDefault];
+    renderCard();
+    fireEvent.click(radios()[1]);
+    succeed();
+    fireEvent.click(screen.getByRole("button", { name: "Undo" }));
+    succeed();
+    expect(status()).toHaveTextContent("Pallet is the default order unit again.");
+    expect(radios()[2]).toHaveFocus();
+  });
+
+  it("a default that changes elsewhere (another tab, a non-hook write) drops the message", () => {
+    mockUnits = [caseUnit, palletUnit];
+    const { rerender } = renderCard();
+    fireEvent.click(radios()[1]);
+    succeed();
+    // the refetch after our own write: Case is the default, as the message says
+    mockUnits = [{ ...caseUnit, isDefaultSelling: true }, palletUnit];
+    rerender(<Card />);
+    expect(status()).toHaveTextContent("Case is now the default order unit.");
+    // someone else makes Pallet the default
+    mockUnits = [caseUnit, { ...palletUnit, isDefaultSelling: true }];
+    rerender(<Card />);
+    expect(status()).toHaveTextContent("");
+    expect(screen.queryByRole("button", { name: "Undo" })).toBeNull();
+  });
+
+  it("every default radio says how the keys work, in a visually hidden hint", () => {
+    mockUnits = [caseUnit];
+    renderCard();
+    for (const r of radios()) {
+      expect(r).toHaveAccessibleDescription(
+        "Use arrow keys to move, Space to make it the default.",
+      );
+    }
+  });
+
   describe("keyboard: arrows move focus without saving; Space or Enter commits", () => {
     it("ArrowDown / ArrowUp move focus between the radios and write nothing", async () => {
       mockUnits = [caseUnit, palletUnit];

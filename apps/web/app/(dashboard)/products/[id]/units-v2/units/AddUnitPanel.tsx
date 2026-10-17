@@ -132,7 +132,7 @@ function AddUnitForm({
               data-testid="units-v2-add-name-hint"
               className="mt-1 text-xs text-navy/70"
             >
-              A 1-piece unit is always named &quot;{baseLabel}&quot;.
+              A 1-piece unit is always called &quot;{baseLabel}&quot;.
             </p>
           )}
         </div>

@@ -61,7 +61,7 @@ for (const vp of VIEWPORTS) {
         await expect(page.getByTestId(ID.addName)).toHaveValue("Piece");
         await expect(page.getByTestId(ID.addName)).toHaveAttribute("readonly", "");
         await expect(page.getByTestId("units-v2-add-name-hint")).toContainText(
-          'A 1-piece unit is always named "Piece".',
+          'A 1-piece unit is always called "Piece".',
         );
         await shot(page, info, "k10e-piece-prefilled");
 

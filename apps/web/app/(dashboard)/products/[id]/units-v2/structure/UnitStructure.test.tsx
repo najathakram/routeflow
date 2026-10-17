@@ -677,15 +677,16 @@ describe("K10e F07: a product with no 1-piece unit can get one from the pointer"
     expect(name()).toHaveValue("Single");
   });
 
-  it("a product priced elsewhere (family) never reads as 'Piece missing'", async () => {
+  it("a product priced elsewhere (family: every row locked) never reads as 'Piece missing'", async () => {
     mockGrid = {
       data: {
         ...grid,
-        rows: grid.rows.map((r) =>
-          r.kind === "base"
-            ? { ...r, editable: false, notEditableReason: "Priced by the family." }
-            : r,
-        ),
+        rows: grid.rows.map((r) => ({
+          ...r,
+          editable: false,
+          notEditableReason:
+            r.kind === "base" ? "Add the Piece unit first." : "Priced by the family.",
+        })),
       },
       isLoading: false,
       isError: false,
@@ -694,5 +695,34 @@ describe("K10e F07: a product with no 1-piece unit can get one from the pointer"
     render();
     await user.click(addOpener());
     expect(count()).toHaveAttribute("min", "2");
+  });
+
+  it("the signal is structural: a locked base row beside editable rows is a missing Piece whatever its reason says", async () => {
+    mockGrid = {
+      data: {
+        ...grid,
+        anchor: "pack",
+        rows: [pack, { ...missingPiece, notEditableReason: "No unit for this level yet." }],
+      },
+      isLoading: false,
+      isError: false,
+    };
+    const user = userEvent.setup();
+    render();
+    await user.click(addOpener());
+    await user.type(count(), "1");
+    expect(screen.getByTestId("units-v2-add-submit")).toBeEnabled();
+  });
+
+  it("a pointer click that does not open the form (panel already open) leaves no stale prefill for the next plain open", async () => {
+    withoutPiece();
+    const user = userEvent.setup();
+    render();
+    await user.click(addOpener()); // panel open, blank
+    await user.click(pointer()); // the opener toggles it SHUT: onOpen never fires for this pointer click
+    expect(screen.queryByTestId("units-v2-add-panel")).toBeNull();
+    await user.click(addOpener());
+    expect(count()).toHaveValue(null);
+    expect(name()).toHaveValue("");
   });
 });

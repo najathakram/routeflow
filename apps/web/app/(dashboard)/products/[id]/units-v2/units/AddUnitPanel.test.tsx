@@ -316,7 +316,7 @@ describe("AddUnitPanel: the missing 1-piece unit (F07)", () => {
     expect(name()).toHaveValue("Piece");
     expect(name()).toHaveAttribute("readonly");
     const hint = screen.getByTestId("units-v2-add-name-hint");
-    expect(hint).toHaveTextContent('A 1-piece unit is always named "Piece".');
+    expect(hint).toHaveTextContent('A 1-piece unit is always called "Piece".');
     expect(name()).toHaveAccessibleDescription(hint.textContent ?? "");
     await userEvent.clear(count());
     await userEvent.type(count(), "12");

@@ -295,9 +295,10 @@ const DUPLICATE_NAME =
   /^A (category|subcategory|product) named ".*" already exists(?: in this section)?\.?$/;
 /**
  * K10e/O1: the units service's uncoded 400 for a 1-piece unit with any other name. It echoes the TENANT's piece name (set in
- * Settings, "Piece" when unset), never text a user typed here, so a short plain name is shown back and anything else is not.
+ * Settings, "Piece" when unset), never text a user typed here, so a short plain name (any letters or digits) is shown back and anything else is not.
  */
-const ONE_PIECE_NAME = /^A 1-piece unit is always named "([A-Za-z0-9][A-Za-z0-9 ._'-]{0,39})"\.$/;
+const ONE_PIECE_NAME =
+  /^A 1-piece unit is always named "([\p{L}\p{N}][\p{L}\p{N} ._'-]{0,39})"\.$/u;
 /** Static server sentences that already tell the user what to do (B986-7: send email, delete order). */
 const ACTIONABLE_REFUSALS: Record<string, string> = {
   // the unit-selling plan limit is an uncoded 403: say it is a PLAN limit, not a permission problem

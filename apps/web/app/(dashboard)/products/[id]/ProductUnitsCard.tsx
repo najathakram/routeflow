@@ -57,7 +57,13 @@ const LABEL = "mb-1 block text-[11px] font-medium uppercase tracking-wide text-n
 /** F18: the last default change's message, and the single write that undoes it (null once it has been undone). */
 type DefaultNote = {
   text: string;
-  undo: { body: { id: string; isDefaultSelling: boolean }; restoredName: string } | null;
+  /** The unit that should be the default while this message is true (null: the pack, i.e. none). */
+  expectedDefaultId: string | null;
+  undo: {
+    body: { id: string; isDefaultSelling: boolean };
+    restoredName: string;
+    restoredId: string | null;
+  } | null;
 };
 
 type Draft = {
@@ -73,6 +79,8 @@ const draftOf = (u: ProductUnitLevel): Draft => ({
 });
 
 const DEFAULT_RADIO = "default-selling-unit";
+const DEFAULT_HINT_ID = "units-default-hint";
+const DEFAULT_HINT = "Use arrow keys to move, Space to make it the default.";
 
 /**
  * F18: a default-order-unit radio saves the moment it is chosen, so the keys must not choose by accident. Arrow keys only
@@ -242,6 +250,7 @@ function UnitRow({
           <input
             type="radio"
             name={DEFAULT_RADIO}
+            aria-describedby={DEFAULT_HINT_ID}
             checked={unit.isDefaultSelling}
             onChange={() => onMakeDefault(unit)}
             onKeyDown={radioKeys(() => {
@@ -303,8 +312,29 @@ export function ProductUnitsCard({
   // F18: what the last default change said, and the one write that takes it back. No timer: it stays until the next write,
   // Dismiss, or leaving the page (WCAG 2.2.1), so a keyboard or screen-reader user is never raced.
   const [defaultNote, setDefaultNote] = React.useState<DefaultNote | null>(null);
-  const noteRef = React.useRef<HTMLDivElement>(null);
+  const cardRef = React.useRef<HTMLDivElement>(null);
   const ownWrite = React.useRef(false);
+  // After Dismiss or Undo the message block shrinks to nothing, so keyboard focus goes to the default radio instead.
+  const [refocusTick, setRefocusTick] = React.useState(0);
+  React.useEffect(() => {
+    if (refocusTick === 0) return;
+    const radios = Array.from(
+      cardRef.current?.querySelectorAll<HTMLInputElement>(
+        `input[type="radio"][name="${DEFAULT_RADIO}"]:not(:disabled)`,
+      ) ?? [],
+    );
+    (radios.find((r) => r.checked) ?? radios[0])?.focus();
+  }, [refocusTick]);
+
+  // The default that changed under us (another tab, a write that is not a mutation here) makes the message untrue: drop it.
+  // Keyed on the default's id alone, so our own write (whose refetch lands on the id the message names) keeps it.
+  const currentDefaultId = (list.data ?? []).find((u) => u.isDefaultSelling)?.id ?? null;
+  const defaultNoteRef = React.useRef(defaultNote);
+  defaultNoteRef.current = defaultNote;
+  React.useEffect(() => {
+    const n = defaultNoteRef.current;
+    if (n && currentDefaultId !== n.expectedDefaultId) setDefaultNote(null);
+  }, [currentDefaultId]);
 
   // K10d: the same grid the v2 shell reads. Until it has rows the shell has no Add / Remove, so the old ones stay.
   const shellOwns = hideAddForm && !unitStructureGoverned(product);
@@ -358,7 +388,8 @@ export function ProductUnitsCard({
     writeDefault(body, () =>
       setDefaultNote({
         text: `${target ? target.label : packName} is now the default order unit.`,
-        undo: { body: undo, restoredName },
+        expectedDefaultId: target ? target.id : null,
+        undo: { body: undo, restoredName, restoredId: prev ? prev.id : null },
       }),
     );
   };
@@ -367,14 +398,18 @@ export function ProductUnitsCard({
     const undo = defaultNote?.undo;
     if (!undo) return;
     writeDefault(undo.body, () => {
-      setDefaultNote({ text: `${undo.restoredName} is the default order unit again.`, undo: null });
-      noteRef.current?.focus();
+      setDefaultNote({
+        text: `${undo.restoredName} is the default order unit again.`,
+        expectedDefaultId: undo.restoredId,
+        undo: null,
+      });
+      setRefocusTick((t) => t + 1);
     });
   };
 
   const dismissDefaultNote = () => {
     setDefaultNote(null);
-    noteRef.current?.focus();
+    setRefocusTick((t) => t + 1);
   };
 
   const save = (unit: ProductUnitLevel, d: Draft) => {
@@ -441,6 +476,7 @@ export function ProductUnitsCard({
 
   return (
     <div
+      ref={cardRef}
       data-units-card
       className="overflow-hidden rounded-lg border border-surface-border bg-white shadow-card"
     >
@@ -465,6 +501,7 @@ export function ProductUnitsCard({
               <input
                 type="radio"
                 name={DEFAULT_RADIO}
+                aria-describedby={DEFAULT_HINT_ID}
                 checked={noneDefault}
                 disabled={busy || noneDefault}
                 onChange={() => changeDefault(null)}
@@ -476,12 +513,13 @@ export function ProductUnitsCard({
         </div>
 
         {/* F18: always mounted, so the text it receives is announced. Undo and Dismiss sit beside it, not inside it. */}
+        <p id={DEFAULT_HINT_ID} className="sr-only">
+          {DEFAULT_HINT}
+        </p>
         <div
-          ref={noteRef}
-          tabIndex={-1}
           className={
             defaultNote
-              ? "flex flex-wrap items-center gap-x-3 gap-y-1 rounded-lg bg-surface-raised px-3 py-2 text-sm text-navy outline-none"
+              ? "flex flex-wrap items-center gap-x-3 gap-y-1 rounded-lg bg-surface-raised px-3 py-2 text-sm text-navy"
               : "sr-only"
           }
         >

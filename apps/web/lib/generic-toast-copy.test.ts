@@ -270,6 +270,21 @@ describe("genericToastCopy: codes users rely on", () => {
     );
   });
 
+  it("O1: a base name with accents or non-Latin letters keeps the specific copy", () => {
+    const one = (label: string) => `A 1-piece unit is always named "${label}".`;
+    expect(genericToastCopy(err(400, { message: one("Pièce") }))).toBe(
+      "A 1-piece unit is always called Pièce. Rename it to Pièce, or give it more than one piece.",
+    );
+    expect(genericToastCopy(err(400, { message: one("Stück") }))).toBe(
+      "A 1-piece unit is always called Stück. Rename it to Stück, or give it more than one piece.",
+    );
+    expect(genericToastCopy(err(400, { message: one("件") }))).toMatch(/always called 件\./);
+    // markup and control characters are still never echoed
+    expect(genericToastCopy(err(400, { message: one("Pièce<b>") }))).toBe(
+      "Some details aren't valid. Check what you entered and try again.",
+    );
+  });
+
   describe("B986: coded refusals that tell the user what to fix (never less actionable than the server sentence)", () => {
     it("ALLOCATIONS_EXCEED_PAYMENT names the two amounts from the STRUCTURED fields, never the message", () => {
       const copy = genericToastCopy(

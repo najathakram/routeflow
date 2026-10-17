@@ -36,7 +36,14 @@ export function UnitStructureControls({ productId }: { productId: string }) {
   React.useEffect(() => {
     const onClick = (e: MouseEvent) => {
       const hit = e.target instanceof Element && e.target.closest(POINTER_SELECTOR);
-      if (hit) fromPointer.current = true;
+      if (!hit) return;
+      fromPointer.current = true;
+      // The pointer's click opens the form within this same dispatch. If it does not (the opener is disabled, or the panel
+      // is already open and the click closes it) the flag must not wait for some later plain open. A timeout, not a
+      // microtask: a browser runs microtasks between a native click's listeners, which would clear it too early.
+      setTimeout(() => {
+        fromPointer.current = false;
+      }, 0);
     };
     document.addEventListener("click", onClick, true);
     return () => document.removeEventListener("click", onClick, true);
@@ -99,7 +106,7 @@ export function UnitStructureControls({ productId }: { productId: string }) {
   const ofUnits = rows
     .filter((r) => r !== base)
     .map((r) => ({ label: r.label, factorToBase: r.factor }));
-  const pieceMissing = pieceIsMissing(base);
+  const pieceMissing = pieceIsMissing(rows);
   const anchor = served.rows.find((r) => r.ref === served.anchor);
   const reset = resetPreview(served);
 
@@ -145,16 +152,16 @@ export function UnitStructureControls({ productId }: { productId: string }) {
 }
 
 const POINTER_SELECTOR = `[data-testid="${UNITS_V2_TESTIDS.addUnitPointer}"]`;
-/** The server's reason for the implicit Piece row (product-price-grid.service `addUnitFirst`): no 1-piece unit backs it. */
-const ADD_UNIT_FIRST = /^Add the .+ unit first\.$/;
 
-/** True when the grid shows a base (Piece) row that no unit backs yet. A row locked for another reason (a family) is not. */
-function pieceIsMissing(base: ProductPriceGridRowDto | undefined): boolean {
+/**
+ * True when the grid shows a base (Piece) row that no unit backs yet. The signal is structural, not the server's wording:
+ * the implicit Piece row is the one row locked while another row of the grid is still editable. A family, recipe or
+ * variant product locks EVERY row, so it never reads as a missing Piece.
+ */
+function pieceIsMissing(rows: ProductPriceGridRowDto[]): boolean {
+  const base = rows.find((r) => r.kind === "base");
   return (
-    base != null &&
-    base.editable === false &&
-    typeof base.notEditableReason === "string" &&
-    ADD_UNIT_FIRST.test(base.notEditableReason)
+    base != null && base.editable === false && rows.some((r) => r.kind !== "base" && r.editable)
   );
 }
 
