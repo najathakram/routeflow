@@ -374,6 +374,30 @@ describe("MF2 -> SA-733r9: paid coverage is one walk over every paid source (act
       },
     );
 
+    it("the base is the WEB_URL when FRONTEND_URL is unset (the prod misconfiguration that sent a payer to localhost)", async () => {
+      const savedWeb = process.env.WEB_URL;
+      delete process.env.FRONTEND_URL;
+      process.env.WEB_URL = "https://www.routeflow.test";
+      try {
+        const h = make({ invoices: [OCT_OPEN], sub: sub() });
+        await h.svc.open("t1", {
+          now: NOW,
+          expectedStubCents: 31000,
+          successPath: "/settings/billing?paid=1",
+          cancelPath: "/settings/billing?checkout=cancelled",
+        });
+        const params = h.stripe.client.checkout.sessions.create.mock.calls[0][0];
+        expect(params.success_url).toBe("https://www.routeflow.test/settings/billing?paid=1");
+        expect(params.cancel_url).toBe(
+          "https://www.routeflow.test/settings/billing?checkout=cancelled",
+        );
+        expect(String(params.success_url)).not.toContain("localhost");
+      } finally {
+        if (savedWeb === undefined) delete process.env.WEB_URL;
+        else process.env.WEB_URL = savedWeb;
+      }
+    });
+
     it("with no paths the defaults are unchanged (the super-admin route)", async () => {
       process.env.FRONTEND_URL = "https://app.test";
       const h = make({ invoices: [OCT_OPEN], sub: sub() });

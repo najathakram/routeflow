@@ -248,7 +248,7 @@ export class PaymentDueService {
       const out = await this.catchup.open(tenantId, {
         expectedStubCents: stubCents,
         now,
-        // paths: open() joins them to its one FRONTEND_URL base
+        // paths: open() joins them to its one web base (webBaseUrl)
         successPath: view.cardNeeded ? CARD_RETURN_PATH : PAID_RETURN_PATH,
         cancelPath: "/settings/billing?checkout=cancelled",
       });
