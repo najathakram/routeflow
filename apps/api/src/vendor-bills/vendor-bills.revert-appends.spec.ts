@@ -962,11 +962,21 @@ describe("B846 sibling — voidBill appends a PURCHASE reversal (the tobacco fil
       });
       return h;
     };
+    /** Review item 4: a void moves the product's Σq and its counter by the same amount. */
+    const together = async (h: Harness, run: () => Promise<any>) => {
+      const q0 = h.sum({ productId: "prod-1" });
+      const c0 = h.product.currentStock;
+      const out = await run();
+      expect(h.sum({ productId: "prod-1" }).sub(q0).toNumber()).toBe(
+        h.product.currentStock.sub(c0).toNumber(),
+      );
+      return out;
+    };
 
     it("V1: a legacy bill with no receipt row voids — ADJUSTMENT -Q dated now, purchases unchanged, audit row, lot gone", async () => {
       const h = await legacyWorld();
 
-      const out = await voidIt(h, 10);
+      const out = await together(h, () => voidIt(h, 10));
 
       expect(h.rows).toHaveLength(1);
       expect(h.rows[0]).toMatchObject({
@@ -1020,7 +1030,7 @@ describe("B846 sibling — voidBill appends a PURCHASE reversal (the tobacco fil
       const refund = jest.spyOn(h.service as any, "refundDrawnSupplierCredits");
       h.setBill({ ...receivedBill(10), status: "PAID" });
 
-      const out = await (h.service as any).voidBill("bill-1", "user-2");
+      const out = await together(h, () => (h.service as any).voidBill("bill-1", "user-2"));
 
       expect(h.rows.map((r) => [r.type, Number(r.quantity)])).toEqual([
         ["PURCHASE", 5],
@@ -1054,7 +1064,7 @@ describe("B846 sibling — voidBill appends a PURCHASE reversal (the tobacco fil
         createdAt: BILL_DATE,
       });
 
-      await voidIt(h, 10);
+      await together(h, () => voidIt(h, 10));
 
       expect(h.rows.find((r) => r.id === "mv-moved")?.productId).toBe("prod-2");
       expect(D(h.rows.at(-1)?.quantity).eq(-10)).toBe(true);
@@ -1119,7 +1129,7 @@ describe("B846 sibling — voidBill appends a PURCHASE reversal (the tobacco fil
         });
         h.prisma.auditLog.create.mockClear();
 
-        await (h.service as any).voidBill("bill-1", "user-2");
+        await together(h, () => (h.service as any).voidBill("bill-1", "user-2"));
 
         expect(h.rows.filter((r) => r.type === "ADJUSTMENT")).toHaveLength(0);
         expect(h.rows.filter((r) => Number(r.quantity) < 0)).toHaveLength(2);
@@ -1135,7 +1145,7 @@ describe("B846 sibling — voidBill appends a PURCHASE reversal (the tobacco fil
       h.rows[0].effectiveAt = new Date("2026-09-16T08:00:00.000Z"); // legacy: lot and row disagree
       h.lots.push({ ...h.lots[0], id: "lot-twin" });
 
-      const out = await voidIt(h, 10);
+      const out = await together(h, () => voidIt(h, 10));
 
       expect(out.status).toBe("VOID");
       expect(h.rows.map((r) => [r.type, Number(r.quantity)])).toEqual([
@@ -1175,7 +1185,41 @@ describe("B846 sibling — voidBill appends a PURCHASE reversal (the tobacco fil
       });
     });
 
-    it("a shortfall product's bill-number lots above what the bill received are left standing (a manual lot shares the number)", async () => {
+    it("a manual lot alone, ≤ received, survives a void (never by reference alone, SA-808 §2)", async () => {
+      const h = await legacyWorld();
+      h.lots.length = 0; // the legacy bill never made a lot of its own
+      h.rows.push({
+        id: "mv-manual",
+        productId: "prod-1",
+        type: "PURCHASE",
+        quantity: D(4),
+        unitCost: D(1),
+        supplierId: "sup-1",
+        reference: "B-1",
+        notes: "manual purchase",
+        effectiveAt: new Date("2026-05-20T00:00:00.000Z"),
+        createdAt: new Date("2026-05-20T00:00:00.000Z"),
+      });
+      h.lots.push({
+        id: "lot-manual",
+        productId: "prod-1",
+        reference: "B-1", // a person's purchase that happens to share the bill number
+        purchaseDate: new Date("2026-05-20T00:00:00.000Z"),
+        qty: D(4),
+        remainingQty: D(4),
+        unitCost: D(1),
+      });
+      h.product.currentStock = D(14);
+
+      const out = await together(h, () => voidIt(h, 10));
+
+      expect(out.status).toBe("VOID");
+      expect(h.lots.map((l) => l.id)).toEqual(["lot-manual"]);
+      expect(h.prisma.stockLot.delete).not.toHaveBeenCalled();
+      expect(h.prisma.stockLot.update).not.toHaveBeenCalled();
+    });
+
+    it("a shortfall takes only the lot shaped like its line; a manual lot sharing the number stays", async () => {
       const h = await legacyWorld();
       h.lots.push({
         id: "lot-manual",
@@ -1188,14 +1232,13 @@ describe("B846 sibling — voidBill appends a PURCHASE reversal (the tobacco fil
       });
       h.product.currentStock = D(14);
 
-      const out = await voidIt(h, 10);
+      const out = await together(h, () => voidIt(h, 10));
 
       expect(out.status).toBe("VOID");
-      expect(D(h.rows[0].quantity).eq(-10)).toBe(true); // the shortfall ADJUSTMENT still lands
-      expect(h.lots.map((l) => l.id).sort()).toEqual(["lot-legacy", "lot-manual"]);
+      expect(D(h.rows[0].quantity).eq(-10)).toBe(true); // the shortfall ADJUSTMENT lands
+      expect(h.lots.map((l) => l.id)).toEqual(["lot-manual"]);
       expect(out.gapsDetected).toEqual([
         { productId: "prod-1", name: "Widget", stockDrift: 10, noReceiptQty: 10 },
-        { productId: "prod-1", name: "Widget", stockDrift: 0, lotsLeft: 14 },
       ]);
     });
   });

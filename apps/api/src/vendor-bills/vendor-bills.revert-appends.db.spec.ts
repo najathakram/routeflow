@@ -106,6 +106,7 @@ describeDb("B846 bill revert appends — real Postgres", () => {
         await prisma.stockMovement.deleteMany({ where: { tenantId } });
         await prisma.product.deleteMany({ where: { tenantId } });
         await prisma.trackedCategory.deleteMany({ where: { tenantId } });
+        await prisma.supplierCredit.deleteMany({ where: { tenantId } });
         await prisma.supplier.deleteMany({ where: { tenantId } });
         await prisma.user.deleteMany({ where: { tenantId } });
         await prisma.tenant.delete({ where: { id: tenantId } });
@@ -558,11 +559,30 @@ describeDb("B846 bill revert appends — real Postgres", () => {
 
   it("808b-V2: a PAID bill with half its rows missing — half -PURCHASE at the original date, half ADJUSTMENT now", async () => {
     const w = await seedWorld("b2", "tobacco");
+    // On-account credit the bill draws at create() (a BillPayment linked to the credit).
+    const credit = await prisma.supplierCredit.create({
+      data: {
+        tenantId: w.tenantId,
+        supplierId: w.supplierId,
+        amount: 8,
+        balance: 8,
+        method: "CASH",
+      },
+    });
     const id = await receiveBill(w, 10);
+    expect(
+      Number((await prisma.supplierCredit.findUniqueOrThrow({ where: { id: credit.id } })).balance),
+    ).toBe(0);
     await setReceiptQty(w, 5); // the other 5 were never recorded
     await prisma.vendorBill.update({ where: { id }, data: { status: "PAID" } });
 
     await voidIt(w, id);
+
+    // the supplier credit came back in the DB, and the bill's draw is gone
+    expect(
+      Number((await prisma.supplierCredit.findUniqueOrThrow({ where: { id: credit.id } })).balance),
+    ).toBe(8);
+    expect(await prisma.billPayment.count({ where: { vendorBillId: id } })).toBe(0);
 
     const rows = await prisma.stockMovement.findMany({ where: { productId: w.productId } });
     const receipt = rows.find((r) => Number(r.quantity) === 5) as (typeof rows)[number];
@@ -637,10 +657,11 @@ describeDb("B846 bill revert appends — real Postgres", () => {
       // `@default(now())` per create call, so the rows can differ by a millisecond and createdAt,
       // not the uuid, would decide the order. Force the createdAt tie, then pin the uuid order.
       expect(new Set(created.map((r) => r.effectiveAt.getTime())).size).toBe(1);
-      // Distinct per case (ids are table-global): the last digits carry the mode, the case, the rank.
+      // Distinct per run and case (ids are table-global; a crashed run leaves its rows behind): the
+      // first group is the run's hex suffix, the last digits carry the mode, the case, the rank.
       const m = mode === "revert" ? 1 : 2;
       const fixed = [1, 2].map(
-        (rank) => `00000000-0000-4000-8000-000000000${m}${qtyOrder[0]}${rank}`,
+        (rank) => `${RUN_SUFFIX}-0000-4000-8000-000000000${m}${qtyOrder[0]}${rank}`,
       );
       for (const [i, q] of qtyOrder.entries()) {
         const row = created.find((r) => Number(r.quantity) === q) as (typeof created)[number];

@@ -104,7 +104,7 @@ describe("void feedback", () => {
     expect(voidSuccessToast("B-1", [lot])).toEqual({
       title: "Bill voided",
       description:
-        "Widget's stock lot couldn't be matched to this bill, so it was left as is. Ask an admin to repair it.",
+        "Some stock batches for this bill were left unchanged and are listed in the activity log.",
       variant: "info",
     });
     const gap = { productId: "p2", name: "Gadget", stockDrift: 3, noReceiptQty: 3 };

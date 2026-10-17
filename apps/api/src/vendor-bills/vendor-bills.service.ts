@@ -1563,9 +1563,8 @@ export class VendorBillsService {
       /** SA-808b (void): pieces still on bill lots the void could not identify and left standing. */
       lotsLeft?: number;
     }[] = [];
-    // SA-808b (void only): per product, the receipt rows found and the shortfall adjusted.
-    const audited: { productId: string; found: string[]; noReceiptQty: string }[] = [];
-    const shortfalls = new Map<string, { name: string; received: Prisma.Decimal }>();
+    // SA-808b (void only): products with a shortfall, and their plan lines (the lot shapes).
+    const shortfalls = new Map<string, { name: string; lines: typeof plan }>();
     // One filed-period decision per (product, distinct date), not one per row.
     const dateMemo = new Map<string, DocumentStockDate>();
     const stockDateOf = async (productId: string, documentDate: Date) => {
@@ -1593,13 +1592,6 @@ export class VendorBillsService {
       const found = isLast ? receiptsByProduct.get(productId) : undefined;
       const mine = found?.rows ?? [];
       const shortfall = found?.shortfall ?? new Prisma.Decimal(0);
-      if (found && action === "voided") {
-        audited.push({
-          productId,
-          found: mine.map((r) => r.id),
-          noReceiptQty: shortfall.toString(),
-        });
-      }
 
       // Read current product state within the transaction for accurate AVCO reversal
       const product = await tx.product.findFirst({
@@ -1689,10 +1681,7 @@ export class VendorBillsService {
           stockDrift: shortfall.toNumber(),
           noReceiptQty: shortfall.toNumber(),
         });
-        shortfalls.set(productId, {
-          name,
-          received: costs.reduce((t, p) => t.add(p.qty), new Prisma.Decimal(0)),
-        });
+        shortfalls.set(productId, { name, lines: costs });
       }
     }
 
@@ -1741,7 +1730,7 @@ export class VendorBillsService {
     // (moved by a merge or a family writer — they count as shortfall and are never reassigned).
     if (shortfalls.size > 0 || lotsLeft.length > 0) {
       const planned = new Set(plan.map((p) => p.item.productId as string));
-      const elsewhere = (await tx.stockMovement.findMany({
+      const moved = (await tx.stockMovement.findMany({
         where: {
           type: MovementType.PURCHASE,
           reference: bill.billNumber,
@@ -1751,6 +1740,11 @@ export class VendorBillsService {
         },
         select: { id: true, productId: true, quantity: true },
       })) as { id: string; productId: string; quantity: Prisma.Decimal }[];
+      // A row moved together with its reversal is not live: drop paired originals.
+      const pairedElsewhere = new Set<string>();
+      for (const pid of new Set((moved ?? []).map((r) => r.productId)))
+        for (const pairedId of await pairedReceiptIds(tx, pid)) pairedElsewhere.add(pairedId);
+      const elsewhere = (moved ?? []).filter((r) => !pairedElsewhere.has(r.id));
       await tx.auditLog.create({
         data: {
           tenantId: tenantId ?? null,
@@ -1760,9 +1754,13 @@ export class VendorBillsService {
           entityId: bill.id,
           meta: {
             billNumber: bill.billNumber,
-            products: audited,
+            products: [...receiptsByProduct].map(([productId, r]) => ({
+              productId,
+              found: r.rows.map((x) => x.id),
+              noReceiptQty: r.shortfall.toString(),
+            })),
             lotsLeft,
-            receiptRowsOnOtherProducts: (elsewhere ?? []).map((r) => ({
+            receiptRowsOnOtherProducts: elsewhere.map((r) => ({
               id: r.id,
               productId: r.productId,
               quantity: String(r.quantity),
@@ -1849,10 +1847,9 @@ export class VendorBillsService {
    * back to (product, reference, qty, unit cost) and reverses ONLY a single candidate; several are
    * refused (INVENTORY_LEDGER_GAP) rather than guess, and none means no lot was ever made.
    *
-   * SA-808b, void only: a product with a shortfall (no receipt row to match) gives up its remaining
-   * bill-number lots when they hold no more than the bill received; and an ambiguous lot never
-   * blocks the void — it is left standing, untouched, and returned for the audit row and gapsDetected.
-   * A revert still refuses both (it has an exit: void).
+   * SA-808b (void only): a shortfall's lots are found by its plan lines' shape through the same
+   * fallback; an ambiguous lot is left standing, untouched, and returned for the audit row. A revert
+   * still refuses (it has an exit: void).
    */
   private async reverseBillLots(
     tx: Prisma.TransactionClient,
@@ -1860,14 +1857,15 @@ export class VendorBillsService {
     receipts: (LiveBillReceipt & { productId: string; name: string })[],
     billDate: Date | null,
     action: BillReversalAction,
-    /** SA-808b (void only): products with a shortfall, and what the bill received of each. */
-    shortfalls: Map<string, { name: string; received: Prisma.Decimal }> = new Map(),
+    /** SA-808b (void only): products with a shortfall, and their plan lines. */
+    shortfalls: Map<
+      string,
+      { name: string; lines: { qty: Prisma.Decimal; unitCost: Prisma.Decimal }[] }
+    > = new Map(),
   ): Promise<{ productId: string; name: string; lotIds: string[]; remainingQty: string }[]> {
     const lots: Awaited<ReturnType<typeof tx.stockLot.findMany>> = [];
     const left: { productId: string; name: string; lotIds: string[]; remainingQty: string }[] = [];
-    const leftIds = new Set<string>();
     const leave = (productId: string, name: string, standing: typeof lots) => {
-      for (const l of standing) leftIds.add(l.id);
       left.push({
         productId,
         name,
@@ -1894,6 +1892,37 @@ export class VendorBillsService {
       if (exact.length > 0) lots.push(exact[0]);
       else unmatched.push(r);
     }
+    // SA-808b: stock with no receipt row has no tuple of its own, so each plan line of a shortfall
+    // product not already answered (by a lot taken above or an unmatched receipt of its shape)
+    // joins pass 2 as a synthetic receipt — matched by (product, reference, qty, cost, bill date),
+    // never by reference alone (SA-808 §2).
+    const dec = (v: unknown) =>
+      v == null ? "null" : new Prisma.Decimal(v as Prisma.Decimal).toString();
+    const shapeKey = (productId: string, qty: unknown, cost: unknown) =>
+      `${productId}|${dec(qty)}|${dec(cost)}`;
+    const answered = new Map<string, number>();
+    const bump = (k: string) => answered.set(k, (answered.get(k) ?? 0) + 1);
+    for (const l of lots) bump(shapeKey(l.productId, l.qty, l.unitCost));
+    for (const r of unmatched) bump(shapeKey(r.productId, r.quantity, r.unitCost));
+    // No bill date ⇒ no exact match is possible: the shortfall's lots stay untouched.
+    for (const [productId, { name, lines }] of billDate ? shortfalls : new Map()) {
+      for (const line of lines as { qty: Prisma.Decimal; unitCost: Prisma.Decimal }[]) {
+        const k = shapeKey(productId, line.qty, line.unitCost);
+        if ((answered.get(k) ?? 0) > 0) {
+          answered.set(k, (answered.get(k) ?? 0) - 1); // this line's lot is already accounted for
+          continue;
+        }
+        unmatched.push({
+          id: "",
+          supplierId: null,
+          effectiveAt: billDate, // unused: pass 2 matches the bill date
+          productId,
+          name,
+          quantity: line.qty,
+          unitCost: line.unitCost,
+        });
+      }
+    }
     // Pass 2 (legacy lots were stamped with the bill date): receipts that share a shape share
     // their candidates, so accept when there are no more candidates than receipts of that shape.
     const groups = new Map<string, typeof receipts>();
@@ -1918,27 +1947,6 @@ export class VendorBillsService {
         continue;
       }
       lots.push(...found); // none ⇒ no lot was ever made for these receipts: nothing to reverse
-    }
-    // SA-808b: stock with no receipt row has no tuple to match. Its product's remaining bill-number
-    // lots go when they hold no more than the bill received (master took them by reference alone);
-    // more than that means a lot the bill cannot explain (a person's purchase sharing the number) —
-    // left standing and reported.
-    for (const [productId, { name, received }] of shortfalls) {
-      const loose = (
-        (await tx.stockLot.findMany({ where: { productId, reference: billNumber } })) ?? []
-      ).filter(
-        (l) =>
-          !(l.notes ?? "").includes("(bill reversed;") &&
-          !lots.some((x) => x.id === l.id) &&
-          !leftIds.has(l.id),
-      );
-      if (loose.length === 0) continue; // no lot was ever made for the missing part
-      const taken = lots
-        .filter((l) => l.productId === productId)
-        .reduce((t, l) => t.add(l.qty), new Prisma.Decimal(0));
-      const looseQty = loose.reduce((t, l) => t.add(l.qty), new Prisma.Decimal(0));
-      if (looseQty.lte(received.sub(taken))) lots.push(...loose);
-      else leave(productId, name, loose);
     }
     for (const lot of lots) {
       const remaining = new Prisma.Decimal(lot.remainingQty);
