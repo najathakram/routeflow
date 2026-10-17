@@ -48,6 +48,7 @@ const plural = (label: string, n: number) =>
 
 /** "40 Boxes" and "= 960 Pieces in all", read from the rows' own factors and labels. */
 function containsLines(row: ProductPriceGridRowDto, sorted: ProductPriceGridRowDto[]): string[] {
+  if (isMissingUnit(row)) return [EMPTY_GLYPH];
   if (row.kind === "base") return ["Smallest unit"];
   const base = sorted.find((r) => r.kind === "base");
   const lower = [...sorted].reverse().find((r) => r.factor < row.factor);
@@ -78,6 +79,11 @@ interface CellView {
 const isMissingUnit = (row: ProductPriceGridRowDto): boolean =>
   row.kind === "base" && !row.editable && ADD_UNIT_FIRST(row.notEditableReason);
 
+/** The empty-cell glyph: the price cells, and the barcode and Contains of a missing unit (the API serves the case's code on it). */
+const EMPTY_GLYPH = "—";
+const barcodeText = (row: ProductPriceGridRowDto): string =>
+  isMissingUnit(row) ? EMPTY_GLYPH : (row.code ?? "No barcode");
+
 function cellView(
   row: ProductPriceGridRowDto,
   tier: number,
@@ -85,7 +91,12 @@ function cellView(
   cell: ProductPriceGridCellDto | undefined,
 ): CellView {
   if (isMissingUnit(row))
-    return { tier, display: "—", word: null, aria: `${name} ${row.label} price, no unit yet` };
+    return {
+      tier,
+      display: EMPTY_GLYPH,
+      word: null,
+      aria: `${name} ${row.label} price, no unit yet`,
+    };
   if (!cell) return { tier, display: "—", word: null, aria: `${name} ${row.label} price, none` };
   const noPrice = row.kind === "pack" && tier === 1 && Number(cell.value) === 0;
   const display = noPrice ? "No price" : formatMoney(cell.value);
@@ -561,11 +572,11 @@ export function ProductPricesGrid({
                     {row.label}
                     {compact ? (
                       <div className="mt-0.5 text-xs font-normal text-navy/60">
-                        {containsLines(row, ascending)[0]
+                        {containsLines(row, ascending)[0] && !isMissingUnit(row)
                           ? `${containsLines(row, ascending)[0]} · `
                           : ""}
                         <span data-testid={T.code(row.ref)} className="tabular-nums">
-                          {row.code ?? "No barcode"}
+                          {barcodeText(row)}
                         </span>
                       </div>
                     ) : (
@@ -573,7 +584,7 @@ export function ProductPricesGrid({
                         data-testid={T.code(row.ref)}
                         className="mt-0.5 text-xs font-normal tabular-nums text-navy/60"
                       >
-                        {row.code ?? "No barcode"}
+                        {barcodeText(row)}
                       </div>
                     )}
                     {/* N7: outside the row header (it would join the header's name); compact has no Contains cell, so there it stays */}
@@ -633,7 +644,7 @@ export function ProductPricesGrid({
                 ))}
               </div>
               <div className="mb-2 text-xs text-navy/70">
-                Barcode: <span data-testid={T.code(row.ref)}>{row.code ?? "No barcode"}</span>
+                Barcode: <span data-testid={T.code(row.ref)}>{barcodeText(row)}</span>
               </div>
               <dl className="grid grid-cols-2 gap-2">
                 {TIERS.map((t, i) => {
