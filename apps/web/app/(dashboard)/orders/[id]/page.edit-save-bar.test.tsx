@@ -84,7 +84,7 @@ describe("order edit mode: one sticky Save bar (O2 / F11)", () => {
     expect(saves).toHaveLength(1);
     const bar = screen.getByTestId("edit-save-bar");
     expect(bar).toContainElement(saves[0]);
-    expect(bar).toHaveClass("sticky", "bottom-0");
+    expect(bar).toHaveClass("sticky", "-bottom-24");
     expect(within(bar).getByRole("button", { name: /^cancel$/i })).toBeInTheDocument();
     const card = screen.getByRole("heading", { name: /line items/i }).closest("div.rounded-lg")!;
     expect(card).toContainElement(bar);
