@@ -6,6 +6,7 @@ import { ProductPricesGrid } from "../../ProductPricesGrid";
 import type { UnitsCardProduct } from "../../ProductUnitsCard";
 import { UNITS_V2_TESTIDS as T } from "../../units-v2-testids";
 import { AlsoUpdatePanel } from "../change-prices/AlsoUpdatePanel";
+import { AddUnitIntentProvider } from "./add-unit-intent";
 import { OrderUnitDraft } from "./OrderUnitDraft";
 import { BTN, SkipToSave } from "./PriceEditBar";
 import { usePriceDraft } from "./usePriceDraft";
@@ -65,48 +66,50 @@ export function EditablePricesGrid({
   }, [editing]);
 
   return (
-    <div ref={root} className="relative">
-      {editing && <SkipToSave />}
-      <div className="mb-2 flex flex-wrap items-center justify-end gap-2">
-        {editing && (
-          <span
-            data-testid={T.editingPill}
-            className="rounded-full bg-amber-100 px-2.5 py-1 text-xs font-medium text-amber-900"
-          >
-            Editing
-          </span>
-        )}
-        {onOpenChangePrices && anyEditable && (
-          <button
-            ref={changePricesRef}
-            type="button"
-            id="btn-change-open"
-            data-testid={T.btnChange}
-            aria-expanded={changePricesOpen}
-            aria-controls="change-panel"
-            className={BTN}
-            onClick={onOpenChangePrices}
-          >
-            Change prices
-          </button>
-        )}
-        {!editing && anyEditable && (
-          <button
-            ref={editBtn}
-            type="button"
-            data-testid={T.btnEdit}
-            className={BTN}
-            onClick={() => d.startEditing()}
-          >
-            Edit
-          </button>
-        )}
+    <AddUnitIntentProvider>
+      <div ref={root} className="relative">
+        {editing && <SkipToSave />}
+        <div className="mb-2 flex flex-wrap items-center justify-end gap-2">
+          {editing && (
+            <span
+              data-testid={T.editingPill}
+              className="rounded-full bg-amber-100 px-2.5 py-1 text-xs font-medium text-amber-900"
+            >
+              Editing
+            </span>
+          )}
+          {onOpenChangePrices && anyEditable && (
+            <button
+              ref={changePricesRef}
+              type="button"
+              id="btn-change-open"
+              data-testid={T.btnChange}
+              aria-expanded={changePricesOpen}
+              aria-controls="change-panel"
+              className={BTN}
+              onClick={onOpenChangePrices}
+            >
+              Change prices
+            </button>
+          )}
+          {!editing && anyEditable && (
+            <button
+              ref={editBtn}
+              type="button"
+              data-testid={T.btnEdit}
+              className={BTN}
+              onClick={() => d.startEditing()}
+            >
+              Edit
+            </button>
+          )}
+        </div>
+        {panel}
+        {unitControls}
+        <ProductPricesGrid product={product} edit={d.api} rowAction={rowAction} />
+        {editing && <OrderUnitDraft />}
+        {d.plan && <AlsoUpdatePanel plan={d.plan.plan} />}
       </div>
-      {panel}
-      {unitControls}
-      <ProductPricesGrid product={product} edit={d.api} rowAction={rowAction} />
-      {editing && <OrderUnitDraft />}
-      {d.plan && <AlsoUpdatePanel plan={d.plan.plan} />}
-    </div>
+    </AddUnitIntentProvider>
   );
 }

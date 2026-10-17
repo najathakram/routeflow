@@ -11,6 +11,7 @@ import { productTierLabel } from "@/lib/tier-one-label";
 import type { UnitsCardProduct } from "./ProductUnitsCard";
 import { UNITS_V2_TESTIDS as T } from "./units-v2-testids";
 import type { GridEditApi } from "./units-v2/edit/edit-types";
+import { useAddUnitIntent, type AddUnitIntent } from "./units-v2/edit/add-unit-intent";
 import { ADD_UNIT_FIRST } from "./units-v2/edit/view-from-grid";
 
 /**
@@ -56,12 +57,21 @@ interface CellView {
   aria: string;
 }
 
+/**
+ * K11-11: the implicit base row of a product whose smallest unit does not exist yet. The grid still serves it a ladder
+ * ("Piece $1.50 Auto"), but nothing backs it, so no price may be shown for it.
+ */
+const isMissingUnit = (row: ProductPriceGridRowDto): boolean =>
+  row.kind === "base" && !row.editable && ADD_UNIT_FIRST(row.notEditableReason);
+
 function cellView(
   row: ProductPriceGridRowDto,
   tier: number,
   name: string,
   cell: ProductPriceGridCellDto | undefined,
 ): CellView {
+  if (isMissingUnit(row))
+    return { tier, display: "—", word: null, aria: `${name} ${row.label} price, no unit yet` };
   if (!cell) return { tier, display: "—", word: null, aria: `${name} ${row.label} price, none` };
   const noPrice = row.kind === "pack" && tier === 1 && Number(cell.value) === 0;
   const display = noPrice ? "No price" : formatMoney(cell.value);
@@ -106,27 +116,58 @@ const addUnitTarget = (): HTMLElement | null =>
     : (document.querySelector<HTMLElement>('[data-testid="units-v2-add-open"]') ??
       document.getElementById("new-unit-name"));
 
-/** A pointer from a refused first price to the Add unit control: a button when the control exists, else nothing. */
-function AddUnitPointer({ unit }: { unit: string }) {
+/**
+ * Open the Add a unit panel (K11-11): never toggle it shut. A panel that is already open keeps its form and takes
+ * focus in its first field; a closed one opens, as the Piece when `asPiece` and the shell shares an intent flag.
+ */
+function openAddUnit(intent: AddUnitIntent | null, asPiece: boolean) {
+  const el = addUnitTarget();
+  if (!el) return;
+  if (el.dataset.testid !== "units-v2-add-open") {
+    el.scrollIntoView?.({ block: "center" });
+    el.focus();
+    return;
+  }
+  const opener = el as HTMLButtonElement;
+  if (opener.getAttribute("aria-expanded") === "true") {
+    const panel = document.getElementById("units-v2-add-panel");
+    panel?.scrollIntoView?.({ block: "center" });
+    panel?.querySelector<HTMLElement>("input")?.focus();
+    return;
+  }
+  opener.scrollIntoView?.({ block: "center" });
+  // Waiting on unsaved prices disables it: scrolled to, its hint says why.
+  if (opener.disabled) return;
+  if (intent) intent.current = asPiece;
+  try {
+    opener.click();
+  } finally {
+    if (intent) intent.current = false;
+  }
+}
+
+/**
+ * A pointer from a missing unit (or a refused first price) to the Add unit control: nothing when the control does not
+ * exist. `button` is the missing unit's row head, a real secondary button; the inline form sits in a refusal message.
+ */
+function AddUnitPointer({ unit, button = false }: { unit: string; button?: boolean }) {
   // Checked after paint: the v2 opener is a sibling of the grid, so it is not in the DOM yet while this renders.
   const [has, setHas] = React.useState(false);
   React.useEffect(() => setHas(addUnitTarget() != null), []);
+  const intent = useAddUnitIntent();
   if (!has) return null;
   return (
     <button
       type="button"
       data-testid={T.addUnitPointer}
-      className="mt-0.5 block underline"
-      onClick={() => {
-        const el = addUnitTarget();
-        el?.scrollIntoView?.({ block: "center" });
-        if (el?.dataset.testid === "units-v2-add-open") {
-          // Waiting on unsaved prices disables it: scroll to it, its hint says why.
-          if (!(el as HTMLButtonElement).disabled) el.click();
-        } else el?.focus();
-      }}
+      className={
+        button
+          ? "mt-1 block h-8 rounded-md border border-line-strong bg-white px-2.5 text-xs font-medium text-navy hover:bg-surface-muted"
+          : "mt-0.5 block underline"
+      }
+      onClick={() => openAddUnit(intent, true)}
     >
-      Add a {unit} unit
+      {button ? `Add ${unit} unit` : `Add a ${unit} unit`}
     </button>
   );
 }
@@ -137,9 +178,7 @@ function NotEditable({ row }: { row: ProductPriceGridRowDto }) {
   return (
     <p data-testid={T.notEditable(row.ref)} className="mt-0.5 text-[11px] font-normal text-navy/55">
       {row.notEditableReason}
-      {row.kind === "base" && ADD_UNIT_FIRST(row.notEditableReason) && (
-        <AddUnitPointer unit={row.label} />
-      )}
+      {isMissingUnit(row) && <AddUnitPointer unit={row.label} button />}
     </p>
   );
 }

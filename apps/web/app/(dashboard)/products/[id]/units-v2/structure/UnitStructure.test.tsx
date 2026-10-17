@@ -719,8 +719,9 @@ describe("K10e F07: a product with no 1-piece unit can get one from the pointer"
     const user = userEvent.setup();
     render();
     await user.click(addOpener()); // panel open, blank
-    await user.click(pointer()); // the opener toggles it SHUT: onOpen never fires for this pointer click
-    expect(screen.queryByTestId("units-v2-add-panel")).toBeNull();
+    await user.click(pointer()); // K11-11: the pointer never toggles an open panel shut, and onOpen never fires for it
+    expect(screen.getByTestId("units-v2-add-panel")).toBeInTheDocument();
+    await user.click(screen.getByTestId("units-v2-add-cancel"));
     await user.click(addOpener());
     expect(count()).toHaveValue(null);
     expect(name()).toHaveValue("");
