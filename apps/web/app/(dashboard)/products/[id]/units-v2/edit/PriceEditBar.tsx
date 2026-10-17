@@ -50,6 +50,8 @@ function useBarScrollPadding() {
 }
 
 const FINISH_FIRST = "Finish Change prices first.";
+// N3: what Ctrl/Cmd+S says to a screen reader. Not the slot button's words: that sentence is on screen once, in the slot.
+const SAVE_PAUSED = "Save is paused while Change prices is open.";
 
 /** K11-15: right after Change prices Apply the bar says what is staged; any later edit is the plain count. */
 const countLine = (count: number, lead: string | null) =>
@@ -117,7 +119,7 @@ export function PriceEditBar({ changePricesOpen = false }: { changePricesOpen?: 
           ) : (
             <span>{d.count === 0 ? "Nothing changed yet" : countLine(d.count, d.appliedLead)}</span>
           )}
-          {told && changePricesOpen && <span className="ml-2">{FINISH_FIRST}</span>}
+          {told && changePricesOpen && <span className="sr-only">{SAVE_PAUSED}</span>}
           {!confirm && !changePricesOpen && (
             <span data-testid={T.ebHint} className="ml-2 hidden text-xs text-navy/60 md:inline">
               {isMac() ? "⌘S saves" : "Ctrl+S saves"}
