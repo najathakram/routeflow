@@ -1386,7 +1386,11 @@ export default function ProductDetailPage() {
                 data-testid="product-details-header"
                 className="flex flex-wrap items-center justify-between gap-3 border-b border-surface-border px-5 py-3.5 max-sm:py-2"
               >
-                <h3 className="text-[11px] font-semibold uppercase tracking-[0.08em] text-navy/70">
+                <h3
+                  data-testid="product-details-heading"
+                  tabIndex={-1}
+                  className="text-[11px] font-semibold uppercase tracking-[0.08em] text-navy/70 outline-none"
+                >
                   Details
                 </h3>
                 <div className="flex max-w-full flex-wrap items-center justify-end gap-2">
@@ -1449,6 +1453,7 @@ export default function ProductDetailPage() {
                         </div>
                       ) : (
                         <input
+                          aria-label="Product name"
                           value={(editDraft.name as string) ?? ""}
                           onChange={(e) => setEditDraft((d) => ({ ...d, name: e.target.value }))}
                           className="w-full rounded border border-surface-border px-2 py-1 text-lg font-bold text-navy focus:outline-none focus:ring-2 focus:ring-brand-500"
@@ -1748,6 +1753,11 @@ export default function ProductDetailPage() {
                     productId={product.id}
                     isEditing={isEditing}
                     anchor={() => detailsCardRef.current}
+                    fallback={() =>
+                      detailsCardRef.current?.querySelector<HTMLElement>(
+                        '[data-testid="product-details-heading"]',
+                      )
+                    }
                   />
                 ) : (
                   tiersBlock
@@ -1850,7 +1860,7 @@ export default function ProductDetailPage() {
             )}
           </div>
           {/* ── Left: image gallery + stock card ── */}
-          <div className="space-y-4 lg:col-start-1 lg:row-start-1 lg:row-span-2">
+          <div data-region-covers className="space-y-4 lg:col-start-1 lg:row-start-1 lg:row-span-2">
             {/* ── Image gallery ── */}
             <div
               data-testid="product-image-card"

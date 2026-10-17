@@ -237,6 +237,26 @@ describe("K11-20c card: v2 on shows served figures, not price inputs", () => {
   });
 });
 
+describe("K11-20c card: nits", () => {
+  it("figure buttons are at least 44 px tall below sm", () => {
+    render(<Page />);
+    expect(screen.getByRole("button", { name: "Edit Retail Box price" }).className).toMatch(
+      /min-h-11/,
+    );
+  });
+
+  it("when the grid query errors, the figures are the unit's own prices as read-only text, not dashes", () => {
+    mockGrid = { data: undefined, isLoading: false, isError: true };
+    render(<Page />);
+    openTiers();
+    expect(priceInputs()).toHaveLength(0);
+    expect(screen.getByText("$17.00")).toBeInTheDocument();
+    expect(screen.getByText("$99.00")).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: /^Edit .* price$/ })).toBeNull();
+    // Only a price the unit does not store is a dash (its Auto tiers have no stored value).
+  });
+});
+
 describe("K11-20c card: it opens the window on that box", () => {
   it("clicking 'Edit Wholesale Box price' opens the window with focus in that box", async () => {
     const user = userEvent.setup();

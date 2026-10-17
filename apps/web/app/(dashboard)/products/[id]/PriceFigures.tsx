@@ -36,6 +36,7 @@ export function PriceFigure({
   fallback,
   disabled,
   className,
+  plainValue,
 }: {
   row: ProductPriceGridRowDto | undefined;
   tier: (typeof TIERS)[number];
@@ -45,11 +46,23 @@ export function PriceFigure({
   fallback?: () => HTMLElement | null | undefined;
   disabled?: boolean;
   className?: string;
+  /**
+   * The grid query failed, so there is no served row: show this (the unit's or product's own stored price) as read-only
+   * text instead of a dash. Not a button: nothing can be opened without the grid.
+   */
+  plainValue?: number | string | null;
 }) {
   const opener = usePriceWindowOpener();
   const names = useTierLabels().data;
   const describedBy = React.useId();
   const cell = row?.cells.find((c) => c.tier === tier);
+  if ((!row || !cell) && plainValue != null && Number(plainValue) > 0) {
+    return (
+      <span className={className}>
+        <MoneyFigure value={plainValue} className="font-mono text-sm font-medium text-navy" />
+      </span>
+    );
+  }
   if (!row || !cell) {
     return (
       <span className={className}>
@@ -78,7 +91,7 @@ export function PriceFigure({
       data-testid={`price-figure-${row.ref}-${tier}`}
       className={
         className ??
-        "inline-flex min-h-8 items-center rounded-md px-1.5 py-0.5 text-left hover:bg-surface-raised focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand-500/40 disabled:opacity-60"
+        "inline-flex min-h-11 items-center sm:min-h-8 rounded-md px-1.5 py-0.5 text-left hover:bg-surface-raised focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand-500/40 disabled:opacity-60"
       }
       onClick={(e) =>
         opener.open({
@@ -103,10 +116,13 @@ export function DetailsPriceLine({
   productId,
   isEditing,
   anchor,
+  fallback,
 }: {
   productId: string;
   isEditing: boolean;
   anchor: () => HTMLElement | null | undefined;
+  /** Where focus goes on close if the figure is gone (the Details heading). */
+  fallback?: () => HTMLElement | null | undefined;
 }) {
   const opener = usePriceWindowOpener();
   const names = useTierLabels().data;
@@ -140,7 +156,7 @@ export function DetailsPriceLine({
         {TIERS.map((t) => (
           <li key={t} className="flex items-baseline gap-1.5">
             <span className="text-xs text-navy/70">{productTierLabel(names, t)}</span>
-            <PriceFigure row={plain} tier={t} anchor={anchor} />
+            <PriceFigure row={plain} tier={t} anchor={anchor} fallback={fallback} />
           </li>
         ))}
       </ul>

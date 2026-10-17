@@ -143,6 +143,29 @@ describe("K11-20c: where every legacy-card control lives after the change (secti
     expect(src).toContain(needle as string);
   });
 
+  it.each([
+    [
+      "Details Set all to Retail: MOVED to the window's Change prices (Raise/Lower, Also update)",
+      "Change prices",
+    ],
+    [
+      "Details case-price field: MOVED to the Retail box of the Case row in the window and the grid",
+      "Edit prices",
+    ],
+    [
+      "Details ≈ $x / piece hint: MOVED to the grid's per-unit rows (the Piece row shows it)",
+      "Piece",
+    ],
+  ])("%s", (_row, needle) => {
+    // In v2 these Details controls are gone (see the next test); each has a named home that still renders.
+    const win = read("units-v2/window/PriceEditWindow.tsx");
+    const grid = read("ProductPricesGrid.tsx");
+    expect(win + grid + figs + read("units-v2/edit/EditablePricesGrid.tsx")).toContain(needle);
+    // and in v2 Details, the legacy controls are not rendered
+    expect(page).toContain("{!isFamily && !pricesInWindow && priceEachRow}");
+    expect(page).toMatch(/pricesInWindow \? \(\s*<DetailsPriceLine/);
+  });
+
   it("the flag-off card and Details keep every price input path", () => {
     expect(card).toContain("aria-label={`${unit.label} price`}");
     expect(card).toContain('id="new-unit-price"');
@@ -157,6 +180,12 @@ describe("K11-20c: where every legacy-card control lives after the change (secti
     expect(page).toContain("const pricesInWindow = v2 && !unitStructureGoverned(product);");
     expect(page).toMatch(/pricesInWindow \? \(\s*<DetailsPriceLine/);
     expect(read("PriceFigures.tsx")).toContain("Save or cancel Details first");
+  });
+
+  it("the covered image column is marked for the inline full-width region, and the Details heading is the figures' fallback", () => {
+    expect(page).toContain("data-region-covers");
+    expect(page).toContain('data-testid="product-details-heading"');
+    expect(page).toMatch(/<DetailsPriceLine[\s\S]*?fallback=\{/);
   });
 
   it("the page mounts the price host once, around the whole page", () => {

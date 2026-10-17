@@ -101,7 +101,7 @@ describe("K11-20c host: one draft and one opener for the page", () => {
     expect(screen.queryByRole("dialog")).toBeNull();
     expect(screen.getByLabelText("inline case t2")).toHaveFocus();
     expect(draft!.editingIn).toBe("inline");
-    expect(screen.queryByTestId("price-window-note")).toBeNull();
+    expect(screen.getByTestId("price-window-note")).toBeEmptyDOMElement();
     origin.remove();
   });
 
@@ -163,6 +163,59 @@ describe("K11-20c host: a served-grid revision change refreshes the product and 
     const after = spy.mock.calls.length;
     rerender();
     expect(spy.mock.calls.length).toBe(after);
+  });
+});
+
+describe("K11-20c host: nits", () => {
+  it("navigating to another product does not invalidate (the revision it sees is a new product's first)", () => {
+    const spy = jest.spyOn(qc, "invalidateQueries");
+    const view = mount();
+    mockGrid = withRevision(12);
+    view.rerender(
+      <QueryClientProvider client={qc}>
+        <PriceWindowHost product={{ ...PRODUCT, id: "p2" }} enabled>
+          <Probe />
+        </PriceWindowHost>
+      </QueryClientProvider>,
+    );
+    expect(spy).not.toHaveBeenCalled();
+  });
+
+  it("the N7 note lives in a live region that is always mounted, never takes the pointer, and sits above the Save bar", () => {
+    mount();
+    const live = screen.getByTestId("price-window-note");
+    expect(live).toHaveAttribute("role", "status");
+    expect(live).toBeEmptyDOMElement();
+    act(() => {
+      draft!.startEditing(undefined, "inline");
+    });
+    const origin = document.createElement("button");
+    document.body.appendChild(origin);
+    act(() => opener!.open({ origin, anchor: origin }));
+    expect(screen.getByTestId("price-window-note")).toHaveTextContent(/edited in the grid/i);
+    expect(live.className).toMatch(/pointer-events-none/);
+    expect(live.className).toMatch(/bottom-2[0-9]|bottom-3[0-9]/);
+    origin.remove();
+  });
+
+  it("from the header's Edit prices (no price named) while editing inline, focus goes to the first inline box", () => {
+    mount(
+      true,
+      <>
+        <input data-testid="units-v2-input-case-1" aria-label="first inline" />
+        <input data-testid="units-v2-input-box-1" aria-label="second inline" />
+      </>,
+    );
+    act(() => {
+      draft!.startEditing(undefined, "inline");
+    });
+    const origin = document.createElement("button");
+    document.body.appendChild(origin);
+    act(() => opener!.open({ origin, anchor: origin }));
+    expect(screen.getByLabelText("first inline")).toHaveFocus();
+    expect(screen.getByTestId("price-window-note")).toBeEmptyDOMElement();
+    expect(screen.queryByRole("dialog")).toBeNull();
+    origin.remove();
   });
 });
 
@@ -242,6 +295,86 @@ describe("K11-20c region: the prices grid is full width only while the inline ed
     act(() => draft!.discard());
     expect(screen.getByLabelText("probe")).toBe(input);
     expect(input).toHaveFocus();
+  });
+
+  it("while wide it is an opaque raised surface, so nothing under it shows through", () => {
+    mount(true, <ProductPricingRegion>x</ProductPricingRegion>);
+    expect(region().className).not.toMatch(/bg-white|shadow-card/);
+    act(() => {
+      draft!.startEditing(undefined, "inline");
+    });
+    expect(region().className).toMatch(/lg:bg-white/);
+    expect(region().className).toMatch(/lg:shadow-card/);
+  });
+
+  describe("the column it covers is inert only while wide, at lg and up", () => {
+    const original = window.matchMedia;
+    const stubLg = (matches: boolean) => {
+      window.matchMedia = ((query: string) => ({
+        matches,
+        media: query,
+        addEventListener: jest.fn(),
+        removeEventListener: jest.fn(),
+        addListener: jest.fn(),
+        removeListener: jest.fn(),
+        dispatchEvent: jest.fn(),
+        onchange: null,
+      })) as unknown as typeof window.matchMedia;
+    };
+    afterEach(() => {
+      window.matchMedia = original;
+    });
+    const withColumn = () =>
+      mount(
+        true,
+        <>
+          <div data-region-covers data-testid="covered">
+            <button type="button">hidden under the grid</button>
+          </div>
+          <ProductPricingRegion>x</ProductPricingRegion>
+        </>,
+      );
+
+    it("is inert while the inline editor edits at lg and up, and not before or after", () => {
+      stubLg(true);
+      withColumn();
+      expect(screen.getByTestId("covered")).not.toHaveAttribute("inert");
+      act(() => {
+        draft!.startEditing(undefined, "inline");
+      });
+      expect(screen.getByTestId("covered")).toHaveAttribute("inert");
+      act(() => draft!.discard());
+      expect(screen.getByTestId("covered")).not.toHaveAttribute("inert");
+    });
+
+    it("is not inert below lg even while editing inline", () => {
+      stubLg(false);
+      withColumn();
+      act(() => {
+        draft!.startEditing(undefined, "inline");
+      });
+      expect(screen.getByTestId("covered")).not.toHaveAttribute("inert");
+    });
+
+    it("is not inert while the window edits", () => {
+      stubLg(true);
+      withColumn();
+      act(() => {
+        draft!.startEditing(undefined, "window");
+      });
+      expect(screen.getByTestId("covered")).not.toHaveAttribute("inert");
+    });
+
+    it("is released when the region unmounts mid-edit", () => {
+      stubLg(true);
+      const view = withColumn();
+      act(() => {
+        draft!.startEditing(undefined, "inline");
+      });
+      expect(screen.getByTestId("covered")).toHaveAttribute("inert");
+      view.unmount();
+      expect(document.querySelector("[data-region-covers]")).toBeNull();
+    });
   });
 
   it("without a page-level draft it is just the normal column", () => {

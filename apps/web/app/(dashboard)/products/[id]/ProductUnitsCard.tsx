@@ -146,6 +146,8 @@ function UnitRow({
    */
   figures?: {
     grid: ProductPriceGridDto | undefined;
+    /** The grid query failed with nothing cached: figures show the stored prices as read-only text. */
+    errored: boolean;
     card: () => HTMLElement | null;
     heading: () => HTMLElement | null;
   };
@@ -163,7 +165,13 @@ function UnitRow({
   const gridRow = figures ? rowForUnit(figures.grid, unit) : undefined;
   const figure = (t: (typeof TIERS)[number]) =>
     figures ? (
-      <PriceFigure row={gridRow} tier={t} anchor={figures.card} fallback={figures.heading} />
+      <PriceFigure
+        row={gridRow}
+        tier={t}
+        anchor={figures.card}
+        fallback={figures.heading}
+        plainValue={figures.errored ? base.prices[t - 1] : undefined}
+      />
     ) : null;
   const w = unitWords();
   const valid = draft.label.trim() !== "" && draft.factor != null && draft.factor >= 1;
@@ -386,7 +394,12 @@ export function ProductUnitsCard({
   const grid = gridQuery.data;
   const figures = shellOwns && opener != null;
   const figureCtx = figures
-    ? { grid, card: () => cardRef.current, heading: () => headingRef.current }
+    ? {
+        grid,
+        errored: gridQuery.isError && !grid,
+        card: () => cardRef.current,
+        heading: () => headingRef.current,
+      }
     : undefined;
   const anyEditable = !!grid?.rows?.some((r) => r.editable);
   // Any write that is not this card's own default change makes the Undo stale: the unit writes below, the v2 shell's Add /
@@ -583,6 +596,7 @@ export function ProductUnitsCard({
                 tier={1}
                 anchor={() => cardRef.current}
                 fallback={() => headingRef.current}
+                plainValue={gridQuery.isError && !grid ? product.pricePerUnit : undefined}
               />
             ) : (
               <span className="font-mono tabular-nums text-navy">
