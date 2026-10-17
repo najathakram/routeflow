@@ -1,6 +1,7 @@
 "use client";
 
 import * as React from "react";
+import { usePathname, useRouter, useSearchParams } from "next/navigation";
 import { isSpecialTier } from "@routeflow/pricing";
 import type {
   CustomerProductUnitPricesDto,
@@ -29,6 +30,37 @@ const PAGE_SIZE = 10;
 
 /** V10: "Remember the last choice for the session". Module scope: lives for the SPA session, gone on reload. */
 let lastChoice: { id: string; name: string } | null = null;
+
+/**
+ * K11-06: the picked customer lives in the URL (`?customer=<id>`, the id only, never the name) on the product page,
+ * so a refresh or a shared link comes back to the same customer. Product-page mode only: the customer page (a fixed
+ * customerId) never reads or writes it. The router can be absent (a component test with no app router mounted); then
+ * the write is a no-op and the session memory above still works.
+ */
+function useCustomerParam(enabled: boolean) {
+  let router: ReturnType<typeof useRouter> | null = null;
+  try {
+    // useRouter makes exactly one useContext call and throws only after it, so the hook order is the same on
+    // every render whether or not an app router is mounted.
+    // eslint-disable-next-line react-hooks/rules-of-hooks
+    router = useRouter();
+  } catch {
+    router = null; // no app router mounted
+  }
+  const pathname = usePathname();
+  const searchParams = useSearchParams();
+  const fromUrl = enabled ? searchParams?.get("customer") || null : null;
+  const write = (id: string | null) => {
+    if (!enabled || !router) return;
+    const params = new URLSearchParams(searchParams?.toString() ?? "");
+    if (id) params.set("customer", id);
+    else params.delete("customer");
+    const qs = params.toString();
+    const path = pathname ?? window.location.pathname;
+    router.replace(`${path}${qs ? `?${qs}` : ""}${window.location.hash}`, { scroll: false });
+  };
+  return { fromUrl, write };
+}
 
 /** Forget the remembered customer (tests; a sign-out could call it too). */
 export function resetCustomerViewMemory() {
@@ -192,8 +224,9 @@ export interface CustomerPriceViewProps {
 
 export function CustomerPriceView({ customerId, productId }: CustomerPriceViewProps) {
   const fixed = customerId ?? null;
+  const url = useCustomerParam(!fixed);
   const [picked, setPicked] = React.useState<{ id: string; name: string } | null>(
-    fixed ? null : lastChoice,
+    fixed ? null : url.fromUrl ? { id: url.fromUrl, name: "" } : lastChoice,
   );
   const [page, setPage] = React.useState(1);
   const activeId = fixed ?? picked?.id ?? null;
@@ -204,7 +237,19 @@ export function CustomerPriceView({ customerId, productId }: CustomerPriceViewPr
     lastChoice = c;
     setPicked(c);
     setPage(1);
+    url.write(c?.id ?? null);
   };
+
+  // K11-06: an id the server refuses (gone, or not this business's) drops out of the URL and the session memory,
+  // so a refresh does not loop on it. The error line and the picker stay on screen.
+  const refused = !fixed && activeId !== null && q.isError;
+  const dropRefused = React.useRef(url.write);
+  dropRefused.current = url.write;
+  React.useEffect(() => {
+    if (!refused) return;
+    if (lastChoice?.id === activeId) lastChoice = null;
+    dropRefused.current(null);
+  }, [refused, activeId]);
 
   const res = q.data;
   const customerName = res?.customerName ?? picked?.name ?? "";
@@ -221,16 +266,16 @@ export function CustomerPriceView({ customerId, productId }: CustomerPriceViewPr
         {fixed ? "Unit prices" : "Customer view"}
       </h2>
 
-      {fixed ? null : activeId ? (
+      {fixed ? null : activeId && !refused ? (
         <div className="flex flex-wrap items-center gap-2 text-sm">
           <span data-testid={T.chosen} className="font-medium text-navy">
-            {customerName}
+            {customerName || "Loading customer..."}
           </span>
           <button
             type="button"
             data-testid={T.change}
             onClick={() => choose(null)}
-            aria-label={`Change customer, now ${customerName}`}
+            aria-label={customerName ? `Change customer, now ${customerName}` : "Change customer"}
             className="text-sm text-brand-600 underline"
           >
             Choose another customer
@@ -239,9 +284,11 @@ export function CustomerPriceView({ customerId, productId }: CustomerPriceViewPr
       ) : (
         <>
           <CustomerPicker onPick={choose} />
-          <p data-testid={T.empty} className="text-sm text-navy/70">
-            Choose a customer to see their units and prices.
-          </p>
+          {refused ? null : (
+            <p data-testid={T.empty} className="text-sm text-navy/70">
+              Choose a customer to see their units and prices.
+            </p>
+          )}
         </>
       )}
 
