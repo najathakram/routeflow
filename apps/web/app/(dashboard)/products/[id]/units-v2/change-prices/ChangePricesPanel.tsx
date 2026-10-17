@@ -12,7 +12,8 @@ import { Button } from "@routeflow/ui/web";
 import { formatMoney } from "@/lib/format";
 import { usePriceDraft, type PriceDraft } from "../edit/usePriceDraft";
 import { PLAN_TESTIDS as T } from "./plan-testids";
-import { PlanView } from "./PlanView";
+import { againstReason, movesAgainst } from "./against-reason";
+import { AGAINST, PlanView } from "./PlanView";
 import { foldPlan, parseAmount, usePlanSelection } from "./selection";
 import { usePlanNames } from "./usePlanNames";
 
@@ -276,17 +277,41 @@ function ChangePricesForm({
               <div className="overflow-x-auto">
                 <table className="w-full min-w-[300px] text-sm">
                   <caption className="sr-only">Old and new prices for every unit and tier</caption>
-                  <tbody>
-                    {plan.changes.map((c) => (
-                      <tr key={`${c.ref}|${c.tier}`} className="border-t border-surface-border">
-                        <th scope="row" className="py-1 text-left font-normal text-navy">
-                          {tierName(c.tier)} {c.label}
-                        </th>
-                        <td className="tabular-nums text-ink-500">{formatMoney(c.from)}</td>
-                        <td className="tabular-nums font-medium text-navy">{formatMoney(c.to)}</td>
-                      </tr>
-                    ))}
-                  </tbody>
+                  {plan.changes.map((c) => {
+                    const against = movesAgainst(direction, c);
+                    return (
+                      <tbody
+                        key={`${c.ref}|${c.tier}`}
+                        data-against={against ? "true" : "false"}
+                        className="border-t border-surface-border"
+                      >
+                        <tr className={against ? AGAINST : undefined}>
+                          <th scope="row" className="py-1 text-left font-normal text-navy">
+                            {tierName(c.tier)} {c.label}
+                          </th>
+                          <td className="tabular-nums text-ink-500">{formatMoney(c.from)}</td>
+                          <td className="tabular-nums font-medium text-navy">
+                            {formatMoney(c.to)}
+                          </td>
+                        </tr>
+                        {against && (
+                          <tr className={AGAINST}>
+                            <td colSpan={3} className="pb-1.5 text-xs text-ink-500">
+                              {againstReason({
+                                view,
+                                rules: rules ?? {},
+                                plan,
+                                change: c,
+                                direction,
+                                also: !!also,
+                                tierName,
+                              })}
+                            </td>
+                          </tr>
+                        )}
+                      </tbody>
+                    );
+                  })}
                 </table>
               </div>
               <p className="mt-2 text-xs text-ink-500">
