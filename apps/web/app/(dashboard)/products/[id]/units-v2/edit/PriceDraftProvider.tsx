@@ -3,7 +3,13 @@
 import * as React from "react";
 import { PriceDraftContext, useCreatePriceDraft, type PriceDraftHooks } from "./usePriceDraft";
 
-/** One draft per product page; K3's grid, K4's panels, K5 and K6 all read it through usePriceDraft(). */
+export { usePriceDraftOptional } from "./usePriceDraft";
+
+/**
+ * One draft per product page; K3's grid, K4's panels, K5 and K6 all read it through usePriceDraft(). K11-20: the page may
+ * mount it above both the inline section and the floating window (ProductPricingV2 then uses it instead of its own);
+ * `usePriceDraftOptional()` reads it without throwing when there is none.
+ */
 export function PriceDraftProvider({
   productId,
   children,

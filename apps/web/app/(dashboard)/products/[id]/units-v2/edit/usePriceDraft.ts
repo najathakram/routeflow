@@ -83,13 +83,26 @@ const withLine = (notice: string | null, line: string) =>
 const asCellPatches = (ps: readonly { ref: string; tier: number; to: number | null }[]) =>
   ps.map((p): CellPatch => ({ ref: p.ref, tier: p.tier as PriceTier, to: p.to }));
 
+/**
+ * K11-20: which editor owns the draft. The inline grid (the page's own section) and the floating price window are two
+ * surfaces on ONE draft; only one of them edits at a time.
+ */
+export type EditSurface = "inline" | "window";
+
 /** The shared draft store (SPRINT-CONTRACT §3). K3 may add to it, never rename. */
 export interface PriceDraft {
   grid: ProductPriceGridDto | undefined;
   /** The draft ladder (edits, ticked offers and Keeps applied). */
   view: LadderView | null;
+  /** True while either surface edits (its meaning is unchanged); `editingIn` says which. */
   editing: boolean;
-  startEditing: (focus?: CellFocus) => void;
+  /** K11-20: the surface that is editing, or null. A page-level provider exposes it to the page. */
+  editingIn: EditSurface | null;
+  /**
+   * Start editing in `surface` (default "inline"), optionally on one cell. Returns false, and does nothing, while the
+   * OTHER surface is editing; starting the surface that is already editing is fine (a click on another price).
+   */
+  startEditing: (focus?: CellFocus, surface?: EditSurface) => boolean;
   /**
    * K11-13: the cell the last `startEditing(cell)` asked to focus, recorded synchronously (a ref, not state) so the
    * grid's "focus the first box" step can see it in the very render where editing turned on and stand aside.
@@ -131,7 +144,13 @@ export interface PriceDraft {
   saving: boolean;
   saveError: PriceWriteError | null;
   canSave: boolean;
-  lastSave: { auditId: string; revision: number; undo: SavePricesResponse["undo"] } | null;
+  /** `surface` is where the save was made: each surface's status line shows only its own (one Undo on the page). */
+  lastSave: {
+    auditId: string;
+    revision: number;
+    undo: SavePricesResponse["undo"];
+    surface: EditSurface;
+  } | null;
   undo: () => void;
   /** A strict-undo conflict as a preview row: customer, tier-first unit label, money as shown. Display only. */
   conflictRow: (c: CustomerPriceConflict) => UndoPreviewRow;
@@ -169,6 +188,11 @@ export function usePriceDraft(): PriceDraft {
   return d;
 }
 
+/** The draft when a provider is above, else null: for a component that works with or without a page-level provider. */
+export function usePriceDraftOptional(): PriceDraft | null {
+  return React.useContext(PriceDraftContext);
+}
+
 export interface PriceDraftHooks {
   /** K5's status line: called after a successful save. */
   onSaved?: (saved: NonNullable<PriceDraft["lastSave"]>) => void;
@@ -189,7 +213,10 @@ export function useCreatePriceDraft(productId: string, hooks: PriceDraftHooks = 
   const undoMut = useUndoPrices(productId);
 
   const planSeq = React.useRef(0);
-  const [editing, setEditing] = React.useState(false);
+  const [editingIn, setEditingIn] = React.useState<EditSurface | null>(null);
+  const editing = editingIn !== null;
+  // Mirrors `editingIn` but updates synchronously, so two starts in one batch cannot both win.
+  const surfaceRef = React.useRef<EditSurface | null>(null);
   const [entries, setEntries] = React.useState<DraftEntry[]>([]);
   const [openKey, setOpenKey] = React.useState<string | null>(null);
   const [keeps, setKeeps] = React.useState<Pin[]>([]);
@@ -244,7 +271,8 @@ export function useCreatePriceDraft(productId: string, hooks: PriceDraftHooks = 
       : null;
 
   const reset = React.useCallback(() => {
-    setEditing(false);
+    surfaceRef.current = null;
+    setEditingIn(null);
     setEntries([]);
     setOpenKey(null);
     setNotice(null);
@@ -385,9 +413,11 @@ export function useCreatePriceDraft(productId: string, hooks: PriceDraftHooks = 
   const doSave = () => {
     const req = toRequest();
     if (!canSave || !req) return;
+    // Where this save was made, read before the success resets the draft.
+    const surface = surfaceRef.current ?? "inline";
     save.mutate(req, {
       onSuccess: (res) => {
-        const saved = { auditId: res.auditId, revision: res.revision, undo: res.undo };
+        const saved = { auditId: res.auditId, revision: res.revision, undo: res.undo, surface };
         setLastSave(saved);
         hooksRef.current.onSaved?.(saved);
         setUndoStale(false);
@@ -465,18 +495,22 @@ export function useCreatePriceDraft(productId: string, hooks: PriceDraftHooks = 
     };
   };
 
-  const beginEditing = () => {
-    setEditing(true);
+  const beginEditing = (surface: EditSurface) => {
+    surfaceRef.current = surface;
+    setEditingIn(surface);
     setLastSave(null);
     hooksRef.current.onEdit?.();
   };
 
   const api: GridEditApi = {
     editing,
-    begin: (cell) => {
-      beginEditing();
+    begin: (cell, surface = "inline") => {
+      // One editor at a time: the other surface keeps the draft until it saves or discards.
+      if (surfaceRef.current !== null && surfaceRef.current !== surface) return false;
+      beginEditing(surface);
       beginTarget.current = cell ?? null;
       if (cell) setFocus(cell);
+      return true;
     },
     text: (ref, tier, original) => {
       const key = cellKey(ref, tier);
@@ -523,6 +557,7 @@ export function useCreatePriceDraft(productId: string, hooks: PriceDraftHooks = 
     grid,
     view,
     editing,
+    editingIn,
     startEditing: api.begin,
     beginTarget,
     discard: () => {
@@ -601,7 +636,8 @@ export function useCreatePriceDraft(productId: string, hooks: PriceDraftHooks = 
           ? [...(count === 0 ? [] : applied!.leads), lead]
           : null;
       setApplied(leads ? { leads, sig: null } : null);
-      beginEditing();
+      // Change prices Apply is made in the surface that is editing (or opens the inline one).
+      beginEditing(surfaceRef.current ?? "inline");
       const key = `plan:${planSeq.current++}`;
       setEntries([...entries, { kind: "plan", key, plan, replan }]);
       setOpenKey(key);

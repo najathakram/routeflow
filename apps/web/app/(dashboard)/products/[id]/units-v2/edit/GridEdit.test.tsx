@@ -333,7 +333,13 @@ describe("units v2 edit grid (S12a)", () => {
     expect(onEdit).toHaveBeenCalled();
     await type(user, 2, "14.5");
     await user.click(screen.getByTestId(T.ebSave));
-    expect(onSaved).toHaveBeenCalledWith({ auditId: "a1", revision: 8, undo: expect.anything() });
+    // K11-20a: the saved record now says where it was made.
+    expect(onSaved).toHaveBeenCalledWith({
+      auditId: "a1",
+      revision: 8,
+      undo: expect.anything(),
+      surface: "inline",
+    });
     expect(draft.lastSave?.auditId).toBe("a1");
     const preview = await draft.loadUndoPreview();
     expect(preview.revision).toBe(8);
