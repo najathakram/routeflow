@@ -27,7 +27,7 @@ import { useUrlSearch } from "@/lib/hooks/useUrlSearch";
 import { useUrlPage, useResetPageOnChange, useClampPage } from "@/lib/hooks/useUrlPage";
 import { useProducts, useUpdateProduct, useBulkDeleteProducts } from "@/lib/api/products";
 import { applyLadderChange, ladderChangeNote, unitWords, type TierField } from "@routeflow/pricing";
-import { tierLabel } from "@/lib/tier-label";
+import { productTierLabel } from "@/lib/tier-one-label";
 import { useTierLabels, type TierLabelsConfig } from "@/lib/api/tier-labels";
 import { unitsLabel } from "@/lib/stock-label";
 import { useTrackedCategories, type TrackedCategory } from "@/lib/api/tracked-categories";
@@ -54,6 +54,7 @@ import { deactivateFailureToast, isReadOnlyRefusal } from "@/lib/product-reactiv
 import { BulkDeleteSkipReport, type SkippedProduct } from "@/components/BulkDeleteSkipReport";
 import { ReadOnlyHint, WriteButton } from "@/lib/read-only-gate";
 import { ProductsExportButton } from "./_components/ProductsExportButton";
+import { ProductNameLink } from "./_components/ProductNameLink";
 import { RestrictMenu } from "@/components/restrictions/RestrictMenu";
 import { SelectAllMatching } from "@/components/restrictions/SelectAllMatching";
 import { OFF_PAGE_HINT, OFF_PAGE_HINT_ID } from "@/lib/rule-chooser";
@@ -159,6 +160,11 @@ function ProductCard({
   sectionNameById: Map<string, string>;
 }) {
   const status = getProductStatus(product);
+  const trackedTypeTitle = product.trackedCategoryId
+    ? ((product as any).trackedSubcategory?.name ??
+      sectionNameById.get(product.trackedCategoryId) ??
+      "Type")
+    : undefined;
   return (
     <div
       className={cn(
@@ -228,7 +234,13 @@ function ProductCard({
                 context is rendered below as a small caption. Falls back to
                 full `name` for variants whose row still has the legacy
                 "Parent - Variant" composite name (pre-fix data). */}
-            {product.variantName ?? product.name}
+            {selectionMode ? (
+              (product.variantName ?? product.name)
+            ) : (
+              <ProductNameLink id={product.id} stretched srNote={trackedTypeTitle}>
+                {product.variantName ?? product.name}
+              </ProductNameLink>
+            )}
           </p>
         </div>
         <div className="mt-auto flex items-end justify-between gap-1">
@@ -253,12 +265,9 @@ function ProductCard({
           <MerchBadges product={product} />
           {product.trackedCategoryId && (
             <span
-              title={
-                (product as any).trackedSubcategory?.name ??
-                sectionNameById.get(product.trackedCategoryId) ??
-                "Type"
-              }
-              className="rounded-full border border-brand-200 bg-brand-50 px-2 py-0.5 text-[11px] text-brand-700"
+              title={trackedTypeTitle}
+              aria-hidden="true"
+              className="relative z-10 rounded-full border border-brand-200 bg-brand-50 px-2 py-0.5 text-[11px] text-brand-700"
             >
               {sectionNameById.get(product.trackedCategoryId) ?? "Type"}
             </span>
@@ -272,7 +281,7 @@ function ProductCard({
               e.stopPropagation();
               onAddVariant(product.id);
             }}
-            className="mt-1 flex items-center gap-1 text-[10px] text-navy/70 hover:text-brand-500 transition-colors"
+            className="relative z-10 mt-1 flex items-center gap-1 text-[10px] text-navy/70 hover:text-brand-500 transition-colors"
           >
             <Plus className="h-2.5 w-2.5" />
             Add variant
@@ -457,7 +466,7 @@ function makeTableColumns(
             </div>
             <div className="min-w-0">
               <p className="font-semibold text-navy">
-                {p.name}
+                {selectMode ? p.name : <ProductNameLink id={p.id}>{p.name}</ProductNameLink>}
                 {(p as any).isTobacco && (
                   <span
                     title="Tobacco product — tracked separately for monthly tax reports"
@@ -806,7 +815,7 @@ export default function ProductsPage() {
           product as never,
         );
         Object.assign(updates, moved);
-        ladderNote = ladderChangeNote(moved, (n) => tierLabel(tierLabels, n));
+        ladderNote = ladderChangeNote(moved, (n) => productTierLabel(tierLabels, n));
       }
 
       // P0 2026-10-14: a tier commit moves lower tiers only by applyLadderChange (tracking the old value, 0, or above
@@ -819,7 +828,7 @@ export default function ProductsPage() {
           product as never,
         );
         Object.assign(updates, moved);
-        ladderNote = ladderChangeNote(moved, (n) => tierLabel(tierLabels, n));
+        ladderNote = ladderChangeNote(moved, (n) => productTierLabel(tierLabels, n));
       }
 
       await updateProduct.mutateAsync(updates);
@@ -951,7 +960,7 @@ export default function ProductsPage() {
         ? applyLadderChange("pricePerUnit", product.pricePerUnit, newPriceStr, product as never)
         : {};
       Object.assign(updates, moved);
-      const ladderNote = ladderChangeNote(moved, (n) => tierLabel(tierLabels, n));
+      const ladderNote = ladderChangeNote(moved, (n) => productTierLabel(tierLabels, n));
       await updateProduct.mutateAsync(updates);
       toast({
         title: "Price updated",

@@ -9,7 +9,7 @@ import { DecimalInput } from "@/components/MoneyInput";
 import { useAuth } from "@/lib/auth-context";
 import { fmt } from "@/lib/formatting";
 import { useTierLabels } from "@/lib/api/tier-labels";
-import { tierLabel } from "@/lib/tier-label";
+import { productTierLabel } from "@/lib/tier-one-label";
 import {
   useCreateProductUnit,
   useDeleteProductUnit,
@@ -168,11 +168,11 @@ function UnitRow({
           {[2, 3, 4, 5].map((t) => (
             <div key={t}>
               <label className={LABEL} htmlFor={`${idp}-t${t}`}>
-                {tierLabel(tierNames, t)}
+                {productTierLabel(tierNames, t)}
               </label>
               <DecimalInput
                 id={`${idp}-t${t}`}
-                aria-label={`${unit.label} ${tierLabel(tierNames, t)} price`}
+                aria-label={`${unit.label} ${productTierLabel(tierNames, t)} price`}
                 className={FIELD}
                 value={draft.prices[t - 1]}
                 placeholder={derived(t) != null ? fmt(derived(t) as number) : ""}
@@ -449,7 +449,7 @@ export function ProductUnitsCard({ product }: { product: UnitsCardProduct }) {
               <ul className="ml-3">
                 {p.changes.map((c) => (
                   <li key={c.field}>
-                    {tierLabel(tierNames, c.tier)}:{" "}
+                    {productTierLabel(tierNames, c.tier)}:{" "}
                     <span className="font-mono tabular-nums">
                       {fmt(c.from)} → {fmt(c.to)}
                     </span>

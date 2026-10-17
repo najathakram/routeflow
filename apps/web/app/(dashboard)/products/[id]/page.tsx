@@ -7,7 +7,6 @@ import Link from "next/link";
 import { useParams, useRouter } from "next/navigation";
 import {
   ArrowLeft,
-  Package,
   Pencil,
   Check,
   X,
@@ -58,7 +57,7 @@ import {
   type TierField,
 } from "@routeflow/pricing";
 import { useTierLabels } from "@/lib/api/tier-labels";
-import { tierLabel } from "@/lib/tier-label";
+import { productTierLabel, tierOneLabel } from "@/lib/tier-one-label";
 import { unitsLabel } from "@/lib/stock-label";
 import { stockCountLabel } from "../_components/product-status";
 import { PiecesPerBoxValue } from "./PiecesPerBoxValue";
@@ -75,6 +74,7 @@ import { useHasAddon, TOBACCO_ADDON } from "@/lib/api/tobacco";
 import { usePricesV2Enabled } from "@/lib/api/units-v2";
 import { MSRP_ADDON } from "@/lib/api/addons";
 import { CropModal } from "./CropModal";
+import { ProductImagesEmpty } from "./ProductImagesEmpty";
 import { ProductStockCostCard } from "./ProductStockCostCard";
 import { FamilyVariantsEditor } from "@/components/family/FamilyVariantsEditor";
 import { useReactivateFlow } from "./useReactivateFlow";
@@ -817,7 +817,7 @@ export default function ProductDetailPage() {
         priceTier5: variantForm.priceTier5 || variantForm.price,
       };
       const vMoved = ladderChangeNote(editTierPatchMoves(editingVariant as any, vDraft), (n) =>
-        tierLabel(tierLabels, n),
+        productTierLabel(tierLabels, n),
       );
       updateProduct.mutate(
         {
@@ -1205,7 +1205,6 @@ export default function ProductDetailPage() {
               <div className="p-4">
                 {(() => {
                   const images: string[] = (product as any).imageUrls ?? [];
-                  const hasImages = images.length > 0;
                   const safeIdx = Math.min(activeImageIdx, images.length - 1);
 
                   const handleUpload = (files: FileList | null) => queueForCrop(files);
@@ -1226,6 +1225,10 @@ export default function ProductDetailPage() {
                     if (toDelete.length > 0) setPendingImageDelete(toDelete);
                   };
 
+                  if (images.length === 0)
+                    return (
+                      <ProductImagesEmpty onFiles={handleUpload} busy={uploadImages.isPending} />
+                    );
                   return (
                     <div className="space-y-2">
                       {/* Main image / drop zone — 4:5 portrait viewport matching the
@@ -1246,97 +1249,77 @@ export default function ProductDetailPage() {
                         className={cn(
                           "relative h-44 w-full overflow-hidden rounded-xl border lg:h-auto lg:aspect-[4/5]",
                           isDragging && "ring-2 ring-brand-500",
-                          !hasImages && "cursor-pointer",
                           stockStatus === "LOW" && "border-warning/30 bg-warning-bg",
                           stockStatus === "OUT_OF_STOCK" && "border-warning/30 bg-warning-bg",
                           stockStatus === "IN_STOCK" && "border-surface-border bg-surface-raised",
                         )}
-                        onClick={!hasImages ? () => fileInputRef.current?.click() : undefined}
                       >
-                        {hasImages ? (
-                          <>
-                            {/* eslint-disable-next-line @next/next/no-img-element */}
-                            <img
-                              src={images[safeIdx]}
-                              alt={`${product.name} — image ${safeIdx + 1}`}
-                              className="absolute inset-0 h-full w-full cursor-zoom-in object-contain max-lg:![object-position:50%_50%] lg:object-cover"
-                              style={{ objectPosition: objectPositionForUrl(images[safeIdx]) }}
+                        <>
+                          {/* eslint-disable-next-line @next/next/no-img-element */}
+                          <img
+                            src={images[safeIdx]}
+                            alt={`${product.name} — image ${safeIdx + 1}`}
+                            className="absolute inset-0 h-full w-full cursor-zoom-in object-contain max-lg:![object-position:50%_50%] lg:object-cover"
+                            style={{ objectPosition: objectPositionForUrl(images[safeIdx]) }}
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              setLightboxIdx(safeIdx);
+                              setLightboxOpen(true);
+                            }}
+                          />
+                          {/* Delete current image (single) */}
+                          {!selectMode && (
+                            <button
                               onClick={(e) => {
                                 e.stopPropagation();
-                                setLightboxIdx(safeIdx);
-                                setLightboxOpen(true);
+                                const key = (product as any).imageKeys?.[safeIdx];
+                                if (key) setPendingImageDelete([key]);
                               }}
-                            />
-                            {/* Delete current image (single) */}
-                            {!selectMode && (
+                              className={cn(
+                                TAP_TARGET,
+                                "absolute right-2 top-2 rounded-full bg-black/50 text-white hover:bg-danger transition-colors",
+                              )}
+                              title="Delete this image"
+                            >
+                              <Trash2 className="h-3.5 w-3.5" />
+                            </button>
+                          )}
+                          {/* Prev / next arrows */}
+                          {images.length > 1 && !selectMode && (
+                            <>
                               <button
                                 onClick={(e) => {
                                   e.stopPropagation();
-                                  const key = (product as any).imageKeys?.[safeIdx];
-                                  if (key) setPendingImageDelete([key]);
+                                  setActiveImageIdx((i) => (i - 1 + images.length) % images.length);
                                 }}
                                 className={cn(
                                   TAP_TARGET,
-                                  "absolute right-2 top-2 rounded-full bg-black/50 text-white hover:bg-danger transition-colors",
+                                  "absolute left-1 top-1/2 -translate-y-1/2 rounded-full bg-black/40 text-white hover:bg-black/60 transition-colors",
                                 )}
-                                title="Delete this image"
                               >
-                                <Trash2 className="h-3.5 w-3.5" />
+                                <ChevronLeft className="h-4 w-4" />
                               </button>
-                            )}
-                            {/* Prev / next arrows */}
-                            {images.length > 1 && !selectMode && (
-                              <>
-                                <button
-                                  onClick={(e) => {
-                                    e.stopPropagation();
-                                    setActiveImageIdx(
-                                      (i) => (i - 1 + images.length) % images.length,
-                                    );
-                                  }}
-                                  className={cn(
-                                    TAP_TARGET,
-                                    "absolute left-1 top-1/2 -translate-y-1/2 rounded-full bg-black/40 text-white hover:bg-black/60 transition-colors",
-                                  )}
-                                >
-                                  <ChevronLeft className="h-4 w-4" />
-                                </button>
-                                <button
-                                  onClick={(e) => {
-                                    e.stopPropagation();
-                                    setActiveImageIdx((i) => (i + 1) % images.length);
-                                  }}
-                                  className={cn(
-                                    TAP_TARGET,
-                                    "absolute right-8 top-1/2 -translate-y-1/2 rounded-full bg-black/40 text-white hover:bg-black/60 transition-colors",
-                                  )}
-                                >
-                                  <ChevronRight className="h-4 w-4" />
-                                </button>
-                              </>
-                            )}
-                            {/* Page indicator */}
-                            {images.length > 1 && !selectMode && (
-                              <div className="absolute bottom-2 left-1/2 -translate-x-1/2 rounded-full bg-black/40 px-2 py-0.5 text-xs text-white">
-                                {safeIdx + 1} / {images.length}
-                              </div>
-                            )}
-                          </>
-                        ) : (
-                          <div className="flex h-full flex-col items-center justify-center gap-2">
-                            <Package
-                              className={cn(
-                                "h-14 w-14",
-                                stockStatus === "LOW" && "text-warning/30",
-                                stockStatus === "OUT_OF_STOCK" && "text-warning/30",
-                                stockStatus === "IN_STOCK" && "text-navy/15",
-                              )}
-                            />
-                            <p className="text-xs text-navy/70">
-                              Drop images here or click to upload
-                            </p>
-                          </div>
-                        )}
+                              <button
+                                onClick={(e) => {
+                                  e.stopPropagation();
+                                  setActiveImageIdx((i) => (i + 1) % images.length);
+                                }}
+                                className={cn(
+                                  TAP_TARGET,
+                                  "absolute right-8 top-1/2 -translate-y-1/2 rounded-full bg-black/40 text-white hover:bg-black/60 transition-colors",
+                                )}
+                              >
+                                <ChevronRight className="h-4 w-4" />
+                              </button>
+                            </>
+                          )}
+                          {/* Page indicator */}
+                          {images.length > 1 && !selectMode && (
+                            <div className="absolute bottom-2 left-1/2 -translate-x-1/2 rounded-full bg-black/40 px-2 py-0.5 text-xs text-white">
+                              {safeIdx + 1} / {images.length}
+                            </div>
+                          )}
+                        </>
                       </div>
 
                       {/* Thumbnail strip with checkboxes in select mode */}
@@ -1378,7 +1361,7 @@ export default function ProductDetailPage() {
                       )}
 
                       {/* Operator-only controls for the active image */}
-                      {isStaff && !selectMode && hasImages && (
+                      {isStaff && !selectMode && (
                         <div className="flex flex-wrap items-center gap-1.5 border-t border-surface-border pt-2">
                           {/* Move left / right */}
                           <button
@@ -1443,37 +1426,36 @@ export default function ProductDetailPage() {
 
                       {/* Action row: select-mode toggle + bulk delete + upload */}
                       <div className="flex items-center gap-2">
-                        {hasImages &&
-                          (selectMode ? (
-                            <>
-                              <button
-                                onClick={deleteSelected}
-                                disabled={selectedImages.size === 0 || deleteImage.isPending}
-                                className="flex items-center gap-1.5 rounded-lg bg-danger px-3 py-1.5 text-xs font-medium text-white hover:bg-danger/90 disabled:opacity-40 transition-colors"
-                              >
-                                <Trash2 className="h-3.5 w-3.5" />
-                                Delete {selectedImages.size > 0 ? `${selectedImages.size} ` : ""}
-                                selected
-                              </button>
-                              <button
-                                onClick={() => {
-                                  setSelectMode(false);
-                                  setSelectedImages(new Set());
-                                }}
-                                className="rounded-lg border border-surface-border px-3 py-1.5 text-xs text-navy/70 hover:text-navy transition-colors"
-                              >
-                                Cancel
-                              </button>
-                            </>
-                          ) : (
+                        {selectMode ? (
+                          <>
                             <button
-                              onClick={() => setSelectMode(true)}
-                              className="flex items-center gap-1.5 rounded-lg border border-surface-border px-3 py-1.5 text-xs text-navy/70 hover:text-navy transition-colors"
+                              onClick={deleteSelected}
+                              disabled={selectedImages.size === 0 || deleteImage.isPending}
+                              className="flex items-center gap-1.5 rounded-lg bg-danger px-3 py-1.5 text-xs font-medium text-white hover:bg-danger/90 disabled:opacity-40 transition-colors"
                             >
                               <Trash2 className="h-3.5 w-3.5" />
-                              Select to delete
+                              Delete {selectedImages.size > 0 ? `${selectedImages.size} ` : ""}
+                              selected
                             </button>
-                          ))}
+                            <button
+                              onClick={() => {
+                                setSelectMode(false);
+                                setSelectedImages(new Set());
+                              }}
+                              className="rounded-lg border border-surface-border px-3 py-1.5 text-xs text-navy/70 hover:text-navy transition-colors"
+                            >
+                              Cancel
+                            </button>
+                          </>
+                        ) : (
+                          <button
+                            onClick={() => setSelectMode(true)}
+                            className="flex items-center gap-1.5 rounded-lg border border-surface-border px-3 py-1.5 text-xs text-navy/70 hover:text-navy transition-colors"
+                          >
+                            <Trash2 className="h-3.5 w-3.5" />
+                            Select to delete
+                          </button>
+                        )}
                         <button
                           onClick={() => fileInputRef.current?.click()}
                           disabled={uploadImages.isPending || !!cropState}
@@ -1830,7 +1812,7 @@ export default function ProductDetailPage() {
                   <InfoRow
                     label={priceRowLabel(
                       isEditing ? (editDraft.unit as string) : product.unit,
-                      tierLabel(tierLabels, 1),
+                      tierOneLabel(tierLabels),
                     )}
                     value={
                       isEditing ? (
@@ -1977,7 +1959,7 @@ export default function ProductDetailPage() {
                         }}
                         className="text-xs text-brand-600 hover:underline"
                       >
-                        Set all to {tierLabel(tierLabels, 1)}
+                        Set all to {tierOneLabel(tierLabels)}
                       </button>
                     )}
                   </div>
@@ -1986,7 +1968,7 @@ export default function ProductDetailPage() {
                       // Names the tiers a save would move with the list (#3470 review: never a fixed string).
                       const note = ladderChangeNote(
                         editTierPatchMoves(product, editDraft as Record<string, string>),
-                        (n) => tierLabel(tierLabels, n),
+                        (n) => productTierLabel(tierLabels, n),
                       );
                       return note ? (
                         <p className="mb-2 text-xs text-navy/70" data-testid="tiers-move-note">
@@ -1997,10 +1979,10 @@ export default function ProductDetailPage() {
                   <div className="grid grid-cols-1 gap-2 sm:grid-cols-4">
                     {(
                       [
-                        [tierLabel(tierLabels, 2), "priceTier2", product.priceTier2],
-                        [tierLabel(tierLabels, 3), "priceTier3", product.priceTier3],
-                        [tierLabel(tierLabels, 4), "priceTier4", product.priceTier4],
-                        [tierLabel(tierLabels, 5), "priceTier5", product.priceTier5],
+                        [productTierLabel(tierLabels, 2), "priceTier2", product.priceTier2],
+                        [productTierLabel(tierLabels, 3), "priceTier3", product.priceTier3],
+                        [productTierLabel(tierLabels, 4), "priceTier4", product.priceTier4],
+                        [productTierLabel(tierLabels, 5), "priceTier5", product.priceTier5],
                       ] as [string, string, any][]
                     ).map(([label, field, productVal], idx) => {
                       const prevFields = ["pricePerUnit", "priceTier2", "priceTier3", "priceTier4"];
@@ -2053,7 +2035,7 @@ export default function ProductDetailPage() {
                                   );
                                   setEditDraft((d) => ({ ...d, ...moved }));
                                   setLadderNote(
-                                    ladderChangeNote(moved, (n) => tierLabel(tierLabels, n)),
+                                    ladderChangeNote(moved, (n) => productTierLabel(tierLabels, n)),
                                   );
                                 }}
                               />
@@ -2452,10 +2434,10 @@ export default function ProductDetailPage() {
                             SKU
                           </th>
                           <th className="border-b-2 border-navy px-3 py-2.5 text-right text-[11px] font-semibold uppercase tracking-[0.07em] text-navy/70">
-                            {tierLabel(tierLabels, 1)}
+                            {tierOneLabel(tierLabels)}
                           </th>
                           <th className="border-b-2 border-navy px-3 py-2.5 text-right text-[11px] font-semibold uppercase tracking-[0.07em] text-navy/70">
-                            {tierLabel(tierLabels, 2)}
+                            {productTierLabel(tierLabels, 2)}
                           </th>
                           <th className="border-b-2 border-navy px-3 py-2.5 text-[11px] font-semibold uppercase tracking-[0.07em] text-navy/70">
                             Status
@@ -2698,7 +2680,7 @@ export default function ProductDetailPage() {
               })}
             </div>
             <p className="mt-1.5 text-xs text-navy/70">
-              Higher tiers (volume) are typically equal to or lower than {tierLabel(tierLabels, 1)}.
+              Higher tiers (volume) are typically equal to or lower than {tierOneLabel(tierLabels)}.
             </p>
           </div>
 
