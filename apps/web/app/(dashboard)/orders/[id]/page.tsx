@@ -134,13 +134,13 @@ import { parseCreditLimitError, type CreditLimitInfo } from "@/lib/api/credit-li
 import { useProducts } from "@/lib/api/products";
 import {
   computeLineSubtotal,
-  getTierPrice,
-  isSpecialTier,
+  customerLinePrice,
   needsOverrideReason,
   normalizeBoxesPieces,
   roundMoney,
 } from "@routeflow/pricing";
 import { useCustomer, useCustomerPrices } from "@/lib/api/customers";
+import { useCustomerPriceLayer } from "@/lib/api/useCustomerPriceLayer";
 import { useMarginConfig, floorForCategory } from "@/lib/api/margin";
 import { PriceEditRow } from "./price-edit-row";
 import { MoneyInput, DecimalInput } from "@/components/MoneyInput";
@@ -1884,9 +1884,12 @@ export default function OrderDetailPage() {
   // path even SENDS it). Gate pricing-dependent controls until both settle.
   // NOTE: a disabled query is isPending forever — short-circuit when there is no
   // customer. An errored fetch falls back to today's tier-1 degraded mode.
+  // S19b: flag on, the customer's price layer must also have settled (a price is UNCONFIRMED while it reads or failed); flag
+  // off it is ready at once, no request.
+  const priceLayer = useCustomerPriceLayer(order?.customerId);
   const pricingReady =
     !order?.customerId ||
-    ((!customerPending || customerFailed) && (!pricesPending || pricesFailed));
+    ((!customerPending || customerFailed) && (!pricesPending || pricesFailed) && priceLayer.ready);
   const cpMap = React.useMemo(() => {
     const m = new Map<string, number | null>();
     for (const cp of (customerPrices ?? []) as Array<{
@@ -1899,19 +1902,35 @@ export default function OrderDetailPage() {
   }, [customerPrices]);
   const customerTier = (customerDetail as { pricingTier?: number } | undefined)?.pricingTier ?? 1;
   const tierPriceFor = React.useCallback(
-    (p: SubstituteOption) => getTierPrice(p, cpMap.get(p.id) ?? customerTier ?? 1),
-    [cpMap, customerTier],
+    (p: SubstituteOption) =>
+      customerLinePrice({
+        product: p as unknown as Record<string, unknown>,
+        tier: cpMap.get(p.id) ?? customerTier ?? 1,
+        layer: priceLayer.layerOf(p.id),
+      }).price,
+    [cpMap, customerTier, priceLayer],
   );
   const isSpecialTierFor = React.useCallback(
-    (p: SubstituteOption) => isSpecialTier(cpMap.get(p.id) ?? customerTier ?? 1),
-    [cpMap, customerTier],
+    (p: SubstituteOption) =>
+      customerLinePrice({
+        product: p as unknown as Record<string, unknown>,
+        tier: cpMap.get(p.id) ?? customerTier ?? 1,
+        layer: priceLayer.layerOf(p.id),
+      }).isSpecial,
+    [cpMap, customerTier, priceLayer],
   );
   // B465: id-only variant for call sites that only have `productId` (an
   // EditItemState line, not a full SubstituteOption/product row) — same rule,
   // shared so the save-time guard below and the row's own render never drift.
   const isSpecialTierForProductId = React.useCallback(
-    (productId: string) => isSpecialTier(cpMap.get(productId) ?? customerTier ?? 1),
-    [cpMap, customerTier],
+    (productId: string) =>
+      customerLinePrice({
+        product: {},
+        tier: cpMap.get(productId) ?? customerTier ?? 1,
+        layer: priceLayer.layerOf(productId),
+        tierPrice: 0,
+      }).isSpecial,
+    [cpMap, customerTier, priceLayer],
   );
   // units_v1: the EFFECTIVE numeric tier `OrderLineUnitPicker` needs (it resolves the ladder
   // price at this tier, same source as isSpecialTierForProductId above).

@@ -841,7 +841,7 @@ export function CreateOrderModal({
       // just the variant name in `product.name` (PR #44).
       productName: displayProductName(product),
       unit: product.unit ?? "each",
-      listPrice: linePrice.layered ? linePrice.listPrice : listPrice,
+      listPrice: linePrice.layered ? (linePrice.listPrice ?? listPrice) : listPrice,
       specialPrice: customerLineSpecial(linePrice),
       discountedPrice: hasHistOverride ? histEntry!.lastPrice : undefined,
       // a price the system pre-filled from history: the layer replaces it if one turns out to price this line (review 1)

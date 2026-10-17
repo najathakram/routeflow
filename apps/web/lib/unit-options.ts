@@ -65,7 +65,9 @@ export function withLayerPrices(
       unitLabel: o.kind === "pack" ? null : o.value,
       tierPrice: o.price,
     });
-    return lp.layered ? { ...o, price: lp.price, listPrice: lp.listPrice, layerLine: lp } : o;
+    return lp.layered
+      ? { ...o, price: lp.price, listPrice: lp.listPrice ?? o.listPrice, layerLine: lp }
+      : o;
   });
 }
 

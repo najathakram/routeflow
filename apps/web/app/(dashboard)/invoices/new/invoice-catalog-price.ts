@@ -25,7 +25,8 @@ export function catalogPricing(
   const layered = o.layerLine?.layered ? o.layerLine : undefined;
   if (layered) {
     // The layer's price IS the line's price (R3); above-list is MANUAL with no promo (R2).
-    const listPrice = layered.listPrice;
+    // a pack row always carries its list; the fallback only satisfies `number | null` (no strikethrough from a null list)
+    const listPrice = layered.listPrice ?? parseFloat(String(product.pricePerUnit ?? 0));
     return {
       listPrice,
       effectivePrice: layered.price,

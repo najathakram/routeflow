@@ -122,7 +122,7 @@ export function repriceLine(
     const line: InvoiceDraftLine = {
       ...stored,
       ...common,
-      listPrice: unitLine ? unitLine.listPrice : opt.listPrice,
+      listPrice: unitLine?.listPrice ?? opt.listPrice,
     };
     if (!typed) {
       line.unitPrice = unitLine ? unitLine.price : opt.price;

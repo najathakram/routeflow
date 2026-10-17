@@ -740,15 +740,12 @@ function LineUnitControl({
   item,
   enabled,
   tier,
-  customerId,
   onChoose,
   legacy,
 }: {
   item: LineItemState;
   enabled: boolean;
   tier: number;
-  /** S19b: the document's customer; the picker reads their price layer (flag on) for the unit prices. */
-  customerId?: string | null;
   onChoose: (key: string, option: Parameters<typeof chooseUnit>[2], refresh: boolean) => void;
   legacy: React.ReactNode;
 }) {
@@ -760,7 +757,6 @@ function LineUnitControl({
       <OrderLineUnitPicker
         line={pickerLineOf(item)}
         tier={tier}
-        customerId={customerId}
         startOnDefaultUnit={!!item.startOnDefaultUnit}
         onChange={(option, refresh) => onChoose(item.key, option, refresh)}
       />
@@ -1078,7 +1074,7 @@ export default function NewInvoicePage() {
       const target = prev.find((i) => i.key === key);
       if (option.kind === "level" && target) {
         const r = layerLevelLine(target, option.value, option.price);
-        if (r) opt = { ...option, price: r.price, listPrice: r.listPrice };
+        if (r) opt = { ...option, price: r.price, listPrice: r.listPrice ?? option.listPrice };
       }
       return chooseUnit(prev, key, opt, refresh, tierFor);
     });
@@ -2529,7 +2525,7 @@ export default function NewInvoicePage() {
                           const pricing = layerLine
                             ? {
                                 tierPrice: layerLine.price,
-                                listPrice: layerLine.listPrice,
+                                listPrice: layerLine.listPrice ?? parseFloat(price),
                                 isSpecialTier: layerLine.isSpecial,
                               }
                             : pid && product
@@ -2564,7 +2560,7 @@ export default function NewInvoicePage() {
                             // a new product: the unit state of the old one is gone; staff start on the default unit
                             unit: (product as any)?.unit ?? "each",
                             listPrice: layerLine
-                              ? layerLine.listPrice
+                              ? (layerLine.listPrice ?? (price ? parseFloat(price) : undefined))
                               : price
                                 ? parseFloat(price)
                                 : undefined,
@@ -2601,7 +2597,6 @@ export default function NewInvoicePage() {
                         item={item}
                         enabled={unitsOn}
                         tier={tierFor(item.productId ?? "")}
-                        customerId={customer?.id}
                         onChoose={setLineUnit}
                         legacy={
                           <>

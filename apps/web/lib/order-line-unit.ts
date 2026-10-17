@@ -174,7 +174,7 @@ function restorePack<T extends UnitLine>(
     });
     restored.unitPrice = lp.price;
     if (lp.layered) {
-      restored.listPrice = lp.listPrice;
+      restored.listPrice = lp.listPrice ?? restored.listPrice;
       restored.priceType = lp.priceType;
       restored.specialPrice = customerLineSpecial(lp);
     } else {
@@ -193,7 +193,7 @@ function withLayerLine<T extends PackBase>(line: T, lp: CustomerLinePrice): T {
   return {
     ...line,
     unitPrice: lp.price,
-    listPrice: lp.listPrice,
+    listPrice: lp.listPrice ?? line.listPrice,
     priceType: lp.priceType,
     specialPrice: customerLineSpecial(lp),
   };

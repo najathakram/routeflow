@@ -244,9 +244,11 @@ describe('nit 1: a tenant whose base unit is named "Can" still gets the layer pr
     const ladder = buildPackLadder(canProduct);
     expect(optionWithLayerPrice(canOption, ladder as never, 1, [packA, canRow]).price).toBe(1.5);
   });
-  it("without the labels the same pick would miss the row (why the ladder must carry them)", () => {
+  it("a bare ladder still finds the row by its own label (core rule since 76643f053: a labelled base row is matched by name)", () => {
+    // Slice D asserted the pick MISSED here; the integrated core (layerRowForLabel includes labelled "base" rows) resolves it,
+    // so the carried labels are belt-and-braces for the Piece/base-name paths, no longer the only route to the row.
     const bare = buildPackLadder(product);
-    expect(optionWithLayerPrice(canOption, bare as never, 1, [packA, canRow])).toBe(canOption);
+    expect(optionWithLayerPrice(canOption, bare as never, 1, [packA, canRow]).price).toBe(1.5);
   });
   it("unitLineSpecial sees the Can line's own row through that ladder", () => {
     const ladder = buildPackLadder(canProduct);
