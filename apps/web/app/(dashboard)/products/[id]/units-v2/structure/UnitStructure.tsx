@@ -49,6 +49,8 @@ export function UnitStructureControls({ productId }: { productId: string }) {
   const [note, setNote] = React.useState("");
   const [focusBar, setFocusBar] = React.useState(false);
   // K11-19: which opener was used last, so two open panels stack in opener order (see OPENER_ROW).
+  // K11-19: the one unsaved-changes hint for the opener row; both disabled openers point at it.
+  const hintId = React.useId();
   const [lastOpened, setLastOpened] = React.useState<"add" | "reset" | null>(null);
 
   // F07: the grid's "Add the Piece unit first" pointer opens this panel by clicking its opener, so the panel cannot tell
@@ -155,6 +157,7 @@ export function UnitStructureControls({ productId }: { productId: string }) {
           ofUnits={ofUnits}
           dirty={draft.dirty}
           hideHint
+          hintId={hintId}
           pieceMissing={pieceMissing}
           prefillPiece={prefillPiece}
           validatePrice={cellPriceProblem}
@@ -182,12 +185,13 @@ export function UnitStructureControls({ productId }: { productId: string }) {
             anchorName={anchor?.label}
             dirty={draft.dirty}
             hideHint
+            hintId={hintId}
             preview={<ResetPreview rows={reset.rows} />}
           />
         )}
       </div>
       {draft.dirty && (
-        <p className="mt-2 text-xs text-navy/70" data-testid="units-v2-structure-hint">
+        <p id={hintId} className="mt-2 text-xs text-navy/70" data-testid="units-v2-structure-hint">
           {DIRTY_HINT}
         </p>
       )}

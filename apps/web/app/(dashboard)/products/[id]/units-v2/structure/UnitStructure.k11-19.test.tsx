@@ -252,6 +252,32 @@ describe("K11-19: one unsaved hint for the opener row", () => {
     expect(row().compareDocumentPosition(hints[0]) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
   });
 
+  it("each disabled opener is described by the one shared hint", async () => {
+    await dirtyIt();
+    const hint = within(structure()).getByText(DIRTY_HINT);
+    expect(hint.id).not.toBe("");
+    expect(addOpener()).toHaveAttribute("aria-describedby", hint.id);
+    expect(resetOpener()).toHaveAttribute("aria-describedby", hint.id);
+    expect(addOpener()).toHaveAccessibleDescription(DIRTY_HINT);
+    expect(resetOpener()).toHaveAccessibleDescription(DIRTY_HINT);
+  });
+
+  it("a panel with hideHint and no hintId has no description; with a hintId it keeps it", () => {
+    const { rerender } = rtlRender(
+      <AddUnitPanel productId="p1" baseLabel="Piece" dirty hideHint />,
+    );
+    expect(screen.getByTestId("units-v2-add-open")).not.toHaveAttribute("aria-describedby");
+    rerender(<AddUnitPanel productId="p1" baseLabel="Piece" dirty hideHint hintId="shared-x" />);
+    expect(screen.getByTestId("units-v2-add-open")).toHaveAttribute("aria-describedby", "shared-x");
+    rerender(<ResetToAutoPanel onApply={jest.fn()} dirty hideHint />);
+    expect(screen.getByTestId("units-v2-reset-open")).not.toHaveAttribute("aria-describedby");
+    rerender(<ResetToAutoPanel onApply={jest.fn()} dirty hideHint hintId="shared-x" />);
+    expect(screen.getByTestId("units-v2-reset-open")).toHaveAttribute(
+      "aria-describedby",
+      "shared-x",
+    );
+  });
+
   it("the add-note status region stays mounted next to the one hint", async () => {
     await dirtyIt();
     const note = screen.getByTestId("units-v2-add-note");

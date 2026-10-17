@@ -19,6 +19,7 @@ export function ResetToAutoPanel({
   dirty = false,
   disabled = false,
   hideHint = false,
+  hintId: sharedHintId,
 }: {
   onApply: () => void;
   onCancel?: () => void;
@@ -33,6 +34,8 @@ export function ResetToAutoPanel({
   disabled?: boolean;
   /** The caller prints one shared unsaved-changes hint for a row of openers: leave this panel's own out. */
   hideHint?: boolean;
+  /** With `hideHint`: the id of the shared hint that describes this opener while it waits. */
+  hintId?: string;
 }) {
   const { open, close, toggle, openerRef } = usePanelDisclosure();
   const hintId = React.useId();
@@ -53,7 +56,7 @@ export function ResetToAutoPanel({
         data-testid="units-v2-reset-open"
         aria-expanded={open}
         aria-controls="units-v2-reset-panel"
-        aria-describedby={dirty && !hideHint ? hintId : undefined}
+        aria-describedby={dirty ? (hideHint ? sharedHintId : hintId) : undefined}
         disabled={blocked && !open}
         hidden={open}
         style={open ? { display: "none" } : undefined}

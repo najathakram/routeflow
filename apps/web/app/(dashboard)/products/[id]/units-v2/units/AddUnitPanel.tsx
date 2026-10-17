@@ -238,6 +238,7 @@ export function AddUnitPanel({
   onOpen,
   onAdded,
   hideHint = false,
+  hintId: sharedHintId,
 }: {
   productId: string;
   /** The base unit's name (the smallest unit, e.g. "Piece"): always the first "of" choice. */
@@ -264,6 +265,8 @@ export function AddUnitPanel({
   onAdded?: (added: AddedUnit) => void;
   /** The caller prints one shared unsaved-changes hint for a row of openers: leave this panel's own out. */
   hideHint?: boolean;
+  /** With `hideHint`: the id of the shared hint that describes this opener while it waits. */
+  hintId?: string;
 }) {
   const { open, close, toggle, openerRef } = usePanelDisclosure();
   const hintId = React.useId();
@@ -283,7 +286,7 @@ export function AddUnitPanel({
         data-testid="units-v2-add-open"
         aria-expanded={open}
         aria-controls="units-v2-add-panel"
-        aria-describedby={dirty && !hideHint ? hintId : undefined}
+        aria-describedby={dirty ? (hideHint ? sharedHintId : hintId) : undefined}
         disabled={blocked}
         hidden={open}
         style={open ? { display: "none" } : undefined}
