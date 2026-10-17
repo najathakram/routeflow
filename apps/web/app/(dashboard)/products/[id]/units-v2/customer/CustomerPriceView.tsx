@@ -207,7 +207,9 @@ function ProductBlock({
                       tierName={tierName}
                       tierPrice={
                         hasTierFigure &&
-                        (row.source === "customer" || row.source === "customer-shape")
+                        (row.source === "customer" ||
+                          row.source === "customer-shape" ||
+                          row.source === "history")
                           ? row.tierPrice
                           : null
                       }

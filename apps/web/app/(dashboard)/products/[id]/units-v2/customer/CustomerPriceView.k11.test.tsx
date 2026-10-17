@@ -217,6 +217,25 @@ describe("K11-07: nothing repeats in the table, the card fills the column", () =
     );
   });
 
+  it("a history (sticky upsell) row at tier 3 keeps the real tier price in its caption", () => {
+    const data = response({}, 3, "history");
+    data.products[0].rows[0] = { ...data.products[0].rows[0], price: 34, tierPrice: 28 };
+    mockPrices.mockImplementation(() => loaded(data));
+    render(<CustomerPriceView customerId="c1" />);
+    const caption = screen.getByTestId(T.row("p1", "pack")).querySelectorAll("td")[1];
+    expect(caption).toHaveTextContent("$34.00");
+    expect(caption).toHaveTextContent("History");
+    expect(caption).toHaveTextContent("Tier 3: $28.00");
+  });
+
+  it("a history row of a retail-tier customer adds no tier figure", () => {
+    const data = response({}, 1, "history");
+    data.products[0].rows[0] = { ...data.products[0].rows[0], price: 34, tierPrice: 28 };
+    mockPrices.mockImplementation(() => loaded(data));
+    render(<CustomerPriceView customerId="c1" />);
+    expect(screen.getByTestId(T.row("p1", "pack"))).not.toHaveTextContent("$28.00");
+  });
+
   it("uses the tenant's label for the tier", () => {
     mockLabels = { "1": "Retail", "3": "Wholesale plus" };
     show("customer");
