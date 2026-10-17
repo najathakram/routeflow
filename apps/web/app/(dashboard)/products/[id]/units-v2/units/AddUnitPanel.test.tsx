@@ -252,3 +252,42 @@ describe("AddUnitPanel optional price (K10d)", () => {
     expect(onAdded).toHaveBeenCalledWith({ id: "u9", label: "Box", price: "7.50" });
   });
 });
+
+describe("AddUnitPanel reveals itself when it opens (K10d, under the Edit save bar)", () => {
+  const seen: Array<{ el: Element; opts: unknown }> = [];
+  beforeEach(() => {
+    seen.length = 0;
+    Element.prototype.scrollIntoView = function (this: Element, opts?: unknown) {
+      seen.push({ el: this, opts });
+    };
+  });
+  afterEach(() => {
+    delete (Element.prototype as { scrollIntoView?: unknown }).scrollIntoView;
+  });
+
+  it("scrolls the whole panel to the nearest edge, so scroll-padding keeps its buttons clear of the bar", async () => {
+    setup();
+    await userEvent.click(opener());
+    const hit = seen.filter((s) => s.el === screen.getByTestId("units-v2-add-panel"));
+    expect(hit).toHaveLength(1);
+    expect(hit[0].opts).toEqual({ block: "nearest" });
+  });
+
+  it("does nothing before it is opened", () => {
+    setup();
+    expect(seen).toEqual([]);
+  });
+});
+
+describe("AddUnitPanel onOpen (K10d)", () => {
+  it("fires when the opener opens the panel, not when the panel closes", async () => {
+    const onOpen = jest.fn();
+    setup({ onOpen });
+    await userEvent.click(opener());
+    expect(onOpen).toHaveBeenCalledTimes(1);
+    await userEvent.keyboard("{Escape}");
+    expect(onOpen).toHaveBeenCalledTimes(1);
+    await userEvent.click(opener());
+    expect(onOpen).toHaveBeenCalledTimes(2);
+  });
+});

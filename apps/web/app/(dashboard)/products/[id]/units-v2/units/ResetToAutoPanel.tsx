@@ -2,7 +2,7 @@
 
 import * as React from "react";
 import { Button } from "@routeflow/ui/web";
-import { DIRTY_HINT, usePanelDisclosure } from "./usePanelDisclosure";
+import { DIRTY_HINT, usePanelDisclosure, useRevealOnOpen } from "./usePanelDisclosure";
 
 /**
  * "Reset all to Auto": a button that opens a confirm panel. It knows nothing about prices: the
@@ -34,6 +34,8 @@ export function ResetToAutoPanel({
   const { open, close, toggle, openerRef } = usePanelDisclosure();
   const hintId = React.useId();
   const blocked = dirty || disabled;
+  const panelRef = React.useRef<HTMLDivElement>(null);
+  useRevealOnOpen(panelRef, open);
 
   React.useEffect(() => {
     if (dirty && open) close();
@@ -63,6 +65,7 @@ export function ResetToAutoPanel({
       )}
       {open && (
         <div
+          ref={panelRef}
           id="units-v2-reset-panel"
           data-testid="units-v2-reset-panel"
           role="group"

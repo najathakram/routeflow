@@ -49,6 +49,12 @@ export function UnitStructureControls({ productId }: { productId: string }) {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [pendingPrice, served, gridFetching, gridFailed]);
 
+  // The note is about a moment that has passed once the user starts typing in the grid.
+  const draftCount = draft.count;
+  React.useEffect(() => {
+    if (draftCount > 0) setNote("");
+  }, [draftCount]);
+
   // After Reset's Apply the panel and its opener step aside (the draft is dirty, so the opener is disabled): put focus
   // on the save bar, which is where the user goes next, once it exists.
   const editing = draft.editing;
@@ -64,7 +70,14 @@ export function UnitStructureControls({ productId }: { productId: string }) {
     return () => clearTimeout(t);
   }, [focusBar, editing]);
 
-  if (!served || served.rows.length === 0) return null;
+  // The note is a live region: mounted before it has anything to say, so a screen reader announces the text.
+  const noteRegion = (
+    <p role="status" data-testid="units-v2-add-note" className="text-sm text-navy/80">
+      {note}
+    </p>
+  );
+
+  if (!served || served.rows.length === 0) return noteRegion;
 
   const rows = [...served.rows].sort((a, b) => a.factor - b.factor);
   const base = rows.find((r) => r.kind === "base");
@@ -82,16 +95,13 @@ export function UnitStructureControls({ productId }: { productId: string }) {
         ofUnits={ofUnits}
         dirty={draft.dirty}
         validatePrice={cellPriceProblem}
+        onOpen={() => setNote("")}
         onAdded={(added) => {
           setNote("");
           if (added.price !== "") setPendingPrice(added);
         }}
       />
-      {note && (
-        <p role="status" data-testid="units-v2-add-note" className="text-sm text-navy/80">
-          {note}
-        </p>
-      )}
+      {noteRegion}
       {reset.rows.length > 0 && (
         <ResetToAutoPanel
           disabled={draft.dirty}

@@ -151,3 +151,24 @@ describe("RemoveUnitControl a11y and focus (K10d)", () => {
     expect(button()).toHaveFocus();
   });
 });
+
+describe("RemoveUnitControl reveals its confirm when it opens (K10d, under the Edit save bar)", () => {
+  const seen: Element[] = [];
+  beforeEach(() => {
+    seen.length = 0;
+    Element.prototype.scrollIntoView = function (this: Element, opts?: unknown) {
+      expect(opts).toEqual({ block: "nearest" });
+      seen.push(this);
+    };
+  });
+  afterEach(() => {
+    delete (Element.prototype as { scrollIntoView?: unknown }).scrollIntoView;
+  });
+
+  it("scrolls the confirm to the nearest edge", async () => {
+    render(<RemoveUnitControl productId="p1" unit={UNIT} />);
+    expect(seen).toEqual([]);
+    await userEvent.click(screen.getByTestId("units-v2-rm-u1"));
+    expect(seen).toEqual([screen.getByTestId("units-v2-remove-panel")]);
+  });
+});

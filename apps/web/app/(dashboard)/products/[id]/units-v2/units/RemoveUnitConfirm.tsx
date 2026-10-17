@@ -4,7 +4,7 @@ import * as React from "react";
 import { Button } from "@routeflow/ui/web";
 import { useDeleteProductUnit } from "@/lib/api/product-units";
 import { orderErrorText } from "@/lib/order-error-text";
-import { DIRTY_HINT, usePanelDisclosure } from "./usePanelDisclosure";
+import { DIRTY_HINT, usePanelDisclosure, useRevealOnOpen } from "./usePanelDisclosure";
 
 const panelId = (unit: { id: string }, key?: string) =>
   `units-v2-remove-panel-${unit.id}${key ? `-${key}` : ""}`;
@@ -40,6 +40,8 @@ export function RemoveUnitConfirm({
   const [err, setErr] = React.useState("");
 
   React.useEffect(() => keepRef.current?.focus(), []);
+  const panelRef = React.useRef<HTMLDivElement>(null);
+  useRevealOnOpen(panelRef);
 
   React.useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
@@ -61,6 +63,7 @@ export function RemoveUnitConfirm({
 
   return (
     <div
+      ref={panelRef}
       id={panelId(unit, panelKey)}
       data-testid="units-v2-remove-panel"
       role="group"

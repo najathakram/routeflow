@@ -4,7 +4,7 @@ import * as React from "react";
 import { Button } from "@routeflow/ui/web";
 import { useCreateProductUnit } from "@/lib/api/product-units";
 import { orderErrorText } from "@/lib/order-error-text";
-import { DIRTY_HINT, usePanelDisclosure } from "./usePanelDisclosure";
+import { DIRTY_HINT, usePanelDisclosure, useRevealOnOpen } from "./usePanelDisclosure";
 
 /** A unit the new one can contain: its name and how many base pieces one of it holds. */
 export interface AddUnitOf {
@@ -51,6 +51,9 @@ function AddUnitForm({
   const headingId = `${uid}-h`;
 
   React.useEffect(() => nameRef.current?.focus(), []);
+  // Declared after the focus above so the reveal has the last word: the buttons below the name box stay in view.
+  const formRef = React.useRef<HTMLFormElement>(null);
+  useRevealOnOpen(formRef);
 
   const count = Number(n);
   const countOk = Number.isInteger(count) && count >= 2;
@@ -82,6 +85,7 @@ function AddUnitForm({
 
   return (
     <form
+      ref={formRef}
       id="units-v2-add-panel"
       data-testid="units-v2-add-panel"
       aria-labelledby={headingId}
@@ -208,6 +212,7 @@ export function AddUnitPanel({
   dirty = false,
   disabled = false,
   validatePrice,
+  onOpen,
   onAdded,
 }: {
   productId: string;
@@ -223,6 +228,8 @@ export function AddUnitPanel({
    * (blank is always fine: Auto). The panel never writes the price: it hands the text to `onAdded`.
    */
   validatePrice?: (text: string) => string | null;
+  /** Called when the opener opens the panel (not when it closes it). */
+  onOpen?: () => void;
   onAdded?: (added: AddedUnit) => void;
 }) {
   const { open, close, toggle, openerRef } = usePanelDisclosure();
@@ -247,7 +254,10 @@ export function AddUnitPanel({
         disabled={blocked}
         hidden={open}
         style={open ? { display: "none" } : undefined}
-        onClick={toggle}
+        onClick={() => {
+          if (!open) onOpen?.();
+          toggle();
+        }}
       >
         Add a unit
       </Button>

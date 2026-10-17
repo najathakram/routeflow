@@ -43,3 +43,15 @@ export function usePanelDisclosure<T extends HTMLElement = HTMLButtonElement>() 
 
   return { open, setOpen, close, toggle, openerRef };
 }
+
+/**
+ * A panel that opens low on the page can land half under the Edit save bar (a sticky bar at the bottom of the page's
+ * scroller, which sets scroll-padding-bottom to its own height while it is mounted). Scrolling the panel to its nearest
+ * edge once it is on screen honours that padding, so its buttons end up clear of the bar. A no-op where the panel is
+ * already fully visible, and where scrollIntoView does not exist (jsdom).
+ */
+export function useRevealOnOpen(ref: React.RefObject<HTMLElement | null>, open = true) {
+  React.useEffect(() => {
+    if (open) ref.current?.scrollIntoView?.({ block: "nearest" });
+  }, [ref, open]);
+}

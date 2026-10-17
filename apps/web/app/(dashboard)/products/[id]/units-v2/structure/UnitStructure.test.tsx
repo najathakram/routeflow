@@ -546,7 +546,7 @@ describe("K10d fold: a price typed in Add a unit lands as a draft", () => {
     });
     await addPack(user, "");
     await waitFor(() => expect(screen.queryByTestId("units-v2-add-panel")).toBeNull());
-    expect(screen.queryByTestId("units-v2-add-note")).toBeNull();
+    expect(screen.getByTestId("units-v2-add-note")).toHaveTextContent("");
     noDraft();
   });
 
@@ -570,5 +570,33 @@ describe("K10d fold: a price typed in Add a unit lands as a draft", () => {
     await waitFor(() => expect(screen.queryByTestId("units-v2-add-panel")).toBeNull());
     expect(screen.queryByTestId(T.editbar)).toBeNull();
     expect(mockSave).not.toHaveBeenCalled();
+  });
+});
+
+describe("K10d: a panel opened under the Edit save bar is scrolled clear of it", () => {
+  const seen: Element[] = [];
+  beforeEach(() => {
+    seen.length = 0;
+    Element.prototype.scrollIntoView = function (this: Element) {
+      seen.push(this);
+    };
+  });
+  afterEach(() => {
+    delete (Element.prototype as { scrollIntoView?: unknown }).scrollIntoView;
+  });
+
+  it("Add, Remove (table and card) open with the bar mounted and each scrolls its panel into view", async () => {
+    const user = userEvent.setup();
+    render();
+    await user.click(screen.getByTestId(T.btnEdit));
+    expect(screen.getByTestId(T.editbar)).toBeInTheDocument();
+    await user.click(addOpener());
+    expect(seen).toContain(screen.getByTestId("units-v2-add-panel"));
+    await user.keyboard("{Escape}");
+    await user.click(removeOpener());
+    expect(seen).toContain(screen.getByTestId("units-v2-remove-panel"));
+    await user.keyboard("{Escape}");
+    await user.click(resetOpener());
+    expect(seen).toContain(screen.getByTestId("units-v2-reset-panel"));
   });
 });
