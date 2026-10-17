@@ -12,6 +12,8 @@ import { priceQtyHint } from "@/lib/price-qty-hint";
 import { BarcodeScannerButton } from "./BarcodeScannerButton";
 import { PackSizePrompt } from "./PackSizePrompt";
 import { UnitCombobox } from "./UnitCombobox";
+import { RestoreDraftBanner } from "./product-create/RestoreDraftBanner";
+import { EMPTY_DRAFT_FORM, useProductCreateDraft } from "./product-create/product-create-draft";
 import { CategoryCombobox } from "./CategoryCombobox";
 import { SubcategoryCombobox } from "./SubcategoryCombobox";
 import { SearchableProductPicker } from "./SearchableProductPicker";
@@ -275,8 +277,35 @@ export function ProductCreateModal({
     setPreviews([]);
   };
 
+  // Unfinished-product draft: only a plain New product (no prefill, not a variant) keeps one.
+  const draft = useProductCreateDraft({
+    isOpen,
+    enabled: [
+      defaultParentId,
+      initialName,
+      initialSku,
+      initialPrice,
+      initialCost,
+      initialUnitsPerBox,
+    ].every((v) => v == null),
+    form,
+    onRestore: (fields) => setForm((f) => ({ ...f, ...fields })),
+  });
+
+  // In-flight guard: a double-click posts twice (201 then 409) before isPending re-renders.
+  const submittingRef = React.useRef(false);
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
+    if (submittingRef.current) return;
+    submittingRef.current = true;
+    try {
+      await submitProduct();
+    } finally {
+      submittingRef.current = false;
+    }
+  };
+
+  const submitProduct = async () => {
     if (!form.pricePerUnit || parseFloat(form.pricePerUnit) < 0) {
       setPriceError("Please enter a valid price.");
       return;
@@ -318,6 +347,7 @@ export function ProductCreateModal({
         regUomUnit: form.regUomUnit || undefined,
       });
       toast({ title: "Product created", variant: "success" });
+      draft.clear();
     } catch (err: any) {
       // Only the formula-led refusal is ours; any other error already reached the global toast.
       const copy = safeTextErrorCopy(err);
@@ -411,6 +441,15 @@ export function ProductCreateModal({
     >
       <form id={FORM_ID} onSubmit={handleSubmit}>
         <div className="space-y-4">
+          {draft.offer && (
+            <RestoreDraftBanner
+              onRestore={draft.restore}
+              onDiscard={() => {
+                draft.discard();
+                setForm((f) => ({ ...f, ...EMPTY_DRAFT_FORM }));
+              }}
+            />
+          )}
           {/* ── Photos ── */}
           <div>
             <label className="mb-1.5 block text-sm font-medium text-navy">Photos</label>
