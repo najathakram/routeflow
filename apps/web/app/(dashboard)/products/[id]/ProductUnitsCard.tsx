@@ -104,7 +104,7 @@ function radioKeys(commit: () => void) {
     e.preventDefault();
     const group = Array.from(
       (e.currentTarget.closest("[data-units-card]") ?? document).querySelectorAll<HTMLInputElement>(
-        `input[type="radio"][name="${DEFAULT_RADIO}"]:not(:disabled)`,
+        `input[type="radio"][name="${DEFAULT_RADIO}"]`,
       ),
     );
     const at = group.indexOf(e.currentTarget);
@@ -256,7 +256,7 @@ function UnitRow({
             onKeyDown={radioKeys(() => {
               if (!unit.isDefaultSelling) onMakeDefault(unit);
             })}
-            disabled={busy}
+            aria-disabled={busy || undefined}
           />
           Default order unit
         </label>
@@ -314,17 +314,24 @@ export function ProductUnitsCard({
   const [defaultNote, setDefaultNote] = React.useState<DefaultNote | null>(null);
   const cardRef = React.useRef<HTMLDivElement>(null);
   const ownWrite = React.useRef(false);
-  // After Dismiss or Undo the message block shrinks to nothing, so keyboard focus goes to the default radio instead.
-  const [refocusTick, setRefocusTick] = React.useState(0);
+  // After Dismiss, Undo or a committed change the CHECKED default radio takes focus (never another radio: one Space press
+  // on it would flip the default). It is the pack radio when the pack is the default, so that one is never natively
+  // disabled. Focus moves only if it is already on the page's body or inside this card, so a late write never steals it
+  // from somewhere else; a plain click commit (focus not in the card) only scrolls. Scrolling never moves focus.
+  const [refocus, setRefocus] = React.useState({ n: 0, needInside: false });
   React.useEffect(() => {
-    if (refocusTick === 0) return;
-    const radios = Array.from(
-      cardRef.current?.querySelectorAll<HTMLInputElement>(
-        `input[type="radio"][name="${DEFAULT_RADIO}"]:not(:disabled)`,
-      ) ?? [],
+    if (refocus.n === 0) return;
+    const card = cardRef.current;
+    const checked = card?.querySelector<HTMLInputElement>(
+      `input[type="radio"][name="${DEFAULT_RADIO}"]:checked`,
     );
-    (radios.find((r) => r.checked) ?? radios[0])?.focus();
-  }, [refocusTick]);
+    if (!card || !checked) return;
+    const active = document.activeElement;
+    const inside = active != null && active !== document.body && card.contains(active);
+    const free = active == null || active === document.body;
+    if (inside || (free && !refocus.needInside)) checked.focus();
+    checked.scrollIntoView?.({ block: "nearest" });
+  }, [refocus]);
 
   // The default that changed under us (another tab, a write that is not a mutation here) makes the message untrue: drop it.
   // Keyed on the default's id alone, so our own write (whose refetch lands on the id the message names) keeps it.
@@ -376,6 +383,7 @@ export function ProductUnitsCard({
 
   /** F18: make `target` the default order unit (null = the pack row), and say so with an inline Undo. */
   const changeDefault = (target: ProductUnitLevel | null) => {
+    if (busy) return;
     const prev = units.find((u) => u.isDefaultSelling) ?? null;
     if (target ? target.isDefaultSelling : prev == null) return;
     const body = target
@@ -385,13 +393,14 @@ export function ProductUnitsCard({
       ? { id: prev.id, isDefaultSelling: true }
       : { id: (target as ProductUnitLevel).id, isDefaultSelling: false };
     const restoredName = prev ? prev.label : packName;
-    writeDefault(body, () =>
+    writeDefault(body, () => {
       setDefaultNote({
         text: `${target ? target.label : packName} is now the default order unit.`,
         expectedDefaultId: target ? target.id : null,
         undo: { body: undo, restoredName, restoredId: prev ? prev.id : null },
-      }),
-    );
+      });
+      setRefocus((r) => ({ n: r.n + 1, needInside: true }));
+    });
   };
 
   const undoDefault = () => {
@@ -403,13 +412,13 @@ export function ProductUnitsCard({
         expectedDefaultId: undo.restoredId,
         undo: null,
       });
-      setRefocusTick((t) => t + 1);
+      setRefocus((r) => ({ n: r.n + 1, needInside: false }));
     });
   };
 
   const dismissDefaultNote = () => {
     setDefaultNote(null);
-    setRefocusTick((t) => t + 1);
+    setRefocus((r) => ({ n: r.n + 1, needInside: false }));
   };
 
   const save = (unit: ProductUnitLevel, d: Draft) => {
@@ -503,9 +512,15 @@ export function ProductUnitsCard({
                 name={DEFAULT_RADIO}
                 aria-describedby={DEFAULT_HINT_ID}
                 checked={noneDefault}
-                disabled={busy || noneDefault}
-                onChange={() => changeDefault(null)}
-                onKeyDown={radioKeys(() => changeDefault(null))}
+                // Never natively disabled: a disabled radio drops focus the moment it becomes the checked default, so a
+                // screen-reader user would hear nothing. aria-disabled keeps it focusable; activating it does nothing.
+                aria-disabled={busy || noneDefault || undefined}
+                onChange={() => {
+                  if (!busy && !noneDefault) changeDefault(null);
+                }}
+                onKeyDown={radioKeys(() => {
+                  if (!busy && !noneDefault) changeDefault(null);
+                })}
               />
               Default order unit
             </label>
@@ -534,7 +549,7 @@ export function ProductUnitsCard({
           {defaultNote && (
             <button
               type="button"
-              className="text-xs font-medium text-brand-600 underline"
+              className="inline-flex min-h-11 items-center px-1 text-xs font-medium text-brand-600 underline"
               aria-label="Dismiss the default order unit message"
               onClick={dismissDefaultNote}
             >

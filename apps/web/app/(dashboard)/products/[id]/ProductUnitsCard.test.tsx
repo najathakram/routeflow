@@ -610,13 +610,97 @@ describe("K10e F18: changing the default order unit says so and can be undone (i
     expect(radios()[2]).toHaveFocus(); // Pallet is still the checked one in this data
   });
 
-  it("when the checked radio is disabled (the pack is the default), Dismiss focuses the first enabled radio", () => {
+  it("pack is the default: Dismiss focuses the pack radio, which is the checked one (never the unchecked Case)", () => {
+    mockUnits = [{ ...caseUnit, isDefaultSelling: true }];
+    const { rerender } = renderCard();
+    fireEvent.click(radios()[0]); // the pack becomes the default
+    mockUnits = [caseUnit]; // the refetch before the write reports back
+    rerender(<Card />);
+    succeed();
+    fireEvent.click(screen.getByRole("button", { name: /dismiss/i }));
+    expect(radios()[0]).toBeChecked();
+    expect(radios()[0]).toHaveFocus();
+    expect(radios()[1]).not.toHaveFocus();
+  });
+
+  it("the checked pack radio stays focusable: aria-disabled, not natively disabled", () => {
+    mockUnits = [caseUnit];
+    renderCard();
+    expect(radios()[0]).toBeChecked();
+    expect(radios()[0]).not.toBeDisabled();
+    expect(radios()[0]).toHaveAttribute("aria-disabled", "true");
+    radios()[0].focus();
+    expect(radios()[0]).toHaveFocus();
+  });
+
+  it("activating the aria-disabled checked pack radio is ignored: Space and click send no write and show no note", async () => {
+    mockUnits = [caseUnit];
+    renderCard();
+    const user = userEvent.setup();
+    radios()[0].focus();
+    await user.keyboard(" ");
+    await user.keyboard("{Enter}");
+    await user.click(radios()[0]);
+    fireEvent.click(radios()[0]);
+    expect(updateMutate).not.toHaveBeenCalled();
+    expect(status()).toHaveTextContent("");
+    expect(screen.queryByRole("button", { name: "Undo" })).toBeNull();
+  });
+
+  it("Space on the pack radio commits it and focus STAYS on that radio (it is not disabled by the commit)", async () => {
+    mockUnits = [{ ...caseUnit, isDefaultSelling: true }];
+    const { rerender } = renderCard();
+    const user = userEvent.setup();
+    radios()[0].focus();
+    await user.keyboard(" ");
+    expect(updateMutate).toHaveBeenCalledTimes(1);
+    expect(updateMutate.mock.calls[0][0]).toEqual({ id: "u-case", isDefaultSelling: false });
+    mockUnits = [caseUnit];
+    rerender(<Card />);
+    succeed();
+    expect(status()).toHaveTextContent("Box is now the default order unit.");
+    expect(radios()[0]).toBeChecked();
+    expect(radios()[0]).toHaveFocus();
+  });
+
+  it("Undo of a pack default focuses the checked radio (the restored unit), whichever it is", () => {
+    mockUnits = [{ ...caseUnit, isDefaultSelling: true }];
+    const { rerender } = renderCard();
+    fireEvent.click(radios()[0]);
+    mockUnits = [caseUnit];
+    rerender(<Card />);
+    succeed();
+    fireEvent.click(screen.getByRole("button", { name: "Undo" }));
+    mockUnits = [{ ...caseUnit, isDefaultSelling: true }];
+    rerender(<Card />);
+    succeed(updateMutate.mock.calls.length - 1);
+    expect(status()).toHaveTextContent("Case is the default order unit again.");
+    expect(radios()[1]).toBeChecked();
+    expect(radios()[1]).toHaveFocus();
+  });
+
+  it("the changed radio is scrolled into view (nearest) when the message appears, and focus does not move", () => {
+    const scroll = jest.fn();
+    Element.prototype.scrollIntoView = scroll;
+    try {
+      mockUnits = [caseUnit, palletDefault];
+      renderCard();
+      const before = document.activeElement;
+      fireEvent.click(radios()[1]);
+      succeed();
+      expect(scroll).toHaveBeenCalledWith({ block: "nearest" });
+      expect(document.activeElement).toBe(before);
+    } finally {
+      delete (Element.prototype as { scrollIntoView?: unknown }).scrollIntoView;
+    }
+  });
+
+  it("Dismiss is a 44px-tall target (min-h-11) in the quiet text style", () => {
     mockUnits = [caseUnit];
     renderCard();
     fireEvent.click(radios()[1]);
     succeed();
-    fireEvent.click(screen.getByRole("button", { name: /dismiss/i }));
-    expect(document.activeElement).toBe(radios()[1]);
+    expect(screen.getByRole("button", { name: /dismiss/i })).toHaveClass("min-h-11");
   });
 
   it("after Undo, focus is on the default order unit radio, not on the message", () => {
@@ -665,7 +749,7 @@ describe("K10e F18: changing the default order unit says so and can be undone (i
       await user.keyboard("{ArrowDown}");
       expect(radios()[2]).toHaveFocus();
       await user.keyboard("{ArrowRight}");
-      expect(radios()[1]).toHaveFocus(); // wraps past the end; the pack radio is disabled while it is the default
+      expect(radios()[0]).toHaveFocus(); // wraps past the end to the pack radio (focusable, though it is the default)
       expect(updateMutate).not.toHaveBeenCalled();
       expect(radios()[2]).not.toBeChecked();
     });
