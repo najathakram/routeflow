@@ -15,6 +15,7 @@ import { FLEET_KEYS, isFleetHeld } from "./fulfilment-capability";
 import { FeatureConfigStore } from "./feature-config.store";
 import { API_ERROR_CODES } from "../common/api-error-codes";
 import { isFulfilmentLockedKey, underFulfilmentLock } from "./fulfilment-settings-lock";
+import { assertNoCarrierInTransit } from "../orders/carrier-in-transit-guard";
 
 export const FEATURE_CONFIG_SET_ACTION = "FEATURE_CONFIG_SET";
 export const FEATURE_CONFIG_CLEARED_ACTION = "FEATURE_CONFIG_CLEARED";
@@ -249,6 +250,27 @@ export class FeatureConfigService {
     return this.setUnlocked(tenantId, key, mode, reason, byUserId);
   }
 
+  /**
+   * BO-04 (seam S4): the carrier-in-transit rule for the Feature Console and the profile apply's mode step. Only
+   * `fulfilment_model` moves the billing moment. `from` is the STORED row read from the DB (never the cache), else
+   * the registry fallback; `to` is the mode being set, or the fallback when clearing. Called INSIDE the
+   * `fulfilment-settings` lock, before the row is written or audited, so a refusal leaves nothing behind.
+   * (`setAuditedInTx` has no call here: its only caller, tenant Settings, guards in its own transaction.)
+   */
+  private async assertNoCarrierInTransitFor(
+    tenantId: string,
+    key: string,
+    to: string | null,
+  ): Promise<void> {
+    if (key !== "fulfilment_model") return;
+    const fallback = this.registryRow(key)?.config?.fallbackMode ?? "unset";
+    const stored = await this.prisma.tenantFeatureConfig.findUnique({
+      where: { tenantId_featureKey: { tenantId, featureKey: key } },
+      select: { mode: true },
+    });
+    await assertNoCarrierInTransit(this.prisma, tenantId, stored?.mode ?? fallback, to ?? fallback);
+  }
+
   private async setUnlocked(
     tenantId: string,
     key: string,
@@ -257,6 +279,7 @@ export class FeatureConfigService {
     byUserId: string | null,
   ): Promise<void> {
     await this.validate(tenantId, key, mode);
+    await this.assertNoCarrierInTransitFor(tenantId, key, mode);
 
     await this.prisma.tenantFeatureConfig.upsert({
       where: { tenantId_featureKey: { tenantId, featureKey: key } },
@@ -340,6 +363,7 @@ export class FeatureConfigService {
     if (!row?.config) {
       throw new BadRequestException(`"${key}" has no config modes`);
     }
+    await this.assertNoCarrierInTransitFor(tenantId, key, null);
 
     await this.prisma.tenantFeatureConfig.deleteMany({
       where: { tenantId, featureKey: key },
