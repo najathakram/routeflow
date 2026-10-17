@@ -79,7 +79,7 @@ export function PriceEditBar() {
       aria-label="Unsaved changes"
       data-testid={T.editbar}
       style={{ bottom: `${clear.bottom}px` }}
-      className={`sticky z-30 -mx-4 mt-4 border-t bg-white/95 px-4 py-3 backdrop-blur ${FRAME_BORDER}`}
+      className={`sticky z-30 mt-4 rounded-lg border bg-white/95 px-4 py-3 backdrop-blur ${FRAME_BORDER}`}
     >
       <div className="flex flex-wrap items-center justify-between gap-x-4 gap-y-2">
         <div data-testid={T.ebText} className="min-w-0 flex-1 text-sm text-navy" aria-live="polite">
@@ -97,7 +97,7 @@ export function PriceEditBar() {
             <span>{d.count === 0 ? "Nothing changed yet" : `${d.count} unsaved`}</span>
           )}
           {!confirm && (
-            <span data-testid={T.ebHint} className="ml-2 text-xs text-navy/60">
+            <span data-testid={T.ebHint} className="ml-2 hidden text-xs text-navy/60 md:inline">
               {isMac() ? "⌘S saves" : "Ctrl+S saves"}
             </span>
           )}

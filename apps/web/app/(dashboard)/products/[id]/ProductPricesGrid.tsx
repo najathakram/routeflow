@@ -96,15 +96,24 @@ interface EditTarget {
   original: string;
 }
 
-/** The price and its Auto/Set word. `dim` (edit mode, under the input) is the word alone, calmer (V16). */
-function CellDisplay({ view, dim }: { view: CellView; dim?: boolean }) {
+/**
+ * The price and its Auto/Set word. `dim` (edit mode, under the input) is the word alone, calmer (V16), and K11-14 says
+ * "Set" only: an Auto box already shows its value as the grey placeholder, so its "Auto" is left to screen readers
+ * (`wordId` is what the input's aria-describedby points at).
+ */
+function CellDisplay({ view, dim, wordId }: { view: CellView; dim?: boolean; wordId?: string }) {
   return (
     <>
       {!dim && <div className="font-medium tabular-nums text-navy">{view.display}</div>}
-      {view.word && (
+      {view.word && !(dim && view.word === "Auto") && (
         <div className={`text-[11px] ${dim ? "mt-0.5 text-navy/45" : "text-navy/60"}`}>
           {view.word}
         </div>
+      )}
+      {dim && view.word === "Auto" && (
+        <span id={wordId} className="sr-only">
+          Auto
+        </span>
       )}
     </>
   );
@@ -202,6 +211,11 @@ function CellInput({ t, tier, view }: { t: EditTarget; tier: number; view: CellV
   const addUnit = edit.addUnitProblem(t.ref, tier);
   const problem = edit.problem(t.ref, tier) ?? addUnit;
   const pid = T.problem(t.layout, t.ref, tier);
+  // K11-14: an Auto box's "Auto" is not drawn under it, so the input is described by the hidden word instead.
+  const describedBy =
+    [problem ? pid : null, view.word === "Auto" ? T.word(t.layout, t.ref, tier) : null]
+      .filter(Boolean)
+      .join(" ") || undefined;
   // K11-12: the text the box held when it took focus (Escape puts it back), and whether focus is in it. While it is
   // not, a price shows in its money text, so a value a plan drafted ("1.4") reads "1.40" too.
   const atFocus = React.useRef<string | null>(null);
@@ -225,7 +239,7 @@ function CellInput({ t, tier, view }: { t: EditTarget; tier: number; view: CellV
           data-testid={T.input(t.ref, tier)}
           aria-label={`${t.name} ${t.unit} price`}
           aria-invalid={problem ? true : undefined}
-          aria-describedby={problem ? pid : undefined}
+          aria-describedby={describedBy}
           placeholder={view.display}
           value={inside ? text : canonicalPriceText(text)}
           onFocus={(e) => {
@@ -294,7 +308,7 @@ function PriceCell({
       {target && edit?.editing ? (
         <>
           <CellInput t={target} tier={view.tier} view={view} />
-          <CellDisplay view={view} dim />
+          <CellDisplay view={view} dim wordId={T.word(target.layout, target.ref, view.tier)} />
         </>
       ) : target && edit ? (
         <button
