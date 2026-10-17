@@ -237,7 +237,8 @@ describe("ProductJumpLinks (V19)", () => {
 });
 
 describe("ProductJumpLinks: the Customer view entry (K10c, F27)", () => {
-  const CUSTOMER_HEADING = "units-v2-h-cust";
+  // The REAL heading id: CustomerPriceView renders `id="h-cust"` itself (K10d), so the link finds it directly.
+  const CUSTOMER_HEADING = "h-cust";
 
   function PageWithCustomer({ customer = true }: { customer?: boolean }) {
     return (
@@ -260,6 +261,18 @@ describe("ProductJumpLinks: the Customer view entry (K10c, F27)", () => {
     render(<PageWithCustomer />);
     expect(link("h-cust")).toHaveTextContent("Customer view");
     expect(link("h-cust")).toHaveAttribute("href", `#${CUSTOMER_HEADING}`);
+  });
+
+  it("does not adopt a stray #units-v2-h-cust element: that fallback id is retired (the heading is h-cust)", () => {
+    render(
+      <div>
+        <ProductJumpLinks />
+        <h1 id="h-product">Cola</h1>
+        <h2 id="units-v2-h-cust">Not the Customer view heading</h2>
+      </div>,
+    );
+    expect(link("h-cust")).toBeNull();
+    expect(document.getElementById("units-v2-h-cust")).not.toHaveAttribute("data-jump-target");
   });
 
   it("is absent when the Customer view heading is not rendered", () => {

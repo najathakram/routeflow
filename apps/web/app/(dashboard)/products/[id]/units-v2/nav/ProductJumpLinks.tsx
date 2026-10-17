@@ -8,7 +8,7 @@ import * as React from "react";
  * ids that exist in the DOM and follows it as sections appear. A link is never shown for a missing one.
  *
  * `fallback` names an existing element to adopt when no element carries the section id yet (the prices
- * grid title, the Customer view heading). The adopted element keeps any id it already has; the link points at it. The Product
+ * grid title; the Customer view heading carries `id="h-cust"` itself, so it needs none). The adopted element keeps any id it already has; the link points at it. The Product
  * section is the page h1 carrying `id="h-product"` (set by the page itself); there is deliberately no
  * `h1` fallback, because the dashboard header has an h1 of its own that comes first in the DOM.
  *
@@ -19,7 +19,7 @@ const SECTIONS: { id: string; label: string; fallback?: string }[] = [
   { id: "h-product", label: "Product" },
   { id: "h-units", label: "Units and prices", fallback: "#units-v2-grid-title" },
   { id: "h-exc", label: "Customers and tiers" },
-  { id: "h-cust", label: "Customer view", fallback: "#units-v2-h-cust" },
+  { id: "h-cust", label: "Customer view" },
   { id: "h-sales", label: "Sales" },
 ];
 
