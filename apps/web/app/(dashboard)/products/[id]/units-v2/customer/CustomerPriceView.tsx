@@ -246,12 +246,8 @@ export function CustomerPriceView({ customerId, productId }: CustomerPriceViewPr
   const tierName = res ? tierLabel(labels, res.tier) : "";
 
   return (
-    <section data-testid={T.section} aria-labelledby="units-v2-h-cust" className="space-y-3">
-      <h2
-        id="units-v2-h-cust"
-        data-testid={T.heading}
-        className="text-base font-semibold text-navy"
-      >
+    <section data-testid={T.section} aria-labelledby="h-cust" className="space-y-3">
+      <h2 id="h-cust" data-testid={T.heading} className="text-base font-semibold text-navy">
         {fixed ? "Unit prices" : "Customer view"}
       </h2>
 

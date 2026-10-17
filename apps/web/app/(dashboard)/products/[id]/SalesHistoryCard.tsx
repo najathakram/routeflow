@@ -61,7 +61,10 @@ export function SalesHistoryCard({
   return (
     <div className="overflow-hidden rounded-lg border border-surface-border bg-white shadow-card">
       <div className="border-b border-surface-border px-5 py-3.5">
-        <h3 className="text-[11px] font-semibold uppercase tracking-[0.08em] text-navy/70">
+        <h3
+          id="h-sales"
+          className="text-[11px] font-semibold uppercase tracking-[0.08em] text-navy/70"
+        >
           Sales
         </h3>
       </div>
