@@ -63,7 +63,6 @@ jest.mock("@/lib/api/tier-labels", () => ({ useTierLabels: () => ({ data: undefi
 jest.mock("@/lib/api/tobacco", () => ({ useHasAddon: () => false, TOBACCO_ADDON: "tobacco" }));
 jest.mock("./useReactivateFlow", () => ({ useReactivateFlow: () => ({}) }));
 jest.mock("./useDeleteProductFlow", () => ({ useDeleteProductFlow: () => ({}) }));
-const stub = (testId: string) => () => <div data-testid={testId} />;
 jest.mock("./ProductStockCostCard", () => ({
   ProductStockCostCard: () => <div data-testid="stock-card" />,
 }));
@@ -90,7 +89,6 @@ for (const m of [
 ]) {
   jest.mock(m, () => new Proxy({}, { get: () => () => null }));
 }
-void stub;
 jest.mock("@/components/family/FamilyVariantsEditor", () => ({ FamilyVariantsEditor: () => null }));
 jest.mock("@/components/BarcodeScannerButton", () => ({ BarcodeScannerButton: () => null }));
 jest.mock("@/components/CategoryCombobox", () => ({ CategoryCombobox: () => null }));
