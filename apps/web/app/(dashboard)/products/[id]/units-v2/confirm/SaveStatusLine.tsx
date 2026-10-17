@@ -104,9 +104,9 @@ function reduce(s: State, a: Action): State {
   }
 }
 
-/** The bar's look (PriceEditBar: sticky, border-t, bg-white/95 + blur, -mx-4 px-4), on the one live region. */
+/** The bar's current look (PriceEditBar: sticky, rounded-lg border, bg-white/95 + blur, px-4 py-3, off the content edge). */
 const PINNED_CLASS =
-  "sticky z-30 -mx-4 mt-2 flex flex-wrap items-center gap-2 border-t border-surface-border bg-white/95 px-4 py-2 text-[13px] text-navy backdrop-blur focus:outline-none";
+  "sticky z-30 mt-4 flex flex-wrap items-center gap-2 rounded-lg border border-surface-border bg-white/95 px-4 py-3 text-[13px] text-navy backdrop-blur focus:outline-none";
 const FADING_CLASS = " opacity-0 transition-opacity duration-150 motion-reduce:transition-none";
 const SETTLED_CLASS =
   "mt-2 flex flex-wrap items-center gap-2 rounded-ctl border border-line bg-surface-raised px-3 py-2 text-[13px] text-navy focus:outline-none";
