@@ -56,9 +56,12 @@ for (const vp of VIEWPORTS) {
       await expect(page.locator(`#${ID.ebSave}`)).toBeVisible();
       await expect(page.getByTestId("units-v2-eb-cancel")).toBeVisible();
 
-      // leave the fixture alone
+      // Leave the fixture alone. Nothing was typed, so Cancel closes at once: Discard only exists to be clicked when the
+      // draft is dirty, and waiting for it here would hang until the test timeout.
       await page.getByTestId("units-v2-eb-cancel").click();
-      await page.getByTestId("units-v2-eb-discard").click();
+      const discard = page.getByTestId("units-v2-eb-discard");
+      if (await discard.isVisible()) await discard.click();
+      await expect(bar).toBeHidden();
     });
   });
 }
