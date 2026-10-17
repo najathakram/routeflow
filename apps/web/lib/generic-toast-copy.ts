@@ -43,6 +43,9 @@ const CODE_COPY: Record<string, string> = {
   // a buyer write toward a paused seller: the seller-unavailable sentence, never "You don't have permission"
   [API_ERROR_CODES.SELLER_UNAVAILABLE]: sellerUnavailableCopy(null),
   [API_ERROR_CODES.RETURN_REFUND_OVER_LINE_HEADROOM]: RETURN_REFUND_OVER_LINE_HEADROOM_COPY,
+  // SA-804 (1): FIFO and LIFO costing are retired; the picker no longer offers them, so this is an old client or a direct API call.
+  [API_ERROR_CODES.COSTING_METHOD_RETIRED]:
+    "FIFO and LIFO costing are retired. Pick average cost, standard cost or last cost.",
   INLINE_RETURN_ALREADY_RETURNED_REASON_REQUIRED:
     "This item was already returned. Add a reason to confirm another return.",
   INLINE_RETURN_KEY_CONFLICT: "This return was already submitted. Refresh to see it.",
@@ -185,6 +188,11 @@ const CODE_COPY: Record<string, string> = {
   // SA-733r7 PR-B3 (dunning): a plan change is refused while an invoice is overdue; paying it restores everything.
   [API_ERROR_CODES.PAYMENT_OVERDUE]:
     "An invoice on this account is overdue. Pay it to continue; plan changes are available again right after.",
+  // Row 542: paying an amount due was refused because nothing is due (already paid); the banner re-reads.
+  [API_ERROR_CODES.PAYMENT_NOT_DUE]: "Nothing is due right now.",
+  // Row 542c: the terms the banner showed no longer hold; the banner re-reads (the mutation invalidates it on error).
+  [API_ERROR_CODES.PAYMENT_TERMS_CHANGED]:
+    "The amount changed. We've refreshed it, please check and try again.",
   [API_ERROR_CODES.PAYMENT_STATE_UNKNOWN]:
     "We couldn't confirm your open invoice just now. Please try again in a moment.",
   // B1102: a catalog add-on whose plan setting is invalid is refused instead of billed; fixed sentence, no ids.

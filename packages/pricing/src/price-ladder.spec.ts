@@ -332,12 +332,12 @@ describe("PF-5: a non-pack anchor with no typed Retail keeps the materialized pa
   it("Box $12 x 12 materialized from a Piece anchor with no price: every cell is priced, none is $0.00", () => {
     const product: LadderProduct = { unit: "Box", unitsPerBox: 12, pricePerUnit: "14.40" };
     const view = buildLadderView(product, [lvl("Piece", 1, null, { id: "piece-1" })], {
-      orderUnit: "piece-1",
+      orderUnit: "base",
       packAuto: 0b00001,
     });
     for (const tier of TIERS) {
       expect(ladderPrice(view, "pack", tier)).toBe(14.4);
-      expect(ladderPrice(view, "piece-1", tier)).toBe(1.2);
+      expect(ladderPrice(view, "base", tier)).toBe(1.2);
     }
   });
 });

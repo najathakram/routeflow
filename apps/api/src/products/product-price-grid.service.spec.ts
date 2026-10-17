@@ -1,5 +1,11 @@
 import { NotFoundException } from "@nestjs/common";
-import { buildLadderView, priceGrid, unitCodeOf, type ProductCodes } from "@routeflow/pricing";
+import {
+  buildLadderView,
+  canonicalUnitRef,
+  priceGrid,
+  unitCodeOf,
+  type ProductCodes,
+} from "@routeflow/pricing";
 import type { ProductPriceGridDto } from "@routeflow/types";
 import { ProductPriceGridService } from "./product-price-grid.service";
 
@@ -54,17 +60,23 @@ const unitRow = (over: Partial<UnitRow> & Pick<UnitRow, "id" | "label" | "factor
 
 function build(product: Record<string, unknown> | null, rows: UnitRow[]) {
   const db = {
-    product: { findFirst: jest.fn().mockResolvedValue(product) },
-    productUnit: {
-      findMany: jest.fn().mockResolvedValue(rows.map((r) => ({ id: r.id, sku: r.sku ?? null }))),
+    product: {
+      findFirst: jest.fn().mockResolvedValue(
+        product && {
+          id: PRODUCT_ID,
+          packAuto: 0,
+          priceRevision: 0,
+          orderUnitRef: "pack",
+          ...product,
+        },
+      ),
     },
+    productUnit: { findMany: jest.fn().mockResolvedValue(rows) },
+    productTierUnit: { findMany: jest.fn().mockResolvedValue([]) },
   };
   const prisma = { forTenant: () => db };
-  const units = {
-    list: jest.fn().mockResolvedValue(rows.map(({ sku: _sku, ...rest }) => rest)),
-  };
-  const service = new ProductPriceGridService(prisma as never, units as never);
-  return { service, db, units };
+  const service = new ProductPriceGridService(prisma as never);
+  return { service, db };
 }
 
 /** What the pricing package alone says the grid is, for the same rows and the same codes. */
@@ -77,12 +89,26 @@ function expected(product: ReturnType<typeof baseProduct>, rows: UnitRow[]): Pro
     sku: product.sku,
     barcode: product.barcode,
     unitSku: product.unitSku,
-    unitCodes: Object.fromEntries(rows.map((r) => [r.id, r.sku ?? null])),
+    unitCodes: Object.fromEntries(
+      rows.map((r) => [canonicalUnitRef(rows as never, r.id), r.sku ?? null]),
+    ),
   };
+  // SA-809: "base" is writable exactly when a factor-1 ProductUnit backs the piece level.
+  const baseBacked = rows.some((r) => r.factorToBase === 1);
   return {
     productId: PRODUCT_ID,
     anchor: view.anchor,
-    rows: priceGrid(view).map((g) => ({ ...g, code: unitCodeOf(codes, g.ref) })),
+    rows: priceGrid(view).map((g) => ({
+      ...g,
+      code: unitCodeOf(codes, g.ref),
+      ...(g.ref === "base" && !baseBacked
+        ? { editable: false, notEditableReason: "Add the Piece unit first." }
+        : { editable: true }),
+    })),
+    revision: 0,
+    priceState: expect.stringMatching(/^[0-9a-f]{64}$/),
+    tierAnchors: {},
+    tierRules: {},
   };
 }
 
@@ -140,6 +166,24 @@ describe("ProductPriceGridService (units v2)", () => {
     expect(cell(dto, "Piece", 1)).toEqual({ tier: 1, source: "set", value: 1.2 });
   });
 
+  it('SA-809: the factor-1 row\'s code lands under "base" and its cell is editable', async () => {
+    const rows = [
+      unitRow({ id: "u-piece", label: "Piece", factorToBase: 1, price: "1.20", sku: "PIECE-1" }),
+    ];
+    const { service } = build(baseProduct({ unitSku: null, barcode: "BC-1" }), rows);
+    const dto = await service.get(PRODUCT_ID);
+    const piece = dto.rows.find((r) => r.ref === "base")!;
+    expect(piece.code).toBe("PIECE-1");
+    expect(piece.editable).toBe(true);
+    expect(piece.notEditableReason).toBeUndefined();
+    // No Piece row: the implicit level stays refused.
+    const bare = (await build(baseProduct({}), []).service.get(PRODUCT_ID)).rows.find(
+      (r) => r.ref === "base",
+    )!;
+    expect(bare.editable).toBe(false);
+    expect(bare.notEditableReason).toBe("Add the Piece unit first.");
+  });
+
   it("Box $10 of 12 -> Piece Auto $0.83", async () => {
     const product = baseProduct({ pricePerUnit: "10.00" });
     const { service } = build(product, []);
@@ -159,13 +203,57 @@ describe("ProductPriceGridService (units v2)", () => {
     expect(code("Case")).toBe("CASE-1");
   });
 
-  it("reads the product and its units for the one tenant, through ProductUnitsService.list", async () => {
-    const { service, db, units } = build(baseProduct({}), []);
+  it("reads the product, its units and tier units for the one tenant client", async () => {
+    const { service, db } = build(baseProduct({}), []);
     await service.get(PRODUCT_ID);
     expect(db.product.findFirst).toHaveBeenCalledWith(
       expect.objectContaining({ where: { id: PRODUCT_ID } }),
     );
-    expect(units.list).toHaveBeenCalledWith(PRODUCT_ID);
+    expect(db.productUnit.findMany).toHaveBeenCalledWith(
+      expect.objectContaining({ where: { productId: PRODUCT_ID } }),
+    );
+    expect(db.productTierUnit.findMany).toHaveBeenCalledWith(
+      expect.objectContaining({ where: { productId: PRODUCT_ID } }),
+    );
+  });
+
+  it("serves the revision and a price-state token that moves when a price column moves", async () => {
+    const a = await build(baseProduct({}), []).service.get(PRODUCT_ID);
+    const b = await build(baseProduct({ priceTier2: "11.00" }), []).service.get(PRODUCT_ID);
+    const c = await build(baseProduct({}), []).service.get(PRODUCT_ID);
+    expect(a.revision).toBe(0);
+    expect(a.priceState).toBe(c.priceState);
+    expect(a.priceState).not.toBe(b.priceState);
+  });
+
+  it("the order unit and the pack's Auto flags join the view", async () => {
+    const rows = [unitRow({ id: "u-piece", label: "Piece", factorToBase: 1, price: "1.00" })];
+    const { service } = build(baseProduct({ orderUnitRef: "u-piece", packAuto: 1 }), rows);
+    const dto = await service.get(PRODUCT_ID);
+    // SA-809: a stored order unit that names the factor-1 row's id reads as the level's ref.
+    expect(dto.anchor).toBe("base");
+    expect(cell(dto, "Box", 1)?.source).toBe("auto");
+  });
+
+  it("rows the write would refuse say so: a variant, a family, a recipe, and the implicit base row", async () => {
+    const reasons = async (over: Record<string, unknown>) => {
+      const dto = await build(baseProduct(over), []).service.get(PRODUCT_ID);
+      return dto.rows.map((r) => [r.label, r.editable, r.notEditableReason]);
+    };
+    expect(await reasons({ parentProductId: "fam-1" })).toEqual([
+      ["Box", false, "Priced by the family."],
+      ["Piece", false, "Priced by the family."],
+    ]);
+    expect((await reasons({ kind: "FAMILY" }))[0]).toEqual([
+      "Box",
+      false,
+      "Family prices are edited on the family page.",
+    ]);
+    expect((await reasons({ kind: "RECIPE" }))[0]).toEqual(["Box", false, "Priced by its recipe."]);
+    expect(await reasons({})).toEqual([
+      ["Box", true, undefined],
+      ["Piece", false, "Add the Piece unit first."],
+    ]);
   });
 
   it("a product the tenant does not have is a 404", async () => {

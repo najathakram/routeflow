@@ -1,6 +1,7 @@
 import {
   buildLadderView,
   DEFAULT_TIER_RULES,
+  canonicalUnitRef,
   refForLabel,
   type LadderViewOptions,
   type LadderViewUnit,
@@ -57,8 +58,9 @@ export function resolveCustomerUnitPrice(input: CustomerUnitPriceInput): Resolve
   const { product, units, customer } = input;
   const rules = input.rules ?? DEFAULT_TIER_RULES;
   const view = buildLadderView(product, units, input.viewOptions);
-  const ref = view.rows.some((r) => r.ref === input.unit)
-    ? input.unit
+  const asRef = canonicalUnitRef(units, input.unit);
+  const ref = view.rows.some((r) => r.ref === asRef)
+    ? asRef
     : refForLabel(product, units, input.unit);
   const pricing: CustomerPricing = {
     tier: customer.tier,

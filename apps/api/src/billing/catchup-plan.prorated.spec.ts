@@ -89,30 +89,30 @@ describe("the plan price refusal (r9 rule 7): null -> no_monthly_price, <= 0 -> 
 });
 
 describe("describeStub labels a mid-month start with the start (r10 nit 2)", () => {
-  it("RED: [Nov 11, Dec 1) -> 'Subscription — Nov 11 to Nov 30, 2026', never a bare month name", () => {
+  it("RED: [Nov 11, Dec 1) -> 'Nov 11 to Nov 30, 2026 subscription', never a bare month name", () => {
     expect(describeStub(d("2026-11-11T12:00:00Z"), d("2026-12-01T12:00:00Z"))).toBe(
-      "Subscription — Nov 11 to Nov 30, 2026",
+      "Nov 11 to Nov 30, 2026 subscription",
     );
   });
 
-  it("RED: [Oct 10, Nov 1) -> 'Subscription — Oct 10 to Oct 31, 2026'", () => {
+  it("RED: [Oct 10, Nov 1) -> 'Oct 10 to Oct 31, 2026 subscription'", () => {
     expect(describeStub(d("2026-10-10T12:00:00Z"), d("2026-11-01T12:00:00Z"))).toBe(
-      "Subscription — Oct 10 to Oct 31, 2026",
+      "Oct 10 to Oct 31, 2026 subscription",
     );
   });
 
-  it("RED: a mid-month start across two months -> 'Subscription — Oct 10 to Nov 30, 2026'", () => {
+  it("RED: a mid-month start across two months -> 'Oct 10 to Nov 30, 2026 subscription'", () => {
     expect(describeStub(d("2026-10-10T12:00:00Z"), d("2026-12-01T12:00:00Z"))).toBe(
-      "Subscription — Oct 10 to Nov 30, 2026",
+      "Oct 10 to Nov 30, 2026 subscription",
     );
   });
 
   it("PIN: whole months keep their month-name label", () => {
     expect(describeStub(d("2026-10-01T12:00:00Z"), d("2026-11-01T12:00:00Z"))).toBe(
-      "Subscription — October 2026",
+      "October 2026 subscription",
     );
     expect(describeStub(d("2026-10-01T12:00:00Z"), d("2026-12-01T12:00:00Z"))).toBe(
-      "Subscription — October 2026 to November 2026",
+      "October 2026 to November 2026 subscription",
     );
   });
 });
