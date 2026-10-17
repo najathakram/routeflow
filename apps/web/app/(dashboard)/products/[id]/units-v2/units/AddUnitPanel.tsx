@@ -237,6 +237,7 @@ export function AddUnitPanel({
   validatePrice,
   onOpen,
   onAdded,
+  hideHint = false,
 }: {
   productId: string;
   /** The base unit's name (the smallest unit, e.g. "Piece"): always the first "of" choice. */
@@ -261,6 +262,8 @@ export function AddUnitPanel({
   /** Called when the opener opens the panel (not when it closes it). */
   onOpen?: () => void;
   onAdded?: (added: AddedUnit) => void;
+  /** The caller prints one shared unsaved-changes hint for a row of openers: leave this panel's own out. */
+  hideHint?: boolean;
 }) {
   const { open, close, toggle, openerRef } = usePanelDisclosure();
   const hintId = React.useId();
@@ -280,7 +283,7 @@ export function AddUnitPanel({
         data-testid="units-v2-add-open"
         aria-expanded={open}
         aria-controls="units-v2-add-panel"
-        aria-describedby={dirty ? hintId : undefined}
+        aria-describedby={dirty && !hideHint ? hintId : undefined}
         disabled={blocked}
         hidden={open}
         style={open ? { display: "none" } : undefined}
@@ -291,7 +294,7 @@ export function AddUnitPanel({
       >
         Add a unit
       </Button>
-      {dirty && (
+      {dirty && !hideHint && (
         <p id={hintId} className="text-xs text-navy/70">
           {DIRTY_HINT}
         </p>

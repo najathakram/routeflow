@@ -8,7 +8,7 @@ import { apiClient } from "@/lib/api-client";
 import { ProductPricingV2 } from "../../ProductPricingV2";
 import { ProductUnitsCard } from "../../ProductUnitsCard";
 import { UNITS_V2_TESTIDS as T } from "../../units-v2-testids";
-import { DIRTY_HINT } from "../units";
+import { AddUnitPanel, DIRTY_HINT, ResetToAutoPanel } from "../units";
 
 // K10d: K7's unit panels mounted in the v2 shell, the way the page mounts the shell.
 
@@ -229,5 +229,49 @@ describe("K11-19: the row's variants compile to the selectors the layout needs",
     expect(css).toMatch(
       /\[data-last-opened="?reset"?]>\*:has\(\[data-testid=units-v2-reset-panel\]\)\s*\{\s*order: 10000/,
     );
+  });
+});
+
+describe("K11-19: one unsaved hint for the opener row", () => {
+  const dirtyIt = async () => {
+    const user = userEvent.setup();
+    render();
+    await user.click(screen.getByTestId(T.btnEdit));
+    const input = within(screen.getByTestId(T.row("case"))).getByTestId(T.input("case", 2));
+    await user.clear(input);
+    await user.type(input, "14.5");
+  };
+
+  it("a dirty draft prints the hint once for the whole structure, after the row", async () => {
+    await dirtyIt();
+    expect(addOpener()).toBeDisabled();
+    expect(resetOpener()).toBeDisabled();
+    const hints = within(structure()).getAllByText(DIRTY_HINT);
+    expect(hints).toHaveLength(1);
+    expect(row()).not.toContainElement(hints[0]);
+    expect(row().compareDocumentPosition(hints[0]) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+  });
+
+  it("the add-note status region stays mounted next to the one hint", async () => {
+    await dirtyIt();
+    const note = screen.getByTestId("units-v2-add-note");
+    expect(note).toHaveAttribute("role", "status");
+    expect(structure()).toContainElement(note);
+  });
+
+  it("a clean draft prints no hint and mounts no hint element", () => {
+    render();
+    expect(within(structure()).queryByText(DIRTY_HINT)).toBeNull();
+  });
+
+  it("each panel on its own still prints its own hint; hideHint suppresses it", () => {
+    const { rerender } = rtlRender(<AddUnitPanel productId="p1" baseLabel="Piece" dirty />);
+    expect(screen.getAllByText(DIRTY_HINT)).toHaveLength(1);
+    rerender(<AddUnitPanel productId="p1" baseLabel="Piece" dirty hideHint />);
+    expect(screen.queryByText(DIRTY_HINT)).toBeNull();
+    rerender(<ResetToAutoPanel onApply={jest.fn()} dirty />);
+    expect(screen.getAllByText(DIRTY_HINT)).toHaveLength(1);
+    rerender(<ResetToAutoPanel onApply={jest.fn()} dirty hideHint />);
+    expect(screen.queryByText(DIRTY_HINT)).toBeNull();
   });
 });

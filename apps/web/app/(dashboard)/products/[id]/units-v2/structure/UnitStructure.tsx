@@ -8,7 +8,13 @@ import { formatMoney } from "@/lib/format";
 import { UNITS_V2_TESTIDS } from "../../units-v2-testids";
 import { usePriceDraft } from "../edit/usePriceDraft";
 import { rulesFromGrid, viewFromGrid } from "../edit/view-from-grid";
-import { AddUnitPanel, RemoveUnitControl, ResetToAutoPanel, type AddedUnit } from "../units";
+import {
+  AddUnitPanel,
+  DIRTY_HINT,
+  RemoveUnitControl,
+  ResetToAutoPanel,
+  type AddedUnit,
+} from "../units";
 
 /**
  * K10d: K7's unit panels mounted in the v2 shell (V15, V17). Everything here reads the ONE shared price draft:
@@ -148,6 +154,7 @@ export function UnitStructureControls({ productId }: { productId: string }) {
           baseLabel={base?.label ?? "Piece"}
           ofUnits={ofUnits}
           dirty={draft.dirty}
+          hideHint
           pieceMissing={pieceMissing}
           prefillPiece={prefillPiece}
           validatePrice={cellPriceProblem}
@@ -174,10 +181,16 @@ export function UnitStructureControls({ productId }: { productId: string }) {
             changedCount={reset.rows.length}
             anchorName={anchor?.label}
             dirty={draft.dirty}
+            hideHint
             preview={<ResetPreview rows={reset.rows} />}
           />
         )}
       </div>
+      {draft.dirty && (
+        <p className="mt-2 text-xs text-navy/70" data-testid="units-v2-structure-hint">
+          {DIRTY_HINT}
+        </p>
+      )}
       {noteRegion}
     </div>
   );
