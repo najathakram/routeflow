@@ -115,7 +115,7 @@ describe("D-2: NewOrderScreen / invoices-new / edit-items pre-fill $33", () => {
     expect(withLayerBase(line, product, 3, [packA, caseA]).unitBasePrice).toBe(377.14);
     expect(withLayerBase(line, product, 3, undefined)).toBe(line);
     expect(withLayerBase(line, product, 3, [packA])).toBe(line); // no Case row: master's base
-    const pack = { qty: 1 };
+    const pack: { qty: number; unitLabel?: string } = { qty: 1 };
     expect(withLayerBase(pack, product, 3, [packA])).toBe(pack);
   });
   it("a case-different label still finds the Case row (the core's label rule, M2)", () => {

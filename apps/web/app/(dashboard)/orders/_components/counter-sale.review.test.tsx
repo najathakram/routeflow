@@ -102,7 +102,6 @@ jest.mock("@/lib/api/customers", () => ({
 jest.mock("@/lib/api/tier-labels", () => ({ useTierLabels: () => ({ data: undefined }) }));
 
 describe("review item 3: an incomplete layer blocks the till per product", () => {
-  // eslint-disable-next-line @typescript-eslint/no-require-imports
   const { useCounterReprice } = require("./useCounterReprice");
   const run = (lines: SaleLine[]) =>
     renderHook(() =>

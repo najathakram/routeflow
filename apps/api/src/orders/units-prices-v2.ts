@@ -74,7 +74,8 @@ const isOddTier = (t: unknown): boolean => {
   return !(Number.isInteger(n) && n >= 1 && n <= 5);
 };
 
-const str = (v: unknown): string | null => (v == null ? null : String(v));
+// Decimal / number / string columns: all stringify through their own toString.
+const str = (v: unknown): string | null => (v == null ? null : String(v as string | number));
 
 // the sanctioned Prisma-row -> ladder-product converter (the pack is never read inline: line-units-callsites ratchet)
 const ladderProductOf = (p: LayerProduct): LadderProduct => asLadderProduct(p);
@@ -226,7 +227,10 @@ export interface CustomerPricing {
    * The customer-layer price of one unit of a product (`label` null = the pack), or null: flag off, no typed price, or the
    * unit is not in the layer (a typed price on another unit only). Null leaves the caller's tier / sticky chain untouched.
    */
-  layer(product: LayerProduct | null | undefined, label?: string | null): CustomerLayerPrice | null;
+  layer: (
+    product: LayerProduct | null | undefined,
+    label?: string | null,
+  ) => CustomerLayerPrice | null;
 }
 
 type PricingSvc = {

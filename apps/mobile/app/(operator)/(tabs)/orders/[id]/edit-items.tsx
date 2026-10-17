@@ -749,12 +749,15 @@ export function EditOrderItemsScreen({ orderId }: { orderId?: string } = {}) {
   // ScanTray hands a TOTAL UNIT count (ScanTray.tsx), which is exactly what
   // `setUnits` normalises back into cases + loose — except a unit-sold line (units_v1,
   // SA-085f), whose total IS the count already, so it goes through `setQty` instead.
-  const onTrayChangeQty = useCallback((id: string, units: number) => {
-    const d = trayDepsRef.current;
-    if (unlistedRow(id)) d.setUnlistedQty(id, units);
-    else if (isUnitLine(d.draft[id] ?? {})) d.setQty(id, units);
-    else d.setUnits(id, units);
-  }, []);
+  const onTrayChangeQty = useCallback(
+    (id: string, units: number) => {
+      const d = trayDepsRef.current;
+      if (unlistedRow(id)) d.setUnlistedQty(id, units);
+      else if (isUnitLine(d.draft[id] ?? {})) d.setQty(id, units);
+      else d.setUnits(id, units);
+    },
+    [trayDepsRef, unlistedRow],
+  );
 
   // ── Save ─────────────────────────────────────────────────────────────────
 

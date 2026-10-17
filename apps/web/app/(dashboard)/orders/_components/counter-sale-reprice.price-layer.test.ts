@@ -77,7 +77,6 @@ jest.mock("@/lib/api/customers", () => ({
 jest.mock("@/lib/api/tier-labels", () => ({ useTierLabels: () => ({ data: undefined }) }));
 
 describe("counter sale: an unconfirmed layer blocks the till (B-5b)", () => {
-  // eslint-disable-next-line @typescript-eslint/no-require-imports
   const { useCounterReprice } = require("./useCounterReprice");
   const run = () =>
     renderHook(() =>
