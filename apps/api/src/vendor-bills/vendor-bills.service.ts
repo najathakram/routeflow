@@ -1905,8 +1905,9 @@ export class VendorBillsService {
     for (const l of lots) bump(shapeKey(l.productId, l.qty, l.unitCost));
     for (const r of unmatched) bump(shapeKey(r.productId, r.quantity, r.unitCost));
     // No bill date ⇒ no exact match is possible: the shortfall's lots stay untouched.
-    for (const [productId, { name, lines }] of billDate ? shortfalls : new Map()) {
-      for (const line of lines as { qty: Prisma.Decimal; unitCost: Prisma.Decimal }[]) {
+    for (const [productId, { name, lines }] of shortfalls) {
+      if (!billDate) break;
+      for (const line of lines) {
         const k = shapeKey(productId, line.qty, line.unitCost);
         if ((answered.get(k) ?? 0) > 0) {
           answered.set(k, (answered.get(k) ?? 0) - 1); // this line's lot is already accounted for
