@@ -740,12 +740,15 @@ function LineUnitControl({
   item,
   enabled,
   tier,
+  customerId,
   onChoose,
   legacy,
 }: {
   item: LineItemState;
   enabled: boolean;
   tier: number;
+  /** S19b: the document's customer; the picker reads their price layer (flag on) for the unit prices. */
+  customerId?: string | null;
   onChoose: (key: string, option: Parameters<typeof chooseUnit>[2], refresh: boolean) => void;
   legacy: React.ReactNode;
 }) {
@@ -757,6 +760,7 @@ function LineUnitControl({
       <OrderLineUnitPicker
         line={pickerLineOf(item)}
         tier={tier}
+        customerId={customerId}
         startOnDefaultUnit={!!item.startOnDefaultUnit}
         onChange={(option, refresh) => onChoose(item.key, option, refresh)}
       />
@@ -2597,6 +2601,7 @@ export default function NewInvoicePage() {
                         item={item}
                         enabled={unitsOn}
                         tier={tierFor(item.productId ?? "")}
+                        customerId={customer?.id}
                         onChoose={setLineUnit}
                         legacy={
                           <>

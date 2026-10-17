@@ -2,9 +2,14 @@
 
 import * as React from "react";
 import { Select } from "@routeflow/ui/web";
-import type { LadderProduct } from "@routeflow/pricing";
+import type { CustomerLayerUnit, LadderProduct } from "@routeflow/pricing";
 import type { ProductUnitLevel } from "@routeflow/types";
-import { buildUnitOptions, unitOptionText, type UnitOption } from "@/lib/unit-options";
+import {
+  buildUnitOptions,
+  unitOptionText,
+  withLayerPrices,
+  type UnitOption,
+} from "@/lib/unit-options";
 
 export interface UnitPickerProps {
   product: LadderProduct;
@@ -12,11 +17,14 @@ export interface UnitPickerProps {
   units: readonly ProductUnitLevel[] | undefined;
   /**
    * The EFFECTIVE tier 1-5 for this product on this order — the server prices a unit line at
-   * `CustomerPrice.pricingTier ?? customer.pricingTier`, so pass that, not the customer's tier alone.
+   * `CustomerPrice.pricingTier ?? customer.pricingTier`, so pass that, not the customer's tier alone. Tier ladder only: a
+   * customer-layer price is picked by `customerLinePrice` (S19b, SA-811a) in the surface that owns the line.
    */
   tier?: number | string;
   /** The price the parent already shows for the pack (promotions / remembered upsell apply to it). */
   packPrice?: number;
+  /** S19b: the customer's layer rows for this product (flag on): options with a row show the layer price. */
+  layer?: readonly CustomerLayerUnit[] | null;
   /** Accessible name; give each row's picker a distinct one (e.g. include the product name). */
   ariaLabel?: string;
   /** The `unitLabel` being sold; `""` = the pack. A stale label falls back to the pack. */
@@ -37,6 +45,7 @@ export function UnitPicker({
   units,
   tier = 1,
   packPrice,
+  layer,
   ariaLabel = "Sell by",
   value,
   onChange,
@@ -48,12 +57,20 @@ export function UnitPicker({
     if (!units) return { options: [], ok: false }; // still loading: nothing is known yet
     if (units.length === 0) return { options: [], ok: true };
     try {
-      return { options: buildUnitOptions(product, units, tier, packPrice), ok: true };
+      return {
+        options: withLayerPrices(
+          buildUnitOptions(product, units, tier, packPrice),
+          product,
+          tier,
+          layer,
+        ),
+        ok: true,
+      };
     } catch {
       // display-only: a bad tier must never unmount the order form (the server 400s it on save)
       return { options: [], ok: false };
     }
-  }, [product, units, tier, packPrice]);
+  }, [product, units, tier, packPrice, layer]);
   const known = options.some((o) => o.value === value);
   // A held label the ladder does not offer (product swapped, level deleted) would otherwise show the
   // pack — or nothing — while the parent still SENDS the stale label and the server 400s the save.
