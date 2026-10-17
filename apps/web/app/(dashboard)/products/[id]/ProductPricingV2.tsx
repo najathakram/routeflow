@@ -12,6 +12,8 @@ import { EditablePricesGrid } from "./units-v2/edit/EditablePricesGrid";
 import { PriceDraftProvider } from "./units-v2/edit/PriceDraftProvider";
 import { PriceEditBar } from "./units-v2/edit/PriceEditBar";
 import { usePriceDraft, type PriceDraftHooks } from "./units-v2/edit/usePriceDraft";
+import { UnitRowRemove, UnitStructureControls } from "./units-v2/structure/UnitStructure";
+import { useUnitStructureAllowed } from "./units-v2/structure/unit-structure";
 
 /**
  * Shell for the units v2 pricing surface (rendered by the page behind `flag.units_prices_v2`, so
@@ -22,9 +24,15 @@ export function ProductPricingV2({
   onSaved,
   onEdit,
 }: {
-  product: UnitsCardProduct & { msrp?: number | string | null };
+  product: UnitsCardProduct & {
+    msrp?: number | string | null;
+    kind?: string | null;
+    parentProductId?: string | null;
+  };
 } & PriceDraftHooks) {
   const cp = useChangePrices();
+  // K10d: Add a unit / Remove / Reset to Auto, only where the unit ladder can be edited.
+  const structure = useUnitStructureAllowed(product);
   return (
     <PriceDraftProvider productId={product.id} onSaved={onSaved} onEdit={onEdit}>
       <EditablePricesGrid
@@ -33,6 +41,12 @@ export function ProductPricingV2({
         changePricesOpen={cp.open}
         changePricesRef={cp.opener}
         panel={<ChangePrices open={cp.open} onClose={cp.close} openerRef={cp.opener} />}
+        unitControls={structure ? <UnitStructureControls productId={product.id} /> : undefined}
+        rowAction={
+          structure
+            ? (row, layout) => <UnitRowRemove productId={product.id} row={row} layout={layout} />
+            : undefined
+        }
       />
       <SaveStatus productId={product.id} />
       <CustomerPriceView productId={product.id} />

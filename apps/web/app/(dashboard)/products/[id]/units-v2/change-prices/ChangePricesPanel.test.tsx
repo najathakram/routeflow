@@ -20,8 +20,9 @@ const draft = {
 jest.mock("../edit/usePriceDraft", () => ({ usePriceDraft: () => draft }));
 jest.mock("@/lib/api/tier-labels", () => ({ useTierLabels: () => ({ data: {} }) }));
 const customers = [{ customerId: "c1", name: "Northside", tier: 1, orderUnit: null, set: {} }];
+let mockTruncated = false;
 jest.mock("@/lib/api/useProductCustomerPrices", () => ({
-  useProductCustomerPrices: () => ({ data: { customers } }),
+  useProductCustomerPrices: () => ({ data: { customers, truncated: mockTruncated } }),
 }));
 
 const plan = planPriceChange as jest.Mock;
@@ -31,6 +32,7 @@ const type = (v: string) =>
 const apply = () => fireEvent.click(screen.getByRole("button", { name: "Apply" }));
 
 beforeEach(() => {
+  mockTruncated = false;
   draft.view = VIEW;
   draft.applyPlan.mockReset();
   draft.setOfferTicked.mockReset();
@@ -121,15 +123,69 @@ describe("ChangePricesPanel (V03, V05, V18)", () => {
     expect(screen.getByTestId(T.againstSummary)).toBeInTheDocument();
   });
 
-  it("keeps Apply in the DOM inside the sticky footer while the preview is long", () => {
+  it("F02: Apply and Cancel sit below the preview in normal flow, on the card background, so no row is under them", () => {
     plan.mockReturnValue(longPlan(40));
     mount();
     type("5");
-    expect(within(screen.getByTestId(T.changePreview)).getAllByRole("row")).toHaveLength(40);
+    const preview = screen.getByTestId(T.changePreview);
+    expect(within(preview).getAllByRole("row")).toHaveLength(40);
     const footer = screen.getByTestId(T.changeFooter);
-    expect(footer.className).toContain("sticky");
-    expect(footer.style.bottom).toBe("var(--editbar-h, 0px)");
+    // not sticky: a sticky row stops at #main-content's pb-24 and lands on the preview table's last rows
+    expect(footer.className).not.toMatch(/\b(sticky|fixed|absolute)\b/);
+    expect(footer.style.bottom).toBe("");
+    expect(footer.className).toContain("bg-white");
+    expect(preview.compareDocumentPosition(footer)).toBe(Node.DOCUMENT_POSITION_FOLLOWING);
     expect(within(footer).getByRole("button", { name: "Apply" })).toBeEnabled();
+    expect(within(footer).getByRole("button", { name: "Cancel" })).toBeEnabled();
+  });
+
+  it("F02: the Also update box grows to its content: nothing on it or above it clips, clamps or caps the height", () => {
+    mount();
+    type("5%");
+    const box = screen.getByTestId(T.alsoUpdate);
+    const clip = /\b(overflow-hidden|overflow-y-hidden|truncate|max-h-\S+|h-\d\S*|line-clamp-\d)\b/;
+    for (let el: HTMLElement | null = box; el && el !== document.body; el = el.parentElement) {
+      expect(el.className).not.toMatch(clip);
+      expect(el.style.maxHeight).toBe("");
+      expect(el.style.height).toBe("");
+    }
+    expect(box).toHaveTextContent("Also raise the prices you set");
+    expect(box).toHaveTextContent("Case Tier 2 $12.50");
+  });
+
+  it("P13: only the chosen Raise/Lower half is filled; the other is outlined, and the choice is the native radio's checked state", () => {
+    mount();
+    const half = (name: string) => screen.getByText(name, { selector: "label" });
+    const radio = (name: string) => screen.getByRole("radio", { name });
+    expect(half("Raise").className).toContain("bg-accent-strong");
+    expect(half("Lower").className).not.toContain("bg-accent-strong");
+    expect(half("Lower").className).toContain("border");
+    expect(radio("Raise")).toBeChecked();
+    expect(radio("Lower")).not.toBeChecked();
+    // the fill is never driven by `peer-checked:`: a later sibling label would match the checked radio before it
+    expect(half("Raise").className).not.toContain("peer-checked");
+    expect(half("Lower").className).not.toContain("peer-checked");
+    fireEvent.click(radio("Lower"));
+    expect(half("Lower").className).toContain("bg-accent-strong");
+    expect(half("Raise").className).not.toContain("bg-accent-strong");
+    expect(radio("Lower")).toBeChecked();
+    expect(radio("Raise")).not.toBeChecked();
+  });
+
+  it("K3b NIT-3: the Also update section says the customer list was capped, only when it was", () => {
+    const { unmount } = mount();
+    type("5");
+    expect(screen.queryByTestId(T.customersTruncated)).toBeNull();
+    unmount();
+    mockTruncated = true;
+    mount();
+    type("5");
+    expect(screen.getByTestId(T.alsoUpdate)).toContainElement(
+      screen.getByTestId(T.customersTruncated),
+    );
+    expect(screen.getByTestId(T.customersTruncated)).toHaveTextContent(
+      "Showing the first 500 customers with their own prices. Others aren't included.",
+    );
   });
 
   it("disables Apply and does not plan until an amount is typed", () => {

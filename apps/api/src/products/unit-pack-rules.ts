@@ -1,4 +1,19 @@
 import { ConflictException } from "@nestjs/common";
+import { unitNameKey } from "../units/piece-words";
+
+/**
+ * The comparison form of a product's PACK word: the ladder names the pack `Product.unit`, or "Box"
+ * when that is blank (packages/pricing `packLabelOf`). One definition for every caller that must
+ * keep a level from sharing the pack's word (`assertPackKeepsLevelsValid`, the unit rename check).
+ */
+export const packWordKey = (unit: string | null | undefined): string =>
+  unitNameKey(unit ?? "") || "box";
+
+/** The pack's size in pieces: `unitsPerBox` when above 1, else 1 (a loose-piece pack). */
+export const packFactorOf = (pack: { unitsPerBox?: number | null }): number => {
+  const upb = Math.trunc(Number(pack.unitsPerBox ?? 0));
+  return upb > 1 ? upb : 1;
+};
 
 /**
  * Editing a product's PACK (`unit`, `unitsPerBox`, regulated section) must never invalidate the
@@ -14,8 +29,8 @@ export function assertPackKeepsLevelsValid(
   if (levels.length === 0) return;
   const upb = Math.trunc(Number(pack.unitsPerBox ?? 0));
   const factor = upb > 1 ? upb : 1;
-  const label = (pack.unit ?? "").trim().toLowerCase() || "box";
-  const clash = levels.find((l) => l.label.trim().toLowerCase() === label);
+  const label = packWordKey(pack.unit);
+  const clash = levels.find((l) => unitNameKey(l.label) === label);
   if (clash) {
     throw new ConflictException(
       `This product has a "${clash.label}" unit — the pack can't be named the same. Remove or rename that unit first.`,

@@ -152,7 +152,11 @@ describe("ProductsService — importer seam (B858)", () => {
     });
     prisma.product.update.mockResolvedValue({ id: "prod-1" });
 
-    await service.update("prod-1", { reorderPoint: 4, reorderQty: 48 }, { suppressEmit: true });
+    await service.update(
+      "prod-1",
+      { reorderPoint: 4, reorderQty: 48 },
+      { packPrecondition: "internal", suppressEmit: true },
+    );
 
     const writes = prisma.product.update.mock.calls.map((c: any) => c[0].data);
     expect(writes).toContainEqual(expect.objectContaining({ reorderPoint: 4, reorderQty: 48 }));
@@ -174,7 +178,7 @@ describe("ProductsService — importer seam (B858)", () => {
       prisma.product.findUnique.mockResolvedValue(EXISTING);
       prisma.product.update.mockResolvedValue({ id: "prod-1" });
 
-      await service.update("prod-1", { reorderPoint: 4 });
+      await service.update("prod-1", { reorderPoint: 4 }, { packPrecondition: "internal" });
 
       expect(authority.can).toHaveBeenCalledWith("test-tenant", "flag.forecasting");
     });
@@ -183,7 +187,9 @@ describe("ProductsService — importer seam (B858)", () => {
       authority.can.mockResolvedValue(false);
       prisma.product.findUnique.mockResolvedValue(EXISTING);
 
-      const err = await service.update("prod-1", { reorderQty: 48 }).catch((e: unknown) => e);
+      const err = await service
+        .update("prod-1", { reorderQty: 48 }, { packPrecondition: "internal" })
+        .catch((e: unknown) => e);
 
       expect(err).toBeInstanceOf(ForbiddenException);
       expect((err as ForbiddenException).getResponse()).toEqual(inventoryRouteDenial());
@@ -205,7 +211,7 @@ describe("ProductsService — importer seam (B858)", () => {
       prisma.product.findUnique.mockResolvedValue(EXISTING);
       prisma.product.update.mockResolvedValue({ id: "prod-1" });
 
-      await service.update("prod-1", { description: "x" });
+      await service.update("prod-1", { description: "x" }, { packPrecondition: "internal" });
       await service.create({ name: "Other", sku: "O-1", unit: "case", pricePerUnit: "1" });
 
       expect(authority.can).not.toHaveBeenCalled();

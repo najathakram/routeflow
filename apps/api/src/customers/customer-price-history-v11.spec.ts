@@ -284,6 +284,18 @@ describe("CustomerPriceHistoryService v1.1", () => {
       expect(where.status).toBeDefined();
     });
 
+    it("NFD and NFC spellings of one unit are ONE group for low/high (grouped by unitNameKey)", async () => {
+      const cafe = (unitLabel: string, unitPrice: number) =>
+        line({ productId: "p1", unitPrice, unitLabel, unitsPerBox: 6, boxes: 1, pieces: 0 });
+      prisma.invoice.findMany.mockResolvedValue([
+        { ...inv("c", "2026-06-03T00:00:00Z", 30), items: [cafe("Caf\u00e9", 30)] },
+        { ...inv("b", "2026-06-02T00:00:00Z", 24), items: [cafe("Cafe\u0301", 24)] },
+        { ...inv("a", "2026-06-01T00:00:00Z", 27), items: [cafe(" CAF\u00c9 ", 27)] },
+      ]);
+      const r = await sum("p1");
+      expect([r.p1.low, r.p1.high]).toEqual([24, 30]);
+    });
+
     it("splits per product: last3 newest-first, low/high over the returned lines", async () => {
       prisma.invoice.findMany.mockResolvedValue([
         {

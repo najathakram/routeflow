@@ -1,6 +1,7 @@
 "use client";
 
 import * as React from "react";
+import type { ProductPriceGridRowDto } from "@routeflow/types";
 import { ProductPricesGrid } from "../../ProductPricesGrid";
 import type { UnitsCardProduct } from "../../ProductUnitsCard";
 import { UNITS_V2_TESTIDS as T } from "../../units-v2-testids";
@@ -20,6 +21,8 @@ export function EditablePricesGrid({
   changePricesOpen = false,
   changePricesRef,
   panel,
+  unitControls,
+  rowAction,
 }: {
   product: UnitsCardProduct & { msrp?: number | string | null };
   /** K4's Change prices opener; the button renders only when it is passed. */
@@ -29,6 +32,10 @@ export function EditablePricesGrid({
   changePricesRef?: React.Ref<HTMLButtonElement>;
   /** Rendered right under the actions row (K4's Change prices panel). */
   panel?: React.ReactNode;
+  /** K10d: Add a unit and Reset to Auto, rendered under `panel` and above the grid. */
+  unitControls?: React.ReactNode;
+  /** K10d: a control under each unit's name (Remove). */
+  rowAction?: (row: ProductPriceGridRowDto, layout: "table" | "card") => React.ReactNode;
 }) {
   const d = usePriceDraft();
   const root = React.useRef<HTMLDivElement>(null);
@@ -96,7 +103,8 @@ export function EditablePricesGrid({
         )}
       </div>
       {panel}
-      <ProductPricesGrid product={product} edit={d.api} />
+      {unitControls}
+      <ProductPricesGrid product={product} edit={d.api} rowAction={rowAction} />
       {editing && <OrderUnitDraft />}
       {d.plan && <AlsoUpdatePanel plan={d.plan.plan} />}
     </div>

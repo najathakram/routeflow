@@ -1,6 +1,14 @@
 import { ApiProperty, ApiPropertyOptional } from "@nestjs/swagger";
 import { Type } from "class-transformer";
-import { IsInt, IsISO8601, IsOptional, Min, ValidateIf, ValidateNested } from "class-validator";
+import {
+  IsInt,
+  IsISO8601,
+  IsObject,
+  IsOptional,
+  Min,
+  ValidateIf,
+  ValidateNested,
+} from "class-validator";
 
 /**
  * Row 542c: the terms the banner SHOWED (the SA-796 precondition pattern). These values are only COMPARED with the
@@ -34,6 +42,7 @@ export class PaymentDueShownDto {
 export class PaymentDuePayDto {
   @ApiPropertyOptional({ type: PaymentDueShownDto })
   @IsOptional()
+  @IsObject()
   @ValidateNested()
   @Type(() => PaymentDueShownDto)
   shown?: PaymentDueShownDto;

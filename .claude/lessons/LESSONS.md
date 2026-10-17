@@ -54,27 +54,6 @@
 - **Lesson:** **For a train push whose members were each verified and whose tip CI will test, do the seconds-long pre-flight only (`npm run lint:migrations`, `split-prisma-schema.mjs --check`, the fail-fast guards) and let CI in the window be the gate. Do not add FULL_VERIFY or the database lane to such a push. Bypassing the pre-push hook is still an owner decision (an audited SKIP_VERIFY), never a lane's.**
 - **Guard:** none automatic; the lead's lane rules and the audited `SKIP_VERIFY_REASON` line in `.git/skip-verify.log`.
 
-### L-284 · 2026-10-08 · process · lanes report events only, review depth follows risk, and a bug in a file you are changing rides in its own commit
-
-- **Symptom:** recorded by the 2026-10-08 operating review as an operating-model rule; the incident detail is in the lead's notes.
-- **Root cause:** coordination messages cost more than the work they describe, review effort is only worth spending where the risk is, and a bug fixed inside a commit about something else cannot be reviewed or reverted on its own.
-- **Lesson:** **Lanes report EVENTS only (pushed <sha> / blocked <why> / done / needs ruling), never status or load pings. Review depth follows risk: Opus for money, tenant security, concurrency and migrations; Sonnet for UI and docs; non-money nits go to a follow-up row, not a re-review loop. A bug found in a file you are already changing rides along in its OWN commit on the same branch, with a red-first test.**
-- **Guard:** the lane rules and the `pre-merge-review` skill.
-
-### L-283 · 2026-10-08 · process · cap work in flight per machine, and run the 2-minute fail-fast guards before the 7-minute verify push
-
-- **Symptom:** recorded by the 2026-10-08 operating review as an operating-model rule; the incident detail is in the lead's notes.
-- **Root cause:** work in flight beyond what one machine can finish competes with new work, and one deterministic failure found only inside the ~7 minute verify push costs a full verify.
-- **Lesson:** **Cap work in flight per machine: at most 2 PRs in review and at most 1 local-only branch; finish and push in-flight work before starting new feature work. Before a verify push run the ~2 minute fail-fast guards: size ratchets, pins, campaign-check freshness after any master merge, bare-cron, and check-types on the changed workspaces.**
-- **Guard:** the lane rules; the pre-push gates themselves.
-
-### L-281 · 2026-10-08 · process · on a shared host never `git stash` in a lane session and never kill processes by name
-
-- **Symptom:** recorded by the 2026-10-08 operating review as a standing hazard of several sessions sharing one machine; the incident detail is in the lead's notes.
-- **Root cause:** a stash is repo-wide and invisible in any working tree, so a `pop` in the wrong worktree restores or loses another lane's work. A name or pattern match (`pkill`, grep-and-kill) on a shared host cannot tell your jobs from another lane's, so it kills theirs.
-- **Lesson:** **In a builder or worktree session never use `git stash`: commit a WIP commit instead. Never kill by name or pattern: kill only the PID tree you started.**
-- **Guard:** the standing lane rules in the start prompt; no script yet.
-
 ### L-215 · 2026-09-23 · process · an approval covers only the exact value or sha it names
 
 - **Symptom:** a relayed brief said "set the ratchet baseline to the actual 5716" (a lowering from
@@ -193,6 +172,7 @@
 - **Root cause:** one PR added constructor parameters; another PR's spec still built the old arity. They landed back to back, and the merge-tree check sees only TEXT conflicts, so a semantic break between two clean merges went unchecked. Each PR's own green covers its own tree, never the combination.
 - **Lesson:** **After landing two PRs that touch the same constructor, signature or shared type in one window, run `npm run check-types -w apps/api` (and the touched specs) on the COMBINED master before the next land; never infer the combination from each PR's own green. Cf. [[L-228]], [[L-247]].**
 - **Guard:** none automatic yet; the landing script is to run `npm run check-types -w apps/api` on the post-merge tree before the next merge (to be added).
+- **Recurrence (2026-10-17, units-v2-3):** a merge that makes a parameter REQUIRED must re-run every spec and call site that passes it on the merged tree, not only the files the PR touched; run the full check-types ratchet plus the specs that import the changed function before the train is cut.
 
 ### L-267 · 2026-10-06 · process · a "retry with the same key" path excludes every state an office action ended, and "final" is derived only from terminal facts (#3211 counter-sale review)
 
@@ -207,13 +187,6 @@
 - **Root cause:** the window outlived the watchdog's deadline and nothing re-armed it or re-read visibility; the lane assumed the window was still open because nobody had said otherwise.
 - **Lesson:** **Re-arm the visibility watchdog on a timer at least 5 minutes before its deadline (an app restart also kills it), and read the repo's visibility immediately before every merge; a merge never proceeds on the belief that the window is open.**
 - **Guard:** none automatic yet; propose a pre-merge step in the landing script that fails on `PRIVATE` or on under 5 minutes of watchdog time left. Cf. [[L-253]] (archived).
-
-### L-273 · 2026-10-07 · process · a pre-push log piped through `tail` hides the real failure
-
-- **Symptom:** a builder diagnosed a warning near the end of a pre-push log as the failure and chased it.
-- **Root cause:** the log was piped through `tail`, so the failing test's output had scrolled out of view and only trailing warnings showed.
-- **Lesson:** **Save the full pre-push or verify log to a file and grep it for `FAIL` and `Tests:` before diagnosing; never judge a failure from the tail of a piped log.**
-- **Guard:** run verify as `... > log 2>&1` and read `grep -n "FAIL\|Tests:" log` first.
 
 ### L-280 · 2026-10-08 · process · a delete-by-filter ran with an erroring age filter and removed recent files
 
@@ -380,12 +353,12 @@
 
 ## testing
 
-### L-308 · 2026-10-16 · testing · a bounded input buffer reports what it drops, and a repeat rule is proved with the real inter-scan timing of each source
+### L-314 · 2026-10-17 · testing · back-to-back creates can tie on createdAt, so a test that asserts "oldest" pins the timestamps
 
-- **Symptom:** 20 repeat scans of one item added only 14 or 15 on the New order screen, on both the phone camera and a desktop wedge scanner (row 536).
-- **Root cause:** repeat suppression waited for a steady hold tuned for camera jitter, a two-deep pending buffer discarded overflow silently, and wedge reads interleaved with async lookups; tests used instant, evenly spaced scans that never showed the loss.
-- **Lesson:** **A bounded queue returns a `dropped` signal the screen must show, never a silent discard. Tune repeat rules per screen (opt-in, absence-based for a deliberate-repeat screen), run per-item async work through one serial FIFO, and take-and-clear the input atomically. Prove it with a deferred-resolve test: scan 1 in flight, half of scan 2, resolve, finish.**
-- **Guard:** `scan-pending-buffer.spec.ts`, `scan-engine.continuous.spec.ts`, the `useScanCodeHandler` and `CreateOrderModal` deferred-resolve tests.
+- **Symptom:** two label-sync specs picked the wrong category about half the time on a fast runner ("Dup" and "dup" created one statement apart); the b846 twin hit the same tie.
+- **Root cause:** the writer orders by `createdAt asc, id asc`; two rows created in the same millisecond tie on createdAt and the id tie-break is a random uuid, so "the oldest" is a coin flip the test never controlled.
+- **Lesson:** **A test that asserts an oldest, newest or first-created pick sets `createdAt` explicitly on every row it ranks (a second apart), or forces the tie on purpose and asserts the documented tie-break. Never rely on insertion order or the wall clock to separate two rows.**
+- **Guard:** the pinned `createdAt` in `label-sync.db.spec.ts` (branch fix/label-sync-oldest-tie) and the forced tie in the b846 twin (`vendor-bills.revert-appends.db.spec.ts`); none automatic.
 
 ### L-205 · 2026-09-18 · testing · regression tests pinned literal source text, not behavior
 
@@ -453,12 +426,40 @@
 
 ## domain
 
-### L-307 · 2026-10-16 · domain · two fields that describe one quantity are stored as one and derived; the customer-facing server path refuses a contradictory pair
+### L-315 · 2026-10-17 · domain · a signature over checkout terms signs the exact params the builder sends, and an absent signature is a mismatch, not unknown
 
-- **Symptom:** the buyer cart's quantity and its case/piece split drifted apart, so the cart showed one price while the server billed another (row 531).
-- **Root cause:** quantity and split were both client state, each edited by its own control, and the server accepted whatever pair arrived; saved carts and pack-size changes re-created the drift.
-- **Lesson:** **Keep ONE source (quantity in pieces), derive the split through the shared pricing helper on every change, rebuild saved state quantity-first and flag what was rebuilt, and have the server refuse a contradictory pair on the customer-facing path with a coded 400 before any key, lock or write. Staff paths only warn until a census of existing rows says enforcing is safe.** Cf. [[L-222]].
-- **Guard:** `qty-split-consistency.spec.ts` and its DB spec, `buyer-cart-line.test.ts`, the read-only `report-buyer-split-mismatch.mjs` census.
+- **Symptom:** a reused Stripe checkout session stayed open after the plan's terms changed, and a session created before signing existed was trusted as current (542d).
+- **Root cause:** the session carried no digest of the terms it was built from, so staleness was inferred from fields that did not cover every term, and a missing signature was read as "nothing to compare".
+- **Lesson:** **Sign (sha256) the exact params the session builder sends, store the signature in the session metadata, and on reuse recompute it from a fresh plan. A missing or different signature means expire-then-release and replan, never reuse. Gate the rule by a dated SIGNING_SINCE so older sessions are replaced, not grandfathered silently.**
+- **Guard:** `catchup-session-terms.spec.ts`, `payment-due.terms.spec.ts`, `payment-due.stale-session.spec.ts` (`catchupTermsSignature`, `assertSignedSession`).
+
+### L-313 · 2026-10-17 · domain · a write that changes a row's type breaks every spec and reader that finds rows of the old type
+
+- **Symptom:** a bill revert and a purchase-order edit began appending a negative PURCHASE row instead of an ADJUSTMENT or a delete; specs that found "the receipt" by type alone picked the reversal, and a PO-edit case asserted against the wrong row (B846 and its PO-edit siblings).
+- **Root cause:** the stock ledger is read by type, and the new write put a row of an old, widely-read type on the table with the opposite sign. Every finder that said "the PURCHASE row" now has two candidates.
+- **Lesson:** **When a write starts producing a row of a type that already exists (ADJUSTMENT to a negative PURCHASE), search every spec and reader that selects that type and give each an explicit order and a sign filter (qty > 0 for receipts, < 0 for reversals), or find the row by id. Prove it with a fixture that holds both the receipt and its reversal.**
+- **Guard:** `vendor-bills.revert-appends.db.spec.ts`, `inventory.po-edit-reversal.db.spec.ts`, `inventory.po-edit.db.spec.ts` (case 8 pinned to the original receipt row).
+
+### L-310 · 2026-10-16 · domain · every path that destroys a row holding booked stock settles that stock through the cancel's own unwind
+
+- **Symptom:** deleting a live order (pending, confirmed, out for delivery, part delivered), or deleting or purging a customer that owned such orders, left the shelf count down for good; a cancel credited it back, a delete did not.
+- **Root cause:** stock is booked when the order is created and was credited back only by the cancel path. Delete, bulk delete and the customer delete and purge cascade removed the rows without that unwind, and each earlier fix looked only at the one path in front of it.
+- **Lesson:** **Enumerate every destroyer of a stock-holding row (delete, bulk delete, purge, a cascade from a parent) by search and route each through the cancel's own settle path in its own transaction: lock the Order row first, read the status under the lock, settle only the states a cancel would credit (not DRAFT, CANCELLED or DELIVERED), then lock the products once in ranked order. Prove it with a ledger invariant (shelf = opening + movements) after each destroyer, not a per-path count.** Cf. [[L-223]], [[L-301]] (a racing reopen is the same class: claim the row under its lock, then compare-and-set the status before re-booking).
+- **Guard:** `inventory/testing/ledger-consistency.ts` and `order-stock-world.ts`, the `order-stock-o6-delete-live`, `order-stock-o5-reopen-race` and `customer-delete-returns-stock` DB specs, `order-reopen-claim.spec.ts`, `customer-delete-stock.spec.ts`.
+
+### L-311 · 2026-10-16 · domain · an explicit "keep this separate" choice travels to every automatic step that follows the create
+
+- **Symptom:** a buyer who chose "create a new order" instead of adding to the pending one had the new order folded straight back into the pending one: the new order was deleted, its number burned, and the idempotency key left on the survivor, so a duplicate submit either 409ed or re-applied the cart.
+- **Root cause:** the create honoured the choice, but the consolidation sweep that ran right after it did not know about it. The staff path already had a separate-order marker; the buyer path never got one.
+- **Lesson:** **When a user choice opposes an automatic behaviour (auto-merge, consolidation, dedupe), carry the choice as an explicit flag to the create AND to every automatic step after it, and let the sweep read the same flag. Test with the automatic step live (create, then assert the order still exists), never with it mocked, and replay a duplicate submit by key.** Cf. [[L-267]].
+- **Guard:** `buyer-create-new-order-choice.db.spec.ts`, `buyer.merge-lock.spec.ts`.
+
+### L-312 · 2026-10-16 · domain · a write that names ids resolves each against the catalog before it acts
+
+- **Symptom:** bill lines carried product ids no catalog entry matched; a purchase-order receive skipped an item that was not on the order and answered 200; a reorder-point write on an unresolved id surfaced a raw database error (B1236 to B1238).
+- **Root cause:** DTO validation checked the shape of the payload, not whether each id resolves. The services trusted the ids and then wrote, silently skipped or crashed further down.
+- **Lesson:** **Resolve every id in a line array with one catalog read (an in-list) before any row is written. An unknown id is a coded 4xx that names it, never a silent skip, a 200 or a raw database error. Put the unknown-id case in the spec of every writer that takes a line array.**
+- **Guard:** `vendor-bill-line-validation.db.spec.ts`, `inventory-line-validation.db.spec.ts`, `vendor-bills.service.spec.ts`, `inventory.service.spec.ts`.
 
 ### L-306 · 2026-10-12 · domain · a switch that must stop a family of automatic writers is enforced by a writer census and a fail-closed read, never by the callers you remember
 

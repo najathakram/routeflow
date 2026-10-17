@@ -51,6 +51,34 @@
 //                    NOT_FOUND | SELF | VARIANT_PARENT | INACTIVE | HAS_VARIANTS. Nothing was written.
 //   NAME_TAKEN     — `body.code` of the 409 when reactivating a product whose name an ACTIVE product of
 //                    the same scope now holds (SA-603a/b); body carries the holder's `productId`/`productName`.
+//   UNIT_NAME_TAKEN — `body.code` of the 409 when renaming a unit to a name another unit of the tenant already has
+//                    (archived or not).
+//   UNIT_RENAME_COLLISION — `body.code` of the 409 when a unit rename would give one product two levels the same name;
+//                    `body.reason` is NAME (a product already has that name), DUPLICATE_LEVELS (two of its levels are
+//                    linked to the unit), LINES_AT_OTHER_SIZE (orders or invoices already carry the new name at another
+//                    size) or MIXED; `products` lists up to 10 `{id, name}` and `total` counts them all.
+//                    Nothing was changed.
+//   UNITS_RENAME_IN_PROGRESS — `body.code` of the 409 when a pack edit, level write or import confirmation could not get the
+//                    tenant units lock within 3 s because a unit rename is running (or a rename could not get it within 5 s
+//                    because writers hold it, or a pack edit could not get one product's lock because another save of that product holds it).
+//                    The user-facing copy is neutral ("Another change is in progress"): the blocker is not always a rename. Nothing was changed; retry.
+//   UNIT_ARCHIVED — `body.code` of the 409 when a product level is given a unit name that is ARCHIVED in Settings > Units
+//                    and the product does not already use it (restore the unit first). Nothing was written.
+//   TENANT_UNIT_LIMIT — `body.code` of the 409 when a person adds or restores a unit in Settings > Units while the tenant
+//                    already has 200 ACTIVE units (SA-810); `body.limit` is the cap and `body.active` the active count.
+//                    Archive one to free a slot. Nothing was written. A level write at the cap is never refused: it saves
+//                    the level unlinked and its response carries `unitNotListed: [name]`.
+//   UNIT_SIZE_IN_USE — `body.code` of the 409 when a product level's size would change (or a label move onto a size) while
+//                    orders or invoices already carry that label at a different size. Nothing was written.
+//   PRODUCT_PACK_STALE — `body.code` of the 409 from PATCH /products/:id when the pack the form read (expectedUnit,
+//                    expectedUnitsPerBox, expectedTenantUnitId) no longer matches the product under its pack lock, e.g. a
+//                    Settings > Units rename committed while the form was open (SA-797). Nothing was written; reload.
+//   PRODUCT_PACK_PRECONDITION_REQUIRED — `body.code` of the 409 from PATCH /products/:id when a client sends `unit` or
+//                    `unitsPerBox` WITHOUT its expected twin and the value differs from the stored one (SA-797a): an
+//                    older app build that never sends the expected pack. An equal value (an echo) is accepted. Nothing
+//                    was written; reloading cannot fix it, updating the app does.
+//   VARIANT_NAME_PREFIX_ONLY — `body.code` of the 400 when a variant name is only its parent's name and the separator ("Acme - ",
+//                    any case / spacing); `body.field` is "name". Nothing was written; type what makes the variant different.
 //   RECIPE_IMMUTABLE — `body.code` of the 409 when a recipe that is ACTIVE or RETIRED is edited
 //                    in place (#2717 M2, I3); clone it with POST /recipes/:id/versions instead.
 //   RECIPE_CATEGORY_LOCKED — `body.code` of the 409 when a product that sits in a non-RETIRED
@@ -220,6 +248,16 @@ export const API_ERROR_CODES = {
   CODE_TAKEN: "CODE_TAKEN",
   PRODUCT_CODE_IN_USE: "PRODUCT_CODE_IN_USE",
   NAME_TAKEN: "NAME_TAKEN",
+  UNIT_NAME_TAKEN: "UNIT_NAME_TAKEN",
+  UNIT_RENAME_COLLISION: "UNIT_RENAME_COLLISION",
+  UNITS_RENAME_IN_PROGRESS: "UNITS_RENAME_IN_PROGRESS",
+  UNIT_ARCHIVED: "UNIT_ARCHIVED",
+  TENANT_UNIT_LIMIT: "TENANT_UNIT_LIMIT",
+  UNIT_SIZE_IN_USE: "UNIT_SIZE_IN_USE",
+  PRODUCT_PACK_STALE: "PRODUCT_PACK_STALE",
+  PRODUCT_PACK_PRECONDITION_REQUIRED: "PRODUCT_PACK_PRECONDITION_REQUIRED",
+  /** 400 from product create / update, the family grid and the stock split: a variant name that is only its parent's name plus the separator ("Acme - "); there is no label to store. Nothing was written. */
+  VARIANT_NAME_PREFIX_ONLY: "VARIANT_NAME_PREFIX_ONLY",
   HOLDERS_CHANGED: "HOLDERS_CHANGED",
   FAMILY_NOT_SELLABLE: "FAMILY_NOT_SELLABLE",
   /** 400 from PUT customer price overrides and POST/PATCH promotions: a FAMILY container is never priced or promoted; `productIds` names them. Use its variants. */
@@ -375,6 +413,7 @@ export const API_ERROR_CODES = {
   PO_LOT_PARTIALLY_CONSUMED: "PO_LOT_PARTIALLY_CONSUMED",
   PO_HAS_LINKED_BILL: "PO_HAS_LINKED_BILL",
   INVENTORY_LEDGER_GAP: "INVENTORY_LEDGER_GAP",
+  STOCK_DATE_IN_FILED_PERIOD: "STOCK_DATE_IN_FILED_PERIOD",
   ALLOCATIONS_EXCEED_PAYMENT: "ALLOCATIONS_EXCEED_PAYMENT",
   INVOICE_CHANGED_DURING_EDIT: "INVOICE_CHANGED_DURING_EDIT",
   EMAIL_NOT_CONFIGURED: "EMAIL_NOT_CONFIGURED",

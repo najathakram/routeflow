@@ -22,8 +22,8 @@ import {
 } from "../lib/cart-line-state";
 import {
   computeOrderTotal,
-  lineUnitFor,
-  priceEditorPrefill,
+  lineUnitFor as libLineUnitFor,
+  priceEditorPrefill as libPriceEditorPrefill,
   type UnlistedTotalLine,
 } from "../lib/cart-order-total";
 import { decideTrayPrice } from "../lib/staff-price-override";
@@ -73,15 +73,16 @@ import { createScanAcceptGuard } from "../lib/scan-accept-guard";
 import { needsUnitLabelConfirm } from "../lib/scan-unit-confirm";
 // Compose "<Parent> - <Variant>" so scanned variants don't show as "Strawberry" alone.
 import { displayProductName as displayName } from "../lib/product-display";
-import { effectiveQty, getTierPrice, isSpecialTier, roundMoney } from "@routeflow/pricing";
+import { effectiveQty, isSpecialTier, roundMoney } from "@routeflow/pricing";
+import { useCustomerPriceLayer } from "../lib/api/price-layer";
+import { PriceLayerGateNotice } from "./PriceLayerGateNotice";
+import { buildInvoiceSplitPreview } from "../lib/invoice-split-preview";
+import { buildDraftCatalogLines } from "../lib/draft-catalog-lines";
+import { lineIsSpecial, lineLayerPrice, packLinePrice } from "../lib/cart-order-total";
+import { guardLayerSave, layerAwareIsSpecial, priceLayerGate } from "../lib/price-layer-gate";
 import { useMarginConfig, floorForCategory } from "../lib/api/margin";
 import { useTrackedCategories } from "../lib/api/tracked-categories";
-import {
-  groupLinesForInvoiceSplit,
-  type InvoiceSplitCategory,
-  type InvoiceSplitLineInput,
-  type InvoiceSplitPreview,
-} from "../lib/invoice-split";
+import { type InvoiceSplitCategory, type InvoiceSplitPreview } from "../lib/invoice-split";
 import { InlineCreateProductSheet } from "./InlineCreateProductSheet";
 import { ProductPickerSheet } from "./ProductPickerSheet";
 import { BoxedQtyBand } from "./BoxedQtyBand";
@@ -491,9 +492,25 @@ function ProductPickView({
   }, [customerPrices]);
   const effectiveTierFor = (id: string) => cpMap.get(id) ?? customerTier ?? 1;
   /** The customer's effective per-selling-unit (box) price for a product. */
-  const tierPriceFor = (p: Product) => getTierPrice(p, effectiveTierFor(p.id));
+  // S19b slice D (SA-811a/813): billing's own customer price layer. Flag off: no request, `layerOf` is undefined and every
+  // price below is master's number.
+  const priceLayer = useCustomerPriceLayer(customerId);
+  const layerOf = priceLayer.layerOf;
+  const packPriceFor = (p: Product) => packLinePrice(p, effectiveTierFor(p.id), layerOf(p.id));
+  const tierPriceFor = (p: Product) => packPriceFor(p).price;
+  // The lib's pure line price with this customer's layer bound in (the call sites keep their pinned shapes).
+  const lineUnitFor = (line: LineState | undefined, p: Product, tier: number) =>
+    libLineUnitFor(line, p, tier, layerOf(p.id));
+  const priceEditorPrefill = (line: LineState | undefined, p: Product, tier: number) =>
+    libPriceEditorPrefill(line, p, tier, layerOf(p.id));
+  /** The line's comparison base: its OWN unit's resolved price (the layer row, else master's unitPriceBase). */
+  const lineBaseFor = (line: LineState, p: Product) =>
+    lineLayerPrice(line, p, effectiveTierFor(p.id), layerOf(p.id)).price;
   /** SPECIAL (tier≠1) lines are the customer's permanent price — never overridable. */
-  const isSpecialFor = (p: Product) => isSpecialTier(effectiveTierFor(p.id));
+  const isSpecialFor = (p: Product) => packPriceFor(p).isSpecial;
+  /** This LINE's SPECIAL-ness: a unit line answers with its own layer row (a Can is not the pack). */
+  const lineSpecialFor = (line: LineState | undefined, p: Product) =>
+    lineIsSpecial(line, p, effectiveTierFor(p.id), layerOf(p.id));
   const [scanOpen, setScanOpen] = useState(false);
   /** Tray line (catalog id or unlisted local id) whose price is being edited. */
   const [priceEditId, setPriceEditId] = useState<string | null>(null);
@@ -790,7 +807,7 @@ function ProductPickView({
       priceHistory?.[id],
       p ? toNumber(p.pricePerUnit) : 0,
       p ? tierPriceFor(p) : 0,
-      isSpecialTier(effectiveTierFor(id)),
+      p ? layerAwareIsSpecial(packPriceFor(p)) : isSpecialTier(effectiveTierFor(id)),
     );
     // #2865: the add decision is the pure `applyAddToItems` (lib/pending-unit-adapter): refused while the line is pending -> false.
     const input = { id, level, dflt, viaRow, code, role: userRole, upb, prefill };
@@ -1139,9 +1156,16 @@ function ProductPickView({
   // items that aren't in the local list still contribute. Subtotal uses the shared
   // box/piece-aware formula so the footer agrees with what the server will compute on submit.
   const { total, totalItems } = useMemo(
-    () => computeOrderTotal(items, productById, unlisted as UnlistedTotalLine[], effectiveTierFor),
+    () =>
+      computeOrderTotal(
+        items,
+        productById,
+        unlisted as UnlistedTotalLine[],
+        effectiveTierFor,
+        layerOf,
+      ),
     // eslint-disable-next-line react-hooks/exhaustive-deps
-    [items, productById, unlisted, cpMap, customerTier],
+    [items, productById, unlisted, cpMap, customerTier, priceLayer.data, customerId],
   );
 
   // REG-4: live, DISPLAY-ONLY preview of how this cart will split into invoices.
@@ -1150,29 +1174,24 @@ function ProductPickView({
   // inside groupLinesForInvoiceSplit produces the same pre-tax per-line amounts
   // the total memo already sums; this just also buckets them by category. The
   // server (createSplitInvoices) is the sole source of truth for the real split.
-  const invoiceSplit: InvoiceSplitPreview = useMemo(() => {
-    const splitLines: InvoiceSplitLineInput[] = [];
-    for (const [id, line] of Object.entries(items)) {
-      const p = productById.get(id);
-      if (!p) continue;
-      const qty = effectiveQty(line, p.unitsPerBox);
-      if (qty <= 0) continue;
-      splitLines.push({
-        trackedCategoryId: p.trackedCategoryId ?? null,
-        unitPrice: lineUnitFor(line, p, effectiveTierFor(p.id)),
-        qty,
-        boxes: line.boxes ?? null,
-        pieces: line.pieces ?? null,
-        unitsPerBox: p.unitsPerBox ?? null,
-      });
-    }
-    for (const u of unlisted) {
-      if (u.qty <= 0) continue;
-      splitLines.push({ trackedCategoryId: null, unitPrice: u.unitPrice, qty: u.qty });
-    }
-    return groupLinesForInvoiceSplit(splitLines, splitCategoryById);
+  const invoiceSplit: InvoiceSplitPreview = useMemo(
+    () =>
+      buildInvoiceSplitPreview(items, productById, unlisted, splitCategoryById, {
+        lineUnitFor,
+        effectiveTierFor,
+      }),
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [items, productById, unlisted, splitCategoryById, cpMap, customerTier]);
+    [
+      items,
+      productById,
+      unlisted,
+      splitCategoryById,
+      cpMap,
+      customerTier,
+      priceLayer.data,
+      customerId,
+    ],
+  );
 
   // Newest-first "order so far" for the scan tray. Same inputs as the total
   // memo, so the tray and the footer cannot disagree.
@@ -1190,11 +1209,11 @@ function ProductPickView({
         },
         overridable: (p) => {
           const full = productById.get(p.id);
-          return full ? !isSpecialFor(full) : true;
+          return full ? !lineSpecialFor(items[p.id], full) : true;
         },
       }),
     // eslint-disable-next-line react-hooks/exhaustive-deps
-    [items, unlisted, scanOrder, productById, cpMap, customerTier],
+    [items, unlisted, scanOrder, productById, cpMap, customerTier, priceLayer.data, customerId],
   );
 
   /**
@@ -1311,8 +1330,12 @@ function ProductPickView({
       unlisted: false,
       rule: {
         base: unitPriceBase(line ?? {}, tierPriceFor(p)),
+        // S19b: a unit line whose unit is in the customer layer is judged against that price (later key wins).
+        ...(line?.unitLabel ? { base: lineBaseFor(line, p) } : {}),
         listPrice: toNumber(p.pricePerUnit),
         isSpecial: isSpecialFor(p),
+        // S19b: a unit line is judged by ITS OWN layer row, not the pack's (later key wins; a pack line is unchanged).
+        ...(line?.unitLabel ? { isSpecial: lineSpecialFor(line, p) } : {}),
         reason: line?.overrideReason,
       },
     };
@@ -1403,60 +1426,11 @@ function ProductPickView({
   // these variables 1:1 by design — see drafts-payload.ts). Every money value
   // flows through computeLineSubtotal elsewhere (never re-derived here); this
   // memo just packages the CURRENT effective price/qty per line.
-  const draftCatalogLines = useMemo<DraftCatalogLine[]>(() => {
-    const lines: DraftCatalogLine[] = [];
-    for (const [productId, line] of Object.entries(items)) {
-      const p = productById.get(productId);
-      if (!p) continue;
-      const qty = effectiveQty(line, p.unitsPerBox);
-      if (qty <= 0) continue;
-      const special = isSpecialFor(p);
-      const tierPrice = tierPriceFor(p);
-      const listPrice = toNumber(p.pricePerUnit);
-      // B747: a unit-sold line's comparison base is its OWN resolved price, never the pack's
-      // tier price — same fix as lineUnitFor/computeOrderTotal (lib/cart-order-total.ts). Before
-      // this, a parked unit line was written to the wire as a plain STANDARD/pack line (no
-      // unitLabel at all), so this screen's own drafts never actually carried the field the old
-      // whole-draft resume refusal keyed on — that refusal only ever fired for a draft parked by
-      // a different client.
-      const priceBase = unitPriceBase(line, tierPrice);
-      // Mobile has no separate "permanent discount" concept — any explicit
-      // override the operator set is tagged MANUAL (never DISCOUNTED), which
-      // is exactly what the resume-hydration pin rule above checks for.
-      // #2696(c): a special line's override parks only WITH its reason (as submit sends it).
-      const hasOverride =
-        (!special || !!line.overrideReason?.trim()) &&
-        line.unitPrice != null &&
-        line.unitPrice !== priceBase;
-      lines.push({
-        productId,
-        productName: displayName(p),
-        unit: p.unit ?? "each",
-        listPrice,
-        ...(special ? { specialPrice: tierPrice } : {}),
-        ...(hasOverride ? { discountedPrice: line.unitPrice } : {}),
-        ...(hasOverride && line.overrideReason ? { overrideReason: line.overrideReason } : {}),
-        unitPrice: hasOverride ? line.unitPrice! : priceBase,
-        priceType: hasOverride ? "MANUAL" : special ? "SPECIAL" : "STANDARD",
-        qty,
-        ...(p.unitsPerBox ? { unitsPerBox: Number(p.unitsPerBox) } : {}),
-        ...(line.boxes != null ? { boxes: line.boxes } : {}),
-        ...(line.pieces != null ? { pieces: line.pieces } : {}),
-        ...(line.unitLabel ? { unitLabel: line.unitLabel } : {}),
-        ...(line.derivedBase ? { derivedBase: line.derivedBase } : {}),
-        ...(hasOverride && line.priceSource ? { priceSource: line.priceSource } : {}),
-        ...(p.averageCost != null
-          ? { unitCost: toNumber(p.averageCost) }
-          : p.standardCost != null
-            ? { unitCost: toNumber(p.standardCost) }
-            : {}),
-        ...(p.category ? { category: p.category } : {}),
-        ...(line.note?.trim() ? { note: line.note.trim() } : {}),
-      });
-    }
-    return lines;
+  const draftCatalogLines = useMemo<DraftCatalogLine[]>(
+    () => buildDraftCatalogLines(items, productById, { lineSpecialFor, tierPriceFor, lineBaseFor }),
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [items, productById, cpMap, customerTier]);
+    [items, productById, cpMap, customerTier, priceLayer.data, customerId],
+  );
 
   const draftBuilderState = useMemo<DraftBuilderState>(
     () => ({
@@ -1715,7 +1689,13 @@ function ProductPickView({
     setSubmitting(false);
   };
 
-  const canSave = totalItems > 0 && !createOrder.isPending && !submitting;
+  // D-5 (SA-813 M3): Create stays disabled until every line's price is confirmed by the layer read.
+  const layerGate = priceLayerGate(
+    priceLayer,
+    Object.keys(items),
+    (id) => productById.get(id)?.name ?? id,
+  );
+  const canSave = totalItems > 0 && !createOrder.isPending && !submitting && !layerGate.blocked;
   // "Save as draft" needs only a customer (a zero-item DRAFT is allowed server-side).
   const canSaveDraft = !!customerId && !createOrder.isPending && !submitting;
 
@@ -1748,10 +1728,10 @@ function ProductPickView({
         // the server applies the SPECIAL/tier price authoritatively.
         // units_v1: see lib/unit-options.ts#unitPriceBase — the comparison base is the ACTIVE
         // unit's own resolved price, never the pack's `tierPriceFor`.
-        const catalog = unitPriceBase(line, p ? tierPriceFor(p) : 0);
+        const catalog = p ? lineBaseFor(line, p) : 0;
         // #2696(c): a SPECIAL line's override is sent only WITH its reason (the server refuses
         // one without); a lingering reasonless one (e.g. an old draft) is dropped, as before.
-        const specialOk = p != null && (!isSpecialFor(p) || !!line.overrideReason?.trim());
+        const specialOk = p != null && (!lineSpecialFor(line, p) || !!line.overrideReason?.trim());
         const override =
           specialOk && line.unitPrice != null && line.unitPrice !== catalog
             ? {
@@ -2023,6 +2003,12 @@ function ProductPickView({
   const onSave = (asDraft = false, finish: "invoice" | "confirm" = "invoice") => {
     // Not while a submit is in flight: Confirm only mid-flight must not downgrade Confirm & invoice.
     if (!submittingRef.current) pos.finishRef.current = finish;
+    // D-5: a charge is never saved on unconfirmed prices (a draft is not a charge).
+    const layerBlock = guardLayerSave(layerGate, asDraft);
+    if (layerBlock) {
+      alertInfo("Prices aren't confirmed", layerBlock);
+      return;
+    }
     const gate = orderSubmitGate({ hasCustomer: !!customerId, itemCount: totalItems, asDraft });
     if (!gate.ok) {
       alertInfo(gate.title ?? "Can't save yet", gate.message ?? "");
@@ -2338,6 +2324,11 @@ function ProductPickView({
             <Ionicons name="arrow-forward" size={14} color="#fff" />
           </Pressable>
         </View>
+        <PriceLayerGateNotice
+          gate={layerGate}
+          onRetry={priceLayer.refetch}
+          textStyle={{ color: ios.system.orangeInk, fontSize: 12, textAlign: "center" }}
+        />
         <View style={styles.footerSubRow}>
           {/* A rejected draft write used to be silent everywhere. The order
               itself is never at risk — it is right here on screen — so say
@@ -2481,6 +2472,9 @@ function ProductPickView({
         priceHistory={priceHistory}
         tierPriceFor={tierPriceFor}
         isSpecialFor={isSpecialFor}
+        layerOf={layerOf}
+        layerGate={layerGate}
+        onRetryLayer={priceLayer.refetch}
         tierForProductId={effectiveTierFor}
         marginFloorFor={(p) => floorForCategory(marginConfig, p.category)}
         unlisted={unlisted}

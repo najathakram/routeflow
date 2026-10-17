@@ -63,6 +63,7 @@ import { RestrictionsSettingsModule } from "./restrictions-settings/restrictions
 import { SettingsInventoryModule } from "./settings-inventory/settings-inventory.module";
 import { SettingsFulfilmentModule } from "./settings-fulfilment/settings-fulfilment.module";
 import { ProductCategoriesModule } from "./product-categories/product-categories.module";
+import { UnitsModule } from "./units/units.module";
 import { SellingRestrictionsAdminModule } from "./selling-restrictions-admin/selling-restrictions-admin.module";
 import { RegulatedModule } from "./regulated/regulated.module";
 import { AuthorizationsModule } from "./authorizations/authorizations.module";
@@ -191,6 +192,7 @@ import { AppService } from "./app.service";
     SettingsInventoryModule,
     SettingsFulfilmentModule,
     ProductCategoriesModule,
+    UnitsModule,
     SellingRestrictionsAdminModule,
     RegulatedModule,
     AuthorizationsModule,

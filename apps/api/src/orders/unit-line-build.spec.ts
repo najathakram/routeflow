@@ -471,4 +471,24 @@ describe("buildUnitLine — snapshot fallback for an EXISTING line (units P0b)",
   it("a NEW line (no snapshot) naming an unknown unit is still the 400 UNIT_NOT_OFFERED", () => {
     expect(() => rebuild(false)).toThrow(BadRequestException);
   });
+  it("SA M2: the held word matches by unitNameKey, so an NFD snapshot and an NFC request are the same unit", () => {
+    // "Étui" stored decomposed (E + U+0301), re-sent composed: trim().toLowerCase() calls them different words.
+    const held = { ...existing, unitLabel: "E\u0301tui" };
+    const line = buildUnitLine({
+      product,
+      units: liveUnits,
+      // buildUnitLine's own compare: a caller that resolved the word composed (NFC) while the line holds it decomposed.
+      resolved: {
+        ...resolveLineUnits(product, liveUnits, undefined, held),
+        unitLabel: "\u00c9tui",
+      },
+      item: { productId: "p1", qty: 3, unitLabel: "\u00c9tui" },
+      tier: 1,
+      taxFor,
+      position: 0,
+      tenantId: "t1",
+      existing: held,
+    } as never);
+    expect(line).toMatchObject({ unitsPerBox: 12, unitPrice: 100, qty: 36, subtotal: 300 });
+  });
 });

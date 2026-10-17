@@ -28,6 +28,13 @@ jest.mock("@/lib/api/product-units", () => ({
   }),
   useDeleteProductUnit: () => ({ mutate: removeMutate, isPending: false }),
 }));
+// K10d: the card reads the same price grid the v2 shell does, to know whether the shell has mounted its controls.
+let mockGrid: { data?: unknown; isLoading: boolean; isError: boolean } = {
+  data: undefined,
+  isLoading: true,
+  isError: false,
+};
+jest.mock("@/lib/api/usePriceGrid", () => ({ usePriceGrid: () => mockGrid }));
 jest.mock("@/lib/api/tier-labels", () => ({ useTierLabels: () => ({ data: {} }) }));
 jest.mock("@/lib/auth-context", () => ({ useAuth: () => ({ user: { role: "OPERATOR" } }) }));
 
@@ -69,6 +76,7 @@ beforeEach(() => {
   mockEnabled.mockReturnValue(true);
   updateMutateAsync.mockResolvedValue({});
   mockUnits = [];
+  mockGrid = { data: undefined, isLoading: true, isError: false };
 });
 
 describe("ProductUnitsCard", () => {
@@ -210,6 +218,21 @@ describe("ProductUnitsCard", () => {
     expect(removeMutate).toHaveBeenCalledWith("u-case", expect.any(Object));
   });
 
+  it("SA-810: a level saved while the unit list is full says its name wasn't added (the level still saved)", async () => {
+    createMutate.mockImplementation((_b, opts) =>
+      opts?.onSuccess?.({ ...caseUnit, label: "Crate", unitNotListed: ["Crate"] }),
+    );
+    renderCard();
+    fireEvent.change(screen.getByLabelText("New unit"), { target: { value: "Crate" } });
+    fireEvent.change(screen.getByLabelText("Pieces per new unit"), { target: { value: "48" } });
+    fireEvent.click(screen.getByRole("button", { name: "Add unit" }));
+    expect(
+      await screen.findByText(
+        "Saved. 'Crate' wasn't added to your unit list because the list is full (200).",
+      ),
+    ).toBeInTheDocument();
+  });
+
   it("B594: a failed write raises NO toast of its own — the global MutationCache handler already shows the server's message once", async () => {
     mockUnits = [caseUnit];
     const err = { response: { data: { message: "size cannot change" } } };
@@ -287,5 +310,114 @@ describe("ProductUnitsCard", () => {
       expect(await screen.findByText("Updated 0 of 1 other units")).toBeInTheDocument();
       expect(screen.getByText(/Not updated: Pallet/)).toBeInTheDocument();
     });
+  });
+});
+
+describe("ProductUnitsCard on the v2 surface (K10d: one Add a unit, one Remove per row)", () => {
+  const gridRow = (ref: string, kind: "pack" | "base" | "unit", editable = true) => ({
+    ref,
+    label: ref,
+    factor: 1,
+    kind,
+    code: null,
+    cells: [],
+    editable,
+  });
+  const loaded = (...rows: ReturnType<typeof gridRow>[]) => {
+    mockGrid = { data: { rows }, isLoading: false, isError: false };
+  };
+  const renderWith = (props: Record<string, unknown>, p: Record<string, unknown> = product) =>
+    render(
+      <QueryClientProvider client={queryClient}>
+        <ToastProvider>
+          <ProductUnitsCard product={p as typeof product} {...props} />
+        </ToastProvider>
+      </QueryClientProvider>,
+    );
+
+  it("hideAddForm drops the always-open Add unit form once the grid has loaded, and keeps every row control", () => {
+    mockUnits = [caseUnit];
+    loaded(gridRow("pack", "pack"), gridRow("u-case", "unit"));
+    renderWith({ hideAddForm: true });
+    expect(screen.queryByRole("button", { name: "Add unit" })).toBeNull();
+    expect(screen.queryByLabelText("New unit")).toBeNull();
+    expect(document.getElementById("new-unit-name")).toBeNull();
+    expect(screen.getByLabelText("Case name")).toBeInTheDocument();
+    expect(screen.getByLabelText("Case price")).toBeInTheDocument();
+  });
+
+  it.each([
+    ["loading", { data: undefined, isLoading: true, isError: false }],
+    ["errored", { data: undefined, isLoading: false, isError: true }],
+    ["empty", { data: { rows: [] }, isLoading: false, isError: false }],
+  ])("keeps the old Add unit form while the grid is %s (the shell has no Add yet)", (_n, g) => {
+    mockGrid = g;
+    renderWith({ hideAddForm: true });
+    expect(screen.getByRole("button", { name: "Add unit" })).toBeInTheDocument();
+    expect(screen.getByText(/No other units yet/)).toHaveTextContent(/below/);
+  });
+
+  it("the empty state no longer says 'below' when the form is gone", () => {
+    loaded(gridRow("pack", "pack"));
+    renderWith({ hideAddForm: true });
+    expect(screen.getByText(/No other units yet/)).toHaveTextContent(/Add a unit/);
+    expect(screen.getByText(/No other units yet/)).not.toHaveTextContent(/below/);
+  });
+
+  it("without the prop the form and the row Remove are there, exactly as before", () => {
+    mockUnits = [caseUnit];
+    loaded(gridRow("pack", "pack"), gridRow("u-case", "unit"));
+    renderWith({});
+    expect(screen.getByRole("button", { name: "Add unit" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Remove" })).toBeInTheDocument();
+  });
+
+  it("hides the old Remove on a unit row the shell gives its own Remove (grid kind unit)", () => {
+    mockUnits = [caseUnit, palletUnit];
+    loaded(gridRow("pack", "pack"), gridRow("u-case", "unit"), gridRow("u-pallet", "unit"));
+    renderWith({ hideAddForm: true });
+    expect(screen.queryByRole("button", { name: "Remove" })).toBeNull();
+  });
+
+  it("keeps the old Remove on a row the shell has no Remove for, and on every row while the grid is not loaded", () => {
+    mockUnits = [caseUnit, palletUnit];
+    // the Pallet is the pack row in the grid (no kind unit): only the Case gets the shell's control
+    loaded(gridRow("pack", "pack"), gridRow("u-case", "unit"));
+    const a = renderWith({ hideAddForm: true });
+    expect(screen.getAllByRole("button", { name: "Remove" })).toHaveLength(1);
+    a.unmount();
+    mockGrid = { data: undefined, isLoading: true, isError: false };
+    renderWith({ hideAddForm: true });
+    expect(screen.getAllByRole("button", { name: "Remove" })).toHaveLength(2);
+  });
+
+  it.each([
+    ["a variant", { ...product, parentProductId: "fam-1" }],
+    ["a recipe", { ...product, kind: "RECIPE" }],
+    ["a family", { ...product, kind: "FAMILY" }],
+  ])("%s keeps its old form and its old Remove: the shell mounts neither there", (_n, p) => {
+    mockUnits = [caseUnit];
+    loaded(gridRow("pack", "pack"), gridRow("u-case", "unit"));
+    renderWith({ hideAddForm: true }, p);
+    expect(screen.getByRole("button", { name: "Add unit" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Remove" })).toBeInTheDocument();
+  });
+
+  it("a grid error with cached rows keeps the old Remove (an errored grid is not a mounted shell)", () => {
+    mockUnits = [caseUnit];
+    mockGrid = {
+      data: { rows: [gridRow("pack", "pack"), gridRow("u-case", "unit")] },
+      isLoading: false,
+      isError: true,
+    };
+    renderWith({ hideAddForm: true });
+    expect(screen.getByRole("button", { name: "Remove" })).toBeInTheDocument();
+  });
+
+  it("a unit row the grid marks not editable keeps the old Remove", () => {
+    mockUnits = [caseUnit];
+    loaded(gridRow("pack", "pack"), gridRow("u-case", "unit", false));
+    renderWith({ hideAddForm: true });
+    expect(screen.getByRole("button", { name: "Remove" })).toBeInTheDocument();
   });
 });

@@ -17,13 +17,18 @@ import { foldPlan, parseAmount, usePlanSelection } from "./selection";
 import { usePlanNames } from "./usePlanNames";
 
 // S12b: "Change prices". Every price shown is planPriceChange's PricePlan. The customer opt-in is an unticked offer
-// (SA-798 c, V03), Apply sits in a sticky footer (V05) and folds the plan into the shared draft: Save is the commit.
+// (SA-798 c, V03), Apply sits in a footer below the preview, in normal flow (V05, F02), and folds the plan into the
+// shared draft: Save is the commit.
 
 const FIELD =
   "h-[34px] rounded-ctl border border-line-strong bg-paper px-2.5 text-[13px] text-navy focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent";
 const LBL = "text-[11px] font-semibold uppercase tracking-[0.08em] text-navy/70";
+// P13: the fill follows the state, never `peer-checked:` (a later label is a sibling of the checked radio before it, so
+// both halves filled). Each half is outlined; the chosen one is filled.
 const SEG =
-  "flex-1 basis-0 cursor-pointer select-none px-3 py-1.5 text-center text-[13px] text-navy peer-checked:bg-accent-strong peer-checked:text-white peer-focus-visible:ring-2 peer-focus-visible:ring-accent";
+  "flex-1 basis-0 cursor-pointer select-none border px-3 py-1.5 text-center text-[13px] peer-focus-visible:ring-2 peer-focus-visible:ring-accent";
+const SEG_ON = "border-accent-strong bg-accent-strong text-white";
+const SEG_OFF = "border-line-strong bg-paper text-navy";
 const NO_CHANGES = {
   patches: [],
   undo: [],
@@ -52,7 +57,7 @@ function ChangePricesForm({
   onClose: () => void;
 }) {
   const { grid } = draft;
-  const { tierName, customerName, customers, rules } = usePlanNames();
+  const { tierName, customerName, customers, rules, customersTruncated } = usePlanNames();
   const ids = React.useId();
   const root = React.useRef<HTMLElement>(null);
   const { selection, toggleOffer, toggleKeep, toggleCustomerKeep, reset } = usePlanSelection();
@@ -183,13 +188,12 @@ function ChangePricesForm({
           <span id={`${ids}-dir`} className={LBL}>
             Direction
           </span>
-          <div
-            role="radiogroup"
-            aria-labelledby={`${ids}-dir`}
-            className="flex overflow-hidden rounded-ctl border border-line-strong"
-          >
+          <div role="radiogroup" aria-labelledby={`${ids}-dir`} className="flex">
             {(["raise", "lower"] as const).map((d) => (
-              <React.Fragment key={d}>
+              <span
+                key={d}
+                className="flex flex-1 basis-0 first:*:rounded-l-ctl last:*:rounded-r-ctl [&:not(:first-child)]:-ml-px"
+              >
                 <input
                   type="radio"
                   name={`${ids}-dir`}
@@ -198,10 +202,13 @@ function ChangePricesForm({
                   checked={direction === d}
                   onChange={() => change({ direction: d })}
                 />
-                <label htmlFor={`${ids}-${d}`} className={SEG}>
+                <label
+                  htmlFor={`${ids}-${d}`}
+                  className={`${SEG} ${direction === d ? SEG_ON : SEG_OFF}`}
+                >
                   {d === "raise" ? "Raise" : "Lower"}
                 </label>
-              </React.Fragment>
+              </span>
             ))}
           </div>
         </div>
@@ -241,6 +248,7 @@ function ChangePricesForm({
           tierName={tierName}
           customerName={customerName}
           hideFollowers
+          customersTruncated={customersTruncated}
           extraOffers={alsoBlock}
         />
       </div>
@@ -275,8 +283,7 @@ function ChangePricesForm({
       </div>
       <div
         data-testid={T.changeFooter}
-        className="sticky z-[2] mt-4 flex gap-2 border-t border-surface-border bg-white py-2.5"
-        style={{ bottom: "var(--editbar-h, 0px)" }}
+        className="mt-4 flex gap-2 border-t border-surface-border bg-white py-2.5"
       >
         <Button id="ch-apply" type="button" disabled={!canApply} onClick={apply}>
           Apply

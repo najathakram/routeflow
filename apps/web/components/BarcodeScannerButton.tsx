@@ -20,6 +20,10 @@ interface BarcodeScannerButtonProps {
   inputRef?: React.RefObject<HTMLInputElement | null>;
   className?: string;
   title?: string;
+  /** Disables the camera button (a wedge scanner on `inputRef` is unaffected). Pair it with `ariaLabel` to say why. */
+  disabled?: boolean;
+  /** Overrides the button's accessible name (otherwise `title` names it), e.g. to carry the reason it is disabled. */
+  ariaLabel?: string;
   /**
    * Called with a plain-language message whenever the webcam path can't start —
    * permission denied, no camera present, or an insecure origin (getUserMedia is
@@ -54,6 +58,8 @@ export function BarcodeScannerButton({
   inputRef,
   className,
   title = "Scan barcode",
+  disabled,
+  ariaLabel,
   onError,
   onOpenContinuous,
 }: BarcodeScannerButtonProps) {
@@ -224,8 +230,10 @@ export function BarcodeScannerButton({
         type="button"
         onClick={startWebcam}
         title={title}
+        disabled={disabled}
+        aria-label={ariaLabel}
         className={cn(
-          "inline-flex items-center justify-center rounded border border-surface-border bg-white p-1.5 text-navy/70 transition hover:bg-surface-raised hover:text-navy focus:outline-none focus:ring-2 focus:ring-brand-500",
+          "inline-flex items-center justify-center rounded border border-surface-border bg-white p-1.5 text-navy/70 transition hover:bg-surface-raised hover:text-navy focus:outline-none focus:ring-2 focus:ring-brand-500 disabled:cursor-not-allowed disabled:bg-surface-raised disabled:text-navy/40 disabled:hover:text-navy/40",
           className,
         )}
       >

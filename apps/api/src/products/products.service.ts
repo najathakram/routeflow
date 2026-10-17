@@ -1,5 +1,6 @@
 import { API_ERROR_CODES } from "../common/api-error-codes";
 import { productCodeInUse } from "./product-code-in-use";
+import { bareVariantNames } from "./product-variant-name";
 import {
   assertSafeProductCategory,
   assertSafeProductNames,
@@ -55,6 +56,17 @@ import { buildProductListWhere } from "./product-list-where";
 import type { ProductIdsForFilterResponse } from "@routeflow/types";
 import { RULE_TARGETS_MAX_PER_REQUEST as PRODUCT_IDS_CAP } from "../selling-restrictions-admin/dto/rule-targets.dto";
 import { assertPackKeepsLevelsValid } from "./unit-pack-rules";
+import { lockProductPack } from "../units/tenant-units-lock";
+import {
+  EXPECTED_PACK_FIELDS,
+  LOGGED_AGENT_MAX,
+  PRODUCT_PACK_PRECONDITION_REQUIRED_MESSAGE,
+  assertPackUnchanged,
+  packTenantUnitIdOf,
+  sendsExpectedPack,
+  unguardedPackChanges,
+  type PackPrecondition,
+} from "./pack-precondition";
 import { isMsrpBelowWholesale, wholesalePerPiece } from "../common/msrp";
 import { TOBACCO_CATEGORY_NAME, isTobaccoCategoryName } from "../common/tobacco-category";
 import {
@@ -592,6 +604,10 @@ export class ProductsService {
         origin: "LEGACY" as const,
       };
     });
+    // SA-797: the tenant unit the pack word names when the form opens; a save carrying `unit` sends it back.
+    const packTenantUnitId = readTenantId
+      ? await packTenantUnitIdOf(this.prisma.forTenant(), readTenantId, product.unit)
+      : null;
     return {
       ...product,
       parent: tenantSafeParent(product.parent, readTenantId),
@@ -600,6 +616,7 @@ export class ProductsService {
       stockAlertCount,
       barcodes,
       images,
+      packTenantUnitId,
     };
   }
 
@@ -785,6 +802,9 @@ export class ProductsService {
     dto: CreateProductDto,
     options?: { suppressEmit?: boolean; actorId?: string | null; actorName?: string | null },
   ) {
+    // B1: a variant stores its BARE label; strip a composed "<parent> - <label>" first, so the guard and the name
+    // uniqueness check below judge what will actually be stored.
+    await bareVariantNames(this.prisma.forTenant(), dto, dto.parentProductId);
     assertSafeProductNames(dto); // B964-2: a formula-led name/variantName is refused before any read or write
     assertCostingMethodAllowed(dto.costingMethod); // SA-804 (1): FIFO/LIFO are retired: 400 COSTING_METHOD_RETIRED before any read or write
     // B990: the typed free-text category too, UNCONDITIONALLY: even with a structured subcategory chosen or a parent without one
@@ -1050,7 +1070,15 @@ export class ProductsService {
   async update(
     id: string,
     dto: UpdateProductDto,
-    options?: { suppressEmit?: boolean; actorId?: string | null; actorName?: string | null },
+    options: {
+      /** SA-797a: REQUIRED so every caller is found. Only the PATCH controller is "client". */
+      packPrecondition: PackPrecondition;
+      /** The client's User-Agent, logged with a PRODUCT_PACK_PRECONDITION_REQUIRED refusal. */
+      clientAgent?: string | null;
+      suppressEmit?: boolean;
+      actorId?: string | null;
+      actorName?: string | null;
+    },
   ) {
     await this.assertCanFlagTobacco(dto.isTobacco);
     if (dto.msrp !== undefined) await this.assertMsrpAllowed();
@@ -1068,6 +1096,13 @@ export class ProductsService {
         "deactivateHolderIds only applies when reactivating an inactive product",
       );
     }
+    // B1: a variant stores its BARE label; a composed "<parent> - <label>" from a client is stripped first (so the
+    // change-only name guard and the uniqueness check below judge the label that will actually be stored).
+    await bareVariantNames(
+      this.prisma.forTenant(),
+      dto,
+      dto.parentProductId !== undefined ? dto.parentProductId : existing.parentProductId,
+    );
     assertSafeProductNames(dto, existing); // B964-2: change-only against the one read already made
     // B990: change-only for the free-text category, BEFORE resolveOrCreateTobaccoCategory below, so a refusal never leaves an orphan Tobacco type
     if (dto.category !== undefined)
@@ -1163,25 +1198,6 @@ export class ProductsService {
       (field) => dto[field] !== undefined && (dto[field] ?? null) !== (existing[field] ?? null),
     );
     const sectionChanged = (effectiveCategoryId ?? null) !== (existing.trackedCategoryId ?? null);
-    // units_v1: a pack edit (name, size, or moving into a regulated section) must not
-    // invalidate the unit levels already defined on this product.
-    const nextUnit = dto.unit !== undefined ? dto.unit : existing.unit;
-    const nextUnitsPerBox = dto.unitsPerBox !== undefined ? dto.unitsPerBox : existing.unitsPerBox;
-    const packTouched =
-      nextUnit !== existing.unit ||
-      (nextUnitsPerBox ?? null) !== (existing.unitsPerBox ?? null) ||
-      (sectionChanged && effectiveCategoryId != null);
-    if (packTouched) {
-      const levels = await this.prisma.forTenant().productUnit.findMany({
-        where: { productId: id },
-        select: { label: true, factorToBase: true },
-      });
-      assertPackKeepsLevelsValid(levels, {
-        unit: nextUnit,
-        unitsPerBox: nextUnitsPerBox,
-        regulated: effectiveCategoryId != null,
-      });
-    }
     // `!clearingSection` is load-bearing: a legitimate section clear is a move too,
     // and validating it would 400 on "requires a regulated type" before the
     // auto-clear below ever runs.
@@ -1207,6 +1223,8 @@ export class ProductsService {
     delete data.deactivateHolderIds;
     // Not a column either: B1213's family-deactivation confirmation, read from `dto` inside the tx.
     delete data.confirmCascade;
+    // Nor the SA-797 pack precondition: compared inside the tx, never written.
+    for (const k of EXPECTED_PACK_FIELDS) delete data[k];
     // Force the (possibly auto-cleared) subcategory into the write when the section
     // was cleared but the client didn't also clear the subcategory.
     if (effectiveCategoryId == null && existing.trackedSubcategoryId != null) {
@@ -1299,6 +1317,10 @@ export class ProductsService {
       hasPriceColumns(dto) || dto.parentProductId
         ? await readFamilyPriceMode(this.featureConfig, tenantId)
         : "off";
+    // Set when an old client's pack echo was stripped from the write; a PATCH left with nothing else to write
+    // then writes no row at all (no UPDATE, no event) and answers with the stored row.
+    let packEchoStripped = false;
+    let wroteRow = true;
     let propagatedRows = 0;
     let doorDeactivated: string[] = [];
     let cascaded: string[] = [];
@@ -1308,6 +1330,72 @@ export class ProductsService {
       dto.parentProductId !== undefined &&
       dto.parentProductId !== (existing.parentProductId ?? null);
     const txDone = this.prisma.tenantTransaction(async (tx: any) => {
+      // units_v1: a pack edit (unit word, size or regulated section) must not invalidate the levels on
+      // this product. FIRST in the tx, before any other lock: the tenant units lock (a rename holds it
+      // exclusive) and THIS product's lock (the one every level write takes). Whether the pack really
+      // moves is judged on the row read UNDER those locks, never on the pre-tx `existing`, so the levels
+      // are checked against the pack as it is NOW. SA-797 (row 218): a form that sends the pack it READ
+      // (expectedUnit / expectedUnitsPerBox / expectedTenantUnitId) is refused with a 409 when that pack moved
+      // meanwhile (a rename committed while the form was open), compared on this same locked read. A VALUE
+      // compare, never updatedAt: every stock and cost write moves updatedAt.
+      if (
+        dto.unit !== undefined ||
+        dto.unitsPerBox !== undefined ||
+        dto.trackedCategoryId !== undefined ||
+        sendsExpectedPack(dto)
+      ) {
+        await lockProductPack(tx, tenantId, id);
+        const locked = await tx.product.findUnique({
+          where: { id },
+          select: { unit: true, unitsPerBox: true, trackedCategoryId: true },
+        });
+        if (!locked) throw new NotFoundException("Product not found");
+        await assertPackUnchanged(tx, tenantId, locked, dto);
+        if (options.packPrecondition === "client") {
+          const fields = unguardedPackChanges(locked, dto);
+          if (fields.length > 0) {
+            // TODO(2026-10-23): SA-797a measure — remove this log line 7 days after it ships. No client sends
+            // an app-version header today, so appVersion is "unknown" and the User-Agent (an iOS build
+            // carries its CFBundleVersion there) is logged beside it.
+            this.logger.warn(
+              `PRODUCT_PACK_PRECONDITION_REQUIRED product=${id} tenant=${tenantId} fields=${fields.join(",")} appVersion=unknown userAgent=${JSON.stringify(options.clientAgent?.slice(0, LOGGED_AGENT_MAX) ?? null)}`,
+            );
+            throw new ConflictException({
+              code: API_ERROR_CODES.PRODUCT_PACK_PRECONDITION_REQUIRED,
+              message: PRODUCT_PACK_PRECONDITION_REQUIRED_MESSAGE,
+            });
+          }
+          // An echo of the pack word (same unitNameKey, no expectedUnit) changes nothing: keep the stored spelling,
+          // and drop it (and an equal size, which unguardedPackChanges already let through) from the write.
+          if (dto.unit !== undefined && dto.expectedUnit === undefined) {
+            dto.unit = locked.unit;
+            delete data.unit;
+            packEchoStripped = true;
+          }
+          if (dto.unitsPerBox !== undefined && dto.expectedUnitsPerBox === undefined) {
+            delete data.unitsPerBox;
+            packEchoStripped = true;
+          }
+        }
+        const nextUnit = dto.unit !== undefined ? dto.unit : locked.unit;
+        const nextUnitsPerBox =
+          dto.unitsPerBox !== undefined ? dto.unitsPerBox : locked.unitsPerBox;
+        const nextCategoryId =
+          dto.trackedCategoryId !== undefined ? dto.trackedCategoryId : locked.trackedCategoryId;
+        const packTouched =
+          nextUnit !== locked.unit ||
+          (nextUnitsPerBox ?? null) !== (locked.unitsPerBox ?? null) ||
+          (nextCategoryId != null && nextCategoryId !== (locked.trackedCategoryId ?? null));
+        if (packTouched) {
+          assertPackKeepsLevelsValid(
+            await tx.productUnit.findMany({
+              where: { productId: id },
+              select: { label: true, factorToBase: true },
+            }),
+            { unit: nextUnit, unitsPerBox: nextUnitsPerBox, regulated: nextCategoryId != null },
+          );
+        }
+      }
       // SA-603a: reactivate restores the retired codes still free; a code this PATCH sets is claimed (an inactive
       // holder is released + audited, an active one is a 409); deactivate releases BEFORE the isActive write.
       const claims = codeClaims(dto, existing);
@@ -1472,6 +1560,10 @@ export class ProductsService {
           confirmed: !!dto.confirmCascade,
         });
       }
+      if (packEchoStripped && Object.values(data).every((v) => v === undefined)) {
+        wroteRow = false;
+        return tx.product.findUnique({ where: { id } });
+      }
       // The category text this write REPLACES, read inside the tx (the label sync below compares name keys against it,
       // never the pre-transaction read). A plain read: the UPDATE right after takes the row lock (house lock order).
       const before = await tx.product.findFirst({
@@ -1545,7 +1637,7 @@ export class ProductsService {
     });
     // suppressEmit lets a caller that loops this method (bulkAssignParent) emit
     // ONE coalesced event after the loop instead of one per row.
-    if (!options?.suppressEmit) this.emitProductChanged(id, "updated");
+    if (!options?.suppressEmit && wroteRow) this.emitProductChanged(id, "updated");
     // The one-tx door deactivated blocking products too: buyer/driver caches must not keep them visible (SA-603j LOW, N4).
     if (doorDeactivated.length > 0 || cascaded.length > 0) this.emitProductChanged(null, "bulk");
     // The family edit moved its children's prices: ONE coalesced event, after the commit (L-237).
@@ -1736,6 +1828,7 @@ export class ProductsService {
             name: assignment.variantName,
           } as UpdateProductDto,
           {
+            packPrecondition: "internal", // a family assignment writes no pack field
             suppressEmit: true,
             actorId: actor?.actorId ?? null,
             actorName: actor?.actorName ?? null,

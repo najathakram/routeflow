@@ -14,7 +14,7 @@ import { usePlanNames } from "./usePlanNames";
  */
 export function AlsoUpdatePanel({ plan }: { plan: PricePlan }) {
   const draft = usePriceDraft();
-  const { tierName, customerName } = usePlanNames();
+  const { tierName, customerName, customersTruncated } = usePlanNames();
   const open = draft.plan;
   const selection = React.useMemo(
     () => ({
@@ -39,6 +39,7 @@ export function AlsoUpdatePanel({ plan }: { plan: PricePlan }) {
       }
       tierName={tierName}
       customerName={customerName}
+      customersTruncated={customersTruncated}
       onToggleOffer={draft.setOfferTicked}
       onToggleKeep={(f, on) => (on ? draft.keep(f.keep) : draft.unkeep(f.keep))}
       onToggleCustomerKeep={(c, on) => draft.keepCustomer(keepMove(c), on)}

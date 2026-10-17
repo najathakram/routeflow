@@ -14,15 +14,18 @@ jest.mock("../edit/usePriceDraft", () => ({ usePriceDraft: () => draft }));
 jest.mock("@/lib/api/tier-labels", () => ({
   useTierLabels: () => ({ data: { "2": "Wholesale" } }),
 }));
+let mockTruncated: boolean | undefined;
 jest.mock("@/lib/api/useProductCustomerPrices", () => ({
   useProductCustomerPrices: () => ({
     data: {
       customers: [{ customerId: "c1", name: "Northside", tier: 1, orderUnit: null, set: {} }],
+      truncated: mockTruncated,
     },
   }),
 }));
 
 beforeEach(() => {
+  mockTruncated = false;
   Object.values(draft).forEach((v) => typeof v === "function" && (v as jest.Mock).mockReset());
   draft.plan = { cell: { ref: "case", tier: 1 }, ticked: [], keeps: [], customerKeeps: [] };
 });
@@ -55,5 +58,16 @@ describe("AlsoUpdatePanel (K3 mounts it with the draft's plan)", () => {
   it("names the customer from the customers the planner was given", () => {
     render(<AlsoUpdatePanel plan={richPlan()} />);
     expect(screen.getAllByText(/Northside, Can/).length).toBeGreaterThan(0);
+  });
+
+  it("K3b NIT-3: says the customer list was capped only when the server said truncated", () => {
+    const { unmount } = render(<AlsoUpdatePanel plan={richPlan()} />);
+    expect(screen.queryByTestId("units-v2-cp-customers-truncated")).toBeNull();
+    unmount();
+    mockTruncated = true;
+    render(<AlsoUpdatePanel plan={richPlan()} />);
+    expect(screen.getByTestId("units-v2-cp-customers-truncated")).toHaveTextContent(
+      "Showing the first 500 customers with their own prices. Others aren't included.",
+    );
   });
 });
