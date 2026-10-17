@@ -156,7 +156,8 @@ export interface PriceEditInvalidBody {
 /**
  * GET /products/:productId/customer-prices: the customers with at least one CustomerUnitPrice row for this product,
  * in the shape the planners take (pricing CustomerPricingWithId), for planPriceChange's `customers` and the
- * "Also update" customer section. Capped at 500, newest first; `truncated` says more exist.
+ * "Also update" customer section. Capped at 500 customers, newest customer first (Customer.createdAt), so each
+ * customer's `set` is always whole; `truncated` says more exist.
  */
 export interface ProductCustomerPricingDto {
   customerId: string;
