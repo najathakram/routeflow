@@ -7,7 +7,7 @@ import { buildCatchupSessionParams, type CatchupSessionInput } from "./catchup-s
  * signature that Stripe says was created AFTER this instant came from a creation path that does not sign: a defect
  * (the service logs it). Sessions created before it and still open at the deploy are expected to be unsigned.
  */
-export const SIGNING_SINCE = new Date("2026-10-17T00:00:00Z");
+export const SIGNING_SINCE = new Date("2026-10-18T00:00:00Z");
 
 /**
  * Row 542d: do the terms a STORED Checkout session was built with equal the fresh plan's? One pure answer, so

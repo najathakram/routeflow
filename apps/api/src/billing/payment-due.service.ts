@@ -3,7 +3,7 @@ import { API_ERROR_CODES } from "../common/api-error-codes";
 import { resolveZone } from "../common/tenant-time-zone";
 import { PrismaService } from "../prisma/prisma.service";
 import { CatchupCheckoutService } from "./catchup-checkout.service";
-import { claimRefusal } from "./catchup-claim";
+import { CATCHUP_META, claimRefusal } from "./catchup-claim";
 import { CatchupClaimService } from "./catchup-claim.service";
 import { chargeNowCents, describeStubPeriod } from "./catchup-plan";
 import {
@@ -400,7 +400,7 @@ export class PaymentDueService {
     session: { created?: number | null; metadata?: unknown },
   ): void {
     const meta = session.metadata as Record<string, unknown> | null | undefined;
-    const sig = meta?.catchup_terms_sig;
+    const sig = meta?.[CATCHUP_META.termsSig];
     const createdMs = Number(session.created) * 1000;
     if (sig != null || !Number.isFinite(createdMs) || createdMs <= SIGNING_SINCE.getTime()) return;
     this.logger.warn(

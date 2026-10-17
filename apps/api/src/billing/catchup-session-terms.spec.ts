@@ -395,7 +395,7 @@ describe("G1: the builder asserts the signature is present on everything it retu
 });
 
 describe("G2: SIGNING_SINCE is the deploy date of the signing fold", () => {
-  it("is 2026-10-17T00:00:00Z", () => {
-    expect(SIGNING_SINCE.toISOString()).toBe("2026-10-17T00:00:00.000Z");
+  it("is 2026-10-18T00:00:00Z", () => {
+    expect(SIGNING_SINCE.toISOString()).toBe("2026-10-18T00:00:00.000Z");
   });
 });
