@@ -1,5 +1,5 @@
 import { ApiProperty } from "@nestjs/swagger";
-import { IsNotEmpty, IsString } from "class-validator";
+import { IsHexadecimal, IsNotEmpty, IsString, Length } from "class-validator";
 
 /**
  * Mirrors BuyerVerifyEmailDto: the single-use merge-verification token is POSTed in the body, never
@@ -9,5 +9,8 @@ export class BuyerVerifyMergeDto {
   @ApiProperty({ description: "Raw merge-verification token from the emailed link" })
   @IsString()
   @IsNotEmpty()
+  // randomBytes(32).toString("hex"): exactly 64 hex chars
+  @Length(64, 64)
+  @IsHexadecimal()
   token: string;
 }

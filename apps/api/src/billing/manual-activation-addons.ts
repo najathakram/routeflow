@@ -6,8 +6,9 @@ import { billableAddonWhere, keepsTrialAddons } from "./addon-row";
 import { emitAddonDelta } from "./addon-ledger";
 import { BillingEventService } from "./billing-event.service";
 import { cyclePrice, Cycle } from "./billing-math";
-import { writeManualInvoiceNotice } from "./manual-invoice-notice";
-import { addonSkuCode, isAddonIncludedAtPlan, isSelfServiceAddon } from "./plan-catalog.constants";
+import { includedAtPlanVerdict } from "./addon-catalog-invalid";
+import { writeAdminNotice, writeManualInvoiceNotice } from "./manual-invoice-notice";
+import { addonSkuCode, isSelfServiceAddon } from "./plan-catalog.constants";
 
 const logger = new Logger("ManualActivationAddons");
 
@@ -170,7 +171,22 @@ export async function priceUnbilledAddonsOnActivation(
   for (const row of rows.filter(isSelfServeRow)) {
     const sku = addonSkuCode({ sku: row.sku, addonKey: row.addonKey }) as string;
     const def = a.catalogAddons.find((c) => c.sku === sku);
-    if (def && isAddonIncludedAtPlan(def.includedAtPlan, a.planKey)) continue;
+    const verdict = def ? includedAtPlanVerdict(def, a.planKey) : null;
+    if (verdict?.kind === "INCLUDED") continue;
+    if (verdict?.kind === "CATALOG_INVALID") {
+      // B1102: never price a row against a catalog entry that names no plan; leave it as it is and say so.
+      logger.error(
+        `Manual activation: add-on "${sku}" catalog includedAtPlan "${verdict.value}" names no plan — left unpriced`,
+      );
+      await writeAdminNotice(tx, {
+        tenantId: a.tenantId,
+        actorId: a.actorId,
+        action: AdminAuditAction.ADDON_CATALOG_INVALID,
+        message: `Add-on ${sku} for ${a.tenantLabel} was not priced: the catalog's includedAtPlan "${verdict.value}" is not a plan — fix the catalog entry.`,
+        meta: { sku, value: verdict.value },
+      });
+      continue;
+    }
     const name = def?.name ?? sku;
     const rawQty = Number(row.quantity);
     const quantity = Number.isFinite(rawQty) && rawQty >= 1 ? rawQty : 0;

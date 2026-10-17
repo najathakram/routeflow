@@ -1,3 +1,5 @@
+import { STOCK_TX_OPTIONS, setStockLockTimeout } from "../common/product-locks";
+import { retryStockTx } from "../common/tx-retry";
 import {
   BadRequestException,
   ConflictException,
@@ -338,6 +340,28 @@ export class VendorBillsService {
     return `${prefix}${String(seq).padStart(4, "0")}`;
   }
 
+  /**
+   * B1236: every line's productId must be a product of the caller's own catalog. One scoped read for
+   * the set of ids; any id it does not return is refused (404 naming them) before a bill row is written.
+   */
+  private async assertLineProductsInCatalog(items: any[] | undefined | null) {
+    if (!Array.isArray(items)) return;
+    const ids = [...new Set(items.map((i) => i?.productId).filter(Boolean))] as string[];
+    if (ids.length === 0) return;
+    const found = await this.prisma.forTenant().product.findMany({
+      where: { id: { in: ids } },
+      select: { id: true },
+    });
+    const have = new Set(found.map((p) => p.id));
+    const missing = ids.filter((id) => !have.has(id));
+    if (missing.length > 0) {
+      throw new NotFoundException({
+        message: "Product not found",
+        missingProductIds: missing,
+      });
+    }
+  }
+
   async create(dto: any) {
     // #2488: the literal calendar day, refused (400 naming the field) before any read or write.
     const dueDate = dto.dueDate ? calendarFieldStamp(dto.dueDate, "dueDate") : null;
@@ -348,6 +372,7 @@ export class VendorBillsService {
       }
     }
     const supplierId = dto.supplierId && dto.supplierId.trim() ? dto.supplierId.trim() : null;
+    await this.assertLineProductsInCatalog(dto.items);
 
     // Calculate totalOwed from line items if provided, otherwise use dto.totalOwed
     let preTaxOwed = dto.totalOwed ?? 0;
@@ -939,6 +964,8 @@ export class VendorBillsService {
       );
     }
 
+    if (Array.isArray(dto.items)) await this.assertLineProductsInCatalog(dto.items);
+
     // Recalculate total if items are provided. Mirror create(): fold the
     // bill's tax back in and round — the old recompute dropped taxAmount on
     // the FIRST edit (the G4 "tax lost on edit" bug the taxAmount column was
@@ -1205,7 +1232,11 @@ export class VendorBillsService {
       return this.lineReceivedQty(bill, item).add(adding).gte(new Prisma.Decimal(item.qty));
     });
 
-    const updated = await this.prisma.tenantTransaction(async (tx) => {
+    // SA-767 L-1: re-run the whole tx on a 40P01 / 40001 / P2034. Every local the body fills
+    // (restockedIds, gapsDetected) is declared inside it, the plan was computed before it, and the
+    // alerts below fire after the commit, so a rolled-back attempt leaves nothing behind.
+    const runBody = async (tx: any) => {
+      await setStockLockTimeout(tx); // SA-767 R6: bound the bill row lock wait too
       await this.lockBillAndAssertReceiptState(tx, bill);
       // Sync inventory for each line in the plan. The whole block works in
       // INVENTORY denomination: lineInventoryDelta converts a case-priced line
@@ -1361,7 +1392,10 @@ export class VendorBillsService {
       });
 
       return { updatedBill, restockedIds, gapsDetected };
-    });
+    };
+    const updated = await retryStockTx("vendorBills.receive", () =>
+      this.prisma.tenantTransaction(runBody, STOCK_TX_OPTIONS),
+    );
 
     // Bill receive is the main restock path — fire the same low-stock-cleared
     // alerts a manual purchase does (it never did).
@@ -1401,7 +1435,9 @@ export class VendorBillsService {
     // there is nothing to reverse — the PO owns its own movements and lots.
     const movesStock = bill.purchaseOrderId == null;
 
-    return this.prisma.tenantTransaction(async (tx) => {
+    // SA-767 L-1: the whole reversal tx re-runs on a 40P01 / 40001 / P2034 (nothing leaves the tx).
+    const runBody = async (tx: any) => {
+      await setStockLockTimeout(tx); // SA-767 R6: bound the bill row lock wait too
       await this.lockBillAndAssertReceiptState(tx, bill);
       // B285: the reversal below read-modify-writes the product's average — lock it first.
       await this.inventory.lockProducts(tx, this.productIdsOf(bill.items));
@@ -1475,7 +1511,10 @@ export class VendorBillsService {
           payments: { orderBy: { createdAt: "desc" } },
         },
       });
-    });
+    };
+    return retryStockTx("vendorBills.revertToDraft", () =>
+      this.prisma.tenantTransaction(runBody, STOCK_TX_OPTIONS),
+    );
   }
 
   /**
@@ -1520,7 +1559,9 @@ export class VendorBillsService {
       bill.receivedDate != null &&
       bill.purchaseOrderId == null;
     if (needsReversal) {
-      return this.prisma.tenantTransaction(async (tx) => {
+      // SA-767 L-1: the whole reversal tx re-runs on a 40P01 / 40001 / P2034 (nothing leaves the tx).
+      const runBody = async (tx: any) => {
+        await setStockLockTimeout(tx); // SA-767 R6: bound the bill row lock wait too
         await this.lockBillAndAssertReceiptState(tx, bill);
         await this.inventory.lockProducts(tx, this.productIdsOf(bill.items));
         for (const item of bill.items) {
@@ -1586,7 +1627,10 @@ export class VendorBillsService {
             ...(await this.unlinkPurchaseOrderOnVoid(tx, bill)),
           },
         });
-      });
+      };
+      return retryStockTx("vendorBills.voidBill", () =>
+        this.prisma.tenantTransaction(runBody, STOCK_TX_OPTIONS),
+      );
     }
 
     // Transactional (it used to be a bare update) so the credit refund and the

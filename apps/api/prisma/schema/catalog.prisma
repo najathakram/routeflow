@@ -159,6 +159,19 @@ model Product {
   // #2717 M2 (Q3): FIXED-recipe products may keep their own tiers while the family propagates.
   familyPriceOverride Boolean @default(false)
 
+  // Units program S6 (SA-795 (b)): which pack price cells are Auto. Bitmask, DB CHECK 0..31 (raw SQL):
+  // bit 0 = Retail (pricePerUnit), bits 1-4 = priceTier2-5 (@routeflow/pricing PACK_AUTO_BITS).
+  // 0 = every cell set, today. priceSource() is the only reader.
+  packAuto       Int     @default(0)
+  // SA-796 R-1: bumped in the same UPDATE by every units price write (never by stock). S9's precondition is
+  // this PLUS a value compare-and-set of the prices it read (legacy writers do not bump it), else 409.
+  priceRevision  Int     @default(0)
+  // S6 (PLAN §1.2/§1.6): the order unit, which is also the price anchor: "pack" | "base" | a ProductUnit.id.
+  // Stored on every product; the constant default IS the backfill (every product orders by its pack today).
+  orderUnitRef   String  @default("pack")
+  // S6: the product-scope invoice unit (same refs); null = the business setting. Display only (SA-795 (g)).
+  invoiceUnitRef String?
+
   tenant                Tenant?                @relation(fields: [tenantId], references: [id])
   orderItems            OrderItem[]
   deliveryMutations     DeliveryMutation[]
@@ -187,6 +200,7 @@ model Product {
   supplierProducts      SupplierProduct[]
   categoryLabels        ProductCategoryLabel[]
   sellingRestrictions   SellingRestriction[]
+  sellingRestrictionTargets SellingRestrictionTarget[]
   barcodes              ProductBarcode[]
   images                ProductImage[]
   recipesAsProduct      Recipe[]               @relation("RecipeProduct")
@@ -194,6 +208,11 @@ model Product {
   recipeComponents      RecipeComponent[]
   orderItemComponents   OrderItemComponent[]
   invoiceItemComponents InvoiceItemComponent[]
+  // Units program S6: tier/customer unit settings and the family provenance of split supplier lines.
+  tierUnits                ProductTierUnit[]
+  customerUnitPrices       CustomerUnitPrice[]
+  familyPurchaseOrderItems PurchaseOrderItem[]    @relation("PurchaseOrderItemFamily")
+  familyVendorBillItems    VendorBillItem[]       @relation("VendorBillItemFamily")
 
   @@unique([tenantId, sku])
   @@unique([tenantId, barcode])
@@ -374,6 +393,17 @@ model PurchaseOrderItem {
   @@index([tenantId])
   // Units rebuild P0a: sale-time unit-name snapshots (null = legacy line).
   baseLabel String?
+
+  // Units program S6 (PLAN §1.8): the family purchase split. unitLabel = the line's own unit name;
+  // familyProductId = the FAMILY a split child line came from (SetNull: provenance only, never blocks a
+  // product delete); familyGroupId groups the child lines of one supplier line. Null on every line today.
+  unitLabel       String?
+  familyProductId String?
+  familyGroupId   String?
+  familyProduct   Product? @relation("PurchaseOrderItemFamily", fields: [familyProductId], references: [id], onDelete: SetNull)
+
+  @@index([familyGroupId])
+  @@index([familyProductId])
 }
 
 // ─── Multi-level units + purchase-order supplier mapping (2026-09-19) ─────────
@@ -427,6 +457,29 @@ model ProductUnit {
   @@index([tenantId])
   @@index([tenantUnitId])
   @@index([tenantId, sku])
+}
+
+/// Units program S6 (PLAN §1.2/§1.6): a pricing tier's own order and invoice unit for one product (the
+/// "product x tier" scope; customer > tier > product > business). Refs: "pack" | "base" | a ProductUnit.id
+/// (DB CHECK, SA-796 R-3: never a `label:` ref), null = fall through to the product. `tier` 2..5 (DB CHECK,
+/// raw SQL; SA-796 R-2): Retail customers (tier 1) use the product scope itself, and one retail customer's own
+/// unit is `CustomerPrice.orderUnitRef`.
+/// A row with BOTH refs null means nothing (no CHECK on purpose): S20's writer deletes the row instead.
+model ProductTierUnit {
+  id             String   @id @default(uuid())
+  tenantId       String
+  productId      String
+  tier           Int
+  orderUnitRef   String?
+  invoiceUnitRef String?
+  createdAt      DateTime @default(now())
+  updatedAt      DateTime @updatedAt
+
+  tenant  Tenant  @relation(fields: [tenantId], references: [id])
+  product Product @relation(fields: [productId], references: [id], onDelete: Cascade)
+
+  @@unique([productId, tier])
+  @@index([tenantId])
 }
 
 /// Units rebuild P0a: a tenant-wide unit name ("Case", "Pack", ...). `nameKey` = lower(trim(name)), set by the service.
@@ -599,6 +652,7 @@ model ProductCategory {
   tenant              Tenant?                @relation(fields: [tenantId], references: [id])
   labels              ProductCategoryLabel[]
   sellingRestrictions SellingRestriction[]
+  sellingRestrictionTargets SellingRestrictionTarget[]
 
   @@unique([tenantId, name])
 }
@@ -766,10 +820,13 @@ model StockCountLine {
   /// The denomination they entered it in, purely for faithful re-display.
   boxes            Int?
   pieces           Int?
-  /// On-hand snapshotted when this line was FIRST counted — the "expected" the
-  /// review screen compares against. Snapshotting (rather than reading live
-  /// stock at commit) is what makes the variance mean "what changed since you
-  /// started counting" instead of silently moving under the counter.
+  /// The on-hand baseline the REPLACE delta is measured from (delta = countedQty -
+  /// expectedQty). Stamped from the live stock when the line is created and on every
+  /// ABSOLUTE write that changes the count (a typed / set total or a recount); an
+  /// increment scan, a cost-only edit, a mode toggle and a same-value resend keep it.
+  /// Snapshotting (rather than reading live stock at commit) is what makes the
+  /// variance mean "what changed since you started counting", so a sale that lands
+  /// after the baseline is kept instead of being counted away.
   expectedQty      Decimal            @db.Decimal(10, 3)
   /// Optional per-line cost correction, 4dp (COST_DP). Set ⇒ commit ALSO writes
   /// the audited COST_BASIS path for this product, not just the quantity.

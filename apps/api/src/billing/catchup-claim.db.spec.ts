@@ -474,7 +474,7 @@ describeDb("SA-733r3 N2 catch-up claim (real Postgres)", () => {
           product_data: { name: "RouteFlow Growth - monthly" },
         }),
       } as any,
-      { checkoutAddonLines: async () => ({ lineItems: [], skus: [] }) } as any,
+      { checkoutAddonLines: async () => ({ lineItems: [], skus: [], invalid: [] }) } as any,
       claim,
       { ensureStripeCustomer: async () => "cus_mfa" } as any,
     );

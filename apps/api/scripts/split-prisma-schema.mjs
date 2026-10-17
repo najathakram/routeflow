@@ -142,6 +142,7 @@ const MODEL_DOMAIN = {
   PurchaseOrder: "catalog",
   PurchaseOrderItem: "catalog",
   ProductUnit: "catalog",
+  ProductTierUnit: "catalog",
   TenantUnit: "catalog",
   ProductBarcode: "catalog",
   ProductImage: "catalog",
@@ -160,6 +161,7 @@ const MODEL_DOMAIN = {
   CustomerComment: "sales",
   ContactPerson: "sales",
   CustomerPrice: "sales",
+  CustomerUnitPrice: "sales",
   Driver: "sales",
   DriverLocation: "sales",
   Route: "sales",
@@ -285,6 +287,8 @@ const MODEL_DOMAIN = {
   ReturnParkedRestock: "compliance",
   RegulatedFiling: "compliance",
   SellingRestriction: "compliance",
+  SellingRestrictionTarget: "compliance",
+  SellingRestrictionRevision: "compliance",
 };
 
 const HEADER_RE =

@@ -35,6 +35,56 @@ export interface RestrictionRuleFacts {
   effectiveTo: Date | null;
   liftedAt: Date | null;
   reason: string;
+  /**
+   * Row 509: what the rule covers, from its ACTIVE `SellingRestrictionTarget` rows at the evaluation time. `null` /
+   * absent = the rule has NO target rows at all (written before the targets table, or by old code during a deploy):
+   * it is matched by its legacy `categoryId` / `productId` (SA condition 1, fail closed). A rule WITH target rows is
+   * matched by them only, so an empty set (every target removed) matches nothing.
+   */
+  targets?: RuleTargetSets | null;
+}
+
+/** Row 509: a rule's active targets, split by kind (product targets bind lineage, label targets effective labels). */
+export interface RuleTargetSets {
+  productIds: ReadonlySet<string>;
+  categoryIds: ReadonlySet<string>;
+}
+
+/** A `SellingRestrictionTarget` row, reduced to what the decision reads. */
+export interface RuleTargetRow {
+  productId: string | null;
+  categoryId: string | null;
+  addedAt: Date;
+  removedAt: Date | null;
+}
+
+/** A target row is active at `at`: added on/before it and not yet removed (the same half-open window as a rule). */
+export function targetIsActive(t: Pick<RuleTargetRow, "addedAt" | "removedAt">, at: Date): boolean {
+  return (
+    t.addedAt.getTime() <= at.getTime() &&
+    (t.removedAt === null || t.removedAt.getTime() > at.getTime())
+  );
+}
+
+/**
+ * Row 509: the target sets a rule is matched by at `at`, or `null` when the rule has no target rows at all
+ * (`totalRows === 0`: the legacy-column fallback, SA condition 1). `rows` may be a filtered subset of the rule's
+ * rows (a loader that only fetched the ones touching its products); `totalRows` must be the rule's full count.
+ */
+export function ruleTargetSets(
+  rows: readonly RuleTargetRow[],
+  totalRows: number,
+  at: Date,
+): RuleTargetSets | null {
+  if (totalRows === 0) return null;
+  const productIds = new Set<string>();
+  const categoryIds = new Set<string>();
+  for (const t of rows) {
+    if (!targetIsActive(t, at)) continue;
+    if (t.productId) productIds.add(t.productId);
+    else if (t.categoryId) categoryIds.add(t.categoryId);
+  }
+  return { productIds, categoryIds };
 }
 
 export interface CustomerAddressFacts {
@@ -203,9 +253,19 @@ export function ruleBindsChannel(
   return (rule.surface as string) !== "BUYER_PORTAL" || channel === "BUYER_PORTAL";
 }
 
-/** Rule matches a product directly (`productId`) or through any effective label (`categoryId`). */
+/**
+ * Rule matches a product directly (a product target, through lineage: a parent's rule binds its variants) or
+ * through any effective label (a label target). Row 509: a rule with target rows is matched by its ACTIVE targets
+ * only; a rule with none falls back to its legacy `productId` / `categoryId` (SA condition 1).
+ */
 export function ruleMatchesProduct(rule: RestrictionRuleFacts, product: ProductFacts): boolean {
-  if (rule.productId) return (product.lineageIds ?? new Set([product.id])).has(rule.productId);
+  const lineage = product.lineageIds ?? new Set([product.id]);
+  if (rule.targets) {
+    for (const id of lineage) if (rule.targets.productIds.has(id)) return true;
+    for (const c of rule.targets.categoryIds) if (product.effectiveCategoryIds.has(c)) return true;
+    return false;
+  }
+  if (rule.productId) return lineage.has(rule.productId);
   if (rule.categoryId) return product.effectiveCategoryIds.has(rule.categoryId);
   return false; // XOR CHECK in the DB makes this unreachable; never match on a malformed row.
 }
@@ -341,11 +401,14 @@ export function resolveGoverningState(
 export function ruleHidesFromBuyer(
   rule: RestrictionRuleFacts,
   governingState: GoverningState,
+  /** L8 M1: a pickup-only tenant whose STORE state is unset hides every state rule (fail closed). */
+  hideWhenUnresolved = false,
 ): boolean {
   if ((rule.jurisdiction as string) !== "STATE") return true;
   const states = ruleStates(rule);
   if (states.length === 0) return true;
-  if (!governingState.resolved) return (rule.surface as string) !== "BUYER_PORTAL";
+  if (!governingState.resolved)
+    return hideWhenUnresolved || (rule.surface as string) !== "BUYER_PORTAL";
   return states.includes(governingState.state);
 }
 
@@ -355,6 +418,8 @@ export interface EvaluateInput {
   products: readonly ProductFacts[];
   rules: readonly RestrictionRuleFacts[];
   governingState: GoverningState;
+  /** L8: a counter / pickup sale is judged on the STORE state: a missing one is INDETERMINATE even for portal-only rules. */
+  storeJudged?: boolean;
   /** categoryId → display name, for messages. */
   categoryNames?: ReadonlyMap<string, string>;
 }
@@ -460,7 +525,8 @@ export function evaluateRestrictions(input: EvaluateInput): RestrictionsEvaluati
     if (!input.governingState.resolved) {
       // Owner ruling 2: a customer with no state on file is ALLOWED where every matched STATE rule is a portal-only limit
       // (a commercial choice, not law). A legal ban (surface ALL) among them keeps the fail-closed INDETERMINATE.
-      if (stateRules.every((r) => (r.surface as string) === "BUYER_PORTAL")) continue;
+      if (!input.storeJudged && stateRules.every((r) => (r.surface as string) === "BUYER_PORTAL"))
+        continue;
       indeterminate = true;
       reasons.push(
         line(

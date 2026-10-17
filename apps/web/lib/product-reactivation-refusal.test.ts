@@ -237,6 +237,19 @@ describe("deactivateFailureToast — CODES_CHANGED on the deactivate/delete path
     });
   });
 
+  it("PRODUCT_HAS_ACTIVE_ORDER_ITEMS (single delete of a product on an open order) -> the fixed open-order sentence, never the server message", () => {
+    const t = deactivateFailureToast(
+      err({ code: "PRODUCT_HAS_ACTIVE_ORDER_ITEMS", message: "RAW SERVER TEXT" }),
+      "Failed to delete product",
+    );
+    expect(t).toEqual({
+      title: "Failed to delete product",
+      description:
+        "This product is on an order that is still open. Finish or cancel the order first.",
+      variant: "error",
+    });
+  });
+
   it.each([
     ["another 409", err({ code: "CODE_TAKEN", message: "RAW" })],
     ["a 500", { response: { status: 500, data: { message: "boom" } } }],
@@ -300,9 +313,11 @@ describe("codeTakenOnSubmit — which typed code the server refused, by code + f
     expect(codeTakenOnSubmit(e409("BARCODE_TAKEN", { field: "barcode" }), all)).toBe("barcode");
   });
 
-  it("a 409 falls back to the first sent field when the named one was not sent", () => {
-    expect(codeTakenOnSubmit(e409("CODE_TAKEN", { field: "unitSku" }), { sku: "S-1" })).toBe("sku");
-    expect(codeTakenOnSubmit(e409("BARCODE_TAKEN"), { unitSku: "U-1" })).toBe("unitSku");
+  it("a 409 naming a field that was NOT sent is null: the holders refusal names it, no loop on the first sent field", () => {
+    expect(codeTakenOnSubmit(e409("CODE_TAKEN", { field: "unitSku" }), { sku: "S-1" })).toBeNull();
+    expect(codeTakenOnSubmit(e409("BARCODE_TAKEN"), { unitSku: "U-1" })).toBeNull();
+    // a 409 that names no recognised field still falls back (nothing to say it was not sent)
+    expect(codeTakenOnSubmit(e409("CODE_TAKEN"), { sku: "S-1" })).toBe("sku");
   });
 
   it.each([

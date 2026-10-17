@@ -25,6 +25,7 @@ import {
   useCustomerPriceHistory,
   type ActiveOrderSummary,
 } from "@/lib/api/orders";
+import { usePriceSummary } from "@/lib/api/price-history";
 import { useCreateDraft, useUpdateDraft, useDeleteDraft, useDraft } from "@/lib/api/drafts";
 import { draftDeviceLabel, type OrderDraftPayload } from "@/lib/drafts";
 import { apiClient } from "@/lib/api-client";
@@ -41,6 +42,7 @@ import {
   computeLineSubtotal,
   pendingScanDecision,
   undoPendingTap,
+  type DerivedBaseMarker,
   type SellLevel,
 } from "@routeflow/pricing";
 import {
@@ -83,6 +85,7 @@ import {
 import { useDefaultUnitResolver } from "@/lib/hooks/useDefaultUnitResolver";
 import type { UnitOption } from "@/lib/unit-options";
 import { useScanCodeHandler } from "./scan/useScanCodeHandler";
+import { createSerialScanQueue } from "./scan/serial-scan-queue";
 import { DidYouMeanPicker } from "@/components/scan/DidYouMeanPicker";
 import { ScanOrderScreen } from "./scan/ScanOrderScreen";
 import { PriceEditor } from "./scan/PriceEditor";
@@ -159,7 +162,7 @@ interface SelectedCustomer {
   fulfillPath?: "ROUTE" | "SHIP";
 }
 
-interface LineItem {
+interface LineItem extends DerivedBaseMarker {
   tempId: string;
   /** Empty string for unlisted (ad-hoc) lines — `isUnlisted` is the real flag. */
   productId: string;
@@ -318,6 +321,10 @@ export function CreateOrderModal({
   const [productSearch, setProductSearch] = React.useState("");
   const [debouncedProductSearch, setDebouncedProductSearch] = React.useState("");
   const [lineItems, setLineItems] = React.useState<LineItem[]>([]);
+  // The scan handler's local fast path reads the order as of the LAST COMMIT (addLineItem flushSyncs).
+  const orderSessionRef = React.useRef(0);
+  const lineItemsRef = React.useRef(lineItems);
+  lineItemsRef.current = lineItems;
   const [lineItemsError, setLineItemsError] = React.useState("");
   const [expandedParentId, setExpandedParentId] = React.useState<string | null>(null);
 
@@ -391,6 +398,12 @@ export function CreateOrderModal({
   // Per-product last-given price for this customer — fetched once on customer select so
   // scanning is instant (no per-item round trip). Used to pre-fill the discount field.
   const { data: priceHistory } = useCustomerPriceHistory(selectedCustomer?.id);
+  // ONE batched request feeds every line's "Recent prices" chips (no per-line request, no mount budget).
+  // This screen creates a new order, so there is no order of its own to exclude.
+  const { data: priceSummary } = usePriceSummary(
+    isOpen ? selectedCustomer?.id : null,
+    lineItems.map((l) => (l.isUnlisted ? null : l.productId)),
+  );
 
   // Regulated tracked-categories (for the per-line "· regulated" tag + the live
   // invoice-split preview). Only staff build orders here; fetch while open.
@@ -485,6 +498,8 @@ export function CreateOrderModal({
     },
     onSuggestion: (matches) => setScanMatches(matches),
     suggestionsSuppressed: () => scanScreenActive,
+    hasLine: (productId) => lineItemsRef.current.some((li) => li.productId === productId),
+    sessionKey: () => orderSessionRef.current,
     onUnknownCode: (code) => {
       setCreateProductInitialName("");
       setCreateProductInitialSku(code);
@@ -493,15 +508,32 @@ export function CreateOrderModal({
     toast,
   });
 
+  // ONE FIFO queue for every code that arrives outside the scan screen (wedge, typed SKU + Enter, the
+  // single-shot camera): each finishes lookup AND line commit before the next starts. `consumedCodeRef`
+  // names the code in flight so addLineItem clears the search field only if it still holds THAT code -
+  // never the partly-typed next scan of a burst.
+  const consumedCodeRef = React.useRef<string | null>(null);
+  const [scanQueue] = React.useState(() =>
+    createSerialScanQueue(async (code: string) => {
+      consumedCodeRef.current = code;
+      try {
+        return await barcodeScanHandlerRef.current(code);
+      } finally {
+        consumedCodeRef.current = null;
+      }
+    }),
+  );
+
   // handleProductSearchEnter — called when Enter is pressed in the product search input.
   // Works for keyboard-emulation scanners AND paste-mode scanners (where no individual
   // keydown events fire for each character, so sequence-accumulation approaches fail).
   const handleProductSearchEnter = () => {
-    const code = productSearch.trim();
+    // The DOM value, not the render's `productSearch`: a burst can outrun the re-render that state needs.
+    const code = (productSearchRef.current?.value ?? productSearch).trim();
     if (!code) return;
     setProductSearch("");
     setDebouncedProductSearch("");
-    barcodeScanHandlerRef.current(code);
+    void scanQueue.enqueue(code);
   };
 
   const { register, handleSubmit, reset, watch, setValue } = useForm<FormValues>({
@@ -528,6 +560,7 @@ export function CreateOrderModal({
   // hydration effect below re-fills the state from the draft payload right after.
   React.useEffect(() => {
     if (!isOpen) return;
+    orderSessionRef.current += 1; // a new order: forget which products earlier scans resolved to
     reset({
       urgent: false,
       fulfillPath: initialFulfillPath === "SHIP" && !resumeDraftId ? "SHIP" : undefined,
@@ -874,6 +907,18 @@ export function CreateOrderModal({
     // or a retry that treats the throw as "resolveCode failed" would re-run this whole method and
     // add the line a SECOND time. Logged, not silently swallowed; the commit's own outcome is
     // returned either way.
+    // A picker add clears the search it was made from; a scan clears the field only while it still holds the
+    // code that scan consumed (the wedge take already emptied it - a later clear must not eat the next scan).
+    const consumed = consumedCodeRef.current;
+    const clearSearchAfterAdd = () => {
+      if (consumed === null) {
+        setProductSearch("");
+        setDebouncedProductSearch("");
+      } else {
+        setProductSearch((cur) => (cur.trim() === consumed.trim() ? "" : cur));
+        setDebouncedProductSearch((cur) => (cur.trim() === consumed.trim() ? "" : cur));
+      }
+    };
     try {
       if (result.refused) {
         // The scan screen reports the refusal itself; elsewhere a toast says it.
@@ -890,13 +935,11 @@ export function CreateOrderModal({
           });
         }
         setScrollToId(result.mergedInto!.tempId);
-        setProductSearch("");
-        setDebouncedProductSearch("");
+        clearSearchAfterAdd();
         scheduleScannerRefocus(productSearchRef, 50);
       } else {
         setScrollToId(newTempId);
-        setProductSearch("");
-        setDebouncedProductSearch("");
+        clearSearchAfterAdd();
         setLineItemsError("");
         // Re-focus the product search so the scanner is ready for the next item
         scheduleScannerRefocus(productSearchRef, 50);
@@ -1745,6 +1788,7 @@ export function CreateOrderModal({
               customerId: selectedCustomer?.id,
               customerName: selectedCustomer?.businessName,
               onUsePrice: (price) => setDiscountedPrice(li.tempId, price),
+              summary: priceSummary,
             }
           : undefined
       }
@@ -1892,7 +1936,7 @@ export function CreateOrderModal({
           {/* Three-tier hierarchy: ghost (dismiss) < secondary (alt save) <
               primary (main action). Save-as-Draft was an amber button that
               competed with the primary blue and misused a warning colour. */}
-          <div className="flex flex-wrap items-center justify-end gap-2 sm:gap-3">
+          <div className="flex flex-wrap items-center justify-end gap-2 sm:order-2 sm:gap-3">
             {/* Row 344: the footer actions are 44 px tap targets below sm (they were 34 px at 390). */}
             <Button variant="ghost" type="button" className="max-sm:h-11" onClick={handleDismiss}>
               Cancel
@@ -1942,6 +1986,20 @@ export function CreateOrderModal({
               {posMode ? POS_COPY.confirmAndInvoice : "Create Order"}
             </WriteButton>
           </div>
+          {/* O3 (P01/P02): the total used to sit at the foot of the scrolling body, hidden behind
+              this sticky footer at the moment of "Create Order". It is now pinned HERE. DOM-last so
+              the col-reverse stack puts it on top of the buttons under `sm`; `sm:order-1` seats it
+              between Minimize and the actions on the single row. min-w-0 + tabular-nums, no fixed
+              width: a five-figure total wraps instead of clipping. */}
+          {lineItems.length > 0 && (
+            <div
+              data-testid="create-order-footer-total"
+              className="flex min-w-0 items-baseline justify-between gap-2 tabular-nums text-navy sm:order-1 sm:justify-end"
+            >
+              <span className="text-sm text-navy/70">Total</span>
+              <span className="min-w-0 break-all text-base font-semibold">${total.toFixed(2)}</span>
+            </div>
+          )}
         </div>
       }
     >
@@ -2286,8 +2344,14 @@ export function CreateOrderModal({
                 )}
               <BarcodeScannerButton
                 inputRef={productSearchRef}
-                onScan={(code) => {
-                  barcodeScanHandlerRef.current(code); // a camera scan is +1
+                onScan={(code, source) => {
+                  // A wedge scan is taken from the field AND the field cleared here, in the same task, so
+                  // the next scan of a burst types into an empty field. A camera scan is +1.
+                  if (source === "field") {
+                    setProductSearch("");
+                    setDebouncedProductSearch("");
+                  }
+                  void scanQueue.enqueue(code);
                 }}
                 onError={(message) => toast({ variant: "error", title: message })}
                 onOpenContinuous={scanV2 ? () => setScanScreenOpen(true) : undefined}

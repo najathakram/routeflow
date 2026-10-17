@@ -35,6 +35,8 @@ export const READ_ONLY_STATUS = "READ_ONLY" as const;
 
 /** The `readOnlyReason` a dunning pause writes (no new enum: READ_ONLY plus this reason). */
 export const PAYMENT_OVERDUE_REASON = "payment_overdue";
+/** F4: the `readOnlyReason` of a READ_ONLY an admin set by hand - a payment never reinstates it. */
+export const ADMIN_SET_REASON = "admin_set";
 /** The `readOnlyReason` a cancel (self-serve, or Stripe's own) leaves a paused tenant on. */
 export const SUBSCRIPTION_CANCELLED_REASON = "subscription_cancelled";
 

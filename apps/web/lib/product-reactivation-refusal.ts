@@ -145,8 +145,9 @@ export function newCodeFields(refusal: ReactivationRefusal | null): ReplaceableC
 /**
  * The write refused a replacement code that was free at the availability check: a 400 `PRODUCT_CODE_IN_USE`
  * (field named in `data.field`), or a 409 `CODE_TAKEN` (field sku | unitSku in `data.field`) / `BARCODE_TAKEN`
- * (always the barcode) from the write transaction. Returns the sent code field it names, else the first sent
- * field, or null for any other error. Call it only for a request that carried replacement codes: the pre-write
+ * (always the barcode) from the write transaction. Returns the sent code field it names; a 400 that names none
+ * falls back to the first sent field; a 409 that names a field that was NOT sent is null (see below); null for any
+ * other error. Call it only for a request that carried replacement codes: the pre-write
  * holders refusal for the ORIGINAL codes is the same 409 code. Only the code, status and field are read; no
  * server text is.
  */
@@ -165,6 +166,9 @@ export function codeTakenOnSubmit(
   else return null;
   const field = CODE_FIELD_ORDER.find((f) => f === named);
   if (field && sent[field]) return field;
+  // A 409 that NAMES a code field the operator did not send is about the ORIGINAL code, not a typed one: return null so
+  // the caller shows the holders refusal (which names the taken code) instead of looping on the first sent field.
+  if (field && res?.status === 409) return null;
   return CODE_FIELD_ORDER.find((f) => sent[f]) ?? null;
 }
 
@@ -184,6 +188,8 @@ const DEACTIVATE_CONFLICT_LINES: Record<string, string> = {
     "Turn the family back on first, then reactivate this variant.",
   [API_ERROR_CODES.PRODUCT_DELETE_CONFLICT]:
     "Nothing was deleted because something changed at the same time. Reload and try again.",
+  [API_ERROR_CODES.PRODUCT_HAS_ACTIVE_ORDER_ITEMS]:
+    "This product is on an order that is still open. Finish or cancel the order first.",
   [API_ERROR_CODES.FAMILY_NOT_PRICEABLE]:
     "A product family can't be priced or promoted. Use its variants instead.",
 };

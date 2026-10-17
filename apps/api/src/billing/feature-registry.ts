@@ -631,6 +631,34 @@ export const FEATURE_REGISTRY: readonly FeatureDef[] = [
     defaultGranted: false,
   },
   {
+    key: "flag.units_prices_v2",
+    kind: "boolean",
+    area: "catalog",
+    label: "Units and prices v2",
+    description: "The one price grid per product: every unit, every tier, Set or Auto.",
+    gate: {
+      via: "RequirePlanFlag",
+      // SA-796 R-5: a stated exception to the DARK_PLAN_FLAGS rule. The key gates a NEW route and
+      // UI with zero prior users (blast radius 0), and "dark" would allow it for every tenant, so
+      // it ships ENFORCED-BUT-UNGRANTED like flag.units_v1.
+      state: "enforced",
+      added: "2026-10-16",
+      routes: [
+        "GET /products/:productId/price-grid (product-pricing.controller.ts, class-level)",
+        "GET /products/:productId/customer-prices (product-pricing.controller.ts, class-level)",
+        "POST /products/:productId/prices (product-pricing.controller.ts, class-level)",
+        "POST /products/:productId/prices/undo (product-pricing.controller.ts, class-level)",
+        "GET /customers/:customerId/unit-prices (customer-unit-prices.controller.ts, class-level)",
+        "products.service.ts create and importFromZoho, product-families.service.ts createFamily and updateVariants (hasFlag, S4)",
+      ],
+      grantPath:
+        "Owner override GRANT per tenant after the 95/95 live check (S28); the local test tenant for proofs",
+      backfill: "New key: no tenant has used it, so there is nothing to backfill.",
+    },
+    billing: { skus: [], selfService: false },
+    defaultGranted: false,
+  },
+  {
     key: "flag.import_integrations",
     kind: "boolean",
     area: "integrations",

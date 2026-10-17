@@ -14,6 +14,8 @@ jest.mock("@/lib/auth-context", () => ({
   ...jest.requireActual("@/lib/auth-context"),
   useAuth: () => ({ user: { role } }),
 }));
+// The card renders PortalLimitsRow, whose "View rule" toast action routes (row 509 PR5).
+jest.mock("next/navigation", () => ({ useRouter: () => ({ push: jest.fn() }) }));
 jest.mock("@routeflow/ui/web", () => ({
   ...jest.requireActual("@routeflow/ui/web"),
   useToast: () => ({ toast }),
@@ -102,6 +104,30 @@ describe("ProductLabelsCard", () => {
     expect(screen.getByRole("alert")).toHaveTextContent(/can.t be resolved/i);
   });
 
+  it("an INCLUDE the category-text sync added renders like any other own label, with a Remove for staff and none for a non-staff role", () => {
+    labels = view({
+      parentProductId: null,
+      inherited: [],
+      own: [
+        own({
+          id: "auto1",
+          categoryId: "c2",
+          categoryName: "THC",
+          createdById: "u1",
+          createdByName: "olivia",
+        }),
+      ],
+    });
+    render();
+    const list = screen.getByRole("list", { name: "Labels on this product" });
+    expect(list).toHaveTextContent("THC");
+    expect(screen.getByRole("button", { name: "Remove THC" })).toBeInTheDocument();
+    role = "DRIVER";
+    renderWithProviders(<ProductLabelsCard productId="v1" />);
+    expect(screen.getAllByRole("list", { name: "Labels on this product" })).toHaveLength(2);
+    expect(screen.getAllByRole("button", { name: "Remove THC" })).toHaveLength(1);
+  });
+
   it("adds an INCLUDE label from the untaken ones and removes one", () => {
     labels = view({ parentProductId: null, inherited: [], own: [own()] });
     render();
@@ -166,11 +192,73 @@ describe("ProductLabelsCard", () => {
     expect(screen.queryByText(/No more labels to add/)).toBeNull();
   });
 
-  it("is read-only for a non-admin", () => {
-    role = "OPERATOR";
+  it.each(["DRIVER", "CUSTOMER"])("is read-only for %s", (r) => {
+    role = r;
     render();
     expect(screen.getByText("Alcohol")).toBeInTheDocument();
     expect(screen.queryByLabelText("Add a label")).toBeNull();
     expect(screen.queryByRole("button", { name: /opt out|remove/i })).toBeNull();
+  });
+
+  describe("owner ruling 2026-10-14: operators write labels, except a federal-covered one", () => {
+    const HINT = "Only an account admin can change (or lift) a federal rule.";
+
+    it("an operator adds, removes and opts out of labels no federal rule covers, with no hint", () => {
+      role = "OPERATOR";
+      labels = view({ own: [own({ id: "l2", categoryId: "c2", categoryName: "THC" })] });
+      render();
+      expect(screen.getByRole("button", { name: "Remove THC" })).toBeEnabled();
+      expect(screen.getByRole("button", { name: "Opt out" })).toBeEnabled();
+      expect(screen.getByLabelText("Add a label")).toBeEnabled();
+      expect(screen.queryByText(HINT)).toBeNull();
+    });
+
+    it("an operator sees a federal-covered label's controls DISABLED, pointing at the one visible hint", () => {
+      role = "OPERATOR";
+      labels = view({
+        own: [own({ id: "l2", categoryId: "c2", categoryName: "THC" })],
+        federalCategoryIds: ["c1", "c2"],
+      });
+      render();
+      const remove = screen.getByRole("button", { name: "Remove THC" });
+      const optOut = screen.getByRole("button", { name: "Opt out" });
+      for (const b of [remove, optOut]) {
+        expect(b).toBeDisabled();
+        const hint = document.getElementById(b.getAttribute("aria-describedby") as string);
+        expect(hint).toHaveTextContent(HINT);
+        expect(hint).toBeVisible();
+      }
+      expect(screen.getAllByText(HINT)).toHaveLength(1);
+      fireEvent.click(remove);
+      expect(remove).toBeDisabled();
+    });
+
+    it.each(["TENANT_ADMIN", "SUPER_ADMIN"])(
+      "%s writes a federal-covered label: enabled, no hint",
+      (r) => {
+        role = r;
+        labels = view({
+          own: [own({ id: "l2", categoryId: "c2", categoryName: "THC" })],
+          federalCategoryIds: ["c1", "c2"],
+        });
+        render();
+        expect(screen.getByRole("button", { name: "Remove THC" })).toBeEnabled();
+        expect(screen.getByRole("button", { name: "Opt out" })).toBeEnabled();
+        expect(screen.queryByText(HINT)).toBeNull();
+      },
+    );
+  });
+});
+
+describe("ProductLabelsCard: 44px hit areas on the small label controls (SA, #3467)", () => {
+  it("the chip remove and the opt-out button carry TAP_TARGET", () => {
+    role = "OPERATOR";
+    labels = view({ own: [own({ id: "l2", categoryId: "c2", categoryName: "THC" })] });
+    render();
+    const { TAP_TARGET } = jest.requireActual("@routeflow/ui/web");
+    for (const name of ["Remove THC", "Opt out"]) {
+      const cls = screen.getByRole("button", { name }).className;
+      for (const c of String(TAP_TARGET).split(/\s+/).filter(Boolean)) expect(cls).toContain(c);
+    }
   });
 });

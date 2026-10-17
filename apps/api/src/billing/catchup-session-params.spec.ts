@@ -1,6 +1,7 @@
 import { buildCatchupSessionParams, assertCheckoutAcceptable } from "./catchup-session-params";
 import { planCatchup, type CatchupInvoice } from "./catchup-plan";
 import { CATCHUP_META } from "./catchup-claim";
+import { CHECKOUT_MAX_LIFETIME_MS, planCheckoutAnchor } from "./checkout-anchor";
 
 /**
  * SA-733r5 against Stripe's DOCUMENTED Checkout limits (docs.stripe.com/payments/checkout/billing-cycle,
@@ -19,7 +20,7 @@ const PLAN_LINE = {
   currency: "usd",
   unit_amount: 31000,
   recurring: { interval: "month" },
-  product_data: { name: "RouteFlow Growth — monthly" },
+  product_data: { name: "RouteFlow Growth" },
 };
 const ADDON_LINE = {
   price_data: {
@@ -76,7 +77,7 @@ describe("trial_one_time (the common case: an unpaid October, session Oct 9)", (
       price_data: {
         currency: "usd",
         unit_amount: 31000 + 3100, // base 31/31 + add-on 31/31
-        product_data: { name: "Subscription — October 2026" },
+        product_data: { name: "October 2026 subscription" },
       },
       quantity: 1,
     });
@@ -103,8 +104,14 @@ describe("trial_one_time (the common case: an unpaid October, session Oct 9)", (
     });
   });
 
-  it("the session lives min(now + 24 h, A - 60 min) = 24 h", () => {
-    expect(params.expires_at).toBe(Math.floor((NOW.getTime() + 24 * 3600_000) / 1000));
+  it("the session lives min(now + 23 h, A - 60 min) = 23 h (margin under Stripe's 24 h cap)", () => {
+    expect(params.expires_at).toBe(Math.floor((NOW.getTime() + 23 * 3600_000) / 1000));
+  });
+
+  it("Stripe rejects expires_at >= 24 h out when the host clock runs ahead: stay under with margin", () => {
+    const nowSec = Math.floor(NOW.getTime() / 1000);
+    // even with the host clock 30 min ahead of Stripe's, the expiry is still below Stripe's now + 24 h
+    expect(params.expires_at).toBeLessThan(nowSec - 30 * 60 + 24 * 3600);
   });
 
   it("session Oct 30: A = Dec 1, ONE line for Oct 1 -> Nov 30 (two months)", () => {
@@ -114,7 +121,7 @@ describe("trial_one_time (the common case: an unpaid October, session Oct 9)", (
     expect(x.subscription_data.trial_end).toBe(Date.UTC(2026, 11, 1, 12) / 1000);
     expect(x.line_items.filter(isOneTime)[0].price_data.unit_amount).toBe(62000);
     expect(x.line_items.filter(isOneTime)[0].price_data.product_data.name).toBe(
-      "Subscription — October 2026 to November 2026",
+      "October 2026 to November 2026 subscription",
     );
   });
 
@@ -136,6 +143,12 @@ describe("trial_one_time (the common case: an unpaid October, session Oct 9)", (
 describe("trial shape (prepaid; October paid, paid-through Nov 1)", () => {
   const p = plan({ invoices: [inv("o", "PAID", "2026-10-01T12:00:00Z", "2026-11-01T12:00:00Z")] });
   const params = build(p);
+
+  it("the prepaid session also expires inside Stripe's 24 h cap with margin (now + 23 h)", () => {
+    const nowSec = Math.floor(NOW.getTime() / 1000);
+    expect(params.expires_at).toBe(nowSec + 23 * 3600);
+    expect(params.expires_at).toBeLessThan(nowSec - 30 * 60 + 24 * 3600);
+  });
 
   it("trial_end = T alone, recurring lines only, catchup=prepaid", () => {
     expect(p.shape).toBe("trial");
@@ -170,7 +183,7 @@ describe("a FUTURE mid-month S (paid through Nov 14) is trial_one_time, charged 
     const oneTime = x.line_items.filter(isOneTime);
     expect(oneTime).toHaveLength(1);
     expect(oneTime[0].price_data.unit_amount).toBe(17567);
-    expect(oneTime[0].price_data.product_data.name).toBe("Subscription — Nov 14 to Nov 30, 2026");
+    expect(oneTime[0].price_data.product_data.name).toBe("Nov 14 to Nov 30, 2026 subscription");
     expect(x.metadata[CATCHUP_META.from]).toBe("2026-11-14T12:00:00.000Z");
     expect(x.metadata[CATCHUP_META.to]).toBe("2026-12-01T12:00:00.000Z");
   });
@@ -266,5 +279,36 @@ describe("assertCheckoutAcceptable (Stripe's documented Checkout limits)", () =>
         subscription_data: { billing_cycle_anchor: 2, proration_behavior: "none" },
       }),
     ).not.toThrow();
+  });
+});
+
+describe("row 425: ONE shared Checkout lifetime under Stripe's 24 h cap", () => {
+  const MID_MONTH = d("2026-10-15T09:00:00Z");
+
+  it("the shared constant is 23 h", () => {
+    expect(CHECKOUT_MAX_LIFETIME_MS).toBe(23 * 3600_000);
+  });
+
+  it("expires_at - now <= 23 h for BOTH builders (catch-up period, catch-up prepaid, regular anchor), now mid-month", () => {
+    const nowSec = Math.floor(MID_MONTH.getTime() / 1000);
+    const period = build(plan({ now: MID_MONTH }), MID_MONTH);
+    const prepaid = build(
+      plan({
+        now: MID_MONTH,
+        invoices: [inv("o", "PAID", "2026-10-01T12:00:00Z", "2026-11-01T12:00:00Z")],
+      }),
+      MID_MONTH,
+    );
+    const anchor = planCheckoutAnchor(MID_MONTH);
+    for (const expiresAt of [period.expires_at, prepaid.expires_at, anchor.expiresAt]) {
+      expect(expiresAt - nowSec).toBeLessThanOrEqual(23 * 3600);
+      expect(expiresAt - nowSec).toBeGreaterThan(22 * 3600);
+    }
+  });
+
+  it("the anchor branch is unchanged near the anchor: anchor - 60 min still wins", () => {
+    const near = d("2026-10-31T23:00:00Z");
+    const p = planCheckoutAnchor(near);
+    expect(p.expiresAt * 1000).toBe(p.anchorAt.getTime() - 60 * 60_000);
   });
 });

@@ -45,12 +45,14 @@ const ALLOWED: Record<string, string> = {
   // when the operator explicitly asks for a local run.
   "data-questions-report.mjs": "--local mode only",
   "sa077-split-qty-consistency.mjs": "--local mode only",
+  "labels-from-categories.mjs": "--local mode only (writer: requireProxy otherwise)",
   "t6-backfill-census.mjs": "--local mode only",
   "t6-null-census.mjs": "--local mode only",
   "t6-null-rows-report.mjs": "--local mode only",
   "stamp-addon-comp.mjs": "--local mode only (writer: id-pinned, dry-run first)",
   // B294: a gated WRITER; production resolves with requireProxy, DATABASE_URL is --local only.
   "backfill-b294-order-line-taxrate.mjs": "--local mode only (writer: requireProxy otherwise)",
+  "backfill-b297-rate-snapshot.mjs": "--local mode only (writer: requireProxy otherwise)",
   // The drift gate and the production guard deliberately read the raw variable.
   "schema-drift.mjs": "drift gate (railway-db-url.mjs: read-only drift check)",
   // Writers, destructive/QA and admin scripts: out of B768's scope (a separate decision). Listed so

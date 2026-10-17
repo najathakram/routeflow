@@ -18,7 +18,13 @@ import { PREF } from "./preferences";
 export type SettingHome = "policy" | "systemConfig" | "userPref" | "featureConfig" | "tenantConfig";
 export type SettingKind = "config" | "behaviour" | "preference" | "memo";
 export type SettingStatus =
-  "live" | "legacy" | "pending #1337" | "moves to policy (PR-3)" | "pending WS4";
+  | "live"
+  | "legacy"
+  | "pending #1337"
+  | "moves to policy (PR-3)"
+  | "pending WS4"
+  // Units program S6: registered dark, no reader or writer until the settings slice (S18) ships.
+  | "pending units S18";
 
 export interface SettingRow {
   /** Exact key, or a prefix pattern ending in `*` (e.g. `margin.floor.category.*`). */
@@ -70,9 +76,9 @@ export const OFF_HUB_SCREENS: Record<string, string> = {
   "mobile:settings": "Mobile operator settings (push notifications)",
   implicit: "Remembered last-used default; not a setting anyone edits",
   "/settings?tab=fulfilment#delivery-method":
-    "Fulfillment tab, Delivery method card: reached by its ?tab= link, shown only when self-serve is on",
+    "Fulfillment tab, Delivery method card: listed in the admin hub / rail (Fulfillment row) and reached by its ?tab= link, only when self-serve is on",
   "/settings?tab=fulfilment#counter-sales":
-    "Fulfillment tab, Counter sales card: reached by its ?tab= link, shown only when self-serve is on",
+    "Fulfillment tab, Counter sales card: listed in the admin hub / rail (Counter sales row) and reached by its ?tab= link, only when self-serve is on",
   "/orders/counter-sale":
     "Counter sale screen: the Quick keys grid's Edit keys dialog saves the pins and hides here; opened from the till, not the settings hub",
   "/orders":
@@ -103,9 +109,10 @@ export const SETTINGS_REGISTRY: SettingRow[] = [
     "smtpUser",
     "smtpPassword",
     "smtpSecure",
-  ].map((k) => cfg(`email.${k}`, "/settings?tab=email")),
-  cfg("email.sendingDomain", "/settings?tab=email"),
-  cfg("anthropic.apiKey", "/settings?tab=integrations"),
+  ].map((k) => cfg(`email.${k}`, "/settings?tab=email", { adminOnly: true })),
+  // Perms PR1: every email (SMTP) and Claude AI settings endpoint is TENANT_ADMIN-only
+  cfg("email.sendingDomain", "/settings?tab=email", { adminOnly: true }),
+  cfg("anthropic.apiKey", "/settings?tab=integrations", { adminOnly: true }),
   ...[
     "serviceTimeMinutes",
     "defaultStartTime",
@@ -128,6 +135,28 @@ export const SETTINGS_REGISTRY: SettingRow[] = [
   cfg("margin.floor.category.*", "/settings?tab=costing"),
   cfg("remittance.config", "/settings?tab=remittance"),
   cfg("pricing.tierLabels", "/settings"),
+  // Units program S6 (PLAN §1.2, SA-795 (h)): dark CONFIG rows; nothing reads or writes them yet. Their defaults
+  // (0% tier rules, order unit "pack", invoice unit "legacy" = today) live in @routeflow/pricing: the keys and
+  // unit defaults in units-prices-v2.ts, the tier rules' DEFAULT_TIER_RULES in the units core (price-ladder.ts).
+  ...(
+    [
+      [
+        "pricing.tierRules",
+        "Settings > Pricing: tier rules (% below Retail) with an impact preview (units S18)",
+      ],
+      [
+        "units.orderUnit",
+        "Settings > Units: the business order unit, new products only (units S18)",
+      ],
+      ["units.invoiceUnit", "Settings > Units: the business invoice unit (units S18, S23)"],
+    ] as const
+  ).map(([key, plannedSurface]): SettingRow => ({
+    key,
+    home: "systemConfig",
+    kind: "config",
+    status: "pending units S18",
+    plannedSurface,
+  })),
   // Receipt email limits (SA-751r change 4): read with their defaults (3 per order, 100 per tenant per day); no editor yet.
   ...[
     "receipts.email.perOrder",

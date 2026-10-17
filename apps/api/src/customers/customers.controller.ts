@@ -134,7 +134,7 @@ export class CustomersController {
   }
 
   @Delete("all")
-  @Roles(UserRole.OPERATOR)
+  @Roles(UserRole.TENANT_ADMIN)
   deleteAll() {
     return this.customersService.deleteAllCustomers();
   }
@@ -147,13 +147,13 @@ export class CustomersController {
   }
 
   @Get("cleanup-preview")
-  @Roles(UserRole.OPERATOR)
+  @Roles(UserRole.TENANT_ADMIN)
   cleanupPreview() {
     return this.customersService.previewImportedCleanup();
   }
 
   @Delete("cleanup-imported")
-  @Roles(UserRole.OPERATOR)
+  @Roles(UserRole.TENANT_ADMIN)
   @HttpCode(200)
   cleanupImported() {
     return this.customersService.deleteImportedCustomers();
@@ -169,8 +169,8 @@ export class CustomersController {
 
   @Patch(":id")
   @Roles(UserRole.OPERATOR)
-  update(@Param("id") id: string, @Body() dto: UpdateCustomerDto) {
-    return this.customersService.update(id, dto);
+  update(@Param("id") id: string, @Body() dto: UpdateCustomerDto, @CurrentUser() user: JwtPayload) {
+    return this.customersService.update(id, dto, undefined, user);
   }
 
   @Patch(":id/status")

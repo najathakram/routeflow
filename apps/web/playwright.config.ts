@@ -534,6 +534,15 @@ export default defineConfig({
       use: { ...devices["Desktop Chrome"], storageState: path.join(AUTH_DIR, "operator.json") },
     },
 
+    // ── Settings search (settings-search.spec.ts): carrier / low stock / clear at 1440 and 390. READ-ONLY.
+    {
+      name: "settings-search",
+      testMatch: /settings-search\.spec\.ts/,
+      dependencies: ["setup"],
+      // tenant admin: the spec opens the Low-stock digest, an admin-only setting (an OPERATOR never sees it)
+      use: { ...devices["Desktop Chrome"], storageState: path.join(AUTH_DIR, "tenant-admin.json") },
+    },
+
     // ── #2791: /invoices/[id]/edit redirects a pending-mirror draft to its order (spec 64).
     {
       name: "invoice-edit-pending-mirror",
@@ -1050,6 +1059,17 @@ export default defineConfig({
           {
             name: "counter-pos-stack",
             testMatch: /72-counter-pos-stack\.spec\.ts/,
+            dependencies: ["setup"],
+            use: {
+              ...devices["Desktop Chrome"],
+              storageState: path.join(AUTH_DIR, "operator.json"),
+            },
+          },
+          // Units v2 (grid / stock-off / family / blank-tiers money): needs a stack built WITH the feature and `flag.units_prices_v2`
+          // served to the test tenant; each spec fails (never skips) without it. Local lane only, like 71-73.
+          {
+            name: "units-v2",
+            testMatch: /units-v2-.*\.spec\.ts/,
             dependencies: ["setup"],
             use: {
               ...devices["Desktop Chrome"],

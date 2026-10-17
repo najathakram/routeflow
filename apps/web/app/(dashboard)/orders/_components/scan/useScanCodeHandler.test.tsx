@@ -85,6 +85,13 @@ describe("useScanCodeHandler", () => {
     expect(first.addLineItem).not.toHaveBeenCalled();
   });
 
+  it("B993: a refused add (units still loading) resolves to exactly { kind: 'refused' }, no message field", async () => {
+    mockResolve.mockResolvedValue({ notFound: false, archived: false, product });
+    const d = deps({ addLineItem: jest.fn().mockReturnValue({ created: false, refused: true }) });
+    const { result } = renderHook(() => useScanCodeHandler(d));
+    await expect(result.current.current("012345678905")).resolves.toEqual({ kind: "refused" });
+  });
+
   it("does not touch addLineItem while the hook is called — only when a code is scanned (thunk deferral)", () => {
     const addLineItem = jest.fn();
     renderHook(() => useScanCodeHandler(deps({ addLineItem })));
@@ -229,5 +236,40 @@ describe("useScanCodeHandler - connectivity + quiet", () => {
     expect(d.toast).toHaveBeenCalledWith(
       expect.objectContaining({ title: "Old is archived — reactivate to sell" }),
     );
+  });
+});
+
+describe("useScanCodeHandler local fast path (row 536)", () => {
+  beforeEach(() => jest.clearAllMocks());
+
+  it("a code already on the order is added again with NO lookup; a removed line looks it up again", async () => {
+    mockResolve.mockResolvedValue({ notFound: false, archived: false, product });
+    let onOrder = false;
+    const d = deps({ hasLine: () => onOrder, sessionKey: () => 1 });
+    const { result } = renderHook(() => useScanCodeHandler(d));
+
+    await result.current.current("012345678905");
+    onOrder = true;
+    await result.current.current("012345678905");
+    await result.current.current("012345678905");
+    expect(mockResolve).toHaveBeenCalledTimes(1);
+    expect(d.addLineItem).toHaveBeenCalledTimes(3);
+
+    onOrder = false; // the line was deleted
+    await result.current.current("012345678905");
+    expect(mockResolve).toHaveBeenCalledTimes(2);
+  });
+
+  it("the remembered product never outlives its order: a new session key forces a fresh lookup", async () => {
+    mockResolve.mockResolvedValue({ notFound: false, archived: false, product });
+    let session = 1;
+    const d = deps({ hasLine: () => true, sessionKey: () => session });
+    const { result } = renderHook(() => useScanCodeHandler(d));
+    await result.current.current("012345678905");
+    await result.current.current("012345678905");
+    expect(mockResolve).toHaveBeenCalledTimes(1);
+    session = 2; // a new order opened
+    await result.current.current("012345678905");
+    expect(mockResolve).toHaveBeenCalledTimes(2);
   });
 });

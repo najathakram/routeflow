@@ -7,6 +7,7 @@ import {
 } from "@nestjs/common";
 import { fromCents, toCents } from "@routeflow/pricing";
 import { API_ERROR_CODES } from "../common/api-error-codes";
+import { addonCatalogInvalidException } from "./addon-catalog-invalid";
 import { ADMIN_AUDIT_ENTITY } from "../platform-admin/audit-actions.constant";
 import { PrismaService } from "../prisma/prisma.service";
 import { billableAddonWhere } from "./addon-row";
@@ -67,6 +68,8 @@ export interface CatchupReport {
   plan: CatchupPlanResult;
   /** For the session: the pieces `open()` needs (not serialised). */
   _inputs?: { planPriceData: Record<string, any>; addonLines: any[]; addonSkus: string[] };
+  /** Add-ons the quiet read dropped for an unparseable catalog includedAtPlan (internal; the open() refuses on it). */
+  _catalogInvalid?: { sku: string; value: string }[];
 }
 
 /** The plan changed between the dry-run read and the claim (re-planned under the claim). */
@@ -132,6 +135,16 @@ export function catchupReportJson(r: CatchupReport) {
   };
 }
 
+/**
+ * Defence in depth for the Checkout return paths: a same-origin PATH only ("/x"), never "//host", "/\host" or
+ * "@host" (which would turn `${base}${path}` into another origin). Callers pass constants today.
+ */
+function safePath(path: string | undefined, fallback: string): string {
+  if (path === undefined) return fallback;
+  if (!/^\/(?![/\\])/.test(path)) throw new Error(`unsafe Checkout return path: ${path}`);
+  return path;
+}
+
 @Injectable()
 export class CatchupCheckoutService {
   private readonly logger = new Logger(CatchupCheckoutService.name);
@@ -193,6 +206,8 @@ export class CatchupCheckoutService {
     }
 
     const lines = await this.mutations.checkoutAddonLines(tenantId, "month", { quiet: true });
+    // B1102: a held add-on whose catalog includedAtPlan names no plan is CATALOG_INVALID, not "not card billable".
+    if (lines.invalid.length > 0) ineligible.push("addon_catalog_invalid");
     const addons: CatchupAddon[] = lines.lineItems.map((li: any) => ({
       sku: String(li.price_data?.product_data?.metadata?.addonSku ?? "ADDON"),
       unitPrice: fromCents(Number(li.price_data?.unit_amount ?? 0)),
@@ -283,6 +298,7 @@ export class CatchupCheckoutService {
       subPeriod: sub ? { start: sub.periodStart ?? null, end: sub.periodEnd ?? null } : null,
       plan,
       _inputs: { planPriceData, addonLines: lines.lineItems, addonSkus: lines.skus },
+      _catalogInvalid: lines.invalid,
     };
   }
 
@@ -336,13 +352,22 @@ export class CatchupCheckoutService {
    */
   async open(
     tenantId: string,
-    opts: { expectedStubCents: number; now?: Date },
+    opts: { expectedStubCents: number; now?: Date; successPath?: string; cancelPath?: string },
   ): Promise<{ checkoutUrl: string; sessionId: string; stubCents: number; shape: string }> {
     const now = opts.now ?? new Date();
+    // validated before anything is claimed or created
+    const successPath = safePath(opts.successPath, "/settings/billing?checkout=success");
+    const cancelPath = safePath(opts.cancelPath, "/settings/billing?checkout=cancelled");
     if (!this.stripe.isConfigured) {
       throw new ServiceUnavailableException("Stripe is not configured.");
     }
     const report = await this.plan(tenantId, now);
+    if (report._catalogInvalid?.length) {
+      // B1102: the coded 409 + the platform notice, BEFORE the plan's own (misleading) card-billable refusal.
+      await this.mutations.recordInvalidCatalogAddons(tenantId, report._catalogInvalid);
+      const first = report._catalogInvalid[0];
+      throw addonCatalogInvalidException(first.sku, first.value);
+    }
     if (!report.plan.ok) {
       // a coded refusal with fixed copy: never the internal reason string
       throw planRefusalException(report.plan.reason);
@@ -397,8 +422,9 @@ export class CatchupCheckoutService {
         addonSkus: fresh._inputs!.addonSkus,
         plan: fresh.plan,
         now,
-        successUrl: `${base}/settings/billing?checkout=success`,
-        cancelUrl: `${base}/settings/billing?checkout=cancelled`,
+        // PATHS ("/settings/billing?..."), joined to the one FRONTEND_URL base here
+        successUrl: `${base}${successPath}`,
+        cancelUrl: `${base}${cancelPath}`,
       });
       session = await this.stripe.client.checkout.sessions.create(withCheckoutPolicy(params), {
         idempotencyKey: `${tenantId}:catchup-session:${plan.paidThrough.getTime()}:${now.getTime()}`,

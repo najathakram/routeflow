@@ -1,3 +1,13 @@
+// SA-767 L-2.2: `commitStockCountSession` holds a session-scoped advisory lock (db-locks, a real pg
+// connection). These specs have no database, so the lock is a PASS-THROUGH that still runs the body.
+jest.mock("../common/db-locks", () => ({
+  ...jest.requireActual("../common/db-locks"),
+  withAdvisoryLock: async (_opts: unknown, fn: () => Promise<unknown>) => ({
+    acquired: true,
+    value: await fn(),
+  }),
+}));
+
 import { Test, TestingModule } from "@nestjs/testing";
 import { BadRequestException, ConflictException, NotFoundException } from "@nestjs/common";
 import { Prisma } from "@prisma/client";
@@ -624,37 +634,29 @@ describe("InventoryService", () => {
       expect(result.stockAfter.toString()).toBe("6");
     });
 
-    it("blends consumed lot costs for FIFO products and draws the lots down", async () => {
-      prisma.product.findFirst.mockResolvedValue(product({ costingMethod: "FIFO" }));
-      prisma.stockLot.findMany.mockResolvedValue([
-        { id: "lot-1", remainingQty: D(5), unitCost: D(1) },
-        { id: "lot-2", remainingQty: D(10), unitCost: D(2) },
-      ]);
+    // SA-804 (1) / B1233: FIFO and LIFO are retired. A STORED one is costed as AVCO: the SALE unitCost is the
+    // average cost (matching valuation and reports), and a sale no longer reads or draws down lots.
+    it.each(["FIFO", "LIFO"])(
+      "costs a stored-%s product at the AVERAGE cost, not the lot cost, and leaves the lots alone",
+      async (method) => {
+        prisma.product.findFirst.mockResolvedValue(product({ costingMethod: method }));
+        // Lots that WOULD blend to 1.375 under the old FIFO plan; the average (2) must win.
+        prisma.stockLot.findMany.mockResolvedValue([
+          { id: "lot-1", remainingQty: D(5), unitCost: D(1) },
+          { id: "lot-2", remainingQty: D(10), unitCost: D(2) },
+        ]);
+        counterAfter(2);
 
-      const result = await service.recordSale("prod-1", D(8), null, null, tx());
+        const result = await service.recordSale("prod-1", D(8), null, null, tx());
 
-      // (5×1 + 3×2) / 8 = 1.375
-      expect(result.unitCost.toString()).toBe("1.375");
-      expect(prisma.stockLot.update).toHaveBeenCalledTimes(2);
-      expect(prisma.stockLot.update.mock.calls[0][0]).toEqual({
-        where: { id: "lot-1" },
-        data: { remainingQty: { decrement: D(5) } },
-      });
-      expect(prisma.stockLot.update.mock.calls[1][0]).toEqual({
-        where: { id: "lot-2" },
-        data: { remainingQty: { decrement: D(3) } },
-      });
-    });
-
-    it("falls back to the average cost when FIFO lots are missing (pre-fix data)", async () => {
-      prisma.product.findFirst.mockResolvedValue(product({ costingMethod: "FIFO" }));
-      prisma.stockLot.findMany.mockResolvedValue([]);
-
-      const result = await service.recordSale("prod-1", D(4), null, null, tx());
-
-      expect(result.unitCost.toString()).toBe("2");
-      expect(prisma.stockLot.update).not.toHaveBeenCalled();
-    });
+        expect(result.unitCost.toString()).toBe("2");
+        const movementArgs = prisma.stockMovement.create.mock.calls[0][0].data;
+        expect(movementArgs.unitCost.toString()).toBe("2");
+        expect(movementArgs.avgCostAfter.toString()).toBe("2");
+        expect(prisma.stockLot.findMany).not.toHaveBeenCalled();
+        expect(prisma.stockLot.update).not.toHaveBeenCalled();
+      },
+    );
 
     it("uses standardCost for STANDARD products", async () => {
       prisma.product.findFirst.mockResolvedValue(
@@ -729,6 +731,10 @@ describe("InventoryService", () => {
   describe("setCostBasis", () => {
     it("creates a COST_BASIS movement (qty 0) and updates the product average", async () => {
       prisma.product.findUnique.mockResolvedValue(product({ averageCost: null }));
+      // SA-767 L-2: the movement is stamped from the counter the update returned (the locked row).
+      prisma.product.findMany.mockResolvedValue([product({ averageCost: null })]);
+      // Deliberately NOT the fixture's 10: the movement must carry the counter the UPDATE returned.
+      prisma.product.update.mockResolvedValue({ currentStock: D(7) } as any);
 
       await service.setCostBasis("prod-1", { unitCost: 3.15, notes: "opening basis" }, "user-1");
 
@@ -737,12 +743,13 @@ describe("InventoryService", () => {
       expect(movementArgs.quantity).toBe(0);
       expect(movementArgs.unitCost.toString()).toBe("3.15");
       expect(movementArgs.avgCostAfter.toString()).toBe("3.15");
-      expect(movementArgs.stockAfter.toString()).toBe("10");
+      expect(movementArgs.stockAfter.toString()).toBe("7");
       expect(movementArgs.performedById).toBe("user-1");
 
       expect(prisma.product.update).toHaveBeenCalledWith({
         where: { id: "prod-1" },
         data: { averageCost: D(3.15) },
+        select: { currentStock: true },
       });
       // Lots untouched unless explicitly requested
       expect(prisma.stockLot.updateMany).not.toHaveBeenCalled();
@@ -750,6 +757,7 @@ describe("InventoryService", () => {
 
     it("rewrites open lots only when applyToLots is set", async () => {
       prisma.product.findUnique.mockResolvedValue(product());
+      prisma.product.findMany.mockResolvedValue([product()]);
 
       await service.setCostBasis("prod-1", { unitCost: 3, applyToLots: true }, "user-1");
 
@@ -1128,6 +1136,16 @@ describe("InventoryService", () => {
       expect(prisma.stockLot.findMany).not.toHaveBeenCalled();
     });
 
+    it("values a LIFO-labelled product at the weighted average too (B1233 guard: valuation = sale cost)", async () => {
+      prisma.product.findMany.mockResolvedValue([
+        product({ costingMethod: "LIFO", currentStock: D(10), averageCost: D(2) }),
+      ]);
+
+      const result = await service.getValuation();
+
+      expect(result.totalValue).toBe(20);
+    });
+
     it("values a product with zero stock at zero however many lots survive", async () => {
       prisma.product.findMany.mockResolvedValue([
         product({ costingMethod: "FIFO", currentStock: D(0), averageCost: D(5) }),
@@ -1218,6 +1236,19 @@ describe("InventoryService", () => {
       ...over,
     });
 
+    // SA-767 L-2.2: the commit flips the session by CAS after the last batch.
+    beforeEach(() => {
+      prisma.stockCountSession.updateMany.mockResolvedValue({ count: 1 });
+      // The edits probe the shared stock-count lock; it fails closed, so grant it explicitly.
+      prisma.tenantTransaction.mockImplementation((fn: any) =>
+        fn({
+          ...prisma,
+          $executeRaw: jest.fn().mockResolvedValue(0),
+          $queryRaw: jest.fn().mockResolvedValue([{ ok: true }]),
+        }),
+      );
+    });
+
     it("a committed session short-circuits instead of re-applying its deltas", async () => {
       prisma.stockCountSession.findUnique.mockResolvedValue(
         session({ status: "COMMITTED", movementReference: "STOCK_COUNT-sess-1" }),
@@ -1230,15 +1261,21 @@ describe("InventoryService", () => {
       expect(prisma.product.update).not.toHaveBeenCalled();
     });
 
-    it("existing movements for the reference short-circuit a lost-response retry", async () => {
+    it("a line whose movement already exists is skipped on a re-run; the interrupted commit finishes", async () => {
       prisma.stockCountSession.findUnique.mockResolvedValue(session());
       prisma.product.findMany.mockResolvedValue([product()]);
-      prisma.stockMovement.findMany.mockResolvedValue([{ id: "m-existing" }]);
+      prisma.stockMovement.findMany.mockResolvedValue([
+        { id: "m-existing", productId: "prod-1", type: "ADJUSTMENT" },
+      ]);
 
       const res = await service.commitStockCountSession("sess-1", {}, { sub: "user-1" });
 
-      expect(res).toMatchObject({ alreadyCommitted: true, applied: 1 });
+      // not re-applied, counted in the complete movement set, and the session is flipped by the CAS
+      expect(res).toMatchObject({ applied: 1, movementIds: ["m-existing"] });
+      expect(res).not.toHaveProperty("alreadyCommitted");
       expect(prisma.stockMovement.create).not.toHaveBeenCalled();
+      expect(prisma.product.update).not.toHaveBeenCalled();
+      expect(prisma.stockCountSession.updateMany).toHaveBeenCalledTimes(1);
     });
 
     it("REPLACE commits the counted-minus-expected delta and never touches uncounted products", async () => {
@@ -1310,7 +1347,7 @@ describe("InventoryService", () => {
       ).rejects.toBeInstanceOf(BadRequestException);
     });
 
-    it("snapshots expectedQty on FIRST count only, so later stock drift can't move the baseline", async () => {
+    it("stamps expectedQty on the first count and re-stamps it on an absolute recount (SA-767 L-2.4 A)", async () => {
       prisma.stockCountSession.findFirst.mockResolvedValue({ id: "sess-1", status: "OPEN" });
       prisma.product.findFirst.mockResolvedValue({
         id: "prod-1",
@@ -1327,7 +1364,7 @@ describe("InventoryService", () => {
 
       expect(Number(prisma.stockCountLine.create.mock.calls[0][0].data.expectedQty)).toBe(10);
 
-      // Second touch updates the count but must NOT re-snapshot the expectation.
+      // An absolute recount re-stamps the baseline from the live stock (10); a scan does not.
       prisma.stockCountLine.findUnique.mockResolvedValue(line({ countedQty: D(4) }));
       await service.upsertStockCountLine(
         "sess-1",
@@ -1335,7 +1372,7 @@ describe("InventoryService", () => {
         { sub: "user-1" },
       );
       expect(prisma.stockCountLine.update).toHaveBeenCalled();
-      expect(prisma.stockCountLine.update.mock.calls[0][0].data.expectedQty).toBeUndefined();
+      expect(Number(prisma.stockCountLine.update.mock.calls[0][0].data.expectedQty)).toBe(10);
     });
 
     it("increment adds to the running count; without it the value replaces", async () => {

@@ -278,6 +278,21 @@ describe("InvoicesService.update — a DRAFT invoice edit sells a line by a unit
     expect(prisma.invoice.update.mock.calls[0][0].data.subtotal).toBe(72);
   });
 
+  it("A6 (factor 1, row 457): a factor-1 unit row re-sent verbatim is untouched, never a churned re-write", async () => {
+    // a factor-1 level ("Each" = 1 piece): create() stores it with boxes NULL, the count in qty
+    const each = { ...ladder[0], label: "Each", factorToBase: 1, price: "2.00" };
+    scopedUnits.findMany.mockResolvedValue([...ladder, each]);
+    const eachLine = (over: Record<string, unknown> = {}) =>
+      caseLine({ unitLabel: "Each", qty: 5, unitPrice: 2, ...over });
+    await service.create({ customerId: "cust-1", items: [eachLine()] } as never);
+    const stored = { ...prisma.invoice.create.mock.calls[0][0].data.items.create[0], id: "row-e" };
+    expect(stored.boxes ?? null).toBeNull();
+    prisma.invoiceItem.findMany.mockResolvedValue([stored]);
+    await update([eachLine({ id: "row-e" })]);
+    expect(prisma.invoiceItem.update).not.toHaveBeenCalled();
+    expect(prisma.invoiceItem.deleteMany.mock.calls[0][0].where.id).toEqual({ notIn: ["row-e"] });
+  });
+
   it("A6 (id-less): the cached-client fallback matches a stored Case row on its unit too, never a pack row", async () => {
     prisma.invoiceItem.findMany.mockResolvedValue([storedCase()]);
     await update([caseLine()]);

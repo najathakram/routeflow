@@ -69,10 +69,19 @@ describe("RecurringInvoicesService — selling restrictions (F-05)", () => {
       customerId: "c1",
       lines: [{ productId: "p-banned" }],
       channel: "STAFF",
+      fulfilmentKind: "DELIVERY",
     });
     expect(invoices.create).not.toHaveBeenCalled();
     // the only template write is the suspension — the cycle is never claimed (nextRunAt untouched)
     expect(prisma.recurringInvoice.updateMany).not.toHaveBeenCalled();
+  });
+
+  it("L8: at a PICKUP-ONLY tenant this sale is judged as PICKUP (the store's state), not DELIVERY", async () => {
+    prisma.tenantFeatureConfig.findFirst.mockResolvedValue({ mode: "pickup" });
+    await cron();
+    expect(restrictions.checkLinesSellable).toHaveBeenCalledWith(
+      expect.objectContaining({ fulfilmentKind: "PICKUP" }),
+    );
   });
 
   it("suspends the template with the reason, audits it (rule ids) and notifies each operator once", async () => {

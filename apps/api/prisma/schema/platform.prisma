@@ -406,7 +406,10 @@ model RfInvoice {
   sendCount   Int       @default(0)
   voidedAt    DateTime?
   voidReason  String?
-  /// An add-on line had no price snapshot and was written at 0: the office must look at it.
+  /// The office must look at this invoice before RouteFlow chases it. Set at issue (an add-on line had no price
+  /// snapshot and was written at 0, or the billing window is irregular) or when a manual activation only PARTLY
+  /// covers the period. The automatic emails (issue and d0/d7/d14 reminders) skip a flagged row; a manual
+  /// resend still works. Nothing clears the flag in code: a super-admin resolves the row (void or mark paid).
   needsReview Boolean   @default(false)
 
   tenant Tenant @relation(fields: [tenantId], references: [id], onDelete: Cascade)

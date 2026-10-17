@@ -115,11 +115,11 @@ function make(
       currency: "usd",
       unit_amount: Math.round((o.monthly ?? 310) * 100),
       recurring: { interval: "month" },
-      product_data: { name: "RouteFlow Growth — monthly" },
+      product_data: { name: "RouteFlow Growth" },
     })),
   };
   const mutations: any = {
-    checkoutAddonLines: jest.fn(async () => ({ lineItems: [], skus: [] })),
+    checkoutAddonLines: jest.fn(async () => ({ lineItems: [], skus: [], invalid: [] })),
   };
   const claim = new CatchupClaimService(prisma, stripe as any, { emit: jest.fn() } as any);
   const billing: any = { ensureStripeCustomer: jest.fn(async () => "cus_1") };
@@ -209,7 +209,7 @@ describe("RED: the prorated start - the paid-through may be mid-month (r9 rule 2
     expect(r.plan.stub.from.toISOString()).toBe("2026-11-14T12:00:00.000Z");
     expect(r.plan.stub.to.toISOString()).toBe("2026-12-01T12:00:00.000Z");
     expect(r.plan.stub.totalCents).toBe(17000);
-    expect(r.plan.stub.label).toBe("Subscription — Nov 14 to Nov 30, 2026");
+    expect(r.plan.stub.label).toBe("Nov 14 to Nov 30, 2026 subscription");
     expect(r.plan.trialEndAt.toISOString()).toBe("2026-12-01T12:00:00.000Z");
     expect(r.plan.voidInvoiceIds).toEqual(["next"]);
   });

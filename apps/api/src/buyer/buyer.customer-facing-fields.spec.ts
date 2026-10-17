@@ -233,5 +233,9 @@ describe("buyer invoice reads — customer-facing fields only", () => {
     const out = (await controller.getInvoice("inv-1", CTX)) as unknown as Row;
     expectCustomerFacingInvoice(out);
     expect(out.id).toBe("inv-1");
+    // H3b: InvoiceItem now STORES the staff override reason + author (copied from the order line);
+    // the fixture line carries both, and the buyer read must drop them by name, not only by the walk.
+    expect(out.items?.[0]).not.toHaveProperty("overrideReason");
+    expect(out.items?.[0]).not.toHaveProperty("overriddenBy");
   });
 });

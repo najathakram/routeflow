@@ -17,6 +17,14 @@ import * as crypto from "crypto";
 import { PrismaService } from "../prisma/prisma.service";
 import { EmailService } from "../email/email.service";
 import { BillingService } from "../billing/billing.service";
+import {
+  assertActivationWindowNotEnded,
+  assertWindowClearOfPaidInvoices,
+  findRecentIdenticalActivation,
+  resolveActivationWindow,
+  voidCoveredRfInvoices,
+  type RecentActivation,
+} from "../billing/rf-invoice/rf-invoice-activation-void";
 import { PlatformPricingService } from "../billing/platform-pricing.service";
 import { PlanCatalogService } from "../billing/plan-catalog.service";
 import { ProrationService } from "../billing/proration.service";
@@ -26,7 +34,11 @@ import { FeatureOverrideService } from "../billing/feature-override.service";
 import { PlanTransitionConfigService } from "../billing/plan-transition-config.service";
 import { gateVia } from "../billing/feature-registry";
 import { BillingEventService } from "../billing/billing-event.service";
-import { PAYMENT_OVERDUE_REASON, READ_ONLY_STATUS } from "../billing/dunning-config";
+import {
+  ADMIN_SET_REASON,
+  PAYMENT_OVERDUE_REASON,
+  READ_ONLY_STATUS,
+} from "../billing/dunning-config";
 import { DunningService } from "../billing/dunning.service";
 import { assertTenantNotPaymentOverdue } from "../billing/payment-overdue";
 import {
@@ -62,6 +74,7 @@ import {
 } from "../billing/manual-activation-addons";
 import { roundMoney } from "@routeflow/pricing";
 import { StripeService } from "../billing/stripe.service";
+import { stripeGateBeforeTermination, tenantChangedRefusal } from "./stripe-termination-gate";
 import { ScheduledPriceChangeService } from "../billing/scheduled-price-change";
 import {
   beginStripeFirstPlanChange,
@@ -119,6 +132,13 @@ function activeTenantTrialRefusal(): ConflictException {
     code: API_ERROR_CODES.TENANT_TRIAL_EXTEND_NOT_ALLOWED,
     message: "This tenant is Active. A trial can't be set on a paying tenant.",
   });
+}
+
+/** 400: only a SUSPENDED tenant can be deleted (the pre-check, and again under the row lock). */
+function notSuspendedRefusal(): BadRequestException {
+  return new BadRequestException(
+    "Tenant must be suspended before it can be deleted. Suspend the tenant first.",
+  );
 }
 
 @Injectable()
@@ -597,26 +617,79 @@ export class PlatformAdminService {
     });
     if (!existing) throw new NotFoundException(`Tenant ${id} not found`);
     if (existing.status !== "SUSPENDED") {
-      throw new BadRequestException(
-        "Tenant must be suspended before it can be deleted. Suspend the tenant first.",
-      );
+      throw notSuspendedRefusal();
     }
-    const tenant = await this.prisma.tenant.update({
-      where: { id },
-      data: { deletedAt: new Date(), status: "CANCELLED" },
+    // M4: the same Stripe gate as status -> CANCELLED - the read happens BEFORE the transaction, the id it read is
+    // compared under the row lock. A deleted tenant must never be left over a subscription that may still bill.
+    const gate = await this.stripeGateBeforeTermination(id, adminId);
+    const readSubId = gate.stripeSubId;
+    const tenant = await this.prisma.$transaction(async (tx) => {
+      await tx.$queryRaw`SELECT id FROM "Tenant" WHERE id = ${id} FOR UPDATE`;
+      await this.assertStripeSubUnchangedTx(tx, id, readSubId);
+      // The SUSPENDED check above ran before the Stripe read; re-prove it under the lock. An admin who set the
+      // tenant ACTIVE meanwhile must not get a paying tenant CANCELLED + deleted with no ledger delta.
+      const { count } = await tx.tenant.updateMany({
+        where: { id, status: "SUSPENDED" },
+        data: { deletedAt: new Date(), status: "CANCELLED" },
+      });
+      if (count !== 1) throw notSuspendedRefusal();
+      return tx.tenant.findUniqueOrThrow({ where: { id } });
     });
     // Evict cached status so the guard blocks this tenant immediately
     this.tenantStatusGuard.invalidate(id);
     await this.recordAdminAction(id, adminId, AdminAuditAction.TENANT_DELETED, {
       slug: tenant.slug,
     });
+    if (gate.notFound) await this.noteStripeSubNotFound(id, adminId, gate.stripeSubId);
     return { id: tenant.id, slug: tenant.slug, status: tenant.status, deletedAt: tenant.deletedAt };
   }
 
   // ─── Mutations ────────────────────────────────────────────────────────────────
 
+  /** The shared Stripe gate (see stripe-termination-gate.ts): the read happens before any transaction. */
+  private stripeGateBeforeTermination(id: string, adminId: string | null) {
+    return stripeGateBeforeTermination(
+      {
+        prisma: this.prisma,
+        stripe: this.stripe,
+        logger: this.logger,
+        record: (t, a, action, meta) => this.recordAdminAction(t, a, action, meta),
+      },
+      id,
+      adminId,
+    );
+  }
+
+  private noteStripeSubNotFound(id: string, adminId: string | null, stripeSubId: string | null) {
+    return this.recordAdminAction(id, adminId, AdminAuditAction.STRIPE_SUB_NOT_FOUND_TERMINATED, {
+      note: "stripe sub not found; customer present",
+      stripeSubId,
+    });
+  }
+
+  /** Under the tenant row lock: the stored subscription id is still the one the Stripe gate judged, else 409 retry. */
+  private async assertStripeSubUnchangedTx(
+    tx: Prisma.TransactionClient,
+    id: string,
+    readSubId: string | null,
+  ): Promise<void> {
+    const row = await tx.tenantSubscription.findUnique({
+      where: { tenantId: id },
+      select: { stripeSubId: true },
+    });
+    if ((row?.stripeSubId ?? null) !== readSubId) throw tenantChangedRefusal();
+  }
+
   async updateStatus(id: string, dto: UpdateTenantStatusDto, adminId: string | null = null) {
     await this._findOrThrow(id);
+
+    // M2: CANCELLED over a live Stripe subscription would leave Stripe billing a cancelled tenant. Stripe is read
+    // HERE, before the transaction - never under the tenant row lock - and the id it judged is compared below.
+    const gate =
+      dto.status === "CANCELLED"
+        ? await this.stripeGateBeforeTermination(id, adminId)
+        : { stripeSubId: null, notFound: false };
+    const readSubId = gate.stripeSubId;
 
     // B216 / FINDING-3 (round 2 review): the prior-status read, the status write, and the
     // downgrade lookup are ONE transaction, using the same non-ACTIVE→ACTIVE CAS shape as
@@ -652,10 +725,21 @@ export class PlatformAdminService {
           class: true,
           deletedAt: true,
           subscription: {
-            select: { planKey: true, basePriceSnapshot: true, discount: true, couponFull: true },
+            select: {
+              planKey: true,
+              basePriceSnapshot: true,
+              discount: true,
+              couponFull: true,
+              stripeSubId: true,
+            },
           },
         },
       });
+
+      // F4 / M2: the Stripe judgement above only stands if the subscription is still the one it judged.
+      if (dto.status === "CANCELLED" && (before.subscription?.stripeSubId ?? null) !== readSubId) {
+        throw tenantChangedRefusal();
+      }
 
       // The same refusal as extendTrial, on the PRIOR status read under the row lock above: the status
       // PATCH accepts any TenantStatus, so it must not be the back door for ACTIVE -> TRIAL.
@@ -685,6 +769,8 @@ export class PlatformAdminService {
                 ...(before.readOnlyReason === PAYMENT_OVERDUE_REASON
                   ? { readOnlyReason: null }
                   : {}),
+                // F4: an admin-set READ_ONLY says so (never null), so a renewal can tell it from a lapsed trial
+                ...(dto.status === READ_ONLY_STATUS ? { readOnlyReason: ADMIN_SET_REASON } : {}),
               },
             });
       // Same exit, local side: a PAUSED tenant moved to SUSPENDED / CANCELLED / TRIAL / ... by an admin loses its
@@ -801,6 +887,7 @@ export class PlatformAdminService {
           }
         : {}),
     });
+    if (gate.notFound) await this.noteStripeSubNotFound(id, adminId, gate.stripeSubId);
 
     return { id: tenant.id, slug: tenant.slug, status: tenant.status };
   }
@@ -1187,7 +1274,11 @@ export class PlatformAdminService {
     const { version, definition } = await this.resolvePublishedPlan(planKey);
 
     const now = new Date();
-    const periodEnd = new Date(now.getTime() + dto.billingPeriodDays * 24 * 60 * 60 * 1000);
+    // PR4a (owner ruling, option A): the prepaid window starts at the earliest OPEN RouteFlow invoice's period
+    // (else now) and runs billingPeriodDays from there. Resolved inside the transaction, under the tenant row
+    // lock, and written to the subscription; these defaults (no open invoice) are today's [now, now + N).
+    let periodStart = now;
+    let periodEnd = new Date(now.getTime() + dto.billingPeriodDays * 24 * 60 * 60 * 1000);
     // B863 / SA-277: 365-day prepaid = ANNUAL, shorter = MONTHLY; external rows roll length-preserving (rollCycles).
     const cycle: "MONTHLY" | "ANNUAL" = dto.billingPeriodDays >= 365 ? "ANNUAL" : "MONTHLY";
 
@@ -1220,11 +1311,44 @@ export class PlatformAdminService {
     const addonSkusToPrice = await unbilledSelfServeSkus(this.prisma, id);
 
     const exitBox: { exit: PauseExit | null } = { exit: null };
+    const duplicateBox: { hit: RecentActivation | null } = { hit: null };
     const tenant = await withAddonLocks(id, addonSkusToPrice, () =>
       this.prisma.$transaction(async (tx) => {
         // B864 / SA-277 (D2): same tenant row lock as updateStatus/updateTenantClass/
         // updateTenantPriceOverride.
         await tx.$queryRaw`SELECT id FROM "Tenant" WHERE id = ${id} FOR UPDATE`;
+        // PR4a (idempotency): a double-click (or a retried request) of the SAME payment finds its own marker under
+        // this lock and does nothing - the first click's voids consumed the open invoices, so a second run would
+        // otherwise anchor at now and record a SECOND period plus a second marker.
+        const repeated = await findRecentIdenticalActivation(tx, {
+          tenantId: id,
+          now,
+          plan: dto.plan,
+          paymentMethod: dto.paymentMethod,
+          paymentRef: dto.paymentRef ?? null,
+          days: dto.billingPeriodDays,
+        });
+        // Train S2 (money): a repeat is the SAME payment clicked twice while the tenant is still ACTIVE. After a
+        // lapse (SUSPENDED / TRIAL / ...) an identical re-activation is a new one and must book the price again.
+        const stillActive =
+          repeated &&
+          (await tx.tenant.findUniqueOrThrow({ where: { id }, select: { status: true } }))
+            .status === TenantStatus.ACTIVE;
+        if (repeated && stillActive) {
+          duplicateBox.hit = repeated;
+          return tx.tenant.findUniqueOrThrow({ where: { id } });
+        }
+        const activationWindow = await resolveActivationWindow(tx, {
+          tenantId: id,
+          now,
+          days: dto.billingPeriodDays,
+        });
+        // Owner ruling: a window that already ended is refused (409), before any write in this transaction.
+        assertActivationWindowNotEnded(activationWindow, now);
+        // ...and one that would cover an already PAID RouteFlow invoice again (the payment would be taken twice).
+        await assertWindowClearOfPaidInvoices(tx, { tenantId: id, window: activationWindow });
+        periodStart = activationWindow.windowStart;
+        periodEnd = activationWindow.windowEnd;
         if (transition && preparedTransition) {
           await this.planTransition.onPlanChange(tx, transition, preparedTransition);
         }
@@ -1311,7 +1435,7 @@ export class PlatformAdminService {
               currentPlan: dto.plan,
               planKey: definition.planKey,
               planVersionId: version.id,
-              periodStart: now,
+              periodStart,
               periodEnd,
               cycle,
               externalPayment: true,
@@ -1324,7 +1448,7 @@ export class PlatformAdminService {
               currentPlan: dto.plan,
               planKey: definition.planKey,
               planVersionId: version.id,
-              periodStart: now,
+              periodStart,
               periodEnd,
               cycle,
               // Rolling the period forward disarms every pending transition. A downgrade left
@@ -1342,6 +1466,16 @@ export class PlatformAdminService {
             },
           }),
         ]);
+
+        // PR4a (owner ruling): the new prepaid window settles any OPEN RouteFlow invoice it fully covers -
+        // void them in THIS transaction, so the activation and the void land or roll back together.
+        const voidResult = await voidCoveredRfInvoices(tx, {
+          tenantId: id,
+          windowStart: periodStart,
+          windowEnd: periodEnd,
+          actorId: adminId,
+          now,
+        });
 
         // UNCONDITIONAL: the reset also stamps couponSyncedAt = now, so a Stripe read that started before this
         // activation can never write its (now stale) state afterwards, even for a tenant that was not couponFull.
@@ -1478,8 +1612,15 @@ export class PlatformAdminService {
               paymentMethod: dto.paymentMethod,
               cycle,
               // the activation's OWN unsnapped period: the October catch-up measures paid coverage from it
-              periodStart: now.toISOString(),
+              // M1: the ANCHORED start (the earliest open invoice's period), never the click time: the catch-up
+              // measures paid coverage from this, and a "now" here would shrink the covered range.
+              periodStart: periodStart.toISOString(),
               periodEnd: periodEnd.toISOString(),
+              // the repeat guard's key (findRecentIdenticalActivation) and the audit trail of what this settled
+              paymentRef: dto.paymentRef ?? null,
+              billingPeriodDays: dto.billingPeriodDays,
+              voidedInvoiceIds: voidResult.voided,
+              flaggedInvoiceIds: voidResult.flagged,
             },
           },
         });
@@ -1487,6 +1628,21 @@ export class PlatformAdminService {
         return updated;
       }, this.planTransition.transactionOptions(preparedTransition)),
     );
+
+    if (duplicateBox.hit) {
+      // The repeat of a payment already recorded: nothing was written, so no cache, no pause, no trail row.
+      return {
+        id: tenant.id,
+        slug: tenant.slug,
+        status: tenant.status,
+        plan: tenant.plan,
+        periodStart: duplicateBox.hit.periodStart,
+        periodEnd: duplicateBox.hit.periodEnd,
+        paymentMethod: dto.paymentMethod,
+        paymentRef: dto.paymentRef ?? null,
+        repeated: true,
+      };
+    }
 
     this.planTransition.invalidateCaches(id, preparedTransition);
     // Invalidate cached tenant status so the guard picks up ACTIVE immediately
@@ -1505,7 +1661,7 @@ export class PlatformAdminService {
       slug: tenant.slug,
       status: tenant.status,
       plan: tenant.plan,
-      periodStart: now,
+      periodStart,
       periodEnd,
       paymentMethod: dto.paymentMethod,
       paymentRef: dto.paymentRef ?? null,
@@ -1518,7 +1674,9 @@ export class PlatformAdminService {
    * Issues a short-lived (15-min) access token with the target tenant-admin
    * user's claims plus `impersonatedBy: superAdminId`.
    * The ImpersonationGuard logs write operations for audit trail purposes;
-   * impersonation sessions have full write access (same as the impersonated user).
+   * impersonation sessions have write access (same as the impersonated user) EXCEPT the routes marked
+   * `@NoImpersonation(scope)` (billing actions, payment setup, and the account's own credentials and linked
+   * identities), which a support session is refused with 403 IMPERSONATION_NOT_ALLOWED.
    */
   async impersonate(tenantId: string, superAdminId: string) {
     const tenant = await this._findOrThrow(tenantId);

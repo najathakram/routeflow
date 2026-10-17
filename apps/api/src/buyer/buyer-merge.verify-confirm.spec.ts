@@ -57,14 +57,22 @@ function build(over: Partial<Row> = {}) {
     // token was cleared or whose status moved on since the lookup is NOT written, count 0.
     updateMany: jest.fn(
       async (args: {
-        where: { id: string; verificationToken?: string; status?: BuyerMergeRequestStatus };
+        where: {
+          id: string;
+          verificationToken?: string;
+          status?: BuyerMergeRequestStatus;
+          verificationExpires?: { gt: Date };
+        };
         data: Partial<Row>;
       }) => {
         const w = args.where;
         const match =
           w.id === row.id &&
           (w.verificationToken === undefined || w.verificationToken === row.verificationToken) &&
-          (w.status === undefined || w.status === row.status);
+          (w.status === undefined || w.status === row.status) &&
+          (w.verificationExpires === undefined ||
+            (row.verificationExpires !== null &&
+              row.verificationExpires > w.verificationExpires.gt));
         if (match) Object.assign(row, args.data);
         return { count: match ? 1 : 0 };
       },
@@ -121,6 +129,7 @@ describe("BuyerMergeService.verifyMergeToken: the single-use consume is unchange
         id: "req-1",
         verificationToken: TOKEN,
         status: BuyerMergeRequestStatus.PENDING_VERIFICATION,
+        verificationExpires: { gt: expect.any(Date) },
       },
       data: {
         status: BuyerMergeRequestStatus.PENDING_REVIEW,
@@ -194,6 +203,22 @@ describe("BuyerMergeService.verifyMergeToken: the consume is compare-and-set", (
     expect(ctx.row.verifiedAt).toBeNull();
     expect(ctx.buyerMergeRequest.updateMany).toHaveBeenCalledTimes(1);
     expect(ctx.buyerMergeRequest.update).not.toHaveBeenCalled();
+  });
+
+  it("an expired token whose row slipped past the pre-check cannot be consumed", async () => {
+    const ctx = build();
+    // the lookup saw an unexpired row; by the time of the write the expiry has passed
+    ctx.buyerMergeRequest.findUnique.mockImplementationOnce(async () => {
+      const seen = { ...ctx.row };
+      ctx.row.verificationExpires = new Date(Date.now() - 1000);
+      return seen;
+    });
+
+    await expect(ctx.svc.verifyMergeToken(TOKEN)).rejects.toThrow(NotFoundException);
+
+    expect(ctx.row.status).toBe(BuyerMergeRequestStatus.PENDING_VERIFICATION);
+    expect(ctx.row.verifiedAt).toBeNull();
+    expect(ctx.row.verificationToken).toBe(TOKEN);
   });
 
   it("a token cleared by a concurrent consume is a 404, not a second success", async () => {

@@ -2,7 +2,7 @@ import {
   BadRequestException,
   ConflictException,
   ExecutionContext,
-  NotFoundException,
+  ForbiddenException,
   ValidationPipe,
 } from "@nestjs/common";
 import { Reflector } from "@nestjs/core";
@@ -31,21 +31,46 @@ const ids = (n: number, prefix = "p") => Array.from({ length: n }, (_, i) => `${
 function setup(opts: { foreignProductIds?: string[] } = {}) {
   const prisma = createMockPrisma();
   const models = prisma.forTenant() as any;
-  const store = { rules: [] as any[], audits: [] as any[] };
+  const store = {
+    rules: [] as any[],
+    targets: [] as any[],
+    audits: [] as any[],
+    revisions: [] as any[],
+  };
   let failAudit = false;
   const rules = {
     findMany: jest.fn().mockResolvedValue([]),
     findFirst: jest.fn(async (a: any) => store.rules.find((r) => r.id === a?.where?.id) ?? null),
-    create: jest.fn(),
-    createMany: jest.fn(async (a: any) => {
-      store.rules.push(...a.data);
-      return { count: a.data.length };
+    // Row 509: ONE rule row per create (the legacy column mirrors the first target) ...
+    create: jest.fn(async (a: any) => {
+      store.rules.push(a.data);
+      return a.data;
     }),
     updateMany: jest.fn(),
   };
+  // ... plus one target row per product / label, in the same transaction.
+  const targetRows = {
+    createMany: jest.fn(async (a: any) => {
+      store.targets.push(...a.data);
+      return { count: a.data.length };
+    }),
+    findMany: jest.fn().mockResolvedValue([]),
+  };
   models.sellingRestriction = rules;
+  models.sellingRestrictionTarget = targetRows;
+  // Row 509 PR3: revision 1 of each rule, written in the same transaction.
+  models.sellingRestrictionRevision = {
+    create: jest.fn(async (a: any) => {
+      store.revisions.push(a.data);
+      return a.data;
+    }),
+  };
+  models.$queryRaw = jest.fn().mockResolvedValue([]);
+  // The label resolver asks for the tenant's non-archived labels among the ids: "c1" is the one it has.
   models.productCategory = {
-    findFirst: jest.fn().mockResolvedValue({ id: "c1", archivedAt: null }),
+    findMany: jest.fn(async (a: any) =>
+      (a?.where?.id?.in ?? []).filter((id: string) => id === "c1").map((id: string) => ({ id })),
+    ),
   };
   const foreign = new Set(opts.foreignProductIds ?? []);
   models.product.findMany.mockImplementation(async (a: any) =>
@@ -58,12 +83,19 @@ function setup(opts: { foreignProductIds?: string[] } = {}) {
     return row;
   });
   (prisma.tenantTransaction as jest.Mock).mockImplementation(async (fn: any) => {
-    const snap = { rules: [...store.rules], audits: [...store.audits] };
+    const snap = {
+      rules: [...store.rules],
+      targets: [...store.targets],
+      audits: [...store.audits],
+      revisions: [...store.revisions],
+    };
     try {
       return await fn({ ...models });
     } catch (e) {
       store.rules = snap.rules;
+      store.targets = snap.targets;
       store.audits = snap.audits;
+      store.revisions = snap.revisions;
       throw e;
     }
   });
@@ -72,6 +104,7 @@ function setup(opts: { foreignProductIds?: string[] } = {}) {
     prisma,
     models,
     rules,
+    targetRows,
     store,
     failAuditWrite: () => (failAudit = true),
     service: new SellingRestrictionsAdminService(prisma, labels as any),
@@ -87,29 +120,53 @@ const OPEN_SINCE_PAST = {
   liftedAt: null,
 };
 
-describe("POST /selling-restrictions/bulk (row a): N products, one transaction, one audit row", () => {
-  it("bulk with 12 products creates 12 rows through ONE createMany in ONE transaction and writes ONE audit row", async () => {
+describe("POST /selling-restrictions/bulk (row a, owner Q6): N products become ONE rule, one transaction, one audit row", () => {
+  it("bulk with 12 products creates ONE rule with 12 target rows in ONE transaction and writes ONE audit row", async () => {
     const s = setup();
     const res = await s.service.bulkCreate({ ...bulk, productIds: ids(12) }, user);
 
     expect(s.prisma.tenantTransaction).toHaveBeenCalledTimes(1);
-    expect(s.rules.createMany).toHaveBeenCalledTimes(1);
-    expect(s.rules.create).not.toHaveBeenCalled();
-    const data = s.rules.createMany.mock.calls[0][0].data;
-    expect(data).toHaveLength(12);
-    expect(data.map((d: any) => d.productId)).toEqual(ids(12));
-    for (const d of data) {
-      expect(d).toMatchObject({
+    expect(s.rules.create).toHaveBeenCalledTimes(1);
+    expect(s.targetRows.createMany).toHaveBeenCalledTimes(1);
+    const rule = s.rules.create.mock.calls[0][0].data;
+    // the legacy column mirrors the FIRST target (SA condition 2)
+    expect(rule).toMatchObject({
+      tenantId: "test-tenant",
+      productId: "p1",
+      categoryId: null,
+      jurisdiction: "STATE",
+      states: ["TX"],
+      surface: "BUYER_PORTAL", // the bulk default
+      reason: "Portal limit", // the bulk default
+      createdById: "u1",
+      createdByName: "admin",
+    });
+    expect(typeof rule.id).toBe("string");
+    // revision 1 = the rule as created, by its creator
+    expect(s.store.revisions).toEqual([
+      expect.objectContaining({
         tenantId: "test-tenant",
-        categoryId: null,
+        ruleId: rule.id,
+        revision: 1,
         jurisdiction: "STATE",
         states: ["TX"],
-        surface: "BUYER_PORTAL", // the bulk default
-        reason: "Portal limit", // the bulk default
-        createdById: "u1",
-        createdByName: "admin",
+        surface: "BUYER_PORTAL",
+        reason: "Portal limit",
+        editedById: "u1",
+        editedByName: "admin",
+      }),
+    ]);
+    const targets = s.targetRows.createMany.mock.calls[0][0].data;
+    expect(targets).toHaveLength(12);
+    expect(targets.map((t: any) => t.productId)).toEqual(ids(12));
+    for (const t of targets) {
+      expect(t).toMatchObject({
+        tenantId: "test-tenant",
+        ruleId: rule.id,
+        categoryId: null,
+        addedById: "u1",
+        addedByName: "admin",
       });
-      expect(typeof d.id).toBe("string");
     }
 
     expect(s.store.audits).toHaveLength(1);
@@ -118,18 +175,20 @@ describe("POST /selling-restrictions/bulk (row a): N products, one transaction, 
       entityType: "SellingRestriction",
       userId: "u1",
       meta: expect.objectContaining({
-        ids: data.map((d: any) => d.id),
+        ids: [rule.id],
         scope: { productIds: ids(12) },
+        productCount: 12,
         states: ["TX"],
       }),
     });
 
     expect(res).toEqual({
-      created: 12,
+      created: 1,
       skipped: 0,
-      createdIds: data.map((d: any) => d.id),
+      createdIds: [rule.id],
       skippedProductIds: [],
       auditId: "audit-1",
+      ruleId: rule.id,
     });
   });
 
@@ -139,40 +198,60 @@ describe("POST /selling-restrictions/bulk (row a): N products, one transaction, 
       { ...bulk, productIds: ["p1", "p2", "p1"], surface: "ALL", reason: "Not licensed in TX" },
       user,
     );
-    expect(res.created).toBe(2);
-    expect(s.rules.createMany.mock.calls[0][0].data).toEqual([
-      expect.objectContaining({ productId: "p1", surface: "ALL", reason: "Not licensed in TX" }),
-      expect.objectContaining({ productId: "p2", surface: "ALL", reason: "Not licensed in TX" }),
+    expect(res.created).toBe(1);
+    expect(s.rules.create.mock.calls[0][0].data).toMatchObject({
+      surface: "ALL",
+      reason: "Not licensed in TX",
+    });
+    expect(s.targetRows.createMany.mock.calls[0][0].data.map((t: any) => t.productId)).toEqual([
+      "p1",
+      "p2",
     ]);
   });
 
-  it("a categoryId scope creates ONE category rule (it also covers products labelled later), not N product rules", async () => {
+  it("a categoryId scope creates ONE rule with ONE label target", async () => {
     const s = setup();
     const res = await s.service.bulkCreate({ ...bulk, categoryId: "c1" }, user);
-    expect(s.rules.createMany.mock.calls[0][0].data).toEqual([
-      expect.objectContaining({ categoryId: "c1", productId: null, surface: "BUYER_PORTAL" }),
+    expect(s.rules.create.mock.calls[0][0].data).toMatchObject({
+      categoryId: "c1",
+      productId: null,
+      surface: "BUYER_PORTAL",
+    });
+    expect(s.targetRows.createMany.mock.calls[0][0].data).toEqual([
+      expect.objectContaining({ categoryId: "c1", productId: null }),
     ]);
     expect(s.models.product.findMany).not.toHaveBeenCalled();
     expect(res).toMatchObject({ created: 1, skipped: 0 });
     expect(s.store.audits[0].meta.scope).toEqual({ categoryId: "c1" });
   });
+
+  it("an operator cannot bulk-create an all-customer (FEDERAL) rule: 403, nothing written", async () => {
+    const s = setup();
+    await expect(
+      s.service.bulkCreate({ jurisdiction: "FEDERAL", states: [], productIds: ["p1"] }, user),
+    ).rejects.toBeInstanceOf(ForbiddenException);
+    expect(s.rules.create).not.toHaveBeenCalled();
+    expect(s.store.audits).toHaveLength(0);
+  });
 });
 
-describe("row b: a failing row rolls the whole batch back", () => {
-  it("when the audit write fails after createMany, nothing from the batch persists", async () => {
+describe("row b: a failing write rolls the whole rule back", () => {
+  it("when the audit write fails after the rows, nothing persists", async () => {
     const s = setup();
     s.failAuditWrite();
     await expect(s.service.bulkCreate({ ...bulk, productIds: ids(12) }, user)).rejects.toThrow(
       "audit insert failed",
     );
-    expect(s.rules.createMany).toHaveBeenCalledTimes(1); // the rows WERE written inside the tx ...
+    expect(s.targetRows.createMany).toHaveBeenCalledTimes(1); // the rows WERE written inside the tx ...
     expect(s.store.rules).toHaveLength(0); // ... and rolled back with it
+    expect(s.store.targets).toHaveLength(0);
+    expect(s.store.revisions).toHaveLength(0); // revision 1 rolls back with the rule
     expect(s.store.audits).toHaveLength(0);
   });
 
-  it("when createMany itself fails, no audit row is written", async () => {
+  it("when the target rows fail, no audit row is written and the rule row is rolled back", async () => {
     const s = setup();
-    s.rules.createMany.mockRejectedValueOnce(new Error("FK violation"));
+    s.targetRows.createMany.mockRejectedValueOnce(new Error("FK violation"));
     await expect(s.service.bulkCreate({ ...bulk, productIds: ids(3) }, user)).rejects.toThrow(
       "FK violation",
     );
@@ -181,118 +260,118 @@ describe("row b: a failing row rolls the whole batch back", () => {
   });
 });
 
-describe("row c: an identical active rule is skipped and reported", () => {
-  it("skips a product whose live rule has the same jurisdiction, states set and surface; creates the rest", async () => {
+/** A live rule as the identical-rule candidate read returns it (`_count.targets` = its target rows ever). */
+const candidate = (over: Record<string, unknown> = {}) => ({
+  id: "x1",
+  productId: "p1",
+  categoryId: null,
+  jurisdiction: "STATE",
+  states: ["TX"],
+  surface: "BUYER_PORTAL",
+  _count: { targets: 1 },
+  ...OPEN_SINCE_PAST,
+  ...over,
+});
+
+describe("row c: an identical live rule that holds ALL the products skips the create", () => {
+  it("skips when one live rule with the same jurisdiction, states set and surface holds every product", async () => {
     const s = setup();
     s.rules.findMany.mockResolvedValue([
-      // identical: same states in a different order/spelling, same surface, not lifted, not expired
-      {
-        productId: "p2",
-        categoryId: null,
-        jurisdiction: "STATE",
-        states: ["OK", "TX"],
-        surface: "BUYER_PORTAL",
-        ...OPEN_SINCE_PAST,
-      },
-      // NOT identical: a different states set
-      {
-        productId: "p3",
-        categoryId: null,
-        jurisdiction: "STATE",
-        states: ["TX"],
-        surface: "BUYER_PORTAL",
-        ...OPEN_SINCE_PAST,
-      },
-      // NOT identical: a different surface
-      {
-        productId: "p4",
-        categoryId: null,
-        jurisdiction: "STATE",
-        states: ["TX", "OK"],
-        surface: "ALL",
-        ...OPEN_SINCE_PAST,
-      },
+      // same states in a different order/spelling, same surface, not lifted, not expired
+      candidate({ id: "x1", states: ["OK", "TX"] }),
     ]);
+    s.targetRows.findMany.mockResolvedValue([{ ruleId: "x1" }, { ruleId: "x1" }, { ruleId: "x1" }]);
     const res = await s.service.bulkCreate(
-      { ...bulk, states: ["Texas", "ok"], productIds: ["p1", "p2", "p3", "p4"] },
+      { ...bulk, states: ["Texas", "ok"], productIds: ["p1", "p2", "p3"] },
       user,
     );
-    expect(res).toMatchObject({ created: 3, skipped: 1, skippedProductIds: ["p2"] });
-    expect(s.rules.createMany.mock.calls[0][0].data.map((d: any) => d.productId)).toEqual([
-      "p1",
-      "p3",
-      "p4",
-    ]);
-    expect(s.store.audits[0].meta.skippedProductIds).toEqual(["p2"]);
+    expect(res).toEqual({
+      created: 0,
+      skipped: 3,
+      createdIds: [],
+      skippedProductIds: ["p1", "p2", "p3"],
+    });
+    expect(s.rules.create).not.toHaveBeenCalled();
+    expect(s.store.audits).toHaveLength(0);
 
-    // The candidate read is tenant-scoped, matches target + jurisdiction + surface in SQL,
-    // excludes lifted and expired rules, and only reads windows that could cover the request.
+    // The candidate read is tenant-scoped, matches jurisdiction + surface in SQL, excludes lifted and
+    // expired rules, and only reads windows that could cover the request; the held read is by ACTIVE target.
     const where = s.rules.findMany.mock.calls[0][0].where;
     expect(where).toMatchObject({
       tenantId: "test-tenant",
-      productId: { in: ["p1", "p2", "p3", "p4"] },
       jurisdiction: "STATE",
       surface: "BUYER_PORTAL",
     });
     expect(JSON.stringify(where.AND)).toContain("liftedAt");
     expect(JSON.stringify(where.AND)).toContain("effectiveTo");
     expect(JSON.stringify(where.AND)).toContain("effectiveFrom");
+    expect(s.targetRows.findMany.mock.calls[0][0].where).toMatchObject({
+      tenantId: "test-tenant",
+      ruleId: { in: ["x1"] },
+      removedAt: null,
+      OR: [{ productId: { in: ["p1", "p2", "p3"] } }],
+    });
   });
 
-  it("when every product is already limited, nothing is written and no audit row is added", async () => {
+  it("a rule holding only SOME of the products is not identical: ONE new rule with all of them", async () => {
     const s = setup();
-    s.rules.findMany.mockResolvedValue([
-      {
-        productId: "p1",
-        categoryId: null,
-        jurisdiction: "STATE",
-        states: ["TX"],
-        surface: "BUYER_PORTAL",
-        ...OPEN_SINCE_PAST,
-      },
-    ]);
+    s.rules.findMany.mockResolvedValue([candidate({ id: "x1" })]);
+    s.targetRows.findMany.mockResolvedValue([{ ruleId: "x1" }, { ruleId: "x1" }]); // 2 of 3
+    const res = await s.service.bulkCreate({ ...bulk, productIds: ["p1", "p2", "p3"] }, user);
+    expect(res).toMatchObject({ created: 1, skipped: 0 });
+    expect(s.targetRows.createMany.mock.calls[0][0].data).toHaveLength(3);
+  });
+
+  it("different states set or surface is not identical", async () => {
+    for (const other of [
+      { states: ["TX"], surface: "BUYER_PORTAL" },
+      { states: ["TX", "OK"], surface: "ALL" },
+    ]) {
+      const s = setup();
+      s.rules.findMany.mockResolvedValue([candidate({ id: "x1", ...other })]);
+      s.targetRows.findMany.mockResolvedValue([{ ruleId: "x1" }]);
+      const res = await s.service.bulkCreate(
+        { ...bulk, states: ["Texas", "ok"], productIds: ["p1"] },
+        user,
+      );
+      expect(res.created).toBe(1);
+    }
+  });
+
+  it("a pre-509 rule (zero target rows) holds exactly its legacy column", async () => {
+    const s = setup();
+    s.rules.findMany.mockResolvedValue([candidate({ _count: { targets: 0 } })]);
     const res = await s.service.bulkCreate({ ...bulk, productIds: ["p1"] }, user);
     expect(res).toEqual({ created: 0, skipped: 1, createdIds: [], skippedProductIds: ["p1"] });
-    expect(s.rules.createMany).not.toHaveBeenCalled();
-    expect(s.store.audits).toHaveLength(0);
+    expect(s.targetRows.findMany).not.toHaveBeenCalled(); // no rule with target rows to read
+    const other = setup();
+    other.rules.findMany.mockResolvedValue([candidate({ _count: { targets: 0 } })]);
+    const two = await other.service.bulkCreate({ ...bulk, productIds: ["p1", "p2"] }, user);
+    expect(two.created).toBe(1);
   });
 
   it("an identical category rule is skipped too", async () => {
     const s = setup();
     s.rules.findMany.mockResolvedValue([
-      {
-        productId: null,
-        categoryId: "c1",
-        jurisdiction: "STATE",
-        states: ["TX"],
-        surface: "BUYER_PORTAL",
-        ...OPEN_SINCE_PAST,
-      },
+      candidate({ id: "x9", productId: null, categoryId: "c1" }),
     ]);
+    s.targetRows.findMany.mockResolvedValue([{ ruleId: "x9" }]);
     const res = await s.service.bulkCreate({ ...bulk, categoryId: "c1" }, user);
     expect(res).toEqual({ created: 0, skipped: 1, createdIds: [] });
-    expect(s.rules.findMany.mock.calls[0][0].where).toMatchObject({ categoryId: "c1" });
+    expect(s.targetRows.findMany.mock.calls[0][0].where.OR).toEqual([
+      { categoryId: { in: ["c1"] } },
+    ]);
   });
 });
 
 describe("row c (dates): an existing rule is identical ONLY if its window covers the requested one", () => {
   const DAY = 24 * 60 * 60 * 1000;
-  const existing = (w: {
-    effectiveFrom: Date;
-    effectiveTo: Date | null;
-    liftedAt?: Date | null;
-  }) => ({
-    productId: "p1",
-    categoryId: null,
-    jurisdiction: "STATE",
-    states: ["TX"],
-    surface: "ALL",
-    liftedAt: null,
-    ...w,
-  });
+  const existing = (w: { effectiveFrom: Date; effectiveTo: Date | null; liftedAt?: Date | null }) =>
+    candidate({ surface: "ALL", liftedAt: null, ...w });
   const run = async (row: object, req: { effectiveFrom?: string; effectiveTo?: string } = {}) => {
     const s = setup();
     s.rules.findMany.mockResolvedValue([row]);
+    s.targetRows.findMany.mockResolvedValue([{ ruleId: "x1" }]);
     const res = await s.service.bulkCreate(
       { ...bulk, surface: "ALL", productIds: ["p1"], ...req },
       user,
@@ -432,34 +511,37 @@ describe("row e: XOR and state validation are the SAME path as single create", (
       expect(bulkErr).toBeInstanceOf(BadRequestException);
       expect(singleErr).toBeInstanceOf(BadRequestException);
       expect((bulkErr as Error).message).toBe((singleErr as Error).message);
-      expect(s.rules.createMany).not.toHaveBeenCalled();
+      expect(s.rules.create).not.toHaveBeenCalled();
       expect(s.store.audits).toHaveLength(0);
     },
   );
 
-  it("FEDERAL with no states stores [] for every product; state names become USPS codes", async () => {
+  it("FEDERAL with no states stores [] (TENANT_ADMIN only); state names become USPS codes", async () => {
     const s = setup();
-    await s.service.bulkCreate({ jurisdiction: "FEDERAL", states: [], productIds: ["p1"] }, user);
-    expect(s.rules.createMany.mock.calls[0][0].data[0].states).toEqual([]);
+    await s.service.bulkCreate(
+      { jurisdiction: "FEDERAL", states: [], productIds: ["p1"] },
+      { ...user, role: UserRole.TENANT_ADMIN },
+    );
+    expect(s.rules.create.mock.calls[0][0].data.states).toEqual([]);
     const t = setup();
     await t.service.bulkCreate(
       { ...bulk, states: ["Texas", "tx", " fl "], productIds: ["p1"] },
       user,
     );
-    expect(t.rules.createMany.mock.calls[0][0].data[0].states).toEqual(["TX", "FL"]);
+    expect(t.rules.create.mock.calls[0][0].data.states).toEqual(["TX", "FL"]);
   });
 
-  it("an unknown category is a 404 and an archived one a 409, as in single create", async () => {
+  it("an unknown or archived label is the coded 409 RULE_TARGETS_NOT_FOUND, as in single create (was 404 / 409)", async () => {
     const s = setup();
-    s.models.productCategory.findFirst.mockResolvedValueOnce(null);
-    await expect(
-      s.service.bulkCreate({ ...bulk, categoryId: "nope" }, user),
-    ).rejects.toBeInstanceOf(NotFoundException);
-    s.models.productCategory.findFirst.mockResolvedValueOnce({ id: "c1", archivedAt: new Date() });
-    await expect(s.service.bulkCreate({ ...bulk, categoryId: "c1" }, user)).rejects.toBeInstanceOf(
-      ConflictException,
-    );
-    expect(s.rules.createMany).not.toHaveBeenCalled();
+    const err = await s.service
+      .bulkCreate({ ...bulk, categoryId: "nope" }, user)
+      .catch((e: unknown) => e);
+    expect(err).toBeInstanceOf(ConflictException);
+    expect((err as ConflictException).getResponse()).toMatchObject({
+      code: "RULE_TARGETS_NOT_FOUND",
+      notFoundIds: ["nope"],
+    });
+    expect(s.rules.create).not.toHaveBeenCalled();
   });
 
   it("refuses without a tenant context", async () => {
@@ -473,12 +555,18 @@ describe("row e: XOR and state validation are the SAME path as single create", (
 });
 
 describe("tenant isolation", () => {
-  it("a product id this tenant can't see (another tenant's) is a 404 and NOTHING in the batch is created", async () => {
+  it("a product id this tenant can't see (another tenant's) is the coded 409 and NOTHING is created", async () => {
     const s = setup({ foreignProductIds: ["other-tenant-p"] });
-    await expect(
-      s.service.bulkCreate({ ...bulk, productIds: ["p1", "other-tenant-p", "p2"] }, user),
-    ).rejects.toBeInstanceOf(NotFoundException);
-    expect(s.rules.createMany).not.toHaveBeenCalled();
+    const err = await s.service
+      .bulkCreate({ ...bulk, productIds: ["p1", "other-tenant-p", "p2"] }, user)
+      .catch((e: unknown) => e);
+    expect(err).toBeInstanceOf(ConflictException);
+    expect((err as ConflictException).getResponse()).toMatchObject({
+      code: "RULE_TARGETS_NOT_FOUND",
+      notFoundIds: ["other-tenant-p"],
+    });
+    expect(s.rules.create).not.toHaveBeenCalled();
+    expect(s.targetRows.createMany).not.toHaveBeenCalled();
     expect(s.store.rules).toHaveLength(0);
     // The existence read is tenant-scoped.
     expect(s.models.product.findMany.mock.calls[0][0].where).toMatchObject({

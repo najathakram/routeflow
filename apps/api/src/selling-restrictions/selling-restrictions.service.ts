@@ -13,6 +13,8 @@ import { normalizeUsState } from "../common/us-states";
 import { excludeWalkIn } from "../customers/walk-in-protected";
 import { PrismaService } from "../prisma/prisma.service";
 import { tenantBusinessState } from "./tenant-business-state";
+import { tenantIsPickupOnly, tenantOffersPickup } from "./tenant-fulfilment-model";
+import { judgedAtStore, type SaleFulfilmentKind } from "./sale-fulfilment";
 import { ProductLabelsService } from "../product-labels/product-labels.service";
 import {
   activeRuleWhere,
@@ -26,6 +28,8 @@ import {
   restrictionsApply,
   ruleHidesFromBuyer,
   ruleMatchesProduct,
+  ruleTargetSets,
+  type RuleTargetRow,
   ruleStates,
   stateRuleInPlay,
   UNRESOLVED_STATE,
@@ -102,6 +106,43 @@ const RULE_FACTS_SELECT = {
   reason: true,
 } as const;
 
+/** Row 509: the `SellingRestrictionTarget` columns the decision reads (`RuleTargetRow`). */
+const TARGET_ROW_SELECT = {
+  productId: true,
+  categoryId: true,
+  addedAt: true,
+  removedAt: true,
+} as const;
+
+/** A rule row as the two product-matching loaders read it: its facts plus (some of) its target rows and their count. */
+type RuleRowWithTargets = Omit<RestrictionRuleFacts, "targets"> & {
+  targets?: RuleTargetRow[];
+  _count?: { targets: number };
+};
+
+/**
+ * Row 509: rule rows → facts with their target sets at `at`. A rule with no target rows at all keeps `targets: null`
+ * (matched by its legacy column, SA condition 1); `_count` is the rule's FULL row count, so a loader may fetch only
+ * the target rows that touch its products.
+ */
+function withTargetSets(rows: readonly RuleRowWithTargets[], at: Date): RestrictionRuleFacts[] {
+  return rows.map(({ targets, _count, ...rule }) => {
+    // A missing count would silently read as "no target rows" and fall back to the legacy column: fail loud.
+    if (typeof _count?.targets !== "number" || !targets) {
+      throw new Error(
+        `selling restrictions: rule ${rule.id} was read without its targets and count`,
+      );
+    }
+    return { ...rule, targets: ruleTargetSets(targets, _count.targets, at) };
+  });
+}
+
+/** Row 509: a target row active at `at` (the SQL twin of `targetIsActive`; the core re-checks in JS). */
+const activeTargetWhere = (at: Date) => ({
+  addedAt: { lte: at },
+  OR: [{ removedAt: null }, { removedAt: { gt: at } }],
+});
+
 /** Levels of variants under a rule's product the buyer visibility expansion follows (a malformed cycle's bound). */
 const BUYER_VISIBILITY_MAX_DEPTH = 5;
 
@@ -146,6 +187,8 @@ export interface SellableLinesParams {
   switchGated?: boolean;
   /** As `EvaluateOptions.skipPortalOnlyRules`. */
   skipPortalOnlyRules?: boolean;
+  /** As `EvaluateOptions.fulfilmentKind`: REQUIRED, so every caller states how the goods change hands. */
+  fulfilmentKind: SaleFulfilmentKind;
 }
 
 export interface EvaluateOptions {
@@ -165,6 +208,11 @@ export interface EvaluateOptions {
    * order of legacy provenance (a NULL creator/editor role beside known staff), which is staff-built.
    */
   skipPortalOnlyRules?: boolean;
+  /**
+   * L8: how the goods change hands (`sale-fulfilment.ts`), REQUIRED so no caller can forget to say. COUNTER / PICKUP
+   * judge a STATE rule on the STORE's state for every customer, named or walk-in; DELIVERY keeps the customer's address.
+   */
+  fulfilmentKind: SaleFulfilmentKind;
 }
 
 /**
@@ -323,8 +371,9 @@ export class SellingRestrictionsService {
 
   /**
    * True only when a business state is REQUIRED and absent. A business state matters only when some active STATE
-   * rule could need it (the same `stateRuleInPlay` evaluate() asks, on the STAFF channel: an `ALL` legal-ban rule):
-   * a tenant with no such rule (none, FEDERAL only, or only lifted / expired / buyer-portal-only ones) never needs
+   * rule could need it (the same `stateRuleInPlay` evaluate() asks, on the STAFF channel: an `ALL` legal-ban rule, or
+   * on the portal channel of a PICKUP-ONLY tenant):
+   * a tenant with no such rule (none, FEDERAL only, or only lifted / expired ones, or portal-only ones on a shipping tenant) never needs
    * one. The ONE answer for the readiness probe and the "customers without a state" card.
    */
   async businessStateMissing(tenantId: string, at: Date = new Date()): Promise<boolean> {
@@ -335,10 +384,13 @@ export class SellingRestrictionsService {
         where: { tenantId, jurisdiction: "STATE", AND: [activeRuleWhere(at)] },
         select: RULE_FACTS_SELECT,
       });
-    return (
-      stateRuleInPlay(stateRules, "STAFF", at) &&
-      (await tenantBusinessState(this.prisma, tenantId)) === null
-    );
+    // L8 M1: a tenant WITH a pickup path (pickup-only or pickup+ship) judges that path by the store state, so a state
+    // rule that binds the portal (any surface) needs one there as well. Read lazily: only when no staff rule already asks for it.
+    const needed =
+      stateRuleInPlay(stateRules, "STAFF", at) ||
+      (stateRuleInPlay(stateRules, "BUYER_PORTAL", at) &&
+        (await tenantOffersPickup(this.prisma, tenantId)));
+    return needed && (await tenantBusinessState(this.prisma, tenantId)) === null;
   }
 
   /**
@@ -409,13 +461,16 @@ export class SellingRestrictionsService {
       for (const id of p.lineageIds ?? new Set<string>()) lineageIds.add(id);
     }
 
-    const loadedRules: RestrictionRuleFacts[] = await db.sellingRestriction.findMany({
+    // Row 509: a rule touches these products through its legacy column OR any target row (the pure match below
+    // decides with the ACTIVE targets; a rule with targets never matches by its legacy column).
+    const touches = [
+      { productId: { in: [...lineageIds] } },
+      ...(categoryIds.size > 0 ? [{ categoryId: { in: [...categoryIds] } }] : []),
+    ];
+    const loadedRows: RuleRowWithTargets[] = await db.sellingRestriction.findMany({
       where: {
         tenantId,
-        OR: [
-          { productId: { in: [...lineageIds] } },
-          ...(categoryIds.size > 0 ? [{ categoryId: { in: [...categoryIds] } }] : []),
-        ],
+        OR: [...touches, { targets: { some: { AND: [activeTargetWhere(at), { OR: touches }] } } }],
         // Only rules active at `at` (the SQL twin of `ruleIsActive`; `matchingRules` re-checks in JS).
         AND: [activeRuleWhere(at)],
       },
@@ -423,8 +478,16 @@ export class SellingRestrictionsService {
       // deterministic (a database collation's `id` order need not equal JS string order) — do NOT
       // drop that sort because this ordering exists.
       orderBy: [{ effectiveFrom: "desc" }, { id: "asc" }],
-      select: RULE_FACTS_SELECT,
+      select: {
+        ...RULE_FACTS_SELECT,
+        targets: {
+          where: { AND: [activeTargetWhere(at), { OR: touches }] },
+          select: TARGET_ROW_SELECT,
+        },
+        _count: { select: { targets: true } },
+      },
     });
+    const loadedRules = withTargetSets(loadedRows, at);
     // A staff-built run ignores portal-only limits (a legal ban, surface ALL, still binds).
     const rules = options?.skipPortalOnlyRules
       ? loadedRules.filter((r) => (r.surface as string) !== "BUYER_PORTAL")
@@ -448,7 +511,13 @@ export class SellingRestrictionsService {
       }
     }
     let governingState = UNRESOLVED_STATE;
-    if (stateRuleInPlay(matched, channel, at) && customerId) {
+    const stateInPlay = stateRuleInPlay(matched, channel, at); // asked ONCE (readiness asks the same)
+    if (stateInPlay && judgedAtStore(options.fulfilmentKind)) {
+      // L8: a counter sale / pickup is judged where the STORE is, whoever the customer is (or none). No usable store
+      // state stays UNRESOLVED (INDETERMINATE, fail closed) — never the customer's address instead.
+      const state = await tenantBusinessState(this.prisma, tenantId);
+      governingState = state ? { resolved: true, state } : UNRESOLVED_STATE;
+    } else if (stateInPlay && customerId) {
       // Ownership check + addresses in ONE query through the customer: a nested select is not
       // rewritten by the tenant extension, so a legacy address row with a NULL tenantId is still
       // seen (dropping it could let a different, stamped address govern), and a customer that
@@ -485,7 +554,15 @@ export class SellingRestrictionsService {
       for (const c of cats) categoryNames.set(c.id, c.name);
     }
 
-    return evaluateRestrictions({ channel, at, products, rules, governingState, categoryNames });
+    return evaluateRestrictions({
+      channel,
+      at,
+      products,
+      rules,
+      governingState,
+      categoryNames,
+      storeJudged: judgedAtStore(options.fulfilmentKind),
+    });
   }
 
   /**
@@ -507,34 +584,57 @@ export class SellingRestrictionsService {
   ): Promise<ReadonlySet<string>> {
     assertAmbientTenant(this.prisma, tenantId, "SellingRestrictionsService");
     const db = this.prisma.forTenant();
-    const rules: RestrictionRuleFacts[] = await db.sellingRestriction.findMany({
+    // Row 509: every active rule with its targets active at `at` (bounded by the per-rule cap the admin writes
+    // enforce, SA condition 6) and its full row count (the zero-target legacy fallback).
+    const rows: RuleRowWithTargets[] = await db.sellingRestriction.findMany({
       where: { tenantId, AND: [activeRuleWhere(at)] },
-      select: RULE_FACTS_SELECT,
+      select: {
+        ...RULE_FACTS_SELECT,
+        targets: { where: activeTargetWhere(at), select: TARGET_ROW_SELECT },
+        _count: { select: { targets: true } },
+      },
     });
-    if (rules.length === 0) return new Set<string>();
+    if (rows.length === 0) return new Set<string>();
+    const rules = withTargetSets(rows, at);
 
     let governingState = UNRESOLVED_STATE;
-    if (customerId && stateRuleInPlay(rules, "BUYER_PORTAL", at)) {
-      const { addressPrecedence } = await this.getPolicy(tenantId);
-      const customer = await db.customer.findFirst({
-        where: { id: customerId, tenantId },
-        select: { isWalkIn: true, addresses: { select: ADDRESS_SELECT } },
-      });
-      if (customer?.isWalkIn === true) {
+    let judgedOnStore = false;
+    if (stateRuleInPlay(rules, "BUYER_PORTAL", at)) {
+      if (await tenantIsPickupOnly(this.prisma, tenantId)) {
+        // L8 M1: buyers of a pickup-only tenant collect in store, so the portal hides by the STORE's state (no customer
+        // needed); an unset store state stays UNRESOLVED and hides the restricted products (fail closed).
+        judgedOnStore = true;
         const state = await tenantBusinessState(this.prisma, tenantId);
         governingState = state ? { resolved: true, state } : UNRESOLVED_STATE;
-      } else if (customer) {
-        governingState = resolveGoverningState(customer.addresses, addressPrecedence);
+      } else if (customerId) {
+        const { addressPrecedence } = await this.getPolicy(tenantId);
+        const customer = await db.customer.findFirst({
+          where: { id: customerId, tenantId },
+          select: { isWalkIn: true, addresses: { select: ADDRESS_SELECT } },
+        });
+        if (customer?.isWalkIn === true) {
+          const state = await tenantBusinessState(this.prisma, tenantId);
+          governingState = state ? { resolved: true, state } : UNRESOLVED_STATE;
+        } else if (customer) {
+          governingState = resolveGoverningState(customer.addresses, addressPrecedence);
+        }
       }
     }
-    const hiding = rules.filter((r) => ruleHidesFromBuyer(r, governingState));
+    const hiding = rules.filter((r) => ruleHidesFromBuyer(r, governingState, judgedOnStore));
     if (hiding.length === 0) return new Set<string>();
 
     // Candidates: the rules' own products and the products labelled with a hiding category, plus their variants.
-    const seeds = new Set<string>(hiding.map((r) => r.productId).filter((x): x is string => !!x));
-    const categoryIds = [
-      ...new Set(hiding.map((r) => r.categoryId).filter((x): x is string => !!x)),
-    ];
+    // Row 509: a rule's product / label targets, or its legacy column when it has no target rows.
+    const seeds = new Set<string>();
+    const hidingCategories = new Set<string>();
+    for (const r of hiding) {
+      if (r.targets) {
+        r.targets.productIds.forEach((id) => seeds.add(id));
+        r.targets.categoryIds.forEach((id) => hidingCategories.add(id));
+      } else if (r.productId) seeds.add(r.productId);
+      else if (r.categoryId) hidingCategories.add(r.categoryId);
+    }
+    const categoryIds = [...hidingCategories];
     if (categoryIds.length > 0) {
       const labelled = await db.productCategoryLabel.findMany({
         where: { tenantId, categoryId: { in: categoryIds }, mode: "INCLUDE" },
@@ -595,6 +695,7 @@ export class SellingRestrictionsService {
         at: params.at,
         switchGated: params.switchGated,
         skipPortalOnlyRules: params.skipPortalOnlyRules,
+        fulfilmentKind: params.fulfilmentKind,
       },
     );
   }

@@ -175,7 +175,7 @@ describeDb("buyer portal visibility — the one rule, end to end, real Postgres"
       prisma,
       gateway,
       systemConfig,
-      entitlements: { hasFlag: async () => true },
+      entitlements: { hasFlag: async (_t: string, k: string) => k !== "flag.units_prices_v2" },
       sellingRestrictions: {
         getPolicy: async () => ({ enabled: false, addressPrecedence: "BILLING_FIRST" }),
         assertLinesSellable: async () => undefined,
@@ -1002,6 +1002,7 @@ describeDb("buyer portal visibility — the one rule, end to end, real Postgres"
     const check = (f: Fx, p: any, channel: "BUYER_PORTAL" | "STAFF" = "BUYER_PORTAL") =>
       inTenant(f, () =>
         restrictions.checkLinesSellable({
+          fulfilmentKind: "DELIVERY",
           tenantId: f.tenantId,
           customerId: f.customerId,
           lines: [{ productId: p.id, qtyDelta: 1 }],
@@ -1082,6 +1083,7 @@ describeDb("buyer portal visibility — the one rule, end to end, real Postgres"
       await expect(
         inTenant(f, () =>
           restrictions.assertLinesSellable({
+            fulfilmentKind: "DELIVERY",
             tenantId: f.tenantId,
             customerId: f.customerId,
             lines: [{ productId: f.S.id, qtyDelta: 1 }],
@@ -1166,6 +1168,110 @@ describeDb("buyer portal visibility — the one rule, end to end, real Postgres"
       const v = await buyerView(f);
       expectSurfaces(f, v, f.S, true);
       expectSurfaces(f, v, f.V1, true);
+    });
+  });
+  // H6 (qa-azm 2026-10-13): a family made the way product-families.service makes one stores each variant with
+  // name = variantName (the bare label) and NO category. The buyer must still see "<Family> - <Variant>" under the
+  // family's category, and find it by the family's name, as the restriction messages name it.
+  describe("H6: family variants carry a display name and the family's category on every buyer read", () => {
+    async function seedChips(f: Fx) {
+      const family = await raw.product.create({
+        data: {
+          tenantId: f.tenantId,
+          name: `Crunch Potato Chips ${run}`,
+          sku: `CHIPS-${run}-${seq}`,
+          kind: "FAMILY",
+          category: "Snacks",
+          unit: "case",
+          unitsPerBox: 24,
+          pricePerUnit: "9.99",
+          currentStock: 0,
+        } as any,
+      });
+      const mk = (label: string) =>
+        raw.product.create({
+          data: {
+            tenantId: f.tenantId,
+            name: label,
+            variantName: label,
+            kind: "VARIANT",
+            parentProductId: family.id,
+            sku: `CHIPS-${label.toUpperCase()}-${run}-${seq}`,
+            unit: "case",
+            unitsPerBox: 24,
+            pricePerUnit: "9.99",
+            currentStock: 50,
+          } as any,
+        });
+      const classic = await mk("Classic");
+      const bbq = await mk("BBQ");
+      return { family, classic, bbq, display: `Crunch Potato Chips ${run} - Classic` };
+    }
+
+    it("list tiles name the variant '<Family> - <Variant>' and give it the family's category", async () => {
+      const f = await seedTenant("h6-list");
+      const c = await seedChips(f);
+      const list = await inTenant(f, () =>
+        catalog.getCatalog({ limit: 100 }, f.customerId, f.buyerAccountId),
+      );
+      const tile = list.data.find((r: any) => r.id === c.classic.id) as any;
+      expect(tile).toBeDefined();
+      expect(tile.name).toBe(c.display);
+      expect(tile.category).toBe("Snacks");
+    });
+
+    it("search by the family's words ('chips', 'potato chips') finds the variants", async () => {
+      const f = await seedTenant("h6-search");
+      const c = await seedChips(f);
+      for (const q of ["chips", "potato chips", "Crunch"]) {
+        // eslint-disable-next-line no-await-in-loop
+        const r = await inTenant(f, () =>
+          catalog.getCatalog({ search: q, limit: 100 }, f.customerId),
+        );
+        const got = new Set(r.data.map((x: any) => x.id));
+        expect([q, got.has(c.classic.id), got.has(c.bbq.id)]).toEqual([q, true, true]);
+      }
+      // the family container itself is still never a tile
+      const r = await inTenant(f, () =>
+        catalog.getCatalog({ search: "chips", limit: 100 }, f.customerId),
+      );
+      expect(r.data.some((x: any) => x.id === c.family.id)).toBe(false);
+    });
+
+    it("the category filter, the category list and the rail counts include the variants under the family's category", async () => {
+      const f = await seedTenant("h6-category");
+      const c = await seedChips(f);
+      const filtered = await inTenant(f, () =>
+        catalog.getCatalog({ category: "Snacks", limit: 100 }, f.customerId),
+      );
+      const ids = new Set(filtered.data.map((x: any) => x.id));
+      expect(ids.has(c.classic.id) && ids.has(c.bbq.id)).toBe(true);
+      const categories = (await inTenant(f, () => catalog.getCategories(f.customerId))) as string[];
+      expect(categories).toContain("Snacks");
+      const counts = await inTenant(f, () =>
+        catalog.getCatalogCounts(f.customerId, f.buyerAccountId),
+      );
+      const snacks = counts.categories.find((x: any) => x.name === "Snacks");
+      expect(snacks?.count).toBeGreaterThanOrEqual(2);
+    });
+
+    it("the product detail of a variant opened directly carries the display name and the family's category", async () => {
+      const f = await seedTenant("h6-detail");
+      const c = await seedChips(f);
+      const d = (await inTenant(f, () =>
+        catalog.getProductDetail(c.classic.id, f.customerId),
+      )) as any;
+      expect(d.name).toBe(c.display);
+      expect(d.category).toBe("Snacks");
+    });
+
+    it("restriction messages name the variant by its display name", async () => {
+      const f = await seedTenant("h6-restriction");
+      const c = await seedChips(f);
+      const labels = await inTenant(f, () =>
+        new ProductLabelsService(prisma).effectiveLabels(f.tenantId, [c.classic.id]),
+      );
+      expect(labels.get(c.classic.id)?.name).toBe(c.display);
     });
   });
 });

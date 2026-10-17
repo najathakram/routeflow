@@ -12,6 +12,9 @@ import { buyerVerifyMerge } from "@/lib/buyer-auth";
 // Next.js static-generation export error at build time.
 export const dynamic = "force-dynamic";
 
+// Fixed copy for a throttled confirm; the throttler's own text is never shown.
+const TOO_MANY_ATTEMPTS = "Too many attempts. Try again in 15 minutes.";
+
 function VerifyMergeContent() {
   const params = useSearchParams();
   // Mirrors buyer/verify-email: capture the single-use token once, then strip it
@@ -53,9 +56,17 @@ function VerifyMergeContent() {
       setStatus("success");
       setMessage("Your account ownership is confirmed.");
     } catch (err: unknown) {
-      const msg = (err as { response?: { data?: { message?: unknown } } })?.response?.data?.message;
+      const res = (err as { response?: { status?: number; data?: { message?: unknown } } })
+        ?.response;
+      const msg = res?.data?.message;
       setStatus("error");
-      setMessage(typeof msg === "string" && msg ? msg : "Verification failed.");
+      setMessage(
+        res?.status === 429
+          ? TOO_MANY_ATTEMPTS
+          : typeof msg === "string" && msg
+            ? msg
+            : "Verification failed.",
+      );
     } finally {
       inFlight.current = false;
     }
@@ -74,6 +85,7 @@ function VerifyMergeContent() {
 
   return (
     <AuthShell audience="retailer" kicker="Retailer account" title={title}>
+      {/* The live region holds only the announced text; the confirm button sits outside it. */}
       <div
         ref={resultRef}
         role="status"
@@ -90,9 +102,6 @@ function VerifyMergeContent() {
               account. If you didn&apos;t ask for this, close this page — nothing changes until you
               confirm.
             </p>
-            <Button onClick={onConfirm} loading={status === "loading"} className="rf-btn w-full">
-              Confirm account merge
-            </Button>
           </div>
         )}
 
@@ -139,6 +148,14 @@ function VerifyMergeContent() {
           </>
         )}
       </div>
+
+      {(status === "confirm" || status === "loading") && (
+        <div className="mt-4 flex flex-col items-center">
+          <Button onClick={onConfirm} loading={status === "loading"} className="rf-btn w-full">
+            Confirm account merge
+          </Button>
+        </div>
+      )}
     </AuthShell>
   );
 }

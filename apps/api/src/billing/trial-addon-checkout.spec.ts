@@ -64,7 +64,7 @@ const CATALOG = {
 
 const PLAN_PRICE_DATA = {
   currency: "usd",
-  product_data: { name: "RouteFlow Starter — monthly" },
+  product_data: { name: "RouteFlow Starter" },
   unit_amount: 9900,
   recurring: { interval: "month" },
 };
@@ -111,7 +111,7 @@ const baseItem = () => ({
       id: "prod_base",
       object: "product",
       metadata: {},
-      name: "RouteFlow Starter — monthly",
+      name: "RouteFlow Starter",
     },
     recurring: {
       interval: "month",
@@ -580,6 +580,11 @@ function make(opts: Opts = {}) {
     planTransition,
     mutations,
   );
+  // These specs are about the apply transaction, not the price push (a failed post-checkout push now throws so
+  // Stripe redelivers it): the push is stubbed as "already at the resolved price".
+  jest
+    .spyOn(billing, "syncStripeSubscriptionPrice")
+    .mockResolvedValue({ synced: true, unchanged: true, proration: "none" });
 
   const session = (extra: Record<string, unknown> = {}) => ({
     id: "cs_1",
@@ -1158,9 +1163,11 @@ describe("SA-690 completion — adopt each checkout item onto its row, once", ()
     });
     await h.completed();
     const keys = mockWithAdvisoryLock.mock.calls.map((c) => c[0]);
+    // M1: the completion's price re-sync then takes the tenant price lock - AFTER the add-on locks are released.
     expect(keys).toEqual([
       expect.objectContaining({ family: "billing", key: "addon:t1:CUSTOMER_PACK_100" }),
       expect.objectContaining({ family: "billing", key: "addon:t1:FORECASTING" }),
+      expect.objectContaining({ family: "tenant-price", key: "t1" }),
     ]);
   });
 

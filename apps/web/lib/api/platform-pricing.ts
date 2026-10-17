@@ -3,6 +3,7 @@
 // `superAdminClient`, called from component-local state — this area has no TanStack Query).
 // Backing endpoints: WP2/WP3 of `.claude/pipeline/plans/2026-08-21-platform-billing-pricing.md`
 // (`PlatformPricingService` + `platform-admin.controller.ts`).
+import { API_ERROR_CODES } from "@routeflow/types";
 import { superAdminClient } from "@/lib/admin-api";
 
 export type BillingInterval = "month" | "year";
@@ -96,6 +97,25 @@ function errorMessage(err: unknown, fallback: string): string {
 }
 
 export { errorMessage as platformPricingErrorMessage };
+
+/** Fixed copy for an admin-created checkout refused in the window before the 1st (the API's CHECKOUT_ANCHOR_WINDOW). */
+const CHECKOUT_REOPENS_SOON_COPY = "Checkout reopens in a few minutes.";
+
+/**
+ * The admin "Create checkout session" failure: the anchor window gets FIXED copy plus the browser-local time of the
+ * `retryAt` field (never the server's message); every other failure keeps the existing message path.
+ */
+export function tenantCheckoutErrorMessage(err: unknown): string {
+  const body = (err as { response?: { data?: { code?: unknown; retryAt?: unknown } } } | undefined)
+    ?.response?.data;
+  if (body?.code === API_ERROR_CODES.CHECKOUT_ANCHOR_WINDOW) {
+    const retryAt = new Date(typeof body.retryAt === "string" ? body.retryAt : NaN);
+    return Number.isNaN(retryAt.getTime())
+      ? CHECKOUT_REOPENS_SOON_COPY
+      : `Checkout reopens at ${retryAt.toLocaleTimeString([], { hour: "numeric", minute: "2-digit" })}`;
+  }
+  return errorMessage(err, "Failed to create checkout session");
+}
 
 export async function fetchTenantPricing(tenantId: string): Promise<TenantPricingResponse> {
   const res = await superAdminClient.get(`/platform-admin/tenants/${tenantId}/billing/pricing`);

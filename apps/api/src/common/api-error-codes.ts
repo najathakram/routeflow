@@ -22,6 +22,7 @@ export const API_ERROR_CODES = {
   CLEANUP_IMPORTED_DISABLED: "CLEANUP_IMPORTED_DISABLED",
   ORDER_LINE_CHANGED: "ORDER_LINE_CHANGED",
   ORDER_REVISION_STALE: "ORDER_REVISION_STALE",
+  INVOICE_STALE: "INVOICE_STALE",
   ORDER_INVOICES_NEED_REVIEW: "ORDER_INVOICES_NEED_REVIEW",
   ORDER_INVOICE_SETTLE_FAILED: "ORDER_INVOICE_SETTLE_FAILED",
   NSF_LINE_UNTAXED: "NSF_LINE_UNTAXED",
@@ -83,6 +84,9 @@ export const API_ERROR_CODES = {
   BILL_VOID: "BILL_VOID",
   RETURN_NOTHING_BILLED: "RETURN_NOTHING_BILLED",
   INVOICE_CHANGED_CONCURRENTLY: "INVOICE_CHANGED_CONCURRENTLY",
+  LABEL_NAME_TAKEN: "LABEL_NAME_TAKEN",
+  LABEL_CHANGE_IN_PROGRESS: "LABEL_CHANGE_IN_PROGRESS",
+  PRODUCT_CHAIN_UNREADABLE: "PRODUCT_CHAIN_UNREADABLE",
   INVOICE_TAX_STATE_STALE: "INVOICE_TAX_STATE_STALE",
   INVOICE_TOTAL_BELOW_PAID: "INVOICE_TOTAL_BELOW_PAID",
   PRICE_ADJUSTMENT_PARTIAL: "PRICE_ADJUSTMENT_PARTIAL",
@@ -126,7 +130,14 @@ export const API_ERROR_CODES = {
   ORDER_WITH_CARRIER_NO_CHANGE_REQUEST: "ORDER_WITH_CARRIER_NO_CHANGE_REQUEST",
   CONCURRENT_UPDATE: "CONCURRENT_UPDATE",
   MERGE_IN_PROGRESS: "MERGE_IN_PROGRESS",
+  MERGE_ALREADY_DECIDED: "MERGE_ALREADY_DECIDED",
   LOCK_UNAVAILABLE: "LOCK_UNAVAILABLE",
+  // SA-767 L-2.2: a durable stock count is being committed (batch by batch); a second commit, a line edit or a
+  // discard is refused until the last batch lands. 409, nothing was changed, retry is safe.
+  STOCK_COUNT_COMMITTING: "STOCK_COUNT_COMMITTING",
+  // SA-767 r-note 5 SA-3: one OPEN count per product. Adding a product to a count (or committing one) is refused
+  // while another OPEN / REVIEW count already has a line for it. 409, nothing was changed.
+  PRODUCT_IN_OPEN_COUNT: "PRODUCT_IN_OPEN_COUNT",
   PO_ALREADY_BILLED: "PO_ALREADY_BILLED",
   BILL_EXCEEDS_PO: "BILL_EXCEEDS_PO",
   INVOICE_HAS_UNSPENT_CREDIT: "INVOICE_HAS_UNSPENT_CREDIT",
@@ -155,6 +166,14 @@ export const API_ERROR_CODES = {
   STOP_SKIPPED: "STOP_SKIPPED",
   SELLING_RESTRICTED: "SELLING_RESTRICTED",
   SELLING_RESTRICTIONS_NOT_READY: "SELLING_RESTRICTIONS_NOT_READY",
+  RULE_NOT_EDITABLE: "RULE_NOT_EDITABLE",
+  RULE_ADMIN_ONLY: "RULE_ADMIN_ONLY",
+  RULE_TARGETS_NOT_FOUND: "RULE_TARGETS_NOT_FOUND",
+  RULE_NEEDS_A_TARGET: "RULE_NEEDS_A_TARGET",
+  RULE_TARGET_LIMIT: "RULE_TARGET_LIMIT",
+  RULE_STALE: "RULE_STALE",
+  RULE_IMPACT_CHANGED: "RULE_IMPACT_CHANGED",
+  RULE_END_USE_LIFT: "RULE_END_USE_LIFT",
   PO_LINK_CONFLICT: "PO_LINK_CONFLICT",
   SCAN_ALREADY_POSTED: "SCAN_ALREADY_POSTED",
   PO_LINK_BROKEN: "PO_LINK_BROKEN",
@@ -170,6 +189,10 @@ export const API_ERROR_CODES = {
   INVOICE_CHANGED_DURING_EDIT: "INVOICE_CHANGED_DURING_EDIT",
   EMAIL_NOT_CONFIGURED: "EMAIL_NOT_CONFIGURED",
   EMAIL_SEND_FAILED: "EMAIL_SEND_FAILED",
+  // Row 466: create-and-send committed the invoice, then the send step threw a non-HTTP error. The body carries `invoiceId`.
+  INVOICE_SEND_AFTER_CREATE_FAILED: "INVOICE_SEND_AFTER_CREATE_FAILED",
+  // Row 466: createSale committed the order, then its invoice step threw. The body carries `orderId`.
+  SALE_INVOICE_CREATE_FAILED: "SALE_INVOICE_CREATE_FAILED",
   ADDON_DEFAULT_GRANTED: "ADDON_DEFAULT_GRANTED",
   EXPIRES_AT_MUST_BE_FUTURE: "EXPIRES_AT_MUST_BE_FUTURE",
   FEATURE_KEY_UNKNOWN: "FEATURE_KEY_UNKNOWN",
@@ -178,8 +201,13 @@ export const API_ERROR_CODES = {
   PLAN_CHANGED_DURING_SUBSCRIBE: "PLAN_CHANGED_DURING_SUBSCRIBE",
   ADDON_ANNUAL_NOT_SUPPORTED: "ADDON_ANNUAL_NOT_SUPPORTED",
   ADDON_INCLUDED_IN_PLAN: "ADDON_INCLUDED_IN_PLAN",
+  ADDON_CATALOG_INVALID: "ADDON_CATALOG_INVALID",
   ADDON_BILLING_PENDING_CHECKOUT: "ADDON_BILLING_PENDING_CHECKOUT",
   ADDON_COMP_MANAGED_BY_SUPPORT: "ADDON_COMP_MANAGED_BY_SUPPORT",
+  ADDON_QUANTITY_CHANGED: "ADDON_QUANTITY_CHANGED",
+  ADDON_QUANTITY_NOT_INCREASED: "ADDON_QUANTITY_NOT_INCREASED",
+  ADDON_NOT_STACKABLE: "ADDON_NOT_STACKABLE",
+  ADDON_RAISE_UNBILLED_ROW: "ADDON_RAISE_UNBILLED_ROW",
   ADDON_CHECKOUT_ITEM_UNREADABLE: "ADDON_CHECKOUT_ITEM_UNREADABLE",
   ADDON_CHECKOUT_ITEM_MISSING: "ADDON_CHECKOUT_ITEM_MISSING",
   ADDON_UNCOMP_STRIPE_UNAVAILABLE: "ADDON_UNCOMP_STRIPE_UNAVAILABLE",
@@ -196,6 +224,13 @@ export const API_ERROR_CODES = {
   PRICE_OVERRIDE_STRIPE_AHEAD: "PRICE_OVERRIDE_STRIPE_AHEAD",
   PLAN_CHANGE_STRIPE_AHEAD: "PLAN_CHANGE_STRIPE_AHEAD",
   CHECKOUT_ANNUAL_NOT_SUPPORTED: "CHECKOUT_ANNUAL_NOT_SUPPORTED",
+  CHECKOUT_ANCHOR_WINDOW: "CHECKOUT_ANCHOR_WINDOW",
+  TENANT_CANCEL_SUBSCRIPTION_FIRST: "TENANT_CANCEL_SUBSCRIPTION_FIRST",
+  STRIPE_NOT_CONFIGURED: "STRIPE_NOT_CONFIGURED",
+  STRIPE_ACCOUNT_MISMATCH: "STRIPE_ACCOUNT_MISMATCH",
+  STRIPE_SUBSCRIPTION_OWNER_MISMATCH: "STRIPE_SUBSCRIPTION_OWNER_MISMATCH",
+  PAYMENT_NOT_DUE: "PAYMENT_NOT_DUE",
+  PAYMENT_TERMS_CHANGED: "PAYMENT_TERMS_CHANGED",
   CATCHUP_SESSION_OPEN: "CATCHUP_SESSION_OPEN",
   CATCHUP_PENDING: "CATCHUP_PENDING",
   CATCHUP_NOT_ELIGIBLE: "CATCHUP_NOT_ELIGIBLE",
@@ -301,6 +336,11 @@ export const API_ERROR_CODES = {
    */
   ORDER_RUN_LINK_CHANGED: "ORDER_RUN_LINK_CHANGED",
   /**
+   * 400 from `PATCH /orders/:id/fulfill-path` from PICKUP to ROUTE or SHIP: the customer has no address on file,
+   * so there is nowhere to deliver to and no state to judge selling restrictions on. Nothing was written.
+   */
+  ORDER_DELIVERY_ADDRESS_MISSING: "ORDER_DELIVERY_ADDRESS_MISSING",
+  /**
    * 404 from GET /orders/counter-sale/by-key/:key: NO sale exists for this Idempotency-Key in this tenant.
    * A definitive answer (unlike a timeout): the clerk may ring the sale again with a new key.
    */
@@ -366,6 +406,23 @@ export const API_ERROR_CODES = {
    * order (or the reverse). The body carries `orderId`: open that order to confirm it, never resubmit on a new key.
    */
   IDEMPOTENCY_KEY_DRAFT_MISMATCH: "IDEMPOTENCY_KEY_DRAFT_MISMATCH",
+  /**
+   * 400 from create(): a CUSTOMER (buyer) asked for a DRAFT order. A draft is the staff working copy and is
+   * judged only when promoted, so a buyer-started one is refused outright. Nothing is written.
+   */
+  ORDER_DRAFT_STAFF_ONLY: "ORDER_DRAFT_STAFF_ONLY",
+  /**
+   * 400 from every order and invoice edit: the same stored line id appears twice in the incoming `items`. Checked on
+   * the payload alone before any read or write, so nothing is saved; the client refreshes and resubmits once.
+   */
+  DUPLICATE_LINE_ID: "DUPLICATE_LINE_ID",
+  /**
+   * 400 from the BUYER order paths (create, the fold into an active order, edit lines): a boxed line (unitsPerBox > 1)
+   * named BOTH a `qty` and a `boxes`/`pieces` split that disagree. Checked on the payload alone before any read or
+   * write, so nothing is saved; the client re-derives the cart from qty and the buyer reviews it (row 531). Staff and
+   * shared paths only warn (orders/qty-split-consistency.ts).
+   */
+  QTY_SPLIT_MISMATCH: "QTY_SPLIT_MISMATCH",
   /**
    * 503 from create(): the order WAS saved but its credit-note sync exhausted its retries. The body carries
    * `orderId`: open that order and apply the credits there; a replay of the key never applies them.
@@ -435,6 +492,18 @@ export const API_ERROR_CODES = {
    */
   TENANT_TRIAL_EXTEND_NOT_ALLOWED: "TENANT_TRIAL_EXTEND_NOT_ALLOWED",
   /**
+   * 409 from POST /platform-admin/tenants/:id/activate-subscription: the prepaid window the activation would
+   * record already ended (windowEnd <= now), so the next invoice period would be left unbilled or re-billed.
+   * Nothing was written; activate for more days or record the newer invoices first.
+   */
+  ACTIVATION_PERIOD_ALREADY_ENDED: "ACTIVATION_PERIOD_ALREADY_ENDED",
+  /**
+   * 409 from the same endpoint: the prepaid window (anchored at the oldest OPEN invoice) would run over a RouteFlow
+   * invoice that is already PAID, so that period would be recorded as paid twice. Body: `invoiceNumber`, `paidFrom`
+   * (ISO date), `maxDays` (the longest activation that stops before it). Nothing was written.
+   */
+  ACTIVATION_OVERLAPS_PAID_PERIOD: "ACTIVATION_OVERLAPS_PAID_PERIOD",
+  /**
    * 403 body `code` when an operator lacks every feature group the endpoint needs; `groups` lists the groups
    * that would have opened it. Nothing was written.
    */
@@ -475,6 +544,35 @@ export const API_ERROR_CODES = {
    * sign-in (GET /auth/google).
    */
   SIGN_IN_ROUTE_RETIRED: "SIGN_IN_ROUTE_RETIRED",
+  /**
+   * 403 from a billing action (subscribe, checkout, portal, plan change, add-on enable/disable) taken in a support
+   * session. Fixed body; nothing was written. Reads stay available (SA-778).
+   */
+  IMPERSONATION_NOT_ALLOWED: "IMPERSONATION_NOT_ALLOWED",
+  SELF_DEACTIVATION_REFUSED: "SELF_DEACTIVATION_REFUSED",
+  LAST_TENANT_ADMIN: "LAST_TENANT_ADMIN",
+  /**
+   * 409 from the tier-rules setting (any tier discount above 0%) and from every order-unit switch (product, tier,
+   * customer, "Apply to existing products"): they stay off until every writer of the pack price columns uses the one
+   * write path (SA-795 h). Fixed body; nothing was written.
+   */
+  PRICING_RULES_NOT_READY: "PRICING_RULES_NOT_READY",
+  /**
+   * 400 from POST/PATCH /products and PATCH /settings/margin: the request tried to SET the costing method FIFO or LIFO,
+   * which are retired (a stored FIFO/LIFO is costed as average cost). Use AVCO, STANDARD or LAST_COST. Fixed body;
+   * nothing was written (SA-804 (1), B1232).
+   */
+  COSTING_METHOD_RETIRED: "COSTING_METHOD_RETIRED",
+  /**
+   * 409 from POST /products/:productId/prices and POST /prices/undo (units v2): the product's priceRevision, its price state
+   * (SA-796 R-1 value compare-and-set) or a customer cell's expected price changed since the grid was read. Body carries
+   * `revision`. Nothing was written; reload the grid.
+   */
+  LADDER_REVISION_STALE: "LADDER_REVISION_STALE",
+  /** 400 from POST /products/:productId/prices: the pricing core refused a value (zero/junk, the anchor's Retail cleared); body carries `problems`. */
+  PRICE_EDIT_INVALID: "PRICE_EDIT_INVALID",
+  /** 409 from POST /products/:productId/prices/undo: that audit row is not a price save of this product, or it was already undone. */
+  PRICE_UNDO_UNAVAILABLE: "PRICE_UNDO_UNAVAILABLE",
 } as const satisfies Record<string, ApiErrorCode>;
 
 /** The `flag` of a PLAN_GATE body that gates a count (a meter), not a feature flag. Not an error code. */

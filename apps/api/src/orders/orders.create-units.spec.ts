@@ -137,6 +137,74 @@ describe("OrdersService.create — sell by a unit (units_v1, 4b-2b)", () => {
     expect(hasFlag()).toHaveBeenCalledWith("test-tenant", "flag.units_v1");
   });
 
+  describe("SA-728 / P0b: a derived Piece from an OLD client bills as the pack's pieces", () => {
+    const PACK3 = { ...PRODUCT, id: "prod-3", unit: "Pack", pricePerUnit: 10, unitsPerBox: 3 };
+    const caseRow = {
+      productId: "prod-3",
+      label: "Case",
+      factorToBase: 12,
+      price: null,
+      priceTier2: null,
+      priceTier3: null,
+      priceTier4: null,
+      priceTier5: null,
+      sortOrder: 0,
+    };
+    beforeEach(() => prisma.product.findMany.mockResolvedValue([PACK3]));
+
+    it("3-pack @10, 2 pcs sent as unitLabel Piece = $6.67 on a pack line (boxes 0, pieces 2), no unitLabel stored", async () => {
+      scopedUnits.findMany.mockResolvedValue([caseRow]);
+      await create([{ productId: "prod-3", qty: 2, unitLabel: "Piece", unitPrice: 3.33 }]);
+      const line = orderData().lineItems.create[0];
+      expect("unitLabel" in line && line.unitLabel != null).toBe(false);
+      expect(line).toMatchObject({
+        boxes: 0,
+        pieces: 2,
+        qty: 2,
+        unitsPerBox: 3,
+        unitPrice: 10,
+        subtotal: 6.67,
+      });
+      expect(orderData().subtotal).toBe(6.67);
+    });
+
+    it("SA-759r B1: an old client's retry of the derived Piece create replays the stored pack line (no cartMismatch 409)", async () => {
+      scopedUnits.findMany.mockResolvedValue([caseRow]);
+      // what the first press stored: the PACK line's pieces, no unitLabel
+      const original = {
+        id: "ord-old",
+        customerId: "cust-1",
+        lineItems: [
+          { productId: "prod-3", qty: 2, boxes: 0, pieces: 2, unitLabel: null, status: "PENDING" },
+        ],
+      };
+      jest.spyOn(service as any, "findReplayCandidateByKey").mockResolvedValue(original);
+      const retry = (items: unknown[]) =>
+        service.create({ customerId: "cust-1", items, idempotencyKey: "k-old" } as never, staff);
+      await expect(
+        retry([{ productId: "prod-3", qty: 2, unitLabel: "Piece", unitPrice: 3.33 }]),
+      ).resolves.toBe(original);
+      // a DIFFERENT count is still a different cart
+      await expect(
+        retry([{ productId: "prod-3", qty: 3, unitLabel: "Piece", unitPrice: 3.33 }]),
+      ).rejects.toThrow(/different cart/);
+      expect(prisma.order.create).not.toHaveBeenCalled();
+    });
+
+    it("an own-priced Piece row keeps the unit-line path: unitLabel Piece at the row's price", async () => {
+      scopedUnits.findMany.mockResolvedValue([
+        { ...caseRow, label: "Piece", factorToBase: 1, price: "3.00" },
+      ]);
+      await create([{ productId: "prod-3", qty: 2, unitLabel: "Piece" }]);
+      expect(orderData().lineItems.create[0]).toMatchObject({
+        unitLabel: "Piece",
+        unitPrice: 3,
+        qty: 2,
+        subtotal: 6,
+      });
+    });
+  });
+
   it("a mixed order keeps its pack line exactly as before next to a unit line", async () => {
     await create([
       { productId: "prod-1", qty: 2, boxes: 2, pieces: 0 }, // pack: 2 boxes of 24 at $42
@@ -268,5 +336,27 @@ describe("OrdersService.create — sell by a unit (units_v1, 4b-2b)", () => {
       /different cart/,
     );
     expect(prisma.order.create).not.toHaveBeenCalled();
+  });
+
+  describe("SA ruling (#3418): each nested line carries its explicit author marker from the creator", () => {
+    it("a staff create writes STAFF on every line (pack and unit), whatever the timestamps", async () => {
+      await create([
+        { productId: "prod-1", qty: 2, boxes: 2, pieces: 0 },
+        { productId: "prod-1", qty: 1, unitLabel: "Pallet" },
+      ]);
+      const lines = orderData().lineItems.create;
+      expect(lines.map((l: any) => l.authorChannel)).toEqual(["STAFF", "STAFF"]);
+      expect(orderData()).toMatchObject({ source: "PHONE", sourceRecorded: true });
+    });
+
+    it("a buyer create writes BUYER on every line", async () => {
+      (service as any).promotionsService.activeForCatalog.mockResolvedValue([]);
+      await create([{ productId: "prod-1", qty: 2 }], {
+        ...customerPayload,
+        tenantId: "t-1",
+      } as never);
+      expect(orderData().lineItems.create.map((l: any) => l.authorChannel)).toEqual(["BUYER"]);
+      expect(orderData()).toMatchObject({ source: "APP", sourceRecorded: true });
+    });
   });
 });

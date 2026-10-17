@@ -14,6 +14,8 @@ const config: Config = {
       colors: {
         background: "var(--background)",
         foreground: "var(--foreground)",
+        // Border of text inputs, selects and textareas (>= 3:1, WCAG 1.4.11). Dividers keep line / line-strong.
+        field: "var(--field)",
         // Tenant-branded primary — overridden at runtime by TenantProvider.
         // Ledger default is teal (--brand-500). Full brand + canvas scales come
         // from the shared preset (packages/config/tailwind.config.ts).

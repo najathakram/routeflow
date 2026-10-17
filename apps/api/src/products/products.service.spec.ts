@@ -487,11 +487,11 @@ describe("ProductsService", () => {
         sku: "T-3",
         unit: "kg",
         pricePerUnit: 1,
-        costingMethod: "FIFO",
+        costingMethod: "LAST_COST",
       } as any);
 
       expect(prisma.product.create).toHaveBeenCalledWith(
-        expect.objectContaining({ data: expect.objectContaining({ costingMethod: "FIFO" }) }),
+        expect.objectContaining({ data: expect.objectContaining({ costingMethod: "LAST_COST" }) }),
       );
     });
 
@@ -589,13 +589,28 @@ describe("ProductsService", () => {
       expect(systemConfig.get).not.toHaveBeenCalled();
     });
 
+    it.each(["FIFO", "LIFO"])(
+      "a variant of a parent still stored as %s inherits AVCO, never the retired value (SA-804 (1))",
+      async (m) => {
+        prisma.product.findFirst.mockImplementation(({ where }: any) =>
+          Promise.resolve(where?.id === "parent-1" ? { ...MOCK_PARENT, costingMethod: m } : null),
+        );
+
+        await service.create({ ...VARIANT_DTO } as any);
+
+        expect(prisma.product.create).toHaveBeenCalledWith(
+          expect.objectContaining({ data: expect.objectContaining({ costingMethod: "AVCO" }) }),
+        );
+      },
+    );
+
     it("keeps explicit dto values over the parent's", async () => {
       await service.create({
         ...VARIANT_DTO,
         category: "Disposables",
         unitsPerBox: 5,
         standardCost: "9.9999",
-        costingMethod: "FIFO",
+        costingMethod: "LAST_COST",
       } as any);
 
       expect(prisma.product.create).toHaveBeenCalledWith(
@@ -604,7 +619,7 @@ describe("ProductsService", () => {
             category: "Disposables",
             unitsPerBox: 5,
             standardCost: "9.9999",
-            costingMethod: "FIFO",
+            costingMethod: "LAST_COST",
           }),
         }),
       );
@@ -707,6 +722,7 @@ describe("ProductsService", () => {
           { id: "prod-b", reason: 'A variant named "Grape" already exists for this product' },
           { id: "prod-c", reason: "Update failed" }, // raw Prisma text NOT disclosed
         ],
+        keptLabels: [],
       });
       // Each row goes through the full update() path, variant name doubling as
       // `name` — suppressEmit:true since this loop can reassign N products in
@@ -719,8 +735,118 @@ describe("ProductsService", () => {
           variantName: "Strawberry",
           name: "Strawberry",
         },
-        { suppressEmit: true },
+        { suppressEmit: true, actorId: null, actorName: null },
       );
+    });
+  });
+
+  // ─── retired costing methods (SA-804 (1) / B1232) ─────────────────────────
+
+  describe("retired costing methods FIFO / LIFO", () => {
+    const BASE = { name: "T", sku: "T-R", unit: "kg", pricePerUnit: 1 };
+
+    it.each(["FIFO", "LIFO"])(
+      "create refuses %s with 400 COSTING_METHOD_RETIRED and writes nothing",
+      async (method) => {
+        systemConfig.get.mockResolvedValue(null);
+        prisma.product.findFirst.mockResolvedValue(null);
+        prisma.product.create.mockResolvedValue(MOCK_PRODUCT);
+
+        const err: any = await service
+          .create({ ...BASE, costingMethod: method } as any)
+          .catch((e: unknown) => e);
+
+        expect(err).toBeInstanceOf(BadRequestException);
+        expect(err.getResponse()).toMatchObject({ code: "COSTING_METHOD_RETIRED" });
+        expect(prisma.product.create).not.toHaveBeenCalled();
+      },
+    );
+
+    it.each(["AVCO", "STANDARD", "LAST_COST"])("create still accepts %s", async (method) => {
+      systemConfig.get.mockResolvedValue(null);
+      prisma.product.findFirst.mockResolvedValue(null);
+      prisma.product.create.mockResolvedValue(MOCK_PRODUCT);
+
+      await service.create({
+        ...BASE,
+        costingMethod: method,
+        ...(method === "STANDARD" ? { standardCost: "1.0000" } : {}),
+      } as any);
+
+      expect(prisma.product.create).toHaveBeenCalledWith(
+        expect.objectContaining({ data: expect.objectContaining({ costingMethod: method }) }),
+      );
+    });
+
+    it("a tenant whose stored default is the retired FIFO gives a NEW product AVCO, never FIFO", async () => {
+      systemConfig.get.mockResolvedValue("FIFO");
+      prisma.product.findFirst.mockResolvedValue(null);
+      prisma.product.create.mockResolvedValue(MOCK_PRODUCT);
+
+      await service.create({ ...BASE } as any);
+
+      expect(prisma.product.create).toHaveBeenCalledWith(
+        expect.objectContaining({ data: expect.objectContaining({ costingMethod: "AVCO" }) }),
+      );
+    });
+
+    it.each(["FIFO", "LIFO"])("update refuses SETTING %s on an AVCO product (400)", async (m) => {
+      prisma.product.findUnique.mockResolvedValue({ ...MOCK_PRODUCT, costingMethod: "AVCO" });
+      prisma.product.findFirst.mockResolvedValue(null);
+      prisma.product.update.mockResolvedValue(MOCK_PRODUCT);
+
+      const err: any = await service
+        .update("prod-1", { costingMethod: m } as any)
+        .catch((e: unknown) => e);
+
+      expect(err).toBeInstanceOf(BadRequestException);
+      expect(err.getResponse()).toMatchObject({ code: "COSTING_METHOD_RETIRED" });
+      expect(prisma.product.update).not.toHaveBeenCalled();
+    });
+
+    it("update refuses switching a stored FIFO product to LIFO (a different retired value)", async () => {
+      prisma.product.findUnique.mockResolvedValue({ ...MOCK_PRODUCT, costingMethod: "FIFO" });
+      prisma.product.findFirst.mockResolvedValue(null);
+
+      await expect(
+        service.update("prod-1", { costingMethod: "LIFO" } as any),
+      ).rejects.toBeInstanceOf(BadRequestException);
+      expect(prisma.product.update).not.toHaveBeenCalled();
+    });
+
+    it("a no-op edit of a stored-FIFO product's OTHER fields still works", async () => {
+      const stored = { ...MOCK_PRODUCT, costingMethod: "FIFO" };
+      prisma.product.findUnique.mockResolvedValue(stored);
+      prisma.product.findFirst.mockResolvedValue(null);
+      prisma.product.update.mockResolvedValue(stored);
+
+      await service.update("prod-1", { description: "New text" } as any);
+
+      const data = prisma.product.update.mock.calls[0][0].data;
+      expect(data.description).toBe("New text");
+      expect(data).not.toHaveProperty("costingMethod");
+    });
+
+    it("a whole-object save that echoes the stored FIFO back does not fail and leaves the column alone", async () => {
+      const stored = { ...MOCK_PRODUCT, costingMethod: "FIFO" };
+      prisma.product.findUnique.mockResolvedValue(stored);
+      prisma.product.findFirst.mockResolvedValue(null);
+      prisma.product.update.mockResolvedValue(stored);
+
+      await service.update("prod-1", { description: "x", costingMethod: "FIFO" } as any);
+
+      expect(prisma.product.update.mock.calls[0][0].data).not.toHaveProperty("costingMethod");
+    });
+
+    it("update can move a stored-FIFO product to AVCO", async () => {
+      const stored = { ...MOCK_PRODUCT, costingMethod: "FIFO" };
+      prisma.product.findUnique.mockResolvedValue(stored);
+      prisma.product.findFirst.mockResolvedValue(null);
+      prisma.product.update.mockResolvedValue(stored);
+
+      await service.update("prod-1", { costingMethod: "AVCO" } as any);
+
+      expect(prisma.product.update.mock.calls[0][0].data.costingMethod).toBe("AVCO");
     });
   });
 

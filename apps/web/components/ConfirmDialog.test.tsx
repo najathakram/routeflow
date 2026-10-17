@@ -38,3 +38,34 @@ describe("ConfirmDialog mobile fit", () => {
     expect(cls).not.toMatch(/(^|\s)max-w-sm(\s|$)/); // the bare 384px cap is what left 3px gutters
   });
 });
+
+describe("ConfirmDialog P-15 focus + variants", () => {
+  const mk = (variant?: "danger" | "secondary" | "warning") =>
+    render(
+      <ConfirmDialog
+        open
+        onClose={() => undefined}
+        onConfirm={() => undefined}
+        title="Delete thing?"
+        confirmLabel="Yes, delete"
+        variant={variant}
+      />,
+    );
+
+  it("a danger dialog opens with focus on Cancel, so Enter cannot confirm", () => {
+    mk("danger");
+    expect(screen.getByRole("button", { name: "Cancel" })).toHaveFocus();
+  });
+
+  it("a warning dialog is not red and does not steal focus to Cancel", () => {
+    mk("warning");
+    const confirm = screen.getByRole("button", { name: "Yes, delete" });
+    expect(confirm.className).not.toMatch(/bg-danger/);
+    expect(screen.getByRole("button", { name: "Cancel" })).not.toHaveFocus();
+  });
+
+  it("a secondary dialog keeps the default focus", () => {
+    mk("secondary");
+    expect(screen.getByRole("button", { name: "Cancel" })).not.toHaveFocus();
+  });
+});

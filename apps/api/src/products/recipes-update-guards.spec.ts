@@ -86,6 +86,10 @@ async function build(
       ...prisma.product,
       // The SA-603a active-name probe (`where.name`) finds no other holder; every other read is `existing`.
       findFirst: jest.fn(async (args: any) => (args?.where?.name ? null : existing)),
+      // H2's read-only label plan walks the family chain: every family here is a standalone row.
+      findMany: jest.fn(async (args: any) =>
+        ((args?.where?.id?.in ?? []) as string[]).map((id) => ({ id, parentProductId: null })),
+      ),
       update: jest.fn(async (args: any) => {
         events.push(`write:product:${args.where.id}`);
         return prisma.product.update(args);
@@ -98,6 +102,7 @@ async function build(
     }),
     $executeRaw: jest.fn().mockResolvedValue(0),
   };
+  tx.productCategoryLabel = { ...prisma.productCategoryLabel, findMany: jest.fn(async () => []) };
   prisma.tenantTransaction.mockImplementation(async (fn: any) => fn(tx));
   const mod: TestingModule = await Test.createTestingModule({
     providers: [
@@ -106,7 +111,12 @@ async function build(
       { provide: StorageService, useValue: { presignedUrls: jest.fn().mockResolvedValue([]) } },
       { provide: AddonService, useValue: { hasAddon: jest.fn().mockResolvedValue(false) } },
       { provide: SystemConfigService, useValue: { get: jest.fn().mockResolvedValue(null) } },
-      { provide: EntitlementsService, useValue: { hasFlag: jest.fn().mockResolvedValue(true) } },
+      {
+        provide: EntitlementsService,
+        useValue: {
+          hasFlag: jest.fn(async (_t: string, k: string) => k !== "flag.units_prices_v2"),
+        },
+      },
       entitlementAuthorityFromEntitlements,
       // #2185: the reorder gate's deny body reads admin overrides.
       { provide: FeatureOverrideService, useValue: { get: jest.fn().mockResolvedValue(null) } },

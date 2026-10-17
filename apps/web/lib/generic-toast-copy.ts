@@ -1,4 +1,10 @@
-import { API_ERROR_CODES, CREDITS_PENDING_COPY, SHIPPED_ORDER_MESSAGE } from "@routeflow/types";
+import {
+  API_ERROR_CODES,
+  CREDITS_PENDING_COPY,
+  SHIPPED_ORDER_MESSAGE,
+  productInOpenCountCopy,
+} from "@routeflow/types";
+import { BUYER_QTY_SPLIT_MISMATCH_COPY } from "./buyer-cart-line";
 import { READ_ONLY_SENTENCE } from "@routeflow/types/read-only-copy";
 import { regulatedAuthCopy } from "@routeflow/types/regulated-auth-copy";
 import {
@@ -7,6 +13,7 @@ import {
   UNCONFIRMED_COPY,
   noResponse,
 } from "./credit-note-error-copy";
+import { activationEndedCopy, activationOverlapsPaidCopy } from "./activation-error-copy";
 import { creditLimitSentence } from "./credit-limit-copy";
 import { COUNTER_VOID_ERROR_COPY } from "./counter-void-copy";
 import { COUNTER_SALE_DAY_CLOSED_COPY, DAY_CLOSED_FOR_PAYMENT_DATE_COPY } from "./day-closed-copy";
@@ -16,6 +23,7 @@ import { parsePlanGate } from "./plan-gate";
 import { safeTextErrorCopy } from "./safe-text-error-copy";
 import { sellerUnavailableCopy } from "./seller-unavailable";
 import { sellingRestrictedCopy } from "./selling-restricted-copy";
+import { RULE_ERROR_COPY } from "./restriction-rule-errors";
 
 /**
  * B980 (owner rule: no raw strings in the UI): the app-wide mutation error toast shows FIXED copy,
@@ -30,9 +38,14 @@ import { sellingRestrictedCopy } from "./selling-restricted-copy";
 
 /** Daily-work refusals, by `body.code`. The sentences name the cause and the next step. */
 const CODE_COPY: Record<string, string> = {
+  // Row 509: selling-restriction rule targets and edits (fixed copy; the guided cases are rendered in place).
+  ...RULE_ERROR_COPY,
   // a buyer write toward a paused seller: the seller-unavailable sentence, never "You don't have permission"
   [API_ERROR_CODES.SELLER_UNAVAILABLE]: sellerUnavailableCopy(null),
   [API_ERROR_CODES.RETURN_REFUND_OVER_LINE_HEADROOM]: RETURN_REFUND_OVER_LINE_HEADROOM_COPY,
+  // SA-804 (1): FIFO and LIFO costing are retired; the picker no longer offers them, so this is an old client or a direct API call.
+  [API_ERROR_CODES.COSTING_METHOD_RETIRED]:
+    "FIFO and LIFO costing are retired. Pick average cost, standard cost or last cost.",
   INLINE_RETURN_ALREADY_RETURNED_REASON_REQUIRED:
     "This item was already returned. Add a reason to confirm another return.",
   INLINE_RETURN_KEY_CONFLICT: "This return was already submitted. Refresh to see it.",
@@ -43,7 +56,13 @@ const CODE_COPY: Record<string, string> = {
     "A line on this order is sold by a unit such as a case, so this action isn't available for it yet.",
   MERGE_PACK_MISMATCH:
     "The pack size on this order no longer matches the product. Refresh and review the line.",
+  ORDER_DELIVERY_ADDRESS_MISSING:
+    "This customer has no delivery address on file. Add one before switching the order to delivery.",
   ORDER_CHANGED_DURING_EDIT: "This order changed while you were editing it. Refresh and try again.",
+  // F3: the edit named one line twice; nothing was saved.
+  DUPLICATE_LINE_ID: "A line appears twice. Refresh the page and try again.",
+  // Row 531: a buyer cart whose quantity and box split disagree; nothing was saved.
+  QTY_SPLIT_MISMATCH: BUYER_QTY_SPLIT_MISMATCH_COPY,
   ORDER_BILLING_CHANGED:
     "This order's billing changed while you were working on it. Refresh and try again.",
   FULFIL_METHOD_NOT_OFFERED: "This business doesn't offer that way of fulfilling orders.",
@@ -63,6 +82,9 @@ const CODE_COPY: Record<string, string> = {
   CONCURRENT_UPDATE: "Someone else is updating this record. Try again in a moment.",
   MERGE_IN_PROGRESS: "Another change for this customer is in progress. Try again in a moment.",
   LOCK_UNAVAILABLE: "This is busy right now. Try again in a moment.",
+  [API_ERROR_CODES.STOCK_COUNT_COMMITTING]: "This count is being saved. Try again in a moment.",
+  // SA-767 r-note 5 SA-3: the count screens name the other count themselves; this is the fallback.
+  [API_ERROR_CODES.PRODUCT_IN_OPEN_COUNT]: productInOpenCountCopy(),
   [API_ERROR_CODES.ORDER_SAVED_CREDITS_PENDING]: CREDITS_PENDING_COPY,
   [API_ERROR_CODES.BARCODE_TAKEN]: "Another product already uses that barcode.",
   [API_ERROR_CODES.FAMILY_NOT_PRICEABLE]:
@@ -81,6 +103,9 @@ const CODE_COPY: Record<string, string> = {
     "This invoice has no balance due, so there is nothing to remind about.",
   [API_ERROR_CODES.REMINDER_NOT_ISSUED]:
     "A reminder can only be sent for an invoice that has been issued and is still unpaid.",
+  // SA-778: a billing action refused in a support session. Fixed sentence, same as the server's.
+  [API_ERROR_CODES.IMPERSONATION_NOT_ALLOWED]:
+    "This action isn't available in a support session. Ask the account admin to do it.",
   EMAIL_NOT_CONFIGURED:
     "Email isn't set up for this workspace yet. Connect it under Settings → Email, then try again.",
   EMAIL_SEND_FAILED:
@@ -103,8 +128,15 @@ const CODE_COPY: Record<string, string> = {
     "This invoice's lines couldn't be verified, so it can't be edited. Ask an admin.",
   [API_ERROR_CODES.CHANGE_REQUEST_PACK_CHANGED]:
     "The pack size changed, so a change request was filed. Decline it and re-add the item to the next order.",
+  [API_ERROR_CODES.MERGE_ALREADY_DECIDED]:
+    "This merge request was already decided by someone else. Refresh to see its status.",
   [API_ERROR_CODES.INVOICE_CHANGED_CONCURRENTLY]:
     "The invoice changed while this was happening. Refresh and try again.",
+  [API_ERROR_CODES.LABEL_NAME_TAKEN]:
+    "A product label with this name already exists. Use that label or pick another name.",
+  [API_ERROR_CODES.LABEL_CHANGE_IN_PROGRESS]:
+    "Another product label change is in progress. Try again in a moment.",
+  [API_ERROR_CODES.PRODUCT_CHAIN_UNREADABLE]: "This product's family chain can't be read.",
   [API_ERROR_CODES.INVOICE_TAX_STATE_STALE]:
     "This invoice's tax no longer matches its lines. Re-save the invoice lines, then try again.",
   [API_ERROR_CODES.INVOICE_TOTAL_BELOW_PAID]:
@@ -156,8 +188,24 @@ const CODE_COPY: Record<string, string> = {
   // SA-733r7 PR-B3 (dunning): a plan change is refused while an invoice is overdue; paying it restores everything.
   [API_ERROR_CODES.PAYMENT_OVERDUE]:
     "An invoice on this account is overdue. Pay it to continue; plan changes are available again right after.",
+  // Row 542: paying an amount due was refused because nothing is due (already paid); the banner re-reads.
+  [API_ERROR_CODES.PAYMENT_NOT_DUE]: "Nothing is due right now.",
+  // Row 542c: the terms the banner showed no longer hold; the banner re-reads (the mutation invalidates it on error).
+  [API_ERROR_CODES.PAYMENT_TERMS_CHANGED]:
+    "The amount changed. We've refreshed it, please check and try again.",
   [API_ERROR_CODES.PAYMENT_STATE_UNKNOWN]:
     "We couldn't confirm your open invoice just now. Please try again in a moment.",
+  // B1102: a catalog add-on whose plan setting is invalid is refused instead of billed; fixed sentence, no ids.
+  [API_ERROR_CODES.ADDON_CATALOG_INVALID]:
+    "This add-on can't be changed right now because of a setup problem on our side. Please contact support.",
+  // M11 (stackable add-on quantity): fixed sentences, never the server's text.
+  [API_ERROR_CODES.ADDON_QUANTITY_CHANGED]:
+    "Your add-on changed since this page loaded. Check the new total and try again.",
+  [API_ERROR_CODES.ADDON_QUANTITY_NOT_INCREASED]:
+    "That would not add any more of this add-on, so nothing was changed. Check the total and try again.",
+  [API_ERROR_CODES.ADDON_NOT_STACKABLE]: "This add-on can only be turned on once per workspace.",
+  [API_ERROR_CODES.ADDON_RAISE_UNBILLED_ROW]:
+    "This add-on isn't billed on your subscription yet, so its quantity can't be raised here. Please contact support.",
 };
 
 /** Exact server sentences (already product text) for refusals with no `code`; matched whole, never partially. */
@@ -304,6 +352,9 @@ export function codedToastCopy(err: unknown): string | null {
   if (code === API_ERROR_CODES.DUPLICATE_VENDOR_BILL) return duplicateBillCopy(data);
   if (code === API_ERROR_CODES.CREDIT_LIMIT_EXCEEDED)
     return creditLimitSentence(data.limit, data.exposure);
+  if (code === API_ERROR_CODES.ACTIVATION_PERIOD_ALREADY_ENDED) return activationEndedCopy(err);
+  if (code === API_ERROR_CODES.ACTIVATION_OVERLAPS_PAID_PERIOD)
+    return activationOverlapsPaidCopy(err);
   // CQ-06 review: a selling-restriction refusal with no dialog of its own says what is wrong and the next step.
   if (code === API_ERROR_CODES.SELLING_RESTRICTED) return sellingRestrictedCopy(data.blockedLines);
   // CQ-06: the license refusal says what is wrong (expired / none on file) and where to fix it (shared with mobile).

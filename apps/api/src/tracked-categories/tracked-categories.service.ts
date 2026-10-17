@@ -13,6 +13,7 @@ import { CreateSubcategoryDto } from "./dto/create-subcategory.dto";
 import { UpdateSubcategoryDto } from "./dto/update-subcategory.dto";
 import { templateByKey, allColumnKeys } from "../regulated/template-registry";
 import { isTobaccoCategoryName } from "../common/tobacco-category";
+import { syncCategoryLabelForProducts } from "../product-categories/label-writer";
 import {
   assertNoOpenRecipe,
   lockProductsForCategoryWrite,
@@ -407,27 +408,44 @@ export class TrackedCategoriesService {
       }
     }
     try {
-      const row = await this.prisma.forTenant().trackedSubcategory.update({
-        where: { id: subId },
-        data: {
-          ...(name !== undefined ? { name } : {}),
-          ...(dto.active !== undefined ? { active: dto.active } : {}),
-        },
-        include: WITH_COUNT,
-      });
-      // One-category-axis rule: a rename must propagate to every product whose
-      // Product.category mirrors this subcategory — either already synced to
-      // the OLD name, or never synced (NULL). Products whose category diverged
-      // (legacy free-text) are left alone until the one-time tidy script.
-      if (name !== undefined && name !== existingSub.name) {
-        await this.prisma.forTenant().product.updateMany({
-          where: {
-            trackedSubcategoryId: subId,
-            OR: [{ category: existingSub.name }, { category: null }],
+      // ONE tx: the rename and its product mirror (+ the add-only label sync) commit together, so a busy label lock
+      // (a coded 409) rolls the rename back too and a retry re-mirrors — never a renamed subcategory with stale products.
+      const row = await this.prisma.tenantTransaction(async (tx: any) => {
+        const updated = await tx.trackedSubcategory.update({
+          where: { id: subId },
+          data: {
+            ...(name !== undefined ? { name } : {}),
+            ...(dto.active !== undefined ? { active: dto.active } : {}),
           },
-          data: { category: name },
+          include: WITH_COUNT,
         });
-      }
+        // One-category-axis rule: a rename must propagate to every product whose
+        // Product.category mirrors this subcategory — either already synced to
+        // the OLD name, or never synced (NULL). Products whose category diverged
+        // (legacy free-text) are left alone until the one-time tidy script.
+        if (name !== undefined && name !== existingSub.name) {
+          const tenantId = this.tenantIdOrThrow();
+          const newName = name;
+          // The SAME guard as before (still mirroring the old name, or blank) in the write itself, so a product
+          // whose text changed meanwhile is never overwritten; only the rows actually renamed are synced.
+          const renamed: Array<{ id: string }> = await tx.product.updateManyAndReturn({
+            where: {
+              trackedSubcategoryId: subId,
+              OR: [{ category: existingSub.name }, { category: null }],
+            },
+            data: { category: newName },
+            select: { id: true },
+          });
+          if (renamed.length > 0) {
+            await syncCategoryLabelForProducts(tx, {
+              tenantId,
+              productIds: renamed.map((p) => p.id),
+              text: newName,
+            });
+          }
+        }
+        return updated;
+      });
       return this.serializeSub(row);
     } catch (e) {
       if (e instanceof Prisma.PrismaClientKnownRequestError && e.code === "P2002") {

@@ -56,7 +56,7 @@ describe("BuyerController — buyer portal 500 fixes (F1-INFRA-500S)", () => {
   };
   let invoicesService: jest.Mocked<Pick<InvoicesService, "findAll">>;
   let templatesService: jest.Mocked<
-    Pick<OrderTemplatesService, "findAllForUser" | "generateOrder">
+    Pick<OrderTemplatesService, "findAllForBuyer" | "generateOrder">
   >;
   let authorizationsService: jest.Mocked<Pick<AuthorizationsService, "listForBuyer" | "submit">>;
   let stockAlertService: {
@@ -82,7 +82,7 @@ describe("BuyerController — buyer portal 500 fixes (F1-INFRA-500S)", () => {
     };
     invoicesService = { findAll: jest.fn().mockResolvedValue({ data: [], meta: { total: 0 } }) };
     templatesService = {
-      findAllForUser: jest.fn().mockResolvedValue({ data: [], meta: { total: 0 } }),
+      findAllForBuyer: jest.fn().mockResolvedValue({ data: [], meta: { total: 0 } }),
       generateOrder: jest.fn().mockResolvedValue({ id: "o1" }),
     };
     authorizationsService = {
@@ -175,33 +175,26 @@ describe("BuyerController — buyer portal 500 fixes (F1-INFRA-500S)", () => {
     expect(args).toHaveLength(1);
   });
 
-  it("getStandingOrders: passes customerId directly — no userId lookup", async () => {
+  it("getStandingOrders: the buyer-filtered list, by customerId — no userId lookup (row 479)", async () => {
     await controller.getStandingOrders(MOCK_CTX as any);
 
-    expect(templatesService.findAllForUser).toHaveBeenCalledTimes(1);
-    const [user, customerId] = (templatesService.findAllForUser as jest.Mock).mock.calls[0];
-
-    // OPERATOR role so findAllForUser takes the direct-customerId path
-    expect(user.role).toBe(UserRole.OPERATOR);
-    expect(customerId).toBe("cust-abc");
+    expect(templatesService.findAllForBuyer).toHaveBeenCalledTimes(1);
+    expect(templatesService.findAllForBuyer).toHaveBeenCalledWith("cust-abc");
   });
 
-  it("getTemplates: passes customerId directly — no userId lookup", async () => {
+  it("getTemplates: the buyer-filtered list, by customerId — no userId lookup (row 479)", async () => {
     await controller.getTemplates(MOCK_CTX as any);
 
-    expect(templatesService.findAllForUser).toHaveBeenCalledTimes(1);
-    const [user, customerId] = (templatesService.findAllForUser as jest.Mock).mock.calls[0];
-
-    expect(user.role).toBe(UserRole.OPERATOR);
-    expect(customerId).toBe("cust-abc");
+    expect(templatesService.findAllForBuyer).toHaveBeenCalledTimes(1);
+    expect(templatesService.findAllForBuyer).toHaveBeenCalledWith("cust-abc");
   });
 
   // RF-094 / RF-180: GET /buyer/standing-orders returns 200 (empty array OK)
   it("getStandingOrders: returns data without 500 when customerId is set", async () => {
     const result = await controller.getStandingOrders(MOCK_CTX as any);
-    // templatesService.findAllForUser resolves to { data: [], meta: { total: 0 } }
+    // templatesService.findAllForBuyer resolves to { data: [], meta: { total: 0 } }
     expect(result).toBeDefined();
-    expect(templatesService.findAllForUser).toHaveBeenCalledTimes(1);
+    expect(templatesService.findAllForBuyer).toHaveBeenCalledTimes(1);
   });
 
   // #1208 review LOW-MED: this buyer-portal path bypasses generateOrderForUser entirely

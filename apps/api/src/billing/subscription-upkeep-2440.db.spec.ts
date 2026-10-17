@@ -50,7 +50,7 @@ describeDb("BillingService — #2440 subscription upkeep, real Postgres (SA-450/
   const pricing = {
     checkoutPriceData: jest.fn().mockResolvedValue({
       currency: "usd",
-      product_data: { name: "RouteFlow Starter — monthly" },
+      product_data: { name: "RouteFlow Starter" },
       unit_amount: 34900,
       recurring: { interval: "month" },
     }),
@@ -84,7 +84,7 @@ describeDb("BillingService — #2440 subscription upkeep, real Postgres (SA-450/
       billingNotification as any,
       planTransition as any,
       {
-        checkoutAddonLines: async () => ({ lineItems: [], skus: [] }),
+        checkoutAddonLines: async () => ({ lineItems: [], skus: [], invalid: [] }),
         adoptCheckoutAddons: async () => undefined,
       } as any, // mutations (SA-690)
     );
@@ -185,6 +185,13 @@ describeDb("BillingService — #2440 subscription upkeep, real Postgres (SA-450/
 
   it("SA-450 (3): updated with status past_due ⇒ no status write, nothing booked", async () => {
     const t = await makeTenant("pastdue", TenantStatus.ACTIVE);
+    // F1 (#3407): the handler writes from the subscription as Stripe has it NOW, never from the payload
+    stripe.getSubscription.mockResolvedValueOnce({
+      id: t.subId,
+      status: "past_due",
+      cancel_at_period_end: false,
+      items: { data: [] },
+    });
 
     await deliver("customer.subscription.updated", {
       id: t.subId,

@@ -313,6 +313,16 @@ export class RfInvoiceIssuerService {
       const invoice = await withRfInvoiceNumberLock(() =>
         withRfInvoiceNumber(() =>
           this.prisma.$transaction(async (tx) => {
+            // PR4a: a manual activation holds the Tenant row FOR UPDATE and rewrites the subscription period (and
+            // voids the invoices it covers) in one transaction. Taking the row FOR SHARE here makes this insert wait
+            // for it, and the re-read below sees the NEW period: an issue planned from the OLD period is dropped
+            // (the next sweep plans from the new one) instead of landing an invoice the activation just settled.
+            await tx.$executeRaw`SELECT id FROM "Tenant" WHERE id = ${sub.tenantId} FOR SHARE`;
+            const current = await tx.tenantSubscription.findUnique({
+              where: { tenantId: sub.tenantId },
+              select: { periodStart: true, periodEnd: true },
+            });
+            if (current && !samePeriod(current, sub)) return null;
             const number = await mintRfInvoiceNumber(tx, now);
             const row = await tx.rfInvoice.create({
               data: {
@@ -350,6 +360,7 @@ export class RfInvoiceIssuerService {
           }),
         ),
       );
+      if (!invoice) return { status: "exists" }; // the subscription period moved under us: re-planned next sweep
       // Only after the row is committed: a failed create must never leave a notice saying "was issued".
       // BEST EFFORT: raiseOnce swallows and logs its own failure, and nothing re-raises it - if this notice
       // fails once, the invoice stays issued and the notice is never written again (the row's needsReview flag
@@ -450,4 +461,13 @@ export function isCandidate(sub: IssuerSubscription): boolean {
     sub.tenant.deletedAt == null &&
     sub.tenant.status === "ACTIVE"
   );
+}
+
+/** The subscription period the sweep read, compared to the one re-read under the Tenant share lock. */
+function samePeriod(
+  a: { periodStart: Date | null; periodEnd: Date | null },
+  b: { periodStart: Date | null; periodEnd: Date | null },
+): boolean {
+  const t = (d: Date | null) => (d instanceof Date ? d.getTime() : null);
+  return t(a.periodStart) === t(b.periodStart) && t(a.periodEnd) === t(b.periodEnd);
 }

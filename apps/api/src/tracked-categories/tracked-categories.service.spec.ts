@@ -728,16 +728,19 @@ describe("TrackedCategoriesService", () => {
           active: true,
           _count: { products: 0 },
         });
-        prisma.product.updateMany.mockResolvedValue({ count: 4 });
+        prisma.product.updateManyAndReturn.mockResolvedValue([{ id: "p1" }, { id: "p2" }]);
 
         await service.updateSubcategory("c1", "s1", { name: "Zyn Pouches" });
 
-        expect(prisma.product.updateMany).toHaveBeenCalledWith({
+        // ONE guarded write (still mirroring the old name, or blank) that returns exactly the rows it renamed,
+        // so the label sync never touches a product whose text changed meanwhile.
+        expect(prisma.product.updateManyAndReturn).toHaveBeenCalledWith({
           where: {
             trackedSubcategoryId: "s1",
             OR: [{ category: "Zyn" }, { category: null }],
           },
           data: { category: "Zyn Pouches" },
+          select: { id: true },
         });
       });
 

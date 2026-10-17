@@ -89,6 +89,20 @@ describe("buyer verify-merge page: confirm only on click", () => {
     expect(screen.getByText(/submit a new merge request/i)).toBeInTheDocument();
   });
 
+  it("maps an HTTP 429 to fixed copy, never the throttler's text", async () => {
+    const user = userEvent.setup();
+    mockPost.mockRejectedValueOnce({
+      response: { status: 429, data: { message: "ThrottlerException: Too Many Requests" } },
+    });
+    render(<VerifyMergePage />);
+
+    await user.click(await screen.findByRole("button", { name: /confirm account merge/i }));
+
+    expect(await screen.findByRole("heading", { name: "Verification Failed" })).toBeInTheDocument();
+    expect(screen.getByText("Too many attempts. Try again in 15 minutes.")).toBeInTheDocument();
+    expect(screen.queryByText(/ThrottlerException/)).not.toBeInTheDocument();
+  });
+
   it("falls back to a neutral error when the request fails without a message", async () => {
     const user = userEvent.setup();
     mockPost.mockRejectedValueOnce(new Error("Network Error"));
@@ -131,9 +145,13 @@ describe("buyer verify-merge page: confirm only on click", () => {
 
       const region = await screen.findByRole("status");
       expect(region).toHaveAttribute("aria-live", "polite");
-      expect(region).toContainElement(
+      // a status live-region must not contain the button: it is a sibling, outside the region
+      expect(region).not.toContainElement(
         screen.getByRole("button", { name: /confirm account merge/i }),
       );
+      expect(
+        screen.getByRole("button", { name: /confirm account merge/i }).closest("[role=status]"),
+      ).toBeNull();
       // an on-load render must not steal focus from the page
       expect(region).not.toHaveFocus();
     });

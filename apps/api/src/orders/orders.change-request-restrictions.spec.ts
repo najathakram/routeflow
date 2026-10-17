@@ -52,6 +52,7 @@ describe("OrdersService.approveChangeRequestAtStop — selling restrictions (lan
     type: "CHANGE_QTY",
     status: "PENDING",
     payload: {},
+    requestedByRole: "DRIVER", // F1(i): staff-filed unless a test says otherwise (the author's channel counts)
     ...o,
   });
   const ADD_X = cr({
@@ -109,6 +110,18 @@ describe("OrdersService.approveChangeRequestAtStop — selling restrictions (lan
     expect(h.restrictions.assertLinesSellable).not.toHaveBeenCalled();
   });
 
+  it.each([
+    [{ fulfillPath: "PICKUP" }, "PICKUP"],
+    [{ fulfillPath: "ROUTE" }, "DELIVERY"],
+  ])("L8: an at-door add on an order with %j is judged as %s", async (facts, kind) => {
+    on();
+    h.prisma.order.findUnique.mockResolvedValue({ ...ORDER, ...facts });
+    await approve(ADD_X);
+    expect(h.restrictions.assertLinesSellable).toHaveBeenCalledWith(
+      expect.objectContaining({ fulfilmentKind: kind }),
+    );
+  });
+
   it("ON: an ADD_ITEM asks the choke point once — row tenant, customer, the product, STAFF — before the invoice revert and the transaction", async () => {
     on();
     await approve(ADD_X);
@@ -119,6 +132,7 @@ describe("OrdersService.approveChangeRequestAtStop — selling restrictions (lan
       customerId: "cust-1",
       lines: [{ productId: "prod-x" }],
       channel: "STAFF",
+      fulfilmentKind: "DELIVERY",
     });
     const asked = firstCall(h.restrictions.assertLinesSellable);
     expect(asked).toBeLessThan(firstCall(revert));
@@ -189,5 +203,61 @@ describe("OrdersService.approveChangeRequestAtStop — selling restrictions (lan
     h.prisma.order.findUnique.mockResolvedValue({ ...ORDER, lineItems: [{ ...LINE, qty: 6 }] });
     h.prisma.orderItem.findMany.mockResolvedValue([LINE]);
     await expect(approve(RAISE_A)).resolves.toMatchObject({ merged: true });
+  });
+  // F1(i): the line is judged at the stricter of the resolver's and the REQUESTER's channel.
+  describe("the requester's channel counts, not only the resolver's", () => {
+    /** A product the buyer portal bans is refused on BUYER_PORTAL only. */
+    const bannedForBuyers = () =>
+      h.restrictions.assertLinesSellable.mockImplementation(
+        async (p: { channel: string; lines: Array<{ productId: string }> }) => {
+          if (p.channel === "BUYER_PORTAL" && p.lines.some((l) => l.productId === "prod-x"))
+            throw new ConflictException({ code: "SELLING_RESTRICTED", blockedLines: [] });
+        },
+      );
+
+    it("a BUYER's ADD_ITEM approved by a driver is judged on BUYER_PORTAL: a buyer-banned product is refused, nothing merges", async () => {
+      bannedForBuyers();
+
+      await expect(
+        approve({ ...ADD_X, requestedByRole: "CUSTOMER" }, driver),
+      ).rejects.toMatchObject({
+        response: { code: "SELLING_RESTRICTED" },
+      });
+
+      expect(h.restrictions.assertLinesSellable).toHaveBeenCalledWith(
+        expect.objectContaining({ channel: "BUYER_PORTAL", lines: [{ productId: "prod-x" }] }),
+      );
+      expect(h.prisma.orderItem.create).not.toHaveBeenCalled();
+      expect(revert).not.toHaveBeenCalled();
+    });
+
+    it("an UNKNOWN requester (no role recorded) is the buyer channel too", async () => {
+      bannedForBuyers();
+
+      await expect(approve({ ...ADD_X, requestedByRole: null }, driver)).rejects.toMatchObject({
+        response: { code: "SELLING_RESTRICTED" },
+      });
+    });
+
+    it("control: the SAME product requested by the DRIVER and approved by a driver stays on STAFF and merges", async () => {
+      bannedForBuyers();
+      on();
+
+      await expect(approve({ ...ADD_X, requestedByRole: "DRIVER" }, driver)).resolves.toMatchObject(
+        { merged: true },
+      );
+
+      expect(h.restrictions.assertLinesSellable).toHaveBeenCalledWith(
+        expect.objectContaining({ channel: "STAFF" }),
+      );
+    });
+
+    it("a buyer's raise (CHANGE_QTY) approved by an operator is judged on BUYER_PORTAL as well", async () => {
+      await approve({ ...RAISE_A, requestedByRole: "CUSTOMER" });
+
+      expect(h.restrictions.assertLinesSellable).toHaveBeenCalledWith(
+        expect.objectContaining({ channel: "BUYER_PORTAL" }),
+      );
+    });
   });
 });

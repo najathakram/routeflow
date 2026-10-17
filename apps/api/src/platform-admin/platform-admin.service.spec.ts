@@ -96,7 +96,12 @@ describe("PlatformAdminService — audit provenance", () => {
   // SA-733r7 PR-B3: every exit from a dunning pause clears Stripe pause_collection after its commit.
   let dunning: { clearPauseAfterCommit: jest.Mock };
   // the owed-invoice re-read of the PAYMENT_OVERDUE guard
-  let stripeMock: { isConfigured: boolean; getInvoiceFacts: jest.Mock };
+  let stripeMock: {
+    isConfigured: boolean;
+    getSubscription: jest.Mock;
+    getCustomer: jest.Mock;
+    getInvoiceFacts: jest.Mock;
+  };
 
   const ADMIN_ID = "super-1";
   const TENANT_ID = "tenant-1";
@@ -120,11 +125,20 @@ describe("PlatformAdminService — audit provenance", () => {
       // B556: createTenant()/register() now create a subscription row alongside the tenant.
       create: jest.fn().mockResolvedValue({}),
     };
+    // PR4a: the activation auto-voids covered OPEN RouteFlow invoices inside its transaction; none by default.
+    (prisma as any).rfInvoice = {
+      // the window anchor: the earliest OPEN invoice with a period (none by default -> the window starts now)
+      findFirst: jest.fn().mockResolvedValue(null),
+      findMany: jest.fn().mockResolvedValue([]),
+      updateMany: jest.fn().mockResolvedValue({ count: 1 }),
+    };
     (prisma as any).auditLog = {
       findMany: jest.fn().mockResolvedValue([]),
       count: jest.fn().mockResolvedValue(0),
       // S3: activateManualSubscription writes its billing marker row inside the transaction.
       create: jest.fn().mockResolvedValue({}),
+      // PR4a: the repeat guard looks for the same payment's marker just written (none by default)
+      findFirst: jest.fn().mockResolvedValue(null),
     };
     // createMockPrisma's default $transaction mock builds `tx` from its internal model
     // set, which — like the top level — omits tenantSubscription. updatePlan writes
@@ -214,6 +228,8 @@ describe("PlatformAdminService — audit provenance", () => {
     dunning = { clearPauseAfterCommit: jest.fn().mockResolvedValue(undefined) };
     stripeMock = {
       isConfigured: false,
+      getSubscription: jest.fn().mockResolvedValue({ status: "active", customer: "cus_1" }),
+      getCustomer: jest.fn().mockResolvedValue({ id: "cus_1" }),
       getInvoiceFacts: jest.fn().mockResolvedValue({
         status: "open",
         amountPaid: 0,
@@ -289,6 +305,155 @@ describe("PlatformAdminService — audit provenance", () => {
     expect(auditLog).toHaveBeenCalledWith(
       expect.objectContaining({ action: "TENANT_REACTIVATED", tenantId: TENANT_ID }),
     );
+  });
+
+  // F4: an admin-set READ_ONLY carries the reason `admin_set` (never null) so a later renewal can tell it from a
+  // lapsed trial; and a CANCELLED over a LIVE Stripe subscription is refused - cancel the subscription first.
+  describe("updateStatus - F4 admin_set / cancel-the-subscription-first", () => {
+    const before = (over: Record<string, unknown> = {}) => {
+      // M2: the Stripe gate reads the stored subscription id BEFORE the transaction (a plain read).
+      (prisma as any).tenantSubscription.findUnique.mockResolvedValue({
+        stripeSubId:
+          (over.subscription as { stripeSubId?: string } | undefined)?.stripeSubId ?? null,
+        stripeCustomerId: "cus_1",
+      });
+      return prisma.tenant.findUniqueOrThrow.mockResolvedValue({
+        id: TENANT_ID,
+        slug: "acme",
+        plan: "STARTER",
+        status: "ACTIVE",
+        readOnlyReason: null,
+        class: "PRODUCTION",
+        deletedAt: null,
+        subscription: {
+          planKey: "STARTER",
+          basePriceSnapshot: 99,
+          discount: 0,
+          couponFull: false,
+          stripeSubId: null,
+        },
+        ...over,
+      } as any);
+    };
+
+    it("READ_ONLY is written with readOnlyReason 'admin_set', never null", async () => {
+      before();
+      prisma.tenant.findUnique.mockResolvedValue({ id: TENANT_ID, slug: "acme" } as any);
+      prisma.tenant.update.mockResolvedValue({
+        id: TENANT_ID,
+        slug: "acme",
+        status: "READ_ONLY",
+      } as any);
+      await service.updateStatus(TENANT_ID, { status: "READ_ONLY" } as any, ADMIN_ID);
+      expect(prisma.tenant.update.mock.calls[0][0].data).toEqual({
+        status: "READ_ONLY",
+        readOnlyReason: "admin_set",
+      });
+    });
+
+    it("READ_ONLY over a payment_overdue pause is 'admin_set' too (not nulled)", async () => {
+      before({ status: "READ_ONLY", readOnlyReason: "payment_overdue" });
+      prisma.tenant.findUnique.mockResolvedValue({ id: TENANT_ID, slug: "acme" } as any);
+      prisma.tenant.update.mockResolvedValue({
+        id: TENANT_ID,
+        slug: "acme",
+        status: "READ_ONLY",
+      } as any);
+      await service.updateStatus(TENANT_ID, { status: "READ_ONLY" } as any, ADMIN_ID);
+      expect(prisma.tenant.update.mock.calls[0][0].data.readOnlyReason).toBe("admin_set");
+    });
+
+    it("CANCELLED with a live stripeSubId: 409 TENANT_CANCEL_SUBSCRIPTION_FIRST, nothing written", async () => {
+      before({
+        subscription: {
+          planKey: "STARTER",
+          basePriceSnapshot: 99,
+          discount: 0,
+          couponFull: false,
+          stripeSubId: "sub_live",
+        },
+      });
+      stripeMock.isConfigured = true;
+      stripeMock.getSubscription.mockResolvedValue({ status: "active", customer: "cus_1" });
+      prisma.tenant.findUnique.mockResolvedValue({ id: TENANT_ID, slug: "acme" } as any);
+      const err: any = await service
+        .updateStatus(TENANT_ID, { status: "CANCELLED" } as any, ADMIN_ID)
+        .catch((e) => e);
+      expect(err.getStatus()).toBe(409);
+      expect(err.getResponse()).toMatchObject({ code: "TENANT_CANCEL_SUBSCRIPTION_FIRST" });
+      expect(prisma.tenant.update).not.toHaveBeenCalled();
+    });
+
+    const withSub = () =>
+      before({
+        subscription: {
+          planKey: "STARTER",
+          basePriceSnapshot: 99,
+          discount: 0,
+          couponFull: false,
+          stripeSubId: "sub_ended",
+        },
+      });
+    const cancelOk = async () => {
+      prisma.tenant.findUnique.mockResolvedValue({ id: TENANT_ID, slug: "acme" } as any);
+      prisma.tenant.update.mockResolvedValue({
+        id: TENANT_ID,
+        slug: "acme",
+        status: "CANCELLED",
+      } as any);
+      await service.updateStatus(TENANT_ID, { status: "CANCELLED" } as any, ADMIN_ID);
+      expect(prisma.tenant.update.mock.calls[0][0].data.status).toBe("CANCELLED");
+    };
+
+    it("CANCELLED over an ENDED Stripe subscription (stripeSubId kept) is allowed", async () => {
+      withSub();
+      stripeMock.isConfigured = true;
+      stripeMock.getSubscription.mockResolvedValue({ status: "canceled", customer: "cus_1" });
+      await cancelOk();
+      expect(stripeMock.getSubscription).toHaveBeenCalledWith("sub_ended");
+    });
+
+    it("CANCELLED when Stripe no longer knows the subscription (404) is allowed", async () => {
+      withSub();
+      stripeMock.isConfigured = true;
+      stripeMock.getSubscription.mockRejectedValue({ code: "resource_missing", statusCode: 404 });
+      await cancelOk();
+    });
+
+    it("a Stripe read failure FAILS CLOSED: 409, nothing written", async () => {
+      withSub();
+      stripeMock.isConfigured = true;
+      stripeMock.getSubscription.mockRejectedValue(new Error("network"));
+      prisma.tenant.findUnique.mockResolvedValue({ id: TENANT_ID, slug: "acme" } as any);
+      const err: any = await service
+        .updateStatus(TENANT_ID, { status: "CANCELLED" } as any, ADMIN_ID)
+        .catch((e) => e);
+      expect(err.getStatus()).toBe(409);
+      expect(prisma.tenant.update).not.toHaveBeenCalled();
+    });
+
+    it("Stripe not configured with a stored subscription FAILS CLOSED too", async () => {
+      withSub();
+      stripeMock.isConfigured = false;
+      prisma.tenant.findUnique.mockResolvedValue({ id: TENANT_ID, slug: "acme" } as any);
+      const err: any = await service
+        .updateStatus(TENANT_ID, { status: "CANCELLED" } as any, ADMIN_ID)
+        .catch((e) => e);
+      expect(err.getStatus()).toBe(409);
+      expect(prisma.tenant.update).not.toHaveBeenCalled();
+    });
+
+    it("CANCELLED with no Stripe subscription is allowed", async () => {
+      before();
+      prisma.tenant.findUnique.mockResolvedValue({ id: TENANT_ID, slug: "acme" } as any);
+      prisma.tenant.update.mockResolvedValue({
+        id: TENANT_ID,
+        slug: "acme",
+        status: "CANCELLED",
+      } as any);
+      await service.updateStatus(TENANT_ID, { status: "CANCELLED" } as any, ADMIN_ID);
+      expect(prisma.tenant.update.mock.calls[0][0].data.status).toBe("CANCELLED");
+    });
   });
 
   // FINDING-4 RULING (2026-09-14, lead): an admin reactivation LEAVES an armed downgrade armed.
@@ -4351,6 +4516,263 @@ describe("PlatformAdminService — audit provenance", () => {
         toPlanVersionId: "v-9",
         actor: { id: ADMIN_ID },
       });
+    });
+  });
+
+  describe("activateManualSubscription - auto-void of covered RouteFlow invoices (PR4a)", () => {
+    const activateDto = {
+      plan: "PROFESSIONAL",
+      billingPeriodDays: 30,
+      paymentMethod: "BANK_TRANSFER",
+    } as any;
+
+    beforeEach(() => {
+      prisma.tenant.findUnique.mockResolvedValue({ id: TENANT_ID, slug: "acme" } as any);
+      planCatalogService.getPublishedVersion.mockResolvedValue({
+        id: "v-9",
+        definitions: [{ planKey: "SCALE", monthlyPrice: 499, isCustom: false }],
+      } as any);
+      prisma.tenant.update.mockResolvedValue({ id: TENANT_ID, slug: "acme" } as any);
+    });
+
+    it("voids the OPEN invoices the new window covers, in the activation transaction, tenant-scoped", async () => {
+      const covered = {
+        id: "inv-1",
+        number: "RF-2026-0001",
+        amount: 499,
+        periodKey: "2026-10-10T00:00:00.000Z",
+        periodStart: new Date(Date.now() + 3 * 86_400_000),
+        periodEnd: new Date(Date.now() + 20 * 86_400_000),
+      };
+      (prisma as any).rfInvoice.findMany.mockResolvedValue([covered]);
+
+      await service.activateManualSubscription(TENANT_ID, activateDto, ADMIN_ID);
+
+      const where = (prisma as any).rfInvoice.findMany.mock.calls[0][0].where;
+      expect(where).toMatchObject({ tenantId: TENANT_ID, status: "OPEN" });
+      // the overlap read: the recorded period [now, now+30d) is the window
+      expect(where.periodStart.lt.getTime() - where.periodEnd.gt.getTime()).toBe(30 * 86_400_000);
+      expect((prisma as any).rfInvoice.updateMany.mock.calls[0][0]).toMatchObject({
+        where: { id: "inv-1", tenantId: TENANT_ID, status: "OPEN" },
+        data: {
+          status: "VOID",
+          voidReason: expect.stringMatching(/^Covered by manual activation on \d{4}-\d{2}-\d{2}$/),
+        },
+      });
+      // an activation void KEEPS the periodKey (period consumed; only the admin void renames it)
+      expect((prisma as any).rfInvoice.updateMany.mock.calls[0][0].data).not.toHaveProperty(
+        "periodKey",
+      );
+      const actions = (prisma as any).auditLog.create.mock.calls.map((c: any) => c[0].data.action);
+      expect(actions).toEqual(expect.arrayContaining(["RF_INVOICE_VOIDED"]));
+    });
+
+    it("PIN 1 (service): with an OPEN invoice [P, P+30d) ahead, the period is written from P (not from now) and ends P+30d", async () => {
+      const DAY = 86_400_000;
+      const P = new Date(Date.now() + 3 * DAY);
+      // 1st read = the window anchor (the earliest OPEN invoice); the 2nd = "is a PAID invoice in the way" (none)
+      (prisma as any).rfInvoice.findFirst.mockResolvedValueOnce({ periodStart: P });
+      (prisma as any).rfInvoice.findMany.mockResolvedValue([
+        {
+          id: "inv-1",
+          number: "RF-2026-0001",
+          amount: 499,
+          periodKey: P.toISOString(),
+          periodStart: P,
+          periodEnd: new Date(P.getTime() + 30 * DAY),
+        },
+      ]);
+
+      const out = await service.activateManualSubscription(TENANT_ID, activateDto, ADMIN_ID);
+
+      const anchor = (prisma as any).rfInvoice.findFirst.mock.calls[0][0];
+      expect(anchor.where).toMatchObject({ tenantId: TENANT_ID, status: "OPEN" });
+      expect(anchor.orderBy).toEqual({ periodStart: "asc" });
+      const upsert = (prisma as any).tenantSubscription.upsert.mock.calls[0][0];
+      for (const branch of [upsert.create, upsert.update]) {
+        expect(branch.periodStart).toEqual(P);
+        expect(branch.periodEnd).toEqual(new Date(P.getTime() + 30 * DAY));
+      }
+      // the void sees the SAME window, so the invoice is covered and voided
+      const where = (prisma as any).rfInvoice.findMany.mock.calls[0][0].where;
+      expect(where.periodStart.lt).toEqual(new Date(P.getTime() + 30 * DAY));
+      expect(where.periodEnd.gt).toEqual(P);
+      expect((prisma as any).rfInvoice.updateMany.mock.calls[0][0].data.status).toBe("VOID");
+      expect(out.periodStart).toEqual(P);
+      expect(out.periodEnd).toEqual(new Date(P.getTime() + 30 * DAY));
+      const marker = (prisma as any).auditLog.create.mock.calls
+        .map((c: any) => c[0].data)
+        .find((d: any) => d.action === "TENANT_MANUAL_ACTIVATION_MARKER");
+      expect(marker.meta.periodEnd).toBe(new Date(P.getTime() + 30 * DAY).toISOString());
+      // M1: the marker's start is the ANCHORED start, never the click time
+      expect(marker.meta.periodStart).toBe(P.toISOString());
+      // ...and it carries the repeat guard's key plus what this activation settled
+      expect(marker.meta).toMatchObject({
+        paymentRef: activateDto.paymentRef ?? null,
+        billingPeriodDays: 30,
+        voidedInvoiceIds: ["inv-1"],
+        flaggedInvoiceIds: [],
+      });
+    });
+
+    it("M1 pin: the activation is clicked 10 days BEFORE the open invoice's period P -> marker.periodStart == P, the subscription row agrees", async () => {
+      const DAY = 86_400_000;
+      const P = new Date(Date.now() + 10 * DAY);
+      (prisma as any).rfInvoice.findFirst.mockResolvedValueOnce({
+        number: "RF-2026-0007",
+        periodStart: P,
+        periodEnd: new Date(P.getTime() + 30 * DAY),
+      });
+
+      await service.activateManualSubscription(TENANT_ID, activateDto, ADMIN_ID);
+
+      const marker = (prisma as any).auditLog.create.mock.calls
+        .map((c: any) => c[0].data)
+        .find((d: any) => d.action === "TENANT_MANUAL_ACTIVATION_MARKER");
+      const upsert = (prisma as any).tenantSubscription.upsert.mock.calls[0][0];
+      expect(marker.meta.periodStart).toBe(P.toISOString());
+      expect(marker.meta.periodStart).toBe(upsert.update.periodStart.toISOString());
+    });
+
+    it("M2 pin (service): OPEN Aug, PAID Sep in the way of a 90-day window -> 409 ACTIVATION_OVERLAPS_PAID_PERIOD, nothing written", async () => {
+      const DAY = 86_400_000;
+      const aug = new Date(Date.now() - 2 * DAY);
+      const sepStart = new Date(aug.getTime() + 31 * DAY);
+      (prisma as any).rfInvoice.findFirst
+        .mockResolvedValueOnce({
+          number: "RF-AUG",
+          periodStart: aug,
+          periodEnd: new Date(aug.getTime() + 31 * DAY),
+        })
+        .mockResolvedValueOnce({
+          number: "RF-SEP",
+          periodStart: sepStart,
+          periodEnd: new Date(sepStart.getTime() + 30 * DAY),
+        });
+
+      const err = await service
+        .activateManualSubscription(TENANT_ID, { ...activateDto, billingPeriodDays: 90 }, ADMIN_ID)
+        .then(
+          () => null,
+          (e: unknown) => e,
+        );
+
+      expect(err).toBeInstanceOf(ConflictException);
+      expect((err as ConflictException).getResponse()).toMatchObject({
+        code: "ACTIVATION_OVERLAPS_PAID_PERIOD",
+        invoiceNumber: "RF-SEP",
+        maxDays: 31,
+      });
+      expect((prisma as any).tenantSubscription.upsert).not.toHaveBeenCalled();
+      expect((prisma as any).rfInvoice.updateMany).not.toHaveBeenCalled();
+      expect((prisma as any).auditLog.create).not.toHaveBeenCalled();
+    });
+
+    it("train S2 (money): an identical activation after a LAPSE is not a repeat - it books again", async () => {
+      const DAY = 86_400_000;
+      const start = new Date(Date.now() - 1000);
+      (prisma as any).auditLog.findFirst.mockResolvedValueOnce({
+        meta: {
+          plan: activateDto.plan,
+          paymentMethod: activateDto.paymentMethod,
+          paymentRef: activateDto.paymentRef ?? null,
+          billingPeriodDays: activateDto.billingPeriodDays,
+          periodStart: start.toISOString(),
+          periodEnd: new Date(start.getTime() + 30 * DAY).toISOString(),
+        },
+      });
+      const baseFind = (prisma as any).tenant.findUniqueOrThrow.getMockImplementation();
+      (prisma as any).tenant.findUniqueOrThrow.mockImplementation((args: any) =>
+        args?.select?.status ? Promise.resolve({ status: "SUSPENDED" }) : baseFind?.(args),
+      );
+
+      const out: any = await service.activateManualSubscription(TENANT_ID, activateDto, ADMIN_ID);
+
+      expect(out?.repeated).not.toBe(true);
+      expect((prisma as any).tenantSubscription.upsert).toHaveBeenCalled();
+    });
+
+    it("M3 pin (service): the same payment sent twice records ONE period and ONE marker - the repeat writes nothing", async () => {
+      const DAY = 86_400_000;
+      const start = new Date(Date.now() - 1000);
+      (prisma as any).auditLog.findFirst.mockResolvedValueOnce({
+        meta: {
+          plan: activateDto.plan,
+          paymentMethod: activateDto.paymentMethod,
+          paymentRef: activateDto.paymentRef ?? null,
+          billingPeriodDays: activateDto.billingPeriodDays,
+          periodStart: start.toISOString(),
+          periodEnd: new Date(start.getTime() + 30 * DAY).toISOString(),
+        },
+      });
+      // the first click activated it: the tenant is ACTIVE under the lock (train S2: a repeat needs that)
+      const baseFind = (prisma as any).tenant.findUniqueOrThrow.getMockImplementation();
+      (prisma as any).tenant.findUniqueOrThrow.mockImplementation((args: any) =>
+        args?.select?.status ? Promise.resolve({ status: "ACTIVE" }) : baseFind?.(args),
+      );
+
+      const out: any = await service.activateManualSubscription(TENANT_ID, activateDto, ADMIN_ID);
+
+      expect(out).toMatchObject({ repeated: true, periodStart: start });
+      expect(out.periodEnd).toEqual(new Date(start.getTime() + 30 * DAY));
+      expect((prisma as any).tenantSubscription.upsert).not.toHaveBeenCalled();
+      expect(prisma.tenant.update).not.toHaveBeenCalled();
+      expect((prisma as any).rfInvoice.findMany).not.toHaveBeenCalled();
+      expect((prisma as any).auditLog.create).not.toHaveBeenCalled();
+      expect(auditLog).not.toHaveBeenCalled(); // no second TENANT_SUBSCRIPTION_ACTIVATED trail row
+    });
+
+    it("PIN 3 (service): with no OPEN invoice the period starts now and runs the activation length", async () => {
+      const before = Date.now();
+      const out = await service.activateManualSubscription(TENANT_ID, activateDto, ADMIN_ID);
+      const after = Date.now();
+
+      expect(out.periodStart.getTime()).toBeGreaterThanOrEqual(before);
+      expect(out.periodStart.getTime()).toBeLessThanOrEqual(after);
+      expect(out.periodEnd.getTime() - out.periodStart.getTime()).toBe(30 * 86_400_000);
+      const upsert = (prisma as any).tenantSubscription.upsert.mock.calls[0][0];
+      expect(upsert.update.periodStart).toEqual(out.periodStart);
+      expect(upsert.update.periodEnd).toEqual(out.periodEnd);
+    });
+
+    it("PIN (ended window): an OPEN invoice whose 30-day window already ended -> 409 ACTIVATION_PERIOD_ALREADY_ENDED, nothing written", async () => {
+      const DAY = 86_400_000;
+      const ended = new Date(Date.now() - 40 * DAY);
+      const endedOn = new Date(ended.getTime() + 30 * DAY).toISOString().slice(0, 10);
+      const invoiceEnd = new Date(ended.getTime() + 30 * DAY);
+      (prisma as any).rfInvoice.findFirst.mockResolvedValue({
+        number: "RF-2026-0042",
+        periodStart: ended,
+        periodEnd: invoiceEnd,
+      });
+
+      const err = await service.activateManualSubscription(TENANT_ID, activateDto, ADMIN_ID).then(
+        () => null,
+        (e: unknown) => e,
+      );
+
+      expect(err).toBeInstanceOf(ConflictException);
+      expect((err as ConflictException).getStatus()).toBe(409);
+      expect((err as ConflictException).getResponse()).toEqual({
+        code: "ACTIVATION_PERIOD_ALREADY_ENDED",
+        message: `Invoice RF-2026-0042 (${ended.toISOString().slice(0, 10)} to ${invoiceEnd.toISOString().slice(0, 10)}) is still open and this payment's window ended on ${endedOn}. Mark it paid or void it in RouteFlow invoices, or activate for at least 41 days.`,
+        invoiceNumber: "RF-2026-0042",
+        endedOn,
+        minDays: 41,
+      });
+      // refused before any write of the transaction
+      expect(prisma.tenant.update).not.toHaveBeenCalled();
+      expect((prisma as any).tenantSubscription.upsert).not.toHaveBeenCalled();
+      expect((prisma as any).rfInvoice.findMany).not.toHaveBeenCalled();
+      expect((prisma as any).rfInvoice.updateMany).not.toHaveBeenCalled();
+      expect((prisma as any).auditLog.create).not.toHaveBeenCalled();
+    });
+
+    it("a void failure fails the activation (the transaction rolls back as one)", async () => {
+      (prisma as any).rfInvoice.findMany.mockRejectedValue(new Error("void boom"));
+      await expect(
+        service.activateManualSubscription(TENANT_ID, activateDto, ADMIN_ID),
+      ).rejects.toThrow("void boom");
     });
   });
 

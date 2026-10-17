@@ -15,6 +15,8 @@ import { ReplenishmentService } from "./replenishment.service";
 import { PromotionsService } from "../promotions/promotions.service";
 import { signableImageKeys } from "../products/product-image-keys";
 import type { BuyerProduct } from "@routeflow/types";
+import { buyerCategoryWhere, buyerSearchWhere } from "./buyer-catalog-where";
+import { displayCategory, productDisplayName } from "../products/product-display-name";
 import { SellingRestrictionsService } from "../selling-restrictions/selling-restrictions.service";
 import {
   buyerVisibilityFor,
@@ -199,10 +201,16 @@ export class BuyerCatalogService {
       andWhere,
     };
 
+    // H6: search and category are judged HERE, not by the staff list's clauses: a family variant stores only its own
+    // label ("Classic") and no category, so the buyer must find it by its family's name and under its family's
+    // category. The family container itself is never a tile (buyerVisibleProductWhere).
+    const search = query.search?.trim();
+    if (search) andWhere.push(buyerSearchWhere(search));
+    const category = query.category?.trim();
+    if (category) andWhere.push(buyerCategoryWhere(category));
+
     const result = await this.productsService.findAll(
       {
-        search: query.search,
-        category: query.category,
         page: fetchAll ? 1 : page,
         limit: fetchAll ? 0 : limit,
       },
@@ -248,12 +256,12 @@ export class BuyerCatalogService {
 
         return {
           id: p.id,
-          name: p.name,
+          name: productDisplayName(p, p.parent?.name),
           description: p.description,
           sku: p.sku,
           barcode: p.barcode,
           unit: p.unit,
-          category: p.category,
+          category: displayCategory(p, p.parent),
           buyerPrice,
           unitsPerBox: p.unitsPerBox ?? null,
           isFeatured: p.isFeatured ?? false,
@@ -333,12 +341,18 @@ export class BuyerCatalogService {
       gateOr.length > 0 ? { OR: gateOr } : undefined,
     );
 
-    const [total, byCategory, newCount, favRows, estimates, promos] = await Promise.all([
+    const [total, byCategory, inherited, newCount, favRows, estimates, promos] = await Promise.all([
       this.prisma.forTenant().product.count({ where: baseWhere }),
       this.prisma.forTenant().product.groupBy({
         by: ["category"],
         where: { ...baseWhere, category: { not: null } },
         _count: { _all: true },
+      }),
+      // H6: family variants carry no category of their own; they count under
+      // the family's category, matching the buyer category filter.
+      this.prisma.forTenant().product.findMany({
+        where: { AND: [baseWhere, { category: null, parent: { category: { not: null } } }] },
+        select: { parent: { select: { category: true } } },
       }),
       this.prisma.forTenant().product.count({ where: { ...baseWhere, isNew: true } }),
       this.prisma.forTenant().buyerFavorite.findMany({
@@ -365,10 +379,10 @@ export class BuyerCatalogService {
 
     return {
       total,
-      categories: (byCategory as Array<{ category: string | null; _count: { _all: number } }>)
-        .filter((c) => c.category)
-        .map((c) => ({ name: c.category as string, count: c._count._all }))
-        .sort((a, b) => a.name.localeCompare(b.name)),
+      categories: mergeCategoryCounts(
+        byCategory as Array<{ category: string | null; _count: { _all: number } }>,
+        inherited.map((r) => r.parent?.category ?? null),
+      ),
       collections: { usuals, favorites, new: newCount, deals },
       lockedCategories: locked,
     };
@@ -432,14 +446,15 @@ export class BuyerCatalogService {
     // presigns every image, the listing only the first MAX_TILE_IMAGES.
     const imageUrls: string[] = (product as any).imageUrls ?? [];
 
+    const parentRow = (product as any).parent as { name?: string; category?: string | null } | null;
     return {
       id: product.id,
-      name: product.name,
+      name: productDisplayName(product as any, parentRow?.name),
       description: product.description,
       sku: product.sku,
       barcode: product.barcode,
       unit: product.unit,
-      category: product.category,
+      category: displayCategory(product as any, parentRow),
       buyerPrice,
       // The merch/box/stock fields the listing returns must be here too: the
       // detail page shares the tile's add-to-cart semantics (boxed => 1 box)
@@ -475,13 +490,26 @@ export class BuyerCatalogService {
    */
   async getCategories(customerId: string) {
     const visibility = await this.buyerVisibility(customerId);
-    const products = await this.prisma.forTenant().product.findMany({
-      where: buyerVisibleProductWhere(visibility, { category: { not: null } }),
-      select: { category: true },
-      distinct: ["category"],
-      orderBy: { category: "asc" },
-    });
-    return products.map((p) => p.category).filter(Boolean);
+    const [own, inherited] = await Promise.all([
+      this.prisma.forTenant().product.findMany({
+        where: buyerVisibleProductWhere(visibility, { category: { not: null } }),
+        select: { category: true },
+        distinct: ["category"],
+        orderBy: { category: "asc" },
+      }),
+      // H6: a family variant has no category of its own and sits under its family's.
+      this.prisma.forTenant().product.findMany({
+        where: buyerVisibleProductWhere(visibility, {
+          category: null,
+          parent: { category: { not: null } },
+        }),
+        select: { parent: { select: { category: true } } },
+      }),
+    ]);
+    const names = new Set<string>();
+    for (const p of own) if (p.category) names.add(p.category);
+    for (const p of inherited) if (p.parent?.category) names.add(p.parent.category);
+    return [...names].sort((a, b) => a.localeCompare(b));
   }
 
   // ─── Favorites ──────────────────────────────────────────────────────────────
@@ -495,7 +523,10 @@ export class BuyerCatalogService {
       // SA-606 M3: hidden favourites are KEPT (as "no longer available online" stubs) — only the read below decides.
       where: { buyerAccountId, customerId },
       include: {
-        product: { include: { parent: { select: PORTAL_PARENT_SELECT } } },
+        // name/category: a family variant is shown as "<Family> - <Variant>" under the family's category (H6).
+        product: {
+          include: { parent: { select: { ...PORTAL_PARENT_SELECT, name: true, category: true } } },
+        },
       },
       orderBy: { createdAt: "desc" },
     });
@@ -537,7 +568,7 @@ export class BuyerCatalogService {
     const stubs = unavailableFavorites.map((f) => ({
       id: f.id,
       productId: f.productId,
-      name: f.product.name,
+      name: productDisplayName(f.product, f.product.parent?.name),
       unavailable: true as const,
       unavailableText: "No longer available online",
       createdAt: f.createdAt,
@@ -548,10 +579,10 @@ export class BuyerCatalogService {
         unavailable: false as const,
         id: f.id,
         productId: f.productId,
-        name: f.product.name,
+        name: productDisplayName(f.product, f.product.parent?.name),
         sku: f.product.sku,
         unit: f.product.unit,
-        category: f.product.category,
+        category: displayCategory(f.product, f.product.parent),
         buyerPrice: effectiveBuyerPrice(
           getTierPrice(f.product, effectiveTier),
           Number(f.product.pricePerUnit),
@@ -610,4 +641,21 @@ export class BuyerCatalogService {
     if (deleted.count === 0) throw new NotFoundException("Favorite not found");
     return { productId, message: "Removed from favorites" };
   }
+}
+
+/** Own-category group counts plus variants counted under their family's category. */
+function mergeCategoryCounts(
+  own: Array<{ category: string | null; _count: { _all: number } }>,
+  inheritedCategories: Array<string | null>,
+): Array<{ name: string; count: number }> {
+  const counts = new Map<string, number>();
+  for (const c of own) {
+    if (c.category) counts.set(c.category, (counts.get(c.category) ?? 0) + c._count._all);
+  }
+  for (const cat of inheritedCategories) {
+    if (cat) counts.set(cat, (counts.get(cat) ?? 0) + 1);
+  }
+  return [...counts.entries()]
+    .map(([name, count]) => ({ name, count }))
+    .sort((a, b) => a.name.localeCompare(b.name));
 }

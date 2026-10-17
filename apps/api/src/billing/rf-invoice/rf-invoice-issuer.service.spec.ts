@@ -23,6 +23,11 @@ const p2002 = (index: string) => ({
   meta: { driverAdapterError: { cause: { constraint: { index } } } },
 });
 
+const WIN = {
+  periodStart: new Date("2026-10-12T00:00:00.000Z"),
+  periodEnd: new Date("2026-11-12T00:00:00.000Z"),
+};
+
 function sub(over: Record<string, unknown> = {}, tenantOver: Record<string, unknown> = {}) {
   return {
     tenantId: "tenant-acme",
@@ -79,6 +84,7 @@ const DRAFT = {
 function make(
   opts: {
     subs?: any[];
+    currentPeriod?: { periodStart: Date; periodEnd: Date };
     invoices?: any[];
     draft?: any;
     createHook?: (data: any, attempt: number) => void;
@@ -88,7 +94,11 @@ function make(
   const audits: any[] = [];
   let createCalls = 0;
   const prisma: any = {
-    tenantSubscription: { findMany: jest.fn(async () => opts.subs ?? []) },
+    tenantSubscription: {
+      findMany: jest.fn(async () => opts.subs ?? []),
+      // the period re-read under the Tenant share lock (PR4a): absent = unchanged
+      findUnique: jest.fn(async () => opts.currentPeriod ?? null),
+    },
     rfInvoice: {
       findMany: jest.fn(async ({ where }: any) => invoices.filter((r) => matches(r, where))),
       findFirst: jest.fn(async ({ where, orderBy }: any) => {
@@ -299,6 +309,37 @@ describe("RfInvoiceIssuerService", () => {
     const r = await svc.issuePeriod(sub() as any, quarter, NOW, "sa-1");
     expect(r.status).toBe("issued");
     expect((builder.build as jest.Mock).mock.calls[0]).toEqual(["tenant-acme", "MONTHLY", quarter]);
+  });
+
+  it("PR4a: the insert takes the Tenant row FOR SHARE first, so it waits for a manual activation holding it FOR UPDATE", async () => {
+    const { svc, prisma } = make({ subs: [] });
+    await svc.issuePeriod(sub() as any, WIN, NOW, "sa-1");
+    const calls = prisma.$executeRaw.mock.calls.map((c: unknown[]) => (c[0] as string[]).join("?"));
+    expect(calls.some((q: string) => /FROM "Tenant" WHERE id = \? FOR SHARE/.test(q))).toBe(true);
+  });
+
+  it("PR4a: a subscription period that moved since the sweep read it (an activation committed) issues NOTHING", async () => {
+    const { svc, invoices } = make({
+      subs: [],
+      currentPeriod: {
+        periodStart: new Date("2026-10-12T00:00:00.000Z"),
+        periodEnd: new Date("2026-11-11T00:00:00.000Z"),
+      },
+    });
+    const r = await svc.issuePeriod(sub() as any, WIN, NOW, "sa-1");
+    expect(r.status).toBe("exists");
+    expect(invoices).toHaveLength(0);
+  });
+
+  it("PR4a: an unchanged period still issues", async () => {
+    const s = sub();
+    const { svc, invoices } = make({
+      subs: [],
+      currentPeriod: { periodStart: s.periodStart, periodEnd: s.periodEnd },
+    });
+    const r = await svc.issuePeriod(s as any, WIN, NOW, "sa-1");
+    expect(r.status).toBe("issued");
+    expect(invoices).toHaveLength(1);
   });
 
   it("CRON-4: RF_INVOICING_MODE unset (or junk) makes ZERO reads and writes", async () => {

@@ -124,8 +124,8 @@
     "why": "B991 / B987-E (codes + structured fields first): the fulfillment refusal is UNCODED and today's server sentence says what to fix, so it keeps it (coded refusals are mapped first); moved here from orders/[id]/page.tsx; pending"
   },
   "app/(dashboard)/orders/_components/scan/ScanOrderScreen.tsx": {
-    "count": 2,
-    "why": "B986-7 orders + customers: two reads, both pending a code (B991 / B987-E): one folds an unexpected scan-resolver rejection (a JS Error, not a server body); the other is #2865's `res.message` for a refused scan lookup (a server sentence)"
+    "count": 1,
+    "why": "B986-7 orders + customers: folds an unexpected scan-resolver rejection (a JS Error, not a server body) into the scan error message; reviewed, pending a code for the lookup failure (B987-E). The refused-scan read is gone (B993)."
   },
   "app/(dashboard)/orders/_components/scan/useScanCodeHandler.ts": {
     "count": 2,
@@ -269,7 +269,7 @@
     "why": "B986-2 platform-admin: per-surface raw message read, pending"
   },
   "app/(platform-admin)/admin/tenants/[id]/page.tsx": {
-    "count": 7,
+    "count": 6,
     "why": "B986-2 platform-admin: per-surface raw message read, pending"
   },
   "app/(platform-admin)/admin/tenants/page.tsx": {
@@ -410,6 +410,10 @@
     "count": 1,
     "permanent": true,
     "why": "log: console.error of a websocket error, never rendered"
+  },
+  "lib/activation-error-copy.ts": {
+    "count": 1,
+    "why": "B986-2 platform-admin: the activation error line (mapped sentence first, else the server message) moved here from admin/tenants/[id]/page.tsx; pending"
   },
   "lib/invoice-void-copy.ts": {
     "count": 1,

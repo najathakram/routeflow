@@ -58,6 +58,7 @@ function make(
     monthly?: number | null;
     addonLines?: any[];
     addonRows?: Record<string, unknown>[];
+    invalid?: { sku: string; value: string }[];
   } = {},
 ) {
   const db = fakeCatchupDb({
@@ -87,14 +88,16 @@ function make(
       currency: "usd",
       unit_amount: 31000,
       recurring: { interval: "month" },
-      product_data: { name: "RouteFlow Growth — monthly" },
+      product_data: { name: "RouteFlow Growth" },
     })),
   };
   const mutations: any = {
     checkoutAddonLines: jest.fn(async () => ({
       lineItems: o.addonLines ?? [],
       skus: (o.addonLines ?? []).map((l) => l.price_data.product_data.metadata.addonSku),
+      invalid: o.invalid ?? [],
     })),
+    recordInvalidCatalogAddons: jest.fn(async () => undefined),
   };
   const claim = new CatchupClaimService(prisma, stripe as any, { emit: jest.fn() } as any);
   const billing: any = { ensureStripeCustomer: jest.fn(async () => "cus_1") };
@@ -122,7 +125,7 @@ describe("plan() is a read-only dry-run", () => {
     expect(r.plan).toMatchObject({ ok: true, shape: "trial_one_time" });
     expect(r.plan.ok && r.plan.stub).toMatchObject({
       totalCents: 31000,
-      label: "Subscription — October 2026",
+      label: "October 2026 subscription",
     });
     expect(r.plan.ok && r.plan.trialEndAt.toISOString()).toBe("2026-11-01T12:00:00.000Z");
     expect(r.eligible).toBe(true);
@@ -334,6 +337,51 @@ describe("MF2 -> SA-733r9: paid coverage is one walk over every paid source (act
     const params = h.stripe.client.checkout.sessions.create.mock.calls[0][0];
     expect(params.managed_payments).toEqual({ enabled: false });
     expect(params.automatic_tax?.enabled).not.toBe(true);
+  });
+
+  describe("F6: the return paths are joined to the one FRONTEND_URL base inside open()", () => {
+    const saved = process.env.FRONTEND_URL;
+    afterEach(() => {
+      if (saved === undefined) delete process.env.FRONTEND_URL;
+      else process.env.FRONTEND_URL = saved;
+    });
+
+    it("successPath / cancelPath become base + path in the Stripe session", async () => {
+      process.env.FRONTEND_URL = "https://app.test";
+      const h = make({ invoices: [OCT_OPEN], sub: sub() });
+      await h.svc.open("t1", {
+        now: NOW,
+        expectedStubCents: 31000,
+        successPath: "/settings/billing?paid=1",
+        cancelPath: "/settings/billing?checkout=cancelled",
+      });
+      const params = h.stripe.client.checkout.sessions.create.mock.calls[0][0];
+      expect(params.success_url).toBe("https://app.test/settings/billing?paid=1");
+      expect(params.cancel_url).toBe("https://app.test/settings/billing?checkout=cancelled");
+    });
+
+    it.each(["//evil.example", "/\\evil.example", "@evil.com", "https://evil.example", "settings"])(
+      "a return path that is not a same-origin path (%s) is refused before anything is claimed or created",
+      async (bad) => {
+        const h = make({ invoices: [OCT_OPEN], sub: sub() });
+        await expect(
+          h.svc.open("t1", { now: NOW, expectedStubCents: 31000, successPath: bad }),
+        ).rejects.toThrow(/unsafe Checkout return path/);
+        await expect(
+          h.svc.open("t1", { now: NOW, expectedStubCents: 31000, cancelPath: bad }),
+        ).rejects.toThrow(/unsafe Checkout return path/);
+        expect(h.stripe.client.checkout.sessions.create).not.toHaveBeenCalled();
+      },
+    );
+
+    it("with no paths the defaults are unchanged (the super-admin route)", async () => {
+      process.env.FRONTEND_URL = "https://app.test";
+      const h = make({ invoices: [OCT_OPEN], sub: sub() });
+      await h.svc.open("t1", { now: NOW, expectedStubCents: 31000 });
+      const params = h.stripe.client.checkout.sessions.create.mock.calls[0][0];
+      expect(params.success_url).toBe("https://app.test/settings/billing?checkout=success");
+      expect(params.cancel_url).toBe("https://app.test/settings/billing?checkout=cancelled");
+    });
   });
 
   it("activated Sep 26 ([Sep 26, Oct 26)): eligible before AND after the next window is issued (S = Oct 26)", async () => {
@@ -644,5 +692,34 @@ describe("Opus review: planning under the claim, the plan key, billing start", (
     const r = await h.svc.plan("t1", NOW);
     expect(r.eligible).toBe(false);
     expect(r.ineligible).toContain("unplaceable_open_invoice");
+  });
+});
+
+describe("B1102 a held add-on with an unparseable catalog includedAtPlan", () => {
+  const INVALID = [{ sku: "FORECASTING", value: "pro_typo" }];
+  const held = [{ sku: "FORECASTING", quantity: 1, priceSnapshot: 19 }];
+
+  it("the dry-run reports it as addon_catalog_invalid with the catalog code, not 'not card billable', and writes nothing", async () => {
+    const h = make({ invalid: INVALID, addonRows: held });
+    const r = await h.svc.plan("t1", NOW);
+    expect(r.eligible).toBe(false);
+    expect(r.ineligible).toContain("addon_catalog_invalid");
+    expect(catchupReportJson(r).refusals).toContain(API_ERROR_CODES.ADDON_CATALOG_INVALID);
+    expect(h.mutations.recordInvalidCatalogAddons).not.toHaveBeenCalled();
+    expect(h.db.audits).toHaveLength(0);
+  });
+
+  it("open() writes the catalog-invalid notice and answers ADDON_CATALOG_INVALID, with the claim untouched and zero Stripe calls", async () => {
+    const h = make({ invalid: INVALID, addonRows: held });
+    const err: any = await h.svc.open("t1", { now: NOW, expectedStubCents: 31000 }).catch((e) => e);
+    expect(err.getStatus()).toBe(409);
+    expect(err.getResponse()).toMatchObject({
+      code: API_ERROR_CODES.ADDON_CATALOG_INVALID,
+      reason: "CATALOG_INVALID",
+      sku: "FORECASTING",
+    });
+    expect(h.mutations.recordInvalidCatalogAddons).toHaveBeenCalledWith("t1", INVALID);
+    expect(h.stripe.calls).toEqual([]);
+    expect(h.sub().catchupState).toBeNull();
   });
 });
