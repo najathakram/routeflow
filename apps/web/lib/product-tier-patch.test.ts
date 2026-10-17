@@ -1,5 +1,6 @@
 import { applyLadderChange } from "@routeflow/pricing";
 import {
+  cascadeTiers,
   detailsPriceMoves,
   detailsPricePatch,
   editTierPatch,
@@ -213,5 +214,43 @@ describe("detailsPriceMoves: the note names exactly the tiers the save moves wit
   it("is empty when nothing moves", () => {
     expect(detailsPriceMoves(s, { ...seeded }, seeded)).toEqual({});
     expect(detailsPriceMoves(s, { ...seeded, priceTier2: "7" }, seeded)).toEqual({});
+  });
+});
+
+describe("detailsPricePatch: what counts as a change", () => {
+  const s = stored("9.00", "10.00", "0.00", "10.00");
+  const seeded = shown(s);
+
+  it("a value that rounds to the same cents (10.004 vs 10) is the same price, so it is not sent", () => {
+    const out = detailsPricePatch(s, { ...seeded, pricePerUnit: "10.004" }, seeded);
+    expect(out.pricePerUnit).toBeUndefined();
+    expect(
+      detailsPricePatch(s, { ...seeded, priceTier2: "9.004" }, seeded).priceTier2,
+    ).toBeUndefined();
+  });
+
+  it("a cleared tier (0, 'follow the list') is a typed change and is sent as 0", () => {
+    const out = detailsPricePatch(s, { ...seeded, priceTier3: "0" }, seeded);
+    expect(out.priceTier3).toBe("0");
+    expect(out.priceTier2).toBeUndefined();
+    expect(out.pricePerUnit).toBeUndefined();
+  });
+});
+
+describe("cascadeTiers: the in-form cascade reads fresh values for tiers the operator has not touched", () => {
+  const old = stored("9.00", "9.00", "0.00", "0.00");
+  const seeded = shown(old);
+
+  it("an untouched tier is read from the fresh product, a typed one from the draft", () => {
+    const fresh = { ...old, priceTier3: "8.00" };
+    const draft = { ...seeded, priceTier2: "9.5", priceTier4: "7" };
+    const t = cascadeTiers(fresh, draft, seeded);
+    expect(t.priceTier3).toBe("8.00"); // untouched: fresh
+    expect(t.priceTier4).toBe("7"); // typed: the draft
+    expect(t.priceTier5).toBe("0.00"); // untouched: fresh
+  });
+
+  it("without a seed it is the draft, as before", () => {
+    expect(cascadeTiers(old, { ...seeded, priceTier3: "5" }, undefined).priceTier3).toBe("5");
   });
 });

@@ -78,6 +78,8 @@ function usePriceWrite<Req>(
       // Every cached product may hold the prices this write just moved: the product the Details form reads, a legacy
       // parent that embeds its variants, the products lists the quick-save reads, the units lists. Only the price grid
       // (written just above) is spared. staleTime is 30s and focus refetch is off, so nothing else would refresh them.
+      // (The predicate also marks non-price products keys stale: categories, demand, sales, customer-prices. That is
+      // harmless: only a query with an active observer refetches.)
       void qc.invalidateQueries({
         predicate: (q) => q.queryKey[0] === "products" && q.queryKey[2] !== "price-grid",
       });

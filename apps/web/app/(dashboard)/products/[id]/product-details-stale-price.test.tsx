@@ -276,6 +276,35 @@ describe("a Details save never restores a stale price", () => {
     expect(body.priceTier2).toBeUndefined();
   });
 
+  it("REG (in-form cascade): raising a tier does not cascade through a lower tier a v2 save moved meanwhile", async () => {
+    const user = userEvent.setup();
+    server = { ...server, priceTier3: "9.00" }; // Tier 3 tracks Tier 2 (9) when the form opens
+    await renderPage();
+    await user.click(await screen.findByTitle("Edit product"));
+    await v2SaveSetting(user, { priceTier3: "8.00" }); // the v2 grid breaks that tracking
+    const t2 = screen.getAllByDisplayValue("9.00")[0]; // Tier 2 (Tier 3's stale 9.00 is the second)
+    await user.clear(t2);
+    await user.type(t2, "9.5");
+    const body = await saveDetails(user);
+    expect(body.priceTier2).toBe("9.5");
+    // The ladder reads Tier 3's FRESH 8: not tracking Tier 2, not above 9.50, so it is neither moved nor sent.
+    expect(body.priceTier3).toBeUndefined();
+    expect(body.pricePerUnit).toBeUndefined();
+  });
+
+  it("the in-form cascade still moves a lower tier that really tracks the one raised", async () => {
+    const user = userEvent.setup();
+    server = { ...server, priceTier3: "9.00" };
+    await renderPage();
+    await user.click(await screen.findByTitle("Edit product"));
+    const t2 = screen.getAllByDisplayValue("9.00")[0];
+    await user.clear(t2);
+    await user.type(t2, "9.5");
+    const body = await saveDetails(user);
+    expect(body.priceTier2).toBe("9.5");
+    expect(body.priceTier3).toBe("9.5");
+  });
+
   it("editing one tier in Details sends that tier, and not the untouched case price", async () => {
     const user = userEvent.setup();
     await renderPage();

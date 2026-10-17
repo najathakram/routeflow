@@ -12,7 +12,7 @@ const detail = fs.readFileSync(path.join(__dirname, "[id]/page.tsx"), "utf8");
 const list = fs.readFileSync(path.join(__dirname, "page.tsx"), "utf8");
 
 describe("list-price changes move tiers by the one ladder rule", () => {
-  it("detail page: the product save and the variant modal build their tiers with editTierPatch", () => {
+  it("detail page: the product save and the variant modal build their tiers with detailsPricePatch", () => {
     expect(detail).toMatch(/\.\.\.detailsPricePatch\(product, draft, /);
     expect(detail).toMatch(/\.\.\.detailsPricePatch\(editingVariant as any, vDraft, /);
     expect(detail).not.toMatch(/priceTier[2-5]: asDecimal\(/);

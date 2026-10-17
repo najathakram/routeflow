@@ -103,7 +103,12 @@ import { ProductJumpLinks } from "./units-v2/nav/ProductJumpLinks";
 import { ImageLightbox } from "./ImageLightbox";
 import { objectPositionForUrl, type FocalPoint } from "@/lib/image-focal";
 import { COMMON_UNITS } from "@/lib/common-units";
-import { detailsPriceMoves, detailsPricePatch, type PriceDraftKey } from "@/lib/product-tier-patch";
+import {
+  cascadeTiers,
+  detailsPriceMoves,
+  detailsPricePatch,
+  type PriceDraftKey,
+} from "@/lib/product-tier-patch";
 import { keptLabelsNote } from "@/lib/kept-labels-copy";
 import { isStaffRole } from "@/lib/default-unit-line";
 import { ConfirmDialog } from "@/components/ConfirmDialog";
@@ -2045,7 +2050,11 @@ export default function ProductDetailPage() {
                                     field as TierField,
                                     atFocus ?? productVal,
                                     v,
-                                    editDraft as Record<string, string>,
+                                    cascadeTiers(
+                                      product,
+                                      editDraft as Record<string, string>,
+                                      pricesWhenEditStartedRef.current,
+                                    ),
                                   );
                                   setEditDraft((d) => ({ ...d, ...moved }));
                                   setLadderNote(

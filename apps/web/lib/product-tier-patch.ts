@@ -129,3 +129,20 @@ export function detailsPriceMoves(
     if (patch[k] !== undefined && sameMoney(draft[k], seeded[k])) moves[k] = patch[k];
   return moves;
 }
+
+/**
+ * The tiers `applyLadderChange` should read when an in-form tier edit commits (the cascade into the lower tiers). A
+ * tier the operator has not touched (draft equals seeded, in cents) is read from the FRESH product: the draft still
+ * holds the value the form opened with, and a price save made meanwhile would otherwise be cascaded from a stale
+ * figure and sent as typed. A typed tier is read from the draft. Without the seed it is the draft, as before.
+ */
+export function cascadeTiers(
+  stored: TierPrices,
+  draft: PriceDraft,
+  seeded: Record<PriceDraftKey, string> | undefined,
+): Partial<Record<TierPriceKey, Price>> {
+  const out: Partial<Record<TierPriceKey, Price>> = {};
+  for (const k of TIER_PRICE_KEYS)
+    out[k] = seeded && sameMoney(draft[k], seeded[k]) ? stored[k] : draft[k];
+  return out;
+}
