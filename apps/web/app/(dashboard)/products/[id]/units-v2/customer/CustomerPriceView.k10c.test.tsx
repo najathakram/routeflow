@@ -88,6 +88,10 @@ describe("F26: the customer search is a WAI-ARIA combobox", () => {
     render(<CustomerPriceView productId="p1" />);
     const box = input();
     expect(box).toHaveAttribute("role", "combobox");
+    // K11-04: the list starts shut; focus opens it.
+    expect(box).toHaveAttribute("aria-expanded", "false");
+    expect(screen.queryByRole("listbox")).toBeNull();
+    act(() => box.focus());
     expect(box).toHaveAttribute("aria-expanded", "true");
     expect(box).toHaveAttribute("aria-autocomplete", "list");
     const list = screen.getByRole("listbox", { name: "Customers" });
@@ -137,6 +141,7 @@ describe("F26: the customer search is a WAI-ARIA combobox", () => {
   it("Enter on a single match picks it without moving first", () => {
     setHits([HITS[0]]);
     render(<CustomerPriceView productId="p1" />);
+    act(() => input().focus());
     fireEvent.keyDown(input(), { key: "Enter" });
     expect(screen.getByTestId(T.chosen)).toBeInTheDocument();
     expect(mockPrices).toHaveBeenLastCalledWith("c1", "p1", expect.anything());
@@ -179,12 +184,13 @@ describe("F26: the customer search is a WAI-ARIA combobox", () => {
     expect(document.activeElement).toBe(box);
   });
 
-  it("stays open on blur (the list is inline, not a floating popup) and is closed after a pick", () => {
+  it("closes on blur (K11-04: shut until asked) and is closed after a pick", () => {
     render(<CustomerPriceView productId="p1" />);
     const box = input();
     act(() => box.focus());
     act(() => box.blur());
-    expect(screen.getByRole("listbox")).toBeInTheDocument();
+    expect(screen.queryByRole("listbox")).toBeNull();
+    act(() => box.focus());
     fireEvent.click(screen.getByTestId(T.result("c1")));
     expect(screen.queryByRole("listbox")).toBeNull();
   });
@@ -199,7 +205,7 @@ describe("F26: the customer search is a WAI-ARIA combobox", () => {
       </div>,
     );
     const box = input();
-    box.focus();
+    act(() => box.focus());
     const open = fireEvent.keyDown(box, { key: "Escape" });
     expect(parent).not.toHaveBeenCalled();
     expect(doc).not.toHaveBeenCalled();
@@ -225,6 +231,7 @@ describe("F26: the customer search is a WAI-ARIA combobox", () => {
 
   it("a mouse click still picks, and options are 44px touch targets", () => {
     render(<CustomerPriceView productId="p1" />);
+    act(() => input().focus());
     const opt = screen.getByTestId(T.result("c3"));
     expect(opt.className).toContain("min-h-11");
     fireEvent.click(opt);
