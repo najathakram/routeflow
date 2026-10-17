@@ -1,7 +1,8 @@
 /**
  * B846 / SA-808 — vendor-bill revert against real Postgres: nothing deletes a StockMovement, the
  * reversal is a signed PURCHASE row paired by note, and a filed period never moves. The twin of
- * `vendor-bills.revert-appends.spec.ts` (R1-R5; R6 is the unit guard). Throwaway `qa-b846-*` tenants.
+ * `vendor-bills.revert-appends.spec.ts` (R1-R5; R6 is the unit guard), the void sibling's V1-V3 and
+ * SA-808b's 808b-V1..V5 (a void degrades, revert refuses naming void). Throwaway `qa-b846-*` tenants.
  *
  * Collected only by `jest.db.config.js` (`.db.spec.ts$`). Run with `npm run local:test:db`.
  */
@@ -98,6 +99,7 @@ describeDb("B846 bill revert appends — real Postgres", () => {
         await prisma.billPayment.deleteMany({ where: { vendorBillId: { in: billIds } } });
         await prisma.vendorBillItem.deleteMany({ where: { vendorBillId: { in: billIds } } });
         await prisma.vendorBill.deleteMany({ where: { tenantId } });
+        await prisma.auditLog.deleteMany({ where: { tenantId } });
         await prisma.regulatedFiling.deleteMany({ where: { tenantId } });
         await prisma.tobaccoReport.deleteMany({ where: { tenantId } });
         await prisma.stockLot.deleteMany({ where: { tenantId } });
@@ -467,38 +469,24 @@ describeDb("B846 bill revert appends — real Postgres", () => {
 
   it("V3: a manual PURCHASE sharing the bill number (row and lot) survives the void", async () => {
     const w = await seedWorld("v3", "tobacco");
+    // As R1: the bill exists first so the manual purchase can share its REAL number, written by the
+    // production writer (L-220) the month before so no cost replay adds rows.
+    const { id, billNumber } = await createBill(w, 10);
     await inTenant(w, () =>
-      prisma.stockMovement.create({
-        data: {
+      inventory.recordPurchase(
+        {
           productId: w.productId,
-          type: "PURCHASE",
           quantity: 5,
           unitCost: 1,
-          stockAfter: 5,
           supplierId: w.supplierId,
-          reference: "B-846-1",
+          reference: billNumber,
           notes: "manual purchase",
-        },
-      }),
+          effectiveDate: EARLIER_DATE,
+        } as never,
+        w.userId,
+      ),
     );
-    await inTenant(w, () =>
-      prisma.stockLot.create({
-        data: {
-          tenantId: w.tenantId,
-          productId: w.productId,
-          reference: "B-846-1",
-          qty: 5,
-          remainingQty: 5,
-          unitCost: 1,
-          purchaseDate: new Date(),
-        },
-      }),
-    );
-    await prisma.product.update({
-      where: { id: w.productId },
-      data: { currentStock: 5, averageCost: 1 },
-    });
-    const id = await receiveBill(w, 10);
+    await receive(w, id);
 
     await voidIt(w, id);
 
@@ -508,19 +496,130 @@ describeDb("B846 bill revert appends — real Postgres", () => {
     expect(await purchaseSumOfBillMonth(w)).toBe(0); // only the bill's pair left the month
     expect(rows.reduce((t, r) => t + r.q, 0)).toBe(await counter(w)); // Σq == the counter
     expect(await counter(w)).toBe(5);
-    expect(await prisma.stockLot.count({ where: { productId: w.productId } })).toBe(1);
+    const lots = await prisma.stockLot.findMany({ where: { productId: w.productId } });
+    expect(lots.map((l) => [Number(l.qty), Number(l.remainingQty), l.reference, l.notes])).toEqual([
+      [5, 5, billNumber, "manual purchase"],
+    ]);
+  });
+
+  // ─── SA-808b: a void degrades (808b-V1, V2), an excess is refused (V3), revert names void (V4) ───
+  /** A legacy received bill: the counter and the lot hold the stock, but no PURCHASE row exists. */
+  async function legacyReceivedBill(w: World, qty: number) {
+    const { id, billNumber } = await createBill(w, qty);
+    await prisma.vendorBill.update({
+      where: { id },
+      data: {
+        status: "RECEIVED",
+        receivedDate: new Date(`${BILL_DATE}T12:00:00.000Z`),
+        items: { updateMany: { where: {}, data: { qtyReceived: qty } } },
+      },
+    });
+    await inTenant(w, () =>
+      prisma.stockLot.create({
+        data: {
+          tenantId: w.tenantId,
+          productId: w.productId,
+          reference: billNumber,
+          qty,
+          remainingQty: qty,
+          unitCost: 2,
+          purchaseDate: new Date(`${BILL_DATE}T00:00:00.000Z`),
+        },
+      }),
+    );
+    await prisma.product.update({
+      where: { id: w.productId },
+      data: { currentStock: qty, averageCost: 2 },
+    });
+    return { id, billNumber };
+  }
+  const setReceiptQty = (w: World, qty: number) =>
+    prisma.$executeRaw`UPDATE "StockMovement" SET quantity = ${qty} WHERE "productId" = ${w.productId} AND type = 'PURCHASE' AND quantity > 0`;
+
+  it("808b-V1: a legacy bill with no receipt row voids — ADJUSTMENT -Q dated now, purchases unchanged, audit row, lot gone", async () => {
+    const w = await seedWorld("b1", "tobacco");
+    const { id, billNumber } = await legacyReceivedBill(w, 10);
+
+    const out = (await voidIt(w, id)) as { status: string; gapsDetected: unknown[] };
+
+    expect(out.status).toBe("VOID");
+    expect(out.gapsDetected).toEqual([expect.objectContaining({ noReceiptQty: 10 })]);
+    const rows = await prisma.stockMovement.findMany({ where: { productId: w.productId } });
+    expect(rows.map((r) => [r.type, Number(r.quantity)])).toEqual([["ADJUSTMENT", -10]]);
+    expect(inBillMonth(rows[0].effectiveAt)).toBe(false); // dated now
+    expect(rows[0].notes).toContain(billNumber);
+    expect(rows[0].notes).toContain("had no receipt record");
+    expect(await purchaseSumOfBillMonth(w)).toBe(0);
+    expect(await counter(w)).toBe(0);
+    expect(await prisma.stockLot.count({ where: { productId: w.productId } })).toBe(0);
+    const audit = await prisma.auditLog.findMany({ where: { tenantId: w.tenantId, entityId: id } });
+    expect(audit.map((a) => a.action)).toEqual(["vendor-bill.void-without-receipt"]);
+  });
+
+  it("808b-V2: a PAID bill with half its rows missing — half -PURCHASE at the original date, half ADJUSTMENT now", async () => {
+    const w = await seedWorld("b2", "tobacco");
+    const id = await receiveBill(w, 10);
+    await setReceiptQty(w, 5); // the other 5 were never recorded
+    await prisma.vendorBill.update({ where: { id }, data: { status: "PAID" } });
+
+    await voidIt(w, id);
+
+    const rows = await prisma.stockMovement.findMany({ where: { productId: w.productId } });
+    const receipt = rows.find((r) => Number(r.quantity) === 5) as (typeof rows)[number];
+    const reversal = rows.find((r) => r.type === "PURCHASE" && Number(r.quantity) === -5);
+    const adjustment = rows.find((r) => r.type === "ADJUSTMENT");
+    expect(reversal?.effectiveAt).toEqual(receipt.effectiveAt);
+    expect(Number(adjustment?.quantity)).toBe(-5);
+    expect(inBillMonth(adjustment?.effectiveAt as Date)).toBe(false);
+    expect(await purchaseSumOfBillMonth(w)).toBe(0);
+    expect(await counter(w)).toBe(0);
+    expect((await prisma.vendorBill.findUniqueOrThrow({ where: { id } })).status).toBe("VOID");
+  });
+
+  it("808b-V3: an excess is refused 409 with the admin-repair text — nothing written", async () => {
+    const w = await seedWorld("b3");
+    const id = await receiveBill(w, 10);
+    await setReceiptQty(w, 12);
+
+    await expect(voidIt(w, id)).rejects.toMatchObject({
+      response: {
+        code: "INVENTORY_LEDGER_GAP",
+        message: expect.stringContaining(
+          "stock records show more received than this bill, so it can't be voided here. It needs an admin repair.",
+        ),
+      },
+    });
+    expect(await prisma.stockMovement.count({ where: { productId: w.productId } })).toBe(1);
+    expect((await prisma.vendorBill.findUniqueOrThrow({ where: { id } })).status).toBe("RECEIVED");
+  });
+
+  it("808b-V4 (guard): revert on 808b-V1's bill is refused 409 with the message that names void", async () => {
+    const w = await seedWorld("b4");
+    const { id } = await legacyReceivedBill(w, 10);
+
+    await expect(revert(w, id)).rejects.toMatchObject({
+      response: {
+        code: "INVENTORY_LEDGER_GAP",
+        message: expect.stringContaining(
+          "stock records for this bill don't match what was received, so it can't go back to draft. Void the bill and enter it again.",
+        ),
+      },
+    });
+    expect(await prisma.stockMovement.count({ where: { productId: w.productId } })).toBe(0);
   });
 
   // The DB does not force row order, so the uuid tiebreak on a createdAt tie is pinned here: after
   // the receive, the two receipt rows get fixed ids in each order, making the old per-line split a
   // deterministic red. (StockMovement has no inbound FKs; resolvedMovementId is a plain string.)
   it.each([
-    ["5-row first", [5, 3]],
-    ["3-row first", [3, 5]],
+    ["revert", "5-row first", [5, 3]],
+    ["revert", "3-row first", [3, 5]],
+    ["void", "5-row first", [5, 3]],
+    ["void", "3-row first", [3, 5]],
   ] as const)(
-    "V5 (SA-808b item 3): a two-line, one-product bill reverts — %s on the uuid tiebreak",
-    async (_label, qtyOrder) => {
-      const w = await seedWorld(`v5-${qtyOrder[0]}`);
+    "V5 (SA-808b item 3): a two-line, one-product bill — %s, %s on the uuid tiebreak",
+    async (mode, _label, qtyOrder) => {
+      const w = await seedWorld(`v5-${mode}-${qtyOrder[0]}`);
       const bill: any = await inTenant(w, () =>
         bills.create({
           supplierId: w.supplierId,
@@ -538,8 +637,11 @@ describeDb("B846 bill revert appends — real Postgres", () => {
       // `@default(now())` per create call, so the rows can differ by a millisecond and createdAt,
       // not the uuid, would decide the order. Force the createdAt tie, then pin the uuid order.
       expect(new Set(created.map((r) => r.effectiveAt.getTime())).size).toBe(1);
-      // Distinct per case (ids are table-global): the last hex digit carries the case, then the rank.
-      const fixed = [1, 2].map((rank) => `00000000-0000-4000-8000-0000000000${qtyOrder[0]}${rank}`);
+      // Distinct per case (ids are table-global): the last digits carry the mode, the case, the rank.
+      const m = mode === "revert" ? 1 : 2;
+      const fixed = [1, 2].map(
+        (rank) => `00000000-0000-4000-8000-000000000${m}${qtyOrder[0]}${rank}`,
+      );
       for (const [i, q] of qtyOrder.entries()) {
         const row = created.find((r) => Number(r.quantity) === q) as (typeof created)[number];
         await prisma.$executeRaw`UPDATE "StockMovement" SET id = ${fixed[i]}, "createdAt" = (SELECT MIN("createdAt") FROM "StockMovement" WHERE "productId" = ${w.productId}) WHERE id = ${row.id}`;
@@ -549,13 +651,18 @@ describeDb("B846 bill revert appends — real Postgres", () => {
       const pinned = await ledger(w);
       expect(pinned.map((r) => r.q)).toEqual([...qtyOrder]);
 
-      await revert(w, bill.id);
+      await (mode === "revert" ? revert(w, bill.id) : voidIt(w, bill.id));
 
       const rows = await ledger(w);
       expect(rows.map((r) => r.q).sort((a, b) => a - b)).toEqual(
         [-5, -3, 3, 5].sort((a, b) => a - b),
       );
       expect(await counter(w)).toBe(0);
+      // no shortfall, so no ADJUSTMENT and no degraded-void audit row
+      expect(
+        await prisma.stockMovement.count({ where: { productId: w.productId, type: "ADJUSTMENT" } }),
+      ).toBe(0);
+      expect(await prisma.auditLog.count({ where: { tenantId: w.tenantId } })).toBe(0);
     },
   );
 });
